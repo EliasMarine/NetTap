@@ -792,7 +792,7 @@
 					<div class="welcome-header">
 						<svg class="logo" viewBox="0 0 48 48" width="64" height="64" fill="none">
 							<rect width="48" height="48" rx="10" fill="var(--accent)"/>
-							<path d="M12 24h24M24 12v24M15 15l18 18M33 15L15 33" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+							<path d="M12 24h24M24 12v24M15 15l18 18M33 15L15 33" stroke="var(--on-accent)" stroke-width="2.5" stroke-linecap="round"/>
 						</svg>
 						<h1>Welcome to NetTap</h1>
 						<p class="text-muted">
@@ -2067,7 +2067,7 @@
 
 	.step-item.active .step-number {
 		background-color: var(--accent);
-		color: #fff;
+		color: var(--on-accent);
 		border-color: var(--accent);
 	}
 
@@ -2270,7 +2270,7 @@
 
 	.mode-badge.recommended {
 		background-color: var(--success);
-		color: #fff;
+		color: var(--on-accent);
 	}
 
 	.mode-icon {

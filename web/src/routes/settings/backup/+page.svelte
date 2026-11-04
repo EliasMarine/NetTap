@@ -301,19 +301,19 @@
 	.page-header h1 {
 		font-size: 1.75rem;
 		font-weight: 700;
-		color: var(--text-primary, #e4e4e7);
+		color: var(--text-1);
 		margin: 0;
 	}
 
 	.subtitle {
-		color: var(--text-secondary, #a1a1aa);
+		color: var(--text-2);
 		margin: 0.25rem 0 0;
 		font-size: 0.9rem;
 	}
 
 	.card {
-		background: var(--surface-card, #1a1a2e);
-		border: 1px solid var(--border-color, #2d2d44);
+		background: var(--surface-1);
+		border: 1px solid var(--line);
 		border-radius: 0.75rem;
 		padding: 1.5rem;
 		margin-bottom: 1.5rem;
@@ -322,12 +322,12 @@
 	h2 {
 		font-size: 1.1rem;
 		font-weight: 600;
-		color: var(--text-primary, #e4e4e7);
+		color: var(--text-1);
 		margin: 0 0 0.5rem;
 	}
 
 	.description {
-		color: var(--text-secondary, #a1a1aa);
+		color: var(--text-2);
 		font-size: 0.875rem;
 		margin: 0 0 1rem;
 		line-height: 1.5;
@@ -340,23 +340,23 @@
 	}
 
 	.last-export {
-		color: var(--text-muted, #52525b);
+		color: var(--text-3);
 		font-size: 0.8rem;
 	}
 
 	.btn {
 		padding: 0.5rem 1rem;
-		border: 1px solid var(--border-color, #2d2d44);
+		border: 1px solid var(--line);
 		border-radius: 0.5rem;
 		cursor: pointer;
 		font-size: 0.875rem;
 		transition: all 0.15s;
-		background: var(--surface-card, #1a1a2e);
-		color: var(--text-primary, #e4e4e7);
+		background: var(--surface-1);
+		color: var(--text-1);
 	}
 
 	.btn:hover {
-		border-color: var(--accent-blue, #3b82f6);
+		border-color: var(--accent);
 	}
 
 	.btn:disabled {
@@ -365,17 +365,17 @@
 	}
 
 	.btn-primary {
-		background: var(--accent-blue, #3b82f6);
-		border-color: var(--accent-blue, #3b82f6);
-		color: #fff;
+		background: var(--accent);
+		border-color: var(--accent);
+		color: var(--on-accent);
 	}
 
 	.btn-primary:hover:not(:disabled) {
-		background: #2563eb;
+		background: var(--accent-strong);
 	}
 
 	.btn-secondary {
-		background: var(--surface-elevated, #252540);
+		background: var(--surface-2);
 	}
 
 	.btn-sm {
@@ -388,19 +388,19 @@
 		padding: 0.625rem 1rem;
 		border-radius: 0.5rem;
 		font-size: 0.875rem;
-		background: rgba(34, 197, 94, 0.1);
-		border: 1px solid rgba(34, 197, 94, 0.3);
-		color: #22c55e;
+		background: color-mix(in srgb, var(--ok) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
+		color: var(--ok);
 	}
 
 	.message.error {
-		background: rgba(239, 68, 68, 0.1);
-		border-color: rgba(239, 68, 68, 0.3);
-		color: #ef4444;
+		background: color-mix(in srgb, var(--sev-critical) 10%, transparent);
+		border-color: color-mix(in srgb, var(--sev-critical) 30%, transparent);
+		color: var(--sev-critical);
 	}
 
 	.dropzone {
-		border: 2px dashed var(--border-color, #2d2d44);
+		border: 2px dashed var(--line);
 		border-radius: 0.75rem;
 		padding: 2rem;
 		text-align: center;
@@ -410,8 +410,8 @@
 
 	.dropzone:hover,
 	.dropzone.dragging {
-		border-color: var(--accent-blue, #3b82f6);
-		background: rgba(59, 130, 246, 0.05);
+		border-color: var(--accent);
+		background: color-mix(in srgb, var(--accent) 5%, transparent);
 	}
 
 	.dropzone-content {
@@ -427,13 +427,13 @@
 	}
 
 	.dropzone-content p {
-		color: var(--text-secondary, #a1a1aa);
+		color: var(--text-2);
 		font-size: 0.875rem;
 		margin: 0;
 	}
 
 	.dropzone-or {
-		color: var(--text-muted, #52525b) !important;
+		color: var(--text-3) !important;
 		font-size: 0.75rem !important;
 	}
 
@@ -451,8 +451,8 @@
 		align-items: center;
 		gap: 0.75rem;
 		padding: 0.75rem 1rem;
-		background: var(--surface-input, #0f0f1a);
-		border: 1px solid var(--border-color, #2d2d44);
+		background: var(--bg);
+		border: 1px solid var(--line);
 		border-radius: 0.5rem;
 		margin-bottom: 1rem;
 	}
@@ -460,11 +460,11 @@
 	.file-name {
 		font-family: 'JetBrains Mono', monospace;
 		font-size: 0.875rem;
-		color: var(--text-primary, #e4e4e7);
+		color: var(--text-1);
 	}
 
 	.file-size {
-		color: var(--text-muted, #52525b);
+		color: var(--text-3);
 		font-size: 0.8rem;
 	}
 
@@ -481,15 +481,15 @@
 	}
 
 	.validation-status.valid {
-		background: rgba(34, 197, 94, 0.1);
-		border: 1px solid rgba(34, 197, 94, 0.3);
-		color: #22c55e;
+		background: color-mix(in srgb, var(--ok) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
+		color: var(--ok);
 	}
 
 	.validation-status.invalid {
-		background: rgba(239, 68, 68, 0.1);
-		border: 1px solid rgba(239, 68, 68, 0.3);
-		color: #ef4444;
+		background: color-mix(in srgb, var(--sev-critical) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--sev-critical) 30%, transparent);
+		color: var(--sev-critical);
 	}
 
 	.validation-list {
@@ -503,11 +503,11 @@
 	}
 
 	.validation-list.errors h4 {
-		color: #ef4444;
+		color: var(--sev-critical);
 	}
 
 	.validation-list.warnings h4 {
-		color: #f59e0b;
+		color: var(--sev-medium);
 	}
 
 	.validation-list ul {
@@ -517,11 +517,11 @@
 	}
 
 	.validation-list.errors li {
-		color: #ef4444;
+		color: var(--sev-critical);
 	}
 
 	.validation-list.warnings li {
-		color: #f59e0b;
+		color: var(--sev-medium);
 	}
 
 	.preview {
@@ -531,7 +531,7 @@
 	.preview h4 {
 		font-size: 0.8rem;
 		font-weight: 600;
-		color: var(--text-secondary, #a1a1aa);
+		color: var(--text-2);
 		margin: 0 0 0.5rem;
 	}
 
@@ -545,18 +545,18 @@
 		display: flex;
 		justify-content: space-between;
 		padding: 0.5rem 0.75rem;
-		background: var(--surface-input, #0f0f1a);
+		background: var(--bg);
 		border-radius: 0.375rem;
 		font-size: 0.8rem;
 	}
 
 	.section-name {
-		color: var(--text-primary, #e4e4e7);
+		color: var(--text-1);
 		text-transform: capitalize;
 	}
 
 	.section-info {
-		color: var(--text-muted, #52525b);
+		color: var(--text-3);
 	}
 
 	.import-result {
@@ -567,13 +567,13 @@
 	}
 
 	.import-result.success {
-		background: rgba(34, 197, 94, 0.1);
-		border: 1px solid rgba(34, 197, 94, 0.3);
+		background: color-mix(in srgb, var(--ok) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
 	}
 
 	.import-result.failure {
-		background: rgba(239, 68, 68, 0.1);
-		border: 1px solid rgba(239, 68, 68, 0.3);
+		background: color-mix(in srgb, var(--sev-critical) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--sev-critical) 30%, transparent);
 	}
 
 	.import-result h4 {
@@ -582,24 +582,24 @@
 	}
 
 	.import-result.success h4 {
-		color: #22c55e;
+		color: var(--ok);
 	}
 
 	.import-result.failure h4 {
-		color: #ef4444;
+		color: var(--sev-critical);
 	}
 
 	.import-result p {
 		margin: 0.25rem 0;
-		color: var(--text-secondary, #a1a1aa);
+		color: var(--text-2);
 		font-size: 0.8rem;
 	}
 
 	.import-errors {
-		color: #ef4444 !important;
+		color: var(--sev-critical) !important;
 	}
 
 	.import-warnings {
-		color: #f59e0b !important;
+		color: var(--sev-medium) !important;
 	}
 </style>

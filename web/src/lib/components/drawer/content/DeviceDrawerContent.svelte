@@ -35,10 +35,10 @@
 
 	// Risk score colors
 	const RISK_COLORS: Record<string, string> = {
-		critical: 'var(--red)',
-		high: 'var(--orange)',
-		medium: 'var(--amber)',
-		low: 'var(--green)',
+		critical: 'var(--sev-critical)',
+		high: 'var(--sev-high)',
+		medium: 'var(--sev-medium)',
+		low: 'var(--sev-low)',
 		none: 'var(--text-muted)',
 	};
 

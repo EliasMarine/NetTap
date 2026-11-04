@@ -15,6 +15,7 @@
 	 */
 
 	import { partOfWhole } from '$lib/utils/part-of-whole';
+	import { CATEGORY_COLORS } from '$lib/utils/category-colors';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { page } from '$app/stores';
 	import { onDestroy } from 'svelte';
@@ -37,24 +38,24 @@
 	// ---------------------------------------------------------------------------
 
 	const CATEGORY_META: Record<string, { icon: string; color: string }> = {
-		streaming: { icon: '\u25B6', color: 'var(--red)' },
-		gaming: { icon: '\uD83C\uDFAE', color: 'var(--purple)' },
-		social: { icon: '\uD83D\uDC65', color: 'var(--blue)' },
-		communication: { icon: '\uD83D\uDCAC', color: 'var(--amber)' },
-		work: { icon: '\uD83D\uDCBC', color: 'var(--green)' },
-		iot: { icon: '\uD83D\uDCE1', color: 'var(--orange)' },
-		cloud: { icon: '\u2601', color: 'var(--cyan)' },
-		file_transfer: { icon: '\uD83D\uDCC1', color: 'var(--teal)' },
-		dns: { icon: '\uD83C\uDF10', color: 'var(--text-muted)' },
-		email: { icon: '\u2709', color: 'var(--pink)' },
-		web: { icon: '\uD83D\uDD17', color: 'var(--accent)' },
-		security: { icon: '\uD83D\uDD12', color: 'var(--green)' },
-		shopping: { icon: '\uD83D\uDED2', color: 'var(--orange)' },
-		news: { icon: '\uD83D\uDCF0', color: 'var(--blue)' },
-		ads: { icon: '\uD83D\uDCCA', color: 'var(--text-muted)' },
-		updates: { icon: '\u2B07', color: 'var(--teal)' },
-		suspicious: { icon: '\u26A0', color: 'var(--red)' },
-		other: { icon: '\u2026', color: 'var(--text-muted)' },
+		streaming: { icon: '\u25B6', color: CATEGORY_COLORS.streaming },
+		gaming: { icon: '\uD83C\uDFAE', color: CATEGORY_COLORS.gaming },
+		social: { icon: '\uD83D\uDC65', color: CATEGORY_COLORS.social },
+		communication: { icon: '\uD83D\uDCAC', color: CATEGORY_COLORS.communication },
+		work: { icon: '\uD83D\uDCBC', color: CATEGORY_COLORS.work },
+		iot: { icon: '\uD83D\uDCE1', color: CATEGORY_COLORS.iot },
+		cloud: { icon: '\u2601', color: CATEGORY_COLORS.cloud },
+		file_transfer: { icon: '\uD83D\uDCC1', color: CATEGORY_COLORS.file_transfer },
+		dns: { icon: '\uD83C\uDF10', color: CATEGORY_COLORS.dns },
+		email: { icon: '\u2709', color: CATEGORY_COLORS.email },
+		web: { icon: '\uD83D\uDD17', color: CATEGORY_COLORS.web },
+		security: { icon: '\uD83D\uDD12', color: CATEGORY_COLORS.security },
+		shopping: { icon: '\uD83D\uDED2', color: CATEGORY_COLORS.shopping },
+		news: { icon: '\uD83D\uDCF0', color: CATEGORY_COLORS.news },
+		ads: { icon: '\uD83D\uDCCA', color: CATEGORY_COLORS.ads },
+		updates: { icon: '\u2B07', color: CATEGORY_COLORS.updates },
+		suspicious: { icon: '\u26A0', color: CATEGORY_COLORS.suspicious },
+		other: { icon: '\u2026', color: CATEGORY_COLORS.other },
 	};
 
 	const TIME_RANGES = [
@@ -746,7 +747,7 @@
 	.auto-refresh-btn.active {
 		border-color: var(--cyan);
 		color: var(--cyan);
-		background: rgba(0, 212, 255, 0.06);
+		background: color-mix(in srgb, var(--accent) 6%, transparent);
 	}
 
 	.auto-refresh-indicator {
@@ -759,7 +760,7 @@
 
 	.auto-refresh-btn.active .auto-refresh-indicator {
 		background: var(--cyan);
-		box-shadow: 0 0 8px rgba(0, 212, 255, 0.5);
+		box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 50%, transparent);
 		animation: pulse 2s ease-in-out infinite;
 	}
 
@@ -839,7 +840,7 @@
 
 	.stat-card-accent::before {
 		background: var(--accent);
-		box-shadow: 0 0 12px rgba(0, 212, 255, 0.3);
+		box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 30%, transparent);
 	}
 
 	.stat-label {
@@ -871,8 +872,8 @@
 		border-radius: var(--radius-sm);
 	}
 
-	.trend-up { color: var(--green); background: rgba(0, 230, 118, 0.12); }
-	.trend-down { color: var(--red); background: rgba(255, 71, 87, 0.12); }
+	.trend-up { color: var(--green); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+	.trend-down { color: var(--red); background: color-mix(in srgb, var(--sev-critical) 12%, transparent); }
 	.trend-neutral { color: var(--text-muted); background: var(--bg-tertiary); }
 
 	/* ----------------------------------------------------------------
@@ -1006,8 +1007,8 @@
 		align-items: center;
 		gap: 6px;
 		padding: 4px 10px;
-		background: rgba(0, 212, 255, 0.08);
-		border: 1px solid rgba(0, 212, 255, 0.25);
+		background: color-mix(in srgb, var(--accent) 8%, transparent);
+		border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
 		border-radius: var(--radius-sm);
 		font-size: var(--text-xs);
 		color: var(--cyan);
@@ -1016,7 +1017,7 @@
 		transition: all var(--transition-fast);
 	}
 
-	.filter-badge:hover { background: rgba(0, 212, 255, 0.15); }
+	.filter-badge:hover { background: color-mix(in srgb, var(--accent) 15%, transparent); }
 
 	.filter-close { font-size: 14px; line-height: 1; opacity: 0.6; }
 	.filter-badge:hover .filter-close { opacity: 1; }

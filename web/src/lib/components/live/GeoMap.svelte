@@ -9,6 +9,9 @@
 	import type { GeoArc } from '$lib/api/live';
 	import L from 'leaflet';
 	import 'leaflet/dist/leaflet.css';
+	import { theme } from '$lib/stores/theme';
+	import { resolveToken, prefersReducedMotion } from '$lib/utils/tokens';
+	import { createArcScheduler, type ArcScheduler } from './arc-scheduler';
 
 	// ---------------------------------------------------------------------------
 	// Props
@@ -45,14 +48,28 @@
 	let map: L.Map | null = null;
 	let homeMarkerGroup: L.LayerGroup | null = null;
 	let destLayerGroup: L.LayerGroup | null = null;
-	let animFrameId: number | null = null;
-	let arcPhase = 0;
+	let scheduler: ArcScheduler | null = null;
 
-	// Colors — pulled from the design system token values for canvas drawing.
-	// Canvas cannot read CSS vars at draw time, so we resolve the actual values.
-	const COLOR_ACCENT = '#00d4ff';
-	const COLOR_GREEN = '#00e676';
-	const COLOR_RED = '#ff4757';
+	// OLD CODE START — 2026-11-03: literal colours and a single rAF loop replaced by
+	// theme tokens (resolveToken) and arc-scheduler, which keeps static arcs under reduced motion.
+	// let animFrameId: number | null = null;
+	// let arcPhase = 0;
+	// const COLOR_ACCENT = '#00d4ff';
+	// const COLOR_GREEN = '#00e676';
+	// const COLOR_RED = '#ff4757';
+	// OLD CODE END
+
+	// Canvas and Leaflet markers can't use var(), so token values are read here
+	// and re-read whenever the theme changes.
+	let colors = $state({ accent: '', ok: '', alert: '' });
+
+	function readColors() {
+		return {
+			accent: resolveToken('--accent'),
+			ok: resolveToken('--ok'),
+			alert: resolveToken('--sev-critical'),
+		};
+	}
 
 	// ---------------------------------------------------------------------------
 	// Map initialization
@@ -86,21 +103,47 @@
 		homeMarkerGroup = L.layerGroup().addTo(map);
 		destLayerGroup = L.layerGroup().addTo(map);
 
-		// Keep canvas sized to the map container
-		syncCanvasSize();
-		map.on('moveend', syncCanvasSize);
-		map.on('zoomend', syncCanvasSize);
-		map.on('resize', syncCanvasSize);
-		window.addEventListener('resize', syncCanvasSize);
+		// OLD CODE START — 2026-11-03: resizing clears the canvas, and the static frame
+		// under reduced motion must be redrawn after it, so these now go through the scheduler.
+		// syncCanvasSize();
+		// map.on('moveend', syncCanvasSize);
+		// map.on('zoomend', syncCanvasSize);
+		// map.on('resize', syncCanvasSize);
+		// window.addEventListener('resize', syncCanvasSize);
+		// animFrameId = requestAnimationFrame(animationLoop);
+		// ...cleanup: if (animFrameId !== null) cancelAnimationFrame(animFrameId);
+		// window.removeEventListener('resize', syncCanvasSize);
+		// OLD CODE END
 
-		// Start animation loop
-		animFrameId = requestAnimationFrame(animationLoop);
+		// The store notifies after <html data-variant> changes, so this reads the new values
+		const unsubscribeTheme = theme.subscribe(() => {
+			colors = readColors();
+		});
+
+		scheduler = createArcScheduler({
+			draw: drawFrame,
+			reduceMotion: prefersReducedMotion(),
+			isPaused: () => paused,
+		});
+
+		// Keep canvas sized to the map container. Resizing clears it, so redraw after.
+		const onViewportSettled = () => {
+			syncCanvasSize();
+			scheduler?.redraw();
+		};
+		const onViewportMove = () => scheduler?.redraw();
+		syncCanvasSize();
+		map.on('moveend zoomend resize', onViewportSettled);
+		map.on('move zoom', onViewportMove);
+		window.addEventListener('resize', onViewportSettled);
+
+		scheduler.start();
 
 		return () => {
-			if (animFrameId !== null) {
-				cancelAnimationFrame(animFrameId);
-			}
-			window.removeEventListener('resize', syncCanvasSize);
+			scheduler?.stop();
+			scheduler = null;
+			unsubscribeTheme();
+			window.removeEventListener('resize', onViewportSettled);
 			if (map) {
 				map.remove();
 				map = null;
@@ -165,10 +208,10 @@
 		// Outer glow ring
 		L.circleMarker([lat, lng], {
 			radius: 16,
-			color: COLOR_GREEN,
+			color: colors.ok,
 			weight: 1,
 			opacity: 0.15,
-			fillColor: COLOR_GREEN,
+			fillColor: colors.ok,
 			fillOpacity: 0.06,
 			interactive: false,
 		}).addTo(homeMarkerGroup);
@@ -176,10 +219,10 @@
 		// Solid home dot
 		const homeMarker = L.circleMarker([lat, lng], {
 			radius: 7,
-			color: COLOR_GREEN,
+			color: colors.ok,
 			weight: 2,
 			opacity: 0.9,
-			fillColor: COLOR_GREEN,
+			fillColor: colors.ok,
 			fillOpacity: 1,
 			interactive: false,
 		}).addTo(homeMarkerGroup);
@@ -210,7 +253,7 @@
 
 			const isAlert = _alerts.has(dest.country_code);
 			const isActive = _active === dest.country_code;
-			const color = isAlert ? COLOR_RED : COLOR_ACCENT;
+			const color = isAlert ? colors.alert : colors.accent;
 			const radius = Math.min(4 + Math.sqrt(dest.count) * 2, 14);
 
 			const marker = L.circleMarker([dest.lat, dest.lon], {
@@ -238,10 +281,103 @@
 	// Animated canvas arc layer
 	// ---------------------------------------------------------------------------
 
-	function animationLoop() {
-		animFrameId = requestAnimationFrame(animationLoop);
+	// Static frame redraw under reduced motion: data, alert set or theme changed
+	$effect(() => {
+		void destinations;
+		void homeLocation;
+		void hasAlertCountries;
+		void colors.accent;
+		void colors.alert;
+		scheduler?.redraw();
+	});
 
-		if (paused || !map || !canvasEl || !homeLocation) return;
+	// OLD CODE START — 2026-11-03: drawing and scheduling were one function, so skipping the
+	// loop under reduced motion would also remove the static arcs. Split into drawFrame (below)
+	// and arc-scheduler.ts.
+	// function animationLoop() {
+	// 	animFrameId = requestAnimationFrame(animationLoop);
+	//
+	// 	if (paused || !map || !canvasEl || !homeLocation) return;
+	//
+	// 	const ctx = canvasEl.getContext('2d');
+	// 	if (!ctx) return;
+	//
+	// 	const dpr = window.devicePixelRatio || 1;
+	// 	ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+	// 	ctx.clearRect(0, 0, canvasEl.width / dpr, canvasEl.height / dpr);
+	//
+	// 	const homePixel = map.latLngToContainerPoint([homeLocation.lat, homeLocation.lng]);
+	//
+	// 	arcPhase = (arcPhase + 0.005) % 1;
+	//
+	// 	for (let i = 0; i < destinations.length; i++) {
+	// 		const dest = destinations[i];
+	// 		if (dest.lat == null || dest.lon == null) continue;
+	//
+	// 		const destPixel = map.latLngToContainerPoint([dest.lat, dest.lon]);
+	// 		const isAlert = hasAlertCountries.has(dest.country_code);
+	// 		const color = isAlert ? COLOR_RED : COLOR_ACCENT;
+	//
+	// 		// Quadratic bezier control point — arcs upward
+	// 		const midX = (homePixel.x + destPixel.x) / 2;
+	// 		const minY = Math.min(homePixel.y, destPixel.y);
+	// 		const dx = destPixel.x - homePixel.x;
+	// 		const dy = destPixel.y - homePixel.y;
+	// 		const distance = Math.sqrt(dx * dx + dy * dy);
+	// 		const cpX = midX;
+	// 		const cpY = minY - 40 - distance * 0.12;
+	//
+	// 		// Draw static arc with glow
+	// 		ctx.beginPath();
+	// 		ctx.moveTo(homePixel.x, homePixel.y);
+	// 		ctx.quadraticCurveTo(cpX, cpY, destPixel.x, destPixel.y);
+	// 		ctx.strokeStyle = color;
+	// 		ctx.globalAlpha = 0.07;
+	// 		ctx.lineWidth = 6;
+	// 		ctx.stroke();
+	//
+	// 		ctx.beginPath();
+	// 		ctx.moveTo(homePixel.x, homePixel.y);
+	// 		ctx.quadraticCurveTo(cpX, cpY, destPixel.x, destPixel.y);
+	// 		ctx.strokeStyle = color;
+	// 		ctx.globalAlpha = 0.3;
+	// 		ctx.lineWidth = 1.5;
+	// 		ctx.stroke();
+	//
+	// 		// Animated pulse dots — more pulses for higher connection counts
+	// 		const pulseCount = Math.min(1 + Math.floor(Math.sqrt(dest.count)), 3);
+	//
+	// 		for (let p = 0; p < pulseCount; p++) {
+	// 			const t = (arcPhase + i * 0.11 + p * (1 / pulseCount)) % 1;
+	//
+	// 			// Position along the quadratic bezier at parameter t
+	// 			const px = (1 - t) * (1 - t) * homePixel.x + 2 * (1 - t) * t * cpX + t * t * destPixel.x;
+	// 			const py = (1 - t) * (1 - t) * homePixel.y + 2 * (1 - t) * t * cpY + t * t * destPixel.y;
+	//
+	// 			// Outer glow
+	// 			ctx.beginPath();
+	// 			ctx.arc(px, py, 8, 0, Math.PI * 2);
+	// 			ctx.fillStyle = color;
+	// 			ctx.globalAlpha = 0.25;
+	// 			ctx.fill();
+	//
+	// 			// Solid dot
+	// 			ctx.beginPath();
+	// 			ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+	// 			ctx.fillStyle = color;
+	// 			ctx.globalAlpha = 0.95;
+	// 			ctx.fill();
+	// 		}
+	// 	}
+	//
+	// 	// Reset alpha for next frame
+	// 	ctx.globalAlpha = 1;
+	// }
+	// OLD CODE END
+
+	/** Draws every arc, plus pulse dots at `pulsePhase` (none when null: reduced motion). */
+	function drawFrame(pulsePhase: number | null) {
+		if (!map || !canvasEl || !homeLocation) return;
 
 		const ctx = canvasEl.getContext('2d');
 		if (!ctx) return;
@@ -252,15 +388,13 @@
 
 		const homePixel = map.latLngToContainerPoint([homeLocation.lat, homeLocation.lng]);
 
-		arcPhase = (arcPhase + 0.005) % 1;
-
 		for (let i = 0; i < destinations.length; i++) {
 			const dest = destinations[i];
 			if (dest.lat == null || dest.lon == null) continue;
 
 			const destPixel = map.latLngToContainerPoint([dest.lat, dest.lon]);
 			const isAlert = hasAlertCountries.has(dest.country_code);
-			const color = isAlert ? COLOR_RED : COLOR_ACCENT;
+			const color = isAlert ? colors.alert : colors.accent;
 
 			// Quadratic bezier control point — arcs upward
 			const midX = (homePixel.x + destPixel.x) / 2;
@@ -271,7 +405,7 @@
 			const cpX = midX;
 			const cpY = minY - 40 - distance * 0.12;
 
-			// Draw static arc with glow
+			// Static arc with glow
 			ctx.beginPath();
 			ctx.moveTo(homePixel.x, homePixel.y);
 			ctx.quadraticCurveTo(cpX, cpY, destPixel.x, destPixel.y);
@@ -288,11 +422,13 @@
 			ctx.lineWidth = 1.5;
 			ctx.stroke();
 
+			if (pulsePhase === null) continue;
+
 			// Animated pulse dots — more pulses for higher connection counts
 			const pulseCount = Math.min(1 + Math.floor(Math.sqrt(dest.count)), 3);
 
 			for (let p = 0; p < pulseCount; p++) {
-				const t = (arcPhase + i * 0.11 + p * (1 / pulseCount)) % 1;
+				const t = (pulsePhase + i * 0.11 + p * (1 / pulseCount)) % 1;
 
 				// Position along the quadratic bezier at parameter t
 				const px = (1 - t) * (1 - t) * homePixel.x + 2 * (1 - t) * t * cpX + t * t * destPixel.x;
@@ -314,7 +450,6 @@
 			}
 		}
 
-		// Reset alpha for next frame
 		ctx.globalAlpha = 1;
 	}
 </script>
@@ -401,7 +536,7 @@
 	/* Home tooltip — green accent */
 
 	:global(.geo-map .home-tooltip) {
-		background: rgba(0, 230, 118, 0.12);
+		background: var(--green-dim);
 		border-color: var(--green);
 		color: var(--green);
 		font-weight: 600;

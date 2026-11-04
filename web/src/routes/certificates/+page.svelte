@@ -517,7 +517,7 @@
 	.status-valid { background: var(--green-dim); color: var(--green); }
 	.status-warning { background: var(--amber-dim); color: var(--amber); }
 	.status-critical { background: var(--red-dim); color: var(--red); }
-	.status-info { background: var(--cyan-dim); color: var(--accent); }
+	.status-info { background: var(--sev-info-muted); color: var(--sev-info); }
 
 	/* Modal */
 	.modal-overlay {

@@ -5,6 +5,7 @@
 	import { getUnifiStatus } from '$lib/api/unifi';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { formatDuration } from '$lib/utils/tshark-helpers';
+	import ThemePicker from '$lib/components/ThemePicker.svelte';
 
 	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'integrations' | 'display' | 'about';
 
@@ -1725,6 +1726,8 @@
 					<span class="card-title">Display Preferences</span>
 				</div>
 
+				<ThemePicker />
+
 				{#if displayMessage}
 					<div class="alert alert-success" style="margin-bottom: var(--space-md);">
 						{displayMessage}
@@ -2036,7 +2039,7 @@
 
 	.toggle-input:checked + .toggle-slider::before {
 		transform: translateX(20px);
-		background-color: white;
+		background-color: var(--on-accent);
 	}
 
 	.toggle-input:focus-visible + .toggle-slider {
@@ -2092,7 +2095,7 @@
 
 	.btn-icon-remove:hover {
 		color: var(--red);
-		background: rgba(239, 68, 68, 0.1);
+		background: color-mix(in srgb, var(--sev-critical) 10%, transparent);
 	}
 
 	/* API Keys section */
@@ -2136,9 +2139,9 @@
 	}
 
 	.badge-configured {
-		background: rgba(34, 197, 94, 0.15);
-		color: var(--green, #22c55e);
-		border: 1px solid rgba(34, 197, 94, 0.3);
+		background: color-mix(in srgb, var(--ok) 15%, transparent);
+		color: var(--ok);
+		border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
 	}
 
 	.smtp-grid {

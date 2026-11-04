@@ -199,7 +199,7 @@
 
 	.device-card.is-new {
 		border-color: var(--cyan);
-		box-shadow: 0 0 8px rgba(0, 212, 255, 0.1);
+		box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 10%, transparent);
 	}
 
 	.device-header {

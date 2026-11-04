@@ -37,13 +37,13 @@
 	const BASE_CHART_H = 400;
 
 	const PROTO_COLORS: Record<string, string> = {
-		tcp: 'var(--cyan)',
-		udp: 'var(--green)',
-		icmp: 'var(--amber)',
-		tls: 'var(--purple)',
-		dns: 'var(--amber)',
-		http: 'var(--blue)',
-		ssh: 'var(--red)',
+		tcp: 'var(--data-1)',
+		udp: 'var(--data-5)',
+		icmp: 'var(--data-6)',
+		tls: 'var(--data-4)',
+		dns: 'var(--data-2)',
+		http: 'var(--data-3)',
+		ssh: 'var(--data-7)',
 	};
 
 	// ---------------------------------------------------------------------------
@@ -286,7 +286,10 @@
 							x={node.x + node.w / 2}
 							y={node.y + node.h / 2 + 4}
 							text-anchor="middle"
-							fill="#fff"
+							fill="var(--text-1)"
+							stroke="var(--bg)"
+							stroke-width="3"
+							paint-order="stroke"
 							font-size="12"
 							font-weight="600"
 							opacity={hoveredNode ? (isConnected ? 1 : 0.3) : 1}

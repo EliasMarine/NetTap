@@ -233,7 +233,7 @@
 		gap: 6px;
 		padding: 5px 12px;
 		background: var(--cyan-dim);
-		border: 1px solid rgba(0, 212, 255, 0.2);
+		border: 1px solid color-mix(in srgb, var(--cyan) 20%, transparent);
 		border-radius: 20px;
 		color: var(--cyan);
 		font-size: var(--text-xs);

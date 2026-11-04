@@ -893,12 +893,12 @@
 	.pills { display: flex; gap: var(--space-xs); background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: var(--space-sm); padding: 2px; }
 	.pill { padding: 6px 12px; border: none; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: var(--text-sm); cursor: pointer; transition: all 0.15s; }
 	.pill:hover { color: var(--text-primary); }
-	.pill.active { background: var(--accent); color: #000; }
+	.pill.active { background: var(--accent); color: var(--on-accent); }
 
 	/* Buttons */
 	.btn { padding: var(--space-sm) var(--space-md); border: 1px solid var(--border-default); border-radius: var(--space-sm); cursor: pointer; font-size: var(--text-base); transition: all 0.15s; background: var(--bg-secondary); color: var(--text-primary); }
 	.btn:disabled { opacity: 0.5; cursor: not-allowed; }
-	.btn-primary { background: var(--accent); border-color: var(--accent); color: #000; }
+	.btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 	.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
 	.btn-secondary { background: var(--bg-tertiary); }
 	.btn-sm { padding: var(--space-xs) var(--space-sm); font-size: var(--text-xs); }
@@ -939,13 +939,13 @@
 	.quick-filters { display: flex; gap: 6px; flex-wrap: wrap; }
 	.chip { padding: var(--space-xs) 10px; font-size: var(--text-xs); border-radius: var(--space-md); border: 1px solid var(--border-default); background: var(--bg-secondary); color: var(--text-primary); cursor: pointer; transition: all 0.15s; }
 	.chip:hover { border-color: var(--accent); }
-	.chip.active { background: var(--accent); border-color: var(--accent); color: #000; }
+	.chip.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 	.syntax-hints { display: flex; gap: var(--space-sm); align-items: center; flex-wrap: wrap; font-size: var(--text-xs); color: var(--text-muted); }
 	.syntax-hints code { background: var(--bg-input); padding: 2px 6px; border-radius: var(--space-xs); }
 	.hint { font-weight: 600; }
 
 	/* Error */
-	.error-banner { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; padding: 12px var(--space-md); border-radius: var(--space-sm); margin-bottom: var(--space-md); font-size: var(--text-base); }
+	.error-banner { background: color-mix(in srgb, var(--sev-critical) 10%, transparent); border: 1px solid color-mix(in srgb, var(--sev-critical) 30%, transparent); color: var(--sev-critical); padding: 12px var(--space-md); border-radius: var(--space-sm); margin-bottom: var(--space-md); font-size: var(--text-base); }
 
 	/* Tables */
 	.table-container { overflow-x: auto; border: 1px solid var(--border-default); border-radius: var(--space-sm); max-height: 450px; overflow-y: auto; }

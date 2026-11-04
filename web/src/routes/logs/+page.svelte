@@ -857,7 +857,7 @@
 					mono: true,
 					value: dest.count,
 					formattedValue: formatCompactNumber(dest.count),
-					color: 'var(--orange)',
+					color: 'var(--data-2)',
 				}))}
 				showRank={true}
 				labelWidth={140}
@@ -881,7 +881,7 @@
 					mono: true,
 					value: dnsEntry.count,
 					formattedValue: formatCompactNumber(dnsEntry.count),
-					color: 'var(--green)',
+					color: 'var(--data-3)',
 				}))}
 				showRank={true}
 				labelWidth={140}
@@ -1165,7 +1165,7 @@
 		margin-top: 2px;
 	}
 
-	.text-white { color: #fff; }
+	.text-white { color: var(--text-1); }
 	.text-cyan { color: var(--cyan); }
 	.text-green { color: var(--green); }
 	.text-purple { color: var(--purple); }
@@ -1252,7 +1252,7 @@
 		padding: 8px 10px;
 		min-width: 150px;
 		z-index: 10;
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+		box-shadow: 0 4px 12px color-mix(in srgb, var(--bg) 40%, transparent);
 	}
 
 	.chart-tooltip-title {
@@ -1449,7 +1449,7 @@
 		font-weight: 500;
 		color: var(--accent);
 		background: var(--accent-muted);
-		border: 1px solid rgba(0, 212, 255, 0.3);
+		border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
 		border-radius: var(--radius-full);
 		cursor: pointer;
 		transition: all var(--transition-fast);
@@ -1457,7 +1457,7 @@
 	}
 
 	.filter-badge:hover {
-		background: rgba(0, 212, 255, 0.2);
+		background: color-mix(in srgb, var(--accent) 20%, transparent);
 	}
 
 	.filter-x {

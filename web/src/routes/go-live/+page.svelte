@@ -608,12 +608,12 @@
 
 	.phase-step.active .phase-num {
 		background-color: var(--accent);
-		color: #fff;
+		color: var(--on-accent);
 	}
 
 	.phase-step.completed .phase-num {
 		background-color: var(--success);
-		color: #fff;
+		color: var(--on-accent);
 	}
 
 	.phase-label {

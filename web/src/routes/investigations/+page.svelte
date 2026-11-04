@@ -100,15 +100,15 @@
 	function severityBadgeClass(severity: string): string {
 		switch (severity) {
 			case 'critical':
-				return 'badge badge-danger';
+				return 'badge severity-critical';
 			case 'high':
-				return 'badge badge-warning';
+				return 'badge severity-high';
 			case 'medium':
-				return 'badge badge-accent';
+				return 'badge severity-medium';
 			case 'low':
-				return 'badge badge-success';
+				return 'badge severity-low';
 			default:
-				return 'badge';
+				return 'badge severity-info';
 		}
 	}
 
@@ -753,7 +753,7 @@
 
 	.filter-tab.active .filter-count {
 		background-color: var(--accent);
-		color: #fff;
+		color: var(--on-accent);
 	}
 
 	/* Loading state */

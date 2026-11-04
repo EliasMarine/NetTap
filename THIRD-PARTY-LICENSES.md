@@ -39,6 +39,17 @@ isolated Docker container with no code linking to NetTap's own codebase.
   - Redis — BSD 3-Clause
   - Nginx — BSD 2-Clause
 
+## Web UI fonts (Sora, Manrope, JetBrains Mono)
+
+- **License:** SIL Open Font License 1.1 (OFL-1.1)
+- **Projects:** Sora (https://github.com/sora-xor/sora-font), Manrope
+  (https://github.com/googlefonts/manrope), JetBrains Mono
+  (https://github.com/JetBrains/JetBrainsMono)
+- **Integration:** Unmodified variable WOFF2 files (Latin subset, as published by
+  Google Fonts), served by the web UI from `web/static/fonts/`. They're bundled so
+  the UI never loads anything from a CDN.
+- **License texts:** `web/static/fonts/<family>/OFL.txt`, next to each font.
+
 ## Note on GPL Components
 
 TShark and Suricata are licensed under GPL-2.0. NetTap integrates these

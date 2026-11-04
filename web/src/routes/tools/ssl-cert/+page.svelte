@@ -484,19 +484,19 @@
 	.badge-success {
 		background: var(--green-dim);
 		color: var(--green);
-		border: 1px solid rgba(0, 230, 118, 0.2);
+		border: 1px solid color-mix(in srgb, var(--green) 20%, transparent);
 	}
 
 	.badge-warning {
 		background: var(--amber-dim);
 		color: var(--amber);
-		border: 1px solid rgba(255, 171, 0, 0.2);
+		border: 1px solid color-mix(in srgb, var(--amber) 20%, transparent);
 	}
 
 	.badge-danger {
 		background: var(--red-dim);
 		color: var(--red);
-		border: 1px solid rgba(255, 71, 87, 0.2);
+		border: 1px solid color-mix(in srgb, var(--red) 20%, transparent);
 	}
 
 	.badge-muted {
@@ -532,8 +532,8 @@
 	.spinner {
 		width: 14px;
 		height: 14px;
-		border: 2px solid rgba(255, 255, 255, 0.3);
-		border-top-color: #fff;
+		border: 2px solid color-mix(in srgb, var(--on-accent) 30%, transparent);
+		border-top-color: var(--on-accent);
 		border-radius: 50%;
 		animation: spin 0.6s linear infinite;
 		display: inline-block;

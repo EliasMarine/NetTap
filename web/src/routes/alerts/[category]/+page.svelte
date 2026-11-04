@@ -1082,11 +1082,11 @@
 		border: 1px solid transparent;
 	}
 
-	.severity-pill.critical { background: var(--red-dim); color: var(--red); border-color: rgba(255, 71, 87, 0.2); }
-	.severity-pill.high { background: var(--orange-dim); color: var(--orange); border-color: rgba(255, 109, 0, 0.2); }
-	.severity-pill.medium { background: var(--amber-dim); color: var(--amber); border-color: rgba(255, 171, 0, 0.2); }
-	.severity-pill.low { background: var(--blue-dim); color: var(--blue); border-color: rgba(68, 138, 255, 0.2); }
-	.severity-pill.info { background: var(--bg-tertiary); color: var(--text-muted); border-color: var(--border-dim); }
+	.severity-pill.critical { background: var(--sev-critical-muted); color: var(--sev-critical); border-color: color-mix(in srgb, var(--sev-critical) 20%, transparent); }
+	.severity-pill.high { background: var(--sev-high-muted); color: var(--sev-high); border-color: color-mix(in srgb, var(--sev-high) 20%, transparent); }
+	.severity-pill.medium { background: var(--sev-medium-muted); color: var(--sev-medium); border-color: color-mix(in srgb, var(--sev-medium) 20%, transparent); }
+	.severity-pill.low { background: var(--sev-low-muted); color: var(--sev-low); border-color: color-mix(in srgb, var(--sev-low) 20%, transparent); }
+	.severity-pill.info { background: var(--sev-info-muted); color: var(--sev-info); border-color: color-mix(in srgb, var(--sev-info) 20%, transparent); }
 
 	.severity-dot {
 		width: 6px;
@@ -1094,11 +1094,11 @@
 		border-radius: 50%;
 	}
 
-	.severity-pill.critical .severity-dot { background: var(--red); }
-	.severity-pill.high .severity-dot { background: var(--orange); }
-	.severity-pill.medium .severity-dot { background: var(--amber); }
-	.severity-pill.low .severity-dot { background: var(--blue); }
-	.severity-pill.info .severity-dot { background: var(--text-muted); }
+	.severity-pill.critical .severity-dot { background: var(--sev-critical); }
+	.severity-pill.high .severity-dot { background: var(--sev-high); }
+	.severity-pill.medium .severity-dot { background: var(--sev-medium); }
+	.severity-pill.low .severity-dot { background: var(--sev-low); }
+	.severity-pill.info .severity-dot { background: var(--sev-info); }
 
 	/* Time range pills */
 	.pills {
@@ -1126,10 +1126,10 @@
 	.pill:hover { color: var(--text-primary); background: var(--bg-elevated); }
 
 	.pill.active {
-		background: var(--cyan);
-		color: var(--bg-void);
+		background: var(--accent);
+		color: var(--on-accent);
 		font-weight: 600;
-		box-shadow: 0 0 12px rgba(0, 212, 255, 0.3);
+		box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 30%, transparent);
 	}
 
 	/* ----------------------------------------------------------------
@@ -1197,10 +1197,10 @@
 		transition: background var(--transition-fast);
 	}
 
-	.stat-card:nth-child(1)::before { background: var(--blue); box-shadow: 0 0 12px rgba(68, 138, 255, 0.3); }
-	.stat-card:nth-child(2)::before { background: var(--cyan); box-shadow: 0 0 12px rgba(0, 212, 255, 0.3); }
-	.stat-card:nth-child(3)::before { background: var(--amber); box-shadow: 0 0 12px rgba(255, 171, 0, 0.3); }
-	.stat-card:nth-child(4)::before { background: var(--green); box-shadow: 0 0 12px rgba(0, 230, 118, 0.3); }
+	.stat-card:nth-child(1)::before { background: var(--data-1); box-shadow: 0 0 12px color-mix(in srgb, var(--data-1) 30%, transparent); }
+	.stat-card:nth-child(2)::before { background: var(--data-2); box-shadow: 0 0 12px color-mix(in srgb, var(--data-2) 30%, transparent); }
+	.stat-card:nth-child(3)::before { background: var(--data-3); box-shadow: 0 0 12px color-mix(in srgb, var(--data-3) 30%, transparent); }
+	.stat-card:nth-child(4)::before { background: var(--data-4); box-shadow: 0 0 12px color-mix(in srgb, var(--data-4) 30%, transparent); }
 
 	.stat-label {
 		font-size: var(--text-xs);
@@ -1296,8 +1296,8 @@
 	.sub-cat-row:hover { background: var(--bg-tertiary); }
 
 	.sub-cat-row.active {
-		border-color: var(--cyan);
-		background: rgba(0, 212, 255, 0.04);
+		border-color: var(--accent);
+		background: color-mix(in srgb, var(--accent) 4%, transparent);
 	}
 
 	.sub-cat-label {
@@ -1344,7 +1344,7 @@
 		justify-content: space-between;
 		padding: var(--space-sm) var(--space-lg);
 		border-top: 1px solid var(--border-dim);
-		background: rgba(0, 212, 255, 0.03);
+		background: color-mix(in srgb, var(--accent) 3%, transparent);
 	}
 
 	.filter-text {
@@ -1453,11 +1453,11 @@
 		text-transform: uppercase;
 	}
 
-	.sev-badge.critical, .sev-badge.sev-high { background: var(--red-dim); color: var(--red); }
-	.sev-badge.high { background: var(--orange-dim); color: var(--orange); }
-	.sev-badge.sev-medium, .sev-badge.medium { background: var(--amber-dim); color: var(--amber); }
-	.sev-badge.sev-low, .sev-badge.low { background: var(--blue-dim); color: var(--blue); }
-	.sev-badge.sev-info { background: var(--bg-tertiary); color: var(--text-muted); }
+	.sev-badge.critical { background: var(--sev-critical-muted); color: var(--sev-critical); }
+	.sev-badge.sev-high, .sev-badge.high { background: var(--sev-high-muted); color: var(--sev-high); }
+	.sev-badge.sev-medium, .sev-badge.medium { background: var(--sev-medium-muted); color: var(--sev-medium); }
+	.sev-badge.sev-low, .sev-badge.low { background: var(--sev-low-muted); color: var(--sev-low); }
+	.sev-badge.sev-info, .sev-badge.info { background: var(--sev-info-muted); color: var(--sev-info); }
 
 	/* ----------------------------------------------------------------
 	   Signatures List
@@ -1708,8 +1708,8 @@
 	}
 
 	.action-btn.danger:hover {
-		border-color: rgba(255, 71, 87, 0.3);
-		color: var(--red);
+		border-color: color-mix(in srgb, var(--sev-critical) 30%, transparent);
+		color: var(--sev-critical);
 		background: var(--red-dim);
 	}
 

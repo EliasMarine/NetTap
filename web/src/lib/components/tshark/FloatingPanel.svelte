@@ -88,7 +88,7 @@
 		background: var(--bg-primary);
 		border: 1px solid var(--accent);
 		border-radius: var(--radius-md);
-		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+		box-shadow: 0 8px 32px color-mix(in srgb, var(--bg) 50%, transparent);
 		z-index: 50;
 		overflow: hidden;
 	}

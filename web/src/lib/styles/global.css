@@ -1,80 +1,217 @@
 /* ============================================================
-   NetTap Design System v2 — Mission Control / SIEM Aesthetic
-   Dark background, vibrant data viz, dense but readable
+   NetTap Design System v3: pure black, Ember default
+   Visual reference: mockups/redesign-2026-11/index.html
+   Rules: web/DESIGN-SYSTEM.md
    ============================================================ */
 
-/* ----- CSS Custom Properties ----- */
+/* ----- Fonts (bundled, OFL 1.1; see static/fonts/) ----- */
+@font-face {
+  font-family: 'Sora';
+  src: url('/fonts/sora/Sora-Variable.woff2') format('woff2');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Manrope';
+  src: url('/fonts/manrope/Manrope-Variable.woff2') format('woff2');
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrains-mono/JetBrainsMono-Variable.woff2') format('woff2');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ----- Tokens -----
+   The colour gate (scripts/check-colors.mjs) skips everything between the
+   TOKENS START and TOKENS END markers. Colour literals live here and only here. */
+/* TOKENS START */
+/* [data-theme-preview] gives one element a variant's tokens (the Settings theme swatches). */
+:root,
+[data-theme-preview="ember"] {
+  color-scheme: dark;
+
+  /* Shared by every variant */
+  --bg: #000000;
+  --sev-critical: #ff4d6d;
+  --sev-high: #ff9142;
+  --sev-medium: #f5c84c;
+  --sev-low: #5aa9ff;
+  --sev-info: #a0a0ac;
+  --ok: #3ddc97;
+  --scrim: rgba(0, 0, 0, 0.66);
+  --shadow-pop: 0 24px 60px rgba(0, 0, 0, 0.6);
+
+  /* Ember (default): warm black, amber accent */
+  --surface-1: #0d0b0a;
+  --surface-2: #161310;
+  --surface-3: #1f1b17;
+  --line: #26211c;
+  --line-strong: #3a332c;
+  --text-1: #f6f1ec;
+  --text-2: #b8afa5;
+  --text-3: #938a80;
+  --accent: #ff7a1a;
+  --accent-strong: #ffa35c;
+  --on-accent: #000000;
+  --focus: #ffb067;
+  --row-hover: rgba(255, 140, 60, 0.05);
+  --data-1: #ff7a1a;
+  --data-2: #ffc06b;
+  --data-3: #ffe6c7;
+  --data-4: #c65a2e;
+  --data-5: #938a80;
+  --data-6: #e89a73;
+  --data-7: #d9b38c;
+  --data-8: #6b5a4c;
+}
+
+:root[data-variant="graphite"],
+[data-theme-preview="graphite"] {
+  --surface-1: #0b0b0c;
+  --surface-2: #141416;
+  --surface-3: #1c1c1f;
+  --line: #232326;
+  --line-strong: #36363b;
+  --text-1: #f4f4f5;
+  --text-2: #adadb4;
+  --text-3: #8e8e96;
+  --accent: #f4f4f5;
+  --accent-strong: #ffffff;
+  --on-accent: #000000;
+  --focus: #9cc0ff;
+  --row-hover: rgba(255, 255, 255, 0.035);
+  --data-1: #f4f4f5;
+  --data-2: #9cc0ff;
+  --data-3: #a1a1aa;
+  --data-4: #6e6e78;
+  --data-5: #d4d4d8;
+  --data-6: #64646c;
+  --data-7: #c8d9ff;
+  --data-8: #4b4b52;
+}
+
+:root[data-variant="spectrum"],
+[data-theme-preview="spectrum"] {
+  --surface-1: #0b0b10;
+  --surface-2: #13131a;
+  --surface-3: #1b1b25;
+  --line: #21212d;
+  --line-strong: #33334a;
+  --text-1: #f3f2fa;
+  --text-2: #aca9c2;
+  --text-3: #8f8ca8;
+  --accent: #9b8cff;
+  --accent-strong: #b8adff;
+  --on-accent: #000000;
+  --focus: #b8adff;
+  --row-hover: rgba(155, 140, 255, 0.05);
+  --data-1: #9b8cff;
+  --data-2: #4da3ff;
+  --data-3: #ff8a65;
+  --data-4: #3dd6c6;
+  --data-5: #ffc857;
+  --data-6: #d17dff;
+  --data-7: #7ee081;
+  --data-8: #ff6fa8;
+}
+/* TOKENS END */
+
+/* ----- Derived tokens and legacy names -----
+   No literals below: everything is built from the tokens above, so it follows
+   the variant. The legacy names keep every existing page working; new code
+   uses the new names. */
 :root {
-  /* Background hierarchy (deepest → elevated) */
-  --bg-void: #06080d;
-  --bg-primary: #0a0e17;
-  --bg-secondary: #0f1319;
-  --bg-tertiary: #141920;
-  --bg-elevated: #181d27;
-  --bg-input: #0d1118;
-  --bg-overlay: rgba(0, 0, 0, 0.6);
+  /* Legacy surfaces */
+  --bg-void: var(--bg);
+  --bg-primary: var(--bg);
+  --bg-secondary: var(--surface-1);
+  --bg-input: var(--surface-1);
+  --bg-tertiary: var(--surface-2);
+  --bg-elevated: var(--surface-3);
+  --bg-overlay: var(--scrim);
 
-  /* Borders */
-  --border-dim: #1a1f2e;
-  --border-default: #222939;
-  --border-bright: #2d3548;
+  /* Legacy borders */
+  --border-dim: var(--line);
+  --border-muted: var(--line);
+  --border-default: var(--line);
+  --border-bright: var(--line-strong);
+  --border-accent: var(--accent);
 
-  /* OLD CODE START — kept for backwards compat with existing components */
-  --border-muted: #1a1f2e;
-  --border-accent: #00d4ff;
-  /* OLD CODE END */
+  /* Legacy text */
+  --text-primary: var(--text-1);
+  --text-secondary: var(--text-2);
+  --text-muted: var(--text-3);
+  --text-dim: var(--text-3);
+  --text-link: var(--accent-strong);
 
-  /* Text hierarchy */
-  --text-primary: #e8edf5;
-  --text-secondary: #8892a4;
-  --text-muted: #555f73;
-  --text-dim: #3a4255;
-  --text-link: #00d4ff;
+  /* Legacy accent (brand and "informational" use) */
+  --accent-hover: var(--accent-strong);
+  --accent-muted: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-glow: color-mix(in srgb, var(--accent) 25%, transparent);
+  --cyan: var(--accent);
+  --cyan-dim: var(--accent-muted);
+  --info: var(--sev-info);
+  --info-muted: var(--sev-info-muted);
 
-  /* Accent & status colors (vibrant for dark bg) */
-  --accent: #00d4ff;
-  --accent-hover: #33ddff;
-  --accent-muted: rgba(0, 212, 255, 0.12);
-  --accent-glow: rgba(0, 212, 255, 0.25);
+  /* Legacy status colours, mapped onto severity and status tokens */
+  --red: var(--sev-critical);
+  --red-dim: color-mix(in srgb, var(--sev-critical) 12%, transparent);
+  --orange: var(--sev-high);
+  --orange-dim: color-mix(in srgb, var(--sev-high) 12%, transparent);
+  --amber: var(--sev-medium);
+  --amber-dim: color-mix(in srgb, var(--sev-medium) 12%, transparent);
+  --blue: var(--sev-low);
+  --blue-dim: color-mix(in srgb, var(--sev-low) 12%, transparent);
+  --green: var(--ok);
+  --green-dim: color-mix(in srgb, var(--ok) 12%, transparent);
 
-  --cyan: #00d4ff;
-  --cyan-dim: rgba(0, 212, 255, 0.12);
-  --green: #00e676;
-  --green-dim: rgba(0, 230, 118, 0.12);
-  --amber: #ffab00;
-  --amber-dim: rgba(255, 171, 0, 0.12);
-  --red: #ff4757;
-  --red-dim: rgba(255, 71, 87, 0.12);
-  --purple: #b388ff;
-  --purple-dim: rgba(179, 136, 255, 0.12);
-  --orange: #ff6d00;
-  --orange-dim: rgba(255, 109, 0, 0.12);
-  --blue: #448aff;
-  --blue-dim: rgba(68, 138, 255, 0.12);
-  --pink: #ff4081;
-  --pink-dim: rgba(255, 64, 129, 0.12);
-  --teal: #1de9b6;
-  --teal-dim: rgba(29, 233, 182, 0.12);
+  /* Legacy decorative category colours */
+  --purple: var(--data-4);
+  --purple-dim: color-mix(in srgb, var(--data-4) 12%, transparent);
+  --pink: var(--data-6);
+  --pink-dim: color-mix(in srgb, var(--data-6) 12%, transparent);
+  --teal: var(--data-3);
+  --teal-dim: color-mix(in srgb, var(--data-3) 12%, transparent);
 
   /* Semantic aliases */
-  --success: var(--green);
+  --success: var(--ok);
   --success-muted: var(--green-dim);
-  --warning: var(--amber);
+  --warning: var(--sev-medium);
   --warning-muted: var(--amber-dim);
-  --danger: var(--red);
+  --danger: var(--sev-critical);
   --danger-muted: var(--red-dim);
-  --info: var(--cyan);
-  --info-muted: var(--cyan-dim);
 
-  /* Chart color palette (8 vibrant colors for data viz) */
-  --chart-1: #00d4ff;
-  --chart-2: #00e676;
-  --chart-3: #ffab00;
-  --chart-4: #ff4757;
-  --chart-5: #b388ff;
-  --chart-6: #ff6d00;
-  --chart-7: #448aff;
-  --chart-8: #ff4081;
+  /* Names some pages use that were never defined (they rendered as nothing) */
+  --border: var(--line);
+  --status-success: var(--ok);
+  --status-warning: var(--sev-medium);
+  --status-critical: var(--sev-critical);
+  --text-md: var(--text-lg);
+
+  /* Severity tints, for badge backgrounds and borders */
+  --sev-critical-muted: color-mix(in srgb, var(--sev-critical) 12%, transparent);
+  --sev-high-muted: color-mix(in srgb, var(--sev-high) 12%, transparent);
+  --sev-medium-muted: color-mix(in srgb, var(--sev-medium) 12%, transparent);
+  --sev-low-muted: color-mix(in srgb, var(--sev-low) 12%, transparent);
+  --sev-info-muted: color-mix(in srgb, var(--sev-info) 12%, transparent);
+
+  /* Legacy chart palette */
+  --chart-1: var(--data-1);
+  --chart-2: var(--data-2);
+  --chart-3: var(--data-3);
+  --chart-4: var(--data-4);
+  --chart-5: var(--data-5);
+  --chart-6: var(--data-6);
+  --chart-7: var(--data-7);
+  --chart-8: var(--data-8);
 
   /* Spacing scale (4px base) */
   --space-xs: 4px;
@@ -86,34 +223,41 @@
   --space-3xl: 64px;
 
   /* Border radius */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
-  --radius-full: 9999px;
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 20px;
+  --r-xl: 26px;
+  --r-pill: 999px;
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
+  --radius-full: var(--r-pill);
 
-  /* Typography — DM Sans + JetBrains Mono */
-  --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+  /* Typography: Sora (display, numbers), Manrope (UI), JetBrains Mono (IPs, ports) */
+  --font-display: 'Sora', 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
+  --font-sans: 'Manrope', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
   --text-xs: 0.75rem;   /* 12px */
-  --text-sm: 0.8125rem; /* 13px — denser for SIEM tables */
-  --text-base: 0.875rem;/* 14px — base size for data-dense UI */
+  --text-sm: 0.8125rem; /* 13px */
+  --text-base: 0.875rem;/* 14px */
   --text-lg: 1rem;      /* 16px */
   --text-xl: 1.125rem;  /* 18px */
   --text-2xl: 1.375rem; /* 22px */
   --text-3xl: 1.75rem;  /* 28px */
-  --text-4xl: 2.25rem;  /* 36px — stat card values */
+  --text-4xl: 2.25rem;  /* 36px, stat values */
 
   --leading-tight: 1.2;
   --leading-normal: 1.5;
   --leading-relaxed: 1.75;
 
-  /* Shadows (subtle on dark bg) */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 20px rgba(0, 212, 255, 0.1);
+  /* Shadows */
+  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--bg) 40%, transparent);
+  --shadow-md: 0 4px 12px color-mix(in srgb, var(--bg) 40%, transparent);
+  --shadow-lg: var(--shadow-pop);
+  --shadow-glow: 0 0 20px color-mix(in srgb, var(--accent) 10%, transparent);
 
   /* Transitions */
   --transition-fast: 150ms ease;
@@ -313,12 +457,12 @@ img {
 }
 
 .badge-info {
-  background-color: var(--cyan-dim);
-  color: var(--cyan);
+  background-color: var(--sev-info-muted);
+  color: var(--sev-info);
 }
 
 .badge-muted {
-  background-color: rgba(85, 95, 115, 0.15);
+  background-color: color-mix(in srgb, var(--text-3) 15%, transparent);
   color: var(--text-muted);
 }
 
@@ -361,7 +505,7 @@ img {
 .btn-primary {
   background-color: var(--accent);
   border-color: var(--accent);
-  color: #000;
+  color: var(--on-accent);
   font-weight: 600;
 }
 
@@ -384,11 +528,11 @@ img {
 .btn-danger {
   background-color: var(--danger);
   border-color: var(--danger);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .btn-danger:hover {
-  background-color: #e6333f;
+  background-color: color-mix(in srgb, var(--danger) 85%, var(--text-1));
 }
 
 .btn-sm {
@@ -590,26 +734,26 @@ img {
 }
 
 .alert-info {
-  background-color: var(--cyan-dim);
-  border-color: rgba(0, 212, 255, 0.3);
-  color: var(--cyan);
+  background-color: var(--sev-info-muted);
+  border-color: color-mix(in srgb, var(--sev-info) 30%, transparent);
+  color: var(--sev-info);
 }
 
 .alert-success {
   background-color: var(--green-dim);
-  border-color: rgba(0, 230, 118, 0.3);
+  border-color: color-mix(in srgb, var(--ok) 30%, transparent);
   color: var(--green);
 }
 
 .alert-warning {
   background-color: var(--amber-dim);
-  border-color: rgba(255, 171, 0, 0.3);
+  border-color: color-mix(in srgb, var(--sev-medium) 30%, transparent);
   color: var(--amber);
 }
 
 .alert-danger {
   background-color: var(--red-dim);
-  border-color: rgba(255, 71, 87, 0.3);
+  border-color: color-mix(in srgb, var(--sev-critical) 30%, transparent);
   color: var(--red);
 }
 
@@ -770,8 +914,9 @@ img {
   box-shadow: 0 0 6px var(--red);
 }
 
-/* ----- Severity badges ----- */
-.severity-high { background: var(--red-dim); color: var(--red); }
-.severity-medium { background: var(--amber-dim); color: var(--amber); }
-.severity-low { background: var(--blue-dim); color: var(--blue); }
-.severity-info { background: var(--cyan-dim); color: var(--cyan); }
+/* ----- Severity badges: one token per severity, the same in every variant ----- */
+.severity-critical { background: var(--sev-critical-muted); color: var(--sev-critical); }
+.severity-high { background: var(--sev-high-muted); color: var(--sev-high); }
+.severity-medium { background: var(--sev-medium-muted); color: var(--sev-medium); }
+.severity-low { background: var(--sev-low-muted); color: var(--sev-low); }
+.severity-info { background: var(--sev-info-muted); color: var(--sev-info); }

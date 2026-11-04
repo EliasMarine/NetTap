@@ -62,8 +62,7 @@ The app has 42k lines of route markup across ~45 pages and 48 components. They u
 **It scans** `web/src/**/*.{svelte,ts,css}`. It skips:
 - tests
 - the token blocks in `global.css`
-- `// OLD CODE START`–`END` and `/* OLD CODE … */` blocks
-- comments
+- comments (commented-out OLD CODE is skipped as a comment; live code between OLD CODE markers is still checked)
 
 **It fails on** `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb(`/`rgba(`, `hsl(`/`hsla(`, and the named colours `white` and `black` used as colour values.
 

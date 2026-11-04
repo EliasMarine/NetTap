@@ -10,13 +10,13 @@ const MIN_NODE_H = 20;
 const NODE_PAD = 8;
 
 const PROTO_COLORS: Record<string, string> = {
-	tcp: 'var(--cyan)',
-	udp: 'var(--green)',
-	icmp: 'var(--amber)',
-	tls: 'var(--purple)',
-	dns: 'var(--amber)',
-	http: 'var(--blue)',
-	ssh: 'var(--red)',
+	tcp: 'var(--data-1)',
+	udp: 'var(--data-5)',
+	icmp: 'var(--data-6)',
+	tls: 'var(--data-4)',
+	dns: 'var(--data-2)',
+	http: 'var(--data-3)',
+	ssh: 'var(--data-7)',
 };
 
 function formatBytes(b: number): string {
@@ -73,9 +73,9 @@ describe('SankeyDiagram logic', () => {
 	});
 
 	describe('protocol colors', () => {
-		it('has color for tcp', () => expect(PROTO_COLORS['tcp']).toBe('var(--cyan)'));
-		it('has color for udp', () => expect(PROTO_COLORS['udp']).toBe('var(--green)'));
-		it('has color for tls', () => expect(PROTO_COLORS['tls']).toBe('var(--purple)'));
+		it('has color for tcp', () => expect(PROTO_COLORS['tcp']).toBe('var(--data-1)'));
+		it('has color for udp', () => expect(PROTO_COLORS['udp']).toBe('var(--data-5)'));
+		it('has color for tls', () => expect(PROTO_COLORS['tls']).toBe('var(--data-4)'));
 		it('returns undefined for unknown protocols', () => expect(PROTO_COLORS['ftp']).toBeUndefined());
 	});
 

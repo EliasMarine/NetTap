@@ -37,10 +37,11 @@
 	];
 
 	const SEVERITY_COLORS: Record<string, string> = {
-		critical: 'var(--red)',
-		high: 'var(--orange)',
-		medium: 'var(--amber)',
-		low: 'var(--accent)',
+		critical: 'var(--sev-critical)',
+		high: 'var(--sev-high)',
+		medium: 'var(--sev-medium)',
+		low: 'var(--sev-low)',
+		info: 'var(--sev-info)',
 	};
 
 	// ---------------------------------------------------------------------------
@@ -814,7 +815,7 @@
 
 	.pill.active {
 		background: var(--accent);
-		color: #000;
+		color: var(--on-accent);
 	}
 
 	/* Buttons */
@@ -834,7 +835,7 @@
 	.btn-primary {
 		background: var(--accent);
 		border-color: var(--accent);
-		color: #000;
+		color: var(--on-accent);
 	}
 
 	.btn-primary:hover:not(:disabled) { filter: brightness(0.85); }
@@ -1193,7 +1194,7 @@
 		text-transform: uppercase;
 		padding: 2px var(--space-sm);
 		border-radius: var(--radius-full);
-		color: #000;
+		color: var(--on-accent);
 	}
 
 	.suspicious-type {

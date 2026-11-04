@@ -9,7 +9,7 @@
 // Types
 // ---------------------------------------------------------------------------
 
-export type ThresholdLevel = 'success' | 'warning' | 'danger' | 'accent' | 'muted';
+export type ThresholdLevel = 'success' | 'warning' | 'danger' | 'high' | 'low' | 'accent' | 'muted';
 
 export interface Threshold {
 	value: number;
@@ -78,6 +78,10 @@ function levelToCssVar(level: ThresholdLevel): string {
 			return 'var(--warning)';
 		case 'danger':
 			return 'var(--danger)';
+		case 'high':
+			return 'var(--sev-high)';
+		case 'low':
+			return 'var(--sev-low)';
 		case 'accent':
 			return 'var(--accent)';
 		case 'muted':
@@ -93,6 +97,10 @@ function levelToBadgeClass(level: ThresholdLevel): string {
 			return 'badge badge-warning';
 		case 'danger':
 			return 'badge badge-danger';
+		case 'high':
+			return 'badge severity-high';
+		case 'low':
+			return 'badge severity-low';
 		case 'accent':
 			return 'badge badge-accent';
 		case 'muted':
@@ -109,10 +117,17 @@ function levelToBadgeClass(level: ThresholdLevel): string {
  * Suricata severity values: 1=high, 2=medium, 3=low.
  * Lower number = more severe.
  */
+// OLD CODE START — 2026-11-03, low used the brand accent and high shared the critical colour (UI redesign severity audit)
+// export const ALERT_SEVERITY_THRESHOLDS: Threshold[] = [
+// 	{ value: 3, level: 'accent' },   // low severity (3)
+// 	{ value: 2, level: 'warning' },  // medium severity (2)
+// 	{ value: 1, level: 'danger' },   // high severity (1)
+// ];
+// OLD CODE END
 export const ALERT_SEVERITY_THRESHOLDS: Threshold[] = [
-	{ value: 3, level: 'accent' },   // low severity (3)
+	{ value: 3, level: 'low' },      // low severity (3)
 	{ value: 2, level: 'warning' },  // medium severity (2)
-	{ value: 1, level: 'danger' },   // high severity (1)
+	{ value: 1, level: 'high' },     // high severity (1)
 ];
 
 /**

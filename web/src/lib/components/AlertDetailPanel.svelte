@@ -52,16 +52,16 @@
 	});
 
 	let severityClass = $derived.by(() => {
-		if (!alert?.alert?.severity) return 'badge';
+		if (!alert?.alert?.severity) return 'badge severity-info';
 		switch (alert.alert.severity) {
 			case 1:
-				return 'badge badge-danger';
+				return 'badge severity-high';
 			case 2:
-				return 'badge badge-warning';
+				return 'badge severity-medium';
 			case 3:
-				return 'badge badge-accent';
+				return 'badge severity-low';
 			default:
-				return 'badge';
+				return 'badge severity-info';
 		}
 	});
 
@@ -594,8 +594,8 @@
 		display: inline-block;
 		width: 14px;
 		height: 14px;
-		border: 2px solid rgba(255, 255, 255, 0.3);
-		border-top-color: #fff;
+		border: 2px solid color-mix(in srgb, var(--on-accent) 30%, transparent);
+		border-top-color: var(--on-accent);
 		border-radius: 50%;
 		animation: spin 0.6s linear infinite;
 	}

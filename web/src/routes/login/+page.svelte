@@ -15,7 +15,7 @@
 		<div class="login-header">
 			<svg class="login-logo" viewBox="0 0 32 32" width="48" height="48" fill="none">
 				<rect width="32" height="32" rx="6" fill="var(--accent)" />
-				<path d="M8 16h16M16 8v16M10 10l12 12M22 10L10 22" stroke="#fff" stroke-width="2" stroke-linecap="round" />
+				<path d="M8 16h16M16 8v16M10 10l12 12M22 10L10 22" stroke="var(--on-accent)" stroke-width="2" stroke-linecap="round" />
 			</svg>
 			<h1>NetTap</h1>
 			<p class="text-muted">Network Visibility Appliance</p>

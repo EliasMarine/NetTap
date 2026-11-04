@@ -453,7 +453,7 @@
 		gap: 6px;
 		padding: 2px 10px;
 		background: var(--green-dim);
-		border: 1px solid rgba(0, 230, 118, 0.25);
+		border: 1px solid color-mix(in srgb, var(--ok) 25%, transparent);
 		border-radius: var(--radius-full);
 		font-size: var(--text-xs);
 		font-weight: 600;
@@ -471,8 +471,8 @@
 	}
 
 	@keyframes live-pulse {
-		0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.4); }
-		50% { opacity: 0.6; box-shadow: 0 0 0 6px rgba(0, 230, 118, 0); }
+		0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 40%, transparent); }
+		50% { opacity: 0.6; box-shadow: 0 0 0 6px color-mix(in srgb, var(--ok) 0%, transparent); }
 	}
 
 	/* Map section */
@@ -579,7 +579,7 @@
 		gap: 6px;
 		padding: 4px 10px;
 		background: var(--accent-muted);
-		border: 1px solid rgba(0, 212, 255, 0.2);
+		border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
 		border-radius: var(--radius-full);
 		font-size: var(--text-xs);
 		font-family: var(--font-mono);
@@ -588,7 +588,7 @@
 		transition: all var(--transition-fast);
 	}
 
-	.filter-pill:hover { background: rgba(0, 212, 255, 0.2); }
+	.filter-pill:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 	.pill-x { font-size: 14px; opacity: 0.6; }
 
 	.clear-btn {

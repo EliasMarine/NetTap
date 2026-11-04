@@ -25,12 +25,12 @@
 	// ---------------------------------------------------------------------------
 
 	const PROTO_COLORS: Record<string, string> = {
-		tcp: 'var(--cyan)',
-		udp: 'var(--green)',
-		tls: 'var(--purple)',
-		dns: 'var(--amber)',
-		icmp: 'var(--red)',
-		http: 'var(--blue)',
+		tcp: 'var(--data-1)',
+		udp: 'var(--data-5)',
+		tls: 'var(--data-4)',
+		dns: 'var(--data-2)',
+		icmp: 'var(--data-6)',
+		http: 'var(--data-3)',
 	};
 
 	const PROTO_ORDER = ['tcp', 'udp', 'tls', 'dns', 'icmp', 'http'];
@@ -243,7 +243,7 @@
 		pointer-events: none;
 		z-index: 10;
 		white-space: nowrap;
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+		box-shadow: 0 4px 12px color-mix(in srgb, var(--bg) 30%, transparent);
 	}
 
 	.tooltip-time {

@@ -224,7 +224,7 @@
 	}
 
 	.layer-header.expanded {
-		background-color: rgba(33, 38, 45, 0.5);
+		background-color: color-mix(in srgb, var(--surface-3) 50%, transparent);
 	}
 
 	.chevron {

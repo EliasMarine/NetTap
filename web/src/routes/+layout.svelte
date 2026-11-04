@@ -99,12 +99,6 @@
 	}
 </script>
 
-<svelte:head>
-	<link rel="preconnect" href="https://fonts.googleapis.com" />
-	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
-	<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-</svelte:head>
-
 {#if $page.url.pathname.startsWith('/login') || $page.url.pathname.startsWith('/setup')}
 	{@render children()}
 {:else}
@@ -118,8 +112,8 @@
 				<div class="logo">
 					<svg class="logo-icon" viewBox="0 0 28 28" width="24" height="24" fill="none">
 						<rect width="28" height="28" rx="5" fill="var(--cyan)" />
-						<path d="M7 14h14M14 7v14" stroke="#000" stroke-width="2.5" stroke-linecap="round" />
-						<circle cx="14" cy="14" r="4" stroke="#000" stroke-width="1.5" fill="none" />
+						<path d="M7 14h14M14 7v14" stroke="var(--on-accent)" stroke-width="2.5" stroke-linecap="round" />
+						<circle cx="14" cy="14" r="4" stroke="var(--on-accent)" stroke-width="1.5" fill="none" />
 					</svg>
 					{#if !sidebarCollapsed}
 						<span class="logo-text">NetTap</span>
@@ -351,7 +345,7 @@
 	}
 
 	.nav-item:hover {
-		background-color: rgba(255, 255, 255, 0.04);
+		background-color: var(--row-hover);
 		color: var(--text-primary);
 		text-decoration: none;
 	}

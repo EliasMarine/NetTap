@@ -390,11 +390,11 @@
 	/** Get the threat level badge color. */
 	function threatLevelColor(level: string): { bg: string; text: string } {
 		switch (level) {
-			case 'critical': return { bg: 'var(--red-dim)', text: 'var(--red)' };
-			case 'high': return { bg: 'var(--orange-dim)', text: 'var(--orange)' };
-			case 'medium': return { bg: 'var(--amber-dim)', text: 'var(--amber)' };
-			case 'low': return { bg: 'var(--blue-dim)', text: 'var(--blue)' };
-			default: return { bg: 'var(--green-dim)', text: 'var(--green)' };
+			case 'critical': return { bg: 'var(--sev-critical-muted)', text: 'var(--sev-critical)' };
+			case 'high': return { bg: 'var(--sev-high-muted)', text: 'var(--sev-high)' };
+			case 'medium': return { bg: 'var(--sev-medium-muted)', text: 'var(--sev-medium)' };
+			case 'low': return { bg: 'var(--sev-low-muted)', text: 'var(--sev-low)' };
+			default: return { bg: 'var(--green-dim)', text: 'var(--ok)' };
 		}
 	}
 
@@ -733,9 +733,9 @@
 		<div class="card-header">
 			<h2>Alert Timeline</h2>
 			<div class="legend-row">
-				<span class="legend-item"><span class="legend-dot" style="background: var(--red);"></span> High</span>
-				<span class="legend-item"><span class="legend-dot" style="background: var(--amber);"></span> Medium</span>
-				<span class="legend-item"><span class="legend-dot" style="background: var(--blue);"></span> Low</span>
+				<span class="legend-item"><span class="legend-dot" style="background: var(--sev-high);"></span> High</span>
+				<span class="legend-item"><span class="legend-dot" style="background: var(--sev-medium);"></span> Medium</span>
+				<span class="legend-item"><span class="legend-dot" style="background: var(--sev-low);"></span> Low</span>
 			</div>
 		</div>
 		<div class="chart-wrapper" bind:clientWidth={chartWidth}>
@@ -774,17 +774,17 @@
 							<!-- Low -->
 							{#if hLow > 0}
 								<rect x={x} y={200 - hLow} width={barW} height={hLow} rx="2"
-									fill="var(--blue)" opacity={hoveredBarIndex !== null && !isHovered ? 0.3 : 0.8} />
+									fill="var(--sev-low)" opacity={hoveredBarIndex !== null && !isHovered ? 0.3 : 0.8} />
 							{/if}
 							<!-- Medium -->
 							{#if hMed > 0}
 								<rect x={x} y={200 - hLow - hMed} width={barW} height={hMed} rx="2"
-									fill="var(--amber)" opacity={hoveredBarIndex !== null && !isHovered ? 0.3 : 0.8} />
+									fill="var(--sev-medium)" opacity={hoveredBarIndex !== null && !isHovered ? 0.3 : 0.8} />
 							{/if}
 							<!-- High -->
 							{#if hHigh > 0}
 								<rect x={x} y={200 - hLow - hMed - hHigh} width={barW} height={hHigh} rx="2"
-									fill="var(--red)" opacity={hoveredBarIndex !== null && !isHovered ? 0.3 : 0.8} />
+									fill="var(--sev-high)" opacity={hoveredBarIndex !== null && !isHovered ? 0.3 : 0.8} />
 							{/if}
 							<!-- Zero baseline -->
 							{#if total === 0}
@@ -811,9 +811,9 @@
 					{@const tooltipX = 55 + hoveredBarIndex * ((chartWidth - 60) / timeline.length)}
 					<div class="bar-tooltip" style="left: {Math.min(tooltipX, chartWidth - 200)}px; top: 20px;">
 						<div class="tooltip-time">{formatShortTimestamp(hb.timestamp)}</div>
-						<div class="tooltip-row"><span class="legend-dot" style="background: var(--red);"></span> High: <strong>{hb.high}</strong></div>
-						<div class="tooltip-row"><span class="legend-dot" style="background: var(--amber);"></span> Medium: <strong>{hb.medium}</strong></div>
-						<div class="tooltip-row"><span class="legend-dot" style="background: var(--blue);"></span> Low: <strong>{hb.low}</strong></div>
+						<div class="tooltip-row"><span class="legend-dot" style="background: var(--sev-high);"></span> High: <strong>{hb.high}</strong></div>
+						<div class="tooltip-row"><span class="legend-dot" style="background: var(--sev-medium);"></span> Medium: <strong>{hb.medium}</strong></div>
+						<div class="tooltip-row"><span class="legend-dot" style="background: var(--sev-low);"></span> Low: <strong>{hb.low}</strong></div>
 					</div>
 				{/if}
 			{:else if failed.timeline && !loading}
@@ -1331,16 +1331,16 @@
 	}
 
 	.stat-total::before { background: var(--cyan); }
-	.stat-critical::before { background: var(--red); }
-	.stat-high::before { background: var(--orange); }
-	.stat-medium::before { background: var(--amber); }
-	.stat-low::before { background: var(--blue); }
+	.stat-critical::before { background: var(--sev-critical); }
+	.stat-high::before { background: var(--sev-high); }
+	.stat-medium::before { background: var(--sev-medium); }
+	.stat-low::before { background: var(--sev-low); }
 
 	.text-primary-val { color: var(--text-primary); }
-	.text-red { color: var(--red); }
-	.text-orange { color: var(--orange); }
-	.text-amber { color: var(--amber); }
-	.text-blue { color: var(--blue); }
+	.text-red { color: var(--sev-critical); }
+	.text-orange { color: var(--sev-high); }
+	.text-amber { color: var(--sev-medium); }
+	.text-blue { color: var(--sev-low); }
 
 	/* ------------------------------------------------------------------ */
 	/* Chart                                                              */
@@ -1467,16 +1467,16 @@
 	}
 
 	/* Category color hover variants */
-	.cat-card[data-color="red"]:hover { border-color: rgba(255, 71, 87, 0.4); box-shadow: 0 4px 20px rgba(255, 71, 87, 0.08); }
-	.cat-card[data-color="blue"]:hover { border-color: rgba(68, 138, 255, 0.4); box-shadow: 0 4px 20px rgba(68, 138, 255, 0.08); }
-	.cat-card[data-color="amber"]:hover { border-color: rgba(255, 171, 0, 0.4); box-shadow: 0 4px 20px rgba(255, 171, 0, 0.08); }
-	.cat-card[data-color="cyan"]:hover { border-color: rgba(0, 212, 255, 0.4); box-shadow: 0 4px 20px rgba(0, 212, 255, 0.08); }
-	.cat-card[data-color="orange"]:hover { border-color: rgba(255, 109, 0, 0.4); box-shadow: 0 4px 20px rgba(255, 109, 0, 0.08); }
-	.cat-card[data-color="pink"]:hover { border-color: rgba(255, 64, 129, 0.4); box-shadow: 0 4px 20px rgba(255, 64, 129, 0.08); }
-	.cat-card[data-color="purple"]:hover { border-color: rgba(179, 136, 255, 0.4); box-shadow: 0 4px 20px rgba(179, 136, 255, 0.08); }
-	.cat-card[data-color="teal"]:hover { border-color: rgba(29, 233, 182, 0.4); box-shadow: 0 4px 20px rgba(29, 233, 182, 0.08); }
-	.cat-card[data-color="green"]:hover { border-color: rgba(0, 230, 118, 0.4); box-shadow: 0 4px 20px rgba(0, 230, 118, 0.08); }
-	.cat-card[data-color="muted"]:hover { border-color: rgba(85, 95, 115, 0.4); box-shadow: 0 4px 20px rgba(85, 95, 115, 0.08); }
+	.cat-card[data-color="red"]:hover { border-color: color-mix(in srgb, var(--red) 40%, transparent); box-shadow: 0 4px 20px color-mix(in srgb, var(--red) 8%, transparent); }
+	.cat-card[data-color="blue"]:hover { border-color: color-mix(in srgb, var(--blue) 40%, transparent); box-shadow: 0 4px 20px color-mix(in srgb, var(--blue) 8%, transparent); }
+	.cat-card[data-color="amber"]:hover { border-color: color-mix(in srgb, var(--amber) 40%, transparent); box-shadow: 0 4px 20px color-mix(in srgb, var(--amber) 8%, transparent); }
+	.cat-card[data-color="cyan"]:hover { border-color: color-mix(in srgb, var(--cyan) 40%, transparent); box-shadow: 0 4px 20px color-mix(in srgb, var(--cyan) 8%, transparent); }
+	.cat-card[data-color="orange"]:hover { border-color: color-mix(in srgb, var(--orange) 40%, transparent); box-shadow: 0 4px 20px color-mix(in srgb, var(--orange) 8%, transparent); }
+	.cat-card[data-color="pink"]:hover { border-color: color-mix(in srgb, var(--pink) 40%, transparent); box-shadow: 0 4px 20px color-mix(in srgb, var(--pink) 8%, transparent); }
+	.cat-card[data-color="purple"]:hover { border-color: color-mix(in srgb, var(--purple) 40%, transparent); box-shadow: 0 4px 20px color-mix(in srgb, var(--purple) 8%, transparent); }
+	.cat-card[data-color="teal"]:hover { border-color: color-mix(in srgb, var(--teal) 40%, transparent); box-shadow: 0 4px 20px color-mix(in srgb, var(--teal) 8%, transparent); }
+	.cat-card[data-color="green"]:hover { border-color: color-mix(in srgb, var(--green) 40%, transparent); box-shadow: 0 4px 20px color-mix(in srgb, var(--green) 8%, transparent); }
+	.cat-card[data-color="muted"]:hover { border-color: color-mix(in srgb, var(--text-muted) 40%, transparent); box-shadow: 0 4px 20px color-mix(in srgb, var(--text-muted) 8%, transparent); }
 
 	.cat-card-top {
 		display: flex;
@@ -1534,10 +1534,10 @@
 	}
 
 	.sev-seg { border-radius: 2px; height: 100%; }
-	.sev-seg.crit { background: var(--red); }
-	.sev-seg.high { background: var(--orange); }
-	.sev-seg.med { background: var(--amber); }
-	.sev-seg.low { background: var(--blue); }
+	.sev-seg.crit { background: var(--sev-critical); }
+	.sev-seg.high { background: var(--sev-high); }
+	.sev-seg.med { background: var(--sev-medium); }
+	.sev-seg.low { background: var(--sev-low); }
 
 	/* Sub-category pills */
 	.subcat-pills {

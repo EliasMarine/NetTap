@@ -75,10 +75,10 @@
 
 	function severityBadge(severity: number): { label: string; cls: string } {
 		switch (severity) {
-			case 1: return { label: 'HIGH', cls: 'badge badge-danger' };
-			case 2: return { label: 'MEDIUM', cls: 'badge badge-warning' };
-			case 3: return { label: 'LOW', cls: 'badge badge-accent' };
-			default: return { label: 'INFO', cls: 'badge' };
+			case 1: return { label: 'HIGH', cls: 'badge severity-high' };
+			case 2: return { label: 'MEDIUM', cls: 'badge severity-medium' };
+			case 3: return { label: 'LOW', cls: 'badge severity-low' };
+			default: return { label: 'INFO', cls: 'badge severity-info' };
 		}
 	}
 

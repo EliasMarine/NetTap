@@ -182,7 +182,7 @@
 		align-items: center;
 		justify-content: center;
 		gap: var(--space-sm);
-		background-color: rgba(13, 17, 23, 0.85);
+		background-color: color-mix(in srgb, var(--bg) 85%, transparent);
 		z-index: 10;
 	}
 
@@ -261,7 +261,7 @@
 	}
 
 	.packet-row.even {
-		background-color: rgba(22, 27, 34, 0.5);
+		background-color: color-mix(in srgb, var(--surface-2) 50%, transparent);
 	}
 
 	.packet-row:hover {

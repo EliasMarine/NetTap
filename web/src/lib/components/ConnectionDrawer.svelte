@@ -616,7 +616,7 @@
 		position: fixed;
 		inset: 0;
 		z-index: 998;
-		background: rgba(0, 0, 0, 0.5);
+		background: var(--scrim);
 		backdrop-filter: blur(4px);
 		-webkit-backdrop-filter: blur(4px);
 		border: none;
@@ -647,7 +647,7 @@
 		flex-direction: column;
 		transform: translateX(100%);
 		transition: transform 0.25s ease;
-		box-shadow: -8px 0 32px rgba(0, 0, 0, 0.5);
+		box-shadow: -8px 0 32px color-mix(in srgb, var(--bg) 50%, transparent);
 	}
 
 	.conn-drawer.open {
@@ -884,7 +884,7 @@
 	}
 
 	.tshark-btn-primary:hover {
-		box-shadow: 0 0 12px rgba(0, 212, 255, 0.3);
+		box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 30%, transparent);
 	}
 
 	.tshark-btn-primary:disabled {

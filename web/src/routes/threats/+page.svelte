@@ -89,10 +89,10 @@
 	});
 
 	let threatColor = $derived(
-		threatLevel === 'critical' ? 'var(--red)' :
-		threatLevel === 'high' ? 'var(--red)' :
-		threatLevel === 'medium' ? 'var(--amber)' :
-		threatLevel === 'low' ? 'var(--green)' : 'var(--text-muted)'
+		threatLevel === 'critical' ? 'var(--sev-critical)' :
+		threatLevel === 'high' ? 'var(--sev-high)' :
+		threatLevel === 'medium' ? 'var(--sev-medium)' :
+		threatLevel === 'low' ? 'var(--sev-low)' : 'var(--text-muted)'
 	);
 
 	// Category bar segments
@@ -528,7 +528,7 @@
 						<div class="investigation-card">
 							<button class="inv-header" type="button" onclick={() => (expandedInvestigation = expandedInvestigation === i ? null : i)}>
 								<div class="inv-title-area">
-									<span class="inv-sev" class:sev-critical={inv.alert.severity_label === 'CRITICAL'} class:sev-high={inv.alert.severity_label === 'HIGH'}>{inv.alert.severity_label}</span>
+									<span class="inv-sev" class:sev-critical={inv.alert.severity_label === 'CRITICAL'} class:sev-high={inv.alert.severity_label === 'HIGH'} class:sev-medium={inv.alert.severity_label === 'MEDIUM'} class:sev-low={inv.alert.severity_label === 'LOW'}>{inv.alert.severity_label}</span>
 									<div>
 										<div class="inv-title">{inv.alert.signature}</div>
 										<div class="inv-subtitle mono">{inv.alert.source_ip} &rarr; {inv.alert.destination_ip}</div>
@@ -635,19 +635,19 @@
 	.card-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--border-dim); }
 	.card-title { font-size: var(--text-sm); font-weight: 600; }
 	.card-badge { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); background: var(--bg-tertiary); padding: 2px 8px; border-radius: var(--radius-sm); }
-	.card-badge.danger { color: var(--red); background: rgba(255,71,87,0.12); }
+	.card-badge.danger { color: var(--sev-critical); background: var(--sev-critical-muted); }
 	.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md); }
 
 	/* Kill Chains */
-	.kill-chain-card { border-color: rgba(255,71,87,0.2); }
+	.kill-chain-card { border-color: color-mix(in srgb, var(--sev-critical) 20%, transparent); }
 	.kill-chain-item { padding: var(--space-lg); border-bottom: 1px solid var(--border-dim); }
 	.kill-chain-item:last-child { border-bottom: none; }
 	.kc-header { display: flex; align-items: center; gap: var(--space-md); margin-bottom: var(--space-md); }
 	.kc-ip { font-size: var(--text-lg); font-weight: 600; color: var(--red); }
-	.kc-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 8px; border-radius: var(--radius-sm); background: rgba(255,71,87,0.12); color: var(--red); }
+	.kc-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 8px; border-radius: var(--radius-sm); background: var(--sev-critical-muted); color: var(--sev-critical); }
 	.kc-stages { display: flex; align-items: center; margin-bottom: var(--space-md); flex-wrap: wrap; gap: var(--space-xs); }
 	.kc-stage { display: flex; flex-direction: column; align-items: center; gap: var(--space-xs); padding: var(--space-sm) var(--space-md); background: var(--bg-tertiary); border: 1px solid var(--border-dim); border-radius: var(--radius-md); min-width: 110px; text-align: center; }
-	.kc-stage.active { border-color: var(--red); background: rgba(255,71,87,0.08); }
+	.kc-stage.active { border-color: var(--sev-critical); background: color-mix(in srgb, var(--sev-critical) 8%, transparent); }
 	.kc-stage-num { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); font-weight: 600; }
 	.kc-stage.active .kc-stage-num { color: var(--red); }
 	.kc-stage-name { font-size: var(--text-xs); font-weight: 600; color: var(--text-secondary); }
@@ -656,8 +656,8 @@
 	.kc-arrow { font-size: 16px; color: var(--text-dim); }
 	.kc-assessment { font-size: var(--text-sm); color: var(--text-secondary); line-height: 1.6; padding: var(--space-sm) var(--space-md); background: var(--bg-tertiary); border-radius: var(--radius-sm); border-left: 3px solid var(--red); }
 	.kc-actions { display: flex; gap: var(--space-sm); margin-top: var(--space-md); }
-	.btn-investigate { padding: 6px 16px; background: var(--red); color: var(--bg-void); border: none; border-radius: var(--radius-sm); font-size: var(--text-xs); font-weight: 700; cursor: pointer; font-family: var(--font-sans); transition: all var(--transition-fast); }
-	.btn-investigate:hover { box-shadow: 0 0 16px rgba(255,71,87,0.4); }
+	.btn-investigate { padding: 6px 16px; background: var(--sev-critical); color: var(--on-accent); border: none; border-radius: var(--radius-sm); font-size: var(--text-xs); font-weight: 700; cursor: pointer; font-family: var(--font-sans); transition: all var(--transition-fast); }
+	.btn-investigate:hover { box-shadow: 0 0 16px color-mix(in srgb, var(--sev-critical) 40%, transparent); }
 	.btn-secondary-sm { padding: 6px 16px; background: transparent; color: var(--text-secondary); border: 1px solid var(--border-default); border-radius: var(--radius-sm); font-size: var(--text-xs); font-weight: 600; cursor: pointer; font-family: var(--font-sans); transition: all var(--transition-fast); }
 	.btn-secondary-sm:hover { border-color: var(--border-bright); color: var(--text-primary); }
 
@@ -676,7 +676,7 @@
 
 	/* DNS Anomalies */
 	.anomaly-group-header { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-sm) var(--space-lg); font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); border-bottom: 1px solid var(--border-dim); }
-	.anomaly-count-badge { font-family: var(--font-mono); padding: 1px 6px; border-radius: var(--radius-sm); background: rgba(255,71,87,0.12); color: var(--red); font-size: 10px; }
+	.anomaly-count-badge { font-family: var(--font-mono); padding: 1px 6px; border-radius: var(--radius-sm); background: var(--sev-critical-muted); color: var(--sev-critical); font-size: 10px; }
 	.dga-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: var(--space-md); padding: var(--space-sm) var(--space-lg); border-bottom: 1px solid var(--border-dim); }
 	.dga-row:last-child { border-bottom: none; }
 	.dga-domain { font-size: var(--text-sm); word-break: break-all; }
@@ -693,7 +693,7 @@
 	.lateral-row { display: grid; grid-template-columns: auto 1fr auto auto auto; align-items: center; gap: var(--space-md); padding: var(--space-sm) var(--space-lg); border-bottom: 1px solid var(--border-dim); transition: background var(--transition-fast); }
 	.lateral-row:hover { background: var(--bg-tertiary); }
 	.lateral-row:last-child { border-bottom: none; }
-	.lateral-fanout { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: var(--radius-sm); font-size: 10px; font-weight: 700; background: rgba(255,71,87,0.12); color: var(--red); min-width: 85px; }
+	.lateral-fanout { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: var(--radius-sm); font-size: 10px; font-weight: 700; background: var(--sev-critical-muted); color: var(--sev-critical); min-width: 85px; }
 	.lateral-path { display: flex; align-items: center; gap: var(--space-sm); font-size: var(--text-sm); }
 	.lateral-src { color: var(--cyan); }
 	.lateral-arrow { color: var(--text-dim); font-size: 12px; }
@@ -705,7 +705,7 @@
 	/* Threat Intel */
 	.ti-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: var(--space-md); padding: var(--space-sm) var(--space-lg); border-bottom: 1px solid var(--border-dim); }
 	.ti-row:last-child { border-bottom: none; }
-	.ti-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 8px; border-radius: var(--radius-sm); background: rgba(255,71,87,0.12); color: var(--red); }
+	.ti-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 8px; border-radius: var(--radius-sm); background: var(--sev-critical-muted); color: var(--sev-critical); }
 	.ti-feed-name { font-size: var(--text-sm); }
 	.ti-feed-count { font-size: var(--text-xs); color: var(--text-muted); }
 
@@ -715,9 +715,11 @@
 	.inv-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-md) var(--space-lg); background: var(--bg-secondary); border: none; width: 100%; cursor: pointer; text-align: left; font: inherit; color: inherit; transition: background var(--transition-fast); }
 	.inv-header:hover { background: var(--bg-tertiary); }
 	.inv-title-area { display: flex; align-items: center; gap: var(--space-md); }
-	.inv-sev { padding: 3px 10px; border-radius: var(--radius-sm); font-size: 10px; font-weight: 700; text-transform: uppercase; background: rgba(255,171,0,0.12); color: var(--amber); }
-	.sev-critical { background: rgba(255,71,87,0.15); color: var(--red); }
-	.sev-high { background: rgba(255,71,87,0.12); color: var(--red); }
+	.inv-sev { padding: 3px 10px; border-radius: var(--radius-sm); font-size: 10px; font-weight: 700; text-transform: uppercase; background: var(--sev-info-muted); color: var(--sev-info); }
+	.sev-critical { background: color-mix(in srgb, var(--sev-critical) 15%, transparent); color: var(--sev-critical); }
+	.sev-high { background: var(--sev-high-muted); color: var(--sev-high); }
+	.sev-medium { background: var(--sev-medium-muted); color: var(--sev-medium); }
+	.sev-low { background: var(--sev-low-muted); color: var(--sev-low); }
 	.inv-title { font-size: var(--text-sm); font-weight: 600; }
 	.inv-subtitle { font-size: var(--text-xs); color: var(--text-muted); }
 	.inv-expand { font-size: 14px; color: var(--text-dim); }
@@ -727,7 +729,7 @@
 	.inv-field { display: flex; flex-direction: column; gap: 1px; }
 	.inv-field-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 500; }
 	.inv-field-value { font-size: var(--text-sm); color: var(--text-primary); }
-	.inv-recommendation { grid-column: 1 / -1; padding: var(--space-md); background: rgba(255,71,87,0.08); border: 1px solid rgba(255,71,87,0.2); border-radius: var(--radius-md); font-size: var(--text-sm); color: var(--text-primary); line-height: 1.6; }
+	.inv-recommendation { grid-column: 1 / -1; padding: var(--space-md); background: color-mix(in srgb, var(--sev-critical) 8%, transparent); border: 1px solid color-mix(in srgb, var(--sev-critical) 20%, transparent); border-radius: var(--radius-md); font-size: var(--text-sm); color: var(--text-primary); line-height: 1.6; }
 	.inv-rec-label { font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--red); margin-bottom: var(--space-xs); letter-spacing: 0.06em; }
 
 	/* Responsive */

@@ -71,8 +71,8 @@
 	const PROTOCOL_OPTIONS = ['All', 'TCP', 'UDP', 'ICMP', 'TLS'] as const;
 
 	const PROTO_COLORS: Record<string, string> = {
-		tcp: 'var(--cyan)', udp: 'var(--green)', tls: 'var(--purple)',
-		dns: 'var(--amber)', icmp: 'var(--red)', http: 'var(--blue)',
+		tcp: 'var(--data-1)', udp: 'var(--data-5)', tls: 'var(--data-4)',
+		dns: 'var(--data-2)', icmp: 'var(--data-6)', http: 'var(--data-3)',
 	};
 
 	// ---------------------------------------------------------------------------
@@ -233,7 +233,7 @@
 			value: d.total_bytes,
 			formattedValue: formatBytes(d.total_bytes),
 			secondaryValue: d.country || '',
-			color: 'var(--green)',
+			color: 'var(--data-2)',
 		}))
 	);
 

@@ -145,12 +145,12 @@
 
 	// Protocol colors for flow diagram
 	const PROTO_COLORS: Record<string, string> = {
-		tcp: 'var(--cyan)',
-		udp: 'var(--green)',
-		tls: 'var(--purple)',
-		dns: 'var(--amber)',
-		icmp: 'var(--red)',
-		http: 'var(--blue)',
+		tcp: 'var(--data-1)',
+		udp: 'var(--data-5)',
+		tls: 'var(--data-4)',
+		dns: 'var(--data-2)',
+		icmp: 'var(--data-6)',
+		http: 'var(--data-3)',
 	};
 
 	// OLD CODE START — formatDuration/formatBytes moved to $lib/utils/tshark-helpers.ts
@@ -853,12 +853,12 @@
 		font-size: 10px;
 		font-weight: 700;
 		letter-spacing: 0.05em;
-		background: var(--bg-secondary);
-		color: var(--text-muted);
+		background: var(--sev-low-muted);
+		color: var(--sev-low);
 	}
 
-	.threat-severity.sev-high { background: var(--red); color: var(--text-primary); }
-	.threat-severity.sev-med { background: var(--amber); color: var(--bg-primary); }
+	.threat-severity.sev-high { background: var(--sev-high); color: var(--on-accent); }
+	.threat-severity.sev-med { background: var(--sev-medium); color: var(--on-accent); }
 
 	.threat-sig {
 		font-size: var(--text-xs);
@@ -902,7 +902,7 @@
 		border-color: var(--accent);
 	}
 
-	.tshark-btn-primary:hover { box-shadow: 0 0 12px rgba(0, 212, 255, 0.3); }
+	.tshark-btn-primary:hover { box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 30%, transparent); }
 	.tshark-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
 
 	.tshark-btn-mode {

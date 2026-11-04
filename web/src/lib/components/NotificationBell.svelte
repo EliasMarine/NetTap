@@ -256,7 +256,7 @@
 		line-height: 16px;
 		text-align: center;
 		background-color: var(--danger);
-		color: #fff;
+		color: var(--on-accent);
 		border-radius: var(--radius-full);
 	}
 
@@ -343,7 +343,7 @@
 	}
 
 	.notification-item.unread {
-		background-color: rgba(88, 166, 255, 0.04);
+		background-color: color-mix(in srgb, var(--accent) 4%, transparent);
 	}
 
 	.notification-item:last-child {
@@ -359,23 +359,23 @@
 	}
 
 	.severity-critical {
-		background-color: var(--danger);
-		color: var(--danger);
+		background-color: var(--sev-critical);
+		color: var(--sev-critical);
 	}
 
 	.severity-high {
-		background-color: var(--warning);
-		color: var(--warning);
+		background-color: var(--sev-high);
+		color: var(--sev-high);
 	}
 
 	.severity-medium {
-		background-color: var(--accent);
-		color: var(--accent);
+		background-color: var(--sev-medium);
+		color: var(--sev-medium);
 	}
 
 	.severity-low {
-		background-color: var(--text-muted);
-		color: var(--text-muted);
+		background-color: var(--sev-low);
+		color: var(--sev-low);
 	}
 
 	.notif-content {
@@ -411,6 +411,8 @@
 	}
 
 	.notif-severity {
+		/* The severity-* classes above paint a dot; on this label only the text is coloured */
+		background: none;
 		font-size: 10px;
 		font-weight: 600;
 		text-transform: uppercase;

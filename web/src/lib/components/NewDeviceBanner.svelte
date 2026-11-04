@@ -67,7 +67,7 @@
 		gap: var(--space-md);
 		padding: var(--space-sm) var(--space-md);
 		background-color: var(--cyan-dim);
-		border: 1px solid rgba(0, 212, 255, 0.3);
+		border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
 		border-radius: var(--radius-md);
 		color: var(--cyan);
 		font-size: var(--text-sm);

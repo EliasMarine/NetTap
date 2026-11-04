@@ -508,17 +508,17 @@
 	.page-header h1 {
 		font-size: 1.75rem;
 		font-weight: 700;
-		color: var(--text-primary, #e4e4e7);
+		color: var(--text-1);
 		margin: 0;
 	}
 
 	.subtitle {
-		color: var(--text-secondary, #a1a1aa);
+		color: var(--text-2);
 		margin: 0.25rem 0 0;
 	}
 
 	.back-link {
-		color: var(--accent, #60a5fa);
+		color: var(--accent);
 		text-decoration: none;
 		font-size: 0.875rem;
 		white-space: nowrap;
@@ -536,26 +536,26 @@
 	}
 
 	.message.success {
-		background: rgba(34, 197, 94, 0.15);
-		color: #4ade80;
-		border: 1px solid rgba(34, 197, 94, 0.3);
+		background: color-mix(in srgb, var(--ok) 15%, transparent);
+		color: var(--ok);
+		border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
 	}
 
 	.message.error {
-		background: rgba(239, 68, 68, 0.15);
-		color: #f87171;
-		border: 1px solid rgba(239, 68, 68, 0.3);
+		background: color-mix(in srgb, var(--sev-critical) 15%, transparent);
+		color: var(--sev-critical);
+		border: 1px solid color-mix(in srgb, var(--sev-critical) 30%, transparent);
 	}
 
 	.loading {
 		text-align: center;
 		padding: 3rem;
-		color: var(--text-secondary, #a1a1aa);
+		color: var(--text-2);
 	}
 
 	.hero-card {
-		background: var(--card-bg, #1e1e2e);
-		border: 1px solid var(--border, #2e2e3e);
+		background: var(--surface-1);
+		border: 1px solid var(--line);
 		border-radius: 0.75rem;
 		padding: 1.5rem;
 		margin-bottom: 1.5rem;
@@ -579,19 +579,19 @@
 	.stat-value {
 		font-size: 1.5rem;
 		font-weight: 700;
-		color: var(--text-primary, #e4e4e7);
+		color: var(--text-1);
 	}
 
 	.stat-label {
 		font-size: 0.75rem;
-		color: var(--text-secondary, #a1a1aa);
+		color: var(--text-2);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
 
 	.card {
-		background: var(--card-bg, #1e1e2e);
-		border: 1px solid var(--border, #2e2e3e);
+		background: var(--surface-1);
+		border: 1px solid var(--line);
 		border-radius: 0.75rem;
 		padding: 1.5rem;
 		margin-bottom: 1.5rem;
@@ -600,12 +600,12 @@
 	.card h2 {
 		font-size: 1.125rem;
 		font-weight: 600;
-		color: var(--text-primary, #e4e4e7);
+		color: var(--text-1);
 		margin: 0 0 0.25rem;
 	}
 
 	.section-desc {
-		color: var(--text-secondary, #a1a1aa);
+		color: var(--text-2);
 		font-size: 0.875rem;
 		margin: 0 0 1rem;
 	}
@@ -619,29 +619,29 @@
 	.sources-table th {
 		text-align: left;
 		padding: 0.5rem 0.75rem;
-		color: var(--text-secondary, #a1a1aa);
+		color: var(--text-2);
 		font-size: 0.75rem;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		border-bottom: 1px solid var(--border, #2e2e3e);
+		border-bottom: 1px solid var(--line);
 	}
 
 	.sources-table td {
 		padding: 0.75rem;
-		border-bottom: 1px solid var(--border-light, #252535);
-		color: var(--text-primary, #e4e4e7);
+		border-bottom: 1px solid var(--line);
+		color: var(--text-1);
 		font-size: 0.875rem;
 	}
 
 	.source-id code {
-		background: var(--code-bg, #252535);
+		background: var(--surface-2);
 		padding: 0.125rem 0.375rem;
 		border-radius: 0.25rem;
 		font-size: 0.8125rem;
 	}
 
 	.source-desc {
-		color: var(--text-secondary, #a1a1aa);
+		color: var(--text-2);
 	}
 
 	.toggle-btn {
@@ -649,17 +649,17 @@
 		border-radius: 9999px;
 		font-size: 0.75rem;
 		font-weight: 600;
-		border: 1px solid var(--border, #2e2e3e);
+		border: 1px solid var(--line);
 		cursor: pointer;
-		background: rgba(239, 68, 68, 0.15);
-		color: #f87171;
+		background: color-mix(in srgb, var(--sev-critical) 15%, transparent);
+		color: var(--sev-critical);
 		transition: all 0.15s;
 	}
 
 	.toggle-btn.enabled {
-		background: rgba(34, 197, 94, 0.15);
-		color: #4ade80;
-		border-color: rgba(34, 197, 94, 0.3);
+		background: color-mix(in srgb, var(--ok) 15%, transparent);
+		color: var(--ok);
+		border-color: color-mix(in srgb, var(--ok) 30%, transparent);
 	}
 
 	.toggle-btn:hover:not(:disabled) {
@@ -679,14 +679,14 @@
 	}
 
 	.schedule-row label {
-		color: var(--text-primary, #e4e4e7);
+		color: var(--text-1);
 		font-size: 0.875rem;
 	}
 
 	.schedule-row select {
-		background: var(--input-bg, #252535);
-		color: var(--text-primary, #e4e4e7);
-		border: 1px solid var(--border, #2e2e3e);
+		background: var(--surface-2);
+		color: var(--text-1);
+		border: 1px solid var(--line);
 		border-radius: 0.375rem;
 		padding: 0.5rem 0.75rem;
 		font-size: 0.875rem;
@@ -694,15 +694,15 @@
 
 	.schedule-status {
 		font-size: 0.8125rem;
-		color: var(--text-secondary, #a1a1aa);
+		color: var(--text-2);
 	}
 	OLD CODE END */
 
 	.custom-rules-editor {
 		width: 100%;
-		background: var(--input-bg, #0d0d15);
-		color: var(--text-primary, #e4e4e7);
-		border: 1px solid var(--border, #2e2e3e);
+		background: var(--bg);
+		color: var(--text-1);
+		border: 1px solid var(--line);
 		border-radius: 0.5rem;
 		padding: 0.75rem;
 		font-family: 'JetBrains Mono', 'Fira Code', monospace;
@@ -717,16 +717,16 @@
 		gap: 1.5rem;
 		flex-wrap: wrap;
 		padding: 0.75rem;
-		background: rgba(59, 130, 246, 0.1);
-		border: 1px solid rgba(59, 130, 246, 0.2);
+		background: color-mix(in srgb, var(--accent) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
 		border-radius: 0.5rem;
 		margin-bottom: 1rem;
 		font-size: 0.875rem;
-		color: var(--text-primary, #e4e4e7);
+		color: var(--text-1);
 	}
 
 	.commercial-status code {
-		background: var(--code-bg, #252535);
+		background: var(--surface-2);
 		padding: 0.125rem 0.375rem;
 		border-radius: 0.25rem;
 	}
@@ -746,14 +746,14 @@
 
 	.form-group label {
 		font-size: 0.8125rem;
-		color: var(--text-secondary, #a1a1aa);
+		color: var(--text-2);
 	}
 
 	.form-group select,
 	.form-group input {
-		background: var(--input-bg, #252535);
-		color: var(--text-primary, #e4e4e7);
-		border: 1px solid var(--border, #2e2e3e);
+		background: var(--surface-2);
+		color: var(--text-1);
+		border: 1px solid var(--line);
 		border-radius: 0.375rem;
 		padding: 0.5rem 0.75rem;
 		font-size: 0.875rem;
@@ -780,19 +780,19 @@
 	}
 
 	.btn-primary {
-		background: var(--accent, #3b82f6);
-		color: white;
+		background: var(--accent);
+		color: var(--on-accent);
 	}
 
 	.btn-secondary {
-		background: var(--card-bg-hover, #252535);
-		color: var(--text-primary, #e4e4e7);
-		border: 1px solid var(--border, #2e2e3e);
+		background: var(--surface-2);
+		color: var(--text-1);
+		border: 1px solid var(--line);
 	}
 
 	.btn-ghost {
 		background: transparent;
-		color: var(--text-secondary, #a1a1aa);
+		color: var(--text-2);
 	}
 
 	.btn:hover:not(:disabled) {

@@ -13,6 +13,7 @@
 	 */
 
 	import { page } from '$app/stores';
+	import { CATEGORY_COLORS } from '$lib/utils/category-colors';
 	import { goto } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
 	import TimeSeriesChart from '$components/charts/TimeSeriesChart.svelte';
@@ -45,15 +46,6 @@
 	// ---------------------------------------------------------------------------
 	// Category colors (same as traffic category pages)
 	// ---------------------------------------------------------------------------
-
-	const CATEGORY_COLORS: Record<string, string> = {
-		streaming: 'var(--red)', gaming: 'var(--purple)', social: 'var(--blue)',
-		communication: 'var(--amber)', work: 'var(--green)', iot: 'var(--orange)',
-		cloud: 'var(--cyan)', file_transfer: 'var(--teal)', dns: 'var(--text-muted)',
-		email: 'var(--pink)', web: 'var(--accent)', security: 'var(--green)',
-		shopping: 'var(--orange)', news: 'var(--blue)', ads: 'var(--text-muted)',
-		updates: 'var(--teal)', suspicious: 'var(--red)', other: 'var(--text-muted)',
-	};
 
 	const DEVICE_ICONS: Record<string, string> = {
 		ios: '\u{1F4F1}', android: '\u{1F4F1}', windows: '\u{1F4BB}', macos: '\u{1F4BB}',
@@ -424,11 +416,20 @@
 		return `${Math.floor(total / 60)}m ${total % 60}s`;
 	}
 
+	// OLD CODE START — 2026-11-03 UI redesign: critical and high shared one red, and low sat on green instead of --sev-low
+	// function riskColor(level: string): string {
+	// 	if (level === 'critical') return 'var(--red)';
+	// 	if (level === 'high') return 'var(--red)';
+	// 	if (level === 'medium') return 'var(--amber)';
+	// 	return 'var(--green)';
+	// }
+	// OLD CODE END
 	function riskColor(level: string): string {
-		if (level === 'critical') return 'var(--red)';
-		if (level === 'high') return 'var(--red)';
-		if (level === 'medium') return 'var(--amber)';
-		return 'var(--green)';
+		if (level === 'critical') return 'var(--sev-critical)';
+		if (level === 'high') return 'var(--sev-high)';
+		if (level === 'medium') return 'var(--sev-medium)';
+		if (level === 'low') return 'var(--sev-low)';
+		return 'var(--ok)';
 	}
 
 	function sevLabel(sev: number): string {
@@ -720,7 +721,7 @@
 						{#each (alertsExpanded ? smartAlerts : smartAlerts.slice(0, ALERTS_COLLAPSED_COUNT)) as sa, i (`${sa.signature_id}-${sa.source_ip}-${i}`)}
 							<div class="smart-alert-card">
 								<div class="sa-header">
-									<span class="sa-sev {sa.severity <= 1 ? 'sev-critical' : sa.severity === 2 ? 'sev-high' : sa.severity === 3 ? 'sev-med' : 'sev-low'}">{sa.severity_label}</span>
+									<span class="sa-sev {sa.severity <= 1 ? 'sev-critical' : sa.severity === 2 ? 'sev-high' : sa.severity === 3 ? 'sev-med' : sa.severity === 4 ? 'sev-low' : 'sev-info'}">{sa.severity_label}</span>
 									<span class="sa-category">{sa.category_label}</span>
 									<span class="sa-count mono">&times;{formatNumber(sa.count)}</span>
 									{#if sa.trend === 'increasing'}
@@ -941,11 +942,11 @@
 	.header-main { display: grid; grid-template-columns: auto 1fr auto; gap: var(--space-lg); align-items: start; }
 
 	.device-icon-area { display: flex; flex-direction: column; align-items: center; gap: var(--space-sm); }
-	.device-icon-box { width: 64px; height: 64px; border-radius: var(--radius-lg); display: flex; align-items: center; justify-content: center; font-size: 1.75rem; background: var(--cyan-dim); border: 1px solid rgba(0,212,255,0.2); position: relative; }
+	.device-icon-box { width: 64px; height: 64px; border-radius: var(--radius-lg); display: flex; align-items: center; justify-content: center; font-size: 1.75rem; background: var(--cyan-dim); border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent); position: relative; }
 	.status-dot { position: absolute; bottom: -2px; right: -2px; width: 14px; height: 14px; border-radius: 50%; background: var(--text-dim); border: 3px solid var(--bg-secondary); }
-	.status-dot.online { background: var(--green); box-shadow: 0 0 8px rgba(0,230,118,0.5); animation: pulse 2s infinite; }
+	.status-dot.online { background: var(--ok); box-shadow: 0 0 8px color-mix(in srgb, var(--ok) 50%, transparent); animation: pulse 2s infinite; }
 	.status-dot.idle { background: var(--amber); }
-	@keyframes pulse { 0%,100% { box-shadow: 0 0 4px rgba(0,230,118,0.3); } 50% { box-shadow: 0 0 12px rgba(0,230,118,0.6); } }
+	@keyframes pulse { 0%,100% { box-shadow: 0 0 4px color-mix(in srgb, var(--ok) 30%, transparent); } 50% { box-shadow: 0 0 12px color-mix(in srgb, var(--ok) 60%, transparent); } }
 	.status-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
 	.status-label.online { color: var(--green); }
 
@@ -958,8 +959,8 @@
 	.meta-value { color: var(--text-secondary); }
 	.device-badges { display: flex; gap: var(--space-sm); margin-top: var(--space-xs); }
 	.badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: var(--radius-sm); font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
-	.badge-os { background: rgba(179,136,255,0.12); color: var(--purple); border: 1px solid rgba(179,136,255,0.2); }
-	.badge-new { background: rgba(0,230,118,0.12); color: var(--green); border: 1px solid rgba(0,230,118,0.2); }
+	.badge-os { background: color-mix(in srgb, var(--purple) 12%, transparent); color: var(--purple); border: 1px solid color-mix(in srgb, var(--purple) 20%, transparent); }
+	.badge-new { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 20%, transparent); }
 	.protocol-list { display: flex; gap: 4px; margin-top: var(--space-xs); }
 	.proto-tag { padding: 2px 8px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 10px; font-weight: 500; background: var(--bg-tertiary); color: var(--text-muted); border: 1px solid var(--border-dim); text-transform: uppercase; }
 
@@ -971,17 +972,17 @@
 	.pills { display: flex; gap: 2px; background: var(--bg-tertiary); border-radius: var(--radius-md); padding: 2px; border: 1px solid var(--border-dim); }
 	.pill { padding: 5px 12px; border: none; background: transparent; color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 500; border-radius: 5px; cursor: pointer; transition: all var(--transition-fast); }
 	.pill:hover { color: var(--text-primary); background: var(--bg-elevated); }
-	.pill.active { background: var(--cyan); color: var(--bg-void); font-weight: 600; }
+	.pill.active { background: var(--accent); color: var(--on-accent); font-weight: 600; }
 	.auto-btn { display: flex; align-items: center; gap: 6px; padding: 5px 10px; background: var(--bg-tertiary); border: 1px solid var(--border-dim); border-radius: var(--radius-md); color: var(--text-muted); font-size: var(--text-xs); font-family: var(--font-sans); cursor: pointer; transition: all var(--transition-fast); }
-	.auto-btn.active { border-color: var(--cyan); color: var(--cyan); background: rgba(0,212,255,0.06); }
+	.auto-btn.active { border-color: var(--cyan); color: var(--cyan); background: color-mix(in srgb, var(--accent) 6%, transparent); }
 	.auto-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); transition: all var(--transition-fast); }
-	.auto-btn.active .auto-dot { background: var(--cyan); box-shadow: 0 0 6px rgba(0,212,255,0.5); }
+	.auto-btn.active .auto-dot { background: var(--cyan); box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 50%, transparent); }
 
 	/* ---------------------------------------------------------------- Stat Cards */
 	.stats-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--space-md); }
 	.stat-card { background: var(--bg-secondary); border: 1px solid var(--border-dim); border-radius: var(--radius-md); padding: var(--space-md); position: relative; overflow: hidden; }
 	.stat-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--border-dim); }
-	.stat-accent::before { background: var(--cyan); box-shadow: 0 0 10px rgba(0,212,255,0.3); }
+	.stat-accent::before { background: var(--cyan); box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 30%, transparent); }
 	.stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500; margin-bottom: 6px; }
 	.stat-value { font-family: var(--font-mono); font-size: var(--text-xl); font-weight: 600; color: var(--text-primary); letter-spacing: -0.02em; line-height: 1; }
 	.stat-value.accent { color: var(--cyan); }
@@ -1042,10 +1043,11 @@
 	.smart-alert-card:hover { background: var(--bg-tertiary); }
 	.sa-header { display: flex; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-xs); }
 	.sa-sev { padding: 2px 8px; border-radius: var(--radius-sm); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
-	.sev-critical { background: rgba(255,71,87,0.2); color: var(--red); border: 1px solid rgba(255,71,87,0.3); }
-	.sev-high { background: rgba(255,71,87,0.12); color: var(--red); }
-	.sev-med { background: rgba(255,171,0,0.12); color: var(--amber); }
-	.sev-low { background: rgba(0,212,255,0.08); color: var(--cyan); }
+	.sev-critical { background: color-mix(in srgb, var(--sev-critical) 20%, transparent); color: var(--sev-critical); border: 1px solid color-mix(in srgb, var(--sev-critical) 30%, transparent); }
+	.sev-high { background: var(--sev-high-muted); color: var(--sev-high); }
+	.sev-med { background: var(--sev-medium-muted); color: var(--sev-medium); }
+	.sev-low { background: var(--sev-low-muted); color: var(--sev-low); }
+	.sev-info { background: var(--sev-info-muted); color: var(--sev-info); }
 	.sa-category { font-size: var(--text-xs); color: var(--text-muted); font-weight: 500; }
 	.sa-count { font-size: var(--text-xs); color: var(--text-dim); margin-left: auto; }
 	.sa-trend { font-size: var(--text-xs); font-weight: 700; }
@@ -1080,10 +1082,10 @@
 	.proto-pills { display: flex; gap: 2px; }
 	.proto-pill { padding: 4px 10px; border: 1px solid var(--border-dim); background: transparent; color: var(--text-muted); font-size: 10px; font-family: var(--font-mono); font-weight: 500; border-radius: var(--radius-sm); cursor: pointer; text-transform: uppercase; transition: all var(--transition-fast); }
 	.proto-pill:hover { color: var(--text-secondary); border-color: var(--border-default); }
-	.proto-pill.active { background: var(--cyan); color: var(--bg-void); border-color: var(--cyan); }
+	.proto-pill.active { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 	.conn-row { cursor: pointer; }
 	.conn-row:hover { background: var(--bg-elevated) !important; }
-	.conn-row.selected { background: rgba(0,212,255,0.06) !important; }
+	.conn-row.selected { background: color-mix(in srgb, var(--accent) 6%, transparent) !important; }
 	.pagination { display: flex; align-items: center; justify-content: center; gap: var(--space-md); padding: var(--space-md); border-top: 1px solid var(--border-dim); }
 	.page-btn { padding: 4px 12px; background: var(--bg-tertiary); border: 1px solid var(--border-dim); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: var(--text-xs); cursor: pointer; transition: all var(--transition-fast); }
 	.page-btn:hover:not(:disabled) { border-color: var(--border-default); color: var(--text-primary); }

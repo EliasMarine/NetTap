@@ -537,7 +537,7 @@
 
 	.stat-value.green { color: var(--green); }
 	.stat-value.cyan { color: var(--cyan); }
-	.stat-value.blue { color: #448aff; }
+	.stat-value.blue { color: var(--data-3); }
 	.stat-value.amber { color: var(--amber); }
 	.stat-value.red { color: var(--red); }
 
@@ -582,15 +582,15 @@
 	}
 
 	.rtt-bar.good {
-		background: linear-gradient(to top, var(--green), rgba(0, 230, 118, 0.4));
+		background: linear-gradient(to top, var(--green), color-mix(in srgb, var(--green) 40%, transparent));
 	}
 
 	.rtt-bar.medium {
-		background: linear-gradient(to top, var(--amber), rgba(255, 171, 0, 0.4));
+		background: linear-gradient(to top, var(--amber), color-mix(in srgb, var(--amber) 40%, transparent));
 	}
 
 	.rtt-bar.bad {
-		background: linear-gradient(to top, var(--red), rgba(255, 71, 87, 0.4));
+		background: linear-gradient(to top, var(--red), color-mix(in srgb, var(--red) 40%, transparent));
 	}
 
 	.rtt-bar-value {
@@ -648,10 +648,10 @@
 	}
 
 	.data-table tr:hover td {
-		background: rgba(255, 255, 255, 0.02);
+		background: color-mix(in srgb, var(--text-1) 2%, transparent);
 	}
 
-	.blue { color: #448aff; }
+	.blue { color: var(--data-3); }
 	.timeout { color: var(--text-dim); font-style: italic; }
 
 	.rtt-good { color: var(--green); }
@@ -680,20 +680,20 @@
 		width: 12px;
 		height: 12px;
 		border-radius: 50%;
-		background: #448aff;
+		background: var(--data-3);
 		border: 2px solid var(--bg-void);
-		box-shadow: 0 0 8px rgba(68, 138, 255, 0.4);
+		box-shadow: 0 0 8px color-mix(in srgb, var(--data-3) 40%, transparent);
 		z-index: 1;
 	}
 
 	.hop-dot.start {
 		background: var(--green);
-		box-shadow: 0 0 8px rgba(0, 230, 118, 0.4);
+		box-shadow: 0 0 8px color-mix(in srgb, var(--green) 40%, transparent);
 	}
 
 	.hop-dot.end {
 		background: var(--cyan);
-		box-shadow: 0 0 8px rgba(0, 212, 255, 0.4);
+		box-shadow: 0 0 8px color-mix(in srgb, var(--cyan) 40%, transparent);
 		width: 16px;
 		height: 16px;
 	}
@@ -712,7 +712,7 @@
 	}
 
 	.hop-line.active {
-		background: linear-gradient(90deg, #448aff, rgba(68, 138, 255, 0.3));
+		background: linear-gradient(90deg, var(--data-3), color-mix(in srgb, var(--data-3) 30%, transparent));
 	}
 
 	.hop-label {
@@ -741,11 +741,17 @@
 	.spinner {
 		width: 14px;
 		height: 14px;
-		border: 2px solid rgba(255, 255, 255, 0.3);
-		border-top-color: #fff;
+		border: 2px solid color-mix(in srgb, var(--on-accent) 30%, transparent);
+		border-top-color: var(--on-accent);
 		border-radius: 50%;
 		animation: spin 0.6s linear infinite;
 		display: inline-block;
+	}
+
+	/* The traceroute button is not a solid accent button, so its spinner needs the light text colour. */
+	.btn-secondary .spinner {
+		border-color: color-mix(in srgb, var(--text-1) 30%, transparent);
+		border-top-color: var(--text-1);
 	}
 
 	@keyframes spin {

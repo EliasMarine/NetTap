@@ -40,12 +40,12 @@
 	});
 
 	let severityClass = $derived.by(() => {
-		if (!alert?.alert?.severity) return 'badge';
+		if (!alert?.alert?.severity) return 'badge severity-info';
 		switch (alert.alert.severity) {
-			case 1: return 'badge badge-danger';
-			case 2: return 'badge badge-warning';
-			case 3: return 'badge badge-accent';
-			default: return 'badge';
+			case 1: return 'badge severity-high';
+			case 2: return 'badge severity-medium';
+			case 3: return 'badge severity-low';
+			default: return 'badge severity-info';
 		}
 	});
 

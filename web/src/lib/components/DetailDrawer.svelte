@@ -139,7 +139,7 @@
 		flex-direction: column;
 		transform: translateX(100%);
 		transition: transform var(--transition-normal);
-		box-shadow: -4px 0 24px rgba(0, 0, 0, 0.4);
+		box-shadow: -4px 0 24px color-mix(in srgb, var(--bg) 40%, transparent);
 	}
 
 	.detail-drawer.open {

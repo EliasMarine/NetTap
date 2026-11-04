@@ -2082,7 +2082,7 @@
 		gap: var(--space-sm);
 		padding: 6px 14px;
 		background: var(--green-dim);
-		border: 1px solid rgba(0, 230, 118, 0.2);
+		border: 1px solid color-mix(in srgb, var(--green) 20%, transparent);
 		border-radius: var(--radius-full);
 		font-size: var(--text-xs);
 		font-weight: 600;
@@ -2100,8 +2100,8 @@
 	}
 
 	@keyframes pulse-dot {
-		0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.4); }
-		50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(0, 230, 118, 0); }
+		0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--green) 40%, transparent); }
+		50% { opacity: 0.7; box-shadow: 0 0 0 6px color-mix(in srgb, var(--green) 0%, transparent); }
 	}
 
 	.btn-refresh {
@@ -2149,8 +2149,8 @@
 		position: absolute;
 		inset: 0;
 		background-image:
-			linear-gradient(rgba(0, 212, 255, 0.02) 1px, transparent 1px),
-			linear-gradient(90deg, rgba(0, 212, 255, 0.02) 1px, transparent 1px);
+			linear-gradient(color-mix(in srgb, var(--cyan) 2%, transparent) 1px, transparent 1px),
+			linear-gradient(90deg, color-mix(in srgb, var(--cyan) 2%, transparent) 1px, transparent 1px);
 		background-size: 40px 40px;
 		pointer-events: none;
 	}
@@ -2223,8 +2223,9 @@
 		border-radius: var(--radius-lg);
 		padding: 1px;
 		background: linear-gradient(135deg, transparent 40%, var(--cyan) 100%);
-		-webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-		mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+		/* A mask reads alpha only, so any opaque token works here. */
+		-webkit-mask: linear-gradient(var(--bg) 0 0) content-box, linear-gradient(var(--bg) 0 0);
+		mask: linear-gradient(var(--bg) 0 0) content-box, linear-gradient(var(--bg) 0 0);
 		-webkit-mask-composite: xor;
 		mask-composite: exclude;
 		opacity: 0;
@@ -2238,13 +2239,13 @@
 
 	.pipeline-node:hover .node-card,
 	.pipeline-node.active .node-card {
-		border-color: rgba(0, 212, 255, 0.3);
-		box-shadow: 0 0 20px rgba(0, 212, 255, 0.15);
+		border-color: color-mix(in srgb, var(--cyan) 30%, transparent);
+		box-shadow: 0 0 20px color-mix(in srgb, var(--cyan) 15%, transparent);
 		transform: translateY(-2px);
 	}
 
 	.pipeline-node.active .node-card {
-		background: rgba(0, 212, 255, 0.06);
+		background: color-mix(in srgb, var(--cyan) 6%, transparent);
 	}
 
 	.node-icon {
@@ -2258,13 +2259,13 @@
 		font-size: 18px;
 	}
 
-	.node-icon.bridge { background: rgba(68, 138, 255, 0.15); color: var(--blue); }
-	.node-icon.capture { background: rgba(0, 212, 255, 0.15); color: var(--cyan); }
-	.node-icon.zeek { background: rgba(0, 230, 118, 0.15); color: var(--green); }
-	.node-icon.suricata { background: rgba(255, 71, 87, 0.15); color: var(--red); }
-	.node-icon.filebeat { background: rgba(255, 171, 0, 0.15); color: var(--amber); }
-	.node-icon.logstash { background: rgba(179, 136, 255, 0.15); color: var(--purple); }
-	.node-icon.opensearch { background: rgba(29, 233, 182, 0.15); color: var(--teal); }
+	.node-icon.bridge { background: color-mix(in srgb, var(--blue) 15%, transparent); color: var(--blue); }
+	.node-icon.capture { background: color-mix(in srgb, var(--cyan) 15%, transparent); color: var(--cyan); }
+	.node-icon.zeek { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); }
+	.node-icon.suricata { background: color-mix(in srgb, var(--red) 15%, transparent); color: var(--red); }
+	.node-icon.filebeat { background: color-mix(in srgb, var(--amber) 15%, transparent); color: var(--amber); }
+	.node-icon.logstash { background: color-mix(in srgb, var(--purple) 15%, transparent); color: var(--purple); }
+	.node-icon.opensearch { background: color-mix(in srgb, var(--teal) 15%, transparent); color: var(--teal); }
 
 	.node-name {
 		font-size: var(--text-sm);
@@ -2327,11 +2328,11 @@
 	@keyframes flow-normal { to { stroke-dashoffset: -20; } }
 	@keyframes flow-slow   { to { stroke-dashoffset: -23; } }
 
-	:global(.conn-cyan)     { stroke: rgba(0, 212, 255, 0.2); }
+	:global(.conn-cyan)     { stroke: color-mix(in srgb, var(--cyan) 20%, transparent); }
 	:global(.conn-cyan-p)   { stroke: var(--cyan); }
-	:global(.conn-green)    { stroke: rgba(0, 230, 118, 0.15); }
+	:global(.conn-green)    { stroke: color-mix(in srgb, var(--green) 15%, transparent); }
 	:global(.conn-green-p)  { stroke: var(--green); }
-	:global(.conn-red)      { stroke: rgba(255, 71, 87, 0.15); }
+	:global(.conn-red)      { stroke: color-mix(in srgb, var(--red) 15%, transparent); }
 	:global(.conn-red-p)    { stroke: var(--red); }
 
 	/* ═══════════════════════════════════════════════════════════
@@ -2673,9 +2674,9 @@
 		flex-shrink: 0;
 	}
 
-	.service-icon-box.os { background: rgba(29, 233, 182, 0.12); color: var(--teal); }
-	.service-icon-box.grafana { background: rgba(255, 109, 0, 0.12); color: var(--orange); }
-	.service-icon-box.cyberchef { background: rgba(179, 136, 255, 0.12); color: var(--purple); }
+	.service-icon-box.os { background: color-mix(in srgb, var(--teal) 12%, transparent); color: var(--teal); }
+	.service-icon-box.grafana { background: color-mix(in srgb, var(--orange) 12%, transparent); color: var(--orange); }
+	.service-icon-box.cyberchef { background: color-mix(in srgb, var(--purple) 12%, transparent); color: var(--purple); }
 
 	.service-info-text .service-name {
 		font-weight: 600;
@@ -2704,9 +2705,9 @@
 		flex-shrink: 0;
 	}
 
-	.health-dot.green { background: var(--green); box-shadow: 0 0 6px rgba(0, 230, 118, 0.5); }
-	.health-dot.yellow { background: var(--amber); box-shadow: 0 0 6px rgba(255, 171, 0, 0.5); }
-	.health-dot.red { background: var(--red); box-shadow: 0 0 6px rgba(255, 71, 87, 0.5); }
+	.health-dot.green { background: var(--green); box-shadow: 0 0 6px color-mix(in srgb, var(--green) 50%, transparent); }
+	.health-dot.yellow { background: var(--amber); box-shadow: 0 0 6px color-mix(in srgb, var(--amber) 50%, transparent); }
+	.health-dot.red { background: var(--red); box-shadow: 0 0 6px color-mix(in srgb, var(--red) 50%, transparent); }
 
 	/* ═══════════════════════════════════════════════════════════
 	   BADGE (scoped)
@@ -2725,7 +2726,7 @@
 	}
 
 	.badge-muted {
-		background-color: rgba(85, 95, 115, 0.15);
+		background-color: color-mix(in srgb, var(--text-3) 15%, transparent);
 		color: var(--text-muted);
 	}
 

@@ -78,7 +78,7 @@
 		if (maxVal <= 0 || value <= 0) return 'var(--bg-tertiary)';
 		const intensity = Math.min(1, value / maxVal);
 		const alpha = 0.1 + intensity * 0.9;
-		return `rgba(0, 212, 255, ${alpha.toFixed(2)})`;
+		return `color-mix(in srgb, var(--accent) ${Math.round(alpha * 100)}%, transparent)`;
 	}
 
 	function heatmapMax(): number {

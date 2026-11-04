@@ -486,7 +486,7 @@
 	}
 
 	.port-table tr:hover td {
-		background: rgba(255, 255, 255, 0.02);
+		background: color-mix(in srgb, var(--text-1) 2%, transparent);
 	}
 
 	.port-num {
@@ -517,15 +517,15 @@
 	}
 
 	.protocol-badge.tcp {
-		background: rgba(68, 138, 255, 0.1);
-		color: #448aff;
-		border-color: rgba(68, 138, 255, 0.2);
+		background: color-mix(in srgb, var(--data-1) 10%, transparent);
+		color: var(--data-1);
+		border-color: color-mix(in srgb, var(--data-1) 20%, transparent);
 	}
 
 	.protocol-badge.udp {
-		background: var(--purple-dim);
-		color: var(--purple);
-		border-color: rgba(179, 136, 255, 0.2);
+		background: color-mix(in srgb, var(--data-5) 10%, transparent);
+		color: var(--data-5);
+		border-color: color-mix(in srgb, var(--data-5) 20%, transparent);
 	}
 
 	.no-results {

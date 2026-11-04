@@ -757,7 +757,7 @@
 			<div class="recommendations-list">
 				{#each recommendations as rec}
 					<div class="recommendation-item">
-						<span class="rec-priority badge {rec.priority === 'high' ? 'badge-danger' : rec.priority === 'medium' ? 'badge-warning' : 'badge-success'}">
+						<span class="rec-priority badge {rec.priority === 'high' ? 'rec-high' : rec.priority === 'medium' ? 'rec-medium' : 'rec-low'}">
 							{rec.priority.toUpperCase()}
 						</span>
 						<span class="rec-text">{rec.text}</span>
@@ -1134,6 +1134,22 @@
 	.rec-priority {
 		flex-shrink: 0;
 		margin-top: 1px;
+	}
+
+	/* Each priority has its own severity token: high, medium, low. */
+	.rec-high {
+		background-color: var(--sev-high-muted);
+		color: var(--sev-high);
+	}
+
+	.rec-medium {
+		background-color: var(--sev-medium-muted);
+		color: var(--sev-medium);
+	}
+
+	.rec-low {
+		background-color: var(--sev-low-muted);
+		color: var(--sev-low);
 	}
 
 	.rec-text {

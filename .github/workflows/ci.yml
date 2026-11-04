@@ -83,6 +83,11 @@ jobs:
         run: npm ci
         working-directory: web/
 
+      # Before svelte-check, so it still runs if svelte-check fails
+      - name: Colour gate
+        run: npm run check:colors
+        working-directory: web/
+
       - name: Run svelte-check
         run: npx svelte-check --tsconfig ./tsconfig.json
         working-directory: web/

@@ -528,21 +528,21 @@
 		border-color: var(--border-bright);
 		background: var(--bg-tertiary);
 		transform: translateY(-2px);
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+		box-shadow: 0 8px 24px color-mix(in srgb, var(--bg) 30%, transparent);
 		text-decoration: none;
 		color: inherit;
 	}
 
 	.tool-card.network:hover {
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(68, 138, 255, 0.15);
+		box-shadow: 0 8px 24px color-mix(in srgb, var(--bg) 30%, transparent), 0 0 0 1px color-mix(in srgb, var(--blue) 15%, transparent);
 	}
 
 	.tool-card.analysis:hover {
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(179, 136, 255, 0.15);
+		box-shadow: 0 8px 24px color-mix(in srgb, var(--bg) 30%, transparent), 0 0 0 1px color-mix(in srgb, var(--purple) 15%, transparent);
 	}
 
 	.tool-card.lookup:hover {
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(29, 233, 182, 0.15);
+		box-shadow: 0 8px 24px color-mix(in srgb, var(--bg) 30%, transparent), 0 0 0 1px color-mix(in srgb, var(--teal) 15%, transparent);
 	}
 
 	/* Card header row */

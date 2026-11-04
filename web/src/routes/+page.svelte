@@ -10,6 +10,7 @@
 	 */
 
 	import TimeSeriesChart from '$components/charts/TimeSeriesChart.svelte';
+	import { CATEGORY_COLORS } from '$lib/utils/category-colors';
 	import DonutChart from '$components/charts/DonutChart.svelte';
 	import { compareValues, severityRank } from '$lib/utils/table-sort.svelte';
 	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTopTalkers, getTrafficCategories } from '$api/traffic';
@@ -338,26 +339,26 @@
 
 	// Protocol colors for donut chart
 	const PROTOCOL_COLORS = [
-		'#58a6ff', // accent blue
-		'#3fb950', // green
-		'#d29922', // amber
-		'#f85149', // red
-		'#bc8cff', // purple
-		'#79c0ff', // light blue
-		'#8b949e', // grey (other)
+		'var(--data-1)',
+		'var(--data-2)',
+		'var(--data-3)',
+		'var(--data-4)',
+		'var(--data-5)',
+		'var(--data-6)',
+		'var(--data-7)', // fallback (other)
 	];
 
 	// Severity badge helper
 	function severityBadge(severity: number | undefined): { label: string; class: string } {
 		switch (severity) {
 			case 1:
-				return { label: 'HIGH', class: 'badge badge-danger' };
+				return { label: 'HIGH', class: 'badge severity-high' };
 			case 2:
-				return { label: 'MEDIUM', class: 'badge badge-warning' };
+				return { label: 'MEDIUM', class: 'badge severity-medium' };
 			case 3:
-				return { label: 'LOW', class: 'badge badge-accent' };
+				return { label: 'LOW', class: 'badge severity-low' };
 			default:
-				return { label: 'INFO', class: 'badge' };
+				return { label: 'INFO', class: 'badge severity-info' };
 		}
 	}
 
@@ -381,7 +382,7 @@
 	let protocolTotal = $derived(protocols.reduce((s, p) => s + p.count, 0));
 
 	// Service bar colors
-	const SERVICE_COLORS = ['var(--cyan)', 'var(--green)', 'var(--blue)', 'var(--purple)', 'var(--teal)', 'var(--amber)', 'var(--orange)', 'var(--red)'];
+	const SERVICE_COLORS = ['var(--data-1)', 'var(--data-2)', 'var(--data-3)', 'var(--data-4)', 'var(--data-5)', 'var(--data-6)', 'var(--data-7)', 'var(--data-8)'];
 	let maxServiceCount = $derived(services.length > 0 ? services[0].count : 1);
 
 	// Health status
@@ -511,27 +512,6 @@
 	// };
 	// OLD CODE END
 
-	// Category color palette — keys match backend CATEGORIES dict in traffic_classifier.py
-	const CATEGORY_COLORS: Record<string, string> = {
-		streaming: 'var(--red)',
-		gaming: 'var(--purple)',
-		social: 'var(--blue)',
-		communication: 'var(--amber)',
-		work: 'var(--green)',
-		iot: 'var(--orange)',
-		cloud: 'var(--cyan)',
-		file_transfer: 'var(--teal)',
-		dns: 'var(--text-muted)',
-		email: 'var(--pink)',
-		web: 'var(--accent)',
-		security: 'var(--green)',
-		shopping: 'var(--orange)',
-		news: 'var(--blue)',
-		ads: 'var(--text-muted)',
-		updates: 'var(--teal)',
-		suspicious: 'var(--red)',
-		other: 'var(--text-muted)',
-	};
 
 	function categoryColor(name: string): string {
 		return CATEGORY_COLORS[name.toLowerCase()] || CATEGORY_COLORS['other'];
@@ -1069,7 +1049,7 @@
 				{#each smartAlerts.slice(0, 5) as sa, i (`sa-${sa.signature_id}-${i}`)}
 					<div class="ag-item" onclick={() => goto('/threats')} role="button" tabindex="0">
 						<div class="ag-top-row">
-							<span class="ag-sev-dot" style="background: {sa.severity <= 2 ? 'var(--red)' : sa.severity === 3 ? 'var(--amber)' : 'var(--cyan)'};"></span>
+							<span class="ag-sev-dot" style="background: {sa.severity <= 1 ? 'var(--sev-critical)' : sa.severity === 2 ? 'var(--sev-high)' : sa.severity === 3 ? 'var(--sev-medium)' : sa.severity === 4 ? 'var(--sev-low)' : 'var(--sev-info)'};"></span>
 							<span class="ag-sig">{sa.signature}</span>
 							<span class="ag-count mono">&times;{formatNumber(sa.count)}</span>
 						</div>
@@ -1338,7 +1318,7 @@
 	.talker-bar-fill {
 		height: 100%;
 		border-radius: var(--radius-sm);
-		background: linear-gradient(90deg, var(--cyan), var(--blue));
+		background: linear-gradient(90deg, var(--accent), var(--accent-strong));
 		transition: width 0.4s ease-out;
 		min-width: 2px;
 	}
@@ -1536,7 +1516,7 @@
 	.td-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
 	.td-identity { display: flex; align-items: center; gap: var(--space-sm); }
 	.td-status { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); flex-shrink: 0; }
-	.td-status.online { background: var(--green); box-shadow: 0 0 6px rgba(0,230,118,0.4); }
+	.td-status.online { background: var(--green); box-shadow: 0 0 6px color-mix(in srgb, var(--ok) 40%, transparent); }
 	.td-ip { font-size: var(--text-sm); font-weight: 600; color: var(--text-link); transition: color var(--transition-fast); }
 	.td-item:hover .td-ip { color: var(--cyan); }
 	.td-bytes { font-size: var(--text-sm); font-weight: 600; color: var(--text-primary); }

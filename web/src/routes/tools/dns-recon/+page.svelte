@@ -360,7 +360,7 @@
 
 	.record-type-chip.selected {
 		background: var(--teal-dim);
-		border-color: rgba(29, 233, 182, 0.3);
+		border-color: color-mix(in srgb, var(--teal) 30%, transparent);
 		color: var(--teal);
 	}
 
@@ -431,7 +431,7 @@
 	.type-badge.NS { background: var(--green-dim); color: var(--green); }
 	.type-badge.TXT { background: var(--teal-dim); color: var(--teal); }
 	.type-badge.SOA { background: var(--red-dim); color: var(--red); }
-	.type-badge.CNAME { background: rgba(255, 255, 255, 0.06); color: var(--text-secondary); }
+	.type-badge.CNAME { background: color-mix(in srgb, var(--text-1) 6%, transparent); color: var(--text-secondary); }
 	.type-badge.PTR { background: var(--orange-dim); color: var(--orange); }
 	.type-badge.SRV { background: var(--cyan-dim); color: var(--cyan); }
 
@@ -472,7 +472,7 @@
 	}
 
 	.record-table tr:hover td {
-		background: rgba(255, 255, 255, 0.02);
+		background: color-mix(in srgb, var(--text-1) 2%, transparent);
 	}
 
 	.ttl-value {
@@ -499,7 +499,7 @@
 		gap: var(--space-sm);
 		padding: var(--space-md);
 		background: var(--red-dim);
-		border: 1px solid rgba(255, 71, 87, 0.3);
+		border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
 		border-radius: var(--radius-md);
 		color: var(--red);
 		font-size: var(--text-sm);

@@ -12,7 +12,8 @@
 		"test:watch": "vitest",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
-		"test:e2e": "playwright test"
+		"test:e2e": "playwright test",
+		"check:colors": "node scripts/check-colors.mjs"
 	},
 	"devDependencies": {
 		"@playwright/test": "^1.58.2",

@@ -205,11 +205,11 @@
 
 	function gradeColor(grade: string): string {
 		switch (grade) {
-			case 'A': return 'var(--green)';
-			case 'B': return 'var(--cyan)';
-			case 'C': return 'var(--amber)';
-			case 'D': return 'var(--orange)';
-			default: return 'var(--red)';
+			case 'A': return 'var(--ok)';
+			case 'B': return 'var(--sev-low)';
+			case 'C': return 'var(--sev-medium)';
+			case 'D': return 'var(--sev-high)';
+			default: return 'var(--sev-critical)';
 		}
 	}
 
@@ -511,22 +511,46 @@
 		return `${Math.floor(hours / 24)}d ago`;
 	}
 
+	// OLD CODE START — 2026-11-03 UI redesign: critical and high shared one red, low was green, info had no colour
+	// function severityColor(severity: string): string {
+	// 	switch (severity) {
+	// 		case 'critical': return 'var(--red)';
+	// 		case 'high': return 'var(--red)';
+	// 		case 'medium': return 'var(--amber)';
+	// 		case 'low': return 'var(--green)';
+	// 		default: return 'var(--text-muted)';
+	// 	}
+	// }
+	//
+	// function severityBadgeClass(severity: string): string {
+	// 	switch (severity) {
+	// 		case 'critical': return 'badge-danger';
+	// 		case 'high': return 'badge-danger';
+	// 		case 'medium': return 'badge-warning';
+	// 		case 'low': return 'badge-success';
+	// 		default: return '';
+	// 	}
+	// }
+	// OLD CODE END
 	function severityColor(severity: string): string {
 		switch (severity) {
-			case 'critical': return 'var(--red)';
-			case 'high': return 'var(--red)';
-			case 'medium': return 'var(--amber)';
-			case 'low': return 'var(--green)';
+			case 'critical': return 'var(--sev-critical)';
+			case 'high': return 'var(--sev-high)';
+			case 'medium': return 'var(--sev-medium)';
+			case 'low': return 'var(--sev-low)';
+			case 'info': return 'var(--sev-info)';
 			default: return 'var(--text-muted)';
 		}
 	}
 
+	// The severity-* classes live in global.css (background tint + text colour per level)
 	function severityBadgeClass(severity: string): string {
 		switch (severity) {
-			case 'critical': return 'badge-danger';
-			case 'high': return 'badge-danger';
-			case 'medium': return 'badge-warning';
-			case 'low': return 'badge-success';
+			case 'critical': return 'severity-critical';
+			case 'high': return 'severity-high';
+			case 'medium': return 'severity-medium';
+			case 'low': return 'severity-low';
+			case 'info': return 'severity-info';
 			default: return '';
 		}
 	}
@@ -1334,7 +1358,7 @@
 
 	.trust-card:hover {
 		transform: translateY(-2px);
-		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+		box-shadow: 0 4px 16px color-mix(in srgb, var(--bg) 30%, transparent);
 		border-color: var(--border-bright);
 	}
 
