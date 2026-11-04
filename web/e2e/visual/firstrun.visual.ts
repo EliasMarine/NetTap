@@ -4,7 +4,7 @@ import { expectNoConsoleErrors, expectReached, setMode, sweep, VIEWPORTS, watchA
 
 // Setup renders without the shell (no <main>), so markers are looked up in <body>; Go Live keeps the shell.
 const FIRST_RUN = [
-	{ path: '/setup', marker: 'Welcome to NetTap', shell: false },
+	{ path: '/setup', marker: 'Set up NetTap', shell: false },
 	{ path: '/go-live', marker: 'Go Live', shell: true },
 ] as const;
 
