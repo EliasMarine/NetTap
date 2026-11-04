@@ -242,7 +242,8 @@
 <div class="analysis-panel">
 	<!-- Header with status badge -->
 	<div class="panel-header">
-		<h3 class="page-title">Packet analysis</h3>
+		<!-- the page head owns the h1; this names the panel -->
+		<h2 class="card-title">Packet analysis</h2>
 		<div class="status-badge-group">
 			{#if statusLoading}
 				<span class="chip">
