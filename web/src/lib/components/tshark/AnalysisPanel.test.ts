@@ -48,6 +48,15 @@ describe('AnalysisPanel when a request fails (#96)', () => {
 		expect(screen.queryByText(/No PCAP files found/)).not.toBeInTheDocument();
 	});
 
+	it("names TShark once when the version line already starts with it", async () => {
+		const version = 'TShark (Wireshark) 4.2.5 (Git v4.2.5 packaged as 4.2.5-1)';
+		stubFetch({ '/api/tshark/status': { ...STATUS, version }, '/api/tshark/pcaps': { pcaps: [], count: 0 } });
+
+		render(AnalysisPanel);
+		expect(await screen.findByText(version)).toBeInTheDocument();
+		expect(screen.queryByText(/TShark TShark/)).not.toBeInTheDocument();
+	});
+
 	it('still shows the version and an empty list when both requests succeed', async () => {
 		stubFetch({ '/api/tshark/status': STATUS, '/api/tshark/pcaps': { pcaps: [], count: 0 } });
 

@@ -52,6 +52,10 @@
 	let status = $state<TSharkStatus | null>(null);
 	let statusLoading = $state(true);
 	let statusFailed = $state(false); // #96: a failed check is not "TShark Unavailable"
+	// the daemon passes on `tshark --version`'s first line, which already names TShark
+	const versionLabel = $derived(
+		status && /^tshark\b/i.test(status.version) ? status.version : `TShark ${status?.version ?? ''}`,
+	);
 
 	// ---- Read URL query params + auto-analyze on mount ----
 	let autoAnalyzeDone = false;
@@ -253,7 +257,7 @@
 			{:else if status?.available}
 				<span class="chip is-ok">
 					<Icon name="check" />
-					TShark {status.version}
+					{versionLabel}
 				</span>
 			{:else if statusFailed}
 				<span class="chip" title="The status request failed">
@@ -484,7 +488,11 @@
 		display: flex;
 		align-items: center;
 		gap: var(--sp-2);
+		min-width: 0;
 	}
+
+	/* the full version line is longer than a phone is wide */
+	.status-badge-group .chip { white-space: normal; }
 
 	/* "Checking" and "unknown": a grey dot that pulses while the status loads */
 	.status-dot {
