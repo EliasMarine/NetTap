@@ -23,6 +23,8 @@
 		cell?: Snippet<[T]>;
 		/** Added to the column's th and td. */
 		class?: string;
+		/** Hover text on the header, such as a field's description. */
+		title?: string;
 	}
 
 	export interface TablePager {
@@ -126,7 +128,7 @@
 			<tr>
 				{#each columns as column (column.key)}
 					<th scope="col" class={[column.numeric && 'num', column.class]} aria-sort={ariaSort(column.key)}>
-						<button class="th-btn" type="button" onclick={() => toggle(column.key)}
+						<button class="th-btn" type="button" title={column.title} onclick={() => toggle(column.key)}
 							>{column.label}<Icon name="sort" class="s-none" /><Icon name="chevdown" class="s-dir" /></button
 						>
 					</th>

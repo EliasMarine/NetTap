@@ -204,8 +204,7 @@
 		{ id: 'fields', label: 'Fields' },
 		{ id: 'raw', label: 'Raw JSON' },
 	];
-	// shortcut: DataTable's header has no title yet, so these field descriptions (the old header
-	// tooltips) aren't shown; wire them in once Column takes a title (shared change requested)
+	// field descriptions, shown as the table headers' hover text
 	let fieldDefs = $state<Record<string, string>>({});
 
 	// Active filters from chart clicks
@@ -777,6 +776,7 @@
 			numeric: NUMERIC_FIELDS.has(col),
 			class: MONO_FIELDS.has(col) || IP_FIELDS.has(col) ? 'mono' : undefined,
 			cell: IP_CELLS[col],
+			title: fieldDefs[col],
 		})),
 	);
 

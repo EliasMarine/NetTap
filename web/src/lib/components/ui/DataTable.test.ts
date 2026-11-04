@@ -47,6 +47,13 @@ describe('DataTable rendering', () => {
 		expect(screen.getAllByRole('cell')[1]).toHaveClass('num');
 	});
 
+	it("puts a column's title on its header button", () => {
+		const columns: Column<Row>[] = [{ key: 'name', label: 'Device', title: 'The name NetTap knows it by' }, COLUMNS[1]];
+		render(Table, { columns, rows: ROWS, ariaLabel: 'Connections', rowKey });
+		expect(within(header('Device')).getByRole('button')).toHaveAttribute('title', 'The name NetTap knows it by');
+		expect(within(header('Data')).getByRole('button')).not.toHaveAttribute('title');
+	});
+
 	it('keeps the given order and marks every column unsorted without an initial sort', () => {
 		render(Table, { columns: COLUMNS, rows: ROWS, ariaLabel: 'Connections', rowKey });
 		expect(order()).toEqual(['Work laptop', 'Living-room TV', 'Kitchen iPad']);
