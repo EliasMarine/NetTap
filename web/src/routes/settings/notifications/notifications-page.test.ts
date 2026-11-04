@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
+import { get } from 'svelte/store';
+import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 
 /** Stub fetch: URLs in `routes` get their body, everything else a 500. */
@@ -28,11 +30,11 @@ describe('Notification settings when requests fail (#96)', () => {
 		expect(await screen.findByText("Couldn't load the notification channels: the request failed.")).toBeInTheDocument();
 		expect(screen.getByText("Couldn't load the routing rules: the request failed.")).toBeInTheDocument();
 		expect(screen.getByText("Couldn't load the delivery log: the request failed.")).toBeInTheDocument();
-		expect(screen.getByText('Notification Channels (--)')).toBeInTheDocument();
-		expect(screen.getByText('Routing Rules (--)')).toBeInTheDocument();
+		expect(screen.getByText('— channels')).toBeInTheDocument();
+		expect(screen.getByText('— rules')).toBeInTheDocument();
 		expect(screen.queryByText(/No channels configured/)).not.toBeInTheDocument();
-		expect(screen.queryByText('No routing rules configured.')).not.toBeInTheDocument();
-		expect(screen.queryByText('No delivery attempts yet.')).not.toBeInTheDocument();
+		expect(screen.queryByText('No routing rules configured')).not.toBeInTheDocument();
+		expect(screen.queryByText('No delivery attempts yet')).not.toBeInTheDocument();
 	});
 
 	it('shows the real empty states when nothing is configured', async () => {
@@ -44,9 +46,9 @@ describe('Notification settings when requests fail (#96)', () => {
 		render(Page);
 
 		expect(await screen.findByText(/No channels configured/)).toBeInTheDocument();
-		expect(screen.getByText('No routing rules configured.')).toBeInTheDocument();
-		expect(screen.getByText('No delivery attempts yet.')).toBeInTheDocument();
-		expect(screen.getByText('Notification Channels (0)')).toBeInTheDocument();
+		expect(screen.getByText('No routing rules configured')).toBeInTheDocument();
+		expect(screen.getByText('No delivery attempts yet')).toBeInTheDocument();
+		expect(screen.getByText('0 channels')).toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
 	});
 
@@ -75,5 +77,78 @@ describe('Notification settings when requests fail (#96)', () => {
 
 		expect(await screen.findByText("Couldn't refresh the delivery log: showing the last entries.")).toBeInTheDocument();
 		expect(screen.getByText('Earlier alert')).toBeInTheDocument();
+	});
+});
+
+const LISTS: Record<string, unknown> = {
+	'/api/notifications/channels': { channels: [CHANNEL], count: 1 },
+	'/api/notifications/rules': { rules: [], count: 0 },
+	'/api/notifications/log': { log: [], count: 0 },
+};
+
+describe('Notification settings card states', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('shows each card loading until the first load lands', () => {
+		vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+		render(Page);
+
+		expect(screen.getByText('Loading notification channels')).toBeInTheDocument();
+		expect(screen.getByText('Loading routing rules')).toBeInTheDocument();
+		expect(screen.getByText('Loading delivery log')).toBeInTheDocument();
+	});
+
+	it('offers a retry on a failed card that reloads the page', async () => {
+		stubFetch({});
+		render(Page);
+		await screen.findByText("Couldn't load the notification channels: the request failed.");
+
+		stubFetch(LISTS);
+		await fireEvent.click(screen.getAllByRole('button', { name: 'Try again' })[0]);
+
+		expect(await screen.findByText('Home Discord')).toBeInTheDocument();
+		expect(screen.getByText('1 channel')).toBeInTheDocument();
+		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
+	});
+});
+
+describe('Notification settings refresh contract (PLAN §5.5)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('registers its loader and reports ok, partial and failed', async () => {
+		stubFetch(LISTS);
+		render(Page);
+		expect(get(pageRefresh).available).toBe(true);
+		expect(await refreshPage()).toBe('ok');
+
+		const { '/api/notifications/log': _log, ...withoutLog } = LISTS;
+		stubFetch(withoutLog);
+		expect(await refreshPage()).toBe('partial');
+
+		stubFetch({});
+		expect(await refreshPage()).toBe('failed');
+	});
+
+	it('writes nothing once the page has gone', async () => {
+		let answer: () => void = () => {};
+		const gate = new Promise<void>((resolve) => (answer = resolve));
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				await gate;
+				return { ok: true, status: 200, json: async () => LISTS[url] };
+			}),
+		);
+		const { unmount } = render(Page);
+		const pending = refreshPage();
+		unmount();
+		answer();
+
+		expect(await pending).toBe('skipped');
+		expect(get(pageRefresh)).toMatchObject({ available: false, updatedAt: null });
 	});
 });

@@ -24,11 +24,11 @@ async function expectTheme(page: Page, variant: keyof typeof ACCENT): Promise<vo
 	});
 }
 
-/** Opens Settings' Display tab. The tab button is server-rendered, so a click before hydration
+/** Opens Settings' Display tab. The tab is server-rendered, so a click before hydration
  * does nothing: retry until the picker shows. */
 async function openDisplayTab(page: Page): Promise<void> {
 	await expect(async () => {
-		await page.getByRole('button', { name: 'Display' }).click();
+		await page.getByRole('tab', { name: 'Display' }).click();
 		await expect(page.getByRole('radio', { name: 'Ember' })).toBeAttached({ timeout: 1_000 });
 	}).toPass({ timeout: 15_000 });
 }

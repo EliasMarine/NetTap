@@ -19,7 +19,7 @@ async function openIntegrations() {
 	render(Page);
 	for (let i = 0; i < 5; i++) await Promise.resolve();
 	await new Promise((r) => setTimeout(r, 0));
-	await fireEvent.click(screen.getByRole('button', { name: 'Integrations' }));
+	await fireEvent.click(screen.getByRole('tab', { name: 'Integrations' }));
 }
 
 describe('Settings — UniFi status failed', () => {

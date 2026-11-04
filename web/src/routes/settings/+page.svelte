@@ -6,10 +6,28 @@
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { formatDuration } from '$lib/utils/tshark-helpers';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import Pills, { type PillOption } from '$lib/components/ui/Pills.svelte';
+	import StatStrip from '$lib/components/ui/StatStrip.svelte';
+	import Meter from '$lib/components/ui/Meter.svelte';
 
 	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'integrations' | 'display' | 'about';
 
 	let activeTab = $state<TabId>('notifications');
+
+	// Values are id-safe: Pills builds settings-tab-{value} / settings-panel-{value} from them
+	const TABS: PillOption<TabId>[] = [
+		{ value: 'notifications', label: 'Notifications' },
+		{ value: 'retention', label: 'Retention' },
+		{ value: 'capture', label: 'Capture' },
+		{ value: 'api-keys', label: 'API keys' },
+		{ value: 'network', label: 'Network' },
+		{ value: 'integrations', label: 'Integrations' },
+		{ value: 'display', label: 'Display' },
+		{ value: 'about', label: 'About' },
+	];
 
 	// --- Notifications state ---
 	let severityThreshold = $state<string>('medium');
@@ -36,6 +54,7 @@
 	let diskUsage = $state<number | null>(null);
 	let lastPruneAt = $state<string | null>(null);
 	let storageStatusFailed = $state(false);
+	let storageLoading = $state(true);
 	let ilmStatus = $state<{ synced: boolean; last_applied: string | null; pending_retry: boolean; policies: Record<string, string> } | null>(null);
 	let retentionSaving = $state(false);
 	let retentionMessage = $state('');
@@ -91,6 +110,7 @@
 	let defaultTimeRange = $state('1h');
 	let displaySaving = $state(false);
 	let displayMessage = $state('');
+	let displayError = $state(false);
 
 	// --- UniFi Integration state ---
 	let unifiControllerUrl = $state('');
@@ -111,9 +131,9 @@
 	let unifiSitesLoading = $state(false);
 
 	// --- About state ---
-	let version = $state('...');
-	let uptime = $state('...');
-	let buildInfo = $state('...');
+	let version = $state('…');
+	let uptime = $state('…');
+	let buildInfo = $state('…');
 
 	async function loadNotificationConfig() {
 		try {
@@ -166,6 +186,7 @@
 				lastPruneAt = data.last_prune_at ?? null;
 				ilmStatus = data.ilm_status ?? null;
 				storageStatusFailed = false;
+				storageLoading = false;
 				return;
 			}
 		} catch {
@@ -174,6 +195,7 @@
 			// OLD CODE END
 		}
 		storageStatusFailed = true;
+		storageLoading = false;
 	}
 
 	// --- Retention health helpers ---
@@ -800,6 +822,7 @@
 	function saveDisplay() {
 		displaySaving = true;
 		displayMessage = '';
+		displayError = false;
 		try {
 			localStorage.setItem(
 				'nettap-display-settings',
@@ -808,6 +831,7 @@
 			displayMessage = 'Display settings saved.';
 		} catch {
 			displayMessage = 'Failed to save display settings.';
+			displayError = true;
 		} finally {
 			displaySaving = false;
 		}
@@ -825,479 +849,318 @@
 	<title>Settings | NetTap</title>
 </svelte:head>
 
-<div class="settings-page">
-	<div class="page-header">
-		<div>
-			<h2 class="page-title">Settings</h2>
-			<p class="text-muted">Configure your NetTap appliance.</p>
+{#snippet feedback(message: string, isError: boolean)}
+	{#if message}
+		<div class={['notice', isError ? 'is-error' : 'is-ok']} role={isError ? 'alert' : 'status'}>
+			<Icon name={isError ? 'warn' : 'check'} />{message}
 		</div>
-	</div>
+	{/if}
+{/snippet}
 
-	<div class="tabs">
-		<button
-			class="tab"
-			class:active={activeTab === 'notifications'}
-			onclick={() => (activeTab = 'notifications')}
-		>
-			Notifications
-		</button>
-		<button
-			class="tab"
-			class:active={activeTab === 'retention'}
-			onclick={() => (activeTab = 'retention')}
-		>
-			Retention
-		</button>
-		<button
-			class="tab"
-			class:active={activeTab === 'capture'}
-			onclick={() => (activeTab = 'capture')}
-		>
-			Capture
-		</button>
-		<button
-			class="tab"
-			class:active={activeTab === 'api-keys'}
-			onclick={() => (activeTab = 'api-keys')}
-		>
-			API Keys
-		</button>
-		<button
-			class="tab"
-			class:active={activeTab === 'network'}
-			onclick={() => (activeTab = 'network')}
-		>
-			Network
-		</button>
-		<button
-			class="tab"
-			class:active={activeTab === 'integrations'}
-			onclick={() => (activeTab = 'integrations')}
-		>
-			Integrations
-		</button>
-		<button
-			class="tab"
-			class:active={activeTab === 'display'}
-			onclick={() => (activeTab = 'display')}
-		>
-			Display
-		</button>
-		<button
-			class="tab"
-			class:active={activeTab === 'about'}
-			onclick={() => (activeTab = 'about')}
-		>
-			About
-		</button>
-	</div>
+{#snippet configured(set: boolean | undefined)}
+	{#if set}<span class="chip is-ok"><Icon name="check" />Configured</span>{/if}
+{/snippet}
 
+<div class="page-head">
+	<div>
+		<h1 class="page-title">Settings</h1>
+		<p class="page-sub">Alerts, storage, capture, credentials and display for this NetTap.</p>
+	</div>
+</div>
+
+<div class="tabs-scroll">
+	<Pills options={TABS} bind:value={activeTab} ariaLabel="Settings sections" mode="tabs" idPrefix="settings" />
+</div>
+
+<div class="grid" role="tabpanel" id="settings-panel-{activeTab}" aria-labelledby="settings-tab-{activeTab}" tabindex="0">
 	{#if activeTab === 'notifications'}
-		<div class="settings-section">
-			<div class="card">
-				<div class="card-header">
-					<span class="card-title">Notification Preferences</span>
-				</div>
-
+		<Card title="Notification preferences" sub="Which alerts reach you · by email and webhook" class="c-12">
+			<div class="stack">
 				{#if notifLoadFailed}
-					<div class="alert alert-danger" style="margin-bottom: var(--space-md);">
-						Could not load the current notification settings, so saving is off. Reload the page to try again.
-					</div>
+					{@render feedback('Could not load the current notification settings, so saving is off. Reload the page to try again.', true)}
 				{/if}
+				{@render feedback(notifMessage, notifError)}
 
-				{#if notifMessage}
-					<div class="alert {notifError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
-						{notifMessage}
+				<div class="form-grid">
+					<div class="field">
+						<label class="label" for="severity-threshold">Alert severity threshold</label>
+						<select class="select" id="severity-threshold" bind:value={severityThreshold}>
+							{#each severityOptions as opt (opt.value)}
+								<option value={opt.value}>{opt.label}</option>
+							{/each}
+						</select>
+						<p class="field-help">Only notify for alerts at or above this severity level.</p>
 					</div>
-				{/if}
-
-				<div class="form-group">
-					<label class="label" for="severity-threshold">Alert Severity Threshold</label>
-					<select class="select" id="severity-threshold" bind:value={severityThreshold}>
-						{#each severityOptions as opt}
-							<option value={opt.value}>{opt.label}</option>
-						{/each}
-					</select>
-					<p class="field-help">Only notify for alerts at or above this severity level.</p>
+					<div class="field">
+						<label class="label" for="webhook-url">Webhook URL</label>
+						<input class="input mono" id="webhook-url" type="url" bind:value={webhookUrl} placeholder="https://hooks.example.com/nettap" />
+						<p class="field-help">POST JSON payloads will be sent to this URL for each alert.</p>
+					</div>
 				</div>
 
-				<div class="form-group">
-					<label class="label">Email Notifications</label>
-					<div class="toggle-row">
-						<label class="toggle-label" for="email-toggle">
-							<div class="toggle-text">
-								<span class="toggle-title">Enable email alerts</span>
-								<span class="toggle-description">Send alert notifications to the email address below. Requires SMTP to be configured in API Keys.</span>
-							</div>
-							<div class="toggle-switch">
-								<input
-									type="checkbox"
-									id="email-toggle"
-									class="toggle-input"
-									bind:checked={emailEnabled}
-								/>
-								<span class="toggle-slider"></span>
-							</div>
-						</label>
+				<div class="switch-row">
+					<input type="checkbox" role="switch" class="switch" id="email-toggle" bind:checked={emailEnabled} aria-describedby="email-toggle-help" />
+					<div>
+						<label class="label" for="email-toggle">Enable email alerts</label>
+						<p class="field-help" id="email-toggle-help">Send alert notifications to the email address below. Requires SMTP to be configured in API keys.</p>
 					</div>
 				</div>
 
 				{#if emailEnabled}
-					<div class="form-group">
-						<label class="label" for="email-address">Recipient Email</label>
-						<input class="input" id="email-address" type="email" bind:value={emailAddress} placeholder="admin@example.com" />
+					<div class="form-grid">
+						<div class="field">
+							<label class="label" for="email-address">Recipient email</label>
+							<input class="input" id="email-address" type="email" bind:value={emailAddress} placeholder="admin@example.com" />
+						</div>
 					</div>
 				{/if}
 
-				<div class="form-group">
-					<label class="label" for="webhook-url">Webhook URL</label>
-					<input class="input" id="webhook-url" type="url" bind:value={webhookUrl} placeholder="https://hooks.example.com/nettap" />
-					<p class="field-help">POST JSON payloads will be sent to this URL for each alert.</p>
-				</div>
-
-				<div class="btn-row">
-					<button class="btn btn-primary" onclick={saveNotifications} disabled={notifSaving || notifLoadFailed}>
-						{notifSaving ? 'Saving...' : 'Save Notification Settings'}
+				<div class="form-actions">
+					<button class="btn" type="button" onclick={sendTestNotification} disabled={testingSending}>
+						{testingSending ? 'Sending…' : 'Send test notification'}
 					</button>
-					<button class="btn btn-secondary" onclick={sendTestNotification} disabled={testingSending}>
-						{testingSending ? 'Sending...' : 'Send Test Notification'}
+					<button class="btn primary" type="button" onclick={saveNotifications} disabled={notifSaving || notifLoadFailed}>
+						{notifSaving ? 'Saving…' : 'Save notification settings'}
 					</button>
 				</div>
-
-				{#if testMessage}
-					<div class="alert {testError ? 'alert-danger' : 'alert-success'}" style="margin-top: var(--space-md);">
-						{testMessage}
-					</div>
-				{/if}
+				{@render feedback(testMessage, testError)}
 			</div>
-		</div>
-
+		</Card>
 	{:else if activeTab === 'retention'}
-		<div class="settings-section">
-
-			<!-- Retention Health Status -->
-			<div class="card retention-health-card">
-				<div class="card-header">
-					<span class="card-title">Retention Health</span>
-					<span class="health-badge health-{retentionHealth.status}">
-						<span class="health-dot"></span>
-						<!-- OLD CODE START — no unknown state
-						{retentionHealth.status === 'healthy' ? 'Healthy' : retentionHealth.status === 'attention' ? 'Attention' : 'Problem'}
-						OLD CODE END -->
+		<Card title="Retention health" sub="Storage status · read when this page opened" class="c-4">
+			{#snippet actions()}
+				{#if !storageLoading}
+					<!-- OLD CODE START — no unknown state
+					{retentionHealth.status === 'healthy' ? 'Healthy' : retentionHealth.status === 'attention' ? 'Attention' : 'Problem'}
+					OLD CODE END -->
+					<span class={['chip', { healthy: 'is-ok', attention: 'is-warn', problem: 'is-bad', unknown: '' }[retentionHealth.status]]}>
 						{{ healthy: 'Healthy', attention: 'Attention', problem: 'Problem', unknown: 'Unknown' }[retentionHealth.status]}
 					</span>
-				</div>
-
+				{/if}
+			{/snippet}
+			{#if storageLoading}
+				<CardState state="loading" title="Loading the storage status" />
+			{:else if storageStatusFailed && ilmStatus === null && lastPruneAt === null}
+				<CardState state="error" title={loadFailed('the storage status')} message="Check that NetTap is running on the System page, then reload." />
+			{:else}
 				{#if storageStatusFailed}
-					<p class="text-warning">{loadFailed('the storage status', ilmStatus !== null || lastPruneAt !== null)}</p>
+					{@render feedback(loadFailed('the storage status', true), true)}
 				{/if}
-				<div class="health-rows">
-					<div class="health-row">
-						<span class="health-label">ILM Policies</span>
-						<span class="health-value">
-							{#if ilmStatus === null && storageStatusFailed}
-								<span class="text-muted">Unknown</span>
-							{:else if ilmStatus === null}
-								<span class="text-muted">Loading...</span>
-							{:else if retentionHealth.ilmPending}
-								<span style="color: var(--amber);">&#x27f3; Syncing...</span>
-							{:else if retentionHealth.ilmOk}
-								<!-- OLD CODE START — 2026-11-02: read "All 1 synced" with one policy
-								<span style="color: var(--green);">&#x2713; All {Object.keys(ilmStatus.policies).length || 3} synced</span>
-								OLD CODE END -->
-								{@const policyCount = Object.keys(ilmStatus.policies).length}
-								<span style="color: var(--green);">&#x2713; {policyCount === 1 ? 'Policy synced' : `${policyCount || 'All'} policies synced`}</span>
-							{:else}
-								<span style="color: var(--red);">&#x2717; Out of sync</span>
-							{/if}
-						</span>
-					</div>
-					<div class="health-row">
-						<span class="health-label">Disk Usage</span>
-						<span class="health-value">
-							{#if diskUsage !== null}
-								<span class="mono" style="color: {retentionHealth.diskCritical ? 'var(--red)' : retentionHealth.diskHigh ? 'var(--amber)' : 'var(--green)'}">
-									{diskUsage}%
-								</span>
-								<span class="text-muted">(threshold: {retentionConfig.disk_threshold}%)</span>
-							{:else}
-								<span class="text-muted">Unavailable</span>
-							{/if}
-						</span>
-					</div>
-					<div class="health-row">
-						<span class="health-label">Last Prune</span>
-						<span class="health-value">
-							{#if lastPruneAt}
-								<span class="mono" style="color: {retentionHealth.pruneStale ? 'var(--red)' : retentionHealth.pruneOk ? 'var(--green)' : 'var(--amber)'}">
-									{timeAgo(lastPruneAt)}
-								</span>
-							{:else if storageStatusFailed}
-								<span class="text-muted">Unknown</span>
-							{:else}
-								<span class="text-muted">Never (daemon starting...)</span>
-							{/if}
-						</span>
-					</div>
-				</div>
-			</div>
+				<dl class="facts flush">
+					<dt>ILM policies</dt>
+					<dd>
+						{#if ilmStatus === null}
+							<span class="dim">Not reported</span>
+						{:else if retentionHealth.ilmPending}
+							<span class="chip">Syncing…</span>
+						{:else if retentionHealth.ilmOk}
+							<!-- OLD CODE START — 2026-11-02: read "All 1 synced" with one policy
+							<span style="color: var(--green);">&#x2713; All {Object.keys(ilmStatus.policies).length || 3} synced</span>
+							OLD CODE END -->
+							{@const policyCount = Object.keys(ilmStatus.policies).length}
+							<span class="chip is-ok"><Icon name="check" />{policyCount === 1 ? 'Policy synced' : `${policyCount || 'All'} policies synced`}</span>
+						{:else}
+							<span class="chip is-bad"><Icon name="warn" />Out of sync</span>
+						{/if}
+					</dd>
+					<dt>Disk usage</dt>
+					<dd>
+						{#if diskUsage !== null}
+							<span class="num">{diskUsage}%</span> <span class="dim">· warning at {retentionConfig.disk_threshold}%</span>
+						{:else}
+							<span class="dim">Unavailable</span>
+						{/if}
+					</dd>
+					<dt>Last prune</dt>
+					<dd>
+						{#if lastPruneAt}
+							<span class="num">{timeAgo(lastPruneAt)}</span>
+						{:else}
+							<span class="dim">Never (daemon starting…)</span>
+						{/if}
+					</dd>
+				</dl>
+				{#if diskUsage !== null}
+					<div class="meter-row"><Meter value={diskUsage} label="Disk used" /></div>
+				{/if}
+			{/if}
+		</Card>
 
-			<div class="card">
-				<div class="card-header">
-					<span class="card-title">Data Retention Policy</span>
-				</div>
-
+		<Card title="Data retention policy" sub="Days kept per tier · disk thresholds in %" class="c-8">
+			<div class="stack">
 				{#if retentionLoad === 'failed'}
-					<div class="alert alert-danger" style="margin-bottom: var(--space-md);">
-						Could not load the current retention settings, so saving is off. Reload the page to try again.
-					</div>
+					{@render feedback('Could not load the current retention settings, so saving is off. Reload the page to try again.', true)}
 				{/if}
+				{@render feedback(retentionMessage, retentionError)}
 
-				{#if retentionMessage}
-					<div class="alert {retentionError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
-						{retentionMessage}
-					</div>
-				{/if}
-
-				<div class="retention-grid">
-					<div class="form-group">
+				<div class="form-grid">
+					<div class="field">
 						<!-- OLD CODE START — 2026-11-02: Malcolm writes Zeek and Suricata to one daily
 						     arkime_sessions3 index, so this setting governs alerts too
 						<label class="label" for="hot-days">Hot Tier (Zeek metadata)</label>
 						OLD CODE END -->
-						<label class="label" for="hot-days">Hot Tier (Zeek metadata and Suricata alerts)</label>
-						<div class="input-with-unit">
+						<label class="label" for="hot-days">Hot tier (Zeek metadata and Suricata alerts)</label>
+						<div class="unit-field">
 							<input class="input" id="hot-days" type="number" bind:value={retentionConfig.hot_days} min={7} max={365} />
-							<span class="input-unit">days</span>
+							<span class="dim">days</span>
 						</div>
-						<!-- OLD CODE START
-						<p class="field-help">Structured metadata logs from Zeek.</p>
-						OLD CODE END -->
 						<p class="field-help">Zeek logs and Suricata alerts share one daily index, so both are deleted after this many days.</p>
 					</div>
-					<div class="form-group">
+					<div class="field">
 						<!-- OLD CODE START — 2026-11-02: no Malcolm index is warm; alerts follow the Hot tier
 						<label class="label" for="warm-days">Warm Tier (Suricata alerts)</label>
 						OLD CODE END -->
-						<label class="label" for="warm-days">Warm Tier (separate Suricata indices)</label>
-						<div class="input-with-unit">
+						<label class="label" for="warm-days">Warm tier (separate Suricata indices)</label>
+						<div class="unit-field">
 							<input class="input" id="warm-days" type="number" bind:value={retentionConfig.warm_days} min={7} max={730} />
-							<span class="input-unit">days</span>
+							<span class="dim">days</span>
 						</div>
-						<!-- OLD CODE START
-						<p class="field-help">IDS alerts and rule matches.</p>
-						OLD CODE END -->
-						<p class="field-help">Applies only to separate <code>suricata-*</code> indices, which this install doesn't create. Alerts follow the Hot tier.</p>
+						<p class="field-help">Applies only to separate <span class="mono">suricata-*</span> indices, which this install doesn't create. Alerts follow the Hot tier.</p>
 					</div>
-					<div class="form-group">
-						<label class="label" for="cold-days">Cold Tier (PCAP files)</label>
-						<div class="input-with-unit">
+					<div class="field">
+						<label class="label" for="cold-days">Cold tier (PCAP files)</label>
+						<div class="unit-field">
 							<input class="input" id="cold-days" type="number" bind:value={retentionConfig.cold_days} min={1} max={365} />
-							<span class="input-unit">days</span>
+							<span class="dim">days</span>
 						</div>
-						<!-- OLD CODE START — 2026-11-02: capture is continuous, not alert-triggered
-						<p class="field-help">Raw packet captures (alert-triggered).</p>
-						OLD CODE END -->
 						<p class="field-help">Raw packet captures of all traffic. The oldest files also go once PCAP passes its share of the disk.</p>
 					</div>
 				</div>
 
-				<div class="threshold-section">
-					<div class="form-group">
-						<label class="label" for="disk-threshold">Disk Warning Threshold</label>
-						<div class="input-with-unit">
+				<div class="form-grid">
+					<div class="field">
+						<label class="label" for="disk-threshold">Disk warning threshold</label>
+						<div class="unit-field">
 							<input class="input" id="disk-threshold" type="number" bind:value={retentionConfig.disk_threshold} min={50} max={95} />
-							<span class="input-unit">%</span>
+							<span class="dim">%</span>
 						</div>
 						<p class="field-help">Start pruning old data when disk usage exceeds this.</p>
 					</div>
-					<div class="form-group">
-						<label class="label" for="emergency-threshold">Emergency Threshold</label>
-						<div class="input-with-unit">
+					<div class="field">
+						<label class="label" for="emergency-threshold">Emergency threshold</label>
+						<div class="unit-field">
 							<input class="input" id="emergency-threshold" type="number" bind:value={retentionConfig.emergency_threshold} min={60} max={99} />
-							<span class="input-unit">%</span>
+							<span class="dim">%</span>
 						</div>
 						<p class="field-help">Aggressive pruning regardless of tier when disk exceeds this.</p>
 					</div>
 				</div>
 
-				{#if diskUsage !== null}
-					<div class="disk-usage-bar">
-						<div class="disk-usage-header">
-							<span class="label" style="margin-bottom: 0;">Current Disk Usage</span>
-							<span class="disk-usage-value" class:text-danger={diskUsage >= retentionConfig.disk_threshold} class:text-warning={diskUsage >= 60 && diskUsage < retentionConfig.disk_threshold}>{diskUsage}%</span>
-						</div>
-						<div class="disk-bar-track">
-							<div
-								class="disk-bar-fill"
-								class:bar-danger={diskUsage >= retentionConfig.disk_threshold}
-								class:bar-warning={diskUsage >= 60 && diskUsage < retentionConfig.disk_threshold}
-								style="width: {Math.min(diskUsage, 100)}%"
-							></div>
-							<div class="disk-bar-marker" style="left: {retentionConfig.disk_threshold}%" title="Warning threshold"></div>
-						</div>
+				<div class="form-actions">
+					<button class="btn primary" type="button" onclick={saveRetention} disabled={retentionSaving || retentionLoad !== 'ok'}>
+						{retentionSaving ? 'Saving…' : 'Save retention settings'}
+					</button>
+				</div>
+			</div>
+		</Card>
+
+		<Card title="Manual data cleanup" sub="Deletes OpenSearch indices and PCAP files · cannot be undone" class="c-12">
+			<div class="stack">
+				<p class="field-help">Permanently delete OpenSearch indices and PCAP files older than a specified number of days to free up disk space.</p>
+				{@render feedback(cleanupMessage, cleanupError)}
+
+				<div class="inline-row">
+					<span>Delete data older than</span>
+					<div class="unit-field">
+						<!-- OLD CODE START — editing the days left the old preview (and its Delete button) on screen
+						<input class="input" type="number" bind:value={cleanupDays} min={1} max={3650} disabled={cleanupExecuting} />
+						OLD CODE END -->
+						<input
+							class="input"
+							type="number"
+							aria-label="Delete data older than (days)"
+							bind:value={cleanupDays}
+							oninput={cancelCleanup}
+							min={1}
+							max={3650}
+							disabled={cleanupExecuting || cleanupPreviewing}
+						/>
+						<span class="dim">days</span>
 					</div>
+					<button class="btn" type="button" onclick={handleCleanupPreview} disabled={cleanupPreviewing || cleanupExecuting || cleanupDays < 1}>
+						{cleanupPreviewing ? 'Scanning…' : 'Preview cleanup'}
+					</button>
+				</div>
+
+				{#if cleanupPreview}
+					<section class="preview" aria-labelledby="cleanup-preview-title">
+						<div class="preview-head">
+							<h3 class="eyebrow" id="cleanup-preview-title">Cleanup preview</h3>
+							<span class="dim">Data before {new Date(cleanupPreview.cutoff_date).toLocaleDateString()}</span>
+						</div>
+						<StatStrip
+							stats={[
+								{ key: 'indices', label: 'Indices', value: String(cleanupPreview.total_indices) },
+								{ key: 'pcap', label: 'PCAP files', value: String(cleanupPreview.total_pcap_files) },
+								{ key: 'freed', label: 'Space freed', value: formatCleanupBytes(cleanupPreview.estimated_freed_bytes) },
+							]}
+						/>
+
+						{#if cleanupPreview.total_indices === 0 && cleanupPreview.total_pcap_files === 0}
+							<p class="dim">No data found older than {cleanupPreviewDays} days.</p>
+						{:else if !showCleanupConfirm}
+							{@render feedback('This action is irreversible. Deleted data cannot be recovered.', true)}
+							<div class="form-actions">
+								<button class="btn" type="button" onclick={cancelCleanup}>Cancel</button>
+								<button class="btn danger" type="button" onclick={() => (showCleanupConfirm = true)}>Delete data</button>
+							</div>
+						{:else}
+							{@render feedback(
+								`Are you sure? This will permanently delete ${cleanupPreview.total_indices} indices and ${cleanupPreview.total_pcap_files} PCAP files (${formatCleanupBytes(cleanupPreview.estimated_freed_bytes)}).`,
+								true,
+							)}
+							<div class="form-actions">
+								<button class="btn" type="button" onclick={cancelCleanup} disabled={cleanupExecuting}>Cancel</button>
+								<button class="btn danger" type="button" onclick={handleCleanupExecute} disabled={cleanupExecuting}>
+									{cleanupExecuting ? 'Deleting…' : 'Confirm delete'}
+								</button>
+							</div>
+						{/if}
+					</section>
 				{/if}
-
-				<button class="btn btn-primary" onclick={saveRetention} disabled={retentionSaving || retentionLoad !== 'ok'}>
-					{retentionSaving ? 'Saving...' : 'Save Retention Config'}
-				</button>
 			</div>
-
-		<!-- Manual Data Cleanup -->
-		<div class="card" style="margin-top: var(--space-lg);">
-			<div class="card-header">
-				<span class="card-title">Manual Data Cleanup</span>
-			</div>
-
-			<p class="field-help" style="margin-bottom: var(--space-md);">
-				Permanently delete OpenSearch indices and PCAP files older than a specified number of days to free up disk space.
-			</p>
-
-			{#if cleanupMessage}
-				<div class="alert {cleanupError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
-					{cleanupMessage}
-				</div>
-			{/if}
-
-			<div class="cleanup-input-row">
-				<span class="cleanup-label">Delete data older than</span>
-				<div class="input-with-unit" style="width: 120px;">
-					<!-- OLD CODE START — editing the days left the old preview (and its Delete button) on screen
-					<input
-						class="input"
-						type="number"
-						bind:value={cleanupDays}
-						min={1}
-						max={3650}
-						disabled={cleanupExecuting}
-					/>
-					OLD CODE END -->
-					<input
-						class="input"
-						type="number"
-						aria-label="Delete data older than (days)"
-						bind:value={cleanupDays}
-						oninput={cancelCleanup}
-						min={1}
-						max={3650}
-						disabled={cleanupExecuting || cleanupPreviewing}
-					/>
-					<span class="input-unit">days</span>
-				</div>
-				<button
-					class="btn btn-secondary"
-					onclick={handleCleanupPreview}
-					disabled={cleanupPreviewing || cleanupExecuting || cleanupDays < 1}
-				>
-					{cleanupPreviewing ? 'Scanning...' : 'Preview Cleanup'}
-				</button>
-			</div>
-
-			{#if cleanupPreview}
-				<div class="cleanup-preview">
-					<div class="cleanup-preview-header">
-						<span class="cleanup-preview-title">Cleanup Preview</span>
-						<span class="text-muted">Data before {new Date(cleanupPreview.cutoff_date).toLocaleDateString()}</span>
-					</div>
-
-					<div class="cleanup-stats">
-						<div class="cleanup-stat">
-							<span class="cleanup-stat-value">{cleanupPreview.total_indices}</span>
-							<span class="cleanup-stat-label">Indices</span>
-						</div>
-						<div class="cleanup-stat">
-							<span class="cleanup-stat-value">{cleanupPreview.total_pcap_files}</span>
-							<span class="cleanup-stat-label">PCAP Files</span>
-						</div>
-						<div class="cleanup-stat">
-							<span class="cleanup-stat-value">{formatCleanupBytes(cleanupPreview.estimated_freed_bytes)}</span>
-							<span class="cleanup-stat-label">Space Freed</span>
-						</div>
-					</div>
-
-					{#if cleanupPreview.total_indices === 0 && cleanupPreview.total_pcap_files === 0}
-						<p class="text-muted" style="margin-top: var(--space-sm);">No data found older than {cleanupPreviewDays} days.</p>
-					{:else}
-						<div class="cleanup-confirm-section">
-							{#if !showCleanupConfirm}
-								<p class="text-danger" style="font-size: var(--text-sm); margin-bottom: var(--space-sm);">
-									This action is irreversible. Deleted data cannot be recovered.
-								</p>
-								<div class="cleanup-actions">
-									<button class="btn btn-secondary" onclick={cancelCleanup}>Cancel</button>
-									<button class="btn btn-danger" onclick={() => showCleanupConfirm = true}>
-										Delete Data
-									</button>
-								</div>
-							{:else}
-								<div class="cleanup-final-confirm">
-									<p class="text-danger" style="font-weight: 600; margin-bottom: var(--space-sm);">
-										Are you sure? This will permanently delete {cleanupPreview.total_indices} indices and {cleanupPreview.total_pcap_files} PCAP files ({formatCleanupBytes(cleanupPreview.estimated_freed_bytes)}).
-									</p>
-									<div class="cleanup-actions">
-										<button class="btn btn-secondary" onclick={cancelCleanup} disabled={cleanupExecuting}>
-											Cancel
-										</button>
-										<button class="btn btn-danger" onclick={handleCleanupExecute} disabled={cleanupExecuting}>
-											{cleanupExecuting ? 'Deleting...' : 'Confirm Delete'}
-										</button>
-									</div>
-								</div>
-							{/if}
-						</div>
-					{/if}
-				</div>
-			{/if}
-		</div>
-	</div>
-
+		</Card>
 	{:else if activeTab === 'capture'}
-		<div class="settings-section">
-			<div class="card">
-				<div class="card-header">
-					<span class="card-title">PCAP Capture</span>
-				</div>
+		<Card title="PCAP capture" sub="Packet capture container · file size in MB" class="c-12">
+			{#if captureLoading}
+				<CardState state="loading" title="Loading capture settings" />
+			{:else if captureLoadFailed}
+				<CardState state="error" title="Could not load the current capture settings, so changes are off." message="Reload the page to try again." />
+			{:else}
+				<div class="stack">
+					{@render feedback(captureMessage, captureError)}
+					<dl class="facts flush">
+						<dt>Container status</dt>
+						<dd>
+							{#if captureContainerRunning}
+								<span class="chip is-ok"><Icon name="check" />Running</span>
+							{:else}
+								<span class="chip">{captureContainerStatus}</span>
+							{/if}
+						</dd>
+					</dl>
 
-				{#if captureMessage}
-					<div class="alert {captureError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
-						{captureMessage}
-					</div>
-				{/if}
-
-				{#if captureLoading}
-					<p class="text-muted">Loading capture settings...</p>
-				{:else if captureLoadFailed}
-					<div class="alert alert-danger">
-						Could not load the current capture settings, so changes are off. Reload the page to try again.
-					</div>
-				{:else}
-					<!-- Status card -->
-					<div class="capture-status-card" style="margin-bottom: var(--space-lg);">
-						<div class="capture-status-row">
-							<span class="label">Container Status</span>
-							<span class="capture-badge" class:status-running={captureContainerRunning} class:status-stopped={!captureContainerRunning}>
-								{captureContainerRunning ? 'Running' : captureContainerStatus}
-							</span>
-						</div>
-					</div>
-
-					<!-- Toggle -->
-					<div class="form-group" style="margin-bottom: var(--space-lg);">
-						<label class="label">PCAP Collection</label>
-						<div class="capture-toggle-row">
-							<button
-								class="capture-toggle-switch"
-								class:on={captureEnabled}
-								onclick={handleCaptureToggle}
-								disabled={captureToggling}
-							>
-								<span class="capture-toggle-knob" class:loading={captureToggling}></span>
-							</button>
+					<div class="switch-row">
+						<!-- the API decides the state: the click is cancelled and the switch follows the answer -->
+						<input
+							type="checkbox"
+							role="switch"
+							class="switch"
+							id="capture-toggle"
+							checked={captureEnabled}
+							disabled={captureToggling}
+							aria-describedby="capture-toggle-help"
+							onclick={(e) => {
+								e.preventDefault();
+								handleCaptureToggle();
+							}}
+						/>
+						<div>
+							<label class="label" for="capture-toggle">PCAP collection</label>
 							<!-- OLD CODE START — claimed "capturing packets" even with the container stopped
 							<span class="capture-toggle-label">{captureEnabled ? 'Enabled — capturing packets' : 'Disabled — no new captures'}</span>
 							OLD CODE END -->
-							<span class="capture-toggle-label">
+							<p class="state-line">
 								{#if !captureEnabled}
 									Disabled — no new captures
 								{:else if captureContainerRunning}
@@ -1307,1200 +1170,467 @@
 								{:else}
 									Enabled — capture container not running
 								{/if}
-							</span>
+							</p>
+							<p class="field-help" id="capture-toggle-help">When disabled, the capture container is stopped. Existing PCAP files remain accessible.</p>
 						</div>
-						<p class="field-help">When disabled, the capture container is stopped. Existing PCAP files remain accessible.</p>
 					</div>
 
-					<!-- File size -->
-					<div class="form-group" style="margin-bottom: var(--space-lg);">
-						<label class="label" for="max-file-size">Max File Size</label>
-						<div class="input-with-unit">
-							<input
-								class="input"
-								id="max-file-size"
-								type="number"
-								bind:value={captureMaxFileSize}
-								min={10}
-								max={10000}
-							/>
-							<span class="input-unit">MB</span>
+					<div class="form-grid">
+						<div class="field">
+							<label class="label" for="max-file-size">Max file size</label>
+							<div class="unit-field">
+								<input class="input" id="max-file-size" type="number" bind:value={captureMaxFileSize} min={10} max={10000} />
+								<span class="dim">MB</span>
+							</div>
+							<!-- OLD CODE START — 2026-11-02: the 100 MB default was never what netsniff used
+							<p class="field-help">Individual PCAP files rotate at this size. Default: 100 MB. Range: 10–10,000 MB.</p>
+							OLD CODE END -->
+							<p class="field-help">
+								A new file starts at this size{captureRotateMinutes ? ` or every ${captureRotateMinutes} minutes, whichever comes first` : ''}. Range: 10–10,000 MB.
+							</p>
 						</div>
-						<!-- OLD CODE START — 2026-11-02: the 100 MB default was never what netsniff used
-						<p class="field-help">Individual PCAP files rotate at this size. Default: 100 MB. Range: 10–10,000 MB.</p>
-						OLD CODE END -->
-						<p class="field-help">
-							A new file starts at this size{captureRotateMinutes ? ` or every ${captureRotateMinutes} minutes, whichever comes first` : ''}. Range: 10–10,000 MB.
-						</p>
 					</div>
 
-					<button class="btn btn-primary" onclick={saveCaptureSettings} disabled={captureSaving}>
-						{captureSaving ? 'Saving...' : 'Save Capture Settings'}
-					</button>
-				{/if}
-			</div>
-		</div>
-
-	{:else if activeTab === 'api-keys'}
-		<div class="settings-section">
-			<div class="card">
-				<div class="card-header">
-					<span class="card-title">API Keys &amp; Credentials</span>
+					<div class="form-actions">
+						<button class="btn primary" type="button" onclick={saveCaptureSettings} disabled={captureSaving}>
+							{captureSaving ? 'Saving…' : 'Save capture settings'}
+						</button>
+					</div>
 				</div>
+			{/if}
+		</Card>
+	{:else if activeTab === 'api-keys'}
+		<Card title="API keys and credentials" sub="Stored on this NetTap · never shown after saving" class="c-12">
+			{#if apiKeysLoading}
+				<CardState state="loading" title="Loading API key status" />
+			{:else}
+				<div class="stack">
+					<p class="field-help">
+						Configure external service credentials. Keys are stored securely on disk and never displayed after saving.
+						Fields marked "Configured" already have a value saved: leave the input blank to keep the existing value.
+					</p>
+					{@render feedback(apiKeysMessage, apiKeysError)}
 
-				<p class="field-help" style="margin-bottom: var(--space-lg);">
-					Configure external service credentials. Keys are stored securely on disk and never displayed after saving.
-					Fields showing "Configured" already have a value saved — leave the input blank to keep the existing value.
-				</p>
-
-				{#if apiKeysMessage}
-					<div class="alert {apiKeysError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
-						{apiKeysMessage}
-					</div>
-				{/if}
-
-				{#if apiKeysLoading}
-					<p class="text-muted">Loading API key status...</p>
-				{:else}
-					<!-- GeoIP Section -->
-					<div class="api-keys-section">
-						<h4 class="api-keys-section-title">GeoIP Lookups</h4>
-
-						<div class="form-group">
-							<div class="label-with-badge">
-								<label class="label" for="maxmind-key">MaxMind License Key</label>
-								{#if apiKeysStatus['MAXMIND_LICENSE_KEY']}
-									<span class="badge badge-configured">Configured</span>
-								{/if}
-							</div>
-							<input
-								class="input"
-								id="maxmind-key"
-								type="password"
-								bind:value={apiKeyValues['MAXMIND_LICENSE_KEY']}
-								placeholder={apiKeysStatus['MAXMIND_LICENSE_KEY'] ? 'Leave blank to keep current value' : 'Enter MaxMind license key'}
-							/>
-							<p class="field-help">Required for GeoIP map visualizations. Get a free key at <a href="https://www.maxmind.com/en/geolite2/signup" target="_blank" rel="noopener">maxmind.com</a>.</p>
-						</div>
-					</div>
-
-					<!-- IDS Rules Section -->
-					<div class="api-keys-section">
-						<h4 class="api-keys-section-title">IDS Rules</h4>
-
-						<div class="form-group">
-							<div class="label-with-badge">
-								<label class="label" for="et-pro-key">Emerging Threats Pro Key</label>
-								{#if apiKeysStatus['SURICATA_ET_PRO_KEY']}
-									<span class="badge badge-configured">Configured</span>
-								{/if}
-							</div>
-							<input
-								class="input"
-								id="et-pro-key"
-								type="password"
-								bind:value={apiKeyValues['SURICATA_ET_PRO_KEY']}
-								placeholder={apiKeysStatus['SURICATA_ET_PRO_KEY'] ? 'Leave blank to keep current value' : 'Enter ET Pro key (optional)'}
-							/>
-							<p class="field-help">Optional. Enables Proofpoint's commercial Suricata ruleset. Free ET Open rules are used by default.</p>
-						</div>
-					</div>
-
-					<!-- SMTP Section -->
-					<div class="api-keys-section">
-						<h4 class="api-keys-section-title">SMTP (Email Alerts)</h4>
-						<p class="field-help" style="margin-bottom: var(--space-md);">
-							Required for email notifications. Configure your SMTP server details below, then enable email alerts in the Notifications tab.
-						</p>
-
-						<div class="smtp-grid">
-							<div class="form-group">
-								<div class="label-with-badge">
-									<label class="label" for="smtp-host">SMTP Host</label>
-									{#if apiKeysStatus['SMTP_HOST']}
-										<span class="badge badge-configured">Configured</span>
-									{/if}
-								</div>
+					<section class="key-group" aria-labelledby="keys-geoip">
+						<h3 class="eyebrow" id="keys-geoip">GeoIP lookups</h3>
+						<div class="form-grid">
+							<div class="field">
+								<div class="label-row"><label class="label" for="maxmind-key">MaxMind licence key</label>{@render configured(apiKeysStatus['MAXMIND_LICENSE_KEY'])}</div>
 								<input
-									class="input"
-									id="smtp-host"
-									type="text"
-									bind:value={apiKeyValues['SMTP_HOST']}
-									placeholder={apiKeysStatus['SMTP_HOST'] ? 'Leave blank to keep current' : 'smtp.gmail.com'}
+									class="input mono"
+									id="maxmind-key"
+									type="password"
+									bind:value={apiKeyValues['MAXMIND_LICENSE_KEY']}
+									placeholder={apiKeysStatus['MAXMIND_LICENSE_KEY'] ? 'Leave blank to keep current value' : 'Enter MaxMind licence key'}
 								/>
+								<p class="field-help">Required for GeoIP map visualisations. Get a free key at <a class="link" href="https://www.maxmind.com/en/geolite2/signup" target="_blank" rel="noopener">maxmind.com</a>.</p>
+							</div>
+						</div>
+					</section>
+
+					<section class="key-group" aria-labelledby="keys-ids">
+						<h3 class="eyebrow" id="keys-ids">IDS rules</h3>
+						<div class="form-grid">
+							<div class="field">
+								<div class="label-row"><label class="label" for="et-pro-key">Emerging Threats Pro key</label>{@render configured(apiKeysStatus['SURICATA_ET_PRO_KEY'])}</div>
+								<input
+									class="input mono"
+									id="et-pro-key"
+									type="password"
+									bind:value={apiKeyValues['SURICATA_ET_PRO_KEY']}
+									placeholder={apiKeysStatus['SURICATA_ET_PRO_KEY'] ? 'Leave blank to keep current value' : 'Enter ET Pro key (optional)'}
+								/>
+								<p class="field-help">Optional. Enables Proofpoint's commercial Suricata ruleset. Free ET Open rules are used by default.</p>
+							</div>
+						</div>
+					</section>
+
+					<section class="key-group" aria-labelledby="keys-smtp">
+						<h3 class="eyebrow" id="keys-smtp">SMTP (email alerts)</h3>
+						<p class="field-help">Required for email notifications. Configure your SMTP server details below, then enable email alerts in the Notifications tab.</p>
+						<div class="form-grid">
+							<div class="field">
+								<div class="label-row"><label class="label" for="smtp-host">SMTP host</label>{@render configured(apiKeysStatus['SMTP_HOST'])}</div>
+								<input class="input mono" id="smtp-host" type="text" bind:value={apiKeyValues['SMTP_HOST']} placeholder={apiKeysStatus['SMTP_HOST'] ? 'Leave blank to keep current' : 'smtp.gmail.com'} />
 								<p class="field-help">SMTP server hostname.</p>
 							</div>
-
-							<div class="form-group">
-								<div class="label-with-badge">
-									<label class="label" for="smtp-port">SMTP Port</label>
-									{#if apiKeysStatus['SMTP_PORT']}
-										<span class="badge badge-configured">Configured</span>
-									{/if}
-								</div>
-								<input
-									class="input"
-									id="smtp-port"
-									type="text"
-									bind:value={apiKeyValues['SMTP_PORT']}
-									placeholder={apiKeysStatus['SMTP_PORT'] ? 'Leave blank to keep current' : '587'}
-								/>
+							<div class="field">
+								<div class="label-row"><label class="label" for="smtp-port">SMTP port</label>{@render configured(apiKeysStatus['SMTP_PORT'])}</div>
+								<input class="input mono" id="smtp-port" type="text" bind:value={apiKeyValues['SMTP_PORT']} placeholder={apiKeysStatus['SMTP_PORT'] ? 'Leave blank to keep current' : '587'} />
 								<p class="field-help">587 for STARTTLS, 465 for SSL/TLS.</p>
 							</div>
-
-							<div class="form-group">
-								<div class="label-with-badge">
-									<label class="label" for="smtp-username">SMTP Username</label>
-									{#if apiKeysStatus['SMTP_USERNAME']}
-										<span class="badge badge-configured">Configured</span>
-									{/if}
-								</div>
-								<input
-									class="input"
-									id="smtp-username"
-									type="text"
-									bind:value={apiKeyValues['SMTP_USERNAME']}
-									placeholder={apiKeysStatus['SMTP_USERNAME'] ? 'Leave blank to keep current' : 'user@example.com'}
-								/>
+							<div class="field">
+								<div class="label-row"><label class="label" for="smtp-username">SMTP username</label>{@render configured(apiKeysStatus['SMTP_USERNAME'])}</div>
+								<input class="input" id="smtp-username" type="text" bind:value={apiKeyValues['SMTP_USERNAME']} placeholder={apiKeysStatus['SMTP_USERNAME'] ? 'Leave blank to keep current' : 'user@example.com'} />
 								<p class="field-help">Your SMTP login username or email.</p>
 							</div>
-
-							<div class="form-group">
-								<div class="label-with-badge">
-									<label class="label" for="smtp-password">SMTP Password</label>
-									{#if apiKeysStatus['SMTP_PASSWORD']}
-										<span class="badge badge-configured">Configured</span>
-									{/if}
-								</div>
-								<input
-									class="input"
-									id="smtp-password"
-									type="password"
-									bind:value={apiKeyValues['SMTP_PASSWORD']}
-									placeholder={apiKeysStatus['SMTP_PASSWORD'] ? 'Leave blank to keep current' : 'App password or SMTP password'}
-								/>
+							<div class="field">
+								<div class="label-row"><label class="label" for="smtp-password">SMTP password</label>{@render configured(apiKeysStatus['SMTP_PASSWORD'])}</div>
+								<input class="input" id="smtp-password" type="password" bind:value={apiKeyValues['SMTP_PASSWORD']} placeholder={apiKeysStatus['SMTP_PASSWORD'] ? 'Leave blank to keep current' : 'App password or SMTP password'} />
 								<p class="field-help">For Gmail, use an App Password (not your account password).</p>
 							</div>
-
-							<div class="form-group smtp-sender-full">
-								<div class="label-with-badge">
-									<label class="label" for="smtp-sender">Sender Email</label>
-									{#if apiKeysStatus['SMTP_SENDER_EMAIL']}
-										<span class="badge badge-configured">Configured</span>
-									{/if}
-								</div>
-								<input
-									class="input"
-									id="smtp-sender"
-									type="email"
-									bind:value={apiKeyValues['SMTP_SENDER_EMAIL']}
-									placeholder={apiKeysStatus['SMTP_SENDER_EMAIL'] ? 'Leave blank to keep current' : 'nettap@example.com'}
-								/>
+							<div class="field">
+								<div class="label-row"><label class="label" for="smtp-sender">Sender email</label>{@render configured(apiKeysStatus['SMTP_SENDER_EMAIL'])}</div>
+								<input class="input" id="smtp-sender" type="email" bind:value={apiKeyValues['SMTP_SENDER_EMAIL']} placeholder={apiKeysStatus['SMTP_SENDER_EMAIL'] ? 'Leave blank to keep current' : 'nettap@example.com'} />
 								<p class="field-help">The "From" address on alert emails.</p>
 							</div>
 						</div>
-					</div>
+					</section>
 
-					<!-- Webhook Section -->
-					<div class="api-keys-section">
-						<h4 class="api-keys-section-title">Webhook</h4>
-
-						<div class="form-group">
-							<div class="label-with-badge">
-								<label class="label" for="webhook-url-keys">Webhook URL</label>
-								{#if apiKeysStatus['WEBHOOK_URL']}
-									<span class="badge badge-configured">Configured</span>
-								{/if}
+					<section class="key-group" aria-labelledby="keys-webhook">
+						<h3 class="eyebrow" id="keys-webhook">Webhook</h3>
+						<div class="form-grid">
+							<div class="field">
+								<div class="label-row"><label class="label" for="webhook-url-keys">Webhook URL</label>{@render configured(apiKeysStatus['WEBHOOK_URL'])}</div>
+								<input
+									class="input mono"
+									id="webhook-url-keys"
+									type="url"
+									bind:value={apiKeyValues['WEBHOOK_URL']}
+									placeholder={apiKeysStatus['WEBHOOK_URL'] ? 'Leave blank to keep current' : 'https://hooks.slack.com/services/…'}
+								/>
+								<p class="field-help">Also configurable in the Notifications tab. JSON alert payloads are POSTed here.</p>
 							</div>
-							<input
-								class="input"
-								id="webhook-url-keys"
-								type="url"
-								bind:value={apiKeyValues['WEBHOOK_URL']}
-								placeholder={apiKeysStatus['WEBHOOK_URL'] ? 'Leave blank to keep current' : 'https://hooks.slack.com/services/...'}
-							/>
-							<p class="field-help">Also configurable in the Notifications tab. JSON alert payloads are POSTed here.</p>
 						</div>
+					</section>
+
+					<div class="form-actions">
+						<button class="btn primary" type="button" onclick={saveApiKeys} disabled={apiKeysSaving}>
+							{apiKeysSaving ? 'Saving…' : 'Save API keys'}
+						</button>
 					</div>
-
-					<button class="btn btn-primary" onclick={saveApiKeys} disabled={apiKeysSaving} style="margin-top: var(--space-md);">
-						{apiKeysSaving ? 'Saving...' : 'Save API Keys'}
-					</button>
-				{/if}
-			</div>
-		</div>
-
-	{:else if activeTab === 'network'}
-		<div class="settings-section">
-			<div class="card">
-				<div class="card-header">
-					<span class="card-title">Excluded IPs</span>
 				</div>
+			{/if}
+		</Card>
+	{:else if activeTab === 'network'}
+		<Card title="Excluded IPs" sub="Hidden from device views · still in logs, alerts and connections" class="c-12">
+			{#if networkLoading}
+				<CardState state="loading" title="Loading the excluded IP list" />
+			{:else if networkLoadFailed}
+				<CardState state="error" title="Could not load the excluded IP list, so changes are off." message="Reload the page to try again." />
+			{:else}
+				<div class="stack">
+					<p class="field-help">
+						IPs in this list are hidden from device-centric views (Devices, Top Talkers, Risk Scores) but remain visible in Log Explorer, Alerts, and raw connection data.
+						Useful for filtering out your ISP gateway's public IP or infrastructure addresses that appear on every connection.
+					</p>
+					{@render feedback(networkMessage, networkError)}
 
-				<p class="field-help" style="margin-bottom: var(--space-md);">
-					IPs in this list are hidden from device-centric views (Devices, Top Talkers, Risk Scores) but remain visible in Log Explorer, Alerts, and raw connection data.
-					Useful for filtering out your ISP gateway's public IP or infrastructure addresses that appear on every connection.
-				</p>
-
-				{#if networkMessage}
-					<div class="alert {networkError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
-						{networkMessage}
-					</div>
-				{/if}
-
-				{#if networkLoading}
-					<p class="text-muted">Loading...</p>
-				{:else if networkLoadFailed}
-					<div class="alert alert-danger">
-						Could not load the excluded IP list, so changes are off. Reload the page to try again.
-					</div>
-				{:else}
-					<div class="excluded-ip-input-row">
-						<input
-							class="input"
-							type="text"
-							bind:value={newExcludedIp}
-							placeholder="e.g. 99.10.70.92"
-							onkeydown={(e) => { if (e.key === 'Enter') addExcludedIp(); }}
-						/>
-						<button class="btn btn-secondary" onclick={addExcludedIp}>Add</button>
+					<div class="field">
+						<label class="label" for="excluded-ip-new">IP address to exclude</label>
+						<div class="inline-row">
+							<input
+								class="input mono"
+								id="excluded-ip-new"
+								type="text"
+								bind:value={newExcludedIp}
+								placeholder="e.g. 99.10.70.92"
+								onkeydown={(e) => {
+									if (e.key === 'Enter') addExcludedIp();
+								}}
+							/>
+							<button class="btn" type="button" onclick={addExcludedIp}>Add</button>
+						</div>
 					</div>
 
 					{#if excludedIps.length === 0}
-						<p class="text-muted" style="margin-top: var(--space-md);">No IPs excluded. All IPs appear in device views.</p>
+						<p class="dim">No IPs excluded. All IPs appear in device views.</p>
 					{:else}
-						<div class="excluded-ip-list">
-							{#each excludedIps as ip}
-								<div class="excluded-ip-item">
+						<ul class="ip-list" aria-label="Excluded IPs">
+							{#each excludedIps as ip (ip)}
+								<li>
 									<span class="mono">{ip}</span>
-									<button class="btn-icon-remove" onclick={() => removeExcludedIp(ip)} title="Remove {ip}">
-										&times;
-									</button>
-								</div>
+									<button class="icon-btn ghost" type="button" aria-label="Remove {ip}" onclick={() => removeExcludedIp(ip)}><Icon name="close" /></button>
+								</li>
 							{/each}
-						</div>
+						</ul>
 					{/if}
 
-					<button class="btn btn-primary" onclick={saveExcludedIps} disabled={networkSaving} style="margin-top: var(--space-md);">
-						{networkSaving ? 'Saving...' : 'Save Excluded IPs'}
-					</button>
-				{/if}
-			</div>
-		</div>
-
-	{:else if activeTab === 'integrations'}
-		<div class="settings-section">
-			<div class="card">
-				<div class="card-header">
-					<span class="card-title">UniFi Controller</span>
-					{#if unifiConfigured}
-						<span class="unifi-conn-badge" class:connected={unifiConnected} class:disconnected={!unifiConnected}>
-							<span class="unifi-conn-dot"></span>
-							{unifiConnected ? 'Connected' : 'Disconnected'}
-						</span>
-					{/if}
-				</div>
-
-				<p class="field-help" style="margin-bottom: var(--space-lg);">
-					Connect to your UniFi controller to enrich device data with friendly names, models, and network assignments. Uses API key authentication (UniFi OS 10.2.93+).
-				</p>
-
-				{#if unifiMessage}
-					<div class="alert {unifiError ? 'alert-danger' : 'alert-success'}" style="margin-bottom: var(--space-md);">
-						{unifiMessage}
-					</div>
-				{/if}
-
-				{#if unifiLoading}
-					<p class="text-muted">Loading UniFi status...</p>
-				{:else}
-					{#if unifiStatusFailed}
-						<p class="text-warning">{loadFailed('the UniFi status')} The controller may already be set up.</p>
-					{/if}
-					<!-- Connection Status Card (only shown when configured) -->
-					{#if unifiConfigured && (unifiCacheCounts || unifiLastPoll)}
-						<div class="unifi-status-card">
-							<div class="unifi-status-grid">
-								{#if unifiCacheCounts}
-									<div class="unifi-status-item">
-										<span class="unifi-status-value mono">{unifiCacheCounts.clients}</span>
-										<span class="unifi-status-label">Cached Clients</span>
-									</div>
-									<div class="unifi-status-item">
-										<span class="unifi-status-value mono">{unifiCacheCounts.devices}</span>
-										<span class="unifi-status-label">Cached Devices</span>
-									</div>
-								{/if}
-								{#if unifiLastPoll}
-									<div class="unifi-status-item">
-										<span class="unifi-status-value mono">{formatUnifiPollTime(unifiLastPoll)}</span>
-										<span class="unifi-status-label">Last Poll</span>
-									</div>
-								{/if}
-							</div>
-						</div>
-					{/if}
-
-					<!-- Controller URL -->
-					<div class="form-group">
-						<label class="label" for="unifi-url">Controller URL</label>
-						<input
-							class="input"
-							id="unifi-url"
-							type="url"
-							bind:value={unifiControllerUrl}
-							placeholder="https://192.168.1.1"
-						/>
-						<p class="field-help">Full URL to your UniFi controller (e.g. https://192.168.1.1 or https://unifi.local:8443).</p>
-					</div>
-
-					<!-- API Key -->
-					<div class="form-group">
-						<div class="label-with-badge">
-							<label class="label" for="unifi-api-key">API Key</label>
-							{#if unifiConfigured}
-								<span class="badge badge-configured">Configured</span>
-							{/if}
-						</div>
-						<input
-							class="input mono"
-							id="unifi-api-key"
-							type="password"
-							bind:value={unifiApiKey}
-							placeholder={unifiConfigured ? 'Leave blank to keep current key' : 'Paste your UniFi API key'}
-							autocomplete="off"
-							spellcheck="false"
-						/>
-						<p class="field-help">
-							Generate an API key in UniFi OS: Settings &rarr; System &rarr; Advanced &rarr; API Key.
-							{#if unifiConfigured}
-								Leave blank to keep the currently saved key.
-							{/if}
-						</p>
-					</div>
-
-					<!-- Site Selector -->
-					<div class="form-group">
-						<label class="label" for="unifi-site">Site</label>
-						{#if unifiSites.length > 0}
-							<select class="select" id="unifi-site" bind:value={unifiSiteId}>
-								<option value="">Select a site...</option>
-								{#each unifiSites as site}
-									<option value={site.id}>{site.desc || site.name || site.id}</option>
-								{/each}
-							</select>
-							<p class="field-help">Select which UniFi site to poll for device data.</p>
-						{:else if unifiSitesLoading}
-							<p class="text-muted" style="font-size: var(--text-sm);">Loading sites...</p>
-						{:else}
-							<input
-								class="input"
-								id="unifi-site"
-								type="text"
-								bind:value={unifiSiteId}
-								placeholder="default"
-							/>
-							<p class="field-help">Enter a site ID manually, or save and test the connection to auto-discover sites. Most setups use "default".</p>
-						{/if}
-					</div>
-
-					<!-- Action buttons -->
-					<div class="btn-row" style="margin-top: var(--space-md);">
-						<button class="btn btn-primary" onclick={saveUnifiConfig} disabled={unifiSaving || unifiTesting}>
-							{unifiSaving ? 'Saving...' : 'Save Configuration'}
+					<div class="form-actions">
+						<button class="btn primary" type="button" onclick={saveExcludedIps} disabled={networkSaving}>
+							{networkSaving ? 'Saving…' : 'Save excluded IPs'}
 						</button>
+					</div>
+				</div>
+			{/if}
+		</Card>
+	{:else if activeTab === 'integrations'}
+		<Card title="UniFi controller" sub="Device names, models and networks from UniFi · API key sign-in" class="c-12">
+			{#snippet actions()}
+				{#if unifiConfigured}
+					<span class={['chip', unifiConnected ? 'is-ok' : 'is-bad']}>
+						<Icon name={unifiConnected ? 'check' : 'warn'} />{unifiConnected ? 'Connected' : 'Disconnected'}
+					</span>
+				{/if}
+			{/snippet}
+			{#if unifiLoading}
+				<CardState state="loading" title="Loading UniFi status" />
+			{:else}
+				<div class="stack">
+					<p class="field-help">
+						Connect to your UniFi controller to enrich device data with friendly names, models, and network assignments. Uses API key authentication (UniFi OS 10.2.93+).
+					</p>
+					{@render feedback(unifiMessage, unifiError)}
+					{#if unifiStatusFailed}
+						<div class="notice is-warn" role="status"><Icon name="warn" />{loadFailed('the UniFi status')} The controller may already be set up.</div>
+					{/if}
+
+					{#if unifiConfigured && (unifiCacheCounts || unifiLastPoll)}
+						<StatStrip
+							stats={[
+								...(unifiCacheCounts
+									? [
+											{ key: 'clients', label: 'Cached clients', value: String(unifiCacheCounts.clients) },
+											{ key: 'devices', label: 'Cached devices', value: String(unifiCacheCounts.devices) },
+										]
+									: []),
+								...(unifiLastPoll ? [{ key: 'poll', label: 'Last poll', value: formatUnifiPollTime(unifiLastPoll) }] : []),
+							]}
+						/>
+					{/if}
+
+					<div class="form-grid">
+						<div class="field">
+							<label class="label" for="unifi-url">Controller URL</label>
+							<input class="input mono" id="unifi-url" type="url" bind:value={unifiControllerUrl} placeholder="https://192.168.1.1" />
+							<p class="field-help">Full URL to your UniFi controller (e.g. https://192.168.1.1 or https://unifi.local:8443).</p>
+						</div>
+
+						<div class="field">
+							<div class="label-row"><label class="label" for="unifi-api-key">API key</label>{@render configured(unifiConfigured)}</div>
+							<input
+								class="input mono"
+								id="unifi-api-key"
+								type="password"
+								bind:value={unifiApiKey}
+								placeholder={unifiConfigured ? 'Leave blank to keep current key' : 'Paste your UniFi API key'}
+								autocomplete="off"
+								spellcheck="false"
+							/>
+							<p class="field-help">
+								Generate an API key in UniFi OS: Settings · System · Advanced · API Key.
+								{#if unifiConfigured}
+									Leave blank to keep the currently saved key.
+								{/if}
+							</p>
+						</div>
+
+						<div class="field">
+							<label class="label" for="unifi-site">Site</label>
+							{#if unifiSites.length > 0}
+								<select class="select" id="unifi-site" bind:value={unifiSiteId}>
+									<option value="">Select a site…</option>
+									{#each unifiSites as site (site.id)}
+										<option value={site.id}>{site.desc || site.name || site.id}</option>
+									{/each}
+								</select>
+								<p class="field-help">Select which UniFi site to poll for device data.</p>
+							{:else if unifiSitesLoading}
+								<p class="field-help">Loading sites…</p>
+							{:else}
+								<input class="input mono" id="unifi-site" type="text" bind:value={unifiSiteId} placeholder="default" />
+								<p class="field-help">Enter a site ID manually, or save and test the connection to auto-discover sites. Most setups use "default".</p>
+							{/if}
+						</div>
+					</div>
+
+					<div class="form-actions">
 						{#if unifiConfigured}
-							<button class="btn btn-secondary" onclick={testUnifiConnection} disabled={unifiTesting || unifiSaving}>
-								{unifiTesting ? 'Testing...' : 'Test Connection'}
+							<button class="btn" type="button" onclick={testUnifiConnection} disabled={unifiTesting || unifiSaving}>
+								{unifiTesting ? 'Testing…' : 'Test connection'}
 							</button>
 						{/if}
+						<button class="btn primary" type="button" onclick={saveUnifiConfig} disabled={unifiSaving || unifiTesting}>
+							{unifiSaving ? 'Saving…' : 'Save configuration'}
+						</button>
 					</div>
-				{/if}
-			</div>
-		</div>
-
+				</div>
+			{/if}
+		</Card>
 	{:else if activeTab === 'display'}
-		<div class="settings-section">
-			<div class="card">
-				<div class="card-header">
-					<span class="card-title">Display Preferences</span>
-				</div>
-
+		<Card title="Display preferences" sub="Theme, refresh and time settings · saved in this browser" class="c-12">
+			<div class="stack">
 				<ThemePicker />
+				{@render feedback(displayMessage, displayError)}
 
-				{#if displayMessage}
-					<div class="alert alert-success" style="margin-bottom: var(--space-md);">
-						{displayMessage}
+				<div class="form-grid">
+					<div class="field">
+						<label class="label" for="auto-refresh">Auto-refresh interval</label>
+						<select class="select" id="auto-refresh" bind:value={autoRefresh}>
+							<option value="0">Off</option>
+							<option value="10">10 seconds</option>
+							<option value="30">30 seconds</option>
+							<option value="60">1 minute</option>
+							<option value="300">5 minutes</option>
+						</select>
+						<p class="field-help">How often dashboards auto-refresh data.</p>
 					</div>
-				{/if}
-
-				<div class="form-group">
-					<label class="label" for="auto-refresh">Auto-Refresh Interval</label>
-					<select class="select" id="auto-refresh" bind:value={autoRefresh}>
-						<option value="0">Off</option>
-						<option value="10">10 seconds</option>
-						<option value="30">30 seconds</option>
-						<option value="60">1 minute</option>
-						<option value="300">5 minutes</option>
-					</select>
-					<p class="field-help">How often dashboards auto-refresh data.</p>
+					<div class="field">
+						<label class="label" for="timezone">Timezone</label>
+						<select class="select" id="timezone" bind:value={timezone}>
+							<option value="utc">UTC</option>
+							<option value="local">Local (browser)</option>
+						</select>
+						<p class="field-help">Timezone used for displaying timestamps.</p>
+					</div>
+					<div class="field">
+						<label class="label" for="default-range">Default time range</label>
+						<select class="select" id="default-range" bind:value={defaultTimeRange}>
+							<option value="15m">Last 15 minutes</option>
+							<option value="1h">Last 1 hour</option>
+							<option value="4h">Last 4 hours</option>
+							<option value="24h">Last 24 hours</option>
+							<option value="7d">Last 7 days</option>
+						</select>
+						<p class="field-help">Default time window for traffic and alert views.</p>
+					</div>
 				</div>
 
-				<div class="form-group">
-					<label class="label" for="timezone">Timezone</label>
-					<select class="select" id="timezone" bind:value={timezone}>
-						<option value="utc">UTC</option>
-						<option value="local">Local (browser)</option>
-					</select>
-					<p class="field-help">Timezone used for displaying timestamps.</p>
+				<div class="form-actions">
+					<button class="btn primary" type="button" onclick={saveDisplay} disabled={displaySaving}>
+						{displaySaving ? 'Saving…' : 'Save display settings'}
+					</button>
 				</div>
-
-				<div class="form-group">
-					<label class="label" for="default-range">Default Time Range</label>
-					<select class="select" id="default-range" bind:value={defaultTimeRange}>
-						<option value="15m">Last 15 minutes</option>
-						<option value="1h">Last 1 hour</option>
-						<option value="4h">Last 4 hours</option>
-						<option value="24h">Last 24 hours</option>
-						<option value="7d">Last 7 days</option>
-					</select>
-					<p class="field-help">Default time window for traffic and alert views.</p>
-				</div>
-
-				<button class="btn btn-primary" onclick={saveDisplay} disabled={displaySaving}>
-					{displaySaving ? 'Saving...' : 'Save Display Settings'}
-				</button>
 			</div>
-		</div>
-
+		</Card>
 	{:else if activeTab === 'about'}
-		<div class="settings-section">
-			<div class="card">
-				<div class="card-header">
-					<span class="card-title">About NetTap</span>
-				</div>
-				<div class="about-grid">
-					<div class="about-row">
-						<span class="about-label">Version</span>
-						<span class="about-value mono">{version}</span>
-					</div>
-					<div class="about-row">
-						<span class="about-label">Uptime</span>
-						<span class="about-value mono">{uptime}</span>
-					</div>
-					<div class="about-row">
-						<span class="about-label">License</span>
-						<span class="about-value">Apache 2.0</span>
-					</div>
-					<div class="about-row">
-						<span class="about-label">Stack</span>
-						<!-- OLD CODE: Zeek + Suricata + Arkime + OpenSearch (Arkime off by default since 2026-11-02, #44) -->
-						<span class="about-value">Zeek + Suricata + OpenSearch</span>
-					</div>
-					<div class="about-row">
-						<span class="about-label">Build</span>
-						<span class="about-value mono">{buildInfo}</span>
-					</div>
-				</div>
-
-				<div class="about-links">
-					<a href="https://github.com/EliasMarine/NetTap" target="_blank" rel="noopener" class="btn btn-secondary">
-						GitHub Repository
-					</a>
-					<a href="https://github.com/EliasMarine/NetTap/wiki" target="_blank" rel="noopener" class="btn btn-secondary">
-						Documentation
-					</a>
-				</div>
+		<Card title="About NetTap" sub="This appliance · read when this page opened" class="c-6">
+			<dl class="facts flush">
+				<dt>Version</dt>
+				<dd class="mono">{version}</dd>
+				<dt>Uptime</dt>
+				<dd class="num">{uptime}</dd>
+				<dt>Licence</dt>
+				<dd>Apache 2.0</dd>
+				<dt>Stack</dt>
+				<!-- OLD CODE: Zeek + Suricata + Arkime + OpenSearch (Arkime off by default since 2026-11-02, #44) -->
+				<dd>Zeek + Suricata + OpenSearch</dd>
+				<dt>Build</dt>
+				<dd class="mono">{buildInfo}</dd>
+			</dl>
+			<div class="form-actions">
+				<a href="https://github.com/EliasMarine/NetTap" target="_blank" rel="noopener" class="btn">GitHub repository</a>
+				<a href="https://github.com/EliasMarine/NetTap/wiki" target="_blank" rel="noopener" class="btn">Documentation</a>
 			</div>
-		</div>
+		</Card>
 	{/if}
 </div>
 
 <style>
-	.settings-page {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
+	/* Eight tabs overflow a phone: the tab row scrolls on its own, never the page */
+	.tabs-scroll {
+		overflow-x: auto;
+		padding: var(--sp-1);
+		margin: calc(var(--sp-1) * -1);
 	}
 
-	/* OLD CODE START — 2026-11-02: pages are always full width (design system rule 4, #67)
-	.settings-section {
-		max-width: 720px;
-	}
-	OLD CODE END */
-
-	.field-help {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		margin-top: var(--space-xs);
-	}
-
-	.btn-row {
-		display: flex;
-		gap: var(--space-sm);
-		align-items: center;
-	}
-
-	/* Retention grid */
-	.retention-grid {
-		display: grid;
-		grid-template-columns: repeat(3, 1fr);
-		gap: var(--space-md);
-		margin-bottom: var(--space-lg);
-	}
-
-	.threshold-section {
-		display: grid;
-		grid-template-columns: repeat(2, 1fr);
-		gap: var(--space-md);
-		margin-bottom: var(--space-lg);
-	}
-
-	.input-with-unit {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.input-with-unit .input {
-		flex: 1;
-	}
-
-	.input-unit {
-		font-size: var(--text-sm);
-		color: var(--text-muted);
-		font-weight: 500;
-		white-space: nowrap;
-	}
-
-	/* Disk usage bar */
-	.disk-usage-bar {
-		margin-bottom: var(--space-lg);
-	}
-
-	.disk-usage-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: var(--space-xs);
-	}
-
-	.disk-usage-value {
-		font-family: var(--font-mono);
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.disk-bar-track {
-		position: relative;
-		height: 8px;
-		background: var(--bg-tertiary);
-		border-radius: var(--radius-full);
-		overflow: visible;
-	}
-
-	.disk-bar-fill {
-		height: 100%;
-		border-radius: var(--radius-full);
-		background: var(--accent);
-		transition: width var(--transition-normal);
-	}
-
-	.disk-bar-fill.bar-warning {
-		background: var(--amber);
-	}
-
-	.disk-bar-fill.bar-danger {
-		background: var(--red);
-	}
-
-	.disk-bar-marker {
-		position: absolute;
-		top: -3px;
-		width: 2px;
-		height: 14px;
-		background: var(--text-muted);
-		border-radius: 1px;
-		transform: translateX(-1px);
-	}
-
-	/* About section */
-	.about-grid {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.about-row {
-		display: flex;
-		padding: var(--space-sm) 0;
-		border-bottom: 1px solid var(--border-muted);
-	}
-
-	.about-row:last-child {
-		border-bottom: none;
-	}
-
-	.about-label {
-		width: 120px;
-		font-size: var(--text-sm);
-		color: var(--text-muted);
-		font-weight: 500;
-		flex-shrink: 0;
-	}
-
-	.about-value {
-		font-size: var(--text-sm);
-		color: var(--text-primary);
-	}
-
-	.about-links {
-		display: flex;
-		gap: var(--space-sm);
-		margin-top: var(--space-lg);
-	}
-
-	/* Toggle switch */
-	.toggle-row {
-		padding: var(--space-sm) 0;
-	}
-
-	.toggle-label {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-md);
-		cursor: pointer;
-	}
-
-	.toggle-text {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		flex: 1;
-	}
-
-	.toggle-title {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.toggle-description {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		line-height: 1.4;
-	}
-
-	.toggle-switch {
-		position: relative;
-		width: 44px;
-		height: 24px;
-		flex-shrink: 0;
-	}
-
-	.toggle-input {
-		opacity: 0;
-		width: 0;
-		height: 0;
-		position: absolute;
-	}
-
-	.toggle-slider {
-		position: absolute;
-		top: 0;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		background-color: var(--bg-tertiary);
-		border: 1px solid var(--border-default);
-		border-radius: 12px;
-		transition: all var(--transition-fast);
-		cursor: pointer;
-	}
-
-	.toggle-slider::before {
-		content: '';
-		position: absolute;
-		width: 18px;
-		height: 18px;
-		left: 2px;
-		bottom: 2px;
-		background-color: var(--text-muted);
-		border-radius: 50%;
-		transition: all var(--transition-fast);
-	}
-
-	.toggle-input:checked + .toggle-slider {
-		background-color: var(--accent);
-		border-color: var(--accent);
-	}
-
-	.toggle-input:checked + .toggle-slider::before {
-		transform: translateX(20px);
-		background-color: var(--on-accent);
-	}
-
-	.toggle-input:focus-visible + .toggle-slider {
-		outline: 2px solid var(--accent);
+	.grid:focus-visible {
+		outline: 2px solid var(--focus);
 		outline-offset: 2px;
+		border-radius: var(--r-lg);
 	}
 
-	/* Excluded IPs */
-	.excluded-ip-input-row {
+	.facts.flush {
+		border-top: 0;
+		padding-top: 0;
+	}
+
+	.switch-row {
 		display: flex;
-		gap: var(--space-sm);
-		align-items: center;
+		align-items: flex-start;
+		gap: var(--sp-3);
 	}
 
-	.excluded-ip-input-row .input {
-		flex: 1;
-		max-width: 300px;
-	}
-
-	.excluded-ip-list {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-xs);
-		margin-top: var(--space-md);
-	}
-
-	.excluded-ip-item {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: var(--space-xs) var(--space-sm);
-		background: var(--bg-tertiary);
-		border: 1px solid var(--border-muted);
-		border-radius: var(--radius-md);
-	}
-
-	.excluded-ip-item .mono {
-		font-size: var(--text-sm);
-		color: var(--text-primary);
-	}
-
-	.btn-icon-remove {
-		background: none;
-		border: none;
-		color: var(--text-muted);
-		font-size: 1.2rem;
-		cursor: pointer;
-		padding: 0 var(--space-xs);
-		line-height: 1;
-		border-radius: var(--radius-sm);
-		transition: color var(--transition-fast), background var(--transition-fast);
-	}
-
-	.btn-icon-remove:hover {
-		color: var(--red);
-		background: color-mix(in srgb, var(--sev-critical) 10%, transparent);
-	}
-
-	/* API Keys section */
-	.api-keys-section {
-		margin-bottom: var(--space-lg);
-		padding-bottom: var(--space-lg);
-		border-bottom: 1px solid var(--border-muted);
-	}
-
-	.api-keys-section:last-of-type {
-		border-bottom: none;
-		margin-bottom: 0;
-		padding-bottom: 0;
-	}
-
-	.api-keys-section-title {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-secondary);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		margin-bottom: var(--space-md);
-	}
-
-	.label-with-badge {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.label-with-badge .label {
+	.switch-row .label {
 		margin-bottom: 0;
 	}
 
-	.badge {
-		font-size: var(--text-xs);
-		font-weight: 600;
-		padding: 1px 8px;
-		border-radius: var(--radius-full);
-		white-space: nowrap;
+	.state-line {
+		font-size: var(--text-sm);
+		color: var(--text-2);
 	}
 
-	.badge-configured {
-		background: color-mix(in srgb, var(--ok) 15%, transparent);
-		color: var(--ok);
-		border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
-	}
-
-	.smtp-grid {
-		display: grid;
-		grid-template-columns: repeat(2, 1fr);
-		gap: var(--space-md);
-	}
-
-	.smtp-sender-full {
-		grid-column: 1 / -1;
-	}
-
-	@media (max-width: 768px) {
-		.retention-grid {
-			grid-template-columns: 1fr;
-		}
-
-		.threshold-section {
-			grid-template-columns: 1fr;
-		}
-
-		.btn-row {
-			flex-direction: column;
-			align-items: stretch;
-		}
-
-		.about-links {
-			flex-direction: column;
-		}
-
-		.smtp-grid {
-			grid-template-columns: 1fr;
-		}
-	}
-
-	/* Capture tab */
-	.capture-status-card {
-		background: var(--bg-tertiary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md, 8px);
-		padding: var(--space-md);
-	}
-
-	.capture-status-row {
+	.label-row {
 		display: flex;
+		align-items: center;
 		justify-content: space-between;
-		align-items: center;
+		gap: var(--sp-2);
 	}
 
-	.capture-badge {
-		font-size: var(--text-sm);
-		padding: var(--space-xs) var(--space-sm);
-		border-radius: var(--radius-sm, 4px);
-		font-weight: 500;
-	}
-	.capture-badge.status-running {
-		background: var(--green-dim);
-		color: var(--green);
-	}
-	.capture-badge.status-stopped {
-		background: var(--red-dim);
-		color: var(--red);
+	.label-row .label {
+		margin-bottom: 0;
 	}
 
-	.capture-toggle-row {
+	.unit-field,
+	.inline-row {
 		display: flex;
 		align-items: center;
-		gap: var(--space-md);
-	}
-
-	.capture-toggle-label {
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-	}
-
-	.capture-toggle-switch {
-		position: relative;
-		width: 44px;
-		height: 24px;
-		border-radius: 12px;
-		border: 1px solid var(--border-default);
-		background: var(--bg-tertiary);
-		cursor: pointer;
-		transition: background 0.2s, border-color 0.2s;
-		padding: 0;
-		flex-shrink: 0;
-		color: var(--text-primary);
-	}
-	.capture-toggle-switch.on {
-		background: var(--green-dim);
-		border-color: var(--green);
-	}
-	.capture-toggle-switch:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
-	.capture-toggle-knob {
-		position: absolute;
-		top: 2px;
-		left: 2px;
-		width: 18px;
-		height: 18px;
-		border-radius: 50%;
-		background: var(--text-secondary);
-		transition: transform 0.2s, background 0.2s;
-	}
-	.capture-toggle-switch.on .capture-toggle-knob {
-		transform: translateX(20px);
-		background: var(--green);
-	}
-	.capture-toggle-knob.loading {
-		animation: capture-pulse 0.8s ease-in-out infinite;
-	}
-
-	@keyframes capture-pulse {
-		0%, 100% { opacity: 1; }
-		50% { opacity: 0.4; }
-	}
-
-	/* Manual Data Cleanup */
-	.cleanup-input-row {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		margin-bottom: var(--space-md);
+		gap: var(--sp-2);
 		flex-wrap: wrap;
 	}
 
-	.cleanup-label {
-		color: var(--text-secondary);
-		font-size: var(--text-sm);
-		white-space: nowrap;
+	.unit-field .input {
+		width: 120px;
 	}
 
-	.cleanup-preview {
-		background: var(--bg-tertiary);
-		border: 1px solid var(--border);
-		border-radius: var(--radius-md);
-		padding: var(--space-md);
-		margin-top: var(--space-sm);
+	.inline-row .input {
+		flex: 1 1 220px;
+		max-width: 360px;
 	}
 
-	.cleanup-preview-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: var(--space-md);
+	.meter-row {
+		margin-top: var(--sp-4);
 	}
 
-	.cleanup-preview-title {
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.cleanup-stats {
-		display: flex;
-		gap: var(--space-lg);
-		margin-bottom: var(--space-md);
-	}
-
-	.cleanup-stat {
+	.preview {
 		display: flex;
 		flex-direction: column;
-		align-items: center;
+		gap: var(--sp-4);
+		padding: var(--sp-4);
+		border-radius: var(--r-md);
+		background: var(--surface-2);
+		border: 1px solid var(--line);
 	}
 
-	.cleanup-stat-value {
-		font-size: var(--text-xl);
-		font-weight: 700;
-		color: var(--text-primary);
-	}
-
-	.cleanup-stat-label {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
-	.cleanup-confirm-section {
-		border-top: 1px solid var(--border);
-		padding-top: var(--space-md);
-		margin-top: var(--space-sm);
-	}
-
-	.cleanup-actions {
+	.preview-head {
 		display: flex;
-		gap: var(--space-sm);
+		align-items: baseline;
+		justify-content: space-between;
+		gap: var(--sp-3);
+		flex-wrap: wrap;
+		font-size: var(--text-xs);
 	}
 
-	.cleanup-final-confirm {
-		background: var(--bg-secondary);
-		border: 1px solid var(--red);
-		border-radius: var(--radius-md);
-		padding: var(--space-md);
+	.key-group {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sp-3);
+		padding-top: var(--sp-4);
+		border-top: 1px solid var(--line);
 	}
 
-	/* Retention Health Card */
-	.retention-health-card {
-		margin-bottom: var(--space-lg);
+	.ip-list {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--sp-2);
 	}
 
-	.health-badge {
+	.ip-list li {
 		display: inline-flex;
 		align-items: center;
-		gap: var(--space-xs);
+		gap: var(--sp-1);
+		padding-left: var(--sp-3);
+		border-radius: var(--r-pill);
+		background: var(--surface-2);
+		border: 1px solid var(--line);
 		font-size: var(--text-sm);
-		font-weight: 600;
-		padding: 2px var(--space-sm);
-		border-radius: var(--radius-full);
 	}
 
-	.health-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-	}
-
-	.health-healthy {
-		color: var(--green);
-		background: var(--green-dim);
-	}
-	.health-healthy .health-dot {
-		background: var(--green);
-		box-shadow: 0 0 6px var(--green);
-	}
-
-	.health-attention {
-		color: var(--amber);
-		background: var(--amber-dim);
-	}
-	.health-attention .health-dot {
-		background: var(--amber);
-		box-shadow: 0 0 6px var(--amber);
-	}
-
-	.health-problem {
-		color: var(--red);
-		background: var(--red-dim);
-	}
-	.health-problem .health-dot {
-		background: var(--red);
-		box-shadow: 0 0 6px var(--red);
-	}
-	.health-unknown {
-		color: var(--text-muted);
-		background: var(--bg-elevated);
-	}
-	.health-unknown .health-dot {
-		background: var(--text-dim);
-	}
-
-	.health-rows {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-xs);
-	}
-
-	.health-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: var(--space-xs) 0;
-	}
-
-	.health-row + .health-row {
-		border-top: 1px solid var(--border-dim);
-	}
-
-	.health-label {
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-	}
-
-	.health-value {
-		font-size: var(--text-sm);
-		display: flex;
-		align-items: center;
-		gap: var(--space-xs);
-	}
-
-	/* UniFi Integration */
-	.unifi-conn-badge {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--space-xs);
-		font-size: var(--text-sm);
-		font-weight: 600;
-		padding: 2px var(--space-sm);
-		border-radius: var(--radius-full);
-	}
-
-	.unifi-conn-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-	}
-
-	.unifi-conn-badge.connected {
-		color: var(--green);
-		background: var(--green-dim);
-	}
-	.unifi-conn-badge.connected .unifi-conn-dot {
-		background: var(--green);
-		box-shadow: 0 0 6px var(--green);
-	}
-
-	.unifi-conn-badge.disconnected {
-		color: var(--text-muted);
-		background: var(--bg-tertiary);
-	}
-	.unifi-conn-badge.disconnected .unifi-conn-dot {
-		background: var(--text-muted);
-	}
-
-	.unifi-status-card {
-		background: var(--bg-tertiary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		padding: var(--space-md);
-		margin-bottom: var(--space-lg);
-	}
-
-	.unifi-status-grid {
-		display: flex;
-		gap: var(--space-xl);
-	}
-
-	.unifi-status-item {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 2px;
-	}
-
-	.unifi-status-value {
-		font-size: var(--text-lg);
-		font-weight: 700;
-		color: var(--text-primary);
-	}
-
-	.unifi-status-label {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
-	@media (max-width: 768px) {
-		.unifi-status-grid {
-			flex-direction: column;
-			gap: var(--space-md);
-			align-items: flex-start;
-		}
-
-		.unifi-status-item {
-			flex-direction: row;
-			gap: var(--space-sm);
-		}
+	/* The system has no destructive button: the word carries it, the colour backs it up */
+	.btn.danger {
+		color: var(--sev-critical);
 	}
 </style>

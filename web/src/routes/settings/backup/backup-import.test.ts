@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
+import { get } from 'svelte/store';
+import { pageRefresh } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 
 /** Validation always passes; the import answers with `importReply`. */
@@ -23,7 +25,7 @@ async function applyConfig() {
 	const input = container.querySelector('input[type="file"]') as HTMLInputElement;
 	const file = new File([JSON.stringify({ metadata: { schema_version: 1 }, sections: {} })], 'nettap.json', { type: 'application/json' });
 	await fireEvent.change(input, { target: { files: [file] } });
-	await fireEvent.click(await screen.findByRole('button', { name: 'Apply Configuration' }));
+	await fireEvent.click(await screen.findByRole('button', { name: 'Apply configuration' }));
 }
 
 describe('Backup import when the daemon fails (#96)', () => {
@@ -36,14 +38,28 @@ describe('Backup import when the daemon fails (#96)', () => {
 		await applyConfig();
 
 		expect(await screen.findByText('Config import failed: disk full')).toBeInTheDocument();
-		expect(screen.queryByText('Import Successful')).not.toBeInTheDocument();
+		expect(screen.queryByText('Import successful')).not.toBeInTheDocument();
 	});
 
 	it('shows the rejected sections when the daemon refuses the config', async () => {
 		stubFetch({ ok: false, status: 400, body: { success: false, applied: [], errors: ['Schema too new'], warnings: [] } });
 		await applyConfig();
 
-		expect(await screen.findByText('Import Failed')).toBeInTheDocument();
+		expect(await screen.findByText('Import failed')).toBeInTheDocument();
 		expect(screen.getByText('Errors: Schema too new')).toBeInTheDocument();
+	});
+});
+
+// Forms only: nothing on this page comes from a loader, so the top bar hides Refresh (PLAN §5.5)
+describe('Backup page refresh contract', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('registers no page loader', () => {
+		stubFetch({ ok: true, status: 200, body: {} });
+		render(Page);
+
+		expect(get(pageRefresh).available).toBe(false);
 	});
 });

@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import {
 		exportConfig,
 		downloadConfigFile,
@@ -8,6 +7,8 @@
 		readConfigFile,
 	} from '$lib/api/backup';
 	import type { ValidationResult, ImportResult } from '$lib/api/backup';
+	import Card from '$lib/components/ui/Card.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -126,99 +127,86 @@
 </script>
 
 <svelte:head>
-	<title>Backup & Restore - NetTap</title>
+	<title>Backup and restore | NetTap</title>
 </svelte:head>
 
-<div class="page-container">
-	<header class="page-header">
-		<h1>Backup & Restore</h1>
-		<p class="subtitle">Export and import your NetTap configuration</p>
-	</header>
+<div class="page-head">
+	<div>
+		<a class="back" href="/settings"><Icon name="back" />Settings</a>
+		<h1 class="page-title">Backup and restore</h1>
+		<p class="page-sub">Export your NetTap configuration to a file, or restore it from one</p>
+	</div>
+</div>
 
-	<!-- Export Section -->
-	<section class="card">
-		<h2>Export Configuration</h2>
-		<p class="description">
+<div class="grid">
+	<Card title="Export configuration" sub="One JSON file · every NetTap setting" class="c-6">
+		<p class="card-text">
 			Download all NetTap settings as a JSON file. Includes capture mode, retention policies,
 			notification channels, device aliases, excluded IPs, and bandwidth cap.
 		</p>
 
-		<div class="export-actions">
-			<button class="btn btn-primary" onclick={handleExport} disabled={exporting}>
-				{exporting ? 'Exporting...' : 'Export Configuration'}
+		<div class="form-actions start">
+			<button class="btn primary" type="button" onclick={handleExport} disabled={exporting}>
+				<Icon name="download" />{exporting ? 'Exporting…' : 'Export configuration'}
 			</button>
-
 			{#if lastExportDate}
-				<span class="last-export">Last export: {lastExportDate}</span>
+				<span class="dim">Last export: {lastExportDate}</span>
 			{/if}
 		</div>
 
 		{#if exportMessage}
-			<div class="message" class:error={exportError}>
-				{exportMessage}
+			<div class={['notice', exportError ? 'is-error' : 'is-ok']} role={exportError ? 'alert' : 'status'}>
+				<Icon name={exportError ? 'warn' : 'check'} />{exportMessage}
 			</div>
 		{/if}
-	</section>
+	</Card>
 
-	<!-- Import Section -->
-	<section class="card">
-		<h2>Import Configuration</h2>
-		<p class="description">
+	<Card title="Import configuration" sub="A file from an earlier export · checked before it is applied" class="c-6">
+		<p class="card-text">
 			Upload a previously exported configuration file to restore settings.
 			The file will be validated before applying.
 		</p>
 
 		{#if !importFile}
-			<!-- Drop zone -->
+			<!-- The drop target only widens the mouse path; the file input is the keyboard path -->
 			<div
-				class="dropzone"
-				class:dragging={isDragging}
-				role="button"
-				tabindex="0"
+				class={['dropzone', isDragging && 'dragging']}
+				role="region"
+				aria-label="Drop a configuration file"
 				ondrop={handleDrop}
 				ondragover={handleDragOver}
 				ondragleave={handleDragLeave}
 			>
-				<div class="dropzone-content">
-					<span class="dropzone-icon">&#128196;</span>
-					<p>Drag and drop a configuration file here</p>
-					<p class="dropzone-or">or</p>
-					<label class="btn btn-secondary file-label">
-						Choose File
-						<input
-							type="file"
-							accept=".json"
-							onchange={handleFileSelect}
-							class="file-input"
-						/>
-					</label>
-				</div>
+				<span class="state-ic"><Icon name="logs" /></span>
+				<p>Drag and drop a configuration file here</p>
+				<p class="dim">or</p>
+				<label class="btn file-label">
+					Choose file
+					<input type="file" accept=".json" onchange={handleFileSelect} class="sr-only" />
+				</label>
 			</div>
 		{:else}
-			<!-- File selected -->
 			<div class="selected-file">
-				<span class="file-name">{importFile.name}</span>
-				<span class="file-size">
-					({(importFile.size / 1024).toFixed(1)} KB)
-				</span>
-				<button class="btn btn-sm" onclick={resetImport}>Remove</button>
+				<span class="mono">{importFile.name}</span>
+				<span class="dim num">{(importFile.size / 1024).toFixed(1)} KB</span>
+				<button class="btn" type="button" onclick={resetImport}>Remove</button>
 			</div>
 
 			{#if validating}
-				<div class="message">Validating configuration...</div>
+				<div class="notice" role="status">Validating configuration…</div>
 			{/if}
 
 			{#if validation}
-				<!-- Validation results -->
-				<div class="validation-results">
-					<div class="validation-status" class:valid={validation.is_valid} class:invalid={!validation.is_valid}>
+				<div class="validation">
+					<div class={['notice', validation.is_valid ? 'is-ok' : 'is-error']} role="status">
+						<Icon name={validation.is_valid ? 'check' : 'warn'} />
 						{validation.is_valid ? 'Valid configuration' : 'Invalid configuration'}
 					</div>
 
 					{#if validation.errors.length > 0}
-						<div class="validation-list errors">
-							<h4>Errors</h4>
-							<ul>
+						<div>
+							<h3 class="eyebrow">Errors</h3>
+							<ul class="issues">
 								{#each validation.errors as err}
 									<li>{err}</li>
 								{/each}
@@ -227,9 +215,9 @@
 					{/if}
 
 					{#if validation.warnings.length > 0}
-						<div class="validation-list warnings">
-							<h4>Warnings</h4>
-							<ul>
+						<div>
+							<h3 class="eyebrow">Warnings</h3>
+							<ul class="issues">
 								{#each validation.warnings as warn}
 									<li>{warn}</li>
 								{/each}
@@ -238,368 +226,72 @@
 					{/if}
 
 					{#if Object.keys(validation.preview).length > 0}
-						<div class="preview">
-							<h4>Sections to import</h4>
-							<div class="preview-grid">
+						<div>
+							<h3 class="eyebrow">Sections to import</h3>
+							<dl class="facts flush">
 								{#each Object.entries(validation.preview) as [name, info]}
-									<div class="preview-item">
-										<span class="section-name">{name.replace(/_/g, ' ')}</span>
-										<span class="section-info">{info.size} items</span>
-									</div>
+									<dt>{name.replace(/_/g, ' ')}</dt>
+									<dd class="num">{info.size} items</dd>
 								{/each}
-							</div>
+							</dl>
 						</div>
 					{/if}
 
 					{#if validation.is_valid}
-						<button
-							class="btn btn-primary"
-							onclick={handleImport}
-							disabled={importing}
-						>
-							{importing ? 'Importing...' : 'Apply Configuration'}
-						</button>
+						<div class="form-actions">
+							<button class="btn primary" type="button" onclick={handleImport} disabled={importing}>
+								{importing ? 'Importing…' : 'Apply configuration'}
+							</button>
+						</div>
 					{/if}
 				</div>
 			{/if}
 
 			{#if importResult}
-				<div class="import-result" class:success={importResult.success} class:failure={!importResult.success}>
-					<h4>{importResult.success ? 'Import Successful' : 'Import Failed'}</h4>
-					{#if importResult.applied.length > 0}
-						<p>Applied sections: {importResult.applied.join(', ')}</p>
-					{/if}
-					{#if importResult.errors.length > 0}
-						<p class="import-errors">Errors: {importResult.errors.join(', ')}</p>
-					{/if}
-					{#if importResult.warnings.length > 0}
-						<p class="import-warnings">Warnings: {importResult.warnings.join(', ')}</p>
-					{/if}
+				<div
+					class={['notice', importResult.success ? 'is-ok' : 'is-error']}
+					role={importResult.success ? 'status' : 'alert'}
+				>
+					<Icon name={importResult.success ? 'check' : 'warn'} />
+					<div>
+						<b>{importResult.success ? 'Import successful' : 'Import failed'}</b>
+						{#if importResult.applied.length > 0}
+							<p>Applied sections: {importResult.applied.join(', ')}</p>
+						{/if}
+						{#if importResult.errors.length > 0}
+							<p>Errors: {importResult.errors.join(', ')}</p>
+						{/if}
+						{#if importResult.warnings.length > 0}
+							<p>Warnings: {importResult.warnings.join(', ')}</p>
+						{/if}
+					</div>
 				</div>
 			{/if}
 
 			{#if importError && !importResult}
-				<div class="message error">{importError}</div>
+				<div class="notice is-error" role="alert"><Icon name="warn" />{importError}</div>
 			{/if}
 		{/if}
-	</section>
+	</Card>
 </div>
 
 <style>
-	.page-container {
-		/* OLD CODE START — design system: page containers are always full width */
-		/* max-width: 800px; */
-		/* OLD CODE END */
-		margin: 0 auto;
-		padding: 1.5rem;
-	}
-
-	.page-header {
-		margin-bottom: 1.5rem;
-	}
-
-	.page-header h1 {
-		font-size: 1.75rem;
-		font-weight: 700;
-		color: var(--text-1);
-		margin: 0;
-	}
-
-	.subtitle {
-		color: var(--text-2);
-		margin: 0.25rem 0 0;
-		font-size: 0.9rem;
-	}
-
-	.card {
-		background: var(--surface-1);
-		border: 1px solid var(--line);
-		border-radius: 0.75rem;
-		padding: 1.5rem;
-		margin-bottom: 1.5rem;
-	}
-
-	h2 {
-		font-size: 1.1rem;
-		font-weight: 600;
-		color: var(--text-1);
-		margin: 0 0 0.5rem;
-	}
-
-	.description {
-		color: var(--text-2);
-		font-size: 0.875rem;
-		margin: 0 0 1rem;
-		line-height: 1.5;
-	}
-
-	.export-actions {
-		display: flex;
-		align-items: center;
-		gap: 1rem;
-	}
-
-	.last-export {
-		color: var(--text-3);
-		font-size: 0.8rem;
-	}
-
-	.btn {
-		padding: 0.5rem 1rem;
-		border: 1px solid var(--line);
-		border-radius: 0.5rem;
-		cursor: pointer;
-		font-size: 0.875rem;
-		transition: all 0.15s;
-		background: var(--surface-1);
-		color: var(--text-1);
-	}
-
-	.btn:hover {
-		border-color: var(--accent);
-	}
-
-	.btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	.btn-primary {
-		background: var(--accent);
-		border-color: var(--accent);
-		color: var(--on-accent);
-	}
-
-	.btn-primary:hover:not(:disabled) {
-		background: var(--accent-strong);
-	}
-
-	.btn-secondary {
-		background: var(--surface-2);
-	}
-
-	.btn-sm {
-		padding: 0.25rem 0.5rem;
-		font-size: 0.75rem;
-	}
-
-	.message {
-		margin-top: 0.75rem;
-		padding: 0.625rem 1rem;
-		border-radius: 0.5rem;
-		font-size: 0.875rem;
-		background: color-mix(in srgb, var(--ok) 10%, transparent);
-		border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
-		color: var(--ok);
-	}
-
-	.message.error {
-		background: color-mix(in srgb, var(--sev-critical) 10%, transparent);
-		border-color: color-mix(in srgb, var(--sev-critical) 30%, transparent);
-		color: var(--sev-critical);
-	}
-
+	.card-text { color: var(--text-2); font-size: var(--text-sm); line-height: 1.5; margin-bottom: var(--sp-4); }
+	.form-actions.start { justify-content: flex-start; align-items: center; margin: 0 0 var(--sp-4); }
 	.dropzone {
-		border: 2px dashed var(--line);
-		border-radius: 0.75rem;
-		padding: 2rem;
-		text-align: center;
-		cursor: pointer;
-		transition: all 0.15s;
+		display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); text-align: center;
+		padding: var(--sp-6) var(--sp-4); border: 1px dashed var(--line-strong); border-radius: var(--r-md);
+		background: var(--surface-1); color: var(--text-2); font-size: var(--text-sm);
+		transition: background var(--dur-fast);
 	}
-
-	.dropzone:hover,
-	.dropzone.dragging {
-		border-color: var(--accent);
-		background: color-mix(in srgb, var(--accent) 5%, transparent);
-	}
-
-	.dropzone-content {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.dropzone-icon {
-		font-size: 2rem;
-		opacity: 0.5;
-	}
-
-	.dropzone-content p {
-		color: var(--text-2);
-		font-size: 0.875rem;
-		margin: 0;
-	}
-
-	.dropzone-or {
-		color: var(--text-3) !important;
-		font-size: 0.75rem !important;
-	}
-
-	.file-label {
-		display: inline-flex;
-		align-items: center;
-	}
-
-	.file-input {
-		display: none;
-	}
-
-	.selected-file {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		padding: 0.75rem 1rem;
-		background: var(--bg);
-		border: 1px solid var(--line);
-		border-radius: 0.5rem;
-		margin-bottom: 1rem;
-	}
-
-	.file-name {
-		font-family: 'JetBrains Mono', monospace;
-		font-size: 0.875rem;
-		color: var(--text-1);
-	}
-
-	.file-size {
-		color: var(--text-3);
-		font-size: 0.8rem;
-	}
-
-	.validation-results {
-		margin-top: 1rem;
-	}
-
-	.validation-status {
-		padding: 0.5rem 1rem;
-		border-radius: 0.5rem;
-		font-weight: 600;
-		font-size: 0.875rem;
-		margin-bottom: 0.75rem;
-	}
-
-	.validation-status.valid {
-		background: color-mix(in srgb, var(--ok) 10%, transparent);
-		border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
-		color: var(--ok);
-	}
-
-	.validation-status.invalid {
-		background: color-mix(in srgb, var(--sev-critical) 10%, transparent);
-		border: 1px solid color-mix(in srgb, var(--sev-critical) 30%, transparent);
-		color: var(--sev-critical);
-	}
-
-	.validation-list {
-		margin-bottom: 0.75rem;
-	}
-
-	.validation-list h4 {
-		font-size: 0.8rem;
-		font-weight: 600;
-		margin: 0 0 0.25rem;
-	}
-
-	.validation-list.errors h4 {
-		color: var(--sev-critical);
-	}
-
-	.validation-list.warnings h4 {
-		color: var(--sev-medium);
-	}
-
-	.validation-list ul {
-		margin: 0;
-		padding-left: 1.25rem;
-		font-size: 0.8rem;
-	}
-
-	.validation-list.errors li {
-		color: var(--sev-critical);
-	}
-
-	.validation-list.warnings li {
-		color: var(--sev-medium);
-	}
-
-	.preview {
-		margin-bottom: 1rem;
-	}
-
-	.preview h4 {
-		font-size: 0.8rem;
-		font-weight: 600;
-		color: var(--text-2);
-		margin: 0 0 0.5rem;
-	}
-
-	.preview-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-		gap: 0.5rem;
-	}
-
-	.preview-item {
-		display: flex;
-		justify-content: space-between;
-		padding: 0.5rem 0.75rem;
-		background: var(--bg);
-		border-radius: 0.375rem;
-		font-size: 0.8rem;
-	}
-
-	.section-name {
-		color: var(--text-1);
-		text-transform: capitalize;
-	}
-
-	.section-info {
-		color: var(--text-3);
-	}
-
-	.import-result {
-		margin-top: 1rem;
-		padding: 0.75rem 1rem;
-		border-radius: 0.5rem;
-		font-size: 0.875rem;
-	}
-
-	.import-result.success {
-		background: color-mix(in srgb, var(--ok) 10%, transparent);
-		border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
-	}
-
-	.import-result.failure {
-		background: color-mix(in srgb, var(--sev-critical) 10%, transparent);
-		border: 1px solid color-mix(in srgb, var(--sev-critical) 30%, transparent);
-	}
-
-	.import-result h4 {
-		margin: 0 0 0.5rem;
-		font-size: 0.9rem;
-	}
-
-	.import-result.success h4 {
-		color: var(--ok);
-	}
-
-	.import-result.failure h4 {
-		color: var(--sev-critical);
-	}
-
-	.import-result p {
-		margin: 0.25rem 0;
-		color: var(--text-2);
-		font-size: 0.8rem;
-	}
-
-	.import-errors {
-		color: var(--sev-critical) !important;
-	}
-
-	.import-warnings {
-		color: var(--sev-medium) !important;
-	}
+	.dropzone.dragging { background: var(--surface-2); border-color: var(--accent); }
+	.file-label { cursor: pointer; }
+	.file-label:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+	.selected-file { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; margin-bottom: var(--sp-4); font-size: var(--text-sm); }
+	.selected-file .btn { margin-left: auto; }
+	.validation { display: flex; flex-direction: column; gap: var(--sp-4); margin-bottom: var(--sp-4); }
+	.issues { margin: var(--sp-2) 0 0; padding-left: var(--sp-5); font-size: var(--text-sm); color: var(--text-2); }
+	.facts.flush { border-top: 0; padding-top: 0; margin-top: var(--sp-2); }
+	.facts dt { text-transform: capitalize; }
+	.notice p { margin-top: var(--sp-1); }
 </style>
