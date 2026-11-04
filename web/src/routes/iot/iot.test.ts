@@ -50,7 +50,10 @@ describe('IoT page — failed endpoints', () => {
 		render(IoTPage);
 		await flush();
 
-		expect(screen.getByText('Failed to load IoT data.')).toBeInTheDocument();
+		// OLD CODE START — 2026-11-03 UI redesign: the system's error pattern is "Couldn't load …: the request failed."
+		// expect(screen.getByText('Failed to load IoT data.')).toBeInTheDocument();
+		// OLD CODE END
+		expect(screen.getByText("Couldn't load IoT data: the request failed.")).toBeInTheDocument();
 		expect(screen.queryByText('F')).not.toBeInTheDocument();
 	});
 
@@ -60,8 +63,12 @@ describe('IoT page — failed endpoints', () => {
 		render(IoTPage);
 		await flush();
 
-		expect(screen.queryByText('Failed to load IoT data.')).not.toBeInTheDocument();
-		expect(screen.getByText('Network Isolation')).toBeInTheDocument();
+		// OLD CODE START — 2026-11-03 UI redesign: the error text and the card title changed (sentence case)
+		// expect(screen.queryByText('Failed to load IoT data.')).not.toBeInTheDocument();
+		// expect(screen.getByText('Network Isolation')).toBeInTheDocument();
+		// OLD CODE END
+		expect(screen.queryByText("Couldn't load IoT data: the request failed.")).not.toBeInTheDocument();
+		expect(screen.getByText('Network isolation')).toBeInTheDocument();
 		// OLD CODE START — #96: the failure read as a finding of no cross-segment traffic
 		// expect(screen.getByText('No cross-segment IoT communication detected.')).toBeInTheDocument();
 		// OLD CODE END
@@ -81,7 +88,10 @@ describe('IoT page — failed endpoints', () => {
 		await flush();
 
 		expect(screen.getByText(/Couldn't check privacy: the request failed/)).toBeInTheDocument();
-		expect(screen.queryByText('No findings -- all devices look healthy.')).not.toBeInTheDocument();
+		// OLD CODE START — 2026-11-03 UI redesign: the empty text lost its "--"
+		// expect(screen.queryByText('No findings -- all devices look healthy.')).not.toBeInTheDocument();
+		// OLD CODE END
+		expect(screen.queryByText('No findings. All devices look healthy.')).not.toBeInTheDocument();
 		expect(screen.getByText(/Couldn't load manufacturer profiles/)).toBeInTheDocument();
 	});
 
@@ -91,7 +101,10 @@ describe('IoT page — failed endpoints', () => {
 		render(IoTPage);
 		await flush();
 
-		expect(screen.getByText('No findings -- all devices look healthy.')).toBeInTheDocument();
+		// OLD CODE START — 2026-11-03 UI redesign: the empty text lost its "--"
+		// expect(screen.getByText('No findings -- all devices look healthy.')).toBeInTheDocument();
+		// OLD CODE END
+		expect(screen.getByText('No findings. All devices look healthy.')).toBeInTheDocument();
 		expect(screen.getByText('No cross-segment IoT communication detected.')).toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
 	});

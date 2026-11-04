@@ -1,18 +1,37 @@
 <script lang="ts">
 	/**
-	 * Device Inventory v2 — Card-based network device dashboard.
+	 * Devices: every device NetTap sees on the network.
 	 *
-	 * Shows devices seen in network traffic, grouped by category (computer, phone, IoT,
-	 * infrastructure, unknown) with hero stats, search, and category filters.
+	 * - By type: Home's device cards (moved here, PLAN.md §3): the registry, one card per MAC,
+	 *   with each card's traffic from the device list, grouped by device type. Mirror mode only,
+	 *   as on Home.
+	 * - All devices: the IP-keyed device list as a sortable table, with type filter and search.
 	 */
 
-	import { onDestroy } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { getDevices, getDeviceCount } from '$api/devices';
-	import { getNewDeviceCount } from '$api/devices-registry';
 	import type { Device } from '$api/devices';
+	import { getNewDeviceCount, getRegistryDevices } from '$api/devices-registry';
+	import type { RegistryDevice, RegistryListResponse } from '$api/devices-registry';
+	import { getCaptureMode } from '$api/capture';
+	import type { CaptureMode } from '$api/capture';
 	import { loadFailed } from '$lib/utils/load-failed';
-	import { compareValues } from '$lib/utils/table-sort.svelte';
+	import { withTraffic } from '$lib/utils/registry-traffic';
+	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import NewDeviceBanner from '$components/NewDeviceBanner.svelte';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import KpiCard from '$lib/components/ui/KpiCard.svelte';
+	import Pills from '$lib/components/ui/Pills.svelte';
+	import SearchField from '$lib/components/ui/SearchField.svelte';
+	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
+	import DeviceTile from '$lib/components/ui/DeviceTile.svelte';
+	import Bytes from '$lib/components/ui/Bytes.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import { deviceIcon } from '$lib/components/ui/device-icon';
+	import { groupByType } from './device-types';
+	import { outcome } from './load-outcome';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -22,7 +41,9 @@
 	let devices = $state<Device[]>([]);
 	// #96: a failed load keeps the last list and says so; it never reads as "No devices seen yet"
 	let devicesFailed = $state(false);
-	// the list stops at 200 rows; Total Devices is the exact count, '—' until one loads
+	// the list's range start, once it has loaded (Home's deviceListFrom, for the card merge)
+	let listFrom = $state<string | null>(null);
+	// the list stops at LIST_LIMIT rows; Total Devices is the exact count, '—' until one loads
 	let deviceCount = $state<number | null>(null);
 	let deviceCountFailed = $state(false);
 	// exact counts, not filters of the busiest-N list: '—' until loaded, a note if they fail
@@ -31,118 +52,175 @@
 	let newCount = $state<number | null>(null);
 	let newFailed = $state(false);
 	const LIST_LIMIT = 500; // the daemon's largest device list
+	const DAY = 24 * 60 * 60 * 1000;
 	let searchQuery = $state('');
 	let categoryFilter = $state('all');
-	let viewMode = $state<'grid' | 'list'>('grid');
 	let autoRefresh = $state(false);
 
-	// List view sort state
-	let sortField = $state<string>('total_bytes');
-	let sortDir = $state<'asc' | 'desc'>('desc');
+	// By type: Home's registry cards (mirror mode only)
+	let captureMode = $state<CaptureMode | null>(null);
+	let modeFailed = $state(false);
+	let registryDevices = $state<RegistryDevice[]>([]);
+	let registryFailed = $state(false);
+	const isMirrorMode = $derived(captureMode?.mode === 'mirror');
 
-	function toggleSort(field: string) {
-		if (sortField === field) {
-			sortDir = sortDir === 'desc' ? 'asc' : 'desc';
-		} else {
-			sortField = field;
-			sortDir = 'desc';
-		}
-	}
-
-	function sortArrow(field: string): string {
-		if (sortField !== field) return '';
-		return sortDir === 'asc' ? ' \u25B2' : ' \u25BC';
-	}
-	let autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
-	let lastUpdated = $state('');
+	// The tab the user picked; until then By type in mirror mode, All devices otherwise
+	let pickedView = $state<'type' | 'all' | null>(null);
+	const view = $derived(pickedView ?? (isMirrorMode ? 'type' : 'all'));
+	const VIEWS = [
+		{ value: 'type' as const, label: 'By type' },
+		{ value: 'all' as const, label: 'All devices' },
+	];
 
 	// ---------------------------------------------------------------------------
 	// Category config
 	// ---------------------------------------------------------------------------
 
+	// OLD CODE START — 2026-11-03 UI redesign: emoji icons and legacy colours; device types use the system icons
+	// const CATEGORIES = [
+	// 	{ key: 'all', label: 'All', icon: '' },
+	// 	{ key: 'computer', label: 'Computers', icon: '\u{1F4BB}' },
+	// 	{ key: 'phone', label: 'Phones', icon: '\u{1F4F1}' },
+	// 	{ key: 'media', label: 'Media', icon: '\u{1F4FA}' },
+	// 	{ key: 'iot', label: 'IoT', icon: '\u{1F4E1}' },
+	// 	{ key: 'infrastructure', label: 'Infra', icon: '\u{1F5A7}' },
+	// 	{ key: 'unknown', label: 'Unknown', icon: '\u{2753}' },
+	// ];
+	// const CATEGORY_COLORS: Record<string, string> = {
+	// 	computer: 'var(--cyan)', phone: 'var(--green)', media: 'var(--purple)',
+	// 	iot: 'var(--orange)', infrastructure: 'var(--blue)', unknown: 'var(--text-dim)',
+	// };
+	// const CATEGORY_ICONS: Record<string, string> = {
+	// 	computer: '\u{1F4BB}', phone: '\u{1F4F1}', media: '\u{1F4FA}',
+	// 	iot: '\u{1F4E1}', infrastructure: '\u{1F5A7}', unknown: '\u{2753}',
+	// };
+	// OLD CODE END
 	const CATEGORIES = [
-		{ key: 'all', label: 'All', icon: '' },
-		{ key: 'computer', label: 'Computers', icon: '\u{1F4BB}' },
-		{ key: 'phone', label: 'Phones', icon: '\u{1F4F1}' },
-		{ key: 'media', label: 'Media', icon: '\u{1F4FA}' },
-		{ key: 'iot', label: 'IoT', icon: '\u{1F4E1}' },
-		{ key: 'infrastructure', label: 'Infra', icon: '\u{1F5A7}' },
-		{ key: 'unknown', label: 'Unknown', icon: '\u{2753}' },
+		{ key: 'all', label: 'All' },
+		{ key: 'computer', label: 'Computers' },
+		{ key: 'phone', label: 'Phones' },
+		{ key: 'media', label: 'Media' },
+		{ key: 'iot', label: 'IoT' },
+		{ key: 'infrastructure', label: 'Infrastructure' },
+		{ key: 'unknown', label: 'Unknown' },
 	];
-
-	const CATEGORY_COLORS: Record<string, string> = {
-		computer: 'var(--cyan)', phone: 'var(--green)', media: 'var(--purple)',
-		iot: 'var(--orange)', infrastructure: 'var(--blue)', unknown: 'var(--text-dim)',
-	};
-
-	const CATEGORY_ICONS: Record<string, string> = {
-		computer: '\u{1F4BB}', phone: '\u{1F4F1}', media: '\u{1F4FA}',
-		iot: '\u{1F4E1}', infrastructure: '\u{1F5A7}', unknown: '\u{2753}',
+	const CATEGORY_LABELS: Record<string, string> = {
+		computer: 'Computer', phone: 'Phone', media: 'Media', iot: 'IoT', infrastructure: 'Infrastructure', unknown: 'Unknown',
 	};
 
 	// ---------------------------------------------------------------------------
 	// Fetching
 	// ---------------------------------------------------------------------------
 
-	async function fetchDevices() {
-		loading = true;
-		// OLD CODE START — Total Devices was the length of this 200-row list, so bigger networks read 200
-		// try {
-		// 	const res = await getDevices({ sort: 'bytes', order: 'desc', limit: 200 });
-		// 	devices = res.devices;
-		// 	lastUpdated = new Date().toLocaleTimeString();
-		// 	devicesFailed = false;
-		// } catch {
-		// 	// OLD CODE START — #96: a failure read as "0 devices" and "No devices seen yet"
-		// 	// devices = [];
-		// 	// OLD CODE END
-		// 	devicesFailed = true;
-		// } finally {
-		// 	loading = false;
-		// }
-		// OLD CODE END
-		// same (default 24 h) range for both: the page sends no from/to
+	// OLD CODE START — 2026-11-03 UI redesign: the loader goes through the page refresh contract
+	// (PLAN.md §5.5) with a load guard, and also loads Home's registry cards for By type
+	// async function fetchDevices() {
+	// 	loading = true;
+	// 	const now = Date.now();
+	// 	const iso = (ms: number) => new Date(ms).toISOString();
+	// 	const [listRes, countRes, onlineRes, newRes] = await Promise.allSettled([
+	// 		getDevices({ sort: 'bytes', order: 'desc', limit: LIST_LIMIT }),
+	// 		getDeviceCount(),
+	// 		getDeviceCount({ from: iso(now - 5 * 60 * 1000), to: iso(now) }),
+	// 		getNewDeviceCount(iso(now - 24 * 60 * 60 * 1000)),
+	// 	]);
+	// 	if (onlineRes.status === 'fulfilled') onlineCount = onlineRes.value.count;
+	// 	onlineFailed = onlineRes.status === 'rejected';
+	// 	if (newRes.status === 'fulfilled') newCount = newRes.value.count;
+	// 	newFailed = newRes.status === 'rejected';
+	// 	if (listRes.status === 'fulfilled') {
+	// 		devices = listRes.value.devices;
+	// 		lastUpdated = new Date().toLocaleTimeString();
+	// 	}
+	// 	devicesFailed = listRes.status === 'rejected';
+	// 	if (countRes.status === 'fulfilled') deviceCount = countRes.value.count;
+	// 	deviceCountFailed = countRes.status === 'rejected';
+	// 	loading = false;
+	// }
+	// $effect(() => { fetchDevices(); });
+	// $effect(() => {
+	// 	if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+	// 	if (autoRefresh) {
+	// 		autoRefreshTimer = setInterval(() => fetchDevices(), 30_000);
+	// 	}
+	// 	return () => { if (autoRefreshTimer) clearInterval(autoRefreshTimer); };
+	// });
+	// onDestroy(() => { if (autoRefreshTimer) clearInterval(autoRefreshTimer); });
+	// OLD CODE END
+
+	/** Home's order (routes/+page.svelte fetchAllData): the capture mode first, the registry only in mirror mode. */
+	async function loadRegistry(): Promise<{
+		mode: PromiseSettledResult<CaptureMode>;
+		registry: PromiseSettledResult<RegistryListResponse> | null;
+	}> {
+		const [mode] = await Promise.allSettled([getCaptureMode()]);
+		if (mode.status === 'rejected' || mode.value.mode !== 'mirror') return { mode, registry: null };
+		const [registry] = await Promise.allSettled([getRegistryDevices({ limit: 200 })]);
+		return { mode, registry };
+	}
+
+	async function load(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		// same (default 24 h) range for the list and the total: the page sends no from/to
 		const now = Date.now();
 		const iso = (ms: number) => new Date(ms).toISOString();
-		const [listRes, countRes, onlineRes, newRes] = await Promise.allSettled([
-			// OLD CODE START — a 200-row list; Online Now and the category pills counted only it
-			// getDevices({ sort: 'bytes', order: 'desc', limit: 200 }),
-			// OLD CODE END
-			getDevices({ sort: 'bytes', order: 'desc', limit: LIST_LIMIT }),
-			getDeviceCount(),
-			// devices with traffic in the last 5 minutes, by the list's own device rules
-			getDeviceCount({ from: iso(now - 5 * 60 * 1000), to: iso(now) }),
-			getNewDeviceCount(iso(now - 24 * 60 * 60 * 1000)),
+		const [[listRes, countRes, onlineRes, newRes], { mode: modeRes, registry: registryRes }] = await Promise.all([
+			Promise.allSettled([
+				// OLD CODE START — a 200-row list; Online Now and the category pills counted only it
+				// getDevices({ sort: 'bytes', order: 'desc', limit: 200 }),
+				// OLD CODE END
+				getDevices({ sort: 'bytes', order: 'desc', limit: LIST_LIMIT }),
+				getDeviceCount(),
+				// devices with traffic in the last 5 minutes, by the list's own device rules
+				getDeviceCount({ from: iso(now - 5 * 60 * 1000), to: iso(now) }),
+				getNewDeviceCount(iso(now - DAY)),
+			]),
+			loadRegistry(),
 		]);
+		if (!guard.current(g)) return 'skipped';
+
 		if (onlineRes.status === 'fulfilled') onlineCount = onlineRes.value.count;
 		onlineFailed = onlineRes.status === 'rejected';
 		if (newRes.status === 'fulfilled') newCount = newRes.value.count;
 		newFailed = newRes.status === 'rejected';
 		if (listRes.status === 'fulfilled') {
 			devices = listRes.value.devices;
-			lastUpdated = new Date().toLocaleTimeString();
+			listFrom = listRes.value.from;
 		}
 		devicesFailed = listRes.status === 'rejected';
 		if (countRes.status === 'fulfilled') deviceCount = countRes.value.count;
 		deviceCountFailed = countRes.status === 'rejected';
+		// a failed mode keeps the last one; with none, By type says so instead of guessing bridge
+		if (modeRes.status === 'fulfilled') captureMode = modeRes.value;
+		modeFailed = modeRes.status === 'rejected';
+		// #96: a failed registry keeps the last cards; it never reads as "No devices detected yet"
+		if (registryRes?.status === 'fulfilled') registryDevices = registryRes.value.devices;
+		registryFailed = registryRes?.status === 'rejected';
 		loading = false;
+
+		return outcome([listRes, countRes, onlineRes, newRes, modeRes, ...(registryRes ? [registryRes] : [])]);
 	}
 
-	$effect(() => { fetchDevices(); });
-
-	$effect(() => {
-		if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-		if (autoRefresh) {
-			autoRefreshTimer = setInterval(() => fetchDevices(), 30_000);
-		}
-		return () => { if (autoRefreshTimer) clearInterval(autoRefreshTimer); };
+	const refresh = registerPageRefresh(load);
+	onMount(() => {
+		refresh.run();
 	});
+	onDestroy(() => refresh.unregister());
 
-	onDestroy(() => { if (autoRefreshTimer) clearInterval(autoRefreshTimer); });
+	// The page's own 30 s auto refresh, through the same contract so "Updated" stays honest
+	$effect(() => {
+		if (!autoRefresh) return;
+		const timer = setInterval(() => refresh.run(), 30_000);
+		return () => clearInterval(timer);
+	});
 
 	// ---------------------------------------------------------------------------
 	// Derived
 	// ---------------------------------------------------------------------------
+
+	// Home's device cards: the range's traffic per IP; a list shorter than its limit holds every device
+	const deviceCards = $derived(withTraffic(registryDevices, listFrom ? devices : null, devices.length < LIST_LIMIT, listFrom ?? ''));
+	const typeGroups = $derived(groupByType(deviceCards));
 
 	let filteredDevices = $derived.by(() => {
 		let list = [...devices];
@@ -175,8 +253,8 @@
 		}
 		return counts;
 	});
+	const categoryOptions = $derived(CATEGORIES.map((c) => ({ value: c.key, label: `${c.label} ${categoryCounts[c.key] ?? 0}` })));
 
-	// Hero stats
 	// OLD CODE START — counted inside the busiest-200 list; and first_seen is the first record in
 	// the page's 24 h window, so "New (24h)" was every device (54 of 54 on the G11)
 	// let onlineCount = $derived(devices.filter((d) => d.last_seen && (Date.now() - new Date(d.last_seen).getTime()) < 5 * 60 * 1000).length);
@@ -189,19 +267,22 @@
 	// Max bytes for bar widths
 	let maxBytes = $derived(devices.length > 0 ? Math.max(...devices.map((d) => d.total_bytes), 1) : 1);
 
-	// Sorted list for table view
-	let sortedDevices = $derived.by(() => {
-		return [...filteredDevices].sort((a, b) => {
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			const av = (a as any)[sortField] ?? 0;
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
-			const bv = (b as any)[sortField] ?? 0;
-			// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
-			// const cmp = av < bv ? -1 : av > bv ? 1 : 0;
-			// OLD CODE END
-			const cmp = compareValues(av, bv);
-			return sortDir === 'asc' ? cmp : -cmp;
-		});
+	// OLD CODE START — 2026-11-03 UI redesign: the hand-built table's sort; DataTable sorts every column
+	// let sortedDevices = $derived.by(() => {
+	// 	return [...filteredDevices].sort((a, b) => {
+	// 		const av = (a as any)[sortField] ?? 0;
+	// 		const bv = (b as any)[sortField] ?? 0;
+	// 		const cmp = compareValues(av, bv);
+	// 		return sortDir === 'asc' ? cmp : -cmp;
+	// 	});
+	// });
+	// OLD CODE END
+
+	const subtitle = $derived.by(() => {
+		if (devicesFailed) return devices.length > 0 ? loadFailed('devices', true) : 'Every device NetTap sees on the network';
+		if (deviceCount === null && devices.length === 0) return 'Every device NetTap sees on the network';
+		const total = deviceCount !== null ? `${deviceCount} devices seen on the network` : `Showing ${devices.length} devices`;
+		return listIsPartial ? `${total} · showing the ${devices.length} busiest` : total;
 	});
 
 	// ---------------------------------------------------------------------------
@@ -215,24 +296,31 @@
 		return `${(bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
 	}
 
+	/** A registry card's traffic: undefined is unknown (the list didn't cover it), 0 is a real zero. */
+	function cardBytes(bytes: number | undefined): string {
+		return bytes === undefined || bytes < 0 ? '—' : formatBytes(bytes);
+	}
+
 	function formatNumber(n: number): string {
 		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
 		if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
 		return n.toLocaleString();
 	}
 
-	function isOnline(d: Device): boolean {
-		return !!d.last_seen && (Date.now() - new Date(d.last_seen).getTime()) < 5 * 60 * 1000;
+	function ageMs(d: Device): number | null {
+		return d.last_seen ? Date.now() - new Date(d.last_seen).getTime() : null;
 	}
 
-	function isIdle(d: Device): boolean {
-		if (!d.last_seen) return false;
-		const diff = Date.now() - new Date(d.last_seen).getTime();
-		return diff >= 5 * 60 * 1000 && diff < 60 * 60 * 1000;
+	/** Traffic in the last 5 minutes is online; in the last hour, idle. */
+	function status(d: Device): { rank: number; label: string } {
+		const age = ageMs(d);
+		if (age !== null && age < 5 * 60 * 1000) return { rank: 2, label: 'Online' };
+		if (age !== null && age < 60 * 60 * 1000) return { rank: 1, label: 'Idle' };
+		return { rank: 0, label: 'Offline' };
 	}
 
 	function timeAgo(dateStr: string): string {
-		if (!dateStr) return '--';
+		if (!dateStr) return '—';
 		const diff = Date.now() - new Date(dateStr).getTime();
 		const mins = Math.floor(diff / 60000);
 		if (mins < 1) return 'just now';
@@ -242,363 +330,237 @@
 		return `${Math.floor(hours / 24)}d ago`;
 	}
 
-	function catColor(d: Device): string {
-		return CATEGORY_COLORS[d.category ?? 'unknown'] ?? 'var(--text-dim)';
-	}
+	const deviceName = (d: Device) => d.unifi_name ?? d.hostname ?? d.ip;
+	const openDevice = (d: Device) => goto(`/devices/${encodeURIComponent(d.ip)}`);
+	// "1.2 GB" as the KPI's value and unit
+	const topBytes = $derived(topConsumer ? formatBytes(topConsumer.total_bytes).split(' ') : null);
 
-	function catIcon(d: Device): string {
-		return CATEGORY_ICONS[d.category ?? 'unknown'] ?? '\u{2753}';
+	// Every column sorts (design system); the snippets are at the top of the markup
+	const columns: Column<Device>[] = [
+		{ key: 'ip', label: 'IP address', cell: ipCell },
+		{ key: 'name', label: 'Name', cell: nameCell, sortValue: (d) => d.unifi_name ?? d.hostname },
+		{ key: 'status', label: 'Status', cell: statusCell, sortValue: (d) => status(d).rank },
+		{ key: 'category', label: 'Type', cell: typeCell, sortValue: (d) => d.category ?? 'unknown' },
+		{ key: 'os_hint', label: 'OS', cell: osCell },
+		{ key: 'manufacturer', label: 'Manufacturer', cell: vendorCell },
+		{ key: 'total_bytes', label: 'Bandwidth', numeric: true, cell: bytesCell },
+		{ key: 'connection_count', label: 'Connections', numeric: true, cell: connCell },
+		{ key: 'alert_count', label: 'Alerts', numeric: true, cell: alertCell },
+		{ key: 'last_seen', label: 'Last seen', cell: seenCell, sortValue: (d) => (d.last_seen ? Date.parse(d.last_seen) : null) },
+	];
+
+	function resetFilters() {
+		searchQuery = '';
+		categoryFilter = 'all';
 	}
 </script>
+
+{#snippet ipCell(d: Device)}<span class="mono">{d.ip}</span>{/snippet}
+{#snippet nameCell(d: Device)}
+	{#if d.unifi_name}
+		<span class="two"><span>{d.unifi_name} <span class="tag">UniFi</span></span><span class="mono">{d.hostname ?? '—'}</span></span>
+	{:else}
+		{d.hostname ?? '—'}
+	{/if}
+{/snippet}
+{#snippet statusCell(d: Device)}
+	{@const s = status(d)}
+	<span class={['res', s.rank === 2 && 'is-live']}>{s.label}</span>
+{/snippet}
+{#snippet typeCell(d: Device)}
+	<span class="type"><Icon name={deviceIcon(d.category)} />{CATEGORY_LABELS[d.category ?? 'unknown'] ?? d.category}</span>
+{/snippet}
+{#snippet osCell(d: Device)}{d.os_hint ?? '—'}{/snippet}
+{#snippet vendorCell(d: Device)}{d.manufacturer ?? '—'}{/snippet}
+{#snippet bytesCell(d: Device)}<Bytes value={d.total_bytes} max={maxBytes} display={formatBytes(d.total_bytes)} />{/snippet}
+{#snippet connCell(d: Device)}{formatNumber(d.connection_count)}{/snippet}
+{#snippet alertCell(d: Device)}{formatNumber(d.alert_count)}{/snippet}
+{#snippet seenCell(d: Device)}{timeAgo(d.last_seen)}{/snippet}
 
 <svelte:head>
 	<title>Devices | NetTap</title>
 </svelte:head>
 
-<div class="devices-page">
-	<!-- Page Header -->
-	<div class="page-header">
-		<div>
-			<h1>Device Inventory</h1>
-			<!-- OLD CODE START — 2026-11-01: devices come from observed traffic, not DHCP leases ("DHCP-leased devices") -->
-			<!-- OLD CODE END -->
-			<!-- OLD CODE START \u2014 #96: read "0 devices seen on the network" when the list failed to load
-			<p class="subtitle">{devices.length} devices seen on the network{lastUpdated ? ` \u00b7 Updated ${lastUpdated}` : ''}</p>
-			OLD CODE END -->
-			{#if devicesFailed}
-				<!-- with nothing loaded the empty state below says it couldn't load -->
-				{#if devices.length > 0}<p class="subtitle">{loadFailed('devices', true)}</p>{/if}
-			{:else}
-				<!-- OLD CODE START — the list length, which stops at 200
-				<p class="subtitle">{devices.length} devices seen on the network{lastUpdated ? ` \u00b7 Updated ${lastUpdated}` : ''}</p>
-				OLD CODE END -->
-				<p class="subtitle">
-					{deviceCount !== null ? `${deviceCount} devices seen on the network` : `Showing ${devices.length} devices`}{deviceCount !== null && devices.length < deviceCount ? ` \u00b7 showing the ${devices.length} busiest` : ''}{lastUpdated ? ` \u00b7 Updated ${lastUpdated}` : ''}
-				</p>
-			{/if}
-		</div>
-		<div class="header-controls">
-			<button class="auto-btn" class:active={autoRefresh} onclick={() => (autoRefresh = !autoRefresh)}>
-				<span class="auto-dot"></span> {autoRefresh ? 'Auto ON' : 'Auto OFF'}
-			</button>
-			<button class="refresh-btn" onclick={() => fetchDevices()}>Refresh</button>
-		</div>
+<div class="page-head">
+	<div>
+		<h1 class="page-title">Devices</h1>
+		<!-- OLD CODE START — 2026-11-01: devices come from observed traffic, not DHCP leases ("DHCP-leased devices") -->
+		<!-- OLD CODE END -->
+		<p class="page-sub">{subtitle}</p>
 	</div>
+	<div class="head-actions">
+		<button class="btn" type="button" aria-pressed={autoRefresh} onclick={() => (autoRefresh = !autoRefresh)}>
+			<Icon name="refresh" />{autoRefresh ? 'Auto refresh on' : 'Auto refresh off'}
+		</button>
+	</div>
+</div>
 
-	{#if loading && devices.length === 0}
-		<div class="loading-state">
-			<div class="loading-spinner"></div>
-			<span class="text-muted">Discovering devices...</span>
-		</div>
-	{:else if devicesFailed && devices.length === 0}
-		<div class="empty-state">
-			<p class="empty-text">{loadFailed('devices')}</p>
-			<button class="reset-btn" onclick={() => fetchDevices()}>Try again</button>
-		</div>
-	{:else}
-		<!-- Hero Stats -->
-		<div class="stats-grid">
-			<div class="stat-card stat-accent">
-				<div class="stat-label">Total Devices</div>
-				<!-- OLD CODE START — the 200-row list length, not the device count
-				<div class="stat-value accent">{devices.length}</div>
-				<div class="stat-sub">Seen on the network</div>
-				OLD CODE END -->
-				<div class="stat-value accent">{deviceCount ?? '\u2014'}</div>
-				<div class="stat-sub">
-					{#if deviceCountFailed}
-						<span class="text-warning">{loadFailed('the device count', deviceCount !== null)}</span>
-					{:else}
-						Seen on the network
-					{/if}
-				</div>
-			</div>
-			<div class="stat-card">
-				<div class="stat-label">Online Now</div>
-				<div class="stat-value" style="color: var(--green);">{onlineCount ?? '\u2014'}</div>
-				<div class="stat-sub">
-					{#if onlineFailed}<span class="text-warning">{loadFailed('the online count', onlineCount !== null)}</span>{:else}traffic in the last 5 min{/if}
-				</div>
-			</div>
-			<div class="stat-card">
-				<div class="stat-label">New (24h)</div>
-				<div class="stat-value" style="color: var(--amber);">{newCount ?? '\u2014'}</div>
-				<div class="stat-sub">
-					{#if newFailed}<span class="text-warning">{loadFailed('the new-device count', newCount !== null)}</span>{:else}first seen by NetTap in 24 h{/if}
-				</div>
-			</div>
-			<div class="stat-card">
-				<div class="stat-label">Top Consumer</div>
-				<div class="stat-value" style="font-size: var(--text-lg);">{topConsumer ? formatBytes(topConsumer.total_bytes) : '--'}</div>
-				<div class="stat-sub">{topConsumer?.unifi_name ?? topConsumer?.hostname ?? topConsumer?.ip ?? '--'}</div>
-			</div>
-		</div>
+<!-- New device detection banner (mirror mode), fed from the registry as on Home -->
+{#if isMirrorMode && registryDevices.length > 0}
+	<NewDeviceBanner devices={registryDevices} />
+{/if}
 
-		<!-- Category Filter + Search -->
-		<div class="filter-bar">
-			<div class="category-pills">
-				{#each CATEGORIES as cat}
-					<button
-						class="cat-pill"
-						class:active={categoryFilter === cat.key}
-						onclick={() => (categoryFilter = cat.key)}
-					>
-						{#if cat.icon}<span class="cat-pill-icon">{cat.icon}</span>{/if}
-						{cat.label}
-						<span class="cat-pill-count">{categoryCounts[cat.key] ?? 0}</span>
-					</button>
-				{/each}
-				{#if listIsPartial}
-					<span class="cat-pill-note">counts for the {devices.length} busiest devices</span>
-				{/if}
-			</div>
-			<div class="filter-right">
-				<div class="view-toggle">
-					<button class="view-btn" class:active={viewMode === 'grid'} onclick={() => (viewMode = 'grid')} title="Grid view">&#x25A6;</button>
-					<button class="view-btn" class:active={viewMode === 'list'} onclick={() => (viewMode = 'list')} title="List view">&#x2630;</button>
-				</div>
-				<div class="search-wrap">
-					<input type="text" class="search-input" placeholder="Search by IP, hostname, or vendor..." bind:value={searchQuery} />
-				</div>
-			</div>
-		</div>
+<div class="grid">
+	<KpiCard
+		class="c-3"
+		label="Total devices"
+		icon="devices"
+		value={deviceCount ?? '—'}
+		sub={deviceCountFailed ? loadFailed('the device count', deviceCount !== null) : 'Seen on the network'}
+		note="Last 24 hours"
+	/>
+	<KpiCard
+		class="c-3"
+		label="Online now"
+		icon="live"
+		value={onlineCount ?? '—'}
+		sub={onlineFailed ? loadFailed('the online count', onlineCount !== null) : 'Traffic in the last 5 minutes'}
+	/>
+	<KpiCard
+		class="c-3"
+		label="New in 24 h"
+		icon="up"
+		value={newCount ?? '—'}
+		sub={newFailed ? loadFailed('the new-device count', newCount !== null) : 'First seen by NetTap'}
+		note="Last 24 hours"
+	/>
+	<KpiCard
+		class="c-3"
+		label="Top consumer"
+		icon="bandwidth"
+		value={topBytes?.[0] ?? '—'}
+		unit={topBytes?.[1]}
+		sub={topConsumer ? deviceName(topConsumer) : undefined}
+		note="Last 24 hours"
+	/>
+</div>
 
-		<!-- Device Cards Grid -->
-		{#if filteredDevices.length === 0}
-			<div class="empty-state">
-				{#if searchQuery || categoryFilter !== 'all'}
-					<p class="empty-text">No devices matching your filter.</p>
-					<button class="reset-btn" onclick={() => { searchQuery = ''; categoryFilter = 'all'; }}>Reset filters</button>
-				{:else}
-					<!-- OLD CODE START — 2026-11-01: "No DHCP-leased devices found." / "...obtain an IP from the network's DHCP server." -->
-					<!-- OLD CODE END -->
-					<p class="empty-text">No devices seen yet.</p>
-					<p class="empty-hint">Devices appear once they make a few connections through the monitored link.</p>
-				{/if}
-			</div>
-		{:else if viewMode === 'grid'}
-			<!-- Grid View -->
-			<div class="device-grid">
-				{#each filteredDevices as device, i (`grid-${device.ip}-${i}`)}
-					<button
-						class="device-card"
-						style="border-left-color: {catColor(device)}; animation-delay: {i * 30}ms;"
-						onclick={() => goto(`/devices/${encodeURIComponent(device.ip)}`)}
-						type="button"
-					>
-						<div class="dc-header">
-							<span class="dc-status" class:online={isOnline(device)} class:idle={isIdle(device)}></span>
-							<span class="dc-icon">{catIcon(device)}</span>
-							<div class="dc-identity">
-								{#if device.unifi_name}
-									<span class="dc-name">{device.unifi_name} <span class="badge badge-muted" style="font-size: 10px;">UniFi</span></span>
-									<span class="dc-hostname">{device.hostname ?? device.ip}</span>
-								{:else}
-									<span class="dc-ip mono">{device.ip}</span>
-									{#if device.hostname}
-										<span class="dc-hostname">{device.hostname}</span>
-									{/if}
-								{/if}
-							</div>
-						</div>
+<div>
+	<Pills mode="tabs" idPrefix="devices" ariaLabel="Device view" options={VIEWS} value={view} onchange={(v) => (pickedView = v)} />
+</div>
 
-						<div class="dc-meta">
-							{#if device.os_hint}<span>{device.os_hint}</span>{/if}
-							{#if device.manufacturer}<span class="dc-sep">&middot;</span><span>{device.manufacturer}</span>{/if}
-						</div>
-
-						<div class="dc-bandwidth">
-							<div class="dc-bar-track">
-								<div class="dc-bar-fill" style="width: {(device.total_bytes / maxBytes) * 100}%; background: {catColor(device)};"></div>
-							</div>
-							<span class="dc-bar-value mono">{formatBytes(device.total_bytes)}</span>
-						</div>
-
-						<div class="dc-stats">
-							<span class="mono">{formatNumber(device.connection_count)} conn</span>
-							{#if device.alert_count > 0}
-								<span class="dc-alerts">{formatNumber(device.alert_count)} alerts</span>
-							{/if}
-							<span class="dc-lastseen">{timeAgo(device.last_seen)}</span>
-						</div>
-
-						{#if device.mac}
-							<div class="dc-mac mono">{device.mac}</div>
-						{/if}
-					</button>
-				{/each}
-			</div>
+<div role="tabpanel" id="devices-panel-type" aria-labelledby="devices-tab-type" hidden={view !== 'type'}>
+	{#if view === 'type'}
+		{#if loading && !captureMode}
+			<Card title="Devices by type" sub="Grouped by device type · traffic in the last 24 hours">
+				<CardState state="loading" title="Loading devices" />
+			</Card>
+		{:else if !captureMode}
+			<Card title="Devices by type" sub="Grouped by device type · traffic in the last 24 hours">
+				<CardState state="error" title={loadFailed('the capture mode')} message="By type needs the capture mode. Check that NetTap is running on the System page, then try again." onaction={() => refresh.run()} />
+			</Card>
+		{:else if !isMirrorMode}
+			<Card title="Devices by type" sub="Grouped by device type">
+				<CardState
+					state="empty"
+					icon="devices"
+					title="Device cards by type show in mirror mode"
+					message="All devices lists every device NetTap sees in this capture mode."
+					actionLabel="Show all devices"
+					onaction={() => (pickedView = 'all')}
+				/>
+			</Card>
+		{:else if registryFailed && registryDevices.length === 0}
+			<Card title="Devices by type" sub="Grouped by device type · traffic in the last 24 hours">
+				<CardState state="error" title={loadFailed('devices')} onaction={() => refresh.run()} />
+			</Card>
+		{:else if registryDevices.length === 0}
+			<Card title="Devices by type" sub="Grouped by device type · traffic in the last 24 hours">
+				<CardState state="empty" icon="devices" title="No devices yet" message="Devices appear here once NetTap sees their traffic." />
+			</Card>
 		{:else}
-			<!-- List View -->
-			<div class="list-card">
-				<div class="table-wrap">
-					<table class="data-table">
-						<thead>
-							<tr>
-								<th></th>
-								<th class="sortable" class:sorted={sortField === 'ip'} onclick={() => toggleSort('ip')}>IP Address{sortArrow('ip')}</th>
-								<th class="sortable" class:sorted={sortField === 'hostname'} onclick={() => toggleSort('hostname')}>Hostname{sortArrow('hostname')}</th>
-								<th>Category</th>
-								<th>OS</th>
-								<th>Manufacturer</th>
-								<th class="sortable" class:sorted={sortField === 'total_bytes'} onclick={() => toggleSort('total_bytes')}>Bandwidth{sortArrow('total_bytes')}</th>
-								<th class="sortable" class:sorted={sortField === 'connection_count'} onclick={() => toggleSort('connection_count')}>Connections{sortArrow('connection_count')}</th>
-								<th class="sortable" class:sorted={sortField === 'alert_count'} onclick={() => toggleSort('alert_count')}>Alerts{sortArrow('alert_count')}</th>
-								<th class="sortable" class:sorted={sortField === 'last_seen'} onclick={() => toggleSort('last_seen')}>Last Seen{sortArrow('last_seen')}</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each sortedDevices as device, i (`list-${device.ip}-${i}`)}
-								<tr class="list-row" onclick={() => goto(`/devices/${encodeURIComponent(device.ip)}`)}>
-									<td><span class="dc-status" class:online={isOnline(device)} class:idle={isIdle(device)}></span></td>
-									<td class="mono" style="font-size: var(--text-sm); font-weight: 500;">{device.ip}</td>
-									<td style="font-size: var(--text-sm); color: var(--text-secondary);">
-									{#if device.unifi_name}
-										<div>{device.unifi_name} <span class="badge badge-muted" style="font-size: 10px;">UniFi</span></div>
-										<div style="font-size: var(--text-xs); color: var(--text-muted);">{device.hostname ?? '--'}</div>
-									{:else}
-										{device.hostname ?? '--'}
-									{/if}
-								</td>
-									<td>
-										<span class="cat-badge" style="color: {catColor(device)}; background: color-mix(in srgb, {catColor(device)} 12%, transparent);">
-											{catIcon(device)} {(device.category ?? 'unknown').replace(/^\w/, (c: string) => c.toUpperCase())}
+			{#if registryFailed}
+				<p class="note">{loadFailed('devices', true)}</p>
+			{/if}
+			<div class="type-groups">
+				{#each typeGroups as group (group.key)}
+					<section class="type-group" aria-labelledby="type-{group.key}">
+						<div class="group-head">
+							<h2 class="card-title" id="type-{group.key}">{group.label}</h2>
+							<span class="chip">{group.devices.length}</span>
+						</div>
+						<div class="grid">
+							{#each group.devices as device (device.mac)}
+								<a class="card dev-card c-4" href="/devices/mac/{encodeURIComponent(device.mac)}">
+									<span class="dev-card-top">
+										<DeviceTile category={device.category} />
+										<span class="two">
+											<span class="dev-name">{device.display_name || device.mac}</span>
+											<span class="mono">{device.ips[0] ?? device.mac}</span>
 										</span>
-									</td>
-									<td style="font-size: var(--text-xs); color: var(--text-muted);">{device.os_hint ?? '--'}</td>
-									<td style="font-size: var(--text-xs); color: var(--text-muted);">{device.manufacturer ?? '--'}</td>
-									<td class="mono" style="font-size: var(--text-sm);">{formatBytes(device.total_bytes)}</td>
-									<td class="mono" style="font-size: var(--text-sm);">{formatNumber(device.connection_count)}</td>
-									<td class="mono" style="font-size: var(--text-sm); {device.alert_count > 0 ? 'color: var(--amber); font-weight: 600;' : ''}">{device.alert_count > 0 ? formatNumber(device.alert_count) : '--'}</td>
-									<td style="font-size: var(--text-xs); color: var(--text-muted); white-space: nowrap;">{timeAgo(device.last_seen)}</td>
-								</tr>
+										{#if device.is_new}<span class="chip is-ok">New</span>{/if}
+									</span>
+									{#if device.manufacturer}<span class="dim vendor">{device.manufacturer}</span>{/if}
+									<span class="dev-card-stats">
+										<span><span class="meta-k">Traffic</span><span class="meta-v num">{cardBytes(device.total_bytes)}</span></span>
+										<span><span class="meta-k">Connections</span><span class="meta-v num">{device.connection_count?.toLocaleString() ?? '—'}</span></span>
+										<span><span class="meta-k">Last seen</span><span class="meta-v">{timeAgo(device.last_seen)}</span></span>
+									</span>
+								</a>
 							{/each}
-						</tbody>
-					</table>
-				</div>
+						</div>
+					</section>
+				{/each}
 			</div>
 		{/if}
 	{/if}
 </div>
 
+<div role="tabpanel" id="devices-panel-all" aria-labelledby="devices-tab-all" hidden={view !== 'all'}>
+	{#if view === 'all'}
+		<Card title="All devices" sub="Busiest first · traffic in the last 24 hours">
+			{#if loading && devices.length === 0}
+				<CardState state="loading" title="Loading devices" />
+			{:else if devicesFailed && devices.length === 0}
+				<CardState state="error" title={loadFailed('devices')} onaction={() => refresh.run()} />
+			{:else if devices.length === 0}
+				<!-- OLD CODE START — 2026-11-01: "No DHCP-leased devices found." / "...obtain an IP from the network's DHCP server." -->
+				<!-- OLD CODE END -->
+				<CardState
+					state="empty"
+					icon="devices"
+					title="No devices seen yet."
+					message="Devices appear once they make a few connections through the monitored link."
+				/>
+			{:else}
+				<div class="toolbar">
+					<Pills ariaLabel="Device type" options={categoryOptions} bind:value={categoryFilter} />
+					{#if listIsPartial}
+						<span class="dim">counts for the {devices.length} busiest devices</span>
+					{/if}
+					<SearchField id="device-search" label="Search devices" placeholder="Search by IP, hostname or vendor" size="toolbar" bind:value={searchQuery} />
+				</div>
+				{#if filteredDevices.length === 0}
+					<CardState state="empty" icon="filter" title="No devices match these filters" actionLabel="Reset filters" onaction={resetFilters} />
+				{:else}
+					<DataTable
+						ariaLabel="All devices"
+						rows={filteredDevices}
+						rowKey={(d) => d.ip}
+						initialSort={{ key: 'total_bytes', dir: 'desc' }}
+						onrowactivate={openDevice}
+						rowLabel={(d) => `Open ${deviceName(d)}`}
+						{columns}
+					/>
+				{/if}
+			{/if}
+		</Card>
+	{/if}
+</div>
+
 <style>
-	.devices-page { display: flex; flex-direction: column; gap: var(--space-lg); }
-
-	/* Header */
-	.page-header { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: var(--space-md); }
-	h1 { font-size: var(--text-2xl); font-weight: 700; letter-spacing: -0.02em; }
-	.subtitle { font-size: var(--text-sm); color: var(--text-muted); margin-top: 2px; }
-	.header-controls { display: flex; align-items: center; gap: var(--space-sm); }
-	.auto-btn { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: var(--bg-tertiary); border: 1px solid var(--border-dim); border-radius: var(--radius-md); color: var(--text-muted); font-size: var(--text-xs); font-family: var(--font-sans); cursor: pointer; transition: all var(--transition-fast); }
-	.auto-btn.active { border-color: var(--cyan); color: var(--cyan); background: color-mix(in srgb, var(--accent) 6%, transparent); }
-	.auto-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); }
-	.auto-btn.active .auto-dot { background: var(--cyan); box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 50%, transparent); }
-	.refresh-btn { padding: 6px 14px; background: var(--bg-tertiary); border: 1px solid var(--border-dim); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--text-xs); font-family: var(--font-sans); cursor: pointer; transition: all var(--transition-fast); }
-	.refresh-btn:hover { border-color: var(--border-default); color: var(--text-primary); }
-
-	/* Loading / Empty */
-	.loading-state { display: flex; align-items: center; justify-content: center; gap: var(--space-md); padding: var(--space-3xl); }
-	.empty-state { text-align: center; padding: var(--space-3xl); }
-	.empty-text { font-size: var(--text-lg); color: var(--text-primary); margin-bottom: var(--space-sm); }
-	.empty-hint { font-size: var(--text-sm); color: var(--text-muted); }
-	.reset-btn { margin-top: var(--space-md); padding: 6px 16px; background: var(--bg-tertiary); border: 1px solid var(--border-dim); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: var(--text-xs); cursor: pointer; font-family: var(--font-sans); }
-
-	/* Stats */
-	.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-md); }
-	.stat-card { background: var(--bg-secondary); border: 1px solid var(--border-dim); border-radius: var(--radius-md); padding: var(--space-md); position: relative; overflow: hidden; }
-	.stat-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--border-dim); }
-	.stat-accent::before { background: var(--cyan); box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 30%, transparent); }
-	.stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500; margin-bottom: 6px; }
-	.stat-value { font-family: var(--font-mono); font-size: var(--text-3xl); font-weight: 600; color: var(--text-primary); letter-spacing: -0.02em; line-height: 1; }
-	.stat-value.accent { color: var(--cyan); }
-	.stat-sub { font-size: 10px; color: var(--text-dim); margin-top: 6px; font-family: var(--font-mono); }
-
-	/* Filter Bar */
-	.filter-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); flex-wrap: wrap; }
-	.category-pills { display: flex; gap: 4px; flex-wrap: wrap; }
-	.cat-pill { display: flex; align-items: center; gap: 6px; padding: 6px 14px; border: 1px solid var(--border-dim); background: var(--bg-secondary); color: var(--text-muted); font-size: var(--text-xs); font-weight: 500; border-radius: var(--radius-md); cursor: pointer; font-family: var(--font-sans); transition: all var(--transition-fast); }
-	.cat-pill:hover { border-color: var(--border-default); color: var(--text-secondary); }
-	.cat-pill.active { background: var(--cyan); color: var(--bg-void); border-color: var(--cyan); font-weight: 600; }
-	.cat-pill-icon { font-size: 14px; }
-	.cat-pill-count { font-family: var(--font-mono); font-size: 10px; opacity: 0.7; }
-	.cat-pill-note { align-self: center; color: var(--text-muted); font-size: var(--text-xs); }
-	.filter-right { display: flex; align-items: center; gap: var(--space-sm); }
-	.view-toggle { display: flex; gap: 2px; background: var(--bg-tertiary); border-radius: var(--radius-md); padding: 2px; border: 1px solid var(--border-dim); }
-	.view-btn { width: 32px; height: 28px; border: none; background: transparent; color: var(--text-muted); font-size: 14px; border-radius: 5px; cursor: pointer; transition: all var(--transition-fast); display: flex; align-items: center; justify-content: center; }
-	.view-btn:hover { color: var(--text-primary); background: var(--bg-elevated); }
-	.view-btn.active { background: var(--cyan); color: var(--bg-void); }
-	.search-wrap { max-width: 300px; flex: 1; }
-	.search-input { width: 100%; padding: 7px 14px; background: var(--bg-input); border: 1px solid var(--border-dim); border-radius: var(--radius-md); color: var(--text-primary); font-family: var(--font-mono); font-size: var(--text-xs); outline: none; transition: border-color var(--transition-fast); }
-	.search-input::placeholder { color: var(--text-dim); }
-	.search-input:focus { border-color: var(--accent); }
-
-	/* Device Cards Grid */
-	.device-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-md); }
-
-	.device-card {
-		display: flex; flex-direction: column; gap: var(--space-sm);
-		padding: var(--space-md);
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-dim);
-		border-left: 3px solid var(--text-dim);
-		border-radius: var(--radius-md);
-		cursor: pointer;
-		text-align: left;
-		font: inherit; color: inherit;
-		transition: all var(--transition-fast);
-		animation: cardIn 0.3s ease both;
-	}
-
-	.device-card:hover { border-color: var(--border-bright); background: var(--bg-tertiary); transform: translateY(-2px); box-shadow: 0 4px 16px color-mix(in srgb, var(--bg) 30%, transparent); }
-
-	@keyframes cardIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-
-	/* Card internals */
-	.dc-header { display: flex; align-items: center; gap: var(--space-sm); }
-	.dc-status { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); flex-shrink: 0; }
-	.dc-status.online { background: var(--green); box-shadow: 0 0 6px color-mix(in srgb, var(--ok) 50%, transparent); }
-	.dc-status.idle { background: var(--amber); }
-	.dc-icon { font-size: 16px; flex-shrink: 0; }
-	.dc-identity { min-width: 0; overflow: hidden; }
-	.dc-ip { font-size: var(--text-sm); font-weight: 600; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color var(--transition-fast); }
-	.device-card:hover .dc-ip { color: var(--accent); }
-	.dc-name { font-size: var(--text-sm); font-weight: 600; display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: color var(--transition-fast); }
-	.device-card:hover .dc-name { color: var(--accent); }
-	.dc-hostname { font-size: var(--text-xs); color: var(--text-muted); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-	.dc-meta { font-size: var(--text-xs); color: var(--text-dim); display: flex; align-items: center; gap: 4px; }
-	.dc-sep { color: var(--text-dim); }
-
-	.dc-bandwidth { display: flex; align-items: center; gap: var(--space-sm); }
-	.dc-bar-track { flex: 1; height: 6px; background: var(--bg-tertiary); border-radius: 3px; overflow: hidden; }
-	.dc-bar-fill { height: 100%; border-radius: 3px; opacity: 0.7; transition: width var(--transition-slow); }
-	.device-card:hover .dc-bar-fill { opacity: 1; }
-	.dc-bar-value { font-size: var(--text-xs); color: var(--text-secondary); white-space: nowrap; min-width: 50px; text-align: right; }
-
-	.dc-stats { display: flex; align-items: center; gap: var(--space-sm); font-size: 10px; color: var(--text-dim); flex-wrap: wrap; }
-	.dc-alerts { color: var(--amber); font-weight: 600; }
-	.dc-lastseen { margin-left: auto; }
-
-	.dc-mac { font-size: 10px; color: var(--text-dim); opacity: 0; transition: opacity var(--transition-fast); }
-	.device-card:hover .dc-mac { opacity: 1; }
-
-	/* Responsive */
-	@media (max-width: 1280px) { .device-grid { grid-template-columns: repeat(3, 1fr); } }
-	@media (max-width: 1024px) { .device-grid { grid-template-columns: repeat(2, 1fr); } .stats-grid { grid-template-columns: repeat(2, 1fr); } }
-	/* List View */
-	.list-card { background: var(--bg-secondary); border: 1px solid var(--border-dim); border-radius: var(--radius-md); overflow: hidden; }
-	.table-wrap { overflow-x: auto; }
-	.data-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
-	.data-table th { padding: var(--space-sm) var(--space-md); text-align: left; font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; background: var(--bg-tertiary); border-bottom: 1px solid var(--border-dim); white-space: nowrap; }
-	.data-table th.sortable { cursor: pointer; user-select: none; transition: color var(--transition-fast); }
-	.data-table th.sortable:hover { color: var(--text-primary); }
-	.data-table th.sorted { color: var(--accent); }
-	.data-table td { padding: var(--space-sm) var(--space-md); border-bottom: 1px solid var(--border-dim); vertical-align: middle; }
-	.data-table tbody tr { transition: background var(--transition-fast); }
-	.data-table tbody tr:hover { background: var(--bg-tertiary); }
-	.data-table tbody tr:last-child td { border-bottom: none; }
-	.list-row { cursor: pointer; }
-	.cat-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: var(--radius-sm); font-size: 10px; font-weight: 600; white-space: nowrap; }
-
-	@media (max-width: 768px) { .device-grid { grid-template-columns: 1fr; } .stats-grid { grid-template-columns: 1fr; } }
+	/* Layout glue the system lacks: the By type groups and their device cards */
+	.type-groups { display: flex; flex-direction: column; gap: var(--sp-6); }
+	.type-group { display: flex; flex-direction: column; gap: var(--sp-3); }
+	.group-head { display: flex; align-items: center; gap: var(--sp-2); }
+	.dev-card { display: flex; flex-direction: column; gap: var(--sp-3); text-decoration: none; color: var(--text-1); }
+	.dev-card:hover { border-color: var(--line-strong); }
+	.dev-card-top { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; }
+	.dev-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.vendor { font-size: var(--text-xs); }
+	.dev-card-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
+	.dev-card-stats > span { display: flex; flex-direction: column; min-width: 0; }
+	.type { display: inline-flex; align-items: center; gap: var(--sp-2); }
+	.type :global(.ic) { color: var(--text-3); width: 16px; height: 16px; }
+	.note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); }
 </style>

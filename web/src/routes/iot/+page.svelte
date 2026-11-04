@@ -3,26 +3,34 @@
 	 * IoT Trust Score Dashboard — /iot
 	 *
 	 * Complete smart home health dashboard:
-	 *   1. Hero Score Card (SVG gauge arc, sub-scores)
-	 *   2. Stat Cards Row (4 key metrics)
-	 *   3. Time Range Pills
-	 *   4. Device Trust Grid (4-col responsive cards)
-	 *   5. Manufacturer Profiles Card
-	 *   6. Findings Feed Card
-	 *   7. Network Isolation Card
-	 *   8. Device Detail Drawer (5 tabs)
+	 *   1. KPIs (devices, anomalies, privacy concerns, unencrypted)
+	 *   2. Smart home health: the trust Ring with its privacy, security and behaviour rows
+	 *   3. Findings feed
+	 *   4. Device trust scores (table; a row opens the drawer)
+	 *   5. Manufacturer profiles
+	 *   6. Network isolation
+	 *   7. Device detail drawer (5 tabs)
 	 */
 
+	import { onDestroy, untrack } from 'svelte';
 	import DetailDrawer from '$lib/components/DetailDrawer.svelte';
 	import DrawerSection from '$lib/components/drawer/DrawerSection.svelte';
 	import KVRow from '$lib/components/drawer/KVRow.svelte';
-	import HorizontalBarList from '$lib/components/HorizontalBarList.svelte';
-	import DonutChart from '$lib/components/charts/DonutChart.svelte';
-	import TimeSeriesChart from '$lib/components/charts/TimeSeriesChart.svelte';
 	import type { DrawerTab } from '$lib/components/DetailDrawer.svelte';
-	import type { BarItem } from '$lib/components/HorizontalBarList.svelte';
-	import type { Segment } from '$lib/components/charts/DonutChart.svelte';
-	import { compareValues } from '$lib/utils/table-sort.svelte';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import KpiCard from '$lib/components/ui/KpiCard.svelte';
+	import Pills from '$lib/components/ui/Pills.svelte';
+	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
+	import BarList, { type BarItem } from '$lib/components/ui/BarList.svelte';
+	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
+	import Who from '$lib/components/ui/Who.svelte';
+	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
+	import Donut from '$lib/components/ui/charts/Donut.svelte';
+	import Ring from '$lib/components/ui/charts/Ring.svelte';
+	import type { SeverityLevel } from '$lib/utils/severity';
+	import { registerPageRefresh, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { outcome } from '../devices/load-outcome';
 
 	import {
 		getFleetSummary,
@@ -35,10 +43,10 @@
 	} from '$lib/api/iot';
 	import type {
 		FleetSummary, FleetDevice, PrivacyReport, PrivacyDevice,
-		CommunicationMap, Destination, ActivityTimeline,
+		CommunicationMap, ActivityTimeline,
 		ProtocolAudit, ProtocolDevice, ProtocolFinding,
 		NetworkIsolation, IsolationPair,
-		ManufacturerProfilesResponse, ManufacturerProfile,
+		ManufacturerProfilesResponse,
 	} from '$lib/api/iot';
 
 	// ---------------------------------------------------------------------------
@@ -75,6 +83,8 @@
 		{ label: '24h', value: '24h' },
 		{ label: '7d', value: '7d' },
 	];
+	const RANGE_LABEL: Record<string, string> = { '1h': 'last hour', '6h': 'last 6 hours', '24h': 'last 24 hours', '7d': 'last 7 days' };
+	const rangeLabel = $derived(RANGE_LABEL[selectedRange] ?? 'last 24 hours');
 
 	const DRAWER_TABS: DrawerTab[] = [
 		{ id: 'overview', label: 'Overview' },
@@ -104,25 +114,24 @@
 	// Fetching
 	// ---------------------------------------------------------------------------
 
-	async function fetchAll(range: string) {
-		loading = true;
-		const params = computeTimeParams(range);
-		// The getters throw on HTTP errors, so a failed section is null (its empty
-		// state) instead of fake zeros; a failed fleet summary shows the error state.
-		const [fleetRes, privacyRes, protocolRes, isolationRes, mfgRes] = await Promise.allSettled([
-			getFleetSummary(params),
-			getPrivacyReport(params),
-			getProtocolAudit(params),
-			getNetworkIsolation(params),
-			getManufacturerProfiles(params),
-		]);
-		fleet = fleetRes.status === 'fulfilled' ? fleetRes.value : null;
-		privacy = privacyRes.status === 'fulfilled' ? privacyRes.value : null;
-		protocol = protocolRes.status === 'fulfilled' ? protocolRes.value : null;
-		isolation = isolationRes.status === 'fulfilled' ? isolationRes.value : null;
-		manufacturers = mfgRes.status === 'fulfilled' ? mfgRes.value : null;
-		loading = false;
-	}
+	// OLD CODE START — 2026-11-03 UI redesign: fetchAll goes through the page refresh contract
+	// (PLAN.md §5.5) with a load guard, so a slow 7 d reply can't overwrite a newer 1 h one
+	// async function fetchAll(range: string) {
+	// 	loading = true;
+	// 	const params = computeTimeParams(range);
+	// 	const [fleetRes, privacyRes, protocolRes, isolationRes, mfgRes] = await Promise.allSettled([
+	// 		getFleetSummary(params), getPrivacyReport(params), getProtocolAudit(params),
+	// 		getNetworkIsolation(params), getManufacturerProfiles(params),
+	// 	]);
+	// 	fleet = fleetRes.status === 'fulfilled' ? fleetRes.value : null;
+	// 	privacy = privacyRes.status === 'fulfilled' ? privacyRes.value : null;
+	// 	protocol = protocolRes.status === 'fulfilled' ? protocolRes.value : null;
+	// 	isolation = isolationRes.status === 'fulfilled' ? isolationRes.value : null;
+	// 	manufacturers = mfgRes.status === 'fulfilled' ? mfgRes.value : null;
+	// 	loading = false;
+	// }
+	// $effect(() => { fetchAll(selectedRange); });
+	// OLD CODE END
 
 	// OLD CODE START — one failed endpoint blanked the whole page
 	/*
@@ -155,9 +164,45 @@
 	*/
 	// OLD CODE END
 
-	$effect(() => { fetchAll(selectedRange); });
+	async function load(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		const params = computeTimeParams(selectedRange);
+		loading = true;
+		// The getters throw on HTTP errors, so a failed section is null (its error state)
+		// instead of fake zeros; a failed fleet summary shows the page's error state.
+		const results = await Promise.allSettled([
+			getFleetSummary(params),
+			getPrivacyReport(params),
+			getProtocolAudit(params),
+			getNetworkIsolation(params),
+			getManufacturerProfiles(params),
+		]);
+		if (!guard.current(g)) return 'skipped';
+		const [fleetRes, privacyRes, protocolRes, isolationRes, mfgRes] = results;
+		fleet = fleetRes.status === 'fulfilled' ? fleetRes.value : null;
+		privacy = privacyRes.status === 'fulfilled' ? privacyRes.value : null;
+		protocol = protocolRes.status === 'fulfilled' ? protocolRes.value : null;
+		isolation = isolationRes.status === 'fulfilled' ? isolationRes.value : null;
+		manufacturers = mfgRes.status === 'fulfilled' ? mfgRes.value : null;
+		loading = false;
+		return outcome(results);
+	}
+
+	const refresh = registerPageRefresh(load);
+	// a newer device's drawer data must not be overwritten by an older device's reply
+	const drawerGuard = createLoadGuard();
+	onDestroy(() => {
+		refresh.unregister();
+		drawerGuard.invalidate();
+	});
+
+	$effect(() => {
+		void selectedRange; // reload when the range changes
+		untrack(() => refresh.run());
+	});
 
 	async function selectDevice(device: FleetDevice) {
+		const g = drawerGuard.begin();
 		selectedDevice = device;
 		drawerOpen = true;
 		activeTab = 'overview';
@@ -182,6 +227,7 @@
 			getCommunicationMap(device.mac, params),
 			getActivityTimeline(device.mac, params),
 		]);
+		if (!drawerGuard.current(g)) return;
 		commMapData = commMap.status === 'fulfilled' ? commMap.value : null;
 		commFailed = commMap.status === 'rejected';
 		timelineData = timeline.status === 'fulfilled' ? timeline.value : null;
@@ -190,6 +236,7 @@
 	}
 
 	function closeDrawer() {
+		drawerGuard.begin(); // drop a reply still on its way
 		drawerOpen = false;
 		selectedDevice = null;
 		commMapData = null;
@@ -197,7 +244,7 @@
 	}
 
 	// ---------------------------------------------------------------------------
-	// Derived — Hero gauge
+	// Derived — Hero ring
 	// ---------------------------------------------------------------------------
 
 	let healthScore = $derived(fleet?.health_score ?? 0);
@@ -213,25 +260,26 @@
 		}
 	}
 
-	let gaugeColor = $derived(gradeColor(healthGrade));
-
-	let gaugeArcPath = $derived.by(() => {
-		const pct = Math.min(healthScore / 100, 1);
-		const angle = pct * 180;
-		const rad = (angle * Math.PI) / 180;
-		const endX = 90 - 75 * Math.cos(rad);
-		const endY = 90 - 75 * Math.sin(rad);
-		const largeArc = angle > 180 ? 1 : 0;
-		return `M 15 90 A 75 75 0 ${largeArc} 1 ${endX} ${endY}`;
-	});
-
-	let heroSubtitle = $derived(fleet?.subtitle || 'Scanning your smart home...');
-
-	// Sorted devices — worst trust score first
-	let sortedDevices = $derived.by(() => {
-		if (!fleet?.devices) return [];
-		return [...fleet.devices].sort((a, b) => a.score - b.score);
-	});
+	// OLD CODE START — 2026-11-03 UI redesign: the half-circle gauge; the system's trust Ring draws the score
+	// let gaugeColor = $derived(gradeColor(healthGrade));
+	// let gaugeArcPath = $derived.by(() => {
+	// 	const pct = Math.min(healthScore / 100, 1);
+	// 	const angle = pct * 180;
+	// 	const rad = (angle * Math.PI) / 180;
+	// 	const endX = 90 - 75 * Math.cos(rad);
+	// 	const endY = 90 - 75 * Math.sin(rad);
+	// 	const largeArc = angle > 180 ? 1 : 0;
+	// 	return `M 15 90 A 75 75 0 ${largeArc} 1 ${endX} ${endY}`;
+	// });
+	// let heroSubtitle = $derived(fleet?.subtitle || 'Scanning your smart home...');
+	// let sortedDevices = $derived.by(() => {
+	// 	if (!fleet?.devices) return [];
+	// 	return [...fleet.devices].sort((a, b) => a.score - b.score);
+	// });
+	// OLD CODE END
+	let heroSubtitle = $derived(fleet?.subtitle || 'Scanning your smart home…');
+	// the table opens worst trust score first (initialSort), as the old grid did
+	const fleetDevices = $derived(fleet?.devices ?? []);
 
 	// ---------------------------------------------------------------------------
 	// Derived — Findings feed
@@ -317,22 +365,39 @@
 		return items;
 	});
 
+	// #96: findings come from the privacy and protocol checks; a failed one is not "healthy"
+	const checksFailed = $derived(
+		privacy === null && protocol === null ? 'privacy or protocols' : privacy === null ? 'privacy' : protocol === null ? 'protocols' : null,
+	);
+	const CATEGORY_LABEL: Record<Finding['category'], string> = { Privacy: 'Privacy', Security: 'Security', Behavior: 'Behaviour' };
+
 	// ---------------------------------------------------------------------------
 	// Derived — Manufacturer bar items
 	// ---------------------------------------------------------------------------
 
+	// OLD CODE START — 2026-11-03 UI redesign: HorizontalBarList items, each coloured by grade
+	// let mfgBarItems = $derived.by((): BarItem[] => {
+	// 	if (!manufacturers?.manufacturers) return [];
+	// 	const mfgs = [...manufacturers.manufacturers].sort((a, b) => a.avg_trust_score - b.avg_trust_score);
+	// 	const max = Math.max(...mfgs.map(m => m.avg_trust_score), 1);
+	// 	return mfgs.map(m => ({
+	// 		key: m.name, label: m.name, value: m.avg_trust_score,
+	// 		formattedValue: `${Math.round(m.avg_trust_score)}`, color: gradeColor(m.avg_trust_grade),
+	// 		secondaryValue: `${m.device_count} device${m.device_count !== 1 ? 's' : ''}`,
+	// 	}));
+	// });
+	// OLD CODE END
 	let mfgBarItems = $derived.by((): BarItem[] => {
 		if (!manufacturers?.manufacturers) return [];
-		const mfgs = [...manufacturers.manufacturers].sort((a, b) => a.avg_trust_score - b.avg_trust_score);
-		const max = Math.max(...mfgs.map(m => m.avg_trust_score), 1);
-		return mfgs.map(m => ({
-			key: m.name,
-			label: m.name,
-			value: m.avg_trust_score,
-			formattedValue: `${Math.round(m.avg_trust_score)}`,
-			color: gradeColor(m.avg_trust_grade),
-			secondaryValue: `${m.device_count} device${m.device_count !== 1 ? 's' : ''}`,
-		}));
+		return [...manufacturers.manufacturers]
+			.sort((a, b) => a.avg_trust_score - b.avg_trust_score)
+			.map((m) => ({
+				key: m.name,
+				label: m.name,
+				value: m.avg_trust_score,
+				display: `${Math.round(m.avg_trust_score)}`,
+				detail: `grade ${m.avg_trust_grade} · ${m.device_count} device${m.device_count !== 1 ? 's' : ''}`,
+			}));
 	});
 
 	// ---------------------------------------------------------------------------
@@ -349,7 +414,13 @@
 		return protocol.devices.find(d => d.mac === selectedDevice!.mac) ?? null;
 	});
 
-	// Comm map bar items
+	// OLD CODE START — 2026-11-03 UI redesign: HorizontalBarList, DonutChart and TimeSeriesChart data;
+	// BarList, Donut and AreaChart take plain items and series
+	// let commBarItems = …  (label, formattedValue, colour by baseline, IN BASELINE / NEW badge)
+	// let trackerBarItems = …  (domain, query count, red)
+	// let privacyDonutSegments = …  (Encrypted green / Unencrypted red, in %)
+	// let timelineChartData = $derived(timelineData?.buckets.map(b => ({ time: b.time, value: b.connections })) ?? []);
+	// OLD CODE END
 	let commBarItems = $derived.by((): BarItem[] => {
 		if (!commMapData?.destinations) return [];
 		const dests = [...commMapData.destinations].sort((a, b) => (b.bytes_sent + b.bytes_received) - (a.bytes_sent + a.bytes_received));
@@ -357,131 +428,43 @@
 			key: d.ip,
 			label: d.hostname || d.ip,
 			value: d.bytes_sent + d.bytes_received,
-			formattedValue: formatBytes(d.bytes_sent + d.bytes_received),
-			color: d.in_baseline ? 'var(--green)' : 'var(--amber)',
-			secondaryValue: d.country ?? '',
-			mono: !d.hostname,
-			isIp: !d.hostname,
-			badgeText: d.in_baseline ? 'IN BASELINE' : 'NEW',
-			badgeClass: d.in_baseline ? 'badge-success' : 'badge-warning',
+			display: formatBytes(d.bytes_sent + d.bytes_received),
+			detail: [d.country, d.in_baseline ? 'in baseline' : 'new'].filter(Boolean).join(' · '),
 		}));
 	});
 
-	// Privacy tracker bar items
 	let trackerBarItems = $derived.by((): BarItem[] => {
 		if (!selectedPrivacy?.tracker_domains) return [];
 		return selectedPrivacy.tracker_domains.map(t => ({
 			key: t.domain,
 			label: t.domain,
 			value: t.query_count,
-			formattedValue: `${t.query_count}`,
-			color: 'var(--red)',
-			mono: true,
+			display: `${t.query_count}`,
+			detail: 'lookups',
 		}));
 	});
 
-	// Privacy donut segments
-	let privacyDonutSegments = $derived.by((): Segment[] => {
-		if (!selectedPrivacy) return [];
-		const encrypted = Math.round(selectedPrivacy.encryption_ratio * 100);
-		const unencrypted = 100 - encrypted;
-		return [
-			{ label: 'Encrypted', value: encrypted, color: 'var(--green)' },
-			{ label: 'Unencrypted', value: unencrypted, color: 'var(--red)' },
-		];
-	});
+	let encryptedPct = $derived(selectedPrivacy ? Math.round(selectedPrivacy.encryption_ratio * 100) : 0);
 
-	// Timeline chart data
-	let timelineChartData = $derived.by(() => {
-		if (!timelineData?.buckets) return [];
-		return timelineData.buckets.map(b => ({
-			time: b.time,
-			value: b.connections,
-		}));
-	});
+	const timelineBuckets = $derived(timelineData?.buckets ?? []);
+	const busiestBucket = $derived(timelineBuckets.reduce((best, b, i) => (b.connections > (timelineBuckets[best]?.connections ?? -1) ? i : best), -1));
 
-	// Isolation table sort
-	let isoSortField = $state<string>('connection_count');
-	let isoSortDir = $state<'asc' | 'desc'>('desc');
-
-	function toggleIsoSort(field: string) {
-		if (isoSortField === field) {
-			isoSortDir = isoSortDir === 'desc' ? 'asc' : 'desc';
-		} else {
-			isoSortField = field;
-			isoSortDir = 'desc';
-		}
-	}
-
-	let sortedIsolationPairs = $derived.by(() => {
-		if (!isolation?.pairs) return [];
-		return [...isolation.pairs].sort((a, b) => {
-			let av: string | number, bv: string | number;
-			switch (isoSortField) {
-				case 'iot_device':
-					av = a.iot_device.name; bv = b.iot_device.name;
-					break;
-				case 'internal_target':
-					av = a.internal_target.hostname ?? a.internal_target.ip;
-					bv = b.internal_target.hostname ?? b.internal_target.ip;
-					break;
-				case 'risk':
-					// OLD CODE START — critical ranked 0, so the first (descending) click put low risk on top
-					// const riskOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
-					// av = riskOrder[a.risk] ?? 4; bv = riskOrder[b.risk] ?? 4;
-					// OLD CODE END
-					const riskRank: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
-					av = riskRank[a.risk] ?? 0; bv = riskRank[b.risk] ?? 0;
-					break;
-				case 'ports':
-					av = a.ports.join(', '); bv = b.ports.join(', ');
-					break;
-				case 'description':
-					av = a.description; bv = b.description;
-					break;
-				default:
-					av = a.connection_count; bv = b.connection_count;
-			}
-			// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
-			// const cmp = av < bv ? -1 : av > bv ? 1 : 0;
-			// OLD CODE END
-			const cmp = compareValues(av, bv);
-			return isoSortDir === 'asc' ? cmp : -cmp;
-		});
-	});
-
-	// Protocol audit table sort (for drawer)
-	let protoSortField = $state<string>('severity');
-	let protoSortDir = $state<'asc' | 'desc'>('desc');
-
-	function toggleProtoSort(field: string) {
-		if (protoSortField === field) {
-			protoSortDir = protoSortDir === 'desc' ? 'asc' : 'desc';
-		} else {
-			protoSortField = field;
-			protoSortDir = 'desc';
-		}
-	}
-
-	let sortedProtocolFindings = $derived.by(() => {
-		if (!selectedProtocol?.findings) return [];
-		const sevOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-		return [...selectedProtocol.findings].sort((a, b) => {
-			let av: string | number, bv: string | number;
-			switch (protoSortField) {
-				case 'type':
-					av = a.type; bv = b.type; break;
-				case 'port':
-					av = a.port ?? 0; bv = b.port ?? 0; break;
-				case 'protocol':
-					av = a.protocol ?? ''; bv = b.protocol ?? ''; break;
-				default:
-					av = sevOrder[a.severity] ?? 5; bv = sevOrder[b.severity] ?? 5;
-			}
-			const cmp = av < bv ? -1 : av > bv ? 1 : 0;
-			return protoSortDir === 'asc' ? cmp : -cmp;
-		});
-	});
+	// OLD CODE START — 2026-11-03 UI redesign: the hand-built isolation and protocol tables' sorts;
+	// DataTable sorts every column. (The protocol sort ranked critical 0, so its first descending
+	// click put info on top; the severity column now ranks higher-is-worse.)
+	// let isoSortField = $state<string>('connection_count');
+	// let isoSortDir = $state<'asc' | 'desc'>('desc');
+	// function toggleIsoSort(field: string) { … }
+	// let sortedIsolationPairs = $derived.by(() => { … compareValues … riskRank … });
+	// let protoSortField = $state<string>('severity');
+	// let protoSortDir = $state<'asc' | 'desc'>('desc');
+	// function toggleProtoSort(field: string) { … }
+	// let sortedProtocolFindings = $derived.by(() => { … sevOrder critical 0 … });
+	// OLD CODE END
+	const RISK_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
+	const protocolFindings = $derived(
+		(selectedProtocol?.findings ?? []).map((f, i): ProtocolFinding & { key: string } => ({ ...f, key: `${f.type}-${f.port}-${i}` })),
+	);
 
 	// ---------------------------------------------------------------------------
 	// Formatters
@@ -501,7 +484,7 @@
 	}
 
 	function timeAgo(dateStr: string | null): string {
-		if (!dateStr) return '--';
+		if (!dateStr) return '—';
 		const diff = Date.now() - new Date(dateStr).getTime();
 		const mins = Math.floor(diff / 60000);
 		if (mins < 1) return 'just now';
@@ -511,57 +494,41 @@
 		return `${Math.floor(hours / 24)}d ago`;
 	}
 
-	// OLD CODE START — 2026-11-03 UI redesign: critical and high shared one red, low was green, info had no colour
+	// OLD CODE START — 2026-11-03 UI redesign: dots, badges and tags coloured by hand; SeverityPill carries
+	// colour, shape and word, and category tags are neutral
 	// function severityColor(severity: string): string {
 	// 	switch (severity) {
-	// 		case 'critical': return 'var(--red)';
-	// 		case 'high': return 'var(--red)';
-	// 		case 'medium': return 'var(--amber)';
-	// 		case 'low': return 'var(--green)';
+	// 		case 'critical': return 'var(--sev-critical)';
+	// 		case 'high': return 'var(--sev-high)';
+	// 		case 'medium': return 'var(--sev-medium)';
+	// 		case 'low': return 'var(--sev-low)';
+	// 		case 'info': return 'var(--sev-info)';
 	// 		default: return 'var(--text-muted)';
 	// 	}
 	// }
-	//
 	// function severityBadgeClass(severity: string): string {
 	// 	switch (severity) {
-	// 		case 'critical': return 'badge-danger';
-	// 		case 'high': return 'badge-danger';
-	// 		case 'medium': return 'badge-warning';
-	// 		case 'low': return 'badge-success';
+	// 		case 'critical': return 'severity-critical';
+	// 		case 'high': return 'severity-high';
+	// 		case 'medium': return 'severity-medium';
+	// 		case 'low': return 'severity-low';
+	// 		case 'info': return 'severity-info';
 	// 		default: return '';
 	// 	}
 	// }
+	// function categoryColor(cat: string): string {
+	// 	switch (cat) {
+	// 		case 'Privacy': return 'var(--purple)';
+	// 		case 'Security': return 'var(--red)';
+	// 		case 'Behavior': return 'var(--amber)';
+	// 		default: return 'var(--text-muted)';
+	// 	}
+	// }
 	// OLD CODE END
-	function severityColor(severity: string): string {
-		switch (severity) {
-			case 'critical': return 'var(--sev-critical)';
-			case 'high': return 'var(--sev-high)';
-			case 'medium': return 'var(--sev-medium)';
-			case 'low': return 'var(--sev-low)';
-			case 'info': return 'var(--sev-info)';
-			default: return 'var(--text-muted)';
-		}
-	}
 
-	// The severity-* classes live in global.css (background tint + text colour per level)
-	function severityBadgeClass(severity: string): string {
-		switch (severity) {
-			case 'critical': return 'severity-critical';
-			case 'high': return 'severity-high';
-			case 'medium': return 'severity-medium';
-			case 'low': return 'severity-low';
-			case 'info': return 'severity-info';
-			default: return '';
-		}
-	}
-
-	function categoryColor(cat: string): string {
-		switch (cat) {
-			case 'Privacy': return 'var(--purple)';
-			case 'Security': return 'var(--red)';
-			case 'Behavior': return 'var(--amber)';
-			default: return 'var(--text-muted)';
-		}
+	/** A severity the daemon sent, or null for anything else (shown as its raw word). */
+	function asLevel(severity: string): SeverityLevel | null {
+		return severity in RISK_RANK ? (severity as SeverityLevel) : null;
 	}
 
 	function scoreToGrade(score: number): string {
@@ -571,379 +538,222 @@
 		if (score >= 40) return 'D';
 		return 'F';
 	}
+
+	function openFindingDevice(finding: Finding) {
+		const dev = fleet?.devices.find(d => d.mac === finding.deviceMac);
+		if (dev) selectDevice(dev);
+	}
+
+	const scoreRows = (s: { privacy_score: number; security_score: number; behavior_score: number }) => [
+		{ label: 'Privacy', value: s.privacy_score, colour: 1 },
+		{ label: 'Security', value: s.security_score, colour: 2 },
+		{ label: 'Behaviour', value: s.behavior_score, colour: 3 },
+	];
+
+	// Every column sorts (design system); the cell snippets are at the top of the markup
+	const deviceColumns: Column<FleetDevice>[] = [
+		{ key: 'name', label: 'Device', cell: deviceCell },
+		{ key: 'manufacturer', label: 'Manufacturer' },
+		{ key: 'score', label: 'Trust', numeric: true, cell: trustCell },
+		{ key: 'privacy_score', label: 'Privacy', cell: privacyCell },
+		{ key: 'encryption_pct', label: 'Encrypted', numeric: true, cell: encryptedCell, sortValue: (d) => (d.encryption_applicable === false ? null : d.encryption_pct) },
+		{ key: 'anomaly_count', label: 'Anomalies', numeric: true },
+		{ key: 'last_seen', label: 'Last seen', cell: seenCell, sortValue: (d) => (d.last_seen ? Date.parse(d.last_seen) : null) },
+	];
+	const isolationColumns: Column<IsolationPair>[] = [
+		{ key: 'iot_device', label: 'IoT device', cell: isoDeviceCell, sortValue: (p) => p.iot_device.name },
+		{ key: 'internal_target', label: 'Internal target', cell: targetCell, sortValue: (p) => p.internal_target.hostname ?? p.internal_target.ip },
+		{ key: 'risk', label: 'Risk', cell: riskCell, sortValue: (p) => RISK_RANK[p.risk] ?? -1 },
+		{ key: 'connection_count', label: 'Connections', numeric: true, cell: isoConnCell },
+		{ key: 'ports', label: 'Ports', cell: portsCell, sortValue: (p) => p.ports.join(', ') },
+		{ key: 'description', label: 'Description', cell: descCell },
+	];
+	const protocolColumns: Column<ProtocolFinding & { key: string }>[] = [
+		{ key: 'type', label: 'Type', cell: typeCell },
+		{ key: 'severity', label: 'Severity', cell: findingSevCell, sortValue: (f) => RISK_RANK[f.severity] ?? -1 },
+		{ key: 'port', label: 'Port', numeric: true, cell: findingPortCell },
+		{ key: 'description', label: 'Description', cell: findingDescCell },
+	];
 </script>
+
+{#snippet grade(letter: string, small = false)}
+	<span class={['grade', small && 'sm']} style:--g={gradeColor(letter)}>{letter}</span>
+{/snippet}
+{#snippet severity(level: string)}
+	{@const known = asLevel(level)}
+	{#if known}<SeverityPill level={known} />{:else}<span class="chip">{level}</span>{/if}
+{/snippet}
+{#snippet deviceCell(d: FleetDevice)}<Who name={d.name} ip={d.ip ?? undefined} category="iot" />{/snippet}
+{#snippet trustCell(d: FleetDevice)}<span class="trust-cell">{@render grade(d.grade, true)}<span class="num">{d.score}</span></span>{/snippet}
+{#snippet privacyCell(d: FleetDevice)}{@render grade(scoreToGrade(d.privacy_score), true)}{/snippet}
+{#snippet encryptedCell(d: FleetDevice)}{d.encryption_applicable === false ? 'N/A' : `${d.encryption_pct}%`}{/snippet}
+{#snippet seenCell(d: FleetDevice)}{timeAgo(d.last_seen)}{/snippet}
+{#snippet isoDeviceCell(p: IsolationPair)}<Who name={p.iot_device.name} ip={p.iot_device.ip} category="iot" />{/snippet}
+{#snippet targetCell(p: IsolationPair)}<span class="mono">{p.internal_target.hostname ?? p.internal_target.ip}</span>{/snippet}
+{#snippet riskCell(p: IsolationPair)}{@render severity(p.risk)}{/snippet}
+{#snippet isoConnCell(p: IsolationPair)}{formatNumber(p.connection_count)}{/snippet}
+{#snippet portsCell(p: IsolationPair)}<span class="mono">{p.ports.join(', ')}</span>{/snippet}
+{#snippet descCell(p: IsolationPair)}<span class="trunc" title={p.description}>{p.description}</span>{/snippet}
+{#snippet typeCell(f: ProtocolFinding)}<span class="tag">{f.type.replace(/_/g, ' ')}</span>{/snippet}
+{#snippet findingSevCell(f: ProtocolFinding)}{@render severity(f.severity)}{/snippet}
+{#snippet findingPortCell(f: ProtocolFinding)}<span class="mono">{f.port ?? '—'}</span>{/snippet}
+{#snippet findingDescCell(f: ProtocolFinding)}<span class="trunc" title={f.description}>{f.description}</span>{/snippet}
+{#snippet scores(rows: { label: string; value: number; colour: number }[])}
+	<ul class="score-rows">
+		{#each rows as row (row.label)}
+			<li>
+				<span>{row.label}</span><b>{row.value}</b>
+				<span class="bar-track" aria-hidden="true"><span class="bar-fill c-d{row.colour}" style:--w="{Math.max(0, Math.min(100, row.value))}%"></span></span>
+			</li>
+		{/each}
+	</ul>
+{/snippet}
 
 <svelte:head>
 	<title>IoT Trust Score | NetTap</title>
 </svelte:head>
 
-<div class="iot-page">
-	<!-- ================================================================
-	     Page Header
-	     ================================================================ -->
-	<header class="page-header">
-		<div class="header-left">
-			<h1>IoT Trust Score</h1>
-			<p class="subtitle">Smart home device health, privacy, and security</p>
-		</div>
-		<div class="header-right">
-			<div class="pills">
-				{#each TIME_RANGES as tr}
-					<button class="pill" class:active={selectedRange === tr.value}
-						onclick={() => (selectedRange = tr.value)}>
-						{tr.label}
-					</button>
-				{/each}
-			</div>
-			<button class="btn btn-primary btn-sm" onclick={() => fetchAll(selectedRange)} disabled={loading}>
-				{loading ? 'Loading...' : 'Refresh'}
-			</button>
-		</div>
-	</header>
-
-	{#if loading && !fleet}
-		<div class="loading-state">
-			<div class="loading-spinner"></div>
-			<span class="text-muted">Scanning IoT devices...</span>
-		</div>
-	{:else if !fleet}
-		<div class="empty-state">
-			<p class="empty-text">Failed to load IoT data.</p>
-			<p class="empty-hint">Check that the daemon is running and OpenSearch is accessible.</p>
-		</div>
-	{:else}
-		<!-- ============================================================
-		     1. Hero Score Card
-		     ============================================================ -->
-		<div class="hero-card card">
-			<div class="hero-inner">
-				<div class="hero-gauge-area">
-					<div class="hero-gauge">
-						<svg viewBox="0 0 180 100">
-							<!-- Background arc -->
-							<path d="M 15 90 A 75 75 0 0 1 165 90" fill="none" stroke="var(--bg-tertiary)" stroke-width="14" stroke-linecap="round" />
-							<!-- Score arc -->
-							<path d={gaugeArcPath} fill="none" stroke={gaugeColor} stroke-width="14" stroke-linecap="round" />
-							<!-- Grade letter -->
-							<text x="90" y="62" text-anchor="middle" fill={gaugeColor} font-family="var(--font-mono)" font-size="38" font-weight="700">{healthGrade}</text>
-							<!-- Numeric score -->
-							<text x="90" y="82" text-anchor="middle" fill="var(--text-secondary)" font-family="var(--font-mono)" font-size="14">{healthScore}/100</text>
-							<!-- Label -->
-							<text x="90" y="96" text-anchor="middle" fill="var(--text-muted)" font-size="8" font-weight="600" letter-spacing="0.12em">SMART HOME HEALTH</text>
-						</svg>
-					</div>
-
-					<!-- Sub-score badges -->
-					<div class="sub-scores">
-						<div class="sub-score-badge">
-							<span class="sub-dot" style="background: var(--purple);"></span>
-							<span class="sub-label">Privacy</span>
-							<span class="sub-value mono">{fleet.privacy_score}</span>
-						</div>
-						<div class="sub-score-badge">
-							<span class="sub-dot" style="background: var(--cyan);"></span>
-							<span class="sub-label">Security</span>
-							<span class="sub-value mono">{fleet.security_score}</span>
-						</div>
-						<div class="sub-score-badge">
-							<span class="sub-dot" style="background: var(--amber);"></span>
-							<span class="sub-label">Behavior</span>
-							<span class="sub-value mono">{fleet.behavior_score}</span>
-						</div>
-					</div>
-				</div>
-
-				<div class="hero-headline">
-					<p class="hero-subtitle">{heroSubtitle}</p>
-				</div>
-			</div>
-		</div>
-
-		<!-- ============================================================
-		     2. Stat Cards Row
-		     ============================================================ -->
-		<div class="stats-grid">
-			<div class="stat-card">
-				<span class="stat-label">IoT DEVICES</span>
-				<span class="stat-value" style="color: var(--cyan);">{fleet.device_count}</span>
-				<span class="stat-hint">classified devices</span>
-			</div>
-			<div class="stat-card">
-				<span class="stat-label">ANOMALIES</span>
-				<span class="stat-value" style="color: {fleet.anomaly_count === 0 ? 'var(--green)' : fleet.anomaly_count <= 3 ? 'var(--amber)' : 'var(--red)'};">{fleet.anomaly_count}</span>
-				<span class="stat-hint">{fleet.anomaly_count === 0 ? 'all clear' : 'need review'}</span>
-			</div>
-			<div class="stat-card">
-				<span class="stat-label">PRIVACY CONCERNS</span>
-				<span class="stat-value" style="color: {fleet.privacy_concerns === 0 ? 'var(--green)' : fleet.privacy_concerns <= 2 ? 'var(--amber)' : 'var(--red)'};">{fleet.privacy_concerns}</span>
-				<span class="stat-hint">{fleet.privacy_concerns === 0 ? 'no trackers' : 'tracker domains found'}</span>
-			</div>
-			<div class="stat-card">
-				<span class="stat-label">UNENCRYPTED</span>
-				<span class="stat-value" style="color: {fleet.unencrypted_count === 0 ? 'var(--green)' : 'var(--red)'};">{fleet.unencrypted_count}</span>
-				<span class="stat-hint">{fleet.unencrypted_count === 0 ? 'fully encrypted' : 'devices using plaintext'}</span>
-			</div>
-		</div>
-
-		<!-- ============================================================
-		     4. Device Trust Grid
-		     ============================================================ -->
-		{#if sortedDevices.length > 0}
-			<section class="card">
-				<div class="card-header">
-					<h2>Device Trust Scores</h2>
-					<span class="card-badge">{sortedDevices.length} DEVICES</span>
-				</div>
-				<div class="trust-grid">
-					{#each sortedDevices as device, i (device.mac)}
-						<button
-							class="trust-card"
-							style="border-left-color: {gradeColor(device.grade)}; animation-delay: {i * 40}ms;"
-							onclick={() => selectDevice(device)}
-							type="button"
-						>
-							<div class="tc-header">
-								<div class="tc-identity">
-									<span class="tc-name">{device.name}</span>
-									<span class="tc-mfg">{device.manufacturer}</span>
-									{#if device.ip}
-										<span class="tc-ip mono">{device.ip}</span>
-									{/if}
-								</div>
-								<div class="tc-grade" style="color: {gradeColor(device.grade)}; background: color-mix(in srgb, {gradeColor(device.grade)} 12%, transparent);">
-									{device.grade}
-								</div>
-							</div>
-
-							<div class="tc-indicators">
-								<div class="tc-indicator">
-									<span class="tc-ind-label">Privacy</span>
-									<span class="tc-ind-value" style="color: {gradeColor(scoreToGrade(device.privacy_score))};">{scoreToGrade(device.privacy_score)}</span>
-								</div>
-								<div class="tc-indicator">
-									<span class="tc-ind-label">Encrypted</span>
-									<span class="tc-ind-value mono">{device.encryption_applicable === false ? 'N/A' : `${device.encryption_pct}%`}</span>
-								</div>
-								<div class="tc-indicator">
-									<span class="tc-ind-label">Anomalies</span>
-									<span class="tc-ind-value mono" style="color: {device.anomaly_count === 0 ? 'var(--green)' : 'var(--amber)'};">{device.anomaly_count}</span>
-								</div>
-							</div>
-
-							{#if device.last_seen}
-								<span class="tc-lastseen">{timeAgo(device.last_seen)}</span>
-							{/if}
-						</button>
-					{/each}
-				</div>
-			</section>
-		{:else}
-			<section class="card">
-				<div class="card-header">
-					<h2>Device Trust Scores</h2>
-				</div>
-				<div class="empty-state">
-					<p class="empty-text">No IoT devices classified yet.</p>
-					<p class="empty-hint">Devices are automatically classified based on manufacturer fingerprints (Ring, Nest, Wyze, etc.)</p>
-				</div>
-			</section>
-		{/if}
-
-		<!-- ============================================================
-		     Two-column layout: Manufacturer Profiles + Findings Feed
-		     ============================================================ -->
-		<div class="two-col">
-			<!-- 5. Manufacturer Profiles -->
-			<section class="card">
-				<div class="card-header">
-					<h2>Manufacturer Profiles</h2>
-					{#if manufacturers?.manufacturers?.length}
-						<span class="card-badge">{manufacturers.manufacturers.length} VENDORS</span>
-					{/if}
-				</div>
-				<div class="card-body">
-					{#if mfgBarItems.length > 0}
-						<HorizontalBarList
-							items={mfgBarItems}
-							showDot={true}
-							labelWidth={130}
-						/>
-					{:else if manufacturers === null}
-						<div class="empty-state-inline">
-							<p class="text-muted">Couldn't load manufacturer profiles: the request failed.</p>
-						</div>
-					{:else}
-						<div class="empty-state-inline">
-							<p class="text-muted">No manufacturer data available.</p>
-						</div>
-					{/if}
-				</div>
-			</section>
-
-			<!-- 6. Findings Feed -->
-			<section class="card">
-				<div class="card-header">
-					<h2>Findings Feed</h2>
-					{#if findings.length > 0}
-						<span class="card-badge" style="color: var(--amber);">{findings.length} FINDINGS</span>
-					{/if}
-				</div>
-				<div class="findings-list">
-					<!-- #96: findings come from the privacy and protocol checks; a failed one is not "healthy" -->
-					{#if privacy === null || protocol === null}
-						<div class="empty-state-inline">
-							<p class="text-muted">
-								Couldn't check {privacy === null && protocol === null ? 'privacy or protocols' : privacy === null ? 'privacy' : 'protocols'}: the request failed.
-							</p>
-						</div>
-					{/if}
-					{#if findings.length > 0}
-						{#each findings.slice(0, 20) as finding (finding.id)}
-							<div class="finding-item">
-								<span class="severity-dot" style="background: {severityColor(finding.severity)};"></span>
-								<div class="finding-content">
-									<p class="finding-desc">{finding.description}</p>
-									<div class="finding-meta">
-										<button class="finding-device" type="button"
-											onclick={() => {
-												const dev = fleet?.devices.find(d => d.mac === finding.deviceMac);
-												if (dev) selectDevice(dev);
-											}}>
-											{finding.deviceName}
-										</button>
-										<span class="finding-tag" style="color: {categoryColor(finding.category)}; background: color-mix(in srgb, {categoryColor(finding.category)} 12%, transparent);">
-											{finding.category}
-										</span>
-									</div>
-								</div>
-							</div>
-						{/each}
-						{#if findings.length > 20}
-							<div class="finding-overflow">
-								+{findings.length - 20} more findings
-							</div>
-						{/if}
-					{:else if privacy !== null && protocol !== null}
-						<div class="empty-state-inline">
-							<p class="text-muted">No findings -- all devices look healthy.</p>
-						</div>
-					{/if}
-				</div>
-			</section>
-		</div>
-
-		<!-- ============================================================
-		     7. Network Isolation Card
-		     ============================================================ -->
-		<section class="card">
-			<div class="card-header">
-				<h2>Network Isolation</h2>
-				{#if isolation}
-					<div class="iso-header-badges">
-						<span class="iso-score mono">{isolation.segmentation_score}/100</span>
-						<span class="iso-grade" style="color: {gradeColor(isolation.segmentation_grade)}; background: color-mix(in srgb, {gradeColor(isolation.segmentation_grade)} 12%, transparent);">
-							{isolation.segmentation_grade}
-						</span>
-					</div>
-				{/if}
-			</div>
-			{#if isolation && isolation.pairs.length > 0}
-				<div class="table-wrap">
-					<table class="data-table">
-						<thead>
-							<tr>
-								<th class="sortable" class:sorted={isoSortField === 'iot_device'}
-									onclick={() => toggleIsoSort('iot_device')}>
-									IoT Device
-									{#if isoSortField === 'iot_device'}
-										<span class="sort-arrow">{isoSortDir === 'desc' ? '\u2193' : '\u2191'}</span>
-									{/if}
-								</th>
-								<th class="sortable" class:sorted={isoSortField === 'internal_target'}
-									onclick={() => toggleIsoSort('internal_target')}>
-									Internal Target
-									{#if isoSortField === 'internal_target'}
-										<span class="sort-arrow">{isoSortDir === 'desc' ? '\u2193' : '\u2191'}</span>
-									{/if}
-								</th>
-								<th class="sortable" class:sorted={isoSortField === 'risk'}
-									onclick={() => toggleIsoSort('risk')}>
-									Risk
-									{#if isoSortField === 'risk'}
-										<span class="sort-arrow">{isoSortDir === 'desc' ? '\u2193' : '\u2191'}</span>
-									{/if}
-								</th>
-								<th class="sortable" class:sorted={isoSortField === 'connection_count'}
-									onclick={() => toggleIsoSort('connection_count')}>
-									Connections
-									{#if isoSortField === 'connection_count'}
-										<span class="sort-arrow">{isoSortDir === 'desc' ? '\u2193' : '\u2191'}</span>
-									{/if}
-								</th>
-								<th class="sortable" class:sorted={isoSortField === 'ports'}
-									onclick={() => toggleIsoSort('ports')}>
-									Ports
-									{#if isoSortField === 'ports'}
-										<span class="sort-arrow">{isoSortDir === 'desc' ? '\u2193' : '\u2191'}</span>
-									{/if}
-								</th>
-								<th class="sortable" class:sorted={isoSortField === 'description'}
-									onclick={() => toggleIsoSort('description')}>
-									Description
-									{#if isoSortField === 'description'}
-										<span class="sort-arrow">{isoSortDir === 'desc' ? '\u2193' : '\u2191'}</span>
-									{/if}
-								</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each sortedIsolationPairs as pair (pair.iot_device.mac + '-' + pair.internal_target.ip)}
-								<tr>
-									<td>
-										<div class="iso-device">
-											<span class="iso-name">{pair.iot_device.name}</span>
-											<span class="iso-ip mono">{pair.iot_device.ip}</span>
-										</div>
-									</td>
-									<td class="mono">{pair.internal_target.hostname ?? pair.internal_target.ip}</td>
-									<td>
-										<span class="{severityBadgeClass(pair.risk)}" style="padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-full); font-size: var(--text-xs); font-weight: 600; text-transform: uppercase;">
-											{pair.risk}
-										</span>
-									</td>
-									<td class="mono">{formatNumber(pair.connection_count)}</td>
-									<td class="mono" style="font-size: var(--text-xs);">{pair.ports.join(', ')}</td>
-									<td style="font-size: var(--text-sm); color: var(--text-secondary); max-width: 300px;">{pair.description}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
-				{#if isolation.recommendation}
-					<div class="iso-recommendation">
-						<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--amber)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<circle cx="12" cy="12" r="10"></circle>
-							<line x1="12" y1="8" x2="12" y2="12"></line>
-							<line x1="12" y1="16" x2="12.01" y2="16"></line>
-						</svg>
-						<p>{isolation.recommendation}</p>
-					</div>
-				{/if}
-			{:else if isolation === null}
-				<div class="empty-state-inline" style="padding: var(--space-lg);">
-					<p class="text-muted">Couldn't check for cross-segment IoT communication: the request failed.</p>
-				</div>
-			{:else}
-				<div class="empty-state-inline" style="padding: var(--space-lg);">
-					<p class="text-muted">No cross-segment IoT communication detected.</p>
-				</div>
-			{/if}
-		</section>
-	{/if}
+<div class="page-head">
+	<div>
+		<h1 class="page-title">IoT trust score</h1>
+		<p class="page-sub">Smart home device health, privacy and security</p>
+	</div>
+	<div class="head-actions">
+		<Pills ariaLabel="Time range" options={TIME_RANGES} bind:value={selectedRange} />
+	</div>
 </div>
 
+{#if !fleet}
+	<Card title="Smart home health" sub="Trust score out of 100 · {rangeLabel}">
+		{#if loading}
+			<CardState state="loading" title="Scanning IoT devices" />
+		{:else}
+			<!-- OLD CODE START — 2026-11-03 UI redesign: "Failed to load IoT data." (the system's error pattern is "Couldn't load …") -->
+			<!-- OLD CODE END -->
+			<CardState
+				state="error"
+				title="Couldn't load IoT data: the request failed."
+				message="Check that the daemon is running and OpenSearch is accessible."
+				onaction={() => refresh.run()}
+			/>
+		{/if}
+	</Card>
+{:else}
+	<div class="grid">
+		<KpiCard class="c-3" label="IoT devices" icon="iot" value={fleet.device_count} sub="Classified devices" note={rangeLabel} />
+		<KpiCard class="c-3" label="Anomalies" icon="warn" value={fleet.anomaly_count} sub={fleet.anomaly_count === 0 ? 'All clear' : 'Need review'} note={rangeLabel} />
+		<KpiCard class="c-3" label="Privacy concerns" icon="threats" value={fleet.privacy_concerns} sub={fleet.privacy_concerns === 0 ? 'No trackers' : 'Tracker domains found'} note={rangeLabel} />
+		<KpiCard class="c-3" label="Unencrypted" icon="certs" value={fleet.unencrypted_count} sub={fleet.unencrypted_count === 0 ? 'Fully encrypted' : 'Devices using plaintext'} note={rangeLabel} />
+
+		<Card class="c-4" hero title="Smart home health" sub="Trust score out of 100 · {rangeLabel}">
+			<div class="trust-top">
+				<Ring value={healthScore} ariaLabel="Smart home health {healthScore} of 100, grade {healthGrade}" />
+				<div class="trust-side">
+					{@render grade(healthGrade)}
+					<p class="trust-plain">{heroSubtitle}</p>
+				</div>
+			</div>
+			{@render scores(scoreRows(fleet))}
+		</Card>
+
+		<Card class="c-8" title="Findings" sub="From the privacy and protocol checks · {rangeLabel}">
+			{#snippet actions()}
+				{#if findings.length > 0}<span class="chip is-warn">{findings.length} findings</span>{/if}
+			{/snippet}
+			{#if checksFailed && findings.length === 0}
+				<CardState state="error" title="Couldn't check {checksFailed}: the request failed." onaction={() => refresh.run()} />
+			{:else if findings.length === 0}
+				<!-- OLD CODE START — 2026-11-03 UI redesign: "No findings -- all devices look healthy." -->
+				<!-- OLD CODE END -->
+				<CardState state="empty" icon="check" title="No findings. All devices look healthy." />
+			{:else}
+				{#if checksFailed}<p class="note">Couldn't check {checksFailed}: the request failed.</p>{/if}
+				<ul class="findings">
+					{#each findings.slice(0, 20) as finding (finding.id)}
+						<li class="finding">
+							{@render severity(finding.severity)}
+							<div class="finding-body">
+								<p>{finding.description}</p>
+								<div class="finding-meta">
+									<button class="link finding-device" type="button" onclick={() => openFindingDevice(finding)}>{finding.deviceName}</button>
+									<span class="tag">{CATEGORY_LABEL[finding.category]}</span>
+								</div>
+							</div>
+						</li>
+					{/each}
+				</ul>
+				{#if findings.length > 20}
+					<p class="note">+{findings.length - 20} more findings</p>
+				{/if}
+			{/if}
+		</Card>
+
+		<Card class="c-12" title="Device trust scores" sub="Out of 100 · worst first · {rangeLabel}">
+			{#snippet actions()}
+				{#if fleetDevices.length > 0}<span class="chip">{fleetDevices.length} devices</span>{/if}
+			{/snippet}
+			{#if fleetDevices.length > 0}
+				<DataTable
+					ariaLabel="Device trust scores"
+					rows={fleetDevices}
+					rowKey={(d) => d.mac}
+					initialSort={{ key: 'score', dir: 'asc' }}
+					onrowactivate={selectDevice}
+					rowLabel={(d) => `Open ${d.name}`}
+					selectedKey={drawerOpen ? selectedDevice?.mac : undefined}
+					columns={deviceColumns}
+				/>
+			{:else}
+				<CardState
+					state="empty"
+					icon="iot"
+					title="No IoT devices classified yet."
+					message="Devices are classified from manufacturer fingerprints (Ring, Nest, Wyze and others)."
+				/>
+			{/if}
+		</Card>
+
+		<Card class="c-4" title="Manufacturer profiles" sub="Average trust score out of 100 · worst first">
+			{#snippet actions()}
+				{#if manufacturers?.manufacturers?.length}<span class="chip">{manufacturers.manufacturers.length} vendors</span>{/if}
+			{/snippet}
+			{#if manufacturers === null}
+				<CardState state="error" title="Couldn't load manufacturer profiles: the request failed." onaction={() => refresh.run()} />
+			{:else if mfgBarItems.length > 0}
+				<BarList items={mfgBarItems} />
+			{:else}
+				<CardState state="empty" icon="iot" title="No manufacturer data available." />
+			{/if}
+		</Card>
+
+		<Card class="c-8" title="Network isolation" sub="IoT devices talking to other local devices · {rangeLabel}">
+			{#snippet actions()}
+				{#if isolation}
+					<span class="trust-cell"><span class="chip num">{isolation.segmentation_score}/100</span>{@render grade(isolation.segmentation_grade, true)}</span>
+				{/if}
+			{/snippet}
+			{#if isolation === null}
+				<CardState state="error" title="Couldn't check for cross-segment IoT communication: the request failed." onaction={() => refresh.run()} />
+			{:else if isolation.pairs.length === 0}
+				<CardState state="empty" icon="check" title="No cross-segment IoT communication detected." />
+			{:else}
+				<DataTable
+					ariaLabel="Network isolation"
+					rows={isolation.pairs}
+					rowKey={(p) => `${p.iot_device.mac}-${p.internal_target.ip}`}
+					initialSort={{ key: 'connection_count', dir: 'desc' }}
+					columns={isolationColumns}
+				/>
+				{#if isolation.recommendation}
+					<div class="todo"><b>What to do</b>{isolation.recommendation}</div>
+				{/if}
+			{/if}
+		</Card>
+	</div>
+{/if}
+
 <!-- ==================================================================
-     8. Device Detail Drawer
+     Device Detail Drawer
      ================================================================== -->
 <DetailDrawer
 	open={drawerOpen}
@@ -956,43 +766,12 @@
 >
 	{#snippet children()}
 		{#if drawerLoading && activeTab !== 'overview'}
-			<div class="loading-state" style="padding: var(--space-xl);">
-				<div class="loading-spinner"></div>
-				<span class="text-muted">Loading device data...</span>
-			</div>
+			<CardState state="loading" title="Loading device data" />
 		{:else if selectedDevice}
 			<!-- Tab 1: Overview -->
 			{#if activeTab === 'overview'}
 				<DrawerSection title="Trust Score Breakdown">
-					<div class="drawer-progress-bars">
-						<div class="drawer-progress-item">
-							<div class="dp-header">
-								<span class="dp-label">Privacy</span>
-								<span class="dp-value mono" style="color: var(--purple);">{selectedDevice.privacy_score}</span>
-							</div>
-							<div class="dp-track">
-								<div class="dp-fill" style="width: {selectedDevice.privacy_score}%; background: var(--purple);"></div>
-							</div>
-						</div>
-						<div class="drawer-progress-item">
-							<div class="dp-header">
-								<span class="dp-label">Security</span>
-								<span class="dp-value mono" style="color: var(--cyan);">{selectedDevice.security_score}</span>
-							</div>
-							<div class="dp-track">
-								<div class="dp-fill" style="width: {selectedDevice.security_score}%; background: var(--cyan);"></div>
-							</div>
-						</div>
-						<div class="drawer-progress-item">
-							<div class="dp-header">
-								<span class="dp-label">Behavior</span>
-								<span class="dp-value mono" style="color: var(--amber);">{selectedDevice.behavior_score}</span>
-							</div>
-							<div class="dp-track">
-								<div class="dp-fill" style="width: {selectedDevice.behavior_score}%; background: var(--amber);"></div>
-							</div>
-						</div>
-					</div>
+					{@render scores(scoreRows(selectedDevice))}
 				</DrawerSection>
 
 				<DrawerSection title="Device Info">
@@ -1000,7 +779,7 @@
 					<KVRow label="MAC Address" value={selectedDevice.mac} mono copyable />
 					<KVRow label="Manufacturer" value={selectedDevice.manufacturer} />
 					<KVRow label="Trust Grade" value={`${selectedDevice.grade} (${selectedDevice.score}/100)`} />
-					<KVRow label="Last Seen" value={selectedDevice.last_seen ? timeAgo(selectedDevice.last_seen) : '--'} />
+					<KVRow label="Last Seen" value={selectedDevice.last_seen ? timeAgo(selectedDevice.last_seen) : '—'} />
 				</DrawerSection>
 
 				<DrawerSection title="Quick Stats">
@@ -1013,15 +792,11 @@
 			{:else if activeTab === 'communication'}
 				<DrawerSection title="Top Destinations">
 					{#if commBarItems.length > 0}
-						<HorizontalBarList
-							items={commBarItems}
-							showRank={true}
-							labelWidth={160}
-						/>
+						<BarList items={commBarItems} />
 					{:else if commFailed}
-						<p class="text-muted" style="font-size: var(--text-sm);">Couldn't load this device's destinations: the request failed.</p>
+						<p class="note">Couldn't load this device's destinations: the request failed.</p>
 					{:else}
-						<p class="text-muted" style="font-size: var(--text-sm);">No communication data for this device.</p>
+						<p class="note">No communication data for this device.</p>
 					{/if}
 				</DrawerSection>
 
@@ -1029,132 +804,85 @@
 			{:else if activeTab === 'privacy'}
 				{#if selectedPrivacy}
 					<DrawerSection title="Privacy Grade">
-						<div class="drawer-grade-display">
-							<span class="drawer-grade-letter" style="color: {gradeColor(selectedPrivacy.privacy_grade)};">
-								{selectedPrivacy.privacy_grade}
-							</span>
-							<span class="drawer-grade-score mono">{selectedPrivacy.privacy_score}/100</span>
+						<div class="trust-cell">
+							{@render grade(selectedPrivacy.privacy_grade)}
+							<span class="num">{selectedPrivacy.privacy_score}/100</span>
 						</div>
 					</DrawerSection>
 
 					{#if trackerBarItems.length > 0}
 						<DrawerSection title="Tracker Domains ({selectedPrivacy.tracker_count})">
-							<HorizontalBarList
-								items={trackerBarItems}
-								showRank={true}
-								labelWidth={180}
-							/>
+							<BarList items={trackerBarItems} />
 						</DrawerSection>
 					{/if}
 
 					<DrawerSection title="Encryption">
-						<DonutChart
-							segments={privacyDonutSegments}
-							size={160}
-							formatValue={(n) => `${n}%`}
-						/>
+						<!-- OLD CODE START — 2026-11-03 UI redesign: the donut drew 0% encrypted for a device with only local chatter -->
+						<!-- OLD CODE END -->
+						{#if selectedPrivacy.encryption_applicable === false}
+							<p class="note">N/A: only local traffic (DNS, mDNS, NTP) was seen, so there is nothing to encrypt.</p>
+						{:else}
+							<Donut
+								items={[
+									{ key: 'encrypted', label: 'Encrypted', value: encryptedPct },
+									{ key: 'unencrypted', label: 'Unencrypted', value: 100 - encryptedPct },
+								]}
+								total={encryptedPct}
+								centreLabel="% encrypted"
+								formatValue={(n) => `${n}%`}
+								ariaLabel="{encryptedPct}% of connections encrypted"
+							/>
+						{/if}
 					</DrawerSection>
 
 					<DrawerSection title="Phone Home Frequency">
-						<div class="phone-home-stat">
-							<span class="ph-value mono">{Math.round(selectedPrivacy.phone_home_per_hour)}</span>
-							<span class="ph-label">requests/hour</span>
-						</div>
+						<div class="foot-stat"><b>{Math.round(selectedPrivacy.phone_home_per_hour)}</b>requests per hour</div>
 					</DrawerSection>
 				{:else if privacy === null}
-					<div class="empty-state-inline">
-						<p class="text-muted">Couldn't load the privacy report: the request failed.</p>
-					</div>
+					<p class="note">Couldn't load the privacy report: the request failed.</p>
 				{:else}
-					<div class="empty-state-inline">
-						<p class="text-muted">No privacy data available for this device.</p>
-					</div>
+					<p class="note">No privacy data available for this device.</p>
 				{/if}
 
 			<!-- Tab 4: Protocol Audit -->
 			{:else if activeTab === 'protocol'}
 				{#if selectedProtocol && selectedProtocol.findings.length > 0}
 					<DrawerSection title="Protocol Findings ({selectedProtocol.findings.length})">
-						<div class="table-wrap" style="margin-top: var(--space-sm);">
-							<table class="data-table">
-								<thead>
-									<tr>
-										<th class="sortable" class:sorted={protoSortField === 'type'}
-											onclick={() => toggleProtoSort('type')}>
-											Type
-											{#if protoSortField === 'type'}
-												<span class="sort-arrow">{protoSortDir === 'desc' ? '\u2193' : '\u2191'}</span>
-											{/if}
-										</th>
-										<th class="sortable" class:sorted={protoSortField === 'severity'}
-											onclick={() => toggleProtoSort('severity')}>
-											Severity
-											{#if protoSortField === 'severity'}
-												<span class="sort-arrow">{protoSortDir === 'desc' ? '\u2193' : '\u2191'}</span>
-											{/if}
-										</th>
-										<th class="sortable" class:sorted={protoSortField === 'port'}
-											onclick={() => toggleProtoSort('port')}>
-											Port
-											{#if protoSortField === 'port'}
-												<span class="sort-arrow">{protoSortDir === 'desc' ? '\u2193' : '\u2191'}</span>
-											{/if}
-										</th>
-										<th>Description</th>
-									</tr>
-								</thead>
-								<tbody>
-									{#each sortedProtocolFindings as f, i (`${f.type}-${f.port}-${i}`)}
-										<tr>
-											<td>
-												<span class="proto-type-badge">
-													{f.type.replace(/_/g, ' ')}
-												</span>
-											</td>
-											<td>
-												<span class="{severityBadgeClass(f.severity)}" style="padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-full); font-size: var(--text-xs); font-weight: 600; text-transform: uppercase;">
-													{f.severity}
-												</span>
-											</td>
-											<td class="mono">{f.port ?? '--'}</td>
-											<td style="font-size: var(--text-sm); color: var(--text-secondary);">{f.description}</td>
-										</tr>
-									{/each}
-								</tbody>
-							</table>
-						</div>
+						<DataTable
+							ariaLabel="Protocol findings"
+							rows={protocolFindings}
+							rowKey={(f) => f.key}
+							initialSort={{ key: 'severity', dir: 'desc' }}
+							columns={protocolColumns}
+						/>
 					</DrawerSection>
 				{:else if protocol === null}
 					<DrawerSection title="Protocol Audit">
-						<p class="text-muted" style="font-size: var(--text-sm);">Couldn't run the protocol audit: the request failed.</p>
+						<p class="note">Couldn't run the protocol audit: the request failed.</p>
 					</DrawerSection>
 				{:else}
 					<DrawerSection title="Protocol Audit">
-						<div class="proto-compliant">
-							<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="var(--green)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-								<polyline points="22 4 12 14.01 9 11.01"></polyline>
-							</svg>
-							<span>All protocols within expected parameters.</span>
-						</div>
+						<p class="ok-line"><span class="chip is-ok">Compliant</span>All protocols within expected parameters.</p>
 					</DrawerSection>
 				{/if}
 
 			<!-- Tab 5: Activity Timeline -->
 			{:else if activeTab === 'timeline'}
 				<DrawerSection title="Connections Over Time">
-					{#if timelineChartData.length > 0}
-						<TimeSeriesChart
-							data={timelineChartData}
+					{#if busiestBucket >= 0}
+						<AreaChart
+							series={[{ key: 'connections', label: 'Connections', colour: 1, points: timelineBuckets.map((b) => ({ t: b.time, v: b.connections })) }]}
+							formatX={(t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+							formatY={(n) => formatNumber(Math.round(n))}
+							formatTip={(i) => `${new Date(timelineBuckets[i].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${formatNumber(timelineBuckets[i].connections)} connections`}
+							highlightIndex={busiestBucket}
+							ariaLabel="Busiest at {new Date(timelineBuckets[busiestBucket].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}, with {formatNumber(timelineBuckets[busiestBucket].connections)} connections"
 							height={200}
-							color="var(--cyan)"
-							label="Connections"
-							formatValue={(n) => formatNumber(Math.round(n))}
 						/>
 					{:else if timelineFailed}
-						<p class="text-muted" style="font-size: var(--text-sm);">Couldn't load this device's activity: the request failed.</p>
+						<p class="note">Couldn't load this device's activity: the request failed.</p>
 					{:else}
-						<p class="text-muted" style="font-size: var(--text-sm);">No activity data available.</p>
+						<p class="note">No activity data available.</p>
 					{/if}
 				</DrawerSection>
 			{/if}
@@ -1163,628 +891,18 @@
 </DetailDrawer>
 
 <style>
-	/* ----------------------------------------------------------------
-	   Page Layout
-	   ---------------------------------------------------------------- */
-	.iot-page {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-	}
-
-	.page-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: var(--space-md);
-		flex-wrap: wrap;
-	}
-
-	h1 {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		letter-spacing: -0.02em;
-		margin-bottom: var(--space-xs);
-	}
-
-	.subtitle {
-		color: var(--text-secondary);
-		font-size: var(--text-sm);
-	}
-
-	.header-right {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		flex-wrap: wrap;
-	}
-
-	/* ----------------------------------------------------------------
-	   Card overrides
-	   ---------------------------------------------------------------- */
-	.card-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: var(--space-md) var(--space-lg);
-		border-bottom: 1px solid var(--border-dim);
-	}
-
-	.card-header h2 {
-		font-size: var(--text-lg);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.card-badge {
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--text-muted);
-		letter-spacing: 0.05em;
-		text-transform: uppercase;
-	}
-
-	.card-body {
-		padding: var(--space-md) var(--space-lg);
-	}
-
-	/* ----------------------------------------------------------------
-	   1. Hero Score Card
-	   ---------------------------------------------------------------- */
-	.hero-card {
-		padding: var(--space-lg);
-	}
-
-	.hero-inner {
-		display: flex;
-		align-items: center;
-		gap: var(--space-xl);
-		flex-wrap: wrap;
-	}
-
-	.hero-gauge-area {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: var(--space-md);
-		flex-shrink: 0;
-	}
-
-	.hero-gauge {
-		width: 220px;
-	}
-
-	.hero-gauge svg {
-		display: block;
-		width: 100%;
-	}
-
-	.sub-scores {
-		display: flex;
-		gap: var(--space-md);
-	}
-
-	.sub-score-badge {
-		display: flex;
-		align-items: center;
-		gap: var(--space-xs);
-		padding: var(--space-xs) var(--space-sm);
-		background: var(--bg-tertiary);
-		border: 1px solid var(--border-dim);
-		border-radius: var(--radius-full);
-		font-size: var(--text-xs);
-	}
-
-	.sub-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-
-	.sub-label {
-		color: var(--text-secondary);
-		font-weight: 500;
-	}
-
-	.sub-value {
-		color: var(--text-primary);
-		font-weight: 600;
-	}
-
-	.hero-headline {
-		flex: 1;
-		min-width: 200px;
-	}
-
-	.hero-subtitle {
-		font-size: var(--text-lg);
-		color: var(--text-secondary);
-		line-height: 1.5;
-	}
-
-	/* ----------------------------------------------------------------
-	   2. Stat Cards
-	   ---------------------------------------------------------------- */
-	.stats-grid {
-		display: grid;
-		grid-template-columns: repeat(4, 1fr);
-		gap: var(--space-md);
-	}
-
-	.stat-hint {
-		display: block;
-		font-size: var(--text-xs);
-		color: var(--text-dim);
-		margin-top: 2px;
-	}
-
-	/* ----------------------------------------------------------------
-	   4. Device Trust Grid
-	   ---------------------------------------------------------------- */
-	.trust-grid {
-		display: grid;
-		grid-template-columns: repeat(4, 1fr);
-		gap: var(--space-md);
-		padding: var(--space-md) var(--space-lg);
-	}
-
-	.trust-card {
-		background: var(--bg-tertiary);
-		border: 1px solid var(--border-dim);
-		border-left: 3px solid var(--text-dim);
-		border-radius: var(--radius-md);
-		padding: var(--space-md);
-		cursor: pointer;
-		text-align: left;
-		transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-		animation: trustCardIn 400ms ease both;
-		color: var(--text-primary);
-	}
-
-	@keyframes trustCardIn {
-		from {
-			opacity: 0;
-			transform: translateY(8px);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0);
-		}
-	}
-
-	.trust-card:hover {
-		transform: translateY(-2px);
-		box-shadow: 0 4px 16px color-mix(in srgb, var(--bg) 30%, transparent);
-		border-color: var(--border-bright);
-	}
-
-	.tc-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: flex-start;
-		gap: var(--space-sm);
-	}
-
-	.tc-identity {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		min-width: 0;
-		flex: 1;
-	}
-
-	.tc-name {
-		font-weight: 600;
-		font-size: var(--text-sm);
-		color: var(--text-primary);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.tc-mfg {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-	}
-
-	.tc-ip {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-	}
-
-	.tc-grade {
-		font-family: var(--font-mono);
-		font-size: var(--text-lg);
-		font-weight: 700;
-		width: 36px;
-		height: 36px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		border-radius: var(--radius-sm);
-		flex-shrink: 0;
-	}
-
-	.tc-indicators {
-		display: flex;
-		gap: var(--space-sm);
-		border-top: 1px solid var(--border-dim);
-		padding-top: var(--space-sm);
-	}
-
-	.tc-indicator {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		flex: 1;
-	}
-
-	.tc-ind-label {
-		font-size: 10px;
-		color: var(--text-dim);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-	}
-
-	.tc-ind-value {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.tc-lastseen {
-		font-size: 10px;
-		color: var(--text-dim);
-		text-align: right;
-	}
-
-	/* ----------------------------------------------------------------
-	   Two-column layout
-	   ---------------------------------------------------------------- */
-	.two-col {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: var(--space-md);
-	}
-
-	/* ----------------------------------------------------------------
-	   6. Findings Feed
-	   ---------------------------------------------------------------- */
-	.findings-list {
-		display: flex;
-		flex-direction: column;
-	}
-
-	.finding-item {
-		display: flex;
-		gap: var(--space-md);
-		padding: var(--space-sm) var(--space-lg);
-		border-bottom: 1px solid var(--border-dim);
-	}
-
-	.finding-item:last-child {
-		border-bottom: none;
-	}
-
-	.severity-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		margin-top: 6px;
-		flex-shrink: 0;
-	}
-
-	.finding-content {
-		flex: 1;
-		min-width: 0;
-	}
-
-	.finding-desc {
-		font-size: var(--text-sm);
-		color: var(--text-primary);
-		line-height: 1.4;
-		margin-bottom: var(--space-xs);
-	}
-
-	.finding-meta {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.finding-device {
-		font-size: var(--text-xs);
-		color: var(--text-link);
-		background: none;
-		border: none;
-		cursor: pointer;
-		padding: 0;
-		text-decoration: none;
-		font-weight: 500;
-	}
-
-	.finding-device:hover {
-		text-decoration: underline;
-	}
-
-	.finding-tag {
-		font-size: 10px;
-		font-weight: 600;
-		padding: 2px var(--space-sm);
-		border-radius: var(--radius-full);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-	}
-
-	.finding-overflow {
-		padding: var(--space-sm) var(--space-lg);
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		text-align: center;
-	}
-
-	/* ----------------------------------------------------------------
-	   7. Network Isolation
-	   ---------------------------------------------------------------- */
-	.iso-header-badges {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.iso-score {
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-	}
-
-	.iso-grade {
-		font-family: var(--font-mono);
-		font-size: var(--text-sm);
-		font-weight: 700;
-		padding: var(--space-xs) var(--space-sm);
-		border-radius: var(--radius-sm);
-	}
-
-	.iso-device {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-	}
-
-	.iso-name {
-		font-weight: 500;
-		font-size: var(--text-sm);
-		color: var(--text-primary);
-	}
-
-	.iso-ip {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-	}
-
-	.iso-recommendation {
-		display: flex;
-		align-items: flex-start;
-		gap: var(--space-sm);
-		padding: var(--space-md) var(--space-lg);
-		border-top: 1px solid var(--border-dim);
-		background: color-mix(in srgb, var(--amber) 5%, transparent);
-	}
-
-	.iso-recommendation p {
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-		line-height: 1.5;
-	}
-
-	/* ----------------------------------------------------------------
-	   Table overrides
-	   ---------------------------------------------------------------- */
-	.table-wrap {
-		overflow-x: auto;
-	}
-
-	.data-table th.sortable {
-		cursor: pointer;
-		user-select: none;
-	}
-
-	.data-table th.sortable:hover {
-		color: var(--text-primary);
-	}
-
-	.data-table th.sorted {
-		color: var(--accent);
-	}
-
-	.sort-arrow {
-		color: var(--accent);
-		margin-left: 2px;
-	}
-
-	/* ----------------------------------------------------------------
-	   Drawer tab content
-	   ---------------------------------------------------------------- */
-	.drawer-progress-bars {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-md);
-	}
-
-	.drawer-progress-item {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-xs);
-	}
-
-	.dp-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-	}
-
-	.dp-label {
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--text-secondary);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-	}
-
-	.dp-value {
-		font-size: var(--text-sm);
-		font-weight: 600;
-	}
-
-	.dp-track {
-		height: 6px;
-		background: var(--bg-tertiary);
-		border-radius: var(--radius-full);
-		overflow: hidden;
-	}
-
-	.dp-fill {
-		height: 100%;
-		border-radius: var(--radius-full);
-		transition: width var(--transition-normal);
-	}
-
-	/* Privacy grade display */
-	.drawer-grade-display {
-		display: flex;
-		align-items: center;
-		gap: var(--space-md);
-		padding: var(--space-sm) 0;
-	}
-
-	.drawer-grade-letter {
-		font-family: var(--font-mono);
-		font-size: var(--text-4xl);
-		font-weight: 700;
-	}
-
-	.drawer-grade-score {
-		font-size: var(--text-lg);
-		color: var(--text-secondary);
-	}
-
-	/* Phone home stat */
-	.phone-home-stat {
-		display: flex;
-		align-items: baseline;
-		gap: var(--space-sm);
-		padding: var(--space-sm) 0;
-	}
-
-	.ph-value {
-		font-size: var(--text-3xl);
-		font-weight: 700;
-		color: var(--text-primary);
-	}
-
-	.ph-label {
-		font-size: var(--text-sm);
-		color: var(--text-muted);
-	}
-
-	/* Protocol type badge */
-	.proto-type-badge {
-		font-size: var(--text-xs);
-		font-weight: 500;
-		color: var(--text-secondary);
-		text-transform: capitalize;
-	}
-
-	/* Protocol compliant state */
-	.proto-compliant {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-sm) 0;
-		font-size: var(--text-sm);
-		color: var(--green);
-	}
-
-	/* ----------------------------------------------------------------
-	   Empty / Loading states
-	   ---------------------------------------------------------------- */
-	.empty-state-inline {
-		padding: var(--space-lg);
-		text-align: center;
-	}
-
-	.loading-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		padding: var(--space-3xl);
-		gap: var(--space-md);
-	}
-
-	.empty-state {
-		padding: var(--space-xl);
-		text-align: center;
-	}
-
-	.empty-text {
-		color: var(--text-secondary);
-		font-size: var(--text-sm);
-		margin-bottom: var(--space-xs);
-	}
-
-	.empty-hint {
-		color: var(--text-dim);
-		font-size: var(--text-xs);
-	}
-
-	/* ----------------------------------------------------------------
-	   Responsive
-	   ---------------------------------------------------------------- */
-	@media (max-width: 1280px) {
-		.trust-grid {
-			grid-template-columns: repeat(3, 1fr);
-		}
-	}
-
-	@media (max-width: 1024px) {
-		.stats-grid {
-			grid-template-columns: repeat(2, 1fr);
-		}
-
-		.trust-grid {
-			grid-template-columns: repeat(2, 1fr);
-		}
-
-		.two-col {
-			grid-template-columns: 1fr;
-		}
-	}
-
-	@media (max-width: 768px) {
-		.page-header {
-			flex-direction: column;
-		}
-
-		.stats-grid {
-			grid-template-columns: 1fr;
-		}
-
-		.trust-grid {
-			grid-template-columns: 1fr;
-		}
-
-		.hero-inner {
-			flex-direction: column;
-			text-align: center;
-		}
-
-		.sub-scores {
-			flex-wrap: wrap;
-			justify-content: center;
-		}
-	}
+	/* Layout glue the system lacks */
+	.grade { color: var(--g); background: color-mix(in srgb, var(--g) 14%, transparent); }
+	.grade.sm { width: 26px; height: 26px; border-radius: var(--r-sm); font-size: var(--text-sm); }
+	.trust-side { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2); min-width: 0; }
+	.trust-cell { display: inline-flex; align-items: center; gap: var(--sp-2); }
+	.note { color: var(--text-2); font-size: var(--text-sm); }
+	.findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+	.finding { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--sp-3); align-items: start; padding: var(--sp-3) 0; }
+	.finding + .finding { border-top: 1px solid var(--line); }
+	.finding-body { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--text-sm); min-width: 0; }
+	.finding-meta { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+	.finding-device { background: none; border: 0; padding: 0; cursor: pointer; }
+	.ok-line { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--text-sm); color: var(--text-2); }
+	.todo { margin-top: var(--sp-4); }
 </style>
