@@ -1,32 +1,29 @@
 /**
- * Live Monitor, populated (PLAN.md §5.2): GeoMap must draw its arcs on `.arc-canvas`.
- * Runs in `app` (animated) and `reduced-motion` (a static frame, redrawn only on change).
+ * Live Monitor, populated (PLAN.md §5.4): the DotMap draws a hotspot per destination country.
+ * Runs in `app` (animated) and `reduced-motion`, where the feed starts paused and the map is a
+ * static frame (PLAN.md §4.5).
  */
 import { expect, test, type Page } from '@playwright/test';
+import { LIVE_ROUTES } from './fixtures/live.ts';
 import { expectNoConsoleErrors, expectReached, setMode, sweep, VIEWPORTS, watchApi, watchConsole } from './harness.ts';
 
-// Six arcs of a few hundred CSS pixels each; markers are Leaflet's, not on this canvas.
-const MIN_ARC_PIXELS = 1_000;
 const LIVE = { route: '/live', mode: 'populated' } as const;
 
-/** Non-transparent pixel count and a hash of every pixel on the arc canvas. */
-function readArcCanvas(page: Page): Promise<{ painted: number; hash: number }> {
-	return page.evaluate(() => {
-		const canvas = document.querySelector<HTMLCanvasElement>('.arc-canvas');
-		const ctx = canvas?.getContext('2d');
-		if (!canvas || !ctx || canvas.width === 0 || canvas.height === 0) return { painted: 0, hash: 0 };
-		const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-		let painted = 0;
-		let hash = 0;
-		for (let i = 0; i < data.length; i++) {
-			hash = (hash * 31 + data[i]) | 0;
-			if (i % 4 === 3 && data[i] > 0) painted++;
-		}
-		return { painted, hash };
-	});
+// One hotspot per destination country in the populated fixture
+const populated = LIVE_ROUTES[0].populated as { geo_arcs: { country_code: string }[] };
+const COUNTRIES = new Set(populated.geo_arcs.map((a) => a.country_code)).size;
+
+const map = (page: Page) => page.locator('main .map-card svg');
+
+/** The map's markup and its running animations, to compare two moments. */
+function readMap(page: Page): Promise<{ markup: string; animations: number }> {
+	return map(page).evaluate((svg) => ({
+		markup: svg.outerHTML,
+		animations: svg.getAnimations({ subtree: true }).length,
+	}));
 }
 
-test('/live populated: arcs drawn', async ({ page }, testInfo) => {
+test('/live populated: hotspots drawn', async ({ page }, testInfo) => {
 	const reduced = testInfo.project.name === 'reduced-motion';
 	await setMode('populated');
 	const errors = watchConsole(page);
@@ -37,18 +34,24 @@ test('/live populated: arcs drawn', async ({ page }, testInfo) => {
 	await expectReached(page, '/live', /Live/);
 	await apiIdle();
 
-	await expect
-		.poll(async () => (await readArcCanvas(page)).painted, { message: 'arc pixels on .arc-canvas' })
-		.toBeGreaterThan(MIN_ARC_PIXELS);
+	// each hotspot is a focusable button named by its country and connection count
+	await expect(map(page).locator('g[role="button"]'), 'one hotspot per country').toHaveCount(COUNTRIES);
+	await expect(map(page).locator('.hot-core')).toHaveCount(COUNTRIES);
+	await expect(map(page).getByRole('button', { name: /^United States, \d+ connections$/ })).toBeVisible();
+	// home is null today, so no "Your network" ring or arcs
+	await expect(map(page).locator('.arc, .home-ring')).toHaveCount(0);
 
 	if (reduced) {
-		// no animation loop: two reads ~500 ms apart are identical
-		const first = await readArcCanvas(page);
+		await expect(page.locator('main .live-chip'), 'the feed starts paused').toHaveText('Paused');
+		// a static frame: nothing animates, and two reads ~500 ms apart are identical
+		const first = await readMap(page);
 		await page.waitForTimeout(500);
-		const second = await readArcCanvas(page);
-		expect(second, 'static frame under reduced motion').toEqual(first);
+		const second = await readMap(page);
+		expect(first.animations, 'map animations under reduced motion').toBe(0);
+		expect(second, 'static map under reduced motion').toEqual(first);
 		await sweep(page, testInfo, LIVE, { variants: ['ember'], viewports: [VIEWPORTS[0]] });
 	} else {
+		await expect(page.locator('main .live-chip')).toHaveText('Live');
 		await sweep(page, testInfo, LIVE);
 	}
 	expectNoConsoleErrors(errors, LIVE);

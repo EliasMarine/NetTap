@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import {
@@ -23,8 +23,22 @@
 	import { getLiveDashboard } from '$api/live';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import IPAddress from '$components/IPAddress.svelte';
-	import HorizontalBarList from '$components/HorizontalBarList.svelte';
-	import type { BarItem } from '$components/HorizontalBarList.svelte';
+	// OLD CODE START — replaced by the system's BarList (ui/BarList)
+	// import HorizontalBarList from '$components/HorizontalBarList.svelte';
+	// import type { BarItem } from '$components/HorizontalBarList.svelte';
+	// OLD CODE END
+	import BarList, { type BarItem } from '$lib/components/ui/BarList.svelte';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import StatStrip, { type Stat } from '$lib/components/ui/StatStrip.svelte';
+	import Pills from '$lib/components/ui/Pills.svelte';
+	import SearchField from '$lib/components/ui/SearchField.svelte';
+	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
+	import Bytes from '$lib/components/ui/Bytes.svelte';
+	import ConnResult, { type ConnResultKind } from '$lib/components/ui/ConnResult.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import { registerPageRefresh, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import type { SortDir } from '$lib/utils/table-sort.svelte';
 	import SankeyDiagram from '$components/SankeyDiagram.svelte';
 	import SessionTimeline from '$components/SessionTimeline.svelte';
 	import DetailDrawer from '$components/DetailDrawer.svelte';
@@ -46,14 +60,16 @@
 		label: string;
 		value: string;
 		ms: number;
+		/** The window in words, for card subtitles */
+		text: string;
 	}
 
 	const TIME_RANGES: TimeRange[] = [
-		{ label: '15m', value: '15m', ms: 15 * 60 * 1000 },
-		{ label: '1h', value: '1h', ms: 60 * 60 * 1000 },
-		{ label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000 },
-		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000 },
-		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000 },
+		{ label: '15m', value: '15m', ms: 15 * 60 * 1000, text: 'Last 15 minutes' },
+		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, text: 'Last hour' },
+		{ label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, text: 'Last 4 hours' },
+		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, text: 'Last 24 hours' },
+		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, text: 'Last 7 days' },
 	];
 
 	const INTERVAL_MAP: Record<string, string> = {
@@ -70,16 +86,26 @@
 
 	const PROTOCOL_OPTIONS = ['All', 'TCP', 'UDP', 'ICMP', 'TLS'] as const;
 
-	const PROTO_COLORS: Record<string, string> = {
-		tcp: 'var(--data-1)', udp: 'var(--data-5)', tls: 'var(--data-4)',
-		dns: 'var(--data-2)', icmp: 'var(--data-6)', http: 'var(--data-3)',
-	};
+	// OLD CODE START — the protocol badges and bars took a colour each; the system's tags and bar
+	// lists are one colour (PLAN.md §4.1)
+	// const PROTO_COLORS: Record<string, string> = {
+	// 	tcp: 'var(--data-1)', udp: 'var(--data-5)', tls: 'var(--data-4)',
+	// 	dns: 'var(--data-2)', icmp: 'var(--data-6)', http: 'var(--data-3)',
+	// };
+	// OLD CODE END
+
+	const RANGE_PILLS = TIME_RANGES.map((r) => ({ value: r.value, label: r.label }));
+	const PROTOCOL_PILLS = PROTOCOL_OPTIONS.map((p) => ({ value: p as string, label: p }));
+	const AUTO_REFRESH_MS = 15_000;
 
 	// ---------------------------------------------------------------------------
 	// State
 	// ---------------------------------------------------------------------------
 
-	let initialized = $state(false);
+	// OLD CODE START — the load guard (below) makes a load started before the first one finished
+	// safe, so range and filter changes no longer wait for it
+	// let initialized = $state(false);
+	// OLD CODE END
 	let loading = $state(false);
 
 	// Time range
@@ -202,17 +228,51 @@
 	// });
 	// OLD CODE END
 
-	// Bar list items for analytics row
+	// OLD CODE START — HorizontalBarList items; the system's BarList takes display/detail, one colour
+	// // Bar list items for analytics row
+	// let sourceBarItems = $derived<BarItem[]>(
+	// 	(stats?.top_sources || []).map((s, i) => ({
+	// 		key: s.ip,
+	// 		label: s.ip,
+	// 		value: s.total_bytes,
+	// 		formattedValue: formatBytes(s.total_bytes),
+	// 		secondaryValue: `${s.connections} conn`,
+	// 		color: 'var(--cyan)',
+	// 		isIp: true,
+	// 		mono: true,
+	// 	}))
+	// );
+	//
+	// let protocolBarItems = $derived<BarItem[]>(
+	// 	(stats?.protocols || []).map((p) => ({
+	// 		key: p.name,
+	// 		label: p.name.toUpperCase(),
+	// 		value: p.count,
+	// 		formattedValue: formatNumber(p.count),
+	// 		color: PROTO_COLORS[p.name.toLowerCase()] || 'var(--accent)',
+	// 	}))
+	// );
+	//
+	// let destBarItems = $derived<BarItem[]>(
+	// 	(stats?.top_destinations || []).map((d) => ({
+	// 		key: d.ip,
+	// 		label: d.asn || d.ip,
+	// 		value: d.total_bytes,
+	// 		formattedValue: formatBytes(d.total_bytes),
+	// 		secondaryValue: d.country || '',
+	// 		color: 'var(--data-2)',
+	// 	}))
+	// );
+	// OLD CODE END
+	// The IP's context menu had "device details"; the bar label now links there
 	let sourceBarItems = $derived<BarItem[]>(
-		(stats?.top_sources || []).map((s, i) => ({
+		(stats?.top_sources || []).map((s) => ({
 			key: s.ip,
 			label: s.ip,
 			value: s.total_bytes,
-			formattedValue: formatBytes(s.total_bytes),
-			secondaryValue: `${s.connections} conn`,
-			color: 'var(--cyan)',
-			isIp: true,
-			mono: true,
+			display: formatBytes(s.total_bytes),
+			detail: `${s.connections.toLocaleString('en-GB')} conn`,
+			href: `/devices/${encodeURIComponent(s.ip)}`,
 		}))
 	);
 
@@ -221,8 +281,7 @@
 			key: p.name,
 			label: p.name.toUpperCase(),
 			value: p.count,
-			formattedValue: formatNumber(p.count),
-			color: PROTO_COLORS[p.name.toLowerCase()] || 'var(--accent)',
+			display: formatNumber(p.count),
 		}))
 	);
 
@@ -231,23 +290,40 @@
 			key: d.ip,
 			label: d.asn || d.ip,
 			value: d.total_bytes,
-			formattedValue: formatBytes(d.total_bytes),
-			secondaryValue: d.country || '',
-			color: 'var(--data-2)',
+			display: formatBytes(d.total_bytes),
+			detail: d.country || undefined,
 		}))
 	);
+
+	let range = $derived(selectedTimeRange.text);
+
+	let summaryStats = $derived<Stat[]>([
+		{ key: 'sessions', label: 'Sessions', value: stats ? formatNumber(stats.total_sessions) : '—' },
+		{ key: 'data', label: 'Data', value: stats ? formatBytes(stats.bytes_in + stats.bytes_out) : '—' },
+		{ key: 'alerts', label: 'With alerts', value: stats ? formatNumber(stats.alert_sessions) : '—' },
+		{ key: 'devices', label: 'Active devices', value: activeNow === null ? '—' : String(activeNow) },
+	]);
+
+	let summarySub = $derived(
+		stats
+			? `${range} · ${formatBytes(stats.bytes_in)} in, ${formatBytes(stats.bytes_out)} out · devices active in the last 5 minutes`
+			: `${range} · devices active in the last 5 minutes`,
+	);
+
+	// Log-scale bars in both byte columns share the page's largest value
+	let maxRowBytes = $derived(Math.max(0, ...connections.map((c) => Math.max(bytesIn(c) ?? 0, bytesOut(c) ?? 0))));
 
 	// ---------------------------------------------------------------------------
 	// Display helpers
 	// ---------------------------------------------------------------------------
 
 	function formatTimestamp(ts: string | undefined): string {
-		if (!ts) return '--';
+		if (!ts) return '—';
 		try { return new Date(ts).toLocaleString(); } catch { return ts; }
 	}
 
 	function formatBytes(bytes: number | undefined): string {
-		if (bytes === undefined || bytes === null) return '--';
+		if (bytes === undefined || bytes === null) return '—';
 		if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`;
 		if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
 		if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -269,7 +345,7 @@
 		// if (isNaN(ms) || ms < 0) return '--';
 		// OLD CODE END
 		const ms = connectionDurationMs(conn);
-		if (ms === null) return '--';
+		if (ms === null) return '—';
 		const seconds = ms / 1000;
 		if (seconds < 1) return `${ms}ms`;
 		if (seconds < 60) return `${seconds.toFixed(1)}s`;
@@ -292,22 +368,49 @@
 		return lower || 'unknown';
 	}
 
-	function stateBadgeClass(state: string): string {
-		switch (state) {
-			case 'established': return 'badge badge-success';
-			case 'closed': return 'badge badge-muted';
-			case 'rejected': return 'badge badge-danger';
-			case 'timeout': return 'badge badge-warning';
-			default: return 'badge badge-muted';
+	// OLD CODE START — legacy badge classes; the system shows a connection result as ConnResult
+	// function stateBadgeClass(state: string): string {
+	// 	switch (state) {
+	// 		case 'established': return 'badge badge-success';
+	// 		case 'closed': return 'badge badge-muted';
+	// 		case 'rejected': return 'badge badge-danger';
+	// 		case 'timeout': return 'badge badge-warning';
+	// 		default: return 'badge badge-muted';
+	// 	}
+	// }
+	//
+	// function stateLabel(conn: Connection): string {
+	// 	const raw = asString(getField(conn, 'zeek.conn.conn_state'));
+	// 	const mapped = connState(conn);
+	// 	if (raw && mapped !== raw.toLowerCase()) return `${mapped.toUpperCase()} (${raw})`;
+	// 	return mapped.toUpperCase();
+	// }
+	// OLD CODE END
+
+	/** Zeek's conn_state as the system's result (README "Connection results"); null when unknown. */
+	function connResult(conn: Connection): ConnResultKind | null {
+		switch (connState(conn)) {
+			// SF ran to a normal close; S1 and the like are still open
+			case 'established': return rawState(conn).toUpperCase() === 'SF' ? 'completed' : 'ongoing';
+			case 'closed': return 'completed';
+			case 'rejected': return 'reset';
+			case 'timeout': return 'no-reply';
+			default: return null;
 		}
 	}
 
-	function stateLabel(conn: Connection): string {
-		const raw = asString(getField(conn, 'zeek.conn.conn_state'));
-		const mapped = connState(conn);
-		if (raw && mapped !== raw.toLowerCase()) return `${mapped.toUpperCase()} (${raw})`;
-		return mapped.toUpperCase();
+	const rawState = (conn: Connection) => asString(getField(conn, 'zeek.conn.conn_state'));
+	const bytesIn = (conn: Connection) => (getField(conn, 'source.bytes') ?? getField(conn, 'client.bytes')) as number | undefined;
+	const bytesOut = (conn: Connection) => (getField(conn, 'destination.bytes') ?? getField(conn, 'server.bytes')) as number | undefined;
+
+	/** One result for a load from its parts: newer loads own the 'skipped' parts. */
+	function outcome(parts: ('ok' | 'failed' | 'skipped')[]): LoadResult {
+		const done = parts.filter((p) => p !== 'skipped');
+		if (done.length === 0) return 'skipped';
+		const failed = done.filter((p) => p === 'failed').length;
+		return failed === 0 ? 'ok' : failed === done.length ? 'failed' : 'partial';
 	}
+	const settled = (r: PromiseSettledResult<unknown>) => (r.status === 'fulfilled' ? 'ok' : 'failed');
 
 	// ---------------------------------------------------------------------------
 	// Data fetching
@@ -334,104 +437,192 @@
 		return parts.join(' ');
 	}
 
-	// OLD CODE START — always reloaded page 1, so auto-refresh threw the user back to the first page
-	// async function fetchAll() {
+	// OLD CODE START — PLAN.md §5.5: each load wrote whatever answered last, so a slow 24 h response
+	// could overwrite a newer 1 h one; loads now go through the page refresh contract and a load guard
+	// // OLD CODE START — always reloaded page 1, so auto-refresh threw the user back to the first page
+	// // async function fetchAll() {
+	// // OLD CODE END
+	// /** Reload everything; the table stays on `pg` (the current page unless told otherwise). */
+	// async function fetchAll(pg: number = currentPage) {
+	// 	loading = true;
+	// 	const { from, to } = getTimeRange();
+	// 	const interval = INTERVAL_MAP[selectedTimeRange.value] || '15m';
+	//
+	// 	try {
+	// 		const [statsRes, sankeyRes, timelineRes, liveRes] = await Promise.allSettled([
+	// 			getConnectionStats({ from, to }),
+	// 			getConnectionSankey({ from, to, limit: 10 }),
+	// 			getConnectionTimeline({ from, to, interval }),
+	// 			// OLD CODE START — count of a 1-item list, so "Active Now" was only ever 0 or 1
+	// 			// getLiveConnections({ limit: 1 }),
+	// 			// OLD CODE END
+	// 			getLiveDashboard({ limit: 1 }),
+	// 		]);
+	//
+	// 		if (statsRes.status === 'fulfilled') stats = statsRes.value;
+	// 		if (sankeyRes.status === 'fulfilled') sankey = sankeyRes.value;
+	// 		if (timelineRes.status === 'fulfilled') timeline = timelineRes.value.buckets;
+	// 		statsFailed = statsRes.status === 'rejected';
+	// 		sankeyFailed = sankeyRes.status === 'rejected';
+	// 		timelineFailed = timelineRes.status === 'rejected';
+	// 		// OLD CODE START
+	// 		// if (liveRes.status === 'fulfilled') activeNow = liveRes.value.count;
+	// 		// OLD CODE END
+	// 		// Distinct source devices seen in the live window (last 5 minutes)
+	// 		if (liveRes.status === 'fulfilled') activeNow = liveRes.value.stats?.active_devices ?? 0;
+	// 		liveFailed = liveRes.status === 'rejected';
+	// 	} catch { /* handled per-request */ }
+	//
+	// 	// OLD CODE START
+	// 	// await fetchConnections(1);
+	// 	// OLD CODE END
+	// 	await fetchConnections(pg);
+	// 	loading = false;
+	// }
+	//
+	// async function fetchConnections(pg: number = 1) {
+	// 	const { from, to } = getTimeRange();
+	// 	const q = buildSearchQuery();
+	// 	try {
+	// 		// OLD CODE START — #145: filtered one page of 50 rows, while the total and pages counted all
+	// 		// const response: ConnectionsResponse = await getConnections({
+	// 		// 	from, to, page: pg, size: pageSize, q: q || undefined,
+	// 		// });
+	// 		// let filtered = response.connections;
+	// 		// if (stateFilter !== 'all') {
+	// 		// 	filtered = filtered.filter((c) => connState(c) === stateFilter);
+	// 		// }
+	// 		// connections = filtered;
+	// 		// OLD CODE END
+	// 		const response: ConnectionsResponse = await getConnections({
+	// 			from, to, page: pg, size: pageSize, q: q || undefined,
+	// 			sort: sortKey, order: sortDir, state: stateFilter === 'all' ? undefined : stateFilter,
+	// 		});
+	// 		connections = response.connections;
+	// 		currentPage = response.page;
+	// 		totalPages = response.total_pages;
+	// 		totalConnections = response.total;
+	// 		connectionsFailed = false;
+	// 	} catch {
+	// 		// rows are specific to this page and filter set, so they are not kept as stale
+	// 		connections = [];
+	// 		totalPages = 0;
+	// 		totalConnections = 0;
+	// 		connectionsFailed = true;
+	// 	}
+	// }
 	// OLD CODE END
-	/** Reload everything; the table stays on `pg` (the current page unless told otherwise). */
-	async function fetchAll(pg: number = currentPage) {
-		loading = true;
-		const { from, to } = getTimeRange();
-		const interval = INTERVAL_MAP[selectedTimeRange.value] || '15m';
 
+	// The summary (stats, flow, timeline, live) and the table load separately: a page, sort or filter
+	// change reloads only the table, so it has its own guard and never drops the summary's figures.
+	const tableGuard = createLoadGuard();
+	const refresh = registerPageRefresh(loadAll);
+
+	/** The table for page `pg` in `span`; a newer table load makes this one write nothing. */
+	async function loadTable(pg: number, span = getTimeRange()): Promise<'ok' | 'failed' | 'skipped'> {
+		const t = tableGuard.begin();
+		const q = buildSearchQuery();
+		const params = {
+			...span, page: pg, size: pageSize, q: q || undefined,
+			sort: sortKey, order: sortDir, state: stateFilter === 'all' ? undefined : stateFilter,
+		};
 		try {
-			const [statsRes, sankeyRes, timelineRes, liveRes] = await Promise.allSettled([
-				getConnectionStats({ from, to }),
-				getConnectionSankey({ from, to, limit: 10 }),
-				getConnectionTimeline({ from, to, interval }),
-				// OLD CODE START — count of a 1-item list, so "Active Now" was only ever 0 or 1
-				// getLiveConnections({ limit: 1 }),
-				// OLD CODE END
-				getLiveDashboard({ limit: 1 }),
-			]);
+			const response: ConnectionsResponse = await getConnections(params);
+			if (!tableGuard.current(t)) return 'skipped';
+			connections = response.connections;
+			currentPage = response.page;
+			totalPages = response.total_pages;
+			totalConnections = response.total;
+			connectionsFailed = false;
+			return 'ok';
+		} catch {
+			if (!tableGuard.current(t)) return 'skipped';
+			// rows are specific to this page and filter set, so they are not kept as stale
+			connections = [];
+			totalPages = 0;
+			totalConnections = 0;
+			connectionsFailed = true;
+			return 'failed';
+		}
+	}
 
+	/** Reload everything; the table stays on the current page. The top bar's Refresh calls this. */
+	async function loadAll(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		const span = getTimeRange();
+		const interval = INTERVAL_MAP[selectedTimeRange.value] || '15m';
+		loading = true;
+		const table = loadTable(currentPage, span);
+		const results = await Promise.allSettled([
+			getConnectionStats(span),
+			getConnectionSankey({ ...span, limit: 10 }),
+			getConnectionTimeline({ ...span, interval }),
+			getLiveDashboard({ limit: 1 }),
+		]);
+		const [statsRes, sankeyRes, timelineRes, liveRes] = results;
+		if (guard.current(g)) {
 			if (statsRes.status === 'fulfilled') stats = statsRes.value;
 			if (sankeyRes.status === 'fulfilled') sankey = sankeyRes.value;
 			if (timelineRes.status === 'fulfilled') timeline = timelineRes.value.buckets;
 			statsFailed = statsRes.status === 'rejected';
 			sankeyFailed = sankeyRes.status === 'rejected';
 			timelineFailed = timelineRes.status === 'rejected';
-			// OLD CODE START
-			// if (liveRes.status === 'fulfilled') activeNow = liveRes.value.count;
-			// OLD CODE END
 			// Distinct source devices seen in the live window (last 5 minutes)
 			if (liveRes.status === 'fulfilled') activeNow = liveRes.value.stats?.active_devices ?? 0;
 			liveFailed = liveRes.status === 'rejected';
-		} catch { /* handled per-request */ }
-
-		// OLD CODE START
-		// await fetchConnections(1);
-		// OLD CODE END
-		await fetchConnections(pg);
-		loading = false;
-	}
-
-	async function fetchConnections(pg: number = 1) {
-		const { from, to } = getTimeRange();
-		const q = buildSearchQuery();
-		try {
-			// OLD CODE START — #145: filtered one page of 50 rows, while the total and pages counted all
-			// const response: ConnectionsResponse = await getConnections({
-			// 	from, to, page: pg, size: pageSize, q: q || undefined,
-			// });
-			// let filtered = response.connections;
-			// if (stateFilter !== 'all') {
-			// 	filtered = filtered.filter((c) => connState(c) === stateFilter);
-			// }
-			// connections = filtered;
-			// OLD CODE END
-			const response: ConnectionsResponse = await getConnections({
-				from, to, page: pg, size: pageSize, q: q || undefined,
-				sort: sortKey, order: sortDir, state: stateFilter === 'all' ? undefined : stateFilter,
-			});
-			connections = response.connections;
-			currentPage = response.page;
-			totalPages = response.total_pages;
-			totalConnections = response.total;
-			connectionsFailed = false;
-		} catch {
-			// rows are specific to this page and filter set, so they are not kept as stale
-			connections = [];
-			totalPages = 0;
-			totalConnections = 0;
-			connectionsFailed = true;
 		}
+		const tableResult = await table;
+		if (!guard.current(g)) return 'skipped';
+		loading = false;
+		return outcome([...results.map(settled), tableResult]);
 	}
 
 	// ---------------------------------------------------------------------------
 	// Interaction handlers
 	// ---------------------------------------------------------------------------
 
-	function toggleSort(key: SortKey) {
-		if (sortKey === key) {
-			sortDir = sortDir === 'asc' ? 'desc' : 'asc';
-		} else {
-			sortKey = key;
-			// OLD CODE START — #145: page key names
-			// sortDir = key === 'timestamp' ? 'desc' : 'asc';
-			// OLD CODE END
-			sortDir = key === 'time' ? 'desc' : 'asc';
-		}
-		fetchConnections(1);
+	// OLD CODE START — the DataTable owns the header buttons and their direction (a new column
+	// starts descending, as in every table); the page asks the daemon for that order
+	// function toggleSort(key: SortKey) {
+	// 	if (sortKey === key) {
+	// 		sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+	// 	} else {
+	// 		sortKey = key;
+	// 		// OLD CODE START — #145: page key names
+	// 		// sortDir = key === 'timestamp' ? 'desc' : 'asc';
+	// 		// OLD CODE END
+	// 		sortDir = key === 'time' ? 'desc' : 'asc';
+	// 	}
+	// 	fetchConnections(1);
+	// }
+	// OLD CODE END
+	function handleSortChange(key: string, dir: SortDir) {
+		sortKey = key as SortKey;
+		sortDir = dir;
+		void loadTable(1);
 	}
 
-	function handleTimeRangeChange(range: TimeRange) {
-		selectedTimeRange = range;
+	// OLD CODE START — waited for the first load (`initialized`) and took the range object
+	// function handleTimeRangeChange(range: TimeRange) {
+	// 	selectedTimeRange = range;
+	// 	// #96: the last range's figures must not stand in for this range if its load fails
+	// 	stats = null;
+	// 	sankey = null;
+	// 	timeline = [];
+	// 	// A new time range is a new result set: start from page 1
+	// 	if (initialized) fetchAll(1);
+	// }
+	// OLD CODE END
+	function handleTimeRangeChange(value: string) {
+		selectedTimeRange = TIME_RANGES.find((r) => r.value === value) ?? selectedTimeRange;
 		// #96: the last range's figures must not stand in for this range if its load fails
 		stats = null;
 		sankey = null;
 		timeline = [];
-		// A new time range is a new result set: start from page 1
-		if (initialized) fetchAll(1);
+		// A new time range is a new result set: start from page 1. The new load's guard
+		// generation drops whatever the older range's requests return.
+		currentPage = 1;
+		void refresh.run();
 	}
 
 	function handleSankeyNodeClick(type: 'source' | 'protocol' | 'destination', id: string) {
@@ -446,12 +637,28 @@
 		} else {
 			sankeyFilter = { type, id };
 		}
-		if (initialized) fetchConnections(1);
+		// OLD CODE START: if (initialized) fetchConnections(1); OLD CODE END
+		void loadTable(1);
 	}
 
 	function clearSankeyFilter() {
 		sankeyFilter = null;
-		if (initialized) fetchConnections(1);
+		// OLD CODE START: if (initialized) fetchConnections(1); OLD CODE END
+		void loadTable(1);
+	}
+
+	function setProtocolFilter(value: string) {
+		protocolFilter = value;
+		void loadTable(1);
+	}
+
+	function setStateFilter(value: StateFilter) {
+		stateFilter = value;
+		void loadTable(1);
+	}
+
+	function applyOnEnter(e: KeyboardEvent) {
+		if (e.key === 'Enter') void loadTable(1);
 	}
 
 	function toggleAutoRefresh() {
@@ -460,7 +667,10 @@
 			// OLD CODE START
 			// refreshInterval = setInterval(fetchAll, 15_000);
 			// OLD CODE END
-			refreshInterval = setInterval(() => fetchAll(), 15_000);
+			// OLD CODE START: refreshInterval = setInterval(() => fetchAll(), 15_000); OLD CODE END
+			// A tick while a load is still running waits: starting another would make the guard
+			// drop the slow one, and on a slow daemon nothing would ever land
+			refreshInterval = setInterval(() => { if (!loading) void refresh.run(); }, AUTO_REFRESH_MS);
 		} else if (refreshInterval) {
 			clearInterval(refreshInterval);
 			refreshInterval = null;
@@ -479,14 +689,38 @@
 
 	function goToPage(pg: number) {
 		if (pg < 1 || pg > totalPages) return;
-		fetchConnections(pg);
+		// OLD CODE START: fetchConnections(pg); OLD CODE END
+		void loadTable(pg);
 	}
 
 	function handlePageSizeChange(event: Event) {
 		const target = event.target as HTMLSelectElement;
 		pageSize = parseInt(target.value) || 50;
-		fetchConnections(1);
+		// OLD CODE START: fetchConnections(1); OLD CODE END
+		void loadTable(1);
 	}
+
+	// ---------------------------------------------------------------------------
+	// Table
+	// ---------------------------------------------------------------------------
+
+	const RETRY_HINT = 'Check that NetTap is running on the System page, then try again.';
+
+	// Keys are the daemon's sort names: the table is server-sorted (#145)
+	const COLUMNS: Column<Connection>[] = [
+		{ key: 'time', label: 'Time', cell: timeCell },
+		{ key: 'source', label: 'Source', cell: sourceCell },
+		{ key: 'destination', label: 'Destination', cell: destinationCell },
+		{ key: 'proto', label: 'Protocol', cell: protoCell },
+		{ key: 'service', label: 'Service', cell: serviceCell },
+		{ key: 'duration', label: 'Duration', numeric: true, cell: durationCell },
+		{ key: 'ul', label: 'Bytes in', numeric: true, cell: bytesInCell },
+		{ key: 'dl', label: 'Bytes out', numeric: true, cell: bytesOutCell },
+		{ key: 'state', label: 'Result', cell: resultCell },
+	];
+
+	const rowLabel = (conn: Connection) =>
+		`Open connection from ${asString(getField(conn, 'source.ip')) || 'an unknown source'} to ${asString(getField(conn, 'destination.ip')) || 'an unknown destination'}`;
 
 	// ---------------------------------------------------------------------------
 	// Init
@@ -498,8 +732,15 @@
 		const urlProtocol = $page.url.searchParams.get('protocol');
 		if (urlProtocol) protocolFilter = urlProtocol;
 
-		fetchAll().then(() => { initialized = true; });
+		// OLD CODE START: fetchAll().then(() => { initialized = true; }); OLD CODE END
+		void refresh.run();
 		return () => { if (refreshInterval) clearInterval(refreshInterval); };
+	});
+
+	// Navigating away: no pending load may write to this page again
+	onDestroy(() => {
+		refresh.unregister();
+		tableGuard.invalidate();
 	});
 </script>
 
@@ -507,372 +748,215 @@
 	<title>Connections | NetTap</title>
 </svelte:head>
 
-<div class="page-container">
-	<!-- ================================================================== -->
-	<!-- Header                                                             -->
-	<!-- ================================================================== -->
-	<header class="page-header">
-		<div class="header-left">
-			<h1>Connections</h1>
-			<p class="subtitle">Network session explorer</p>
-		</div>
-		<div class="header-right">
-			<div class="pills">
-				{#each TIME_RANGES as range}
-					<button
-						class="pill"
-						class:active={selectedTimeRange.value === range.value}
-						onclick={() => handleTimeRangeChange(range)}
-					>
-						{range.label}
-					</button>
-				{/each}
-			</div>
-			<button
-				class="btn btn-secondary btn-sm"
-				class:auto-refresh-active={autoRefresh}
-				onclick={toggleAutoRefresh}
-			>
-				{autoRefresh ? 'Auto ON' : 'Auto'}
-			</button>
-			<button class="btn btn-primary btn-sm" onclick={() => fetchAll()} disabled={loading}>
-				{loading ? 'Loading...' : 'Refresh'}
-			</button>
-		</div>
-	</header>
+{#snippet timeCell(conn: Connection)}{formatTimestamp(conn['@timestamp'] as string | undefined)}{/snippet}
 
-	<!-- ================================================================== -->
-	<!-- Stat Cards                                                         -->
-	<!-- ================================================================== -->
+{#snippet sourceCell(conn: Connection)}
+	{@const ip = asString(getField(conn, 'source.ip'))}
+	{@const port = getField(conn, 'source.port')}
+	{#if ip}
+		<!-- No device name in the record, so the IP leads (in mono, keeping its context menu) -->
+		<span class="who"><Icon name="devices" /><span class="mono"><IPAddress {ip} />{#if port}:{port}{/if}</span></span>
+	{:else}—{/if}
+{/snippet}
+
+{#snippet destinationCell(conn: Connection)}
+	{@const ip = asString(getField(conn, 'destination.ip'))}
+	{@const port = getField(conn, 'destination.port')}
+	{@const org = asString(getField(conn, 'destination.as.full'))}
+	{#if ip}
+		<span class="dest">
+			<span class="mono"><IPAddress {ip} />{#if port}:{port}{/if}</span>
+			{#if org}<span class="org trunc" title={org}>{org}</span>{/if}
+		</span>
+	{:else}—{/if}
+{/snippet}
+
+{#snippet protoCell(conn: Connection)}
+	{@const proto = asString(getField(conn, 'network.transport')).toUpperCase()}
+	{#if proto}<span class="tag">{proto}</span>{:else}—{/if}
+{/snippet}
+
+<!-- OLD CODE START: <td>{asString(getField(conn, 'protocol')) || '--'}</td> (#145: protocol's first entry is the transport, so Service read udp/tcp) OLD CODE END -->
+{#snippet serviceCell(conn: Connection)}<span class="mono">{asString(getField(conn, 'network.protocol')) || '—'}</span>{/snippet}
+
+{#snippet durationCell(conn: Connection)}{formatDuration(conn)}{/snippet}
+
+{#snippet bytesInCell(conn: Connection)}
+	<Bytes value={bytesIn(conn) ?? 0} max={maxRowBytes} display={formatBytes(bytesIn(conn))} />
+{/snippet}
+
+{#snippet bytesOutCell(conn: Connection)}
+	<Bytes value={bytesOut(conn) ?? 0} max={maxRowBytes} display={formatBytes(bytesOut(conn))} />
+{/snippet}
+
+{#snippet resultCell(conn: Connection)}
+	{@const result = connResult(conn)}
+	{@const raw = rawState(conn)}
+	<span class="result">
+		{#if result}<ConnResult {result} />{/if}
+		{#if raw}<span class="mono raw">{raw}</span>{:else if !result}—{/if}
+	</span>
+{/snippet}
+
+<div class="page-head">
+	<div>
+		<h1 class="page-title">Connections</h1>
+		<p class="page-sub">Every session your devices opened, with where it went and how it ended</p>
+	</div>
+	<div class="head-actions">
+		<Pills options={RANGE_PILLS} value={selectedTimeRange.value} onchange={handleTimeRangeChange} ariaLabel="Time range" />
+		<button class="btn" type="button" title="Refresh every 15 seconds" onclick={toggleAutoRefresh}>
+			{autoRefresh ? 'Auto on' : 'Auto'}
+		</button>
+	</div>
+</div>
+
+<div class="grid">
 	<!-- OLD CODE START — #96: with no stats (failed or not yet loaded) the cards read 0 sessions, 0 B
 	<span class="stat-value mono">{formatNumber(stats?.total_sessions ?? 0)}</span>
 	<span class="stat-value mono">{formatBytes(stats?.bytes_in ?? 0)}</span>
 	<span class="stat-value mono">{formatBytes(stats?.bytes_out ?? 0)}</span>
 	<span class="stat-value mono">{formatNumber(stats?.alert_sessions ?? 0)}</span>
 	OLD CODE END -->
-	{#if statsFailed}
-		<p class="text-warning load-note">{loadFailed('connection stats', stats !== null)}</p>
-	{/if}
-	{#if liveFailed}
-		<p class="text-warning load-note">{loadFailed('active devices', activeNow !== null)}</p>
-	{/if}
-	<div class="stat-cards">
-		<div class="stat-card">
-			<span class="stat-value mono">{stats ? formatNumber(stats.total_sessions) : '—'}</span>
-			<span class="stat-label">Total Sessions</span>
-		</div>
-		<div class="stat-card">
-			<span class="stat-value mono">
-				{activeNow ?? '—'}
-				{#if activeNow && !liveFailed}<span class="pulse-dot"></span>{/if}
-			</span>
-			<!-- OLD CODE START — the value is now active devices, not a connection count
-			<span class="stat-label">Active Now</span>
-			OLD CODE END -->
-			<span class="stat-label" title="Devices with traffic in the last 5 minutes">Active Devices</span>
-		</div>
-		<div class="stat-card">
-			<span class="stat-value mono">{stats ? formatBytes(stats.bytes_in) : '—'}</span>
-			<span class="stat-label">Bytes In</span>
-		</div>
-		<div class="stat-card">
-			<span class="stat-value mono">{stats ? formatBytes(stats.bytes_out) : '—'}</span>
-			<span class="stat-label">Bytes Out</span>
-		</div>
-		<div class="stat-card" class:has-alerts={stats && stats.alert_sessions > 0}>
-			<span class="stat-value mono">{stats ? formatNumber(stats.alert_sessions) : '—'}</span>
-			<span class="stat-label">w/ Alerts</span>
-		</div>
-	</div>
-
-	<!-- ================================================================== -->
-	<!-- Sankey Flow Diagram                                                 -->
-	<!-- ================================================================== -->
-	<section class="card">
-		<div class="card-header">
-			<h2>Network Flow</h2>
-			<span class="card-badge">Source IPs &rarr; Protocols &rarr; Destinations</span>
-		</div>
-		<div class="card-body">
-			{#if sankey}
-				<SankeyDiagram
-					sources={sankey.nodes.sources}
-					protocols={sankey.nodes.protocols}
-					destinations={sankey.nodes.destinations}
-					links={sankey.links}
-					onNodeClick={handleSankeyNodeClick}
-				/>
-				{#if sankeyFailed}
-					<p class="text-warning load-note">{loadFailed('the flow diagram', true)}</p>
-				{/if}
-			{:else if loading}
-				<div class="chart-placeholder">
-					<div class="spinner"></div>
-				</div>
-			{:else if sankeyFailed}
-				<div class="chart-placeholder">
-					<p class="text-warning">{loadFailed('the flow diagram')}</p>
-				</div>
-			{:else}
-				<div class="chart-placeholder">
-					<p class="text-muted">No flow data available</p>
-				</div>
+	<Card class="c-12" hero title="Summary" sub={summarySub}>
+		{#if loading && stats === null && activeNow === null && !statsFailed && !liveFailed}
+			<CardState state="loading" title="Loading connection stats" />
+		{:else}
+			<StatStrip stats={summaryStats} />
+			{#if statsFailed}
+				<p class="load-note">{loadFailed('connection stats', stats !== null)}</p>
 			{/if}
-		</div>
-	</section>
+			{#if liveFailed}
+				<p class="load-note">{loadFailed('active devices', activeNow !== null)}</p>
+			{/if}
+		{/if}
+	</Card>
 
-	<!-- ================================================================== -->
-	<!-- Session Volume Timeline                                            -->
-	<!-- ================================================================== -->
-	<section class="card">
+	<article class="card c-8">
 		<SessionTimeline buckets={timeline} {loading} emptyMessage={timelineFailed ? loadFailed('the session timeline') : undefined} />
 		{#if timelineFailed && timeline.length > 0}
-			<p class="text-warning load-note">{loadFailed('the session timeline', true)}</p>
+			<p class="load-note">{loadFailed('the session timeline', true)}</p>
 		{/if}
-	</section>
+	</article>
 
-	<!-- ================================================================== -->
-	<!-- Three-Column Analytics Row                                         -->
-	<!-- ================================================================== -->
-	<div class="analytics-row">
-		<div class="analytics-col card">
-			<div class="analytics-header">
-				<h3>Top Sources</h3>
-				<span class="card-badge">by bytes</span>
-			</div>
-			<HorizontalBarList items={sourceBarItems} showRank labelWidth={130} emptyMessage={statsFailed ? loadFailed('top sources') : undefined} />
-		</div>
-		<div class="analytics-col card">
-			<div class="analytics-header">
-				<h3>Protocol Distribution</h3>
-			</div>
-			<HorizontalBarList items={protocolBarItems} showDot labelWidth={80} emptyMessage={statsFailed ? loadFailed('the protocol split') : undefined} />
-		</div>
-		<div class="analytics-col card">
-			<div class="analytics-header">
-				<h3>Top Destinations</h3>
-				<span class="card-badge">by bytes</span>
-			</div>
-			<HorizontalBarList items={destBarItems} showRank labelWidth={160} emptyMessage={statsFailed ? loadFailed('top destinations') : undefined} />
-		</div>
-	</div>
+	<Card class="c-4" title="Protocols" sub="Sessions per protocol · {range}">
+		{#if protocolBarItems.length > 0}
+			<BarList items={protocolBarItems} />
+		{:else if loading && !stats}
+			<CardState state="loading" title="Loading protocols" />
+		{:else if statsFailed}
+			<CardState state="error" title={loadFailed('the protocol split')} message={RETRY_HINT} onaction={() => refresh.run()} />
+		{:else}
+			<CardState state="empty" title="No protocols in this window" message="Protocols appear here once NetTap sees sessions in this time range." />
+		{/if}
+	</Card>
 
-	<!-- ================================================================== -->
-	<!-- Filter Bar                                                         -->
-	<!-- ================================================================== -->
-	<div class="filter-bar card">
-		<div class="filter-row">
-			<div class="filter-group">
-				<label class="label" for="protocol-filter">Protocol</label>
-				<div class="pills pills-sm">
-					{#each PROTOCOL_OPTIONS as proto}
-						<button
-							class="pill"
-							class:active={protocolFilter === proto}
-							onclick={() => { protocolFilter = proto; if (initialized) fetchConnections(1); }}
-						>
-							{proto}
-						</button>
-					{/each}
-				</div>
-			</div>
-			<div class="filter-group">
-				<label class="label" for="service-filter">Service</label>
-				<input
-					id="service-filter"
-					class="input"
-					type="text"
-					placeholder="dns, http, tls..."
-					bind:value={serviceFilter}
-					onkeydown={(e) => { if (e.key === 'Enter') fetchConnections(1); }}
-				/>
-			</div>
-			<div class="filter-group">
-				<label class="label" for="ip-filter">IP Address</label>
-				<input
-					id="ip-filter"
-					class="input"
-					type="text"
-					placeholder="192.168.1.100"
-					bind:value={ipFilter}
-					onkeydown={(e) => { if (e.key === 'Enter') fetchConnections(1); }}
-				/>
-			</div>
-			<div class="filter-group">
-				<label class="label">State</label>
-				<div class="pills pills-sm">
-					{#each STATE_FILTERS as sf}
-						<button
-							class="pill"
-							class:active={stateFilter === sf.value}
-							onclick={() => { stateFilter = sf.value; if (initialized) fetchConnections(1); }}
-						>
-							{sf.label}
-						</button>
-					{/each}
-				</div>
-			</div>
-		</div>
-		<div class="filter-row filter-row-secondary">
-			<div class="filter-group">
-				<label class="toggle-label">
-					<input type="checkbox" bind:checked={hasAlertsFilter} onchange={() => fetchConnections(1)} />
-					<span>Has Alerts</span>
-				</label>
-			</div>
-			{#if sankeyFilter}
-				<div class="filter-badge">
-					<span class="badge badge-accent">
-						{sankeyFilter.type}: {sankeyFilter.id}
-						<button class="badge-dismiss" onclick={clearSankeyFilter}>&times;</button>
-					</span>
-				</div>
+	<Card class="c-12" title="Network flow" sub="Source devices, then protocols, then destinations · {range}">
+		{#if sankey && (sankey.nodes.sources.length || sankey.nodes.protocols.length || sankey.nodes.destinations.length)}
+			<SankeyDiagram
+				sources={sankey.nodes.sources}
+				protocols={sankey.nodes.protocols}
+				destinations={sankey.nodes.destinations}
+				links={sankey.links}
+				onNodeClick={handleSankeyNodeClick}
+			/>
+			{#if sankeyFailed}
+				<p class="load-note">{loadFailed('the flow diagram', true)}</p>
 			{/if}
-			<div class="filter-group filter-group-apply">
-				<button class="btn btn-secondary btn-sm" onclick={() => fetchConnections(1)} disabled={loading}>
-					Apply
-				</button>
-			</div>
-		</div>
-	</div>
-
-	<!-- ================================================================== -->
-	<!-- Sessions Table                                                     -->
-	<!-- ================================================================== -->
-	{#if loading && connections.length === 0}
-		<div class="loading-state">
-			<div class="spinner"></div>
-			<p class="text-muted">Loading connections...</p>
-		</div>
-	{:else if connectionsFailed && !loading}
-		<div class="empty-state">
-			<p class="text-warning">{loadFailed('connections')}</p>
-		</div>
-	{:else if connections.length === 0 && !loading}
-		<div class="empty-state">
-			<div class="empty-icon">
-				<svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-				</svg>
-			</div>
-			<h3>No Connections</h3>
-			<p class="text-muted">
-				No connections found for the selected time range and filters.
-			</p>
-		</div>
-	{:else}
-		<div class="card table-wrapper">
-			<div class="table-scroll">
-				<table class="data-table">
-					<thead>
-						<tr>
-							{#each [
-								{ key: 'time', label: 'Timestamp' },
-								{ key: 'source', label: 'Source' },
-								{ key: 'destination', label: 'Destination' },
-								{ key: 'proto', label: 'Protocol' },
-								{ key: 'service', label: 'Service' },
-								{ key: 'duration', label: 'Duration' },
-								{ key: 'ul', label: 'Bytes In' },
-								{ key: 'dl', label: 'Bytes Out' },
-								{ key: 'state', label: 'State' },
-							] as col}
-								<th class="sortable" onclick={() => toggleSort(col.key as SortKey)}>
-									{col.label}
-									{#if sortKey === col.key}
-										<span class="sort-arrow">{sortDir === 'asc' ? '\u25B2' : '\u25BC'}</span>
-									{/if}
-								</th>
-							{/each}
-						</tr>
-					</thead>
-					<tbody>
-						<!-- OLD CODE START: {#each sortedConnections as conn (conn._id)} OLD CODE END -->
-						{#each connections as conn (conn._id)}
-							{@const srcAsn = asString(getField(conn, 'destination.as.full'))}
-							<tr
-								class="conn-row"
-								class:expanded={drawerConn?._id === conn._id}
-								onclick={() => openDrawer(conn)}
-							>
-								<td class="mono">{formatTimestamp(conn['@timestamp'] as string | undefined)}</td>
-								<td class="mono">
-									{#if getField(conn, 'source.ip')}
-										<IPAddress ip={String(getField(conn, 'source.ip'))} /><!--
-										-->{#if getField(conn, 'source.port')}:{getField(conn, 'source.port')}{/if}
-									{:else}
-										--
-									{/if}
-								</td>
-								<td class="mono">
-									{#if getField(conn, 'destination.ip')}
-										<IPAddress ip={String(getField(conn, 'destination.ip'))} /><!--
-										-->{#if getField(conn, 'destination.port')}:{getField(conn, 'destination.port')}{/if}
-										{#if srcAsn}
-											<span class="org-tag">{srcAsn.length > 20 ? srcAsn.slice(0, 19) + '\u2026' : srcAsn}</span>
-										{/if}
-									{:else}
-										--
-									{/if}
-								</td>
-								<td>
-									<span class="proto-badge" style="background: {PROTO_COLORS[asString(getField(conn, 'network.transport')).toLowerCase()] || 'var(--text-muted)'};">
-										{asString(getField(conn, 'network.transport')).toUpperCase() || '--'}
-									</span>
-								</td>
-								<!-- OLD CODE START: <td>{asString(getField(conn, 'protocol')) || '--'}</td> (#145: protocol's first entry is the transport, so Service read udp/tcp) OLD CODE END -->
-								<td>{asString(getField(conn, 'network.protocol')) || '--'}</td>
-								<td class="mono">{formatDuration(conn)}</td>
-								<td class="mono">{formatBytes((getField(conn, 'source.bytes') ?? getField(conn, 'client.bytes')) as number | undefined)}</td>
-								<td class="mono">{formatBytes((getField(conn, 'destination.bytes') ?? getField(conn, 'server.bytes')) as number | undefined)}</td>
-								<td>
-									<span class={stateBadgeClass(connState(conn))}>
-										{stateLabel(conn)}
-									</span>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
-		</div>
-
-		<!-- Pagination -->
-		{#if totalPages > 0}
-			<div class="pagination">
-				<button
-					class="btn btn-secondary btn-sm"
-					disabled={currentPage <= 1 || loading}
-					onclick={() => goToPage(currentPage - 1)}
-				>
-					Previous
-				</button>
-				<span class="pagination-info">
-					Page {currentPage} of {totalPages}
-					<span class="text-muted">({totalConnections.toLocaleString()} total)</span>
-				</span>
-				<button
-					class="btn btn-secondary btn-sm"
-					disabled={currentPage >= totalPages || loading}
-					onclick={() => goToPage(currentPage + 1)}
-				>
-					Next
-				</button>
-				<select class="input select page-size-select" value={String(pageSize)} onchange={handlePageSizeChange}>
-					<option value="25">25</option>
-					<option value="50">50</option>
-					<option value="100">100</option>
-				</select>
-			</div>
+		{:else if loading}
+			<CardState state="loading" title="Loading the flow diagram" />
+		{:else if sankeyFailed}
+			<CardState state="error" title={loadFailed('the flow diagram')} message={RETRY_HINT} onaction={() => refresh.run()} />
+		{:else}
+			<CardState state="empty" title="No flows in this window" message="Flows appear here once NetTap sees traffic in this time range." />
 		{/if}
-	{/if}
+	</Card>
+
+	<Card class="c-6" title="Top sources" sub="Data sent and received · {range}">
+		{#if sourceBarItems.length > 0}
+			<BarList items={sourceBarItems} />
+		{:else if loading && !stats}
+			<CardState state="loading" title="Loading top sources" />
+		{:else if statsFailed}
+			<CardState state="error" title={loadFailed('top sources')} message={RETRY_HINT} onaction={() => refresh.run()} />
+		{:else}
+			<CardState state="empty" title="No sources in this window" message="Devices appear here once they send traffic in this time range." />
+		{/if}
+	</Card>
+
+	<Card class="c-6" title="Top destinations" sub="Data sent and received, by network · {range}">
+		{#if destBarItems.length > 0}
+			<BarList items={destBarItems} />
+		{:else if loading && !stats}
+			<CardState state="loading" title="Loading top destinations" />
+		{:else if statsFailed}
+			<CardState state="error" title={loadFailed('top destinations')} message={RETRY_HINT} onaction={() => refresh.run()} />
+		{:else}
+			<CardState state="empty" title="No destinations in this window" message="Destinations appear here once devices reach the internet in this time range." />
+		{/if}
+	</Card>
+
+	<Card class="c-12" title="Sessions" sub="{connectionsFailed ? '—' : totalConnections.toLocaleString('en-GB')} matching · {range}">
+		<div class="toolbar">
+			<SearchField id="ip-filter" label="Filter by IP address" placeholder="IP address, such as 192.168.1.100" size="toolbar" bind:value={ipFilter} onkeydown={applyOnEnter} />
+			<SearchField id="service-filter" label="Filter by service" placeholder="Service: dns, http, tls…" size="toolbar" bind:value={serviceFilter} onkeydown={applyOnEnter} />
+			<Pills options={PROTOCOL_PILLS} value={protocolFilter} onchange={setProtocolFilter} ariaLabel="Protocol" />
+			<Pills options={STATE_FILTERS} value={stateFilter} onchange={setStateFilter} ariaLabel="Connection state" />
+			<label class="check-row">
+				<input type="checkbox" bind:checked={hasAlertsFilter} onchange={() => loadTable(1)} />
+				Has alerts
+			</label>
+			{#if sankeyFilter}
+				<button class="chip" type="button" aria-label="Remove the {sankeyFilter.type} filter {sankeyFilter.id}" onclick={clearSankeyFilter}
+					>{sankeyFilter.type}: {sankeyFilter.id}<Icon name="close" /></button
+				>
+			{/if}
+			<button class="btn" type="button" onclick={() => loadTable(1)} disabled={loading}>Apply</button>
+			<select class="select rows" aria-label="Rows per page" value={String(pageSize)} onchange={handlePageSizeChange}>
+				<option value="25">25 rows</option>
+				<option value="50">50 rows</option>
+				<option value="100">100 rows</option>
+			</select>
+		</div>
+
+		{#if loading && connections.length === 0 && !connectionsFailed}
+			<CardState state="loading" title="Loading connections" />
+		{:else if connectionsFailed && !loading}
+			<CardState state="error" title={loadFailed('connections')} message={RETRY_HINT} onaction={() => loadTable(currentPage)} />
+		{:else if connections.length === 0 && !loading}
+			<CardState state="empty" title="No connections" message="No connections match this time range and these filters. Try a longer range or clear a filter." />
+		{:else}
+			<!-- OLD CODE START: {#each sortedConnections as conn (conn._id)} OLD CODE END -->
+			<DataTable
+				columns={COLUMNS}
+				rows={connections}
+				ariaLabel="Connections"
+				rowKey={(conn) => conn._id}
+				initialSort={{ key: sortKey, dir: sortDir }}
+				onsortchange={handleSortChange}
+				onrowactivate={openDrawer}
+				rowLabel={rowLabel}
+				selectedKey={drawerConn?._id}
+				pager={totalPages > 0
+					? {
+							page: currentPage,
+							pageCount: totalPages,
+							total: totalConnections,
+							from: (currentPage - 1) * pageSize + 1,
+							to: (currentPage - 1) * pageSize + connections.length,
+							onpage: goToPage,
+						}
+					: undefined}
+			/>
+		{/if}
+	</Card>
 </div>
 
 <!-- Detail Drawer -->
 <DetailDrawer
 	open={drawerConn !== null}
-	title={drawerConn ? `${asString(getField(drawerConn, 'source.ip'))} \u2192 ${asString(getField(drawerConn, 'destination.ip'))}` : ''}
-	subtitle={drawerConn ? `${asString(getField(drawerConn, 'network.transport')).toUpperCase()} \u00B7 ${formatTimestamp(drawerConn['@timestamp'] as string | undefined)}` : ''}
+	title={drawerConn ? `${asString(getField(drawerConn, 'source.ip'))} → ${asString(getField(drawerConn, 'destination.ip'))}` : ''}
+	subtitle={drawerConn ? `${asString(getField(drawerConn, 'network.transport')).toUpperCase()} · ${formatTimestamp(drawerConn['@timestamp'] as string | undefined)}` : ''}
 	tabs={CONN_DRAWER_TABS}
 	activeTab={drawerTab}
 	onclose={closeDrawer}
@@ -889,18 +973,18 @@
 			{@const dstIp = asString(getField(drawerConn, 'destination.ip'))}
 			{@const cid = asString(getField(drawerConn, 'network.community_id'))}
 			{#if srcIp}
-				<button class="btn btn-secondary btn-sm" onclick={() => goto(`/devices/${encodeURIComponent(srcIp)}`)}>
-					View Source Device
+				<button class="btn" type="button" onclick={() => goto(`/devices/${encodeURIComponent(srcIp)}`)}>
+					View source device
 				</button>
 			{/if}
 			{#if dstIp}
-				<button class="btn btn-secondary btn-sm" onclick={() => goto(`/devices/${encodeURIComponent(dstIp)}`)}>
-					View Dest Device
+				<button class="btn" type="button" onclick={() => goto(`/devices/${encodeURIComponent(dstIp)}`)}>
+					View destination device
 				</button>
 			{/if}
 			{#if cid}
-				<button class="btn btn-secondary btn-sm" onclick={() => { navigator.clipboard.writeText(cid); }}>
-					Copy Community ID
+				<button class="btn" type="button" onclick={() => { navigator.clipboard.writeText(cid); }}>
+					Copy community ID
 				</button>
 			{/if}
 		{/if}
@@ -908,402 +992,14 @@
 </DetailDrawer>
 
 <style>
-	/* ================================================================== */
-	/* Page container                                                      */
-	/* ================================================================== */
-	.page-container {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-	}
-
-	/* Header */
-	.page-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: var(--space-md);
-		flex-wrap: wrap;
-	}
-
-	.header-left h1 {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		margin-bottom: 2px;
-	}
-
-	.subtitle {
-		font-size: var(--text-sm);
-		color: var(--text-muted);
-	}
-
-	.header-right {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.auto-refresh-active {
-		color: var(--accent) !important;
-		border-color: var(--accent) !important;
-	}
-
-	/* ================================================================== */
-	/* Stat Cards                                                          */
-	/* ================================================================== */
-	.stat-cards {
-		display: grid;
-		grid-template-columns: repeat(5, 1fr);
-		gap: var(--space-md);
-	}
-
-	.stat-card {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 2px;
-		padding: var(--space-md);
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-lg);
-		text-align: center;
-	}
-
-	.stat-card .stat-value {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		color: var(--text-primary);
-		display: flex;
-		align-items: center;
-		gap: var(--space-xs);
-	}
-
-	.stat-card .stat-label {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
-	.stat-card.has-alerts .stat-value {
-		color: var(--red);
-	}
-
-	.pulse-dot {
-		display: inline-block;
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		background: var(--green);
-		animation: pulse 2s ease-in-out infinite;
-	}
-
-	@keyframes pulse {
-		0%, 100% { opacity: 1; transform: scale(1); }
-		50% { opacity: 0.5; transform: scale(1.3); }
-	}
-
-	/* ================================================================== */
-	/* Cards                                                               */
-	/* ================================================================== */
-	.card-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: var(--space-md);
-		gap: var(--space-sm);
-		flex-wrap: wrap;
-	}
-
-	.card-header h2 {
-		font-size: var(--text-base);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.card-badge {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-	}
-
-	.card-body {
-		padding: 0 var(--space-md) var(--space-md);
-	}
-
-	.chart-placeholder {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		min-height: 200px;
-	}
-
-	.load-note {
-		margin: 0;
-		padding: var(--space-sm) var(--space-md);
-		font-size: var(--text-sm);
-	}
-
-	/* ================================================================== */
-	/* Analytics Row                                                       */
-	/* ================================================================== */
-	.analytics-row {
-		display: grid;
-		grid-template-columns: repeat(3, 1fr);
-		gap: var(--space-md);
-	}
-
-	.analytics-col {
-		padding: var(--space-md);
-		overflow: hidden;
-	}
-
-	.analytics-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		margin-bottom: var(--space-sm);
-	}
-
-	.analytics-header h3 {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	/* ================================================================== */
-	/* Filter Bar                                                          */
-	/* ================================================================== */
-	.filter-bar {
-		padding: var(--space-md);
-	}
-
-	.filter-row {
-		display: flex;
-		align-items: flex-end;
-		gap: var(--space-md);
-		flex-wrap: wrap;
-	}
-
-	.filter-row + .filter-row {
-		margin-top: var(--space-md);
-	}
-
-	.filter-row-secondary {
-		align-items: center;
-	}
-
-	.filter-group {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-xs);
-	}
-
-	.filter-group-apply {
-		margin-left: auto;
-	}
-
-	.filter-group .input {
-		width: 180px;
-	}
-
-	.pills-sm {
-		gap: 2px;
-	}
-
-	.toggle-label {
-		display: flex;
-		align-items: center;
-		gap: var(--space-xs);
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-		cursor: pointer;
-	}
-
-	.filter-badge {
-		display: flex;
-		align-items: center;
-	}
-
-	.badge-accent {
-		background: var(--accent-muted);
-		color: var(--accent);
-		display: inline-flex;
-		align-items: center;
-		gap: var(--space-xs);
-		padding: 2px 8px;
-		border-radius: var(--radius-sm);
-		font-size: var(--text-xs);
-	}
-
-	.badge-dismiss {
-		background: none;
-		border: none;
-		color: var(--accent);
-		cursor: pointer;
-		font-size: var(--text-base);
-		line-height: 1;
-		padding: 0;
-	}
-
-	/* ================================================================== */
-	/* Table                                                               */
-	/* ================================================================== */
-	.table-wrapper {
-		padding: 0;
-		overflow: hidden;
-	}
-
-	.table-scroll {
-		overflow-x: auto;
-		max-height: 70vh;
-	}
-
-	th.sortable {
-		cursor: pointer;
-		user-select: none;
-		white-space: nowrap;
-		transition: color var(--transition-fast);
-	}
-
-	th.sortable:hover {
-		color: var(--accent);
-	}
-
-	.sort-arrow {
-		font-size: 10px;
-		margin-left: 2px;
-	}
-
-	.conn-row {
-		cursor: pointer;
-		transition: background-color var(--transition-fast);
-	}
-
-	.conn-row:hover td {
-		background-color: var(--bg-tertiary);
-	}
-
-	.conn-row.expanded td {
-		background-color: var(--bg-tertiary);
-		border-bottom-color: transparent;
-	}
-
-	.org-tag {
-		display: inline-block;
-		margin-left: var(--space-xs);
-		padding: 1px 4px;
-		border-radius: var(--radius-sm);
-		font-size: 10px;
-		color: var(--text-muted);
-		background: var(--bg-tertiary);
-		font-family: var(--font-body, inherit);
-	}
-
-	.proto-badge {
-		display: inline-block;
-		padding: 1px 6px;
-		border-radius: var(--radius-sm);
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--bg-primary);
-	}
-
-	/* ================================================================== */
-	/* Loading / Empty / Pagination                                        */
-	/* ================================================================== */
-	.loading-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: var(--space-3xl);
-		gap: var(--space-md);
-	}
-
-	.spinner {
-		width: 32px;
-		height: 32px;
-		border: 3px solid var(--border-default);
-		border-top-color: var(--accent);
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-	}
-
-	@keyframes spin {
-		to { transform: rotate(360deg); }
-	}
-
-	.empty-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: var(--space-3xl);
-		text-align: center;
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-lg);
-	}
-
-	.empty-icon {
-		color: var(--text-muted);
-		margin-bottom: var(--space-md);
-	}
-
-	.empty-state h3 {
-		font-size: var(--text-xl);
-		font-weight: 600;
-		color: var(--text-primary);
-		margin-bottom: var(--space-sm);
-	}
-
-	.pagination {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: var(--space-md);
-		padding: var(--space-md) 0;
-	}
-
-	.pagination-info {
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-	}
-
-	.page-size-select {
-		width: 70px;
-		font-size: var(--text-sm);
-	}
-
-	/* ================================================================== */
-	/* Responsive                                                          */
-	/* ================================================================== */
-	@media (max-width: 1200px) {
-		.analytics-row {
-			grid-template-columns: 1fr;
-		}
-	}
-
-	@media (max-width: 768px) {
-		.page-header {
-			flex-direction: column;
-		}
-
-		.header-right {
-			width: 100%;
-			flex-wrap: wrap;
-		}
-
-		.stat-cards {
-			grid-template-columns: repeat(2, 1fr);
-		}
-
-		.stat-cards .stat-card:last-child {
-			grid-column: span 2;
-		}
-
-		.filter-group .input {
-			width: 100%;
-		}
-	}
+	/* Layout glue the system lacks */
+	.load-note { margin-top: var(--sp-3); font-size: var(--text-xs); color: var(--sev-medium); }
+	.dest { display: inline-flex; flex-direction: column; line-height: 1.3; }
+	.org { color: var(--text-3); font-size: var(--text-xs); }
+	.result { display: inline-flex; align-items: center; gap: var(--sp-2); }
+	.raw { color: var(--text-3); font-size: var(--text-xs); }
+	.rows { width: auto; }
+	button.chip { border: 0; font-family: inherit; cursor: pointer; }
+	/* Five state pills are wider than a phone: the track scrolls instead of the page */
+	.toolbar :global(.pills) { max-width: 100%; overflow-x: auto; }
 </style>

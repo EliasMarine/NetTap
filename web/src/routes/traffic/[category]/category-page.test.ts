@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
-import { readable } from 'svelte/store';
+import { render, screen, fireEvent } from '@testing-library/svelte';
+import { readable, get } from 'svelte/store';
+import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import CategoryPage from './+page.svelte';
 
 vi.mock('$app/stores', () => ({
@@ -54,9 +55,64 @@ describe('Traffic category page', () => {
 	it('shows a dash, not 0.0%, when the network total failed', async () => {
 		stubDaemon({ '/api/traffic/categories/streaming': BUSY });
 		render(CategoryPage);
-		const card = (await screen.findByText('% of Network')).closest('.stat-card');
+		// OLD CODE START: const card = (await screen.findByText('% of Network')).closest('.stat-card'); (now a KpiCard, "Share of network") OLD CODE END
+		const card = (await screen.findByText('Share of network')).closest('.kpi');
 		expect(card).toHaveTextContent('—');
 		expect(card).not.toHaveTextContent('0.0%');
 		expect(screen.getByText("Couldn't load bandwidth over time: the request failed.")).toBeInTheDocument();
+	});
+
+	it('loading: says it is loading the category', async () => {
+		vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+		render(CategoryPage);
+		expect(await screen.findByRole('status')).toHaveTextContent('Loading category data');
+	});
+
+	it('shows the KPIs with their trend, the chart, the services and the device table', async () => {
+		const prevBusy = { ...BUSY, total_bytes: 2048, connection_count: 6 };
+		const series = [
+			{ timestamp: '2026-11-03T09:00:00Z', download_bytes: 1000, upload_bytes: 50, total_bytes: 1050, connections: 1 },
+			{ timestamp: '2026-11-03T10:00:00Z', download_bytes: 3000, upload_bytes: 46, total_bytes: 3046, connections: 2 },
+		];
+		let detailCalls = 0;
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const path = url.split('?')[0];
+				const body =
+					path === '/api/traffic/categories/streaming' ? (detailCalls++ === 0 ? { ...BUSY, services: [{ name: 'Netflix', bytes: 4096, connections: 3 }] } : prevBusy)
+					: path === '/api/traffic/categories/streaming/bandwidth' ? { category: 'streaming', from: '', to: '', interval: '15m', series }
+					: path === '/api/traffic/summary' ? { total_bytes: 8192 }
+					: null;
+				return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 503, json: async () => ({}) };
+			}),
+		);
+		render(CategoryPage);
+		const total = (await screen.findByText('Total bandwidth')).closest('.kpi');
+		expect(total).toHaveTextContent('4.0 KB');
+		expect(total).toHaveTextContent('+100.0%');
+		expect(total).toHaveTextContent('vs previous 24 h');
+		expect(screen.getByText('Share of network').closest('.kpi')).toHaveTextContent('50.0%');
+		expect(screen.getByRole('img', { name: /^Busiest at .*, with 3\.0 KB$/ })).toBeInTheDocument();
+		expect(screen.getByText('Netflix')).toBeInTheDocument();
+		expect(screen.getByRole('table', { name: 'Per-device breakdown' })).toHaveTextContent('192.168.1.20');
+	});
+
+	it('the device filter says when nothing matches', async () => {
+		stubDaemon({ '/api/traffic/categories/streaming': BUSY });
+		render(CategoryPage);
+		const search = await screen.findByRole('searchbox', { name: 'Filter devices' });
+		await fireEvent.input(search, { target: { value: '10.9.9.9' } });
+		expect(screen.getByRole('heading', { name: 'No devices matching "10.9.9.9"' })).toBeInTheDocument();
+	});
+
+	it('refresh contract: partial when some requests fail', async () => {
+		stubDaemon({ '/api/traffic/categories/streaming': BUSY });
+		render(CategoryPage);
+		await screen.findByText('Total bandwidth');
+		// bandwidth and the network total answer 503
+		expect(await refreshPage()).toBe('partial');
+		expect(get(pageRefresh).status).toBe('partial');
 	});
 });
