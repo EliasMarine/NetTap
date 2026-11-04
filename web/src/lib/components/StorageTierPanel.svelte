@@ -12,9 +12,9 @@
 
 	// Tier configuration with colors
 	const TIER_DEFS = [
-		{ key: 'hot', label: 'Hot (Zeek Metadata)', color: 'var(--red)', defaultDays: 90, daysField: 'hot_days' as const },
-		{ key: 'warm', label: 'Warm (Suricata Alerts)', color: 'var(--amber)', defaultDays: 180, daysField: 'warm_days' as const },
-		{ key: 'cold', label: 'Cold (PCAP)', color: 'var(--blue)', defaultDays: 30, daysField: 'cold_days' as const },
+		{ key: 'hot', label: 'Hot (Zeek Metadata)', color: 'var(--sev-critical)', defaultDays: 90, daysField: 'hot_days' as const },
+		{ key: 'warm', label: 'Warm (Suricata Alerts)', color: 'var(--sev-medium)', defaultDays: 180, daysField: 'warm_days' as const },
+		{ key: 'cold', label: 'Cold (PCAP)', color: 'var(--sev-low)', defaultDays: 30, daysField: 'cold_days' as const },
 	] as const;
 
 	async function fetchData() {
@@ -41,9 +41,9 @@
 	}
 
 	function diskUsageColor(percent: number): string {
-		if (percent > 85) return 'var(--danger)';
-		if (percent > 70) return 'var(--warning)';
-		return 'var(--success)';
+		if (percent > 85) return 'var(--sev-critical)';
+		if (percent > 70) return 'var(--sev-medium)';
+		return 'var(--ok)';
 	}
 
 	// Derive tier data from index_counts + actual retention days from API
@@ -144,7 +144,7 @@
 	.storage-tier-panel {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.usage-pct {
@@ -155,22 +155,22 @@
 	.disk-bar-container {
 		width: 100%;
 		height: 8px;
-		background-color: var(--bg-tertiary);
-		border-radius: var(--radius-full);
+		background-color: var(--surface-2);
+		border-radius: var(--r-pill);
 		overflow: hidden;
 	}
 
 	.disk-bar-fill {
 		height: 100%;
-		border-radius: var(--radius-full);
-		transition: width var(--transition-normal);
+		border-radius: var(--r-pill);
+		transition: width 250ms var(--ease);
 	}
 
 	.disk-summary {
 		display: flex;
-		gap: var(--space-xl);
+		gap: var(--sp-8);
 		flex-wrap: wrap;
-		margin-top: var(--space-xs);
+		margin-top: var(--sp-1);
 	}
 
 	.disk-stat {
@@ -182,16 +182,16 @@
 
 	.disk-label {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 	}
 
 	.tier-section {
-		margin-top: var(--space-md);
-		padding-top: var(--space-md);
-		border-top: 1px solid var(--border-muted);
+		margin-top: var(--sp-4);
+		padding-top: var(--sp-4);
+		border-top: 1px solid var(--line);
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.tier-row {
@@ -203,7 +203,7 @@
 	.tier-info {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.tier-dot {
@@ -215,18 +215,18 @@
 
 	.tier-label {
 		font-size: var(--text-sm);
-		color: var(--text-primary);
+		color: var(--text-1);
 	}
 
 	.tier-meta {
 		display: flex;
 		align-items: center;
-		gap: var(--space-md);
+		gap: var(--sp-4);
 	}
 
 	.tier-retention {
 		font-size: var(--text-xs);
-		color: var(--text-secondary);
+		color: var(--text-2);
 	}
 
 	.tier-count {
@@ -234,47 +234,47 @@
 	}
 
 	.retention-section {
-		margin-top: var(--space-md);
-		padding-top: var(--space-md);
-		border-top: 1px solid var(--border-muted);
+		margin-top: var(--sp-4);
+		padding-top: var(--sp-4);
+		border-top: 1px solid var(--line);
 	}
 
 	.section-label {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
 		display: block;
-		margin-bottom: var(--space-sm);
+		margin-bottom: var(--sp-2);
 	}
 
 	.retention-item {
 		display: flex;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 		font-size: var(--text-sm);
-		margin-bottom: var(--space-xs);
+		margin-bottom: var(--sp-1);
 	}
 
 	.retention-key {
-		color: var(--text-secondary);
+		color: var(--text-2);
 		text-transform: capitalize;
 	}
 
 	.retention-val {
-		color: var(--text-primary);
+		color: var(--text-1);
 	}
 
 	.skeleton-rows {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.skeleton {
-		background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--border-muted) 50%, var(--bg-tertiary) 75%);
+		background: linear-gradient(90deg, var(--surface-2) 25%, var(--line) 50%, var(--surface-2) 75%);
 		background-size: 200% 100%;
 		animation: shimmer 1.5s infinite;
-		border-radius: var(--radius-sm);
+		border-radius: var(--r-sm);
 	}
 
 	.skeleton-bar {

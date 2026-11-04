@@ -460,7 +460,7 @@
 						</div>
 					{/each}
 					{#if threatAlerts.length > 5}
-						<p class="text-muted" style="margin-top: var(--space-xs);">+ {threatAlerts.length - 5} more alerts</p>
+						<p class="text-muted" style="margin-top: var(--sp-1);">+ {threatAlerts.length - 5} more alerts</p>
 					{/if}
 				</div>
 			{:else if threatFailed}
@@ -649,7 +649,7 @@
 								fill={protoColor(connProto)}
 								opacity="0.7"
 							/>
-							<text x="0" y={i * 12 + 11} fill="var(--text-muted)" font-size="9" font-family="var(--font-mono)">
+							<text x="0" y={i * 12 + 11} fill="var(--text-3)" font-size="9" font-family="var(--font-mono)">
 								{formatTimestamp((conn as Record<string, unknown>)?.['@timestamp'] as string || '').split(',')[1]?.trim() || ''}
 							</text>
 						{/each}
@@ -680,51 +680,51 @@
 	<div class="flow-content">
 		<svg viewBox="0 0 380 160" width="100%" height="160">
 			<!-- Source node -->
-			<rect x="10" y="50" width="100" height="60" rx="8" fill="var(--cyan)" opacity="0.2" stroke="var(--cyan)" stroke-width="1.5" />
-			<text x="60" y="72" text-anchor="middle" fill="var(--text-primary)" font-size="11" font-weight="600">
+			<rect x="10" y="50" width="100" height="60" rx="8" fill="var(--accent)" opacity="0.2" stroke="var(--accent)" stroke-width="1.5" />
+			<text x="60" y="72" text-anchor="middle" fill="var(--text-1)" font-size="11" font-weight="600">
 				{srcIp || 'Source'}
 			</text>
 			{#if srcPort}
-				<text x="60" y="88" text-anchor="middle" fill="var(--text-muted)" font-size="10">:{srcPort}</text>
+				<text x="60" y="88" text-anchor="middle" fill="var(--text-3)" font-size="10">:{srcPort}</text>
 			{/if}
 			{#if srcCountry}
-				<text x="60" y="102" text-anchor="middle" fill="var(--text-muted)" font-size="9">{srcCountry}</text>
+				<text x="60" y="102" text-anchor="middle" fill="var(--text-3)" font-size="9">{srcCountry}</text>
 			{/if}
 
 			<!-- Protocol node -->
 			<rect x="150" y="55" width="80" height="50" rx="8" fill={protoColor(proto)} opacity="0.2" stroke={protoColor(proto)} stroke-width="1.5" />
-			<text x="190" y="78" text-anchor="middle" fill="var(--text-primary)" font-size="12" font-weight="600">
+			<text x="190" y="78" text-anchor="middle" fill="var(--text-1)" font-size="12" font-weight="600">
 				{proto?.toUpperCase() || '?'}
 			</text>
 			{#if service}
-				<text x="190" y="94" text-anchor="middle" fill="var(--text-muted)" font-size="10">{service}</text>
+				<text x="190" y="94" text-anchor="middle" fill="var(--text-3)" font-size="10">{service}</text>
 			{/if}
 
 			<!-- Destination node -->
-			<rect x="270" y="50" width="100" height="60" rx="8" fill="var(--green)" opacity="0.2" stroke="var(--green)" stroke-width="1.5" />
-			<text x="320" y="72" text-anchor="middle" fill="var(--text-primary)" font-size="11" font-weight="600">
+			<rect x="270" y="50" width="100" height="60" rx="8" fill="var(--ok)" opacity="0.2" stroke="var(--ok)" stroke-width="1.5" />
+			<text x="320" y="72" text-anchor="middle" fill="var(--text-1)" font-size="11" font-weight="600">
 				{dstIp || 'Dest'}
 			</text>
 			{#if dstPort}
-				<text x="320" y="88" text-anchor="middle" fill="var(--text-muted)" font-size="10">:{dstPort}</text>
+				<text x="320" y="88" text-anchor="middle" fill="var(--text-3)" font-size="10">:{dstPort}</text>
 			{/if}
 			{#if dstCountry}
-				<text x="320" y="102" text-anchor="middle" fill="var(--text-muted)" font-size="9">{dstCountry}</text>
+				<text x="320" y="102" text-anchor="middle" fill="var(--text-3)" font-size="9">{dstCountry}</text>
 			{/if}
 			{#if dstAsn}
-				<text x="320" y="130" text-anchor="middle" fill="var(--text-dim)" font-size="8">
+				<text x="320" y="130" text-anchor="middle" fill="var(--text-3)" font-size="8">
 					{dstAsn.length > 25 ? dstAsn.slice(0, 24) + '\u2026' : dstAsn}
 				</text>
 			{/if}
 
 			<!-- Arrows -->
-			<line x1="110" y1="80" x2="148" y2="80" stroke="var(--text-muted)" stroke-width="1.5" marker-end="url(#arrowhead)" />
-			<line x1="230" y1="80" x2="268" y2="80" stroke="var(--text-muted)" stroke-width="1.5" marker-end="url(#arrowhead)" />
+			<line x1="110" y1="80" x2="148" y2="80" stroke="var(--text-3)" stroke-width="1.5" marker-end="url(#arrowhead)" />
+			<line x1="230" y1="80" x2="268" y2="80" stroke="var(--text-3)" stroke-width="1.5" marker-end="url(#arrowhead)" />
 
 			<!-- Arrow markers -->
 			<defs>
 				<marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
-					<polygon points="0 0, 8 3, 0 6" fill="var(--text-muted)" />
+					<polygon points="0 0, 8 3, 0 6" fill="var(--text-3)" />
 				</marker>
 			</defs>
 
@@ -734,9 +734,9 @@
 
 			<!-- Alert indicator -->
 			{#if threatAlerts.length > 0}
-				<circle cx="190" cy="35" r="8" fill="var(--red)" opacity="0.8" />
-				<text x="190" y="38" text-anchor="middle" fill="var(--text-primary)" font-size="9" font-weight="700">{threatAlerts.length}</text>
-				<text x="210" y="38" fill="var(--red)" font-size="8">alerts</text>
+				<circle cx="190" cy="35" r="8" fill="var(--sev-critical)" opacity="0.8" />
+				<text x="190" y="38" text-anchor="middle" fill="var(--text-1)" font-size="9" font-weight="700">{threatAlerts.length}</text>
+				<text x="210" y="38" fill="var(--sev-critical)" font-size="8">alerts</text>
 			{/if}
 		</svg>
 
@@ -762,30 +762,30 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-xl) 0;
+		gap: var(--sp-2);
+		padding: var(--sp-8) 0;
 	}
 
 	.error-state, .empty-state {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-xl) 0;
+		gap: var(--sp-2);
+		padding: var(--sp-8) 0;
 		text-align: center;
 	}
 
-	.raw-content { gap: var(--space-sm); }
+	.raw-content { gap: var(--sp-2); }
 	.raw-header { display: flex; justify-content: flex-end; }
 
 	.raw-block {
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
-		color: var(--text-primary);
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		padding: var(--space-md);
+		color: var(--text-1);
+		background-color: var(--surface-1);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
+		padding: var(--sp-4);
 		overflow-x: auto;
 		white-space: pre-wrap;
 		word-break: break-all;
@@ -798,8 +798,8 @@
 	.ratio-row {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-xs) 0;
+		gap: var(--sp-2);
+		padding: var(--sp-1) 0;
 	}
 
 	.ratio-label {
@@ -807,7 +807,7 @@
 		width: 160px;
 		font-size: var(--text-xs);
 		font-weight: 600;
-		color: var(--text-muted);
+		color: var(--text-3);
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
 	}
@@ -816,16 +816,16 @@
 		flex: 1;
 		display: flex;
 		height: 10px;
-		border-radius: var(--radius-sm);
+		border-radius: var(--r-sm);
 		overflow: hidden;
 	}
 
-	.ratio-in { background: var(--cyan); }
-	.ratio-out { background: var(--amber); }
+	.ratio-in { background: var(--accent); }
+	.ratio-out { background: var(--sev-medium); }
 
 	.ratio-text {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 		white-space: nowrap;
 		min-width: 40px;
 	}
@@ -834,26 +834,26 @@
 	.threat-list {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-xs);
+		gap: var(--sp-1);
 	}
 
 	.threat-item {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-xs);
-		border-radius: var(--radius-sm);
-		background: var(--bg-tertiary);
+		gap: var(--sp-2);
+		padding: var(--sp-1);
+		border-radius: var(--r-sm);
+		background: var(--surface-2);
 	}
 
 	.threat-severity {
 		flex-shrink: 0;
 		padding: 2px 6px;
-		border-radius: var(--radius-sm);
+		border-radius: var(--r-sm);
 		font-size: 10px;
 		font-weight: 700;
 		letter-spacing: 0.05em;
-		background: var(--sev-low-muted);
+		background: color-mix(in srgb, var(--sev-low) 12%, transparent);
 		color: var(--sev-low);
 	}
 
@@ -862,7 +862,7 @@
 
 	.threat-sig {
 		font-size: var(--text-xs);
-		color: var(--text-secondary);
+		color: var(--text-2);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -870,25 +870,25 @@
 
 	.no-threats {
 		font-size: var(--text-xs);
-		padding: var(--space-sm) 0;
+		padding: var(--sp-2) 0;
 	}
 
 	/* TShark controls */
 	.tshark-controls {
 		display: flex;
-		gap: var(--space-xs);
-		margin-bottom: var(--space-md);
+		gap: var(--sp-1);
+		margin-bottom: var(--sp-4);
 		flex-wrap: wrap;
 	}
 
 	.tshark-btn {
 		padding: 5px 12px;
-		border-radius: var(--radius-sm);
-		font-family: var(--font-sans);
+		border-radius: var(--r-sm);
+		font-family: var(--font-body);
 		font-size: var(--text-xs);
 		font-weight: 600;
 		cursor: pointer;
-		transition: all var(--transition-fast);
+		transition: all var(--dur-fast);
 		border: 1px solid;
 		text-decoration: none;
 		display: inline-flex;
@@ -898,7 +898,7 @@
 
 	.tshark-btn-primary {
 		background: var(--accent);
-		color: var(--bg-primary);
+		color: var(--bg);
 		border-color: var(--accent);
 	}
 
@@ -907,19 +907,19 @@
 
 	.tshark-btn-mode {
 		background: transparent;
-		color: var(--text-secondary);
-		border-color: var(--border-default);
+		color: var(--text-2);
+		border-color: var(--line);
 	}
 
 	.tshark-btn-mode:hover {
-		border-color: var(--border-bright);
-		color: var(--text-primary);
+		border-color: var(--line-strong);
+		color: var(--text-1);
 	}
 
 	.tshark-btn-mode.active {
 		border-color: var(--accent);
 		color: var(--accent);
-		background: var(--accent-muted);
+		background: color-mix(in srgb, var(--accent) 12%, transparent);
 	}
 
 	.tshark-text-block {
@@ -932,59 +932,59 @@
 	.filter-preview {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-sm) var(--space-md);
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		margin-bottom: var(--space-md);
+		gap: var(--sp-2);
+		padding: var(--sp-2) var(--sp-4);
+		background-color: var(--surface-1);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
+		margin-bottom: var(--sp-4);
 	}
 
-	.filter-label { font-size: var(--text-xs); color: var(--text-muted); white-space: nowrap; }
+	.filter-label { font-size: var(--text-xs); color: var(--text-3); white-space: nowrap; }
 	.filter-code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--accent); word-break: break-all; }
 
 	.packet-table-wrap {
 		overflow-x: auto;
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		margin-bottom: var(--space-md);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
+		margin-bottom: var(--sp-4);
 	}
 
 	.packet-table { width: 100%; border-collapse: collapse; font-size: var(--text-xs); }
 
 	.packet-table th {
-		padding: var(--space-xs) var(--space-sm);
+		padding: var(--sp-1) var(--sp-2);
 		text-align: left;
 		font-weight: 600;
-		color: var(--text-muted);
+		color: var(--text-3);
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
-		background-color: var(--bg-tertiary);
-		border-bottom: 1px solid var(--border-default);
+		background-color: var(--surface-2);
+		border-bottom: 1px solid var(--line);
 		white-space: nowrap;
 	}
 
 	.packet-table td {
-		padding: var(--space-xs) var(--space-sm);
-		border-bottom: 1px solid var(--border-dim);
-		color: var(--text-primary);
+		padding: var(--sp-1) var(--sp-2);
+		border-bottom: 1px solid var(--line);
+		color: var(--text-1);
 		white-space: nowrap;
 	}
 
-	.packet-row { cursor: pointer; transition: background-color var(--transition-fast); }
-	.packet-row:hover { background-color: var(--bg-tertiary); }
-	.packet-row.selected { background-color: var(--accent-muted); }
+	.packet-row { cursor: pointer; transition: background-color var(--dur-fast); }
+	.packet-row:hover { background-color: var(--surface-2); }
+	.packet-row.selected { background-color: color-mix(in srgb, var(--accent) 12%, transparent); }
 	.packet-row.selected td { color: var(--accent); }
 
-	.hex-section { margin-top: var(--space-sm); }
+	.hex-section { margin-top: var(--sp-2); }
 
 	.hex-title {
 		font-size: var(--text-xs);
 		font-weight: 600;
-		color: var(--text-muted);
+		color: var(--text-3);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		margin-bottom: var(--space-sm);
+		margin-bottom: var(--sp-2);
 	}
 
 	.hex-block { font-size: 11px; line-height: 1.6; }
@@ -993,8 +993,8 @@
 	.related-summary {
 		display: grid;
 		grid-template-columns: repeat(3, 1fr);
-		gap: var(--space-md);
-		padding: var(--space-md) 0;
+		gap: var(--sp-4);
+		padding: var(--sp-4) 0;
 	}
 
 	.related-stat {
@@ -1007,17 +1007,17 @@
 	.stat-value {
 		font-size: var(--text-lg);
 		font-weight: 700;
-		color: var(--text-primary);
+		color: var(--text-1);
 		font-family: var(--font-mono);
 		display: flex;
-		gap: var(--space-xs);
+		gap: var(--sp-1);
 		flex-wrap: wrap;
 		justify-content: center;
 	}
 
 	.stat-label {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
 	}
@@ -1025,52 +1025,52 @@
 	.proto-badge {
 		display: inline-block;
 		padding: 1px 6px;
-		border-radius: var(--radius-sm);
+		border-radius: var(--r-sm);
 		font-size: 10px;
 		font-weight: 600;
-		color: var(--bg-primary);
+		color: var(--bg);
 	}
 
 	.related-timerange {
-		border-top: 1px solid var(--border-dim);
-		padding-top: var(--space-sm);
+		border-top: 1px solid var(--line);
+		padding-top: var(--sp-2);
 	}
 
 	.related-timeline {
-		padding-top: var(--space-md);
+		padding-top: var(--sp-4);
 	}
 
 	.section-title {
 		font-size: var(--text-xs);
 		font-weight: 600;
-		color: var(--text-muted);
+		color: var(--text-3);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		margin-bottom: var(--space-sm);
+		margin-bottom: var(--sp-2);
 	}
 
 	/* Flow diagram */
 	.flow-content {
-		gap: var(--space-md);
+		gap: var(--sp-4);
 	}
 
 	.flow-details {
-		border-top: 1px solid var(--border-dim);
-		padding-top: var(--space-sm);
+		border-top: 1px solid var(--line);
+		padding-top: var(--sp-2);
 	}
 
 	/* Utility */
-	.whois-raw { margin-top: var(--space-sm); }
-	.whois-raw summary { font-size: var(--text-xs); color: var(--text-muted); cursor: pointer; padding: var(--space-xs) 0; }
+	.whois-raw { margin-top: var(--sp-2); }
+	.whois-raw summary { font-size: var(--text-xs); color: var(--text-3); cursor: pointer; padding: var(--sp-1) 0; }
 	.mono { font-family: var(--font-mono); }
-	.text-danger { color: var(--danger); }
-	.text-muted { color: var(--text-muted); font-size: var(--text-sm); }
-	.text-dim { color: var(--text-dim); font-size: var(--text-xs); }
+	.text-danger { color: var(--sev-critical); }
+	.text-muted { color: var(--text-3); font-size: var(--text-sm); }
+	.text-dim { color: var(--text-3); font-size: var(--text-xs); }
 
 	.loading-spinner {
 		width: 24px;
 		height: 24px;
-		border: 2px solid var(--border-default);
+		border: 2px solid var(--line);
 		border-top-color: var(--accent);
 		border-radius: 50%;
 		animation: spin 0.6s linear infinite;

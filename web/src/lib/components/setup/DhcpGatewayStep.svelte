@@ -79,42 +79,42 @@
 	.dhcp-step {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-lg);
+		gap: var(--sp-6);
 	}
 
 	.field-hint {
-		margin-top: var(--space-xs);
+		margin-top: var(--sp-1);
 		font-size: var(--text-xs);
-		color: var(--text-secondary);
+		color: var(--text-2);
 	}
 
 	.field-hint.error {
-		color: var(--danger);
+		color: var(--sev-critical);
 	}
 
 	.info-section {
-		background-color: var(--bg-tertiary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		padding: var(--space-lg);
+		background-color: var(--surface-2);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
+		padding: var(--sp-6);
 	}
 
 	.info-section h3 {
 		font-size: var(--text-base);
 		font-weight: 600;
-		color: var(--text-primary);
-		margin-bottom: var(--space-sm);
+		color: var(--text-1);
+		margin-bottom: var(--sp-2);
 	}
 
 	.info-section ol,
 	.info-section ul {
-		padding-left: var(--space-lg);
+		padding-left: var(--sp-6);
 		font-size: var(--text-sm);
-		color: var(--text-secondary);
-		line-height: var(--leading-relaxed);
+		color: var(--text-2);
+		line-height: 1.75;
 	}
 
 	.info-section li {
-		margin-bottom: var(--space-xs);
+		margin-bottom: var(--sp-1);
 	}
 </style>

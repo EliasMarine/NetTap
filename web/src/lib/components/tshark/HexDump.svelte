@@ -73,9 +73,9 @@
 
 <style>
 	.hex-dump {
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		background: var(--bg-secondary);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
+		background: var(--surface-1);
 		height: 100%;
 		overflow-y: auto;
 		font-family: var(--font-mono);
@@ -87,11 +87,11 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-2xl) var(--space-lg);
-		color: var(--text-muted);
+		gap: var(--sp-2);
+		padding: var(--sp-8) var(--sp-6);
+		color: var(--text-3);
 		font-size: var(--text-sm);
-		font-family: var(--font-sans, sans-serif);
+		font-family: var(--font-body, sans-serif);
 		text-align: center;
 	}
 
@@ -100,17 +100,17 @@
 	}
 
 	.hex-content {
-		padding: var(--space-sm) var(--space-md);
+		padding: var(--sp-2) var(--sp-4);
 	}
 
 	.hex-row {
 		display: flex;
-		gap: var(--space-md);
+		gap: var(--sp-4);
 		white-space: pre;
 	}
 
 	.hex-offset {
-		color: var(--text-muted);
+		color: var(--text-3);
 		flex-shrink: 0;
 		width: 4ch;
 	}
@@ -126,17 +126,17 @@
 	}
 
 	.hex-byte {
-		color: var(--text-primary);
+		color: var(--text-1);
 	}
 
 	.hex-byte.highlighted {
-		background: var(--accent-muted);
+		background: color-mix(in srgb, var(--accent) 12%, transparent);
 		color: var(--accent);
 		border-radius: 2px;
 	}
 
 	.hex-ascii {
-		color: var(--text-secondary);
+		color: var(--text-2);
 		flex-shrink: 0;
 	}
 </style>

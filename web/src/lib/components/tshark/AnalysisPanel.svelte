@@ -469,7 +469,7 @@
 	.analysis-panel {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-md);
+		gap: var(--sp-4);
 	}
 
 	.panel-header {
@@ -477,19 +477,19 @@
 		align-items: center;
 		justify-content: space-between;
 		flex-wrap: wrap;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.panel-title {
 		font-size: var(--text-xl);
 		font-weight: 700;
-		color: var(--text-primary);
+		color: var(--text-1);
 	}
 
 	.status-badge-group {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.status-dot {
@@ -500,17 +500,17 @@
 	}
 
 	.status-dot.online {
-		background-color: var(--success);
-		box-shadow: 0 0 6px var(--success);
+		background-color: var(--ok);
+		box-shadow: 0 0 6px var(--ok);
 	}
 
 	.status-dot.offline {
-		background-color: var(--danger);
-		box-shadow: 0 0 6px var(--danger);
+		background-color: var(--sev-critical);
+		box-shadow: 0 0 6px var(--sev-critical);
 	}
 
 	.status-dot.checking {
-		background-color: var(--text-muted);
+		background-color: var(--text-3);
 		animation: pulse 1s ease-in-out infinite;
 	}
 
@@ -520,13 +520,13 @@
 	}
 
 	.controls-card {
-		padding: var(--space-lg);
+		padding: var(--sp-6);
 	}
 
 	.controls-grid {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-md);
+		gap: var(--sp-4);
 	}
 
 	.pcap-group {
@@ -540,7 +540,7 @@
 
 	.controls-row {
 		display: flex;
-		gap: var(--space-md);
+		gap: var(--sp-4);
 		align-items: flex-end;
 		flex-wrap: wrap;
 	}
@@ -579,13 +579,13 @@
 	.results-summary {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 		flex-wrap: wrap;
 	}
 
 	.summary-detail {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 	}
 
 	.results-layout {
@@ -596,7 +596,7 @@
 
 	.pcap-input-row {
 		display: flex;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.pcap-input-row .input {
@@ -614,17 +614,17 @@
 		display: inline-block;
 		width: 12px;
 		height: 12px;
-		border: 2px solid var(--text-muted);
-		border-top-color: var(--text-primary);
+		border: 2px solid var(--text-3);
+		border-top-color: var(--text-1);
 		border-radius: 50%;
 		animation: spin 0.7s linear infinite;
 	}
 
 	.pcap-picker {
-		margin-top: var(--space-xs);
-		background: var(--bg-primary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
+		margin-top: var(--sp-1);
+		background: var(--bg);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
 		max-height: 240px;
 		overflow: hidden;
 		display: flex;
@@ -637,21 +637,21 @@
 		align-items: center;
 		padding: 8px 12px;
 		font-size: var(--text-xs);
-		color: var(--text-muted);
-		border-bottom: 1px solid var(--border-dim);
+		color: var(--text-3);
+		border-bottom: 1px solid var(--line);
 	}
 
 	.pcap-picker-close {
 		background: none;
 		border: none;
-		color: var(--text-muted);
+		color: var(--text-3);
 		cursor: pointer;
 		font-size: var(--text-sm);
 		padding: 0 4px;
 	}
 
 	.pcap-picker-close:hover {
-		color: var(--text-primary);
+		color: var(--text-1);
 	}
 
 	.pcap-picker-list {
@@ -667,20 +667,20 @@
 		padding: 8px 12px;
 		background: none;
 		border: none;
-		border-bottom: 1px solid var(--border-dim);
-		color: var(--text-primary);
+		border-bottom: 1px solid var(--line);
+		color: var(--text-1);
 		cursor: pointer;
 		text-align: left;
 		font-size: var(--text-sm);
-		transition: background-color var(--transition-fast);
+		transition: background-color var(--dur-fast);
 	}
 
 	.pcap-picker-item:hover {
-		background: var(--bg-tertiary);
+		background: var(--surface-2);
 	}
 
 	.pcap-picker-item.selected {
-		background: var(--bg-tertiary);
+		background: var(--surface-2);
 		border-left: 3px solid var(--accent);
 	}
 
@@ -695,16 +695,16 @@
 
 	.pcap-meta {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 		white-space: nowrap;
-		margin-left: var(--space-md);
+		margin-left: var(--sp-4);
 	}
 
 	.pcap-picker-loading,
 	.pcap-picker-empty {
 		padding: 16px;
 		text-align: center;
-		color: var(--text-muted);
+		color: var(--text-3);
 		font-size: var(--text-sm);
 	}
 

@@ -223,22 +223,22 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-2xl) 0;
+		gap: var(--sp-2);
+		padding: var(--sp-8) 0;
 	}
 
 	.error-state {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-lg) 0;
+		gap: var(--sp-2);
+		padding: var(--sp-6) 0;
 	}
 
 	.raw-content {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.raw-header {
@@ -249,11 +249,11 @@
 	.raw-block {
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
-		color: var(--text-primary);
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		padding: var(--space-md);
+		color: var(--text-1);
+		background-color: var(--surface-1);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
+		padding: var(--sp-4);
 		overflow-x: auto;
 		white-space: pre-wrap;
 		word-break: break-all;
@@ -263,28 +263,28 @@
 	}
 
 	.whois-raw {
-		margin-top: var(--space-sm);
+		margin-top: var(--sp-2);
 	}
 
 	.whois-raw summary {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 		cursor: pointer;
-		padding: var(--space-xs) 0;
+		padding: var(--sp-1) 0;
 	}
 
 	.text-danger {
-		color: var(--danger);
+		color: var(--sev-critical);
 	}
 
 	.text-muted {
-		color: var(--text-muted);
+		color: var(--text-3);
 	}
 
 	.loading-spinner {
 		width: 24px;
 		height: 24px;
-		border: 2px solid var(--border-default);
+		border: 2px solid var(--line);
 		border-top-color: var(--accent);
 		border-radius: 50%;
 		animation: spin 0.6s linear infinite;

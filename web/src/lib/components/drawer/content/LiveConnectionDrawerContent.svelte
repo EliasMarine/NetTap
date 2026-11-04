@@ -243,81 +243,81 @@
 	.loading-row {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-md) 0;
+		gap: var(--sp-2);
+		padding: var(--sp-4) 0;
 	}
 
 	.loading-text {
 		font-size: var(--text-sm);
-		color: var(--text-muted);
+		color: var(--text-3);
 	}
 
 	/* Empty state */
 	.empty-section {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-md) 0;
-		color: var(--text-muted);
+		gap: var(--sp-2);
+		padding: var(--sp-4) 0;
+		color: var(--text-3);
 		font-size: var(--text-sm);
 	}
 
 	.empty-icon {
-		color: var(--green);
+		color: var(--ok);
 		font-size: var(--text-lg);
 	}
 
 	.empty-label {
-		color: var(--text-muted);
+		color: var(--text-3);
 	}
 
 	/* Alert cards */
 	.alert-list {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.alert-card {
-		background: var(--bg-tertiary);
-		border: 1px solid var(--border-dim);
-		border-radius: var(--radius-sm);
-		padding: var(--space-sm) var(--space-md);
+		background: var(--surface-2);
+		border: 1px solid var(--line);
+		border-radius: var(--r-sm);
+		padding: var(--sp-2) var(--sp-4);
 	}
 
 	.alert-header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		margin-bottom: var(--space-xs);
+		margin-bottom: var(--sp-1);
 	}
 
 	.alert-time {
 		font-size: var(--text-xs);
 		font-family: var(--font-mono);
-		color: var(--text-muted);
+		color: var(--text-3);
 	}
 
 	.alert-sig {
 		font-size: var(--text-sm);
-		color: var(--text-primary);
+		color: var(--text-1);
 		font-weight: 500;
 		margin-bottom: 2px;
 	}
 
 	.alert-cat {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 	}
 
 	/* History summary spacing */
 	.history-summary {
-		margin-bottom: var(--space-md);
+		margin-bottom: var(--sp-4);
 	}
 
 	/* Sparkline bar chart */
 	.sparkline-wrap {
-		padding: var(--space-xs) 0;
+		padding: var(--sp-1) 0;
 	}
 
 	.sparkline {
@@ -325,16 +325,16 @@
 		align-items: flex-end;
 		gap: 1px;
 		height: 80px;
-		padding: var(--space-xs) 0;
+		padding: var(--sp-1) 0;
 	}
 
 	.spark-bar {
 		flex: 1;
 		min-width: 0;
-		background-color: var(--cyan);
+		background-color: var(--accent);
 		border-radius: 1px 1px 0 0;
 		opacity: 0.8;
-		transition: opacity var(--transition-fast);
+		transition: opacity var(--dur-fast);
 		cursor: help;
 	}
 
@@ -345,11 +345,11 @@
 	.sparkline-labels {
 		display: flex;
 		justify-content: space-between;
-		margin-top: var(--space-xs);
+		margin-top: var(--sp-1);
 	}
 
 	.sparkline-label {
 		font-size: var(--text-xs);
-		color: var(--text-dim);
+		color: var(--text-3);
 	}
 </style>

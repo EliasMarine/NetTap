@@ -204,20 +204,20 @@
 		font-size: var(--text-sm);
 		cursor: context-menu;
 		user-select: text;
-		border-bottom: 1px dashed var(--border-default);
-		transition: border-color var(--transition-fast), color var(--transition-fast);
+		border-bottom: 1px dashed var(--line);
+		transition: border-color var(--dur-fast), color var(--dur-fast);
 		display: inline;
 		line-height: 1.4;
 	}
 
 	.ip-address:hover {
 		border-color: var(--accent);
-		color: var(--accent-hover);
+		color: var(--accent-strong);
 	}
 
 	.ip-address:focus-visible {
 		outline: 2px solid var(--accent);
 		outline-offset: 2px;
-		border-radius: var(--radius-sm);
+		border-radius: var(--r-sm);
 	}
 </style>

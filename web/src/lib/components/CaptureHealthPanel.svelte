@@ -178,21 +178,21 @@
 	.capture-health-panel {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.info-grid {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-xs);
+		gap: var(--sp-1);
 	}
 
 	.info-row {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: var(--space-xs) 0;
-		border-bottom: 1px solid var(--border-muted);
+		padding: var(--sp-1) 0;
+		border-bottom: 1px solid var(--line);
 	}
 
 	.info-row:last-child {
@@ -201,12 +201,12 @@
 
 	.info-label {
 		font-size: var(--text-sm);
-		color: var(--text-secondary);
+		color: var(--text-2);
 	}
 
 	.info-value {
 		font-size: var(--text-sm);
-		color: var(--text-primary);
+		color: var(--text-1);
 		font-weight: 500;
 		display: flex;
 		align-items: center;
@@ -214,12 +214,12 @@
 	}
 
 	.stats-section {
-		margin-top: var(--space-sm);
-		padding-top: var(--space-sm);
-		border-top: 1px solid var(--border-muted);
+		margin-top: var(--sp-2);
+		padding-top: var(--sp-2);
+		border-top: 1px solid var(--line);
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-xs);
+		gap: var(--sp-1);
 	}
 
 	.stat-row {
@@ -230,37 +230,37 @@
 
 	.stat-label {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 	}
 
 	.stat-value {
 		font-size: var(--text-xs);
-		color: var(--text-primary);
+		color: var(--text-1);
 	}
 
 	.issues-section {
-		margin-top: var(--space-sm);
+		margin-top: var(--sp-2);
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-xs);
+		gap: var(--sp-1);
 	}
 
 	.issue-item {
 		font-size: var(--text-xs);
-		padding: var(--space-xs) var(--space-sm);
+		padding: var(--sp-1) var(--sp-2);
 	}
 
 	.skeleton-rows {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.skeleton {
-		background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--border-muted) 50%, var(--bg-tertiary) 75%);
+		background: linear-gradient(90deg, var(--surface-2) 25%, var(--line) 50%, var(--surface-2) 75%);
 		background-size: 200% 100%;
 		animation: shimmer 1.5s infinite;
-		border-radius: var(--radius-sm);
+		border-radius: var(--r-sm);
 	}
 
 	.skeleton-row {

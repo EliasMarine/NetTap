@@ -74,7 +74,7 @@
 		position: absolute;
 		inset: 0;
 		z-index: 20;
-		background: var(--bg-primary);
+		background: var(--bg);
 	}
 
 	.dock-panel-header {
@@ -82,8 +82,8 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 4px 8px;
-		background: var(--bg-tertiary);
-		border-bottom: 1px solid var(--border-default);
+		background: var(--surface-2);
+		border-bottom: 1px solid var(--line);
 		flex-shrink: 0;
 		user-select: none;
 	}
@@ -91,7 +91,7 @@
 	.dock-panel-title {
 		font-size: var(--text-xs);
 		font-weight: 600;
-		color: var(--text-secondary);
+		color: var(--text-2);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
@@ -110,15 +110,15 @@
 		padding: 0;
 		background: none;
 		border: none;
-		border-radius: var(--radius-sm);
-		color: var(--text-muted);
+		border-radius: var(--r-sm);
+		color: var(--text-3);
 		cursor: pointer;
-		transition: all var(--transition-fast);
+		transition: all var(--dur-fast);
 	}
 
 	.panel-action-btn:hover {
-		background: var(--bg-secondary);
-		color: var(--text-primary);
+		background: var(--surface-1);
+		color: var(--text-1);
 	}
 
 	.dock-panel-content {

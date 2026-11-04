@@ -282,21 +282,21 @@
 
 	.alert-badges {
 		display: flex;
-		gap: var(--space-sm);
-		margin-bottom: var(--space-md);
+		gap: var(--sp-2);
+		margin-bottom: var(--sp-4);
 	}
 
 	.alert-signature {
 		font-size: var(--text-lg);
 		font-weight: 700;
-		color: var(--text-primary);
+		color: var(--text-1);
 		line-height: 1.3;
-		margin-bottom: var(--space-sm);
+		margin-bottom: var(--sp-2);
 	}
 
 	.section-body {
 		font-size: var(--text-sm);
-		color: var(--text-primary);
+		color: var(--text-1);
 		line-height: 1.6;
 	}
 
@@ -304,11 +304,11 @@
 	.flow-visualization {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-md);
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
+		gap: var(--sp-2);
+		padding: var(--sp-4);
+		background-color: var(--surface-1);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
 		flex-wrap: wrap;
 		justify-content: center;
 	}
@@ -322,7 +322,7 @@
 
 	.flow-label {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		font-weight: 600;
@@ -337,7 +337,7 @@
 
 	.flow-port {
 		font-size: var(--text-xs);
-		color: var(--text-secondary);
+		color: var(--text-2);
 	}
 
 	.flow-arrow {
@@ -345,7 +345,7 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 2px;
-		color: var(--text-muted);
+		color: var(--text-3);
 		flex-shrink: 0;
 	}
 
@@ -357,8 +357,8 @@
 	/* Related events table */
 	.related-table-wrap {
 		overflow-x: auto;
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
 	}
 
 	.related-table {
@@ -368,30 +368,30 @@
 	}
 
 	.related-table th {
-		padding: var(--space-xs) var(--space-sm);
+		padding: var(--sp-1) var(--sp-2);
 		text-align: left;
 		font-weight: 600;
-		color: var(--text-muted);
+		color: var(--text-3);
 		text-transform: uppercase;
 		letter-spacing: 0.04em;
-		background-color: var(--bg-tertiary);
-		border-bottom: 1px solid var(--border-default);
+		background-color: var(--surface-2);
+		border-bottom: 1px solid var(--line);
 		white-space: nowrap;
 	}
 
 	.related-table td {
-		padding: var(--space-xs) var(--space-sm);
-		border-bottom: 1px solid var(--border-dim);
-		color: var(--text-primary);
+		padding: var(--sp-1) var(--sp-2);
+		border-bottom: 1px solid var(--line);
+		color: var(--text-1);
 	}
 
 	.related-row {
 		cursor: pointer;
-		transition: background-color var(--transition-fast);
+		transition: background-color var(--dur-fast);
 	}
 
 	.related-row:hover {
-		background-color: var(--bg-tertiary);
+		background-color: var(--surface-2);
 	}
 
 	/* Common */
@@ -399,20 +399,20 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-xl) 0;
+		gap: var(--sp-2);
+		padding: var(--sp-8) 0;
 	}
 
 	.error-state, .empty-state {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-xl) 0;
+		gap: var(--sp-2);
+		padding: var(--sp-8) 0;
 		text-align: center;
 	}
 
-	.raw-content { gap: var(--space-sm); }
+	.raw-content { gap: var(--sp-2); }
 
 	.raw-header {
 		display: flex;
@@ -422,11 +422,11 @@
 	.raw-block {
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
-		color: var(--text-primary);
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		padding: var(--space-md);
+		color: var(--text-1);
+		background-color: var(--surface-1);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
+		padding: var(--sp-4);
 		overflow-x: auto;
 		white-space: pre-wrap;
 		word-break: break-all;
@@ -436,13 +436,13 @@
 	}
 
 	.mono { font-family: var(--font-mono); }
-	.text-danger { color: var(--danger); font-size: var(--text-sm); }
-	.text-muted { color: var(--text-muted); font-size: var(--text-sm); }
+	.text-danger { color: var(--sev-critical); font-size: var(--text-sm); }
+	.text-muted { color: var(--text-3); font-size: var(--text-sm); }
 
 	.loading-spinner {
 		width: 24px;
 		height: 24px;
-		border: 2px solid var(--border-default);
+		border: 2px solid var(--line);
 		border-top-color: var(--accent);
 		border-radius: 50%;
 		animation: spin 0.6s linear infinite;

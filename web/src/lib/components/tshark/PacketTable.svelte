@@ -168,9 +168,9 @@
 <style>
 	.packet-table-wrapper {
 		position: relative;
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		background-color: var(--bg-secondary);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
+		background-color: var(--surface-1);
 		overflow: hidden;
 	}
 
@@ -181,7 +181,7 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 		background-color: color-mix(in srgb, var(--bg) 85%, transparent);
 		z-index: 10;
 	}
@@ -189,7 +189,7 @@
 	.spinner {
 		width: 28px;
 		height: 28px;
-		border: 3px solid var(--border-default);
+		border: 3px solid var(--line);
 		border-top-color: var(--accent);
 		border-radius: 50%;
 		animation: spin 0.8s linear infinite;
@@ -201,7 +201,7 @@
 
 	.loading-text {
 		font-size: var(--text-sm);
-		color: var(--text-secondary);
+		color: var(--text-2);
 	}
 
 	.table-scroll {
@@ -223,28 +223,28 @@
 	}
 
 	.packet-table th {
-		padding: var(--space-sm) var(--space-md);
+		padding: var(--sp-2) var(--sp-4);
 		text-align: left;
 		font-weight: 600;
 		font-size: var(--text-xs);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		color: var(--text-secondary);
-		background-color: var(--bg-tertiary);
-		border-bottom: 1px solid var(--border-default);
+		color: var(--text-2);
+		background-color: var(--surface-2);
+		border-bottom: 1px solid var(--line);
 		user-select: none;
 	}
 
 	.proto-name { text-transform: none; }
 
 	.packet-table th.sortable { cursor: pointer; }
-	.packet-table th.sortable:hover { color: var(--text-primary); }
+	.packet-table th.sortable:hover { color: var(--text-1); }
 	.packet-table th.sorted { color: var(--accent); }
 
 	.packet-table td {
-		padding: var(--space-xs) var(--space-md);
-		color: var(--text-primary);
-		border-bottom: 1px solid var(--border-muted);
+		padding: var(--sp-1) var(--sp-4);
+		color: var(--text-1);
+		border-bottom: 1px solid var(--line);
 		max-width: 360px;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -257,7 +257,7 @@
 
 	.packet-row {
 		cursor: pointer;
-		transition: background-color var(--transition-fast);
+		transition: background-color var(--dur-fast);
 	}
 
 	.packet-row.even {
@@ -265,11 +265,11 @@
 	}
 
 	.packet-row:hover {
-		background-color: var(--accent-muted);
+		background-color: color-mix(in srgb, var(--accent) 12%, transparent);
 	}
 
 	.packet-row.selected {
-		background-color: var(--accent-muted);
+		background-color: color-mix(in srgb, var(--accent) 12%, transparent);
 		box-shadow: inset 3px 0 0 var(--accent);
 	}
 
@@ -289,15 +289,15 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-2xl) var(--space-lg);
-		color: var(--text-muted);
+		gap: var(--sp-2);
+		padding: var(--sp-8) var(--sp-6);
+		color: var(--text-3);
 		font-size: var(--text-sm);
 		text-align: center;
 	}
 
 	.empty-state svg {
-		color: var(--text-muted);
+		color: var(--text-3);
 		opacity: 0.5;
 	}
 </style>

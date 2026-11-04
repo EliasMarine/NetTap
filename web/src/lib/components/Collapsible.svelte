@@ -66,19 +66,19 @@
 
 <style>
 	.collapsible {
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-lg);
+		background-color: var(--surface-1);
+		border: 1px solid var(--line);
+		border-radius: var(--r-lg);
 		overflow: hidden;
-		transition: border-color var(--transition-fast);
+		transition: border-color var(--dur-fast);
 	}
 
 	.collapsible:hover {
-		border-color: var(--border-accent);
+		border-color: var(--accent);
 	}
 
 	.collapsible-expanded {
-		border-color: var(--border-accent);
+		border-color: var(--accent);
 	}
 
 	.collapsible-header {
@@ -86,38 +86,38 @@
 		align-items: center;
 		justify-content: space-between;
 		width: 100%;
-		padding: var(--space-md) var(--space-lg);
+		padding: var(--sp-4) var(--sp-6);
 		background: none;
 		border: none;
 		cursor: pointer;
-		font-family: var(--font-sans);
+		font-family: var(--font-body);
 		text-align: left;
-		color: var(--text-primary);
-		transition: background-color var(--transition-fast);
+		color: var(--text-1);
+		transition: background-color var(--dur-fast);
 	}
 
 	.collapsible-header:hover {
-		background-color: var(--bg-tertiary);
+		background-color: var(--surface-2);
 	}
 
 	.collapsible-header-left {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 		min-width: 0;
 	}
 
 	.collapsible-header-right {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 		flex-shrink: 0;
 	}
 
 	.collapsible-chevron {
 		flex-shrink: 0;
-		color: var(--text-muted);
-		transition: transform var(--transition-normal);
+		color: var(--text-3);
+		transition: transform 250ms var(--ease);
 	}
 
 	.chevron-expanded {
@@ -134,12 +134,12 @@
 	.collapsible-title {
 		font-size: var(--text-sm);
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--text-1);
 	}
 
 	.collapsible-subtitle {
 		font-size: var(--text-xs);
-		color: var(--text-secondary);
+		color: var(--text-2);
 	}
 
 	.collapsible-body {
@@ -153,7 +153,7 @@
 	}
 
 	.collapsible-body-inner {
-		padding: 0 var(--space-lg) var(--space-lg) var(--space-lg);
-		border-top: 1px solid var(--border-default);
+		padding: 0 var(--sp-6) var(--sp-6) var(--sp-6);
+		border-top: 1px solid var(--line);
 	}
 </style>

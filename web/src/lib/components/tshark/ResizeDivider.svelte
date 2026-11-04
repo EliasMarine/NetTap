@@ -46,8 +46,8 @@
 <style>
 	.resize-divider {
 		flex-shrink: 0;
-		background: var(--border-default);
-		transition: background-color var(--transition-fast);
+		background: var(--line);
+		transition: background-color var(--dur-fast);
 		touch-action: none;
 		z-index: 2;
 	}

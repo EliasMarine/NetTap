@@ -80,7 +80,7 @@
 	}
 
 	function protoColor(proto: string): string {
-		return PROTO_COLORS[proto.toLowerCase()] || 'var(--text-muted)';
+		return PROTO_COLORS[proto.toLowerCase()] || 'var(--text-3)';
 	}
 </script>
 
@@ -105,10 +105,10 @@
 					<line
 						x1="50" y1={180 - frac * 160}
 						x2={chartWidth} y2={180 - frac * 160}
-						stroke="var(--border-default)" stroke-width="0.5" opacity="0.4"
+						stroke="var(--line)" stroke-width="0.5" opacity="0.4"
 					/>
 					<text x="45" y={180 - frac * 160 + 4} text-anchor="end"
-						fill="var(--text-muted)" font-size="10">
+						fill="var(--text-3)" font-size="10">
 						{Math.round(maxTotal * frac)}
 					</text>
 				{/each}
@@ -147,7 +147,7 @@
 						<!-- Zero baseline -->
 						{#if bucket.total === 0}
 							<rect x={x} y={178} width={barW} height={2} rx="1"
-								fill="var(--border-default)" opacity="0.3" />
+								fill="var(--line)" opacity="0.3" />
 						{/if}
 					</g>
 				{/each}
@@ -157,7 +157,7 @@
 					{@const idx = Math.round(li * (buckets.length - 1) / Math.max(1, Math.min(5, buckets.length - 1)))}
 					{@const stepW = (chartWidth - 60) / buckets.length}
 					{@const lx = 55 + idx * stepW + Math.max(2, stepW - 2) / 2}
-					<text x={lx} y="196" text-anchor="middle" fill="var(--text-muted)" font-size="10">
+					<text x={lx} y="196" text-anchor="middle" fill="var(--text-3)" font-size="10">
 						{formatShortTimestamp(buckets[idx]?.timestamp || '')}
 					</text>
 				{/each}
@@ -196,28 +196,28 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: var(--space-md) var(--space-md) var(--space-sm);
+		padding: var(--sp-4) var(--sp-4) var(--sp-2);
 		flex-wrap: wrap;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.card-header h2 {
 		font-size: var(--text-base);
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--text-1);
 	}
 
 	.legend-row {
 		display: flex;
-		gap: var(--space-md);
+		gap: var(--sp-4);
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 	}
 
 	.legend-item {
 		display: flex;
 		align-items: center;
-		gap: var(--space-xs);
+		gap: var(--sp-1);
 	}
 
 	.legend-dot {
@@ -230,15 +230,15 @@
 
 	.chart-wrapper {
 		position: relative;
-		padding: 0 var(--space-sm) var(--space-sm);
+		padding: 0 var(--sp-2) var(--sp-2);
 	}
 
 	.bar-tooltip {
 		position: absolute;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		padding: var(--space-xs) var(--space-sm);
+		background: var(--surface-1);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
+		padding: var(--sp-1) var(--sp-2);
 		font-size: var(--text-xs);
 		pointer-events: none;
 		z-index: 10;
@@ -248,14 +248,14 @@
 
 	.tooltip-time {
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--text-1);
 		margin-bottom: 2px;
 	}
 
 	.tooltip-row {
 		display: flex;
 		align-items: center;
-		gap: var(--space-xs);
-		color: var(--text-secondary);
+		gap: var(--sp-1);
+		color: var(--text-2);
 	}
 </style>

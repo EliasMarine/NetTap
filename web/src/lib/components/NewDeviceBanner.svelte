@@ -64,12 +64,12 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: var(--space-md);
-		padding: var(--space-sm) var(--space-md);
-		background-color: var(--cyan-dim);
+		gap: var(--sp-4);
+		padding: var(--sp-2) var(--sp-4);
+		background-color: color-mix(in srgb, var(--accent) 12%, transparent);
 		border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-		border-radius: var(--radius-md);
-		color: var(--cyan);
+		border-radius: var(--r-md);
+		color: var(--accent);
 		font-size: var(--text-sm);
 		animation: slideDown 0.3s ease;
 	}
@@ -88,7 +88,7 @@
 	.banner-content {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 		min-width: 0;
 	}
 
@@ -105,30 +105,30 @@
 
 	.device-list {
 		font-size: var(--text-xs);
-		color: var(--text-secondary);
+		color: var(--text-2);
 	}
 
 	.device-link {
-		color: var(--cyan);
+		color: var(--accent);
 		font-weight: 500;
 	}
 
 	.device-link:hover {
-		color: var(--accent-hover);
+		color: var(--accent-strong);
 	}
 
 	.banner-dismiss {
 		flex-shrink: 0;
 		background: none;
 		border: none;
-		color: var(--text-muted);
+		color: var(--text-3);
 		cursor: pointer;
-		padding: var(--space-xs);
-		border-radius: var(--radius-sm);
-		transition: color var(--transition-fast);
+		padding: var(--sp-1);
+		border-radius: var(--r-sm);
+		transition: color var(--dur-fast);
 	}
 
 	.banner-dismiss:hover {
-		color: var(--text-primary);
+		color: var(--text-1);
 	}
 </style>

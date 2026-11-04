@@ -85,9 +85,9 @@
 		position: absolute;
 		display: flex;
 		flex-direction: column;
-		background: var(--bg-primary);
+		background: var(--bg);
 		border: 1px solid var(--accent);
-		border-radius: var(--radius-md);
+		border-radius: var(--r-md);
 		box-shadow: 0 8px 32px color-mix(in srgb, var(--bg) 50%, transparent);
 		z-index: 50;
 		overflow: hidden;
@@ -98,8 +98,8 @@
 		align-items: center;
 		justify-content: space-between;
 		padding: 6px 10px;
-		background: var(--bg-tertiary);
-		border-bottom: 1px solid var(--border-default);
+		background: var(--surface-2);
+		border-bottom: 1px solid var(--line);
 		cursor: grab;
 		user-select: none;
 		touch-action: none;
@@ -112,7 +112,7 @@
 	.floating-title {
 		font-size: var(--text-xs);
 		font-weight: 600;
-		color: var(--text-secondary);
+		color: var(--text-2);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
@@ -126,14 +126,14 @@
 		padding: 0;
 		background: none;
 		border: none;
-		border-radius: var(--radius-sm);
-		color: var(--text-muted);
+		border-radius: var(--r-sm);
+		color: var(--text-3);
 		cursor: pointer;
 	}
 
 	.floating-close:hover {
-		background: var(--bg-secondary);
-		color: var(--text-primary);
+		background: var(--surface-1);
+		color: var(--text-1);
 	}
 
 	.floating-content {

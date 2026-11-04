@@ -51,24 +51,24 @@
 	}
 
 	function linkColor(up: boolean | undefined): string {
-		if (up === undefined) return 'var(--text-muted)';
-		return up ? 'var(--success)' : 'var(--danger)';
+		if (up === undefined) return 'var(--text-3)';
+		return up ? 'var(--ok)' : 'var(--sev-critical)';
 	}
 
 	function bridgeLineColor(status: string | undefined): string {
 		switch (status) {
 			case 'normal':
-				return 'var(--success)';
+				return 'var(--ok)';
 			case 'degraded':
-				return 'var(--warning)';
+				return 'var(--sev-medium)';
 			case 'bypass':
 				return 'var(--accent)';
 			case 'not_configured':
-				return 'var(--text-muted)';
+				return 'var(--text-3)';
 			case 'down':
-				return 'var(--danger)';
+				return 'var(--sev-critical)';
 			default:
-				return 'var(--text-muted)';
+				return 'var(--text-3)';
 		}
 	}
 
@@ -393,8 +393,8 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		padding: var(--space-xl);
-		gap: var(--space-md);
+		padding: var(--sp-8);
+		gap: var(--sp-4);
 		text-align: center;
 	}
 
@@ -405,7 +405,7 @@
 	.not-configured-title {
 		font-size: var(--text-lg);
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--text-1);
 	}
 
 	.not-configured-desc {
@@ -420,14 +420,14 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		padding: var(--space-xl);
-		gap: var(--space-md);
+		padding: var(--sp-8);
+		gap: var(--sp-4);
 	}
 
 	.spinner {
 		width: 32px;
 		height: 32px;
-		border: 3px solid var(--border-default);
+		border: 3px solid var(--line);
 		border-top-color: var(--accent);
 		border-radius: 50%;
 		animation: spin 0.8s linear infinite;
@@ -445,30 +445,30 @@
 		align-items: center;
 		justify-content: center;
 		gap: 0;
-		padding: var(--space-lg) var(--space-sm);
+		padding: var(--sp-6) var(--sp-2);
 	}
 
 	.nic-box {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-xs);
-		padding: var(--space-md);
-		background-color: var(--bg-tertiary);
-		border: 2px solid var(--border-default);
-		border-radius: var(--radius-lg);
+		gap: var(--sp-1);
+		padding: var(--sp-4);
+		background-color: var(--surface-2);
+		border: 2px solid var(--line);
+		border-radius: var(--r-lg);
 		min-width: 80px;
-		transition: border-color var(--transition-normal);
+		transition: border-color 250ms var(--ease);
 	}
 
 	.nic-icon {
-		color: var(--text-secondary);
+		color: var(--text-2);
 	}
 
 	.nic-label {
 		font-size: var(--text-sm);
 		font-weight: 700;
-		color: var(--text-primary);
+		color: var(--text-1);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
@@ -482,16 +482,16 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-xs);
-		padding: 0 var(--space-sm);
+		gap: var(--sp-1);
+		padding: 0 var(--sp-2);
 		min-width: 100px;
 	}
 
 	.bridge-line {
 		width: 100%;
 		height: 3px;
-		border-radius: var(--radius-full);
-		transition: background-color var(--transition-normal);
+		border-radius: var(--r-pill);
+		transition: background-color 250ms var(--ease);
 	}
 
 	.bridge-label {
@@ -502,90 +502,90 @@
 	}
 
 	.bridge-icon {
-		margin-top: var(--space-xs);
+		margin-top: var(--sp-1);
 	}
 
 	/* Stats row */
 	.bridge-stats {
 		display: flex;
-		gap: var(--space-lg);
+		gap: var(--sp-6);
 		flex-wrap: wrap;
-		padding: var(--space-md) 0;
-		border-top: 1px solid var(--border-muted);
-		border-bottom: 1px solid var(--border-muted);
+		padding: var(--sp-4) 0;
+		border-top: 1px solid var(--line);
+		border-bottom: 1px solid var(--line);
 	}
 
 	.stat-item {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-xs);
+		gap: var(--sp-1);
 		flex: 1;
 		min-width: 80px;
 	}
 
 	.stat-label {
 		font-size: var(--text-xs);
-		color: var(--text-secondary);
+		color: var(--text-2);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
 
 	.stat-value {
 		font-size: var(--text-sm);
-		color: var(--text-primary);
+		color: var(--text-1);
 		font-weight: 600;
 	}
 
 	/* Bypass section */
 	.bypass-section {
-		padding: var(--space-md) 0;
+		padding: var(--sp-4) 0;
 	}
 
 	.bypass-header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		margin-bottom: var(--space-sm);
+		margin-bottom: var(--sp-2);
 	}
 
 	.bypass-title {
 		font-size: var(--text-sm);
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--text-1);
 	}
 
 	.bypass-warning {
 		font-size: var(--text-sm);
-		color: var(--warning);
-		margin-bottom: var(--space-sm);
-		padding: var(--space-sm);
-		background-color: color-mix(in srgb, var(--warning) 10%, transparent);
-		border-radius: var(--radius-md);
-		border: 1px solid color-mix(in srgb, var(--warning) 25%, transparent);
+		color: var(--sev-medium);
+		margin-bottom: var(--sp-2);
+		padding: var(--sp-2);
+		background-color: color-mix(in srgb, var(--sev-medium) 10%, transparent);
+		border-radius: var(--r-md);
+		border: 1px solid color-mix(in srgb, var(--sev-medium) 25%, transparent);
 	}
 
 	.bypass-since {
 		font-size: var(--text-xs);
-		margin-bottom: var(--space-sm);
+		margin-bottom: var(--sp-2);
 	}
 
 	.bypass-actions {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.confirm-text {
 		font-size: var(--text-sm);
-		color: var(--text-secondary);
+		color: var(--text-2);
 	}
 
 	/* Issues list */
 	.bridge-issues {
-		padding-top: var(--space-md);
+		padding-top: var(--sp-4);
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	/* Footer */
@@ -593,32 +593,32 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding-top: var(--space-md);
-		border-top: 1px solid var(--border-muted);
+		padding-top: var(--sp-4);
+		border-top: 1px solid var(--line);
 		font-size: var(--text-xs);
 	}
 
 	.footer-item {
 		display: flex;
 		align-items: center;
-		gap: var(--space-xs);
+		gap: var(--sp-1);
 	}
 
 	/* Responsive */
 	@media (max-width: 640px) {
 		.bridge-diagram {
 			flex-direction: column;
-			gap: var(--space-sm);
+			gap: var(--sp-2);
 		}
 
 		.bridge-line-container {
 			transform: rotate(90deg);
-			padding: var(--space-sm) 0;
+			padding: var(--sp-2) 0;
 		}
 
 		.bridge-stats {
 			flex-direction: column;
-			gap: var(--space-sm);
+			gap: var(--sp-2);
 		}
 
 		.bypass-actions {
@@ -627,7 +627,7 @@
 
 		.bridge-footer {
 			flex-direction: column;
-			gap: var(--space-sm);
+			gap: var(--sp-2);
 			align-items: flex-start;
 		}
 	}

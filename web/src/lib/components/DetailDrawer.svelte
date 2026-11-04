@@ -113,7 +113,7 @@
 		position: fixed;
 		inset: 0;
 		z-index: 998;
-		background-color: var(--bg-overlay);
+		background-color: var(--scrim);
 		border: none;
 		cursor: pointer;
 		animation: backdropFadeIn 200ms ease-out;
@@ -133,12 +133,12 @@
 		width: 480px;
 		max-width: 100vw;
 		z-index: 999;
-		background-color: var(--bg-primary);
-		border-left: 1px solid var(--border-default);
+		background-color: var(--bg);
+		border-left: 1px solid var(--line);
 		display: flex;
 		flex-direction: column;
 		transform: translateX(100%);
-		transition: transform var(--transition-normal);
+		transition: transform 250ms var(--ease);
 		box-shadow: -4px 0 24px color-mix(in srgb, var(--bg) 40%, transparent);
 	}
 
@@ -151,11 +151,11 @@
 		display: flex;
 		align-items: flex-start;
 		justify-content: space-between;
-		padding: var(--space-md) var(--space-lg);
-		border-bottom: 1px solid var(--border-default);
-		background-color: var(--bg-secondary);
+		padding: var(--sp-4) var(--sp-6);
+		border-bottom: 1px solid var(--line);
+		background-color: var(--surface-1);
 		flex-shrink: 0;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.drawer-header-text {
@@ -166,14 +166,14 @@
 	.drawer-title {
 		font-size: var(--text-lg);
 		font-weight: 700;
-		color: var(--text-primary);
+		color: var(--text-1);
 		line-height: 1.3;
 		word-break: break-word;
 	}
 
 	.drawer-subtitle {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 		margin-top: 2px;
 	}
 
@@ -185,46 +185,46 @@
 		height: 32px;
 		background: none;
 		border: none;
-		border-radius: var(--radius-sm);
-		color: var(--text-secondary);
+		border-radius: var(--r-sm);
+		color: var(--text-2);
 		cursor: pointer;
-		transition: all var(--transition-fast);
+		transition: all var(--dur-fast);
 		flex-shrink: 0;
 	}
 
 	.drawer-close-btn:hover {
-		background-color: var(--bg-tertiary);
-		color: var(--text-primary);
+		background-color: var(--surface-2);
+		color: var(--text-1);
 	}
 
 	/* ----- Tabs ----- */
 	.drawer-tabs {
 		display: flex;
-		border-bottom: 1px solid var(--border-default);
-		background-color: var(--bg-secondary);
+		border-bottom: 1px solid var(--line);
+		background-color: var(--surface-1);
 		flex-shrink: 0;
-		padding: 0 var(--space-lg);
+		padding: 0 var(--sp-6);
 		gap: 0;
 	}
 
 	.drawer-tab {
 		position: relative;
-		padding: var(--space-sm) var(--space-md);
+		padding: var(--sp-2) var(--sp-4);
 		font-size: var(--text-sm);
 		font-weight: 500;
-		color: var(--text-muted);
+		color: var(--text-3);
 		background: none;
 		border: none;
 		cursor: pointer;
-		transition: color var(--transition-fast);
+		transition: color var(--dur-fast);
 		white-space: nowrap;
 		display: flex;
 		align-items: center;
-		gap: var(--space-xs);
+		gap: var(--sp-1);
 	}
 
 	.drawer-tab:hover {
-		color: var(--text-primary);
+		color: var(--text-1);
 	}
 
 	.drawer-tab.active {
@@ -235,8 +235,8 @@
 		content: '';
 		position: absolute;
 		bottom: -1px;
-		left: var(--space-md);
-		right: var(--space-md);
+		left: var(--sp-4);
+		right: var(--sp-4);
 		height: 2px;
 		background-color: var(--accent);
 		border-radius: 1px;
@@ -251,13 +251,13 @@
 		padding: 0 5px;
 		font-size: 10px;
 		font-weight: 600;
-		border-radius: var(--radius-full);
-		background-color: var(--bg-tertiary);
-		color: var(--text-secondary);
+		border-radius: var(--r-pill);
+		background-color: var(--surface-2);
+		color: var(--text-2);
 	}
 
 	.drawer-tab.active .tab-badge {
-		background-color: var(--accent-muted);
+		background-color: color-mix(in srgb, var(--accent) 12%, transparent);
 		color: var(--accent);
 	}
 
@@ -265,18 +265,18 @@
 	.drawer-body {
 		flex: 1;
 		overflow-y: auto;
-		padding: var(--space-lg);
+		padding: var(--sp-6);
 	}
 
 	/* ----- Footer ----- */
 	.drawer-footer {
-		padding: var(--space-md) var(--space-lg);
-		border-top: 1px solid var(--border-default);
-		background-color: var(--bg-secondary);
+		padding: var(--sp-4) var(--sp-6);
+		border-top: 1px solid var(--line);
+		background-color: var(--surface-1);
 		flex-shrink: 0;
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	/* ----- Responsive ----- */

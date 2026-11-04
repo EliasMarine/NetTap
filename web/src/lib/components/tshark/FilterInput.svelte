@@ -196,13 +196,13 @@
 	.filter-input-wrapper {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-xs);
+		gap: var(--sp-1);
 	}
 
 	.filter-row {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.input-group {
@@ -227,11 +227,11 @@
 	}
 
 	.validation-indicator.valid {
-		color: var(--success);
+		color: var(--ok);
 	}
 
 	.validation-indicator.invalid {
-		color: var(--danger);
+		color: var(--sev-critical);
 	}
 
 	.validation-indicator.checking {
@@ -259,11 +259,11 @@
 		min-width: 320px;
 		max-height: 300px;
 		overflow-y: auto;
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		box-shadow: var(--shadow-lg);
-		padding: var(--space-xs);
+		background-color: var(--surface-1);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
+		box-shadow: var(--shadow-pop);
+		padding: var(--sp-1);
 	}
 
 	.preset-item {
@@ -272,44 +272,44 @@
 		align-items: flex-start;
 		gap: 2px;
 		width: 100%;
-		padding: var(--space-sm) var(--space-md);
+		padding: var(--sp-2) var(--sp-4);
 		background: none;
 		border: none;
-		border-radius: var(--radius-sm);
+		border-radius: var(--r-sm);
 		cursor: pointer;
 		text-align: left;
-		transition: background-color var(--transition-fast);
+		transition: background-color var(--dur-fast);
 	}
 
 	.preset-item:hover {
-		background-color: var(--bg-tertiary);
+		background-color: var(--surface-2);
 	}
 
 	.preset-label {
 		font-size: var(--text-sm);
-		color: var(--text-primary);
+		color: var(--text-1);
 		font-weight: 500;
 	}
 
 	.preset-filter {
 		font-family: var(--font-mono);
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 	}
 
 	.validation-message {
 		font-size: var(--text-xs);
-		padding: var(--space-xs) var(--space-sm);
-		border-radius: var(--radius-sm);
+		padding: var(--sp-1) var(--sp-2);
+		border-radius: var(--r-sm);
 	}
 
 	.validation-message.valid {
-		color: var(--success);
-		background-color: var(--success-muted);
+		color: var(--ok);
+		background-color: color-mix(in srgb, var(--ok) 12%, transparent);
 	}
 
 	.validation-message.invalid {
-		color: var(--danger);
-		background-color: var(--danger-muted);
+		color: var(--sev-critical);
+		background-color: color-mix(in srgb, var(--sev-critical) 12%, transparent);
 	}
 </style>

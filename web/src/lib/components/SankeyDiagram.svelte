@@ -99,8 +99,8 @@
 				color: type === 'protocol'
 					? (PROTO_COLORS[n.id.toLowerCase()] || 'var(--accent)')
 					: type === 'source'
-						? 'var(--cyan)'
-						: 'var(--teal, var(--green))',
+						? 'var(--accent)'
+						: 'var(--data-3, var(--ok))',
 				type,
 				country: n.country,
 			};
@@ -276,7 +276,7 @@
 						rx="4"
 						fill={node.color}
 						opacity={hoveredNode ? (isConnected ? 1 : 0.2) : 0.85}
-						stroke={isHovered ? 'var(--text-primary)' : 'none'}
+						stroke={isHovered ? 'var(--text-1)' : 'none'}
 						stroke-width="1.5"
 						style="transition: opacity 0.2s;"
 					/>
@@ -330,7 +330,7 @@
 	.sankey-headers {
 		position: relative;
 		height: 24px;
-		margin-bottom: var(--space-xs);
+		margin-bottom: var(--sp-1);
 	}
 
 	.sankey-col-title {
@@ -338,23 +338,23 @@
 		top: 0;
 		font-size: var(--text-xs);
 		font-weight: 600;
-		color: var(--text-muted);
+		color: var(--text-3);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
 
 	.sankey-empty {
-		padding: var(--space-xl);
+		padding: var(--sp-8);
 		text-align: center;
 	}
 
 	.sankey-tooltip {
 		position: absolute;
 		transform: translate(-50%, -100%);
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		padding: var(--space-xs) var(--space-sm);
+		background: var(--surface-1);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
+		padding: var(--sp-1) var(--sp-2);
 		pointer-events: none;
 		z-index: 10;
 		white-space: nowrap;
@@ -363,17 +363,17 @@
 	.tooltip-label {
 		font-size: var(--text-xs);
 		font-weight: 600;
-		color: var(--text-primary);
+		color: var(--text-1);
 	}
 
 	.tooltip-value {
 		font-size: var(--text-xs);
-		color: var(--text-secondary);
+		color: var(--text-2);
 		font-family: var(--font-mono);
 	}
 
 	.tooltip-country {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 	}
 </style>

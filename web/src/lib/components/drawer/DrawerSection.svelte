@@ -35,7 +35,7 @@
 
 <style>
 	.drawer-section {
-		border-bottom: 1px solid var(--border-dim);
+		border-bottom: 1px solid var(--line);
 	}
 
 	.drawer-section:last-child {
@@ -47,16 +47,16 @@
 		align-items: center;
 		justify-content: space-between;
 		width: 100%;
-		padding: var(--space-sm) 0;
+		padding: var(--sp-2) 0;
 		background: none;
 		border: none;
 		cursor: pointer;
-		color: var(--text-secondary);
-		transition: color var(--transition-fast);
+		color: var(--text-2);
+		transition: color var(--dur-fast);
 	}
 
 	.section-header:hover {
-		color: var(--text-primary);
+		color: var(--text-1);
 	}
 
 	.section-title {
@@ -67,7 +67,7 @@
 	}
 
 	.section-chevron {
-		transition: transform var(--transition-fast);
+		transition: transform var(--dur-fast);
 		flex-shrink: 0;
 	}
 
@@ -76,6 +76,6 @@
 	}
 
 	.section-body {
-		padding: var(--space-xs) 0 var(--space-md) 0;
+		padding: var(--sp-1) 0 var(--sp-4) 0;
 	}
 </style>

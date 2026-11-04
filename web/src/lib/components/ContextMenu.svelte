@@ -201,11 +201,11 @@
 		z-index: 9999;
 		min-width: 200px;
 		max-width: 320px;
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		box-shadow: var(--shadow-lg);
-		padding: var(--space-xs);
+		background-color: var(--surface-1);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
+		box-shadow: var(--shadow-pop);
+		padding: var(--sp-1);
 		animation: contextMenuFadeIn 120ms ease-out;
 	}
 
@@ -223,24 +223,24 @@
 	.context-menu-item {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 		width: 100%;
-		padding: var(--space-sm) var(--space-md);
-		font-family: var(--font-sans);
+		padding: var(--sp-2) var(--sp-4);
+		font-family: var(--font-body);
 		font-size: var(--text-sm);
 		font-weight: 500;
-		color: var(--text-primary);
+		color: var(--text-1);
 		background: none;
 		border: none;
-		border-radius: var(--radius-sm);
+		border-radius: var(--r-sm);
 		cursor: pointer;
-		transition: background-color var(--transition-fast);
+		transition: background-color var(--dur-fast);
 		text-align: left;
 		white-space: nowrap;
 	}
 
 	.context-menu-item:hover {
-		background-color: var(--accent-muted);
+		background-color: color-mix(in srgb, var(--accent) 12%, transparent);
 		color: var(--accent);
 	}
 
@@ -259,7 +259,7 @@
 
 	.context-menu-separator {
 		height: 1px;
-		background-color: var(--border-default);
-		margin: var(--space-xs) var(--space-sm);
+		background-color: var(--line);
+		margin: var(--sp-1) var(--sp-2);
 	}
 </style>
