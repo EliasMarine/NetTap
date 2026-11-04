@@ -16,7 +16,7 @@ const PROTO_COLORS: Record<string, string> = {
 	tls: 'var(--data-4)',
 	dns: 'var(--data-2)',
 	http: 'var(--data-3)',
-	ssh: 'var(--data-7)',
+	ssh: 'var(--text-3)',
 };
 
 function formatBytes(b: number): string {

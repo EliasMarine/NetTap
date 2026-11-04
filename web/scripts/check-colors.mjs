@@ -6,7 +6,8 @@
  * Where it looks (so prose like "PR #147" or `white-space` never trips it):
  * - .css files, and <style> blocks in .svelte: the whole CSS
  * - .ts files, <script> blocks and Svelte markup: quoted strings only
- * What it skips: test files, the TOKENS START/END block and comments. OLD CODE
+ * What it skips: src/lib/styles/tokens.css (the design system's token file, the one
+ * place literals live), test files, any TOKENS START/END block and comments. OLD CODE
  * blocks are comments, so they're skipped too; live code between the markers is
  * still checked.
  */
@@ -17,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC_DIR = join(WEB_DIR, 'src');
 const ALLOWLIST_FILE = join(WEB_DIR, 'scripts', 'check-colors.allowlist');
+const TOKEN_FILE = join(SRC_DIR, 'lib', 'styles', 'tokens.css');
 
 const HEX = /(?<![\w&/])#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})(?![\w-])/g;
 const FUNC = /\b(?:rgba?|hsla?)\(/g;
@@ -140,7 +142,7 @@ function main() {
 	let count = 0;
 	for (const file of walk(SRC_DIR)) {
 		const rel = relative(WEB_DIR, file);
-		if (allow.has(rel)) continue;
+		if (allow.has(rel) || file === TOKEN_FILE) continue;
 		for (const hit of findColorLiterals(file, readFileSync(file, 'utf8'))) {
 			console.error(`${rel}:${hit.line}: ${hit.match}`);
 			count++;

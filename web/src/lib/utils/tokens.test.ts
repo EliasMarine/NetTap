@@ -4,7 +4,7 @@ import { resolveToken, prefersReducedMotion } from './tokens';
 describe('resolveToken', () => {
 	afterEach(() => {
 		document.head.querySelectorAll('style[data-test-tokens]').forEach((el) => el.remove());
-		delete document.documentElement.dataset.variant;
+		delete document.documentElement.dataset.theme;
 		vi.unstubAllGlobals();
 	});
 
@@ -21,8 +21,8 @@ describe('resolveToken', () => {
 	});
 
 	it('follows the variant attribute', () => {
-		addStyle(':root { --accent: #ff7a1a; } :root[data-variant="spectrum"] { --accent: #9b8cff; }');
-		document.documentElement.dataset.variant = 'spectrum';
+		addStyle(':root { --accent: #ff7a1a; } :root[data-theme="spectrum"] { --accent: #9b8cff; }');
+		document.documentElement.dataset.theme = 'spectrum';
 		expect(resolveToken('--accent')).toBe('#9b8cff');
 	});
 

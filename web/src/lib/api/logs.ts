@@ -269,8 +269,6 @@ export function protocolColor(protocol: string): string {
 			return 'var(--data-5)';
 		case 'dhcp':
 			return 'var(--data-6)';
-		case 'smtp':
-			return 'var(--data-7)';
 		case 'alert':
 			return 'var(--sev-critical)';
 		default:

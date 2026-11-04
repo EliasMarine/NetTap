@@ -3,7 +3,7 @@
  *
  * Protocol (PLAN.md, PR 1):
  * - The inline script in app.html reads localStorage before first paint and sets
- *   <html data-variant>. Ember is the absence of the attribute.
+ *   <html data-theme>. Ember is the absence of the attribute.
  * - This store starts from that attribute and never reads storage itself, so it
  *   can't disagree with what is already painted. Nothing writes on init.
  * - setTheme is the only writer: attribute first, then the store (so subscribers
@@ -22,7 +22,7 @@ export function isThemeVariant(value: unknown): value is ThemeVariant {
 
 function initialVariant(): ThemeVariant {
 	if (typeof document === 'undefined') return 'ember';
-	const attr = document.documentElement.dataset.variant;
+	const attr = document.documentElement.dataset.theme;
 	return attr === 'graphite' || attr === 'spectrum' ? attr : 'ember';
 }
 
@@ -35,9 +35,9 @@ export function setTheme(value: ThemeVariant): void {
 
 	const root = document.documentElement;
 	if (value === 'ember') {
-		delete root.dataset.variant;
+		delete root.dataset.theme;
 	} else {
-		root.dataset.variant = value;
+		root.dataset.theme = value;
 	}
 
 	store.set(value);

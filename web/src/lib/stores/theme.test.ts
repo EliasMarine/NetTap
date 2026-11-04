@@ -8,7 +8,7 @@ async function loadStore() {
 
 describe('theme store (browser)', () => {
 	beforeEach(() => {
-		delete document.documentElement.dataset.variant;
+		delete document.documentElement.dataset.theme;
 		localStorage.clear();
 	});
 
@@ -23,13 +23,13 @@ describe('theme store (browser)', () => {
 	});
 
 	it('starts from the attribute the bootstrap set', async () => {
-		document.documentElement.dataset.variant = 'graphite';
+		document.documentElement.dataset.theme = 'graphite';
 		const { theme } = await loadStore();
 		expect(get(theme)).toBe('graphite');
 	});
 
 	it('treats an unknown attribute as ember', async () => {
-		document.documentElement.dataset.variant = 'neon';
+		document.documentElement.dataset.theme = 'neon';
 		const { theme } = await loadStore();
 		expect(get(theme)).toBe('ember');
 	});
@@ -47,16 +47,16 @@ describe('theme store (browser)', () => {
 	it('setTheme sets the attribute, the store and storage', async () => {
 		const { theme, setTheme } = await loadStore();
 		setTheme('spectrum');
-		expect(document.documentElement.dataset.variant).toBe('spectrum');
+		expect(document.documentElement.dataset.theme).toBe('spectrum');
 		expect(get(theme)).toBe('spectrum');
 		expect(localStorage.getItem('nettap-theme')).toBe('spectrum');
 	});
 
 	it('setTheme("ember") removes the attribute', async () => {
-		document.documentElement.dataset.variant = 'graphite';
+		document.documentElement.dataset.theme = 'graphite';
 		const { theme, setTheme } = await loadStore();
 		setTheme('ember');
-		expect(document.documentElement.hasAttribute('data-variant')).toBe(false);
+		expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
 		expect(get(theme)).toBe('ember');
 		expect(localStorage.getItem('nettap-theme')).toBe('ember');
 	});
@@ -67,7 +67,7 @@ describe('theme store (browser)', () => {
 		});
 		const { theme, setTheme } = await loadStore();
 		expect(() => setTheme('graphite')).not.toThrow();
-		expect(document.documentElement.dataset.variant).toBe('graphite');
+		expect(document.documentElement.dataset.theme).toBe('graphite');
 		expect(get(theme)).toBe('graphite');
 	});
 
@@ -76,14 +76,14 @@ describe('theme store (browser)', () => {
 		// @ts-expect-error: runtime guard for untyped callers
 		setTheme('neon');
 		expect(get(theme)).toBe('ember');
-		expect(document.documentElement.hasAttribute('data-variant')).toBe(false);
+		expect(document.documentElement.hasAttribute('data-theme')).toBe(false);
 	});
 
 	it('changes the attribute before subscribers are notified', async () => {
 		const style = document.createElement('style');
 		style.dataset.testTheme = '';
 		style.textContent =
-			':root { --accent: #ff7a1a; } :root[data-variant="graphite"] { --accent: #f4f4f5; }';
+			':root { --accent: #ff7a1a; } :root[data-theme="graphite"] { --accent: #f4f4f5; }';
 		document.head.appendChild(style);
 
 		const { theme, setTheme } = await loadStore();

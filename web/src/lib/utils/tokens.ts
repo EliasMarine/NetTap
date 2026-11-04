@@ -1,6 +1,6 @@
 /**
  * Read a design token's current value, for code that can't use var() (canvas).
- * Re-read after the theme changes: the value follows <html data-variant>.
+ * Re-read after the theme changes: the value follows <html data-theme>.
  * Returns '' when the token isn't defined.
  */
 export function resolveToken(name: string, el: Element = document.documentElement): string {

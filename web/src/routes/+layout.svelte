@@ -1,4 +1,8 @@
 <script lang="ts">
+	import '$lib/styles/tokens.css';
+	import '$lib/styles/system.css';
+	import '$lib/styles/forms.css';
+	import '$lib/styles/a11y.css';
 	import '$lib/styles/global.css';
 	import { page } from '$app/stores';
 	import NotificationBell from '$components/NotificationBell.svelte';

@@ -317,7 +317,7 @@ describe('protocolColor', () => {
 		expect(protocolColor('ssl')).toBe('var(--data-4)');
 		expect(protocolColor('files')).toBe('var(--data-5)');
 		expect(protocolColor('dhcp')).toBe('var(--data-6)');
-		expect(protocolColor('smtp')).toBe('var(--data-7)');
+		expect(protocolColor('smtp')).toBe('var(--text-3)');
 		expect(protocolColor('alert')).toBe('var(--sev-critical)');
 	});
 

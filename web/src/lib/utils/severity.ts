@@ -1,0 +1,34 @@
+/**
+ * Severity partition for every severity summary and gauge (PLAN.md §4.1).
+ * Built only from severity fields: never from categories (malware-c2 overlaps High).
+ */
+export type SeverityLevel = 'critical' | 'high' | 'medium' | 'low' | 'info';
+
+export interface SeverityBucket {
+	level: SeverityLevel;
+	count: number;
+}
+
+export interface SeverityInput {
+	total: number;
+	high: number;
+	medium: number;
+	low: number;
+	/** Only when an API returns a real critical severity field. */
+	critical?: number;
+}
+
+const count = (n: number | undefined) => (Number.isFinite(n) && (n as number) > 0 ? Math.floor(n as number) : 0);
+
+/** Mutually exclusive buckets that sum to `total`; info is what the named levels leave. */
+export function severityBuckets(input: SeverityInput): SeverityBucket[] {
+	const total = count(input.total);
+	const named: SeverityBucket[] = [
+		...(input.critical === undefined ? [] : [{ level: 'critical' as const, count: count(input.critical) }]),
+		{ level: 'high', count: count(input.high) },
+		{ level: 'medium', count: count(input.medium) },
+		{ level: 'low', count: count(input.low) },
+	];
+	const namedSum = named.reduce((a, b) => a + b.count, 0);
+	return [...named, { level: 'info', count: Math.max(0, total - namedSum) }];
+}

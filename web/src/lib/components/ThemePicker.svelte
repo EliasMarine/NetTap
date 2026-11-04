@@ -32,7 +32,7 @@
 					checked={selected === opt.value}
 					onchange={() => setTheme(opt.value)}
 				/>
-				<span class="swatch" data-theme-preview={opt.value} aria-hidden="true">
+				<span class="swatch" data-theme={opt.value} aria-hidden="true">
 					<span class="swatch-accent"></span>
 				</span>
 				<span class="text">
@@ -91,7 +91,7 @@
 		pointer-events: none;
 	}
 
-	/* data-theme-preview gives the swatch that variant's own tokens (see global.css) */
+	/* data-theme gives the swatch that theme's own tokens (the token selectors are not :root-only) */
 	.swatch {
 		display: grid;
 		place-items: center;

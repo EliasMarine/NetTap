@@ -3,9 +3,10 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 // PLAN.md §5.4: every text-bearing token is WCAG AA (4.5:1) on every surface, in every variant.
-const css = readFileSync(resolve(process.cwd(), 'src/lib/styles/global.css'), 'utf8');
-const block = css.slice(css.indexOf('/* TOKENS START */'), css.indexOf('/* TOKENS END */'));
-const [emberCss, graphiteCss, spectrumCss] = block.split(/\n(?=:root\[data-variant)/);
+// tokens.css is nettap-design-system/tokens.css verbatim: one Ember block, then Graphite, then Spectrum.
+const css = readFileSync(resolve(process.cwd(), 'src/lib/styles/tokens.css'), 'utf8');
+const block = css.slice(css.indexOf(':root, [data-theme="ember"]'), css.lastIndexOf('\n:root {'));
+const [emberCss, graphiteCss, spectrumCss] = block.split(/\n(?=\[data-theme)/);
 
 const parse = (text: string) =>
 	Object.fromEntries([...text.matchAll(/(--[\w-]+):\s*(#[0-9a-f]{6})\b/gi)].map((m) => [m[1], m[2]]));
@@ -46,5 +47,9 @@ describe.each(Object.entries(VARIANTS))('%s tokens', (_name, tokens) => {
 
 	it('text on the accent is AA', () => {
 		expect(contrast(tokens['--on-accent'], tokens['--accent'])).toBeGreaterThanOrEqual(4.5);
+	});
+
+	it('text on the light selected pill is AA', () => {
+		expect(contrast(tokens['--on-light'], tokens['--pill-active-bg'])).toBeGreaterThanOrEqual(4.5);
 	});
 });

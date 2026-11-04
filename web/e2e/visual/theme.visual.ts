@@ -6,14 +6,14 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 import { expectNoConsoleErrors, setMode, watchConsole } from './harness.ts';
 
-// --accent per variant, from src/lib/styles/global.css
+// --accent per variant, from src/lib/styles/tokens.css
 const ACCENT = { ember: '#ff7a1a', graphite: '#f4f4f5', spectrum: '#9b8cff' } as const;
 const NAME = { ember: 'Ember', graphite: 'Graphite', spectrum: 'Spectrum' } as const;
 type Saved = 'graphite' | 'spectrum';
 
 async function rootTheme(page: Page): Promise<{ variant: string | undefined; accent: string; bg: string }> {
 	return page.evaluate(() => ({
-		variant: document.documentElement.dataset.variant,
+		variant: document.documentElement.dataset.theme,
 		accent: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim().toLowerCase(),
 		bg: getComputedStyle(document.body).backgroundColor,
 	}));

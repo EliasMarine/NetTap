@@ -1,0 +1,22 @@
+/* Documented corrections to system.css (PLAN.md §5.1). The design system wins on looks, but
+   not where its CSS removes behaviour the app needs. Each rule names the bundle.css line it
+   corrects; add new ones here, never in system.css. */
+
+/* 1. bundle.css:148 sets outline 0 on the search input. Show the system focus ring on the field. */
+.search:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* 2. bundle.css:52 styles the selected pill only for aria-pressed / aria-current.
+      Pills in tabs mode mark the selected tab with aria-selected. */
+.pill[role="tab"][aria-selected="true"] { background: var(--pill-active-bg); color: var(--on-light); }
+
+/* 3. bundle.css:273 styles .dev as a link only. DeviceList's select mode renders a button with
+      aria-pressed; it gets the selected-row look of a selected AlertRow (bundle.css:357). */
+button.dev { width: 100%; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.dev[aria-pressed="true"] { background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line-strong); }
+
+/* 4. bundle.css:449 opens the phone nav as position: absolute, which scrolls away on a long page.
+      In the app the drawer and scrim stay fixed to the viewport. */
+@container app (max-width: 760px) {
+  .app.nav-open .sidebar { position: fixed; top: 0; bottom: 0; left: 0; max-height: none; border-radius: 0 var(--r-xl) var(--r-xl) 0; }
+  .app.nav-open .scrim { position: fixed; }
+}

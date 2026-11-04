@@ -101,8 +101,8 @@ export async function stubGrafana(page: Page, mode: FixtureMode): Promise<void> 
 
 export async function setVariant(page: Page, variant: Variant): Promise<void> {
 	await page.evaluate((v) => {
-		if (v === 'ember') delete document.documentElement.dataset.variant;
-		else document.documentElement.dataset.variant = v;
+		if (v === 'ember') delete document.documentElement.dataset.theme;
+		else document.documentElement.dataset.theme = v;
 	}, variant);
 }
 

@@ -115,7 +115,7 @@
 		// window.removeEventListener('resize', syncCanvasSize);
 		// OLD CODE END
 
-		// The store notifies after <html data-variant> changes, so this reads the new values
+		// The store notifies after <html data-theme> changes, so this reads the new values
 		const unsubscribeTheme = theme.subscribe(() => {
 			colors = readColors();
 		});

@@ -28,7 +28,7 @@ describe('ThemePicker', () => {
 	it('applies and remembers a choice', async () => {
 		render(ThemePicker);
 		await fireEvent.click(screen.getByRole('radio', { name: 'Graphite' }));
-		expect(document.documentElement.dataset.variant).toBe('graphite');
+		expect(document.documentElement.dataset.theme).toBe('graphite');
 		expect(localStorage.getItem('nettap-theme')).toBe('graphite');
 		expect(screen.getByRole('radio', { name: 'Graphite' })).toBeChecked();
 	});
