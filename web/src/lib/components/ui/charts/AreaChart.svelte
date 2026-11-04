@@ -15,7 +15,7 @@
 </script>
 
 <script lang="ts">
-	import { monotonePath, fitAxis, labelStep, nearestIndex, tipBox, type Point } from './geometry';
+	import { monotonePath, fitAxis, fitByteAxis, labelStep, nearestIndex, tipBox, type Point } from './geometry';
 	import { observeWidth } from './resize';
 
 	let {
@@ -26,6 +26,7 @@
 		highlightIndex,
 		ariaLabel,
 		height = 220,
+		bytes = false,
 	}: {
 		series: AreaSeries[];
 		formatX?: (t: number | string) => string;
@@ -34,7 +35,10 @@
 		formatTip: (i: number) => string;
 		highlightIndex?: number;
 		ariaLabel: string;
+		/** Minimum height; in a `col` card the chart grows to fill the card. */
 		height?: number;
+		/** Values are bytes: ticks land on round 1024-based units, like the byte formatters. */
+		bytes?: boolean;
 	} = $props();
 
 	const PAD = { l: 50, r: 12, t: 18, b: 28 };
@@ -43,14 +47,17 @@
 	const uid = $props.id();
 
 	let measured = $state(0);
+	let measuredH = $state(0);
 	let hoverIndex = $state<number | null>(null);
 
 	const w = $derived(Math.max(MIN_WIDTH, Math.round(measured) || FALLBACK_WIDTH));
+	const h = $derived(Math.max(height, Math.round(measuredH)));
 	const iw = $derived(w - PAD.l - PAD.r);
-	const ih = $derived(height - PAD.t - PAD.b);
+	const ih = $derived(h - PAD.t - PAD.b);
 	const n = $derived(Math.max(0, ...series.map((s) => s.points.length)));
 	const ts = $derived(series.find((s) => s.points.length === n)?.points.map((p) => p.t) ?? []);
-	const axis = $derived(fitAxis(Math.max(0, ...series.flatMap((s) => s.points.map((p) => p.v)).filter(Number.isFinite))));
+	const peak = $derived(Math.max(0, ...series.flatMap((s) => s.points.map((p) => p.v)).filter(Number.isFinite)));
+	const axis = $derived(bytes ? fitByteAxis(peak) : fitAxis(peak));
 	const every = $derived(labelStep(n, iw));
 	const slot = $derived(n > 1 ? iw / (n - 1) : iw);
 	const highlight = $derived(
@@ -89,11 +96,18 @@
 </script>
 
 {#if n > 0}
-	<div class="chart" {@attach observeWidth((width) => (measured = width))}>
+	<div
+		class="chart"
+		style:min-height="{height}px"
+		{@attach observeWidth((width, ht) => {
+			measured = width;
+			measuredH = ht;
+		})}
+	>
 		<svg
-			viewBox="0 0 {w} {height}"
+			viewBox="0 0 {w} {h}"
 			width={w}
-			{height}
+			height={h}
 			role="img"
 			aria-label={ariaLabel}
 			{onpointermove}
@@ -113,7 +127,7 @@
 			{/each}
 			{#each ts as t, i (i)}
 				{#if i % every === 0}
-					<text class="ax" x={X(i).toFixed(1)} y={height - 6} text-anchor="middle">{formatX(t)}</text>
+					<text class="ax" x={X(i).toFixed(1)} y={h - 6} text-anchor="middle">{formatX(t)}</text>
 				{/if}
 			{/each}
 			{#if highlight !== null}
@@ -140,3 +154,17 @@
 		</svg>
 	</div>
 {/if}
+
+<style>
+	/* The svg is taken out of flow so the box's height comes from the card, not the svg:
+	   in a `col` card the chart fills the space a taller neighbour gives the row. */
+	.chart {
+		position: relative;
+		flex: 1 0 auto;
+	}
+	.chart svg {
+		position: absolute;
+		top: 0;
+		left: 0;
+	}
+</style>

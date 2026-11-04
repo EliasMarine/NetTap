@@ -8,6 +8,7 @@ import {
 	allocateTicks,
 	inPolygon,
 	fitAxis,
+	fitByteAxis,
 	labelStep,
 	nearestIndex,
 	tipBox,
@@ -166,6 +167,20 @@ describe('inPolygon', () => {
 		expect(inPolygon(12, 2, [square])).toBe(false);
 		expect(inPolygon(5, 5, [square, hole])).toBe(false);
 		expect(inPolygon(2, 5, [square, hole])).toBe(true);
+	});
+});
+
+describe('fitByteAxis', () => {
+	const GiB = 1024 ** 3;
+
+	it('puts ticks on round 1024-based units', () => {
+		expect(fitByteAxis(28 * GiB)).toEqual({ top: 30 * GiB, values: [0, 10, 20, 30].map((v) => v * GiB) });
+		expect(fitByteAxis(GiB).values.at(-1)).toBe(GiB);
+	});
+
+	it('matches fitAxis below 1 KB', () => {
+		expect(fitByteAxis(500)).toEqual(fitAxis(500));
+		expect(fitByteAxis(0)).toEqual(fitAxis(0));
 	});
 });
 

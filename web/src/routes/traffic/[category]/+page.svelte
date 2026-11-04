@@ -601,7 +601,7 @@
 			note="Of all traffic in the last {rangeText}"
 		/>
 
-		<Card class="c-8" hero title="Bandwidth over time" sub="Download and upload per {INTERVAL_MAP[selectedRange] ?? '15m'} · last {rangeText}">
+		<Card class="c-8" hero col title="Bandwidth over time" sub="Download and upload per {INTERVAL_MAP[selectedRange] ?? '15m'} · last {rangeText}">
 			{#snippet actions()}
 				<ul class="legend">
 					<li><span class="sw c-d1"></span>Download</li>
@@ -611,6 +611,7 @@
 			{#if bandwidthSeries.length > 0}
 				<AreaChart
 					series={chartSeries}
+					bytes
 					formatX={formatPointTime}
 					formatY={formatBytes}
 					formatTip={chartTip}

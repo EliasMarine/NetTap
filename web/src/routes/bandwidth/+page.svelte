@@ -396,7 +396,7 @@
 		</Card>
 	{/if}
 
-	<Card class="c-8" hero title="Daily usage" sub="Data per day, download and upload · this month, UTC days">
+	<Card class="c-8" hero col title="Daily usage" sub="Data per day, download and upload · this month, UTC days">
 		{#snippet actions()}
 			<ul class="legend">
 				<li><span class="sw c-d1"></span>Download</li>
@@ -406,6 +406,7 @@
 		{#if daily.length > 0}
 			<AreaChart
 				series={dailySeries}
+				bytes
 				formatX={(t) => formatDate(String(t))}
 				formatY={formatBytes}
 				formatTip={dailyTip}

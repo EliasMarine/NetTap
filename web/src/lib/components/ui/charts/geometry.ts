@@ -155,6 +155,17 @@ export function fitAxis(max: number, ticks = 5): { top: number; values: number[]
 	return { top: cover, values: values.filter((v) => v <= cover) };
 }
 
+/**
+ * fitAxis in the 1024-based unit the byte formatters print, so a 28 GB peak gets
+ * 0, 10, 20, 30 GB ticks instead of round decimal bytes shown as 9.3, 19, 28, 37 GB.
+ */
+export function fitByteAxis(max: number, ticks = 5): { top: number; values: number[] } {
+	// log2 is exact on powers of two, so 1 GiB lands on the GiB unit, not MiB
+	const unit = max >= 1024 ? 1024 ** Math.floor(Math.log2(max) / 10) : 1;
+	const { top, values } = fitAxis(max / unit, ticks);
+	return { top: top * unit, values: values.map((v) => v * unit) };
+}
+
 /** Label every Nth point so neighbouring x labels sit at least `minGap` px apart. */
 export function labelStep(count: number, plotWidth: number, minGap = 64): number {
 	if (count <= 1 || !(plotWidth > 0)) return 1;

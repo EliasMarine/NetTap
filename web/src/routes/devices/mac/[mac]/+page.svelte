@@ -246,6 +246,7 @@
 			<Card class="c-12" hero title="Bandwidth over time" sub="Bytes per interval · last 24 hours">
 				{#if busiest >= 0}
 					<AreaChart
+						bytes
 						series={[{ key: 'bytes', label: 'Bytes', colour: 1, points: series.map((p) => ({ t: p.timestamp, v: p.bytes })) }]}
 						formatX={chartTime}
 						formatY={formatBytesShort}

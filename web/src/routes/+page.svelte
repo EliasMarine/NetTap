@@ -636,7 +636,7 @@ OLD CODE END -->
 		foot={newDeviceCount && newDeviceCount > 0 ? newToday : undefined}
 	/>
 
-	<Card title="Bandwidth over time" sub="Bytes per hour · {windowText}{busiest >= 0 ? ` · ${busiestText}` : ''}" hero class="c-8">
+	<Card title="Bandwidth over time" sub="Bytes per hour · {windowText}{busiest >= 0 ? ` · ${busiestText}` : ''}" hero col class="c-8">
 		{#snippet actions()}
 			<ul class="legend">
 				<li><span class="sw line c-d1"></span>Downloaded</li>
@@ -646,6 +646,7 @@ OLD CODE END -->
 		{#if bandwidthData.length > 0}
 			<AreaChart
 				series={bandwidthSeries}
+				bytes
 				formatX={axisLabel}
 				formatY={formatBytesShort}
 				formatTip={bandwidthTip}
