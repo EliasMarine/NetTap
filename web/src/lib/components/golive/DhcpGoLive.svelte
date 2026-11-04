@@ -324,7 +324,7 @@
 						class:failed={!check.passed && check.blocking}
 						class:warn={!check.passed && !check.blocking}
 					>
-						<span class="check-icon"><Icon name={checkIconName(check)} /></span>
+						<span class="check-icon"><Icon name={checkIconName(check)} label={check.passed ? 'Passed' : check.blocking ? 'Blocking' : 'Warning'} /></span>
 						<div class="check-content">
 							<span class="check-name">{checkLabel(check)}</span>
 							{#if check.message}
