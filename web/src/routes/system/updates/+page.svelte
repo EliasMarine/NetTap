@@ -21,7 +21,7 @@
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Meter from '$lib/components/ui/Meter.svelte';
-	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import { loadFailed } from '$lib/utils/load-failed';
 
 	// ---------------------------------------------------------------------------
@@ -343,8 +343,11 @@
 		versionsFailed = versionsRes.status === 'rejected';
 		updatesFailed = updatesRes.status === 'rejected';
 		loading = false;
-		const failures = results.filter((r) => r.status === 'rejected').length;
-		return failures === 0 ? 'ok' : failures === results.length ? 'failed' : 'partial';
+		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
+		// const failures = results.filter((r) => r.status === 'rejected').length;
+		// return failures === 0 ? 'ok' : failures === results.length ? 'failed' : 'partial';
+		// OLD CODE END
+		return outcome(results);
 	}
 
 	const refresh = registerPageRefresh(load);

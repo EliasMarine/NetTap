@@ -26,7 +26,7 @@
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { TableSort } from '$lib/utils/table-sort.svelte';
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
-	import type { SeverityLevel } from '$lib/utils/severity';
+	import { smartLevel, type SeverityLevel } from '$lib/utils/severity';
 	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { DeviceConnectionSort } from '$api/devices';
 	import type { SmartAlert } from '$api/alerts';
@@ -490,14 +490,16 @@
 	// function sevClass(sev: number): string { … }   (unused)
 	// OLD CODE END
 
-	/** Smart alert severity (1 critical … 4 low, 5 info), as the old badge classes read it. */
-	function smartLevel(sev: number): SeverityLevel {
-		if (sev <= 1) return 'critical';
-		if (sev === 2) return 'high';
-		if (sev === 3) return 'medium';
-		if (sev === 4) return 'low';
-		return 'info';
-	}
+	// OLD CODE START — the same mapping now lives once in $lib/utils/severity
+	// /** Smart alert severity (1 critical … 4 low, 5 info), as the old badge classes read it. */
+	// function smartLevel(sev: number): SeverityLevel {
+	// 	if (sev <= 1) return 'critical';
+	// 	if (sev === 2) return 'high';
+	// 	if (sev === 3) return 'medium';
+	// 	if (sev === 4) return 'low';
+	// 	return 'info';
+	// }
+	// OLD CODE END
 
 	const factorLabel = (name: string) => name.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 

@@ -20,7 +20,7 @@
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import type { SeverityLevel } from '$lib/utils/severity';
-	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -276,8 +276,11 @@
 			statsFailed = true;
 		}
 		loading = false;
-		const ok = [list, counts].filter((r) => r.status === 'fulfilled').length;
-		return ok === 2 ? 'ok' : ok === 0 ? 'failed' : 'partial';
+		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
+		// const ok = [list, counts].filter((r) => r.status === 'fulfilled').length;
+		// return ok === 2 ? 'ok' : ok === 0 ? 'failed' : 'partial';
+		// OLD CODE END
+		return outcome([list, counts]);
 	}
 
 	const refresh = registerPageRefresh(load);

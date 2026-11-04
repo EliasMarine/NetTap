@@ -16,7 +16,7 @@
 	import DeviceList, { type DeviceListItem } from '$lib/components/ui/DeviceList.svelte';
 	import Bytes from '$lib/components/ui/Bytes.svelte';
 	import AreaChart, { type AreaSeries } from '$lib/components/ui/charts/AreaChart.svelte';
-	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -320,8 +320,11 @@
 		heatmapFailed = heatmapRes.status === 'rejected';
 		loading = false;
 
-		const failed = results.filter((r) => r.status === 'rejected').length;
-		return failed === 0 ? 'ok' : failed === results.length ? 'failed' : 'partial';
+		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
+		// const failed = results.filter((r) => r.status === 'rejected').length;
+		// return failed === 0 ? 'ok' : failed === results.length ? 'failed' : 'partial';
+		// OLD CODE END
+		return outcome(results);
 	}
 
 	const refresh = registerPageRefresh(fetchAll);

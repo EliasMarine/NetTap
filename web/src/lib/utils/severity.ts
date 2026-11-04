@@ -23,6 +23,14 @@ export function suricataLevel(severity: number | null | undefined): SeverityLeve
 	return severity === 1 ? 'high' : severity === 2 ? 'medium' : severity === 3 ? 'low' : 'info';
 }
 
+/** A smart alert's severity (the daemon's sev_name_map: 1 critical … 4 low, 5 info) as a system level. */
+export function smartLevel(severity: number): SeverityLevel {
+	if (severity <= 1) return 'critical';
+	if (severity === 2) return 'high';
+	if (severity === 3) return 'medium';
+	return severity === 4 ? 'low' : 'info';
+}
+
 const count = (n: number | undefined) => (Number.isFinite(n) && (n as number) > 0 ? Math.floor(n as number) : 0);
 
 /** Mutually exclusive buckets that sum to `total`; info is what the named levels leave. */

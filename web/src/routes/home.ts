@@ -4,7 +4,6 @@
  */
 import type { PipelineStage } from '$components/ui/Pipeline.svelte';
 import { modeLabel } from '$components/shell/status';
-import type { SeverityLevel } from '$lib/utils/severity';
 import type { SystemHealth } from '$api/system';
 import type { CaptureHealthResponse, CaptureStatsResponse } from '$api/capture';
 
@@ -92,13 +91,16 @@ export function kpiWindow(
 	return t.direction === 'flat' ? { note: `No change vs ${previous}` } : { comparison: `vs ${previous}` };
 }
 
-/** Smart alert severity, 1 critical to 5 info (the daemon's sev_name_map). */
-export function smartLevel(severity: number): SeverityLevel {
-	if (severity <= 1) return 'critical';
-	if (severity === 2) return 'high';
-	if (severity === 3) return 'medium';
-	return severity === 4 ? 'low' : 'info';
-}
+// OLD CODE START — moved to $lib/utils/severity so the device page shares it
+// /** Smart alert severity, 1 critical to 5 info (the daemon's sev_name_map). */
+// export function smartLevel(severity: number): SeverityLevel {
+// 	if (severity <= 1) return 'critical';
+// 	if (severity === 2) return 'high';
+// 	if (severity === 3) return 'medium';
+// 	return severity === 4 ? 'low' : 'info';
+// }
+// OLD CODE END
+export { smartLevel } from '$lib/utils/severity';
 
 // ---------------------------------------------------------------------------
 // Capture pipeline: replaces CaptureHealthPanel on Home, and System Health moves into it

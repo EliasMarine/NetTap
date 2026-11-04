@@ -26,7 +26,7 @@
 	} from '$lib/api/dns';
 	import { compareValues } from '$lib/utils/table-sort.svelte';
 	import type { SortDir } from '$lib/utils/table-sort.svelte';
-	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import type { SeverityLevel } from '$lib/utils/severity';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 	import BarList from '$lib/components/ui/BarList.svelte';
@@ -333,8 +333,11 @@
 		timelineFailed = results[4].status === 'rejected';
 
 		loading = false;
-		const ok = results.filter((r) => r.status === 'fulfilled').length;
-		return ok === results.length ? 'ok' : ok === 0 ? 'failed' : 'partial';
+		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
+		// const ok = results.filter((r) => r.status === 'fulfilled').length;
+		// return ok === results.length ? 'ok' : ok === 0 ? 'failed' : 'partial';
+		// OLD CODE END
+		return outcome(results);
 	}
 
 	async function lookupDevice() {

@@ -47,7 +47,7 @@
 	// import { TableSort } from '$lib/utils/table-sort.svelte';
 	// OLD CODE END
 	import { severityBuckets, type SeverityLevel } from '$lib/utils/severity';
-	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import KpiCard from '$lib/components/ui/KpiCard.svelte';
@@ -113,7 +113,6 @@
 	let alertsFailed = $state(false);
 	let alerts = $state<Alert[]>([]);
 	let loading = $state(true);
-	let alertsLoading = $state(false);
 
 	// Pagination
 	let currentPage = $state(1);
@@ -397,15 +396,17 @@
 		shownKey = key;
 		loading = false;
 
-		const ok = [detail, timeline, alertsResult].filter((r) => r.status === 'fulfilled').length;
-		return ok === 3 ? 'ok' : ok === 0 ? 'failed' : 'partial';
+		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
+		// const ok = [detail, timeline, alertsResult].filter((r) => r.status === 'fulfilled').length;
+		// return ok === 3 ? 'ok' : ok === 0 ? 'failed' : 'partial';
+		// OLD CODE END
+		return outcome([detail, timeline, alertsResult]);
 	}
 
 	const refresh = registerPageRefresh(loadAll);
 
 	async function fetchAlerts(pg: number = 1) {
 		const lg = listGuard.begin();
-		alertsLoading = true;
 		const { from, to } = getTimeRange();
 		const params = { from, to, page: pg, size: pageSize, category, sub: subCatFilter ?? undefined, sort: SERVER_SORT[sortKey], order: sortDir };
 		const result = await getAlerts(params).then(
@@ -415,7 +416,6 @@
 		if (!listGuard.current(lg)) return;
 		// the old fetchAlerts kept the total on failure
 		applyList(result, totalAlerts);
-		alertsLoading = false;
 	}
 
 	// OLD CODE START — #146/#147: fetchData now reads the sort and sub-category, which would make
@@ -674,7 +674,7 @@
 	<span class="mono">{formatTimestamp(a.timestamp)}</span>{#if a.acknowledged}<span class="chip">Acknowledged</span>{/if}
 {/snippet}
 {#snippet severityCell(a: Alert)}<SeverityPill level={alertLevel(a.alert?.severity)} />{/snippet}
-{#snippet signatureCell(a: Alert)}<span class="mono" title={a.alert?.signature ?? ''}>{a.alert?.signature ?? 'Unknown'}</span>{/snippet}
+{#snippet signatureCell(a: Alert)}<span class="mono" title={a.alert?.signature || 'Unknown'}>{a.alert?.signature || 'Unknown'}</span>{/snippet}
 {#snippet srcCell(a: Alert)}{#if a.src_ip}<IPAddress ip={a.src_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet destCell(a: Alert)}{#if a.dest_ip}<IPAddress ip={a.dest_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet portCell(a: Alert)}
@@ -856,7 +856,7 @@
 					initialSort={{ key: 'timestamp', dir: 'desc' }}
 					onsortchange={changeSort}
 					onrowactivate={openDrawer}
-					rowLabel={(a) => `Open alert ${a.alert?.signature ?? 'Unknown'}${a.src_ip ? ` from ${a.src_ip}` : ''}`}
+					rowLabel={(a) => `Open alert ${a.alert?.signature || 'Unknown'}${a.src_ip ? ` from ${a.src_ip}` : ''}`}
 					selectedKey={selectedRowKey}
 					pager={totalPages > 1 ? { page: currentPage, pageCount: totalPages, total: totalAlerts, from: fromRow, to: toRow, onpage: (p) => fetchAlerts(p) } : undefined}
 				/>

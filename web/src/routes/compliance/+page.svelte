@@ -26,7 +26,7 @@
 	import Ring from '$lib/components/ui/charts/Ring.svelte';
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -618,8 +618,11 @@
 		failed = (Object.keys(settled) as Input[]).filter((k) => settled[k].status === 'rejected');
 		loading = false;
 		loaded = true;
-		if (failed.length === 0) return 'ok';
-		return failed.length === Object.keys(settled).length ? 'failed' : 'partial';
+		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
+		// if (failed.length === 0) return 'ok';
+		// return failed.length === Object.keys(settled).length ? 'failed' : 'partial';
+		// OLD CODE END
+		return outcome(Object.values(settled));
 	}
 
 	// OLD CODE START — #96: any failure left the defaults in place, so it scored as a clean network

@@ -20,7 +20,7 @@
 		type RoutingRule,
 		type DeliveryLogEntry,
 	} from '$lib/api/notification-hub';
-	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import type { SeverityLevel } from '$lib/utils/severity';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -159,8 +159,11 @@
 			log: logRes.status === 'rejected',
 		};
 		loaded = true;
-		const failures = results.filter((r) => r.status === 'rejected').length;
-		return failures === 0 ? 'ok' : failures === results.length ? 'failed' : 'partial';
+		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
+		// const failures = results.filter((r) => r.status === 'rejected').length;
+		// return failures === 0 ? 'ok' : failures === results.length ? 'failed' : 'partial';
+		// OLD CODE END
+		return outcome(results);
 	}
 
 	const refresh = registerPageRefresh(load);

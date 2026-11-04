@@ -25,7 +25,7 @@
 	// OLD CODE END
 	import { fetchCaptureStatus, toggleCapture, captureState } from '$lib/api/capture';
 	import type { CaptureStatus } from '$lib/api/capture';
-	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 	import BarList from '$lib/components/ui/BarList.svelte';
 	import Bytes from '$lib/components/ui/Bytes.svelte';
@@ -356,8 +356,11 @@
 			captureStatus = captureRes.value;
 			captureEnabled = captureRes.value.enabled;
 		}
-		const ok = [filesRes, captureRes].filter((r) => r.status === 'fulfilled').length;
-		return ok === 2 ? 'ok' : ok === 0 ? 'failed' : 'partial';
+		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
+		// const ok = [filesRes, captureRes].filter((r) => r.status === 'fulfilled').length;
+		// return ok === 2 ? 'ok' : ok === 0 ? 'failed' : 'partial';
+		// OLD CODE END
+		return outcome([filesRes, captureRes]);
 	}
 
 	// OLD CODE START — 2026-11-02: one request that waited for the daemon to tshark every file,

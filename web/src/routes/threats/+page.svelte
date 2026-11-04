@@ -20,7 +20,7 @@
 		LateralMovement,
 		ThreatIntelInfo,
 	} from '$api/threats';
-	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import type { SeverityLevel } from '$lib/utils/severity';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -301,8 +301,11 @@
 		threatIntel = tiRes.status === 'fulfilled' ? tiRes.value : null;
 		intelFailed = tiRes.status === 'rejected';
 		loading = false;
-		const succeeded = [reportRes, tiRes].filter((r) => r.status === 'fulfilled').length;
-		return succeeded === 2 ? 'ok' : succeeded === 1 ? 'partial' : 'failed';
+		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
+		// const succeeded = [reportRes, tiRes].filter((r) => r.status === 'fulfilled').length;
+		// return succeeded === 2 ? 'ok' : succeeded === 1 ? 'partial' : 'failed';
+		// OLD CODE END
+		return outcome([reportRes, tiRes]);
 	}
 
 	const refresh = registerPageRefresh(load);

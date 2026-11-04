@@ -5,7 +5,7 @@
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import { loadFailed } from '$lib/utils/load-failed';
 
 	let status = $state<CyberChefStatus | null>(null);
@@ -61,8 +61,11 @@
 		statusFailed = statusResult.status === 'rejected';
 		recipesFailed = recipesResult.status === 'rejected';
 		loading = false;
-		const failures = results.filter((r) => r.status === 'rejected').length;
-		return failures === 0 ? 'ok' : failures === results.length ? 'failed' : 'partial';
+		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
+		// const failures = results.filter((r) => r.status === 'rejected').length;
+		// return failures === 0 ? 'ok' : failures === results.length ? 'failed' : 'partial';
+		// OLD CODE END
+		return outcome(results);
 	}
 
 	const refresh = registerPageRefresh(load);

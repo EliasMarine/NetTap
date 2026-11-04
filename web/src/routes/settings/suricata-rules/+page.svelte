@@ -27,7 +27,7 @@
 		type UpdateSchedule,
 		type CommercialConfig,
 	} from '$lib/api/suricata-rules';
-	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import StatStrip from '$lib/components/ui/StatStrip.svelte';
@@ -158,8 +158,11 @@
 		// Only these feed what the page shows; the source list, stats and schedule replies only
 		// back the controls that aren't wired up yet (#58)
 		const shown = [liveRes, customRes, commRes];
-		const failures = shown.filter((r) => r.status === 'rejected').length;
-		return failures === 0 ? 'ok' : failures === shown.length ? 'failed' : 'partial';
+		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
+		// const failures = shown.filter((r) => r.status === 'rejected').length;
+		// return failures === 0 ? 'ok' : failures === shown.length ? 'failed' : 'partial';
+		// OLD CODE END
+		return outcome(shown);
 	}
 
 	const refresh = registerPageRefresh(load);
