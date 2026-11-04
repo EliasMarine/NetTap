@@ -1,6 +1,6 @@
 /**
  * Live Monitor (/api/live/dashboard). Populated has destinations with lat/lon on three
- * continents, and an alerting connection to NL, so GeoMap draws arcs in both colours.
+ * continents, and an alerting connection to NL, so DotMap draws hotspots on each.
  */
 import type { GeoArc, LiveConnection, LiveDashboardResponse } from '../../../src/lib/api/live.ts';
 import { iso, type FixtureRoute } from './types.ts';
