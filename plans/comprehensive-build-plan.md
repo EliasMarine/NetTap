@@ -991,7 +991,7 @@ The owner rejected the colours-only PR #165 and supplied the full design system.
 | 4E.2 | Shell | M | [x] Done (2026-11-03, `661c37a`) | Sidebar (17 links in 4 groups), top bar with search and refresh, phone drawer, layout server load |
 | 4E.3 | Shared components | L | [x] Done (2026-11-03, `ad31c23`, `d41fd57`) | 20 ui components and 8 charts; 30 existing components restyled; DotMap replaces Leaflet |
 | 4E.4 | Page batches B1–B8 | XL | [x] Done (2026-11-03) | Home, Alerts/Threats, Traffic, Logs/DNS/PCAP, Devices/IoT, System/Settings, Tools, Login/Setup/other, built in parallel and merged one by one |
-| 4E.5 | Cleanup and verification | M | [ ] In progress | Replaced components, legacy tokens and Leaflet deleted; colour gate extended; docs; deploy + rollback scripts. Left: review gates, G11 deploy, owner check, PR (NET-147) |
+| 4E.5 | Cleanup and verification | M | [x] Done (2026-11-04, PR #166 `977d1bb`) | Replaced components, legacy tokens and Leaflet deleted; colour gate extended; docs; deploy + rollback scripts. Review gates passed, owner checked every page in all three themes on the G11, bandwidth chart fix (NET-148), merged (NET-147) |
 
 ---
 
