@@ -9,6 +9,7 @@
 	import { goto } from '$app/navigation';
 	import DrawerSection from '../DrawerSection.svelte';
 	import KVRow from '../KVRow.svelte';
+	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { getWhois } from '$api/lookup';
 	import type { WhoisResult } from '$api/lookup';
@@ -380,14 +381,6 @@
 	}
 </script>
 
-{#snippet sevShape(level: string)}
-	<svg viewBox="0 0 10 10" aria-hidden="true">
-		{#if level === 'High'}<path d="M5 1 9.4 9H.6z" />
-		{:else if level === 'Medium'}<rect x="1" y="1" width="8" height="8" rx="1.5" />
-		{:else}<circle cx="5" cy="5" r="4" />{/if}
-	</svg>
-{/snippet}
-
 <!-- ======================================================================= -->
 <!-- Tab 1: Summary + Threat Context                                          -->
 <!-- ======================================================================= -->
@@ -461,10 +454,10 @@
 			{:else if threatAlerts.length > 0}
 				<div class="threat-list">
 					{#each threatAlerts.slice(0, 5) as alert}
-						{@const level = alert.alert?.severity === 1 || alert.alert?.severity === 2 ? 'High' : alert.alert?.severity === 3 ? 'Medium' : 'Low'}
+						{@const level = alert.alert?.severity === 1 || alert.alert?.severity === 2 ? 'high' : alert.alert?.severity === 3 ? 'medium' : 'low'}
 						<!-- Same mapping as before: severity 1 and 2 read High, 3 Medium, anything else Low -->
 						<div class="threat-item">
-							<span class="sev sev-{level.toLowerCase()}">{@render sevShape(level)}{level}</span>
+							<SeverityPill {level} />
 							<span class="threat-sig">{alert.alert?.signature || alert.rule_name || 'Unknown alert'}</span>
 						</div>
 					{/each}
@@ -784,7 +777,7 @@
 {/if}
 
 <style>
-	.details-content, .tshark-content, .raw-content, .related-content, .flow-content {
+	.details-content, .tshark-content, .related-content, .flow-content {
 		display: flex;
 		flex-direction: column;
 	}
@@ -803,8 +796,6 @@
 	.small { font-size: var(--text-xs); }
 	.error-text { color: var(--sev-critical); font-size: var(--text-sm); }
 
-	.raw-content { gap: var(--sp-2); }
-	.raw-header { display: flex; justify-content: flex-end; }
 
 	/* Global pre styles give the surface, border, radius and padding. */
 	.raw-block {

@@ -1,6 +1,6 @@
-/* Form controls: the one extension to the NetTap design system (web/DESIGN-SYSTEM.md).
-   The system has no inputs, selects, checkboxes, switches or textareas, but Settings, Setup,
-   Tools and the lookups need them. Built only from system tokens and shapes: a 36px surface-1
+/* Form controls and their feedback: the one extension to the NetTap design system
+   (web/DESIGN-SYSTEM.md). The system has no inputs, selects, checkboxes, switches, textareas
+   or inline notices, but Settings, Setup, Go Live, Tools and the lookups need them. Built only from system tokens and shapes: a 36px surface-1
    field, a line border that brightens on hover and focus, r-pill single-line fields, r-md
    textareas, labels in type-label. */
 
@@ -54,3 +54,21 @@ input[type="checkbox"], input[type="radio"] { width: 16px; height: 16px; margin:
 
 .input:disabled, .select:disabled, .textarea:disabled, .switch:disabled,
 .btn:disabled, .icon-btn:disabled, .pill:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Notices: inline feedback for an action or a status (Setup, Go Live, bridge, analysis).
+   Tone: accent (info) by default; is-ok, is-warn, is-error. The word carries the meaning; the
+   tone and the warn icon only back it up. */
+.notice {
+  --tone: var(--accent);
+  display: flex; align-items: flex-start; gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md);
+  font-size: var(--text-sm); line-height: 1.5; color: var(--text-1);
+  background: color-mix(in srgb, var(--tone) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tone) 26%, transparent);
+}
+.notice .ic { flex: none; width: 16px; height: 16px; margin-top: 2px; color: var(--tone); }
+.notice.is-ok { --tone: var(--ok); }
+.notice.is-warn { --tone: var(--sev-medium); }
+.notice.is-error { --tone: var(--sev-critical); }
+/* A stopped or failed state; the system's .chip.is-warn is for high, this is critical. */
+.chip.is-bad { color: var(--sev-critical); background: color-mix(in srgb, var(--sev-critical) 12%, transparent); }

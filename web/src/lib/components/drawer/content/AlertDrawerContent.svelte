@@ -6,6 +6,8 @@
 	import { goto } from '$app/navigation';
 	import DrawerSection from '../DrawerSection.svelte';
 	import KVRow from '../KVRow.svelte';
+	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
+	import type { SeverityLevel } from '$lib/utils/severity';
 	import IPAddress from '$components/IPAddress.svelte';
 	import type { Alert } from '$api/alerts';
 
@@ -39,13 +41,23 @@
 		}
 	});
 
-	let severityClass = $derived.by(() => {
-		if (!alert?.alert?.severity) return 'sev sev-info';
-		switch (alert.alert.severity) {
-			case 1: return 'sev sev-high';
-			case 2: return 'sev sev-medium';
-			case 3: return 'sev sev-low';
-			default: return 'sev sev-info';
+	// OLD CODE START — 2026-11-03: the badge is the shared SeverityPill, which takes the level, not a class
+	// let severityClass = $derived.by(() => {
+	// 	if (!alert?.alert?.severity) return 'sev sev-info';
+	// 	switch (alert.alert.severity) {
+	// 		case 1: return 'sev sev-high';
+	// 		case 2: return 'sev sev-medium';
+	// 		case 3: return 'sev sev-low';
+	// 		default: return 'sev sev-info';
+	// 	}
+	// });
+	// OLD CODE END
+	let severityLevel = $derived.by((): SeverityLevel => {
+		switch (alert?.alert?.severity) {
+			case 1: return 'high';
+			case 2: return 'medium';
+			case 3: return 'low';
+			default: return 'info';
 		}
 	});
 
@@ -128,20 +140,11 @@
 	}
 </script>
 
-{#snippet sevShape(level: string)}
-	<svg viewBox="0 0 10 10" aria-hidden="true">
-		{#if level === 'High'}<path d="M5 1 9.4 9H.6z" />
-		{:else if level === 'Medium'}<rect x="1" y="1" width="8" height="8" rx="1.5" />
-		{:else if level === 'Low'}<circle cx="5" cy="5" r="4" />
-		{:else}<circle cx="5" cy="5" r="3.4" class="hollow" />{/if}
-	</svg>
-{/snippet}
-
 {#if activeTab === 'summary'}
 	<div class="summary-content">
 		<!-- Severity and category -->
 		<div class="alert-badges">
-			<span class={severityClass}>{@render sevShape(severityLabel)}{severityLabel}</span>
+			<SeverityPill level={severityLevel} />
 			{#if alert.alert?.category}
 				<span class="chip">{alert.alert.category}</span>
 			{/if}

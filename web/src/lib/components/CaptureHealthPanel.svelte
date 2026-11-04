@@ -169,7 +169,7 @@
 		{#if health.issues.length > 0}
 			<div class="issues-section">
 				{#each health.issues as issue}
-					<div class="notice issue-item"><Icon name="warn" />{issue}</div>
+					<div class="notice is-warn issue-item"><Icon name="warn" />{issue}</div>
 				{/each}
 			</div>
 		{/if}
@@ -257,11 +257,6 @@
 		color: var(--sev-critical);
 	}
 
-	.chip.is-bad {
-		color: var(--sev-critical);
-		background: color-mix(in srgb, var(--sev-critical) 12%, transparent);
-	}
-
 	.issues-section {
 		margin-top: var(--sp-2);
 		display: flex;
@@ -269,22 +264,16 @@
 		gap: var(--sp-1);
 	}
 
-	.notice {
-		display: flex;
-		align-items: flex-start;
-		gap: var(--sp-2);
+	/* the shared .notice (forms.css), compact for a list of issues */
+	.issue-item {
 		padding: var(--sp-2) var(--sp-3);
-		border-radius: var(--r-md);
 		font-size: var(--text-xs);
-		color: var(--text-1);
-		background: color-mix(in srgb, var(--sev-medium) 12%, transparent);
-		border: 1px solid color-mix(in srgb, var(--sev-medium) 26%, transparent);
 	}
 
-	.notice :global(.ic) {
+	.issue-item :global(.ic) {
 		width: 14px;
 		height: 14px;
-		color: var(--sev-medium);
+		margin-top: 1px;
 	}
 
 	.skeleton-rows {

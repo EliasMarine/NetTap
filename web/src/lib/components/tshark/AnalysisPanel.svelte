@@ -500,11 +500,6 @@
 		50% { opacity: 0.4; }
 	}
 
-	.chip.is-bad {
-		color: var(--sev-critical);
-		background: color-mix(in srgb, var(--sev-critical) 12%, transparent);
-	}
-
 	.controls-grid {
 		display: flex;
 		flex-direction: column;
@@ -553,24 +548,6 @@
 		to { transform: rotate(360deg); }
 	}
 
-	.notice {
-		display: flex;
-		align-items: flex-start;
-		gap: var(--sp-2);
-		padding: var(--sp-3) var(--sp-4);
-		border-radius: var(--r-md);
-		font-size: var(--text-sm);
-		color: var(--text-1);
-	}
-
-	.notice.is-error {
-		background: color-mix(in srgb, var(--sev-critical) 12%, transparent);
-		border: 1px solid color-mix(in srgb, var(--sev-critical) 26%, transparent);
-	}
-
-	.notice.is-error :global(.ic) {
-		color: var(--sev-critical);
-	}
 
 	.results-summary {
 		display: flex;

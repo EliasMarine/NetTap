@@ -9,6 +9,8 @@
 	import type { LiveConnection, ConnectionDetailResponse } from '$lib/api/live';
 	import DrawerSection from '../DrawerSection.svelte';
 	import KVRow from '../KVRow.svelte';
+	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
+	import type { SeverityLevel } from '$lib/utils/severity';
 	import Icon from '$lib/components/ui/Icon.svelte';
 
 	// ---------------------------------------------------------------------------
@@ -95,21 +97,32 @@
 		return connection.dest_port < 1024 ? 'Outbound' : 'Inbound';
 	}
 
-	function severityLabel(sev: number): string {
+	// OLD CODE START — 2026-11-03: the badge is the shared SeverityPill, which takes the level and
+	// prints the word itself, so neither the label nor the class is needed here
+	// function severityLabel(sev: number): string {
+	// 	switch (sev) {
+	// 		case 1: return 'High';
+	// 		case 2: return 'Medium';
+	// 		case 3: return 'Low';
+	// 		default: return 'Info';
+	// 	}
+	// }
+	//
+	// function severityClass(sev: number): string {
+	// 	switch (sev) {
+	// 		case 1: return 'sev-high';
+	// 		case 2: return 'sev-medium';
+	// 		case 3: return 'sev-low';
+	// 		default: return 'sev-info';
+	// 	}
+	// }
+	// OLD CODE END
+	function severityLevel(sev: number): SeverityLevel {
 		switch (sev) {
-			case 1: return 'High';
-			case 2: return 'Medium';
-			case 3: return 'Low';
-			default: return 'Info';
-		}
-	}
-
-	function severityClass(sev: number): string {
-		switch (sev) {
-			case 1: return 'sev-high';
-			case 2: return 'sev-medium';
-			case 3: return 'sev-low';
-			default: return 'sev-info';
+			case 1: return 'high';
+			case 2: return 'medium';
+			case 3: return 'low';
+			default: return 'info';
 		}
 	}
 
@@ -134,15 +147,6 @@
 	let geoAsn = $derived(detail?.geo?.asn ?? connection.dest_asn);
 	let geoOrg = $derived(detail?.geo?.organization || connection.dest_org || '--');
 </script>
-
-{#snippet sevShape(level: string)}
-	<svg viewBox="0 0 10 10" aria-hidden="true">
-		{#if level === 'High'}<path d="M5 1 9.4 9H.6z" />
-		{:else if level === 'Medium'}<rect x="1" y="1" width="8" height="8" rx="1.5" />
-		{:else if level === 'Low'}<circle cx="5" cy="5" r="4" />
-		{:else}<circle cx="5" cy="5" r="3.4" class="hollow" />{/if}
-	</svg>
-{/snippet}
 
 <!-- ======================================================================= -->
 <!-- DETAILS TAB                                                            -->
@@ -201,7 +205,7 @@
 				{#each detail.alerts as alert}
 					<div class="alert-card">
 						<div class="alert-header">
-							<span class="sev {severityClass(alert.severity)}">{@render sevShape(severityLabel(alert.severity))}{severityLabel(alert.severity)}</span>
+							<SeverityPill level={severityLevel(alert.severity)} />
 							<span class="alert-time">{formatTimestamp(alert.timestamp)}</span>
 						</div>
 						<div class="alert-sig">{alert.signature}</div>

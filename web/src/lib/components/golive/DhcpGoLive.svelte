@@ -686,44 +686,6 @@
 	}
 
 	/* ----- Notices: a tint plus an icon, never colour alone ----- */
-	.notice {
-		--tone: var(--accent);
-		display: flex;
-		align-items: flex-start;
-		gap: var(--sp-2);
-		padding: var(--sp-3) var(--sp-4);
-		border-radius: var(--r-md);
-		font-size: var(--text-sm);
-		line-height: 1.5;
-		color: var(--text-1);
-		background: color-mix(in srgb, var(--tone) 12%, transparent);
-		border: 1px solid color-mix(in srgb, var(--tone) 26%, transparent);
-	}
-
-	.notice :global(.ic) {
-		width: 16px;
-		height: 16px;
-		margin-top: 2px;
-		color: var(--tone);
-	}
-
-	.notice.is-ok {
-		--tone: var(--ok);
-	}
-
-	.notice.is-warn {
-		--tone: var(--sev-medium);
-	}
-
-	.notice.is-error {
-		--tone: var(--sev-critical);
-	}
-
-	.chip.is-bad {
-		color: var(--sev-critical);
-		background: color-mix(in srgb, var(--sev-critical) 12%, transparent);
-	}
-
 	/* ----- Checklist ----- */
 	.checklist {
 		list-style: none;
