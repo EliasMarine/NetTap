@@ -1,6 +1,42 @@
 # 2026-11-03 — UI redesign (pure black, Ember default)
 
-**Status:** PR 1 (foundation) in progress on `feature/ui-redesign-foundation`. Linear: NET-144 (parent), NET-145 (PR 1).
+**Status:** superseded by the **full redesign** on `feature/ui-redesign-full` (see the section below). Everything is built and tested; the review gates, the G11 deploy and the owner's check are left. Linear: NET-144 (parent), NET-145 (foundation), NET-147 (full redesign).
+
+> The PR 1 sections further down describe the first, colours-only plan (PR #165). The owner rejected it ("I wanted a FULL REDESIGN") and supplied the design system in `nettap-design-system/`. They are kept as the record.
+
+## Full redesign (`feature/ui-redesign-full`, NET-147)
+
+**What changed**
+- **Foundation:** the system's `tokens.css` and `bundle.css` copied in verbatim (`web/src/lib/styles/tokens.css`, `system.css`), plus `forms.css` (form controls the system lacks) and `a11y.css` (five numbered corrections). The theme attribute is now `data-theme`, and there are 48 icons with a drift test.
+- **Components:** 20 in `web/src/lib/components/ui/` and 8 charts in `ui/charts/`. AreaChart, Donut, SeverityGauge, Ring, Sparkline, StackBar, Radar and DotMap replace the old charts and the Leaflet map.
+- **Shell:** sidebar, top bar (search, refresh, "Updated", bell), phone drawer. `+layout.server.ts` returns only the username.
+- **Pages:** all 45 rebuilt to the recipe in 8 parallel batches (B1–B8). Home has no device cards; they are on Devices → By type.
+- **Data rules:** every loader registers with `registerPageRefresh`, returns ok/partial/failed/skipped, and uses the load guard. Alert counts come from the shared `alertSnapshots` store.
+- **Cleanup:** 26 replaced components, the legacy token aliases and Leaflet are deleted. The colour gate also fails on undefined `var(--x)` and on emoji, and its allowlist is empty.
+- **Deploy:** `scripts/remote/deploy-ui-redesign.sh` (records the deployed commit in `~/.nettap-last-deploy`) and `scripts/remote/rollback-ui-redesign.sh`.
+
+**Bugs found and fixed on the way**
+- The shared alert snapshot dropped its counts on a failed refresh, so Home showed "—" instead of the last count (#96 rule). It now keeps the last good counts.
+- `input[type="checkbox"]` out-ranked `.switch`, so every switch was a 16 px dot.
+- Settings said "Licence: Apache 2.0"; it is the NetTap Personal Use License.
+- Pill groups and the TShark version chip pushed the page sideways at 390 px.
+- NET-146: Log Explorer field tooltips never showed (`f.field` vs the daemon's `name`), and the connection drawer read Suricata severity 2 as High while everything else read Medium.
+- The setup wizard spec, stale since the capture-mode step was added, is rewritten and passes.
+
+**Tests:** vitest 274 files / 2919 tests; svelte-check 0 errors; colour gate clean; visual harness 140 pass (3 themes × 1920/1440/390, empty and error modes, plus populated); behavioural Playwright 14 pass; deploy and rollback dry-run in a scratch clone with a stub `sudo`.
+
+**Behaviour changes for the owner to confirm:** Home's Custom date range is dropped; a newly clicked table column sorts descending first; page Refresh buttons moved to the top bar. The full list goes in the PR body.
+
+**Lessons**
+- Parallel page agents need hard ownership (their route folders only; shared needs come back as report items). All 8 merges then cherry-picked cleanly.
+- Redirect a long Playwright run to a file. Piping it through `tail` in the background shows nothing until it ends.
+- `{/regex/}` in Svelte markup is read as a closing block tag: the build fails, while vitest passed. Run svelte-check or a build after markup edits.
+- `.gitignore` ignores directories named `logs` and `pcap`, so stage `web/src/routes/logs` with `git add -u`.
+
+**Next steps**
+1. `/deep-review` and `/ponytail-review` on the branch; fix findings.
+2. Owner: `bash scripts/remote/deploy-ui-redesign.sh` on the G11, then a check of every page in all three themes.
+3. One PR into `main` (closes #165), `gh pr checks`, two-angle review, squash merge, then `BRANCH="main"` in the deploy script.
 
 **Plan:** `PLAN.md` (repo root). Codex approved it after 4 rounds (19 findings: 6 High, 13 Medium; all taken on, one narrowed). The review log is in `.codex-review/2026-11-03-144402-ui-redesign/` (gitignored).
 **Visual reference:** `mockups/redesign-2026-11/index.html` (owner-approved 2026-11-03).

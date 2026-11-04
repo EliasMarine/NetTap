@@ -210,21 +210,23 @@ OpenSearch ILM handles hot-tier rotation. A custom Python daemon monitors disk u
 
 ## Design System (MANDATORY)
 
-**CRITICAL: Before ANY frontend/UI work, read `web/DESIGN-SYSTEM.md` first.** This document is the canonical design reference for all NetTap pages. It codifies the colors, spacing, typography, component patterns, and layout rules that every page MUST follow.
+**CRITICAL: Before ANY frontend/UI work, read `web/DESIGN-SYSTEM.md` first.** It says how the web app uses the owner's design system in `nettap-design-system/` (its `README.md` and `components/<Name>/README.md` are the source of truth for the look).
 
 - **Location:** `web/DESIGN-SYSTEM.md`
-- **Reference implementation:** `web/src/routes/logs/+page.svelte` (Log Explorer page)
-- **Global CSS tokens:** `web/src/lib/styles/global.css`
-- **Before any UI change:** Check the design system for the correct pattern, variable, or component
-- **After any UI change:** Verify the page still follows the design system rules (no hardcoded colors, spacing, or font sizes)
+- **Styles:** `web/src/lib/styles/tokens.css` and `system.css` are verbatim copies of the system (never hand-edit them); `forms.css` is the form-control extension; `a11y.css` holds numbered corrections.
+- **Components:** build pages from `web/src/lib/components/ui/` and `ui/charts/`.
+- **Reference pages:** `web/src/routes/+page.svelte` (Home) and `web/src/routes/alerts/+page.svelte`.
+- **Before any UI change:** check the design system for the correct pattern, token or component.
+- **After any UI change:** run `cd web && npm run check:colors` and `npm run test:visual`.
 
 ### Key Rules
-1. **NEVER hardcode hex colors** — use CSS variables (`var(--red)`, not `#ff4757`)
-2. **NEVER hardcode spacing** — use spacing vars (`var(--space-md)`, not `16px`)
-3. **NEVER hardcode font sizes** — use text vars (`var(--text-sm)`, not `0.8125rem`)
-4. **NEVER set max-width on page containers** — pages are always full-width
-5. **ALL tables MUST be sortable** — ascending/descending on every column
-6. **NEVER use hardcoded text colors** (`#fff`, `#000`, `black`, `white`) — always use theme-aware CSS variables (`var(--text-primary)`, `var(--text-secondary)`, `var(--text-muted)`). The UI is dark-mode now but light mode is planned; hardcoded colors will break when themes change. Pay special attention to `<button>` elements whose user-agent default `color: ButtonText` (black) overrides inherited text colors — always set an explicit color class.
+1. **NEVER hardcode colours.** Use system tokens (`var(--sev-critical)`, not `#ff4757`). `npm run check:colors` fails on colour literals, on any `var(--x)` nothing defines (so the old `--red`, `--space-md`, `--text-primary` names fail), and on emoji.
+2. **NEVER hardcode spacing or font sizes.** Use `var(--sp-4)` (not `16px`) and `var(--text-sm)` (not `0.8125rem`).
+3. **NEVER set max-width on page containers.** Pages are always full width.
+4. **ALL tables MUST be sortable.** Use `DataTable`: every column, both directions.
+5. **Text colours are theme tokens only** (`var(--text-1)`, `var(--text-2)`, `var(--text-3)`), never `#fff`, `black` or `white`. There are three themes (Ember, Graphite, Spectrum). Every `<button>` needs an explicit text colour, because the browser default `ButtonText` is black.
+6. **Follow the page recipe:** one `h1.page-title` in a `.page-head`, a KPI row, a hero chart, then details. Every data card shows `CardState` for loading, empty and error, and every loader uses `registerPageRefresh` with the load guard.
+7. **Voice:** sentence case, UK spelling, `…` not `...`, no emoji. Severity is colour + shape + word (`SeverityPill`).
 
 ---
 
@@ -241,7 +243,7 @@ OpenSearch ILM handles hot-tier rotation. A custom Python daemon monitors disk u
    - Web components: Vitest + Testing Library (render with mock data, test interactions, test empty/loading/error states)
 3. **ALL tests must pass** (existing + new) before any PR is created. Run `cd daemon && python -m pytest` and `cd web && npx vitest run` and `cd web && npx svelte-check`.
 4. **Follow the dependency order:** Group A (data) → Group B (UI) → Group C (intelligence) → Group D (viz) → Group E (advanced). Do not build UI features before their data layer exists.
-5. **Use existing patterns:** New API endpoints follow the same pattern as `daemon/api/traffic.py`. New pages follow the same layout as `web/src/routes/+page.svelte`. New components use the design system from `web/src/lib/styles/global.css`.
+5. **Use existing patterns:** New API endpoints follow the same pattern as `daemon/api/traffic.py`. New pages follow the same layout as `web/src/routes/+page.svelte`. New components follow `web/DESIGN-SYSTEM.md` and build on `web/src/lib/components/ui/`.
 
 ### Three Design Pillars
 
