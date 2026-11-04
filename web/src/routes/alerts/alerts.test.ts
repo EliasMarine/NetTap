@@ -10,7 +10,7 @@ import {
 	getEnhancedCategories,
 	getSmartAlertSummary,
 } from '$api/alerts';
-import { _configure as resetAlertSnapshots } from '$lib/stores/alertSnapshot';
+import { _configure as resetAlertSnapshots, refreshAlertSnapshots } from '$lib/stores/alertSnapshot';
 import Page from './+page.svelte';
 
 vi.mock('$app/stores', () => ({
@@ -236,5 +236,23 @@ describe('Alerts — sorting', () => {
 		await flush();
 		expect(getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'proto', order: 'asc' }));
 		expect(header('Protocol').closest('th')).toHaveAttribute('aria-sort', 'ascending');
+	});
+});
+
+describe('Alerts — a failed count refresh keeps the last counts (#96)', () => {
+	beforeEach(() => resetAlertSnapshots({}));
+	afterEach(() => vi.clearAllMocks());
+
+	it('shows the last severity counts with a stale note, as Home does', async () => {
+		const counts = { total: 37, high: 1, medium: 6, low: 30 };
+		vi.mocked(getAlertCount).mockResolvedValueOnce({ from: '', to: '', counts }).mockRejectedValue(new Error('HTTP 503'));
+		render(Page);
+		expect(await screen.findByRole('button', { name: 'Show high alerts (1)' })).toBeInTheDocument();
+
+		await refreshAlertSnapshots();
+
+		expect(await screen.findByText("Couldn't refresh the alert counts; showing the last figures loaded.")).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Show low alerts (30)' })).toBeInTheDocument();
+		expect(screen.queryByText("Couldn't load the alert counts: the request failed.")).not.toBeInTheDocument();
 	});
 });

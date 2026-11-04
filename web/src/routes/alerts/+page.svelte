@@ -57,6 +57,7 @@
 	import AlertRow from '$lib/components/ui/AlertRow.svelte';
 	import AlertGroup from '$lib/components/ui/AlertGroup.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { loadFailed } from '$lib/utils/load-failed';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 	import SeverityGauge from '$lib/components/ui/charts/SeverityGauge.svelte';
 	import Ring from '$lib/components/ui/charts/Ring.svelte';
@@ -266,7 +267,8 @@
 	const rangeHours = $derived(range.ms / 3_600_000);
 	// One global count per window, shared with Home and the sidebar (PLAN.md §4.1)
 	const snapshot = $derived($alertSnapshots[rangeHours]);
-	const counts = $derived(snapshot?.status === 'ok' ? snapshot.data?.counts : undefined);
+	// on 'error' the store keeps the last good counts (#96): show them with a stale note, as Home does
+	const counts = $derived(snapshot?.data?.counts);
 	const buckets = $derived(counts ? severityBuckets(counts) : []);
 	const groups = $derived(groupAlerts(sortedAlerts));
 	const fromRow = $derived(totalAlerts > 0 ? (currentPage - 1) * pageSize + 1 : 0);
@@ -958,9 +960,12 @@
 	<Card class="c-12" title="Alerts by severity" sub="Alerts · {range.words}, by severity">
 		{#if !snapshot || snapshot.status === 'loading'}
 			<CardState state="loading" title="Loading alert counts" />
-		{:else if snapshot.status === 'error' || !counts}
+		{:else if !counts}
 			<CardState state="error" title="Couldn't load the alert counts: the request failed." message="Check that NetTap is running on the System page, then try again." onaction={() => refresh.run()} />
 		{:else}
+			{#if snapshot.status === 'error'}
+				<p class="notice is-warn"><Icon name="warn" /><span>{loadFailed('the alert counts', true)}</span></p>
+			{/if}
 			<div class="sev-sum">
 				<div class="sev-left">
 					<div class="sev-counts">
