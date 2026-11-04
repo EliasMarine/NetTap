@@ -6,6 +6,8 @@
 	 *   packet – the selected packet object (or null when nothing is selected)
 	 */
 
+	import Icon from '$lib/components/ui/Icon.svelte';
+
 	interface Props {
 		packet: any | null;
 	}
@@ -121,11 +123,7 @@
 <div class="protocol-tree">
 	{#if !packet}
 		<div class="empty-state">
-			<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-				<polyline points="4 7 4 4 20 4 20 7" />
-				<line x1="9" y1="20" x2="15" y2="20" />
-				<line x1="12" y1="4" x2="12" y2="20" />
-			</svg>
+			<Icon name="logs" />
 			<span>Select a packet to view protocol details</span>
 		</div>
 	{:else if layers.length === 0}
@@ -142,18 +140,11 @@
 					onkeydown={(e) => handleLayerKeydown(e, layer.name)}
 					aria-expanded={expandedLayers.has(layer.name)}
 				>
-					<svg
-						class="chevron"
-						class:rotated={expandedLayers.has(layer.name)}
-						viewBox="0 0 16 16"
-						width="14"
-						height="14"
-						fill="currentColor"
-					>
-						<path d="M6.22 3.22a.75.75 0 011.06 0l4.25 4.25a.75.75 0 010 1.06l-4.25 4.25a.75.75 0 01-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 010-1.06z" />
-					</svg>
+					<span class="chevron" class:rotated={expandedLayers.has(layer.name)}>
+						<Icon name="chevdown" />
+					</span>
 					<span class="layer-name">{layerDisplayName(layer.name)}</span>
-					<span class="layer-badge">{layer.name}</span>
+					<span class="tag">{layer.name}</span>
 				</button>
 
 				{#if expandedLayers.has(layer.name)}
@@ -173,9 +164,9 @@
 
 <style>
 	.protocol-tree {
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		background-color: var(--bg-secondary);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
+		background-color: var(--surface-1);
 		overflow-y: auto;
 		height: 100%;
 	}
@@ -184,19 +175,20 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-2xl) var(--space-lg);
-		color: var(--text-muted);
+		gap: var(--sp-2);
+		padding: var(--sp-8) var(--sp-6);
+		color: var(--text-3);
 		font-size: var(--text-sm);
 		text-align: center;
 	}
 
-	.empty-state svg {
-		opacity: 0.5;
+	.empty-state :global(.ic) {
+		width: 28px;
+		height: 28px;
 	}
 
 	.layer {
-		border-bottom: 1px solid var(--border-muted);
+		border-bottom: 1px solid var(--line);
 	}
 
 	.layer:last-child {
@@ -206,62 +198,57 @@
 	.layer-header {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 		width: 100%;
-		padding: var(--space-sm) var(--space-md);
+		padding: var(--sp-2) var(--sp-4);
 		background: none;
 		border: none;
 		cursor: pointer;
-		color: var(--text-primary);
+		color: var(--text-1);
 		font-size: var(--text-sm);
 		font-weight: 600;
 		text-align: left;
-		transition: background-color var(--transition-fast);
+		transition: background-color var(--dur-fast);
 	}
 
-	.layer-header:hover {
-		background-color: var(--bg-tertiary);
-	}
-
+	.layer-header:hover,
 	.layer-header.expanded {
-		background-color: rgba(33, 38, 45, 0.5);
+		background-color: var(--surface-2);
 	}
 
+	/* chevdown points down; collapsed layers turn it to point right */
 	.chevron {
+		display: inline-flex;
 		flex-shrink: 0;
-		color: var(--text-muted);
-		transition: transform var(--transition-fast);
+		color: var(--text-3);
+		transform: rotate(-90deg);
+		transition: transform var(--dur-fast);
+	}
+
+	.chevron :global(.ic) {
+		width: 14px;
+		height: 14px;
 	}
 
 	.chevron.rotated {
-		transform: rotate(90deg);
+		transform: none;
 	}
 
 	.layer-name {
 		flex: 1;
 	}
 
-	.layer-badge {
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-		font-weight: 400;
-		color: var(--text-muted);
-		background-color: var(--bg-tertiary);
-		padding: 1px 6px;
-		border-radius: var(--radius-sm);
-	}
-
 	.layer-fields {
-		padding: 0 var(--space-md) var(--space-sm);
-		padding-left: calc(var(--space-md) + 14px + var(--space-sm));
+		padding: 0 var(--sp-4) var(--sp-2);
+		padding-left: calc(var(--sp-4) + 14px + var(--sp-2));
 	}
 
 	.field-row {
 		display: flex;
-		gap: var(--space-md);
+		gap: var(--sp-4);
 		padding: 2px 0;
 		font-size: var(--text-xs);
-		border-bottom: 1px solid var(--border-muted);
+		border-bottom: 1px solid var(--line);
 	}
 
 	.field-row:last-child {
@@ -272,7 +259,7 @@
 		flex-shrink: 0;
 		width: 220px;
 		font-family: var(--font-mono);
-		color: var(--text-secondary);
+		color: var(--text-2);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -281,7 +268,7 @@
 	.field-value {
 		flex: 1;
 		font-family: var(--font-mono);
-		color: var(--text-primary);
+		color: var(--text-1);
 		word-break: break-all;
 	}
 </style>

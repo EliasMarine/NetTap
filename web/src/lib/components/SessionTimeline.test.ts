@@ -8,12 +8,12 @@ import { describe, it, expect } from 'vitest';
 // Reproduce constants and functions from the component
 
 const PROTO_COLORS: Record<string, string> = {
-	tcp: 'var(--cyan)',
-	udp: 'var(--green)',
-	tls: 'var(--purple)',
-	dns: 'var(--amber)',
-	icmp: 'var(--red)',
-	http: 'var(--blue)',
+	tcp: 'var(--data-1)',
+	udp: 'var(--data-5)',
+	tls: 'var(--data-4)',
+	dns: 'var(--data-2)',
+	icmp: 'var(--data-6)',
+	http: 'var(--data-3)',
 };
 
 const PROTO_ORDER = ['tcp', 'udp', 'tls', 'dns', 'icmp', 'http'];
@@ -39,7 +39,7 @@ function formatShortTimestamp(ts: string): string {
 }
 
 function protoColor(proto: string): string {
-	return PROTO_COLORS[proto.toLowerCase()] || 'var(--text-muted)';
+	return PROTO_COLORS[proto.toLowerCase()] || 'var(--text-3)';
 }
 
 function deriveActiveProtocols(buckets: TimelineBucket[]): string[] {
@@ -75,10 +75,10 @@ describe('SessionTimeline logic', () => {
 	});
 
 	describe('protoColor', () => {
-		it('returns cyan for tcp', () => expect(protoColor('tcp')).toBe('var(--cyan)'));
-		it('returns green for udp', () => expect(protoColor('udp')).toBe('var(--green)'));
-		it('returns purple for TLS (case-insensitive)', () => expect(protoColor('TLS')).toBe('var(--purple)'));
-		it('returns fallback for unknown protocol', () => expect(protoColor('sctp')).toBe('var(--text-muted)'));
+		it('returns data-1 for tcp', () => expect(protoColor('tcp')).toBe('var(--data-1)'));
+		it('returns data-5 for udp', () => expect(protoColor('udp')).toBe('var(--data-5)'));
+		it('returns data-4 for TLS (case-insensitive)', () => expect(protoColor('TLS')).toBe('var(--data-4)'));
+		it('returns fallback for unknown protocol', () => expect(protoColor('sctp')).toBe('var(--text-3)'));
 	});
 
 	describe('deriveActiveProtocols', () => {

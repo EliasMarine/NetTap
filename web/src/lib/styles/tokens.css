@@ -1,0 +1,168 @@
+/* NetTap tokens: nettap-design-system/tokens.css verbatim (generated from tokens.json),
+   plus the bundled font faces. This is the only file allowed colour literals; the colour
+   gate exempts it by path. Do not edit the token values here: change tokens.json in the
+   design system and copy the generated file. */
+
+/* Fonts (bundled, OFL 1.1; see static/fonts/ and THIRD-PARTY-LICENSES.md) */
+/* ----- Fonts (bundled, OFL 1.1; see static/fonts/) ----- */
+@font-face {
+  font-family: 'Sora';
+  src: url('/fonts/sora/Sora-Variable.woff2') format('woff2');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Manrope';
+  src: url('/fonts/manrope/Manrope-Variable.woff2') format('woff2');
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/jetbrains-mono/JetBrainsMono-Variable.woff2') format('woff2');
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root, [data-theme="ember"] {
+  --bg: #000000;
+  --surface-1: #0d0b0a;
+  --surface-2: #161310;
+  --surface-3: #1f1b17;
+  --line: #26211c;
+  --line-strong: #3a332c;
+  --text-1: #f6f1ec;
+  --text-2: #b8afa5;
+  --text-3: #938a80;
+  --accent: #ff7a1a;
+  --accent-strong: #ffa35c;
+  --on-accent: #000000;
+  --pill-active-bg: #fff3e8;
+  --on-light: #000000;
+  --focus: #ffb067;
+  --band: rgba(255, 122, 26, 0.12);
+  --row-hover: rgba(255, 140, 60, 0.05);
+  --map-dot: rgba(184, 175, 165, 0.22);
+  --card-top: #110e0c;
+  --card-bottom: #0b0908;
+  --hero-glow: rgba(255, 110, 20, 0.15);
+  --data-1: #ff7a1a;
+  --data-2: #ffc06b;
+  --data-3: #ffe6c7;
+  --data-4: #c65a2e;
+  --data-5: #938a80;
+  --data-6: #e89a73;
+  --sev-critical: #ff4d6d;
+  --sev-high: #ff9142;
+  --sev-medium: #f5c84c;
+  --sev-low: #5aa9ff;
+  --sev-info: #a0a0ac;
+  --ok: #3ddc97;
+  --scrim: rgba(0, 0, 0, 0.66);
+  --sheen: inset 0 1px 0 rgba(255, 236, 220, 0.05);
+  --shadow-pop: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+[data-theme="graphite"] {
+  --surface-1: #0b0b0c;
+  --surface-2: #141416;
+  --surface-3: #1c1c1f;
+  --line: #232326;
+  --line-strong: #36363b;
+  --text-1: #f4f4f5;
+  --text-2: #adadb4;
+  --text-3: #8e8e96;
+  --accent: #f4f4f5;
+  --accent-strong: #ffffff;
+  --pill-active-bg: #f4f4f5;
+  --focus: #9cc0ff;
+  --band: rgba(255, 255, 255, 0.08);
+  --row-hover: rgba(255, 255, 255, 0.035);
+  --map-dot: rgba(173, 173, 180, 0.2);
+  --card-top: #0f0f11;
+  --card-bottom: #0a0a0b;
+  --hero-glow: rgba(255, 255, 255, 0.07);
+  --data-1: #f4f4f5;
+  --data-2: #9cc0ff;
+  --data-3: #a1a1aa;
+  --data-4: #6e6e78;
+  --data-5: #d4d4d8;
+  --data-6: #64646c;
+  --sheen: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+[data-theme="spectrum"] {
+  --surface-1: #0b0b10;
+  --surface-2: #13131a;
+  --surface-3: #1b1b25;
+  --line: #21212d;
+  --line-strong: #33334a;
+  --text-1: #f3f2fa;
+  --text-2: #aca9c2;
+  --text-3: #8f8ca8;
+  --accent: #9b8cff;
+  --accent-strong: #b8adff;
+  --pill-active-bg: #f0eeff;
+  --focus: #b8adff;
+  --band: rgba(155, 140, 255, 0.13);
+  --row-hover: rgba(155, 140, 255, 0.05);
+  --map-dot: rgba(172, 169, 194, 0.2);
+  --card-top: #0f0f16;
+  --card-bottom: #0a0a0e;
+  --hero-glow: rgba(124, 108, 255, 0.17);
+  --data-1: #9b8cff;
+  --data-2: #4da3ff;
+  --data-3: #ff8a65;
+  --data-4: #3dd6c6;
+  --data-5: #ffc857;
+  --data-6: #d17dff;
+  --sheen: inset 0 1px 0 rgba(220, 215, 255, 0.06);
+}
+:root {
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 20px;
+  --r-xl: 26px;
+  --r-pill: 999px;
+  --text-micro: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.75rem;
+  --text-num: 2.75rem;
+  --sidebar-w: 256px;
+  --bp-tablet: 1100px;
+  --bp-phone: 760px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur-fast: 140ms;
+  --font-display: "Sora", "Avenir Next", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Manrope", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.type-kpi { font-family: var(--font-display); font-size: 2.75rem; line-height: 1; font-weight: 300; letter-spacing: -0.04em; }
+.type-page-title { font-family: var(--font-display); font-size: 1.75rem; line-height: 1.15; font-weight: 500; letter-spacing: -0.025em; }
+.type-stat { font-family: var(--font-display); font-size: 1.75rem; line-height: 1.15; font-weight: 300; letter-spacing: -0.03em; }
+.type-drawer-title { font-family: var(--font-display); font-size: 1.25rem; line-height: 1.25; font-weight: 500; letter-spacing: -0.015em; }
+.type-card-title { font-family: var(--font-display); font-size: 1rem; line-height: 1.3; font-weight: 500; letter-spacing: -0.01em; }
+.type-group-title { font-family: var(--font-display); font-size: 0.875rem; line-height: 1.3; font-weight: 500; }
+.type-body { font-family: var(--font-body); font-size: 0.875rem; line-height: 1.5; font-weight: 400; }
+.type-label { font-family: var(--font-body); font-size: 0.8125rem; line-height: 1; font-weight: 600; }
+.type-strong-row { font-family: var(--font-body); font-size: 0.8125rem; line-height: 1.3; font-weight: 700; }
+.type-meta { font-family: var(--font-body); font-size: 0.75rem; line-height: 1.4; font-weight: 400; }
+.type-eyebrow { font-family: var(--font-body); font-size: 0.6875rem; line-height: 1.2; font-weight: 700; letter-spacing: 0.08em; }
+.type-axis { font-family: var(--font-body); font-size: 0.6875rem; line-height: 1; font-weight: 400; }
+.type-mono { font-family: var(--font-mono); font-size: 0.8125rem; line-height: 1.3; font-weight: 400; letter-spacing: -0.01em; }
+.type-tag { font-family: var(--font-mono); font-size: 0.6875rem; line-height: 1; font-weight: 500; }

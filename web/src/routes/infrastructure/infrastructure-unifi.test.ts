@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, afterEach, afterAll } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, within } from '@testing-library/svelte';
 import InfrastructurePage from './+page.svelte';
+import { refreshPage } from '$lib/stores/pageRefresh';
 
 // #96: a failed UniFi status read showed "Connect your UniFi controller", and failed lists read
 // "No UniFi devices found" / 0 firewall policies
@@ -54,8 +55,6 @@ function stubFetch(routes: Record<string, unknown>) {
 
 describe('Infrastructure — UniFi reads that failed', () => {
 	afterEach(() => vi.unstubAllGlobals());
-	// let the page's 100ms draw timer fire before the document is torn down
-	afterAll(() => new Promise((r) => setTimeout(r, 150)));
 
 	it('says the UniFi status failed instead of "Connect your UniFi controller"', async () => {
 		stubFetch({});
@@ -95,5 +94,68 @@ describe('Infrastructure — UniFi reads that failed', () => {
 
 		expect(await screen.findByText(/Connect your UniFi controller/)).toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't load the UniFi status/)).not.toBeInTheDocument();
+	});
+});
+
+describe('Infrastructure — UniFi tables', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('lists every UniFi list in its own sortable table', async () => {
+		stubFetch({
+			...SYSTEM_READINGS,
+			[`${UNIFI}/status`]: CONFIGURED,
+			[`${UNIFI}/devices`]: {
+				devices: [{ id: 'd1', name: 'Dream Machine', model: 'UDM-Pro', ipAddress: '192.168.1.1', state: 'ONLINE', firmwareVersion: '4.0.6', firmwareUpdatable: true, features: [] }],
+			},
+			[`${UNIFI}/networks`]: { networks: [{ id: 'n1', name: 'Default', vlanId: 1, management: 'gateway', enabled: true }] },
+			[`${UNIFI}/wifi`]: { wifi: [{ id: 'w1', name: 'Home', broadcastingFrequenciesGHz: [5, 2.4], securityConfiguration: { type: 'WPA2_PERSONAL' }, enabled: true }] },
+			[`${UNIFI}/firewall`]: { policies: [{ id: 'p1', name: 'Block IoT', enabled: true, action: { type: 'BLOCK' } }], zones: [] },
+			[`${UNIFI}/dns-policies`]: { policies: [] },
+			[`${UNIFI}/wans`]: { wans: [{ id: 'wan1', name: 'WAN', type: 'dhcp', status: 'connected' }] },
+			[`${UNIFI}/vpn`]: { tunnels: [{ id: 'v1', name: 'Office', type: 'wireguard', status: 'down' }] },
+		});
+		render(InfrastructurePage);
+
+		const devices = await screen.findByRole('table', { name: 'UniFi devices' });
+		expect(within(devices).getByText('Gateway')).toBeInTheDocument();
+		expect(within(devices).getByText('Update')).toBeInTheDocument();
+		const wifi = within(screen.getByRole('table', { name: 'WiFi networks' }));
+		expect(wifi.getByText('2.4 / 5 GHz')).toBeInTheDocument();
+		expect(wifi.getByText('WPA2 PERSONAL')).toBeInTheDocument();
+		expect(within(screen.getByRole('table', { name: 'Firewall policies' })).getByText('BLOCK')).toBeInTheDocument();
+		expect(within(screen.getByRole('table', { name: 'WAN interfaces' })).getByText('connected')).toBeInTheDocument();
+		expect(within(screen.getByRole('table', { name: 'VPN tunnels' })).getByText('down')).toBeInTheDocument();
+		// every column sorts (repo rule), including the ones the old tables left unsorted
+		for (const name of ['UniFi devices', 'Networks', 'WiFi networks', 'Firewall policies', 'WAN interfaces', 'VPN tunnels']) {
+			for (const th of within(screen.getByRole('table', { name })).getAllByRole('columnheader')) {
+				expect(within(th).getByRole('button')).toBeInTheDocument();
+			}
+		}
+	});
+});
+
+describe('Infrastructure — a refresh while the UniFi lists load', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('does not leave the cards loading when the next status read fails', async () => {
+		let statusUp = true;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn((url: string) => {
+				if (url === `${UNIFI}/status`) {
+					return Promise.resolve(statusUp ? { ok: true, status: 200, json: async () => CONFIGURED } : { ok: false, status: 503, json: async () => ({}) });
+				}
+				if (url.startsWith(UNIFI)) return new Promise(() => {}); // the lists never answer
+				return Promise.resolve(url in SYSTEM_READINGS ? { ok: true, status: 200, json: async () => SYSTEM_READINGS[url] } : { ok: false, status: 503, json: async () => ({}) });
+			}),
+		);
+		render(InfrastructurePage);
+		expect(await screen.findByText('Loading UniFi devices')).toBeInTheDocument();
+
+		statusUp = false;
+		void refreshPage();
+
+		expect(await screen.findByText(/Couldn't (load|refresh) the UniFi status/)).toBeInTheDocument();
+		expect(screen.queryByText('Loading UniFi devices')).not.toBeInTheDocument();
 	});
 });

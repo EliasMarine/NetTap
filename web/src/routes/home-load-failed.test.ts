@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen } from '@testing-library/svelte';
 import HomePage from './+page.svelte';
+import { refreshPage } from '$lib/stores/pageRefresh';
 
 // #96: a failed traffic request read as "0 B", an empty chart and "No category data yet".
 
@@ -47,14 +48,7 @@ describe('Home — failed traffic requests (#96)', () => {
 		expect(screen.queryByText('No device data available.')).not.toBeInTheDocument();
 	});
 
-	it('says the mirror-mode device list failed instead of "No devices detected yet"', async () => {
-		stubCharts();
-		stubDaemon({ '/api/capture/mode': { mode: 'mirror', interface: 'eth1' } });
-		render(HomePage);
-
-		expect(await screen.findByText("Couldn't load devices: the request failed.")).toBeInTheDocument();
-		expect(screen.queryByText('No devices detected yet')).not.toBeInTheDocument();
-	});
+	// The mirror-mode device list ("Couldn't load devices") moved to /devices with the device cards.
 
 	it('still says there is no category data when the request succeeds with none', async () => {
 		stubCharts();
@@ -72,7 +66,8 @@ describe('Home — failed traffic requests (#96)', () => {
 		expect(await screen.findByText('Streaming')).toBeInTheDocument();
 
 		stubDaemon({});
-		await fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+		// Home's own Refresh button moved to the top bar, which calls the registered loader
+		await refreshPage();
 
 		expect(await screen.findByText("Couldn't refresh traffic categories; showing the last figures loaded.")).toBeInTheDocument();
 		expect(screen.getByText('Streaming')).toBeInTheDocument();

@@ -1,6 +1,6 @@
 <!--
   SessionTimeline.svelte — Stacked bar chart showing session count over time,
-  colored by protocol (TCP=cyan, UDP=green, TLS=purple, DNS=amber).
+  coloured by protocol (data-1..6, with a legend).
 -->
 <script lang="ts">
 	import type { ConnectionTimelineBucket } from '$api/traffic';
@@ -12,7 +12,7 @@
 	let {
 		buckets = [],
 		loading = false,
-		emptyMessage = 'No timeline data available',
+		emptyMessage = 'Sessions appear here once NetTap sees traffic in this time range.',
 	}: {
 		buckets: ConnectionTimelineBucket[];
 		loading?: boolean;
@@ -25,12 +25,12 @@
 	// ---------------------------------------------------------------------------
 
 	const PROTO_COLORS: Record<string, string> = {
-		tcp: 'var(--cyan)',
-		udp: 'var(--green)',
-		tls: 'var(--purple)',
-		dns: 'var(--amber)',
-		icmp: 'var(--red)',
-		http: 'var(--blue)',
+		tcp: 'var(--data-1)',
+		udp: 'var(--data-5)',
+		tls: 'var(--data-4)',
+		dns: 'var(--data-2)',
+		icmp: 'var(--data-6)',
+		http: 'var(--data-3)',
 	};
 
 	const PROTO_ORDER = ['tcp', 'udp', 'tls', 'dns', 'icmp', 'http'];
@@ -80,35 +80,45 @@
 	}
 
 	function protoColor(proto: string): string {
-		return PROTO_COLORS[proto.toLowerCase()] || 'var(--text-muted)';
+		return PROTO_COLORS[proto.toLowerCase()] || 'var(--text-3)';
 	}
+
+	// The chart's headline for screen readers (design system: every chart states it)
+	let headline = $derived.by(() => {
+		if (buckets.length === 0) return 'Session volume';
+		const peak = buckets.reduce((a, b) => (b.total > a.total ? b : a));
+		return `Session volume, busiest at ${formatShortTimestamp(peak.timestamp)} with ${peak.total.toLocaleString()} sessions`;
+	});
 </script>
 
 <div class="timeline-card">
-	<div class="card-header">
-		<h2>Session Volume</h2>
-		<div class="legend-row">
-			{#each activeProtocols as proto}
-				<span class="legend-item">
-					<span class="legend-dot" style="background: {protoColor(proto)};"></span>
-					{proto.toUpperCase()}
-				</span>
-			{/each}
+	<div class="card-head">
+		<div>
+			<h2 class="card-title">Session volume</h2>
+			<p class="card-sub">Sessions over time, by protocol</p>
 		</div>
+		<ul class="legend">
+			{#each activeProtocols as proto}
+				<li>
+					<span class="sw" style="--c: {protoColor(proto)};"></span>
+					{proto.toUpperCase()}
+				</li>
+			{/each}
+		</ul>
 	</div>
 
 	<div class="chart-wrapper" bind:clientWidth={chartWidth}>
 		{#if buckets.length > 0}
-			<svg viewBox="0 0 {chartWidth} 200" width="100%" height="200">
+			<svg viewBox="0 0 {chartWidth} 200" width="100%" height="200" role="img" aria-label={headline}>
 				<!-- Grid lines + Y labels -->
 				{#each [0, 0.25, 0.5, 0.75, 1] as frac}
 					<line
+						class="gl"
+						class:dash={frac > 0}
 						x1="50" y1={180 - frac * 160}
 						x2={chartWidth} y2={180 - frac * 160}
-						stroke="var(--border-default)" stroke-width="0.5" opacity="0.4"
 					/>
-					<text x="45" y={180 - frac * 160 + 4} text-anchor="end"
-						fill="var(--text-muted)" font-size="10">
+					<text class="ax" x="45" y={180 - frac * 160 + 4} text-anchor="end">
 						{Math.round(maxTotal * frac)}
 					</text>
 				{/each}
@@ -147,7 +157,7 @@
 						<!-- Zero baseline -->
 						{#if bucket.total === 0}
 							<rect x={x} y={178} width={barW} height={2} rx="1"
-								fill="var(--border-default)" opacity="0.3" />
+								fill="var(--line)" opacity="0.3" />
 						{/if}
 					</g>
 				{/each}
@@ -157,7 +167,7 @@
 					{@const idx = Math.round(li * (buckets.length - 1) / Math.max(1, Math.min(5, buckets.length - 1)))}
 					{@const stepW = (chartWidth - 60) / buckets.length}
 					{@const lx = 55 + idx * stepW + Math.max(2, stepW - 2) / 2}
-					<text x={lx} y="196" text-anchor="middle" fill="var(--text-muted)" font-size="10">
+					<text class="ax" x={lx} y="196" text-anchor="middle">
 						{formatShortTimestamp(buckets[idx]?.timestamp || '')}
 					</text>
 				{/each}
@@ -173,7 +183,7 @@
 					{#each activeProtocols as proto}
 						{#if hb.protocols[proto]}
 							<div class="tooltip-row">
-								<span class="legend-dot" style="background: {protoColor(proto)};"></span>
+								<span class="sw" style="--c: {protoColor(proto)};"></span>
 								{proto.toUpperCase()}: <strong>{hb.protocols[proto].toLocaleString()}</strong>
 							</div>
 						{/if}
@@ -181,7 +191,7 @@
 				</div>
 			{/if}
 		{:else if !loading}
-			<p class="text-muted" style="padding: 2rem; text-align: center;">{emptyMessage}</p>
+			<p class="dim timeline-empty">{emptyMessage}</p>
 		{/if}
 	</div>
 </div>
@@ -192,70 +202,37 @@
 		flex-direction: column;
 	}
 
-	.card-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: var(--space-md) var(--space-md) var(--space-sm);
-		flex-wrap: wrap;
-		gap: var(--space-sm);
-	}
-
-	.card-header h2 {
-		font-size: var(--text-base);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.legend-row {
-		display: flex;
-		gap: var(--space-md);
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-	}
-
-	.legend-item {
-		display: flex;
-		align-items: center;
-		gap: var(--space-xs);
-	}
-
-	.legend-dot {
-		display: inline-block;
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-
 	.chart-wrapper {
 		position: relative;
-		padding: 0 var(--space-sm) var(--space-sm);
 	}
 
+	.timeline-empty {
+		padding: var(--sp-8);
+		text-align: center;
+	}
+
+	/* Chart tooltip: the system's light pill (pill-active-bg, on-light) */
 	.bar-tooltip {
 		position: absolute;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		padding: var(--space-xs) var(--space-sm);
+		background: var(--pill-active-bg);
+		color: var(--on-light);
+		border-radius: var(--r-md);
+		padding: var(--sp-1) var(--sp-3);
 		font-size: var(--text-xs);
+		font-variant-numeric: tabular-nums;
 		pointer-events: none;
 		z-index: 10;
 		white-space: nowrap;
-		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 	}
 
 	.tooltip-time {
-		font-weight: 600;
-		color: var(--text-primary);
+		font-weight: 700;
 		margin-bottom: 2px;
 	}
 
 	.tooltip-row {
 		display: flex;
 		align-items: center;
-		gap: var(--space-xs);
-		color: var(--text-secondary);
+		gap: var(--sp-1);
 	}
 </style>

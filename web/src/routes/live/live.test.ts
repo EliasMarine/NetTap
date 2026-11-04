@@ -20,13 +20,17 @@ describe('Live Monitor — failed requests', () => {
 
 	it('says live data failed to load instead of showing 0 connections', async () => {
 		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
-		// jsdom has no canvas; the geo map only needs calls on its 2D context to succeed
-		const ctx = new Proxy({}, { get: () => () => ({}) });
-		vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as never);
+		// OLD CODE START — GeoMap drew on a canvas; DotMap is SVG
+		// // jsdom has no canvas; the geo map only needs calls on its 2D context to succeed
+		// const ctx = new Proxy({}, { get: () => () => ({}) });
+		// vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as never);
+		// OLD CODE END
 		vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })));
 		render(Page);
 		expect((await screen.findAllByText("Couldn't load live data: the request failed.")).length).toBeGreaterThan(0);
-		expect(screen.queryByText('Live Connections')).not.toBeInTheDocument();
+		// OLD CODE START: expect(screen.queryByText('Live Connections')).not.toBeInTheDocument(); (the card keeps its head now; the table is what must not show) OLD CODE END
+		expect(screen.queryByRole('table', { name: 'Live connections' })).not.toBeInTheDocument();
+		expect(screen.queryByText(/^0 connections/)).not.toBeInTheDocument();
 	});
 
 	it('says a connection\'s alerts failed to load instead of "No alerts"', () => {

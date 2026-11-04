@@ -66,7 +66,7 @@ class KVRowState {
 	/** Title tooltip */
 	get titleText(): string | undefined {
 		if (!this.copyable || this.isEmpty) return undefined;
-		return this.copied ? 'Copied!' : 'Click to copy';
+		return this.copied ? 'Copied' : 'Click to copy';
 	}
 
 	/** Handles copy action — mirrors handleCopy in KVRow.svelte */
@@ -195,11 +195,11 @@ describe('KVRow logic', () => {
 			expect(state.titleText).toBe('Click to copy');
 		});
 
-		it('title says "Copied!" after copying', () => {
+		it('title says "Copied" after copying', () => {
 			const state = new KVRowState({ label: 'IP', value: '10.0.0.1', copyable: true });
 			const writeText = vi.fn();
 			state.handleCopy(writeText);
-			expect(state.titleText).toBe('Copied!');
+			expect(state.titleText).toBe('Copied');
 		});
 	});
 

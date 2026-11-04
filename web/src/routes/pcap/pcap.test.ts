@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import { getPcapFiles, searchPcaps, previewPcap, getDownloadUrl, formatBytes } from '$lib/api/pcap';
 import PcapPage from './+page.svelte';
+import { refreshPage } from '$lib/stores/pageRefresh';
 
 /**
  * Page-level tests for the PCAP search page.
@@ -135,21 +136,22 @@ describe('PCAP page — capture status', () => {
 	it('says Active when enabled and the container is running', async () => {
 		await renderWithCaptureStatus({ enabled: true, maxFileSizeMB: 100, containerRunning: true, containerStatus: 'running' });
 
-		expect(screen.getByText('Capture Active')).toBeInTheDocument();
+		// sentence case (design system voice); was 'Capture Active'
+		expect(screen.getByText('Capture active')).toBeInTheDocument();
 	});
 
 	it('does not say Active when enabled but the container is down', async () => {
 		await renderWithCaptureStatus({ enabled: true, maxFileSizeMB: 100, containerRunning: false, containerStatus: 'exited' });
 
-		expect(screen.getByText('Capture Stopped')).toBeInTheDocument();
-		expect(screen.queryByText('Capture Active')).not.toBeInTheDocument();
+		expect(screen.getByText('Capture stopped')).toBeInTheDocument();
+		expect(screen.queryByText('Capture active')).not.toBeInTheDocument();
 	});
 
 	it('says the status is unknown when it cannot be read', async () => {
 		await renderWithCaptureStatus(null);
 
-		expect(screen.getByText('Capture Status Unknown')).toBeInTheDocument();
-		expect(screen.queryByText('Capture Active')).not.toBeInTheDocument();
+		expect(screen.getByText('Capture status unknown')).toBeInTheDocument();
+		expect(screen.queryByText('Capture active')).not.toBeInTheDocument();
 	});
 });
 
@@ -186,9 +188,10 @@ describe('PCAP page — capture toggle', () => {
 		const fetchMock = stubCapture(null);
 		render(PcapPage);
 
-		const toggle = await screen.findByRole('button', { name: "PCAP capture state unknown: can't change it" });
+		// The toggle is now the system's switch (a checkbox with role="switch"); was a button with class 'on'
+		const toggle = await screen.findByRole('switch', { name: "PCAP capture state unknown: can't change it" });
 		expect(toggle).toBeDisabled();
-		expect(toggle).not.toHaveClass('on');
+		expect(toggle).not.toBeChecked();
 		await fireEvent.click(toggle);
 		expect(toggleCalls(fetchMock)).toHaveLength(0);
 	});
@@ -197,11 +200,12 @@ describe('PCAP page — capture toggle', () => {
 		const fetchMock = stubCapture(RUNNING, { enabled: false, containerRunning: false, containerStatus: 'exited' });
 		render(PcapPage);
 
-		const toggle = await screen.findByRole('button', { name: 'Disable PCAP capture' });
-		expect(toggle).toHaveClass('on');
+		const toggle = await screen.findByRole('switch', { name: 'PCAP capture' });
+		expect(toggle).toBeChecked();
 		await fireEvent.click(toggle);
 
-		expect(await screen.findByText('Capture Stopped')).toBeInTheDocument();
+		expect(await screen.findByText('Capture stopped')).toBeInTheDocument();
+		expect(toggle).not.toBeChecked();
 		expect(toggleCalls(fetchMock)[0][1]).toMatchObject({ body: JSON.stringify({ enabled: false }) });
 	});
 
@@ -209,10 +213,12 @@ describe('PCAP page — capture toggle', () => {
 		stubCapture(RUNNING);
 		render(PcapPage);
 
-		await fireEvent.click(await screen.findByRole('button', { name: 'Disable PCAP capture' }));
+		const toggle = await screen.findByRole('switch', { name: 'PCAP capture' });
+		await fireEvent.click(toggle);
 
 		expect(await screen.findByText("Couldn't turn capture off: docker did not answer")).toBeInTheDocument();
-		expect(screen.getByText('Capture Active')).toBeInTheDocument();
+		expect(screen.getByText('Capture active')).toBeInTheDocument();
+		expect(toggle).toBeChecked(); // shows the daemon's state, not the failed click
 	});
 });
 
@@ -294,7 +300,8 @@ describe('PCAP page — search polling', () => {
 		await vi.advanceTimersByTimeAsync(3000);
 
 		expect(screen.getByText('a.pcap')).toBeInTheDocument();
-		expect(screen.getByText('Search Results (1 files match)')).toBeInTheDocument();
+		// the count moved from the title into the card sub; was 'Search Results (1 files match)'
+		expect(screen.getByText('1 file matches')).toBeInTheDocument();
 		expect(screen.queryByText(/Checked \d+ of/)).not.toBeInTheDocument();
 		expect(urls).toHaveLength(2);
 		expect(urls[1]).toBe(urls[0]); // identical filter/from/to or the daemon restarts the job
@@ -308,7 +315,7 @@ describe('PCAP page — search polling', () => {
 
 		await startSearch();
 		await fireEvent.input(screen.getByPlaceholderText(/display filter/i), { target: { value: 'http' } });
-		await fireEvent.click(screen.getByRole('button', { name: 'Searching...' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Searching…' })); // was 'Searching...' (voice: …)
 		await vi.advanceTimersByTimeAsync(0);
 		const startedAt = urls.length;
 		await vi.advanceTimersByTimeAsync(9000);
@@ -472,7 +479,8 @@ describe('PCAP page — preview time limit', () => {
 			count: 3,
 			timed_out: false,
 		});
-		const table = document.querySelector('table.packet-table')!;
+		// DataTable has no class of its own; find the packet table by its name
+		const table = screen.getByRole('table', { name: 'Packets in a.pcap' });
 		const column = (i: number) => [...table.querySelectorAll('tbody tr')].map((r) => r.querySelectorAll('td')[i].textContent);
 
 		// #141: TLSv1.3 as Wireshark writes it; an old frame.protocols chain still shows its last entry
@@ -521,5 +529,82 @@ describe('PCAP page — file list', () => {
 
 		expect(await screen.findByText('No PCAP files in this time range.')).toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't load the PCAP file list/)).not.toBeInTheDocument();
+	});
+
+	it('shows the list loading, not 0 files, before the first answer', () => {
+		vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+		render(PcapPage);
+		expect(screen.getByText('Loading PCAP files')).toBeInTheDocument();
+		expect(screen.getByText('PCAP files').closest('.kpi')).toHaveTextContent('—');
+	});
+
+	it('says a failed preview failed instead of "No packets to display"', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) =>
+				url.startsWith('/api/pcap/files')
+					? { ok: true, status: 200, json: async () => ({ count: 1, files: [MATCH] }) }
+					: { ok: false, status: 500, json: async () => ({ error: 'tshark crashed' }) },
+			),
+		);
+		render(PcapPage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Preview a.pcap' }));
+		expect(await screen.findByText("Couldn't preview a.pcap: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText(/No packets to display/)).not.toBeInTheDocument();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// PLAN §5.5: the page refresh contract
+// ---------------------------------------------------------------------------
+
+describe('PCAP page — refresh contract', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const RUNNING = { enabled: true, maxFileSizeMB: 100, containerRunning: true, containerStatus: 'running' };
+
+	it('reports ok, partial and failed from the file list and the capture state', async () => {
+		let up = { files: true, capture: true };
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				if (url.startsWith('/api/pcap/files') && up.files) return { ok: true, status: 200, json: async () => ({ count: 1, files: [MATCH] }) };
+				if (url.startsWith('/api/capture/status') && up.capture) return { ok: true, status: 200, json: async () => RUNNING };
+				return { ok: false, status: 503, json: async () => ({}) };
+			}),
+		);
+		render(PcapPage);
+		await screen.findByText('a.pcap');
+		expect(await refreshPage()).toBe('ok');
+		up = { files: true, capture: false };
+		expect(await refreshPage()).toBe('partial');
+		up = { files: false, capture: false };
+		expect(await refreshPage()).toBe('failed');
+	});
+
+	it("drops an older range's slower file list", async () => {
+		const held: Array<() => void> = [];
+		const OLD = { ...MATCH, file: '/data/pcap/old.pcap', name: 'old.pcap' };
+		vi.stubGlobal(
+			'fetch',
+			vi.fn((url: string) => {
+				if (!url.startsWith('/api/pcap/files')) return Promise.resolve({ ok: false, status: 503, json: async () => ({}) });
+				const q = new URL(url, 'http://x').searchParams;
+				const hours = (Date.parse(q.get('to') ?? '') - Date.parse(q.get('from') ?? '')) / 3_600_000;
+				if (hours > 2) return Promise.resolve({ ok: true, status: 200, json: async () => ({ count: 1, files: [MATCH] }) });
+				return new Promise((resolve) => held.push(() => resolve({ ok: true, status: 200, json: async () => ({ count: 1, files: [OLD] }) })));
+			}),
+		);
+		render(PcapPage);
+		await vi.waitFor(() => expect(held).toHaveLength(1)); // the 1 h default, still pending
+		await fireEvent.click(screen.getByRole('button', { name: '24h' }));
+		expect(await screen.findByText('a.pcap')).toBeInTheDocument();
+
+		held[0]();
+		await new Promise((r) => setTimeout(r, 0));
+		expect(screen.queryByText('old.pcap')).not.toBeInTheDocument();
+		expect(screen.getByText('a.pcap')).toBeInTheDocument();
 	});
 });

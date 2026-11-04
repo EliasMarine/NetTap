@@ -163,6 +163,8 @@ describe('DhcpGoLive', () => {
 			await flush();
 
 			expect(screen.getByText('IP forwarding is off on the host.')).toBeInTheDocument();
+			// the check's state is spoken, not only drawn (the icons replaced ✓ ✗ ! text)
+			expect(screen.getByRole('img', { name: 'Blocking' })).toBeInTheDocument();
 			expect(screen.queryByText("Turn off your router's DHCP server")).not.toBeInTheDocument();
 			expect(screen.getByText('Fix the problems above first')).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'Check again' })).toBeInTheDocument();

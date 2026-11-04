@@ -1,0 +1,39 @@
+<!-- @dsCard height=288 -->
+<!doctype html>
+<html data-theme="ember">
+<head><link rel="stylesheet" href="../../tokens.css"><link rel="stylesheet" href="../bundle.css"><meta charset="utf-8"><title>NetTap cover</title>
+<style>
+html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); }
+.cv { position: relative; width: 960px; height: 288px; overflow: hidden; background: var(--bg); }
+.cv svg { position: absolute; inset: 0; }
+.slab { fill: var(--accent); }
+.b2 { fill: var(--data-2); }
+.b4 { fill: var(--data-4); }
+.b3 { fill: var(--data-3); }
+.home { fill: var(--text-1); }
+.ring { fill: none; stroke: var(--text-1); stroke-width: 2; }
+.cut { fill: var(--bg); }
+.txt { position: absolute; left: 40px; bottom: 36px; max-width: 440px; }
+.name { font: 500 120px/0.92 var(--font-display); letter-spacing: -0.04em; color: var(--text-1); margin: 0; }
+.tagline { font: 400 14px/1.4 var(--font-body); color: var(--text-2); margin: 16px 0 0; }
+</style></head>
+<body>
+<div class="cv">
+<svg viewBox="0 0 960 288" width="960" height="288" aria-hidden="true">
+<!-- blocks: accent slab 200x240, data-2 224x112, data-4 104x112, data-3 pill 104x48, text-1 disc 48 (sizes are sp-4/sp-6 multiples)
+     arrangement: a modular card grid with sp-4 gutters, like the 12-column dashboard, the tall accent slab as the hero card
+     pattern: dot grid cut out of the slab at sp-4 pitch; "precise, technical", echoing the dot-grid world map of the Live screen
+     radii: r-lg 20 on the cards, pill = half the short side (24), the home disc ringed like the map's Your network marker -->
+<rect class="slab" x="496" y="24" width="200" height="240" rx="20"/>
+<circle class="cut" cx="512" cy="176" r="2.2"/><circle class="cut" cx="512" cy="192" r="2.2"/><circle class="cut" cx="512" cy="208" r="2.2"/><circle class="cut" cx="512" cy="224" r="2.2"/><circle class="cut" cx="512" cy="240" r="2.2"/><circle class="cut" cx="528" cy="176" r="2.2"/><circle class="cut" cx="528" cy="192" r="2.2"/><circle class="cut" cx="528" cy="208" r="2.2"/><circle class="cut" cx="528" cy="224" r="2.2"/><circle class="cut" cx="528" cy="240" r="2.2"/><circle class="cut" cx="544" cy="176" r="2.2"/><circle class="cut" cx="544" cy="192" r="2.2"/><circle class="cut" cx="544" cy="208" r="2.2"/><circle class="cut" cx="544" cy="224" r="2.2"/><circle class="cut" cx="544" cy="240" r="2.2"/><circle class="cut" cx="560" cy="176" r="2.2"/><circle class="cut" cx="560" cy="192" r="2.2"/><circle class="cut" cx="560" cy="208" r="2.2"/><circle class="cut" cx="560" cy="224" r="2.2"/><circle class="cut" cx="560" cy="240" r="2.2"/><circle class="cut" cx="576" cy="176" r="2.2"/><circle class="cut" cx="576" cy="192" r="2.2"/><circle class="cut" cx="576" cy="208" r="2.2"/><circle class="cut" cx="576" cy="224" r="2.2"/><circle class="cut" cx="576" cy="240" r="2.2"/><circle class="cut" cx="592" cy="176" r="2.2"/><circle class="cut" cx="592" cy="192" r="2.2"/><circle class="cut" cx="592" cy="208" r="2.2"/><circle class="cut" cx="592" cy="224" r="2.2"/><circle class="cut" cx="592" cy="240" r="2.2"/><circle class="cut" cx="608" cy="176" r="2.2"/><circle class="cut" cx="608" cy="192" r="2.2"/><circle class="cut" cx="608" cy="208" r="2.2"/><circle class="cut" cx="608" cy="224" r="2.2"/><circle class="cut" cx="608" cy="240" r="2.2"/><circle class="cut" cx="624" cy="176" r="2.2"/><circle class="cut" cx="624" cy="192" r="2.2"/><circle class="cut" cx="624" cy="208" r="2.2"/><circle class="cut" cx="624" cy="224" r="2.2"/><circle class="cut" cx="624" cy="240" r="2.2"/><circle class="cut" cx="640" cy="176" r="2.2"/><circle class="cut" cx="640" cy="192" r="2.2"/><circle class="cut" cx="640" cy="208" r="2.2"/><circle class="cut" cx="640" cy="224" r="2.2"/><circle class="cut" cx="640" cy="240" r="2.2"/><circle class="cut" cx="656" cy="176" r="2.2"/><circle class="cut" cx="656" cy="192" r="2.2"/><circle class="cut" cx="656" cy="208" r="2.2"/><circle class="cut" cx="656" cy="224" r="2.2"/><circle class="cut" cx="656" cy="240" r="2.2"/><circle class="cut" cx="672" cy="176" r="2.2"/><circle class="cut" cx="672" cy="192" r="2.2"/><circle class="cut" cx="672" cy="208" r="2.2"/><circle class="cut" cx="672" cy="224" r="2.2"/><circle class="cut" cx="672" cy="240" r="2.2"/>
+<rect class="b2" x="712" y="24" width="224" height="112" rx="20"/>
+<rect class="b4" x="712" y="152" width="104" height="112" rx="20"/>
+<rect class="b3" x="832" y="152" width="104" height="48" rx="24"/>
+<circle class="home" cx="856" cy="240" r="7"/>
+<circle class="ring" cx="856" cy="240" r="20"/>
+<rect class="b3" x="896" y="216" width="40" height="48" rx="20"/>
+</svg>
+<div class="txt"><p class="name">NetTap</p><p class="tagline">Everything that crossed your network, explained in plain words.</p></div>
+</div>
+</body>
+</html>

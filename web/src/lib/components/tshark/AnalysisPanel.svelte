@@ -13,6 +13,7 @@
 	 */
 
 	import FilterInput from './FilterInput.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
 	// OLD CODE START — replaced PacketTable + ProtocolTree with PanelManager (3-pane layout)
 	// import PacketTable from './PacketTable.svelte';
 	// import ProtocolTree from './ProtocolTree.svelte';
@@ -51,6 +52,10 @@
 	let status = $state<TSharkStatus | null>(null);
 	let statusLoading = $state(true);
 	let statusFailed = $state(false); // #96: a failed check is not "TShark Unavailable"
+	// the daemon passes on `tshark --version`'s first line, which already names TShark
+	const versionLabel = $derived(
+		status && /^tshark\b/i.test(status.version) ? status.version : `TShark ${status?.version ?? ''}`,
+	);
 
 	// ---- Read URL query params + auto-analyze on mount ----
 	let autoAnalyzeDone = false;
@@ -241,56 +246,55 @@
 <div class="analysis-panel">
 	<!-- Header with status badge -->
 	<div class="panel-header">
-		<h3 class="panel-title">Packet Analysis</h3>
+		<!-- the page head owns the h1; this names the panel -->
+		<h2 class="card-title">Packet analysis</h2>
 		<div class="status-badge-group">
 			{#if statusLoading}
-				<span class="badge">
-					<span class="status-dot checking"></span>
-					Checking...
+				<span class="chip">
+					<span class="status-dot"></span>
+					Checking…
 				</span>
 			{:else if status?.available}
-				<span class="badge badge-success">
-					<span class="status-dot online"></span>
-					TShark {status.version}
+				<span class="chip is-ok">
+					<Icon name="check" />
+					{versionLabel}
 				</span>
 			{:else if statusFailed}
-				<span class="badge" title="The status request failed">
-					<span class="status-dot checking"></span>
+				<span class="chip" title="The status request failed">
+					<span class="status-dot"></span>
 					TShark status unknown
 				</span>
 			{:else}
-				<span class="badge badge-danger">
-					<span class="status-dot offline"></span>
-					TShark Unavailable
+				<span class="chip is-bad">
+					<Icon name="warn" />
+					TShark unavailable
 				</span>
 			{/if}
 
-			<button class="btn btn-secondary btn-sm" onclick={fetchStatus} title="Refresh TShark status">
-				<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-					<path d="M8 2.002a5.998 5.998 0 103.906 10.531.75.75 0 01.984 1.131A7.5 7.5 0 118 .5a7.47 7.47 0 015.217 2.118l.146-.152a.75.75 0 011.072 1.046l-2.038 2.094a.75.75 0 01-1.072.009L9.287 3.508a.75.75 0 011.07-1.05l.206.208A5.97 5.97 0 008 2.002z" />
-				</svg>
+			<button class="icon-btn" onclick={fetchStatus} title="Refresh TShark status" aria-label="Refresh TShark status">
+				<Icon name="refresh" />
 			</button>
 		</div>
 	</div>
 
 	<!-- Controls card -->
-	<div class="card controls-card">
+	<div class="card">
 		<div class="controls-grid">
 			<!-- PCAP path input -->
 			<div class="form-group pcap-group">
-				<label class="label" for="pcap-path">PCAP File Path</label>
+				<label class="label" for="pcap-path">PCAP file path</label>
 				<div class="pcap-input-row">
 					<input
 						id="pcap-path"
 						type="text"
-						class="input mono-input"
+						class="input mono"
 						placeholder="/opt/nettap/pcap/capture.pcap"
 						bind:value={pcapPath}
 						onkeydown={handleAnalyzeKeydown}
 						disabled={loading}
 					/>
 					<button
-						class="btn btn-secondary btn-sm browse-btn"
+						class="btn"
 						onclick={loadPcapFiles}
 						disabled={loading}
 						title="Browse available PCAP files"
@@ -298,9 +302,7 @@
 						{#if pcapFilesLoading}
 							<span class="btn-spinner-sm"></span>
 						{:else}
-							<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" />
-							</svg>
+							<Icon name="pcap" />
 						{/if}
 						Browse
 					</button>
@@ -308,7 +310,7 @@
 				{#if showPcapPicker}
 					<div class="pcap-picker">
 						{#if pcapFilesLoading}
-							<div class="pcap-picker-loading">Loading PCAP files...</div>
+							<div class="pcap-picker-loading">Loading PCAP files…</div>
 						{:else if pcapFilesFailed}
 							<div class="pcap-picker-empty">Couldn't load the PCAP file list: the request failed.</div>
 						{:else if pcapFiles.length === 0}
@@ -316,7 +318,9 @@
 						{:else}
 							<div class="pcap-picker-header">
 								<span>{pcapFiles.length} file{pcapFiles.length !== 1 ? 's' : ''} available</span>
-								<button class="pcap-picker-close" onclick={() => (showPcapPicker = false)}>x</button>
+								<button class="icon-btn ghost" onclick={() => (showPcapPicker = false)} aria-label="Close the file list">
+									<Icon name="close" />
+								</button>
 							</div>
 							<div class="pcap-picker-list">
 								{#each pcapFiles as pcap}
@@ -325,7 +329,7 @@
 										class:selected={pcapPath === pcap.path}
 										onclick={() => selectPcap(pcap)}
 									>
-										<span class="pcap-name">{pcap.name}</span>
+										<span class="mono">{pcap.name}</span>
 										<span class="pcap-meta">
 											{formatFileSize(pcap.size_bytes)} &middot; {formatFileDate(pcap.modified)}
 										</span>
@@ -340,10 +344,10 @@
 			<!-- Output format + Max packets -->
 			<div class="controls-row">
 				<div class="form-group">
-					<label class="label" for="output-format">Output Format</label>
+					<label class="label" for="output-format">Output format</label>
 					<select
 						id="output-format"
-						class="input"
+						class="select"
 						bind:value={outputFormat}
 						disabled={loading}
 					>
@@ -353,7 +357,7 @@
 				</div>
 
 				<div class="form-group">
-					<label class="label" for="max-packets">Max Packets</label>
+					<label class="label" for="max-packets">Max packets</label>
 					<input
 						id="max-packets"
 						type="number"
@@ -368,18 +372,16 @@
 				<div class="form-group analyze-btn-group">
 					<span class="label" aria-hidden="true">&nbsp;</span>
 					<button
-						class="btn btn-primary analyze-btn"
+						class="btn primary analyze-btn"
 						onclick={runAnalysis}
 						disabled={loading || !pcapPath.trim()}
 					>
 						{#if loading}
 							<span class="btn-spinner"></span>
-							Analyzing...
+							Analysing…
 						{:else}
-							<svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
-								<path d="M11.28 3.22a.75.75 0 010 1.06L4.56 11H13.25a.75.75 0 010 1.5H2.75a.75.75 0 01-.53-1.28l8-8a.75.75 0 011.06 0z" />
-							</svg>
-							Analyze
+							<Icon name="play" />
+							Analyse
 						{/if}
 					</button>
 				</div>
@@ -387,7 +389,7 @@
 
 			<!-- Display filter -->
 			<div class="form-group filter-group">
-				<span class="label">Display Filter</span>
+				<span class="label">Display filter</span>
 				<!-- OLD CODE START — Analyze ignored a filter typed but not yet applied, and showed unfiltered packets (#65)
 				<FilterInput onsubmit={handleFilterSubmit} disabled={loading} value={displayFilter} />
 				OLD CODE END -->
@@ -403,15 +405,16 @@
 
 	<!-- Error display -->
 	{#if errorMessage}
-		<div class="alert alert-danger">
-			<strong>Error:</strong> {errorMessage}
+		<div class="notice is-error">
+			<Icon name="warn" />
+			<span><strong>Error:</strong> {errorMessage}</span>
 		</div>
 	{/if}
 
 	<!-- Results summary -->
 	{#if result && !errorMessage}
 		<div class="results-summary">
-			<span class="badge badge-accent">
+			<span class="chip num">
 				{result.packet_count} packet{result.packet_count !== 1 ? 's' : ''}
 			</span>
 			<!-- OLD CODE START — 2026-11-03: a filter search cut short at its time limit with 0 found
@@ -423,7 +426,8 @@
 			{/if}
 			OLD CODE END -->
 			{#if result.truncated}
-				<span class="badge badge-warning">
+				<span class="chip is-warn">
+					<Icon name="warn" />
 					{result.packet_count === 0
 						? 'Stopped before the end of the file: matches may be further in'
 						: 'Not the whole file: more packets may match'}
@@ -469,7 +473,7 @@
 	.analysis-panel {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-md);
+		gap: var(--sp-4);
 	}
 
 	.panel-header {
@@ -477,40 +481,26 @@
 		align-items: center;
 		justify-content: space-between;
 		flex-wrap: wrap;
-		gap: var(--space-sm);
-	}
-
-	.panel-title {
-		font-size: var(--text-xl);
-		font-weight: 700;
-		color: var(--text-primary);
+		gap: var(--sp-2);
 	}
 
 	.status-badge-group {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
+		min-width: 0;
 	}
 
+	/* the full version line is longer than a phone is wide */
+	.status-badge-group .chip { white-space: normal; }
+
+	/* "Checking" and "unknown": a grey dot that pulses while the status loads */
 	.status-dot {
 		display: inline-block;
 		width: 8px;
 		height: 8px;
 		border-radius: 50%;
-	}
-
-	.status-dot.online {
-		background-color: var(--success);
-		box-shadow: 0 0 6px var(--success);
-	}
-
-	.status-dot.offline {
-		background-color: var(--danger);
-		box-shadow: 0 0 6px var(--danger);
-	}
-
-	.status-dot.checking {
-		background-color: var(--text-muted);
+		background-color: var(--text-3);
 		animation: pulse 1s ease-in-out infinite;
 	}
 
@@ -519,28 +509,19 @@
 		50% { opacity: 0.4; }
 	}
 
-	.controls-card {
-		padding: var(--space-lg);
-	}
-
 	.controls-grid {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-md);
+		gap: var(--sp-4);
 	}
 
 	.pcap-group {
 		margin-bottom: 0;
 	}
 
-	.mono-input {
-		font-family: var(--font-mono);
-		font-size: var(--text-sm);
-	}
-
 	.controls-row {
 		display: flex;
-		gap: var(--space-md);
+		gap: var(--sp-4);
 		align-items: flex-end;
 		flex-wrap: wrap;
 	}
@@ -566,8 +547,8 @@
 		display: inline-block;
 		width: 14px;
 		height: 14px;
-		border: 2px solid rgba(255, 255, 255, 0.3);
-		border-top-color: #fff;
+		border: 2px solid color-mix(in srgb, var(--on-accent) 30%, transparent);
+		border-top-color: var(--on-accent);
 		border-radius: 50%;
 		animation: spin 0.7s linear infinite;
 	}
@@ -576,16 +557,17 @@
 		to { transform: rotate(360deg); }
 	}
 
+
 	.results-summary {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 		flex-wrap: wrap;
 	}
 
 	.summary-detail {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 	}
 
 	.results-layout {
@@ -596,35 +578,28 @@
 
 	.pcap-input-row {
 		display: flex;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.pcap-input-row .input {
 		flex: 1;
 	}
 
-	.browse-btn {
-		white-space: nowrap;
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-	}
-
 	.btn-spinner-sm {
 		display: inline-block;
 		width: 12px;
 		height: 12px;
-		border: 2px solid var(--text-muted);
-		border-top-color: var(--text-primary);
+		border: 2px solid var(--text-3);
+		border-top-color: var(--text-1);
 		border-radius: 50%;
 		animation: spin 0.7s linear infinite;
 	}
 
 	.pcap-picker {
-		margin-top: var(--space-xs);
-		background: var(--bg-primary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
+		margin-top: var(--sp-1);
+		background: var(--surface-1);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
 		max-height: 240px;
 		overflow: hidden;
 		display: flex;
@@ -635,23 +610,10 @@
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		padding: 8px 12px;
+		padding: var(--sp-1) var(--sp-1) var(--sp-1) var(--sp-3);
 		font-size: var(--text-xs);
-		color: var(--text-muted);
-		border-bottom: 1px solid var(--border-dim);
-	}
-
-	.pcap-picker-close {
-		background: none;
-		border: none;
-		color: var(--text-muted);
-		cursor: pointer;
-		font-size: var(--text-sm);
-		padding: 0 4px;
-	}
-
-	.pcap-picker-close:hover {
-		color: var(--text-primary);
+		color: var(--text-3);
+		border-bottom: 1px solid var(--line);
 	}
 
 	.pcap-picker-list {
@@ -664,53 +626,43 @@
 		justify-content: space-between;
 		align-items: center;
 		width: 100%;
-		padding: 8px 12px;
+		padding: var(--sp-2) var(--sp-3);
 		background: none;
 		border: none;
-		border-bottom: 1px solid var(--border-dim);
-		color: var(--text-primary);
+		border-bottom: 1px solid var(--line);
+		color: var(--text-1);
 		cursor: pointer;
 		text-align: left;
 		font-size: var(--text-sm);
-		transition: background-color var(--transition-fast);
+		transition: background-color var(--dur-fast);
 	}
 
 	.pcap-picker-item:hover {
-		background: var(--bg-tertiary);
+		background: var(--row-hover);
 	}
 
 	.pcap-picker-item.selected {
-		background: var(--bg-tertiary);
-		border-left: 3px solid var(--accent);
+		background: var(--surface-2);
+		box-shadow: inset 0 0 0 1px var(--line-strong);
 	}
 
 	.pcap-picker-item:last-child {
 		border-bottom: none;
 	}
 
-	.pcap-name {
-		font-family: var(--font-mono);
-		font-weight: 500;
-	}
-
 	.pcap-meta {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 		white-space: nowrap;
-		margin-left: var(--space-md);
+		margin-left: var(--sp-4);
 	}
 
 	.pcap-picker-loading,
 	.pcap-picker-empty {
-		padding: 16px;
+		padding: var(--sp-4);
 		text-align: center;
-		color: var(--text-muted);
+		color: var(--text-3);
 		font-size: var(--text-sm);
-	}
-
-	select.input {
-		appearance: auto;
-		cursor: pointer;
 	}
 
 	@media (max-width: 640px) {

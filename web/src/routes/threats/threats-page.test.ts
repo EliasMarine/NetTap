@@ -51,7 +51,7 @@ describe('Threats page', () => {
 	it('says the report failed instead of showing threat level none', async () => {
 		stubDaemon({});
 		render(ThreatsPage);
-		await vi.waitFor(() => expect(screen.getByText('Failed to load threat intelligence data.')).toBeInTheDocument());
+		await vi.waitFor(() => expect(screen.getByText("Couldn't load the threat report: the request failed.")).toBeInTheDocument());
 		expect(screen.queryByText('NONE')).not.toBeInTheDocument();
 	});
 
@@ -74,7 +74,7 @@ describe('Threats page', () => {
 			'/api/threats/intel': { from: '', to: '', new_indicators: 0, feeds: {}, total_indicators: 0 },
 		});
 		render(ThreatsPage);
-		await vi.waitFor(() => expect(screen.getByText('1 suspects')).toBeInTheDocument());
+		await vi.waitFor(() => expect(screen.getByText('1 suspect')).toBeInTheDocument());
 		expect(screen.getByText(/contacts 12 internet hosts on regular schedules/)).toBeInTheDocument();
 		expect(screen.queryByText('198.51.100.3', { exact: false })).not.toBeInTheDocument();
 	});

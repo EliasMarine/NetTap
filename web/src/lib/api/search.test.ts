@@ -93,10 +93,7 @@ describe('search API client', () => {
 	describe('getSearchSuggestions', () => {
 		it('sends GET with query parameter and returns suggestions', async () => {
 			const expected = {
-				suggestions: [
-					{ text: 'DNS queries from 192.168.1.0/24' },
-					{ text: 'DNS queries to external resolvers' },
-				],
+				suggestions: ['DNS queries from 192.168.1.0/24', 'DNS queries to external resolvers'],
 			};
 			mockFetchSuccess(expected);
 
@@ -104,7 +101,7 @@ describe('search API client', () => {
 
 			expect(fetch).toHaveBeenCalledWith('/api/search/suggest?q=DNS+quer');
 			expect(result.suggestions).toHaveLength(2);
-			expect(result.suggestions[0].text).toBe('DNS queries from 192.168.1.0/24');
+			expect(result.suggestions[0]).toBe('DNS queries from 192.168.1.0/24');
 		});
 
 		it('returns empty suggestions on HTTP error', async () => {

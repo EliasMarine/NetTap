@@ -258,23 +258,21 @@ export function formatCompactNumber(n: number): string {
 export function protocolColor(protocol: string): string {
 	switch (protocol) {
 		case 'conn':
-			return '#00b8d4';
+			return 'var(--data-1)';
 		case 'dns':
-			return '#00e676';
+			return 'var(--data-2)';
 		case 'http':
-			return '#ff9100';
+			return 'var(--data-3)';
 		case 'ssl':
-			return '#aa66ff';
+			return 'var(--data-4)';
 		case 'files':
-			return '#ffd600';
+			return 'var(--data-5)';
 		case 'dhcp':
-			return '#ff4081';
-		case 'smtp':
-			return '#18ffff';
+			return 'var(--data-6)';
 		case 'alert':
-			return '#ff1744';
+			return 'var(--sev-critical)';
 		default:
-			return '#888';
+			return 'var(--text-3)';
 	}
 }
 

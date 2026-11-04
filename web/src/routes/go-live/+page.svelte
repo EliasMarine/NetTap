@@ -11,6 +11,9 @@
 	} from '$lib/api/bridge.js';
 	import { fetchCaptureMode } from '$lib/api/capture.js';
 	import DhcpGoLive from '$lib/components/golive/DhcpGoLive.svelte';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	// ----- Capture mode -----
 	// null until /api/capture/mode answers. Bridge polling waits for it, so a
@@ -206,482 +209,417 @@
 		return String(n);
 	}
 
-	function statusBadgeClass(status: string): string {
+	// OLD CODE START — 2026-11-03 redesign: legacy badge classes; the status is a system chip now
+	// function statusBadgeClass(status: string): string {
+	// 	switch (status) {
+	// 		case 'normal':
+	// 			return 'badge-success';
+	// 		case 'degraded':
+	// 			return 'badge-warning';
+	// 		case 'bypass':
+	// 			return 'badge-warning';
+	// 		case 'down':
+	// 		case 'not_configured':
+	// 			return 'badge-danger';
+	// 		default:
+	// 			return 'badge-muted';
+	// 	}
+	// }
+	// OLD CODE END
+	/** The bridge status chip: the same mapping as the old badges, with the word always shown. */
+	function statusChip(status: string): { cls: string; icon: 'check' | 'warn' | null } {
 		switch (status) {
 			case 'normal':
-				return 'badge-success';
+				return { cls: 'is-ok', icon: 'check' };
 			case 'degraded':
-				return 'badge-warning';
 			case 'bypass':
-				return 'badge-warning';
+				return { cls: 'is-warn', icon: 'warn' };
 			case 'down':
 			case 'not_configured':
-				return 'badge-danger';
+				return { cls: 'is-bad', icon: 'warn' };
 			default:
-				return 'badge-muted';
+				return { cls: '', icon: null };
 		}
 	}
+
+	/** "not_configured" reads "Not configured". */
+	function statusWord(status: string): string {
+		const words = status.replace(/_/g, ' ');
+		return words.charAt(0).toUpperCase() + words.slice(1);
+	}
+
+	const PHASES = [
+		{ n: 1, label: 'Readiness' },
+		{ n: 2, label: 'Wiring' },
+		{ n: 3, label: 'Monitoring' },
+	] as const;
 </script>
 
 <svelte:head>
 	<title>Go Live | NetTap</title>
 </svelte:head>
 
-<div class="go-live-page">
-	<div class="page-header">
-		<h1>Go Live</h1>
-		<p class="text-muted">Connect your NetTap appliance to the network</p>
+<div class="page-head">
+	<div>
+		<h1 class="page-title">Go Live</h1>
+		<p class="page-sub">Connect NetTap to your network</p>
 	</div>
+</div>
 
-	{#if modeError}
-		<div class="alert alert-danger" style="margin-bottom: var(--space-md);">{modeError}</div>
-		<button class="btn btn-secondary" onclick={loadCaptureMode}>Retry</button>
-	{:else if captureModeName === null}
-		<p class="text-muted">Loading...</p>
-	{:else if captureModeName === 'dhcp_gateway'}
-		<DhcpGoLive />
-	{:else}
-	<!-- Phase indicator -->
-	<div class="phase-indicator">
-		<div class="phase-step" class:active={phase >= 1} class:completed={phase > 1}>
-			<span class="phase-num">1</span>
-			<span class="phase-label">Readiness</span>
-		</div>
-		<div class="phase-connector" class:active={phase > 1}></div>
-		<div class="phase-step" class:active={phase >= 2} class:completed={phase > 2}>
-			<span class="phase-num">2</span>
-			<span class="phase-label">Wiring</span>
-		</div>
-		<div class="phase-connector" class:active={phase > 2}></div>
-		<div class="phase-step" class:active={phase >= 3}>
-			<span class="phase-num">3</span>
-			<span class="phase-label">Monitoring</span>
-		</div>
+{#if modeError}
+	<div class="grid">
+		<Card title="Capture mode" sub="Go Live follows the mode chosen during setup" class="c-12">
+			<CardState
+				state="error"
+				title="Couldn't start Go Live"
+				message={modeError}
+				actionLabel="Retry"
+				onaction={loadCaptureMode}
+			/>
+		</Card>
 	</div>
+{:else if captureModeName === null}
+	<div class="grid">
+		<Card title="Capture mode" sub="Go Live follows the mode chosen during setup" class="c-12">
+			<CardState state="loading" title="Loading the capture mode" />
+		</Card>
+	</div>
+{:else if captureModeName === 'dhcp_gateway'}
+	<DhcpGoLive />
+{:else}
+	<!-- Step indicator: the system's pill track. The phase follows the readiness checks, so it is not a control. -->
+	<ol class="pills phases" aria-label="Go Live progress">
+		{#each PHASES as p (p.n)}
+			<li class="pill" aria-current={phase === p.n ? 'step' : undefined}>
+				{#if phase > p.n}<Icon name="check" label="Done" />{/if}
+				<span>{p.label}</span>
+			</li>
+		{/each}
+	</ol>
 
 	<!-- ==================== PHASE 1: Readiness Check ==================== -->
 	{#if phase === 1}
-		<div class="card phase-card">
-			<div class="card-header">
-				<h2 class="card-title">Readiness Check</h2>
-				{#if readinessLoading}
-					<span class="badge badge-muted">Checking...</span>
-				{:else if readiness?.ready}
-					<span class="badge badge-success">Ready</span>
-				{:else if !readiness}
-					<span class="badge badge-muted">Unknown</span>
-				{:else}
-					<span class="badge badge-warning">Not Ready</span>
-				{/if}
-			</div>
-
-			{#if readinessError}
-				<div class="alert alert-danger">{readinessError}</div>
-			{/if}
-
-			{#if readiness?.checks && readiness.checks.length > 0}
-				<ul class="checklist">
-					{#each readiness.checks as check}
-						<li class="checklist-item" class:passed={check.passed} class:failed={!check.passed}>
-							<span class="check-icon">{check.passed ? '\u2713' : '\u2717'}</span>
-							<div class="check-content">
-								<span class="check-name">{check.name.replace(/_/g, ' ')}</span>
-								<span class="check-detail text-muted">{check.detail}</span>
-							</div>
-						</li>
-					{/each}
-				</ul>
-			{:else if !readinessLoading}
-				<p class="text-muted">No readiness checks returned. Is the daemon running?</p>
-			{/if}
-
-			<!-- OLD CODE START — #96: a failed readiness check read as "not created yet"
-			{#if !bridgeExists}
-			OLD CODE END -->
-			{#if readiness && !bridgeExists}
-				<div class="action-section">
-					<p class="text-muted">The bridge has not been created yet. Create it to proceed.</p>
-					{#if createError}
-						<div class="alert alert-danger" style="margin-bottom: var(--space-md);">{createError}</div>
+		<div class="grid">
+			<Card title="Readiness check" sub="Checked every 3 seconds" class="c-12">
+				{#snippet actions()}
+					{#if readinessLoading}
+						<span class="chip">Checking…</span>
+					{:else if readiness?.ready}
+						<span class="chip is-ok"><Icon name="check" />Ready</span>
+					{:else if !readiness}
+						<span class="chip">Unknown</span>
+					{:else}
+						<span class="chip is-warn"><Icon name="warn" />Not ready</span>
 					{/if}
-					<button
-						class="btn btn-primary btn-lg"
-						onclick={handleCreateBridge}
-						disabled={creating}
-					>
-						{#if creating}
-							Creating Bridge...
-						{:else}
-							Create Bridge
-						{/if}
-					</button>
-				</div>
-			{/if}
+				{/snippet}
 
-			{#if readiness?.message}
-				<p class="readiness-message text-muted">{readiness.message}</p>
-			{/if}
+				<div class="stack">
+					{#if readinessError}
+						<div class="notice is-error" role="alert"><Icon name="warn" /><span>{readinessError}</span></div>
+					{/if}
+
+					{#if readiness?.checks && readiness.checks.length > 0}
+						<ul class="checklist">
+							{#each readiness.checks as check}
+								<li class="check" class:passed={check.passed}>
+									<span class="check-icon"><Icon name={check.passed ? 'check' : 'close'} label={check.passed ? 'Passed' : 'Failed'} /></span>
+									<span class="check-body">
+										<span class="check-name">{check.name.replace(/_/g, ' ')}</span>
+										{#if check.detail}<span class="check-detail">{check.detail}</span>{/if}
+									</span>
+								</li>
+							{/each}
+						</ul>
+					{:else if !readinessLoading}
+						<p class="muted">No readiness checks returned. Is the daemon running?</p>
+					{/if}
+
+					<!-- OLD CODE START — #96: a failed readiness check read as "not created yet"
+					{#if !bridgeExists}
+					OLD CODE END -->
+					{#if readiness && !bridgeExists}
+						<div class="action-section">
+							<p class="muted">The bridge has not been created yet. Create it to proceed.</p>
+							{#if createError}
+								<div class="notice is-error" role="alert"><Icon name="warn" /><span>{createError}</span></div>
+							{/if}
+							<div class="actions">
+								<button class="btn primary" onclick={handleCreateBridge} disabled={creating}>
+									{creating ? 'Creating bridge…' : 'Create bridge'}
+								</button>
+							</div>
+						</div>
+					{/if}
+
+					{#if readiness?.message}
+						<p class="muted">{readiness.message}</p>
+					{/if}
+				</div>
+			</Card>
 		</div>
 
 	<!-- ==================== PHASE 2: Wiring Guide ==================== -->
 	{:else if phase === 2}
-		<div class="card phase-card">
-			<div class="card-header">
-				<h2 class="card-title">Cable Your Network</h2>
-				<span class="badge badge-accent">Waiting for links</span>
-			</div>
+		<div class="grid">
+			<Card title="Cable your network" sub="Link state checked every 3 seconds" class="c-12">
+				{#snippet actions()}
+					<span class="chip">Waiting for links</span>
+				{/snippet}
 
-			<p class="text-muted" style="margin-bottom: var(--space-lg);">
-				Follow the steps below to physically connect NetTap inline between your modem and router.
-			</p>
+				<div class="stack">
+					<p class="muted">Follow the steps below to connect NetTap inline between your modem and router.</p>
 
-			<!-- Network diagram -->
-			<div class="network-diagram">
-				<div class="diagram-device">
-					<div class="device-icon">&#127760;</div>
-					<div class="device-label">ISP Modem</div>
-				</div>
-				<div class="diagram-cable">
-					<div class="cable-line"></div>
-				</div>
-				<div class="diagram-device nic-device">
-					<div class="carrier-dot" class:carrier-up={wanCarrier} class:carrier-down={!wanCarrier}></div>
-					<div class="device-label mono">{wanIface}</div>
-					<div class="device-sublabel">WAN</div>
-				</div>
-				<div class="diagram-bridge">
-					<div class="bridge-label">NetTap br0</div>
-				</div>
-				<div class="diagram-device nic-device">
-					<div class="carrier-dot" class:carrier-up={lanCarrier} class:carrier-down={!lanCarrier}></div>
-					<div class="device-label mono">{lanIface}</div>
-					<div class="device-sublabel">LAN</div>
-				</div>
-				<div class="diagram-cable">
-					<div class="cable-line"></div>
-				</div>
-				<div class="diagram-device">
-					<div class="device-icon">&#128225;</div>
-					<div class="device-label">Router</div>
-				</div>
-			</div>
+					<!-- Modem → WAN port → NetTap bridge → LAN port → router -->
+					<div class="diagram">
+						<div class="node">
+							<span class="tile"><Icon name="dns" /></span>
+							<span class="node-label">ISP modem</span>
+						</div>
+						<span class="cable" aria-hidden="true"></span>
+						<div class="node">
+							<span class="tag">{wanIface}</span>
+							<span class="node-label">WAN</span>
+							<span class="res" class:is-live={wanCarrier} class:is-medium={!wanCarrier}>{wanCarrier ? 'Connected' : 'No carrier'}</span>
+						</div>
+						<span class="cable" aria-hidden="true"></span>
+						<div class="node">
+							<span class="tile accent"><Icon name="connections" /></span>
+							<span class="node-label">NetTap <span class="mono">br0</span></span>
+						</div>
+						<span class="cable" aria-hidden="true"></span>
+						<div class="node">
+							<span class="tag">{lanIface}</span>
+							<span class="node-label">LAN</span>
+							<span class="res" class:is-live={lanCarrier} class:is-medium={!lanCarrier}>{lanCarrier ? 'Connected' : 'No carrier'}</span>
+						</div>
+						<span class="cable" aria-hidden="true"></span>
+						<div class="node">
+							<span class="tile"><Icon name="infra" /></span>
+							<span class="node-label">Router</span>
+						</div>
+					</div>
 
-			<!-- Instructions -->
-			<div class="wiring-steps">
-				<h3>Steps</h3>
-				<ol>
-					<li>
-						<strong>Disconnect</strong> the Ethernet cable running from your ISP modem to your router.
-					</li>
-					<li>
-						<strong>Connect</strong> the modem's Ethernet cable to the <span class="mono badge badge-accent">{wanIface}</span> port on NetTap (WAN).
-					</li>
-					<li>
-						<strong>Connect</strong> a new Ethernet cable from the <span class="mono badge badge-accent">{lanIface}</span> port on NetTap (LAN) to your router's WAN port.
-					</li>
-					<li>
-						<strong>Wait</strong> for both carrier indicators above to turn green. This page will advance automatically.
-					</li>
-				</ol>
-			</div>
-
-			<!-- Carrier status -->
-			<div class="carrier-status">
-				<div class="carrier-item">
-					<span class="carrier-dot-inline" class:carrier-up={wanCarrier} class:carrier-down={!wanCarrier}></span>
-					<span>WAN ({wanIface}): <strong>{wanCarrier ? 'Connected' : 'No carrier'}</strong></span>
+					<div>
+						<h3 class="sub-title">Steps</h3>
+						<ol class="steps">
+							<li><strong>Disconnect</strong> the Ethernet cable running from your ISP modem to your router.</li>
+							<li>
+								<strong>Connect</strong> the modem's Ethernet cable to the <span class="tag">{wanIface}</span> port on NetTap (WAN).
+							</li>
+							<li>
+								<strong>Connect</strong> a new Ethernet cable from the <span class="tag">{lanIface}</span> port on NetTap (LAN) to your router's WAN port.
+							</li>
+							<li><strong>Wait</strong> for both ports above to read Connected. This page moves on by itself.</li>
+						</ol>
+					</div>
 				</div>
-				<div class="carrier-item">
-					<span class="carrier-dot-inline" class:carrier-up={lanCarrier} class:carrier-down={!lanCarrier}></span>
-					<span>LAN ({lanIface}): <strong>{lanCarrier ? 'Connected' : 'No carrier'}</strong></span>
-				</div>
-			</div>
+			</Card>
 		</div>
 
 	<!-- ==================== PHASE 3: Live Monitoring ==================== -->
 	{:else if phase === 3}
-		<!-- Bypass warning banner -->
 		{#if health?.bypass_active}
-			<div class="alert alert-warning" style="margin-bottom: var(--space-md);">
-				<strong>Bypass mode is active.</strong> Traffic is passing through without inspection. Disable bypass to resume monitoring.
+			<div class="notice is-warn">
+				<Icon name="warn" />
+				<span><strong>Bypass mode is on.</strong> Traffic passes through without inspection. Turn bypass off to resume monitoring.</span>
 			</div>
 		{/if}
 
-		<!-- Success banner -->
-		<div class="alert alert-success" style="margin-bottom: var(--space-lg);">
-			<strong>Your network is being monitored by NetTap.</strong>
-			All traffic between your modem and router is being analyzed for threats and anomalies.
+		<div class="notice is-ok">
+			<Icon name="check" />
+			<span><strong>NetTap is monitoring your network.</strong> All traffic between your modem and router is analysed for threats and anomalies.</span>
 		</div>
 
-		<!-- Health card -->
-		<div class="card phase-card">
-			<div class="card-header">
-				<h2 class="card-title">Bridge Health</h2>
-				{#if health}
-					<span class="badge {statusBadgeClass(health.health_status)}">
-						{health.health_status.toUpperCase()}
-					</span>
-				{:else if healthError}
-					<span class="badge badge-danger">Error</span>
-				{:else}
-					<span class="badge badge-muted">Loading...</span>
-				{/if}
-			</div>
+		<div class="grid">
+			<Card title="Bridge health" sub="Packets since the last check · checked every 5 seconds" class="c-12">
+				{#snippet actions()}
+					{#if health}
+						{@const chip = statusChip(health.health_status)}
+						<span class="chip {chip.cls}">{#if chip.icon}<Icon name={chip.icon} />{/if}{statusWord(health.health_status)}</span>
+					{:else if healthError}
+						<span class="chip is-bad"><Icon name="warn" />Error</span>
+					{:else}
+						<span class="chip">Loading…</span>
+					{/if}
+				{/snippet}
 
-			{#if healthError}
-				<div class="alert alert-danger">{healthError}</div>
-			{/if}
+				<div class="stack">
+					{#if healthError}
+						<div class="notice is-error" role="alert"><Icon name="warn" /><span>{healthError}</span></div>
+					{/if}
 
-			{#if health}
-				<div class="grid grid-cols-4 health-grid">
-					<div class="health-stat">
-						<span class="health-label">WAN Link</span>
-						<span class="health-value" class:text-success={health.wan_link} class:text-danger={!health.wan_link}>
-							{health.wan_link ? 'UP' : 'DOWN'}
-						</span>
-					</div>
-					<div class="health-stat">
-						<span class="health-label">LAN Link</span>
-						<span class="health-value" class:text-success={health.lan_link} class:text-danger={!health.lan_link}>
-							{health.lan_link ? 'UP' : 'DOWN'}
-						</span>
-					</div>
-					<div class="health-stat">
-						<span class="health-label">RX Packets</span>
-						<span class="health-value">{formatPackets(health.rx_packets_delta)}</span>
-					</div>
-					<div class="health-stat">
-						<span class="health-label">TX Packets</span>
-						<span class="health-value">{formatPackets(health.tx_packets_delta)}</span>
-					</div>
-					<div class="health-stat">
-						<span class="health-label">Latency</span>
-						<!-- OLD CODE START — read "null us" now that the daemon doesn't make up a latency
-						<span class="health-value">{health.latency_us} us</span>
-						OLD CODE END -->
-						<span class="health-value" title={health.latency_note || undefined}>{health.latency_us != null ? `${health.latency_us} us` : 'Not measured'}</span>
-					</div>
-					<div class="health-stat">
-						<span class="health-label">Uptime</span>
-						<span class="health-value">{formatUptime(health.uptime_seconds)}</span>
-					</div>
-					<div class="health-stat">
-						<span class="health-label">Bridge State</span>
-						<span class="health-value">{health.bridge_state}</span>
-					</div>
-					<div class="health-stat">
-						<span class="health-label">Bypass</span>
-						<span class="health-value" class:text-warning={health.bypass_active}>
-							{health.bypass_active ? 'ACTIVE' : 'Off'}
-						</span>
-					</div>
+					{#if health}
+						<div class="stats health-stats">
+							<div class="stat">
+								<div class="stat-k">WAN link</div>
+								<div class="stat-v link" class:up={health.wan_link}>{health.wan_link ? 'Up' : 'Down'}</div>
+							</div>
+							<div class="stat">
+								<div class="stat-k">LAN link</div>
+								<div class="stat-v link" class:up={health.lan_link}>{health.lan_link ? 'Up' : 'Down'}</div>
+							</div>
+							<div class="stat">
+								<div class="stat-k">RX packets</div>
+								<div class="stat-v">{formatPackets(health.rx_packets_delta)}</div>
+							</div>
+							<div class="stat">
+								<div class="stat-k">TX packets</div>
+								<div class="stat-v">{formatPackets(health.tx_packets_delta)}</div>
+							</div>
+							<div class="stat">
+								<div class="stat-k">Latency</div>
+								<!-- OLD CODE START — read "null us" now that the daemon doesn't make up a latency
+								<span class="health-value">{health.latency_us} us</span>
+								OLD CODE END -->
+								<div class="stat-v" title={health.latency_note || undefined}>{health.latency_us != null ? `${health.latency_us} us` : 'Not measured'}</div>
+							</div>
+							<div class="stat">
+								<div class="stat-k">Uptime</div>
+								<div class="stat-v">{formatUptime(health.uptime_seconds)}</div>
+							</div>
+							<div class="stat">
+								<div class="stat-k">Bridge state</div>
+								<div class="stat-v mono">{health.bridge_state}</div>
+							</div>
+							<div class="stat">
+								<div class="stat-k">Bypass</div>
+								<div class="stat-v">{health.bypass_active ? 'On' : 'Off'}</div>
+							</div>
+						</div>
+
+						{#if health.issues.length > 0}
+							<div class="issues">
+								<h3 class="sub-title">Issues</h3>
+								<ul>
+									{#each health.issues as issue}
+										<li><Icon name="warn" /><span>{issue}</span></li>
+									{/each}
+								</ul>
+							</div>
+						{/if}
+					{/if}
 				</div>
-
-				{#if health.issues.length > 0}
-					<div class="issues-section">
-						<h3>Issues</h3>
-						<ul>
-							{#each health.issues as issue}
-								<li class="text-warning">{issue}</li>
-							{/each}
-						</ul>
-					</div>
-				{/if}
-			{/if}
+			</Card>
 		</div>
 
-		<!-- Action buttons -->
-		<div class="action-buttons">
-			<button class="btn btn-primary btn-lg" onclick={() => goto('/')}>
-				Go to Dashboard
-			</button>
+		<div class="actions">
+			<button class="btn primary" onclick={() => goto('/')}>Go to dashboard</button>
 
 			<!-- #96: no bypass toggle while the bridge state is unknown -->
 			{#if health?.bypass_active}
-				<button
-					class="btn btn-lg"
-					onclick={handleBypassToggle}
-					disabled={bypassToggling}
-				>
-					{bypassToggling ? 'Disabling...' : 'Disable Bypass'}
+				<button class="btn" onclick={handleBypassToggle} disabled={bypassToggling}>
+					{bypassToggling ? 'Turning bypass off…' : 'Disable bypass'}
 				</button>
 			{:else}
 				<button
-					class="btn btn-danger btn-lg"
+					class="btn danger"
 					onclick={() => { bypassConfirmOpen = true; }}
 					disabled={bypassToggling || !health}
 				>
-					Enable Bypass
+					Enable bypass
 				</button>
 			{/if}
 		</div>
 		{#if bypassError}
-			<div class="alert alert-danger">{bypassError}</div>
+			<div class="notice is-error" role="alert"><Icon name="warn" /><span>{bypassError}</span></div>
 		{/if}
 
 		<!-- Bypass confirmation dialog -->
 		{#if bypassConfirmOpen}
-			<div class="modal-overlay" onclick={() => { bypassConfirmOpen = false; }} role="presentation">
+			<div class="overlay" onclick={() => { bypassConfirmOpen = false; }} role="presentation">
 				<!-- svelte-ignore a11y_click_events_have_key_events -->
-				<!-- svelte-ignore a11y_no_static_element_interactions -->
-				<div class="modal-card card" onclick={(e) => e.stopPropagation()}>
-					<h3 class="card-title">Enable Bypass Mode?</h3>
-					<p class="text-muted" style="margin: var(--space-md) 0;">
-						Bypass mode stops all traffic inspection. Packets will pass through the bridge without being analyzed.
-						Use this only for troubleshooting.
+				<div
+					class="card dialog"
+					role="dialog"
+					aria-modal="true"
+					aria-labelledby="bypass-title"
+					tabindex="-1"
+					onclick={(e) => e.stopPropagation()}
+				>
+					<h2 id="bypass-title" class="card-title">Turn on bypass mode?</h2>
+					<p class="muted">
+						Bypass mode stops all traffic inspection. Packets pass through the bridge without being analysed.
+						Use it only for troubleshooting.
 					</p>
-					<div class="modal-actions">
+					<div class="actions end">
 						<button class="btn" onclick={() => { bypassConfirmOpen = false; }}>Cancel</button>
-						<button
-							class="btn btn-danger"
-							onclick={handleBypassToggle}
-							disabled={bypassToggling}
-						>
-							{bypassToggling ? 'Enabling...' : 'Confirm Bypass'}
+						<button class="btn danger" onclick={handleBypassToggle} disabled={bypassToggling}>
+							{bypassToggling ? 'Turning bypass on…' : 'Turn on bypass'}
 						</button>
 					</div>
 				</div>
 			</div>
 		{/if}
 	{/if}
-	{/if}
-</div>
+{/if}
 
 <style>
-	.go-live-page {
-		max-width: 800px;
-		margin: 0 auto;
-		padding: var(--space-xl) var(--space-md);
+	/* Step indicator: the pill track, read-only. The system styles aria-pressed and
+	   aria-current="page"; a step is aria-current="step", so it gets the same light pill here. */
+	.phases {
+		list-style: none;
+		margin: 0;
+		align-self: flex-start;
+		max-width: 100%;
+		overflow-x: auto;
 	}
 
-	.page-header {
-		margin-bottom: var(--space-xl);
+	.phases .pill {
+		gap: var(--sp-1);
+		cursor: default;
 	}
 
-	.page-header h1 {
-		font-size: var(--text-3xl);
-		font-weight: 700;
-		margin-bottom: var(--space-xs);
+	.phases .pill[aria-current='step'] {
+		background: var(--pill-active-bg);
+		color: var(--on-light);
 	}
 
-	/* ----- Phase indicator ----- */
-	.phase-indicator {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0;
-		margin-bottom: var(--space-xl);
+	.phases .pill :global(.ic) {
+		width: 14px;
+		height: 14px;
+		stroke-width: 2.2;
 	}
 
-	.phase-step {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-sm) var(--space-md);
-		border-radius: var(--radius-full);
-		background-color: var(--bg-tertiary);
-		border: 1px solid var(--border-default);
-		transition: all var(--transition-normal);
-	}
-
-	.phase-step.active {
-		border-color: var(--accent);
-		background-color: var(--accent-muted);
-	}
-
-	.phase-step.completed {
-		border-color: var(--success);
-		background-color: var(--success-muted);
-	}
-
-	.phase-num {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		border-radius: var(--radius-full);
-		background-color: var(--bg-tertiary);
-		font-size: var(--text-xs);
-		font-weight: 700;
-	}
-
-	.phase-step.active .phase-num {
-		background-color: var(--accent);
-		color: #fff;
-	}
-
-	.phase-step.completed .phase-num {
-		background-color: var(--success);
-		color: #fff;
-	}
-
-	.phase-label {
+	.muted {
+		color: var(--text-2);
 		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-secondary);
 	}
 
-	.phase-step.active .phase-label {
-		color: var(--accent);
+	.sub-title {
+		font: 500 var(--text-base)/1.3 var(--font-display);
+		margin-bottom: var(--sp-2);
 	}
 
-	.phase-step.completed .phase-label {
-		color: var(--success);
-	}
-
-	.phase-connector {
-		width: 40px;
-		height: 2px;
-		background-color: var(--border-default);
-		transition: background-color var(--transition-normal);
-	}
-
-	.phase-connector.active {
-		background-color: var(--success);
-	}
-
-	/* ----- Phase card ----- */
-	.phase-card {
-		margin-bottom: var(--space-lg);
-	}
-
-	/* ----- Checklist (Phase 1) ----- */
+	/* ----- Readiness checklist ----- */
 	.checklist {
 		list-style: none;
+		margin: 0;
 		padding: 0;
-		margin: var(--space-md) 0;
 	}
 
-	.checklist-item {
+	.check {
 		display: flex;
 		align-items: flex-start;
-		gap: var(--space-sm);
-		padding: var(--space-sm) 0;
-		border-bottom: 1px solid var(--border-muted);
+		gap: var(--sp-3);
+		padding: var(--sp-2) 0;
+		border-bottom: 1px solid var(--line);
 	}
 
-	.checklist-item:last-child {
-		border-bottom: none;
+	.check:last-child {
+		border-bottom: 0;
 	}
 
 	.check-icon {
-		font-size: var(--text-lg);
-		line-height: 1;
-		flex-shrink: 0;
-		width: 24px;
-		text-align: center;
+		display: inline-flex;
+		padding-top: 2px;
+		color: var(--sev-critical);
 	}
 
-	.checklist-item.passed .check-icon {
-		color: var(--success);
+	.check.passed .check-icon {
+		color: var(--ok);
 	}
 
-	.checklist-item.failed .check-icon {
-		color: var(--danger);
-	}
-
-	.check-content {
+	.check-body {
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
@@ -689,289 +627,151 @@
 
 	.check-name {
 		font-weight: 600;
-		text-transform: capitalize;
+		font-size: var(--text-sm);
+	}
+
+	.check-name::first-letter {
+		text-transform: uppercase;
 	}
 
 	.check-detail {
-		font-size: var(--text-sm);
+		font-size: var(--text-xs);
+		color: var(--text-2);
 	}
 
 	.action-section {
-		margin-top: var(--space-lg);
-		padding-top: var(--space-lg);
-		border-top: 1px solid var(--border-default);
+		display: flex;
+		flex-direction: column;
+		gap: var(--sp-3);
+		padding-top: var(--sp-4);
+		border-top: 1px solid var(--line);
 	}
 
-	.readiness-message {
-		margin-top: var(--space-md);
-		font-size: var(--text-sm);
-		font-style: italic;
-	}
-
-	/* ----- Network diagram (Phase 2) ----- */
-	.network-diagram {
+	/* ----- Wiring diagram ----- */
+	.diagram {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		gap: var(--space-xs);
-		padding: var(--space-xl) var(--space-md);
-		background-color: var(--bg-primary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-lg);
-		margin-bottom: var(--space-lg);
-		overflow-x: auto;
+		flex-wrap: wrap;
+		gap: var(--sp-3);
+		padding: var(--sp-5);
+		border-radius: var(--r-md);
+		background: var(--surface-2);
+		border: 1px solid var(--line);
 	}
 
-	.diagram-device {
+	.node {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-xs);
-		min-width: 70px;
+		gap: var(--sp-1);
+		text-align: center;
 	}
 
-	.device-icon {
-		font-size: var(--text-2xl);
-	}
-
-	.device-label {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.device-sublabel {
+	.node-label {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
-		text-transform: uppercase;
+		font-weight: 600;
+		color: var(--text-2);
 	}
 
-	.nic-device {
-		position: relative;
-		padding: var(--space-sm);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		background-color: var(--bg-secondary);
-	}
-
-	.diagram-cable {
-		flex: 0 0 30px;
-		display: flex;
-		align-items: center;
-	}
-
-	.cable-line {
-		width: 100%;
-		height: 2px;
-		background-color: var(--border-default);
-	}
-
-	.diagram-bridge {
-		padding: var(--space-sm) var(--space-md);
-		border: 2px solid var(--accent);
-		border-radius: var(--radius-md);
-		background-color: var(--accent-muted);
-	}
-
-	.bridge-label {
-		font-size: var(--text-sm);
-		font-weight: 700;
+	.tile.accent {
 		color: var(--accent);
-		font-family: var(--font-mono);
 	}
 
-	.carrier-dot {
-		width: 10px;
-		height: 10px;
-		border-radius: var(--radius-full);
-		position: absolute;
-		top: -5px;
-		right: -5px;
+	.cable {
+		width: var(--sp-8);
+		height: 2px;
+		border-radius: var(--r-pill);
+		background: var(--line-strong);
 	}
 
-	.carrier-dot.carrier-up {
-		background-color: var(--success);
-		box-shadow: 0 0 6px var(--success);
-	}
-
-	.carrier-dot.carrier-down {
-		background-color: var(--danger);
-		box-shadow: 0 0 6px var(--danger);
-	}
-
-	.carrier-dot-inline {
-		display: inline-block;
-		width: 10px;
-		height: 10px;
-		border-radius: var(--radius-full);
-		flex-shrink: 0;
-	}
-
-	.carrier-dot-inline.carrier-up {
-		background-color: var(--success);
-		box-shadow: 0 0 6px var(--success);
-	}
-
-	.carrier-dot-inline.carrier-down {
-		background-color: var(--danger);
-		box-shadow: 0 0 6px var(--danger);
-	}
-
-	/* ----- Wiring steps ----- */
-	.wiring-steps {
-		margin-bottom: var(--space-lg);
-	}
-
-	.wiring-steps h3 {
-		font-size: var(--text-lg);
-		font-weight: 600;
-		margin-bottom: var(--space-sm);
-	}
-
-	.wiring-steps ol {
-		padding-left: var(--space-lg);
+	.steps {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.wiring-steps li {
+		gap: var(--sp-2);
+		margin: 0;
+		padding-left: var(--sp-6);
 		font-size: var(--text-sm);
-		line-height: var(--leading-relaxed);
-		color: var(--text-secondary);
+		color: var(--text-2);
+		line-height: 1.7;
 	}
 
-	.carrier-status {
-		display: flex;
-		gap: var(--space-lg);
-		padding: var(--space-md);
-		background-color: var(--bg-primary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
+	.steps strong {
+		color: var(--text-1);
 	}
 
-	.carrier-item {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
+	/* ----- Health stats: the system's strip, eight stats in two rows of four ----- */
+	.health-stats {
+		row-gap: var(--sp-5);
 	}
 
-	/* ----- Health grid (Phase 3) ----- */
-	.health-grid {
-		margin: var(--space-md) 0;
+	.health-stats .stat:nth-child(4n + 1) {
+		padding-left: 0;
+		border-left: 0;
 	}
 
-	.health-stat {
+	.link {
+		color: var(--sev-critical);
+	}
+
+	.link.up {
+		color: var(--ok);
+	}
+
+	.issues ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-xs);
-		padding: var(--space-sm);
-		background-color: var(--bg-primary);
-		border: 1px solid var(--border-muted);
-		border-radius: var(--radius-md);
+		gap: var(--sp-2);
 	}
 
-	.health-label {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		text-transform: uppercase;
-		font-weight: 600;
-	}
-
-	.health-value {
-		font-size: var(--text-lg);
-		font-weight: 700;
-		font-family: var(--font-mono);
-	}
-
-	.issues-section {
-		margin-top: var(--space-md);
-		padding-top: var(--space-md);
-		border-top: 1px solid var(--border-default);
-	}
-
-	.issues-section h3 {
-		font-size: var(--text-base);
-		font-weight: 600;
-		margin-bottom: var(--space-sm);
-	}
-
-	.issues-section ul {
-		list-style: disc;
-		padding-left: var(--space-lg);
-	}
-
-	.issues-section li {
-		font-size: var(--text-sm);
-		margin-bottom: var(--space-xs);
-	}
-
-	/* ----- Action buttons ----- */
-	.action-buttons {
+	.issues li {
 		display: flex;
-		gap: var(--space-md);
-		margin-top: var(--space-lg);
+		gap: var(--sp-2);
+		font-size: var(--text-sm);
 	}
 
-	/* ----- Bypass confirmation modal ----- */
-	.modal-overlay {
+	.issues li :global(.ic) {
+		flex: none;
+		width: 16px;
+		height: 16px;
+		margin-top: 2px;
+		color: var(--sev-medium);
+	}
+
+	.actions.end {
+		justify-content: flex-end;
+	}
+
+	.btn.danger {
+		color: var(--sev-critical);
+	}
+
+	/* ----- Bypass confirmation ----- */
+	.overlay {
 		position: fixed;
 		inset: 0;
-		background-color: var(--bg-overlay);
+		z-index: 40;
+		display: grid;
+		place-items: center;
+		padding: var(--sp-4);
+		background: var(--scrim);
+	}
+
+	.dialog {
+		width: min(100%, 480px);
 		display: flex;
-		align-items: center;
-		justify-content: center;
-		z-index: 1000;
+		flex-direction: column;
+		gap: var(--sp-4);
+		box-shadow: var(--shadow-pop);
 	}
 
-	.modal-card {
-		max-width: 480px;
-		width: 90%;
-	}
-
-	.modal-actions {
-		display: flex;
-		gap: var(--space-sm);
-		justify-content: flex-end;
-		margin-top: var(--space-md);
-	}
-
-	/* ----- Responsive ----- */
-	@media (max-width: 640px) {
-		.phase-indicator {
-			flex-wrap: wrap;
-			gap: var(--space-xs);
-		}
-
-		.phase-connector {
-			display: none;
-		}
-
-		.network-diagram {
-			flex-direction: column;
-			gap: var(--space-sm);
-		}
-
-		.diagram-cable {
-			width: 2px;
-			height: 20px;
-			flex: 0 0 20px;
-		}
-
-		.cable-line {
-			width: 2px;
-			height: 100%;
-		}
-
-		.carrier-status {
-			flex-direction: column;
-			gap: var(--space-sm);
-		}
-
-		.action-buttons {
-			flex-direction: column;
+	@container app (max-width: 760px) {
+		.health-stats .stat:nth-child(odd) {
+			padding-left: 0;
+			border-left: 0;
 		}
 	}
 </style>

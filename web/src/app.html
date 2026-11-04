@@ -5,6 +5,11 @@
 		<link rel="icon" href="%sveltekit.assets%/favicon.png" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<title>NetTap</title>
+		<!-- Theme bootstrap: runs before first paint so a saved variant never flashes Ember. Ember is no attribute. See src/lib/stores/theme.ts. -->
+		<script>
+			try { const v = localStorage.getItem('nettap-theme'); if (v === 'graphite' || v === 'spectrum') document.documentElement.dataset.theme = v; } catch {}
+		</script>
+		<link rel="preload" href="/fonts/manrope/Manrope-Variable.woff2" as="font" type="font/woff2" crossorigin />
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

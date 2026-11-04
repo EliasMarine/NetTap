@@ -31,9 +31,9 @@ test.describe('Login page', () => {
 		await page.getByLabel('Password').fill('wrongpassword');
 		await page.getByRole('button', { name: 'Sign In' }).click();
 
-		// The server-side action returns a fail(401) with error message
-		// which renders in the {#if form?.error} block as .alert-danger
-		const errorAlert = page.locator('.alert-danger');
+		// The server-side action returns a fail(401) with error message,
+		// which renders in the {#if form?.error} block as a role="alert" notice
+		const errorAlert = page.getByRole('alert');
 		await expect(errorAlert).toBeVisible({ timeout: 10_000 });
 		await expect(errorAlert).toContainText('Invalid username or password');
 	});
@@ -103,7 +103,7 @@ test.describe('Login page', () => {
 		// on the mock token), that's okay — we verified the form submitted.
 		// If we ended up at /, the full flow worked.
 		const finalUrl = page.url();
-		const submitted = !finalUrl.includes('/login') || page.locator('.alert-danger').isHidden();
+		const submitted = !finalUrl.includes('/login') || (await page.getByRole('alert').isHidden());
 		expect(submitted).toBeTruthy();
 	});
 });

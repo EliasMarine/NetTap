@@ -1,0 +1,13 @@
+<!-- @dsCard group="Actions" height=120 -->
+<!doctype html>
+<html data-theme="ember">
+<head><link rel="stylesheet" href="../../tokens.css"><link rel="stylesheet" href="../bundle.css"><meta charset="utf-8"><title>Pills preview</title></head>
+<body>
+<div style="display:flex;flex-wrap:wrap;gap:var(--sp-3)">
+  <div class="pills" role="group" aria-label="Time range"><button class="pill" type="button" aria-pressed="false">1h</button><button class="pill" type="button" aria-pressed="true">24h</button><button class="pill" type="button" aria-pressed="false">7d</button><button class="pill" type="button" aria-pressed="false">30d</button></div>
+  <div class="pills" role="group" aria-label="Group alerts"><button class="pill" type="button" aria-pressed="true">By category</button><button class="pill" type="button" aria-pressed="false">All alerts</button></div>
+  <div class="pills" role="group" aria-label="Protocol"><button class="pill" type="button" aria-pressed="true">All</button><button class="pill" type="button" aria-pressed="false">TCP</button><button class="pill" type="button" aria-pressed="false">UDP</button><button class="pill" type="button" aria-pressed="false">ICMP</button></div>
+</div>
+<script>document.addEventListener('click',function(e){var p=e.target.closest('.pill');if(!p)return;p.parentElement.querySelectorAll('.pill').forEach(function(x){x.setAttribute('aria-pressed',String(x===p))});});</script>
+</body>
+</html>

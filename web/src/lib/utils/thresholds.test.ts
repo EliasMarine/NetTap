@@ -89,19 +89,19 @@ describe('threshold utilities', () => {
 	// -- thresholdColor ------------------------------------------------------
 
 	describe('thresholdColor', () => {
-		it('returns var(--success) for success level', () => {
+		it('returns var(--ok) for success level', () => {
 			const thresholds: Threshold[] = [{ value: 0, level: 'success' }];
-			expect(thresholdColor(10, thresholds)).toBe('var(--success)');
+			expect(thresholdColor(10, thresholds)).toBe('var(--ok)');
 		});
 
-		it('returns var(--warning) for warning level', () => {
+		it('returns var(--sev-medium) for warning level', () => {
 			const thresholds: Threshold[] = [{ value: 0, level: 'warning' }];
-			expect(thresholdColor(10, thresholds)).toBe('var(--warning)');
+			expect(thresholdColor(10, thresholds)).toBe('var(--sev-medium)');
 		});
 
-		it('returns var(--danger) for danger level', () => {
+		it('returns var(--sev-critical) for danger level', () => {
 			const thresholds: Threshold[] = [{ value: 0, level: 'danger' }];
-			expect(thresholdColor(10, thresholds)).toBe('var(--danger)');
+			expect(thresholdColor(10, thresholds)).toBe('var(--sev-critical)');
 		});
 
 		it('returns var(--accent) for accent level', () => {
@@ -109,21 +109,27 @@ describe('threshold utilities', () => {
 			expect(thresholdColor(10, thresholds)).toBe('var(--accent)');
 		});
 
-		it('returns var(--text-muted) for muted level (below all thresholds)', () => {
+		it('returns each alert severity its own colour token', () => {
+			expect(thresholdColor(1, ALERT_SEVERITY_THRESHOLDS)).toBe('var(--sev-high)');
+			expect(thresholdColor(2, ALERT_SEVERITY_THRESHOLDS)).toBe('var(--sev-medium)');
+			expect(thresholdColor(3, ALERT_SEVERITY_THRESHOLDS)).toBe('var(--sev-low)');
+		});
+
+		it('returns var(--text-3) for muted level (below all thresholds)', () => {
 			const thresholds: Threshold[] = [{ value: 50, level: 'warning' }];
-			expect(thresholdColor(10, thresholds)).toBe('var(--text-muted)');
+			expect(thresholdColor(10, thresholds)).toBe('var(--text-3)');
 		});
 
 		it('returns correct CSS variable for DISK_USAGE at 85%', () => {
-			expect(thresholdColor(85, DISK_USAGE_THRESHOLDS)).toBe('var(--danger)');
+			expect(thresholdColor(85, DISK_USAGE_THRESHOLDS)).toBe('var(--sev-critical)');
 		});
 
 		it('returns correct CSS variable for DISK_USAGE at 70%', () => {
-			expect(thresholdColor(70, DISK_USAGE_THRESHOLDS)).toBe('var(--warning)');
+			expect(thresholdColor(70, DISK_USAGE_THRESHOLDS)).toBe('var(--sev-medium)');
 		});
 
 		it('returns correct CSS variable for DISK_USAGE at 30%', () => {
-			expect(thresholdColor(30, DISK_USAGE_THRESHOLDS)).toBe('var(--success)');
+			expect(thresholdColor(30, DISK_USAGE_THRESHOLDS)).toBe('var(--ok)');
 		});
 	});
 
@@ -156,7 +162,7 @@ describe('threshold utilities', () => {
 		});
 
 		it('returns correct badge for ALERT_SEVERITY severity 1 (high)', () => {
-			expect(thresholdBadgeClass(1, ALERT_SEVERITY_THRESHOLDS)).toBe('badge badge-danger');
+			expect(thresholdBadgeClass(1, ALERT_SEVERITY_THRESHOLDS)).toBe('badge severity-high');
 		});
 
 		it('returns correct badge for ALERT_SEVERITY severity 2 (medium)', () => {
@@ -164,23 +170,23 @@ describe('threshold utilities', () => {
 		});
 
 		it('returns correct badge for ALERT_SEVERITY severity 3 (low)', () => {
-			expect(thresholdBadgeClass(3, ALERT_SEVERITY_THRESHOLDS)).toBe('badge badge-accent');
+			expect(thresholdBadgeClass(3, ALERT_SEVERITY_THRESHOLDS)).toBe('badge severity-low');
 		});
 	});
 
 	// -- Preset Threshold Configs -------------------------------------------
 
 	describe('ALERT_SEVERITY_THRESHOLDS', () => {
-		it('maps severity 1 to danger', () => {
-			expect(resolveLevel(1, ALERT_SEVERITY_THRESHOLDS)).toBe('danger');
+		it('maps severity 1 to high', () => {
+			expect(resolveLevel(1, ALERT_SEVERITY_THRESHOLDS)).toBe('high');
 		});
 
 		it('maps severity 2 to warning', () => {
 			expect(resolveLevel(2, ALERT_SEVERITY_THRESHOLDS)).toBe('warning');
 		});
 
-		it('maps severity 3 to accent', () => {
-			expect(resolveLevel(3, ALERT_SEVERITY_THRESHOLDS)).toBe('accent');
+		it('maps severity 3 to low', () => {
+			expect(resolveLevel(3, ALERT_SEVERITY_THRESHOLDS)).toBe('low');
 		});
 
 		it('maps severity 0 to muted (below all thresholds)', () => {

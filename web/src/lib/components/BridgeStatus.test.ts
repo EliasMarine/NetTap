@@ -18,15 +18,15 @@ import { describe, it, expect } from 'vitest';
 function healthBadgeClass(status: string): string {
 	switch (status) {
 		case 'normal':
-			return 'badge badge-success';
+			return 'chip is-ok';
 		case 'degraded':
-			return 'badge badge-warning';
+			return 'chip is-warn';
 		case 'bypass':
-			return 'badge badge-info';
+			return 'chip';
 		case 'down':
-			return 'badge badge-danger';
+			return 'chip is-bad';
 		default:
-			return 'badge';
+			return 'chip';
 	}
 }
 
@@ -48,23 +48,23 @@ function healthBadgeLabel(status: string): string {
 
 /** Returns the CSS color for a NIC link state */
 function linkColor(up: boolean | undefined): string {
-	if (up === undefined) return 'var(--text-muted)';
-	return up ? 'var(--success)' : 'var(--danger)';
+	if (up === undefined) return 'var(--text-3)';
+	return up ? 'var(--ok)' : 'var(--sev-critical)';
 }
 
 /** Returns the CSS color for the bridge line based on health status */
 function bridgeLineColor(status: string | undefined): string {
 	switch (status) {
 		case 'normal':
-			return 'var(--success)';
+			return 'var(--ok)';
 		case 'degraded':
-			return 'var(--warning)';
+			return 'var(--sev-medium)';
 		case 'bypass':
 			return 'var(--accent)';
 		case 'down':
-			return 'var(--danger)';
+			return 'var(--sev-critical)';
 		default:
-			return 'var(--text-muted)';
+			return 'var(--text-3)';
 	}
 }
 
@@ -129,8 +129,8 @@ class BypassToggleState {
 
 	get buttonLabel(): string {
 		if (this.isLoading) return 'Updating...';
-		if (this.isActive) return 'Disable Bypass';
-		return 'Enable Bypass';
+		if (this.isActive) return 'Disable bypass';
+		return 'Enable bypass';
 	}
 
 	get confirmText(): string {
@@ -139,7 +139,7 @@ class BypassToggleState {
 	}
 
 	get statusBadgeClass(): string {
-		return this.isActive ? 'badge badge-warning' : 'badge badge-success';
+		return this.isActive ? 'chip is-warn' : 'chip is-ok';
 	}
 
 	get statusLabel(): string {
@@ -156,23 +156,23 @@ describe('BridgeStatus logic', () => {
 
 	describe('healthBadgeClass', () => {
 		it('returns success badge for normal status', () => {
-			expect(healthBadgeClass('normal')).toBe('badge badge-success');
+			expect(healthBadgeClass('normal')).toBe('chip is-ok');
 		});
 
 		it('returns warning badge for degraded status', () => {
-			expect(healthBadgeClass('degraded')).toBe('badge badge-warning');
+			expect(healthBadgeClass('degraded')).toBe('chip is-warn');
 		});
 
 		it('returns info badge for bypass status', () => {
-			expect(healthBadgeClass('bypass')).toBe('badge badge-info');
+			expect(healthBadgeClass('bypass')).toBe('chip');
 		});
 
 		it('returns danger badge for down status', () => {
-			expect(healthBadgeClass('down')).toBe('badge badge-danger');
+			expect(healthBadgeClass('down')).toBe('chip is-bad');
 		});
 
-		it('returns plain badge for unknown status', () => {
-			expect(healthBadgeClass('something-else')).toBe('badge');
+		it('returns plain chip for unknown status', () => {
+			expect(healthBadgeClass('something-else')).toBe('chip');
 		});
 	});
 
@@ -202,15 +202,15 @@ describe('BridgeStatus logic', () => {
 
 	describe('linkColor', () => {
 		it('returns success color when link is up', () => {
-			expect(linkColor(true)).toBe('var(--success)');
+			expect(linkColor(true)).toBe('var(--ok)');
 		});
 
 		it('returns danger color when link is down', () => {
-			expect(linkColor(false)).toBe('var(--danger)');
+			expect(linkColor(false)).toBe('var(--sev-critical)');
 		});
 
 		it('returns muted color when link state is undefined', () => {
-			expect(linkColor(undefined)).toBe('var(--text-muted)');
+			expect(linkColor(undefined)).toBe('var(--text-3)');
 		});
 	});
 
@@ -218,11 +218,11 @@ describe('BridgeStatus logic', () => {
 
 	describe('bridgeLineColor', () => {
 		it('returns success for normal', () => {
-			expect(bridgeLineColor('normal')).toBe('var(--success)');
+			expect(bridgeLineColor('normal')).toBe('var(--ok)');
 		});
 
 		it('returns warning for degraded', () => {
-			expect(bridgeLineColor('degraded')).toBe('var(--warning)');
+			expect(bridgeLineColor('degraded')).toBe('var(--sev-medium)');
 		});
 
 		it('returns accent for bypass', () => {
@@ -230,11 +230,11 @@ describe('BridgeStatus logic', () => {
 		});
 
 		it('returns danger for down', () => {
-			expect(bridgeLineColor('down')).toBe('var(--danger)');
+			expect(bridgeLineColor('down')).toBe('var(--sev-critical)');
 		});
 
 		it('returns muted for undefined', () => {
-			expect(bridgeLineColor(undefined)).toBe('var(--text-muted)');
+			expect(bridgeLineColor(undefined)).toBe('var(--text-3)');
 		});
 	});
 
@@ -375,12 +375,12 @@ describe('BridgeStatus logic', () => {
 
 		it('returns correct button label when inactive', () => {
 			const state = new BypassToggleState(false);
-			expect(state.buttonLabel).toBe('Enable Bypass');
+			expect(state.buttonLabel).toBe('Enable bypass');
 		});
 
 		it('returns correct button label when active', () => {
 			const state = new BypassToggleState(true);
-			expect(state.buttonLabel).toBe('Disable Bypass');
+			expect(state.buttonLabel).toBe('Disable bypass');
 		});
 
 		it('returns correct confirm text when enabling', () => {
@@ -395,12 +395,12 @@ describe('BridgeStatus logic', () => {
 
 		it('returns correct status badge class for active', () => {
 			const state = new BypassToggleState(true);
-			expect(state.statusBadgeClass).toBe('badge badge-warning');
+			expect(state.statusBadgeClass).toBe('chip is-warn');
 		});
 
 		it('returns correct status badge class for inactive', () => {
 			const state = new BypassToggleState(false);
-			expect(state.statusBadgeClass).toBe('badge badge-success');
+			expect(state.statusBadgeClass).toBe('chip is-ok');
 		});
 
 		it('returns correct status label', () => {

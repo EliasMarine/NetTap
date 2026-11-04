@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, fireEvent } from '@testing-library/svelte';
+import { get } from 'svelte/store';
+import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import ToolsCyberChefPage from './+page.svelte';
 import SystemCyberChefPage from '../../system/cyberchef/+page.svelte';
 
@@ -41,5 +43,52 @@ describe.each([
 
 		expect(await screen.findByText(/container is not running/)).toBeInTheDocument();
 		expect(screen.getByText('Offline')).toBeInTheDocument();
+	});
+});
+
+describe('Tools CyberChef page', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const UP = { available: true, version: '10.19.4', container_running: true, container_name: 'cyberchef' };
+
+	it('shows the loading state while the status is checked', () => {
+		vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+		render(ToolsCyberChefPage);
+		expect(screen.getByRole('status')).toHaveTextContent('Checking CyberChef status…');
+		expect(screen.getByText('Checking…')).toBeInTheDocument();
+	});
+
+	it('shows the workspace and the running chip when CyberChef is up', async () => {
+		stubFetch(UP);
+		render(ToolsCyberChefPage);
+		expect(await screen.findByTitle('CyberChef')).toHaveAttribute('src', '/cyberchef/');
+		expect(screen.getByText('Running')).toBeInTheDocument();
+		expect(screen.getByRole('heading', { level: 1, name: 'CyberChef' })).toBeInTheDocument();
+	});
+
+	it('reports ok to the page refresh, failed when the status request fails, and unregisters on destroy', async () => {
+		stubFetch(UP);
+		const { unmount } = render(ToolsCyberChefPage);
+		await screen.findByText('Running');
+		expect(get(pageRefresh)).toMatchObject({ available: true, status: 'ok' });
+
+		stubFetch(null);
+		expect(await refreshPage()).toBe('failed');
+		expect(get(pageRefresh).status).toBe('failed');
+
+		unmount();
+		expect(get(pageRefresh).available).toBe(false);
+	});
+
+	it('Try again re-checks the status through the refresh contract', async () => {
+		stubFetch(null);
+		render(ToolsCyberChefPage);
+		await screen.findByText("Couldn't check CyberChef status: the request failed.");
+		stubFetch(UP);
+		await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+		expect(await screen.findByText('Running')).toBeInTheDocument();
+		expect(get(pageRefresh).status).toBe('ok');
 	});
 });

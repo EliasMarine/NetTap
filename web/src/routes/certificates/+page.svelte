@@ -6,7 +6,10 @@
 	 * and detail modal. Alerts on issuer changes (potential MITM).
 	 */
 
-	import { compareValues } from '$lib/utils/table-sort.svelte';
+	import { onDestroy, onMount } from 'svelte';
+	// OLD CODE START — sorting moved into DataTable (utils/table-sort, blanks last both ways)
+	// import { compareValues } from '$lib/utils/table-sort.svelte';
+	// OLD CODE END
 	import {
 		getCertificates,
 		getExpiringCerts,
@@ -17,6 +20,13 @@
 		type IssuerChange,
 		type CertStats,
 	} from '$lib/api/certificates';
+	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import KpiCard from '$lib/components/ui/KpiCard.svelte';
+	import Pills from '$lib/components/ui/Pills.svelte';
 
 	// State
 	let certificates = $state<Certificate[]>([]);
@@ -26,72 +36,77 @@
 	// OLD CODE START — 2026-11-02: null now means the stats couldn't be loaded (cards show a dash)
 	// let stats = $state<CertStats>({ total_certs: 0, expiring_count: 0, expired_count: 0, self_signed_count: 0, issuer_changes_count: 0, from: '', to: '' });
 	// OLD CODE END
-	let stats = $state<CertStats | null>({ total_certs: 0, expiring_count: 0, expired_count: 0, self_signed_count: 0, issuer_changes_count: 0, from: '', to: '' });
+	// OLD CODE START — zeros before the first load read as real counts (PLAN §4.1)
+	// let stats = $state<CertStats | null>({ total_certs: 0, expiring_count: 0, expired_count: 0, self_signed_count: 0, issuer_changes_count: 0, from: '', to: '' });
+	// OLD CODE END
+	let stats = $state<CertStats | null>(null);
 	let issuerChanges = $state<IssuerChange[]>([]);
 	let loading = $state(true);
 	let statusFilter = $state('all');
 	let selectedCert = $state<Certificate | null>(null);
 
-	// Sort state
-	let sortField = $state('domain');
-	let sortDir = $state<'asc' | 'desc'>('asc');
-
-	function toggleSort(field: string) {
-		if (sortField === field) {
-			sortDir = sortDir === 'desc' ? 'asc' : 'desc';
-		} else {
-			sortField = field;
-			sortDir = field === 'not_after' ? 'asc' : 'desc';
-		}
-	}
-
-	let sortedCertificates = $derived.by(() => {
-		const sorted = [...certificates];
-		sorted.sort((a, b) => {
-			let aVal: string | number = '';
-			let bVal: string | number = '';
-			switch (sortField) {
-				case 'domain':
-					aVal = (a.domain || a.server_name || '').toLowerCase();
-					bVal = (b.domain || b.server_name || '').toLowerCase();
-					break;
-				case 'issuer':
-					aVal = (a.issuer || '').toLowerCase();
-					bVal = (b.issuer || '').toLowerCase();
-					break;
-				case 'not_before':
-					aVal = a.not_before || '';
-					bVal = b.not_before || '';
-					break;
-				case 'not_after':
-					aVal = a.not_after || '';
-					bVal = b.not_after || '';
-					break;
-				case 'status':
-					aVal = (a.status || '').toLowerCase();
-					bVal = (b.status || '').toLowerCase();
-					break;
-				case 'source_ip':
-					aVal = (a.source_ip || '').toLowerCase();
-					bVal = (b.source_ip || '').toLowerCase();
-					break;
-			}
-			// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
-			// if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
-			// if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
-			// return 0;
-			// OLD CODE END
-			if (!aVal !== !bVal) return aVal ? -1 : 1; // a blank (no source IP, no date) goes last both ways
-			const cmp = compareValues(aVal, bVal);
-			return sortDir === 'asc' ? cmp : -cmp;
-		});
-		return sorted;
-	});
-
-	// Load data on mount
-	$effect(() => {
-		loadData();
-	});
+	// OLD CODE START — DataTable sorts every column (utils/table-sort: numbers in text by value, blanks last)
+	// // Sort state
+	// let sortField = $state('domain');
+	// let sortDir = $state<'asc' | 'desc'>('asc');
+	//
+	// function toggleSort(field: string) {
+	// 	if (sortField === field) {
+	// 		sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+	// 	} else {
+	// 		sortField = field;
+	// 		sortDir = field === 'not_after' ? 'asc' : 'desc';
+	// 	}
+	// }
+	//
+	// let sortedCertificates = $derived.by(() => {
+	// 	const sorted = [...certificates];
+	// 	sorted.sort((a, b) => {
+	// 		let aVal: string | number = '';
+	// 		let bVal: string | number = '';
+	// 		switch (sortField) {
+	// 			case 'domain':
+	// 				aVal = (a.domain || a.server_name || '').toLowerCase();
+	// 				bVal = (b.domain || b.server_name || '').toLowerCase();
+	// 				break;
+	// 			case 'issuer':
+	// 				aVal = (a.issuer || '').toLowerCase();
+	// 				bVal = (b.issuer || '').toLowerCase();
+	// 				break;
+	// 			case 'not_before':
+	// 				aVal = a.not_before || '';
+	// 				bVal = b.not_before || '';
+	// 				break;
+	// 			case 'not_after':
+	// 				aVal = a.not_after || '';
+	// 				bVal = b.not_after || '';
+	// 				break;
+	// 			case 'status':
+	// 				aVal = (a.status || '').toLowerCase();
+	// 				bVal = (b.status || '').toLowerCase();
+	// 				break;
+	// 			case 'source_ip':
+	// 				aVal = (a.source_ip || '').toLowerCase();
+	// 				bVal = (b.source_ip || '').toLowerCase();
+	// 				break;
+	// 		}
+	// 		// OLD CODE START — text order put 10.10.0.235 before 10.10.0.26; compareValues orders the numbers in text
+	// 		// if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
+	// 		// if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
+	// 		// return 0;
+	// 		// OLD CODE END
+	// 		if (!aVal !== !bVal) return aVal ? -1 : 1; // a blank (no source IP, no date) goes last both ways
+	// 		const cmp = compareValues(aVal, bVal);
+	// 		return sortDir === 'asc' ? cmp : -cmp;
+	// 	});
+	// 	return sorted;
+	// });
+	//
+	// // Load data on mount
+	// $effect(() => {
+	// 	loadData();
+	// });
+	// OLD CODE END
 
 	// OLD CODE START — #96: the getters returned [] on failure, read as "No certificates found"
 	// and no MITM warning; they now throw
@@ -128,47 +143,95 @@
 	let certsFailed = $state(false);
 	let changesFailed = $state(false);
 
-	async function loadData() {
+	// OLD CODE START — PLAN §5.5: one guarded loader for the first load, Refresh and the filter,
+	// so a refresh keeps the chosen filter and a slower, older answer never wins
+	// async function loadData() {
+	// 	loading = true;
+	// 	const [certsRes, statsRes, changesRes] = await Promise.allSettled([
+	// 		getCertificates(),
+	// 		getCertStats(),
+	// 		getIssuerChanges(),
+	// 	]);
+	// 	certificates = certsRes.status === 'fulfilled' ? certsRes.value.certificates : [];
+	// 	certsFailed = certsRes.status === 'rejected';
+	// 	stats = statsRes.status === 'fulfilled' ? statsRes.value : null;
+	// 	issuerChanges = changesRes.status === 'fulfilled' ? changesRes.value.changes : [];
+	// 	changesFailed = changesRes.status === 'rejected';
+	// 	loading = false;
+	// }
+	//
+	// async function filterByStatus(filter: string) {
+	// 	statusFilter = filter;
+	// 	loading = true;
+	// 	try {
+	// 		const res =
+	// 			filter === 'expiring' ? await getExpiringCerts(30)
+	// 			: filter === 'self-signed' ? await getSelfSignedCerts()
+	// 			: await getCertificates();
+	// 		certificates = res.certificates;
+	// 		certsFailed = false;
+	// 	} catch {
+	// 		certificates = [];
+	// 		certsFailed = true;
+	// 	}
+	// 	loading = false;
+	// }
+	// OLD CODE END
+	const refresh = registerPageRefresh(loadData);
+	onMount(() => {
+		refresh.run();
+	});
+	onDestroy(refresh.unregister);
+
+	async function loadData(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		const filter = statusFilter;
 		loading = true;
 		const [certsRes, statsRes, changesRes] = await Promise.allSettled([
-			getCertificates(),
+			filter === 'expiring' ? getExpiringCerts(30) : filter === 'self-signed' ? getSelfSignedCerts() : getCertificates(),
 			getCertStats(),
 			getIssuerChanges(),
 		]);
+		if (!guard.current(g)) return 'skipped';
 		certificates = certsRes.status === 'fulfilled' ? certsRes.value.certificates : [];
 		certsFailed = certsRes.status === 'rejected';
+		// getCertStats answers null when the counts couldn't be loaded
 		stats = statsRes.status === 'fulfilled' ? statsRes.value : null;
 		issuerChanges = changesRes.status === 'fulfilled' ? changesRes.value.changes : [];
 		changesFailed = changesRes.status === 'rejected';
 		loading = false;
+		const ok = [!certsFailed, stats !== null, !changesFailed].filter(Boolean).length;
+		return ok === 3 ? 'ok' : ok === 0 ? 'failed' : 'partial';
 	}
 
-	async function filterByStatus(filter: string) {
+	function filterByStatus(filter: string) {
 		statusFilter = filter;
-		loading = true;
-		try {
-			const res =
-				filter === 'expiring' ? await getExpiringCerts(30)
-				: filter === 'self-signed' ? await getSelfSignedCerts()
-				: await getCertificates();
-			certificates = res.certificates;
-			certsFailed = false;
-		} catch {
-			certificates = [];
-			certsFailed = true;
-		}
-		loading = false;
+		refresh.run();
 	}
 
-	function statusBadgeClass(status: string): string {
-		switch (status) {
-			case 'valid': return 'status-valid';
-			case 'expiring': return 'status-warning';
-			case 'expired': return 'status-critical';
-			case 'self-signed': return 'status-info';
-			default: return '';
-		}
-	}
+	const FILTERS = [
+		{ value: 'all', label: 'All' },
+		{ value: 'expiring', label: 'Expiring' },
+		{ value: 'self-signed', label: 'Self-signed' },
+	];
+
+	// OLD CODE START — status badge classes; the status is now a system chip
+	// function statusBadgeClass(status: string): string {
+	// 	switch (status) {
+	// 		case 'valid': return 'status-valid';
+	// 		case 'expiring': return 'status-warning';
+	// 		case 'expired': return 'status-critical';
+	// 		case 'self-signed': return 'status-info';
+	// 		default: return '';
+	// 	}
+	// }
+	// OLD CODE END
+	const STATUS: Record<string, { label: string; tone: string }> = {
+		valid: { label: 'Valid', tone: 'is-ok' },
+		expiring: { label: 'Expiring', tone: 'is-warn' },
+		expired: { label: 'Expired', tone: 'is-bad' },
+		'self-signed': { label: 'Self-signed', tone: '' },
+	};
 
 	function formatDate(dateStr: string): string {
 		if (!dateStr) return '-';
@@ -179,414 +242,157 @@
 		}
 	}
 
-	function truncate(str: string, len: number): string {
-		if (!str) return '-';
-		return str.length > len ? str.slice(0, len) + '...' : str;
-	}
+	// OLD CODE START — long values now truncate in CSS (.trunc) with the full text as a title
+	// function truncate(str: string, len: number): string {
+	// 	if (!str) return '-';
+	// 	return str.length > len ? str.slice(0, len) + '...' : str;
+	// }
+	// OLD CODE END
+
+	const domainOf = (c: Certificate) => c.domain || c.server_name || '';
+
+	const columns: Column<Certificate>[] = [
+		{ key: 'domain', label: 'Domain', sortValue: domainOf, cell: domainCell },
+		{ key: 'issuer', label: 'Issuer', cell: issuerCell },
+		{ key: 'not_before', label: 'Valid from', cell: fromCell },
+		{ key: 'not_after', label: 'Valid to', cell: toCell },
+		{ key: 'status', label: 'Status', cell: statusCell },
+		{ key: 'source_ip', label: 'Source', class: 'mono' },
+	];
+
+	// The dialog: focus moves to its close button, and Escape closes it
+	let closeButton = $state<HTMLButtonElement>();
+	$effect(() => {
+		if (selectedCert) closeButton?.focus();
+	});
 </script>
+
+{#snippet domainCell(cert: Certificate)}<span class="mono trunc" title={domainOf(cert)}>{domainOf(cert) || '-'}</span>{/snippet}
+{#snippet issuerCell(cert: Certificate)}<span class="trunc" title={cert.issuer}>{cert.issuer || '-'}</span>{/snippet}
+{#snippet fromCell(cert: Certificate)}<span class="num">{formatDate(cert.not_before)}</span>{/snippet}
+{#snippet toCell(cert: Certificate)}<span class="num">{formatDate(cert.not_after)}</span>{/snippet}
+{#snippet statusCell(cert: Certificate)}
+	<span class="chip {STATUS[cert.status]?.tone ?? ''}">{STATUS[cert.status]?.label ?? cert.status}</span>
+{/snippet}
 
 <svelte:head>
 	<title>Certificates | NetTap</title>
 </svelte:head>
 
-<div class="certificates-page">
-	<div class="page-header">
-		<h2>TLS Certificate Inventory</h2>
-		<!-- OLD CODE START — 2026-11-01: added the TLS 1.3 visibility note
-		<p class="text-muted">Track observed certificates, detect expiry, self-signed usage, and issuer changes.</p>
-		OLD CODE END -->
-		<p class="text-muted">Track observed certificates, detect expiry, self-signed usage, and issuer changes. TLS 1.3 encrypts certificates, so only those sent in TLS 1.2 or older connections appear here.</p>
-	</div>
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && selectedCert) selectedCert = null; }} />
 
-	<!-- Hero Stats -->
-	<div class="stats-grid">
-		<div class="stat-card">
-			<span class="stat-label">Total Certificates</span>
-			<span class="stat-value">{stats?.total_certs ?? '—'}</span>
-		</div>
-		<div class="stat-card" class:stat-warning={(stats?.expiring_count ?? 0) > 0}>
-			<span class="stat-label">Expiring (30d)</span>
-			<span class="stat-value">{stats?.expiring_count ?? '—'}</span>
-			<span class="stat-hint">{stats ? `${stats.expired_count} already expired` : 'Counts unavailable'}</span>
-		</div>
-		<div class="stat-card" class:stat-info={(stats?.self_signed_count ?? 0) > 0}>
-			<span class="stat-label">Self-Signed</span>
-			<span class="stat-value">{stats?.self_signed_count ?? '—'}</span>
-		</div>
-		<div class="stat-card" class:stat-critical={(stats?.issuer_changes_count ?? 0) > 0}>
-			<span class="stat-label">Issuer Changes</span>
-			<span class="stat-value">{stats?.issuer_changes_count ?? '—'}</span>
-		</div>
+<div class="page-head">
+	<div>
+		<h1 class="page-title">Certificates</h1>
+		<p class="page-sub">Track observed certificates, detect expiry, self-signed usage, and issuer changes. TLS 1.3 encrypts certificates, so only those sent in TLS 1.2 or older connections appear here.</p>
 	</div>
+</div>
 
-	<!-- Issuer Change Alerts -->
+<div class="grid">
+	<KpiCard class="c-3" label="Total certificates" icon="certs" value={stats?.total_certs ?? '—'} note="Last 7 days" />
+	<KpiCard
+		class="c-3"
+		label="Expiring in 30 days"
+		icon="changelog"
+		value={stats?.expiring_count ?? '—'}
+		sub={stats ? `${stats.expired_count} already expired` : loading ? undefined : 'Counts unavailable'}
+	/>
+	<KpiCard class="c-3" label="Self-signed" icon="certs" value={stats?.self_signed_count ?? '—'} note="Last 7 days" />
+	<KpiCard class="c-3" label="Issuer changes" icon="warn" value={stats?.issuer_changes_count ?? '—'} note="Domains with more than one issuer" />
+
 	{#if changesFailed}
-		<div class="alert alert-warning">Couldn't check for issuer changes (possible MITM): the request failed.</div>
+		<p class="notice is-warn c-12" role="status"><Icon name="warn" />Couldn't check for issuer changes (possible MITM): the request failed.</p>
 	{/if}
 	{#if issuerChanges.length > 0}
-		<div class="alert alert-danger">
-			<strong>Potential MITM Warning:</strong> {issuerChanges.length} domain{issuerChanges.length !== 1 ? 's have' : ' has'} multiple certificate issuers.
-			{#each issuerChanges as change}
-				<div class="issuer-change-detail">
-					<strong>{change.domain}</strong>: {change.issuers.join(', ')} ({change.issuer_count} issuers)
-				</div>
-			{/each}
-		</div>
-	{/if}
-
-	<!-- Status Filters -->
-	<div class="filter-tabs">
-		<button class="tab" class:active={statusFilter === 'all'} onclick={() => filterByStatus('all')}>All</button>
-		<button class="tab" class:active={statusFilter === 'expiring'} onclick={() => filterByStatus('expiring')}>Expiring</button>
-		<button class="tab" class:active={statusFilter === 'self-signed'} onclick={() => filterByStatus('self-signed')}>Self-Signed</button>
-	</div>
-
-	<!-- Certificate Table -->
-	{#if loading}
-		<div class="card">
-			<p class="text-muted" style="padding: var(--space-lg);">Loading certificates...</p>
-		</div>
-	{:else if certsFailed}
-		<div class="card">
-			<p class="text-muted" style="padding: var(--space-lg);">Couldn't load certificates: the request failed.</p>
-		</div>
-	{:else if certificates.length === 0}
-		<div class="card">
-			<p class="text-muted" style="padding: var(--space-lg);">No certificates found for the selected filter.</p>
-		</div>
-	{:else}
-		<div class="table-wrapper">
-			<table class="data-table">
-				<thead>
-					<tr>
-						<th class="sortable" onclick={() => toggleSort('domain')}>
-							Domain {sortField === 'domain' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-						</th>
-						<th class="sortable" onclick={() => toggleSort('issuer')}>
-							Issuer {sortField === 'issuer' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-						</th>
-						<th class="sortable" onclick={() => toggleSort('not_before')}>
-							Valid From {sortField === 'not_before' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-						</th>
-						<th class="sortable" onclick={() => toggleSort('not_after')}>
-							Valid To {sortField === 'not_after' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-						</th>
-						<th class="sortable" onclick={() => toggleSort('status')}>
-							Status {sortField === 'status' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-						</th>
-						<th class="sortable" onclick={() => toggleSort('source_ip')}>
-							Source {sortField === 'source_ip' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
-						</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each sortedCertificates as cert}
-						<tr onclick={() => selectedCert = cert} class="clickable-row">
-							<td class="mono">{truncate(cert.domain || cert.server_name, 40)}</td>
-							<td>{truncate(cert.issuer, 30)}</td>
-							<td>{formatDate(cert.not_before)}</td>
-							<td>{formatDate(cert.not_after)}</td>
-							<td>
-								<span class="status-badge {statusBadgeClass(cert.status)}">{cert.status}</span>
-							</td>
-							<td class="mono text-muted">{cert.source_ip}</td>
-						</tr>
+		<div class="notice is-error c-12" role="alert">
+			<Icon name="warn" />
+			<div>
+				<strong>Potential MITM warning:</strong> {issuerChanges.length} domain{issuerChanges.length !== 1 ? 's have' : ' has'} multiple certificate issuers.
+				<ul class="changes">
+					{#each issuerChanges as change (change.domain)}
+						<li><span class="mono">{change.domain}</span>: {change.issuers.join(', ')} ({change.issuer_count} issuers)</li>
 					{/each}
-				</tbody>
-			</table>
-		</div>
-	{/if}
-
-	<!-- Detail Modal -->
-	{#if selectedCert}
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="modal-overlay" onclick={() => selectedCert = null} onkeydown={(e) => { if (e.key === 'Escape') selectedCert = null; }}>
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
-			<div class="modal-content" onclick={(e) => e.stopPropagation()}>
-				<div class="modal-header">
-					<h3>Certificate Details</h3>
-					<button class="btn btn-sm" onclick={() => selectedCert = null}>Close</button>
-				</div>
-				<div class="detail-grid">
-					<div class="detail-row">
-						<span class="detail-label">Domain</span>
-						<span class="detail-value mono">{selectedCert.domain || selectedCert.server_name || '-'}</span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">Subject</span>
-						<span class="detail-value">{selectedCert.subject || '-'}</span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">Issuer</span>
-						<span class="detail-value">{selectedCert.issuer || '-'}</span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">Valid From</span>
-						<span class="detail-value">{formatDate(selectedCert.not_before)}</span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">Valid To</span>
-						<span class="detail-value">{formatDate(selectedCert.not_after)}</span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">Status</span>
-						<span class="detail-value"><span class="status-badge {statusBadgeClass(selectedCert.status)}">{selectedCert.status}</span></span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">TLS Version</span>
-						<span class="detail-value">{selectedCert.tls_version || '-'}</span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">SHA-256</span>
-						<span class="detail-value mono" style="word-break: break-all;">{selectedCert.hash_sha256 || '-'}</span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">Source IP</span>
-						<span class="detail-value mono">{selectedCert.source_ip || '-'}</span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">Destination</span>
-						<span class="detail-value mono">{selectedCert.destination_ip || '-'}:{selectedCert.destination_port || '-'}</span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">Validation</span>
-						<span class="detail-value">{selectedCert.validation_status || '-'}</span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">Server Names</span>
-						<span class="detail-value mono">{selectedCert.server_names?.join(', ') || '-'}</span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">SAN DNS</span>
-						<span class="detail-value mono" style="word-break: break-all;">{selectedCert.san_dns?.join(', ') || '-'}</span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">Clients</span>
-						<span class="detail-value mono">{selectedCert.clients?.join(', ') || '-'}</span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">Key</span>
-						<span class="detail-value">{selectedCert.key_type ? `${selectedCert.key_type} ${selectedCert.key_length ?? ''}` : '-'}</span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">First Seen</span>
-						<span class="detail-value">{formatDate(selectedCert.first_seen)}</span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">Observed</span>
-						<span class="detail-value">{formatDate(selectedCert.timestamp)}</span>
-					</div>
-					<div class="detail-row">
-						<span class="detail-label">Sessions</span>
-						<span class="detail-value">{selectedCert.times_seen ?? '-'}</span>
-					</div>
-				</div>
+				</ul>
 			</div>
 		</div>
 	{/if}
+
+	<Card title="Certificate inventory" sub="One row per certificate · last 7 days" class="c-12">
+		<div class="toolbar">
+			<Pills options={FILTERS} value={statusFilter} onchange={filterByStatus} ariaLabel="Certificate status" />
+		</div>
+		{#if loading}
+			<CardState state="loading" title="Loading certificates" />
+		{:else if certsFailed}
+			<CardState
+				state="error"
+				title="Couldn't load certificates: the request failed."
+				message="Check that NetTap is running on the System page, then try again."
+				onaction={() => refresh.run()}
+			/>
+		{:else if certificates.length === 0}
+			<CardState
+				state="empty"
+				icon="certs"
+				title="No certificates found for the selected filter."
+				message="Certificates appear here once NetTap sees a TLS 1.2 or older handshake."
+			/>
+		{:else}
+			<DataTable
+				{columns}
+				rows={certificates}
+				ariaLabel="Certificates"
+				rowKey={(c) => c._id}
+				initialSort={{ key: 'domain', dir: 'asc' }}
+				onrowactivate={(c) => (selectedCert = c)}
+				rowLabel={(c) => `Open certificate for ${domainOf(c) || 'an unnamed server'}`}
+				selectedKey={selectedCert?._id}
+			/>
+		{/if}
+	</Card>
 </div>
 
+{#if selectedCert}
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<!-- The scrim closes on click; Escape and the close button are the keyboard path -->
+	<div class="overlay" onclick={() => (selectedCert = null)}>
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<div class="card dialog" role="dialog" aria-modal="true" aria-labelledby="cert-title" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+			<div class="card-head">
+				<div>
+					<h2 class="card-title" id="cert-title">Certificate details</h2>
+					<p class="card-sub mono">{selectedCert.domain || selectedCert.server_name || '-'}</p>
+				</div>
+				<button class="icon-btn" type="button" aria-label="Close" bind:this={closeButton} onclick={() => (selectedCert = null)}><Icon name="close" /></button>
+			</div>
+			<dl class="facts">
+				<dt>Domain</dt><dd class="mono">{selectedCert.domain || selectedCert.server_name || '-'}</dd>
+				<dt>Subject</dt><dd>{selectedCert.subject || '-'}</dd>
+				<dt>Issuer</dt><dd>{selectedCert.issuer || '-'}</dd>
+				<dt>Valid from</dt><dd>{formatDate(selectedCert.not_before)}</dd>
+				<dt>Valid to</dt><dd>{formatDate(selectedCert.not_after)}</dd>
+				<dt>Status</dt><dd><span class="chip {STATUS[selectedCert.status]?.tone ?? ''}">{STATUS[selectedCert.status]?.label ?? selectedCert.status}</span></dd>
+				<dt>TLS version</dt><dd>{selectedCert.tls_version || '-'}</dd>
+				<dt>SHA-256</dt><dd class="mono">{selectedCert.hash_sha256 || '-'}</dd>
+				<dt>Source IP</dt><dd class="mono">{selectedCert.source_ip || '-'}</dd>
+				<dt>Destination</dt><dd class="mono">{selectedCert.destination_ip || '-'}:{selectedCert.destination_port || '-'}</dd>
+				<dt>Validation</dt><dd>{selectedCert.validation_status || '-'}</dd>
+				<dt>Server names</dt><dd class="mono">{selectedCert.server_names?.join(', ') || '-'}</dd>
+				<dt>SAN DNS</dt><dd class="mono">{selectedCert.san_dns?.join(', ') || '-'}</dd>
+				<dt>Clients</dt><dd class="mono">{selectedCert.clients?.join(', ') || '-'}</dd>
+				<dt>Key</dt><dd>{selectedCert.key_type ? `${selectedCert.key_type} ${selectedCert.key_length ?? ''}` : '-'}</dd>
+				<dt>First seen</dt><dd>{formatDate(selectedCert.first_seen)}</dd>
+				<dt>Observed</dt><dd>{formatDate(selectedCert.timestamp)}</dd>
+				<dt>Sessions</dt><dd class="num">{selectedCert.times_seen ?? '-'}</dd>
+			</dl>
+		</div>
+	</div>
+{/if}
+
 <style>
-	.certificates-page {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-	}
-
-	.page-header h2 {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		margin-bottom: var(--space-xs);
-	}
-
-	/* Stats cards */
-	.stats-grid {
-		display: grid;
-		grid-template-columns: repeat(4, 1fr);
-		gap: var(--space-md);
-	}
-
-	/* stat-card, stat-value, stat-label inherit from global.css */
-
-	.stat-hint {
-		display: block;
-		font-size: var(--text-xs);
-		color: var(--text-dim);
-		margin-top: var(--space-xs);
-	}
-
-	.stat-warning .stat-value { color: var(--amber); }
-	.stat-info .stat-value { color: var(--accent); }
-	.stat-critical .stat-value { color: var(--red); }
-
-	/* Issuer change alerts */
-	.issuer-change-detail {
-		margin-top: var(--space-xs);
-		font-size: var(--text-sm);
-	}
-
-	/* Filter tabs */
-	.filter-tabs {
-		display: flex;
-		gap: var(--space-xs);
-	}
-
-	.tab {
-		padding: var(--space-xs) var(--space-md);
-		font-size: var(--text-sm);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		background: var(--bg-secondary);
-		color: var(--text-secondary);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.tab:hover { background: var(--bg-tertiary); }
-	.tab.active {
-		background: var(--accent-muted);
-		border-color: var(--accent);
-		color: var(--accent);
-		font-weight: 600;
-	}
-
-	/* Table */
-	.table-wrapper {
-		overflow-x: auto;
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-	}
-
-	.data-table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: var(--text-sm);
-	}
-
-	.data-table th {
-		padding: var(--space-sm) var(--space-md);
-		text-align: left;
-		font-weight: 500;
-		background: var(--bg-secondary);
-		border-bottom: 1px solid var(--border-default);
-		color: var(--text-muted);
-		font-size: var(--text-xs);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		white-space: nowrap;
-	}
-
-	.data-table th.sortable {
-		cursor: pointer;
-		user-select: none;
-	}
-
-	.data-table th.sortable:hover {
-		color: var(--text-primary);
-	}
-
-	.data-table td {
-		padding: var(--space-sm) var(--space-md);
-		border-bottom: 1px solid var(--border-dim);
-	}
-
-	.clickable-row {
-		cursor: pointer;
-		transition: background var(--transition-fast);
-	}
-
-	.clickable-row:hover {
-		background: var(--bg-secondary);
-	}
-
-	.mono {
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-	}
-
-	/* Status badges */
-	.status-badge {
-		display: inline-block;
-		padding: var(--space-xs) var(--space-sm);
-		font-size: var(--text-xs);
-		font-weight: 600;
-		border-radius: var(--radius-full);
-		text-transform: uppercase;
-	}
-
-	.status-valid { background: var(--green-dim); color: var(--green); }
-	.status-warning { background: var(--amber-dim); color: var(--amber); }
-	.status-critical { background: var(--red-dim); color: var(--red); }
-	.status-info { background: var(--cyan-dim); color: var(--accent); }
-
-	/* Modal */
-	.modal-overlay {
-		position: fixed;
-		inset: 0;
-		background: var(--bg-overlay);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		z-index: 1000;
-	}
-
-	.modal-content {
-		background: var(--bg-primary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-lg);
-		padding: var(--space-lg);
-		max-width: 600px;
-		width: 90%;
-		max-height: 80vh;
-		overflow-y: auto;
-	}
-
-	.modal-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: var(--space-md);
-	}
-
-	.modal-header h3 {
-		font-size: var(--text-lg);
-		font-weight: 700;
-	}
-
-	.detail-grid {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.detail-row {
-		display: flex;
-		gap: var(--space-md);
-		padding: var(--space-xs) 0;
-		border-bottom: 1px solid var(--border-dim);
-	}
-
-	.detail-label {
-		min-width: 120px;
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-secondary);
-	}
-
-	.detail-value {
-		font-size: var(--text-sm);
-		color: var(--text-primary);
-	}
-
-	@media (max-width: 768px) {
-		.stats-grid {
-			grid-template-columns: repeat(2, 1fr);
-		}
-	}
-
-	@media (max-width: 480px) {
-		.stats-grid {
-			grid-template-columns: 1fr;
-		}
-	}
+	/* Layout glue the system lacks: the issuer list, and the details dialog over the scrim */
+	.changes { margin: var(--sp-2) 0 0; padding-left: var(--sp-5); }
+	.overlay { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: var(--sp-4); background: var(--scrim); }
+	.dialog { width: min(40rem, 100%); max-height: calc(100dvh - var(--sp-8)); overflow-y: auto; box-shadow: var(--shadow-pop); }
+	.dialog .facts { padding-top: 0; border-top: 0; }
 </style>

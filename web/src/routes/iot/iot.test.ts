@@ -50,7 +50,10 @@ describe('IoT page — failed endpoints', () => {
 		render(IoTPage);
 		await flush();
 
-		expect(screen.getByText('Failed to load IoT data.')).toBeInTheDocument();
+		// OLD CODE START — 2026-11-03 UI redesign: the system's error pattern is "Couldn't load …: the request failed."
+		// expect(screen.getByText('Failed to load IoT data.')).toBeInTheDocument();
+		// OLD CODE END
+		expect(screen.getByText("Couldn't load IoT data: the request failed.")).toBeInTheDocument();
 		expect(screen.queryByText('F')).not.toBeInTheDocument();
 	});
 
@@ -60,8 +63,12 @@ describe('IoT page — failed endpoints', () => {
 		render(IoTPage);
 		await flush();
 
-		expect(screen.queryByText('Failed to load IoT data.')).not.toBeInTheDocument();
-		expect(screen.getByText('Network Isolation')).toBeInTheDocument();
+		// OLD CODE START — 2026-11-03 UI redesign: the error text and the card title changed (sentence case)
+		// expect(screen.queryByText('Failed to load IoT data.')).not.toBeInTheDocument();
+		// expect(screen.getByText('Network Isolation')).toBeInTheDocument();
+		// OLD CODE END
+		expect(screen.queryByText("Couldn't load IoT data: the request failed.")).not.toBeInTheDocument();
+		expect(screen.getByText('Network isolation')).toBeInTheDocument();
 		// OLD CODE START — #96: the failure read as a finding of no cross-segment traffic
 		// expect(screen.getByText('No cross-segment IoT communication detected.')).toBeInTheDocument();
 		// OLD CODE END
@@ -81,7 +88,10 @@ describe('IoT page — failed endpoints', () => {
 		await flush();
 
 		expect(screen.getByText(/Couldn't check privacy: the request failed/)).toBeInTheDocument();
-		expect(screen.queryByText('No findings -- all devices look healthy.')).not.toBeInTheDocument();
+		// OLD CODE START — 2026-11-03 UI redesign: the empty text lost its "--"
+		// expect(screen.queryByText('No findings -- all devices look healthy.')).not.toBeInTheDocument();
+		// OLD CODE END
+		expect(screen.queryByText('No findings. All devices look healthy.')).not.toBeInTheDocument();
 		expect(screen.getByText(/Couldn't load manufacturer profiles/)).toBeInTheDocument();
 	});
 
@@ -91,7 +101,10 @@ describe('IoT page — failed endpoints', () => {
 		render(IoTPage);
 		await flush();
 
-		expect(screen.getByText('No findings -- all devices look healthy.')).toBeInTheDocument();
+		// OLD CODE START — 2026-11-03 UI redesign: the empty text lost its "--"
+		// expect(screen.getByText('No findings -- all devices look healthy.')).toBeInTheDocument();
+		// OLD CODE END
+		expect(screen.getByText('No findings. All devices look healthy.')).toBeInTheDocument();
 		expect(screen.getByText('No cross-segment IoT communication detected.')).toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
 	});
@@ -253,11 +266,11 @@ interface Finding {
 
 function gradeColor(grade: string): string {
 	switch (grade) {
-		case 'A': return 'var(--green)';
-		case 'B': return 'var(--cyan)';
-		case 'C': return 'var(--amber)';
-		case 'D': return 'var(--orange)';
-		default: return 'var(--red)';
+		case 'A': return 'var(--ok)';
+		case 'B': return 'var(--sev-low)';
+		case 'C': return 'var(--sev-medium)';
+		case 'D': return 'var(--sev-high)';
+		default: return 'var(--sev-critical)';
 	}
 }
 
@@ -295,20 +308,22 @@ function timeAgo(dateStr: string | null): string {
 
 function severityColor(severity: string): string {
 	switch (severity) {
-		case 'critical': return 'var(--red)';
-		case 'high': return 'var(--red)';
-		case 'medium': return 'var(--amber)';
-		case 'low': return 'var(--green)';
+		case 'critical': return 'var(--sev-critical)';
+		case 'high': return 'var(--sev-high)';
+		case 'medium': return 'var(--sev-medium)';
+		case 'low': return 'var(--sev-low)';
+		case 'info': return 'var(--sev-info)';
 		default: return 'var(--text-muted)';
 	}
 }
 
 function severityBadgeClass(severity: string): string {
 	switch (severity) {
-		case 'critical': return 'badge-danger';
-		case 'high': return 'badge-danger';
-		case 'medium': return 'badge-warning';
-		case 'low': return 'badge-success';
+		case 'critical': return 'severity-critical';
+		case 'high': return 'severity-high';
+		case 'medium': return 'severity-medium';
+		case 'low': return 'severity-low';
+		case 'info': return 'severity-info';
 		default: return '';
 	}
 }
@@ -521,28 +536,28 @@ describe('IoT Trust Score page', () => {
 	// -- Grade color mapping ---------------------------------------------------
 
 	describe('gradeColor', () => {
-		it('returns green for grade A', () => {
-			expect(gradeColor('A')).toBe('var(--green)');
+		it('returns ok for grade A', () => {
+			expect(gradeColor('A')).toBe('var(--ok)');
 		});
 
-		it('returns cyan for grade B', () => {
-			expect(gradeColor('B')).toBe('var(--cyan)');
+		it('returns sev-low for grade B', () => {
+			expect(gradeColor('B')).toBe('var(--sev-low)');
 		});
 
-		it('returns amber for grade C', () => {
-			expect(gradeColor('C')).toBe('var(--amber)');
+		it('returns sev-medium for grade C', () => {
+			expect(gradeColor('C')).toBe('var(--sev-medium)');
 		});
 
-		it('returns orange for grade D', () => {
-			expect(gradeColor('D')).toBe('var(--orange)');
+		it('returns sev-high for grade D', () => {
+			expect(gradeColor('D')).toBe('var(--sev-high)');
 		});
 
-		it('returns red for grade F (default)', () => {
-			expect(gradeColor('F')).toBe('var(--red)');
+		it('returns sev-critical for grade F (default)', () => {
+			expect(gradeColor('F')).toBe('var(--sev-critical)');
 		});
 
-		it('returns red for unknown grade', () => {
-			expect(gradeColor('X')).toBe('var(--red)');
+		it('returns sev-critical for unknown grade', () => {
+			expect(gradeColor('X')).toBe('var(--sev-critical)');
 		});
 	});
 
@@ -650,48 +665,56 @@ describe('IoT Trust Score page', () => {
 	// -- Severity color ---------------------------------------------------------
 
 	describe('severityColor', () => {
-		it('returns red for critical severity', () => {
-			expect(severityColor('critical')).toBe('var(--red)');
+		it('returns sev-critical for critical severity', () => {
+			expect(severityColor('critical')).toBe('var(--sev-critical)');
 		});
 
-		it('returns red for high severity', () => {
-			expect(severityColor('high')).toBe('var(--red)');
+		it('returns sev-high for high severity, not the critical colour', () => {
+			expect(severityColor('high')).toBe('var(--sev-high)');
 		});
 
-		it('returns amber for medium severity', () => {
-			expect(severityColor('medium')).toBe('var(--amber)');
+		it('returns sev-medium for medium severity', () => {
+			expect(severityColor('medium')).toBe('var(--sev-medium)');
 		});
 
-		it('returns green for low severity', () => {
-			expect(severityColor('low')).toBe('var(--green)');
+		it('returns sev-low for low severity', () => {
+			expect(severityColor('low')).toBe('var(--sev-low)');
+		});
+
+		it('returns sev-info for info severity', () => {
+			expect(severityColor('info')).toBe('var(--sev-info)');
 		});
 
 		it('returns muted for unknown severity', () => {
-			expect(severityColor('info')).toBe('var(--text-muted)');
+			expect(severityColor('other')).toBe('var(--text-muted)');
 		});
 	});
 
 	// -- Severity badge class ---------------------------------------------------
 
 	describe('severityBadgeClass', () => {
-		it('returns badge-danger for critical', () => {
-			expect(severityBadgeClass('critical')).toBe('badge-danger');
+		it('returns severity-critical for critical', () => {
+			expect(severityBadgeClass('critical')).toBe('severity-critical');
 		});
 
-		it('returns badge-danger for high', () => {
-			expect(severityBadgeClass('high')).toBe('badge-danger');
+		it('returns severity-high for high, not the critical class', () => {
+			expect(severityBadgeClass('high')).toBe('severity-high');
 		});
 
-		it('returns badge-warning for medium', () => {
-			expect(severityBadgeClass('medium')).toBe('badge-warning');
+		it('returns severity-medium for medium', () => {
+			expect(severityBadgeClass('medium')).toBe('severity-medium');
 		});
 
-		it('returns badge-success for low', () => {
-			expect(severityBadgeClass('low')).toBe('badge-success');
+		it('returns severity-low for low', () => {
+			expect(severityBadgeClass('low')).toBe('severity-low');
+		});
+
+		it('returns severity-info for info', () => {
+			expect(severityBadgeClass('info')).toBe('severity-info');
 		});
 
 		it('returns empty string for unknown', () => {
-			expect(severityBadgeClass('info')).toBe('');
+			expect(severityBadgeClass('other')).toBe('');
 		});
 	});
 
@@ -841,10 +864,10 @@ describe('IoT Trust Score page', () => {
 
 		it('maps device grades to correct colors', () => {
 			const ringColor = gradeColor(mockFleetSummary.devices[0].grade); // A
-			expect(ringColor).toBe('var(--green)');
+			expect(ringColor).toBe('var(--ok)');
 
 			const nestColor = gradeColor(mockFleetSummary.devices[1].grade); // B
-			expect(nestColor).toBe('var(--cyan)');
+			expect(nestColor).toBe('var(--sev-low)');
 		});
 	});
 
@@ -860,7 +883,7 @@ describe('IoT Trust Score page', () => {
 		it('empty fleet has grade F with score 0', () => {
 			expect(mockEmptyFleetSummary.health_grade).toBe('F');
 			expect(mockEmptyFleetSummary.health_score).toBe(0);
-			expect(gradeColor(mockEmptyFleetSummary.health_grade)).toBe('var(--red)');
+			expect(gradeColor(mockEmptyFleetSummary.health_grade)).toBe('var(--sev-critical)');
 		});
 
 		it('empty fleet has zero counts for all stats', () => {

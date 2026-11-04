@@ -87,7 +87,7 @@ describe('PacketTable component', () => {
 		const onselect = vi.fn();
 		render(PacketTable, { props: { packets: [], loading: true, onselect } });
 
-		expect(screen.getByText(/analyzing packets/i)).toBeInTheDocument();
+		expect(screen.getByText(/analysing packets/i)).toBeInTheDocument();
 	});
 
 	it('does not show loading overlay when loading is false', () => {

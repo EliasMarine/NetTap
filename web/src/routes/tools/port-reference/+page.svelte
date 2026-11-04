@@ -4,13 +4,14 @@
 	 *
 	 * Pure frontend — no API calls. Static data with ~150 common ports.
 	 *
-	 * Layout:
-	 *   - Back button to /tools
-	 *   - Search + protocol filter
-	 *   - Result count
-	 *   - Sortable table: Port, Protocol, Service, Description
+	 * A toolbar (search and protocol pills) over a DataTable card: Port, Protocol,
+	 * Service, Description. Every column sorts; port ascending to start.
 	 */
-	import { compareValues } from '$lib/utils/table-sort.svelte';
+	import Card from '$lib/components/ui/Card.svelte';
+	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import Pills from '$lib/components/ui/Pills.svelte';
+	import SearchField from '$lib/components/ui/SearchField.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Static port data (~150 well-known ports)
@@ -193,8 +194,6 @@
 
 	let search = $state('');
 	let protocolFilter = $state<'All' | 'TCP' | 'UDP'>('All');
-	let sortKey = $state<'port' | 'protocol' | 'service' | 'description'>('port');
-	let sortAsc = $state(true);
 
 	// ---------------------------------------------------------------------------
 	// Derived
@@ -218,338 +217,86 @@
 			);
 		}
 
-		const sorted = [...list].sort((a, b) => {
-			const av = a[sortKey];
-			const bv = b[sortKey];
-			if (typeof av === 'number' && typeof bv === 'number') {
-				return sortAsc ? av - bv : bv - av;
-			}
-			// OLD CODE START — text columns: compareValues orders the numbers inside names ("HTTP-8" before "HTTP-80"), like every table
-			// const cmp = String(av).localeCompare(String(bv));
-			// OLD CODE END
-			const cmp = compareValues(av, bv);
-			return sortAsc ? cmp : -cmp;
-		});
-
-		return sorted;
+		// OLD CODE START — DataTable sorts every column (utils/table-sort, the same compareValues), so the page only filters
+		// const sorted = [...list].sort((a, b) => {
+		// 	const av = a[sortKey];
+		// 	const bv = b[sortKey];
+		// 	if (typeof av === 'number' && typeof bv === 'number') {
+		// 		return sortAsc ? av - bv : bv - av;
+		// 	}
+		// 	// OLD CODE START — text columns: compareValues orders the numbers inside names ("HTTP-8" before "HTTP-80"), like every table
+		// 	// const cmp = String(av).localeCompare(String(bv));
+		// 	// OLD CODE END
+		// 	const cmp = compareValues(av, bv);
+		// 	return sortAsc ? cmp : -cmp;
+		// });
+		//
+		// return sorted;
+		// OLD CODE END
+		return list;
 	});
 
-	// ---------------------------------------------------------------------------
-	// Actions
-	// ---------------------------------------------------------------------------
+	// OLD CODE START — the header buttons and arrows moved into DataTable
+	// let sortKey = $state<'port' | 'protocol' | 'service' | 'description'>('port');
+	// let sortAsc = $state(true);
 
-	function toggleSort(key: 'port' | 'protocol' | 'service' | 'description') {
-		if (sortKey === key) {
-			sortAsc = !sortAsc;
-		} else {
-			sortKey = key;
-			sortAsc = true;
-		}
-	}
+	// function toggleSort(key: 'port' | 'protocol' | 'service' | 'description') {
+	// 	if (sortKey === key) {
+	// 		sortAsc = !sortAsc;
+	// 	} else {
+	// 		sortKey = key;
+	// 		sortAsc = true;
+	// 	}
+	// }
 
-	function sortIndicator(key: string): string {
-		if (sortKey !== key) return '';
-		return sortAsc ? ' ↑' : ' ↓';
-	}
+	// function sortIndicator(key: string): string {
+	// 	if (sortKey !== key) return '';
+	// 	return sortAsc ? ' ↑' : ' ↓';
+	// }
+	// OLD CODE END
+
+	const protocolOptions = [
+		{ value: 'All' as const, label: 'All protocols' },
+		{ value: 'TCP' as const, label: 'TCP' },
+		{ value: 'UDP' as const, label: 'UDP' },
+	];
+
+	const columns: Column<PortEntry>[] = [
+		{ key: 'port', label: 'Port', numeric: true, cell: portCell },
+		{ key: 'protocol', label: 'Protocol', cell: protocolCell },
+		{ key: 'service', label: 'Service', cell: serviceCell },
+		{ key: 'description', label: 'Description' },
+	];
 </script>
 
+{#snippet portCell(entry: PortEntry)}<span class="mono">{entry.port}</span>{/snippet}
+{#snippet protocolCell(entry: PortEntry)}<span class="tag">{entry.protocol}</span>{/snippet}
+{#snippet serviceCell(entry: PortEntry)}<b>{entry.service}</b>{/snippet}
+{#snippet noPorts()}<span class="dim">No ports match your search.</span>{/snippet}
+
 <svelte:head>
-	<title>Port Reference | NetTap</title>
+	<title>Port reference | NetTap</title>
 </svelte:head>
 
-<div class="port-page">
-	<!-- Back button -->
-	<div class="back-nav">
-		<a href="/tools" class="btn btn-secondary btn-sm">
-			<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-				<line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
-			</svg>
-			Back to Tools
-		</a>
-	</div>
-
-	<!-- Page header -->
-	<div class="page-header">
-		<h1>Port Reference</h1>
-		<p class="page-desc">Quick reference for well-known network ports, protocols, and services</p>
-	</div>
-
-	<!-- Filter bar -->
-	<div class="filter-bar">
-		<div class="search-group">
-			<svg class="search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-				<circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-			</svg>
-			<input
-				type="text"
-				class="search-input"
-				placeholder="Search by port, service, or description..."
-				bind:value={search}
-			/>
-		</div>
-		<select class="protocol-select" bind:value={protocolFilter}>
-			<option value="All">All Protocols</option>
-			<option value="TCP">TCP</option>
-			<option value="UDP">UDP</option>
-		</select>
-	</div>
-
-	<!-- Result count -->
-	<div class="result-count">
-		Showing <strong>{filtered.length}</strong> of <strong>{PORTS.length}</strong> ports
-	</div>
-
-	<!-- Port table -->
-	<div class="port-table">
-		<table>
-			<thead>
-				<tr>
-					<th class="sortable" onclick={() => toggleSort('port')}>
-						Port{sortIndicator('port')}
-					</th>
-					<th class="sortable" onclick={() => toggleSort('protocol')}>
-						Protocol{sortIndicator('protocol')}
-					</th>
-					<th class="sortable" onclick={() => toggleSort('service')}>
-						Service{sortIndicator('service')}
-					</th>
-					<th class="sortable" onclick={() => toggleSort('description')}>
-						Description{sortIndicator('description')}
-					</th>
-				</tr>
-			</thead>
-			<tbody>
-				{#each filtered as entry (entry.port + entry.description)}
-					<tr>
-						<td class="port-num">{entry.port}</td>
-						<td>
-							<span class="protocol-badge" class:tcp={entry.protocol.includes('TCP')} class:udp={entry.protocol === 'UDP'}>
-								{entry.protocol}
-							</span>
-						</td>
-						<td class="service-name">{entry.service}</td>
-						<td class="port-desc">{entry.description}</td>
-					</tr>
-				{/each}
-				{#if filtered.length === 0}
-					<tr>
-						<td colspan="4" class="no-results">No ports match your search.</td>
-					</tr>
-				{/if}
-			</tbody>
-		</table>
+<div class="page-head">
+	<div>
+		<a class="back" href="/tools"><Icon name="back" />Tools</a>
+		<h1 class="page-title">Port reference</h1>
+		<p class="page-sub">Well-known network ports, their protocols and the services that normally use them.</p>
 	</div>
 </div>
 
-<style>
-	.port-page {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-	}
-
-	/* Back nav */
-	.back-nav {
-		display: flex;
-	}
-
-	/* Page header */
-	.page-header {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-xs);
-	}
-
-	.page-header h1 {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		color: var(--text-primary);
-	}
-
-	.page-desc {
-		color: var(--text-secondary);
-		font-size: var(--text-sm);
-	}
-
-	/* Filter bar */
-	.filter-bar {
-		display: flex;
-		gap: var(--space-md);
-		align-items: center;
-	}
-
-	.search-group {
-		flex: 1;
-		position: relative;
-		max-width: 480px;
-	}
-
-	.search-icon {
-		position: absolute;
-		left: 12px;
-		top: 50%;
-		transform: translateY(-50%);
-		color: var(--text-dim);
-		pointer-events: none;
-	}
-
-	.search-input {
-		width: 100%;
-		padding: 10px 14px 10px 38px;
-		background: var(--bg-input);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		color: var(--text-primary);
-		font-size: var(--text-sm);
-		outline: none;
-		transition: border-color var(--transition-fast);
-	}
-
-	.search-input::placeholder {
-		color: var(--text-dim);
-	}
-
-	.search-input:focus {
-		border-color: var(--accent);
-	}
-
-	.protocol-select {
-		padding: 10px 14px;
-		background: var(--bg-input);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		color: var(--text-primary);
-		font-size: var(--text-sm);
-		outline: none;
-		cursor: pointer;
-		transition: border-color var(--transition-fast);
-	}
-
-	.protocol-select:focus {
-		border-color: var(--accent);
-	}
-
-	/* Result count */
-	.result-count {
-		font-size: var(--text-sm);
-		color: var(--text-muted);
-	}
-
-	.result-count strong {
-		color: var(--text-secondary);
-	}
-
-	/* Port table */
-	.port-table {
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-dim);
-		border-radius: var(--radius-lg);
-		overflow: hidden;
-	}
-
-	.port-table table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-
-	.port-table th {
-		text-align: left;
-		padding: 10px 20px;
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--text-dim);
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		background: var(--bg-elevated);
-		border-bottom: 1px solid var(--border-dim);
-		user-select: none;
-	}
-
-	.port-table th.sortable {
-		cursor: pointer;
-		transition: color var(--transition-fast);
-	}
-
-	.port-table th.sortable:hover {
-		color: var(--text-secondary);
-	}
-
-	.port-table td {
-		padding: 10px 20px;
-		font-size: var(--text-sm);
-		color: var(--text-primary);
-		border-bottom: 1px solid var(--border-dim);
-	}
-
-	.port-table tr:last-child td {
-		border-bottom: none;
-	}
-
-	.port-table tr:hover td {
-		background: rgba(255, 255, 255, 0.02);
-	}
-
-	.port-num {
-		font-family: var(--font-mono);
-		font-weight: 600;
-		color: var(--accent);
-	}
-
-	.service-name {
-		font-weight: 500;
-	}
-
-	.port-desc {
-		color: var(--text-secondary);
-	}
-
-	/* Protocol badge */
-	.protocol-badge {
-		display: inline-block;
-		padding: 2px 8px;
-		border-radius: var(--radius-sm);
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-		font-weight: 600;
-		background: var(--bg-tertiary);
-		color: var(--text-muted);
-		border: 1px solid var(--border-dim);
-	}
-
-	.protocol-badge.tcp {
-		background: rgba(68, 138, 255, 0.1);
-		color: #448aff;
-		border-color: rgba(68, 138, 255, 0.2);
-	}
-
-	.protocol-badge.udp {
-		background: var(--purple-dim);
-		color: var(--purple);
-		border-color: rgba(179, 136, 255, 0.2);
-	}
-
-	.no-results {
-		text-align: center;
-		color: var(--text-muted);
-		padding: var(--space-xl) var(--space-md) !important;
-	}
-
-	/* Responsive */
-	@media (max-width: 768px) {
-		.filter-bar {
-			flex-direction: column;
-		}
-
-		.search-group {
-			max-width: 100%;
-		}
-
-		.port-table {
-			overflow-x: auto;
-		}
-
-		.port-table table {
-			min-width: 600px;
-		}
-	}
-</style>
+<Card title="Ports" sub="Showing {filtered.length} of {PORTS.length} ports">
+	<div class="toolbar">
+		<SearchField id="port-search" label="Search ports" placeholder="Search by port, service or description…" size="toolbar" bind:value={search} />
+		<Pills options={protocolOptions} bind:value={protocolFilter} ariaLabel="Protocol" />
+	</div>
+	<DataTable
+		{columns}
+		rows={filtered}
+		ariaLabel="Well-known ports"
+		rowKey={(entry) => entry.port + entry.description}
+		initialSort={{ key: 'port', dir: 'asc' }}
+		empty={noPorts}
+	/>
+</Card>

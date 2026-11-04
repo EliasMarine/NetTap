@@ -10,6 +10,7 @@ import {
 	getEnhancedCategories,
 	getSmartAlertSummary,
 } from '$api/alerts';
+import { _configure as resetAlertSnapshots, refreshAlertSnapshots } from '$lib/stores/alertSnapshot';
 import Page from './+page.svelte';
 
 vi.mock('$app/stores', () => ({
@@ -80,6 +81,7 @@ vi.stubGlobal(
 
 describe('Alerts — auto-refresh', () => {
 	beforeEach(() => {
+		resetAlertSnapshots({});
 		vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 		vi.mocked(getAlerts).mockImplementation(async (opts = {}) => alertsPage(opts.page ?? 1));
 	});
@@ -92,7 +94,9 @@ describe('Alerts — auto-refresh', () => {
 	it('reloads the page the user is on, not page 1', async () => {
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+		// the pager is the table's: the "By category" view groups the same page of alerts
+		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
 		await flush();
 		expect(screen.getByText('Sig on page 2')).toBeInTheDocument();
 
@@ -113,6 +117,7 @@ describe('Alerts — auto-refresh', () => {
 // ---------------------------------------------------------------------------
 
 describe('Alerts — failed requests', () => {
+	beforeEach(() => resetAlertSnapshots({}));
 	afterEach(() => {
 		vi.clearAllMocks();
 	});
@@ -123,8 +128,9 @@ describe('Alerts — failed requests', () => {
 		render(Page);
 		await flush();
 
-		expect(screen.getByText("Couldn't load alerts")).toBeInTheDocument();
-		expect(screen.queryByText('No Alerts')).not.toBeInTheDocument();
+		expect(screen.getByText("Couldn't load alerts: the request failed.")).toBeInTheDocument();
+		expect(screen.queryByText('No alerts')).not.toBeInTheDocument();
+		expect(screen.getByText(/Couldn't load the alert counts/)).toBeInTheDocument();
 		expect(screen.getByText(/Couldn't load the alert timeline/)).toBeInTheDocument();
 		expect(screen.getByText(/Couldn't load alert categories/)).toBeInTheDocument();
 		expect(screen.getByText(/Couldn't load top signatures/)).toBeInTheDocument();
@@ -148,7 +154,7 @@ describe('Alerts — failed requests', () => {
 		render(Page);
 		await flush();
 
-		expect(screen.getByText('No Alerts')).toBeInTheDocument();
+		expect(screen.getByText('No alerts')).toBeInTheDocument();
 		expect(screen.getByText('No signatures found')).toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
 	});
@@ -159,6 +165,7 @@ describe('Alerts — failed requests', () => {
 // ---------------------------------------------------------------------------
 
 describe('Alerts — sorting', () => {
+	beforeEach(() => resetAlertSnapshots({}));
 	afterEach(() => {
 		vi.clearAllMocks();
 	});
@@ -197,21 +204,55 @@ describe('Alerts — sorting', () => {
 		const { container } = render(Page);
 		await flush();
 		expect(getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'time', order: 'desc' }));
-		const header = (label: string) => [...container.querySelectorAll('th button.sort-btn')].find((b) => b.textContent?.startsWith(label))!;
+		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
+		// OLD CODE START — the table is the shared DataTable: th-btn headers, aria-sort instead of an arrow
+		// const header = (label: string) => [...container.querySelectorAll('th button.sort-btn')].find((b) => b.textContent?.startsWith(label))!;
+		// OLD CODE END
+		const header = (label: string) => [...container.querySelectorAll('th button.th-btn')].find((b) => b.textContent?.startsWith(label))!;
 		const sigs = () => [...container.querySelectorAll('td.sig-cell')].map((td) => td.textContent?.trim());
 
 		// a high alert on page 9 must reach page 1: ranking the 50 rows on screen can't find it
 		await fireEvent.click(header('Severity'));
 		await flush();
 		expect(getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, sort: 'severity', order: 'desc' }));
-		expect(header('Severity').textContent).toContain('↓');
+		// OLD CODE START
+		// expect(header('Severity').textContent).toContain('↓');
+		// OLD CODE END
+		expect(header('Severity').closest('th')).toHaveAttribute('aria-sort', 'descending');
 		expect(sigs()).toEqual(['Sig med', 'Sig low']); // shown as the daemon returned them
 
-		await fireEvent.click(header('Protocol')); // text columns start A→Z
-		await flush();
-		expect(getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, sort: 'proto', order: 'asc' }));
+		// OLD CODE START — the shared DataTable starts every new column descending (utils/table-sort)
+		// await fireEvent.click(header('Protocol')); // text columns start A→Z
+		// await flush();
+		// expect(getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, sort: 'proto', order: 'asc' }));
+		// await fireEvent.click(header('Protocol'));
+		// await flush();
+		// expect(getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'proto', order: 'desc' }));
+		// OLD CODE END
 		await fireEvent.click(header('Protocol'));
 		await flush();
-		expect(getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'proto', order: 'desc' }));
+		expect(getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, sort: 'proto', order: 'desc' }));
+		await fireEvent.click(header('Protocol'));
+		await flush();
+		expect(getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'proto', order: 'asc' }));
+		expect(header('Protocol').closest('th')).toHaveAttribute('aria-sort', 'ascending');
+	});
+});
+
+describe('Alerts — a failed count refresh keeps the last counts (#96)', () => {
+	beforeEach(() => resetAlertSnapshots({}));
+	afterEach(() => vi.clearAllMocks());
+
+	it('shows the last severity counts with a stale note, as Home does', async () => {
+		const counts = { total: 37, high: 1, medium: 6, low: 30 };
+		vi.mocked(getAlertCount).mockResolvedValueOnce({ from: '', to: '', counts }).mockRejectedValue(new Error('HTTP 503'));
+		render(Page);
+		expect(await screen.findByRole('button', { name: 'Show high alerts (1)' })).toBeInTheDocument();
+
+		await refreshAlertSnapshots();
+
+		expect(await screen.findByText("Couldn't refresh the alert counts; showing the last figures loaded.")).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Show low alerts (30)' })).toBeInTheDocument();
+		expect(screen.queryByText("Couldn't load the alert counts: the request failed.")).not.toBeInTheDocument();
 	});
 });

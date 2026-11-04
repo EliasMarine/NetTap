@@ -14,7 +14,14 @@
 		UpdateStatus,
 		UpdateResult,
 	} from '$api/updates.js';
+	import { onDestroy, onMount } from 'svelte';
 	import Collapsible from '$lib/components/Collapsible.svelte';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import Meter from '$lib/components/ui/Meter.svelte';
+	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import { loadFailed } from '$lib/utils/load-failed';
 
 	// ---------------------------------------------------------------------------
@@ -57,8 +64,10 @@
 	let updateInProgress = $state(false);
 	let updateCompleted = $state(false);
 
-	// Sort state
-	let sortBy = $state<'name' | 'status'>('name');
+	// OLD CODE START — the Name / Status sort buttons; each table now sorts by any column header
+	// // Sort state
+	// let sortBy = $state<'name' | 'status'>('name');
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// Derived
@@ -71,15 +80,54 @@
 		// OLD CODE END
 		const entries = Object.values(versions).map((v) => ({ key: v.name, ...v }));
 
-		if (sortBy === 'status') {
-			const statusOrder: Record<string, number> = { error: 0, unknown: 1, ok: 2 };
-			entries.sort((a, b) => (statusOrder[a.status] ?? 1) - (statusOrder[b.status] ?? 1));
-		} else {
-			entries.sort((a, b) => a.name.localeCompare(b.name));
-		}
+		// OLD CODE START — sorting moved to the DataTable headers (by name until one is clicked)
+		// if (sortBy === 'status') {
+		// 	const statusOrder: Record<string, number> = { error: 0, unknown: 1, ok: 2 };
+		// 	entries.sort((a, b) => (statusOrder[a.status] ?? 1) - (statusOrder[b.status] ?? 1));
+		// } else {
+		// 	entries.sort((a, b) => a.name.localeCompare(b.name));
+		// }
+		// OLD CODE END
 
 		return entries;
 	});
+
+	type VersionEntry = (typeof versionEntries)[number];
+	type RowStatus = 'Error' | 'Unknown' | 'Update available' | 'Not checked' | 'Up to date';
+
+	/** What a versions row says about its component (same order of checks the table had). */
+	function rowStatus(entry: VersionEntry): RowStatus {
+		if (entry.status === 'error') return 'Error';
+		if (entry.status === 'unknown') return 'Unknown';
+		if (updatesMap.has(entry.key)) return 'Update available';
+		if (checkFailed(entry.key, entry.name)) return 'Unknown';
+		// no check since the daemon started: no update listed doesn't mean none exists;
+		// nothing checks the OS, Docker, Python…: no listed update doesn't make them current
+		if (!lastCheck || (checkedComponents && !checkedComponents.includes(entry.name))) return 'Not checked';
+		return 'Up to date';
+	}
+
+	// the most urgent first when sorted descending
+	const STATUS_RANK: Record<RowStatus, number> = { Error: 4, 'Update available': 3, Unknown: 2, 'Not checked': 1, 'Up to date': 0 };
+
+	const versionColumns: Column<VersionEntry>[] = [
+		{ key: 'name', label: 'Component', cell: componentCell, class: 'vtcol-name' },
+		{ key: 'current_version', label: 'Current version', cell: currentCell, class: 'vtcol-current' },
+		{ key: 'latest', label: 'Latest available', sortValue: (e) => updatesMap.get(e.key)?.latest_version ?? '', cell: latestCell, class: 'vtcol-latest' },
+		{ key: 'status', label: 'Status', sortValue: (e) => STATUS_RANK[rowStatus(e)], cell: statusCell, class: 'vtcol-status' },
+		// rows NetTap can update here first, then rows that say how their update arrives
+		{ key: 'action', label: 'Action', sortValue: (e) => { const u = updatesMap.get(e.key); return u ? (u.applies_with ? 1 : 2) : 0; }, cell: actionCell, class: 'vtcol-action' },
+	];
+
+	const historyColumns: Column<UpdateResult>[] = [
+		{ key: 'success', label: 'Result', sortValue: (r) => (r.success ? 1 : 0), cell: historyResultCell },
+		{ key: 'component', label: 'Component' },
+		{ key: 'version', label: 'Version', sortValue: (r) => r.new_version, cell: historyVersionCell },
+		{ key: 'completed_at', label: 'Date', sortValue: (r) => Date.parse(r.completed_at) || 0, cell: historyDateCell },
+		{ key: 'duration', label: 'Duration', numeric: true, sortValue: (r) => (Date.parse(r.completed_at) || 0) - (Date.parse(r.started_at) || 0), cell: historyDurationCell },
+		{ key: 'error', label: 'Error', sortValue: (r) => r.error ?? '', cell: historyErrorCell },
+		{ key: 'rollback', label: 'Action', sortValue: (r) => (r.rollback_available ? 1 : 0), cell: historyActionCell },
+	];
 
 	const groupedVersions = $derived.by(() => {
 		const groups: Record<string, typeof versionEntries> = {
@@ -126,11 +174,11 @@
 	const finishedTitle = $derived(
 		updateStatus?.state === 'completed'
 			? updateStatus.results.some((r) => !r.success)
-				? 'Update Failed'
-				: 'Update Complete'
+				? 'Update failed'
+				: 'Update complete'
 			: updateStatus?.state === 'error'
-				? 'Update Failed'
-				: 'Update Not Confirmed',
+				? 'Update failed'
+				: 'Update not confirmed',
 	);
 
 	// A Malcolm update takes 10–40 minutes, a rules update about one: poll every 3 s, give up after 3 hours
@@ -170,18 +218,20 @@
 		return 'badge badge-success';
 	}
 
-	function updateTypeBadgeClass(type: string): string {
-		switch (type) {
-			case 'major':
-				return 'badge badge-danger';
-			case 'minor':
-				return 'badge badge-warning';
-			case 'patch':
-				return 'badge badge-success';
-			default:
-				return 'badge badge-muted';
-		}
-	}
+	// OLD CODE START — colour-coded legacy badges; the update type is now a plain tag with its word
+	// function updateTypeBadgeClass(type: string): string {
+	// 	switch (type) {
+	// 		case 'major':
+	// 			return 'badge badge-danger';
+	// 		case 'minor':
+	// 			return 'badge badge-warning';
+	// 		case 'patch':
+	// 			return 'badge badge-success';
+	// 		default:
+	// 			return 'badge badge-muted';
+	// 	}
+	// }
+	// OLD CODE END
 
 	function formatSizeMB(mb: number): string {
 		if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
@@ -245,7 +295,12 @@
 	// Data fetching
 	// ---------------------------------------------------------------------------
 
-	async function fetchAll() {
+	// OLD CODE START — the page refresh contract (PLAN.md §5.5): the top bar's Refresh runs this
+	// loader, which says what loaded and drops a reply that lands after the page has gone
+	// async function fetchAll() {
+	// OLD CODE END
+	async function load(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
 		loading = true;
 		// OLD CODE START — #96: the getters faked empty lists on failure (every row read
 		// "Up to Date"), and one failure blanked the rest; they now throw
@@ -266,11 +321,13 @@
 		// 	loading = false;
 		// }
 		// OLD CODE END
-		const [versionsRes, updatesRes, historyRes] = await Promise.allSettled([
+		const results = await Promise.allSettled([
 			getVersions(),
 			getAvailableUpdates(),
 			getUpdateHistory(),
 		]);
+		if (!guard.current(g)) return 'skipped';
+		const [versionsRes, updatesRes, historyRes] = results;
 		if (versionsRes.status === 'fulfilled') {
 			versions = versionsRes.value.versions;
 			lastScan = versionsRes.value.last_scan;
@@ -286,7 +343,15 @@
 		versionsFailed = versionsRes.status === 'rejected';
 		updatesFailed = updatesRes.status === 'rejected';
 		loading = false;
+		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
+		// const failures = results.filter((r) => r.status === 'rejected').length;
+		// return failures === 0 ? 'ok' : failures === results.length ? 'failed' : 'partial';
+		// OLD CODE END
+		return outcome(results);
 	}
+
+	const refresh = registerPageRefresh(load);
+	onDestroy(refresh.unregister);
 
 	async function handleCheckForUpdates() {
 		checking = true;
@@ -456,7 +521,7 @@
 				// idle: the daemon restarted and lost track of the batch
 				actionError = "Couldn't confirm the update finished: NetTap stopped reporting it. Check the versions below.";
 			}
-			await fetchAll();
+			await refresh.run();
 			return;
 		}
 
@@ -494,7 +559,7 @@
 			// OLD CODE END
 			const res = await rollbackComponent(component);
 			if (res.result === 'error') actionError = `Couldn't roll back ${component}: the request failed.`;
-			await fetchAll();
+			await refresh.run();
 		} catch {
 			// OLD CODE START — #96: a network error was swallowed
 			// // Keep existing state
@@ -507,8 +572,17 @@
 	// Initialize
 	// ---------------------------------------------------------------------------
 
-	$effect(() => {
-		fetchAll();
+	// OLD CODE START — loads go through the page refresh contract
+	// $effect(() => {
+	// 	fetchAll();
+	// 	resumeRunningUpdate();
+	// 	return () => {
+	// 		pollRun++;
+	// 	};
+	// });
+	// OLD CODE END
+	onMount(() => {
+		void refresh.run();
 		resumeRunningUpdate();
 		return () => {
 			pollRun++;
@@ -517,1148 +591,381 @@
 </script>
 
 <svelte:head>
-	<title>Software Updates | NetTap</title>
+	<title>Software updates | NetTap</title>
 </svelte:head>
 
-<div class="updates-page">
-	<!-- Header -->
-	<div class="page-header">
-		<div class="header-left">
-			<div class="header-breadcrumb">
-				<a href="/system" class="breadcrumb-link">System</a>
-				<span class="breadcrumb-sep">/</span>
-				<span>Software Updates</span>
-			</div>
-			<h2>Software Updates</h2>
-			<p class="text-muted">
-				{#if updatesFailed}
-					Couldn't load the available updates: the request failed.
-				{:else if lastCheck}
-					Last checked: {timeAgo(lastCheck)}
-				{:else}
-					Updates have not been checked yet
-				{/if}
-			</p>
-			{#if failedChecks.length > 0}
-				<!-- OLD CODE START — showed "component-versions" as is, and blamed every failure on a source not answering
-				<p class="text-warning">Couldn't check {failedChecks.join(', ')}: those sources didn't answer.</p>
-				OLD CODE END -->
-				<p class="text-warning">{failedChecksNote}</p>
-			{/if}
-		</div>
-		<div class="header-actions">
-			<button
-				class="btn btn-primary btn-sm"
-				onclick={handleCheckForUpdates}
-				disabled={checking || loading}
-			>
-				<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<polyline points="23 4 23 10 17 10" />
-					<polyline points="1 20 1 14 7 14" />
-					<path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
-				</svg>
-				{checking ? 'Checking...' : 'Check for Updates'}
-			</button>
-		</div>
-	</div>
+{#snippet componentCell(entry: VersionEntry)}
+	<span class="two">
+		<span class="component-name">{entry.name}</span>
+		<span class="dim component-type">{entry.install_type}</span>
+	</span>
+{/snippet}
 
-	{#if loading && Object.keys(versions).length === 0}
-		<div class="loading-state">
-			<div class="spinner"></div>
-			<p class="text-muted">Loading version information...</p>
-		</div>
+{#snippet currentCell(entry: VersionEntry)}
+	<span class="mono">{entry.current_version}</span>
+{/snippet}
+
+{#snippet latestCell(entry: VersionEntry)}
+	<span class="mono">{updatesMap.get(entry.key)?.latest_version ?? '—'}</span>
+{/snippet}
+
+{#snippet statusCell(entry: VersionEntry)}
+	{@const status = rowStatus(entry)}
+	{#if status === 'Error'}
+		<span class="chip is-bad"><Icon name="warn" />Error</span>
+	{:else if status === 'Update available'}
+		<span class="chip"><Icon name="download" />Update available</span>
+	{:else if status === 'Up to date'}
+		<span class="chip is-ok"><Icon name="check" />Up to date</span>
 	{:else}
-		{#if actionError}
-			<div class="alert alert-danger">{actionError}</div>
-		{/if}
+		<span class="chip">{status}</span>
+	{/if}
+{/snippet}
 
-		<!-- Update Banner -->
-		{#if updatesAvailableCount > 0 && !showUpdatePanel}
-			<div class="update-banner">
-				<div class="update-banner-content">
-					<div class="update-banner-icon">
-						<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-							<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-							<polyline points="7 10 12 15 17 10" />
-							<line x1="12" y1="15" x2="12" y2="3" />
-						</svg>
-					</div>
-					<div class="update-banner-text">
-						<span class="update-banner-title">
-							{updatesAvailableCount} update{updatesAvailableCount !== 1 ? 's' : ''} available
-						</span>
-						<span class="update-banner-subtitle">
-							<!-- was always "Review and apply…", also when none could be applied here -->
-							{#if applicableCount > 0}
-								Review and apply updates to keep your appliance secure and up to date.
-							{:else}
-								None of these can be applied from here: each one says how it arrives.
-							{/if}
-						</span>
-					</div>
-				</div>
-				<div class="update-banner-actions">
-					<button class="btn btn-secondary btn-sm" onclick={() => openUpdatePanel(true)}>
-						Review
-					</button>
+{#snippet actionCell(entry: VersionEntry)}
+	{@const update = updatesMap.get(entry.key)}
+	<!-- OLD CODE START — offered Update for updates NetTap can't apply
+	{#if update}
+	OLD CODE END -->
+	{#if update && !update.applies_with}
+		<button class="btn" type="button" onclick={() => openSingleUpdate(entry.key)}>Update</button>
+	{:else if update?.applies_with}
+		<!-- was blank: say how this update arrives -->
+		<span class="applies-with">{update.applies_with}</span>
+	{/if}
+{/snippet}
+
+{#snippet historyResultCell(result: UpdateResult)}
+	<span class={['chip', result.success ? 'is-ok' : 'is-bad']}>
+		<Icon name={result.success ? 'check' : 'close'} />{result.success ? 'Success' : 'Failed'}
+	</span>
+{/snippet}
+
+{#snippet historyVersionCell(result: UpdateResult)}
+	<span class="mono">{result.old_version} → {result.new_version}</span>
+{/snippet}
+
+{#snippet historyDateCell(result: UpdateResult)}
+	<span class="dim">{new Date(result.completed_at).toLocaleDateString()}</span>
+{/snippet}
+
+{#snippet historyDurationCell(result: UpdateResult)}
+	<span class="num">{formatDuration(result.started_at, result.completed_at)}</span>
+{/snippet}
+
+{#snippet historyErrorCell(result: UpdateResult)}
+	{#if result.error}<span class="error-text">{result.error}</span>{/if}
+{/snippet}
+
+{#snippet historyActionCell(result: UpdateResult)}
+	{#if result.rollback_available}
+		<button class="btn" type="button" onclick={() => handleRollback(result.component)}>Roll back</button>
+	{/if}
+{/snippet}
+
+<div class="page-head">
+	<div>
+		<a href="/system" class="back"><Icon name="back" />System</a>
+		<h1 class="page-title">Software updates</h1>
+		<p class="page-sub">
+			{#if updatesFailed}
+				Couldn't load the available updates: the request failed.
+			{:else if lastCheck}
+				Last checked: {timeAgo(lastCheck)}
+			{:else}
+				Updates have not been checked yet
+			{/if}
+		</p>
+	</div>
+	<div class="head-actions">
+		<button class="btn primary" type="button" onclick={handleCheckForUpdates} disabled={checking || loading}>
+			<Icon name="refresh" />
+			{checking ? 'Checking…' : 'Check for updates'}
+		</button>
+	</div>
+</div>
+
+{#if failedChecks.length > 0}
+	<!-- OLD CODE START — showed "component-versions" as is, and blamed every failure on a source not answering
+	<p class="text-warning">Couldn't check {failedChecks.join(', ')}: those sources didn't answer.</p>
+	OLD CODE END -->
+	<div class="notice is-warn" role="status"><Icon name="warn" />{failedChecksNote}</div>
+{/if}
+
+{#if actionError}
+	<div class="notice is-error" role="alert"><Icon name="warn" />{actionError}</div>
+{/if}
+
+<div class="grid">
+	<!-- Update banner -->
+	{#if updatesAvailableCount > 0 && !showUpdatePanel}
+		<Card
+			hero
+			class="c-12"
+			title="{updatesAvailableCount} update{updatesAvailableCount !== 1 ? 's' : ''} available"
+			sub={applicableCount > 0
+				? 'Review and apply updates to keep your appliance secure and up to date.'
+				: 'None of these can be applied from here: each one says how it arrives.'}
+		>
+			<!-- the sub was always "Review and apply…", also when none could be applied here -->
+			{#snippet actions()}
+				<div class="actions">
+					<button class="btn" type="button" onclick={() => openUpdatePanel(true)}>Review</button>
 					<!-- was always shown: with nothing applicable it opened a panel with nothing to pick -->
 					{#if applicableCount > 0}
-						<button class="btn btn-primary btn-sm" onclick={() => openUpdatePanel(true)}>
-							Update All
-						</button>
+						<button class="btn primary" type="button" onclick={() => openUpdatePanel(true)}>Update all</button>
 					{/if}
 				</div>
-			</div>
-		{/if}
+			{/snippet}
+		</Card>
+	{/if}
 
-		<!-- Update Panel (modal-like overlay) -->
-		{#if showUpdatePanel}
-			<div class="update-panel">
-				<div class="card">
-					<div class="card-header">
-						<span class="card-title">
-							{#if updateCompleted}
-								<!-- OLD CODE START — read "Update Complete" also when polling stopped first
-								Update Complete
-								OLD CODE END -->
-								{finishedTitle}
-							{:else if updateInProgress}
-								Updating...
-							{:else}
-								Apply Updates
-							{/if}
-						</span>
-						<button class="btn-close" onclick={closeUpdatePanel} aria-label="Close">
-							<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<line x1="18" y1="6" x2="6" y2="18" />
-								<line x1="6" y1="6" x2="18" y2="18" />
-							</svg>
-						</button>
-					</div>
+	<!-- Update panel -->
+	{#if showUpdatePanel}
+		<Card
+			class="c-12"
+			title={updateCompleted ? finishedTitle : updateInProgress ? 'Updating…' : 'Apply updates'}
+			sub={updateCompleted
+				? 'What happened to each component'
+				: updateInProgress
+					? 'A Malcolm update takes 10 to 40 minutes · you can leave this page and come back'
+					: 'Pick the components to update · NetTap backs up first and rolls back if an update fails'}
+		>
+			<!-- OLD CODE START — read "Update Complete" also when polling stopped first
+			Update Complete
+			OLD CODE END -->
+			{#snippet actions()}
+				<button class="icon-btn" type="button" onclick={closeUpdatePanel} aria-label="Close"><Icon name="close" /></button>
+			{/snippet}
 
-					{#if updateCompleted && updateStatus}
-						<!-- Completion summary -->
-						<div class="update-summary">
-							<div class="summary-stats">
-								{#if successCount > 0}
-									<div class="summary-stat summary-success">
-										<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
-											<polyline points="22 4 12 14.01 9 11.01" />
-										</svg>
-										<span>{successCount} succeeded</span>
-									</div>
-								{/if}
-								{#if failCount > 0}
-									<div class="summary-stat summary-fail">
-										<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<circle cx="12" cy="12" r="10" />
-											<line x1="15" y1="9" x2="9" y2="15" />
-											<line x1="9" y1="9" x2="15" y2="15" />
-										</svg>
-										<span>{failCount} failed</span>
-									</div>
-								{/if}
-							</div>
-
-							<!-- Per-component results -->
-							<div class="result-list">
-								{#each updateStatus.results as result}
-									<div class="result-item">
-										<div class="result-info">
-											{#if result.success}
-												<span class="result-icon result-icon-success">
-													<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12" /></svg>
-												</span>
-											{:else}
-												<span class="result-icon result-icon-fail">
-													<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-												</span>
-											{/if}
-											<div>
-												<span class="result-name">{result.component}</span>
-												<span class="result-version mono">
-													{result.old_version} &rarr; {result.new_version}
-												</span>
-											</div>
-										</div>
-										<div class="result-actions">
-											{#if result.error}
-												<span class="text-danger text-sm">{result.error}</span>
-											{/if}
-											{#if result.rollback_available && !result.success}
-												<button class="btn btn-secondary btn-xs" onclick={() => handleRollback(result.component)}>
-													Rollback
-												</button>
-											{/if}
-										</div>
-									</div>
-								{/each}
-							</div>
-						</div>
-					{:else if updateInProgress && updateStatus}
-						<!-- Progress display -->
-						<div class="update-progress">
-							<div class="progress-bar-container">
-								<div
-									class="progress-bar"
-									style="width: {updateStatus.progress_percent}%"
-								></div>
-							</div>
-							<p class="progress-label mono">{updateStatus.progress_percent}% complete</p>
-							{#if updateStatus.current_step}
-								<p class="progress-label">{updateStatus.current_step}</p>
-							{/if}
-
-							<div class="component-status-list">
-								{#each [...selectedComponents] as component}
-									{@const icon = componentStatusIcon(component, updateStatus)}
-									<div class="component-status-item">
-										<span class="component-status-icon">
-											{#if icon === 'updating'}
-												<div class="spinner-sm"></div>
-											{:else if icon === 'success'}
-												<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--success)" stroke-width="2"><polyline points="20 6 9 17 4 12" /></svg>
-											{:else if icon === 'failed'}
-												<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--danger)" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-											{:else}
-												<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--text-muted)" stroke-width="2"><circle cx="12" cy="12" r="10" /></svg>
-											{/if}
-										</span>
-										<span class="component-status-name">{component}</span>
-										<span class="component-status-label">
-											{#if icon === 'updating'}
-												Updating...
-											{:else if icon === 'success'}
-												Done
-											{:else if icon === 'failed'}
-												Failed
-											{:else}
-												Pending
-											{/if}
-										</span>
-									</div>
-								{/each}
-							</div>
-
-							{#if updateStatus.current_component}
-								<div class="log-area">
-									<p class="log-title mono">Updating: {updateStatus.current_component}</p>
-								</div>
-							{/if}
-						</div>
-					{:else}
-						<!-- Component selection -->
-						<div class="update-selection">
-							<p class="text-muted selection-help">
-								Select the components you want to update:
-							</p>
-
-							<div class="component-checklist">
-								{#each availableUpdates as update}
-									<div class="component-check-item">
-										<label class="check-label">
-											<!-- applies_with: NetTap can't apply it, so it can't be picked -->
-											<input
-												type="checkbox"
-												checked={!update.applies_with && selectedComponents.has(update.component)}
-												disabled={!!update.applies_with}
-												onchange={() => toggleComponent(update.component)}
-											/>
-											<div class="check-info">
-												<div class="check-header">
-													<span class="check-name">{update.component}</span>
-													<span class={updateTypeBadgeClass(update.update_type)}>
-														{update.update_type}
-													</span>
-													{#if update.requires_restart && !update.applies_with}
-														<span class="badge badge-warning">Restart required</span>
-													{/if}
-												</div>
-												<span class="check-version mono">
-													{update.current_version} &rarr; {update.latest_version}
-												</span>
-												<!-- OLD CODE START — an unmeasured (null) size showed nothing; now it says so
-												{#if update.size_mb > 0}
-													<span class="check-size text-muted">{formatSizeMB(update.size_mb)}</span>
-												{/if}
-												OLD CODE END -->
-												{#if update.applies_with}
-													<span class="check-size text-muted">{update.applies_with}</span>
-												{:else if update.size_mb == null}
-													<span class="check-size text-muted">size unknown</span>
-												{:else if update.size_mb > 0}
-													<span class="check-size text-muted">{formatSizeMB(update.size_mb)}</span>
-												{/if}
-											</div>
-										</label>
-
-										<!-- Expandable changelog -->
-										{#if update.changelog}
-											<Collapsible title="Changelog" subtitle={update.latest_version}>
-												<pre class="changelog-content">{update.changelog}</pre>
-											</Collapsible>
-										{/if}
-									</div>
-								{/each}
-							</div>
-
-							<div class="update-actions">
-								<button class="btn btn-secondary" onclick={closeUpdatePanel}>
-									Cancel
-								</button>
-								<button
-									class="btn btn-primary"
-									onclick={handleApplyUpdates}
-									disabled={selectedCount === 0 || applying}
-								>
-									{applying ? 'Starting...' : `Update ${selectedCount} Component${selectedCount !== 1 ? 's' : ''}`}
-								</button>
-							</div>
-						</div>
+			{#if updateCompleted && updateStatus}
+				<!-- Completion summary -->
+				<div class="chips summary">
+					{#if successCount > 0}
+						<span class="chip is-ok"><Icon name="check" />{successCount} succeeded</span>
+					{/if}
+					{#if failCount > 0}
+						<span class="chip is-bad"><Icon name="close" />{failCount} failed</span>
 					{/if}
 				</div>
-			</div>
-		{/if}
-
-		<!-- Release Notes / What's New -->
-		{#if updateHistory.length > 0 && updateHistory.some((r) => r.success)}
-			<Collapsible title="What's New" subtitle="Recent updates applied to your appliance">
-				<div class="release-notes">
-					{#each updateHistory.filter((r) => r.success).slice(0, 5) as result}
-						<div class="release-note-item">
-							<div class="release-note-header">
-								<span class="release-note-name">{result.component}</span>
-								<span class="mono release-note-version">{result.old_version} &rarr; {result.new_version}</span>
-								<span class="text-muted text-sm">{timeAgo(result.completed_at)}</span>
-							</div>
-						</div>
+				<ul class="rows">
+					{#each updateStatus.results as result (result.component)}
+						<li class="row">
+							<span class={['row-ic', result.success ? 'is-ok' : 'is-bad']}>
+								<Icon name={result.success ? 'check' : 'close'} label={result.success ? 'Succeeded' : 'Failed'} />
+							</span>
+							<span class="two">
+								<b>{result.component}</b>
+								<span class="mono">{result.old_version} → {result.new_version}</span>
+							</span>
+							<span class="row-end">
+								{#if result.error}
+									<span class="error-text">{result.error}</span>
+								{/if}
+								{#if result.rollback_available && !result.success}
+									<button class="btn" type="button" onclick={() => handleRollback(result.component)}>Roll back</button>
+								{/if}
+							</span>
+						</li>
 					{/each}
+				</ul>
+			{:else if updateInProgress && updateStatus}
+				<!-- Progress -->
+				<div class="progress">
+					<Meter value={updateStatus.progress_percent} label="Update progress" />
+					<p class="num">{updateStatus.progress_percent}% complete</p>
+					{#if updateStatus.current_step}
+						<p class="dim">{updateStatus.current_step}</p>
+					{/if}
 				</div>
-			</Collapsible>
-		{/if}
-
-		<!-- Versions Table -->
-		<div class="card">
-			<div class="card-header">
-				<span class="card-title">Installed Versions</span>
-				<div class="sort-controls">
-					<span class="text-muted text-sm">Sort by:</span>
-					<button
-						class="sort-btn"
-						class:sort-active={sortBy === 'name'}
-						onclick={() => (sortBy = 'name')}
-					>
-						Name
-					</button>
-					<button
-						class="sort-btn"
-						class:sort-active={sortBy === 'status'}
-						onclick={() => (sortBy = 'status')}
-					>
-						Status
+				<ul class="rows">
+					{#each [...selectedComponents] as component (component)}
+						{@const icon = componentStatusIcon(component, updateStatus)}
+						<li class="row">
+							<span class={['row-ic', icon === 'success' && 'is-ok', icon === 'failed' && 'is-bad']}>
+								{#if icon === 'updating'}
+									<Icon name="refresh" />
+								{:else if icon === 'success'}
+									<Icon name="check" />
+								{:else if icon === 'failed'}
+									<Icon name="close" />
+								{/if}
+							</span>
+							<span class="component-status-name">{component}</span>
+							<span class="row-end dim">
+								{#if icon === 'updating'}
+									Updating…
+								{:else if icon === 'success'}
+									Done
+								{:else if icon === 'failed'}
+									Failed
+								{:else}
+									Pending
+								{/if}
+							</span>
+						</li>
+					{/each}
+				</ul>
+				{#if updateStatus.current_component}
+					<p class="mono dim current">Updating: {updateStatus.current_component}</p>
+				{/if}
+			{:else}
+				<!-- Component selection -->
+				<p class="help">Select the components you want to update:</p>
+				<ul class="checklist">
+					{#each availableUpdates as update (update.component)}
+						<li>
+							<label class="check-row pick">
+								<!-- applies_with: NetTap can't apply it, so it can't be picked -->
+								<input
+									type="checkbox"
+									checked={!update.applies_with && selectedComponents.has(update.component)}
+									disabled={!!update.applies_with}
+									onchange={() => toggleComponent(update.component)}
+								/>
+								<span class="pick-info">
+									<span class="pick-head">
+										<b>{update.component}</b>
+										<span class="tag">{update.update_type}</span>
+										{#if update.requires_restart && !update.applies_with}
+											<span class="tag">Restart required</span>
+										{/if}
+									</span>
+									<span class="mono">{update.current_version} → {update.latest_version}</span>
+									<!-- OLD CODE START — an unmeasured (null) size showed nothing; now it says so
+									{#if update.size_mb > 0}
+										<span class="check-size text-muted">{formatSizeMB(update.size_mb)}</span>
+									{/if}
+									OLD CODE END -->
+									{#if update.applies_with}
+										<span class="dim">{update.applies_with}</span>
+									{:else if update.size_mb == null}
+										<span class="dim">size unknown</span>
+									{:else if update.size_mb > 0}
+										<span class="dim">{formatSizeMB(update.size_mb)}</span>
+									{/if}
+								</span>
+							</label>
+							{#if update.changelog}
+								<Collapsible title="Changelog" subtitle={update.latest_version}>
+									<pre class="changelog">{update.changelog}</pre>
+								</Collapsible>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+				<div class="form-actions">
+					<button class="btn" type="button" onclick={closeUpdatePanel}>Cancel</button>
+					<button class="btn primary" type="button" onclick={handleApplyUpdates} disabled={selectedCount === 0 || applying}>
+						{applying ? 'Starting…' : `Update ${selectedCount} component${selectedCount !== 1 ? 's' : ''}`}
 					</button>
 				</div>
-			</div>
+			{/if}
+		</Card>
+	{/if}
 
-			{#each Object.entries(groupedVersions) as [category, entries]}
+	<!-- Installed versions -->
+	<Card title="Installed versions" sub="Every component NetTap runs · by kind" class="c-12">
+		{#if loading && Object.keys(versions).length === 0}
+			<CardState state="loading" title="Loading version information" />
+		{:else if versionsFailed && Object.keys(versions).length === 0}
+			<CardState
+				state="error"
+				title="Couldn't load installed versions: the request failed."
+				message="Check that NetTap is running on the System page, then try again."
+				onaction={() => void refresh.run()}
+			/>
+		{:else if Object.keys(versions).length === 0}
+			<CardState
+				state="empty"
+				icon="download"
+				title="No version information available"
+				message="Select Check for updates to scan this NetTap."
+			/>
+		{:else}
+			{#if versionsFailed}
+				<div class="notice is-warn" role="status"><Icon name="warn" />{loadFailed('installed versions', true)}</div>
+			{/if}
+			{#each Object.entries(groupedVersions) as [category, entries] (category)}
 				{#if entries.length > 0}
-					<div class="version-category">
-						<h4 class="category-title">{categoryLabels[category] || category}</h4>
-						<div class="version-table">
-							<div class="version-table-header">
-								<span class="vtcol-name">Component</span>
-								<span class="vtcol-current">Current Version</span>
-								<span class="vtcol-latest">Latest Available</span>
-								<span class="vtcol-status">Status</span>
-								<span class="vtcol-action"></span>
-							</div>
-							{#each entries as entry}
-								{@const update = updatesMap.get(entry.key)}
-								<div class="version-row">
-									<span class="vtcol-name">
-										<span class="component-name">{entry.name}</span>
-										<span class="component-type text-muted text-xs">{entry.install_type}</span>
-									</span>
-									<span class="vtcol-current mono">{entry.current_version}</span>
-									<span class="vtcol-latest mono">
-										{#if update}
-											{update.latest_version}
-										{:else}
-											--
-										{/if}
-									</span>
-									<span class="vtcol-status">
-										{#if entry.status === 'error'}
-											<span class="badge badge-danger">Error</span>
-										{:else if entry.status === 'unknown'}
-											<span class="badge badge-muted">Unknown</span>
-										{:else if update}
-											<span class="badge badge-warning">Update Available</span>
-										{:else if checkFailed(entry.key, entry.name)}
-											<span class="badge badge-muted">Unknown</span>
-										<!-- no check since the daemon started: no update listed doesn't mean none exists -->
-										{:else if !lastCheck || (checkedComponents && !checkedComponents.includes(entry.name))}
-											<!-- nothing checks the OS, Docker, Python…: no listed update doesn't make them current -->
-											<span class="badge badge-muted">Not checked</span>
-										{:else}
-											<span class="badge badge-success">Up to Date</span>
-										{/if}
-									</span>
-									<span class="vtcol-action">
-										<!-- OLD CODE START — offered Update for updates NetTap can't apply
-										{#if update}
-										OLD CODE END -->
-										{#if update && !update.applies_with}
-											<button
-												class="btn btn-secondary btn-xs"
-												onclick={() => openSingleUpdate(entry.key)}
-											>
-												Update
-											</button>
-										{:else if update?.applies_with}
-											<!-- was blank: say how this update arrives -->
-											<span class="applies-with text-xs">{update.applies_with}</span>
-										{/if}
-									</span>
-								</div>
-							{/each}
-						</div>
-					</div>
+					<section class="category">
+						<h3 class="eyebrow">{categoryLabels[category] || category}</h3>
+						<DataTable
+							columns={versionColumns}
+							rows={entries}
+							ariaLabel={categoryLabels[category] || category}
+							rowKey={(e) => e.key}
+							initialSort={{ key: 'name', dir: 'asc' }}
+						/>
+					</section>
 				{/if}
 			{/each}
+		{/if}
+	</Card>
 
-			{#if versionsFailed}
-				<p class="text-muted empty-state">Couldn't load installed versions: the request failed.</p>
-			{:else if Object.keys(versions).length === 0}
-				<p class="text-muted empty-state">No version information available. Click "Check for Updates" to scan.</p>
+	<!-- What's new -->
+	{#if updateHistory.length > 0 && updateHistory.some((r) => r.success)}
+		<Card title="What's new" sub="Recent updates applied to your appliance · last five" class="c-12">
+			<dl class="facts flush">
+				{#each updateHistory.filter((r) => r.success).slice(0, 5) as result, i (i)}
+					<dt>{result.component}</dt>
+					<dd><span class="mono">{result.old_version} → {result.new_version}</span> <span class="dim">· {timeAgo(result.completed_at)}</span></dd>
+				{/each}
+			</dl>
+		</Card>
+	{/if}
+
+	<!-- Update history -->
+	{#if updateHistory.length > 0}
+		<Card title="Update history" sub="{updateHistory.length} past update{updateHistory.length !== 1 ? 's' : ''}" class="c-12">
+			{#if historyFailed}
+				<div class="notice is-warn" role="status"><Icon name="warn" />{loadFailed('the update history', true)}</div>
 			{/if}
-		</div>
-
-		<!-- Update History -->
-		{#if updateHistory.length > 0}
-			<Collapsible title="Update History" subtitle="{updateHistory.length} past update{updateHistory.length !== 1 ? 's' : ''}" badge={String(updateHistory.length)}>
-				<div class="history-list">
-					{#each updateHistory as result}
-						<div class="history-item">
-							<div class="history-info">
-								<span class={result.success ? 'badge badge-success' : 'badge badge-danger'}>
-									{result.success ? 'Success' : 'Failed'}
-								</span>
-								<span class="history-component">{result.component}</span>
-								<span class="history-version mono">
-									{result.old_version} &rarr; {result.new_version}
-								</span>
-							</div>
-							<div class="history-meta">
-								<span class="text-muted text-sm">
-									{new Date(result.completed_at).toLocaleDateString()}
-								</span>
-								<span class="text-muted text-sm">
-									{formatDuration(result.started_at, result.completed_at)}
-								</span>
-								{#if result.error}
-									<span class="text-danger text-sm">{result.error}</span>
-								{/if}
-								{#if result.rollback_available}
-									<button class="btn btn-secondary btn-xs" onclick={() => handleRollback(result.component)}>
-										Rollback
-									</button>
-								{/if}
-							</div>
-						</div>
-					{/each}
-				</div>
-			</Collapsible>
-		{/if}
-		{#if historyFailed}
-			<p class="text-warning">{loadFailed('the update history', updateHistory.length > 0)}</p>
-		{/if}
+			<DataTable
+				columns={historyColumns}
+				rows={updateHistory}
+				ariaLabel="Update history"
+				rowKey={(r) => `${r.component}-${r.started_at}-${r.completed_at}`}
+				initialSort={{ key: 'completed_at', dir: 'desc' }}
+			/>
+		</Card>
+	{:else if historyFailed}
+		<Card title="Update history" sub="Past updates on this NetTap" class="c-12">
+			<CardState
+				state="error"
+				title={loadFailed('the update history')}
+				message="Check that NetTap is running on the System page, then try again."
+				onaction={() => void refresh.run()}
+			/>
+		</Card>
 	{/if}
 </div>
 
 <style>
-	.updates-page {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-	}
-
-	/* Header */
-	.page-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: var(--space-md);
-		flex-wrap: wrap;
-	}
-
-	.header-left h2 {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		margin-bottom: var(--space-xs);
-	}
-
-	.header-actions {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.header-breadcrumb {
-		display: flex;
-		align-items: center;
-		gap: var(--space-xs);
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		margin-bottom: var(--space-xs);
-	}
-
-	.breadcrumb-link {
-		color: var(--accent);
-		text-decoration: none;
-	}
-
-	.breadcrumb-link:hover {
-		text-decoration: underline;
-	}
-
-	.breadcrumb-sep {
-		color: var(--text-muted);
-	}
-
-	/* Loading */
-	.loading-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: var(--space-3xl);
-		gap: var(--space-md);
-	}
-
-	.spinner {
-		width: 32px;
-		height: 32px;
-		border: 3px solid var(--border-default);
-		border-top-color: var(--accent);
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-	}
-
-	.spinner-sm {
-		width: 16px;
-		height: 16px;
-		border: 2px solid var(--border-default);
-		border-top-color: var(--accent);
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-	/* Update Banner */
-	.update-banner {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-md);
-		padding: var(--space-md) var(--space-lg);
-		background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 12%, transparent), color-mix(in srgb, var(--accent) 6%, transparent));
-		border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-		border-radius: var(--radius-lg);
-		flex-wrap: wrap;
-	}
-
-	.update-banner-content {
-		display: flex;
-		align-items: center;
-		gap: var(--space-md);
-	}
-
-	.update-banner-icon {
-		color: var(--accent);
-		flex-shrink: 0;
-	}
-
-	.update-banner-text {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-	}
-
-	.update-banner-title {
-		font-size: var(--text-base);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.update-banner-subtitle {
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-	}
-
-	.update-banner-actions {
-		display: flex;
-		gap: var(--space-sm);
-		flex-shrink: 0;
-	}
-
-	/* Update Panel */
-	.update-panel {
-		position: relative;
-	}
-
-	.btn-close {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		padding: 0;
-		background: none;
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-sm);
-		color: var(--text-muted);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.btn-close:hover {
-		color: var(--text-primary);
-		background: var(--bg-tertiary);
-	}
-
-	/* Update Selection */
-	.selection-help {
-		margin-bottom: var(--space-md);
-	}
-
-	.component-checklist {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-md);
-		margin-bottom: var(--space-lg);
-	}
-
-	.component-check-item {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-		padding: var(--space-sm) 0;
-		border-bottom: 1px solid var(--border-muted);
-	}
-
-	.component-check-item:last-child {
-		border-bottom: none;
-	}
-
-	.check-label {
-		display: flex;
-		align-items: flex-start;
-		gap: var(--space-sm);
-		cursor: pointer;
-	}
-
-	.check-label:has(input:disabled) {
-		cursor: default;
-	}
-
-	.check-label input[type='checkbox'] {
-		margin-top: 3px;
-		accent-color: var(--accent);
-	}
-
-	.check-info {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-	}
-
-	.check-header {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		flex-wrap: wrap;
-	}
-
-	.check-name {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.check-version {
-		font-size: var(--text-xs);
-		color: var(--text-secondary);
-	}
-
-	.check-size {
-		font-size: var(--text-xs);
-	}
-
-	.changelog-content {
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-		color: var(--text-secondary);
-		white-space: pre-wrap;
-		word-break: break-word;
-		background: var(--bg-tertiary);
-		padding: var(--space-sm);
-		border-radius: var(--radius-sm);
-		max-height: 200px;
-		overflow-y: auto;
-		margin-top: var(--space-sm);
-	}
-
-	.update-actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: var(--space-sm);
-		padding-top: var(--space-md);
-		border-top: 1px solid var(--border-muted);
-	}
-
-	/* Progress */
-	.update-progress {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-md);
-	}
-
-	.progress-bar-container {
-		width: 100%;
-		height: 8px;
-		background-color: var(--bg-tertiary);
-		border-radius: var(--radius-full);
-		overflow: hidden;
-	}
-
-	.progress-bar {
-		height: 100%;
-		background-color: var(--accent);
-		border-radius: var(--radius-full);
-		transition: width 0.3s ease;
-	}
-
-	.progress-label {
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-		text-align: center;
-	}
-
-	.component-status-list {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-xs);
-	}
-
-	.component-status-item {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-xs) 0;
-	}
-
-	.component-status-icon {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 20px;
-		height: 20px;
-		flex-shrink: 0;
-	}
-
-	.component-status-name {
-		font-size: var(--text-sm);
-		font-weight: 500;
-		color: var(--text-primary);
-		flex: 1;
-	}
-
-	.component-status-label {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-	}
-
-	.log-area {
-		background: var(--bg-tertiary);
-		border-radius: var(--radius-sm);
-		padding: var(--space-sm) var(--space-md);
-		margin-top: var(--space-sm);
-	}
-
-	.log-title {
-		font-size: var(--text-xs);
-		color: var(--accent);
-	}
-
-	/* Summary */
-	.update-summary {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-md);
-	}
-
-	.summary-stats {
-		display: flex;
-		gap: var(--space-lg);
-		flex-wrap: wrap;
-	}
-
-	.summary-stat {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		font-size: var(--text-sm);
-		font-weight: 600;
-	}
-
-	.summary-success {
-		color: var(--success);
-	}
-
-	.summary-fail {
-		color: var(--danger);
-	}
-
-	.result-list {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.result-item {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-md);
-		padding: var(--space-sm) 0;
-		border-bottom: 1px solid var(--border-muted);
-	}
-
-	.result-item:last-child {
-		border-bottom: none;
-	}
-
-	.result-info {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.result-icon {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-	}
-
-	.result-icon-success {
-		color: var(--success);
-	}
-
-	.result-icon-fail {
-		color: var(--danger);
-	}
-
-	.result-info div {
-		display: flex;
-		flex-direction: column;
-	}
-
-	.result-name {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.result-version {
-		font-size: var(--text-xs);
-		color: var(--text-secondary);
-	}
-
-	.result-actions {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	/* Versions Table */
-	.version-category {
-		margin-bottom: var(--space-lg);
-	}
-
-	.version-category:last-child {
-		margin-bottom: 0;
-	}
-
-	.category-title {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-secondary);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		margin-bottom: var(--space-sm);
-		padding-bottom: var(--space-xs);
-		border-bottom: 1px solid var(--border-muted);
-	}
-
-	.version-table {
-		width: 100%;
-	}
-
-	.version-table-header {
-		display: grid;
-		/* OLD CODE START — auto: an applies_with sentence squeezed the other columns
-		grid-template-columns: 2fr 1.5fr 1.5fr 1fr auto;
-		OLD CODE END */
-		grid-template-columns: 2fr 1.5fr 1.5fr 1fr 1.5fr;
-		gap: var(--space-md);
-		padding: var(--space-xs) 0;
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		border-bottom: 1px solid var(--border-default);
-	}
-
-	.version-row {
-		display: grid;
-		/* OLD CODE START — auto: an applies_with sentence squeezed the other columns
-		grid-template-columns: 2fr 1.5fr 1.5fr 1fr auto;
-		OLD CODE END */
-		grid-template-columns: 2fr 1.5fr 1.5fr 1fr 1.5fr;
-		gap: var(--space-md);
-		padding: var(--space-sm) 0;
-		align-items: center;
-		border-bottom: 1px solid var(--border-muted);
-	}
-
-	.version-row:last-child {
-		border-bottom: none;
-	}
-
-	.vtcol-name {
-		display: flex;
-		flex-direction: column;
-		gap: 1px;
-	}
-
-	.component-name {
-		font-size: var(--text-sm);
-		font-weight: 500;
-		color: var(--text-primary);
-	}
-
-	.component-type {
-		font-size: var(--text-xs);
-	}
-
-	.vtcol-current,
-	.vtcol-latest {
-		font-size: var(--text-sm);
-	}
-
-	.vtcol-status {
-		display: flex;
-	}
-
-	.vtcol-action {
-		display: flex;
-		justify-content: flex-end;
-	}
-
-	.applies-with {
-		color: var(--text-muted);
-		text-align: right;
-	}
-
-	.sort-controls {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.sort-btn {
-		padding: 2px var(--space-sm);
-		font-family: var(--font-sans);
-		font-size: var(--text-xs);
-		font-weight: 500;
-		color: var(--text-muted);
-		background: none;
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.sort-btn:hover {
-		color: var(--text-primary);
-		background: var(--bg-tertiary);
-	}
-
-	.sort-active {
-		color: var(--accent);
-		border-color: var(--accent);
-		background: color-mix(in srgb, var(--accent) 10%, transparent);
-	}
-
-	.empty-state {
-		padding: var(--space-xl);
-		text-align: center;
-	}
-
-	/* Release Notes */
-	.release-notes {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.release-note-item {
-		padding: var(--space-sm) 0;
-		border-bottom: 1px solid var(--border-muted);
-	}
-
-	.release-note-item:last-child {
-		border-bottom: none;
-	}
-
-	.release-note-header {
-		display: flex;
-		align-items: center;
-		gap: var(--space-md);
-		flex-wrap: wrap;
-	}
-
-	.release-note-name {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.release-note-version {
-		font-size: var(--text-xs);
-		color: var(--text-secondary);
-	}
-
-	/* History */
-	.history-list {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.history-item {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-md);
-		padding: var(--space-sm) 0;
-		border-bottom: 1px solid var(--border-muted);
-		flex-wrap: wrap;
-	}
-
-	.history-item:last-child {
-		border-bottom: none;
-	}
-
-	.history-info {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.history-component {
-		font-size: var(--text-sm);
-		font-weight: 500;
-		color: var(--text-primary);
-	}
-
-	.history-version {
-		font-size: var(--text-xs);
-		color: var(--text-secondary);
-	}
-
-	.history-meta {
-		display: flex;
-		align-items: center;
-		gap: var(--space-md);
-	}
-
-	/* Utility classes */
-	.text-sm {
-		font-size: var(--text-sm);
-	}
-
-	.text-xs {
-		font-size: var(--text-xs);
-	}
-
-	.text-danger {
-		color: var(--danger);
-	}
-
-	.text-success {
-		color: var(--success);
-	}
-
-	.badge-muted {
-		font-size: var(--text-xs);
-		padding: 2px 8px;
-		border-radius: var(--radius-sm);
-		background: var(--bg-tertiary);
-		color: var(--text-muted);
-		font-weight: 500;
-	}
-
-	.btn-xs {
-		padding: 2px var(--space-sm);
-		font-size: var(--text-xs);
-	}
-
-	@media (max-width: 768px) {
-		.page-header {
-			flex-direction: column;
-		}
-
-		.update-banner {
-			flex-direction: column;
-		}
-
-		.version-table-header,
-		.version-row {
-			/* OLD CODE START — auto: see .version-row
-			grid-template-columns: 1.5fr 1fr 1fr auto;
-			OLD CODE END */
-			grid-template-columns: 1.5fr 1fr 1fr 1fr;
-		}
-
-		.vtcol-latest {
-			display: none;
-		}
-
-		.history-item {
-			flex-direction: column;
-			align-items: flex-start;
-		}
-	}
-
-	@media (max-width: 480px) {
-		.version-table-header,
-		.version-row {
-			grid-template-columns: 1fr auto;
-		}
-
-		.vtcol-current,
-		.vtcol-latest {
-			display: none;
-		}
-	}
+	:global(.card) > .notice { margin-bottom: var(--sp-4); }
+	.category + .category { margin-top: var(--sp-5); }
+	.category .eyebrow { margin-bottom: var(--sp-2); }
+	.category :global(.vtcol-action) { text-align: right; }
+	.component-type { font-size: var(--text-xs); }
+	.applies-with { display: inline-block; max-width: 280px; font-size: var(--text-xs); color: var(--text-3); text-align: right; white-space: normal; }
+	.error-text { color: var(--sev-critical); font-size: var(--text-sm); }
+	.summary { margin-bottom: var(--sp-4); }
+	.rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+	.row { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; padding: var(--sp-2) 0; }
+	.row + .row { border-top: 1px solid var(--line); }
+	.row-ic { display: grid; place-items: center; color: var(--text-3); }
+	.row-ic.is-ok { color: var(--ok); }
+	.row-ic.is-bad { color: var(--sev-critical); }
+	.row-end { display: flex; align-items: center; gap: var(--sp-3); justify-content: flex-end; font-size: var(--text-sm); }
+	.progress { display: flex; flex-direction: column; gap: var(--sp-2); margin-bottom: var(--sp-4); font-size: var(--text-sm); }
+	.current { margin-top: var(--sp-3); font-size: var(--text-sm); }
+	.help { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); }
+	.checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+	.checklist > li { padding: var(--sp-3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-1); }
+	.pick { align-items: flex-start; }
+	.pick input { margin-top: 2px; }
+	.pick-info { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+	.pick-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
+	.changelog { margin: 0; white-space: pre-wrap; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-2); }
+	.facts.flush { border-top: 0; padding-top: 0; }
 </style>

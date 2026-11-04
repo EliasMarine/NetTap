@@ -15,6 +15,12 @@ function stubFetch(health: Record<string, unknown> | null) {
 	);
 }
 
+/** The pipeline stage's status line (System Health moved into the capture pipeline). */
+function stage(label: string): string | undefined {
+	const item = [...document.querySelectorAll('.pipe-item')].find((el) => el.querySelector('.pipe-k')?.textContent?.trim() === label);
+	return item?.querySelector('.pipe-v')?.textContent?.trim();
+}
+
 describe('Home — System Health card (#96)', () => {
 	beforeEach(() => {
 		// jsdom has no ResizeObserver; the bandwidth chart needs one to mount
@@ -40,6 +46,7 @@ describe('Home — System Health card (#96)', () => {
 		expect(await screen.findByText("Couldn't check: the request failed")).toBeInTheDocument();
 		expect(screen.queryByText('Degraded')).not.toBeInTheDocument();
 		expect(screen.queryByText(/OpenSearch unreachable/)).not.toBeInTheDocument();
+		expect(screen.queryByText('Unreachable')).not.toBeInTheDocument();
 		expect(screen.queryByText(/OpenSearch is not reachable/)).not.toBeInTheDocument();
 	});
 
@@ -49,6 +56,8 @@ describe('Home — System Health card (#96)', () => {
 		render(HomePage);
 
 		expect(await screen.findByText('Healthy')).toBeInTheDocument();
-		expect(screen.getByText(/OpenSearch connected/)).toBeInTheDocument();
+		// was the card's "OpenSearch connected" line; now the pipeline's OpenSearch stage
+		expect(stage('OpenSearch')).toBe('Connected');
+		expect(stage('System')).toBe('Healthy');
 	});
 });

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import {
 		getPcapFiles,
 		searchPcaps,
@@ -17,23 +17,36 @@
 		PcapPacket,
 	} from '$lib/api/pcap';
 	import { formatDuration } from '$lib/utils/tshark-helpers';
-	import { TableSort, compareValues } from '$lib/utils/table-sort.svelte';
+	// OLD CODE START — DataTable sorts every table (utils/table-sort)
+	// import { TableSort, compareValues } from '$lib/utils/table-sort.svelte';
+	// OLD CODE END
 	// OLD CODE START — getCaptureStatus fakes enabled: true when the request fails
 	// import { getCaptureStatus, toggleCapture, captureState } from '$lib/api/capture';
 	// OLD CODE END
 	import { fetchCaptureStatus, toggleCapture, captureState } from '$lib/api/capture';
 	import type { CaptureStatus } from '$lib/api/capture';
+	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
+	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
+	import BarList from '$lib/components/ui/BarList.svelte';
+	import Bytes from '$lib/components/ui/Bytes.svelte';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import KpiCard from '$lib/components/ui/KpiCard.svelte';
+	import Pills from '$lib/components/ui/Pills.svelte';
+	import SearchField from '$lib/components/ui/SearchField.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Constants
 	// ---------------------------------------------------------------------------
 
 	const TIME_RANGES = [
-		{ label: '1h', value: '1h', ms: 60 * 60 * 1000 },
-		{ label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000 },
-		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000 },
-		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000 },
-		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000 },
+		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour', bucket: '5 minutes' },
+		{ label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours', bucket: '20 minutes' },
+		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours', bucket: 'hour' },
+		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days', bucket: '6 hours' },
+		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days', bucket: 'day' },
 	];
 
 	const SEARCH_POLL_MS = 3000;
@@ -46,7 +59,9 @@
 	// let selectedTimeRange = $state('24h');
 	// OLD CODE END
 	let selectedTimeRange = $state('1h');
-	let initialized = $state(false);
+	// OLD CODE START — PLAN §5.5: a range change during the first load now starts a new, guarded load
+	// let initialized = $state(false);
+	// OLD CODE END
 
 	// Filter
 	let bpfFilter = $state('');
@@ -81,16 +96,20 @@
 	let previewTimedOut = $state(false);
 	let previewFile = $state('');
 	let previewLoading = $state(false);
+	// A failed preview is not "No packets to display"
+	let previewFailed = $state(false);
 
-	// Sorting — Files
-	type FileSortKey = 'name' | 'size_bytes' | 'modified';
-	let fileSortKey = $state<FileSortKey>('modified');
-	let fileSortDir = $state<'asc' | 'desc'>('desc');
-
-	// Sorting — Search Results
-	type ResultSortKey = 'name' | 'matching_packets' | 'size_bytes' | 'modified';
-	let resultSortKey = $state<ResultSortKey>('matching_packets');
-	let resultSortDir = $state<'asc' | 'desc'>('desc');
+	// OLD CODE START — DataTable sorts the file and result tables (every column, utils/table-sort)
+	// // Sorting — Files
+	// type FileSortKey = 'name' | 'size_bytes' | 'modified';
+	// let fileSortKey = $state<FileSortKey>('modified');
+	// let fileSortDir = $state<'asc' | 'desc'>('desc');
+	//
+	// // Sorting — Search Results
+	// type ResultSortKey = 'name' | 'matching_packets' | 'size_bytes' | 'modified';
+	// let resultSortKey = $state<ResultSortKey>('matching_packets');
+	// let resultSortDir = $state<'asc' | 'desc'>('desc');
+	// OLD CODE END
 
 	// Capture control
 	// OLD CODE START — assumed on, so an unread state showed the toggle on and a click turned capture off
@@ -100,11 +119,16 @@
 	let captureLoading = $state(false);
 	let captureStatus = $state<CaptureStatus | null>(null);
 	let captureView = $derived(captureState(captureStatus));
-	const CAPTURE_LABELS = { active: 'Capture Active', stopped: 'Capture Stopped', unknown: 'Capture Status Unknown' };
+	// OLD CODE START — sentence case (design system voice)
+	// const CAPTURE_LABELS = { active: 'Capture Active', stopped: 'Capture Stopped', unknown: 'Capture Status Unknown' };
+	// OLD CODE END
+	const CAPTURE_LABELS = { active: 'Capture active', stopped: 'Capture stopped', unknown: 'Capture status unknown' };
 
-	// Timeline
-	let hoveredBarIndex = $state<number | null>(null);
-	let chartWidth = $state(800);
+	// OLD CODE START — the hand-drawn timeline's hover and width; AreaChart handles both
+	// // Timeline
+	// let hoveredBarIndex = $state<number | null>(null);
+	// let chartWidth = $state(800);
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// Derived — Stats
@@ -115,6 +139,10 @@
 	let newestCapture = $derived(files.length ? files.reduce((a, b) => a.modified > b.modified ? a : b).modified : '');
 	let oldestCapture = $derived(files.length ? files.reduce((a, b) => a.modified < b.modified ? a : b).modified : '');
 	let maxFileSize = $derived(Math.max(1, ...files.map((f) => f.size_bytes)));
+
+	const range = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange) ?? TIME_RANGES[0]);
+	// The file counts read as unknown, not 0, until the first listing arrives
+	const filesUnknown = $derived(filesFailed || (filesLoading && files.length === 0));
 
 	// ---------------------------------------------------------------------------
 	// Derived — Capture Timeline
@@ -150,7 +178,12 @@
 	}
 
 	let captureTimeline = $derived(buildCaptureTimeline(files, selectedTimeRange));
-	let maxTimelineCount = $derived(Math.max(1, ...captureTimeline.map((b) => b.count)));
+	// OLD CODE START — the hand-drawn timeline's scale; AreaChart fits its own axis
+	// let maxTimelineCount = $derived(Math.max(1, ...captureTimeline.map((b) => b.count)));
+	// OLD CODE END
+	const busiestBucket = $derived(
+		captureTimeline.reduce((best, b, i) => (b.count > (captureTimeline[best]?.count ?? 0) ? i : best), -1),
+	);
 
 	// ---------------------------------------------------------------------------
 	// Derived — Protocol Breakdown
@@ -188,33 +221,35 @@
 	// Derived — Sorted tables
 	// ---------------------------------------------------------------------------
 
-	let sortedFiles = $derived(
-		[...files].sort((a, b) => {
-			// OLD CODE START — never returned 0 for equal values, and compared names as plain text
-			// const cmp = fileSortKey === 'name' ? a.name.localeCompare(b.name) : (a[fileSortKey] as number | string) < (b[fileSortKey] as number | string) ? -1 : 1;
-			// OLD CODE END
-			const cmp = compareValues(a[fileSortKey], b[fileSortKey]);
-			return fileSortDir === 'asc' ? cmp : -cmp;
-		})
-	);
-
-	let sortedResults = $derived(
-		[...searchResults].sort((a, b) => {
-			// OLD CODE START — never returned 0 for equal values, and compared names as plain text
-			// const cmp = resultSortKey === 'name' ? a.name.localeCompare(b.name) : (a[resultSortKey] as number | string) < (b[resultSortKey] as number | string) ? -1 : 1;
-			// OLD CODE END
-			const cmp = compareValues(a[resultSortKey], b[resultSortKey]);
-			return resultSortDir === 'asc' ? cmp : -cmp;
-		})
-	);
-
-	type PacketSortKey = 'frame_number' | 'timestamp' | 'source' | 'destination' | 'protocol' | 'length' | 'info';
-	const PACKET_COLUMNS: [PacketSortKey, string][] = [
-		['frame_number', '#'], ['timestamp', 'Time'], ['source', 'Source'], ['destination', 'Destination'],
-		['protocol', 'Protocol'], ['length', 'Length'], ['info', 'Info'],
-	];
-	// capture order first; every field is text, compareValues orders "10" after "9"
-	const packetSort = new TableSort<PacketSortKey>('frame_number', 'asc');
+	// OLD CODE START — DataTable sorts these (utils/table-sort compareValues, blanks last)
+	// let sortedFiles = $derived(
+	// 	[...files].sort((a, b) => {
+	// 		// OLD CODE START — never returned 0 for equal values, and compared names as plain text
+	// 		// const cmp = fileSortKey === 'name' ? a.name.localeCompare(b.name) : (a[fileSortKey] as number | string) < (b[fileSortKey] as number | string) ? -1 : 1;
+	// 		// OLD CODE END
+	// 		const cmp = compareValues(a[fileSortKey], b[fileSortKey]);
+	// 		return fileSortDir === 'asc' ? cmp : -cmp;
+	// 	})
+	// );
+	//
+	// let sortedResults = $derived(
+	// 	[...searchResults].sort((a, b) => {
+	// 		// OLD CODE START — never returned 0 for equal values, and compared names as plain text
+	// 		// const cmp = resultSortKey === 'name' ? a.name.localeCompare(b.name) : (a[resultSortKey] as number | string) < (b[resultSortKey] as number | string) ? -1 : 1;
+	// 		// OLD CODE END
+	// 		const cmp = compareValues(a[resultSortKey], b[resultSortKey]);
+	// 		return resultSortDir === 'asc' ? cmp : -cmp;
+	// 	})
+	// );
+	//
+	// type PacketSortKey = 'frame_number' | 'timestamp' | 'source' | 'destination' | 'protocol' | 'length' | 'info';
+	// const PACKET_COLUMNS: [PacketSortKey, string][] = [
+	// 	['frame_number', '#'], ['timestamp', 'Time'], ['source', 'Source'], ['destination', 'Destination'],
+	// 	['protocol', 'Protocol'], ['length', 'Length'], ['info', 'Info'],
+	// ];
+	// // capture order first; every field is text, compareValues orders "10" after "9"
+	// const packetSort = new TableSort<PacketSortKey>('frame_number', 'asc');
+	// OLD CODE END
 
 	function packetProtocol(pkt: PcapPacket): string {
 		// OLD CODE START — #141: upper-cased the last frame.protocols entry
@@ -223,11 +258,13 @@
 		return protocolLabel(pkt.protocol);
 	}
 
-	let sortedPreviewPackets = $derived(
-		packetSort.apply(previewPackets, (pkt, key) => (key === 'protocol' ? packetProtocol(pkt) : pkt[key]))
-	);
-
-	let maxMatchingPackets = $derived(Math.max(1, ...searchResults.map((r) => r.matching_packets)));
+	// OLD CODE START — DataTable sorts the packets; capture order first (initialSort below)
+	// let sortedPreviewPackets = $derived(
+	// 	packetSort.apply(previewPackets, (pkt, key) => (key === 'protocol' ? packetProtocol(pkt) : pkt[key]))
+	// );
+	//
+	// let maxMatchingPackets = $derived(Math.max(1, ...searchResults.map((r) => r.matching_packets)));
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// Helpers
@@ -240,11 +277,13 @@
 		return { from: new Date(now.getTime() - ms).toISOString(), to: now.toISOString() };
 	}
 
-	function formatNumber(n: number): string {
-		if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-		if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
-		return n.toString();
-	}
+	// OLD CODE START — unused; counts read in full
+	// function formatNumber(n: number): string {
+	// 	if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+	// 	if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+	// 	return n.toString();
+	// }
+	// OLD CODE END
 
 	function formatTimestamp(ts: string): string {
 		try {
@@ -255,8 +294,8 @@
 	// OLD CODE START — #137: a shorter range doesn't make a large file any faster
 	// function timedOutNote(n: number): string {
 	// 	return n === 1
-	// 		? '1 large file took longer than 5 minutes and was skipped \u2014 pick a shorter time range to search it.'
-	// 		: `${n} large files took longer than 5 minutes each and were skipped \u2014 pick a shorter time range to search them.`;
+	// 		? '1 large file took longer than 5 minutes and was skipped — pick a shorter time range to search it.'
+	// 		: `${n} large files took longer than 5 minutes each and were skipped — pick a shorter time range to search them.`;
 	// }
 	// OLD CODE END
 	function timedOutNote(n: number): string {
@@ -272,27 +311,56 @@
 		return `, about ${formatDuration(Math.round(left))} left`;
 	}
 
-	function sortIndicator(active: boolean, dir: 'asc' | 'desc'): string {
-		return active ? (dir === 'asc' ? ' \u2191' : ' \u2193') : '';
-	}
+	// OLD CODE START — DataTable draws the sort chevrons
+	// function sortIndicator(active: boolean, dir: 'asc' | 'desc'): string {
+	// 	return active ? (dir === 'asc' ? ' ↑' : ' ↓') : '';
+	// }
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// Data fetching
 	// ---------------------------------------------------------------------------
 
-	async function loadFiles() {
+	// OLD CODE START — PLAN §5.5: the guarded page loader below lists the files and reads the capture state
+	// async function loadFiles() {
+	// 	filesLoading = true;
+	// 	filesFailed = false;
+	// 	try {
+	// 		const { from, to } = getTimeRange();
+	// 		const response = await getPcapFiles({ from, to });
+	// 		files = response.files;
+	// 	} catch {
+	// 		files = [];
+	// 		filesFailed = true;
+	// 	} finally {
+	// 		filesLoading = false;
+	// 	}
+	// }
+	// OLD CODE END
+	const refresh = registerPageRefresh(loadPage);
+	onDestroy(refresh.unregister);
+
+	/** The file list for the range and the capture state: the first load, Refresh and every range change. */
+	async function loadPage(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		const { from, to } = getTimeRange();
 		filesLoading = true;
 		filesFailed = false;
-		try {
-			const { from, to } = getTimeRange();
-			const response = await getPcapFiles({ from, to });
-			files = response.files;
-		} catch {
-			files = [];
-			filesFailed = true;
-		} finally {
-			filesLoading = false;
+		const [filesRes, captureRes] = await Promise.allSettled([getPcapFiles({ from, to }), fetchCaptureStatus()]);
+		if (!guard.current(g)) return 'skipped';
+		files = filesRes.status === 'fulfilled' ? filesRes.value.files : [];
+		filesFailed = filesRes.status === 'rejected';
+		filesLoading = false;
+		// A failed read leaves the state unknown: the label says so and the toggle stays disabled
+		if (captureRes.status === 'fulfilled') {
+			captureStatus = captureRes.value;
+			captureEnabled = captureRes.value.enabled;
 		}
+		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
+		// const ok = [filesRes, captureRes].filter((r) => r.status === 'fulfilled').length;
+		// return ok === 2 ? 'ok' : ok === 0 ? 'failed' : 'partial';
+		// OLD CODE END
+		return outcome([filesRes, captureRes]);
 	}
 
 	// OLD CODE START — 2026-11-02: one request that waited for the daemon to tshark every file,
@@ -368,6 +436,7 @@
 		previewFile = file;
 		previewPackets = [];
 		previewTimedOut = false;
+		previewFailed = false;
 		error = '';
 		try {
 			const response = await previewPcap(file, {
@@ -378,6 +447,7 @@
 			previewTimedOut = response.timed_out ?? false;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Preview failed';
+			previewFailed = true;
 		} finally {
 			previewLoading = false;
 			scrollTimer = setTimeout(() => {
@@ -390,21 +460,24 @@
 		previewFile = '';
 		previewPackets = [];
 		previewTimedOut = false;
+		previewFailed = false;
 	}
 
 	// ---------------------------------------------------------------------------
 	// Interaction handlers
 	// ---------------------------------------------------------------------------
 
-	function toggleFileSort(key: FileSortKey) {
-		if (fileSortKey === key) { fileSortDir = fileSortDir === 'asc' ? 'desc' : 'asc'; }
-		else { fileSortKey = key; fileSortDir = key === 'name' ? 'asc' : 'desc'; }
-	}
-
-	function toggleResultSort(key: ResultSortKey) {
-		if (resultSortKey === key) { resultSortDir = resultSortDir === 'asc' ? 'desc' : 'asc'; }
-		else { resultSortKey = key; resultSortDir = key === 'name' ? 'asc' : 'desc'; }
-	}
+	// OLD CODE START — DataTable owns the header toggles
+	// function toggleFileSort(key: FileSortKey) {
+	// 	if (fileSortKey === key) { fileSortDir = fileSortDir === 'asc' ? 'desc' : 'asc'; }
+	// 	else { fileSortKey = key; fileSortDir = key === 'name' ? 'asc' : 'desc'; }
+	// }
+	//
+	// function toggleResultSort(key: ResultSortKey) {
+	// 	if (resultSortKey === key) { resultSortDir = resultSortDir === 'asc' ? 'desc' : 'asc'; }
+	// 	else { resultSortKey = key; resultSortDir = key === 'name' ? 'asc' : 'desc'; }
+	// }
+	// OLD CODE END
 
 	function applyQuickFilter(filter: string) {
 		bpfFilter = filter;
@@ -430,29 +503,34 @@
 
 	function handleTimeRangeChange(value: string) {
 		selectedTimeRange = value;
-		if (initialized) loadFiles();
+		// OLD CODE START — PLAN §5.5: the guard drops the older range's load, so always reload
+		// if (initialized) loadFiles();
+		// OLD CODE END
+		refresh.run();
 	}
 
 	// ---------------------------------------------------------------------------
 	// Capture control
 	// ---------------------------------------------------------------------------
 
-	async function loadCaptureStatus() {
-		// OLD CODE START — a failed read came back as enabled: true and set the toggle on
-		// try {
-		// 	captureStatus = await getCaptureStatus();
-		// 	captureEnabled = captureStatus.enabled;
-		// } catch {
-		// 	// Default to enabled if API unreachable
-		// }
-		// OLD CODE END
-		try {
-			captureStatus = await fetchCaptureStatus();
-			captureEnabled = captureStatus.enabled;
-		} catch {
-			// state unknown: the label says so and the toggle stays disabled
-		}
-	}
+	// OLD CODE START — PLAN §5.5: the capture state is read by the page loader with the file list
+	// async function loadCaptureStatus() {
+	// 	// OLD CODE START — a failed read came back as enabled: true and set the toggle on
+	// 	// try {
+	// 	// 	captureStatus = await getCaptureStatus();
+	// 	// 	captureEnabled = captureStatus.enabled;
+	// 	// } catch {
+	// 	// 	// Default to enabled if API unreachable
+	// 	// }
+	// 	// OLD CODE END
+	// 	try {
+	// 		captureStatus = await fetchCaptureStatus();
+	// 		captureEnabled = captureStatus.enabled;
+	// 	} catch {
+	// 		// state unknown: the label says so and the toggle stays disabled
+	// 	}
+	// }
+	// OLD CODE END
 
 	async function handleCaptureToggle() {
 		if (captureEnabled === null) return;
@@ -475,196 +553,222 @@
 		}
 	}
 
+	/** The switch shows the daemon's state, never the click: put it back until the daemon answers. */
+	function onCaptureSwitch(event: Event & { currentTarget: HTMLInputElement }) {
+		event.currentTarget.checked = captureEnabled === true;
+		handleCaptureToggle();
+	}
+
+	// ---------------------------------------------------------------------------
+	// Tables
+	// ---------------------------------------------------------------------------
+
+	const fileColumns: Column<PcapFile>[] = [
+		{ key: 'name', label: 'File', class: 'mono' },
+		{ key: 'size_bytes', label: 'Size', numeric: true, cell: fileSizeCell },
+		{ key: 'modified', label: 'Modified', cell: modifiedCell },
+		// Every column sorts (repo rule); this one by file name
+		{ key: 'actions', label: 'Actions', sortValue: (f) => f.name, cell: fileActionsCell },
+	];
+
+	const resultColumns: Column<PcapSearchResult>[] = [
+		{ key: 'name', label: 'File', class: 'mono' },
+		{ key: 'matching_packets', label: 'Matching', numeric: true, cell: matchingCell },
+		{ key: 'size_bytes', label: 'Size', numeric: true, cell: sizeCell },
+		{ key: 'modified', label: 'Modified', cell: modifiedCell },
+		{ key: 'actions', label: 'Actions', sortValue: (r) => r.name, cell: downloadCell },
+	];
+
+	// Capture order first; every field is text, and the sort orders "10" after "9"
+	const packetColumns: Column<PcapPacket>[] = [
+		{ key: 'frame_number', label: '#', numeric: true, class: 'mono' },
+		{ key: 'timestamp', label: 'Time', class: 'mono' },
+		{ key: 'source', label: 'Source', class: 'mono' },
+		{ key: 'destination', label: 'Destination', class: 'mono' },
+		{ key: 'protocol', label: 'Protocol', class: 'mono', sortValue: packetProtocol, cell: protocolCell },
+		{ key: 'length', label: 'Length', numeric: true, class: 'mono' },
+		{ key: 'info', label: 'Info', class: 'info' },
+	];
+
+	const previewName = $derived(files.find((f) => f.file === previewFile)?.name ?? previewFile.split('/').at(-1) ?? '');
+
 	// ---------------------------------------------------------------------------
 	// Lifecycle
 	// ---------------------------------------------------------------------------
 
 	onMount(() => {
-		loadCaptureStatus();
-		loadFiles().then(() => { initialized = true; });
+		// OLD CODE START — PLAN §5.5: one guarded loader reads the files and the capture state
+		// loadCaptureStatus();
+		// loadFiles().then(() => { initialized = true; });
+		// OLD CODE END
+		refresh.run();
 		return () => { searchRun++; clearTimeout(scrollTimer); };
 	});
 </script>
+
+{#snippet fileSizeCell(f: PcapFile)}<Bytes value={f.size_bytes} max={maxFileSize} display={formatBytes(f.size_bytes)} />{/snippet}
+{#snippet sizeCell(r: PcapSearchResult)}{formatBytes(r.size_bytes)}{/snippet}
+{#snippet matchingCell(r: PcapSearchResult)}{r.matching_packets.toLocaleString()}{/snippet}
+{#snippet modifiedCell(f: { modified: string })}<span class="num">{new Date(f.modified).toLocaleString()}</span>{/snippet}
+{#snippet protocolCell(pkt: PcapPacket)}{packetProtocol(pkt)}{/snippet}
+{#snippet downloadCell(r: { file: string; name: string })}
+	<button class="btn" type="button" aria-label="Download {r.name}" onclick={() => downloadFile(r.file)}><Icon name="download" />Download</button>
+{/snippet}
+{#snippet fileActionsCell(f: PcapFile)}
+	<div class="row-actions">
+		<button class="btn" type="button" aria-label="Copy the name {f.name}" onclick={() => copyText(f.name)}>Copy name</button>
+		{@render downloadCell(f)}
+	</div>
+{/snippet}
 
 <svelte:head>
 	<title>PCAP Search - NetTap</title>
 </svelte:head>
 
-<div class="page-container">
-	<!-- Header -->
-	<header class="page-header">
-		<div class="header-left">
-			<h1>PCAP Search</h1>
-			<p class="subtitle">Search and analyze captured network traffic</p>
-		</div>
-		<div class="header-right">
-			<div class="capture-toggle">
-				<!-- OLD CODE START — showed "Active" whenever capture was enabled, even with the
-				     container down or the status request failed (DEFAULT_STATUS has enabled: true)
-				<span class="capture-status-dot" class:active={captureEnabled}></span>
-				<span class="capture-status-label">
-					{captureEnabled ? 'Capture Active' : 'Capture Stopped'}
-				</span>
-				OLD CODE END -->
-				<span class="capture-status-dot" class:active={captureView === 'active'}></span>
-				<span class="capture-status-label">{CAPTURE_LABELS[captureView]}</span>
-				<!-- OLD CODE START — read "on" and stayed clickable when the state was unknown
-				<button
-					class="toggle-switch"
-					class:on={captureEnabled}
-					onclick={handleCaptureToggle}
-					disabled={captureLoading}
-					aria-label={captureEnabled ? 'Disable PCAP capture' : 'Enable PCAP capture'}
-				>
-				OLD CODE END -->
-				<button
-					class="toggle-switch"
-					class:on={captureEnabled === true}
-					onclick={handleCaptureToggle}
-					disabled={captureLoading || captureEnabled === null}
-					aria-label={captureEnabled === null ? "PCAP capture state unknown: can't change it" : captureEnabled ? 'Disable PCAP capture' : 'Enable PCAP capture'}
-				>
-					<span class="toggle-knob" class:loading={captureLoading}></span>
-				</button>
-			</div>
-			<div class="pills">
-				{#each TIME_RANGES as range}
-					<button
-						class="pill"
-						class:active={selectedTimeRange === range.value}
-						onclick={() => handleTimeRangeChange(range.value)}
-					>
-						{range.label}
-					</button>
-				{/each}
-			</div>
-			<button class="btn btn-primary" onclick={loadFiles} disabled={filesLoading}>
-				{filesLoading ? 'Loading...' : 'Refresh'}
-			</button>
-		</div>
-	</header>
-
-	<!-- Hero Stats -->
-	<div class="stats-grid">
-		<button class="stat-card clickable" onclick={() => document.getElementById('files-section')?.scrollIntoView({ behavior: 'smooth' })}>
-			<span class="stat-label">PCAP Files</span>
-			<span class="stat-value text-primary">{filesFailed ? '--' : totalFileCount}</span>
-		</button>
-		<div class="stat-card">
-			<span class="stat-label">Total Captured</span>
-			<span class="stat-value">{filesFailed ? '--' : formatBytes(totalBytes)}</span>
-		</div>
-		<div class="stat-card">
-			<span class="stat-label">Newest Capture</span>
-			<span class="stat-value">{newestCapture ? formatRelativeTime(newestCapture) : '\u2014'}</span>
-		</div>
-		<div class="stat-card">
-			<!-- OLD CODE START — read as the top protocol of all captures, but it only counts the previewed packets (#63)
-			<span class="stat-label">Top Protocol</span>
-			OLD CODE END -->
-			<span class="stat-label" title="Most common protocol among the packets in the preview below">Top Protocol in Preview</span>
-			<span class="stat-value">{protocolBreakdown.length > 0 ? protocolBreakdown[0].protocol : '\u2014'}</span>
-		</div>
+<div class="page-head">
+	<div>
+		<h1 class="page-title">PCAP search</h1>
+		<p class="page-sub">Search and analyze captured network traffic</p>
 	</div>
-
-	<!-- Capture Timeline -->
-	<section class="card">
-		<h2>Capture Timeline</h2>
-		{#if filesFailed && !filesLoading}
-			<p class="empty-state">Couldn't load the PCAP file list: the request failed.</p>
-		{:else if captureTimeline.length === 0 && !filesLoading}
-			<p class="empty-state">No PCAP files in this time range.</p>
-		{:else if captureTimeline.length > 0}
-			<div class="chart-wrapper" bind:clientWidth={chartWidth}>
-				<svg class="timeline-svg" viewBox="0 0 {chartWidth} 220" preserveAspectRatio="none">
-					{#each [0, 0.25, 0.5, 0.75, 1] as frac}
-						<line x1="45" y1={200 - frac * 180} x2={chartWidth} y2={200 - frac * 180} stroke="var(--border-dim)" stroke-width="1" />
-						{#if frac === 0 || frac === 0.5 || frac === 1}
-							<text x="40" y={204 - frac * 180} text-anchor="end" font-size="10" fill="var(--text-muted)">{Math.round(maxTimelineCount * frac)}</text>
-						{/if}
-					{/each}
-					{#each captureTimeline as bucket, i}
-						{@const barW = Math.max(2, (chartWidth - 50) / captureTimeline.length - 1)}
-						{@const x = 50 + i * ((chartWidth - 50) / captureTimeline.length)}
-						{@const h = (bucket.count / maxTimelineCount) * 180}
-						<rect
-							{x} y={200 - h} width={barW} height={Math.max(1, h)}
-							fill={hoveredBarIndex === i ? 'var(--accent)' : 'var(--chart-7)'}
-							opacity={hoveredBarIndex !== null && hoveredBarIndex !== i ? 0.4 : 1}
-							rx="1"
-							onmouseenter={() => hoveredBarIndex = i}
-							onmouseleave={() => hoveredBarIndex = null}
-							style="cursor: pointer; transition: opacity 100ms"
-						/>
-					{/each}
-					{#each Array(Math.min(6, captureTimeline.length)) as _, idx}
-						{@const i = Math.round(idx * (captureTimeline.length - 1) / Math.max(1, Math.min(5, captureTimeline.length - 1)))}
-						{@const x = 50 + i * ((chartWidth - 50) / captureTimeline.length) + Math.max(2, (chartWidth - 50) / captureTimeline.length - 1) / 2}
-						{#if captureTimeline[i]}
-							<text {x} y="216" text-anchor="middle" font-size="10" fill="var(--text-muted)">{formatTimestamp(captureTimeline[i].label)}</text>
-						{/if}
-					{/each}
-				</svg>
-				{#if hoveredBarIndex !== null && captureTimeline[hoveredBarIndex]}
-					{@const tooltipX = 50 + hoveredBarIndex * ((chartWidth - 50) / captureTimeline.length)}
-					<div class="bar-tooltip" style="left: {Math.min(tooltipX, chartWidth - 160)}px">
-						<span class="mono">{formatTimestamp(captureTimeline[hoveredBarIndex].label)}</span>
-						<span class="accent">{captureTimeline[hoveredBarIndex].count} file(s), {formatBytes(captureTimeline[hoveredBarIndex].bytes)}</span>
-					</div>
-				{/if}
-			</div>
-		{/if}
-	</section>
-
-	<!-- Filter Bar -->
-	<div class="card filter-bar">
-		<div class="filter-input-row">
+	<div class="head-actions">
+		<!-- OLD CODE START — showed "Active" whenever capture was enabled, even with the
+		     container down or the status request failed (DEFAULT_STATUS has enabled: true)
+		<span class="capture-status-dot" class:active={captureEnabled}></span>
+		<span class="capture-status-label">
+			{captureEnabled ? 'Capture Active' : 'Capture Stopped'}
+		</span>
+		OLD CODE END -->
+		<span class={['chip', captureView === 'active' && 'is-ok', captureView === 'stopped' && 'is-bad']}>
+			{#if captureView === 'active'}<span class="live-dot"></span>{/if}{CAPTURE_LABELS[captureView]}
+		</span>
+		<label class="check-row">
 			<input
-				type="text"
-				class="bpf-input"
-				placeholder="Wireshark display filter (e.g., tcp.port == 80, ip.addr == 192.168.1.1, dns)"
-				bind:value={bpfFilter}
-				onkeydown={(e) => e.key === 'Enter' && runSearch()}
+				type="checkbox"
+				role="switch"
+				class="switch"
+				checked={captureEnabled === true}
+				disabled={captureLoading || captureEnabled === null}
+				aria-label={captureEnabled === null ? "PCAP capture state unknown: can't change it" : undefined}
+				onchange={onCaptureSwitch}
 			/>
-			<!-- OLD CODE START — 2026-11-02: disabled for the whole run; a background search
-			     can take many minutes, so a new filter or range must be able to replace it
-			<button class="btn btn-primary" onclick={runSearch} disabled={loading}>
-			OLD CODE END -->
-			<button class="btn btn-primary" onclick={runSearch}>
-				{loading ? 'Searching...' : 'Search'}
-			</button>
-			<button class="btn btn-secondary" onclick={downloadFiltered} disabled={!bpfFilter.trim()}>
-				Download Filtered
-			</button>
-		</div>
-		<div class="filter-options">
-			<div class="quick-filters">
-				{#each QUICK_FILTERS as qf}
-					<button class="chip" class:active={bpfFilter === qf.filter} onclick={() => applyQuickFilter(qf.filter)}>
-						{qf.label}
-					</button>
-				{/each}
-			</div>
-		</div>
-		<div class="syntax-hints">
-			<span class="hint">Display filter syntax:</span>
-			<code>ip.addr == 1.2.3.4</code>
-			<code>tcp.port == 443</code>
-			<code>http.request</code>
-			<code>dns</code>
-		</div>
+			PCAP capture
+		</label>
+		<Pills options={TIME_RANGES} value={selectedTimeRange} onchange={handleTimeRangeChange} ariaLabel="Time range" />
 	</div>
+</div>
+
+<div class="grid">
+	<KpiCard class="c-3" label="PCAP files" icon="pcap" value={filesUnknown ? '—' : totalFileCount} note={range.words} href="#files-section" />
+	<KpiCard class="c-3" label="Total captured" icon="download" value={filesUnknown ? '—' : formatBytes(totalBytes)} note={range.words} />
+	<KpiCard
+		class="c-3"
+		label="Newest capture"
+		icon="changelog"
+		value={newestCapture ? formatRelativeTime(newestCapture) : '—'}
+		note={oldestCapture ? `Oldest ${formatRelativeTime(oldestCapture)}` : undefined}
+	/>
+	<!-- #63: it only counts the previewed packets, so the label says so -->
+	<KpiCard
+		class="c-3"
+		label="Top protocol in preview"
+		icon="connections"
+		value={protocolBreakdown.length > 0 ? protocolBreakdown[0].protocol : '—'}
+		note="Among the packets in the preview below"
+	/>
+
+	<Card title="Capture timeline" sub="Files written per {range.bucket} · {range.words}" hero class="c-8">
+		{#if filesFailed && !filesLoading}
+			<CardState state="error" title="Couldn't load the PCAP file list: the request failed." message="Check that NetTap is running on the System page, then try again." onaction={() => refresh.run()} />
+		{:else if captureTimeline.length === 0 && filesLoading}
+			<CardState state="loading" title="Loading the PCAP file list" />
+		{:else if captureTimeline.length === 0}
+			<CardState state="empty" icon="pcap" title="No PCAP files in this time range." message="Files appear here while capture is on. Pick a longer range to see older ones." />
+		{:else}
+			<AreaChart
+				series={[{ key: 'files', label: 'Files', colour: 1, points: captureTimeline.map((b) => ({ t: b.label, v: b.count })) }]}
+				formatX={(t) => formatTimestamp(String(t))}
+				formatY={(v) => String(Math.round(v))}
+				formatTip={(i) => `${formatTimestamp(captureTimeline[i]?.label ?? '')} · ${captureTimeline[i]?.count ?? 0} file(s), ${formatBytes(captureTimeline[i]?.bytes ?? 0)}`}
+				highlightIndex={busiestBucket >= 0 ? busiestBucket : undefined}
+				ariaLabel={busiestBucket >= 0
+					? `Most files at ${formatTimestamp(captureTimeline[busiestBucket].label)}, with ${captureTimeline[busiestBucket].count} written`
+					: 'No files written in this range'}
+			/>
+		{/if}
+	</Card>
+
+	<Card title="Selected file" sub="The file in the packet preview" class="c-4">
+		{#snippet actions()}
+			{#if previewFile}
+				<button class="icon-btn" type="button" aria-label="Close the preview" onclick={closePreview}><Icon name="close" /></button>
+			{/if}
+		{/snippet}
+		{#if previewFile}
+			{@const selectedFileObj = files.find((f) => f.file === previewFile)}
+			<dl class="facts">
+				<dt>Name</dt><dd class="mono">{selectedFileObj?.name ?? previewName}</dd>
+				{#if selectedFileObj}
+					<dt>Size</dt><dd class="num">{formatBytes(selectedFileObj.size_bytes)}</dd>
+					<dt>Modified</dt><dd class="num">{new Date(selectedFileObj.modified).toLocaleString()}</dd>
+					<dt>Path</dt><dd class="mono">{selectedFileObj.relative_path}</dd>
+				{/if}
+			</dl>
+		{:else}
+			<CardState state="empty" icon="pcap" title="No file selected" message="Click a file to inspect it." />
+		{/if}
+	</Card>
+
+	<Card title="Search captures" sub="Wireshark display filter · {range.words}, newest files first" class="c-12">
+		<div class="toolbar">
+			<div class="filter-field">
+				<SearchField
+					id="pcap-filter"
+					label="Wireshark display filter"
+					placeholder="Wireshark display filter (e.g., tcp.port == 80, ip.addr == 192.168.1.1, dns)"
+					size="toolbar"
+					class="mono"
+					bind:value={bpfFilter}
+					onkeydown={(e) => e.key === 'Enter' && runSearch()}
+				/>
+			</div>
+			<!-- 2026-11-02: never disabled; a background search can take many minutes, so a new
+			     filter or range must be able to replace it -->
+			<button class="btn primary" type="button" onclick={runSearch}>
+				<Icon name="search" />{loading ? 'Searching…' : 'Search'}
+			</button>
+			<button class="btn" type="button" onclick={downloadFiltered} disabled={!bpfFilter.trim()}>
+				<Icon name="download" />Download filtered
+			</button>
+		</div>
+		<div class="toolbar">
+			<Pills
+				options={QUICK_FILTERS.map((qf) => ({ value: qf.filter as string, label: qf.label as string }))}
+				value={bpfFilter}
+				onchange={applyQuickFilter}
+				ariaLabel="Quick filters"
+			/>
+		</div>
+		<p class="field-help">
+			Display filter syntax:
+			<code class="tag">ip.addr == 1.2.3.4</code>
+			<code class="tag">tcp.port == 443</code>
+			<code class="tag">http.request</code>
+			<code class="tag">dns</code>
+		</p>
+	</Card>
 
 	{#if error}
-		<div class="error-banner">{error}</div>
+		<p class="notice is-error c-12" role="alert"><Icon name="warn" />{error}</p>
 	{/if}
 
-	<!-- Search Results -->
 	{#if searchDone || loading}
-		<section class="card">
-			<h2>Search Results ({searchResults.length} files match)</h2>
+		<Card
+			title="Search results"
+			sub={searchResults.length === 1 ? '1 file matches' : `${searchResults.length} files match`}
+			class="c-12"
+		>
 			{#if loading}
-				<p class="search-progress">
+				<p class="search-progress num" role="status">
 					{#if searchProgress}
 						<!-- OLD CODE START — #137: no sizes or estimate
 						Checked {searchProgress.checked} of {searchProgress.total} files, newest first&hellip;
@@ -675,417 +779,126 @@
 					{/if}
 				</p>
 			{:else if searchProgress && searchProgress.timedOut > 0}
-				<p class="search-note">{timedOutNote(searchProgress.timedOut)}</p>
+				<p class="notice is-warn note"><Icon name="warn" />{timedOutNote(searchProgress.timedOut)}</p>
 			{/if}
 			{#if !loading && searchProgress && searchProgress.failed > 0}
-				<p class="search-note">
-					{searchProgress.failed === 1 ? "1 file couldn't be searched" : `${searchProgress.failed} files couldn't be searched`}{searchProgress.error ? `: ${searchProgress.error}` : '.'}
+				<p class="notice is-warn note">
+					<Icon name="warn" />{searchProgress.failed === 1 ? "1 file couldn't be searched" : `${searchProgress.failed} files couldn't be searched`}{searchProgress.error ? `: ${searchProgress.error}` : '.'}
 				</p>
 			{/if}
 			{#if searchResults.length === 0}
 				{#if searchDone && searchProgress && searchProgress.failed > 0}
-					<p class="empty-state">No matching packets in the files that could be searched.</p>
+					<CardState state="empty" icon="search" title="No matching packets in the files that could be searched." message="Try another filter, or a range without the unreadable files." />
 				{:else if searchDone}
-					<p class="empty-state">No matching packets found in any PCAP file.</p>
+					<CardState state="empty" icon="search" title="No matching packets found in any PCAP file." message="Try another filter or a longer time range." />
 				{/if}
 			{:else}
-				<div class="table-container">
-					<table class="data-table">
-						<thead>
-							<tr>
-								<th><button class="sort-btn" class:active-sort={resultSortKey === 'name'} onclick={() => toggleResultSort('name')}>File{sortIndicator(resultSortKey === 'name', resultSortDir)}</button></th>
-								<th><button class="sort-btn" class:active-sort={resultSortKey === 'matching_packets'} onclick={() => toggleResultSort('matching_packets')}>Matching{sortIndicator(resultSortKey === 'matching_packets', resultSortDir)}</button></th>
-								<th><button class="sort-btn" class:active-sort={resultSortKey === 'size_bytes'} onclick={() => toggleResultSort('size_bytes')}>Size{sortIndicator(resultSortKey === 'size_bytes', resultSortDir)}</button></th>
-								<th><button class="sort-btn" class:active-sort={resultSortKey === 'modified'} onclick={() => toggleResultSort('modified')}>Modified{sortIndicator(resultSortKey === 'modified', resultSortDir)}</button></th>
-								<th></th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each sortedResults as result}
-								<tr class="clickable-row" class:selected-row={previewFile === result.file} onclick={() => showPreview(result.file)}>
-									<td class="mono">{result.name}</td>
-									<td>
-										<div class="match-bar-row">
-											<div class="match-bar-track"><div class="match-bar-fill" style="width: {(result.matching_packets / maxMatchingPackets * 100).toFixed(1)}%"></div></div>
-											<span class="mono">{result.matching_packets.toLocaleString()}</span>
-										</div>
-									</td>
-									<td class="mono">{formatBytes(result.size_bytes)}</td>
-									<td class="nowrap">{new Date(result.modified).toLocaleString()}</td>
-									<td><button class="btn btn-sm" onclick={(e) => { e.stopPropagation(); downloadFile(result.file); }}>Download</button></td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+				<DataTable
+					columns={resultColumns}
+					rows={searchResults}
+					ariaLabel="Files matching the filter"
+					rowKey={(r) => r.file}
+					initialSort={{ key: 'matching_packets', dir: 'desc' }}
+					onrowactivate={(r) => showPreview(r.file)}
+					rowLabel={(r) => `Preview ${r.name}`}
+					selectedKey={previewFile || undefined}
+				/>
 			{/if}
-		</section>
+		</Card>
 	{/if}
 
-	<!-- Packet Preview -->
-	<section class="card" id="preview-panel" style="scroll-margin-top: 80px">
-		<div class="card-header">
-			<h2>
-				Packet Preview
-				{#if previewFile}
-					<span class="preview-filename mono">{files.find((f) => f.file === previewFile)?.name ?? previewFile.split('/').at(-1)}</span>
-				{/if}
-				{#if previewLoading}<span class="loading-indicator">Loading...</span>{/if}
-			</h2>
+	<Card
+		title="Packet preview"
+		sub={previewFile ? `${previewName} · first 100 packets${bpfFilter ? ' matching the filter' : ''}` : 'The first 100 packets of a file'}
+		class="c-12"
+	>
+		{#snippet actions()}
 			{#if previewFile}
-				<div class="preview-actions">
-					<button class="btn btn-sm" onclick={() => downloadFile(previewFile)}>Download</button>
-					<button class="btn btn-sm" onclick={closePreview}>&times; Close</button>
+				<div class="head-actions">
+					<button class="btn" type="button" onclick={() => downloadFile(previewFile)}><Icon name="download" />Download</button>
+					<button class="btn" type="button" onclick={closePreview}><Icon name="close" />Close</button>
 				</div>
 			{/if}
-		</div>
+		{/snippet}
+		<span id="preview-panel" class="anchor"></span>
 		{#if !previewFile}
-			<p class="empty-state">Select a file below or run a search to preview packets.</p>
+			<CardState state="empty" icon="pcap" title="No file selected" message="Select a file below or run a search to preview packets." />
+		{:else if previewLoading}
+			<CardState state="loading" title="Loading packets from {previewName}" />
 		{:else if previewPackets.length > 0}
-			<div class="table-container packet-table-container">
-				<table class="data-table packet-table">
-					<thead>
-						<tr>
-							<!-- OLD CODE START — the packet columns couldn't be sorted (design system: every column sorts)
-							<th>#</th>
-							<th>Time</th>
-							<th>Source</th>
-							<th>Destination</th>
-							<th>Protocol</th>
-							<th>Length</th>
-							<th>Info</th>
-							OLD CODE END -->
-							{#each PACKET_COLUMNS as [key, label] (key)}
-								<th><button class="sort-btn" class:active-sort={packetSort.key === key} onclick={() => packetSort.toggle(key)}>{label}{sortIndicator(packetSort.key === key, packetSort.dir)}</button></th>
-							{/each}
-						</tr>
-					</thead>
-					<tbody>
-						{#each sortedPreviewPackets as pkt}
-							<tr>
-								<td class="mono">{pkt.frame_number}</td>
-								<td class="mono nowrap">{pkt.timestamp}</td>
-								<td class="mono">{pkt.source}</td>
-								<td class="mono">{pkt.destination}</td>
-								<td class="mono proto-cell">{packetProtocol(pkt)}</td>
-								<td class="mono">{pkt.length}</td>
-								<td class="info-cell">{pkt.info}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
+			<div class="packets">
+				<DataTable
+					columns={packetColumns}
+					rows={previewPackets}
+					ariaLabel="Packets in {previewName}"
+					rowKey={(pkt) => pkt.frame_number}
+					initialSort={{ key: 'frame_number', dir: 'asc' }}
+				/>
 			</div>
-			<p class="table-footer">Showing {previewPackets.length} packets</p>
+			<p class="tbl-foot">Showing {previewPackets.length} packets</p>
 			{#if previewTimedOut}
-				<p class="search-note">Stopped after 45 seconds: this file is large, so only its first part was read.</p>
+				<p class="notice is-warn note"><Icon name="warn" />Stopped after 45 seconds: this file is large, so only its first part was read.</p>
 			{/if}
-		{:else if !previewLoading && previewTimedOut}
-			<p class="search-note">No matching packets in the part of this file read within 45 seconds. The file is large; try a smaller file or a narrower time range.</p>
-		{:else if !previewLoading}
-			<p class="empty-state">No packets to display{bpfFilter ? ` matching filter "${bpfFilter}"` : ''}.</p>
+		{:else if previewFailed}
+			<CardState state="error" title="Couldn't preview {previewName}: the request failed." message={error || undefined} onaction={() => showPreview(previewFile)} />
+		{:else if previewTimedOut}
+			<p class="notice is-warn"><Icon name="warn" />No matching packets in the part of this file read within 45 seconds. The file is large; try a smaller file or a narrower time range.</p>
+		{:else}
+			<CardState state="empty" icon="pcap" title="No packets to display{bpfFilter ? ` matching filter "${bpfFilter}"` : ''}." message="Try another file, or clear the display filter." />
 		{/if}
-	</section>
+	</Card>
 
-	<!-- Two-column: Files + Protocol Breakdown -->
-	<div class="two-col pcap-split" id="files-section">
-		<!-- Available Files -->
-		<section class="card">
-			<div class="card-header">
-				<h2>Available Files{!filesLoading && !filesFailed ? ` (${files.length})` : ''}</h2>
-				{#if filesLoading}<span class="loading-indicator">Loading...</span>{/if}
-			</div>
-			{#if filesFailed && !filesLoading}
-				<p class="empty-state">Couldn't load the PCAP file list: the request failed.</p>
-			{:else if files.length === 0 && !filesLoading}
-				<p class="empty-state">No PCAP files found in the selected time range.</p>
-			{:else}
-				<div class="table-container">
-					<table class="data-table">
-						<thead>
-							<tr>
-								<th><button class="sort-btn" class:active-sort={fileSortKey === 'name'} onclick={() => toggleFileSort('name')}>File{sortIndicator(fileSortKey === 'name', fileSortDir)}</button></th>
-								<th><button class="sort-btn" class:active-sort={fileSortKey === 'size_bytes'} onclick={() => toggleFileSort('size_bytes')}>Size{sortIndicator(fileSortKey === 'size_bytes', fileSortDir)}</button></th>
-								<th><button class="sort-btn" class:active-sort={fileSortKey === 'modified'} onclick={() => toggleFileSort('modified')}>Modified{sortIndicator(fileSortKey === 'modified', fileSortDir)}</button></th>
-								<th></th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each sortedFiles as file}
-								<tr class="clickable-row" class:selected-row={previewFile === file.file} onclick={() => showPreview(file.file)}>
-									<td>
-										<div class="file-name-cell">
-											<span class="mono">{file.name}</span>
-											<button class="btn-icon copy-btn" title="Copy filename" onclick={(e) => { e.stopPropagation(); copyText(file.name); }}>&#x2398;</button>
-										</div>
-									</td>
-									<td>
-										<div class="size-bar-row">
-											<div class="size-bar-track"><div class="size-bar-fill" style="width: {(file.size_bytes / maxFileSize * 100).toFixed(1)}%"></div></div>
-											<span class="mono size-label">{formatBytes(file.size_bytes)}</span>
-										</div>
-									</td>
-									<td class="mono nowrap">{new Date(file.modified).toLocaleString()}</td>
-									<td><button class="btn btn-sm" onclick={(e) => { e.stopPropagation(); downloadFile(file.file); }}>Download</button></td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
-			{/if}
-		</section>
+	<Card title="Available files" sub="{filesUnknown ? 'Capture files' : `${files.length} files`} · {range.words}" class="c-8">
+		<span id="files-section" class="anchor"></span>
+		{#if filesFailed && !filesLoading}
+			<CardState state="error" title="Couldn't load the PCAP file list: the request failed." message="Check that NetTap is running on the System page, then try again." onaction={() => refresh.run()} />
+		{:else if files.length === 0 && filesLoading}
+			<CardState state="loading" title="Loading PCAP files" />
+		{:else if files.length === 0}
+			<CardState state="empty" icon="pcap" title="No PCAP files found in the selected time range." message="Files appear here while capture is on." />
+		{:else}
+			<DataTable
+				columns={fileColumns}
+				rows={files}
+				ariaLabel="PCAP files"
+				rowKey={(f) => f.file}
+				initialSort={{ key: 'modified', dir: 'desc' }}
+				onrowactivate={(f) => showPreview(f.file)}
+				rowLabel={(f) => `Preview ${f.name}`}
+				selectedKey={previewFile || undefined}
+			/>
+		{/if}
+	</Card>
 
-		<!-- Right panel: File Detail + Protocol Breakdown -->
-		<div class="right-panel">
-			{#if previewFile}
-				{@const selectedFileObj = files.find((f) => f.file === previewFile)}
-				<div class="card detail-card">
-					<div class="card-header">
-						<h2>Selected File</h2>
-						<button class="btn-icon" onclick={closePreview}>&times;</button>
-					</div>
-					{#if selectedFileObj}
-						<div class="detail-rows">
-							<div class="detail-row"><span class="detail-label">Name</span><span class="mono">{selectedFileObj.name}</span></div>
-							<div class="detail-row"><span class="detail-label">Size</span><span class="mono">{formatBytes(selectedFileObj.size_bytes)}</span></div>
-							<div class="detail-row"><span class="detail-label">Modified</span><span class="mono">{new Date(selectedFileObj.modified).toLocaleString()}</span></div>
-							<div class="detail-row"><span class="detail-label">Path</span><span class="mono path-cell">{selectedFileObj.relative_path}</span></div>
-						</div>
-					{/if}
-				</div>
-			{:else}
-				<div class="card detail-card">
-					<p class="empty-state">Click a file to inspect it</p>
-				</div>
-			{/if}
-
-			<div class="card">
-				<h2>Protocol Breakdown</h2>
-				{#if protocolBreakdown.length === 0}
-					<p class="empty-state">Load a file preview to see protocol distribution.</p>
-				{:else}
-					<div class="type-bars">
-						{#each protocolBreakdown as proto}
-							{@const pct = previewPackets.length > 0 ? (proto.count / previewPackets.length) * 100 : 0}
-							<button class="type-row" onclick={() => applyProtocolFilter(proto.protocol)}>
-								<span class="type-label mono">{proto.protocol}</span>
-								<div class="type-bar-track"><div class="type-bar-fill" style="width: {pct.toFixed(1)}%"></div></div>
-								<span class="type-count mono">{proto.count}</span>
-								<span class="type-pct">{pct.toFixed(1)}%</span>
-							</button>
-						{/each}
-					</div>
-				{/if}
-			</div>
-		</div>
-	</div>
+	<Card title="Protocols in preview" sub="Packets per protocol · share of the preview" class="c-4">
+		{#if protocolBreakdown.length === 0}
+			<CardState state="empty" icon="connections" title="No preview loaded" message="Load a file preview to see protocol distribution." />
+		{:else}
+			<BarList
+				items={protocolBreakdown.map((proto) => ({
+					key: proto.protocol,
+					label: proto.protocol,
+					value: proto.count,
+					display: proto.count.toLocaleString(),
+					detail: `${(previewPackets.length > 0 ? (proto.count / previewPackets.length) * 100 : 0).toFixed(1)}%`,
+					onclick: () => applyProtocolFilter(proto.protocol),
+				}))}
+			/>
+		{/if}
+	</Card>
 </div>
 
 <style>
-	.page-container { margin: 0 auto; padding: var(--space-lg); }
-
-	/* Header */
-	.page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--space-lg); flex-wrap: wrap; gap: var(--space-md); }
-	.header-left h1 { font-size: var(--text-3xl); font-weight: 700; color: var(--text-primary); margin: 0; }
-	.subtitle { color: var(--text-secondary); margin: var(--space-xs) 0 0; font-size: var(--text-base); }
-	.header-right { display: flex; gap: 12px; align-items: center; }
-
-	/* Pills */
-	.pills { display: flex; gap: var(--space-xs); background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: var(--space-sm); padding: 2px; }
-	.pill { padding: 6px 12px; border: none; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: var(--text-sm); cursor: pointer; transition: all 0.15s; }
-	.pill:hover { color: var(--text-primary); }
-	.pill.active { background: var(--accent); color: #000; }
-
-	/* Buttons */
-	.btn { padding: var(--space-sm) var(--space-md); border: 1px solid var(--border-default); border-radius: var(--space-sm); cursor: pointer; font-size: var(--text-base); transition: all 0.15s; background: var(--bg-secondary); color: var(--text-primary); }
-	.btn:disabled { opacity: 0.5; cursor: not-allowed; }
-	.btn-primary { background: var(--accent); border-color: var(--accent); color: #000; }
-	.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
-	.btn-secondary { background: var(--bg-tertiary); }
-	.btn-sm { padding: var(--space-xs) var(--space-sm); font-size: var(--text-xs); }
-	.btn-icon { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: var(--space-xs); font-size: var(--text-lg); line-height: 1; }
-	.btn-icon:hover { color: var(--text-primary); }
-
-	/* Stats Grid */
-	.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-md); margin-bottom: var(--space-lg); }
-	.stat-card.clickable { text-align: left; width: 100%; }
-	.text-primary { color: var(--text-primary); }
-	/* stat-label inherits from global.css */
-
-	/* Cards */
-	.card { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 12px; padding: var(--space-lg); margin-bottom: var(--space-lg); }
-	.card h2 { font-size: var(--text-lg); font-weight: 600; color: var(--text-primary); margin: 0 0 var(--space-md); }
-	.card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-md); }
-	.card-header h2 { margin: 0; }
-
-	/* Two-column layout */
-	.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-lg); margin-bottom: var(--space-lg); }
-	.two-col .card { margin-bottom: 0; }
-	.pcap-split { grid-template-columns: 1.6fr 1fr; }
-	.right-panel { display: flex; flex-direction: column; gap: var(--space-lg); }
-	.right-panel .card { margin-bottom: 0; }
-
-	/* Timeline Chart */
-	.chart-wrapper { position: relative; width: 100%; min-height: 220px; }
-	.timeline-svg { width: 100%; height: 220px; }
-	.bar-tooltip { position: absolute; top: -8px; background: var(--bg-tertiary); border: 1px solid var(--border-default); border-radius: 6px; padding: 6px 10px; display: flex; flex-direction: column; gap: 2px; font-size: var(--text-xs); pointer-events: none; z-index: 10; white-space: nowrap; }
-	.bar-tooltip .accent { color: var(--accent); font-weight: 600; }
-
-	/* Filter Bar */
-	.filter-bar { padding: var(--space-lg); }
-	.filter-input-row { display: flex; gap: 12px; margin-bottom: 12px; }
-	.bpf-input { flex: 1; padding: 10px var(--space-md); background: var(--bg-input); border: 1px solid var(--border-default); border-radius: var(--space-sm); color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: var(--text-base); }
-	.bpf-input::placeholder { color: var(--text-muted); }
-	.filter-options { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--space-sm); margin-bottom: 12px; }
-	.quick-filters { display: flex; gap: 6px; flex-wrap: wrap; }
-	.chip { padding: var(--space-xs) 10px; font-size: var(--text-xs); border-radius: var(--space-md); border: 1px solid var(--border-default); background: var(--bg-secondary); color: var(--text-primary); cursor: pointer; transition: all 0.15s; }
-	.chip:hover { border-color: var(--accent); }
-	.chip.active { background: var(--accent); border-color: var(--accent); color: #000; }
-	.syntax-hints { display: flex; gap: var(--space-sm); align-items: center; flex-wrap: wrap; font-size: var(--text-xs); color: var(--text-muted); }
-	.syntax-hints code { background: var(--bg-input); padding: 2px 6px; border-radius: var(--space-xs); }
-	.hint { font-weight: 600; }
-
-	/* Error */
-	.error-banner { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; padding: 12px var(--space-md); border-radius: var(--space-sm); margin-bottom: var(--space-md); font-size: var(--text-base); }
-
-	/* Tables */
-	.table-container { overflow-x: auto; border: 1px solid var(--border-default); border-radius: var(--space-sm); max-height: 450px; overflow-y: auto; }
-	.packet-table-container { max-height: 500px; }
-	.data-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
-	.data-table th { background: var(--bg-secondary); padding: var(--space-sm) 12px; text-align: left; color: var(--text-secondary); font-weight: 600; border-bottom: 1px solid var(--border-default); white-space: nowrap; position: sticky; top: 0; z-index: 1; }
-	.data-table td { padding: var(--space-sm) 12px; border-bottom: 1px solid var(--border-dim); color: var(--text-primary); }
-	.clickable-row { cursor: pointer; }
-	.clickable-row:hover td { background: var(--bg-tertiary); }
-	.selected-row td { background: var(--accent-muted); border-left: 2px solid var(--accent); }
-	.sort-btn { background: none; border: none; color: var(--text-secondary); font-weight: 600; font-size: var(--text-sm); cursor: pointer; padding: 0; white-space: nowrap; }
-	.sort-btn:hover { color: var(--text-primary); }
-	.sort-btn.active-sort { color: var(--accent); }
-	.mono { font-family: 'JetBrains Mono', monospace; font-size: var(--text-sm); }
-	.nowrap { white-space: nowrap; }
-	.table-footer { text-align: center; font-size: var(--text-xs); color: var(--text-muted); padding: var(--space-sm); }
-
-	/* File name + copy */
-	.file-name-cell { display: flex; align-items: center; gap: var(--space-xs); }
-	.copy-btn { opacity: 0; transition: opacity 0.15s; font-size: 1.25rem; color: var(--accent); padding: var(--space-xs) var(--space-sm); }
-	.copy-btn:hover { color: var(--accent-hover); }
-	.clickable-row:hover .copy-btn { opacity: 1; }
-
-	/* Size bars */
-	.size-bar-row { display: flex; align-items: center; gap: var(--space-sm); }
-	.size-bar-track { flex: 1; height: 16px; background: var(--bg-input); border-radius: var(--space-xs); overflow: hidden; min-width: 60px; }
-	.size-bar-fill { height: 100%; background: var(--chart-7); border-radius: var(--space-xs); transition: width 0.3s; min-width: 2px; }
-	.size-label { white-space: nowrap; font-size: var(--text-xs); }
-
-	/* Match bars (search results) */
-	.match-bar-row { display: flex; align-items: center; gap: var(--space-sm); }
-	.match-bar-track { flex: 1; height: 16px; background: var(--bg-input); border-radius: var(--space-xs); overflow: hidden; min-width: 40px; }
-	.match-bar-fill { height: 100%; background: var(--accent); border-radius: var(--space-xs); transition: width 0.3s; min-width: 2px; }
-
-	/* Preview */
-	.preview-filename { font-size: var(--text-base); color: var(--accent); margin-left: var(--space-sm); }
-	.preview-actions { display: flex; gap: var(--space-sm); }
-	.loading-indicator { font-size: var(--text-sm); color: var(--text-muted); font-weight: 400; margin-left: var(--space-sm); }
-	.proto-cell { color: var(--chart-7); font-weight: 600; }
-	.info-cell { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-	/* Protocol Breakdown */
-	.type-bars { display: flex; flex-direction: column; gap: 10px; }
-	.type-row { display: grid; grid-template-columns: 60px 1fr 50px 50px; align-items: center; gap: 12px; background: none; border: none; cursor: pointer; padding: var(--space-xs) 0; color: inherit; width: 100%; text-align: left; border-radius: var(--space-xs); transition: background 0.15s; }
-	.type-row:hover { background: var(--bg-tertiary); }
-	.type-label { font-size: var(--text-sm); color: var(--text-secondary); text-align: right; }
-	.type-bar-track { height: 24px; background: var(--bg-input); border-radius: var(--space-xs); overflow: hidden; }
-	.type-bar-fill { height: 100%; background: var(--chart-7); border-radius: var(--space-xs); transition: width 0.3s; min-width: 2px; }
-	.type-count { text-align: right; font-size: var(--text-sm); color: var(--text-primary); }
-	.type-pct { font-size: var(--text-xs); color: var(--text-muted); text-align: right; }
-
-	/* Detail card */
-	.detail-card { min-height: 120px; }
-	.detail-rows { display: flex; flex-direction: column; gap: var(--space-sm); }
-	.detail-row { display: flex; gap: 12px; align-items: baseline; }
-	.detail-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; min-width: 60px; }
-	.path-cell { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-	/* Empty states */
-	.search-progress { color: var(--text-secondary); font-size: var(--text-sm); margin: 0 0 var(--space-md); }
-	.search-note { color: var(--warning); font-size: var(--text-sm); margin: 0 0 var(--space-md); }
-	.empty-state { color: var(--text-muted); font-size: var(--text-base); text-align: center; padding: var(--space-xl) var(--space-md); }
-
-	/* Capture toggle */
-	.capture-toggle {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-xs) var(--space-md);
-		background: var(--bg-elevated);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md, 8px);
-	}
-
-	.capture-status-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		background: var(--red);
-		flex-shrink: 0;
-	}
-	.capture-status-dot.active {
-		background: var(--green);
-		box-shadow: 0 0 6px var(--green);
-	}
-
-	.capture-status-label {
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-		white-space: nowrap;
-	}
-
-	.toggle-switch {
-		position: relative;
-		width: 36px;
-		height: 20px;
-		border-radius: 10px;
-		border: 1px solid var(--border-default);
-		background: var(--bg-tertiary);
-		cursor: pointer;
-		transition: background 0.2s, border-color 0.2s;
-		padding: 0;
-		flex-shrink: 0;
-		color: var(--text-primary);
-	}
-	.toggle-switch.on {
-		background: var(--green-dim);
-		border-color: var(--green);
-	}
-	.toggle-switch:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
-	.toggle-knob {
-		position: absolute;
-		top: 2px;
-		left: 2px;
-		width: 14px;
-		height: 14px;
-		border-radius: 50%;
-		background: var(--text-secondary);
-		transition: transform 0.2s, background 0.2s;
-	}
-	.toggle-switch.on .toggle-knob {
-		transform: translateX(16px);
-		background: var(--green);
-	}
-	.toggle-knob.loading {
-		animation: pulse-toggle 0.8s ease-in-out infinite;
-	}
-
-	@keyframes pulse-toggle {
-		0%, 100% { opacity: 1; }
-		50% { opacity: 0.4; }
-	}
-
-	/* Responsive */
-	@media (max-width: 900px) {
-		.stats-grid { grid-template-columns: repeat(2, 1fr); }
-		.two-col, .pcap-split { grid-template-columns: 1fr; }
-	}
+	/* Layout glue the system lacks */
+	/* In-card anchors for the KPI link and the preview scroll; the margin keeps the card head in view */
+	.anchor { display: block; scroll-margin-top: calc(var(--sp-8) * 3); }
+	/* The display filter takes the toolbar's free width (the system caps a toolbar search at 360px) */
+	.filter-field { display: flex; flex: 1 1 28rem; min-width: 0; }
+	.filter-field :global(.search) { max-width: none; }
+	.search-progress { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); }
+	.note { margin-bottom: var(--sp-3); }
+	.row-actions { display: flex; gap: var(--sp-2); justify-content: flex-end; }
+	/* A long preview scrolls inside the card */
+	.packets { max-height: 32rem; overflow-y: auto; }
+	.packets :global(td.info) { white-space: normal; overflow-wrap: anywhere; min-width: 16rem; }
 </style>

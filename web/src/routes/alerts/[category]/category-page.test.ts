@@ -77,7 +77,10 @@ describe('Alert category page — sorting (#146)', () => {
 		const { container } = render(Page);
 		await vi.waitFor(() => expect(screen.getByText('Sig a')).toBeInTheDocument());
 		const severity = [...container.querySelectorAll('th')].find((th) => th.textContent?.trim().startsWith('Severity'))!;
-		severity.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+		// OLD CODE START — the shared DataTable sorts from the header's button, not the th
+		// severity.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+		// OLD CODE END
+		severity.querySelector('button')!.click();
 		await vi.waitFor(() => {
 			const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url)).filter((u) => u.startsWith('/api/alerts?'));
 			const last = new URLSearchParams(urls.at(-1)!.split('?')[1]);

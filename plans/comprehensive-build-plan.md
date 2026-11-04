@@ -977,6 +977,24 @@ An inline bridge between the modem and the router only sees the router's public 
 
 ---
 
+## Phase 4E: UI Redesign (pure black, Ember default)
+
+**Timeline:** started 2026-11-03
+**Status:** the full redesign is built on `feature/ui-redesign-full` (one PR, supersedes #165); waiting on the review gates, the G11 deploy and the owner's check
+**Plan:** `PLAN.md` (the full-redesign plan, Codex-approved in 4 rounds). Design source: `nettap-design-system/` (owner-supplied). Tracking: `tracking-fixes/2026-11-03-ui-redesign.md`. Linear: NET-144, NET-147.
+
+The owner rejected the colours-only PR #165 and supplied the full design system. Every page is rebuilt to it: the system's shell and page recipe, its components and charts, and a clean Home with no device cards (they moved to Devices). Data, API calls and behaviour stay the same; the changes are listed in the PR body.
+
+| # | Task | Size | Status | Description |
+|---|------|------|--------|-------------|
+| 4E.1 | Foundation | L | [x] Done (2026-11-03, `feature/ui-redesign-full` `6fb9eba`) | The system's tokens and bundle verbatim, forms.css, a11y.css, `data-theme`, 48 icons, severity/series helpers, refresh and alert-snapshot stores (NET-145 work carried in) |
+| 4E.2 | Shell | M | [x] Done (2026-11-03, `661c37a`) | Sidebar (17 links in 4 groups), top bar with search and refresh, phone drawer, layout server load |
+| 4E.3 | Shared components | L | [x] Done (2026-11-03, `ad31c23`, `d41fd57`) | 20 ui components and 8 charts; 30 existing components restyled; DotMap replaces Leaflet |
+| 4E.4 | Page batches B1–B8 | XL | [x] Done (2026-11-03) | Home, Alerts/Threats, Traffic, Logs/DNS/PCAP, Devices/IoT, System/Settings, Tools, Login/Setup/other, built in parallel and merged one by one |
+| 4E.5 | Cleanup and verification | M | [ ] In progress | Replaced components, legacy tokens and Leaflet deleted; colour gate extended; docs; deploy + rollback scripts. Left: review gates, G11 deploy, owner check, PR (NET-147) |
+
+---
+
 ## v2.0 Roadmap: Nice-to-Have Features
 
 **Status:** Planned for post-v1.0 release. These are ambitious features that push NetTap toward a unique market position.

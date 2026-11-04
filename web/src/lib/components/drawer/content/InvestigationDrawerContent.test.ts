@@ -56,10 +56,10 @@ function timeAgo(ts: string): string {
 
 function getStatusColor(status: string): string {
 	switch (status) {
-		case 'open': return 'var(--amber)';
+		case 'open': return 'var(--sev-medium)';
 		case 'in_progress': return 'var(--accent)';
-		case 'closed': return 'var(--green)';
-		default: return 'var(--text-muted)';
+		case 'closed': return 'var(--ok)';
+		default: return 'var(--text-3)';
 	}
 }
 
@@ -144,7 +144,7 @@ describe('InvestigationDrawerContent logic', () => {
 
 	describe('getStatusColor', () => {
 		it('returns amber for open status', () => {
-			expect(getStatusColor('open')).toBe('var(--amber)');
+			expect(getStatusColor('open')).toBe('var(--sev-medium)');
 		});
 
 		it('returns accent for in_progress status', () => {
@@ -152,12 +152,12 @@ describe('InvestigationDrawerContent logic', () => {
 		});
 
 		it('returns green for closed status', () => {
-			expect(getStatusColor('closed')).toBe('var(--green)');
+			expect(getStatusColor('closed')).toBe('var(--ok)');
 		});
 
 		it('returns muted for unknown status', () => {
-			expect(getStatusColor('resolved')).toBe('var(--text-muted)');
-			expect(getStatusColor('')).toBe('var(--text-muted)');
+			expect(getStatusColor('resolved')).toBe('var(--text-3)');
+			expect(getStatusColor('')).toBe('var(--text-3)');
 		});
 	});
 
@@ -286,7 +286,7 @@ describe('InvestigationDrawerContent logic', () => {
 		it('supports all status values', () => {
 			const validStatuses = ['open', 'in_progress', 'closed'];
 			validStatuses.forEach(status => {
-				expect(getStatusColor(status)).not.toBe('var(--text-muted)');
+				expect(getStatusColor(status)).not.toBe('var(--text-3)');
 			});
 		});
 	});

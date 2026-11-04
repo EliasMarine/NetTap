@@ -6,6 +6,7 @@
 	 * Pushover, and Webhook. Includes routing rules engine and delivery log.
 	 */
 
+	import { onDestroy, onMount } from 'svelte';
 	import {
 		getChannels,
 		createChannel,
@@ -19,12 +20,23 @@
 		type RoutingRule,
 		type DeliveryLogEntry,
 	} from '$lib/api/notification-hub';
+	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
+	import type { SeverityLevel } from '$lib/utils/severity';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 
 	// State
 	let channels = $state<NotificationChannel[]>([]);
 	let rules = $state<RoutingRule[]>([]);
 	let deliveryLog = $state<DeliveryLogEntry[]>([]);
-	let loading = $state(true);
+	// OLD CODE START — the whole page hid behind one loading card on every reload; each card now
+	// shows its own loading state, once, until the first load lands
+	// let loading = $state(true);
+	// OLD CODE END
+	let loaded = $state(false);
 	let message = $state('');
 	let messageType = $state<'success' | 'error'>('success');
 
@@ -50,42 +62,42 @@
 		email: {
 			label: 'Email (SMTP)',
 			fields: [
-				{ key: 'smtp_host', label: 'SMTP Host', type: 'text', placeholder: 'smtp.gmail.com' },
-				{ key: 'smtp_port', label: 'SMTP Port', type: 'number', placeholder: '587' },
-				{ key: 'smtp_user', label: 'SMTP Username', type: 'text', placeholder: 'user@example.com' },
-				{ key: 'smtp_pass', label: 'SMTP Password', type: 'password', placeholder: 'App password' },
-				{ key: 'from_address', label: 'From Address', type: 'email', placeholder: 'nettap@yourdomain.com' },
+				{ key: 'smtp_host', label: 'SMTP host', type: 'text', placeholder: 'smtp.gmail.com' },
+				{ key: 'smtp_port', label: 'SMTP port', type: 'number', placeholder: '587' },
+				{ key: 'smtp_user', label: 'SMTP username', type: 'text', placeholder: 'user@example.com' },
+				{ key: 'smtp_pass', label: 'SMTP password', type: 'password', placeholder: 'App password' },
+				{ key: 'from_address', label: 'From address', type: 'email', placeholder: 'nettap@yourdomain.com' },
 				{ key: 'recipients', label: 'Recipients (comma-separated)', type: 'text', placeholder: 'admin@example.com, ops@example.com' },
 			],
 		},
 		discord: {
 			label: 'Discord',
 			fields: [
-				{ key: 'webhook_url', label: 'Webhook URL', type: 'url', placeholder: 'https://discord.com/api/webhooks/...' },
+				{ key: 'webhook_url', label: 'Webhook URL', type: 'url', placeholder: 'https://discord.com/api/webhooks/…' },
 			],
 		},
 		slack: {
 			label: 'Slack',
 			fields: [
-				{ key: 'webhook_url', label: 'Webhook URL', type: 'url', placeholder: 'https://hooks.slack.com/services/...' },
+				{ key: 'webhook_url', label: 'Webhook URL', type: 'url', placeholder: 'https://hooks.slack.com/services/…' },
 			],
 		},
 		telegram: {
 			label: 'Telegram',
 			fields: [
-				{ key: 'bot_token', label: 'Bot Token', type: 'text', placeholder: '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11' },
+				{ key: 'bot_token', label: 'Bot token', type: 'text', placeholder: '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11' },
 				{ key: 'chat_id', label: 'Chat ID', type: 'text', placeholder: '-1001234567890' },
 			],
 		},
 		pushover: {
 			label: 'Pushover',
 			fields: [
-				{ key: 'user_key', label: 'User Key', type: 'text', placeholder: 'your-user-key' },
-				{ key: 'api_token', label: 'API Token', type: 'text', placeholder: 'your-api-token' },
+				{ key: 'user_key', label: 'User key', type: 'text', placeholder: 'your-user-key' },
+				{ key: 'api_token', label: 'API token', type: 'text', placeholder: 'your-api-token' },
 			],
 		},
 		webhook: {
-			label: 'Generic Webhook',
+			label: 'Generic webhook',
 			fields: [
 				{ key: 'url', label: 'Webhook URL', type: 'url', placeholder: 'https://your-server.com/webhook' },
 			],
@@ -93,40 +105,50 @@
 	};
 
 	const eventTypes = [
-		{ value: 'new_device', label: 'New Device' },
+		{ value: 'new_device', label: 'New device' },
 		{ value: 'alert', label: 'Alert' },
 		{ value: 'anomaly', label: 'Anomaly' },
-		{ value: 'storage_warning', label: 'Storage Warning' },
-		{ value: 'smart_warning', label: 'SMART Warning' },
-		{ value: 'capture_error', label: 'Capture Error' },
-		{ value: 'system_error', label: 'System Error' },
+		{ value: 'storage_warning', label: 'Storage warning' },
+		{ value: 'smart_warning', label: 'SMART warning' },
+		{ value: 'capture_error', label: 'Capture error' },
+		{ value: 'system_error', label: 'System error' },
 	];
 
-	// Load data on mount
-	$effect(() => {
-		loadAll();
-	});
+	// OLD CODE START — the page refresh contract (PLAN §5.5): every load goes through refresh.run()
+	// // Load data on mount
+	// $effect(() => {
+	// 	loadAll();
+	// });
+	// OLD CODE END
 
 	// #96: which section's last load failed (a failed request is not "none configured")
 	let failed = $state({ channels: false, rules: false, log: false });
 
-	async function loadAll() {
-		loading = true;
-		// OLD CODE START — #96: the getters now throw on failure instead of returning empty lists
-		// const [chRes, ruRes, logRes] = await Promise.all([
-		// 	getChannels(),
-		// 	getRules(),
-		// 	getDeliveryLog(),
-		// ]);
-		// channels = chRes.channels;
-		// rules = ruRes.rules;
-		// deliveryLog = logRes.log;
-		// OLD CODE END
-		const [chRes, ruRes, logRes] = await Promise.allSettled([
-			getChannels(),
-			getRules(),
-			getDeliveryLog(),
-		]);
+	// OLD CODE START — the page refresh contract (PLAN §5.5): a guarded loader that reports what loaded
+	// async function loadAll() {
+	// 	loading = true;
+	// 	const [chRes, ruRes, logRes] = await Promise.allSettled([
+	// 		getChannels(),
+	// 		getRules(),
+	// 		getDeliveryLog(),
+	// 	]);
+	// 	// A failed reload keeps the last list it had and marks it stale
+	// 	if (chRes.status === 'fulfilled') channels = chRes.value.channels;
+	// 	if (ruRes.status === 'fulfilled') rules = ruRes.value.rules;
+	// 	if (logRes.status === 'fulfilled') deliveryLog = logRes.value.log;
+	// 	failed = {
+	// 		channels: chRes.status === 'rejected',
+	// 		rules: ruRes.status === 'rejected',
+	// 		log: logRes.status === 'rejected',
+	// 	};
+	// 	loading = false;
+	// }
+	// OLD CODE END
+	async function load(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		const results = await Promise.allSettled([getChannels(), getRules(), getDeliveryLog()]);
+		if (!guard.current(g)) return 'skipped';
+		const [chRes, ruRes, logRes] = results;
 		// A failed reload keeps the last list it had and marks it stale
 		if (chRes.status === 'fulfilled') channels = chRes.value.channels;
 		if (ruRes.status === 'fulfilled') rules = ruRes.value.rules;
@@ -136,8 +158,17 @@
 			rules: ruRes.status === 'rejected',
 			log: logRes.status === 'rejected',
 		};
-		loading = false;
+		loaded = true;
+		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
+		// const failures = results.filter((r) => r.status === 'rejected').length;
+		// return failures === 0 ? 'ok' : failures === results.length ? 'failed' : 'partial';
+		// OLD CODE END
+		return outcome(results);
 	}
+
+	const refresh = registerPageRefresh(load);
+	onDestroy(refresh.unregister);
+	onMount(() => void refresh.run());
 
 	function showMessage(msg: string, type: 'success' | 'error') {
 		message = msg;
@@ -159,7 +190,7 @@
 			showAddForm = false;
 			newChannelName = '';
 			newChannelConfig = {};
-			await loadAll();
+			await refresh.run();
 		} else {
 			showMessage('Failed to create channel.', 'error');
 		}
@@ -169,7 +200,7 @@
 	async function handleDeleteChannel(id: string) {
 		if (await deleteChannel(id)) {
 			showMessage('Channel deleted.', 'success');
-			await loadAll();
+			await refresh.run();
 		} else {
 			showMessage('Failed to delete channel.', 'error');
 		}
@@ -205,7 +236,7 @@
 			showMessage('Routing rule created.', 'success');
 			showRuleForm = false;
 			newRuleChannels = [];
-			await loadAll();
+			await refresh.run();
 		} else {
 			showMessage('Failed to create rule.', 'error');
 		}
@@ -215,7 +246,7 @@
 	async function handleDeleteRule(id: string) {
 		if (await deleteRule(id)) {
 			showMessage('Rule deleted.', 'success');
-			await loadAll();
+			await refresh.run();
 		} else {
 			showMessage('Failed to delete rule.', 'error');
 		}
@@ -225,15 +256,18 @@
 		return channelTypeConfigs[type]?.label ?? type;
 	}
 
-	function severityLabel(level: number): string {
-		switch (level) {
-			case 1: return 'Critical';
-			case 2: return 'High';
-			case 3: return 'Medium';
-			case 4: return 'Low';
-			default: return `Severity ${level}`;
-		}
-	}
+	// OLD CODE START — severity is shown as a SeverityPill (colour, shape and word); unknown levels keep the text
+	// function severityLabel(level: number): string {
+	// 	switch (level) {
+	// 		case 1: return 'Critical';
+	// 		case 2: return 'High';
+	// 		case 3: return 'Medium';
+	// 		case 4: return 'Low';
+	// 		default: return `Severity ${level}`;
+	// 	}
+	// }
+	// OLD CODE END
+	const SEVERITY: Record<number, SeverityLevel> = { 1: 'critical', 2: 'high', 3: 'medium', 4: 'low' };
 
 	function toggleRuleChannel(chId: string) {
 		if (newRuleChannels.includes(chId)) {
@@ -242,405 +276,246 @@
 			newRuleChannels = [...newRuleChannels, chId];
 		}
 	}
+
+	/** A count, or '—' when its list failed to load and there is nothing earlier to show (#96). */
+	function countLabel(failedLoad: boolean, n: number, unit: string): string {
+		return failedLoad && n === 0 ? `— ${unit}s` : `${n} ${unit}${n === 1 ? '' : 's'}`;
+	}
+
+	// The log has no id; its position in the reply keys the row
+	const logRows = $derived(deliveryLog.slice(0, 20).map((entry, i) => ({ ...entry, key: i })));
+	type LogRow = (typeof logRows)[number];
+	const logColumns: Column<LogRow>[] = [
+		{ key: 'success', label: 'Result', cell: resultCell, sortValue: (r) => (r.success ? 1 : 0) },
+		{ key: 'channel_type', label: 'Channel', cell: channelCell },
+		{ key: 'title', label: 'Notification' },
+		{ key: 'timestamp', label: 'Sent at', cell: timeCell, sortValue: (r) => Date.parse(r.timestamp) || 0 },
+	];
 </script>
 
+{#snippet resultCell(entry: LogRow)}
+	<span class={['res', entry.success ? 'is-live' : 'is-high']}>{entry.success ? 'Sent' : 'Failed'}</span>
+{/snippet}
+{#snippet channelCell(entry: LogRow)}<span class="tag">{entry.channel_type}</span>{/snippet}
+{#snippet timeCell(entry: LogRow)}<span class="num">{new Date(entry.timestamp).toLocaleString()}</span>{/snippet}
+
 <svelte:head>
-	<title>Notification Settings | NetTap</title>
+	<title>Notifications | NetTap</title>
 </svelte:head>
 
-<div class="notification-settings">
-	<div class="settings-header">
-		<div class="header-with-back">
-			<a href="/settings" class="back-link">
-				<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<polyline points="15 18 9 12 15 6" />
-				</svg>
-				Settings
-			</a>
-		</div>
-		<h2>Notification Settings</h2>
-		<p class="text-muted">Configure multi-channel notifications and routing rules.</p>
+<div class="page-head">
+	<div>
+		<a class="back" href="/settings"><Icon name="back" />Settings</a>
+		<h1 class="page-title">Notifications</h1>
+		<p class="page-sub">Where NetTap sends its notifications, and which events go to which channel</p>
 	</div>
+</div>
 
-	{#if message}
-		<div class="alert {messageType === 'success' ? 'alert-success' : 'alert-danger'}">
-			{message}
-		</div>
-	{/if}
+{#if message}
+	<div class={['notice', messageType === 'success' ? 'is-ok' : 'is-error']} role={messageType === 'success' ? 'status' : 'alert'}>
+		<Icon name={messageType === 'success' ? 'check' : 'warn'} />{message}
+	</div>
+{/if}
 
-	{#if loading}
-		<div class="card settings-section">
-			<p class="text-muted">Loading notification settings...</p>
-		</div>
-	{:else}
-		<!-- Notification Channels -->
-		<div class="card settings-section">
-			<div class="card-header">
-				<!-- OLD CODE START — #96: a failed load showed "(0)"
-				<span class="card-title">Notification Channels ({channels.length})</span>
-				OLD CODE END -->
-				<span class="card-title">Notification Channels ({failed.channels && channels.length === 0 ? '--' : channels.length})</span>
-				<button class="btn btn-sm btn-primary" onclick={() => showAddForm = !showAddForm}>
-					{showAddForm ? 'Cancel' : '+ Add Channel'}
-				</button>
-			</div>
+<div class="grid">
+	<Card title="Notification channels" sub={countLabel(failed.channels, channels.length, 'channel')} class="c-6">
+		{#snippet actions()}
+			<button class={['btn', !showAddForm && 'primary']} type="button" onclick={() => (showAddForm = !showAddForm)}>
+				{showAddForm ? 'Cancel' : 'Add channel'}
+			</button>
+		{/snippet}
 
-			{#if showAddForm}
-				<div class="add-form">
-					<div class="form-group">
-						<label class="label" for="channel-type">Channel Type</label>
-						<select class="input" id="channel-type" bind:value={newChannelType}>
+		{#if showAddForm}
+			<div class="add-form">
+				<div class="form-grid">
+					<div class="field">
+						<label class="label" for="channel-type">Channel type</label>
+						<select class="select" id="channel-type" bind:value={newChannelType}>
 							{#each Object.entries(channelTypeConfigs) as [key, cfg]}
 								<option value={key}>{cfg.label}</option>
 							{/each}
 						</select>
 					</div>
-					<div class="form-group">
+					<div class="field">
 						<label class="label" for="channel-name">Name</label>
-						<input class="input" id="channel-name" type="text" bind:value={newChannelName} placeholder="My Discord Server" />
+						<input class="input" id="channel-name" type="text" bind:value={newChannelName} placeholder="My Discord server" />
 					</div>
 					{#each channelTypeConfigs[newChannelType]?.fields ?? [] as field}
-						<div class="form-group">
+						<div class="field">
 							<label class="label" for="cfg-{field.key}">{field.label}</label>
 							<input class="input" id="cfg-{field.key}" type={field.type} bind:value={newChannelConfig[field.key]} placeholder={field.placeholder} />
 						</div>
 					{/each}
-					<button class="btn btn-primary" onclick={handleAddChannel} disabled={addingChannel || !newChannelName}>
-						{addingChannel ? 'Creating...' : 'Create Channel'}
+				</div>
+				<div class="form-actions">
+					<button class="btn primary" type="button" onclick={handleAddChannel} disabled={addingChannel || !newChannelName}>
+						{addingChannel ? 'Creating…' : 'Create channel'}
 					</button>
 				</div>
-			{/if}
-
-			<!-- OLD CODE START — #96: a failed load read as "No channels configured"
-			{#if channels.length === 0}
-				<p class="text-muted section-description">No channels configured. Add one to start receiving notifications.</p>
-			{:else}
-			OLD CODE END -->
-			{#if failed.channels && channels.length === 0}
-				<p class="text-warning section-description">Couldn't load the notification channels: the request failed.</p>
-			{:else if channels.length === 0}
-				<p class="text-muted section-description">No channels configured. Add one to start receiving notifications.</p>
-			{:else}
-				{#if failed.channels}
-					<p class="text-warning section-description">Couldn't refresh the notification channels: showing the last list.</p>
-				{/if}
-				<div class="channel-list">
-					{#each channels as ch}
-						<div class="channel-item">
-							<div class="channel-info">
-								<span class="badge badge-{ch.type}">{channelTypeBadge(ch.type)}</span>
-								<strong>{ch.name}</strong>
-							</div>
-							<div class="channel-actions">
-								<button class="btn btn-sm btn-secondary" onclick={() => handleTestChannel(ch.id)} disabled={testingChannelId === ch.id}>
-									{testingChannelId === ch.id ? 'Testing...' : 'Test'}
-								</button>
-								<button class="btn btn-sm btn-danger" onclick={() => handleDeleteChannel(ch.id)}>Delete</button>
-							</div>
-						</div>
-					{/each}
-				</div>
-			{/if}
-		</div>
-
-		<!-- Routing Rules -->
-		<div class="card settings-section">
-			<div class="card-header">
-				<!-- OLD CODE START — #96: a failed load showed "(0)"
-				<span class="card-title">Routing Rules ({rules.length})</span>
-				OLD CODE END -->
-				<span class="card-title">Routing Rules ({failed.rules && rules.length === 0 ? '--' : rules.length})</span>
-				<button class="btn btn-sm btn-primary" onclick={() => showRuleForm = !showRuleForm} disabled={channels.length === 0}>
-					{showRuleForm ? 'Cancel' : '+ Add Rule'}
-				</button>
 			</div>
+		{/if}
 
-			<p class="section-description">Map event types to notification channels with severity filtering.</p>
+		{#if !loaded}
+			<CardState state="loading" title="Loading notification channels" />
+		{:else if failed.channels && channels.length === 0}
+			<CardState
+				state="error"
+				title="Couldn't load the notification channels: the request failed."
+				message="Check that NetTap is running on the System page, then try again."
+				onaction={() => refresh.run()}
+			/>
+		{:else if channels.length === 0}
+			<CardState
+				state="empty"
+				icon="alerts"
+				title="No channels configured"
+				message="Add one to start receiving notifications."
+			/>
+		{:else}
+			{#if failed.channels}
+				<div class="notice is-warn" role="status"><Icon name="warn" />Couldn't refresh the notification channels: showing the last list.</div>
+			{/if}
+			<ul class="rows">
+				{#each channels as ch}
+					<li>
+						<span class="row-main"><span class="tag">{channelTypeBadge(ch.type)}</span><b>{ch.name}</b></span>
+						<span class="actions">
+							<button class="btn" type="button" onclick={() => handleTestChannel(ch.id)} disabled={testingChannelId === ch.id}>
+								{testingChannelId === ch.id ? 'Testing…' : 'Test'}
+							</button>
+							<button class="btn" type="button" onclick={() => handleDeleteChannel(ch.id)}>Delete</button>
+						</span>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</Card>
 
-			{#if showRuleForm}
-				<div class="add-form">
-					<div class="form-group">
-						<label class="label" for="rule-event">Event Type</label>
-						<select class="input" id="rule-event" bind:value={newRuleEventType}>
+	<Card title="Routing rules" sub={countLabel(failed.rules, rules.length, 'rule')} class="c-6">
+		{#snippet actions()}
+			<button
+				class={['btn', !showRuleForm && 'primary']}
+				type="button"
+				onclick={() => (showRuleForm = !showRuleForm)}
+				disabled={channels.length === 0}
+			>
+				{showRuleForm ? 'Cancel' : 'Add rule'}
+			</button>
+		{/snippet}
+
+		<p class="card-text">Map event types to notification channels with severity filtering.</p>
+
+		{#if showRuleForm}
+			<div class="add-form">
+				<div class="form-grid">
+					<div class="field">
+						<label class="label" for="rule-event">Event type</label>
+						<select class="select" id="rule-event" bind:value={newRuleEventType}>
 							{#each eventTypes as et}
 								<option value={et.value}>{et.label}</option>
 							{/each}
 						</select>
 					</div>
-					<div class="form-group">
-						<label class="label">Send To Channels</label>
-						<div class="checkbox-group">
-							{#each channels as ch}
-								<label class="checkbox-label">
-									<input type="checkbox" checked={newRuleChannels.includes(ch.id)} onchange={() => toggleRuleChannel(ch.id)} />
-									{ch.name} ({channelTypeBadge(ch.type)})
-								</label>
-							{/each}
-						</div>
-					</div>
-					<div class="form-group">
-						<label class="label" for="rule-severity">Minimum Severity</label>
-						<select class="input" id="rule-severity" bind:value={newRuleSeverity}>
+					<div class="field">
+						<label class="label" for="rule-severity">Minimum severity</label>
+						<select class="select" id="rule-severity" bind:value={newRuleSeverity}>
 							<option value={1}>Critical only</option>
 							<option value={2}>High and above</option>
 							<option value={3}>Medium and above</option>
-							<option value={4}>All (including Low)</option>
+							<option value={4}>All (including low)</option>
 						</select>
 					</div>
-					<button class="btn btn-primary" onclick={handleAddRule} disabled={addingRule || newRuleChannels.length === 0}>
-						{addingRule ? 'Creating...' : 'Create Rule'}
+				</div>
+				<fieldset class="field channel-picks">
+					<legend class="label">Send to channels</legend>
+					{#each channels as ch}
+						<label class="check-row">
+							<input type="checkbox" checked={newRuleChannels.includes(ch.id)} onchange={() => toggleRuleChannel(ch.id)} />
+							{ch.name} ({channelTypeBadge(ch.type)})
+						</label>
+					{/each}
+				</fieldset>
+				<div class="form-actions">
+					<button class="btn primary" type="button" onclick={handleAddRule} disabled={addingRule || newRuleChannels.length === 0}>
+						{addingRule ? 'Creating…' : 'Create rule'}
 					</button>
 				</div>
-			{/if}
-
-			<!-- OLD CODE START — #96: a failed load read as "No routing rules configured"
-			{#if rules.length === 0}
-				<p class="text-muted">No routing rules configured.</p>
-			{:else}
-			OLD CODE END -->
-			{#if failed.rules && rules.length === 0}
-				<p class="text-warning">Couldn't load the routing rules: the request failed.</p>
-			{:else if rules.length === 0}
-				<p class="text-muted">No routing rules configured.</p>
-			{:else}
-				{#if failed.rules}
-					<p class="text-warning">Couldn't refresh the routing rules: showing the last list.</p>
-				{/if}
-				<div class="rules-list">
-					{#each rules as rule}
-						<div class="rule-item">
-							<div class="rule-info">
-								<span class="badge">{eventTypes.find(e => e.value === rule.event_type)?.label ?? rule.event_type}</span>
-								<span class="rule-arrow">--></span>
-								<span class="rule-channels">{rule.channels.length} channel{rule.channels.length !== 1 ? 's' : ''}</span>
-								<span class="badge badge-severity">Min: {severityLabel(rule.min_severity)}</span>
-							</div>
-							<button class="btn btn-sm btn-danger" onclick={() => handleDeleteRule(rule.id)}>Delete</button>
-						</div>
-					{/each}
-				</div>
-			{/if}
-		</div>
-
-		<!-- Delivery Log -->
-		<div class="card settings-section">
-			<div class="card-header">
-				<span class="card-title">Recent Deliveries</span>
 			</div>
+		{/if}
 
-			<!-- OLD CODE START — #96: a failed load read as "No delivery attempts yet"
-			{#if deliveryLog.length === 0}
-				<p class="text-muted section-description">No delivery attempts yet.</p>
-			{:else}
-			OLD CODE END -->
-			{#if failed.log && deliveryLog.length === 0}
-				<p class="text-warning section-description">Couldn't load the delivery log: the request failed.</p>
-			{:else if deliveryLog.length === 0}
-				<p class="text-muted section-description">No delivery attempts yet.</p>
-			{:else}
-				{#if failed.log}
-					<p class="text-warning section-description">Couldn't refresh the delivery log: showing the last entries.</p>
-				{/if}
-				<div class="log-list">
-					{#each deliveryLog.slice(0, 20) as entry}
-						<div class="log-entry {entry.success ? 'log-success' : 'log-failure'}">
-							<span class="log-status">{entry.success ? 'OK' : 'FAIL'}</span>
-							<span class="log-channel">{entry.channel_type}</span>
-							<span class="log-title">{entry.title}</span>
-							<span class="log-time">{new Date(entry.timestamp).toLocaleString()}</span>
-						</div>
-					{/each}
-				</div>
+		{#if !loaded}
+			<CardState state="loading" title="Loading routing rules" />
+		{:else if failed.rules && rules.length === 0}
+			<CardState
+				state="error"
+				title="Couldn't load the routing rules: the request failed."
+				message="Check that NetTap is running on the System page, then try again."
+				onaction={() => refresh.run()}
+			/>
+		{:else if rules.length === 0}
+			<CardState
+				state="empty"
+				icon="filter"
+				title="No routing rules configured"
+				message="Rules send each kind of event to the channels you pick."
+			/>
+		{:else}
+			{#if failed.rules}
+				<div class="notice is-warn" role="status"><Icon name="warn" />Couldn't refresh the routing rules: showing the last list.</div>
 			{/if}
-		</div>
-	{/if}
+			<ul class="rows">
+				{#each rules as rule}
+					<li>
+						<span class="row-main">
+							<span class="tag">{eventTypes.find(e => e.value === rule.event_type)?.label ?? rule.event_type}</span>
+							<span>to {rule.channels.length} channel{rule.channels.length !== 1 ? 's' : ''} · minimum</span>
+							{#if SEVERITY[rule.min_severity]}
+								<SeverityPill level={SEVERITY[rule.min_severity]} />
+							{:else}
+								<span>severity {rule.min_severity}</span>
+							{/if}
+						</span>
+						<button class="btn" type="button" onclick={() => handleDeleteRule(rule.id)}>Delete</button>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</Card>
+
+	<Card title="Recent deliveries" sub="Up to 20 delivery attempts, as NetTap reports them" class="c-12">
+		{#if !loaded}
+			<CardState state="loading" title="Loading delivery log" />
+		{:else if failed.log && deliveryLog.length === 0}
+			<CardState
+				state="error"
+				title="Couldn't load the delivery log: the request failed."
+				message="Check that NetTap is running on the System page, then try again."
+				onaction={() => refresh.run()}
+			/>
+		{:else if deliveryLog.length === 0}
+			<CardState
+				state="empty"
+				icon="logs"
+				title="No delivery attempts yet"
+				message="Each notification NetTap sends, and each test, appears here."
+			/>
+		{:else}
+			{#if failed.log}
+				<div class="notice is-warn" role="status"><Icon name="warn" />Couldn't refresh the delivery log: showing the last entries.</div>
+			{/if}
+			<DataTable columns={logColumns} rows={logRows} ariaLabel="Recent notification deliveries" rowKey={(r) => r.key} />
+		{/if}
+	</Card>
 </div>
 
 <style>
-	.notification-settings {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-		/* OLD CODE START — design system: page containers are always full width */
-		/* max-width: 800px; */
-		/* OLD CODE END */
-	}
-
-	.settings-header h2 {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		margin-bottom: var(--space-xs);
-	}
-
-	.header-with-back {
-		margin-bottom: var(--space-sm);
-	}
-
-	.back-link {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--space-xs);
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-	}
-
-	.back-link:hover {
-		color: var(--text-primary);
-		text-decoration: none;
-	}
-
-	.settings-section {
-		padding: var(--space-lg);
-	}
-
-	.section-description {
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-		margin-bottom: var(--space-md);
-	}
-
-	.add-form {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-		padding: var(--space-md);
-		background: var(--bg-secondary);
-		border-radius: var(--radius-md);
-		margin-bottom: var(--space-md);
-	}
-
-	/* Channel list */
-	.channel-list, .rules-list {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-		margin-top: var(--space-md);
-	}
-
-	.channel-item, .rule-item {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: var(--space-sm) var(--space-md);
-		background: var(--bg-secondary);
-		border-radius: var(--radius-md);
-		border: 1px solid var(--border-default);
-	}
-
-	.channel-info, .rule-info {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.channel-actions {
-		display: flex;
-		gap: var(--space-xs);
-	}
-
-	.badge {
-		display: inline-block;
-		padding: 2px 8px;
-		font-size: var(--text-xs);
-		font-weight: 600;
-		border-radius: var(--radius-full);
-		background: var(--bg-tertiary);
-		color: var(--text-secondary);
-		text-transform: uppercase;
-		letter-spacing: 0.5px;
-	}
-
-	.badge-severity {
-		background: var(--accent-muted);
-		color: var(--accent);
-	}
-
-	.rule-arrow {
-		color: var(--text-muted);
-		font-family: monospace;
-	}
-
-	.rule-channels {
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-	}
-
-	/* Checkbox group */
-	.checkbox-group {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-xs);
-	}
-
-	.checkbox-label {
-		display: flex;
-		align-items: center;
-		gap: var(--space-xs);
-		font-size: var(--text-sm);
-		cursor: pointer;
-	}
-
-	/* Delivery log */
-	.log-list {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		margin-top: var(--space-sm);
-	}
-
-	.log-entry {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-xs) var(--space-sm);
-		font-size: var(--text-sm);
-		border-radius: var(--radius-sm);
-	}
-
-	.log-success {
-		background: color-mix(in srgb, var(--status-success) 10%, transparent);
-	}
-
-	.log-failure {
-		background: color-mix(in srgb, var(--status-critical) 10%, transparent);
-	}
-
-	.log-status {
-		font-weight: 700;
-		font-size: var(--text-xs);
-		min-width: 32px;
-	}
-
-	.log-success .log-status { color: var(--status-success); }
-	.log-failure .log-status { color: var(--status-critical); }
-
-	.log-channel {
-		font-weight: 600;
-		min-width: 60px;
-		text-transform: uppercase;
-		font-size: var(--text-xs);
-		color: var(--text-secondary);
-	}
-
-	.log-title {
-		flex: 1;
-		color: var(--text-primary);
-	}
-
-	.log-time {
-		color: var(--text-muted);
-		font-size: var(--text-xs);
-	}
-
-	@media (max-width: 640px) {
-		.channel-item, .rule-item {
-			flex-direction: column;
-			align-items: flex-start;
-			gap: var(--space-sm);
-		}
-
-		.channel-actions {
-			width: 100%;
-		}
-	}
+	.card-text { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-4); }
+	.add-form { padding: var(--sp-4); margin-bottom: var(--sp-4); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line); }
+	.channel-picks { border: 0; padding: 0; margin: var(--sp-4) 0 0; gap: var(--sp-2); }
+	.rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+	.rows li { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; padding: var(--sp-3) 0; font-size: var(--text-sm); }
+	.rows li + li { border-top: 1px solid var(--line); }
+	.row-main { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; min-width: 0; color: var(--text-2); }
+	.row-main b { color: var(--text-1); }
+	.notice { margin-bottom: var(--sp-3); }
 </style>

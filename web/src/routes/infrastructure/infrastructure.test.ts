@@ -1,6 +1,18 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/svelte';
+import { render, screen, within } from '@testing-library/svelte';
 import InfrastructurePage from './+page.svelte';
+
+/** A capture-pipeline stage by its label (the strip replaced the clickable topology nodes). */
+function stage(label: string): HTMLElement {
+	const item = [...document.querySelectorAll<HTMLElement>('.pipe-item')].find(
+		(el) => el.querySelector('.pipe-k')?.textContent?.trim() === label,
+	);
+	if (!item) throw new Error(`No pipeline stage "${label}"`);
+	return item;
+}
+
+/** A card by its title (the detail panels became always-visible cards). */
+const card = (title: string) => screen.getByRole('heading', { level: 2, name: title }).closest('article') as HTMLElement;
 
 describe('Infrastructure', () => {
 	it('should export a Svelte component', async () => {
@@ -35,7 +47,6 @@ describe('Infrastructure capture detail', () => {
 		render(InfrastructurePage);
 		await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/capture/mode'));
 		await new Promise((r) => setTimeout(r, 0));
-		await fireEvent.click(document.querySelector('[data-node="capture"]') as HTMLElement);
 	}
 
 	it('labels dhcp_gateway mode instead of bridge/br0', async () => {
@@ -43,8 +54,9 @@ describe('Infrastructure capture detail', () => {
 
 		await openCaptureDetail();
 
-		expect(screen.getByText('DHCP Gateway')).toBeInTheDocument();
-		expect(screen.getByText('DHCP gateway on enp1s0')).toBeInTheDocument();
+		const capture = within(card('Packet capture'));
+		expect(capture.getByText('DHCP gateway')).toBeInTheDocument();
+		expect(capture.getByText('DHCP gateway on enp1s0')).toBeInTheDocument();
 		expect(screen.queryByText(/Promiscuous mode on br0/)).not.toBeInTheDocument();
 	});
 
@@ -62,7 +74,7 @@ describe('Infrastructure capture detail', () => {
 
 		await openCaptureDetail();
 
-		expect(screen.getByText('Promiscuous mode on br0 — Bridge capture')).toBeInTheDocument();
+		expect(screen.getByText('Promiscuous mode on br0 · bridge capture')).toBeInTheDocument();
 		expect(screen.getByText('br0')).toBeInTheDocument();
 	});
 });
@@ -105,24 +117,21 @@ describe('Infrastructure pipeline in mirror mode', () => {
 		stubFetch('mirror', HEALTH);
 		await renderPage();
 
-		expect(screen.getByText('Mirror Port')).toBeInTheDocument();
-		expect(screen.getByText(/enp4s0 UP/)).toBeInTheDocument();
+		expect(within(stage('Mirror port')).getByText(/enp4s0 up/)).toBeInTheDocument();
 		expect(screen.queryByText('not_configured')).not.toBeInTheDocument();
 		expect(screen.queryByText(/WAN/)).not.toBeInTheDocument();
 
-		await fireEvent.click(document.querySelector('[data-node="bridge"]') as HTMLElement);
-		expect(screen.getByText(/Mirror Port — enp4s0/)).toBeInTheDocument();
+		expect(within(card('Mirror port')).getByText('enp4s0')).toBeInTheDocument();
 		expect(screen.getByText('eno1')).toBeInTheDocument();
-		expect(screen.queryByText(/Bridge — br0/)).not.toBeInTheDocument();
+		expect(screen.queryByRole('heading', { name: 'Bridge' })).not.toBeInTheDocument();
 	});
 
 	it('reports the real promiscuous state on the Capture node', async () => {
 		stubFetch('mirror', { ...HEALTH, promisc_enabled: false, status: 'degraded', issues: ['Promiscuous mode is off'] });
 		await renderPage();
 
-		expect(screen.getByText(/Not promiscuous/)).toBeInTheDocument();
-		await fireEvent.click(document.querySelector('[data-node="bridge"]') as HTMLElement);
-		expect(screen.getByText('Promiscuous mode is off')).toBeInTheDocument();
+		expect(within(stage('Capture')).getByText(/Not promiscuous/)).toBeInTheDocument();
+		expect(within(card('Mirror port')).getByText('Promiscuous mode is off')).toBeInTheDocument();
 	});
 
 	it('shows the gateway port, not a br0 bridge, in DHCP gateway mode', async () => {
@@ -132,27 +141,24 @@ describe('Infrastructure pipeline in mirror mode', () => {
 		});
 		await renderPage();
 
-		expect(screen.getByText('Gateway Port')).toBeInTheDocument();
-		expect(screen.getByText(/enp4s0 UP/)).toBeInTheDocument();
+		expect(within(stage('Gateway port')).getByText(/enp4s0 up/)).toBeInTheDocument();
 		expect(screen.queryByText('Bridge')).not.toBeInTheDocument();
 		expect(screen.queryByText(/WAN/)).not.toBeInTheDocument();
 
-		await fireEvent.click(document.querySelector('[data-node="bridge"]') as HTMLElement);
-		const detail = within(document.querySelector('.detail-panel') as HTMLElement);
-		expect(detail.getByText(/Gateway Port — enp4s0/)).toBeInTheDocument();
+		const detail = within(card('Gateway port'));
+		expect(detail.getByText('enp4s0')).toBeInTheDocument();
 		expect(detail.getByText('10.77.0.0/24')).toBeInTheDocument();
 		expect(detail.getByText('14')).toBeInTheDocument();
 		expect(detail.getByText('Running')).toBeInTheDocument();
-		expect(screen.queryByText('IP on Mirror Port')).not.toBeInTheDocument();
-		expect(screen.queryByText(/Bridge — br0/)).not.toBeInTheDocument();
+		expect(screen.queryByText('IP on mirror port')).not.toBeInTheDocument();
+		expect(screen.queryByRole('heading', { name: 'Bridge' })).not.toBeInTheDocument();
 	});
 
 	it('says the mirror port IP check could not run instead of "None"', async () => {
 		stubFetch('mirror', { ...HEALTH, has_ip: null, status: 'degraded', issues: ['Could not check whether enp4s0 has an IP address'] });
 		await renderPage();
 
-		await fireEvent.click(document.querySelector('[data-node="bridge"]') as HTMLElement);
-		const detail = within(document.querySelector('.detail-panel') as HTMLElement);
+		const detail = within(card('Mirror port'));
 		expect(detail.getByText("Couldn't check")).toBeInTheDocument();
 		expect(detail.queryByText('None')).not.toBeInTheDocument();
 	});
@@ -161,8 +167,7 @@ describe('Infrastructure pipeline in mirror mode', () => {
 		stubFetch('mirror', HEALTH);
 		await renderPage();
 
-		await fireEvent.click(document.querySelector('[data-node="bridge"]') as HTMLElement);
-		const detail = within(document.querySelector('.detail-panel') as HTMLElement);
+		const detail = within(card('Mirror port'));
 		expect(detail.getByText('None')).toBeInTheDocument();
 		expect(detail.queryByText("Couldn't check")).not.toBeInTheDocument();
 	});
@@ -171,8 +176,8 @@ describe('Infrastructure pipeline in mirror mode', () => {
 		stubFetch('bridge', { ...HEALTH, mode: 'bridge' });
 		await renderPage();
 
-		expect(screen.getByText('Bridge')).toBeInTheDocument();
-		expect(screen.queryByText('Mirror Port')).not.toBeInTheDocument();
+		expect(stage('Bridge')).toBeInTheDocument();
+		expect(screen.queryByText('Mirror port')).not.toBeInTheDocument();
 	});
 });
 
@@ -305,8 +310,7 @@ describe('Infrastructure when requests fail', () => {
 		expect(screen.getByText(/Couldn't load .*bridge health/)).toBeInTheDocument();
 		expect(screen.queryByText('Promiscuous')).not.toBeInTheDocument();
 
-		await fireEvent.click(document.querySelector('[data-node="opensearch"]') as HTMLElement);
-		expect(screen.getByText('Cluster status unknown')).toBeInTheDocument();
+		expect(within(card('OpenSearch cluster')).getByText('Cluster status unknown')).toBeInTheDocument();
 	});
 
 	it('shows real readings, with no failure banner, when every request answers', async () => {
@@ -327,8 +331,10 @@ describe('Infrastructure when requests fail', () => {
 		await renderPage();
 
 		expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument();
-		expect(screen.getByText('Green')).toBeInTheDocument();
-		expect(screen.getByText('Idle')).toBeInTheDocument();
+		expect(within(stage('OpenSearch')).getByText(/^Green/)).toBeInTheDocument();
+		expect(within(card('OpenSearch cluster')).getByText('Green')).toBeInTheDocument();
+		expect(within(stage('Filebeat')).getByText('Idle')).toBeInTheDocument();
+		expect(within(card('Filebeat log shipper')).getByText('Idle')).toBeInTheDocument();
 	});
 });
 
@@ -357,14 +363,17 @@ describe('Infrastructure bridge latency', () => {
 		render(InfrastructurePage);
 		await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/bridge/health'));
 		await new Promise((r) => setTimeout(r, 0));
-		return screen.getByText('Latency', { selector: '.stat-label' }).closest('.stat-card-mini') as HTMLElement;
+		return screen.getByText('Latency', { selector: '.kpi-top span' }).closest('.kpi') as HTMLElement;
 	}
 
 	it('says Not measured, with the reason, instead of "-- ms"', async () => {
 		stubBridge({ latency_us: null, latency_note: NOTE });
 		const card = await latencyCard();
 
-		expect(within(card).getByText('Not measured')).toHaveAttribute('title', NOTE);
+		expect(within(card).getByText('Not measured')).toBeInTheDocument();
+		// the KPI card shows the reason under the figure; the bridge card keeps it as the title
+		expect(within(card).getByText(NOTE)).toBeInTheDocument();
+		expect(screen.getByText('Not measured', { selector: '[title]' })).toHaveAttribute('title', NOTE);
 		expect(card.textContent).not.toContain('ms');
 	});
 

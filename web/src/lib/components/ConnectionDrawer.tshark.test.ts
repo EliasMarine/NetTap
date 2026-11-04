@@ -19,7 +19,7 @@ function stubFetch(replies: Record<string, unknown>) {
 
 async function openTSharkTab() {
 	render(ConnectionDrawer, { props: { connection: CONNECTION, deviceIp: '10.0.0.5', onclose: () => {} } });
-	await fireEvent.click(screen.getByRole('button', { name: 'TShark Analysis' }));
+	await fireEvent.click(screen.getByRole('button', { name: 'TShark analysis' }));
 }
 
 describe('ConnectionDrawer TShark tab when a request fails (#96)', () => {

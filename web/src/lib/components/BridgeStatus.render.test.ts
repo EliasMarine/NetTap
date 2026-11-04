@@ -44,7 +44,7 @@ describe('BridgeStatus when a request fails (#96)', () => {
 		expect(await screen.findByText("Couldn't check bridge health: the request failed.")).toBeInTheDocument();
 		expect(screen.getByText('Unknown')).toBeInTheDocument();
 		expect(screen.queryByText('Down')).not.toBeInTheDocument();
-		expect(screen.queryByText('Link Down')).not.toBeInTheDocument();
+		expect(screen.queryByText('Link down')).not.toBeInTheDocument();
 	});
 
 	it('says bypass is unknown, not inactive, and offers no toggle', async () => {
@@ -52,10 +52,10 @@ describe('BridgeStatus when a request fails (#96)', () => {
 
 		render(BridgeStatus);
 
-		expect(await screen.findByText('Bypass Mode')).toBeInTheDocument();
+		expect(await screen.findByText('Bypass mode')).toBeInTheDocument();
 		expect(screen.getByText('Unknown')).toBeInTheDocument();
 		expect(screen.queryByText('Inactive')).not.toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Enable Bypass' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Enable bypass' })).toBeDisabled();
 	});
 
 	it('reads bypass as active when the daemon says bypass_active', async () => {
@@ -63,8 +63,8 @@ describe('BridgeStatus when a request fails (#96)', () => {
 
 		render(BridgeStatus);
 
-		expect(await screen.findByRole('button', { name: 'Disable Bypass' })).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Enable Bypass' })).not.toBeInTheDocument();
+		expect(await screen.findByRole('button', { name: 'Disable bypass' })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Enable bypass' })).not.toBeInTheDocument();
 	});
 
 	it('still reads Normal and Inactive when both requests succeed', async () => {
@@ -75,7 +75,7 @@ describe('BridgeStatus when a request fails (#96)', () => {
 		expect(await screen.findByText('Inactive')).toBeInTheDocument();
 		expect(screen.getAllByText('Normal').length).toBeGreaterThan(0);
 		expect(screen.queryByText("Couldn't check bridge health: the request failed.")).not.toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Enable Bypass' })).toBeEnabled();
+		expect(screen.getByRole('button', { name: 'Enable bypass' })).toBeEnabled();
 	});
 });
 

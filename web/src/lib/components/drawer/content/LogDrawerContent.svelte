@@ -166,12 +166,12 @@
 		{#if fullDocLoading}
 			<div class="loading-state">
 				<div class="loading-spinner"></div>
-				<p class="text-muted">Loading fields...</p>
+				<p class="dim">Loading fields…</p>
 			</div>
 		{:else if fullDocError}
 			<div class="error-state">
-				<p class="text-danger">{fullDocError}</p>
-				<button class="btn btn-secondary btn-sm" onclick={fetchFullDocument}>Retry</button>
+				<p class="error-text">{fullDocError}</p>
+				<button class="btn" type="button" onclick={fetchFullDocument}>Retry</button>
 			</div>
 		{:else}
 			{#each groupedFields as { label, fields }, i}
@@ -187,7 +187,7 @@
 		{#if whoisResult}
 			<DrawerSection title="WHOIS — {whoisIp}" defaultExpanded>
 				{#if whoisResult.error}
-					<p class="text-danger" style="font-size: var(--text-sm);">{whoisResult.error}</p>
+					<p class="error-text">{whoisResult.error}</p>
 				{:else}
 					{#each Object.entries(whoisResult.parsed) as [key, val]}
 						<KVRow label={key} value={val} copyable />
@@ -205,8 +205,8 @@
 {:else if activeTab === 'raw'}
 	<div class="raw-content">
 		<div class="raw-header">
-			<button class="btn btn-secondary btn-sm" onclick={copyJson}>
-				{copied ? 'Copied!' : 'Copy JSON'}
+			<button class="btn" type="button" onclick={copyJson}>
+				{copied ? 'Copied' : 'Copy JSON'}
 			</button>
 		</div>
 		<pre class="raw-block">{rawJson}</pre>
@@ -220,25 +220,26 @@
 	}
 
 	.loading-state {
+		font-size: var(--text-sm);
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-2xl) 0;
+		gap: var(--sp-2);
+		padding: var(--sp-8) 0;
 	}
 
 	.error-state {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-lg) 0;
+		gap: var(--sp-2);
+		padding: var(--sp-6) 0;
 	}
 
 	.raw-content {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.raw-header {
@@ -246,15 +247,10 @@
 		justify-content: flex-end;
 	}
 
+	/* Global pre styles give the surface, border, radius and padding. */
 	.raw-block {
-		font-family: var(--font-mono);
 		font-size: var(--text-xs);
-		color: var(--text-primary);
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		padding: var(--space-md);
-		overflow-x: auto;
+		color: var(--text-1);
 		white-space: pre-wrap;
 		word-break: break-all;
 		max-height: 600px;
@@ -263,28 +259,25 @@
 	}
 
 	.whois-raw {
-		margin-top: var(--space-sm);
+		margin-top: var(--sp-2);
 	}
 
 	.whois-raw summary {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 		cursor: pointer;
-		padding: var(--space-xs) 0;
+		padding: var(--sp-1) 0;
 	}
 
-	.text-danger {
-		color: var(--danger);
-	}
-
-	.text-muted {
-		color: var(--text-muted);
+	.error-text {
+		color: var(--sev-critical);
+		font-size: var(--text-sm);
 	}
 
 	.loading-spinner {
 		width: 24px;
 		height: 24px;
-		border: 2px solid var(--border-default);
+		border: 2px solid var(--line);
 		border-top-color: var(--accent);
 		border-radius: 50%;
 		animation: spin 0.6s linear infinite;

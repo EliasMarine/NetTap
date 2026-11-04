@@ -7,6 +7,7 @@
 	 * license keys (ET Pro, Snort Subscriber).
 	 */
 
+	import { onDestroy, onMount } from 'svelte';
 	import {
 		getRuleSources,
 		enableRuleSource,
@@ -26,6 +27,11 @@
 		type UpdateSchedule,
 		type CommercialConfig,
 	} from '$lib/api/suricata-rules';
+	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import StatStrip from '$lib/components/ui/StatStrip.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	// What Suricata really runs (#58). The source toggles, schedule picker, custom rules and
 	// commercial keys below are not wired into suricata-update yet, so they are shown as such.
@@ -38,7 +44,11 @@
 	let schedule = $state<UpdateSchedule>({ interval: 'daily', enabled: true });
 	let commercialConfig = $state<CommercialConfig>({ configured: false });
 	let lastUpdate = $state<string | null>(null);
-	let loading = $state(true);
+	// OLD CODE START — the whole page hid behind one loading line; each card now shows its own
+	// loading state until the first load lands
+	// let loading = $state(true);
+	// OLD CODE END
+	let loaded = $state(false);
 	let updating = $state(false);
 	let message = $state('');
 	let messageType = $state<'success' | 'error'>('success');
@@ -62,16 +72,6 @@
 		setTimeout(() => { message = ''; }, 5000);
 	}
 
-	async function loadLive() {
-		try {
-			live = await getLiveRuleStatus();
-			liveError = '';
-		} catch (err) {
-			live = null;
-			liveError = err instanceof Error ? err.message : 'unknown error';
-		}
-	}
-
 	function sourceName(url: string): string {
 		if (url.includes('emergingthreats.net')) return 'Emerging Threats Open';
 		if (url.includes('sslbl.abuse.ch')) return 'abuse.ch SSL Blacklist';
@@ -85,16 +85,50 @@
 	function scheduleText(cron: string | null | undefined): string {
 		if (cron === '0 0 * * *') return 'Rules refresh automatically every day at 00:00 UTC.';
 		if (cron) return `Rules refresh automatically on the cron schedule "${cron}" (UTC).`;
-		return 'No automatic refresh is scheduled. Use Update Rules Now.';
+		return 'No automatic refresh is scheduled. Use Update rules now.';
 	}
 
 	// #96: custom rules and the commercial key load on their own; a failure says so in its section
 	let customFailed = $state(false);
 	let commercialFailed = $state(false);
 
-	async function loadData() {
-		loading = true;
-		await loadLive();
+	// OLD CODE START — the page refresh contract (PLAN §5.5): one guarded loader that reports what loaded
+	// async function loadLive() {
+	// 	try {
+	// 		live = await getLiveRuleStatus();
+	// 		liveError = '';
+	// 	} catch (err) {
+	// 		live = null;
+	// 		liveError = err instanceof Error ? err.message : 'unknown error';
+	// 	}
+	// }
+	//
+	// async function loadData() {
+	// 	loading = true;
+	// 	await loadLive();
+	// 	const [sourcesRes, statsRes, scheduleRes, customRes, commRes] = await Promise.allSettled([
+	// 		getRuleSources(),
+	// 		getRuleStats(),
+	// 		getUpdateSchedule(),
+	// 		getCustomRules(),
+	// 		getCommercialConfig(),
+	// 	]);
+	// 	if (sourcesRes.status === 'fulfilled') {
+	// 		sources = sourcesRes.value.sources;
+	// 		lastUpdate = sourcesRes.value.last_update;
+	// 	}
+	// 	if (statsRes.status === 'fulfilled') stats = statsRes.value;
+	// 	if (scheduleRes.status === 'fulfilled') schedule = scheduleRes.value;
+	// 	if (customRes.status === 'fulfilled') customRulesContent = customRes.value;
+	// 	customFailed = customRes.status === 'rejected';
+	// 	if (commRes.status === 'fulfilled') commercialConfig = commRes.value;
+	// 	commercialFailed = commRes.status === 'rejected';
+	// 	loading = false;
+	// }
+	// OLD CODE END
+	async function load(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		const [liveRes] = await Promise.allSettled([getLiveRuleStatus()]);
 		const [sourcesRes, statsRes, scheduleRes, customRes, commRes] = await Promise.allSettled([
 			getRuleSources(),
 			getRuleStats(),
@@ -102,6 +136,14 @@
 			getCustomRules(),
 			getCommercialConfig(),
 		]);
+		if (!guard.current(g)) return 'skipped';
+		if (liveRes.status === 'fulfilled') {
+			live = liveRes.value;
+			liveError = '';
+		} else {
+			live = null;
+			liveError = liveRes.reason instanceof Error ? liveRes.reason.message : 'unknown error';
+		}
 		if (sourcesRes.status === 'fulfilled') {
 			sources = sourcesRes.value.sources;
 			lastUpdate = sourcesRes.value.last_update;
@@ -112,8 +154,20 @@
 		customFailed = customRes.status === 'rejected';
 		if (commRes.status === 'fulfilled') commercialConfig = commRes.value;
 		commercialFailed = commRes.status === 'rejected';
-		loading = false;
+		loaded = true;
+		// Only these feed what the page shows; the source list, stats and schedule replies only
+		// back the controls that aren't wired up yet (#58)
+		const shown = [liveRes, customRes, commRes];
+		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
+		// const failures = shown.filter((r) => r.status === 'rejected').length;
+		// return failures === 0 ? 'ok' : failures === shown.length ? 'failed' : 'partial';
+		// OLD CODE END
+		return outcome(shown);
 	}
+
+	const refresh = registerPageRefresh(load);
+	onDestroy(refresh.unregister);
+	onMount(() => void refresh.run());
 
 	// OLD CODE START — #96: one failed request left every section on its defaults
 	/*
@@ -168,7 +222,7 @@
 			const result = await updateRulesNow();
 			if (result.success) {
 				showMessage('Rules updated and reloaded successfully');
-				await loadData();
+				await refresh.run();
 			} else {
 				showMessage('Rule update failed: ' + result.output.slice(0, 200), 'error');
 			}
@@ -208,7 +262,7 @@
 
 	async function handleSaveCommercial() {
 		if (!commercialKey || commercialKey.length < 8) {
-			showMessage('License key must be at least 8 characters', 'error');
+			showMessage('Licence key must be at least 8 characters', 'error');
 			return;
 		}
 		savingCommercial = true;
@@ -238,564 +292,192 @@
 		}
 	}
 
-	// Load data on mount
-	$effect(() => {
-		loadData();
-	});
+	// OLD CODE START — the page refresh contract (PLAN §5.5): the first load goes through refresh.run()
+	// // Load data on mount
+	// $effect(() => {
+	// 	loadData();
+	// });
+	// OLD CODE END
+
+	const liveStats = $derived(
+		live
+			? [
+					{ key: 'rules', label: 'Enabled rules', value: live.enabled_rules.toLocaleString() },
+					{ key: 'sources', label: 'Sources', value: String(live.sources.length) },
+					{ key: 'updated', label: 'Last updated', value: formatDate(live.last_updated) },
+				]
+			: [],
+	);
+	const retryMessage = 'Check that Suricata is running on the System page, then try again.';
 </script>
 
 <svelte:head>
-	<title>Suricata Rules | NetTap Settings</title>
+	<title>Suricata rules | NetTap</title>
 </svelte:head>
 
-<div class="page-container">
-	<header class="page-header">
-		<div>
-			<h1>Suricata IDS Rules</h1>
-			<p class="subtitle">Manage threat detection rule sources, updates, and custom rules</p>
-		</div>
-		<a href="/settings" class="back-link">Back to Settings</a>
-	</header>
+<div class="page-head">
+	<div>
+		<a class="back" href="/settings"><Icon name="back" />Settings</a>
+		<h1 class="page-title">Suricata rules</h1>
+		<p class="page-sub">The threat detection rules Suricata runs, where they come from and when they refresh</p>
+	</div>
+	<div class="head-actions">
+		<button class="btn primary" type="button" onclick={handleUpdateNow} disabled={updating}>
+			<Icon name="refresh" />{updating ? 'Updating…' : 'Update rules now'}
+		</button>
+	</div>
+</div>
 
-	{#if message}
-		<div class="message" class:error={messageType === 'error'} class:success={messageType === 'success'}>
-			{message}
-		</div>
-	{/if}
+{#if message}
+	<div class={['notice', messageType === 'error' ? 'is-error' : 'is-ok']} role={messageType === 'error' ? 'alert' : 'status'}>
+		<Icon name={messageType === 'error' ? 'warn' : 'check'} />{message}
+	</div>
+{/if}
 
-	{#if loading}
-		<div class="loading">Loading rule configuration...</div>
-	{:else}
-		<!-- Hero card -->
-		<div class="hero-card">
-			<!-- OLD CODE START — counted update-sources.yaml, which suricata-update never reads (#58)
-			<div class="hero-stats">
-				<div class="stat">
-					<span class="stat-value">{stats?.enabled_sources ?? 0}</span>
-					<span class="stat-label">Active Sources</span>
-				</div>
-				<div class="stat">
-					<span class="stat-value">{stats?.total_sources ?? 0}</span>
-					<span class="stat-label">Total Sources</span>
-				</div>
-				<div class="stat">
-					<span class="stat-value">{formatDate(lastUpdate)}</span>
-					<span class="stat-label">Last Updated</span>
-				</div>
-			</div>
-			OLD CODE END -->
-			<div class="hero-stats">
-				<div class="stat">
-					<span class="stat-value">{live ? live.enabled_rules.toLocaleString() : '--'}</span>
-					<span class="stat-label">Enabled Rules</span>
-				</div>
-				<div class="stat">
-					<span class="stat-value">{live ? live.sources.length : '--'}</span>
-					<span class="stat-label">Sources</span>
-				</div>
-				<div class="stat">
-					<span class="stat-value">{live ? formatDate(live.last_updated) : '--'}</span>
-					<span class="stat-label">Last Updated</span>
-				</div>
-			</div>
-			<div class="hero-actions">
-				<button class="btn btn-primary" onclick={handleUpdateNow} disabled={updating}>
-					{updating ? 'Updating...' : 'Update Rules Now'}
-				</button>
-			</div>
-		</div>
-
-		{#if liveError}
-			<div class="message error">Could not read Suricata's rules: {liveError}</div>
+<div class="grid">
+	<Card title="Rules Suricata runs" sub="Read from the Suricata container · rule count, feeds and last update" hero class="c-12">
+		{#if !loaded}
+			<CardState state="loading" title="Loading Suricata's rules" />
+		{:else if !live}
+			<CardState
+				state="error"
+				title="Could not read Suricata's rules: {liveError}"
+				message={retryMessage}
+				onaction={() => refresh.run()}
+			/>
+		{:else}
+			<StatStrip stats={liveStats} />
 		{/if}
+	</Card>
 
-		<!-- Rule Sources: what the rule updater really downloads (#58) -->
-		<section class="card">
-			<h2>Rule Sources</h2>
-			<p class="section-desc">The feeds Suricata's rule updater downloads. Turning feeds on or off from this page is not available yet.</p>
-			{#if live && live.sources.length > 0}
-				<ul class="source-list">
-					{#each live.sources as url}
-						<li><span class="source-name">{sourceName(url)}</span> <code class="source-url">{url}</code></li>
-					{/each}
-				</ul>
-			{:else if live}
-				<p class="section-desc">No sources are listed in the rule updater's configuration.</p>
-			{/if}
-		</section>
+	<!-- Rule sources: what the rule updater really downloads (#58) -->
+	<Card title="Rule sources" sub="The feeds Suricata's rule updater downloads" class="c-6">
+		{#if !loaded}
+			<CardState state="loading" title="Loading rule sources" />
+		{:else if !live}
+			<CardState
+				state="error"
+				title="Couldn't read the rule sources: the request failed."
+				message={retryMessage}
+				onaction={() => refresh.run()}
+			/>
+		{:else if live.sources.length === 0}
+			<CardState
+				state="empty"
+				icon="threats"
+				title="No rule sources listed"
+				message="No sources are listed in the rule updater's configuration."
+			/>
+		{:else}
+			<p class="card-text">Turning feeds on or off from this page is not available yet.</p>
+			<ul class="rows">
+				{#each live.sources as url}
+					<li class="two"><b>{sourceName(url)}</b><span class="mono">{url}</span></li>
+				{/each}
+			</ul>
+		{/if}
+	</Card>
 
-		<!-- OLD CODE START — toggled update-sources.yaml, which suricata-update never reads (#58)
-		<section class="card">
-			<h2>Rule Sources</h2>
-			<p class="section-desc">Enable or disable community rule feeds. Changes take effect on next update.</p>
-			<table class="sources-table">
-				<thead>
-					<tr>
-						<th>Source</th>
-						<th>Description</th>
-						<th>Status</th>
-					</tr>
-				</thead>
-				<tbody>
-					{#each sources as source}
-						<tr>
-							<td class="source-id"><code>{source.id}</code></td>
-							<td class="source-desc">{source.description}</td>
-							<td>
-								<button
-									class="toggle-btn"
-									class:enabled={source.enabled}
-									onclick={() => toggleSource(source)}
-									disabled={togglingSource === source.id}
-								>
-									{togglingSource === source.id ? '...' : source.enabled ? 'Enabled' : 'Disabled'}
-								</button>
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</section>
+	<!-- Update schedule: the real cron entry in the Suricata container (#58) -->
+	<Card title="Update schedule" sub="Container time (UTC)" class="c-6">
+		{#if !loaded}
+			<CardState state="loading" title="Loading the update schedule" />
+		{:else if !live}
+			<CardState
+				state="error"
+				title="Couldn't read the update schedule: the request failed."
+				message={retryMessage}
+				onaction={() => refresh.run()}
+			/>
+		{:else}
+			<p class="card-text">{scheduleText(live.schedule)}</p>
+		{/if}
+	</Card>
 
-		OLD CODE END -->
-
-		<!-- Update Schedule: the real cron entry in the Suricata container (#58) -->
-		<section class="card">
-			<h2>Update Schedule</h2>
-			<p class="section-desc">{live ? scheduleText(live.schedule) : 'Unknown: the schedule could not be read.'}</p>
-		</section>
-
-		<!-- OLD CODE START — saved a schedule nothing ran (#58)
-		<section class="card">
-			<h2>Update Schedule</h2>
-			<p class="section-desc">How often should rules be automatically updated from upstream sources?</p>
-			<div class="schedule-row">
-				<label for="schedule-select">Auto-update interval:</label>
-				<select id="schedule-select" value={schedule.interval} onchange={handleScheduleChange}>
-					<option value="daily">Daily</option>
-					<option value="weekly">Weekly</option>
-					<option value="manual">Manual only</option>
-				</select>
-				<span class="schedule-status">
-					{schedule.enabled ? 'Auto-updates enabled' : 'Auto-updates disabled (manual only)'}
-				</span>
-			</div>
-		</section>
-
-		OLD CODE END -->
-
-		<!-- Custom Rules -->
-		<section class="card">
-			<h2>Custom Rules</h2>
-			<p class="section-desc">
-				Add your own Suricata rules. One rule per line. Lines starting with # are comments.
-			</p>
-			<p class="not-wired">Not connected to Suricata yet: rules saved here are not loaded, so saving is off.</p>
-			{#if customFailed}
-				<p class="section-desc">Couldn't load the saved custom rules: the request failed.</p>
-			{/if}
+	<Card title="Custom rules" sub="One rule per line · lines starting with # are comments" class="c-6">
+		<p class="card-text">Add your own Suricata rules.</p>
+		<div class="notice is-warn" role="status">
+			<Icon name="warn" />Not connected to Suricata yet: rules saved here are not loaded, so saving is off.
+		</div>
+		{#if customFailed}
+			<div class="notice is-error" role="status"><Icon name="warn" />Couldn't load the saved custom rules: the request failed.</div>
+		{/if}
+		<div class="field">
+			<label class="label" for="custom-rules">Rules</label>
 			<textarea
-				class="custom-rules-editor"
+				id="custom-rules"
+				class="textarea mono"
 				readonly
 				bind:value={customRulesContent}
 				placeholder='alert tcp any any -> any any (msg:"Custom rule"; sid:9999001; rev:1;)'
 				rows="8"
 			></textarea>
-			<button
-				class="btn btn-secondary"
-				onclick={handleSaveCustomRules}
-				disabled
-			>
-				{savingCustomRules ? 'Saving...' : 'Save Custom Rules'}
+		</div>
+		<div class="form-actions">
+			<button class="btn" type="button" onclick={handleSaveCustomRules} disabled>
+				{savingCustomRules ? 'Saving…' : 'Save custom rules'}
 			</button>
-		</section>
+		</div>
+	</Card>
 
-		<!-- Commercial License -->
-		<section class="card">
-			<h2>Commercial Rule Sources</h2>
-			<p class="section-desc">
-				Configure ET Pro or Snort Subscriber license keys for premium rule feeds.
-			</p>
-			<p class="not-wired">Not connected to Suricata yet: a key saved here would not add any rules, so this is off.</p>
-			{#if commercialFailed}
-				<p class="section-desc">Couldn't load the commercial license status: the request failed.</p>
-			{/if}
-			{#if commercialConfig.configured}
-				<div class="commercial-status">
-					<span>Active: <strong>{commercialConfig.source_type === 'etpro' ? 'ET Pro' : 'Snort Subscriber'}</strong></span>
-					<span>Key: <code>{commercialConfig.license_key_masked}</code></span>
-					<span>Configured: {formatDate(commercialConfig.configured_at ?? null)}</span>
+	<Card title="Commercial rule sources" sub="ET Pro or Snort Subscriber licence keys" class="c-6">
+		<p class="card-text">Configure ET Pro or Snort Subscriber licence keys for premium rule feeds.</p>
+		<div class="notice is-warn" role="status">
+			<Icon name="warn" />Not connected to Suricata yet: a key saved here would not add any rules, so this is off.
+		</div>
+		{#if commercialFailed}
+			<div class="notice is-error" role="status"><Icon name="warn" />Couldn't load the commercial licence status: the request failed.</div>
+		{/if}
+		{#if commercialConfig.configured}
+			<dl class="facts">
+				<dt>Active</dt>
+				<dd>{commercialConfig.source_type === 'etpro' ? 'ET Pro' : 'Snort Subscriber'}</dd>
+				<dt>Key</dt>
+				<dd class="mono">{commercialConfig.license_key_masked}</dd>
+				<dt>Configured</dt>
+				<dd class="num">{formatDate(commercialConfig.configured_at ?? null)}</dd>
+			</dl>
+		{/if}
+		{#if showCommercialForm}
+			<div class="form-grid commercial-form">
+				<div class="field">
+					<label class="label" for="commercial-type">Source type</label>
+					<select class="select" id="commercial-type" bind:value={commercialType}>
+						<option value="etpro">ET Pro (Proofpoint)</option>
+						<option value="snort">Snort Subscriber (Cisco Talos)</option>
+					</select>
 				</div>
-			{/if}
-			{#if showCommercialForm}
-				<div class="commercial-form">
-					<div class="form-group">
-						<label for="commercial-type">Source Type:</label>
-						<select id="commercial-type" bind:value={commercialType}>
-							<option value="etpro">ET Pro (Proofpoint)</option>
-							<option value="snort">Snort Subscriber (Cisco Talos)</option>
-						</select>
-					</div>
-					<div class="form-group">
-						<label for="commercial-key">License Key / Oink Code:</label>
-						<input
-							id="commercial-key"
-							type="password"
-							bind:value={commercialKey}
-							placeholder="Enter your license key"
-						/>
-					</div>
-					<div class="form-actions">
-						<button class="btn btn-primary" onclick={handleSaveCommercial} disabled={savingCommercial}>
-							{savingCommercial ? 'Saving...' : 'Save'}
-						</button>
-						<button class="btn btn-ghost" onclick={() => { showCommercialForm = false; }}>
-							Cancel
-						</button>
-					</div>
+				<div class="field">
+					<label class="label" for="commercial-key">Licence key or Oink code</label>
+					<input
+						class="input mono"
+						id="commercial-key"
+						type="password"
+						bind:value={commercialKey}
+						placeholder="Enter your licence key"
+					/>
 				</div>
-			{:else}
-				<button class="btn btn-secondary" disabled onclick={() => { showCommercialForm = true; }}>
-					{commercialConfig.configured ? 'Update License' : 'Add Commercial License'}
+			</div>
+			<div class="form-actions">
+				<button class="btn" type="button" onclick={() => { showCommercialForm = false; }}>Cancel</button>
+				<button class="btn primary" type="button" onclick={handleSaveCommercial} disabled={savingCommercial}>
+					{savingCommercial ? 'Saving…' : 'Save'}
 				</button>
-			{/if}
-		</section>
-	{/if}
+			</div>
+		{:else}
+			<div class="form-actions">
+				<button class="btn" type="button" disabled onclick={() => { showCommercialForm = true; }}>
+					{commercialConfig.configured ? 'Update licence' : 'Add commercial licence'}
+				</button>
+			</div>
+		{/if}
+	</Card>
 </div>
 
 <style>
-	.source-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.source-name {
-		color: var(--text-primary);
-		font-weight: 600;
-	}
-
-	.source-url {
-		color: var(--text-muted);
-		font-size: var(--text-xs);
-		word-break: break-all;
-	}
-
-	.not-wired {
-		color: var(--amber);
-		font-size: var(--text-sm);
-		margin: 0 0 var(--space-sm);
-	}
-
-	.page-container {
-		/* OLD CODE START — design system: page containers are always full width */
-		/* max-width: 960px; */
-		/* OLD CODE END */
-		margin: 0 auto;
-		padding: 2rem;
-	}
-
-	.page-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: flex-start;
-		margin-bottom: 1.5rem;
-	}
-
-	.page-header h1 {
-		font-size: 1.75rem;
-		font-weight: 700;
-		color: var(--text-primary, #e4e4e7);
-		margin: 0;
-	}
-
-	.subtitle {
-		color: var(--text-secondary, #a1a1aa);
-		margin: 0.25rem 0 0;
-	}
-
-	.back-link {
-		color: var(--accent, #60a5fa);
-		text-decoration: none;
-		font-size: 0.875rem;
-		white-space: nowrap;
-	}
-
-	.back-link:hover {
-		text-decoration: underline;
-	}
-
-	.message {
-		padding: 0.75rem 1rem;
-		border-radius: 0.5rem;
-		margin-bottom: 1rem;
-		font-size: 0.875rem;
-	}
-
-	.message.success {
-		background: rgba(34, 197, 94, 0.15);
-		color: #4ade80;
-		border: 1px solid rgba(34, 197, 94, 0.3);
-	}
-
-	.message.error {
-		background: rgba(239, 68, 68, 0.15);
-		color: #f87171;
-		border: 1px solid rgba(239, 68, 68, 0.3);
-	}
-
-	.loading {
-		text-align: center;
-		padding: 3rem;
-		color: var(--text-secondary, #a1a1aa);
-	}
-
-	.hero-card {
-		background: var(--card-bg, #1e1e2e);
-		border: 1px solid var(--border, #2e2e3e);
-		border-radius: 0.75rem;
-		padding: 1.5rem;
-		margin-bottom: 1.5rem;
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 1rem;
-		flex-wrap: wrap;
-	}
-
-	.hero-stats {
-		display: flex;
-		gap: 2rem;
-	}
-
-	.stat {
-		display: flex;
-		flex-direction: column;
-	}
-
-	.stat-value {
-		font-size: 1.5rem;
-		font-weight: 700;
-		color: var(--text-primary, #e4e4e7);
-	}
-
-	.stat-label {
-		font-size: 0.75rem;
-		color: var(--text-secondary, #a1a1aa);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
-	.card {
-		background: var(--card-bg, #1e1e2e);
-		border: 1px solid var(--border, #2e2e3e);
-		border-radius: 0.75rem;
-		padding: 1.5rem;
-		margin-bottom: 1.5rem;
-	}
-
-	.card h2 {
-		font-size: 1.125rem;
-		font-weight: 600;
-		color: var(--text-primary, #e4e4e7);
-		margin: 0 0 0.25rem;
-	}
-
-	.section-desc {
-		color: var(--text-secondary, #a1a1aa);
-		font-size: 0.875rem;
-		margin: 0 0 1rem;
-	}
-
-	/* OLD CODE START — styles for the source toggles and schedule picker kept as OLD CODE in the markup (#58)
-	.sources-table {
-		width: 100%;
-		border-collapse: collapse;
-	}
-
-	.sources-table th {
-		text-align: left;
-		padding: 0.5rem 0.75rem;
-		color: var(--text-secondary, #a1a1aa);
-		font-size: 0.75rem;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		border-bottom: 1px solid var(--border, #2e2e3e);
-	}
-
-	.sources-table td {
-		padding: 0.75rem;
-		border-bottom: 1px solid var(--border-light, #252535);
-		color: var(--text-primary, #e4e4e7);
-		font-size: 0.875rem;
-	}
-
-	.source-id code {
-		background: var(--code-bg, #252535);
-		padding: 0.125rem 0.375rem;
-		border-radius: 0.25rem;
-		font-size: 0.8125rem;
-	}
-
-	.source-desc {
-		color: var(--text-secondary, #a1a1aa);
-	}
-
-	.toggle-btn {
-		padding: 0.25rem 0.75rem;
-		border-radius: 9999px;
-		font-size: 0.75rem;
-		font-weight: 600;
-		border: 1px solid var(--border, #2e2e3e);
-		cursor: pointer;
-		background: rgba(239, 68, 68, 0.15);
-		color: #f87171;
-		transition: all 0.15s;
-	}
-
-	.toggle-btn.enabled {
-		background: rgba(34, 197, 94, 0.15);
-		color: #4ade80;
-		border-color: rgba(34, 197, 94, 0.3);
-	}
-
-	.toggle-btn:hover:not(:disabled) {
-		opacity: 0.8;
-	}
-
-	.toggle-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	.schedule-row {
-		display: flex;
-		align-items: center;
-		gap: 1rem;
-		flex-wrap: wrap;
-	}
-
-	.schedule-row label {
-		color: var(--text-primary, #e4e4e7);
-		font-size: 0.875rem;
-	}
-
-	.schedule-row select {
-		background: var(--input-bg, #252535);
-		color: var(--text-primary, #e4e4e7);
-		border: 1px solid var(--border, #2e2e3e);
-		border-radius: 0.375rem;
-		padding: 0.5rem 0.75rem;
-		font-size: 0.875rem;
-	}
-
-	.schedule-status {
-		font-size: 0.8125rem;
-		color: var(--text-secondary, #a1a1aa);
-	}
-	OLD CODE END */
-
-	.custom-rules-editor {
-		width: 100%;
-		background: var(--input-bg, #0d0d15);
-		color: var(--text-primary, #e4e4e7);
-		border: 1px solid var(--border, #2e2e3e);
-		border-radius: 0.5rem;
-		padding: 0.75rem;
-		font-family: 'JetBrains Mono', 'Fira Code', monospace;
-		font-size: 0.8125rem;
-		line-height: 1.5;
-		resize: vertical;
-		margin-bottom: 0.75rem;
-	}
-
-	.commercial-status {
-		display: flex;
-		gap: 1.5rem;
-		flex-wrap: wrap;
-		padding: 0.75rem;
-		background: rgba(59, 130, 246, 0.1);
-		border: 1px solid rgba(59, 130, 246, 0.2);
-		border-radius: 0.5rem;
-		margin-bottom: 1rem;
-		font-size: 0.875rem;
-		color: var(--text-primary, #e4e4e7);
-	}
-
-	.commercial-status code {
-		background: var(--code-bg, #252535);
-		padding: 0.125rem 0.375rem;
-		border-radius: 0.25rem;
-	}
-
-	.commercial-form {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-		margin-top: 0.75rem;
-	}
-
-	.form-group {
-		display: flex;
-		flex-direction: column;
-		gap: 0.375rem;
-	}
-
-	.form-group label {
-		font-size: 0.8125rem;
-		color: var(--text-secondary, #a1a1aa);
-	}
-
-	.form-group select,
-	.form-group input {
-		background: var(--input-bg, #252535);
-		color: var(--text-primary, #e4e4e7);
-		border: 1px solid var(--border, #2e2e3e);
-		border-radius: 0.375rem;
-		padding: 0.5rem 0.75rem;
-		font-size: 0.875rem;
-	}
-
-	.form-actions {
-		display: flex;
-		gap: 0.75rem;
-	}
-
-	.btn {
-		padding: 0.5rem 1rem;
-		border-radius: 0.5rem;
-		font-size: 0.875rem;
-		font-weight: 500;
-		cursor: pointer;
-		border: none;
-		transition: opacity 0.15s;
-	}
-
-	.btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	.btn-primary {
-		background: var(--accent, #3b82f6);
-		color: white;
-	}
-
-	.btn-secondary {
-		background: var(--card-bg-hover, #252535);
-		color: var(--text-primary, #e4e4e7);
-		border: 1px solid var(--border, #2e2e3e);
-	}
-
-	.btn-ghost {
-		background: transparent;
-		color: var(--text-secondary, #a1a1aa);
-	}
-
-	.btn:hover:not(:disabled) {
-		opacity: 0.85;
-	}
+	.card-text { color: var(--text-2); font-size: var(--text-sm); line-height: 1.5; margin-bottom: var(--sp-4); }
+	.notice { margin-bottom: var(--sp-3); }
+	.rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); font-size: var(--text-sm); }
+	.rows .mono { overflow-wrap: anywhere; }
+	.commercial-form { margin-top: var(--sp-4); }
 </style>

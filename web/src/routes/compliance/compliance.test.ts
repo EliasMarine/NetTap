@@ -34,8 +34,11 @@ const DAEMON_REPLIES: Record<string, unknown> = {
 };
 
 function categoryCard(name: string): HTMLElement {
-	return screen.getByText(name).closest('.category-card') as HTMLElement;
+	return screen.getByRole('heading', { name }).closest('.category-card') as HTMLElement;
 }
+
+/** The category cards render once the first load has finished. */
+const heading = (name: string) => screen.getByRole('heading', { name });
 
 describe('Security Posture page', () => {
 	afterEach(() => {
@@ -56,10 +59,10 @@ describe('Security Posture page', () => {
 
 		render(CompliancePage);
 
-		await vi.waitFor(() => expect(screen.getByText('Monitoring Coverage')).toBeInTheDocument());
-		expect(screen.queryByText('Calculating security posture...')).not.toBeInTheDocument();
-		expect(within(categoryCard('Monitoring Coverage')).getByText('100%')).toBeInTheDocument();
-		expect(within(categoryCard('Network Segmentation')).getByText('100%')).toBeInTheDocument();
+		await vi.waitFor(() => expect(heading('Monitoring coverage')).toBeInTheDocument());
+		expect(screen.queryByText('Calculating security posture…')).not.toBeInTheDocument();
+		expect(within(categoryCard('Monitoring coverage')).getByText('100%')).toBeInTheDocument();
+		expect(within(categoryCard('Network segmentation')).getByText('100%')).toBeInTheDocument();
 	});
 
 	it('compares every device, not the two endpoints\' top 100s (#96)', async () => {
@@ -86,11 +89,11 @@ describe('Security Posture page', () => {
 
 		render(CompliancePage);
 
-		await vi.waitFor(() => expect(screen.getByText('Network Segmentation')).toBeInTheDocument());
-		const network = categoryCard('Network Segmentation');
+		await vi.waitFor(() => expect(heading('Network segmentation')).toBeInTheDocument());
+		const network = categoryCard('Network segmentation');
 		expect(within(network).getByText('150 device(s) discovered on your network')).toBeInTheDocument();
 		expect(within(network).getByText('100%')).toBeInTheDocument();
-		const monitoring = categoryCard('Monitoring Coverage');
+		const monitoring = categoryCard('Monitoring coverage');
 		expect(within(monitoring).getByText('150 of 150 device(s) have risk scores computed')).toBeInTheDocument();
 		expect(within(monitoring).getByText('100%')).toBeInTheDocument();
 	});
@@ -108,11 +111,11 @@ describe('Security Posture page', () => {
 
 		render(CompliancePage);
 
-		await vi.waitFor(() => expect(screen.getByText('Encryption')).toBeInTheDocument());
+		await vi.waitFor(() => expect(heading('Encryption')).toBeInTheDocument());
 		const encryption = categoryCard('Encryption');
 		expect(within(encryption).getByText('60%')).toBeInTheDocument();
 		expect(within(encryption).getByText('120 of 200 connections encrypted (60%)')).toBeInTheDocument();
-		const dns = categoryCard('DNS Security');
+		const dns = categoryCard('DNS security');
 		expect(within(dns).getByText('10%')).toBeInTheDocument();
 		expect(within(dns).getByText('10 DNS-over-TLS connections')).toBeInTheDocument();
 	});
@@ -141,8 +144,8 @@ describe('Security Posture page when an input fails', () => {
 		stubDaemon({ '/api/risk/scores': 'http' });
 		render(CompliancePage);
 
-		await vi.waitFor(() => expect(screen.getByText('Monitoring Coverage')).toBeInTheDocument());
-		for (const name of ['Monitoring Coverage', 'Network Segmentation']) {
+		await vi.waitFor(() => expect(heading('Monitoring coverage')).toBeInTheDocument());
+		for (const name of ['Monitoring coverage', 'Network segmentation']) {
 			const card = categoryCard(name);
 			expect(within(card).getAllByText("Couldn't load risk scores: the request failed.").length).toBeGreaterThan(0);
 			expect(within(card).queryByText(/%$/)).not.toBeInTheDocument();
@@ -157,38 +160,41 @@ describe('Security Posture page when an input fails', () => {
 		stubDaemon({ '/api/traffic/protocols': 'network' });
 		render(CompliancePage);
 
-		await vi.waitFor(() => expect(screen.getByText('Encryption')).toBeInTheDocument());
-		for (const name of ['Encryption', 'DNS Security', 'Patch Currency']) {
+		await vi.waitFor(() => expect(heading('Encryption')).toBeInTheDocument());
+		for (const name of ['Encryption', 'DNS security', 'Patch currency']) {
 			expect(within(categoryCard(name)).getAllByText("Couldn't load traffic protocols: the request failed.").length).toBeGreaterThan(0);
 		}
 		expect(screen.queryByText('No legacy unencrypted protocols detected')).not.toBeInTheDocument();
 		expect(screen.queryByText(/looks excellent/)).not.toBeInTheDocument();
-		expect(within(categoryCard('Monitoring Coverage')).getByText('100%')).toBeInTheDocument();
+		expect(within(categoryCard('Monitoring coverage')).getByText('100%')).toBeInTheDocument();
 	});
 
 	it('shows the overall score when every input loads', async () => {
 		stubDaemon({});
 		render(CompliancePage);
 
-		await vi.waitFor(() => expect(screen.getByText('Overall Security Posture')).toBeInTheDocument());
+		// the overall figure is the ring's (its centre reads the number without a % sign)
+		await vi.waitFor(() =>
+			expect(screen.getByRole('img', { name: /^Overall score \d+ out of 100, grade [A-F]$/ })).toBeInTheDocument(),
+		);
 		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
-		// the overall figure plus all six categories
-		expect(screen.getAllByText(/^\d+%$/)).toHaveLength(7);
+		// all six categories
+		expect(screen.getAllByText(/^\d+%$/)).toHaveLength(6);
 	});
 
 	it('needs investigation stats for Alert Response only when there are alerts', async () => {
 		stubDaemon({ '/api/investigations/stats': 'http' });
 		const { unmount } = render(CompliancePage);
 		// no alerts: the score is 100 whatever the investigations
-		await vi.waitFor(() => expect(screen.getByText('Alert Response')).toBeInTheDocument());
-		expect(within(categoryCard('Alert Response')).getByText('100%')).toBeInTheDocument();
+		await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
+		expect(within(categoryCard('Alert response')).getByText('100%')).toBeInTheDocument();
 		unmount();
 
 		DAEMON_REPLIES['/api/alerts/count'] = { from: '', to: '', counts: { total: 3, high: 1, medium: 2, low: 0 } };
 		try {
 			render(CompliancePage);
-			await vi.waitFor(() => expect(screen.getByText('Alert Response')).toBeInTheDocument());
-			const card = categoryCard('Alert Response');
+			await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
+			const card = categoryCard('Alert response');
 			expect(within(card).getAllByText("Couldn't load investigation stats: the request failed.").length).toBeGreaterThan(0);
 			expect(within(card).queryByText('0%')).not.toBeInTheDocument();
 		} finally {

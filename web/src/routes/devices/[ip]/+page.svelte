@@ -3,62 +3,62 @@
 	 * Device Intelligence Dashboard v2
 	 *
 	 * Sections:
-	 *   1. Device identity header (icon, meta, risk gauge, status, time range)
-	 *   2. 6 stat cards (bandwidth DL/UL, upload ratio, connections, alerts, unique dests, first/last seen)
-	 *   3. Bandwidth over time chart (dual series DL/UL via TimeSeriesChart)
-	 *   4. Traffic intelligence (categories + top services)
-	 *   5. Security posture (risk factor breakdown + recent alerts)
-	 *   6. Network detail (top destinations, DNS activity, top ports)
-	 *   7. Recent connections (protocol filters, clickable rows → drawer)
+	 *   1. Identity hero (device tile, name, chips, facts, time range)
+	 *   2. KPIs (traffic, upload share, connections, alerts)
+	 *   3. Bandwidth over time + risk score ring with its factors
+	 *   4. Smart alerts, traffic categories and top services
+	 *   5. Network detail (top destinations, DNS activity, top ports)
+	 *   6. Recent connections (protocol filter, server-sorted, rows open a drawer)
 	 */
 
 	import { page } from '$app/stores';
-	import { goto } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
-	import TimeSeriesChart from '$components/charts/TimeSeriesChart.svelte';
-	import DualSeriesChart from '$components/charts/DualSeriesChart.svelte';
-	import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	import IPAddress from '$components/IPAddress.svelte';
 	import ConnectionDrawer from '$components/ConnectionDrawer.svelte';
 	import {
 		getDeviceDetail,
 		getDeviceConnections,
-		getDeviceCategories as fetchDeviceCategories,
-		getDevicePorts as fetchDevicePorts,
+		getDeviceCategories,
+		getDevicePorts,
 		getDeviceRiskScore,
 	} from '$api/devices';
 	import { getSmartAlerts, suppressAlert } from '$api/alerts';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { TableSort } from '$lib/utils/table-sort.svelte';
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
+	import { smartLevel, type SeverityLevel } from '$lib/utils/severity';
+	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { DeviceConnectionSort } from '$api/devices';
 	import type { SmartAlert } from '$api/alerts';
 	import type {
 		DeviceDetail,
 		DeviceConnection,
 		DeviceCategory,
+		DeviceDestination,
+		DeviceDNSQuery,
 		DevicePort,
 		// DeviceAlert removed — using SmartAlert from alerts.ts instead
 		RiskFactor,
 	} from '$api/devices';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import KpiCard from '$lib/components/ui/KpiCard.svelte';
+	import Pills from '$lib/components/ui/Pills.svelte';
+	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
+	import BarList from '$lib/components/ui/BarList.svelte';
+	import Meter from '$lib/components/ui/Meter.svelte';
+	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
+	import DeviceTile from '$lib/components/ui/DeviceTile.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import AreaChart, { type AreaSeries } from '$lib/components/ui/charts/AreaChart.svelte';
+	import Ring from '$lib/components/ui/charts/Ring.svelte';
 
-	// ---------------------------------------------------------------------------
-	// Category colors (same as traffic category pages)
-	// ---------------------------------------------------------------------------
-
-	const CATEGORY_COLORS: Record<string, string> = {
-		streaming: 'var(--red)', gaming: 'var(--purple)', social: 'var(--blue)',
-		communication: 'var(--amber)', work: 'var(--green)', iot: 'var(--orange)',
-		cloud: 'var(--cyan)', file_transfer: 'var(--teal)', dns: 'var(--text-muted)',
-		email: 'var(--pink)', web: 'var(--accent)', security: 'var(--green)',
-		shopping: 'var(--orange)', news: 'var(--blue)', ads: 'var(--text-muted)',
-		updates: 'var(--teal)', suspicious: 'var(--red)', other: 'var(--text-muted)',
-	};
-
-	const DEVICE_ICONS: Record<string, string> = {
-		ios: '\u{1F4F1}', android: '\u{1F4F1}', windows: '\u{1F4BB}', macos: '\u{1F4BB}',
-		linux: '\u{1F5A5}', chromeos: '\u{1F4BB}', default: '\u{1F4E1}',
-	};
+	// OLD CODE START — 2026-11-03 UI redesign: emoji by OS; the tile shows the device type's system icon
+	// const DEVICE_ICONS: Record<string, string> = {
+	// 	ios: '\u{1F4F1}', android: '\u{1F4F1}', windows: '\u{1F4BB}', macos: '\u{1F4BB}',
+	// 	linux: '\u{1F5A5}', chromeos: '\u{1F4BB}', default: '\u{1F4E1}',
+	// };
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -100,33 +100,32 @@
 	/** a risk score has loaded for this device and range (riskScore 0 is otherwise a placeholder) */
 	let riskLoaded = $state(false);
 	let connectionsFailed = $state(false);
-	/** ip|range of the figures on screen (not reactive: only fetchAll reads it) */
+	/** ip|range of the figures on screen (not reactive: only the loader reads it) */
 	let loadedView = '';
 
-	// #96: these mark their own card and keep its last good list when the request fails, instead of
-	// rejecting fetchAll's Promise.all and blanking the page. They take the API names so fetchAll
-	// still reads the same.
-	async function getDeviceCategories(ip: string, s: { from: string; to: string }): Promise<{ categories: DeviceCategory[] }> {
-		try {
-			const res = await fetchDeviceCategories(ip, s);
-			categoriesFailed = false;
-			return res;
-		} catch {
-			categoriesFailed = true;
-			return { categories };
-		}
-	}
-
-	async function getDevicePorts(ip: string, s: { from: string; to: string }): Promise<{ ports: DevicePort[] }> {
-		try {
-			const res = await fetchDevicePorts(ip, s);
-			portsFailed = false;
-			return res;
-		} catch {
-			portsFailed = true;
-			return { ports };
-		}
-	}
+	// OLD CODE START — 2026-11-03 UI redesign: these wrappers wrote their failure flags after an await,
+	// outside the load guard; the loader now settles every request and writes only while current
+	// async function getDeviceCategories(ip: string, s: { from: string; to: string }): Promise<{ categories: DeviceCategory[] }> {
+	// 	try {
+	// 		const res = await fetchDeviceCategories(ip, s);
+	// 		categoriesFailed = false;
+	// 		return res;
+	// 	} catch {
+	// 		categoriesFailed = true;
+	// 		return { categories };
+	// 	}
+	// }
+	// async function getDevicePorts(ip: string, s: { from: string; to: string }): Promise<{ ports: DevicePort[] }> {
+	// 	try {
+	// 		const res = await fetchDevicePorts(ip, s);
+	// 		portsFailed = false;
+	// 		return res;
+	// 	} catch {
+	// 		portsFailed = true;
+	// 		return { ports };
+	// 	}
+	// }
+	// OLD CODE END
 
 	// Connections
 	let connections = $state<DeviceConnection[]>([]);
@@ -136,6 +135,7 @@
 	let connectionsTotal = $state(0);
 	const connectionsPageSize = 25;
 	let protoFilter = $state('all');
+	const PROTO_OPTIONS = ['all', 'tcp', 'udp', 'icmp'].map((p) => ({ value: p, label: p === 'all' ? 'All' : p.toUpperCase() }));
 
 	// UI state
 	let autoRefresh = $state(false);
@@ -144,6 +144,8 @@
 	const RANGE_HOURS = { '24h': 24, '7d': 168, '30d': 720 } as const;
 	type RangeKey = keyof typeof RANGE_HOURS;
 	const RANGE_KEYS = Object.keys(RANGE_HOURS) as RangeKey[];
+	const RANGE_OPTIONS = RANGE_KEYS.map((key) => ({ value: key, label: key }));
+	const RANGE_LABEL: Record<RangeKey, string> = { '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' };
 	let range = $state<RangeKey>('24h');
 	// The window of the last fetch; connection pages reuse it so paging doesn't slide in time
 	let span = $state<{ from: string; to: string }>({ from: '', to: '' });
@@ -153,8 +155,6 @@
 		const from = new Date(to.getTime() - RANGE_HOURS[key] * 3_600_000);
 		return { from: from.toISOString(), to: to.toISOString() };
 	}
-	let autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
-	let lastUpdated = $state(new Date());
 	let selectedConnection = $state<Record<string, unknown> | null>(null);
 	let drawerOpen = $state(false);
 
@@ -162,7 +162,6 @@
 	// Derived
 	// ---------------------------------------------------------------------------
 
-	let deviceIcon = $derived(DEVICE_ICONS[(device?.os_hint ?? '').toLowerCase()] ?? DEVICE_ICONS.default);
 	let isOnline = $derived(device?.last_seen ? (Date.now() - new Date(device.last_seen).getTime()) < 5 * 60 * 1000 : false);
 	let statusLabel = $derived(isOnline ? 'Online' : device?.last_seen ? (Date.now() - new Date(device.last_seen).getTime() < 60 * 60 * 1000 ? 'Idle' : 'Offline') : 'Unknown');
 
@@ -170,188 +169,221 @@
 	let respBytes = $derived(device?.resp_bytes ?? 0);
 	let totalBytes = $derived(device?.total_bytes ?? 0);
 	let uploadRatio = $derived(totalBytes > 0 ? Math.round((origBytes / totalBytes) * 100) : 0);
-	let uploadRatioColor = $derived(uploadRatio < 40 ? 'var(--green)' : uploadRatio < 70 ? 'var(--amber)' : 'var(--red)');
+	// OLD CODE START — 2026-11-03 UI redesign: green/amber/red text; colour is reserved for data and severity
+	// let uploadRatioColor = $derived(uploadRatio < 40 ? 'var(--green)' : uploadRatio < 70 ? 'var(--amber)' : 'var(--red)');
+	// OLD CODE END
 	let uploadRatioLabel = $derived(uploadRatio < 40 ? 'Normal' : uploadRatio < 70 ? 'Elevated' : 'High');
 
-	let chartData = $derived(
-		device?.bandwidth_series?.map((p) => ({
-			time: p.timestamp,
-			value: p.bytes,
-		})) ?? [],
-	);
+	// OLD CODE START — 2026-11-03 UI redesign: TimeSeriesChart / DualSeriesChart data; the AreaChart takes series
+	// let chartData = $derived(device?.bandwidth_series?.map((p) => ({ time: p.timestamp, value: p.bytes })) ?? []);
+	// let dualChartData = $derived(
+	// 	device?.bandwidth_series?.map((p) => ({ time: p.timestamp, download: p.download_bytes ?? p.bytes, upload: p.upload_bytes ?? 0 })) ?? [],
+	// );
+	// OLD CODE END
+	const bandwidth = $derived(device?.bandwidth_series ?? []);
 
 	// Dual-series chart data (DL/UL split)
 	let hasDualSeries = $derived(
 		device?.bandwidth_series?.some((p) => p.download_bytes != null) ?? false,
 	);
 
-	let dualChartData = $derived(
-		device?.bandwidth_series?.map((p) => ({
-			time: p.timestamp,
-			download: p.download_bytes ?? p.bytes,
-			upload: p.upload_bytes ?? 0,
-		})) ?? [],
+	const chartSeries = $derived.by((): AreaSeries[] =>
+		hasDualSeries
+			? [
+					{ key: 'down', label: 'Download', colour: 1, points: bandwidth.map((p) => ({ t: p.timestamp, v: p.download_bytes ?? p.bytes })) },
+					{ key: 'up', label: 'Upload', colour: 2, points: bandwidth.map((p) => ({ t: p.timestamp, v: p.upload_bytes ?? 0 })) },
+				]
+			: [{ key: 'total', label: 'Traffic', colour: 1, points: bandwidth.map((p) => ({ t: p.timestamp, v: p.bytes })) }],
 	);
+	// the busiest bucket, marked on the chart and named in its label
+	const busiest = $derived(bandwidth.reduce((best, p, i) => (p.bytes > (bandwidth[best]?.bytes ?? -1) ? i : best), -1));
 
-	let isNewDevice = $derived(device?.first_seen ? (Date.now() - new Date(device.first_seen).getTime()) < 24 * 60 * 60 * 1000 : false);
+	// OLD CODE START — 2026-11-03 UI redesign: first_seen is the first record in the chosen range, so every
+	// device read NEW in the 24 h view; the badge is gone and the fact says "in range"
+	// let isNewDevice = $derived(device?.first_seen ? (Date.now() - new Date(device.first_seen).getTime()) < 24 * 60 * 60 * 1000 : false);
+	// OLD CODE END
 
-	// Risk gauge arc calculation
-	let riskArcPath = $derived.by(() => {
-		const angle = Math.min(riskScore / 100, 1) * 180;
-		const rad = (angle * Math.PI) / 180;
-		const endX = 60 - 50 * Math.cos(rad);
-		const endY = 65 - 50 * Math.sin(rad);
-		const largeArc = angle > 180 ? 1 : 0;
-		return `M 10 65 A 50 50 0 ${largeArc} 1 ${endX} ${endY}`;
-	});
+	// OLD CODE START — 2026-11-03 UI redesign: the half-circle gauge; the system's Ring draws the score
+	// let riskArcPath = $derived.by(() => {
+	// 	const angle = Math.min(riskScore / 100, 1) * 180;
+	// 	const rad = (angle * Math.PI) / 180;
+	// 	const endX = 60 - 50 * Math.cos(rad);
+	// 	const endY = 65 - 50 * Math.sin(rad);
+	// 	const largeArc = angle > 180 ? 1 : 0;
+	// 	return `M 10 65 A 50 50 0 ${largeArc} 1 ${endX} ${endY}`;
+	// });
+	// let lastUpdatedText = $derived.by(() => { … });  (the top bar shows "Updated")
+	// OLD CODE END
 
-	let lastUpdatedText = $derived.by(() => {
-		const diff = Math.floor((Date.now() - lastUpdated.getTime()) / 1000);
-		if (diff < 5) return 'just now';
-		if (diff < 60) return `${diff}s ago`;
-		return `${Math.floor(diff / 60)}m ago`;
-	});
+	const RISK_LEVELS: readonly string[] = ['critical', 'high', 'medium', 'low'];
+	const riskSeverity = $derived(RISK_LEVELS.includes(riskLevel) ? (riskLevel as SeverityLevel) : null);
 
 	// ---------------------------------------------------------------------------
 	// Data fetching
 	// ---------------------------------------------------------------------------
 
-	async function fetchAll() {
+	// OLD CODE START — 2026-11-03 UI redesign: fetchAll goes through the page refresh contract
+	// (PLAN.md §5.5): it awaits the connections too, writes only while its load is current, and
+	// reports ok / partial / failed. The fetch itself (same requests, same window) is unchanged.
+	// async function fetchAll() {
+	// 	loading = true;
+	// 	span = rangeSpan(range);
+	// 	const view = `${deviceIp}|${range}`;
+	// 	if (view !== loadedView) { device = null; categories = []; ports = []; riskLoaded = false; }
+	// 	try {
+	// 		const [deviceRes, catRes, smartRes, portRes, riskRes] = await Promise.all([
+	// 			getDeviceDetail(deviceIp, span).catch(() => null),
+	// 			getDeviceCategories(deviceIp, span),
+	// 			getSmartAlerts({ device_ip: deviceIp, limit: 10, ...span }).catch(() => null),
+	// 			getDevicePorts(deviceIp, span),
+	// 			getDeviceRiskScore(deviceIp, span).catch(() => null),
+	// 		]);
+	// 		if (deviceRes) { device = deviceRes.device; loadedView = view; }
+	// 		deviceFailed = deviceRes === null;
+	// 		categories = catRes.categories;
+	// 		smartAlerts = smartRes?.alerts ?? [];
+	// 		smartAlertsTotal = smartRes?.total ?? 0;
+	// 		smartAlertsFailed = smartRes === null;
+	// 		ports = portRes.ports;
+	// 		if (riskRes) { riskScore = riskRes.score; riskLevel = riskRes.level; riskFactors = riskRes.factors; riskLoaded = true; }
+	// 		riskFailed = riskRes === null;
+	// 		if (deviceRes) lastUpdated = new Date();
+	// 	} catch {
+	// 		device = null;
+	// 		deviceFailed = true;
+	// 	} finally {
+	// 		loading = false;
+	// 	}
+	// 	fetchConnections(1);
+	// }
+	// OLD CODE END
+	async function load(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		const ip = deviceIp;
+		const s = rangeSpan(range);
+		const view = `${ip}|${range}`;
+		if (!ip) return 'skipped';
 		loading = true;
-		span = rangeSpan(range);
+		span = s;
 		// A refresh of the same view keeps its last good figures; another view must not show them
-		const view = `${deviceIp}|${range}`;
 		if (view !== loadedView) {
 			device = null;
 			categories = [];
 			ports = [];
 			riskLoaded = false;
 		}
-		try {
-			// OLD CODE START — #87: no time range, so the pills changed nothing
-			// const [deviceRes, catRes, smartRes, portRes, riskRes] = await Promise.all([
-			// 	getDeviceDetail(deviceIp),
-			// 	getDeviceCategories(deviceIp),
-			// 	getSmartAlerts({ device_ip: deviceIp, limit: 10 }),
-			// 	getDevicePorts(deviceIp),
-			// 	getDeviceRiskScore(deviceIp),
-			// ]);
-			// OLD CODE END
-			const [deviceRes, catRes, smartRes, portRes, riskRes] = await Promise.all([
-				// OLD CODE START — #96: a failure rejected the whole Promise.all, so the page said "Device not found"
-				// getDeviceDetail(deviceIp, span),
-				// OLD CODE END
-				getDeviceDetail(deviceIp, span).catch(() => null),
-				getDeviceCategories(deviceIp, span),
-				// #96: a failed alert lookup marks its card only, not the whole device page
-				getSmartAlerts({ device_ip: deviceIp, limit: 10, ...span }).catch(() => null),
-				getDevicePorts(deviceIp, span),
-				// OLD CODE START — #96: see getDeviceDetail
-				// getDeviceRiskScore(deviceIp, span),
-				// OLD CODE END
-				getDeviceRiskScore(deviceIp, span).catch(() => null),
-			]);
-			// OLD CODE START — #96: a failed detail is not "Device not found"; a refresh keeps the last one
-			// device = deviceRes.device;
-			// OLD CODE END
-			if (deviceRes) {
-				device = deviceRes.device;
-				loadedView = view;
-			}
-			deviceFailed = deviceRes === null;
-			categories = catRes.categories;
-			// OLD CODE START — #96: getSmartAlerts now throws instead of returning no alerts
-			// smartAlerts = smartRes.alerts;
-			// smartAlertsTotal = smartRes.total;
-			// OLD CODE END
-			smartAlerts = smartRes?.alerts ?? [];
-			smartAlertsTotal = smartRes?.total ?? 0;
-			smartAlertsFailed = smartRes === null;
-			ports = portRes.ports;
-			// OLD CODE START — #96: a failed risk score read as 0, LOW
-			// riskScore = riskRes.score;
-			// riskLevel = riskRes.level;
-			// riskFactors = riskRes.factors;
-			// lastUpdated = new Date();
-			// OLD CODE END
-			if (riskRes) {
-				riskScore = riskRes.score;
-				riskLevel = riskRes.level;
-				riskFactors = riskRes.factors;
-				riskLoaded = true;
-			}
-			riskFailed = riskRes === null;
-			if (deviceRes) lastUpdated = new Date();
-		} catch {
-			// only a network error on the alerts lookup reaches here; it is not "Device not found"
-			device = null;
-			deviceFailed = true;
-		} finally {
-			loading = false;
+		const connectionsLoad = fetchConnections(1, s, ip);
+		const results = await Promise.allSettled([
+			getDeviceDetail(ip, s),
+			getDeviceCategories(ip, s),
+			getSmartAlerts({ device_ip: ip, limit: 10, ...s }),
+			getDevicePorts(ip, s),
+			getDeviceRiskScore(ip, s),
+		]);
+		if (!guard.current(g)) return 'skipped';
+		const [deviceRes, catRes, smartRes, portRes, riskRes] = results;
+
+		// #96: a failed detail is not "Device not found"; a refresh keeps the last one
+		if (deviceRes.status === 'fulfilled') {
+			device = deviceRes.value.device;
+			loadedView = view;
 		}
-		fetchConnections(1);
+		deviceFailed = deviceRes.status === 'rejected';
+		if (catRes.status === 'fulfilled') categories = catRes.value.categories;
+		categoriesFailed = catRes.status === 'rejected';
+		// #96: a failed alert lookup marks its card only, not the whole device page
+		smartAlerts = smartRes.status === 'fulfilled' ? smartRes.value.alerts : [];
+		smartAlertsTotal = smartRes.status === 'fulfilled' ? smartRes.value.total : 0;
+		smartAlertsFailed = smartRes.status === 'rejected';
+		if (portRes.status === 'fulfilled') ports = portRes.value.ports;
+		portsFailed = portRes.status === 'rejected';
+		// #96: a failed risk score never reads as 0, LOW
+		if (riskRes.status === 'fulfilled') {
+			riskScore = riskRes.value.score;
+			riskLevel = riskRes.value.level;
+			riskFactors = riskRes.value.factors;
+			riskLoaded = true;
+		}
+		riskFailed = riskRes.status === 'rejected';
+		loading = false;
+
+		const connectionsRes = await connectionsLoad;
+		if (!guard.current(g)) return 'skipped';
+		return outcome([...results, connectionsRes]);
 	}
 
-	// Every table sorts (design system): the short top-N tables here, Recent Connections on the
-	// daemon, so a sort covers every page of results, not just the one shown (#140)
-	const destSort = new TableSort<'ip' | 'bytes' | 'connections'>('bytes');
-	const dnsSort = new TableSort<'domain' | 'count'>('count');
-	const portSort = new TableSort<'port' | 'service' | 'connections'>('connections');
+	// OLD CODE START — 2026-11-03 UI redesign: the hand-built tables' sorts; DataTable sorts every column
+	// const destSort = new TableSort<'ip' | 'bytes' | 'connections'>('bytes');
+	// const dnsSort = new TableSort<'domain' | 'count'>('count');
+	// const portSort = new TableSort<'port' | 'service' | 'connections'>('connections');
+	// function sortConnections(key: DeviceConnectionSort) {
+	// 	connSort.toggle(key);
+	// 	fetchConnections(1);
+	// }
+	// OLD CODE END
+	// Recent Connections sorts on the daemon, so a sort covers every page of results, not just the one shown (#140)
 	const connSort = new TableSort<DeviceConnectionSort>('time');
-	const CONNECTION_COLUMNS: [DeviceConnectionSort, string][] = [
-		['time', 'Time'], ['destination', 'Destination'], ['proto', 'Proto'], ['service', 'Service'],
-		['duration', 'Duration'], ['dl', 'DL'], ['ul', 'UL'],
-	];
 
-	function sortConnections(key: DeviceConnectionSort) {
-		connSort.toggle(key);
+	function sortConnections(key: string, dir: 'asc' | 'desc') {
+		connSort.key = key as DeviceConnectionSort;
+		connSort.dir = dir;
 		fetchConnections(1);
 	}
 
-	async function fetchConnections(pageNum: number = 1) {
+	// Paging and sorting start their own connection loads; a newer one drops an older one's reply
+	const connGuard = createLoadGuard();
+
+	async function fetchConnections(
+		pageNum: number = 1,
+		s: { from: string; to: string } = span,
+		ip: string = deviceIp,
+	): Promise<PromiseSettledResult<unknown>> {
+		const g = connGuard.begin();
 		connectionsLoading = true;
-		try {
-			const res = await getDeviceConnections(deviceIp, {
-				...span,
+		const [res] = await Promise.allSettled([
+			getDeviceConnections(ip, {
+				...s,
 				page: pageNum,
 				size: connectionsPageSize,
 				sort: connSort.key,
 				order: connSort.dir,
-			});
-			connections = res.connections;
-			connectionsPage = res.page;
-			connectionsTotalPages = res.total_pages;
-			connectionsTotal = res.total;
-			connectionsFailed = false;
-		} catch {
+			}),
+		]);
+		if (!connGuard.current(g)) return res;
+		if (res.status === 'fulfilled') {
+			connections = res.value.connections;
+			connectionsPage = res.value.page;
+			connectionsTotalPages = res.value.total_pages;
+			connectionsTotal = res.value.total;
+		} else {
 			// rows are specific to this page of results, so they are not kept as stale
 			connections = [];
 			connectionsTotalPages = 0;
-			connectionsFailed = true;
-		} finally {
-			connectionsLoading = false;
 		}
+		connectionsFailed = res.status === 'rejected';
+		connectionsLoading = false;
+		return res;
 	}
 
+	const refresh = registerPageRefresh(load);
+	onDestroy(() => {
+		refresh.unregister();
+		connGuard.invalidate();
+	});
+
 	$effect(() => {
-		const ip = deviceIp;
+		void deviceIp; // reload for another device
 		void range; // refetch when the range changes
-		// fetchAll writes and reads `span`; untracked so that write can't rerun this effect
-		untrack(() => {
-			if (ip) fetchAll();
-		});
+		// the loader writes and reads state; untracked so those writes can't rerun this effect
+		untrack(() => refresh.run());
 	});
 
-	// Auto-refresh
+	// The page's own 30 s auto refresh, through the same contract so "Updated" stays honest
 	$effect(() => {
-		if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-		if (autoRefresh) {
-			autoRefreshTimer = setInterval(() => fetchAll(), 30_000);
-		}
-		return () => { if (autoRefreshTimer) clearInterval(autoRefreshTimer); };
+		if (!autoRefresh) return;
+		const timer = setInterval(() => refresh.runIfIdle(), 30_000);
+		return () => clearInterval(timer);
 	});
-
-	onDestroy(() => { if (autoRefreshTimer) clearInterval(autoRefreshTimer); });
 
 	// ---------------------------------------------------------------------------
 	// Helpers
@@ -371,12 +403,12 @@
 	}
 
 	function formatDate(dateStr: string): string {
-		if (!dateStr) return '--';
+		if (!dateStr) return '—';
 		try { return new Date(dateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch { return dateStr; }
 	}
 
 	function timeAgo(dateStr: string): string {
-		if (!dateStr) return '--';
+		if (!dateStr) return '—';
 		const diffMs = Date.now() - new Date(dateStr).getTime();
 		const mins = Math.floor(diffMs / 60000);
 		if (mins < 1) return 'just now';
@@ -385,6 +417,28 @@
 		if (hours < 24) return `${hours}h ago`;
 		return `${Math.floor(hours / 24)}d ago`;
 	}
+
+	/** A chart time: the hour in the 24 h view, the day otherwise. */
+	function chartTime(t: number | string): string {
+		const d = new Date(t);
+		return range === '24h'
+			? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+			: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+	}
+
+	function chartTip(i: number): string {
+		const p = bandwidth[i];
+		if (!p) return '';
+		return hasDualSeries
+			? `${chartTime(p.timestamp)} · ↓ ${formatBytes(p.download_bytes ?? p.bytes)} · ↑ ${formatBytes(p.upload_bytes ?? 0)}`
+			: `${chartTime(p.timestamp)} · ${formatBytes(p.bytes)}`;
+	}
+
+	const chartLabel = $derived(
+		busiest >= 0
+			? `Busiest at ${chartTime(bandwidth[busiest].timestamp)}, with ${formatBytes(bandwidth[busiest].bytes)} transferred`
+			: 'No traffic in this range',
+	);
 
 	function getField(obj: Record<string, unknown>, path: string): unknown {
 		const parts = path.split('.');
@@ -413,7 +467,7 @@
 	// OLD CODE END
 	function formatDuration(conn: Record<string, unknown>): string {
 		const diffMs = connectionDurationMs(conn);
-		if (diffMs === null) return '--';
+		if (diffMs === null) return '—';
 		if (diffMs < 1000) return `${Math.round(diffMs)}ms`;
 		const sec = diffMs / 1000;
 		if (sec < 60) return `${sec.toFixed(1)}s`;
@@ -424,24 +478,30 @@
 		return `${Math.floor(total / 60)}m ${total % 60}s`;
 	}
 
-	function riskColor(level: string): string {
-		if (level === 'critical') return 'var(--red)';
-		if (level === 'high') return 'var(--red)';
-		if (level === 'medium') return 'var(--amber)';
-		return 'var(--green)';
-	}
+	// OLD CODE START — 2026-11-03 UI redesign: colours for the gauge and badges; SeverityPill carries colour, shape and word
+	// function riskColor(level: string): string {
+	// 	if (level === 'critical') return 'var(--sev-critical)';
+	// 	if (level === 'high') return 'var(--sev-high)';
+	// 	if (level === 'medium') return 'var(--sev-medium)';
+	// 	if (level === 'low') return 'var(--sev-low)';
+	// 	return 'var(--ok)';
+	// }
+	// function sevLabel(sev: number): string { … }   (unused)
+	// function sevClass(sev: number): string { … }   (unused)
+	// OLD CODE END
 
-	function sevLabel(sev: number): string {
-		if (sev === 1) return 'HIGH';
-		if (sev === 2) return 'MED';
-		return 'LOW';
-	}
+	// OLD CODE START — the same mapping now lives once in $lib/utils/severity
+	// /** Smart alert severity (1 critical … 4 low, 5 info), as the old badge classes read it. */
+	// function smartLevel(sev: number): SeverityLevel {
+	// 	if (sev <= 1) return 'critical';
+	// 	if (sev === 2) return 'high';
+	// 	if (sev === 3) return 'medium';
+	// 	if (sev === 4) return 'low';
+	// 	return 'info';
+	// }
+	// OLD CODE END
 
-	function sevClass(sev: number): string {
-		if (sev === 1) return 'sev-high';
-		if (sev === 2) return 'sev-med';
-		return 'sev-low';
-	}
+	const factorLabel = (name: string) => name.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 
 	function openDrawer(conn: Record<string, unknown>) {
 		selectedConnection = conn;
@@ -461,454 +521,345 @@
 			return proto === protoFilter;
 		});
 	});
+	// the rows of one server-sorted page, keyed by position so a missing _id can't collide
+	interface ConnRow {
+		conn: DeviceConnection;
+		key: string;
+	}
+	const connectionRows = $derived(filteredConnections.map((conn, i): ConnRow => ({ conn, key: `${String(conn._id)}-${i}` })));
+	const selectedKey = $derived(connectionRows.find((r) => r.conn === selectedConnection)?.key);
+
+	const dnsRows = $derived(
+		(device?.dns_queries ?? [])
+			.filter((d) => !d.domain.includes('._tcp.') && !d.domain.includes('._udp.') && !d.domain.endsWith('.arpa'))
+			.slice(0, 10),
+	);
+	const pager = $derived(
+		connectionsTotal > 0
+			? {
+					page: connectionsPage,
+					pageCount: connectionsTotalPages,
+					total: connectionsTotal,
+					from: (connectionsPage - 1) * connectionsPageSize + 1,
+					to: Math.min(connectionsPage * connectionsPageSize, connectionsTotal),
+					onpage: (p: number) => fetchConnections(p),
+				}
+			: undefined,
+	);
+	// "1.2 GB" as the KPI's value and unit
+	const trafficParts = $derived(formatBytes(totalBytes).split(' '));
+
+	// Every column sorts (design system); the cell snippets are at the top of the markup
+	const destColumns: Column<DeviceDestination>[] = [
+		{ key: 'ip', label: 'Destination', cell: destCell },
+		{ key: 'bytes', label: 'Data', numeric: true, cell: destBytesCell },
+		{ key: 'connections', label: 'Conn', numeric: true, cell: destConnCell },
+	];
+	const dnsColumns: Column<DeviceDNSQuery>[] = [
+		{ key: 'domain', label: 'Domain', cell: domainCell },
+		{ key: 'count', label: 'Lookups', numeric: true, cell: countCell },
+	];
+	const portColumns: Column<DevicePort>[] = [
+		{ key: 'port', label: 'Port', cell: portCell },
+		{ key: 'service', label: 'Service', cell: serviceCell },
+		{ key: 'connections', label: 'Conn', numeric: true, cell: portConnCell },
+	];
+	// keys are the daemon's sort names: the table only reports the sort, the daemon applies it
+	const connectionColumns: Column<ConnRow>[] = [
+		{ key: 'time', label: 'Time', cell: timeCell },
+		{ key: 'destination', label: 'Destination', cell: connDestCell },
+		{ key: 'proto', label: 'Proto', cell: protoCell },
+		{ key: 'service', label: 'Service', cell: svcCell },
+		{ key: 'duration', label: 'Duration', numeric: true, cell: durationCell },
+		{ key: 'dl', label: 'DL', numeric: true, cell: dlCell },
+		{ key: 'ul', label: 'UL', numeric: true, cell: ulCell },
+	];
 </script>
+
+{#snippet destCell(d: DeviceDestination)}<span class="mono"><IPAddress ip={d.ip} /></span>{/snippet}
+{#snippet destBytesCell(d: DeviceDestination)}{formatBytes(d.bytes)}{/snippet}
+{#snippet destConnCell(d: DeviceDestination)}{formatNumber(d.connections)}{/snippet}
+{#snippet domainCell(q: DeviceDNSQuery)}<span class="mono trunc" title={q.domain}>{q.domain}</span>{/snippet}
+{#snippet countCell(q: DeviceDNSQuery)}{formatNumber(q.count)}{/snippet}
+{#snippet portCell(p: DevicePort)}<span class="mono">{p.port}</span>{/snippet}
+{#snippet serviceCell(p: DevicePort)}
+	<span class="svc">{p.service}{#if p.suspicious}<span class="chip is-warn"><Icon name="warn" />Suspicious</span>{/if}</span>
+{/snippet}
+{#snippet portConnCell(p: DevicePort)}{formatNumber(p.connections)}{/snippet}
+{#snippet timeCell(r: ConnRow)}
+	<span class="mono">{range === '24h' ? new Date(asString(getField(r.conn, '@timestamp'))).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : new Date(asString(getField(r.conn, '@timestamp'))).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+{/snippet}
+{#snippet connDestCell(r: ConnRow)}<span class="mono">{asString(getField(r.conn, 'destination.ip'))}:{asString(getField(r.conn, 'destination.port'))}</span>{/snippet}
+{#snippet protoCell(r: ConnRow)}<span class="tag">{asString(getField(r.conn, 'network.transport'))}</span>{/snippet}
+{#snippet svcCell(r: ConnRow)}{asString(getField(r.conn, 'network.protocol')) || asString(getField(r.conn, 'network.transport'))}{/snippet}
+<!-- OLD CODE START: <td class="mono td-sm">{formatDuration(getField(conn, 'event.start'), getField(conn, 'event.end'))}</td> OLD CODE END -->
+{#snippet durationCell(r: ConnRow)}{formatDuration(r.conn)}{/snippet}
+{#snippet dlCell(r: ConnRow)}{formatBytes(Number(asString(getField(r.conn, 'destination.bytes') ?? getField(r.conn, 'server.bytes'))) || 0)}{/snippet}
+{#snippet ulCell(r: ConnRow)}{formatBytes(Number(asString(getField(r.conn, 'source.bytes') ?? getField(r.conn, 'client.bytes'))) || 0)}{/snippet}
 
 <svelte:head>
 	<title>{device?.unifi_name ?? deviceIp} | Device Intelligence | NetTap</title>
 </svelte:head>
 
-<div class="device-page">
-	{#if loading && !device}
-		<div class="loading-state">
-			<div class="loading-spinner"></div>
-			<span class="text-muted">Loading device data...</span>
+<a class="back" href="/devices"><Icon name="back" />Devices</a>
+
+<!-- Identity hero: the h1 is here in every state, so loading and errors keep the page's heading -->
+<article class="card hero">
+	<div class="ident">
+		<DeviceTile size="lg" category={device?.category} />
+		<div>
+			<h1 class={['page-title', !device?.unifi_name && 'mono']}>{device?.unifi_name ?? deviceIp}</h1>
+			{#if device}
+				<div class="chips">
+					<span class={['chip', isOnline && 'is-ok']}>{statusLabel}</span>
+					{#if device.unifi_name}<span class="chip">UniFi</span>{/if}
+					{#if device.os_hint}<span class="chip">{device.os_hint}</span>{/if}
+					{#each (device.protocols ?? []).slice(0, 8) as proto (proto)}<span class="tag">{proto}</span>{/each}
+				</div>
+			{/if}
 		</div>
+		<div class="head-actions">
+			<!-- OLD CODE START — #87: no handlers; 24h was always marked active
+			<button class="pill active">24h</button>
+			<button class="pill">7d</button>
+			<button class="pill">30d</button>
+			OLD CODE END -->
+			<Pills ariaLabel="Time range" options={RANGE_OPTIONS} bind:value={range} />
+			<button class="btn" type="button" aria-pressed={autoRefresh} onclick={() => (autoRefresh = !autoRefresh)}>
+				<Icon name="refresh" />Auto
+			</button>
+		</div>
+	</div>
+	{#if device && device.ip}
+		<dl class="ident-meta">
+			<div><dt class="meta-k">IP address</dt><dd class="meta-v mono">{device.ip}</dd></div>
+			<div><dt class="meta-k">MAC</dt><dd class="meta-v mono">{device.mac ?? '—'}</dd></div>
+			<div><dt class="meta-k">Vendor</dt><dd class="meta-v">{device.manufacturer ?? '—'}</dd></div>
+			<div><dt class="meta-k">Hostname</dt><dd class="meta-v mono">{device.hostname ?? '—'}</dd></div>
+			<div><dt class="meta-k">First seen in range</dt><dd class="meta-v">{formatDate(device.first_seen)}</dd></div>
+			<div><dt class="meta-k">Last seen</dt><dd class="meta-v">{timeAgo(device.last_seen)}</dd></div>
+		</dl>
+	{:else if loading && !device}
+		<CardState state="loading" title="Loading device" />
 	{:else if deviceFailed && !device}
-		<div class="empty-state">
-			<p class="empty-text">{loadFailed(`device ${deviceIp}`)}</p>
-			<button class="btn-back" onclick={() => fetchAll()}>Try again</button>
-		</div>
-	{:else if !device || !device.ip}
-		<div class="empty-state">
-			<p class="empty-text">Device not found: {deviceIp}</p>
-			<button class="btn-back" onclick={() => goto('/devices')}>Return to Devices</button>
-		</div>
+		<CardState state="error" title={loadFailed(`device ${deviceIp}`)} onaction={() => refresh.run()} />
 	{:else}
-		{#if deviceFailed}
-			<p class="text-warning load-note">{loadFailed('this device', true)}</p>
-		{/if}
-		<!-- ============================================================
-		     Section 1: Device Identity Header
-		     ============================================================ -->
-		<div class="device-header">
-			<div class="header-top">
-				<button class="back-link" onclick={() => goto('/devices')}>&larr; Back to Devices</button>
-				<div class="header-controls">
-					<div class="pills">
-						<!-- OLD CODE START — #87: no handlers; 24h was always marked active
-						<button class="pill active">24h</button>
-						<button class="pill">7d</button>
-						<button class="pill">30d</button>
-						OLD CODE END -->
-						{#each RANGE_KEYS as key (key)}
-							<button class="pill" class:active={range === key} aria-pressed={range === key} onclick={() => (range = key)}>{key}</button>
-						{/each}
-					</div>
-					<button class="auto-btn" class:active={autoRefresh} onclick={() => (autoRefresh = !autoRefresh)}>
-						<span class="auto-dot"></span> Auto
-					</button>
-				</div>
-			</div>
-			<div class="header-main">
-				<div class="device-icon-area">
-					<div class="device-icon-box">
-						{deviceIcon}
-						<span class="status-dot" class:online={isOnline} class:idle={!isOnline && statusLabel === 'Idle'}></span>
-					</div>
-					<span class="status-label" class:online={isOnline}>{statusLabel}</span>
-				</div>
-				<div class="device-info">
-					{#if device.unifi_name}
-						<h1>{device.unifi_name} <span class="badge badge-muted" style="font-size: 10px; vertical-align: middle;">UniFi</span></h1>
-						<div class="device-hostname mono">{device.ip}{#if device.hostname} &middot; {device.hostname}{/if}</div>
-					{:else}
-						<h1 class="mono">{device.ip}</h1>
-						{#if device.hostname}
-							<div class="device-hostname">{device.hostname}</div>
-						{/if}
-					{/if}
-					<div class="device-meta">
-						{#if device.mac}<span class="meta-item"><span class="meta-label">MAC</span> <span class="meta-value mono">{device.mac}</span></span>{/if}
-						{#if device.manufacturer}<span class="meta-item"><span class="meta-label">Vendor</span> <span class="meta-value">{device.manufacturer}</span></span>{/if}
-						<span class="meta-item"><span class="meta-label">Updated</span> <span class="meta-value">{lastUpdatedText}</span></span>
-					</div>
-					<div class="device-badges">
-						{#if device.os_hint}<span class="badge badge-os">{device.os_hint}</span>{/if}
-						{#if isNewDevice}<span class="badge badge-new">NEW</span>{/if}
-					</div>
-					{#if device.protocols?.length}
-						<div class="protocol-list">
-							{#each device.protocols.slice(0, 8) as proto}<span class="proto-tag">{proto}</span>{/each}
-						</div>
-					{/if}
-				</div>
-				<div class="risk-area">
-					<div class="risk-gauge">
-						<svg viewBox="0 0 120 70">
-							<path d="M 10 65 A 50 50 0 0 1 110 65" fill="none" stroke="var(--bg-tertiary)" stroke-width="10" stroke-linecap="round" />
-							<path d={riskArcPath} fill="none" stroke={riskColor(riskLevel)} stroke-width="10" stroke-linecap="round" />
-							<!-- OLD CODE START — #96: with no score loaded this read "0" in green, LOW
-							<text x="60" y="52" text-anchor="middle" fill={riskColor(riskLevel)} font-family="var(--font-mono)" font-size="22" font-weight="700">{riskScore}</text>
-							OLD CODE END -->
-							<text x="60" y="52" text-anchor="middle" fill={riskLoaded ? riskColor(riskLevel) : 'var(--text-muted)'} font-family="var(--font-mono)" font-size="22" font-weight="700">{riskLoaded ? riskScore : '—'}</text>
-							<text x="60" y="66" text-anchor="middle" fill="var(--text-muted)" font-size="9" font-weight="600" letter-spacing="0.08em">RISK</text>
-						</svg>
-					</div>
-					<!-- OLD CODE START — #96: see the gauge
-					<span class="risk-badge" style="color: {riskColor(riskLevel)}; background: color-mix(in srgb, {riskColor(riskLevel)} 12%, transparent);">{riskLevel.toUpperCase()}</span>
-					OLD CODE END -->
-					{#if riskLoaded}
-						<span class="risk-badge" style="color: {riskColor(riskLevel)}; background: color-mix(in srgb, {riskColor(riskLevel)} 12%, transparent);">{riskLevel.toUpperCase()}</span>
-					{:else if riskFailed}
-						<span class="risk-badge text-warning">UNKNOWN</span>
-					{/if}
-				</div>
-			</div>
-		</div>
+		<CardState state="empty" icon="devices" title="Device not found: {deviceIp}" actionLabel="Return to devices" href="/devices" />
+	{/if}
+</article>
 
-		<!-- ============================================================
-		     Section 2: Stat Cards
-		     ============================================================ -->
-		<div class="stats-grid">
-			<div class="stat-card stat-accent">
-				<div class="stat-label">Total Bandwidth</div>
-				<div class="stat-value accent">{formatBytes(totalBytes)}</div>
-				<div class="split-bar">
-					<div class="split-dl" style="width: {totalBytes > 0 ? (respBytes / totalBytes) * 100 : 50}%;"></div>
-					<div class="split-ul" style="width: {totalBytes > 0 ? (origBytes / totalBytes) * 100 : 50}%;"></div>
-				</div>
-				<div class="split-legend">
-					<span class="legend-item"><span class="legend-dot" style="background:var(--cyan);"></span>{formatBytes(respBytes)}</span>
-					<span class="legend-item"><span class="legend-dot" style="background:var(--purple);"></span>{formatBytes(origBytes)}</span>
-				</div>
-			</div>
-			<div class="stat-card">
-				<div class="stat-label">Upload Ratio</div>
-				<div class="stat-value" style="color: {uploadRatioColor};">{uploadRatio}%</div>
-				<div class="ratio-bar"><div class="ratio-fill" style="width: {uploadRatio}%; background: {uploadRatioColor};"></div></div>
-				<div class="stat-sub">{uploadRatioLabel}</div>
-			</div>
-			<div class="stat-card">
-				<div class="stat-label">Connections</div>
-				<div class="stat-value">{formatNumber(device.connection_count)}</div>
-			</div>
-			<div class="stat-card">
-				<div class="stat-label">Alerts</div>
-				<div class="stat-value" style="color: {device.alert_count > 0 ? 'var(--red)' : 'var(--text-primary)'};">{formatNumber(device.alert_count)}</div>
-			</div>
-			<div class="stat-card">
-				<div class="stat-label">Unique Destinations</div>
-				<div class="stat-value">{formatNumber(device.unique_destinations ?? 0)}</div>
-			</div>
-			<div class="stat-card">
-				<div class="stat-label">First Seen</div>
-				<div class="stat-value" style="font-size: var(--text-lg);">{formatDate(device.first_seen)}</div>
-				<div class="stat-sub">Last: {timeAgo(device.last_seen)}</div>
-			</div>
-		</div>
+{#if device && device.ip}
+	{#if deviceFailed}
+		<p class="note">{loadFailed('this device', true)}</p>
+	{/if}
 
-		<!-- ============================================================
-		     Section 3: Bandwidth Chart
-		     ============================================================ -->
-		{#if chartData.length > 0}
-			<div class="section-card">
-				<div class="section-header">
-					<span class="section-title">Bandwidth Over Time</span>
-					{#if hasDualSeries}
-						<div class="chart-legend">
-							<span class="legend-item"><span class="legend-dot" style="background:var(--cyan);"></span> Download</span>
-							<span class="legend-item"><span class="legend-dot" style="background:var(--purple);"></span> Upload</span>
-						</div>
-					{/if}
-				</div>
-				<div class="chart-body">
-					{#if hasDualSeries}
-						<DualSeriesChart data={dualChartData} height={220} formatValue={formatBytes} />
-					{:else}
-						<TimeSeriesChart data={chartData} height={220} color="var(--cyan)" formatValue={formatBytes} />
-					{/if}
-				</div>
-			</div>
-		{/if}
+	<div class="grid">
+		<KpiCard class="c-3" label="Traffic" icon="bandwidth" value={trafficParts[0]} unit={trafficParts[1]}
+			sub="↓ {formatBytes(respBytes)} down · ↑ {formatBytes(origBytes)} up" note={RANGE_LABEL[range]} />
+		<KpiCard class="c-3" label="Upload share" icon="up" value={uploadRatio} unit="%" sub={uploadRatioLabel} note={RANGE_LABEL[range]}>
+			{#snippet foot()}<Meter value={uploadRatio} label="Upload share {uploadRatio}%" />{/snippet}
+		</KpiCard>
+		<KpiCard class="c-3" label="Connections" icon="connections" value={formatNumber(device.connection_count)}
+			sub="{formatNumber(device.unique_destinations ?? 0)} unique destinations" note={RANGE_LABEL[range]} />
+		<KpiCard class="c-3" label="Alerts" icon="alerts" value={formatNumber(device.alert_count)} sub="Suricata alerts on this device's traffic" note={RANGE_LABEL[range]} />
 
-		<!-- ============================================================
-		     Section 4: Traffic Intelligence
-		     ============================================================ -->
-		<div class="two-col">
-			<div class="card">
-				<div class="card-header">
-					<span class="card-title">Traffic Categories</span>
-					<span class="card-badge">{categoriesFailed && categories.length === 0 ? 'load failed' : `${categories.length} categories`}</span>
-				</div>
-				{#if categoriesFailed}
-					<p class="empty-msg">{loadFailed('traffic categories', categories.length > 0)}</p>
+		<Card class="c-8" hero col title="Bandwidth over time" sub="Bytes per interval · {RANGE_LABEL[range].toLowerCase()}">
+			{#snippet actions()}
+				{#if hasDualSeries && busiest >= 0}
+					<ul class="legend">
+						<li><span class="sw c-d1"></span>Download</li>
+						<li><span class="sw c-d2"></span>Upload</li>
+					</ul>
 				{/if}
-				{#if categories.length > 0}
-					<HorizontalBarList
+			{/snippet}
+			{#if busiest >= 0}
+				<AreaChart bytes series={chartSeries} formatX={chartTime} formatY={formatBytes} formatTip={chartTip} highlightIndex={busiest} ariaLabel={chartLabel} />
+			{:else}
+				<CardState state="empty" icon="bandwidth" title="No traffic in this range" message="The chart fills in once NetTap records traffic from this device." />
+			{/if}
+		</Card>
+
+		<Card class="c-4" title="Risk score" sub="Out of 100 · higher is riskier · {RANGE_LABEL[range].toLowerCase()}">
+			{#if riskLoaded}
+				<div class="trust-top">
+					<Ring value={riskScore} ariaLabel="Risk score {riskScore} of 100, {riskLevel}" />
+					{#if riskSeverity}<SeverityPill level={riskSeverity} />{/if}
+				</div>
+				{#if riskFailed}<p class="note">{loadFailed('the risk score', true)}</p>{/if}
+				{#if riskFactors.length > 0}
+					<ul class="score-rows">
+						{#each riskFactors as factor, i (`${factor.name}-${i}`)}
+							{@const pct = factor.max > 0 ? (factor.score / factor.max) * 100 : 0}
+							<li title={factor.description}>
+								<span>{factorLabel(factor.name)}</span><b>{factor.score} / {factor.max}</b>
+								<span class="bar-track" aria-hidden="true"><span class="bar-fill c-d1" style:--w="{pct.toFixed(1)}%"></span></span>
+							</li>
+						{/each}
+					</ul>
+				{:else}
+					<p class="trust-plain">No risk factors reported.</p>
+				{/if}
+			{:else if riskFailed}
+				<CardState state="error" title={loadFailed('the risk score')} onaction={() => refresh.run()} />
+			{:else}
+				<CardState state="loading" title="Loading the risk score" />
+			{/if}
+		</Card>
+
+		<Card class="c-8" title="Smart alerts" sub="Grouped by signature · {RANGE_LABEL[range].toLowerCase()}">
+			{#snippet actions()}
+				<span class="chip">{smartAlertsFailed ? 'check failed' : `${smartAlertsTotal} grouped`}</span>
+			{/snippet}
+			{#if smartAlerts.length > 0}
+				<ul class="sa-list">
+					{#each (alertsExpanded ? smartAlerts : smartAlerts.slice(0, ALERTS_COLLAPSED_COUNT)) as sa, i (`${sa.signature_id}-${sa.source_ip}-${i}`)}
+						<li class="sa">
+							<div class="sa-head">
+								<SeverityPill level={smartLevel(sa.severity)} />
+								<b>{sa.category_label}</b>
+								<span class="dim num">×{formatNumber(sa.count)}</span>
+								{#if sa.trend === 'increasing'}
+									<Icon name="up" label="Rising" />
+								{:else if sa.trend === 'decreasing'}
+									<Icon name="down" label="Falling" />
+								{/if}
+							</div>
+							<div class="sig wrap">{sa.signature}</div>
+							<div class="mono dim">{sa.source_ip} → {sa.destination_ip}{#if sa.destination_port}:{sa.destination_port}{/if}</div>
+							<p class="sa-plain">{sa.assessment}</p>
+							<div class="actions">
+								<a href="/alerts?ip={encodeURIComponent(deviceIp)}" class="btn">Investigate</a>
+								<!-- OLD CODE START — removed the row before the daemon answered; a failed suppress was an unhandled rejection -->
+								<!-- <button class="sa-action-btn" onclick={() => { suppressAlert(sa.signature_id, deviceIp); smartAlerts = smartAlerts.filter(a => a !== sa); }}>Suppress</button> -->
+								<!-- OLD CODE END -->
+								<button class="btn" type="button" onclick={() => suppressSmartAlert(sa)}>Suppress</button>
+								{#if suppressFailedId === sa.signature_id}
+									<span class="sa-error" role="alert">Suppress failed. Try again.</span>
+								{/if}
+							</div>
+						</li>
+					{/each}
+				</ul>
+				<div class="sa-foot">
+					{#if smartAlerts.length > ALERTS_COLLAPSED_COUNT}
+						<button class="btn" type="button" onclick={() => (alertsExpanded = !alertsExpanded)}>
+							{alertsExpanded ? 'Show less' : `Show ${smartAlerts.length - ALERTS_COLLAPSED_COUNT} more alerts`}
+						</button>
+					{/if}
+					<a href="/alerts?ip={encodeURIComponent(deviceIp)}" class="link">View all alerts<Icon name="back" class="chev" /></a>
+				</div>
+			{:else if smartAlertsFailed}
+				<CardState state="error" title="Couldn't load alerts for this device: the request failed." onaction={() => refresh.run()} />
+			{:else}
+				<CardState state="empty" icon="alerts" title="No actionable alerts for this device." />
+			{/if}
+		</Card>
+
+		<div class="stack c-4">
+			<Card title="Traffic categories" sub="Bytes by category · {RANGE_LABEL[range].toLowerCase()}">
+				{#if categoriesFailed && categories.length === 0}
+					<CardState state="error" title={loadFailed('traffic categories')} onaction={() => refresh.run()} />
+				{:else if categories.length === 0}
+					<CardState state="empty" icon="bandwidth" title="No category data available." />
+				{:else}
+					{#if categoriesFailed}<p class="note">{loadFailed('traffic categories', true)}</p>{/if}
+					<BarList
 						items={categories.map((c, i) => ({
 							key: `${c.name}-${i}`,
 							label: c.label,
 							value: c.total_bytes,
-							formattedValue: formatBytes(c.total_bytes),
-							color: CATEGORY_COLORS[c.name] ?? 'var(--text-muted)',
+							display: formatBytes(c.total_bytes),
 							href: `/traffic/${c.name}`,
 						}))}
-						showDot={true}
-						labelWidth={130}
-						barHeight={10}
 					/>
-				{:else if !categoriesFailed}
-					<p class="empty-msg">No category data available.</p>
 				{/if}
-			</div>
-			<div class="card">
-				<div class="card-header">
-					<span class="card-title">Top Services</span>
-					<span class="card-badge">by bytes</span>
-				</div>
+			</Card>
+			<Card title="Top services" sub="Bytes by service · {RANGE_LABEL[range].toLowerCase()}">
 				{#if device.top_services?.length}
-					<div class="service-list">
-						{#each device.top_services as svc, i (`${svc.name}-${i}`)}
-							<div class="svc-row">
-								<span class="svc-name">{svc.name}</span>
-								<span class="svc-bytes mono">{formatBytes(svc.bytes)}</span>
-								<span class="svc-conns mono">{formatNumber(svc.connections)} conn</span>
-							</div>
-						{/each}
-					</div>
+					<BarList
+						items={device.top_services.map((svc, i) => ({
+							key: `${svc.name}-${i}`,
+							label: svc.name,
+							value: svc.bytes,
+							display: formatBytes(svc.bytes),
+							detail: `${formatNumber(svc.connections)} connections`,
+						}))}
+					/>
 				{:else}
-					<p class="empty-msg">No service data available.</p>
+					<CardState state="empty" icon="connections" title="No service data available." />
 				{/if}
-			</div>
+			</Card>
 		</div>
 
-		<!-- ============================================================
-		     Section 5: Security Posture
-		     ============================================================ -->
-		<div class="two-col">
-			<div class="card">
-				<div class="card-header">
-					<span class="card-title">Risk Factor Breakdown</span>
-					<span class="card-badge">{riskLoaded ? `${riskScore} / 100` : '—'}</span>
-				</div>
-				{#if riskFailed}
-					<p class="empty-msg">{loadFailed('the risk score', riskLoaded)}</p>
-				{/if}
-				{#if riskLoaded && riskFactors.length > 0}
-					<div class="risk-factor-list">
-						{#each riskFactors as factor, i (`${factor.name}-${i}`)}
-							{@const pct = factor.max > 0 ? (factor.score / factor.max) * 100 : 0}
-							{@const fColor = pct > 66 ? 'var(--red)' : pct > 33 ? 'var(--amber)' : 'var(--green)'}
-							<div class="risk-factor">
-								<span class="rf-name">{factor.name.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</span>
-								<div class="rf-bar"><div class="rf-fill" style="width: {pct}%; background: {fColor};"></div></div>
-								<span class="rf-score mono" style="color: {fColor};">{factor.score} / {factor.max}</span>
-							</div>
-						{/each}
-					</div>
-				{:else if !riskFailed}
-					<p class="empty-msg">No risk data available.</p>
-				{/if}
-			</div>
-			<div class="card">
-				<div class="card-header">
-					<span class="card-title">Smart Alerts</span>
-					<span class="card-badge">{smartAlertsFailed ? 'check failed' : `${smartAlertsTotal} grouped`}</span>
-				</div>
-				{#if smartAlerts.length > 0}
-					<div class="smart-alert-list">
-						{#each (alertsExpanded ? smartAlerts : smartAlerts.slice(0, ALERTS_COLLAPSED_COUNT)) as sa, i (`${sa.signature_id}-${sa.source_ip}-${i}`)}
-							<div class="smart-alert-card">
-								<div class="sa-header">
-									<span class="sa-sev {sa.severity <= 1 ? 'sev-critical' : sa.severity === 2 ? 'sev-high' : sa.severity === 3 ? 'sev-med' : 'sev-low'}">{sa.severity_label}</span>
-									<span class="sa-category">{sa.category_label}</span>
-									<span class="sa-count mono">&times;{formatNumber(sa.count)}</span>
-									{#if sa.trend === 'increasing'}
-										<span class="sa-trend trend-up">&uarr;</span>
-									{:else if sa.trend === 'decreasing'}
-										<span class="sa-trend trend-down">&darr;</span>
-									{/if}
-								</div>
-								<div class="sa-signature">{sa.signature}</div>
-								<div class="sa-meta">
-									<span class="mono">{sa.source_ip}</span>
-									<span class="sa-arrow">&rarr;</span>
-									<span class="mono">{sa.destination_ip}{#if sa.destination_port}:{sa.destination_port}{/if}</span>
-								</div>
-								<div class="sa-assessment">{sa.assessment}</div>
-								<div class="sa-actions">
-									<a href="/alerts?ip={deviceIp}" class="sa-action-btn">Investigate</a>
-									<!-- OLD CODE START — removed the row before the daemon answered; a failed suppress was an unhandled rejection -->
-									<!-- <button class="sa-action-btn" onclick={() => { suppressAlert(sa.signature_id, deviceIp); smartAlerts = smartAlerts.filter(a => a !== sa); }}>Suppress</button> -->
-									<!-- OLD CODE END -->
-									<button class="sa-action-btn" onclick={() => suppressSmartAlert(sa)}>Suppress</button>
-									{#if suppressFailedId === sa.signature_id}
-										<span class="sa-suppress-error">Suppress failed. Try again.</span>
-									{/if}
-								</div>
-							</div>
-						{/each}
-					</div>
-					{#if smartAlerts.length > ALERTS_COLLAPSED_COUNT}
-						<button class="card-expand-btn" onclick={() => (alertsExpanded = !alertsExpanded)}>
-							{alertsExpanded ? 'Show less' : `Show ${smartAlerts.length - ALERTS_COLLAPSED_COUNT} more alerts`}
-						</button>
-					{/if}
-					<a href="/alerts?ip={deviceIp}" class="card-link">View all alerts &rarr;</a>
-				{:else if smartAlertsFailed}
-					<p class="empty-msg">Couldn't load alerts for this device: the request failed.</p>
-				{:else}
-					<p class="empty-msg">No actionable alerts for this device.</p>
-				{/if}
-			</div>
-		</div>
+		<Card class="c-4" title="Top destinations" sub="By bytes · {RANGE_LABEL[range].toLowerCase()}">
+			{#if device.top_destinations?.length}
+				<DataTable
+					ariaLabel="Top destinations"
+					rows={device.top_destinations.slice(0, 8)}
+					rowKey={(d) => d.ip}
+					initialSort={{ key: 'bytes', dir: 'desc' }}
+					columns={destColumns}
+				/>
+			{:else}
+				<CardState state="empty" icon="connections" title="No destination data." />
+			{/if}
+		</Card>
 
-		<!-- ============================================================
-		     Section 6: Network Detail
-		     ============================================================ -->
-		<div class="three-col">
-			<!-- Top Destinations -->
-			<div class="card">
-				<div class="card-header"><span class="card-title">Top Destinations</span></div>
-				{#if device.top_destinations?.length}
-					<div class="table-wrap">
-						<table class="data-table">
-							<thead><tr>
-								{#each [['ip', 'Destination'], ['bytes', 'Bytes'], ['connections', 'Conn']] as const as [key, label] (key)}
-									<th class="sortable" class:sorted={destSort.key === key} onclick={() => destSort.toggle(key)}>{label}<span class="sort-arrow">{destSort.arrow(key)}</span></th>
-								{/each}
-							</tr></thead>
-							<tbody>
-								{#each destSort.apply(device.top_destinations.slice(0, 8), (d, key) => d[key]) as dest, i (`${dest.ip}-${i}`)}
-									<tr>
-										<td><span class="mono td-sm"><IPAddress ip={dest.ip} /></span></td>
-										<td class="mono td-sm">{formatBytes(dest.bytes)}</td>
-										<td class="mono td-sm">{formatNumber(dest.connections)}</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-				{:else}
-					<p class="empty-msg">No destination data.</p>
-				{/if}
-			</div>
+		<Card class="c-4" title="DNS activity" sub="Lookups by domain · {RANGE_LABEL[range].toLowerCase()}">
+			{#if dnsRows.length > 0}
+				<DataTable ariaLabel="DNS activity" rows={dnsRows} rowKey={(q) => q.domain} initialSort={{ key: 'count', dir: 'desc' }} columns={dnsColumns} />
+			{:else}
+				<CardState state="empty" icon="dns" title="No DNS data." />
+			{/if}
+		</Card>
 
-			<!-- DNS Activity -->
-			<div class="card">
-				<div class="card-header"><span class="card-title">DNS Activity</span></div>
-				{#if device.dns_queries?.length}
-					<div class="table-wrap">
-						<table class="data-table">
-							<thead><tr>
-								{#each [['domain', 'Domain'], ['count', 'Count']] as const as [key, label] (key)}
-									<th class="sortable" class:sorted={dnsSort.key === key} onclick={() => dnsSort.toggle(key)}>{label}<span class="sort-arrow">{dnsSort.arrow(key)}</span></th>
-								{/each}
-							</tr></thead>
-							<tbody>
-								{#each dnsSort.apply(device.dns_queries.filter((d) => !d.domain.includes('._tcp.') && !d.domain.includes('._udp.') && !d.domain.endsWith('.arpa')).slice(0, 10), (q, key) => q[key]) as q, i (`${q.domain}-${i}`)}
-									<tr>
-										<td class="td-sm" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title={q.domain}>{q.domain}</td>
-										<td class="mono td-sm">{formatNumber(q.count)}</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-				{:else}
-					<p class="empty-msg">No DNS data.</p>
-				{/if}
-			</div>
+		<Card class="c-4" title="Top ports used" sub="By connections · {RANGE_LABEL[range].toLowerCase()}">
+			{#if portsFailed && ports.length === 0}
+				<CardState state="error" title={loadFailed('ports')} onaction={() => refresh.run()} />
+			{:else if ports.length === 0}
+				<CardState state="empty" icon="connections" title="No port data." />
+			{:else}
+				{#if portsFailed}<p class="note">{loadFailed('ports', true)}</p>{/if}
+				<DataTable ariaLabel="Top ports" rows={ports.slice(0, 8)} rowKey={(p) => p.port} initialSort={{ key: 'connections', dir: 'desc' }} columns={portColumns} />
+			{/if}
+		</Card>
 
-			<!-- Top Ports -->
-			<div class="card">
-				<div class="card-header"><span class="card-title">Top Ports Used</span></div>
-				{#if portsFailed}
-					<p class="empty-msg">{loadFailed('ports', ports.length > 0)}</p>
-				{/if}
-				{#if ports.length > 0}
-					<div class="table-wrap">
-						<table class="data-table">
-							<thead><tr>
-								{#each [['port', 'Port'], ['service', 'Service'], ['connections', 'Conn']] as const as [key, label] (key)}
-									<th class="sortable" class:sorted={portSort.key === key} onclick={() => portSort.toggle(key)}>{label}<span class="sort-arrow">{portSort.arrow(key)}</span></th>
-								{/each}
-							</tr></thead>
-							<tbody>
-								{#each portSort.apply(ports.slice(0, 8), (p, key) => p[key]) as p, i (`${p.port}-${i}`)}
-									<tr>
-										<td class="mono td-sm" class:port-suspicious={p.suspicious}>{p.port}</td>
-										<td class="td-sm" class:port-suspicious={p.suspicious}>{p.service}{#if p.suspicious} &#x26A0;{/if}</td>
-										<td class="mono td-sm">{formatNumber(p.connections)}</td>
-									</tr>
-								{/each}
-							</tbody>
-						</table>
-					</div>
-				{:else if !portsFailed}
-					<p class="empty-msg">No port data.</p>
-				{/if}
-			</div>
-		</div>
-
-		<!-- ============================================================
-		     Section 7: Recent Connections
-		     ============================================================ -->
-		<div class="card">
-			<div class="card-header">
-				<span class="card-title">Recent Connections</span>
-				<span class="card-badge">{connectionsFailed ? 'load failed' : `${formatNumber(connectionsTotal)} total`}</span>
-			</div>
-			<div class="conn-toolbar">
-				<div class="proto-pills">
-					{#each ['all', 'tcp', 'udp', 'icmp'] as p}
-						<button class="proto-pill" class:active={protoFilter === p} onclick={() => (protoFilter = p)}>{p.toUpperCase()}</button>
-					{/each}
-				</div>
+		<Card class="c-12" title="Recent connections" sub="Sessions from this device · {RANGE_LABEL[range].toLowerCase()}">
+			{#snippet actions()}
+				<span class="chip">{connectionsFailed ? 'load failed' : `${formatNumber(connectionsTotal)} total`}</span>
+			{/snippet}
+			<div class="toolbar">
+				<Pills ariaLabel="Protocol" options={PROTO_OPTIONS} bind:value={protoFilter} />
 			</div>
 			{#if connectionsLoading}
-				<div class="loading-inline"><span class="text-muted">Loading connections...</span></div>
+				<CardState state="loading" title="Loading connections" />
 			{:else if connectionsFailed}
-				<p class="empty-msg">{loadFailed('connections')}</p>
+				<CardState state="error" title={loadFailed('connections')} onaction={() => fetchConnections(connectionsPage)} />
+			{:else if connectionRows.length === 0}
+				<CardState state="empty" icon="connections" title="No connections in this range" />
 			{:else}
-				<div class="table-wrap">
-					<table class="data-table">
-						<thead>
-							<tr>
-								{#each CONNECTION_COLUMNS as [key, label] (key)}
-									<th class="sortable" class:sorted={connSort.key === key} onclick={() => sortConnections(key)}>{label}<span class="sort-arrow">{connSort.arrow(key)}</span></th>
-								{/each}
-							</tr>
-						</thead>
-						<tbody>
-							{#each filteredConnections as conn, i (`${conn._id}-${i}`)}
-								<tr class="conn-row" class:selected={selectedConnection === conn} onclick={() => openDrawer(conn)}>
-									<td class="mono td-sm">{range === '24h' ? new Date(asString(getField(conn, '@timestamp'))).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : new Date(asString(getField(conn, '@timestamp'))).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
-									<td class="mono td-sm">{asString(getField(conn, 'destination.ip'))}:{asString(getField(conn, 'destination.port'))}</td>
-									<td><span class="proto-tag">{asString(getField(conn, 'network.transport'))}</span></td>
-									<td class="td-sm">{asString(getField(conn, 'network.protocol')) || asString(getField(conn, 'network.transport'))}</td>
-									<!-- OLD CODE START: <td class="mono td-sm">{formatDuration(getField(conn, 'event.start'), getField(conn, 'event.end'))}</td> OLD CODE END -->
-									<td class="mono td-sm">{formatDuration(conn)}</td>
-									<td class="mono td-sm dl-col">{formatBytes(Number(asString(getField(conn, 'destination.bytes') ?? getField(conn, 'server.bytes'))) || 0)}</td>
-									<td class="mono td-sm ul-col">{formatBytes(Number(asString(getField(conn, 'source.bytes') ?? getField(conn, 'client.bytes'))) || 0)}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
-				<div class="pagination">
-					<button class="page-btn" disabled={connectionsPage <= 1} onclick={() => fetchConnections(connectionsPage - 1)}>Previous</button>
-					<span class="page-info mono">Page {connectionsPage} of {connectionsTotalPages}</span>
-					<button class="page-btn" disabled={connectionsPage >= connectionsTotalPages} onclick={() => fetchConnections(connectionsPage + 1)}>Next</button>
-				</div>
+				<DataTable
+					ariaLabel="Recent connections"
+					rows={connectionRows}
+					rowKey={(r) => r.key}
+					initialSort={{ key: connSort.key, dir: connSort.dir }}
+					onsortchange={sortConnections}
+					onrowactivate={(r) => openDrawer(r.conn)}
+					rowLabel={(r) => `Open connection to ${asString(getField(r.conn, 'destination.ip'))}`}
+					{selectedKey}
+					{pager}
+					columns={connectionColumns}
+				/>
 			{/if}
-			<div class="quick-links">
-				<a href="/logs?filter={deviceIp}" class="quick-link">View in Log Explorer &rarr;</a>
-				<a href="/connections?ip={deviceIp}" class="quick-link">Filter Connections &rarr;</a>
-			</div>
-		</div>
-	{/if}
-</div>
+			{#snippet foot()}
+				<div class="actions">
+					<a href="/logs?filter={encodeURIComponent(deviceIp)}" class="link">View in Log Explorer<Icon name="back" class="chev" /></a>
+					<a href="/connections?ip={encodeURIComponent(deviceIp)}" class="link">Filter connections<Icon name="back" class="chev" /></a>
+				</div>
+			{/snippet}
+		</Card>
+	</div>
+{/if}
 
 <!-- Connection Drill-Down Drawer -->
 {#if drawerOpen && selectedConnection}
@@ -916,185 +867,16 @@
 {/if}
 
 <style>
-	.device-page { display: flex; flex-direction: column; gap: var(--space-lg); }
-
-	/* Loading / Empty */
-	.loading-state { display: flex; align-items: center; justify-content: center; gap: var(--space-md); padding: var(--space-3xl); }
-	.loading-inline { padding: var(--space-xl); text-align: center; }
-	.empty-state { text-align: center; padding: var(--space-3xl); }
-	.empty-text { font-size: var(--text-lg); color: var(--text-primary); margin-bottom: var(--space-md); }
-	.empty-msg { padding: var(--space-lg); text-align: center; font-size: var(--text-sm); color: var(--text-muted); }
-	.load-note { margin: 0; font-size: var(--text-sm); }
-	.btn-back { padding: 6px 14px; background: var(--bg-tertiary); border: 1px solid var(--border-dim); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: var(--text-sm); cursor: pointer; }
-
-	/* ---------------------------------------------------------------- Header */
-	.device-header {
-		background: var(--bg-secondary); border: 1px solid var(--border-dim);
-		border-radius: var(--radius-lg); padding: var(--space-lg);
-		position: relative; overflow: hidden;
-	}
-	.device-header::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, var(--cyan), var(--purple), var(--cyan)); opacity: 0.7; }
-	.header-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-lg); }
-	.back-link { font-size: var(--text-sm); color: var(--text-muted); text-decoration: none; background: none; border: none; cursor: pointer; font-family: var(--font-sans); transition: color var(--transition-fast); }
-	.back-link:hover { color: var(--accent); }
-	.header-controls { display: flex; align-items: center; gap: var(--space-md); }
-	.header-main { display: grid; grid-template-columns: auto 1fr auto; gap: var(--space-lg); align-items: start; }
-
-	.device-icon-area { display: flex; flex-direction: column; align-items: center; gap: var(--space-sm); }
-	.device-icon-box { width: 64px; height: 64px; border-radius: var(--radius-lg); display: flex; align-items: center; justify-content: center; font-size: 1.75rem; background: var(--cyan-dim); border: 1px solid rgba(0,212,255,0.2); position: relative; }
-	.status-dot { position: absolute; bottom: -2px; right: -2px; width: 14px; height: 14px; border-radius: 50%; background: var(--text-dim); border: 3px solid var(--bg-secondary); }
-	.status-dot.online { background: var(--green); box-shadow: 0 0 8px rgba(0,230,118,0.5); animation: pulse 2s infinite; }
-	.status-dot.idle { background: var(--amber); }
-	@keyframes pulse { 0%,100% { box-shadow: 0 0 4px rgba(0,230,118,0.3); } 50% { box-shadow: 0 0 12px rgba(0,230,118,0.6); } }
-	.status-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
-	.status-label.online { color: var(--green); }
-
-	.device-info { display: flex; flex-direction: column; gap: var(--space-xs); }
-	.device-info h1 { font-size: var(--text-2xl); font-weight: 700; letter-spacing: -0.02em; }
-	.device-hostname { font-size: var(--text-lg); color: var(--text-secondary); }
-	.device-meta { display: flex; flex-wrap: wrap; gap: var(--space-sm) var(--space-lg); margin-top: var(--space-xs); }
-	.meta-item { display: flex; align-items: center; gap: 6px; font-size: var(--text-xs); color: var(--text-muted); }
-	.meta-label { font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; }
-	.meta-value { color: var(--text-secondary); }
-	.device-badges { display: flex; gap: var(--space-sm); margin-top: var(--space-xs); }
-	.badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: var(--radius-sm); font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
-	.badge-os { background: rgba(179,136,255,0.12); color: var(--purple); border: 1px solid rgba(179,136,255,0.2); }
-	.badge-new { background: rgba(0,230,118,0.12); color: var(--green); border: 1px solid rgba(0,230,118,0.2); }
-	.protocol-list { display: flex; gap: 4px; margin-top: var(--space-xs); }
-	.proto-tag { padding: 2px 8px; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 10px; font-weight: 500; background: var(--bg-tertiary); color: var(--text-muted); border: 1px solid var(--border-dim); text-transform: uppercase; }
-
-	.risk-area { display: flex; flex-direction: column; align-items: center; gap: var(--space-sm); }
-	.risk-gauge { width: 120px; height: 70px; }
-	.risk-badge { font-size: var(--text-xs); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 12px; border-radius: var(--radius-sm); }
-
-	/* Pills + Auto */
-	.pills { display: flex; gap: 2px; background: var(--bg-tertiary); border-radius: var(--radius-md); padding: 2px; border: 1px solid var(--border-dim); }
-	.pill { padding: 5px 12px; border: none; background: transparent; color: var(--text-secondary); font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 500; border-radius: 5px; cursor: pointer; transition: all var(--transition-fast); }
-	.pill:hover { color: var(--text-primary); background: var(--bg-elevated); }
-	.pill.active { background: var(--cyan); color: var(--bg-void); font-weight: 600; }
-	.auto-btn { display: flex; align-items: center; gap: 6px; padding: 5px 10px; background: var(--bg-tertiary); border: 1px solid var(--border-dim); border-radius: var(--radius-md); color: var(--text-muted); font-size: var(--text-xs); font-family: var(--font-sans); cursor: pointer; transition: all var(--transition-fast); }
-	.auto-btn.active { border-color: var(--cyan); color: var(--cyan); background: rgba(0,212,255,0.06); }
-	.auto-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim); transition: all var(--transition-fast); }
-	.auto-btn.active .auto-dot { background: var(--cyan); box-shadow: 0 0 6px rgba(0,212,255,0.5); }
-
-	/* ---------------------------------------------------------------- Stat Cards */
-	.stats-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--space-md); }
-	.stat-card { background: var(--bg-secondary); border: 1px solid var(--border-dim); border-radius: var(--radius-md); padding: var(--space-md); position: relative; overflow: hidden; }
-	.stat-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: var(--border-dim); }
-	.stat-accent::before { background: var(--cyan); box-shadow: 0 0 10px rgba(0,212,255,0.3); }
-	.stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500; margin-bottom: 6px; }
-	.stat-value { font-family: var(--font-mono); font-size: var(--text-xl); font-weight: 600; color: var(--text-primary); letter-spacing: -0.02em; line-height: 1; }
-	.stat-value.accent { color: var(--cyan); }
-	.stat-sub { font-size: 10px; color: var(--text-muted); margin-top: 6px; font-family: var(--font-mono); }
-	.split-bar { display: flex; height: 4px; border-radius: 2px; overflow: hidden; gap: 1px; margin-top: 8px; }
-	.split-dl { background: var(--cyan); border-radius: 2px 0 0 2px; }
-	.split-ul { background: var(--purple); border-radius: 0 2px 2px 0; }
-	.split-legend { display: flex; gap: var(--space-sm); margin-top: 4px; font-size: 10px; }
-	.legend-item { display: flex; align-items: center; gap: 4px; color: var(--text-dim); }
-	.legend-dot { width: 6px; height: 6px; border-radius: 50%; }
-	.ratio-bar { height: 6px; border-radius: 3px; background: var(--bg-tertiary); margin-top: 8px; overflow: hidden; }
-	.ratio-fill { height: 100%; border-radius: 3px; transition: width var(--transition-slow); }
-
-	/* ---------------------------------------------------------------- Chart */
-	.section-card { background: var(--bg-secondary); border: 1px solid var(--border-dim); border-radius: var(--radius-md); overflow: hidden; }
-	.section-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--border-dim); }
-	.section-title { font-size: var(--text-sm); font-weight: 600; }
-	.chart-body { padding: var(--space-sm) var(--space-md); }
-	.chart-legend { display: flex; gap: var(--space-md); font-size: var(--text-xs); color: var(--text-secondary); }
-	.legend-item { display: flex; align-items: center; gap: 6px; }
-	.legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-
-	/* ---------------------------------------------------------------- Grid layouts */
-	.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md); }
-	.three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: var(--space-md); }
-
-	/* ---------------------------------------------------------------- Card */
-	.card { background: var(--bg-secondary); border: 1px solid var(--border-dim); border-radius: var(--radius-md); overflow: hidden; }
-	.card-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--border-dim); }
-	.card-title { font-size: var(--text-sm); font-weight: 600; }
-	.card-badge { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted); background: var(--bg-tertiary); padding: 2px 8px; border-radius: var(--radius-sm); }
-	.card-link { display: block; padding: var(--space-sm) var(--space-lg); border-top: 1px solid var(--border-dim); font-size: var(--text-xs); color: var(--text-link); text-decoration: none; transition: background var(--transition-fast); }
-	.card-link:hover { background: var(--bg-tertiary); }
-
-	/* ---------------------------------------------------------------- Services */
-	.service-list { padding: var(--space-xs) 0; }
-	.svc-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: var(--space-md); padding: var(--space-sm) var(--space-lg); border-bottom: 1px solid var(--border-dim); transition: background var(--transition-fast); }
-	.svc-row:last-child { border-bottom: none; }
-	.svc-row:hover { background: var(--bg-tertiary); }
-	.svc-name { font-size: var(--text-sm); }
-	.svc-bytes { font-size: var(--text-xs); color: var(--text-secondary); }
-	.svc-conns { font-size: 10px; color: var(--text-dim); }
-
-	/* ---------------------------------------------------------------- Risk factors */
-	.risk-factor-list { padding: var(--space-md) var(--space-lg); }
-	.risk-factor { display: grid; grid-template-columns: 140px 1fr auto; align-items: center; gap: var(--space-md); padding: var(--space-sm) 0; }
-	.risk-factor + .risk-factor { border-top: 1px solid var(--border-dim); }
-	.rf-name { font-size: var(--text-sm); color: var(--text-secondary); }
-	.rf-bar { height: 8px; background: var(--bg-tertiary); border-radius: 4px; overflow: hidden; }
-	.rf-fill { height: 100%; border-radius: 4px; transition: width var(--transition-slow); }
-	.rf-score { font-size: var(--text-xs); font-weight: 600; min-width: 50px; text-align: right; }
-
-	/* ---------------------------------------------------------------- Alerts */
-	/* ---------------------------------------------------------------- Smart Alerts */
-	.smart-alert-list { padding: var(--space-xs) 0; }
-	.smart-alert-card { padding: var(--space-md) var(--space-lg); border-bottom: 1px solid var(--border-dim); transition: background var(--transition-fast); }
-	.smart-alert-card:last-child { border-bottom: none; }
-	.smart-alert-card:hover { background: var(--bg-tertiary); }
-	.sa-header { display: flex; align-items: center; gap: var(--space-sm); margin-bottom: var(--space-xs); }
-	.sa-sev { padding: 2px 8px; border-radius: var(--radius-sm); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
-	.sev-critical { background: rgba(255,71,87,0.2); color: var(--red); border: 1px solid rgba(255,71,87,0.3); }
-	.sev-high { background: rgba(255,71,87,0.12); color: var(--red); }
-	.sev-med { background: rgba(255,171,0,0.12); color: var(--amber); }
-	.sev-low { background: rgba(0,212,255,0.08); color: var(--cyan); }
-	.sa-category { font-size: var(--text-xs); color: var(--text-muted); font-weight: 500; }
-	.sa-count { font-size: var(--text-xs); color: var(--text-dim); margin-left: auto; }
-	.sa-trend { font-size: var(--text-xs); font-weight: 700; }
-	.trend-up { color: var(--red); }
-	.trend-down { color: var(--green); }
-	.sa-signature { font-size: var(--text-sm); color: var(--text-primary); font-weight: 500; margin-bottom: 4px; }
-	.sa-meta { font-size: var(--text-xs); color: var(--text-secondary); margin-bottom: 6px; display: flex; align-items: center; gap: 4px; }
-	.sa-arrow { color: var(--text-dim); }
-	.sa-assessment { font-size: var(--text-xs); color: var(--text-muted); line-height: 1.5; margin-bottom: var(--space-sm); }
-	.sa-actions { display: flex; gap: var(--space-sm); }
-	.sa-action-btn { padding: 3px 10px; border-radius: var(--radius-sm); font-size: 10px; font-weight: 600; cursor: pointer; transition: all var(--transition-fast); border: 1px solid var(--border-dim); background: var(--bg-tertiary); color: var(--text-secondary); text-decoration: none; font-family: var(--font-sans); }
-	.sa-action-btn:hover { border-color: var(--border-default); color: var(--text-primary); }
-	.sa-suppress-error { align-self: center; color: var(--red); font-size: var(--text-xs); }
-	.card-expand-btn { display: flex; align-items: center; justify-content: center; width: 100%; padding: var(--space-sm) var(--space-md); border: none; border-top: 1px solid var(--border-dim); background: none; font-size: var(--text-xs); color: var(--text-muted); cursor: pointer; font-family: var(--font-sans); transition: all var(--transition-fast); }
-	.card-expand-btn:hover { color: var(--accent); background: var(--bg-tertiary); }
-
-	/* ---------------------------------------------------------------- Tables */
-	.table-wrap { overflow-x: auto; }
-	.data-table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
-	.data-table th { padding: var(--space-sm) var(--space-md); text-align: left; font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; background: var(--bg-tertiary); border-bottom: 1px solid var(--border-dim); white-space: nowrap; }
-	.data-table td { padding: var(--space-sm) var(--space-md); border-bottom: 1px solid var(--border-dim); vertical-align: middle; }
-	.data-table tbody tr { transition: background var(--transition-fast); }
-	.data-table tbody tr:hover { background: var(--bg-tertiary); }
-	.data-table tbody tr:last-child td { border-bottom: none; }
-	.td-sm { font-size: var(--text-xs); }
-	.port-suspicious { color: var(--red); font-weight: 600; }
-	.dl-col { color: var(--cyan); }
-	.ul-col { color: var(--purple); }
-
-	/* ---------------------------------------------------------------- Connections */
-	.conn-toolbar { display: flex; align-items: center; gap: var(--space-md); padding: var(--space-sm) var(--space-lg); border-bottom: 1px solid var(--border-dim); }
-	.proto-pills { display: flex; gap: 2px; }
-	.proto-pill { padding: 4px 10px; border: 1px solid var(--border-dim); background: transparent; color: var(--text-muted); font-size: 10px; font-family: var(--font-mono); font-weight: 500; border-radius: var(--radius-sm); cursor: pointer; text-transform: uppercase; transition: all var(--transition-fast); }
-	.proto-pill:hover { color: var(--text-secondary); border-color: var(--border-default); }
-	.proto-pill.active { background: var(--cyan); color: var(--bg-void); border-color: var(--cyan); }
-	.conn-row { cursor: pointer; }
-	.conn-row:hover { background: var(--bg-elevated) !important; }
-	.conn-row.selected { background: rgba(0,212,255,0.06) !important; }
-	.pagination { display: flex; align-items: center; justify-content: center; gap: var(--space-md); padding: var(--space-md); border-top: 1px solid var(--border-dim); }
-	.page-btn { padding: 4px 12px; background: var(--bg-tertiary); border: 1px solid var(--border-dim); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: var(--text-xs); cursor: pointer; transition: all var(--transition-fast); }
-	.page-btn:hover:not(:disabled) { border-color: var(--border-default); color: var(--text-primary); }
-	.page-btn:disabled { opacity: 0.3; cursor: default; }
-	.page-info { font-size: var(--text-xs); color: var(--text-muted); }
-	.quick-links { display: flex; gap: var(--space-md); padding: var(--space-md) var(--space-lg); border-top: 1px solid var(--border-dim); }
-	.quick-link { font-size: var(--text-xs); color: var(--text-link); text-decoration: none; transition: opacity var(--transition-fast); }
-	.quick-link:hover { opacity: 0.8; text-decoration: underline; }
-
-	/* ---------------------------------------------------------------- Responsive */
-	@media (max-width: 1200px) { .three-col { grid-template-columns: 1fr; } .two-col { grid-template-columns: 1fr; } }
-	@media (max-width: 1024px) { .stats-grid { grid-template-columns: repeat(3, 1fr); } }
-	@media (max-width: 768px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } .header-main { grid-template-columns: 1fr; } }
+	/* Layout glue the system lacks */
+	.ident-meta > div { min-width: 0; }
+	.ident-meta dd { margin: 0; }
+	.note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); }
+	.sa-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
+	.sa { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line); }
+	.sa-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; font-size: var(--text-sm); }
+	.sa-plain { color: var(--text-2); font-size: var(--text-sm); }
+	.sa .actions { margin-top: var(--sp-2); align-items: center; }
+	.sa-error { color: var(--sev-high); font-size: var(--text-xs); font-weight: 600; }
+	.sa-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-top: var(--sp-4); flex-wrap: wrap; }
+	.svc { display: inline-flex; align-items: center; gap: var(--sp-2); }
 </style>

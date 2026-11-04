@@ -15,6 +15,7 @@
 	} from '$api/notifications';
 	import { createNotificationStream } from '$api/notification-stream';
 	import { goto } from '$app/navigation';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	// State
 	let notifications = $state<Notification[]>([]);
@@ -149,17 +150,15 @@
 
 <div class="notification-bell" bind:this={bellRef}>
 	<button
-		class="bell-button"
+		class="icon-btn"
+		type="button"
 		onclick={toggleDropdown}
-		aria-label="Notifications"
+		aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'}
 		aria-expanded={open}
 	>
-		<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-			<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" />
-			<path d="M13.73 21a2 2 0 01-3.46 0" />
-		</svg>
+		<Icon name="alerts" />
 		{#if unreadCount > 0}
-			<span class="unread-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
+			<span class="badge-dot" aria-hidden="true">{unreadCount > 99 ? '99+' : unreadCount}</span>
 		{/if}
 	</button>
 
@@ -168,7 +167,7 @@
 			<div class="dropdown-header">
 				<span class="dropdown-title">Notifications</span>
 				{#if unreadCount > 0}
-					<button class="mark-all-btn" onclick={handleMarkAllRead}>
+					<button class="link mark-all-btn" type="button" onclick={handleMarkAllRead}>
 						Mark all read
 					</button>
 				{/if}
@@ -176,7 +175,7 @@
 
 			<div class="dropdown-list">
 				{#if loading && notifications.length === 0}
-					<div class="dropdown-empty">Loading...</div>
+					<div class="dropdown-empty">Loading…</div>
 				<!-- OLD CODE START — #96: a failed fetch read as "No notifications"
 				{:else if notifications.length === 0}
 					<div class="dropdown-empty">No notifications</div>
@@ -193,6 +192,7 @@
 					{#each notifications as notification (notification.id)}
 						<button
 							class="notification-item"
+							type="button"
 							class:unread={!notification.read}
 							onclick={() => handleMarkRead(notification.id)}
 						>
@@ -213,170 +213,120 @@
 			</div>
 
 			<div class="dropdown-footer">
-				<a href="/alerts" onclick={() => (open = false)}>View all alerts</a>
+				<a class="link" href="/alerts" onclick={() => (open = false)}>View all alerts</a>
 			</div>
 		</div>
 	{/if}
 </div>
 
 <style>
+	/* Button and badge come from system.css (.icon-btn, .badge-dot); this styles the dropdown. */
 	.notification-bell {
 		position: relative;
 	}
 
-	.bell-button {
-		position: relative;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 36px;
-		height: 36px;
-		background: none;
-		border: 1px solid transparent;
-		border-radius: var(--radius-md);
-		color: var(--text-secondary);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.bell-button:hover {
-		background-color: var(--bg-tertiary);
-		color: var(--text-primary);
-	}
-
-	.unread-badge {
-		position: absolute;
-		top: 2px;
-		right: 2px;
-		min-width: 16px;
-		height: 16px;
-		padding: 0 4px;
-		font-size: 10px;
-		font-weight: 700;
-		line-height: 16px;
-		text-align: center;
-		background-color: var(--danger);
-		color: #fff;
-		border-radius: var(--radius-full);
-	}
-
 	.notification-dropdown {
 		position: absolute;
-		top: calc(100% + 8px);
+		top: calc(100% + var(--sp-2));
 		right: 0;
+		z-index: 40;
 		width: 360px;
 		max-height: 480px;
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-lg);
-		box-shadow: var(--shadow-lg);
-		z-index: 200;
 		display: flex;
 		flex-direction: column;
 		overflow: hidden;
+		background: var(--surface-1);
+		border: 1px solid var(--line-strong);
+		border-radius: var(--r-lg);
+		box-shadow: var(--shadow-pop);
 	}
 
-	.dropdown-header {
+	.dropdown-header,
+	.dropdown-footer {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: var(--space-sm) var(--space-md);
-		border-bottom: 1px solid var(--border-default);
+		padding: var(--sp-3) var(--sp-4);
+	}
+
+	.dropdown-header {
+		border-bottom: 1px solid var(--line);
+	}
+
+	.dropdown-footer {
+		justify-content: center;
+		border-top: 1px solid var(--line);
 	}
 
 	.dropdown-title {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-primary);
+		font: 600 var(--text-sm) / 1.2 var(--font-display);
+		color: var(--text-1);
 	}
 
 	.mark-all-btn {
-		font-size: var(--text-xs);
-		font-family: var(--font-sans);
-		color: var(--accent);
+		padding: 0;
+		border: 0;
 		background: none;
-		border: none;
 		cursor: pointer;
-		padding: 2px 4px;
-		border-radius: var(--radius-sm);
-	}
-
-	.mark-all-btn:hover {
-		background-color: var(--accent-muted);
 	}
 
 	.dropdown-list {
 		flex: 1;
 		overflow-y: auto;
-		max-height: 380px;
 	}
 
 	.dropdown-empty {
-		padding: var(--space-xl);
+		padding: var(--sp-6) var(--sp-4);
 		text-align: center;
-		color: var(--text-muted);
+		color: var(--text-3);
 		font-size: var(--text-sm);
 	}
 
 	.dropdown-stale {
-		padding: var(--space-sm) var(--space-md);
-		color: var(--amber);
+		padding: var(--sp-2) var(--sp-4);
+		color: var(--sev-medium);
 		font-size: var(--text-xs);
 	}
 
 	.notification-item {
 		display: flex;
-		gap: var(--space-sm);
-		padding: var(--space-sm) var(--space-md);
+		gap: var(--sp-3);
 		width: 100%;
+		padding: var(--sp-3) var(--sp-4);
 		text-align: left;
+		font: inherit;
+		color: var(--text-2);
 		background: none;
-		border: none;
-		border-bottom: 1px solid var(--border-muted);
+		border: 0;
+		border-bottom: 1px solid var(--line);
 		cursor: pointer;
-		transition: background-color var(--transition-fast);
-		font-family: var(--font-sans);
-	}
-
-	.notification-item:hover {
-		background-color: var(--bg-tertiary);
-	}
-
-	.notification-item.unread {
-		background-color: rgba(88, 166, 255, 0.04);
 	}
 
 	.notification-item:last-child {
-		border-bottom: none;
+		border-bottom: 0;
+	}
+
+	.notification-item:hover {
+		background: var(--surface-2);
+	}
+
+	.notification-item.unread {
+		background: color-mix(in srgb, var(--accent) 6%, transparent);
 	}
 
 	.notif-indicator {
 		width: 8px;
 		height: 8px;
-		border-radius: 50%;
-		flex-shrink: 0;
 		margin-top: 6px;
+		flex: none;
+		border-radius: 50%;
+		background: var(--text-3);
 	}
 
-	.severity-critical {
-		background-color: var(--danger);
-		color: var(--danger);
-	}
-
-	.severity-high {
-		background-color: var(--warning);
-		color: var(--warning);
-	}
-
-	.severity-medium {
-		background-color: var(--accent);
-		color: var(--accent);
-	}
-
-	.severity-low {
-		background-color: var(--text-muted);
-		color: var(--text-muted);
-	}
+	.notif-indicator.severity-critical { background: var(--sev-critical); }
+	.notif-indicator.severity-high { background: var(--sev-high); }
+	.notif-indicator.severity-medium { background: var(--sev-medium); }
+	.notif-indicator.severity-low { background: var(--sev-low); }
 
 	.notif-content {
 		flex: 1;
@@ -384,59 +334,58 @@
 	}
 
 	.notif-title {
-		font-size: var(--text-sm);
-		font-weight: 500;
-		color: var(--text-primary);
-		white-space: nowrap;
 		overflow: hidden;
+		white-space: nowrap;
 		text-overflow: ellipsis;
+		font-size: var(--text-sm);
+		font-weight: 600;
+		color: var(--text-1);
 	}
 
 	.notif-message {
-		font-size: var(--text-xs);
-		color: var(--text-secondary);
-		margin-top: 2px;
 		display: -webkit-box;
 		-webkit-line-clamp: 2;
 		line-clamp: 2;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
+		margin-top: var(--sp-1);
+		font-size: var(--text-xs);
 	}
 
 	.notif-meta {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
-		margin-top: 4px;
+		gap: var(--sp-2);
+		margin-top: var(--sp-1);
+		font-size: var(--text-micro);
 	}
 
+	/* The word beside the dot: colour, shape and word together, in sentence case */
 	.notif-severity {
-		font-size: 10px;
+		display: inline-block;
 		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 	}
+
+	.notif-severity::first-letter {
+		text-transform: uppercase;
+	}
+
+	.notif-severity.severity-critical { color: var(--sev-critical); }
+	.notif-severity.severity-high { color: var(--sev-high); }
+	.notif-severity.severity-medium { color: var(--sev-medium); }
+	.notif-severity.severity-low { color: var(--sev-low); }
 
 	.notif-time {
-		font-size: 10px;
-		color: var(--text-muted);
+		color: var(--text-3);
 	}
 
-	.dropdown-footer {
-		padding: var(--space-sm) var(--space-md);
-		border-top: 1px solid var(--border-default);
-		text-align: center;
-	}
-
-	.dropdown-footer a {
-		font-size: var(--text-xs);
-		font-weight: 500;
-	}
-
-	@media (max-width: 640px) {
+	@container app (max-width: 760px) {
 		.notification-dropdown {
-			width: calc(100vw - 32px);
-			right: -8px;
+			position: fixed;
+			top: var(--sp-8);
+			left: var(--sp-4);
+			right: var(--sp-4);
+			width: auto;
 		}
 	}
 </style>

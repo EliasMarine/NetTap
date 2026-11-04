@@ -1,0 +1,15 @@
+<!-- @dsCard group="Feedback" height=330 -->
+<!doctype html>
+<html data-theme="ember">
+<head><link rel="stylesheet" href="../../tokens.css"><link rel="stylesheet" href="../bundle.css"><meta charset="utf-8"><title>CardStates preview</title></head>
+<body>
+<div class="grid">
+<article class="card c-4" aria-busy="true"><div class="card-head"><div><h2 class="card-title">Bandwidth over time</h2><p class="card-sub">Loading</p></div></div>
+  <div class="skel-wrap" role="status" aria-label="Loading bandwidth"><div class="skel" style="height:34px;width:46%"></div><div class="skel" style="height:120px"></div><div class="skel" style="height:12px;width:70%"></div></div></article>
+<article class="card c-4"><div class="card-head"><div><h2 class="card-title">Top devices</h2><p class="card-sub">Nothing to show yet</p></div></div>
+  <div class="state"><span class="state-ic"><svg class="ic " viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h5l2 3h4l2-3h5"/><path d="M5 13 7.5 5h9L19 13v5a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z"/></svg></span><h3>No devices seen yet</h3><p>Devices appear here once NetTap sees their traffic.</p><button class="btn" type="button">Open Go Live</button></div></article>
+<article class="card c-4"><div class="card-head"><div><h2 class="card-title">Alert summary</h2><p class="card-sub">Request failed</p></div></div>
+  <div class="state is-error" role="alert"><span class="state-ic"><svg class="ic " viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg></span><h3>Couldn't load alerts: the request failed.</h3><p>Check that the NetTap daemon is running on the System page.</p><button class="btn" type="button"><svg class="ic " viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7L20 8.5"/><path d="M20 3.5v5h-5"/></svg>Try again</button></div></article>
+</div>
+</body>
+</html>

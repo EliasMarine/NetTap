@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
-import { readable } from 'svelte/store';
+import { readable, get } from 'svelte/store';
+import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 
 // #89: the daemon wraps both replies ({device}, {from, to, traffic}); the page read the wrappers,
@@ -62,7 +63,10 @@ describe('Device by MAC page', () => {
 		await vi.waitFor(() => expect(screen.getByText('2.0MB in / 1.0MB out')).toBeInTheDocument());
 		expect(screen.getAllByText('1,234')).toHaveLength(2); // connections and the UDP count
 		expect(screen.getByText('512KB')).toBeInTheDocument();
-		expect(document.querySelector('.loading-state')).toBeNull();
+		// OLD CODE START — 2026-11-03 UI redesign: the spinner's class; the loading state is now a CardState status
+		// expect(document.querySelector('.loading-state')).toBeNull();
+		// OLD CODE END
+		expect(screen.queryByRole('status')).not.toBeInTheDocument();
 	});
 });
 
@@ -85,5 +89,55 @@ describe('Device by MAC page — failed request', () => {
 		stubStatus(404);
 		render(Page);
 		expect(await screen.findByText('Device not found')).toBeInTheDocument();
+	});
+});
+
+// PLAN.md §5.5: the top bar's Refresh goes through this page's loader
+describe('Device by MAC page — page refresh contract', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	/** The daemon replies above, minus the paths in `fail` (those answer 503). */
+	function stub(fail: string[] = []): void {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const path = url.split('?')[0];
+				const body = fail.some((f) => path.endsWith(f)) ? undefined : REPLIES[path];
+				return body
+					? { ok: true, status: 200, json: async () => body }
+					: { ok: false, status: 503, json: async () => ({}) };
+			}),
+		);
+	}
+
+	it('reports ok when both requests succeed, and unregisters on unmount', async () => {
+		stub();
+		const { unmount } = render(Page);
+		await screen.findByText('2.0MB in / 1.0MB out');
+		expect(await refreshPage()).toBe('ok');
+		unmount();
+		expect(get(pageRefresh).available).toBe(false);
+	});
+
+	it('reports partial and says so when only the traffic fails', async () => {
+		stub(['/traffic']);
+		render(Page);
+		expect(await screen.findAllByText("Couldn't load traffic: the request failed.")).not.toHaveLength(0);
+		expect(screen.getByRole('heading', { level: 1, name: 'Ubiquiti gateway' })).toBeInTheDocument();
+		expect(await refreshPage()).toBe('partial');
+	});
+
+	it('reports failed when both fail, keeping the MAC as the heading', async () => {
+		stub([`/${encodeURIComponent(MAC)}`, '/traffic']);
+		render(Page);
+		await screen.findByText(`Couldn't load device ${MAC}: the request failed.`);
+		expect(screen.getByRole('heading', { level: 1, name: MAC })).toBeInTheDocument();
+		expect(await refreshPage()).toBe('failed');
+	});
+
+	it('shows the loading state while the device loads', () => {
+		vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+		render(Page);
+		expect(screen.getByRole('status')).toHaveTextContent('Loading device details');
 	});
 });

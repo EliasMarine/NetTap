@@ -29,7 +29,7 @@ describe('Connection drawer — Related tab', () => {
 		render(ConnectionDrawerContent, { connection: CONNECTION, activeTab: 'related' });
 		expect(await screen.findByText("Couldn't load related connections: the request failed.")).toBeInTheDocument();
 		expect(screen.queryByText('No related connections found')).not.toBeInTheDocument();
-		expect(screen.queryByText('Total Sessions')).not.toBeInTheDocument();
+		expect(screen.queryByText('Total sessions')).not.toBeInTheDocument();
 	});
 
 	it('shows the related totals when the request succeeds', async () => {
@@ -39,7 +39,7 @@ describe('Connection drawer — Related tab', () => {
 			first_seen: null, last_seen: null, connections: [],
 		});
 		render(ConnectionDrawerContent, { connection: CONNECTION, activeTab: 'related' });
-		expect(await screen.findByText('Total Sessions')).toBeInTheDocument();
+		expect(await screen.findByText('Total sessions')).toBeInTheDocument();
 		expect(screen.getByText('7')).toBeInTheDocument();
 	});
 });

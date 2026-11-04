@@ -25,7 +25,7 @@
 	<div class="form-group">
 		<label for="dhcp-subnet" class="label">
 			Subnet for your devices
-			<span class="text-muted">(NetTap hands out addresses from this range)</span>
+			<span class="dim">(NetTap hands out addresses from this range)</span>
 		</label>
 		<input
 			id="dhcp-subnet"
@@ -37,7 +37,7 @@
 			aria-invalid={!check.valid}
 			aria-describedby="dhcp-subnet-hint"
 		/>
-		<p id="dhcp-subnet-hint" class="field-hint" class:error={!check.valid} aria-live="polite">
+		<p id="dhcp-subnet-hint" class="field-help field-hint" class:field-error={!check.valid} aria-live="polite">
 			{check.valid ? 'Looks good. The default works for almost every home network.' : check.error}
 		</p>
 	</div>
@@ -79,42 +79,41 @@
 	.dhcp-step {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-lg);
+		gap: var(--sp-6);
 	}
 
+	/* .field-help and .field-error (forms.css) set the type and colour. */
 	.field-hint {
-		margin-top: var(--space-xs);
-		font-size: var(--text-xs);
-		color: var(--text-secondary);
+		margin-top: var(--sp-1);
 	}
 
-	.field-hint.error {
-		color: var(--danger);
+	.dim {
+		font-weight: 400;
 	}
 
 	.info-section {
-		background-color: var(--bg-tertiary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		padding: var(--space-lg);
+		background-color: var(--surface-2);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
+		padding: var(--sp-5);
 	}
 
 	.info-section h3 {
-		font-size: var(--text-base);
-		font-weight: 600;
-		color: var(--text-primary);
-		margin-bottom: var(--space-sm);
+		font: 500 var(--text-md)/1.3 var(--font-display);
+		letter-spacing: -0.01em;
+		color: var(--text-1);
+		margin-bottom: var(--sp-2);
 	}
 
 	.info-section ol,
 	.info-section ul {
-		padding-left: var(--space-lg);
+		padding-left: var(--sp-6);
 		font-size: var(--text-sm);
-		color: var(--text-secondary);
-		line-height: var(--leading-relaxed);
+		color: var(--text-2);
+		line-height: 1.75;
 	}
 
 	.info-section li {
-		margin-bottom: var(--space-xs);
+		margin-bottom: var(--sp-1);
 	}
 </style>

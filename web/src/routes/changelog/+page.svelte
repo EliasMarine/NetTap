@@ -6,7 +6,13 @@
 	 * date range selection, and CSV/JSON export.
 	 */
 
+	import { onDestroy, onMount } from 'svelte';
 	import { getChangelogEvents, getEventTypes, type ChangelogEvent } from '$lib/api/changelog';
+	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import type { IconName } from '$lib/components/ui/icons';
 
 	// State
 	let events = $state<ChangelogEvent[]>([]);
@@ -16,46 +22,79 @@
 	let limitCount = $state(100);
 
 	// Event type display config
-	const eventIcons: Record<string, string> = {
-		device_joined: 'device-join',
-		device_left: 'device-leave',
-		alert_triggered: 'alert',
-		config_changed: 'config',
-		rule_updated: 'rule',
-		capture_started: 'capture-start',
-		capture_stopped: 'capture-stop',
-		storage_pruned: 'storage',
+	// OLD CODE START — never rendered; each type now has a system icon
+	// const eventIcons: Record<string, string> = {
+	// 	device_joined: 'device-join',
+	// 	device_left: 'device-leave',
+	// 	alert_triggered: 'alert',
+	// 	config_changed: 'config',
+	// 	rule_updated: 'rule',
+	// 	capture_started: 'capture-start',
+	// 	capture_stopped: 'capture-stop',
+	// 	storage_pruned: 'storage',
+	// };
+	// OLD CODE END
+	const eventIcons: Record<string, IconName> = {
+		device_joined: 'devices',
+		device_left: 'devices',
+		alert_triggered: 'alerts',
+		config_changed: 'settings',
+		rule_updated: 'filter',
+		capture_started: 'play',
+		capture_stopped: 'pause',
+		storage_pruned: 'system',
 	};
 
+	// OLD CODE START — sentence case (design system voice)
+	// const eventLabels: Record<string, string> = {
+	// 	device_joined: 'Device Joined',
+	// 	device_left: 'Device Left',
+	// 	alert_triggered: 'Alert Triggered',
+	// 	config_changed: 'Config Changed',
+	// 	rule_updated: 'Rule Updated',
+	// 	capture_started: 'Capture Started',
+	// 	capture_stopped: 'Capture Stopped',
+	// 	storage_pruned: 'Storage Pruned',
+	// };
+	// OLD CODE END
 	const eventLabels: Record<string, string> = {
-		device_joined: 'Device Joined',
-		device_left: 'Device Left',
-		alert_triggered: 'Alert Triggered',
-		config_changed: 'Config Changed',
-		rule_updated: 'Rule Updated',
-		capture_started: 'Capture Started',
-		capture_stopped: 'Capture Stopped',
-		storage_pruned: 'Storage Pruned',
+		device_joined: 'Device joined',
+		device_left: 'Device left',
+		alert_triggered: 'Alert triggered',
+		config_changed: 'Config changed',
+		rule_updated: 'Rule updated',
+		capture_started: 'Capture started',
+		capture_stopped: 'Capture stopped',
+		storage_pruned: 'Storage pruned',
 	};
 
-	// Load data on mount
-	$effect(() => {
-		loadData();
+	// OLD CODE START — the page refresh contract (PLAN §5.5) runs the first load
+	// // Load data on mount
+	// $effect(() => {
+	// 	loadData();
+	// });
+	// OLD CODE END
+	const refresh = registerPageRefresh(loadData);
+	onMount(() => {
+		refresh.run();
 	});
+	onDestroy(refresh.unregister);
 
 	// #96: the event request failed, so an empty list is not "no events"
 	let eventsFailed = $state(false);
 
-	// Events for the current filter; a failure clears them (they'd belong to another filter)
-	async function fetchEvents() {
-		try {
-			events = (await getChangelogEvents({ type: selectedType || undefined, limit: limitCount })).events;
-			eventsFailed = false;
-		} catch {
-			events = [];
-			eventsFailed = true;
-		}
-	}
+	// OLD CODE START — folded into loadData, which now guards against an older, slower load
+	// // Events for the current filter; a failure clears them (they'd belong to another filter)
+	// async function fetchEvents() {
+	// 	try {
+	// 		events = (await getChangelogEvents({ type: selectedType || undefined, limit: limitCount })).events;
+	// 		eventsFailed = false;
+	// 	} catch {
+	// 		events = [];
+	// 		eventsFailed = true;
+	// 	}
+	// }
+	// OLD CODE END
 
 	// OLD CODE START — #96: getChangelogEvents now throws on failure
 	// async function loadData() {
@@ -82,17 +121,38 @@
 	// 	loading = false;
 	// }
 	// OLD CODE END
-	async function loadData() {
+	// OLD CODE START — PLAN §5.5: a filter change during a load let the older response win
+	// async function loadData() {
+	// 	loading = true;
+	// 	const [, typesRes] = await Promise.all([fetchEvents(), getEventTypes()]);
+	// 	eventTypes = typesRes;
+	// 	loading = false;
+	// }
+	//
+	// async function handleFilter() {
+	// 	loading = true;
+	// 	await fetchEvents();
+	// 	loading = false;
+	// }
+	// OLD CODE END
+	/** Events for the current filter plus the type list; a failure clears the events (they'd belong to another filter). */
+	async function loadData(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		const type = selectedType || undefined;
+		const limit = limitCount;
 		loading = true;
-		const [, typesRes] = await Promise.all([fetchEvents(), getEventTypes()]);
-		eventTypes = typesRes;
+		const [eventsRes, typesRes] = await Promise.allSettled([getChangelogEvents({ type, limit }), getEventTypes()]);
+		if (!guard.current(g)) return 'skipped';
+		events = eventsRes.status === 'fulfilled' ? eventsRes.value.events : [];
+		eventsFailed = eventsRes.status === 'rejected';
+		// getEventTypes answers [] on failure, as before
+		if (typesRes.status === 'fulfilled') eventTypes = typesRes.value;
 		loading = false;
+		return eventsFailed ? 'failed' : 'ok';
 	}
 
-	async function handleFilter() {
-		loading = true;
-		await fetchEvents();
-		loading = false;
+	function handleFilter() {
+		refresh.run();
 	}
 
 	function exportAsJson() {
@@ -132,228 +192,115 @@
 		}
 	}
 
-	function eventColor(type: string): string {
-		const colors: Record<string, string> = {
-			device_joined: 'var(--status-success)',
-			device_left: 'var(--status-warning)',
-			alert_triggered: 'var(--status-critical)',
-			config_changed: 'var(--accent)',
-			rule_updated: 'var(--accent)',
-			capture_started: 'var(--status-success)',
-			capture_stopped: 'var(--status-warning)',
-			storage_pruned: 'var(--text-muted)',
-		};
-		return colors[type] ?? 'var(--text-muted)';
-	}
+	// OLD CODE START — legacy status colours; the type now reads from its icon and label
+	// function eventColor(type: string): string {
+	// 	const colors: Record<string, string> = {
+	// 		device_joined: 'var(--status-success)',
+	// 		device_left: 'var(--status-warning)',
+	// 		alert_triggered: 'var(--status-critical)',
+	// 		config_changed: 'var(--accent)',
+	// 		rule_updated: 'var(--accent)',
+	// 		capture_started: 'var(--status-success)',
+	// 		capture_stopped: 'var(--status-warning)',
+	// 		storage_pruned: 'var(--text-muted)',
+	// 	};
+	// 	return colors[type] ?? 'var(--text-muted)';
+	// }
+	// OLD CODE END
 </script>
 
 <svelte:head>
 	<title>Changelog | NetTap</title>
 </svelte:head>
 
-<div class="changelog-page">
-	<div class="page-header">
-		<h2>Network Changelog</h2>
-		<p class="text-muted">Chronological timeline of network events and system changes.</p>
+<div class="page-head">
+	<div>
+		<h1 class="page-title">Changelog</h1>
+		<p class="page-sub">Network events and system changes, newest first</p>
 	</div>
-
-	<!-- Filters -->
-	<div class="filters-row">
-		<div class="filter-group">
-			<label class="label" for="type-filter">Event Type</label>
-			<select class="input" id="type-filter" bind:value={selectedType} onchange={handleFilter}>
-				<option value="">All Events</option>
-				{#each eventTypes as et}
-					<option value={et}>{eventLabels[et] ?? et}</option>
-				{/each}
-			</select>
-		</div>
-		<div class="filter-group">
-			<label class="label" for="limit-filter">Show</label>
-			<select class="input" id="limit-filter" bind:value={limitCount} onchange={handleFilter}>
-				<option value={25}>25 events</option>
-				<option value={50}>50 events</option>
-				<option value={100}>100 events</option>
-				<option value={500}>500 events</option>
-			</select>
-		</div>
-		<div class="export-buttons">
-			<button class="btn btn-sm btn-secondary" onclick={exportAsJson} disabled={events.length === 0}>Export JSON</button>
-			<button class="btn btn-sm btn-secondary" onclick={exportAsCsv} disabled={events.length === 0}>Export CSV</button>
-		</div>
+	<div class="head-actions">
+		<button class="btn" type="button" onclick={exportAsJson} disabled={events.length === 0}><Icon name="download" />Export JSON</button>
+		<button class="btn" type="button" onclick={exportAsCsv} disabled={events.length === 0}><Icon name="download" />Export CSV</button>
 	</div>
+</div>
 
-	<!-- Timeline -->
-	{#if loading}
-		<div class="card">
-			<p class="text-muted" style="padding: var(--space-lg);">Loading changelog events...</p>
+<div class="grid">
+	<Card title="Events" sub="Newest first · up to {limitCount} events" class="c-12">
+		<div class="toolbar">
+			<div class="field">
+				<label class="label" for="type-filter">Event type</label>
+				<select class="select" id="type-filter" bind:value={selectedType} onchange={handleFilter}>
+					<option value="">All events</option>
+					{#each eventTypes as et (et)}
+						<option value={et}>{eventLabels[et] ?? et}</option>
+					{/each}
+				</select>
+			</div>
+			<div class="field">
+				<label class="label" for="limit-filter">Show</label>
+				<select class="select" id="limit-filter" bind:value={limitCount} onchange={handleFilter}>
+					<option value={25}>25 events</option>
+					<option value={50}>50 events</option>
+					<option value={100}>100 events</option>
+					<option value={500}>500 events</option>
+				</select>
+			</div>
 		</div>
-	{:else if eventsFailed}
-		<div class="card">
-			<p class="text-warning" style="padding: var(--space-lg);">Couldn't load changelog events: the request failed.</p>
-		</div>
-	{:else if events.length === 0}
-		<div class="card">
-			<p class="text-muted" style="padding: var(--space-lg);">No events found for the selected filters.</p>
-		</div>
-	{:else}
-		<div class="timeline">
-			{#each events as event}
-				<div class="timeline-entry">
-					<div class="timeline-dot" style="background-color: {eventColor(event.event_type)};"></div>
-					<div class="timeline-content">
-						<div class="timeline-header">
-							<span class="event-badge" style="color: {eventColor(event.event_type)};">
-								{eventLabels[event.event_type] ?? event.event_type}
-							</span>
-							<span class="event-time">{formatTime(event['@timestamp'])}</span>
-						</div>
-						<h4 class="event-title">{event.title}</h4>
-						{#if event.description}
-							<p class="event-description">{event.description}</p>
-						{/if}
-						{#if event.metadata && Object.keys(event.metadata).length > 0}
-							<div class="event-metadata">
-								{#each Object.entries(event.metadata) as [key, value]}
-									<span class="meta-tag"><strong>{key}:</strong> {String(value)}</span>
-								{/each}
+
+		{#if loading}
+			<CardState state="loading" title="Loading changelog events" />
+		{:else if eventsFailed}
+			<CardState
+				state="error"
+				title="Couldn't load changelog events: the request failed."
+				message="Check that NetTap is running on the System page, then try again."
+				onaction={handleFilter}
+			/>
+		{:else if events.length === 0}
+			<CardState
+				state="empty"
+				icon="changelog"
+				title="No events found for the selected filters."
+				message="Events appear here as devices join or leave, alerts fire and settings change."
+			/>
+		{:else}
+			<ol class="events">
+				{#each events as event}
+					<li class="event">
+						<span class="tile"><Icon name={eventIcons[event.event_type] ?? 'changelog'} /></span>
+						<div class="event-main">
+							<div class="event-top">
+								<span class="tag">{eventLabels[event.event_type] ?? event.event_type}</span>
+								<time class="dim num" datetime={event['@timestamp']}>{formatTime(event['@timestamp'])}</time>
 							</div>
-						{/if}
-					</div>
-				</div>
-			{/each}
-		</div>
-	{/if}
+							<h3 class="event-title">{event.title}</h3>
+							{#if event.description}
+								<p class="event-desc">{event.description}</p>
+							{/if}
+							{#if event.metadata && Object.keys(event.metadata).length > 0}
+								<div class="chips">
+									{#each Object.entries(event.metadata) as [key, value] (key)}
+										<span class="chip">{key}: <span class="mono">{String(value)}</span></span>
+									{/each}
+								</div>
+							{/if}
+						</div>
+					</li>
+				{/each}
+			</ol>
+		{/if}
+	</Card>
 </div>
 
 <style>
-	.changelog-page {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-		max-width: 900px;
-	}
-
-	.page-header h2 {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		margin-bottom: var(--space-xs);
-	}
-
-	.filters-row {
-		display: flex;
-		align-items: flex-end;
-		gap: var(--space-md);
-		flex-wrap: wrap;
-	}
-
-	.filter-group {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-xs);
-	}
-
-	.export-buttons {
-		display: flex;
-		gap: var(--space-xs);
-		margin-left: auto;
-	}
-
-	/* Timeline */
-	.timeline {
-		display: flex;
-		flex-direction: column;
-		gap: 0;
-		position: relative;
-		padding-left: 24px;
-	}
-
-	.timeline::before {
-		content: '';
-		position: absolute;
-		left: 7px;
-		top: 0;
-		bottom: 0;
-		width: 2px;
-		background: var(--border-default);
-	}
-
-	.timeline-entry {
-		position: relative;
-		padding: var(--space-sm) 0 var(--space-md) var(--space-md);
-	}
-
-	.timeline-dot {
-		position: absolute;
-		left: -21px;
-		top: 14px;
-		width: 12px;
-		height: 12px;
-		border-radius: 50%;
-		border: 2px solid var(--bg-primary);
-		z-index: 1;
-	}
-
-	.timeline-content {
-		padding: var(--space-sm) var(--space-md);
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-	}
-
-	.timeline-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: var(--space-xs);
-	}
-
-	.event-badge {
-		font-size: var(--text-xs);
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.5px;
-	}
-
-	.event-time {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-	}
-
-	.event-title {
-		font-size: var(--text-base);
-		font-weight: 600;
-		margin-bottom: var(--space-xs);
-	}
-
-	.event-description {
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-		margin-bottom: var(--space-xs);
-	}
-
-	.event-metadata {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-xs);
-	}
-
-	.meta-tag {
-		font-size: var(--text-xs);
-		padding: 2px 6px;
-		background: var(--bg-tertiary);
-		border-radius: var(--radius-sm);
-		color: var(--text-secondary);
-	}
-
-	@media (max-width: 640px) {
-		.filters-row {
-			flex-direction: column;
-			align-items: stretch;
-		}
-
-		.export-buttons {
-			margin-left: 0;
-		}
-	}
+	/* Layout glue the system lacks: the filter fields' width and the event rows */
+	.toolbar .field { width: 14rem; }
+	.events { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+	.event { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--sp-3); padding: var(--sp-3) 0; }
+	.event + .event { border-top: 1px solid var(--line); }
+	.event-main { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+	.event-top { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; font-size: var(--text-xs); }
+	.event-title { font: 500 var(--text-base)/1.3 var(--font-display); overflow-wrap: anywhere; }
+	.event-desc { color: var(--text-2); font-size: var(--text-sm); overflow-wrap: anywhere; }
+	.event .chips { margin-top: var(--sp-1); }
 </style>

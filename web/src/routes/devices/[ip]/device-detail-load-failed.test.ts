@@ -73,8 +73,12 @@ describe('Device detail — failed requests', () => {
 
 		expect(screen.getAllByText('laptop').length).toBeGreaterThan(0);
 		expect(screen.getByText("Couldn't load the risk score: the request failed.")).toBeInTheDocument();
-		expect(screen.getByText('UNKNOWN')).toBeInTheDocument();
-		expect(screen.queryByText('LOW')).not.toBeInTheDocument();
+		// OLD CODE START — 2026-11-03 UI redesign: the gauge's UNKNOWN badge became the card's error state
+		// expect(screen.getByText('UNKNOWN')).toBeInTheDocument();
+		// expect(screen.queryByText('LOW')).not.toBeInTheDocument();
+		// OLD CODE END
+		expect(screen.queryByRole('img', { name: /^Risk score/ })).not.toBeInTheDocument();
+		expect(screen.queryByText('Low')).not.toBeInTheDocument();
 	});
 
 	it('says ports and categories failed instead of "No port data" / "No category data"', async () => {
@@ -94,7 +98,11 @@ describe('Device detail — failed requests', () => {
 		await flush();
 
 		expect(screen.getByText('No port data.')).toBeInTheDocument();
-		expect(screen.getByText('LOW')).toBeInTheDocument();
-		expect(screen.getByText('12 / 100')).toBeInTheDocument();
+		// OLD CODE START — 2026-11-03 UI redesign: the LOW badge and "12 / 100" became a severity pill and the Ring
+		// expect(screen.getByText('LOW')).toBeInTheDocument();
+		// expect(screen.getByText('12 / 100')).toBeInTheDocument();
+		// OLD CODE END
+		expect(screen.getByText('Low')).toBeInTheDocument();
+		expect(screen.getByRole('img', { name: 'Risk score 12 of 100, low' })).toBeInTheDocument();
 	});
 });

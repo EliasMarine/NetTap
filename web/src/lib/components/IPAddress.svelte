@@ -199,25 +199,22 @@
 />
 
 <style>
+	/* .mono (system.css) sets the family and the 0.92em size. */
 	.ip-address {
-		color: var(--accent);
-		font-size: var(--text-sm);
+		color: var(--accent-strong);
 		cursor: context-menu;
 		user-select: text;
-		border-bottom: 1px dashed var(--border-default);
-		transition: border-color var(--transition-fast), color var(--transition-fast);
+		border-bottom: 1px dashed var(--line-strong);
+		transition: border-color var(--dur-fast);
 		display: inline;
 		line-height: 1.4;
 	}
 
 	.ip-address:hover {
-		border-color: var(--accent);
-		color: var(--accent-hover);
+		border-color: var(--accent-strong);
 	}
 
 	.ip-address:focus-visible {
-		outline: 2px solid var(--accent);
-		outline-offset: 2px;
-		border-radius: var(--radius-sm);
+		border-radius: var(--r-xs);
 	}
 </style>

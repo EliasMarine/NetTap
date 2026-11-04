@@ -8,6 +8,7 @@
 
 	import type { RegistryDevice } from '$api/devices-registry';
 	import { acknowledgeDevice } from '$api/devices-registry';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	interface Props {
 		devices: RegistryDevice[];
@@ -33,28 +34,24 @@
 {#if visible}
 	<div class="new-device-banner" role="alert">
 		<div class="banner-content">
-			<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-				<circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
-			</svg>
+			<span class="banner-icon"><Icon name="devices" /></span>
 			<div class="banner-text">
 				<strong>{newDevices.length} new device{newDevices.length !== 1 ? 's' : ''} detected</strong>
 				<span class="device-list">
 					{#each newDevices.slice(0, 3) as device, i}
 						{#if i > 0}, {/if}
-						<a href="/devices/mac/{encodeURIComponent(device.mac)}" class="device-link">
+						<a href="/devices/mac/{encodeURIComponent(device.mac)}" class="link device-link">
 							{device.display_name || device.mac}
 						</a>
 					{/each}
 					{#if newDevices.length > 3}
-						<span class="text-muted"> and {newDevices.length - 3} more</span>
+						<span class="dim"> and {newDevices.length - 3} more</span>
 					{/if}
 				</span>
 			</div>
 		</div>
-		<button class="banner-dismiss" onclick={dismissAll} aria-label="Dismiss">
-			<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-				<line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-			</svg>
+		<button class="icon-btn ghost banner-dismiss" onclick={dismissAll} aria-label="Dismiss">
+			<Icon name="close" />
 		</button>
 	</div>
 {/if}
@@ -64,14 +61,14 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: var(--space-md);
-		padding: var(--space-sm) var(--space-md);
-		background-color: var(--cyan-dim);
-		border: 1px solid rgba(0, 212, 255, 0.3);
-		border-radius: var(--radius-md);
-		color: var(--cyan);
+		gap: var(--sp-4);
+		padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-4);
+		background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+		border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+		border-radius: var(--r-md);
+		color: var(--text-1);
 		font-size: var(--text-sm);
-		animation: slideDown 0.3s ease;
+		animation: slideDown 0.3s var(--ease);
 	}
 
 	@keyframes slideDown {
@@ -88,12 +85,14 @@
 	.banner-content {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--sp-3);
 		min-width: 0;
 	}
 
-	.banner-content svg {
+	.banner-icon {
+		display: inline-flex;
 		flex-shrink: 0;
+		color: var(--accent-strong);
 	}
 
 	.banner-text {
@@ -105,30 +104,11 @@
 
 	.device-list {
 		font-size: var(--text-xs);
-		color: var(--text-secondary);
+		color: var(--text-2);
 	}
 
+	/* .link is inline-flex; keep the comma-separated names on one line of text. */
 	.device-link {
-		color: var(--cyan);
-		font-weight: 500;
-	}
-
-	.device-link:hover {
-		color: var(--accent-hover);
-	}
-
-	.banner-dismiss {
-		flex-shrink: 0;
-		background: none;
-		border: none;
-		color: var(--text-muted);
-		cursor: pointer;
-		padding: var(--space-xs);
-		border-radius: var(--radius-sm);
-		transition: color var(--transition-fast);
-	}
-
-	.banner-dismiss:hover {
-		color: var(--text-primary);
+		display: inline;
 	}
 </style>

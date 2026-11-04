@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
 import { getConnections } from '$api/traffic';
 import { getLiveDashboard } from '$api/live';
@@ -61,6 +61,11 @@ async function flush() {
 	await new Promise((r) => setTimeout(r, 0));
 }
 
+/** A figure in the summary strip, by its label. */
+function stat(label: string): Element | undefined {
+	return [...document.querySelectorAll('.stat')].find((el) => el.querySelector('.stat-k')?.textContent === label);
+}
+
 // jsdom has no ResizeObserver; the timeline/Sankey charts need one to mount
 vi.stubGlobal(
 	'ResizeObserver',
@@ -85,7 +90,8 @@ describe('Connections — Active Devices card', () => {
 		render(Page);
 		await flush();
 
-		const card = screen.getByText('Active Devices').closest('.stat-card');
+		// OLD CODE START: const card = screen.getByText('Active Devices').closest('.stat-card'); OLD CODE END
+		const card = stat('Active devices');
 		expect(card).toHaveTextContent('17');
 		expect(getLiveDashboard).toHaveBeenCalledWith({ limit: 1 });
 	});
@@ -106,9 +112,14 @@ describe('Connections — auto-refresh', () => {
 	it('reloads the page the user is on, not page 1', async () => {
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+		// OLD CODE START — the pager's markup changed (DataTable): "Next page", and the current page is marked
+		// await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+		// await flush();
+		// expect(screen.getByText('Page 2 of 5')).toBeInTheDocument();
+		// OLD CODE END
+		await fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
 		await flush();
-		expect(screen.getByText('Page 2 of 5')).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'page');
 
 		await fireEvent.click(screen.getByRole('button', { name: 'Auto' }));
 		vi.mocked(getConnections).mockClear();
@@ -117,7 +128,8 @@ describe('Connections — auto-refresh', () => {
 
 		expect(getConnections).toHaveBeenCalledWith(expect.objectContaining({ page: 2 }));
 		expect(getConnections).not.toHaveBeenCalledWith(expect.objectContaining({ page: 1 }));
-		expect(screen.getByText('Page 2 of 5')).toBeInTheDocument();
+		// OLD CODE START: expect(screen.getByText('Page 2 of 5')).toBeInTheDocument(); OLD CODE END
+		expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'page');
 	});
 });
 
@@ -138,9 +150,15 @@ describe('Connections — failed requests', () => {
 		await flush();
 
 		expect(screen.getByText("Couldn't load connections: the request failed.")).toBeInTheDocument();
-		expect(screen.queryByText('No Connections')).not.toBeInTheDocument();
+		// OLD CODE START — copy and markup changed: "No connections", and the stat strip's .stat
+		// expect(screen.queryByText('No Connections')).not.toBeInTheDocument();
+		// expect(screen.getByText("Couldn't load connection stats: the request failed.")).toBeInTheDocument();
+		// expect(screen.getByText('Total Sessions').closest('.stat-card')).not.toHaveTextContent('0');
+		// OLD CODE END
+		expect(screen.queryByText('No connections')).not.toBeInTheDocument();
 		expect(screen.getByText("Couldn't load connection stats: the request failed.")).toBeInTheDocument();
-		expect(screen.getByText('Total Sessions').closest('.stat-card')).not.toHaveTextContent('0');
+		expect(stat('Sessions')).not.toHaveTextContent('0');
+		expect(stat('Data')).not.toHaveTextContent('0');
 		expect(screen.getByText("Couldn't load the flow diagram: the request failed.")).toBeInTheDocument();
 		expect(screen.queryByText('No flow data available')).not.toBeInTheDocument();
 		expect(screen.getByText("Couldn't load the session timeline: the request failed.")).toBeInTheDocument();
@@ -153,18 +171,20 @@ describe('Connections — failed requests', () => {
 		render(Page);
 		await flush();
 
-		const card = screen.getByText('Active Devices').closest('.stat-card');
+		// OLD CODE START: const card = screen.getByText('Active Devices').closest('.stat-card'); OLD CODE END
+		const card = stat('Active devices');
 		expect(card).toHaveTextContent('—');
 		expect(card).not.toHaveTextContent('0');
 		expect(screen.getByText("Couldn't load active devices: the request failed.")).toBeInTheDocument();
 	});
 
-	it('still says "No Connections" when the list is really empty', async () => {
+	it('still says "No connections" when the list is really empty', async () => {
 		vi.mocked(getConnections).mockResolvedValue({ ...connectionsPage(1, 0), connections: [], total: 0 });
 		render(Page);
 		await flush();
 
-		expect(screen.getByText('No Connections')).toBeInTheDocument();
+		// OLD CODE START: expect(screen.getByText('No Connections')).toBeInTheDocument(); (sentence case now) OLD CODE END
+		expect(screen.getByText('No connections')).toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't load connections/)).not.toBeInTheDocument();
 	});
 });
@@ -216,16 +236,29 @@ describe('Connections — sorting', () => {
 	}
 
 	it('asks the daemon to sort every page, not just the rows on screen', async () => {
-		const { container } = await renderWith([row('a')]);
+		await renderWith([row('a')]);
 		expect(getConnections).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'time', order: 'desc' }));
-		const header = [...container.querySelectorAll('th.sortable')].find((th) => th.textContent?.trim().startsWith('Source'))!;
+		// OLD CODE START — the DataTable's header buttons; a new column starts descending, as in every table
+		// const header = [...container.querySelectorAll('th.sortable')].find((th) => th.textContent?.trim().startsWith('Source'))!;
+		//
+		// await fireEvent.click(header); // a new text column starts ascending
+		// await flush();
+		// expect(getConnections).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, sort: 'source', order: 'asc' }));
+		// await fireEvent.click(header);
+		// await flush();
+		// expect(getConnections).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, sort: 'source', order: 'desc' }));
+		// OLD CODE END
+		const header = screen.getByRole('columnheader', { name: 'Source' });
+		const button = within(header).getByRole('button');
 
-		await fireEvent.click(header); // a new text column starts ascending
-		await flush();
-		expect(getConnections).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, sort: 'source', order: 'asc' }));
-		await fireEvent.click(header);
+		await fireEvent.click(button);
 		await flush();
 		expect(getConnections).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, sort: 'source', order: 'desc' }));
+		expect(header).toHaveAttribute('aria-sort', 'descending');
+		await fireEvent.click(button);
+		await flush();
+		expect(getConnections).toHaveBeenLastCalledWith(expect.objectContaining({ page: 1, sort: 'source', order: 'asc' }));
+		expect(header).toHaveAttribute('aria-sort', 'ascending');
 	});
 
 	it("filters by state on the daemon and shows its rows as they come", async () => {

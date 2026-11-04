@@ -38,7 +38,7 @@
 			tabindex={copyable ? 0 : undefined}
 			onclick={handleCopy}
 			onkeydown={(e) => { if (copyable && (e.key === 'Enter' || e.key === ' ')) handleCopy(); }}
-			title={copyable ? (copied ? 'Copied!' : 'Click to copy') : undefined}
+			title={copyable ? (copied ? 'Copied' : 'Click to copy') : undefined}
 		>
 			{value}
 			{#if copied}
@@ -49,29 +49,20 @@
 </div>
 
 <style>
+	/* One row of the system's .facts list: key in text-3, value right-aligned in text-1. */
 	.kv-row {
 		display: flex;
-		align-items: flex-start;
-		gap: var(--space-sm);
-		padding: var(--space-xs) 0;
-		border-bottom: 1px solid var(--border-dim);
+		align-items: baseline;
+		justify-content: space-between;
+		gap: var(--sp-4);
+		padding: var(--sp-1) 0;
 		font-size: var(--text-sm);
 	}
 
-	.kv-row:last-child {
-		border-bottom: none;
-	}
-
 	.kv-label {
-		flex-shrink: 0;
-		width: 160px;
-		min-width: 160px;
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		padding-top: 2px;
+		flex: 0 0 auto;
+		max-width: 45%;
+		color: var(--text-3);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -79,40 +70,36 @@
 
 	.kv-value {
 		flex: 1;
-		color: var(--text-primary);
-		word-break: break-all;
+		min-width: 0;
+		text-align: right;
+		color: var(--text-1);
+		overflow-wrap: anywhere;
 		line-height: 1.4;
-	}
-
-	.kv-value.mono {
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
 	}
 
 	.kv-value.copyable {
 		cursor: pointer;
-		border-radius: var(--radius-sm);
-		transition: background-color var(--transition-fast);
-		padding: 1px 4px;
-		margin: -1px -4px;
+		border-radius: var(--r-xs);
+		transition: background-color var(--dur-fast);
+		padding: 1px var(--sp-1);
+		margin: -1px calc(var(--sp-1) * -1);
 		position: relative;
 	}
 
 	.kv-value.copyable:hover {
-		background-color: var(--bg-tertiary);
+		background-color: var(--surface-2);
 	}
 
 	.kv-empty {
-		color: var(--text-dim);
+		color: var(--text-3);
 	}
 
 	.copied-badge {
 		display: inline-flex;
 		align-items: center;
-		margin-left: var(--space-xs);
-		font-size: 10px;
-		color: var(--green);
+		margin-left: var(--sp-1);
+		font-size: var(--text-micro);
+		color: var(--ok);
 		font-weight: 600;
-		letter-spacing: 0.02em;
 	}
 </style>

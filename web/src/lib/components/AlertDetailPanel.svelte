@@ -52,16 +52,16 @@
 	});
 
 	let severityClass = $derived.by(() => {
-		if (!alert?.alert?.severity) return 'badge';
+		if (!alert?.alert?.severity) return 'badge severity-info';
 		switch (alert.alert.severity) {
 			case 1:
-				return 'badge badge-danger';
+				return 'badge severity-high';
 			case 2:
-				return 'badge badge-warning';
+				return 'badge severity-medium';
 			case 3:
-				return 'badge badge-accent';
+				return 'badge severity-low';
 			default:
-				return 'badge';
+				return 'badge severity-info';
 		}
 	});
 
@@ -322,7 +322,7 @@
 				</button>
 			{:else}
 				<div class="acknowledged-notice">
-					<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--ok)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" />
 					</svg>
 					<span>This alert has been acknowledged</span>
@@ -338,7 +338,7 @@
 		position: fixed;
 		inset: 0;
 		z-index: 998;
-		background-color: var(--bg-overlay);
+		background-color: var(--scrim);
 		border: none;
 		cursor: pointer;
 		animation: backdropFadeIn 200ms ease-out;
@@ -358,13 +358,13 @@
 		width: 480px;
 		max-width: 100vw;
 		z-index: 999;
-		background-color: var(--bg-primary);
-		border-left: 1px solid var(--border-default);
+		background-color: var(--bg);
+		border-left: 1px solid var(--line);
 		display: flex;
 		flex-direction: column;
 		transform: translateX(100%);
-		transition: transform var(--transition-normal);
-		box-shadow: var(--shadow-lg);
+		transition: transform var(--dur-fast) var(--ease);
+		box-shadow: var(--shadow-pop);
 	}
 
 	.alert-detail-panel.open {
@@ -376,16 +376,16 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: var(--space-md) var(--space-lg);
-		border-bottom: 1px solid var(--border-default);
-		background-color: var(--bg-secondary);
+		padding: var(--sp-4) var(--sp-6);
+		border-bottom: 1px solid var(--line);
+		background-color: var(--surface-1);
 		flex-shrink: 0;
 	}
 
 	.panel-header-left {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.panel-close-btn {
@@ -396,69 +396,69 @@
 		height: 32px;
 		background: none;
 		border: none;
-		border-radius: var(--radius-sm);
-		color: var(--text-secondary);
+		border-radius: var(--r-sm);
+		color: var(--text-2);
 		cursor: pointer;
-		transition: all var(--transition-fast);
+		transition: all var(--dur-fast) var(--ease);
 	}
 
 	.panel-close-btn:hover {
-		background-color: var(--bg-tertiary);
-		color: var(--text-primary);
+		background-color: var(--surface-2);
+		color: var(--text-1);
 	}
 
 	/* ----- Body ----- */
 	.panel-body {
 		flex: 1;
 		overflow-y: auto;
-		padding: var(--space-lg);
+		padding: var(--sp-6);
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-lg);
+		gap: var(--sp-6);
 	}
 
 	/* Sections */
 	.panel-section {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.section-label {
 		font-size: var(--text-xs);
 		font-weight: 600;
-		color: var(--text-muted);
+		color: var(--text-3);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
 
 	.section-body {
 		font-size: var(--text-sm);
-		color: var(--text-primary);
-		line-height: var(--leading-relaxed);
+		color: var(--text-1);
+		line-height: 1.75;
 	}
 
 	.alert-signature {
 		font-size: var(--text-lg);
 		font-weight: 700;
-		color: var(--text-primary);
-		line-height: var(--leading-tight);
+		color: var(--text-1);
+		line-height: 1.2;
 	}
 
 	.alert-timestamp {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 	}
 
 	/* Flow visualization */
 	.flow-visualization {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-md);
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
+		gap: var(--sp-2);
+		padding: var(--sp-4);
+		background-color: var(--surface-1);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
 		flex-wrap: wrap;
 		justify-content: center;
 	}
@@ -473,7 +473,7 @@
 
 	.flow-label {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
+		color: var(--text-3);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		font-weight: 600;
@@ -488,7 +488,7 @@
 
 	.flow-port {
 		font-size: var(--text-xs);
-		color: var(--text-secondary);
+		color: var(--text-2);
 	}
 
 	.flow-arrow {
@@ -496,7 +496,7 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 2px;
-		color: var(--text-muted);
+		color: var(--text-3);
 		flex-shrink: 0;
 	}
 
@@ -509,7 +509,7 @@
 	.device-links {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.device-links .btn {
@@ -519,16 +519,16 @@
 
 	/* Metadata */
 	.panel-section-meta {
-		gap: var(--space-xs);
+		gap: var(--sp-1);
 	}
 
 	.meta-row {
 		display: flex;
 		align-items: flex-start;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 		font-size: var(--text-sm);
-		padding: var(--space-xs) 0;
-		border-bottom: 1px solid var(--border-muted);
+		padding: var(--sp-1) 0;
+		border-bottom: 1px solid var(--line);
 	}
 
 	.meta-row:last-child {
@@ -539,7 +539,7 @@
 		flex-shrink: 0;
 		width: 100px;
 		font-weight: 600;
-		color: var(--text-muted);
+		color: var(--text-3);
 		font-size: var(--text-xs);
 		text-transform: uppercase;
 		letter-spacing: 0.03em;
@@ -548,11 +548,11 @@
 
 	.meta-val {
 		flex: 1;
-		color: var(--text-primary);
+		color: var(--text-1);
 		word-break: break-all;
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 		flex-wrap: wrap;
 	}
 
@@ -562,13 +562,13 @@
 
 	/* ----- Footer ----- */
 	.panel-footer {
-		padding: var(--space-md) var(--space-lg);
-		border-top: 1px solid var(--border-default);
-		background-color: var(--bg-secondary);
+		padding: var(--sp-4) var(--sp-6);
+		border-top: 1px solid var(--line);
+		background-color: var(--surface-1);
 		flex-shrink: 0;
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 	}
 
 	.panel-footer .btn {
@@ -577,25 +577,25 @@
 
 	.acknowledge-error {
 		font-size: var(--text-sm);
-		color: var(--danger);
+		color: var(--sev-critical);
 	}
 
 	.acknowledged-notice {
 		display: flex;
 		align-items: center;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 		font-size: var(--text-sm);
-		color: var(--success);
+		color: var(--ok);
 		justify-content: center;
-		padding: var(--space-sm);
+		padding: var(--sp-2);
 	}
 
 	.btn-spinner {
 		display: inline-block;
 		width: 14px;
 		height: 14px;
-		border: 2px solid rgba(255, 255, 255, 0.3);
-		border-top-color: #fff;
+		border: 2px solid color-mix(in srgb, var(--on-accent) 30%, transparent);
+		border-top-color: var(--on-accent);
 		border-radius: 50%;
 		animation: spin 0.6s linear infinite;
 	}

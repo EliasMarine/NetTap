@@ -45,10 +45,10 @@
 
 	function getStatusColor(status: string): string {
 		switch (status) {
-			case 'open': return 'var(--amber)';
+			case 'open': return 'var(--sev-medium)';
 			case 'in_progress': return 'var(--accent)';
-			case 'closed': return 'var(--green)';
-			default: return 'var(--text-muted)';
+			case 'closed': return 'var(--ok)';
+			default: return 'var(--text-3)';
 		}
 	}
 
@@ -91,17 +91,17 @@
 			<DrawerSection title="Tags" defaultExpanded={false}>
 				<div class="tag-pills">
 					{#each investigation.tags as tag}
-						<span class="badge badge-muted">{tag}</span>
+						<span class="chip">{tag}</span>
 					{/each}
 				</div>
 			</DrawerSection>
 		{/if}
 
 		<!-- Status change -->
-		<DrawerSection title="Change Status" defaultExpanded={false}>
-			<select class="status-select" value={investigation.status} onchange={handleStatusChange}>
+		<DrawerSection title="Change status" defaultExpanded={false}>
+			<select class="select" aria-label="Investigation status" value={investigation.status} onchange={handleStatusChange}>
 				<option value="open">Open</option>
-				<option value="in_progress">In Progress</option>
+				<option value="in_progress">In progress</option>
 				<option value="closed">Closed</option>
 			</select>
 		</DrawerSection>
@@ -120,24 +120,24 @@
 			</div>
 		{:else}
 			<div class="empty-state">
-				<p class="text-muted">No notes yet</p>
+				<p class="dim">No notes yet</p>
 			</div>
 		{/if}
 
 		<!-- Add note -->
 		<div class="add-note">
 			<textarea
-				class="note-input"
-				placeholder="Add a note..."
+				class="textarea"
+				placeholder="Add a note…"
 				bind:value={noteText}
 				rows="3"
 			></textarea>
 			<button
-				class="btn btn-primary btn-sm"
+				class="btn primary"
 				onclick={handleAddNote}
 				disabled={!noteText.trim() || noteSaving}
 			>
-				{noteSaving ? 'Saving...' : 'Add Note'}
+				{noteSaving ? 'Saving…' : 'Add note'}
 			</button>
 		</div>
 	</div>
@@ -145,7 +145,7 @@
 {:else if activeTab === 'linked'}
 	<div class="linked-content">
 		{#if investigation.alert_ids?.length > 0}
-			<DrawerSection title="Linked Alerts ({investigation.alert_ids.length})" defaultExpanded>
+			<DrawerSection title="Linked alerts ({investigation.alert_ids.length})" defaultExpanded>
 				<div class="linked-list">
 					{#each investigation.alert_ids as alertId}
 						<a href="/alerts?id={alertId}" class="linked-item mono">{alertId}</a>
@@ -155,7 +155,7 @@
 		{/if}
 
 		{#if investigation.device_ips?.length > 0}
-			<DrawerSection title="Linked Devices ({investigation.device_ips.length})" defaultExpanded>
+			<DrawerSection title="Linked devices ({investigation.device_ips.length})" defaultExpanded>
 				<div class="linked-list">
 					{#each investigation.device_ips as ip}
 						<a href="/devices/{ip}" class="linked-item mono">{ip}</a>
@@ -166,7 +166,7 @@
 
 		{#if !investigation.alert_ids?.length && !investigation.device_ips?.length}
 			<div class="empty-state">
-				<p class="text-muted">No linked items</p>
+				<p class="dim">No linked items</p>
 			</div>
 		{/if}
 	</div>
@@ -180,107 +180,82 @@
 
 	.description-text {
 		font-size: var(--text-sm);
-		color: var(--text-primary);
+		color: var(--text-1);
 		line-height: 1.6;
 	}
 
 	.tag-pills {
 		display: flex;
 		flex-wrap: wrap;
-		gap: var(--space-xs);
-	}
-
-	.status-select {
-		width: 100%;
-		padding: var(--space-sm);
-		font-size: var(--text-sm);
-		font-family: var(--font-sans);
-		color: var(--text-primary);
-		background-color: var(--bg-input);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-sm);
-		cursor: pointer;
+		gap: var(--sp-1);
 	}
 
 	.notes-list {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
-		margin-bottom: var(--space-md);
+		gap: var(--sp-2);
+		margin-bottom: var(--sp-4);
 	}
 
 	.note-item {
-		padding: var(--space-sm) var(--space-md);
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-dim);
-		border-radius: var(--radius-md);
+		padding: var(--sp-2) var(--sp-4);
+		background-color: var(--surface-2);
+		border: 1px solid var(--line);
+		border-radius: var(--r-md);
 	}
 
 	.note-meta {
 		font-size: var(--text-xs);
-		color: var(--text-muted);
-		margin-bottom: var(--space-xs);
+		color: var(--text-3);
+		margin-bottom: var(--sp-1);
 	}
 
 	.note-text {
 		font-size: var(--text-sm);
-		color: var(--text-primary);
+		color: var(--text-1);
 		line-height: 1.5;
 	}
 
 	.add-note {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
-		margin-top: var(--space-md);
-		padding-top: var(--space-md);
-		border-top: 1px solid var(--border-dim);
+		gap: var(--sp-2);
+		margin-top: var(--sp-4);
+		padding-top: var(--sp-4);
+		border-top: 1px solid var(--line);
 	}
 
-	.note-input {
-		width: 100%;
-		padding: var(--space-sm);
-		font-family: var(--font-sans);
-		font-size: var(--text-sm);
-		color: var(--text-primary);
-		background-color: var(--bg-input);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		resize: vertical;
-	}
-
-	.note-input::placeholder {
-		color: var(--text-muted);
+	.add-note .btn {
+		align-self: flex-end;
 	}
 
 	.linked-list {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-xs);
+		gap: var(--sp-1);
 	}
 
 	.linked-item {
 		display: block;
-		padding: var(--space-xs) var(--space-sm);
+		padding: var(--sp-1) var(--sp-2);
 		font-size: var(--text-sm);
-		color: var(--accent);
+		color: var(--accent-strong);
 		text-decoration: none;
-		border-radius: var(--radius-sm);
-		transition: background-color var(--transition-fast);
+		border-radius: var(--r-sm);
+		transition: background-color var(--dur-fast);
 	}
 
 	.linked-item:hover {
-		background-color: var(--accent-muted);
+		background-color: var(--row-hover);
 		text-decoration: none;
 	}
 
 	.empty-state {
+		font-size: var(--text-sm);
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		padding: var(--space-xl) 0;
+		padding: var(--sp-8) 0;
 	}
 
-	.mono { font-family: var(--font-mono); }
-	.text-muted { color: var(--text-muted); font-size: var(--text-sm); }
 </style>

@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, within } from '@testing-library/svelte';
+import { get } from 'svelte/store';
+import { pageRefresh } from '$lib/stores/pageRefresh';
 import { previewCleanup, executeCleanup } from '$lib/api/storage';
 import Page from './+page.svelte';
 
@@ -67,10 +69,10 @@ describe('Settings — manual cleanup', () => {
 
 	async function openPreview(days: string) {
 		render(Page);
-		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
 		const input = screen.getByLabelText('Delete data older than (days)');
 		await fireEvent.input(input, { target: { value: days } });
-		await fireEvent.click(screen.getByRole('button', { name: 'Preview Cleanup' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Preview cleanup' }));
 		await flush();
 		return input;
 	}
@@ -79,8 +81,8 @@ describe('Settings — manual cleanup', () => {
 		await openPreview('30');
 		expect(previewCleanup).toHaveBeenCalledWith(30);
 
-		await fireEvent.click(screen.getByRole('button', { name: 'Delete Data' }));
-		await fireEvent.click(screen.getByRole('button', { name: 'Confirm Delete' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Delete data' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
 		await flush();
 
 		expect(executeCleanup).toHaveBeenCalledWith(30);
@@ -88,12 +90,12 @@ describe('Settings — manual cleanup', () => {
 
 	it('drops the preview and its delete button when the days change', async () => {
 		const input = await openPreview('30');
-		expect(screen.getByRole('button', { name: 'Delete Data' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Delete data' })).toBeInTheDocument();
 
 		await fireEvent.input(input, { target: { value: '5' } });
 
-		expect(screen.queryByRole('button', { name: 'Delete Data' })).not.toBeInTheDocument();
-		expect(screen.queryByText('Cleanup Preview')).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Delete data' })).not.toBeInTheDocument();
+		expect(screen.queryByText('Cleanup preview')).not.toBeInTheDocument();
 		expect(executeCleanup).not.toHaveBeenCalled();
 	});
 });
@@ -108,8 +110,8 @@ describe('Settings — retention save', () => {
 		stubFetch({ '/api/setup/storage': (init) => (init?.method === 'POST' ? { status, body } : { body: {} }) });
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
-		await fireEvent.click(screen.getByRole('button', { name: 'Save Retention Config' }));
+		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Save retention settings' }));
 		await flush();
 	}
 
@@ -131,7 +133,7 @@ describe('Settings — retention save', () => {
 		stubFetch({});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
 
 		expect(screen.getByText(/Raw packet captures of all traffic/)).toBeInTheDocument();
 		expect(screen.queryByText(/alert-triggered/)).not.toBeInTheDocument();
@@ -141,10 +143,10 @@ describe('Settings — retention save', () => {
 		stubFetch({});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
 
-		expect(screen.getByLabelText('Hot Tier (Zeek metadata and Suricata alerts)')).toBeInTheDocument();
-		expect(screen.getByLabelText('Warm Tier (separate Suricata indices)')).toBeInTheDocument();
+		expect(screen.getByLabelText('Hot tier (Zeek metadata and Suricata alerts)')).toBeInTheDocument();
+		expect(screen.getByLabelText('Warm tier (separate Suricata indices)')).toBeInTheDocument();
 		expect(screen.getByText(/Alerts follow the Hot tier/)).toBeInTheDocument();
 	});
 
@@ -152,9 +154,9 @@ describe('Settings — retention save', () => {
 		stubFetch({ '/api/setup/storage': () => ({ body: { source: 'mock', hot_days: 90 } }) });
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
 
-		expect(screen.getByRole('button', { name: 'Save Retention Config' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Save retention settings' })).toBeDisabled();
 		expect(screen.getByText(/Could not load the current retention settings/)).toBeInTheDocument();
 	});
 });
@@ -173,7 +175,7 @@ describe('Settings — About', () => {
 		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'About' }));
+		await fireEvent.click(screen.getByRole('tab', { name: 'About' }));
 
 		expect(screen.getByText('0.4.0')).toBeInTheDocument();
 		expect(screen.getByText('6h 6m')).toBeInTheDocument();
@@ -196,7 +198,7 @@ describe('Settings — retention health', () => {
 		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
 
 		expect(screen.getByText(/Policy synced/)).toBeInTheDocument();
 		expect(screen.queryByText(/All 1 synced/)).not.toBeInTheDocument();
@@ -207,13 +209,13 @@ describe('Settings — retention health', () => {
 		stubFetch();
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
 
 		expect(screen.getByText("Couldn't load the storage status: the request failed.")).toBeInTheDocument();
-		expect(screen.getByText('Unknown', { selector: '.health-badge' })).toBeInTheDocument();
+		expect(screen.getByText('Unknown', { selector: '.chip' })).toBeInTheDocument();
 		expect(screen.queryByText('Problem')).not.toBeInTheDocument();
-		expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
-		expect(screen.queryByText('Never (daemon starting...)')).not.toBeInTheDocument();
+		expect(screen.queryByText('Loading the storage status')).not.toBeInTheDocument();
+		expect(screen.queryByText('Never (daemon starting…)')).not.toBeInTheDocument();
 	});
 
 	it('still reads Healthy when the storage status loads in sync', async () => {
@@ -225,9 +227,9 @@ describe('Settings — retention health', () => {
 		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Retention' }));
+		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
 
-		expect(screen.getByText('Healthy', { selector: '.health-badge' })).toBeInTheDocument();
+		expect(screen.getByText('Healthy', { selector: '.chip' })).toBeInTheDocument();
 		expect(screen.getByText(/2 policies synced/)).toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't load the storage status/)).not.toBeInTheDocument();
 	});
@@ -246,7 +248,7 @@ describe('Settings — capture status label', () => {
 		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Capture' }));
+		await fireEvent.click(screen.getByRole('tab', { name: 'Capture' }));
 
 		expect(screen.getByText('Enabled — capture container not running')).toBeInTheDocument();
 		expect(screen.queryByText('Enabled — capturing packets')).not.toBeInTheDocument();
@@ -260,7 +262,7 @@ describe('Settings — capture status label', () => {
 		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Capture' }));
+		await fireEvent.click(screen.getByRole('tab', { name: 'Capture' }));
 
 		expect(screen.getByDisplayValue('4096')).toBeInTheDocument();
 		expect(screen.getByText(/or every 10 minutes, whichever comes first/)).toBeInTheDocument();
@@ -277,10 +279,10 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 		stubFetch({ '/api/capture/status': () => ({ status: 502, body: { error: 'Daemon unreachable' } }) });
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Capture' }));
+		await fireEvent.click(screen.getByRole('tab', { name: 'Capture' }));
 
 		expect(screen.getByText(/Could not load the current capture settings/)).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Save Capture Settings' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Save capture settings' })).not.toBeInTheDocument();
 		expect(screen.queryByDisplayValue('100')).not.toBeInTheDocument();
 	});
 
@@ -290,7 +292,7 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 		await flush();
 
 		expect(screen.getByText(/Could not load the current notification settings/)).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Save Notification Settings' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Save notification settings' })).toBeDisabled();
 	});
 
 	it('Notifications: Save works once the config has loaded', async () => {
@@ -304,17 +306,17 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 
 		expect(screen.queryByText(/Could not load the current notification settings/)).not.toBeInTheDocument();
 		expect(screen.getByDisplayValue('https://hooks.example.com/x')).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Save Notification Settings' })).toBeEnabled();
+		expect(screen.getByRole('button', { name: 'Save notification settings' })).toBeEnabled();
 	});
 
 	it('Network: no list editor or Save when the excluded IPs cannot be read', async () => {
 		stubFetch();
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Network' }));
+		await fireEvent.click(screen.getByRole('tab', { name: 'Network' }));
 
 		expect(screen.getByText(/Could not load the excluded IP list/)).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Save Excluded IPs' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Save excluded IPs' })).not.toBeInTheDocument();
 		expect(screen.queryByText(/No IPs excluded/)).not.toBeInTheDocument();
 	});
 
@@ -322,10 +324,10 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 		stubFetch({ '/api/settings/excluded-ips': () => ({ body: { excluded_ips: ['99.10.70.92'] } }) });
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Network' }));
+		await fireEvent.click(screen.getByRole('tab', { name: 'Network' }));
 
 		expect(screen.getByText('99.10.70.92')).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Save Excluded IPs' })).toBeEnabled();
+		expect(screen.getByRole('button', { name: 'Save excluded IPs' })).toBeEnabled();
 	});
 });
 
@@ -351,7 +353,7 @@ describe('Settings — UniFi integration', () => {
 	async function openIntegrations() {
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Integrations' }));
+		await fireEvent.click(screen.getByRole('tab', { name: 'Integrations' }));
 	}
 
 	it('shows connected state and last poll from the daemon status fields', async () => {
@@ -360,7 +362,7 @@ describe('Settings — UniFi integration', () => {
 		await openIntegrations();
 
 		expect(screen.getByText('Connected')).toBeInTheDocument();
-		expect(screen.getByText('Last Poll')).toBeInTheDocument();
+		expect(screen.getByText('Last poll')).toBeInTheDocument();
 		expect(screen.getByText(/^\d+s ago$/)).toBeInTheDocument();
 		expect(screen.getByLabelText('Site')).toHaveValue('site-a');
 	});
@@ -373,7 +375,7 @@ describe('Settings — UniFi integration', () => {
 		await openIntegrations();
 
 		expect(screen.getByText('Disconnected')).toBeInTheDocument();
-		expect(screen.queryByText('Last Poll')).not.toBeInTheDocument();
+		expect(screen.queryByText('Last poll')).not.toBeInTheDocument();
 	});
 
 	it('does not post a blank site_id', async () => {
@@ -385,12 +387,156 @@ describe('Settings — UniFi integration', () => {
 
 		await openIntegrations();
 		await fireEvent.input(screen.getByLabelText('Site'), { target: { value: '   ' } });
-		await fireEvent.click(screen.getByRole('button', { name: 'Save Configuration' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Save configuration' }));
 		await flush();
 
 		const call = fetchMock.mock.calls.find(([url]) => url === '/api/integrations/unifi/configure');
 		expect(call).toBeDefined();
 		const body = JSON.parse(String(call?.[1]?.body));
 		expect(body).toEqual({ controller_url: 'https://192.168.1.1' });
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Redesign: section tabs (Pills tabs mode), the switch, load states, no page refresh
+// ---------------------------------------------------------------------------
+
+describe('Settings — section tabs', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('wires each tab to its panel and opens Notifications first', async () => {
+		stubFetch();
+		render(Page);
+
+		const tablist = screen.getByRole('tablist', { name: 'Settings sections' });
+		const tabs = within(tablist).getAllByRole('tab');
+		expect(tabs.map((t) => t.textContent?.trim())).toEqual([
+			'Notifications', 'Retention', 'Capture', 'API keys', 'Network', 'Integrations', 'Display', 'About',
+		]);
+		const first = screen.getByRole('tab', { name: 'Notifications' });
+		expect(first).toHaveAttribute('aria-selected', 'true');
+		const panel = screen.getByRole('tabpanel');
+		expect(panel).toHaveAttribute('id', 'settings-panel-notifications');
+		expect(panel).toHaveAttribute('aria-labelledby', first.id);
+		expect(first).toHaveAttribute('aria-controls', panel.id);
+		expect(within(panel).getByText('Notification preferences')).toBeInTheDocument();
+	});
+
+	it('moves between sections with the arrow, Home and End keys', async () => {
+		stubFetch();
+		render(Page);
+
+		await fireEvent.keyDown(screen.getByRole('tab', { name: 'Notifications' }), { key: 'ArrowRight' });
+		expect(screen.getByRole('tab', { name: 'Retention' })).toHaveAttribute('aria-selected', 'true');
+		expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'settings-panel-retention');
+
+		await fireEvent.keyDown(screen.getByRole('tab', { name: 'Retention' }), { key: 'End' });
+		expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'settings-panel-about');
+
+		await fireEvent.keyDown(screen.getByRole('tab', { name: 'About' }), { key: 'ArrowRight' });
+		expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'settings-panel-notifications');
+
+		await fireEvent.keyDown(screen.getByRole('tab', { name: 'Notifications' }), { key: 'Home' });
+		expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'settings-panel-notifications');
+	});
+
+	it('registers no page refresh, so the top bar hides Refresh (forms-only page)', async () => {
+		stubFetch();
+		render(Page);
+		await flush();
+
+		expect(get(pageRefresh).available).toBe(false);
+	});
+});
+
+describe('Settings — load states', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	/** Every request waits forever, so each card stays in its loading state. */
+	function stubPending() {
+		vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+	}
+
+	it.each([
+		['Retention', 'Loading the storage status'],
+		['Capture', 'Loading capture settings'],
+		['API keys', 'Loading API key status'],
+		['Network', 'Loading the excluded IP list'],
+		['Integrations', 'Loading UniFi status'],
+	])('%s shows a loading card while its request runs', async (tab, text) => {
+		stubPending();
+		render(Page);
+		await fireEvent.click(screen.getByRole('tab', { name: tab }));
+
+		expect(screen.getByText(text).closest('[role="status"]')).toHaveAttribute('aria-busy', 'true');
+	});
+
+	it('shows the error card, with no form, when the excluded IP list fails', async () => {
+		stubFetch();
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('tab', { name: 'Network' }));
+
+		expect(screen.getByRole('alert')).toHaveTextContent(/Could not load the excluded IP list/);
+		expect(screen.queryByLabelText('IP address to exclude')).not.toBeInTheDocument();
+	});
+
+	it('shows the capture error card instead of the switch', async () => {
+		stubFetch();
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('tab', { name: 'Capture' }));
+
+		expect(screen.getByRole('alert')).toHaveTextContent(/Could not load the current capture settings/);
+		expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+	});
+
+	it('shows an empty excluded list as text, with the editor still there', async () => {
+		stubFetch({ '/api/settings/excluded-ips': () => ({ body: { excluded_ips: [] } }) });
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('tab', { name: 'Network' }));
+
+		expect(screen.getByText('No IPs excluded. All IPs appear in device views.')).toBeInTheDocument();
+		expect(screen.getByLabelText('IP address to exclude')).toBeInTheDocument();
+	});
+});
+
+describe('Settings — PCAP collection switch', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const STATUS = { enabled: true, maxFileSizeMB: 100, containerRunning: true, containerStatus: 'running' };
+
+	async function openCapture(toggle: FetchRoute) {
+		const fetchMock = stubFetch({ '/api/capture/status': () => ({ body: STATUS }), '/api/capture/toggle': toggle });
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('tab', { name: 'Capture' }));
+		return fetchMock;
+	}
+
+	it('follows the answer from the daemon', async () => {
+		const fetchMock = await openCapture(() => ({ body: { enabled: false, containerRunning: false, containerStatus: 'exited' } }));
+		const toggle = screen.getByRole('switch', { name: 'PCAP collection' });
+		expect(toggle).toBeChecked();
+
+		await fireEvent.click(toggle);
+		await flush();
+
+		const call = fetchMock.mock.calls.find(([url]) => url === '/api/capture/toggle');
+		expect(JSON.parse(String(call?.[1]?.body))).toEqual({ enabled: false });
+		expect(toggle).not.toBeChecked();
+		expect(screen.getByText('PCAP capture disabled')).toBeInTheDocument();
+	});
+
+	it('stays on when the toggle fails', async () => {
+		await openCapture(() => ({ status: 502, body: { error: 'Daemon unreachable' } }));
+		const toggle = screen.getByRole('switch', { name: 'PCAP collection' });
+
+		await fireEvent.click(toggle);
+		await flush();
+
+		expect(toggle).toBeChecked();
+		expect(screen.getByRole('alert')).toHaveTextContent('Daemon unreachable');
 	});
 });

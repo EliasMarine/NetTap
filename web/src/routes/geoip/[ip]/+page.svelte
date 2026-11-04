@@ -1,23 +1,21 @@
 <script lang="ts">
 	/**
-	 * GeoIP Lookup — Displays geolocation data for an IP address.
-	 *
-	 * Layout:
-	 *   - Back button
-	 *   - Search bar to look up any IP
-	 *   - Results card with country (flag), city, coordinates, ASN, org
-	 *   - Coordinates link to Google Maps
-	 *   - Private IP badge when applicable
+	 * GeoIP lookup: geolocation data for an IP address.
+	 * A form card to look up another address, a result card with .facts (country, city,
+	 * coordinates linked to Google Maps, ASN, organisation, private or public), the
+	 * OpenStreetMap embed when there are coordinates, and links to the related pages.
+	 * The lookup runs through the page refresh contract.
 	 */
 
+	import { onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { lookupGeoIP } from '$api/geoip';
 	import type { GeoIPResult } from '$api/geoip';
-
-	// ---------------------------------------------------------------------------
-	// State
-	// ---------------------------------------------------------------------------
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 
 	let ip = $derived($page.params.ip);
 	let result = $state<GeoIPResult | null>(null);
@@ -25,22 +23,44 @@
 	let error = $state('');
 	let searchIp = $state('');
 
-	// ---------------------------------------------------------------------------
-	// Lookup
-	// ---------------------------------------------------------------------------
+	// OLD CODE START — the lookup now goes through the page refresh contract (PLAN.md §5.5):
+	// it reports its result and a load guard drops a response that a newer load replaced
+	// async function lookup(targetIp: string) {
+	// 	loading = true;
+	// 	error = '';
+	// 	try {
+	// 		result = await lookupGeoIP(targetIp);
+	// 	} catch (e) {
+	// 		error = e instanceof Error ? e.message : 'Lookup failed';
+	// 		result = null;
+	// 	} finally {
+	// 		loading = false;
+	// 	}
+	// }
+	// OLD CODE END
 
-	async function lookup(targetIp: string) {
+	async function lookup(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		const targetIp = decodeURIComponent(ip ?? '');
 		loading = true;
 		error = '';
 		try {
-			result = await lookupGeoIP(targetIp);
+			const data = await lookupGeoIP(targetIp);
+			if (!guard.current(g)) return 'skipped';
+			result = data;
+			return 'ok';
 		} catch (e) {
+			if (!guard.current(g)) return 'skipped';
 			error = e instanceof Error ? e.message : 'Lookup failed';
 			result = null;
+			return 'failed';
 		} finally {
-			loading = false;
+			if (guard.current(g)) loading = false;
 		}
 	}
+
+	const refresh = registerPageRefresh(lookup);
+	onDestroy(refresh.unregister);
 
 	function handleSearch() {
 		const trimmed = searchIp.trim();
@@ -55,439 +75,122 @@
 		}
 	}
 
-	// ---------------------------------------------------------------------------
-	// Country code to flag emoji
-	// ---------------------------------------------------------------------------
+	// OLD CODE START — the design system allows no emoji, so the country shows its name and code only
+	// function countryCodeToFlag(code: string): string {
+	// 	if (!code || code.length !== 2 || code === 'XX') return '';
+	// 	const upper = code.toUpperCase();
+	// 	const codePoints = [...upper].map(
+	// 		(c) => 0x1f1e6 + c.charCodeAt(0) - 65
+	// 	);
+	// 	return String.fromCodePoint(...codePoints);
+	// }
+	// OLD CODE END
 
-	function countryCodeToFlag(code: string): string {
-		if (!code || code.length !== 2 || code === 'XX') return '';
-		const upper = code.toUpperCase();
-		const codePoints = [...upper].map(
-			(c) => 0x1f1e6 + c.charCodeAt(0) - 65
-		);
-		return String.fromCodePoint(...codePoints);
-	}
+	const mapsUrl = (r: GeoIPResult) => `https://www.google.com/maps/search/?api=1&query=${r.latitude},${r.longitude}`;
 
-	// ---------------------------------------------------------------------------
-	// Reactive fetch on route param change
-	// ---------------------------------------------------------------------------
-
+	// Look up again whenever the route's IP changes
 	$effect(() => {
 		if (ip) {
 			searchIp = decodeURIComponent(ip);
-			lookup(decodeURIComponent(ip));
+			refresh.run();
 		}
 	});
 </script>
 
 <svelte:head>
-	<title>GeoIP Lookup — {ip ? decodeURIComponent(ip) : ''} | NetTap</title>
+	<title>GeoIP lookup — {ip ? decodeURIComponent(ip) : ''} | NetTap</title>
 </svelte:head>
 
-<div class="geoip-page">
-	<!-- Back button -->
-	<div class="back-nav">
-		<button class="btn btn-secondary btn-sm" onclick={() => history.back()}>
-			<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-				<line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
-			</svg>
-			Back
-		</button>
+<div class="page-head">
+	<div>
+		<button class="back" type="button" onclick={() => history.back()}><Icon name="back" />Back</button>
+		<h1 class="page-title">GeoIP lookup</h1>
+		<p class="page-sub">Where an IP address is, and the network that owns it.</p>
 	</div>
+</div>
 
-	<!-- Page header + search -->
-	<div class="page-header">
-		<h1>GeoIP Lookup</h1>
-		<div class="search-bar">
-			<input
-				type="text"
-				class="input"
-				placeholder="Enter an IP address..."
-				bind:value={searchIp}
-				onkeydown={handleKeydown}
-			/>
-			<button class="btn btn-primary btn-sm" onclick={handleSearch}>
-				<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-				</svg>
-				Lookup
-			</button>
+<div class="grid">
+	<Card title="Look up an address" sub="One IPv4 or IPv6 address" class="c-4">
+		<div class="field">
+			<label class="label" for="geoip-ip">IP address</label>
+			<input id="geoip-ip" type="text" class="input mono" placeholder="Enter an IP address…" bind:value={searchIp} onkeydown={handleKeydown} />
 		</div>
-	</div>
-
-	<!-- Loading state -->
-	{#if loading}
-		<div class="card loading-card">
-			<div class="skeleton skeleton-block"></div>
-			<div class="skeleton-grid">
-				{#each Array(6) as _}
-					<div class="skeleton skeleton-field"></div>
-				{/each}
-			</div>
+		<div class="form-actions">
+			<button class="btn primary" type="button" onclick={handleSearch}><Icon name="search" />Lookup</button>
 		</div>
-	{:else if error}
-		<!-- Error state -->
-		<div class="empty-state">
-			<div class="empty-icon">
-				<svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-					<circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
-				</svg>
-			</div>
-			<h3>Lookup Failed</h3>
-			<p class="text-muted">{error}</p>
-		</div>
-	{:else if result}
-		<!-- Results -->
-		<div class="card result-card">
-			<!-- IP header -->
-			<div class="result-header">
-				<h2 class="mono">{result.ip}</h2>
-				{#if result.is_private}
-					<span class="badge badge-warning">Private IP</span>
-				{/if}
-			</div>
+	</Card>
 
-			<!-- Data grid -->
-			<div class="result-grid">
-				<!-- Country -->
-				<div class="result-field">
-					<span class="field-label">Country</span>
-					<span class="field-value">
-						{#if result.country_code && result.country_code !== 'XX'}
-							<span class="flag">{countryCodeToFlag(result.country_code)}</span>
-						{/if}
-						{result.country || '--'}
-						{#if result.country_code && result.country_code !== 'XX'}
-							<span class="text-muted">({result.country_code})</span>
-						{/if}
-					</span>
-				</div>
-
-				<!-- City -->
-				<div class="result-field">
-					<span class="field-label">City</span>
-					<span class="field-value">{result.city || '--'}</span>
-				</div>
-
-				<!-- Coordinates -->
-				<div class="result-field">
-					<span class="field-label">Coordinates</span>
-					<span class="field-value">
-						{#if result.latitude != null && result.longitude != null}
-							<a
-								href="https://www.google.com/maps/search/?api=1&query={result.latitude},{result.longitude}"
-								target="_blank"
-								rel="noopener noreferrer"
-								class="coord-link"
-							>
-								{result.latitude.toFixed(4)}, {result.longitude.toFixed(4)}
-								<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-									<path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
-								</svg>
-							</a>
-						{:else}
-							--
-						{/if}
-					</span>
-				</div>
-
-				<!-- ASN -->
-				<div class="result-field">
-					<span class="field-label">ASN</span>
-					<span class="field-value mono">{result.asn != null ? `AS${result.asn}` : '--'}</span>
-				</div>
-
-				<!-- Organization -->
-				<div class="result-field">
-					<span class="field-label">Organization</span>
-					<span class="field-value">{result.organization || '--'}</span>
-				</div>
-
-				<!-- Private -->
-				<div class="result-field">
-					<span class="field-label">Is Private</span>
-					<span class="field-value">
-						{#if result.is_private}
-							<span class="badge badge-warning">Yes</span>
-						{:else}
-							<span class="badge badge-success">No (Public)</span>
-						{/if}
-					</span>
-				</div>
-			</div>
-
-			<!-- Embedded map -->
-			{#if result.latitude != null && result.longitude != null}
-				<div class="map-container">
-					<iframe
-						title="GeoIP Location Map"
-						width="100%"
-						height="300"
-						frameborder="0"
-						scrolling="no"
-						src="https://www.openstreetmap.org/export/embed.html?bbox={result.longitude - 0.5},{result.latitude - 0.3},{result.longitude + 0.5},{result.latitude + 0.3}&layer=mapnik&marker={result.latitude},{result.longitude}"
-					></iframe>
-					<div class="map-footer">
-						<span class="text-muted mono">
-							{result.latitude.toFixed(4)}, {result.longitude.toFixed(4)}
-						</span>
-						<a
-							href="https://www.google.com/maps/search/?api=1&query={result.latitude},{result.longitude}"
-							target="_blank"
-							rel="noopener noreferrer"
-							class="btn btn-secondary btn-sm"
+	<Card title="Result" sub="Location, network and owner" class="c-8">
+		{#if loading}
+			<CardState state="loading" title="Looking up the location" />
+		{:else if error}
+			<CardState state="error" title="Lookup failed" message={error} />
+		{:else if result}
+			<dl class="facts">
+				<dt>IP address</dt>
+				<dd class="mono">{result.ip}</dd>
+				<dt>Country</dt>
+				<dd>
+					{result.country || '—'}
+					{#if result.country_code && result.country_code !== 'XX'}<span class="dim mono">({result.country_code})</span>{/if}
+				</dd>
+				<dt>City</dt>
+				<dd>{result.city || '—'}</dd>
+				<dt>Coordinates</dt>
+				<dd>
+					{#if result.latitude != null && result.longitude != null}
+						<a class="link mono" href={mapsUrl(result)} target="_blank" rel="noopener noreferrer"
+							>{result.latitude.toFixed(4)}, {result.longitude.toFixed(4)}<Icon name="up" /></a
 						>
-							Open in Google Maps
-						</a>
-					</div>
-				</div>
-			{/if}
-		</div>
+					{:else}
+						—
+					{/if}
+				</dd>
+				<dt>ASN</dt>
+				<dd class="mono">{result.asn != null ? `AS${result.asn}` : '—'}</dd>
+				<dt>Organisation</dt>
+				<dd>{result.organization || '—'}</dd>
+				<dt>Private address</dt>
+				<dd>
+					{#if result.is_private}<span class="chip">Yes</span>{:else}<span class="chip">No (public)</span>{/if}
+				</dd>
+			</dl>
+			<div class="actions result-actions">
+				<a class="btn" href="/devices/{encodeURIComponent(result.ip ?? '')}">View device details</a>
+				<a class="btn" href="/connections?filter=ip.src=={encodeURIComponent(result.ip ?? '')}">Filter connections from</a>
+				<a class="btn" href="/connections?filter=ip.dst=={encodeURIComponent(result.ip ?? '')}">Filter connections to</a>
+			</div>
+		{/if}
+	</Card>
 
-		<!-- Quick actions -->
-		<div class="actions-row">
-			<button class="btn btn-secondary btn-sm" onclick={() => goto(`/devices/${encodeURIComponent(result?.ip ?? '')}`)}>
-				View Device Details
-			</button>
-			<button class="btn btn-secondary btn-sm" onclick={() => goto(`/connections?filter=ip.src==${encodeURIComponent(result?.ip ?? '')}`)}>
-				Filter Connections From
-			</button>
-			<button class="btn btn-secondary btn-sm" onclick={() => goto(`/connections?filter=ip.dst==${encodeURIComponent(result?.ip ?? '')}`)}>
-				Filter Connections To
-			</button>
-		</div>
+	{#if !loading && !error && result && result.latitude != null && result.longitude != null}
+		<Card title="Map" sub="OpenStreetMap · centred on the coordinates" class="c-12">
+			<div class="map">
+				<iframe
+					title="GeoIP location map"
+					width="100%"
+					height="300"
+					frameborder="0"
+					scrolling="no"
+					src="https://www.openstreetmap.org/export/embed.html?bbox={result.longitude - 0.5},{result.latitude - 0.3},{result.longitude + 0.5},{result.latitude + 0.3}&layer=mapnik&marker={result.latitude},{result.longitude}"
+				></iframe>
+			</div>
+			{#snippet foot()}
+				<div class="foot-stat">
+					<span class="mono">{result?.latitude?.toFixed(4)}, {result?.longitude?.toFixed(4)}</span>
+					{#if result}<a class="btn" href={mapsUrl(result)} target="_blank" rel="noopener noreferrer">Open in Google Maps</a>{/if}
+				</div>
+			{/snippet}
+		</Card>
 	{/if}
 </div>
 
 <style>
-	.geoip-page {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-	}
-
-	/* Back nav */
-	.back-nav {
-		display: flex;
-	}
-
-	/* Page header */
-	.page-header {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-md);
-	}
-
-	.page-header h1 {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		color: var(--text-primary);
-	}
-
-	.search-bar {
-		display: flex;
-		gap: var(--space-sm);
-		max-width: 480px;
-	}
-
-	.search-bar .input {
-		flex: 1;
-		padding: var(--space-sm) var(--space-md);
-		font-size: var(--text-sm);
-		font-family: var(--font-mono);
-		color: var(--text-primary);
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		outline: none;
-		transition: border-color var(--transition-fast);
-	}
-
-	.search-bar .input:focus {
-		border-color: var(--accent);
-	}
-
-	.search-bar .input::placeholder {
-		color: var(--text-muted);
-	}
-
-	/* Result card */
-	.result-card {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-	}
-
-	.result-header {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.result-header h2 {
-		font-size: var(--text-3xl);
-		font-weight: 700;
-		color: var(--accent);
-	}
-
-	/* Data grid */
-	.result-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-		gap: var(--space-lg);
-	}
-
-	.result-field {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
-	}
-
-	.field-label {
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
-	.field-value {
-		font-size: var(--text-md);
-		color: var(--text-primary);
-		display: flex;
-		align-items: center;
-		gap: var(--space-xs);
-	}
-
-	.flag {
-		font-size: var(--text-xl);
-	}
-
-	.coord-link {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		color: var(--accent);
-		text-decoration: none;
-		font-family: var(--font-mono);
-		font-size: var(--text-sm);
-		border-bottom: 1px dashed var(--border-default);
-		transition: border-color var(--transition-fast), color var(--transition-fast);
-	}
-
-	.coord-link:hover {
-		border-color: var(--accent);
-		color: var(--accent-hover);
-	}
-
-	/* Map container */
-	.map-container {
-		display: flex;
-		flex-direction: column;
-		gap: 0;
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		overflow: hidden;
-	}
-
-	.map-container iframe {
-		display: block;
-		filter: invert(0.9) hue-rotate(180deg) saturate(0.5) brightness(1.1);
-	}
-
-	.map-footer {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: var(--space-sm) var(--space-md);
-		background-color: var(--bg-tertiary);
-		border-top: 1px solid var(--border-default);
-	}
-
-	/* Actions row */
-	.actions-row {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-sm);
-	}
-
-	/* Loading state */
-	.loading-card {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-	}
-
-	.skeleton {
-		background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--border-muted) 50%, var(--bg-tertiary) 75%);
-		background-size: 200% 100%;
-		animation: shimmer 1.5s infinite;
-		border-radius: var(--radius-sm);
-	}
-
-	.skeleton-block {
-		height: 48px;
-		width: 240px;
-	}
-
-	.skeleton-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-		gap: var(--space-lg);
-	}
-
-	.skeleton-field {
-		height: 56px;
-		width: 100%;
-	}
-
-	@keyframes shimmer {
-		0% { background-position: 200% 0; }
-		100% { background-position: -200% 0; }
-	}
-
-	/* Empty / error state */
-	.empty-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: var(--space-3xl);
-		text-align: center;
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-lg);
-	}
-
-	.empty-icon {
-		color: var(--text-muted);
-		margin-bottom: var(--space-md);
-	}
-
-	.empty-state h3 {
-		font-size: var(--text-xl);
-		font-weight: 600;
-		color: var(--text-primary);
-		margin-bottom: var(--space-sm);
-	}
-
-	.empty-state p {
-		max-width: 480px;
-		line-height: var(--leading-relaxed);
-	}
-
-	/* Responsive */
-	@media (max-width: 768px) {
-		.result-header h2 {
-			font-size: var(--text-2xl);
-		}
-
-		.result-grid {
-			grid-template-columns: 1fr;
-		}
-
-		.search-bar {
-			max-width: 100%;
-		}
-	}
+	.result-actions { margin-top: var(--sp-4); }
+	/* Layout glue: the embedded map sits in an inset with the card's inner radius; the
+	   filter darkens the light OpenStreetMap tiles to sit on the dark card */
+	.map { border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; }
+	.map iframe { display: block; filter: invert(0.9) hue-rotate(180deg) saturate(0.5) brightness(1.1); }
+	/* .back is styled for a link; this one is a button (it goes back in history) */
+	button.back { background: none; border: 0; padding: 0; cursor: pointer; }
 </style>

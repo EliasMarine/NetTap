@@ -226,6 +226,7 @@ async function sendEmail(
 				.filter(Boolean)
 				.join('\n'),
 			html: [
+				// colour-gate: allow-next-line email clients can't read CSS variables, so email HTML keeps literals
 				`<h2 style="color: ${notification.severity === 'critical' ? '#f85149' : notification.severity === 'high' ? '#d29922' : '#58a6ff'}">${prefix} ${notification.title}</h2>`,
 				`<p><strong>Severity:</strong> ${notification.severity.toUpperCase()}</p>`,
 				`<p><strong>Type:</strong> ${notification.type}</p>`,

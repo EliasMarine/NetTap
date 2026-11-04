@@ -24,9 +24,13 @@ describe('Infrastructure — Zeek and Suricata rates', () => {
 
 		render(InfrastructurePage);
 
-		const metric = (node: string) => document.querySelector(`[data-node="${node}"] .node-metric`)?.textContent?.trim();
-		await vi.waitFor(() => expect(metric('zeek')).toBe('5.2 conn/s'));
-		expect(metric('suricata')).toBe('0.8 alerts/s');
+		// the stage's status line in the capture pipeline strip
+		const metric = (label: string) =>
+			[...document.querySelectorAll('.pipe-item')]
+				.find((el) => el.querySelector('.pipe-k')?.textContent?.trim() === label)
+				?.querySelector('.pipe-v')?.textContent?.trim();
+		await vi.waitFor(() => expect(metric('Zeek')).toBe('5.2 conn/s'));
+		expect(metric('Suricata')).toBe('0.8 alerts/s');
 		for (const url of asked) {
 			const params = new URL(url, 'https://nettap.test').searchParams;
 			const span = Date.parse(params.get('to') ?? '') - Date.parse(params.get('from') ?? '');
