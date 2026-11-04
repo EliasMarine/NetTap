@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
+import { get } from 'svelte/store';
+import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import UpdatesPage from './+page.svelte';
 
 const VERSIONS = {
@@ -34,7 +36,7 @@ describe('Software Updates page when a request fails (#96)', () => {
 		expect(await screen.findByText('Zeek')).toBeInTheDocument();
 		expect(screen.getByText("Couldn't load the available updates: the request failed.")).toBeInTheDocument();
 		expect(screen.getByText('Unknown')).toBeInTheDocument();
-		expect(screen.queryByText('Up to Date')).not.toBeInTheDocument();
+		expect(screen.queryByText('Up to date')).not.toBeInTheDocument();
 	});
 
 	it('says "Not checked", not "Up to Date", before the first update check since a restart', async () => {
@@ -46,7 +48,7 @@ describe('Software Updates page when a request fails (#96)', () => {
 		expect(await screen.findByText('Zeek')).toBeInTheDocument();
 		expect(screen.getByText('Updates have not been checked yet')).toBeInTheDocument();
 		expect(screen.getByText('Not checked')).toBeInTheDocument();
-		expect(screen.queryByText('Up to Date')).not.toBeInTheDocument();
+		expect(screen.queryByText('Up to date')).not.toBeInTheDocument();
 	});
 
 	it('says the installed versions failed instead of "No version information available"', async () => {
@@ -63,7 +65,7 @@ describe('Software Updates page when a request fails (#96)', () => {
 
 		render(UpdatesPage);
 		await screen.findByText('Zeek');
-		await fireEvent.click(screen.getByRole('button', { name: 'Check for Updates' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }));
 
 		expect(await screen.findByText("Couldn't check for updates: the request failed.")).toBeInTheDocument();
 		expect(screen.queryByText('Last checked: Just now')).not.toBeInTheDocument();
@@ -77,11 +79,11 @@ describe('Software Updates page when a request fails (#96)', () => {
 		stubFetch({ '/api/system/versions': VERSIONS, '/api/system/updates/available': { updates: [update], last_check: '' } });
 
 		render(UpdatesPage);
-		await fireEvent.click(await screen.findByRole('button', { name: 'Update All' }));
-		await fireEvent.click(screen.getByRole('button', { name: 'Update 1 Component' }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Update 1 component' }));
 
 		expect(await screen.findByText("Couldn't start the update: the request failed.")).toBeInTheDocument();
-		expect(screen.queryByText('Update Complete')).not.toBeInTheDocument();
+		expect(screen.queryByText('Update complete')).not.toBeInTheDocument();
 	});
 
 	it('names the sources the daemon could not check and marks their rows Unknown', async () => {
@@ -105,7 +107,7 @@ describe('Software Updates page when a request fails (#96)', () => {
 
 		expect(await screen.findByText("Couldn't check nettap-daemon for updates.")).toBeInTheDocument();
 		// Zeek was checked and is current; the daemon's own release check failed
-		expect(screen.getAllByText('Up to Date')).toHaveLength(1);
+		expect(screen.getAllByText('Up to date')).toHaveLength(1);
 		expect(screen.getAllByText('Unknown')).toHaveLength(1);
 	});
 
@@ -122,7 +124,7 @@ describe('Software Updates page when a request fails (#96)', () => {
 			await screen.findByText("Couldn't read the installed versions, so no component could be checked for updates."),
 		).toBeInTheDocument();
 		expect(screen.queryByText(/component-versions/)).not.toBeInTheDocument();
-		expect(screen.queryByText('Up to Date')).not.toBeInTheDocument();
+		expect(screen.queryByText('Up to date')).not.toBeInTheDocument();
 	});
 
 	it('names container and docker checks the daemon could not make', async () => {
@@ -156,7 +158,7 @@ describe('Software Updates page when a request fails (#96)', () => {
 		render(UpdatesPage);
 
 		expect(await screen.findByText('Error')).toBeInTheDocument();
-		expect(screen.queryByText('Up to Date')).not.toBeInTheDocument();
+		expect(screen.queryByText('Up to date')).not.toBeInTheDocument();
 	});
 
 	it('still reads Up to Date when the update list loads and is empty', async () => {
@@ -171,7 +173,7 @@ describe('Software Updates page when a request fails (#96)', () => {
 
 		render(UpdatesPage);
 
-		expect(await screen.findByText('Up to Date')).toBeInTheDocument();
+		expect(await screen.findByText('Up to date')).toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
 	});
 });
@@ -194,7 +196,7 @@ describe('Software Updates page — update size', () => {
 			'/api/system/updates/history': { history: [], count: 0 },
 		});
 		render(UpdatesPage);
-		await fireEvent.click(await screen.findByRole('button', { name: 'Update All' }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
 	}
 
 	it('says the size is unknown when it was not measured', async () => {
@@ -233,7 +235,7 @@ describe('Software Updates page — update history', () => {
 
 		render(UpdatesPage);
 
-		expect(await screen.findByText('Update History')).toBeInTheDocument();
+		expect(await screen.findByText('Update history')).toBeInTheDocument();
 		expect(screen.getByText('1 past update')).toBeInTheDocument();
 	});
 
@@ -247,7 +249,7 @@ describe('Software Updates page — update history', () => {
 		render(UpdatesPage);
 
 		await screen.findByText('Zeek');
-		expect(screen.queryByText('Update History')).not.toBeInTheDocument();
+		expect(screen.queryByText('Update history')).not.toBeInTheDocument();
 		expect(screen.queryByText(/update history/)).not.toBeInTheDocument();
 	});
 
@@ -298,7 +300,7 @@ describe('Software Updates page — updates NetTap cannot apply', () => {
 	it('leaves it out of Update All, disables its checkbox and says how it arrives', async () => {
 		stub();
 		render(UpdatesPage);
-		await fireEvent.click(await screen.findByRole('button', { name: 'Update All' }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
 
 		const pinned = screen.getByRole('checkbox', { name: /^arkime/ });
 		expect(pinned).toBeDisabled();
@@ -314,7 +316,7 @@ describe('Software Updates page — updates NetTap cannot apply', () => {
 		const rules = screen.getByRole('checkbox', { name: /^suricata-rules/ });
 		expect(rules).toBeEnabled();
 		expect(rules).toBeChecked();
-		expect(screen.getByRole('button', { name: 'Update 1 Component' })).toBeEnabled();
+		expect(screen.getByRole('button', { name: 'Update 1 component' })).toBeEnabled();
 	});
 
 	it('offers no per-row Update button for it', async () => {
@@ -336,7 +338,7 @@ describe('Software Updates page — updates NetTap cannot apply', () => {
 
 		expect(await screen.findByText('1 update available')).toBeInTheDocument();
 		expect(screen.getByText('None of these can be applied from here: each one says how it arrives.')).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Update All' })).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Update all' })).toBeNull();
 		expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument();
 	});
 });
@@ -362,10 +364,10 @@ describe('Software Updates page — rows match the real reply', () => {
 
 		render(UpdatesPage);
 
-		const status = async (name: string) => (await screen.findByText(name)).closest('.version-row')?.querySelector('.vtcol-status')?.textContent?.trim();
-		expect(await status('logstash')).toBe('Update Available');
+		const status = async (name: string) => (await screen.findByText(name)).closest('tr')?.querySelector('.vtcol-status')?.textContent?.trim();
+		expect(await status('logstash')).toBe('Update available');
 		expect(await status('os')).toBe('Not checked');
-		expect(await status('suricata-rules')).toBe('Up to Date');
+		expect(await status('suricata-rules')).toBe('Up to date');
 	});
 });
 
@@ -409,17 +411,17 @@ describe('Software Updates page — a long-running update', () => {
 		replies['/api/system/updates/apply'] = running(['zeek']);
 
 		render(UpdatesPage);
-		await fireEvent.click(await screen.findByRole('button', { name: 'Update All' }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
 		replies[STATUS] = {
 			...running(['zeek']), state: 'completed', current_component: null, progress_percent: 100, completed_at: '2026-11-02T20:30:00Z',
 			results: [{ component: 'zeek', success: false, old_version: '26.02.0', new_version: '26.02.0', started_at: '', completed_at: '',
 				error: 'Not every container was running. NetTap rolled back to Malcolm 26.02.0.', rollback_available: false }],
 		};
-		await fireEvent.click(screen.getByRole('button', { name: 'Update 1 Component' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Update 1 component' }));
 		await vi.advanceTimersByTimeAsync(3000);
 
-		expect(await screen.findByText('Update Failed')).toBeInTheDocument();
-		expect(screen.queryByText('Update Complete')).not.toBeInTheDocument();
+		expect(await screen.findByText('Update failed')).toBeInTheDocument();
+		expect(screen.queryByText('Update complete')).not.toBeInTheDocument();
 		expect(screen.getByText(/NetTap rolled back to Malcolm 26.02.0/)).toBeInTheDocument();
 	});
 
@@ -429,9 +431,9 @@ describe('Software Updates page — a long-running update', () => {
 		replies['/api/system/updates/apply'] = running(['zeek']);
 
 		render(UpdatesPage);
-		await fireEvent.click(await screen.findByRole('button', { name: 'Update All' }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
 		replies[STATUS] = running(['zeek']);
-		await fireEvent.click(screen.getByRole('button', { name: 'Update 1 Component' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Update 1 component' }));
 
 		expect(await screen.findByText('45% complete')).toBeInTheDocument();
 		await vi.advanceTimersByTimeAsync(150_000);
@@ -444,7 +446,7 @@ describe('Software Updates page — a long-running update', () => {
 			results: [{ component: 'zeek', success: true, old_version: '6.0.4', new_version: '6.0.5', started_at: '', completed_at: '', error: null, rollback_available: false }],
 		};
 		await vi.advanceTimersByTimeAsync(3000);
-		expect(await screen.findByText('Update Complete')).toBeInTheDocument();
+		expect(await screen.findByText('Update complete')).toBeInTheDocument();
 		expect(screen.getByText('1 succeeded')).toBeInTheDocument();
 
 		const callsWhenDone = statusCalls();
@@ -467,7 +469,7 @@ describe('Software Updates page — a long-running update', () => {
 		render(UpdatesPage);
 
 		expect(await screen.findByText('45% complete')).toBeInTheDocument();
-		expect(screen.getByText('Updating...', { selector: '.card-title' })).toBeInTheDocument();
+		expect(screen.getByText('Updating…', { selector: '.card-title' })).toBeInTheDocument();
 		expect(screen.getByText('malcolm', { selector: '.component-status-name' })).toBeInTheDocument();
 		// in progress mode: nothing offers to start another update
 		expect(screen.queryByRole('button', { name: /^Update \d+ Component/ })).toBeNull();
@@ -483,9 +485,9 @@ describe('Software Updates page — a long-running update', () => {
 		replies['/api/system/updates/apply'] = { error: 'An update is already running', ...running(['malcolm'], 'Backing up OpenSearch') };
 
 		render(UpdatesPage);
-		await fireEvent.click(await screen.findByRole('button', { name: 'Update All' }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'Update all' }));
 		replies[STATUS] = running(['malcolm'], 'Backing up OpenSearch');
-		await fireEvent.click(screen.getByRole('button', { name: 'Update 1 Component' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Update 1 component' }));
 
 		expect(await screen.findByText('Backing up OpenSearch')).toBeInTheDocument();
 		expect(screen.getByText('malcolm', { selector: '.component-status-name' })).toBeInTheDocument();
@@ -508,7 +510,7 @@ describe('Software Updates page — a long-running update', () => {
 		expect(
 			await screen.findByText('Lost contact with NetTap while the update was running: reload the page to see where it got to.'),
 		).toBeInTheDocument();
-		expect(screen.queryByText('Update Complete')).not.toBeInTheDocument();
+		expect(screen.queryByText('Update complete')).not.toBeInTheDocument();
 		const callsWhenStopped = statusCalls();
 		await vi.advanceTimersByTimeAsync(30_000);
 		expect(statusCalls()).toBe(callsWhenStopped);
@@ -538,7 +540,7 @@ describe('Software Updates page — the Malcolm row', () => {
 		});
 	}
 	const actionCell = async (name: string) =>
-		(await screen.findByText(name, { selector: '.component-name' })).closest('.version-row')!.querySelector('.vtcol-action') as HTMLElement;
+		(await screen.findByText(name, { selector: '.component-name' })).closest('tr')!.querySelector('.vtcol-action') as HTMLElement;
 
 	it('shows the applies_with sentence in the action column, with no Update button for that row', async () => {
 		stub();
@@ -556,5 +558,130 @@ describe('Software Updates page — the Malcolm row', () => {
 		const cell = await actionCell('malcolm');
 		expect(within(cell).getByRole('button', { name: 'Update' })).toBeInTheDocument();
 		expect(screen.getAllByRole('button', { name: 'Update' })).toHaveLength(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Redesign: card states, table sorting and the page refresh contract (PLAN.md §5.5)
+// ---------------------------------------------------------------------------
+
+const ANSWERED: Record<string, unknown> = {
+	'/api/system/versions': VERSIONS,
+	'/api/system/updates/available': { updates: [], last_check: '2026-11-02T21:00:00Z' },
+	'/api/system/updates/history': { history: [], count: 0 },
+	'/api/system/updates/status': {
+		state: 'idle', components: [], current_component: null, current_step: null, progress_percent: 0,
+		started_at: null, completed_at: null, results: [],
+	},
+};
+
+describe('Software Updates page — card states', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('shows the versions card loading while the request is pending', () => {
+		vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+
+		render(UpdatesPage);
+
+		expect(screen.getByText('Loading version information').closest('[role="status"]')).toHaveAttribute('aria-busy', 'true');
+	});
+
+	it('offers Try again on a failed versions load, which loads again', async () => {
+		stubFetch({ '/api/system/updates/available': { updates: [], last_check: '' } });
+		const versionCalls = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === '/api/system/versions').length;
+
+		render(UpdatesPage);
+
+		const error = (await screen.findByText("Couldn't load installed versions: the request failed.")).closest('[role="alert"]') as HTMLElement;
+		const before = versionCalls();
+		await fireEvent.click(within(error).getByRole('button', { name: 'Try again' }));
+		await vi.waitFor(() => expect(versionCalls()).toBe(before + 1));
+	});
+
+	it('shows the empty state when the daemon lists no components', async () => {
+		stubFetch({ ...ANSWERED, '/api/system/versions': { versions: [], last_scan: '' } });
+
+		render(UpdatesPage);
+
+		expect(await screen.findByText('No version information available')).toBeInTheDocument();
+	});
+
+	it('keeps the rows and says so when a later versions load fails', async () => {
+		const replies: Record<string, unknown> = { ...ANSWERED };
+		stubFetch(replies);
+		render(UpdatesPage);
+		await screen.findByText('Zeek');
+
+		delete replies['/api/system/versions'];
+		await refreshPage();
+
+		expect(await screen.findByText("Couldn't refresh installed versions; showing the last figures loaded.")).toBeInTheDocument();
+		expect(screen.getByText('Zeek')).toBeInTheDocument();
+	});
+});
+
+describe('Software Updates page — versions table', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const row = (name: string, status = 'ok') =>
+		({ name, category: 'docker', current_version: '1', install_type: 'docker', last_checked: '', status, details: {} });
+
+	it('sorts by name first, and by status (most urgent first) from its header', async () => {
+		stubFetch({
+			...ANSWERED,
+			'/api/system/versions': { versions: [row('zeek'), row('arkime', 'error'), row('logstash')], last_scan: '' },
+			'/api/system/updates/available': {
+				updates: [{ component: 'logstash', current_version: '1', latest_version: '2', update_type: 'minor', release_url: '', release_date: '',
+					changelog: '', size_mb: null, requires_restart: false, applies_with: null }],
+				last_check: '2026-11-02T21:00:00Z',
+			},
+		});
+		render(UpdatesPage);
+		await screen.findByText('zeek');
+		const names = () => [...document.querySelectorAll('.component-name')].map((el) => el.textContent);
+
+		expect(names()).toEqual(['arkime', 'logstash', 'zeek']);
+		const header = screen.getByRole('columnheader', { name: /^Status/ });
+		await fireEvent.click(within(header).getByRole('button'));
+		if (header.getAttribute('aria-sort') !== 'descending') await fireEvent.click(within(header).getByRole('button'));
+
+		expect(header).toHaveAttribute('aria-sort', 'descending');
+		expect(names()).toEqual(['arkime', 'logstash', 'zeek']);
+		await fireEvent.click(within(header).getByRole('button'));
+		expect(names()).toEqual(['zeek', 'logstash', 'arkime']);
+	});
+});
+
+describe('Software Updates page — refresh contract', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('registers its loader and reports ok when every request answers', async () => {
+		stubFetch(ANSWERED);
+		render(UpdatesPage);
+
+		expect(get(pageRefresh).available).toBe(true);
+		expect(await refreshPage()).toBe('ok');
+	});
+
+	it('reports partial when one request fails', async () => {
+		stubFetch({ ...ANSWERED, '/api/system/updates/history': undefined });
+		render(UpdatesPage);
+
+		expect(await refreshPage()).toBe('partial');
+	});
+
+	it('reports failed when every request fails', async () => {
+		stubFetch({});
+		render(UpdatesPage);
+
+		expect(await refreshPage()).toBe('failed');
+	});
+
+	it('unregisters when the page goes', () => {
+		stubFetch(ANSWERED);
+		const { unmount } = render(UpdatesPage);
+		unmount();
+
+		expect(get(pageRefresh).available).toBe(false);
 	});
 });

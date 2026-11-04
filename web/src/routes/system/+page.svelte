@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy, onMount } from 'svelte';
 	import { getSystemHealth, getStorageStatus, getSmartHealth } from '$api/system.js';
 	import { getTSharkStatus } from '$api/tshark.js';
 	import { getCyberChefStatus } from '$api/cyberchef.js';
@@ -7,6 +8,13 @@
 	import type { CyberChefStatus } from '$api/cyberchef.js';
 	import BridgeStatus from '$lib/components/BridgeStatus.svelte';
 	import { getCaptureMode } from '$api/capture.js';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import Meter from '$lib/components/ui/Meter.svelte';
+	import Pipeline, { type PipelineStage } from '$lib/components/ui/Pipeline.svelte';
+	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { loadFailed } from '$lib/utils/load-failed';
 
 	let systemHealth = $state<SystemHealth | null>(null);
 	let storageStatus = $state<StorageStatus | null>(null);
@@ -21,7 +29,7 @@
 	let captureModeFailed = $state(false);
 
 	function formatBytes(bytes: number | null | undefined): string {
-		if (bytes == null || !isFinite(bytes) || bytes <= 0) return '--';
+		if (bytes == null || !isFinite(bytes) || bytes <= 0) return '—';
 		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
 		const i = Math.floor(Math.log(bytes) / Math.log(1024));
 		const val = bytes / Math.pow(1024, i);
@@ -29,7 +37,7 @@
 	}
 
 	function formatUptime(seconds: number): string {
-		if (seconds <= 0) return '--';
+		if (seconds <= 0) return '—';
 		const days = Math.floor(seconds / 86400);
 		const hours = Math.floor((seconds % 86400) / 3600);
 		const minutes = Math.floor((seconds % 3600) / 60);
@@ -40,54 +48,102 @@
 		return parts.join(' ');
 	}
 
-	function diskUsageColor(percent: number): string {
-		if (percent > 85) return 'var(--danger)';
-		if (percent > 70) return 'var(--warning)';
-		return 'var(--success)';
-	}
+	// OLD CODE START — colour-only warnings; the design system shows state with a word and a
+	// shape (the health strip's warn icon), never colour alone
+	// function diskUsageColor(percent: number): string {
+	// 	if (percent > 85) return 'var(--danger)';
+	// 	if (percent > 70) return 'var(--warning)';
+	// 	return 'var(--success)';
+	// }
+	//
+	// function tempColor(temp: number): string {
+	// 	if (temp > 70) return 'var(--danger)';
+	// 	if (temp > 55) return 'var(--warning)';
+	// 	return 'var(--success)';
+	// }
+	// OLD CODE END
+	// the old bar turned red above this share
+	const DISK_FULL_PERCENT = 85;
 
-	function tempColor(temp: number): string {
-		if (temp > 70) return 'var(--danger)';
-		if (temp > 55) return 'var(--warning)';
-		return 'var(--success)';
-	}
-
-	async function fetchAll() {
-		loading = true;
-		// OLD CODE START — #96: the getters faked "unhealthy" defaults on failure, and one
-		// failure blanked every card; they now throw, so each card is settled on its own
-		// try {
-		// 	const [health, storage, smart, tshark, cyberchef] = await Promise.all([
-		// 		getSystemHealth(),
-		// 		getStorageStatus(),
-		// 		getSmartHealth(),
-		// 		getTSharkStatus(),
-		// 		getCyberChefStatus(),
-		// 	]);
-		// 	systemHealth = health;
-		// 	storageStatus = storage;
-		// 	smartHealth = smart;
-		// 	tsharkStatus = tshark;
-		// 	cyberchefStatus = cyberchef;
-		// } catch {
-		// 	// Keep existing state on error
-		// } finally {
-		// 	loading = false;
-		// }
-		// OLD CODE END
-		const [health, storage, smart, tshark, cyberchef] = await Promise.allSettled([
+	// OLD CODE START — the page refresh contract (PLAN.md §5.5): the top bar's Refresh runs the
+	// page loader, which reports what loaded and drops a reply that lands after the page has gone
+	// async function fetchAll() {
+	// 	loading = true;
+	// 	// OLD CODE START — #96: the getters faked "unhealthy" defaults on failure, and one
+	// 	// failure blanked every card; they now throw, so each card is settled on its own
+	// 	// try {
+	// 	// 	const [health, storage, smart, tshark, cyberchef] = await Promise.all([
+	// 	// 		getSystemHealth(),
+	// 	// 		getStorageStatus(),
+	// 	// 		getSmartHealth(),
+	// 	// 		getTSharkStatus(),
+	// 	// 		getCyberChefStatus(),
+	// 	// 	]);
+	// 	// 	systemHealth = health;
+	// 	// 	storageStatus = storage;
+	// 	// 	smartHealth = smart;
+	// 	// 	tsharkStatus = tshark;
+	// 	// 	cyberchefStatus = cyberchef;
+	// 	// } catch {
+	// 	// 	// Keep existing state on error
+	// 	// } finally {
+	// 	// 	loading = false;
+	// 	// }
+	// 	// OLD CODE END
+	// 	const [health, storage, smart, tshark, cyberchef] = await Promise.allSettled([
+	// 		getSystemHealth(),
+	// 		getStorageStatus(),
+	// 		getSmartHealth(),
+	// 		getTSharkStatus(),
+	// 		getCyberChefStatus(),
+	// 	]);
+	// 	// a failed refresh keeps the last reading; the card says the refresh failed
+	// 	if (health.status === 'fulfilled') systemHealth = health.value;
+	// 	if (storage.status === 'fulfilled') storageStatus = storage.value;
+	// 	if (smart.status === 'fulfilled') smartHealth = smart.value;
+	// 	if (tshark.status === 'fulfilled') tsharkStatus = tshark.value;
+	// 	if (cyberchef.status === 'fulfilled') cyberchefStatus = cyberchef.value;
+	// 	failed = {
+	// 		health: health.status === 'rejected',
+	// 		storage: storage.status === 'rejected',
+	// 		smart: smart.status === 'rejected',
+	// 		tshark: tshark.status === 'rejected',
+	// 		cyberchef: cyberchef.status === 'rejected',
+	// 	};
+	// 	loading = false;
+	// }
+	//
+	// $effect(() => {
+	// 	fetchAll();
+	// 	getCaptureMode()
+	// 		.then((m) => {
+	// 			captureModeName = m.mode;
+	// 		})
+	// 		.catch(() => {
+	// 			captureModeFailed = true; // #96: the getter no longer guesses 'bridge'
+	// 		});
+	// });
+	// OLD CODE END
+	async function load(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		// the capture mode is read on every load now, so a failed first read can recover
+		const results = await Promise.allSettled([
 			getSystemHealth(),
 			getStorageStatus(),
 			getSmartHealth(),
 			getTSharkStatus(),
 			getCyberChefStatus(),
+			getCaptureMode(),
 		]);
+		if (!guard.current(g)) return 'skipped';
+		const [health, storage, smart, tshark, cyberchef, mode] = results;
 		// a failed refresh keeps the last reading; the card says the refresh failed
 		if (health.status === 'fulfilled') systemHealth = health.value;
 		if (storage.status === 'fulfilled') storageStatus = storage.value;
 		if (smart.status === 'fulfilled') smartHealth = smart.value;
 		if (tshark.status === 'fulfilled') tsharkStatus = tshark.value;
 		if (cyberchef.status === 'fulfilled') cyberchefStatus = cyberchef.value;
+		if (mode.status === 'fulfilled') captureModeName = mode.value.mode;
 		failed = {
 			health: health.status === 'rejected',
 			storage: storage.status === 'rejected',
@@ -95,701 +151,389 @@
 			tshark: tshark.status === 'rejected',
 			cyberchef: cyberchef.status === 'rejected',
 		};
+		// #96: the getter no longer guesses 'bridge'; a reading from an earlier load still stands
+		captureModeFailed = mode.status === 'rejected' && captureModeName === null;
 		loading = false;
+		const failures = results.filter((r) => r.status === 'rejected').length;
+		return failures === 0 ? 'ok' : failures === results.length ? 'failed' : 'partial';
 	}
 
-	$effect(() => {
-		fetchAll();
-		getCaptureMode()
-			.then((m) => {
-				captureModeName = m.mode;
-			})
-			.catch(() => {
-				captureModeFailed = true; // #96: the getter no longer guesses 'bridge'
-			});
+	const refresh = registerPageRefresh(load);
+	onDestroy(refresh.unregister);
+	onMount(() => void refresh.run());
+	const retry = () => void refresh.run();
+
+	// One stage per part this page reads; a stage with no reading is "unknown", never healthy
+	const stages = $derived.by((): PipelineStage[] => {
+		const waiting = (key: string, label: string, didFail: boolean): PipelineStage => ({
+			key,
+			label,
+			status: 'unknown',
+			detail: didFail ? 'Request failed' : 'Checking…',
+		});
+		const daemon: PipelineStage =
+			systemHealth && !failed.health
+				? { key: 'daemon', label: 'NetTap', status: systemHealth.healthy ? 'ok' : 'failing', detail: systemHealth.healthy ? `Up ${formatUptime(systemHealth.uptime)}` : 'Reports a problem' }
+				: waiting('daemon', 'NetTap', failed.health);
+		const search: PipelineStage =
+			systemHealth && !failed.health
+				? { key: 'opensearch', label: 'OpenSearch', status: systemHealth.opensearch_reachable ? 'ok' : 'failing', detail: systemHealth.opensearch_reachable ? 'Connected' : 'Not reachable' }
+				: waiting('opensearch', 'OpenSearch', failed.health);
+		const disk: PipelineStage =
+			storageStatus && !failed.storage
+				? {
+						key: 'storage',
+						label: 'Storage',
+						status: storageStatus.disk_usage_percent > DISK_FULL_PERCENT ? 'failing' : 'ok',
+						detail: `${storageStatus.disk_usage_percent.toFixed(1)}% used · ${formatBytes(storageStatus.disk_free_bytes)} free`,
+					}
+				: waiting('storage', 'Storage', failed.storage);
+		const drive: PipelineStage =
+			smartHealth && !failed.smart && smartHealth.healthy !== null
+				? { key: 'drive', label: 'Drive', status: smartHealth.healthy ? 'ok' : 'failing', detail: smartHealth.healthy ? 'SMART checks pass' : 'SMART reports a problem' }
+				: smartHealth && !failed.smart
+					? { key: 'drive', label: 'Drive', status: 'unknown', detail: "Couldn't read the drive" }
+					: waiting('drive', 'Drive', failed.smart);
+		return [daemon, search, disk, drive];
 	});
+
+	const serviceRows = $derived([
+		{ key: 'tshark', name: 'TShark', status: tsharkStatus, didFail: failed.tshark },
+		{ key: 'cyberchef', name: 'CyberChef', status: cyberchefStatus, didFail: failed.cyberchef },
+	]);
 </script>
 
 <svelte:head>
 	<title>System | NetTap</title>
 </svelte:head>
 
-<div class="system-page">
-	<!-- Header -->
-	<div class="page-header">
-		<div class="header-left">
-			<h2>System</h2>
-			<p class="text-muted">Hardware health, storage, and service status</p>
-		</div>
-		<div class="header-actions">
-			<a href="/system/updates" class="btn btn-secondary btn-sm">
-				<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-					<polyline points="7 10 12 15 17 10" />
-					<line x1="12" y1="15" x2="12" y2="3" />
-				</svg>
-				Software Updates
-			</a>
-			<button class="btn btn-primary btn-sm" onclick={fetchAll} disabled={loading}>
-				<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<polyline points="23 4 23 10 17 10" />
-					<polyline points="1 20 1 14 7 14" />
-					<path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
-				</svg>
-				{loading ? 'Loading...' : 'Refresh'}
-			</button>
-		</div>
+<div class="page-head">
+	<div>
+		<h1 class="page-title">System</h1>
+		<p class="page-sub">Hardware health, storage and service status</p>
 	</div>
+	<div class="head-actions">
+		<a href="/system/updates" class="btn"><Icon name="download" />Software updates</a>
+	</div>
+</div>
 
-	{#if loading && !systemHealth}
-		<div class="loading-state">
-			<div class="spinner"></div>
-			<p class="text-muted">Fetching system status...</p>
-		</div>
-	{:else}
-		<!-- Top cards: System Overview + OpenSearch -->
-		<div class="grid grid-cols-2">
-			<!-- System Overview -->
-			<div class="card">
-				<div class="card-header">
-					<span class="card-title">System Overview</span>
-					{#if systemHealth && !failed.health}
-						<span class={systemHealth.healthy ? 'badge badge-success' : 'badge badge-danger'}>
-							{systemHealth.healthy ? 'Healthy' : 'Degraded'}
-						</span>
+<div class="grid">
+	<Card title="System health" sub="Latest reading of each part · updated when the page loads or refreshes" class="c-12 health-card">
+		<Pipeline {stages} />
+	</Card>
+
+	<Card title="System overview" sub="The NetTap daemon · uptime and last check" class="c-6">
+		{#snippet actions()}
+			{#if systemHealth && !failed.health}
+				<span class={['chip', systemHealth.healthy ? 'is-ok' : 'is-bad']}>{systemHealth.healthy ? 'Healthy' : 'Degraded'}</span>
+			{:else if !loading}
+				<span class="chip">Unknown</span>
+			{/if}
+		{/snippet}
+		{#if loading && !systemHealth}
+			<CardState state="loading" title="Loading system health" />
+		{:else if failed.health && !systemHealth}
+			<CardState
+				state="error"
+				title="Couldn't load system health: the request failed."
+				message="Check that the NetTap daemon is running, then try again."
+				onaction={retry}
+			/>
+		{:else}
+			{#if failed.health}
+				<div class="notice is-warn" role="status"><Icon name="warn" />{loadFailed('system health', true)}</div>
+			{/if}
+			<dl class="facts flush">
+				<dt>Uptime</dt>
+				<dd class="mono">{systemHealth ? formatUptime(systemHealth.uptime) : '—'}</dd>
+				<dt>Last check</dt>
+				<dd class="mono">{systemHealth ? new Date(systemHealth.timestamp).toLocaleString() : '—'}</dd>
+			</dl>
+		{/if}
+	</Card>
+
+	<Card title="OpenSearch" sub="The search index NetTap stores its logs in · data indices only" class="c-6">
+		{#snippet actions()}
+			{#if systemHealth && !failed.health}
+				<span class={['chip', systemHealth.opensearch_reachable ? 'is-ok' : 'is-bad']}>
+					{systemHealth.opensearch_reachable ? 'Reachable' : 'Unreachable'}
+				</span>
+			{:else if !loading}
+				<span class="chip">Unknown</span>
+			{/if}
+		{/snippet}
+		{#if loading && !systemHealth && !storageStatus}
+			<CardState state="loading" title="Loading OpenSearch status" />
+		{:else if failed.health && failed.storage && !systemHealth && !storageStatus}
+			<CardState
+				state="error"
+				title="Couldn't check OpenSearch: the system health and storage requests failed."
+				message="Check that the NetTap daemon is running, then try again."
+				onaction={retry}
+			/>
+		{:else}
+			<dl class="facts flush">
+				<dt>Status</dt>
+				<dd>
+					{#if !systemHealth}
+						<span class="dim">—</span>
+					{:else if systemHealth.opensearch_reachable}
+						Connected
 					{:else}
-						<span class="badge">Unknown</span>
+						Disconnected
 					{/if}
-				</div>
-				{#if failed.health}
-					<p class="text-muted">Couldn't load system health: the request failed.</p>
+				</dd>
+				<!-- data indices only: the storage manager skips OpenSearch's own "." indices (#39) -->
+				<dt>Data indices</dt>
+				<!-- #96: the daemon sends indices_error (and null counts) when OpenSearch couldn't be asked -->
+				{#if storageStatus?.indices_error}
+					<dd class="dim" title={storageStatus.indices_error}>Couldn't read indices</dd>
+				{:else}
+					<dd class="num">{storageStatus?.total_indices ?? storageStatus?.index_summary?.count ?? '—'}</dd>
 				{/if}
-				<div class="info-grid">
-					<div class="info-row">
-						<span class="info-label">Uptime</span>
-						<span class="info-value mono">{systemHealth ? formatUptime(systemHealth.uptime) : '--'}</span>
-					</div>
-					<div class="info-row">
-						<span class="info-label">Last Check</span>
-						<span class="info-value mono">
-							{systemHealth ? new Date(systemHealth.timestamp).toLocaleString() : '--'}
-						</span>
-					</div>
-				</div>
-			</div>
-
-			<!-- OpenSearch -->
-			<div class="card">
-				<div class="card-header">
-					<span class="card-title">OpenSearch</span>
-					{#if systemHealth && !failed.health}
-						<span class={systemHealth.opensearch_reachable ? 'badge badge-success' : 'badge badge-danger'}>
-							{systemHealth.opensearch_reachable ? 'Reachable' : 'Unreachable'}
-						</span>
-					{:else}
-						<span class="badge">Unknown</span>
-					{/if}
-				</div>
-				<div class="info-grid">
-					<div class="info-row">
-						<span class="info-label">Status</span>
-						<span class="info-value">
-							{#if !systemHealth}
-								<span class="text-muted">--</span>
-							{:else if systemHealth.opensearch_reachable}
-								<span class="text-success">Connected</span>
-							{:else}
-								<span class="text-danger">Disconnected</span>
-							{/if}
-						</span>
-					</div>
-					<div class="info-row">
-						<!-- data indices only: the storage manager skips OpenSearch's own "." indices (#39) -->
-						<span class="info-label">Data Indices</span>
-						<!-- #96: the daemon sends indices_error (and null counts) when OpenSearch couldn't be asked -->
-						{#if storageStatus?.indices_error}
-							<span class="info-value text-muted" title={storageStatus.indices_error}>Couldn't read indices</span>
-						{:else}
-							<span class="info-value mono">
-								{storageStatus?.total_indices ?? storageStatus?.index_summary?.count ?? '--'}
-							</span>
-						{/if}
-					</div>
-				</div>
-				{#if systemHealth && !systemHealth.opensearch_reachable}
-					<div class="alert alert-info os-help">
+			</dl>
+			{#if systemHealth && !systemHealth.opensearch_reachable}
+				<div class="notice" role="status">
+					<Icon name="warn" />
+					<div>
 						OpenSearch is not reachable. Possible causes:
-						<ul>
-							<li>OpenSearch container is still starting (can take up to 3 minutes)</li>
-							<li>Credentials are not configured — check curlrc mount</li>
-							<li>OpenSearch security needs bootstrap — see CLAUDE.md</li>
+						<ul class="causes">
+							<li>The OpenSearch container is still starting, which can take up to 3 minutes.</li>
+							<li>Its credentials aren't configured: check the curlrc mount.</li>
+							<li>OpenSearch security needs its bootstrap: see CLAUDE.md.</li>
 						</ul>
 					</div>
-				{/if}
-			</div>
-		</div>
-
-		<!-- Bridge & Failover Status -->
-		<!-- OLD CODE START — rendered (and polled /api/bridge) in every capture mode (2026-10-30)
-		<BridgeStatus />
-		OLD CODE END -->
-		{#if captureModeName === 'bridge'}
-			<BridgeStatus />
-		{:else if captureModeFailed}
-			<div class="card">
-				<p class="text-muted">Couldn't read the capture mode, so bridge status isn't shown.</p>
-			</div>
+				</div>
+			{/if}
 		{/if}
+	</Card>
 
-		<!-- Storage card (full width) -->
-		<div class="card">
-			<div class="card-header">
-				<span class="card-title">Storage</span>
-				{#if failed.storage}
-					<span class="badge">Unknown</span>
-				{/if}
-				{#if storageStatus}
-					<span class="storage-percent mono" style="color: {diskUsageColor(storageStatus.disk_usage_percent)}">
-						{storageStatus.disk_usage_percent.toFixed(1)}% used
-					</span>
-				{/if}
-			</div>
+	<!-- OLD CODE START — rendered (and polled /api/bridge) in every capture mode (2026-10-30)
+	<BridgeStatus />
+	OLD CODE END -->
+	{#if captureModeName === 'bridge'}
+		<div class="c-12"><BridgeStatus /></div>
+	{:else if captureModeFailed}
+		<Card title="Bridge and failover" sub="Shown in bridge mode only" class="c-12">
+			<CardState
+				state="error"
+				title="Couldn't read the capture mode, so bridge status isn't shown."
+				message="Try again in a moment; the rest of this page doesn't depend on it."
+				onaction={retry}
+			/>
+		</Card>
+	{/if}
+
+	<Card title="Storage" sub="The data disk · space and how long each kind of data is kept" class="c-12">
+		{#snippet actions()}
 			{#if failed.storage}
-				<p class="text-muted">Couldn't load storage status: the request failed.</p>
+				<span class="chip">Unknown</span>
 			{/if}
 			{#if storageStatus}
-				<div class="storage-bar-container">
-					<div
-						class="storage-bar"
-						style="width: {Math.min(storageStatus.disk_usage_percent, 100)}%; background-color: {diskUsageColor(storageStatus.disk_usage_percent)}"
-					></div>
-				</div>
-				<div class="storage-details">
-					<div class="storage-stat">
-						<span class="info-label">Total</span>
-						<span class="info-value mono">{formatBytes(storageStatus.disk_total_bytes)}</span>
-					</div>
-					<div class="storage-stat">
-						<span class="info-label">Used</span>
-						<span class="info-value mono">{formatBytes(storageStatus.disk_used_bytes)}</span>
-					</div>
-					<div class="storage-stat">
-						<span class="info-label">Free</span>
-						<span class="info-value mono">{formatBytes(storageStatus.disk_free_bytes)}</span>
-					</div>
-				</div>
-				{#if storageStatus.retention}
-					<div class="retention-section">
-						<span class="info-label">Retention Policy</span>
-						<div class="retention-details">
-							{#if typeof storageStatus.retention === 'object'}
-								{#each Object.entries(storageStatus.retention) as [key, val]}
-									<div class="retention-item">
-										<span class="retention-key">{key}:</span>
-										<span class="retention-val mono">{val}</span>
-									</div>
-								{/each}
-							{:else}
-								<span class="mono">{storageStatus.retention}</span>
-							{/if}
-						</div>
-					</div>
-				{/if}
-			{:else if !failed.storage}
-				<p class="text-muted">Storage data unavailable</p>
+				<span class="chip num">{storageStatus.disk_usage_percent.toFixed(1)}% used</span>
 			{/if}
-		</div>
-
-		<!-- Bottom row: SMART + Services -->
-		<div class="grid grid-cols-2">
-			<!-- Drive Health (SMART) -->
-			<div class="card">
-				<div class="card-header">
-					<span class="card-title">Drive Health</span>
-					{#if failed.smart || smartHealth?.healthy === null}
-						<span class="badge">Unknown</span>
-					{:else if smartHealth}
-						<span class={smartHealth.healthy ? 'badge badge-success' : 'badge badge-danger'}>
-							{smartHealth.healthy ? 'Healthy' : 'Degraded'}
-						</span>
-					{:else}
-						<span class="badge">Unknown</span>
-					{/if}
-				</div>
-				{#if failed.smart}
-					<p class="text-muted">Couldn't load drive health: the request failed.</p>
-				{:else if smartHealth?.healthy === null}
-					<!-- #96: the daemon reports healthy: null (with error) when the drive can't be read -->
-					<p class="text-muted">Drive health unknown: {smartHealth.error || 'the drive could not be read.'}</p>
+		{/snippet}
+		{#if loading && !storageStatus}
+			<CardState state="loading" title="Loading storage" />
+		{:else if failed.storage && !storageStatus}
+			<CardState
+				state="error"
+				title="Couldn't load storage status: the request failed."
+				message="Check that the NetTap daemon is running, then try again."
+				onaction={retry}
+			/>
+		{:else if storageStatus}
+			{#if failed.storage}
+				<div class="notice is-warn" role="status"><Icon name="warn" />{loadFailed('storage status', true)}</div>
+			{/if}
+			<Meter value={storageStatus.disk_usage_percent} label="Disk used" />
+			<dl class="facts">
+				<dt>Total</dt>
+				<dd class="mono">{formatBytes(storageStatus.disk_total_bytes)}</dd>
+				<dt>Used</dt>
+				<dd class="mono">{formatBytes(storageStatus.disk_used_bytes)}</dd>
+				<dt>Free</dt>
+				<dd class="mono">{formatBytes(storageStatus.disk_free_bytes)}</dd>
+			</dl>
+			{#if storageStatus.retention}
+				<h3 class="eyebrow section-label">Retention policy</h3>
+				{#if typeof storageStatus.retention === 'object'}
+					<dl class="facts flush">
+						{#each Object.entries(storageStatus.retention) as [key, val] (key)}
+							<dt>{key}</dt>
+							<dd class="mono">{val}</dd>
+						{/each}
+					</dl>
+				{:else}
+					<p class="mono">{storageStatus.retention}</p>
 				{/if}
-				{#if smartHealth && smartHealth.device}
-					<div class="info-grid">
-						<div class="info-row">
-							<span class="info-label">Model</span>
-							<span class="info-value mono">{smartHealth.model || '--'}</span>
-						</div>
-						<div class="info-row">
-							<span class="info-label">Temperature</span>
-							{#if smartHealth.temperature_c != null}
-								<span class="info-value mono" style="color: {tempColor(smartHealth.temperature_c)}">
-									{smartHealth.temperature_c}&deg;C
-								</span>
+			{/if}
+		{:else}
+			<CardState state="empty" title="Storage data unavailable" message="Disk figures appear here once the daemon reports them." />
+		{/if}
+	</Card>
+
+	<Card title="Drive health" sub="SMART readings from the data drive" class="c-6">
+		{#snippet actions()}
+			{#if failed.smart || smartHealth?.healthy === null}
+				<span class="chip">Unknown</span>
+			{:else if smartHealth}
+				<span class={['chip', smartHealth.healthy ? 'is-ok' : 'is-bad']}>{smartHealth.healthy ? 'Healthy' : 'Degraded'}</span>
+			{:else if !loading}
+				<span class="chip">Unknown</span>
+			{/if}
+		{/snippet}
+		{#if loading && !smartHealth}
+			<CardState state="loading" title="Loading drive health" />
+		{:else if failed.smart && !smartHealth}
+			<CardState
+				state="error"
+				title="Couldn't load drive health: the request failed."
+				message="Check that the NetTap daemon is running, then try again."
+				onaction={retry}
+			/>
+		{:else}
+			{#if failed.smart}
+				<div class="notice is-warn" role="status"><Icon name="warn" />{loadFailed('drive health', true)}</div>
+			{:else if smartHealth?.healthy === null}
+				<!-- #96: the daemon reports healthy: null (with error) when the drive can't be read -->
+				<div class="notice is-warn" role="status"><Icon name="warn" />Drive health unknown: {smartHealth.error || 'the drive could not be read.'}</div>
+			{/if}
+			{#if smartHealth && smartHealth.device}
+				<dl class="facts flush">
+					<dt>Model</dt>
+					<dd class="mono">{smartHealth.model || '—'}</dd>
+					<dt>Temperature</dt>
+					{#if smartHealth.temperature_c != null}
+						<dd class="num">{smartHealth.temperature_c}&deg;C</dd>
+					{:else}
+						<dd class="dim" title="SMART temperature data could not be read. Check /dev mount and SYS_RAWIO capability.">Unavailable</dd>
+					{/if}
+					<dt>Wear</dt>
+					{#if smartHealth.percentage_used != null}
+						<dd class="wear">
+							<Meter value={smartHealth.percentage_used} label="Drive wear" />
+							<span class="num">{smartHealth.percentage_used}%</span>
+						</dd>
+					{:else}
+						<dd class="dim" title="SMART wear level data could not be read. Check /dev mount and SYS_RAWIO capability.">Unavailable</dd>
+					{/if}
+					<dt>Power-on hours</dt>
+					{#if smartHealth.power_on_hours != null}
+						<dd class="num">{smartHealth.power_on_hours.toLocaleString()}</dd>
+					{:else}
+						<dd class="dim" title="SMART power-on hours data could not be read. Check /dev mount and SYS_RAWIO capability.">Unavailable</dd>
+					{/if}
+					<dt>Total written</dt>
+					<dd class="mono">{smartHealth.total_bytes_written != null ? formatBytes(smartHealth.total_bytes_written) : '—'}</dd>
+					<dt>Total read</dt>
+					<dd class="mono">{smartHealth.total_bytes_read != null ? formatBytes(smartHealth.total_bytes_read) : '—'}</dd>
+					{#if smartHealth.device_type === 'nvme'}
+						<dt>Media errors</dt>
+						<dd class="num">
+							{#if smartHealth.media_errors == null}
+								—
+							{:else if smartHealth.media_errors > 0}
+								<span class="chip is-warn">{smartHealth.media_errors.toLocaleString()} found</span>
 							{:else}
-								<span class="info-value unavailable" title="SMART temperature data could not be read. Check /dev mount and SYS_RAWIO capability.">Unavailable</span>
+								0
 							{/if}
-						</div>
-						<div class="info-row">
-							<span class="info-label">Wear</span>
-							{#if smartHealth.percentage_used != null}
-								<div class="wear-cell">
-									<div class="wear-bar-container">
-										<div
-											class="wear-bar"
-											style="width: {Math.min(smartHealth.percentage_used, 100)}%; background-color: {smartHealth.percentage_used > 80 ? 'var(--danger)' : smartHealth.percentage_used > 50 ? 'var(--warning)' : 'var(--success)'}"
-										></div>
-									</div>
-									<span class="mono wear-text">{smartHealth.percentage_used}%</span>
-								</div>
+						</dd>
+					{/if}
+					{#if smartHealth.device_type === 'sata'}
+						<dt>Reallocated sectors</dt>
+						<dd class="num">
+							{#if smartHealth.reallocated_sectors == null}
+								—
+							{:else if smartHealth.reallocated_sectors > 0}
+								<span class="chip is-warn">{smartHealth.reallocated_sectors.toLocaleString()} found</span>
 							{:else}
-								<span class="info-value unavailable" title="SMART wear level data could not be read. Check /dev mount and SYS_RAWIO capability.">Unavailable</span>
+								0
 							{/if}
-						</div>
-						<div class="info-row">
-							<span class="info-label">Power-On Hours</span>
-							{#if smartHealth.power_on_hours != null}
-								<span class="info-value mono">{smartHealth.power_on_hours.toLocaleString()}</span>
-							{:else}
-								<span class="info-value unavailable" title="SMART power-on hours data could not be read. Check /dev mount and SYS_RAWIO capability.">Unavailable</span>
-							{/if}
-						</div>
-						<div class="info-row">
-							<span class="info-label">Total Written</span>
-							{#if smartHealth.total_bytes_written != null}
-								<span class="info-value mono">{formatBytes(smartHealth.total_bytes_written)}</span>
-							{:else}
-								<span class="info-value text-muted">--</span>
-							{/if}
-						</div>
-						<div class="info-row">
-							<span class="info-label">Total Read</span>
-							{#if smartHealth.total_bytes_read != null}
-								<span class="info-value mono">{formatBytes(smartHealth.total_bytes_read)}</span>
-							{:else}
-								<span class="info-value text-muted">--</span>
-							{/if}
-						</div>
+						</dd>
+					{/if}
+					<dt>Serial</dt>
+					<dd class="mono">{smartHealth.serial || '—'}</dd>
+					<dt>Type</dt>
+					<dd>
 						{#if smartHealth.device_type === 'nvme'}
-							<div class="info-row">
-								<span class="info-label">Media Errors</span>
-								{#if smartHealth.media_errors != null}
-									<span class="info-value mono" style="color: {smartHealth.media_errors > 0 ? 'var(--danger)' : 'var(--success)'}">
-										{smartHealth.media_errors.toLocaleString()}
-									</span>
-								{:else}
-									<span class="info-value text-muted">--</span>
-								{/if}
-							</div>
+							<span class="tag">NVMe</span>
+						{:else if smartHealth.device_type === 'sata'}
+							<span class="tag">SATA</span>
+						{:else}
+							<span class="dim">—</span>
 						{/if}
-						{#if smartHealth.device_type === 'sata'}
-							<div class="info-row">
-								<span class="info-label">Reallocated Sectors</span>
-								{#if smartHealth.reallocated_sectors != null}
-									<span class="info-value mono" style="color: {smartHealth.reallocated_sectors > 0 ? 'var(--danger)' : 'var(--success)'}">
-										{smartHealth.reallocated_sectors.toLocaleString()}
-									</span>
-								{:else}
-									<span class="info-value text-muted">--</span>
-								{/if}
-							</div>
-						{/if}
-						<div class="info-row">
-							<span class="info-label">Serial</span>
-							<span class="info-value mono">{smartHealth.serial || '--'}</span>
-						</div>
-						<div class="info-row">
-							<span class="info-label">Type</span>
-							<span class="info-value">
-								{#if smartHealth.device_type === 'nvme'}
-									<span class="badge badge-info">NVMe</span>
-								{:else if smartHealth.device_type === 'sata'}
-									<span class="badge badge-info">SATA</span>
-								{:else}
-									<span class="text-muted">--</span>
-								{/if}
-							</span>
-						</div>
-						{#if smartHealth.timestamp}
-							<div class="info-row">
-								<span class="info-label">Last Updated</span>
-								<span class="info-value text-muted">{new Date(smartHealth.timestamp).toLocaleString()}</span>
-							</div>
-						{/if}
-					</div>
-					{#if smartHealth.temperature_c == null && smartHealth.power_on_hours == null && smartHealth.percentage_used == null}
-						<div class="alert alert-info os-help">
+					</dd>
+					{#if smartHealth.timestamp}
+						<dt>Last updated</dt>
+						<dd class="dim">{new Date(smartHealth.timestamp).toLocaleString()}</dd>
+					{/if}
+				</dl>
+				{#if smartHealth.temperature_c == null && smartHealth.power_on_hours == null && smartHealth.percentage_used == null}
+					<div class="notice" role="status">
+						<Icon name="warn" />
+						<div>
 							SMART metrics are unavailable. The device was detected but no data could be read.
 							Check that the /dev volume is mounted without :ro in Docker Compose, as NVMe drives require write access for admin commands.
-							<a href="/api/smart/diagnostics" target="_blank" class="diag-link">View diagnostics</a>
+							<a href="/api/smart/diagnostics" target="_blank" rel="noopener" class="link">View diagnostics</a>
 						</div>
-					{/if}
-					{#if smartHealth.warnings && smartHealth.warnings.length > 0}
-						<div class="smart-warnings">
-							{#each smartHealth.warnings as warning}
-								<div class="alert alert-warning">{warning}</div>
-							{/each}
-						</div>
-					{/if}
-				{:else if !failed.smart && smartHealth?.healthy !== null}
-					<p class="text-muted">SMART data unavailable. Drive health monitoring requires smartmontools.</p>
+					</div>
 				{/if}
-			</div>
+				{#each smartHealth.warnings ?? [] as warning}
+					<div class="notice is-warn" role="status"><Icon name="warn" />{warning}</div>
+				{/each}
+			{:else if !failed.smart && smartHealth?.healthy !== null}
+				<CardState state="empty" title="SMART data unavailable" message="Drive health monitoring requires smartmontools." />
+			{/if}
+		{/if}
+	</Card>
 
-			<!-- Services -->
-			<div class="card">
-				<div class="card-header">
-					<span class="card-title">Services</span>
-				</div>
-				<div class="services-list">
-					<!-- TShark -->
-					<div class="service-item">
-						<div class="service-info">
-							<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0022 16z" />
-								<polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-								<line x1="12" y1="22.08" x2="12" y2="12" />
-							</svg>
-							<div>
-								<span class="service-name">TShark</span>
-								{#if failed.tshark}
-									<span class="service-version">couldn't check</span>
-								{:else if tsharkStatus?.version}
-									<span class="service-version mono">{tsharkStatus.version}</span>
-								{:else if tsharkStatus && !tsharkStatus.available}
-									<span class="service-version mono">not deployed</span>
-								{/if}
-							</div>
-						</div>
-						{#if failed.tshark}
-							<span class="badge" title="The status request failed">Unknown</span>
-						{:else if tsharkStatus}
-							<span class={tsharkStatus.available ? 'badge badge-success' : 'badge badge-muted'}>
-								{tsharkStatus.available ? 'Available' : 'Not Deployed'}
-							</span>
+	<Card title="Services" sub="Optional analysis tools · installed version" class="c-6">
+		{#snippet actions()}
+			{#if cyberchefStatus?.available}
+				<a href="/system/cyberchef" class="link">Open CyberChef</a>
+			{/if}
+		{/snippet}
+		{#if loading && !tsharkStatus && !cyberchefStatus}
+			<CardState state="loading" title="Loading services" />
+		{:else}
+			<dl class="facts flush">
+				{#each serviceRows as row (row.key)}
+					<dt>{row.name}</dt>
+					<dd class="service">
+						{#if row.didFail}
+							<span class="dim">couldn't check</span>
+							<span class="chip" title="The status request failed">Unknown</span>
+						{:else if row.status}
+							{#if row.status.version}
+								<span class="mono">{row.status.version}</span>
+							{:else if !row.status.available}
+								<span class="mono dim">not deployed</span>
+							{/if}
+							<span class={['chip', row.status.available && 'is-ok']}>{row.status.available ? 'Available' : 'Not deployed'}</span>
 						{:else}
-							<span class="badge">Checking...</span>
+							<span class="chip">Checking…</span>
 						{/if}
-					</div>
-
-					<!-- CyberChef -->
-					<div class="service-item">
-						<div class="service-info">
-							<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-								<polyline points="16 18 22 12 16 6" />
-								<polyline points="8 6 2 12 8 18" />
-								<line x1="14" y1="4" x2="10" y2="20" />
-							</svg>
-							<div>
-								<span class="service-name">CyberChef</span>
-								{#if failed.cyberchef}
-									<span class="service-version">couldn't check</span>
-								{:else if cyberchefStatus?.version}
-									<span class="service-version mono">{cyberchefStatus.version}</span>
-								{:else if cyberchefStatus && !cyberchefStatus.available}
-									<span class="service-version mono">not deployed</span>
-								{/if}
-							</div>
-						</div>
-						{#if failed.cyberchef}
-							<span class="badge" title="The status request failed">Unknown</span>
-						{:else if cyberchefStatus}
-							<span class={cyberchefStatus.available ? 'badge badge-success' : 'badge badge-muted'}>
-								{cyberchefStatus.available ? 'Available' : 'Not Deployed'}
-							</span>
-						{:else}
-							<span class="badge">Checking...</span>
-						{/if}
-					</div>
-				</div>
-
-				<div class="service-links">
-					{#if cyberchefStatus?.available}
-						<a href="/system/cyberchef" class="btn btn-secondary btn-sm">Open CyberChef</a>
-					{/if}
-				</div>
-			</div>
-		</div>
-	{/if}
+					</dd>
+				{/each}
+			</dl>
+		{/if}
+	</Card>
 </div>
 
 <style>
-	.system-page {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
+	/* the four health stages fill the row on desktop; the system's tablet and phone rules still apply */
+	@container app (min-width: 1101px) {
+		:global(.health-card .pipe) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 	}
-
-	/* Header */
-	.page-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: var(--space-md);
-		flex-wrap: wrap;
-	}
-
-	.header-left h2 {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		margin-bottom: var(--space-xs);
-	}
-
-	.header-actions {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	/* Loading */
-	.loading-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: var(--space-3xl);
-		gap: var(--space-md);
-	}
-
-	.spinner {
-		width: 32px;
-		height: 32px;
-		border: 3px solid var(--border-default);
-		border-top-color: var(--accent);
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-	/* Info grid (key-value rows) */
-	.info-grid {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.info-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: var(--space-xs) 0;
-		border-bottom: 1px solid var(--border-muted);
-	}
-
-	.info-row:last-child {
-		border-bottom: none;
-	}
-
-	.info-label {
-		font-size: var(--text-sm);
-		color: var(--text-secondary);
-	}
-
-	.info-value {
-		font-size: var(--text-sm);
-		color: var(--text-primary);
-		font-weight: 500;
-	}
-
-	/* Storage bar */
-	.storage-percent {
-		font-size: var(--text-sm);
-		font-weight: 600;
-	}
-
-	.storage-bar-container {
-		width: 100%;
-		height: 8px;
-		background-color: var(--bg-tertiary);
-		border-radius: var(--radius-full);
-		overflow: hidden;
-		margin-bottom: var(--space-md);
-	}
-
-	.storage-bar {
-		height: 100%;
-		border-radius: var(--radius-full);
-		transition: width var(--transition-normal);
-	}
-
-	.storage-details {
-		display: flex;
-		gap: var(--space-xl);
-		flex-wrap: wrap;
-	}
-
-	.storage-stat {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-xs);
-	}
-
-	.retention-section {
-		margin-top: var(--space-md);
-		padding-top: var(--space-md);
-		border-top: 1px solid var(--border-muted);
-	}
-
-	.retention-details {
-		margin-top: var(--space-sm);
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-xs);
-	}
-
-	.retention-item {
-		display: flex;
-		gap: var(--space-sm);
-		font-size: var(--text-sm);
-	}
-
-	.retention-key {
-		color: var(--text-secondary);
-		text-transform: capitalize;
-	}
-
-	.retention-val {
-		color: var(--text-primary);
-	}
-
-	/* Wear bar */
-	.wear-cell {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.wear-bar-container {
-		width: 80px;
-		height: 6px;
-		background-color: var(--bg-tertiary);
-		border-radius: var(--radius-full);
-		overflow: hidden;
-	}
-
-	.wear-bar {
-		height: 100%;
-		border-radius: var(--radius-full);
-		transition: width var(--transition-normal);
-	}
-
-	.wear-text {
-		font-size: var(--text-xs);
-		color: var(--text-secondary);
-		min-width: 36px;
-		text-align: right;
-	}
-
-	/* Actionable help boxes */
-	.os-help {
-		margin-top: var(--space-md);
-		font-size: var(--text-sm);
-		line-height: 1.5;
-	}
-
-	.os-help ul {
-		margin: var(--space-xs) 0 0 var(--space-md);
-		padding: 0;
-	}
-
-	.os-help li {
-		margin-bottom: var(--space-xs);
-	}
-
-	/* Unavailable metric indicator */
-	.unavailable {
-		color: var(--text-muted);
-		font-size: var(--text-xs);
-		font-style: italic;
-		cursor: help;
-		border-bottom: 1px dotted var(--text-muted);
-	}
-
-	.diag-link {
-		display: inline-block;
-		margin-top: var(--space-xs);
-		color: var(--accent);
-		text-decoration: underline;
-		font-size: var(--text-xs);
-	}
-
-	/* SMART warnings */
-	.smart-warnings {
-		margin-top: var(--space-md);
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	/* Services */
-	.services-list {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.service-item {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: var(--space-sm) 0;
-		border-bottom: 1px solid var(--border-muted);
-	}
-
-	.service-item:last-child {
-		border-bottom: none;
-	}
-
-	.service-info {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		color: var(--text-secondary);
-	}
-
-	.service-info div {
-		display: flex;
-		flex-direction: column;
-	}
-
-	.service-name {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.service-version {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-	}
-
-	.service-links {
-		margin-top: var(--space-md);
-		display: flex;
-		gap: var(--space-sm);
-	}
-
-	@media (max-width: 640px) {
-		.page-header {
-			flex-direction: column;
-		}
-
-		.storage-details {
-			flex-direction: column;
-			gap: var(--space-sm);
-		}
-	}
+	.facts.flush { border-top: 0; padding-top: 0; }
+	:global(.meter) + .facts { margin-top: var(--sp-4); }
+	/* block siblings: the margins collapse with the card head's and with each other */
+	.notice { margin-block: var(--sp-4); }
+	.notice:last-child { margin-bottom: 0; }
+	.causes { margin: var(--sp-1) 0 0; padding-left: var(--sp-5); }
+	.section-label { margin: var(--sp-5) 0 var(--sp-2); }
+	.wear { display: flex; align-items: center; gap: var(--sp-2); justify-content: flex-end; }
+	.wear :global(.meter) { flex: 1; max-width: 120px; }
+	.service { display: flex; align-items: center; gap: var(--sp-2); justify-content: flex-end; }
 </style>
