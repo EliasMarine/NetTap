@@ -8,10 +8,14 @@ export const E2E_DATA_DIR = path.join(os.tmpdir(), 'nettap-e2e-data');
 
 export default defineConfig({
 	testDir: './e2e',
-	fullyParallel: true,
+	// Behavioural specs only: the visual harness has its own config, and *.test.ts files are Vitest's.
+	testMatch: '*.spec.ts',
+	testIgnore: ['visual/**', '**/*.test.ts'],
+	// The specs share one server and one user store (setup-wizard and shell wipe it), so one file at a time.
+	fullyParallel: false,
 	forbidOnly: !!process.env.CI,
 	retries: process.env.CI ? 2 : 0,
-	workers: process.env.CI ? 1 : undefined,
+	workers: 1,
 	reporter: 'html',
 	use: {
 		baseURL: 'http://localhost:3000',

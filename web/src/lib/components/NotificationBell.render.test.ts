@@ -30,7 +30,7 @@ async function openBell() {
 	render(NotificationBell);
 	await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/notifications?limit=15'));
 	await new Promise((r) => setTimeout(r, 0));
-	await fireEvent.click(screen.getByRole('button', { name: 'Notifications' }));
+	await fireEvent.click(screen.getByRole('button', { name: /^Notifications/ }));
 }
 
 describe('NotificationBell when the request fails (#96)', () => {

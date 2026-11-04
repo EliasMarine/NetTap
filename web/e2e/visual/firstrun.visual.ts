@@ -2,10 +2,10 @@
 import { test } from '@playwright/test';
 import { expectNoConsoleErrors, expectReached, setMode, sweep, VIEWPORTS, watchApi, watchConsole } from './harness.ts';
 
-// These pages render outside the app shell (no <main>), so the marker is looked up in <body>.
+// Setup renders without the shell (no <main>), so markers are looked up in <body>; Go Live keeps the shell.
 const FIRST_RUN = [
-	{ path: '/setup', marker: 'Welcome to NetTap' },
-	{ path: '/go-live', marker: 'Go Live' },
+	{ path: '/setup', marker: 'Welcome to NetTap', shell: false },
+	{ path: '/go-live', marker: 'Go Live', shell: true },
 ] as const;
 
 for (const mode of ['empty', 'error'] as const) {
@@ -18,7 +18,7 @@ for (const mode of ['empty', 'error'] as const) {
 			await page.goto(route.path);
 			await expectReached(page, route.path, route.marker, { scope: 'body' });
 			await apiIdle();
-			await sweep(page, testInfo, { route: route.path, mode });
+			await sweep(page, testInfo, { route: route.path, mode }, { shell: route.shell });
 			expectNoConsoleErrors(errors, { route: route.path, mode });
 		});
 	}

@@ -6,8 +6,6 @@ export interface FixtureRoute {
 	empty: unknown;
 	/** Falls back to `empty`. */
 	populated?: unknown;
-	/** Falls back to `populated`, then `empty`. Only for pages that have a stale-data state. */
-	stale?: unknown;
 	/** HTTP method; any method when omitted. */
 	method?: string;
 }

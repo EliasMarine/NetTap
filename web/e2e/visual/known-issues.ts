@@ -4,9 +4,6 @@
  */
 import type { FixtureMode } from './harness.ts';
 
-// shortcut: the old shell overflows at 390 px; PR 2 sets this to true
-export const ENFORCE_MOBILE_OVERFLOW = false;
-
 export interface KnownIssue {
 	route: string;
 	modes: readonly FixtureMode[];

@@ -41,7 +41,7 @@ test.describe('signed out', () => {
 		const errors = watchConsole(page);
 		await page.goto('/login');
 		await expectReached(page, '/login', 'NetTap', { scope: 'body' });
-		await sweep(page, testInfo, { route: '/login', mode: 'empty' });
+		await sweep(page, testInfo, { route: '/login', mode: 'empty' }, { shell: false });
 		expectNoConsoleErrors(errors, { route: '/login', mode: 'empty' });
 	});
 });

@@ -1,7 +1,7 @@
 /** Shared checks for the visual specs (PLAN.md §5.2 "Each spec"). */
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { DAEMON_URL } from '../../playwright.visual.config.ts';
-import { ENFORCE_MOBILE_OVERFLOW, knownIssue } from './known-issues.ts';
+import { knownIssue } from './known-issues.ts';
 
 export const VARIANTS = ['ember', 'graphite', 'spectrum'] as const;
 export const VIEWPORTS = [
@@ -10,7 +10,12 @@ export const VIEWPORTS = [
 	{ width: 390, height: 844 },
 ] as const;
 
-export type FixtureMode = 'populated' | 'empty' | 'error' | 'slow' | 'stale';
+/** `slow` holds every daemon response until `releaseHeld()`. Stale data is a sequence: load in
+ * `populated`, `setMode('error')`, press the top bar's Refresh, then check the old data is marked. */
+export type FixtureMode = 'populated' | 'empty' | 'error' | 'slow';
+
+// --accent per theme, from src/lib/styles/tokens.css: a theme-only value, so a screenshot can't be mislabelled
+export const ACCENT = { ember: '#ff7a1a', graphite: '#f4f4f5', spectrum: '#9b8cff' } as const;
 export type Variant = (typeof VARIANTS)[number];
 
 export async function setMode(mode: FixtureMode): Promise<void> {
@@ -20,6 +25,19 @@ export async function setMode(mode: FixtureMode): Promise<void> {
 		body: JSON.stringify({ mode }),
 	});
 	if (!res.ok) throw new Error(`fixture daemon refused mode ${mode}: ${res.status} ${await res.text()}`);
+}
+
+/** How many responses `slow` mode is holding. */
+export async function heldCount(): Promise<number> {
+	const res = await fetch(`${DAEMON_URL}/__fixture/health`);
+	return ((await res.json()) as { held: number }).held;
+}
+
+/** Sends every response `slow` mode is holding; later requests are held again until the next call. */
+export async function releaseHeld(): Promise<number> {
+	const res = await fetch(`${DAEMON_URL}/__fixture/release`, { method: 'POST' });
+	if (!res.ok) throw new Error(`fixture daemon refused release: ${res.status}`);
+	return ((await res.json()) as { released: number }).released;
 }
 
 // Only the fixture daemon's 503: a 500 or 502 from the web server itself is a bug error mode must catch.
@@ -116,25 +134,37 @@ function annotate(testInfo: TestInfo, type: string, description: string): void {
 	testInfo.annotations.push({ type, description });
 }
 
-/** Horizontal overflow fails unless it is the old shell at 390 (while not enforced) or a known issue. */
+/** Horizontal overflow fails unless it is a known issue for this route. */
 function checkOverflow(testInfo: TestInfo, ctx: CheckContext, variant: Variant, width: number, scrollWidth: number): void {
 	if (scrollWidth <= width) return;
 	const where = `${ctx.route} ${scrollWidth} [${ctx.mode}, ${variant}]`;
-	if (width === 390 && !ENFORCE_MOBILE_OVERFLOW) return annotate(testInfo, 'known-overflow-390', where);
 	const known = knownIssue(ctx.route, ctx.mode, `horizontal scroll @ ${width}`);
 	if (known) return annotate(testInfo, 'known-issue', `${known.note}: ${where} @ ${width}`);
 	expect.soft(scrollWidth, `horizontal scroll, ${variant} @ ${width}`).toBeLessThanOrEqual(width);
 }
 
-/** Every variant at every viewport: black body, no horizontal scroll, a screenshot. */
+/** The shell (PLAN.md §7): the sidebar on desktop, the phone bar at 390, and the page's own h1. */
+async function checkShell(page: Page, variant: Variant, width: number): Promise<void> {
+	const at = `${variant} @ ${width}`;
+	if (width >= 1100) await expect.soft(page.locator('nav.sidebar'), `sidebar, ${at}`).toBeVisible();
+	if (width <= 760) await expect.soft(page.locator('.m-top'), `phone bar, ${at}`).toBeVisible();
+	await expect.soft(page.locator('main h1.page-title'), `one h1.page-title, ${at}`).toHaveCount(1);
+}
+
+/** Every variant at every viewport: the theme really applied, black body, no horizontal scroll,
+ * the shell (unless `shell: false`, for Login and Setup), a screenshot. */
 export async function sweep(
 	page: Page,
 	testInfo: TestInfo,
 	ctx: CheckContext,
-	opts: { variants?: readonly Variant[]; viewports?: readonly { width: number; height: number }[] } = {}
+	opts: { variants?: readonly Variant[]; viewports?: readonly { width: number; height: number }[]; shell?: boolean } = {}
 ): Promise<void> {
 	for (const variant of opts.variants ?? VARIANTS) {
 		await setVariant(page, variant);
+		const accent = await page.evaluate(() =>
+			getComputedStyle(document.documentElement).getPropertyValue('--accent').trim().toLowerCase(),
+		);
+		expect(accent, `--accent after switching to ${variant}`).toBe(ACCENT[variant]);
 		for (const viewport of opts.viewports ?? VIEWPORTS) {
 			await page.setViewportSize(viewport);
 			await settle(page);
@@ -144,6 +174,7 @@ export async function sweep(
 			}));
 			expect.soft(metrics.bg, `body background, ${variant} @ ${viewport.width}`).toBe('rgb(0, 0, 0)');
 			checkOverflow(testInfo, ctx, variant, viewport.width, metrics.scrollWidth);
+			if (opts.shell ?? true) await checkShell(page, variant, viewport.width);
 			await page.screenshot({ path: testInfo.outputPath(`${variant}-${viewport.width}.png`), fullPage: true });
 		}
 	}

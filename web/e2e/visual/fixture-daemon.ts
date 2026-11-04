@@ -10,17 +10,26 @@ import { readFileSync } from 'node:fs';
 import { ROUTES } from './fixtures/index.ts';
 import type { FixtureRoute } from './fixtures/types.ts';
 
-const MODES = ['populated', 'empty', 'error', 'slow', 'stale'] as const;
+// Stale data is a sequence, not a mode: load in `populated`, switch to `error`, refresh (harness.ts).
+const MODES = ['populated', 'empty', 'error', 'slow'] as const;
 type Mode = (typeof MODES)[number];
 
 const PORT = Number(process.env.FIXTURE_DAEMON_PORT ?? 3199);
-const SLOW_MS = 2_000;
 const TOKEN_HEADER = 'x-nettap-daemon-token';
 const tokenFile = process.env.DAEMON_TOKEN_FILE;
 if (!tokenFile) throw new Error('DAEMON_TOKEN_FILE is required');
 const expectedToken = readFileSync(tokenFile, 'utf-8').trim();
 
 let mode: Mode = 'empty';
+/** `slow` mode parks each response here until POST /__fixture/release, so tests check the loading state while it lasts. */
+let held: Array<() => void> = [];
+
+function release(): number {
+	const n = held.length;
+	held.forEach((send) => send());
+	held = [];
+	return n;
+}
 
 function send(res: ServerResponse, status: number, body: unknown): void {
 	res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -37,9 +46,7 @@ function findRoute(method: string, pathname: string): FixtureRoute | undefined {
 }
 
 function bodyFor(route: FixtureRoute, m: Mode): unknown {
-	if (m === 'empty') return route.empty;
-	if (m === 'stale') return route.stale ?? route.populated ?? route.empty;
-	return route.populated ?? route.empty;
+	return m === 'empty' ? route.empty : (route.populated ?? route.empty);
 }
 
 async function readBody(req: IncomingMessage): Promise<string> {
@@ -49,7 +56,8 @@ async function readBody(req: IncomingMessage): Promise<string> {
 }
 
 async function control(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<void> {
-	if (pathname === '/__fixture/health') return send(res, 200, { status: 'ok', mode });
+	if (pathname === '/__fixture/health') return send(res, 200, { status: 'ok', mode, held: held.length });
+	if (pathname === '/__fixture/release' && req.method === 'POST') return send(res, 200, { released: release() });
 	if (pathname === '/__fixture/mode' && req.method === 'POST') {
 		let requested: unknown;
 		try {
@@ -60,6 +68,7 @@ async function control(req: IncomingMessage, res: ServerResponse, pathname: stri
 		if (!MODES.includes(requested as Mode)) {
 			return send(res, 400, { error: `mode must be one of ${MODES.join(', ')}` });
 		}
+		release(); // a mode change never strands a parked response
 		mode = requested as Mode;
 		return send(res, 200, { mode });
 	}
@@ -82,8 +91,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 	if (!route) console.error(`[fixture-daemon] MISSING FIXTURE ${method} ${pathname} (mode ${mode})`);
 	if (mode === 'error') return send(res, 503, { error: 'Service unavailable (fixture error mode)' });
 	if (!route) return send(res, 404, { error: `No fixture for ${method} ${pathname}` });
-	if (mode === 'slow') await new Promise((r) => setTimeout(r, SLOW_MS));
-	send(res, 200, bodyFor(route, mode));
+	const body = bodyFor(route, mode);
+	if (mode === 'slow') {
+		held = [...held, () => send(res, 200, body)];
+		return;
+	}
+	send(res, 200, body);
 }
 
 createServer((req, res) => {

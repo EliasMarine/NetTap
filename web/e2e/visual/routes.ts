@@ -1,7 +1,6 @@
 /**
  * Every page under src/routes (find src/routes -name +page.svelte), with the heading
- * that proves the page itself rendered. The marker is looked up inside <main>, because
- * the layout's top bar has its own h1 on every page and would pass for any route.
+ * that proves the page itself rendered, looked up inside <main> so the shell can't pass for it.
  * Dynamic routes use synthetic ids (RFC 5737 / RFC 1918 addresses, locally administered MACs).
  */
 export interface RouteCase {
