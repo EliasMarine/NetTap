@@ -17,8 +17,9 @@ function stubDaemon(replies: Record<string, unknown>): void {
 	);
 }
 
+/** A KPI card's number, found by its label (the stat cards became KpiCards). */
 function cardValue(label: string): string | undefined {
-	return screen.getByText(label, { selector: '.card-subtitle' }).closest('.stat-card')?.querySelector('.card-value')?.textContent?.trim();
+	return screen.getByText(label, { selector: '.kpi-top > span' }).closest('.kpi')?.querySelector('.kpi-num')?.textContent?.trim();
 }
 
 describe('Home — real zeros and failed counts', () => {
@@ -31,7 +32,7 @@ describe('Home — real zeros and failed counts', () => {
 		});
 		render(HomePage);
 		await screen.findByText('0 high, 0 med, 0 low');
-		expect(cardValue('Alerts (24h)')?.startsWith('0')).toBe(true);
+		expect(cardValue('Alerts')?.startsWith('0')).toBe(true);
 		await vi.waitFor(() => expect(cardValue('Devices')).toBe('0'));
 	});
 
@@ -43,6 +44,6 @@ describe('Home — real zeros and failed counts', () => {
 		});
 		render(HomePage);
 		expect(await screen.findByText("Couldn't load the alert count: the request failed.")).toBeInTheDocument();
-		expect(cardValue('Alerts (24h)')?.startsWith('—')).toBe(true);
+		expect(cardValue('Alerts')?.startsWith('—')).toBe(true);
 	});
 });

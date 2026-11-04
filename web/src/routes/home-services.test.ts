@@ -30,8 +30,9 @@ describe('Home — application layer labels (#20)', () => {
 		);
 		render(HomePage);
 
-		expect(await screen.findByText('UNIDENTIFIED')).toBeInTheDocument();
+		// sentence case now (Voice rules); was 'UNIDENTIFIED' beside upper-case protocol names
+		expect(await screen.findByText('Unidentified')).toBeInTheDocument();
 		expect(screen.getAllByText('DNS').length).toBeGreaterThan(0);
-		expect(screen.queryByText('UNKNOWN')).not.toBeInTheDocument();
+		expect(screen.queryByText(/^unknown$/i)).not.toBeInTheDocument();
 	});
 });
