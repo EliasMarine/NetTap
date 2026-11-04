@@ -1452,7 +1452,7 @@ const SCREENS = { home: screenHome, alerts: screenAlerts, device: screenDevice, 
 /* ---------- Routing and events ---------- */
 function route() {
   const key = location.hash.slice(1);
-  if (key && !SCREENS[key]) return; // e.g. the skip link's #main: not a screen
+  if (key && !Object.hasOwn(SCREENS, key)) return; // e.g. the skip link's #main: not a screen
   const k = key || 'home';
   stopLive();
   stage.innerHTML = SCREENS[k]();
