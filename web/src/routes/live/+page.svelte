@@ -662,8 +662,6 @@
 	.filters { margin-bottom: var(--sp-4); align-items: center; }
 	button.chip { border: 0; font-family: inherit; cursor: pointer; }
 	button.link { border: 0; background: none; padding: 0; cursor: pointer; }
-	/* Many protocols are wider than a phone: the track scrolls instead of the page */
-	.toolbar :global(.pills) { max-width: 100%; overflow-x: auto; }
 	/* The system's new-row flash (tr.new, bundle.css:310) on a row the DataTable renders; the system
 	   CSS stops it under reduced motion */
 	:global(.live-feed tr:has(.row-new) td) { animation: rowin 900ms var(--ease); }

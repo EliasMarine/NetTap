@@ -24,3 +24,8 @@ html:has(.app.nav-open) { overflow: hidden; }
 @container app (max-width: 760px) {
   .app.nav-open .sidebar { height: 100dvh; border-radius: 0 var(--r-xl) var(--r-xl) 0; }
 }
+
+/* 5. bundle.css:42 makes .pills flex: none, so a group of five or more pills is wider than a
+      390 px phone and the whole page scrolls sideways. The track scrolls inside itself instead,
+      on phones only, so a desktop focus ring is never clipped by the scroll box. */
+@container app (max-width: 760px) { .pills { max-width: 100%; overflow-x: auto; scrollbar-width: none; } }

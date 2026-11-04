@@ -1000,6 +1000,4 @@
 	.raw { color: var(--text-3); font-size: var(--text-xs); }
 	.rows { width: auto; }
 	button.chip { border: 0; font-family: inherit; cursor: pointer; }
-	/* Five state pills are wider than a phone: the track scrolls instead of the page */
-	.toolbar :global(.pills) { max-width: 100%; overflow-x: auto; }
 </style>
