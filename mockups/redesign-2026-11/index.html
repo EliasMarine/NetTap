@@ -1447,15 +1447,15 @@ const screenPhone = () => `<div class="phone-stage">
   <div class="phone"><div class="phone-screen">${shell('home', 'Home', homeContent())}</div></div>
   <div class="phone-note"><h2>Home at 390 px</h2><p>The sidebar becomes a menu button at the top. Key numbers sit two to a row and every other card stacks in one column, in the same order as on a monitor.</p><p>Tap the menu icon to open the full navigation.</p></div></div>`;
 
-const SCREENS = { home: screenHome, alerts: screenAlerts, device: screenDevice, connections: screenConnections, live: screenLive, phone: screenPhone, states: screenStates };
+const SCREENS = new Map(Object.entries({ home: screenHome, alerts: screenAlerts, device: screenDevice, connections: screenConnections, live: screenLive, phone: screenPhone, states: screenStates }));
 
 /* ---------- Routing and events ---------- */
 function route() {
   const key = location.hash.slice(1);
-  if (key && !Object.hasOwn(SCREENS, key)) return; // e.g. the skip link's #main: not a screen
+  if (key && !SCREENS.has(key)) return; // e.g. the skip link's #main: not a screen
   const k = key || 'home';
   stopLive();
-  stage.innerHTML = SCREENS[k]();
+  stage.innerHTML = SCREENS.get(k)();
   $$('.mock-tabs a').forEach(a => (a.getAttribute('href') === `#${k}` ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
   mountCharts(stage);
   if (k === 'alerts') renderDrawer();
