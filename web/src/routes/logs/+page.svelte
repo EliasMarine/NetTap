@@ -60,7 +60,7 @@
 	}
 
 	interface FieldDef {
-		field: string;
+		name: string;
 		type: string;
 		description: string;
 	}
@@ -567,7 +567,8 @@
 			const data: { fields: FieldDef[] } = await res.json();
 			const map: Record<string, string> = {};
 			for (const f of data.fields) {
-				map[f.field] = f.description;
+				// OLD CODE: map[f.field]; the daemon sends `name`, so every description went under "undefined" (NET-146)
+				map[f.name] = f.description;
 			}
 			fieldDefs = map;
 		} catch {

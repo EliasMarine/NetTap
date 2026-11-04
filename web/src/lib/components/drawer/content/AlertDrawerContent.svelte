@@ -7,7 +7,7 @@
 	import DrawerSection from '../DrawerSection.svelte';
 	import KVRow from '../KVRow.svelte';
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
-	import type { SeverityLevel } from '$lib/utils/severity';
+	import { suricataLevel } from '$lib/utils/severity';
 	import IPAddress from '$components/IPAddress.svelte';
 	import type { Alert } from '$api/alerts';
 
@@ -52,14 +52,17 @@
 	// 	}
 	// });
 	// OLD CODE END
-	let severityLevel = $derived.by((): SeverityLevel => {
-		switch (alert?.alert?.severity) {
-			case 1: return 'high';
-			case 2: return 'medium';
-			case 3: return 'low';
-			default: return 'info';
-		}
-	});
+	// OLD CODE START — the same mapping now lives once in $lib/utils/severity (NET-146)
+	// let severityLevel = $derived.by((): SeverityLevel => {
+	// 	switch (alert?.alert?.severity) {
+	// 		case 1: return 'high';
+	// 		case 2: return 'medium';
+	// 		case 3: return 'low';
+	// 		default: return 'info';
+	// 	}
+	// });
+	// OLD CODE END
+	let severityLevel = $derived(suricataLevel(alert?.alert?.severity));
 
 	let rawJson = $derived(JSON.stringify(alert, null, 2));
 

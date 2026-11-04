@@ -10,7 +10,7 @@
 	import DrawerSection from '../DrawerSection.svelte';
 	import KVRow from '../KVRow.svelte';
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
-	import type { SeverityLevel } from '$lib/utils/severity';
+	import { suricataLevel } from '$lib/utils/severity';
 	import Icon from '$lib/components/ui/Icon.svelte';
 
 	// ---------------------------------------------------------------------------
@@ -117,14 +117,17 @@
 	// 	}
 	// }
 	// OLD CODE END
-	function severityLevel(sev: number): SeverityLevel {
-		switch (sev) {
-			case 1: return 'high';
-			case 2: return 'medium';
-			case 3: return 'low';
-			default: return 'info';
-		}
-	}
+	// OLD CODE START — the same mapping now lives once in $lib/utils/severity (NET-146)
+	// function severityLevel(sev: number): SeverityLevel {
+	// 	switch (sev) {
+	// 		case 1: return 'high';
+	// 		case 2: return 'medium';
+	// 		case 3: return 'low';
+	// 		default: return 'info';
+	// 	}
+	// }
+	// OLD CODE END
+	const severityLevel = suricataLevel;
 
 	// ---------------------------------------------------------------------------
 	// Sparkline helpers

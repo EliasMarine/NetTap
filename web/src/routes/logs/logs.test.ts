@@ -200,3 +200,18 @@ describe('Log Explorer — refresh contract', () => {
 		await vi.waitFor(() => expect(sorts().at(-1)).toBe('source.ip:asc'));
 	});
 });
+
+describe('Log Explorer — field descriptions on the table headers (NET-146)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('keys each description by the field name the daemon sends', async () => {
+		stubDaemon({
+			...AGGREGATIONS,
+			'/api/logs/search': { hits: [hit('a', '10.0.0.5')], total: 1 },
+			'/api/logs/fields/zeek.conn': { fields: [{ name: 'source.ip', type: 'ip', description: 'Who opened the connection' }] },
+		});
+		render(Page);
+		const header = await screen.findByRole('columnheader', { name: 'source.ip' });
+		await vi.waitFor(() => expect(header.querySelector('button')).toHaveAttribute('title', 'Who opened the connection'));
+	});
+});

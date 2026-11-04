@@ -43,8 +43,9 @@ describe('Connection drawer — threat context', () => {
 		expect(await screen.findByText('No associated alerts found')).toBeInTheDocument();
 	});
 
-	// The restyle draws each level as the system pill: colour, shape and word, with the old mapping.
-	it('shows each alert as a severity pill with shape and word: 1 and 2 High, 3 Medium, else Low', async () => {
+	// Each level is the system pill: colour, shape and word. NET-146: the mapping is the Alerts page's
+	// and the Live drawer's (it read 1 and 2 High, 3 Medium, else Low, so severity 2 disagreed).
+	it('shows each alert as a severity pill with shape and word: 1 High, 2 Medium, 3 Low, else Info', async () => {
 		const alerts = [
 			{ _id: 'a1', alert: { severity: 1, signature: 'SIG ONE' } },
 			{ _id: 'a2', alert: { severity: 2, signature: 'SIG TWO' } },
@@ -54,10 +55,16 @@ describe('Connection drawer — threat context', () => {
 		stubAlerts({ ok: true, body: { from: '', to: '', page: 1, size: 10, total: 4, total_pages: 1, alerts } });
 		render(ConnectionDrawerContent, { connection: CONNECTION, activeTab: 'summary' });
 		const expected: Array<[string, string, string]> = [
+			// OLD CODE START — the old mapping
+			// ['SIG ONE', 'High', 'sev-high'],
+			// ['SIG TWO', 'High', 'sev-high'],
+			// ['SIG THREE', 'Medium', 'sev-medium'],
+			// ['SIG FOUR', 'Low', 'sev-low'],
+			// OLD CODE END
 			['SIG ONE', 'High', 'sev-high'],
-			['SIG TWO', 'High', 'sev-high'],
-			['SIG THREE', 'Medium', 'sev-medium'],
-			['SIG FOUR', 'Low', 'sev-low'],
+			['SIG TWO', 'Medium', 'sev-medium'],
+			['SIG THREE', 'Low', 'sev-low'],
+			['SIG FOUR', 'Info', 'sev-info'],
 		];
 		for (const [sig, word, cls] of expected) {
 			const pill = (await screen.findByText(sig)).previousElementSibling as HTMLElement;

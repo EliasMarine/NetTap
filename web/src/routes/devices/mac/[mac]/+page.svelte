@@ -17,7 +17,7 @@
 	import type { RegistryDevice, DeviceTraffic } from '$api/devices-registry';
 	import IPAddress from '$components/IPAddress.svelte';
 	import { loadFailed } from '$lib/utils/load-failed';
-	import type { SeverityLevel } from '$lib/utils/severity';
+	import { suricataLevel } from '$lib/utils/severity';
 	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -134,13 +134,16 @@
 	// let maxDestBytes = $derived(traffic?.top_destinations?.length ? Math.max(...traffic.top_destinations.map((d) => d.bytes)) : 1);
 	// OLD CODE END
 
-	/** Suricata severity: 1 high, 2 medium, 3 low, anything else info (as the old badges read it). */
-	function alertLevel(severity: number): SeverityLevel {
-		if (severity === 1) return 'high';
-		if (severity === 2) return 'medium';
-		if (severity === 3) return 'low';
-		return 'info';
-	}
+	// OLD CODE START — the same mapping now lives once in $lib/utils/severity (NET-146)
+	// /** Suricata severity: 1 high, 2 medium, 3 low, anything else info (as the old badges read it). */
+	// function alertLevel(severity: number): SeverityLevel {
+	// 	if (severity === 1) return 'high';
+	// 	if (severity === 2) return 'medium';
+	// 	if (severity === 3) return 'low';
+	// 	return 'info';
+	// }
+	// OLD CODE END
+	const alertLevel = suricataLevel;
 
 	const series = $derived(traffic?.bandwidth_series ?? []);
 	const busiest = $derived(series.reduce((best, p, i) => (p.bytes > (series[best]?.bytes ?? -1) ? i : best), -1));

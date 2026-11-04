@@ -3,13 +3,16 @@
  * and the "By category" grouping of the alerts a page has loaded (AlertRow README).
  */
 import type { Alert } from '$api/alerts';
-import type { SeverityLevel } from '$lib/utils/severity';
+import { suricataLevel, type SeverityLevel } from '$lib/utils/severity';
 import { severityRank } from '$lib/utils/table-sort.svelte';
 
-/** Suricata's 1–3 as the system's levels; anything else is info. */
-export function alertLevel(severity: number | undefined): SeverityLevel {
-	return severity === 1 ? 'high' : severity === 2 ? 'medium' : severity === 3 ? 'low' : 'info';
-}
+// OLD CODE START — the same mapping now lives once in $lib/utils/severity (NET-146)
+// /** Suricata's 1–3 as the system's levels; anything else is info. */
+// export function alertLevel(severity: number | undefined): SeverityLevel {
+// 	return severity === 1 ? 'high' : severity === 2 ? 'medium' : severity === 3 ? 'low' : 'info';
+// }
+// OLD CODE END
+export const alertLevel = suricataLevel;
 
 const text = (value: unknown): string | undefined =>
 	typeof value === 'string' && value.trim() ? value : undefined;

@@ -10,6 +10,7 @@
 	import DrawerSection from '../DrawerSection.svelte';
 	import KVRow from '../KVRow.svelte';
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
+	import { suricataLevel } from '$lib/utils/severity';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { getWhois } from '$api/lookup';
 	import type { WhoisResult } from '$api/lookup';
@@ -454,8 +455,9 @@
 			{:else if threatAlerts.length > 0}
 				<div class="threat-list">
 					{#each threatAlerts.slice(0, 5) as alert}
-						{@const level = alert.alert?.severity === 1 || alert.alert?.severity === 2 ? 'high' : alert.alert?.severity === 3 ? 'medium' : 'low'}
-						<!-- Same mapping as before: severity 1 and 2 read High, 3 Medium, anything else Low -->
+						<!-- OLD CODE: severity 1 and 2 read High, 3 Medium, anything else Low, so severity 2 disagreed
+						     with the Live drawer and the Alerts page (NET-146) -->
+						{@const level = suricataLevel(alert.alert?.severity)}
 						<div class="threat-item">
 							<SeverityPill {level} />
 							<span class="threat-sig">{alert.alert?.signature || alert.rule_name || 'Unknown alert'}</span>

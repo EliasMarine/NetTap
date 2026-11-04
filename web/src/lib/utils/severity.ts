@@ -18,6 +18,11 @@ export interface SeverityInput {
 	critical?: number;
 }
 
+/** Suricata's alert severity (1 high, 2 medium, 3 low) as a system level; anything else is info. */
+export function suricataLevel(severity: number | null | undefined): SeverityLevel {
+	return severity === 1 ? 'high' : severity === 2 ? 'medium' : severity === 3 ? 'low' : 'info';
+}
+
 const count = (n: number | undefined) => (Number.isFinite(n) && (n as number) > 0 ? Math.floor(n as number) : 0);
 
 /** Mutually exclusive buckets that sum to `total`; info is what the named levels leave. */
