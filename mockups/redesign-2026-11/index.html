@@ -1451,11 +1451,11 @@ const SCREENS = new Map(Object.entries({ home: screenHome, alerts: screenAlerts,
 
 /* ---------- Routing and events ---------- */
 function route() {
-  const key = location.hash.slice(1);
-  if (key && !SCREENS.has(key)) return; // e.g. the skip link's #main: not a screen
-  const k = key || 'home';
+  const k = location.hash.slice(1) || 'home';
+  const render = SCREENS.get(k);
+  if (typeof render !== 'function') return; // e.g. the skip link's #main: not a screen
   stopLive();
-  stage.innerHTML = SCREENS.get(k)();
+  stage.innerHTML = render();
   $$('.mock-tabs a').forEach(a => (a.getAttribute('href') === `#${k}` ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current')));
   mountCharts(stage);
   if (k === 'alerts') renderDrawer();
