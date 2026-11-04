@@ -381,7 +381,7 @@
 	// The page's own 30 s auto refresh, through the same contract so "Updated" stays honest
 	$effect(() => {
 		if (!autoRefresh) return;
-		const timer = setInterval(() => refresh.run(), 30_000);
+		const timer = setInterval(() => refresh.runIfIdle(), 30_000);
 		return () => clearInterval(timer);
 	});
 

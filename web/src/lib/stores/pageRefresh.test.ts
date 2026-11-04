@@ -97,6 +97,24 @@ describe('registerPageRefresh', () => {
 		h.unregister();
 	});
 
+	it('runIfIdle lets a slow load finish instead of cancelling it', async () => {
+		const slow = deferred<void>();
+		let calls = 0;
+		const h = registerPageRefresh(async (guard) => {
+			calls++;
+			const g = guard.begin();
+			await slow.promise;
+			return guard.current(g) ? 'ok' : 'skipped';
+		}, now);
+		const first = h.run();
+		expect(await h.runIfIdle()).toBe('skipped');
+		expect(calls).toBe(1);
+		slow.resolve();
+		expect(await first).toBe('ok');
+		expect(get(pageRefresh).updatedAt).toBe(1000);
+		h.unregister();
+	});
+
 	it('navigation before completion: no writes and no timestamp change', async () => {
 		const shown: string[] = [];
 		const pending = deferred<string>();

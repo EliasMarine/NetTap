@@ -733,7 +733,7 @@
 			// OLD CODE START — the auto loop goes through the page refresh contract, so "Updated" stays honest
 			// refreshInterval = setInterval(() => fetchAll(), 15_000);
 			// OLD CODE END
-			refreshInterval = setInterval(() => refresh.run(), 15_000);
+			refreshInterval = setInterval(() => refresh.runIfIdle(), 15_000);
 		} else if (refreshInterval) {
 			clearInterval(refreshInterval);
 			refreshInterval = null;

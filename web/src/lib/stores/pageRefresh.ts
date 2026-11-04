@@ -45,6 +45,8 @@ export interface PageRefreshHandle {
 	guard: LoadGuard;
 	/** Run the loader through the contract. Pages use this for every load, so "Updated" stays honest. */
 	run(): Promise<LoadResult>;
+	/** For timers: skips while a load is running, because each new load cancels the one before and a slow page would never land. */
+	runIfIdle(): Promise<LoadResult>;
 	unregister(): void;
 }
 
@@ -67,7 +69,7 @@ export function registerPageRefresh(
 	const guard = createLoadGuard();
 	// Server rendering shares this module between requests, and loaders only run in the browser.
 	if (typeof window === 'undefined') {
-		return { guard, run: async () => 'skipped', unregister: () => guard.invalidate() };
+		return { guard, run: async () => 'skipped', runIfIdle: async () => 'skipped', unregister: () => guard.invalidate() };
 	}
 	const id = ++nextId;
 	let inFlight = 0;
@@ -99,6 +101,7 @@ export function registerPageRefresh(
 	return {
 		guard,
 		run,
+		runIfIdle: () => (inFlight > 0 ? Promise.resolve('skipped') : run()),
 		unregister() {
 			guard.invalidate();
 			if (active?.id === id) {

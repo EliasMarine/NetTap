@@ -453,7 +453,7 @@
 			// 	30_000,
 			// );
 			// OLD CODE END
-			autoRefreshTimer = setInterval(() => refresh.run(), 30_000);
+			autoRefreshTimer = setInterval(() => refresh.runIfIdle(), 30_000);
 		}
 		return () => {
 			if (autoRefreshTimer) clearInterval(autoRefreshTimer);

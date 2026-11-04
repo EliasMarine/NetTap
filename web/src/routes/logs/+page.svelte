@@ -753,7 +753,7 @@
 			// OLD CODE START — PLAN §5.5: auto-refresh goes through the contract, so "Updated" stays honest
 			// refreshInterval = setInterval(fetchAll, 30_000);
 			// OLD CODE END
-			refreshInterval = setInterval(() => refresh.run(), 30_000);
+			refreshInterval = setInterval(() => refresh.runIfIdle(), 30_000);
 		} else if (refreshInterval) {
 			clearInterval(refreshInterval);
 			refreshInterval = null;
