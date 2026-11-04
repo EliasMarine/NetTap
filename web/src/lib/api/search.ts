@@ -22,9 +22,11 @@ export interface SearchResponse {
 	results: SearchResult[];
 }
 
-export interface SearchSuggestion {
-	text: string;
-}
+// OLD CODE START — the daemon's suggest() returns plain strings (daemon/services/nl_search.py), never { text }
+// export interface SearchSuggestion {
+// 	text: string;
+// }
+// OLD CODE END
 
 // ---------------------------------------------------------------------------
 // Fetch helpers
@@ -62,7 +64,7 @@ export async function executeSearch(query: string): Promise<SearchResponse> {
  */
 export async function getSearchSuggestions(
 	partial: string
-): Promise<{ suggestions: SearchSuggestion[] }> {
+): Promise<{ suggestions: string[] }> {
 	const qs = new URLSearchParams({ q: partial });
 	const res = await fetch(`/api/search/suggest?${qs.toString()}`);
 

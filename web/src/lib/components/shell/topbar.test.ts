@@ -26,7 +26,7 @@ let handle: PageRefreshHandle | undefined;
 
 beforeEach(() => {
 	vi.useFakeTimers();
-	suggest.mockResolvedValue({ suggestions: [{ text: '192.168.1.10' }, { text: '192.168.1.20' }] });
+	suggest.mockResolvedValue({ suggestions: ['192.168.1.10', '192.168.1.20'] });
 });
 
 afterEach(() => {
@@ -122,16 +122,39 @@ describe('TopBar search', () => {
 	});
 
 	it('only shows the newest keystroke\'s suggestions', async () => {
-		let resolveSlow: (v: { suggestions: { text: string }[] }) => void = () => {};
+		let resolveSlow: (v: { suggestions: string[] }) => void = () => {};
 		suggest
 			.mockReturnValueOnce(new Promise((r) => (resolveSlow = r)))
-			.mockResolvedValueOnce({ suggestions: [{ text: 'new.example' }] });
+			.mockResolvedValueOnce({ suggestions: ['new.example'] });
 		render(TopBar, { props: { offline: false } });
 		await type('ol');
 		await type('new');
-		resolveSlow({ suggestions: [{ text: 'old.example' }] });
+		resolveSlow({ suggestions: ['old.example'] });
 		await vi.advanceTimersByTimeAsync(0);
 		expect(screen.getByRole('option')).toHaveTextContent('new.example');
+	});
+
+	it('keeps the list shut when Enter beats the debounce', async () => {
+		render(TopBar, { props: { offline: false } });
+		const box = screen.getByRole('combobox');
+		await fireEvent.input(box, { target: { value: '10.0.0.5' } });
+		await fireEvent.keyDown(box, { key: 'Enter' });
+		await vi.advanceTimersByTimeAsync(250);
+		expect(goto).toHaveBeenCalledTimes(1);
+		expect(suggest).not.toHaveBeenCalled();
+		expect(box).toHaveAttribute('aria-expanded', 'false');
+	});
+
+	it('keeps the list shut when a slow answer lands after the text got too short', async () => {
+		let resolveSlow: (v: { suggestions: string[] }) => void = () => {};
+		suggest.mockReturnValueOnce(new Promise((r) => (resolveSlow = r)));
+		render(TopBar, { props: { offline: false } });
+		const box = await type('ro');
+		await fireEvent.input(box, { target: { value: 'r' } });
+		resolveSlow({ suggestions: ['router.lan'] });
+		await vi.advanceTimersByTimeAsync(0);
+		expect(box).toHaveAttribute('aria-expanded', 'false');
+		expect(screen.queryAllByRole('option')).toHaveLength(0);
 	});
 
 	it('focuses search on Ctrl-K', async () => {

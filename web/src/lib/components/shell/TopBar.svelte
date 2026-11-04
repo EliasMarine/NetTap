@@ -36,8 +36,14 @@
 					: `${suggestions.length} suggestion${suggestions.length === 1 ? '' : 's'}.`,
 	);
 
-	function onInput() {
+	// A debounce timer or a request still in flight would reopen the list after it was meant to close.
+	function cancelPending() {
 		clearTimeout(timer);
+		requestId++;
+	}
+
+	function onInput() {
+		cancelPending();
 		active = -1;
 		const q = query.trim();
 		if (q.length < 2) {
@@ -54,7 +60,10 @@
 		try {
 			const res = await getSearchSuggestions(q);
 			if (id !== requestId) return; // a newer keystroke owns the list
-			suggestions = res.suggestions.map((s) => s.text);
+			// OLD CODE START — the daemon sends strings, so .text was undefined and every option was blank
+			// suggestions = res.suggestions.map((s) => s.text);
+			// OLD CODE END
+			suggestions = res.suggestions;
 			status = 'ok';
 		} catch {
 			if (id !== requestId) return;
@@ -67,6 +76,7 @@
 	function submit(text: string) {
 		const target = searchTarget(text);
 		if (!target) return;
+		cancelPending();
 		open = false;
 		active = -1;
 		goto(target);
@@ -85,6 +95,7 @@
 			e.preventDefault();
 			submit(active >= 0 && open ? suggestions[active] : query);
 		} else if (e.key === 'Escape') {
+			cancelPending();
 			if (open) {
 				open = false;
 				active = -1;
