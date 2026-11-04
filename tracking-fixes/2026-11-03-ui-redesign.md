@@ -38,11 +38,24 @@ Each phase gets a fresh branch from `main`, created after the previous PR merges
 - **Contrast test:** `src/tests/token-contrast.test.ts`. Every text and severity token is AA on every surface, in every variant.
 - **Deploy script:** `scripts/remote/deploy-ui-redesign.sh` rebuilds only `nettap-web`, then checks the bootstrap, the fonts and the new stylesheet.
 
-**Test results:** to be filled in before the PR.
+**Test results (2026-11-03, local):**
+- **Vitest:** 2,370 passed in 212 files.
+- **svelte-check:** 0 errors and 44 warnings. The warnings are the same per file as on `main`.
+- **Daemon pytest:** 2,914 passed, 1 skipped.
+- **Colour gate:** clean. NetworkMap and charts/SankeyDiagram are allowlisted until PR 3.
+- **Visual harness:** 139 passed, 0 failed, 43 skipped (3.7 min). Every route ran in all 3 variants at 1920, 1440 and 390.
+- **Known issues:** these are recorded as annotations, not failures, in `web/e2e/visual/known-issues.ts`:
+  - Overflow at 390 px from the old shell, fixed in PR 2.
+  - Home is 1522 px wide after a resize from 1920 to 1440.
+  - `/traffic/streaming` logs its own console.error in error mode.
+  - The first-run EventSource on `/go-live` gets an HTML redirect.
+- **Reviews:** `/deep-review` found nothing. The `/ponytail-review` findings (1 must-fix, 3 should-fix, 4 nice-to-have) are all fixed.
 
 ## Lessons
 
 - In Playwright 1.58, `webServer` entries start before `globalSetup`. Anything the servers need (temp dirs, a fixture daemon) has to exist by the time the config loads, or be a `webServer` itself.
+- The harness serves a copy of `build/` (`test-results/visual-build`). An unrelated `npm run build` mid-run otherwise replaced the chunks under the running server and failed 133 tests with `ERR_MODULE_NOT_FOUND`.
+- Settings tabs are server-rendered buttons, so a click that lands before hydration does nothing. Tests retry the tab click until its content appears.
 - A Svelte store notifies its subscribers synchronously. Anything that reads computed CSS when the theme changes needs the DOM attribute set *before* the store publishes.
 
 ## Next steps

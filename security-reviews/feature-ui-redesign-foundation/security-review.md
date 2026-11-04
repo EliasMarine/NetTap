@@ -36,6 +36,7 @@ The diff has 86 files, so it was reviewed in large-diff mode, by cluster:
 * **Limitations / unresolved edges:** large-diff mode. The colour-token swaps were checked for new data-bound `style=` bindings and new raw-HTML sinks, not read line by line. The GeoMap `bindTooltip` label (GeoIP city/country) is pre-existing and unchanged by this diff.
 * **Not covered (by design):** DoS/ReDoS, rate limiting, dependency CVEs, generic hardening. Run the two-angle review for those.
 * **External analysis consumed:** none
+* **Visual harness commit (follow-up):** fast path; no multi-agent stages were run. It is test-only: `web/e2e/visual/**` and `web/playwright.visual.config.ts`, a local fixture daemon bound to 127.0.0.1 with synthetic data, and a random per-run token file at mode 0600. It also adds two `package.json` scripts and one CI step that runs `tsc --noEmit` on the harness, with no new permissions, secrets or triggers. Nothing in it ships in the app image.
 * **Delta after review fixes:** re-checked by the coordinator. The ponytail fixes are CSS/token values, a shared category-colour map, colour-gate logic, and the deploy script now looping over its own server's stylesheet links (fixed host, `grep -q`, nothing printed). They add no new trust edge.
 
 ## Findings
