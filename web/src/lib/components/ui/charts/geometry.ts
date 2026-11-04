@@ -143,3 +143,116 @@ export function inPolygon(lng: number, lat: number, rings: readonly (readonly Po
 	}
 	return inside;
 }
+
+/**
+ * niceAxis trimmed to the first round value that covers `max`, so a 4.7 GB peak gets a
+ * 0–5 axis instead of 0–8 and the line fills the plot.
+ */
+export function fitAxis(max: number, ticks = 5): { top: number; values: number[] } {
+	const { top, values } = niceAxis(max, ticks);
+	const cover = values.find((v) => v > 0 && v >= max);
+	if (!(max > 0) || cover === undefined) return { top, values };
+	return { top: cover, values: values.filter((v) => v <= cover) };
+}
+
+/** Label every Nth point so neighbouring x labels sit at least `minGap` px apart. */
+export function labelStep(count: number, plotWidth: number, minGap = 64): number {
+	if (count <= 1 || !(plotWidth > 0)) return 1;
+	const fit = Math.max(2, Math.floor(plotWidth / minGap));
+	return Math.max(1, Math.ceil(count / fit));
+}
+
+/** Index of the evenly spaced point nearest to `x`, clamped to the data. */
+export function nearestIndex(x: number, left: number, plotWidth: number, count: number): number {
+	if (count <= 1 || !(plotWidth > 0) || !Number.isFinite(x)) return 0;
+	const i = Math.round(((x - left) / plotWidth) * (count - 1));
+	return Math.max(0, Math.min(count - 1, i));
+}
+
+/** The pill tooltip's box: width estimated from the text, kept inside the chart. */
+export function tipBox(x: number, y: number, text: string, chartWidth: number): { x: number; y: number; width: number } {
+	const width = Math.round(text.length * 6.2 + 24);
+	return { x: Math.max(2, Math.min(x - width / 2, chartWidth - width - 2)), y: Math.max(y - 38, 0), width };
+}
+
+/**
+ * SVG dash attributes for a donutSegments() segment on a `<circle>` rotated -90°, so the
+ * ring starts at 12 o'clock and runs clockwise. A negative offset moves the dash forward.
+ */
+export function segmentDash(seg: DonutSegment, circumference: number): { dasharray: string; dashoffset: string } {
+	return {
+		dasharray: `${fmt(seg.dash)} ${fmt(Math.max(0, circumference - seg.dash))}`,
+		dashoffset: fmt(-seg.offset),
+	};
+}
+
+/** The point `deg` degrees clockwise from 3 o'clock (SVG's y axis points down). */
+export function polar(cx: number, cy: number, r: number, deg: number): Point {
+	const a = (deg * Math.PI) / 180;
+	return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+}
+
+export type Rings = readonly (readonly Point[])[];
+
+/**
+ * Every polygon (outer ring + holes) in a GeoJSON FeatureCollection; anything malformed is
+ * skipped. Rings that cross the antimeridian (Fiji, Chukotka) move to 0–360° so they don't
+ * smear land across the whole map.
+ */
+export function polygonsOf(geojson: unknown): Rings[] {
+	const features = (geojson as { features?: unknown } | null)?.features;
+	if (!Array.isArray(features)) return [];
+	const polygons: Rings[] = features.flatMap((f) => {
+		const g = (f as { geometry?: { type?: string; coordinates?: unknown } } | null)?.geometry;
+		if (!Array.isArray(g?.coordinates)) return [];
+		if (g.type === 'Polygon') return [g.coordinates as Rings];
+		if (g.type === 'MultiPolygon') return g.coordinates as Rings[];
+		return [];
+	});
+	return polygons.filter(Array.isArray).map((rings) => rings.filter(Array.isArray).map(unwrapRing));
+}
+
+function unwrapRing(ring: readonly Point[]): readonly Point[] {
+	const crosses = ring.some((p, i) => i > 0 && Math.abs(p[0] - ring[i - 1][0]) > 180);
+	return crosses ? ring.map(([x, y]) => [x < 0 ? x + 360 : x, y] as const) : ring;
+}
+
+/** The map's latitude band: everything inhabited, with Antarctica and the far Arctic left out. */
+export const MAP_TOP = 80;
+export const MAP_BOTTOM = -56;
+
+/** Land dots as [lng, lat] on a fixed grid: point-in-polygon, run once per map. */
+export function landDots(polygons: readonly Rings[], step = 2.6): Point[] {
+	const boxes = polygons.map((rings) => {
+		const outer = rings[0] ?? [];
+		const xs = outer.map((p) => p[0]);
+		const ys = outer.map((p) => p[1]);
+		return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] as const;
+	});
+	const hit = (lng: number, lat: number) =>
+		polygons.some((rings, i) => {
+			const [x0, y0, x1, y1] = boxes[i];
+			return lng >= x0 && lng <= x1 && lat >= y0 && lat <= y1 && inPolygon(lng, lat, rings);
+		});
+	const dots: Point[] = [];
+	for (let row = 0; MAP_TOP - 2 - row * step >= MAP_BOTTOM; row++) {
+		const lat = MAP_TOP - 2 - row * step;
+		for (let col = 0; -178 + col * step <= 178; col++) {
+			const lng = -178 + col * step;
+			// unwrapped rings live past 180°, so test the same spot one turn east too
+			if (hit(lng, lat) || hit(lng + 360, lat)) dots.push([lng, lat]);
+		}
+	}
+	return dots;
+}
+
+/** Equirectangular projection of the MAP_TOP..MAP_BOTTOM band onto width × height. */
+export function project(lng: number, lat: number, width: number, height: number): Point {
+	return [((lng + 180) / 360) * width, ((MAP_TOP - lat) / (MAP_TOP - MAP_BOTTOM)) * height];
+}
+
+/** A quadratic arc from `a` to `b` that bows upward by a third of its length. */
+export function arcPath([ax, ay]: Point, [bx, by]: Point): string {
+	const lift = Math.hypot(bx - ax, by - ay) * 0.32;
+	return `M${fmt(ax)},${fmt(ay)} Q${fmt((ax + bx) / 2)},${fmt((ay + by) / 2 - lift)} ${fmt(bx)},${fmt(by)}`;
+}

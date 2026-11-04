@@ -1,5 +1,26 @@
 import { describe, it, expect } from 'vitest';
-import { niceAxis, monotonePath, donutSegments, allocateTicks, inPolygon, type Point } from './geometry';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import {
+	niceAxis,
+	monotonePath,
+	donutSegments,
+	allocateTicks,
+	inPolygon,
+	fitAxis,
+	labelStep,
+	nearestIndex,
+	tipBox,
+	segmentDash,
+	polar,
+	polygonsOf,
+	landDots,
+	project,
+	arcPath,
+	MAP_TOP,
+	MAP_BOTTOM,
+	type Point,
+} from './geometry';
 
 const ROUND = [1, 2, 2.5, 5];
 const isRoundStep = (s: number) => ROUND.some((m) => Math.abs(s / 10 ** Math.floor(Math.log10(s)) - m) < 1e-9);
@@ -145,5 +166,161 @@ describe('inPolygon', () => {
 		expect(inPolygon(12, 2, [square])).toBe(false);
 		expect(inPolygon(5, 5, [square, hole])).toBe(false);
 		expect(inPolygon(2, 5, [square, hole])).toBe(true);
+	});
+});
+
+describe('fitAxis', () => {
+	it('stops at the first round value that covers the peak', () => {
+		expect(fitAxis(4.7)).toEqual({ top: 5, values: [0, 1, 2, 3, 4, 5] });
+		expect(fitAxis(5.2).values).toEqual([0, 2, 4, 6]);
+	});
+
+	it.each([0.3, 1, 37, 182406])('keeps round steps and covers %s', (max) => {
+		const { top, values } = fitAxis(max);
+		expect(top).toBeGreaterThanOrEqual(max);
+		expect(values.at(-1)).toBe(top);
+		expect(isRoundStep(values[1] - values[0])).toBe(true);
+	});
+
+	it('falls back to the plain axis for zero and NaN', () => {
+		for (const v of [0, Number.NaN]) {
+			const { top, values } = fitAxis(v);
+			expect(top).toBeGreaterThan(0);
+			expect(values.every(Number.isFinite)).toBe(true);
+		}
+	});
+});
+
+describe('labelStep', () => {
+	it.each([
+		[24, 600],
+		[24, 220],
+		[168, 1100],
+		[7, 900],
+	])('keeps %s labels over %spx at least 64px apart', (count, width) => {
+		const step = labelStep(count, width);
+		expect((width / (count - 1)) * step).toBeGreaterThanOrEqual(64);
+	});
+
+	it('labels every point when they fit, and survives one point or no width', () => {
+		expect(labelStep(5, 900)).toBe(1);
+		expect(labelStep(1, 900)).toBe(1);
+		expect(labelStep(24, 0)).toBe(1);
+	});
+});
+
+describe('nearestIndex', () => {
+	it('snaps to the closest point and clamps outside the plot', () => {
+		expect(nearestIndex(50, 50, 230, 24)).toBe(0);
+		expect(nearestIndex(50 + 230 * (21 / 23) + 3, 50, 230, 24)).toBe(21);
+		expect(nearestIndex(-100, 50, 230, 24)).toBe(0);
+		expect(nearestIndex(9999, 50, 230, 24)).toBe(23);
+	});
+
+	it('returns 0 for one point, no width or a NaN position', () => {
+		expect(nearestIndex(10, 0, 100, 1)).toBe(0);
+		expect(nearestIndex(10, 0, 0, 5)).toBe(0);
+		expect(nearestIndex(Number.NaN, 0, 100, 5)).toBe(0);
+	});
+});
+
+describe('tipBox', () => {
+	it('centres on the point and stays inside the chart', () => {
+		const mid = tipBox(300, 100, '21:00 · 4.7 GB', 600);
+		expect(mid.x + mid.width / 2).toBeCloseTo(300);
+		expect(mid.y).toBe(62);
+		expect(tipBox(0, 10, 'long tooltip text', 600).x).toBe(2);
+		const right = tipBox(600, 10, 'long tooltip text', 600);
+		expect(right.x + right.width).toBe(598);
+		expect(right.y).toBe(0);
+	});
+});
+
+describe('segmentDash', () => {
+	const C = 2 * Math.PI * 68;
+
+	it('draws each dash at its offset, one dash per turn', () => {
+		const segs = donutSegments([3, 1], C, 4, 12);
+		const [a, b] = segs.map((s) => segmentDash(s, C));
+		const [dashA, gapA] = a.dasharray.split(' ').map(Number);
+		expect(dashA + gapA).toBeCloseTo(C, 1);
+		expect(Number(a.dashoffset)).toBeCloseTo(-segs[0].offset, 1);
+		expect(Number(b.dashoffset)).toBeLessThan(Number(a.dashoffset));
+	});
+
+	it('draws a single segment as the full ring', () => {
+		const [seg] = donutSegments([5], C, 4, 12);
+		expect(segmentDash(seg, C)).toEqual({ dasharray: `${Math.round(C * 100) / 100} 0`, dashoffset: '0' });
+	});
+});
+
+describe('polar', () => {
+	it('measures clockwise from 3 o’clock in SVG space', () => {
+		const near = (p: Point, q: Point) => p.forEach((v, i) => expect(v).toBeCloseTo(q[i]));
+		near(polar(50, 50, 10, 0), [60, 50]);
+		near(polar(50, 50, 10, 90), [50, 60]);
+		near(polar(50, 50, 10, -90), [50, 40]);
+	});
+});
+
+describe('world map', () => {
+	const world = JSON.parse(readFileSync(resolve(process.cwd(), 'static/geo/countries-110m.geojson'), 'utf8'));
+	const polygons = polygonsOf(world);
+	const dots = landDots(polygons);
+	const isLand = (lng: number, lat: number) =>
+		polygons.some((p) => inPolygon(lng, lat, p) || inPolygon(lng + 360, lat, p));
+
+	it('reads every polygon from the bundled file', () => {
+		expect(polygons.length).toBeGreaterThan(200);
+	});
+
+	it.each([
+		['Paris', 2.35, 48.85, true],
+		['Denver', -104.99, 39.74, true],
+		['Nairobi', 36.82, -1.29, true],
+		['Sydney', 150.9, -33.8, true],
+		['the mid-Atlantic', -30, 30, false],
+		['the Pacific', -150, 0, false],
+		['the Norwegian Sea', 0, 66, false],
+	])('knows %s', (_name, lng, lat, land) => {
+		expect(isLand(lng, lat)).toBe(land);
+	});
+
+	it('keeps antimeridian rings from smearing land across the map', () => {
+		// Before unwrapping, Chukotka's ring filled the latitude rows from Alaska to Norway
+		expect(dots.some(([lng, lat]) => lng > -10 && lng < 4 && lat > 63 && lat < 70)).toBe(false);
+		expect(isLand(177, 65)).toBe(true);
+	});
+
+	it('lays a grid of land dots inside the map band', () => {
+		expect(dots.length).toBeGreaterThan(1500);
+		expect(dots.length).toBeLessThan(3000);
+		for (const [lng, lat] of dots) {
+			expect(Math.abs(lng)).toBeLessThanOrEqual(180);
+			expect(lat).toBeLessThanOrEqual(MAP_TOP);
+			expect(lat).toBeGreaterThanOrEqual(MAP_BOTTOM);
+		}
+	});
+
+	it('skips malformed input instead of throwing', () => {
+		expect(polygonsOf(null)).toEqual([]);
+		expect(polygonsOf({ features: 'x' })).toEqual([]);
+		expect(polygonsOf({ features: [null, { geometry: { type: 'Point', coordinates: [1, 2] } }, {}] })).toEqual([]);
+		expect(landDots([])).toEqual([]);
+	});
+});
+
+describe('project', () => {
+	it('maps the band edges onto the map edges', () => {
+		expect(project(-180, MAP_TOP, 900, 400)).toEqual([0, 0]);
+		expect(project(180, MAP_BOTTOM, 900, 400)).toEqual([900, 400]);
+		expect(project(0, 12, 900, 400)[0]).toBe(450);
+	});
+});
+
+describe('arcPath', () => {
+	it('bows a quadratic arc upward between the two points', () => {
+		expect(arcPath([0, 100], [100, 100])).toBe('M0,100 Q50,68 100,100');
+		expect(arcPath([10, 10], [10, 10])).not.toMatch(/NaN/);
 	});
 });
