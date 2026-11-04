@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import BrandMark from '$lib/components/shell/BrandMark.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	let { form } = $props();
 
@@ -10,20 +12,18 @@
 	<title>Login | NetTap</title>
 </svelte:head>
 
-<div class="login-page">
-	<div class="login-container">
-		<div class="login-header">
-			<svg class="login-logo" viewBox="0 0 32 32" width="48" height="48" fill="none">
-				<rect width="32" height="32" rx="6" fill="var(--accent)" />
-				<path d="M8 16h16M16 8v16M10 10l12 12M22 10L10 22" stroke="var(--on-accent)" stroke-width="2" stroke-linecap="round" />
-			</svg>
-			<h1>NetTap</h1>
-			<p class="text-muted">Network Visibility Appliance</p>
-		</div>
+<!-- Bare route (no shell): a centred card with the brand, the form and the error state -->
+<div class="login">
+	<article class="card login-card">
+		<header class="login-head">
+			<h1 class="brand"><BrandMark />NetTap</h1>
+			<p class="page-sub">Sign in with your admin account.</p>
+		</header>
 
 		{#if form?.error}
-			<div class="alert alert-danger">
-				{form.error}
+			<div class="notice is-error" role="alert">
+				<Icon name="warn" />
+				<span>{form.error}</span>
 			</div>
 		{/if}
 
@@ -64,62 +64,47 @@
 				/>
 			</div>
 
-			<button type="submit" class="btn btn-primary btn-lg login-btn" disabled={loading}>
+			<!-- "Sign In" stays title case: the e2e specs (login, shell, the visual auth setup) name it -->
+			<button type="submit" class="btn primary login-btn" disabled={loading}>
 				{#if loading}
-					Signing in...
+					Signing in…
 				{:else}
 					Sign In
 				{/if}
 			</button>
 		</form>
-	</div>
+	</article>
 </div>
 
 <style>
-	.login-page {
-		min-height: 100vh;
+	.login {
+		min-height: calc(100dvh - var(--sp-8));
+		display: grid;
+		place-items: center;
+	}
+
+	/* A card, not the page container: the page itself stays full width */
+	.login-card {
+		width: min(100%, 400px);
 		display: flex;
+		flex-direction: column;
+		gap: var(--sp-5);
+	}
+
+	.login-head {
+		display: flex;
+		flex-direction: column;
 		align-items: center;
-		justify-content: center;
-		background-color: var(--bg-primary);
-		padding: var(--space-md);
-	}
-
-	.login-container {
-		width: 100%;
-		max-width: 400px;
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-xl);
-		padding: var(--space-2xl);
-	}
-
-	.login-header {
+		gap: var(--sp-2);
 		text-align: center;
-		margin-bottom: var(--space-xl);
 	}
 
-	.login-logo {
-		margin-bottom: var(--space-md);
-	}
-
-	.login-header h1 {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		color: var(--text-primary);
-		margin-bottom: var(--space-xs);
-	}
-
-	.login-header p {
-		font-size: var(--text-sm);
-	}
-
-	.alert {
-		margin-bottom: var(--space-md);
+	.login-head .brand {
+		padding: 0;
 	}
 
 	.login-btn {
 		width: 100%;
-		margin-top: var(--space-sm);
+		justify-content: center;
 	}
 </style>

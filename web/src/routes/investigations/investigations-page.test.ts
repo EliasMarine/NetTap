@@ -22,22 +22,22 @@ describe('Investigations page', () => {
 		vi.unstubAllGlobals();
 	});
 
-	it('says the list could not be loaded instead of "No Investigations"', async () => {
+	it('says the list could not be loaded instead of "No investigations yet"', async () => {
 		stubDaemon({});
 		render(InvestigationsPage);
-		await vi.waitFor(() => expect(screen.getByText("Couldn't load investigations")).toBeInTheDocument());
-		expect(screen.queryByText('No Investigations')).not.toBeInTheDocument();
+		await vi.waitFor(() => expect(screen.getByText(/^Couldn't load investigations/)).toBeInTheDocument());
+		expect(screen.queryByText('No investigations yet')).not.toBeInTheDocument();
 		expect(screen.getAllByText('—').length).toBeGreaterThan(0);
 		expect(screen.queryByText('0')).not.toBeInTheDocument();
 	});
 
-	it('still says "No Investigations" when there are none', async () => {
+	it('still says "No investigations yet" when there are none', async () => {
 		stubDaemon({
 			'/api/investigations': { investigations: [] },
 			'/api/investigations/stats': { total: 0, by_status: {}, by_severity: {} },
 		});
 		render(InvestigationsPage);
-		await vi.waitFor(() => expect(screen.getByText('No Investigations')).toBeInTheDocument());
+		await vi.waitFor(() => expect(screen.getByText('No investigations yet')).toBeInTheDocument());
 		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
 	});
 
@@ -52,15 +52,15 @@ describe('Investigations page', () => {
 		});
 		vi.stubGlobal('fetch', lists);
 		render(InvestigationsPage);
-		await vi.waitFor(() => expect(screen.getByText('No Investigations')).toBeInTheDocument());
+		await vi.waitFor(() => expect(screen.getByText('No investigations yet')).toBeInTheDocument());
 
-		await fireEvent.click(screen.getByRole('button', { name: /New Investigation/ }));
-		const title = screen.getByPlaceholderText('Investigation title...') as HTMLInputElement;
+		await fireEvent.click(screen.getByRole('button', { name: 'New investigation' }));
+		const title = screen.getByPlaceholderText('Investigation title…') as HTMLInputElement;
 		await fireEvent.input(title, { target: { value: 'Router scan' } });
-		await fireEvent.click(screen.getByRole('button', { name: 'Create Investigation' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Create investigation' }));
 
 		await vi.waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent("Couldn't create the investigation"));
-		expect((screen.getByPlaceholderText('Investigation title...') as HTMLInputElement).value).toBe('Router scan');
+		expect((screen.getByPlaceholderText('Investigation title…') as HTMLInputElement).value).toBe('Router scan');
 	});
 });
 

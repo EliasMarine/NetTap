@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy, onMount } from 'svelte';
 	import {
 		getInvestigations,
 		createInvestigation,
@@ -11,6 +12,15 @@
 	import type { Investigation, InvestigationStats } from '$api/investigations';
 	import DetailDrawer from '$components/DetailDrawer.svelte';
 	import InvestigationDrawerContent from '$components/drawer/content/InvestigationDrawerContent.svelte';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import KpiCard from '$lib/components/ui/KpiCard.svelte';
+	import Pills from '$lib/components/ui/Pills.svelte';
+	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
+	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import type { SeverityLevel } from '$lib/utils/severity';
+	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -22,12 +32,19 @@
 	// State
 	// ---------------------------------------------------------------------------
 
+	const NO_STATS: InvestigationStats = { total: 0, by_status: {}, by_severity: {} };
+
 	let investigations = $state<Investigation[]>([]);
-	let stats = $state<InvestigationStats>({ total: 0, by_status: {}, by_severity: {} });
-	let loading = $state(false);
+	let stats = $state<InvestigationStats>(NO_STATS);
+	// OLD CODE START — 2026-11-03 redesign: loading started false, and the counts showed their 0
+	// defaults until the first stats reply; now nothing shows a number before it has loaded
+	// let loading = $state(false);
+	// OLD CODE END
+	let loading = $state(true);
 	// #96: a failed request must not read as "No Investigations" or zero counts
 	let listFailed = $state(false);
 	let statsFailed = $state(false);
+	let statsLoaded = $state(false);
 	// #96: a failed save, delete or note looked like it worked; say so and keep what was typed
 	let actionError = $state<string | null>(null);
 	function failed(what: string): void {
@@ -35,8 +52,9 @@
 	}
 	let activeFilter = $state<StatusFilter>('all');
 
-	// Expanded investigation (keep accordion for cards)
+	// The investigation whose details are open beside the table
 	let expandedId = $state<string | null>(null);
+	let expanded = $derived(investigations.find((inv) => inv.id === expandedId) ?? null);
 
 	// Detail drawer state
 	let drawerInvestigation = $state<Investigation | null>(null);
@@ -59,12 +77,12 @@
 
 	async function handleDrawerStatusChange(id: string, status: string) {
 		if (!(await updateInvestigation(id, { status }))) failed('change the status');
-		fetchAll();
+		refresh.run();
 	}
 
 	async function handleDrawerNoteAdded(id: string, noteText: string) {
 		if (!(await addNote(id, noteText))) failed('save the note');
-		fetchAll();
+		refresh.run();
 	}
 
 	// New investigation form
@@ -82,13 +100,13 @@
 	let deleteConfirmId = $state<string | null>(null);
 
 	// ---------------------------------------------------------------------------
-	// Status filter tabs
+	// Status filter
 	// ---------------------------------------------------------------------------
 
 	const statusFilters: { value: StatusFilter; label: string }[] = [
 		{ value: 'all', label: 'All' },
 		{ value: 'open', label: 'Open' },
-		{ value: 'in_progress', label: 'In Progress' },
+		{ value: 'in_progress', label: 'In progress' },
 		{ value: 'resolved', label: 'Resolved' },
 		{ value: 'closed', label: 'Closed' },
 	];
@@ -97,34 +115,40 @@
 	// Display helpers
 	// ---------------------------------------------------------------------------
 
-	function severityBadgeClass(severity: string): string {
-		switch (severity) {
-			case 'critical':
-				return 'badge severity-critical';
-			case 'high':
-				return 'badge severity-high';
-			case 'medium':
-				return 'badge severity-medium';
-			case 'low':
-				return 'badge severity-low';
-			default:
-				return 'badge severity-info';
-		}
+	// OLD CODE START — 2026-11-03 redesign: legacy badge classes; severity is a SeverityPill and
+	// status a system chip now (severityLevel, statusChip)
+	// function severityBadgeClass(severity: string): string {
+	// 	switch (severity) {
+	// 		case 'critical': return 'badge severity-critical';
+	// 		case 'high': return 'badge severity-high';
+	// 		case 'medium': return 'badge severity-medium';
+	// 		case 'low': return 'badge severity-low';
+	// 		default: return 'badge severity-info';
+	// 	}
+	// }
+	// function statusBadgeClass(status: string): string {
+	// 	switch (status) {
+	// 		case 'open': return 'badge badge-accent';
+	// 		case 'in_progress': return 'badge badge-warning';
+	// 		case 'resolved': return 'badge badge-success';
+	// 		case 'closed': return 'badge';
+	// 		default: return 'badge';
+	// 	}
+	// }
+	// OLD CODE END
+
+	const SEVERITY_RANK: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 };
+	const STATUS_ORDER: Record<string, number> = { open: 0, in_progress: 1, resolved: 2, closed: 3 };
+
+	/** Unknown severities show as Info, as the old badge did. */
+	function severityLevel(severity: string): SeverityLevel {
+		return severity in SEVERITY_RANK ? (severity as SeverityLevel) : 'info';
 	}
 
-	function statusBadgeClass(status: string): string {
-		switch (status) {
-			case 'open':
-				return 'badge badge-accent';
-			case 'in_progress':
-				return 'badge badge-warning';
-			case 'resolved':
-				return 'badge badge-success';
-			case 'closed':
-				return 'badge';
-			default:
-				return 'badge';
-		}
+	function statusChip(status: string): string {
+		if (status === 'in_progress') return 'is-warn';
+		if (status === 'resolved') return 'is-ok';
+		return '';
 	}
 
 	function severityLabel(severity: string): string {
@@ -145,7 +169,7 @@
 	function statusLabel(status: string): string {
 		switch (status) {
 			case 'in_progress':
-				return 'In Progress';
+				return 'In progress';
 			default:
 				return status.charAt(0).toUpperCase() + status.slice(1);
 		}
@@ -165,51 +189,107 @@
 		return stats.by_status[filter] ?? 0;
 	}
 
+	/** A count, or "—" while the stats are loading or after they failed (#96: never a stand-in 0). */
+	function countText(filter: StatusFilter): string {
+		return statsLoaded && !statsFailed ? filterCount(filter).toLocaleString() : '—';
+	}
+
+	let filterOptions = $derived(
+		statusFilters.map((f) => ({ value: f.value, label: `${f.label} · ${countText(f.value)}` })),
+	);
+
+	const columns: Column<Investigation>[] = [
+		{ key: 'title', label: 'Investigation', sortValue: (r) => r.title.toLowerCase(), cell: titleCell },
+		{ key: 'severity', label: 'Severity', sortValue: (r) => SEVERITY_RANK[r.severity] ?? 0, cell: severityCell },
+		{ key: 'status', label: 'Status', sortValue: (r) => STATUS_ORDER[r.status] ?? 9, cell: statusCell },
+		{ key: 'alerts', label: 'Alerts', numeric: true, sortValue: (r) => r.alert_ids.length, cell: alertsCell },
+		{ key: 'devices', label: 'Devices', numeric: true, sortValue: (r) => r.device_ips.length, cell: devicesCell },
+		{ key: 'notes', label: 'Notes', numeric: true, sortValue: (r) => r.notes.length, cell: notesCell },
+		{ key: 'tags', label: 'Tags', sortValue: (r) => r.tags.join(', ').toLowerCase(), cell: tagsCell },
+		{ key: 'created_at', label: 'Created', sortValue: (r) => Date.parse(r.created_at) || 0, cell: createdCell },
+	];
+
 	// ---------------------------------------------------------------------------
 	// Data fetching
 	// ---------------------------------------------------------------------------
 
-	async function fetchInvestigations() {
+	// OLD CODE START — 2026-11-03 redesign: two loaders that wrote state whenever they finished,
+	// so a slow reply for an old filter could overwrite a newer one. One guarded loader now
+	// feeds the page refresh contract (PLAN.md §5.5); a filter change runs it too.
+	// async function fetchInvestigations() {
+	// 	loading = true;
+	// 	try {
+	// 		const statusParam = activeFilter === 'all' ? undefined : activeFilter;
+	// 		const response = await getInvestigations({ status: statusParam });
+	// 		investigations = response.investigations;
+	// 		listFailed = false;
+	// 	} catch {
+	// 		investigations = [];
+	// 		listFailed = true;
+	// 	} finally {
+	// 		loading = false;
+	// 	}
+	// }
+	// async function fetchStats() {
+	// 	try {
+	// 		stats = await getInvestigationStats();
+	// 		statsFailed = false;
+	// 	} catch {
+	// 		stats = { total: 0, by_status: {}, by_severity: {} };
+	// 		statsFailed = true;
+	// 	}
+	// }
+	// async function fetchAll() {
+	// 	await Promise.all([fetchInvestigations(), fetchStats()]);
+	// }
+	// let prevFilter: StatusFilter | null = null;
+	// $effect(() => {
+	// 	if (prevFilter !== null && prevFilter !== activeFilter) {
+	// 		fetchInvestigations();
+	// 	}
+	// 	prevFilter = activeFilter;
+	// });
+	// $effect(() => {
+	// 	fetchAll();
+	// });
+	// OLD CODE END
+
+	async function load(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		const status = activeFilter === 'all' ? undefined : activeFilter;
 		loading = true;
-		try {
-			const statusParam = activeFilter === 'all' ? undefined : activeFilter;
-			const response = await getInvestigations({ status: statusParam });
-			investigations = response.investigations;
+		const [list, counts] = await Promise.allSettled([getInvestigations({ status }), getInvestigationStats()]);
+		if (!guard.current(g)) return 'skipped';
+		if (list.status === 'fulfilled') {
+			investigations = list.value.investigations;
 			listFailed = false;
-		} catch {
+		} else {
 			investigations = [];
 			listFailed = true;
-		} finally {
-			loading = false;
 		}
-	}
-
-	async function fetchStats() {
-		try {
-			stats = await getInvestigationStats();
+		if (counts.status === 'fulfilled') {
+			stats = counts.value;
 			statsFailed = false;
-		} catch {
-			stats = { total: 0, by_status: {}, by_severity: {} };
+			statsLoaded = true;
+		} else {
+			stats = NO_STATS;
 			statsFailed = true;
 		}
+		loading = false;
+		const ok = [list, counts].filter((r) => r.status === 'fulfilled').length;
+		return ok === 2 ? 'ok' : ok === 0 ? 'failed' : 'partial';
 	}
 
-	async function fetchAll() {
-		await Promise.all([fetchInvestigations(), fetchStats()]);
-	}
-
-	// ---------------------------------------------------------------------------
-	// Filter change triggers refetch
-	// ---------------------------------------------------------------------------
-
-	let prevFilter: StatusFilter | null = null;
-
-	$effect(() => {
-		if (prevFilter !== null && prevFilter !== activeFilter) {
-			fetchInvestigations();
-		}
-		prevFilter = activeFilter;
+	const refresh = registerPageRefresh(load);
+	onMount(() => {
+		refresh.run();
 	});
+	onDestroy(() => refresh.unregister());
+
+	function changeFilter(next: StatusFilter) {
+		activeFilter = next;
+		refresh.run();
+	}
 
 	// ---------------------------------------------------------------------------
 	// CRUD actions
@@ -239,7 +319,7 @@
 			newSeverity = 'medium';
 			newTags = '';
 			showNewForm = false;
-			await fetchAll();
+			await refresh.run();
 		} finally {
 			creating = false;
 		}
@@ -247,7 +327,7 @@
 
 	async function handleStatusChange(inv: Investigation, newStatus: string) {
 		if (!(await updateInvestigation(inv.id, { status: newStatus }))) failed('change the status');
-		await fetchAll();
+		await refresh.run();
 	}
 
 	async function handleDelete(id: string) {
@@ -257,7 +337,7 @@
 		}
 		deleteConfirmId = null;
 		if (expandedId === id) expandedId = null;
-		await fetchAll();
+		await refresh.run();
 	}
 
 	async function handleAddNote(invId: string) {
@@ -268,12 +348,12 @@
 			return;
 		}
 		noteInputs[invId] = '';
-		await fetchAll();
+		await refresh.run();
 	}
 
 	async function handleDeleteNote(invId: string, noteId: string) {
 		if (!(await deleteNote(invId, noteId))) failed('delete the note');
-		await fetchAll();
+		await refresh.run();
 	}
 
 	// ---------------------------------------------------------------------------
@@ -283,365 +363,243 @@
 	function toggleExpand(id: string) {
 		expandedId = expandedId === id ? null : id;
 	}
-
-	// ---------------------------------------------------------------------------
-	// Initial fetch
-	// ---------------------------------------------------------------------------
-
-	$effect(() => {
-		fetchAll();
-	});
 </script>
+
+{#snippet titleCell(inv: Investigation)}<span class="inv-title">{inv.title}</span>{/snippet}
+{#snippet severityCell(inv: Investigation)}<SeverityPill level={severityLevel(inv.severity)} />{/snippet}
+{#snippet statusCell(inv: Investigation)}<span class="chip {statusChip(inv.status)}">{statusLabel(inv.status)}</span>{/snippet}
+{#snippet alertsCell(inv: Investigation)}{inv.alert_ids.length}{/snippet}
+{#snippet devicesCell(inv: Investigation)}{inv.device_ips.length}{/snippet}
+{#snippet notesCell(inv: Investigation)}{inv.notes.length}{/snippet}
+{#snippet tagsCell(inv: Investigation)}
+	{#if inv.tags.length > 0}
+		<span class="tags">
+			{#each inv.tags.slice(0, 3) as tag}<span class="tag">{tag}</span>{/each}
+			{#if inv.tags.length > 3}<span class="tag">+{inv.tags.length - 3}</span>{/if}
+		</span>
+	{:else}<span class="dim">None</span>{/if}
+{/snippet}
+{#snippet createdCell(inv: Investigation)}<span class="dim num">{formatTimestamp(inv.created_at)}</span>{/snippet}
 
 <svelte:head>
 	<title>Investigations | NetTap</title>
 </svelte:head>
 
-<div class="investigations-page">
-	<!-- Header -->
-	<div class="page-header">
-		<div class="header-left">
-			<h2>Investigations</h2>
-			<p class="text-muted">Track and manage security investigations</p>
-		</div>
-		<div class="header-actions">
-			<button class="btn btn-primary btn-sm" onclick={() => (showNewForm = !showNewForm)}>
-				<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-				</svg>
-				New Investigation
-			</button>
-		</div>
+<div class="page-head">
+	<div>
+		<h1 class="page-title">Investigations</h1>
+		<p class="page-sub">Track and manage security investigations</p>
 	</div>
+	<div class="head-actions">
+		<button class="btn primary" onclick={() => (showNewForm = !showNewForm)}>New investigation</button>
+	</div>
+</div>
 
-	{#if actionError}
-		<div class="action-error" role="alert">
-			<span>{actionError}</span>
-			<button class="btn btn-secondary btn-sm" onclick={() => (actionError = null)}>Dismiss</button>
-		</div>
-	{/if}
+{#if actionError}
+	<div class="notice is-error" role="alert">
+		<Icon name="warn" />
+		<span class="grow">{actionError}</span>
+		<button class="btn" onclick={() => (actionError = null)}>Dismiss</button>
+	</div>
+{/if}
+
+<div class="grid inv-layout">
+	<KpiCard class="c-3" label="Investigations" icon="logs" value={countText('all')} note={statsFailed ? "Couldn't load the counts" : 'All time'} />
+	<KpiCard class="c-3" label="Open" icon="alerts" value={countText('open')} note={statsFailed ? "Couldn't load the counts" : 'Not started yet'} />
+	<KpiCard class="c-3" label="In progress" icon="refresh" value={countText('in_progress')} note={statsFailed ? "Couldn't load the counts" : 'Being worked on'} />
+	<KpiCard class="c-3" label="Resolved" icon="check" value={countText('resolved')} note={statsFailed ? "Couldn't load the counts" : 'Fixed, not yet closed'} />
 
 	<!-- New investigation form -->
 	{#if showNewForm}
-		<div class="card new-investigation-form">
-			<h3>Create Investigation</h3>
+		<Card title="New investigation" sub="Saved to NetTap's investigation log" class="c-12">
 			<div class="form-grid">
-				<div class="form-group">
-					<label for="inv-title">Title</label>
-					<input
-						id="inv-title"
-						class="input"
-						type="text"
-						placeholder="Investigation title..."
-						bind:value={newTitle}
-					/>
+				<div class="field">
+					<label class="label" for="inv-title">Title</label>
+					<input id="inv-title" class="input" type="text" placeholder="Investigation title…" bind:value={newTitle} />
 				</div>
-				<div class="form-group">
-					<label for="inv-severity">Severity</label>
-					<select id="inv-severity" class="input" bind:value={newSeverity}>
+				<div class="field">
+					<label class="label" for="inv-severity">Severity</label>
+					<select id="inv-severity" class="select" bind:value={newSeverity}>
 						<option value="low">Low</option>
 						<option value="medium">Medium</option>
 						<option value="high">High</option>
 						<option value="critical">Critical</option>
 					</select>
 				</div>
-				<div class="form-group form-group-full">
-					<label for="inv-description">Description</label>
+				<div class="field full">
+					<label class="label" for="inv-description">Description</label>
 					<textarea
 						id="inv-description"
-						class="input"
+						class="textarea"
 						rows="3"
-						placeholder="Describe the investigation..."
+						placeholder="Describe the investigation…"
 						bind:value={newDescription}
 					></textarea>
 				</div>
-				<div class="form-group form-group-full">
-					<label for="inv-tags">Tags (comma-separated)</label>
-					<input
-						id="inv-tags"
-						class="input"
-						type="text"
-						placeholder="malware, c2, phishing..."
-						bind:value={newTags}
-					/>
+				<div class="field full">
+					<label class="label" for="inv-tags">Tags (comma-separated)</label>
+					<input id="inv-tags" class="input" type="text" placeholder="malware, c2, phishing…" bind:value={newTags} />
 				</div>
 			</div>
 			<div class="form-actions">
-				<button class="btn btn-secondary btn-sm" onclick={() => (showNewForm = false)}>
-					Cancel
-				</button>
-				<button
-					class="btn btn-primary btn-sm"
-					onclick={handleCreate}
-					disabled={creating || !newTitle.trim()}
-				>
-					{creating ? 'Creating...' : 'Create Investigation'}
+				<button class="btn" onclick={() => (showNewForm = false)}>Cancel</button>
+				<button class="btn primary" onclick={handleCreate} disabled={creating || !newTitle.trim()}>
+					{creating ? 'Creating…' : 'Create investigation'}
 				</button>
 			</div>
-		</div>
+		</Card>
 	{/if}
 
-	<!-- Filter tabs -->
-	<div class="filter-tabs">
-		{#each statusFilters as filter}
-			<button
-				class="filter-tab"
-				class:active={activeFilter === filter.value}
-				onclick={() => (activeFilter = filter.value)}
-			>
-				{filter.label}
-				<span class="filter-count">
-					<!-- OLD CODE START — #96: a failed stats request showed 0 in every tab
-					{filterCount(filter.value)}
-					OLD CODE END -->
-					{statsFailed ? '—' : filterCount(filter.value)}
-				</span>
-			</button>
-		{/each}
-	</div>
+	<Card
+		title="All investigations"
+		sub={listFailed ? 'The list failed to load' : `${investigations.length.toLocaleString()} shown · all time`}
+		class={expanded ? 'c-8' : 'c-12'}
+	>
+		{#snippet actions()}
+			<Pills options={filterOptions} value={activeFilter} onchange={changeFilter} ariaLabel="Status" />
+		{/snippet}
 
-	<!-- Investigation list -->
-	{#if loading && investigations.length === 0}
-		<div class="loading-state">
-			<div class="spinner"></div>
-			<p class="text-muted">Loading investigations...</p>
-		</div>
-	{:else if listFailed}
-		<div class="empty-state">
-			<h3>Couldn't load investigations</h3>
-			<p class="text-muted">The request failed. Reload the page to try again.</p>
-		</div>
-	{:else if investigations.length === 0}
-		<div class="empty-state">
-			<div class="empty-icon">
-				<svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2" />
-					<rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
-				</svg>
-			</div>
-			<h3>No Investigations</h3>
-			<p class="text-muted">
-				Create an investigation to track and manage security incidents.
-				Click "New Investigation" above to get started.
-			</p>
-		</div>
-	{:else}
-		<div class="investigation-list">
-			{#each investigations as inv (inv.id)}
-				<div class="card investigation-card" class:expanded={expandedId === inv.id}>
-					<!-- Card header (always visible) -->
-					<button
-						class="investigation-card-header"
-						onclick={() => toggleExpand(inv.id)}
+		{#if loading && investigations.length === 0}
+			<CardState state="loading" title="Loading investigations" />
+		{:else if listFailed}
+			<CardState
+				state="error"
+				title="Couldn't load investigations: the request failed."
+				message="Check that NetTap is running on the System page, then try again."
+				onaction={() => refresh.run()}
+			/>
+		{:else if investigations.length === 0}
+			<CardState
+				state="empty"
+				icon="logs"
+				title={activeFilter === 'all' ? 'No investigations yet' : 'No investigations with this status'}
+				message="Investigations appear here once you create one. Use New investigation to start tracking a security incident."
+			/>
+		{:else}
+			<DataTable
+				{columns}
+				rows={investigations}
+				ariaLabel="Investigations"
+				rowKey={(inv) => inv.id}
+				onrowactivate={(inv) => toggleExpand(inv.id)}
+				rowLabel={(inv) => `Open investigation ${inv.title}`}
+				selectedKey={expandedId ?? undefined}
+			/>
+		{/if}
+	</Card>
+
+	<!-- The open investigation, beside the table (below it under 1100 px) -->
+	{#if expanded}
+		{@const inv = expanded}
+		<Card title={inv.title} sub="{severityLabel(inv.severity)} · {statusLabel(inv.status)} · opened {formatTimestamp(inv.created_at)}" class="c-4 inv-detail">
+			{#snippet actions()}
+				<button class="icon-btn ghost" aria-label="Close details" onclick={() => (expandedId = null)}><Icon name="close" /></button>
+			{/snippet}
+
+			<div class="stack">
+				{#if inv.description}
+					<p class="body-text">{inv.description}</p>
+				{/if}
+
+				<div class="field">
+					<label class="label" for="inv-status-{inv.id}">Status</label>
+					<select
+						id="inv-status-{inv.id}"
+						class="select"
+						value={inv.status}
+						onchange={(e) => handleStatusChange(inv, (e.target as HTMLSelectElement).value)}
 					>
-						<div class="inv-header-left">
-							<span class={severityBadgeClass(inv.severity)}>
-								{inv.severity.toUpperCase()}
-							</span>
-							<span class={statusBadgeClass(inv.status)}>
-								{statusLabel(inv.status)}
-							</span>
-							<h4 class="inv-title">{inv.title}</h4>
+						<option value="open">Open</option>
+						<option value="in_progress">In progress</option>
+						<option value="resolved">Resolved</option>
+						<option value="closed">Closed</option>
+					</select>
+				</div>
+
+				{#if inv.alert_ids.length > 0}
+					<section>
+						<h3 class="eyebrow">Linked alerts ({inv.alert_ids.length})</h3>
+						<ul class="linked">
+							{#each inv.alert_ids as alertId}
+								<li><Icon name="alerts" /><span class="mono">{alertId}</span></li>
+							{/each}
+						</ul>
+					</section>
+				{/if}
+
+				{#if inv.device_ips.length > 0}
+					<section>
+						<h3 class="eyebrow">Linked devices ({inv.device_ips.length})</h3>
+						<ul class="linked">
+							{#each inv.device_ips as ip}
+								<li><Icon name="devices" /><a class="link mono" href="/devices/{ip}">{ip}</a></li>
+							{/each}
+						</ul>
+					</section>
+				{/if}
+
+				<section>
+					<h3 class="eyebrow">Notes ({inv.notes.length})</h3>
+					{#if inv.notes.length > 0}
+						<ul class="notes">
+							{#each inv.notes as note (note.id)}
+								<li class="note">
+									<p class="body-text">{note.content}</p>
+									<div class="note-meta">
+										<span class="dim num">{formatTimestamp(note.created_at)}</span>
+										<button
+											class="icon-btn ghost"
+											aria-label="Delete note"
+											title="Delete note"
+											onclick={() => handleDeleteNote(inv.id, note.id)}><Icon name="close" /></button
+										>
+									</div>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+					<div class="add-note">
+						<label class="sr-only" for="inv-note-{inv.id}">Add a note</label>
+						<textarea
+							id="inv-note-{inv.id}"
+							class="textarea"
+							rows="2"
+							placeholder="Add a note…"
+							value={noteInputs[inv.id] ?? ''}
+							oninput={(e) => (noteInputs[inv.id] = (e.target as HTMLTextAreaElement).value)}
+						></textarea>
+						<button class="btn" onclick={() => handleAddNote(inv.id)} disabled={!noteInputs[inv.id]?.trim()}>
+							Save note
+						</button>
+					</div>
+				</section>
+
+				{#if inv.tags.length > 0}
+					<section>
+						<h3 class="eyebrow">Tags</h3>
+						<div class="tags">
+							{#each inv.tags as tag}<span class="tag">{tag}</span>{/each}
 						</div>
-						<div class="inv-header-right">
-							<div class="inv-meta-badges">
-								{#if inv.alert_ids.length > 0}
-									<span class="meta-badge" title="Linked alerts">
-										<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" /></svg>
-										{inv.alert_ids.length}
-									</span>
-								{/if}
-								{#if inv.device_ips.length > 0}
-									<span class="meta-badge" title="Linked devices">
-										<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>
-										{inv.device_ips.length}
-									</span>
-								{/if}
-								{#if inv.notes.length > 0}
-									<span class="meta-badge" title="Notes">
-										<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>
-										{inv.notes.length}
-									</span>
-								{/if}
-							</div>
-							{#if inv.tags.length > 0}
-								<div class="inv-tags">
-									{#each inv.tags.slice(0, 3) as tag}
-										<span class="tag">{tag}</span>
-									{/each}
-									{#if inv.tags.length > 3}
-										<span class="tag tag-more">+{inv.tags.length - 3}</span>
-									{/if}
-								</div>
-							{/if}
-							<span class="inv-timestamp mono">{formatTimestamp(inv.created_at)}</span>
-							<svg
-								class="expand-icon"
-								class:rotate={expandedId === inv.id}
-								viewBox="0 0 24 24"
-								width="16"
-								height="16"
-								fill="none"
-								stroke="currentColor"
-								stroke-width="2"
-								stroke-linecap="round"
-								stroke-linejoin="round"
-							>
-								<polyline points="6 9 12 15 18 9" />
-							</svg>
+					</section>
+				{/if}
+
+				<div class="actions">
+					<button class="btn" onclick={() => openDrawer(inv)}>View full details</button>
+				</div>
+
+				<div class="danger-zone">
+					{#if deleteConfirmId === inv.id}
+						<p class="body-text">Delete this investigation? This can't be undone.</p>
+						<div class="actions">
+							<button class="btn" onclick={() => (deleteConfirmId = null)}>Cancel</button>
+							<button class="btn danger" onclick={() => handleDelete(inv.id)}>Delete investigation</button>
 						</div>
-					</button>
-
-					<!-- Expanded details -->
-					{#if expandedId === inv.id}
-						<div class="investigation-details">
-							<!-- Description -->
-							{#if inv.description}
-								<div class="detail-section">
-									<h5>Description</h5>
-									<p class="inv-description">{inv.description}</p>
-								</div>
-							{/if}
-
-							<!-- Status change -->
-							<div class="detail-section">
-								<h5>Change Status</h5>
-								<div class="status-actions">
-									<select
-										class="input input-sm"
-										value={inv.status}
-										onchange={(e) => handleStatusChange(inv, (e.target as HTMLSelectElement).value)}
-									>
-										<option value="open">Open</option>
-										<option value="in_progress">In Progress</option>
-										<option value="resolved">Resolved</option>
-										<option value="closed">Closed</option>
-									</select>
-								</div>
-							</div>
-
-							<!-- Linked alerts -->
-							{#if inv.alert_ids.length > 0}
-								<div class="detail-section">
-									<h5>Linked Alerts ({inv.alert_ids.length})</h5>
-									<div class="linked-items">
-										{#each inv.alert_ids as alertId}
-											<span class="linked-item">
-												<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" /></svg>
-												{alertId}
-											</span>
-										{/each}
-									</div>
-								</div>
-							{/if}
-
-							<!-- Linked devices -->
-							{#if inv.device_ips.length > 0}
-								<div class="detail-section">
-									<h5>Linked Devices ({inv.device_ips.length})</h5>
-									<div class="linked-items">
-										{#each inv.device_ips as ip}
-											<a href="/devices/{ip}" class="linked-item linked-device">
-												<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>
-												{ip}
-											</a>
-										{/each}
-									</div>
-								</div>
-							{/if}
-
-							<!-- Notes -->
-							<div class="detail-section">
-								<h5>Notes ({inv.notes.length})</h5>
-								{#if inv.notes.length > 0}
-									<div class="notes-list">
-										{#each inv.notes as note (note.id)}
-											<div class="note-card">
-												<p class="note-content">{note.content}</p>
-												<div class="note-meta">
-													<span class="mono text-muted">{formatTimestamp(note.created_at)}</span>
-													<button
-														class="btn-icon btn-danger-icon"
-														title="Delete note"
-														onclick={() => handleDeleteNote(inv.id, note.id)}
-													>
-														<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-															<polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-														</svg>
-													</button>
-												</div>
-											</div>
-										{/each}
-									</div>
-								{/if}
-
-								<!-- Add note form -->
-								<div class="add-note-form">
-									<textarea
-										class="input"
-										rows="2"
-										placeholder="Add a note..."
-										value={noteInputs[inv.id] ?? ''}
-										oninput={(e) => (noteInputs[inv.id] = (e.target as HTMLTextAreaElement).value)}
-									></textarea>
-									<button
-										class="btn btn-secondary btn-sm"
-										onclick={() => handleAddNote(inv.id)}
-										disabled={!noteInputs[inv.id]?.trim()}
-									>
-										Save Note
-									</button>
-								</div>
-							</div>
-
-							<!-- Tags -->
-							{#if inv.tags.length > 0}
-								<div class="detail-section">
-									<h5>Tags</h5>
-									<div class="tags-list">
-										{#each inv.tags as tag}
-											<span class="tag">{tag}</span>
-										{/each}
-									</div>
-								</div>
-							{/if}
-
-							<!-- View Details Drawer -->
-							<div class="detail-section">
-								<button class="btn btn-primary btn-sm" onclick={() => openDrawer(inv)}>
-									<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-										<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
-									</svg>
-									View Full Details
-								</button>
-							</div>
-
-							<!-- Delete -->
-							<div class="detail-section detail-section-danger">
-								{#if deleteConfirmId === inv.id}
-									<p class="text-danger">Are you sure you want to delete this investigation? This cannot be undone.</p>
-									<div class="delete-actions">
-										<button class="btn btn-secondary btn-sm" onclick={() => (deleteConfirmId = null)}>
-											Cancel
-										</button>
-										<button class="btn btn-danger btn-sm" onclick={() => handleDelete(inv.id)}>
-											Delete Investigation
-										</button>
-									</div>
-								{:else}
-									<button class="btn btn-danger btn-sm" onclick={() => (deleteConfirmId = inv.id)}>
-										<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
-										</svg>
-										Delete Investigation
-									</button>
-								{/if}
-							</div>
-						</div>
+					{:else}
+						<button class="btn danger" onclick={() => (deleteConfirmId = inv.id)}>Delete investigation</button>
 					{/if}
 				</div>
-			{/each}
-		</div>
+			</div>
+		</Card>
 	{/if}
 </div>
 
@@ -666,497 +624,127 @@
 		{/if}
 	{/snippet}
 	{#snippet actions()}
-		<button class="btn btn-secondary btn-sm" onclick={closeDrawer}>
-			Close
-		</button>
+		<button class="btn" onclick={closeDrawer}>Close</button>
 	{/snippet}
 </DetailDrawer>
 
 <style>
-	.investigations-page {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
+	.grow {
+		flex: 1;
+		align-self: center;
 	}
 
-	/* Header */
-	.page-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: var(--space-md);
-		flex-wrap: wrap;
-	}
-
-	.header-left h2 {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		margin-bottom: var(--space-xs);
-	}
-
-	.header-actions {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	/* Filter tabs */
-	.filter-tabs {
-		display: flex;
-		gap: 2px;
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		padding: var(--space-xs);
-		overflow-x: auto;
-	}
-
-	.filter-tab {
-		display: flex;
-		align-items: center;
-		gap: var(--space-xs);
-		padding: var(--space-sm) var(--space-md);
-		font-family: var(--font-sans);
-		font-size: var(--text-sm);
-		font-weight: 500;
-		color: var(--text-secondary);
-		background: none;
-		border: none;
-		border-radius: var(--radius-sm);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-		white-space: nowrap;
-	}
-
-	.filter-tab:hover {
-		color: var(--text-primary);
-		background-color: var(--bg-tertiary);
-	}
-
-	.filter-tab.active {
-		color: var(--accent);
-		background-color: var(--accent-muted);
-	}
-
-	.filter-count {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-width: 20px;
-		height: 20px;
-		padding: 0 6px;
-		font-size: var(--text-xs);
-		font-weight: 600;
-		background-color: var(--bg-tertiary);
-		border-radius: var(--radius-full);
-	}
-
-	.filter-tab.active .filter-count {
-		background-color: var(--accent);
-		color: var(--on-accent);
-	}
-
-	/* Loading state */
-	.loading-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: var(--space-3xl);
-		gap: var(--space-md);
-	}
-
-	.spinner {
-		width: 32px;
-		height: 32px;
-		border: 3px solid var(--border-default);
-		border-top-color: var(--accent);
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-	/* Empty state */
-	.action-error {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-md);
-		padding: var(--space-sm) var(--space-md);
-		margin-bottom: var(--space-md);
-		border: 1px solid var(--red);
-		border-radius: var(--radius-sm);
-		background: var(--red-dim);
-		color: var(--text-primary);
-		font-size: var(--text-sm);
-	}
-
-	.empty-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: var(--space-3xl);
-		text-align: center;
-		background-color: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-lg);
-	}
-
-	.empty-icon {
-		color: var(--text-muted);
-		margin-bottom: var(--space-md);
-	}
-
-	.empty-state h3 {
-		font-size: var(--text-xl);
-		font-weight: 600;
-		color: var(--text-primary);
-		margin-bottom: var(--space-sm);
-	}
-
-	.empty-state p {
-		max-width: 480px;
-		line-height: var(--leading-relaxed);
-	}
-
-	/* New investigation form */
-	.new-investigation-form {
-		padding: var(--space-lg);
-	}
-
-	.new-investigation-form h3 {
-		font-size: var(--text-lg);
-		font-weight: 600;
-		margin-bottom: var(--space-md);
-	}
-
-	.form-grid {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: var(--space-md);
-	}
-
-	.form-group {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-xs);
-	}
-
-	.form-group-full {
+	.field.full {
 		grid-column: 1 / -1;
 	}
 
-	.form-group label {
-		font-size: var(--text-sm);
-		font-weight: 500;
-		color: var(--text-secondary);
-	}
-
-	.form-actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: var(--space-sm);
-		margin-top: var(--space-md);
-		padding-top: var(--space-md);
-		border-top: 1px solid var(--border-default);
-	}
-
-	/* Investigation list */
-	.investigation-list {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.investigation-card {
-		padding: 0;
-		overflow: hidden;
-		transition: border-color var(--transition-fast);
-	}
-
-	.investigation-card:hover {
-		border-color: var(--accent);
-	}
-
-	.investigation-card.expanded {
-		border-color: var(--accent);
-	}
-
-	/* Card header */
-	.investigation-card-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-md);
-		padding: var(--space-md);
-		width: 100%;
-		background: none;
-		border: none;
-		cursor: pointer;
-		font-family: var(--font-sans);
-		text-align: left;
-	}
-
-	.investigation-card-header:hover {
-		background-color: var(--bg-tertiary);
-	}
-
-	.inv-header-left {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		min-width: 0;
-		flex: 1;
-	}
-
 	.inv-title {
-		font-size: var(--text-base);
-		font-weight: 600;
-		color: var(--text-primary);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
+		font-weight: 700;
+		white-space: normal;
 	}
 
-	.inv-header-right {
-		display: flex;
-		align-items: center;
-		gap: var(--space-md);
-		flex-shrink: 0;
-	}
-
-	.inv-meta-badges {
-		display: flex;
-		align-items: center;
-		gap: var(--space-xs);
-	}
-
-	.meta-badge {
+	.tags {
 		display: inline-flex;
-		align-items: center;
-		gap: 3px;
-		padding: 2px 6px;
-		font-size: var(--text-xs);
-		font-weight: 500;
-		color: var(--text-secondary);
-		background-color: var(--bg-tertiary);
-		border-radius: var(--radius-sm);
-	}
-
-	.inv-tags {
-		display: flex;
-		align-items: center;
-		gap: var(--space-xs);
-	}
-
-	.tag {
-		display: inline-block;
-		padding: 1px 8px;
-		font-size: 11px;
-		font-weight: 500;
-		color: var(--text-secondary);
-		background-color: var(--bg-tertiary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-full);
-	}
-
-	.tag-more {
-		color: var(--text-muted);
-	}
-
-	.inv-timestamp {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-	}
-
-	.expand-icon {
-		transition: transform var(--transition-fast);
-		color: var(--text-muted);
-		flex-shrink: 0;
-	}
-
-	.expand-icon.rotate {
-		transform: rotate(180deg);
-	}
-
-	/* Expanded details */
-	.investigation-details {
-		border-top: 1px solid var(--border-default);
-		padding: var(--space-md);
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-	}
-
-	.detail-section h5 {
-		font-size: var(--text-sm);
-		font-weight: 600;
-		color: var(--text-secondary);
-		margin-bottom: var(--space-sm);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
-	.inv-description {
-		font-size: var(--text-sm);
-		line-height: var(--leading-relaxed);
-		color: var(--text-primary);
-	}
-
-	/* Status actions */
-	.status-actions {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.input-sm {
-		padding: var(--space-xs) var(--space-sm);
-		font-size: var(--text-sm);
-	}
-
-	/* Linked items */
-	.linked-items {
-		display: flex;
 		flex-wrap: wrap;
-		gap: var(--space-xs);
+		gap: var(--sp-1);
 	}
 
-	.linked-item {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		padding: 3px 10px;
-		font-size: var(--text-xs);
-		font-family: var(--font-mono);
-		color: var(--text-secondary);
-		background-color: var(--bg-tertiary);
-		border-radius: var(--radius-sm);
-		border: 1px solid var(--border-default);
+	/* The detail card sits beside the table like the alert drawer, and below it under 1100 px */
+	.inv-layout > :global(.inv-detail) {
+		position: sticky;
+		top: var(--sp-4);
+		align-self: start;
 	}
 
-	.linked-device {
-		text-decoration: none;
-		transition: border-color var(--transition-fast), color var(--transition-fast);
+	.body-text {
+		font-size: var(--text-sm);
+		color: var(--text-2);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
 
-	.linked-device:hover {
-		border-color: var(--accent);
-		color: var(--accent);
-		text-decoration: none;
-	}
-
-	/* Notes */
-	.notes-list {
+	section {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
-		margin-bottom: var(--space-md);
+		gap: var(--sp-2);
 	}
 
-	.note-card {
-		padding: var(--space-sm) var(--space-md);
-		background-color: var(--bg-tertiary);
-		border-radius: var(--radius-md);
-		border: 1px solid var(--border-default);
-	}
-
-	.note-content {
+	.linked {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--sp-1);
 		font-size: var(--text-sm);
-		line-height: var(--leading-normal);
-		color: var(--text-primary);
-		margin-bottom: var(--space-xs);
+	}
+
+	.linked li {
+		display: flex;
+		align-items: center;
+		gap: var(--sp-2);
+		min-width: 0;
+	}
+
+	.linked li :global(.ic) {
+		width: 14px;
+		height: 14px;
+		color: var(--text-3);
+	}
+
+	.notes {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--sp-2);
+	}
+
+	.note {
+		padding: var(--sp-3);
+		border-radius: var(--r-md);
+		background: var(--surface-2);
+		border: 1px solid var(--line);
 	}
 
 	.note-meta {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		gap: var(--sp-2);
+		margin-top: var(--sp-1);
+		font-size: var(--text-xs);
 	}
 
-	.btn-icon {
-		background: none;
-		border: none;
-		cursor: pointer;
-		padding: 2px;
-		border-radius: var(--radius-sm);
-		color: var(--text-muted);
-		transition: color var(--transition-fast);
-	}
-
-	.btn-danger-icon:hover {
-		color: var(--danger);
-	}
-
-	.add-note-form {
+	.add-note {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
 		align-items: flex-end;
+		gap: var(--sp-2);
 	}
 
-	.add-note-form textarea {
-		width: 100%;
-	}
-
-	/* Tags list */
-	.tags-list {
+	.danger-zone {
 		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-xs);
+		flex-direction: column;
+		gap: var(--sp-2);
+		padding-top: var(--sp-4);
+		border-top: 1px solid var(--line);
 	}
 
-	/* Danger section */
-	.detail-section-danger {
-		padding-top: var(--space-md);
-		border-top: 1px solid var(--border-default);
+	.btn.danger {
+		color: var(--sev-critical);
 	}
 
-	.text-danger {
-		color: var(--danger);
-		font-size: var(--text-sm);
-		margin-bottom: var(--space-sm);
+	/* Keep the close button beside a long title */
+	.inv-layout > :global(.inv-detail > .card-head) {
+		flex-wrap: nowrap;
 	}
 
-	.delete-actions {
-		display: flex;
-		gap: var(--space-sm);
-	}
-
-	/* Responsive */
-	@media (max-width: 768px) {
-		.page-header {
-			flex-direction: column;
-		}
-
-		.header-actions {
-			width: 100%;
-			justify-content: flex-end;
-		}
-
-		.investigation-card-header {
-			flex-direction: column;
-			align-items: flex-start;
-		}
-
-		.inv-header-right {
-			flex-wrap: wrap;
-		}
-
-		.form-grid {
-			grid-template-columns: 1fr;
-		}
-	}
-
-	@media (max-width: 640px) {
-		.inv-tags {
-			display: none;
+	@container app (max-width: 1100px) {
+		.inv-layout > :global(.inv-detail) {
+			grid-column: span 12;
+			position: static;
 		}
 	}
 </style>

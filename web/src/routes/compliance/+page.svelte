@@ -15,7 +15,18 @@
 	import type { DeviceCountResponse } from '$api/devices';
 	import type { RiskScoresResponse } from '$api/risk';
 	import type { InvestigationStats } from '$api/investigations';
+	import { onDestroy, onMount } from 'svelte';
 	import Collapsible from '$components/Collapsible.svelte';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import KpiCard from '$lib/components/ui/KpiCard.svelte';
+	import Meter from '$lib/components/ui/Meter.svelte';
+	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
+	import Radar from '$lib/components/ui/charts/Radar.svelte';
+	import Ring from '$lib/components/ui/charts/Ring.svelte';
+	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -39,8 +50,13 @@
 		name: string;
 		icon: string;
 		score: number | null;
-		status: 'Good' | 'Needs Attention' | 'Poor' | "Couldn't compute";
+		// OLD CODE START — 2026-11-03 redesign: title-case status word
+		// status: 'Good' | 'Needs Attention' | 'Poor' | "Couldn't compute";
+		// OLD CODE END
+		status: 'Good' | 'Needs attention' | 'Poor' | "Couldn't compute";
 		statusClass: string;
+		/** The card's subtitle: what the score measures. */
+		sub: string;
 		description: string;
 		findings: string[];
 		needs: Input[];
@@ -59,6 +75,8 @@
 	// ---------------------------------------------------------------------------
 
 	let loading = $state(true);
+	// The first load has finished: until then no card shows a figure computed from the stand-in defaults
+	let loaded = $state(false);
 	let protocols = $state<ProtocolsResponse>({ from: '', to: '', protocols: [], services: [] });
 	let alertCounts = $state<AlertCountResponse>({ from: '', to: '', counts: { total: 0, high: 0, medium: 0, low: 0 } });
 	// OLD CODE START — #96: see the getDevices import
@@ -213,27 +231,37 @@
 		return 'F';
 	});
 
-	let gradeColorClass = $derived.by(() => {
-		if (overallScore >= 90) return 'grade-a';
-		if (overallScore >= 80) return 'grade-b';
-		if (overallScore >= 70) return 'grade-c';
-		return 'grade-df';
-	});
+	// OLD CODE START — 2026-11-03 redesign: legacy grade colour classes; the grade is a Ring and a word now
+	// let gradeColorClass = $derived.by(() => {
+	// 	if (overallScore >= 90) return 'grade-a';
+	// 	if (overallScore >= 80) return 'grade-b';
+	// 	if (overallScore >= 70) return 'grade-c';
+	// 	return 'grade-df';
+	// });
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// Category cards
 	// ---------------------------------------------------------------------------
 
-	function getStatus(score: number): 'Good' | 'Needs Attention' | 'Poor' {
+	function getStatus(score: number): 'Good' | 'Needs attention' | 'Poor' {
 		if (score >= 80) return 'Good';
-		if (score >= 50) return 'Needs Attention';
+		if (score >= 50) return 'Needs attention';
 		return 'Poor';
 	}
 
+	// OLD CODE START — 2026-11-03 redesign: legacy badge classes
+	// function getStatusClass(score: number): string {
+	// 	if (score >= 80) return 'badge-success';
+	// 	if (score >= 50) return 'badge-warning';
+	// 	return 'badge-danger';
+	// }
+	// OLD CODE END
+	/** The status chip: the word always shows; the tint only backs it up. */
 	function getStatusClass(score: number): string {
-		if (score >= 80) return 'badge-success';
-		if (score >= 50) return 'badge-warning';
-		return 'badge-danger';
+		if (score >= 80) return 'is-ok';
+		if (score >= 50) return 'is-warn';
+		return 'is-bad';
 	}
 
 	function getEncryptionFindings(): string[] {
@@ -382,7 +410,7 @@
 				...cat,
 				score: null,
 				status: "Couldn't compute",
-				statusClass: 'badge-muted',
+				statusClass: '',
 				findings: [`Couldn't load ${missing.map((n) => INPUT_NAMES[n]).join(' or ')}: the request failed.`],
 			};
 		});
@@ -394,6 +422,7 @@
 	let categories = $derived<CategoryScore[]>(withFailures([
 		{
 			name: 'Encryption',
+			sub: 'Percent of connections that can be encrypted · current period',
 			icon: 'lock',
 			score: encryptionScore,
 			status: getStatus(encryptionScore),
@@ -403,7 +432,8 @@
 			needs: ['protocols'],
 		},
 		{
-			name: 'DNS Security',
+			name: 'DNS security',
+			sub: 'Percent of DNS lookups sent over TLS · current period',
 			icon: 'globe',
 			score: dnsScore,
 			status: getStatus(dnsScore),
@@ -413,7 +443,8 @@
 			needs: ['protocols'],
 		},
 		{
-			name: 'Network Segmentation',
+			name: 'Network segmentation',
+			sub: '100, less 10 for each device not yet baselined',
 			icon: 'layers',
 			score: networkScore,
 			status: getStatus(networkScore),
@@ -423,7 +454,8 @@
 			needs: ['devices', 'risk'],
 		},
 		{
-			name: 'Patch Currency',
+			name: 'Patch currency',
+			sub: 'Percent of connections not on legacy protocols · current period',
 			icon: 'refresh',
 			score: patchScore,
 			status: getStatus(patchScore),
@@ -433,7 +465,8 @@
 			needs: ['protocols'],
 		},
 		{
-			name: 'Alert Response',
+			name: 'Alert response',
+			sub: 'Percent of investigations resolved or closed',
 			icon: 'bell-ring',
 			score: alertScore,
 			status: getStatus(alertScore),
@@ -444,7 +477,8 @@
 			needs: alertCounts.counts.total > 0 ? ['alerts', 'investigations'] : ['alerts'],
 		},
 		{
-			name: 'Monitoring Coverage',
+			name: 'Monitoring coverage',
+			sub: 'Percent of devices with a risk score',
 			icon: 'eye',
 			score: monitoringScore,
 			status: getStatus(monitoringScore),
@@ -481,31 +515,31 @@
 				priority: encryptionScore < 50 ? 'high' : 'medium',
 			});
 		}
-		if (low('DNS Security', dnsScore)) {
+		if (low('DNS security', dnsScore)) {
 			recs.push({
 				text: 'Enable DNS-over-HTTPS (DoH) or DNS-over-TLS (DoT) on your router or devices to encrypt DNS queries.',
 				priority: dnsScore < 50 ? 'high' : 'medium',
 			});
 		}
-		if (low('Network Segmentation', networkScore)) {
+		if (low('Network segmentation', networkScore)) {
 			recs.push({
 				text: 'Review un-baselined devices on the Devices page and mark them as known to improve segmentation visibility.',
 				priority: 'medium',
 			});
 		}
-		if (low('Patch Currency', patchScore)) {
+		if (low('Patch currency', patchScore)) {
 			recs.push({
 				text: 'Replace legacy protocols (FTP, Telnet, plain HTTP) with encrypted alternatives (SFTP, SSH, HTTPS).',
 				priority: patchScore < 50 ? 'high' : 'medium',
 			});
 		}
-		if (low('Alert Response', alertScore)) {
+		if (low('Alert response', alertScore)) {
 			recs.push({
 				text: 'Investigate and resolve open alerts. Create investigations for high-severity alerts to improve response tracking.',
 				priority: alertScore < 50 ? 'high' : 'medium',
 			});
 		}
-		if (low('Monitoring Coverage', monitoringScore)) {
+		if (low('Monitoring coverage', monitoringScore)) {
 			recs.push({
 				text: 'Ensure all devices are being monitored. Visit the Devices page to trigger risk scoring for un-scored devices.',
 				priority: 'medium',
@@ -529,7 +563,36 @@
 	// Data fetching
 	// ---------------------------------------------------------------------------
 
-	async function fetchAll() {
+	// OLD CODE START — 2026-11-03 redesign: wrote state whenever it finished and reported nothing;
+	// the guarded loader below feeds the page refresh contract (PLAN.md §5.5)
+	// async function fetchAll() {
+	// 	loading = true;
+	// 	// #96: each input on its own, so one failure marks only the categories built on it
+	// 	const [protocolsRes, alertsRes, devicesRes, riskRes, statsRes] = await Promise.allSettled([
+	// 		getProtocolDistribution(),
+	// 		getAlertCount(),
+	// 		getDeviceCount(),
+	// 		getRiskScores(),
+	// 		getInvestigationStats(),
+	// 	]);
+	// 	if (protocolsRes.status === 'fulfilled') protocols = protocolsRes.value;
+	// 	if (alertsRes.status === 'fulfilled') alertCounts = alertsRes.value;
+	// 	if (devicesRes.status === 'fulfilled') deviceCount = devicesRes.value;
+	// 	if (riskRes.status === 'fulfilled') riskScores = riskRes.value;
+	// 	if (statsRes.status === 'fulfilled') investigationStats = statsRes.value;
+	// 	const settled: Record<Input, PromiseSettledResult<unknown>> = {
+	// 		protocols: protocolsRes,
+	// 		alerts: alertsRes,
+	// 		devices: devicesRes,
+	// 		risk: riskRes,
+	// 		investigations: statsRes,
+	// 	};
+	// 	failed = (Object.keys(settled) as Input[]).filter((k) => settled[k].status === 'rejected');
+	// 	loading = false;
+	// }
+	// OLD CODE END
+	async function load(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
 		loading = true;
 		// #96: each input on its own, so one failure marks only the categories built on it
 		const [protocolsRes, alertsRes, devicesRes, riskRes, statsRes] = await Promise.allSettled([
@@ -539,6 +602,7 @@
 			getRiskScores(),
 			getInvestigationStats(),
 		]);
+		if (!guard.current(g)) return 'skipped';
 		if (protocolsRes.status === 'fulfilled') protocols = protocolsRes.value;
 		if (alertsRes.status === 'fulfilled') alertCounts = alertsRes.value;
 		if (devicesRes.status === 'fulfilled') deviceCount = devicesRes.value;
@@ -553,6 +617,9 @@
 		};
 		failed = (Object.keys(settled) as Input[]).filter((k) => settled[k].status === 'rejected');
 		loading = false;
+		loaded = true;
+		if (failed.length === 0) return 'ok';
+		return failed.length === Object.keys(settled).length ? 'failed' : 'partial';
 	}
 
 	// OLD CODE START — #96: any failure left the defaults in place, so it scored as a clean network
@@ -592,602 +659,259 @@
 	// Initial fetch
 	// ---------------------------------------------------------------------------
 
-	$effect(() => {
-		fetchAll();
+	// OLD CODE START — 2026-11-03 redesign: the first load now goes through the refresh contract
+	// $effect(() => {
+	// 	fetchAll();
+	// });
+	// OLD CODE END
+	const refresh = registerPageRefresh(load);
+	onMount(() => {
+		refresh.run();
 	});
+	onDestroy(() => refresh.unregister());
+
+	// ---------------------------------------------------------------------------
+	// Page summary (only figures computed above, nothing new)
+	// ---------------------------------------------------------------------------
+
+	const computed = $derived(categories.filter((c) => c.score !== null));
+	const byStatus = (status: CategoryScore['status']) => categories.filter((c) => c.status === status);
+
+	const radarAxes = $derived(computed.map((c) => ({ key: c.name, label: c.name, value: c.score ?? 0 })));
+	const weakest = $derived(computed.reduce<CategoryScore | null>((low, c) => (low && (low.score ?? 0) <= (c.score ?? 0) ? low : c), null));
+
+	const summary = $derived.by(() => {
+		if (overallScore >= 90) return 'Excellent security posture. Your network follows best practices across all categories.';
+		if (overallScore >= 80) return 'Good security posture with minor areas for improvement.';
+		if (overallScore >= 70) return 'Moderate security posture. Several areas need attention.';
+		if (overallScore >= 60) return 'Below average. Multiple security practices need improvement.';
+		return 'Critical issues detected. Immediate action recommended.';
+	});
+
+	type Recommendation = { text: string; priority: 'high' | 'medium' | 'low' };
+	const PRIORITY_RANK: Record<Recommendation['priority'], number> = { high: 3, medium: 2, low: 1 };
+	const recColumns: Column<Recommendation>[] = [
+		{ key: 'priority', label: 'Priority', sortValue: (r) => PRIORITY_RANK[r.priority], cell: priorityCell },
+		{ key: 'text', label: 'Recommendation', sortValue: (r) => r.text.toLowerCase(), cell: recCell, class: 'wrap' },
+	];
+
+	/** "Encryption, DNS security" or "None". */
+	const names = (cats: CategoryScore[]) => (cats.length > 0 ? cats.map((c) => c.name).join(', ') : 'None');
 </script>
+
+{#snippet priorityCell(r: Recommendation)}<SeverityPill level={r.priority} />{/snippet}
+{#snippet recCell(r: Recommendation)}{r.text}{/snippet}
 
 <svelte:head>
 	<title>Security Posture | NetTap</title>
 </svelte:head>
 
-<div class="compliance-page">
-	<!-- Page header -->
-	<div class="page-header">
-		<div class="header-left">
-			<h2>Security Posture</h2>
-			<p class="text-muted">How well your network follows security best practices</p>
-		</div>
-		<div class="header-actions">
-			<button class="btn btn-primary btn-sm" onclick={fetchAll} disabled={loading}>
-				<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<polyline points="23 4 23 10 17 10" />
-					<polyline points="1 20 1 14 7 14" />
-					<path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
-				</svg>
-				{loading ? 'Refreshing...' : 'Refresh'}
-			</button>
-		</div>
+<div class="page-head">
+	<div>
+		<h1 class="page-title">Security posture</h1>
+		<p class="page-sub">How well your network follows security best practices</p>
 	</div>
+	<div class="head-actions">
+		<!-- The top bar's Refresh does the same; this one stays for phone widths, where the top bar is hidden -->
+		<button class="btn" onclick={() => refresh.run()} disabled={loading}>
+			<Icon name="refresh" />{loading ? 'Refreshing…' : 'Refresh'}
+		</button>
+	</div>
+</div>
 
-	{#if loading}
-		<div class="loading-state">
-			<div class="spinner"></div>
-			<p class="text-muted">Calculating security posture...</p>
-		</div>
-	{:else}
-		<!-- Overall score card -->
-		<div class="overall-score-card card">
+<div class="grid posture">
+	<KpiCard
+		class="c-4"
+		label="Good"
+		icon="check"
+		value={loaded ? byStatus('Good').length : '—'}
+		unit={loaded ? 'of 6' : undefined}
+		note="Scored 80 or more"
+		sub={loaded ? names(byStatus('Good')) : undefined}
+	/>
+	<KpiCard
+		class="c-4"
+		label="Needs attention"
+		icon="warn"
+		value={loaded ? byStatus('Needs attention').length : '—'}
+		unit={loaded ? 'of 6' : undefined}
+		note="Scored 50 to 79"
+		sub={loaded ? names(byStatus('Needs attention')) : undefined}
+	/>
+	<KpiCard
+		class="c-4"
+		label="Poor"
+		icon="threats"
+		value={loaded ? byStatus('Poor').length : '—'}
+		unit={loaded ? 'of 6' : undefined}
+		note="Scored under 50"
+		sub={loaded ? names(byStatus('Poor')) : undefined}
+	/>
+
+	<Card title="Score by category" sub="0 to 100 for each category · higher is better" hero class="c-8">
+		{#if !loaded}
+			<CardState state="loading" title="Calculating security posture…" />
+		{:else if radarAxes.length < 3}
+			<CardState
+				state="error"
+				title="Couldn't compute enough categories to draw them."
+				message="{uncomputed.join(', ')} have no score because a request failed. Refresh to try again."
+				onaction={() => refresh.run()}
+			/>
+		{:else}
+			<Radar
+				axes={radarAxes}
+				ariaLabel={weakest ? `Score by category: lowest is ${weakest.name} at ${weakest.score} out of 100` : 'Score by category'}
+			/>
 			{#if uncomputed.length > 0}
-				<!-- #96: a weighted score over the categories that loaded would read as the whole picture -->
-				<div class="overall-score-content">
-					<div class="grade-circle grade-unknown">
-						<span class="grade-letter">?</span>
-					</div>
-					<div class="overall-score-info">
-						<h3 class="overall-score-title">Overall Security Posture</h3>
-						<p class="overall-score-summary text-muted">
-							Couldn't compute the overall score: {uncomputed.join(', ')}
-							{uncomputed.length === 1 ? 'has' : 'have'} no score because a request failed. Refresh to try again.
-						</p>
-					</div>
-				</div>
-			{:else}
-			<div class="overall-score-content">
-				<div class="grade-circle {gradeColorClass}">
-					<span class="grade-letter">{overallGrade}</span>
-				</div>
-				<div class="overall-score-info">
-					<h3 class="overall-score-title">Overall Security Posture</h3>
-					<div class="overall-score-bar-wrapper">
-						<div class="overall-score-percentage {gradeColorClass}-text">{overallScore}%</div>
-						<div class="progress-bar-track progress-bar-lg">
-							<div
-								class="progress-bar-fill {gradeColorClass}-bg"
-								style="width: {overallScore}%"
-							></div>
-						</div>
-					</div>
-					<p class="overall-score-summary text-muted">
-						{#if overallScore >= 90}
-							Excellent security posture. Your network follows best practices across all categories.
-						{:else if overallScore >= 80}
-							Good security posture with minor areas for improvement.
-						{:else if overallScore >= 70}
-							Moderate security posture. Several areas need attention.
-						{:else if overallScore >= 60}
-							Below average. Multiple security practices need improvement.
-						{:else}
-							Critical issues detected. Immediate action recommended.
-						{/if}
-					</p>
-				</div>
-			</div>
+				<p class="note">Not shown: {uncomputed.join(', ')}, because a request failed.</p>
 			{/if}
-		</div>
+		{/if}
+	</Card>
 
-		<!-- Category cards grid (2x3) -->
-		<div class="grid grid-cols-2 category-grid">
-			{#each categories as cat}
-				<div class="card category-card">
-					<div class="category-header">
-						<div class="category-icon-name">
-							<div class="category-icon">
-								<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-									{#if cat.icon === 'lock'}
-										<rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0110 0v4" />
-									{:else if cat.icon === 'globe'}
-										<circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" />
-									{:else if cat.icon === 'layers'}
-										<polygon points="12 2 2 7 12 12 22 7 12 2" /><polyline points="2 17 12 22 22 17" /><polyline points="2 12 12 17 22 12" />
-									{:else if cat.icon === 'refresh'}
-										<polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" />
-									{:else if cat.icon === 'bell-ring'}
-										<path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 01-3.46 0" /><path d="M2 8a10.78 10.78 0 011-4" /><path d="M22 8a10.78 10.78 0 00-1-4" />
-									{:else if cat.icon === 'eye'}
-										<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
-									{/if}
-								</svg>
-							</div>
-							<span class="category-name">{cat.name}</span>
-						</div>
-						<span class="badge {cat.statusClass}">{cat.status}</span>
-					</div>
+	<Card title="Overall security posture" sub="Weighted across the six categories" class="c-4">
+		{#if !loaded}
+			<CardState state="loading" title="Calculating the overall score" />
+		{:else if uncomputed.length > 0}
+			<!-- #96: a weighted score over the categories that loaded would read as the whole picture -->
+			<CardState
+				state="error"
+				title="Couldn't compute the overall score"
+				message="{uncomputed.join(', ')} {uncomputed.length === 1 ? 'has' : 'have'} no score because a request failed. Refresh to try again."
+				onaction={() => refresh.run()}
+			/>
+		{:else}
+			<div class="overall">
+				<Ring
+					value={overallScore}
+					label="Grade {overallGrade}"
+					ariaLabel="Overall score {overallScore} out of 100, grade {overallGrade}"
+				/>
+				<p class="trust-plain">{summary}</p>
+			</div>
+		{/if}
+	</Card>
 
+	{#if !loaded}
+		<Card title="Categories" sub="Six checks, each scored 0 to 100" class="c-12">
+			<CardState state="loading" title="Scoring the categories" />
+		</Card>
+	{:else}
+		{#each categories as cat (cat.name)}
+			<Card title={cat.name} sub={cat.sub} class="c-4 category-card">
+				{#snippet actions()}
+					<span class="chip {cat.statusClass}">{cat.status}</span>
+				{/snippet}
+
+				<div class="stack">
 					{#if cat.score === null}
 						<!-- #96: no score for a category whose input failed -->
-						<div class="category-score-row">
-							<span class="category-score-value text-muted">—</span>
-							<span class="category-unavailable text-muted">{cat.findings[0]}</span>
+						<div class="score-row">
+							<span class="score dim">—</span>
+							<span class="unavailable">{cat.findings[0]}</span>
 						</div>
 					{:else}
-						<div class="category-score-row">
-							<span class="category-score-value">{cat.score}%</span>
-							<div class="progress-bar-track">
-								<div
-									class="progress-bar-fill {cat.score >= 80 ? 'fill-success' : cat.score >= 50 ? 'fill-warning' : 'fill-danger'}"
-									style="width: {cat.score}%"
-								></div>
-							</div>
+						<div class="score-row">
+							<span class="score">{cat.score}%</span>
+							<Meter value={cat.score} label="{cat.name} score" />
 						</div>
 					{/if}
 
-					<p class="category-description text-muted">{cat.description}</p>
+					<p class="desc">{cat.description}</p>
 
-					<!-- Expandable detail section -->
-					<Collapsible title="View Findings" badge={String(cat.findings.length)}>
-						<ul class="findings-list">
+					<Collapsible title="View findings" badge={String(cat.findings.length)}>
+						<ul class="findings">
 							{#each cat.findings as finding}
-								<li class="finding-item">
-									<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-										<polyline points="9 11 12 14 22 4" />
-										<path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-									</svg>
-									<span>{finding}</span>
-								</li>
+								<li><Icon name="check" /><span>{finding}</span></li>
 							{/each}
 						</ul>
 					</Collapsible>
 				</div>
-			{/each}
-		</div>
-
-		<!-- Improve Your Score section -->
-		<div class="card recommendations-card">
-			<div class="recommendations-header">
-				<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<circle cx="12" cy="12" r="10" />
-					<line x1="12" y1="16" x2="12" y2="12" />
-					<line x1="12" y1="8" x2="12.01" y2="8" />
-				</svg>
-				<h3>Improve Your Score</h3>
-			</div>
-			<p class="recommendations-subtitle text-muted">Actionable recommendations to improve your network's security posture</p>
-
-			<div class="recommendations-list">
-				{#each recommendations as rec}
-					<div class="recommendation-item">
-						<span class="rec-priority badge {rec.priority === 'high' ? 'rec-high' : rec.priority === 'medium' ? 'rec-medium' : 'rec-low'}">
-							{rec.priority.toUpperCase()}
-						</span>
-						<span class="rec-text">{rec.text}</span>
-					</div>
-				{/each}
-			</div>
-		</div>
+			</Card>
+		{/each}
 	{/if}
+
+	<Card title="Improve your score" sub="What to change, highest priority first" class="c-12">
+		{#if !loaded}
+			<CardState state="loading" title="Working out recommendations" />
+		{:else}
+			<div class="recs">
+				<DataTable
+					columns={recColumns}
+					rows={recommendations}
+					ariaLabel="Recommendations"
+					rowKey={(r) => r.text}
+					initialSort={{ key: 'priority', dir: 'desc' }}
+				/>
+			</div>
+		{/if}
+	</Card>
 </div>
 
 <style>
-	.compliance-page {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-	}
-
-	/* Page header */
-	.page-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: var(--space-md);
-		flex-wrap: wrap;
-	}
-
-	.header-left h2 {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		margin-bottom: var(--space-xs);
-	}
-
-	.header-actions {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	/* Loading state */
-	.loading-state {
+	.overall {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		justify-content: center;
-		padding: var(--space-3xl);
-		gap: var(--space-md);
+		gap: var(--sp-4);
+		text-align: center;
 	}
 
-	.spinner {
-		width: 32px;
-		height: 32px;
-		border: 3px solid var(--border-default);
-		border-top-color: var(--accent);
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
+	.note {
+		margin-top: var(--sp-3);
+		font-size: var(--text-xs);
+		color: var(--text-3);
 	}
 
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-	/* Overall score card */
-	.overall-score-card {
-		padding: var(--space-xl);
-	}
-
-	.overall-score-card:hover {
-		border-color: var(--border-default);
-	}
-
-	.overall-score-content {
-		display: flex;
-		align-items: center;
-		gap: var(--space-xl);
-	}
-
-	.grade-circle {
-		width: 96px;
-		height: 96px;
-		border-radius: 50%;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-		border: 4px solid;
-	}
-
-	.grade-circle.grade-a {
-		background-color: var(--success-muted);
-		border-color: var(--success);
-	}
-
-	.grade-circle.grade-b {
-		background-color: var(--accent-muted);
-		border-color: var(--accent);
-	}
-
-	.grade-circle.grade-c {
-		background-color: var(--warning-muted);
-		border-color: var(--warning);
-	}
-
-	.grade-circle.grade-df {
-		background-color: var(--danger-muted);
-		border-color: var(--danger);
-	}
-
-	.grade-letter {
-		font-size: 2.5rem;
-		font-weight: 800;
-		line-height: 1;
-	}
-
-	.grade-a .grade-letter {
-		color: var(--success);
-	}
-
-	.grade-b .grade-letter {
-		color: var(--accent);
-	}
-
-	.grade-c .grade-letter {
-		color: var(--warning);
-	}
-
-	.grade-df .grade-letter {
-		color: var(--danger);
-	}
-
-	.grade-circle.grade-unknown {
-		background-color: var(--bg-tertiary);
-		border-color: var(--border-default);
-	}
-
-	.grade-unknown .grade-letter,
-	.category-score-value.text-muted {
-		color: var(--text-muted);
-	}
-
-	.category-unavailable {
-		font-size: var(--text-sm);
-	}
-
-	.overall-score-info {
-		flex: 1;
-		min-width: 0;
-	}
-
-	.overall-score-title {
-		font-size: var(--text-xl);
-		font-weight: 700;
-		margin-bottom: var(--space-sm);
-	}
-
-	.overall-score-bar-wrapper {
-		display: flex;
-		align-items: center;
-		gap: var(--space-md);
-		margin-bottom: var(--space-sm);
-	}
-
-	.overall-score-percentage {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		flex-shrink: 0;
-		min-width: 56px;
-	}
-
-	.grade-a-text {
-		color: var(--success);
-	}
-
-	.grade-b-text {
-		color: var(--accent);
-	}
-
-	.grade-c-text {
-		color: var(--warning);
-	}
-
-	.grade-df-text {
-		color: var(--danger);
-	}
-
-	.overall-score-summary {
-		font-size: var(--text-sm);
-		line-height: var(--leading-relaxed);
-	}
-
-	/* Progress bars */
-	.progress-bar-track {
-		flex: 1;
-		height: 8px;
-		background-color: var(--bg-tertiary);
-		border-radius: var(--radius-full);
-		overflow: hidden;
-	}
-
-	.progress-bar-lg {
-		height: 12px;
-	}
-
-	.progress-bar-fill {
-		height: 100%;
-		border-radius: var(--radius-full);
-		transition: width 0.6s ease;
-	}
-
-	.grade-a-bg {
-		background-color: var(--success);
-	}
-
-	.grade-b-bg {
-		background-color: var(--accent);
-	}
-
-	.grade-c-bg {
-		background-color: var(--warning);
-	}
-
-	.grade-df-bg {
-		background-color: var(--danger);
-	}
-
-	.fill-success {
-		background-color: var(--success);
-	}
-
-	.fill-warning {
-		background-color: var(--warning);
-	}
-
-	.fill-danger {
-		background-color: var(--danger);
-	}
-
-	/* Category grid */
-	.category-grid {
-		gap: var(--space-md);
-	}
-
-	.category-card {
-		padding: var(--space-lg);
+	.score-row {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-md);
+		gap: var(--sp-2);
 	}
 
-	.category-card:hover {
-		border-color: var(--border-default);
+	.score {
+		font: 300 var(--text-xl)/1 var(--font-display);
+		letter-spacing: -0.03em;
+		font-variant-numeric: tabular-nums;
 	}
 
-	.category-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-sm);
-	}
-
-	.category-icon-name {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-
-	.category-icon {
-		width: 36px;
-		height: 36px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background-color: var(--bg-tertiary);
-		border-radius: var(--radius-md);
-		color: var(--accent);
-		flex-shrink: 0;
-	}
-
-	.category-name {
-		font-size: var(--text-base);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.category-score-row {
-		display: flex;
-		align-items: center;
-		gap: var(--space-md);
-	}
-
-	.category-score-value {
-		font-size: var(--text-xl);
-		font-weight: 700;
-		color: var(--text-primary);
-		min-width: 52px;
-		flex-shrink: 0;
-	}
-
-	.category-description {
+	.unavailable,
+	.desc {
 		font-size: var(--text-sm);
-		line-height: var(--leading-relaxed);
+		color: var(--text-2);
 	}
 
-	/* Findings list */
-	.findings-list {
+	.findings {
 		list-style: none;
+		margin: 0;
 		padding: 0;
-		margin: var(--space-sm) 0 0 0;
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-sm);
-	}
-
-	.finding-item {
-		display: flex;
-		align-items: flex-start;
-		gap: var(--space-sm);
+		gap: var(--sp-2);
 		font-size: var(--text-sm);
-		color: var(--text-secondary);
-		line-height: var(--leading-normal);
+		color: var(--text-2);
 	}
 
-	.finding-item svg {
-		flex-shrink: 0;
-		margin-top: 2px;
-		color: var(--accent);
-	}
-
-	/* Recommendations card */
-	.recommendations-card {
-		padding: var(--space-lg);
-	}
-
-	.recommendations-card:hover {
-		border-color: var(--border-default);
-	}
-
-	.recommendations-header {
+	.findings li {
 		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		margin-bottom: var(--space-xs);
-		color: var(--accent);
+		gap: var(--sp-2);
 	}
 
-	.recommendations-header h3 {
-		font-size: var(--text-lg);
-		font-weight: 700;
-		color: var(--text-primary);
+	.findings li :global(.ic) {
+		flex: none;
+		width: 14px;
+		height: 14px;
+		margin-top: 3px;
+		color: var(--text-3);
 	}
 
-	.recommendations-subtitle {
-		font-size: var(--text-sm);
-		margin-bottom: var(--space-lg);
+	.recs :global(td.wrap) {
+		white-space: normal;
+		min-width: 16em;
 	}
 
-	.recommendations-list {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-md);
-	}
-
-	.recommendation-item {
-		display: flex;
-		align-items: flex-start;
-		gap: var(--space-md);
-		padding: var(--space-md);
-		background-color: var(--bg-tertiary);
-		border-radius: var(--radius-md);
-		border: 1px solid var(--border-default);
-	}
-
-	.rec-priority {
-		flex-shrink: 0;
-		margin-top: 1px;
-	}
-
-	/* Each priority has its own severity token: high, medium, low. */
-	.rec-high {
-		background-color: var(--sev-high-muted);
-		color: var(--sev-high);
-	}
-
-	.rec-medium {
-		background-color: var(--sev-medium-muted);
-		color: var(--sev-medium);
-	}
-
-	.rec-low {
-		background-color: var(--sev-low-muted);
-		color: var(--sev-low);
-	}
-
-	.rec-text {
-		font-size: var(--text-sm);
-		color: var(--text-primary);
-		line-height: var(--leading-relaxed);
-	}
-
-	/* Responsive */
-	@media (max-width: 768px) {
-		.page-header {
-			flex-direction: column;
-		}
-
-		.header-actions {
-			width: 100%;
-			justify-content: flex-end;
-		}
-
-		.overall-score-content {
-			flex-direction: column;
-			text-align: center;
-		}
-
-		.overall-score-bar-wrapper {
-			flex-direction: column;
-			align-items: stretch;
-		}
-
-		.overall-score-percentage {
-			text-align: center;
-		}
-	}
-
-	@media (max-width: 640px) {
-		.recommendation-item {
-			flex-direction: column;
-			gap: var(--space-sm);
-		}
+	/* Keep the status chip beside the title when the subtitle wraps */
+	.posture > :global(.category-card > .card-head) {
+		flex-wrap: nowrap;
 	}
 </style>

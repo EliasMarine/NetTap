@@ -32,7 +32,7 @@ function stubNics(nics: unknown, storage: Response = new Response(JSON.stringify
 
 async function openMirrorInterfacesStep() {
 	render(SetupPage, { props: { form: null } });
-	const start = await screen.findByRole('button', { name: /Get Started/ });
+	const start = await screen.findByRole('button', { name: /Get started/ });
 	await waitFor(() => expect(start).not.toBeDisabled());
 	await fireEvent.click(start);
 	await fireEvent.click(await screen.findByRole('button', { name: /Mirror \/ SPAN/ }));

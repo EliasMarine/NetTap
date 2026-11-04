@@ -44,11 +44,11 @@ function mockFetch(overrides: Responses = {}) {
 
 async function chooseBridgeModeThenCreateAccount() {
 	const view = render(SetupPage, { props: { form: null } });
-	const start = await screen.findByRole('button', { name: /Get Started/ });
+	const start = await screen.findByRole('button', { name: /Get started/ });
 	await waitFor(() => expect(start).not.toBeDisabled());
 	await fireEvent.click(start);
 	await fireEvent.click(await screen.findByRole('button', { name: /Advanced/ }));
-	await fireEvent.click(await screen.findByRole('button', { name: /Inline Bridge/ }));
+	await fireEvent.click(await screen.findByRole('button', { name: /Inline bridge/ }));
 
 	// The createAdmin action returned success (and set the session cookie).
 	await view.rerender({ form: { success: true, username: 'admin' } });
@@ -59,12 +59,12 @@ async function chooseBridgeModeThenCreateAccount() {
 /** Mirror mode: Welcome → Capture Mode → Interfaces → Storage → Enrichment (UniFi on) → Account */
 async function walkMirrorModeWithUnifiThenCreateAccount() {
 	const view = render(SetupPage, { props: { form: null } });
-	const start = await screen.findByRole('button', { name: /Get Started/ });
+	const start = await screen.findByRole('button', { name: /Get started/ });
 	await waitFor(() => expect(start).not.toBeDisabled());
 	await fireEvent.click(start);
 	await fireEvent.click(await screen.findByRole('button', { name: /Mirror \/ SPAN/ }));
 	await fireEvent.click(screen.getByRole('button', { name: /Next/ }));
-	const nicSelect = await screen.findByLabelText(/Capture Interface/);
+	const nicSelect = await screen.findByLabelText(/Capture interface/);
 	await fireEvent.change(nicSelect, { target: { value: 'eth0' } });
 	await fireEvent.click(screen.getByRole('button', { name: /Next/ }));
 	await fireEvent.click(await screen.findByRole('button', { name: /Skip/ }));
@@ -105,19 +105,19 @@ describe('setup wizard after account creation', () => {
 		});
 		await chooseBridgeModeThenCreateAccount();
 
-		await screen.findByText('System Verification');
+		await screen.findByText('System verification');
 		const alert = await screen.findByRole('alert');
 		expect(alert).toHaveTextContent('Your capture settings were not saved.');
 		expect(alert).toHaveTextContent('dhcp_subnet overlaps 192.168.1.0/24 on eth1');
-		await waitFor(() => expect(screen.getByRole('link', { name: 'Go to Dashboard' })).toBeInTheDocument());
-		expect(screen.queryByRole('link', { name: 'Go Live Setup' })).not.toBeInTheDocument();
+		await waitFor(() => expect(screen.getByRole('link', { name: 'Go to dashboard' })).toBeInTheDocument());
+		expect(screen.queryByRole('link', { name: 'Go Live setup' })).not.toBeInTheDocument();
 
 		// Retrying the save clears the error once the daemon accepts it
 		mockFetch();
 		await fireEvent.click(screen.getByRole('button', { name: 'Try saving again' }));
 		await waitFor(() => expect(screen.queryByText('Your capture settings were not saved.')).not.toBeInTheDocument());
 		expect(calls).toContain('POST /api/setup/configure');
-		expect(screen.getByRole('link', { name: 'Go Live Setup' })).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'Go Live setup' })).toBeInTheDocument();
 	});
 
 	// the daemon answers 200 with status "partial" and warnings when e.g. retention.json wasn't written;
@@ -130,7 +130,7 @@ describe('setup wizard after account creation', () => {
 		});
 		await chooseBridgeModeThenCreateAccount();
 
-		await screen.findByText('System Verification');
+		await screen.findByText('System verification');
 		const alert = await screen.findByRole('alert');
 		expect(alert).toHaveTextContent('Setup is only partly done.');
 		expect(alert).toHaveTextContent('Retention settings were not saved: disk full');
@@ -146,7 +146,7 @@ describe('setup wizard after account creation', () => {
 		mockFetch();
 		await chooseBridgeModeThenCreateAccount();
 
-		await screen.findByText('System Verification');
+		await screen.findByText('System verification');
 		await waitFor(() => expect(calls).toContain('GET /api/bridge/health'));
 		expect(screen.queryByText('Setup is only partly done.')).not.toBeInTheDocument();
 		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -160,7 +160,7 @@ describe('setup wizard after account creation', () => {
 		expect(screen.queryByText('Bridge not fully healthy')).not.toBeInTheDocument();
 	});
 
-	it('never leaves a row on "Checking..." when a check gets an error status', async () => {
+	it('never leaves a row on "Checking…" when a check gets an error status', async () => {
 		mockFetch({
 			'GET /api/settings/excluded-ips': { status: 500, body: { error: 'boom' } },
 			'GET /api/bridge/health': { status: 502, body: { error: 'daemon down' } },
@@ -169,7 +169,7 @@ describe('setup wizard after account creation', () => {
 
 		expect(await screen.findByText('Could not check (HTTP 500)')).toBeInTheDocument();
 		expect(await screen.findByText('Could not check (HTTP 502)')).toBeInTheDocument();
-		await waitFor(() => expect(screen.queryByText('Checking...')).not.toBeInTheDocument());
+		await waitFor(() => expect(screen.queryByText('Checking…')).not.toBeInTheDocument());
 	});
 
 	it('does not report UniFi as connected until the daemon says so', async () => {
@@ -205,20 +205,20 @@ describe('setup wizard UniFi test connection', () => {
 			},
 		});
 		render(SetupPage, { props: { form: null } });
-		const start = await screen.findByRole('button', { name: /Get Started/ });
+		const start = await screen.findByRole('button', { name: /Get started/ });
 		await waitFor(() => expect(start).not.toBeDisabled());
 		await fireEvent.click(start);
 		await fireEvent.click(await screen.findByRole('button', { name: /Mirror \/ SPAN/ }));
 		await fireEvent.click(screen.getByRole('button', { name: /Next/ }));
-		const nicSelect = await screen.findByLabelText(/Capture Interface/);
+		const nicSelect = await screen.findByLabelText(/Capture interface/);
 		await fireEvent.change(nicSelect, { target: { value: 'eth0' } });
 		await fireEvent.click(screen.getByRole('button', { name: /Next/ }));
 		await fireEvent.click(await screen.findByRole('button', { name: /Skip/ }));
 		await fireEvent.click(await screen.findByRole('checkbox'));
 		await fireEvent.input(screen.getByLabelText('Controller URL'), { target: { value: 'https://10.0.0.1' } });
-		await fireEvent.input(screen.getByLabelText('API Key'), { target: { value: 'wrong-key' } });
+		await fireEvent.input(screen.getByLabelText('API key'), { target: { value: 'wrong-key' } });
 
-		await fireEvent.click(screen.getByRole('button', { name: /Test Connection/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Test connection/ }));
 
 		expect(await screen.findByText('Connection failed: Invalid API key')).toBeInTheDocument();
 		expect(screen.queryByText('Successfully connected to UniFi controller.')).not.toBeInTheDocument();
@@ -239,10 +239,10 @@ const DHCP_NICS: Responses = {
 
 async function startWizard() {
 	const view = render(SetupPage, { props: { form: null } });
-	const start = await screen.findByRole('button', { name: /Get Started/ });
+	const start = await screen.findByRole('button', { name: /Get started/ });
 	await waitFor(() => expect(start).not.toBeDisabled());
 	await fireEvent.click(start);
-	await screen.findByText('Choose Capture Mode');
+	await screen.findByText('Choose capture mode');
 	return view;
 }
 
@@ -254,7 +254,7 @@ async function walkToDhcpStep(routerPort = 'eth1') {
 	const view = await startWizard();
 	await fireEvent.click(dhcpCard());
 	await fireEvent.click(nextButton());
-	await fireEvent.change(await screen.findByLabelText(/Router Port/), { target: { value: routerPort } });
+	await fireEvent.change(await screen.findByLabelText(/Router port/), { target: { value: routerPort } });
 	await fireEvent.click(nextButton());
 	await screen.findByLabelText(/Subnet for your devices/);
 	return view;
@@ -266,7 +266,7 @@ describe('setup wizard capture mode choice', () => {
 		const view = await startWizard();
 
 		const cards = view.container.querySelectorAll('.mode-cards .mode-card');
-		expect(cards[0].textContent).toContain('DHCP Gateway');
+		expect(cards[0].textContent).toContain('DHCP gateway');
 		expect(cards[0].textContent).toContain('Recommended');
 		expect(cards[1].textContent).toContain('Mirror / SPAN');
 		expect(cards[1].textContent).not.toContain('Recommended');
@@ -277,7 +277,7 @@ describe('setup wizard capture mode choice', () => {
 		await startWizard();
 
 		const advanced = screen.getByRole('button', { name: /Advanced/ });
-		const bridgeBody = screen.getByRole('button', { name: /Inline Bridge/ }).closest('.collapsible-body');
+		const bridgeBody = screen.getByRole('button', { name: /Inline bridge/ }).closest('.collapsible-body');
 		expect(advanced).toHaveAttribute('aria-expanded', 'false');
 		expect(bridgeBody).not.toHaveClass('collapsible-body-expanded');
 
@@ -291,7 +291,7 @@ describe('setup wizard capture mode choice', () => {
 		mockFetch();
 		await startWizard();
 		await fireEvent.click(screen.getByRole('button', { name: /Advanced/ }));
-		await fireEvent.click(screen.getByRole('button', { name: /Inline Bridge/ }));
+		await fireEvent.click(screen.getByRole('button', { name: /Inline bridge/ }));
 		await fireEvent.click(nextButton());
 		await fireEvent.click(await screen.findByRole('button', { name: /Back/ }));
 
@@ -308,7 +308,7 @@ describe('setup wizard capture mode choice', () => {
 
 		const labels = [...view.container.querySelectorAll('.step-label')].map((el) => el.textContent);
 		expect(labels).toEqual([
-			'Welcome', 'Capture Mode', 'Interfaces', 'DHCP Gateway', 'Storage', 'Enrichment', 'Account', 'Verification',
+			'Welcome', 'Capture mode', 'Interfaces', 'DHCP gateway', 'Storage', 'Enrichment', 'Account', 'Verification',
 		]);
 	});
 });
@@ -317,12 +317,12 @@ describe('setup wizard storage step', () => {
 	it('says alerts follow the Hot tier and PCAP records all traffic', async () => {
 		mockFetch({ 'GET /api/setup/storage': { body: { disk_used_gb: 128, disk_free_gb: 1626, disk_total_gb: 1830, disk_usage_percent: 7 } } });
 		render(SetupPage, { props: { form: null } });
-		const start = await screen.findByRole('button', { name: /Get Started/ });
+		const start = await screen.findByRole('button', { name: /Get started/ });
 		await waitFor(() => expect(start).not.toBeDisabled());
 		await fireEvent.click(start);
 		await fireEvent.click(await screen.findByRole('button', { name: /Mirror \/ SPAN/ }));
 		await fireEvent.click(screen.getByRole('button', { name: /Next/ }));
-		await fireEvent.change(await screen.findByLabelText(/Capture Interface/), { target: { value: 'eth0' } });
+		await fireEvent.change(await screen.findByLabelText(/Capture interface/), { target: { value: 'eth0' } });
 		await fireEvent.click(screen.getByRole('button', { name: /Next/ }));
 
 		expect(await screen.findByText(/and Suricata alerts, kept in one daily index/)).toBeInTheDocument();
@@ -338,7 +338,7 @@ describe('setup wizard DHCP gateway flow', () => {
 		await startWizard();
 		await fireEvent.click(dhcpCard());
 		await fireEvent.click(nextButton());
-		const select = await screen.findByLabelText(/Router Port/);
+		const select = await screen.findByLabelText(/Router port/);
 
 		await fireEvent.change(select, { target: { value: 'eth1' } });
 		expect(screen.getByText('192.168.1.50')).toBeInTheDocument();
@@ -372,7 +372,7 @@ describe('setup wizard DHCP gateway flow', () => {
 		await waitFor(() => expect(nextButton()).not.toBeDisabled());
 		await fireEvent.click(nextButton());
 		await fireEvent.click(await screen.findByRole('button', { name: /Skip/ })); // Storage
-		await screen.findByText('Device Enrichment');
+		await screen.findByText('Device enrichment');
 		await fireEvent.click(screen.getByRole('button', { name: /Skip/ })); // Enrichment
 
 		await view.rerender({ form: { success: true, username: 'admin' } });

@@ -89,7 +89,7 @@ describe('GoLive page — capture mode switch', () => {
 		await vi.advanceTimersByTimeAsync(10_000);
 
 		expect(screen.getByText(/Could not read the capture mode: Daemon unreachable: ECONNREFUSED/)).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: /Create Bridge/ })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /Create bridge/i })).not.toBeInTheDocument();
 		expect(screen.queryByText('Readiness')).not.toBeInTheDocument();
 		expect(bridgeApi.getBridgeReadiness).not.toHaveBeenCalled();
 		expect(bridgeApi.getBridgeHealth).not.toHaveBeenCalled();
@@ -164,7 +164,7 @@ describe('GoLive page — failed readiness check', () => {
 		expect(await screen.findByText('Failed to check readiness')).toBeInTheDocument();
 		expect(screen.getByText('Unknown')).toBeInTheDocument();
 		expect(screen.queryByText(/has not been created yet/)).not.toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Create Bridge' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Create bridge' })).not.toBeInTheDocument();
 	});
 
 	it('still offers Create Bridge when the bridge really is missing', async () => {
@@ -173,7 +173,7 @@ describe('GoLive page — failed readiness check', () => {
 		);
 
 		expect(await screen.findByText(/has not been created yet/)).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Create Bridge' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Create bridge' })).toBeInTheDocument();
 	});
 });
 
