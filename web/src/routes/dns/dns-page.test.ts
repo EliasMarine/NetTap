@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
 import DnsPage from './+page.svelte';
+import { refreshPage } from '$lib/stores/pageRefresh';
 
 vi.mock('$app/stores', () => ({
 	page: readable({ url: new URL('http://localhost/dns') }),
@@ -55,7 +56,8 @@ describe('DNS page suspicious patterns', () => {
 		expect(screen.getByText("Couldn't load top domains: the request failed.")).toBeInTheDocument();
 		expect(screen.queryByText(/No domains recorded/)).not.toBeInTheDocument();
 		expect(screen.getByText("Couldn't load DNS totals: the request failed.")).toBeInTheDocument();
-		expect(screen.getByText('Total Queries').closest('.stat-card')).not.toHaveTextContent('0');
+		// KpiCard: the label sits in the card's .kpi root
+		expect(screen.getByText('Total queries').closest('.kpi')).not.toHaveTextContent('0');
 		expect(screen.getByText("Couldn't load the query timeline: the request failed.")).toBeInTheDocument();
 		expect(screen.getByText("Couldn't load query types: the request failed.")).toBeInTheDocument();
 	});
@@ -94,5 +96,82 @@ describe('DNS page suspicious patterns', () => {
 		await fireEvent.click(screen.getByText('Show all 60'));
 		expect(screen.getByText('d59.example.com')).toBeInTheDocument();
 		expect(screen.getByText('Showing 60 of 60')).toBeInTheDocument();
+	});
+});
+
+/** A full, successful set of DNS answers; `domain` names the one top domain. */
+function replies(domain: string): Record<string, unknown> {
+	return {
+		'/api/dns/stats': { total_queries: 1200, unique_domains: 40, nxdomain_count: 3, avg_resolution_ms: 4.2 },
+		'/api/dns/top-domains': { domains: [{ domain, count: 900, unique_clients: 2 }] },
+		'/api/dns/nxdomain': { nxdomains: [] },
+		'/api/dns/types': { types: [{ type: 'A', count: 900 }] },
+		'/api/dns/timeline': { series: [{ timestamp: '2026-11-03T10:00:00Z', count: 900 }] },
+		'/api/dns/suspicious': { suspicious: [] },
+	};
+}
+
+const reply = (body: unknown) => ({ ok: true, status: 200, json: async () => body });
+const fail = { ok: false, status: 503, json: async () => ({}) };
+
+// PLAN §5.5: the loader is the top bar's Refresh; it reports what loaded, and an older range never wins.
+describe('DNS page — refresh contract', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	function stub(answer: (path: string, url: string) => unknown | Promise<unknown>) {
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		vi.stubGlobal('fetch', vi.fn(async (url: string) => answer(url.split('?')[0], url)));
+	}
+
+	it('shows each card loading until its answer arrives', () => {
+		stub(() => new Promise(() => {}));
+		render(DnsPage);
+		expect(screen.getByText('Loading the query timeline')).toBeInTheDocument();
+		expect(screen.getByText('Loading top domains')).toBeInTheDocument();
+		expect(screen.getByText('Loading query types')).toBeInTheDocument();
+		expect(screen.getByText('Loading NXDOMAIN errors')).toBeInTheDocument();
+		expect(screen.getByText('Total queries').closest('.kpi')).toHaveTextContent('—');
+	});
+
+	it('reports ok, partial and failed, and keeps the last figures when a refresh fails', async () => {
+		let mode: 'ok' | 'some' | 'none' = 'ok';
+		stub((path) => {
+			const body = replies('api.example.org')[path];
+			if (mode === 'none' || (mode === 'some' && path === '/api/dns/top-domains')) return fail;
+			return body ? reply(body) : fail;
+		});
+		render(DnsPage);
+		await screen.findAllByText('api.example.org');
+		expect(await refreshPage()).toBe('ok');
+
+		mode = 'some';
+		expect(await refreshPage()).toBe('partial');
+		expect(screen.getByText("Couldn't refresh top domains; showing the last figures loaded.")).toBeInTheDocument();
+		expect(screen.getAllByText('api.example.org').length).toBeGreaterThan(0);
+
+		mode = 'none';
+		expect(await refreshPage()).toBe('failed');
+	});
+
+	it("drops an older range's slower answers", async () => {
+		const held: Array<() => void> = [];
+		stub((path, url) => {
+			const hours = (Date.parse(new URL(url, 'http://x').searchParams.get('to') ?? '') - Date.parse(new URL(url, 'http://x').searchParams.get('from') ?? '')) / 3_600_000;
+			const body = replies(hours > 2 ? 'old-range.example' : 'new-range.example')[path];
+			if (hours <= 2) return body ? reply(body) : fail;
+			return new Promise((resolve) => held.push(() => resolve(body ? reply(body) : fail)));
+		});
+		render(DnsPage);
+		await vi.waitFor(() => expect(held.length).toBe(6));
+		await fireEvent.click(screen.getByRole('button', { name: '1h' }));
+		await screen.findAllByText('new-range.example');
+
+		held.forEach((release) => release());
+		await new Promise((r) => setTimeout(r, 0));
+		expect(screen.queryByText('old-range.example')).not.toBeInTheDocument();
+		expect(screen.getAllByText('new-range.example').length).toBeGreaterThan(0);
+		expect(screen.getByRole('button', { name: '1h' })).toHaveAttribute('aria-pressed', 'true');
 	});
 });

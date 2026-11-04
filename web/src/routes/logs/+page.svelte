@@ -1,8 +1,10 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, untrack, type Snippet } from 'svelte';
 	import { page } from '$app/stores';
 	import IPAddress from '$components/IPAddress.svelte';
-	import HorizontalBarList from '$components/HorizontalBarList.svelte';
+	// OLD CODE START — replaced by the design system's BarList
+	// import HorizontalBarList from '$components/HorizontalBarList.svelte';
+	// OLD CODE END
 	import DetailDrawer from '$components/DetailDrawer.svelte';
 	import LogDrawerContent from '$components/drawer/content/LogDrawerContent.svelte';
 	import { goto } from '$app/navigation';
@@ -17,7 +19,9 @@
 		getLogTopDns,
 		formatBytes,
 		formatCompactNumber,
-		protocolColor,
+		// OLD CODE START — the chart and bars use the system's data colours
+		// protocolColor,
+		// OLD CODE END
 		protocolLabel,
 	} from '$lib/api/logs';
 	import type {
@@ -27,6 +31,17 @@
 		LogDestinationEntry,
 		LogDnsEntry,
 	} from '$lib/api/logs';
+	import type { SortDir } from '$lib/utils/table-sort.svelte';
+	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
+	import BarList from '$lib/components/ui/BarList.svelte';
+	import Card from '$lib/components/ui/Card.svelte';
+	import CardState from '$lib/components/ui/CardState.svelte';
+	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
+	import KpiCard from '$lib/components/ui/KpiCard.svelte';
+	import Pills from '$lib/components/ui/Pills.svelte';
+	import SearchField from '$lib/components/ui/SearchField.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -53,6 +68,9 @@
 	type LogType = 'all' | 'zeek.conn' | 'zeek.dns' | 'zeek.http' | 'zeek.tls' | 'zeek.files' | 'zeek.dhcp' | 'zeek.smtp' | 'suricata';
 	type TimeRange = '15m' | '1h' | '4h' | '24h' | '7d' | '30d';
 
+	/** A table row: each column's display text by field, plus the hit the drawer opens. */
+	type LogRow = { _id: string; hit: LogHit } & Record<string, unknown>;
+
 	// ---------------------------------------------------------------------------
 	// Constants
 	// ---------------------------------------------------------------------------
@@ -69,8 +87,12 @@
 		suricata: ['@timestamp', 'source.ip', 'destination.ip', 'suricata.alert.signature', 'suricata.alert.severity', 'suricata.alert.category'],
 	};
 
+	// OLD CODE START — sentence case (design system voice)
+	// const LOG_TYPE_LABELS: Record<LogType, string> = {
+	// 	all: 'All Logs',
+	// OLD CODE END
 	const LOG_TYPE_LABELS: Record<LogType, string> = {
-		all: 'All Logs',
+		all: 'All logs',
 		'zeek.conn': 'Connections',
 		'zeek.dns': 'DNS',
 		'zeek.http': 'HTTP',
@@ -81,13 +103,13 @@
 		suricata: 'Suricata',
 	};
 
-	const TIME_RANGES: { value: TimeRange; label: string; ms: number }[] = [
-		{ value: '15m', label: '15m', ms: 15 * 60_000 },
-		{ value: '1h', label: '1h', ms: 60 * 60_000 },
-		{ value: '4h', label: '4h', ms: 4 * 60 * 60_000 },
-		{ value: '24h', label: '24h', ms: 24 * 60 * 60_000 },
-		{ value: '7d', label: '7d', ms: 7 * 24 * 60 * 60_000 },
-		{ value: '30d', label: '30d', ms: 30 * 24 * 60 * 60_000 },
+	const TIME_RANGES: { value: TimeRange; label: string; ms: number; words: string }[] = [
+		{ value: '15m', label: '15m', ms: 15 * 60_000, words: 'last 15 minutes' },
+		{ value: '1h', label: '1h', ms: 60 * 60_000, words: 'last hour' },
+		{ value: '4h', label: '4h', ms: 4 * 60 * 60_000, words: 'last 4 hours' },
+		{ value: '24h', label: '24h', ms: 24 * 60 * 60_000, words: 'last 24 hours' },
+		{ value: '7d', label: '7d', ms: 7 * 24 * 60 * 60_000, words: 'last 7 days' },
+		{ value: '30d', label: '30d', ms: 30 * 24 * 60 * 60_000, words: 'last 30 days' },
 	];
 
 	const INTERVAL_MAP: Record<string, string> = {
@@ -99,6 +121,16 @@
 		'30d': '1d',
 	};
 
+	/** How the timeline card names each INTERVAL_MAP bucket. */
+	const INTERVAL_WORDS: Record<string, string> = {
+		'1m': 'minute',
+		'5m': '5 minutes',
+		'15m': '15 minutes',
+		'1h': 'hour',
+		'6h': '6 hours',
+		'1d': 'day',
+	};
+
 	const IP_FIELDS = new Set(['source.ip', 'destination.ip', 'zeek.dhcp.client_addr']);
 	const MONO_FIELDS = new Set([
 		'source.ip', 'destination.ip', 'source.port', 'destination.port',
@@ -106,10 +138,17 @@
 		'zeek.tls.version', 'source.bytes', 'destination.bytes', 'event.duration',
 		'suricata.alert.severity', 'zeek.files.total_bytes',
 	]);
+	/** Right-aligned, tabular columns (design system: numbers in tables). */
+	const NUMERIC_FIELDS = new Set([
+		'source.port', 'destination.port', 'source.bytes', 'destination.bytes', 'event.duration',
+		'zeek.http.status_code', 'suricata.alert.severity', 'zeek.files.total_bytes',
+	]);
 
 	// Protocol types used for timeline stacking (order matters for visual stacking)
 	// Alert data is excluded from log explorer aggregations (has its own Alerts page)
 	const PROTOCOL_KEYS = ['conn', 'dns', 'http', 'ssl', 'files', 'dhcp', 'smtp'] as const;
+
+	const RETRY_HINT = 'Check that NetTap is running on the System page, then try again.';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -165,29 +204,38 @@
 		{ id: 'fields', label: 'Fields' },
 		{ id: 'raw', label: 'Raw JSON' },
 	];
+	// shortcut: DataTable's header has no title yet, so these field descriptions (the old header
+	// tooltips) aren't shown; wire them in once Column takes a title (shared change requested)
 	let fieldDefs = $state<Record<string, string>>({});
 
 	// Active filters from chart clicks
 	let activeIpFilter = $state('');
 	let activeDnsFilter = $state('');
 
-	// Chart interaction
-	let hoveredBarIndex = $state<number | null>(null);
-	let chartWidth = $state(800);
-	let tooltipX = $state(0);
-	let tooltipBucket = $state<LogTimelineBucket | null>(null);
+	// OLD CODE START — the hand-drawn stacked chart's hover and width; AreaChart handles both
+	// // Chart interaction
+	// let hoveredBarIndex = $state<number | null>(null);
+	// let chartWidth = $state(800);
+	// let tooltipX = $state(0);
+	// let tooltipBucket = $state<LogTimelineBucket | null>(null);
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// Derived
 	// ---------------------------------------------------------------------------
 
-	let maxBucketTotal = $derived(
-		Math.max(1, ...timeline.map((b) => {
-			let sum = 0;
-			for (const k of PROTOCOL_KEYS) sum += (b[k] || 0);
-			return sum;
-		}))
-	);
+	// OLD CODE START — the stacked chart's scale; AreaChart fits its own axis to the totals below
+	// let maxBucketTotal = $derived(
+	// 	Math.max(1, ...timeline.map((b) => {
+	// 		let sum = 0;
+	// 		for (const k of PROTOCOL_KEYS) sum += (b[k] || 0);
+	// 		return sum;
+	// 	}))
+	// );
+	// OLD CODE END
+	/** Events per bucket across the protocols the chart used to stack. */
+	const bucketTotals = $derived(timeline.map((b) => PROTOCOL_KEYS.reduce((sum, k) => sum + (b[k] || 0), 0)));
+	const busiest = $derived(bucketTotals.reduce((best, v, i) => (v > (bucketTotals[best] ?? -1) ? i : best), -1));
 
 	// OLD CODE START — max values now computed internally by HorizontalBarList component
 	// let maxTalkerCount = $derived(topTalkers.length > 0 ? topTalkers[0].count : 1);
@@ -198,13 +246,15 @@
 
 	let hasActiveFilters = $derived(activeIpFilter !== '' || activeDnsFilter !== '' || logType !== 'all');
 
+	const rangeWords = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange)?.words ?? 'last 24 hours');
+
 	// ---------------------------------------------------------------------------
 	// Helpers
 	// ---------------------------------------------------------------------------
 
-	function getTimeRange(): { from: string; to: string } {
+	function getTimeRange(rangeValue: TimeRange = selectedTimeRange): { from: string; to: string } {
 		const now = Date.now();
-		const range = TIME_RANGES.find((r) => r.value === selectedTimeRange) || TIME_RANGES[3];
+		const range = TIME_RANGES.find((r) => r.value === rangeValue) || TIME_RANGES[3];
 		return {
 			from: new Date(now - range.ms).toISOString(),
 			to: new Date(now).toISOString(),
@@ -299,10 +349,50 @@
 	// Data fetching — aggregations
 	// ---------------------------------------------------------------------------
 
-	async function fetchDashboard() {
+	// OLD CODE START — PLAN §5.5: the guarded version below drops an older range's answers
+	// async function fetchDashboard() {
+	// 	loading = true;
+	// 	const { from, to } = getTimeRange();
+	// 	const interval = INTERVAL_MAP[selectedTimeRange] || '1h';
+	//
+	// 	const results = await Promise.allSettled([
+	// 		getLogStats({ from, to }),
+	// 		getLogTimeline({ from, to, interval }),
+	// 		getLogTopTalkers({ from, to, limit: 10 }),
+	// 		getLogProtocolBreakdown({ from, to }),
+	// 		getLogTopDestinations({ from, to, limit: 10 }),
+	// 		getLogTopDns({ from, to, limit: 10 }),
+	// 	]);
+	//
+	// 	if (results[0].status === 'fulfilled') {
+	// 		const s = results[0].value;
+	// 		totalEvents = s.total_events;
+	// 		uniqueSources = s.unique_sources;
+	// 		protocolCount = s.protocol_count;
+	// 		totalBytesVal = s.total_bytes;
+	// 		statsLoaded = true;
+	// 	}
+	// 	if (results[1].status === 'fulfilled') timeline = results[1].value.buckets;
+	// 	if (results[2].status === 'fulfilled') topTalkers = results[2].value.talkers;
+	// 	if (results[3].status === 'fulfilled') protocols = results[3].value.protocols;
+	// 	if (results[4].status === 'fulfilled') topDestinations = results[4].value.destinations;
+	// 	if (results[5].status === 'fulfilled') topDns = results[5].value.queries;
+	// 	statsFailed = results[0].status === 'rejected';
+	// 	timelineFailed = results[1].status === 'rejected';
+	// 	talkersFailed = results[2].status === 'rejected';
+	// 	protocolsFailed = results[3].status === 'rejected';
+	// 	destinationsFailed = results[4].status === 'rejected';
+	// 	dnsFailed = results[5].status === 'rejected';
+	//
+	// 	loading = false;
+	// }
+	// OLD CODE END
+	/** The six aggregations for the current range; null when a newer load took over. */
+	async function fetchDashboard(guard: LoadGuard, g: number): Promise<boolean[] | null> {
+		const range = selectedTimeRange;
 		loading = true;
-		const { from, to } = getTimeRange();
-		const interval = INTERVAL_MAP[selectedTimeRange] || '1h';
+		const { from, to } = getTimeRange(range);
+		const interval = INTERVAL_MAP[range] || '1h';
 
 		const results = await Promise.allSettled([
 			getLogStats({ from, to }),
@@ -312,6 +402,7 @@
 			getLogTopDestinations({ from, to, limit: 10 }),
 			getLogTopDns({ from, to, limit: 10 }),
 		]);
+		if (!guard.current(g)) return null;
 
 		if (results[0].status === 'fulfilled') {
 			const s = results[0].value;
@@ -334,13 +425,77 @@
 		dnsFailed = results[5].status === 'rejected';
 
 		loading = false;
+		return results.map((r) => r.status === 'fulfilled');
 	}
 
 	// ---------------------------------------------------------------------------
 	// Data fetching — log table
 	// ---------------------------------------------------------------------------
 
-	async function fetchLogs(append = false) {
+	/** Table loads have their own guard: a search, sort or type change must not cancel the charts. */
+	const tableGuard = createLoadGuard();
+
+	// OLD CODE START — PLAN §5.5: an older, slower search could overwrite a newer one
+	// async function fetchLogs(append = false) {
+	// 	if (append) {
+	// 		loadingMore = true;
+	// 	} else {
+	// 		tableLoading = true;
+	// 		searchAfter = undefined;
+	// 	}
+	// 	error = '';
+	//
+	// 	try {
+	// 		const params = new URLSearchParams();
+	// 		if (logType !== 'all') params.set('log_type', logType);
+	//
+	// 		// Combine search query with active filters
+	// 		let fullQuery = query.trim();
+	// 		if (activeIpFilter) {
+	// 			const ipQ = `(source.ip:"${activeIpFilter}" OR destination.ip:"${activeIpFilter}")`;
+	// 			fullQuery = fullQuery ? `${fullQuery} AND ${ipQ}` : ipQ;
+	// 		}
+	// 		if (activeDnsFilter) {
+	// 			const dnsQ = `zeek.dns.query:"${activeDnsFilter}"`;
+	// 			fullQuery = fullQuery ? `${fullQuery} AND ${dnsQ}` : dnsQ;
+	// 		}
+	// 		if (fullQuery) params.set('query', fullQuery);
+	//
+	// 		params.set('from', timeRangeToISO(selectedTimeRange));
+	// 		params.set('to', new Date().toISOString());
+	// 		params.set('size', '100');
+	// 		params.set('sort', `${sortField}:${sortDir}`);
+	// 		if (append && searchAfter) {
+	// 			params.set('search_after', JSON.stringify(searchAfter));
+	// 		}
+	// 		const columns = COLUMNS[logType];
+	// 		params.set('fields', columns.join(','));
+	//
+	// 		const res = await fetch(`/api/logs/search?${params.toString()}`);
+	// 		if (!res.ok) {
+	// 			const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+	// 			throw new Error(body.error || `HTTP ${res.status}`);
+	// 		}
+	//
+	// 		const data: SearchResponse = await res.json();
+	// 		if (append) {
+	// 			results = [...results, ...data.hits];
+	// 		} else {
+	// 			results = data.hits;
+	// 		}
+	// 		totalHits = data.total;
+	// 		searchAfter = data.search_after;
+	// 	} catch (e) {
+	// 		error = e instanceof Error ? e.message : 'Failed to fetch logs';
+	// 		if (!append) results = [];
+	// 	} finally {
+	// 		tableLoading = false;
+	// 		loadingMore = false;
+	// 	}
+	// }
+	// OLD CODE END
+	async function fetchLogs(append = false): Promise<LoadResult> {
+		const g = tableGuard.begin();
 		if (append) {
 			loadingMore = true;
 		} else {
@@ -350,6 +505,7 @@
 		error = '';
 
 		try {
+			// Every parameter is read here, before the first await
 			const params = new URLSearchParams();
 			if (logType !== 'all') params.set('log_type', logType);
 
@@ -382,6 +538,7 @@
 			}
 
 			const data: SearchResponse = await res.json();
+			if (!tableGuard.current(g)) return 'skipped';
 			if (append) {
 				results = [...results, ...data.hits];
 			} else {
@@ -389,12 +546,17 @@
 			}
 			totalHits = data.total;
 			searchAfter = data.search_after;
+			return 'ok';
 		} catch (e) {
+			if (!tableGuard.current(g)) return 'skipped';
 			error = e instanceof Error ? e.message : 'Failed to fetch logs';
 			if (!append) results = [];
+			return 'failed';
 		} finally {
-			tableLoading = false;
-			loadingMore = false;
+			if (tableGuard.current(g)) {
+				tableLoading = false;
+				loadingMore = false;
+			}
 		}
 	}
 
@@ -418,8 +580,26 @@
 	// Combined fetch
 	// ---------------------------------------------------------------------------
 
-	async function fetchAll() {
-		await Promise.all([fetchDashboard(), fetchLogs()]);
+	// OLD CODE START — PLAN §5.5: the page refresh contract (a result for the top bar)
+	// async function fetchAll() {
+	// 	await Promise.all([fetchDashboard(), fetchLogs()]);
+	// }
+	// OLD CODE END
+	const refresh = registerPageRefresh(fetchAll);
+	onDestroy(() => {
+		refresh.unregister();
+		tableGuard.invalidate();
+		if (refreshInterval) clearInterval(refreshInterval);
+	});
+
+	async function fetchAll(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		const [dashboard, table] = await Promise.all([fetchDashboard(guard, g), fetchLogs()]);
+		if (!guard.current(g) || dashboard === null) return 'skipped';
+		// A table load that a newer search replaced says nothing about this refresh
+		const outcomes = table === 'skipped' ? dashboard : [...dashboard, table === 'ok'];
+		const ok = outcomes.filter(Boolean).length;
+		return ok === outcomes.length ? 'ok' : ok === 0 ? 'failed' : 'partial';
 	}
 
 	// ---------------------------------------------------------------------------
@@ -435,7 +615,10 @@
 		protocols = [];
 		topDestinations = [];
 		topDns = [];
-		if (initialized) fetchAll();
+		// OLD CODE START — PLAN §5.5: the guard drops the older range's load, so always reload
+		// if (initialized) fetchAll();
+		// OLD CODE END
+		refresh.run();
 	}
 
 	function handleSearch(e: KeyboardEvent) {
@@ -450,13 +633,21 @@
 		}
 	}
 
-	function toggleSort(field: string) {
-		if (sortField === field) {
-			sortDir = sortDir === 'desc' ? 'asc' : 'desc';
-		} else {
-			sortField = field;
-			sortDir = 'desc';
-		}
+	// OLD CODE START — DataTable owns the header toggle and reports the new sort
+	// function toggleSort(field: string) {
+	// 	if (sortField === field) {
+	// 		sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+	// 	} else {
+	// 		sortField = field;
+	// 		sortDir = 'desc';
+	// 	}
+	// 	fetchLogs();
+	// }
+	// OLD CODE END
+	/** The table is sorted by the daemon: DataTable reports the new sort and the search runs again. */
+	function setSort(field: string, dir: SortDir) {
+		sortField = field;
+		sortDir = dir;
 		fetchLogs();
 	}
 
@@ -559,7 +750,10 @@
 	function toggleAutoRefresh() {
 		autoRefresh = !autoRefresh;
 		if (autoRefresh) {
-			refreshInterval = setInterval(fetchAll, 30_000);
+			// OLD CODE START — PLAN §5.5: auto-refresh goes through the contract, so "Updated" stays honest
+			// refreshInterval = setInterval(fetchAll, 30_000);
+			// OLD CODE END
+			refreshInterval = setInterval(() => refresh.run(), 30_000);
 		} else if (refreshInterval) {
 			clearInterval(refreshInterval);
 			refreshInterval = null;
@@ -567,86 +761,199 @@
 	}
 
 	// ---------------------------------------------------------------------------
+	// Table
+	// ---------------------------------------------------------------------------
+
+	const IP_CELLS: Record<string, Snippet<[LogRow]>> = {
+		'source.ip': sourceIpCell,
+		'destination.ip': destinationIpCell,
+		'zeek.dhcp.client_addr': dhcpIpCell,
+	};
+
+	const logColumns = $derived<Column<LogRow>[]>(
+		COLUMNS[logType].map((col) => ({
+			key: col,
+			label: shortFieldName(col),
+			numeric: NUMERIC_FIELDS.has(col),
+			class: MONO_FIELDS.has(col) || IP_FIELDS.has(col) ? 'mono' : undefined,
+			cell: IP_CELLS[col],
+		})),
+	);
+
+	const logRows = $derived<LogRow[]>(
+		results.map((hit) => ({
+			...Object.fromEntries(COLUMNS[logType].map((col) => [col, formatCellValue(col, getNestedValue(hit._source, col))])),
+			_id: hit._id,
+			hit,
+		})),
+	);
+
+	// ---------------------------------------------------------------------------
 	// Init
 	// ---------------------------------------------------------------------------
 
-	onMount(() => {
-		// Read URL params for deep-linking from other pages (e.g., /logs?filter=1.2.3.4)
-		const urlFilter = $page.url.searchParams.get('filter');
-		const urlIp = $page.url.searchParams.get('ip');
-		const urlQuery = $page.url.searchParams.get('query');
-		if (urlFilter) {
-			activeIpFilter = urlFilter;
-		} else if (urlIp) {
-			activeIpFilter = urlIp;
-		} else if (urlQuery) {
-			query = urlQuery;
-		}
+	// OLD CODE START — the URL was read once on mount, so a second top-bar search while already
+	// on /logs (goto('/logs?ip=…') or goto('/logs?query=…')) did nothing
+	// onMount(() => {
+	// 	// Read URL params for deep-linking from other pages (e.g., /logs?filter=1.2.3.4)
+	// 	const urlFilter = $page.url.searchParams.get('filter');
+	// 	const urlIp = $page.url.searchParams.get('ip');
+	// 	const urlQuery = $page.url.searchParams.get('query');
+	// 	if (urlFilter) {
+	// 		activeIpFilter = urlFilter;
+	// 	} else if (urlIp) {
+	// 		activeIpFilter = urlIp;
+	// 	} else if (urlQuery) {
+	// 		query = urlQuery;
+	// 	}
+	//
+	// 	fetchAll().then(() => {
+	// 		initialized = true;
+	// 	});
+	// 	fetchFieldDefs();
+	// 	return () => {
+	// 		if (refreshInterval) clearInterval(refreshInterval);
+	// 	};
+	// });
+	// OLD CODE END
+	/** The ?filter= / ?ip= / ?query= last applied; null before the first load. */
+	let appliedSearch: string | null = null;
 
-		fetchAll().then(() => {
-			initialized = true;
+	$effect(() => {
+		// Deep links from other pages (e.g., /logs?filter=1.2.3.4) and the top-bar search hand-off
+		const params = $page.url.searchParams;
+		const urlFilter = params.get('filter');
+		const urlIp = params.get('ip');
+		const urlQuery = params.get('query');
+		const search = JSON.stringify([urlFilter, urlIp, urlQuery]);
+		untrack(() => {
+			// The hash changes too (the KPI links); only a new search runs one
+			if (search === appliedSearch) return;
+			const first = appliedSearch === null;
+			appliedSearch = search;
+			// A hand-off replaces the last one's IP filter and text; the first load starts from neither
+			activeIpFilter = urlFilter || urlIp || '';
+			query = urlFilter || urlIp ? '' : (urlQuery ?? '');
+			if (first) {
+				refresh.run().then(() => {
+					initialized = true;
+				});
+				fetchFieldDefs();
+			} else {
+				fetchLogs();
+			}
 		});
-		fetchFieldDefs();
-		return () => {
-			if (refreshInterval) clearInterval(refreshInterval);
-		};
 	});
 </script>
+
+{#snippet ipValue(value: unknown)}
+	{#if value != null && value !== ''}<IPAddress ip={String(value)} />{:else}--{/if}
+{/snippet}
+{#snippet sourceIpCell(r: LogRow)}{@render ipValue(getNestedValue(r.hit._source, 'source.ip'))}{/snippet}
+{#snippet destinationIpCell(r: LogRow)}{@render ipValue(getNestedValue(r.hit._source, 'destination.ip'))}{/snippet}
+{#snippet dhcpIpCell(r: LogRow)}{@render ipValue(getNestedValue(r.hit._source, 'zeek.dhcp.client_addr'))}{/snippet}
+
+{#snippet timelineBody()}
+	<AreaChart
+		series={[{ key: 'events', label: 'Events', colour: 1, points: timeline.map((b, i) => ({ t: b.timestamp, v: bucketTotals[i] })) }]}
+		formatX={(t) => formatShortTimestamp(String(t))}
+		formatY={formatCompactNumber}
+		formatTip={(i) => `${formatShortTimestamp(timeline[i]?.timestamp ?? '')} · ${(bucketTotals[i] ?? 0).toLocaleString()} events`}
+		highlightIndex={busiest}
+		ariaLabel={busiest >= 0
+			? `Busiest at ${formatShortTimestamp(timeline[busiest].timestamp)}, with ${bucketTotals[busiest].toLocaleString()} events`
+			: 'Log events over time'}
+	/>
+{/snippet}
+{#snippet protocolsBody()}
+	<BarList
+		items={protocols.map((proto) => ({
+			key: proto.protocol,
+			label: proto.label || protocolLabel(proto.protocol),
+			value: proto.count,
+			display: formatCompactNumber(proto.count),
+			onclick: () => drillByProtocol(proto.protocol),
+		}))}
+	/>
+{/snippet}
+{#snippet talkersBody()}
+	<BarList
+		items={topTalkers.map((talker) => ({
+			key: talker.ip,
+			label: talker.ip,
+			value: talker.count,
+			display: formatCompactNumber(talker.count),
+			detail: activeIpFilter === talker.ip ? 'filtering the table' : undefined,
+			onclick: () => drillByIp(talker.ip),
+		}))}
+	/>
+{/snippet}
+{#snippet destinationsBody()}
+	<BarList
+		items={topDestinations.map((dest) => ({
+			key: dest.ip,
+			label: dest.ip,
+			value: dest.count,
+			display: formatCompactNumber(dest.count),
+			detail: activeIpFilter === dest.ip ? 'filtering the table' : undefined,
+			onclick: () => drillByIp(dest.ip),
+			colour: 2,
+		}))}
+	/>
+{/snippet}
+{#snippet dnsBody()}
+	<BarList
+		items={topDns.map((dnsEntry) => ({
+			key: dnsEntry.domain,
+			label: dnsEntry.domain,
+			value: dnsEntry.count,
+			display: formatCompactNumber(dnsEntry.count),
+			detail: activeDnsFilter === dnsEntry.domain ? 'filtering the table' : undefined,
+			onclick: () => drillByDns(dnsEntry.domain),
+			colour: 3,
+		}))}
+	/>
+{/snippet}
+
+<!-- One card body: its data (with a note when a refresh failed), or its loading, error or empty state -->
+{#snippet section(what: string, failed: boolean, has: boolean, emptyTitle: string, emptyMessage: string, body: Snippet)}
+	{#if has}
+		{#if failed && !loading}
+			<p class="notice is-warn stale" role="status"><Icon name="warn" />{loadFailed(what, true)}</p>
+		{/if}
+		{@render body()}
+	{:else if loading}
+		<CardState state="loading" title="Loading {what}" />
+	{:else if failed}
+		<CardState state="error" title={loadFailed(what)} message={RETRY_HINT} onaction={() => refresh.run()} />
+	{:else}
+		<CardState state="empty" icon="logs" title={emptyTitle} message={emptyMessage} />
+	{/if}
+{/snippet}
 
 <svelte:head>
 	<title>Log Explorer | NetTap</title>
 </svelte:head>
 
-<div class="page-container">
-	<!-- ================================================================== -->
-	<!-- Header                                                             -->
-	<!-- ================================================================== -->
-	<header class="page-header">
-		<div class="header-left">
-			<h1>Network Activity</h1>
-			<p class="subtitle">Real-time visibility into all network traffic and events</p>
-		</div>
-		<div class="header-right">
-			<div class="pills">
-				{#each TIME_RANGES as tr}
-					<button
-						class="pill"
-						class:active={selectedTimeRange === tr.value}
-						onclick={() => handleTimeRangeChange(tr.value)}
-					>
-						{tr.label}
-					</button>
-				{/each}
-			</div>
-			<button
-				class="btn btn-secondary btn-sm"
-				class:auto-refresh-active={autoRefresh}
-				onclick={toggleAutoRefresh}
-			>
-				{autoRefresh ? 'Auto ON' : 'Auto'}
-			</button>
-			<button class="btn btn-secondary btn-sm" onclick={exportCSV} disabled={results.length === 0}>
-				<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-					<polyline points="7 10 12 15 17 10" />
-					<line x1="12" y1="15" x2="12" y2="3" />
-				</svg>
-				CSV
-			</button>
-			<button class="btn btn-primary btn-sm" onclick={() => fetchAll()} disabled={loading}>
-				{loading ? 'Loading...' : 'Refresh'}
-			</button>
-		</div>
-	</header>
+<div class="page-head">
+	<div>
+		<h1 class="page-title">Log explorer</h1>
+		<p class="page-sub">Every Zeek and Suricata log entry in the range, searchable</p>
+	</div>
+	<div class="head-actions">
+		<Pills options={TIME_RANGES} value={selectedTimeRange} onchange={handleTimeRangeChange} ariaLabel="Time range" />
+		<button class="btn" type="button" aria-pressed={autoRefresh} onclick={toggleAutoRefresh}>
+			<Icon name="refresh" />{autoRefresh ? 'Auto-refresh on' : 'Auto-refresh'}
+		</button>
+		<button class="btn" type="button" onclick={exportCSV} disabled={results.length === 0}>
+			<Icon name="download" />Export CSV
+		</button>
+	</div>
+</div>
 
-	<!-- ================================================================== -->
-	<!-- Hero Stats                                                         -->
-	<!-- ================================================================== -->
+<div class="grid">
 	{#if statsFailed}
-		<p class="load-note">{loadFailed('log totals', statsLoaded)}</p>
-	{/if}
-	{#if (timelineFailed && timeline.length > 0) || (talkersFailed && topTalkers.length > 0) || (protocolsFailed && protocols.length > 0) || (destinationsFailed && topDestinations.length > 0) || (dnsFailed && topDns.length > 0)}
-		<p class="load-note">Couldn't refresh some charts; they show the last figures loaded.</p>
+		<p class="notice is-warn c-12" role="status"><Icon name="warn" />{loadFailed('log totals', statsLoaded)}</p>
 	{/if}
 	<!-- OLD CODE START — #96: the totals start at 0, which read as a fact before (or without) a load
 	<span class="stat-value text-white">{formatCompactNumber(totalEvents)}</span>
@@ -654,413 +961,119 @@
 	<span class="stat-value text-green">{protocolCount}</span>
 	<span class="stat-value text-purple">{formatBytes(totalBytesVal)}</span>
 	OLD CODE END -->
-	<div class="stats-grid">
-		<button
-			class="stat-card clickable"
-			onclick={() => document.getElementById('log-table')?.scrollIntoView({ behavior: 'smooth' })}
-		>
-			<span class="stat-label">Total Events</span>
-			<span class="stat-value text-white">{statsLoaded ? formatCompactNumber(totalEvents) : '—'}</span>
-			<span class="stat-hint">All log entries in range</span>
-		</button>
-		<button
-			class="stat-card clickable"
-			onclick={() => document.getElementById('top-talkers-section')?.scrollIntoView({ behavior: 'smooth' })}
-		>
-			<span class="stat-label">Active Sources</span>
-			<span class="stat-value text-cyan">{statsLoaded ? formatCompactNumber(uniqueSources) : '—'}</span>
-			<span class="stat-hint">Unique source IPs</span>
-		</button>
-		<button
-			class="stat-card clickable"
-			onclick={() => document.getElementById('protocol-section')?.scrollIntoView({ behavior: 'smooth' })}
-		>
-			<span class="stat-label">Protocols</span>
-			<span class="stat-value text-green">{statsLoaded ? protocolCount : '—'}</span>
-			<span class="stat-hint">Distinct log types</span>
-		</button>
-		<button
-			class="stat-card clickable"
-			onclick={() => document.getElementById('log-table')?.scrollIntoView({ behavior: 'smooth' })}
-		>
-			<span class="stat-label">Data Volume</span>
-			<span class="stat-value text-purple">{statsLoaded ? formatBytes(totalBytesVal) : '—'}</span>
-			<span class="stat-hint">Total bytes transferred</span>
-		</button>
-	</div>
+	<KpiCard class="c-3" label="Total events" icon="logs" value={statsLoaded ? formatCompactNumber(totalEvents) : '—'} note="All log entries in range" href="#log-table" />
+	<KpiCard class="c-3" label="Active sources" icon="devices" value={statsLoaded ? formatCompactNumber(uniqueSources) : '—'} note="Unique source IPs" href="#top-talkers-section" />
+	<KpiCard class="c-3" label="Protocols" icon="connections" value={statsLoaded ? protocolCount : '—'} note="Distinct log types" href="#protocol-section" />
+	<KpiCard class="c-3" label="Data volume" icon="bandwidth" value={statsLoaded ? formatBytes(totalBytesVal) : '—'} note="Total bytes transferred" href="#log-table" />
 
-	<!-- ================================================================== -->
-	<!-- Activity Timeline                                                  -->
-	<!-- ================================================================== -->
-	<section class="card">
-		<div class="card-header">
-			<h2>Activity Timeline</h2>
-			<div class="legend-row">
-				{#each PROTOCOL_KEYS as pk}
-					<button class="legend-item" onclick={() => drillByProtocol(pk)}>
-						<span class="legend-dot" style="background: {protocolColor(pk)};"></span>
-						{protocolLabel(pk)}
-					</button>
-				{/each}
-			</div>
-		</div>
-		<div class="chart-wrapper" bind:clientWidth={chartWidth}>
-			{#if timeline.length > 0}
-				<div class="chart-container">
-					<svg role="img" aria-label="Activity timeline chart" viewBox="0 0 {chartWidth} 220" width="100%" height="220"
-						onmouseleave={() => { hoveredBarIndex = null; tooltipBucket = null; }}>
-						<!-- Grid lines -->
-						{#each [0, 0.25, 0.5, 0.75, 1] as frac}
-							<line
-								x1="50" y1={200 - frac * 180}
-								x2={chartWidth} y2={200 - frac * 180}
-								stroke="var(--border-default)" stroke-width="0.5" opacity="0.4"
-							/>
-							<text x="45" y={200 - frac * 180 + 4} text-anchor="end"
-								fill="var(--text-muted)" font-size="10">
-								{formatCompactNumber(Math.round(maxBucketTotal * frac))}
-							</text>
-						{/each}
+	<Card title="Activity timeline" sub="Log events per {INTERVAL_WORDS[INTERVAL_MAP[selectedTimeRange]] ?? 'hour'} · {rangeWords}" hero class="c-8">
+		{@render section('the activity timeline', timelineFailed, timeline.length > 0, 'No timeline data available', 'Events appear here once Zeek is processing traffic.', timelineBody)}
+	</Card>
 
-						<!-- Stacked bars -->
-						{#each timeline as bucket, i}
-							{@const barW = Math.max(2, (chartWidth - 60) / timeline.length - 2)}
-							{@const x = 55 + i * ((chartWidth - 60) / timeline.length)}
+	<Card title="Protocol breakdown" sub="Log entries per protocol · {rangeWords}" class="c-4">
+		<span id="protocol-section" class="anchor"></span>
+		{@render section('protocols', protocolsFailed, protocols.length > 0, 'No protocol data', 'Protocols appear once Zeek logs traffic in this range.', protocolsBody)}
+	</Card>
 
-							<!-- Compute stacked heights -->
-							{@const heights = PROTOCOL_KEYS.map((k) => ((bucket[k] || 0) / maxBucketTotal) * 180)}
-							{@const totalH = heights.reduce((a, b) => a + b, 0)}
+	<Card title="Top source IPs" sub="Most active devices · log entries · {rangeWords}" class="c-4">
+		<span id="top-talkers-section" class="anchor"></span>
+		{@render section('top sources', talkersFailed, topTalkers.length > 0, 'No source IP data', 'Devices appear once Zeek logs their traffic.', talkersBody)}
+	</Card>
 
-							<g
-								role="img"
-								onmouseenter={() => { hoveredBarIndex = i; tooltipX = x; tooltipBucket = bucket; }}
-								style="cursor: pointer;"
-							>
-								<!-- Invisible full-height hitbox for smooth hovering -->
-								<rect x={x} y="0" width={barW} height="200" fill="transparent" />
-								<!-- Stacked segments (bottom to top) -->
-								{#each PROTOCOL_KEYS as pk, j}
-									{@const h = heights[j]}
-									{@const yOffset = heights.slice(j + 1).reduce((a, b) => a + b, 0)}
-									{#if h > 0}
-										<rect
-											role="button"
-											tabindex="-1"
-											x={x} y={200 - yOffset - h} width={barW} height={h}
-											fill={protocolColor(pk)}
-											rx="1"
-											onclick={() => drillByProtocol(pk)}
-											onkeydown={(e) => { if (e.key === 'Enter') drillByProtocol(pk); }}
-										/>
-									{/if}
-								{/each}
-							</g>
-						{/each}
-					</svg>
+	<Card title="Most contacted servers" sub="Destination IPs · log entries · {rangeWords}" class="c-4">
+		{@render section('top destinations', destinationsFailed, topDestinations.length > 0, 'No destination data', 'Servers appear once Zeek logs traffic to them.', destinationsBody)}
+	</Card>
 
-					<!-- HTML tooltip overlay (avoids SVG re-render flicker) -->
-					{#if tooltipBucket && hoveredBarIndex !== null}
-						<div class="chart-tooltip" style="left: {Math.min(tooltipX, chartWidth - 170)}px;">
-							<div class="chart-tooltip-title">{formatShortTimestamp(tooltipBucket.timestamp)}</div>
-							{#each PROTOCOL_KEYS.filter((k) => (tooltipBucket?.[k] || 0) > 0) as pk}
-								<div class="chart-tooltip-row">
-									<span class="chart-tooltip-dot" style="background: {protocolColor(pk)};"></span>
-									<span class="chart-tooltip-label">{protocolLabel(pk)}</span>
-									<span class="chart-tooltip-val">{(tooltipBucket?.[pk] || 0).toLocaleString()}</span>
-								</div>
-							{/each}
-						</div>
-					{/if}
-				</div>
-			{:else if loading}
-				<div class="chart-placeholder">
-					<div class="loading-spinner"></div>
-				</div>
-			{:else if timelineFailed}
-				<div class="chart-placeholder">
-					<p class="load-note">{loadFailed('the activity timeline')}</p>
-				</div>
-			{:else}
-				<div class="chart-placeholder">
-					<p class="text-muted">No timeline data available</p>
-				</div>
-			{/if}
-		</div>
-	</section>
+	<Card title="Top DNS queries" sub="Most looked-up domains · {rangeWords}" class="c-4">
+		{@render section('top DNS queries', dnsFailed, topDns.length > 0, 'No DNS data', 'Domains appear once Zeek logs DNS lookups.', dnsBody)}
+	</Card>
 
-	<!-- ================================================================== -->
-	<!-- Protocol Breakdown + Top Talkers (two columns)                     -->
-	<!-- ================================================================== -->
-	<div class="two-col" id="protocol-section">
-		<!-- Protocol Breakdown -->
-		<section class="card">
-			<div class="card-header">
-				<h2>Protocol Breakdown</h2>
-			</div>
-			<HorizontalBarList
-				items={protocols.map(proto => ({
-					key: proto.protocol,
-					label: proto.label || protocolLabel(proto.protocol),
-					value: proto.count,
-					formattedValue: formatCompactNumber(proto.count),
-					color: protocolColor(proto.protocol),
-				}))}
-				showDot={true}
-				labelWidth={140}
-				barHeight={12}
-				onclick={(item) => drillByProtocol(item.key)}
-				emptyMessage={protocolsFailed ? loadFailed('protocols') : 'No protocol data'}
-			/>
-		</section>
-
-		<!-- Top Talkers -->
-		<section class="card" id="top-talkers-section">
-			<div class="card-header">
-				<h2>Top Source IPs</h2>
-				<span class="card-badge">Most Active Devices</span>
-			</div>
-			<HorizontalBarList
-				items={topTalkers.map(talker => ({
-					key: talker.ip,
-					label: talker.ip,
-					isIp: true,
-					mono: true,
-					value: talker.count,
-					formattedValue: formatCompactNumber(talker.count),
-					color: 'var(--cyan)',
-				}))}
-				showRank={true}
-				labelWidth={140}
-				barHeight={12}
-				activeKey={activeIpFilter}
-				onclick={(item) => drillByIp(item.key)}
-				emptyMessage={talkersFailed ? loadFailed('top sources') : 'No source IP data'}
-			/>
-		</section>
-	</div>
-
-	<!-- ================================================================== -->
-	<!-- Top Destinations + Top DNS Queries (two columns)                   -->
-	<!-- ================================================================== -->
-	<div class="two-col">
-		<!-- Top Destinations -->
-		<section class="card">
-			<div class="card-header">
-				<h2>Most Contacted Servers</h2>
-				<span class="card-badge">Destination IPs</span>
-			</div>
-			<HorizontalBarList
-				items={topDestinations.map(dest => ({
-					key: dest.ip,
-					label: dest.ip,
-					isIp: true,
-					mono: true,
-					value: dest.count,
-					formattedValue: formatCompactNumber(dest.count),
-					color: 'var(--data-2)',
-				}))}
-				showRank={true}
-				labelWidth={140}
-				barHeight={12}
-				activeKey={activeIpFilter}
-				onclick={(item) => drillByIp(item.key)}
-				emptyMessage={destinationsFailed ? loadFailed('top destinations') : 'No destination data'}
-			/>
-		</section>
-
-		<!-- Top DNS Queries -->
-		<section class="card">
-			<div class="card-header">
-				<h2>Top DNS Queries</h2>
-				<span class="card-badge">Most Looked Up Domains</span>
-			</div>
-			<HorizontalBarList
-				items={topDns.map(dnsEntry => ({
-					key: dnsEntry.domain,
-					label: dnsEntry.domain,
-					mono: true,
-					value: dnsEntry.count,
-					formattedValue: formatCompactNumber(dnsEntry.count),
-					color: 'var(--data-3)',
-				}))}
-				showRank={true}
-				labelWidth={140}
-				barHeight={12}
-				activeKey={activeDnsFilter}
-				onclick={(item) => drillByDns(item.key)}
-				emptyMessage={dnsFailed ? loadFailed('top DNS queries') : 'No DNS data'}
-			/>
-		</section>
-	</div>
-
-	<!-- ================================================================== -->
-	<!-- Log Table Section                                                  -->
-	<!-- ================================================================== -->
-	<section id="log-table">
-		<!-- Log type tabs -->
-		<div class="tabs">
-			{#each Object.entries(LOG_TYPE_LABELS) as [value, label]}
-				<button
-					class="tab"
-					class:active={logType === value}
-					onclick={() => setLogType(value as LogType)}
-				>
-					{label}
-				</button>
-			{/each}
-		</div>
-
-		<!-- Search + active filters -->
-		<div class="search-bar">
-			<div class="search-input-wrap">
-				<svg class="search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<circle cx="11" cy="11" r="8" />
-					<line x1="21" y1="21" x2="16.65" y2="16.65" />
-				</svg>
-				<input
-					class="input search-input"
-					type="text"
-					placeholder="Search logs... (e.g. google.com, 192.168.1.1, dns)"
+	<Card title="Log entries" sub="{LOG_TYPE_LABELS[logType]} · {rangeWords} · 100 per page" class="c-12">
+		<span id="log-table" class="anchor"></span>
+		<div class="toolbar">
+			<div class="search-wide">
+				<SearchField
+					id="logs-search"
+					label="Search logs"
+					placeholder="Search logs… (e.g. google.com, 192.168.1.1, dns)"
+					size="toolbar"
 					bind:value={query}
 					onkeydown={handleSearch}
 				/>
 			</div>
-			<button class="btn btn-primary btn-sm" onclick={() => fetchLogs()} disabled={tableLoading}>
-				Search
+			<button class="btn primary" type="button" onclick={() => fetchLogs()} disabled={tableLoading}>
+				<Icon name="search" />Search
 			</button>
 		</div>
+		<div class="toolbar types">
+			<Pills
+				options={Object.entries(LOG_TYPE_LABELS).map(([value, label]) => ({ value: value as LogType, label }))}
+				value={logType}
+				onchange={setLogType}
+				ariaLabel="Log type"
+			/>
+		</div>
 
-		<!-- Active filter badges -->
 		{#if hasActiveFilters}
-			<div class="active-filters">
-				<span class="filter-label">Active filters:</span>
+			<div class="chips filters">
+				<span class="dim">Active filters:</span>
 				{#if logType !== 'all'}
-					<button class="filter-badge" onclick={() => { logType = 'all'; fetchLogs(); fetchFieldDefs(); }}>
-						Type: {LOG_TYPE_LABELS[logType]}
-						<span class="filter-x">&times;</span>
+					<button class="chip" type="button" aria-label="Remove filter Type: {LOG_TYPE_LABELS[logType]}" onclick={() => { logType = 'all'; fetchLogs(); fetchFieldDefs(); }}>
+						Type: {LOG_TYPE_LABELS[logType]}<Icon name="close" />
 					</button>
 				{/if}
 				{#if activeIpFilter}
-					<button class="filter-badge" onclick={() => { activeIpFilter = ''; fetchLogs(); }}>
-						IP: {activeIpFilter}
-						<span class="filter-x">&times;</span>
+					<button class="chip" type="button" aria-label="Remove filter IP: {activeIpFilter}" onclick={() => { activeIpFilter = ''; fetchLogs(); }}>
+						IP: <span class="mono">{activeIpFilter}</span><Icon name="close" />
 					</button>
 				{/if}
 				{#if activeDnsFilter}
-					<button class="filter-badge" onclick={() => { activeDnsFilter = ''; fetchLogs(); fetchFieldDefs(); }}>
-						DNS: {activeDnsFilter}
-						<span class="filter-x">&times;</span>
+					<button class="chip" type="button" aria-label="Remove filter DNS: {activeDnsFilter}" onclick={() => { activeDnsFilter = ''; fetchLogs(); fetchFieldDefs(); }}>
+						DNS: <span class="mono">{activeDnsFilter}</span><Icon name="close" />
 					</button>
 				{/if}
-				<button class="filter-clear" onclick={clearAllFilters}>Clear all</button>
+				<button class="link" type="button" onclick={clearAllFilters}>Clear all</button>
 			</div>
 		{/if}
 
-		<!-- Error state -->
-		{#if error}
-			<div class="alert alert-danger">{error}</div>
-		{/if}
-
-		<!-- Results info -->
-		{#if !tableLoading || results.length > 0}
-			<div class="results-info">
-				<span class="text-muted">
-					Showing <strong>{results.length.toLocaleString()}</strong> of <strong>{totalHits.toLocaleString()}</strong> results
-				</span>
-				{#if tableLoading}
-					<div class="loading-spinner" style="width: 14px; height: 14px;"></div>
-				{/if}
-			</div>
-		{/if}
-
-		<!-- Loading state (initial) -->
-		{#if tableLoading && results.length === 0 && !error}
-			<div class="loading-state">
-				<div class="loading-spinner"></div>
-				<p class="text-muted">Searching logs...</p>
-			</div>
-		{:else if !tableLoading && results.length === 0 && !error}
-			<div class="empty-state">
-				<div class="empty-icon">
-					<svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-						<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-						<polyline points="14 2 14 8 20 8" />
-						<line x1="16" y1="13" x2="8" y2="13" />
-						<line x1="16" y1="17" x2="8" y2="17" />
-						<polyline points="10 9 9 9 8 9" />
-					</svg>
-				</div>
-				<p class="empty-text">No logs found</p>
-				<p class="empty-hint">Try adjusting your time range or search query. Logs appear once Zeek/Suricata are processing traffic.</p>
-			</div>
+		{#if error && results.length === 0}
+			<CardState state="error" title="Couldn't search the logs: the request failed." message={error} onaction={() => fetchLogs()} />
+		{:else if tableLoading && results.length === 0}
+			<CardState state="loading" title="Searching logs" />
+		{:else if results.length === 0}
+			<CardState
+				state="empty"
+				icon="logs"
+				title="No logs found"
+				message="Try adjusting your time range or search query. Logs appear once Zeek/Suricata are processing traffic."
+			/>
 		{:else}
-			<!-- Results table -->
-			<div class="table-wrap">
-				<table class="data-table">
-					<thead>
-						<tr>
-							<th style="width: 28px;"></th>
-							{#each COLUMNS[logType] as col}
-								<th
-									class="sortable"
-									class:sorted={sortField === col}
-									onclick={() => toggleSort(col)}
-									data-tooltip={fieldDefs[col] || ''}
-									class:tooltip={!!fieldDefs[col]}
-								>
-									{shortFieldName(col)}
-									{#if sortField === col}
-										<span class="sort-arrow">{sortDir === 'desc' ? ' \u2193' : ' \u2191'}</span>
-									{/if}
-								</th>
-							{/each}
-						</tr>
-					</thead>
-					<tbody>
-						{#each results as hit (hit._id)}
-							<tr
-								class="log-row"
-								class:expanded={drawerHit?._id === hit._id}
-								onclick={() => openDrawer(hit)}
-							>
-								<td class="expand-cell">
-									<span class="expand-icon" class:rotated={drawerHit?._id === hit._id}>&#9654;</span>
-								</td>
-								{#each COLUMNS[logType] as col}
-									{@const value = getNestedValue(hit._source, col)}
-									<td class:mono={MONO_FIELDS.has(col) || IP_FIELDS.has(col)}>
-										{#if IP_FIELDS.has(col) && value != null && value !== ''}
-											<IPAddress ip={String(value)} />
-										{:else}
-											{formatCellValue(col, value)}
-										{/if}
-									</td>
-								{/each}
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
-
-			<!-- Load more -->
-			{#if searchAfter && results.length < totalHits}
-				<div class="load-more">
-					<button
-						class="btn btn-secondary"
-						onclick={() => fetchLogs(true)}
-						disabled={loadingMore}
-					>
-						{#if loadingMore}
-							<div class="loading-spinner" style="width: 14px; height: 14px;"></div>
-							Loading...
-						{:else}
-							Load More
-						{/if}
-					</button>
-				</div>
+			{#if error}
+				<p class="notice is-error stale" role="alert"><Icon name="warn" />{error}</p>
 			{/if}
+			<DataTable
+				columns={logColumns}
+				rows={logRows}
+				ariaLabel="Log entries"
+				rowKey={(r) => r._id}
+				initialSort={{ key: sortField, dir: sortDir }}
+				onsortchange={setSort}
+				onrowactivate={(r) => openDrawer(r.hit)}
+				rowLabel={(r) => `Open log entry from ${String(r['@timestamp'] ?? '')}`}
+				selectedKey={drawerHit?._id}
+			/>
+			<div class="tbl-foot">
+				<span aria-live="polite">
+					Showing <strong class="num">{results.length.toLocaleString()}</strong> of <strong class="num">{totalHits.toLocaleString()}</strong> results{tableLoading ? ' · searching…' : ''}
+				</span>
+				{#if searchAfter && results.length < totalHits}
+					<button class="btn" type="button" onclick={() => fetchLogs(true)} disabled={loadingMore}>
+						{loadingMore ? 'Loading…' : 'Load more'}
+					</button>
+				{/if}
+			</div>
 		{/if}
-	</section>
+	</Card>
 </div>
 
 <!-- Detail Drawer -->
@@ -1079,8 +1092,8 @@
 		{/if}
 	{/snippet}
 	{#snippet actions()}
-		<button class="btn btn-secondary btn-sm" onclick={drawerViewSourceDevice}>
-			View Source Device
+		<button class="btn" type="button" onclick={drawerViewSourceDevice}>
+			View source device
 		</button>
 	{/snippet}
 </DetailDrawer>
@@ -1101,489 +1114,16 @@
 </script>
 
 <style>
-	.page-container {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-lg);
-	}
-
-	/* Header */
-	.page-header {
-		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: var(--space-md);
-		flex-wrap: wrap;
-	}
-
-	h1 {
-		font-size: var(--text-2xl);
-		font-weight: 700;
-		margin-bottom: var(--space-xs);
-	}
-
-	.subtitle {
-		color: var(--text-secondary);
-		font-size: var(--text-sm);
-	}
-
-	.header-right {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		flex-wrap: wrap;
-	}
-
-	.auto-refresh-active {
-		background: var(--accent-muted) !important;
-		border-color: var(--accent) !important;
-		color: var(--accent) !important;
-	}
-
-	/* Stats grid */
-	.stats-grid {
-		display: grid;
-		grid-template-columns: repeat(4, 1fr);
-		gap: var(--space-md);
-	}
-
-	.stat-card.clickable {
-		text-align: left;
-		width: 100%;
-	}
-
-	.load-note {
-		margin: 0;
-		color: var(--amber);
-		font-size: var(--text-sm);
-	}
-
-	.stat-hint {
-		display: block;
-		font-size: var(--text-xs);
-		color: var(--text-dim);
-		margin-top: 2px;
-	}
-
-	.text-white { color: var(--text-1); }
-	.text-cyan { color: var(--cyan); }
-	.text-green { color: var(--green); }
-	.text-purple { color: var(--purple); }
-
-	/* Card */
-	.card {
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-		padding: var(--space-lg);
-	}
-
-	.card-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		margin-bottom: var(--space-md);
-		flex-wrap: wrap;
-		gap: var(--space-sm);
-	}
-
-	.card-header h2 {
-		font-size: var(--text-lg);
-		font-weight: 600;
-	}
-
-	.card-badge {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-	}
-
-	/* Legend */
-	.legend-row {
-		display: flex;
-		gap: var(--space-sm);
-		flex-wrap: wrap;
-	}
-
-	.legend-item {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		font-size: var(--text-xs);
-		color: var(--text-secondary);
-		background: none;
-		border: none;
-		cursor: pointer;
-		padding: 2px 4px;
-		border-radius: var(--radius-sm);
-		transition: background var(--transition-fast);
-	}
-
-	.legend-item:hover {
-		background: var(--bg-tertiary);
-		color: var(--text-primary);
-	}
-
-	.legend-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		display: inline-block;
-	}
-
-	/* Chart */
-	.chart-wrapper {
-		width: 100%;
-		overflow: hidden;
-	}
-
-	.chart-container {
-		position: relative;
-	}
-
-	.chart-tooltip {
-		position: absolute;
-		top: 4px;
-		pointer-events: none;
-		background: var(--bg-elevated);
-		border: 1px solid var(--border-default);
-		border-radius: 6px;
-		padding: 8px 10px;
-		min-width: 150px;
-		z-index: 10;
-		box-shadow: 0 4px 12px color-mix(in srgb, var(--bg) 40%, transparent);
-	}
-
-	.chart-tooltip-title {
-		font-size: 11px;
-		font-weight: 600;
-		color: var(--text-primary);
-		margin-bottom: 4px;
-	}
-
-	.chart-tooltip-row {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		font-size: 10px;
-		line-height: 1.6;
-	}
-
-	.chart-tooltip-dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-
-	.chart-tooltip-label {
-		color: var(--text-secondary);
-		flex: 1;
-	}
-
-	.chart-tooltip-val {
-		color: var(--text-primary);
-		font-weight: 500;
-		font-family: var(--font-mono);
-	}
-
-	.chart-placeholder {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		height: 220px;
-	}
-
-	/* Two-column layout */
-	.two-col {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: var(--space-md);
-	}
-
-	/* OLD CODE START — bar styles replaced by shared HorizontalBarList component */
-	/*
-	.bar-list {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-	}
-
-	.bar-row {
-		display: grid;
-		grid-template-columns: minmax(120px, 1.2fr) 1fr auto;
-		align-items: center;
-		gap: var(--space-sm);
-		padding: var(--space-xs) var(--space-sm);
-		border-radius: var(--radius-sm);
-		background: none;
-		border: 1px solid transparent;
-		cursor: pointer;
-		transition: all var(--transition-fast);
-		text-align: left;
-		width: 100%;
-	}
-
-	.bar-row:hover {
-		background: var(--bg-tertiary);
-		border-color: var(--border-dim);
-	}
-
-	.bar-row.active-filter {
-		background: var(--accent-muted);
-		border-color: var(--accent);
-	}
-
-	.bar-label {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		min-width: 0;
-		overflow: hidden;
-	}
-
-	.bar-dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-
-	.bar-rank {
-		font-size: var(--text-xs);
-		color: var(--text-dim);
-		font-weight: 500;
-		min-width: 16px;
-		text-align: right;
-		flex-shrink: 0;
-	}
-
-	.bar-name {
-		font-size: var(--text-sm);
-		color: var(--text-primary);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.bar-track {
-		height: 6px;
-		background: var(--bg-tertiary);
-		border-radius: 3px;
-		overflow: hidden;
-		min-width: 60px;
-	}
-
-	.bar-fill {
-		height: 100%;
-		border-radius: 3px;
-		transition: width var(--transition-normal);
-		min-width: 2px;
-	}
-
-	.bar-count {
-		font-size: var(--text-xs);
-		color: var(--text-secondary);
-		text-align: right;
-		min-width: 40px;
-	}
-	*/
-	/* OLD CODE END */
-
-	.empty-section {
-		padding: var(--space-xl);
-		text-align: center;
-		font-size: var(--text-sm);
-	}
-
-	/* Search bar */
-	.search-bar {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		margin-bottom: var(--space-md);
-	}
-
-	.search-input-wrap {
-		position: relative;
-		flex: 1;
-		min-width: 240px;
-	}
-
-	.search-icon {
-		position: absolute;
-		left: 12px;
-		top: 50%;
-		transform: translateY(-50%);
-		color: var(--text-dim);
-		pointer-events: none;
-	}
-
-	.search-input {
-		padding-left: 36px;
-	}
-
-	/* Active filters */
-	.active-filters {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		flex-wrap: wrap;
-		margin-bottom: var(--space-md);
-	}
-
-	.filter-label {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-	}
-
-	.filter-badge {
-		display: inline-flex;
-		align-items: center;
-		gap: 4px;
-		padding: 3px 10px;
-		font-size: var(--text-xs);
-		font-weight: 500;
-		color: var(--accent);
-		background: var(--accent-muted);
-		border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-		border-radius: var(--radius-full);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-		font-family: var(--font-mono);
-	}
-
-	.filter-badge:hover {
-		background: color-mix(in srgb, var(--accent) 20%, transparent);
-	}
-
-	.filter-x {
-		font-size: 14px;
-		line-height: 1;
-		margin-left: 2px;
-		opacity: 0.7;
-	}
-
-	.filter-clear {
-		font-size: var(--text-xs);
-		color: var(--text-muted);
-		background: none;
-		border: none;
-		cursor: pointer;
-		text-decoration: underline;
-		padding: 2px 4px;
-	}
-
-	.filter-clear:hover {
-		color: var(--text-primary);
-	}
-
-	/* Results info */
-	.results-info {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-		font-size: var(--text-sm);
-		margin-bottom: var(--space-sm);
-	}
-
-	.results-info strong {
-		color: var(--text-primary);
-	}
-
-	/* Table wrapper */
-	.table-wrap {
-		overflow-x: auto;
-		background: var(--bg-secondary);
-		border: 1px solid var(--border-default);
-		border-radius: var(--radius-md);
-	}
-
-	.data-table th.sorted {
-		color: var(--accent);
-	}
-
-	.sort-arrow {
-		color: var(--accent);
-	}
-
-	/* Expand/collapse */
-	.expand-cell {
-		width: 28px;
-		text-align: center;
-		cursor: pointer;
-		color: var(--text-muted);
-	}
-
-	.expand-icon {
-		display: inline-block;
-		font-size: 10px;
-		transition: transform var(--transition-fast);
-	}
-
-	.expand-icon.rotated {
-		transform: rotate(90deg);
-	}
-
-	.log-row {
-		cursor: pointer;
-	}
-
-	.log-row.expanded td {
-		background-color: var(--bg-tertiary);
-		border-bottom-color: var(--border-bright);
-	}
-
-	/* OLD CODE START — expanded row styles replaced by DetailDrawer */
-	/* .expanded-row td, .expanded-content, .field-grid, .expanded-raw — moved to drawer */
-	/* OLD CODE END */
-
-	/* Loading state */
-	.loading-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: var(--space-3xl);
-		gap: var(--space-md);
-	}
-
-	/* Load more */
-	.load-more {
-		display: flex;
-		justify-content: center;
-		padding: var(--space-md) 0;
-	}
-
-	@media (max-width: 1024px) {
-		.stats-grid {
-			grid-template-columns: repeat(2, 1fr);
-		}
-
-		.two-col {
-			grid-template-columns: 1fr;
-		}
-	}
-
-	@media (max-width: 768px) {
-		.stats-grid {
-			grid-template-columns: 1fr;
-		}
-
-		.search-bar {
-			flex-direction: column;
-			align-items: stretch;
-		}
-
-		.page-header {
-			flex-direction: column;
-		}
-
-		.legend-row {
-			display: none;
-		}
-	}
+	/* Layout glue the system lacks */
+	/* In-card anchors for the KPI links and the drill scrolls; the margin keeps the card head in view */
+	.anchor { display: block; scroll-margin-top: calc(var(--sp-8) * 3); }
+	.stale { margin-bottom: var(--sp-3); }
+	/* The log search takes the toolbar's free width (the system caps a toolbar search at 360px) */
+	.search-wide { display: flex; flex: 1 1 28rem; min-width: 0; }
+	.search-wide :global(.search) { max-width: none; }
+	/* Nine log types: the pill group scrolls sideways instead of overflowing a phone */
+	.types { overflow-x: auto; }
+	.filters { align-items: center; margin-bottom: var(--sp-4); font-size: var(--text-xs); }
+	button.chip { border: 0; cursor: pointer; }
+	button.link { background: none; border: 0; padding: 0; cursor: pointer; }
 </style>
