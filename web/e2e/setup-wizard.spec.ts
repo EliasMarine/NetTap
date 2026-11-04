@@ -109,8 +109,9 @@ test.describe('Setup wizard', () => {
 		await expect(page.getByLabel('Confirm password')).toBeVisible();
 		await expect(page.getByRole('button', { name: 'Complete setup' })).toBeDisabled();
 
-		// Back returns to the previous step
-		await page.getByRole('button', { name: 'Back', exact: true }).click();
+		// The Account step has no Back button (it never had); a done step in the indicator goes back
+		await expect(page.getByRole('button', { name: 'Back', exact: true })).toHaveCount(0);
+		await steps.getByRole('button', { name: /Enrichment/ }).click();
 		await expect(page.getByRole('heading', { name: 'Device enrichment' })).toBeVisible();
 	});
 
