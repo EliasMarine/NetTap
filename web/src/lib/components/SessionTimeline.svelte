@@ -1,6 +1,6 @@
 <!--
   SessionTimeline.svelte — Stacked bar chart showing session count over time,
-  colored by protocol (TCP=cyan, UDP=green, TLS=purple, DNS=amber).
+  coloured by protocol (data-1..6, with a legend).
 -->
 <script lang="ts">
 	import type { ConnectionTimelineBucket } from '$api/traffic';
@@ -12,7 +12,7 @@
 	let {
 		buckets = [],
 		loading = false,
-		emptyMessage = 'No timeline data available',
+		emptyMessage = 'Sessions appear here once NetTap sees traffic in this time range.',
 	}: {
 		buckets: ConnectionTimelineBucket[];
 		loading?: boolean;
@@ -82,33 +82,43 @@
 	function protoColor(proto: string): string {
 		return PROTO_COLORS[proto.toLowerCase()] || 'var(--text-3)';
 	}
+
+	// The chart's headline for screen readers (design system: every chart states it)
+	let headline = $derived.by(() => {
+		if (buckets.length === 0) return 'Session volume';
+		const peak = buckets.reduce((a, b) => (b.total > a.total ? b : a));
+		return `Session volume, busiest at ${formatShortTimestamp(peak.timestamp)} with ${peak.total.toLocaleString()} sessions`;
+	});
 </script>
 
 <div class="timeline-card">
-	<div class="card-header">
-		<h2>Session Volume</h2>
-		<div class="legend-row">
-			{#each activeProtocols as proto}
-				<span class="legend-item">
-					<span class="legend-dot" style="background: {protoColor(proto)};"></span>
-					{proto.toUpperCase()}
-				</span>
-			{/each}
+	<div class="card-head">
+		<div>
+			<h2 class="card-title">Session volume</h2>
+			<p class="card-sub">Sessions over time, by protocol</p>
 		</div>
+		<ul class="legend">
+			{#each activeProtocols as proto}
+				<li>
+					<span class="sw" style="--c: {protoColor(proto)};"></span>
+					{proto.toUpperCase()}
+				</li>
+			{/each}
+		</ul>
 	</div>
 
 	<div class="chart-wrapper" bind:clientWidth={chartWidth}>
 		{#if buckets.length > 0}
-			<svg viewBox="0 0 {chartWidth} 200" width="100%" height="200">
+			<svg viewBox="0 0 {chartWidth} 200" width="100%" height="200" role="img" aria-label={headline}>
 				<!-- Grid lines + Y labels -->
 				{#each [0, 0.25, 0.5, 0.75, 1] as frac}
 					<line
+						class="gl"
+						class:dash={frac > 0}
 						x1="50" y1={180 - frac * 160}
 						x2={chartWidth} y2={180 - frac * 160}
-						stroke="var(--line)" stroke-width="0.5" opacity="0.4"
 					/>
-					<text x="45" y={180 - frac * 160 + 4} text-anchor="end"
-						fill="var(--text-3)" font-size="10">
+					<text class="ax" x="45" y={180 - frac * 160 + 4} text-anchor="end">
 						{Math.round(maxTotal * frac)}
 					</text>
 				{/each}
@@ -157,7 +167,7 @@
 					{@const idx = Math.round(li * (buckets.length - 1) / Math.max(1, Math.min(5, buckets.length - 1)))}
 					{@const stepW = (chartWidth - 60) / buckets.length}
 					{@const lx = 55 + idx * stepW + Math.max(2, stepW - 2) / 2}
-					<text x={lx} y="196" text-anchor="middle" fill="var(--text-3)" font-size="10">
+					<text class="ax" x={lx} y="196" text-anchor="middle">
 						{formatShortTimestamp(buckets[idx]?.timestamp || '')}
 					</text>
 				{/each}
@@ -173,7 +183,7 @@
 					{#each activeProtocols as proto}
 						{#if hb.protocols[proto]}
 							<div class="tooltip-row">
-								<span class="legend-dot" style="background: {protoColor(proto)};"></span>
+								<span class="sw" style="--c: {protoColor(proto)};"></span>
 								{proto.toUpperCase()}: <strong>{hb.protocols[proto].toLocaleString()}</strong>
 							</div>
 						{/if}
@@ -181,7 +191,7 @@
 				</div>
 			{/if}
 		{:else if !loading}
-			<p class="text-muted" style="padding: 2rem; text-align: center;">{emptyMessage}</p>
+			<p class="dim timeline-empty">{emptyMessage}</p>
 		{/if}
 	</div>
 </div>
@@ -192,63 +202,31 @@
 		flex-direction: column;
 	}
 
-	.card-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: var(--sp-4) var(--sp-4) var(--sp-2);
-		flex-wrap: wrap;
-		gap: var(--sp-2);
-	}
-
-	.card-header h2 {
-		font-size: var(--text-base);
-		font-weight: 600;
-		color: var(--text-1);
-	}
-
-	.legend-row {
-		display: flex;
-		gap: var(--sp-4);
-		font-size: var(--text-xs);
-		color: var(--text-3);
-	}
-
-	.legend-item {
-		display: flex;
-		align-items: center;
-		gap: var(--sp-1);
-	}
-
-	.legend-dot {
-		display: inline-block;
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-
 	.chart-wrapper {
 		position: relative;
-		padding: 0 var(--sp-2) var(--sp-2);
 	}
 
+	.timeline-empty {
+		padding: var(--sp-8);
+		text-align: center;
+	}
+
+	/* Chart tooltip: the system's light pill (pill-active-bg, on-light) */
 	.bar-tooltip {
 		position: absolute;
-		background: var(--surface-1);
-		border: 1px solid var(--line);
+		background: var(--pill-active-bg);
+		color: var(--on-light);
 		border-radius: var(--r-md);
-		padding: var(--sp-1) var(--sp-2);
+		padding: var(--sp-1) var(--sp-3);
 		font-size: var(--text-xs);
+		font-variant-numeric: tabular-nums;
 		pointer-events: none;
 		z-index: 10;
 		white-space: nowrap;
-		box-shadow: 0 4px 12px color-mix(in srgb, var(--bg) 30%, transparent);
 	}
 
 	.tooltip-time {
-		font-weight: 600;
-		color: var(--text-1);
+		font-weight: 700;
 		margin-bottom: 2px;
 	}
 
@@ -256,6 +234,5 @@
 		display: flex;
 		align-items: center;
 		gap: var(--sp-1);
-		color: var(--text-2);
 	}
 </style>

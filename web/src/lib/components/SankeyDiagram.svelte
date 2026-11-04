@@ -100,7 +100,7 @@
 					? (PROTO_COLORS[n.id.toLowerCase()] || 'var(--accent)')
 					: type === 'source'
 						? 'var(--accent)'
-						: 'var(--data-3, var(--ok))',
+						: 'var(--data-3)',
 				type,
 				country: n.country,
 			};
@@ -226,19 +226,25 @@
 		if (label.length <= maxLen) return label;
 		return label.slice(0, maxLen - 1) + '\u2026';
 	}
+
+	// The chart's headline for screen readers (design system: every chart states it)
+	const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+	let headline = $derived(
+		`Traffic flow from ${count(sources.length, 'source')} through ${count(protocols.length, 'protocol')} to ${count(destinations.length, 'destination')}`
+	);
 </script>
 
 {#if sources.length === 0 && protocols.length === 0 && destinations.length === 0}
 	<div class="sankey-empty">
-		<p class="text-muted">No flow data available for this time range</p>
+		<p class="dim">Traffic flows appear here once NetTap sees traffic in this time range.</p>
 	</div>
 {:else}
-	<div class="sankey-wrap" bind:clientWidth={chartWidth}>
+	<div class="sankey-wrap" role="group" aria-label={headline} bind:clientWidth={chartWidth}>
 		<!-- Column headers -->
 		<div class="sankey-headers" style="--col1-x: {PADDING}px; --col2-x: {chartWidth / 2 - COL_WIDTH / 2}px; --col3-x: {chartWidth - COL_WIDTH - PADDING}px;">
-			<span class="sankey-col-title" style="left: {PADDING}px;">Sources</span>
-			<span class="sankey-col-title" style="left: {chartWidth / 2 - COL_WIDTH / 2}px;">Protocols</span>
-			<span class="sankey-col-title" style="left: {chartWidth - COL_WIDTH - PADDING}px;">Destinations</span>
+			<span class="sankey-col-title eyebrow" style="left: {PADDING}px;">Sources</span>
+			<span class="sankey-col-title eyebrow" style="left: {chartWidth / 2 - COL_WIDTH / 2}px;">Protocols</span>
+			<span class="sankey-col-title eyebrow" style="left: {chartWidth - COL_WIDTH - PADDING}px;">Destinations</span>
 		</div>
 
 		<svg viewBox="0 0 {chartWidth} {layout.height}" width="100%" height={layout.height}>
@@ -251,7 +257,7 @@
 					stroke={linkColor(link)}
 					stroke-width={linkWidth(link)}
 					opacity={hoveredNode ? (connected ? 0.6 : 0.08) : 0.3}
-					style="transition: opacity 0.2s;"
+					style="transition: opacity var(--dur-fast);"
 				/>
 			{/each}
 
@@ -278,7 +284,7 @@
 						opacity={hoveredNode ? (isConnected ? 1 : 0.2) : 0.85}
 						stroke={isHovered ? 'var(--text-1)' : 'none'}
 						stroke-width="1.5"
-						style="transition: opacity 0.2s;"
+						style="transition: opacity var(--dur-fast);"
 					/>
 					<!-- Label -->
 					{#if node.h >= 16}
@@ -286,14 +292,8 @@
 							x={node.x + node.w / 2}
 							y={node.y + node.h / 2 + 4}
 							text-anchor="middle"
-							fill="var(--text-1)"
-							stroke="var(--bg)"
-							stroke-width="3"
-							paint-order="stroke"
-							font-size="12"
-							font-weight="600"
+							class="node-lbl"
 							opacity={hoveredNode ? (isConnected ? 1 : 0.3) : 1}
-							style="pointer-events: none;"
 						>
 							{truncateLabel(node.label, 14)}
 						</text>
@@ -336,11 +336,6 @@
 	.sankey-col-title {
 		position: absolute;
 		top: 0;
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--text-3);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 	}
 
 	.sankey-empty {
@@ -348,32 +343,42 @@
 		text-align: center;
 	}
 
+	/* Node labels: text-1 with a bg halo so they read over any node colour */
+	.node-lbl {
+		fill: var(--text-1);
+		stroke: var(--bg);
+		stroke-width: 3px;
+		paint-order: stroke;
+		font-family: var(--font-body);
+		font-size: var(--text-xs);
+		font-weight: 600;
+		pointer-events: none;
+	}
+
+	/* Chart tooltip: the system's light pill (pill-active-bg, on-light) */
 	.sankey-tooltip {
 		position: absolute;
 		transform: translate(-50%, -100%);
-		background: var(--surface-1);
-		border: 1px solid var(--line);
+		background: var(--pill-active-bg);
+		color: var(--on-light);
 		border-radius: var(--r-md);
-		padding: var(--sp-1) var(--sp-2);
+		padding: var(--sp-1) var(--sp-3);
+		font-size: var(--text-xs);
 		pointer-events: none;
 		z-index: 10;
 		white-space: nowrap;
 	}
 
 	.tooltip-label {
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--text-1);
+		font-weight: 700;
 	}
 
 	.tooltip-value {
-		font-size: var(--text-xs);
-		color: var(--text-2);
 		font-family: var(--font-mono);
+		font-variant-numeric: tabular-nums;
 	}
 
 	.tooltip-country {
-		font-size: var(--text-xs);
-		color: var(--text-3);
+		color: color-mix(in srgb, var(--on-light) 70%, transparent);
 	}
 </style>

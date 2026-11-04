@@ -115,7 +115,7 @@
 <div class="panel-manager">
 	{#if tablePanelMode !== 'floating'}
 		<div class="top-panel" style="height: {tablePanelMode === 'maximized' ? '100' : tablePanelMode === 'minimized' ? 'auto' : topSplitPercent}%;">
-			<DockPanel title="Packet Table" panelId="table" mode={tablePanelMode} onaction={handlePanelAction}>
+			<DockPanel title="Packet table" panelId="table" mode={tablePanelMode} onaction={handlePanelAction}>
 				<PacketTable
 					{packets}
 					{loading}
@@ -134,7 +134,7 @@
 		<div class="bottom-panels" style="flex: 1; min-height: 0;">
 			{#if treePanelMode !== 'floating'}
 				<div class="bottom-left" style="width: {treePanelMode === 'maximized' ? '100' : treePanelMode === 'minimized' ? 'auto' : bottomSplitPercent}%;">
-					<DockPanel title="Protocol Tree" panelId="tree" mode={treePanelMode} onaction={handlePanelAction}>
+					<DockPanel title="Protocol tree" panelId="tree" mode={treePanelMode} onaction={handlePanelAction}>
 						<ProtocolTree packet={selectedPacket} />
 					</DockPanel>
 				</div>
@@ -146,7 +146,7 @@
 
 			{#if hexPanelMode !== 'floating'}
 				<div class="bottom-right" style="flex: 1; min-width: 0;">
-					<DockPanel title="Hex Dump" panelId="hex" mode={hexPanelMode} onaction={handlePanelAction}>
+					<DockPanel title="Hex dump" panelId="hex" mode={hexPanelMode} onaction={handlePanelAction}>
 						<HexDump {rawHex} />
 					</DockPanel>
 				</div>
@@ -156,7 +156,7 @@
 
 	{#if tablePanelMode === 'floating'}
 		<FloatingPanel
-			title="Packet Table"
+			title="Packet table"
 			panelId="table"
 			bind:x={floatingPositions.table.x}
 			bind:y={floatingPositions.table.y}
@@ -171,7 +171,7 @@
 
 	{#if treePanelMode === 'floating'}
 		<FloatingPanel
-			title="Protocol Tree"
+			title="Protocol tree"
 			panelId="tree"
 			bind:x={floatingPositions.tree.x}
 			bind:y={floatingPositions.tree.y}
@@ -186,7 +186,7 @@
 
 	{#if hexPanelMode === 'floating'}
 		<FloatingPanel
-			title="Hex Dump"
+			title="Hex dump"
 			panelId="hex"
 			bind:x={floatingPositions.hex.x}
 			bind:y={floatingPositions.hex.y}

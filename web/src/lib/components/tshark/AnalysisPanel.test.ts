@@ -35,7 +35,7 @@ describe('AnalysisPanel when a request fails (#96)', () => {
 		render(AnalysisPanel);
 
 		expect(await screen.findByText(/TShark status unknown/)).toBeInTheDocument();
-		expect(screen.queryByText(/TShark Unavailable/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/TShark unavailable/)).not.toBeInTheDocument();
 	});
 
 	it('says the PCAP list failed instead of "No PCAP files found"', async () => {
@@ -75,8 +75,8 @@ describe('AnalysisPanel when TShark stopped before the end of the file', () => {
 		stubFetch({ '/api/tshark/status': STATUS, '/api/tshark/analyze': CUT_SHORT });
 
 		render(AnalysisPanel);
-		await fireEvent.input(screen.getByLabelText('PCAP File Path'), { target: { value: '/opt/nettap/pcap/f1.pcap' } });
-		await fireEvent.click(screen.getByRole('button', { name: /Analyze/ }));
+		await fireEvent.input(screen.getByLabelText('PCAP file path'), { target: { value: '/opt/nettap/pcap/f1.pcap' } });
+		await fireEvent.click(screen.getByRole('button', { name: /Analyse/ }));
 
 		expect(await screen.findByText(/Stopped before the end of the file/)).toBeInTheDocument();
 		expect(screen.queryByText(/more packets available/)).not.toBeInTheDocument();

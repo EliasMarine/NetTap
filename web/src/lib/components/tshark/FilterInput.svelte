@@ -8,6 +8,8 @@
 	 *   onchange  – callback fired on every edit, so a parent's Analyze uses the typed filter
 	 */
 
+	import Icon from '$lib/components/ui/Icon.svelte';
+
 	interface Props {
 		onsubmit: (filter: string) => void;
 		disabled?: boolean;
@@ -78,7 +80,7 @@
 			}
 		} catch {
 			validationStatus = 'invalid';
-			validationMessage = 'Could not validate filter — daemon unreachable';
+			validationMessage = "Couldn't validate the filter: the daemon can't be reached.";
 		}
 	}
 
@@ -123,7 +125,7 @@
 		<div class="input-group">
 			<input
 				type="text"
-				class="input filter-field"
+				class="input mono filter-field"
 				placeholder="Enter display filter (e.g. http.request, dns, tcp.port == 443)"
 				bind:value={filterText}
 				oninput={() => onchange?.(filterText.trim())}
@@ -133,18 +135,14 @@
 
 			{#if validationStatus === 'valid'}
 				<span class="validation-indicator valid" title="Valid filter">
-					<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-						<path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z" />
-					</svg>
+					<Icon name="check" />
 				</span>
 			{:else if validationStatus === 'invalid'}
 				<span class="validation-indicator invalid" title="Invalid filter">
-					<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-						<path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z" />
-					</svg>
+					<Icon name="close" />
 				</span>
 			{:else if validationStatus === 'checking'}
-				<span class="validation-indicator checking" title="Checking...">
+				<span class="validation-indicator checking" title="Checking…">
 					<svg class="spin" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
 						<circle cx="8" cy="8" r="6" opacity="0.25" />
 						<path d="M14 8a6 6 0 00-6-6" />
@@ -153,16 +151,14 @@
 			{/if}
 		</div>
 
-		<button class="btn btn-secondary" onclick={validateFilter} disabled={disabled || !filterText.trim()}>
+		<button class="btn" onclick={validateFilter} disabled={disabled || !filterText.trim()}>
 			Validate
 		</button>
 
 		<div class="presets-wrapper">
-			<button class="btn btn-secondary" onclick={togglePresets} {disabled}>
+			<button class="btn" onclick={togglePresets} {disabled}>
 				Presets
-				<svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
-					<path d="M4.427 7.427l3.396 3.396a.25.25 0 00.354 0l3.396-3.396A.25.25 0 0011.396 7H4.604a.25.25 0 00-.177.427z" />
-				</svg>
+				<Icon name="chevdown" />
 			</button>
 
 			{#if showPresets}
@@ -180,7 +176,7 @@
 			{/if}
 		</div>
 
-		<button class="btn btn-primary" onclick={handleSubmit} disabled={disabled || !filterText.trim()}>
+		<button class="btn primary" onclick={handleSubmit} disabled={disabled || !filterText.trim()}>
 			Apply
 		</button>
 	</div>
@@ -213,17 +209,20 @@
 	}
 
 	.filter-field {
-		font-family: var(--font-mono);
-		font-size: var(--text-sm);
-		padding-right: 36px;
+		padding-right: var(--sp-8);
 	}
 
 	.validation-indicator {
 		position: absolute;
-		right: 10px;
+		right: var(--sp-3);
 		display: flex;
 		align-items: center;
 		pointer-events: none;
+	}
+
+	.validation-indicator :global(.ic) {
+		width: 16px;
+		height: 16px;
 	}
 
 	.validation-indicator.valid {
@@ -253,7 +252,7 @@
 
 	.presets-dropdown {
 		position: absolute;
-		top: calc(100% + 4px);
+		top: calc(100% + var(--sp-1));
 		right: 0;
 		z-index: 20;
 		min-width: 320px;
@@ -272,10 +271,11 @@
 		align-items: flex-start;
 		gap: 2px;
 		width: 100%;
-		padding: var(--sp-2) var(--sp-4);
+		padding: var(--sp-2) var(--sp-3);
 		background: none;
 		border: none;
 		border-radius: var(--r-sm);
+		color: var(--text-1);
 		cursor: pointer;
 		text-align: left;
 		transition: background-color var(--dur-fast);
@@ -287,8 +287,7 @@
 
 	.preset-label {
 		font-size: var(--text-sm);
-		color: var(--text-1);
-		font-weight: 500;
+		font-weight: 600;
 	}
 
 	.preset-filter {

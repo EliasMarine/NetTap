@@ -1,4 +1,6 @@
 <script lang="ts">
+	import Icon from '$lib/components/ui/Icon.svelte';
+
 	interface Props {
 		rawHex?: string | null;
 		highlightStart?: number;
@@ -41,12 +43,7 @@
 <div class="hex-dump">
 	{#if rows.length === 0}
 		<div class="empty-state">
-			<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-				<rect x="2" y="3" width="20" height="18" rx="2" />
-				<line x1="8" y1="7" x2="16" y2="7" />
-				<line x1="8" y1="11" x2="16" y2="11" />
-				<line x1="8" y1="15" x2="12" y2="15" />
-			</svg>
+			<Icon name="empty" />
 			<span>Select a packet to view hex dump</span>
 		</div>
 	{:else}
@@ -79,7 +76,7 @@
 		height: 100%;
 		overflow-y: auto;
 		font-family: var(--font-mono);
-		font-size: 12px;
+		font-size: var(--text-xs);
 		line-height: 1.6;
 	}
 
@@ -91,12 +88,13 @@
 		padding: var(--sp-8) var(--sp-6);
 		color: var(--text-3);
 		font-size: var(--text-sm);
-		font-family: var(--font-body, sans-serif);
+		font-family: var(--font-body);
 		text-align: center;
 	}
 
-	.empty-state svg {
-		opacity: 0.5;
+	.empty-state :global(.ic) {
+		width: 28px;
+		height: 28px;
 	}
 
 	.hex-content {
@@ -118,11 +116,11 @@
 	.hex-bytes {
 		flex-shrink: 0;
 		display: flex;
-		gap: 4px;
+		gap: var(--sp-1);
 	}
 
 	.hex-gap {
-		width: 4px;
+		width: var(--sp-1);
 	}
 
 	.hex-byte {
@@ -130,8 +128,8 @@
 	}
 
 	.hex-byte.highlighted {
-		background: color-mix(in srgb, var(--accent) 12%, transparent);
-		color: var(--accent);
+		background: var(--band);
+		color: var(--accent-strong);
 		border-radius: 2px;
 	}
 

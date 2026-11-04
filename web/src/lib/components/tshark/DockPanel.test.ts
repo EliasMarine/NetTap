@@ -12,8 +12,8 @@ describe('DockPanel', () => {
 		const { container } = render(DockPanel, {
 			props: { title: 'Proto Tree', panelId: 'tree' },
 		});
-		expect(container.querySelector('[title="Minimize"]')).not.toBeNull();
-		expect(container.querySelector('[title="Maximize"]')).not.toBeNull();
+		expect(container.querySelector('[title="Minimise"]')).not.toBeNull();
+		expect(container.querySelector('[title="Maximise"]')).not.toBeNull();
 		expect(container.querySelector('[title="Pop out"]')).not.toBeNull();
 	});
 
@@ -22,7 +22,7 @@ describe('DockPanel', () => {
 		const { container } = render(DockPanel, {
 			props: { title: 'Test', panelId: 'test', onaction },
 		});
-		const btn = container.querySelector('[title="Minimize"]')!;
+		const btn = container.querySelector('[title="Minimise"]')!;
 		await fireEvent.click(btn);
 		expect(onaction).toHaveBeenCalledWith('test', 'minimize');
 	});

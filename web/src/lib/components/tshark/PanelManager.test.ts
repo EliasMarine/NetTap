@@ -25,9 +25,9 @@ describe('PanelManager', () => {
 			},
 		});
 
-		expect(screen.getByText('Packet Table')).toBeInTheDocument();
-		expect(screen.getByText('Protocol Tree')).toBeInTheDocument();
-		expect(screen.getByText('Hex Dump')).toBeInTheDocument();
+		expect(screen.getByText('Packet table')).toBeInTheDocument();
+		expect(screen.getByText('Protocol tree')).toBeInTheDocument();
+		expect(screen.getByText('Hex dump')).toBeInTheDocument();
 	});
 
 	it('renders PacketTable with packets data', () => {

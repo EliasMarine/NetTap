@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	interface Props {
 		title: string;
@@ -66,11 +67,9 @@
 >
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="floating-header" onpointerdown={handleHeaderPointerDown}>
-		<span class="floating-title">{title}</span>
+		<span class="floating-title eyebrow">{title}</span>
 		<button class="floating-close" title="Dock panel" onclick={() => onclose?.(panelId)}>
-			<svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
-				<path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z" />
-			</svg>
+			<Icon name="close" />
 		</button>
 	</div>
 	<div class="floating-content">
@@ -85,10 +84,10 @@
 		position: absolute;
 		display: flex;
 		flex-direction: column;
-		background: var(--bg);
-		border: 1px solid var(--accent);
+		background: var(--surface-1);
+		border: 1px solid var(--line-strong);
 		border-radius: var(--r-md);
-		box-shadow: 0 8px 32px color-mix(in srgb, var(--bg) 50%, transparent);
+		box-shadow: var(--shadow-pop);
 		z-index: 50;
 		overflow: hidden;
 	}
@@ -97,7 +96,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: 6px 10px;
+		padding: var(--sp-1) var(--sp-1) var(--sp-1) var(--sp-3);
 		background: var(--surface-2);
 		border-bottom: 1px solid var(--line);
 		cursor: grab;
@@ -109,30 +108,28 @@
 		cursor: grabbing;
 	}
 
-	.floating-title {
-		font-size: var(--text-xs);
-		font-weight: 600;
-		color: var(--text-2);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
+	/* Compact icon button, matching DockPanel's header actions */
 	.floating-close {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 22px;
-		height: 22px;
+		width: 24px;
+		height: 24px;
 		padding: 0;
 		background: none;
 		border: none;
-		border-radius: var(--r-sm);
+		border-radius: var(--r-pill);
 		color: var(--text-3);
 		cursor: pointer;
 	}
 
+	.floating-close :global(.ic) {
+		width: 14px;
+		height: 14px;
+	}
+
 	.floating-close:hover {
-		background: var(--surface-1);
+		background: var(--surface-3);
 		color: var(--text-1);
 	}
 

@@ -17,6 +17,7 @@
 	}
 
 	import { TableSort } from '$lib/utils/table-sort.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	let { packets, loading = false, onselect, selectedIndex = -1 }: Props = $props();
 
@@ -98,7 +99,7 @@
 	{#if loading}
 		<div class="table-overlay">
 			<div class="spinner"></div>
-			<span class="loading-text">Analyzing packets...</span>
+			<span class="loading-text">Analysing packets…</span>
 		</div>
 	{/if}
 
@@ -116,7 +117,11 @@
 					<th class="col-info">Info</th>
 					OLD CODE END -->
 					{#each COLUMNS as [key, label, cls] (key)}
-						<th class="{cls} sortable" class:sorted={packetSort.key === key} onclick={() => packetSort.toggle(key)}>
+						<th
+							class="{cls} sortable"
+							aria-sort={packetSort.key === key ? (packetSort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+							onclick={() => packetSort.toggle(key)}
+						>
 							{label}<span class="sort-arrow">{packetSort.arrow(key)}</span>
 						</th>
 					{/each}
@@ -127,21 +132,16 @@
 					<tr class="empty-row">
 						<td colspan="7">
 							<div class="empty-state">
-								<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-									<path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
-									<polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-									<line x1="12" y1="22.08" x2="12" y2="12" />
-								</svg>
+								<Icon name="pcap" />
 								<span>No packets to display. Select a PCAP file and run analysis.</span>
 							</div>
 						</td>
 					</tr>
 				{:else}
-					{#each sortedPackets as pkt, idx}
+					{#each sortedPackets as pkt}
 						<tr
 							class="packet-row"
 							class:selected={captureIndex.get(pkt) === selectedIndex}
-							class:even={idx % 2 === 0}
 							onclick={() => handleRowClick(pkt)}
 							onkeydown={(e) => handleRowKeydown(e, pkt)}
 							tabindex="0"
@@ -152,8 +152,7 @@
 							<td class="col-src mono">{col(pkt, 'src')}</td>
 							<td class="col-dst mono">{col(pkt, 'dst')}</td>
 							<td class="col-proto">
-								<!-- proto-name: Wireshark writes TLSv1.2, not TLSV1.2 (.badge upper-cases) -->
-								<span class="badge badge-accent proto-name">{col(pkt, 'protocol')}</span>
+								<span class="tag">{col(pkt, 'protocol')}</span>
 							</td>
 							<td class="col-len mono">{col(pkt, 'length')}</td>
 							<td class="col-info">{col(pkt, 'info')}</td>
@@ -209,13 +208,7 @@
 		height: 100%;
 	}
 
-	.packet-table {
-		width: 100%;
-		border-collapse: collapse;
-		font-size: var(--text-sm);
-		white-space: nowrap;
-	}
-
+	/* system.css styles the table; this keeps the header in view and the rows dense */
 	.packet-table thead {
 		position: sticky;
 		top: 0;
@@ -223,54 +216,31 @@
 	}
 
 	.packet-table th {
-		padding: var(--sp-2) var(--sp-4);
-		text-align: left;
-		font-weight: 600;
-		font-size: var(--text-xs);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: var(--text-2);
-		background-color: var(--surface-2);
-		border-bottom: 1px solid var(--line);
 		user-select: none;
 	}
 
-	.proto-name { text-transform: none; }
-
 	.packet-table th.sortable { cursor: pointer; }
 	.packet-table th.sortable:hover { color: var(--text-1); }
-	.packet-table th.sorted { color: var(--accent); }
+
+	.sort-arrow {
+		margin-left: var(--sp-1);
+	}
 
 	.packet-table td {
-		padding: var(--sp-1) var(--sp-4);
-		color: var(--text-1);
-		border-bottom: 1px solid var(--line);
+		padding: var(--sp-1) var(--sp-3);
 		max-width: 360px;
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
 
-	.mono {
-		font-family: var(--font-mono);
-		font-size: var(--text-xs);
-	}
-
 	.packet-row {
 		cursor: pointer;
-		transition: background-color var(--dur-fast);
 	}
 
-	.packet-row.even {
-		background-color: color-mix(in srgb, var(--surface-2) 50%, transparent);
-	}
-
-	.packet-row:hover {
-		background-color: color-mix(in srgb, var(--accent) 12%, transparent);
-	}
-
-	.packet-row.selected {
-		background-color: color-mix(in srgb, var(--accent) 12%, transparent);
-		box-shadow: inset 3px 0 0 var(--accent);
+	/* Selected: the AlertRow aria-current look (surface-2 fill, line-strong ring) */
+	.packet-row.selected td {
+		background-color: var(--surface-2);
+		box-shadow: inset 0 1px 0 var(--line-strong), inset 0 -1px 0 var(--line-strong);
 	}
 
 	.col-no { width: 60px; }
@@ -282,7 +252,9 @@
 	.col-info { width: auto; }
 
 	.empty-row td {
-		border-bottom: none;
+		max-width: none;
+		white-space: normal;
+		background: none;
 	}
 
 	.empty-state {
@@ -296,8 +268,8 @@
 		text-align: center;
 	}
 
-	.empty-state svg {
-		color: var(--text-3);
-		opacity: 0.5;
+	.empty-state :global(.ic) {
+		width: 32px;
+		height: 32px;
 	}
 </style>

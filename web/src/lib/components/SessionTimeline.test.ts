@@ -39,7 +39,7 @@ function formatShortTimestamp(ts: string): string {
 }
 
 function protoColor(proto: string): string {
-	return PROTO_COLORS[proto.toLowerCase()] || 'var(--text-muted)';
+	return PROTO_COLORS[proto.toLowerCase()] || 'var(--text-3)';
 }
 
 function deriveActiveProtocols(buckets: TimelineBucket[]): string[] {
@@ -78,7 +78,7 @@ describe('SessionTimeline logic', () => {
 		it('returns data-1 for tcp', () => expect(protoColor('tcp')).toBe('var(--data-1)'));
 		it('returns data-5 for udp', () => expect(protoColor('udp')).toBe('var(--data-5)'));
 		it('returns data-4 for TLS (case-insensitive)', () => expect(protoColor('TLS')).toBe('var(--data-4)'));
-		it('returns fallback for unknown protocol', () => expect(protoColor('sctp')).toBe('var(--text-muted)'));
+		it('returns fallback for unknown protocol', () => expect(protoColor('sctp')).toBe('var(--text-3)'));
 	});
 
 	describe('deriveActiveProtocols', () => {
