@@ -968,7 +968,7 @@
 			{/if}
 			<div class="sev-sum">
 				<div class="sev-left">
-					<div class="sev-counts">
+					<div class="sev-counts" style:--sev-chars={Math.max(...buckets.map((b) => fmt(b.count).length))}>
 						{#each buckets as b (b.level)}
 							<button class="sev-tile" type="button" aria-label="Show {b.level} alerts ({fmt(b.count)})" onclick={() => showSeverity(b.level as SeverityFilter)}>
 								<SeverityPill level={b.level} count={b.count} />

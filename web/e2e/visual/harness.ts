@@ -2,6 +2,7 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { DAEMON_URL } from '../../playwright.visual.config.ts';
 import { knownIssue } from './known-issues.ts';
+import { findTileSpills } from './severity-tiles.ts';
 
 export const VARIANTS = ['ember', 'graphite', 'spectrum'] as const;
 export const VIEWPORTS = [
@@ -147,6 +148,11 @@ function checkOverflow(testInfo: TestInfo, ctx: CheckContext, variant: Variant, 
 	expect.soft(scrollWidth, `horizontal scroll, ${variant} @ ${width}`).toBeLessThanOrEqual(width);
 }
 
+/** A severity count stays inside its tile, and a tile never runs into the one beside it. */
+export async function checkSeverityTiles(page: Page, variant: Variant, width: number): Promise<void> {
+	expect.soft(await page.evaluate(findTileSpills), `severity tiles, ${variant} @ ${width}`).toEqual([]);
+}
+
 /** The shell (PLAN.md §7): the sidebar on desktop, the phone bar at 390, and the page's own h1. */
 async function checkShell(page: Page, variant: Variant, width: number): Promise<void> {
 	const at = `${variant} @ ${width}`;
@@ -178,6 +184,7 @@ export async function sweep(
 			}));
 			expect.soft(metrics.bg, `body background, ${variant} @ ${viewport.width}`).toBe('rgb(0, 0, 0)');
 			checkOverflow(testInfo, ctx, variant, viewport.width, metrics.scrollWidth);
+			await checkSeverityTiles(page, variant, viewport.width);
 			if (opts.shell ?? true) await checkShell(page, variant, viewport.width);
 			await page.screenshot({ path: testInfo.outputPath(`${variant}-${viewport.width}.png`), fullPage: true });
 		}
