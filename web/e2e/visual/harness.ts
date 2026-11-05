@@ -149,7 +149,7 @@ function checkOverflow(testInfo: TestInfo, ctx: CheckContext, variant: Variant, 
 }
 
 /** A severity count stays inside its tile, and a tile never runs into the one beside it. */
-async function checkSeverityTiles(page: Page, variant: Variant, width: number): Promise<void> {
+export async function checkSeverityTiles(page: Page, variant: Variant, width: number): Promise<void> {
 	expect.soft(await page.evaluate(findTileSpills), `severity tiles, ${variant} @ ${width}`).toEqual([]);
 }
 
