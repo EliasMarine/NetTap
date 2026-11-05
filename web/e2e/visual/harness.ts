@@ -147,6 +147,23 @@ function checkOverflow(testInfo: TestInfo, ctx: CheckContext, variant: Variant, 
 	expect.soft(scrollWidth, `horizontal scroll, ${variant} @ ${width}`).toBeLessThanOrEqual(width);
 }
 
+/** A severity count stays inside its tile, and a tile never runs into the one beside it. */
+async function checkSeverityTiles(page: Page, variant: Variant, width: number): Promise<void> {
+	const spills = await page.evaluate(() =>
+		[...document.querySelectorAll('.sev-count')].flatMap((tile, i, all) => {
+			const t = tile.getBoundingClientRect();
+			const n = tile.querySelector('b')?.getBoundingClientRect();
+			const next = all[i + 1]?.getBoundingClientRect();
+			const name = tile.textContent?.trim();
+			return [
+				...(n && n.right > t.right + 0.5 ? [`${name}: the count spills out of its tile`] : []),
+				...(next && next.top === t.top && t.right > next.left + 0.5 ? [`${name}: the tile overlaps the next one`] : []),
+			];
+		}),
+	);
+	expect.soft(spills, `severity tiles, ${variant} @ ${width}`).toEqual([]);
+}
+
 /** The shell (PLAN.md §7): the sidebar on desktop, the phone bar at 390, and the page's own h1. */
 async function checkShell(page: Page, variant: Variant, width: number): Promise<void> {
 	const at = `${variant} @ ${width}`;
@@ -178,6 +195,7 @@ export async function sweep(
 			}));
 			expect.soft(metrics.bg, `body background, ${variant} @ ${viewport.width}`).toBe('rgb(0, 0, 0)');
 			checkOverflow(testInfo, ctx, variant, viewport.width, metrics.scrollWidth);
+			await checkSeverityTiles(page, variant, viewport.width);
 			if (opts.shell ?? true) await checkShell(page, variant, viewport.width);
 			await page.screenshot({ path: testInfo.outputPath(`${variant}-${viewport.width}.png`), fullPage: true });
 		}

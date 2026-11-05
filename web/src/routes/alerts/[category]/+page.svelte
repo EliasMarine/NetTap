@@ -750,7 +750,7 @@
 		<Card class="c-12" title="Alerts by severity" sub="{fmt(data.stats.total)} alerts · {range.words}, by severity">
 			<div class="sev-sum">
 				<div class="sev-left">
-					<div class="sev-counts">
+					<div class="sev-counts" style:--sev-chars={Math.max(...buckets.map((b) => fmt(b.count).length))}>
 						{#each buckets as b (b.level)}<SeverityPill level={b.level} count={b.count} />{/each}
 					</div>
 				</div>

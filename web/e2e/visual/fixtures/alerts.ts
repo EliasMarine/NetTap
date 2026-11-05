@@ -79,9 +79,15 @@ const ALERT_LIST = { ...ALERT_LIST_EMPTY, total: 214, total_pages: 22, alerts: A
 // --- /api/alerts/count and /timeline ---------------------------------------------------------
 
 const COUNT_EMPTY = { from: FROM, to: TO, counts: { total: 0, high: 0, medium: 0, low: 0 } } satisfies AlertCountResponse;
-const COUNT = { from: FROM, to: TO, counts: { total: 214, high: 9, medium: 47, low: 158 } } satisfies AlertCountResponse;
+// Real-sized counts (a home G11 logs ~150,000 a day), so a six-digit count has to fit its severity tile
+const SCALE = 1000;
+const COUNT = {
+	from: FROM,
+	to: TO,
+	counts: { total: 214 * SCALE, high: 9 * SCALE, medium: 47 * SCALE, low: 158 * SCALE },
+} satisfies AlertCountResponse;
 
-// One entry per hour, oldest first; the columns sum to the counts above (9 / 47 / 158)
+// One entry per hour, oldest first; times SCALE, the columns sum to the counts above (9 / 47 / 158)
 const HIGH_PER_HOUR = [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 2, 0, 0, 1, 0, 2, 0, 1, 1];
 const MEDIUM_PER_HOUR = [1, 2, 1, 3, 2, 1, 2, 1, 2, 3, 2, 1, 2, 3, 2, 1, 2, 3, 2, 2, 3, 2, 2, 2];
 const LOW_PER_HOUR = [5, 6, 7, 6, 5, 7, 6, 8, 7, 6, 7, 8, 7, 6, 7, 8, 7, 6, 7, 7, 6, 6, 7, 6];
@@ -91,9 +97,9 @@ const TIMELINE = {
 	...TIMELINE_EMPTY,
 	buckets: HIGH_PER_HOUR.map((high, i) => ({
 		timestamp: iso((HIGH_PER_HOUR.length - i) * HOUR),
-		high,
-		medium: MEDIUM_PER_HOUR[i],
-		low: LOW_PER_HOUR[i],
+		high: high * SCALE,
+		medium: MEDIUM_PER_HOUR[i] * SCALE,
+		low: LOW_PER_HOUR[i] * SCALE,
 	})),
 } satisfies AlertTimelineResponse;
 

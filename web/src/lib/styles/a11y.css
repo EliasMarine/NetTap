@@ -29,3 +29,15 @@ html:has(.app.nav-open) { overflow: hidden; }
       390 px phone and the whole page scrolls sideways. The track scrolls inside itself instead,
       on phones only, so a desktop focus ring is never clipped by the scroll box. */
 @container app (max-width: 760px) { .pills { max-width: 100%; overflow-x: auto; scrollbar-width: none; } }
+
+/* 6. bundle.css:341 lays .sev-counts out as five columns and bundle.css:343 sets the count at a
+      fixed --text-xl. Without a Critical tile the fifth column stays empty, and a real count
+      (115,758) is wider than its tile: it runs into the next tile and, on a phone, scrolls the
+      page sideways. On desktop the tiles share the row however many there are (phones keep the
+      system's three columns), and the counts shrink together to fit: the page sets --sev-chars
+      on .sev-counts to its longest count's length; a Sora digit at weight 300 is 0.646em wide. */
+@container app (width > 760px) {
+  .sev-counts { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+}
+.sev-count { container-type: inline-size; }
+.sev-count b { font-size: min(var(--text-xl), 100cqi / (var(--sev-chars, 1) * 0.65)); }

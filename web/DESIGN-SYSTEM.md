@@ -104,6 +104,7 @@ From the system README: sentence case everywhere (titles, buttons, labels), UK s
 3. `DeviceList` select mode: a pressed row gets the selected-row look.
 4. While the phone drawer is open the page doesn't scroll, and the drawer is one screen tall and scrolls inside itself.
 5. On phones a long pill group scrolls inside its track instead of pushing the page sideways.
+6. Severity count tiles share the row however many there are, and their counts shrink together to fit (the page sets `--sev-chars` on `.sev-counts`).
 
 Every `<button>` sets an explicit text colour (the browser default is black). Focus rings use `--focus`.
 
