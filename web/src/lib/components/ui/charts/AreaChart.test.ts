@@ -66,6 +66,14 @@ describe('AreaChart', () => {
 		xs.slice(1).forEach((x, i) => expect(x - xs[i]).toBeGreaterThanOrEqual(64));
 	});
 
+	it('spaces long date labels further apart, so "Nov 4, 04:00 PM" never runs into the next one', () => {
+		const { container } = draw([toSeries('down', 1, DOWN)], { formatX: (t: number | string) => `Nov 4, ${hour(Number(t))} PM` });
+		const xs = [...container.querySelectorAll('text.ax[text-anchor="middle"]')].map((t) => Number(t.getAttribute('x')));
+		expect(xs.length).toBeGreaterThan(1);
+		// 15 characters at 6.2 px each, plus a 16 px gap
+		xs.slice(1).forEach((x, i) => expect(x - xs[i]).toBeGreaterThanOrEqual(15 * 6.2 + 16));
+	});
+
 	it('moves the tooltip and a dashed guide with the pointer, and restores the headline on leave', async () => {
 		const { container, getByRole } = draw([toSeries('down', 1, DOWN)], { highlightIndex: 21 });
 		const svg = getByRole('img') as unknown as SVGSVGElement;

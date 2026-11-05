@@ -58,7 +58,9 @@
 	const ts = $derived(series.find((s) => s.points.length === n)?.points.map((p) => p.t) ?? []);
 	const peak = $derived(Math.max(0, ...series.flatMap((s) => s.points.map((p) => p.v)).filter(Number.isFinite)));
 	const axis = $derived(bytes ? fitByteAxis(peak) : fitAxis(peak));
-	const every = $derived(labelStep(n, iw));
+	// "Nov 4, 04:00 PM" needs more room than "21:00": space labels by the longest, at tipBox's 6.2 px a character
+	const labelGap = $derived(Math.max(64, Math.max(0, ...ts.map((t) => formatX(t).length)) * 6.2 + 16));
+	const every = $derived(labelStep(n, iw, labelGap));
 	const slot = $derived(n > 1 ? iw / (n - 1) : iw);
 	const highlight = $derived(
 		highlightIndex !== undefined && highlightIndex >= 0 && highlightIndex < n ? highlightIndex : null,
