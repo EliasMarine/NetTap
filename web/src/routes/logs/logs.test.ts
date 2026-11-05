@@ -215,3 +215,35 @@ describe('Log Explorer — field descriptions on the table headers (NET-146)', (
 		await vi.waitFor(() => expect(header.querySelector('button')).toHaveAttribute('title', 'Who opened the connection'));
 	});
 });
+
+// A busy box logs 20+ protocols: listing them all made the breakdown card three times the
+// timeline's height, and the timeline sat at the top of its stretched card with a gap below.
+describe('Log Explorer — protocol breakdown length', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const manyProtocols = Array.from({ length: 12 }, (_, i) => ({ protocol: `p${i}`, label: `Proto ${i}`, count: 1000 - i }));
+
+	it('lists the top 10 protocols and shows the rest on request', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/protocol-breakdown': { protocols: manyProtocols }, '/api/logs/search': { hits: [], total: 0 } });
+		render(Page);
+		expect(await screen.findByText('Proto 9')).toBeInTheDocument();
+		expect(screen.queryByText('Proto 10')).not.toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('button', { name: 'Show all 12' }));
+		expect(screen.getByText('Proto 11')).toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('button', { name: 'Show fewer' }));
+		expect(screen.queryByText('Proto 11')).not.toBeInTheDocument();
+	});
+
+	it('has no show-all button when every protocol already fits', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [], total: 0 } });
+		render(Page);
+		expect(await screen.findByText('Connections')).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /Show all/ })).not.toBeInTheDocument();
+	});
+
+	it('lets the timeline fill its card instead of leaving a gap under it', () => {
+		stubDaemon({});
+		render(Page);
+		expect(screen.getByText('Activity timeline').closest('.card')).toHaveClass('col');
+	});
+});

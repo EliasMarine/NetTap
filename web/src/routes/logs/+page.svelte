@@ -10,6 +10,7 @@
 	import { goto } from '$app/navigation';
 	import { getWhois } from '$api/lookup';
 	import { loadFailed } from '$lib/utils/load-failed';
+	import { partOfWhole } from '$lib/utils/part-of-whole';
 	import {
 		getLogStats,
 		getLogTimeline,
@@ -168,6 +169,9 @@
 	let timeline = $state<LogTimelineBucket[]>([]);
 	let topTalkers = $state<LogTalkerEntry[]>([]);
 	let protocols = $state<LogProtocolEntry[]>([]);
+	// A busy box logs 20+ protocols; all of them made the card three times the timeline's height
+	let showAllProtocols = $state(false);
+	const PROTOCOLS_SHOWN = 10;
 	let topDestinations = $state<LogDestinationEntry[]>([]);
 	let topDns = $state<LogDnsEntry[]>([]);
 	// #96: a failed section keeps its last good figures and says so; it never reads as 0 or "No data"
@@ -868,7 +872,7 @@
 {/snippet}
 {#snippet protocolsBody()}
 	<BarList
-		items={protocols.map((proto) => ({
+		items={(showAllProtocols ? protocols : protocols.slice(0, PROTOCOLS_SHOWN)).map((proto) => ({
 			key: proto.protocol,
 			label: proto.label || protocolLabel(proto.protocol),
 			value: proto.count,
@@ -876,6 +880,14 @@
 			onclick: () => drillByProtocol(proto.protocol),
 		}))}
 	/>
+	{#if protocols.length > PROTOCOLS_SHOWN}
+		<div class="tbl-foot">
+			<span>Showing {partOfWhole(showAllProtocols ? protocols.length : PROTOCOLS_SHOWN, protocols.length)}</span>
+			<button class="btn" type="button" onclick={() => (showAllProtocols = !showAllProtocols)}>
+				{showAllProtocols ? 'Show fewer' : `Show all ${protocols.length}`}
+			</button>
+		</div>
+	{/if}
 {/snippet}
 {#snippet talkersBody()}
 	<BarList
@@ -967,7 +979,7 @@
 	<KpiCard class="c-3" label="Protocols" icon="connections" value={statsLoaded ? protocolCount : '—'} note="Distinct log types" href="#protocol-section" />
 	<KpiCard class="c-3" label="Data volume" icon="bandwidth" value={statsLoaded ? formatBytes(totalBytesVal) : '—'} note="Total bytes transferred" href="#log-table" />
 
-	<Card title="Activity timeline" sub="Log events per {INTERVAL_WORDS[INTERVAL_MAP[selectedTimeRange]] ?? 'hour'} · {rangeWords}" hero class="c-8">
+	<Card title="Activity timeline" sub="Log events per {INTERVAL_WORDS[INTERVAL_MAP[selectedTimeRange]] ?? 'hour'} · {rangeWords}" hero col class="c-8">
 		{@render section('the activity timeline', timelineFailed, timeline.length > 0, 'No timeline data available', 'Events appear here once Zeek is processing traffic.', timelineBody)}
 	</Card>
 
