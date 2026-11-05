@@ -17,7 +17,7 @@ describe('vite.config', () => {
 	});
 
 	it('configures vitest test settings', () => {
-		expect(content).toContain("include: ['src/**/*.{test,spec}.{js,ts}']");
+		expect(content).toContain("include: ['src/**/*.{test,spec}.{js,ts}', 'e2e/visual/**/*.test.ts']");
 		expect(content).toContain("environment: 'jsdom'");
 		expect(content).toContain("setupFiles: ['src/tests/setup.ts']");
 	});

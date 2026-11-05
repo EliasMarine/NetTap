@@ -2,6 +2,7 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { DAEMON_URL } from '../../playwright.visual.config.ts';
 import { knownIssue } from './known-issues.ts';
+import { findTileSpills } from './severity-tiles.ts';
 
 export const VARIANTS = ['ember', 'graphite', 'spectrum'] as const;
 export const VIEWPORTS = [
@@ -149,19 +150,7 @@ function checkOverflow(testInfo: TestInfo, ctx: CheckContext, variant: Variant, 
 
 /** A severity count stays inside its tile, and a tile never runs into the one beside it. */
 async function checkSeverityTiles(page: Page, variant: Variant, width: number): Promise<void> {
-	const spills = await page.evaluate(() =>
-		[...document.querySelectorAll('.sev-count')].flatMap((tile, i, all) => {
-			const t = tile.getBoundingClientRect();
-			const n = tile.querySelector('b')?.getBoundingClientRect();
-			const next = all[i + 1]?.getBoundingClientRect();
-			const name = tile.textContent?.trim();
-			return [
-				...(n && n.right > t.right + 0.5 ? [`${name}: the count spills out of its tile`] : []),
-				...(next && next.top === t.top && t.right > next.left + 0.5 ? [`${name}: the tile overlaps the next one`] : []),
-			];
-		}),
-	);
-	expect.soft(spills, `severity tiles, ${variant} @ ${width}`).toEqual([]);
+	expect.soft(await page.evaluate(findTileSpills), `severity tiles, ${variant} @ ${width}`).toEqual([]);
 }
 
 /** The shell (PLAN.md §7): the sidebar on desktop, the phone bar at 390, and the page's own h1. */
