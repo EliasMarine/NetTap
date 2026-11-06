@@ -101,6 +101,8 @@ describe('Address page', () => {
 		expect(kpi('Devices that talked to it')).toHaveTextContent('on your network, of 3 addresses in all');
 		expect(kpi('Alerts').closest('a')).toHaveAttribute('href', '/alerts?ip=198.51.100.10');
 		expect(screen.getByText('Not on a threat list')).toBeInTheDocument();
+		// the daemon buckets a 24-hour window by the hour
+		expect(screen.getByText('Connections per hour · last 24 hours')).toBeInTheDocument();
 		// the window is the request's
 		const req = calls.find((u) => u.pathname === '/api/addresses/198.51.100.10')!;
 		expect(Date.parse(req.searchParams.get('to')!) - Date.parse(req.searchParams.get('from')!)).toBe(24 * 3_600_000);
@@ -117,6 +119,8 @@ describe('Address page', () => {
 		const laptop = within(peers).getByRole('link', { name: '192.168.1.20' }).closest('tr')!;
 		expect(laptop).toHaveTextContent('at least 60.0 MB');
 		const tls = card('Names it served (TLS)');
+		// every TLS session counts here; Certificates counts only those that showed a certificate
+		expect(within(tls).getByText(/so its figures can be lower/)).toBeInTheDocument();
 		expect(within(tls).getByRole('link', { name: 'stream.example.net' })).toHaveAttribute('href', '/domain/stream.example.net');
 		const certs = new URL(within(tls).getAllByRole('link', { name: /Certificates seen/ })[0].getAttribute('href')!, 'http://x');
 		expect(certs.pathname).toBe('/certificates');
@@ -145,6 +149,10 @@ describe('Address page', () => {
 		expect(screen.getByText(/Too many addresses to list them all/)).toBeInTheDocument();
 		expect(screen.getByText(/Too many ports to list them all/)).toBeInTheDocument();
 		expect(screen.getByText(/Too many names to list them all/)).toBeInTheDocument();
+		// connections with no port or transport recorded keep a row, so the rows add up
+		const unknown = within(card('Ports on this address')).getByText('Unknown port').closest('tr')!;
+		expect(unknown).toHaveTextContent('—');
+		expect(unknown).toHaveTextContent('90');
 		expectNoNestedInteractive(container);
 	});
 
@@ -239,5 +247,16 @@ describe('Address page', () => {
 		await new Promise((r) => setTimeout(r, 0));
 		expect(kpi('Data to it')).toHaveTextContent('Not measured');
 		expect(screen.getByRole('heading', { level: 1, name: '192.0.2.80' })).toBeInTheDocument();
+	});
+
+	it("asks for a zone id once encoded and shows the daemon's 400 as an error", async () => {
+		// SvelteKit hands the page the decoded param; decoding it again threw on the "%"
+		goTo('fe80::1%eth0');
+		stubDaemon({ ...baseReplies(undefined), '/api/addresses/*': undefined }, 'That is not an IP address.');
+		render(Page);
+		expect(screen.getByRole('heading', { level: 1, name: 'fe80::1%eth0' })).toBeInTheDocument();
+		await vi.waitFor(() => expect(screen.getAllByText('That is not an IP address.').length).toBeGreaterThan(0));
+		expect(calls.some((u) => u.pathname === '/api/addresses/fe80%3A%3A1%25eth0')).toBe(true);
+		expect(kpi('Connections')).toHaveTextContent('—');
 	});
 });

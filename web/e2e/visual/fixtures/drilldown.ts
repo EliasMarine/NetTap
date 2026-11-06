@@ -72,7 +72,11 @@ export const ADDRESS_QUIET: AddressSummary = {
 		{ ip: '192.168.1.31', lan: true, connections: 200, bytes_to: null, bytes_from: null, bytes_partial: true, last_seen: iso(HOUR) },
 	],
 	peers_complete: false,
-	ports: [{ port: 8883, transport: 'tcp', service: null, connections: 1100 }],
+	ports: [
+		{ port: 8883, transport: 'tcp', service: null, connections: 1100 },
+		// connections with no port or transport recorded keep their own row
+		{ port: null, transport: null, service: null, connections: 90 },
+	],
 	ports_complete: false,
 	timeline: hourly(1190),
 	tls_names: [

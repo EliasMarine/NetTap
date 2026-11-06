@@ -22,8 +22,8 @@ describe('address fixtures', () => {
 			expect(sum(a.peers.map((p) => p.connections))).toBe(a.connections);
 			// a partial peer makes the whole total partial
 			if (a.peers.some((p) => p.bytes_partial)) expect(a.bytes_to.partial).toBe(true);
-			expect(sum(a.peers.map((p) => p.bytes_to))).toBe(a.bytes_to.total);
-			expect(sum(a.peers.map((p) => p.bytes_from))).toBe(a.bytes_from.total);
+			expect(sum(a.peers.map((p) => p.bytes_to ?? 0))).toBe(a.bytes_to.total);
+			expect(sum(a.peers.map((p) => p.bytes_from ?? 0))).toBe(a.bytes_from.total);
 		}
 		if (a.ports_complete) expect(sum(a.ports.map((p) => p.connections))).toBeLessThanOrEqual(a.connections);
 		for (const t of a.tls_names) expect(sum(Object.values(t.statuses))).toBe(t.sessions);

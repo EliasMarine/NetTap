@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { byteFigure, certificatesHref, logsHrefForIp, measuredNote, rangeWindow } from './drilldown';
+import { byteFigure, certificatesHref, chartTime, logsHrefForIp, measuredNote, rangeWindow } from './drilldown';
 
 const MB = 1024 ** 2;
 
@@ -36,6 +36,17 @@ describe('drill-down wording', () => {
 		expect(url.pathname).toBe('/certificates');
 		expect(Object.fromEntries(url.searchParams)).toEqual({ site: 'example.com', server: '2001:db8::1', from: 'a', to: 'b' });
 		expect(certificatesHref({ site: null, server: '1.2.3.4', from: 'a', to: 'b' })).toBe('/certificates?server=1.2.3.4&from=a&to=b');
+	});
+
+	it('canonicalises the site name as recorded, so both spellings filter the same', () => {
+		expect(certificatesHref({ site: 'Example.COM.', from: 'a', to: 'b' })).toBe('/certificates?site=example.com&from=a&to=b');
+	});
+
+	it('labels timeline points for the bucket size the daemon picks', () => {
+		const t = '2026-11-06T18:00:00Z';
+		expect(chartTime(t, 24)).toMatch(/^\d\d:\d\d$/);
+		expect(chartTime(t, 168)).toMatch(/^6 Nov, \d\d:\d\d$/);
+		expect(chartTime(t, 720)).toBe('6 Nov');
 	});
 
 	it('searches Log Explorer for either side, quoted', () => {

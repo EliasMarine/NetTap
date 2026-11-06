@@ -32,9 +32,10 @@ export interface AddressPeer {
 	last_seen: string;
 }
 
+/** A row keeps connections whose port, transport or service is missing (null), so the rows add up. */
 export interface AddressPort {
-	port: number;
-	transport: string;
+	port: number | null;
+	transport: string | null;
 	service: string | null;
 	connections: number;
 }

@@ -12,13 +12,23 @@ export interface DrillRange {
 	label: string;
 	hours: number;
 	words: string;
+	/** The timeline's bucket, as the daemon picks it for this window (up to 24 h: 1 h; 7 d: 6 h; longer: 1 day). */
+	interval: string;
 }
 
 export const DRILL_RANGES: readonly DrillRange[] = [
-	{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours' },
-	{ value: '7d', label: '7d', hours: 168, words: 'last 7 days' },
-	{ value: '30d', label: '30d', hours: 720, words: 'last 30 days' },
+	{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours', interval: 'hour' },
+	{ value: '7d', label: '7d', hours: 168, words: 'last 7 days', interval: '6 hours' },
+	{ value: '30d', label: '30d', hours: 720, words: 'last 30 days', interval: 'day' },
 ];
+
+/** A timeline label: the time within a day, day and time for a week of 6-hour buckets, the day beyond. */
+export function chartTime(t: number | string, hours: number): string {
+	const d = new Date(t);
+	if (hours <= 24) return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+	if (hours <= 168) return d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+	return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
 
 /** The window ending now, as ISO strings. */
 export function rangeWindow(hours: number, now: Date = new Date()): { from: string; to: string } {
@@ -45,7 +55,10 @@ export function measuredNote(b: ByteTotal): string | null {
 /** The observed certificates for a site and/or server in a window (the Certificates page's filter). */
 export function certificatesHref(opts: { site?: string | null; server?: string | null; from: string; to: string }): string {
 	const q = new URLSearchParams();
-	if (opts.site) q.set('site', opts.site);
+	// OLD CODE START — the name went as recorded ("Example.com."); the filter takes the canonical name
+	// if (opts.site) q.set('site', opts.site);
+	// OLD CODE END
+	if (opts.site) q.set('site', opts.site.trim().replace(/\.$/, '').toLowerCase());
 	if (opts.server) q.set('server', opts.server);
 	q.set('from', opts.from);
 	q.set('to', opts.to);
