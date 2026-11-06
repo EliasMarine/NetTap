@@ -308,6 +308,9 @@ describe('capture API client', () => {
 			expect(await lossWindowOf(GOOD)).toEqual(GOOD);
 			const measuring = { state: 'measuring', interface: 'br0', window: null, cumulative: { arrived: 0, lost: 0, drop_rate_pct: null } };
 			expect(await lossWindowOf(measuring)).toEqual(measuring);
+			// exactly a minute is the shortest window the daemon sends; nothing arrived has no rate
+			const quiet = { ...GOOD, window: { seconds: 60, arrived: 0, lost: 0, drop_rate_pct: null } };
+			expect(await lossWindowOf(quiet)).toEqual(quiet);
 		});
 
 		it('reads an old daemon with no loss_window as unavailable', async () => {
@@ -324,6 +327,8 @@ describe('capture API client', () => {
 				{ ...GOOD.window, drop_rate_pct: undefined },
 				{ ...GOOD.window, seconds: 30 },
 				{ ...GOOD.window, seconds: undefined },
+				{ ...GOOD.window, seconds: Number.POSITIVE_INFINITY },
+				{ ...GOOD.window, drop_rate_pct: null }, // 98,765 arrived, so a null rate is malformed
 				null, // state ok needs a window
 				'3480',
 			]) {

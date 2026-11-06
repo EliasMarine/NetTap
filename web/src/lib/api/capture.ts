@@ -128,7 +128,9 @@ function parseLossWindow(v: unknown): LossWindow {
 		cumulative === undefined ||
 		(state === 'ok') !== (win !== null) ||
 		// under a minute would read "last 0 min"; the daemon never sends one
-		(win !== null && !(isCount(seconds) && seconds >= 60))
+		(win !== null && !(isCount(seconds) && seconds >= 60)) ||
+		// packets arrived but no rate: lossWords would say "No packets"; the daemon never sends one
+		(win !== null && win.arrived > 0 && win.drop_rate_pct === null)
 	) {
 		return unavailable;
 	}
