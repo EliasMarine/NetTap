@@ -15,7 +15,7 @@ from aiohttp.test_utils import AioHTTPTestCase
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from services.changelog import ChangelogService, CHANGELOG_EVENT_TYPES
+from services.changelog import ChangelogService
 
 
 class TestChangelogServiceLogEvent(unittest.TestCase):
@@ -174,38 +174,54 @@ class TestChangelogServiceGetEventTypes(unittest.TestCase):
         self.mock_client = MagicMock()
         self.service = ChangelogService(client=self.mock_client)
 
-    def test_get_event_types_from_aggregation(self):
-        """get_event_types() returns types from OpenSearch aggregation."""
-        self.mock_client.search.return_value = {
-            "aggregations": {
-                "event_types": {
-                    "buckets": [
-                        {"key": "device_joined", "doc_count": 10},
-                        {"key": "alert_triggered", "doc_count": 5},
-                    ]
-                }
-            }
-        }
-
+    # OLD CODE START — NET-173: the filter came from an aggregation that failed on the text-mapped
+    # event_type, and the fallback assertions followed the constant
+    # def test_get_event_types_from_aggregation(self):
+    #     """get_event_types() returns types from OpenSearch aggregation."""
+    #     self.mock_client.search.return_value = {
+    #         "aggregations": {
+    #             "event_types": {
+    #                 "buckets": [
+    #                     {"key": "device_joined", "doc_count": 10},
+    #                     {"key": "alert_triggered", "doc_count": 5},
+    #                 ]
+    #             }
+    #         }
+    #     }
+    #
+    #     types = self.service.get_event_types()
+    #     self.assertEqual(types, ["device_joined", "alert_triggered"])
+    #
+    # def test_get_event_types_fallback_to_static(self):
+    #     """get_event_types() falls back to static list on empty aggregation."""
+    #     self.mock_client.search.return_value = {
+    #         "aggregations": {"event_types": {"buckets": []}}
+    #     }
+    #
+    #     types = self.service.get_event_types()
+    #     # OLD CODE: self.assertEqual(types, sorted(CHANGELOG_EVENT_TYPES)) (NET-173: followed the
+    #     # constant, so restoring the six never-recorded types would still pass)
+    #     self.assertEqual(types, ["device_joined", "storage_pruned"])
+    #     # NET-173: event_type is text under dynamic mapping; the aggregation needs .keyword
+    #     body = self.mock_client.search.call_args.kwargs["body"]
+    #     self.assertEqual(
+    #         body["aggs"]["event_types"]["terms"]["field"], "event_type.keyword"
+    #     )
+    #
+    # def test_get_event_types_opensearch_error(self):
+    #     """get_event_types() returns static list on OpenSearch error."""
+    #     from opensearchpy import OpenSearchException
+    #
+    #     self.mock_client.search.side_effect = OpenSearchException("timeout")
+    #     types = self.service.get_event_types()
+    #     # OLD CODE: self.assertEqual(types, sorted(CHANGELOG_EVENT_TYPES)) (NET-173)
+    #     self.assertEqual(types, ["device_joined", "storage_pruned"])
+    # OLD CODE END
+    def test_get_event_types_are_the_recorded_types_without_a_query(self):
+        """NET-173: only device joins and storage cleanups are ever written."""
         types = self.service.get_event_types()
-        self.assertEqual(types, ["device_joined", "alert_triggered"])
-
-    def test_get_event_types_fallback_to_static(self):
-        """get_event_types() falls back to static list on empty aggregation."""
-        self.mock_client.search.return_value = {
-            "aggregations": {"event_types": {"buckets": []}}
-        }
-
-        types = self.service.get_event_types()
-        self.assertEqual(types, sorted(CHANGELOG_EVENT_TYPES))
-
-    def test_get_event_types_opensearch_error(self):
-        """get_event_types() returns static list on OpenSearch error."""
-        from opensearchpy import OpenSearchException
-
-        self.mock_client.search.side_effect = OpenSearchException("timeout")
-        types = self.service.get_event_types()
-        self.assertEqual(types, sorted(CHANGELOG_EVENT_TYPES))
+        self.assertEqual(types, ["device_joined", "storage_pruned"])
+        self.mock_client.search.assert_not_called()
 
 
 class TestChangelogApiQueryFailure(AioHTTPTestCase):
