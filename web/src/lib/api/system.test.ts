@@ -4,6 +4,7 @@ import {
 	getStorageStatus,
 	getSmartHealth,
 	getIndices,
+	healthStage,
 } from './system';
 
 // ---------------------------------------------------------------------------
@@ -170,5 +171,18 @@ describe('system API client', () => {
 			expect(result.indices).toEqual([]);
 			expect(result.count).toBe(0);
 		});
+	});
+});
+
+// NET-168: Home and System both read this map, so an incomplete check is amber everywhere
+describe('healthStage', () => {
+	it('maps each aggregate status to its pipeline stage', () => {
+		expect(healthStage('healthy')).toEqual({ status: 'ok', detail: 'Healthy' });
+		expect(healthStage('problem')).toEqual({ status: 'failing', detail: 'Reports a problem' });
+		expect(healthStage('incomplete')).toEqual({ status: 'warn', detail: "Incomplete · some checks couldn't run" });
+	});
+
+	it('reads Unknown when an older daemon sends no status', () => {
+		expect(healthStage(undefined)).toEqual({ status: 'unknown', detail: 'Unknown' });
 	});
 });
