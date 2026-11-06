@@ -999,7 +999,10 @@ OLD CODE END -->
 <div class="page-head">
 	<div>
 		<h1 class="page-title">Log explorer</h1>
-		<p class="page-sub">Every Zeek and Suricata log entry in the range, searchable</p>
+		<!-- OLD CODE START — NET-165: didn't say these figures count excluded devices, so "Top DNS queries" could disagree with the DNS page unexplained -->
+		<!-- <p class="page-sub">Every Zeek and Suricata log entry in the range, searchable</p> -->
+		<!-- OLD CODE END -->
+		<p class="page-sub">Every Zeek and Suricata log entry in the range, searchable. Devices excluded in Settings are counted here too, so figures can differ from the DNS and Devices pages.</p>
 	</div>
 	<div class="head-actions">
 		<Pills options={TIME_RANGES} value={selectedTimeRange} onchange={handleTimeRangeChange} ariaLabel="Time range" />
