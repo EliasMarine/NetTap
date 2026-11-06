@@ -36,7 +36,13 @@ try:
     r = urllib.request.urlopen(req, timeout=120)
     code, d = r.status, json.load(r)
 except urllib.error.HTTPError as e:
-    code, d = e.code, {}
+    # OLD CODE: code, d = e.code, {}  (an error reply read as empty, so its checks printed None)
+    try:
+        code, d = e.code, json.load(e)
+    except ValueError:
+        code, d = e.code, {}
+    if isinstance(d, dict):
+        d.setdefault('error', 'HTTP %d' % code)
 print(code if sys.argv[3] == 'status' else eval(sys.argv[3]))" "$@" 2>&1 | tail -n 1
 }
 
@@ -101,9 +107,14 @@ check "S1 example.com is trusted and matches its name" "$rc" "$GOOD"
 EXPIRED=$(daemon POST /api/tools/ssl-cert "(d.get('trusted'), d.get('verify_errors'))" '{"host": "expired.badssl.com", "port": 443}')
 case "$EXPIRED" in "(False, "*expired*) rc=0 ;; *) rc=1 ;; esac
 check "S1 expired.badssl.com is not trusted, and says why" "$rc" "$EXPIRED"
-WRONG=$(daemon POST /api/tools/ssl-cert "d.get('name_match')" '{"host": "wrong.host.badssl.com", "port": 443}')
-if [ "$WRONG" = "False" ]; then rc=0; else rc=1; fi
-check "S1 wrong.host.badssl.com does not match its name" "$rc" "$WRONG"
+# OLD CODE START — printed only name_match, so a failed lookup (no answer from badssl.com) read as "None"
+# WRONG=$(daemon POST /api/tools/ssl-cert "d.get('name_match')" '{"host": "wrong.host.badssl.com", "port": 443}')
+# if [ "$WRONG" = "False" ]; then rc=0; else rc=1; fi
+# OLD CODE END
+# The three S1 checks reach badssl.com and example.com over the internet: an error is shown as one
+WRONG=$(daemon POST /api/tools/ssl-cert "(d.get('name_match'), d.get('error'))" '{"host": "wrong.host.badssl.com", "port": 443}')
+if [ "$WRONG" = "(False, None)" ]; then rc=0; else rc=1; fi
+check "S1 wrong.host.badssl.com does not match its name (name_match, error)" "$rc" "$WRONG"
 
 PING=$(daemon POST /api/tools/ping "(d.get('packet_loss_pct'), d.get('rtt_avg'))" '{"target": "127.0.0.1", "count": 3}')
 case "$PING" in "(0, "[0-9]*")"|"(0.0, "[0-9]*")") rc=0 ;; *) rc=1 ;; esac
