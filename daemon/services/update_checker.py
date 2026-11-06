@@ -897,7 +897,8 @@ class UpdateChecker:
             total += asset.get("size", 0)
 
         if total > 0:
-            return round(total / (1024 * 1024), 1)
+            # OLD CODE: return round(total / (1024 * 1024), 1) (NET-166: MiB labelled MB)
+            return round(total / 1e6, 1)
 
         # OLD CODE START — #96: a release without assets showed a made-up 50 MB
         # # Default estimate for NetTap release

@@ -822,12 +822,14 @@ class TestEstimateReleaseSize(unittest.TestCase):
         """Should calculate size from asset sizes."""
         data = {
             "assets": [
-                {"size": 1024 * 1024 * 10},  # 10 MB
-                {"size": 1024 * 1024 * 5},  # 5 MB
+                # OLD CODE: {"size": 1024 * 1024 * 10}, {"size": 1024 * 1024 * 5} (NET-166: MB is 10**6)
+                {"size": 10_000_000},  # 10 MB
+                {"size": 5_000_000},  # 5 MB
             ]
         }
         result = UpdateChecker._estimate_release_size(data)
-        self.assertAlmostEqual(result, 15.0, places=0)
+        # OLD CODE: self.assertAlmostEqual(result, 15.0, places=0) (NET-166: exact, so 1,024 fails)
+        self.assertEqual(result, 15.0)
 
     def test_without_assets_size_is_unknown(self):
         """#96: no assets means the size isn't known, not a made-up 50 MB."""

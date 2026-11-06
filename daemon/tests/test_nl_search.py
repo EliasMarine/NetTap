@@ -243,6 +243,12 @@ class TestTrafficPatterns(unittest.TestCase):
         self.assertIn("client.bytes", query_str)
         self.assertIn("large traffic transfers", result["description"])
 
+    def test_large_traffic_means_over_one_decimal_megabyte(self):
+        """NET-166: ">1MB" is more than 1,000,000 bytes, not 1 MiB."""
+        query_str = str(self.parser.parse("large traffic")["query"])
+        self.assertIn("{'gt': 1000000}", query_str)
+        self.assertNotIn("1048576", query_str)
+
     def test_heavy_uploads(self):
         """Parse 'heavy uploads'."""
         result = self.parser.parse("heavy uploads")

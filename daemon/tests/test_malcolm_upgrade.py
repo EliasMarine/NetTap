@@ -243,6 +243,10 @@ class TestNothingChangesBeforeTheStop:
         docker = FakeDocker(free_kb=10 * 1048576)
         result = _apply(_upgrade(docker, tmp_path=tmp_path))
         assert "Not enough disk space" in result["error"]
+        # NET-166: df/du count 1,024-byte blocks; the message says decimal GB, like every page
+        assert "needs 23.0 GB free" in result["error"]
+        assert "OpenSearch's 1.5 GB of data" in result["error"]
+        assert "and 10.7 GB is" in result["error"]
         assert not any("pull" in c for c in docker.calls)
 
     def test_mixed_releases_refuse(self, tmp_path):

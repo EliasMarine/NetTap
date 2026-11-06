@@ -178,6 +178,11 @@ def malcolm_changelog(offered: str, latest: str, tested: bool) -> str:
     return text
 
 
+def _kib_as_gb(kib: int) -> str:
+    """A `df -k` / `du -k` count (1,024-byte blocks) in decimal GB, as every NetTap page shows sizes (NET-166)."""
+    return f"{kib * 1024 / 1e9:.1f} GB"
+
+
 def _tail(text: str, limit: int = 400) -> str:
     return text.strip()[-limit:]
 
@@ -431,9 +436,15 @@ class MalcolmUpgrade:
         used_kb, free_kb = (int(n) for n in out.split()[:2])
         need_kb = used_kb + IMAGE_HEADROOM_KB
         if free_kb < need_kb:
+            # OLD CODE START — NET-166: GiB (1048576 KiB), truncated, labelled GB
+            # raise UpgradeError(
+            #     f"Not enough disk space: the update needs {need_kb // 1048576} GB free (a copy of "
+            #     f"OpenSearch's {used_kb // 1048576} GB of data plus the new images), and {free_kb // 1048576} GB is."
+            # )
+            # OLD CODE END
             raise UpgradeError(
-                f"Not enough disk space: the update needs {need_kb // 1048576} GB free (a copy of "
-                f"OpenSearch's {used_kb // 1048576} GB of data plus the new images), and {free_kb // 1048576} GB is."
+                f"Not enough disk space: the update needs {_kib_as_gb(need_kb)} free (a copy of "
+                f"OpenSearch's {_kib_as_gb(used_kb)} of data plus the new images), and {_kib_as_gb(free_kb)} is."
             )
 
     async def _pull(self, p: dict, tag: str) -> None:

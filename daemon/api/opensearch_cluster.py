@@ -40,6 +40,12 @@ async def handle_cluster_health(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
 
+def _byte_count(value: object) -> int | None:
+    """A `_cat` size asked for with bytes=b: digits only. Anything else is unknown (None)."""
+    text = str(value).strip() if value is not None else ""
+    return int(text) if text.isdigit() else None
+
+
 async def handle_indices(request: web.Request) -> web.Response:
     """GET /api/opensearch/indices — Index list with details."""
     storage: StorageManager = request.app["storage"]
@@ -47,10 +53,13 @@ async def handle_indices(request: web.Request) -> web.Response:
         loop = asyncio.get_running_loop()
         raw_indices = await loop.run_in_executor(
             None,
+            # NET-166: bytes="b" asks for exact byte counts; the default "512kb"/"1.2gb" text is
+            # base 1,024 and already rounded, so the page couldn't show it in decimal units honestly
             lambda: storage._client.cat.indices(
                 format="json",
                 h="index,health,status,docs.count,store.size,pri.store.size,creation.date.string",
                 s="index",
+                bytes="b",
             ),
         )
         # Normalize dot-notation keys to underscore for frontend compatibility
@@ -62,8 +71,10 @@ async def handle_indices(request: web.Request) -> web.Response:
                     "health": idx.get("health", ""),
                     "status": idx.get("status", ""),
                     "docs_count": idx.get("docs.count", ""),
-                    "store_size": idx.get("store.size", ""),
-                    "pri_store_size": idx.get("pri.store.size", ""),
+                    # OLD CODE: "store_size": idx.get("store.size", ""), (NET-166: OpenSearch's text)
+                    # OLD CODE: "pri_store_size": idx.get("pri.store.size", ""),
+                    "store_size": _byte_count(idx.get("store.size")),
+                    "pri_store_size": _byte_count(idx.get("pri.store.size")),
                     "creation_date": idx.get("creation.date.string", ""),
                 }
             )
