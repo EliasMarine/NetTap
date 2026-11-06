@@ -269,6 +269,13 @@ describe('devices API client', () => {
 			expect(url).toContain('sort=direction');
 		});
 
+		it('sorts by source for the address page, which lists both sides (NET-160)', async () => {
+			mockFetchSuccess({ from: '', to: '', ip: '203.0.113.9', page: 1, size: 25, total: 0, total_pages: 0, connections: [] });
+			await getDeviceConnections('203.0.113.9', { sort: 'source', order: 'asc' });
+			const url = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+			expect(url).toBe('/api/devices/203.0.113.9/connections?sort=source&order=asc');
+		});
+
 		it('passes time range with pagination parameters', async () => {
 			mockFetchSuccess({
 				from: '', to: '', ip: '192.168.1.100',

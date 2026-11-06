@@ -1,9 +1,21 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
+import type { writable } from 'svelte/store';
 import CertificatesPage from './+page.svelte';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import type { CertificateOverview, CertSite } from '$lib/api/certificates';
 import { OVERVIEW, OVERVIEW_EMPTY } from '../../../e2e/visual/fixtures/certificates';
+import { LAN_POLICY } from '../../../e2e/visual/fixtures/drilldown';
+import { expectNoNestedInteractive } from '../../tests/nested-interactive';
+
+// NET-160: the page reads ?site=&server=&from=&to= from the URL
+const pageStore = vi.hoisted(() => ({ value: null as unknown as ReturnType<typeof writable> }));
+vi.mock('$app/stores', async () => {
+	const { writable: w } = await import('svelte/store');
+	pageStore.value = w({ url: new URL('http://localhost/certificates') });
+	return { page: pageStore.value };
+});
+const openUrl = (search: string) => pageStore.value.set({ url: new URL(`http://localhost/certificates${search}`) });
 
 // NET-154: one overview request; a failure never reads as "nothing needs a look", and figures
 // from an earlier window are never shown as the window the pills now select.
@@ -37,6 +49,7 @@ const kpi = (label: string) => screen.getAllByText(label).map((e) => e.closest('
 describe('Certificates page', () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
+		openUrl('');
 	});
 
 	it('shows loading, not zero counts, before the first answer', () => {
@@ -76,12 +89,15 @@ describe('Certificates page', () => {
 	});
 
 	it('opens a finding in the drawer with links to drill down, and closes on Escape', async () => {
-		stubDaemon({ '/api/certificates/overview': OVERVIEW, '/api/devices/registry': REGISTRY });
+		// OLD CODE START: stubDaemon({ '/api/certificates/overview': OVERVIEW, '/api/devices/registry': REGISTRY }); OLD CODE END
+		// NET-160: a device link goes to its device page once the LAN policy says it is on your network
+		stubDaemon({ '/api/certificates/overview': OVERVIEW, '/api/devices/registry': REGISTRY, '/api/network/lan': LAN_POLICY });
 		render(CertificatesPage);
 		await fireEvent.click(await screen.findByRole('button', { name: /from an unexpected authority/ }));
 		const drawer = screen.getByRole('complementary', { name: 'Certificate details' });
 		expect(within(drawer).getByText('What to do')).toBeInTheDocument();
-		expect(within(drawer).getByRole('link', { name: 'Work laptop' })).toHaveAttribute('href', '/devices/192.168.1.42');
+		// OLD CODE START: expect(within(drawer).getByRole('link', { name: 'Work laptop' })).toHaveAttribute('href', '/devices/192.168.1.42'); OLD CODE END
+		await vi.waitFor(() => expect(within(drawer).getByRole('link', { name: 'Work laptop' })).toHaveAttribute('href', '/devices/192.168.1.42'));
 		expect(within(drawer).getByRole('link', { name: /View connections/ })).toHaveAttribute('href', '/connections?ip=203.0.113.10');
 		expect(within(drawer).getByRole('link', { name: /Check it now/ })).toHaveAttribute('href', '/tools/ssl-cert?host=www.example.com');
 		expect(within(drawer).getByText('Example Unknown')).toBeInTheDocument();
@@ -134,6 +150,82 @@ describe('Certificates page', () => {
 		expect(sessions()[0]).toBe(1);
 		await fireEvent.click(screen.getByRole('button', { name: 'Needs a look' }));
 		expect(screen.getByText('No sites match')).toBeInTheDocument();
+	});
+});
+
+// NET-160: the address and domain pages link here with a site and/or server and their window
+describe('Certificates page — drill-down filter', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		openUrl('');
+	});
+
+	const WWW = OVERVIEW.sites.find((x) => x.name === 'www.example.com')!;
+	const site = (over: Partial<CertSite>): CertSite => ({ ...WWW, ...over });
+	const only = (sites: CertSite[]): CertificateOverview => ({ ...OVERVIEW, sites, sites_total: sites.length, findings: [], findings_total: 0 });
+	const overviewCalls = () =>
+		vi.mocked(fetch).mock.calls.map(([u]) => new URL(String(u), 'http://x')).filter((u) => u.pathname === '/api/certificates/overview');
+
+	it('sends the site, server and the link window, and shows the window as Custom', async () => {
+		// a fortnight ago: the default 7 days would never reach it
+		openUrl('?site=www.example.com&server=203.0.113.10&from=2026-10-20T08:00:00Z&to=2026-10-21T08:00:00Z');
+		stubDaemon({ '/api/certificates/overview': only([WWW]), '/api/devices/registry': REGISTRY, '/api/network/lan': LAN_POLICY });
+		render(CertificatesPage);
+		await vi.waitFor(() => expect(overviewCalls().length).toBe(1));
+		expect(Object.fromEntries(overviewCalls()[0].searchParams)).toEqual({
+			from: '2026-10-20T08:00:00.000Z',
+			to: '2026-10-21T08:00:00.000Z',
+			site: 'www.example.com',
+			server: '203.0.113.10',
+		});
+		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		expect(await screen.findByText(/Showing only the site www.example.com served by 203.0.113.10/)).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'Show all certificates' })).toHaveAttribute('href', '/certificates');
+		await vi.waitFor(() => expect(kpi('Certificates seen')).toHaveTextContent(/window 20 Oct, \d\d:\d\d to 21 Oct, \d\d:\d\d/));
+	});
+
+	it('opens the one matching site, linking its name to the domain page', async () => {
+		openUrl('?site=www.example.com&from=2026-11-05T00:00:00Z&to=2026-11-06T00:00:00Z');
+		stubDaemon({ '/api/certificates/overview': only([WWW]), '/api/devices/registry': REGISTRY, '/api/network/lan': LAN_POLICY });
+		const { container } = render(CertificatesPage);
+		const drawer = await screen.findByRole('complementary', { name: 'Certificate details' });
+		expect(within(drawer).getByRole('heading', { name: 'www.example.com' })).toBeInTheDocument();
+		expect(within(drawer).getByRole('link', { name: 'Open domain page' })).toHaveAttribute('href', '/domain/www.example.com');
+		await vi.waitFor(() => expect(within(drawer).getByRole('link', { name: '203.0.113.10' })).toHaveAttribute('href', '/address/203.0.113.10'));
+		expect(within(drawer).getByRole('link', { name: 'Work laptop' })).toHaveAttribute('href', '/devices/192.168.1.42');
+		expectNoNestedInteractive(container);
+	});
+
+	it.each([
+		['IPv4', '203.0.113.50', '/address/203.0.113.50'],
+		['IPv6', '2001:db8::5', '/address/2001%3Adb8%3A%3A5'],
+	])('links a site with no name (%s) to its server, never to a domain page', async (_v, server, href) => {
+		openUrl(`?server=${encodeURIComponent(server)}`);
+		const noName = site({ id: `no-sni:${server}`, name: null, server, servers: [server] });
+		stubDaemon({ '/api/certificates/overview': only([noName]), '/api/devices/registry': REGISTRY, '/api/network/lan': LAN_POLICY });
+		render(CertificatesPage);
+		const drawer = await screen.findByRole('complementary', { name: 'Certificate details' });
+		expect(within(drawer).getByRole('link', { name: 'Open address page' })).toHaveAttribute('href', href);
+		expect(within(drawer).queryByRole('link', { name: 'Open domain page' })).not.toBeInTheDocument();
+		expect(overviewCalls()[0].searchParams.get('server')).toBe(server);
+	});
+
+	it('leaves the choice to you when the filter matches several sites', async () => {
+		openUrl('?server=203.0.113.10');
+		stubDaemon({ '/api/certificates/overview': only([OVERVIEW.sites[0], OVERVIEW.sites[1]]), '/api/devices/registry': REGISTRY, '/api/network/lan': LAN_POLICY });
+		render(CertificatesPage);
+		await screen.findByText(/Showing only certificates served by 203.0.113.10/);
+		expect(screen.queryByRole('complementary', { name: 'Certificate details' })).not.toBeInTheDocument();
+	});
+
+	it('ignores an unreadable window and keeps the 7-day default', async () => {
+		openUrl('?site=www.example.com&from=yesterday&to=today');
+		stubDaemon({ '/api/certificates/overview': OVERVIEW, '/api/devices/registry': REGISTRY, '/api/network/lan': LAN_POLICY });
+		render(CertificatesPage);
+		await vi.waitFor(() => expect(overviewCalls().length).toBe(1));
+		const q = overviewCalls()[0].searchParams;
+		expect(Date.parse(q.get('to')!) - Date.parse(q.get('from')!)).toBe(168 * 3_600_000);
+		expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument();
 	});
 });
 

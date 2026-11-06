@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
 import DnsPage from './+page.svelte';
 import { refreshPage } from '$lib/stores/pageRefresh';
+import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
 vi.mock('$app/stores', () => ({
 	page: readable({ url: new URL('http://localhost/dns') }),
@@ -153,6 +154,20 @@ describe('DNS page — refresh contract', () => {
 
 		mode = 'none';
 		expect(await refreshPage()).toBe('failed');
+	});
+
+	// NET-160: the domain tables open a selection on their row button, so the domain page link sits
+	// beside the selection, never inside a row
+	it('links the selected domain to its domain page', async () => {
+		stub((path) => {
+			const body = replies('API.Example.org')[path];
+			return body ? reply(body) : fail;
+		});
+		const { container } = render(DnsPage);
+		await screen.findAllByText('API.Example.org');
+		await fireEvent.click(screen.getAllByRole('button', { name: /API\.Example\.org/ })[0]);
+		expect(await screen.findByRole('link', { name: 'Open domain page' })).toHaveAttribute('href', '/domain/api.example.org');
+		expectNoNestedInteractive(container);
 	});
 
 	it("drops an older range's slower answers", async () => {

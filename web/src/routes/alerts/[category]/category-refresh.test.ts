@@ -18,6 +18,10 @@ import {
 } from '$api/alerts';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
+import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
+
+/** NET-160: the daemon's LAN policy, so LAN addresses link to their device page. */
+const LAN_POLICY = { version: 'v1', subnets: ['192.168.1.0/24'], source: 'env', ipv6: 'not-lan' };
 
 vi.mock('$app/stores', () => ({
 	page: readable({ url: new URL('http://localhost/alerts/scan'), params: { category: 'scan' } }),
@@ -83,7 +87,10 @@ function succeedAll() {
 	vi.mocked(getAlerts).mockResolvedValue(list([row('a1')]));
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+	vi.clearAllMocks();
+	vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => LAN_POLICY })));
+});
 afterEach(() => vi.mocked(getAlerts).mockReset());
 
 describe('Alert category page — refresh contract', () => {
@@ -185,11 +192,22 @@ describe('Alert category page — cards', () => {
 	// OLD CODE END
 	it('takes the severity summary from the category breakdown, on the alert tiles\' scale (I4)', async () => {
 		succeedAll();
-		render(Page);
+		const { container } = render(Page);
 		await flush();
 		expect(screen.getByRole('img', { name: '10 Scanning alerts in the last 24 hours: 2 high, 3 medium, 4 low, 1 info' })).toBeInTheDocument();
 		expect(screen.getByText('Unique targets').closest('.kpi')).toHaveTextContent('3');
-		expect(screen.getByRole('link', { name: 'View device' })).toHaveAttribute('href', '/devices/192.168.1.57');
+		// OLD CODE START — NET-160: "View device" for every address
+		// expect(screen.getByRole('link', { name: 'View device' })).toHaveAttribute('href', '/devices/192.168.1.57');
+		// OLD CODE END
+		// OLD CODE START — NET-160 review: the extra link beside the address went to the same page
+		// await vi.waitFor(() => expect(screen.getByRole('link', { name: 'Open device' })).toHaveAttribute('href', '/devices/192.168.1.57'));
+		// OLD CODE END
+		await vi.waitFor(() => {
+			const links = screen.getAllByRole('link', { name: '192.168.1.57' });
+			for (const link of links) expect(link).toHaveAttribute('href', '/devices/192.168.1.57');
+		});
+		expect(screen.queryByRole('link', { name: /^Open (device|address)$/ })).toBeNull();
+		expectNoNestedInteractive(container);
 		expect(screen.getByRole('link', { name: 'T1046' })).toHaveAttribute('href', 'https://attack.mitre.org/techniques/T1046/');
 	});
 

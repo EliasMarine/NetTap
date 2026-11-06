@@ -4,6 +4,7 @@ import type { Writable } from 'svelte/store';
 import { page } from '$app/stores';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
+import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
 // OLD CODE START — a fixed URL; the page now follows URL changes, so the tests move it
 // vi.mock('$app/stores', () => ({
@@ -115,6 +116,18 @@ describe('Log Explorer — URL hand-off', () => {
 		await new Promise((r) => setTimeout(r, 0));
 		expect(searchQueries()).toEqual(['dns']);
 	});
+
+	it('opens on the window a link carries (?range=), so its counts match the page it came from (NET-160)', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [], total: 0 } });
+		goTo('/logs?query=dns&range=7d');
+		render(Page);
+		await vi.waitFor(() => expect(searchQueries()).toEqual(['dns']));
+		expect(screen.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
+		const search = vi.mocked(fetch).mock.calls.map(([u]) => new URL(String(u), 'http://x')).find((u) => u.pathname === '/api/logs/search')!;
+		const hours = (Date.parse(search.searchParams.get('from')!) - Date.parse(search.searchParams.get('to')!)) / -3_600_000;
+		expect(hours).toBe(168);
+		goTo('/logs');
+	});
 });
 
 // PLAN §5.5: the loader is the top bar's Refresh; it reports what loaded, and older answers never win.
@@ -141,8 +154,11 @@ describe('Log Explorer — refresh contract', () => {
 				return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 503, json: async () => ({}) };
 			}),
 		);
-		render(Page);
+		const { container } = render(Page);
 		await screen.findByRole('button', { name: /^Open log entry from/ });
+		// NET-160: the row's address is a link beside the row button, never inside it
+		expect(screen.getByRole('link', { name: '10.0.0.5' })).toHaveAttribute('href', '/address/10.0.0.5');
+		expectNoNestedInteractive(container);
 		expect(await refreshPage()).toBe('ok');
 
 		replies = { ...AGGREGATIONS };
@@ -186,6 +202,17 @@ describe('Log Explorer — refresh contract', () => {
 		held[0]();
 		await new Promise((r) => setTimeout(r, 0));
 		expect(screen.queryByText('10.0.0.66')).not.toBeInTheDocument();
+	});
+
+	it('links a single address only, never an array or text joined into one', async () => {
+		const many = { ...hit('m', ''), _source: { ...hit('m', '')._source, source: { ip: ['10.0.0.7', '10.0.0.8'] } } };
+		const text = { ...hit('t', ''), _source: { ...hit('t', '')._source, source: { ip: 'unknown' } } };
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [hit('a', '10.0.0.5'), many, text], total: 3 } });
+		render(Page);
+		expect(await screen.findByRole('link', { name: '10.0.0.5' })).toHaveAttribute('href', '/address/10.0.0.5');
+		expect(screen.getByText('10.0.0.7, 10.0.0.8').closest('a')).toBeNull();
+		expect(screen.getByText('unknown').closest('a')).toBeNull();
+		expect(document.querySelector('a[href*="%2C"]')).toBeNull();
 	});
 
 	it('asks the daemon for the new order when a header is clicked', async () => {

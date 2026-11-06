@@ -21,8 +21,18 @@ import { daemonFetch } from '$lib/server/daemon.js';
 // The certificate overview stops itself at 50 s and answers 503, so 60 s always gets its reason
 const SLOW_PATH_TIMEOUT_MS: Record<string, number> = {
 	'/api/pcap/preview': 60_000,
+	// Filtered (?site=&server=) requests too: the lookup is by path
 	'/api/certificates/overview': 60_000,
 };
+// NET-160: the address and domain pages stop themselves at 25 s and answer 503, so 30 s gets the reason
+const SLOW_PREFIX_TIMEOUT_MS: [string, number][] = [
+	['/api/addresses/', 30_000],
+	['/api/domains/', 30_000],
+];
+
+function timeoutFor(path: string): number | undefined {
+	return SLOW_PATH_TIMEOUT_MS[path] ?? SLOW_PREFIX_TIMEOUT_MS.find(([prefix]) => path.startsWith(prefix))?.[1];
+}
 
 async function proxyToDaemon(
 	{ url, request }: { url: URL; request: Request },
@@ -51,7 +61,10 @@ async function proxyToDaemon(
 	// OLD CODE START — 2026-11-02: one 10 s timeout for every path, downloads included
 	// const res = await daemonFetch(daemonPath, options);
 	// OLD CODE END
-	const res = await daemonFetch(daemonPath, options, SLOW_PATH_TIMEOUT_MS[path]);
+	// OLD CODE START — NET-160: exact paths only
+	// const res = await daemonFetch(daemonPath, options, SLOW_PATH_TIMEOUT_MS[path]);
+	// OLD CODE END
+	const res = await daemonFetch(daemonPath, options, timeoutFor(path));
 
 	// For download endpoints, stream the response through
 	const contentType = res.headers.get('content-type') || 'application/json';

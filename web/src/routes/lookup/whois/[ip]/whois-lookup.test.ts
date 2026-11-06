@@ -32,6 +32,8 @@ describe('WHOIS lookup page', () => {
 		render(Page);
 		expect(await screen.findByText('Google LLC')).toBeInTheDocument();
 		expect(screen.getByText('8.8.8.0/24')).toBeInTheDocument();
+		// NET-160: an internet address opens its address page, never a device page
+		expect(screen.getByRole('link', { name: 'Open address page' })).toHaveAttribute('href', '/address/8.8.8.8');
 
 		const toggle = screen.getByRole('button', { name: 'Show raw WHOIS output' });
 		expect(toggle).toHaveAttribute('aria-expanded', 'false');

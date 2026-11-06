@@ -2,6 +2,7 @@
 	import { onDestroy, untrack, type Snippet } from 'svelte';
 	import { page } from '$app/stores';
 	import IPAddress from '$components/IPAddress.svelte';
+	import { isIpAddress } from '$lib/stores/lan';
 	// OLD CODE START — replaced by the design system's BarList
 	// import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	// OLD CODE END
@@ -858,6 +859,9 @@
 			if (search === appliedSearch) return;
 			const first = appliedSearch === null;
 			appliedSearch = search;
+			// A link from a page with its own window (?range=, NET-160) opens on that window
+			const urlRange = params.get('range');
+			if (first && TIME_RANGES.some((r) => r.value === urlRange)) selectedTimeRange = urlRange as TimeRange;
 			// A hand-off replaces the last one's IP filter and text; the first load starts from neither
 			activeIpFilter = urlFilter || urlIp || '';
 			query = urlFilter || urlIp ? '' : (urlQuery ?? '');
@@ -873,8 +877,15 @@
 	});
 </script>
 
+<!-- OLD CODE START — String() of an array-valued field linked /address/a%2Cb
 {#snippet ipValue(value: unknown)}
 	{#if value != null && value !== ''}<IPAddress ip={String(value)} />{:else}--{/if}
+{/snippet}
+OLD CODE END -->
+{#snippet ipValue(value: unknown)}
+	{#if typeof value === 'string' && isIpAddress(value)}<IPAddress ip={value} />
+	{:else if value != null && value !== ''}<IPAddress ip={Array.isArray(value) ? value.join(', ') : String(value)} linked={false} />
+	{:else}--{/if}
 {/snippet}
 {#snippet sourceIpCell(r: LogRow)}{@render ipValue(getNestedValue(r.hit._source, 'source.ip'))}{/snippet}
 {#snippet destinationIpCell(r: LogRow)}{@render ipValue(getNestedValue(r.hit._source, 'destination.ip'))}{/snippet}

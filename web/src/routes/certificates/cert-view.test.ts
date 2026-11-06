@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { CertDevice, CertFinding, CertSite } from '$lib/api/certificates';
 import {
 	RANGES,
+	customRange,
 	deviceVerification,
 	findingAdvice,
 	findingEvidence,
@@ -185,5 +186,24 @@ describe('window notices', () => {
 
 	it('uses the shared stale wording when the same window failed to refresh', () => {
 		expect(staleNotice(week, week, at, '')).toBe("Couldn't refresh certificate data; showing the last figures loaded.");
+	});
+});
+
+// NET-160: a drill-down link brings its window
+describe('customRange', () => {
+	it('reads a link window as Custom, in words', () => {
+		const r = customRange('2026-11-01T08:00:00Z', '2026-11-02T08:00:00.000Z')!;
+		expect(r).toMatchObject({ value: 'custom', label: 'Custom', hours: 24, from: '2026-11-01T08:00:00.000Z', to: '2026-11-02T08:00:00.000Z' });
+		expect(r.words).toMatch(/^window 1 Nov, \d\d:\d\d to 2 Nov, \d\d:\d\d$/);
+	});
+
+	it.each([
+		[null, '2026-11-02T00:00:00Z'],
+		['2026-11-01T00:00:00Z', null],
+		['yesterday', '2026-11-02T00:00:00Z'],
+		['2026-11-02T00:00:00Z', '2026-11-01T00:00:00Z'],
+		['2026-11-02T00:00:00Z', '2026-11-02T00:00:00Z'],
+	])('ignores a missing, unreadable or backwards window (%s to %s)', (from, to) => {
+		expect(customRange(from, to)).toBeNull();
 	});
 });

@@ -51,7 +51,7 @@ The old names (`--bg-tertiary`, `--text-primary`, `--cyan`, `--red`, `--space-md
 
 `+layout.svelte` draws the system shell: skip link, `.app > .shell`, `Sidebar`, then `main#main` with `TopBar` and the page. Components live in `src/lib/components/shell/`.
 
-- **Sidebar:** 17 links in 4 groups (`nav.ts`), the Alerts count from the shared alert snapshot, the capture chip and storage meter, and Sign out (a `POST /api/auth/logout` form).
+- **Sidebar:** 19 links in 4 groups (`nav.ts`), the Alerts count from the shared alert snapshot, the capture chip and storage meter, and Sign out (a `POST /api/auth/logout` form).
 - **TopBar:** search combobox (Ctrl-K), Refresh (runs the page's registered loader), the "Updated" time and the notification bell. **Pages have no Refresh button or "Updated" text of their own.**
 - **Phone (≤ 760 px app width):** a top bar with a menu button opens the sidebar as a drawer: focus moves in, Tab is trapped, and Escape, the scrim or a link closes it.
 - `/login` and `/setup` render bare (no shell).
@@ -86,6 +86,15 @@ Every chart has `role="img"` and an `aria-label` that states its headline, for e
 - **One source per number.** A number on two screens comes from one place. The alert count is `alertSnapshots` (`stores/alertSnapshot.ts`): Home, Alerts and the sidebar read the same snapshot per window.
 - **Refresh contract** (`stores/pageRefresh.ts`): a page that loads data calls `registerPageRefresh(loader)`. The loader awaits every request behind visible data and returns `'ok' | 'partial' | 'failed' | 'skipped'`; `outcome(results)` computes that from `Promise.allSettled`. Auto-refresh loops call the same loader.
 - **Load guard:** `const g = guard.begin()`, copy the query (range, filters, page, sort) into locals before the first `await`, and check `guard.current(g)` before every state write after an `await`. A slow, older response then never overwrites a newer one.
+- **Partial figures say so** (NET-160): a byte total some records didn't measure reads "at least …" with how many were measured, none measured reads "Not measured", and a list too long to count shows "—" with "too many to count" (`utils/drilldown.ts`).
+
+## Drill-down links (NET-160)
+
+- **Every IP is `IPAddress`** (`components/IPAddress.svelte`): a link to `$ipHref(ip)` (its device page when the daemon's LAN policy says so, `/address/<ip>` otherwise or before the policy loads, `stores/lan.ts`), with its right-click menu beside it. Inside another link or button, or in column 0 of a table with `onrowactivate`, use `linked={false}` (plain text) and make sure the row's drawer links the address.
+- **Every domain links with `domainHref(name)`** (`/domain/<name>`), except in column 0 of a row-activated table: put the link in the row's drawer or detail.
+- **Never nest a link or button in another.** Page tests call `expectNoNestedInteractive(container)` (`src/tests/nested-interactive.ts`).
+- **A count links to a list over the same window.** Pass the window on (`?range=` to Alerts and Log Explorer, `from`/`to` to Certificates), so the list a number opens holds that number.
+- **Outside look-ups run on click.** Reverse DNS and WHOIS about an address or name wait for a button: an automatic one tells whoever runs that server that we looked.
 
 ## Tables
 

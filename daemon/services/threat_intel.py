@@ -47,6 +47,37 @@ TI_FEEDS = {
     "dshield_block": {"label": "DShield Block List", "type": "ip"},
 }
 
+# The Suricata rules that fire on a listed host; their alerts feed ALERT_FEED (NET-160 shares
+# them with the address page, which checks its own window's alerts)
+LISTING_RULES: dict = {
+    "bool": {
+        "should": [
+            {"wildcard": {"rule.name": "*COMPROMISED*"}},
+            {"wildcard": {"rule.name": "*DROP*"}},
+            {"wildcard": {"rule.name": "*CINS*"}},
+            {"wildcard": {"rule.name": "*Dshield*"}},
+        ],
+        "minimum_should_match": 1,
+    }
+}
+ALERT_FEED = "et_compromised"
+
+
+def listed_endpoint(src: str | None, dst: str | None) -> str | None:
+    """The listed host of a listing-rule alert: its one internet endpoint, or None.
+
+    With no internet endpoint, or two (e.g. an inbound alert to this network's public
+    address), the listed one can't be told apart (I7).
+    """
+    outside = [ip for ip in (src, dst) if ip and _is_outside(ip)]
+    return outside[0] if len(outside) == 1 else None
+
+
+def feed_hit(feed_id: str, ip: str) -> dict:
+    """One feed listing `ip`, as lookup_ip reports it."""
+    feed_meta = TI_FEEDS.get(feed_id, {"label": feed_id, "type": "ip"})
+    return {"feed": feed_id, "label": feed_meta["label"], "indicator": ip, "type": "ip"}
+
 
 class ThreatIntelService:
     """Manages threat intel IP/domain lookups against cached feed data."""
@@ -131,21 +162,36 @@ class ThreatIntelService:
             self._ip_sets[feed_id] = set()
         self._ip_sets[feed_id].update(ips)
 
+    @property
+    def indicator_count(self) -> int:
+        """Indicators held across every feed."""
+        return sum(len(ips) for ips in self._ip_sets.values())
+
+    @property
+    def available(self) -> bool:
+        """At least one indicator to check against (_loaded only says a cache file was read)."""
+        return self.indicator_count > 0
+
     def lookup_ip(self, ip: str) -> list[dict]:
         """Check IP against all loaded feeds."""
-        hits = []
-        for feed_id, ip_set in self._ip_sets.items():
-            if ip in ip_set:
-                feed_meta = TI_FEEDS.get(feed_id, {"label": feed_id, "type": "ip"})
-                hits.append(
-                    {
-                        "feed": feed_id,
-                        "label": feed_meta["label"],
-                        "indicator": ip,
-                        "type": "ip",
-                    }
-                )
-        return hits
+        # OLD CODE START — NET-160: the hit's shape moved to feed_hit, shared with the address page
+        # hits = []
+        # for feed_id, ip_set in self._ip_sets.items():
+        #     if ip in ip_set:
+        #         feed_meta = TI_FEEDS.get(feed_id, {"label": feed_id, "type": "ip"})
+        #         hits.append(
+        #             {
+        #                 "feed": feed_id,
+        #                 "label": feed_meta["label"],
+        #                 "indicator": ip,
+        #                 "type": "ip",
+        #             }
+        #         )
+        # return hits
+        # OLD CODE END
+        return [
+            feed_hit(feed_id, ip) for feed_id, ips in self._ip_sets.items() if ip in ips
+        ]
 
     def enrich_alerts(self, alerts: list[dict]) -> list[dict]:
         """Add threat intel context to alert groups."""
@@ -210,17 +256,20 @@ class ThreatIntelService:
                 {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
                 {"term": {"event.provider": "suricata"}},
                 {"term": {"event.dataset": "alert"}},
-                {
-                    "bool": {
-                        "should": [
-                            {"wildcard": {"rule.name": "*COMPROMISED*"}},
-                            {"wildcard": {"rule.name": "*DROP*"}},
-                            {"wildcard": {"rule.name": "*CINS*"}},
-                            {"wildcard": {"rule.name": "*Dshield*"}},
-                        ],
-                        "minimum_should_match": 1,
-                    }
-                },
+                # OLD CODE START — NET-160: the same rules, now LISTING_RULES (shared)
+                # {
+                #     "bool": {
+                #         "should": [
+                #             {"wildcard": {"rule.name": "*COMPROMISED*"}},
+                #             {"wildcard": {"rule.name": "*DROP*"}},
+                #             {"wildcard": {"rule.name": "*CINS*"}},
+                #             {"wildcard": {"rule.name": "*Dshield*"}},
+                #         ],
+                #         "minimum_should_match": 1,
+                #     }
+                # },
+                # OLD CODE END
+                LISTING_RULES,
             ]
         }
         # OLD CODE START — excluded IPs stay visible in threat detections
@@ -300,9 +349,16 @@ class ThreatIntelService:
         seen: set[str] = set()
         ambiguous = 0
         for b in buckets:
-            outside = [ip for ip in b["key"].values() if ip and _is_outside(ip)]
-            if len(outside) == 1:
-                seen.add(outside[0])
+            # OLD CODE START — NET-160: the same rule, now listed_endpoint (shared)
+            # outside = [ip for ip in b["key"].values() if ip and _is_outside(ip)]
+            # if len(outside) == 1:
+            #     seen.add(outside[0])
+            # else:
+            #     ambiguous += 1
+            # OLD CODE END
+            listed = listed_endpoint(b["key"].get("src"), b["key"].get("dst"))
+            if listed:
+                seen.add(listed)
             else:
                 ambiguous += 1
         if ambiguous:
@@ -312,9 +368,9 @@ class ThreatIntelService:
             )
         self.seen_in_window = seen
 
-        known = self._ip_sets.get("et_compromised", set())
+        known = self._ip_sets.get(ALERT_FEED, set())
         new_ips = sorted(seen - known)
         if new_ips:
-            self.add_indicators("et_compromised", new_ips)
+            self.add_indicators(ALERT_FEED, new_ips)
             self.save_cache()
         return len(new_ips)

@@ -630,6 +630,75 @@ class TestConnectionsHandler(AioHTTPTestCase):
         self.assertEqual(resp.status, 502)
 
 
+class TestConnectionsIpFilter(AioHTTPTestCase):
+    """NET-160: ?ip= is one address on either side, a structured filter apart from q."""
+
+    def setUp(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []}
+        }
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.storage
+        register_traffic_routes(app, self.storage)
+        return app
+
+    def _query(self) -> dict:
+        return self.mock_client.search.call_args.kwargs["body"]["query"]
+
+    @staticmethod
+    def _record(**fields) -> dict:
+        return {
+            "@timestamp": "2026-11-05T10:00:00Z",
+            "event.provider": "zeek",
+            "event.dataset": "conn",
+            **fields,
+        }
+
+    async def test_the_address_matches_either_side_and_no_other_field(self):
+        from tests.fake_drill_opensearch import matches
+
+        for sent, ip in (
+            ("192.168.1.20", "192.168.1.20"),
+            ("2001:DB8::1", "2001:db8::1"),  # IPv6, canonical
+        ):
+            resp = await self.client.get(
+                "/api/traffic/connections?from=2026-11-05T00:00:00Z"
+                f"&to=2026-11-05T12:00:00Z&ip={sent}"
+            )
+            self.assertEqual(resp.status, 200)
+            query = self._query()
+            self.assertTrue(matches(self._record(**{"source.ip": ip}), query))
+            self.assertTrue(matches(self._record(**{"destination.ip": ip}), query))
+            self.assertFalse(matches(self._record(**{"related.ip": ip}), query))
+            self.assertFalse(matches(self._record(**{"source.ip": "10.9.9.9"}), query))
+            self.assertEqual(query["bool"]["must"], [{"match_all": {}}])
+
+    async def test_ip_combines_with_q_paging_and_sort(self):
+        resp = await self.client.get(
+            "/api/traffic/connections?ip=10.0.0.5&q=dns&page=2&size=10&sort=source&order=asc"
+        )
+        self.assertEqual(resp.status, 200)
+        body = self.mock_client.search.call_args.kwargs["body"]
+        self.assertEqual((body["from"], body["size"]), (10, 10))
+        self.assertIn("query_string", body["query"]["bool"]["must"][0])
+        self.assertNotIn(
+            "10.0.0.5", body["query"]["bool"]["must"][0]["query_string"]["query"]
+        )
+        self.assertEqual(
+            body["sort"][0], {"source.ip": {"order": "asc", "missing": "_last"}}
+        )
+
+    async def test_a_bad_address_is_a_400(self):
+        for bad in ("not-an-ip", "10.0.0.0/8", "fe80::1%25eth0"):
+            resp = await self.client.get(f"/api/traffic/connections?ip={bad}")
+            self.assertEqual(resp.status, 400, bad)
+        self.mock_client.search.assert_not_called()
+
+
 class TestTopByBytesOrdering(AioHTTPTestCase):
     """Top-N-by-bytes aggs must rank buckets by bytes, not by doc count."""
 

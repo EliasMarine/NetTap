@@ -38,6 +38,7 @@
 	import Pills from '$lib/components/ui/Pills.svelte';
 	import SearchField from '$lib/components/ui/SearchField.svelte';
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
+	import { domainHref } from '$lib/stores/lan';
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -700,6 +701,8 @@
 		{#if selectedDomain}
 			<div class="chips selected">
 				<span class="chip">Selected domain: <span class="mono">{selectedDomain}</span></span>
+				<!-- NET-160: the domain tables open this selection on their row, so the domain page link lives here -->
+				<a class="link" href={domainHref(selectedDomain)}>Open domain page</a>
 				<button class="link" type="button" onclick={() => copyDomain(selectedDomain ?? '')}>Copy</button>
 				<button class="link" type="button" onclick={() => (selectedDomain = null)}>Clear</button>
 			</div>

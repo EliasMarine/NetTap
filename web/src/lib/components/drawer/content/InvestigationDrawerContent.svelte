@@ -3,6 +3,7 @@
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { ipHref } from '$lib/stores/lan';
 	import DrawerSection from '../DrawerSection.svelte';
 	import KVRow from '../KVRow.svelte';
 	import type { Investigation } from '$api/investigations';
@@ -158,7 +159,8 @@
 			<DrawerSection title="Linked devices ({investigation.device_ips.length})" defaultExpanded>
 				<div class="linked-list">
 					{#each investigation.device_ips as ip}
-						<a href="/devices/{ip}" class="linked-item mono">{ip}</a>
+						<!-- OLD CODE START: <a href="/devices/{ip}" class="linked-item mono">{ip}</a> (NET-160: internet addresses went to a device page, unencoded) OLD CODE END -->
+						<a href={$ipHref(ip)} class="linked-item mono">{ip}</a>
 					{/each}
 				</div>
 			</DrawerSection>

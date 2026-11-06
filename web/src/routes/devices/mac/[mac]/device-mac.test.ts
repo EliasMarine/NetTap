@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/svelte';
 import { readable, get } from 'svelte/store';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
+import { expectNoNestedInteractive } from '../../../../tests/nested-interactive';
 
 // #89: the daemon wraps both replies ({device}, {from, to, traffic}); the page read the wrappers,
 // crashed on device.ips.length and stayed on its loader. Its in/out and destination bytes were
@@ -40,6 +41,7 @@ const REPLIES: Record<string, unknown> = {
 			protocols: ['udp'],
 			top_protocols: [{ name: 'udp', count: 1234 }],
 			top_destinations: [{ ip: '192.168.1.174', connections: 600, bytes: 512 * 1024 }],
+			dns_queries: [{ domain: 'Updates.Example.COM.', count: 3 }],
 		},
 	},
 };
@@ -58,9 +60,13 @@ describe('Device by MAC page', () => {
 			}),
 		);
 
-		render(Page);
+		const { container } = render(Page);
 
 		await vi.waitFor(() => expect(screen.getByText('2.0MB in / 1.0MB out')).toBeInTheDocument());
+		// NET-160: a looked-up domain opens its domain page; the destination is a link, nothing nested
+		expect(screen.getByRole('link', { name: 'Updates.Example.COM.' })).toHaveAttribute('href', '/domain/updates.example.com');
+		expect(screen.getByRole('link', { name: '192.168.1.174' })).toHaveAttribute('href', '/address/192.168.1.174');
+		expectNoNestedInteractive(container);
 		expect(screen.getAllByText('1,234')).toHaveLength(2); // connections and the UDP count
 		expect(screen.getByText('512KB')).toBeInTheDocument();
 		// OLD CODE START — 2026-11-03 UI redesign: the spinner's class; the loading state is now a CardState status

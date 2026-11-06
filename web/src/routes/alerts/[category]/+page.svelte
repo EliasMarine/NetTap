@@ -13,6 +13,7 @@
 	 */
 
 	import { page } from '$app/stores';
+	// OLD CODE START: import { ipHref, isLan } from '$lib/stores/lan'; — only the removed "Open device" link used them OLD CODE END
 	import { onDestroy, untrack } from 'svelte';
 	import {
 		getAlertCategoryDetail,
@@ -700,7 +701,12 @@
 	<span class="device-cell">
 		<IPAddress ip={d.ip} />
 		{#if d.hostname}<span class="dim">{d.hostname}</span>{/if}
+		<!-- OLD CODE START — NET-160: the device page for internet addresses too
 		<a class="link" href="/devices/{encodeURIComponent(d.ip)}">View device</a>
+		OLD CODE END -->
+		<!-- OLD CODE START — NET-160 review: the address beside it already links to the same page
+		<a class="link" href={$ipHref(d.ip)}>{$isLan(d.ip) === true ? 'Open device' : 'Open address'}</a>
+		OLD CODE END -->
 	</span>
 {/snippet}
 {#snippet deviceCountCell(d: CategoryDetailDevice)}{formatNumber(d.count)}{/snippet}

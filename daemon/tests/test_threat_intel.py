@@ -403,3 +403,31 @@ async def test_intel_counts_only_indicators_seen_in_the_window(tmp_path, monkeyp
     assert body["total_indicators"] == 2
     assert body["feeds"]["et_compromised"]["indicator_count"] == 2
     assert body["new_indicators"] == 1
+
+
+class TestAvailability:
+    """NET-160: the address page says "not checked" until an indicator exists, not "no match"."""
+
+    def test_no_cache_file_is_unavailable(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "services.threat_intel._TI_CACHE_PATH", tmp_path / "ti.json"
+        )
+        svc = ThreatIntelService()
+        svc.load_cache()
+        assert (svc.available, svc.indicator_count) == (False, 0)
+
+    def test_a_read_cache_with_no_indicators_is_still_unavailable(
+        self, tmp_path, monkeypatch
+    ):
+        cache = tmp_path / "ti.json"
+        cache.write_text(json.dumps({"version": 2, "ip_feeds": {"et_compromised": []}}))
+        monkeypatch.setattr("services.threat_intel._TI_CACHE_PATH", cache)
+        svc = ThreatIntelService()
+        svc.load_cache()
+        assert svc._loaded and not svc.available
+
+    def test_added_indicators_are_available_at_once_without_a_reload(self):
+        svc = ThreatIntelService()
+        svc.add_indicators("et_compromised", ["198.51.100.5", "198.51.100.6"])
+        assert (svc.available, svc.indicator_count) == (True, 2)
+        assert svc.lookup_ip("198.51.100.5")[0]["feed"] == "et_compromised"

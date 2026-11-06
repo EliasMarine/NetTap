@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, untrack } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import {
@@ -50,6 +50,7 @@
 	import ConnectionDrawerContent from '$components/drawer/content/ConnectionDrawerContent.svelte';
 	import { buildTSharkFilter, getField, asString } from '$lib/utils/tshark-filter';
 	import { captureMode } from '$lib/stores/captureMode';
+	import { ipHref, isIpAddress, isLan } from '$lib/stores/lan';
 	// OLD CODE START — #145: the client-side sort is gone
 	// import { compareValues } from '$lib/utils/table-sort.svelte';
 	// OLD CODE END
@@ -139,6 +140,8 @@
 	let deviceNames = $state(new Map<string, string>());
 	let timelineFailed = $state(false);
 	let connectionsFailed = $state(false);
+	/** Why the table failed, as the daemon or the request said */
+	let connectionsError = $state('');
 
 	// Connections table
 	let connections = $state<Connection[]>([]);
@@ -283,7 +286,10 @@
 			value: s.total_bytes,
 			display: formatBytes(s.total_bytes),
 			detail: `${s.connections.toLocaleString('en-GB')} conn`,
-			href: `/devices/${encodeURIComponent(s.ip)}`,
+			// OLD CODE START — NET-160: the device page for every source, internet ones included
+			// href: `/devices/${encodeURIComponent(s.ip)}`,
+			// OLD CODE END
+			href: $ipHref(s.ip),
 		}))
 	);
 
@@ -306,6 +312,8 @@
 			value: d.total_bytes,
 			display: formatBytes(d.total_bytes),
 			detail: d.country || undefined,
+			// NET-160: each destination drills down to its address (or device) page
+			href: $ipHref(d.ip),
 		}))
 	);
 
@@ -457,11 +465,28 @@
 		return { from, to };
 	}
 
+	// OLD CODE START — any text with a colon ("tcp:443") went as an address and failed with a 400
+	// /** A whole address (IPv4, or anything with a colon: IPv6) goes to the daemon's either-side filter, which validates it. */
+	// function structuredIp(text: string): string | undefined {
+	// 	const ip = text.trim();
+	// 	return ip && (ipv4ToNumber(ip) !== null || ip.includes(':')) ? ip : undefined;
+	// }
+	// OLD CODE END
+	/** A whole address goes to the daemon's either-side filter, which validates it; other text is searched */
+	function structuredIp(text: string): string | undefined {
+		return isIpAddress(text) ? text.trim() : undefined;
+	}
+
 	function buildSearchQuery(): string {
 		const parts: string[] = [];
 		if (protocolFilter !== 'All') parts.push(protocolFilter.toLowerCase());
 		if (serviceFilter.trim()) parts.push(serviceFilter.trim());
-		if (ipFilter.trim()) parts.push(ipFilter.trim());
+		// OLD CODE START — NET-160: free text matched the address in any field, and an IPv6 colon is
+		// query syntax; loadTable sends it as the structured `ip` filter instead
+		// if (ipFilter.trim()) parts.push(ipFilter.trim());
+		// OLD CODE END
+		// Part of an address typed in the box ("192.168.1") still searches as text, as before
+		if (ipFilter.trim() && !structuredIp(ipFilter)) parts.push(ipFilter.trim());
 		// Apply sankey filter
 		if (sankeyFilter) {
 			if (sankeyFilter.type === 'source') parts.push(`source.ip:${sankeyFilter.id}`);
@@ -563,6 +588,7 @@
 		const params = {
 			...span, page: pg, size: pageSize, q: q || undefined,
 			sort: sortKey, order: sortDir, state: stateFilter === 'all' ? undefined : stateFilter,
+			ip: structuredIp(ipFilter),
 		};
 		try {
 			const response: ConnectionsResponse = await getConnections(params);
@@ -573,8 +599,9 @@
 			totalConnections = response.total;
 			connectionsFailed = false;
 			return 'ok';
-		} catch {
+		} catch (err) {
 			if (!tableGuard.current(t)) return 'skipped';
+			connectionsError = err instanceof Error ? err.message : '';
 			// rows are specific to this page and filter set, so they are not kept as stale
 			connections = [];
 			totalPages = 0;
@@ -673,7 +700,8 @@
 	function handleSankeyNodeClick(type: 'source' | 'protocol' | 'destination', id: string) {
 		if (type === 'source') {
 			// Source IPs navigate to device intelligence page
-			goto(`/devices/${encodeURIComponent(id)}`);
+			// OLD CODE START: goto(`/devices/${encodeURIComponent(id)}`); (NET-160: internet sources too) OLD CODE END
+			goto($ipHref(id));
 			return;
 		}
 		// Protocol + Destination: toggle table filter (existing behavior)
@@ -775,9 +803,42 @@
 	// Init
 	// ---------------------------------------------------------------------------
 
+	/** The ?ip= last applied; null before the first load. */
+	let appliedIp: string | null = null;
+	/** The navigation it came from: a new URL object is a new navigation, even to the same address */
+	let appliedUrl: URL | null = null;
+
+	// NET-160: ?ip= is read whenever the URL changes, so a link to another address from this page
+	// (an IP's menu) filters for it. Declared before onMount, so the first load already has it.
+	$effect(() => {
+		// OLD CODE START — compared only the address, so a link to the one already applied did nothing
+		// after the user had edited the box
+		// const urlIp = $page.url.searchParams.get('ip') ?? '';
+		// OLD CODE END
+		const url = $page.url;
+		const urlIp = url.searchParams.get('ip') ?? '';
+		untrack(() => {
+			// OLD CODE START: if (urlIp === appliedIp) return; OLD CODE END
+			const again = url !== appliedUrl && urlIp !== '' && ipFilter.trim() !== urlIp;
+			appliedUrl = url;
+			if (urlIp === appliedIp && !again) return;
+			const first = appliedIp === null;
+			appliedIp = urlIp;
+			ipFilter = urlIp;
+			// A new address is a new result set: page 1, through the table guard, so a late
+			// reply for the old address is dropped
+			if (!first) {
+				currentPage = 1;
+				void loadTable(1);
+			}
+		});
+	});
+
 	onMount(() => {
-		const urlIp = $page.url.searchParams.get('ip');
-		if (urlIp) ipFilter = urlIp;
+		// OLD CODE START — NET-160: read once, so navigating to ?ip= for another address changed nothing
+		// const urlIp = $page.url.searchParams.get('ip');
+		// if (urlIp) ipFilter = urlIp;
+		// OLD CODE END
 		const urlProtocol = $page.url.searchParams.get('protocol');
 		if (urlProtocol) protocolFilter = urlProtocol;
 
@@ -987,7 +1048,8 @@
 		{#if loading && connections.length === 0 && !connectionsFailed}
 			<CardState state="loading" title="Loading connections" />
 		{:else if connectionsFailed && !loading}
-			<CardState state="error" title={loadFailed('connections')} message={RETRY_HINT} onaction={() => loadTable(currentPage)} />
+			<!-- OLD CODE START: message={RETRY_HINT} dropped the daemon's reason (NET-160) OLD CODE END -->
+			<CardState state="error" title={loadFailed('connections')} message={connectionsError || RETRY_HINT} onaction={() => loadTable(currentPage)} />
 		{:else if connections.length === 0 && !loading}
 			<CardState state="empty" title="No connections" message="No connections match this time range and these filters. Try a longer range or clear a filter." />
 		{:else}
@@ -1037,6 +1099,7 @@
 			{@const srcIp = asString(getField(drawerConn, 'source.ip'))}
 			{@const dstIp = asString(getField(drawerConn, 'destination.ip'))}
 			{@const cid = asString(getField(drawerConn, 'network.community_id'))}
+			<!-- OLD CODE START — NET-160: the device page for every address, internet ones included
 			{#if srcIp}
 				<button class="btn" type="button" onclick={() => goto(`/devices/${encodeURIComponent(srcIp)}`)}>
 					View source device
@@ -1046,6 +1109,13 @@
 				<button class="btn" type="button" onclick={() => goto(`/devices/${encodeURIComponent(dstIp)}`)}>
 					View destination device
 				</button>
+			{/if}
+			OLD CODE END -->
+			{#if srcIp}
+				<a class="btn" href={$ipHref(srcIp)}>{$isLan(srcIp) === true ? 'Open source device' : 'Open source address'}</a>
+			{/if}
+			{#if dstIp}
+				<a class="btn" href={$ipHref(dstIp)}>{$isLan(dstIp) === true ? 'Open destination device' : 'Open destination address'}</a>
 			{/if}
 			{#if cid}
 				<button class="btn" type="button" onclick={() => { navigator.clipboard.writeText(cid); }}>

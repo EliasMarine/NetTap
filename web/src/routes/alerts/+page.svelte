@@ -34,6 +34,7 @@
 	// import AlertDetailPanel from '$components/AlertDetailPanel.svelte';
 	// OLD CODE END
 	import IPAddress from '$components/IPAddress.svelte';
+	import { ipHref } from '$lib/stores/lan';
 	// OLD CODE START — 2026-11-03 redesign: the system's BarList and the docked drawer column
 	// import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	// import DetailDrawer from '$components/DetailDrawer.svelte';
@@ -74,6 +75,8 @@
 		{ label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' },
 		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours' },
 		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days' },
+		// NET-160: the address and domain pages link here with their 30-day window
+		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days' },
 	];
 
 	const INTERVAL_MAP: Record<string, string> = {
@@ -82,6 +85,7 @@
 		'4h': '15m',
 		'24h': '1h',
 		'7d': '6h',
+		'30d': '1d',
 	};
 
 	type SeverityFilter = 'all' | 'high' | 'medium' | 'low' | 'info';
@@ -108,7 +112,10 @@
 	let loaded = $state(false);
 	/** The alert list has answered at least once. */
 	let listLoaded = $state(false);
-	let selectedTimeRange = $state('24h');
+	// OLD CODE START: let selectedTimeRange = $state('24h'); — a link's ?range= was ignored OLD CODE END
+	// A link from a page with its own window (?range=, NET-160) opens on that window when it is one of ours
+	const urlRange = $page.url.searchParams.get('range');
+	let selectedTimeRange = $state(TIME_RANGES.some((r) => r.value === urlRange) ? (urlRange as string) : '24h');
 	let autoRefresh = $state(false);
 	let refreshInterval = $state<ReturnType<typeof setInterval> | null>(null);
 
@@ -911,8 +918,12 @@
 	);
 	const threatPill = $derived(THREAT_LEVELS.find((l) => l === threatLevel));
 
+	// OLD CODE START — NET-160: the device page for every address, unencoded
+	// const ipBars = (entries: AlertIpEntry[]) =>
+	// 	entries.map((e) => ({ key: e.ip, label: e.ip, value: e.count, display: fmt(e.count), href: `/devices/${e.ip}` }));
+	// OLD CODE END
 	const ipBars = (entries: AlertIpEntry[]) =>
-		entries.map((e) => ({ key: e.ip, label: e.ip, value: e.count, display: fmt(e.count), href: `/devices/${e.ip}` }));
+		entries.map((e) => ({ key: e.ip, label: e.ip, value: e.count, display: fmt(e.count), href: $ipHref(e.ip) }));
 
 	const columns: Column<Alert>[] = [
 		{ key: 'timestamp', label: 'Time', cell: timeCell },

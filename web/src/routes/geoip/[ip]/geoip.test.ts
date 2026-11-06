@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/svelte';
 import { readable, get } from 'svelte/store';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
+import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
 
 vi.mock('$app/stores', () => ({
 	page: readable({ url: new URL('http://localhost/geoip/8.8.8.8'), params: { ip: '8.8.8.8' } }),
@@ -63,7 +64,21 @@ describe('GeoIP Lookup Page — states', () => {
 			'https://www.google.com/maps/search/?api=1&query=37.4056,-122.0775',
 		);
 		expect(screen.getByTitle('GeoIP location map')).toBeInTheDocument();
-		expect(screen.getByRole('link', { name: 'Filter connections to' })).toHaveAttribute('href', '/connections?filter=ip.dst==8.8.8.8');
+		// OLD CODE START — NET-160: ?filter= links the Connections page never read
+		// expect(screen.getByRole('link', { name: 'Filter connections to' })).toHaveAttribute('href', '/connections?filter=ip.dst==8.8.8.8');
+		// OLD CODE END
+		expect(screen.getByRole('link', { name: 'Connections with this address' })).toHaveAttribute('href', '/connections?ip=8.8.8.8');
+		expect(screen.getByRole('link', { name: 'Open address page' })).toHaveAttribute('href', '/address/8.8.8.8');
+		expect(screen.queryByRole('link', { name: 'View device details' })).not.toBeInTheDocument();
+		expectNoNestedInteractive(document.body);
+	});
+
+	it('offers the device page for a LAN address', async () => {
+		const lan = { version: 'v', subnets: ['192.168.1.0/24'], source: 'env', ipv6: 'not-lan' };
+		vi.stubGlobal('fetch', vi.fn(async (url: string) => (url === '/api/network/lan' ? okJson(lan) : okJson(geo('Home', { ip: '192.168.1.5', is_private: true })))));
+		render(Page);
+		await screen.findByText('Home');
+		await vi.waitFor(() => expect(screen.getByRole('link', { name: 'View device details' })).toHaveAttribute('href', '/devices/192.168.1.5'));
 	});
 
 	it('leaves the map out when there are no coordinates', async () => {
@@ -85,7 +100,8 @@ describe('GeoIP Lookup Page — refresh contract', () => {
 			.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) })
 			.mockReturnValueOnce(new Promise((r) => (resolveSlow = r)))
 			.mockResolvedValueOnce(okJson(geo('Newest')));
-		vi.stubGlobal('fetch', fetch);
+		// NET-160: the action links fetch the LAN policy; only the lookups take the sequence
+		vi.stubGlobal('fetch', vi.fn((url: string) => (url === '/api/network/lan' ? Promise.resolve({ ok: false, status: 404, json: async () => ({}) }) : fetch(url))));
 		const { unmount } = render(Page);
 		await screen.findByText('First');
 		expect(get(pageRefresh).status).toBe('ok');

@@ -72,12 +72,25 @@ class CertificateMonitor:
         excluded_ips: list[str] | None = None,
         budget: Budget | None = None,
         pit_id: str | None = None,
+        site: str | None = None,
+        server: str | None = None,
     ) -> dict[str, Any]:
         """Every figure the Certificates page shows (CertQueryFailed and subclasses on failure)."""
         if not from_ts or not to_ts:
             from_ts, to_ts = _default_range()
+        # OLD CODE START — NET-160: no site/server narrowing
+        # return self._overview.overview(
+        #     from_ts, to_ts, excluded_ips, budget=budget, pit_id=pit_id
+        # )
+        # OLD CODE END
         return self._overview.overview(
-            from_ts, to_ts, excluded_ips, budget=budget, pit_id=pit_id
+            from_ts,
+            to_ts,
+            excluded_ips,
+            budget=budget,
+            pit_id=pit_id,
+            site=site,
+            server=server,
         )
 
     def get_certificates(

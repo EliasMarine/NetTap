@@ -4,7 +4,11 @@
 	 * your own devices' certificates run out. Every figure comes from one complete pass over the
 	 * window's TLS sessions (/api/certificates/overview); lists are paged here, never the counts.
 	 */
-	import { onDestroy, onMount, tick } from 'svelte';
+	// OLD CODE START — NET-160: onMount loaded once; the drill-down filter is read from the URL instead
+	// import { onDestroy, onMount, tick } from 'svelte';
+	// OLD CODE END
+	import { onDestroy, tick, untrack } from 'svelte';
+	import { page as pageStore } from '$app/stores';
 	import {
 		getCertificateOverview,
 		type CertDevice,
@@ -30,6 +34,7 @@
 	import CertDetail from './CertDetail.svelte';
 	import {
 		RANGES,
+		customRange,
 		deviceName,
 		deviceVerification,
 		findingEvidence,
@@ -42,6 +47,7 @@
 		siteStatus,
 		staleNotice,
 		whoUsed,
+		type CustomRange,
 		type RangeOption,
 		type RangeValue,
 	} from './cert-view';
@@ -68,21 +74,56 @@
 	let sortDir = $state<SortDir>('desc');
 	let showAllFindings = $state(false);
 	let showQuiet = $state(false);
+	/** NET-160: a drill-down link's site and/or server; the daemon counts only their sessions. */
+	let filter = $state<{ site: string | null; server: string | null }>({ site: null, server: null });
+	/** The window a drill-down link brought, shown as "Custom". */
+	let custom = $state<CustomRange | null>(null);
+	/** Open the one matching site once the filtered overview loads (not reactive: only the loader reads it). */
+	let openOnLoad = false;
+	/** The URL filter last applied; null before the first load. */
+	let appliedUrl: string | null = null;
 
 	const refresh = registerPageRefresh(load);
-	onMount(() => {
-		refresh.run();
-	});
+	// OLD CODE START — NET-160: loaded once on mount; the URL effect below starts every load now
+	// onMount(() => {
+	// 	refresh.run();
+	// });
+	// OLD CODE END
 	onDestroy(refresh.unregister);
+
+	// ?site=&server=&from=&to= from the address and domain pages, read whenever the URL changes
+	$effect(() => {
+		const params = $pageStore.url.searchParams;
+		const key = JSON.stringify(['site', 'server', 'from', 'to'].map((k) => params.get(k)));
+		untrack(() => {
+			if (key === appliedUrl) return;
+			appliedUrl = key;
+			filter = { site: params.get('site')?.trim() || null, server: params.get('server')?.trim() || null };
+			custom = customRange(params.get('from'), params.get('to'));
+			if (custom) rangeValue = 'custom';
+			else if (rangeValue === 'custom') rangeValue = '7d';
+			selected = null;
+			page = 1;
+			openOnLoad = !!(filter.site || filter.server);
+			void refresh.run();
+		});
+	});
 
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
-		const range = RANGES.find((r) => r.value === rangeValue) ?? RANGES[1];
-		const to = new Date();
-		const from = new Date(to.getTime() - range.hours * 3_600_000);
+		// OLD CODE START — NET-160: always a window ending now
+		// const range = RANGES.find((r) => r.value === rangeValue) ?? RANGES[1];
+		// const to = new Date();
+		// const from = new Date(to.getTime() - range.hours * 3_600_000);
+		// OLD CODE END
+		const range: RangeOption = rangeValue === 'custom' && custom ? custom : (RANGES.find((r) => r.value === rangeValue) ?? RANGES[1]);
+		const to = range === custom && custom ? new Date(custom.to) : new Date();
+		const from = range === custom && custom ? new Date(custom.from) : new Date(to.getTime() - range.hours * 3_600_000);
+		const wanted = filter;
 		loading = true;
 		const results = await Promise.allSettled([
-			getCertificateOverview(from.toISOString(), to.toISOString()),
+			// OLD CODE START: getCertificateOverview(from.toISOString(), to.toISOString()), OLD CODE END
+			getCertificateOverview(from.toISOString(), to.toISOString(), wanted),
 			getRegistryDevices({ limit: 200 }),
 		]);
 		if (!guard.current(g)) return 'skipped';
@@ -92,12 +133,23 @@
 		if (overview.status === 'fulfilled') {
 			loaded = { data: overview.value, range, at: new Date() };
 			failure = null;
+			// A drill-down for one site opens it; a filter matching several leaves the choice to you
+			if (openOnLoad) {
+				openOnLoad = false;
+				if (overview.value.sites.length === 1) void openSite(overview.value.sites[0].id);
+			}
 		} else {
 			failure = { range, reason: overview.reason instanceof Error ? overview.reason.message : '' };
 		}
 		loading = false;
 		return outcome(results);
 	}
+
+	const rangeOptions = $derived([...RANGES, ...(custom ? [custom] : [])].map((r) => ({ value: r.value, label: r.label })));
+	/** "the site example.com served by 203.0.113.9", for the filter notice. */
+	const filterWords = $derived(
+		[filter.site && `the site ${filter.site}`, filter.server && `${filter.site ? 'served' : 'certificates served'} by ${filter.server}`].filter(Boolean).join(' '),
+	);
 
 	function changeRange(value: RangeValue) {
 		rangeValue = value;
@@ -643,10 +695,16 @@
 			TLS 1.2 and older connections; TLS 1.3 hides them.
 		</p>
 	</div>
-	<Pills options={RANGES.map((r) => ({ value: r.value, label: r.label }))} value={rangeValue} onchange={changeRange} ariaLabel="Time range" />
+	<!-- OLD CODE START: <Pills options={RANGES.map((r) => ({ value: r.value, label: r.label }))} value={rangeValue} onchange={changeRange} ariaLabel="Time range" /> OLD CODE END -->
+	<Pills options={rangeOptions} value={rangeValue} onchange={changeRange} ariaLabel="Time range" />
 </div>
 
 <div class="grid">
+	{#if filter.site || filter.server}
+		<p class="notice c-12" role="note">
+			<Icon name="filter" /><span>Showing only {filterWords}: every figure below counts just those sessions. <a href="/certificates">Show all certificates</a></span>
+		</p>
+	{/if}
 	<KpiCard
 		class="c-4"
 		label="Needs a look"

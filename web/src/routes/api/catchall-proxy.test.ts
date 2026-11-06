@@ -47,6 +47,29 @@ describe('API Catch-All Proxy Route ([...path]/+server.ts)', () => {
 		expect(daemonFetch.mock.calls[0][2]).toBe(60_000);
 	});
 
+	it('keeps 60 s for a filtered certificate overview', async () => {
+		await GET(event('/api/certificates/overview?from=a&to=b&site=example.com&server=203.0.113.9') as never);
+		expect(daemonFetch.mock.calls[0][2]).toBe(60_000);
+	});
+
+	// NET-160: the daemon's drill-down budget is 25 s; the default 10 s would cut it off as unreachable
+	it.each(['/api/addresses/203.0.113.9?from=a&to=b', '/api/addresses/2001%3Adb8%3A%3A1', '/api/domains/example.com?from=a&to=b'])(
+		'gives %s 30 s',
+		async (path) => {
+			await GET(event(path) as never);
+			expect(daemonFetch.mock.calls[0][2]).toBe(30_000);
+		},
+	);
+
+	it('passes a daemon 503 through with its reason', async () => {
+		daemonFetch.mockResolvedValue(
+			new Response(JSON.stringify({ error: 'busy' }), { status: 503, headers: { 'Content-Type': 'application/json' } }),
+		);
+		const res = await GET(event('/api/addresses/203.0.113.9') as never);
+		expect(res.status).toBe(503);
+		expect(await res.json()).toEqual({ error: 'busy' });
+	});
+
 	it('lets PCAP downloads run as long as the browser keeps the request open', async () => {
 		for (const path of ['/api/pcap/download-file?file=a.pcap', '/api/pcap/download?filter=dns']) {
 			daemonFetch.mockClear();

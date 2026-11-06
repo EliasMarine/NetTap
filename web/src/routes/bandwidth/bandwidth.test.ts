@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
+import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
 describe('Bandwidth', () => {
 	it('should export a Svelte component', async () => {
@@ -101,7 +102,9 @@ const HEATMAP = {
 	from: '', to: '', days: [], hours: [],
 	matrix: Array.from({ length: 7 }, (_, d) => Array.from({ length: 24 }, (_, h) => (d === 3 && h === 21 ? 4 * GB : 0))),
 };
-const ALL = { '/api/bandwidth/monthly': MONTHLY, '/api/bandwidth/daily': DAILY, '/api/bandwidth/devices': DEVICES, '/api/bandwidth/heatmap': HEATMAP };
+/** NET-160: the daemon's LAN policy, so LAN addresses link to their device page. */
+const LAN_POLICY = { version: 'v1', subnets: ['192.168.1.0/24'], source: 'env', ipv6: 'not-lan' };
+const ALL = { '/api/bandwidth/monthly': MONTHLY, '/api/bandwidth/daily': DAILY, '/api/bandwidth/devices': DEVICES, '/api/bandwidth/heatmap': HEATMAP, '/api/network/lan': LAN_POLICY };
 
 describe('Bandwidth — cards', () => {
 	afterEach(() => vi.unstubAllGlobals());
@@ -109,11 +112,20 @@ describe('Bandwidth — cards', () => {
 	it('shows the month KPIs, the daily chart, top consumers, the table and the heatmap', async () => {
 		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 		stubDaemon(ALL);
-		render(Page);
+		const { container } = render(Page);
 		expect((await screen.findByText('Projected')).closest('.kpi')).toHaveTextContent('45.0GB');
 		expect(screen.getByText('Days remaining').closest('.kpi')).toHaveTextContent('28days');
 		expect(screen.getByRole('img', { name: /^Busiest day Nov 2, with 5\.0 GB/ })).toBeInTheDocument();
-		expect(screen.getByRole('link', { name: /192\.168\.1\.9/ })).toHaveAttribute('href', '/devices/192.168.1.9');
+		// OLD CODE START — NET-160: the table's address is a link now too, so there are two
+		// expect(screen.getByRole('link', { name: /192\.168\.1\.9/ })).toHaveAttribute('href', '/devices/192.168.1.9');
+		// OLD CODE END
+		// top consumers and the table's address both drill down to the device (a LAN address)
+		await vi.waitFor(() => {
+			const links = screen.getAllByRole('link', { name: /192\.168\.1\.9/ });
+			expect(links).toHaveLength(2);
+			for (const link of links) expect(link).toHaveAttribute('href', '/devices/192.168.1.9');
+		});
+		expectNoNestedInteractive(container);
 		const rows = screen.getAllByRole('row').slice(1).map((r) => r.querySelector('td')?.textContent?.trim());
 		expect(rows).toEqual(['192.168.1.10', '192.168.1.9']);
 		expect(screen.getByRole('img', { name: 'Busiest hour Thu 21:00, with 4.0 GB' })).toBeInTheDocument();

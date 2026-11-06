@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import ConnectionDrawer from './ConnectionDrawer.svelte';
+import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
 const CONNECTION = { 'id.orig_h': '10.0.0.5', 'id.resp_h': '1.1.1.1', 'id.orig_p': 50000, 'id.resp_p': 443, proto: 'tcp' };
 
@@ -48,5 +49,31 @@ describe('ConnectionDrawer TShark tab when a request fails (#96)', () => {
 		await openTSharkTab();
 
 		expect(await screen.findByText('TShark is not available.')).toBeInTheDocument();
+	});
+});
+
+// NET-160: the TLS name (SNI) opens its domain page
+describe('ConnectionDrawer TLS details', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('links the SNI to its domain page, with nothing nested', () => {
+		stubFetch({});
+		const { container } = render(ConnectionDrawer, {
+			props: { connection: { ...CONNECTION, zeek: { ssl: { server_name: 'WWW.Example.com' } } }, deviceIp: '10.0.0.5', onclose: () => {} },
+		});
+		expect(screen.getByRole('link', { name: 'WWW.Example.com' })).toHaveAttribute('href', '/domain/www.example.com');
+		expectNoNestedInteractive(container);
+	});
+});
+
+// NET-160: a related source that isn't on your network opens its address page, not a device page
+describe('ConnectionDrawer related activity', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('links an internet source to its address page', async () => {
+		stubFetch({});
+		render(ConnectionDrawer, { props: { connection: { ...CONNECTION, source: { ip: '203.0.113.7' } }, deviceIp: '10.0.0.5', onclose: () => {} } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Related activity' }));
+		expect(screen.getByRole('link', { name: /Address: 203.0.113.7/ })).toHaveAttribute('href', '/address/203.0.113.7');
 	});
 });

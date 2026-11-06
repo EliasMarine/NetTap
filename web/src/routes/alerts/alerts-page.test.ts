@@ -6,7 +6,8 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
-import { readable, get } from 'svelte/store';
+// OLD CODE START: import { readable, get } from 'svelte/store'; — the page mock no longer uses readable OLD CODE END
+import { get } from 'svelte/store';
 import {
 	getAlerts,
 	getAlertCount,
@@ -24,9 +25,20 @@ import {
 import { _configure as resetAlertSnapshots, alertSnapshots, loadAlertSnapshot } from '$lib/stores/alertSnapshot';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
+import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
+/** NET-160: the daemon's LAN policy, so LAN addresses link to their device page. */
+const LAN_POLICY = { version: 'v1', subnets: ['192.168.1.0/24'], source: 'env', ipv6: 'not-lan' };
+const lanReply = () => Promise.resolve({ ok: true, status: 200, json: async () => LAN_POLICY });
+
+// OLD CODE START — a fixed URL, so ?range= couldn't be tested
+// vi.mock('$app/stores', () => ({
+// 	page: readable({ url: new URL('http://localhost/alerts') }),
+// }));
+// OLD CODE END
+const nav = vi.hoisted(() => ({ url: new URL('http://localhost/alerts') }));
 vi.mock('$app/stores', () => ({
-	page: readable({ url: new URL('http://localhost/alerts') }),
+	page: { subscribe: (fn: (v: { url: URL }) => void) => (fn({ url: nav.url }), () => {}) },
 }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$api/alerts', async (importOriginal) => ({
@@ -134,9 +146,11 @@ function failAll() {
 beforeEach(() => {
 	resetAlertSnapshots({});
 	vi.clearAllMocks();
+	vi.stubGlobal('fetch', vi.fn(lanReply));
 });
 
 afterEach(() => {
+	nav.url = new URL('http://localhost/alerts');
 	vi.unstubAllGlobals();
 	vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 });
@@ -255,6 +269,35 @@ describe('Alerts — refresh contract', () => {
 // ---------------------------------------------------------------------------
 // Severity summary: the shared snapshot (PLAN.md §4.1)
 // ---------------------------------------------------------------------------
+
+describe('Alerts — window from a link (NET-160)', () => {
+	const spanHours = () => {
+		const opts = vi.mocked(getAlertTimeline).mock.calls.at(-1)![0]!;
+		return (Date.parse(opts.to!) - Date.parse(opts.from!)) / 3_600_000;
+	};
+
+	it.each([
+		['7d', 168, '6h'],
+		['30d', 720, '1d'],
+	])('opens on ?range=%s, so a count from the address page matches the list', async (value, hours, interval) => {
+		nav.url = new URL(`http://localhost/alerts?ip=198.51.100.10&range=${value}`);
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(screen.getByRole('button', { name: value })).toHaveAttribute('aria-pressed', 'true');
+		expect(spanHours()).toBe(hours);
+		expect(vi.mocked(getAlertTimeline).mock.calls.at(-1)![0]!.interval).toBe(interval);
+	});
+
+	it('keeps its own 24 hours for a range it does not offer', async () => {
+		nav.url = new URL('http://localhost/alerts?range=90d');
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(screen.getByRole('button', { name: '24h' })).toHaveAttribute('aria-pressed', 'true');
+		expect(spanHours()).toBe(24);
+	});
+});
 
 describe('Alerts — severity summary', () => {
 	it('shares the sidebar\'s in-flight count instead of asking again, and shows the same numbers', async () => {
@@ -378,12 +421,16 @@ describe('Alerts — card states', () => {
 
 	it('shows the loaded data: categories link to their page, the threat score and its level', async () => {
 		succeedAll();
-		render(Page);
+		const { container } = render(Page);
 		await flush();
 		expect(screen.getByRole('link', { name: 'Malware & C2' })).toHaveAttribute('href', '/alerts/malware_c2');
 		expect(screen.getByRole('img', { name: 'Threat score 42 of 100, level medium' })).toBeInTheDocument();
 		expect(screen.getByText('Malware / C2')).toBeInTheDocument();
-		expect(screen.getAllByRole('link', { name: '192.168.1.42' })[0]).toHaveAttribute('href', '/devices/192.168.1.42');
+		// NET-160: every 192.168.1.42 link (top affected devices, the table) goes to its device page
+		const links = screen.getAllByRole('link', { name: '192.168.1.42' });
+		expect(links.length).toBeGreaterThan(1);
+		for (const link of links) expect(link).toHaveAttribute('href', '/devices/192.168.1.42');
+		expectNoNestedInteractive(container);
 	});
 
 	it('a top signature filters the list, and selecting it again clears the filter', async () => {
@@ -465,8 +512,13 @@ describe('Alerts — drawer', () => {
 	it('links to the connections, both devices and the Log Explorer', async () => {
 		const drawer = await openFromRow();
 		expect(within(drawer).getByRole('link', { name: 'View connections' })).toHaveAttribute('href', '/connections?ip=192.168.1.42');
-		expect(within(drawer).getByRole('link', { name: 'View source device' })).toHaveAttribute('href', '/devices/192.168.1.42');
-		expect(within(drawer).getByRole('link', { name: 'View destination device' })).toHaveAttribute('href', '/devices/203.0.113.45');
+		// OLD CODE START — NET-160: "View … device" sent internet addresses to a device page
+		// expect(within(drawer).getByRole('link', { name: 'View source device' })).toHaveAttribute('href', '/devices/192.168.1.42');
+		// expect(within(drawer).getByRole('link', { name: 'View destination device' })).toHaveAttribute('href', '/devices/203.0.113.45');
+		// OLD CODE END
+		expect(within(drawer).getByRole('link', { name: 'Open source device' })).toHaveAttribute('href', '/devices/192.168.1.42');
+		expect(within(drawer).getByRole('link', { name: 'Open destination address' })).toHaveAttribute('href', '/address/203.0.113.45');
+		expectNoNestedInteractive(drawer);
 		const logs = within(drawer).getByRole('link', { name: 'View in Log Explorer' }).getAttribute('href')!;
 		expect(decodeURIComponent(logs)).toBe('/logs?query=(source.ip:"192.168.1.42" OR destination.ip:"192.168.1.42") OR (source.ip:"203.0.113.45" OR destination.ip:"203.0.113.45")');
 	});
@@ -506,7 +558,8 @@ describe('Alerts — drawer', () => {
 		const fetchMock = vi.fn()
 			.mockResolvedValueOnce({ ok: false, status: 502, json: async () => ({}) })
 			.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ hits: [{ _id: 'z1', _source: { '@timestamp': '2026-11-03T10:01:00Z', 'event.dataset': 'conn', 'source.ip': '192.168.1.42', 'destination.ip': '203.0.113.45' } }] }) });
-		vi.stubGlobal('fetch', fetchMock);
+		// NET-160: the address links fetch the LAN policy themselves; only the drawer's requests are counted
+		vi.stubGlobal('fetch', vi.fn((url: string) => (String(url) === '/api/network/lan' ? lanReply() : fetchMock(url))));
 		const drawer = await openFromRow();
 		expect(fetchMock).not.toHaveBeenCalled();
 		await fireEvent.click(within(drawer).getByRole('button', { name: /Related events/ }));

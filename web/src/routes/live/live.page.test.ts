@@ -9,6 +9,7 @@ import { getLiveDashboard } from '$lib/api/live';
 import type { LiveConnection, LiveDashboardResponse } from '$lib/api/live';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
+import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$lib/api/live', async (importOriginal) => ({
@@ -101,7 +102,9 @@ async function renderLive() {
 
 describe('Live filters', () => {
 	it('country alone: a map hotspot narrows the feed and shows a chip', async () => {
-		await renderLive();
+		const { container } = await renderLive();
+		// NET-160: each row's addresses are links beside the row button, never inside it
+		expectNoNestedInteractive(container);
 		await fireEvent.click(hotspot('Netherlands'));
 		expect(feed()).toEqual(['203.0.113.4', '203.0.113.1']);
 		expect(chips()).toEqual(['Country: NL']);
