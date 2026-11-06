@@ -8,6 +8,7 @@ indices in OpenSearch.
 
 import calendar
 import logging
+import math
 import os
 from datetime import datetime, timezone
 from typing import Any
@@ -362,7 +363,12 @@ class BandwidthTracker:
 
         # Calculate days elapsed in this month
         if now.year == year and now.month == month:
-            days_elapsed = now.day + (now.hour / 24.0)
+            # OLD CODE START — 2026-11-06 (O1): counted the current day as already over, so
+            # 06:00 on the 1st was 1.25 days in: the rate and projection were a day too low
+            # days_elapsed = now.day + (now.hour / 24.0)
+            # OLD CODE END
+            month_start = datetime(year, month, 1, tzinfo=timezone.utc)
+            days_elapsed = (now - month_start).total_seconds() / 86400
         elif (now.year > year) or (now.year == year and now.month > month):
             days_elapsed = float(days_in_month)
         else:
@@ -380,7 +386,11 @@ class BandwidthTracker:
             "month": month,
             "current_bytes": current_bytes,
             "projected_bytes": projected_bytes,
-            "days_elapsed": round(days_elapsed, 1),
+            # OLD CODE START — 2026-11-06 (O1): rounding up read "0 days remaining" before the month ended
+            # "days_elapsed": round(days_elapsed, 1),
+            # OLD CODE END
+            # Rounded down: the page's days remaining is days_in_month minus its whole days
+            "days_elapsed": math.floor(days_elapsed * 10) / 10,
             "days_in_month": days_in_month,
             "daily_rate_bytes": int(current_bytes / days_elapsed)
             if days_elapsed > 0

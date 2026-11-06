@@ -309,6 +309,31 @@ class TestBandwidthTrackerWithClient(unittest.TestCase):
 
         self.assertFalse(result["exceeds_cap"])
 
+    def _project_at(self, now: datetime, used: int) -> dict:
+        self.mock_client.search.return_value = {
+            "aggregations": {"orig_bytes": {"value": used}, "resp_bytes": {"value": 0}}
+        }
+        with patch("services.bandwidth_tracker.datetime") as mock_dt:
+            mock_dt.now.return_value = now
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            return self.tracker.get_projected_monthly(now.year, now.month)
+
+    def test_projection_on_day_one_counts_hours_not_a_whole_day(self):
+        """O1: 06:00 on the 1st is a quarter day in, not 1.25 days (now.day + hour/24)."""
+        result = self._project_at(datetime(2026, 11, 1, 6, tzinfo=timezone.utc), 1000)
+        self.assertEqual(result["days_elapsed"], 0.2)  # 0.25, rounded down
+        self.assertEqual(result["daily_rate_bytes"], 4000)
+        self.assertEqual(result["projected_bytes"], 120_000)  # 4000 a day x 30 days
+
+    def test_projection_on_the_last_day(self):
+        """O1: noon on the 30th of November is 29.5 days in, and a day is still left."""
+        result = self._project_at(datetime(2026, 11, 30, 12, tzinfo=timezone.utc), 59_000)
+        self.assertEqual(result["days_elapsed"], 29.5)
+        self.assertEqual(result["daily_rate_bytes"], 2000)
+        self.assertEqual(result["projected_bytes"], 60_000)
+        late = self._project_at(datetime(2026, 11, 30, 23, 59, tzinfo=timezone.utc), 1)
+        self.assertLess(late["days_elapsed"], 30)  # the page still shows 1 day remaining
+
     def test_hourly_heatmap(self):
         """Should parse heatmap from OpenSearch aggregation."""
         self.mock_client.search.return_value = {
