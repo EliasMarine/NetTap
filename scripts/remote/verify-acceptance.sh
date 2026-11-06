@@ -43,7 +43,17 @@ echo "   $(git branch --show-current) @ $(git log -1 --format='%h %s') (origin: 
 echo ""
 
 echo "→ Step 2: Containers..."
-UNHEALTHY=$(sudo docker ps -a --filter name=nettap- --format '{{.Names}} {{.Status}}' | grep -v -E 'Up .*\(healthy\)|Up [0-9]+ (seconds|minutes|hours|days)$|Up About' | tr '\n' ';')
+# PCAP capture switched off in Settings (the toggle writes this and stops the container, NET-179):
+# its stopped container and its old files are the setting, not a fault
+PCAP_OFF=0
+if sudo docker exec nettap-storage-daemon grep -q '^PCAP_CAPTURE_ENABLED="\?false"\?$' /opt/nettap/data/.env 2>/dev/null; then
+    PCAP_OFF=1
+    echo "   · PCAP capture is off in Settings: nettap-pcap-capture is stopped on purpose and isn't counted below"
+fi
+# OLD CODE START — NET-179: a capture switched off in Settings counted as an unhealthy container
+# UNHEALTHY=$(sudo docker ps -a --filter name=nettap- --format '{{.Names}} {{.Status}}' | grep -v -E 'Up .*\(healthy\)|Up [0-9]+ (seconds|minutes|hours|days)$|Up About' | tr '\n' ';')
+# OLD CODE END
+UNHEALTHY=$(sudo docker ps -a --filter name=nettap- --format '{{.Names}} {{.Status}}' | grep -v -E 'Up .*\(healthy\)|Up [0-9]+ (seconds|minutes|hours|days)$|Up About' | { if [ "$PCAP_OFF" = 1 ]; then grep -v -E '^nettap-pcap-capture Exited \(0\)'; else cat; fi; } | tr '\n' ';')
 RUNNING=$(sudo docker ps --filter name=nettap- --format '{{.Names}}' | wc -l)
 if [ -z "$UNHEALTHY" ]; then rc=0; else rc=1; fi
 check "every NetTap container up and healthy" "$rc" "$RUNNING running${UNHEALTHY:+; not healthy: $UNHEALTHY}"
@@ -132,8 +142,16 @@ check "capture port up, promiscuous, healthy" "$rc" "${MODE:-?} on ${IFACE:-?}, 
 if awk -v d="${DROP:-100}" 'BEGIN {exit !(d < 0.1)}'; then rc=0; else rc=1; fi
 check "capture drop rate under 0.1%" "$rc" "${DROP:-?}%"
 NEWEST_AGE=$(field NEWEST 3)
-if [ -n "$NEWEST_AGE" ] && [ "$NEWEST_AGE" -lt 900 ]; then rc=0; else rc=1; fi
-check "netsniff is writing PCAP" "$rc" "newest $(field NEWEST 2), written ${NEWEST_AGE:-?} s ago, $(field NEWEST 4) files"
+# OLD CODE START — NET-179: failed while capture was switched off in Settings
+# if [ -n "$NEWEST_AGE" ] && [ "$NEWEST_AGE" -lt 900 ]; then rc=0; else rc=1; fi
+# check "netsniff is writing PCAP" "$rc" "newest $(field NEWEST 2), written ${NEWEST_AGE:-?} s ago, $(field NEWEST 4) files"
+# OLD CODE END
+if [ "$PCAP_OFF" = 1 ]; then
+    echo "   · netsniff isn't writing PCAP: capture is off in Settings (newest $(field NEWEST 2), written ${NEWEST_AGE:-?} s ago, $(field NEWEST 4) files)"
+else
+    if [ -n "$NEWEST_AGE" ] && [ "$NEWEST_AGE" -lt 900 ]; then rc=0; else rc=1; fi
+    check "netsniff is writing PCAP" "$rc" "newest $(field NEWEST 2), written ${NEWEST_AGE:-?} s ago, $(field NEWEST 4) files"
+fi
 for provider in zeek suricata; do
     N=$(os_query "/arkime_sessions3-*/_count?q=event.provider:$provider%20AND%20@timestamp:%3Enow-5m" | grep -o '"count":[0-9]*' | cut -d: -f2)
     if [ "${N:-0}" -gt 0 ]; then rc=0; else rc=1; fi
