@@ -17,6 +17,7 @@
 	import Bytes from '$lib/components/ui/Bytes.svelte';
 	import AreaChart, { type AreaSeries } from '$lib/components/ui/charts/AreaChart.svelte';
 	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
+	import { ipHref } from '$lib/stores/lan';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -228,7 +229,10 @@
 			ip: '',
 			value: d.total_bytes,
 			display: `${formatBytes(d.total_bytes)} · ${d.percent_of_total}%`,
-			href: '/devices/' + d.ip,
+			// OLD CODE START — NET-160: unencoded, and the device page for every address
+			// href: '/devices/' + d.ip,
+			// OLD CODE END
+			href: $ipHref(d.ip),
 		})),
 	);
 

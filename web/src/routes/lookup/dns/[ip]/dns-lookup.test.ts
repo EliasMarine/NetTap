@@ -34,6 +34,9 @@ describe('DNS lookup page', () => {
 		expect(screen.getByText('Reverse DNS (PTR)')).toBeInTheDocument();
 		expect(screen.getByRole('link', { name: 'WHOIS lookup' })).toHaveAttribute('href', '/lookup/whois/8.8.8.8');
 		expect(screen.getByRole('heading', { level: 1, name: 'DNS lookup' })).toBeInTheDocument();
+		// NET-160: an internet address opens its address page, never a device page
+		expect(screen.getByRole('link', { name: 'Open address page' })).toHaveAttribute('href', '/address/8.8.8.8');
+		expect(screen.queryByRole('link', { name: 'View device details' })).not.toBeInTheDocument();
 	});
 
 	it('says so when there is no reverse record', async () => {

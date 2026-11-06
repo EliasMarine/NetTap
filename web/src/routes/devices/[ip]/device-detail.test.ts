@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
 import { getSmartAlerts, suppressAlert } from '$api/alerts';
 import Page from './+page.svelte';
+import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
 
 const { IP } = vi.hoisted(() => ({ IP: '192.168.1.10' }));
 
@@ -19,8 +20,8 @@ vi.mock('$api/devices', () => ({
 			alert_count: 1,
 			first_seen: '2026-10-29T00:00:00Z',
 			last_seen: '2026-10-29T01:00:00Z',
-			top_destinations: [],
-			dns_queries: [],
+			top_destinations: [{ ip: '203.0.113.9', bytes: 2048, connections: 2 }],
+			dns_queries: [{ domain: 'Example.COM', count: 4 }],
 			bandwidth_series: [],
 			protocols: [],
 		},
@@ -85,6 +86,21 @@ describe('Device detail — suppress smart alert', () => {
 
 		expect(screen.queryByText(ALERT.signature)).not.toBeInTheDocument();
 		expect(screen.queryByText('Suppress failed. Try again.')).not.toBeInTheDocument();
+	});
+});
+
+// NET-160: a looked-up domain opens its domain page, a destination its address page, nothing nested
+describe('Device detail — drill-down links', () => {
+	beforeEach(() => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+	});
+
+	it('links the DNS domain and the destination address', async () => {
+		const { container } = render(Page);
+		await flush();
+		expect(await screen.findByRole('link', { name: 'Example.COM' })).toHaveAttribute('href', '/domain/example.com');
+		expect(screen.getByRole('link', { name: '203.0.113.9' })).toHaveAttribute('href', '/address/203.0.113.9');
+		expectNoNestedInteractive(container);
 	});
 });
 

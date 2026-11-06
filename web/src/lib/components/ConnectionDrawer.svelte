@@ -13,6 +13,7 @@
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { unwrap, getPacketSummary, formatDuration, formatBytes, CONN_STATE_DESC } from '$lib/utils/tshark-helpers';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { domainHref, ipHref, isLan } from '$lib/stores/lan';
 
 	// ---------------------------------------------------------------------------
 	// Props
@@ -463,7 +464,8 @@
 							{#if tlsSni}
 								<div class="detail-item">
 									<span class="detail-label">SNI</span>
-									<span class="detail-value">{tlsSni}</span>
+									<!-- OLD CODE START: <span class="detail-value">{tlsSni}</span> (NET-160: not a link) OLD CODE END -->
+									<a class="detail-value" href={domainHref(tlsSni)}>{tlsSni}</a>
 								</div>
 							{/if}
 							{#if tlsJa3}
@@ -603,9 +605,14 @@
 						{/if}
 
 						{#if srcIp && srcIp !== deviceIp}
+							<!-- OLD CODE START (NET-160: the device page for internet sources too)
 							<a href="/devices/{encodeURIComponent(srcIp)}" class="related-item">
 								<span class="tag related-type">Conn</span>
 								<span class="related-text">Device: {srcIp}</span>
+							OLD CODE END -->
+							<a href={$ipHref(srcIp)} class="related-item">
+								<span class="tag related-type">Conn</span>
+								<span class="related-text">{$isLan(srcIp) === true ? 'Device' : 'Address'}: {srcIp}</span>
 								<Icon name="back" class="chev related-arrow" />
 							</a>
 						{/if}

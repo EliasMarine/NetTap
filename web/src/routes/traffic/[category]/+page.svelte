@@ -549,7 +549,8 @@
 
 {#snippet deviceCell(device: CategoryDevice)}
 	<a href="/devices/{encodeURIComponent(device.ip)}" class="device">
-		<IPAddress ip={device.ip} />
+		<!-- OLD CODE START: <IPAddress ip={device.ip} /> (NET-160: a link and menu inside this link) OLD CODE END -->
+		<IPAddress ip={device.ip} linked={false} />
 		{#if device.hostname}<span class="hostname trunc" title={device.hostname}>{device.hostname}</span>{/if}
 	</a>
 {/snippet}

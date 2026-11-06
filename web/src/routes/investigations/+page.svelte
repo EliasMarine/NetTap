@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
+	import { ipHref } from '$lib/stores/lan';
 	import {
 		getInvestigations,
 		createInvestigation,
@@ -535,7 +536,8 @@
 						<h3 class="eyebrow">Linked devices ({inv.device_ips.length})</h3>
 						<ul class="linked">
 							{#each inv.device_ips as ip}
-								<li><Icon name="devices" /><a class="link mono" href="/devices/{ip}">{ip}</a></li>
+								<!-- OLD CODE START: <li><Icon name="devices" /><a class="link mono" href="/devices/{ip}">{ip}</a></li> (NET-160: internet addresses went to a device page, unencoded) OLD CODE END -->
+								<li><Icon name="devices" /><a class="link mono" href={$ipHref(ip)}>{ip}</a></li>
 							{/each}
 						</ul>
 					</section>

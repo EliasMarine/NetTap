@@ -12,6 +12,7 @@
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { ipHref, isLan } from '$lib/stores/lan';
 
 	let ip = $derived($page.params.ip);
 	let result = $state<{ ip: string; hostname: string | null; aliases: string[]; addresses: string[]; error: string | null } | null>(null);
@@ -132,7 +133,10 @@
 				</dd>
 			</dl>
 			<div class="actions result-actions">
+				<!-- OLD CODE START — NET-160: the device page for internet addresses too
 				<a class="btn" href="/devices/{encodeURIComponent(result.ip ?? '')}">View device details</a>
+				OLD CODE END -->
+				<a class="btn" href={$ipHref(result.ip ?? '')}>{$isLan(result.ip ?? '') === true ? 'View device details' : 'Open address page'}</a>
 				<a class="btn" href="/geoip/{encodeURIComponent(result.ip ?? '')}">GeoIP lookup</a>
 				<a class="btn" href="/lookup/whois/{encodeURIComponent(result.ip ?? '')}">WHOIS lookup</a>
 			</div>

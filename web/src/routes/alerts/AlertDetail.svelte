@@ -12,6 +12,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import IPAddress from '$components/IPAddress.svelte';
+	import { ipHref, isLan } from '$lib/stores/lan';
 	import DrawerSection from '$components/drawer/DrawerSection.svelte';
 	import KVRow from '$components/drawer/KVRow.svelte';
 	import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
@@ -60,7 +61,9 @@
 			: ts;
 	}
 
-	const device = (ip: string) => `/devices/${encodeURIComponent(ip)}`;
+	// OLD CODE START — NET-160: the device page for every address, internet ones included
+	// const device = (ip: string) => `/devices/${encodeURIComponent(ip)}`;
+	// OLD CODE END
 </script>
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && onclose()} />
@@ -110,8 +113,12 @@
 			<button class="btn" type="button" title="Suppress this signature" disabled={busy} onclick={() => act(onsuppress)}>Suppress</button>
 			<button class="btn" type="button" title="Mark as false positive" disabled={busy} onclick={() => act(onfalsepositive)}>False positive</button>
 		{/if}
+		<!-- OLD CODE START — NET-160
 		{#if alert.src_ip}<a class="btn" href={device(alert.src_ip)}>View source device</a>{/if}
 		{#if alert.dest_ip}<a class="btn" href={device(alert.dest_ip)}>View destination device</a>{/if}
+		OLD CODE END -->
+		{#if alert.src_ip}<a class="btn" href={$ipHref(alert.src_ip)}>{$isLan(alert.src_ip) === true ? 'Open source device' : 'Open source address'}</a>{/if}
+		{#if alert.dest_ip}<a class="btn" href={$ipHref(alert.dest_ip)}>{$isLan(alert.dest_ip) === true ? 'Open destination device' : 'Open destination address'}</a>{/if}
 		<a class="btn" href={logExplorerHref(alert)}><Icon name="logs" />View in Log Explorer</a>
 	</div>
 	<div class="more">

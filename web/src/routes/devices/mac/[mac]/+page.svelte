@@ -27,6 +27,7 @@
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import DeviceTile from '$lib/components/ui/DeviceTile.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { domainHref } from '$lib/stores/lan';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 
 	type Destination = DeviceTraffic['top_destinations'][number];
@@ -171,7 +172,8 @@
 {#snippet destCell(d: Destination)}<span class="mono"><IPAddress ip={d.ip} /></span>{/snippet}
 {#snippet destBytesCell(d: Destination)}{formatBytesShort(d.bytes)}{/snippet}
 {#snippet destConnCell(d: Destination)}{d.connections.toLocaleString()}{/snippet}
-{#snippet domainCell(q: DnsQuery)}<span class="mono trunc" title={q.domain}>{q.domain}</span>{/snippet}
+<!-- OLD CODE START: {#snippet domainCell(q: DnsQuery)}<span class="mono trunc" title={q.domain}>{q.domain}</span>{/snippet} (NET-160: not a link) OLD CODE END -->
+{#snippet domainCell(q: DnsQuery)}<a class="mono trunc" href={domainHref(q.domain)} title={q.domain}>{q.domain}</a>{/snippet}
 {#snippet dnsCountCell(q: DnsQuery)}{q.count.toLocaleString()}{/snippet}
 {#snippet sevCell(a: TrafficAlert)}<SeverityPill level={alertLevel(a.severity)} />{/snippet}
 {#snippet sigCell(a: TrafficAlert)}<span class="sig trunc" title={a.signature}>{a.signature}</span>{/snippet}

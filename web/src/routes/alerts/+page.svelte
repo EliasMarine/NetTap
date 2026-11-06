@@ -34,6 +34,7 @@
 	// import AlertDetailPanel from '$components/AlertDetailPanel.svelte';
 	// OLD CODE END
 	import IPAddress from '$components/IPAddress.svelte';
+	import { ipHref } from '$lib/stores/lan';
 	// OLD CODE START — 2026-11-03 redesign: the system's BarList and the docked drawer column
 	// import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	// import DetailDrawer from '$components/DetailDrawer.svelte';
@@ -911,8 +912,12 @@
 	);
 	const threatPill = $derived(THREAT_LEVELS.find((l) => l === threatLevel));
 
+	// OLD CODE START — NET-160: the device page for every address, unencoded
+	// const ipBars = (entries: AlertIpEntry[]) =>
+	// 	entries.map((e) => ({ key: e.ip, label: e.ip, value: e.count, display: fmt(e.count), href: `/devices/${e.ip}` }));
+	// OLD CODE END
 	const ipBars = (entries: AlertIpEntry[]) =>
-		entries.map((e) => ({ key: e.ip, label: e.ip, value: e.count, display: fmt(e.count), href: `/devices/${e.ip}` }));
+		entries.map((e) => ({ key: e.ip, label: e.ip, value: e.count, display: fmt(e.count), href: $ipHref(e.ip) }));
 
 	const columns: Column<Alert>[] = [
 		{ key: 'timestamp', label: 'Time', cell: timeCell },
