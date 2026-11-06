@@ -1,6 +1,6 @@
 # 2026-11-06 — Drill down from every IP and domain (NET-160, slice 1)
 
-**Status:** built on `feature/drill-down-links`. The PR and the G11 check are pending.
+**Status:** built and reviewed on `feature/drill-down-links`. The PR and the G11 check are pending.
 
 **Problem**
 
@@ -64,13 +64,60 @@ Before this change:
 - The catch-all proxy gives `/api/addresses` and `/api/domains` 30 s; the explicit `/api/traffic/connections` proxy forwards `ip`.
 - Visual fixtures for both pages; DESIGN-SYSTEM.md states the link rules.
 
+**Review fixes**
+
+`/deep-review` (full) found nothing. The two-angle review (security, TypeScript, Python) and `/ponytail-review` found no Critical issues. Everything below is fixed:
+
+- Accuracy:
+  - Different spellings of one DNS answer (case, a trailing dot, IPv6 case, a TXT copy of an A record) became duplicate rows, and a duplicate key stopped the domain page rendering. Answers now merge by kind and value, and rows are keyed by position.
+  - Zeek logs some connections with two services (`quic,ssl`). Grouping ports by service counted them twice, so ports now group by port and transport and list their services.
+  - The threat-intel verdict came only from the cache the Threats page fills. It now also checks this window's listing-rule alerts, with the Threats page's rule that the address must be the alert's one internet endpoint.
+  - TLS names merge by canonical name.
+  - An address is no longer its own peer.
+  - Cut short lists fail with a reason.
+- Address page:
+  - It showed the previous address's connections after a same-page navigation. Fixed.
+  - A truncated list's subtitle now says "First N".
+  - A non-numeric byte value showed "0 B"; it now shows "—".
+  - The no-name TLS row no longer links to every certificate on the server.
+  - The ports in its connections table never showed. Fixed.
+- Validators reject a missing `partial`, `threat_intel` or completeness flag, so a malformed reply reaches the error state.
+- Timing and errors:
+  - The budget is now 20 s, so the daemon's own reason always beats the proxy's 30 s.
+  - OpenSearch timeouts are a 503 "try a shorter range", where they used to be a 502.
+  - An unexpected error is a JSON 500.
+  - Lists cap at 5,000, flagged.
+- Privacy: reverse DNS runs on click, like WHOIS, because an automatic PTR look-up tells whoever runs the address that someone looked.
+- Windows: the Alerts count links to `/alerts?ip=&range=`. Alerts and Log Explorer read `?range=`, and Alerts gained 30d.
+- Connections:
+  - Only a whole IP becomes the `ip` filter; "tcp:443" is text again.
+  - The daemon's reason is shown.
+  - The same link re-applies after an edit.
+- Lean:
+  - one slot runner, shared with Certificates (`run_in_slot`);
+  - shared query fragments;
+  - the IPv4 maths reused from `dhcpSubnet.ts`;
+  - one `canonicalName()` and one `getJson`;
+  - unused options deleted.
+- Deploy script:
+  - the token can't be reached from its `eval`;
+  - each page is fetched once;
+  - the mapping check needs at least one mapped field;
+  - the raw counts use the daemon's own exclusions and listing rules.
+
+**Known limits (by decision)**
+- One DNS response that carries two spellings of the same answer counts twice in the merged row.
+- The Connections table reaches the newest 10,000 rows. Log Explorer's HTTP match is case-sensitive. TLS counts can exceed the Certificates counts (TLS 1.3, resumed sessions, excluded addresses). Each page says so.
+
 **Tests**
-- Daemon: 3,112 passed, 1 skipped (was 3,053). ruff clean.
-- Web: 3,118 passed (was 3,006). svelte-check 0 errors. Colour gate clean. e2e tsc ok.
+- Daemon: 3,131 passed, 1 skipped (was 3,053). ruff and shellcheck clean.
+- Web: 3,181 passed (was 3,006). svelte-check 0 errors. Colour gate clean. e2e tsc ok. Visual 207 passed.
 
 **Still to do**
-- `/deep-review`, `/ponytail-review`, the two-angle review, the PR, then the device check.
+- The PR, then the device check: `bash /home/nettap/NetTap/scripts/remote/deploy-drill-down.sh` (BRANCH is `main`, so run it after the merge).
 
 **Lessons**
+- A keyed list built from network data needs keys that can't collide after the daemon normalises them: two spellings become one value. Key by position, or merge on the daemon.
+- A figure that links to a list must pass its window on, or the list opens on its own default and disagrees with the number.
 - An explicit proxy with a parameter allowlist silently drops new parameters. Check every `+server.ts` between the page and the daemon when an API gains one. Codex caught this in round 4.
 - `complete_terms` discards its completeness flag. Use composite paging when the page presents a list as whole.

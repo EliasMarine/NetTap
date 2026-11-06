@@ -7,7 +7,7 @@
 * Base Ref: `origin/main`
 * Base Ref Commit Date: `2026-11-06T08:03:31-08:00`
 * Inspected Branch or PR: `feature/drill-down-links`
-* Current Commit: `0f43a25`
+* Current Commit: `b8d766f` (delta re-run over 0f43a25..b8d766f: the review fixes; the full review ran at 0f43a25)
 * Review Scope: `committed-only`
 * Diff Sources: `origin/main...HEAD`
 * Dirty Working Tree Included: `no`
@@ -33,7 +33,7 @@ Security-relevant source (101 changed files in all; tests, docs, plans and visua
 * Sinks considered: injection (OpenSearch DSL), auth, path traversal, SSRF, XSS / href injection, secret exposure, error-message disclosure, resource bounds of the new runner
 * Regression patterns checked: removed sanitizers, weakened types, auth-default flips, tenant-filter removal, visibility changes
 * Trusted rule memory: none
-* Limitations / unresolved edges: large diff reviewed per cluster (daemon routes, changed daemon routes, web proxies and links, device script); single-tenant app, so no tenant boundary applies
+* Limitations / unresolved edges: delta re-run covered the review-fix hunks (slot runner shared with Certificates, catch-all 500, listing-rule alert check, ?range= on Alerts and Log Explorer, deploy script token scope); large diff reviewed per cluster (daemon routes, changed daemon routes, web proxies and links, device script); single-tenant app, so no tenant boundary applies
 * Not covered (by design): DoS/ReDoS, rate limiting, dependency CVEs, generic hardening — run the two-angle review for those
 * External analysis consumed: none
 

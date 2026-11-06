@@ -19,7 +19,7 @@
 set -u
 
 REPO_DIR="/home/nettap/NetTap"
-BRANCH="feature/drill-down-links"
+BRANCH="main"
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
 FAILED=0
 TO_TS=$(date -u -d '15 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
