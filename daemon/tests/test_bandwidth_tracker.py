@@ -327,12 +327,15 @@ class TestBandwidthTrackerWithClient(unittest.TestCase):
 
     def test_projection_on_the_last_day(self):
         """O1: noon on the 30th of November is 29.5 days in, and a day is still left."""
-        result = self._project_at(datetime(2026, 11, 30, 12, tzinfo=timezone.utc), 59_000)
+        result = self._project_at(
+            datetime(2026, 11, 30, 12, tzinfo=timezone.utc), 59_000
+        )
         self.assertEqual(result["days_elapsed"], 29.5)
         self.assertEqual(result["daily_rate_bytes"], 2000)
         self.assertEqual(result["projected_bytes"], 60_000)
         late = self._project_at(datetime(2026, 11, 30, 23, 59, tzinfo=timezone.utc), 1)
-        self.assertLess(late["days_elapsed"], 30)  # the page still shows 1 day remaining
+        # the page still shows 1 day remaining
+        self.assertLess(late["days_elapsed"], 30)
 
     def test_hourly_heatmap(self):
         """Should parse heatmap from OpenSearch aggregation."""
