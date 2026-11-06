@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
-from api.drilldown_runner import ip_param
+from api.drilldown_runner import either_side, ip_param
 from api.time_range import parse_time_range
 from api.devices import _CONNECTION_SORT_FIELDS, _connection_sort
 from services.excluded_ips import build_excluded_ips_filter
@@ -681,17 +681,20 @@ async def handle_connections(request: web.Request) -> web.Response:
                 {"error": "ip must be one IP address, such as 192.168.1.20"},
                 status=400,
             )
-        filter_clauses.append(
-            {
-                "bool": {
-                    "should": [
-                        {"term": {"source.ip": ip}},
-                        {"term": {"destination.ip": ip}},
-                    ],
-                    "minimum_should_match": 1,
-                }
-            }
-        )
+        # OLD CODE START — NET-160 review: the shared either_side()
+        # filter_clauses.append(
+        #     {
+        #         "bool": {
+        #             "should": [
+        #                 {"term": {"source.ip": ip}},
+        #                 {"term": {"destination.ip": ip}},
+        #             ],
+        #             "minimum_should_match": 1,
+        #         }
+        #     }
+        # )
+        # OLD CODE END
+        filter_clauses.append(either_side(ip))
 
     query = {
         "size": size,

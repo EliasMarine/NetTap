@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from aiohttp import web
 
-from api.drilldown_runner import ip_param
+from api.drilldown_runner import SlotBusy, ip_param, run_in_slot
 from api.time_range import parse_time_range
 from services.hostnames import canonical_name
 from services.cert_monitor import CertificateMonitor, CertQueryFailed
@@ -86,30 +86,55 @@ def _listed(rows: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
     }
 
 
+# OLD CODE START — NET-160 review: the slot handling moved to api/drilldown_runner.run_in_slot,
+# shared with the drill-down pages
+# async def _run(request: web.Request, work: Callable[[Budget], Any]) -> web.Response:
+#     """One certificate pass at a time, in a worker thread, inside one budget from arrival.
+#
+#     Every failure is a 503 with a reason; a partial or estimated reply is never sent (#96).
+#     """
+#     budget = Budget()
+#     lock: asyncio.Lock = request.app["cert_lock"]
+#     try:
+#         await asyncio.wait_for(lock.acquire(), timeout=max(0.0, budget.remaining()))
+#     except asyncio.TimeoutError:
+#         return _error(_BUSY)
+#
+#     def release(done: asyncio.Future) -> None:
+#         lock.release()
+#         if not done.cancelled():
+#             done.exception()  # retrieved here when the request was cancelled before it finished
+#
+#     future = asyncio.get_running_loop().run_in_executor(
+#         None, lambda: encode_bounded(work(budget), budget)
+#     )
+#     # The lock is held until the thread finishes, even when the client gives up first
+#     future.add_done_callback(release)
+#     try:
+#         body = await asyncio.shield(future)
+#     except CertTooSlow:
+#         return _error(_SLOW)
+#     except CertTooBig:
+#         return _error(_BIG)
+#     except CertQueryFailed:
+#         # the service already logged the OpenSearch error; [] or zeros would read as "none found"
+#         return _error(_UNAVAILABLE)
+#     return web.Response(body=body, content_type="application/json")
+# OLD CODE END
 async def _run(request: web.Request, work: Callable[[Budget], Any]) -> web.Response:
     """One certificate pass at a time, in a worker thread, inside one budget from arrival.
 
     Every failure is a 503 with a reason; a partial or estimated reply is never sent (#96).
     """
     budget = Budget()
-    lock: asyncio.Lock = request.app["cert_lock"]
     try:
-        await asyncio.wait_for(lock.acquire(), timeout=max(0.0, budget.remaining()))
-    except asyncio.TimeoutError:
+        body = await run_in_slot(
+            request.app["cert_lock"],
+            budget,
+            lambda: encode_bounded(work(budget), budget),
+        )
+    except SlotBusy:
         return _error(_BUSY)
-
-    def release(done: asyncio.Future) -> None:
-        lock.release()
-        if not done.cancelled():
-            done.exception()  # retrieved here when the request was cancelled before it finished
-
-    future = asyncio.get_running_loop().run_in_executor(
-        None, lambda: encode_bounded(work(budget), budget)
-    )
-    # The lock is held until the thread finishes, even when the client gives up first
-    future.add_done_callback(release)
-    try:
-        body = await asyncio.shield(future)
     except CertTooSlow:
         return _error(_SLOW)
     except CertTooBig:

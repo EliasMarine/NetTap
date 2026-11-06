@@ -1,8 +1,9 @@
 """Every search of one request over one point-in-time snapshot, checked (NET-154, NET-160).
 
 Extracted from the certificate pass (services/cert_overview.py) so the drill-down pages use
-the same guards. A figure is complete or the request fails: a timed-out reply, a failed
-shard, a missing aggregation or a malformed reply raises QueryFailed, never a smaller count.
+the same guards. A figure is complete or the request fails: a failed shard, a missing
+aggregation or a malformed reply raises QueryFailed, and a search that ran out of time
+(OpenSearch's own timeout or the client's) raises TooSlow, never a smaller count.
 Lists come from composite aggregations paged over the same snapshot, so every page and every
 total sees the same data, and a list cut by its cap says so (`complete` False).
 """
@@ -12,7 +13,7 @@ import os
 import time
 from typing import Any, Callable
 
-from opensearchpy import OpenSearchException
+from opensearchpy import ConnectionTimeout, OpenSearchException
 
 logger = logging.getLogger("nettap.storage.snapshot_search")
 
@@ -21,10 +22,19 @@ NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 PIT_CLOSE_SECONDS = (
     5  # closing runs in `finally`, often when OpenSearch is already slow
 )
-GROUP_PAGE = 1_000
+PIT_KEEP_ALIVE = "30s"
+# OLD CODE START — NET-160 review: 1,000 a page rescanned a busy address's list up to 100 times
+# GROUP_PAGE = 1_000
+# OLD CODE END
+GROUP_PAGE = 5_000  # far below OpenSearch's default search.max_buckets (65,535)
 MAX_GROUP_BUCKETS = 100_000
-# Per-bucket metrics only: a nested terms agg could be cut without saying so
+# OLD CODE START — NET-160 review: terms sub-aggregations are allowed when they come back whole
+# # Per-bucket metrics only: a nested terms agg could be cut without saying so
+# _METRICS = {"sum", "max", "min", "value_count"}
+# OLD CODE END
+# Per-bucket metrics, or terms that must come back whole: a cut one would hide values
 _METRICS = {"sum", "max", "min", "value_count"}
+_WHOLE_TERMS = "terms"
 
 
 class QueryFailed(Exception):
@@ -56,8 +66,12 @@ def checked(reply: Any, what: str, required: tuple[str, ...] = ()) -> dict:
     """A complete, well-formed reply holding every `required` aggregation, or QueryFailed."""
     if not isinstance(reply, dict):
         raise QueryFailed(f"{what}: malformed reply")
+    # OLD CODE START — NET-160 review: a timeout read as a failure (502), not "try a shorter range"
+    # if reply.get("timed_out"):
+    #     raise QueryFailed(f"{what} timed out")
+    # OLD CODE END
     if reply.get("timed_out"):
-        raise QueryFailed(f"{what} timed out")
+        raise TooSlow(f"{what} timed out")
     shards = reply.get("_shards")
     if isinstance(shards, dict) and shards.get("failed"):
         raise QueryFailed(f"{what}: {shards.get('failed')} shard(s) failed")
@@ -77,6 +91,9 @@ def search(client: Any, body: dict, budget: Budget, what: str) -> dict:
     body = {**body, "timeout": f"{int(timeout * 1000)}ms"}
     try:
         reply = client.search(body=body, request_timeout=timeout)
+    except ConnectionTimeout as exc:  # NET-160 review: out of time, not a broken query
+        logger.warning("Query for %s ran out of time: %s", what, exc)
+        raise TooSlow(f"{what} took too long") from exc
     except OpenSearchException as exc:
         logger.error("Failed to query %s: %s", what, exc)
         raise QueryFailed(f"{what} query failed") from exc
@@ -93,6 +110,9 @@ def open_pit(client: Any, index: str, keep_alive: str, budget: Budget) -> str:
             allow_partial_pit_creation="false",
             request_timeout=max(1.0, budget.remaining()),
         )
+    except ConnectionTimeout as exc:
+        logger.warning("Opening a point in time ran out of time: %s", exc)
+        raise TooSlow("opening a snapshot took too long") from exc
     except OpenSearchException as exc:
         logger.error("Failed to open a point in time: %s", exc)
         raise QueryFailed("snapshot failed") from exc
@@ -141,17 +161,28 @@ def metric(agg: dict, name: str, what: str) -> Any:
 class SnapshotSearch:
     """`with SnapshotSearch(client, index, budget) as snap:` — every search on one PIT."""
 
-    def __init__(
-        self, client: Any, index: str, budget: Budget, keep_alive: str = "30s"
-    ) -> None:
+    # OLD CODE START — NET-160 review: no caller set keep_alive
+    # def __init__(
+    #     self, client: Any, index: str, budget: Budget, keep_alive: str = "30s"
+    # ) -> None:
+    #     self._client = client
+    #     self._index = index
+    #     self._budget = budget
+    #     self._keep_alive = keep_alive
+    #     self._pit: str | None = None
+    #
+    # def __enter__(self) -> "SnapshotSearch":
+    #     self._pit = open_pit(self._client, self._index, self._keep_alive, self._budget)
+    #     return self
+    # OLD CODE END
+    def __init__(self, client: Any, index: str, budget: Budget) -> None:
         self._client = client
         self._index = index
         self._budget = budget
-        self._keep_alive = keep_alive
         self._pit: str | None = None
 
     def __enter__(self) -> "SnapshotSearch":
-        self._pit = open_pit(self._client, self._index, self._keep_alive, self._budget)
+        self._pit = open_pit(self._client, self._index, PIT_KEEP_ALIVE, self._budget)
         return self
 
     def __exit__(self, *_exc: Any) -> None:
@@ -160,7 +191,7 @@ class SnapshotSearch:
             self._pit = None
 
     def search(self, body: dict, what: str, required: tuple[str, ...] = ()) -> dict:
-        body = {**body, "pit": {"id": self._pit, "keep_alive": self._keep_alive}}
+        body = {**body, "pit": {"id": self._pit, "keep_alive": PIT_KEEP_ALIVE}}
         reply = checked(search(self._client, body, self._budget, what), what, required)
         self._pit = reply.get("pit_id") or self._pit
         return reply
@@ -177,10 +208,20 @@ class SnapshotSearch:
         what: str,
         max_buckets: int | None = None,
     ) -> tuple[list[dict], bool]:
-        """(every composite bucket for `sources`, False if the cap stopped the paging)."""
+        """(every composite bucket for `sources`, False if the cap stopped the paging).
+
+        `metrics` are per-bucket metrics, or terms aggregations that must hold every value
+        in each bucket: one that doesn't (sum_other_doc_count) fails the request.
+        """
         cap = MAX_GROUP_BUCKETS if max_buckets is None else max_buckets
-        if any(next(iter(m)) not in _METRICS for m in (metrics or {}).values()):
-            raise ValueError("groups takes per-bucket metrics only")
+        # OLD CODE START — NET-160 review: terms sub-aggregations allowed when whole
+        # if any(next(iter(m)) not in _METRICS for m in (metrics or {}).values()):
+        #     raise ValueError("groups takes per-bucket metrics only")
+        # OLD CODE END
+        kinds = {name: next(iter(m)) for name, m in (metrics or {}).items()}
+        if any(k not in _METRICS and k != _WHOLE_TERMS for k in kinds.values()):
+            raise ValueError("groups takes per-bucket metrics or whole terms only")
+        whole = [name for name, k in kinds.items() if k == _WHOLE_TERMS]
         buckets: list[dict] = []
         after = None
         while True:
@@ -195,6 +236,17 @@ class SnapshotSearch:
             got = page.get("buckets")
             if not isinstance(got, list):
                 raise QueryFailed(f"{what}: malformed aggregation")
+            for b in got:
+                for name in whole:
+                    sub = b.get(name) if isinstance(b, dict) else None
+                    if (
+                        not isinstance(sub, dict)
+                        or not isinstance(sub.get("buckets"), list)
+                        or sub.get("sum_other_doc_count")
+                    ):
+                        raise QueryFailed(
+                            f"{what}: the {name} of a group was cut short"
+                        )
             buckets.extend(got)
             after = page.get("after_key")
             # a composite fills every page it can, so a short page is the last one

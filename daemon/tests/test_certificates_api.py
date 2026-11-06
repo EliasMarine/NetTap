@@ -187,3 +187,23 @@ class TestCertificateOverviewNarrowed(AioHTTPTestCase):
         for query in ("site=bad..name", "server=example.com", "server=10.0.0.0/8"):
             self.assertIn("error", await self.overview(query, status=400))
         self.assertEqual(self.os.bodies, [])
+
+
+class TestCertificateTimeouts(AioHTTPTestCase):
+    """NET-160 review: an OpenSearch timeout is "too slow" (try a shorter window), not "unavailable"."""
+
+    async def get_application(self):
+        def timed_out(kind, reply):
+            return {**reply, "timed_out": True} if kind == "sessions" else reply
+
+        self.os = RawOpenSearch([ssl(["A"])], [x509("A")], tamper=timed_out)
+        app = web.Application()
+        register_certificate_routes(app, CertificateMonitor(self.os))
+        return app
+
+    async def test_a_timed_out_search_is_a_503_saying_it_took_too_long(self):
+        resp = await self.client.get(
+            "/api/certificates/overview?from=2026-11-05T00:00:00Z&to=2026-11-05T12:00:00Z"
+        )
+        self.assertEqual(resp.status, 503)
+        self.assertIn("took too long", (await resp.json())["error"])
