@@ -307,6 +307,26 @@ describe('Alerts — severity summary', () => {
 		expect(severityPill('Low')).toHaveAttribute('aria-pressed', 'true');
 	});
 
+	it('the Info filter asks for info alerts, not every alert (I1)', async () => {
+		succeedAll();
+		render(Page);
+		await flush();
+		await fireEvent.click(severityPill('Info'));
+		expect(getAlerts).toHaveBeenLastCalledWith(expect.objectContaining({ severity: 'info', page: 1 }));
+	});
+
+	it('the timeline counts info alerts, so it adds up to the tiles (I1)', async () => {
+		succeedAll();
+		vi.mocked(getAlertTimeline).mockResolvedValue({
+			...range,
+			interval: '1h',
+			buckets: [{ timestamp: '2026-11-03T09:00:00Z', high: 1, medium: 2, low: 3, info: 4 }],
+		});
+		render(Page);
+		await flush();
+		expect(screen.getByRole('img', { name: /^Busiest .*, with 10 alerts$/ })).toBeInTheDocument();
+	});
+
 	it('a failed count shows the error, never a gauge or zeros', async () => {
 		succeedAll();
 		vi.mocked(getAlertCount).mockRejectedValue(new Error('HTTP 502'));

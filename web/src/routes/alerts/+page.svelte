@@ -316,7 +316,21 @@
 		};
 	}
 
-	function severityFilterToNumber(f: SeverityFilter): number | undefined {
+	// OLD CODE START — I1: Info sent no severity, so the Info filter listed every alert
+	// function severityFilterToNumber(f: SeverityFilter): number | undefined {
+	// 	switch (f) {
+	// 		case 'high':
+	// 			return 1;
+	// 		case 'medium':
+	// 			return 2;
+	// 		case 'low':
+	// 			return 3;
+	// 		default:
+	// 			return undefined;
+	// 	}
+	// }
+	// OLD CODE END
+	function severityFilterToNumber(f: SeverityFilter): number | 'info' | undefined {
 		switch (f) {
 			case 'high':
 				return 1;
@@ -324,6 +338,8 @@
 				return 2;
 			case 'low':
 				return 3;
+			case 'info':
+				return 'info';
 			default:
 				return undefined;
 		}
@@ -873,7 +889,10 @@
 		return open ? rowKey(open) : undefined;
 	});
 
-	const timelineTotals = $derived(timeline.map((b) => b.high + b.medium + b.low));
+	// OLD CODE START — I1: info alerts were left out, so the slots summed to less than the tiles
+	// const timelineTotals = $derived(timeline.map((b) => b.high + b.medium + b.low));
+	// OLD CODE END
+	const timelineTotals = $derived(timeline.map((b) => b.high + b.medium + b.low + (b.info ?? 0)));
 	const busiest = $derived(timelineTotals.reduce((best, v, i) => (v > timelineTotals[best] ? i : best), 0));
 	const timelineLabel = $derived(
 		timelineTotals.length && timelineTotals[busiest] > 0
@@ -1076,7 +1095,7 @@
 				series={[{ key: 'alerts', label: 'Alerts', colour: 1, points: timeline.map((b, i) => ({ t: b.timestamp, v: timelineTotals[i] })) }]}
 				formatX={(t) => formatShortTimestamp(String(t))}
 				formatY={(v) => fmt(v)}
-				formatTip={(i) => `${formatShortTimestamp(timeline[i].timestamp)} · ${fmt(timelineTotals[i])} alerts · High ${fmt(timeline[i].high)} · Medium ${fmt(timeline[i].medium)} · Low ${fmt(timeline[i].low)}`}
+				formatTip={(i) => `${formatShortTimestamp(timeline[i].timestamp)} · ${fmt(timelineTotals[i])} alerts · High ${fmt(timeline[i].high)} · Medium ${fmt(timeline[i].medium)} · Low ${fmt(timeline[i].low)} · Info ${fmt(timeline[i].info ?? 0)}`}
 				highlightIndex={busiest}
 				ariaLabel={timelineLabel}
 			/>

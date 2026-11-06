@@ -363,7 +363,11 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
     # OLD CODE START — Zeek-native field: "alert.severity"
     # filter_clauses.append({"term": {"alert.severity": severity}})
     # OLD CODE END
-    if severity_raw:
+    # "info" is what the Info tile counts: total minus 1, 2 and 3 (it was ignored, so Info listed every alert)
+    severity_must_not: list[dict] = []
+    if severity_raw == "info":
+        severity_must_not.append({"terms": {"suricata.alert.severity": [1, 2, 3]}})
+    elif severity_raw:
         try:
             severity = int(severity_raw)
             if severity in (1, 2, 3):
@@ -498,7 +502,7 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
                 # "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
                 # OLD CODE END
-                "must_not": _SURICATA_NOISE_EXCLUSION,
+                "must_not": _SURICATA_NOISE_EXCLUSION + severity_must_not,
             }
         },
         # OLD CODE START — Zeek-native sort field: "timestamp"
@@ -838,6 +842,14 @@ async def handle_alerts_timeline(request: web.Request) -> web.Response:
             label = _SEVERITY_MAP.get(int_key)
             if label:
                 entry[label] = sev_bucket.get("doc_count", 0)
+        # Info is the rest of the slot, as on the tiles, so the slots sum to the alert count
+        entry["info"] = max(
+            0,
+            bucket.get("doc_count", 0)
+            - entry["high"]
+            - entry["medium"]
+            - entry["low"],
+        )
         buckets.append(entry)
 
     return web.json_response(
