@@ -84,7 +84,13 @@
 		return `${(us / 1_000_000).toFixed(2)} s`;
 	}
 
-	function formatByteRate(bytes: number): string {
+	// OLD CODE START — 2026-11-06 (S12): fed the per-check byte delta (about 30 s of traffic) as B/s
+	// function formatByteRate(bytes: number): string {
+	// 	if (bytes <= 0) return '0 B/s';
+	// OLD CODE END
+	function formatByteRate(bytes: number | null | undefined): string {
+		// no rate yet (first sample) or the counters reset: unavailable, not 0
+		if (bytes == null) return '—';
 		if (bytes <= 0) return '0 B/s';
 		const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
 		const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
@@ -277,13 +283,17 @@
 				<div class="stat-k">Latency</div>
 				<div class="stat-v" title={health.latency_note || undefined}>{formatLatency(health.latency_us)}</div>
 			</div>
+			<!-- OLD CODE START — 2026-11-06 (S12): the per-check delta shown as a per-second rate
+			<div class="stat-v">{formatByteRate(health.rx_bytes_delta)}</div>
+			<div class="stat-v">{formatByteRate(health.tx_bytes_delta)}</div>
+			OLD CODE END -->
 			<div class="stat">
 				<div class="stat-k">RX rate</div>
-				<div class="stat-v">{formatByteRate(health.rx_bytes_delta)}</div>
+				<div class="stat-v">{formatByteRate(health.rx_bytes_per_sec)}</div>
 			</div>
 			<div class="stat">
 				<div class="stat-k">TX rate</div>
-				<div class="stat-v">{formatByteRate(health.tx_bytes_delta)}</div>
+				<div class="stat-v">{formatByteRate(health.tx_bytes_per_sec)}</div>
 			</div>
 			<div class="stat">
 				<div class="stat-k">Uptime</div>

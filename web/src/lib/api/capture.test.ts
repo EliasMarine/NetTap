@@ -9,7 +9,23 @@ import {
 	toggleCapture,
 	updateCaptureSettings,
 	captureState,
+	formatLossPct,
+	packetsLost,
 } from './capture';
+
+// S9: one total-loss count (kernel drops + NIC misses) behind every zero-loss claim
+describe('packet loss', () => {
+	it('counts NIC misses as well as kernel drops', () => {
+		expect(packetsLost({ rx_dropped: 0, rx_missed_errors: 50 })).toBe(50);
+		expect(packetsLost({ rx_dropped: 7, rx_missed_errors: 3 })).toBe(10);
+	});
+
+	it('never rounds a real loss down to 0', () => {
+		expect(formatLossPct(0.0000001, 1)).toBe('< 0.01%');
+		expect(formatLossPct(0, 0)).toBe('0.00%');
+		expect(formatLossPct(0.42, 900)).toBe('0.42%');
+	});
+});
 
 // ---------------------------------------------------------------------------
 // Mock helpers

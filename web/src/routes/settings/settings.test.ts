@@ -182,6 +182,32 @@ describe('Settings — About', () => {
 		expect(screen.queryByText('0.3.0')).not.toBeInTheDocument();
 		expect(screen.queryByText('21970.08')).not.toBeInTheDocument();
 	});
+
+	it('hides the Build row when the daemon sends no build, rather than claim a development build (S11)', async () => {
+		stubFetch({
+			'/api/system/health': () => ({ body: { uptime: 60 } }),
+			'/api/system/versions': () => ({ body: { versions: [{ name: 'nettap-daemon', current_version: '0.4.0' }] } }),
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('tab', { name: 'About' }));
+
+		expect(screen.getByText('0.4.0')).toBeInTheDocument();
+		expect(screen.queryByText('Build')).not.toBeInTheDocument();
+		expect(screen.queryByText('Development build')).not.toBeInTheDocument();
+	});
+
+	it('shows the build when the daemon sends one', async () => {
+		stubFetch({
+			'/api/system/health': () => ({ body: { uptime: 60 } }),
+			'/api/system/versions': () => ({ body: { versions: [], build: 'abc1234' } }),
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('tab', { name: 'About' }));
+
+		expect(screen.getByText('abc1234')).toBeInTheDocument();
+	});
 });
 
 describe('Settings — retention health', () => {

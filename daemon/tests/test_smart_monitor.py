@@ -1020,4 +1020,9 @@ def test_system_health_not_healthy_when_smart_unknown():
         resp = asyncio.run(handle_system_health(req))
     body = json.loads(resp.body)
     assert body["smart"]["healthy"] is None
-    assert body["healthy"] is False
+    # OLD CODE START — 2026-11-06 (S5): an unreadable drive made the whole system "Degraded"
+    # assert body["healthy"] is False
+    # OLD CODE END
+    # not healthy, and not a failure either: the check couldn't run
+    assert body["healthy"] is None
+    assert body["status"] == "incomplete"

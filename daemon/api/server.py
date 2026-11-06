@@ -464,6 +464,13 @@ def _host_uptime_seconds() -> float | None:
         return None
 
 
+def _aggregate_health(failed: bool, unknown: bool) -> str:
+    """S5: a known failure is a problem; otherwise any check that couldn't run makes it incomplete."""
+    if failed:
+        return "problem"
+    return "incomplete" if unknown else "healthy"
+
+
 async def handle_system_health(request: web.Request) -> web.Response:
     """GET /api/system/health -- Combined system health check.
 
@@ -490,6 +497,12 @@ async def handle_system_health(request: web.Request) -> web.Response:
         "opensearch_reachable": False,
         "healthy": True,  # Assume healthy until proven otherwise
     }
+    # OLD CODE START — 2026-11-06 (S5): one boolean, so a check that couldn't run (SMART
+    # unreadable: healthy None, `not None` is True) read the same as a failed one: "Degraded"
+    # (each `result["healthy"] = False` below is now a `failed` or `unknown` flag)
+    # OLD CODE END
+    failed = False  # a check ran and found a problem
+    unknown = False  # a check couldn't run, so health isn't fully known
 
     # Storage status
     try:
@@ -499,7 +512,7 @@ async def handle_system_health(request: web.Request) -> web.Response:
     except Exception as exc:
         logger.warning("System health: storage status unavailable: %s", exc)
         result["storage"] = {"error": str(exc)}
-        result["healthy"] = False
+        unknown = True
 
     # SMART health
     try:
@@ -507,12 +520,15 @@ async def handle_system_health(request: web.Request) -> web.Response:
         loop = asyncio.get_running_loop()
         smart_status = await loop.run_in_executor(None, smart.get_status)
         result["smart"] = smart_status
-        if not smart_status.get("healthy", True):
-            result["healthy"] = False
+        # healthy: None means the drive couldn't be read (#96), not that it failed
+        if smart_status.get("healthy") is False:
+            failed = True
+        elif smart_status.get("healthy") is None:
+            unknown = True
     except Exception as exc:
         logger.warning("System health: SMART status unavailable: %s", exc)
         result["smart"] = {"error": str(exc)}
-        result["healthy"] = False
+        unknown = True
 
     # OpenSearch reachability
     try:
@@ -523,8 +539,11 @@ async def handle_system_health(request: web.Request) -> web.Response:
     except Exception as exc:
         logger.warning("System health: OpenSearch unreachable: %s", exc)
         result["opensearch_reachable"] = False
-        result["healthy"] = False
+        failed = True
 
+    result["status"] = _aggregate_health(failed, unknown)
+    # True, False, or None when incomplete: the same tri-state as SMART's healthy
+    result["healthy"] = {"healthy": True, "problem": False}.get(result["status"])
     return web.json_response(result)
 
 

@@ -8,13 +8,33 @@
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * S5: one aggregate status. A check that found a failure makes it "problem"; otherwise a
+ * check that couldn't run (an unreadable drive, say) makes it "incomplete", never "Degraded".
+ */
+export type HealthStatus = 'healthy' | 'incomplete' | 'problem';
+
+/** The aggregate status as a pipeline stage: Home and System read this one map. */
+// (typed structurally: e2e fixtures type-check this file with plain tsc, which can't read .svelte)
+export const HEALTH_STAGE: Record<HealthStatus, { status: 'ok' | 'failing' | 'unknown'; detail: string }> = {
+	healthy: { status: 'ok', detail: 'Healthy' },
+	problem: { status: 'failing', detail: 'Reports a problem' },
+	incomplete: { status: 'unknown', detail: "Incomplete · some checks couldn't run" },
+};
+
 export interface SystemHealth {
+	/** The appliance's (host's) uptime in seconds, from /proc/uptime */
 	uptime: number;
 	timestamp: string;
 	storage: any;
 	smart: any;
 	opensearch_reachable: boolean;
-	healthy: boolean;
+	// OLD CODE START — 2026-11-06 (S5): a boolean, so "couldn't check" read as "Degraded"
+	// healthy: boolean;
+	// OLD CODE END
+	status: HealthStatus;
+	/** status as a tri-state: null when incomplete */
+	healthy: boolean | null;
 }
 
 export interface StorageStatus {
@@ -33,6 +53,9 @@ export interface StorageStatus {
 	index_counts?: Record<string, number> | null;
 	total_indices?: number | null;
 	indices_error?: string;
+	/** S6: the daemon starts pruning old data here, and prunes hard at the emergency line (0-100) */
+	disk_threshold_percent: number;
+	emergency_threshold_percent: number;
 }
 
 export interface SmartHealth {

@@ -94,7 +94,7 @@ describe('System page when status requests fail (#96)', () => {
 				healthy: null, error: 'SMART health could not be read from /dev/nvme0', warnings: [], timestamp: '2026-11-02T00:00:00Z',
 			},
 			'/api/storage/status': {
-				disk_usage_percent: 42, disk_total_bytes: 100, disk_used_bytes: 42, disk_free_bytes: 58, retention: null,
+				disk_usage_percent: 42, disk_total_bytes: 100, disk_used_bytes: 42, disk_free_bytes: 58, disk_threshold_percent: 80, emergency_threshold_percent: 90, retention: null,
 				index_counts: null, total_indices: null, indices_error: 'Could not list indices: timeout',
 			},
 		};
@@ -117,8 +117,8 @@ describe('System page when status requests fail (#96)', () => {
 	it('still shows Healthy and the disk usage when the requests succeed', async () => {
 		const replies: Record<string, unknown> = {
 			'/api/capture/mode': { mode: 'mirror', interface: 'enp4s0' },
-			'/api/system/health': { uptime: 60, timestamp: '2026-11-02T00:00:00Z', healthy: true, opensearch_reachable: true },
-			'/api/storage/status': { disk_usage_percent: 42, disk_total_bytes: 100, disk_used_bytes: 42, disk_free_bytes: 58, retention: null },
+			'/api/system/health': { uptime: 60, timestamp: '2026-11-02T00:00:00Z', status: 'healthy', healthy: true, opensearch_reachable: true },
+			'/api/storage/status': { disk_usage_percent: 42, disk_total_bytes: 100, disk_used_bytes: 42, disk_free_bytes: 58, disk_threshold_percent: 80, emergency_threshold_percent: 90, retention: null },
 		};
 		vi.stubGlobal(
 			'fetch',
@@ -142,8 +142,8 @@ describe('System page when status requests fail (#96)', () => {
 
 const OK_REPLIES: Record<string, unknown> = {
 	'/api/capture/mode': { mode: 'mirror', interface: 'enp4s0' },
-	'/api/system/health': { uptime: 3600, timestamp: '2026-11-02T00:00:00Z', healthy: true, opensearch_reachable: true },
-	'/api/storage/status': { disk_usage_percent: 42, disk_total_bytes: 100, disk_used_bytes: 42, disk_free_bytes: 58, retention: null, total_indices: 7 },
+	'/api/system/health': { uptime: 3600, timestamp: '2026-11-02T00:00:00Z', status: 'healthy', healthy: true, opensearch_reachable: true },
+	'/api/storage/status': { disk_usage_percent: 42, disk_total_bytes: 100, disk_used_bytes: 42, disk_free_bytes: 58, disk_threshold_percent: 80, emergency_threshold_percent: 90, retention: null, total_indices: 7 },
 	'/api/smart/health': {
 		device: '/dev/nvme0', device_type: 'nvme', model: 'X', serial: 'S', temperature_c: 40, percentage_used: 3,
 		power_on_hours: 10, total_bytes_written: 1, total_bytes_read: 1, media_errors: 0, reallocated_sectors: null,
@@ -230,7 +230,8 @@ describe('System page health strip', () => {
 		render(SystemPage);
 		await screen.findByText('42.0% used');
 
-		expect(stage('NetTap')).toEqual({ word: 'Healthy', detail: 'Up 1h' });
+		// OLD CODE: detail 'Up 1h' (S4: the uptime is the appliance's, not the daemon's)
+		expect(stage('NetTap')).toEqual({ word: 'Healthy', detail: 'Appliance up 1h' });
 		expect(stage('OpenSearch')).toEqual({ word: 'Healthy', detail: 'Connected' });
 		expect(stage('Storage')).toEqual({ word: 'Healthy', detail: '42.0% used · 58 B free' });
 		expect(stage('Drive')).toEqual({ word: 'Healthy', detail: 'SMART checks pass' });
@@ -239,8 +240,8 @@ describe('System page health strip', () => {
 	it('marks a full disk and an unreachable OpenSearch failing', async () => {
 		stubReplies({
 			...OK_REPLIES,
-			'/api/system/health': { uptime: 60, timestamp: '2026-11-02T00:00:00Z', healthy: false, opensearch_reachable: false },
-			'/api/storage/status': { disk_usage_percent: 91.5, disk_total_bytes: 100, disk_used_bytes: 91, disk_free_bytes: 9, retention: null },
+			'/api/system/health': { uptime: 60, timestamp: '2026-11-02T00:00:00Z', status: 'problem', healthy: false, opensearch_reachable: false },
+			'/api/storage/status': { disk_usage_percent: 91.5, disk_total_bytes: 100, disk_used_bytes: 91, disk_free_bytes: 9, disk_threshold_percent: 80, emergency_threshold_percent: 90, retention: null },
 		});
 		render(SystemPage);
 		await screen.findByText('91.5% used');
@@ -248,6 +249,27 @@ describe('System page health strip', () => {
 		expect(stage('NetTap').word).toBe('Failing');
 		expect(stage('OpenSearch')).toEqual({ word: 'Failing', detail: 'Not reachable' });
 		expect(stage('Storage').word).toBe('Failing');
+		expect(stage('Storage').detail).toBe('91.5% used · 9 B free · above the 90% emergency line');
+	});
+
+	it("judges the disk by the daemon's own pruning lines, not a threshold of its own (S6)", async () => {
+		stubReplies({
+			...OK_REPLIES,
+			'/api/storage/status': { disk_usage_percent: 82, disk_total_bytes: 100, disk_used_bytes: 82, disk_free_bytes: 18, disk_threshold_percent: 70, emergency_threshold_percent: 80, retention: null },
+		});
+		render(SystemPage);
+		await screen.findByText('82.0% used');
+		// the old fixed 85% line called this fine; the configured 80% emergency line says otherwise
+		expect(stage('Storage')).toEqual({ word: 'Failing', detail: '82.0% used · 18 B free · above the 80% emergency line' });
+	});
+
+	it('says incomplete, not degraded, when a check could not run (S5)', async () => {
+		stubReplies({ ...OK_REPLIES, '/api/system/health': { uptime: 60, timestamp: '2026-11-02T00:00:00Z', status: 'incomplete', healthy: null, opensearch_reachable: true } });
+		render(SystemPage);
+		await screen.findByText('42.0% used');
+		expect(stage('NetTap')).toEqual({ word: 'Unknown', detail: "Incomplete · some checks couldn't run" });
+		expect(screen.getByText('Incomplete')).toHaveClass('chip');
+		expect(screen.queryByText('Degraded')).not.toBeInTheDocument();
 	});
 
 	it('says unknown, never healthy, for a part whose request failed', async () => {
@@ -304,5 +326,58 @@ describe('System page refresh contract', () => {
 
 		expect(get(pageRefresh).available).toBe(false);
 		expect(container.textContent).not.toContain('% used');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Accuracy audit 2026-11-06 (S4, S7, S10, S12)
+// ---------------------------------------------------------------------------
+
+describe('System page figures', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it("labels the uptime as this appliance's, not the daemon's (S4)", async () => {
+		stubReplies(OK_REPLIES);
+		render(SystemPage);
+		expect(await screen.findByText('This appliance · uptime and last check')).toBeInTheDocument();
+		expect(screen.queryByText(/NetTap daemon/)).not.toBeInTheDocument();
+	});
+
+	it('names each retention setting as Settings does, never the raw key (S7)', async () => {
+		stubReplies({
+			...OK_REPLIES,
+			'/api/storage/status': {
+				disk_usage_percent: 42, disk_total_bytes: 100, disk_used_bytes: 42, disk_free_bytes: 58, disk_threshold_percent: 80,
+				emergency_threshold_percent: 90, retention: { hot_days: 90, warm_days: 180, cold_days: 30 },
+			},
+		});
+		render(SystemPage);
+		expect(await screen.findByText('Hot tier (Zeek metadata and Suricata alerts)')).toBeInTheDocument();
+		expect(screen.getByText('90 days')).toBeInTheDocument();
+		expect(screen.getByText(/180 days · this install doesn't create them; alerts follow the hot tier/)).toBeInTheDocument();
+		expect(screen.getByText(/30 days · or sooner, once PCAP passes its share of the disk/)).toBeInTheDocument();
+		expect(screen.queryByText('hot_days')).not.toBeInTheDocument();
+	});
+
+	it("shows SMART totals in decimal units, as smartctl does (S10)", async () => {
+		stubReplies({
+			...OK_REPLIES,
+			'/api/smart/health': { ...(OK_REPLIES['/api/smart/health'] as object), total_bytes_written: 18_400_000_000_000, total_bytes_read: 0 },
+		});
+		render(SystemPage);
+		// 18.4 × 10^12 bytes is 18.40 TB to smartctl; the 1024-based figure read 16.7 TB
+		expect(await screen.findByText('18.40 TB')).toBeInTheDocument();
+		expect(screen.getByText('0 B')).toBeInTheDocument();
+	});
+
+	it('marks a passing drive with warnings amber, not a green Healthy (S12)', async () => {
+		stubReplies({
+			...OK_REPLIES,
+			'/api/smart/health': { ...(OK_REPLIES['/api/smart/health'] as object), warnings: ['Temperature 72°C is above the 70°C warning line'] },
+		});
+		render(SystemPage);
+		expect(await screen.findByText('Warnings')).toHaveClass('chip', 'is-warn');
+		const drive = [...document.querySelectorAll('.pipe-item')].find((el) => el.querySelector('.pipe-k')?.textContent?.trim() === 'Drive');
+		expect(drive?.querySelector('.pipe-v')?.textContent?.trim()).toBe('SMART checks pass · 1 warning');
 	});
 });

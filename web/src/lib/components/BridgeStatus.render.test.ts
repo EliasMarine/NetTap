@@ -105,3 +105,32 @@ describe('BridgeStatus latency', () => {
 		expect(await screen.findByText('120 us')).toBeInTheDocument();
 	});
 });
+
+// S12: the rate is the daemon's measured bytes per second, never the per-check byte delta
+describe('BridgeStatus traffic rates', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const rate = (label: string) => screen.getByText(label).nextElementSibling?.textContent;
+
+	it("shows the daemon's per-second rate, not the delta", async () => {
+		stubFetch({ '/api/bridge/health': { ...HEALTH, rx_bytes_delta: 3_072_000, rx_bytes_per_sec: 102_400, tx_bytes_per_sec: 0 } });
+
+		render(BridgeStatus);
+
+		await screen.findByText('RX rate');
+		expect(rate('RX rate')).toBe('100.0 KB/s');
+		expect(rate('TX rate')).toBe('0 B/s');
+	});
+
+	it('shows a dash on the first sample or after a counter reset', async () => {
+		stubFetch({ '/api/bridge/health': { ...HEALTH, rx_bytes_per_sec: null, tx_bytes_per_sec: null } });
+
+		render(BridgeStatus);
+
+		await screen.findByText('RX rate');
+		expect(rate('RX rate')).toBe('—');
+		expect(rate('TX rate')).toBe('—');
+	});
+});

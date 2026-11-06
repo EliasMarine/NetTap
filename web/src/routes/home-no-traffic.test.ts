@@ -5,7 +5,7 @@ import HomePage from './+page.svelte';
 // The "No traffic data yet" banner needed a null traffic summary, which a successful load never is,
 // so it never showed on a network with no traffic.
 
-const HEALTH = { uptime: 60, timestamp: '2026-11-02T00:00:00Z', healthy: true, opensearch_reachable: true };
+const HEALTH = { uptime: 60, timestamp: '2026-11-02T00:00:00Z', status: 'healthy', healthy: true, opensearch_reachable: true };
 const summary = (connections: number) => ({
 	from: '', to: '', total_bytes: connections * 1000, orig_bytes: 0, resp_bytes: 0,
 	packet_count: 0, connection_count: connections, top_protocol: 'tcp',

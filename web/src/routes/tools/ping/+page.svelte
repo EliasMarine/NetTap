@@ -127,6 +127,9 @@
 	const isTimeout = (hop: TracerouteHop) => hop.host === TIMEOUT;
 	const rtt = (hop: TracerouteHop, i: number): number | null => (!isTimeout(hop) && hop.rtts[i] != null && hop.rtts[i] > 0 ? hop.rtts[i] : null);
 
+	/** S12: a round-trip figure only when a reply came back; 100% loss has none, not 0.0 ms. */
+	const rttKpi = (r: PingResult, v: number | null): string | null => (r.packets_received > 0 && v != null ? v.toFixed(1) : null);
+
 	// A reply has no id of its own (ping can report a duplicate seq), so each row carries its position
 	type ReplyRow = PingReply & { i: number };
 	let replyRows = $derived<ReplyRow[]>((pingResult?.replies ?? []).map((r, i) => ({ ...r, i })));
@@ -210,10 +213,18 @@
 				<CardState state="error" title="Ping failed" message={pingError} />
 			</Card>
 		{:else if pingResult}
-			<KpiCard label="Packet loss" icon="connections" value={pingResult.packet_loss_pct} unit="%" class="c-3" />
+			<!-- OLD CODE START — 2026-11-06 (S12): no reply read as a 0.0 ms round trip
 			<KpiCard label="Average RTT" icon="live" value={pingResult.rtt_avg.toFixed(1)} unit="ms" class="c-3" />
 			<KpiCard label="Minimum RTT" icon="down" value={pingResult.rtt_min.toFixed(1)} unit="ms" class="c-3" />
 			<KpiCard label="Maximum RTT" icon="up" value={pingResult.rtt_max.toFixed(1)} unit="ms" class="c-3" />
+			OLD CODE END -->
+			{@const avg = rttKpi(pingResult, pingResult.rtt_avg)}
+			{@const min = rttKpi(pingResult, pingResult.rtt_min)}
+			{@const max = rttKpi(pingResult, pingResult.rtt_max)}
+			<KpiCard label="Packet loss" icon="connections" value={pingResult.packet_loss_pct} unit="%" class="c-3" />
+			<KpiCard label="Average RTT" icon="live" value={avg ?? '—'} unit={avg ? 'ms' : undefined} class="c-3" />
+			<KpiCard label="Minimum RTT" icon="down" value={min ?? '—'} unit={min ? 'ms' : undefined} class="c-3" />
+			<KpiCard label="Maximum RTT" icon="up" value={max ?? '—'} unit={max ? 'ms' : undefined} class="c-3" />
 			{#if pingResult.replies.length > 0}
 				<Card title="Round-trip time" sub="ms per reply, by sequence number" class="c-5">
 					<BarList items={rttBars} />
