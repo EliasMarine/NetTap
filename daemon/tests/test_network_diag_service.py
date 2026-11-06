@@ -311,6 +311,22 @@ class TestToolFailuresAreReported(unittest.TestCase):
         result = self._run(lambda: self.svc.ping("10.0.0.9"), out, b"", 1)
         self.assertIsNone(result["error"])
 
+    def test_ping_header_without_summary_reports_stderr(self):
+        # NET-169: ping printed its header, then failed; no statistics line, so no figures
+        out = b"PING 10.0.0.9 (10.0.0.9) 56(84) bytes of data.\n"
+        result = self._run(
+            lambda: self.svc.ping("10.0.0.9"),
+            out,
+            b"ping: sendmsg: Network is unreachable\n",
+            1,
+        )
+        self.assertEqual(result["error"], "ping: sendmsg: Network is unreachable")
+
+    def test_ping_header_without_summary_or_stderr_says_it_did_not_finish(self):
+        out = b"PING 10.0.0.9 (10.0.0.9) 56(84) bytes of data.\n64 bytes from 10.0.0.9: icmp_seq=1 ttl=64 time=0.5 ms\n"
+        result = self._run(lambda: self.svc.ping("10.0.0.9"), out, b"", 0)
+        self.assertEqual(result["error"], "Ping didn't finish: it printed no summary")
+
     def test_traceroute_failure_is_an_error(self):
         result = self._run(
             lambda: self.svc.traceroute("no-such-host.invalid"),

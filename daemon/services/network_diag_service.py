@@ -226,6 +226,14 @@ class NetworkDiagService:
             )
             stdout = stdout_bytes.decode("utf-8", errors="replace")
             parsed = self._parse_ping_output(stdout)
+            error = _tool_error(proc.returncode, stdout, stderr_bytes)
+            if error is None and "packets_transmitted" not in parsed["stats"]:
+                # NET-169: no summary line (ping failed after its header, or was cut short), so
+                # there are no loss or round-trip figures to report
+                error = (
+                    stderr_bytes.decode("utf-8", errors="replace").strip()
+                    or "Ping didn't finish: it printed no summary"
+                )
 
             return {
                 "target": target,
@@ -237,7 +245,8 @@ class NetworkDiagService:
                 # was dropped, so it read as a host that gave no replies
                 # "error": None,
                 # OLD CODE END
-                "error": _tool_error(proc.returncode, stdout, stderr_bytes),
+                # OLD CODE: "error": _tool_error(proc.returncode, stdout, stderr_bytes), (NET-169)
+                "error": error,
             }
 
         except asyncio.TimeoutError:
