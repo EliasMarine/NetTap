@@ -110,6 +110,33 @@ describe('Ping and traceroute page', () => {
 		expect(screen.getByText('Invalid target')).toBeInTheDocument();
 	});
 
+	it('NET-169: a 200 reply carrying an error shows the error, never the default figures', async () => {
+		// ping printed a header and one reply, then failed: the daemon returns its error with the
+		// API's defaults (0 sent, 100% loss, no round trips)
+		stubFetch({
+			...PING,
+			packets_sent: 0,
+			packets_received: 0,
+			packet_loss_pct: 100,
+			rtt_min: null,
+			rtt_avg: null,
+			rtt_max: null,
+			rtt_mdev: null,
+			replies: [PING.replies[0]],
+			error: 'ping: sendmsg: Network is unreachable',
+		});
+		render(Page);
+		await enterTarget();
+		await fireEvent.click(screen.getByRole('button', { name: 'Ping' }));
+		expect(await screen.findByText('Ping failed')).toBeInTheDocument();
+		expect(screen.getByText('ping: sendmsg: Network is unreachable')).toBeInTheDocument();
+		for (const label of ['Packet loss', 'Average RTT', 'Minimum RTT', 'Maximum RTT']) {
+			expect(screen.queryByText(label)).not.toBeInTheDocument();
+		}
+		expect(screen.queryByRole('table', { name: 'Ping replies' })).not.toBeInTheDocument();
+		expect(screen.queryByText('100')).not.toBeInTheDocument();
+	});
+
 	it('runs a traceroute in its own tab, with timeouts shown as stars', async () => {
 		stubFetch(TRACE);
 		render(Page);

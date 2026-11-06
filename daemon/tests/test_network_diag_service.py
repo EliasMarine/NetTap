@@ -61,6 +61,14 @@ class TestValidateTarget(unittest.TestCase):
         with self.assertRaises(NetworkDiagValidationError):
             self.svc.validate_target("`whoami`")
 
+    def test_leading_hyphen_would_be_an_option(self):
+        # NET-175: ping and traceroute would read these as options, not hosts
+        for target in ("-f", "-c100000", "--help", " -f"):
+            with self.assertRaises(NetworkDiagValidationError):
+                self.svc.validate_target(target)
+        # a hyphen inside a host name is fine
+        self.assertEqual(self.svc.validate_target("my-host.lan"), "my-host.lan")
+
 
 class TestValidateCount(unittest.TestCase):
     """Tests for NetworkDiagService.validate_count."""
@@ -310,6 +318,22 @@ class TestToolFailuresAreReported(unittest.TestCase):
         out = b"--- 10.0.0.9 ping statistics ---\n3 packets transmitted, 0 received, 100% packet loss\n"
         result = self._run(lambda: self.svc.ping("10.0.0.9"), out, b"", 1)
         self.assertIsNone(result["error"])
+
+    def test_ping_header_without_summary_reports_stderr(self):
+        # NET-169: ping printed its header, then failed; no statistics line, so no figures
+        out = b"PING 10.0.0.9 (10.0.0.9) 56(84) bytes of data.\n"
+        result = self._run(
+            lambda: self.svc.ping("10.0.0.9"),
+            out,
+            b"ping: sendmsg: Network is unreachable\n",
+            1,
+        )
+        self.assertEqual(result["error"], "ping: sendmsg: Network is unreachable")
+
+    def test_ping_header_without_summary_or_stderr_says_it_did_not_finish(self):
+        out = b"PING 10.0.0.9 (10.0.0.9) 56(84) bytes of data.\n64 bytes from 10.0.0.9: icmp_seq=1 ttl=64 time=0.5 ms\n"
+        result = self._run(lambda: self.svc.ping("10.0.0.9"), out, b"", 0)
+        self.assertEqual(result["error"], "Ping didn't finish: it printed no summary")
 
     def test_traceroute_failure_is_an_error(self):
         result = self._run(

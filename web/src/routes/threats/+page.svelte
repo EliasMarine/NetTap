@@ -14,6 +14,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { getThreatReport, getThreatIntel } from '$api/threats';
+	import { THREAT_SCORE_HOW } from '$api/alerts';
 	import type {
 		ThreatReport,
 		BeaconSuspect,
@@ -407,6 +408,7 @@
 			icon="threats"
 			value={threatScore}
 			unit="/100"
+			sub={THREAT_SCORE_HOW}
 			note={baseline ? `${baseline.deviation}× ${baseline.is_anomalous ? 'above' : 'vs'} baseline` : undefined}
 		>
 			{#snippet foot()}

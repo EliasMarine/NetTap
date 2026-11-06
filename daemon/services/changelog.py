@@ -15,15 +15,23 @@ logger = logging.getLogger("nettap.services.changelog")
 
 CHANGELOG_INDEX_PREFIX = "nettap-changelog"
 
-# Supported event types
+# OLD CODE START — NET-173: six of these are never written, but the filter offered them all
+# # Supported event types
+# CHANGELOG_EVENT_TYPES = {
+#     "device_joined",
+#     "device_left",
+#     "alert_triggered",
+#     "config_changed",
+#     "rule_updated",
+#     "capture_started",
+#     "capture_stopped",
+#     "storage_pruned",
+# }
+# OLD CODE END
+# The event types NetTap records: device_registry._log_new_device and the manual storage cleanup
+# in api/server.py. Add a type here only when something writes it.
 CHANGELOG_EVENT_TYPES = {
     "device_joined",
-    "device_left",
-    "alert_triggered",
-    "config_changed",
-    "rule_updated",
-    "capture_started",
-    "capture_stopped",
     "storage_pruned",
 }
 
@@ -35,7 +43,14 @@ class ChangelogService:
         self._client = client
 
     def _index_name(self) -> str:
-        """Generate the daily index name."""
+        """Generate the daily index name.
+
+        shortcut: events are filed by the day they are written, not by their @timestamp, so a
+        backdated device_joined can sit in the next day's index and a manual date-based cleanup
+        (storage/manager.py) removes it a day later than its timestamp suggests. Changelog
+        indices have no automatic retention tier. The page searches by @timestamp, so what it
+        shows is unaffected. File by @timestamp if changelog retention ever becomes automatic.
+        """
         today = datetime.now(timezone.utc).strftime("%Y.%m.%d")
         return f"{CHANGELOG_INDEX_PREFIX}-{today}"
 
@@ -145,26 +160,38 @@ class ChangelogService:
 
         return events
 
+    # OLD CODE START — NET-173: a terms aggregation on event_type, which is dynamically mapped as
+    # text (Malcolm's template covers arkime_sessions3-* only), so it failed and the fallback
+    # offered all eight types; only two are ever written
+    # def get_event_types(self) -> list[str]:
+    #     """Return a list of distinct event types seen in the changelog index.
+    #
+    #     Falls back to the static CHANGELOG_EVENT_TYPES if no data exists.
+    #     """
+    #     query = {
+    #         "size": 0,
+    #         # OLD CODE: "aggs": {"event_types": {"terms": {"field": "event_type", "size": 50}}},
+    #         # (NET-173: event_type is dynamically mapped as text, so the query failed and the
+    #         # fallback offered every type)
+    #         "aggs": {
+    #             "event_types": {"terms": {"field": "event_type.keyword", "size": 50}}
+    #         },
+    #     }
+    #
+    #     try:
+    #         result = self._client.search(
+    #             index=f"{CHANGELOG_INDEX_PREFIX}-*", body=query
+    #         )
+    #         buckets = (
+    #             result.get("aggregations", {}).get("event_types", {}).get("buckets", [])
+    #         )
+    #         if buckets:
+    #             return [b["key"] for b in buckets]
+    #     except OpenSearchException as exc:
+    #         logger.warning("Failed to query event types: %s", exc)
+    #
+    #     return sorted(CHANGELOG_EVENT_TYPES)
+    # OLD CODE END
     def get_event_types(self) -> list[str]:
-        """Return a list of distinct event types seen in the changelog index.
-
-        Falls back to the static CHANGELOG_EVENT_TYPES if no data exists.
-        """
-        query = {
-            "size": 0,
-            "aggs": {"event_types": {"terms": {"field": "event_type", "size": 50}}},
-        }
-
-        try:
-            result = self._client.search(
-                index=f"{CHANGELOG_INDEX_PREFIX}-*", body=query
-            )
-            buckets = (
-                result.get("aggregations", {}).get("event_types", {}).get("buckets", [])
-            )
-            if buckets:
-                return [b["key"] for b in buckets]
-        except OpenSearchException as exc:
-            logger.warning("Failed to query event types: %s", exc)
-
+        """The event types NetTap records, for the Changelog filter (NET-173)."""
         return sorted(CHANGELOG_EVENT_TYPES)

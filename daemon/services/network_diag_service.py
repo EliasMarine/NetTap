@@ -68,6 +68,13 @@ class NetworkDiagService:
                 f"Invalid target: {target!r} — only alphanumeric, dots, hyphens, and colons allowed"
             )
 
+        # NET-175: the target is ping's and traceroute's last argument, so "-f" would be read
+        # as an option; no host name or IP address starts with "-"
+        if target.startswith("-"):
+            raise NetworkDiagValidationError(
+                f"Invalid target: {target!r} — a host name or IP address can't start with '-'"
+            )
+
         return target
 
     def validate_count(self, count: int | None) -> int:
@@ -226,6 +233,14 @@ class NetworkDiagService:
             )
             stdout = stdout_bytes.decode("utf-8", errors="replace")
             parsed = self._parse_ping_output(stdout)
+            error = _tool_error(proc.returncode, stdout, stderr_bytes)
+            if error is None and "packets_transmitted" not in parsed["stats"]:
+                # NET-169: no summary line (ping failed after its header, or was cut short), so
+                # there are no loss or round-trip figures to report
+                error = (
+                    stderr_bytes.decode("utf-8", errors="replace").strip()
+                    or "Ping didn't finish: it printed no summary"
+                )
 
             return {
                 "target": target,
@@ -237,7 +252,8 @@ class NetworkDiagService:
                 # was dropped, so it read as a host that gave no replies
                 # "error": None,
                 # OLD CODE END
-                "error": _tool_error(proc.returncode, stdout, stderr_bytes),
+                # OLD CODE: "error": _tool_error(proc.returncode, stdout, stderr_bytes), (NET-169)
+                "error": error,
             }
 
         except asyncio.TimeoutError:
