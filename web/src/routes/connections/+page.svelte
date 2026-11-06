@@ -153,8 +153,12 @@
 	let ipFilter = $state('');
 	let countryFilter = $state('');
 	let stateFilter = $state<StateFilter>('all');
-	let hasAlertsFilter = $state(false);
+	// OLD CODE START — I2: the "Has alerts" checkbox was never sent to the daemon, so it filtered nothing
+	// let hasAlertsFilter = $state(false);
+	// OLD CODE END
 	let sankeyFilter = $state<{ type: string; id: string } | null>(null);
+	/** The flow's destination for sessions with no network owner (the daemon's terms `missing` value). */
+	const UNKNOWN_OWNER = 'Unknown';
 
 	// Drawer
 	let drawerConn = $state<Connection | null>(null);
@@ -295,7 +299,10 @@
 	let destBarItems = $derived<BarItem[]>(
 		(stats?.top_destinations || []).map((d) => ({
 			key: d.ip,
-			label: d.asn || d.ip,
+			// OLD CODE START — I9: rows are per destination IP, so two rows could read as the same network
+			// label: d.asn || d.ip,
+			// OLD CODE END
+			label: d.asn ? `${d.asn} · ${d.ip}` : d.ip,
 			value: d.total_bytes,
 			display: formatBytes(d.total_bytes),
 			detail: d.country || undefined,
@@ -307,13 +314,23 @@
 	let summaryStats = $derived<Stat[]>([
 		{ key: 'sessions', label: 'Sessions', value: stats ? formatNumber(stats.total_sessions) : '—' },
 		{ key: 'data', label: 'Data', value: stats ? formatBytes(stats.bytes_in + stats.bytes_out) : '—' },
-		{ key: 'alerts', label: 'With alerts', value: stats ? formatNumber(stats.alert_sessions) : '—' },
+		// OLD CODE START — I9: the daemon counts Suricata alert events in the window, not sessions with alerts
+		// { key: 'alerts', label: 'With alerts', value: stats ? formatNumber(stats.alert_sessions) : '—' },
+		// OLD CODE END
+		{ key: 'alerts', label: 'Alert events', value: stats ? formatNumber(stats.alert_sessions) : '—' },
 		{ key: 'devices', label: 'Active devices', value: activeNow === null ? '—' : String(activeNow) },
 	]);
 
+	// OLD CODE START — I3: bytes_in is source.bytes, what the side that opened the session sent, not "in"
+	// let summarySub = $derived(
+	// 	stats
+	// 		? `${range} · ${formatBytes(stats.bytes_in)} in, ${formatBytes(stats.bytes_out)} out · devices active in the last 5 minutes`
+	// 		: `${range} · devices active in the last 5 minutes`,
+	// );
+	// OLD CODE END
 	let summarySub = $derived(
 		stats
-			? `${range} · ${formatBytes(stats.bytes_in)} in, ${formatBytes(stats.bytes_out)} out · devices active in the last 5 minutes`
+			? `${range} · ${formatBytes(stats.bytes_in)} sent by source, ${formatBytes(stats.bytes_out)} sent by destination · devices active in the last 5 minutes`
 			: `${range} · devices active in the last 5 minutes`,
 	);
 
@@ -439,7 +456,11 @@
 		if (sankeyFilter) {
 			if (sankeyFilter.type === 'source') parts.push(`source.ip:${sankeyFilter.id}`);
 			else if (sankeyFilter.type === 'protocol') parts.push(sankeyFilter.id.toLowerCase());
-			else if (sankeyFilter.type === 'destination') parts.push(`destination.as.full:"${sankeyFilter.id}"`);
+			// OLD CODE START — I11: "Unknown" is the daemon's name for no owner, so it matched 0 sessions
+			// else if (sankeyFilter.type === 'destination') parts.push(`destination.as.full:"${sankeyFilter.id}"`);
+			// OLD CODE END
+			else if (sankeyFilter.type === 'destination')
+				parts.push(sankeyFilter.id === UNKNOWN_OWNER ? 'NOT _exists_:destination.as.full' : `destination.as.full:"${sankeyFilter.id}"`);
 		}
 		return parts.join(' ');
 	}
@@ -728,8 +749,12 @@
 		{ key: 'proto', label: 'Protocol', cell: protoCell },
 		{ key: 'service', label: 'Service', cell: serviceCell },
 		{ key: 'duration', label: 'Duration', numeric: true, cell: durationCell },
-		{ key: 'ul', label: 'Bytes in', numeric: true, cell: bytesInCell },
-		{ key: 'dl', label: 'Bytes out', numeric: true, cell: bytesOutCell },
+		// OLD CODE START — I3: source.bytes is what the source sent, so "in"/"out" were swapped for outbound sessions
+		// { key: 'ul', label: 'Bytes in', numeric: true, cell: bytesInCell },
+		// { key: 'dl', label: 'Bytes out', numeric: true, cell: bytesOutCell },
+		// OLD CODE END
+		{ key: 'ul', label: 'Sent by source', numeric: true, cell: bytesInCell },
+		{ key: 'dl', label: 'Sent by destination', numeric: true, cell: bytesOutCell },
 		{ key: 'state', label: 'Result', cell: resultCell },
 	];
 
@@ -911,7 +936,8 @@
 		{/if}
 	</Card>
 
-	<Card class="c-6" title="Top destinations" sub="Data sent and received, by network · {range}">
+	<!-- OLD CODE START: <Card class="c-6" title="Top destinations" sub="Data sent and received, by network · {range}"> (I9: grouped by IP, not network) OLD CODE END -->
+	<Card class="c-6" title="Top destinations" sub="Data sent and received, per destination IP · {range}">
 		{#if destBarItems.length > 0}
 			<BarList items={destBarItems} />
 		{:else if loading && !stats}
@@ -929,10 +955,12 @@
 			<SearchField id="service-filter" label="Filter by service" placeholder="Service: dns, http, tls…" size="toolbar" bind:value={serviceFilter} onkeydown={applyOnEnter} />
 			<Pills options={PROTOCOL_PILLS} value={protocolFilter} onchange={setProtocolFilter} ariaLabel="Protocol" />
 			<Pills options={STATE_FILTERS} value={stateFilter} onchange={setStateFilter} ariaLabel="Connection state" />
+			<!-- OLD CODE START — I2: never sent to the daemon, so it filtered nothing
 			<label class="check-row">
 				<input type="checkbox" bind:checked={hasAlertsFilter} onchange={() => loadTable(1)} />
 				Has alerts
 			</label>
+			OLD CODE END -->
 			{#if sankeyFilter}
 				<button class="chip" type="button" aria-label="Remove the {sankeyFilter.type} filter {sankeyFilter.id}" onclick={clearSankeyFilter}
 					>{sankeyFilter.type}: {sankeyFilter.id}<Icon name="close" /></button

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
-import { getConnections } from '$api/traffic';
+import { getConnections, getConnectionStats, getConnectionSankey } from '$api/traffic';
 import { getLiveDashboard } from '$api/live';
 import Page from './+page.svelte';
 
@@ -304,5 +304,74 @@ describe('Connections — duration', () => {
 		await flush();
 		const durations = [...container.querySelectorAll('tbody tr')].map((r) => r.querySelectorAll('td')[5]?.textContent?.trim());
 		expect(durations).toEqual(['255ms', '1.5s', '31m 0s']);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Accuracy audit 2026-11-06 (I2, I3, I9, I11)
+// ---------------------------------------------------------------------------
+
+describe('Connections — labels say what the figures count', () => {
+	const stats = {
+		from: '', to: '', total_sessions: 120, bytes_in: 2048, bytes_out: 4096, alert_sessions: 7, protocols: [],
+		top_sources: [],
+		top_destinations: [{ ip: '142.250.1.1', total_bytes: 5000, connections: 3, asn: 'AS15169 Google LLC', country: 'US' }],
+	};
+
+	beforeEach(() => {
+		vi.mocked(getConnections).mockImplementation(async (opts = {}) => connectionsPage(opts.page ?? 1));
+		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard(1));
+		vi.mocked(getConnectionStats).mockResolvedValue(stats);
+	});
+
+	afterEach(() => {
+		vi.clearAllMocks();
+		vi.mocked(getConnectionStats).mockRejectedValue(new Error('not under test'));
+		vi.mocked(getConnectionSankey).mockRejectedValue(new Error('not under test'));
+	});
+
+	it('has no "Has alerts" filter, which was never sent (I2)', async () => {
+		render(Page);
+		await flush();
+		expect(screen.queryByRole('checkbox', { name: 'Has alerts' })).not.toBeInTheDocument();
+	});
+
+	it('labels bytes by who sent them, not in/out (I3)', async () => {
+		render(Page);
+		await flush();
+		expect(screen.getByRole('columnheader', { name: /Sent by source/ })).toBeInTheDocument();
+		expect(screen.getByRole('columnheader', { name: /Sent by destination/ })).toBeInTheDocument();
+		expect(screen.queryByRole('columnheader', { name: /Bytes in/ })).not.toBeInTheDocument();
+		expect(screen.getByText(/sent by source, .* sent by destination/)).toBeInTheDocument();
+	});
+
+	it('counts alert events, and names each top destination by owner and IP (I9)', async () => {
+		render(Page);
+		await flush();
+		expect(stat('Alert events')).toHaveTextContent('7');
+		expect(stat('With alerts')).toBeUndefined();
+		expect(screen.getByText('AS15169 Google LLC · 142.250.1.1')).toBeInTheDocument();
+		expect(screen.getByText(/per destination IP/)).toBeInTheDocument();
+	});
+
+	it('the flow’s "Unknown" destination filters sessions with no owner, not the word Unknown (I11)', async () => {
+		vi.mocked(getConnectionSankey).mockResolvedValue({
+			from: '', to: '',
+			nodes: {
+				sources: [{ id: '10.0.0.5', label: '10.0.0.5', value: 100 }],
+				protocols: [{ id: 'udp', label: 'UDP', value: 100 }],
+				destinations: [{ id: 'Unknown', label: 'Unknown', value: 100 }],
+			},
+			links: [
+				{ source: '10.0.0.5', target: 'udp', value: 100 },
+				{ source: 'udp', target: 'Unknown', value: 100 },
+			],
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('tab', { name: 'Destinations' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Unknown' }));
+		await flush();
+		expect(getConnections).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'NOT _exists_:destination.as.full' }));
 	});
 });
