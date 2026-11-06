@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { getLiveConnections, getConnectionRate, getLiveDashboard, getLiveConnectionDetail } from './live';
+import { getLiveConnections, getConnectionRate, getLiveDashboard, getLiveConnectionDetail, directionLabel } from './live';
+import type { ConnectionDirection } from './live';
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -129,5 +130,18 @@ describe('live API client', () => {
 			mockFetchFailure(503);
 			await expect(getLiveConnectionDetail('10.0.0.5', '8.8.8.8', 53)).rejects.toThrow('HTTP 503');
 		});
+	});
+});
+
+// O2: the port guess called a LAN device's WireGuard session (port 51820) inbound
+describe('directionLabel', () => {
+	it("words the daemon's direction", () => {
+		expect(['out', 'in', 'local', 'unknown'].map((d) => directionLabel({ direction: d as ConnectionDirection }))).toEqual([
+			'Out', 'In', 'Local', 'Unknown',
+		]);
+	});
+
+	it('a row without a direction is unknown, not guessed from its port', () => {
+		expect(directionLabel({})).toBe('Unknown');
 	});
 });

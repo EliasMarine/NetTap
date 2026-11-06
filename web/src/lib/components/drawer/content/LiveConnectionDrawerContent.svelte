@@ -7,6 +7,8 @@
 -->
 <script lang="ts">
 	import type { LiveConnection, ConnectionDetailResponse } from '$lib/api/live';
+	import { directionLabel } from '$lib/api/live';
+	import { formatBytes } from '$lib/api/logs';
 	import DrawerSection from '../DrawerSection.svelte';
 	import KVRow from '../KVRow.svelte';
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
@@ -36,12 +38,14 @@
 	// Format helpers
 	// ---------------------------------------------------------------------------
 
-	function formatBytes(bytes: number): string {
-		if (bytes >= 1_000_000_000) return (bytes / 1_000_000_000).toFixed(1) + ' GB';
-		if (bytes >= 1_000_000) return (bytes / 1_000_000).toFixed(1) + ' MB';
-		if (bytes >= 1_000) return (bytes / 1_000).toFixed(1) + ' KB';
-		return bytes + ' B';
-	}
+	// OLD CODE START — 2026-11-06 (O11): 1000-based, while the rest of NetTap divides by 1024
+	// function formatBytes(bytes: number): string {
+	// 	if (bytes >= 1_000_000_000) return (bytes / 1_000_000_000).toFixed(1) + ' GB';
+	// 	if (bytes >= 1_000_000) return (bytes / 1_000_000).toFixed(1) + ' MB';
+	// 	if (bytes >= 1_000) return (bytes / 1_000).toFixed(1) + ' KB';
+	// 	return bytes + ' B';
+	// }
+	// OLD CODE END
 
 	function formatDuration(seconds: number): string {
 		if (seconds < 0.001) return '<1ms';
@@ -93,9 +97,12 @@
 		return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
 	}
 
-	function directionLabel(): string {
-		return connection.dest_port < 1024 ? 'Outbound' : 'Inbound';
-	}
+	// OLD CODE START — 2026-11-06 (O2): guessed from the port; the daemon's direction is shared
+	// with the feed's Dir column (directionLabel in $lib/api/live)
+	// function directionLabel(): string {
+	// 	return connection.dest_port < 1024 ? 'Outbound' : 'Inbound';
+	// }
+	// OLD CODE END
 
 	// OLD CODE START — 2026-11-03: the badge is the shared SeverityPill, which takes the level and
 	// prints the word itself, so neither the label nor the class is needed here
@@ -159,7 +166,7 @@
 		<KVRow label="Source IP" value={`${connection.source_ip}:${connection.source_port}`} mono copyable />
 		<KVRow label="Destination IP" value={`${connection.dest_ip}:${connection.dest_port}`} mono copyable />
 		<KVRow label="Protocol" value={String(connection.service || connection.protocol || '').toUpperCase()} />
-		<KVRow label="Direction" value={directionLabel()} />
+		<KVRow label="Direction" value={directionLabel(connection)} />
 		<KVRow label="Bytes" value={formatBytes(connection.bytes)} mono />
 		<KVRow label="Duration" value={formatDuration(connection.duration)} mono />
 		<KVRow label="Device" value={connection.device_name || '--'} />

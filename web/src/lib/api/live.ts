@@ -25,6 +25,18 @@ export interface LiveConnection {
 	dest_asn: number | null;
 	dest_org: string;
 	has_alert: boolean;
+	/** From the daemon's LAN subnets (O2); absent from /api/live/connections and older daemons. */
+	direction?: ConnectionDirection;
+}
+
+/** Where a connection runs relative to the LAN: the daemon decides, never the port. */
+export type ConnectionDirection = 'out' | 'in' | 'local' | 'unknown';
+
+const DIRECTION_LABELS: Record<ConnectionDirection, string> = { out: 'Out', in: 'In', local: 'Local', unknown: 'Unknown' };
+
+/** The connection's direction as a word; one the daemon didn't send reads "Unknown". */
+export function directionLabel(c: Pick<LiveConnection, 'direction'>): string {
+	return DIRECTION_LABELS[c.direction ?? 'unknown'] ?? DIRECTION_LABELS.unknown;
 }
 
 export interface LiveConnectionsResponse {

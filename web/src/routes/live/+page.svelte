@@ -6,7 +6,8 @@
 -->
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { getLiveDashboard, getLiveConnectionDetail } from '$lib/api/live';
+	import { getLiveDashboard, getLiveConnectionDetail, directionLabel } from '$lib/api/live';
+	import { formatBytes } from '$lib/api/logs';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { prefersReducedMotion } from '$lib/utils/tokens';
 	import type {
@@ -151,29 +152,67 @@
 	// });
 	// OLD CODE END
 
-	// Derive protocol distribution from filtered connections for cross-filter feedback
-	let filteredProtocols = $derived.by(() => {
-		const map: Record<string, number> = {};
-		for (const c of filteredConnections) {
-			const p = (c.protocol || 'other').toLowerCase();
-			map[p] = (map[p] || 0) + 1;
-		}
-		return map;
-	});
+	// OLD CODE START — 2026-11-06 (O7): counted from the 200 newest feed rows but labelled
+	// "last 5 minutes"; the daemon computes both cards over the window with the same filters
+	// // Derive protocol distribution from filtered connections for cross-filter feedback
+	// let filteredProtocols = $derived.by(() => {
+	// 	const map: Record<string, number> = {};
+	// 	for (const c of filteredConnections) {
+	// 		const p = (c.protocol || 'other').toLowerCase();
+	// 		map[p] = (map[p] || 0) + 1;
+	// 	}
+	// 	return map;
+	// });
+	//
+	// // Derive top talkers from filtered connections
+	// let filteredTopTalkers = $derived.by((): TopTalker[] => {
+	// 	const map = new Map<string, { bytes: number; connections: number }>();
+	// 	for (const c of filteredConnections) {
+	// 		const existing = map.get(c.source_ip) || { bytes: 0, connections: 0 };
+	// 		existing.bytes += c.bytes;
+	// 		existing.connections += 1;
+	// 		map.set(c.source_ip, existing);
+	// 	}
+	// 	return [...map.entries()]
+	// 		.sort((a, b) => b[1].bytes - a[1].bytes)
+	// 		.slice(0, 10)
+	// 		.map(([ip, data]) => ({ ip, bytes: data.bytes, connections: data.connections }));
+	// });
+	// OLD CODE END
 
-	// Derive top talkers from filtered connections
-	let filteredTopTalkers = $derived.by((): TopTalker[] => {
-		const map = new Map<string, { bytes: number; connections: number }>();
-		for (const c of filteredConnections) {
-			const existing = map.get(c.source_ip) || { bytes: 0, connections: 0 };
-			existing.bytes += c.bytes;
-			existing.connections += 1;
-			map.set(c.source_ip, existing);
+	// O7: with a filter on, the top talkers and protocol cards come from the daemon, asked with
+	// the same filters over the whole 5-minute window
+	let filterKey = $derived(hasActiveFilter ? JSON.stringify([countryFilter, protocolFilter, deviceFilter]) : '');
+	let filtered = $state.raw<{ key: string; data: LiveDashboardResponse } | null>(null);
+	let filteredFailedKey = $state<string | null>(null);
+	/** The filtered figures, only when they are for the filters on screen now. */
+	let filteredDashboard = $derived(filtered?.key === filterKey ? filtered.data : null);
+	let filteredFailed = $derived(filterKey !== '' && filteredFailedKey === filterKey);
+	let filteredSeq = 0;
+
+	/** Load the side cards for the current filters; a newer load drops an older one. */
+	async function loadFiltered(): Promise<LoadResult> {
+		const key = filterKey;
+		if (!key) return 'skipped';
+		const seq = ++filteredSeq;
+		const opts = { country: countryFilter ?? undefined, proto: protocolFilter ?? undefined, device: deviceFilter ?? undefined };
+		try {
+			// only its aggregations are used, so one row
+			const data = await getLiveDashboard({ ...opts, limit: 1 });
+			if (seq !== filteredSeq) return 'skipped';
+			filtered = { key, data };
+			filteredFailedKey = null;
+			return 'ok';
+		} catch {
+			if (seq !== filteredSeq) return 'skipped';
+			filteredFailedKey = key;
+			return 'failed';
 		}
-		return [...map.entries()]
-			.sort((a, b) => b[1].bytes - a[1].bytes)
-			.slice(0, 10)
-			.map(([ip, data]) => ({ ip, bytes: data.bytes, connections: data.connections }));
+	}
+
+	// A filter change loads at once, also while the feed is paused
+	$effect(() => {
+		if (filterKey) void loadFiltered();
 	});
 
 	// OLD CODE START — never matched LiveConnectionTable's row ids, so no row ever showed as open
@@ -189,7 +228,8 @@
 	);
 
 	let talkerItems = $derived<DeviceListItem[]>(
-		(hasActiveFilter ? filteredTopTalkers : (dashboard?.top_talkers ?? [])).map((t) => ({
+		// OLD CODE START: (hasActiveFilter ? filteredTopTalkers : (dashboard?.top_talkers ?? [])).map((t) => ({ (O7) OLD CODE END
+		((hasActiveFilter ? filteredDashboard : dashboard)?.top_talkers ?? []).map((t) => ({
 			key: t.ip,
 			name: deviceNames.get(t.ip) || t.ip,
 			ip: deviceNames.has(t.ip) ? t.ip : '',
@@ -200,19 +240,43 @@
 		})),
 	);
 
-	let protocolCounts = $derived(hasActiveFilter ? filteredProtocols : (dashboard?.protocols ?? {}));
+	// OLD CODE START — 2026-11-06 (O6, O7): the daemon sent percentages, shown as counts, and a
+	// filtered donut counted the feed rows; "other" was a pill that matched nothing
+	// let protocolCounts = $derived(hasActiveFilter ? filteredProtocols : (dashboard?.protocols ?? {}));
+	// let protocolItems = $derived(
+	// 	Object.entries(protocolCounts).map(([key, value]) => ({ key, label: key.toUpperCase(), value })),
+	// );
+	// let protocolTotal = $derived(hasActiveFilter ? filteredConnections.length : dashboard?.stats.connections_in_window);
+	//
+	// // Every protocol the window saw, so another can be picked while one is filtered
+	// let protocolPills = $derived([
+	// 	{ value: 'all', label: 'All' },
+	// 	...[...new Set([...Object.keys(dashboard?.protocols ?? {}), ...(protocolFilter ? [protocolFilter] : [])])].map((p) => ({
+	// 		value: p,
+	// 		label: p.toUpperCase(),
+	// 	})),
+	// ]);
+	// OLD CODE END
+	/** The daemon's buckets for records with no recognised transport: counted, never a filter. */
+	const NOT_A_TRANSPORT: Record<string, string> = { other: 'Other', unknown: 'Unknown' };
+	let protocolSource = $derived(hasActiveFilter ? filteredDashboard : dashboard);
+	// Connection counts per transport, which add up to the window's total in the centre
 	let protocolItems = $derived(
-		Object.entries(protocolCounts).map(([key, value]) => ({ key, label: key.toUpperCase(), value })),
+		Object.entries(protocolSource?.protocols ?? {})
+			.filter(([, value]) => value > 0)
+			.map(([key, value]) => ({ key, label: NOT_A_TRANSPORT[key] ?? key.toUpperCase(), value })),
 	);
-	let protocolTotal = $derived(hasActiveFilter ? filteredConnections.length : dashboard?.stats.connections_in_window);
+	let protocolTotal = $derived(protocolSource?.stats.connections_in_window);
 
-	// Every protocol the window saw, so another can be picked while one is filtered
+	// Every transport the window saw, so another can be picked while one is filtered
 	let protocolPills = $derived([
 		{ value: 'all', label: 'All' },
-		...[...new Set([...Object.keys(dashboard?.protocols ?? {}), ...(protocolFilter ? [protocolFilter] : [])])].map((p) => ({
-			value: p,
-			label: p.toUpperCase(),
-		})),
+		...[
+			...new Set([
+				...Object.entries(dashboard?.protocols ?? {}).filter(([p, n]) => n > 0 && !(p in NOT_A_TRANSPORT)).map(([p]) => p),
+				...(protocolFilter ? [protocolFilter] : []),
+			]),
+		].map((p) => ({ value: p, label: p.toUpperCase() })),
 	]);
 
 	let hotspots = $derived<Hotspot[]>(
@@ -230,7 +294,9 @@
 			? [
 					{ key: 'rate', label: 'Connections per second', value: dashboard.stats.connections_per_second.toFixed(1) },
 					{ key: 'bandwidth', label: 'Bandwidth', value: formatBandwidth(dashboard.stats.bandwidth_bytes_per_second) },
-					{ key: 'devices', label: 'Active devices', value: String(dashboard.stats.active_devices) },
+					// OLD CODE START: { key: 'devices', label: 'Active devices', value: String(dashboard.stats.active_devices) }, OLD CODE END
+					// O8: LAN source addresses seen in the window, not the Devices page's "online" rule
+					{ key: 'devices', label: 'Active addresses (LAN)', value: String(dashboard.stats.active_devices) },
 					{ key: 'country', label: 'Top country', value: dashboard.stats.top_country || '—' },
 				]
 			: [],
@@ -249,17 +315,23 @@
 	// Format helpers (from LiveStatsRibbon, LiveConnectionTable and TopTalkersChart)
 	// ---------------------------------------------------------------------------
 
+	// OLD CODE START — 2026-11-06 (O11): 1000-based units here, 1024 everywhere else in NetTap
+	// function formatBandwidth(bytesPerSec: number): string {
+	// 	if (bytesPerSec >= 1_000_000) return `${(bytesPerSec / 1_000_000).toFixed(1)} MB/s`;
+	// 	if (bytesPerSec >= 1_000) return `${(bytesPerSec / 1_000).toFixed(1)} KB/s`;
+	// 	return `${Math.round(bytesPerSec)} B/s`;
+	// }
+	//
+	// function formatBytes(bytes: number): string {
+	// 	if (bytes >= 1_000_000_000) return (bytes / 1_000_000_000).toFixed(1) + ' GB';
+	// 	if (bytes >= 1_000_000) return (bytes / 1_000_000).toFixed(1) + ' MB';
+	// 	if (bytes >= 1_000) return (bytes / 1_000).toFixed(1) + ' KB';
+	// 	return bytes + ' B';
+	// }
+	// OLD CODE END
+	// formatBytes is the shared one ($lib/api/logs)
 	function formatBandwidth(bytesPerSec: number): string {
-		if (bytesPerSec >= 1_000_000) return `${(bytesPerSec / 1_000_000).toFixed(1)} MB/s`;
-		if (bytesPerSec >= 1_000) return `${(bytesPerSec / 1_000).toFixed(1)} KB/s`;
-		return `${Math.round(bytesPerSec)} B/s`;
-	}
-
-	function formatBytes(bytes: number): string {
-		if (bytes >= 1_000_000_000) return (bytes / 1_000_000_000).toFixed(1) + ' GB';
-		if (bytes >= 1_000_000) return (bytes / 1_000_000).toFixed(1) + ' MB';
-		if (bytes >= 1_000) return (bytes / 1_000).toFixed(1) + ' KB';
-		return bytes + ' B';
+		return `${formatBytes(Math.round(bytesPerSec))}/s`;
 	}
 
 	function formatTime(ts: string): string {
@@ -280,14 +352,17 @@
 		return `${Math.floor(totalMin / 60)}h ${totalMin % 60}m`;
 	}
 
-	/**
-	 * Heuristic for direction: if dest_port is a well-known service port (<1024)
-	 * the connection is outbound (our device talking to a server). Otherwise,
-	 * inbound (remote initiated or P2P).
-	 */
-	function getDirection(conn: LiveConnection): 'OUT' | 'IN' {
-		return conn.dest_port < 1024 ? 'OUT' : 'IN';
-	}
+	// OLD CODE START — 2026-11-06 (O2): a port guess; a LAN device on a high port read IN, and
+	// LAN-to-LAN and multicast had no answer. The daemon sends the direction (directionLabel)
+	// /**
+	//  * Heuristic for direction: if dest_port is a well-known service port (<1024)
+	//  * the connection is outbound (our device talking to a server). Otherwise,
+	//  * inbound (remote initiated or P2P).
+	//  */
+	// function getDirection(conn: LiveConnection): 'OUT' | 'IN' {
+	// 	return conn.dest_port < 1024 ? 'OUT' : 'IN';
+	// }
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// Data fetching
@@ -319,6 +394,8 @@
 		if (paused) return 'skipped';
 		const g = guard.begin();
 		loading = true;
+		// The filtered side cards refresh with the feed ('skipped' when no filter is on)
+		const side = loadFiltered();
 		try {
 			const next = await getLiveDashboard({ limit: PAGE_SIZE });
 			if (!guard.current(g)) return 'skipped';
@@ -326,8 +403,11 @@
 			recordTalkers(next.top_talkers);
 			dashboard = next;
 			error = next._error ?? '';
+			// OLD CODE START: loading = false; return next._error ? 'partial' : 'ok'; (O7) OLD CODE END
+			const sideResult = await side;
+			if (!guard.current(g)) return 'skipped';
 			loading = false;
-			return next._error ? 'partial' : 'ok';
+			return next._error || sideResult === 'failed' ? 'partial' : 'ok';
 		} catch {
 			if (!guard.current(g)) return 'skipped';
 			// The last good dashboard stays on screen; the status line says it is stale
@@ -422,7 +502,8 @@
 	const COLUMNS: Column<FeedRow>[] = [
 		{ key: 'timestamp', label: 'Time', cell: timeCell },
 		{ key: 'source_ip', label: 'Source', cell: sourceCell },
-		{ key: 'direction', label: 'Dir', sortValue: getDirection, cell: directionCell },
+		// OLD CODE START: { key: 'direction', label: 'Dir', sortValue: getDirection, cell: directionCell }, (O2) OLD CODE END
+		{ key: 'direction', label: 'Dir', sortValue: directionLabel, cell: directionCell },
 		{ key: 'dest_ip', label: 'Destination', cell: destinationCell },
 		{ key: 'protocol', label: 'Protocol', sortValue: (c) => c.service || c.protocol, cell: protocolCell },
 		{ key: 'dest_port', label: 'Port', numeric: true, cell: portCell },
@@ -476,7 +557,7 @@
 	</span>
 {/snippet}
 
-{#snippet directionCell(c: FeedRow)}<span class="tag">{getDirection(c)}</span>{/snippet}
+{#snippet directionCell(c: FeedRow)}<span class="tag">{directionLabel(c)}</span>{/snippet}
 
 {#snippet destinationCell(c: FeedRow)}
 	<span class="dest">
@@ -517,7 +598,8 @@
 {/if}
 
 <div class="grid">
-	<Card class="c-12" title="Right now" sub="Connections, throughput and devices · last 5 minutes">
+	<!-- OLD CODE START: sub="Connections, throughput and devices · last 5 minutes" (O8) OLD CODE END -->
+	<Card class="c-12" title="Right now" sub="Connections, throughput and LAN addresses · last 5 minutes">
 		{#if dashboard}
 			<StatStrip stats={liveStats} />
 		{:else if error}
@@ -545,9 +627,14 @@
 		{/if}
 	</Card>
 
-	<Card class="c-4" title="Top talkers" sub="Bytes and connections per device · last 5 minutes">
+	<!-- OLD CODE START: sub="Bytes and connections per device · last 5 minutes" (O11: LAN sources only; O7: filtered from the daemon) OLD CODE END -->
+	<Card class="c-4" title="Top talkers" sub="Bytes and connections per LAN address · last 5 minutes{hasActiveFilter ? ', filtered' : ''}">
 		{#if talkerItems.length > 0}
 			<DeviceList items={talkerItems} mode="select" selectedKey={deviceFilter ?? undefined} onselect={(item) => setDeviceFilter(item.key)} />
+		{:else if hasActiveFilter && filteredFailed}
+			<CardState state="error" title={loadFailed('the filtered top talkers')} message="Check that NetTap is running on the System page, then try again." onaction={() => loadFiltered()} />
+		{:else if hasActiveFilter && !filteredDashboard}
+			<CardState state="loading" title="Loading top talkers" />
 		{:else if dashboard}
 			<CardState state="empty" title={hasActiveFilter ? 'No devices match these filters' : 'No devices talking yet'} message="Devices appear here once they send traffic." />
 		{:else if error}
@@ -557,7 +644,7 @@
 		{/if}
 	</Card>
 
-	<Card class="c-4" title="Protocols" sub="Share of connections · last 5 minutes">
+	<Card class="c-4" title="Protocols" sub="Share of connections · last 5 minutes{hasActiveFilter ? ', filtered' : ''}">
 		{#if protocolItems.some((p) => p.value > 0)}
 			<Donut
 				items={protocolItems}
@@ -566,8 +653,12 @@
 				formatValue={(v) => v.toLocaleString('en-GB')}
 				ariaLabel="Protocols across {protocolTotal?.toLocaleString('en-GB') ?? 'the'} connections"
 			/>
+		{:else if hasActiveFilter && filteredFailed}
+			<CardState state="error" title={loadFailed('the filtered protocols')} message="Check that NetTap is running on the System page, then try again." onaction={() => loadFiltered()} />
+		{:else if hasActiveFilter && !filteredDashboard}
+			<CardState state="loading" title="Loading protocols" />
 		{:else if dashboard}
-			<CardState state="empty" title="No protocols yet" message="The protocol split appears here once connections arrive." />
+			<CardState state="empty" title={hasActiveFilter ? 'No connections match these filters' : 'No protocols yet'} message="The protocol split appears here once connections arrive." />
 		{:else if error}
 			<CardState state="error" title={error} message="Check that NetTap is running on the System page, then try again." onaction={() => refresh.run()} />
 		{:else}
