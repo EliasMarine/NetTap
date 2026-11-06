@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { byteSize, compareValues } from '$lib/utils/table-sort.svelte';
+	// OLD CODE: import { byteSize, compareValues } from '$lib/utils/table-sort.svelte'; (NET-166: index sizes arrive in bytes)
+	import { compareValues } from '$lib/utils/table-sort.svelte';
+	// NET-166: the shared formatter prints 0 as "0 B"; this page's own prints '--' for 0, which its KPIs rely on
+	import { formatBytes as sharedFormatBytes } from '$lib/api/logs';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -136,8 +139,12 @@
 	function formatBytes(bytes: number | null | undefined): string {
 		if (bytes == null || !isFinite(bytes) || bytes <= 0) return '--';
 		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(1024));
-		const val = bytes / Math.pow(1024, i);
+		// OLD CODE START — 2026-11-06 (NET-166): 1024-based under decimal labels
+		// const i = Math.floor(Math.log(bytes) / Math.log(1024));
+		// const val = bytes / Math.pow(1024, i);
+		// OLD CODE END
+		const i = Math.floor(Math.log(bytes) / Math.log(1000));
+		const val = bytes / Math.pow(1000, i);
 		return `${val.toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
 	}
 
@@ -750,8 +757,13 @@
 		{ key: 'health', label: 'Health', sortValue: (i) => HEALTH_RANK[i.health] ?? -1, cell: indexHealthCell },
 		{ key: 'index', label: 'Index name', cell: indexNameCell },
 		{ key: 'docs', label: 'Docs', numeric: true, sortValue: (i) => Number(i.docs_count) || 0, cell: indexDocsCell },
-		{ key: 'pri_size', label: 'Primary size', numeric: true, sortValue: (i) => byteSize(i.pri_store_size) ?? -1, cell: priSizeCell },
-		{ key: 'total_size', label: 'Total size', numeric: true, sortValue: (i) => byteSize(i.store_size) ?? -1, cell: totalSizeCell },
+		// OLD CODE START — 2026-11-06 (NET-166): sizes were OpenSearch's text, parsed back to 1024-based bytes
+		// { key: 'pri_size', label: 'Primary size', numeric: true, sortValue: (i) => byteSize(i.pri_store_size) ?? -1, cell: priSizeCell },
+		// { key: 'total_size', label: 'Total size', numeric: true, sortValue: (i) => byteSize(i.store_size) ?? -1, cell: totalSizeCell },
+		// OLD CODE END
+		// bytes; an unknown (null) size sorts last both ways
+		{ key: 'pri_size', label: 'Primary size', numeric: true, sortValue: (i) => i.pri_store_size, cell: priSizeCell },
+		{ key: 'total_size', label: 'Total size', numeric: true, sortValue: (i) => i.store_size, cell: totalSizeCell },
 	];
 
 	const pipelineColumns: Column<LogstashPipeline>[] = [
@@ -1191,8 +1203,12 @@
 {/snippet}
 {#snippet indexNameCell(i: OpenSearchIndex)}<span class="mono">{i.index ?? '--'}</span>{/snippet}
 {#snippet indexDocsCell(i: OpenSearchIndex)}{formatNumber(Number(i.docs_count))}{/snippet}
+<!-- OLD CODE START — 2026-11-06 (NET-166): printed OpenSearch's rounded 1024-based text ("512kb")
 {#snippet priSizeCell(i: OpenSearchIndex)}<span class="mono">{i.pri_store_size ?? '--'}</span>{/snippet}
 {#snippet totalSizeCell(i: OpenSearchIndex)}<span class="mono">{i.store_size ?? '--'}</span>{/snippet}
+OLD CODE END -->
+{#snippet priSizeCell(i: OpenSearchIndex)}<span class="mono">{i.pri_store_size == null ? '--' : sharedFormatBytes(i.pri_store_size)}</span>{/snippet}
+{#snippet totalSizeCell(i: OpenSearchIndex)}<span class="mono">{i.store_size == null ? '--' : sharedFormatBytes(i.store_size)}</span>{/snippet}
 
 {#snippet pipelineIdCell(p: LogstashPipeline)}<span class="mono">{p.id ?? '--'}</span>{/snippet}
 {#snippet eventsInCell(p: LogstashPipeline)}{formatNumber(p.events_in)}{/snippet}

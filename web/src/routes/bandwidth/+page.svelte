@@ -45,19 +45,35 @@
 	// Helpers
 	// ---------------------------------------------------------------------------
 
+	// OLD CODE START — 2026-11-06 (NET-166): 1024-based under decimal labels (a 1,000 GB cap read 931.3 GB)
+	// function formatBytes(bytes: number): string {
+	// 	if (bytes < 1024) return `${bytes} B`;
+	// 	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	// 	if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	// 	return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+	// }
+	//
+	// function formatGB(bytes: number): string {
+	// 	return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+	// }
+	//
+	// /** The GB figure alone, for a KPI whose unit sits beside it. */
+	// const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
+	// OLD CODE END
+	// Decimal units (1 GB = 10^9 bytes), as ISPs state caps; GB is the largest unit on this page
 	function formatBytes(bytes: number): string {
-		if (bytes < 1024) return `${bytes} B`;
-		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-		return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+		if (bytes < 1e3) return `${bytes} B`;
+		if (bytes < 1e6) return `${(bytes / 1e3).toFixed(1)} KB`;
+		if (bytes < 1e9) return `${(bytes / 1e6).toFixed(1)} MB`;
+		return `${(bytes / 1e9).toFixed(1)} GB`;
 	}
 
 	function formatGB(bytes: number): string {
-		return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+		return `${(bytes / 1e9).toFixed(1)} GB`;
 	}
 
 	/** The GB figure alone, for a KPI whose unit sits beside it. */
-	const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
+	const gb = (bytes: number) => (bytes / 1e9).toFixed(1);
 
 	function progressPercent(current: number, cap: number): number {
 		if (cap <= 0) return 0;

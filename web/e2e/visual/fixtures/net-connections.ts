@@ -21,7 +21,8 @@ export interface ConnTemplate {
 	state: string;
 }
 
-const KB = 1024;
+// OLD CODE: const KB = 1024; (NET-166: the pages print decimal units)
+const KB = 1000;
 const MB = KB * KB;
 
 export const CONN_TEMPLATES: readonly ConnTemplate[] = [

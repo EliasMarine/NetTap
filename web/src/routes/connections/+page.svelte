@@ -22,6 +22,7 @@
 	// OLD CODE END
 	import { getLiveDashboard } from '$api/live';
 	import { loadFailed } from '$lib/utils/load-failed';
+	import { formatBytes as sharedFormatBytes } from '$lib/api/logs';
 	import IPAddress from '$components/IPAddress.svelte';
 	// OLD CODE START — replaced by the system's BarList (ui/BarList)
 	// import HorizontalBarList from '$components/HorizontalBarList.svelte';
@@ -365,11 +366,14 @@
 	}
 
 	function formatBytes(bytes: number | undefined): string {
-		if (bytes === undefined || bytes === null) return '—';
-		if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`;
-		if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
-		if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-		return `${bytes} B`;
+		// OLD CODE START — 2026-11-06 (NET-166): a copy of formatBytes in $lib/api/logs, 1024-based under decimal labels
+		// if (bytes === undefined || bytes === null) return '—';
+		// if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`;
+		// if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
+		// if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+		// return `${bytes} B`;
+		// OLD CODE END
+		return bytes == null ? '—' : sharedFormatBytes(bytes);
 	}
 
 	function formatNumber(n: number): string {

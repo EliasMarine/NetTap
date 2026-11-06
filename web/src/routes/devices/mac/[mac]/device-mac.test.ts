@@ -34,13 +34,14 @@ const REPLIES: Record<string, unknown> = {
 		to: '',
 		traffic: {
 			mac: MAC,
-			total_bytes: 3 * 1024 * 1024,
-			inbound_bytes: 2 * 1024 * 1024,
-			outbound_bytes: 1024 * 1024,
+			// decimal units (NET-166): 2,000,000 bytes is 2.0 MB
+			total_bytes: 3_000_000,
+			inbound_bytes: 2_000_000,
+			outbound_bytes: 1_000_000,
 			connection_count: 1234,
 			protocols: ['udp'],
 			top_protocols: [{ name: 'udp', count: 1234 }],
-			top_destinations: [{ ip: '192.168.1.174', connections: 600, bytes: 512 * 1024 }],
+			top_destinations: [{ ip: '192.168.1.174', connections: 600, bytes: 512_000 }],
 			dns_queries: [{ domain: 'Updates.Example.COM.', count: 3 }],
 		},
 	},

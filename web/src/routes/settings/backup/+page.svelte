@@ -188,7 +188,8 @@
 		{:else}
 			<div class="selected-file">
 				<span class="mono">{importFile.name}</span>
-				<span class="dim num">{(importFile.size / 1024).toFixed(1)} KB</span>
+				<!-- OLD CODE: {(importFile.size / 1024).toFixed(1)} KB (NET-166: 1024-based under a decimal label) -->
+				<span class="dim num">{(importFile.size / 1000).toFixed(1)} KB</span>
 				<button class="btn" type="button" onclick={resetImport}>Remove</button>
 			</div>
 

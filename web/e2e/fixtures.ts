@@ -34,9 +34,10 @@ export const MOCK_NICS = [
 ];
 
 export const MOCK_TRAFFIC_SUMMARY = {
-	total_bytes: 1_073_741_824,
-	orig_bytes: 536_870_912,
-	resp_bytes: 536_870_912,
+	// OLD CODE: total_bytes: 1_073_741_824, orig_bytes: 536_870_912, resp_bytes: 536_870_912 (NET-166: 1 GiB reads 1.1 GB now)
+	total_bytes: 1_000_000_000,
+	orig_bytes: 500_000_000,
+	resp_bytes: 500_000_000,
 	connection_count: 12_345,
 	top_protocol: 'tcp',
 	unique_sources: 42,

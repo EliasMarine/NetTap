@@ -196,7 +196,8 @@ describe('Infrastructure index count', () => {
 			'fetch',
 			vi.fn(async (url: string) => {
 				if (url.startsWith('/api/opensearch/indices')) {
-					const indices = indexNames.map((index) => ({ index, health: 'green', status: 'open', docs_count: '1', store_size: '1kb' }));
+					// OLD CODE: …, store_size: '1kb' (NET-166: the daemon sends bytes)
+					const indices = indexNames.map((index) => ({ index, health: 'green', status: 'open', docs_count: '1', store_size: 1000 }));
 					return { ok: true, status: 200, json: async () => ({ indices, count: indices.length }) };
 				}
 				if (url.startsWith('/api/opensearch/cluster')) {
@@ -367,7 +368,8 @@ describe('Infrastructure figures', () => {
 		'/api/system/health': { uptime: 7200, status: 'healthy', healthy: true, opensearch_reachable: true },
 		'/api/bridge/health': {
 			bridge_state: 'up', wan_link: true, lan_link: true, bypass_active: false, latency_us: null, uptime_seconds: 999_999,
-			rx_bytes_delta: 3_072_000, tx_bytes_delta: 0, rx_bytes_per_sec: 102_400, tx_bytes_per_sec: null, issues: [],
+			// OLD CODE: rx_bytes_per_sec: 102_400 (read 100.0 KB/s in 1024-based units; NET-166)
+			rx_bytes_delta: 3_072_000, tx_bytes_delta: 0, rx_bytes_per_sec: 100_000, tx_bytes_per_sec: null, issues: [],
 		},
 	};
 
@@ -415,6 +417,41 @@ describe('Infrastructure figures', () => {
 		const bridge = within(card('Bridge'));
 		expect(bridge.getByText('RX rate').nextElementSibling?.textContent).toBe('100.0 KB/s');
 		expect(bridge.getByText('TX rate').nextElementSibling?.textContent).toBe('--');
+	});
+
+	it('NET-166: index sizes are bytes in decimal units, sorted by bytes, with unknown sizes last', async () => {
+		const idx = (index: string, bytes: number | null) =>
+			({ index, health: 'green', status: 'open', docs_count: '1', pri_store_size: bytes, store_size: bytes });
+		stubFetch({
+			...READINGS,
+			'/api/opensearch/cluster': { status: 'green', number_of_nodes: 1 },
+			'/api/opensearch/indices': {
+				indices: [idx('a-half-mib', 524_288), idx('b-empty', 0), idx('c-unknown', null), idx('d-two-mb', 2_000_000)],
+				count: 4,
+			},
+		});
+		await renderPage();
+
+		const table = await screen.findByRole('table', { name: 'OpenSearch indices' });
+		const sizes = () => within(table).getAllByRole('row').slice(1).map((r) => {
+			const cells = within(r).getAllByRole('cell');
+			return `${cells[1].textContent} ${cells.at(-1)?.textContent}`;
+		});
+		// 524,288 bytes is 524.3 KB (it read "512kb" from OpenSearch); 0 is a real 0 B; null is unknown
+		expect(sizes()).toEqual(['a-half-mib 524.3 KB', 'b-empty 0 B', 'c-unknown --', 'd-two-mb 2.0 MB']);
+
+		const sortBy = (label: string) => within(table).getByRole('button', { name: label }).click();
+		sortBy('Total size');
+		await vi.waitFor(() => expect(sizes()).toEqual(['d-two-mb 2.0 MB', 'a-half-mib 524.3 KB', 'b-empty 0 B', 'c-unknown --']));
+		sortBy('Total size');
+		await vi.waitFor(() => expect(sizes()).toEqual(['b-empty 0 B', 'a-half-mib 524.3 KB', 'd-two-mb 2.0 MB', 'c-unknown --']));
+	});
+
+	it("NET-166: Logstash's heap is in decimal units too (-Xmx1g reads 1.1 GB)", async () => {
+		stubFetch({ ...READINGS, '/api/logstash/stats': { heap_used_bytes: 612_000_000, heap_max_bytes: 2 ** 30, events_in: 1 } });
+		await renderPage();
+
+		expect(await screen.findByText('612.0 MB used · 1.1 GB max')).toBeInTheDocument();
 	});
 
 	it('says Shipping only when events reach Logstash between two polls (S8)', async () => {

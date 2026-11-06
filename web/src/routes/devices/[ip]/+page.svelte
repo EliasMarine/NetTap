@@ -25,6 +25,7 @@
 	} from '$api/devices';
 	import { getSmartAlerts, suppressAlert } from '$api/alerts';
 	import { loadFailed } from '$lib/utils/load-failed';
+	import { formatBytes } from '$lib/api/logs';
 	import { TableSort } from '$lib/utils/table-sort.svelte';
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { smartLevel, type SeverityLevel } from '$lib/utils/severity';
@@ -398,12 +399,14 @@
 	// Helpers
 	// ---------------------------------------------------------------------------
 
-	function formatBytes(bytes: number): string {
-		if (bytes === 0) return '0 B';
-		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(1024));
-		return `${(bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
-	}
+	// OLD CODE START — 2026-11-06 (NET-166): a copy of formatBytes in $lib/api/logs, 1024-based under decimal labels; the shared one is decimal
+	// function formatBytes(bytes: number): string {
+	// 	if (bytes === 0) return '0 B';
+	// 	const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+	// 	const i = Math.floor(Math.log(bytes) / Math.log(1024));
+	// 	return `${(bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
+	// }
+	// OLD CODE END
 
 	function formatNumber(n: number): string {
 		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;

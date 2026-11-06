@@ -244,16 +244,17 @@ describe('formatBytes', () => {
 		expect(formatBytes(500)).toBe('500 B');
 	});
 
+	// NET-166: decimal units
 	it('formats kilobytes', () => {
-		expect(formatBytes(1536)).toBe('1.5 KB');
+		expect(formatBytes(1_500)).toBe('1.5 KB');
 	});
 
 	it('formats megabytes', () => {
-		expect(formatBytes(2_097_152)).toBe('2.0 MB');
+		expect(formatBytes(2_000_000)).toBe('2.0 MB');
 	});
 
 	it('formats gigabytes', () => {
-		expect(formatBytes(1_610_612_736)).toBe('1.5 GB');
+		expect(formatBytes(1_500_000_000)).toBe('1.5 GB');
 	});
 
 	it('handles zero', () => {
@@ -261,7 +262,7 @@ describe('formatBytes', () => {
 	});
 
 	it('handles string number input', () => {
-		expect(formatBytes('1024')).toBe('1.0 KB');
+		expect(formatBytes('1000')).toBe('1.0 KB');
 	});
 });
 

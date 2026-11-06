@@ -91,9 +91,14 @@ export function formatBytes(val: unknown): string {
 	if (val == null) return '--';
 	const n = Number(val);
 	if (isNaN(n)) return String(val);
-	if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(1)} GB`;
-	if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;
-	if (n >= 1_024) return `${(n / 1_024).toFixed(1)} KB`;
+	// OLD CODE START — 2026-11-06 (NET-166): 1024-based under decimal labels
+	// if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(1)} GB`;
+	// if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;
+	// if (n >= 1_024) return `${(n / 1_024).toFixed(1)} KB`;
+	// OLD CODE END
+	if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
+	if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
+	if (n >= 1e3) return `${(n / 1e3).toFixed(1)} KB`;
 	return `${n} B`;
 }
 

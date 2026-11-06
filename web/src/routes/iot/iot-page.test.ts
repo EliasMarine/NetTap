@@ -227,6 +227,25 @@ describe('IoT page — only measured figures', () => {
 		expect(panel).toHaveTextContent('New destinations not checked: this device has no baseline yet.');
 		expect(within(panel).queryByText(/· new$/)).not.toBeInTheDocument();
 	});
+
+	// NET-166: decimal units (the 1024-based code read 953.7 MB and 1000 B for the first two)
+	it("shows each destination's traffic in decimal units", async () => {
+		const dest = (ip: string, sent: number, received: number) => ({ ip, hostname: null, country: 'US', ports: [443],
+			bytes_sent: sent, bytes_received: received, connection_count: 1, first_seen: '', last_seen: '', in_baseline: true });
+		vi.mocked(iotApi.getCommunicationMap).mockResolvedValue({
+			mac: 'm1',
+			destinations: [dest('203.0.113.9', 400_000_000, 600_000_000), dest('203.0.113.10', 1_000, 0), dest('203.0.113.11', 999, 0)],
+		});
+		render(IoTPage);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Open Doorbell' }));
+		await flush();
+		const panel = screen.getByRole('complementary', { name: 'Detail panel' });
+		await fireEvent.click(within(panel).getByRole('button', { name: 'Comm Map' }));
+		expect(within(panel).getByText('1.0 GB')).toBeInTheDocument();
+		expect(within(panel).getByText('1.0 KB')).toBeInTheDocument();
+		expect(within(panel).getByText('999 B')).toBeInTheDocument();
+	});
 });
 
 describe('IoT page — page refresh contract', () => {

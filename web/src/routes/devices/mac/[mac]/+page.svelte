@@ -100,16 +100,24 @@
 	function formatBytes(bytes: number): string {
 		if (!bytes || bytes <= 0) return '0 B';
 		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(1024));
-		const value = bytes / Math.pow(1024, i);
+		// OLD CODE START — 2026-11-06 (NET-166): 1024-based under decimal labels
+		// const i = Math.floor(Math.log(bytes) / Math.log(1024));
+		// const value = bytes / Math.pow(1024, i);
+		// OLD CODE END
+		const i = Math.floor(Math.log(bytes) / Math.log(1000));
+		const value = bytes / Math.pow(1000, i);
 		return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[i]}`;
 	}
 
 	function formatBytesShort(bytes: number): string {
 		if (!bytes || bytes <= 0) return '0';
 		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(1024));
-		const value = bytes / Math.pow(1024, i);
+		// OLD CODE START — 2026-11-06 (NET-166): 1024-based under decimal labels
+		// const i = Math.floor(Math.log(bytes) / Math.log(1024));
+		// const value = bytes / Math.pow(1024, i);
+		// OLD CODE END
+		const i = Math.floor(Math.log(bytes) / Math.log(1000));
+		const value = bytes / Math.pow(1000, i);
 		return `${value.toFixed(value >= 10 ? 0 : 1)}${units[i]}`;
 	}
 

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { byteFigure, canonicalName, certificatesHref, chartTime, isHostName, logsHrefForIp, measuredNote, rangeWindow } from './drilldown';
 
-const MB = 1024 ** 2;
+const MB = 1000 ** 2; // decimal, as formatBytes prints (NET-166)
 
 describe('drill-down wording', () => {
 	it('says Not measured when no connection carried a byte count', () => {

@@ -12,15 +12,16 @@ describe('Bandwidth', () => {
 });
 
 // #96: a failed request read as "0.0 GB" this month and an all-zero heatmap
+// decimal GB (NET-166): 3 × 10^9 bytes reads 3.0 GB (3 GiB would read 3.2 GB)
 const MONTHLY = {
 	year: 2026,
 	month: 11,
-	total_bytes: 3 * 1024 ** 3,
-	orig_bytes: 1024 ** 3,
-	resp_bytes: 2 * 1024 ** 3,
+	total_bytes: 3e9,
+	orig_bytes: 1e9,
+	resp_bytes: 2e9,
 	projection: {
-		year: 2026, month: 11, current_bytes: 3 * 1024 ** 3, projected_bytes: 45 * 1024 ** 3,
-		days_elapsed: 2, days_in_month: 30, daily_rate_bytes: 1.5 * 1024 ** 3,
+		year: 2026, month: 11, current_bytes: 3e9, projected_bytes: 45e9,
+		days_elapsed: 2, days_in_month: 30, daily_rate_bytes: 1.5e9,
 		cap_bytes: 0, usage_percent: 0, projected_percent: 0, exceeds_cap: false,
 	},
 };
@@ -74,6 +75,7 @@ describe('Bandwidth — failed requests', () => {
 		// OLD CODE START: expect(await screen.findByText('3.0 GB')).toBeInTheDocument(); (the KPI sets its unit apart: "3.0" + "GB") OLD CODE END
 		await screen.findByText('Projected');
 		expect(screen.getByText('This month').closest('.kpi')).toHaveTextContent('3.0GB');
+		expect(screen.getByText('This month').closest('.kpi')).toHaveTextContent('↓ 2.0 GB down · ↑ 1.0 GB up');
 		expect(screen.queryByText(/Couldn't load this month's usage/)).not.toBeInTheDocument();
 		expect(screen.getByText("Couldn't load the time-of-day heatmap: the request failed.")).toBeInTheDocument();
 	});
@@ -83,7 +85,7 @@ describe('Bandwidth — failed requests', () => {
 // Redesign: the cards with data, their loading and empty states, and the refresh contract
 // ---------------------------------------------------------------------------
 
-const GB = 1024 ** 3;
+const GB = 1e9; // decimal, as the page prints (NET-166)
 const DAILY = {
 	from: '', to: '',
 	daily: [

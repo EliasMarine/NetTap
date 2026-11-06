@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { daemonJSON } from '$lib/server/daemon.js';
-import { POST } from './+server';
+import { GET, POST } from './+server';
 
 /**
  * Tests for the normalizeStorageStatus function in the storage API proxy.
@@ -76,9 +76,9 @@ function normalizeStorageStatus(raw: Record<string, unknown>): StorageStatus {
 describe('normalizeStorageStatus', () => {
 	it('handles new daemon format (absolute GB values, 0-100 percentages)', () => {
 		const raw = {
-			disk_total_gb: 953.87,
-			disk_used_gb: 42.3,
-			disk_free_gb: 911.57,
+			disk_total_gb: 1000.0,
+			disk_used_gb: 44.3,
+			disk_free_gb: 955.7,
 			disk_usage_percent: 4.4,
 			hot_days: 90,
 			warm_days: 180,
@@ -91,8 +91,8 @@ describe('normalizeStorageStatus', () => {
 
 		const result = normalizeStorageStatus(raw);
 
-		expect(result.disk_total_gb).toBe(953.87);
-		expect(result.disk_free_gb).toBe(911.57);
+		expect(result.disk_total_gb).toBe(1000.0);
+		expect(result.disk_free_gb).toBe(955.7);
 		expect(result.disk_usage_percent).toBe(4.4);
 		expect(result.hot_days).toBe(90);
 		expect(result.disk_threshold_percent).toBe(80);
@@ -187,6 +187,20 @@ describe('normalizeStorageStatus', () => {
 // ---------------------------------------------------------------------------
 
 vi.mock('$lib/server/daemon.js', () => ({ daemonJSON: vi.fn() }));
+
+describe('GET /api/setup/storage', () => {
+	afterEach(() => vi.mocked(daemonJSON).mockReset());
+
+	it('NET-166: the sample reply is a 1 TB drive in decimal GB, and its figures add up', async () => {
+		vi.mocked(daemonJSON).mockResolvedValue({ error: 'Daemon unreachable: ECONNREFUSED', status: 502 });
+		const body = await (await GET({} as Parameters<typeof GET>[0])).json();
+		expect(body.source).toBe('mock');
+		// the 1024-based sample read 953.87 GB for the same drive
+		expect(body.disk_total_gb).toBe(1000);
+		expect(body.disk_used_gb + body.disk_free_gb).toBeCloseTo(body.disk_total_gb, 6);
+		expect(body.disk_usage_percent).toBe(Math.round((body.disk_used_gb / body.disk_total_gb) * 1000) / 10);
+	});
+});
 
 describe('POST /api/setup/storage', () => {
 	const VALID = {

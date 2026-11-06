@@ -103,9 +103,15 @@ export const GET: RequestHandler = async () => {
 
 	// Daemon unavailable — return mock storage status
 	const mock: StorageStatus = {
-		disk_total_gb: 953.87,
-		disk_used_gb: 42.3,
-		disk_free_gb: 911.57,
+		// OLD CODE START — 2026-11-06 (NET-166): 1024-based figures; the daemon's GB are now decimal
+		// disk_total_gb: 953.87,
+		// disk_used_gb: 42.3,
+		// disk_free_gb: 911.57,
+		// OLD CODE END
+		// a 1 TB drive in decimal GB, as the daemon reports it
+		disk_total_gb: 1000.0,
+		disk_used_gb: 44.3,
+		disk_free_gb: 955.7,
 		disk_usage_percent: 4.4,
 		hot_days: 90,
 		warm_days: 180,

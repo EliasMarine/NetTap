@@ -179,8 +179,12 @@ export const QUICK_FILTERS = [
 export function formatBytes(bytes: number): string {
 	if (bytes === 0) return '0 B';
 	const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-	const i = Math.floor(Math.log(bytes) / Math.log(1024));
-	return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+	// OLD CODE START — 2026-11-06 (NET-166): 1024-based under decimal labels
+	// const i = Math.floor(Math.log(bytes) / Math.log(1024));
+	// return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+	// OLD CODE END
+	const i = Math.floor(Math.log(bytes) / Math.log(1000));
+	return `${(bytes / Math.pow(1000, i)).toFixed(1)} ${units[i]}`;
 }
 
 /**

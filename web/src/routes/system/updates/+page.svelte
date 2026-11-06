@@ -234,7 +234,8 @@
 	// OLD CODE END
 
 	function formatSizeMB(mb: number): string {
-		if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+		// OLD CODE: if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`; (NET-166: the daemon's size_mb is decimal, 1 GB = 1,000 MB)
+		if (mb >= 1000) return `${(mb / 1000).toFixed(1)} GB`;
 		return `${mb.toFixed(1)} MB`;
 	}
 

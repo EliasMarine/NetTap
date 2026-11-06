@@ -47,7 +47,7 @@ const storage = (over: Partial<StorageStatus> = {}): StorageStatus => ({
 	disk_usage_percent: 41.2,
 	disk_total_bytes: 1e12,
 	disk_used_bytes: 4e11,
-	disk_free_bytes: 549 * 1_073_741_824,
+	disk_free_bytes: 549e9, // decimal GB, as formatBytes prints (NET-166)
 	retention: { hot_days: 90 },
 	disk_threshold_percent: 80,
 	emergency_threshold_percent: 90,

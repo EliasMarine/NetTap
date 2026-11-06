@@ -171,11 +171,23 @@ describe('inPolygon', () => {
 });
 
 describe('fitByteAxis', () => {
-	const GiB = 1024 ** 3;
+	// OLD CODE START — 2026-11-06 (NET-166): the axis used 1024-based units
+	// const GiB = 1024 ** 3;
+	//
+	// it('puts ticks on round 1024-based units', () => {
+	// 	expect(fitByteAxis(28 * GiB)).toEqual({ top: 30 * GiB, values: [0, 10, 20, 30].map((v) => v * GiB) });
+	// 	expect(fitByteAxis(GiB).values.at(-1)).toBe(GiB);
+	// });
+	// OLD CODE END
+	const GB = 1e9;
 
-	it('puts ticks on round 1024-based units', () => {
-		expect(fitByteAxis(28 * GiB)).toEqual({ top: 30 * GiB, values: [0, 10, 20, 30].map((v) => v * GiB) });
-		expect(fitByteAxis(GiB).values.at(-1)).toBe(GiB);
+	it('puts ticks on whole decimal GB, as formatBytes prints them (NET-166)', () => {
+		expect(fitByteAxis(28e9)).toEqual({ top: 30 * GB, values: [0, 10, 20, 30].map((v) => v * GB) });
+		expect(fitByteAxis(GB).values.at(-1)).toBe(GB);
+	});
+
+	it('puts ticks on whole decimal MB below 1 GB', () => {
+		expect(fitByteAxis(470e6)).toEqual({ top: 500e6, values: [0, 100, 200, 300, 400, 500].map((v) => v * 1e6) });
 	});
 
 	it('matches fitAxis below 1 KB', () => {

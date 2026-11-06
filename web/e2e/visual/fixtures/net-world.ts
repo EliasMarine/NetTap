@@ -6,8 +6,10 @@
  */
 import { DAY, HOUR, NOW, iso } from './types.ts';
 
-export const MB = 1024 ** 2;
-export const GB = 1024 ** 3;
+// OLD CODE: export const MB = 1024 ** 2; export const GB = 1024 ** 3; (NET-166: the pages print decimal units)
+/** Decimal, as every page prints them (NET-166): 24100 * MB reads "24.1 GB". */
+export const MB = 1000 ** 2;
+export const GB = 1000 ** 3;
 
 /** The 24 h window a list endpoint reports when the request names no range. */
 export const WINDOW = { from: iso(DAY), to: iso(0) };

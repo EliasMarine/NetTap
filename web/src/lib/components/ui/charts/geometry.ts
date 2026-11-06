@@ -156,12 +156,16 @@ export function fitAxis(max: number, ticks = 5): { top: number; values: number[]
 }
 
 /**
- * fitAxis in the 1024-based unit the byte formatters print, so a 28 GB peak gets
- * 0, 10, 20, 30 GB ticks instead of round decimal bytes shown as 9.3, 19, 28, 37 GB.
+ * fitAxis in the decimal unit the byte formatters print (1 GB = 10^9 bytes, NET-166), so a
+ * 28 GB peak gets 0, 10, 20, 30 GB ticks, each a whole multiple of the unit.
  */
 export function fitByteAxis(max: number, ticks = 5): { top: number; values: number[] } {
-	// log2 is exact on powers of two, so 1 GiB lands on the GiB unit, not MiB
-	const unit = max >= 1024 ? 1024 ** Math.floor(Math.log2(max) / 10) : 1;
+	// OLD CODE START — 2026-11-06 (NET-166): 1024-based units, while the formatters now divide by 1,000
+	// // log2 is exact on powers of two, so 1 GiB lands on the GiB unit, not MiB
+	// const unit = max >= 1024 ? 1024 ** Math.floor(Math.log2(max) / 10) : 1;
+	// OLD CODE END
+	// log10 is exact on powers of ten, so 1 GB lands on the GB unit, not MB
+	const unit = max >= 1000 ? 1000 ** Math.floor(Math.log10(max) / 3) : 1;
 	const { top, values } = fitAxis(max / unit, ticks);
 	return { top: top * unit, values: values.map((v) => v * unit) };
 }

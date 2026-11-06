@@ -233,13 +233,20 @@ export async function getLogTopDns(
 // ---------------------------------------------------------------------------
 
 /**
- * Format a byte count to a human-readable string (e.g. 1.0 KB, 2.5 MB).
+ * Format a byte count to a human-readable string (e.g. 1.0 KB, 2.5 MB), in decimal
+ * units: 1 KB is 1,000 bytes and 1 TB is 10^12, as drive makers and ISPs count (NET-166).
  */
 export function formatBytes(bytes: number): string {
-	if (bytes >= 1_099_511_627_776) return `${(bytes / 1_099_511_627_776).toFixed(1)} TB`;
-	if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`;
-	if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
-	if (bytes >= 1_024) return `${(bytes / 1_024).toFixed(1)} KB`;
+	// OLD CODE START — 2026-11-06 (NET-166): 1024-based, so every figure read 2.4–9.9% under its label
+	// if (bytes >= 1_099_511_627_776) return `${(bytes / 1_099_511_627_776).toFixed(1)} TB`;
+	// if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`;
+	// if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
+	// if (bytes >= 1_024) return `${(bytes / 1_024).toFixed(1)} KB`;
+	// OLD CODE END
+	if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(1)} TB`;
+	if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+	if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
+	if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(1)} KB`;
 	return `${bytes} B`;
 }
 

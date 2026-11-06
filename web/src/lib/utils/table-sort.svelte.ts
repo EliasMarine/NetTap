@@ -40,14 +40,17 @@ export function severityRank(severity: number | null | undefined): number {
 	return severity ? 5 - severity : 0;
 }
 
-const SIZE_TEXT = /^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb|tb|pb)$/i;
-const SIZE_POWER: Record<string, number> = { b: 0, kb: 1, mb: 2, gb: 3, tb: 4, pb: 5 };
-
-/** OpenSearch's human sizes ("512kb", "1.2gb", 1024-based) in bytes; null if not a size. */
-export function byteSize(text: string | null | undefined): number | null {
-	const m = SIZE_TEXT.exec((text ?? '').trim());
-	return m ? Number(m[1]) * 1024 ** SIZE_POWER[m[2].toLowerCase()] : null;
-}
+// OLD CODE START — 2026-11-06 (NET-166): no caller left; the daemon now sends index sizes in bytes
+// (OpenSearch's `bytes=b`), so the Infrastructure page no longer parses its rounded 1024-based text
+// const SIZE_TEXT = /^(\d+(?:\.\d+)?)\s*(b|kb|mb|gb|tb|pb)$/i;
+// const SIZE_POWER: Record<string, number> = { b: 0, kb: 1, mb: 2, gb: 3, tb: 4, pb: 5 };
+//
+// /** OpenSearch's human sizes ("512kb", "1.2gb", 1024-based) in bytes; null if not a size. */
+// export function byteSize(text: string | null | undefined): number | null {
+// 	const m = SIZE_TEXT.exec((text ?? '').trim());
+// 	return m ? Number(m[1]) * 1024 ** SIZE_POWER[m[2].toLowerCase()] : null;
+// }
+// OLD CODE END
 
 /** A sorted copy; blank values go last in both directions. */
 export function sortRows<T>(rows: readonly T[], value: (row: T) => unknown, dir: SortDir): T[] {
