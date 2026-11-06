@@ -13,7 +13,7 @@
 
 	import { page } from '$app/stores';
 	import { onDestroy, untrack } from 'svelte';
-	import { getRegistryDevice, getDeviceTraffic } from '$api/devices-registry';
+	import { getRegistryDevice, getDeviceTraffic, isNewDevice } from '$api/devices-registry';
 	import type { RegistryDevice, DeviceTraffic } from '$api/devices-registry';
 	import IPAddress from '$components/IPAddress.svelte';
 	import { loadFailed } from '$lib/utils/load-failed';
@@ -192,7 +192,10 @@
 			{#if device}
 				<div class="chips">
 					<span class="chip">{device.category || 'unknown'}</span>
-					{#if device.is_new}<span class="chip is-ok">New</span>{/if}
+					<!-- OLD CODE START — NET-158: is_new clears on the device's next update, so the chip rarely showed -->
+					<!-- {#if device.is_new}<span class="chip is-ok">New</span>{/if} -->
+					<!-- OLD CODE END -->
+					{#if isNewDevice(device)}<span class="chip is-ok">New</span>{/if}
 				</div>
 			{/if}
 		</div>
@@ -240,6 +243,8 @@
 			value={traffic ? traffic.connection_count.toLocaleString() : '—'}
 			note="Last 24 hours"
 		/>
+		<!-- NET-158: the daemon matches the MAC or any of the device's addresses over the whole range -->
+		<p class="c-12 dim">Traffic matching its MAC or any address it has used; another device may have used one since.</p>
 
 		<!-- the daemon doesn't send a bandwidth series yet; the card shows once it does -->
 		{#if traffic?.bandwidth_series}

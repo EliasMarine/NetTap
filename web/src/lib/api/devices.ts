@@ -188,11 +188,16 @@ export interface DeviceCountResponse {
 
 /**
  * Get the number of devices seen on the network (same rule as the device list).
+ * With `active_since`, only the listed devices whose newest record is at or after it: the
+ * table's Online rule (NET-158).
  */
 export async function getDeviceCount(
-	opts: TimeRangeParams = {}
+	opts: TimeRangeParams & { active_since?: string } = {}
 ): Promise<DeviceCountResponse> {
-	const query = buildQuery({ from: opts.from, to: opts.to });
+	// OLD CODE START — NET-158: no active_since, so "Online now" counted a 5-minute range
+	// const query = buildQuery({ from: opts.from, to: opts.to });
+	// OLD CODE END
+	const query = buildQuery({ from: opts.from, to: opts.to, active_since: opts.active_since });
 	const res = await fetch(`/api/devices/count${query}`);
 
 	// OLD CODE START — #96: a failed request read as no devices

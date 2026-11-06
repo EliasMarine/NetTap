@@ -48,6 +48,20 @@ describe('withTraffic', () => {
 		expect(withTraffic([appliance], list, true, FROM)[0].total_bytes).toBeUndefined();
 	});
 
+	// NET-158: the card's figure is the listed addresses' traffic; it says when some are missing
+	it('says how many of the device addresses the list held', () => {
+		const partial = reg('D0:21:F9:5E:35:32', ['192.168.1.1', '10.10.0.1', '192.168.1.200'], '2026-11-02T21:00:00+00:00');
+		const [card] = withTraffic([partial], list, true, FROM);
+		expect([card.total_bytes, card.ips_listed, card.ips.length]).toEqual([1500, 2, 3]);
+	});
+
+	it("counts an address another device took over on both cards: it is each one's listed address", () => {
+		const before = reg('AA:00:00:00:00:01', ['192.168.1.1'], '2026-11-02T10:00:00+00:00');
+		const [old, gw] = withTraffic([before, gateway], list, true, FROM);
+		expect(old.total_bytes).toBe(1000);
+		expect(gw.total_bytes).toBe(1500);
+	});
+
 	it('leaves unlisted devices unknown when the list stopped at its limit or failed', () => {
 		const quiet = reg('AA:00:00:00:00:01', ['192.168.1.9'], '2026-11-01T10:00:00+00:00');
 		expect(withTraffic([quiet], list, false, FROM)[0].total_bytes).toBeUndefined();

@@ -4,7 +4,24 @@ import {
 	getRegistryDevice,
 	getDeviceTraffic,
 	acknowledgeDevice,
+	isNewDevice,
 } from './devices-registry';
+
+// NET-158: the "New" chip read is_new (cleared on the device's next update), so it rarely
+// showed while "New in 24 h" counted first_seen; both use first_seen now
+describe('isNewDevice', () => {
+	const NOW = Date.parse('2026-11-05T12:00:00Z');
+
+	it('is new when first seen within the last 24 hours, whatever is_new says', () => {
+		expect(isNewDevice({ first_seen: '2026-11-05T01:00:00Z' }, NOW)).toBe(true);
+		expect(isNewDevice({ first_seen: '2026-11-04T12:00:00Z' }, NOW)).toBe(true); // the count's gte
+	});
+
+	it('is not new when first seen earlier, or when first_seen is unreadable', () => {
+		expect(isNewDevice({ first_seen: '2026-11-04T11:59:59Z' }, NOW)).toBe(false);
+		expect(isNewDevice({ first_seen: '' }, NOW)).toBe(false);
+	});
+});
 
 // ---------------------------------------------------------------------------
 // Mock helpers

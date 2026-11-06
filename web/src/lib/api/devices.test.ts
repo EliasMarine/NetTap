@@ -7,6 +7,7 @@ import {
 	getDeviceAlerts,
 	getDevicePorts,
 	getDeviceRiskScore,
+	getDeviceCount,
 } from './devices';
 
 // ---------------------------------------------------------------------------
@@ -286,6 +287,21 @@ describe('devices API client', () => {
 			expect(url).toContain('to=');
 			expect(url).toContain('page=2');
 			expect(url).toContain('size=100');
+		});
+	});
+
+	// -- getDeviceCount -------------------------------------------------------
+
+	describe('getDeviceCount', () => {
+		// NET-158: "Online now" is the listed devices whose newest record is recent
+		it('sends active_since with the range', async () => {
+			mockFetchSuccess({ from: 'a', to: 'b', count: 4 });
+
+			const res = await getDeviceCount({ active_since: '2026-11-05T11:55:00.000Z' });
+
+			const url = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+			expect(url).toBe('/api/devices/count?active_since=2026-11-05T11%3A55%3A00.000Z');
+			expect(res.count).toBe(4);
 		});
 	});
 

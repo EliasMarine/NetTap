@@ -9,6 +9,11 @@ import type { RegistryDevice } from '$api/devices-registry';
  * gets a real 0 only when the list is complete and the device was last seen before the range
  * began; otherwise (an excluded or skipped IP, a list cut at its limit, or no list) it stays
  * unknown.
+ *
+ * NET-158: the figure is the traffic of whichever of the device's addresses the list holds,
+ * over the whole range. An address reassigned to another device counts on both cards (time-bound
+ * ownership is a follow-up), so the page labels it as such; `ips_listed` says how many of the
+ * device's addresses were found.
  */
 export function withTraffic(
 	registry: RegistryDevice[],
@@ -22,10 +27,11 @@ export function withTraffic(
 		const rows = device.ips.flatMap((ip) => byIp.get(ip) ?? []);
 		if (rows.length === 0) {
 			const quiet = listComplete && Date.parse(device.last_seen) < Date.parse(rangeFrom);
-			return quiet ? { ...device, total_bytes: 0, connection_count: 0 } : device;
+			return quiet ? { ...device, total_bytes: 0, connection_count: 0, ips_listed: 0 } : device;
 		}
 		return {
 			...device,
+			ips_listed: rows.length,
 			total_bytes: rows.reduce((sum, d) => sum + d.total_bytes, 0),
 			connection_count: rows.reduce((sum, d) => sum + d.connection_count, 0),
 			// the list's newest record, as the Devices page shows it: the registry refreshes on a

@@ -17,7 +17,7 @@ from typing import Any
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
-from api.time_range import parse_time_range
+from api.time_range import _utc, iso_param, parse_time_range
 from storage.all_buckets import PAGE_SIZE, all_buckets
 from storage.manager import StorageManager
 from storage.time_slots import histogram_buckets, time_slots
@@ -1501,12 +1501,16 @@ async def handle_device_ports(request: web.Request) -> web.Response:
 
 
 async def handle_device_count(request: web.Request) -> web.Response:
-    """GET /api/devices/count?from=&to=
+    """GET /api/devices/count?from=&to=&active_since=
 
     Returns how many devices GET /api/devices would list for the same range:
-    same filters, same _MIN_CONNECTIONS threshold, same skip rules.
+    same filters, same _MIN_CONNECTIONS threshold, same skip rules. With active_since,
+    only those whose last_seen (the list's newest record) is at or after it.
     """
     from_ts, to_ts = _parse_time_range(request)
+    # NET-158: "Online now" counted a 5-minute range, so it needed 3 records in those 5 minutes
+    # while the table calls a listed device Online on its newest record alone
+    active_since = iso_param(request, "active_since")
     client = _get_client(request)
 
     # OLD CODE START — replaced 2026-11-01: a mirror on the uplink sees almost no DHCP, so this said 3 while the list showed 27
@@ -1546,7 +1550,15 @@ async def handle_device_count(request: web.Request) -> web.Response:
         # OLD CODE START — #96: the capped terms search above
         # result = client.search(index=NETWORK_INDEX, body=query)
         # OLD CODE END
-        devices = _lan_device_buckets(client, request.app, from_ts, to_ts)
+        devices = _lan_device_buckets(
+            client,
+            request.app,
+            from_ts,
+            to_ts,
+            aggs={"last_seen": {"max": {"field": "@timestamp"}}}
+            if active_since
+            else None,
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in devices/count: %s", exc)
         return web.json_response(
@@ -1561,6 +1573,11 @@ async def handle_device_count(request: web.Request) -> web.Response:
     # buckets = result.get("aggregations", {}).get("devices", {}).get("buckets", [])
     # count = sum(1 for b in buckets if not _is_skipped_device_ip(b["key"]))
     # OLD CODE END
+    if active_since:
+        cutoff_ms = _utc(active_since).timestamp() * 1000
+        devices = [
+            d for d in devices if (d.get("last_seen", {}).get("value") or 0) >= cutoff_ms
+        ]
     count = len(devices)
 
     return web.json_response(

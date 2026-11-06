@@ -1084,6 +1084,44 @@ class TestDeviceCountHandler(AioHTTPTestCase):
             self.mock_client.search.call_count, 2
         )  # a full page of 1,000 and the short last one
 
+    @unittest_run_loop
+    async def test_active_since_counts_listed_devices_by_their_newest_record(self):
+        """NET-158: "Online now" counted a 5-minute range (3 records in it); the table calls a
+        listed device Online on its newest record, so the count now uses that rule."""
+
+        def seen(ip, doc_count, at):
+            ms = datetime.fromisoformat(at.replace("Z", "+00:00")).timestamp() * 1000
+            return {
+                **_device_bucket(ip, doc_count=doc_count),
+                "last_seen": {"value": ms, "value_as_string": at},
+            }
+
+        buckets = [
+            seen("192.168.1.10", 40, "2026-02-25T23:59:00Z"),  # one record in the last 5 min
+            seen("192.168.1.11", 40, "2026-02-25T23:50:00Z"),  # idle
+            seen("192.168.1.12", 2, "2026-02-25T23:59:30Z"),  # not a listed device
+        ]
+        self.mock_client.search.side_effect = _route_device_searches(
+            _device_list_response(buckets)
+        )
+
+        resp = await self.client.request(
+            "GET",
+            "/api/devices/count" + self._RANGE + "&active_since=2026-02-25T23:55:00Z",
+        )
+
+        self.assertEqual(resp.status, 200)
+        self.assertEqual((await resp.json())["count"], 1)
+        aggs = self._bodies()[0]["aggs"]["all"]["aggs"]
+        self.assertEqual(aggs["last_seen"], {"max": {"field": "@timestamp"}})
+
+    @unittest_run_loop
+    async def test_unreadable_active_since_is_400(self):
+        resp = await self.client.request(
+            "GET", "/api/devices/count" + self._RANGE + "&active_since=now-5m"
+        )
+        self.assertEqual(resp.status, 400)
+
 
 class TestDeviceListAlertSort(AioHTTPTestCase):
     """#96: sort=alerts ranks every device, not the top 2 x limit by bytes."""
