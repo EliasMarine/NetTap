@@ -4,6 +4,7 @@ import type { Writable } from 'svelte/store';
 import { page } from '$app/stores';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
+import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
 // OLD CODE START — a fixed URL; the page now follows URL changes, so the tests move it
 // vi.mock('$app/stores', () => ({
@@ -141,8 +142,11 @@ describe('Log Explorer — refresh contract', () => {
 				return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 503, json: async () => ({}) };
 			}),
 		);
-		render(Page);
+		const { container } = render(Page);
 		await screen.findByRole('button', { name: /^Open log entry from/ });
+		// NET-160: the row's address is a link beside the row button, never inside it
+		expect(screen.getByRole('link', { name: '10.0.0.5' })).toHaveAttribute('href', '/address/10.0.0.5');
+		expectNoNestedInteractive(container);
 		expect(await refreshPage()).toBe('ok');
 
 		replies = { ...AGGREGATIONS };

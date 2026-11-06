@@ -11,6 +11,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { lookupGeoIP } from '$api/geoip';
+	import { ipHref, isLan } from '$lib/stores/lan';
 	import type { GeoIPResult } from '$api/geoip';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -156,9 +157,13 @@
 				</dd>
 			</dl>
 			<div class="actions result-actions">
+				<!-- OLD CODE START — NET-160: the device page for internet addresses, and ?filter= the Connections page never read
 				<a class="btn" href="/devices/{encodeURIComponent(result.ip ?? '')}">View device details</a>
 				<a class="btn" href="/connections?filter=ip.src=={encodeURIComponent(result.ip ?? '')}">Filter connections from</a>
 				<a class="btn" href="/connections?filter=ip.dst=={encodeURIComponent(result.ip ?? '')}">Filter connections to</a>
+				OLD CODE END -->
+				<a class="btn" href={$ipHref(result.ip ?? '')}>{$isLan(result.ip ?? '') === true ? 'View device details' : 'Open address page'}</a>
+				<a class="btn" href="/connections?ip={encodeURIComponent(result.ip ?? '')}">Connections with this address</a>
 			</div>
 		{/if}
 	</Card>

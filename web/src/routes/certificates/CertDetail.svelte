@@ -7,6 +7,7 @@
 	import { onMount } from 'svelte';
 	import type { CertDetail, CertFinding, CertSite } from '$lib/api/certificates';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { domainHref, ipHref, isLan } from '$lib/stores/lan';
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import {
 		deviceName,
@@ -51,6 +52,18 @@
 	const server = $derived(finding ? finding.server : (site?.servers[0] ?? site?.server ?? null));
 
 	const device = (ip: string): string => `/devices/${encodeURIComponent(ip)}`;
+	/**
+	 * NET-160: where the site drills down, from its structured identity: a real SNI name to its
+	 * domain page, a site with no name to its server's address page; anything else stays text.
+	 */
+	const siteLink = $derived.by((): { href: string; label: string } | null => {
+		if (hostName) return { href: domainHref(hostName), label: 'Open domain page' };
+		const noName = finding ? finding.server : (site?.server ?? null);
+		if (!noName) return null;
+		return { href: $ipHref(noName), label: $isLan(noName) === true ? 'Open device page' : 'Open address page' };
+	});
+	/** A certificate's site id: "no-sni:<ip>" for a server reached with no name, else the name. */
+	const certSiteHref = (id: string): string => (id.startsWith('no-sni:') ? $ipHref(id.slice(7)) : domainHref(id));
 	const connections = (ip: string): string => `/connections?ip=${encodeURIComponent(ip)}`;
 
 	function versions(cert: CertDetail): string {
@@ -108,7 +121,8 @@
 		<dt>{finding ? 'Devices' : 'Used by'}</dt>
 		<dd>
 			{#each holder?.clients ?? [] as ip (ip)}
-				<a href={device(ip)} title={ip}>{deviceName(ip, names)}</a>
+				<!-- OLD CODE START: <a href={device(ip)} title={ip}>{deviceName(ip, names)}</a> (NET-160: a client can be an internet address) OLD CODE END -->
+				<a href={$ipHref(ip)} title={ip}>{deviceName(ip, names)}</a>
 			{:else}
 				<span class="dim">None recorded</span>
 			{/each}
@@ -119,7 +133,8 @@
 		<dt>Servers</dt>
 		<dd>
 			{#each servers as ip (ip)}
-				<a class="mono" href={connections(ip)}>{ip}</a>
+				<!-- OLD CODE START: <a class="mono" href={connections(ip)}>{ip}</a> (NET-160: a server opens its address page) OLD CODE END -->
+				<a class="mono" href={$ipHref(ip)}>{ip}</a>
 			{:else}
 				<span class="dim">—</span>
 			{/each}
@@ -135,6 +150,9 @@
 		{/if}
 		{#if hostName}
 			<a class="btn" href="/tools/ssl-cert?host={encodeURIComponent(hostName)}"><Icon name="certs" />Check it now</a>
+		{/if}
+		{#if siteLink}
+			<a class="btn" href={siteLink.href}>{siteLink.label}</a>
 		{/if}
 	</div>
 
@@ -170,7 +188,12 @@
 						<dt>First and last seen</dt>
 						<dd class="num">{formatWhen(cert.first_seen)} to {formatWhen(cert.last_seen)}</dd>
 						<dt>Sites</dt>
+						<!-- OLD CODE START (NET-160: each site links where it drills down)
 						<dd class="mono wrap">{cert.sites.map((s) => (s.startsWith('no-sni:') ? s.slice(7) : s)).join(', ') || '—'}{cert.sites_total > cert.sites.length ? ` and ${fmt(cert.sites_total - cert.sites.length)} more` : ''}</dd>
+						OLD CODE END -->
+						<dd class="mono wrap">
+							{#each cert.sites as s (s)}<a href={certSiteHref(s)}>{s.startsWith('no-sni:') ? s.slice(7) : s}</a>{:else}—{/each}{#if cert.sites_total > cert.sites.length}<span class="dim">and {fmt(cert.sites_total - cert.sites.length)} more</span>{/if}
+						</dd>
 						<dt>SHA-256</dt>
 						<dd class="mono wrap">{cert.fingerprint}</dd>
 					</dl>

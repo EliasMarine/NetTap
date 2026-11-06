@@ -24,6 +24,11 @@ import {
 import { _configure as resetAlertSnapshots, alertSnapshots, loadAlertSnapshot } from '$lib/stores/alertSnapshot';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
+import { expectNoNestedInteractive } from '../../tests/nested-interactive';
+
+/** NET-160: the daemon's LAN policy, so LAN addresses link to their device page. */
+const LAN_POLICY = { version: 'v1', subnets: ['192.168.1.0/24'], source: 'env', ipv6: 'not-lan' };
+const lanReply = () => Promise.resolve({ ok: true, status: 200, json: async () => LAN_POLICY });
 
 vi.mock('$app/stores', () => ({
 	page: readable({ url: new URL('http://localhost/alerts') }),
@@ -134,6 +139,7 @@ function failAll() {
 beforeEach(() => {
 	resetAlertSnapshots({});
 	vi.clearAllMocks();
+	vi.stubGlobal('fetch', vi.fn(lanReply));
 });
 
 afterEach(() => {
@@ -378,12 +384,16 @@ describe('Alerts — card states', () => {
 
 	it('shows the loaded data: categories link to their page, the threat score and its level', async () => {
 		succeedAll();
-		render(Page);
+		const { container } = render(Page);
 		await flush();
 		expect(screen.getByRole('link', { name: 'Malware & C2' })).toHaveAttribute('href', '/alerts/malware_c2');
 		expect(screen.getByRole('img', { name: 'Threat score 42 of 100, level medium' })).toBeInTheDocument();
 		expect(screen.getByText('Malware / C2')).toBeInTheDocument();
-		expect(screen.getAllByRole('link', { name: '192.168.1.42' })[0]).toHaveAttribute('href', '/devices/192.168.1.42');
+		// NET-160: every 192.168.1.42 link (top affected devices, the table) goes to its device page
+		const links = screen.getAllByRole('link', { name: '192.168.1.42' });
+		expect(links.length).toBeGreaterThan(1);
+		for (const link of links) expect(link).toHaveAttribute('href', '/devices/192.168.1.42');
+		expectNoNestedInteractive(container);
 	});
 
 	it('a top signature filters the list, and selecting it again clears the filter', async () => {
@@ -465,8 +475,13 @@ describe('Alerts — drawer', () => {
 	it('links to the connections, both devices and the Log Explorer', async () => {
 		const drawer = await openFromRow();
 		expect(within(drawer).getByRole('link', { name: 'View connections' })).toHaveAttribute('href', '/connections?ip=192.168.1.42');
-		expect(within(drawer).getByRole('link', { name: 'View source device' })).toHaveAttribute('href', '/devices/192.168.1.42');
-		expect(within(drawer).getByRole('link', { name: 'View destination device' })).toHaveAttribute('href', '/devices/203.0.113.45');
+		// OLD CODE START — NET-160: "View … device" sent internet addresses to a device page
+		// expect(within(drawer).getByRole('link', { name: 'View source device' })).toHaveAttribute('href', '/devices/192.168.1.42');
+		// expect(within(drawer).getByRole('link', { name: 'View destination device' })).toHaveAttribute('href', '/devices/203.0.113.45');
+		// OLD CODE END
+		expect(within(drawer).getByRole('link', { name: 'Open source device' })).toHaveAttribute('href', '/devices/192.168.1.42');
+		expect(within(drawer).getByRole('link', { name: 'Open destination address' })).toHaveAttribute('href', '/address/203.0.113.45');
+		expectNoNestedInteractive(drawer);
 		const logs = within(drawer).getByRole('link', { name: 'View in Log Explorer' }).getAttribute('href')!;
 		expect(decodeURIComponent(logs)).toBe('/logs?query=(source.ip:"192.168.1.42" OR destination.ip:"192.168.1.42") OR (source.ip:"203.0.113.45" OR destination.ip:"203.0.113.45")');
 	});
@@ -506,7 +521,8 @@ describe('Alerts — drawer', () => {
 		const fetchMock = vi.fn()
 			.mockResolvedValueOnce({ ok: false, status: 502, json: async () => ({}) })
 			.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ hits: [{ _id: 'z1', _source: { '@timestamp': '2026-11-03T10:01:00Z', 'event.dataset': 'conn', 'source.ip': '192.168.1.42', 'destination.ip': '203.0.113.45' } }] }) });
-		vi.stubGlobal('fetch', fetchMock);
+		// NET-160: the address links fetch the LAN policy themselves; only the drawer's requests are counted
+		vi.stubGlobal('fetch', vi.fn((url: string) => (String(url) === '/api/network/lan' ? lanReply() : fetchMock(url))));
 		const drawer = await openFromRow();
 		expect(fetchMock).not.toHaveBeenCalled();
 		await fireEvent.click(within(drawer).getByRole('button', { name: /Related events/ }));

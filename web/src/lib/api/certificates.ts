@@ -380,8 +380,20 @@ export interface CertificateOverview {
  * Every figure the Certificates page shows. Throws with the daemon's reason (busy, too slow,
  * too much data) so the page can say why, never an empty overview that reads as "none".
  */
-export async function getCertificateOverview(from: string, to: string): Promise<CertificateOverview> {
-	const res = await fetch(`/api/certificates/overview?${buildTimeQuery(from, to)}`);
+// OLD CODE START — NET-160: the whole window only; a drill-down now asks for one site and/or server
+// export async function getCertificateOverview(from: string, to: string): Promise<CertificateOverview> {
+// 	const res = await fetch(`/api/certificates/overview?${buildTimeQuery(from, to)}`);
+// OLD CODE END
+export async function getCertificateOverview(
+	from: string,
+	to: string,
+	/** Only the sessions for this SNI name and/or this server address; the daemon filters before counting. */
+	filter: { site?: string | null; server?: string | null } = {},
+): Promise<CertificateOverview> {
+	const qs = new URLSearchParams(buildTimeQuery(from, to));
+	if (filter.site) qs.set('site', filter.site);
+	if (filter.server) qs.set('server', filter.server);
+	const res = await fetch(`/api/certificates/overview?${qs.toString()}`);
 	if (!res.ok) {
 		const reason = await res
 			.json()

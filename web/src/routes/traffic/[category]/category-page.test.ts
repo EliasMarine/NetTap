@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/svelte';
 import { readable, get } from 'svelte/store';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import CategoryPage from './+page.svelte';
+import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
 
 vi.mock('$app/stores', () => ({
 	page: readable({ url: new URL('http://localhost/traffic/streaming'), params: { category: 'streaming' } }),
@@ -97,6 +98,16 @@ describe('Traffic category page', () => {
 		expect(screen.getByRole('img', { name: /^Busiest at .*, with 3\.0 KB$/ })).toBeInTheDocument();
 		expect(screen.getByText('Netflix')).toBeInTheDocument();
 		expect(screen.getByRole('table', { name: 'Per-device breakdown' })).toHaveTextContent('192.168.1.20');
+	});
+
+	// NET-160: the device row is already one link, so its address renders as plain text inside it
+	it('keeps the address plain inside the device link, with nothing nested', async () => {
+		stubDaemon({ '/api/traffic/categories/streaming': BUSY });
+		const { container } = render(CategoryPage);
+		const link = await screen.findByRole('link', { name: /192\.168\.1\.20/ });
+		expect(link).toHaveAttribute('href', '/devices/192.168.1.20');
+		expect(link.querySelector('a, button, [role], [tabindex]')).toBeNull();
+		expectNoNestedInteractive(container);
 	});
 
 	it('the device filter says when nothing matches', async () => {

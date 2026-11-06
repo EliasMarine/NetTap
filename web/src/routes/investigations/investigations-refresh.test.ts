@@ -169,7 +169,9 @@ describe('Investigations table', () => {
 
 		await fireEvent.click(await screen.findByRole('button', { name: 'Open investigation Alpha scan' }));
 		const detail = screen.getByRole('heading', { name: 'Alpha scan' }).closest('.card') as HTMLElement;
-		expect(within(detail).getByRole('link', { name: '192.0.2.1' })).toHaveAttribute('href', '/devices/192.0.2.1');
+		// OLD CODE START: expect(within(detail).getByRole('link', { name: '192.0.2.1' })).toHaveAttribute('href', '/devices/192.0.2.1'); OLD CODE END
+		// NET-160: an internet address opens its address page, not a device page
+		expect(within(detail).getByRole('link', { name: '192.0.2.1' })).toHaveAttribute('href', '/address/192.0.2.1');
 		expect(within(detail).getByLabelText('Status')).toHaveValue('resolved');
 
 		await fireEvent.click(within(detail).getByRole('button', { name: 'Close details' }));

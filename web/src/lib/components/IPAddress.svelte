@@ -1,14 +1,15 @@
 <!--
-  IPAddress.svelte — Clickable IP address with right-click context menu.
-
-  Renders a monospaced IP address that shows a context menu on right-click
-  (or long-press on mobile) with options to copy, navigate to device details,
-  GeoIP lookup, and filter connections.
+  IPAddress.svelte — an IP address that links to where it drills down (NET-160): its device
+  page on the LAN, the address page otherwise ($ipHref). Right-click (or long-press) opens a
+  menu of lookups. The link and the menu are siblings, so the menu's buttons never sit inside
+  the link. `linked={false}` renders plain text (no link, role, tabindex or menu), for the
+  places where the address already sits inside a link or button.
 -->
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import ContextMenu from '$components/ContextMenu.svelte';
 	import type { ContextMenuItem } from '$components/ContextMenu.svelte';
+	import { ipHref, isLan } from '$lib/stores/lan';
 
 	// ---------------------------------------------------------------------------
 	// Props
@@ -17,10 +18,16 @@
 	let {
 		ip,
 		showMenu = true,
+		linked = true,
 	}: {
 		ip: string;
 		showMenu?: boolean;
+		/** False inside another link or button: plain text, no menu. */
+		linked?: boolean;
 	} = $props();
+
+	const href = $derived($ipHref(ip));
+	const onLan = $derived($isLan(ip) === true);
 
 	// ---------------------------------------------------------------------------
 	// Context menu state
@@ -83,12 +90,22 @@
 				});
 			},
 		},
+		// OLD CODE START — NET-160: the device page for every address, internet ones included
+		// {
+		// 	label: 'View device details',
+		// 	icon: 'device',
+		// 	separator: true,
+		// 	action: () => {
+		// 		goto(`/devices/${encodeURIComponent(ip)}`);
+		// 	},
+		// },
+		// OLD CODE END
 		{
-			label: 'View device details',
+			label: onLan ? 'Open device page' : 'Open address page',
 			icon: 'device',
 			separator: true,
 			action: () => {
-				goto(`/devices/${encodeURIComponent(ip)}`);
+				goto(href);
 			},
 		},
 		{
@@ -142,19 +159,29 @@
 				goto(`/alerts?ip=${encodeURIComponent(ip)}`);
 			},
 		},
+		// OLD CODE START — NET-160: Connections ignored ?src_ip= and ?dst_ip=; its filter is ?ip=, either side
+		// {
+		// 	label: 'Filter connections from this IP',
+		// 	icon: 'search',
+		// 	separator: true,
+		// 	action: () => {
+		// 		goto(`/connections?src_ip=${encodeURIComponent(ip)}`);
+		// 	},
+		// },
+		// {
+		// 	label: 'Filter connections to this IP',
+		// 	icon: 'search',
+		// 	action: () => {
+		// 		goto(`/connections?dst_ip=${encodeURIComponent(ip)}`);
+		// 	},
+		// },
+		// OLD CODE END
 		{
-			label: 'Filter connections from this IP',
+			label: 'Connections with this address',
 			icon: 'search',
 			separator: true,
 			action: () => {
-				goto(`/connections?src_ip=${encodeURIComponent(ip)}`);
-			},
-		},
-		{
-			label: 'Filter connections to this IP',
-			icon: 'search',
-			action: () => {
-				goto(`/connections?dst_ip=${encodeURIComponent(ip)}`);
+				goto(`/connections?ip=${encodeURIComponent(ip)}`);
 			},
 		},
 	]);
@@ -177,6 +204,8 @@
 	}
 </script>
 
+<!-- OLD CODE START — NET-160: a span role=button with tabindex, so inside a link or a row button it
+nested interactive elements, and the menu's buttons rendered beside it with no link to follow
 <span
 	class="ip-address mono"
 	role="button"
@@ -197,12 +226,31 @@
 	visible={menuVisible}
 	onclose={closeMenu}
 />
+OLD CODE END -->
+{#if linked}
+	<span class="ip">
+		<a
+			class="ip-address mono"
+			{href}
+			oncontextmenu={handleContextMenu}
+			ontouchstart={handleTouchStart}
+			ontouchend={handleTouchEnd}
+			ontouchmove={handleTouchMove}
+			title={showMenu ? 'Right-click for options' : undefined}>{ip}</a
+		>{#if showMenu}<ContextMenu items={menuItems} x={menuX} y={menuY} visible={menuVisible} onclose={closeMenu} />{/if}
+	</span>
+{:else}
+	<span class="ip-address mono plain">{ip}</span>
+{/if}
 
 <style>
 	/* .mono (system.css) sets the family and the 0.92em size. */
 	.ip-address {
 		color: var(--accent-strong);
+		/* OLD CODE START — NET-160: the address is a link now
 		cursor: context-menu;
+		OLD CODE END */
+		text-decoration: none;
 		user-select: text;
 		border-bottom: 1px dashed var(--line-strong);
 		transition: border-color var(--dur-fast);
@@ -216,5 +264,11 @@
 
 	.ip-address:focus-visible {
 		border-radius: var(--r-xs);
+	}
+
+	/* Inside another link or button: the address reads as that control's text */
+	.plain {
+		color: inherit;
+		border-bottom: 0;
 	}
 </style>

@@ -14,6 +14,7 @@
 	import { page } from '$app/stores';
 	import { onDestroy, untrack } from 'svelte';
 	import IPAddress from '$components/IPAddress.svelte';
+	import { domainHref } from '$lib/stores/lan';
 	import ConnectionDrawer from '$components/ConnectionDrawer.svelte';
 	import {
 		getDeviceDetail,
@@ -601,7 +602,8 @@
 {#snippet destCell(d: DeviceDestination)}<span class="mono"><IPAddress ip={d.ip} /></span>{/snippet}
 {#snippet destBytesCell(d: DeviceDestination)}{formatBytes(d.bytes)}{/snippet}
 {#snippet destConnCell(d: DeviceDestination)}{formatNumber(d.connections)}{/snippet}
-{#snippet domainCell(q: DeviceDNSQuery)}<span class="mono trunc" title={q.domain}>{q.domain}</span>{/snippet}
+<!-- OLD CODE START: {#snippet domainCell(q: DeviceDNSQuery)}<span class="mono trunc" title={q.domain}>{q.domain}</span>{/snippet} (NET-160: not a link) OLD CODE END -->
+{#snippet domainCell(q: DeviceDNSQuery)}<a class="mono trunc" href={domainHref(q.domain)} title={q.domain}>{q.domain}</a>{/snippet}
 {#snippet countCell(q: DeviceDNSQuery)}{formatNumber(q.count)}{/snippet}
 {#snippet portCell(p: DevicePort)}<span class="mono">{p.port}</span>{/snippet}
 {#snippet serviceCell(p: DevicePort)}

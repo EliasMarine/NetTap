@@ -13,6 +13,9 @@ export interface RouteCase {
 
 export const APP_ROUTES: readonly RouteCase[] = [
 	{ path: '/', marker: 'Network overview' },
+	// NET-160: the complete address, and one with bytes not measured, lists too long to count and a threat-list match
+	{ path: '/address/198.51.100.10', marker: '198.51.100.10' },
+	{ path: '/address/192.0.2.80', marker: '192.0.2.80' },
 	{ path: '/alerts', marker: 'Alerts' },
 	{ path: '/alerts/malware', marker: /malware/i },
 	{ path: '/bandwidth', marker: 'Bandwidth' },
@@ -25,6 +28,9 @@ export const APP_ROUTES: readonly RouteCase[] = [
 	// the heading is the device's display name from fixtures/devices.ts
 	{ path: '/devices/mac/02:00:5e:10:00:20', marker: 'laptop-01.example.com', errorText: "Couldn't load device 02:00:5e:10:00:20" },
 	{ path: '/dns', marker: 'DNS analytics' },
+	// NET-160: the complete domain, and one whose lists are too long to count and whose alerts carry no host names
+	{ path: '/domain/stream.example.net', marker: 'stream.example.net' },
+	{ path: '/domain/quiet.example.org', marker: 'quiet.example.org' },
 	{ path: '/geoip/198.51.100.23', marker: 'GeoIP lookup' },
 	{ path: '/infrastructure', marker: 'Infrastructure' },
 	{ path: '/investigations', marker: 'Investigations' },

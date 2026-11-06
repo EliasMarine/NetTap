@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen } from '@testing-library/svelte';
+import AlertDrawerContent from './AlertDrawerContent.svelte';
+import { expectNoNestedInteractive } from '../../../../tests/nested-interactive';
+import type { Alert } from '$api/alerts';
 
 /**
  * Tests for AlertDrawerContent component logic.
@@ -362,5 +366,23 @@ describe('AlertDrawerContent logic', () => {
 			expect(parsed._id).toBe('alert123');
 			expect(parsed.alert.signature).toBe('Test Alert');
 		});
+	});
+});
+
+// NET-160: the flow's addresses are links to where they drill down, with nothing nested
+describe('AlertDrawerContent summary (rendered)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('links both addresses, and nests no control inside another', async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ version: 'v', subnets: ['192.168.1.0/24'], source: 'env', ipv6: 'not-lan' }) })));
+		const alert = {
+			_id: 'a1', _index: 'suricata', timestamp: '2026-11-03T10:00:00Z',
+			alert: { signature: 'ET TEST', severity: 2, category: 'Test' },
+			src_ip: '192.168.1.42', src_port: 51000, dest_ip: '203.0.113.45', dest_port: 443, proto: 'TCP',
+		} as unknown as Alert;
+		const { container } = render(AlertDrawerContent, { alert, activeTab: 'summary' });
+		await vi.waitFor(() => expect(screen.getByRole('link', { name: '192.168.1.42' })).toHaveAttribute('href', '/devices/192.168.1.42'));
+		expect(screen.getByRole('link', { name: '203.0.113.45' })).toHaveAttribute('href', '/address/203.0.113.45');
+		expectNoNestedInteractive(container);
 	});
 });

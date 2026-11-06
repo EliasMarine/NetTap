@@ -11,7 +11,10 @@ import { loadFailed } from '$lib/utils/load-failed';
 
 export type Names = ReadonlyMap<string, string>;
 
-export type RangeValue = '24h' | '7d' | '30d';
+// OLD CODE START — NET-160: a drill-down link carries its own window ("Custom")
+// export type RangeValue = '24h' | '7d' | '30d';
+// OLD CODE END
+export type RangeValue = '24h' | '7d' | '30d' | 'custom';
 
 export interface RangeOption {
 	value: RangeValue;
@@ -25,6 +28,32 @@ export const RANGES: readonly RangeOption[] = [
 	{ value: '7d', label: '7d', hours: 168, words: 'last 7 days' },
 	{ value: '30d', label: '30d', hours: 720, words: 'last 30 days' },
 ];
+
+/** A window a link brought (?from=&to=), shown as "Custom". */
+export interface CustomRange extends RangeOption {
+	from: string;
+	to: string;
+}
+
+/**
+ * The window from a drill-down link (NET-160): the address and domain pages pass the window
+ * their figures came from, so the certificates match them. Null unless both ends are dates
+ * and `from` is before `to`.
+ */
+export function customRange(from: string | null, to: string | null): CustomRange | null {
+	if (!from || !to) return null;
+	const start = new Date(from);
+	const end = new Date(to);
+	if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start >= end) return null;
+	return {
+		value: 'custom',
+		label: 'Custom',
+		hours: (end.getTime() - start.getTime()) / 3_600_000,
+		words: `window ${formatWhen(start.toISOString())} to ${formatWhen(end.toISOString())}`,
+		from: start.toISOString(),
+		to: end.toISOString(),
+	};
+}
 
 const fmt = (n: number): string => n.toLocaleString('en-GB');
 const plural = (n: number, one: string, many = `${one}s`): string => `${fmt(n)} ${n === 1 ? one : many}`;

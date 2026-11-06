@@ -3,7 +3,7 @@ import type { RequestHandler } from './$types.js';
 import { daemonFetch } from '$lib/server/daemon.js';
 
 /**
- * GET /api/traffic/connections?from=&to=&page=1&size=50&q=&sort=&order=&state=
+ * GET /api/traffic/connections?from=&to=&page=1&size=50&q=&sort=&order=&state=&ip=
  * Proxies to the daemon's GET /api/traffic/connections endpoint,
  * forwarding all query parameters for paginated connection listing.
  */
@@ -20,7 +20,10 @@ export const GET: RequestHandler = async ({ url }) => {
 	if (size) params.set('size', size);
 	if (q) params.set('q', q);
 	// #145: the page's sort and State filter; the daemon validates them
-	for (const key of ['sort', 'order', 'state']) {
+	// OLD CODE START — NET-160: the allowlist dropped `ip`, the structured either-side address filter
+	// for (const key of ['sort', 'order', 'state']) {
+	// OLD CODE END
+	for (const key of ['sort', 'order', 'state', 'ip']) {
 		const value = url.searchParams.get(key);
 		if (value) params.set(key, value);
 	}
