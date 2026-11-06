@@ -15,7 +15,14 @@ import { daemonFetch } from '$lib/server/daemon.js';
  */
 
 // tshark-backed previews run up to 45 s in the daemon; the default is 10 s.
-const SLOW_PATH_TIMEOUT_MS: Record<string, number> = { '/api/pcap/preview': 60_000 };
+// OLD CODE START — NET-154: the certificate overview's 50 s budget needs the same allowance
+// const SLOW_PATH_TIMEOUT_MS: Record<string, number> = { '/api/pcap/preview': 60_000 };
+// OLD CODE END
+// The certificate overview stops itself at 50 s and answers 503, so 60 s always gets its reason
+const SLOW_PATH_TIMEOUT_MS: Record<string, number> = {
+	'/api/pcap/preview': 60_000,
+	'/api/certificates/overview': 60_000,
+};
 
 async function proxyToDaemon(
 	{ url, request }: { url: URL; request: Request },
