@@ -437,6 +437,13 @@ export interface SmartAlertsResponse {
 	total: number;
 }
 
+/**
+ * NET-164: how the threat score is worked out, as daemon/services/alert_intelligence.py does it
+ * (get_smart_alert_summary). Its rules are pinned by tests in daemon/tests/test_smart_alert_paging.py.
+ */
+export const THREAT_SCORE_HOW =
+	'Each alert group adds 10 (critical), 5 (high), 2 (medium) or 0.5 (low), rounded down and capped at 100. A busier-than-usual window adds 15 while the score is under 75. The level never exceeds the worst alert.';
+
 export interface SmartAlertSummary {
 	from: string;
 	to: string;

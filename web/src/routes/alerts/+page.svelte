@@ -40,7 +40,8 @@
 	// import DetailDrawer from '$components/DetailDrawer.svelte';
 	// import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
 	// OLD CODE END
-	import { acknowledgeAlert } from '$api/alerts';
+	// OLD CODE: import { acknowledgeAlert } from '$api/alerts'; (NET-164: the score's method)
+	import { acknowledgeAlert, THREAT_SCORE_HOW } from '$api/alerts';
 	// OLD CODE START — #146: the alert table sorts on the daemon now
 	// import { compareValues, severityRank } from '$lib/utils/table-sort.svelte';
 	// OLD CODE END
@@ -1120,12 +1121,14 @@
 			<CardState state="error" title="Couldn't load the threat summary: the request failed." onaction={() => refresh.run()} />
 		{:else}
 			<div class="threat-top">
-				<Ring value={threatScore} label="threat score" ariaLabel="Threat score {threatScore} of 100, level {threatLevel}" />
+				<!-- OLD CODE: <Ring value={threatScore} label="threat score" …> (NET-164: read as a bare number; Ring's default label states the scale) -->
+				<Ring value={threatScore} ariaLabel="Threat score {threatScore} of 100, level {threatLevel}" />
 				<div class="chips">
 					{#if threatPill}<SeverityPill level={threatPill} />{:else}<span class="chip">No threat level</span>{/if}
 					<span class="chip">{fmt(smartSummary.total_groups)} alert groups</span>
 				</div>
 			</div>
+			<p class="dim score-how">{THREAT_SCORE_HOW}</p>
 			{#if smartCategories.length > 0}
 				<ul class="kv">
 					{#each smartCategories as c (c.key)}
@@ -1227,5 +1230,6 @@
 	.row-actions { display: inline-flex; gap: var(--sp-1); }
 	.row-actions .btn { min-height: 28px; padding: 0 var(--sp-3); font-size: var(--text-xs); }
 	.threat-top { display: flex; align-items: center; gap: var(--sp-5); margin-bottom: var(--sp-4); }
+	.score-how { margin: 0 0 var(--sp-4); font-size: var(--text-xs); }
 	:global(.ip-bars) :global(.bar-label), :global(.ip-bars) :global(.bars li > span:first-child) { font-family: var(--font-mono); }
 </style>

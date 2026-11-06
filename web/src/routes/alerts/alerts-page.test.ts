@@ -21,6 +21,7 @@ import {
 	markFalsePositive,
 	type Alert,
 	type AlertsListResponse,
+	THREAT_SCORE_HOW,
 } from '$api/alerts';
 import { _configure as resetAlertSnapshots, alertSnapshots, loadAlertSnapshot } from '$lib/stores/alertSnapshot';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
@@ -425,6 +426,10 @@ describe('Alerts — card states', () => {
 		await flush();
 		expect(screen.getByRole('link', { name: 'Malware & C2' })).toHaveAttribute('href', '/alerts/malware_c2');
 		expect(screen.getByRole('img', { name: 'Threat score 42 of 100, level medium' })).toBeInTheDocument();
+		// NET-164: the ring states its scale, and the card says how the score is worked out
+		expect(screen.getByText('of 100')).toBeInTheDocument();
+		expect(screen.queryByText('threat score')).not.toBeInTheDocument();
+		expect(screen.getByText(/rounded down and capped at 100/)).toHaveTextContent(THREAT_SCORE_HOW);
 		expect(screen.getByText('Malware / C2')).toBeInTheDocument();
 		// NET-160: every 192.168.1.42 link (top affected devices, the table) goes to its device page
 		const links = screen.getAllByRole('link', { name: '192.168.1.42' });

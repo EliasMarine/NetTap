@@ -5,7 +5,7 @@ order, so the home Alert Summary said 394 while the Alerts card said 2.2K.
 """
 
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -196,3 +196,48 @@ def test_summary_level_capped_for_medium_only_alerts():
 
     assert summary["threat_score"] == 100  # 203 medium groups
     assert summary["threat_level"] == "medium"
+
+
+# ---------------------------------------------------------------------------
+# NET-164: every rule the page's "how it's worked out" sentence states
+# ---------------------------------------------------------------------------
+
+
+def _score(severities, anomalous=False):
+    """The summary's score and level for one alert group per severity given."""
+    groups = [
+        {"severity": s, "count": 1, "category": "policy", "signature": f"sig {i}"}
+        for i, s in enumerate(severities)
+    ]
+    baseline = {"is_anomalous": anomalous} if anomalous else None
+    with (
+        patch.object(
+            alert_intelligence, "get_smart_alerts", AsyncMock(return_value=groups)
+        ),
+        patch.object(alert_intelligence, "update_baseline", return_value=baseline),
+        patch.object(alert_intelligence, "detect_kill_chains", return_value=[]),
+    ):
+        summary = asyncio.run(get_smart_alert_summary(object(), _FROM, _TO))
+    return summary["threat_score"], summary["threat_level"]
+
+
+def test_threat_score_weights_round_down():
+    assert _score([4])[0] == 0  # one low group is 0.5, rounded down
+    assert _score([4, 4])[0] == 1
+    assert _score([1, 2, 3])[0] == 17  # 10 + 5 + 2
+
+
+def test_threat_score_caps_at_100():
+    assert _score([1] * 11)[0] == 100
+
+
+def test_busier_than_usual_adds_15_only_under_75():
+    # 7 critical + 2 medium = 74 before the bonus; 7 critical + 1 high = 75
+    assert _score([1] * 7 + [3, 3], anomalous=True)[0] == 89
+    assert _score([1] * 7 + [2], anomalous=True)[0] == 75
+    assert _score([1] * 7 + [3, 3])[0] == 74
+
+
+def test_level_never_exceeds_the_worst_alert():
+    # 38 medium groups score 76, which alone would read "critical"
+    assert _score([3] * 38) == (76, "medium")

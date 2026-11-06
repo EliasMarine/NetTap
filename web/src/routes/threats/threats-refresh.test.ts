@@ -4,6 +4,7 @@ import { get } from 'svelte/store';
 import { goto } from '$app/navigation';
 import { getThreatReport, getThreatIntel, type ThreatReport, type ThreatIntelInfo } from '$api/threats';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
+import { THREAT_SCORE_HOW } from '$api/alerts';
 import ThreatsPage from './+page.svelte';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
@@ -139,6 +140,8 @@ describe('Threats page — card states', () => {
 		render(ThreatsPage);
 		await vi.waitFor(() => expect(screen.getByText('72')).toBeInTheDocument());
 		expect(screen.getByText('High')).toBeInTheDocument(); // threat level as a SeverityPill
+		// NET-164: the score states how it is worked out
+		expect(screen.getByText(THREAT_SCORE_HOW)).toBeInTheDocument();
 		expect(screen.getByText('Abuse.ch Feodo')).toBeInTheDocument();
 		expect(screen.getByRole('img', { name: /Malware & C2 40/ })).toBeInTheDocument();
 
