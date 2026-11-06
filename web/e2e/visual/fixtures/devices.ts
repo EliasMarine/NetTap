@@ -14,6 +14,7 @@ import type {
 	RegistryListResponse,
 	getNewDeviceCount,
 } from '../../../src/lib/api/devices-registry.ts';
+import type { CaptureMode } from '../../../src/lib/api/capture.ts';
 import { DAY, MIN, iso, type FixtureRoute } from './types.ts';
 import { CONN_TEMPLATES, connections } from './net-connections.ts';
 import {
@@ -281,3 +282,59 @@ export const DEVICES_ROUTES: FixtureRoute[] = [
 		empty: { ip: FOCUS.ip, ...WINDOW, total: 0, alerts: [] } satisfies DeviceAlertsResponse,
 	},
 ];
+
+// ---- By type in mirror mode: a band of cards that used to misalign (NET-180) -------------------
+
+/**
+ * devices-layout.visual.ts serves these in place of the registry and the device list (the
+ * fixture's capture mode is bridge, so By type shows no cards otherwise). Four computers, seen
+ * more recently than the fixture's own, so they fill the Computers group's first band: no maker,
+ * an addresses note (2 of 3 listed), a long maker that wraps and a connection count that wraps,
+ * and a short count beside it in the next band (or the same band at two cards a row).
+ */
+const BAND = [
+	{ mac: '02:00:5e:10:00:40', ips: ['192.168.1.40'], name: 'DESKTOP-1H4Q4HV', maker: null, bytes: 640 * MB, connections: 812, ago: 2_000 },
+	{ mac: '02:00:5e:10:00:41', ips: ['192.168.1.41', '192.168.1.141', '10.10.0.41'], name: 'work-laptop.example.com', maker: 'Example Corp', bytes: 2300 * MB, connections: 4100, ago: 3_000 },
+	{ mac: '02:00:5e:10:00:42', ips: ['192.168.1.42'], name: 'build-server.example.com', maker: 'Example Very Long Manufacturer Name Holdings International', bytes: 9800 * MB, connections: 1_234_567_890_123, ago: 4_000 },
+	{ mac: '02:00:5e:10:00:43', ips: ['192.168.1.43'], name: 'mac-mini.example.com', maker: 'Example Corp', bytes: 12 * MB, connections: 7, ago: 5_000 },
+] as const;
+
+const bandRegistryRow = (d: (typeof BAND)[number]): RegistryDevice => ({
+	mac: d.mac,
+	ips: [...d.ips],
+	hostnames: [d.name],
+	manufacturer: d.maker,
+	friendly_name: null,
+	display_name: d.name,
+	category: 'computer',
+	first_seen: iso(90 * DAY),
+	last_seen: iso(d.ago),
+	is_new: false,
+});
+
+/** One list row per listed address: the work laptop's third address isn't listed. */
+const bandListRows = (d: (typeof BAND)[number]): Device[] =>
+	d.ips.slice(0, 2).map((ip, i, listed) => ({
+		ip,
+		mac: d.mac,
+		hostname: d.name,
+		manufacturer: d.maker,
+		os_hint: null,
+		first_seen: iso(DAY - 10 * MIN),
+		last_seen: iso(d.ago + i * MIN),
+		total_bytes: Math.round(d.bytes / listed.length),
+		connection_count: Math.round(d.connections / listed.length),
+		protocols: ['ssl', 'dns'],
+		alert_count: 0,
+		category: 'computer',
+	}));
+
+/** Mirror mode, with the fixture's registry and list plus the band. */
+export const BY_TYPE_LAYOUT = {
+	mode: { mode: 'mirror', interface: 'enp1s0' } satisfies CaptureMode,
+	registry: {
+		devices: [...BAND.map(bandRegistryRow), ...LAN_DEVICES.map(registryRow)],
+		total: BAND.length + LAN_DEVICES.length,
+	} satisfies RegistryListResponse,
+	list: { ...deviceList(), devices: [...BAND.flatMap(bandListRows), ...deviceList().devices] } satisfies DeviceListResponse,
+};

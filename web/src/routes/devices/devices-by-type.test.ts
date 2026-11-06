@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/svelte';
+import { render, screen, fireEvent, within, cleanup } from '@testing-library/svelte';
 import Page from './+page.svelte';
+import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
 // By type: Home's device cards, moved here (PLAN.md §3, §5.6). The first describe is
 // routes/home-device-cards.test.ts ported from Home's markup to this view; the second pins the
@@ -257,5 +258,226 @@ describe('Devices — By type', () => {
 		vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
 		render(Page);
 		expect(screen.getByRole('status')).toHaveTextContent('Loading devices');
+	});
+});
+
+// ---- NET-180: cards that line up, and a compact List layout ----------------------------------
+// The owner: some cards had Traffic, Connections and Last seen higher than their neighbours (a card
+// with no maker was a line shorter), and By type had no list view.
+
+describe('Devices By type — cards line up, and a List layout with the same figures', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.clearAllMocks();
+		vi.restoreAllMocks();
+		localStorage.clear();
+	});
+
+	const MINUTE = 60_000;
+	const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+	const LAYOUT_FROM = ago(24 * 60 * MINUTE);
+
+	function computer(mac: string, name: string, ips: string[], manufacturer: string | null, lastSeen: string) {
+		return {
+			mac, ips, hostnames: [], manufacturer, friendly_name: null, display_name: name, category: 'computer',
+			first_seen: '2026-10-01T00:00:00Z', last_seen: lastSeen, is_new: false,
+		};
+	}
+
+	// Most recent first, as the cards are: A, B, C, D, E. C has the most traffic.
+	const A = 'DESKTOP-1H4Q4HV'; // no maker, the owner's screenshot
+	const B = 'Work laptop'; // 2 of its 3 addresses listed
+	const C = 'Media box';
+	const D = 'Spare laptop'; // seen in range but not listed: unknown, not 0
+	const E = 'Old printer'; // quiet all range: a real 0
+
+	function listRow(ip: string, total_bytes: number, connection_count: number, last_seen: string) {
+		return { ...DEVICE, ip, hostname: null, total_bytes, connection_count, last_seen, first_seen: LAYOUT_FROM };
+	}
+
+	const LAYOUT_REPLIES: Record<string, unknown> = {
+		'/api/capture/mode': MIRROR,
+		'/api/devices/registry': {
+			total: 5,
+			devices: [
+				computer('aa:10', A, ['192.168.1.10'], null, ago(5 * MINUTE)),
+				computer('aa:11', B, ['192.168.1.11', '10.0.0.11', '192.168.1.111'], 'Example Corp', ago(45 * MINUTE)),
+				computer('aa:12', C, ['192.168.1.12'], 'Acme', ago(120 * MINUTE)),
+				computer('aa:13', D, ['192.168.1.13'], 'Beta Labs', ago(180 * MINUTE)),
+				computer('aa:14', E, ['192.168.1.14'], 'Zed Print', ago(48 * 60 * MINUTE)),
+			],
+		},
+		'/api/devices': {
+			from: LAYOUT_FROM, to: '', limit: 500,
+			devices: [
+				listRow('192.168.1.12', 1024 * 1024, 10, ago(120 * MINUTE)),
+				listRow('192.168.1.11', 1024, 600, ago(45 * MINUTE)),
+				listRow('10.0.0.11', 1024, 600, ago(50 * MINUTE)),
+				listRow('192.168.1.10', 512, 9, ago(5 * MINUTE)),
+			],
+		},
+	};
+
+	const panel = () => screen.getByRole('tabpanel', { name: 'By type' });
+	const computers = () => screen.getByRole('region', { name: 'Computers' });
+	const showList = () => fireEvent.click(within(screen.getByRole('group', { name: 'Layout' })).getByRole('button', { name: 'List' }));
+	const showCards = () => fireEvent.click(within(screen.getByRole('group', { name: 'Layout' })).getByRole('button', { name: 'Cards' }));
+	const listTable = () => screen.getByRole('table', { name: 'Computers, as a list' });
+	const bodyRows = () => within(listTable()).getAllByRole('row').slice(1);
+	const rowNames = () => bodyRows().map((r) => r.querySelector('.who-name')?.textContent);
+	const cardNames = () => [...computers().querySelectorAll('.dev-card .dev-name')].map((el) => el.textContent);
+	const card = (name: string) => within(panel()).getByRole('link', { name: new RegExp(name) });
+	const row = (name: string) => within(listTable()).getByRole('button', { name: `Open ${name}` }).closest('tr')!;
+
+	/** What a card says: maker line, address, the three figures. */
+	function cardFigures(name: string) {
+		const el = card(name);
+		const fig = (label: string) =>
+			[...el.querySelectorAll('.meta-k')].find((k) => k.textContent === label)?.nextElementSibling?.textContent?.trim();
+		return {
+			maker: el.querySelector('.dev-card-about > span')?.textContent?.trim(),
+			address: el.querySelector('.dev-card-top .mono')?.textContent?.trim(),
+			traffic: fig('Traffic'),
+			connections: fig('Connections'),
+			lastSeen: fig('Last seen'),
+		};
+	}
+
+	/** What a List row says, in the same shape. */
+	function rowFigures(name: string) {
+		const cells = within(row(name)).getAllByRole('cell').map((c) => c.textContent?.trim());
+		return {
+			maker: cells[2],
+			address: row(name).querySelector('td:nth-child(2) .mono')?.textContent?.trim(),
+			traffic: cells[3],
+			connections: cells[4],
+			lastSeen: cells[5],
+		};
+	}
+
+	async function openByType(replies = LAYOUT_REPLIES) {
+		stubDaemon(replies);
+		const view = render(Page);
+		await within(await screen.findByRole('tabpanel', { name: 'By type' })).findByText(A);
+		// the list's traffic has merged, in either layout
+		await vi.waitFor(() => expect(within(panel()).getByText('1.0 MB')).toBeInTheDocument());
+		return view;
+	}
+
+	it('gives every card the same rows: top, maker line ("Maker unknown" if none, then any addresses note), stats', async () => {
+		await openByType();
+		for (const el of computers().querySelectorAll('.dev-card')) {
+			const rows = [...el.children].map((c) => ['dev-card-top', 'dev-card-about', 'dev-card-stats'].find((k) => c.classList.contains(k)));
+			expect(rows).toEqual(['dev-card-top', 'dev-card-about', 'dev-card-stats']);
+		}
+		expect(within(card(A)).getByText('Maker unknown')).toBeInTheDocument();
+		// the note sits above the stats, in the maker row
+		const note = within(card(B)).getByText('(2 of 3 addresses listed)');
+		expect(note.closest('.dev-card-about')).not.toBeNull();
+		expect(note.compareDocumentPosition(card(B).querySelector('.dev-card-stats')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	});
+
+	it('shows the same devices in the same order with the same figures in List as in Cards', async () => {
+		await openByType();
+		const order = cardNames();
+		// most recent first, though C has far more traffic than A
+		expect(order).toEqual([A, B, C, D, E]);
+		const figures = Object.fromEntries(order.map((n) => [n, cardFigures(n!)]));
+		expect(figures[A]).toMatchObject({ maker: 'Maker unknown', traffic: '512 B', connections: '9' });
+		expect(figures[D]).toMatchObject({ traffic: '—', connections: '—' }); // unknown, not 0
+		expect(figures[E]).toMatchObject({ traffic: '0 B', connections: '0' }); // a real zero
+		expect(figures[B]).toMatchObject({ traffic: '2.0 KB', connections: (1200).toLocaleString() });
+
+		await showList();
+		expect(screen.queryByRole('link', { name: new RegExp(A) })).not.toBeInTheDocument();
+		// one table per type group, under the same group head
+		expect(within(computers()).getByRole('table')).toBe(listTable());
+		expect(rowNames()).toEqual(order);
+		for (const name of order) expect(rowFigures(name!), name!).toEqual(figures[name!]);
+		// partial address coverage: the first address, how many more, and how many were listed
+		expect(row(B).querySelector('td:nth-child(2)')?.textContent).toBe('192.168.1.11 +2 · 2 of 3 listed');
+		expect(row(A).querySelector('td:nth-child(2)')?.textContent).toBe('192.168.1.10');
+	});
+
+	it('sorts every List column both ways, figures by value, unknowns last', async () => {
+		await openByType();
+		await showList();
+		expect(screen.getByRole('columnheader', { name: 'Last seen' })).toHaveAttribute('aria-sort', 'descending');
+		// [header, descending, ascending]: Traffic by bytes, Connections by count, Last seen by time, not by their text
+		const SORTS: [string, string[], string[]][] = [
+			['Device', [B, D, E, C, A], [A, C, E, D, B]],
+			['Address', [E, D, C, B, A], [A, B, C, D, E]],
+			['Maker', [E, B, D, C, A], [C, D, B, E, A]],
+			['Traffic', [C, B, A, E, D], [E, A, B, C, D]],
+			['Connections', [B, C, A, E, D], [E, A, C, B, D]],
+			['Last seen', [A, B, C, D, E], [E, D, C, B, A]],
+		];
+		for (const [label, desc, asc] of SORTS) {
+			const header = screen.getByRole('columnheader', { name: label });
+			await fireEvent.click(within(header).getByRole('button'));
+			expect(header, label).toHaveAttribute('aria-sort', 'descending');
+			expect(rowNames(), `${label} descending`).toEqual(desc);
+			await fireEvent.click(within(header).getByRole('button'));
+			expect(header, label).toHaveAttribute('aria-sort', 'ascending');
+			expect(rowNames(), `${label} ascending`).toEqual(asc);
+		}
+	});
+
+	it('opens the device page from a List row', async () => {
+		const { goto } = await import('$app/navigation');
+		await openByType();
+		await showList();
+		await fireEvent.click(within(listTable()).getByRole('button', { name: `Open ${B}` }));
+		expect(goto).toHaveBeenCalledWith(`/devices/mac/${encodeURIComponent('aa:11')}`);
+	});
+
+	it('keeps the last figures on a failed refresh, the same in both layouts', async () => {
+		await openByType();
+		await showList();
+		const before = Object.fromEntries([A, B, C, D, E].map((n) => [n, rowFigures(n)]));
+
+		const { refreshPage } = await import('$lib/stores/pageRefresh');
+		stubDaemon({ '/api/capture/mode': MIRROR });
+		await refreshPage();
+		expect(await within(panel()).findByText("Couldn't refresh devices; showing the last figures loaded.")).toBeInTheDocument();
+		for (const name of [A, B, C, D, E]) expect(rowFigures(name), name).toEqual(before[name]);
+		await showCards();
+		for (const name of [A, B, C, D, E]) expect(cardFigures(name), name).toEqual(before[name]);
+	});
+
+	it('remembers the layout in this browser, and shows Cards when the stored value is unknown', async () => {
+		const first = await openByType();
+		await showList();
+		expect(localStorage.getItem('nettap-devices-layout')).toBe('list');
+		first.unmount();
+
+		await openByType();
+		expect(listTable()).toBeInTheDocument();
+		expect(within(screen.getByRole('group', { name: 'Layout' })).getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
+		cleanup();
+
+		localStorage.setItem('nettap-devices-layout', 'grid');
+		await openByType();
+		expect(card(A)).toBeInTheDocument();
+		expect(screen.queryByRole('table', { name: 'Computers, as a list' })).not.toBeInTheDocument();
+	});
+
+	it('falls back to Cards, and still switches, when storage is blocked', async () => {
+		const blocked = () => {
+			throw new DOMException('blocked', 'SecurityError');
+		};
+		vi.spyOn(Storage.prototype, 'getItem').mockImplementation(blocked);
+		vi.spyOn(Storage.prototype, 'setItem').mockImplementation(blocked);
+		await openByType();
+		expect(card(A)).toBeInTheDocument();
+		await showList();
+		expect(listTable()).toBeInTheDocument();
+	});
+
+	it('nests no link or button inside another, in either layout', async () => {
+		const { container } = await openByType();
+		expectNoNestedInteractive(container);
+		await showList();
+		expectNoNestedInteractive(container);
 	});
 });
