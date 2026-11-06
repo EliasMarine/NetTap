@@ -1,4 +1,4 @@
-# 2026-11-06 — Threat score states its scale; ping says when it didn't finish; Changelog offers only recorded types (NET-164, NET-169, NET-173)
+# 2026-11-06 — Threat score states its scale; ping says when it didn't finish; Changelog offers only recorded types; ping refuses option-like targets (NET-164, NET-169, NET-173, NET-175)
 
 **Status:** fixed on `fix/accuracy-followups`. The PR is pending. Plan: `plans/2026-11-06-accuracy-followups-net164-169-173.md` (Codex approved in round 2 after 4 findings).
 
@@ -24,12 +24,17 @@
     - Dropping the query avoids an exception to the guard. It also removes a round trip, and the filter still offers exactly the recorded types.
   - A `shortcut:` comment on `_index_name` notes that events are filed by the day they're written. A manual date-based cleanup can therefore keep a backdated join a day longer. Changelog has no automatic retention tier.
 
+**NET-175: a ping or traceroute target could start with "-"** (found by the /deep-review agents, outside this diff)
+- **Problem:** `TARGET_PATTERN` allowed a leading hyphen, so a target such as `-f` became a ping or traceroute option. Only admins reach the Tools page, and with no host after it the command fails, but no host name or IP address starts with "-".
+- **Fix:** `validate_target` refuses it with a clear message. whois validates an IP address, and the SSL check passes the host as an option's value, so neither is affected.
+
 **Not done here**
 - NET-168 (amber "incomplete" on the health strip) needs an owner design decision: the existing `.chip.is-warn` is orange, the failure colour.
 
 **Tests**
 - Daemon:
   - two ping tests: header plus stderr, and header with no stderr;
+  - a target starting with "-" is refused, and a hyphen inside a host name is fine;
   - the changelog types are the literal two-type list, with no query;
   - four threat-score tests.
 - Web: the Alerts ring says "of 100" and shows the sentence; the Threats KPI shows the sentence; a ping reply with HTTP 200 and an `error` shows the error and none of the default figures.
