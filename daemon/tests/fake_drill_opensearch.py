@@ -15,6 +15,12 @@ create_pit freezes a copy of the documents and every search reads that copy, so 
 change `docs` between searches and see the snapshot hold. Documents are flat:
 {"source.ip": "…", "@timestamp": "…"}; a list value is a multi-valued field.
 `tamper(body, reply)` can change or break any reply.
+
+`mapping_types` sets how a field is mapped: a type, {"type", "ignore_above"}, None
+(unmapped), or {index: one of those} per index of `index_names` (missing: unmapped there).
+A field not set is keyword, except `f.keyword`, which is absent unless set. Searches see
+documents as the first index maps them: unmapped fields gone, values longer than
+ignore_above dropped, a set `f.keyword` holding `f`'s values (NET-178).
 """
 
 import copy
@@ -205,24 +211,41 @@ def aggregate(docs: list, aggs: dict) -> dict:
     return {name: _one(docs, spec) for name, spec in aggs.items()}
 
 
+# OLD CODE START — NET-178: one index, every requested field mapped (f.keyword included)
+# class _Indices:
+#     def __init__(self, owner: "DrillOpenSearch") -> None:
+#         self._owner = owner
+#
+#     def get_field_mapping(self, fields, index=None, **params):
+#         types = self._owner.mapping_types
+#         return {
+#             "arkime_sessions3-261105": {
+#                 "mappings": {
+#                     f: {
+#                         "full_name": f,
+#                         "mapping": {
+#                             f.rsplit(".", 1)[-1]: {"type": types.get(f, "keyword")}
+#                         },
+#                     }
+#                     for f in fields.split(",")
+#                 }
+#             }
+#         }
+# OLD CODE END
 class _Indices:
     def __init__(self, owner: "DrillOpenSearch") -> None:
         self._owner = owner
 
     def get_field_mapping(self, fields, index=None, **params):
-        types = self._owner.mapping_types
         return {
-            "arkime_sessions3-261105": {
+            name: {
                 "mappings": {
-                    f: {
-                        "full_name": f,
-                        "mapping": {
-                            f.rsplit(".", 1)[-1]: {"type": types.get(f, "keyword")}
-                        },
-                    }
+                    f: {"full_name": f, "mapping": {f.rsplit(".", 1)[-1]: spec}}
                     for f in fields.split(",")
+                    if (spec := self._owner.spec(f, name)) is not None
                 }
             }
+            for name in self._owner.index_names
         }
 
 
@@ -236,8 +259,37 @@ class DrillOpenSearch:
         self.closed: list[str] = []
         self.pit_params: dict = {}
         self.bodies: list[dict] = []
-        self.mapping_types: dict[str, str] = {}
+        # OLD CODE START — NET-178: a type per field, one index
+        # self.mapping_types: dict[str, str] = {}
+        # OLD CODE END
+        self.mapping_types: dict = {}
+        self.index_names = ["arkime_sessions3-261105"]
         self.indices = _Indices(self)
+
+    def spec(self, field: str, index: str) -> dict | None:
+        """{"type", "ignore_above"?} as `index` maps `field`, or None if it doesn't."""
+        found = self.mapping_types.get(
+            field, None if field.endswith(".keyword") else "keyword"
+        )
+        if isinstance(found, dict) and "type" not in found:  # per index
+            found = found.get(index)
+        return {"type": found} if isinstance(found, str) else found
+
+    def _indexed(self, doc: dict) -> dict:
+        """`doc` as the first index holds it, for every field `mapping_types` sets."""
+        seen = dict(doc)
+        for field in self.mapping_types:
+            spec = self.spec(field, self.index_names[0])
+            if spec is None:
+                seen.pop(field, None)
+                continue
+            limit = spec.get("ignore_above")
+            seen[field] = [
+                v
+                for v in values(doc, field.removesuffix(".keyword"))
+                if limit is None or not isinstance(v, str) or len(v) <= limit
+            ]
+        return seen
 
     def create_pit(self, index, **params):
         self.pit_params = {"index": index, **params}
@@ -253,7 +305,11 @@ class DrillOpenSearch:
     def search(self, body, request_timeout=None):
         assert body["pit"]["id"] in self.pits, "every search runs on the open snapshot"
         self.bodies.append(body)
-        docs = [d for d in self.pits[body["pit"]["id"]] if matches(d, body["query"])]
+        # OLD CODE START — NET-178: documents as given, whatever the mapping
+        # docs = [d for d in self.pits[body["pit"]["id"]] if matches(d, body["query"])]
+        # OLD CODE END
+        pit = self.pits[body["pit"]["id"]]
+        docs = [d for d in map(self._indexed, pit) if matches(d, body["query"])]
         exact = body.get("track_total_hits") is True or len(docs) <= 10_000
         reply = {
             "pit_id": body["pit"]["id"],

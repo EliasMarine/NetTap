@@ -135,7 +135,17 @@ export interface DomainSummary {
 	http: { requests: number };
 	alerts: {
 		/** Alerts whose host fields name this domain; null when no alert in the window carries one. */
+		// NET-178: also null when no host field here can be matched to a whole name (tagged_partial)
 		tagged: number | null;
+		/**
+		 * NET-178: a host field here can't be matched to a whole name (stored as text), so tagged is
+		 * a lower bound, or null when it can't be counted at all. Absent from an older daemon.
+		 */
+		tagged_partial?: boolean;
+		/** The host fields (or their `.keyword` subfields) the count searched. */
+		matched_fields?: string[];
+		/** Host fields that hold names but can't be matched exactly. */
+		unmatched_fields?: string[];
 		alerts_in_window: number;
 		with_host_field: number;
 	};
@@ -232,7 +242,10 @@ export async function getDomainSummary(name: string, from: string, to: string): 
 		isObject(alerts) &&
 		(alerts.tagged === null || isNumber(alerts.tagged)) &&
 		isNumber(alerts.alerts_in_window) &&
-		isNumber(alerts.with_host_field);
+		isNumber(alerts.with_host_field) &&
+		// NET-178: optional, so an older daemon's reply still loads; malformed when present is an error
+		(alerts.tagged_partial === undefined || isBoolean(alerts.tagged_partial)) &&
+		[alerts.matched_fields, alerts.unmatched_fields].every((v) => v === undefined || (Array.isArray(v) && v.every(isString)));
 	if (!ok) throw new Error('Domain summary failed: the reply was malformed');
 	return body as unknown as DomainSummary;
 }

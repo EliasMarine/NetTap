@@ -123,6 +123,30 @@ describe('Domain page', () => {
 		expectNoNestedInteractive(container);
 	});
 
+	// NET-178: tls.client.server_name stored as text on the G11 made the whole page a 502
+	it('says a partial tagged count is a lower bound and names the field it could not search', async () => {
+		const unmatched = { tagged_partial: true, matched_fields: ['related.hosts', 'url.domain'], unmatched_fields: ['tls.client.server_name'] };
+		stubDaemon({ ...DOMAIN, alerts: { ...DOMAIN.alerts, ...unmatched } });
+		const { container } = render(Page);
+		await vi.waitFor(() => expect(kpi('Lookups')).toHaveTextContent('420'));
+		const alerts = card('Alerts tagged with this name');
+		expect(within(alerts).getByText('At least 1')).toHaveClass('big');
+		expect(within(alerts).getByRole('status')).toHaveTextContent(/^TLS names are stored on this NetTap in a way that can't be matched exactly/);
+		expect(alerts).toHaveTextContent('Only 12 of 57 alerts in this window carry a host name.');
+		expectNoNestedInteractive(container);
+	});
+
+	it('says a tagged count no field can make cannot be counted, not Not recorded', async () => {
+		const none = { tagged: null, tagged_partial: true, matched_fields: [], unmatched_fields: ['tls.client.server_name'] };
+		stubDaemon({ ...DOMAIN, alerts: { ...DOMAIN.alerts, ...none } });
+		render(Page);
+		await vi.waitFor(() => expect(kpi('Lookups')).toHaveTextContent('420'));
+		const alerts = card('Alerts tagged with this name');
+		expect(within(alerts).getByText("Can't be counted on this NetTap")).toHaveClass('big');
+		expect(alerts).not.toHaveTextContent('Not recorded');
+		expect(within(alerts).getByRole('status')).toHaveTextContent(/TLS names/);
+	});
+
 	it('lists the same answer twice without crashing the table', async () => {
 		const twice = DOMAIN.dns.answers[0];
 		stubDaemon({ ...DOMAIN, dns: { ...DOMAIN.dns, answers: [twice, { ...twice }] } });

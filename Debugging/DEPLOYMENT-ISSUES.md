@@ -1,6 +1,6 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-11-01 (Chain 25: dashboard figures checked against OpenSearch; host-network DNS names, a pcap-monitor DNS storm, the 1970 record and ISM yellow fixed. Chain 24: malcolm_template's index pattern was never filled in, so indices guessed field types and Zeek records were rejected; the daemon's .keyword queries from Chain 13 are dropped. Chain 23 verified on the G11)
+> **Last updated:** 2026-11-06 (Chain 26: the domain page was a 502 on the G11 because one alert host field is mapped as text; it now answers with an exact lower bound. The same run found PCAP capture stopped for 21 h. Earlier, 2026-11-01, Chain 25: dashboard figures checked against OpenSearch; host-network DNS names, a pcap-monitor DNS storm, the 1970 record and ISM yellow fixed. Chain 24: malcolm_template's index pattern was never filled in, so indices guessed field types and Zeek records were rejected; the daemon's .keyword queries from Chain 13 are dropped. Chain 23 verified on the G11)
 > **Status:** 58 issues tracked. 58 RESOLVED. Latest: Fixed category drill-down page crash (`each_key_duplicate`) — 3 daemon→frontend data contract mismatches in `handle_alert_category_detail()` and `handle_alert_category_timeline()`. Lessons 97–99 added.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
@@ -57,6 +57,8 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | OpenSearch index mapping | OK (G11; PR pending) | Chain 24: malcolm_template's index pattern was a placeholder, so every daily index guessed its field types; Zeek records were rejected (event.id as long) and the daemon's queries were built on the guessed `.keyword` fields. Existing boxes: `bash scripts/remote/fix-index-template.sh --delete-today`, then `bash scripts/remote/deploy-malcolm-field-names.sh`. |
 | Dashboard data accuracy | IN PROGRESS (G11) | Chain 25: dashboard figures disagreed with OpenSearch. Batches 1–2 are deployed and verified on the G11; batch 3 (device registry, bandwidth ranking, Log Explorer totals, pcap-monitor DNS storm) is deploying. Remaining: certificates (x509), IoT heuristics, Tools/PCAP/System pages. Tracking: `tracking-fixes/2026-11-01-dashboard-data-accuracy.md`. |
 | NetTap daemon API (:8880) | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 20: token required on every call except `GET /api/health`. Verify with `bash scripts/remote/deploy-pr110-review-fixes.sh`. |
+| Domain drill-down page | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 26 (NET-178): a 502 on the G11 because `tls.client.server_name` is mapped text. The page now answers; the alert tagged count says "At least N" and names the field it can't search. Verify with `bash scripts/remote/deploy-drill-down.sh`. |
+| PCAP capture (nettap-pcap-capture) | **STOPPED ON THE G11 (2026-11-06), CAUSE UNKNOWN** | Chain 26 (NET-179): "Exited (0)" for 21 h, so something ran `docker stop`. `bash scripts/remote/fix-pcap-capture-stopped.sh` shows who could have and restarts it if Settings want it on. |
 
 ---
 
@@ -430,6 +432,42 @@ CHAIN 25: dashboard figures disagreed with OpenSearch (fix/dashboard-data-accura
   every device's own pages: bash scripts/remote/verify-device-figures.sh;
   figures independent of how the data is split: bash scripts/remote/verify-split-invariance.sh.
   Each checks its fixes against the live APIs.
+
+CHAIN 26: the domain page was a 502 on the G11, and PCAP capture had stopped (fix/domain-host-fields NET-178; PR #183 NET-179)
+  Found 2026-11-06 on the G11 during the pickup deploy runs.
+  1. Domain page 502 (NET-178). GET /api/domains/ip.qurl.in answered 502 in 0 s (name
+     matching unavailable: tls.client.server_name is text). domain_figures ran require_keyword
+     on the three Zeek name fields AND the four Suricata alert host fields (related.hosts,
+     dns.question.name, tls.client.server_name, url.domain). Those four only feed the narrow
+     "Alerts tagged with this name" figure, but one of them failing failed every figure on the
+     page. On the G11, tls.client.server_name is mapped text in every arkime_sessions3-* index
+     (Malcolm's template), dns.question.name is unmapped, and related.hosts, url.domain and the
+     Zeek fields are keyword. A term query on text matches words, not whole names, so the field
+     can't simply be queried either.
+     Fix: require_keyword still guards the three Zeek fields (the page's main figures; a text
+     one is still a 502). The four host fields go through keyword_paths
+     (services/hostnames.py): a field is matched as it is when every index that maps it has it
+     as keyword with ignore_above absent or >= 254 (a 253-character name plus the trailing dot),
+     else through its .keyword subfield when that holds in every index mapping the field, else
+     it is "unmatched"; a field no index maps is in neither list. "Carrying a host name" is
+     exists on the four fields plus every matched path (exists works on text). The tagged count
+     searches only matched paths; with an unmatched field it is an exact lower bound
+     (tagged_partial, unmatched_fields): the page says "At least N" and names the field in
+     words, or "Can't be counted on this NetTap" when no field can be matched. No alert carrying
+     a host name stays "Not recorded". The Malcolm template is not changed (Chain 24: the daemon
+     queries Malcolm's field names; a template change would only reach new daily indices).
+     deploy-drill-down.sh Step 4 now checks only the Zeek fields strictly, prints the host
+     fields' types and ignore_above, and works out each one's path with the rule spelled out
+     again; Step 6 checks alerts in the window, carrying a host name and tagged against
+     OpenSearch, and that the page's matched/unmatched fields agree with Step 4.
+  2. PCAP capture stopped (NET-179). nettap-pcap-capture had been "Exited (0)" for 21 hours.
+     With restart: unless-stopped, a container that exits by itself is restarted, so a lasting
+     Exited means a docker stop. Cause not found yet. fix-pcap-capture-stopped.sh (PR #183) shows
+     the container's record, its last logs, Docker's events and the sudo journal, then starts it
+     only when Settings has PCAP capture on and there is no storage stop flag (CR-018).
+  Verify: bash scripts/remote/fix-pcap-capture-stopped.sh, then (once NET-178 is on main)
+  bash scripts/remote/deploy-drill-down.sh (Step 4 and Step 6 with no ✗ lines).
+  Tracking: tracking-fixes/2026-11-06-domain-host-fields.md.
 ```
 
 ---
@@ -1741,6 +1779,10 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `scripts/remote/deploy-log-explorer.sh` | 1ce47e3 | Deploy script: checks OpenSearch health before deploying, restarts if unhealthy, waits up to 180s, runs security bootstrap as fallback. |
 | `tests/scripts/test_compose_validation.bats` | #54, #56-#62 | 119+ tests, validates security per Malcolm vs NetTap services |
 | `tests/scripts/test_deploy_malcolm.bats` | #54, #55, #60 | Template bootstrap + security bootstrap + startup ordering tests |
+| `daemon/services/hostnames.py` | NET-160, NET-178 | `require_keyword` (strict: any non-keyword field is a 502) for the fields a page's main figures need; `keyword_paths` for optional fields: the field, its `.keyword` subfield, or unmatched, by type and `ignore_above` (>= 254) in every index. Both read the mapping through `_field_types`. |
+| `daemon/api/domains.py` | NET-160, NET-178 | `require_keyword` on the three Zeek name fields only; the alert host fields go through `keyword_paths`. Alerts reply carries `tagged_partial`, `matched_fields`, `unmatched_fields`. |
+| `scripts/remote/deploy-drill-down.sh` | NET-160, NET-178 | Step 4: strict check on the Zeek name fields, alert host fields shown with their path. Step 6: the alert figures and the matched/unmatched fields checked against OpenSearch. |
+| `scripts/remote/fix-pcap-capture-stopped.sh` | #183 (NET-179) | NEW: why nettap-pcap-capture stopped (record, logs, Docker events, sudo journal); starts it only when Settings want capture on and no storage stop flag is set. |
 
 ---
 
@@ -1956,6 +1998,9 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 171. **Measure an approved fix against the real answer before shipping it (Chain 25, #137)** — the owner approved capping tshark's memory with session reset (`-M`). Measured on a real 181 MB file it found 28,888 `http || tls` packets against the true 28,459 and saved no memory, so it would have made PCAP Search report wrong numbers. The exact fix bounded the input instead (256 MB capture files). Tools that trade state for memory change results; check counts against an unbounded run, and go back to the owner when the approved mechanism doesn't hold.
 172. **A reverse proxy that resolves names once breaks on the next container recreate (Chain 25, #138)** — nginx's `upstream { server nettap-web:3000; }` was resolved at startup; batch 51's `--force-recreate` gave the web container a new IP and every page was a 502 for 16 minutes while the container itself was healthy. Earlier recreates happened to get the same IP back, so it hid for weeks. Make the proxy re-resolve (`resolve` in the upstream, or a variable with `resolver 127.0.0.11`), pin the proxy image when you rely on a version-specific directive, and test by recreating the backend on purpose.
 173. **A blocking call in an async server stalls every request, including the health check (Chain 25, #139)** — the daemon's handlers are `async`, but the OpenSearch client is synchronous. The threat report (8–13 s), risk scores (7.5 s) and beaconing (5.6 s) held the one request loop, so an instant request (`/api/capture/mode`) took 8–9 s, and the top bar's 5 s liveness check said "Can't reach NetTap" on a healthy box. Unit tests never showed it because nothing ran concurrently. The fix was found by watching *other* requests' timings during a page load: identical finish times across unrelated endpoints are the signature. Long blocking work goes in `asyncio.to_thread`. Check new slow endpoints with the daemon's own `nettap.api: GET … (N ms)` log lines (anything over ~2 s). Moving work into threads also exposes shared state that was only ever touched on the loop: the LAN filter's `clear()` + `update()` could be read empty by a handler thread, so it now changes in one step.
+174. **Check strictly only what a page's main figures need (Chain 26, NET-178)** — the domain page ran its keyword check on seven fields, four of which only fed one side figure, so one text field (`tls.client.server_name` on the G11) made every domain page a 502. Keep the hard check for the fields the page can't answer without; for optional ones, use what can be matched exactly and make the figure say it is partial ("At least N", naming what it couldn't search). A text field still answers `exists`, so it can count toward coverage even when it can't be matched.
+175. **A `.keyword` subfield or keyword field only matches whole names up to its `ignore_above` (Chain 26, NET-178)** — values longer than `ignore_above` are not indexed, so neither `term` nor `exists` sees them, and a subfield can hold a value its parent dropped. Read `ignore_above` with the type before trusting a field for exact matching (>= 254 for a host name with its trailing dot), and count coverage over every path the match uses.
+176. **A container that stays "Exited (0)" under `restart: unless-stopped` was stopped on purpose (Chain 26, NET-179)** — Docker restarts a container that exits by itself, so a lasting Exited means a `docker stop` (a person, a script or the daemon). Look at `docker events`, the sudo journal and the app's own stop flags before restarting it, and restart only what Settings want running.
 
 ---
 
@@ -1994,6 +2039,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | Storage manager now stops `nettap-pcap-capture` at critical disk (CR-018) | Capture stays off until usage drops below the resume threshold; the flag `/opt/nettap/data/storage-stopped-capture` survives restarts | Resume respects `PCAP_CAPTURE_ENABLED`. If capture seems stuck off, check the daemon log for `docker start` errors and the flag file. |
 | Suricata alert exclusion is hardcoded in logs.py | If event.dataset naming changes in Malcolm upgrade, alerts may leak back into log stats | Check `event.dataset` values after Malcolm version bumps. The `_EXCLUDE_ALERTS_FILTER` constant uses `{"term": {"event.dataset": "alert"}}`. |
 | pcap-monitor DNS exclusion is query-name based | If Zeek internal monitoring changes, the exclusion pattern breaks | The `_EXCLUDE_DNS_NOISE` filter matches `zeek.dns.query.keyword: "pcap-monitor"` literally. Check after Zeek/Malcolm upgrades. |
+| An alert host field mapped as text (Chain 26) | On the G11 `tls.client.server_name` is text, so "Alerts tagged with this name" is a lower bound ("At least N") on every domain page | The page names the field it can't search. A Malcolm template change would only reach new daily indices; if one ever adds a `.keyword` subfield (ignore_above >= 254), the daemon uses it with no code change. Step 4 of `deploy-drill-down.sh` shows which path each field uses. |
 
 ---
 
@@ -2051,3 +2097,5 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | — | c948e8c | Svelte build fix: {@const} inside <svg> invalid — $derived arc calc instead | 2026-03-13 |
 | — | 2052e94 | Ship bundled OUI vendor DB: .gitignore `data/` also hid `daemon/data/oui_database.json` (Chain 19) | 2026-10-29 |
 | — | 520a5b6 | Daemon API token: host networking had left :8880 open to the LAN (Chain 20) | 2026-10-29 |
+| NET-179 | #183 | PCAP capture found stopped for 21 h: fix-pcap-capture-stopped.sh (Chain 26) | 2026-11-06 |
+| NET-178 | pending | Domain page 502: an alert host field mapped as text failed the whole page (Chain 26) | 2026-11-06 |

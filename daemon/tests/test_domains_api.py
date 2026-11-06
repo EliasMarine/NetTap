@@ -19,6 +19,13 @@ from tests.fake_drill_opensearch import (
 )
 
 PHONE, LAPTOP, EXCLUDED = "192.168.1.20", "192.168.1.30", "192.168.1.99"
+HOST_FIELDS = (
+    "related.hosts",
+    "dns.question.name",
+    "tls.client.server_name",
+    "url.domain",
+)
+TLS = "tls.client.server_name"
 
 
 class DomainCase(AioHTTPTestCase):
@@ -248,8 +255,21 @@ class TestAlertsMixed(DomainCase):
 
     async def test_tagged_alerts_come_with_their_coverage(self):
         alerts = (await self.figures())["alerts"]
+        # OLD CODE START — NET-178: the reply also says which host fields were matched
+        # self.assertEqual(
+        #     alerts, {"tagged": 2, "alerts_in_window": 4, "with_host_field": 3}
+        # )
+        # OLD CODE END
         self.assertEqual(
-            alerts, {"tagged": 2, "alerts_in_window": 4, "with_host_field": 3}
+            alerts,
+            {
+                "tagged": 2,
+                "tagged_partial": False,
+                "matched_fields": list(HOST_FIELDS),
+                "unmatched_fields": [],
+                "alerts_in_window": 4,
+                "with_host_field": 3,
+            },
         )
 
 
@@ -258,8 +278,21 @@ class TestAlertsUnrecorded(DomainCase):
 
     async def test_no_host_field_anywhere_is_not_recorded_rather_than_zero(self):
         alerts = (await self.figures())["alerts"]
+        # OLD CODE START — NET-178: the reply also says which host fields were matched
+        # self.assertEqual(
+        #     alerts, {"tagged": None, "alerts_in_window": 2, "with_host_field": 0}
+        # )
+        # OLD CODE END
         self.assertEqual(
-            alerts, {"tagged": None, "alerts_in_window": 2, "with_host_field": 0}
+            alerts,
+            {
+                "tagged": None,
+                "tagged_partial": False,
+                "matched_fields": list(HOST_FIELDS),
+                "unmatched_fields": [],
+                "alerts_in_window": 2,
+                "with_host_field": 0,
+            },
         )
 
 
@@ -306,3 +339,179 @@ class TestShortListsNeverCut(DomainCase):
         ):
             body = await self.figures(status=502)
         self.assertIn("domain response codes", body["error"])
+
+
+# ---------------------------------------------------------------------------
+# NET-178: an alert host field mapped as text (tls.client.server_name on the G11)
+# ---------------------------------------------------------------------------
+
+
+class TestAlertHostFieldsMapped(DomainCase):
+    docs = [
+        alert(PHONE, "93.184.216.34", tls__client__server_name="Example.com"),
+        alert(PHONE, "93.184.216.34", related__hosts=["example.com."]),
+        alert(PHONE, "1.1.1.1", url__domain="other.com"),
+        alert(PHONE, "93.184.216.34"),  # no host field at all
+    ]
+
+    async def alerts(self) -> dict:
+        return (await self.figures())["alerts"]
+
+    async def test_a_text_tls_name_answers_with_an_exact_lower_bound(self):
+        self.os.mapping_types[TLS] = "text"
+        alerts = await self.alerts()
+        # the TLS-only alert carries a host name but can't be matched: at least 1, not 2
+        self.assertEqual(
+            alerts,
+            {
+                "tagged": 1,
+                "tagged_partial": True,
+                "matched_fields": ["related.hosts", "dns.question.name", "url.domain"],
+                "unmatched_fields": [TLS],
+                "alerts_in_window": 4,
+                "with_host_field": 3,
+            },
+        )
+        # the text field is only ever asked whether it exists, never matched by term
+        tagged = self.os.bodies[-1]["aggs"]["tagged"]
+        self.assertNotIn(TLS, str(tagged))
+        self.assertIn(TLS, str(self.os.bodies[-1]["aggs"]["with_host"]))
+
+    async def test_a_text_tls_name_with_a_keyword_subfield_is_matched_through_it(self):
+        self.os.mapping_types[TLS] = "text"
+        self.os.mapping_types[TLS + ".keyword"] = {
+            "type": "keyword",
+            "ignore_above": 256,
+        }
+        alerts = await self.alerts()
+        self.assertEqual(
+            (alerts["tagged"], alerts["tagged_partial"], alerts["unmatched_fields"]),
+            (2, False, []),
+        )
+        self.assertIn(TLS + ".keyword", alerts["matched_fields"])
+        self.assertEqual(alerts["with_host_field"], 3)
+
+    async def test_a_subfield_too_short_for_a_name_is_unmatched(self):
+        self.os.mapping_types[TLS] = "text"
+        self.os.mapping_types[TLS + ".keyword"] = {"type": "keyword", "ignore_above": 8}
+        alerts = await self.alerts()
+        self.assertEqual(
+            (alerts["tagged"], alerts["tagged_partial"], alerts["unmatched_fields"]),
+            (1, True, [TLS]),
+        )
+
+    async def test_a_subfield_missing_from_one_index_is_unmatched(self):
+        older = "arkime_sessions3-261104"
+        self.os.index_names = [*self.os.index_names, older]
+        self.os.mapping_types[TLS] = "text"
+        self.os.mapping_types[TLS + ".keyword"] = {"arkime_sessions3-261105": "keyword"}
+        alerts = await self.alerts()
+        self.assertEqual(
+            (alerts["tagged"], alerts["tagged_partial"], alerts["unmatched_fields"]),
+            (1, True, [TLS]),
+        )
+
+    async def test_no_field_that_can_be_matched_is_a_count_that_cant_be_made(self):
+        for field in HOST_FIELDS:
+            self.os.mapping_types[field] = "text"
+        alerts = await self.alerts()
+        self.assertEqual(
+            (alerts["tagged"], alerts["tagged_partial"], alerts["matched_fields"]),
+            (None, True, []),
+        )
+        self.assertEqual(alerts["with_host_field"], 3)
+        self.assertNotIn("tagged", self.os.bodies[-1]["aggs"])
+
+    async def test_every_host_field_unmapped_is_not_recorded(self):
+        for field in HOST_FIELDS:
+            self.os.mapping_types[field] = None
+        alerts = await self.alerts()
+        self.assertEqual(
+            alerts,
+            {
+                "tagged": None,
+                "tagged_partial": False,
+                "matched_fields": [],
+                "unmatched_fields": [],
+                "alerts_in_window": 4,
+                "with_host_field": 0,
+            },
+        )
+
+
+class TestAlertsOnlyInUnmatchedFields(DomainCase):
+    docs = [
+        alert(PHONE, "93.184.216.34", tls__client__server_name="example.com"),
+        alert(PHONE, "93.184.216.34", url__domain="example.com"),
+        alert(PHONE, "1.1.1.1"),
+    ]
+
+    async def test_unmapped_plus_text_fields_cant_be_counted_rather_than_at_least_0(
+        self,
+    ):
+        self.os.mapping_types["dns.question.name"] = None  # unmapped, as on the G11
+        for field in ("related.hosts", TLS, "url.domain"):
+            self.os.mapping_types[field] = "text"
+        alerts = (await self.figures())["alerts"]
+        self.assertEqual(
+            alerts,
+            {
+                "tagged": None,
+                "tagged_partial": True,
+                "matched_fields": [],
+                "unmatched_fields": ["related.hosts", TLS, "url.domain"],
+                "alerts_in_window": 3,
+                "with_host_field": 2,
+            },
+        )
+
+
+class TestUnmatchedFieldButNoHostNames(DomainCase):
+    docs = [alert(PHONE, "93.184.216.34"), alert(LAPTOP, "1.1.1.1")]
+
+    async def test_no_alert_carrying_a_host_name_stays_not_recorded(self):
+        self.os.mapping_types[TLS] = "text"
+        alerts = (await self.figures())["alerts"]
+        self.assertEqual(
+            (
+                alerts["tagged"],
+                alerts["tagged_partial"],
+                alerts["unmatched_fields"],
+                alerts["with_host_field"],
+            ),
+            (None, False, [TLS], 0),
+        )
+
+
+class TestAlertSubfieldKeepsWhatItsParentDrops(DomainCase):
+    docs = [alert(PHONE, "93.184.216.34", url__domain="example.com")]
+
+    async def test_a_name_only_the_subfield_holds_is_tagged_and_carried(self):
+        self.os.mapping_types["url.domain"] = {"type": "keyword", "ignore_above": 8}
+        self.os.mapping_types["url.domain.keyword"] = {
+            "type": "keyword",
+            "ignore_above": 256,
+        }
+        alerts = (await self.figures())["alerts"]
+        self.assertEqual(
+            (alerts["tagged"], alerts["with_host_field"], alerts["tagged_partial"]),
+            (1, 1, False),
+        )
+        self.assertIn("url.domain.keyword", alerts["matched_fields"])
+
+
+LONGEST = ".".join(["a" * 63] * 3 + ["b" * 61])  # 253 characters
+
+
+class TestLongestNameThroughASubfield(DomainCase):
+    docs = [alert(PHONE, "93.184.216.34", tls__client__server_name=LONGEST + ".")]
+
+    async def test_a_253_character_name_with_its_dot_is_tagged(self):
+        self.assertEqual(len(LONGEST), 253)
+        self.os.mapping_types[TLS] = "text"
+        self.os.mapping_types[TLS + ".keyword"] = {
+            "type": "keyword",
+            "ignore_above": 256,
+        }
+        alerts = (await self.figures(LONGEST))["alerts"]
+        self.assertEqual((alerts["tagged"], alerts["tagged_partial"]), (1, False))

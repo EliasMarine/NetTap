@@ -80,6 +80,19 @@ describe('drill-down clients', () => {
 		await expect(getDomainSummary('x', 'a', 'b')).rejects.toThrow('malformed');
 	});
 
+	// NET-178: the partial-tag fields are optional (an older daemon), but checked when present
+	const partial = { ...DOMAIN, alerts: { ...DOMAIN.alerts, tagged_partial: true, matched_fields: ['url.domain.keyword'], unmatched_fields: ['tls.client.server_name'] } };
+	it.each([
+		['tagged_partial that is text', { tagged_partial: 'yes' }],
+		['matched_fields that is not a list', { matched_fields: 'url.domain' }],
+		['unmatched_fields holding a number', { unmatched_fields: [7] }],
+	])('accepts the partial-tag fields but rejects %s', async (_what, broken) => {
+		vi.stubGlobal('fetch', vi.fn(async () => reply(200, partial)));
+		await expect(getDomainSummary('x', 'a', 'b')).resolves.toEqual(partial);
+		vi.stubGlobal('fetch', vi.fn(async () => reply(200, { ...partial, alerts: { ...partial.alerts, ...broken } })));
+		await expect(getDomainSummary('x', 'a', 'b')).rejects.toThrow('malformed');
+	});
+
 	it.each([
 		['the old one-service shape', { port: 443, transport: 'tcp', service: 'ssl', connections: 1 }],
 		['a service that is not text', { port: 443, transport: 'tcp', services: [7], connections: 1 }],
