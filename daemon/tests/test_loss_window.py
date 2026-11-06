@@ -153,7 +153,8 @@ def test_a_recreated_interface_restarts_even_with_grown_counters():
 def test_a_new_capture_interface_restarts():
     w = LossWindow()
     w.add(0, "br0", C(1000))
-    w.add(600, "enp4s0", C(50000, ifindex=3))
+    # OLD CODE: w.add(600, "enp4s0", C(50000, ifindex=3)) (the new ifindex alone restarted it)
+    w.add(600, "enp4s0", C(50000))  # same ifindex: only the name differs
     assert w.over()["state"] == "measuring"
     assert w.over()["interface"] == "enp4s0"
 
@@ -191,6 +192,27 @@ def test_a_gap_longer_than_an_hour_is_measuring_not_a_two_hour_delta():
     w.add(0, "br0", C(0))
     w.add(60, "br0", C(1000))
     w.add(7260, "br0", C(9000))
+    assert w.over()["state"] == "measuring"
+
+
+def test_readings_closer_than_the_gap_are_not_kept():
+    # a stats request every 10 ms for 100 s: memory stays bounded, the window stays right
+    w = LossWindow()
+    w.add(0, "br0", C(0))
+    for i in range(1, 10_001):
+        w.add(i * 0.01, "br0", C(i * 10, i // 100))
+    assert len(w._samples) <= 100 / 5 + 1
+    out = w.over()
+    assert out["state"] == "ok"
+    assert out["window"]["seconds"] >= 95
+    assert out["window"]["lost"] <= out["window"]["arrived"]
+
+
+def test_a_reset_inside_the_gap_still_restarts():
+    w = LossWindow()
+    w.add(0, "br0", C(1000))
+    w.add(60, "br0", C(2000))
+    w.add(61, "br0", C(10))  # 1 s later, counters went down
     assert w.over()["state"] == "measuring"
 
 
@@ -291,13 +313,15 @@ def test_stats_endpoint_carries_the_window_and_the_sampler_stops_cleanly(tmp_pat
             )
         finally:
             await client.close()
-        return body, task
+        # read inside the loop: asyncio.run cancels leftover tasks itself once run() returns
+        return body, task.done()
 
-    body, task = asyncio.run(run())
+    # OLD CODE: body, task = asyncio.run(run()) … assert task.done() (always true after asyncio.run)
+    body, sampler_stopped = asyncio.run(run())
     assert body["loss_window"]["state"] == "measuring"
     assert body["loss_window"]["cumulative"] == {
         "arrived": 1005,
         "lost": 15,
         "drop_rate_pct": pytest.approx(15 / 1005 * 100),
     }
-    assert task.done()
+    assert sampler_stopped

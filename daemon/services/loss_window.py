@@ -21,6 +21,7 @@ logger = logging.getLogger("nettap.services.loss_window")
 MAX_AGE_S = 3600.0
 MIN_SPAN_S = 60.0
 SAMPLE_INTERVAL_S = 60.0
+MIN_GAP_S = 5.0  # newest reading kept is at most this old; caps an hour at 721 readings
 SYS_NET = os.environ.get("HOST_SYS_NET", "/host/sys/class/net")
 _COUNTERS = ("rx_packets", "rx_dropped", "rx_missed_errors")
 
@@ -106,6 +107,10 @@ class LossWindow:
         if reason:
             logger.info("Loss window on %s restarts: %s", iface, reason)
             self._samples.clear()
+        elif self._samples and at - self._samples[-1].at < MIN_GAP_S:
+            # every stats request takes a reading; keeping them all would grow with request
+            # rate, so the window holds at most one per MIN_GAP_S (reset checks still run)
+            return
         self._samples.append(_Sample(at, iface, counters))
         while self._samples[0].at < at - self._max_age:
             self._samples.popleft()
