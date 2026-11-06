@@ -45,6 +45,8 @@ export interface Certificate {
 	last_seen: string;
 	times_seen: number;
 	self_signed: boolean;
+	/** Sessions per validation status; a session without one is "unchecked" (NET-154). */
+	statuses?: Record<string, number>;
 }
 
 export interface CertificatesResponse {
@@ -52,6 +54,9 @@ export interface CertificatesResponse {
 	to: string;
 	certificates: Certificate[];
 	count: number;
+	/** Every matching certificate; `certificates` stops at 5,000. */
+	total?: number;
+	truncated?: boolean;
 }
 
 export interface IssuerChange {
@@ -213,4 +218,180 @@ export async function getCertStats(from?: string, to?: string): Promise<CertStat
 	} catch {
 		return null;
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Overview (NET-154): every figure the Certificates page shows, from one complete pass
+// ---------------------------------------------------------------------------
+
+export type CertSeverity = 'high' | 'medium' | 'low';
+
+export type FindingKind =
+	| 'unverified-alongside-verified'
+	| 'unverified'
+	| 'expired-at-use'
+	| 'chain-expired'
+	| 'weak'
+	| 'device-expiry';
+
+/** One certificate: x509 details (blank when `details_available` is false) and its sessions. */
+export interface CertDetail {
+	fingerprint: string;
+	details_available: boolean;
+	subject: string;
+	subject_cn: string;
+	subject_full: string;
+	issuer: string;
+	issuer_org: string;
+	issuer_full: string;
+	not_before: string;
+	not_after: string;
+	key_type: string;
+	key_length: number | null;
+	sig_alg: string;
+	serial: string;
+	san_dns: string[];
+	self_signed: boolean;
+	authority: string | null;
+	sessions: number;
+	first_seen: string;
+	last_seen: string;
+	statuses: Record<string, number>;
+	verified: boolean;
+	tls_versions: Record<string, number>;
+	sites: string[];
+	sites_total: number;
+	servers: string[];
+	servers_total: number;
+	clients: string[];
+	clients_total: number;
+}
+
+/** A site is the server name a device asked for; without one, the server's address. */
+export interface CertSite {
+	id: string;
+	name: string | null;
+	server: string | null;
+	sessions: number;
+	first_seen: string;
+	last_seen: string;
+	statuses: Record<string, number>;
+	verified: boolean;
+	scope: 'local' | 'public' | 'unknown' | 'mixed';
+	certificates: string[];
+	certificates_total: number;
+	clients: string[];
+	clients_total: number;
+	servers: string[];
+	servers_total: number;
+	authorities: string[];
+	worst: CertSeverity | null;
+}
+
+export interface CertFinding {
+	id: string;
+	kind: FindingKind;
+	severity: CertSeverity;
+	site_id: string;
+	site: string | null;
+	server: string | null;
+	servers: string[];
+	fingerprint: string;
+	/**
+	 * Only the sessions the finding is about: the failing ones for a verification finding, the
+	 * ones after expiry for expired-at-use. `last_seen`, `servers` and `clients` cover the same.
+	 */
+	sessions: number;
+	last_seen: string;
+	clients: string[];
+	clients_total: number;
+	/** Failing validation statuses and their session counts. */
+	failed?: Record<string, number>;
+	authority?: string | null;
+	other_authority?: string | null;
+	not_after?: string;
+	weaknesses?: string[];
+	port?: number | string | null;
+	days_left?: number | null;
+}
+
+/** A server on your network, for the certificate it presented last. */
+export interface CertDevice {
+	id: string;
+	server: string | null;
+	port: number | string | null;
+	site_id: string;
+	site: string | null;
+	fingerprint: string;
+	details_available: boolean;
+	authority: string | null;
+	not_after: string | null;
+	days_left: number | null;
+	self_signed: boolean;
+	statuses: Record<string, number>;
+	verified: boolean;
+	sessions: number;
+	last_seen: string;
+	certificates_total: number;
+	clients: string[];
+	clients_total: number;
+}
+
+export interface QuietSwitch {
+	site_id: string;
+	site: string | null;
+	server: string | null;
+	authorities: string[];
+	certificates: string[];
+}
+
+export interface CertSummary {
+	certificates: number;
+	certificates_without_details: number;
+	sites: number;
+	sessions: number;
+	sessions_with_details: number;
+	sessions_without_details: number;
+	findings: { high: number; medium: number; low: number; total: number };
+	local_certificates: number;
+	local_endpoints: number;
+	soonest_local_expiry_days: number | null;
+}
+
+export interface CertificateOverview {
+	from: string;
+	to: string;
+	summary: CertSummary;
+	sites: CertSite[];
+	sites_total: number;
+	sites_truncated: boolean;
+	findings: CertFinding[];
+	findings_total: number;
+	findings_truncated: boolean;
+	devices: CertDevice[];
+	devices_total: number;
+	devices_truncated: boolean;
+	quiet_switches: QuietSwitch[];
+	/** Every certificate a returned site, finding or device row refers to; the only certificate list sent. */
+	details: Record<string, CertDetail>;
+}
+
+/**
+ * Every figure the Certificates page shows. Throws with the daemon's reason (busy, too slow,
+ * too much data) so the page can say why, never an empty overview that reads as "none".
+ */
+export async function getCertificateOverview(from: string, to: string): Promise<CertificateOverview> {
+	const res = await fetch(`/api/certificates/overview?${buildTimeQuery(from, to)}`);
+	if (!res.ok) {
+		const reason = await res
+			.json()
+			.then((body: unknown) => (body && typeof body === 'object' && 'error' in body ? String(body.error) : ''))
+			.catch(() => '');
+		throw new Error(reason || `Certificate overview failed: HTTP ${res.status}`);
+	}
+	const body: unknown = await res.json();
+	if (!body || typeof body !== 'object' || !('summary' in body) || !Array.isArray((body as CertificateOverview).sites)) {
+		throw new Error('Certificate overview failed: the reply was malformed');
+	}
+	return body as CertificateOverview;
 }

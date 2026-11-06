@@ -117,11 +117,20 @@ api_logs() { api "/api/logs/search?$Q&log_type=zeek.dns&size=1" 'r["total"]'; }
 compare "Log Explorer zeek.dns total" raw_logs api_logs
 echo ""
 
-echo "→ Certificates page: distinct server certificates"
-CERTS="{\"filter\":[$T,{\"term\":{\"event.provider\":\"zeek\"}},{\"term\":{\"event.dataset\":\"x509\"}},{\"terms\":{\"zeek.x509.host_cert\":[\"true\",\"T\"]}}]}"
-raw_certs() { raw "$CERTS" '{"c":{"cardinality":{"field":"zeek.x509.fingerprint","precision_threshold":40000}}}' 'int(r["aggregations"]["c"]["value"])'; }
-api_certs() { api "/api/certificates/stats?$Q" 'r["total_certs"]'; }
-compare "certificates" raw_certs api_certs
+# OLD CODE START — NET-154: certificates are now the first certificate of each session's chain,
+# which no aggregation can read (doc values lose the order), so an x509 cardinality no longer matches
+# echo "→ Certificates page: distinct server certificates"
+# CERTS="{\"filter\":[$T,{\"term\":{\"event.provider\":\"zeek\"}},{\"term\":{\"event.dataset\":\"x509\"}},{\"terms\":{\"zeek.x509.host_cert\":[\"true\",\"T\"]}}]}"
+# raw_certs() { raw "$CERTS" '{"c":{"cardinality":{"field":"zeek.x509.fingerprint","precision_threshold":40000}}}' 'int(r["aggregations"]["c"]["value"])'; }
+# api_certs() { api "/api/certificates/stats?$Q" 'r["total_certs"]'; }
+# compare "certificates" raw_certs api_certs
+# OLD CODE END
+echo "→ Certificates page: the last 24 hours, recounted from the same snapshot (verify-certificates.py)"
+# shellcheck disable=SC2024  # the script is read by this user and piped in; sudo needn't read it
+CERT_OUT=$(sudo docker exec -i nettap-storage-daemon python3 - 24 < "$(dirname "$0")/verify-certificates.py" 2>&1)
+CERT_RC=$?
+printf '%s\n' "$CERT_OUT" | grep -E "^   [✓✗·]"
+check "certificate figures" "$CERT_RC" "$(printf '%s' "$CERT_OUT" | tail -n 1)"
 echo ""
 
 echo "→ Security Posture (Encryption, DNS Security): the IoT encryption rule, network-wide (#86), excluded IPs hidden (#103)"

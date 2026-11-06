@@ -42,6 +42,11 @@ describe('API Catch-All Proxy Route ([...path]/+server.ts)', () => {
 		expect(daemonFetch.mock.calls[0][2]).toBe(60_000);
 	});
 
+	it('gives the certificate overview 60 s, more than its own 50 s budget', async () => {
+		await GET(event('/api/certificates/overview?from=a&to=b') as never);
+		expect(daemonFetch.mock.calls[0][2]).toBe(60_000);
+	});
+
 	it('lets PCAP downloads run as long as the browser keeps the request open', async () => {
 		for (const path of ['/api/pcap/download-file?file=a.pcap', '/api/pcap/download?filter=dns']) {
 			daemonFetch.mockClear();

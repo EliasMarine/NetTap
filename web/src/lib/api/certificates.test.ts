@@ -5,6 +5,7 @@ import {
 	getSelfSignedCerts,
 	getIssuerChanges,
 	getCertStats,
+	getCertificateOverview,
 } from './certificates';
 
 // ---------------------------------------------------------------------------
@@ -174,6 +175,37 @@ describe('certificates API client', () => {
 		it('returns null on network error', async () => {
 			mockFetchReject();
 			expect(await getCertStats()).toBeNull();
+		});
+	});
+
+	// -- getCertificateOverview (NET-154) ------------------------------------
+
+	describe('getCertificateOverview', () => {
+		const overview = { from: 'a', to: 'b', summary: { certificates: 3 }, sites: [], findings: [], devices: [], certificates: [], details: {} };
+
+		it('asks for the window and returns the overview', async () => {
+			mockFetchSuccess(overview);
+			const result = await getCertificateOverview('2026-11-05T00:00:00Z', '2026-11-05T12:00:00Z');
+			expect(result.summary.certificates).toBe(3);
+			const url = vi.mocked(fetch).mock.calls[0][0] as string;
+			expect(url).toBe('/api/certificates/overview?from=2026-11-05T00%3A00%3A00Z&to=2026-11-05T12%3A00%3A00Z');
+		});
+
+		it("throws with the daemon's reason, so the page can say why", async () => {
+			mockFetchSuccess({ error: 'Working out certificate data for this window took too long. Try a shorter window.' }, 503);
+			await expect(getCertificateOverview('a', 'b')).rejects.toThrow('took too long');
+		});
+
+		it('throws on an HTTP error without a body, and on a network error', async () => {
+			mockFetchFailure(502);
+			await expect(getCertificateOverview('a', 'b')).rejects.toThrow('HTTP 502');
+			mockFetchReject();
+			await expect(getCertificateOverview('a', 'b')).rejects.toThrow('network error');
+		});
+
+		it('throws on a malformed reply instead of showing an empty overview', async () => {
+			mockFetchSuccess({ from: 'a' });
+			await expect(getCertificateOverview('a', 'b')).rejects.toThrow('malformed');
 		});
 	});
 });
