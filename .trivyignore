@@ -43,3 +43,11 @@ CVE-2026-17106 exp:2026-12-03
 #   (2026-11-02) has the fix but no docker:cli image ships it yet; buildx has no fixed release
 # Risk: Low — both only talk to the local engine over its Unix socket (HTTP/1.1)
 CVE-2026-78669 exp:2026-12-03
+
+# golang.org/x/net v0.59/v0.60 (fixed 0.62.0): golang.org/x/net/html denial of service on crafted HTML
+# Affects: docker-compose and docker-buildx in docker:29-cli (reviewed 2026-11-06; published after
+#   the 2026-11-06 19:33 main run, so every PR's Trivy (daemon) job failed on it)
+# Risk: Low — neither plugin parses HTML from the network here: the daemon runs `docker compose` on
+#   NetTap's own compose file over the local engine socket, and buildx runs only for the Malcolm
+#   update's `docker compose build` of NetTap's own Dockerfiles and local context (malcolm_upgrade.py)
+CVE-2026-78661 exp:2026-12-03
