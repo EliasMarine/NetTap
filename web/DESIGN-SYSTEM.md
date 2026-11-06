@@ -75,8 +75,9 @@ Build pages from these; read each file for its props.
 - **Controls:** `Pills` (toggle, tabs or nav mode), `SearchField`, `LiveChip`
 - **Data:** `DataTable`, `BarList`, `Meter`, `Bytes`, `Who`, `ConnResult`, `SeverityPill`, `DeviceList`, `DeviceTile` (with `deviceIcon()` from `device-icon.ts`), `AlertRow`, `AlertGroup`, `Icon` (the system's 48 icons; a test fails if they drift from `nettap-design-system/assets/Icons/`)
 - **Charts (`ui/charts/`):** `AreaChart`, `Donut`, `SeverityGauge` (fed by `severityBuckets()` from `utils/severity.ts`), `Ring`, `Sparkline`, `StackBar`, `Radar`, `DotMap`. Chart maths lives in `ui/charts/geometry.ts`.
+- **Network flow** (`components/NetworkFlow.svelte`, maths in `ui/charts/flow.ts`): device → protocol → destination on one scale, coloured by protocol only (TCP `data-1`, UDP `data-2`, ICMP `data-5`), with an "Other destinations" node so every column adds up. Devices show their registry name (`utils/device-names.ts`), else their IP. Below 640 px of card width, or when the endpoint's two searches disagree beyond rounding, it shows `NetworkFlowTable` instead, with the reported figures unchanged.
 
-Every chart has `role="img"` and an `aria-label` that states its headline, for example "Busiest hour 21:00, with 4.7 GB downloaded".
+Every chart has `role="img"` and an `aria-label` that states its headline, for example "Busiest hour 21:00, with 4.7 GB downloaded". The Network flow's labels are buttons, so it is a `role="group"` with the headline as its label instead.
 
 ## Data on a page
 

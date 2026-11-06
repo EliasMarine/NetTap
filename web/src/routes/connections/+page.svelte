@@ -39,7 +39,12 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { registerPageRefresh, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { SortDir } from '$lib/utils/table-sort.svelte';
-	import SankeyDiagram from '$components/SankeyDiagram.svelte';
+	// OLD CODE START — replaced by NetworkFlow (NET-151): uneven per-column scales, IPs only
+	// import SankeyDiagram from '$components/SankeyDiagram.svelte';
+	// OLD CODE END
+	import NetworkFlow from '$components/NetworkFlow.svelte';
+	import { getRegistryDevices } from '$api/devices-registry';
+	import { namesByIp } from '$lib/utils/device-names';
 	import SessionTimeline from '$components/SessionTimeline.svelte';
 	import DetailDrawer from '$components/DetailDrawer.svelte';
 	import ConnectionDrawerContent from '$components/drawer/content/ConnectionDrawerContent.svelte';
@@ -130,6 +135,8 @@
 	// #96: a failed request keeps the last good figures and says so, never zeros or "none"
 	let statsFailed = $state(false);
 	let sankeyFailed = $state(false);
+	/** IP → device name for the flow chart; a failed registry load keeps the last names. */
+	let deviceNames = $state(new Map<string, string>());
 	let timelineFailed = $state(false);
 	let connectionsFailed = $state(false);
 
@@ -553,6 +560,10 @@
 		const interval = INTERVAL_MAP[selectedTimeRange.value] || '15m';
 		loading = true;
 		const table = loadTable(currentPage, span);
+		const namesLoad = getRegistryDevices({ limit: 200 }).then(
+			(r) => namesByIp(r.devices),
+			() => null,
+		);
 		const results = await Promise.allSettled([
 			getConnectionStats(span),
 			getConnectionSankey({ ...span, limit: 10 }),
@@ -560,7 +571,10 @@
 			getLiveDashboard({ limit: 1 }),
 		]);
 		const [statsRes, sankeyRes, timelineRes, liveRes] = results;
+		// Names are cosmetic: a failed registry load keeps the last names and doesn't count as a failure
+		const names = await namesLoad;
 		if (guard.current(g)) {
+			if (names) deviceNames = names;
 			if (statsRes.status === 'fulfilled') stats = statsRes.value;
 			if (sankeyRes.status === 'fulfilled') sankey = sankeyRes.value;
 			if (timelineRes.status === 'fulfilled') timeline = timelineRes.value.buckets;
@@ -851,6 +865,7 @@
 		{/if}
 	</Card>
 
+	<!-- OLD CODE START — replaced by NetworkFlow (NET-151)
 	<Card class="c-12" title="Network flow" sub="Source devices, then protocols, then destinations · {range}">
 		{#if sankey && (sankey.nodes.sources.length || sankey.nodes.protocols.length || sankey.nodes.destinations.length)}
 			<SankeyDiagram
@@ -858,6 +873,18 @@
 				protocols={sankey.nodes.protocols}
 				destinations={sankey.nodes.destinations}
 				links={sankey.links}
+				onNodeClick={handleSankeyNodeClick}
+			/>
+	OLD CODE END -->
+	<Card class="c-12" title="Network flow" sub="Data by device, then protocol, then destination · {range}">
+		{#if sankey && (sankey.nodes.sources.length || sankey.nodes.protocols.length || sankey.nodes.destinations.length)}
+			<NetworkFlow
+				sources={sankey.nodes.sources}
+				protocols={sankey.nodes.protocols}
+				destinations={sankey.nodes.destinations}
+				links={sankey.links}
+				names={deviceNames}
+				selected={sankeyFilter}
 				onNodeClick={handleSankeyNodeClick}
 			/>
 			{#if sankeyFailed}

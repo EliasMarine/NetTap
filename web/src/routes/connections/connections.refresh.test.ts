@@ -9,6 +9,7 @@ import { getConnections, getConnectionStats, getConnectionSankey, getConnectionT
 import type { ConnectionsResponse, ConnectionStatsResponse } from '$api/traffic';
 import { getLiveDashboard } from '$api/live';
 import type { LiveDashboardResponse } from '$api/live';
+import { getRegistryDevices, type RegistryDevice } from '$api/devices-registry';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 
@@ -26,6 +27,10 @@ vi.mock('$api/traffic', async (importOriginal) => ({
 vi.mock('$api/live', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$api/live')>()),
 	getLiveDashboard: vi.fn(),
+}));
+vi.mock('$api/devices-registry', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$api/devices-registry')>()),
+	getRegistryDevices: vi.fn(),
 }));
 
 vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
@@ -71,6 +76,7 @@ function allSucceed() {
 	vi.mocked(getConnectionTimeline).mockResolvedValue({ from: '', to: '', interval: '5m', buckets: [] } as never);
 	vi.mocked(getLiveDashboard).mockResolvedValue(live(3));
 	vi.mocked(getConnections).mockResolvedValue(table('a'));
+	vi.mocked(getRegistryDevices).mockResolvedValue({ devices: [], total: 0 });
 }
 
 beforeEach(() => {
@@ -125,6 +131,46 @@ describe('Connections refresh contract: results', () => {
 		pending.resolve(stats(9));
 		expect(await run).toBe('ok');
 		expect(sessions()).toBe('9');
+	});
+
+	it('device names are cosmetic: a failed registry load is not a failed refresh', async () => {
+		render(Page);
+		await flush();
+		vi.mocked(getRegistryDevices).mockRejectedValue(new Error('HTTP 503'));
+		expect(await refreshPage()).toBe('ok');
+	});
+});
+
+describe('Connections network flow names', () => {
+	const ipad = {
+		mac: 'aa:bb:cc:00:00:01', ips: ['192.168.1.10'], hostnames: [], manufacturer: 'Apple, Inc.', friendly_name: null,
+		display_name: 'Kitchen iPad', category: 'phone', first_seen: '', last_seen: '2026-11-05T00:00:00Z', is_new: false,
+	} satisfies RegistryDevice;
+
+	it('shows registry names in the flow, and keeps them when a later registry load fails', async () => {
+		vi.mocked(getConnectionSankey).mockResolvedValue({
+			from: '', to: '',
+			nodes: {
+				sources: [{ id: '192.168.1.10', label: '192.168.1.10', value: 10 }, { id: '192.168.1.20', label: '192.168.1.20', value: 5 }],
+				protocols: [{ id: 'tcp', label: 'TCP', value: 15 }],
+				destinations: [{ id: 'Unknown', label: 'Unknown', value: 15 }],
+			},
+			links: [
+				{ source: '192.168.1.10', target: 'tcp', value: 10 },
+				{ source: '192.168.1.20', target: 'tcp', value: 5 },
+				{ source: 'tcp', target: 'Unknown', value: 15 },
+			],
+		});
+		vi.mocked(getRegistryDevices).mockResolvedValue({ devices: [ipad], total: 1 });
+		render(Page);
+		await flush();
+		// jsdom has no layout, so the flow shows as its table
+		expect(screen.getByRole('button', { name: 'Kitchen iPad' })).toBeTruthy();
+		expect(screen.getByRole('button', { name: '192.168.1.20' })).toBeTruthy();
+		vi.mocked(getRegistryDevices).mockRejectedValue(new Error('HTTP 503'));
+		await refreshPage();
+		await flush();
+		expect(screen.getByRole('button', { name: 'Kitchen iPad' })).toBeTruthy();
 	});
 });
 

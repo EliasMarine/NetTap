@@ -1,4 +1,7 @@
 <!--
+  OLD CODE: replaced by NetworkFlow.svelte (NET-151) and no longer used. Kept per the Code
+  Preservation Policy until the new chart has been stable for 3 cycles.
+
   SankeyDiagram.svelte — Pure-SVG Sankey flow diagram.
 
   Renders Source IPs → Protocols → Destination Orgs with cubic bezier links.

@@ -21,6 +21,10 @@ vi.mock('$api/live', async (importOriginal) => ({
 	getLiveConnections: vi.fn().mockResolvedValue({ connections: [{}], count: 1, filters: {} }),
 	getLiveDashboard: vi.fn(),
 }));
+vi.mock('$api/devices-registry', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$api/devices-registry')>()),
+	getRegistryDevices: vi.fn().mockRejectedValue(new Error('not under test')),
+}));
 
 describe('Connections v3 page', () => {
 	it('should export a Svelte component', async () => {
