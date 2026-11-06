@@ -54,3 +54,5 @@
 **Lessons**
 - A test of a formatter's copy can pass while the production code is wrong. Test the component that prints the figure.
 - An index size sent as human text can't be re-expressed honestly in other units. Ask the source for raw bytes.
+
+**Device check:** `bash /home/nettap/NetTap/scripts/remote/deploy-decimal-units.sh` (after the merge). It checks each `*_gb` is its byte count / 10⁹, that `df` has a filesystem of exactly the daemon's total, and that every index size is whole bytes or null.
