@@ -505,7 +505,8 @@ describe("Log Explorer — Home's Connections link and 6h (NET-160 slice 2b-1)",
 		const q = last();
 		expect([q.get('log_type'), q.get('exclude_src'), q.get('from'), q.get('to')]).toEqual(['zeek.conn', '192.168.1.199,2001:db8::199', FROM, TO]);
 		expect(within(screen.getByRole('group', { name: 'Log type' })).getByRole('button', { name: 'Connections' })).toHaveAttribute('aria-pressed', 'true');
-		expect(chip()).toHaveTextContent('Leaving out sources 192.168.1.199, 2001:db8::199 (excluded in Settings, as Home counts)');
+		// The page can't check that a link's list is the Settings list, so the chip says only where it came from
+		expect(chip()).toHaveTextContent('Leaving out sources 192.168.1.199, 2001:db8::199 (set by the link you followed)');
 	});
 
 	it('changing the type then clearing the chip searches everything, and the old URL never comes back', async () => {

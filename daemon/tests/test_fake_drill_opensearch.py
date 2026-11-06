@@ -3,7 +3,13 @@ alerts, traffic summary and log search lean on, against answers worked out by ha
 
 import pytest
 
-from tests.fake_drill_opensearch import DrillOpenSearch, aggregate, alert, nested
+from tests.fake_drill_opensearch import (
+    DrillOpenSearch,
+    aggregate,
+    alert,
+    matches,
+    nested,
+)
 
 INDEX = "arkime_sessions3-*"
 INDEX_NAME = "arkime_sessions3-261105"
@@ -135,3 +141,11 @@ def test_match_none_matches_nothing():
     )
     assert reply["hits"]["total"]["value"] == 0
     assert _ids(reply) == []
+
+
+def test_a_term_with_a_slash_is_text_unless_it_is_a_cidr():
+    rule = {"rule.name": "ET MALWARE Win32/Foo CnC", "source.ip": "10.0.0.1"}
+    assert matches(rule, {"term": {"rule.name": "ET MALWARE Win32/Foo CnC"}})
+    assert not matches(rule, {"term": {"rule.name": "ET MALWARE Win32/Bar CnC"}})
+    assert matches(rule, {"term": {"source.ip": "10.0.0.0/24"}})
+    assert not matches(rule, {"term": {"source.ip": "10.0.1.0/24"}})

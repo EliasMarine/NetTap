@@ -33,7 +33,7 @@
     - The Alerts card opens `alertCount.from`/`to` (the count on screen), never the snapshot's attempted window.
     - Connections and Bandwidth open the conn records of the summary on screen, with its exclusions. Bandwidth's title says "Opens the connections this total is summed from". Only a card with no number links by range alone.
     - `KpiCard` takes an optional `title`.
-  - **Log Explorer:** the URL hand-off takes `type` and `exclude_src`. `exclude_src` shows as a chip ("Leaving out sources … (excluded in Settings, as Home counts)"). Clearing it and "Clear all" change local state only, as every control here does. 6h (15-minute buckets).
+  - **Log Explorer:** the URL hand-off takes `type` and `exclude_src`. `exclude_src` shows as a chip ("Leaving out sources … (set by the link you followed)"; PR #189 review: it first said "excluded in Settings", which the page can't check, so a crafted link could hide a host under that claim). Clearing it and "Clear all" change local state only, as every control here does. 6h (15-minute buckets).
   - `a11y.css` correction 7: on phones `.head-actions` is capped at the page head's width, so the seven range pills scroll inside their track instead of scrolling the page sideways (the visual harness caught it at 390 px).
 
 **Tests**
@@ -52,7 +52,13 @@
 - A smart group with a missing or empty `rule.name`, source or destination has no link. Its ×N still shows.
 - Log Explorer: a hand-off with no `type` (or one that isn't ours) searches every type, as it replaces the IP filter and text.
 - The connection drawers and the MAC page still link signatures by the shown name (outside this slice's plan).
-- The device diagnostic in `scripts/remote/deploy-drill-down.sh` (comparing live counts with their lists) isn't updated yet.
+- `exclude_src` has no limit of its own; the request line (about 8 KB in aiohttp and nginx) caps it at roughly 500 IPv4 or 200 IPv6 addresses (`shortcut:` comment in `daemon/api/logs.py`).
+
+**Review follow-ups (PR #189)**
+- **Gates:** `/deep-review` found nothing (`security-reviews/feature-drill-down-slice2b1/security-review.md`). The security engineer found one LOW and the code reviewer found one LOW. Both are fixed:
+  - **Log Explorer chip:** it said the sources were "excluded in Settings, as Home counts". The page can't check that, so a crafted link could hide a host under that claim. It now says "(set by the link you followed)".
+  - **Evaluator fake:** it treated every `term` value with a "/" as a CIDR, so a rule name like "ET MALWARE Win32/Foo" never matched its own term. Real ET names often contain one. The fake now reads a value as a CIDR only when it parses as one. S2 in `test_drill_exact_lists.py` now contains a "/". With the old fake, 3 tests fail.
+- `deploy-drill-down.sh` Step 7b compares the live counts with their lists. It is a diagnostic: a ✗ only for no answer, or for an empty list behind a non-zero count.
 
 **Lessons**
 - A drill-down link should filter on the values the count grouped by, carried in the response, not on what the page displays.

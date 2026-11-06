@@ -62,10 +62,30 @@ def values(doc: dict, field: str) -> list:
     return [v for v in value if v is not None] if isinstance(value, list) else [value]
 
 
+def _cidr(wanted) -> ipaddress.IPv4Network | ipaddress.IPv6Network | None:
+    try:
+        return (
+            ipaddress.ip_network(wanted, False)
+            if isinstance(wanted, str) and "/" in wanted
+            else None
+        )
+    except ValueError:
+        return None
+
+
 def _equal(value, wanted, case_insensitive=False) -> bool:
-    if isinstance(wanted, str) and "/" in wanted:
+    # OLD CODE START — PR #189 review: every value with a "/" was a CIDR, so a rule name like
+    # "ET MALWARE Win32/Foo" never matched its own term
+    # if isinstance(wanted, str) and "/" in wanted:
+    #     try:
+    #         return ipaddress.ip_address(value) in ipaddress.ip_network(wanted, False)
+    #     except ValueError:
+    #         return False
+    # OLD CODE END
+    network = _cidr(wanted)
+    if network is not None:
         try:
-            return ipaddress.ip_address(value) in ipaddress.ip_network(wanted, False)
+            return ipaddress.ip_address(value) in network
         except ValueError:
             return False
     if case_insensitive and isinstance(value, str) and isinstance(wanted, str):

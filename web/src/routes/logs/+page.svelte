@@ -1224,7 +1224,8 @@ OLD CODE END -->
 				<!-- Clearing it is local, as every control here is: the URL is a one-time hand-off -->
 				{#if excludeSrc.length > 0}
 					<button class="chip" type="button" aria-label="Remove filter: leaving out sources {excludeSrc.join(', ')}" onclick={() => { excludeSrc = []; fetchLogs(); }}>
-						Leaving out sources <span class="mono">{excludeSrc.join(', ')}</span> (excluded in Settings, as Home counts)<Icon name="close" />
+						<!-- OLD CODE: … (excluded in Settings, as Home counts) (PR #189 review: the page can't check where a link's list came from) -->
+						Leaving out sources <span class="mono">{excludeSrc.join(', ')}</span> (set by the link you followed)<Icon name="close" />
 					</button>
 				{/if}
 				<button class="link" type="button" onclick={clearAllFilters}>Clear all</button>

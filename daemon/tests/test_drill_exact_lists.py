@@ -29,7 +29,8 @@ from tests.fake_drill_opensearch import (
 DEVICE, A = "192.168.1.20", "192.168.1.30"
 B, C = "93.184.216.34", "93.184.216.35"
 V6_SRC, V6_DST = "2001:db8::20", "2001:db8::1"
-S1, S2, S3 = "ET SCAN First rule", "ET SCAN Second rule", "ET SCAN Third rule"
+# S2 has a "/", as real ET names do (Win32/…): a term on rule.name matches it as text
+S1, S2, S3 = "ET SCAN First rule", "ET MALWARE Win32/Second CnC", "ET SCAN Third rule"
 EARLIER = "2026-11-04T10:00:00.000Z"  # outside WINDOW
 
 

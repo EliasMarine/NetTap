@@ -568,7 +568,9 @@ async def handle_log_search(request: web.Request) -> web.Response:
     search_after = request.query.get("search_after", "")
 
     # Sources to leave out, as a count that excluded them did (Home's Connections, NET-160 slice
-    # 2b-1). No length limit: Settings has none and the count applies the whole list.
+    # 2b-1). No limit of its own: Settings has none and the count applies the whole list.
+    # shortcut: the request line caps it (aiohttp and nginx, about 8 KB: ~500 IPv4 or ~200 IPv6
+    # addresses); a longer Settings list needs the summary to pass a reference, not the addresses.
     exclude_src: list[str] = []
     for entry in filter(None, request.query.get("exclude_src", "").split(",")):
         ip = parse_single_ip(entry)
