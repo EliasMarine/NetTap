@@ -15,3 +15,30 @@ export function alertCoverage(a: DomainSummary['alerts']): string {
 	}
 	return `Only ${fmt(a.with_host_field)} of ${fmt(a.alerts_in_window)} ${a.alerts_in_window === 1 ? 'alert' : 'alerts'} in this window carry a host name.`;
 }
+
+/**
+ * "Alerts tagged with this name" as the card shows it (NET-178). A host field that can't be
+ * matched to a whole name makes the count a lower bound ("At least 3"), or no count at all when
+ * no field can be matched. No alert carrying a host name stays "Not recorded".
+ */
+export function taggedFigure(a: DomainSummary['alerts']): string {
+	if (a.tagged_partial) return a.tagged === null ? "Can't be counted on this NetTap" : `At least ${fmt(a.tagged)}`;
+	return a.tagged === null ? 'Not recorded' : fmt(a.tagged);
+}
+
+const HOST_FIELD_WORDS: Record<string, string> = {
+	'related.hosts': 'related hosts',
+	'dns.question.name': 'DNS questions',
+	'tls.client.server_name': 'TLS names',
+	'url.domain': 'URL domains',
+};
+
+/** Which host fields the tagged count can't search, in words; null when it searched them all. */
+export function unmatchedNote(a: DomainSummary['alerts']): string | null {
+	const words = a.tagged_partial ? (a.unmatched_fields ?? []).map((f) => HOST_FIELD_WORDS[f] ?? f) : [];
+	if (words.length === 0) return null;
+	const list = words.length === 1 ? words[0] : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+	// OLD CODE: one ending for both cases ("…only there aren't counted"), beside "Can't be counted on this NetTap" when nothing matched
+	const ending = a.tagged === null ? 'the alerts that name this domain can\'t be counted.' : 'alerts that name this domain only there aren\'t counted.';
+	return `${list.charAt(0).toUpperCase()}${list.slice(1)} are stored on this NetTap in a way that can't be matched exactly, so ${ending}`;
+}

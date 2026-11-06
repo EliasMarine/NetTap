@@ -25,7 +25,7 @@
 	import Pills from '$lib/components/ui/Pills.svelte';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 	import { formatWhen, statusList } from '../../certificates/cert-view';
-	import { alertCoverage } from './domain-view';
+	import { alertCoverage, taggedFigure, unmatchedNote } from './domain-view';
 
 	interface TlsPeer {
 		ip: string;
@@ -235,8 +235,11 @@
 		{#if !data}
 			{@render summaryState('the alerts tagged with this name')}
 		{:else}
-			<p class="big">{data.alerts.tagged === null ? 'Not recorded' : fmt(data.alerts.tagged)}</p>
+			{@const unmatched = unmatchedNote(data.alerts)}
+			<!-- OLD CODE START: <p class="big">{data.alerts.tagged === null ? 'Not recorded' : fmt(data.alerts.tagged)}</p> — a host field that can't be matched makes the count partial (NET-178) OLD CODE END -->
+			<p class="big">{taggedFigure(data.alerts)}</p>
 			<p class="coverage">{alertCoverage(data.alerts)}</p>
+			{#if unmatched}<p class="notice is-warn" role="status"><Icon name="warn" /><span>{unmatched}</span></p>{/if}
 			<p class="dim small">
 				Counts alerts whose DNS question, TLS name, URL domain or related hosts equal this name. Alerts with no host name can't be matched, so
 				this isn't every alert tied to the domain.

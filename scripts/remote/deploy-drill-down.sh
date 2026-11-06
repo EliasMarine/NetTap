@@ -7,11 +7,14 @@
 #   - /api/network/lan, the LAN rule the web app links by
 #   - the name fields' mappings (case-insensitive matching needs keyword fields), and a
 #     mixed-case vs lower-case count of the busiest name
+#   - the alert host fields' mappings, and which path the domain page can match each by
+#     (NET-178: one mapped as text makes the tagged count a lower bound, not a 502)
 #   - a busy internet address and the busiest domain: each page fetched once, every figure
 #     against a direct OpenSearch count with the daemon's own filters (raw before <= page <=
 #     raw after, over a past window, as verify-figures.sh does), the ports' services and the
 #     threat-intel answer included
-#   - how many alerts in the window carry a host name at all
+#   - the domain page's alert figures (in the window, carrying a host name, tagged) against
+#     OpenSearch, and the host fields it says it matched and couldn't match
 #   - a bad address is a 400 and no token is a 401
 #
 # Run as the normal user (NOT with sudo):
@@ -145,7 +148,10 @@ NOISE='{"prefix":{"rule.name":"SURICATA "}}'
 # # services/dns_analytics.py DNS_LOOKUP_EXCLUSION: pcap-monitor, and local name services
 # DNS_EXCL='{"term":{"zeek.dns.query":"pcap-monitor"}},{"bool":{"filter":[{"terms":{"destination.port":[5353,5355,137]}},{"terms":{"destination.ip":["224.0.0.0/4","ff00::/8","255.255.255.255","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16","169.254.0.0/16","fe80::/10"]}}]}}'
 # OLD CODE END
-NAME_FIELDS="zeek.dns.query,zeek.ssl.server_name,zeek.http.host,related.hosts,dns.question.name,tls.client.server_name,url.domain"
+# OLD CODE START — NET-178: the alert host fields are optional now (Step 4 shows them instead)
+# NAME_FIELDS="zeek.dns.query,zeek.ssl.server_name,zeek.http.host,related.hosts,dns.question.name,tls.client.server_name,url.domain"
+# OLD CODE END
+NAME_FIELDS="zeek.dns.query,zeek.ssl.server_name,zeek.http.host"
 
 echo "=== Deploy: drill-down pages (NET-160) ==="
 echo ""
@@ -204,7 +210,25 @@ echo "→ Step 4: Name fields are keyword (case-insensitive matching needs it)..
 TYPES=$(os_query "/arkime_sessions3-*/_mapping/field/$NAME_FIELDS?filter_path=*.mappings.*.mapping.*.type" \
     | json_stdin "(lambda t: ('OK ' if any(t.values()) and all(v in ([], ['keyword']) for v in t.values()) else 'NOT-KEYWORD ') + json.dumps(t))({f: sorted({m['mapping'][f.rsplit('.', 1)[-1]]['type'] for i in r.values() for g, m in (i.get('mappings') or {}).items() if g == f}) for f in '$NAME_FIELDS'.split(',')})")
 case "$TYPES" in "OK "*) rc=0 ;; *) rc=1 ;; esac
-check "name fields are keyword wherever mapped, and at least one is ([] = unmapped)" "$rc" "$TYPES"
+# OLD CODE START — NET-178: the check covered the alert host fields too
+# check "name fields are keyword wherever mapped, and at least one is ([] = unmapped)" "$rc" "$TYPES"
+# OLD CODE END
+check "Zeek name fields are keyword wherever mapped, and at least one is ([] = unmapped)" "$rc" "$TYPES"
+# The alert host fields are information: the domain page matches the ones it can (NET-178).
+# HOST_EXACT and HOST_PATHS are services/hostnames.py keyword_paths spelled out again, so the check doesn't
+# trust the code it checks: a path matches exactly when every index that maps it has it as
+# keyword with ignore_above absent or >= 254 (a 253-character name and its trailing dot)
+HOST_FIELDS=$(daemon_json api.domains _HOST_FIELDS)
+case "$HOST_FIELDS" in \[*\]) ;; *) echo "   ✗ could not read the daemon's alert host fields: $HOST_FIELDS"; exit 1 ;; esac
+HOST_MAP=$(os_query "/arkime_sessions3-*/_mapping/field/$(json_get "$HOST_FIELDS" "','.join(r + [f + '.keyword' for f in r])")?filter_path=*.mappings.*.mapping.*.type,*.mappings.*.mapping.*.ignore_above")
+PER="(lambda f: {i: (m.get('mapping') or {}).get(f.rsplit('.', 1)[-1], {}) for i, e in r.items() for g, m in (e.get('mappings') or {}).items() if g == f})"
+# (not EXACT: Step 6 uses that name for a record count)
+HOST_EXACT="(lambda p: bool(p) and all(v.get('type') == 'keyword' and v.get('ignore_above', 254) >= 254 for v in p.values()))"
+HOST_TYPES=$(echo "$HOST_MAP" | json_stdin "json.dumps({g: sorted({str(v.get('type')) + (' ignore_above ' + str(v['ignore_above']) if 'ignore_above' in v else '') for v in $PER(g).values()}) for f in $HOST_FIELDS for g in (f, f + '.keyword')})")
+HOST_PATHS=$(echo "$HOST_MAP" | json_stdin "json.dumps({f: 'UNMAPPED' if not $PER(f) else f if $HOST_EXACT($PER(f)) else f + '.keyword' if $HOST_EXACT($PER(f + '.keyword')) and set($PER(f)) <= set($PER(f + '.keyword')) else 'UNMATCHED' for f in $HOST_FIELDS})")
+case "$HOST_PATHS" in \{*\}) rc=0 ;; *) rc=1 ;; esac
+check "alert host field mappings read" "$rc" "$HOST_PATHS"
+echo "   · alert host field types per index ([] = unmapped): $HOST_TYPES"
 echo "   Window: $FROM_TS → $TO_TS"
 # Single addresses only, as build_excluded_ips_filter takes them (it skips stored CIDRs)
 EXCL=$(daemon /api/settings/excluded-ips "json.dumps([ip for ip in map(__import__('services.excluded_ips', fromlist=['x']).parse_single_ip, d['excluded_ips']) if ip])")
@@ -250,11 +274,40 @@ if [[ "$NAME" =~ ^[a-z0-9._-]+$ ]]; then
     raw_lookups() { raw "{\"filter\":[$T,$(zeek dns),$(ci_name zeek.dns.query "$NAME")],\"must_not\":[$DNS_EXCL,{\"terms\":{\"source.ip\":$EXCL}}]}" '{}' "$TOTAL"; }
     raw_tls() { raw "{\"filter\":[$T,$(zeek ssl),$(ci_name zeek.ssl.server_name "$NAME")]}" '{}' "$TOTAL"; }
     raw_http() { raw "{\"filter\":[$T,$(zeek http),$(ci_name zeek.http.host "$NAME")]}" '{}' "$TOTAL"; }
+    # OLD CODE START — NET-178: the alert figures were printed, not checked
+    # page_vs_raw "$D" \
+    #     "lookups (DNS page rules)|raw_lookups|r['body']['dns']['lookups']" \
+    #     "TLS sessions|raw_tls|r['body']['tls']['sessions']" \
+    #     "HTTP requests|raw_http|r['body']['http']['requests']"
+    # echo "   · alert host-name coverage: $(page "r['body']['alerts']")"
+    # OLD CODE END
+    # The alert figures with the domain page's rules (api/domains.py _alerts), on the paths
+    # Step 4 worked out: carrying = exists on the host fields plus every matched path (a
+    # .keyword can hold what its parent's ignore_above drops); tagged = the name or name. on
+    # the matched paths, any case; no matched path matches nothing (an empty should matches all)
+    MATCHED=$(json_get "$HOST_PATHS" "json.dumps([v for v in r.values() if v not in ('UNMAPPED', 'UNMATCHED')])")
+    UNMATCHED=$(json_get "$HOST_PATHS" "json.dumps([f for f, v in r.items() if v == 'UNMATCHED'])")
+    UNMAPPED=$(json_get "$HOST_PATHS" "json.dumps([f for f, v in r.items() if v == 'UNMAPPED'])")
+    CARRIES=$(json_get "$MATCHED" "json.dumps({'bool': {'should': [{'exists': {'field': f}} for f in dict.fromkeys($HOST_FIELDS + r)], 'minimum_should_match': 1}})")
+    TAGS=$(json_get "$MATCHED" "json.dumps({'bool': {'should': [{'term': {p: {'value': v, 'case_insensitive': True}}} for p in r for v in ('$NAME', '$NAME.')], 'minimum_should_match': 1}} if r else {'match_none': {}})")
+    raw_alerts() { raw "{\"filter\":[$T,$SURICATA],\"must_not\":[$NOISE]}" '{}' "$TOTAL"; }
+    raw_carrying() { raw "{\"filter\":[$T,$SURICATA,$CARRIES],\"must_not\":[$NOISE]}" '{}' "$TOTAL"; }
+    raw_tagged() { raw "{\"filter\":[$T,$SURICATA,$TAGS],\"must_not\":[$NOISE]}" '{}' "$TOTAL"; }
+    # A tagged count the page withholds (null) is 0 here: nothing carries a name, or nothing can match
     page_vs_raw "$D" \
         "lookups (DNS page rules)|raw_lookups|r['body']['dns']['lookups']" \
         "TLS sessions|raw_tls|r['body']['tls']['sessions']" \
-        "HTTP requests|raw_http|r['body']['http']['requests']"
+        "HTTP requests|raw_http|r['body']['http']['requests']" \
+        "alerts in the window (Alerts page filters)|raw_alerts|r['body']['alerts']['alerts_in_window']" \
+        "alerts carrying a host name|raw_carrying|r['body']['alerts']['with_host_field']" \
+        "alerts tagged with $NAME|raw_tagged|(lambda a: 0 if a['tagged'] is None and (a['with_host_field'] == 0 or not a['matched_fields']) else a['tagged'])(r['body']['alerts'])"
     echo "   · alert host-name coverage: $(page "r['body']['alerts']")"
+    FIELDS=$(page "(lambda a: 'OK' if (a['matched_fields'], a['unmatched_fields']) == ($MATCHED, $UNMATCHED) and not set($UNMAPPED) & set(a['matched_fields'] + a['unmatched_fields']) else 'DIFFERENT matched ' + json.dumps(a['matched_fields']) + ' unmatched ' + json.dumps(a['unmatched_fields']))(r['body']['alerts'])")
+    if [ "$FIELDS" = "OK" ]; then rc=0; else rc=1; fi
+    check "host fields the page matched agree with Step 4 (matched $MATCHED, unmatched $UNMATCHED, unmapped in neither $UNMAPPED)" "$rc" "$FIELDS"
+    STATE=$(page "(lambda a: (a['tagged'] is None) == (a['with_host_field'] == 0 or not a['matched_fields']) and a['tagged_partial'] == bool(a['with_host_field'] and a['unmatched_fields']))(r['body']['alerts'])")
+    if [ "$STATE" = "True" ]; then rc=0; else rc=1; fi
+    check "tagged is withheld only with nothing to count, and partial only with an unmatched field" "$rc" "$STATE"
     echo "   · answers: $(page "(r['body']['dns']['addresses'], r['body']['dns']['answers_complete'], [(a['kind'], a['value'], a['lookups']) for a in r['body']['dns']['answers'][:5]])")"
     DUP=$(page "len(r['body']['dns']['answers']) - len({(a['kind'], a['value']) for a in r['body']['dns']['answers']})")
     if [ "$DUP" = "0" ]; then rc=0; else rc=1; fi

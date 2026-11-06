@@ -4,7 +4,9 @@ The name is canonical (one trailing dot stripped, lower case) and every filter m
 with or without the dot in any case (services/hostnames.py). The DNS figures use the DNS
 page's own rules (DNSAnalytics._bool_clause), so "Lookups" and "Devices" mean the same there
 and here. Alerts are a narrow figure: those tagged with this name in one of _HOST_FIELDS,
-next to how many alerts in the window carry any of those fields at all.
+next to how many alerts in the window carry any of those fields at all. A host field that
+can't be matched to a whole name (mapped as text) makes the tagged count a lower bound
+that says so, instead of failing the page (NET-178).
 """
 
 import logging
@@ -34,7 +36,12 @@ from api.drilldown_runner import (
 )
 from api.time_range import parse_time_range
 from services.dns_analytics import DNSAnalytics
-from services.hostnames import canonical_name, name_match, require_keyword
+from services.hostnames import (
+    canonical_name,
+    keyword_paths,
+    name_match,
+    require_keyword,
+)
 from storage.snapshot_search import (
     NETWORK_INDEX,
     Budget,
@@ -306,13 +313,65 @@ def _tls(snap: SnapshotSearch, query: dict, is_lan: Callable[[str], bool]) -> di
     }
 
 
-def _alerts(snap: SnapshotSearch, name: str, window: dict) -> dict:
-    """Alerts tagged with the name, and how many in the window carry a host field at all."""
+# OLD CODE START — NET-178: matched every host field by term, so one mapped as text (as
+# tls.client.server_name is on the G11) failed the whole page in require_keyword
+# def _alerts(snap: SnapshotSearch, name: str, window: dict) -> dict:
+#     """Alerts tagged with the name, and how many in the window carry a host field at all."""
+#     what = "domain alerts"
+#
+#     def any_of(clauses: list[dict]) -> dict:
+#         return {"filter": {"bool": {"should": clauses, "minimum_should_match": 1}}}
+#
+#     reply = snap.search(
+#         {
+#             "size": 0,
+#             "track_total_hits": True,
+#             "query": {
+#                 "bool": {
+#                     "filter": [window, *_SURICATA_ALERT_FILTERS],
+#                     "must_not": SURICATA_NOISE_EXCLUSION,
+#                 }
+#             },
+#             "aggs": {
+#                 "with_host": any_of([{"exists": {"field": f}} for f in _HOST_FIELDS]),
+#                 "tagged": any_of([name_match(f, name) for f in _HOST_FIELDS]),
+#             },
+#         },
+#         what,
+#         ("with_host", "tagged"),
+#     )
+#     aggs = reply["aggregations"]
+#     with_host = doc_count(aggs["with_host"], what)
+#     return {
+#         # No alert carries a host field: the count would be a 0 nothing backs
+#         "tagged": doc_count(aggs["tagged"], what) if with_host else None,
+#         "alerts_in_window": total_hits(reply, what),
+#         "with_host_field": with_host,
+#     }
+# OLD CODE END
+def _alerts(
+    snap: SnapshotSearch,
+    name: str,
+    window: dict,
+    matched: list[str],
+    unmatched: list[str],
+) -> dict:
+    """Alerts tagged with the name, and how many in the window carry a host field at all.
+
+    `matched` are the paths keyword_paths found for _HOST_FIELDS, `unmatched` the mapped
+    fields it can't match. With any unmatched, the tagged count is a lower bound: exact for
+    every alert it counts, missing those that name the host only in an unmatched field.
+    """
     what = "domain alerts"
 
     def any_of(clauses: list[dict]) -> dict:
         return {"filter": {"bool": {"should": clauses, "minimum_should_match": 1}}}
 
+    # A .keyword path can hold a value its parent's ignore_above drops, so it carries too
+    carriers = list(dict.fromkeys([*_HOST_FIELDS, *matched]))
+    aggs = {"with_host": any_of([{"exists": {"field": f}} for f in carriers])}
+    if matched:
+        aggs["tagged"] = any_of([name_match(f, name) for f in matched])
     reply = snap.search(
         {
             "size": 0,
@@ -323,19 +382,19 @@ def _alerts(snap: SnapshotSearch, name: str, window: dict) -> dict:
                     "must_not": SURICATA_NOISE_EXCLUSION,
                 }
             },
-            "aggs": {
-                "with_host": any_of([{"exists": {"field": f}} for f in _HOST_FIELDS]),
-                "tagged": any_of([name_match(f, name) for f in _HOST_FIELDS]),
-            },
+            "aggs": aggs,
         },
         what,
-        ("with_host", "tagged"),
+        tuple(aggs),
     )
-    aggs = reply["aggregations"]
-    with_host = doc_count(aggs["with_host"], what)
+    found = reply["aggregations"]
+    with_host = doc_count(found["with_host"], what)
     return {
-        # No alert carries a host field: the count would be a 0 nothing backs
-        "tagged": doc_count(aggs["tagged"], what) if with_host else None,
+        # No alert carries a host field, or no field can be matched: a 0 nothing backs
+        "tagged": doc_count(found["tagged"], what) if with_host and matched else None,
+        "tagged_partial": bool(with_host and unmatched),
+        "matched_fields": matched,
+        "unmatched_fields": unmatched,
         "alerts_in_window": total_hits(reply, what),
         "with_host_field": with_host,
     }
@@ -352,7 +411,11 @@ def domain_figures(
     budget: Budget,
 ) -> dict:
     """Every figure the domain page shows, over one snapshot."""
-    require_keyword(client, [_QUERY, _SNI, _HTTP_HOST, *_HOST_FIELDS], budget)
+    # OLD CODE START — NET-178: an alert host field mapped as text failed the whole page
+    # require_keyword(client, [_QUERY, _SNI, _HTTP_HOST, *_HOST_FIELDS], budget)
+    # OLD CODE END
+    require_keyword(client, [_QUERY, _SNI, _HTTP_HOST], budget)
+    matched, unmatched = keyword_paths(client, list(_HOST_FIELDS), budget)
     # OLD CODE START — NET-160 review: the shared alerts filter and zeek()
     # window = window_filter(from_ts, to_ts)
     # dns_clause = DNSAnalytics(client)._bool_clause(
@@ -375,7 +438,10 @@ def domain_figures(
         dns = _dns(snap, {"bool": dns_clause}, slots, is_lan)
         tls = _tls(snap, tls_query, is_lan)
         http = {"requests": snap.count(http_query, "domain HTTP requests")}
-        alerts = _alerts(snap, name, window)
+        # OLD CODE START — NET-178: every host field was matched
+        # alerts = _alerts(snap, name, window)
+        # OLD CODE END
+        alerts = _alerts(snap, name, window, matched, unmatched)
     return {
         "name": name,
         "from": from_ts,
