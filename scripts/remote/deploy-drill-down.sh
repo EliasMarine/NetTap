@@ -379,7 +379,52 @@ else
 fi
 echo ""
 
+echo "→ Step 7b: The lists behind a smart alert's ×N and Home's Connections card (NET-160 slice 2b-1)..."
+# Diagnostic: two live searches made a moment apart can differ by records logged in between, so a
+# difference is printed, not failed. ✗ only for no answer, or an empty list behind a non-zero count.
+# Exactness itself is tested on fixed documents (daemon/tests/test_drill_exact_lists.py).
+EXACT_LISTS=$(sudo docker exec nettap-storage-daemon python3 -c "
+import json, sys, urllib.parse, urllib.request
+def fetch(path):
+    headers = {'X-NetTap-Daemon-Token': open('/run/nettap-auth/daemon-token').read().strip()}
+    with urllib.request.urlopen(urllib.request.Request('http://localhost:8880' + path, headers=headers), timeout=120) as r:
+        return json.load(r)
+w = {'from': sys.argv[1], 'to': sys.argv[2]}
+groups = fetch('/api/alerts/smart?' + urllib.parse.urlencode({**w, 'limit': 50, 'include_info': 'true'}))['alerts']
+linkable = [g for g in groups if all((g.get('key') or {}).get(k) for k in ('rule_name', 'source_ip', 'destination_ip'))]
+if linkable:
+    g = linkable[0]
+    k = g['key']
+    listed = fetch('/api/alerts?' + urllib.parse.urlencode({**w, 'signature': k['rule_name'], 'src': k['source_ip'], 'dst': k['destination_ip'], 'size': 1}))
+    print('SMART', g['count'], listed['total'], len(linkable), len(groups))
+else:
+    print('SMART - - 0', len(groups))
+s = fetch('/api/traffic/summary?' + urllib.parse.urlencode(w))
+q = {**w, 'log_type': 'zeek.conn', 'size': 1}
+if s.get('excluded_ips'):
+    q['exclude_src'] = ','.join(s['excluded_ips'])
+print('CONN', s['connection_count'], fetch('/api/logs/search?' + urllib.parse.urlencode(q))['total'], len(s.get('excluded_ips') or []))
+" "$FROM_TS" "$TO_TS" 2>&1 | tail -n 2)
+read -r _ SA_COUNT SA_LIST SA_LINKABLE SA_GROUPS <<<"$(echo "$EXACT_LISTS" | grep '^SMART')"
+read -r _ CONN_CARD CONN_LIST CONN_EXCL <<<"$(echo "$EXACT_LISTS" | grep '^CONN')"
+if [ "${SA_LINKABLE:-}" = "0" ]; then
+    echo "   · no smart alert in the window has a full signature, source and destination (${SA_GROUPS:-?} groups): nothing to link"
+else
+    case "${SA_COUNT:-x}${SA_LIST:-x}" in *[!0-9]*|"") rc=1 ;; *) if [ "$SA_COUNT" -gt 0 ] && [ "$SA_LIST" -eq 0 ]; then rc=1; else rc=0; fi ;; esac
+    check "a smart alert's ×N opens a list (${SA_LINKABLE:-?} of ${SA_GROUPS:-?} groups linkable)" "$rc" "×${SA_COUNT:-?}, list ${SA_LIST:-?}, difference $(( ${SA_LIST:-0} - ${SA_COUNT:-0} ))"
+fi
+case "${CONN_CARD:-x}${CONN_LIST:-x}" in *[!0-9]*|"") rc=1 ;; *) if [ "$CONN_CARD" -gt 0 ] && [ "$CONN_LIST" -eq 0 ]; then rc=1; else rc=0; fi ;; esac
+check "Home's Connections card opens Log Explorer's conn list (${CONN_EXCL:-?} excluded sources)" "$rc" "card ${CONN_CARD:-?}, list ${CONN_LIST:-?}, difference $(( ${CONN_LIST:-0} - ${CONN_CARD:-0} ))"
+[ -z "${SA_COUNT:-}" ] && [ -z "${CONN_CARD:-}" ] && echo "   · reply: $EXACT_LISTS"
+echo ""
+
 echo "→ Step 8: Validation and the token..."
+BAD=$(daemon "/api/alerts?src=fe80::1%25eth0" status)
+if [ "$BAD" = "400" ]; then rc=0; else rc=1; fi
+check "a scoped IPv6 source is refused (slice 2b-1)" "$rc" "HTTP $BAD"
+BAD=$(daemon "/api/logs/search?exclude_src=not-an-ip" status)
+if [ "$BAD" = "400" ]; then rc=0; else rc=1; fi
+check "a bad excluded source is refused (slice 2b-1)" "$rc" "HTTP $BAD"
 BAD=$(daemon "/api/addresses/not-an-ip" status)
 if [ "$BAD" = "400" ]; then rc=0; else rc=1; fi
 check "a bad address is refused" "$rc" "HTTP $BAD"

@@ -78,6 +78,8 @@
 		{ label: '15m', value: '15m', ms: 15 * 60 * 1000, words: 'last 15 minutes' },
 		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour' },
 		{ label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' },
+		// NET-160 slice 2b-1: Home's 6h links here with its window
+		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, words: 'last 6 hours' },
 		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours' },
 		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days' },
 		// NET-160: the address and domain pages link here with their 30-day window
@@ -88,6 +90,7 @@
 		'15m': '1m',
 		'1h': '5m',
 		'4h': '15m',
+		'6h': '15m',
 		'24h': '1h',
 		'7d': '6h',
 		'30d': '1d',
@@ -161,6 +164,9 @@
 	// OLD CODE END
 	let signatureFilter = $state('');
 	let ipFilter = $state('');
+	/** A smart alert's source and destination (NET-160 slice 2b-1) */
+	let srcFilter = $state('');
+	let dstFilter = $state('');
 
 	// Pagination
 	/** The current search's window: paging reuses it, so rows arriving between pages don't shift the list. */
@@ -359,7 +365,8 @@
 			const fit = TIME_RANGES.find((r) => r.ms >= ms) ?? TIME_RANGES[TIME_RANGES.length - 1];
 			return { label: win.label, value: win.value, ms, words: win.words, interval: INTERVAL_MAP[fit.value] };
 		}
-		const r = TIME_RANGES.find((t) => t.value === value) ?? TIME_RANGES[3];
+		// OLD CODE: ?? TIME_RANGES[3]; (slice 2b-1: 6h moved 24h to index 4)
+		const r = TIME_RANGES.find((t) => t.value === value) ?? TIME_RANGES[4];
 		return { ...r, interval: INTERVAL_MAP[r.value] };
 	}
 
@@ -367,7 +374,8 @@
 		// slice 2a: a Custom window is fixed, not a span ending now
 		if (selectedTimeRange === 'custom' && custom) return { from: custom.from, to: custom.to };
 		const now = Date.now();
-		const range = TIME_RANGES.find((r) => r.value === selectedTimeRange) || TIME_RANGES[3];
+		// OLD CODE: || TIME_RANGES[3]; (slice 2b-1: 6h moved 24h to index 4)
+		const range = TIME_RANGES.find((r) => r.value === selectedTimeRange) || TIME_RANGES[4];
 		return {
 			from: new Date(now - range.ms).toISOString(),
 			to: new Date(now).toISOString(),
@@ -646,6 +654,8 @@
 			page: pg,
 			size: pageSize,
 			ip: ipFilter || undefined,
+			src: srcFilter || undefined,
+			dst: dstFilter || undefined,
 			signature: signatureFilter || undefined,
 			sort: SERVER_SORT[sortKey],
 			order: sortDir,
@@ -802,7 +812,10 @@
 	}
 
 	// The list's filters and window, in the URL (slice 2a)
-	const LIST_PARAMS = ['severity', 'signature', 'ip', 'range', 'from', 'to'] as const;
+	// OLD CODE: const LIST_PARAMS = ['severity', 'signature', 'ip', 'range', 'from', 'to'] as const; (slice 2b-1: src and dst)
+	const LIST_PARAMS = ['severity', 'signature', 'ip', 'src', 'dst', 'range', 'from', 'to'] as const;
+	/** Where the window's parameters start in LIST_PARAMS: range, from, to. */
+	const WINDOW_AT = LIST_PARAMS.indexOf('range');
 
 	/** Change only the given list parameters in the URL (null drops one); the URL hand-off below applies them. */
 	function setListParams(changes: Partial<Record<(typeof LIST_PARAMS)[number], string | null>>) {
@@ -1023,9 +1036,9 @@
 	// OLD CODE END
 	/** The list parameters last applied from the URL; null before the first load. */
 	let appliedUrl: string[] | null = null;
-	// The URL is the one source of the list's filters and window. A change applies all six together from
-	// page 1 with one request: a list search when only severity, signature or ip changed, otherwise a full
-	// reload on the new window. The first run is the page's first load.
+	// The URL is the one source of the list's filters and window. A change applies them all together from
+	// page 1 with one request: a list search when only severity, signature, ip, src or dst changed,
+	// otherwise a full reload on the new window. The first run is the page's first load.
 	$effect(() => {
 		const params = $page.url.searchParams;
 		const next = LIST_PARAMS.map((key) => params.get(key) ?? '');
@@ -1033,15 +1046,19 @@
 			const prev = appliedUrl;
 			if (prev && next.every((v, i) => v === prev[i])) return;
 			appliedUrl = next;
-			const [severity, signature, ip, rangeParam, from, to] = next;
+			// OLD CODE: const [severity, signature, ip, rangeParam, from, to] = next; (slice 2b-1: src and dst)
+			const [severity, signature, ip, src, dst, rangeParam, from, to] = next;
 			activeFilter = SEVERITY_FILTERS.find((f) => f.value === severity)?.value ?? 'all';
 			signatureFilter = signature;
 			ipFilter = ip;
+			srcFilter = src;
+			dstFilter = dst;
 			custom = customRange(from, to);
 			baseRange = TIME_RANGES.some((r) => r.value === rangeParam) ? rangeParam : '24h';
 			selectedTimeRange = custom ? 'custom' : baseRange;
 			currentPage = 1;
-			const sameWindow = prev !== null && next.slice(3).every((v, i) => v === prev[i + 3]);
+			// OLD CODE: next.slice(3).every((v, i) => v === prev[i + 3]); (slice 2b-1: src and dst moved the window along)
+			const sameWindow = prev !== null && next.slice(WINDOW_AT).every((v, i) => v === prev[i + WINDOW_AT]);
 			if (sameWindow) void fetchAlerts(1, getTimeRange());
 			else void refresh.run();
 		});
@@ -1139,9 +1156,14 @@
 <!-- OLD CODE START — slice 2a: the signature wasn't a link
 {#snippet signatureCell(a: Alert)}<span class="mono" title={a.alert?.signature || 'Unknown'}>{a.alert?.signature || 'Unknown'}</span>{/snippet}
 OLD CODE END -->
-<!-- Every alert with this signature, over the list's own window -->
+<!-- OLD CODE START — slice 2b-1: linked by the shown signature, which can be alert.signature, not the rule.name the filter matches
 {#snippet signatureCell(a: Alert)}
 	{#if a.alert?.signature}<a class="mono" href={alertsHrefForSignature(a.alert.signature, shownWindow)} title={a.alert.signature}>{a.alert.signature}</a>{:else}<span class="mono">Unknown</span>{/if}
+{/snippet}
+OLD CODE END -->
+<!-- Every alert with this rule, over the list's own window; no link without a rule.name, which the filter matches -->
+{#snippet signatureCell(a: Alert)}
+	{#if a.rule?.name}<a class="mono" href={alertsHrefForSignature(a.rule.name, shownWindow)} title={a.alert?.signature || a.rule.name}>{a.alert?.signature || a.rule.name}</a>{:else}<span class="mono" title={a.alert?.signature || 'Unknown'}>{a.alert?.signature || 'Unknown'}</span>{/if}
 {/snippet}
 {#snippet srcCell(a: Alert)}{#if a.src_ip}<IPAddress ip={a.src_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet destCell(a: Alert)}{#if a.dest_ip}<IPAddress ip={a.dest_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
@@ -1231,6 +1253,18 @@ OLD CODE END -->
 						IP: <span class="mono">{ipFilter}</span>
 						<!-- OLD CODE: onclick={() => goto('/alerts')} (slice 2a: cleared every other filter and the window too) -->
 						<button class="chip-x" type="button" onclick={() => setListParams({ ip: null })} aria-label="Clear IP filter"><Icon name="close" /></button>
+					</span>
+				{/if}
+				{#if srcFilter}
+					<span class="chip">
+						From <span class="mono">{srcFilter}</span>
+						<button class="chip-x" type="button" onclick={() => setListParams({ src: null })} aria-label="Clear source filter"><Icon name="close" /></button>
+					</span>
+				{/if}
+				{#if dstFilter}
+					<span class="chip">
+						To <span class="mono">{dstFilter}</span>
+						<button class="chip-x" type="button" onclick={() => setListParams({ dst: null })} aria-label="Clear destination filter"><Icon name="close" /></button>
 					</span>
 				{/if}
 			</div>

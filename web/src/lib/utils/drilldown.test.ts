@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { alertsHrefForSignature, byteFigure, canonicalName, certificatesHref, chartTime, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, windowQuery } from './drilldown';
+import { alertsHrefForSignature, byteFigure, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, smartAlertHref, windowQuery } from './drilldown';
 
 const MB = 1000 ** 2; // decimal, as formatBytes prints (NET-166)
 
@@ -83,7 +83,39 @@ describe('exact-window links', () => {
 	});
 
 	it("narrows a signature link to one device when the count is that device's", () => {
-		expect(Object.fromEntries(params(alertsHrefForSignature('ET SCAN x', { ...win, range: '24h' }, '2001:db8::1')))).toEqual({ signature: 'ET SCAN x', ip: '2001:db8::1', ...win, range: '24h' });
+		// OLD CODE: alertsHrefForSignature('ET SCAN x', { ...win, range: '24h' }, '2001:db8::1') (slice 2b-1: the narrowing is an object)
+		expect(Object.fromEntries(params(alertsHrefForSignature('ET SCAN x', { ...win, range: '24h' }, { ip: '2001:db8::1' })))).toEqual({ signature: 'ET SCAN x', ip: '2001:db8::1', ...win, range: '24h' });
+	});
+
+	it('narrows a signature link to a source and destination, leaving out empty filters', () => {
+		const href = alertsHrefForSignature('ET SCAN x', { ...win, range: '6h' }, { ip: '', src: '192.168.1.20', dst: '2001:db8::1' });
+		expect(Object.fromEntries(params(href))).toEqual({ signature: 'ET SCAN x', src: '192.168.1.20', dst: '2001:db8::1', ...win, range: '6h' });
+		expect(params(alertsHrefForSignature('ET SCAN x', win, { ip: '10.0.0.1', src: undefined })).has('src')).toBe(false);
+	});
+
+	it("links a smart alert by its bucket key, never its displayed signature, and not at all when a part is missing", () => {
+		const key = { rule_name: 'ET SCAN rule', source_ip: '192.168.1.20', destination_ip: '93.184.216.34' };
+		expect(Object.fromEntries(params(smartAlertHref(key, { ...win, range: '24h' }, '192.168.1.20') ?? ''))).toEqual({
+			signature: 'ET SCAN rule',
+			ip: '192.168.1.20',
+			src: '192.168.1.20',
+			dst: '93.184.216.34',
+			...win,
+			range: '24h',
+		});
+		expect(params(smartAlertHref(key, win) ?? '').has('ip')).toBe(false);
+		for (const part of ['rule_name', 'source_ip', 'destination_ip'] as const) {
+			expect(smartAlertHref({ ...key, [part]: null }, win)).toBeNull();
+			expect(smartAlertHref({ ...key, [part]: '' }, win)).toBeNull();
+		}
+		expect(smartAlertHref(undefined, win)).toBeNull();
+	});
+
+	it("links a traffic summary's conn records with its window and its excluded sources", () => {
+		const href = connLogsHref({ ...win, excluded_ips: ['192.168.1.199', '2001:db8::199'] }, '6h');
+		expect(new URL(href, 'http://x').pathname).toBe('/logs');
+		expect(Object.fromEntries(params(href))).toEqual({ type: 'zeek.conn', exclude_src: '192.168.1.199,2001:db8::199', ...win, range: '6h' });
+		expect(params(connLogsHref({ ...win, excluded_ips: [] }, '24h')).has('exclude_src')).toBe(false);
 	});
 
 	it('joins query clauses with AND and carries the exact window', () => {

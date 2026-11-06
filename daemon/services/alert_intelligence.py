@@ -1475,6 +1475,13 @@ async def get_smart_alerts(
                 "trend": trend,
                 "assessment": assessment,
                 "destination_port": dst_port,
+                # The bucket's own values (null when missing), for an exact drill-down link: the
+                # displayed signature can come from the sample's alert.signature (NET-160 slice 2b-1)
+                "key": {
+                    "rule_name": bucket["key"].get("sig_name"),
+                    "source_ip": bucket["key"].get("src_ip"),
+                    "destination_ip": bucket["key"].get("dst_ip"),
+                },
             }
         )
 

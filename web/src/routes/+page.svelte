@@ -30,6 +30,7 @@
 	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTrafficCategories } from '$api/traffic';
 	import type { TrafficSummary, BandwidthPoint, ProtocolEntry, TrafficCategory } from '$api/traffic';
 	import { getAlertCount, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
+	import { connLogsHref, NO_EXACT_ALERT_LIST, smartAlertHref, windowQuery, type DrillWindow } from '$lib/utils/drilldown';
 	import type { AlertCountResponse, SmartAlert, SmartAlertSummary } from '$api/alerts';
 	import { getDevices, getDeviceCount } from '$api/devices';
 	import type { Device } from '$api/devices';
@@ -83,6 +84,8 @@
 	let prevAlertCount = $state<AlertCountResponse | null>(null);
 	let systemHealth = $state<SystemHealth | null>(null);
 	let smartAlerts = $state<SmartAlert[]>([]);
+	/** The window and range the smart alerts on screen were counted over, set when they land (NET-160 slice 2b-1) */
+	let smartWindow = $state<(DrillWindow & { range: RangeKey }) | null>(null);
 	let smartAlertSummary = $state<SmartAlertSummary | null>(null);
 	let topDevices = $state<Device[]>([]);
 	let captureHealth = $state<CaptureHealthResponse | null>(null);
@@ -137,6 +140,7 @@
 		const g = guard.begin();
 		// the query, fixed before the first await
 		const hours = span.hours;
+		const r = range;
 		// A repeat load moves every reader of the shared count (sidebar, Alerts) to a new window, as Alerts does
 		if (snapshotHoursLoaded === hours) void refreshAlertSnapshots();
 		snapshotHoursLoaded = hours;
@@ -160,7 +164,11 @@
 			loadAlertSnapshot(hours).then((s) => s.status === 'ok'),
 			settle(guard, g, 'prevAlerts', getAlertCount(prev), (v) => (prevAlertCount = v), () => (prevAlertCount = null)),
 			settle(guard, g, 'health', getSystemHealth(), (v) => (systemHealth = v), () => (systemHealth = null)),
-			settle(guard, g, 'smart', getSmartAlerts({ ...win, limit: 10 }), (v) => (smartAlerts = v.alerts), () => (smartAlerts = [])),
+			// OLD CODE: settle(guard, g, 'smart', getSmartAlerts({ ...win, limit: 10 }), (v) => (smartAlerts = v.alerts), () => (smartAlerts = [])), (slice 2b-1: the rows keep their window)
+			settle(guard, g, 'smart', getSmartAlerts({ ...win, limit: 10 }), (v) => {
+				smartAlerts = v.alerts;
+				smartWindow = { from: v.from, to: v.to, range: r };
+			}, () => (smartAlerts = [])),
 			settle(guard, g, 'smartSummary', getSmartAlertSummary(win), (v) => (smartAlertSummary = v), () => (smartAlertSummary = null)),
 			// OLD CODE START — the device cards needed every device's traffic; they moved to /devices
 			// getDevices({ ...timeParams, sort: 'bytes', order: 'desc', limit: DEVICE_LIST_LIMIT }),
@@ -427,6 +435,11 @@
 		alertCount && prevAlertCount ? trendPercent(alertCount.counts.total, prevAlertCount.counts.total) : NO_TREND,
 	);
 
+	/**
+	 * Bandwidth and Connections open the conn records behind the summary on screen: its window and the
+	 * sources it left out (NET-160 slice 2b-1). Only a card with no number links by range alone.
+	 */
+	const trafficHref = $derived(trafficSummary ? connLogsHref(trafficSummary, range) : `/logs?range=${range}`);
 	const bandwidthValue = $derived(trafficSummary ? formatBytes(trafficSummary.total_bytes).split(' ') : null);
 	// orig_bytes is what the side that opened the connection sent (usually a LAN device): up
 	const bandwidthSub = $derived(
@@ -612,7 +625,8 @@ OLD CODE END -->
 		class="c-3"
 		label="Bandwidth"
 		icon="bandwidth"
-		href="/logs"
+		href={trafficHref}
+		title={trafficSummary ? 'Opens the connections this total is summed from' : undefined}
 		value={bandwidthValue?.[0] ?? '—'}
 		unit={bandwidthValue?.[1]}
 		delta={kpiDelta(bandwidthTrend)}
@@ -623,7 +637,7 @@ OLD CODE END -->
 		class="c-3"
 		label="Connections"
 		icon="connections"
-		href="/logs"
+		href={trafficHref}
 		value={trafficSummary ? formatNumber(trafficSummary.connection_count) : '—'}
 		delta={kpiDelta(connectionTrend)}
 		{...kpiWindow(!!(trafficSummary && prevTrafficSummary), connectionTrend, span.window, span.previous)}
@@ -633,7 +647,7 @@ OLD CODE END -->
 		class="c-3"
 		label="Alerts"
 		icon="alerts"
-		href="/alerts"
+		href={alertCount ? `/alerts?${windowQuery(alertCount, range)}` : `/alerts?range=${range}`}
 		value={alertCount ? formatNumber(alertCount.counts.total) : '—'}
 		delta={kpiDelta(alertTrend, true)}
 		{...kpiWindow(!!(alertCount && prevAlertCount), alertTrend, span.window, span.previous)}
@@ -747,11 +761,13 @@ OLD CODE END -->
 				{/if}
 				<div class="top-cats">
 					{#each smartAlerts.slice(0, TOP_ALERT_GROUPS) as sa, i (`sa-${sa.signature_id}-${i}`)}
-						<a class="top-cat" href="/threats">
+						{@const exact = smartWindow ? smartAlertHref(sa.key, smartWindow) : null}
+						<!-- OLD CODE: <a class="top-cat" href="/threats"> (slice 2b-1: the ×N opens the alerts it counts) -->
+						<svelte:element this={exact ? 'a' : 'div'} class="top-cat" href={exact ?? undefined} title={exact ? undefined : NO_EXACT_ALERT_LIST}>
 							<span class="group-name"><SeverityPill level={smartLevel(sa.severity)} /><span>{sa.category_label}</span></span>
 							<b class="num">&times;{formatNumber(sa.count)}</b>
 							<p class="sig">{sa.signature}</p>
-						</a>
+						</svelte:element>
 					{/each}
 				</div>
 				<a href="/threats" class="link">View threat intelligence</a>
@@ -783,7 +799,8 @@ OLD CODE END -->
 	.eyebrow { margin: var(--sp-4) 0 var(--sp-2); }
 	.groups { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-3); margin-top: var(--sp-4); }
 	.groups .top-cats { align-self: stretch; margin-top: 0; }
-	a.top-cat { text-decoration: none; color: inherit; border-radius: var(--r-md); padding: var(--sp-1) var(--sp-2); margin: 0 calc(var(--sp-2) * -1); }
+	/* OLD CODE: a.top-cat { … } (slice 2b-1: a row with no exact list is a div, laid out the same) */
+	.top-cat { text-decoration: none; color: inherit; border-radius: var(--r-md); padding: var(--sp-1) var(--sp-2); margin: 0 calc(var(--sp-2) * -1); }
 	a.top-cat:hover { background: var(--row-hover); }
 	.group-name { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
 </style>

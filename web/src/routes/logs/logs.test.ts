@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import type { Writable } from 'svelte/store';
 import { page } from '$app/stores';
+import { goto } from '$app/navigation';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
@@ -474,5 +475,92 @@ describe('Log Explorer — drill-down links (NET-160 slice 2a)', () => {
 		await fireEvent.click(await screen.findByRole('button', { name: /^Open log entry from/ }));
 		await fireEvent.click(await screen.findByRole('button', { name: 'View source device' }));
 		expect(goto).toHaveBeenCalledWith('/address/203.0.113.7');
+	});
+});
+
+// NET-160 slice 2b-1: Home's Connections link opens the conn records its count holds, leaving out
+// the sources the count left out. The URL is a one-time hand-off: every control here is local.
+describe("Log Explorer — Home's Connections link and 6h (NET-160 slice 2b-1)", () => {
+	const FROM = '2026-11-05T09:00:00.000Z';
+	const TO = '2026-11-05T15:00:00.000Z';
+	const HOME_LINK = `/logs?type=zeek.conn&exclude_src=192.168.1.199,2001:db8::199&from=${FROM}&to=${TO}&range=6h`;
+	const searches = () => requestsTo('/api/logs/search');
+	const last = () => searches().at(-1)!.searchParams;
+	const chip = () => screen.queryByRole('button', { name: 'Remove filter: leaving out sources 192.168.1.199, 2001:db8::199' });
+
+	afterEach(() => vi.unstubAllGlobals());
+
+	async function openHomeLink() {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [], total: 0 } });
+		goTo(HOME_LINK);
+		render(Page);
+		await vi.waitFor(() => expect(searches()).toHaveLength(1));
+		// the type pills and "Clear all" act once the first load has finished, as they do for a user
+		await vi.waitFor(() => expect(screen.getByText('Total events').closest('.kpi')).toHaveTextContent('10'));
+		await new Promise((r) => setTimeout(r, 0));
+	}
+
+	it('makes one search for conn records without the excluded sources, on the link\'s window', async () => {
+		await openHomeLink();
+		const q = last();
+		expect([q.get('log_type'), q.get('exclude_src'), q.get('from'), q.get('to')]).toEqual(['zeek.conn', '192.168.1.199,2001:db8::199', FROM, TO]);
+		expect(within(screen.getByRole('group', { name: 'Log type' })).getByRole('button', { name: 'Connections' })).toHaveAttribute('aria-pressed', 'true');
+		expect(chip()).toHaveTextContent('Leaving out sources 192.168.1.199, 2001:db8::199 (excluded in Settings, as Home counts)');
+	});
+
+	it('changing the type then clearing the chip searches everything, and the old URL never comes back', async () => {
+		vi.mocked(goto).mockClear();
+		await openHomeLink();
+		await fireEvent.click(within(screen.getByRole('group', { name: 'Log type' })).getByRole('button', { name: 'All logs' }));
+		await vi.waitFor(() => expect(searches()).toHaveLength(2));
+		await fireEvent.click(chip()!);
+		await vi.waitFor(() => expect(searches()).toHaveLength(3));
+		expect([last().get('log_type'), last().get('exclude_src')]).toEqual([null, null]);
+		expect(chip()).not.toBeInTheDocument();
+		expect(goto).not.toHaveBeenCalled();
+		// the same URL again is not a new hand-off, so nothing it held is put back
+		goTo(HOME_LINK);
+		await new Promise((r) => setTimeout(r, 0));
+		expect(searches()).toHaveLength(3);
+		expect(chip()).not.toBeInTheDocument();
+	});
+
+	it('a typed query survives clearing the chip', async () => {
+		await openHomeLink();
+		await fireEvent.input(screen.getByLabelText('Search logs'), { target: { value: 'dns' } });
+		await fireEvent.click(chip()!);
+		await vi.waitFor(() => expect(searches()).toHaveLength(2));
+		expect([last().get('query'), last().get('exclude_src'), last().get('log_type')]).toEqual(['dns', null, 'zeek.conn']);
+	});
+
+	it('"Clear all" clears the excluded sources too', async () => {
+		await openHomeLink();
+		await fireEvent.click(screen.getByRole('button', { name: 'Clear all' }));
+		await vi.waitFor(() => expect(searches()).toHaveLength(2));
+		expect([last().get('exclude_src'), last().get('log_type')]).toEqual([null, null]);
+		expect(chip()).not.toBeInTheDocument();
+	});
+
+	it('a hand-off sets its type, and one with no type of ours searches every type', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [], total: 0 } });
+		goTo('/logs?type=zeek.dns&query=example.org');
+		render(Page);
+		await vi.waitFor(() => expect(searches()).toHaveLength(1));
+		expect(last().get('log_type')).toBe('zeek.dns');
+		goTo('/logs?type=zeek.nope&query=example.org');
+		await vi.waitFor(() => expect(searches()).toHaveLength(2));
+		expect(last().get('log_type')).toBeNull();
+	});
+
+	it('?range=6h opens the last 6 hours, with a 15-minute timeline', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [], total: 0 } });
+		goTo('/logs?range=6h');
+		render(Page);
+		await vi.waitFor(() => expect(searches()).toHaveLength(1));
+		expect(screen.getByRole('button', { name: '6h' })).toHaveAttribute('aria-pressed', 'true');
+		expect(screen.getByText(/^Log events per 15 minutes · last 6 hours/)).toBeInTheDocument();
+		expect(requestsTo('/api/logs/timeline')[0].searchParams.get('interval')).toBe('15m');
+		const [from, to] = bounds(searches()[0]);
+		expect((Date.parse(to!) - Date.parse(from!)) / 3_600_000).toBe(6);
 	});
 });

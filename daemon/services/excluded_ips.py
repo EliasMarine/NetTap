@@ -497,9 +497,13 @@ def _detect_interface_ip(iface: str) -> str | None:
 def parse_single_ip(value: object) -> str | None:
     """Return the canonical form of one IPv4/IPv6 address, or None.
 
-    CIDR ranges, hostnames and anything that isn't a string are rejected.
+    CIDR ranges, hostnames, scoped IPv6 (fe80::1%eth0) and anything that isn't a string are
+    rejected.
     """
     if not isinstance(value, str):
+        return None
+    # ip_address accepts any scope text after '%', quotes included; OpenSearch's ip type holds none
+    if "%" in value:
         return None
     try:
         return str(ipaddress.ip_address(value.strip()))
@@ -511,6 +515,22 @@ def parse_single_ip(value: object) -> str | None:
 @functools.lru_cache(maxsize=256)
 def _warn_invalid_entry(entry: str) -> None:
     logger.warning("Ignoring excluded IP entry %s: not a single IP address", entry)
+
+
+def valid_excluded_ips(excluded_ips: list[str]) -> list[str]:
+    """The stored excluded entries that are single IPs, canonical, in order.
+
+    Entries that aren't a single IP (e.g. CIDRs saved before validation existed) are skipped
+    with a warning. The traffic summary reports this list, so a link can apply what it applied.
+    """
+    valid = []
+    for entry in excluded_ips or []:
+        ip = parse_single_ip(entry)
+        if ip is None:
+            _warn_invalid_entry(repr(entry))
+        else:
+            valid.append(ip)
+    return valid
 
 
 def build_excluded_ips_filter(excluded_ips: list[str]) -> list[dict]:
@@ -525,13 +545,16 @@ def build_excluded_ips_filter(excluded_ips: list[str]) -> list[dict]:
     #     return []
     # return [{"terms": {"source.ip": excluded_ips}}]
     # OLD CODE END
-    valid = []
-    for entry in excluded_ips or []:
-        ip = parse_single_ip(entry)
-        if ip is None:
-            _warn_invalid_entry(repr(entry))
-        else:
-            valid.append(ip)
+    # OLD CODE START — slice 2b-1: the loop moved to valid_excluded_ips, which the summary reports
+    # valid = []
+    # for entry in excluded_ips or []:
+    #     ip = parse_single_ip(entry)
+    #     if ip is None:
+    #         _warn_invalid_entry(repr(entry))
+    #     else:
+    #         valid.append(ip)
+    # OLD CODE END
+    valid = valid_excluded_ips(excluded_ips)
     if not valid:
         return []
     return [{"terms": {"source.ip": valid}}]

@@ -148,6 +148,13 @@ describe('alerts API client', () => {
 			const fetchCall = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
 			expect(fetchCall).toContain('severity=info');
 		});
+
+		it("sends a smart alert's source and destination (NET-160 slice 2b-1)", async () => {
+			mockFetchSuccess({ from: '', to: '', page: 1, size: 50, total: 0, total_pages: 0, alerts: [] });
+			await getAlerts({ signature: 'ET SCAN x', src: '192.168.1.20', dst: '2001:db8::1' });
+			const sent = new URL((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string, 'http://x').searchParams;
+			expect([sent.get('signature'), sent.get('src'), sent.get('dst')]).toEqual(['ET SCAN x', '192.168.1.20', '2001:db8::1']);
+		});
 	});
 
 	// -- getAlertTimeline ----------------------------------------------------

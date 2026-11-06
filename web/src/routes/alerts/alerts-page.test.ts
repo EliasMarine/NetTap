@@ -125,6 +125,8 @@ function alert(id: string, over: Partial<Alert> & { severity?: number; signature
 		_index: 'suricata-x',
 		timestamp: '2026-11-03T10:00:00Z',
 		alert: { signature, signature_id: sid, severity, category },
+		// Malcolm's rule.name, which the list's signature filter matches (slice 2b-1); override with `rule`
+		rule: { name: signature },
 		src_ip: '192.168.1.42',
 		src_port: 51842,
 		dest_ip: '203.0.113.45',
@@ -977,5 +979,111 @@ describe('Alerts — URL hand-off and exact windows (NET-160 slice 2a)', () => {
 		held.resolve(list([alert('a2', { signature: 'ET SCAN Nmap' })], 1, 1));
 		await flush();
 		expect(linkFrom()).toBe(pending.from);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// NET-160 slice 2b-1: a smart alert's pair (src, dst) on the list, links by rule.name, and 6h
+// ---------------------------------------------------------------------------
+
+describe('Alerts — source, destination, rule-name links and 6h (NET-160 slice 2b-1)', () => {
+	const FROM = '2026-11-01T08:00:00.000Z';
+	const TO = '2026-11-01T20:00:00.000Z';
+	const SRC = '192.168.1.42';
+	const DST = '2001:db8::1';
+	const at = (query: string) => (nav.url = new URL(`http://localhost/alerts${query}`));
+	const listCalls = () => vi.mocked(getAlerts).mock.calls.map(([opts]) => opts!);
+	const pairQuery = `?signature=ET%20SCAN%20Nmap&src=${SRC}&dst=${encodeURIComponent(DST)}&from=${FROM}&to=${TO}&range=24h`;
+
+	it('a signature, source, destination and window link sends one request with all five, shown as chips', async () => {
+		at(pairQuery);
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(listCalls()).toEqual([expect.objectContaining({ page: 1, signature: 'ET SCAN Nmap', src: SRC, dst: DST, from: FROM, to: TO })]);
+		expect(listCalls()[0].ip).toBeUndefined();
+		expect(screen.getByRole('button', { name: 'Clear source filter' }).closest('.chip')).toHaveTextContent(`From ${SRC}`);
+		expect(screen.getByRole('button', { name: 'Clear destination filter' }).closest('.chip')).toHaveTextContent(`To ${DST}`);
+	});
+
+	it('clearing the From chip keeps the destination, signature and window', async () => {
+		at(pairQuery);
+		succeedAll();
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Clear source filter' }));
+		await flush();
+		const q = nav.url.searchParams;
+		expect([q.get('src'), q.get('dst'), q.get('signature'), q.get('from'), q.get('to'), q.get('range')]).toEqual([null, DST, 'ET SCAN Nmap', FROM, TO, '24h']);
+		expect(listCalls().at(-1)).toMatchObject({ src: undefined, dst: DST, signature: 'ET SCAN Nmap', from: FROM, to: TO });
+		expect(screen.queryByRole('button', { name: 'Clear source filter' })).not.toBeInTheDocument();
+	});
+
+	it('a change of source alone is one page-1 list request, with no reload of the window', async () => {
+		at(pairQuery);
+		succeedAll();
+		render(Page);
+		await flush();
+		vi.mocked(getAlerts).mockClear();
+		vi.mocked(getAlertTimeline).mockClear();
+		at(pairQuery.replace(SRC, '192.168.1.43'));
+		await flush();
+		expect(listCalls()).toEqual([expect.objectContaining({ page: 1, src: '192.168.1.43', dst: DST, from: FROM, to: TO })]);
+		expect(getAlertTimeline).not.toHaveBeenCalled();
+	});
+
+	it('paging keeps the source and destination', async () => {
+		at(pairQuery);
+		succeedAll();
+		vi.mocked(getAlerts).mockImplementation(async (opts = {}) => list([alert(`p${opts.page}`)], opts.page ?? 1, 250));
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+		await flush();
+		expect(listCalls().at(-1)).toMatchObject({ page: 2, src: SRC, dst: DST, signature: 'ET SCAN Nmap', from: FROM, to: TO });
+	});
+
+	it("the table links each row by its rule.name, never a different shown signature, and not at all without one", async () => {
+		succeedAll([
+			alert('a1', { signature: 'A shown name', rule: { name: 'ET SCAN Raw rule' } }),
+			alert('a2', { signature: 'No rule here', rule: undefined }),
+		]);
+		const { container } = render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
+		const href = screen.getByRole('link', { name: 'A shown name' }).getAttribute('href')!;
+		expect(new URL(href, 'http://localhost').searchParams.get('signature')).toBe('ET SCAN Raw rule');
+		expect(screen.queryByRole('link', { name: 'No rule here' })).not.toBeInTheDocument();
+		expect(within(screen.getByRole('table', { name: /Alerts, newest first/ })).getByText('No rule here')).toBeInTheDocument();
+		expectNoNestedInteractive(container);
+	});
+
+	it("the drawer's signature links by rule.name, and is plain text without one", async () => {
+		succeedAll([
+			alert('a1', { signature: 'A shown name', rule: { name: 'ET SCAN Raw rule' }, category: 'Shown category' }),
+			alert('a2', { signature: 'No rule here', rule: undefined, category: 'Bare category' }),
+		]);
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: /Shown category/ }));
+		let drawer = screen.getByRole('complementary', { name: 'Alert details' });
+		expect(within(drawer).getByRole('link', { name: 'A shown name' })).toHaveAttribute('href', '/alerts?signature=ET+SCAN+Raw+rule');
+		await fireEvent.click(screen.getByRole('button', { name: /Bare category/ }));
+		drawer = screen.getByRole('complementary', { name: 'Alert details' });
+		expect(within(drawer).getByText('No rule here')).toBeInTheDocument();
+		expect(within(drawer).queryByRole('link', { name: 'No rule here' })).not.toBeInTheDocument();
+	});
+
+	it('?range=6h opens the last 6 hours, with a 15-minute timeline', async () => {
+		at('?range=6h');
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(screen.getByRole('button', { name: '6h' })).toHaveAttribute('aria-pressed', 'true');
+		expect(screen.getByText(/What Suricata flagged on your network · last 6 hours/)).toBeInTheDocument();
+		const call = listCalls()[0];
+		expect((Date.parse(call.to!) - Date.parse(call.from!)) / 3_600_000).toBe(6);
+		expect(getAlertTimeline).toHaveBeenCalledWith(expect.objectContaining({ interval: '15m' }));
 	});
 });

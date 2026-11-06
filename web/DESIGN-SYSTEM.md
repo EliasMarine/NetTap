@@ -96,8 +96,15 @@ Every chart has `role="img"` and an `aria-label` that states its headline, for e
 - **Never nest a link or button in another.** Page tests call `expectNoNestedInteractive(container)` (`src/tests/nested-interactive.ts`).
 <!-- OLD CODE: - **A count links to a list over the same window.** Pass the window on (`?range=` to Alerts and Log Explorer, `from`/`to` to Certificates), so the list a number opens holds that number. (slice 2a: exact windows) -->
 - **A count links to a list over the same window, exactly.** Pass the count's own `from`/`to` (the bounds its response used, kept when the response lands, not recomputed at click time) plus `range` for the words: `windowQuery`, `alertsHrefForSignature`, `logsHrefForQuery`, `logsHrefForIp` in `utils/drilldown.ts`. Alerts, Log Explorer and Certificates open such a link as a "Custom" range; picking another range clears it, and paging or "load more" stays on the search's window.
-- **The link carries the count's own filters too.** A port's count links with the exact Log Explorer query behind it, so the list holds the number. Where the list can't take a count's filter yet (a smart alert's source → destination pair), the code says so and the link narrows as far as it can (`ip`).
-- **On Alerts the URL holds the list's filters** (`severity`, `signature`, `ip`, `range`, `from`, `to`). Controls change only their own parameter; a severity tile opens the counts' own window with no other filter, since the counts are unfiltered.
+<!-- OLD CODE: - **The link carries the count's own filters too.** A port's count links with the exact Log Explorer query behind it, so the list holds the number. Where the list can't take a count's filter yet (a smart alert's source → destination pair), the code says so and the link narrows as far as it can (`ip`). (slice 2b-1: the list takes the pair now) -->
+- **The link carries the count's own filters too.** A port's count links with the exact Log Explorer query behind it, so the list holds the number.
+- **Filter on what the count grouped by, not on what the page shows** (NET-160 slice 2b-1). A smart alert's ×N links with its response's `key` (`rule_name`, `source_ip`, `destination_ip`) through `smartAlertHref`, plus the device's `ip` on a device page; the shown signature can be another name. An alert row links by its `rule.name`. When a key part is missing or empty there is no link: the ×N or row stays plain, with the title `NO_EXACT_ALERT_LIST`. Never drop a filter to make a link.
+- **A count that left something out says so in its response.** Home's Connections and Bandwidth come from `/api/traffic/summary`, which leaves out the sources excluded in Settings and returns them as `excluded_ips`; `connLogsHref` passes them as Log Explorer's `exclude_src`, shown as a chip.
+- **Link the figure on screen.** After a failed refresh a card keeps its last figure, so its link keeps that response's window (`alertCount.from`/`to`, the summary's own `from`/`to`), never the window of the attempt that failed. Only a card with no number links by range alone.
+<!-- OLD CODE: - **On Alerts the URL holds the list's filters** (`severity`, `signature`, `ip`, `range`, `from`, `to`). Controls change only their own parameter; a severity tile opens the counts' own window with no other filter, since the counts are unfiltered. (slice 2b-1: src and dst) -->
+- **On Alerts the URL holds the list's filters** (`severity`, `signature`, `ip`, `src`, `dst`, `range`, `from`, `to`). Controls change only their own parameter; a severity tile opens the counts' own window with no other filter, since the counts are unfiltered.
+- **On Log Explorer the URL is a one-time hand-off** (`filter`, `ip`, `query`, `type`, `exclude_src`, `range`, `from`, `to`). Each hand-off replaces those filters; after it, every control, chip and "Clear all" changes local state only and never writes the URL.
+- **Every Home range exists on Alerts and Log Explorer** (1h, 6h, 24h, 7d, 30d), so a range link never falls back to 24 hours.
 - **Outside look-ups run on click.** Reverse DNS and WHOIS about an address or name wait for a button: an automatic one tells whoever runs that server that we looked.
 
 ## Tables
@@ -119,6 +126,7 @@ From the system README: sentence case everywhere (titles, buttons, labels), UK s
 4. While the phone drawer is open the page doesn't scroll, and the drawer is one screen tall and scrolls inside itself.
 5. On phones a long pill group scrolls inside its track instead of pushing the page sideways.
 6. Severity count tiles share the row however many there are, and their counts shrink together to fit (the page sets `--sev-chars` on `.sev-counts`).
+7. On phones the head actions are capped at the page head's width, so a long range-pill group (seven on Alerts and Log Explorer) scrolls inside its track instead of scrolling the page sideways.
 
 Every `<button>` sets an explicit text colour (the browser default is black). Focus rings use `--focus`.
 

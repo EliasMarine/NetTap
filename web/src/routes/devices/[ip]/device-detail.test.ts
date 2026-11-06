@@ -49,6 +49,8 @@ const ALERT = {
 	destination_ip: '10.0.0.5',
 	destination_port: 1433,
 	assessment: 'Someone probed a database port.',
+	// the bucket's own values, which the exact link uses (NET-160 slice 2b-1)
+	key: { rule_name: 'ET SCAN Suspicious inbound to MSSQL port 1433', source_ip: IP, destination_ip: '10.0.0.5' },
 };
 
 async function flush() {
@@ -278,7 +280,10 @@ describe('Device detail — port, signature and connection links', () => {
 		const sig = new URL(screen.getByRole('link', { name: ALERT.signature }).getAttribute('href')!, 'http://x');
 		expect(sig.pathname).toBe('/alerts');
 		// OLD CODE: …map over ['signature', 'from', 'to', 'range'] (the count is this device's, so the list is too)
-		expect(['signature', 'ip', 'from', 'to', 'range'].map((k) => sig.searchParams.get(k))).toEqual([ALERT.signature, IP, alertsSent.from, alertsSent.to, '24h']);
+		// OLD CODE: …map over ['signature', 'ip', 'from', 'to', 'range'] (slice 2b-1: the group's pair too)
+		expect(['signature', 'ip', 'src', 'dst', 'from', 'to', 'range'].map((k) => sig.searchParams.get(k))).toEqual([
+			ALERT.signature, IP, IP, '10.0.0.5', alertsSent.from, alertsSent.to, '24h',
+		]);
 	});
 
 	it("links a connection's destination address beside the row's button", async () => {
@@ -295,5 +300,51 @@ describe('Device detail — port, signature and connection links', () => {
 		expect(link).toHaveAttribute('href', '/address/8.8.8.8');
 		expect(link.closest('td')).toHaveTextContent(':443');
 		expectNoNestedInteractive(container);
+	});
+});
+
+// NET-160 slice 2b-1: a smart alert's ×N opens exactly the alerts it counts: its bucket's rule
+// name, source and destination, for this device, over the window it was counted in
+describe('Device detail — smart alert ×N links', () => {
+	afterEach(() => vi.clearAllMocks());
+
+	const countLink = (n: number, signature: string) => screen.getByRole('link', { name: `×${n} alerts: ${signature}` });
+	const params = (a: HTMLElement) => Object.fromEntries(new URL(a.getAttribute('href')!, 'http://x').searchParams);
+
+	it('the ×N is a link to the exact list, the same one the signature opens', async () => {
+		vi.mocked(getSmartAlerts).mockResolvedValueOnce({ alerts: [ALERT], total: 1 } as never);
+		const { container } = render(Page);
+		await flush();
+		const sent = vi.mocked(getSmartAlerts).mock.calls[0][0] as { from: string; to: string };
+		const count = countLink(4, ALERT.signature);
+		expect(count).toHaveTextContent('×4');
+		expect(params(count)).toEqual({ signature: ALERT.key.rule_name, ip: IP, src: IP, dst: '10.0.0.5', from: sent.from, to: sent.to, range: '24h' });
+		expect(screen.getByRole('link', { name: ALERT.signature })).toHaveAttribute('href', count.getAttribute('href'));
+		expectNoNestedInteractive(container);
+	});
+
+	it('links by the bucket key when the shown signature differs from it', async () => {
+		const shown = { ...ALERT, signature: 'A friendlier shown name', key: { ...ALERT.key, rule_name: 'ET SCAN The raw rule' } };
+		vi.mocked(getSmartAlerts).mockResolvedValueOnce({ alerts: [shown], total: 1 } as never);
+		render(Page);
+		await flush();
+		expect(params(countLink(4, 'A friendlier shown name')).signature).toBe('ET SCAN The raw rule');
+		expect(params(screen.getByRole('link', { name: 'A friendlier shown name' })).signature).toBe('ET SCAN The raw rule');
+	});
+
+	it('a group with a missing or empty key part has no link, and says why', async () => {
+		const groups = [
+			{ ...ALERT, signature: 'No destination', key: { ...ALERT.key, destination_ip: null } },
+			{ ...ALERT, signature: 'Empty rule', key: { ...ALERT.key, rule_name: '' } },
+		];
+		vi.mocked(getSmartAlerts).mockResolvedValueOnce({ alerts: groups, total: 2 } as never);
+		render(Page);
+		await flush();
+		for (const name of ['No destination', 'Empty rule']) {
+			expect(screen.queryByRole('link', { name })).not.toBeInTheDocument();
+			expect(screen.queryByRole('link', { name: `×4 alerts: ${name}` })).not.toBeInTheDocument();
+			const item = screen.getByText(name).closest('li')!;
+			expect(within(item).getByText('×4')).toHaveAttribute('title', "This group has no signature, source or destination recorded, so it can't be listed exactly");
+		}
 	});
 });

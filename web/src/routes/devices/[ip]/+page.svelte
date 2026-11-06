@@ -29,7 +29,8 @@
 	import { TableSort } from '$lib/utils/table-sort.svelte';
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { smartLevel, type SeverityLevel } from '$lib/utils/severity';
-	import { alertsHrefForSignature, logsHrefForQuery, type DrillWindow } from '$lib/utils/drilldown';
+	// OLD CODE: import { alertsHrefForSignature, logsHrefForQuery, type DrillWindow } from '$lib/utils/drilldown'; (slice 2b-1: smart alerts link by their key)
+	import { logsHrefForQuery, NO_EXACT_ALERT_LIST, smartAlertHref, type DrillWindow } from '$lib/utils/drilldown';
 	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { DeviceConnectionSort } from '$api/devices';
 	import type { SmartAlert } from '$api/alerts';
@@ -765,11 +766,18 @@ OLD CODE END -->
 			{#if smartAlerts.length > 0}
 				<ul class="sa-list">
 					{#each (alertsExpanded ? smartAlerts : smartAlerts.slice(0, ALERTS_COLLAPSED_COUNT)) as sa, i (`${sa.signature_id}-${sa.source_ip}-${i}`)}
+						{@const exact = smartAlertsWindow ? smartAlertHref(sa.key, smartAlertsWindow, smartAlertsWindow.ip) : null}
+						<!-- NET-160 slice 2b-1: `exact` is the list holding this ×N, counted for this device over the stored window -->
 						<li class="sa">
 							<div class="sa-head">
 								<SeverityPill level={smartLevel(sa.severity)} />
 								<b>{sa.category_label}</b>
-								<span class="dim num">×{formatNumber(sa.count)}</span>
+								<!-- OLD CODE: <span class="dim num">×{formatNumber(sa.count)}</span> (slice 2b-1: the count wasn't a link) -->
+								{#if exact}
+									<a class="num" href={exact} aria-label="×{formatNumber(sa.count)} alerts: {sa.signature}">×{formatNumber(sa.count)}</a>
+								{:else}
+									<span class="dim num" title={NO_EXACT_ALERT_LIST}>×{formatNumber(sa.count)}</span>
+								{/if}
 								{#if sa.trend === 'increasing'}
 									<Icon name="up" label="Rising" />
 								{:else if sa.trend === 'decreasing'}
@@ -777,7 +785,12 @@ OLD CODE END -->
 								{/if}
 							</div>
 							<!-- OLD CODE: <div class="sig wrap">{sa.signature}</div> (slice 2a: not a link) -->
-							<a class="sig wrap" href={alertsHrefForSignature(sa.signature, smartAlertsWindow ?? undefined, smartAlertsWindow?.ip)}>{sa.signature}</a>
+							<!-- OLD CODE: <a class="sig wrap" href={alertsHrefForSignature(sa.signature, smartAlertsWindow ?? undefined, smartAlertsWindow?.ip)}>{sa.signature}</a> (slice 2b-1: the shown name can differ from rule.name, and ip alone listed the device's other pairs) -->
+							{#if exact}
+								<a class="sig wrap" href={exact}>{sa.signature}</a>
+							{:else}
+								<div class="sig wrap">{sa.signature}</div>
+							{/if}
 							<div class="mono dim">{sa.source_ip} → {sa.destination_ip}{#if sa.destination_port}:{sa.destination_port}{/if}</div>
 							<p class="sa-plain">{sa.assessment}</p>
 							<div class="actions">

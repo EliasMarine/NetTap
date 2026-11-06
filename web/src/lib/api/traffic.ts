@@ -25,6 +25,8 @@ export interface TrafficSummary {
 	packet_count: number;
 	connection_count: number;
 	top_protocol: string;
+	/** The excluded sources (Settings) these totals left out, as the daemon applied them (NET-160 slice 2b-1) */
+	excluded_ips: string[];
 }
 
 export interface TopTalker {

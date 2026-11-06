@@ -77,7 +77,8 @@
 	<div>
 		<h2>{alertTitle(alert)}</h2>
 		<!-- OLD CODE: <p class="sig wrap">{alert.alert?.signature || 'Unknown signature'}</p> (slice 2a: not a link) -->
-		<p class="sig wrap">{#if alert.alert?.signature}<a href={alertsHrefForSignature(alert.alert.signature)}>{alert.alert.signature}</a>{:else}Unknown signature{/if}</p>
+		<!-- OLD CODE: <p class="sig wrap">{#if alert.alert?.signature}<a href={alertsHrefForSignature(alert.alert.signature)}>{alert.alert.signature}</a>{:else}Unknown signature{/if}</p> (slice 2b-1: the list's filter matches rule.name, not the shown signature) -->
+		<p class="sig wrap">{#if alert.rule?.name}<a href={alertsHrefForSignature(alert.rule.name)}>{alert.alert?.signature || alert.rule.name}</a>{:else}{alert.alert?.signature || 'Unknown signature'}{/if}</p>
 	</div>
 	{#if explanation}<p class="drawer-plain">{explanation}</p>{/if}
 	<div class="todo"><b>What to do</b>{alertAdvice(alert)}</div>

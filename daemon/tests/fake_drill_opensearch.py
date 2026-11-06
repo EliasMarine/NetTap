@@ -5,15 +5,20 @@ counts are checked against what OpenSearch would answer, not against canned repl
 
 - queries: bool (filter/must/should/must_not, minimum_should_match), term (with
   case_insensitive), terms (CIDRs match IPs), range on @timestamp, exists, prefix,
-  wildcard, match_all;
+  wildcard, match_all, match_none;
 - aggregations: filter, sum/min/max/value_count, terms (with size and
   sum_other_doc_count), composite (paged with `after`, with missing_bucket, one bucket per
-  value of a multi-valued field) and date_range;
-- hits.total exact with track_total_hits, else stopped at 10,000 as OpenSearch does.
+  value of a multi-valued field), date_range and top_hits (size, from, sort, _source);
+- hits.total exact with track_total_hits, else stopped at 10,000 as OpenSearch does;
+- hits.hits: the matching documents after `sort` (missing values last; a multi-valued field
+  sorts by its smallest value ascending, its largest descending), `from` and `size`
+  (default 10), each `_source` projected and expanded to the nested shape OpenSearch stores.
 
-create_pit freezes a copy of the documents and every search reads that copy, so a test can
-change `docs` between searches and see the snapshot hold. Documents are flat:
-{"source.ip": "…", "@timestamp": "…"}; a list value is a multi-valued field.
+create_pit freezes a copy of the documents and every PIT search reads that copy, so a test can
+change `docs` between searches and see the snapshot hold. A search without a PIT names its
+index, as the endpoints that don't use snapshots do, and reads `docs` as they are. Documents
+are flat: {"source.ip": "…", "@timestamp": "…"}; a list value is a multi-valued field, and an
+"_id" key is the hit's id (never part of its _source).
 `tamper(body, reply)` can change or break any reply.
 
 `mapping_types` sets how a field is mapped: a type, {"type", "ignore_above"}, None
@@ -76,6 +81,8 @@ def matches(doc: dict, query: dict) -> bool:
     ((kind, body),) = query.items()
     if kind == "match_all":
         return True
+    if kind == "match_none":
+        return False
     if kind == "bool":
         required = _listed(body.get("filter", [])) + _listed(body.get("must", []))
         should = _listed(body.get("should", []))
@@ -170,6 +177,66 @@ def _metric(docs: list, kind: str, field: str) -> dict:
     return {"value": value}
 
 
+def _sort_value(doc: dict, field: str, desc: bool):
+    found = values(doc, field)
+    if field == "@timestamp":
+        found = [epoch_ms(v) for v in found]
+    return (max if desc else min)(found) if found else None
+
+
+def _sorted(docs: list, sort: list) -> list:
+    """Stable sorts from the last key to the first, so the first key decides; missing values last."""
+    ordered = list(docs)
+    for spec in reversed(sort):
+        ((field, opts),) = spec.items()
+        desc = opts.get("order", "asc") == "desc"
+        keyed = [(d, _sort_value(d, field, desc)) for d in ordered]
+        present = sorted(
+            (p for p in keyed if p[1] is not None), key=lambda p: p[1], reverse=desc
+        )
+        ordered = [d for d, _ in present] + [d for d, v in keyed if v is None]
+    return ordered
+
+
+def _projected(field: str, spec) -> bool:
+    if spec is True:
+        return True
+    if spec is False:
+        return False
+    patterns = spec.get("includes", []) if isinstance(spec, dict) else _listed(spec)
+    return any(
+        fnmatch.fnmatchcase(field, p) or field.startswith(p + ".") for p in patterns
+    )
+
+
+def nested(doc: dict) -> dict:
+    """{"rule.name": "x"} as OpenSearch stores it: {"rule": {"name": "x"}}."""
+    out: dict = {}
+    for field, value in doc.items():
+        *parents, leaf = field.split(".")
+        node = out
+        for part in parents:
+            node = node.setdefault(part, {})
+        node[leaf] = copy.deepcopy(value)
+    return out
+
+
+def _hits(docs: list, body: dict) -> list[dict]:
+    start = body.get("from", 0)
+    page = _sorted(docs, body.get("sort", []))[start : start + body.get("size", 10)]
+    spec = body.get("_source", True)
+    return [
+        {
+            "_id": d.get("_id", ""),
+            "_index": "arkime_sessions3-261105",
+            "_source": nested(
+                {f: v for f, v in d.items() if f != "_id" and _projected(f, spec)}
+            ),
+        }
+        for d in page
+    ]
+
+
 def _one(docs: list, spec: dict) -> dict:
     sub = spec.get("aggs", {})
     ((kind, body),) = ((k, v) for k, v in spec.items() if k != "aggs")
@@ -204,6 +271,13 @@ def _one(docs: list, spec: dict) -> dict:
                 {"from": lo, "to": hi, "doc_count": len(hit), **aggregate(hit, sub)}
             )
         return {"buckets": buckets}
+    if kind == "top_hits":  # OpenSearch's default size is 3
+        return {
+            "hits": {
+                "total": {"value": len(docs), "relation": "eq"},
+                "hits": _hits(docs, {"size": 3, **body}),
+            }
+        }
     raise NotImplementedError(kind)
 
 
@@ -302,17 +376,48 @@ class DrillOpenSearch:
             self.pits.pop(pit, None)
             self.closed.append(pit)
 
-    def search(self, body, request_timeout=None):
-        assert body["pit"]["id"] in self.pits, "every search runs on the open snapshot"
+    # OLD CODE START — slice 2b-1: PIT searches only, with no hits; the alert list, smart alerts,
+    # traffic summary and log search name an index and read hits
+    # def search(self, body, request_timeout=None):
+    #     assert body["pit"]["id"] in self.pits, "every search runs on the open snapshot"
+    #     self.bodies.append(body)
+    #     docs = [d for d in self.pits[body["pit"]["id"]] if matches(d, body["query"])]
+    #     exact = body.get("track_total_hits") is True or len(docs) <= 10_000
+    #     reply = {
+    #         "pit_id": body["pit"]["id"],
+    #         "timed_out": False,
+    #         "_shards": {"total": 1, "failed": 0},
+    #         "hits": {
+    #             "total": {
+    #                 "value": len(docs) if exact else 10_000,
+    #                 "relation": "eq" if exact else "gte",
+    #             },
+    #             "hits": [],
+    #         },
+    #     }
+    # OLD CODE END
+    def search(self, body, index=None, request_timeout=None):
+        if "pit" in body:
+            assert body["pit"]["id"] in self.pits, (
+                "every search runs on the open snapshot"
+            )
+            pool = self.pits[body["pit"]["id"]]
+        else:
+            assert index, "a search without a snapshot names its index"
+            pool = self.docs
         self.bodies.append(body)
         # OLD CODE START — NET-178: documents as given, whatever the mapping
         # docs = [d for d in self.pits[body["pit"]["id"]] if matches(d, body["query"])]
         # OLD CODE END
-        pit = self.pits[body["pit"]["id"]]
-        docs = [d for d in map(self._indexed, pit) if matches(d, body["query"])]
+        # NET-178's indexed view over slice 2b-1's pool (the snapshot, or every document)
+        docs = [
+            d
+            for d in map(self._indexed, pool)
+            if matches(d, body.get("query", {"match_all": {}}))
+        ]
         exact = body.get("track_total_hits") is True or len(docs) <= 10_000
         reply = {
-            "pit_id": body["pit"]["id"],
+            **({"pit_id": body["pit"]["id"]} if "pit" in body else {}),
             "timed_out": False,
             "_shards": {"total": 1, "failed": 0},
             "hits": {
@@ -320,7 +425,7 @@ class DrillOpenSearch:
                     "value": len(docs) if exact else 10_000,
                     "relation": "eq" if exact else "gte",
                 },
-                "hits": [],
+                "hits": _hits(docs, body),
             },
         }
         if "aggs" in body:
