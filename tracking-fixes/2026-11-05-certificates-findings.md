@@ -59,10 +59,24 @@ The over-engineering review (`/ponytail-review`) found that findings counted ses
 - **Runs out soon** listed devices that only got an older certificate at that service. Device tallies are now kept per certificate; the device row still covers every certificate at the service.
 - **The overview reply sent every certificate twice** (`certificates` and `details`), so a 30-day window reached the 5 MB cap about twice as early. Certificates now go out only as `details`.
 
+**Two-angle review on PR #173 (security, Python, TypeScript), fixed**
+
+- **Wording that claimed more than Zeek sees.** "Expired when used" now says the device *got* the certificate and that NetTap sees what the server sent, not whether the device accepted it. The weak-key text no longer says browsers refuse 1024-bit keys; it says public authorities stopped issuing them.
+- **Broken sentences.** The KPI could read "soonest runs out in already ran out"; it now uses the same sentence ending as the findings. "Its 1 sessions" is fixed. A site or service with verified and unchecked sessions reads "Partly checked", not "Not checked".
+- **Overclaims.** The empty state no longer says every certificate was checked for expiry and weakness, only those with stored details. The devices card says which columns are for the latest certificate and which cover all of them.
+- **Devices table.** Its first column held a link inside the row's button. Site is now first and the device link second.
+- **Sort header.** It could disagree with the rows after the table remounted; it now keeps the user's sort.
+- **Malformed replies.** The client now rejects a reply missing any list the page reads.
+- **Hardening against crafted certificates.** Names are cut to 1,000 characters (self-issued is judged before cutting), and SANs to 200 with a total. Expired-certificate recounts are batched, one scan per 1,000 certificates, each session kept only if it came after its own certificate's expiry. Closing the snapshot has a 5 s timeout.
+- **Tests that could miss real bugs.** The fake now honours the window and the dataset terms, with a test of both window edges. A test checks that the recount splits a cell straddling the expiry date.
+- **Not changed, by decision:**
+  - A window whose distinct uses pass 200,000 still fails with a reason rather than folding the long tail.
+  - The older certificate endpoints keep the full budget; no page calls them.
+
 **Tests**
 
-- **Daemon:** `test_cert_findings.py` (30), `test_cert_overview.py` (32), `test_cert_monitor.py` (4) and `test_certificates_api.py` (9). They run on raw ssl and x509 documents (`fake_cert_opensearch.py`). Mutation checks were done on the key rules, the reply checks, the failing-sessions-only tally and the after-expiry recount. The full suite gives 2,963 passed.
-- **Web:** `cert-view.test.ts` (14), `certificates-page.test.ts` (8), the API client (17) and the overview fixture (6). The full suite gives 2,922 passed. svelte-check reports 0 errors, and check:colors, check:e2e and the visual tests for /certificates all pass.
+- **Daemon:** `test_cert_findings.py` (30), `test_cert_overview.py` (37), `test_cert_monitor.py` (4) and `test_certificates_api.py` (9). They run on raw ssl and x509 documents (`fake_cert_opensearch.py`). Mutation checks were done on the key rules, the reply checks, the failing-sessions-only tally and the after-expiry recount. The full suite gives 2,968 passed.
+- **Web:** `cert-view.test.ts` (16), `certificates-page.test.ts` (8), the API client (18) and the overview fixture (6). The full suite gives 2,925 passed. svelte-check reports 0 errors, and check:colors, check:e2e and the visual tests for /certificates all pass.
 
 **Still to do**
 

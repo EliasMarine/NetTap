@@ -375,3 +375,83 @@ def test_no_recount_runs_when_nothing_was_used_after_expiry():
         if "query" in b
         for c in b["query"]["bool"]["filter"]
     )
+
+
+def test_only_ssl_sessions_inside_the_window_are_counted_at_both_edges():
+    sessions = [
+        ssl(["A"], t="2026-11-04T23:59:59.000Z"),  # a second before FROM
+        ssl(["A"], t="2026-11-05T00:00:00.000Z"),  # exactly FROM
+        ssl(["A"], t="2026-11-05T12:00:00.000Z"),  # exactly TO
+        ssl(["A"], t="2026-11-05T12:00:01.000Z"),  # a second after TO
+    ]
+    client = RawOpenSearch(sessions, [x509("A")])
+    out = overview(client)
+    assert out["summary"]["sessions"] == 2
+    query = client.bodies[0]["query"]["bool"]["filter"]
+    assert {"term": {"event.provider": "zeek"}} in query
+    assert {"term": {"event.dataset": "ssl"}} in query
+
+
+def test_a_cell_that_straddles_the_expiry_is_split_by_the_recount():
+    sessions = [  # same certificate, site, server, status and client: one tally cell
+        ssl(["OLD"], sni="old.com", t="2026-11-05T10:00:00.000Z"),
+        ssl(["OLD"], sni="old.com", t="2026-11-05T11:00:00.000Z"),
+    ]
+    client = RawOpenSearch(sessions, [x509("OLD", not_after="2026-11-05T10:30:00")])
+    out = overview(client)
+    (f,) = [f for f in out["findings"] if f["kind"] == "expired-at-use"]
+    assert (f["sessions"], f["last_seen"][:16]) == (1, "2026-11-05T11:00")
+    assert out["sites"][0]["sessions"] == 2
+
+
+def test_one_recount_covers_several_expired_certificates_each_after_its_own_expiry(
+    monkeypatch,
+):
+    monkeypatch.setattr(cert_overview, "DETAIL_CHUNK", 10)
+    sessions = [
+        ssl(["A"], sni="a.com", t="2026-11-05T09:30:00.000Z"),  # after A's expiry
+        ssl(["B"], sni="b.com", t="2026-11-05T09:30:00.000Z"),  # before B's expiry
+        ssl(["B"], sni="b.com", t="2026-11-05T11:00:00.000Z"),  # after B's expiry
+    ]
+    certs = [
+        x509("A", not_after="2026-11-05T09:00:00"),
+        x509("B", not_after="2026-11-05T10:00:00"),
+    ]
+    client = RawOpenSearch(sessions, certs)
+    out = overview(client)
+    got = {
+        f["fingerprint"]: f["sessions"]
+        for f in out["findings"]
+        if f["kind"] == "expired-at-use"
+    }
+    assert got == {"A": 1, "B": 1}
+    recounts = [  # a scan's first page: the chain filter and no search_after
+        b
+        for b in client.bodies
+        if "search_after" not in b
+        and any(
+            "zeek.ssl.cert_chain_fps" in c.get("terms", {})
+            for c in b.get("query", {}).get("bool", {}).get("filter", [])
+        )
+    ]
+    assert len(recounts) == 1
+
+
+def test_network_controlled_names_and_sans_are_cut_and_counted():
+    fields = x509_fields(
+        {
+            "certificate_subject_full": "CN=" + "x" * 5_000,
+            "certificate_issuer_full": "CN=" + "x" * 5_000,
+            "san_dns": [f"h{i}.example" for i in range(5_000)],
+        }
+    )
+    assert len(fields["subject_full"]) == cert_overview.MAX_TEXT
+    assert fields["subject_full"].endswith("…")
+    assert fields["self_issued"] is True  # judged on the whole names, before cutting
+    assert (len(fields["san_dns"]), fields["san_dns_total"]) == (200, 5_000)
+
+
+def test_closing_the_snapshot_has_its_own_short_timeout():
+    client = RawOpenSearch([ssl(["A"])], [x509("A")])
+    overview(client)
+    assert client.close_params == {"request_timeout": cert_overview.PIT_CLOSE_SECONDS}

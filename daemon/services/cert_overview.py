@@ -33,6 +33,12 @@ MAX_KEYS = 200_000  # distinct (certificate, site, server, port, status, version
 BUDGET_SECONDS = 50.0  # the web proxy gives this path 60 s
 MAX_REPLY_BYTES = 5_000_000
 PIT_KEEP_ALIVE = "2m"
+PIT_CLOSE_SECONDS = (
+    5  # closing runs in `finally`, often when OpenSearch is already slow
+)
+MAX_TEXT = (
+    1_000  # characters kept of a certificate's name fields, which the network controls
+)
 
 _CHAIN = "zeek.ssl.cert_chain_fps"
 _FINGERPRINT = "zeek.x509.fingerprint"
@@ -93,28 +99,37 @@ def _dn_part(dn: Any, key: str) -> str:
     return _first(dn.get(key)) if isinstance(dn, dict) else ""
 
 
+def _cut(text: str) -> str:
+    """A name field kept to MAX_TEXT characters, marked when cut."""
+    return text if len(text) <= MAX_TEXT else text[: MAX_TEXT - 1] + "…"
+
+
 def x509_fields(x509: dict[str, Any]) -> dict[str, Any]:
     """Certificate facts from one zeek.x509 record (Malcolm splits DNs into objects)."""
     subject, issuer = x509.get("certificate_subject"), x509.get("certificate_issuer")
     subject_full = _first(x509.get("certificate_subject_full"))
     issuer_full = _first(x509.get("certificate_issuer_full"))
     san = x509.get("san_dns")
+    sans = (
+        [str(s) for s in san] if isinstance(san, list) else ([str(san)] if san else [])
+    )
+    # Names and SANs come from whoever sent the certificate: cut them, so one crafted
+    # certificate can't push every window's reply past MAX_REPLY_BYTES
     return {
-        "subject": _dn_part(subject, "CN") or subject_full,
-        "subject_cn": _dn_part(subject, "CN"),
-        "subject_full": subject_full,
-        "issuer": _dn_part(issuer, "CN") or issuer_full,
-        "issuer_org": _dn_part(issuer, "O"),
-        "issuer_full": issuer_full,
+        "subject": _cut(_dn_part(subject, "CN") or subject_full),
+        "subject_cn": _cut(_dn_part(subject, "CN")),
+        "subject_full": _cut(subject_full),
+        "issuer": _cut(_dn_part(issuer, "CN") or issuer_full),
+        "issuer_org": _cut(_dn_part(issuer, "O")),
+        "issuer_full": _cut(issuer_full),
         "not_before": _first(x509.get("certificate_not_valid_before")),
         "not_after": _first(x509.get("certificate_not_valid_after")),
         "key_type": _first(x509.get("certificate_key_type")),
         "key_length": x509.get("certificate_key_length"),
         "sig_alg": _first(x509.get("certificate_sig_alg")),
         "serial": _first(x509.get("certificate_serial")),
-        "san_dns": [str(s) for s in san]
-        if isinstance(san, list)
-        else ([str(san)] if san else []),
+        "san_dns": [_cut(s) for s in sans[: cert_findings.NESTED_CAP]],
+        "san_dns_total": len(sans),
         # Subject equal to issuer: self-issued. Self-SIGNED would also need the signature checked.
         "self_issued": bool(subject_full) and subject_full == issuer_full,
     }
@@ -218,7 +233,9 @@ class CertOverview:
 
     def _close_pit(self, pit: str) -> None:
         try:
-            self._client.delete_pit(body={"pit_id": [pit]})
+            self._client.delete_pit(
+                body={"pit_id": [pit]}, request_timeout=PIT_CLOSE_SECONDS
+            )
         except (
             OpenSearchException
         ) as exc:  # it expires on its own; the figures are already safe
@@ -254,7 +271,14 @@ class CertOverview:
                 return
             after = hits[-1]["sort"]
 
-    def _tally(self, query: dict, pit: list[str], budget: Budget) -> tuple[dict, dict]:
+    def _tally(
+        self,
+        query: dict,
+        pit: list[str],
+        budget: Budget,
+        keep: Callable[[str, str], bool] | None = None,
+    ) -> tuple[dict, dict]:
+        """Tallies of the sessions `query` matches; `keep(chain[0], time)` can drop some."""
         usage: dict[tuple, list] = {}
         clients: dict[tuple, int] = {}
         for hits in self._session_pages(query, pit, budget):
@@ -267,6 +291,8 @@ class CertOverview:
                     _value(fields, f) for f in _SESSION_FIELDS
                 )
                 when = _value(fields, "@timestamp") or ""
+                if keep and not keep(chain[0], when):
+                    continue
                 key = (chain[0], sni or None, server, port, status or None, version)
                 cell = usage.get(key)
                 if cell is None:
@@ -350,29 +376,32 @@ class CertOverview:
     ) -> tuple[dict, dict]:
         """Exact tallies of the sessions after each used-after-expiry certificate ran out.
 
-        The main tally can't split a cell at a date it didn't know yet, so each such certificate
-        (rare) gets one more scan of the same snapshot: its sessions after not_after only.
+        The main tally can't split a cell at a date it didn't know yet, so these certificates
+        get one more scan of the same snapshot per DETAIL_CHUNK of them: sessions after the
+        chunk's earliest expiry, each then kept only if it is after its own certificate's.
         """
-        expired: dict[str, str] = {}
+        expired: dict[str, datetime] = {}
         for (fp, *_), (_, _, last) in usage.items():
             expiry = cert_findings.parse_time((details.get(fp) or {}).get("not_after"))
             used = cert_findings.parse_time(last)
             if expiry and used and used > expiry and fp not in expired:
-                expired[fp] = expiry.isoformat()
+                expired[fp] = expiry
         usage_after: dict[tuple, list] = {}
         clients_after: dict[tuple, int] = {}
-        for fp, not_after in sorted(expired.items()):
+        ordered = sorted(expired)
+        for i in range(0, len(ordered), DETAIL_CHUNK):
+            chunk = set(ordered[i : i + DETAIL_CHUNK])
             bool_q = query["bool"]
             after_q = {
                 "bool": {
                     **bool_q,
                     "filter": [
                         *bool_q["filter"],
-                        {"term": {_CHAIN: fp}},
+                        {"terms": {_CHAIN: sorted(chunk)}},
                         {
                             "range": {
                                 "@timestamp": {
-                                    "gt": not_after,
+                                    "gt": min(expired[fp] for fp in chunk).isoformat(),
                                     "format": "strict_date_optional_time",
                                 }
                             }
@@ -380,10 +409,16 @@ class CertOverview:
                     ],
                 }
             }
-            u, c = self._tally(after_q, pit, budget)
-            # The term matches fp anywhere in a chain; only sessions credited to it count
-            usage_after.update((k, v) for k, v in u.items() if k[0] == fp)
-            clients_after.update((k, v) for k, v in c.items() if k[0] == fp)
+
+            # The terms match a fingerprint anywhere in a chain; a session counts only for the
+            # certificate it is credited to, and only after that certificate's own expiry
+            def after_own_expiry(first: str, when: str, chunk: set = chunk) -> bool:
+                at = cert_findings.parse_time(when)
+                return first in chunk and at is not None and at > expired[first]
+
+            u, c = self._tally(after_q, pit, budget, keep=after_own_expiry)
+            usage_after.update(u)
+            clients_after.update(c)
         return usage_after, clients_after
 
     # -- Public -----------------------------------------------------------------

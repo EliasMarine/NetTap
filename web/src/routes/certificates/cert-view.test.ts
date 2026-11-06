@@ -8,6 +8,7 @@ import {
 	findingExplanation,
 	findingTitle,
 	runsOut,
+	runsOutSentence,
 	siteMatches,
 	siteName,
 	siteStatus,
@@ -99,6 +100,21 @@ describe('findings in plain English', () => {
 		expect(findingTitle({ ...f, days_left: -2 }, NAMES)).toBe("Office NAS's certificate for a.com has already run out");
 	});
 
+	it('says an expired certificate was sent, never that the device used or accepted it', () => {
+		const f = finding({ kind: 'expired-at-use', sessions: 3, not_after: '2026-11-01T00:00:00Z', failed: undefined });
+		expect(findingTitle(f, NAMES)).toBe('Work laptop got the certificate for a.com after it had expired');
+		expect(findingExplanation(f, undefined, NAMES)).toContain('the server still sent it in 3 sessions');
+		expect(`${findingTitle(f, NAMES)} ${findingExplanation(f, undefined, NAMES)}`).not.toMatch(/\bused\b/);
+	});
+
+	it('words days left as the end of a sentence, including already run out', () => {
+		expect([runsOutSentence(-3), runsOutSentence(0), runsOutSentence(12)]).toEqual([
+			'has already run out',
+			'runs out within a day',
+			'runs out in 12 days',
+		]);
+	});
+
 	it('says a chain-expired finding without details cannot tell which certificate ran out', () => {
 		const f = finding({ kind: 'chain-expired', failed: { 'certificate has expired': 3 }, sessions: 3 });
 		expect(findingExplanation(f, undefined, NAMES)).toContain("can't tell which certificate in the chain ran out");
@@ -132,6 +148,7 @@ describe('statuses and days', () => {
 		expect(deviceVerification({ ...base, self_signed: true })).toBe('Self-signed');
 		expect(deviceVerification({ ...base, statuses: { 'self signed certificate': 2, ok: 1 } })).toBe('Self signed certificate');
 		expect(deviceVerification({ ...base, statuses: { unchecked: 3 } })).toBe('Not checked');
+		expect(deviceVerification({ ...base, statuses: { ok: 40, unchecked: 2 } })).toBe('Partly checked');
 	});
 });
 
@@ -141,6 +158,8 @@ describe('site status', () => {
 		expect(siteStatus(site({ worst: 'low' }), 'weak')).toEqual({ label: 'Weak', tone: 'is-warn' });
 		expect(siteStatus(site({}), undefined)).toEqual({ label: 'Verified', tone: 'is-ok' });
 		expect(siteStatus(site({ verified: false, statuses: { unchecked: 2 } }), undefined).label).toBe('Not checked');
+		// most sessions verified and the rest unchecked is not "Not checked"
+		expect(siteStatus(site({ verified: false, statuses: { ok: 40, unchecked: 2 } }), undefined).label).toBe('Partly checked');
 		expect(siteStatus(site({ verified: false, scope: 'local', statuses: { 'self signed certificate': 2 } }), undefined).label).toBe(
 			'Not verified, your network',
 		);

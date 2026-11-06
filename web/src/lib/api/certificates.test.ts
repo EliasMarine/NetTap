@@ -181,7 +181,7 @@ describe('certificates API client', () => {
 	// -- getCertificateOverview (NET-154) ------------------------------------
 
 	describe('getCertificateOverview', () => {
-		const overview = { from: 'a', to: 'b', summary: { certificates: 3 }, sites: [], findings: [], devices: [], certificates: [], details: {} };
+		const overview = { from: 'a', to: 'b', summary: { certificates: 3 }, sites: [], findings: [], devices: [], quiet_switches: [], details: {} };
 
 		it('asks for the window and returns the overview', async () => {
 			mockFetchSuccess(overview);
@@ -205,6 +205,11 @@ describe('certificates API client', () => {
 
 		it('throws on a malformed reply instead of showing an empty overview', async () => {
 			mockFetchSuccess({ from: 'a' });
+			await expect(getCertificateOverview('a', 'b')).rejects.toThrow('malformed');
+		});
+
+		it('throws when a list the page reads is missing, not only the summary', async () => {
+			mockFetchSuccess({ summary: {}, sites: [], findings: [], devices: [], details: {} });
 			await expect(getCertificateOverview('a', 'b')).rejects.toThrow('malformed');
 		});
 	});

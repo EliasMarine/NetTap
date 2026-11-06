@@ -77,7 +77,8 @@ class RawOpenSearch:
         self.open_pits.add(pit)
         return self.tamper("pit", {"pit_id": pit, "_shards": {"total": 1, "failed": 0}})
 
-    def delete_pit(self, body):
+    def delete_pit(self, body, **params):
+        self.close_params = params
         for pit in body["pit_id"]:
             self.open_pits.discard(pit)
             self.closed.append(pit)
@@ -99,26 +100,34 @@ class RawOpenSearch:
             for ip in c["terms"]["source.ip"]
         }
         filters = body["query"]["bool"]["filter"]
-        # The after-expiry recount adds: the chain holds fp anywhere, and time after not_after
+        terms = {k: v for c in filters for k, v in c.get("term", {}).items()}
+        # Every document here is a Zeek ssl record: any other provider or dataset matches none
+        if terms.get("event.provider") != "zeek" or terms.get("event.dataset") != "ssl":
+            return self._reply(body, [])
+        # The after-expiry recount adds: the chain holds one of these anywhere
         in_chain = next(
-            (c["term"][CHAIN] for c in filters if CHAIN in c.get("term", {})), None
-        )
-        after = next(
-            (
-                when(c["range"]["@timestamp"]["gt"])
-                for c in filters
-                if "gt" in c.get("range", {}).get("@timestamp", {})
-            ),
+            (set(c["terms"][CHAIN]) for c in filters if CHAIN in c.get("terms", {})),
             None,
         )
+        bounds = {
+            op: when(v)
+            for c in filters
+            for op, v in c.get("range", {}).get("@timestamp", {}).items()
+            if op in ("gt", "gte", "lte")
+        }
         docs = [
             (i, d)
             for i, d in enumerate(self.sessions)
             if d["chain"]
             and d["client"] not in excluded
-            and (in_chain is None or in_chain in d["chain"])
-            and (after is None or when(d["t"]) > after)
+            and (in_chain is None or in_chain & set(d["chain"]))
+            and ("gt" not in bounds or when(d["t"]) > bounds["gt"])
+            and ("gte" not in bounds or when(d["t"]) >= bounds["gte"])
+            and ("lte" not in bounds or when(d["t"]) <= bounds["lte"])
         ]
+        return self._reply(body, docs)
+
+    def _reply(self, body, docs):
         after = body.get("search_after", [-1])[0]
         page = [(i, d) for i, d in docs if i > after][: body["size"]]
         hits = [

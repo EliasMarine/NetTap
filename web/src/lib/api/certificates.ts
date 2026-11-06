@@ -390,8 +390,18 @@ export async function getCertificateOverview(from: string, to: string): Promise<
 		throw new Error(reason || `Certificate overview failed: HTTP ${res.status}`);
 	}
 	const body: unknown = await res.json();
-	if (!body || typeof body !== 'object' || !('summary' in body) || !Array.isArray((body as CertificateOverview).sites)) {
+	// Every part the page reads, so a malformed reply is an error, never a blank that reads as "none"
+	const o = body as Partial<CertificateOverview> | null;
+	const wellFormed =
+		!!o &&
+		typeof o === 'object' &&
+		!!o.summary &&
+		typeof o.summary === 'object' &&
+		[o.sites, o.findings, o.devices, o.quiet_switches].every(Array.isArray) &&
+		!!o.details &&
+		typeof o.details === 'object';
+	if (!wellFormed) {
 		throw new Error('Certificate overview failed: the reply was malformed');
 	}
-	return body as CertificateOverview;
+	return o as CertificateOverview;
 }

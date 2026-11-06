@@ -101,7 +101,8 @@ export function runsOut(days: number | null | undefined): string {
 	return plural(days, 'day');
 }
 
-function runsOutSentence(days: number | null | undefined): string {
+/** "runs out in 12 days", "has already run out": days left as the end of a sentence. */
+export function runsOutSentence(days: number | null | undefined): string {
 	if (days === null || days === undefined) return 'has no stored expiry date';
 	if (days < 0) return 'has already run out';
 	if (days === 0) return 'runs out within a day';
@@ -138,7 +139,7 @@ export function findingTitle(f: CertFinding, names: Names): string {
 		case 'unverified':
 			return `${who} got a certificate for ${site} that couldn't be verified`;
 		case 'expired-at-use':
-			return `${who} used the certificate for ${site} after it had expired`;
+			return `${who} got the certificate for ${site} after it had expired`;
 		case 'chain-expired':
 			return `${who} got a certificate chain for ${site} that failed with an expiry error`;
 		case 'weak':
@@ -158,7 +159,7 @@ export function findingEvidence(f: CertFinding): string {
 		case 'chain-expired':
 			return `${site} · ${failedOnly(f.failed)}`;
 		case 'expired-at-use':
-			return `${site} · expired ${formatDay(f.not_after)} · last used ${formatWhen(f.last_seen)}`;
+			return `${site} · expired ${formatDay(f.not_after)} · last seen ${formatWhen(f.last_seen)}`;
 		case 'weak':
 			return `${site} · ${(f.weaknesses ?? []).join(' · ')}`;
 		case 'device-expiry':
@@ -181,14 +182,15 @@ export function findingExplanation(f: CertFinding, detail: CertDetail | undefine
 			);
 		case 'unverified':
 			return (
-				"NetTap checks each certificate against Mozilla's list of trusted authorities, the same list Firefox uses. " +
+				"NetTap checks each certificate against a copy of Mozilla's list of trusted authorities, bundled with Zeek. " +
 				`For ${sessions} this one didn't pass (${failed}). That can mean the site uses its own private authority, ` +
 				'sent an incomplete chain, or the connection was intercepted.'
 			);
 		case 'expired-at-use':
 			return (
-				`This certificate expired on ${formatDay(f.not_after)}, but it was still used on ${formatWhen(f.last_seen)}. ` +
-				"Browsers refuse expired certificates, so whatever kept connecting isn't checking them."
+				`This certificate expired on ${formatDay(f.not_after)}, but the server still sent it in ${sessions}, the last on ${formatWhen(f.last_seen)}. ` +
+				'NetTap sees the certificate sent, not whether the device accepted it. Browsers refuse expired certificates, ' +
+				"so if these connections went ahead, whatever made them isn't checking certificates."
 			);
 		case 'chain-expired':
 			return (
@@ -200,7 +202,7 @@ export function findingExplanation(f: CertFinding, detail: CertDetail | undefine
 		case 'weak':
 			return (
 				`The certificate ${site} sent uses ${weakWords(f.weaknesses)}. ` +
-				'These can be forged with enough computing power, so browsers stopped accepting them.'
+				'Public certificate authorities stopped issuing these years ago because they can be forged with enough computing power.'
 			);
 		case 'device-expiry':
 			return (
@@ -225,7 +227,7 @@ export function findingAdvice(f: CertFinding): string {
 				'Otherwise use Check it now to see what the site sends today, and update the app or device.'
 			);
 		case 'expired-at-use':
-			return 'Update the app or device that kept using it. If the site is yours, renew its certificate.';
+			return 'Update the app or device that kept connecting. If the site is yours, renew its certificate.';
 		case 'chain-expired':
 			return "This is usually the site's problem. Use Check it now to see what it sends today. If the site is yours, update the chain it sends.";
 		case 'weak':
@@ -251,7 +253,7 @@ const failedStatus = (statuses: Readonly<Record<string, number>>): boolean =>
 export function siteStatus(site: CertSite, worstKind: FindingKind | undefined): StatusChip {
 	if (worstKind) return { label: FINDING_LABEL[worstKind], tone: site.worst === 'low' ? 'is-warn' : 'is-bad' };
 	if (site.verified) return { label: 'Verified', tone: 'is-ok' };
-	if (!failedStatus(site.statuses)) return { label: 'Not checked', tone: '' };
+	if (!failedStatus(site.statuses)) return { label: 'ok' in site.statuses ? 'Partly checked' : 'Not checked', tone: '' };
 	// Failures at your own servers are normal (self-signed admin pages) and never a finding
 	return { label: site.scope === 'public' ? 'Not verified' : 'Not verified, your network', tone: '' };
 }
@@ -262,7 +264,7 @@ export function deviceVerification(device: CertDevice): string {
 	if (device.self_signed) return 'Self-signed';
 	const failed = Object.keys(device.statuses).filter((s) => s !== 'ok' && s !== 'unchecked');
 	if (failed.length) return capitalise(failed.sort().join('; '));
-	return 'Not checked';
+	return 'ok' in device.statuses ? 'Partly checked' : 'Not checked';
 }
 
 /** Does a site match the search: its name, server, authorities or the names of its devices? */

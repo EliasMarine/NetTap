@@ -388,6 +388,7 @@ def _cert_row(
             for k in _DETAIL_KEYS
         },
         "san_dns": d.get("san_dns") or [],
+        "san_dns_total": d.get("san_dns_total", len(d.get("san_dns") or [])),
         "self_signed": bool(d.get("self_issued")),
         "authority": authority(detail),
         "sessions": t.sessions,

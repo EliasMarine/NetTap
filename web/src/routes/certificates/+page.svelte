@@ -36,6 +36,7 @@
 		findingTitle,
 		formatWhen,
 		runsOut,
+		runsOutSentence,
 		siteMatches,
 		siteName,
 		siteStatus,
@@ -174,8 +175,8 @@
 	// --- Your devices' certificates ---
 
 	const deviceColumns: Column<CertDevice>[] = [
-		{ key: 'device', label: 'Device', sortValue: (d) => deviceName(d.server, names), cell: deviceCell },
 		{ key: 'site', label: 'Site', sortValue: (d) => siteName(d.site, d.server), cell: deviceSiteCell },
+		{ key: 'device', label: 'Device', sortValue: (d) => deviceName(d.server, names), cell: deviceCell },
 		{ key: 'authority', label: 'Authority', cell: deviceAuthorityCell },
 		{ key: 'verification', label: 'Verification', sortValue: deviceVerification, cell: verificationCell },
 		{ key: 'days_left', label: 'Runs out', numeric: true, cell: runsOutCell },
@@ -660,7 +661,7 @@
 		icon="devices"
 		value={summary ? fmt(summary.local_certificates) : '—'}
 		sub={summary
-			? `on ${fmt(summary.local_endpoints)} ${summary.local_endpoints === 1 ? 'service' : 'services'}${summary.soonest_local_expiry_days === null ? '' : ` · soonest runs out in ${runsOut(summary.soonest_local_expiry_days).toLowerCase()}`}`
+			? `on ${fmt(summary.local_endpoints)} ${summary.local_endpoints === 1 ? 'service' : 'services'}${summary.soonest_local_expiry_days === null ? '' : ` · soonest ${runsOutSentence(summary.soonest_local_expiry_days)}`}`
 			: undefined}
 		note={words || undefined}
 	/>
@@ -681,7 +682,7 @@
 			<Icon name="certs" />{fmt(summary.certificates_without_details)}
 			{summary.certificates_without_details === 1 ? 'certificate has' : 'certificates have'} no stored details. {summary.certificates_without_details === 1
 				? 'Its'
-				: 'Their'} {fmt(summary.sessions_without_details)} sessions are counted, with issuer and dates shown as unavailable.
+				: 'Their'} {fmt(summary.sessions_without_details)} {summary.sessions_without_details === 1 ? 'session is' : 'sessions are'} counted, with issuer and dates shown as unavailable.
 		</p>
 	{/if}
 	{#if data}
@@ -704,7 +705,7 @@
 				state="empty"
 				icon="check"
 				title="Nothing needs a look"
-				message="Checked {fmt(data.summary.certificates)} certificates from {fmt(data.summary.sites)} sites in the {words}: verification, expiry when used, weak keys and signatures, and your devices' expiry dates."
+				message="{fmt(data.summary.certificates)} certificates from {fmt(data.summary.sites)} sites in the {words}. None failed verification on a server outside your network, and none of the {fmt(data.summary.certificates - data.summary.certificates_without_details)} with stored details was expired when used, weak, or close to running out on your own devices."
 			/>
 		{:else}
 			<div class="alert-rows">
@@ -763,7 +764,7 @@
 	<Card
 		class="c-12"
 		title="Your devices' certificates"
-		sub={data ? `Served by devices on your network, for the certificate each presented last · ${words}` : 'Served by devices on your network'}
+		sub={data ? `One row per service on your network. Authority and runs out are for the certificate it sent last; verification and sessions cover every certificate it sent · ${words}` : 'One row per service on your network'}
 	>
 		{#if !data}
 			{@render loadState("your devices' certificates")}
@@ -814,7 +815,7 @@
 				rows={pageRows}
 				ariaLabel="All certificates by site"
 				rowKey={(s) => s.id}
-				initialSort={{ key: 'sessions', dir: 'desc' }}
+				initialSort={{ key: sortKey, dir: sortDir }}
 				onsortchange={(key, dir) => {
 					sortKey = key;
 					sortDir = dir;
