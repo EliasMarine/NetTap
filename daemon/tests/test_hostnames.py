@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 from opensearchpy import ConnectionTimeout, OpenSearchException
 
+from services import hostnames
 from services.hostnames import keyword_paths, require_keyword
 from storage.snapshot_search import Budget, QueryFailed, TooSlow
 
@@ -113,6 +114,24 @@ def test_text_or_a_short_ignore_above_falls_back_to_a_keyword_subfield():
         stub(reply), ["tls.client.server_name", "url.domain"], Budget(10)
     )
     assert got == (["tls.client.server_name.keyword", "url.domain.keyword"], [])
+
+
+@pytest.fixture(autouse=True)
+def _fresh_warnings():
+    hostnames._warned.clear()
+    yield
+    hostnames._warned.clear()
+
+
+def test_an_unmatched_field_is_warned_about_once_until_its_mapping_changes(caplog):
+    text = {DAY1: day(entry("tls.client.server_name", "text"))}
+    with caplog.at_level("WARNING", logger="nettap.services.hostnames"):
+        for _ in range(3):
+            keyword_paths(stub(text), ["tls.client.server_name"], Budget(10))
+        assert caplog.text.count("tls.client.server_name can't be matched") == 1
+        short = {DAY1: day(entry("tls.client.server_name", "keyword", 8))}
+        keyword_paths(stub(short), ["tls.client.server_name"], Budget(10))
+        assert caplog.text.count("tls.client.server_name can't be matched") == 2
 
 
 def test_fields_with_no_exact_path_are_unmatched_and_named_in_a_warning(caplog):

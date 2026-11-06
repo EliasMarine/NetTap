@@ -38,5 +38,7 @@ export function unmatchedNote(a: DomainSummary['alerts']): string | null {
 	const words = a.tagged_partial ? (a.unmatched_fields ?? []).map((f) => HOST_FIELD_WORDS[f] ?? f) : [];
 	if (words.length === 0) return null;
 	const list = words.length === 1 ? words[0] : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
-	return `${list.charAt(0).toUpperCase()}${list.slice(1)} are stored on this NetTap in a way that can't be matched exactly, so alerts that name this domain only there aren't counted.`;
+	// OLD CODE: one ending for both cases ("…only there aren't counted"), beside "Can't be counted on this NetTap" when nothing matched
+	const ending = a.tagged === null ? 'the alerts that name this domain can\'t be counted.' : 'alerts that name this domain only there aren\'t counted.';
+	return `${list.charAt(0).toUpperCase()}${list.slice(1)} are stored on this NetTap in a way that can't be matched exactly, so ${ending}`;
 }

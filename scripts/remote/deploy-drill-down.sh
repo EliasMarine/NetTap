@@ -215,16 +215,17 @@ case "$TYPES" in "OK "*) rc=0 ;; *) rc=1 ;; esac
 # OLD CODE END
 check "Zeek name fields are keyword wherever mapped, and at least one is ([] = unmapped)" "$rc" "$TYPES"
 # The alert host fields are information: the domain page matches the ones it can (NET-178).
-# HOST_RULE is services/hostnames.py keyword_paths spelled out again, so the check doesn't
+# HOST_EXACT and HOST_PATHS are services/hostnames.py keyword_paths spelled out again, so the check doesn't
 # trust the code it checks: a path matches exactly when every index that maps it has it as
 # keyword with ignore_above absent or >= 254 (a 253-character name and its trailing dot)
 HOST_FIELDS=$(daemon_json api.domains _HOST_FIELDS)
 case "$HOST_FIELDS" in \[*\]) ;; *) echo "   ✗ could not read the daemon's alert host fields: $HOST_FIELDS"; exit 1 ;; esac
 HOST_MAP=$(os_query "/arkime_sessions3-*/_mapping/field/$(json_get "$HOST_FIELDS" "','.join(r + [f + '.keyword' for f in r])")?filter_path=*.mappings.*.mapping.*.type,*.mappings.*.mapping.*.ignore_above")
 PER="(lambda f: {i: (m.get('mapping') or {}).get(f.rsplit('.', 1)[-1], {}) for i, e in r.items() for g, m in (e.get('mappings') or {}).items() if g == f})"
-EXACT="(lambda p: bool(p) and all(v.get('type') == 'keyword' and v.get('ignore_above', 254) >= 254 for v in p.values()))"
+# (not EXACT: Step 6 uses that name for a record count)
+HOST_EXACT="(lambda p: bool(p) and all(v.get('type') == 'keyword' and v.get('ignore_above', 254) >= 254 for v in p.values()))"
 HOST_TYPES=$(echo "$HOST_MAP" | json_stdin "json.dumps({g: sorted({str(v.get('type')) + (' ignore_above ' + str(v['ignore_above']) if 'ignore_above' in v else '') for v in $PER(g).values()}) for f in $HOST_FIELDS for g in (f, f + '.keyword')})")
-HOST_PATHS=$(echo "$HOST_MAP" | json_stdin "json.dumps({f: 'UNMAPPED' if not $PER(f) else f if $EXACT($PER(f)) else f + '.keyword' if $EXACT($PER(f + '.keyword')) and set($PER(f)) <= set($PER(f + '.keyword')) else 'UNMATCHED' for f in $HOST_FIELDS})")
+HOST_PATHS=$(echo "$HOST_MAP" | json_stdin "json.dumps({f: 'UNMAPPED' if not $PER(f) else f if $HOST_EXACT($PER(f)) else f + '.keyword' if $HOST_EXACT($PER(f + '.keyword')) and set($PER(f)) <= set($PER(f + '.keyword')) else 'UNMATCHED' for f in $HOST_FIELDS})")
 case "$HOST_PATHS" in \{*\}) rc=0 ;; *) rc=1 ;; esac
 check "alert host field mappings read" "$rc" "$HOST_PATHS"
 echo "   · alert host field types per index ([] = unmapped): $HOST_TYPES"

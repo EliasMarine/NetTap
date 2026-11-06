@@ -42,7 +42,7 @@ describe('unmatchedNote', () => {
 			"TLS names are stored on this NetTap in a way that can't be matched exactly, so alerts that name this domain only there aren't counted.",
 		);
 		expect(unmatchedNote({ ...counted, tagged: null, tagged_partial: true, unmatched_fields: ['related.hosts', TLS, 'url.domain'] })).toBe(
-			"Related hosts, TLS names and URL domains are stored on this NetTap in a way that can't be matched exactly, so alerts that name this domain only there aren't counted.",
+			"Related hosts, TLS names and URL domains are stored on this NetTap in a way that can't be matched exactly, so the alerts that name this domain can't be counted.",
 		);
 	});
 

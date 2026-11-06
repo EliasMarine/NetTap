@@ -129,6 +129,9 @@ def require_keyword(client: Any, fields: list[str], budget: Budget) -> None:
                 )
 
 
+# (field, how it is mapped) already warned about: once per process, again if the mapping changes
+_warned: set[tuple[str, str]] = set()
+
 # A 253-character name plus the trailing dot name_match also tries
 _LONGEST = MAX_NAME + 1
 
@@ -165,11 +168,22 @@ def keyword_paths(
         elif _exact(sub) and own.keys() <= sub.keys():
             matched.append(field + ".keyword")
         else:
-            logger.warning(
-                "%s can't be matched to a whole name (mapped as %s); "
-                "names held only there aren't counted",
-                field,
-                ", ".join(sorted({str(p) for p in own.values()})),
-            )
+            # OLD CODE START — warned on every domain page view, so the G11's log repeated it forever
+            # logger.warning(
+            #     "%s can't be matched to a whole name (mapped as %s); "
+            #     "names held only there aren't counted",
+            #     field,
+            #     ", ".join(sorted({str(p) for p in own.values()})),
+            # )
+            # OLD CODE END
+            mapped_as = ", ".join(sorted({str(p) for p in own.values()}))
+            if (field, mapped_as) not in _warned:
+                _warned.add((field, mapped_as))
+                logger.warning(
+                    "%s can't be matched to a whole name (mapped as %s); "
+                    "names held only there aren't counted",
+                    field,
+                    mapped_as,
+                )
             unmatched.append(field)
     return matched, unmatched
