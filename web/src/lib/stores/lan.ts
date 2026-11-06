@@ -20,6 +20,13 @@ export function ipv4ToNumber(ip: string): number | null {
 	return parts.reduce((n, p) => n * 256 + Number(p), 0);
 }
 
+/** A whole IPv4 address, or text shaped like IPv6 (hex digits, ':' and '.', at least two ':'). */
+export function isIpAddress(text: string): boolean {
+	const t = text.trim();
+	// shortcut: the IPv6 test is by shape only; the daemon validates what it is sent
+	return ipv4ToNumber(t) !== null || (/^[0-9a-f:.]+$/i.test(t) && (t.match(/:/g)?.length ?? 0) >= 2);
+}
+
 /** True when `ip` is in `cidr` ("a.b.c.d/n"); false for a malformed CIDR. */
 export function inCidr(ip: number, cidr: string): boolean {
 	const [base, bitsText] = cidr.split('/');
@@ -56,10 +63,15 @@ export function domainHref(name: string): string {
  * failed fetch keeps the last policy (or none). The same version keeps the same object, so
  * links only re-render when the subnets change.
  */
+/** The policy on screen; module-wide, so a resubscribe keeps the same object while the version holds */
+let current: LanPolicy | null = null;
+
 export const lanPolicy: Readable<LanPolicy | null> = readable<LanPolicy | null>(null, (set) => {
 	// Server rendering shares this module between requests; links render with no policy there
 	if (typeof window === 'undefined') return;
-	let current: LanPolicy | null = null;
+	// OLD CODE START — per subscription, so the first refetch after a resubscribe replaced an unchanged policy
+	// let current: LanPolicy | null = null;
+	// OLD CODE END
 	let stopped = false;
 	const load = () =>
 		getLanPolicy().then(

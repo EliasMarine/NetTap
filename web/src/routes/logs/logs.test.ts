@@ -192,6 +192,17 @@ describe('Log Explorer — refresh contract', () => {
 		expect(screen.queryByText('10.0.0.66')).not.toBeInTheDocument();
 	});
 
+	it('links a single address only, never an array or text joined into one', async () => {
+		const many = { ...hit('m', ''), _source: { ...hit('m', '')._source, source: { ip: ['10.0.0.7', '10.0.0.8'] } } };
+		const text = { ...hit('t', ''), _source: { ...hit('t', '')._source, source: { ip: 'unknown' } } };
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [hit('a', '10.0.0.5'), many, text], total: 3 } });
+		render(Page);
+		expect(await screen.findByRole('link', { name: '10.0.0.5' })).toHaveAttribute('href', '/address/10.0.0.5');
+		expect(screen.getByText('10.0.0.7, 10.0.0.8').closest('a')).toBeNull();
+		expect(screen.getByText('unknown').closest('a')).toBeNull();
+		expect(document.querySelector('a[href*="%2C"]')).toBeNull();
+	});
+
 	it('asks the daemon for the new order when a header is clicked', async () => {
 		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [hit('a', '10.0.0.5')], total: 1 } });
 		render(Page);

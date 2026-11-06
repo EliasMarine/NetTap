@@ -106,6 +106,35 @@ describe('Connections — address filter', () => {
 		expect(opts.q).toBe('192.168.1');
 	});
 
+	it('searches free text with a colon ("tcp:443") as text, not as an address', async () => {
+		page.goto('http://localhost/connections?ip=tcp:443');
+		vi.mocked(getConnections).mockResolvedValue(table('192.168.1.20'));
+		render(Page);
+		await flush();
+		const opts = vi.mocked(getConnections).mock.calls[0][0]!;
+		expect(opts.ip).toBeUndefined();
+		expect(opts.q).toBe('tcp:443');
+	});
+
+	it("shows the daemon's reason when the table fails", async () => {
+		vi.mocked(getConnections).mockRejectedValue(new Error('That is not an IP address.'));
+		render(Page);
+		expect(await screen.findByText('That is not an IP address.')).toBeInTheDocument();
+	});
+
+	it('applies a link to the same address again after the box was edited', async () => {
+		vi.mocked(getConnections).mockResolvedValue(table('203.0.113.9'));
+		render(Page);
+		await flush();
+		const box = screen.getByLabelText('Filter by IP address');
+		await fireEvent.input(box, { target: { value: '10.0.0.1' } });
+		vi.mocked(getConnections).mockClear();
+		page.goto('http://localhost/connections?ip=203.0.113.9'); // the same link, clicked again
+		await flush();
+		expect(box).toHaveValue('203.0.113.9');
+		expect(vi.mocked(getConnections).mock.calls.at(-1)![0]!.ip).toBe('203.0.113.9');
+	});
+
 	it('reloads page 1 for the new address on same-page navigation, dropping a late reply for the old one', async () => {
 		const forA = deferred<ConnectionsResponse>();
 		vi.mocked(getConnections).mockImplementation(async (opts = {}) => (opts.ip === '203.0.113.9' ? forA.promise : table('2001:db8::1')));

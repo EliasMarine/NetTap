@@ -431,7 +431,16 @@ export async function getConnections(
 	// 	};
 	// }
 	// OLD CODE END
-	if (!res.ok) throw new Error(`Connection list failed: HTTP ${res.status}`);
+	// OLD CODE START — NET-160: the daemon's reason ("That is not an IP address.") was dropped
+	// if (!res.ok) throw new Error(`Connection list failed: HTTP ${res.status}`);
+	// OLD CODE END
+	if (!res.ok) {
+		const reason = await res
+			.json()
+			.then((body: unknown) => (body && typeof body === 'object' && 'error' in body ? String(body.error) : ''))
+			.catch(() => '');
+		throw new Error(reason || `Connection list failed: HTTP ${res.status}`);
+	}
 
 	return res.json();
 }
