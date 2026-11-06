@@ -401,6 +401,8 @@ export async function getConnections(
 		sort?: ConnectionSort;
 		order?: 'asc' | 'desc';
 		state?: ConnectionStateFilter;
+		/** NET-160: sessions with this address on either side, a structured filter kept apart from `q` */
+		ip?: string;
 	} = {}
 ): Promise<ConnectionsResponse> {
 	const query = buildQuery({
@@ -412,6 +414,7 @@ export async function getConnections(
 		sort: opts.sort,
 		order: opts.order,
 		state: opts.state,
+		ip: opts.ip,
 	});
 	const res = await fetch(`/api/traffic/connections${query}`);
 
