@@ -260,6 +260,8 @@ OLD CODE END -->
 		transition: border-color var(--dur-fast);
 		display: inline;
 		line-height: 1.4;
+		/* iOS: a long press opens NetTap's menu, not Safari's link preview over it */
+		-webkit-touch-callout: none;
 	}
 
 	.ip-address:hover {

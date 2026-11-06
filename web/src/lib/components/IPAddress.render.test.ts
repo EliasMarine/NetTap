@@ -111,6 +111,13 @@ describe('IPAddress', () => {
 			expect(preventDefault).not.toHaveBeenCalled();
 		});
 
+		it("stops iOS showing Safari's link preview over the menu", async () => {
+			// jsdom has no layout or iOS callout, so this reads the component's own CSS
+			const source = (await import('./IPAddress.svelte?raw')).default;
+			const rule = /\.ip-address\s*\{([^}]*)\}/.exec(source)?.[1] ?? '';
+			expect(rule).toMatch(/-webkit-touch-callout:\s*none/);
+		});
+
 		it('drops a pending long press when the address leaves the page', async () => {
 			stubLan(['192.168.1.0/24']);
 			vi.useFakeTimers();
