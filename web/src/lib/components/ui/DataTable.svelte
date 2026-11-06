@@ -34,6 +34,8 @@
 		from: number;
 		to: number;
 		onpage: (page: number) => void;
+		/** Every page button off, e.g. while the rows on screen are being replaced. */
+		disabled?: boolean;
 	}
 </script>
 
@@ -175,7 +177,7 @@
 	<div class="tbl-foot">
 		<span>Showing {fmt(pg.from)} to {fmt(pg.to)} of {fmt(pg.total)}</span>
 		<div class="pager" role="group" aria-label="Pages">
-			<button type="button" aria-label="Previous page" disabled={pg.page <= 1} onclick={() => pg.onpage(pg.page - 1)}
+			<button type="button" aria-label="Previous page" disabled={pg.disabled || pg.page <= 1} onclick={() => pg.onpage(pg.page - 1)}
 				><Icon name="back" /></button
 			>
 			{#each pages as p (p)}
@@ -183,13 +185,14 @@
 					type="button"
 					aria-label="Page {p}"
 					aria-current={p === pg.page ? 'page' : undefined}
+					disabled={pg.disabled}
 					onclick={() => pg.onpage(p)}>{p}</button
 				>
 			{/each}
 			<button
 				type="button"
 				aria-label="Next page"
-				disabled={pg.page >= pg.pageCount}
+				disabled={pg.disabled || pg.page >= pg.pageCount}
 				onclick={() => pg.onpage(pg.page + 1)}><Icon name="back" class="chev" /></button
 			>
 		</div>

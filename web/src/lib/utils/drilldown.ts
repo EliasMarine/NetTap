@@ -83,7 +83,88 @@ export function certificatesHref(opts: { site?: string | null; server?: string |
 // 	return `/logs?query=${encodeURIComponent(`(source.ip:"${ip}" OR destination.ip:"${ip}")`)}`;
 // }
 // OLD CODE END
-/** Log Explorer over `range`, searching both sides for an address (quoted, so IPv6 colons aren't query syntax). */
-export function logsHrefForIp(ip: string, range: DrillRangeValue): string {
-	return `/logs?query=${encodeURIComponent(`(source.ip:"${ip}" OR destination.ip:"${ip}")`)}&range=${range}`;
+// OLD CODE START — slice 2a: a range link re-anchored the window at click time, so the list could
+// differ from the count by whatever arrived or expired meanwhile
+// /** Log Explorer over `range`, searching both sides for an address (quoted, so IPv6 colons aren't query syntax). */
+// export function logsHrefForIp(ip: string, range: DrillRangeValue): string {
+// 	return `/logs?query=${encodeURIComponent(`(source.ip:"${ip}" OR destination.ip:"${ip}")`)}&range=${range}`;
+// }
+// OLD CODE END
+/**
+ * Log Explorer over `range`, searching both sides for an address (quoted, so IPv6 colons aren't
+ * query syntax). With `win`, the list opens on that exact window (Custom), the count's own.
+ */
+export function logsHrefForIp(ip: string, range: DrillRangeValue, win?: DrillWindow): string {
+	const href = `/logs?query=${encodeURIComponent(`(source.ip:"${ip}" OR destination.ip:"${ip}")`)}&range=${range}`;
+	return win ? `${href}&${windowQuery(win)}` : href;
+}
+
+// ---------------------------------------------------------------------------
+// Exact windows (NET-160 slice 2a): a count links to a list over the count's own window
+// ---------------------------------------------------------------------------
+
+/** The absolute window a figure was counted over, as ISO strings. */
+export interface DrillWindow {
+	from: string;
+	to: string;
+}
+
+/** A day and time, as the windows are written ("6 Nov, 13:02"). */
+export function formatWhen(iso: string | null | undefined): string {
+	if (!iso) return '—';
+	const d = new Date(iso);
+	return Number.isFinite(d.getTime())
+		? d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+		: iso;
+}
+
+/** A window a link brought (?from=&to=), shown as a "Custom" range. */
+export interface CustomWindow extends DrillWindow {
+	value: 'custom';
+	label: 'Custom';
+	hours: number;
+	words: string;
+}
+
+/**
+ * The window from a drill-down link: the page the link came from passes the window its figure
+ * came from, so the list matches it. Null unless both ends are dates and `from` is before `to`.
+ */
+export function customRange(from: string | null, to: string | null): CustomWindow | null {
+	if (!from || !to) return null;
+	const start = new Date(from);
+	const end = new Date(to);
+	if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start >= end) return null;
+	return {
+		value: 'custom',
+		label: 'Custom',
+		hours: (end.getTime() - start.getTime()) / 3_600_000,
+		words: `window ${formatWhen(start.toISOString())} to ${formatWhen(end.toISOString())}`,
+		from: start.toISOString(),
+		to: end.toISOString(),
+	};
+}
+
+/** `from=…&to=…`, then `&range=…` when given (the window's words fall back to that range). */
+export function windowQuery(win: DrillWindow, range?: string): string {
+	const q = new URLSearchParams({ from: win.from, to: win.to });
+	if (range) q.set('range', range);
+	return q.toString();
+}
+
+/**
+ * The alerts list for one signature (an exact match on rule.name), over the count's window when given.
+ * `ip` narrows it to alerts with that address at either end (the list's `ip` filter).
+ */
+export function alertsHrefForSignature(signature: string, win?: DrillWindow & { range?: string }, ip?: string): string {
+	const q = new URLSearchParams(ip ? { signature, ip } : { signature });
+	return win ? `/alerts?${q.toString()}&${windowQuery(win, win.range)}` : `/alerts?${q.toString()}`;
+}
+
+/**
+ * Log Explorer for every clause at once (joined with AND), over the count's exact window. Each
+ * clause is written by the caller to match the count's own filters; quote IP values (IPv6 colons).
+ */
+export function logsHrefForQuery(clauses: readonly string[], win: DrillWindow, range: DrillRangeValue): string {
+	return `/logs?${new URLSearchParams({ query: clauses.join(' AND ') }).toString()}&${windowQuery(win, range)}`;
 }

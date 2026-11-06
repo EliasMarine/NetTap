@@ -48,6 +48,7 @@
 	// import { TableSort } from '$lib/utils/table-sort.svelte';
 	// OLD CODE END
 	import { severityBuckets, type SeverityLevel } from '$lib/utils/severity';
+	import { alertsHrefForSignature, type DrillWindow } from '$lib/utils/drilldown';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -369,6 +370,8 @@
 	const listGuard = createLoadGuard();
 	/** The category and range on screen; a load for another one starts from page 1 and shows loading. */
 	let shownKey = '';
+	/** The window of the figures on screen (set when a load is applied, not while one is in flight). */
+	let shownWindow = $state<DrillWindow>({ from: '', to: '' });
 
 	async function loadAll(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
@@ -395,6 +398,7 @@
 		timelineFailed = timeline.status === 'rejected';
 		if (listGuard.current(lg)) applyList(alertsResult, 0);
 		shownKey = key;
+		shownWindow = { from, to };
 		loading = false;
 
 		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
@@ -658,6 +662,9 @@
 		{ key: 'dest_port', label: 'Port', numeric: true, cell: portCell },
 	];
 
+	/** Every alert with this signature over the window of the figures on screen (NET-160 slice 2a). */
+	const sigHref = (sig: string) => alertsHrefForSignature(sig, { ...shownWindow, range: selectedRange });
+
 	/** The daemon lists at most this many addresses and signatures. */
 	const LIST_CAP = 20;
 	/** "Top 20 of 412 addresses" when capped: the daemon's address total is exact, the list is not (I10). */
@@ -685,7 +692,12 @@
 	<span class="mono">{formatTimestamp(a.timestamp)}</span>{#if a.acknowledged}<span class="chip">Acknowledged</span>{/if}
 {/snippet}
 {#snippet severityCell(a: Alert)}<SeverityPill level={alertLevel(a.alert?.severity)} />{/snippet}
+<!-- OLD CODE START — slice 2a: the signature wasn't a link
 {#snippet signatureCell(a: Alert)}<span class="mono" title={a.alert?.signature || 'Unknown'}>{a.alert?.signature || 'Unknown'}</span>{/snippet}
+OLD CODE END -->
+{#snippet signatureCell(a: Alert)}
+	{#if a.alert?.signature}<a class="mono" href={sigHref(a.alert.signature)} title={a.alert.signature}>{a.alert.signature}</a>{:else}<span class="mono">Unknown</span>{/if}
+{/snippet}
 {#snippet srcCell(a: Alert)}{#if a.src_ip}<IPAddress ip={a.src_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet destCell(a: Alert)}{#if a.dest_ip}<IPAddress ip={a.dest_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet portCell(a: Alert)}
@@ -850,6 +862,7 @@
 						value: sig.count,
 						display: formatNumber(sig.count),
 						detail: formatRelativeTime(sig.last_seen),
+						href: sigHref(sig.signature),
 					}))}
 				/>
 			{/if}

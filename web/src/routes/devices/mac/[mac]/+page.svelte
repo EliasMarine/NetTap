@@ -28,6 +28,7 @@
 	import DeviceTile from '$lib/components/ui/DeviceTile.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { domainHref } from '$lib/stores/lan';
+	import { alertsHrefForSignature } from '$lib/utils/drilldown';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 
 	type Destination = DeviceTraffic['top_destinations'][number];
@@ -184,7 +185,8 @@
 {#snippet domainCell(q: DnsQuery)}<a class="mono trunc" href={domainHref(q.domain)} title={q.domain}>{q.domain}</a>{/snippet}
 {#snippet dnsCountCell(q: DnsQuery)}{q.count.toLocaleString()}{/snippet}
 {#snippet sevCell(a: TrafficAlert)}<SeverityPill level={alertLevel(a.severity)} />{/snippet}
-{#snippet sigCell(a: TrafficAlert)}<span class="sig trunc" title={a.signature}>{a.signature}</span>{/snippet}
+<!-- OLD CODE: {#snippet sigCell(a: TrafficAlert)}<span class="sig trunc" title={a.signature}>{a.signature}</span>{/snippet} (slice 2a: not a link) -->
+{#snippet sigCell(a: TrafficAlert)}<a class="sig trunc" href={alertsHrefForSignature(a.signature)} title={a.signature}>{a.signature}</a>{/snippet}
 {#snippet timeCell(a: TrafficAlert)}<span class="mono">{new Date(a.timestamp).toLocaleString()}</span>{/snippet}
 
 <svelte:head>

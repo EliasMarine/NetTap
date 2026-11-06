@@ -39,13 +39,18 @@ describe('Log Explorer', () => {
 
 // #96: failed aggregations read as 0 events, 0 B and "No protocol data"
 
-/** Replies by path; any path not listed answers 503. */
-function stubDaemon(replies: Record<string, unknown>): void {
+/**
+ * Replies by path (a function reply is called with the URL); any path not listed answers 503.
+ * With `tick`, each request moves the (faked) clock a second on.
+ */
+function stubDaemon(replies: Record<string, unknown>, tick = false): void {
 	vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 	vi.stubGlobal(
 		'fetch',
 		vi.fn(async (url: string) => {
-			const body = replies[url.split('?')[0]];
+			if (tick) vi.setSystemTime(Date.now() + 1000);
+			const reply = replies[url.split('?')[0]];
+			const body = typeof reply === 'function' ? reply(url) : reply;
 			return body
 				? { ok: true, status: 200, json: async () => body }
 				: { ok: false, status: 503, json: async () => ({}) };
@@ -346,5 +351,128 @@ describe('Log Explorer — figures match what the daemon counts', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'DHCP' }));
 		expect(await screen.findByText('johns-iphone')).toBeInTheDocument();
 		expect(screen.getByText('aa:bb:cc:dd:ee:ff')).toBeInTheDocument();
+	});
+});
+
+// NET-160 slice 2a: a count links to a list over the count's own window, so Log Explorer holds a
+// link's exact window (?from=&to=, "Custom") and never moves a search's window while paging.
+const DASHBOARD_PATHS = ['/api/logs/stats', '/api/logs/timeline', '/api/logs/top-talkers', '/api/logs/protocol-breakdown', '/api/logs/top-destinations', '/api/logs/top-dns'];
+const requestsTo = (path: string) =>
+	vi.mocked(fetch).mock.calls.map(([u]) => new URL(String(u), 'http://x')).filter((u) => u.pathname === path);
+const bounds = (u: URL) => [u.searchParams.get('from'), u.searchParams.get('to')];
+
+describe('Log Explorer — exact windows', () => {
+	const FROM = '2026-11-05T09:00:00.000Z';
+	const TO = '2026-11-05T10:30:00.000Z';
+	/** One row per page, each with its own id, and more to come. */
+	const PAGED = (url: string) => ({ hits: [hit(url, '10.0.0.5')], total: 5, search_after: [1] });
+
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date('2026-11-06T12:00:00Z'));
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	it("opens on a link's exact window and pages within it, however late the next page is asked for", async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': PAGED }, true);
+		goTo(`/logs?query=dns&range=24h&from=${FROM}&to=${TO}`);
+		render(Page);
+		const more = await screen.findByRole('button', { name: 'Load more' });
+		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		// 90 minutes: the smallest standard range that covers it is 4h, bucketed by 15 minutes
+		expect(screen.getByText(/^Log events per 15 minutes · window /)).toBeInTheDocument();
+		expect(requestsTo('/api/logs/timeline')[0].searchParams.get('interval')).toBe('15m');
+
+		vi.setSystemTime(Date.now() + 10 * 60_000);
+		await fireEvent.click(more);
+		await vi.waitFor(() => expect(requestsTo('/api/logs/search')).toHaveLength(2));
+		expect(requestsTo('/api/logs/search')[1].searchParams.get('search_after')).toBe('[1]');
+		for (const u of [...requestsTo('/api/logs/search'), ...DASHBOARD_PATHS.flatMap(requestsTo)]) expect(bounds(u)).toEqual([FROM, TO]);
+	});
+
+	it("pages within the first search's window when the link gave none, and the drawer reads from it", async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': PAGED }, true);
+		render(Page);
+		const more = await screen.findByRole('button', { name: 'Load more' });
+		vi.setSystemTime(Date.now() + 10 * 60_000);
+		await fireEvent.click(more);
+		await vi.waitFor(() => expect(requestsTo('/api/logs/search')).toHaveLength(2));
+		const [first, next] = requestsTo('/api/logs/search');
+		expect(bounds(next)).toEqual(bounds(first));
+
+		await fireEvent.click(screen.getAllByRole('button', { name: /^Open log entry from/ })[0]);
+		await vi.waitFor(() => expect(requestsTo('/api/logs/search')).toHaveLength(3));
+		expect(requestsTo('/api/logs/search')[2].searchParams.get('from')).toBe(first.searchParams.get('from'));
+	});
+
+	it('gives the figures and the table one window per load', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [], total: 0 } }, true);
+		render(Page);
+		await vi.waitFor(() => expect(requestsTo('/api/logs/search')).toHaveLength(1));
+		const win = bounds(requestsTo('/api/logs/search')[0]);
+		for (const path of DASHBOARD_PATHS) expect(bounds(requestsTo(path)[0]), path).toEqual(win);
+	});
+
+	it('reloads every card on a window-only URL change, clearing the old figures first', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [], total: 0 } });
+		goTo('/logs?query=dns');
+		render(Page);
+		const total = () => screen.getByText('Total events').closest('.kpi');
+		await vi.waitFor(() => expect(total()).toHaveTextContent('10'));
+
+		// the new window's answers wait, so the old figures are seen to go before they arrive
+		vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+		goTo(`/logs?query=dns&from=${FROM}&to=${TO}`);
+		await vi.waitFor(() => expect(requestsTo('/api/logs/search')).toHaveLength(1));
+		expect(total()).toHaveTextContent('—');
+		for (const path of DASHBOARD_PATHS) expect(requestsTo(path).map(bounds), path).toEqual([[FROM, TO]]);
+		expect(bounds(requestsTo('/api/logs/search')[0])).toEqual([FROM, TO]);
+		expect(requestsTo('/api/logs/search')[0].searchParams.get('query')).toBe('dns');
+	});
+});
+
+describe('Log Explorer — drill-down links (NET-160 slice 2a)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const named = (id: string, dataset: string, zeek: Record<string, unknown>) => ({
+		_id: id,
+		_source: { '@timestamp': '2026-11-03T10:00:00Z', source: { ip: '10.0.0.5' }, event: { dataset }, zeek },
+	});
+
+	it('links a host name to its domain page; addresses, host:port, empty values and lists stay text', async () => {
+		const dns = (id: string, query: unknown) => named(id, 'dns', { dns: { query } });
+		stubDaemon({
+			...AGGREGATIONS,
+			'/api/logs/search': {
+				hits: [
+					dns('a', 'Example.COM.'), dns('b', '203.0.113.7'), dns('c', '2001:db8::1'), dns('d', 'example.com:8080'), dns('e', ''),
+					dns('f', ['a.example', 'b.example']), named('t', 'ssl', { ssl: { server_name: 'www.example.org' } }),
+				],
+				total: 7,
+			},
+		});
+		const { container } = render(Page);
+		await fireEvent.click(await screen.findByRole('button', { name: 'DNS' }));
+		expect(await screen.findByRole('link', { name: 'Example.COM.' })).toHaveAttribute('href', '/domain/example.com');
+		for (const text of ['203.0.113.7', '2001:db8::1', 'example.com:8080', 'a.example, b.example']) {
+			expect(screen.getByText(text).closest('a'), text).toBeNull();
+		}
+		expect(container.querySelectorAll('a[href^="/domain/"]')).toHaveLength(1);
+		expectNoNestedInteractive(container);
+
+		await fireEvent.click(screen.getByRole('button', { name: 'TLS' }));
+		expect(await screen.findByRole('link', { name: 'www.example.org' })).toHaveAttribute('href', '/domain/www.example.org');
+	});
+
+	it("opens the drawer's source address where it drills down: an internet address has no device page", async () => {
+		const { goto } = await import('$app/navigation');
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [hit('a', '203.0.113.7')], total: 1 } });
+		render(Page);
+		await fireEvent.click(await screen.findByRole('button', { name: /^Open log entry from/ }));
+		await fireEvent.click(await screen.findByRole('button', { name: 'View source device' }));
+		expect(goto).toHaveBeenCalledWith('/address/203.0.113.7');
 	});
 });

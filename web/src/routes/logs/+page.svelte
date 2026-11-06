@@ -2,7 +2,9 @@
 	import { onDestroy, untrack, type Snippet } from 'svelte';
 	import { page } from '$app/stores';
 	import IPAddress from '$components/IPAddress.svelte';
-	import { isIpAddress } from '$lib/stores/lan';
+	// OLD CODE: import { isIpAddress } from '$lib/stores/lan'; (slice 2a: domain cells and the drawer's source link)
+	import { domainHref, ipHref, isIpAddress } from '$lib/stores/lan';
+	import { canonicalName, customRange, isHostName, type CustomWindow, type DrillWindow } from '$lib/utils/drilldown';
 	// OLD CODE START — replaced by the design system's BarList
 	// import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	// OLD CODE END
@@ -173,7 +175,10 @@
 
 	let initialized = $state(false);
 	let loading = $state(false);
-	let selectedTimeRange = $state<TimeRange>('24h');
+	// OLD CODE: let selectedTimeRange = $state<TimeRange>('24h'); (slice 2a: a link's exact window shows as "Custom")
+	let selectedTimeRange = $state<TimeRange | 'custom'>('24h');
+	/** The window a drill-down link brought (?from=&to=), offered as "Custom" until another range is picked. */
+	let custom = $state<CustomWindow | null>(null);
 	let autoRefresh = $state(false);
 	let refreshInterval = $state<ReturnType<typeof setInterval> | null>(null);
 
@@ -213,6 +218,8 @@
 	let loadingMore = $state(false);
 	let sortField = $state('@timestamp');
 	let sortDir = $state<'desc' | 'asc'>('desc');
+	/** The window of the rows on screen: "load more" pages within it, and the drawer reads from it. */
+	let tableWindow = $state<DrillWindow | null>(null);
 	// OLD CODE START — replaced by DetailDrawer
 	// let expandedRow = $state<string | null>(null);
 	// let fullDoc = $state<Record<string, unknown> | null>(null);
@@ -271,13 +278,24 @@
 
 	let hasActiveFilters = $derived(activeIpFilter !== '' || activeDnsFilter !== '' || logType !== 'all');
 
-	const rangeWords = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange)?.words ?? 'last 24 hours');
+	// OLD CODE: const rangeWords = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange)?.words ?? 'last 24 hours'); (slice 2a: Custom)
+	const rangeWords = $derived(
+		selectedTimeRange === 'custom' && custom ? custom.words : (TIME_RANGES.find((r) => r.value === selectedTimeRange)?.words ?? 'last 24 hours'),
+	);
+	/** The range whose timeline bucket the window uses: for Custom, the smallest standard range that covers it. */
+	const intervalRange = $derived(
+		selectedTimeRange === 'custom' ? (TIME_RANGES.find((r) => custom && r.ms >= custom.hours * 3_600_000) ?? TIME_RANGES[TIME_RANGES.length - 1]).value : selectedTimeRange,
+	);
+	const rangeOptions = $derived([...TIME_RANGES, ...(custom ? [{ value: 'custom' as const, label: custom.label }] : [])]);
 
 	// ---------------------------------------------------------------------------
 	// Helpers
 	// ---------------------------------------------------------------------------
 
-	function getTimeRange(rangeValue: TimeRange = selectedTimeRange): { from: string; to: string } {
+	// OLD CODE: function getTimeRange(rangeValue: TimeRange = selectedTimeRange): { from: string; to: string } { (slice 2a: Custom)
+	/** The window a load covers: the Custom window as the link gave it, otherwise the range ending now. */
+	function getTimeRange(rangeValue: TimeRange | 'custom' = selectedTimeRange): DrillWindow {
+		if (rangeValue === 'custom' && custom) return { from: custom.from, to: custom.to };
 		const now = Date.now();
 		const range = TIME_RANGES.find((r) => r.value === rangeValue) || TIME_RANGES[3];
 		return {
@@ -286,11 +304,13 @@
 		};
 	}
 
-	function timeRangeToISO(range: TimeRange): string {
-		const now = Date.now();
-		const tr = TIME_RANGES.find((r) => r.value === range);
-		return new Date(now - (tr?.ms || 24 * 60 * 60_000)).toISOString();
-	}
+	// OLD CODE START — slice 2a: the table and the drawer read the window of the rows on screen (tableWindow)
+	// function timeRangeToISO(range: TimeRange): string {
+	// 	const now = Date.now();
+	// 	const tr = TIME_RANGES.find((r) => r.value === range);
+	// 	return new Date(now - (tr?.ms || 24 * 60 * 60_000)).toISOString();
+	// }
+	// OLD CODE END
 
 	function formatTimestamp(ts: string): string {
 		try {
@@ -412,12 +432,18 @@
 	// 	loading = false;
 	// }
 	// OLD CODE END
-	/** The six aggregations for the current range; null when a newer load took over. */
-	async function fetchDashboard(guard: LoadGuard, g: number): Promise<boolean[] | null> {
-		const range = selectedTimeRange;
+	// OLD CODE START — slice 2a: worked out its own window, a moment apart from the table's
+	// /** The six aggregations for the current range; null when a newer load took over. */
+	// async function fetchDashboard(guard: LoadGuard, g: number): Promise<boolean[] | null> {
+	// 	const range = selectedTimeRange;
+	// 	loading = true;
+	// 	const { from, to } = getTimeRange(range);
+	// 	const interval = INTERVAL_MAP[range] || '1h';
+	// OLD CODE END
+	/** The six aggregations over `win` (the table's window too); null when a newer load took over. */
+	async function fetchDashboard(guard: LoadGuard, g: number, { from, to }: DrillWindow): Promise<boolean[] | null> {
 		loading = true;
-		const { from, to } = getTimeRange(range);
-		const interval = INTERVAL_MAP[range] || '1h';
+		const interval = INTERVAL_MAP[intervalRange] || '1h';
 
 		const results = await Promise.allSettled([
 			getLogStats({ from, to }),
@@ -519,8 +545,12 @@
 	// 	}
 	// }
 	// OLD CODE END
-	async function fetchLogs(append = false): Promise<LoadResult> {
+	// OLD CODE: async function fetchLogs(append = false): Promise<LoadResult> { (slice 2a: a window per search)
+	/** A new search over `win` (a new window when not given), or with `append`, the next page in the rows' window. */
+	async function fetchLogs(append = false, win?: DrillWindow): Promise<LoadResult> {
 		const g = tableGuard.begin();
+		// "load more" never moves the window, so no row is listed twice or skipped
+		const w = append && tableWindow ? tableWindow : (win ?? getTimeRange());
 		if (append) {
 			loadingMore = true;
 		} else {
@@ -546,8 +576,12 @@
 			}
 			if (fullQuery) params.set('query', fullQuery);
 
-			params.set('from', timeRangeToISO(selectedTimeRange));
-			params.set('to', new Date().toISOString());
+			// OLD CODE START — slice 2a: every page worked out a new window
+			// params.set('from', timeRangeToISO(selectedTimeRange));
+			// params.set('to', new Date().toISOString());
+			// OLD CODE END
+			params.set('from', w.from);
+			params.set('to', w.to);
 			params.set('size', '100');
 			params.set('sort', `${sortField}:${sortDir}`);
 			if (append && searchAfter) {
@@ -571,6 +605,7 @@
 			}
 			totalHits = data.total;
 			searchAfter = data.search_after;
+			tableWindow = w;
 			return 'ok';
 		} catch (e) {
 			if (!tableGuard.current(g)) return 'skipped';
@@ -620,7 +655,10 @@
 
 	async function fetchAll(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
-		const [dashboard, table] = await Promise.all([fetchDashboard(guard, g), fetchLogs()]);
+		// OLD CODE: const [dashboard, table] = await Promise.all([fetchDashboard(guard, g), fetchLogs()]); (slice 2a)
+		// One window per load, so the figures and the table cover the same span
+		const win = getTimeRange();
+		const [dashboard, table] = await Promise.all([fetchDashboard(guard, g, win), fetchLogs(false, win)]);
 		if (!guard.current(g) || dashboard === null) return 'skipped';
 		// A table load that a newer search replaced says nothing about this refresh
 		const outcomes = table === 'skipped' ? dashboard : [...dashboard, table === 'ok'];
@@ -632,8 +670,11 @@
 	// Event handlers
 	// ---------------------------------------------------------------------------
 
-	function handleTimeRangeChange(value: TimeRange) {
+	// OLD CODE: function handleTimeRangeChange(value: TimeRange) { (slice 2a: Custom)
+	function handleTimeRangeChange(value: TimeRange | 'custom') {
 		selectedTimeRange = value;
+		// Picking a standard range leaves the link's window
+		if (value !== 'custom') custom = null;
 		// #96: the last range's figures must not stand in for this range if its load fails
 		statsLoaded = false;
 		timeline = [];
@@ -746,7 +787,8 @@
 	function drawerViewSourceDevice() {
 		if (!drawerHit) return;
 		const src = drawerHit._source['source.ip'] || (drawerHit._source['source'] as Record<string, unknown>)?.['ip'];
-		if (src) goto(`/devices/${encodeURIComponent(String(Array.isArray(src) ? src[0] : src))}`);
+		// OLD CODE: if (src) goto(`/devices/${encodeURIComponent(String(Array.isArray(src) ? src[0] : src))}`); (slice 2a: an internet address has no device page)
+		if (src) goto($ipHref(String(Array.isArray(src) ? src[0] : src)));
 	}
 
 	// CSV export
@@ -797,13 +839,21 @@
 		'zeek.dhcp.assigned_ip': dhcpIpCell,
 	};
 
+	/** Names that open their domain page (NET-160 slice 2a). */
+	const DOMAIN_CELLS: Record<string, Snippet<[LogRow]>> = {
+		'zeek.dns.query': dnsQueryCell,
+		'zeek.http.host': httpHostCell,
+		'zeek.ssl.server_name': sslNameCell,
+	};
+
 	const logColumns = $derived<Column<LogRow>[]>(
 		COLUMNS[logType].map((col) => ({
 			key: col,
 			label: shortFieldName(col),
 			numeric: NUMERIC_FIELDS.has(col),
 			class: MONO_FIELDS.has(col) || IP_FIELDS.has(col) ? 'mono' : undefined,
-			cell: IP_CELLS[col],
+			// OLD CODE: cell: IP_CELLS[col], (slice 2a: domain columns link too)
+			cell: IP_CELLS[col] ?? DOMAIN_CELLS[col],
 			title: fieldDefs[col],
 		})),
 	);
@@ -844,24 +894,64 @@
 	// 	};
 	// });
 	// OLD CODE END
-	/** The ?filter= / ?ip= / ?query= last applied; null before the first load. */
+	// OLD CODE START — slice 2a: the window was read on the first load only, and only as ?range=, so a
+	// link's exact window (?from=&to=) was ignored and a second link with another window kept the old one
+	// /** The ?filter= / ?ip= / ?query= last applied; null before the first load. */
+	// let appliedSearch: string | null = null;
+	// $effect(() => {
+	// 	// Deep links from other pages (e.g., /logs?filter=1.2.3.4) and the top-bar search hand-off
+	// 	const params = $page.url.searchParams;
+	// 	const urlFilter = params.get('filter');
+	// 	const urlIp = params.get('ip');
+	// 	const urlQuery = params.get('query');
+	// 	const search = JSON.stringify([urlFilter, urlIp, urlQuery]);
+	// 	untrack(() => {
+	// 		// The hash changes too (the KPI links); only a new search runs one
+	// 		if (search === appliedSearch) return;
+	// 		const first = appliedSearch === null;
+	// 		appliedSearch = search;
+	// 		// A link from a page with its own window (?range=, NET-160) opens on that window
+	// 		const urlRange = params.get('range');
+	// 		if (first && TIME_RANGES.some((r) => r.value === urlRange)) selectedTimeRange = urlRange as TimeRange;
+	// 		// A hand-off replaces the last one's IP filter and text; the first load starts from neither
+	// 		activeIpFilter = urlFilter || urlIp || '';
+	// 		query = urlFilter || urlIp ? '' : (urlQuery ?? '');
+	// 		if (first) {
+	// 			refresh.run().then(() => {
+	// 				initialized = true;
+	// 			});
+	// 			fetchFieldDefs();
+	// 		} else {
+	// 			fetchLogs();
+	// 		}
+	// 	});
+	// });
+	// OLD CODE END
+	/** The ?filter= / ?ip= / ?query= / ?range= / ?from= / ?to= last applied; null before the first load. */
 	let appliedSearch: string | null = null;
 
 	$effect(() => {
 		// Deep links from other pages (e.g., /logs?filter=1.2.3.4) and the top-bar search hand-off
 		const params = $page.url.searchParams;
-		const urlFilter = params.get('filter');
-		const urlIp = params.get('ip');
-		const urlQuery = params.get('query');
-		const search = JSON.stringify([urlFilter, urlIp, urlQuery]);
+		const keys = ['filter', 'ip', 'query', 'range', 'from', 'to'] as const;
+		const [urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo] = keys.map((k) => params.get(k));
+		const search = JSON.stringify([urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo]);
 		untrack(() => {
 			// The hash changes too (the KPI links); only a new search runs one
 			if (search === appliedSearch) return;
 			const first = appliedSearch === null;
 			appliedSearch = search;
-			// A link from a page with its own window (?range=, NET-160) opens on that window
-			const urlRange = params.get('range');
-			if (first && TIME_RANGES.some((r) => r.value === urlRange)) selectedTimeRange = urlRange as TimeRange;
+			const windowBefore = JSON.stringify([selectedTimeRange, custom?.from, custom?.to]);
+			// A link from a page with its own window (NET-160) opens on that window: the exact one
+			// (?from=&to=, "Custom") when it gives it, otherwise its ?range=
+			custom = customRange(urlFrom, urlTo);
+			selectedTimeRange = custom
+				? 'custom'
+				: TIME_RANGES.some((r) => r.value === urlRange)
+					? (urlRange as TimeRange)
+					: selectedTimeRange === 'custom'
+						? '24h'
+						: selectedTimeRange;
 			// A hand-off replaces the last one's IP filter and text; the first load starts from neither
 			activeIpFilter = urlFilter || urlIp || '';
 			query = urlFilter || urlIp ? '' : (urlQuery ?? '');
@@ -870,6 +960,9 @@
 					initialized = true;
 				});
 				fetchFieldDefs();
+			} else if (JSON.stringify([selectedTimeRange, custom?.from, custom?.to]) !== windowBefore) {
+				// a new window reloads every card, as picking a range does, so no old figure sits under its words
+				handleTimeRangeChange(selectedTimeRange);
 			} else {
 				fetchLogs();
 			}
@@ -891,6 +984,16 @@ OLD CODE END -->
 {#snippet destinationIpCell(r: LogRow)}{@render ipValue(getNestedValue(r.hit._source, 'destination.ip'))}{/snippet}
 <!-- OLD CODE START: {#snippet dhcpIpCell(r: LogRow)}{@render ipValue(getNestedValue(r.hit._source, 'zeek.dhcp.client_addr'))}{/snippet} (I6) OLD CODE END -->
 {#snippet dhcpIpCell(r: LogRow)}{@render ipValue(getNestedValue(r.hit._source, 'zeek.dhcp.assigned_ip'))}{/snippet}
+<!-- A host name links to its domain page; an address, host:port or anything else stays text. An array is
+     joined text, never one link, as the address cells do. -->
+{#snippet domainValue(value: unknown)}
+	{#if typeof value === 'string' && isHostName(value) && !isIpAddress(canonicalName(value))}<a href={domainHref(value)}>{value}</a>
+	{:else if value != null && value !== ''}{Array.isArray(value) ? value.join(', ') : String(value)}
+	{:else}--{/if}
+{/snippet}
+{#snippet dnsQueryCell(r: LogRow)}{@render domainValue(getNestedValue(r.hit._source, 'zeek.dns.query'))}{/snippet}
+{#snippet httpHostCell(r: LogRow)}{@render domainValue(getNestedValue(r.hit._source, 'zeek.http.host'))}{/snippet}
+{#snippet sslNameCell(r: LogRow)}{@render domainValue(getNestedValue(r.hit._source, 'zeek.ssl.server_name'))}{/snippet}
 
 {#snippet timelineBody()}
 	<AreaChart
@@ -1005,7 +1108,8 @@ OLD CODE END -->
 		<p class="page-sub">Every Zeek and Suricata log entry in the range, searchable. Devices excluded in Settings are counted here too, so figures can differ from the DNS and Devices pages.</p>
 	</div>
 	<div class="head-actions">
-		<Pills options={TIME_RANGES} value={selectedTimeRange} onchange={handleTimeRangeChange} ariaLabel="Time range" />
+		<!-- OLD CODE: <Pills options={TIME_RANGES} value={selectedTimeRange} onchange={handleTimeRangeChange} ariaLabel="Time range" /> (slice 2a: Custom) -->
+		<Pills options={rangeOptions} value={selectedTimeRange} onchange={handleTimeRangeChange} ariaLabel="Time range" />
 		<button class="btn" type="button" aria-pressed={autoRefresh} onclick={toggleAutoRefresh}>
 			<Icon name="refresh" />{autoRefresh ? 'Auto-refresh on' : 'Auto-refresh'}
 		</button>
@@ -1030,7 +1134,8 @@ OLD CODE END -->
 	<KpiCard class="c-3" label="Protocols" icon="connections" value={statsLoaded ? protocolCount : '—'} note="Distinct log types" href="#protocol-section" />
 	<KpiCard class="c-3" label="Data volume" icon="bandwidth" value={statsLoaded ? formatBytes(totalBytesVal) : '—'} note="Total bytes transferred" href="#log-table" />
 
-	<Card title="Activity timeline" sub="Log events per {INTERVAL_WORDS[INTERVAL_MAP[selectedTimeRange]] ?? 'hour'} · {rangeWords}" hero col class="c-8">
+	<!-- OLD CODE: sub="Log events per {INTERVAL_WORDS[INTERVAL_MAP[selectedTimeRange]] ?? 'hour'} · {rangeWords}" (slice 2a: Custom) -->
+	<Card title="Activity timeline" sub="Log events per {INTERVAL_WORDS[INTERVAL_MAP[intervalRange]] ?? 'hour'} · {rangeWords}" hero col class="c-8">
 		{@render section('the activity timeline', timelineFailed, timeline.length > 0, 'No timeline data available', 'Events appear here once Zeek is processing traffic.', timelineBody)}
 	</Card>
 
@@ -1152,7 +1257,8 @@ OLD CODE END -->
 >
 	{#snippet children()}
 		{#if drawerHit}
-			<LogDrawerContent hit={drawerHit} activeTab={drawerTab} timeRange={timeRangeToISO(selectedTimeRange)} />
+			<!-- OLD CODE: <LogDrawerContent hit={drawerHit} activeTab={drawerTab} timeRange={timeRangeToISO(selectedTimeRange)} /> (slice 2a: the rows' own window) -->
+			<LogDrawerContent hit={drawerHit} activeTab={drawerTab} timeRange={tableWindow?.from ?? ''} />
 		{/if}
 	{/snippet}
 	{#snippet actions()}

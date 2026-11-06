@@ -8,6 +8,7 @@
  */
 import type { CertDetail, CertDevice, CertFinding, CertSite, FindingKind } from '$lib/api/certificates';
 import { loadFailed } from '$lib/utils/load-failed';
+import { customRange, formatWhen } from '$lib/utils/drilldown';
 
 export type Names = ReadonlyMap<string, string>;
 
@@ -35,25 +36,29 @@ export interface CustomRange extends RangeOption {
 	to: string;
 }
 
-/**
- * The window from a drill-down link (NET-160): the address and domain pages pass the window
- * their figures came from, so the certificates match them. Null unless both ends are dates
- * and `from` is before `to`.
- */
-export function customRange(from: string | null, to: string | null): CustomRange | null {
-	if (!from || !to) return null;
-	const start = new Date(from);
-	const end = new Date(to);
-	if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start >= end) return null;
-	return {
-		value: 'custom',
-		label: 'Custom',
-		hours: (end.getTime() - start.getTime()) / 3_600_000,
-		words: `window ${formatWhen(start.toISOString())} to ${formatWhen(end.toISOString())}`,
-		from: start.toISOString(),
-		to: end.toISOString(),
-	};
-}
+// OLD CODE START — slice 2a: moved to lib/utils/drilldown.ts, so Log Explorer and Alerts take
+// the same Custom window
+// /**
+//  * The window from a drill-down link (NET-160): the address and domain pages pass the window
+//  * their figures came from, so the certificates match them. Null unless both ends are dates
+//  * and `from` is before `to`.
+//  */
+// export function customRange(from: string | null, to: string | null): CustomRange | null {
+// 	if (!from || !to) return null;
+// 	const start = new Date(from);
+// 	const end = new Date(to);
+// 	if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start >= end) return null;
+// 	return {
+// 		value: 'custom',
+// 		label: 'Custom',
+// 		hours: (end.getTime() - start.getTime()) / 3_600_000,
+// 		words: `window ${formatWhen(start.toISOString())} to ${formatWhen(end.toISOString())}`,
+// 		from: start.toISOString(),
+// 		to: end.toISOString(),
+// 	};
+// }
+// OLD CODE END
+export { customRange };
 
 const fmt = (n: number): string => n.toLocaleString('en-GB');
 const plural = (n: number, one: string, many = `${one}s`): string => `${fmt(n)} ${n === 1 ? one : many}`;
@@ -113,14 +118,17 @@ export function formatDay(iso: string | null | undefined): string {
 	return Number.isFinite(d.getTime()) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : iso;
 }
 
-/** "5 Nov, 21:05"; "—" when missing. */
-export function formatWhen(iso: string | null | undefined): string {
-	if (!iso) return '—';
-	const d = new Date(iso);
-	return Number.isFinite(d.getTime())
-		? d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
-		: iso;
-}
+// OLD CODE START — slice 2a: moved to lib/utils/drilldown.ts with customRange, which words windows with it
+// /** "5 Nov, 21:05"; "—" when missing. */
+// export function formatWhen(iso: string | null | undefined): string {
+// 	if (!iso) return '—';
+// 	const d = new Date(iso);
+// 	return Number.isFinite(d.getTime())
+// 		? d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+// 		: iso;
+// }
+// OLD CODE END
+export { formatWhen };
 
 /** Whole days left, as the daemon counts them (rounded down), in words. */
 export function runsOut(days: number | null | undefined): string {

@@ -117,6 +117,28 @@ describe('Device by MAC page', () => {
 	});
 });
 
+// NET-160 slice 2a: an alert's signature opens the alerts list for it
+describe('Device by MAC page — signature links', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('links each alert signature to /alerts?signature=…', async () => {
+		const reply = REPLIES[`/api/devices/registry/${encodeURIComponent(MAC)}/traffic`] as { traffic: Record<string, unknown> };
+		const withAlerts = { ...reply, traffic: { ...reply.traffic, alerts: [{ timestamp: '2026-11-06T10:00:00Z', severity: 2, signature: 'ET POLICY Ubiquiti check-in' }] } };
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const path = url.split('?')[0];
+				const body = path.endsWith('/traffic') ? withAlerts : REPLIES[path];
+				return { ok: true, status: 200, json: async () => body };
+			}),
+		);
+		const { container } = render(Page);
+		const link = await screen.findByRole('link', { name: 'ET POLICY Ubiquiti check-in' });
+		expect(link).toHaveAttribute('href', '/alerts?signature=ET+POLICY+Ubiquiti+check-in');
+		expectNoNestedInteractive(container);
+	});
+});
+
 // #96: every failure read as "Device not found"
 describe('Device by MAC page — failed request', () => {
 	afterEach(() => vi.unstubAllGlobals());

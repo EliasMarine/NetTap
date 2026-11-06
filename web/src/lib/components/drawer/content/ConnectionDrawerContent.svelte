@@ -26,6 +26,7 @@
 	import type { RelatedConnectionsResponse } from '$api/traffic';
 	import { getAlerts } from '$api/alerts';
 	import type { Alert } from '$api/alerts';
+	import { alertsHrefForSignature } from '$lib/utils/drilldown';
 
 	interface Connection {
 		_id: string;
@@ -472,7 +473,12 @@
 						{@const level = suricataLevel(alert.alert?.severity)}
 						<div class="threat-item">
 							<SeverityPill {level} />
-							<span class="threat-sig">{alert.alert?.signature || alert.rule_name || 'Unknown alert'}</span>
+							<!-- OLD CODE: <span class="threat-sig">{alert.alert?.signature || alert.rule_name || 'Unknown alert'}</span> (slice 2a: not a link) -->
+							{#if alert.alert?.signature}
+								<a class="threat-sig" href={alertsHrefForSignature(alert.alert.signature)}>{alert.alert.signature}</a>
+							{:else}
+								<span class="threat-sig">{alert.rule_name || 'Unknown alert'}</span>
+							{/if}
 						</div>
 					{/each}
 					{#if threatAlerts.length > 5}

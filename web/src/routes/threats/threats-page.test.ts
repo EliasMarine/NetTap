@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import ThreatsPage from './+page.svelte';
+import { LAN_POLICY } from '../../../e2e/visual/fixtures/drilldown';
+import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
 // #96: a failed detector returned [] and the page said "No beaconing patterns detected"; a
 // failed report request was replaced with an all-zero report reading threat level "none".
@@ -77,6 +79,18 @@ describe('Threats page', () => {
 		await vi.waitFor(() => expect(screen.getByText('1 suspect')).toBeInTheDocument());
 		expect(screen.getByText(/contacts 12 internet hosts on regular schedules/)).toBeInTheDocument();
 		expect(screen.queryByText('198.51.100.3', { exact: false })).not.toBeInTheDocument();
+	});
+
+	// NET-160 slice 2a: lateral movement's addresses drill down; an internet one to its address page
+	it('links both ends of a lateral movement', async () => {
+		stubDaemon({
+			'/api/threats/report': { ...REPORT, lateral_movement: [{ ...REPORT.lateral_movement[0], destination_ip: '198.51.100.7' }], failed_checks: [], incomplete_checks: [] },
+			'/api/network/lan': LAN_POLICY,
+		});
+		const { container } = render(ThreatsPage);
+		await vi.waitFor(() => expect(screen.getByRole('link', { name: '198.51.100.7' })).toHaveAttribute('href', '/address/198.51.100.7'));
+		await vi.waitFor(() => expect(screen.getByRole('link', { name: '192.168.1.66' })).toHaveAttribute('href', '/devices/192.168.1.66'));
+		expectNoNestedInteractive(container);
 	});
 
 	it('says a failed auto-investigation failed instead of hiding it', async () => {

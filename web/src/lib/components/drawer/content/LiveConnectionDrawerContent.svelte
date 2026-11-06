@@ -14,6 +14,7 @@
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import { suricataLevel } from '$lib/utils/severity';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { alertsHrefForSignature } from '$lib/utils/drilldown';
 
 	// ---------------------------------------------------------------------------
 	// Props
@@ -218,7 +219,8 @@
 							<SeverityPill level={severityLevel(alert.severity)} />
 							<span class="alert-time">{formatTimestamp(alert.timestamp)}</span>
 						</div>
-						<div class="alert-sig">{alert.signature}</div>
+						<!-- OLD CODE: <div class="alert-sig">{alert.signature}</div> (slice 2a: not a link) -->
+						<div class="alert-sig">{#if alert.signature}<a href={alertsHrefForSignature(alert.signature)}>{alert.signature}</a>{/if}</div>
 						<div class="alert-cat">{alert.category}</div>
 					</div>
 				{/each}

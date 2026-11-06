@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	// OLD CODE: import { onDestroy, onMount } from 'svelte'; (slice 2a: the URL hand-off starts the first load, not onMount)
+	import { onDestroy, untrack } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import {
@@ -7,6 +8,8 @@
 		// OLD CODE START — the severity counts come from the shared alert snapshot (PLAN.md §4.1)
 		// getAlertCount,
 		// OLD CODE END
+		// slice 2a: a Custom window's counts are page-local (the shared snapshot holds rolling windows)
+		getAlertCount,
 		getAlertTimeline,
 		getAlertTopSignatures,
 		getAlertTopIps,
@@ -47,7 +50,8 @@
 	// OLD CODE END
 	import { severityRank } from '$lib/utils/table-sort.svelte';
 	import { severityBuckets, type SeverityLevel } from '$lib/utils/severity';
-	import { alertSnapshots, loadAlertSnapshot, refreshAlertSnapshots } from '$lib/stores/alertSnapshot';
+	import { alertSnapshots, loadAlertSnapshot, refreshAlertSnapshots, type AlertSnapshot } from '$lib/stores/alertSnapshot';
+	import { alertsHrefForSignature, customRange, type CustomWindow, type DrillWindow } from '$lib/utils/drilldown';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -114,9 +118,17 @@
 	/** The alert list has answered at least once. */
 	let listLoaded = $state(false);
 	// OLD CODE START: let selectedTimeRange = $state('24h'); — a link's ?range= was ignored OLD CODE END
-	// A link from a page with its own window (?range=, NET-160) opens on that window when it is one of ours
-	const urlRange = $page.url.searchParams.get('range');
-	let selectedTimeRange = $state(TIME_RANGES.some((r) => r.value === urlRange) ? (urlRange as string) : '24h');
+	// OLD CODE START — 2026-11-06 (slice 2a): read once; the URL hand-off below applies ?range= on every change
+	// // A link from a page with its own window (?range=, NET-160) opens on that window when it is one of ours
+	// const urlRange = $page.url.searchParams.get('range');
+	// let selectedTimeRange = $state(TIME_RANGES.some((r) => r.value === urlRange) ? (urlRange as string) : '24h');
+	// OLD CODE END
+	/** One of TIME_RANGES, or 'custom' while a link's exact window (?from=&to=) is on. */
+	let selectedTimeRange = $state('24h');
+	/** The URL's standard range (24h without one): the words and fallback a Custom window travels with. */
+	let baseRange = $state('24h');
+	/** The exact window a link brought (?from=&to=, NET-160 slice 2a), shown as "Custom". */
+	let custom = $state<CustomWindow | null>(null);
 	let autoRefresh = $state(false);
 	let refreshInterval = $state<ReturnType<typeof setInterval> | null>(null);
 
@@ -139,12 +151,22 @@
 	// Filters
 	let activeFilter = $state<SeverityFilter>('all');
 	let signatureSearch = $state('');
-	let urlSignature = $page.url.searchParams.get('signature') || '';
+	// OLD CODE START — 2026-11-06 (slice 2a): signature was read once and ip derived; the URL hand-off applies both now
+	// let urlSignature = $page.url.searchParams.get('signature') || '';
+	// OLD CODE END
 	let urlCategory = $page.url.searchParams.get('category') || '';
-	let signatureFilter = $state(urlSignature);
-	let ipFilter = $derived($page.url.searchParams.get('ip') || '');
+	// OLD CODE START — 2026-11-06 (slice 2a)
+	// let signatureFilter = $state(urlSignature);
+	// let ipFilter = $derived($page.url.searchParams.get('ip') || '');
+	// OLD CODE END
+	let signatureFilter = $state('');
+	let ipFilter = $state('');
 
 	// Pagination
+	/** The current search's window: paging reuses it, so rows arriving between pages don't shift the list. */
+	let listWindow = $state<DrillWindow>({ from: '', to: '' });
+	/** The window and range words of the rows on screen; set when a list lands, so links never run ahead of the rows. */
+	let shownWindow = $state<DrillWindow & { range: string }>({ from: '', to: '', range: '24h' });
 	let currentPage = $state(1);
 	let totalPages = $state(0);
 	let totalAlerts = $state(0);
@@ -271,10 +293,18 @@
 	// The daemon returns the rows in the table's order (#146)
 	let sortedAlerts = $derived(alerts);
 
-	const range = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange) ?? TIME_RANGES[3]);
+	// OLD CODE START — 2026-11-06 (slice 2a): no Custom window, and the counts were always the shared snapshot's
+	// const range = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange) ?? TIME_RANGES[3]);
+	// const rangeHours = $derived(range.ms / 3_600_000);
+	// // One global count per window, shared with Home and the sidebar (PLAN.md §4.1)
+	// const snapshot = $derived($alertSnapshots[rangeHours]);
+	// OLD CODE END
+	const range = $derived(rangeFor(selectedTimeRange, custom));
 	const rangeHours = $derived(range.ms / 3_600_000);
-	// One global count per window, shared with Home and the sidebar (PLAN.md §4.1)
-	const snapshot = $derived($alertSnapshots[rangeHours]);
+	/** A Custom window's severity counts, loaded by this page: the shared snapshot holds rolling windows only. */
+	let customCounts = $state<AlertSnapshot | null>(null);
+	// One global count per rolling window, shared with Home and the sidebar (PLAN.md §4.1)
+	const snapshot = $derived(range.value === 'custom' ? customCounts : $alertSnapshots[rangeHours]);
 	// on 'error' the store keeps the last good counts (#96): show them with a stale note, as Home does
 	const counts = $derived(snapshot?.data?.counts);
 	const buckets = $derived(counts ? severityBuckets(counts) : []);
@@ -301,21 +331,41 @@
 	// 	}
 	// }
 	// OLD CODE END
-	function filterCountForTab(filter: SeverityFilter): string {
-		if (!counts) return '—';
-		const n = filter === 'all' ? counts.total : (buckets.find((b) => b.level === filter)?.count ?? 0);
-		return n.toLocaleString('en-GB');
-	}
-
-	const severityOptions = $derived(
-		SEVERITY_FILTERS.map((f) => ({ value: f.value, label: `${f.label} ${filterCountForTab(f.value)}` })),
-	);
+	// OLD CODE START — 2026-11-06 (slice 2a): the pills filter the list over its own window and filters, so
+	// the card's counts beside them could be another window's; the tiles above carry the counts
+	// function filterCountForTab(filter: SeverityFilter): string {
+	// 	if (!counts) return '—';
+	// 	const n = filter === 'all' ? counts.total : (buckets.find((b) => b.level === filter)?.count ?? 0);
+	// 	return n.toLocaleString('en-GB');
+	// }
+	//
+	// const severityOptions = $derived(
+	// 	SEVERITY_FILTERS.map((f) => ({ value: f.value, label: `${f.label} ${filterCountForTab(f.value)}` })),
+	// );
+	// OLD CODE END
+	const severityOptions = SEVERITY_FILTERS;
 
 	// ---------------------------------------------------------------------------
 	// Helpers
 	// ---------------------------------------------------------------------------
 
+	/**
+	 * Our range for `value`. Custom takes its window's span and words, and the timeline bucket of the
+	 * smallest standard range that covers it.
+	 */
+	function rangeFor(value: string, win: CustomWindow | null) {
+		if (value === 'custom' && win) {
+			const ms = win.hours * 3_600_000;
+			const fit = TIME_RANGES.find((r) => r.ms >= ms) ?? TIME_RANGES[TIME_RANGES.length - 1];
+			return { label: win.label, value: win.value, ms, words: win.words, interval: INTERVAL_MAP[fit.value] };
+		}
+		const r = TIME_RANGES.find((t) => t.value === value) ?? TIME_RANGES[3];
+		return { ...r, interval: INTERVAL_MAP[r.value] };
+	}
+
 	function getTimeRange(): { from: string; to: string } {
+		// slice 2a: a Custom window is fixed, not a span ending now
+		if (selectedTimeRange === 'custom' && custom) return { from: custom.from, to: custom.to };
 		const now = Date.now();
 		const range = TIME_RANGES.find((r) => r.value === selectedTimeRange) || TIME_RANGES[3];
 		return {
@@ -402,7 +452,8 @@
 	function changeSort(key: string, dir: 'asc' | 'desc') {
 		sortKey = key as SortKey;
 		sortDir = dir;
-		fetchAlerts(1);
+		// OLD CODE: fetchAlerts(1); (slice 2a: page 1 of a new search takes a new window; paging keeps it)
+		fetchAlerts(1, getTimeRange());
 	}
 
 	function copyToClipboard(text: string, e: Event) {
@@ -601,9 +652,11 @@
 		};
 	}
 
-	function applyList(result: PromiseSettledResult<AlertsListResponse>) {
+	// OLD CODE: function applyList(result: PromiseSettledResult<AlertsListResponse>) { (slice 2a: rows didn't keep their window)
+	function applyList(result: PromiseSettledResult<AlertsListResponse>, shown: DrillWindow & { range: string }) {
 		if (result.status === 'fulfilled') {
 			const r = result.value;
+			shownWindow = shown;
 			alerts = r.alerts;
 			totalPages = r.total_pages;
 			totalAlerts = r.total;
@@ -621,6 +674,12 @@
 	// The list has its own generation as well, so a filter change mid-refresh drops only the
 	// refresh's stale list and keeps the rest of what it loaded
 	const listGuard = createLoadGuard();
+	/**
+	 * A list request is out. Its rows replace the ones on screen, so the pager waits for them: a page
+	 * asked for now would mix the new filters with the shown rows' window, and its request would
+	 * discard the new search's answer.
+	 */
+	let listPending = $state(false);
 	/** The snapshot window this page already loaded: loading it again is a refresh. */
 	let snapshotHoursLoaded: number | null = null;
 
@@ -631,18 +690,34 @@
 	async function loadAll(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
 		const lg = listGuard.begin();
-		const timeRange = TIME_RANGES.find((r) => r.value === selectedTimeRange) ?? TIME_RANGES[3];
+		listPending = true;
+		// OLD CODE START — 2026-11-06 (slice 2a): no Custom window
+		// const timeRange = TIME_RANGES.find((r) => r.value === selectedTimeRange) ?? TIME_RANGES[3];
+		// OLD CODE END
+		const timeRange = rangeFor(selectedTimeRange, custom);
 		const hours = timeRange.ms / 3_600_000;
 		const { from, to } = getTimeRange();
-		const interval = INTERVAL_MAP[timeRange.value] || '1h';
+		// OLD CODE: const interval = INTERVAL_MAP[timeRange.value] || '1h'; (slice 2a: Custom has no entry)
+		const interval = timeRange.interval;
 		const list = listParams(currentPage, { from, to });
+		listWindow = { from, to };
+		const shown = { from, to, range: baseRange };
+		const customWindow = timeRange.value === 'custom' ? { from, to } : null;
 
-		// A refresh moves every reader of the shared count (sidebar, Home) to the new window together
-		if (snapshotHoursLoaded === hours) void refreshAlertSnapshots();
-		snapshotHoursLoaded = hours;
+		// OLD CODE START — 2026-11-06 (slice 2a): every window was the shared snapshot's
+		// // A refresh moves every reader of the shared count (sidebar, Home) to the new window together
+		// if (snapshotHoursLoaded === hours) void refreshAlertSnapshots();
+		// snapshotHoursLoaded = hours;
+		// OLD CODE END
+		if (!customWindow) {
+			// A refresh moves every reader of the shared count (sidebar, Home) to the new window together
+			if (snapshotHoursLoaded === hours) void refreshAlertSnapshots();
+			snapshotHoursLoaded = hours;
+		}
 
 		const [snap, results] = await Promise.all([
-			loadAlertSnapshot(hours),
+			// OLD CODE: loadAlertSnapshot(hours), (slice 2a: a Custom window counts on this page)
+			customWindow ? loadCustomCounts(customWindow, hours) : loadAlertSnapshot(hours),
 			Promise.allSettled([
 				getAlertTimeline({ from, to, interval }),
 				getAlertTopSignatures({ from, to, limit: 20 }),
@@ -657,6 +732,7 @@
 		const succeeded = [snap.status === 'ok', ...results.map((r) => r.status === 'fulfilled')];
 		if (!guard.current(g)) return 'skipped';
 
+		if (customWindow) customCounts = snap;
 		if (tl.status === 'fulfilled') timeline = tl.value.buckets;
 		if (sigs.status === 'fulfilled') topSignatures = sigs.value.signatures;
 		if (dest.status === 'fulfilled') topDestIps = dest.value.ips;
@@ -669,82 +745,164 @@
 		}
 		const sections = ['timeline', 'signatures', 'destIps', 'srcIps', 'categories', 'alerts', 'summary'];
 		failed = { ...Object.fromEntries(sections.map((name, i) => [name, results[i].status === 'rejected'])), alerts: failed.alerts ?? false };
-		if (listGuard.current(lg)) applyList(listResult);
+		// OLD CODE: if (listGuard.current(lg)) applyList(listResult);
+		// OLD CODE: if (listGuard.current(lg)) applyList(listResult, shown); (the pager didn't wait)
+		if (listGuard.current(lg)) {
+			applyList(listResult, shown);
+			listPending = false;
+		}
 		loaded = true;
 
 		if (succeeded.every(Boolean)) return 'ok';
 		return succeeded.some(Boolean) ? 'partial' : 'failed';
 	}
 
+	/**
+	 * A Custom window's counts, from the same /api/alerts/count the shared snapshot uses. A new window
+	 * shows loading; a failed refresh of the same window keeps the last figures with a stale note (#96).
+	 */
+	function loadCustomCounts(win: DrillWindow, hours: number): Promise<AlertSnapshot> {
+		const sameWindow = customCounts?.from === win.from && customCounts?.to === win.to;
+		const last = sameWindow ? (customCounts?.data ?? null) : null;
+		if (!sameWindow) customCounts = { status: 'loading', hours, ...win, data: null };
+		return getAlertCount({ from: win.from, to: win.to }).then(
+			(data): AlertSnapshot => ({ status: 'ok', hours, ...win, data }),
+			(): AlertSnapshot => ({ status: 'error', hours, ...win, data: last }),
+		);
+	}
+
 	const refresh = registerPageRefresh(loadAll);
 
-	async function fetchAlerts(pg: number = 1) {
+	// OLD CODE START — 2026-11-06 (slice 2a): every page recomputed the window, so rows arriving between pages shifted the list
+	// async function fetchAlerts(pg: number = 1) {
+	// 	const lg = listGuard.begin();
+	// 	const params = listParams(pg, getTimeRange());
+	// OLD CODE END
+	/** Page `pg` of the list over `win`: the current search's window unless a new search passes its own. */
+	async function fetchAlerts(pg: number = 1, win: DrillWindow = listWindow) {
 		const lg = listGuard.begin();
-		const params = listParams(pg, getTimeRange());
+		listPending = true;
+		listWindow = win;
+		const shown = { ...win, range: baseRange };
+		const params = listParams(pg, win);
 		const result = await getAlerts(params).then(
 			(value): PromiseSettledResult<AlertsListResponse> => ({ status: 'fulfilled', value }),
 			(reason): PromiseSettledResult<AlertsListResponse> => ({ status: 'rejected', reason }),
 		);
-		if (listGuard.current(lg)) applyList(result);
+		// OLD CODE: if (listGuard.current(lg)) applyList(result);
+		// OLD CODE: if (listGuard.current(lg)) applyList(result, shown); (the pager didn't wait)
+		if (listGuard.current(lg)) {
+			applyList(result, shown);
+			listPending = false;
+		}
 	}
 
 	function scrollToList() {
 		document.getElementById('alerts-table')?.scrollIntoView?.({ behavior: 'smooth' });
 	}
 
+	// The list's filters and window, in the URL (slice 2a)
+	const LIST_PARAMS = ['severity', 'signature', 'ip', 'range', 'from', 'to'] as const;
+
+	/** Change only the given list parameters in the URL (null drops one); the URL hand-off below applies them. */
+	function setListParams(changes: Partial<Record<(typeof LIST_PARAMS)[number], string | null>>) {
+		const url = new URL($page.url);
+		for (const [key, value] of Object.entries(changes)) {
+			if (value) url.searchParams.set(key, value);
+			else url.searchParams.delete(key);
+		}
+		return goto(`${url.pathname}${url.search}`, { replaceState: true, keepFocus: true, noScroll: true });
+	}
+
+	// OLD CODE START — 2026-11-06 (slice 2a): the controls set local state and fetched; they write the URL now
+	// function handleTimeRangeChange(value: string) {
+	// 	selectedTimeRange = value;
+	// 	// A new time range is a new result set: start from page 1
+	// 	// OLD CODE START — waited for the first load; the guards drop whichever load is older now
+	// 	// if (initialized) fetchAll(1);
+	// 	// OLD CODE END
+	// 	currentPage = 1;
+	// 	refresh.run();
+	// }
+	//
+	// function handleSeverityChange(value: SeverityFilter) {
+	// 	activeFilter = value;
+	// 	// OLD CODE START — waited for the first load; the list guard drops the older list now
+	// 	// if (initialized) fetchAlerts(1);
+	// 	// OLD CODE END
+	// 	fetchAlerts(1);
+	// }
+	//
+	// /** A severity tile: filter the list by that severity and bring it into view (the old stat cards). */
+	// function showSeverity(level: SeverityFilter) {
+	// 	handleSeverityChange(level);
+	// 	scrollToList();
+	// }
+	//
+	// function filterBySignature(sig: string) {
+	// 	// Toggle: click same signature again to clear filter
+	// 	if (signatureFilter === sig) {
+	// 		signatureFilter = '';
+	// 	} else {
+	// 		signatureFilter = sig;
+	// 	}
+	// 	// OLD CODE START — waited for the first load; the list guard drops the older list now
+	// 	// if (initialized) {
+	// 	// 	fetchAlerts(1).then(() => {
+	// 	// 		document.getElementById('alerts-table')?.scrollIntoView({ behavior: 'smooth' });
+	// 	// 	});
+	// 	// }
+	// 	// OLD CODE END
+	// 	fetchAlerts(1).then(scrollToList);
+	// }
+	//
+	// function clearSignatureFilter() {
+	// 	signatureFilter = '';
+	// 	// OLD CODE START — waited for the first load; the list guard drops the older list now
+	// 	// if (initialized) fetchAlerts(1);
+	// 	// OLD CODE END
+	// 	fetchAlerts(1);
+	// }
+	// OLD CODE END
+
+	/** A range pill: a rolling window ending now, so the link's exact window (Custom) goes. */
 	function handleTimeRangeChange(value: string) {
-		selectedTimeRange = value;
-		// A new time range is a new result set: start from page 1
-		// OLD CODE START — waited for the first load; the guards drop whichever load is older now
-		// if (initialized) fetchAll(1);
-		// OLD CODE END
-		currentPage = 1;
-		refresh.run();
+		if (value !== 'custom') void setListParams({ range: value, from: null, to: null });
 	}
 
 	function handleSeverityChange(value: SeverityFilter) {
-		activeFilter = value;
-		// OLD CODE START — waited for the first load; the list guard drops the older list now
-		// if (initialized) fetchAlerts(1);
-		// OLD CODE END
-		fetchAlerts(1);
+		void setListParams({ severity: value === 'all' ? null : value });
 	}
 
-	/** A severity tile: filter the list by that severity and bring it into view (the old stat cards). */
+	/**
+	 * A severity tile opens the alerts it counts: that level, every signature and address, over the
+	 * displayed counts' own window (on a failed refresh, the older figures' window), then brings the list into view.
+	 */
 	function showSeverity(level: SeverityFilter) {
-		handleSeverityChange(level);
+		const data = snapshot?.data;
+		if (!data) return;
+		const q = new URLSearchParams({ severity: level, from: data.from, to: data.to, range: baseRange });
+		void goto(`/alerts?${q.toString()}`, { keepFocus: true, noScroll: true });
 		scrollToList();
 	}
 
-	function filterBySignature(sig: string) {
-		// Toggle: click same signature again to clear filter
-		if (signatureFilter === sig) {
-			signatureFilter = '';
-		} else {
-			signatureFilter = sig;
-		}
-		// OLD CODE START — waited for the first load; the list guard drops the older list now
-		// if (initialized) {
-		// 	fetchAlerts(1).then(() => {
-		// 		document.getElementById('alerts-table')?.scrollIntoView({ behavior: 'smooth' });
-		// 	});
-		// }
-		// OLD CODE END
-		fetchAlerts(1).then(scrollToList);
+	/** A top signature filters the list; selecting it again clears the filter. */
+	async function filterBySignature(sig: string) {
+		await setListParams({ signature: signatureFilter === sig ? null : sig });
+		scrollToList();
 	}
 
 	function clearSignatureFilter() {
-		signatureFilter = '';
-		// OLD CODE START — waited for the first load; the list guard drops the older list now
-		// if (initialized) fetchAlerts(1);
-		// OLD CODE END
-		fetchAlerts(1);
+		void setListParams({ signature: null });
 	}
 
 	// Pagination
 	function goToPage(pg: number) {
-		if (pg < 1 || pg > totalPages) return;
-		fetchAlerts(pg);
+		// OLD CODE: if (pg < 1 || pg > totalPages) return; (a page during a new search mixed two queries)
+		if (pg < 1 || pg > totalPages || listPending) return;
+		// OLD CODE: fetchAlerts(pg); (listWindow can be a refresh still in flight, so page 2 came from a newer window than page 1)
+		// Page through the window of the rows on screen
+		fetchAlerts(pg, { from: shownWindow.from, to: shownWindow.to });
 	}
 
 	// Auto-refresh
@@ -853,12 +1011,40 @@
 	// IP filter reactivity
 	// ---------------------------------------------------------------------------
 
-	let prevIpFilter: string | null = null;
+	// OLD CODE START — 2026-11-06 (slice 2a): only ip followed the URL (signature and range were read once),
+	// and it searched on the old window, so a link changing ip and the window together went half-applied
+	// let prevIpFilter: string | null = null;
+	// $effect(() => {
+	// 	if (prevIpFilter !== null && prevIpFilter !== ipFilter) {
+	// 		fetchAlerts(1);
+	// 	}
+	// 	prevIpFilter = ipFilter;
+	// });
+	// OLD CODE END
+	/** The list parameters last applied from the URL; null before the first load. */
+	let appliedUrl: string[] | null = null;
+	// The URL is the one source of the list's filters and window. A change applies all six together from
+	// page 1 with one request: a list search when only severity, signature or ip changed, otherwise a full
+	// reload on the new window. The first run is the page's first load.
 	$effect(() => {
-		if (prevIpFilter !== null && prevIpFilter !== ipFilter) {
-			fetchAlerts(1);
-		}
-		prevIpFilter = ipFilter;
+		const params = $page.url.searchParams;
+		const next = LIST_PARAMS.map((key) => params.get(key) ?? '');
+		untrack(() => {
+			const prev = appliedUrl;
+			if (prev && next.every((v, i) => v === prev[i])) return;
+			appliedUrl = next;
+			const [severity, signature, ip, rangeParam, from, to] = next;
+			activeFilter = SEVERITY_FILTERS.find((f) => f.value === severity)?.value ?? 'all';
+			signatureFilter = signature;
+			ipFilter = ip;
+			custom = customRange(from, to);
+			baseRange = TIME_RANGES.some((r) => r.value === rangeParam) ? rangeParam : '24h';
+			selectedTimeRange = custom ? 'custom' : baseRange;
+			currentPage = 1;
+			const sameWindow = prev !== null && next.slice(3).every((v, i) => v === prev[i + 3]);
+			if (sameWindow) void fetchAlerts(1, getTimeRange());
+			else void refresh.run();
+		});
 	});
 
 	// ---------------------------------------------------------------------------
@@ -875,9 +1061,11 @@
 	// 	};
 	// });
 	// OLD CODE END
-	onMount(() => {
-		refresh.run();
-	});
+	// OLD CODE START — 2026-11-06 (slice 2a): the URL hand-off's first run is the first load
+	// onMount(() => {
+	// 	refresh.run();
+	// });
+	// OLD CODE END
 
 	onDestroy(() => {
 		if (refreshInterval) clearInterval(refreshInterval);
@@ -948,7 +1136,13 @@
 	<span class="mono">{formatTimestamp(a.timestamp)}</span>{#if a.acknowledged}<span class="chip">Acknowledged</span>{/if}
 {/snippet}
 {#snippet severityCell(a: Alert)}<SeverityPill level={alertLevel(a.alert?.severity)} />{/snippet}
+<!-- OLD CODE START — slice 2a: the signature wasn't a link
 {#snippet signatureCell(a: Alert)}<span class="mono" title={a.alert?.signature || 'Unknown'}>{a.alert?.signature || 'Unknown'}</span>{/snippet}
+OLD CODE END -->
+<!-- Every alert with this signature, over the list's own window -->
+{#snippet signatureCell(a: Alert)}
+	{#if a.alert?.signature}<a class="mono" href={alertsHrefForSignature(a.alert.signature, shownWindow)} title={a.alert.signature}>{a.alert.signature}</a>{:else}<span class="mono">Unknown</span>{/if}
+{/snippet}
 {#snippet srcCell(a: Alert)}{#if a.src_ip}<IPAddress ip={a.src_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet destCell(a: Alert)}{#if a.dest_ip}<IPAddress ip={a.dest_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet protoCell(a: Alert)}{#if a.proto}<span class="tag">{a.proto.toUpperCase()}</span>{:else}<span class="dim">—</span>{/if}{/snippet}
@@ -975,8 +1169,9 @@
 		<p class="page-sub">What Suricata flagged on your network · {range.words}</p>
 	</div>
 	<div class="head-actions">
+		<!-- OLD CODE: options={TIME_RANGES.map((r) => ({ value: r.value, label: r.label }))} (slice 2a: no Custom) -->
 		<Pills
-			options={TIME_RANGES.map((r) => ({ value: r.value, label: r.label }))}
+			options={[...TIME_RANGES, ...(custom ? [custom] : [])].map((r) => ({ value: r.value, label: r.label }))}
 			value={selectedTimeRange}
 			onchange={handleTimeRangeChange}
 			ariaLabel="Time range"
@@ -1034,7 +1229,8 @@
 				{#if ipFilter}
 					<span class="chip">
 						IP: <span class="mono">{ipFilter}</span>
-						<button class="chip-x" type="button" onclick={() => goto('/alerts')} aria-label="Clear IP filter"><Icon name="close" /></button>
+						<!-- OLD CODE: onclick={() => goto('/alerts')} (slice 2a: cleared every other filter and the window too) -->
+						<button class="chip-x" type="button" onclick={() => setListParams({ ip: null })} aria-label="Clear IP filter"><Icon name="close" /></button>
 					</span>
 				{/if}
 			</div>
@@ -1075,7 +1271,7 @@
 					onrowactivate={openDrawer}
 					rowLabel={(a) => `Open alert ${a.alert?.signature || 'Unknown'}${a.src_ip ? ` from ${a.src_ip}` : ''}`}
 					selectedKey={selectedRowKey}
-					pager={totalPages > 1 ? { page: currentPage, pageCount: totalPages, total: totalAlerts, from: fromRow, to: toRow, onpage: goToPage } : undefined}
+					pager={totalPages > 1 ? { page: currentPage, pageCount: totalPages, total: totalAlerts, from: fromRow, to: toRow, onpage: goToPage, disabled: listPending } : undefined}
 				/>
 			{/if}
 		</div>
@@ -1095,7 +1291,8 @@
 </div>
 
 <div class="grid">
-	<Card class="c-8" hero title="Alert timeline" sub="Alerts per {INTERVAL_MAP[selectedTimeRange] ?? '1h'} · {range.words}">
+	<!-- OLD CODE: sub="Alerts per {INTERVAL_MAP[selectedTimeRange] ?? '1h'} · …" (slice 2a: Custom has no entry) -->
+	<Card class="c-8" hero title="Alert timeline" sub="Alerts per {range.interval} · {range.words}">
 		{#if !loaded}
 			<CardState state="loading" title="Loading the alert timeline" />
 		{:else if failed.timeline}

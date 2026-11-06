@@ -17,7 +17,8 @@
 	import { domainHref, ipHref } from '$lib/stores/lan';
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { namesByIp } from '$lib/utils/device-names';
-	import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown';
+	// OLD CODE: import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown'; (slice 2a)
+	import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { asString, getField } from '$lib/utils/tshark-filter';
 	import type { SortDir } from '$lib/utils/table-sort.svelte';
@@ -45,7 +46,9 @@
 	/** The window of the last load: links and connection pages use it, so they never slide in time. */
 	let span = $state<{ from: string; to: string }>({ from: '', to: '' });
 
-	let loaded = $state<{ data: AddressSummary; range: DrillRange } | null>(null);
+	// OLD CODE: let loaded = $state<{ data: AddressSummary; range: DrillRange } | null>(null); (slice 2a: the figures keep their window)
+	/** The figures on screen, with the range and exact window they were counted over. */
+	let loaded = $state<{ data: AddressSummary; range: DrillRange; window: DrillWindow } | null>(null);
 	let failure = $state<string | null>(null);
 	let geo = $state<GeoIPResult | null>(null);
 	let geoFailed = $state(false);
@@ -71,10 +74,14 @@
 	let connFailed = $state(false);
 	let connSortKey = $state<DeviceConnectionSort>('time');
 	let connSortDir = $state<SortDir>('desc');
+	/** The window the connections on screen (and their total) were counted over. */
+	let connWindow = $state<DrillWindow | null>(null);
 
 	const data = $derived(loaded?.data ?? null);
 	const shown = $derived(loaded?.range ?? range);
 	const words = $derived(shown.words);
+	/** NET-160 slice 2a: the window of the figures on screen, which their links carry; null before any land. */
+	const addressWindow = $derived(loaded?.window ?? null);
 
 	// --- Loading ---
 
@@ -200,7 +207,8 @@
 			landed(
 				getAddressSummary(target, s.from, s.to),
 				(d) => {
-					loaded = { data: d, range: r };
+					// OLD CODE: loaded = { data: d, range: r }; (slice 2a)
+					loaded = { data: d, range: r, window: s };
 					loadedView = view;
 					failure = null;
 				},
@@ -232,6 +240,7 @@
 			connTotal = res.value.total;
 			connPage = res.value.page;
 			connPages = res.value.total_pages;
+			connWindow = s;
 		} else {
 			// rows are specific to this page of results, so they are not kept as stale
 			connections = [];
@@ -388,7 +397,14 @@
 				}
 			: undefined,
 	);
-	const tlsCertificates = (t: TlsName) => certificatesHref({ site: t.name, server: data?.ip ?? ip, ...span });
+	// OLD CODE: const tlsCertificates = (t: TlsName) => certificatesHref({ site: t.name, server: data?.ip ?? ip, ...span }); (slice 2a: span moves when a refresh starts)
+	const tlsCertificates = (t: TlsName) => certificatesHref({ site: t.name, server: data?.ip ?? ip, ...(addressWindow ?? span) });
+	/** The port's connections in Log Explorer: the count's own filters (no source), over its window; null for a row without a port or transport. */
+	function portLogs(p: AddressPort): string | null {
+		if (p.port === null || !p.transport || !data || !addressWindow) return null;
+		const clauses = ['event.provider:zeek', 'event.dataset:conn', `destination.ip:"${data.ip}"`, `destination.port:${p.port}`, `network.transport:${p.transport}`];
+		return logsHrefForQuery(clauses, addressWindow, shown.value);
+	}
 </script>
 
 {#snippet peerCell(p: AddressPeer)}
@@ -414,7 +430,13 @@ OLD CODE END -->
 {#snippet transportCell(p: AddressPort)}<span class="tag">{p.transport.toUpperCase()}</span>{/snippet}
 {#snippet serviceCell(p: AddressPort)}{#if p.service}<span class="mono">{p.service}</span>{:else}<span class="dim">Not identified</span>{/if}{/snippet}
 OLD CODE END -->
-{#snippet portCell(p: AddressPort)}{#if p.port === null}<span class="dim">Unknown port</span>{:else}<span class="mono">{p.port}</span>{/if}{/snippet}
+<!-- OLD CODE START: {#snippet portCell(p: AddressPort)}{#if p.port === null}<span class="dim">Unknown port</span>{:else}<span class="mono">{p.port}</span>{/if}{/snippet} (slice 2a: not a link) OLD CODE END -->
+{#snippet portCell(p: AddressPort)}
+	{@const href = portLogs(p)}
+	{#if p.port === null}<span class="dim">Unknown port</span>
+	{:else if href}<a class="mono" {href}>{p.port}</a>
+	{:else}<span class="mono">{p.port}</span>{/if}
+{/snippet}
 {#snippet transportCell(p: AddressPort)}{#if p.transport}<span class="tag">{p.transport.toUpperCase()}</span>{:else}<span class="dim">—</span>{/if}{/snippet}
 <!-- OLD CODE START: {#snippet serviceCell(p: AddressPort)}{#if p.service}<span class="mono">{p.service}</span>{:else}<span class="dim">—</span>{/if}{/snippet} — a port now lists every service Zeek saw on it OLD CODE END -->
 {#snippet servicesCell(p: AddressPort)}{#if p.services.length}<span class="mono">{p.services.join(', ')}</span>{:else}<span class="dim">—</span>{/if}{/snippet}
@@ -688,7 +710,8 @@ OLD CODE END -->
 						>{connSortKey === 'time' && connSortDir === 'desc'
 							? `Showing the newest ${fmt(CONN_REACH)} of ${fmt(connTotal)}.`
 							: `Showing the first ${fmt(CONN_REACH)} of ${fmt(connTotal)} in this order.`} Narrow the time range to reach older ones, or
-						<a href={logsHrefForIp(ip, shown.value)}>search them all in Log Explorer</a>.</span
+						<!-- OLD CODE: <a href={logsHrefForIp(ip, shown.value)}>search them all in Log Explorer</a>.</span (slice 2a: the count's own window) -->
+						<a href={logsHrefForIp(ip, shown.value, connWindow ?? undefined)}>search them all in Log Explorer</a>.</span
 					>
 				</p>
 			{/if}

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/svelte';
 import { writable } from 'svelte/store';
 import { refreshPage } from '$lib/stores/pageRefresh';
@@ -158,5 +158,35 @@ describe('Domain page', () => {
 		expect(await refreshPage()).toBe('failed');
 		expect(screen.getByText(/Couldn't refresh this domain; showing the last figures loaded/)).toBeInTheDocument();
 		expect(kpi('Lookups')).toHaveTextContent('420');
+	});
+});
+
+// NET-160 slice 2a: a count's links carry the window it was counted in, not a newer refresh's
+describe('Domain page — exact windows', () => {
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date('2026-11-06T12:00:00Z'));
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	it("opens Log Explorer and Certificates on the figures' own window while a refresh is in flight", async () => {
+		stubDaemon(DOMAIN);
+		render(Page);
+		await vi.waitFor(() => expect(kpi('Lookups')).toHaveTextContent('420'));
+		const sent = calls.find((u) => u.pathname === '/api/domains/stream.example.net')!;
+		const win = [sent.searchParams.get('from'), sent.searchParams.get('to')];
+
+		vi.setSystemTime(new Date('2026-11-06T12:10:00Z'));
+		stubDaemon(new Promise(() => {}) as never);
+		void refreshPage();
+		await vi.waitFor(() => expect(calls.some((u) => u.pathname === '/api/domains/stream.example.net')).toBe(true));
+
+		const logs = new URL(screen.getByRole('link', { name: /Search Log Explorer for/ }).getAttribute('href')!, 'http://x');
+		expect(['query', 'from', 'to', 'range'].map((k) => logs.searchParams.get(k))).toEqual(['zeek.http.host:"stream.example.net"', ...win, '24h']);
+		const certs = new URL(screen.getByRole('link', { name: /Certificates seen for this name/ }).getAttribute('href')!, 'http://x');
+		expect(['from', 'to'].map((k) => certs.searchParams.get(k))).toEqual(win);
 	});
 });

@@ -19,6 +19,7 @@
 	} from '$lib/api/certificates';
 	import { getRegistryDevices } from '$lib/api/devices-registry';
 	import { outcome, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { ipHref } from '$lib/stores/lan';
 	import { namesByIp } from '$lib/utils/device-names';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { sortRows, type SortDir } from '$lib/utils/table-sort.svelte';
@@ -660,7 +661,8 @@
 
 {#snippet deviceCell(d: CertDevice)}
 	{#if d.server}
-		<a href="/devices/{encodeURIComponent(d.server)}" title={d.server}>{deviceName(d.server, names)}</a><span class="mono dim">:{d.port ?? '—'}</span>
+		<!-- OLD CODE: <a href="/devices/{encodeURIComponent(d.server)}" title={d.server}>{deviceName(d.server, names)}</a><span class="mono dim">:{d.port ?? '—'}</span> (slice 2a: an internet address has no device page) -->
+		<a href={$ipHref(d.server)} title={d.server}>{deviceName(d.server, names)}</a><span class="mono dim">:{d.port ?? '—'}</span>
 	{:else}<span class="dim">—</span>{/if}
 {/snippet}
 {#snippet deviceSiteCell(d: CertDevice)}<span class="mono trunc" title={siteName(d.site, d.server)}>{siteName(d.site, d.server)}</span>{/snippet}

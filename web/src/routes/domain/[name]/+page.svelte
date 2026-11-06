@@ -12,7 +12,8 @@
 	import { outcome, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { domainHref, ipHref } from '$lib/stores/lan';
 	import { namesByIp } from '$lib/utils/device-names';
-	import { DRILL_RANGES, canonicalName, certificatesHref, chartTime as timeLabel, fmt, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown';
+	// OLD CODE: import { DRILL_RANGES, canonicalName, certificatesHref, chartTime as timeLabel, fmt, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown'; (slice 2a)
+	import { DRILL_RANGES, canonicalName, certificatesHref, chartTime as timeLabel, fmt, logsHrefForQuery, rangeWindow, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import IPAddress from '$components/IPAddress.svelte';
 	import BarList from '$lib/components/ui/BarList.svelte';
@@ -42,7 +43,9 @@
 	let rangeValue = $state<DrillRangeValue>('24h');
 	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES[0]);
 	let span = $state<{ from: string; to: string }>({ from: '', to: '' });
-	let loaded = $state<{ data: DomainSummary; range: DrillRange } | null>(null);
+	// OLD CODE: let loaded = $state<{ data: DomainSummary; range: DrillRange } | null>(null); (slice 2a: the figures keep their window)
+	/** The figures on screen, with the range and exact window they were counted over (their links carry it). */
+	let loaded = $state<{ data: DomainSummary; range: DrillRange; window: DrillWindow } | null>(null);
 	let failure = $state<string | null>(null);
 	let names = $state<ReadonlyMap<string, string>>(new Map());
 	/** name|range of the figures on screen (not reactive: only the loader reads it) */
@@ -85,7 +88,8 @@
 		const [summaryRes] = results;
 		if (loadedNames) names = loadedNames;
 		if (summaryRes.status === 'fulfilled') {
-			loaded = { data: summaryRes.value, range: r };
+			// OLD CODE: loaded = { data: summaryRes.value, range: r }; (slice 2a)
+			loaded = { data: summaryRes.value, range: r, window: s };
 			loadedView = view;
 			failure = null;
 		} else {
@@ -133,7 +137,9 @@
 		{ key: 'sessions', label: 'Sessions', numeric: true, cell: tlsSessionsCell },
 	];
 	// OLD CODE START: const httpLogs = $derived(`/logs?query=${encodeURIComponent(`zeek.http.host:"${name}"`)}`); — Log Explorer opened on its own 24 hours OLD CODE END
-	const httpLogs = $derived(`/logs?query=${encodeURIComponent(`zeek.http.host:"${name}"`)}&range=${shown.value}`);
+	// OLD CODE: const httpLogs = $derived(`/logs?query=${encodeURIComponent(`zeek.http.host:"${name}"`)}&range=${shown.value}`); (slice 2a: a range re-anchored at click time)
+	// shown only once the figures have landed, so `loaded` is set wherever it's used
+	const httpLogs = $derived(loaded ? logsHrefForQuery([`zeek.http.host:"${name}"`], loaded.window, shown.value) : '');
 </script>
 
 {#snippet who(ip: string)}
@@ -296,7 +302,8 @@
 				"Devices that looked it up", which follows the DNS page and leaves excluded devices out, the TLS sessions and devices here include
 				them.
 			</p>
-			<a class="link" href={certificatesHref({ site: name, ...span })}>Certificates seen for this name<Icon name="back" class="chev" /></a>
+			<!-- OLD CODE: <a class="link" href={certificatesHref({ site: name, ...span })}>Certificates seen for this name<Icon name="back" class="chev" /></a> (slice 2a: span moves when a refresh starts) -->
+			<a class="link" href={certificatesHref({ site: name, ...(loaded?.window ?? span) })}>Certificates seen for this name<Icon name="back" class="chev" /></a>
 		{/if}
 	</Card>
 

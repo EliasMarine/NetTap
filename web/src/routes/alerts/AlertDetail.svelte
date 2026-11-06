@@ -17,6 +17,7 @@
 	import KVRow from '$components/drawer/KVRow.svelte';
 	import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
 	import { alertAdvice, alertExplanation, alertLevel, alertTitle, logExplorerHref } from './alert-view';
+	import { alertsHrefForSignature } from '$lib/utils/drilldown';
 
 	interface Props {
 		alert: Alert;
@@ -75,7 +76,8 @@
 	</div>
 	<div>
 		<h2>{alertTitle(alert)}</h2>
-		<p class="sig wrap">{alert.alert?.signature || 'Unknown signature'}</p>
+		<!-- OLD CODE: <p class="sig wrap">{alert.alert?.signature || 'Unknown signature'}</p> (slice 2a: not a link) -->
+		<p class="sig wrap">{#if alert.alert?.signature}<a href={alertsHrefForSignature(alert.alert.signature)}>{alert.alert.signature}</a>{:else}Unknown signature{/if}</p>
 	</div>
 	{#if explanation}<p class="drawer-plain">{explanation}</p>{/if}
 	<div class="todo"><b>What to do</b>{alertAdvice(alert)}</div>

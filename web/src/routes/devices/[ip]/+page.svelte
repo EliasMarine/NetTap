@@ -29,6 +29,7 @@
 	import { TableSort } from '$lib/utils/table-sort.svelte';
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { smartLevel, type SeverityLevel } from '$lib/utils/severity';
+	import { alertsHrefForSignature, logsHrefForQuery, type DrillWindow } from '$lib/utils/drilldown';
 	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { DeviceConnectionSort } from '$api/devices';
 	import type { SmartAlert } from '$api/alerts';
@@ -90,6 +91,10 @@
 		}
 	}
 	let ports = $state<DevicePort[]>([]);
+	/** NET-160 slice 2a: the device, window and range the ports and smart alerts on screen were counted over (set when each lands, so an in-flight refresh can't move a link) */
+	type CountWindow = DrillWindow & { ip: string; range: RangeKey };
+	let portsWindow = $state<CountWindow | null>(null);
+	let smartAlertsWindow = $state<CountWindow | null>(null);
 	let riskScore = $state(0);
 	let riskLevel = $state('low');
 	let riskFactors = $state<RiskFactor[]>([]);
@@ -268,6 +273,7 @@
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
 		const ip = deviceIp;
+		const r = range;
 		const s = rangeSpan(range);
 		const view = `${ip}|${range}`;
 		if (!ip) return 'skipped';
@@ -303,7 +309,12 @@
 		smartAlerts = smartRes.status === 'fulfilled' ? smartRes.value.alerts : [];
 		smartAlertsTotal = smartRes.status === 'fulfilled' ? smartRes.value.total : 0;
 		smartAlertsFailed = smartRes.status === 'rejected';
-		if (portRes.status === 'fulfilled') ports = portRes.value.ports;
+		smartAlertsWindow = { ...s, ip, range: r };
+		// OLD CODE: if (portRes.status === 'fulfilled') ports = portRes.value.ports; (slice 2a: the ports keep the window they were counted over)
+		if (portRes.status === 'fulfilled') {
+			ports = portRes.value.ports;
+			portsWindow = { ...s, ip, range: r };
+		}
 		portsFailed = portRes.status === 'rejected';
 		// #96: a failed risk score never reads as 0, LOW
 		if (riskRes.status === 'fulfilled') {
@@ -608,7 +619,12 @@
 <!-- OLD CODE START: {#snippet domainCell(q: DeviceDNSQuery)}<span class="mono trunc" title={q.domain}>{q.domain}</span>{/snippet} (NET-160: not a link) OLD CODE END -->
 {#snippet domainCell(q: DeviceDNSQuery)}<a class="mono trunc" href={domainHref(q.domain)} title={q.domain}>{q.domain}</a>{/snippet}
 {#snippet countCell(q: DeviceDNSQuery)}{formatNumber(q.count)}{/snippet}
-{#snippet portCell(p: DevicePort)}<span class="mono">{p.port}</span>{/snippet}
+<!-- OLD CODE START: {#snippet portCell(p: DevicePort)}<span class="mono">{p.port}</span>{/snippet} (slice 2a: not a link) OLD CODE END -->
+<!-- The port's connections in Log Explorer: the count's own filters, written out, over its window -->
+{#snippet portCell(p: DevicePort)}
+	{#if portsWindow}<a class="mono" href={logsHrefForQuery(['event.provider:zeek', 'event.dataset:conn', `source.ip:"${portsWindow.ip}"`, `destination.port:${p.port}`], portsWindow, portsWindow.range)}>{p.port}</a>
+	{:else}<span class="mono">{p.port}</span>{/if}
+{/snippet}
 {#snippet serviceCell(p: DevicePort)}
 	<span class="svc">{p.service}{#if p.suspicious}<span class="chip is-warn"><Icon name="warn" />Suspicious</span>{/if}</span>
 {/snippet}
@@ -616,7 +632,11 @@
 {#snippet timeCell(r: ConnRow)}
 	<span class="mono">{range === '24h' ? new Date(asString(getField(r.conn, '@timestamp'))).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : new Date(asString(getField(r.conn, '@timestamp'))).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
 {/snippet}
-{#snippet connDestCell(r: ConnRow)}<span class="mono">{asString(getField(r.conn, 'destination.ip'))}:{asString(getField(r.conn, 'destination.port'))}</span>{/snippet}
+<!-- OLD CODE START: {#snippet connDestCell(r: ConnRow)}<span class="mono">{asString(getField(r.conn, 'destination.ip'))}:{asString(getField(r.conn, 'destination.port'))}</span>{/snippet} (slice 2a: the address wasn't a link) OLD CODE END -->
+{#snippet connDestCell(r: ConnRow)}
+	{@const dst = asString(getField(r.conn, 'destination.ip'))}
+	<span class="mono">{#if dst}<IPAddress ip={dst} />{/if}:{asString(getField(r.conn, 'destination.port'))}</span>
+{/snippet}
 {#snippet protoCell(r: ConnRow)}<span class="tag">{asString(getField(r.conn, 'network.transport'))}</span>{/snippet}
 {#snippet svcCell(r: ConnRow)}{asString(getField(r.conn, 'network.protocol')) || asString(getField(r.conn, 'network.transport'))}{/snippet}
 <!-- OLD CODE START: <td class="mono td-sm">{formatDuration(getField(conn, 'event.start'), getField(conn, 'event.end'))}</td> OLD CODE END -->
@@ -756,7 +776,8 @@ OLD CODE END -->
 									<Icon name="down" label="Falling" />
 								{/if}
 							</div>
-							<div class="sig wrap">{sa.signature}</div>
+							<!-- OLD CODE: <div class="sig wrap">{sa.signature}</div> (slice 2a: not a link) -->
+							<a class="sig wrap" href={alertsHrefForSignature(sa.signature, smartAlertsWindow ?? undefined, smartAlertsWindow?.ip)}>{sa.signature}</a>
 							<div class="mono dim">{sa.source_ip} → {sa.destination_ip}{#if sa.destination_port}:{sa.destination_port}{/if}</div>
 							<p class="sa-plain">{sa.assessment}</p>
 							<div class="actions">
