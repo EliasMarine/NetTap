@@ -196,31 +196,88 @@ const connectionStats = (): ConnectionStatsResponse => ({
 		.map((p) => ({ ip: p.ip, total_bytes: p.bytes, connections: p.connections, asn: asnFull(p), country: p.countryCode })),
 });
 
-const sankey = (): SankeyResponse => {
-	const bytes = (mb: number) => mb * MB;
-	const toProtocol = totalsBy(FLOWS, (f) => `${f.src}→${peer(f.dst).service}`, (f) => bytes(f.mb));
-	const toDestination = totalsBy(FLOWS, (f) => `${peer(f.dst).service}→${asnFull(peer(f.dst))}`, (f) => bytes(f.mb));
-	const link = ([key, value]: [string, number]) => {
-		const [source, target] = key.split('→');
-		return { source, target, value };
-	};
+// OLD CODE START — NET-151: services as protocols and complete flows, so the Network flow chart
+// never met transports, an Other destinations node, unnamed devices or crowded labels
+// const sankey = (): SankeyResponse => {
+// 	const bytes = (mb: number) => mb * MB;
+// 	const toProtocol = totalsBy(FLOWS, (f) => `${f.src}→${peer(f.dst).service}`, (f) => bytes(f.mb));
+// 	const toDestination = totalsBy(FLOWS, (f) => `${peer(f.dst).service}→${asnFull(peer(f.dst))}`, (f) => bytes(f.mb));
+// 	const link = ([key, value]: [string, number]) => {
+// 		const [source, target] = key.split('→');
+// 		return { source, target, value };
+// 	};
+// 	return {
+// 		...WINDOW,
+// 		nodes: {
+// 			sources: totalsBy(FLOWS, (f) => f.src, (f) => bytes(f.mb)).map(([ip, value]) => ({ id: ip, label: ip, value })),
+// 			protocols: totalsBy(FLOWS, (f) => peer(f.dst).service, (f) => bytes(f.mb)).map(([name, value]) => ({
+// 				id: name,
+// 				label: name.toUpperCase(),
+// 				value,
+// 			})),
+// 			destinations: totalsBy(FLOWS, (f) => f.dst, (f) => bytes(f.mb)).map(([ip, value]) => ({
+// 				id: asnFull(peer(ip)),
+// 				label: peer(ip).org,
+// 				value,
+// 				country: peer(ip).countryCode,
+// 			})),
+// 		},
+// 		links: [...toProtocol, ...toDestination].map(link),
+// 	};
+// };
+// OLD CODE END
+
+/**
+ * The Network flow in production's shape, crowded on purpose (NET-151): 10 sources (the 6 LAN
+ * devices, which the registry names, and 4 addresses it doesn't know), one source with ~60 % of
+ * the bytes and some under 0.5 %, transports as protocols, and 10 destinations (two with long
+ * names) that cover ~80 % of the bytes, so the chart draws Other destinations.
+ */
+export const UNNAMED_SOURCES = ['192.168.1.60', '192.168.1.61', '192.168.1.62', '192.168.1.63'] as const;
+const FLOW_SOURCES: [ip: string, mb: Record<string, number>][] = [
+	['192.168.1.22', { tcp: 3000, udp: 9000 }],
+	['192.168.1.20', { tcp: 2400, udp: 600 }],
+	['192.168.1.30', { tcp: 1800, udp: 200 }],
+	['192.168.1.21', { tcp: 900, udp: 600 }],
+	['192.168.1.50', { tcp: 800, udp: 100, icmp: 2 }],
+	['192.168.1.60', { tcp: 300, udp: 120 }],
+	['192.168.1.61', { tcp: 100, icmp: 1 }],
+	['192.168.1.31', { tcp: 40, udp: 20 }],
+	['192.168.1.62', { tcp: 12, udp: 3 }],
+	['192.168.1.63', { tcp: 2 }],
+];
+// The first seven peers' bytes by transport, in MB
+const PEER_FLOWS: Record<string, number>[] = [
+	{ udp: 6000, tcp: 1000 },
+	{ tcp: 1500, udp: 400 },
+	{ tcp: 1400 },
+	{ tcp: 1200 },
+	{ tcp: 900, udp: 100 },
+	{ tcp: 200, udp: 50 },
+	{ tcp: 150, udp: 40 },
+];
+const longName = (asn: number, org: string, country: string, mb: Record<string, number>) => ({ id: `AS${asn} ${org}`, label: org, country, mb });
+const FLOW_DESTINATIONS: { id: string; label: string; country: string; mb: Record<string, number> }[] = [
+	...PEER_FLOWS.map((mb, i) => ({ id: asnFull(PEERS[i]), label: PEERS[i].org, country: PEERS[i].countryCode, mb })),
+	{ id: 'Unknown', label: 'Unknown', country: '', mb: { udp: 2000, tcp: 600 } },
+	longName(64510, 'Example International Aeronautical Telecommunications Society SC', 'CH', { tcp: 400, icmp: 2 }),
+	longName(64511, 'Example Regional Broadband and Fibre Communications Cooperative Ltd', 'GB', { udp: 300, tcp: 50 }),
+];
+
+export const networkFlow = (): SankeyResponse => {
+	const total = (by: Record<string, number>) => sum(Object.values(by)) * MB;
+	const protocolTotals = totalsBy(FLOW_SOURCES.flatMap(([, by]) => Object.entries(by)), ([p]) => p, ([, mb]) => mb * MB);
 	return {
 		...WINDOW,
 		nodes: {
-			sources: totalsBy(FLOWS, (f) => f.src, (f) => bytes(f.mb)).map(([ip, value]) => ({ id: ip, label: ip, value })),
-			protocols: totalsBy(FLOWS, (f) => peer(f.dst).service, (f) => bytes(f.mb)).map(([name, value]) => ({
-				id: name,
-				label: name.toUpperCase(),
-				value,
-			})),
-			destinations: totalsBy(FLOWS, (f) => f.dst, (f) => bytes(f.mb)).map(([ip, value]) => ({
-				id: asnFull(peer(ip)),
-				label: peer(ip).org,
-				value,
-				country: peer(ip).countryCode,
-			})),
+			sources: FLOW_SOURCES.map(([ip, by]) => ({ id: ip, label: ip, value: total(by) })),
+			protocols: protocolTotals.map(([id, value]) => ({ id, label: id.toUpperCase(), value })),
+			destinations: FLOW_DESTINATIONS.map((d) => ({ id: d.id, label: d.label, value: total(d.mb), country: d.country })),
 		},
-		links: [...toProtocol, ...toDestination].map(link),
+		links: [
+			...FLOW_SOURCES.flatMap(([ip, by]) => Object.entries(by).map(([p, mb]) => ({ source: ip, target: p, value: mb * MB }))),
+			...FLOW_DESTINATIONS.flatMap((d) => Object.entries(d.mb).map(([p, mb]) => ({ source: p, target: d.id, value: mb * MB }))),
+		],
 	};
 };
 
@@ -349,7 +406,7 @@ export const TRAFFIC_ROUTES: FixtureRoute[] = [
 			nodes: { sources: [], protocols: [], destinations: [] },
 			links: [],
 		} satisfies SankeyResponse,
-		populated: sankey(),
+		populated: networkFlow(),
 	},
 	{
 		path: '/api/traffic/connections/timeline',
