@@ -16,10 +16,11 @@ export type HealthStatus = 'healthy' | 'incomplete' | 'problem';
 
 /** The aggregate status as a pipeline stage: Home and System read this one map. */
 // (typed structurally: e2e fixtures type-check this file with plain tsc, which can't read .svelte)
-export const HEALTH_STAGE: Record<HealthStatus, { status: 'ok' | 'failing' | 'unknown'; detail: string }> = {
+export const HEALTH_STAGE: Record<HealthStatus, { status: 'ok' | 'warn' | 'failing' | 'unknown'; detail: string }> = {
 	healthy: { status: 'ok', detail: 'Healthy' },
 	problem: { status: 'failing', detail: 'Reports a problem' },
-	incomplete: { status: 'unknown', detail: "Incomplete · some checks couldn't run" },
+	// OLD CODE: incomplete: { status: 'unknown', … } (NET-168: grey "Unknown", though NetTap did check)
+	incomplete: { status: 'warn', detail: "Incomplete · some checks couldn't run" },
 };
 
 /** The stage for a status; a daemon older than the web app sends none, which reads Unknown. */

@@ -34,4 +34,15 @@ describe('Pipeline', () => {
 		expect(screen.getByRole('img', { name: 'Unknown' }).innerHTML).toBe(iconMarkup('changelog'));
 		expect(items[2].querySelector('.pipe-k')).toHaveClass('is-unknown');
 	});
+
+	it('shows a warning stage (NET-168) with its own class, never as failing or unknown', () => {
+		const { container } = render(Pipeline, {
+			stages: [{ key: 'system', label: 'System', status: 'warn', detail: "Incomplete · some checks couldn't run" }],
+		});
+		const key = container.querySelector('.pipe-k');
+		expect(screen.getByRole('img', { name: 'Warning' }).innerHTML).toBe(iconMarkup('warn'));
+		expect(key).toHaveClass('is-warn');
+		expect(key).not.toHaveClass('is-failing');
+		expect(key).not.toHaveClass('is-unknown');
+	});
 });
