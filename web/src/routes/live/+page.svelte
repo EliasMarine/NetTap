@@ -596,6 +596,10 @@
 {#if error && dashboard}
 	<p class="notice is-warn" role="status"><Icon name="warn" />{error}</p>
 {/if}
+<!-- NET-162: a failed filtered refresh leaves the last filtered figures on screen; say they are stale -->
+{#if hasActiveFilter && filteredFailed && filteredDashboard}
+	<p class="notice is-warn" role="status"><Icon name="warn" />{loadFailed('the filtered figures', true)}</p>
+{/if}
 
 <div class="grid">
 	<!-- OLD CODE START: sub="Connections, throughput and devices · last 5 minutes" (O8) OLD CODE END -->

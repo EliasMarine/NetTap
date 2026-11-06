@@ -329,6 +329,35 @@ describe('Live figures (accuracy audit 2026-11-06)', () => {
 		expect(screen.getByText("Couldn't load the filtered protocols: the request failed.")).toBeInTheDocument();
 	});
 
+	it('NET-162: a failed filtered refresh keeps the last filtered figures and says they are stale', async () => {
+		await renderLive();
+		const udp = dashboard([], {
+			protocols: { tcp: 0, udp: 25, icmp: 0, other: 0, unknown: 0 },
+			stats: { ...dashboard().stats, connections_in_window: 25 },
+			top_talkers: [{ ip: '192.168.1.77', bytes: 5000, connections: 25 }],
+		});
+		vi.mocked(getLiveDashboard).mockImplementation(async (opts) => (opts?.proto === 'udp' ? udp : dashboard()));
+		await fireEvent.click(protocolPill('UDP'));
+		await flush();
+		const stale = "Couldn't refresh the filtered figures; showing the last figures loaded.";
+		expect(screen.queryByText(stale)).not.toBeInTheDocument();
+
+		vi.mocked(getLiveDashboard).mockImplementation(async (opts) => {
+			if (opts?.proto) throw new Error('HTTP 503');
+			return dashboard();
+		});
+		expect(await refreshPage()).toBe('partial');
+		await flush();
+		expect(talker(/^192\.168\.1\.77/)).toBeInTheDocument();
+		expect(screen.getByText(stale)).toBeInTheDocument();
+
+		// the next good refresh clears it
+		vi.mocked(getLiveDashboard).mockImplementation(async (opts) => (opts?.proto === 'udp' ? udp : dashboard()));
+		expect(await refreshPage()).toBe('ok');
+		await flush();
+		expect(screen.queryByText(stale)).not.toBeInTheDocument();
+	});
+
 	it("O8: the stat is LAN addresses, not the Devices page's online devices", async () => {
 		await renderLive();
 		expect(screen.getByText('Active addresses (LAN)')).toBeInTheDocument();
