@@ -74,6 +74,33 @@
 		{ value: 'all' as const, label: 'All devices' },
 	];
 
+	// NET-180: By type as cards or compact rows, remembered per browser (a convenience, not data)
+	type Layout = 'cards' | 'list';
+	const LAYOUT_KEY = 'nettap-devices-layout';
+	const LAYOUTS = [
+		{ value: 'cards' as const, label: 'Cards' },
+		{ value: 'list' as const, label: 'List' },
+	];
+	let layout = $state<Layout>('cards');
+
+	/** A missing or unknown value is Cards. */
+	function readLayout(): Layout {
+		try {
+			return localStorage.getItem(LAYOUT_KEY) === 'list' ? 'list' : 'cards';
+		} catch {
+			return 'cards'; // storage blocked: the default
+		}
+	}
+
+	function pickLayout(next: Layout) {
+		layout = next;
+		try {
+			localStorage.setItem(LAYOUT_KEY, next);
+		} catch {
+			// storage blocked: the choice lasts until the page reloads
+		}
+	}
+
 	// ---------------------------------------------------------------------------
 	// Category config
 	// ---------------------------------------------------------------------------
@@ -210,6 +237,7 @@
 
 	const refresh = registerPageRefresh(load);
 	onMount(() => {
+		layout = readLayout();
 		refresh.run();
 	});
 	onDestroy(() => refresh.unregister());
@@ -310,6 +338,17 @@
 		return bytes === undefined || bytes < 0 ? '—' : formatBytes(bytes);
 	}
 
+	// NET-180: the card and its List row read these, so both show the same figures
+	const cardName = (d: RegistryDevice) => d.display_name || d.mac;
+	const cardAddress = (d: RegistryDevice) => d.ips[0] ?? d.mac;
+	const cardConnections = (d: RegistryDevice) => d.connection_count?.toLocaleString() ?? '—';
+	/** Some of the device's addresses weren't in the device list, so its traffic is theirs only. */
+	const partlyListed = (d: RegistryDevice) => !!d.ips_listed && d.ips_listed < d.ips.length;
+	const openCard = (d: RegistryDevice) => goto(`/devices/mac/${encodeURIComponent(d.mac)}`);
+	/** A List row's address suffix: " +2 · 2 of 3 listed" (the card's addresses note, shortened). */
+	const addressMore = (d: RegistryDevice) =>
+		(d.ips.length > 1 ? ` +${d.ips.length - 1}` : '') + (partlyListed(d) ? ` · ${d.ips_listed} of ${d.ips.length} listed` : '');
+
 	function formatNumber(n: number): string {
 		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
 		if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
@@ -358,6 +397,20 @@
 		{ key: 'last_seen', label: 'Last seen', cell: seenCell, sortValue: (d) => (d.last_seen ? Date.parse(d.last_seen) : null) },
 	];
 
+	// NET-180: By type's List layout. Unknown figures sort as missing (last both ways), never as 0;
+	// Last seen descending is the cards' order (device-types.ts)
+	const listColumns: Column<RegistryDevice>[] = [
+		{ key: 'name', label: 'Device', cell: listDeviceCell, sortValue: cardName },
+		{ key: 'address', label: 'Address', cell: listAddressCell, sortValue: cardAddress },
+		{ key: 'manufacturer', label: 'Maker', cell: listMakerCell, sortValue: (d) => d.manufacturer || null },
+		{
+			key: 'total_bytes', label: 'Traffic', numeric: true, cell: listBytesCell,
+			sortValue: (d) => (d.total_bytes === undefined || d.total_bytes < 0 ? null : d.total_bytes),
+		},
+		{ key: 'connection_count', label: 'Connections', numeric: true, cell: listConnCell, sortValue: (d) => d.connection_count ?? null },
+		{ key: 'last_seen', label: 'Last seen', cell: listSeenCell, sortValue: (d) => Date.parse(d.last_seen) },
+	];
+
 	function resetFilters() {
 		searchQuery = '';
 		categoryFilter = 'all';
@@ -385,6 +438,20 @@
 {#snippet connCell(d: Device)}{formatNumber(d.connection_count)}{/snippet}
 {#snippet alertCell(d: Device)}{formatNumber(d.alert_count)}{/snippet}
 {#snippet seenCell(d: Device)}{timeAgo(d.last_seen)}{/snippet}
+
+<!-- NET-180: By type's List rows. The Device cell sits inside the row's button: no links or buttons in it -->
+{#snippet listDeviceCell(d: RegistryDevice)}
+	<span class="who"><Icon name={deviceIcon(d.category)} /><span class="who-name">{cardName(d)}</span>{#if isNewDevice(d)}<span class="chip is-ok">New</span>{/if}</span>
+{/snippet}
+{#snippet listAddressCell(d: RegistryDevice)}
+	<span class="mono">{cardAddress(d)}</span>{#if addressMore(d)}<span class="dim">{addressMore(d)}</span>{/if}
+{/snippet}
+{#snippet listMakerCell(d: RegistryDevice)}
+	{#if d.manufacturer}{d.manufacturer}{:else}<span class="dim">Maker unknown</span>{/if}
+{/snippet}
+{#snippet listBytesCell(d: RegistryDevice)}{cardBytes(d.total_bytes)}{/snippet}
+{#snippet listConnCell(d: RegistryDevice)}{cardConnections(d)}{/snippet}
+{#snippet listSeenCell(d: RegistryDevice)}{timeAgo(d.last_seen)}{/snippet}
 
 <svelte:head>
 	<title>Devices | NetTap</title>
@@ -482,7 +549,13 @@
 				<p class="note">{loadFailed('devices', true)}</p>
 			{/if}
 			<!-- NET-158: a card adds up the device list's rows for its addresses; an address another device took since counts on both -->
-			<p class="note">Traffic in the last 24 hours from the listed addresses each device has used.</p>
+			<!-- OLD CODE START — NET-180: the note stood alone; the Cards / List switch now sits beside it -->
+			<!-- <p class="note">Traffic in the last 24 hours from the listed addresses each device has used.</p> -->
+			<!-- OLD CODE END -->
+			<div class="type-head">
+				<p class="note">Traffic in the last 24 hours from the listed addresses each device has used.</p>
+				<Pills ariaLabel="Layout" options={LAYOUTS} value={layout} onchange={pickLayout} />
+			</div>
 			<div class="type-groups">
 				{#each typeGroups as group (group.key)}
 					<section class="type-group" aria-labelledby="type-{group.key}">
@@ -490,32 +563,55 @@
 							<h2 class="card-title" id="type-{group.key}">{group.label}</h2>
 							<span class="chip">{group.devices.length}</span>
 						</div>
-						<div class="grid">
-							{#each group.devices as device (device.mac)}
-								<a class="card dev-card c-4" href="/devices/mac/{encodeURIComponent(device.mac)}">
-									<span class="dev-card-top">
-										<DeviceTile category={device.category} />
-										<span class="two">
-											<span class="dev-name">{device.display_name || device.mac}</span>
-											<span class="mono">{device.ips[0] ?? device.mac}</span>
+						{#if layout === 'list'}
+							<div class="card dev-list">
+								<DataTable
+									ariaLabel="{group.label}, as a list"
+									rows={group.devices}
+									rowKey={(d) => d.mac}
+									initialSort={{ key: 'last_seen', dir: 'desc' }}
+									onrowactivate={openCard}
+									rowLabel={(d) => `Open ${cardName(d)}`}
+									columns={listColumns}
+								/>
+							</div>
+						{:else}
+							<div class="grid">
+								{#each group.devices as device (device.mac)}
+									<a class="card dev-card c-4" href="/devices/mac/{encodeURIComponent(device.mac)}">
+										<span class="dev-card-top">
+											<DeviceTile category={device.category} />
+											<span class="two">
+												<span class="dev-name">{cardName(device)}</span>
+												<span class="mono">{cardAddress(device)}</span>
+											</span>
+											<!-- OLD CODE START — NET-158: is_new clears on the device's next update, so the chip rarely showed -->
+											<!-- {#if device.is_new}<span class="chip is-ok">New</span>{/if} -->
+											<!-- OLD CODE END -->
+											{#if isNewDevice(device)}<span class="chip is-ok">New</span>{/if}
 										</span>
-										<!-- OLD CODE START — NET-158: is_new clears on the device's next update, so the chip rarely showed -->
-										<!-- {#if device.is_new}<span class="chip is-ok">New</span>{/if} -->
+										<!-- OLD CODE START — NET-180: a card with no maker was a line shorter, so its stats sat higher
+										     than its neighbours', and the addresses note came after the stats -->
+										<!-- {#if device.manufacturer}<span class="dim vendor">{device.manufacturer}</span>{/if} -->
+										<!-- …the stats… -->
+										<!-- {#if device.ips_listed && device.ips_listed < device.ips.length}
+											<span class="dim vendor">({device.ips_listed} of {device.ips.length} addresses listed)</span>
+										{/if} -->
 										<!-- OLD CODE END -->
-										{#if isNewDevice(device)}<span class="chip is-ok">New</span>{/if}
-									</span>
-									{#if device.manufacturer}<span class="dim vendor">{device.manufacturer}</span>{/if}
-									<span class="dev-card-stats">
-										<span><span class="meta-k">Traffic</span><span class="meta-v num">{cardBytes(device.total_bytes)}</span></span>
-										<span><span class="meta-k">Connections</span><span class="meta-v num">{device.connection_count?.toLocaleString() ?? '—'}</span></span>
-										<span><span class="meta-k">Last seen</span><span class="meta-v">{timeAgo(device.last_seen)}</span></span>
-									</span>
-									{#if device.ips_listed && device.ips_listed < device.ips.length}
-										<span class="dim vendor">({device.ips_listed} of {device.ips.length} addresses listed)</span>
-									{/if}
-								</a>
-							{/each}
-						</div>
+										<!-- NET-180: every card has the same three rows (top, maker, stats), each as tall as the band's tallest -->
+										<span class="dim vendor dev-card-about">
+											<span>{device.manufacturer || 'Maker unknown'}</span>
+											{#if partlyListed(device)}<span>({device.ips_listed} of {device.ips.length} addresses listed)</span>{/if}
+										</span>
+										<span class="dev-card-stats">
+											<span><span class="meta-k">Traffic</span><span class="meta-v num">{cardBytes(device.total_bytes)}</span></span>
+											<span><span class="meta-k">Connections</span><span class="meta-v num">{cardConnections(device)}</span></span>
+											<span><span class="meta-k">Last seen</span><span class="meta-v">{timeAgo(device.last_seen)}</span></span>
+										</span>
+									</a>
+								{/each}
+							</div>
+						{/if}
 					</section>
 				{/each}
 			</div>
@@ -572,6 +668,19 @@
 	.group-head { display: flex; align-items: center; gap: var(--sp-2); }
 	.dev-card { display: flex; flex-direction: column; gap: var(--sp-3); text-decoration: none; color: var(--text-1); }
 	.dev-card:hover { border-color: var(--line-strong); }
+	/* NET-180: without subgrid, equal-height cards at least end level */
+	.dev-card-stats { margin-top: auto; }
+	/* NET-180: each card spans three rows of its group's grid and shares their heights, so every
+	   card's stats start at the same height in a band, whatever wraps above or inside them */
+	@supports (grid-template-rows: subgrid) {
+		.dev-card { display: grid; grid-row: span 3; grid-template-rows: subgrid; grid-template-columns: minmax(0, 1fr); row-gap: var(--sp-3); }
+		.dev-card-stats { margin-top: 0; }
+	}
+	.dev-card-about { display: flex; flex-direction: column; }
+	.type-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-3); margin-bottom: var(--sp-3); }
+	.type-head .note { margin-bottom: 0; }
+	/* compact rows: one line each */
+	.dev-list :global(tbody td) { padding-top: var(--sp-2); padding-bottom: var(--sp-2); }
 	.dev-card-top { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; }
 	.dev-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.vendor { font-size: var(--text-xs); }
