@@ -74,7 +74,7 @@ test.describe('Dashboard', () => {
 		for (const label of ['Bandwidth', 'Connections', 'Alerts', 'Devices']) await expect(kpi(label)).toBeVisible();
 
 		// Check that the data values rendered (not loading placeholders)
-		// The traffic summary mock has 1GB total bytes = "1.0" with the unit "GB"
+		// The traffic summary mock has 1 GB (10^9 bytes) total = "1.0" with the unit "GB"
 		await expect(kpi('Bandwidth').locator('.kpi-num')).toHaveText('1.0GB', { timeout: 5_000 });
 
 		// Connection count: 12,345 = "12.3K"

@@ -117,8 +117,9 @@ describe('infrastructure API client', () => {
 						health: 'green',
 						status: 'open',
 						docs_count: 5000,
-						pri_store_size: '100mb',
-						store_size: '100mb',
+						// OLD CODE: '100mb' (NET-166: the daemon sends bytes, or null)
+						pri_store_size: 100_000_000,
+						store_size: 100_000_000,
 						creation_date: '2026-03-22',
 					},
 				],

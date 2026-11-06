@@ -45,8 +45,9 @@ function stubHomeDaemon(): void {
 		'/api/devices': {
 			from: FROM, to: '2026-11-02T22:00:00Z', limit: 500,
 			devices: [
-				{ ip: '192.168.1.1', total_bytes: 1024, connection_count: 1200, last_seen: '2026-11-02T21:50:00Z' },
-				{ ip: '10.10.0.1', total_bytes: 1024, connection_count: 34, last_seen: '2026-11-02T21:40:00Z' },
+				// decimal units (NET-166): the two IPs' 2,000,000 bytes read 2.0 MB (1.9 MB in 1024-based units)
+				{ ip: '192.168.1.1', total_bytes: 1_000_000, connection_count: 1200, last_seen: '2026-11-02T21:50:00Z' },
+				{ ip: '10.10.0.1', total_bytes: 1_000_000, connection_count: 34, last_seen: '2026-11-02T21:40:00Z' },
 			].map((d) => ({ mac: null, hostname: null, manufacturer: null, os_hint: null, first_seen: FROM, protocols: [], alert_count: 0, ...d })),
 		},
 	});
@@ -73,7 +74,7 @@ describe('Devices By type — device cards carry the range traffic', () => {
 		stubHomeDaemon();
 		render(Page);
 		await within(await screen.findByRole('tabpanel', { name: 'By type' })).findByText('Gateway');
-		await vi.waitFor(() => expect(stat('Gateway', 'Traffic')).toBe('2.0 KB'));
+		await vi.waitFor(() => expect(stat('Gateway', 'Traffic')).toBe('2.0 MB'));
 		expect(stat('Gateway', 'Connections')).toBe((1234).toLocaleString());
 		expect(stat('Old printer', 'Traffic')).toBe('0 B');
 		expect(stat('Old printer', 'Connections')).toBe('0');
@@ -104,8 +105,8 @@ describe('Devices By type — what a card counts', () => {
 			'/api/devices': {
 				from: FROM, to: '', limit: 500,
 				devices: [
-					{ ip: '192.168.1.1', total_bytes: 1024, connection_count: 10, last_seen: hourAgo },
-					{ ip: '10.10.0.1', total_bytes: 1024, connection_count: 5, last_seen: hourAgo },
+					{ ip: '192.168.1.1', total_bytes: 1000, connection_count: 10, last_seen: hourAgo },
+					{ ip: '10.10.0.1', total_bytes: 1000, connection_count: 5, last_seen: hourAgo },
 					{ ip: '192.168.1.30', total_bytes: 512, connection_count: 3, last_seen: hourAgo },
 				].map((d) => ({ mac: null, hostname: null, manufacturer: null, os_hint: null, first_seen: FROM, protocols: [], alert_count: 0, ...d })),
 			},
@@ -158,7 +159,7 @@ const PHONE = reg('aa:01', '192.168.1.21', 'phone', { display_name: 'Kitchen iPa
 const PLUG = reg('aa:02', '192.168.1.22', 'iot', { display_name: 'Smart plug' });
 const LIST = {
 	from: LIST_FROM, to: '', limit: 500,
-	devices: [{ ...DEVICE, ip: '192.168.1.21', hostname: 'ipad', total_bytes: 2048, connection_count: 12 }],
+	devices: [{ ...DEVICE, ip: '192.168.1.21', hostname: 'ipad', total_bytes: 2000, connection_count: 12 }],
 };
 
 describe('Devices — By type', () => {

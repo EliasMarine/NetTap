@@ -102,8 +102,9 @@ describe('PCAP search page integration', () => {
 
 	it('formats bytes correctly', () => {
 		expect(formatBytes(0)).toBe('0 B');
-		expect(formatBytes(1024)).toBe('1.0 KB');
-		expect(formatBytes(1048576)).toBe('1.0 MB');
+		// decimal units (NET-166)
+		expect(formatBytes(1_000)).toBe('1.0 KB');
+		expect(formatBytes(1_000_000)).toBe('1.0 MB');
 	});
 });
 
@@ -375,8 +376,9 @@ describe('PCAP page — search polling', () => {
 
 	it('estimates the time left from the pace so far, and none before the first file (#137)', async () => {
 		stubSearch([
-			searchBody({ files_checked: 0, bytes_total: 4 * 1_073_741_824, bytes_checked: 0, seconds_elapsed: 30 }),
-			searchBody({ files_checked: 1, bytes_total: 4 * 1_073_741_824, bytes_checked: 1_073_741_824, seconds_elapsed: 600 }),
+			// decimal GB (NET-166)
+			searchBody({ files_checked: 0, bytes_total: 4e9, bytes_checked: 0, seconds_elapsed: 30 }),
+			searchBody({ files_checked: 1, bytes_total: 4e9, bytes_checked: 1e9, seconds_elapsed: 600 }),
 		]);
 
 		await startSearch();

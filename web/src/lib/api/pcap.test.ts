@@ -198,16 +198,21 @@ describe('pcap API client', () => {
 			expect(formatBytes(500)).toBe('500.0 B');
 		});
 
+		// NET-166: decimal units
 		it('formats kilobytes', () => {
-			expect(formatBytes(1024)).toBe('1.0 KB');
+			expect(formatBytes(1_000)).toBe('1.0 KB');
 		});
 
 		it('formats megabytes', () => {
-			expect(formatBytes(1048576)).toBe('1.0 MB');
+			expect(formatBytes(1_000_000)).toBe('1.0 MB');
 		});
 
 		it('formats gigabytes', () => {
-			expect(formatBytes(1073741824)).toBe('1.0 GB');
+			expect(formatBytes(1_000_000_000)).toBe('1.0 GB');
+		});
+
+		it('shows a full 256 MiB capture file as 268.4 MB', () => {
+			expect(formatBytes(256 * 2 ** 20)).toBe('268.4 MB');
 		});
 	});
 });

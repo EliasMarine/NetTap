@@ -50,11 +50,14 @@ function updateTypeBadgeClass(type: string): string {
 	}
 }
 
-/** Formats a size in MB to a human-readable string (MB or GB) */
-function formatSizeMB(mb: number): string {
-	if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
-	return `${mb.toFixed(1)} MB`;
-}
+// OLD CODE START — 2026-11-06 (NET-166): a copy of the updates page's formatter, so it never caught the
+// page changing; updates-page.test.ts checks the rendered size instead
+// /** Formats a size in MB to a human-readable string (MB or GB) */
+// function formatSizeMB(mb: number): string {
+// 	if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+// 	return `${mb.toFixed(1)} MB`;
+// }
+// OLD CODE END
 
 /** Returns a human-readable "time ago" string from an ISO date string */
 function timeAgo(isoString: string): string {
@@ -267,27 +270,29 @@ describe('UpdateSystem logic', () => {
 
 	// -- Size formatting ------------------------------------------------------
 
-	describe('formatSizeMB', () => {
-		it('formats small sizes in MB', () => {
-			expect(formatSizeMB(120)).toBe('120.0 MB');
-		});
-
-		it('formats fractional MB', () => {
-			expect(formatSizeMB(0.5)).toBe('0.5 MB');
-		});
-
-		it('formats sizes >= 1024 MB in GB', () => {
-			expect(formatSizeMB(1024)).toBe('1.0 GB');
-		});
-
-		it('formats large GB values', () => {
-			expect(formatSizeMB(2560)).toBe('2.5 GB');
-		});
-
-		it('formats zero MB', () => {
-			expect(formatSizeMB(0)).toBe('0.0 MB');
-		});
-	});
+	// OLD CODE START — 2026-11-06 (NET-166): tested the copy above, not the page
+	// describe('formatSizeMB', () => {
+	// 	it('formats small sizes in MB', () => {
+	// 		expect(formatSizeMB(120)).toBe('120.0 MB');
+	// 	});
+	//
+	// 	it('formats fractional MB', () => {
+	// 		expect(formatSizeMB(0.5)).toBe('0.5 MB');
+	// 	});
+	//
+	// 	it('formats sizes >= 1024 MB in GB', () => {
+	// 		expect(formatSizeMB(1024)).toBe('1.0 GB');
+	// 	});
+	//
+	// 	it('formats large GB values', () => {
+	// 		expect(formatSizeMB(2560)).toBe('2.5 GB');
+	// 	});
+	//
+	// 	it('formats zero MB', () => {
+	// 		expect(formatSizeMB(0)).toBe('0.0 MB');
+	// 	});
+	// });
+	// OLD CODE END
 
 	// -- Time ago formatting --------------------------------------------------
 

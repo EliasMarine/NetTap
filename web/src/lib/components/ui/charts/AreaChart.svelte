@@ -37,7 +37,7 @@
 		ariaLabel: string;
 		/** Minimum height; in a `col` card the chart grows to fill the card. */
 		height?: number;
-		/** Values are bytes: ticks land on round 1024-based units, like the byte formatters. */
+		/** Values are bytes: ticks land on round decimal units (1 GB = 10^9 bytes), like the byte formatters. */
 		bytes?: boolean;
 	} = $props();
 

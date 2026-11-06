@@ -379,6 +379,22 @@ describe('System page figures', () => {
 		expect(screen.getByText('0 B')).toBeInTheDocument();
 	});
 
+	// NET-166: decimal units, so a 1 TB drive reads 1.0 TB (the 1,024-based copy read 931.3 GB)
+	it('shows the disk total, used and free in decimal units', async () => {
+		stubReplies({
+			...OK_REPLIES,
+			'/api/storage/status': {
+				disk_usage_percent: 40, disk_total_bytes: 1e12, disk_used_bytes: 400e9, disk_free_bytes: 600e9, disk_threshold_percent: 80,
+				emergency_threshold_percent: 90, retention: null,
+			},
+		});
+		render(SystemPage);
+		const fact = async (label: string) => (await screen.findByText(label, { selector: 'dt' })).nextElementSibling?.textContent;
+		expect(await fact('Total')).toBe('1.0 TB');
+		expect(await fact('Used')).toBe('400.0 GB');
+		expect(await fact('Free')).toBe('600.0 GB');
+	});
+
 	it('marks a passing drive with warnings amber, not a green Healthy (S12)', async () => {
 		stubReplies({
 			...OK_REPLIES,

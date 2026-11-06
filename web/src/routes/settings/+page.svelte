@@ -5,6 +5,7 @@
 	import { getUnifiStatus } from '$lib/api/unifi';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { formatDuration } from '$lib/utils/tshark-helpers';
+	import { formatBytes } from '$lib/api/logs';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -449,9 +450,14 @@
 		try {
 			const result = await updateCaptureSettings({ maxFileSizeMB: captureMaxFileSize });
 			captureMaxFileSize = result.maxFileSizeMB;
+			// OLD CODE START — 2026-11-06 (NET-166): netsniff-ng counts this setting in MiB, not MB
+			// captureMessage = result.restarted
+			// 	? `File size updated to ${result.maxFileSizeMB} MB. Container restarted.`
+			// 	: `File size updated to ${result.maxFileSizeMB} MB.`;
+			// OLD CODE END
 			captureMessage = result.restarted
-				? `File size updated to ${result.maxFileSizeMB} MB. Container restarted.`
-				: `File size updated to ${result.maxFileSizeMB} MB.`;
+				? `File size updated to ${result.maxFileSizeMB} MiB. Container restarted.`
+				: `File size updated to ${result.maxFileSizeMB} MiB.`;
 		} catch (err) {
 			captureError = true;
 			captureMessage = err instanceof Error ? err.message : 'Save failed';
@@ -744,12 +750,14 @@
 		}
 	}
 
-	function formatCleanupBytes(bytes: number): string {
-		if (bytes === 0) return '0 B';
-		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(1024));
-		return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
-	}
+	// OLD CODE START — 2026-11-06 (NET-166): a copy of formatBytes in $lib/api/logs, 1024-based under decimal labels; the shared one is decimal
+	// function formatCleanupBytes(bytes: number): string {
+	// 	if (bytes === 0) return '0 B';
+	// 	const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+	// 	const i = Math.floor(Math.log(bytes) / Math.log(1024));
+	// 	return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+	// }
+	// OLD CODE END
 
 	async function handleCleanupPreview() {
 		if (cleanupDays < 1) return;
@@ -787,7 +795,7 @@
 			// const result = await executeCleanup(cleanupDays);
 			// OLD CODE END
 			const result = await executeCleanup(cleanupPreviewDays);
-			const freedStr = formatCleanupBytes(result.freed_bytes_estimate);
+			const freedStr = formatBytes(result.freed_bytes_estimate);
 			cleanupMessage = `Cleanup complete: deleted ${result.deleted_indices} indices and ${result.deleted_pcap_files} PCAP files, freed ${freedStr}.`;
 			if (result.errors.length > 0) {
 				cleanupMessage += ` (${result.errors.length} errors)`;
@@ -1095,7 +1103,7 @@
 							stats={[
 								{ key: 'indices', label: 'Indices', value: String(cleanupPreview.total_indices) },
 								{ key: 'pcap', label: 'PCAP files', value: String(cleanupPreview.total_pcap_files) },
-								{ key: 'freed', label: 'Space freed', value: formatCleanupBytes(cleanupPreview.estimated_freed_bytes) },
+								{ key: 'freed', label: 'Space freed', value: formatBytes(cleanupPreview.estimated_freed_bytes) },
 							]}
 						/>
 
@@ -1109,7 +1117,7 @@
 							</div>
 						{:else}
 							{@render feedback(
-								`Are you sure? This will permanently delete ${cleanupPreview.total_indices} indices and ${cleanupPreview.total_pcap_files} PCAP files (${formatCleanupBytes(cleanupPreview.estimated_freed_bytes)}).`,
+								`Are you sure? This will permanently delete ${cleanupPreview.total_indices} indices and ${cleanupPreview.total_pcap_files} PCAP files (${formatBytes(cleanupPreview.estimated_freed_bytes)}).`,
 								true,
 							)}
 							<div class="form-actions">
@@ -1124,7 +1132,8 @@
 			</div>
 		</Card>
 	{:else if activeTab === 'capture'}
-		<Card title="PCAP capture" sub="Packet capture container · file size in MB" class="c-12">
+		<!-- OLD CODE: sub="Packet capture container · file size in MB" (NET-166: netsniff-ng counts MiB) -->
+		<Card title="PCAP capture" sub="Packet capture container · file size in MiB" class="c-12">
 			{#if captureLoading}
 				<CardState state="loading" title="Loading capture settings" />
 			{:else if captureLoadFailed}
@@ -1183,13 +1192,20 @@
 							<label class="label" for="max-file-size">Max file size</label>
 							<div class="unit-field">
 								<input class="input" id="max-file-size" type="number" bind:value={captureMaxFileSize} min={10} max={10000} />
-								<span class="dim">MB</span>
+								<!-- OLD CODE: <span class="dim">MB</span> (NET-166: netsniff-ng's PCAP_ROTATE_MB counts mebibytes) -->
+								<span class="dim">MiB</span>
 							</div>
 							<!-- OLD CODE START — 2026-11-02: the 100 MB default was never what netsniff used
 							<p class="field-help">Individual PCAP files rotate at this size. Default: 100 MB. Range: 10–10,000 MB.</p>
 							OLD CODE END -->
+							<!-- OLD CODE START — 2026-11-06 (NET-166): said MB, but netsniff-ng counts MiB
 							<p class="field-help">
 								A new file starts at this size{captureRotateMinutes ? ` or every ${captureRotateMinutes} minutes, whichever comes first` : ''}. Range: 10–10,000 MB.
+							</p>
+							OLD CODE END -->
+							<p class="field-help">
+								A new file starts at this size{captureRotateMinutes ? ` or every ${captureRotateMinutes} minutes, whichever comes first` : ''}. Range: 10–10,000 MiB.
+								1 MiB is 1,048,576 bytes, so a 256 MiB file shows as 268.4 MB on the PCAP page.
 							</p>
 						</div>
 					</div>

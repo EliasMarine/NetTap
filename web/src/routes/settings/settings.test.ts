@@ -47,7 +47,7 @@ const PREVIEW = {
 	pcap_files: [],
 	total_indices: 3,
 	total_pcap_files: 2,
-	estimated_freed_bytes: 1024,
+	estimated_freed_bytes: 1_500_000,
 };
 
 describe('Settings — manual cleanup', () => {
@@ -57,7 +57,7 @@ describe('Settings — manual cleanup', () => {
 		vi.mocked(executeCleanup).mockResolvedValue({
 			deleted_indices: 3,
 			deleted_pcap_files: 2,
-			freed_bytes_estimate: 1024,
+			freed_bytes_estimate: 1_500_000,
 			errors: [],
 		} as never);
 	});
@@ -80,6 +80,8 @@ describe('Settings — manual cleanup', () => {
 	it('deletes with the days that were previewed', async () => {
 		await openPreview('30');
 		expect(previewCleanup).toHaveBeenCalledWith(30);
+		// decimal units (NET-166): 1,500,000 bytes is 1.5 MB (1.4 MB in 1024-based units)
+		expect(screen.getByText('1.5 MB')).toBeInTheDocument();
 
 		await fireEvent.click(screen.getByRole('button', { name: 'Delete data' }));
 		await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
@@ -293,6 +295,24 @@ describe('Settings — capture status label', () => {
 		expect(screen.getByDisplayValue('4096')).toBeInTheDocument();
 		expect(screen.getByText(/or every 10 minutes, whichever comes first/)).toBeInTheDocument();
 		expect(screen.queryByText(/Default: 100 MB/)).not.toBeInTheDocument();
+	});
+
+	// NET-166: netsniff-ng counts PCAP_ROTATE_MB in MiB, and the PCAP page shows decimal MB
+	it('labels the max file size in MiB and says how it reads on the PCAP page', async () => {
+		stubFetch({
+			'/api/capture/status': () => ({
+				body: { enabled: true, maxFileSizeMB: 256, containerRunning: true, containerStatus: 'running' },
+			}),
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('tab', { name: 'Capture' }));
+
+		const field = screen.getByLabelText('Max file size').closest('.field') as HTMLElement;
+		expect(within(field).getByText('MiB')).toBeInTheDocument();
+		expect(field).toHaveTextContent('Range: 10–10,000 MiB.');
+		expect(field).toHaveTextContent('1 MiB is 1,048,576 bytes, so a 256 MiB file shows as 268.4 MB on the PCAP page.');
+		expect(within(field).queryByText('MB')).not.toBeInTheDocument();
 	});
 });
 

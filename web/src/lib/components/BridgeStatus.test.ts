@@ -76,14 +76,17 @@ function formatLatency(us: number): string {
 	return `${(us / 1_000_000).toFixed(2)} s`;
 }
 
-/** Formats a byte rate to a human-readable string with units */
-function formatByteRate(bytes: number): string {
-	if (bytes <= 0) return '0 B/s';
-	const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
-	const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-	const val = bytes / Math.pow(1024, i);
-	return `${val.toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
-}
+// OLD CODE START — 2026-11-06 (NET-166): a copy of the component's formatter, so it never caught the
+// component changing; BridgeStatus.render.test.ts now checks the rendered rates instead
+// /** Formats a byte rate to a human-readable string with units */
+// function formatByteRate(bytes: number): string {
+// 	if (bytes <= 0) return '0 B/s';
+// 	const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+// 	const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+// 	const val = bytes / Math.pow(1024, i);
+// 	return `${val.toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
+// }
+// OLD CODE END
 
 /** Formats an uptime in seconds to a human-readable string */
 function formatUptime(seconds: number): string {
@@ -268,33 +271,35 @@ describe('BridgeStatus logic', () => {
 
 	// -- Byte rate formatting -------------------------------------------------
 
-	describe('formatByteRate', () => {
-		it('returns "0 B/s" for zero bytes', () => {
-			expect(formatByteRate(0)).toBe('0 B/s');
-		});
-
-		it('returns "0 B/s" for negative values', () => {
-			expect(formatByteRate(-100)).toBe('0 B/s');
-		});
-
-		it('formats byte-level rates', () => {
-			expect(formatByteRate(500)).toBe('500 B/s');
-		});
-
-		it('formats KB/s rates', () => {
-			expect(formatByteRate(1024)).toBe('1.0 KB/s');
-			expect(formatByteRate(10240)).toBe('10.0 KB/s');
-		});
-
-		it('formats MB/s rates', () => {
-			expect(formatByteRate(1048576)).toBe('1.0 MB/s');
-			expect(formatByteRate(5242880)).toBe('5.0 MB/s');
-		});
-
-		it('formats GB/s rates', () => {
-			expect(formatByteRate(1073741824)).toBe('1.0 GB/s');
-		});
-	});
+	// OLD CODE START — 2026-11-06 (NET-166): tested the copy above; see BridgeStatus.render.test.ts
+	// describe('formatByteRate', () => {
+	// 	it('returns "0 B/s" for zero bytes', () => {
+	// 		expect(formatByteRate(0)).toBe('0 B/s');
+	// 	});
+	//
+	// 	it('returns "0 B/s" for negative values', () => {
+	// 		expect(formatByteRate(-100)).toBe('0 B/s');
+	// 	});
+	//
+	// 	it('formats byte-level rates', () => {
+	// 		expect(formatByteRate(500)).toBe('500 B/s');
+	// 	});
+	//
+	// 	it('formats KB/s rates', () => {
+	// 		expect(formatByteRate(1024)).toBe('1.0 KB/s');
+	// 		expect(formatByteRate(10240)).toBe('10.0 KB/s');
+	// 	});
+	//
+	// 	it('formats MB/s rates', () => {
+	// 		expect(formatByteRate(1048576)).toBe('1.0 MB/s');
+	// 		expect(formatByteRate(5242880)).toBe('5.0 MB/s');
+	// 	});
+	//
+	// 	it('formats GB/s rates', () => {
+	// 		expect(formatByteRate(1073741824)).toBe('1.0 GB/s');
+	// 	});
+	// });
+	// OLD CODE END
 
 	// -- Uptime formatting ----------------------------------------------------
 

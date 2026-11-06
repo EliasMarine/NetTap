@@ -192,8 +192,9 @@ describe('Device detail — connection direction, protocol filter and upload sha
 		vi.mocked(devices.getDeviceConnections).mockResolvedValue({
 			from: '', to: '', ip: IP, page: 1, size: 25, total: 2, total_pages: 1,
 			connections: [
-				row('a', 'out', IP, '8.8.8.8', 1024, 4096),
-				row('b', 'in', '192.168.1.7', IP, 2048, 512),
+				// decimal units (NET-166): 1,000 bytes is 1.0 KB
+				row('a', 'out', IP, '8.8.8.8', 1000, 4000),
+				row('b', 'in', '192.168.1.7', IP, 2000, 512),
 			],
 		});
 		render(Page);

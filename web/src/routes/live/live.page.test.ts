@@ -364,10 +364,17 @@ describe('Live figures (accuracy audit 2026-11-06)', () => {
 		expect(screen.queryByText('Active devices')).not.toBeInTheDocument();
 	});
 
-	it('O11: bytes use the shared 1024-based units', async () => {
+	// OLD CODE START — 2026-11-06 (NET-166): the shared units were 1024-based
+	// it('O11: bytes use the shared 1024-based units', async () => {
+	// 	vi.mocked(getLiveDashboard).mockResolvedValue(dashboard(CONNECTIONS, { top_talkers: [{ ip: '192.168.1.20', bytes: 1_000_000, connections: 2 }] }));
+	// 	await renderLive();
+	// 	expect(talker(/976\.6 KB · 2 conn/)).toBeInTheDocument();
+	// });
+	// OLD CODE END
+	it('O11, NET-166: bytes use the shared decimal units', async () => {
 		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard(CONNECTIONS, { top_talkers: [{ ip: '192.168.1.20', bytes: 1_000_000, connections: 2 }] }));
 		await renderLive();
-		expect(talker(/976\.6 KB · 2 conn/)).toBeInTheDocument();
+		expect(talker(/(^|\s)1\.0 MB · 2 conn/)).toBeInTheDocument();
 	});
 });
 

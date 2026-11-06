@@ -29,8 +29,13 @@ export interface OpenSearchIndex {
 	health: string;
 	status: string;
 	docs_count: number | string;
-	pri_store_size: string;
-	store_size: string;
+	// OLD CODE START — 2026-11-06 (NET-166): OpenSearch's rounded 1024-based text ("512kb", "1.2gb")
+	// pri_store_size: string;
+	// store_size: string;
+	// OLD CODE END
+	/** Bytes (the daemon asks OpenSearch for `bytes=b`); null when OpenSearch sent no size. */
+	pri_store_size: number | null;
+	store_size: number | null;
 	creation_date: string | null;
 	[key: string]: unknown;
 }

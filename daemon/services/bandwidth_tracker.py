@@ -78,7 +78,8 @@ class BandwidthTracker:
         """Get configured monthly cap and current usage percentage."""
         return {
             "monthly_cap_bytes": self._monthly_cap_bytes,
-            "monthly_cap_gb": round(self._monthly_cap_bytes / (1024**3), 1)
+            # OLD CODE: round(self._monthly_cap_bytes / (1024**3), 1) (NET-166: GiB labelled GB)
+            "monthly_cap_gb": round(self._monthly_cap_bytes / 1e9, 1)
             if self._monthly_cap_bytes
             else 0,
             "enabled": self._monthly_cap_bytes > 0,

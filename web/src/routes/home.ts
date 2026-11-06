@@ -10,19 +10,24 @@ import { lossWords, type CaptureHealthResponse, type CaptureStatsResponse } from
 
 const CHECKING = 'Checking…';
 
+// NET-166: decimal units (1 KB = 1,000 bytes), like formatBytes in $api/logs
 export function formatBytes(bytes: number): string {
 	if (bytes === 0) return '0 B';
 	const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-	const i = Math.floor(Math.log(bytes) / Math.log(1024));
-	const value = bytes / Math.pow(1024, i);
+	// OLD CODE: const i = Math.floor(Math.log(bytes) / Math.log(1024)); (NET-166: 1024-based under decimal labels)
+	const i = Math.floor(Math.log(bytes) / Math.log(1000));
+	// OLD CODE: const value = bytes / Math.pow(1024, i); (NET-166)
+	const value = bytes / Math.pow(1000, i);
 	return `${value.toFixed(value >= 100 ? 0 : 1)} ${units[i]}`;
 }
 
 export function formatBytesShort(bytes: number): string {
 	if (bytes === 0) return '0';
 	const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-	const i = Math.floor(Math.log(bytes) / Math.log(1024));
-	const value = bytes / Math.pow(1024, i);
+	// OLD CODE: const i = Math.floor(Math.log(bytes) / Math.log(1024)); (NET-166: 1024-based under decimal labels)
+	const i = Math.floor(Math.log(bytes) / Math.log(1000));
+	// OLD CODE: const value = bytes / Math.pow(1024, i); (NET-166)
+	const value = bytes / Math.pow(1000, i);
 	return `${value.toFixed(value >= 10 ? 0 : 1)}${units[i]}`;
 }
 

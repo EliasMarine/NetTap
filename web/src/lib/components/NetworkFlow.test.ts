@@ -3,7 +3,7 @@ import { render, fireEvent, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import NetworkFlow from './NetworkFlow.svelte';
 
-const MB = 1_048_576;
+const MB = 1_000_000; // decimal, as formatBytes prints (NET-166)
 const node = (id: string, value: number, label = id) => ({ id, label, value });
 const link = (source: string, target: string, value: number) => ({ source, target, value });
 

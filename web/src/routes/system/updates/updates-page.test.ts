@@ -213,6 +213,17 @@ describe('Software Updates page — update size', () => {
 		expect(await screen.findByText('120.0 MB')).toBeInTheDocument();
 		expect(screen.queryByText('size unknown')).not.toBeInTheDocument();
 	});
+
+	// NET-166: the daemon's size_mb is decimal, so 1,000 MB is 1 GB (the 1024-based code read 1000.0 MB)
+	it.each([
+		[999.9, '999.9 MB'],
+		[1000, '1.0 GB'],
+		[2500, '2.5 GB'],
+	])('shows %s MB as %s', async (sizeMb, text) => {
+		await openUpdatePanel(sizeMb);
+
+		expect(await screen.findByText(text)).toBeInTheDocument();
+	});
 });
 
 // The daemon replies {history, count}; the client treated that object as the list, so no history ever showed.

@@ -9,8 +9,8 @@ const HEALTH = {
 	bypass_active: false,
 	watchdog_active: true,
 	latency_us: 120,
-	rx_bytes_delta: 2048,
-	tx_bytes_delta: 1024,
+	rx_bytes_delta: 2000,
+	tx_bytes_delta: 1000,
 	rx_packets_delta: 10,
 	tx_packets_delta: 5,
 	uptime_seconds: 3600,
@@ -115,12 +115,30 @@ describe('BridgeStatus traffic rates', () => {
 	const rate = (label: string) => screen.getByText(label).nextElementSibling?.textContent;
 
 	it("shows the daemon's per-second rate, not the delta", async () => {
-		stubFetch({ '/api/bridge/health': { ...HEALTH, rx_bytes_delta: 3_072_000, rx_bytes_per_sec: 102_400, tx_bytes_per_sec: 0 } });
+		// OLD CODE: rx_bytes_per_sec: 102_400 (100.0 KB/s in 1024-based units; NET-166)
+		stubFetch({ '/api/bridge/health': { ...HEALTH, rx_bytes_delta: 3_072_000, rx_bytes_per_sec: 100_000, tx_bytes_per_sec: 0 } });
 
 		render(BridgeStatus);
 
 		await screen.findByText('RX rate');
 		expect(rate('RX rate')).toBe('100.0 KB/s');
+		expect(rate('TX rate')).toBe('0 B/s');
+	});
+
+	// NET-166: decimal units, so a rate means what its label says (the 1024-based code read 976.6 KB/s for 1,000,000 B/s)
+	it.each([
+		[500, '500 B/s'],
+		[1_000, '1.0 KB/s'],
+		[1_000_000, '1.0 MB/s'],
+		[5_000_000, '5.0 MB/s'],
+		[1_000_000_000, '1.0 GB/s'],
+	])('shows %i B/s as %s', async (bytesPerSec, text) => {
+		stubFetch({ '/api/bridge/health': { ...HEALTH, rx_bytes_per_sec: bytesPerSec, tx_bytes_per_sec: -100 } });
+
+		render(BridgeStatus);
+
+		await screen.findByText('RX rate');
+		expect(rate('RX rate')).toBe(text);
 		expect(rate('TX rate')).toBe('0 B/s');
 	});
 

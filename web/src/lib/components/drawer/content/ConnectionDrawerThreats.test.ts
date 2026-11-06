@@ -88,3 +88,19 @@ describe('Connection drawer — flow diagram', () => {
 		expect(texts).toContain('Example Networks…');
 	});
 });
+
+// NET-166: the drawer's byte figures are decimal (the 1024-based code read 976.6 KB for 1,000,000 bytes)
+describe('Connection drawer — byte figures', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('shows what each side sent in decimal units', async () => {
+		stubAlerts({ ok: true, body: { from: '', to: '', page: 1, size: 10, total: 0, total_pages: 0, alerts: [] } });
+		const connection = { ...CONNECTION, source: { ...CONNECTION.source, bytes: 1_000_000 }, destination: { ...CONNECTION.destination, bytes: 1_500 } };
+		render(ConnectionDrawerContent, { connection, activeTab: 'summary' });
+		const value = (label: string) => screen.getByText(label).nextElementSibling?.textContent?.trim();
+		expect(value('Sent by source')).toBe('1.0 MB');
+		expect(value('Sent by destination')).toBe('1.5 KB');
+	});
+});

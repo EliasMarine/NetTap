@@ -1,30 +1,35 @@
 import type { SmartHealth, StorageStatus } from '../../../src/lib/api/system.ts';
 import { HOUR, MIN, iso, type FixtureRoute } from './types.ts';
 
-const GIB = 1024 ** 3;
-/** A 1 TB NVMe as the filesystem reports it. */
-const TOTAL_GIB = 931.51;
+// OLD CODE START — 2026-11-06 (NET-166): the daemon's disk_*_gb were GiB; they are decimal GB now
+// const GIB = 1024 ** 3;
+// /** A 1 TB NVMe as the filesystem reports it. */
+// const TOTAL_GIB = 931.51;
+// OLD CODE END
+const GB = 1000 ** 3;
+/** A 1 TB NVMe as the filesystem reports it (931.51 GiB), in decimal GB. */
+const TOTAL_GB = 1000.2;
 const round = (n: number, places: number): number => Math.round(n * 10 ** places) / 10 ** places;
 
-/** The daemon's disk figures for a given used size: bytes, GiB (2 dp) and percent (1 dp). */
-function diskUsage(usedGib: number) {
-	const total = Math.round(TOTAL_GIB * GIB);
-	const used = Math.round(usedGib * GIB);
+/** The daemon's disk figures for a given used size: bytes, decimal GB (2 dp) and percent (1 dp). */
+function diskUsage(usedGb: number) {
+	const total = Math.round(TOTAL_GB * GB);
+	const used = Math.round(usedGb * GB);
 	return {
 		disk_total_bytes: total,
 		disk_used_bytes: used,
 		disk_free_bytes: total - used,
-		disk_total_gb: round(TOTAL_GIB, 2),
-		disk_used_gb: round(usedGib, 2),
-		disk_free_gb: round(TOTAL_GIB - usedGib, 2),
-		disk_usage_percent: round((usedGib / TOTAL_GIB) * 100, 1),
+		disk_total_gb: round(TOTAL_GB, 2),
+		disk_used_gb: round(usedGb, 2),
+		disk_free_gb: round(TOTAL_GB - usedGb, 2),
+		disk_usage_percent: round((usedGb / TOTAL_GB) * 100, 1),
 	};
 }
 
 /** GET /api/storage/status; the extra keys are the ones the Settings page and the web setup route read. */
-function storageStatus(usedGib: number, indexCounts: Record<string, number>) {
+function storageStatus(usedGb: number, indexCounts: Record<string, number>) {
 	return {
-		...diskUsage(usedGib),
+		...diskUsage(usedGb),
 		hot_days: 90,
 		warm_days: 180,
 		cold_days: 30,

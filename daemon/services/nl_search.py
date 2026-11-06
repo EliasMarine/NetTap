@@ -489,9 +489,9 @@ class NLSearchParser:
     def _parse_large_traffic(self, match: re.Match) -> dict:
         """Parse 'large/big/heavy traffic/transfers'."""
         return {
-            "filter": {
-                "range": {"client.bytes": {"gte": 1048576}}  # 1MB+
-            },
+            # OLD CODE: "filter": {"range": {"client.bytes": {"gte": 1048576}}},  # 1MB+
+            # (NET-166: 1 MiB, so 1,000,001 to 1,048,575 bytes matched ">1MB" but were left out)
+            "filter": {"range": {"client.bytes": {"gt": 1_000_000}}},
             "description": "large traffic transfers (>1MB)",
         }
 

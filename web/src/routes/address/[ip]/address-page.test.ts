@@ -32,7 +32,7 @@ const CONNECTIONS = (total: number) => ({
 	total_pages: Math.min(Math.ceil(total / 25), 400),
 	connections: total
 		? [
-				{ _id: 'c1', _index: 'x', '@timestamp': '2026-11-06T08:00:00Z', direction: 'in', source: { ip: '192.168.1.22', port: 50000, bytes: 1024 }, destination: { ip: '198.51.100.10', port: 443 }, network: { transport: 'tcp', protocol: 'ssl' } },
+				{ _id: 'c1', _index: 'x', '@timestamp': '2026-11-06T08:00:00Z', direction: 'in', source: { ip: '192.168.1.22', port: 50000, bytes: 1000 }, destination: { ip: '198.51.100.10', port: 443 }, network: { transport: 'tcp', protocol: 'ssl' } },
 			]
 		: [],
 });
@@ -95,7 +95,8 @@ describe('Address page', () => {
 		const { container } = render(Page);
 		await vi.waitFor(() => expect(kpi('Connections')).toHaveTextContent('1,980'));
 		expect(kpi('Data to it')).toHaveTextContent('at least 200.0 MB');
-		expect(kpi('Data to it')).toHaveTextContent('From it: at least 17.8 GB');
+		// OLD CODE: 'From it: at least 17.8 GB' (18,200 MiB in 1024-based units; NET-166)
+		expect(kpi('Data to it')).toHaveTextContent('From it: at least 18.2 GB');
 		expect(kpi('Data to it')).toHaveTextContent('To it: 1,970 of 1,980 connections measured · from it: 1,970 of 1,980 connections measured');
 		expect(kpi('Devices that talked to it')).toHaveTextContent('3');
 		expect(kpi('Devices that talked to it')).toHaveTextContent('on your network, of 3 addresses in all');
@@ -301,9 +302,10 @@ describe('Address page', () => {
 				...CONNECTIONS(3),
 				connections: [
 					// it opened this one: what the source sent came from it
-					row('out', 'out', { ip: '198.51.100.10', port: 443, bytes: 2048 }, { ip: '192.168.1.22', port: 50000, bytes: 'n/a' }),
+					// decimal units (NET-166): 2,000 bytes is 2.0 KB
+					row('out', 'out', { ip: '198.51.100.10', port: 443, bytes: 2000 }, { ip: '192.168.1.22', port: 50000, bytes: 'n/a' }),
 					row('none', 'in', { ip: '192.168.1.22', port: 50001 }, { ip: '198.51.100.10', port: 443 }),
-					row('in', 'in', { ip: '192.168.1.20', port: 50002, bytes: 1024 }, { ip: '198.51.100.10', port: 443, bytes: 4096 }),
+					row('in', 'in', { ip: '192.168.1.20', port: 50002, bytes: 1000 }, { ip: '198.51.100.10', port: 443, bytes: 4000 }),
 				],
 			},
 		});

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { flowData, flowLayout, dodgeLabels, share, splitText, OTHER_ID, type FlowInput, type PlacedNode } from './flow';
 
-const MB = 1_048_576;
+const MB = 1_000_000; // decimal, as formatBytes prints (NET-166)
 const node = (id: string, value = 0, label = id) => ({ id, label, value });
 const link = (source: string, target: string, value: number) => ({ source, target, value });
 

@@ -93,8 +93,12 @@
 		if (bytes == null) return '—';
 		if (bytes <= 0) return '0 B/s';
 		const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
-		const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-		const val = bytes / Math.pow(1024, i);
+		// OLD CODE START — 2026-11-06 (NET-166): 1024-based under decimal labels
+		// const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+		// const val = bytes / Math.pow(1024, i);
+		// OLD CODE END
+		const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1000)), units.length - 1);
+		const val = bytes / Math.pow(1000, i);
 		return `${val.toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
 	}
 

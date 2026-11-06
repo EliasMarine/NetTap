@@ -84,7 +84,9 @@ const TSHARK_STATUS = {
 	container_name: 'nettap-tshark',
 } satisfies TSharkStatus;
 
-const MB = 1024 ** 2;
+// OLD CODE: const MB = 1024 ** 2; (NET-166: named MB, but these are netsniff-ng's MiB)
+/** netsniff-ng rotates PCAP files in MiB, so a full 256 MiB file is 268.4 MB on the page. */
+const MIB = 1024 ** 2;
 const epochSeconds = (msAgo: number): number => (NOW - msAgo) / 1000;
 
 const PCAPS_POPULATED = {
@@ -93,21 +95,21 @@ const PCAPS_POPULATED = {
 			path: '/opt/nettap/pcap/capture_20261103_0900.pcap',
 			relative_path: 'capture_20261103_0900.pcap',
 			name: 'capture_20261103_0900.pcap',
-			size_bytes: 256 * MB,
+			size_bytes: 256 * MIB,
 			modified: epochSeconds(25 * 60_000),
 		},
 		{
 			path: '/opt/nettap/pcap/capture_20261103_0800.pcap',
 			relative_path: 'capture_20261103_0800.pcap',
 			name: 'capture_20261103_0800.pcap',
-			size_bytes: 256 * MB,
+			size_bytes: 256 * MIB,
 			modified: epochSeconds(1 * HOUR + 20 * 60_000),
 		},
 		{
 			path: '/opt/nettap/pcap/capture_20261102_2300.pcap',
 			relative_path: 'capture_20261102_2300.pcap',
 			name: 'capture_20261102_2300.pcap',
-			size_bytes: 187 * MB,
+			size_bytes: 187 * MIB,
 			modified: epochSeconds(1 * DAY),
 		},
 	],

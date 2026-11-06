@@ -1837,9 +1837,14 @@ class StorageManager:
         disk_total_bytes = disk.total
         disk_used_bytes = disk.used
         disk_free_bytes = disk.free
-        disk_total_gb = round(disk.total / (1024**3), 2)
-        disk_used_gb = round(disk.used / (1024**3), 2)
-        disk_free_gb = round(disk.free / (1024**3), 2)
+        # OLD CODE START — NET-166: GiB labelled GB, so a 1 TB drive read 931.32 GB
+        # disk_total_gb = round(disk.total / (1024**3), 2)
+        # disk_used_gb = round(disk.used / (1024**3), 2)
+        # disk_free_gb = round(disk.free / (1024**3), 2)
+        # OLD CODE END
+        disk_total_gb = round(disk.total / 1e9, 2)
+        disk_used_gb = round(disk.used / 1e9, 2)
+        disk_free_gb = round(disk.free / 1e9, 2)
 
         # OLD CODE START — #96: OpenSearch down read as 0 indices in every tier
         # try:

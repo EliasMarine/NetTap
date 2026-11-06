@@ -193,8 +193,9 @@ describe('Infrastructure — card states', () => {
 			...READINGS,
 			'/api/opensearch/indices': {
 				indices: [
-					{ index: 'arkime_sessions3-261101', health: 'green', status: 'open', docs_count: '9', pri_store_size: '1.2gb', store_size: '1.2gb' },
-					{ index: 'arkime_sessions3-261102', health: 'yellow', status: 'open', docs_count: '10', pri_store_size: '100mb', store_size: '100mb' },
+					// OLD CODE: sizes were OpenSearch's text ('1.2gb', '100mb'); the daemon sends bytes since NET-166
+					{ index: 'arkime_sessions3-261101', health: 'green', status: 'open', docs_count: '9', pri_store_size: 1_200_000_000, store_size: 1_200_000_000 },
+					{ index: 'arkime_sessions3-261102', health: 'yellow', status: 'open', docs_count: '10', pri_store_size: 100_000_000, store_size: 100_000_000 },
 				],
 				count: 2,
 			},
@@ -204,5 +205,6 @@ describe('Infrastructure — card states', () => {
 		const table = await screen.findByRole('table', { name: 'OpenSearch indices' });
 		expect(within(table).getAllByRole('columnheader')).toHaveLength(5);
 		expect(within(table).getByText('Yellow')).toBeInTheDocument();
+		expect(within(table).getAllByText('1.2 GB')).toHaveLength(2); // primary and total
 	});
 });

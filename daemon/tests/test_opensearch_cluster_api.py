@@ -66,6 +66,33 @@ class TestOpenSearchClusterAPI(AioHTTPTestCase):
         self.assertEqual(data["count"], 2)
         self.assertEqual(data["indices"][0]["index"], "arkime_sessions3-260305")
 
+    async def test_indices_sizes_are_exact_bytes(self):
+        """NET-166: sizes come from OpenSearch as bytes (bytes=b) and go out as integers."""
+        self.mock_client.cat.indices.return_value = [
+            {"index": "a", "store.size": "524288", "pri.store.size": "0"},
+            {"index": "b", "store.size": "12.5mb", "pri.store.size": None},
+            {"index": "c"},
+            {"index": "d", "store.size": "²", "pri.store.size": " 7 "},
+        ]
+        resp = await self.client.request("GET", "/api/opensearch/indices")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(self.mock_client.cat.indices.call_args.kwargs["bytes"], "b")
+        rows = {r["index"]: r for r in (await resp.json())["indices"]}
+        self.assertEqual(
+            (rows["a"]["store_size"], rows["a"]["pri_store_size"]), (524288, 0)
+        )
+        # anything but digits is unknown, never a guess
+        self.assertEqual(
+            (rows["b"]["store_size"], rows["b"]["pri_store_size"]), (None, None)
+        )
+        self.assertEqual(
+            (rows["c"]["store_size"], rows["c"]["pri_store_size"]), (None, None)
+        )
+        # a digit int() can't read is unknown too, not a 500 for the whole list
+        self.assertEqual(
+            (rows["d"]["store_size"], rows["d"]["pri_store_size"]), (None, 7)
+        )
+
     async def test_indices_empty(self):
         """GET /api/opensearch/indices handles empty response."""
         self.mock_client.cat.indices.return_value = []

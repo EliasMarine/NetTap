@@ -1,7 +1,10 @@
 import type { OpenSearchCluster, getOpenSearchIndices } from '../../../src/lib/api/infrastructure.ts';
 import { DAY, iso, type FixtureRoute } from './types.ts';
 
-const GIB = 1024 ** 3;
+// OLD CODE: const GIB = 1024 ** 3; (NET-166: the page prints decimal units)
+const KB = 1000;
+const MB = 1000 ** 2;
+const GB = 1000 ** 3;
 
 /** GET /api/opensearch/cluster as the daemon sends it; the client copies total_size_bytes to total_data_size_bytes. */
 interface DaemonCluster
@@ -75,7 +78,7 @@ const CLUSTER_POPULATED = {
 	number_of_pending_tasks: 0,
 	total_indices: 54,
 	total_docs: 48_213_907,
-	total_size_bytes: Math.round(38.4 * GIB),
+	total_size_bytes: Math.round(38.4 * GB),
 } satisfies DaemonCluster;
 
 const CLUSTER_EMPTY = {
@@ -92,28 +95,32 @@ const CLUSTER_EMPTY = {
 	total_size_bytes: 0,
 } satisfies DaemonCluster;
 
-function index(name: string, docs: number, size: string, daysAgo: number, health = 'green') {
+// OLD CODE: function index(name: string, docs: number, size: string, …) passed OpenSearch's text through (NET-166)
+/** `size` in bytes, as the daemon sends it since NET-166 (OpenSearch's `bytes=b`); null when unknown. */
+function index(name: string, docs: number, size: number | null, daysAgo: number, health = 'green') {
+	const bytes = size === null ? null : Math.round(size);
 	return {
 		index: name,
 		health,
 		status: 'open',
 		docs_count: String(docs),
-		pri_store_size: size,
-		store_size: size,
+		pri_store_size: bytes,
+		store_size: bytes,
 		creation_date: iso(daysAgo * DAY),
 	};
 }
 
 const INDICES_POPULATED = {
 	indices: [
-		index('.opendistro_security', 10, '63.4kb', 12),
-		index('.kibana_1', 42, '211.7kb', 12),
-		index('arkime_sessions3-261101', 8_412_330, '6.1gb', 2),
-		index('arkime_sessions3-261102', 9_033_518, '6.6gb', 1),
-		index('arkime_sessions3-261103', 2_948_071, '2.2gb', 0),
-		index('malcolm_beats_zeek_261102', 14_882_904, '4.3gb', 1),
-		index('malcolm_beats_suricata_261102', 41_208, '38.9mb', 1),
-		index('malcolm_beats_zeek_261103', 5_006_127, '1.5gb', 0, 'yellow'),
+		// OLD CODE: sizes were OpenSearch's 1024-based text ('63.4kb', '6.1gb', …) (NET-166)
+		index('.opendistro_security', 10, 63.4 * KB, 12),
+		index('.kibana_1', 42, 211.7 * KB, 12),
+		index('arkime_sessions3-261101', 8_412_330, 6.1 * GB, 2),
+		index('arkime_sessions3-261102', 9_033_518, 6.6 * GB, 1),
+		index('arkime_sessions3-261103', 2_948_071, 2.2 * GB, 0),
+		index('malcolm_beats_zeek_261102', 14_882_904, 4.3 * GB, 1),
+		index('malcolm_beats_suricata_261102', 41_208, 38.9 * MB, 1),
+		index('malcolm_beats_zeek_261103', 5_006_127, 1.5 * GB, 0, 'yellow'),
 	],
 	count: 8,
 } satisfies IndicesResponse;
@@ -135,6 +142,7 @@ function events(inCount: number, durationMs: number): LogstashEvents {
 	return { in: inCount, out: inCount, filtered: inCount, duration_in_millis: durationMs };
 }
 
+// Logstash's -Xmx1g heap is 1 GiB (1024 ** 3 bytes), which the page shows in decimal: 1.1 GB (NET-166)
 const LOGSTASH_STATS_POPULATED = {
 	available: true,
 	jvm: { mem: { heap_used_in_bytes: 612 * 1024 ** 2, heap_max_in_bytes: 1024 ** 3, heap_used_percent: 60 } },

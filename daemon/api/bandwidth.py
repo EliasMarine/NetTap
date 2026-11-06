@@ -263,8 +263,15 @@ async def handle_set_cap(request: web.Request) -> web.Response:
         )
 
     try:
-        cap_bytes = int(float(cap_gb) * (1024**3))
-    except (ValueError, TypeError):
+        # OLD CODE: cap_bytes = int(float(cap_gb) * (1024**3)) (NET-166: the GB typed was GiB)
+        # shortcut: a cap saved before NET-166 keeps its bytes, so it reads about 7% higher (1,000 GiB
+        # shows as 1,073.7 GB); no page sets a cap yet, so convert stored caps if one ships first
+        # int() cut 4.1 GB to 4,099,999,999 bytes (float error), and Infinity raised OverflowError
+        # (a 500); a negative cap is saved as 0 (off), so the reply says 0 too
+        # OLD CODE: cap_bytes = int(float(cap_gb) * 1e9)
+        # OLD CODE: except (ValueError, TypeError):
+        cap_bytes = max(0, round(float(cap_gb) * 1e9))
+    except (ValueError, TypeError, OverflowError):
         return web.json_response(
             {"error": "'monthly_cap_gb' must be a number"}, status=400
         )
@@ -274,7 +281,8 @@ async def handle_set_cap(request: web.Request) -> web.Response:
     return web.json_response(
         {
             "result": "saved",
-            "monthly_cap_gb": round(cap_bytes / (1024**3), 1),
+            # OLD CODE: "monthly_cap_gb": round(cap_bytes / (1024**3), 1), (NET-166)
+            "monthly_cap_gb": round(cap_bytes / 1e9, 1),
             "monthly_cap_bytes": cap_bytes,
         }
     )

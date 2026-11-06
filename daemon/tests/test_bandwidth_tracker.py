@@ -66,7 +66,8 @@ class TestBandwidthTrackerNoClient(unittest.TestCase):
     ):
         """Saving cap should update in-memory value."""
         with patch("services.bandwidth_tracker._CAP_FILE", "/tmp/test_bw_cap.json"):
-            self.tracker.save_cap(1024 * 1024 * 1024 * 1200)  # 1200 GB
+            # OLD CODE: self.tracker.save_cap(1024 * 1024 * 1024 * 1200)  # 1200 GB (NET-166: GiB)
+            self.tracker.save_cap(1200 * 10**9)  # 1200 GB
             cap = self.tracker.get_cap()
             self.assertGreater(cap["monthly_cap_bytes"], 0)
             self.assertTrue(cap["enabled"])
@@ -274,7 +275,8 @@ class TestBandwidthTrackerWithClient(unittest.TestCase):
                 "resp_bytes": {"value": 0},
             }
         }
-        self.tracker._monthly_cap_bytes = 1000 * 1024**3  # 1000 GB cap
+        # OLD CODE: self.tracker._monthly_cap_bytes = 1000 * 1024**3  # 1000 GB cap (NET-166: GiB)
+        self.tracker._monthly_cap_bytes = 1000 * 10**9  # 1000 GB cap
 
         with patch("services.bandwidth_tracker.datetime") as mock_dt:
             mock_now = datetime(2026, 3, 15, 12, 0, 0, tzinfo=timezone.utc)
@@ -461,6 +463,50 @@ class TestBandwidthApiQueryFailure(AioHTTPTestCase):
             resp = await self.client.request("GET", f"/api/bandwidth/{path}")
             self.assertEqual(resp.status, 502, path)
             self.assertIn("error", await resp.json())
+
+
+class TestSetCapIsDecimalGb(AioHTTPTestCase):
+    """NET-166: the GB a user types is the GB every page shows, 1,000,000,000 bytes."""
+
+    async def get_application(self):
+        from api.bandwidth import register_bandwidth_routes
+
+        self.tracker = MagicMock()
+        app = web.Application()
+        register_bandwidth_routes(app, self.tracker)
+        return app
+
+    async def test_a_1000_gb_cap_is_10_to_the_12_bytes(self):
+        resp = await self.client.request(
+            "PUT", "/api/settings/bandwidth-cap", json={"monthly_cap_gb": 1000}
+        )
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.tracker.save_cap.assert_called_once_with(10**12)
+        self.assertEqual(body["monthly_cap_bytes"], 10**12)
+        self.assertEqual(body["monthly_cap_gb"], 1000.0)
+
+    async def test_a_decimal_cap_is_exact(self):
+        resp = await self.client.request(
+            "PUT", "/api/settings/bandwidth-cap", json={"monthly_cap_gb": 4.1}
+        )
+        self.assertEqual(resp.status, 200)
+        self.tracker.save_cap.assert_called_once_with(4_100_000_000)
+
+    async def test_infinity_is_a_400_and_saves_nothing(self):
+        resp = await self.client.request(
+            "PUT", "/api/settings/bandwidth-cap", json={"monthly_cap_gb": float("inf")}
+        )
+        self.assertEqual(resp.status, 400)
+        self.tracker.save_cap.assert_not_called()
+
+    async def test_a_negative_cap_is_saved_and_reported_as_off(self):
+        resp = await self.client.request(
+            "PUT", "/api/settings/bandwidth-cap", json={"monthly_cap_gb": -5}
+        )
+        body = await resp.json()
+        self.tracker.save_cap.assert_called_once_with(0)
+        self.assertEqual((body["monthly_cap_bytes"], body["monthly_cap_gb"]), (0, 0.0))
 
 
 class TestHeatmapScriptsAndTimeZone(AioHTTPTestCase):

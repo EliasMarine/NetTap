@@ -16,9 +16,10 @@ const EMPTY = { category: 'streaming', label: 'Streaming', device_count: 0, tota
 const BUSY = {
 	...EMPTY,
 	device_count: 1,
-	total_bytes: 4096,
+	// decimal units (NET-166): 4,000 bytes is 4.0 KB (4,096 bytes would read 4.1 KB)
+	total_bytes: 4000,
 	connection_count: 3,
-	devices: [{ ip: '192.168.1.20', hostname: null, total_bytes: 4096, download_bytes: 4000, upload_bytes: 96, connections: 3, percent: 100 }],
+	devices: [{ ip: '192.168.1.20', hostname: null, total_bytes: 4000, download_bytes: 3904, upload_bytes: 96, connections: 3, percent: 100 }],
 };
 
 /** Replies by path; any path not listed answers 503. */
@@ -70,7 +71,7 @@ describe('Traffic category page', () => {
 	});
 
 	it('shows the KPIs with their trend, the chart, the services and the device table', async () => {
-		const prevBusy = { ...BUSY, total_bytes: 2048, connection_count: 6 };
+		const prevBusy = { ...BUSY, total_bytes: 2000, connection_count: 6 };
 		const series = [
 			{ timestamp: '2026-11-03T09:00:00Z', download_bytes: 1000, upload_bytes: 50, total_bytes: 1050, connections: 1 },
 			{ timestamp: '2026-11-03T10:00:00Z', download_bytes: 3000, upload_bytes: 46, total_bytes: 3046, connections: 2 },
@@ -82,9 +83,9 @@ describe('Traffic category page', () => {
 			vi.fn(async (url: string) => {
 				const path = url.split('?')[0];
 				const body =
-					path === '/api/traffic/categories/streaming' ? (detailCalls++ === 0 ? { ...BUSY, services: [{ name: 'Netflix', bytes: 4096, connections: 3 }] } : prevBusy)
+					path === '/api/traffic/categories/streaming' ? (detailCalls++ === 0 ? { ...BUSY, services: [{ name: 'Netflix', bytes: 4000, connections: 3 }] } : prevBusy)
 					: path === '/api/traffic/categories/streaming/bandwidth' ? { category: 'streaming', from: '', to: '', interval: '15m', series }
-					: path === '/api/traffic/summary' ? { total_bytes: 8192 }
+					: path === '/api/traffic/summary' ? { total_bytes: 8000 }
 					: null;
 				return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 503, json: async () => ({}) };
 			}),

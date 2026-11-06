@@ -38,15 +38,19 @@ function formatDuration(val: unknown): string {
 	return `${Math.floor(n / 60)}m ${(n % 60).toFixed(0)}s`;
 }
 
-function formatBytes(val: unknown): string {
-	if (val == null) return '--';
-	const n = Number(val);
-	if (isNaN(n)) return String(val);
-	if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(1)} GB`;
-	if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;
-	if (n >= 1_024) return `${(n / 1_024).toFixed(1)} KB`;
-	return `${n} B`;
-}
+// OLD CODE START — 2026-11-06 (NET-166): a copy of the formatter, so it never caught the component
+// changing; ConnectionDrawerThreats.test.ts renders the drawer's byte figures instead, and
+// tshark-helpers.test.ts tests the formatter it imports
+// function formatBytes(val: unknown): string {
+// 	if (val == null) return '--';
+// 	const n = Number(val);
+// 	if (isNaN(n)) return String(val);
+// 	if (n >= 1_073_741_824) return `${(n / 1_073_741_824).toFixed(1)} GB`;
+// 	if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)} MB`;
+// 	if (n >= 1_024) return `${(n / 1_024).toFixed(1)} KB`;
+// 	return `${n} B`;
+// }
+// OLD CODE END
 
 /** Simulates active tab visibility — mirrors the {#if activeTab === ...} blocks */
 function getVisibleContent(activeTab: string): 'summary' | 'tshark' | 'related' | 'flow' | 'none' {
@@ -159,37 +163,39 @@ describe('ConnectionDrawerContent logic', () => {
 
 	// -- formatBytes ----------------------------------------------------------
 
-	describe('formatBytes', () => {
-		it('returns "--" for null', () => {
-			expect(formatBytes(null)).toBe('--');
-		});
-
-		it('returns "--" for undefined', () => {
-			expect(formatBytes(undefined)).toBe('--');
-		});
-
-		it('returns original string for NaN values', () => {
-			expect(formatBytes('invalid')).toBe('invalid');
-		});
-
-		it('formats bytes', () => {
-			expect(formatBytes(500)).toBe('500 B');
-			expect(formatBytes(0)).toBe('0 B');
-		});
-
-		it('formats kilobytes', () => {
-			expect(formatBytes(1024)).toBe('1.0 KB');
-			expect(formatBytes(10240)).toBe('10.0 KB');
-		});
-
-		it('formats megabytes', () => {
-			expect(formatBytes(1_048_576)).toBe('1.0 MB');
-		});
-
-		it('formats gigabytes', () => {
-			expect(formatBytes(1_073_741_824)).toBe('1.0 GB');
-		});
-	});
+	// OLD CODE START — 2026-11-06 (NET-166): tested the copy above, not the component
+	// describe('formatBytes', () => {
+	// 	it('returns "--" for null', () => {
+	// 		expect(formatBytes(null)).toBe('--');
+	// 	});
+	//
+	// 	it('returns "--" for undefined', () => {
+	// 		expect(formatBytes(undefined)).toBe('--');
+	// 	});
+	//
+	// 	it('returns original string for NaN values', () => {
+	// 		expect(formatBytes('invalid')).toBe('invalid');
+	// 	});
+	//
+	// 	it('formats bytes', () => {
+	// 		expect(formatBytes(500)).toBe('500 B');
+	// 		expect(formatBytes(0)).toBe('0 B');
+	// 	});
+	//
+	// 	it('formats kilobytes', () => {
+	// 		expect(formatBytes(1024)).toBe('1.0 KB');
+	// 		expect(formatBytes(10240)).toBe('10.0 KB');
+	// 	});
+	//
+	// 	it('formats megabytes', () => {
+	// 		expect(formatBytes(1_048_576)).toBe('1.0 MB');
+	// 	});
+	//
+	// 	it('formats gigabytes', () => {
+	// 		expect(formatBytes(1_073_741_824)).toBe('1.0 GB');
+	// 	});
+	// });
+	// OLD CODE END
 
 	// -- Connection state descriptions ----------------------------------------
 

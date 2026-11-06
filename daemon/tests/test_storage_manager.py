@@ -583,6 +583,10 @@ class TestGetStatus:
         # Verify absolute GB values are reasonable
         assert status["disk_total_gb"] > 0
         assert status["disk_free_gb"] > 0
+        # NET-166: decimal GB, as the page labels them (1,000 GiB is 1,073.74 GB, not 1,000)
+        assert status["disk_total_gb"] == 1073.74
+        assert status["disk_used_gb"] == 697.93
+        assert status["disk_free_gb"] == 375.81
         assert status["disk_usage_percent"] == 65.0
 
         # Thresholds are 0-100 percentages
