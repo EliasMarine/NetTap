@@ -58,6 +58,13 @@ describe('connections v3 API client', () => {
 			expect(url.searchParams.get('ip')).toBe('2001:db8::1');
 			expect(url.searchParams.get('q')).toBe('dns');
 		});
+
+		it("throws the daemon's reason, so the page can say what was wrong (NET-160)", async () => {
+			mockFetchSuccess({ error: 'That is not an IP address.' }, 400);
+			await expect(getConnections({ ip: 'fe80::1%eth0' })).rejects.toThrow('That is not an IP address.');
+			mockFetchFailure(502);
+			await expect(getConnections()).rejects.toThrow('Connection list failed: HTTP 502');
+		});
 	});
 
 	// -- getConnectionStats --------------------------------------------------

@@ -52,20 +52,38 @@ export function measuredNote(b: ByteTotal): string | null {
 	return `${fmt(b.measured)} of ${fmt(b.connections)} ${b.connections === 1 ? 'connection' : 'connections'} measured`;
 }
 
+/** A name as the daemon matches it: trimmed, one trailing dot dropped, lower case. */
+export function canonicalName(raw: string): string {
+	return raw.trim().replace(/\.$/, '').toLowerCase();
+}
+
+const LABEL = /^[a-z0-9_-]{1,63}$/;
+/** A host name by the daemon's rule (services/hostnames.py): labels of a-z, 0-9, _ and -, 253 characters at most. */
+export function isHostName(raw: string): boolean {
+	const name = canonicalName(raw);
+	return name.length > 0 && name.length <= 253 && name.split('.').every((label) => LABEL.test(label));
+}
+
 /** The observed certificates for a site and/or server in a window (the Certificates page's filter). */
 export function certificatesHref(opts: { site?: string | null; server?: string | null; from: string; to: string }): string {
 	const q = new URLSearchParams();
 	// OLD CODE START — the name went as recorded ("Example.com."); the filter takes the canonical name
 	// if (opts.site) q.set('site', opts.site);
 	// OLD CODE END
-	if (opts.site) q.set('site', opts.site.trim().replace(/\.$/, '').toLowerCase());
+	if (opts.site) q.set('site', canonicalName(opts.site));
 	if (opts.server) q.set('server', opts.server);
 	q.set('from', opts.from);
 	q.set('to', opts.to);
 	return `/certificates?${q.toString()}`;
 }
 
-/** Log Explorer, searching both sides for an address (quoted, so IPv6 colons aren't query syntax). */
-export function logsHrefForIp(ip: string): string {
-	return `/logs?query=${encodeURIComponent(`(source.ip:"${ip}" OR destination.ip:"${ip}")`)}`;
+// OLD CODE START — Log Explorer opened on its own 24-hour window, whatever window the link came from
+// /** Log Explorer, searching both sides for an address (quoted, so IPv6 colons aren't query syntax). */
+// export function logsHrefForIp(ip: string): string {
+// 	return `/logs?query=${encodeURIComponent(`(source.ip:"${ip}" OR destination.ip:"${ip}")`)}`;
+// }
+// OLD CODE END
+/** Log Explorer over `range`, searching both sides for an address (quoted, so IPv6 colons aren't query syntax). */
+export function logsHrefForIp(ip: string, range: DrillRangeValue): string {
+	return `/logs?query=${encodeURIComponent(`(source.ip:"${ip}" OR destination.ip:"${ip}")`)}&range=${range}`;
 }

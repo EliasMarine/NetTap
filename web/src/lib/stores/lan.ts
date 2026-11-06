@@ -8,33 +8,45 @@
  */
 import { derived, readable, type Readable } from 'svelte/store';
 import { getLanPolicy, type LanPolicy } from '$lib/api/network';
+import { PRIVATE_RANGES, inBlock, toNumber } from '$lib/utils/dhcpSubnet';
+import { canonicalName } from '$lib/utils/drilldown';
 
 export const LAN_REFRESH_MS = 5 * 60_000;
 
-const RFC1918 = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
+// OLD CODE START — NET-160 review: utils/dhcpSubnet.ts already has this maths, with the daemon's
+// stricter parser (no leading zeros)
+// const RFC1918 = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
+//
+// /** A dotted-quad IPv4 address as a 32-bit number, or null for anything else (IPv6 included). */
+// export function ipv4ToNumber(ip: string): number | null {
+// 	const parts = ip.trim().split('.');
+// 	if (parts.length !== 4 || !parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255)) return null;
+// 	return parts.reduce((n, p) => n * 256 + Number(p), 0);
+// }
+// OLD CODE END
+const RFC1918 = PRIVATE_RANGES.map(([net, bits]) => `${net}/${bits}`);
 
-/** A dotted-quad IPv4 address as a 32-bit number, or null for anything else (IPv6 included). */
-export function ipv4ToNumber(ip: string): number | null {
-	const parts = ip.trim().split('.');
-	if (parts.length !== 4 || !parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255)) return null;
-	return parts.reduce((n, p) => n * 256 + Number(p), 0);
+/** A whole IPv4 address, or text shaped like IPv6 (hex digits, ':' and '.', at least two ':'). */
+export function isIpAddress(text: string): boolean {
+	const t = text.trim();
+	// shortcut: the IPv6 test is by shape only; the daemon validates what it is sent
+	return toNumber(t) !== null || (/^[0-9a-f:.]+$/i.test(t) && (t.match(/:/g)?.length ?? 0) >= 2);
 }
 
 /** True when `ip` is in `cidr` ("a.b.c.d/n"); false for a malformed CIDR. */
 export function inCidr(ip: number, cidr: string): boolean {
 	const [base, bitsText] = cidr.split('/');
-	const net = ipv4ToNumber(base ?? '');
+	const net = toNumber(base ?? '');
 	const bits = Number(bitsText);
 	if (net === null || !/^\d{1,2}$/.test(bitsText ?? '') || bits > 32) return false;
-	// 2 ** (32 - bits) addresses per block; integer division keeps /0 and /32 exact without bit shifts
-	const size = 2 ** (32 - bits);
-	return Math.floor(ip / size) === Math.floor(net / size);
+	// OLD CODE START: const size = 2 ** (32 - bits); return Math.floor(ip / size) === Math.floor(net / size); OLD CODE END
+	return inBlock(ip, net, bits);
 }
 
 /** On the LAN by `policy`: null while the policy hasn't loaded, false for IPv6 and non-addresses. */
 export function lanStatus(policy: LanPolicy | null, ip: string): boolean | null {
 	if (!policy) return null;
-	const n = ipv4ToNumber(ip);
+	const n = toNumber(ip);
 	if (n === null) return false;
 	const subnets = policy.subnets.length ? policy.subnets : RFC1918;
 	return subnets.some((cidr) => inCidr(n, cidr));
@@ -48,7 +60,8 @@ export function addressHref(policy: LanPolicy | null, ip: string): string {
 
 /** The domain page, for the name as the daemon matches it: one trailing dot dropped, lower case. */
 export function domainHref(name: string): string {
-	return `/domain/${encodeURIComponent(name.trim().replace(/\.$/, '').toLowerCase())}`;
+	// OLD CODE START: return `/domain/${encodeURIComponent(name.trim().replace(/\.$/, '').toLowerCase())}`; OLD CODE END
+	return `/domain/${encodeURIComponent(canonicalName(name))}`;
 }
 
 /**
@@ -56,10 +69,15 @@ export function domainHref(name: string): string {
  * failed fetch keeps the last policy (or none). The same version keeps the same object, so
  * links only re-render when the subnets change.
  */
+/** The policy on screen; module-wide, so a resubscribe keeps the same object while the version holds */
+let current: LanPolicy | null = null;
+
 export const lanPolicy: Readable<LanPolicy | null> = readable<LanPolicy | null>(null, (set) => {
 	// Server rendering shares this module between requests; links render with no policy there
 	if (typeof window === 'undefined') return;
-	let current: LanPolicy | null = null;
+	// OLD CODE START — per subscription, so the first refetch after a resubscribe replaced an unchanged policy
+	// let current: LanPolicy | null = null;
+	// OLD CODE END
 	let stopped = false;
 	const load = () =>
 		getLanPolicy().then(

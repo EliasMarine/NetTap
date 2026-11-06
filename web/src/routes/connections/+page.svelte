@@ -50,7 +50,7 @@
 	import ConnectionDrawerContent from '$components/drawer/content/ConnectionDrawerContent.svelte';
 	import { buildTSharkFilter, getField, asString } from '$lib/utils/tshark-filter';
 	import { captureMode } from '$lib/stores/captureMode';
-	import { ipHref, ipv4ToNumber, isLan } from '$lib/stores/lan';
+	import { ipHref, isIpAddress, isLan } from '$lib/stores/lan';
 	// OLD CODE START — #145: the client-side sort is gone
 	// import { compareValues } from '$lib/utils/table-sort.svelte';
 	// OLD CODE END
@@ -140,6 +140,8 @@
 	let deviceNames = $state(new Map<string, string>());
 	let timelineFailed = $state(false);
 	let connectionsFailed = $state(false);
+	/** Why the table failed, as the daemon or the request said */
+	let connectionsError = $state('');
 
 	// Connections table
 	let connections = $state<Connection[]>([]);
@@ -463,10 +465,16 @@
 		return { from, to };
 	}
 
-	/** A whole address (IPv4, or anything with a colon: IPv6) goes to the daemon's either-side filter, which validates it. */
+	// OLD CODE START — any text with a colon ("tcp:443") went as an address and failed with a 400
+	// /** A whole address (IPv4, or anything with a colon: IPv6) goes to the daemon's either-side filter, which validates it. */
+	// function structuredIp(text: string): string | undefined {
+	// 	const ip = text.trim();
+	// 	return ip && (ipv4ToNumber(ip) !== null || ip.includes(':')) ? ip : undefined;
+	// }
+	// OLD CODE END
+	/** A whole address goes to the daemon's either-side filter, which validates it; other text is searched */
 	function structuredIp(text: string): string | undefined {
-		const ip = text.trim();
-		return ip && (ipv4ToNumber(ip) !== null || ip.includes(':')) ? ip : undefined;
+		return isIpAddress(text) ? text.trim() : undefined;
 	}
 
 	function buildSearchQuery(): string {
@@ -591,8 +599,9 @@
 			totalConnections = response.total;
 			connectionsFailed = false;
 			return 'ok';
-		} catch {
+		} catch (err) {
 			if (!tableGuard.current(t)) return 'skipped';
+			connectionsError = err instanceof Error ? err.message : '';
 			// rows are specific to this page and filter set, so they are not kept as stale
 			connections = [];
 			totalPages = 0;
@@ -796,13 +805,23 @@
 
 	/** The ?ip= last applied; null before the first load. */
 	let appliedIp: string | null = null;
+	/** The navigation it came from: a new URL object is a new navigation, even to the same address */
+	let appliedUrl: URL | null = null;
 
 	// NET-160: ?ip= is read whenever the URL changes, so a link to another address from this page
 	// (an IP's menu) filters for it. Declared before onMount, so the first load already has it.
 	$effect(() => {
-		const urlIp = $page.url.searchParams.get('ip') ?? '';
+		// OLD CODE START — compared only the address, so a link to the one already applied did nothing
+		// after the user had edited the box
+		// const urlIp = $page.url.searchParams.get('ip') ?? '';
+		// OLD CODE END
+		const url = $page.url;
+		const urlIp = url.searchParams.get('ip') ?? '';
 		untrack(() => {
-			if (urlIp === appliedIp) return;
+			// OLD CODE START: if (urlIp === appliedIp) return; OLD CODE END
+			const again = url !== appliedUrl && urlIp !== '' && ipFilter.trim() !== urlIp;
+			appliedUrl = url;
+			if (urlIp === appliedIp && !again) return;
 			const first = appliedIp === null;
 			appliedIp = urlIp;
 			ipFilter = urlIp;
@@ -1029,7 +1048,8 @@
 		{#if loading && connections.length === 0 && !connectionsFailed}
 			<CardState state="loading" title="Loading connections" />
 		{:else if connectionsFailed && !loading}
-			<CardState state="error" title={loadFailed('connections')} message={RETRY_HINT} onaction={() => loadTable(currentPage)} />
+			<!-- OLD CODE START: message={RETRY_HINT} dropped the daemon's reason (NET-160) OLD CODE END -->
+			<CardState state="error" title={loadFailed('connections')} message={connectionsError || RETRY_HINT} onaction={() => loadTable(currentPage)} />
 		{:else if connections.length === 0 && !loading}
 			<CardState state="empty" title="No connections" message="No connections match this time range and these filters. Try a longer range or clear a filter." />
 		{:else}

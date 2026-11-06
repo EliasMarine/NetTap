@@ -12,7 +12,7 @@
 	import { outcome, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { domainHref, ipHref } from '$lib/stores/lan';
 	import { namesByIp } from '$lib/utils/device-names';
-	import { DRILL_RANGES, certificatesHref, chartTime as timeLabel, fmt, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown';
+	import { DRILL_RANGES, canonicalName, certificatesHref, chartTime as timeLabel, fmt, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import IPAddress from '$components/IPAddress.svelte';
 	import BarList from '$lib/components/ui/BarList.svelte';
@@ -36,7 +36,8 @@
 	// OLD CODE START — SvelteKit has already decoded the param; decoding again threw on a stray "%"
 	// const name = $derived(decodeURIComponent(($page.params as Record<string, string>).name ?? '').trim().replace(/\.$/, '').toLowerCase());
 	// OLD CODE END
-	const name = $derived((($page.params as Record<string, string>).name ?? '').trim().replace(/\.$/, '').toLowerCase());
+	// OLD CODE START: const name = $derived((($page.params as Record<string, string>).name ?? '').trim().replace(/\.$/, '').toLowerCase()); OLD CODE END
+	const name = $derived(canonicalName(($page.params as Record<string, string>).name ?? ''));
 
 	let rangeValue = $state<DrillRangeValue>('24h');
 	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES[0]);
@@ -119,7 +120,10 @@
 		{ key: 'lookups', label: 'Lookups', numeric: true, cell: askerLookupsCell },
 		{ key: 'last_seen', label: 'Last seen', sortValue: (a) => Date.parse(a.last_seen) || 0, cell: askerSeenCell },
 	];
-	const answerColumns: Column<DomainAnswer>[] = [
+	/** Keyed by position in the reply, so two rows with the same answer can never collide */
+	type AnswerRow = DomainAnswer & { key: number };
+	const answerRows = $derived((data?.dns.answers ?? []).map((a, i): AnswerRow => ({ ...a, key: i })));
+	const answerColumns: Column<AnswerRow>[] = [
 		{ key: 'value', label: 'Answer', cell: answerCell },
 		{ key: 'kind', label: 'Kind', sortValue: (a) => KIND_WORDS[a.kind], cell: answerKindCell },
 		{ key: 'lookups', label: 'Lookups', numeric: true, cell: answerLookupsCell },
@@ -128,7 +132,8 @@
 		{ key: 'ip', label: 'Address', sortValue: (p) => names.get(p.ip) ?? p.ip, cell: tlsPeerCell },
 		{ key: 'sessions', label: 'Sessions', numeric: true, cell: tlsSessionsCell },
 	];
-	const httpLogs = $derived(`/logs?query=${encodeURIComponent(`zeek.http.host:"${name}"`)}`);
+	// OLD CODE START: const httpLogs = $derived(`/logs?query=${encodeURIComponent(`zeek.http.host:"${name}"`)}`); — Log Explorer opened on its own 24 hours OLD CODE END
+	const httpLogs = $derived(`/logs?query=${encodeURIComponent(`zeek.http.host:"${name}"`)}&range=${shown.value}`);
 </script>
 
 {#snippet who(ip: string)}
@@ -230,13 +235,20 @@
 				Counts alerts whose DNS question, TLS name, URL domain or related hosts equal this name. Alerts with no host name can't be matched, so
 				this isn't every alert tied to the domain.
 			</p>
-			<a class="link" href="/alerts">Open alerts<Icon name="back" class="chev" /></a>
+			<!-- OLD CODE START: <a class="link" href="/alerts">Open alerts…</a> — opened on the alerts page's own 24 hours OLD CODE END -->
+			<a class="link" href="/alerts?range={shown.value}">Open alerts<Icon name="back" class="chev" /></a>
 		{/if}
 	</Card>
 </div>
 
 <div class="grid">
-	<Card class="c-6" title="Devices that looked it up" sub={data ? `${fmt(data.dns.askers.length)} ${data.dns.askers.length === 1 ? 'device' : 'devices'} · lookups per device · ${words}` : 'Lookups per device'}>
+	<Card
+		class="c-6"
+		title="Devices that looked it up"
+		sub={data
+			? `${data.dns.askers_complete ? '' : 'First '}${fmt(data.dns.askers.length)} ${data.dns.askers.length === 1 ? 'device' : 'devices'} · lookups per device · ${words}`
+			: 'Lookups per device'}
+	>
 		{#if !data}
 			{@render summaryState('the devices that looked it up')}
 		{:else if data.dns.askers.length === 0}
@@ -254,7 +266,8 @@
 			<CardState state="empty" icon="dns" title="No answers recorded" message="Answers appear here once a lookup for this name gets one." />
 		{:else}
 			{#if !data.dns.answers_complete}{@render incomplete('answers', data.dns.answers.length)}{/if}
-			<DataTable columns={answerColumns} rows={data.dns.answers} ariaLabel="What it resolved to" rowKey={(a) => `${a.kind}:${a.value}`} initialSort={{ key: 'lookups', dir: 'desc' }} />
+			<!-- OLD CODE START: rows={data.dns.answers} rowKey={(a) => `${a.kind}:${a.value}`} — the same answer twice crashed the table OLD CODE END -->
+			<DataTable columns={answerColumns} rows={answerRows} ariaLabel="What it resolved to" rowKey={(a) => a.key} initialSort={{ key: 'lookups', dir: 'desc' }} />
 		{/if}
 	</Card>
 
@@ -279,7 +292,9 @@
 			</div>
 			<p class="dim small">
 				TLS sessions count every session that asked for this name. Certificates counts only the sessions that showed a certificate (TLS 1.3
-				hides it, and a resumed session doesn't send it again), so its figures can be lower.
+				hides it, and a resumed session doesn't send it again) and leaves out excluded addresses, so its figures can be lower. Unlike
+				"Devices that looked it up", which follows the DNS page and leaves excluded devices out, the TLS sessions and devices here include
+				them.
 			</p>
 			<a class="link" href={certificatesHref({ site: name, ...span })}>Certificates seen for this name<Icon name="back" class="chev" /></a>
 		{/if}
@@ -319,7 +334,7 @@
 
 <style>
 	/* Layout glue the system lacks */
-	.two { display: inline-flex; flex-direction: column; line-height: 1.3; }
+	/* OLD CODE START: .two { display: inline-flex; flex-direction: column; line-height: 1.3; } — system.css defines .two OLD CODE END */
 	.big { margin: 0; font-size: var(--text-xl); font-weight: 700; color: var(--text-1); font-variant-numeric: tabular-nums; }
 	.coverage { margin: var(--sp-2) 0 0; color: var(--text-1); font-size: var(--text-sm); }
 	.small { margin: var(--sp-2) 0 var(--sp-3); font-size: var(--text-sm); }

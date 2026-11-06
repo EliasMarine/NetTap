@@ -99,8 +99,14 @@ describe('Address page', () => {
 		expect(kpi('Data to it')).toHaveTextContent('To it: 1,970 of 1,980 connections measured · from it: 1,970 of 1,980 connections measured');
 		expect(kpi('Devices that talked to it')).toHaveTextContent('3');
 		expect(kpi('Devices that talked to it')).toHaveTextContent('on your network, of 3 addresses in all');
-		expect(kpi('Alerts').closest('a')).toHaveAttribute('href', '/alerts?ip=198.51.100.10');
+		// OLD CODE START: expect(kpi('Alerts').closest('a')).toHaveAttribute('href', '/alerts?ip=198.51.100.10'); OLD CODE END
+		// the alerts page opens on this page's window, so its list matches the count
+		expect(kpi('Alerts').closest('a')).toHaveAttribute('href', '/alerts?ip=198.51.100.10&range=24h');
 		expect(screen.getByText('Not on a threat list')).toBeInTheDocument();
+		expect(screen.getByText("Checked this window's alerts and 5,400 cached indicators")).toBeInTheDocument();
+		// a port lists every service Zeek saw on it, each connection counted once
+		const quic = within(card('Ports on this address')).getByText('quic, ssl').closest('tr')!;
+		expect(quic).toHaveTextContent('250');
 		// the daemon buckets a 24-hour window by the hour
 		expect(screen.getByText('Connections per hour · last 24 hours')).toBeInTheDocument();
 		// the window is the request's
@@ -144,11 +150,19 @@ describe('Address page', () => {
 		const quietPeer = within(card('Devices that talked to it')).getByRole('link', { name: '192.168.1.50' }).closest('tr')!;
 		expect(quietPeer).toHaveTextContent('Not measured');
 		expect(quietPeer).not.toHaveTextContent('0 B');
-		expect(screen.getByText(/On a threat list: Example blocklist/)).toBeInTheDocument();
+		// OLD CODE START: expect(screen.getByText(/On a threat list: Example blocklist/)).toBeInTheDocument(); OLD CODE END
+		// a listing-rule alert in the window named it, with no indicator cache loaded
+		expect(screen.getByText(/On a threat list: ET Compromised IPs/)).toBeInTheDocument();
 		expect(screen.getByText('No name (SNI)')).toBeInTheDocument();
 		expect(screen.getByText(/Too many addresses to list them all/)).toBeInTheDocument();
 		expect(screen.getByText(/Too many ports to list them all/)).toBeInTheDocument();
 		expect(screen.getByText(/Too many names to list them all/)).toBeInTheDocument();
+		// a list cut at its cap says so in its subtitle too
+		expect(card('Devices that talked to it')).toHaveTextContent('First 2 addresses · your devices first');
+		// the no-name row has no certificates link: without a site it would open every certificate on the server
+		const tls = card('Names it served (TLS)');
+		expect(within(screen.getByText('No name (SNI)').closest('tr')!).queryByRole('link')).toBeNull();
+		expect(within(tls).getByRole('link', { name: 'Certificates seen for telemetry.example.org' })).toBeInTheDocument();
 		// connections with no port or transport recorded keep a row, so the rows add up
 		const unknown = within(card('Ports on this address')).getByText('Unknown port').closest('tr')!;
 		expect(unknown).toHaveTextContent('—');
@@ -156,14 +170,56 @@ describe('Address page', () => {
 		expectNoNestedInteractive(container);
 	});
 
-	it('says the address was not checked against threat lists when none are loaded, and shows empty states', async () => {
+	// OLD CODE START — null meant "no indicators loaded"; with no cache the daemon still checks the window's alerts
+	// it('says the address was not checked against threat lists when none are loaded, and shows empty states', async () => {
+	// 	stubDaemon(baseReplies(ADDRESS_EMPTY, 0));
+	// 	render(Page);
+	// 	await screen.findByText('Not checked: no threat indicators loaded yet');
+	// OLD CODE END
+	it('says what it checked with no indicator cache, and shows empty states', async () => {
 		stubDaemon(baseReplies(ADDRESS_EMPTY, 0));
 		render(Page);
-		await screen.findByText('Not checked: no threat indicators loaded yet');
+		await screen.findByText('Not on a threat list');
+		// zero cached indicators is still a check of the window's alerts, not "not checked"
+		expect(screen.getByText("Checked this window's alerts")).toBeInTheDocument();
+		expect(screen.queryByText('Not checked')).toBeNull();
 		expect(kpi('Connections')).toHaveTextContent('0');
 		expect(kpi('Data to it')).toHaveTextContent('0 B');
 		expect(screen.getAllByText('No connections in the last 24 hours').length).toBe(2);
 		expect(screen.getByText('Nothing talked to it in the last 24 hours')).toBeInTheDocument();
+	});
+
+	it('carries the loaded window to the alerts page and Log Explorer', async () => {
+		stubDaemon(baseReplies(ADDRESS, 25_000));
+		render(Page);
+		await vi.waitFor(() => expect(kpi('Connections')).toHaveTextContent('1,980'));
+		await fireEvent.click(screen.getByRole('button', { name: '30d' }));
+		await vi.waitFor(() => expect(kpi('Alerts').closest('a')).toHaveAttribute('href', '/alerts?ip=198.51.100.10&range=30d'));
+		const logs = await screen.findByRole('link', { name: 'search them all in Log Explorer' });
+		expect(new URL(logs.getAttribute('href')!, 'http://x').searchParams.get('range')).toBe('30d');
+	});
+
+	it('says Not checked only when the daemon could not check every alert and nothing matched', async () => {
+		stubDaemon(baseReplies({ ...ADDRESS, threat_intel: null }));
+		render(Page);
+		expect(await screen.findByText('Not checked')).toBeInTheDocument();
+		expect(screen.getByText("This window's alerts couldn't all be checked")).toBeInTheDocument();
+		expect(screen.queryByText('Not on a threat list')).toBeNull();
+	});
+
+	it.each([
+		[503, 'Working this out took too long. Try a shorter time range.'],
+		[500, 'Something went wrong working this out; the daemon log has the details.'],
+	])("shows the daemon's HTTP %s text as it is", async (status, reason) => {
+		stubDaemon(baseReplies(ADDRESS));
+		const fetchStub = vi.mocked(globalThis.fetch as (input: string) => Promise<unknown>);
+		const answer = fetchStub.getMockImplementation()!;
+		fetchStub.mockImplementation(async (input: string) =>
+			input.startsWith('/api/addresses/') ? { ok: false, status, json: async () => ({ error: reason }) } : answer(input),
+		);
+		render(Page);
+		await vi.waitFor(() => expect(screen.getAllByText(reason).length).toBeGreaterThan(0));
+		expect(kpi('Connections')).toHaveTextContent('—');
 	});
 
 	it("shows the daemon's reason when the summary fails, never zeros", async () => {
@@ -175,11 +231,107 @@ describe('Address page', () => {
 		expect(kpi('Alerts')).toHaveTextContent('—');
 	});
 
-	it('says who it is could not be looked up when both lookups fail', async () => {
-		stubDaemon({ ...baseReplies(ADDRESS), '/api/geoip/*': undefined, '/api/lookup/dns/*': undefined });
+	// OLD CODE START — reverse DNS ran on every visit, and the card failed when both lookups did
+	// it('says who it is could not be looked up when both lookups fail', async () => {
+	// 	stubDaemon({ ...baseReplies(ADDRESS), '/api/geoip/*': undefined, '/api/lookup/dns/*': undefined });
+	// 	render(Page);
+	// 	expect(await screen.findByText("Couldn't load who this address is: the request failed.")).toBeInTheDocument();
+	// 	expect(kpi('Connections')).toHaveTextContent('1,980');
+	// });
+	// OLD CODE END
+	it('says where it is could not be looked up, and keeps the name and WHOIS look-ups a click away', async () => {
+		stubDaemon({ ...baseReplies(ADDRESS), '/api/geoip/*': undefined });
 		render(Page);
-		expect(await screen.findByText("Couldn't load who this address is: the request failed.")).toBeInTheDocument();
+		const who = card('Who it is');
+		await vi.waitFor(() => expect(within(who).getByText("Couldn't look it up")).toBeInTheDocument());
+		expect(within(who).getByRole('button', { name: 'Look up its name' })).toBeEnabled();
+		expect(within(who).getByRole('button', { name: 'Look it up' })).toBeEnabled();
 		expect(kpi('Connections')).toHaveTextContent('1,980');
+	});
+
+	it('looks up reverse DNS only when asked, since the lookup reaches whoever runs the address', async () => {
+		stubDaemon(baseReplies(ADDRESS));
+		render(Page);
+		const button = await screen.findByRole('button', { name: 'Look up its name' });
+		await vi.waitFor(() => expect(kpi('Connections')).toHaveTextContent('1,980'));
+		expect(calls.some((u) => u.pathname.startsWith('/api/lookup/dns'))).toBe(false);
+		await fireEvent.click(button);
+		expect(await within(card('Who it is')).findByText('stream.example.net')).toBeInTheDocument();
+	});
+
+	it('shows the figures as soon as they land, without waiting for the location lookup', async () => {
+		stubDaemon({ ...baseReplies(ADDRESS), '/api/geoip/*': () => new Promise(() => {}) });
+		render(Page);
+		await vi.waitFor(() => expect(kpi('Connections')).toHaveTextContent('1,980'));
+		expect(within(card('Who it is')).getByText('Looking up this address')).toBeInTheDocument();
+	});
+
+	it('ties each look-up to its address: another address gets its own button, and a late reply is dropped', async () => {
+		stubDaemon(baseReplies(ADDRESS));
+		const fetchStub = vi.mocked(globalThis.fetch as (input: string) => Promise<unknown>);
+		const answer = fetchStub.getMockImplementation()!;
+		const late: ((v: unknown) => void)[] = [];
+		fetchStub.mockImplementation(async (input: string) =>
+			input.startsWith('/api/lookup/') ? new Promise((r) => late.push(r)) : answer(input),
+		);
+		render(Page);
+		const who = card('Who it is');
+		await fireEvent.click(await within(who).findByRole('button', { name: 'Look it up' }));
+		await fireEvent.click(within(who).getByRole('button', { name: 'Look up its name' }));
+		expect(within(who).getAllByRole('button', { name: 'Looking up…' })).toHaveLength(2);
+		goTo('192.0.2.80');
+		await vi.waitFor(() => expect(screen.getByRole('heading', { level: 1, name: '192.0.2.80' })).toBeInTheDocument());
+		const whoNow = card('Who it is');
+		await vi.waitFor(() => expect(within(whoNow).getByRole('button', { name: 'Look it up' })).toBeEnabled());
+		expect(within(whoNow).getByRole('button', { name: 'Look up its name' })).toBeEnabled();
+		// the first address's replies land late
+		for (const r of late) r({ ok: true, status: 200, json: async () => ({ ip: '198.51.100.10', hostname: 'stream.example.net', raw: 'x', parsed: { orgname: 'Example Streaming CDN' }, aliases: [], addresses: [], error: null }) });
+		await new Promise((r) => setTimeout(r, 0));
+		expect(within(whoNow).queryByText('stream.example.net')).toBeNull();
+		expect(within(whoNow).getByRole('button', { name: 'Look it up' })).toBeEnabled();
+	});
+
+	it('shows each session\'s bytes by direction, and "—" for a count that is missing or not a number', async () => {
+		const row = (id: string, direction: string, source: object, destination: object) => ({
+			_id: id, _index: 'x', '@timestamp': '2026-11-06T08:00:00Z', direction, source, destination, network: { transport: 'tcp', protocol: 'ssl' },
+		});
+		stubDaemon({
+			...baseReplies(ADDRESS),
+			'/api/devices/*': {
+				...CONNECTIONS(3),
+				connections: [
+					// it opened this one: what the source sent came from it
+					row('out', 'out', { ip: '198.51.100.10', port: 443, bytes: 2048 }, { ip: '192.168.1.22', port: 50000, bytes: 'n/a' }),
+					row('none', 'in', { ip: '192.168.1.22', port: 50001 }, { ip: '198.51.100.10', port: 443 }),
+					row('in', 'in', { ip: '192.168.1.20', port: 50002, bytes: 1024 }, { ip: '198.51.100.10', port: 443, bytes: 4096 }),
+				],
+			},
+		});
+		render(Page);
+		const table = await within(card('Connections')).findByRole('table');
+		const rows = within(table).getAllByRole('row').slice(1);
+		const cells = (i: number) => [...rows[i].querySelectorAll('td')].map((td) => td.textContent?.trim());
+		// the other side's port shows, numbers included; the last two columns are Data to it, Data from it
+		expect(cells(0)).toContain('192.168.1.22:50000');
+		expect(cells(0).slice(-2)).toEqual(['—', '2.0 KB']);
+		expect(cells(1).slice(-2)).toEqual(['—', '—']);
+		expect(cells(2).slice(-2)).toEqual(['1.0 KB', '4.0 KB']);
+	});
+
+	it('keeps TLS rows apart when a client sends the literal name "(no name)"', async () => {
+		stubDaemon(baseReplies({ ...ADDRESS, tls_names: [
+			{ name: null, sessions: 3, statuses: { unchecked: 3 } },
+			{ name: '(no name)', sessions: 2, statuses: { ok: 2 } },
+			{ name: 'null', sessions: 1, statuses: { ok: 1 } },
+		] }));
+		render(Page);
+		const tls = await vi.waitFor(() => card('Names it served (TLS)'));
+		await vi.waitFor(() => expect(within(tls).getAllByRole('row')).toHaveLength(4));
+		expect(within(tls).getByText('No name (SNI)')).toBeInTheDocument();
+		// OLD CODE START: expect(within(tls).getByRole('link', { name: '(no name)' })).toBeInTheDocument(); OLD CODE END
+		// not a host name: shown as sent, with no domain page or certificates link to fail on
+		expect(within(tls).getByText('(no name)').closest('a')).toBeNull();
+		expect(within(within(tls).getByText('(no name)').closest('tr')!).queryByRole('link')).toBeNull();
 	});
 
 	it('reports ok, partial and failed to the top bar, keeping the last figures', async () => {
@@ -196,12 +348,20 @@ describe('Address page', () => {
 	});
 
 	it('discloses the 10,000-row reach and links to Log Explorer', async () => {
-		stubDaemon(baseReplies(ADDRESS, 25_000));
+		// the daemon answers with the page it was asked for
+		stubDaemon({ ...baseReplies(ADDRESS), '/api/devices/*': (u: URL) => ({ ...CONNECTIONS(25_000), page: Number(u.searchParams.get('page')) }) });
 		render(Page);
 		const notice = await screen.findByText(/Showing the newest 10,000 of 25,000\./);
 		const link = within(notice.closest('p')!).getByRole('link', { name: 'search them all in Log Explorer' });
-		expect(decodeURIComponent(link.getAttribute('href')!)).toBe('/logs?query=(source.ip:"198.51.100.10" OR destination.ip:"198.51.100.10")');
+		// OLD CODE START: expect(decodeURIComponent(link.getAttribute('href')!)).toBe('/logs?query=(source.ip:"198.51.100.10" OR destination.ip:"198.51.100.10")'); OLD CODE END
+		expect(decodeURIComponent(link.getAttribute('href')!)).toBe('/logs?query=(source.ip:"198.51.100.10" OR destination.ip:"198.51.100.10")&range=24h');
 		expect(screen.getByText('Showing 1 to 25 of 10,000')).toBeInTheDocument();
+		// a refresh of the same view stays on the page the user is reading
+		await fireEvent.click(screen.getByRole('button', { name: 'Page 2' }));
+		await vi.waitFor(() => expect(calls.at(-1)?.searchParams.get('page')).toBe('2'));
+		await refreshPage();
+		const pages = calls.filter((u) => u.pathname.endsWith('/connections')).map((u) => u.searchParams.get('page'));
+		expect(pages.at(-1)).toBe('2');
 	});
 
 	it('looks up WHOIS only when asked', async () => {
@@ -238,11 +398,20 @@ describe('Address page', () => {
 		);
 		render(Page);
 		await vi.waitFor(() => expect(askedOld).toBe(true));
+		// the first address's connections are on screen
+		await vi.waitFor(() => expect(within(card('Connections')).getAllByRole('row').length).toBeGreaterThan(1));
 		fetchStub.mockImplementation(async (input: string) =>
-			input.startsWith('/api/addresses/') ? { ok: true, status: 200, json: async () => ADDRESS_QUIET } : answer(input),
+			input.startsWith('/api/addresses/')
+				? { ok: true, status: 200, json: async () => ADDRESS_QUIET }
+				: input.startsWith('/api/devices/192.0.2.80/')
+					? new Promise(() => {}) // the new address's connections are still on their way
+					: answer(input),
 		);
 		goTo('192.0.2.80');
 		await vi.waitFor(() => expect(kpi('Data to it')).toHaveTextContent('Not measured'));
+		// never the old address's rows under the new one's figures
+		expect(within(card('Connections')).queryByRole('table')).toBeNull();
+		expect(within(card('Connections')).getByText('Loading connections')).toBeInTheDocument();
 		releaseOld(undefined);
 		await new Promise((r) => setTimeout(r, 0));
 		expect(kpi('Data to it')).toHaveTextContent('Not measured');

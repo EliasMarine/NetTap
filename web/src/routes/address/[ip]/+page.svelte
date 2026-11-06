@@ -17,7 +17,7 @@
 	import { domainHref, ipHref } from '$lib/stores/lan';
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { namesByIp } from '$lib/utils/device-names';
-	import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, logsHrefForIp, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown';
+	import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { asString, getField } from '$lib/utils/tshark-filter';
 	import type { SortDir } from '$lib/utils/table-sort.svelte';
@@ -56,7 +56,12 @@
 	let lookedUp = '';
 
 	let whois = $state<WhoisResult | null>(null);
-	let whoisLoading = $state(false);
+	// OLD CODE START — a flag, not tied to the address: opening another one mid-lookup left its button disabled
+	// let whoisLoading = $state(false);
+	// OLD CODE END
+	/** The address each click-to-run lookup is running for; null when none is */
+	let whoisFor = $state<string | null>(null);
+	let rdnsFor = $state<string | null>(null);
 
 	let connections = $state<DeviceConnection[]>([]);
 	let connTotal = $state(0);
@@ -90,6 +95,9 @@
 	/** Reverse DNS answers 200 with an error when there's no name; only its own failures count. */
 	const rdnsFailed = (r: DnsResult) => !!r.error && (r.error.startsWith('HTTP ') || r.error === 'Network error');
 
+	/* OLD CODE START — waited on every lookup before writing any, so a slow one held the figures on
+	   Loading; looked up reverse DNS on every visit, which tells whoever runs the address that we looked;
+	   and kept the last address's connections on screen while the next one loaded
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
 		const target = ip;
@@ -143,6 +151,74 @@
 		if (!guard.current(g)) return 'skipped';
 		return outcome([...results, connRes]);
 	}
+	OLD CODE END */
+
+	async function load(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		const target = ip;
+		const r = range;
+		if (!target) return 'skipped';
+		const s = rangeWindow(r.hours);
+		const view = `${target}|${r.value}`;
+		// A refresh of the same view keeps its last good figures and its page of connections;
+		// another view must not show them
+		const sameView = view === loadedView;
+		if (!sameView) {
+			loaded = null;
+			failure = null;
+			connections = [];
+			connTotal = 0;
+			connPage = 1;
+			connPages = 0;
+			connLoaded = false;
+			connFailed = false;
+		}
+		if (target !== lookedUp) {
+			geo = null;
+			geoFailed = false;
+			rdns = null;
+			whois = null;
+			lookedUp = target;
+		}
+		span = s;
+		/** Writes what a request brings only while this load is the newest, as soon as it lands */
+		function landed<T>(p: Promise<T>, apply: (v: T) => void, fail: (e: unknown) => void = () => {}): Promise<void> {
+			return p.then(
+				(v) => {
+					if (guard.current(g)) apply(v);
+				},
+				(e: unknown) => {
+					if (guard.current(g)) fail(e);
+					throw e;
+				},
+			);
+		}
+		const connLoad = loadConnections(sameView ? connPage : 1, s, target);
+		// Names are cosmetic: a failed registry load keeps the last names and isn't a failure
+		landed(getRegistryDevices({ limit: 200 }), (res) => (names = namesByIp(res.devices))).catch(() => {});
+		const results = await Promise.allSettled([
+			landed(
+				getAddressSummary(target, s.from, s.to),
+				(d) => {
+					loaded = { data: d, range: r };
+					loadedView = view;
+					failure = null;
+				},
+				(e) => (failure = e instanceof Error ? e.message : ''),
+			),
+			landed(
+				lookupGeoIP(target),
+				(res) => {
+					geo = res;
+					geoFailed = false;
+				},
+				() => (geoFailed = true),
+			),
+		]);
+		const connRes = await connLoad;
+		if (!guard.current(g)) return 'skipped';
+		return outcome([...results, connRes]);
+	}
 
 	/** One page of connections; a newer page, sort or load drops this one's reply. */
 	async function loadConnections(pg: number, s = span, target = ip): Promise<PromiseSettledResult<unknown>> {
@@ -172,13 +248,38 @@
 		void loadConnections(1);
 	}
 
+	// OLD CODE START — the loading flag wasn't tied to the address it was for
+	// async function lookUpWhois() {
+	// 	const target = ip;
+	// 	whoisLoading = true;
+	// 	const res = await getWhois(target);
+	// 	whoisLoading = false;
+	// 	// another address opened meanwhile: its card must not show this one's record
+	// 	if (target === ip) whois = res;
+	// }
+	// OLD CODE END
 	async function lookUpWhois() {
 		const target = ip;
-		whoisLoading = true;
-		const res = await getWhois(target);
-		whoisLoading = false;
-		// another address opened meanwhile: its card must not show this one's record
-		if (target === ip) whois = res;
+		whoisFor = target;
+		try {
+			const res = await getWhois(target);
+			// another address opened meanwhile: its card must not show this one's record
+			if (target === ip) whois = res;
+		} finally {
+			if (whoisFor === target) whoisFor = null;
+		}
+	}
+
+	/** Reverse DNS runs only when asked: the lookup reaches the DNS server of whoever runs the address. */
+	async function lookUpName() {
+		const target = ip;
+		rdnsFor = target;
+		try {
+			const res = await getDnsReverse(target);
+			if (target === ip) rdns = res;
+		} finally {
+			if (rdnsFor === target) rdnsFor = null;
+		}
 	}
 
 	// --- Figures ---
@@ -224,7 +325,8 @@
 		{ key: 'port', label: 'Port', numeric: true, cell: portCell },
 		// a missing port, transport or service is null; the table sorts blanks last
 		{ key: 'transport', label: 'Transport', cell: transportCell },
-		{ key: 'service', label: 'Service', sortValue: (p) => p.service ?? '', cell: serviceCell },
+		// OLD CODE START: { key: 'service', label: 'Service', sortValue: (p) => p.service ?? '', cell: serviceCell }, — one service per row OLD CODE END
+		{ key: 'services', label: 'Services', sortValue: (p) => p.services.join(', '), cell: servicesCell },
 		{ key: 'connections', label: 'Connections', numeric: true, cell: portConnCell },
 	];
 	const tlsColumns: Column<TlsName>[] = [
@@ -257,7 +359,11 @@
 		// On a session a peer opened (in), the address is the destination: what the source sent went to it
 		const side = (c.direction === 'in') === (way === 'to') ? 'source' : 'destination';
 		const value = getField(c, `${side}.bytes`) ?? getField(c, `${side === 'source' ? 'client' : 'server'}.bytes`);
-		return value === undefined || value === null || value === '' ? '—' : formatBytes(Number(value) || 0);
+		// OLD CODE START — a value that isn't a number read as "0 B"
+		// return value === undefined || value === null || value === '' ? '—' : formatBytes(Number(value) || 0);
+		// OLD CODE END
+		const n = value === undefined || value === null || value === '' ? NaN : Number(value);
+		return Number.isFinite(n) ? formatBytes(n) : '—';
 	}
 
 	function duration(c: DeviceConnection): string {
@@ -310,19 +416,34 @@ OLD CODE END -->
 OLD CODE END -->
 {#snippet portCell(p: AddressPort)}{#if p.port === null}<span class="dim">Unknown port</span>{:else}<span class="mono">{p.port}</span>{/if}{/snippet}
 {#snippet transportCell(p: AddressPort)}{#if p.transport}<span class="tag">{p.transport.toUpperCase()}</span>{:else}<span class="dim">—</span>{/if}{/snippet}
-{#snippet serviceCell(p: AddressPort)}{#if p.service}<span class="mono">{p.service}</span>{:else}<span class="dim">—</span>{/if}{/snippet}
+<!-- OLD CODE START: {#snippet serviceCell(p: AddressPort)}{#if p.service}<span class="mono">{p.service}</span>{:else}<span class="dim">—</span>{/if}{/snippet} — a port now lists every service Zeek saw on it OLD CODE END -->
+{#snippet servicesCell(p: AddressPort)}{#if p.services.length}<span class="mono">{p.services.join(', ')}</span>{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet portConnCell(p: AddressPort)}{fmt(p.connections)}{/snippet}
 
+<!-- OLD CODE START — linked any name, so a value that isn't a host name opened a domain page that can only fail
 {#snippet tlsNameCell(t: TlsName)}
 	{#if t.name}<a class="mono" href={domainHref(t.name)}>{t.name}</a>{:else}<span class="dim">No name (SNI)</span>{/if}
 {/snippet}
+OLD CODE END -->
+{#snippet tlsNameCell(t: TlsName)}
+	{#if t.name === null}<span class="dim">No name (SNI)</span>
+	{:else if isHostName(t.name)}<a class="mono" href={domainHref(t.name)}>{t.name}</a>
+	{:else}<span class="mono" title="Not a host name, so there is no domain page for it">{t.name}</span>{/if}
+{/snippet}
 {#snippet tlsSessionsCell(t: TlsName)}{fmt(t.sessions)}{/snippet}
 {#snippet tlsStatusCell(t: TlsName)}<span class="trunc" title={statusList(t.statuses)}>{statusList(t.statuses) || '—'}</span>{/snippet}
+<!-- OLD CODE START — the no-name row's link dropped the site filter and opened every certificate on the server, and every link read the same
 {#snippet tlsCertCell(t: TlsName)}<a class="link" href={tlsCertificates(t)}>Certificates seen<Icon name="back" class="chev" /></a>{/snippet}
+OLD CODE END -->
+{#snippet tlsCertCell(t: TlsName)}
+	{#if t.name && isHostName(t.name)}<a class="link" href={tlsCertificates(t)} aria-label="Certificates seen for {t.name}">Certificates seen<Icon name="back" class="chev" /></a>{:else}<span class="dim">—</span>{/if}
+{/snippet}
 
 {#snippet connEnd(side: 'source' | 'destination', c: DeviceConnection)}
 	{@const addr = asString(getField(c, `${side}.ip`))}
-	{@const port = asString(getField(c, `${side}.port`))}
+	<!-- OLD CODE START: {@const port = asString(getField(c, `${side}.port`))} — asString drops numbers, and ports are numbers OLD CODE END -->
+	{@const rawPort = getField(c, `${side}.port`)}
+	{@const port = typeof rawPort === 'number' ? String(rawPort) : asString(rawPort)}
 	{#if !addr}<span class="dim">—</span>
 	{:else if addr === data?.ip || addr === ip}<span class="mono dim">{addr}{port ? `:${port}` : ''}</span>
 	{:else}<span class="mono"><IPAddress ip={addr} />{port ? `:${port}` : ''}</span>{/if}
@@ -358,12 +479,28 @@ OLD CODE END -->
 		{#if data}
 			<div class="chips">
 				{#if data.lan}<span class="chip"><Icon name="devices" />On your network</span>{/if}
+				<!-- OLD CODE START — null meant "no indicators loaded"; the daemon now also checks the window's alerts
 				{#if data.threat_intel === null}
 					<span class="chip">Not checked: no threat indicators loaded yet</span>
 				{:else if data.threat_intel.matched}
 					<span class="chip is-bad"><Icon name="warn" />On a threat list: {data.threat_intel.feeds.map((f) => f.label).join(', ')}</span>
 				{:else}
 					<span class="chip is-ok" title="Checked against {fmt(data.threat_intel.indicators)} threat indicators"><Icon name="check" />Not on a threat list</span>
+				{/if}
+				OLD CODE END -->
+				{#if data.threat_intel === null}
+					<!-- only when nothing matched and some of the window's alerts couldn't be read -->
+					<span class="chip">Not checked</span>
+					<span class="chip-note">This window's alerts couldn't all be checked</span>
+				{:else if data.threat_intel.matched}
+					<span class="chip is-bad"><Icon name="warn" />On a threat list: {data.threat_intel.feeds.map((f) => f.label).join(', ')}</span>
+				{:else}
+					<span class="chip is-ok"><Icon name="check" />Not on a threat list</span>
+					<span class="chip-note"
+						>{data.threat_intel.indicators > 0
+							? `Checked this window's alerts and ${fmt(data.threat_intel.indicators)} cached ${data.threat_intel.indicators === 1 ? 'indicator' : 'indicators'}`
+							: "Checked this window's alerts"}</span
+					>
 				{/if}
 			</div>
 		{/if}
@@ -408,8 +545,9 @@ OLD CODE END -->
 		value={data ? fmt(data.alerts) : '—'}
 		sub={data ? 'with this address on either side' : undefined}
 		note={words}
-		href="/alerts?ip={encodeURIComponent(ip)}"
+		href="/alerts?ip={encodeURIComponent(ip)}&range={shown.value}"
 	/>
+	<!-- OLD CODE START: href="/alerts?ip={encodeURIComponent(ip)}" — /alerts opened on its own 24 hours, so "40 · last 7 days" could list 5 OLD CODE END -->
 </div>
 
 <div class="grid">
@@ -431,10 +569,16 @@ OLD CODE END -->
 	</Card>
 
 	<Card class="c-4" title="Who it is" sub="Location, network and name · looked up now">
+		<!-- OLD CODE START — reverse DNS ran on every visit, so the card waited on it and failed only when both lookups did
 		{#if !geo && !geoFailed && !rdns}
 			<CardState state="loading" title="Looking up this address" />
 		{:else if geoFailed && !geo && rdns && rdnsFailed(rdns)}
 			<CardState state="error" title={loadFailed('who this address is')} message={rdns.error || 'Check that NetTap is running on the System page, then try again.'} onaction={() => refresh.run()} />
+		{:else}
+		OLD CODE END -->
+		<!-- A failed location lookup reads inline, so the name and WHOIS look-ups stay one click away -->
+		{#if !geo && !geoFailed}
+			<CardState state="loading" title="Looking up this address" />
 		{:else}
 			<dl class="facts">
 				<dt>Location</dt>
@@ -453,7 +597,13 @@ OLD CODE END -->
 				<dd>
 					{#if rdns?.hostname}<span class="mono">{rdns.hostname}</span>
 					{:else if rdns?.error}<span class="dim">{rdnsFailed(rdns) ? `Couldn't look it up: ${rdns.error}` : rdns.error}</span>
+					<!-- OLD CODE START — looked up on every visit
 					{:else}<span class="dim">{rdns ? 'None' : 'Looking up…'}</span>{/if}
+					OLD CODE END -->
+					{:else if rdns}<span class="dim">None</span>
+					{:else}
+						<button class="link-btn" type="button" disabled={rdnsFor === ip} onclick={lookUpName}>{rdnsFor === ip ? 'Looking up…' : 'Look up its name'}</button>
+					{/if}
 				</dd>
 				<dt>WHOIS</dt>
 				<dd>
@@ -461,10 +611,12 @@ OLD CODE END -->
 						{whois.parsed.orgname ?? whois.parsed['org-name'] ?? whois.parsed.netname ?? 'No owner in the record'}{#if whois.parsed.cidr}<span class="mono dim"> {whois.parsed.cidr}</span>{/if}
 					{:else if whois?.error}<span class="dim">Couldn't look it up: {whois.error}</span>
 					{:else}
-						<button class="link-btn" type="button" disabled={whoisLoading} onclick={lookUpWhois}>{whoisLoading ? 'Looking up…' : 'Look it up'}</button>
+						<!-- OLD CODE START: <button class="link-btn" type="button" disabled={whoisLoading} onclick={lookUpWhois}>{whoisLoading ? 'Looking up…' : 'Look it up'}</button> OLD CODE END -->
+						<button class="link-btn" type="button" disabled={whoisFor === ip} onclick={lookUpWhois}>{whoisFor === ip ? 'Looking up…' : 'Look it up'}</button>
 					{/if}
 				</dd>
 			</dl>
+			<p class="dim who-note">The name and WHOIS look-ups ask servers outside your network, and reverse DNS reaches whoever runs this address, so both run only when you click.</p>
 			<div class="actions who-links">
 				<a class="link" href="/geoip/{encodeURIComponent(ip)}">Location details<Icon name="back" class="chev" /></a>
 				<a class="link" href="/lookup/whois/{encodeURIComponent(ip)}">Full WHOIS record<Icon name="back" class="chev" /></a>
@@ -477,7 +629,9 @@ OLD CODE END -->
 	<Card
 		class="c-12"
 		title="Devices that talked to it"
-		sub={data ? `${fmt(data.peers.length)} ${data.peers.length === 1 ? 'address' : 'addresses'} · your devices first · ${words}` : 'Your devices first'}
+		sub={data
+			? `${data.peers_complete ? '' : 'First '}${fmt(data.peers.length)} ${data.peers.length === 1 ? 'address' : 'addresses'} · your devices first · ${words}`
+			: 'Your devices first'}
 	>
 		{#if !data}
 			{@render summaryState('the devices that talked to it')}
@@ -500,7 +654,8 @@ OLD CODE END -->
 			{#if !data.ports_complete}
 				<p class="notice is-warn" role="status"><Icon name="warn" /><span>Too many ports to list them all: showing the first {fmt(data.ports.length)}.</span></p>
 			{/if}
-			<DataTable columns={portColumns} rows={data.ports} ariaLabel="Ports on this address" rowKey={(p) => `${p.port}/${p.transport}/${p.service ?? ''}`} initialSort={{ key: 'connections', dir: 'desc' }} />
+			<!-- OLD CODE START: rowKey={(p) => `${p.port}/${p.transport}/${p.service ?? ''}`} — a null and an empty service collided OLD CODE END -->
+			<DataTable columns={portColumns} rows={data.ports} ariaLabel="Ports on this address" rowKey={(p) => JSON.stringify([p.port, p.transport])} initialSort={{ key: 'connections', dir: 'desc' }} />
 		{/if}
 	</Card>
 
@@ -513,8 +668,9 @@ OLD CODE END -->
 			{#if !data.tls_complete}
 				<p class="notice is-warn" role="status"><Icon name="warn" /><span>Too many names to list them all: showing the first {fmt(data.tls_names.length)}.</span></p>
 			{/if}
-			<DataTable columns={tlsColumns} rows={data.tls_names} ariaLabel="Names it served" rowKey={(t) => t.name ?? '(no name)'} initialSort={{ key: 'sessions', dir: 'desc' }} />
-			<p class="dim tls-note">Names are as each device sent them. Sessions count every TLS session. Certificates counts only the sessions that showed a certificate (TLS 1.3 hides it, and a resumed session doesn't send it again), so its figures can be lower.</p>
+			<!-- OLD CODE START: rowKey={(t) => t.name ?? '(no name)'} — collided with a client that sends the literal name "(no name)" OLD CODE END -->
+			<DataTable columns={tlsColumns} rows={data.tls_names} ariaLabel="Names it served" rowKey={(t) => JSON.stringify(t.name)} initialSort={{ key: 'sessions', dir: 'desc' }} />
+			<p class="dim tls-note">Names are as each device sent them. Sessions count every TLS session. Certificates counts only the sessions that showed a certificate (TLS 1.3 hides it, and a resumed session doesn't send it again) and leaves out excluded addresses, so its figures can be lower.</p>
 		{/if}
 	</Card>
 
@@ -532,7 +688,7 @@ OLD CODE END -->
 						>{connSortKey === 'time' && connSortDir === 'desc'
 							? `Showing the newest ${fmt(CONN_REACH)} of ${fmt(connTotal)}.`
 							: `Showing the first ${fmt(CONN_REACH)} of ${fmt(connTotal)} in this order.`} Narrow the time range to reach older ones, or
-						<a href={logsHrefForIp(ip)}>search them all in Log Explorer</a>.</span
+						<a href={logsHrefForIp(ip, shown.value)}>search them all in Log Explorer</a>.</span
 					>
 				</p>
 			{/if}
@@ -552,8 +708,10 @@ OLD CODE END -->
 <style>
 	/* Layout glue the system lacks */
 	.chips { margin-top: var(--sp-2); }
-	.two { display: inline-flex; flex-direction: column; line-height: 1.3; }
+	/* OLD CODE START: .two { display: inline-flex; flex-direction: column; line-height: 1.3; } — system.css defines .two OLD CODE END */
+	.chip-note { align-self: center; color: var(--text-3); font-size: var(--text-sm); }
 	.who-links { margin-top: var(--sp-3); }
+	.who-note { margin: var(--sp-3) 0 0; font-size: var(--text-sm); }
 	.tls-note { margin: var(--sp-3) 0 0; font-size: var(--text-sm); }
 	.link-btn { background: none; border: 0; padding: 0; color: var(--accent-strong); cursor: pointer; font: inherit; text-decoration: underline; }
 	.link-btn:hover { color: var(--text-1); }

@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { get } from 'svelte/store';
 import type { LanPolicy } from '$lib/api/network';
-import { LAN_REFRESH_MS, addressHref, domainHref, inCidr, ipHref, ipv4ToNumber, isLan, lanPolicy, lanStatus } from './lan';
+// OLD CODE START: ipv4ToNumber came from './lan'; the maths is utils/dhcpSubnet.ts's now OLD CODE END
+import { toNumber as ipv4ToNumber } from '$lib/utils/dhcpSubnet';
+import { LAN_REFRESH_MS, addressHref, domainHref, inCidr, ipHref, isIpAddress, isLan, lanPolicy, lanStatus } from './lan';
 
 // NET-160: a link goes to a device page only when the daemon's own LAN policy says so
 
@@ -11,7 +13,8 @@ describe('LAN policy maths', () => {
 	it('reads dotted quads only', () => {
 		expect(ipv4ToNumber('0.0.0.0')).toBe(0);
 		expect(ipv4ToNumber('255.255.255.255')).toBe(2 ** 32 - 1);
-		for (const bad of ['256.1.1.1', '1.2.3', '1.2.3.4.5', '2001:db8::1', 'a.b.c.d', '', '1.2.3.-4']) {
+		// leading zeros are rejected, as the daemon's parser does
+		for (const bad of ['256.1.1.1', '1.2.3', '1.2.3.4.5', '2001:db8::1', 'a.b.c.d', '', '1.2.3.-4', '192.168.01.1']) {
 			expect(ipv4ToNumber(bad)).toBeNull();
 		}
 	});
@@ -69,6 +72,24 @@ describe('LAN policy maths', () => {
 	});
 });
 
+describe('isIpAddress', () => {
+	it.each([
+		['192.168.1.5', true],
+		[' 10.0.0.1 ', true],
+		['2001:db8::1', true],
+		['::1', true],
+		['::ffff:192.0.2.1', true],
+		['192.168.1', false],
+		['tcp:443', false],
+		['dns', false],
+		['a:b', false],
+		['fe80::1%eth0', false],
+		['', false],
+	])('%s is an address: %s', (text, expected) => {
+		expect(isIpAddress(text)).toBe(expected);
+	});
+});
+
 describe('LAN policy store', () => {
 	afterEach(() => {
 		vi.useRealTimers();
@@ -111,6 +132,38 @@ describe('LAN policy store', () => {
 		await vi.advanceTimersByTimeAsync(LAN_REFRESH_MS);
 		expect(seen.length).toBe(count);
 		stop();
+	});
+
+	it('keeps the same object across a resubscribe while the version holds', async () => {
+		vi.useFakeTimers();
+		stubPolicies(policy(['192.168.7.0/24'], 'resub'));
+		const seen: (LanPolicy | null)[] = [];
+		let stop = lanPolicy.subscribe((p) => seen.push(p));
+		await vi.waitFor(() => expect(seen.at(-1)?.version).toBe('resub'));
+		const first = seen.at(-1);
+		stop();
+		stop = lanPolicy.subscribe((p) => seen.push(p));
+		await vi.advanceTimersByTimeAsync(0);
+		expect(seen.at(-1)).toBe(first);
+		stop();
+	});
+
+	it('stops refetching after the last unsubscribe, and ignores a reply that lands after it', async () => {
+		vi.useFakeTimers();
+		let answer: (v: unknown) => void = () => {};
+		const fetchMock = vi.fn(() => new Promise((r) => (answer = r)));
+		vi.stubGlobal('fetch', fetchMock);
+		const seen: (LanPolicy | null)[] = [];
+		const stop = lanPolicy.subscribe((p) => seen.push(p));
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		stop();
+		answer({ ok: true, status: 200, json: async () => policy(['10.9.0.0/16'], 'late') });
+		await vi.advanceTimersByTimeAsync(LAN_REFRESH_MS * 2);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(seen.some((p) => p?.version === 'late')).toBe(false);
+		// a new subscriber starts from the last policy, never the late one
+		vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+		expect(get(lanPolicy)?.version).not.toBe('late');
 	});
 
 	it('keeps the last policy when a refetch fails', async () => {

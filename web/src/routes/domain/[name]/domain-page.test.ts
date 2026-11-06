@@ -70,6 +70,11 @@ describe('Domain page', () => {
 		expect(screen.getByText('DNS lookups per hour · last 24 hours')).toBeInTheDocument();
 		// every TLS session counts here; Certificates counts only those that sent one
 		expect(screen.getByText(/so its figures can be lower/)).toBeInTheDocument();
+		// the TLS lists include excluded devices, unlike the DNS figures
+		expect(screen.getByText(/the TLS sessions and devices here include\s+them/)).toBeInTheDocument();
+		// links to pages with their own window carry this one
+		expect(within(card('Alerts tagged with this name')).getByRole('link', { name: /Open alerts/ })).toHaveAttribute('href', '/alerts?range=24h');
+		expect(new URL(screen.getByRole('link', { name: /Search Log Explorer for/ }).getAttribute('href')!, 'http://x').searchParams.get('range')).toBe('24h');
 		const alerts = card('Alerts tagged with this name');
 		expect(alerts).toHaveTextContent('1');
 		expect(alerts).toHaveTextContent('Only 12 of 57 alerts in this window carry a host name.');
@@ -111,9 +116,19 @@ describe('Domain page', () => {
 		expect(alerts).toHaveTextContent('Only 0 of 57 alerts in this window carry a host name.');
 		// a TXT answer is text, never a link
 		expect(screen.getByText('v=spf1 -all').closest('a')).toBeNull();
+		// a list cut at its cap says so in its subtitle too
+		expect(card('Devices that looked it up')).toHaveTextContent("First 1 device · lookups per device");
 		expect(screen.getByText(/Too many devices to list them all/)).toBeInTheDocument();
 		expect(screen.getByText(/Too many answers to list them all/)).toBeInTheDocument();
 		expectNoNestedInteractive(container);
+	});
+
+	it('lists the same answer twice without crashing the table', async () => {
+		const twice = DOMAIN.dns.answers[0];
+		stubDaemon({ ...DOMAIN, dns: { ...DOMAIN.dns, answers: [twice, { ...twice }] } });
+		render(Page);
+		await vi.waitFor(() => expect(kpi('Lookups')).toHaveTextContent('420'));
+		expect(within(card('What it resolved to')).getAllByRole('link', { name: twice.value })).toHaveLength(2);
 	});
 
 	it('shows empty states when nothing was looked up', async () => {

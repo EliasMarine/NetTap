@@ -6,6 +6,7 @@
   places where the address already sits inside a link or button.
 -->
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import ContextMenu from '$components/ContextMenu.svelte';
 	import type { ContextMenuItem } from '$components/ContextMenu.svelte';
@@ -47,7 +48,7 @@
 		if (!showMenu) return;
 		const touch = e.touches[0];
 		longPressTimer = setTimeout(() => {
-			e.preventDefault();
+			// OLD CODE START: e.preventDefault(); — a no-op: the touch event had finished dispatching OLD CODE END
 			menuX = touch.clientX;
 			menuY = touch.clientY;
 			menuVisible = true;
@@ -67,6 +68,9 @@
 			longPressTimer = null;
 		}
 	}
+
+	// a long press still pending when the address leaves the page opens nothing
+	onDestroy(handleTouchEnd);
 
 	// ---------------------------------------------------------------------------
 	// Context menu items
@@ -256,6 +260,8 @@ OLD CODE END -->
 		transition: border-color var(--dur-fast);
 		display: inline;
 		line-height: 1.4;
+		/* iOS: a long press opens NetTap's menu, not Safari's link preview over it */
+		-webkit-touch-callout: none;
 	}
 
 	.ip-address:hover {

@@ -199,8 +199,14 @@ describe('Alert category page — cards', () => {
 		// OLD CODE START — NET-160: "View device" for every address
 		// expect(screen.getByRole('link', { name: 'View device' })).toHaveAttribute('href', '/devices/192.168.1.57');
 		// OLD CODE END
-		await vi.waitFor(() => expect(screen.getByRole('link', { name: 'Open device' })).toHaveAttribute('href', '/devices/192.168.1.57'));
-		for (const link of screen.getAllByRole('link', { name: '192.168.1.57' })) expect(link).toHaveAttribute('href', '/devices/192.168.1.57');
+		// OLD CODE START — NET-160 review: the extra link beside the address went to the same page
+		// await vi.waitFor(() => expect(screen.getByRole('link', { name: 'Open device' })).toHaveAttribute('href', '/devices/192.168.1.57'));
+		// OLD CODE END
+		await vi.waitFor(() => {
+			const links = screen.getAllByRole('link', { name: '192.168.1.57' });
+			for (const link of links) expect(link).toHaveAttribute('href', '/devices/192.168.1.57');
+		});
+		expect(screen.queryByRole('link', { name: /^Open (device|address)$/ })).toBeNull();
 		expectNoNestedInteractive(container);
 		expect(screen.getByRole('link', { name: 'T1046' })).toHaveAttribute('href', 'https://attack.mitre.org/techniques/T1046/');
 	});
