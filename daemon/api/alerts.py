@@ -19,6 +19,7 @@ from opensearchpy import OpenSearchException
 
 from api.time_range import parse_time_range
 from services.alert_enrichment import AlertEnrichment
+from services.excluded_ips import parse_single_ip
 
 # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
 # from services.excluded_ips import build_excluded_ips_filter
@@ -329,7 +330,7 @@ def _alert_sort(sort_key: str, order: str) -> list[dict]:
 
 
 async def handle_alerts_list(request: web.Request) -> web.Response:
-    """GET /api/alerts?from=&to=&severity=&page=1&size=50&sort=time&order=desc&category=&sub=
+    """GET /api/alerts?from=&to=&severity=&page=1&size=50&sort=time&order=desc&category=&sub=&signature=&ip=&src=&dst=
 
     Returns a paginated list of Suricata alerts with optional severity filter,
     sorted by any of the alert tables' columns across every page (#146).
@@ -350,6 +351,21 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
             },
             status=400,
         )
+    # One canonical address each (NET-160 slice 2b-1). A bad one is a 400: a dropped filter would
+    # list more alerts than the link promised, and OpenSearch's own rejection read as a 502.
+    addresses: dict[str, str] = {}
+    for name in ("ip", "src", "dst"):
+        raw = request.query.get(name, "")
+        if not raw:
+            continue
+        parsed = parse_single_ip(raw)
+        if parsed is None:
+            logger.debug("Alerts list: invalid %s parameter", name)
+            return web.json_response(
+                {"error": "ip, src and dst must each be one IPv4 or IPv6 address"},
+                status=400,
+            )
+        addresses[name] = parsed
     client = _get_client(request)
 
     offset = (page - 1) * size
@@ -375,13 +391,19 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
         except (ValueError, TypeError):
             pass
 
-    # Optional signature filter (wildcard match on rule.name)
+    # Optional signature filter (exact match on rule.name)
     sig_filter = request.query.get("signature", "")
+    # OLD CODE START — slice 2b-1: match_phrase; on the keyword rule.name it matches the same alerts,
+    # but term states the exact match a smart alert's count relies on
+    # if sig_filter:
+    #     filter_clauses.append({"match_phrase": {"rule.name": sig_filter}})
+    # OLD CODE END
     if sig_filter:
-        filter_clauses.append({"match_phrase": {"rule.name": sig_filter}})
+        filter_clauses.append({"term": {"rule.name": sig_filter}})
 
     # Optional IP filter (matches source OR destination)
-    ip_filter = request.query.get("ip", "")
+    # OLD CODE: ip_filter = request.query.get("ip", "") (slice 2b-1: validated above)
+    ip_filter = addresses.get("ip")
     if ip_filter:
         filter_clauses.append(
             {
@@ -394,6 +416,12 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
                 }
             }
         )
+
+    # Optional source and destination (a smart alert's pair, slice 2b-1)
+    if "src" in addresses:
+        filter_clauses.append({"term": {"source.ip": addresses["src"]}})
+    if "dst" in addresses:
+        filter_clauses.append({"term": {"destination.ip": addresses["dst"]}})
 
     # OLD CODE START — #147: any of the category's patterns, while the category's own totals give each
     # signature its first matching category (informational when none): Exploit listed 99 alerts

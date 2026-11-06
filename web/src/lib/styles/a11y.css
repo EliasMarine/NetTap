@@ -41,3 +41,9 @@ html:has(.app.nav-open) { overflow: hidden; }
 }
 .sev-count { container-type: inline-size; }
 .sev-count b { font-size: min(var(--text-xl), 100cqi / (var(--sev-chars, 1) * 0.65)); }
+
+/* 7. bundle.css:433 stacks .page-head on phones with align-items: flex-start, so .head-actions
+      takes its content's width and correction 5's max-width: 100% never binds. Seven range pills
+      (Alerts and Log Explorer, with 6h since NET-160 slice 2b-1) scrolled the page sideways. Capped
+      at the head's width, the actions wrap and the pill track scrolls inside itself. */
+@container app (max-width: 760px) { .head-actions { max-width: 100%; } }

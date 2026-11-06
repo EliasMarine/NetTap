@@ -21,6 +21,11 @@ export const GET: RequestHandler = async ({ url }) => {
 	if (size) params.set('size', size);
 	const ip = url.searchParams.get('ip');
 	if (ip) params.set('ip', ip);
+	// NET-160 slice 2b-1: a smart alert's source → destination pair; the daemon validates both
+	for (const key of ['src', 'dst']) {
+		const value = url.searchParams.get(key);
+		if (value) params.set(key, value);
+	}
 	const signature = url.searchParams.get('signature');
 	if (signature) params.set('signature', signature);
 	const category = url.searchParams.get('category');

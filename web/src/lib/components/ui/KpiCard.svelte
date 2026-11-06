@@ -22,15 +22,17 @@
 		/** One line of breakdown: "↓ 31.8 GB down · ↑ 7.4 GB up". */
 		sub?: string;
 		href?: string;
+		/** Hover text, e.g. what a linked card opens */
+		title?: string;
 		class?: string;
 		foot?: Snippet;
 	}
 
-	let { label, icon, value, unit, delta, comparison, note, sub, href, class: cls = '', foot }: Props = $props();
+	let { label, icon, value, unit, delta, comparison, note, sub, href, title, class: cls = '', foot }: Props = $props();
 	const meta = $derived(comparison ?? note);
 </script>
 
-<svelte:element this={href ? 'a' : 'article'} {href} class={['card', 'kpi', cls]}>
+<svelte:element this={href ? 'a' : 'article'} {href} {title} class={['card', 'kpi', cls]}>
 	<div class="kpi-top"><span>{label}</span><Icon name={icon} /></div>
 	<div class="kpi-num">{value}{#if unit}<span class="kpi-unit">{unit}</span>{/if}</div>
 	{#if delta || meta}

@@ -70,7 +70,8 @@
 	}
 
 	type LogType = 'all' | 'zeek.conn' | 'zeek.dns' | 'zeek.http' | 'zeek.tls' | 'zeek.files' | 'zeek.dhcp' | 'zeek.smtp' | 'suricata';
-	type TimeRange = '15m' | '1h' | '4h' | '24h' | '7d' | '30d';
+	// OLD CODE: type TimeRange = '15m' | '1h' | '4h' | '24h' | '7d' | '30d'; (slice 2b-1: 6h, as Home has)
+	type TimeRange = '15m' | '1h' | '4h' | '6h' | '24h' | '7d' | '30d';
 
 	/** A table row: each column's display text by field, plus the hit the drawer opens. */
 	type LogRow = { _id: string; hit: LogHit } & Record<string, unknown>;
@@ -115,6 +116,7 @@
 		{ value: '15m', label: '15m', ms: 15 * 60_000, words: 'last 15 minutes' },
 		{ value: '1h', label: '1h', ms: 60 * 60_000, words: 'last hour' },
 		{ value: '4h', label: '4h', ms: 4 * 60 * 60_000, words: 'last 4 hours' },
+		{ value: '6h', label: '6h', ms: 6 * 60 * 60_000, words: 'last 6 hours' },
 		{ value: '24h', label: '24h', ms: 24 * 60 * 60_000, words: 'last 24 hours' },
 		{ value: '7d', label: '7d', ms: 7 * 24 * 60 * 60_000, words: 'last 7 days' },
 		{ value: '30d', label: '30d', ms: 30 * 24 * 60 * 60_000, words: 'last 30 days' },
@@ -124,6 +126,7 @@
 		'15m': '1m',
 		'1h': '5m',
 		'4h': '15m',
+		'6h': '15m',
 		'24h': '1h',
 		'7d': '6h',
 		'30d': '1d',
@@ -240,6 +243,8 @@
 	// Active filters from chart clicks
 	let activeIpFilter = $state('');
 	let activeDnsFilter = $state('');
+	/** Sources a link's count left out (?exclude_src=, Home's Connections, NET-160 slice 2b-1) */
+	let excludeSrc = $state<string[]>([]);
 
 	// OLD CODE START — the hand-drawn stacked chart's hover and width; AreaChart handles both
 	// // Chart interaction
@@ -276,7 +281,8 @@
 	// let maxDnsCount = $derived(topDns.length > 0 ? topDns[0].count : 1);
 	// OLD CODE END
 
-	let hasActiveFilters = $derived(activeIpFilter !== '' || activeDnsFilter !== '' || logType !== 'all');
+	// OLD CODE: let hasActiveFilters = $derived(activeIpFilter !== '' || activeDnsFilter !== '' || logType !== 'all'); (slice 2b-1: excluded sources)
+	let hasActiveFilters = $derived(activeIpFilter !== '' || activeDnsFilter !== '' || logType !== 'all' || excludeSrc.length > 0);
 
 	// OLD CODE: const rangeWords = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange)?.words ?? 'last 24 hours'); (slice 2a: Custom)
 	const rangeWords = $derived(
@@ -297,7 +303,8 @@
 	function getTimeRange(rangeValue: TimeRange | 'custom' = selectedTimeRange): DrillWindow {
 		if (rangeValue === 'custom' && custom) return { from: custom.from, to: custom.to };
 		const now = Date.now();
-		const range = TIME_RANGES.find((r) => r.value === rangeValue) || TIME_RANGES[3];
+		// OLD CODE: || TIME_RANGES[3]; (slice 2b-1: 6h moved 24h to index 4)
+		const range = TIME_RANGES.find((r) => r.value === rangeValue) || TIME_RANGES[4];
 		return {
 			from: new Date(now - range.ms).toISOString(),
 			to: new Date(now).toISOString(),
@@ -575,6 +582,8 @@
 				fullQuery = fullQuery ? `${fullQuery} AND ${dnsQ}` : dnsQ;
 			}
 			if (fullQuery) params.set('query', fullQuery);
+			// the daemon validates each and leaves them out as the count's must_not did
+			if (excludeSrc.length > 0) params.set('exclude_src', excludeSrc.join(','));
 
 			// OLD CODE START — slice 2a: every page worked out a new window
 			// params.set('from', timeRangeToISO(selectedTimeRange));
@@ -761,6 +770,7 @@
 	function clearAllFilters() {
 		activeIpFilter = '';
 		activeDnsFilter = '';
+		excludeSrc = [];
 		logType = 'all';
 		query = '';
 		if (initialized) {
@@ -927,15 +937,20 @@
 	// 	});
 	// });
 	// OLD CODE END
-	/** The ?filter= / ?ip= / ?query= / ?range= / ?from= / ?to= last applied; null before the first load. */
+	/** The ?filter= / ?ip= / ?query= / ?range= / ?from= / ?to= / ?type= / ?exclude_src= last applied; null before the first load. */
 	let appliedSearch: string | null = null;
 
 	$effect(() => {
 		// Deep links from other pages (e.g., /logs?filter=1.2.3.4) and the top-bar search hand-off
 		const params = $page.url.searchParams;
-		const keys = ['filter', 'ip', 'query', 'range', 'from', 'to'] as const;
-		const [urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo] = keys.map((k) => params.get(k));
-		const search = JSON.stringify([urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo]);
+		// OLD CODE START — slice 2b-1: no log type or excluded sources (Home's Connections link)
+		// const keys = ['filter', 'ip', 'query', 'range', 'from', 'to'] as const;
+		// const [urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo] = keys.map((k) => params.get(k));
+		// const search = JSON.stringify([urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo]);
+		// OLD CODE END
+		const keys = ['filter', 'ip', 'query', 'range', 'from', 'to', 'type', 'exclude_src'] as const;
+		const [urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo, urlType, urlExclude] = keys.map((k) => params.get(k));
+		const search = JSON.stringify([urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo, urlType, urlExclude]);
 		untrack(() => {
 			// The hash changes too (the KPI links); only a new search runs one
 			if (search === appliedSearch) return;
@@ -955,6 +970,11 @@
 			// A hand-off replaces the last one's IP filter and text; the first load starts from neither
 			activeIpFilter = urlFilter || urlIp || '';
 			query = urlFilter || urlIp ? '' : (urlQuery ?? '');
+			// It replaces the log type too (one of ours, else all types) and the excluded sources (the daemon checks each)
+			const typeBefore = logType;
+			logType = Object.keys(LOG_TYPE_LABELS).includes(urlType ?? '') ? (urlType as LogType) : 'all';
+			excludeSrc = (urlExclude ?? '').split(',').map((ip) => ip.trim()).filter(Boolean);
+			if (!first && logType !== typeBefore) fetchFieldDefs();
 			if (first) {
 				refresh.run().then(() => {
 					initialized = true;
@@ -1199,6 +1219,13 @@ OLD CODE END -->
 				{#if activeDnsFilter}
 					<button class="chip" type="button" aria-label="Remove filter DNS: {activeDnsFilter}" onclick={() => { activeDnsFilter = ''; fetchLogs(); fetchFieldDefs(); }}>
 						DNS: <span class="mono">{activeDnsFilter}</span><Icon name="close" />
+					</button>
+				{/if}
+				<!-- Clearing it is local, as every control here is: the URL is a one-time hand-off -->
+				{#if excludeSrc.length > 0}
+					<button class="chip" type="button" aria-label="Remove filter: leaving out sources {excludeSrc.join(', ')}" onclick={() => { excludeSrc = []; fetchLogs(); }}>
+						<!-- OLD CODE: … (excluded in Settings, as Home counts) (PR #189 review: the page can't check where a link's list came from) -->
+						Leaving out sources <span class="mono">{excludeSrc.join(', ')}</span> (set by the link you followed)<Icon name="close" />
 					</button>
 				{/if}
 				<button class="link" type="button" onclick={clearAllFilters}>Clear all</button>

@@ -42,6 +42,8 @@ export interface Alert {
 	dest_ip?: string;
 	dest_port?: number;
 	proto?: string;
+	/** The raw rule name the list's `signature` filter matches (the shown signature can differ) */
+	rule?: { name?: string };
 	acknowledged: boolean;
 	acknowledged_at?: string;
 	[key: string]: unknown;
@@ -174,6 +176,9 @@ export async function getAlerts(
 		page?: number;
 		size?: number;
 		ip?: string;
+		/** the alert's source and destination address (a smart alert's pair, NET-160 slice 2b-1) */
+		src?: string;
+		dst?: string;
 		signature?: string;
 		category?: string;
 		/** a sub-category of `category` (#147) */
@@ -189,6 +194,8 @@ export async function getAlerts(
 		page: opts.page,
 		size: opts.size,
 		ip: opts.ip,
+		src: opts.src,
+		dst: opts.dst,
 		signature: opts.signature,
 		category: opts.category,
 		sub: opts.sub,
@@ -427,6 +434,18 @@ export interface SmartAlert {
 	trend: string;
 	assessment: string;
 	destination_port?: number;
+	/**
+	 * The group's own bucket values, null when the alerts had none: the exact Alerts list for this
+	 * ×N (NET-160 slice 2b-1). `signature` above can be the sample's display name instead.
+	 * Absent from an older daemon.
+	 */
+	key?: SmartAlertKey;
+}
+
+export interface SmartAlertKey {
+	rule_name: string | null;
+	source_ip: string | null;
+	destination_ip: string | null;
 }
 
 export interface SmartAlertsResponse {

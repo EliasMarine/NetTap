@@ -45,6 +45,7 @@ const summary = {
 	packet_count: Math.round(TOTAL / 820),
 	connection_count: SESSIONS,
 	top_protocol: 'tcp',
+	excluded_ips: [],
 } satisfies TrafficSummary;
 
 const emptySummary = {
@@ -55,6 +56,7 @@ const emptySummary = {
 	packet_count: 0,
 	connection_count: 0,
 	top_protocol: 'unknown',
+	excluded_ips: [],
 } satisfies TrafficSummary;
 
 const bandwidthSeries: BandwidthPoint[] = hourly((i, share) => {

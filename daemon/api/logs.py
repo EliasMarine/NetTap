@@ -19,6 +19,7 @@ from opensearchpy import OpenSearchException
 # from services.excluded_ips import build_excluded_ips_filter
 # OLD CODE END
 from api.time_range import parse_time_range
+from services.excluded_ips import build_excluded_ips_filter, parse_single_ip
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
 from services.dns_analytics import DNS_NOISE_EXCLUSION as _EXCLUDE_DNS_NOISE
 from storage.manager import StorageManager
@@ -566,6 +567,23 @@ async def handle_log_search(request: web.Request) -> web.Response:
     sort_param = request.query.get("sort", "@timestamp:desc")
     search_after = request.query.get("search_after", "")
 
+    # Sources to leave out, as a count that excluded them did (Home's Connections, NET-160 slice
+    # 2b-1). No limit of its own: Settings has none and the count applies the whole list.
+    # shortcut: the request line caps it (aiohttp and nginx, about 8 KB: ~500 IPv4 or ~200 IPv6
+    # addresses); a longer Settings list needs the summary to pass a reference, not the addresses.
+    exclude_src: list[str] = []
+    for entry in filter(None, request.query.get("exclude_src", "").split(",")):
+        ip = parse_single_ip(entry)
+        if ip is None:
+            logger.debug("Log search: invalid exclude_src entry")
+            return web.json_response(
+                {
+                    "error": "exclude_src must be IPv4 or IPv6 addresses, comma-separated"
+                },
+                status=400,
+            )
+        exclude_src.append(ip)
+
     # Build query
     filters = [{"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}}]
 
@@ -594,9 +612,9 @@ async def handle_log_search(request: web.Request) -> web.Response:
                 # OLD CODE END
                 # Alerts have their own page; they show here only when "suricata" is chosen
                 "must_not": _EXCLUDE_DNS_NOISE
-                + (
-                    [] if log_type == "suricata" else _EXCLUDE_ALERTS_FILTER["must_not"]
-                ),
+                + ([] if log_type == "suricata" else _EXCLUDE_ALERTS_FILTER["must_not"])
+                # the same clause the count's must_not used
+                + build_excluded_ips_filter(exclude_src),
             }
         },
         "size": size,

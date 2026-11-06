@@ -3,6 +3,7 @@
  * say when they are partial or not measured instead of showing a number the data can't back.
  */
 import type { ByteTotal } from '$lib/api/drilldown';
+import type { SmartAlertKey } from '$lib/api/alerts';
 import { formatBytes } from '$lib/api/logs';
 
 export type DrillRangeValue = '24h' | '7d' | '30d';
@@ -152,13 +153,58 @@ export function windowQuery(win: DrillWindow, range?: string): string {
 	return q.toString();
 }
 
+// OLD CODE START — slice 2b-1: only `ip` could narrow the list, which matches either end, so a
+// smart alert's link listed the device's other pairs too
+// /**
+//  * The alerts list for one signature (an exact match on rule.name), over the count's window when given.
+//  * `ip` narrows it to alerts with that address at either end (the list's `ip` filter).
+//  */
+// export function alertsHrefForSignature(signature: string, win?: DrillWindow & { range?: string }, ip?: string): string {
+// 	const q = new URLSearchParams(ip ? { signature, ip } : { signature });
+// 	return win ? `/alerts?${q.toString()}&${windowQuery(win, win.range)}` : `/alerts?${q.toString()}`;
+// }
+// OLD CODE END
+/** The Alerts list's address filters: `ip` at either end, `src` the source, `dst` the destination. */
+export interface AlertNarrow {
+	ip?: string;
+	src?: string;
+	dst?: string;
+}
+
 /**
  * The alerts list for one signature (an exact match on rule.name), over the count's window when given.
- * `ip` narrows it to alerts with that address at either end (the list's `ip` filter).
+ * `narrow` adds the address filters; empty ones are left out of the URL.
  */
-export function alertsHrefForSignature(signature: string, win?: DrillWindow & { range?: string }, ip?: string): string {
-	const q = new URLSearchParams(ip ? { signature, ip } : { signature });
+export function alertsHrefForSignature(signature: string, win?: DrillWindow & { range?: string }, narrow: AlertNarrow = {}): string {
+	const q = new URLSearchParams({ signature });
+	for (const key of ['ip', 'src', 'dst'] as const) {
+		if (narrow[key]) q.set(key, narrow[key]);
+	}
 	return win ? `/alerts?${q.toString()}&${windowQuery(win, win.range)}` : `/alerts?${q.toString()}`;
+}
+
+/** Why a smart alert's ×N isn't a link. */
+export const NO_EXACT_ALERT_LIST = "This group has no signature, source or destination recorded, so it can't be listed exactly";
+
+/**
+ * The Alerts list holding exactly a smart alert's ×N: its bucket's rule name, source and
+ * destination over the window it was counted in, plus `device` when the groups were counted for
+ * one (either end, as the count was). Null when a key part is missing or empty: dropping that
+ * filter would list more than ×N.
+ */
+export function smartAlertHref(key: SmartAlertKey | undefined, win: DrillWindow & { range?: string }, device?: string): string | null {
+	if (!key?.rule_name || !key.source_ip || !key.destination_ip) return null;
+	return alertsHrefForSignature(key.rule_name, win, { ip: device, src: key.source_ip, dst: key.destination_ip });
+}
+
+/**
+ * Log Explorer's conn records over a traffic summary's own window, leaving out the sources the
+ * summary left out, so the list holds its connection count (Home's Connections and Bandwidth).
+ */
+export function connLogsHref(summary: DrillWindow & { excluded_ips?: string[] }, range: string): string {
+	const q = new URLSearchParams({ type: 'zeek.conn' });
+	if (summary.excluded_ips?.length) q.set('exclude_src', summary.excluded_ips.join(','));
+	return `/logs?${q.toString()}&${windowQuery(summary, range)}`;
 }
 
 /**

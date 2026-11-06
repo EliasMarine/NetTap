@@ -18,7 +18,7 @@ from opensearchpy import OpenSearchException
 from api.drilldown_runner import either_side, ip_param
 from api.time_range import parse_time_range
 from api.devices import _CONNECTION_SORT_FIELDS, _connection_sort
-from services.excluded_ips import build_excluded_ips_filter
+from services.excluded_ips import build_excluded_ips_filter, valid_excluded_ips
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
 from services.iot_monitor import (
     ENCRYPTED_CONN_FILTER,
@@ -144,6 +144,8 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
     """
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
+    # Reported with the totals, so a link can leave out exactly what they left out (NET-160 slice 2b-1)
+    excluded = valid_excluded_ips(request.app.get("excluded_ips", []))
 
     query = {
         "size": 0,
@@ -165,9 +167,12 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     *_ZEEK_CONN_FILTERS,
                 ],
-                "must_not": build_excluded_ips_filter(
-                    request.app.get("excluded_ips", [])
-                ),
+                # OLD CODE START — slice 2b-1: the list is worked out above so the reply can report it
+                # "must_not": build_excluded_ips_filter(
+                #     request.app.get("excluded_ips", [])
+                # ),
+                # OLD CODE END
+                "must_not": build_excluded_ips_filter(excluded),
             }
         },
         "aggs": {
@@ -216,6 +221,7 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
             "packet_count": orig_pkts + resp_pkts,
             "connection_count": connection_count,
             "top_protocol": top_protocol,
+            "excluded_ips": excluded,
         }
     )
 
