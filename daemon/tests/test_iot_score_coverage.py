@@ -88,9 +88,7 @@ class TestMixedFleet:
         assert fleet["health_grade"] is None
         assert fleet["subtitle"].startswith("Not enough measured")
 
-    def test_a_new_destination_on_a_familiar_port_is_not_scored_as_familiar(
-        self, iot
-    ):
+    def test_a_new_destination_on_a_familiar_port_is_not_scored_as_familiar(self, iot):
         """new_destinations counted new *ports*, so a new IP on 443 read as no change."""
         iot._baselines[CAMERA] = {
             "known_destinations": ["1.1.1.1"],
@@ -98,7 +96,9 @@ class TestMixedFleet:
             "active_hours": list(range(24)),
             "daily_avg_bytes": 10_000,
         }
-        stats = iot._build_device_stats(CAMERA, CONN[CAMERA], {}, iot._baselines[CAMERA], {443})
+        stats = iot._build_device_stats(
+            CAMERA, CONN[CAMERA], {}, iot._baselines[CAMERA], {443}
+        )
         assert stats["new_destinations"] is None
         assert stats["baseline_adherence"] is None
         assert iot._scorer.score_device(stats)["behavior_score"] is None
@@ -114,7 +114,9 @@ class TestOnePrivacyResult:
 
     def test_tracker_share_is_a_share_of_lookups_not_bytes(self, iot):
         camera = next(
-            d for d in iot.get_privacy_report(FROM_TS, TO_TS)["devices"] if d["mac"] == CAMERA
+            d
+            for d in iot.get_privacy_report(FROM_TS, TO_TS)["devices"]
+            if d["mac"] == CAMERA
         )
         assert camera["tracker_lookup_share"] == 0.5  # 4 of 8 lookups
         assert "telemetry_bytes" not in camera

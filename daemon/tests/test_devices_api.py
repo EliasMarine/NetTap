@@ -838,25 +838,44 @@ class TestDeviceConnectionsHandler(AioHTTPTestCase):
             "hits": {
                 "total": {"value": 2},
                 "hits": [
-                    {"_id": "out", "_source": {"source": {"ip": "192.168.1.100"}, "destination": {"ip": "8.8.8.8"}}},
-                    {"_id": "in", "_source": {"source": {"ip": "192.168.1.7"}, "destination": {"ip": "192.168.1.100"}}},
+                    {
+                        "_id": "out",
+                        "_source": {
+                            "source": {"ip": "192.168.1.100"},
+                            "destination": {"ip": "8.8.8.8"},
+                        },
+                    },
+                    {
+                        "_id": "in",
+                        "_source": {
+                            "source": {"ip": "192.168.1.7"},
+                            "destination": {"ip": "192.168.1.100"},
+                        },
+                    },
                 ],
             }
         }
-        resp = await self.client.request("GET", "/api/devices/192.168.1.100/connections")
+        resp = await self.client.request(
+            "GET", "/api/devices/192.168.1.100/connections"
+        )
         rows = (await resp.json())["connections"]
-        self.assertEqual([(r["_id"], r["direction"]) for r in rows], [("out", "out"), ("in", "in")])
+        self.assertEqual(
+            [(r["_id"], r["direction"]) for r in rows], [("out", "out"), ("in", "in")]
+        )
 
     @unittest_run_loop
     async def test_dl_ul_and_direction_sort_on_the_device_side_on_every_page(self):
-        self.mock_client.search.return_value = {"hits": {"total": {"value": 0}, "hits": []}}
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []}
+        }
         for key, picks in (
             ("dl", "'destination.bytes' : 'source.bytes'"),
             ("ul", "'source.bytes' : 'destination.bytes'"),
             ("direction", "? 1 : 0"),
         ):
             resp = await self.client.request(
-                "GET", f"/api/devices/192.168.1.100/connections?sort={key}&order=desc&page=2&size=25"
+                "GET",
+                f"/api/devices/192.168.1.100/connections?sort={key}&order=desc&page=2&size=25",
             )
             self.assertEqual(resp.status, 200)
             body = self.mock_client.search.call_args.kwargs["body"]
@@ -878,13 +897,21 @@ class TestDeviceConnectionsHandler(AioHTTPTestCase):
     @unittest_run_loop
     async def test_protocol_filter_reaches_the_query(self):
         """NET-158: the filter hid rows of one page; the total and pager counted every protocol."""
-        self.mock_client.search.return_value = {"hits": {"total": {"value": 0}, "hits": []}}
-        await self.client.request("GET", "/api/devices/192.168.1.100/connections?proto=udp")
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []}
+        }
+        await self.client.request(
+            "GET", "/api/devices/192.168.1.100/connections?proto=udp"
+        )
         body = self.mock_client.search.call_args.kwargs["body"]
-        self.assertIn({"term": {"network.transport": "udp"}}, body["query"]["bool"]["filter"])
+        self.assertIn(
+            {"term": {"network.transport": "udp"}}, body["query"]["bool"]["filter"]
+        )
 
         self.mock_client.search.reset_mock()
-        resp = await self.client.request("GET", "/api/devices/192.168.1.100/connections?proto=gre")
+        resp = await self.client.request(
+            "GET", "/api/devices/192.168.1.100/connections?proto=gre"
+        )
         self.assertEqual(resp.status, 400)
         self.mock_client.search.assert_not_called()
 
@@ -1097,7 +1124,9 @@ class TestDeviceCountHandler(AioHTTPTestCase):
             }
 
         buckets = [
-            seen("192.168.1.10", 40, "2026-02-25T23:59:00Z"),  # one record in the last 5 min
+            seen(
+                "192.168.1.10", 40, "2026-02-25T23:59:00Z"
+            ),  # one record in the last 5 min
             seen("192.168.1.11", 40, "2026-02-25T23:50:00Z"),  # idle
             seen("192.168.1.12", 2, "2026-02-25T23:59:30Z"),  # not a listed device
         ]

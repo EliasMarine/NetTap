@@ -530,7 +530,9 @@ class IoTMonitor:
             # OLD CODE END
             anomaly_count: int | None = None
             if baseline:
-                anomaly_count = len(self.check_anomalies(mac, excluded_ips=excluded_ips))
+                anomaly_count = len(
+                    self.check_anomalies(mac, excluded_ips=excluded_ips)
+                )
                 total_anomaly_count += anomaly_count
                 anomalies_checked += 1
 

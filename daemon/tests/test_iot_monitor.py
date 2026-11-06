@@ -1441,7 +1441,9 @@ class TestDiscoverIotDevicesFromArkime:
         assert device["manufacturer"] == "Ring LLC"
         # the newest IP is the latest record's, not the most frequent one
         agg = mock_client.search.call_args.kwargs["body"]["aggs"]["all"]["aggs"]
-        assert agg["latest_ip"]["top_hits"]["sort"] == [{"@timestamp": {"order": "desc"}}]
+        assert agg["latest_ip"]["top_hits"]["sort"] == [
+            {"@timestamp": {"order": "desc"}}
+        ]
 
     def test_espressif_matches(self, iot, mock_client):
         """Espressif Inc. matches via IOT_OUI_ALWAYS."""

@@ -29,7 +29,9 @@ NAME_MISMATCH_CODES = {62, 64}
 # s_client's verify callback prints each error to stderr; the final "Verify return
 # code" keeps only the last one, so a self-signed cert with a wrong name shows just the name
 _VERIFY_ERROR = re.compile(r"^verify error:num=(\d+):(.+)$", re.MULTILINE)
-_VERIFY_RESULT = re.compile(r"^\s*Verify return code:\s*(\d+)\s*\((.*)\)\s*$", re.MULTILINE)
+_VERIFY_RESULT = re.compile(
+    r"^\s*Verify return code:\s*(\d+)\s*\((.*)\)\s*$", re.MULTILINE
+)
 # A new attribute starts at ", KEY=" ("C = US" in OpenSSL 1.1, "C=US" in 3.x); a comma
 # inside a value ("O=Test, Inc.") isn't followed by one
 _DN_SPLIT = re.compile(r",\s*(?=[A-Za-z][\w.]*\s*=)")
@@ -97,11 +99,15 @@ class SslCertService:
         verify_code is None when s_client printed no result (nothing was checked).
         """
         results = _VERIFY_RESULT.findall(stdout)
-        errors = [(int(num), reason.strip()) for num, reason in _VERIFY_ERROR.findall(stderr)]
+        errors = [
+            (int(num), reason.strip()) for num, reason in _VERIFY_ERROR.findall(stderr)
+        ]
         if not results:
             return {"verify_code": None, "verify_errors": [], "name_match": None}
         code, reason = int(results[-1][0]), results[-1][1].strip()
-        reasons = list(dict.fromkeys(r for _, r in errors)) or ([] if code == 0 else [reason])
+        reasons = list(dict.fromkeys(r for _, r in errors)) or (
+            [] if code == 0 else [reason]
+        )
         return {
             "verify_code": code,
             "verify_errors": reasons,

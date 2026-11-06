@@ -185,7 +185,9 @@ class BridgeHealthMonitor:
             rx_bytes_delta, tx_bytes_delta, rx_packets_delta, tx_packets_delta = (
                 self._calculate_deltas(stats)
             )
-            rx_bytes_per_sec, tx_bytes_per_sec = self._calculate_rates(stats, sampled_at)
+            rx_bytes_per_sec, tx_bytes_per_sec = self._calculate_rates(
+                stats, sampled_at
+            )
 
             # Update previous counters
             if stats:

@@ -1099,9 +1099,7 @@ def _connection_sort(sort_key: str, order: str) -> list[dict]:
 # the device answered (it is the destination) they are the other way round. These keys sort
 # on the device's side of each session; for this endpoint only (the Connections page keeps
 # its source/destination columns). params.ip is the canonical form ip doc values use.
-_DEVICE_STARTED = (
-    "doc['source.ip'].size() > 0 && doc['source.ip'].value == params.ip"
-)
+_DEVICE_STARTED = "doc['source.ip'].size() > 0 && doc['source.ip'].value == params.ip"
 _DEVICE_SIDE_SORT = {
     # 1 when the device started the session (out), 0 when it answered (in)
     "direction": f"{_DEVICE_STARTED} ? 1 : 0",
@@ -1167,7 +1165,10 @@ async def handle_device_connections(request: web.Request) -> web.Response:
         )
     if proto and proto not in _DEVICE_CONNECTION_PROTOS:
         return web.json_response(
-            {"error": "proto must be one of " + ", ".join(sorted(_DEVICE_CONNECTION_PROTOS))},
+            {
+                "error": "proto must be one of "
+                + ", ".join(sorted(_DEVICE_CONNECTION_PROTOS))
+            },
             status=400,
         )
     client = _get_client(request)
@@ -1576,7 +1577,9 @@ async def handle_device_count(request: web.Request) -> web.Response:
     if active_since:
         cutoff_ms = _utc(active_since).timestamp() * 1000
         devices = [
-            d for d in devices if (d.get("last_seen", {}).get("value") or 0) >= cutoff_ms
+            d
+            for d in devices
+            if (d.get("last_seen", {}).get("value") or 0) >= cutoff_ms
         ]
     count = len(devices)
 

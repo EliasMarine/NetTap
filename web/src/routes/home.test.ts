@@ -104,6 +104,8 @@ describe('capture pipeline stages', () => {
 		// an unreadable drive beside healthy checks is incomplete, never "Degraded"
 		expect(systemStage(system({ status: 'incomplete', healthy: null }), false)).toMatchObject({ status: 'unknown', detail: "Incomplete · some checks couldn't run" });
 		expect(systemStage(null, true)).toMatchObject({ status: 'unknown', detail: "Couldn't check: the request failed" });
+		// a daemon that predates the status field must not break the Home page
+		expect(systemStage(system({ status: undefined }), false)).toMatchObject({ status: 'unknown', detail: 'Unknown' });
 		expect(openSearchStage(system(), false)).toMatchObject({ status: 'ok', detail: 'Connected' });
 		expect(openSearchStage(system({ opensearch_reachable: false }), false)).toMatchObject({ status: 'failing', detail: 'Unreachable' });
 		expect(openSearchStage(null, true).status).toBe('unknown');

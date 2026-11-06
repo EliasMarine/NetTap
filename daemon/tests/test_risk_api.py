@@ -934,7 +934,14 @@ class TestRiskFactorScope(unittest.TestCase):
         [clause] = _device_score_aggs()["external_conns"]["filter"]["bool"]["must_not"]
         excluded = set(clause["terms"]["destination.ip"])
         # multicast (mDNS 224.0.0.251, ff02::fb), broadcast, link-local, IPv6 private
-        for cidr in ("224.0.0.0/4", "ff00::/8", "255.255.255.255/32", "169.254.0.0/16", "fe80::/10", "fc00::/7"):
+        for cidr in (
+            "224.0.0.0/4",
+            "ff00::/8",
+            "255.255.255.255/32",
+            "169.254.0.0/16",
+            "fe80::/10",
+            "fc00::/7",
+        ):
             self.assertIn(cidr, excluded)
 
     def test_ports_leave_out_icmp_on_the_list_and_the_single_device(self):
@@ -945,7 +952,9 @@ class TestRiskFactorScope(unittest.TestCase):
         self.assertEqual(ports["filter"], {"bool": {"must_not": [icmp]}})
         self.assertEqual(ports["aggs"]["ports"]["terms"]["field"], "destination.port")
         bucket = {"doc_count": 3, "ports_used": {"ports": {"buckets": [{"key": 443}]}}}
-        self.assertEqual(_build_device_stats("10.0.0.2", bucket, 0, 0, 0)["ports_used"], [443])
+        self.assertEqual(
+            _build_device_stats("10.0.0.2", bucket, 0, 0, 0)["ports_used"], [443]
+        )
 
 
 if __name__ == "__main__":

@@ -22,7 +22,9 @@ class FakeClock:
         return self.now
 
 
-def _monitor(samples: list[int], clock: FakeClock, read_delays: list[float] | None = None):
+def _monitor(
+    samples: list[int], clock: FakeClock, read_delays: list[float] | None = None
+):
     """A monitor whose rx counter steps through `samples` (tx is twice rx)."""
     monitor = BridgeHealthMonitor()
     calls = iter(range(len(samples)))
@@ -31,7 +33,12 @@ def _monitor(samples: list[int], clock: FakeClock, read_delays: list[float] | No
     async def read_stats(_iface):
         i = next(calls)
         await asyncio.sleep(next(delays))
-        return {"rx_bytes": samples[i], "tx_bytes": samples[i] * 2, "rx_packets": 1, "tx_packets": 1}
+        return {
+            "rx_bytes": samples[i],
+            "tx_bytes": samples[i] * 2,
+            "rx_packets": 1,
+            "tx_packets": 1,
+        }
 
     async def no(*_a):
         return False

@@ -143,7 +143,8 @@ export function systemStage(health: SystemHealth | null, failed: boolean): Pipel
 	// OLD CODE START — 2026-11-06 (S5): a check that couldn't run read as "Degraded"
 	// return health.healthy ? { ...base, status: 'ok', detail: 'Healthy' } : { ...base, status: 'failing', detail: 'Degraded' };
 	// OLD CODE END
-	return { ...base, ...HEALTH_STAGE[health.status] };
+	// A daemon older than the web app sends no status: say Unknown rather than break the card
+	return { ...base, ...(HEALTH_STAGE[health.status] ?? { status: 'unknown', detail: 'Unknown' }) };
 }
 
 export function openSearchStage(health: SystemHealth | null, failed: boolean): PipelineStage {

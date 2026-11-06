@@ -250,7 +250,10 @@ class RiskScorer:
         # unusual_found = port_set - self.SAFE_PORTS - self.SUSPICIOUS_PORTS
         # OLD CODE END
         unusual_found = (
-            port_set - self.SAFE_PORTS - self.SUSPICIOUS_PORTS - self.LOCAL_SERVICE_PORTS
+            port_set
+            - self.SAFE_PORTS
+            - self.SUSPICIOUS_PORTS
+            - self.LOCAL_SERVICE_PORTS
         )
 
         if suspicious_found:

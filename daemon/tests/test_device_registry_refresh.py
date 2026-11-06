@@ -423,13 +423,25 @@ class TestNewDeviceChangelog:
         """NET-158: the Changelog put each join at the time a registry refresh ran."""
         changelog = MagicMock()
         client = _fake_client(
-            [_bucket("192.168.1.10", "aa:bb:cc:00:00:01", last="2026-11-02T21:05:00+00:00")]
+            [
+                _bucket(
+                    "192.168.1.10",
+                    "aa:bb:cc:00:00:01",
+                    last="2026-11-02T21:05:00+00:00",
+                )
+            ]
         )
 
         refresh_device_registry(_app(client, changelog))
 
-        assert client.store["AA:BB:CC:00:00:01"]["first_seen"] == "2026-11-02T21:05:00+00:00"
-        assert changelog.log_event.call_args.kwargs["timestamp"] == "2026-11-02T21:05:00+00:00"
+        assert (
+            client.store["AA:BB:CC:00:00:01"]["first_seen"]
+            == "2026-11-02T21:05:00+00:00"
+        )
+        assert (
+            changelog.log_event.call_args.kwargs["timestamp"]
+            == "2026-11-02T21:05:00+00:00"
+        )
 
     def test_failed_lookup_never_recreates_a_device(self):
         """A timeout on the lookup must not reset first_seen or log a new device."""

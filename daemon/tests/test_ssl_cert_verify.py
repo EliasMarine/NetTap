@@ -16,7 +16,10 @@ notBefore=Nov  6 07:07:49 2026 GMT
 notAfter=Dec  6 07:07:49 2026 GMT
 """
 # What OpenSSL 3 prints for a self-signed certificate asked for under the wrong name
-SELF_SIGNED_STDOUT = PEM + b"Verification error: hostname mismatch\n    Verify return code: 62 (hostname mismatch)\n"
+SELF_SIGNED_STDOUT = (
+    PEM
+    + b"Verification error: hostname mismatch\n    Verify return code: 62 (hostname mismatch)\n"
+)
 SELF_SIGNED_STDERR = b"""depth=0 C=US, O=Test, Inc., CN=selfsigned.local
 verify error:num=18:self-signed certificate
 verify return:1
@@ -34,7 +37,9 @@ def _procs(stdout: bytes, stderr: bytes):
 
 
 def _inspect(host: str, stdout: bytes, stderr: bytes = b""):
-    with patch("asyncio.create_subprocess_exec", side_effect=_procs(stdout, stderr)) as run:
+    with patch(
+        "asyncio.create_subprocess_exec", side_effect=_procs(stdout, stderr)
+    ) as run:
         result = asyncio.run(SslCertService().inspect(host, 443))
     return result, run.call_args_list[0].args
 
@@ -48,7 +53,11 @@ def test_untrusted_certificate_lists_every_reason_not_only_the_last():
 
 def test_trusted_certificate():
     result, _ = _inspect("example.com", TRUSTED_STDOUT)
-    assert (result["verify_code"], result["verify_errors"], result["name_match"]) == (0, [], True)
+    assert (result["verify_code"], result["verify_errors"], result["name_match"]) == (
+        0,
+        [],
+        True,
+    )
 
 
 def test_no_verify_result_means_not_checked():
@@ -81,7 +90,9 @@ def test_parse_dn_keeps_a_comma_inside_a_value():
 class TestSslCertApi(AioHTTPTestCase):
     async def get_application(self):
         app = web.Application()
-        register_tools_routes(app, MagicMock(), MagicMock(), MagicMock(), SslCertService())
+        register_tools_routes(
+            app, MagicMock(), MagicMock(), MagicMock(), SslCertService()
+        )
         return app
 
     async def test_response_has_name_fields_trust_and_raw_output(self):
@@ -89,7 +100,9 @@ class TestSslCertApi(AioHTTPTestCase):
             "asyncio.create_subprocess_exec",
             side_effect=_procs(SELF_SIGNED_STDOUT, SELF_SIGNED_STDERR),
         ):
-            resp = await self.client.post("/api/tools/ssl-cert", json={"host": "example.com"})
+            resp = await self.client.post(
+                "/api/tools/ssl-cert", json={"host": "example.com"}
+            )
         body = await resp.json()
         assert body["subject"]["CN"] == "selfsigned.local"
         assert body["issuer"]["O"] == "Test, Inc."

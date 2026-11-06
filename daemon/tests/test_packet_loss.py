@@ -32,7 +32,10 @@ def _counters(path: str) -> int:
 
 def test_mirror_mode_counts_missed_errors():
     mgr = MirrorManager(
-        interface="enp2s0", management_interface="enp3s0", netplan_dir="", systemd_dir=""
+        interface="enp2s0",
+        management_interface="enp3s0",
+        netplan_dir="",
+        systemd_dir="",
     )
     mgr._read_sysfs_int = _counters
     mgr._read_sysfs_file = lambda path: "2500"
