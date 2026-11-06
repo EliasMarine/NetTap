@@ -93,6 +93,8 @@ Every chart has `role="img"` and an `aria-label` that states its headline, for e
 - **Every IP is `IPAddress`** (`components/IPAddress.svelte`): a link to `$ipHref(ip)` (its device page when the daemon's LAN policy says so, `/address/<ip>` otherwise or before the policy loads, `stores/lan.ts`), with its right-click menu beside it. Inside another link or button, or in column 0 of a table with `onrowactivate`, use `linked={false}` (plain text) and make sure the row's drawer links the address.
 - **Every domain links with `domainHref(name)`** (`/domain/<name>`), except in column 0 of a row-activated table: put the link in the row's drawer or detail.
 - **Never nest a link or button in another.** Page tests call `expectNoNestedInteractive(container)` (`src/tests/nested-interactive.ts`).
+- **A count links to a list over the same window.** Pass the window on (`?range=` to Alerts and Log Explorer, `from`/`to` to Certificates), so the list a number opens holds that number.
+- **Outside look-ups run on click.** Reverse DNS and WHOIS about an address or name wait for a button: an automatic one tells whoever runs that server that we looked.
 
 ## Tables
 
