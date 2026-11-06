@@ -135,7 +135,8 @@ describe('capture pipeline stages', () => {
 		// OLD CODE END
 		expect(systemStage(system({ status: 'problem', healthy: false }), false)).toMatchObject({ status: 'failing', detail: 'Reports a problem' });
 		// an unreadable drive beside healthy checks is incomplete, never "Degraded"
-		expect(systemStage(system({ status: 'incomplete', healthy: null }), false)).toMatchObject({ status: 'unknown', detail: "Incomplete · some checks couldn't run" });
+		// OLD CODE: …toMatchObject({ status: 'unknown', … }) (NET-168: incomplete is amber now)
+		expect(systemStage(system({ status: 'incomplete', healthy: null }), false)).toMatchObject({ status: 'warn', detail: "Incomplete · some checks couldn't run" });
 		expect(systemStage(null, true)).toMatchObject({ status: 'unknown', detail: "Couldn't check: the request failed" });
 		// a daemon that predates the status field must not break the Home page
 		expect(systemStage(system({ status: undefined }), false)).toMatchObject({ status: 'unknown', detail: 'Unknown' });

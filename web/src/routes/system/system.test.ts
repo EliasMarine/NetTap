@@ -267,8 +267,9 @@ describe('System page health strip', () => {
 		stubReplies({ ...OK_REPLIES, '/api/system/health': { uptime: 60, timestamp: '2026-11-02T00:00:00Z', status: 'incomplete', healthy: null, opensearch_reachable: true } });
 		render(SystemPage);
 		await screen.findByText('42.0% used');
-		expect(stage('NetTap')).toEqual({ word: 'Unknown', detail: "Incomplete · some checks couldn't run" });
-		expect(screen.getByText('Incomplete')).toHaveClass('chip');
+		// OLD CODE: expect(stage('NetTap')).toEqual({ word: 'Unknown', … }) (NET-168: amber now)
+		expect(stage('NetTap')).toEqual({ word: 'Warning', detail: "Incomplete · some checks couldn't run" });
+		expect(screen.getByText('Incomplete')).toHaveClass('chip', 'is-caution');
 		expect(screen.queryByText('Degraded')).not.toBeInTheDocument();
 	});
 

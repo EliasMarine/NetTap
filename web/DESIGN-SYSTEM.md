@@ -18,7 +18,7 @@ Imported once, in this order, by `src/routes/+layout.svelte`:
 |---|---|
 | `src/lib/styles/tokens.css` | The system's `tokens.css`, verbatim: every colour, size, radius, motion and font token, per theme. **The only file allowed colour literals.** |
 | `src/lib/styles/system.css` | The system's `components/bundle.css`, verbatim. All system classes are global: `.app`, `.shell`, `.sidebar`, `.page-head`, `.grid`, `.c-3`…`.c-12`, `.card`, `.pills`, `.btn`, `.chip`, `.tbl`, `.who`, … |
-| `src/lib/styles/forms.css` | **The one extension.** The system has no form controls, so this adds them from tokens only: `.input`, `.select`, `.textarea`, `.switch`, `.check-row`, `.field`, `.label`, `.field-help`, `.field-error`, `.form-grid`, `.form-group`, `.form-actions`, plus the shared `.notice` banner (`.is-ok`, `.is-warn`, `.is-error`) and `.chip.is-bad`. |
+| `src/lib/styles/forms.css` | **The one extension.** The system has no form controls, so this adds them from tokens only: `.input`, `.select`, `.textarea`, `.switch`, `.check-row`, `.field`, `.label`, `.field-help`, `.field-error`, `.form-grid`, `.form-group`, `.form-actions`, plus the shared `.notice` banner (`.is-ok`, `.is-warn`, `.is-error`), `.chip.is-bad` (red: stopped or failed) and `.chip.is-caution` (amber: a check couldn't run, needs a look; the system's orange `.chip.is-warn` stays "bad change"). |
 | `src/lib/styles/a11y.css` | Numbered corrections to `system.css`, each naming the `bundle.css` line it corrects (see "Accessibility corrections"). New corrections go here, never in `system.css`. |
 | `src/lib/styles/global.css` | Only the app-wide base rules the system lacks: margins, `pre`/`code`, `::selection`, scrollbars. |
 
@@ -71,7 +71,7 @@ Every card has a title and a sub that states the unit and the window ("GB per ho
 
 Build pages from these; read each file for its props.
 
-- **Layout and state:** `Card`, `CardState` (loading, empty, error; "Try again" only when `onaction` is set), `KpiCard`, `StatStrip`, `Pipeline`
+- **Layout and state:** `Card`, `CardState` (loading, empty, error; "Try again" only when `onaction` is set), `KpiCard`, `StatStrip`, `Pipeline` (stage states: `ok` green check, `warn` amber triangle for a check that couldn't run, `failing` orange triangle, `unknown` grey clock; each icon names its state)
 - **Controls:** `Pills` (toggle, tabs or nav mode), `SearchField`, `LiveChip`
 - **Data:** `DataTable`, `BarList`, `Meter`, `Bytes`, `Who`, `ConnResult`, `SeverityPill`, `DeviceList`, `DeviceTile` (with `deviceIcon()` from `device-icon.ts`), `AlertRow`, `AlertGroup`, `Icon` (the system's 48 icons; a test fails if they drift from `nettap-design-system/assets/Icons/`)
 - **Charts (`ui/charts/`):** `AreaChart`, `Donut`, `SeverityGauge` (fed by `severityBuckets()` from `utils/severity.ts`), `Ring`, `Sparkline`, `StackBar`, `Radar`, `DotMap`. Chart maths lives in `ui/charts/geometry.ts`.

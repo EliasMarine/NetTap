@@ -248,7 +248,8 @@
 	}
 
 	/** S5: the overview chip; a check that couldn't run is "Incomplete", not "Degraded". */
-	const OVERVIEW_CHIP = { healthy: ['Healthy', 'is-ok'], problem: ['Problem', 'is-bad'], incomplete: ['Incomplete', ''] } as const;
+	// OLD CODE: incomplete: ['Incomplete', ''] (NET-168: a neutral chip, no tone of its own)
+	const OVERVIEW_CHIP = { healthy: ['Healthy', 'is-ok'], problem: ['Problem', 'is-bad'], incomplete: ['Incomplete', 'is-caution'] } as const;
 
 	const serviceRows = $derived([
 		{ key: 'tshark', name: 'TShark', status: tsharkStatus, didFail: failed.tshark },

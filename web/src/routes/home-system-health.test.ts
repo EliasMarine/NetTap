@@ -68,5 +68,9 @@ describe('Home — System Health card (#96)', () => {
 
 		expect(await screen.findByText("Incomplete · some checks couldn't run")).toBeInTheDocument();
 		expect(screen.queryByText('Degraded')).not.toBeInTheDocument();
+		// NET-168: an amber warning, not a grey Unknown
+		const key = [...document.querySelectorAll('.pipe-k')].find((el) => el.textContent?.trim() === 'System');
+		expect(key?.querySelector('[role="img"]')).toHaveAttribute('aria-label', 'Warning');
+		expect(key).toHaveClass('is-warn');
 	});
 });

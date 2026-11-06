@@ -72,3 +72,5 @@ input[type="checkbox"]:not(.switch), input[type="radio"] { width: 16px; height: 
 .notice.is-error { --tone: var(--sev-critical); }
 /* A stopped or failed state; the system's .chip.is-warn is for high, this is critical. */
 .chip.is-bad { color: var(--sev-critical); background: color-mix(in srgb, var(--sev-critical) 12%, transparent); }
+/* NET-168: amber, for a check that couldn't run or something that needs a look; is-warn (orange) means a bad change. */
+.chip.is-caution { color: var(--sev-medium); background: color-mix(in srgb, var(--sev-medium) 14%, transparent); }
