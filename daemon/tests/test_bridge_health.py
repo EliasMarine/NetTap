@@ -57,6 +57,8 @@ class TestBridgeHealthCheckDataclass(unittest.TestCase):
             "issues",
             "last_check",
             "latency_note",
+            "rx_bytes_per_sec",
+            "tx_bytes_per_sec",
         }
         self.assertEqual(set(d.keys()), expected_keys)
 
@@ -293,6 +295,8 @@ class TestCheckHealth(unittest.TestCase):
             "issues",
             "last_check",
             "latency_note",
+            "rx_bytes_per_sec",
+            "tx_bytes_per_sec",
         }
         self.assertEqual(set(result.keys()), expected_keys)
 

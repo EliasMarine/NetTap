@@ -11,7 +11,7 @@
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { getBridgeHealth } from '$api/bridge.js';
-	import { getCaptureStats, getCaptureMode, getCaptureHealth } from '$api/capture';
+	import { getCaptureStats, getCaptureMode, getCaptureHealth, formatLossPct, packetsLost, LOSS_SCOPE } from '$api/capture';
 	import { getSystemHealth, getStorageStatus } from '$api/system.js';
 	import {
 		getOpenSearchCluster,
@@ -75,6 +75,10 @@
 	let indices = $state<OpenSearchIndex[]>([]);
 	let templates = $state<unknown[]>([]);
 	let logstashStats = $state<LogstashStats | null>(null);
+	// S8: events into Logstash per second between two polls (events_in counts since Logstash
+	// started); null until there are two readings, or after Logstash restarts
+	let eventsInRate = $state<number | null>(null);
+	let lastEventsIn: { count: number; at: number } | null = null;
 	let logstashPipelines = $state<LogstashPipeline[]>([]);
 	let showTemplates = $state(false);
 	// #96: sources whose last request failed; their figures are the last good reading or '--'
@@ -134,6 +138,12 @@
 		const i = Math.floor(Math.log(bytes) / Math.log(1024));
 		const val = bytes / Math.pow(1024, i);
 		return `${val.toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
+	}
+
+	/** S12: the daemon's measured bytes per second; '--' on the first sample or after a reset. */
+	function byteRate(perSec: number | null | undefined): string {
+		if (perSec == null) return '--';
+		return perSec > 0 ? `${formatBytes(perSec)}/s` : '0 B/s';
 	}
 
 	function formatNumber(n: number | null | undefined): string {
@@ -430,6 +440,12 @@
 		]);
 		if (!guards.pipeline.current(gen)) return null;
 		settle('Logstash stats', stats, (v) => (logstashStats = v));
+		if (stats.status === 'fulfilled' && stats.value) {
+			const now = { count: stats.value.events_in, at: performance.now() };
+			const prev = lastEventsIn;
+			eventsInRate = prev && now.count >= prev.count && now.at > prev.at ? (now.count - prev.count) / ((now.at - prev.at) / 1000) : null;
+			lastEventsIn = now;
+		}
 		if (pipelines.status === 'fulfilled') logstashPipelines = pipelines.value;
 		settle('OpenSearch cluster', cl, (v) => (cluster = v));
 		settle('OpenSearch indices', idx, (v) => (indices = v?.indices ?? []));
@@ -861,10 +877,16 @@
 	let dropRate = $derived.by(() => {
 		return captureStats?.drop_rate_pct ?? 0;
 	});
+	// S9: kernel drops + NIC misses, the count every loss figure on the page reads
+	let lost = $derived(captureStats ? packetsLost(captureStats) : 0);
 
-	let uptimeSeconds = $derived.by(() => {
-		return systemHealth?.uptime ?? bridgeHealth?.uptime_seconds ?? 0;
-	});
+	// OLD CODE START — 2026-11-06 (S4): fell back to the bridge's time since its last state change,
+	// shown as "NetTap up"
+	// let uptimeSeconds = $derived.by(() => {
+	// 	return systemHealth?.uptime ?? bridgeHealth?.uptime_seconds ?? 0;
+	// });
+	// OLD CODE END
+	let uptimeSeconds = $derived(systemHealth?.uptime ?? 0);
 
 	// ─── Logstash heap derived ──────────────────────────────────
 	let heapPercent = $derived.by(() => {
@@ -900,7 +922,8 @@
 	}
 
 	function captureStage(): StageState {
-		const drop = captureStats ? ` · ${dropRate.toFixed(2)}% dropped` : '';
+		// OLD CODE: ` · ${dropRate.toFixed(2)}% dropped` (S9: kernel drops only, and a tiny loss read 0.00%)
+		const drop = captureStats ? ` · ${formatLossPct(dropRate, lost)} lost` : '';
 		if (isMirror || isGateway) {
 			if (!captureHealth) return { status: 'unknown', detail: NO_READING + drop };
 			return captureHealth.promisc_enabled
@@ -919,12 +942,25 @@
 		return { status: rate > 0 ? 'ok' : 'unknown', detail: `${formatNumber(rate)} ${unit}` };
 	}
 
+	// OLD CODE START — 2026-11-06 (S8): "Shipping" from Logstash's events-since-start counter, which
+	// stays above 0 long after shipping stops
+	// function filebeatStage(): StageState {
+	// 	if (!logstashStats) return { status: 'unknown', detail: NO_READING };
+	// 	return logstashStats.events_in > 0
+	// 		? { status: 'ok', detail: `Shipping · ${formatNumber(logstashStats.events_in)} events` }
+	// 		: { status: 'failing', detail: 'Idle' };
+	// }
+	// OLD CODE END
 	function filebeatStage(): StageState {
 		if (!logstashStats) return { status: 'unknown', detail: NO_READING };
-		return logstashStats.events_in > 0
-			? { status: 'ok', detail: `Shipping · ${formatNumber(logstashStats.events_in)} events` }
-			: { status: 'failing', detail: 'Idle' };
+		if (eventsInRate == null) return { status: 'unknown', detail: 'Measuring…' };
+		// events arriving between two polls prove shipping; none proves nothing (rateStage's rule)
+		return eventsInRate > 0
+			? { status: 'ok', detail: `Shipping · ${formatEventRate(eventsInRate)} into Logstash` }
+			: { status: 'unknown', detail: 'No new events since the last check' };
 	}
+
+	const formatEventRate = (rate: number) => `${rate < 10 ? rate.toFixed(1) : formatNumber(Math.round(rate))} events/s`;
 
 	function logstashStage(): StageState {
 		if (!logstashStats) return { status: 'unknown', detail: NO_READING };
@@ -951,7 +987,7 @@
 
 	const pipelineSub = $derived(
 		uptimeSeconds > 0
-			? `Health of each stage, checked every 10 to 15 s · NetTap up ${formatUptime(uptimeSeconds)}`
+			? `Health of each stage, checked every 10 to 15 s · appliance up ${formatUptime(uptimeSeconds)}`
 			: 'Health of each stage, checked every 10 to 15 s',
 	);
 
@@ -1228,12 +1264,15 @@
 		value={indexCount > 0 ? indexCount : '--'}
 		sub={indexCount > 0 ? `${dataIndexCount} data · ${indexCount - dataIndexCount} system` : undefined}
 	/>
+	<!-- OLD CODE START — 2026-11-06 (S9): kernel drops only, rounded to 0.00, no scope
+	<KpiCard class="c-3" label="Drop rate" icon="pcap" value={captureStats ? dropRate.toFixed(2) : '--'} unit={captureStats ? '%' : undefined} />
+	OLD CODE END -->
 	<KpiCard
 		class="c-3"
-		label="Drop rate"
+		label="Packet loss"
 		icon="pcap"
-		value={captureStats ? dropRate.toFixed(2) : '--'}
-		unit={captureStats ? '%' : undefined}
+		value={captureStats ? formatLossPct(dropRate, lost) : '--'}
+		sub={captureStats ? LOSS_SCOPE : undefined}
 	/>
 	{#if bridgeHealth && bridgeHealth.latency_us == null}
 		<KpiCard class="c-3" label="Latency" icon="live" value="Not measured" sub={bridgeHealth.latency_note || undefined} />
@@ -1326,10 +1365,11 @@
 						{:else if bh.latency_us > 0}<span class="num">{(bh.latency_us / 1000).toFixed(1)} ms</span>
 						{:else}--{/if}
 					</dd>
-					<dt>RX traffic</dt>
-					<dd class="num">{formatBytes(bh.rx_bytes_delta)}</dd>
-					<dt>TX traffic</dt>
-					<dd class="num">{formatBytes(bh.tx_bytes_delta)}</dd>
+					<!-- OLD CODE: RX/TX traffic = formatBytes(bh.rx_bytes_delta), bytes over an unstated interval (S12) -->
+					<dt>RX rate</dt>
+					<dd class="num">{byteRate(bh.rx_bytes_per_sec)}</dd>
+					<dt>TX rate</dt>
+					<dd class="num">{byteRate(bh.tx_bytes_per_sec)}</dd>
 					<dt>Promiscuous mode</dt>
 					<dd>{bh.bypass_active ? 'No (bypass)' : 'Yes'}</dd>
 					<dt>Bypass mode</dt>
@@ -1357,8 +1397,9 @@
 				<dd class="num">{formatNumber(captureStats?.rx_packets)}</dd>
 				<dt>TX packets</dt>
 				<dd class="num">{formatNumber(captureStats?.tx_packets)}</dd>
-				<dt>Drop rate</dt>
-				<dd>{#if captureStats}{@render word(`${dropRate.toFixed(2)}%`, dropRate < 1 ? 'ok' : 'medium')}{:else}--{/if}</dd>
+				<!-- OLD CODE: Drop rate = `${dropRate.toFixed(2)}%` (S9: kernel drops only) -->
+				<dt title={LOSS_SCOPE}>Packets lost</dt>
+				<dd>{#if captureStats}{@render word(`${formatNumber(lost)} · ${formatLossPct(dropRate, lost)}`, dropRate < 1 ? 'ok' : 'medium')}{:else}--{/if}</dd>
 				<dt>Link speed</dt>
 				<dd class="num">
 					{captureStats && captureStats.link_speed_mbps > 0 ? `${formatNumber(captureStats.link_speed_mbps)} Mbps` : '--'}
@@ -1399,16 +1440,21 @@
 
 	<Card title="Filebeat log shipper" sub="Watches the Zeek and Suricata logs and ships them to Logstash" class="c-4">
 		{#if logstashStats}
+			<!-- OLD CODE START — 2026-11-06 (S8): Logstash's events-since-start as throughput, "Shipping" whenever above 0
 			{@const shipping = logstashStats.events_in > 0}
-			<dl class="facts flush">
-				<dt>Throughput</dt>
 				<dd class="num">{shipping ? `${formatNumber(logstashStats.events_in)} events` : '--'}</dd>
+				<dd>{@render word(shipping ? 'Shipping' : 'Idle', shipping ? 'ok' : 'medium')}</dd>
+			OLD CODE END -->
+			{@const shipping = eventsInRate != null && eventsInRate > 0}
+			<dl class="facts flush">
+				<dt>Into Logstash</dt>
+				<dd class="num">{eventsInRate == null ? 'Measuring…' : formatEventRate(eventsInRate)}</dd>
 				<dt>Output</dt>
 				<dd class="mono">logstash:5044</dd>
 				<dt>Protocol</dt>
 				<dd>Beats (TCP)</dd>
 				<dt>Status</dt>
-				<dd>{@render word(shipping ? 'Shipping' : 'Idle', shipping ? 'ok' : 'medium')}</dd>
+				<dd>{@render word(shipping ? 'Shipping' : eventsInRate == null ? 'Measuring…' : 'No new events', shipping ? 'ok' : 'medium')}</dd>
 			</dl>
 		{:else if pending('Logstash stats')}
 			<CardState state="loading" title="Loading Filebeat" />
@@ -1421,11 +1467,12 @@
 		{#if logstashStats}
 			{@const ls = logstashStats}
 			<dl class="facts flush">
-				<dt>Events in</dt>
+				<!-- OLD CODE: "Events in/out/filtered" with no window (S8: they count since Logstash started) -->
+				<dt>Events in since start</dt>
 				<dd class="num">{formatNumber(ls.events_in)}</dd>
-				<dt>Events out</dt>
+				<dt>Events out since start</dt>
 				<dd class="num">{formatNumber(ls.events_out)}</dd>
-				<dt>Events filtered</dt>
+				<dt>Events filtered since start</dt>
 				<dd class="num">{formatNumber(ls.events_filtered)}</dd>
 				<dt>CPU load</dt>
 				<dd class="num">{ls.cpu_percent}%</dd>

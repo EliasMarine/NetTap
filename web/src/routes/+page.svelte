@@ -36,7 +36,7 @@
 	import { getNewDeviceCount } from '$api/devices-registry';
 	import { getSystemHealth } from '$api/system';
 	import type { SystemHealth } from '$api/system';
-	import { getCaptureHealth, getCaptureStats } from '$api/capture';
+	import { getCaptureHealth, getCaptureStats, LOSS_SCOPE } from '$api/capture';
 	import type { CaptureHealthResponse, CaptureStatsResponse } from '$api/capture';
 	import {
 		formatBytes, formatBytesShort, formatNumber, computePreviousPeriod, localMidnight, trendPercent, NO_TREND,
@@ -751,7 +751,8 @@ OLD CODE END -->
 		</div>
 	</Card>
 
-	<Card title="Capture pipeline" sub="Each stage at the last refresh" class="c-12">
+	<!-- OLD CODE: sub="Each stage at the last refresh" (S9: the packet counts' scope wasn't stated) -->
+	<Card title="Capture pipeline" sub="Each stage at the last refresh · packets: {LOSS_SCOPE.toLowerCase()}" class="c-12">
 		{#snippet actions()}<a class="link" href="/infrastructure">View infrastructure</a>{/snippet}
 		<Pipeline {stages} />
 	</Card>

@@ -316,7 +316,7 @@ describe('Infrastructure when requests fail', () => {
 	it('shows real readings, with no failure banner, when every request answers', async () => {
 		stubFetch({
 			'/api/capture/mode': { mode: 'bridge', interface: '' },
-			'/api/capture/stats': { capture_interface: 'br0', drop_rate_pct: 0, rx_packets: 1, tx_packets: 1, link_speed_mbps: 1000 },
+			'/api/capture/stats': { capture_interface: 'br0', drop_rate_pct: 0, rx_packets: 1, tx_packets: 1, rx_dropped: 0, rx_missed_errors: 0, link_speed_mbps: 1000 },
 			'/api/capture/health': { mode: 'bridge', status: 'normal', capture_interface: 'br0', link_up: true, promisc_enabled: true, issues: [] },
 			'/api/bridge/health': { bridge_state: 'up', wan_link: true, lan_link: true, bypass_active: false, latency_us: 100, uptime_seconds: 60, issues: [] },
 			'/api/system/health': { uptime: 60, healthy: true, opensearch_reachable: true },
@@ -333,8 +333,102 @@ describe('Infrastructure when requests fail', () => {
 		expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument();
 		expect(within(stage('OpenSearch')).getByText(/^Green/)).toBeInTheDocument();
 		expect(within(card('OpenSearch cluster')).getByText('Green')).toBeInTheDocument();
-		expect(within(stage('Filebeat')).getByText('Idle')).toBeInTheDocument();
-		expect(within(card('Filebeat log shipper')).getByText('Idle')).toBeInTheDocument();
+		// OLD CODE START — 2026-11-06 (S8): one reading of the since-start counter was a verdict
+		// expect(within(stage('Filebeat')).getByText('Idle')).toBeInTheDocument();
+		// expect(within(card('Filebeat log shipper')).getByText('Idle')).toBeInTheDocument();
+		// OLD CODE END
+		expect(within(stage('Filebeat')).getByText('Measuring…')).toBeInTheDocument();
+		expect(within(card('Filebeat log shipper')).getAllByText('Measuring…')).toHaveLength(2);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Accuracy audit 2026-11-06 (S4, S8, S9, S12)
+// ---------------------------------------------------------------------------
+
+describe('Infrastructure figures', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const READINGS: Record<string, unknown> = {
+		'/api/capture/mode': { mode: 'mirror', interface: 'enp4s0' },
+		'/api/capture/stats': {
+			capture_interface: 'enp4s0', drop_rate_pct: 0.0000099, rx_packets: 101_000_000, tx_packets: 0, rx_dropped: 0,
+			rx_missed_errors: 10, link_speed_mbps: 1000,
+		},
+		'/api/system/health': { uptime: 7200, status: 'healthy', healthy: true, opensearch_reachable: true },
+		'/api/bridge/health': {
+			bridge_state: 'up', wan_link: true, lan_link: true, bypass_active: false, latency_us: null, uptime_seconds: 999_999,
+			rx_bytes_delta: 3_072_000, tx_bytes_delta: 0, rx_bytes_per_sec: 102_400, tx_bytes_per_sec: null, issues: [],
+		},
+	};
+
+	function stubFetch(replies: Record<string, unknown | (() => unknown)>) {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const key = Object.keys(replies).find((prefix) => url.startsWith(prefix));
+				if (!key) return { ok: false, status: 503, json: async () => ({}) };
+				const body = replies[key];
+				return { ok: true, status: 200, json: async () => (typeof body === 'function' ? body() : body) };
+			}),
+		);
+	}
+
+	async function renderPage() {
+		render(InfrastructurePage);
+		await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/logstash/stats'));
+		await new Promise((r) => setTimeout(r, 0));
+	}
+
+	it('counts NIC misses as lost packets and never rounds a real loss to 0 (S9)', async () => {
+		stubFetch(READINGS);
+		await renderPage();
+
+		const kpi = screen.getByText('Packet loss', { selector: '.kpi-top span' }).closest('.kpi') as HTMLElement;
+		expect(within(kpi).getByText('< 0.01%')).toBeInTheDocument();
+		expect(within(kpi).getByText('Cumulative kernel interface counters; reset time unknown')).toBeInTheDocument();
+		expect(within(card('Packet capture')).getByText('10 · < 0.01%')).toBeInTheDocument();
+		expect(within(stage('Capture')).getByText(/< 0\.01% lost/)).toBeInTheDocument();
+	});
+
+	it("labels the uptime as the appliance's and never uses the bridge's (S4)", async () => {
+		stubFetch(READINGS);
+		await renderPage();
+		await vi.waitFor(() => expect(screen.getByText(/appliance up 2h 0m/)).toBeInTheDocument());
+		expect(screen.queryByText(/NetTap up/)).not.toBeInTheDocument();
+	});
+
+	it("shows the bridge's measured byte rate, not the per-check delta (S12)", async () => {
+		stubFetch({ ...READINGS, '/api/capture/mode': { mode: 'bridge', interface: '' } });
+		await renderPage();
+
+		const bridge = within(card('Bridge'));
+		expect(bridge.getByText('RX rate').nextElementSibling?.textContent).toBe('100.0 KB/s');
+		expect(bridge.getByText('TX rate').nextElementSibling?.textContent).toBe('--');
+	});
+
+	it('says Shipping only when events reach Logstash between two polls (S8)', async () => {
+		let eventsIn = 5_000_000;
+		stubFetch({ ...READINGS, '/api/logstash/stats': () => ({ events_in: eventsIn }) });
+		const { getByText } = within(document.body);
+		await renderPage();
+
+		// one reading of a since-start counter proves nothing
+		expect(within(stage('Filebeat')).getByText('Measuring…')).toBeInTheDocument();
+		expect(getByText('Events in since start')).toBeInTheDocument();
+
+		// the same count at the next poll: nothing new arrived
+		const { refreshPage } = await import('$lib/stores/pageRefresh');
+		await new Promise((r) => setTimeout(r, 5));
+		await refreshPage();
+		expect(within(stage('Filebeat')).getByText('No new events since the last check')).toBeInTheDocument();
+
+		eventsIn += 300;
+		await new Promise((r) => setTimeout(r, 5));
+		await refreshPage();
+		expect(within(stage('Filebeat')).getByText(/^Shipping · [\d,.]+ events\/s into Logstash$/)).toBeInTheDocument();
 	});
 });
 

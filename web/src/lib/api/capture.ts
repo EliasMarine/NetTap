@@ -35,6 +35,19 @@ export interface CaptureStatsResponse {
 	drop_rate_pct: number;
 }
 
+/** S9: what every packet-loss figure covers; nothing records when the counters last reset. */
+export const LOSS_SCOPE = 'Cumulative kernel interface counters; reset time unknown';
+
+/** S9: packets lost = kernel drops + NIC misses. Every zero-loss claim reads this one count. */
+export function packetsLost(s: Pick<CaptureStatsResponse, 'rx_dropped' | 'rx_missed_errors'>): number {
+	return s.rx_dropped + s.rx_missed_errors;
+}
+
+/** The daemon's loss rate as a percentage that never rounds a real loss down to 0. */
+export function formatLossPct(pct: number, lost: number): string {
+	return lost > 0 && pct < 0.01 ? '< 0.01%' : `${pct.toFixed(2)}%`;
+}
+
 export interface CaptureStatus {
 	enabled: boolean;
 	maxFileSizeMB: number;

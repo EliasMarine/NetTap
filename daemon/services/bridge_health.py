@@ -65,6 +65,10 @@ class BridgeHealthCheck:
     issues: list  # human-readable issue descriptions
     last_check: str  # ISO timestamp
     latency_note: str = ""  # why latency_us is None
+    # S12: bytes per second over the monotonic time since the previous sample; None on the
+    # first sample or after a counter reset (the deltas above cover an unknown interval)
+    rx_bytes_per_sec: float | None = None
+    tx_bytes_per_sec: float | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -111,6 +115,10 @@ class BridgeHealthMonitor:
         self._prev_tx_bytes: int | None = None
         self._prev_rx_packets: int | None = None
         self._prev_tx_packets: int | None = None
+        # When those counters were read, and a lock so overlapping callers (the 30 s loop
+        # and every /api/bridge/health request) take their samples in order
+        self._prev_sample_at: float | None = None
+        self._sample_lock = asyncio.Lock()
 
         # Bridge uptime tracking
         self._bridge_up_since: float | None = None
@@ -159,17 +167,33 @@ class BridgeHealthMonitor:
         lan_link = await self._check_carrier(self._lan_iface)
 
         # Read packet counters and compute deltas
-        stats = await self._read_interface_stats(self._bridge_name)
-        rx_bytes_delta, tx_bytes_delta, rx_packets_delta, tx_packets_delta = (
-            self._calculate_deltas(stats)
-        )
+        # OLD CODE START — 2026-11-06 (S12): unordered samples with no time attached; the page
+        # showed each delta (over 30 s, or however long since any caller) as bytes per second
+        # stats = await self._read_interface_stats(self._bridge_name)
+        # rx_bytes_delta, tx_bytes_delta, rx_packets_delta, tx_packets_delta = (
+        #     self._calculate_deltas(stats)
+        # )
+        #
+        # # Update previous counters
+        # if stats:
+        #     self._prev_rx_bytes = stats.get("rx_bytes")
+        #     ...
+        # OLD CODE END
+        async with self._sample_lock:
+            stats = await self._read_interface_stats(self._bridge_name)
+            sampled_at = time.monotonic()
+            rx_bytes_delta, tx_bytes_delta, rx_packets_delta, tx_packets_delta = (
+                self._calculate_deltas(stats)
+            )
+            rx_bytes_per_sec, tx_bytes_per_sec = self._calculate_rates(stats, sampled_at)
 
-        # Update previous counters
-        if stats:
-            self._prev_rx_bytes = stats.get("rx_bytes")
-            self._prev_tx_bytes = stats.get("tx_bytes")
-            self._prev_rx_packets = stats.get("rx_packets")
-            self._prev_tx_packets = stats.get("tx_packets")
+            # Update previous counters
+            if stats:
+                self._prev_rx_bytes = stats.get("rx_bytes")
+                self._prev_tx_bytes = stats.get("tx_bytes")
+                self._prev_rx_packets = stats.get("rx_packets")
+                self._prev_tx_packets = stats.get("tx_packets")
+                self._prev_sample_at = sampled_at
 
         # Track bridge uptime
         if bridge_state != self._last_bridge_state:
@@ -238,6 +262,8 @@ class BridgeHealthMonitor:
             issues=issues,
             last_check=now.isoformat(),
             latency_note=LATENCY_NOT_MEASURED,
+            rx_bytes_per_sec=rx_bytes_per_sec,
+            tx_bytes_per_sec=tx_bytes_per_sec,
         )
 
         self._history.append(check)
@@ -593,6 +619,23 @@ class BridgeHealthMonitor:
         tx_packets_delta = max(0, tx_packets - (self._prev_tx_packets or 0))
 
         return (rx_bytes_delta, tx_bytes_delta, rx_packets_delta, tx_packets_delta)
+
+    def _calculate_rates(
+        self, current_stats: dict[str, int], sampled_at: float
+    ) -> tuple[float | None, float | None]:
+        """RX and TX bytes per second since the previous sample, by the monotonic clock.
+
+        None on the first sample, when a byte counter is missing, or when one went
+        backwards (the interface was reset), because no interval can be measured then.
+        """
+        rx, tx = current_stats.get("rx_bytes"), current_stats.get("tx_bytes")
+        prev_rx, prev_tx = self._prev_rx_bytes, self._prev_tx_bytes
+        if self._prev_sample_at is None or None in (rx, tx, prev_rx, prev_tx):
+            return (None, None)
+        elapsed = sampled_at - self._prev_sample_at
+        if elapsed <= 0 or rx < prev_rx or tx < prev_tx:
+            return (None, None)
+        return ((rx - prev_rx) / elapsed, (tx - prev_tx) / elapsed)
 
     def _determine_health_status(
         self,

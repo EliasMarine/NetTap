@@ -74,10 +74,22 @@ describe('capture pipeline stages', () => {
 	});
 
 	it('packets: no drops, drops under the 0.1 % flag, drops over it, and a failed request', () => {
-		expect(packetsStage(stats(), false)).toMatchObject({ status: 'ok', detail: 'No packet drops · 1.2M received' });
+		// OLD CODE START — 2026-11-06 (S9): kernel drops only, at 3 decimal places
+		// expect(packetsStage(stats(), false)).toMatchObject({ status: 'ok', detail: 'No packet drops · 1.2M received' });
+		// expect(packetsStage(stats({ rx_dropped: 12, drop_rate_pct: 0.001 }), false)).toMatchObject({
+		// 	status: 'ok',
+		// 	detail: '0.001% dropped · 12 packets',
+		// });
+		// OLD CODE END
+		expect(packetsStage(stats(), false)).toMatchObject({ status: 'ok', detail: 'No packets lost · 1.2M received' });
+		// a tiny real loss never reads as 0.00% or "none"
 		expect(packetsStage(stats({ rx_dropped: 12, drop_rate_pct: 0.001 }), false)).toMatchObject({
 			status: 'ok',
-			detail: '0.001% dropped · 12 packets',
+			detail: '< 0.01% lost · 12 packets',
+		});
+		// NIC misses count: rx_dropped 0 is not "no packets lost"
+		expect(packetsStage(stats({ rx_missed_errors: 600, drop_rate_pct: 0.05 }), false)).toMatchObject({
+			detail: '0.05% lost · 600 packets',
 		});
 		expect(packetsStage(stats({ rx_dropped: 5000, drop_rate_pct: 0.4 }), false).status).toBe('failing');
 		expect(packetsStage(null, true)).toMatchObject({ status: 'unknown', detail: "Couldn't load capture counters: the request failed." });
