@@ -1,8 +1,37 @@
-# NetTap
+<h1 align="center">
+  <img src="docs/assets/nettap-logo.png" alt="NetTap" width="600">
+</h1>
 
-[![CI](https://github.com/EliasMarine/NetTap/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/EliasMarine/NetTap/actions/workflows/ci.yml)
+<p align="center"><strong>A network visibility appliance for home users and small businesses.</strong></p>
 
-**A network visibility appliance for home users and small businesses.**
+<p align="center">
+  <a href="LICENSE"><img alt="License: NetTap Personal Use" src="https://img.shields.io/badge/license-Personal%20Use-blue"></a>
+  <a href="docker/Dockerfile.daemon"><img alt="Python 3.12" src="https://img.shields.io/badge/python-3.12-4c1?logo=python&logoColor=white"></a>
+  <a href="docs/getting-started/requirements.md"><img alt="Platform: Ubuntu 22.04 or 24.04, x86-64" src="https://img.shields.io/badge/platform-Ubuntu%2022.04%20%7C%2024.04%20(x86--64)-black?logo=ubuntu&logoColor=white"></a>
+  <img alt="Status: pre-release" src="https://img.shields.io/badge/status-pre--release-orange">
+  <a href="https://github.com/EliasMarine/NetTap/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/EliasMarine/NetTap/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/cisagov/Malcolm"><img alt="Malcolm 26.10.0" src="https://img.shields.io/badge/Malcolm-26.10.0-555"></a>
+  <a href="https://zeek.org/"><img alt="Zeek: traffic metadata" src="https://img.shields.io/badge/Zeek-traffic%20metadata-555"></a>
+  <a href="https://suricata.io/"><img alt="Suricata: IDS" src="https://img.shields.io/badge/Suricata-IDS-555"></a>
+  <a href="https://opensearch.org/"><img alt="OpenSearch: data store" src="https://img.shields.io/badge/OpenSearch-data%20store-555?logo=opensearch&logoColor=white"></a>
+  <a href="docker/docker-compose.yml"><img alt="Docker Compose" src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white"></a>
+  <a href="web/package.json"><img alt="SvelteKit 2 and Svelte 5" src="https://img.shields.io/badge/SvelteKit%202-Svelte%205-FF3E00?logo=svelte&logoColor=white"></a>
+  <a href="docker/Dockerfile.web"><img alt="Node.js 22" src="https://img.shields.io/badge/node-22-339933?logo=nodedotjs&logoColor=white"></a>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Install</a> ·
+  <a href="#what-it-does">Features</a> ·
+  <a href="#capture-modes">Capture modes</a> ·
+  <a href="#hardware">Hardware</a> ·
+  <a href="#dashboard-pages">Dashboard</a> ·
+  <a href="#tech-stack">Tech stack</a> ·
+  <a href="docs/index.md">Docs</a> ·
+  <a href="#roadmap">Roadmap</a>
+</p>
 
 NetTap watches the traffic on your network and shows it in a web dashboard: which devices talk to what, intrusion alerts, DNS, TLS certificates and full packet captures. It wraps CISA's [Malcolm](https://github.com/cisagov/Malcolm) stack (Zeek, Suricata, OpenSearch) with an installer, a setup wizard, its own dashboard and automatic storage management.
 
