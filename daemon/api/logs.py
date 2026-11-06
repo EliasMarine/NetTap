@@ -19,6 +19,7 @@ from opensearchpy import OpenSearchException
 # from services.excluded_ips import build_excluded_ips_filter
 # OLD CODE END
 from api.time_range import parse_time_range
+from services.dns_analytics import DNS_LOOKUP_EXCLUSION
 from services.dns_analytics import DNS_NOISE_EXCLUSION as _EXCLUDE_DNS_NOISE
 from storage.manager import StorageManager
 from storage.time_slots import histogram_buckets, time_slots
@@ -265,37 +266,43 @@ FIELD_DEFINITIONS = {
             "example": "93.184.216.34",
         },
         {
-            "name": "zeek.tls.version",
+            # OLD CODE START: "name": "zeek.tls.version", (I6: Malcolm writes zeek.ssl.ssl_version) OLD CODE END
+            "name": "zeek.ssl.ssl_version",
             "type": "keyword",
             "description": "TLS version used (TLSv1.3 is current best)",
             "example": "TLSv13",
         },
         {
-            "name": "zeek.tls.server_name",
+            # OLD CODE START: "name": "zeek.tls.server_name", (I6: Malcolm writes zeek.ssl.server_name) OLD CODE END
+            "name": "zeek.ssl.server_name",
             "type": "keyword",
             "description": "Server Name Indication — the domain being connected to",
             "example": "www.google.com",
         },
         {
-            "name": "zeek.tls.cipher",
+            # OLD CODE START: "name": "zeek.tls.cipher", (I6: Malcolm writes zeek.ssl.cipher) OLD CODE END
+            "name": "zeek.ssl.cipher",
             "type": "keyword",
             "description": "Encryption cipher suite negotiated",
             "example": "TLS_AES_256_GCM_SHA384",
         },
         {
-            "name": "zeek.tls.established",
+            # OLD CODE START: "name": "zeek.tls.established", (I6: Malcolm writes zeek.ssl.established) OLD CODE END
+            "name": "zeek.ssl.established",
             "type": "boolean",
             "description": "Whether the TLS handshake completed successfully",
             "example": "true",
         },
         {
-            "name": "zeek.tls.subject",
+            # OLD CODE START: "name": "zeek.tls.subject", (I6: Malcolm writes zeek.ssl.subject) OLD CODE END
+            "name": "zeek.ssl.subject",
             "type": "keyword",
             "description": "Certificate subject (who the cert was issued to)",
             "example": "CN=www.google.com",
         },
         {
-            "name": "zeek.tls.issuer",
+            # OLD CODE START: "name": "zeek.tls.issuer", (I6: Malcolm writes zeek.ssl.issuer) OLD CODE END
+            "name": "zeek.ssl.issuer",
             "type": "keyword",
             "description": "Certificate Authority that issued the cert",
             "example": "CN=GTS CA 1C3,O=Google Trust Services LLC",
@@ -365,19 +372,22 @@ FIELD_DEFINITIONS = {
             "example": "0.0.0.0",
         },
         {
-            "name": "zeek.dhcp.client_addr",
+            # OLD CODE START: "name": "zeek.dhcp.client_addr", (I6: Malcolm writes zeek.dhcp.assigned_ip) OLD CODE END
+            "name": "zeek.dhcp.assigned_ip",
             "type": "ip",
             "description": "IP address assigned to the device",
             "example": "192.168.1.100",
         },
         {
-            "name": "zeek.dhcp.mac",
+            # OLD CODE START: "name": "zeek.dhcp.mac", (I6: Malcolm writes source.mac) OLD CODE END
+            "name": "source.mac",
             "type": "keyword",
             "description": "MAC address of the requesting device",
             "example": "aa:bb:cc:dd:ee:ff",
         },
         {
-            "name": "zeek.dhcp.hostname",
+            # OLD CODE START: "name": "zeek.dhcp.hostname", (I6: Malcolm writes zeek.dhcp.host_name) OLD CODE END
+            "name": "zeek.dhcp.host_name",
             "type": "keyword",
             "description": "Hostname the device reported",
             "example": "johns-iphone",
@@ -1017,7 +1027,11 @@ async def handle_log_top_dns(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
                 # "must_not": _EXCLUDE_DNS_NOISE + excluded,
                 # OLD CODE END
-                "must_not": _EXCLUDE_DNS_NOISE,
+                # OLD CODE START — I12: counted mDNS/LLMNR/NetBIOS discovery, so this card's
+                # "Most looked-up domains" disagreed with the DNS page's
+                # "must_not": _EXCLUDE_DNS_NOISE,
+                # OLD CODE END
+                "must_not": DNS_LOOKUP_EXCLUSION,
             }
         },
         "aggs": {

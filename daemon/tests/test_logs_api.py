@@ -203,6 +203,24 @@ class TestLogSearchAPI(AioHTTPTestCase):
             data = await resp.json()
             self.assertGreater(len(data["fields"]), 0, f"No fields for {log_type}")
 
+    async def test_tls_and_dhcp_fields_are_malcolms_names(self):
+        """I6: Malcolm writes zeek.ssl.* and zeek.dhcp.host_name (cert_monitor, device_registry
+        read them); zeek.tls.* and zeek.dhcp.hostname never exist, so those columns read --."""
+        names = {}
+        for log_type in ("zeek.tls", "zeek.dhcp"):
+            resp = await self.client.request("GET", f"/api/logs/fields/{log_type}")
+            names[log_type] = {f["name"] for f in (await resp.json())["fields"]}
+        self.assertLessEqual(
+            {"zeek.ssl.server_name", "zeek.ssl.ssl_version", "zeek.ssl.cipher"},
+            names["zeek.tls"],
+        )
+        self.assertFalse(any(n.startswith("zeek.tls.") for n in names["zeek.tls"]))
+        self.assertLessEqual(
+            {"zeek.dhcp.host_name", "zeek.dhcp.assigned_ip", "source.mac"},
+            names["zeek.dhcp"],
+        )
+        self.assertNotIn("zeek.dhcp.hostname", names["zeek.dhcp"])
+
     async def test_fields_unknown_type(self):
         """Unknown log type returns 400 with available types."""
         resp = await self.client.request("GET", "/api/logs/fields/unknown.type")
@@ -489,6 +507,17 @@ class TestLogSearchAPI(AioHTTPTestCase):
         ]
         self.assertIn("zeek", providers)
         self.assertIn("dns", datasets)
+
+    async def test_top_dns_leaves_out_local_discovery_like_the_dns_page(self):
+        """I12: mDNS/LLMNR/NetBIOS lookups topped this card but not the DNS page's."""
+        from services.dns_analytics import DNS_LOOKUP_EXCLUSION
+
+        self.mock_client.search.return_value = {"aggregations": {}}
+        await self.client.request("GET", "/api/logs/top-dns")
+        must_not = self.mock_client.search.call_args[1]["body"]["query"]["bool"][
+            "must_not"
+        ]
+        self.assertEqual(must_not, DNS_LOOKUP_EXCLUSION)
 
 
 if __name__ == "__main__":

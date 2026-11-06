@@ -68,7 +68,7 @@ describe('Log Explorer — failed aggregations', () => {
 const hit = (id: string, ip: string) => ({ _id: id, _source: { '@timestamp': '2026-11-03T10:00:00Z', source: { ip }, event: { dataset: 'conn' } } });
 const AGGREGATIONS = {
 	'/api/logs/stats': { total_events: 10, unique_sources: 2, protocol_count: 1, total_bytes: 1024 },
-	'/api/logs/timeline': { buckets: [{ timestamp: '2026-11-03T10:00:00Z', conn: 10 }] },
+	'/api/logs/timeline': { buckets: [{ timestamp: '2026-11-03T10:00:00Z', total: 10, conn: 10 }] },
 	'/api/logs/top-talkers': { talkers: [{ ip: '10.0.0.5', count: 10 }] },
 	'/api/logs/protocol-breakdown': { protocols: [{ protocol: 'conn', count: 10 }] },
 	'/api/logs/top-destinations': { destinations: [{ ip: '10.0.0.1', count: 10 }] },
@@ -245,5 +245,70 @@ describe('Log Explorer — protocol breakdown length', () => {
 		stubDaemon({});
 		render(Page);
 		expect(screen.getByText('Activity timeline').closest('.card')).toHaveClass('col');
+	});
+});
+
+// Accuracy audit 2026-11-06
+describe('Log Explorer — figures match what the daemon counts', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const protocolsOf = (n: number) => Array.from({ length: n }, (_, i) => ({ protocol: `p${i}`, label: `Proto ${i}`, count: 1000 - i }));
+
+	it('plots each slot\'s total, not only the seven named types (I5)', async () => {
+		stubDaemon({
+			...AGGREGATIONS,
+			'/api/logs/timeline': { buckets: [{ timestamp: '2026-11-03T10:00:00Z', total: 15, conn: 10, alert: 0 }] },
+			'/api/logs/search': { hits: [], total: 0 },
+		});
+		render(Page);
+		expect(await screen.findByRole('img', { name: /^Busiest at .*, with 15 events$/ })).toBeInTheDocument();
+	});
+
+	it('names no total when the daemon\'s 20-protocol cap is reached (I5)', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/protocol-breakdown': { protocols: protocolsOf(20) }, '/api/logs/search': { hits: [], total: 0 } });
+		render(Page);
+		expect(await screen.findByText('Showing 10 of the 20 most common')).toBeInTheDocument();
+		expect(screen.queryByText(/of 20$/)).not.toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('button', { name: 'Show the 20 most common' }));
+		expect(screen.getByText('The 20 most common')).toBeInTheDocument();
+		expect(screen.getByText('Proto 19')).toBeInTheDocument();
+	});
+
+	it('gives the exact count between 10 and 20, and no footer under 10 (I5)', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/protocol-breakdown': { protocols: protocolsOf(15) }, '/api/logs/search': { hits: [], total: 0 } });
+		const { unmount } = render(Page);
+		expect(await screen.findByText('Showing 10 of 15')).toBeInTheDocument();
+		unmount();
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/protocol-breakdown': { protocols: protocolsOf(9) }, '/api/logs/search': { hits: [], total: 0 } });
+		render(Page);
+		expect(await screen.findByText('Proto 8')).toBeInTheDocument();
+		expect(screen.queryByText(/^Showing \d+ of/)).not.toBeInTheDocument();
+	});
+
+	it('reads TLS and DHCP columns from the fields Malcolm writes (I6)', async () => {
+		const tls = {
+			_id: 't1',
+			_source: {
+				'@timestamp': '2026-11-03T10:00:00Z', source: { ip: '10.0.0.5' }, destination: { ip: '142.250.1.1' }, event: { dataset: 'ssl' },
+				zeek: { ssl: { server_name: 'www.example.org', ssl_version: 'TLSv13', cipher: 'TLS_AES_128_GCM_SHA256' } },
+			},
+		};
+		const dhcp = {
+			_id: 'd1',
+			_source: {
+				'@timestamp': '2026-11-03T10:00:00Z', source: { ip: '192.168.1.50', mac: 'aa:bb:cc:dd:ee:ff' }, event: { dataset: 'dhcp' },
+				zeek: { dhcp: { host_name: 'johns-iphone', assigned_ip: '192.168.1.50' } },
+			},
+		};
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [tls, dhcp], total: 2 } });
+		render(Page);
+		await fireEvent.click(await screen.findByRole('button', { name: 'TLS' }));
+		expect(await screen.findByText('www.example.org')).toBeInTheDocument();
+		expect(screen.getByText('TLSv13')).toBeInTheDocument();
+		expect(screen.getByRole('columnheader', { name: 'ssl.server_name' })).toBeInTheDocument();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'DHCP' }));
+		expect(await screen.findByText('johns-iphone')).toBeInTheDocument();
+		expect(screen.getByText('aa:bb:cc:dd:ee:ff')).toBeInTheDocument();
 	});
 });
