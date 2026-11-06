@@ -287,6 +287,8 @@ def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
                         return false;
                     """,
                     "lang": "painless",
+                    # Unused by the script: lets Python apply the same rule (lan_subnets_of)
+                    "params": {"lan_subnets": []},
                 }
             }
         }
@@ -316,9 +318,21 @@ def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
                     return {condition_str};
                 """,
                 "lang": "painless",
+                # Unused by the script: lets Python apply the same rule (lan_subnets_of)
+                "params": {"lan_subnets": [list(s) for s in subnets]},
             }
         }
     }
+
+
+def lan_subnets_of(lan_filter: dict | None) -> list[tuple[int, int, int]]:
+    """The subnets a build_lan_filter() filter matches ([] means all of RFC1918)."""
+    try:
+        return [
+            tuple(s) for s in lan_filter["script"]["script"]["params"]["lan_subnets"]
+        ]
+    except (KeyError, TypeError):
+        return []
 
 
 def detect_and_build_lan_filter(client) -> dict:

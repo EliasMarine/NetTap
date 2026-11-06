@@ -11,6 +11,7 @@ Extended in Phase 1 of the Live Network Monitor Redesign to add:
 - Connection detail endpoint via fetch_connection_detail()
 """
 
+import ipaddress
 import logging
 import os
 import time
@@ -20,7 +21,7 @@ from typing import Any
 
 from opensearchpy import OpenSearch, OpenSearchException
 
-from services.excluded_ips import RFC1918_SOURCE_FILTER
+from services.excluded_ips import RFC1918_SOURCE_FILTER, lan_subnets_of
 from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.live_connections")
@@ -65,6 +66,63 @@ def _duration_seconds(source: dict[str, Any], event: dict[str, Any]) -> float:
     if start is None or end is None or end < start:
         return 0.0
     return (end - start) / 1000
+
+
+_RFC1918 = [
+    ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+]
+_LIMITED_BROADCAST = ipaddress.IPv4Address("255.255.255.255")
+
+
+def _in_lan(addr: ipaddress.IPv4Address | ipaddress.IPv6Address, subnets: list) -> bool:
+    """The LAN filter's rule: IPv4 in a detected subnet ((a, b, c), -1 = any), else RFC1918."""
+    if addr.version != 4:
+        return False
+    if not subnets:
+        return any(addr in net for net in _RFC1918)
+    a, b, c, _ = addr.packed
+    return any(sa == a and sb in (-1, b) and sc in (-1, c) for sa, sb, sc in subnets)
+
+
+def _is_special(
+    addr: ipaddress.IPv4Address | ipaddress.IPv6Address, subnets: list
+) -> bool:
+    """Multicast, link-local, loopback, or a broadcast (limited, or a detected subnet's)."""
+    if addr.is_multicast or addr.is_link_local or addr.is_loopback:
+        return True
+    if addr.version != 4:
+        return False
+    octets = tuple(addr.packed)
+    for subnet in subnets:
+        n = 3 - list(subnet).count(-1)  # the subnet's fixed octets
+        if octets[:n] == tuple(subnet[:n]) and all(o == 255 for o in octets[n:]):
+            return True
+    return addr == _LIMITED_BROADCAST
+
+
+def connection_direction(src: Any, dst: Any, lan_subnets: list) -> str:
+    """'local', 'out', 'in' or 'unknown' for one connection, by these rules in order (O2):
+
+    1. either end is multicast, broadcast, link-local or loopback: local
+    2. both ends in the LAN: local
+    3. a LAN source to an internet destination: out
+    4. an internet source to a LAN destination: in
+    5. anything else, such as an ISP's private address or IPv6 outside the LAN rule: unknown
+    """
+    try:
+        s, d = ipaddress.ip_address(src), ipaddress.ip_address(dst)
+    except (TypeError, ValueError):
+        return "unknown"
+    if _is_special(s, lan_subnets) or _is_special(d, lan_subnets):
+        return "local"
+    s_lan, d_lan = _in_lan(s, lan_subnets), _in_lan(d, lan_subnets)
+    if s_lan and d_lan:
+        return "local"
+    if s_lan and d.is_global:
+        return "out"
+    if d_lan and s.is_global:
+        return "in"
+    return "unknown"
 
 
 class LiveConnectionTracker:
@@ -252,19 +310,26 @@ class LiveConnectionTracker:
         # Extract nested fields safely
         src = source.get("source", {}) or {}
         dst = source.get("destination", {}) or {}
-        client_bytes = source.get("client", {}) or {}
-        server_bytes = source.get("server", {}) or {}
+        # OLD CODE START — 2026-11-06 (O11): only read by the payload-bytes sum below
+        # client_bytes = source.get("client", {}) or {}
+        # server_bytes = source.get("server", {}) or {}
+        # OLD CODE END
         network = source.get("network", {}) or {}
         event = source.get("event", {}) or {}
         geo = dst.get("geo", {}) or {}
         dst_as = dst.get("as", {}) or {}
 
-        # Calculate bytes
-        total_bytes = (client_bytes.get("bytes", 0) or 0) + (
-            server_bytes.get("bytes", 0) or 0
-        )
-        if total_bytes == 0:
-            total_bytes = (src.get("bytes", 0) or 0) + (dst.get("bytes", 0) or 0)
+        # OLD CODE START — 2026-11-06 (O11): payload bytes, while the top talkers, bandwidth and
+        # the drawer's 24 h total sum source.bytes + destination.bytes
+        # # Calculate bytes
+        # total_bytes = (client_bytes.get("bytes", 0) or 0) + (
+        #     server_bytes.get("bytes", 0) or 0
+        # )
+        # if total_bytes == 0:
+        #     total_bytes = (src.get("bytes", 0) or 0) + (dst.get("bytes", 0) or 0)
+        # OLD CODE END
+        # One byte basis for the whole Live page (_PAINLESS_BYTE_SUM)
+        total_bytes = (src.get("bytes", 0) or 0) + (dst.get("bytes", 0) or 0)
 
         # OLD CODE START — #144: Malcolm 26.x writes event.start/end as epoch-ms text, which
         # fromisoformat refuses, so every live connection read 0 s
@@ -439,31 +504,59 @@ class LiveConnectionTracker:
                 "protocols": {
                     "terms": {"field": "network.transport", "size": 10},
                 },
+                # O6: records with no transport, so the protocol counts add up to the window's total
+                "protocols_missing": {"missing": {"field": "network.transport"}},
+                # OLD CODE START — 2026-11-06 (O11): every source, so internet hosts and an ISP's
+                # gateway ranked as "devices"
+                # "top_talkers": {
+                #     # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                #     # "terms": {"field": "source.ip.keyword", "size": 5},
+                #     # OLD CODE END
+                #     "terms": {
+                #         "field": "source.ip",
+                #         "size": 5,
+                #         "order": {"total_bytes": "desc"},
+                #     },
+                #     "aggs": {
+                #         "total_bytes": {
+                #             "sum": {
+                #                 "script": {
+                #                     "source": self._PAINLESS_BYTE_SUM,
+                #                     "lang": "painless",
+                #                 }
+                #             }
+                #         },
+                #         # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
+                #         # "bucket_sort": {
+                #         #     "bucket_sort": {
+                #         #         "sort": [{"total_bytes": {"order": "desc"}}]
+                #         #     }
+                #         # },
+                #         # OLD CODE END
+                #     },
+                # },
+                # OLD CODE END
+                # LAN sources only, the same rule as active_devices and the Devices page
                 "top_talkers": {
-                    # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
-                    # "terms": {"field": "source.ip.keyword", "size": 5},
-                    # OLD CODE END
-                    "terms": {
-                        "field": "source.ip",
-                        "size": 5,
-                        "order": {"total_bytes": "desc"},
-                    },
+                    "filter": lan_filter or RFC1918_SOURCE_FILTER,
                     "aggs": {
-                        "total_bytes": {
-                            "sum": {
-                                "script": {
-                                    "source": self._PAINLESS_BYTE_SUM,
-                                    "lang": "painless",
-                                }
-                            }
+                        "ips": {
+                            "terms": {
+                                "field": "source.ip",
+                                "size": 5,
+                                "order": {"total_bytes": "desc"},
+                            },
+                            "aggs": {
+                                "total_bytes": {
+                                    "sum": {
+                                        "script": {
+                                            "source": self._PAINLESS_BYTE_SUM,
+                                            "lang": "painless",
+                                        }
+                                    }
+                                },
+                            },
                         },
-                        # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
-                        # "bucket_sort": {
-                        #     "bucket_sort": {
-                        #         "sort": [{"total_bytes": {"order": "desc"}}]
-                        #     }
-                        # },
-                        # OLD CODE END
                     },
                 },
                 "geo_destinations": {
@@ -628,10 +721,15 @@ class LiveConnectionTracker:
 
         # Parse connections from hits
         hits = conn_result.get("hits", {}).get("hits", [])
+        lan_subnets = lan_subnets_of(lan_filter or RFC1918_SOURCE_FILTER)
         connections = []
         for hit in hits:
             src_doc = hit.get("_source", {})
             conn = self._format_connection(src_doc)
+            # O2: from the LAN subnets, not guessed from the port
+            conn["direction"] = connection_direction(
+                conn["source_ip"], conn["dest_ip"], lan_subnets
+            )
             connections.append(conn)
             self._connections.append(conn)
 
@@ -679,29 +777,49 @@ class LiveConnectionTracker:
         top_country_buckets = aggs.get("top_country", {}).get("buckets", [])
         top_country = top_country_buckets[0]["key"] if top_country_buckets else ""
 
-        # Protocol percentages
-        proto_buckets = aggs.get("protocols", {}).get("buckets", [])
-        total_proto_count = sum(b.get("doc_count", 0) for b in proto_buckets)
-        protocols: dict[str, float] = {
-            "tcp": 0.0,
-            "udp": 0.0,
-            "icmp": 0.0,
-            "other": 0.0,
+        # OLD CODE START — 2026-11-06 (O6): percentages, which the page showed as connection counts,
+        # and transports past the top 10 or missing altogether fell out of the split
+        # # Protocol percentages
+        # proto_buckets = aggs.get("protocols", {}).get("buckets", [])
+        # total_proto_count = sum(b.get("doc_count", 0) for b in proto_buckets)
+        # protocols: dict[str, float] = {
+        #     "tcp": 0.0,
+        #     "udp": 0.0,
+        #     "icmp": 0.0,
+        #     "other": 0.0,
+        # }
+        # for bucket in proto_buckets:
+        #     name = bucket.get("key", "").lower()
+        #     pct = (
+        #         round(bucket["doc_count"] / total_proto_count * 100, 1)
+        #         if total_proto_count > 0
+        #         else 0.0
+        #     )
+        #     if name in protocols:
+        #         protocols[name] = pct
+        #     else:
+        #         protocols["other"] = round(protocols["other"] + pct, 1)
+        # OLD CODE END
+        # Connection counts per transport, a complete split of the window: unrecognised
+        # transports (and any past the top 10) are "other", records with none "unknown"
+        proto_agg = aggs.get("protocols", {})
+        protocols: dict[str, int] = {
+            "tcp": 0,
+            "udp": 0,
+            "icmp": 0,
+            "other": proto_agg.get("sum_other_doc_count", 0) or 0,
+            "unknown": aggs.get("protocols_missing", {}).get("doc_count", 0) or 0,
         }
-        for bucket in proto_buckets:
-            name = bucket.get("key", "").lower()
-            pct = (
-                round(bucket["doc_count"] / total_proto_count * 100, 1)
-                if total_proto_count > 0
-                else 0.0
-            )
-            if name in protocols:
-                protocols[name] = pct
-            else:
-                protocols["other"] = round(protocols["other"] + pct, 1)
+        for bucket in proto_agg.get("buckets", []):
+            name = str(bucket.get("key", "")).lower()
+            key = name if name in ("tcp", "udp", "icmp") else "other"
+            protocols[key] += bucket.get("doc_count", 0)
 
         # Top talkers
-        talker_buckets = aggs.get("top_talkers", {}).get("buckets", [])
+        # OLD CODE START — 2026-11-06 (O11): the terms agg now sits under the LAN filter
+        # talker_buckets = aggs.get("top_talkers", {}).get("buckets", [])
+        # OLD CODE END
+        talker_buckets = aggs.get("top_talkers", {}).get("ips", {}).get("buckets", [])
         top_talkers = [
             {
                 "ip": b["key"],
@@ -711,89 +829,127 @@ class LiveConnectionTracker:
             for b in talker_buckets
         ]
 
-        # Geo arcs (for map visualization)
-        geo_buckets = aggs.get("geo_destinations", {}).get("buckets", [])
-        geo_arcs = []
-        for bucket in geo_buckets:
-            city = bucket.get("key", "")
-            count = bucket.get("doc_count", 0)
-            total_b = bucket.get("total_bytes", {}).get("value", 0)
-
-            # Extract country name
-            country_b = bucket.get("country", {}).get("buckets", [])
-            country_name = country_b[0]["key"] if country_b else ""
-
-            # Extract country code
+        # OLD CODE START — 2026-11-06 (O3): one arc per top-20 city, and a country with any city
+        # in that list skipped its own bucket, so its dot was the sum of its listed cities only
+        # # Geo arcs (for map visualization)
+        # geo_buckets = aggs.get("geo_destinations", {}).get("buckets", [])
+        # geo_arcs = []
+        # for bucket in geo_buckets:
+        #     city = bucket.get("key", "")
+        #     count = bucket.get("doc_count", 0)
+        #     total_b = bucket.get("total_bytes", {}).get("value", 0)
+        #
+        #     # Extract country name
+        #     country_b = bucket.get("country", {}).get("buckets", [])
+        #     country_name = country_b[0]["key"] if country_b else ""
+        #
+        #     # Extract country code
+        #     cc_b = bucket.get("country_code", {}).get("buckets", [])
+        #     country_code = cc_b[0]["key"] if cc_b else ""
+        #
+        #     # Extract lat/lon from top_hits
+        #     loc_hits = bucket.get("location", {}).get("hits", {}).get("hits", [])
+        #     lat = None
+        #     lon = None
+        #     if loc_hits:
+        #         loc_src = loc_hits[0].get("_source", {})
+        #         loc_data = (
+        #             loc_src.get("destination", {}).get("geo", {}).get("location", {})
+        #         )
+        #         if isinstance(loc_data, dict):
+        #             lat = loc_data.get("lat")
+        #             lon = loc_data.get("lon")
+        #
+        #     if city and lat is not None and lon is not None:
+        #         geo_arcs.append(
+        #             {
+        #                 "city": city,
+        #                 "country": country_name,
+        #                 "country_code": country_code,
+        #                 "lat": lat,
+        #                 "lon": lon,
+        #                 "count": count,
+        #                 "bytes": total_b,
+        #             }
+        #         )
+        #
+        # # Country-level fallbacks: add arcs for countries that have
+        # # connections but no city-level entry in the top-20 city list.
+        # seen_countries = {arc["country_code"] for arc in geo_arcs}
+        # country_buckets = aggs.get("geo_countries", {}).get("buckets", [])
+        # for bucket in country_buckets:
+        #     cc = bucket.get("key", "")
+        #     if cc in seen_countries or not cc:
+        #         continue
+        #
+        #     c_count = bucket.get("doc_count", 0)
+        #     c_bytes = bucket.get("total_bytes", {}).get("value", 0)
+        #
+        #     cn_b = bucket.get("country_name", {}).get("buckets", [])
+        #     c_country = cn_b[0]["key"] if cn_b else ""
+        #
+        #     city_b = bucket.get("top_city", {}).get("buckets", [])
+        #     c_city = city_b[0]["key"] if city_b else ""
+        #
+        #     c_loc_hits = bucket.get("location", {}).get("hits", {}).get("hits", [])
+        #     c_lat, c_lon = None, None
+        #     if c_loc_hits:
+        #         c_loc_src = c_loc_hits[0].get("_source", {})
+        #         c_loc_data = (
+        #             c_loc_src.get("destination", {}).get("geo", {}).get("location", {})
+        #         )
+        #         if isinstance(c_loc_data, dict):
+        #             c_lat = c_loc_data.get("lat")
+        #             c_lon = c_loc_data.get("lon")
+        #
+        #     if c_lat is not None and c_lon is not None:
+        #         geo_arcs.append(
+        #             {
+        #                 "city": c_city or c_country,
+        #                 "country": c_country,
+        #                 "country_code": cc,
+        #                 "lat": c_lat,
+        #                 "lon": c_lon,
+        #                 "count": c_count,
+        #                 "bytes": c_bytes,
+        #             }
+        #         )
+        # OLD CODE END
+        # Geo arcs (for the map): one per country with the country's own totals. The busiest
+        # cities only place the dot, at the country's busiest city when that city is listed.
+        city_locations: dict[tuple[str, str], tuple[Any, Any]] = {}
+        for bucket in aggs.get("geo_destinations", {}).get("buckets", []):
             cc_b = bucket.get("country_code", {}).get("buckets", [])
-            country_code = cc_b[0]["key"] if cc_b else ""
-
-            # Extract lat/lon from top_hits
-            loc_hits = bucket.get("location", {}).get("hits", {}).get("hits", [])
-            lat = None
-            lon = None
-            if loc_hits:
-                loc_src = loc_hits[0].get("_source", {})
-                loc_data = (
-                    loc_src.get("destination", {}).get("geo", {}).get("location", {})
-                )
-                if isinstance(loc_data, dict):
-                    lat = loc_data.get("lat")
-                    lon = loc_data.get("lon")
-
-            if city and lat is not None and lon is not None:
-                geo_arcs.append(
-                    {
-                        "city": city,
-                        "country": country_name,
-                        "country_code": country_code,
-                        "lat": lat,
-                        "lon": lon,
-                        "count": count,
-                        "bytes": total_b,
-                    }
+            if cc_b:
+                city_locations[(cc_b[0]["key"], bucket.get("key", ""))] = (
+                    self._hit_location(bucket)
                 )
 
-        # Country-level fallbacks: add arcs for countries that have
-        # connections but no city-level entry in the top-20 city list.
-        seen_countries = {arc["country_code"] for arc in geo_arcs}
-        country_buckets = aggs.get("geo_countries", {}).get("buckets", [])
-        for bucket in country_buckets:
+        geo_arcs = []
+        for bucket in aggs.get("geo_countries", {}).get("buckets", []):
             cc = bucket.get("key", "")
-            if cc in seen_countries or not cc:
+            if not cc:
                 continue
-
-            c_count = bucket.get("doc_count", 0)
-            c_bytes = bucket.get("total_bytes", {}).get("value", 0)
-
             cn_b = bucket.get("country_name", {}).get("buckets", [])
             c_country = cn_b[0]["key"] if cn_b else ""
-
             city_b = bucket.get("top_city", {}).get("buckets", [])
             c_city = city_b[0]["key"] if city_b else ""
-
-            c_loc_hits = bucket.get("location", {}).get("hits", {}).get("hits", [])
-            c_lat, c_lon = None, None
-            if c_loc_hits:
-                c_loc_src = c_loc_hits[0].get("_source", {})
-                c_loc_data = (
-                    c_loc_src.get("destination", {}).get("geo", {}).get("location", {})
-                )
-                if isinstance(c_loc_data, dict):
-                    c_lat = c_loc_data.get("lat")
-                    c_lon = c_loc_data.get("lon")
-
-            if c_lat is not None and c_lon is not None:
-                geo_arcs.append(
-                    {
-                        "city": c_city or c_country,
-                        "country": c_country,
-                        "country_code": cc,
-                        "lat": c_lat,
-                        "lon": c_lon,
-                        "count": c_count,
-                        "bytes": c_bytes,
-                    }
-                )
+            lat, lon = city_locations.get((cc, c_city), (None, None))
+            if lat is None or lon is None:
+                lat, lon = self._hit_location(bucket)
+            if lat is None or lon is None:
+                continue
+            geo_arcs.append(
+                {
+                    "city": c_city or c_country,
+                    "country": c_country,
+                    "country_code": cc,
+                    "lat": lat,
+                    "lon": lon,
+                    "count": bucket.get("doc_count", 0),
+                    "bytes": bucket.get("total_bytes", {}).get("value", 0),
+                }
+            )
 
         return {
             "connections": connections,
@@ -1037,6 +1193,23 @@ class LiveConnectionTracker:
     # Private helpers for dashboard / detail
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _hit_location(bucket: dict) -> tuple[Any, Any]:
+        """(lat, lon) of a geo bucket's newest record (its `location` top_hits), or Nones."""
+        hits = bucket.get("location", {}).get("hits", {}).get("hits", [])
+        loc = (
+            hits[0]
+            .get("_source", {})
+            .get("destination", {})
+            .get("geo", {})
+            .get("location")
+            if hits
+            else None
+        )
+        return (
+            (loc.get("lat"), loc.get("lon")) if isinstance(loc, dict) else (None, None)
+        )
+
     def _parse_session_geo(
         self, session_result: dict, target_ip: str
     ) -> dict[str, Any]:
@@ -1154,7 +1327,7 @@ class LiveConnectionTracker:
                 "active_devices": 0,
                 "top_country": "",
             },
-            "protocols": {"tcp": 0, "udp": 0, "icmp": 0, "other": 0},
+            "protocols": {"tcp": 0, "udp": 0, "icmp": 0, "other": 0, "unknown": 0},
             "top_talkers": [],
             "geo_arcs": [],
         }

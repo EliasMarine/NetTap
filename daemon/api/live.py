@@ -172,7 +172,15 @@ async def handle_live_dashboard(request: web.Request) -> web.Response:
         _enrich_connections_geoip(dashboard.get("connections", []), geoip)
 
     sampler: ThroughputSampler = request.app["live_throughput"]
-    line_rate = await sampler.rate(request.app.get("capture_manager"))
+    # OLD CODE START — 2026-11-06 (O7): a filtered request (the Live page's side cards) took a
+    # sample too, so the unfiltered poll rated the line over the milliseconds between the two
+    # line_rate = await sampler.rate(request.app.get("capture_manager"))
+    # OLD CODE END
+    # The line rate can't be filtered; a filtered request keeps its own conn-record figure
+    filtered = device or proto or country
+    line_rate = (
+        None if filtered else await sampler.rate(request.app.get("capture_manager"))
+    )
     if line_rate is not None:
         stats = {
             **dashboard.get("stats", {}),

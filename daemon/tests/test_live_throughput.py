@@ -66,6 +66,14 @@ class TestDashboardBandwidth(AioHTTPTestCase):
         assert data["stats"]["bandwidth_bytes_per_second"] == 301_103.4
         assert data["stats"]["active_devices"] == 38
 
+    async def test_a_filtered_request_takes_no_line_rate_sample(self):
+        """O7: the page's filtered side-card request would cut the sampler's interval short."""
+        rate = AsyncMock(return_value=301_103.4)
+        with patch.object(self.sampler, "rate", rate):
+            data = await (await self.client.get("/api/live/dashboard?proto=udp")).json()
+        rate.assert_not_called()
+        assert data["stats"]["bandwidth_bytes_per_second"] == 147_811
+
     async def test_estimate_kept_when_the_line_rate_is_unavailable(self):
         with patch.object(self.sampler, "rate", AsyncMock(return_value=None)):
             data = await (await self.client.get("/api/live/dashboard")).json()
