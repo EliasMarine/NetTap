@@ -146,3 +146,32 @@ describe('Home — card states', () => {
 		expect(fetchMock.mock.calls.length).toBeGreaterThan(before);
 	});
 });
+
+describe('Home — Capture pipeline packets (NET-167)', () => {
+	const stats = (loss_window: unknown) => ({
+		capture_interface: 'enp4s0', rx_bytes: 0, tx_bytes: 0, rx_packets: 0, tx_packets: 0, rx_dropped: 0, rx_missed_errors: 0,
+		link_speed_mbps: 1000, drop_rate_pct: 0, loss_window,
+	});
+
+	it('names the interface the loss window measured and shows the last hour, not the cumulative counters', async () => {
+		stubDaemon({
+			'/api/capture/stats': stats({
+				state: 'ok', interface: 'enp4s0',
+				window: { seconds: 3480, arrived: 293_810, lost: 1_234, drop_rate_pct: 0.42 },
+				cumulative: { arrived: 1_200_000, lost: 900_000, drop_rate_pct: 75 },
+			}),
+		});
+		render(HomePage);
+		expect(await screen.findByText('0.42% lost in the last 58 min · 1,234 packets')).toBeInTheDocument();
+		expect(screen.getByText('Each stage at the last refresh · packets: up to the last 60 minutes on enp4s0')).toBeInTheDocument();
+		expect(screen.queryByText(/75/)).not.toBeInTheDocument();
+	});
+
+	it('says "the capture interface" when the stats request failed', async () => {
+		stubDaemon({});
+		render(HomePage);
+		expect(
+			await screen.findByText('Each stage at the last refresh · packets: up to the last 60 minutes on the capture interface'),
+		).toBeInTheDocument();
+	});
+});

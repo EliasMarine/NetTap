@@ -10,7 +10,7 @@ import {
 	systemStage,
 	trendPercent,
 } from './home';
-import type { CaptureHealthResponse, CaptureStatsResponse } from '$api/capture';
+import type { CaptureHealthResponse, CaptureStatsResponse, LossWindow } from '$api/capture';
 import type { SystemHealth } from '$api/system';
 
 const health = (over: Partial<CaptureHealthResponse> = {}): CaptureHealthResponse => ({
@@ -18,8 +18,16 @@ const health = (over: Partial<CaptureHealthResponse> = {}): CaptureHealthRespons
 });
 const stats = (over: Partial<CaptureStatsResponse> = {}): CaptureStatsResponse => ({
 	capture_interface: 'enp4s0', rx_bytes: 0, tx_bytes: 0, rx_packets: 1_200_000, tx_packets: 0, rx_dropped: 0,
-	rx_missed_errors: 0, link_speed_mbps: 2500, drop_rate_pct: 0, ...over,
+	rx_missed_errors: 0, link_speed_mbps: 2500, drop_rate_pct: 0,
+	loss_window: { state: 'unavailable', interface: null, window: null, cumulative: null },
+	...over,
 });
+/** NET-167: stats whose recent window (58 min) is as given; the cumulative counters say otherwise on purpose. */
+const recent = (window: LossWindow['window'], state: LossWindow['state'] = 'ok') =>
+	stats({
+		rx_dropped: 900_000, drop_rate_pct: 75, // a burst days ago, which must not decide the stage
+		loss_window: { state, interface: 'enp4s0', window, cumulative: { arrived: 1_200_000, lost: 900_000, drop_rate_pct: 75 } },
+	});
 const system = (over: Partial<SystemHealth> = {}): SystemHealth => ({
 	uptime: 60, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true, ...over,
 });
@@ -73,7 +81,8 @@ describe('capture pipeline stages', () => {
 		expect(captureStage(null, false)).toMatchObject({ status: 'unknown', detail: 'Checking…' });
 	});
 
-	it('packets: no drops, drops under the 0.1 % flag, drops over it, and a failed request', () => {
+	// OLD CODE: it('packets: no drops, drops under the 0.1 % flag, drops over it, and a failed request', … (NET-167: the drop cases moved below)
+	it('packets: a failed request', () => {
 		// OLD CODE START — 2026-11-06 (S9): kernel drops only, at 3 decimal places
 		// expect(packetsStage(stats(), false)).toMatchObject({ status: 'ok', detail: 'No packet drops · 1.2M received' });
 		// expect(packetsStage(stats({ rx_dropped: 12, drop_rate_pct: 0.001 }), false)).toMatchObject({
@@ -81,18 +90,42 @@ describe('capture pipeline stages', () => {
 		// 	detail: '0.001% dropped · 12 packets',
 		// });
 		// OLD CODE END
-		expect(packetsStage(stats(), false)).toMatchObject({ status: 'ok', detail: 'No packets lost · 1.2M received' });
-		// a tiny real loss never reads as 0.00% or "none"
-		expect(packetsStage(stats({ rx_dropped: 12, drop_rate_pct: 0.001 }), false)).toMatchObject({
-			status: 'ok',
-			detail: '< 0.01% lost · 12 packets',
-		});
-		// NIC misses count: rx_dropped 0 is not "no packets lost"
-		expect(packetsStage(stats({ rx_missed_errors: 600, drop_rate_pct: 0.05 }), false)).toMatchObject({
-			detail: '0.05% lost · 600 packets',
-		});
-		expect(packetsStage(stats({ rx_dropped: 5000, drop_rate_pct: 0.4 }), false).status).toBe('failing');
+		// OLD CODE START — NET-167: judged on the counters since they last reset
+		// expect(packetsStage(stats(), false)).toMatchObject({ status: 'ok', detail: 'No packets lost · 1.2M received' });
+		// // a tiny real loss never reads as 0.00% or "none"
+		// expect(packetsStage(stats({ rx_dropped: 12, drop_rate_pct: 0.001 }), false)).toMatchObject({
+		// 	status: 'ok',
+		// 	detail: '< 0.01% lost · 12 packets',
+		// });
+		// // NIC misses count: rx_dropped 0 is not "no packets lost"
+		// expect(packetsStage(stats({ rx_missed_errors: 600, drop_rate_pct: 0.05 }), false)).toMatchObject({
+		// 	detail: '0.05% lost · 600 packets',
+		// });
+		// expect(packetsStage(stats({ rx_dropped: 5000, drop_rate_pct: 0.4 }), false).status).toBe('failing');
+		// OLD CODE END
 		expect(packetsStage(null, true)).toMatchObject({ status: 'unknown', detail: "Couldn't load capture counters: the request failed." });
+	});
+
+	// NET-167: the stage reads the last hour, so a burst days ago no longer keeps it red
+	it('packets: judged on the recent window, not on the counters since they reset', () => {
+		expect(packetsStage(recent({ seconds: 3480, arrived: 98_765, lost: 0, drop_rate_pct: 0 }), false)).toEqual({
+			key: 'packets', label: 'Packets', status: 'ok', detail: 'No packets lost in the last 58 min · 98,765 received',
+		});
+		// a tiny real loss never reads as 0.00% or "none"
+		expect(packetsStage(recent({ seconds: 3480, arrived: 98_765, lost: 12, drop_rate_pct: 0.01215 }), false)).toMatchObject({
+			status: 'ok', detail: '0.01% lost in the last 58 min · 12 packets',
+		});
+		expect(packetsStage(recent({ seconds: 3480, arrived: 293_810, lost: 1_234, drop_rate_pct: 0.42 }), false)).toMatchObject({
+			status: 'failing', detail: '0.42% lost in the last 58 min · 1,234 packets',
+		});
+	});
+
+	it('packets: no arrivals, measuring and unavailable are unknown, never a 0 % loss', () => {
+		expect(packetsStage(recent({ seconds: 3480, arrived: 0, lost: 0, drop_rate_pct: null }), false)).toMatchObject({
+			status: 'unknown', detail: 'No packets in the last 58 min',
+		});
+		expect(packetsStage(recent(null, 'measuring'), false)).toMatchObject({ status: 'unknown', detail: 'Measuring recent loss…' });
+		expect(packetsStage(recent(null, 'unavailable'), false)).toMatchObject({ status: 'unknown', detail: 'Loss counters unavailable' });
 	});
 
 	it('system and OpenSearch read the one health check; a failed check is unknown, never degraded', () => {

@@ -197,7 +197,11 @@ def env(tmp_path):
     for name, value in {
         "rx_bytes": 1000,
         "tx_bytes": 2000,
-        "rx_packets": 99,
+        # OLD CODE START — NET-167: 99 received + 1 dropped read as 1 %; the kernel already
+        # counts host drops in rx_packets, so 1 % is 1 dropped of 100 received
+        # "rx_packets": 99,
+        # OLD CODE END
+        "rx_packets": 100,
         "tx_packets": 50,
         "rx_dropped": 1,
         "rx_missed_errors": 0,

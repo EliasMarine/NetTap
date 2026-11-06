@@ -54,6 +54,10 @@ const HEALTH_EMPTY = {
 
 const RX_PACKETS = 2_950_000_000;
 const RX_DROPPED = 1_204;
+const DROP_RATE_PCT = Math.round((RX_DROPPED / RX_PACKETS) * 100 * 1e6) / 1e6;
+// the last 59½ minutes at ~2,800 packets/s, 3 of them lost
+const WINDOW_ARRIVED = 9_996_000;
+const WINDOW_LOST = 3;
 
 const STATS_POPULATED = {
 	capture_interface: 'br0',
@@ -64,7 +68,19 @@ const STATS_POPULATED = {
 	rx_dropped: RX_DROPPED,
 	rx_missed_errors: 0,
 	link_speed_mbps: 2500,
-	drop_rate_pct: Math.round((RX_DROPPED / RX_PACKETS) * 100 * 1e6) / 1e6,
+	// OLD CODE: drop_rate_pct: Math.round((RX_DROPPED / RX_PACKETS) * 100 * 1e6) / 1e6, (NET-167: shared with loss_window)
+	drop_rate_pct: DROP_RATE_PCT,
+	loss_window: {
+		state: 'ok',
+		interface: 'br0',
+		window: {
+			seconds: 3_570,
+			arrived: WINDOW_ARRIVED,
+			lost: WINDOW_LOST,
+			drop_rate_pct: Math.round((WINDOW_LOST / WINDOW_ARRIVED) * 100 * 1e6) / 1e6,
+		},
+		cumulative: { arrived: RX_PACKETS, lost: RX_DROPPED, drop_rate_pct: DROP_RATE_PCT },
+	},
 } satisfies CaptureStatsResponse;
 
 const STATS_EMPTY = {
@@ -77,6 +93,8 @@ const STATS_EMPTY = {
 	rx_missed_errors: 0,
 	link_speed_mbps: 0,
 	drop_rate_pct: 0,
+	// no br0 yet, so the daemon has no counters to read
+	loss_window: { state: 'unavailable', interface: 'br0', window: null, cumulative: null },
 } satisfies CaptureStatsResponse;
 
 /** The PCAP container runs in both: only the bridge is missing on a fresh install. */

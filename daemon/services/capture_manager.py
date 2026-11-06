@@ -54,14 +54,28 @@ class CaptureHealth:
         }
 
 
+# OLD CODE START — NET-167: counted host drops twice; the kernel already includes them in
+# rx_packets (rtnl_link_stats64), so the share read low (100 drops in 1,000 packets: 9.09%)
+# def packet_loss_pct(rx_packets: int, rx_dropped: int, rx_missed_errors: int) -> float:
+#     """S9: the one loss rate every capture mode reports, unrounded so a real loss never reads 0.
+#
+#     Lost = kernel drops + NIC misses (neither is in rx_packets), as a share of every
+#     packet that reached the port. The counters are cumulative since they last reset.
+#     """
+#     lost = rx_dropped + rx_missed_errors
+#     arrived = rx_packets + lost
+#     return lost / arrived * 100 if arrived else 0.0
+# OLD CODE END
 def packet_loss_pct(rx_packets: int, rx_dropped: int, rx_missed_errors: int) -> float:
     """S9: the one loss rate every capture mode reports, unrounded so a real loss never reads 0.
 
-    Lost = kernel drops + NIC misses (neither is in rx_packets), as a share of every
-    packet that reached the port. The counters are cumulative since they last reset.
+    Kernel semantics (rtnl_link_stats64): rx_packets already counts the packets the host
+    dropped (rx_dropped); rx_missed_errors are packets the device dropped before the host saw
+    them, so they are not in rx_packets. Lost = rx_dropped + rx_missed_errors, as a share of
+    rx_packets + rx_missed_errors. Cumulative since the counters last reset; not clamped.
     """
     lost = rx_dropped + rx_missed_errors
-    arrived = rx_packets + lost
+    arrived = rx_packets + rx_missed_errors
     return lost / arrived * 100 if arrived else 0.0
 
 

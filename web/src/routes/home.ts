@@ -5,7 +5,8 @@
 import type { PipelineStage } from '$components/ui/Pipeline.svelte';
 import { modeLabel } from '$components/shell/status';
 import { healthStage, type SystemHealth } from '$api/system';
-import { formatLossPct, packetsLost, type CaptureHealthResponse, type CaptureStatsResponse } from '$api/capture';
+// OLD CODE: import { formatLossPct, packetsLost, … } (NET-167: the packets stage reads lossWords)
+import { lossWords, type CaptureHealthResponse, type CaptureStatsResponse } from '$api/capture';
 
 const CHECKING = 'Checking…';
 
@@ -127,13 +128,18 @@ export function packetsStage(s: CaptureStatsResponse | null, failed: boolean): P
 	// 		? `${s.drop_rate_pct.toFixed(3)}% dropped · ${formatNumber(s.rx_dropped)} packets`
 	// 		: `No packet drops · ${formatNumber(s.rx_packets)} received`;
 	// OLD CODE END
-	const lost = packetsLost(s);
-	const detail =
-		lost > 0
-			? `${formatLossPct(s.drop_rate_pct, lost)} lost · ${formatNumber(lost)} packets`
-			: `No packets lost · ${formatNumber(s.rx_packets)} received`;
-	// CaptureHealthPanel flagged a drop rate over 0.1 %
-	return { ...base, status: s.drop_rate_pct > 0.1 ? 'failing' : 'ok', detail };
+	// OLD CODE START — NET-167: judged health on counters since they last reset, so a burst days ago
+	// kept the stage red and loss happening now was diluted
+	// const lost = packetsLost(s);
+	// const detail =
+	// 	lost > 0
+	// 		? `${formatLossPct(s.drop_rate_pct, lost)} lost · ${formatNumber(lost)} packets`
+	// 		: `No packets lost · ${formatNumber(s.rx_packets)} received`;
+	// // CaptureHealthPanel flagged a drop rate over 0.1 %
+	// return { ...base, status: s.drop_rate_pct > 0.1 ? 'failing' : 'ok', detail };
+	// OLD CODE END
+	const { status, detail } = lossWords(s.loss_window);
+	return { ...base, status, detail };
 }
 
 export function systemStage(health: SystemHealth | null, failed: boolean): PipelineStage {

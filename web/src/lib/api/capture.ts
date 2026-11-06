@@ -33,19 +33,108 @@ export interface CaptureStatsResponse {
 	rx_missed_errors: number;
 	link_speed_mbps: number;
 	drop_rate_pct: number;
+	/** NET-167: always set by getCaptureStats; an old daemon's missing block reads as unavailable. */
+	loss_window: LossWindow;
 }
 
-/** S9: what every packet-loss figure covers; nothing records when the counters last reset. */
-export const LOSS_SCOPE = 'Cumulative kernel interface counters; reset time unknown';
-
-/** S9: packets lost = kernel drops + NIC misses. Every zero-loss claim reads this one count. */
-export function packetsLost(s: Pick<CaptureStatsResponse, 'rx_dropped' | 'rx_missed_errors'>): number {
-	return s.rx_dropped + s.rx_missed_errors;
+/** Packets that reached the interface and how many of them were lost. The rate is null when nothing arrived. */
+export interface LossCounts {
+	arrived: number;
+	lost: number;
+	drop_rate_pct: number | null;
 }
+
+/** NET-167: loss over the last hour or less (`window`) and since the counters reset (`cumulative`). */
+export interface LossWindow {
+	state: 'ok' | 'measuring' | 'unavailable';
+	interface: string | null;
+	/** Set only when state is ok; `seconds` is the span actually measured. */
+	window: (LossCounts & { seconds: number }) | null;
+	cumulative: LossCounts | null;
+}
+
+// OLD CODE START — NET-167: labelled the main loss figure, which is now the last hour
+// /** S9: what every packet-loss figure covers; nothing records when the counters last reset. */
+// export const LOSS_SCOPE = 'Cumulative kernel interface counters; reset time unknown';
+// OLD CODE END
+/** What the cumulative loss count covers. */
+export const LOSS_SCOPE =
+	'Counted since the interface counters last reset: boot, driver reload or the interface being re-created';
+
+// OLD CODE START — NET-167: every loss figure now comes from the daemon's validated loss_window;
+// rx_dropped and rx_missed_errors can read 0 when the counters couldn't be read
+// /** S9: packets lost = kernel drops + NIC misses. Every zero-loss claim reads this one count. */
+// export function packetsLost(s: Pick<CaptureStatsResponse, 'rx_dropped' | 'rx_missed_errors'>): number {
+// 	return s.rx_dropped + s.rx_missed_errors;
+// }
+// OLD CODE END
 
 /** The daemon's loss rate as a percentage that never rounds a real loss down to 0. */
 export function formatLossPct(pct: number, lost: number): string {
 	return lost > 0 && pct < 0.01 ? '< 0.01%' : `${pct.toFixed(2)}%`;
+}
+
+/** "last 58 min": whole minutes rounded down, so the span is never overstated. */
+export function windowWords(seconds: number): string {
+	return `last ${Math.floor(seconds / 60)} min`;
+}
+
+export interface LossWords {
+	status: 'ok' | 'failing' | 'unknown';
+	detail: string;
+	/** The loss percentage the detail shows, or null when there is none to show. */
+	pct: string | null;
+}
+
+/** NET-167: the one reading of recent loss Home and Infrastructure both show. Over 0.1 % is failing. */
+export function lossWords(lw: LossWindow): LossWords {
+	if (lw.state === 'measuring') return { status: 'unknown', detail: 'Measuring recent loss…', pct: null };
+	const w = lw.window;
+	if (lw.state !== 'ok' || !w) return { status: 'unknown', detail: 'Loss counters unavailable', pct: null };
+	const span = windowWords(w.seconds);
+	if (w.arrived === 0 || w.drop_rate_pct == null) return { status: 'unknown', detail: `No packets in the ${span}`, pct: null };
+	const pct = formatLossPct(w.drop_rate_pct, w.lost);
+	const status = w.drop_rate_pct > 0.1 ? 'failing' : 'ok';
+	const detail =
+		w.lost > 0
+			? `${pct} lost in the ${span} · ${w.lost.toLocaleString()} packets`
+			: `No packets lost in the ${span} · ${w.arrived.toLocaleString()} received`;
+	return { status, detail, pct };
+}
+
+const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+
+/** Counts as sent, null when the daemon sent null, undefined when malformed. */
+function readCounts(v: unknown): LossCounts | null | undefined {
+	if (v === null) return null;
+	if (typeof v !== 'object') return undefined;
+	const { arrived, lost, drop_rate_pct } = v as Record<string, unknown>;
+	if (!isCount(arrived) || !isCount(lost) || (drop_rate_pct !== null && !isCount(drop_rate_pct))) return undefined;
+	return { arrived, lost, drop_rate_pct };
+}
+
+/** A missing or malformed loss_window reads as unavailable, never as 0 loss. */
+function parseLossWindow(v: unknown): LossWindow {
+	const unavailable: LossWindow = { state: 'unavailable', interface: null, window: null, cumulative: null };
+	if (typeof v !== 'object' || v === null) return unavailable;
+	const { state, interface: iface, window: rawWindow, cumulative: rawCumulative } = v as Record<string, unknown>;
+	const win = readCounts(rawWindow);
+	const cumulative = readCounts(rawCumulative);
+	const seconds = (rawWindow as { seconds?: unknown } | null | undefined)?.seconds;
+	if (
+		(state !== 'ok' && state !== 'measuring' && state !== 'unavailable') ||
+		(iface !== null && typeof iface !== 'string') ||
+		win === undefined ||
+		cumulative === undefined ||
+		(state === 'ok') !== (win !== null) ||
+		// under a minute would read "last 0 min"; the daemon never sends one
+		(win !== null && !(isCount(seconds) && seconds >= 60)) ||
+		// packets arrived but no rate: lossWords would say "No packets"; the daemon never sends one
+		(win !== null && win.arrived > 0 && win.drop_rate_pct === null)
+	) {
+		return unavailable;
+	}
+	return { state, interface: iface, window: win && { ...win, seconds: seconds as number }, cumulative };
 }
 
 export interface CaptureStatus {
@@ -201,7 +290,9 @@ export async function getCaptureStats(): Promise<CaptureStatsResponse> {
 	if (!res.ok) {
 		throw new Error(`Capture stats request failed: HTTP ${res.status}`);
 	}
-	return res.json();
+	// OLD CODE: return res.json(); (NET-167: loss_window is validated here, at the boundary)
+	const data = await res.json();
+	return { ...data, loss_window: parseLossWindow(data?.loss_window) };
 }
 
 // ---------------------------------------------------------------------------

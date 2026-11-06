@@ -427,13 +427,20 @@ class TestGetStats(unittest.TestCase):
         self.assertEqual(stats.link_speed_mbps, 2500)
 
     def test_get_stats_calculates_drop_rate(self):
-        """get_stats() should calculate drop_rate_pct from rx_dropped / (rx_packets + rx_dropped)."""
+        # OLD CODE START — NET-167: the docstring and numbers assumed drops were not in rx_packets
+        # """get_stats() should calculate drop_rate_pct from rx_dropped / (rx_packets + rx_dropped)."""
+        # OLD CODE END
+        """drop_rate_pct = (rx_dropped + rx_missed) / (rx_packets + rx_missed); rx_packets already
+        includes the host's drops (kernel rtnl_link_stats64)."""
         mgr = _make_manager(interface="enp2s0")
 
         def mock_read_sysfs_int(path):
             basename = os.path.basename(path)
             if basename == "rx_packets":
-                return 99000
+                # OLD CODE START — NET-167
+                # return 99000
+                # OLD CODE END
+                return 100000
             if basename == "rx_dropped":
                 return 1000
             return 0
@@ -446,8 +453,7 @@ class TestGetStats(unittest.TestCase):
 
         stats = asyncio.run(mgr.get_stats())
 
-        # MirrorManager: drop_rate = rx_dropped / (rx_packets + rx_dropped) * 100
-        # = 1000 / (99000 + 1000) * 100 = 1.0%
+        # 1000 dropped of the 100000 received = 1.0%
         self.assertAlmostEqual(stats.drop_rate_pct, 1.0, places=2)
 
     def test_get_stats_zero_packets_no_division_error(self):
