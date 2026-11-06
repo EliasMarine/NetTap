@@ -136,6 +136,10 @@ describe('Address page', () => {
 		expect(kpi('Data to it')).not.toHaveTextContent('0 B');
 		expect(kpi('Devices that talked to it')).toHaveTextContent('—');
 		expect(kpi('Devices that talked to it')).toHaveTextContent('too many to count');
+		// a peer whose sessions carried no byte count: Not measured, never "at least 0 B"
+		const quietPeer = within(card('Devices that talked to it')).getByRole('link', { name: '192.168.1.50' }).closest('tr')!;
+		expect(quietPeer).toHaveTextContent('Not measured');
+		expect(quietPeer).not.toHaveTextContent('0 B');
 		expect(screen.getByText(/On a threat list: Example blocklist/)).toBeInTheDocument();
 		expect(screen.getByText('No name (SNI)')).toBeInTheDocument();
 		expect(screen.getByText(/Too many addresses to list them all/)).toBeInTheDocument();

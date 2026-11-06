@@ -263,3 +263,22 @@ class TestThreatIntel(AddressCase):
         ti = (await self.figures())["threat_intel"]
         self.assertTrue(ti["matched"])
         self.assertEqual(ti["feeds"][0]["feed"], "et_compromised")
+
+
+def test_a_peer_with_no_byte_count_reads_not_measured_not_zero():
+    from api.addresses import _peer_row
+
+    # parts are (connections, to, to_n, from, from_n, last): two sessions, none measured
+    row = _peer_row("192.0.2.7", [(2, 0, 0, 0, 0, None)], lambda _ip: False)
+    assert (row["bytes_to"], row["bytes_from"], row["bytes_partial"]) == (
+        None,
+        None,
+        True,
+    )
+    # one direction measured on one of two sessions: a lower bound, still a number
+    row = _peer_row("192.0.2.7", [(2, 40, 1, 0, 0, None)], lambda _ip: False)
+    assert (row["bytes_to"], row["bytes_from"], row["bytes_partial"]) == (
+        40,
+        None,
+        True,
+    )

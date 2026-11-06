@@ -88,6 +88,9 @@ describe('Domain page', () => {
 		const req = calls.find((u) => u.pathname.startsWith('/api/domains/'))!;
 		expect(Object.fromEntries(certs.searchParams)).toEqual({ site: 'stream.example.net', from: req.searchParams.get('from'), to: req.searchParams.get('to') });
 		expect(screen.getByRole('link', { name: /DNS records/ })).toHaveAttribute('href', '/tools/dns-recon?domain=stream.example.net');
+		// Log Explorer matches the exact spelling, unlike the count: the link says so
+		expect(screen.getByRole('link', { name: /Search Log Explorer for/ })).toHaveAttribute('href', expect.stringContaining('zeek.http.host'));
+		expect(screen.getByText(/matches this exact spelling/)).toBeInTheDocument();
 		expect(screen.getByText('No response code')).toBeInTheDocument();
 	});
 

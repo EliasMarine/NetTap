@@ -68,8 +68,8 @@ export const ADDRESS_QUIET: AddressSummary = {
 	bytes_to: { total: 0, measured: 0, connections: 1190, partial: true },
 	bytes_from: { total: 0, measured: 0, connections: 1190, partial: true },
 	peers: [
-		{ ip: '192.168.1.50', lan: true, connections: 900, bytes_to: 0, bytes_from: 0, bytes_partial: true, last_seen: iso(10 * MIN) },
-		{ ip: '192.168.1.31', lan: true, connections: 200, bytes_to: 0, bytes_from: 0, bytes_partial: true, last_seen: iso(HOUR) },
+		{ ip: '192.168.1.50', lan: true, connections: 900, bytes_to: null, bytes_from: null, bytes_partial: true, last_seen: iso(10 * MIN) },
+		{ ip: '192.168.1.31', lan: true, connections: 200, bytes_to: null, bytes_from: null, bytes_partial: true, last_seen: iso(HOUR) },
 	],
 	peers_complete: false,
 	ports: [{ port: 8883, transport: 'tcp', service: null, connections: 1100 }],

@@ -138,14 +138,15 @@ def _peer_row(ip: str, parts: list[tuple], is_lan: Callable[[str], bool]) -> dic
     """One peer's two sides summed: parts are (connections, to, to_n, from, from_n, last)."""
     connections = sum(p[0] for p in parts)
     lasts = [p[5] for p in parts if p[5] is not None]
+    to_n, from_n = sum(p[2] for p in parts), sum(p[4] for p in parts)
     return {
         "ip": ip,
         "lan": is_lan(ip),
         "connections": connections,
-        "bytes_to": sum(p[1] for p in parts),
-        "bytes_from": sum(p[3] for p in parts),
-        "bytes_partial": sum(p[2] for p in parts) < connections
-        or sum(p[4] for p in parts) < connections,
+        # None when no session measured that direction: "Not measured", never "at least 0 B"
+        "bytes_to": sum(p[1] for p in parts) if to_n else None,
+        "bytes_from": sum(p[3] for p in parts) if from_n else None,
+        "bytes_partial": to_n < connections or from_n < connections,
         "last_seen": iso_ms(max(lasts)) if lasts else None,
     }
 

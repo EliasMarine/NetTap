@@ -290,7 +290,11 @@
 		{:else}
 			<p class="big">{fmt(data.http.requests)}</p>
 			<p class="dim small">{data.http.requests === 1 ? 'request' : 'requests'} with this host name, over plain HTTP</p>
+			<!-- OLD CODE START — Log Explorer matches the exact spelling, so it can list fewer than the count above
 			<a class="link" href={httpLogs}>Search them in Log Explorer<Icon name="back" class="chev" /></a>
+			OLD CODE END -->
+			<a class="link" href={httpLogs}>Search Log Explorer for “{name}”<Icon name="back" class="chev" /></a>
+			<p class="dim small">Log Explorer matches this exact spelling, so it can list fewer requests than this count, which ignores case.</p>
 		{/if}
 	</Card>
 

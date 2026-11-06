@@ -287,8 +287,12 @@
 {/snippet}
 {#snippet peerLanCell(p: AddressPeer)}{p.lan ? 'Your network' : 'Internet'}{/snippet}
 {#snippet peerConnCell(p: AddressPeer)}{fmt(p.connections)}{/snippet}
+<!-- OLD CODE START — a peer with no byte count read "at least 0 B"
 {#snippet peerToCell(p: AddressPeer)}{p.bytes_partial ? 'at least ' : ''}{formatBytes(p.bytes_to)}{/snippet}
 {#snippet peerFromCell(p: AddressPeer)}{p.bytes_partial ? 'at least ' : ''}{formatBytes(p.bytes_from)}{/snippet}
+OLD CODE END -->
+{#snippet peerToCell(p: AddressPeer)}{p.bytes_to === null ? 'Not measured' : `${p.bytes_partial ? 'at least ' : ''}${formatBytes(p.bytes_to)}`}{/snippet}
+{#snippet peerFromCell(p: AddressPeer)}{p.bytes_from === null ? 'Not measured' : `${p.bytes_partial ? 'at least ' : ''}${formatBytes(p.bytes_from)}`}{/snippet}
 {#snippet peerSeenCell(p: AddressPeer)}<span class="num">{formatWhen(p.last_seen)}</span>{/snippet}
 
 {#snippet portCell(p: AddressPort)}<span class="mono">{p.port}</span>{/snippet}
