@@ -144,18 +144,37 @@ async function getJson(url: string, what: string): Promise<unknown> {
 
 const windowQuery = (from: string, to: string) => new URLSearchParams({ from, to }).toString();
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object';
-const isByteTotal = (v: unknown) => isObject(v) && ['total', 'measured', 'connections'].every((k) => typeof v[k] === 'number');
+// OLD CODE START — `partial` unchecked, so a reply without it showed an exact figure
+// const isByteTotal = (v: unknown) => isObject(v) && ['total', 'measured', 'connections'].every((k) => typeof v[k] === 'number');
+// OLD CODE END
+const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const isBoolean = (v: unknown): v is boolean => typeof v === 'boolean';
+const isByteTotal = (v: unknown) => isObject(v) && ['total', 'measured', 'connections'].every((k) => isNumber(v[k])) && isBoolean(v.partial);
+/** null (no indicators loaded) or a checked result; a missing field is malformed, not "not checked" */
+const isThreatIntel = (v: unknown) => v === null || (isObject(v) && isBoolean(v.matched) && Array.isArray(v.feeds) && isNumber(v.indicators));
 
 /** Everything the address page shows for `ip` in the window. */
 export async function getAddressSummary(ip: string, from: string, to: string): Promise<AddressSummary> {
 	const body = await getJson(`/api/addresses/${encodeURIComponent(ip)}?${windowQuery(from, to)}`, 'Address summary');
 	// Every part the page reads, so a malformed reply is an error, never a blank that reads as "none"
+	// OLD CODE START — flags, alerts and threat intel unchecked, so a reply missing them read as complete
+	// const ok =
+	// 	isObject(body) &&
+	// 	typeof body.connections === 'number' &&
+	// 	isByteTotal(body.bytes_to) &&
+	// 	isByteTotal(body.bytes_from) &&
+	// 	[body.peers, body.ports, body.timeline, body.tls_names].every(Array.isArray);
+	// OLD CODE END
 	const ok =
 		isObject(body) &&
-		typeof body.connections === 'number' &&
+		isNumber(body.connections) &&
+		isNumber(body.alerts) &&
+		isBoolean(body.lan) &&
 		isByteTotal(body.bytes_to) &&
 		isByteTotal(body.bytes_from) &&
-		[body.peers, body.ports, body.timeline, body.tls_names].every(Array.isArray);
+		[body.peers, body.ports, body.timeline, body.tls_names].every(Array.isArray) &&
+		[body.peers_complete, body.ports_complete, body.tls_complete].every(isBoolean) &&
+		isThreatIntel(body.threat_intel);
 	if (!ok) throw new Error('Address summary failed: the reply was malformed');
 	return body as unknown as AddressSummary;
 }
@@ -163,15 +182,35 @@ export async function getAddressSummary(ip: string, from: string, to: string): P
 /** Everything the domain page shows for `name` in the window. */
 export async function getDomainSummary(name: string, from: string, to: string): Promise<DomainSummary> {
 	const body = await getJson(`/api/domains/${encodeURIComponent(name)}?${windowQuery(from, to)}`, 'Domain summary');
+	// OLD CODE START — the counts under tls, http and alerts, and the complete flags, were cast unchecked
+	// const ok =
+	// 	isObject(body) &&
+	// 	isObject(body.dns) &&
+	// 	typeof body.dns.lookups === 'number' &&
+	// 	[body.dns.askers, body.dns.answers, body.dns.rcodes, body.dns.timeline].every(Array.isArray) &&
+	// 	isObject(body.tls) &&
+	// 	[body.tls.servers, body.tls.clients].every(Array.isArray) &&
+	// 	isObject(body.http) &&
+	// 	isObject(body.alerts);
+	// OLD CODE END
+	const { dns, tls, http, alerts } = isObject(body) ? body : ({} as Record<string, unknown>);
 	const ok =
-		isObject(body) &&
-		isObject(body.dns) &&
-		typeof body.dns.lookups === 'number' &&
-		[body.dns.askers, body.dns.answers, body.dns.rcodes, body.dns.timeline].every(Array.isArray) &&
-		isObject(body.tls) &&
-		[body.tls.servers, body.tls.clients].every(Array.isArray) &&
-		isObject(body.http) &&
-		isObject(body.alerts);
+		isObject(dns) &&
+		isNumber(dns.lookups) &&
+		(dns.addresses === null || isNumber(dns.addresses)) &&
+		[dns.askers, dns.answers, dns.rcodes, dns.timeline].every(Array.isArray) &&
+		[dns.askers_complete, dns.answers_complete].every(isBoolean) &&
+		isObject(tls) &&
+		isNumber(tls.sessions) &&
+		isObject(tls.statuses) &&
+		[tls.servers, tls.clients].every(Array.isArray) &&
+		[tls.servers_complete, tls.clients_complete].every(isBoolean) &&
+		isObject(http) &&
+		isNumber(http.requests) &&
+		isObject(alerts) &&
+		(alerts.tagged === null || isNumber(alerts.tagged)) &&
+		isNumber(alerts.alerts_in_window) &&
+		isNumber(alerts.with_host_field);
 	if (!ok) throw new Error('Domain summary failed: the reply was malformed');
 	return body as unknown as DomainSummary;
 }

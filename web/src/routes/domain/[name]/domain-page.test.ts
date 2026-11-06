@@ -111,9 +111,19 @@ describe('Domain page', () => {
 		expect(alerts).toHaveTextContent('Only 0 of 57 alerts in this window carry a host name.');
 		// a TXT answer is text, never a link
 		expect(screen.getByText('v=spf1 -all').closest('a')).toBeNull();
+		// a list cut at its cap says so in its subtitle too
+		expect(card('Devices that looked it up')).toHaveTextContent("First 1 device · lookups per device");
 		expect(screen.getByText(/Too many devices to list them all/)).toBeInTheDocument();
 		expect(screen.getByText(/Too many answers to list them all/)).toBeInTheDocument();
 		expectNoNestedInteractive(container);
+	});
+
+	it('lists the same answer twice without crashing the table', async () => {
+		const twice = DOMAIN.dns.answers[0];
+		stubDaemon({ ...DOMAIN, dns: { ...DOMAIN.dns, answers: [twice, { ...twice }] } });
+		render(Page);
+		await vi.waitFor(() => expect(kpi('Lookups')).toHaveTextContent('420'));
+		expect(within(card('What it resolved to')).getAllByRole('link', { name: twice.value })).toHaveLength(2);
 	});
 
 	it('shows empty states when nothing was looked up', async () => {
