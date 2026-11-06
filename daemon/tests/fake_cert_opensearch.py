@@ -1,9 +1,12 @@
 """Raw ssl/x509 documents behind the calls a certificate pass makes (NET-154).
 
 Answers create_pit / delete_pit, a session page sorted by _shard_doc and paged with
-search_after (also the after-expiry recount's chain and time filters), and the x509 details
-aggregation. `tamper(kind, reply)` can break a reply.
+search_after (also the after-expiry recount's chain and time filters, and the overview's
+site and server filters, NET-160), the x509 details aggregation, and the field mapping
+check. `tamper(kind, reply)` can break a reply.
 """
+
+from types import SimpleNamespace
 
 from datetime import datetime, timezone
 
@@ -70,6 +73,16 @@ class RawOpenSearch:
         self.pit_params: dict = {}
         self.bodies: list[dict] = []
         self.timeouts: list[float] = []
+        self.indices = SimpleNamespace(
+            get_field_mapping=lambda fields, index=None, **_: {
+                "arkime_sessions3-261105": {
+                    "mappings": {
+                        f: {"mapping": {f.rsplit(".", 1)[-1]: {"type": "keyword"}}}
+                        for f in fields.split(",")
+                    }
+                }
+            }
+        )
 
     def create_pit(self, index, **params):
         self.pit_params = params
@@ -115,12 +128,21 @@ class RawOpenSearch:
             for op, v in c.get("range", {}).get("@timestamp", {}).items()
             if op in ("gt", "gte", "lte")
         }
+        # NET-160: a site is a should of case-insensitive terms, a server a destination term
+        server = terms.get("destination.ip")
+        sites = {
+            t["term"]["zeek.ssl.server_name"]["value"].lower()
+            for c in filters
+            for t in c.get("bool", {}).get("should", [])
+        }
         docs = [
             (i, d)
             for i, d in enumerate(self.sessions)
             if d["chain"]
             and d["client"] not in excluded
             and (in_chain is None or in_chain & set(d["chain"]))
+            and (server is None or d["server"] == server)
+            and (not sites or (d["sni"] or "").lower() in sites)
             and ("gt" not in bounds or when(d["t"]) > bounds["gt"])
             and ("gte" not in bounds or when(d["t"]) >= bounds["gte"])
             and ("lte" not in bounds or when(d["t"]) <= bounds["lte"])

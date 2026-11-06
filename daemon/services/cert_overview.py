@@ -24,6 +24,7 @@ from typing import Any, Callable, Iterator
 
 from services import cert_findings
 from services.excluded_ips import build_excluded_ips_filter
+from services.hostnames import name_match, require_keyword
 from storage import snapshot_search
 from storage.snapshot_search import QueryFailed, TooSlow
 
@@ -473,8 +474,14 @@ class CertOverview:
         budget: Budget | None = None,
         pit_id: str | None = None,
         now: datetime | None = None,
+        site: str | None = None,
+        server: str | None = None,
     ) -> dict[str, Any]:
-        """Every figure the Certificates page shows, over complete data for [from_ts, to_ts]."""
+        """Every figure the Certificates page shows, over complete data for [from_ts, to_ts].
+
+        `site` (a canonical host name) and `server` (a canonical IP) narrow the sessions
+        before anything is tallied, so every figure describes exactly those (NET-160).
+        """
         budget = budget or Budget()
         query: dict = {
             "bool": {
@@ -494,6 +501,11 @@ class CertOverview:
                 ]
             }
         }
+        if site:
+            require_keyword(self._client, [_SESSION_FIELDS[0]], budget)
+            query["bool"]["filter"].append(name_match(_SESSION_FIELDS[0], site))
+        if server:
+            query["bool"]["filter"].append({"term": {"destination.ip": server}})
         excluded = build_excluded_ips_filter(excluded_ips or [])
         if excluded:
             query["bool"]["must_not"] = excluded
