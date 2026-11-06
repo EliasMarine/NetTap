@@ -11,7 +11,9 @@ from typing import Any, Callable
 
 from aiohttp import web
 
+from api.drilldown_runner import ip_param
 from api.time_range import parse_time_range
+from services.hostnames import canonical_name
 from services.cert_monitor import CertificateMonitor, CertQueryFailed
 from services.cert_overview import (
     Budget,
@@ -318,13 +320,33 @@ async def handle_cert_stats(request: web.Request) -> web.Response:
 
 
 async def handle_certificate_overview(request: web.Request) -> web.Response:
-    """GET /api/certificates/overview?from=&to= — Every figure the Certificates page shows."""
+    """GET /api/certificates/overview?from=&to=&site=&server= — Every figure the Certificates
+    page shows; `site` (a host name) and `server` (an IP) narrow it to those sessions (NET-160)."""
+    # OLD CODE START — NET-160: no site/server narrowing
+    # monitor: CertificateMonitor = request.app["cert_monitor"]
+    # from_ts, to_ts = _parse_time_range(request)
+    # excluded = request.app.get("excluded_ips", [])
+    # return await _run(
+    #     request,
+    #     lambda b: paginate(monitor.overview(from_ts, to_ts, excluded, b), _ROW_LIMIT),
+    # )
+    # OLD CODE END
     monitor: CertificateMonitor = request.app["cert_monitor"]
     from_ts, to_ts = _parse_time_range(request)
     excluded = request.app.get("excluded_ips", [])
+    raw_site, raw_server = request.query.get("site"), request.query.get("server")
+    site = canonical_name(raw_site) if raw_site else None
+    server = ip_param(raw_server) if raw_server else None
+    if raw_site and site is None:
+        return web.json_response({"error": "site must be a host name"}, status=400)
+    if raw_server and server is None:
+        return web.json_response({"error": "server must be an IP address"}, status=400)
     return await _run(
         request,
-        lambda b: paginate(monitor.overview(from_ts, to_ts, excluded, b), _ROW_LIMIT),
+        lambda b: paginate(
+            monitor.overview(from_ts, to_ts, excluded, b, site=site, server=server),
+            _ROW_LIMIT,
+        ),
     )
 
 

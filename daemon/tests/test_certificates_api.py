@@ -134,3 +134,56 @@ class TestCertificateOverviewEndpoint(AioHTTPTestCase):
             self.assertIn("already being worked out", (await resp.json())["error"])
         finally:
             lock.release()
+
+
+class TestCertificateOverviewNarrowed(AioHTTPTestCase):
+    """NET-160: ?site= and ?server= narrow the sessions before anything is tallied or cut."""
+
+    WINDOW = "from=2026-11-05T00:00:00Z&to=2026-11-05T12:00:00Z"
+
+    async def get_application(self):
+        sessions = [
+            # one name served by two addresses, each with its own certificate
+            ssl(["A"], sni="shop.example.com", server="93.184.216.34"),
+            ssl(["B"], sni="Shop.Example.com.", server="93.184.216.35"),
+            ssl(["B"], sni="shop.example.com", server="93.184.216.35"),
+            # busier sites that fill a capped unfiltered list
+            *[ssl(["C"], sni="busy.com") for _ in range(3)],
+            *[ssl(["D"], sni="busier.com") for _ in range(4)],
+        ]
+        self.os = RawOpenSearch(sessions, [x509(fp) for fp in "ABCD"])
+        app = web.Application()
+        register_certificate_routes(app, CertificateMonitor(self.os))
+        return app
+
+    async def overview(self, query, status=200):
+        resp = await self.client.get(
+            f"/api/certificates/overview?{self.WINDOW}&{query}"
+        )
+        self.assertEqual(resp.status, status, await resp.text())
+        return await resp.json()
+
+    async def test_site_and_server_show_only_that_servers_certificate(self):
+        body = await self.overview("site=shop.example.com&server=93.184.216.35")
+        self.assertEqual(body["summary"]["sessions"], 2)
+        self.assertEqual(set(body["details"]), {"B"})
+        site_only = await self.overview("site=SHOP.example.com.")
+        self.assertEqual(site_only["summary"]["sessions"], 3)  # both forms, any case
+        self.assertEqual(set(site_only["details"]), {"A", "B"})
+
+    async def test_a_site_past_the_row_cap_is_still_reached(self):
+        with patch("api.certificates._ROW_LIMIT", 2):
+            everything = await self.overview("")
+            narrowed = await self.overview("site=shop.example.com")
+        self.assertNotIn("shop.example.com", [s["name"] for s in everything["sites"]])
+        self.assertTrue(everything["sites_truncated"])
+        # the page keeps each spelling the network sent as its own site row
+        self.assertEqual(
+            {s["name"].lower().rstrip(".") for s in narrowed["sites"]},
+            {"shop.example.com"},
+        )
+
+    async def test_a_bad_site_or_server_is_a_400(self):
+        for query in ("site=bad..name", "server=example.com", "server=10.0.0.0/8"):
+            self.assertIn("error", await self.overview(query, status=400))
+        self.assertEqual(self.os.bodies, [])

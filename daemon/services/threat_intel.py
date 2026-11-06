@@ -131,6 +131,16 @@ class ThreatIntelService:
             self._ip_sets[feed_id] = set()
         self._ip_sets[feed_id].update(ips)
 
+    @property
+    def indicator_count(self) -> int:
+        """Indicators held across every feed."""
+        return sum(len(ips) for ips in self._ip_sets.values())
+
+    @property
+    def available(self) -> bool:
+        """At least one indicator to check against (_loaded only says a cache file was read)."""
+        return self.indicator_count > 0
+
     def lookup_ip(self, ip: str) -> list[dict]:
         """Check IP against all loaded feeds."""
         hits = []

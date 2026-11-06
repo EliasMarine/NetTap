@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.drilldown_runner import ip_param
 from api.time_range import parse_time_range
 from api.devices import _CONNECTION_SORT_FIELDS, _connection_sort
 from services.excluded_ips import build_excluded_ips_filter
@@ -617,7 +618,7 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
 
 
 async def handle_connections(request: web.Request) -> web.Response:
-    """GET /api/traffic/connections?from=&to=&page=1&size=50&q=&sort=time&order=desc&state=all
+    """GET /api/traffic/connections?from=&to=&page=1&size=50&q=&ip=&sort=time&order=desc&state=all
 
     Returns a paginated list of Zeek connection log entries with optional
     full-text search, sorted by any of the page's columns and filtered by
@@ -666,6 +667,28 @@ async def handle_connections(request: web.Request) -> web.Response:
                     "query": search_query,
                     "default_operator": "AND",
                     "analyze_wildcard": True,
+                }
+            }
+        )
+
+    # NET-160: one address on either side, as a structured filter; in `q` an IPv6 colon is
+    # query syntax and any field could match
+    raw_ip = request.query.get("ip", "").strip()
+    if raw_ip:
+        ip = ip_param(raw_ip)
+        if ip is None:
+            return web.json_response(
+                {"error": "ip must be one IP address, such as 192.168.1.20"},
+                status=400,
+            )
+        filter_clauses.append(
+            {
+                "bool": {
+                    "should": [
+                        {"term": {"source.ip": ip}},
+                        {"term": {"destination.ip": ip}},
+                    ],
+                    "minimum_should_match": 1,
                 }
             }
         )
