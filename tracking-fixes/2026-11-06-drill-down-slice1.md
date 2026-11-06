@@ -52,15 +52,24 @@ Before this change:
 - `services/threat_intel.py`: an `available` property.
 - `scripts/remote/deploy-drill-down.sh` checks on the device.
 
-**Web (branch `feature/drill-down-web`)**
-- To be filled in from the web agent's report.
+**Web (branch `feature/drill-down-web`, 12 commits)**
+- `lib/stores/lan.ts`: the daemon's LAN rule, fetched once and every 5 minutes. Until it loads, an IP links nowhere rather than guessing.
+- `IPAddress.svelte`: every IP is a link (LAN → `/devices/<ip>`, otherwise `/address/<ip>`). The right-click menu sits beside the link, not inside it, so there is no nested interactive element. `linked={false}` keeps plain text where a link makes no sense.
+- `lib/utils/drilldown.ts`: `ipHref`, `domainHref`, `certificatesHref`, used by every page.
+- New pages `/address/[ip]` and `/domain/[name]`. Every list says when it stopped at its cap, a withheld KPI says why, and a byte total nobody recorded reads "Not measured".
+- Connections sends `ip` as its own parameter and reads `?ip=` when the URL changes.
+- Certificates opens on `?site=&server=&from=&to=`.
+- Links fixed: Alerts' top destinations, the Connections menu, DNS recon `?domain=`.
+- The sidebar gains Investigations and Security posture.
+- The catch-all proxy gives `/api/addresses` and `/api/domains` 30 s; the explicit `/api/traffic/connections` proxy forwards `ip`.
+- Visual fixtures for both pages; DESIGN-SYSTEM.md states the link rules.
 
 **Tests**
-- Daemon: 3,111 passed, 1 skipped (was 3,053). ruff clean.
-- Web: pending.
+- Daemon: 3,112 passed, 1 skipped (was 3,053). ruff clean.
+- Web: 3,118 passed (was 3,006). svelte-check 0 errors. Colour gate clean. e2e tsc ok.
 
 **Still to do**
-- Web half, merge, every suite, `/deep-review`, `/ponytail-review`, the two-angle review, the PR, then the device check.
+- `/deep-review`, `/ponytail-review`, the two-angle review, the PR, then the device check.
 
 **Lessons**
 - An explicit proxy with a parameter allowlist silently drops new parameters. Check every `+server.ts` between the page and the daemon when an API gains one. Codex caught this in round 4.
