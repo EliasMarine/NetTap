@@ -161,3 +161,43 @@ describe('Bandwidth — refresh contract', () => {
 		expect(await refreshPage()).toBe('failed');
 	});
 });
+
+describe('Bandwidth — one month window and the device cap', () => {
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	/** The query of every request to `path`. */
+	const queries = (path: string) =>
+		vi.mocked(fetch).mock.calls.map(([u]) => String(u)).filter((u) => u.startsWith(path)).map((u) => new URL(u, 'http://x').searchParams);
+
+	it('O5: every request uses the UTC month of one captured now, also across a year rollover', async () => {
+		// 23:30 UTC on 31 December: still December in UTC, January already east of UTC
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date('2026-12-31T23:30:00Z'));
+		stubDaemon(ALL);
+		render(Page);
+		await screen.findByText('Projected');
+		const [monthly] = queries('/api/bandwidth/monthly');
+		expect([monthly.get('year'), monthly.get('month')]).toEqual(['2026', '12']);
+		for (const path of ['/api/bandwidth/daily', '/api/bandwidth/devices']) {
+			const [q] = queries(path);
+			expect([q.get('from'), q.get('to')]).toEqual(['2026-12-01T00:00:00.000Z', '2026-12-31T23:30:00.000Z']);
+		}
+	});
+
+	it("O4: asks for the daemon's 200 and says top 200 only when the list is full", async () => {
+		const full = { from: '', to: '', devices: Array.from({ length: 200 }, (_, i) => ({ ...DEVICES.devices[0], ip: `10.0.${i >> 8}.${i & 255}` })) };
+		stubDaemon({ ...ALL, '/api/bandwidth/devices': full });
+		render(Page);
+		expect(await screen.findByText('This month · top 200 devices')).toBeInTheDocument();
+		expect(queries('/api/bandwidth/devices')[0].get('limit')).toBe('200');
+	});
+
+	it('O4: a short list states its own count', async () => {
+		stubDaemon(ALL);
+		render(Page);
+		expect(await screen.findByText('This month · 2 devices')).toBeInTheDocument();
+	});
+});

@@ -89,6 +89,16 @@ function buildQuery(params: Record<string, string | number | undefined>): string
 	return str ? `?${str}` : '';
 }
 
+/**
+ * "This month" as the daemon counts it: the UTC calendar month containing `now`, from its first
+ * instant to `now`. One window for every request on the page, so the KPI, chart and table agree.
+ */
+export function utcMonthWindow(now: Date): { year: number; month: number; from: string; to: string } {
+	const year = now.getUTCFullYear();
+	const month = now.getUTCMonth();
+	return { year, month: month + 1, from: new Date(Date.UTC(year, month, 1)).toISOString(), to: now.toISOString() };
+}
+
 // ---------------------------------------------------------------------------
 // Fetch helpers
 // ---------------------------------------------------------------------------
