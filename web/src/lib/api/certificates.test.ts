@@ -191,6 +191,17 @@ describe('certificates API client', () => {
 			expect(url).toBe('/api/certificates/overview?from=2026-11-05T00%3A00%3A00Z&to=2026-11-05T12%3A00%3A00Z');
 		});
 
+		it('asks for one site and server when filtered (NET-160)', async () => {
+			mockFetchSuccess(overview);
+			await getCertificateOverview('a', 'b', { site: 'www.example.com', server: '2001:db8::1' });
+			const url = new URL(vi.mocked(fetch).mock.calls[0][0] as string, 'http://x');
+			expect(url.pathname).toBe('/api/certificates/overview');
+			expect(Object.fromEntries(url.searchParams)).toEqual({ from: 'a', to: 'b', site: 'www.example.com', server: '2001:db8::1' });
+			mockFetchSuccess(overview);
+			await getCertificateOverview('a', 'b', { site: null, server: '' });
+			expect(vi.mocked(fetch).mock.calls.at(-1)?.[0]).toBe('/api/certificates/overview?from=a&to=b');
+		});
+
 		it("throws with the daemon's reason, so the page can say why", async () => {
 			mockFetchSuccess({ error: 'Working out certificate data for this window took too long. Try a shorter window.' }, 503);
 			await expect(getCertificateOverview('a', 'b')).rejects.toThrow('took too long');
