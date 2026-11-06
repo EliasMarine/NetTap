@@ -1,10 +1,11 @@
 """The drill-down pages' shared request plumbing (NET-160).
 
-run_drilldown is api/certificates.py's `_run` with room for two: at most DRILL_SLOTS
-drill-downs run at once, each in a worker thread inside one budget that starts when the
-request arrives, so time spent queueing counts and the event loop (and /api/health) never
-waits on OpenSearch. A permit is held until its worker ends, even when the client gave up,
-so a cancelled request can never let a third scan start.
+run_in_slot is shared with the certificate pass (api/certificates.py): the work runs in a
+worker thread once a slot is free, inside one budget that starts when the request arrives,
+so time spent queueing counts and the event loop (and /api/health) never waits on
+OpenSearch. A slot is held until its worker ends, even when the client gave up, so a
+cancelled request can never let another scan start. run_drilldown gives the address and
+domain pages DRILL_SLOTS of them and maps failures to replies.
 """
 
 import asyncio
@@ -12,7 +13,7 @@ import ipaddress
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, TypeVar
 
 from aiohttp import web
 
@@ -29,10 +30,24 @@ from storage.time_slots import histogram_buckets, time_slots
 logger = logging.getLogger("nettap.api.drilldown")
 
 DRILL_SLOTS = 2
-BUDGET_SECONDS = 25.0  # the web proxy gives these paths 30 s
+# OLD CODE START — NET-160 review: the last search gets at least 1 s and closing the PIT up to
+# PIT_CLOSE_SECONDS more, so a 25 s budget could answer at ~31 s, after the 30 s web proxy gave up
+# BUDGET_SECONDS = 25.0  # the web proxy gives these paths 30 s
+# OLD CODE END
+BUDGET_SECONDS = (
+    20.0  # + 1 s last search + 5 s PIT close stays under the 30 s web proxy
+)
+LIST_CAP = 5_000  # rows per drill-down list; past it the list says it is incomplete
 
 _BUSY = "Two other look-ups are being worked out right now; try again in a minute."
 _SLOW = "Working this out took too long. Try a shorter time range."
+_BROKEN = "Something went wrong working this out; the daemon log has the details."
+
+T = TypeVar("T")
+
+
+class SlotBusy(Exception):
+    """No slot came free within the request's budget."""
 
 
 def json_error(message: str, status: int) -> web.Response:
@@ -58,14 +73,38 @@ def lan_check(app: web.Application) -> Callable[[str], bool]:
     return is_lan
 
 
-def window_filter(from_ts: str, to_ts: str) -> dict:
+# OLD CODE START — NET-160 review: the same filter as api/alerts.py's _time_range_filter
+# def window_filter(from_ts: str, to_ts: str) -> dict:
+#     return {
+#         "range": {
+#             "@timestamp": {
+#                 "gte": from_ts,
+#                 "lte": to_ts,
+#                 "format": "strict_date_optional_time",
+#             }
+#         }
+#     }
+# OLD CODE END
+LAST_SEEN = {"last": {"max": {"field": "@timestamp"}}}
+
+
+def zeek(dataset: str) -> list[dict]:
+    """The filters for one Zeek log (conn, dns, ssl, http)."""
+    return [
+        {"term": {"event.provider": "zeek"}},
+        {"term": {"event.dataset": dataset}},
+    ]
+
+
+def either_side(ip: str) -> dict:
+    """The address as source or destination."""
     return {
-        "range": {
-            "@timestamp": {
-                "gte": from_ts,
-                "lte": to_ts,
-                "format": "strict_date_optional_time",
-            }
+        "bool": {
+            "should": [
+                {"term": {"source.ip": ip}},
+                {"term": {"destination.ip": ip}},
+            ],
+            "minimum_should_match": 1,
         }
     }
 
@@ -100,38 +139,89 @@ def install(app: web.Application, client: Any) -> None:
     app.setdefault("drill_slots", asyncio.Semaphore(DRILL_SLOTS))
 
 
-async def run_drilldown(
-    request: web.Request, work: Callable[[Budget], dict], subject: str
-) -> web.Response:
-    """`work(budget)` in a worker thread under a permit; 502 or 503 with a reason on failure.
+async def run_in_slot(
+    slot: asyncio.Semaphore | asyncio.Lock, budget: Budget, work: Callable[[], T]
+) -> T:
+    """`work()` in a worker thread once `slot` is free; SlotBusy if not within the budget.
 
-    QueryFailed is a 502 (OpenSearch failed or a figure could not be made exact), running
-    out of budget or permits a 503. A partial reply is never sent (#96).
+    The slot is released when the thread finishes, even when the caller gave up first.
     """
-    budget = Budget(BUDGET_SECONDS)
-    slots: asyncio.Semaphore = request.app["drill_slots"]
     try:
-        await asyncio.wait_for(slots.acquire(), timeout=max(0.0, budget.remaining()))
+        await asyncio.wait_for(slot.acquire(), timeout=max(0.0, budget.remaining()))
     except asyncio.TimeoutError:
-        logger.warning("Drill-down for %s: no free slot within its budget", subject)
-        return json_error(_BUSY, 503)
+        raise SlotBusy from None
 
     def release(done: asyncio.Future) -> None:
-        slots.release()
+        slot.release()
         if not done.cancelled():
             done.exception()  # retrieved here when the request was cancelled before it finished
 
-    future = asyncio.get_running_loop().run_in_executor(
-        None, lambda: json.dumps(work(budget))
-    )
-    # The permit is held until the thread finishes, even when the client gives up first
+    future = asyncio.get_running_loop().run_in_executor(None, work)
     future.add_done_callback(release)
+    return await asyncio.shield(future)
+
+
+# OLD CODE START — NET-160 review: the slot handling moved to run_in_slot, shared with
+# api/certificates.py; any other exception became a bare text 500
+# async def run_drilldown(
+#     request: web.Request, work: Callable[[Budget], dict], subject: str
+# ) -> web.Response:
+#     """`work(budget)` in a worker thread under a permit; 502 or 503 with a reason on failure.
+#
+#     QueryFailed is a 502 (OpenSearch failed or a figure could not be made exact), running
+#     out of budget or permits a 503. A partial reply is never sent (#96).
+#     """
+#     budget = Budget(BUDGET_SECONDS)
+#     slots: asyncio.Semaphore = request.app["drill_slots"]
+#     try:
+#         await asyncio.wait_for(slots.acquire(), timeout=max(0.0, budget.remaining()))
+#     except asyncio.TimeoutError:
+#         logger.warning("Drill-down for %s: no free slot within its budget", subject)
+#         return json_error(_BUSY, 503)
+#
+#     def release(done: asyncio.Future) -> None:
+#         slots.release()
+#         if not done.cancelled():
+#             done.exception()  # retrieved here when the request was cancelled before it finished
+#
+#     future = asyncio.get_running_loop().run_in_executor(
+#         None, lambda: json.dumps(work(budget))
+#     )
+#     # The permit is held until the thread finishes, even when the client gives up first
+#     future.add_done_callback(release)
+#     try:
+#         body = await asyncio.shield(future)
+#     except TooSlow as exc:
+#         logger.warning("Drill-down for %s ran out of time: %s", subject, exc)
+#         return json_error(_SLOW, 503)
+#     except QueryFailed as exc:
+#         logger.error("Drill-down for %s failed: %s", subject, exc)
+#         return json_error(f"Couldn't read the network data: {exc}.", 502)
+#     return web.Response(text=body, content_type="application/json")
+# OLD CODE END
+async def run_drilldown(
+    request: web.Request, work: Callable[[Budget], dict], subject: str
+) -> web.Response:
+    """`work(budget)` in a worker thread under a permit; an error reply with a reason on failure.
+
+    QueryFailed is a 502 (OpenSearch failed or a figure could not be made exact), running
+    out of budget or permits a 503, anything else a 500. A partial reply is never sent (#96).
+    """
+    budget = Budget(BUDGET_SECONDS)
     try:
-        body = await asyncio.shield(future)
+        body = await run_in_slot(
+            request.app["drill_slots"], budget, lambda: json.dumps(work(budget))
+        )
+    except SlotBusy:
+        logger.warning("Drill-down for %s: no free slot within its budget", subject)
+        return json_error(_BUSY, 503)
     except TooSlow as exc:
         logger.warning("Drill-down for %s ran out of time: %s", subject, exc)
         return json_error(_SLOW, 503)
     except QueryFailed as exc:
         logger.error("Drill-down for %s failed: %s", subject, exc)
         return json_error(f"Couldn't read the network data: {exc}.", 502)
+    except Exception:
+        logger.exception("Drill-down for %s failed unexpectedly", subject)
+        return json_error(_BROKEN, 500)
     return web.Response(text=body, content_type="application/json")

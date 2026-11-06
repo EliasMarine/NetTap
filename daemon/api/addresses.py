@@ -6,7 +6,8 @@ No excluded-IP filter: exclusions act on the source side only, so they would bia
 direction and disagree with the connections table under this page (api/devices.py).
 
 A connection is "to it" when the address is the destination, "from it" otherwise; a
-connection from the address to itself is counted once, on the "to it" side.
+connection from the address to itself is counted once, on the "to it" side, and the
+address is never its own peer.
 """
 
 import logging
@@ -16,9 +17,16 @@ from typing import Any, Callable
 
 from aiohttp import web
 
-from api.alerts import _SURICATA_ALERT_FILTERS, SURICATA_NOISE_EXCLUSION
+from api.alerts import (
+    _SURICATA_ALERT_FILTERS,
+    SURICATA_NOISE_EXCLUSION,
+    _time_range_filter,
+)
 from api.drilldown_runner import (
+    LAST_SEEN,
+    LIST_CAP,
     chart_slots,
+    either_side,
     install,
     ip_param,
     iso_ms,
@@ -26,10 +34,17 @@ from api.drilldown_runner import (
     lan_check,
     run_drilldown,
     timeline,
-    window_filter,
+    zeek,
 )
 from api.time_range import parse_time_range
-from services.threat_intel import ThreatIntelService
+from services.hostnames import canonical_name
+from services.threat_intel import (
+    ALERT_FEED,
+    LISTING_RULES,
+    ThreatIntelService,
+    feed_hit,
+    listed_endpoint,
+)
 from storage.snapshot_search import (
     NETWORK_INDEX,
     Budget,
@@ -41,8 +56,12 @@ from storage.snapshot_search import (
 logger = logging.getLogger("nettap.api.addresses")
 
 _DEFAULT_RANGE = timedelta(hours=24)
-_CONN = [{"term": {"event.provider": "zeek"}}, {"term": {"event.dataset": "conn"}}]
-_SSL = [{"term": {"event.provider": "zeek"}}, {"term": {"event.dataset": "ssl"}}]
+# OLD CODE START — NET-160 review: built by the shared zeek()
+# _CONN = [{"term": {"event.provider": "zeek"}}, {"term": {"event.dataset": "conn"}}]
+# _SSL = [{"term": {"event.provider": "zeek"}}, {"term": {"event.dataset": "ssl"}}]
+# OLD CODE END
+_CONN = zeek("conn")
+_SSL = zeek("ssl")
 # Each sum ships with how many records had the field: a missing value is not a 0
 _BYTES = {
     "src": {"sum": {"field": "source.bytes"}},
@@ -50,7 +69,11 @@ _BYTES = {
     "dst": {"sum": {"field": "destination.bytes"}},
     "dst_n": {"value_count": {"field": "destination.bytes"}},
 }
-_LAST = {"last": {"max": {"field": "@timestamp"}}}
+# OLD CODE START — NET-160 review: the shared LAST_SEEN
+# _LAST = {"last": {"max": {"field": "@timestamp"}}}
+# OLD CODE END
+# The services Zeek saw on a port: a handful, and groups() fails rather than cut them
+_SERVICES = {"services": {"terms": {"field": "network.protocol", "size": 50}}}
 
 
 # ---------------------------------------------------------------------------
@@ -99,8 +122,11 @@ def _sides(ip: str) -> tuple[dict, dict]:
 
 def _totals(snap: SnapshotSearch, ip: str, window: dict, slots: dict) -> dict:
     to_it, from_it = _sides(ip)
-    sides = [{"term": {"source.ip": ip}}, to_it]
-    either = {"bool": {"should": sides, "minimum_should_match": 1}}
+    # OLD CODE START — NET-160 review: the shared either_side()
+    # sides = [{"term": {"source.ip": ip}}, to_it]
+    # either = {"bool": {"should": sides, "minimum_should_match": 1}}
+    # OLD CODE END
+    either = either_side(ip)
     what = "address totals"
     reply = snap.search(
         {
@@ -151,6 +177,31 @@ def _peer_row(ip: str, parts: list[tuple], is_lan: Callable[[str], bool]) -> dic
     }
 
 
+# OLD CODE START — NET-160 review: the address was listed as its own peer, and lists ran to 100,000 rows
+# def _peers(
+#     snap: SnapshotSearch, ip: str, window: dict, is_lan: Callable[[str], bool]
+# ) -> tuple[list[dict], bool]:
+#     to_it, from_it = _sides(ip)
+#     what = "address peers"
+#     parts: dict[str, list[tuple]] = {}
+#     complete = True
+#     for side, peer_field, peer_opened in (
+#         (to_it, "source.ip", True),
+#         (from_it, "destination.ip", False),
+#     ):
+#         buckets, done = snap.groups(
+#             {"bool": {"filter": [window, *_CONN, side]}},
+#             [{"ip": {"terms": {"field": peer_field}}}],
+#             {**_BYTES, **_LAST},
+#             what,
+#         )
+#         complete = complete and done
+#         for b in buckets:
+#             row = (doc_count(b, what), *_directed(b, peer_opened, what))
+#             parts.setdefault(b["key"]["ip"], []).append((*row, metric(b, "last", what)))
+#     rows = [_peer_row(peer, p, is_lan) for peer, p in parts.items()]
+#     return sorted(rows, key=lambda r: (-r["connections"], r["ip"])), complete
+# OLD CODE END
 def _peers(
     snap: SnapshotSearch, ip: str, window: dict, is_lan: Callable[[str], bool]
 ) -> tuple[list[dict], bool]:
@@ -165,19 +216,41 @@ def _peers(
         buckets, done = snap.groups(
             {"bool": {"filter": [window, *_CONN, side]}},
             [{"ip": {"terms": {"field": peer_field}}}],
-            {**_BYTES, **_LAST},
+            {**_BYTES, **LAST_SEEN},
             what,
+            max_buckets=LIST_CAP,
         )
         complete = complete and done
         for b in buckets:
             row = (doc_count(b, what), *_directed(b, peer_opened, what))
             parts.setdefault(b["key"]["ip"], []).append((*row, metric(b, "last", what)))
-    rows = [_peer_row(peer, p, is_lan) for peer, p in parts.items()]
+    # A connection to itself stays in the totals; the address is not its own peer
+    rows = [_peer_row(peer, p, is_lan) for peer, p in parts.items() if peer != ip]
     return sorted(rows, key=lambda r: (-r["connections"], r["ip"])), complete
 
 
+# OLD CODE START — NET-160 review: grouping on network.protocol counted a connection Zeek logged with two services (quic,ssl) once per service
+# def _ports(snap: SnapshotSearch, ip: str, window: dict) -> tuple[list[dict], bool]:
+#     """The ports on this address the network reached (it is the destination)."""
+#     buckets, complete = snap.groups(
+#         {"bool": {"filter": [window, *_CONN, {"term": {"destination.ip": ip}}]}},
+#         [
+#             {name: {"terms": {"field": field, "missing_bucket": True}}}
+#             for name, field in (
+#                 ("port", "destination.port"),
+#                 ("transport", "network.transport"),
+#                 ("service", "network.protocol"),
+#             )
+#         ],
+#         None,
+#         "address ports",
+#     )
+#     rows = [{**b["key"], "connections": doc_count(b, "address ports")} for b in buckets]
+#     return sorted(rows, key=lambda r: -r["connections"]), complete
+# OLD CODE END
 def _ports(snap: SnapshotSearch, ip: str, window: dict) -> tuple[list[dict], bool]:
-    """The ports on this address the network reached (it is the destination)."""
+    """The ports on this address the network reached (it is the destination), each with
+    the services Zeek saw on it, most common first."""
     buckets, complete = snap.groups(
         {"bool": {"filter": [window, *_CONN, {"term": {"destination.ip": ip}}]}},
         [
@@ -185,18 +258,66 @@ def _ports(snap: SnapshotSearch, ip: str, window: dict) -> tuple[list[dict], boo
             for name, field in (
                 ("port", "destination.port"),
                 ("transport", "network.transport"),
-                ("service", "network.protocol"),
             )
         ],
-        None,
+        _SERVICES,
         "address ports",
+        max_buckets=LIST_CAP,
     )
-    rows = [{**b["key"], "connections": doc_count(b, "address ports")} for b in buckets]
+    rows = [
+        {
+            "port": b["key"]["port"],
+            "transport": b["key"]["transport"],
+            "services": [s["key"] for s in b["services"]["buckets"]],
+            "connections": doc_count(b, "address ports"),
+        }
+        for b in buckets
+    ]
     return sorted(rows, key=lambda r: -r["connections"]), complete
 
 
+# OLD CODE START — NET-160 review: Example.com and example.com. were separate rows
+# def _tls_names(snap: SnapshotSearch, ip: str, window: dict) -> tuple[list[dict], bool]:
+#     """The names TLS clients asked this address for, with how each session validated."""
+#     buckets, complete = snap.groups(
+#         {"bool": {"filter": [window, *_SSL, {"term": {"destination.ip": ip}}]}},
+#         [
+#             {
+#                 "name": {
+#                     "terms": {"field": "zeek.ssl.server_name", "missing_bucket": True}
+#                 }
+#             },
+#             {
+#                 "status": {
+#                     "terms": {
+#                         "field": "zeek.ssl.validation_status",
+#                         "missing_bucket": True,
+#                     }
+#                 }
+#             },
+#         ],
+#         None,
+#         "address TLS names",
+#     )
+#     names: dict[Any, Counter] = {}
+#     for b in buckets:
+#         status = b["key"]["status"] or "unchecked"
+#         names.setdefault(b["key"]["name"], Counter())[status] += doc_count(
+#             b, "TLS names"
+#         )
+#     rows = [
+#         {"name": name, "sessions": sum(st.values()), "statuses": dict(st)}
+#         for name, st in names.items()
+#     ]
+#     return sorted(rows, key=lambda r: -r["sessions"]), complete
+# OLD CODE END
 def _tls_names(snap: SnapshotSearch, ip: str, window: dict) -> tuple[list[dict], bool]:
-    """The names TLS clients asked this address for, with how each session validated."""
+    """The names TLS clients asked this address for, with how each session validated.
+
+    Spellings of one host name are one row (canonical form); a value that isn't a host
+    name stays as sent, and no name at all stays its own row. A session has one name, so
+    the merged counts are exact.
+    """
     buckets, complete = snap.groups(
         {"bool": {"filter": [window, *_SSL, {"term": {"destination.ip": ip}}]}},
         [
@@ -216,13 +337,14 @@ def _tls_names(snap: SnapshotSearch, ip: str, window: dict) -> tuple[list[dict],
         ],
         None,
         "address TLS names",
+        max_buckets=LIST_CAP,
     )
     names: dict[Any, Counter] = {}
     for b in buckets:
+        raw = b["key"]["name"]
+        name = None if raw is None else canonical_name(raw) or raw
         status = b["key"]["status"] or "unchecked"
-        names.setdefault(b["key"]["name"], Counter())[status] += doc_count(
-            b, "TLS names"
-        )
+        names.setdefault(name, Counter())[status] += doc_count(b, "TLS names")
     rows = [
         {"name": name, "sessions": sum(st.values()), "statuses": dict(st)}
         for name, st in names.items()
@@ -232,15 +354,13 @@ def _tls_names(snap: SnapshotSearch, ip: str, window: dict) -> tuple[list[dict],
 
 def _alerts(snap: SnapshotSearch, ip: str, window: dict) -> int:
     """Suricata alerts with the address on either side, counted as /api/alerts?ip= lists them."""
-    either = [{"term": {"source.ip": ip}}, {"term": {"destination.ip": ip}}]
+    # OLD CODE START — NET-160 review: the shared either_side()
+    # either = [{"term": {"source.ip": ip}}, {"term": {"destination.ip": ip}}]
+    # OLD CODE END
     return snap.count(
         {
             "bool": {
-                "filter": [
-                    window,
-                    *_SURICATA_ALERT_FILTERS,
-                    {"bool": {"should": either, "minimum_should_match": 1}},
-                ],
+                "filter": [window, *_SURICATA_ALERT_FILTERS, either_side(ip)],
                 "must_not": SURICATA_NOISE_EXCLUSION,
             }
         },
@@ -248,16 +368,103 @@ def _alerts(snap: SnapshotSearch, ip: str, window: dict) -> int:
     )
 
 
-def threat_intel(ip: str) -> dict | None:
-    """None when no indicator is loaded yet; otherwise whether any feed lists the address."""
+def _listed_by_alerts(snap: SnapshotSearch, ip: str, window: dict) -> bool | None:
+    """Whether a listing rule fired in the window with this address as the alert's listed
+    host, by the rule the Threats page learns indicators with (services/threat_intel.py).
+
+    None when there were too many address pairs to check them all.
+    """
+    pairs, complete = snap.groups(
+        {
+            "bool": {
+                "filter": [
+                    window,
+                    *_SURICATA_ALERT_FILTERS,
+                    LISTING_RULES,
+                    either_side(ip),
+                ]
+            }
+        },
+        [
+            {"src": {"terms": {"field": "source.ip"}}},
+            {"dst": {"terms": {"field": "destination.ip"}}},
+        ],
+        None,
+        "address listing alerts",
+        max_buckets=LIST_CAP,
+    )
+    if any(listed_endpoint(b["key"]["src"], b["key"]["dst"]) == ip for b in pairs):
+        return True
+    return False if complete else None
+
+
+# OLD CODE START — NET-160 review: the cache holds only what someone scanned on the Threats page, so "not on a list" could sit next to a listing alert on this page
+# def threat_intel(ip: str) -> dict | None:
+#     """None when no indicator is loaded yet; otherwise whether any feed lists the address."""
+#     ti = ThreatIntelService()
+#     ti.load_cache()
+#     if not ti.available:
+#         return None
+#     hits = ti.lookup_ip(ip)
+#     return {"matched": bool(hits), "feeds": hits, "indicators": ti.indicator_count}
+# OLD CODE END
+def threat_intel(ip: str, by_alerts: bool | None) -> dict | None:
+    """Whether a feed lists the address: a cached indicator, or a listing-rule alert in this
+    window naming it as the listed host (`by_alerts`, added as ALERT_FEED as the Threats page
+    would add it). None only when nothing matched and the alerts couldn't all be checked.
+    """
     ti = ThreatIntelService()
     ti.load_cache()
-    if not ti.available:
-        return None
     hits = ti.lookup_ip(ip)
+    if by_alerts and not any(h["feed"] == ALERT_FEED for h in hits):
+        hits = [*hits, feed_hit(ALERT_FEED, ip)]
+    if not hits and by_alerts is None:
+        return None
     return {"matched": bool(hits), "feeds": hits, "indicators": ti.indicator_count}
 
 
+# OLD CODE START — NET-160 review: threat intel came from the cache alone
+# def address_figures(
+#     client: Any,
+#     ip: str,
+#     from_ts: str,
+#     to_ts: str,
+#     slots: dict,
+#     is_lan: Callable[[str], bool],
+#     budget: Budget,
+# ) -> dict:
+#     """Every figure the address page shows, over one snapshot."""
+#     window = window_filter(from_ts, to_ts)
+#     with SnapshotSearch(client, NETWORK_INDEX, budget) as snap:
+#         totals = _totals(snap, ip, window, slots)
+#         peers, peers_complete = _peers(snap, ip, window, is_lan)
+#         ports, ports_complete = _ports(snap, ip, window)
+#         tls_names, tls_complete = _tls_names(snap, ip, window)
+#         alerts = _alerts(snap, ip, window)
+#     for name, complete in (
+#         ("peers", peers_complete),
+#         ("ports", ports_complete),
+#         ("TLS names", tls_complete),
+#     ):
+#         if not complete:
+#             logger.info("Address %s: the %s list stopped at its cap", ip, name)
+#     return {
+#         "ip": ip,
+#         "from": from_ts,
+#         "to": to_ts,
+#         "lan": is_lan(ip),
+#         **{k: v for k, v in totals.items() if k != "timeline"},
+#         "peers": peers,
+#         "peers_complete": peers_complete,
+#         "ports": ports,
+#         "ports_complete": ports_complete,
+#         "timeline": totals["timeline"],
+#         "tls_names": tls_names,
+#         "tls_complete": tls_complete,
+#         "alerts": alerts,
+#         "threat_intel": threat_intel(ip),
+#     }
+# OLD CODE END
 def address_figures(
     client: Any,
     ip: str,
@@ -268,13 +475,14 @@ def address_figures(
     budget: Budget,
 ) -> dict:
     """Every figure the address page shows, over one snapshot."""
-    window = window_filter(from_ts, to_ts)
+    window = _time_range_filter(from_ts, to_ts)
     with SnapshotSearch(client, NETWORK_INDEX, budget) as snap:
         totals = _totals(snap, ip, window, slots)
         peers, peers_complete = _peers(snap, ip, window, is_lan)
         ports, ports_complete = _ports(snap, ip, window)
         tls_names, tls_complete = _tls_names(snap, ip, window)
         alerts = _alerts(snap, ip, window)
+        by_alerts = _listed_by_alerts(snap, ip, window)
     for name, complete in (
         ("peers", peers_complete),
         ("ports", ports_complete),
@@ -296,7 +504,7 @@ def address_figures(
         "tls_names": tls_names,
         "tls_complete": tls_complete,
         "alerts": alerts,
-        "threat_intel": threat_intel(ip),
+        "threat_intel": threat_intel(ip, by_alerts),
     }
 
 

@@ -14,8 +14,14 @@ from typing import Any, Callable
 
 from aiohttp import web
 
-from api.alerts import _SURICATA_ALERT_FILTERS, SURICATA_NOISE_EXCLUSION
+from api.alerts import (
+    _SURICATA_ALERT_FILTERS,
+    SURICATA_NOISE_EXCLUSION,
+    _time_range_filter,
+)
 from api.drilldown_runner import (
+    LAST_SEEN,
+    LIST_CAP,
     chart_slots,
     install,
     ip_param,
@@ -24,7 +30,7 @@ from api.drilldown_runner import (
     lan_check,
     run_drilldown,
     timeline,
-    window_filter,
+    zeek,
 )
 from api.time_range import parse_time_range
 from services.dns_analytics import DNSAnalytics
@@ -32,6 +38,7 @@ from services.hostnames import canonical_name, name_match, require_keyword
 from storage.snapshot_search import (
     NETWORK_INDEX,
     Budget,
+    QueryFailed,
     SnapshotSearch,
     doc_count,
     metric,
@@ -51,16 +58,45 @@ _HOST_FIELDS = (
     "tls.client.server_name",
     "url.domain",
 )
-_LAST = {"last": {"max": {"field": "@timestamp"}}}
 
 
-def _zeek(dataset: str) -> list[dict]:
-    return [
-        {"term": {"event.provider": "zeek"}},
-        {"term": {"event.dataset": dataset}},
-    ]
-
-
+# OLD CODE START — NET-160 review: the shared LAST_SEEN and zeek() in api/drilldown_runner.py
+# _LAST = {"last": {"max": {"field": "@timestamp"}}}
+#
+#
+# def _zeek(dataset: str) -> list[dict]:
+#     return [
+#         {"term": {"event.provider": "zeek"}},
+#         {"term": {"event.dataset": dataset}},
+#     ]
+# OLD CODE END
+# OLD CODE START — NET-160 review: lists ran to 100,000 rows; the shared LAST_SEEN
+# def _by_ip(
+#     snap: SnapshotSearch,
+#     query: dict,
+#     field: str,
+#     count_key: str,
+#     what: str,
+#     is_lan: Callable[[str], bool],
+#     with_last: bool = False,
+# ) -> tuple[list[dict], bool]:
+#     """Every value of an IP field with its record count, most first; False if capped."""
+#     buckets, complete = snap.groups(
+#         query, [{"ip": {"terms": {"field": field}}}], _LAST if with_last else None, what
+#     )
+#     rows = [
+#         {
+#             "ip": b["key"]["ip"],
+#             "lan": is_lan(b["key"]["ip"]),
+#             count_key: doc_count(b, what),
+#             **({"last_seen": iso_ms(metric(b, "last", what))} if with_last else {}),
+#         }
+#         for b in buckets
+#     ]
+#     if not complete:
+#         logger.info("Domain drill-down: the %s list stopped at its cap", what)
+#     return sorted(rows, key=lambda r: (-r[count_key], r["ip"])), complete
+# OLD CODE END
 def _by_ip(
     snap: SnapshotSearch,
     query: dict,
@@ -72,7 +108,11 @@ def _by_ip(
 ) -> tuple[list[dict], bool]:
     """Every value of an IP field with its record count, most first; False if capped."""
     buckets, complete = snap.groups(
-        query, [{"ip": {"terms": {"field": field}}}], _LAST if with_last else None, what
+        query,
+        [{"ip": {"terms": {"field": field}}}],
+        LAST_SEEN if with_last else None,
+        what,
+        max_buckets=LIST_CAP,
     )
     rows = [
         {
@@ -99,6 +139,38 @@ def _answer(value: Any, lookups: int, is_lan: Callable[[str], bool]) -> dict:
     return {"value": str(value), "kind": "other", "lan": None, "lookups": lookups}
 
 
+def _merged(answers: list[dict]) -> list[dict]:
+    """One row per answer after normalising (Edge.Example.NET and edge.example.net, or
+    2001:DB8::1 and 2001:db8::1, are one answer), lookups summed, most first.
+
+    A response holding two spellings of one answer would count twice; Zeek writes each
+    answer once, so that needs a server sending the same record in two spellings.
+    """
+    lookups: Counter = Counter()
+    first: dict[tuple, dict] = {}
+    for a in answers:
+        key = (a["kind"], a["value"])
+        first.setdefault(key, a)
+        lookups[key] += a["lookups"]
+    rows = [{**first[key], "lookups": n} for key, n in lookups.items()]
+    return sorted(rows, key=lambda a: -a["lookups"])
+
+
+def _every_value(snap: SnapshotSearch, query: dict, field: str, what: str) -> list:
+    """(value, count) of a field with a few values (response codes, validation results);
+    QueryFailed if it ever holds more than a list can carry, never a cut list."""
+    buckets, complete = snap.groups(
+        query,
+        [{"value": {"terms": {"field": field, "missing_bucket": True}}}],
+        None,
+        what,
+        max_buckets=LIST_CAP,
+    )
+    if not complete:
+        raise QueryFailed(f"{what}: more values than one page can list")
+    return [(b["key"]["value"], doc_count(b, what)) for b in buckets]
+
+
 def _dns(
     snap: SnapshotSearch,
     query: dict,
@@ -118,34 +190,53 @@ def _dns(
     askers, askers_complete = _by_ip(
         snap, query, "source.ip", "lookups", "domain askers", is_lan, with_last=True
     )
+    # OLD CODE START — NET-160 review: raw answers were grouped before normalising, so two
+    # spellings of one answer became two rows; the response codes' cap went unchecked
+    # found, answers_complete = snap.groups(
+    #     query,
+    #     [{"value": {"terms": {"field": "zeek.dns.answers"}}}],
+    #     None,
+    #     "domain answers",
+    # )
+    # answers = sorted(
+    #     (
+    #         _answer(b["key"]["value"], doc_count(b, "domain answers"), is_lan)
+    #         for b in found
+    #     ),
+    #     key=lambda a: -a["lookups"],
+    # )
+    # if not answers_complete:
+    #     logger.info("Domain drill-down: the answers list stopped at its cap")
+    # # A handful of response codes exist, so this list never nears the cap
+    # codes, _ = snap.groups(
+    #     query,
+    #     [
+    #         {
+    #             "rcode": {
+    #                 "terms": {"field": "zeek.dns.rcode_name", "missing_bucket": True}
+    #             }
+    #         }
+    #     ],
+    #     None,
+    #     "domain response codes",
+    # )
+    # OLD CODE END
     found, answers_complete = snap.groups(
         query,
         [{"value": {"terms": {"field": "zeek.dns.answers"}}}],
         None,
         "domain answers",
+        max_buckets=LIST_CAP,
     )
-    answers = sorted(
-        (
+    answers = _merged(
+        [
             _answer(b["key"]["value"], doc_count(b, "domain answers"), is_lan)
             for b in found
-        ),
-        key=lambda a: -a["lookups"],
+        ]
     )
     if not answers_complete:
         logger.info("Domain drill-down: the answers list stopped at its cap")
-    # A handful of response codes exist, so this list never nears the cap
-    codes, _ = snap.groups(
-        query,
-        [
-            {
-                "rcode": {
-                    "terms": {"field": "zeek.dns.rcode_name", "missing_bucket": True}
-                }
-            }
-        ],
-        None,
-        "domain response codes",
-    )
+    codes = _every_value(snap, query, "zeek.dns.rcode_name", "domain response codes")
     return {
         "lookups": total_hits(reply, "domain lookups"),
         "askers": askers,
@@ -155,11 +246,17 @@ def _dns(
         "addresses": len({a["value"] for a in answers if a["kind"] == "ip"})
         if answers_complete
         else None,
+        # OLD CODE START — NET-160 review: read from _every_value's pairs now
+        # "rcodes": sorted(
+        #     (
+        #         {"rcode": b["key"]["rcode"], "lookups": doc_count(b, "rcodes")}
+        #         for b in codes
+        #     ),
+        #     key=lambda r: -r["lookups"],
+        # ),
+        # OLD CODE END
         "rcodes": sorted(
-            (
-                {"rcode": b["key"]["rcode"], "lookups": doc_count(b, "rcodes")}
-                for b in codes
-            ),
+            ({"rcode": code, "lookups": n} for code, n in codes),
             key=lambda r: -r["lookups"],
         ),
         "timeline": timeline(reply),
@@ -173,25 +270,32 @@ def _tls(snap: SnapshotSearch, query: dict, is_lan: Callable[[str], bool]) -> di
     clients, clients_complete = _by_ip(
         snap, query, "source.ip", "sessions", "domain TLS clients", is_lan
     )
-    # Validation results are a short list of OpenSSL outcomes, never near the cap
-    found, _ = snap.groups(
-        query,
-        [
-            {
-                "status": {
-                    "terms": {
-                        "field": "zeek.ssl.validation_status",
-                        "missing_bucket": True,
-                    }
-                }
-            }
-        ],
-        None,
-        "domain TLS statuses",
-    )
+    # OLD CODE START — NET-160 review: the statuses' cap went unchecked
+    # # Validation results are a short list of OpenSSL outcomes, never near the cap
+    # found, _ = snap.groups(
+    #     query,
+    #     [
+    #         {
+    #             "status": {
+    #                 "terms": {
+    #                     "field": "zeek.ssl.validation_status",
+    #                     "missing_bucket": True,
+    #                 }
+    #             }
+    #         }
+    #     ],
+    #     None,
+    #     "domain TLS statuses",
+    # )
+    # statuses: Counter = Counter()
+    # for b in found:
+    #     statuses[b["key"]["status"] or "unchecked"] += doc_count(b, "TLS statuses")
+    # OLD CODE END
     statuses: Counter = Counter()
-    for b in found:
-        statuses[b["key"]["status"] or "unchecked"] += doc_count(b, "TLS statuses")
+    for status, n in _every_value(
+        snap, query, "zeek.ssl.validation_status", "domain TLS statuses"
+    ):
+        statuses[status or "unchecked"] += n
     return {
         "sessions": snap.count(query, "domain TLS sessions"),
         "servers": servers,
@@ -249,13 +353,23 @@ def domain_figures(
 ) -> dict:
     """Every figure the domain page shows, over one snapshot."""
     require_keyword(client, [_QUERY, _SNI, _HTTP_HOST, *_HOST_FIELDS], budget)
-    window = window_filter(from_ts, to_ts)
+    # OLD CODE START — NET-160 review: the shared alerts filter and zeek()
+    # window = window_filter(from_ts, to_ts)
+    # dns_clause = DNSAnalytics(client)._bool_clause(
+    #     from_ts, to_ts, excluded, [name_match(_QUERY, name)]
+    # )
+    # tls_query = {"bool": {"filter": [window, *_zeek("ssl"), name_match(_SNI, name)]}}
+    # http_query = {
+    #     "bool": {"filter": [window, *_zeek("http"), name_match(_HTTP_HOST, name)]}
+    # }
+    # OLD CODE END
+    window = _time_range_filter(from_ts, to_ts)
     dns_clause = DNSAnalytics(client)._bool_clause(
         from_ts, to_ts, excluded, [name_match(_QUERY, name)]
     )
-    tls_query = {"bool": {"filter": [window, *_zeek("ssl"), name_match(_SNI, name)]}}
+    tls_query = {"bool": {"filter": [window, *zeek("ssl"), name_match(_SNI, name)]}}
     http_query = {
-        "bool": {"filter": [window, *_zeek("http"), name_match(_HTTP_HOST, name)]}
+        "bool": {"filter": [window, *zeek("http"), name_match(_HTTP_HOST, name)]}
     }
     with SnapshotSearch(client, NETWORK_INDEX, budget) as snap:
         dns = _dns(snap, {"bool": dns_clause}, slots, is_lan)

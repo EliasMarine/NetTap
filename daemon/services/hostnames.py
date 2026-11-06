@@ -10,9 +10,9 @@ import logging
 import re
 from typing import Any
 
-from opensearchpy import OpenSearchException
+from opensearchpy import ConnectionTimeout, OpenSearchException
 
-from storage.snapshot_search import NETWORK_INDEX, Budget, QueryFailed
+from storage.snapshot_search import NETWORK_INDEX, Budget, QueryFailed, TooSlow
 
 logger = logging.getLogger("nettap.services.hostnames")
 
@@ -44,17 +44,34 @@ def name_match(field: str, name: str) -> dict:
     }
 
 
-def require_keyword(
-    client: Any, fields: list[str], budget: Budget, index: str = NETWORK_INDEX
-) -> None:
+# OLD CODE START — NET-160 review: no caller set index; a timeout read as a failure
+# def require_keyword(
+#     client: Any, fields: list[str], budget: Budget, index: str = NETWORK_INDEX
+# ) -> None:
+#     """QueryFailed ("name matching unavailable") unless every index maps `fields` as keyword."""
+#     budget.check("checking the name fields")
+#     try:
+#         reply = client.indices.get_field_mapping(
+#             fields=",".join(fields),
+#             index=index,
+#             request_timeout=max(1.0, budget.remaining()),
+#         )
+#     except OpenSearchException as exc:
+#         logger.error("Failed to read the name field mappings: %s", exc)
+#         raise QueryFailed("name matching unavailable: mappings unreadable") from exc
+# OLD CODE END
+def require_keyword(client: Any, fields: list[str], budget: Budget) -> None:
     """QueryFailed ("name matching unavailable") unless every index maps `fields` as keyword."""
     budget.check("checking the name fields")
     try:
         reply = client.indices.get_field_mapping(
             fields=",".join(fields),
-            index=index,
+            index=NETWORK_INDEX,
             request_timeout=max(1.0, budget.remaining()),
         )
+    except ConnectionTimeout as exc:
+        logger.warning("Reading the name field mappings ran out of time: %s", exc)
+        raise TooSlow("checking the name fields took too long") from exc
     except OpenSearchException as exc:
         logger.error("Failed to read the name field mappings: %s", exc)
         raise QueryFailed("name matching unavailable: mappings unreadable") from exc

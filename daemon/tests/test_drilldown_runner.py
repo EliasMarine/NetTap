@@ -94,6 +94,15 @@ class TestRunner(AioHTTPTestCase):
             self.assertEqual(resp.status, status)
             self.assertIn(words, (await resp.json())["error"])
 
+    async def test_an_unexpected_error_is_a_json_500_logged_with_its_traceback(self):
+        self.release.set()
+        self.fail = KeyError("buckets")  # e.g. a malformed bucket
+        with self.assertLogs("nettap.api.drilldown", "ERROR") as logs:
+            resp = await self.client.get("/drill")
+        self.assertEqual(resp.status, 500)
+        self.assertIn("went wrong", (await resp.json())["error"])
+        self.assertIn("KeyError", logs.output[0])
+
     async def test_the_reply_is_the_work_as_json(self):
         self.release.set()
         resp = await self.client.get("/drill")

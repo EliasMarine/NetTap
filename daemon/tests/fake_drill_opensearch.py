@@ -4,9 +4,11 @@ A small evaluator for the query and aggregation shapes the drill-downs send, so 
 counts are checked against what OpenSearch would answer, not against canned replies:
 
 - queries: bool (filter/must/should/must_not, minimum_should_match), term (with
-  case_insensitive), terms (CIDRs match IPs), range on @timestamp, exists, prefix, match_all;
-- aggregations: filter, sum/min/max/value_count, composite (paged with `after`, with
-  missing_bucket, one bucket per value of a multi-valued field) and date_range;
+  case_insensitive), terms (CIDRs match IPs), range on @timestamp, exists, prefix,
+  wildcard, match_all;
+- aggregations: filter, sum/min/max/value_count, terms (with size and
+  sum_other_doc_count), composite (paged with `after`, with missing_bucket, one bucket per
+  value of a multi-valued field) and date_range;
 - hits.total exact with track_total_hits, else stopped at 10,000 as OpenSearch does.
 
 create_pit freezes a copy of the documents and every search reads that copy, so a test can
@@ -16,6 +18,7 @@ change `docs` between searches and see the snapshot hold. Documents are flat:
 """
 
 import copy
+import fnmatch
 import ipaddress
 import itertools
 from datetime import datetime, timezone
@@ -108,6 +111,9 @@ def matches(doc: dict, query: dict) -> bool:
     if kind == "prefix":
         ((field, start),) = body.items()
         return any(str(v).startswith(start) for v in values(doc, field))
+    if kind == "wildcard":  # on a keyword field: case-sensitive, * and ?
+        ((field, pattern),) = body.items()
+        return any(fnmatch.fnmatchcase(str(v), pattern) for v in values(doc, field))
     raise NotImplementedError(kind)
 
 
@@ -168,6 +174,17 @@ def _one(docs: list, spec: dict) -> dict:
         return _metric(docs, kind, body["field"])
     if kind == "composite":
         return _composite(docs, body, sub)
+    if kind == "terms":  # count desc, then key; cut at size like OpenSearch
+        counts: dict = {}
+        for d in docs:
+            for v in dict.fromkeys(values(d, body["field"])):
+                counts[v] = counts.get(v, 0) + 1
+        ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        size = body.get("size", 10)
+        return {
+            "buckets": [{"key": k, "doc_count": n} for k, n in ranked[:size]],
+            "sum_other_doc_count": sum(n for _, n in ranked[size:]),
+        }
     if kind == "date_range":
         buckets = []
         for r in body["ranges"]:

@@ -120,11 +120,17 @@ class TestTotalsAndBytes(AddressCase):
     async def test_peers_add_up_to_the_connections_and_self_is_once(self):
         body = await self.figures()
         self.assertTrue(body["peers_complete"])
-        self.assertEqual(sum(p["connections"] for p in body["peers"]), 5)
-        (me,) = [p for p in body["peers"] if p["ip"] == ADDR]
-        self.assertEqual(
-            (me["connections"], me["bytes_to"], me["bytes_from"]), (1, 5, 50)
-        )
+        # OLD CODE START — NET-160 review: the address is no longer its own peer
+        # self.assertEqual(sum(p["connections"] for p in body["peers"]), 5)
+        # (me,) = [p for p in body["peers"] if p["ip"] == ADDR]
+        # self.assertEqual(
+        #     (me["connections"], me["bytes_to"], me["bytes_from"]), (1, 5, 50)
+        # )
+        # OLD CODE END
+        # Every connection but the one to itself, which stays in the totals only
+        self.assertEqual(sum(p["connections"] for p in body["peers"]), 5 - 1)
+        self.assertNotIn(ADDR, [p["ip"] for p in body["peers"]])
+        self.assertEqual(body["connections"], 5)
         (laptop,) = [p for p in body["peers"] if p["ip"] == LAPTOP]
         self.assertTrue(laptop["bytes_partial"])  # one of its two was never measured
         self.assertFalse(body["lan"])
@@ -183,18 +189,38 @@ class TestListsAndCaps(AddressCase):
     async def test_ports_include_a_missing_service(self):
         body = await self.figures()
         self.assertTrue(body["ports_complete"])
+        # OLD CODE START — NET-160 review: one row per port, its services listed
+        # self.assertEqual(
+        #     body["ports"],
+        #     [
+        #         {"port": 443, "transport": "tcp", "service": "ssl", "connections": 5},
+        #         {"port": 80, "transport": "tcp", "service": None, "connections": 1},
+        #     ],
+        # )
+        # OLD CODE END
         self.assertEqual(
             body["ports"],
             [
-                {"port": 443, "transport": "tcp", "service": "ssl", "connections": 5},
-                {"port": 80, "transport": "tcp", "service": None, "connections": 1},
+                {
+                    "port": 443,
+                    "transport": "tcp",
+                    "services": ["ssl"],
+                    "connections": 5,
+                },
+                {"port": 80, "transport": "tcp", "services": [], "connections": 1},
             ],
         )
 
     async def test_a_capped_peer_list_says_it_is_incomplete(self):
+        # OLD CODE START — NET-160 review: the drill-down lists stop at LIST_CAP
+        # with (
+        #     patch.object(snapshot_search, "GROUP_PAGE", 2),
+        #     patch.object(snapshot_search, "MAX_GROUP_BUCKETS", 2),
+        # ):
+        # OLD CODE END
         with (
             patch.object(snapshot_search, "GROUP_PAGE", 2),
-            patch.object(snapshot_search, "MAX_GROUP_BUCKETS", 2),
+            patch("api.addresses.LIST_CAP", 2),
         ):
             body = await self.figures()
         self.assertFalse(body["peers_complete"])
@@ -249,9 +275,16 @@ class TestThreatIntel(AddressCase):
         self.cache.write_text(json.dumps({"version": 2, "ip_feeds": feeds}))
 
     async def test_no_indicators_is_not_checked(self):
-        self.assertIsNone((await self.figures())["threat_intel"])
+        # OLD CODE START — NET-160 review: the window's own alerts are checked too, so an
+        # empty cache is "no listing alert and nothing cached", not "not checked"
+        # self.assertIsNone((await self.figures())["threat_intel"])
+        # self.write({"et_compromised": []})
+        # self.assertIsNone((await self.figures())["threat_intel"])
+        # OLD CODE END
+        unlisted = {"matched": False, "feeds": [], "indicators": 0}
+        self.assertEqual((await self.figures())["threat_intel"], unlisted)
         self.write({"et_compromised": []})
-        self.assertIsNone((await self.figures())["threat_intel"])
+        self.assertEqual((await self.figures())["threat_intel"], unlisted)
 
     async def test_loaded_indicators_without_this_address_are_no_match(self):
         self.write({"et_compromised": ["1.2.3.4", "5.6.7.8"]})
@@ -282,3 +315,173 @@ def test_a_peer_with_no_byte_count_reads_not_measured_not_zero():
         None,
         True,
     )
+
+
+# ---------------------------------------------------------------------------
+# NET-160 review
+# ---------------------------------------------------------------------------
+
+
+class TestPortServices(AddressCase):
+    docs = [
+        # one UDP/443 connection Zeek logged with two services
+        outbound(
+            PHONE,
+            destination__port=443,
+            network__transport="udp",
+            network__protocol=["quic", "ssl"],
+        ),
+        outbound(
+            LAPTOP,
+            destination__port=443,
+            network__transport="udp",
+            network__protocol="quic",
+        ),
+        outbound(
+            LAPTOP,
+            destination__port=443,
+            network__transport="tcp",
+            network__protocol="ssl",
+        ),
+    ]
+
+    async def test_a_connection_with_two_services_counts_once(self):
+        body = await self.figures()
+        self.assertEqual(sum(p["connections"] for p in body["ports"]), 3)
+        self.assertEqual(
+            body["ports"][0],
+            {
+                "port": 443,
+                "transport": "udp",
+                "services": ["quic", "ssl"],
+                "connections": 2,
+            },
+        )
+        self.assertEqual(body["ports"][1]["services"], ["ssl"])
+
+
+class TestTlsNameSpellings(AddressCase):
+    docs = [
+        ssl_session("Example.com", server=ADDR),
+        ssl_session("example.com.", server=ADDR, status="self signed certificate"),
+        ssl_session("example.com", server=ADDR),
+        ssl_session("not a host!", server=ADDR),
+        ssl_session(None, server=ADDR),
+    ]
+
+    async def test_spellings_of_one_name_are_one_row(self):
+        rows = {r["name"]: r for r in (await self.figures())["tls_names"]}
+        self.assertEqual(set(rows), {"example.com", "not a host!", None})
+        self.assertEqual(rows["example.com"]["sessions"], 3)
+        self.assertEqual(
+            rows["example.com"]["statuses"], {"ok": 2, "self signed certificate": 1}
+        )
+        self.assertEqual(rows[None]["sessions"], 1)
+
+
+LISTING = "ET COMPROMISED Known Compromised or Hostile Host Traffic group 7"
+
+
+class TestListingAlerts(AddressCase):
+    """The Threats page learns an indicator from a listing-rule alert's one internet
+    endpoint (I7); the address page applies the same rule to its own window."""
+
+    docs = [
+        alert(PHONE, ADDR, rule=LISTING),  # ADDR is the listed host
+        alert(
+            "198.51.100.7", "203.0.113.5", rule=LISTING
+        ),  # two internet ends: neither
+        alert(
+            "203.0.113.9", PHONE, rule=LISTING, t="2026-11-04T10:00:00.000Z"
+        ),  # earlier
+    ]
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        patcher = patch(
+            "services.threat_intel._TI_CACHE_PATH", Path(self._tmp.name) / "ti.json"
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(self._tmp.cleanup)
+        super().setUp()
+
+    async def test_a_listing_alert_in_the_window_matches_without_a_cache(self):
+        ti = (await self.figures())["threat_intel"]
+        self.assertEqual(ti["matched"], True)
+        self.assertEqual(ti["indicators"], 0)
+        self.assertEqual(
+            ti["feeds"],
+            [
+                {
+                    "feed": "et_compromised",
+                    "label": "ET Compromised IPs",
+                    "indicator": ADDR,
+                    "type": "ip",
+                }
+            ],
+        )
+
+    async def test_the_lan_side_or_an_ambiguous_alert_is_not_listed(self):
+        for ip in (PHONE, "198.51.100.7", "203.0.113.9"):
+            self.assertFalse((await self.figures(ip))["threat_intel"]["matched"], ip)
+
+    async def test_a_cached_and_an_alerted_match_list_the_feed_once(self):
+        Path(self._tmp.name, "ti.json").write_text(
+            json.dumps({"version": 2, "ip_feeds": {"et_compromised": [ADDR]}})
+        )
+        ti = (await self.figures())["threat_intel"]
+        self.assertEqual([f["feed"] for f in ti["feeds"]], ["et_compromised"])
+
+    async def test_alerts_too_many_to_check_and_no_match_is_not_checked(self):
+        with (
+            patch.object(snapshot_search, "GROUP_PAGE", 1),
+            patch("api.addresses.LIST_CAP", 1),
+        ):
+            ti = (await self.figures("198.51.100.7"))["threat_intel"]
+        self.assertIsNone(ti)
+
+
+class TestBudgetFitsTheProxy(AddressCase):
+    """A reply must land before the web proxy's 30 s (web/src/routes/api/[...path]/+server.ts)."""
+
+    docs = [outbound(PHONE, sent=1, received=1)]
+
+    def test_the_worst_case_ends_within_budget_plus_last_search_plus_pit_close(self):
+        from api import drilldown_runner
+        from api.addresses import address_figures
+        from storage.snapshot_search import PIT_CLOSE_SECONDS, Budget, TooSlow
+
+        clock = [0.0]
+
+        class Slow:  # every call runs to just under its own timeout
+            def __init__(self, inner):
+                self.inner = inner
+
+            def __getattr__(self, name):
+                call = getattr(self.inner, name)
+
+                def timed(*args, request_timeout=0, **kw):
+                    clock[0] += request_timeout - 0.001
+                    return call(*args, **kw)
+
+                return timed
+
+        budget = Budget(drilldown_runner.BUDGET_SECONDS, clock=lambda: clock[0])
+        client = Slow(DrillOpenSearch(list(self.docs)))
+        slots = {"date_range": {"field": "@timestamp", "ranges": []}}
+        try:
+            address_figures(
+                client,
+                ADDR,
+                "2026-11-05T00:00:00Z",
+                "2026-11-05T12:00:00Z",
+                slots,
+                lambda _ip: False,
+                budget,
+            )
+        except TooSlow:
+            pass
+        worst = drilldown_runner.BUDGET_SECONDS + 1 + PIT_CLOSE_SECONDS
+        self.assertLessEqual(clock[0], worst)
+        self.assertLessEqual(worst, 30 - 3)  # room to encode and cross the proxy

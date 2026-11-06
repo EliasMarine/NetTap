@@ -186,9 +186,15 @@ class TestAnswers(DomainCase):
         self.assertEqual(body["addresses"], 3)  # distinct IP answers only
 
     async def test_addresses_are_withheld_when_the_answers_are_capped(self):
+        # OLD CODE START — NET-160 review: the drill-down lists stop at LIST_CAP
+        # with (
+        #     patch.object(snapshot_search, "GROUP_PAGE", 2),
+        #     patch.object(snapshot_search, "MAX_GROUP_BUCKETS", 2),
+        # ):
+        # OLD CODE END
         with (
             patch.object(snapshot_search, "GROUP_PAGE", 2),
-            patch.object(snapshot_search, "MAX_GROUP_BUCKETS", 2),
+            patch("api.domains.LIST_CAP", 2),
         ):
             body = (await self.figures())["dns"]
         self.assertFalse(body["answers_complete"])
@@ -255,3 +261,48 @@ class TestAlertsUnrecorded(DomainCase):
         self.assertEqual(
             alerts, {"tagged": None, "alerts_in_window": 2, "with_host_field": 0}
         )
+
+
+# ---------------------------------------------------------------------------
+# NET-160 review
+# ---------------------------------------------------------------------------
+
+
+class TestAnswerSpellings(DomainCase):
+    docs = [
+        dns("example.com", zeek__dns__answers=["Edge.Example.NET", "2001:DB8::1"]),
+        dns("example.com", zeek__dns__answers=["edge.example.net", "2001:db8::1"]),
+        dns("example.com", zeek__dns__answers=["93.184.216.34"]),  # A
+        dns("example.com", zeek__dns__answers=[" 93.184.216.34"]),  # as TXT text
+    ]
+
+    async def test_spellings_of_one_answer_are_one_row_with_lookups_summed(self):
+        body = (await self.figures())["dns"]
+        keys = [(a["kind"], a["value"]) for a in body["answers"]]
+        self.assertEqual(len(keys), len(set(keys)))  # the page keys its list on these
+        got = {key: a["lookups"] for key, a in zip(keys, body["answers"])}
+        self.assertEqual(
+            got,
+            {
+                ("name", "edge.example.net"): 2,
+                ("ip", "2001:db8::1"): 2,
+                ("ip", "93.184.216.34"): 2,
+            },
+        )
+        self.assertEqual(body["addresses"], 2)
+
+
+class TestShortListsNeverCut(DomainCase):
+    docs = [
+        dns("example.com", zeek__dns__rcode_name="NOERROR"),
+        dns("example.com", zeek__dns__rcode_name="NXDOMAIN"),
+        dns("example.com", zeek__dns__rcode_name="SERVFAIL"),
+    ]
+
+    async def test_a_cut_response_code_list_fails_rather_than_shrinks(self):
+        with (
+            patch.object(snapshot_search, "GROUP_PAGE", 2),
+            patch("api.domains.LIST_CAP", 2),
+        ):
+            body = await self.figures(status=502)
+        self.assertIn("domain response codes", body["error"])

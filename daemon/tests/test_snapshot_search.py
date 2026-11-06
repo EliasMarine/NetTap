@@ -64,9 +64,48 @@ def test_groups_stopped_by_the_cap_say_so(monkeypatch):
     assert (len(buckets), complete) == (4, False)
 
 
-def test_groups_take_per_bucket_metrics_only():
+# OLD CODE START — NET-160 review: terms sub-aggregations are allowed when they come back whole
+# def test_groups_take_per_bucket_metrics_only():
+#     with snapshot(DrillOpenSearch(peers(1))) as snap, pytest.raises(ValueError):
+#         snap.groups(ALL, BY_SOURCE, {"x": {"terms": {"field": "y"}}}, "peers")
+# OLD CODE END
+def test_groups_take_per_bucket_metrics_or_whole_terms_only():
     with snapshot(DrillOpenSearch(peers(1))) as snap, pytest.raises(ValueError):
-        snap.groups(ALL, BY_SOURCE, {"x": {"terms": {"field": "y"}}}, "peers")
+        snap.groups(ALL, BY_SOURCE, {"x": {"cardinality": {"field": "y"}}}, "peers")
+
+
+def test_a_whole_terms_sub_aggregation_comes_back_and_a_cut_one_fails():
+    docs = [conn("10.0.0.1", "1.1.1.1", network__protocol=p) for p in "abc"]
+
+    def services(size):
+        return {"svc": {"terms": {"field": "network.protocol", "size": size}}}
+
+    with snapshot(DrillOpenSearch(docs)) as snap:
+        (bucket,), _ = snap.groups(ALL, BY_SOURCE, services(3), "ports")
+        assert [b["key"] for b in bucket["svc"]["buckets"]] == ["a", "b", "c"]
+        with pytest.raises(QueryFailed, match="cut short"):
+            snap.groups(ALL, BY_SOURCE, services(2), "ports")
+
+
+@pytest.mark.parametrize("call", ["search", "create_pit"])
+def test_a_client_side_timeout_is_too_slow_not_a_failure(call):
+    from opensearchpy import ConnectionTimeout
+
+    client = DrillOpenSearch(peers(1))
+
+    def times_out(*args, **kw):
+        raise ConnectionTimeout("TIMEOUT", "read timed out", None)
+
+    setattr(client, call, times_out)
+    with pytest.raises(TooSlow):
+        with snapshot(client) as snap:
+            snap.count(ALL, "count")
+
+
+def test_opensearchs_own_timeout_is_too_slow():
+    client = DrillOpenSearch(peers(1), tamper=lambda b, r: {**r, "timed_out": True})
+    with pytest.raises(TooSlow, match="timed out"), snapshot(client) as snap:
+        snap.count(ALL, "count")
 
 
 def test_the_snapshot_holds_when_documents_change_between_searches():
