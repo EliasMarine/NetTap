@@ -1,5 +1,6 @@
 <script lang="ts">
 	/** DNS reconnaissance: a form card (domain and record types), then one card per record type with a DataTable. */
+	import { page } from '$app/stores';
 	import { dnsRecon } from '$api/tools';
 	import type { DnsReconResult, DnsReconRecord } from '$api/tools';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -40,6 +41,12 @@
 	let result = $state<DnsReconResult | null>(null);
 	let loading = $state(false);
 	let error = $state('');
+
+	// NET-160: the domain page's "Look it up now" fills the domain in; the lookup waits for the user
+	$effect(() => {
+		const d = $page.url.searchParams.get('domain');
+		if (d) domain = d;
+	});
 
 	// ---------------------------------------------------------------------------
 	// Actions

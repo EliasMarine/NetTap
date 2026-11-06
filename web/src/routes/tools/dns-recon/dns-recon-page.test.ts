@@ -2,6 +2,11 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import Page from './+page.svelte';
 
+const nav = vi.hoisted(() => ({ url: new URL('http://localhost/tools/dns-recon') }));
+vi.mock('$app/stores', () => ({
+	page: { subscribe: (fn: (v: { url: URL }) => void) => (fn({ url: nav.url }), () => {}) },
+}));
+
 const RESULT = {
 	domain: 'example.com',
 	records: {
@@ -25,7 +30,18 @@ async function lookUp() {
 }
 
 describe('DNS reconnaissance page', () => {
-	afterEach(() => vi.unstubAllGlobals());
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		nav.url = new URL('http://localhost/tools/dns-recon');
+	});
+
+	it('fills the domain in from ?domain= without running the lookup', async () => {
+		nav.url = new URL('http://localhost/tools/dns-recon?domain=example.com');
+		const fetch = stubFetch(RESULT);
+		render(Page);
+		await vi.waitFor(() => expect(screen.getByLabelText('Domain')).toHaveValue('example.com'));
+		expect(fetch).not.toHaveBeenCalled();
+	});
 
 	it('starts empty, with the default record types pressed', async () => {
 		render(Page);
