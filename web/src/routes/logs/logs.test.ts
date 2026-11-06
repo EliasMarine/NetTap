@@ -26,6 +26,15 @@ describe('Log Explorer', () => {
 		const module = await import('./+page.svelte');
 		expect(module.default).toBeDefined();
 	});
+
+	// NET-165: every card here counts excluded devices (Settings promises they stay visible in
+	// logs), so "Top DNS queries" can rank a domain differently from the DNS page; say so
+	it('says its figures include devices excluded in Settings', () => {
+		stubDaemon({});
+		render(Page);
+		expect(screen.getByText(/Devices excluded in Settings are counted here too/)).toBeInTheDocument();
+		vi.unstubAllGlobals();
+	});
 });
 
 // #96: failed aggregations read as 0 events, 0 B and "No protocol data"
