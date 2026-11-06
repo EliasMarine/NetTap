@@ -7,7 +7,9 @@ export interface ThreatReportSummary {
 	threat_score: number;
 	threat_level: string;
 	total_groups: number;
+	/** Events in the groups above info; informational_events are the rest (I8). */
 	total_events: number;
+	informational_events?: number;
 	categories: Record<string, { label: string; groups: number; events: number }>;
 	top_threats: SmartAlertItem[];
 	kill_chains: KillChain[];
@@ -136,6 +138,7 @@ export interface ThreatIntelInfo {
 	from: string;
 	to: string;
 	new_indicators: number;
+	/** Indicators seen in alerts inside the window, per feed (I7: not every cached one). */
 	feeds: Record<string, { label: string; indicator_count: number }>;
 	total_indicators: number;
 }

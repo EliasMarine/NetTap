@@ -73,6 +73,8 @@ export interface AlertTimelineBucket {
 	high: number;
 	medium: number;
 	low: number;
+	/** alerts without Suricata severity 1-3, as the Info tile counts them (I1); absent on an older daemon */
+	info?: number;
 }
 
 export interface AlertTimelineResponse {
@@ -167,7 +169,8 @@ export type AlertSort = 'time' | 'severity' | 'signature' | 'source' | 'destinat
 // OLD CODE END
 export async function getAlerts(
 	opts: TimeRangeParams & {
-		severity?: number;
+		/** 1, 2 or 3, or 'info' for anything else (I1) */
+		severity?: number | 'info';
 		page?: number;
 		size?: number;
 		ip?: string;
@@ -569,8 +572,12 @@ export async function markFalsePositive(
 // Enhanced Category Types (v3 — severity, trends, MITRE, sub-categories)
 // ---------------------------------------------------------------------------
 
+/** Alerts by Suricata severity (1 high, 2 medium, 3 low; info is the rest), as the tiles count them (I4). */
 export interface CategorySeverityBreakdown {
-	critical: number;
+	// OLD CODE START — I4: NetTap's regraded scale had a critical level; the daemon no longer sends it
+	// critical: number;
+	// OLD CODE END
+	critical?: number;
 	high: number;
 	medium: number;
 	low: number;

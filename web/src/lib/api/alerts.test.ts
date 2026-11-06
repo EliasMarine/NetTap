@@ -141,6 +141,13 @@ describe('alerts API client', () => {
 			const fetchCall = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
 			expect(fetchCall).toContain('severity=1');
 		});
+
+		it('passes the info severity filter (I1)', async () => {
+			mockFetchSuccess({ from: '', to: '', page: 1, size: 50, total: 0, total_pages: 0, alerts: [] });
+			await getAlerts({ severity: 'info' });
+			const fetchCall = (fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+			expect(fetchCall).toContain('severity=info');
+		});
 	});
 
 	// -- getAlertTimeline ----------------------------------------------------

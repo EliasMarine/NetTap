@@ -363,7 +363,11 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
     # OLD CODE START — Zeek-native field: "alert.severity"
     # filter_clauses.append({"term": {"alert.severity": severity}})
     # OLD CODE END
-    if severity_raw:
+    # "info" is what the Info tile counts: total minus 1, 2 and 3 (it was ignored, so Info listed every alert)
+    severity_must_not: list[dict] = []
+    if severity_raw == "info":
+        severity_must_not.append({"terms": {"suricata.alert.severity": [1, 2, 3]}})
+    elif severity_raw:
         try:
             severity = int(severity_raw)
             if severity in (1, 2, 3):
@@ -498,7 +502,7 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
                 # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
                 # "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
                 # OLD CODE END
-                "must_not": _SURICATA_NOISE_EXCLUSION,
+                "must_not": _SURICATA_NOISE_EXCLUSION + severity_must_not,
             }
         },
         # OLD CODE START — Zeek-native sort field: "timestamp"
@@ -838,6 +842,11 @@ async def handle_alerts_timeline(request: web.Request) -> web.Response:
             label = _SEVERITY_MAP.get(int_key)
             if label:
                 entry[label] = sev_bucket.get("doc_count", 0)
+        # Info is the rest of the slot, as on the tiles, so the slots sum to the alert count
+        entry["info"] = max(
+            0,
+            bucket.get("doc_count", 0) - entry["high"] - entry["medium"] - entry["low"],
+        )
         buckets.append(entry)
 
     return web.json_response(
@@ -1028,38 +1037,88 @@ def _signature_filter(names) -> dict:
     return {"bool": {"should": should, "minimum_should_match": 1}}
 
 
+# OLD CODE START — I4: an address took the worst NetTap-regraded severity of every signature it
+# appeared in, so one high alert elsewhere made every address of that signature high
+# def _alerts_by_ip(
+#     client, query: dict, field: str, sig_severity: dict[str, int]
+# ) -> dict[str, tuple[int, int]]:
+#     """{ip: (alerts, worst severity)} for every `field` value among these signatures (#96).
+#
+#     The severity is the worst of the signatures the IP appears in, never above 4 (as before).
+#     """
+#     if not sig_severity:
+#         return {}
+#     by_sev: dict[int, list[str]] = defaultdict(list)
+#     for name, sev in sig_severity.items():
+#         by_sev[sev].append(name)
+#     scoped = {"bool": {"filter": [query, _signature_filter(sig_severity)]}}
+#     per_sev = {str(s): _signature_filter(names) for s, names in by_sev.items()}
+#     buckets, complete = all_buckets(
+#         client,
+#         NETWORK_INDEX,
+#         scoped,
+#         [{"ip": {"terms": {"field": field}}}],
+#         {"sev": {"filters": {"filters": per_sev}}},
+#     )
+#     if not complete:
+#         logger.warning("Alert %s values stopped at %d", field, len(buckets))
+#     return {
+#         b["key"]["ip"]: (
+#             b.get("doc_count", 0),
+#             min(
+#                 [4, *(int(s) for s, f in b["sev"]["buckets"].items() if f["doc_count"])]
+#             ),
+#         )
+#         for b in buckets
+#     }
+# OLD CODE END
 def _alerts_by_ip(
-    client, query: dict, field: str, sig_severity: dict[str, int]
+    client, query: dict, field: str, signatures
 ) -> dict[str, tuple[int, int]]:
-    """{ip: (alerts, worst severity)} for every `field` value among these signatures (#96).
+    """{ip: (alerts, worst Suricata severity)} for every `field` value among these signatures (#96).
 
-    The severity is the worst of the signatures the IP appears in, never above 4 (as before).
+    The severity comes from that address's own alerts (I4): 1, 2 or 3, or 4 when none of
+    them carries one of those.
     """
-    if not sig_severity:
+    if not signatures:
         return {}
-    by_sev: dict[int, list[str]] = defaultdict(list)
-    for name, sev in sig_severity.items():
-        by_sev[sev].append(name)
-    scoped = {"bool": {"filter": [query, _signature_filter(sig_severity)]}}
-    per_sev = {str(s): _signature_filter(names) for s, names in by_sev.items()}
+    scoped = {"bool": {"filter": [query, _signature_filter(signatures)]}}
     buckets, complete = all_buckets(
         client,
         NETWORK_INDEX,
         scoped,
         [{"ip": {"terms": {"field": field}}}],
-        {"sev": {"filters": {"filters": per_sev}}},
+        {"sev": {"terms": {"field": "suricata.alert.severity", "size": 10}}},
     )
     if not complete:
         logger.warning("Alert %s values stopped at %d", field, len(buckets))
     return {
         b["key"]["ip"]: (
             b.get("doc_count", 0),
-            min(
-                [4, *(int(s) for s, f in b["sev"]["buckets"].items() if f["doc_count"])]
-            ),
+            min([4, *(k for k in map(_suricata_level, b["sev"]["buckets"]) if k)]),
         )
         for b in buckets
     }
+
+
+def _suricata_level(sev_bucket: dict) -> int | None:
+    """A severity bucket's key as Suricata's 1, 2 or 3 (numeric or keyword field); None otherwise."""
+    try:
+        key = int(sev_bucket.get("key"))
+    except (TypeError, ValueError):
+        return None
+    return key if key in _SEVERITY_MAP and sev_bucket.get("doc_count", 0) else None
+
+
+def _raw_severity_breakdown(bucket: dict) -> dict[str, int]:
+    """Alerts by Suricata severity, as the alert list's tiles count them (I4): high = 1,
+    medium = 2, low = 3, and info = the rest (other values or no severity)."""
+    counts = {"high": 0, "medium": 0, "low": 0}
+    for sev_bucket in bucket.get("by_severity", {}).get("buckets", []):
+        level = _suricata_level(sev_bucket)
+        if level:
+            counts[_SEVERITY_MAP[level]] += sev_bucket["doc_count"]
+    return {**counts, "info": max(0, bucket.get("doc_count", 0) - sum(counts.values()))}
 
 
 async def handle_alerts_categories(request: web.Request) -> web.Response:
@@ -1083,7 +1142,9 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
         MITRE_TECHNIQUES,
         categorize_alert,
         categorize_sub_category,
-        reclassify_severity,
+        # OLD CODE START — I4: the category pages show Suricata's severity now
+        # reclassify_severity,
+        # OLD CODE END
     )
 
     query = {
@@ -1163,18 +1224,23 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
             "color": cat_info["color"],
             "description": cat_info["description"],
             "count": 0,
-            "severity_breakdown": {
-                "critical": 0,
-                "high": 0,
-                "medium": 0,
-                "low": 0,
-                "info": 0,
-            },
+            # OLD CODE START — I4: NetTap's regraded scale; every other page shows Suricata's 1/2/3
+            # "severity_breakdown": {
+            #     "critical": 0,
+            #     "high": 0,
+            #     "medium": 0,
+            #     "low": 0,
+            #     "info": 0,
+            # },
+            # OLD CODE END
+            "severity_breakdown": {"high": 0, "medium": 0, "low": 0, "info": 0},
             "sparkline": {},  # timestamp -> count
             "sub_categories": {},  # sub_id -> {label, count}
         }
 
-    sev_name_map = {1: "critical", 2: "high", 3: "medium", 4: "low", 5: "info"}
+    # OLD CODE START — I4: NetTap's regraded scale; the category pages show Suricata's 1/2/3
+    # sev_name_map = {1: "critical", 2: "high", 3: "medium", 4: "low", 5: "info"}
+    # OLD CODE END
 
     # OLD CODE START — #96: the top 500 signatures only; the rest fell out of every category
     # for bucket in (
@@ -1192,12 +1258,16 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
 
         entry["count"] += doc_count
 
-        # Severity sub-agg (I6 fix: int() conversion on bucket key)
-        for sev_bucket in bucket.get("by_severity", {}).get("buckets", []):
-            raw_sev = sev_bucket.get("key", 4)
-            new_sev = reclassify_severity(sig_name, int(raw_sev))
-            sev_label = sev_name_map.get(new_sev, "info")
-            entry["severity_breakdown"][sev_label] += sev_bucket.get("doc_count", 0)
+        # OLD CODE START — I4: NetTap's regraded scale; every other page shows Suricata's 1/2/3
+        # # Severity sub-agg (I6 fix: int() conversion on bucket key)
+        # for sev_bucket in bucket.get("by_severity", {}).get("buckets", []):
+        #     raw_sev = sev_bucket.get("key", 4)
+        #     new_sev = reclassify_severity(sig_name, int(raw_sev))
+        #     sev_label = sev_name_map.get(new_sev, "info")
+        #     entry["severity_breakdown"][sev_label] += sev_bucket.get("doc_count", 0)
+        # OLD CODE END
+        for level, n in _raw_severity_breakdown(bucket).items():
+            entry["severity_breakdown"][level] += n
 
         # Sparkline sub-agg
         # was bucket.get("over_time", {}).get("buckets", []) (date_histogram, #120)
@@ -1298,7 +1368,9 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
         MITRE_TECHNIQUES,
         categorize_alert,
         categorize_sub_category,
-        reclassify_severity,
+        # OLD CODE START — I4: the category pages show Suricata's severity now
+        # reclassify_severity,
+        # OLD CODE END
     )
 
     if category not in THREAT_CATEGORIES:
@@ -1364,10 +1436,15 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
 
-    sev_name_map = {1: "critical", 2: "high", 3: "medium", 4: "low", 5: "info"}
+    # OLD CODE START — I4: NetTap's regraded scale; the category pages show Suricata's 1/2/3
+    # sev_name_map = {1: "critical", 2: "high", 3: "medium", 4: "low", 5: "info"}
+    # OLD CODE END
 
     total_count = 0
-    severity_breakdown = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    # OLD CODE START — I4: NetTap's regraded scale; every other page shows Suricata's 1/2/3
+    # severity_breakdown = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    # OLD CODE END
+    severity_breakdown = {"high": 0, "medium": 0, "low": 0, "info": 0}
     sub_cat_counts: dict[str, int] = {}
     # OLD CODE START — #96: 50 IPs per signature; 400 scanners read as 50 sources
     # all_sources: set[str] = set()
@@ -1395,19 +1472,26 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
 
         total_count += doc_count
 
-        # Severity
-        primary_sev = 4
-        for sev_bucket in bucket.get("by_severity", {}).get("buckets", []):
-            raw_sev = sev_bucket.get("key", 4)
-            new_sev = reclassify_severity(sig_name, int(raw_sev))
-            sev_label = sev_name_map.get(new_sev, "info")
-            severity_breakdown[sev_label] += sev_bucket.get("doc_count", 0)
-
+        # OLD CODE START — I4: NetTap's regraded scale; every other page shows Suricata's 1/2/3
+        # # Severity
+        # primary_sev = 4
+        # for sev_bucket in bucket.get("by_severity", {}).get("buckets", []):
+        #     raw_sev = sev_bucket.get("key", 4)
+        #     new_sev = reclassify_severity(sig_name, int(raw_sev))
+        #     sev_label = sev_name_map.get(new_sev, "info")
+        #     severity_breakdown[sev_label] += sev_bucket.get("doc_count", 0)
+        #
+        # sev_buckets = bucket.get("by_severity", {}).get("buckets", [])
+        # if sev_buckets:
+        #     primary_sev = reclassify_severity(
+        #         sig_name, int(sev_buckets[0].get("key", 4))
+        #     )
+        # OLD CODE END
+        for level, n in _raw_severity_breakdown(bucket).items():
+            severity_breakdown[level] += n
+        # The signature's most common Suricata severity, as the top-signatures list shows it
         sev_buckets = bucket.get("by_severity", {}).get("buckets", [])
-        if sev_buckets:
-            primary_sev = reclassify_severity(
-                sig_name, int(sev_buckets[0].get("key", 4))
-            )
+        primary_sev = (_suricata_level(sev_buckets[0]) if sev_buckets else None) or 4
 
         # OLD CODE START — #96: 50 IPs per signature; 400 scanners read as 50 sources
         # # Source IPs — track per-device counts
@@ -1439,8 +1523,12 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
             {
                 "signature": sig_name,
                 "count": doc_count,
+                # OLD CODE START — I4: NetTap's regraded scale
+                # "severity": primary_sev,
+                # "severity_label": sev_name_map.get(primary_sev, "info"),
+                # OLD CODE END
                 "severity": primary_sev,
-                "severity_label": sev_name_map.get(primary_sev, "info"),
+                "severity_label": _SEVERITY_MAP.get(primary_sev, "info"),
                 "last_seen": last_seen,
             }
         )
@@ -1449,8 +1537,11 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
 
     # Every source and target IP of the category's signatures, with its alert count
     try:
-        sources = _alerts_by_ip(client, query["query"], "source.ip", sig_severity)
-        targets = _alerts_by_ip(client, query["query"], "destination.ip", sig_severity)
+        # was _alerts_by_ip(..., sig_severity): a signature-wide severity for every address (I4)
+        sources = _alerts_by_ip(client, query["query"], "source.ip", list(sig_severity))
+        targets = _alerts_by_ip(
+            client, query["query"], "destination.ip", list(sig_severity)
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alert category IPs: %s", exc)
         return web.json_response(
@@ -1490,7 +1581,10 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
             {
                 "ip": ip,
                 "count": device_counts[ip],
-                "severity": sev_name_map.get(sev, "info"),
+                # OLD CODE START — I4: NetTap's regraded scale
+                # "severity": sev_name_map.get(sev, "info"),
+                # OLD CODE END
+                "severity": _SEVERITY_MAP.get(sev, "info"),
             }
         )
 

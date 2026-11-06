@@ -309,6 +309,21 @@ class TestAlertsListHandler(AioHTTPTestCase):
         self.mock_client.search.assert_not_called()
 
     @unittest_run_loop
+    async def test_alerts_list_info_filter_lists_only_unrated_alerts(self):
+        """I1: severity=info was ignored, so the Info filter listed every alert. It is what the
+        Info tile counts: anything that isn't Suricata severity 1, 2 or 3."""
+        self.mock_client.search.return_value = {
+            "hits": {"total": {"value": 0}, "hits": []}
+        }
+        resp = await self.client.request("GET", "/api/alerts?severity=info")
+        self.assertEqual(resp.status, 200)
+        bool_q = self.mock_client.search.call_args.kwargs["body"]["query"]["bool"]
+        self.assertIn(
+            {"terms": {"suricata.alert.severity": [1, 2, 3]}}, bool_q["must_not"]
+        )
+        self.assertEqual(len(bool_q["filter"]), 3)  # no positive severity term
+
+    @unittest_run_loop
     async def test_alerts_list_invalid_severity_ignored(self):
         """Invalid severity param is ignored (no filter)."""
         self.mock_client.search.return_value = {
@@ -643,6 +658,35 @@ class TestAlertPanelsMatchTheTotal(AioHTTPTestCase):
         self.assertIn(
             {"prefix": {"rule.name": "SURICATA "}},
             await self._must_not("/api/alerts/timeline"),
+        )
+
+    @unittest_run_loop
+    async def test_timeline_slot_includes_info_so_it_sums_to_the_tiles(self):
+        """I1: the timeline summed high/medium/low only; alerts without severity 1-3 vanished."""
+        self.mock_client.search.return_value = {
+            "aggregations": {
+                "over_time": {
+                    "buckets": [
+                        {
+                            "key": 1767225600000,
+                            "key_as_string": "2026-01-01T00:00:00.000Z",
+                            "doc_count": 10,
+                            "by_severity": {
+                                "buckets": [
+                                    {"key": 1, "doc_count": 2},
+                                    {"key": 3, "doc_count": 3},
+                                    {"key": 4, "doc_count": 1},
+                                ]
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+        resp = await self.client.request("GET", "/api/alerts/timeline")
+        slot = (await resp.json())["buckets"][0]
+        self.assertEqual(
+            (slot["high"], slot["medium"], slot["low"], slot["info"]), (2, 0, 3, 5)
         )
 
     @unittest_run_loop

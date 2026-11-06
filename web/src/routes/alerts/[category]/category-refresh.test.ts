@@ -56,7 +56,8 @@ async function flush() {
 const DETAIL: CategoryDetailResponse = {
 	category: { id: 'scan', label: 'Scanning', description: 'Probes looking for open services.', color: 'amber', icon: 'radar' },
 	stats: { total: 10, unique_sources: 2, unique_targets: 3, affected_devices: 1 },
-	severity_breakdown: { critical: 1, high: 2, medium: 3, low: 4, info: 0 },
+	// OLD CODE START: severity_breakdown: { critical: 1, high: 2, medium: 3, low: 4, info: 0 }, (I4: the daemon sends Suricata's 1/2/3 now, no critical) OLD CODE END
+	severity_breakdown: { high: 2, medium: 3, low: 4, info: 1 },
 	sub_categories: [{ id: 'port_scan', label: 'Port Scan', count: 6 }],
 	affected_devices: [{ ip: '192.168.1.57', count: 6, hostname: 'office-pc', severity: 'high' }],
 	top_signatures: [{ signature: 'ET SCAN Port sweep', count: 6, last_seen: '2026-11-03T10:00:00Z' }],
@@ -175,11 +176,18 @@ describe('Alert category page — cards', () => {
 		expect(screen.getByRole('status')).toHaveTextContent('Loading Scan');
 	});
 
-	it('takes the severity summary from the category breakdown, critical included', async () => {
+	// OLD CODE START — I4: the breakdown is Suricata's severity, as on the alert tiles; there is no critical
+	// it('takes the severity summary from the category breakdown, critical included', async () => {
+	// 	succeedAll();
+	// 	render(Page);
+	// 	await flush();
+	// 	expect(screen.getByRole('img', { name: '10 Scanning alerts in the last 24 hours: 1 critical, 2 high, 3 medium, 4 low, 0 info' })).toBeInTheDocument();
+	// OLD CODE END
+	it('takes the severity summary from the category breakdown, on the alert tiles\' scale (I4)', async () => {
 		succeedAll();
 		render(Page);
 		await flush();
-		expect(screen.getByRole('img', { name: '10 Scanning alerts in the last 24 hours: 1 critical, 2 high, 3 medium, 4 low, 0 info' })).toBeInTheDocument();
+		expect(screen.getByRole('img', { name: '10 Scanning alerts in the last 24 hours: 2 high, 3 medium, 4 low, 1 info' })).toBeInTheDocument();
 		expect(screen.getByText('Unique targets').closest('.kpi')).toHaveTextContent('3');
 		expect(screen.getByRole('link', { name: 'View device' })).toHaveAttribute('href', '/devices/192.168.1.57');
 		expect(screen.getByRole('link', { name: 'T1046' })).toHaveAttribute('href', 'https://attack.mitre.org/techniques/T1046/');
@@ -192,7 +200,8 @@ describe('Alert category page — cards', () => {
 		render(Page);
 		await flush();
 		expect(screen.getByText('No sub-categories')).toBeInTheDocument();
-		expect(screen.getByText('No affected devices found')).toBeInTheDocument();
+		// OLD CODE START: expect(screen.getByText('No affected devices found')).toBeInTheDocument(); (I10) OLD CODE END
+		expect(screen.getByText('No addresses found')).toBeInTheDocument();
 		expect(screen.getByText('No signatures found')).toBeInTheDocument();
 		expect(screen.getByText('No alerts found in this time range.')).toBeInTheDocument();
 	});
@@ -229,3 +238,29 @@ describe('Alert category page — drawer', () => {
 		expect(screen.queryByRole('complementary', { name: 'Alert details' })).not.toBeInTheDocument();
 	});
 });
+
+describe('Alert category page — addresses and caps (I10)', () => {
+	it('counts addresses, not devices, and says when the list is capped', async () => {
+		succeedAll();
+		const devices = Array.from({ length: 20 }, (_, i) => ({ ip: `198.51.100.${i + 1}`, count: 1, severity: 'low' }));
+		const signatures = Array.from({ length: 20 }, (_, i) => ({ signature: `ET SCAN ${i}`, count: 1, last_seen: '2026-11-03T10:00:00Z' }));
+		vi.mocked(getAlertCategoryDetail).mockResolvedValue({
+			...DETAIL, stats: { ...DETAIL.stats, affected_devices: 412 }, affected_devices: devices, top_signatures: signatures,
+		});
+		render(Page);
+		await flush();
+		expect(screen.getByText('Addresses involved', { selector: '.kpi *' }).closest('.kpi')).toHaveTextContent('412');
+		expect(screen.queryByText('Devices on your network')).not.toBeInTheDocument();
+		expect(screen.getByText(/^Top 20 of 412 addresses · alerts per address/)).toBeInTheDocument();
+		expect(screen.getByText(/^The 20 most common · alerts per rule/)).toBeInTheDocument();
+	});
+
+	it('gives the plain count when nothing is capped', async () => {
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(screen.getByText(/^1 address · alerts per address/)).toBeInTheDocument();
+		expect(screen.getByText(/^1 signatures · alerts per rule/)).toBeInTheDocument();
+	});
+});
+
