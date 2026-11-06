@@ -4,7 +4,7 @@
  */
 import type { PipelineStage } from '$components/ui/Pipeline.svelte';
 import { modeLabel } from '$components/shell/status';
-import { HEALTH_STAGE, type SystemHealth } from '$api/system';
+import { healthStage, type SystemHealth } from '$api/system';
 import { formatLossPct, packetsLost, type CaptureHealthResponse, type CaptureStatsResponse } from '$api/capture';
 
 const CHECKING = 'Checking…';
@@ -143,8 +143,7 @@ export function systemStage(health: SystemHealth | null, failed: boolean): Pipel
 	// OLD CODE START — 2026-11-06 (S5): a check that couldn't run read as "Degraded"
 	// return health.healthy ? { ...base, status: 'ok', detail: 'Healthy' } : { ...base, status: 'failing', detail: 'Degraded' };
 	// OLD CODE END
-	// A daemon older than the web app sends no status: say Unknown rather than break the card
-	return { ...base, ...(HEALTH_STAGE[health.status] ?? { status: 'unknown', detail: 'Unknown' }) };
+	return { ...base, ...healthStage(health.status) };
 }
 
 export function openSearchStage(health: SystemHealth | null, failed: boolean): PipelineStage {

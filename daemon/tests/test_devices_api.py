@@ -56,7 +56,12 @@ def _device_list_response(buckets=None):
 
 def _empty_alert_response():
     """Build a mock empty alert count response."""
-    return {"aggregations": {"by_ip": {"buckets": []}}}
+    return {
+        "aggregations": {
+            "by_ip": {"ips": {"buckets": []}},
+            "by_dst": {"ips": {"buckets": []}},
+        }
+    }
 
 
 def _device_bucket(
@@ -343,10 +348,9 @@ class TestDeviceListHandler(AioHTTPTestCase):
         alert_response = {
             "aggregations": {
                 "by_ip": {
-                    "buckets": [
-                        {"key": "192.168.1.100", "doc_count": 5},
-                    ]
-                }
+                    "ips": {"buckets": [{"key": "192.168.1.100", "doc_count": 5}]}
+                },
+                "by_dst": {"ips": {"buckets": []}},
             }
         }
         self._setup_search_responses(
@@ -373,6 +377,52 @@ class TestDeviceListHandler(AioHTTPTestCase):
         self.assertIn(
             {"prefix": {"rule.name": "SURICATA "}},
             bodies[0]["query"]["bool"]["must_not"],
+        )
+
+    @unittest_run_loop
+    async def test_device_list_counts_alerts_on_traffic_to_the_device(self):
+        """An alert on traffic to a device counts, as on its detail page (D4)."""
+        alert_response = {
+            "aggregations": {
+                "by_ip": {
+                    "ips": {"buckets": [{"key": "192.168.1.100", "doc_count": 2}]}
+                },
+                "by_dst": {
+                    "ips": {
+                        "buckets": [
+                            {"key": "192.168.1.100", "doc_count": 3},
+                            {"key": "192.168.1.101", "doc_count": 4},
+                        ]
+                    }
+                },
+            }
+        }
+        self._setup_search_responses(
+            _device_list_response(
+                [_device_bucket("192.168.1.100"), _device_bucket("192.168.1.101")]
+            ),
+            alert_response=alert_response,
+        )
+
+        resp = await self.client.request("GET", "/api/devices")
+        data = await resp.json()
+        counts = {d["ip"]: d["alert_count"] for d in data["devices"]}
+        self.assertEqual(counts, {"192.168.1.100": 5, "192.168.1.101": 4})
+        # One query asks for both sides, each side bucketed only within this chunk
+        (body,) = _alert_bodies(self.mock_client.search)
+        either = {
+            "bool": {
+                "should": [
+                    {"terms": {"source.ip": ["192.168.1.100", "192.168.1.101"]}},
+                    {"terms": {"destination.ip": ["192.168.1.100", "192.168.1.101"]}},
+                ],
+                "minimum_should_match": 1,
+            }
+        }
+        self.assertIn(either, body["query"]["bool"]["filter"])
+        self.assertEqual(
+            body["aggs"]["by_dst"]["filter"],
+            {"terms": {"destination.ip": ["192.168.1.100", "192.168.1.101"]}},
         )
 
 
@@ -957,15 +1007,16 @@ def _route_device_searches(device_response, alerts=None):
     def _search(index=None, body=None, **_kwargs):
         aggs = (body or {}).get("aggs", {})
         if "by_ip" in aggs and alerts:
-            asked = next(
-                f["terms"]["source.ip"]
-                for f in body["query"]["bool"]["filter"]
-                if "terms" in f
-            )
+            asked = aggs["by_ip"]["filter"]["terms"]["source.ip"]
             hits = [
                 {"key": ip, "doc_count": n} for ip, n in alerts.items() if ip in asked
             ]
-            return {"aggregations": {"by_ip": {"buckets": hits}}}
+            return {
+                "aggregations": {
+                    "by_ip": {"ips": {"buckets": hits}},
+                    "by_dst": {"ips": {"buckets": []}},
+                }
+            }
         if "devices" in aggs:
             terms = aggs["devices"]["terms"]
             kept = [
@@ -977,7 +1028,8 @@ def _route_device_searches(device_response, alerts=None):
         return {
             "hits": {"hits": []},
             "aggregations": {
-                "by_ip": {"buckets": []},
+                "by_ip": {"ips": {"buckets": []}},
+                "by_dst": {"ips": {"buckets": []}},
                 "top_hostname": {"buckets": []},
                 "top_ua": {"buckets": []},
             },
@@ -1196,11 +1248,7 @@ class TestDeviceListAlertSort(AioHTTPTestCase):
             listed = await self._listed("?sort=alerts&limit=2")
         self.assertEqual(listed, [("192.168.1.50", 7), ("192.168.1.11", 2)])
         chunks = [
-            next(
-                f["terms"]["source.ip"]
-                for f in b["query"]["bool"]["filter"]
-                if "terms" in f
-            )
+            b["aggs"]["by_ip"]["filter"]["terms"]["source.ip"]
             for b in _alert_bodies(self.mock_client.search)
         ]
         self.assertEqual([len(c) for c in chunks], [4, 4, 3])

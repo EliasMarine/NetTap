@@ -72,7 +72,7 @@ describe('Devices By type — device cards carry the range traffic', () => {
 	it("sums a device's IPs from the device list, and a device quiet all range reads 0 B", async () => {
 		stubHomeDaemon();
 		render(Page);
-		await screen.findByText('Gateway');
+		await within(await screen.findByRole('tabpanel', { name: 'By type' })).findByText('Gateway');
 		await vi.waitFor(() => expect(stat('Gateway', 'Traffic')).toBe('2.0 KB'));
 		expect(stat('Gateway', 'Connections')).toBe((1234).toLocaleString());
 		expect(stat('Old printer', 'Traffic')).toBe('0 B');
@@ -115,9 +115,10 @@ describe('Devices By type — what a card counts', () => {
 	it('says the traffic is from the listed addresses, and how many of them were listed', async () => {
 		stubCards();
 		render(Page);
-		await screen.findByText('Gateway');
+		await within(await screen.findByRole('tabpanel', { name: 'By type' })).findByText('Gateway');
 		expect(screen.getByText('Traffic in the last 24 hours from the listed addresses each device has used.')).toBeInTheDocument();
-		const gateway = screen.getByRole('link', { name: /Gateway/ });
+		// the new-device banner links Gateway too, so read the card in the By type panel
+		const gateway = within(screen.getByRole('tabpanel', { name: 'By type' })).getByRole('link', { name: /Gateway/ });
 		expect(within(gateway).getByText('(2 of 3 addresses listed)')).toBeInTheDocument();
 		const laptop = within(screen.getByRole('tabpanel', { name: 'By type' })).getByRole('link', { name: /Old laptop/ });
 		expect(within(laptop).queryByText(/addresses listed/)).not.toBeInTheDocument();
@@ -126,8 +127,9 @@ describe('Devices By type — what a card counts', () => {
 	it('marks New by first seen in the last 24 hours, the "New in 24 h" rule', async () => {
 		stubCards();
 		render(Page);
-		await screen.findByText('Gateway');
-		const gateway = screen.getByRole('link', { name: /Gateway/ });
+		await within(await screen.findByRole('tabpanel', { name: 'By type' })).findByText('Gateway');
+		// the new-device banner links Gateway too, so read the card in the By type panel
+		const gateway = within(screen.getByRole('tabpanel', { name: 'By type' })).getByRole('link', { name: /Gateway/ });
 		expect(within(gateway).getByText('New')).toBeInTheDocument(); // is_new already cleared
 		const laptop = within(screen.getByRole('tabpanel', { name: 'By type' })).getByRole('link', { name: /Old laptop/ });
 		expect(within(laptop).queryByText('New')).not.toBeInTheDocument(); // first seen in October
@@ -151,7 +153,8 @@ function reg(mac: string, ip: string, category: string, extra: Record<string, un
 	};
 }
 
-const PHONE = reg('aa:01', '192.168.1.21', 'phone', { display_name: 'Kitchen iPad', is_new: true });
+// first seen an hour ago: new by the New chip's 24-hour rule, which the banner shares
+const PHONE = reg('aa:01', '192.168.1.21', 'phone', { display_name: 'Kitchen iPad', is_new: true, first_seen: new Date(Date.now() - 3_600_000).toISOString() });
 const PLUG = reg('aa:02', '192.168.1.22', 'iot', { display_name: 'Smart plug' });
 const LIST = {
 	from: LIST_FROM, to: '', limit: 500,

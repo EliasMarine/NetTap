@@ -2,12 +2,12 @@
 	/**
 	 * NewDeviceBanner — Notification banner/toast for newly detected devices.
 	 *
-	 * Checks for devices with is_new: true from the registry and shows
-	 * a dismissible banner listing them.
+	 * Lists devices first seen in the last 24 hours (the New chip's rule) in a
+	 * dismissible banner; a dismissal holds until a newer device appears.
 	 */
 
 	import type { RegistryDevice } from '$api/devices-registry';
-	import { acknowledgeDevice } from '$api/devices-registry';
+	import { acknowledgeDevice, isNewDevice } from '$api/devices-registry';
 	import Icon from '$lib/components/ui/Icon.svelte';
 
 	interface Props {
@@ -16,16 +16,50 @@
 
 	let { devices }: Props = $props();
 
-	let dismissed = $state(false);
+	// OLD CODE START — PR #174 review: is_new clears on the device's next registry update, so
+	// the banner disagreed with the New chip and the "New in 24 h" count (NET-158)
+	// let dismissed = $state(false);
+	//
+	// let newDevices = $derived(devices.filter((d) => d.is_new));
+	//
+	// let visible = $derived(newDevices.length > 0 && !dismissed);
+	//
+	// async function dismissAll() {
+	// 	dismissed = true;
+	// 	// Acknowledge devices in background
+	// 	for (const device of newDevices) {
+	// 		await acknowledgeDevice(device.mac);
+	// 	}
+	// }
+	// OLD CODE END
 
-	let newDevices = $derived(devices.filter((d) => d.is_new));
+	/** First-seen time of the newest device the user dismissed; anything newer shows again. */
+	const DISMISSED_KEY = 'nettap-new-devices-dismissed';
 
-	let visible = $derived(newDevices.length > 0 && !dismissed);
+	function readDismissed(): number {
+		try {
+			return Number(localStorage.getItem(DISMISSED_KEY)) || 0;
+		} catch {
+			return 0; // storage blocked: the dismissal lasts until the page reloads
+		}
+	}
+
+	let dismissedThrough = $state(readDismissed());
+
+	// The New chip's rule, so the banner, the chip and the count agree
+	let newDevices = $derived(devices.filter((d) => isNewDevice(d) && Date.parse(d.first_seen) > dismissedThrough));
+
+	let visible = $derived(newDevices.length > 0);
 
 	async function dismissAll() {
-		dismissed = true;
-		// Acknowledge devices in background
-		for (const device of newDevices) {
+		const shown = newDevices;
+		dismissedThrough = Math.max(...shown.map((d) => Date.parse(d.first_seen)));
+		try {
+			localStorage.setItem(DISMISSED_KEY, String(dismissedThrough));
+		} catch {
+			// storage blocked: the dismissal lasts until the page reloads
+		}
+		for (const device of shown) {
 			await acknowledgeDevice(device.mac);
 		}
 	}

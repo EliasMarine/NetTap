@@ -95,7 +95,7 @@ describe('Connections — Active Devices card', () => {
 		await flush();
 
 		// OLD CODE START: const card = screen.getByText('Active Devices').closest('.stat-card'); OLD CODE END
-		const card = stat('Active devices');
+		const card = stat('Active addresses (LAN)');
 		expect(card).toHaveTextContent('17');
 		expect(getLiveDashboard).toHaveBeenCalledWith({ limit: 1 });
 	});
@@ -176,10 +176,10 @@ describe('Connections — failed requests', () => {
 		await flush();
 
 		// OLD CODE START: const card = screen.getByText('Active Devices').closest('.stat-card'); OLD CODE END
-		const card = stat('Active devices');
+		const card = stat('Active addresses (LAN)');
 		expect(card).toHaveTextContent('—');
 		expect(card).not.toHaveTextContent('0');
-		expect(screen.getByText("Couldn't load active devices: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load active addresses: the request failed.")).toBeInTheDocument();
 	});
 
 	it('still says "No connections" when the list is really empty', async () => {

@@ -49,6 +49,29 @@ The branches were merged into this one with no conflicts. After the merge:
 - **Formatting.** ruff format was applied to the daemon files the fixes changed.
 - **Deploy script.** `scripts/remote/deploy-data-accuracy-audit.sh` checks the new behaviour on the device, then runs verify-figures.sh and verify-acceptance.sh. The checks cover health states, active_since, the protocol filter and direction, the SSL tool's verdict on good, expired and wrong-host sites, and ping loss and RTT.
 
+**Fixes from the pre-merge reviews (ponytail and two-angle)**
+- **SSL tool (security):**
+  - The verify-result regex is now line-bounded, so a server can no longer send a long run of newlines that makes parsing quadratic.
+  - The verdict comes from the first "Verify return code" line, which s_client prints before any data the server sends. A server can no longer append a fake "0 (ok)".
+  - "Trusted" also needs no error from the verify callback.
+  - s_client and x509 are killed when the inspection times out.
+- **Devices list:** alert counts now include alerts where the device was the destination, the same rule as the detail page (D4 had been fixed in one caller only). It is still one query per chunk of IPs, with one filter-wrapped terms agg per side.
+- **System page:**
+  - It no longer breaks when an older daemon sends no `status`.
+  - Home and System share a single `healthStage()` helper for the stage.
+  - The overview chip reads Unknown.
+- **New-device banner (Devices):**
+  - It now uses the New chip's 24-hour rule rather than `is_new`, which the registry clears on the next update.
+  - A dismissal is remembered until a newer device appears.
+- **IoT "Unencrypted" KPI:**
+  - Shows "None under 50% encrypted · N of M measured" in place of "Fully encrypted".
+  - Shows a dash and "Not measured" when no device had traffic to judge.
+- **Connections:** "Active devices" is now "Active addresses (LAN)", as on Live (NET-161).
+- **SSL tool copy:** says that trust checks the chain and the name, not revocation.
+- **Not changed:**
+  - Risk scoring's local-service port list. It differs from IoT's on purpose; merging the two would change scores.
+  - The device page's direction fallback. The daemon always sends a direction, and the deploy script rebuilds both containers together.
+
 **Response shape changes (consumers updated in the same branch)**
 - **Live and devices:** `/api/live/dashboard` protocols are counts, with an unknown key. Connections gain `direction`.
 - **IoT:** scores, grades and pillars can be null, and coverage fields are added.
@@ -57,11 +80,13 @@ The branches were merged into this one with no conflicts. After the merge:
 - **Device connections:** take `proto` and gain `direction`. The device count takes `active_since`.
 
 **Tests**
-- Daemon: 3,047 passed, 1 skipped.
-- Web: 3,002 passed.
+- Daemon: 3,052 passed, 1 skipped (after the review fixes).
+- Web: 3,006 passed, with no unhandled errors.
 - svelte-check: 0 errors. The colour and e2e checks are clean.
 - Visual: 187 of 187 passed.
-- Gates: `/deep-review` found nothing (`security-reviews/fix-data-accuracy-audit-2026-11-06/`). The ponytail and two-angle reviews are before merge.
+- Gates:
+  - `/deep-review` found nothing (`security-reviews/fix-data-accuracy-audit-2026-11-06/`) and was re-run over the review fixes.
+  - The ponytail and two-angle reviews ran, and their findings are fixed above.
 
 **Still to do**
 - Run `deploy-data-accuracy-audit.sh` on the G11 after merge.

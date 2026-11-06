@@ -580,14 +580,41 @@ async def handle_device_list(request: web.Request) -> web.Response:
                                 }
                             }
                         },
-                        {"terms": {"source.ip": chunk}},
+                        # OLD CODE START — PR #174 review: alerts the device sent only, while
+                        # its detail page (NET-158, D4) counts alerts on its traffic both ways
+                        # {"terms": {"source.ip": chunk}},
+                        # OLD CODE END
+                        {
+                            "bool": {
+                                "should": [
+                                    {"terms": {"source.ip": chunk}},
+                                    {"terms": {"destination.ip": chunk}},
+                                ],
+                                "minimum_should_match": 1,
+                            }
+                        },
                         {"term": {"event.provider": "suricata"}},
                         {"term": {"event.dataset": "alert"}},
                     ],
                     "must_not": SURICATA_NOISE_EXCLUSION,
                 }
             },
-            "aggs": {"by_ip": {"terms": {"field": "source.ip", "size": len(chunk)}}},
+            # OLD CODE START — PR #174 review: source side only
+            # "aggs": {"by_ip": {"terms": {"field": "source.ip", "size": len(chunk)}}},
+            # OLD CODE END
+            # Each side's terms run inside a filter on this chunk, so every bucket is a device here.
+            # shortcut: an alert whose source and destination are the same device counts twice;
+            # the bridge never sees a device talk to itself, so this stays a sum
+            "aggs": {
+                side: {
+                    "filter": {"terms": {field: chunk}},
+                    "aggs": {"ips": {"terms": {"field": field, "size": len(chunk)}}},
+                }
+                for side, field in (
+                    ("by_ip", "source.ip"),
+                    ("by_dst", "destination.ip"),
+                )
+            },
         }
 
         try:
@@ -597,10 +624,18 @@ async def handle_device_list(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": f"OpenSearch query failed: {exc}"}, status=502
             )
-        for ab in (
-            alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
-        ):
-            alert_counts[ab["key"]] = ab["doc_count"]
+        # OLD CODE START — PR #174 review: source side only
+        # for ab in (
+        #     alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
+        # ):
+        #     alert_counts[ab["key"]] = ab["doc_count"]
+        # OLD CODE END
+        aggs = alert_result.get("aggregations", {})
+        for side in ("by_ip", "by_dst"):
+            for ab in aggs.get(side, {}).get("ips", {}).get("buckets", []):
+                alert_counts[ab["key"]] = (
+                    alert_counts.get(ab["key"], 0) + ab["doc_count"]
+                )
 
     if sort_field == "alerts":
         # Bytes (largest first) breaks ties, as the bytes-ordered list did before

@@ -284,6 +284,8 @@
 	let heroSubtitle = $derived(fleet?.subtitle || 'Scanning your smart home…');
 	// the table opens worst trust score first (initialSort), as the old grid did
 	const fleetDevices = $derived(fleet?.devices ?? []);
+	// Devices with traffic whose encryption could be judged; the Unencrypted count is of these
+	const encryptionMeasured = $derived(fleetDevices.filter((d) => d.encryption_pct !== null).length);
 
 	// ---------------------------------------------------------------------------
 	// Derived — Findings feed
@@ -690,7 +692,16 @@ OLD CODE END -->
 			note="last hour" />
 		<KpiCard class="c-3" label="Privacy concerns" icon="threats" value={fleet.privacy_concerns}
 			sub={fleet.privacy_concerns === 0 ? 'None with over 5 tracker domains' : 'Devices with over 5 tracker domains'} note={rangeLabel} />
+		<!-- OLD CODE START — PR #174 review: "Fully encrypted" when no device was under 50%, even
+		     with nothing measured; the daemon counts devices under 50% encrypted, not any plaintext
 		<KpiCard class="c-3" label="Unencrypted" icon="certs" value={fleet.unencrypted_count} sub={fleet.unencrypted_count === 0 ? 'Fully encrypted' : 'Devices using plaintext'} note={rangeLabel} />
+		OLD CODE END -->
+		<KpiCard class="c-3" label="Unencrypted" icon="certs"
+			value={encryptionMeasured === 0 ? '—' : fleet.unencrypted_count}
+			sub={encryptionMeasured === 0
+				? 'Not measured: no device had traffic to judge'
+				: `${fleet.unencrypted_count === 0 ? 'None' : 'Devices'} under 50% encrypted · ${encryptionMeasured} of ${fleet.device_count} measured`}
+			note={rangeLabel} />
 
 		<Card class="c-4" hero title="Smart home health" sub="Trust score out of 100 · from {fleet.scored_device_count} of {fleet.device_count} devices · {rangeLabel}">
 			<div class="trust-top">

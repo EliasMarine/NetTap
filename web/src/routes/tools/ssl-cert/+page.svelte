@@ -164,7 +164,10 @@
 		</div>
 	</Card>
 
+	<!-- OLD CODE START — PR #174 review: "Trusted" didn't say revocation (OCSP, CRL) isn't checked
 	<Card title="Certificate" sub="The leaf certificate the host presented" class="c-8">
+	OLD CODE END -->
+	<Card title="Certificate" sub="The leaf certificate the host presented · trust checks the chain and the name, not revocation" class="c-8">
 		{#snippet actions()}
 			<!-- OLD CODE START — 2026-11-06 (S1): one validity chip from the expiry date
 			{#if validity && result && !result.error && !loading && !error}

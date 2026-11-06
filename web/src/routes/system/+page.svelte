@@ -3,7 +3,7 @@
 	import { getSystemHealth, getStorageStatus, getSmartHealth } from '$api/system.js';
 	import { getTSharkStatus } from '$api/tshark.js';
 	import { getCyberChefStatus } from '$api/cyberchef.js';
-	import { HEALTH_STAGE, type SystemHealth, type StorageStatus, type SmartHealth } from '$api/system.js';
+	import { healthStage, type SystemHealth, type StorageStatus, type SmartHealth } from '$api/system.js';
 	import type { TSharkStatus } from '$api/tshark.js';
 	import type { CyberChefStatus } from '$api/cyberchef.js';
 	import BridgeStatus from '$lib/components/BridgeStatus.svelte';
@@ -204,7 +204,7 @@
 				? {
 						key: 'daemon',
 						label: 'NetTap',
-						...HEALTH_STAGE[systemHealth.status],
+						...healthStage(systemHealth.status),
 						...(systemHealth.status === 'healthy' && { detail: `Appliance up ${formatUptime(systemHealth.uptime)}` }),
 					}
 				: waiting('daemon', 'NetTap', failed.health);
@@ -283,7 +283,7 @@
 	<Card title="System overview" sub="This appliance · uptime and last check" class="c-6">
 		{#snippet actions()}
 			{#if systemHealth && !failed.health}
-				{@const [word, tone] = OVERVIEW_CHIP[systemHealth.status]}
+				{@const [word, tone] = OVERVIEW_CHIP[systemHealth.status] ?? ['Unknown', '']}
 				<span class={['chip', tone]}>{word}</span>
 			{:else if !loading}
 				<span class="chip">Unknown</span>

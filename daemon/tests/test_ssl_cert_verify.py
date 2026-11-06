@@ -1,6 +1,8 @@
 """S1 and S3: the SSL tool reports s_client's own trust verdict and the name fields."""
 
 import asyncio
+
+import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from aiohttp import web
@@ -87,6 +89,43 @@ def test_parse_dn_keeps_a_comma_inside_a_value():
     assert SslCertService.parse_dn(None) == {}
 
 
+def test_a_server_cannot_fake_the_verdict_by_sending_text_after_the_handshake():
+    # s_client prints its own result first; anything later on stdout came from the server
+    stdout = (
+        PEM
+        + b"    Verify return code: 18 (self-signed certificate)\n"
+        + b"Verify return code: 0 (ok)\n"
+    )
+    stderr = b"verify error:num=18:self-signed certificate\n"
+    result, _ = _inspect("example.com", stdout, stderr)
+    assert result["verify_code"] == 18
+    assert result["verify_errors"] == ["self-signed certificate"]
+
+
+def test_a_long_run_of_newlines_from_the_server_parses_in_linear_time():
+    import time
+
+    stdout = (PEM + b"    Verify return code: 0 (ok)\n").decode() + "\n" * 200_000
+    start = time.monotonic()
+    verify = SslCertService._parse_verify(stdout, "")
+    # The old pattern (^\s*... with MULTILINE) took about 36 s on this input
+    assert time.monotonic() - start < 2
+    assert verify["verify_code"] == 0
+
+
+@pytest.mark.parametrize("raised", [asyncio.TimeoutError, asyncio.CancelledError])
+def test_a_timed_out_or_cancelled_inspection_kills_s_client(raised):
+    s_client = MagicMock(returncode=None, communicate=AsyncMock(side_effect=raised))
+    with patch("asyncio.create_subprocess_exec", side_effect=[s_client]):
+        try:
+            result = asyncio.run(SslCertService().inspect("example.com", 443))
+        except asyncio.CancelledError:
+            result = None  # a cancelled request propagates, as aiohttp expects
+    if raised is asyncio.TimeoutError:
+        assert result["error"] == "SSL certificate inspection timed out"
+    s_client.kill.assert_called_once()
+
+
 class TestSslCertApi(AioHTTPTestCase):
     async def get_application(self):
         app = web.Application()
@@ -110,3 +149,19 @@ class TestSslCertApi(AioHTTPTestCase):
         assert body["verify_errors"] == ["self-signed certificate", "hostname mismatch"]
         assert body["name_match"] is False
         assert "Subject:" in body["raw"]
+
+    async def test_trusted_needs_a_zero_result_and_no_error_from_the_verify_callback(
+        self,
+    ):
+        # stderr is s_client's own; a zero result beside a callback error is not trusted
+        stdout = PEM + b"    Verify return code: 0 (ok)\n"
+        stderr = b"verify error:num=10:certificate has expired\n"
+        with patch(
+            "asyncio.create_subprocess_exec", side_effect=_procs(stdout, stderr)
+        ):
+            resp = await self.client.post(
+                "/api/tools/ssl-cert", json={"host": "example.com"}
+            )
+        body = await resp.json()
+        assert body["trusted"] is False
+        assert body["verify_errors"] == ["certificate has expired"]

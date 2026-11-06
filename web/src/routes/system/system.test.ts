@@ -272,6 +272,14 @@ describe('System page health strip', () => {
 		expect(screen.queryByText('Degraded')).not.toBeInTheDocument();
 	});
 
+	it('says unknown when a daemon older than the web app sends no status', async () => {
+		stubReplies({ ...OK_REPLIES, '/api/system/health': { uptime: 60, timestamp: '2026-11-02T00:00:00Z', healthy: true, opensearch_reachable: true } });
+		render(SystemPage);
+		await screen.findByText('42.0% used');
+		expect(stage('NetTap')).toEqual({ word: 'Unknown', detail: 'Unknown' });
+		expect(screen.getByText('Unknown', { selector: '.chip' })).toBeInTheDocument();
+	});
+
 	it('says unknown, never healthy, for a part whose request failed', async () => {
 		stubFetch('mirror');
 		render(SystemPage);

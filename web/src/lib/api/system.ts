@@ -22,6 +22,11 @@ export const HEALTH_STAGE: Record<HealthStatus, { status: 'ok' | 'failing' | 'un
 	incomplete: { status: 'unknown', detail: "Incomplete · some checks couldn't run" },
 };
 
+/** The stage for a status; a daemon older than the web app sends none, which reads Unknown. */
+export function healthStage(status: HealthStatus | undefined): (typeof HEALTH_STAGE)[HealthStatus] {
+	return (status && HEALTH_STAGE[status]) || { status: 'unknown', detail: 'Unknown' };
+}
+
 export interface SystemHealth {
 	/** The appliance's (host's) uptime in seconds, from /proc/uptime */
 	uptime: number;

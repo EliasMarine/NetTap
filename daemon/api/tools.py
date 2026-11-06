@@ -253,7 +253,11 @@ async def handle_ssl_cert(request: web.Request) -> web.Response:
             "chain": chain_strings,
             "raw": result.get("output", ""),
             # S1: s_client's own verdict (chain and name); None when nothing was checked
-            "trusted": None if verify_code is None else verify_code == 0,
+            # Trusted only when s_client's own result is 0 and its verify callback, on stderr
+            # where the server can't write, reported no error
+            "trusted": None
+            if verify_code is None
+            else verify_code == 0 and not result.get("verify_errors"),
             "verify_errors": result.get("verify_errors", []),
             "name_match": result.get("name_match"),
             "error": result.get("error"),

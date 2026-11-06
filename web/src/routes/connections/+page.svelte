@@ -318,7 +318,10 @@
 		// { key: 'alerts', label: 'With alerts', value: stats ? formatNumber(stats.alert_sessions) : '—' },
 		// OLD CODE END
 		{ key: 'alerts', label: 'Alert events', value: stats ? formatNumber(stats.alert_sessions) : '—' },
-		{ key: 'devices', label: 'Active devices', value: activeNow === null ? '—' : String(activeNow) },
+		// OLD CODE START — NET-161: the daemon counts LAN source addresses, as Live's card says (O8)
+		// { key: 'devices', label: 'Active devices', value: activeNow === null ? '—' : String(activeNow) },
+		// OLD CODE END
+		{ key: 'devices', label: 'Active addresses (LAN)', value: activeNow === null ? '—' : String(activeNow) },
 	]);
 
 	// OLD CODE START — I3: bytes_in is source.bytes, what the side that opened the session sent, not "in"
@@ -328,10 +331,17 @@
 	// 		: `${range} · devices active in the last 5 minutes`,
 	// );
 	// OLD CODE END
+	// OLD CODE START — NET-161: "devices active", but the count is LAN addresses
+	// let summarySub = $derived(
+	// 	stats
+	// 		? `${range} · ${formatBytes(stats.bytes_in)} sent by source, ${formatBytes(stats.bytes_out)} sent by destination · devices active in the last 5 minutes`
+	// 		: `${range} · devices active in the last 5 minutes`,
+	// );
+	// OLD CODE END
 	let summarySub = $derived(
 		stats
-			? `${range} · ${formatBytes(stats.bytes_in)} sent by source, ${formatBytes(stats.bytes_out)} sent by destination · devices active in the last 5 minutes`
-			: `${range} · devices active in the last 5 minutes`,
+			? `${range} · ${formatBytes(stats.bytes_in)} sent by source, ${formatBytes(stats.bytes_out)} sent by destination · LAN addresses active in the last 5 minutes`
+			: `${range} · LAN addresses active in the last 5 minutes`,
 	);
 
 	// Log-scale bars in both byte columns share the page's largest value
@@ -866,7 +876,7 @@
 				<p class="load-note">{loadFailed('connection stats', stats !== null)}</p>
 			{/if}
 			{#if liveFailed}
-				<p class="load-note">{loadFailed('active devices', activeNow !== null)}</p>
+				<p class="load-note">{loadFailed('active addresses', activeNow !== null)}</p>
 			{/if}
 		{/if}
 	</Card>

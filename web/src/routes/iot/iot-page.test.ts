@@ -181,6 +181,21 @@ describe('IoT page — only measured figures', () => {
 		expect(kpi('Privacy concerns')).not.toHaveTextContent('No trackers');
 	});
 
+	it('counts devices under 50% encrypted, and says when none could be measured', async () => {
+		vi.mocked(iotApi.getFleetSummary).mockResolvedValue(fleet([device('m1', 'Doorbell', 80), device('m2', 'Hub', 80, { encryption_pct: null })]) as never);
+		const { unmount } = render(IoTPage);
+		await flush();
+		expect(kpi('Unencrypted')).toHaveTextContent('None under 50% encrypted · 1 of 2 measured');
+		expect(kpi('Unencrypted')).not.toHaveTextContent('Fully encrypted');
+		unmount();
+
+		vi.mocked(iotApi.getFleetSummary).mockResolvedValue(fleet([device('m1', 'Doorbell', 80, { encryption_pct: null })]) as never);
+		render(IoTPage);
+		await flush();
+		expect(kpi('Unencrypted').querySelector('.kpi-num')?.textContent).toBe('—');
+		expect(kpi('Unencrypted')).toHaveTextContent('Not measured: no device had traffic to judge');
+	});
+
 	it('shows the coverage in the drawer and the share of lookups to trackers in the privacy tab', async () => {
 		vi.mocked(iotApi.getPrivacyReport).mockResolvedValue({
 			devices: [{ mac: 'm1', name: 'Doorbell', privacy_grade: 'B', privacy_score: 80, tracker_domains: [{ domain: 'doubleclick.net', query_count: 3 }],
