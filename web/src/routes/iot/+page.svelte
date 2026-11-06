@@ -246,8 +246,13 @@
 	// Derived — Hero ring
 	// ---------------------------------------------------------------------------
 
-	let healthScore = $derived(fleet?.health_score ?? 0);
-	let healthGrade = $derived(fleet?.health_grade ?? 'F');
+	// OLD CODE START — NET-158: no score read as 0, grade F
+	// let healthScore = $derived(fleet?.health_score ?? 0);
+	// let healthGrade = $derived(fleet?.health_grade ?? 'F');
+	// OLD CODE END
+	// null: no device has enough measured to score
+	let healthScore = $derived(fleet?.health_score ?? null);
+	let healthGrade = $derived(fleet?.health_grade ?? null);
 
 	function gradeColor(grade: string): string {
 		switch (grade) {
@@ -386,16 +391,32 @@
 	// 	}));
 	// });
 	// OLD CODE END
+	// OLD CODE START — NET-158: a vendor with no scored device has no score (null)
+	// let mfgBarItems = $derived.by((): BarItem[] => {
+	// 	if (!manufacturers?.manufacturers) return [];
+	// 	return [...manufacturers.manufacturers]
+	// 		.sort((a, b) => a.avg_trust_score - b.avg_trust_score)
+	// 		.map((m) => ({
+	// 			key: m.name, label: m.name, value: m.avg_trust_score,
+	// 			display: `${Math.round(m.avg_trust_score)}`,
+	// 			detail: `grade ${m.avg_trust_grade} · ${m.device_count} device${m.device_count !== 1 ? 's' : ''}`,
+	// 		}));
+	// });
+	// OLD CODE END
 	let mfgBarItems = $derived.by((): BarItem[] => {
 		if (!manufacturers?.manufacturers) return [];
+		// worst first, unscored vendors last
 		return [...manufacturers.manufacturers]
-			.sort((a, b) => a.avg_trust_score - b.avg_trust_score)
+			.sort((a, b) => (a.avg_trust_score ?? Infinity) - (b.avg_trust_score ?? Infinity))
 			.map((m) => ({
 				key: m.name,
 				label: m.name,
-				value: m.avg_trust_score,
-				display: `${Math.round(m.avg_trust_score)}`,
-				detail: `grade ${m.avg_trust_grade} · ${m.device_count} device${m.device_count !== 1 ? 's' : ''}`,
+				value: m.avg_trust_score ?? 0,
+				display: m.avg_trust_score === null ? '—' : `${Math.round(m.avg_trust_score)}`,
+				detail: [
+					m.avg_trust_grade === null ? 'not enough measured' : `grade ${m.avg_trust_grade}`,
+					`from ${m.scored_device_count} of ${m.device_count} device${m.device_count !== 1 ? 's' : ''}`,
+				].join(' · '),
 			}));
 	});
 
@@ -428,9 +449,13 @@
 			label: d.hostname || d.ip,
 			value: d.bytes_sent + d.bytes_received,
 			display: formatBytes(d.bytes_sent + d.bytes_received),
-			detail: [d.country, d.in_baseline ? 'in baseline' : 'new'].filter(Boolean).join(' · '),
+			// OLD CODE START — NET-158: with no baseline every destination read "new"
+			// detail: [d.country, d.in_baseline ? 'in baseline' : 'new'].filter(Boolean).join(' · '),
+			// OLD CODE END
+			detail: [d.country, d.in_baseline === null ? null : d.in_baseline ? 'in baseline' : 'new'].filter(Boolean).join(' · '),
 		}));
 	});
+	const newNotChecked = $derived(commMapData?.destinations.some((d) => d.in_baseline === null) ?? false);
 
 	let trackerBarItems = $derived.by((): BarItem[] => {
 		if (!selectedPrivacy?.tracker_domains) return [];
@@ -543,7 +568,8 @@
 		if (dev) selectDevice(dev);
 	}
 
-	const scoreRows = (s: { privacy_score: number; security_score: number; behavior_score: number }) => [
+	// a pillar with no measured check is null and shows "—"
+	const scoreRows = (s: { privacy_score: number | null; security_score: number | null; behavior_score: number | null }) => [
 		{ label: 'Privacy', value: s.privacy_score, colour: 1 },
 		{ label: 'Security', value: s.security_score, colour: 2 },
 		{ label: 'Behaviour', value: s.behavior_score, colour: 3 },
@@ -556,7 +582,10 @@
 		{ key: 'score', label: 'Trust', numeric: true, cell: trustCell },
 		{ key: 'privacy_score', label: 'Privacy', cell: privacyCell },
 		{ key: 'encryption_pct', label: 'Encrypted', numeric: true, cell: encryptedCell, sortValue: (d) => (d.encryption_applicable === false ? null : d.encryption_pct) },
-		{ key: 'anomaly_count', label: 'Anomalies', numeric: true },
+		// OLD CODE START — NET-158: 0 for a device whose anomalies were never checked
+		// { key: 'anomaly_count', label: 'Anomalies', numeric: true },
+		// OLD CODE END
+		{ key: 'anomaly_count', label: 'Anomalies', numeric: true, cell: anomalyCell },
 		{ key: 'last_seen', label: 'Last seen', cell: seenCell, sortValue: (d) => (d.last_seen ? Date.parse(d.last_seen) : null) },
 	];
 	const isolationColumns: Column<IsolationPair>[] = [
@@ -583,9 +612,18 @@
 	{#if known}<SeverityPill level={known} />{:else}<span class="chip">{level}</span>{/if}
 {/snippet}
 {#snippet deviceCell(d: FleetDevice)}<Who name={d.name} ip={d.ip ?? undefined} category="iot" />{/snippet}
+<!-- OLD CODE START — NET-158: score, grade and percentage could be null (not enough measured, N/A)
 {#snippet trustCell(d: FleetDevice)}<span class="trust-cell">{@render grade(d.grade, true)}<span class="num">{d.score}</span></span>{/snippet}
 {#snippet privacyCell(d: FleetDevice)}{@render grade(scoreToGrade(d.privacy_score), true)}{/snippet}
 {#snippet encryptedCell(d: FleetDevice)}{d.encryption_applicable === false ? 'N/A' : `${d.encryption_pct}%`}{/snippet}
+OLD CODE END -->
+{#snippet trustCell(d: FleetDevice)}
+	{#if d.score === null || d.grade === null}<span class="dim">— Not enough measured</span>
+	{:else}<span class="trust-cell">{@render grade(d.grade, true)}<span class="num">{d.score}</span></span>{/if}
+{/snippet}
+{#snippet privacyCell(d: FleetDevice)}{#if d.privacy_score === null}—{:else}{@render grade(scoreToGrade(d.privacy_score), true)}{/if}{/snippet}
+{#snippet encryptedCell(d: FleetDevice)}{d.encryption_applicable === false || d.encryption_pct === null ? 'N/A' : `${d.encryption_pct}%`}{/snippet}
+{#snippet anomalyCell(d: FleetDevice)}{d.anomaly_count === null ? 'Not checked' : d.anomaly_count}{/snippet}
 {#snippet seenCell(d: FleetDevice)}{timeAgo(d.last_seen)}{/snippet}
 {#snippet isoDeviceCell(p: IsolationPair)}<Who name={p.iot_device.name} ip={p.iot_device.ip} category="iot" />{/snippet}
 {#snippet targetCell(p: IsolationPair)}<span class="mono">{p.internal_target.hostname ?? p.internal_target.ip}</span>{/snippet}
@@ -597,12 +635,12 @@
 {#snippet findingSevCell(f: ProtocolFinding)}{@render severity(f.severity)}{/snippet}
 {#snippet findingPortCell(f: ProtocolFinding)}<span class="mono">{f.port ?? '—'}</span>{/snippet}
 {#snippet findingDescCell(f: ProtocolFinding)}<span class="trunc" title={f.description}>{f.description}</span>{/snippet}
-{#snippet scores(rows: { label: string; value: number; colour: number }[])}
+{#snippet scores(rows: { label: string; value: number | null; colour: number }[])}
 	<ul class="score-rows">
 		{#each rows as row (row.label)}
 			<li>
-				<span>{row.label}</span><b>{row.value}</b>
-				<span class="bar-track" aria-hidden="true"><span class="bar-fill c-d{row.colour}" style:--w="{Math.max(0, Math.min(100, row.value))}%"></span></span>
+				<span>{row.label}</span><b>{row.value ?? '—'}</b>
+				<span class="bar-track" aria-hidden="true"><span class="bar-fill c-d{row.colour}" style:--w="{Math.max(0, Math.min(100, row.value ?? 0))}%"></span></span>
 			</li>
 		{/each}
 	</ul>
@@ -640,15 +678,32 @@
 {:else}
 	<div class="grid">
 		<KpiCard class="c-3" label="IoT devices" icon="iot" value={fleet.device_count} sub="Classified devices" note={rangeLabel} />
+		<!-- OLD CODE START — NET-158: "0 · All clear" when no device had a baseline (nothing was
+		     checked), over a 1 h check labelled with the page's range; "0 · No trackers" counted only
+		     devices with more than 5 trackers, while Findings lists every tracker
 		<KpiCard class="c-3" label="Anomalies" icon="warn" value={fleet.anomaly_count} sub={fleet.anomaly_count === 0 ? 'All clear' : 'Need review'} note={rangeLabel} />
 		<KpiCard class="c-3" label="Privacy concerns" icon="threats" value={fleet.privacy_concerns} sub={fleet.privacy_concerns === 0 ? 'No trackers' : 'Tracker domains found'} note={rangeLabel} />
+		OLD CODE END -->
+		<KpiCard class="c-3" label="Anomalies" icon="warn"
+			value={fleet.anomalies_checked === 0 ? '—' : fleet.anomaly_count}
+			sub={fleet.anomalies_checked === 0 ? 'Not checked: no device has a baseline' : `${fleet.anomalies_checked} of ${fleet.device_count} devices checked`}
+			note="last hour" />
+		<KpiCard class="c-3" label="Privacy concerns" icon="threats" value={fleet.privacy_concerns}
+			sub={fleet.privacy_concerns === 0 ? 'None with over 5 tracker domains' : 'Devices with over 5 tracker domains'} note={rangeLabel} />
 		<KpiCard class="c-3" label="Unencrypted" icon="certs" value={fleet.unencrypted_count} sub={fleet.unencrypted_count === 0 ? 'Fully encrypted' : 'Devices using plaintext'} note={rangeLabel} />
 
-		<Card class="c-4" hero title="Smart home health" sub="Trust score out of 100 · {rangeLabel}">
+		<Card class="c-4" hero title="Smart home health" sub="Trust score out of 100 · from {fleet.scored_device_count} of {fleet.device_count} devices · {rangeLabel}">
 			<div class="trust-top">
+				<!-- OLD CODE START — NET-158: no scored device drew 0, grade F
 				<Ring value={healthScore} ariaLabel="Smart home health {healthScore} of 100, grade {healthGrade}" />
+				OLD CODE END -->
+				{#if healthScore !== null && healthGrade !== null}
+					<Ring value={healthScore} ariaLabel="Smart home health {healthScore} of 100, grade {healthGrade}" />
+				{:else}
+					<div class="foot-stat"><b>—</b>Not enough measured</div>
+				{/if}
 				<div class="trust-side">
-					{@render grade(healthGrade)}
+					{#if healthGrade !== null}{@render grade(healthGrade)}{/if}
 					<p class="trust-plain">{heroSubtitle}</p>
 				</div>
 			</div>
@@ -712,7 +767,10 @@
 			{/if}
 		</Card>
 
+		<!-- OLD CODE START — NET-158: an average over every device, scored or not
 		<Card class="c-4" title="Manufacturer profiles" sub="Average trust score out of 100 · worst first">
+		OLD CODE END -->
+		<Card class="c-4" title="Manufacturer profiles" sub="Trust score out of 100 over scored devices · worst first">
 			{#snippet actions()}
 				{#if manufacturers?.manufacturers?.length}<span class="chip">{manufacturers.manufacturers.length} vendors</span>{/if}
 			{/snippet}
@@ -777,20 +835,29 @@
 					<KVRow label="IP Address" value={selectedDevice.ip} mono copyable />
 					<KVRow label="MAC Address" value={selectedDevice.mac} mono copyable />
 					<KVRow label="Manufacturer" value={selectedDevice.manufacturer} />
+					<!-- OLD CODE START — NET-158: score and grade can be null; the coverage is stated
 					<KVRow label="Trust Grade" value={`${selectedDevice.grade} (${selectedDevice.score}/100)`} />
+					OLD CODE END -->
+					<KVRow label="Trust Grade" value={selectedDevice.score === null ? 'Not enough measured' : `${selectedDevice.grade} (${selectedDevice.score}/100)`} />
+					<KVRow label="Measured" value={`from ${selectedDevice.checks_available} of ${selectedDevice.checks_total} checks (${selectedDevice.coverage} of 100 points)`} />
 					<KVRow label="Last Seen" value={selectedDevice.last_seen ? timeAgo(selectedDevice.last_seen) : '—'} />
 				</DrawerSection>
 
 				<DrawerSection title="Quick Stats">
+					<!-- OLD CODE START — NET-158: null encryption and anomalies
 					<KVRow label="Encryption" value={selectedDevice.encryption_applicable === false ? 'N/A' : `${selectedDevice.encryption_pct}%`} mono />
-					<KVRow label="Trackers" value={String(selectedDevice.tracker_count)} mono />
 					<KVRow label="Anomalies" value={String(selectedDevice.anomaly_count)} mono />
+					OLD CODE END -->
+					<KVRow label="Encryption" value={selectedDevice.encryption_applicable === false || selectedDevice.encryption_pct === null ? 'N/A' : `${selectedDevice.encryption_pct}%`} mono />
+					<KVRow label="Trackers" value={String(selectedDevice.tracker_count)} mono />
+					<KVRow label="Anomalies" value={selectedDevice.anomaly_count === null ? 'Not checked' : String(selectedDevice.anomaly_count)} mono />
 				</DrawerSection>
 
 			<!-- Tab 2: Communication Map -->
 			{:else if activeTab === 'communication'}
 				<DrawerSection title="Top Destinations">
 					{#if commBarItems.length > 0}
+						{#if newNotChecked}<p class="note">New destinations not checked: this device has no baseline yet.</p>{/if}
 						<BarList items={commBarItems} />
 					{:else if commFailed}
 						<p class="note">Couldn't load this device's destinations: the request failed.</p>
@@ -802,12 +869,23 @@
 			<!-- Tab 3: Privacy -->
 			{:else if activeTab === 'privacy'}
 				{#if selectedPrivacy}
+					<!-- NET-158: the trust score's privacy pillar, the same figure as the Overview tab -->
 					<DrawerSection title="Privacy Grade">
-						<div class="trust-cell">
-							{@render grade(selectedPrivacy.privacy_grade)}
-							<span class="num">{selectedPrivacy.privacy_score}/100</span>
-						</div>
+						{#if selectedPrivacy.privacy_grade === null || selectedPrivacy.privacy_score === null}
+							<p class="note">— Not enough measured</p>
+						{:else}
+							<div class="trust-cell">
+								{@render grade(selectedPrivacy.privacy_grade)}
+								<span class="num">{selectedPrivacy.privacy_score}/100</span>
+							</div>
+						{/if}
 					</DrawerSection>
+
+					{#if selectedPrivacy.tracker_lookup_share !== null}
+						<DrawerSection title="Tracker lookups">
+							<div class="foot-stat"><b>{Math.round(selectedPrivacy.tracker_lookup_share * 100)}%</b>share of lookups to trackers</div>
+						</DrawerSection>
+					{/if}
 
 					{#if trackerBarItems.length > 0}
 						<DrawerSection title="Tracker Domains ({selectedPrivacy.tracker_count})">

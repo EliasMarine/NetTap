@@ -119,5 +119,67 @@ class TestFleetScore:
         assert result > 0
 
     def test_empty_fleet(self, scorer):
-        result = scorer.compute_fleet_score([])
-        assert result == 100
+        """NET-158: no devices is nothing measured, not 100."""
+        assert scorer.compute_fleet_score([]) is None
+
+    def test_all_unscored_fleet_has_no_score(self, scorer):
+        assert scorer.compute_fleet_score([None, None]) is None
+
+    def test_a_zero_makes_the_fleet_zero(self, scorer):
+        """NET-158: a 0 was counted as 1, so [0, 100] read 2."""
+        assert scorer.compute_fleet_score([0, 100]) == 0
+
+    def test_unscored_devices_are_left_out(self, scorer):
+        assert scorer.compute_fleet_score([None, 80, 40]) == 53
+
+
+# ---------------------------------------------------------------------------
+# Availability-aware score (NET-158)
+# ---------------------------------------------------------------------------
+
+
+MEASURED = {
+    "tracker_domain_count": 0,
+    "third_party_orgs": 1,
+    "encryption_ratio": 0.5,
+    "protocol_violations": 0,
+    "alert_count": 0,
+}
+UNAVAILABLE = {
+    "telemetry_bytes": None,
+    "firmware_age_signal": "unknown",
+    "baseline_adherence": None,
+    "new_destinations": None,
+    "volume_spike": None,
+    "unusual_timing": None,
+}
+
+
+class TestAvailabilityAwareScore:
+    def test_score_is_earned_over_available_weight(self, scorer):
+        result = scorer.score_device({**MEASURED, **UNAVAILABLE})
+        # 47.5 of 55 points: encryption 7.5 of 15, everything else full
+        assert result["score"] == 86
+        assert result["grade"] == "B"
+        assert result["coverage"] == 55
+        assert (result["checks_available"], result["checks_total"]) == (5, 11)
+        assert result["security_breakdown"]["firmware_signal"] is None
+        assert result["behavior_score"] is None  # no available check in the pillar
+
+    def test_no_baseline_telemetry_firmware_or_encryption_means_no_score(self, scorer):
+        """The old score gave this device 2 + 7.5 + 20 + 15 + 10 points it never earned."""
+        result = scorer.score_device(
+            {**MEASURED, **UNAVAILABLE, "encryption_ratio": None}
+        )
+        assert result["coverage"] == 40  # below the 50-point line
+        assert result["score"] is None
+        assert result["grade"] is None
+        assert result["privacy_score"] == 100
+        assert result["security_score"] == 100
+
+    def test_a_measured_zero_stays_distinct_from_unavailable(self, scorer):
+        result = scorer.score_device(
+            {**MEASURED, **UNAVAILABLE, "tracker_domain_count": 40}
+        )
+        assert result["privacy_breakdown"]["tracker_domains"] == 0
+        assert result["privacy_breakdown"]["telemetry_volume"] is None

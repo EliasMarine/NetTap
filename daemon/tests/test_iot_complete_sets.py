@@ -211,6 +211,8 @@ def _monitor_with_device(client: MagicMock) -> IoTMonitor:
             "ip": "192.168.1.40",
         }
     }
+    # discovery rebuilds the set per range (NET-158); these tests set it themselves
+    iot._discover_iot_devices_from_arkime = lambda *a, **k: None
     return iot
 
 
@@ -228,7 +230,11 @@ class TestEveryPortCounts:
         assert device["violation_count"] == 250  # was 200
 
     def test_trust_score_sees_ports_beyond_the_busiest_100(self):
-        """150 ports, the 50 quietest new since the baseline: the old top 100 saw none of them."""
+        """150 ports, none expected: the old top 100 missed 50 of them.
+
+        The baseline checks are unavailable since NET-158 (new_destinations counted new
+        ports), so the complete port set shows in protocol_violations.
+        """
         ports = list(range(30_000, 30_150))
         client = MagicMock()
         client.search.side_effect = _ports_search(ports)
@@ -243,8 +249,10 @@ class TestEveryPortCounts:
         stats = iot._build_device_stats(MAC, conn, {}, baseline, set())
 
         assert len(conn["dest_ports"]) == 150  # was 100
-        assert stats["new_destinations"] == 50  # was 0
-        assert stats["baseline_adherence"] == 100 / 150  # was 1.0
+        assert stats["protocol_violations"] == 150  # was 100
+        # NET-158: unavailable with or without a baseline (they measured ports, not this)
+        assert stats["new_destinations"] is None
+        assert stats["baseline_adherence"] is None
 
     def test_port_counts_keep_the_device_filter(self):
         client = MagicMock()

@@ -40,14 +40,20 @@ export interface IoTAnomaly {
 }
 
 // Fleet Summary
+// NET-158: scores count only measured checks. A device below 50 points of coverage has no
+// score (null); the fleet and each pillar average the scored devices only, null if none.
 export interface FleetSummary {
-	health_score: number;
-	health_grade: string;
-	privacy_score: number;
-	security_score: number;
-	behavior_score: number;
+	health_score: number | null;
+	health_grade: string | null;
+	privacy_score: number | null;
+	security_score: number | null;
+	behavior_score: number | null;
 	device_count: number;
+	/** devices with enough measured to score (the fleet score's "from N of M devices") */
+	scored_device_count: number;
 	anomaly_count: number;
+	/** devices with a baseline: the only ones whose anomalies are checked */
+	anomalies_checked: number;
 	privacy_concerns: number;
 	unencrypted_count: number;
 	subtitle: string;
@@ -59,13 +65,19 @@ export interface FleetDevice {
 	name: string;
 	manufacturer: string;
 	ip: string | null;
-	score: number;
-	grade: string;
-	privacy_score: number;
-	security_score: number;
-	behavior_score: number;
-	anomaly_count: number;
-	encryption_pct: number;
+	score: number | null;
+	grade: string | null;
+	/** weight of the measured checks, out of 100 */
+	coverage: number;
+	checks_available: number;
+	checks_total: number;
+	privacy_score: number | null;
+	security_score: number | null;
+	behavior_score: number | null;
+	/** null: no baseline, so not checked */
+	anomaly_count: number | null;
+	/** null when encryption is not applicable */
+	encryption_pct: number | null;
 	/** False when only local chatter (DNS, mDNS, NTP, ...) was seen: encryption is N/A */
 	encryption_applicable?: boolean;
 	tracker_count: number;
@@ -80,11 +92,16 @@ export interface PrivacyReport {
 export interface PrivacyDevice {
 	mac: string;
 	name: string;
-	privacy_grade: string;
-	privacy_score: number;
+	/** the trust score's privacy pillar, the same figure as FleetDevice.privacy_score */
+	privacy_grade: string | null;
+	privacy_score: number | null;
 	tracker_domains: { domain: string; query_count: number }[];
 	tracker_count: number;
-	telemetry_bytes: number;
+	// OLD CODE START — NET-158: an estimate shown as bytes; the daemon sends the lookup share
+	// telemetry_bytes: number;
+	// OLD CODE END
+	/** share of this device's DNS lookups that went to tracker domains, 0..1; null with none */
+	tracker_lookup_share: number | null;
 	third_party_orgs: number;
 	encryption_ratio: number;
 	/** False when only local chatter was seen: the ratio is N/A, not 100% */
@@ -108,7 +125,8 @@ export interface Destination {
 	connection_count: number;
 	first_seen: string;
 	last_seen: string;
-	in_baseline: boolean;
+	/** null: the device has no baseline, so "new" was not checked */
+	in_baseline: boolean | null;
 }
 
 // Activity Timeline
@@ -175,10 +193,12 @@ export interface ManufacturerProfilesResponse {
 export interface ManufacturerProfile {
 	name: string;
 	device_count: number;
-	avg_trust_score: number;
-	avg_trust_grade: string;
-	avg_privacy_grade: string;
-	encryption_pct: number;
+	scored_device_count: number;
+	/** the fleet rule over this vendor's scored devices; null if none is scored */
+	avg_trust_score: number | null;
+	avg_trust_grade: string | null;
+	avg_privacy_grade: string | null;
+	encryption_pct: number | null;
 	total_tracker_domains: number;
 	total_violations: number;
 }
