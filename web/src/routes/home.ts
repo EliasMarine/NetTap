@@ -4,7 +4,7 @@
  */
 import type { PipelineStage } from '$components/ui/Pipeline.svelte';
 import { modeLabel } from '$components/shell/status';
-import type { SystemHealth } from '$api/system';
+import { HEALTH_STAGE, type SystemHealth } from '$api/system';
 import type { CaptureHealthResponse, CaptureStatsResponse } from '$api/capture';
 
 const CHECKING = 'Checking…';
@@ -132,7 +132,10 @@ export function systemStage(health: SystemHealth | null, failed: boolean): Pipel
 	const base = { key: 'system', label: 'System' };
 	// #96: a failed check reads "Unknown", never "Degraded"
 	if (!health) return { ...base, status: 'unknown', detail: failed ? "Couldn't check: the request failed" : CHECKING };
-	return health.healthy ? { ...base, status: 'ok', detail: 'Healthy' } : { ...base, status: 'failing', detail: 'Degraded' };
+	// OLD CODE START — 2026-11-06 (S5): a check that couldn't run read as "Degraded"
+	// return health.healthy ? { ...base, status: 'ok', detail: 'Healthy' } : { ...base, status: 'failing', detail: 'Degraded' };
+	// OLD CODE END
+	return { ...base, ...HEALTH_STAGE[health.status] };
 }
 
 export function openSearchStage(health: SystemHealth | null, failed: boolean): PipelineStage {

@@ -93,6 +93,7 @@ export const MOCK_ALERTS = {
 };
 
 export const MOCK_SYSTEM_HEALTH = {
+	status: 'healthy',
 	healthy: true,
 	opensearch_reachable: true,
 	disk_usage_percent: 35.2,

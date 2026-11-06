@@ -51,7 +51,7 @@ describe('Home — System Health card (#96)', () => {
 	});
 
 	it('still reads Healthy when the check succeeds', async () => {
-		stubFetch({ uptime: 60, timestamp: '2026-11-02T00:00:00Z', healthy: true, opensearch_reachable: true });
+		stubFetch({ uptime: 60, timestamp: '2026-11-02T00:00:00Z', status: 'healthy', healthy: true, opensearch_reachable: true });
 
 		render(HomePage);
 
@@ -59,5 +59,14 @@ describe('Home — System Health card (#96)', () => {
 		// was the card's "OpenSearch connected" line; now the pipeline's OpenSearch stage
 		expect(stage('OpenSearch')).toBe('Connected');
 		expect(stage('System')).toBe('Healthy');
+	});
+
+	it('reads Incomplete, not Degraded, when a check could not run (S5)', async () => {
+		stubFetch({ uptime: 60, timestamp: '2026-11-02T00:00:00Z', status: 'incomplete', healthy: null, opensearch_reachable: true });
+
+		render(HomePage);
+
+		expect(await screen.findByText("Incomplete · some checks couldn't run")).toBeInTheDocument();
+		expect(screen.queryByText('Degraded')).not.toBeInTheDocument();
 	});
 });

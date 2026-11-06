@@ -21,7 +21,7 @@ const stats = (over: Partial<CaptureStatsResponse> = {}): CaptureStatsResponse =
 	rx_missed_errors: 0, link_speed_mbps: 2500, drop_rate_pct: 0, ...over,
 });
 const system = (over: Partial<SystemHealth> = {}): SystemHealth => ({
-	uptime: 60, timestamp: '', storage: null, smart: null, opensearch_reachable: true, healthy: true, ...over,
+	uptime: 60, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true, ...over,
 });
 
 describe('KPI deltas', () => {
@@ -85,7 +85,12 @@ describe('capture pipeline stages', () => {
 
 	it('system and OpenSearch read the one health check; a failed check is unknown, never degraded', () => {
 		expect(systemStage(system(), false)).toMatchObject({ status: 'ok', detail: 'Healthy' });
-		expect(systemStage(system({ healthy: false }), false)).toMatchObject({ status: 'failing', detail: 'Degraded' });
+		// OLD CODE START — 2026-11-06 (S5): one boolean
+		// expect(systemStage(system({ healthy: false }), false)).toMatchObject({ status: 'failing', detail: 'Degraded' });
+		// OLD CODE END
+		expect(systemStage(system({ status: 'problem', healthy: false }), false)).toMatchObject({ status: 'failing', detail: 'Reports a problem' });
+		// an unreadable drive beside healthy checks is incomplete, never "Degraded"
+		expect(systemStage(system({ status: 'incomplete', healthy: null }), false)).toMatchObject({ status: 'unknown', detail: "Incomplete · some checks couldn't run" });
 		expect(systemStage(null, true)).toMatchObject({ status: 'unknown', detail: "Couldn't check: the request failed" });
 		expect(openSearchStage(system(), false)).toMatchObject({ status: 'ok', detail: 'Connected' });
 		expect(openSearchStage(system({ opensearch_reachable: false }), false)).toMatchObject({ status: 'failing', detail: 'Unreachable' });
