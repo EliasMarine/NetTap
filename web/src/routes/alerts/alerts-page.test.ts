@@ -6,7 +6,8 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
-import { readable, get } from 'svelte/store';
+// OLD CODE START: import { readable, get } from 'svelte/store'; — the page mock no longer uses readable OLD CODE END
+import { get } from 'svelte/store';
 import {
 	getAlerts,
 	getAlertCount,
@@ -30,8 +31,14 @@ import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 const LAN_POLICY = { version: 'v1', subnets: ['192.168.1.0/24'], source: 'env', ipv6: 'not-lan' };
 const lanReply = () => Promise.resolve({ ok: true, status: 200, json: async () => LAN_POLICY });
 
+// OLD CODE START — a fixed URL, so ?range= couldn't be tested
+// vi.mock('$app/stores', () => ({
+// 	page: readable({ url: new URL('http://localhost/alerts') }),
+// }));
+// OLD CODE END
+const nav = vi.hoisted(() => ({ url: new URL('http://localhost/alerts') }));
 vi.mock('$app/stores', () => ({
-	page: readable({ url: new URL('http://localhost/alerts') }),
+	page: { subscribe: (fn: (v: { url: URL }) => void) => (fn({ url: nav.url }), () => {}) },
 }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$api/alerts', async (importOriginal) => ({
@@ -143,6 +150,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	nav.url = new URL('http://localhost/alerts');
 	vi.unstubAllGlobals();
 	vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 });
@@ -261,6 +269,35 @@ describe('Alerts — refresh contract', () => {
 // ---------------------------------------------------------------------------
 // Severity summary: the shared snapshot (PLAN.md §4.1)
 // ---------------------------------------------------------------------------
+
+describe('Alerts — window from a link (NET-160)', () => {
+	const spanHours = () => {
+		const opts = vi.mocked(getAlertTimeline).mock.calls.at(-1)![0]!;
+		return (Date.parse(opts.to!) - Date.parse(opts.from!)) / 3_600_000;
+	};
+
+	it.each([
+		['7d', 168, '6h'],
+		['30d', 720, '1d'],
+	])('opens on ?range=%s, so a count from the address page matches the list', async (value, hours, interval) => {
+		nav.url = new URL(`http://localhost/alerts?ip=198.51.100.10&range=${value}`);
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(screen.getByRole('button', { name: value })).toHaveAttribute('aria-pressed', 'true');
+		expect(spanHours()).toBe(hours);
+		expect(vi.mocked(getAlertTimeline).mock.calls.at(-1)![0]!.interval).toBe(interval);
+	});
+
+	it('keeps its own 24 hours for a range it does not offer', async () => {
+		nav.url = new URL('http://localhost/alerts?range=90d');
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(screen.getByRole('button', { name: '24h' })).toHaveAttribute('aria-pressed', 'true');
+		expect(spanHours()).toBe(24);
+	});
+});
 
 describe('Alerts — severity summary', () => {
 	it('shares the sidebar\'s in-flight count instead of asking again, and shows the same numbers', async () => {

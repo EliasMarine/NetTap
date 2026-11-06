@@ -859,6 +859,9 @@
 			if (search === appliedSearch) return;
 			const first = appliedSearch === null;
 			appliedSearch = search;
+			// A link from a page with its own window (?range=, NET-160) opens on that window
+			const urlRange = params.get('range');
+			if (first && TIME_RANGES.some((r) => r.value === urlRange)) selectedTimeRange = urlRange as TimeRange;
 			// A hand-off replaces the last one's IP filter and text; the first load starts from neither
 			activeIpFilter = urlFilter || urlIp || '';
 			query = urlFilter || urlIp ? '' : (urlQuery ?? '');

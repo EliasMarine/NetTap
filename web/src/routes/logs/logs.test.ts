@@ -116,6 +116,18 @@ describe('Log Explorer — URL hand-off', () => {
 		await new Promise((r) => setTimeout(r, 0));
 		expect(searchQueries()).toEqual(['dns']);
 	});
+
+	it('opens on the window a link carries (?range=), so its counts match the page it came from (NET-160)', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [], total: 0 } });
+		goTo('/logs?query=dns&range=7d');
+		render(Page);
+		await vi.waitFor(() => expect(searchQueries()).toEqual(['dns']));
+		expect(screen.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
+		const search = vi.mocked(fetch).mock.calls.map(([u]) => new URL(String(u), 'http://x')).find((u) => u.pathname === '/api/logs/search')!;
+		const hours = (Date.parse(search.searchParams.get('from')!) - Date.parse(search.searchParams.get('to')!)) / -3_600_000;
+		expect(hours).toBe(168);
+		goTo('/logs');
+	});
 });
 
 // PLAN §5.5: the loader is the top bar's Refresh; it reports what loaded, and older answers never win.
