@@ -572,8 +572,12 @@ export async function markFalsePositive(
 // Enhanced Category Types (v3 — severity, trends, MITRE, sub-categories)
 // ---------------------------------------------------------------------------
 
+/** Alerts by Suricata severity (1 high, 2 medium, 3 low; info is the rest), as the tiles count them (I4). */
 export interface CategorySeverityBreakdown {
-	critical: number;
+	// OLD CODE START — I4: NetTap's regraded scale had a critical level; the daemon no longer sends it
+	// critical: number;
+	// OLD CODE END
+	critical?: number;
 	high: number;
 	medium: number;
 	low: number;
