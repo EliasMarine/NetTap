@@ -107,14 +107,24 @@ class NetworkDiagService:
                 continue
 
             # Match packet loss line: "4 packets transmitted, 4 received, 0% packet loss, ..."
+            # OLD CODE START — 2026-11-06 (S2): `.*?(\d+)%` took the digits after the point,
+            # so "33.3333% packet loss" read as 3333%
+            # loss_match = re.match(
+            #     r"(\d+) packets transmitted, (\d+) received.*?(\d+)% packet loss",
+            #     line.strip(),
+            # )
+            # OLD CODE END
             loss_match = re.match(
-                r"(\d+) packets transmitted, (\d+) received.*?(\d+)% packet loss",
+                r"(\d+) packets transmitted, (\d+) received.*?,\s*([\d.]+)% packet loss",
                 line.strip(),
             )
             if loss_match:
                 stats["packets_transmitted"] = int(loss_match.group(1))
                 stats["packets_received"] = int(loss_match.group(2))
-                stats["packet_loss_percent"] = int(loss_match.group(3))
+                # OLD CODE START — 2026-11-06 (S2): an integer can't hold 33.3333
+                # stats["packet_loss_percent"] = int(loss_match.group(3))
+                # OLD CODE END
+                stats["packet_loss_percent"] = float(loss_match.group(3))
                 continue
 
             # Match RTT line: "rtt min/avg/max/mdev = 11.123/12.456/13.789/0.543 ms"

@@ -200,6 +200,8 @@ describe('tools API client', () => {
 
 			expect(result.packets_sent).toBe(0);
 			expect(result.packet_loss_pct).toBe(100);
+			// S12: no reply is no round trip, never 0 ms
+			expect(result.rtt_avg).toBeNull();
 			expect(result.error).toBe('Host unreachable');
 		});
 
@@ -294,6 +296,9 @@ describe('tools API client', () => {
 				san: ['example.com', '*.example.com'],
 				chain: ['example.com', 'Test CA'],
 				raw: 'Certificate: ...',
+				trusted: true,
+				verify_errors: [],
+				name_match: true,
 			};
 			mockFetchSuccess(expected);
 
@@ -327,6 +332,8 @@ describe('tools API client', () => {
 
 			expect(result.subject).toEqual({});
 			expect(result.san).toEqual([]);
+			// S1: a failed request checked nothing, so it is neither trusted nor untrusted
+			expect(result.trusted).toBeNull();
 			expect(result.error).toBe('Connection refused');
 		});
 

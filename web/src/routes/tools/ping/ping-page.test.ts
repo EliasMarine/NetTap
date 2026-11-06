@@ -90,6 +90,17 @@ describe('Ping and traceroute page', () => {
 		expect(within(table).getAllByRole('columnheader').every((th) => th.hasAttribute('aria-sort'))).toBe(true);
 	});
 
+	it('shows no round-trip time, not 0.0 ms, when every packet was lost (S12)', async () => {
+		stubFetch({ ...PING, packets_received: 0, packet_loss_pct: 100, rtt_min: null, rtt_avg: null, rtt_max: null, rtt_mdev: null, replies: [] });
+		render(Page);
+		await enterTarget();
+		await fireEvent.click(screen.getByRole('button', { name: 'Ping' }));
+
+		expect(await screen.findByText('Average RTT')).toBeInTheDocument();
+		expect(screen.getAllByText('—')).toHaveLength(3);
+		expect(screen.queryByText('0.0')).not.toBeInTheDocument();
+	});
+
 	it('shows the error state with the daemon message when the ping fails', async () => {
 		stubFetch({ error: 'Invalid target' }, false);
 		render(Page);

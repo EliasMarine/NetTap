@@ -45,10 +45,17 @@ export interface PingResult {
 	packets_sent: number;
 	packets_received: number;
 	packet_loss_pct: number;
-	rtt_min: number;
-	rtt_avg: number;
-	rtt_max: number;
-	rtt_mdev: number;
+	// OLD CODE START — 2026-11-06 (S12): the daemon sent 0 ms when no reply came back
+	// rtt_min: number;
+	// rtt_avg: number;
+	// rtt_max: number;
+	// rtt_mdev: number;
+	// OLD CODE END
+	/** null when no reply came back (100% loss): there is no round trip to time */
+	rtt_min: number | null;
+	rtt_avg: number | null;
+	rtt_max: number | null;
+	rtt_mdev: number | null;
 	replies: PingReply[];
 	error?: string;
 }
@@ -80,6 +87,12 @@ export interface SslCertResult {
 	san: string[];
 	chain: string[];
 	raw: string;
+	/** S1: openssl's own verdict on the chain and the name; null when nothing was checked */
+	trusted: boolean | null;
+	/** Every reason verification failed ("self-signed certificate", "hostname mismatch") */
+	verify_errors: string[];
+	/** Whether the certificate covers the host asked for; null when not checked */
+	name_match: boolean | null;
 	error?: string;
 }
 
@@ -169,10 +182,10 @@ export async function ping(
 			packets_sent: 0,
 			packets_received: 0,
 			packet_loss_pct: 100,
-			rtt_min: 0,
-			rtt_avg: 0,
-			rtt_max: 0,
-			rtt_mdev: 0,
+			rtt_min: null,
+			rtt_avg: null,
+			rtt_max: null,
+			rtt_mdev: null,
 			replies: [],
 			error: data.error || `Ping failed (HTTP ${res.status})`,
 		};
@@ -245,6 +258,9 @@ export async function sslCertInspect(
 			san: [],
 			chain: [],
 			raw: '',
+			trusted: null,
+			verify_errors: [],
+			name_match: null,
 			error: data.error || `SSL cert inspection failed (HTTP ${res.status})`,
 		};
 	}

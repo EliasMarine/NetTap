@@ -77,18 +77,43 @@
 	// 	return { label: `Valid (${daysLeft}d remaining)`, cls: 'badge-success' };
 	// }
 	// OLD CODE END
-	function validityBadge(notAfter: string): { label: string; cls: string } {
-		if (!notAfter) return { label: 'Unknown', cls: '' };
-		const expiry = new Date(notAfter);
-		const now = new Date();
-		const daysLeft = Math.floor((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-		if (daysLeft < 0) return { label: `Expired ${Math.abs(daysLeft)}d ago`, cls: 'is-bad' };
-		if (daysLeft <= 30) return { label: `Expires in ${daysLeft}d`, cls: 'is-warn' };
-		return { label: `Valid (${daysLeft}d remaining)`, cls: 'is-ok' };
+	// OLD CODE START — 2026-11-06 (S1): "Valid" came from the expiry date alone (an untrusted or
+	// wrong-name certificate read green), and a date it couldn't parse read "Valid (NaNd remaining)"
+	// function validityBadge(notAfter: string): { label: string; cls: string } {
+	// 	if (!notAfter) return { label: 'Unknown', cls: '' };
+	// 	const expiry = new Date(notAfter);
+	// 	const now = new Date();
+	// 	const daysLeft = Math.floor((expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+	// 	if (daysLeft < 0) return { label: `Expired ${Math.abs(daysLeft)}d ago`, cls: 'is-bad' };
+	// 	if (daysLeft <= 30) return { label: `Expires in ${daysLeft}d`, cls: 'is-warn' };
+	// 	return { label: `Valid (${daysLeft}d remaining)`, cls: 'is-ok' };
+	// }
+	// OLD CODE END
+	type Chip = { label: string; cls: string };
+	const DAY_MS = 86_400_000;
+	const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
+
+	/** openssl's own verdict on the chain and the name, never the expiry date. */
+	function trustChip(r: SslCertResult): Chip {
+		if (r.trusted === true) return { label: 'Trusted', cls: 'is-ok' };
+		if (r.trusted === false) return { label: `Not trusted: ${r.verify_errors.join('; ') || 'verification failed'}`, cls: 'is-bad' };
+		return { label: 'Trust not checked', cls: '' };
+	}
+
+	/** Time to expiry; null when the date can't be read. */
+	function expiryChip(notAfter: string): Chip | null {
+		const ms = notAfter ? new Date(notAfter).getTime() : NaN;
+		if (!Number.isFinite(ms)) return null;
+		const left = Math.floor((ms - Date.now()) / DAY_MS);
+		if (left < 0) return { label: `Expired ${days(-left)} ago`, cls: 'is-bad' };
+		return { label: `Expires in ${days(left)}`, cls: left <= 30 ? 'is-warn' : '' };
 	}
 
 	function formatDate(d: string): string {
-		if (!d) return '--';
+		// OLD CODE START — 2026-11-06 (S1): an unparseable date printed "Invalid Date"
+		// if (!d) return '--';
+		// OLD CODE END
+		if (!d || !Number.isFinite(new Date(d).getTime())) return '—';
 		try {
 			return new Date(d).toLocaleDateString('en-US', {
 				year: 'numeric',
@@ -103,7 +128,11 @@
 		}
 	}
 
-	let validity = $derived(result ? validityBadge(result.not_after) : null);
+	// OLD CODE START — 2026-11-06 (S1): one chip that judged validity by the date alone
+	// let validity = $derived(result ? validityBadge(result.not_after) : null);
+	// OLD CODE END
+	let trust = $derived(result ? trustChip(result) : null);
+	let expiry = $derived(result ? expiryChip(result.not_after) : null);
 </script>
 
 <svelte:head>
@@ -137,8 +166,14 @@
 
 	<Card title="Certificate" sub="The leaf certificate the host presented" class="c-8">
 		{#snippet actions()}
+			<!-- OLD CODE START — 2026-11-06 (S1): one validity chip from the expiry date
 			{#if validity && result && !result.error && !loading && !error}
 				<span class={['chip', validity.cls]}>{validity.label}</span>
+			{/if}
+			OLD CODE END -->
+			{#if result && !result.error && !loading && !error}
+				{#if trust}<span class={['chip', trust.cls]}>{trust.label}</span>{/if}
+				<span class={['chip', expiry?.cls]}>{expiry?.label ?? 'Expiry —'}</span>
 			{/if}
 		{/snippet}
 		{#if loading}
@@ -153,6 +188,8 @@
 				<dd class="mono">{result.subject?.CN || result.subject?.commonName || '—'}</dd>
 				<dt>Issuer</dt>
 				<dd>{result.issuer?.CN || result.issuer?.O || result.issuer?.commonName || '—'}</dd>
+				<dt>Name check</dt>
+				<dd>{result.name_match === true ? `Covers ${result.host}` : result.name_match === false ? `Doesn't cover ${result.host}` : '—'}</dd>
 				<dt>Serial number</dt>
 				<dd class="mono">{result.serial || '—'}</dd>
 				<dt>Not before</dt>
