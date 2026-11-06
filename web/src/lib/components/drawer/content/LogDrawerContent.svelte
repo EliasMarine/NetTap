@@ -8,6 +8,7 @@
 	import DrawerSection from '../DrawerSection.svelte';
 	import KVRow from '../KVRow.svelte';
 	import { getWhois } from '$api/lookup';
+	import { ipHref } from '$lib/stores/lan';
 	import type { WhoisResult } from '$api/lookup';
 
 	interface LogHit {
@@ -153,7 +154,8 @@
 
 	function viewSourceDevice() {
 		const ip = getSourceIp();
-		if (ip) goto(`/devices/${encodeURIComponent(ip)}`);
+		// OLD CODE: if (ip) goto(`/devices/${encodeURIComponent(ip)}`); (slice 2a: an internet address has no device page)
+		if (ip) goto($ipHref(ip));
 	}
 
 	onMount(() => {

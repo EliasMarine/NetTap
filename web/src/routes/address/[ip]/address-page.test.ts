@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { writable } from 'svelte/store';
 import { refreshPage } from '$lib/stores/pageRefresh';
@@ -356,7 +356,11 @@ describe('Address page', () => {
 		const notice = await screen.findByText(/Showing the newest 10,000 of 25,000\./);
 		const link = within(notice.closest('p')!).getByRole('link', { name: 'search them all in Log Explorer' });
 		// OLD CODE START: expect(decodeURIComponent(link.getAttribute('href')!)).toBe('/logs?query=(source.ip:"198.51.100.10" OR destination.ip:"198.51.100.10")'); OLD CODE END
-		expect(decodeURIComponent(link.getAttribute('href')!)).toBe('/logs?query=(source.ip:"198.51.100.10" OR destination.ip:"198.51.100.10")&range=24h');
+		// OLD CODE: expect(decodeURIComponent(link.getAttribute('href')!)).toBe('/logs?query=(source.ip:"198.51.100.10" OR destination.ip:"198.51.100.10")&range=24h'); (slice 2a: the count's own window too)
+		const conn = calls.find((u) => u.pathname.endsWith('/connections'))!;
+		expect(decodeURIComponent(link.getAttribute('href')!)).toBe(
+			`/logs?query=(source.ip:"198.51.100.10" OR destination.ip:"198.51.100.10")&range=24h&from=${conn.searchParams.get('from')}&to=${conn.searchParams.get('to')}`,
+		);
 		expect(screen.getByText('Showing 1 to 25 of 10,000')).toBeInTheDocument();
 		// a refresh of the same view stays on the page the user is reading
 		await fireEvent.click(screen.getByRole('button', { name: 'Page 2' }));
@@ -429,5 +433,55 @@ describe('Address page', () => {
 		await vi.waitFor(() => expect(screen.getAllByText('That is not an IP address.').length).toBeGreaterThan(0));
 		expect(calls.some((u) => u.pathname === '/api/addresses/fe80%3A%3A1%25eth0')).toBe(true);
 		expect(kpi('Connections')).toHaveTextContent('—');
+	});
+});
+
+// NET-160 slice 2a: each port opens its connections in Log Explorer, with the count's own filters
+// (this address as the destination, no source) over the window the count came from
+describe('Address page — port links', () => {
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date('2026-11-06T12:00:00Z'));
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+		goTo('198.51.100.10');
+	});
+
+	const conn = (port: number, transport: string) =>
+		`event.provider:zeek AND event.dataset:conn AND destination.ip:"198.51.100.10" AND destination.port:${port} AND network.transport:${transport}`;
+
+	it("links each port over its count's window, not a newer refresh's", async () => {
+		stubDaemon(baseReplies(ADDRESS));
+		render(Page);
+		await vi.waitFor(() => expect(kpi('Connections')).toHaveTextContent('1,980'));
+		const sent = calls.find((u) => u.pathname === '/api/addresses/198.51.100.10')!;
+
+		// ten minutes on, a refresh whose figures haven't arrived must not move the links
+		vi.setSystemTime(new Date('2026-11-06T12:10:00Z'));
+		stubDaemon({ ...baseReplies(ADDRESS), '/api/addresses/*': () => new Promise(() => {}) });
+		void refreshPage();
+		await vi.waitFor(() => expect(calls.some((u) => u.pathname === '/api/addresses/198.51.100.10')).toBe(true));
+
+		const links = within(card('Ports on this address')).getAllByRole('link').map((a) => new URL(a.getAttribute('href')!, 'http://x'));
+		expect(links.map((u) => u.searchParams.get('query'))).toEqual([conn(443, 'tcp'), conn(443, 'udp'), conn(80, 'tcp')]);
+		for (const u of links) {
+			expect(u.pathname).toBe('/logs');
+			expect(u.searchParams.get('query')).not.toContain('source.ip');
+			expect(['from', 'to', 'range'].map((k) => u.searchParams.get(k))).toEqual([sent.searchParams.get('from'), sent.searchParams.get('to'), '24h']);
+		}
+	});
+
+	it('leaves a port without a number or a transport as text', async () => {
+		const ports = [
+			{ port: 8883, transport: null, services: [], connections: 5 },
+			{ port: null, transport: 'tcp', services: [], connections: 3 },
+		];
+		stubDaemon(baseReplies({ ...ADDRESS, ports }));
+		render(Page);
+		const port = await vi.waitFor(() => within(card('Ports on this address')).getByText('8883'));
+		expect(port.closest('a')).toBeNull();
+		expect(within(card('Ports on this address')).queryAllByRole('link')).toHaveLength(0);
 	});
 });

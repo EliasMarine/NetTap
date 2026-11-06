@@ -152,9 +152,12 @@ export function windowQuery(win: DrillWindow, range?: string): string {
 	return q.toString();
 }
 
-/** The alerts list for one signature (an exact match on rule.name), over the count's window when given. */
-export function alertsHrefForSignature(signature: string, win?: DrillWindow & { range?: string }): string {
-	const q = new URLSearchParams({ signature });
+/**
+ * The alerts list for one signature (an exact match on rule.name), over the count's window when given.
+ * `ip` narrows it to alerts with that address at either end (the list's `ip` filter).
+ */
+export function alertsHrefForSignature(signature: string, win?: DrillWindow & { range?: string }, ip?: string): string {
+	const q = new URLSearchParams(ip ? { signature, ip } : { signature });
 	return win ? `/alerts?${q.toString()}&${windowQuery(win, win.range)}` : `/alerts?${q.toString()}`;
 }
 

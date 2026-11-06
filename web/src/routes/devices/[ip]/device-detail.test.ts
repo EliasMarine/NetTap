@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
 import { getSmartAlerts, suppressAlert } from '$api/alerts';
+import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
 
@@ -237,5 +238,62 @@ describe('Device detail — connection direction, protocol filter and upload sha
 		const kpi = screen.getAllByText('Upload share').map((el) => el.closest('.kpi')).find(Boolean) as HTMLElement;
 		expect(kpi).toHaveTextContent('Elevated');
 		expect(kpi).not.toHaveTextContent('Normal');
+	});
+});
+
+// NET-160 slice 2a: a count links to a list over the window it was counted in, even while a
+// later refresh is still in flight
+describe('Device detail — port, signature and connection links', () => {
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date('2026-11-06T12:00:00Z'));
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.clearAllMocks();
+	});
+
+	it("links each port and signature over its count's own window, not a newer refresh's", async () => {
+		const devices = await import('$api/devices');
+		vi.mocked(devices.getDevicePorts).mockResolvedValueOnce({ ports: [{ port: 443, service: 'https', connections: 12, suspicious: false }] } as never);
+		vi.mocked(getSmartAlerts).mockResolvedValueOnce({ alerts: [ALERT], total: 1 } as never);
+		render(Page);
+		await flush();
+		const portsSent = vi.mocked(devices.getDevicePorts).mock.calls[0][1] as { from: string; to: string };
+		const alertsSent = vi.mocked(getSmartAlerts).mock.calls[0][0] as { from: string; to: string };
+
+		// ten minutes on, a refresh that hasn't answered yet must not move the links
+		vi.setSystemTime(new Date('2026-11-06T12:10:00Z'));
+		vi.mocked(devices.getDevicePorts).mockReturnValueOnce(new Promise(() => {}) as never);
+		vi.mocked(getSmartAlerts).mockReturnValueOnce(new Promise(() => {}) as never);
+		void refreshPage();
+		await flush();
+		expect(vi.mocked(devices.getDevicePorts)).toHaveBeenCalledTimes(2);
+
+		const port = new URL(screen.getByRole('link', { name: '443' }).getAttribute('href')!, 'http://x');
+		expect(port.pathname).toBe('/logs');
+		expect(port.searchParams.get('query')).toBe(`event.provider:zeek AND event.dataset:conn AND source.ip:"${IP}" AND destination.port:443`);
+		expect(['from', 'to', 'range'].map((k) => port.searchParams.get(k))).toEqual([portsSent.from, portsSent.to, '24h']);
+
+		const sig = new URL(screen.getByRole('link', { name: ALERT.signature }).getAttribute('href')!, 'http://x');
+		expect(sig.pathname).toBe('/alerts');
+		// OLD CODE: …map over ['signature', 'from', 'to', 'range'] (the count is this device's, so the list is too)
+		expect(['signature', 'ip', 'from', 'to', 'range'].map((k) => sig.searchParams.get(k))).toEqual([ALERT.signature, IP, alertsSent.from, alertsSent.to, '24h']);
+	});
+
+	it("links a connection's destination address beside the row's button", async () => {
+		const devices = await import('$api/devices');
+		vi.mocked(getSmartAlerts).mockResolvedValueOnce({ alerts: [], total: 0 } as never);
+		vi.mocked(devices.getDeviceConnections).mockResolvedValueOnce({
+			from: '', to: '', ip: IP, page: 1, size: 25, total: 1, total_pages: 1,
+			connections: [{ _id: 'a', _index: 'i', direction: 'out', '@timestamp': '2026-11-06T11:30:00Z', network: { transport: 'tcp' }, source: { ip: IP, port: 50000 }, destination: { ip: '8.8.8.8', port: 443 } }],
+		} as never);
+		const { container } = render(Page);
+		await flush();
+		const table = screen.getByRole('table', { name: 'Recent connections' });
+		const link = within(table).getByRole('link', { name: '8.8.8.8' });
+		expect(link).toHaveAttribute('href', '/address/8.8.8.8');
+		expect(link.closest('td')).toHaveTextContent(':443');
+		expectNoNestedInteractive(container);
 	});
 });

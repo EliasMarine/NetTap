@@ -218,6 +218,18 @@ describe('Certificates page — drill-down filter', () => {
 		expect(screen.queryByRole('complementary', { name: 'Certificate details' })).not.toBeInTheDocument();
 	});
 
+	// NET-160 slice 2a: the device column was hard-wired to /devices/, so an internet server opened a device page that can't exist
+	it("links a device's server where it drills down: an internet address to its address page", async () => {
+		const [lan] = OVERVIEW.devices;
+		const overview = { ...OVERVIEW, devices: [lan, { ...lan, id: 'internet', server: '203.0.113.10' }] };
+		stubDaemon({ '/api/certificates/overview': overview, '/api/devices/registry': REGISTRY, '/api/network/lan': LAN_POLICY });
+		const { container } = render(CertificatesPage);
+		const table = await screen.findByRole('table', { name: "Your devices' certificates" });
+		await vi.waitFor(() => expect(within(table).getByRole('link', { name: '203.0.113.10' })).toHaveAttribute('href', '/address/203.0.113.10'));
+		expect(within(table).getByRole('link', { name: 'Office NAS' })).toHaveAttribute('href', '/devices/192.168.1.10');
+		expectNoNestedInteractive(container);
+	});
+
 	it('ignores an unreadable window and keeps the 7-day default', async () => {
 		openUrl('?site=www.example.com&from=yesterday&to=today');
 		stubDaemon({ '/api/certificates/overview': OVERVIEW, '/api/devices/registry': REGISTRY, '/api/network/lan': LAN_POLICY });

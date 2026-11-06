@@ -82,6 +82,10 @@ describe('exact-window links', () => {
 		expect(Object.fromEntries(params(alertsHrefForSignature(sig, { ...win, range: '7d' })))).toEqual({ signature: sig, ...win, range: '7d' });
 	});
 
+	it("narrows a signature link to one device when the count is that device's", () => {
+		expect(Object.fromEntries(params(alertsHrefForSignature('ET SCAN x', { ...win, range: '24h' }, '2001:db8::1')))).toEqual({ signature: 'ET SCAN x', ip: '2001:db8::1', ...win, range: '24h' });
+	});
+
 	it('joins query clauses with AND and carries the exact window', () => {
 		const href = logsHrefForQuery(['event.provider:zeek', 'destination.ip:"2001:db8::1"', 'destination.port:443'], win, '30d');
 		expect(new URL(href, 'http://x').pathname).toBe('/logs');

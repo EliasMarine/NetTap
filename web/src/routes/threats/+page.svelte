@@ -34,6 +34,7 @@
 	import Meter from '$lib/components/ui/Meter.svelte';
 	import StackBar from '$lib/components/ui/charts/StackBar.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import IPAddress from '$components/IPAddress.svelte';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -239,8 +240,12 @@
 		{ key: 'queries', label: 'Queries', numeric: true, cell: dnsQueries },
 	];
 	const LATERAL_COLUMNS: Column<LateralRow>[] = [
-		{ key: 'source_ip', label: 'From', class: 'mono' },
-		{ key: 'destination_ip', label: 'To', class: 'mono' },
+		// OLD CODE START — slice 2a: the addresses weren't links
+		// { key: 'source_ip', label: 'From', class: 'mono' },
+		// { key: 'destination_ip', label: 'To', class: 'mono' },
+		// OLD CODE END
+		{ key: 'source_ip', label: 'From', class: 'mono', cell: lateralFrom },
+		{ key: 'destination_ip', label: 'To', class: 'mono', cell: lateralTo },
 		{ key: 'service', label: 'Service' },
 		{ key: 'port', label: 'Port', numeric: true, class: 'mono' },
 		{ key: 'connection_count', label: 'Connections', numeric: true, cell: lateralCount },
@@ -372,6 +377,8 @@
 {/snippet}
 {#snippet dnsQueries(r: DnsRow)}{r.queriesText}{/snippet}
 {#snippet lateralCount(m: LateralRow)}{formatNumber(m.connection_count)}{/snippet}
+{#snippet lateralFrom(m: LateralRow)}<IPAddress ip={m.source_ip} />{/snippet}
+{#snippet lateralTo(m: LateralRow)}<IPAddress ip={m.destination_ip} />{/snippet}
 
 <svelte:head>
 	<title>Threats | NetTap</title>

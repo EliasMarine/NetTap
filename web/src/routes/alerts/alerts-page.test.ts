@@ -25,6 +25,7 @@ import {
 } from '$api/alerts';
 import { _configure as resetAlertSnapshots, alertSnapshots, loadAlertSnapshot } from '$lib/stores/alertSnapshot';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
+import { goto } from '$app/navigation';
 import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
@@ -37,11 +38,38 @@ const lanReply = () => Promise.resolve({ ok: true, status: 200, json: async () =
 // 	page: readable({ url: new URL('http://localhost/alerts') }),
 // }));
 // OLD CODE END
-const nav = vi.hoisted(() => ({ url: new URL('http://localhost/alerts') }));
-vi.mock('$app/stores', () => ({
-	page: { subscribe: (fn: (v: { url: URL }) => void) => (fn({ url: nav.url }), () => {}) },
+// OLD CODE START — slice 2a: the URL never changed after the first read, and goto went nowhere
+// const nav = vi.hoisted(() => ({ url: new URL('http://localhost/alerts') }));
+// vi.mock('$app/stores', () => ({
+// 	page: { subscribe: (fn: (v: { url: URL }) => void) => (fn({ url: nav.url }), () => {}) },
+// }));
+// vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+// OLD CODE END
+/** The page's URL: setting `nav.url` is a same-route navigation, and goto() sets it as SvelteKit would. */
+const nav = vi.hoisted(() => {
+	let url = new URL('http://localhost/alerts');
+	const readers = new Set<(v: { url: URL }) => void>();
+	return {
+		get url() {
+			return url;
+		},
+		set url(next: URL) {
+			url = next;
+			for (const fn of readers) fn({ url });
+		},
+		subscribe(fn: (v: { url: URL }) => void) {
+			readers.add(fn);
+			fn({ url });
+			return () => readers.delete(fn);
+		},
+	};
+});
+vi.mock('$app/stores', () => ({ page: { subscribe: nav.subscribe } }));
+vi.mock('$app/navigation', () => ({
+	goto: vi.fn(async (href: string) => {
+		nav.url = new URL(href, nav.url);
+	}),
 }));
-vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$api/alerts', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$api/alerts')>()),
 	getAlerts: vi.fn(),
@@ -75,9 +103,13 @@ function deferred<T>() {
 	return { promise, resolve, reject };
 }
 
-/** A severity filter pill (its label carries the count). */
-const severityPill = (word: string) =>
-	within(screen.getByRole('group', { name: 'Severity' })).getByRole('button', { name: new RegExp(`^${word} `) });
+// OLD CODE START — slice 2a: the pills carried the counts ("High 3"); they are labels only now
+// /** A severity filter pill (its label carries the count). */
+// const severityPill = (word: string) =>
+// 	within(screen.getByRole('group', { name: 'Severity' })).getByRole('button', { name: new RegExp(`^${word} `) });
+// OLD CODE END
+/** A severity filter pill. */
+const severityPill = (word: string) => within(screen.getByRole('group', { name: 'Severity' })).getByRole('button', { name: word });
 
 async function flush() {
 	for (let i = 0; i < 5; i++) await Promise.resolve();
@@ -317,7 +349,7 @@ describe('Alerts — severity summary', () => {
 		const gauge = screen.getByRole('img', { name: /^37 alerts in the last 24 hours/ });
 		expect(gauge).toHaveAccessibleName('37 alerts in the last 24 hours: 2 high, 5 medium, 20 low, 10 info');
 		expect(screen.getByRole('button', { name: 'Show info alerts (10)' })).toBeInTheDocument();
-		expect(severityPill('All')).toHaveTextContent('All 37');
+		// OLD CODE: expect(severityPill('All')).toHaveTextContent('All 37'); (slice 2a: the pills show no counts)
 	});
 
 	it('a refresh starts a new snapshot window, so every reader moves together', async () => {
@@ -378,7 +410,7 @@ describe('Alerts — severity summary', () => {
 		await flush();
 		expect(screen.getByText("Couldn't load the alert counts: the request failed.")).toBeInTheDocument();
 		expect(screen.queryByRole('img', { name: /alerts in the last/ })).not.toBeInTheDocument();
-		expect(severityPill('All')).toHaveTextContent('All —');
+		// OLD CODE: expect(severityPill('All')).toHaveTextContent('All —'); (slice 2a: the pills show no counts)
 	});
 });
 
@@ -502,6 +534,8 @@ describe('Alerts — drawer', () => {
 		expect(within(drawer).getByText('Disconnect the device and run a malware scan.')).toBeInTheDocument();
 		expect(within(drawer).getByText('2900001')).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: /A device contacted a server/ })).toHaveAttribute('aria-current', 'true');
+		// NET-160 slice 2a: the signature opens the alerts list for it (no count here, so no window)
+		expect(within(drawer).getByRole('link', { name: 'ET MALWARE CnC Checkin' })).toHaveAttribute('href', '/alerts?signature=ET+MALWARE+CnC+Checkin');
 	});
 
 	it('says there is no advice instead of inventing one, and titles by category without a description', async () => {
@@ -638,5 +672,276 @@ describe('Alerts — drawer', () => {
 		await flush();
 		expect(within(table()).getByRole('columnheader', { name: /Severity/ })).toHaveAttribute('aria-sort');
 		expect(within(table()).getByRole('columnheader', { name: /Time/ })).toHaveAttribute('aria-sort', 'none');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// NET-160 slice 2a: the URL is the one source of the list's filters and window, and a count
+// opens a list over that count's own window. Every test reads the outgoing request, not just hrefs.
+// ---------------------------------------------------------------------------
+
+describe('Alerts — URL hand-off and exact windows (NET-160 slice 2a)', () => {
+	const FROM = '2026-11-01T08:00:00.000Z';
+	const TO = '2026-11-01T20:00:00.000Z';
+	const at = (query: string) => (nav.url = new URL(`http://localhost/alerts${query}`));
+	const listCalls = () => vi.mocked(getAlerts).mock.calls.map(([opts]) => opts!);
+	const spanHours = (o: { from?: string; to?: string }) => (Date.parse(o.to!) - Date.parse(o.from!)) / 3_600_000;
+	/** The count answers for the window it was asked about, as the daemon does. */
+	const echoCounts = (counts = { total: 40, high: 3, medium: 7, low: 20 }) =>
+		vi.mocked(getAlertCount).mockImplementation(async (opts = {}) => ({ from: opts.from!, to: opts.to!, counts }));
+
+	afterEach(() => {
+		vi.useRealTimers();
+		resetAlertSnapshots({ now: Date.now });
+	});
+
+	it('from page 8, a new signature and range send one page-1 request with both', async () => {
+		succeedAll();
+		vi.mocked(getAlerts).mockResolvedValue(list([alert('a1')], 8, 1000));
+		render(Page);
+		await flush();
+		vi.mocked(getAlerts).mockClear();
+		at('?signature=ET%20SCAN%20Nmap&range=7d');
+		await flush();
+		expect(listCalls()).toHaveLength(1);
+		expect(listCalls()[0]).toMatchObject({ page: 1, signature: 'ET SCAN Nmap' });
+		expect(spanHours(listCalls()[0])).toBe(168);
+	});
+
+	it('a new ip and window together send one request, on that window', async () => {
+		succeedAll();
+		render(Page);
+		await flush();
+		vi.mocked(getAlerts).mockClear();
+		at(`?ip=192.168.1.42&from=${FROM}&to=${TO}`);
+		await flush();
+		expect(listCalls()).toEqual([expect.objectContaining({ page: 1, ip: '192.168.1.42', from: FROM, to: TO })]);
+	});
+
+	it('a window-only change sends one request', async () => {
+		succeedAll();
+		render(Page);
+		await flush();
+		vi.mocked(getAlerts).mockClear();
+		at('?range=7d');
+		await flush();
+		expect(listCalls()).toHaveLength(1);
+		expect(spanHours(listCalls()[0])).toBe(168);
+	});
+
+	it('a fresh severity=high link with from/to lists high alerts on exactly those bounds, as Custom', async () => {
+		at(`?severity=high&from=${FROM}&to=${TO}&range=24h`);
+		succeedAll();
+		echoCounts({ total: 12, high: 5, medium: 4, low: 1 });
+		render(Page);
+		await flush();
+		expect(listCalls()).toEqual([expect.objectContaining({ severity: 1, page: 1, from: FROM, to: TO })]);
+		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		expect(severityPill('High')).toHaveAttribute('aria-pressed', 'true');
+		// Custom counts are this page's own, over the same bounds, and the card shows them
+		expect(getAlertCount).toHaveBeenCalledTimes(1);
+		expect(getAlertCount).toHaveBeenCalledWith({ from: FROM, to: TO });
+		expect(screen.getByRole('button', { name: 'Show high alerts (5)' })).toBeInTheDocument();
+		expect(screen.getByRole('img', { name: /^12 alerts in the window / })).toBeInTheDocument();
+	});
+
+	it('High to Low on the same bounds sends exactly one page-1 list request', async () => {
+		at(`?severity=high&from=${FROM}&to=${TO}`);
+		succeedAll();
+		render(Page);
+		await flush();
+		vi.mocked(getAlerts).mockClear();
+		vi.mocked(getAlertCount).mockClear();
+		at(`?severity=low&from=${FROM}&to=${TO}`);
+		await flush();
+		expect(listCalls()).toEqual([expect.objectContaining({ severity: 3, page: 1, from: FROM, to: TO })]);
+		expect(getAlertCount).not.toHaveBeenCalled();
+	});
+
+	it('reads an unknown severity as all', async () => {
+		at('?severity=critical');
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(listCalls()[0].severity).toBeUndefined();
+		expect(severityPill('All')).toHaveAttribute('aria-pressed', 'true');
+	});
+
+	it('a severity pill writes only severity to the URL, keeping signature, ip and the window', async () => {
+		at(`?signature=ET%20SCAN%20Nmap&ip=192.168.1.42&from=${FROM}&to=${TO}&range=7d`);
+		succeedAll();
+		render(Page);
+		await flush();
+		await fireEvent.click(severityPill('High'));
+		await flush();
+		const q = nav.url.searchParams;
+		expect([q.get('severity'), q.get('signature'), q.get('ip'), q.get('from'), q.get('to'), q.get('range')]).toEqual([
+			'high', 'ET SCAN Nmap', '192.168.1.42', FROM, TO, '7d',
+		]);
+		expect(vi.mocked(goto).mock.calls.at(-1)![1]).toEqual({ replaceState: true, keepFocus: true, noScroll: true });
+		expect(listCalls().at(-1)).toMatchObject({ severity: 1, signature: 'ET SCAN Nmap', ip: '192.168.1.42', from: FROM, to: TO });
+	});
+
+	it("clearing the IP chip keeps severity and signature", async () => {
+		at('?severity=high&signature=ET%20SCAN%20Nmap&ip=192.168.1.42');
+		succeedAll();
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Clear IP filter' }));
+		await flush();
+		expect(nav.url.searchParams.get('ip')).toBeNull();
+		expect(nav.url.searchParams.get('severity')).toBe('high');
+		expect(nav.url.searchParams.get('signature')).toBe('ET SCAN Nmap');
+		expect(listCalls().at(-1)).toMatchObject({ severity: 1, signature: 'ET SCAN Nmap', ip: undefined });
+	});
+
+	it('a top-signature toggle writes signature to the URL, and the list follows it', async () => {
+		succeedAll();
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Filter alerts by ET SCAN Port sweep' }));
+		await flush();
+		expect(nav.url.searchParams.get('signature')).toBe('ET SCAN Port sweep');
+		expect(listCalls().at(-1)).toMatchObject({ signature: 'ET SCAN Port sweep', page: 1 });
+		await fireEvent.click(screen.getByRole('button', { name: 'Clear the filter for ET SCAN Port sweep' }));
+		await flush();
+		expect(nav.url.searchParams.has('signature')).toBe(false);
+	});
+
+	it('a range pill writes range and drops a Custom window', async () => {
+		at(`?from=${FROM}&to=${TO}&range=24h`);
+		succeedAll();
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
+		await flush();
+		expect(nav.url.search).toBe('?range=7d');
+		expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument();
+		expect(spanHours(listCalls().at(-1)!)).toBe(168);
+	});
+
+	it('the severity pills are labels only: the counts are on the tiles', async () => {
+		succeedAll();
+		render(Page);
+		await flush();
+		const pills = within(screen.getByRole('group', { name: 'Severity' })).getAllByRole('button');
+		expect(pills.map((p) => p.textContent?.trim())).toEqual(['All', 'High', 'Medium', 'Low', 'Info']);
+	});
+
+	it('a severity tile clears the signature filter and lists that level over the counts\' bounds', async () => {
+		at('?signature=ET%20SCAN%20Nmap');
+		succeedAll();
+		echoCounts();
+		render(Page);
+		await flush();
+		const shown = get(alertSnapshots)[24].data!;
+		await fireEvent.click(screen.getByRole('button', { name: 'Show high alerts (3)' }));
+		await flush();
+		expect(nav.url.searchParams.has('signature')).toBe(false);
+		expect(listCalls().at(-1)).toMatchObject({ severity: 1, signature: undefined, ip: undefined, from: shown.from, to: shown.to });
+	});
+
+	it('rolling: minutes after loading, High lists exactly the displayed counts\' window', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date('2026-11-06T12:00:30Z'));
+		resetAlertSnapshots({ now: () => Date.now() });
+		succeedAll();
+		echoCounts();
+		render(Page);
+		await flush();
+		const shown = get(alertSnapshots)[24].data!;
+		vi.setSystemTime(new Date('2026-11-06T12:07:45Z'));
+		await fireEvent.click(screen.getByRole('button', { name: 'Show high alerts (3)' }));
+		await flush();
+		expect(listCalls().at(-1)).toMatchObject({ severity: 1, page: 1, from: shown.from, to: shown.to });
+		expect(shown.to).toBe('2026-11-06T12:00:00.000Z');
+	});
+
+	it('after a failed count refresh, High uses the older figures\' window, not the new attempt\'s', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date('2026-11-06T12:00:30Z'));
+		resetAlertSnapshots({ now: () => Date.now() });
+		succeedAll();
+		echoCounts();
+		render(Page);
+		await flush();
+		const older = get(alertSnapshots)[24].data!;
+		vi.setSystemTime(new Date('2026-11-06T12:10:30Z'));
+		vi.mocked(getAlertCount).mockRejectedValueOnce(new Error('HTTP 502'));
+		await refreshPage();
+		await flush();
+		expect(get(alertSnapshots)[24]).toMatchObject({ status: 'error', to: '2026-11-06T12:10:00.000Z', data: older });
+		await fireEvent.click(screen.getByRole('button', { name: 'Show high alerts (3)' }));
+		await flush();
+		expect(listCalls().at(-1)).toMatchObject({ severity: 1, from: older.from, to: older.to });
+	});
+
+	it('paging keeps the search\'s window after the clock moves', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date('2026-11-06T12:00:30Z'));
+		succeedAll();
+		vi.mocked(getAlerts).mockImplementation(async (opts = {}) => list([alert(`p${opts.page}`)], opts.page ?? 1, 250));
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
+		const first = listCalls()[0];
+		vi.setSystemTime(new Date('2026-11-06T12:06:00Z'));
+		await fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+		await flush();
+		expect(listCalls().at(-1)).toMatchObject({ page: 2, from: first.from, to: first.to });
+	});
+
+	it('a page change during a refresh pages through the rows on screen, not the refresh\'s window', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date('2026-11-06T12:00:30Z'));
+		succeedAll();
+		vi.mocked(getAlerts).mockImplementation(async (opts = {}) => list([alert(`p${opts.page}`)], opts.page ?? 1, 250));
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
+		const shown = listCalls().at(-1)!;
+		const held = deferred<ReturnType<typeof list>>();
+		vi.mocked(getAlerts).mockImplementationOnce(() => held.promise);
+		vi.setSystemTime(new Date('2026-11-06T12:06:00Z'));
+		void refreshPage();
+		await flush();
+		expect(listCalls().at(-1)!.from).not.toBe(shown.from);
+		await fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+		await flush();
+		expect(listCalls().at(-1)).toMatchObject({ page: 2, from: shown.from, to: shown.to });
+	});
+
+	it("the table's signature links to that signature over the list's own window", async () => {
+		succeedAll([alert('a1', { signature: 'ET SCAN Nmap' })]);
+		const { container } = render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
+		const first = listCalls()[0];
+		const href = screen.getByRole('link', { name: 'ET SCAN Nmap' }).getAttribute('href')!;
+		const q = new URL(href, 'http://localhost').searchParams;
+		expect([q.get('signature'), q.get('from'), q.get('to'), q.get('range')]).toEqual(['ET SCAN Nmap', first.from, first.to, '24h']);
+		expectNoNestedInteractive(container);
+	});
+
+	it("while a new search is loading, the rows' signature links keep the rows' own window", async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date('2026-11-06T12:00:30Z'));
+		succeedAll([alert('a1', { signature: 'ET SCAN Nmap' })]);
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
+		const first = listCalls()[0];
+		const held = deferred<ReturnType<typeof list>>();
+		vi.mocked(getAlerts).mockImplementationOnce(() => held.promise);
+		vi.setSystemTime(new Date('2026-11-06T12:06:00Z'));
+		await fireEvent.click(severityPill('High'));
+		await flush();
+		const pending = listCalls().at(-1)!;
+		expect(pending.from).not.toBe(first.from);
+		const linkFrom = () => new URL(screen.getByRole('link', { name: 'ET SCAN Nmap' }).getAttribute('href')!, 'http://localhost').searchParams.get('from');
+		expect(linkFrom()).toBe(first.from);
+		held.resolve(list([alert('a2', { signature: 'ET SCAN Nmap' })], 1, 1));
+		await flush();
+		expect(linkFrom()).toBe(pending.from);
 	});
 });

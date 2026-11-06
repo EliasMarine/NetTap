@@ -60,3 +60,19 @@ describe('Live Monitor — duration', () => {
 		expect(screen.getByText('2h 0m')).toBeInTheDocument();
 	});
 });
+
+// NET-160 slice 2a: an alert's signature opens the alerts list for it (no count here, so no window)
+describe('Live Monitor — signature links', () => {
+	it('links each alert signature to /alerts?signature=…', () => {
+		const connection = { source_ip: '192.168.1.20', dest_ip: '8.8.8.8', dest_port: 53, protocol: 'udp' };
+		const detail = { alerts: [{ timestamp: '2026-11-06T10:00:00Z', severity: 2, signature: 'ET DNS Query', category: 'Misc' }] };
+		render(LiveConnectionDrawerContent, {
+			connection: connection as never,
+			detail: detail as never,
+			detailLoading: false,
+			detailFailed: false,
+			activeTab: 'alerts',
+		});
+		expect(screen.getByRole('link', { name: 'ET DNS Query' })).toHaveAttribute('href', '/alerts?signature=ET+DNS+Query');
+	});
+});
