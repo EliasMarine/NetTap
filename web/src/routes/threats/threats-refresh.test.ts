@@ -289,3 +289,19 @@ describe('Threats page — what the figures count', () => {
 	});
 });
 
+describe('Threats page — investigation profiles (I14)', () => {
+	it("says a host profile counts the connections it started, not every connection", async () => {
+		const [first, ...rest] = FULL.investigations;
+		const destination_profile = { ip: '203.0.113.45', connection_count_24h: 0, unique_destinations: 0, total_bytes_24h: 0 };
+		vi.mocked(getThreatReport).mockResolvedValue({
+			...FULL,
+			investigations: [{ ...first, sections: { ...first.sections, destination_profile } }, ...rest],
+		});
+		vi.mocked(getThreatIntel).mockResolvedValue(INTEL);
+		render(ThreatsPage);
+		await vi.waitFor(() => expect(screen.getByText('Destination host profile')).toBeInTheDocument());
+		expect(screen.getAllByText('Connections it started (24h)')).toHaveLength(2);
+		expect(screen.queryByText('Connections (24h)')).not.toBeInTheDocument();
+	});
+});
+

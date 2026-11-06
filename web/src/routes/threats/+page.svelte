@@ -655,9 +655,14 @@
 											<h4 class="eyebrow">Source host profile</h4>
 											<dl class="facts">
 												<dt>IP</dt><dd class="mono">{p.ip}</dd>
+												<!-- OLD CODE START (I14: the daemon counts only connections this host started, and the bytes it sent in them)
 												<dt>Connections (24h)</dt><dd class="num">{formatNumber(Number(p.connection_count_24h) || 0)}</dd>
 												<dt>Unique destinations</dt><dd class="num">{Number(p.unique_destinations) || 0}</dd>
 												<dt>Bytes (24h)</dt><dd class="num">{formatBytes(Number(p.total_bytes_24h) || 0)}</dd>
+												OLD CODE END -->
+												<dt>Connections it started (24h)</dt><dd class="num">{formatNumber(Number(p.connection_count_24h) || 0)}</dd>
+												<dt>Unique destinations</dt><dd class="num">{Number(p.unique_destinations) || 0}</dd>
+												<dt>Bytes it sent in them (24h)</dt><dd class="num">{formatBytes(Number(p.total_bytes_24h) || 0)}</dd>
 												{#if p.protocols}<dt>Protocols</dt><dd class="mono">{list(p.protocols)}</dd>{/if}
 												{#if p.top_ports}<dt>Top ports</dt><dd class="mono">{list(p.top_ports)}</dd>{/if}
 											</dl>
@@ -669,9 +674,14 @@
 											<h4 class="eyebrow">Destination host profile</h4>
 											<dl class="facts">
 												<dt>IP</dt><dd class="mono">{p.ip}</dd>
+												<!-- OLD CODE START (I14: the daemon counts only connections this host started, and the bytes it sent in them)
 												<dt>Connections (24h)</dt><dd class="num">{formatNumber(Number(p.connection_count_24h) || 0)}</dd>
 												<dt>Unique destinations</dt><dd class="num">{Number(p.unique_destinations) || 0}</dd>
 												<dt>Bytes (24h)</dt><dd class="num">{formatBytes(Number(p.total_bytes_24h) || 0)}</dd>
+												OLD CODE END -->
+												<dt>Connections it started (24h)</dt><dd class="num">{formatNumber(Number(p.connection_count_24h) || 0)}</dd>
+												<dt>Unique destinations</dt><dd class="num">{Number(p.unique_destinations) || 0}</dd>
+												<dt>Bytes it sent in them (24h)</dt><dd class="num">{formatBytes(Number(p.total_bytes_24h) || 0)}</dd>
 											</dl>
 										</section>
 									{/if}
