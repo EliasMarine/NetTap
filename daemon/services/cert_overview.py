@@ -18,10 +18,14 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterator
 
-from opensearchpy import OpenSearchException
+# OLD CODE START — NET-160: only the moved I/O methods used it
+# from opensearchpy import OpenSearchException
+# OLD CODE END
 
 from services import cert_findings
 from services.excluded_ips import build_excluded_ips_filter
+from storage import snapshot_search
+from storage.snapshot_search import QueryFailed, TooSlow
 
 logger = logging.getLogger("nettap.services.cert_overview")
 
@@ -33,9 +37,12 @@ MAX_KEYS = 200_000  # distinct (certificate, site, server, port, status, version
 BUDGET_SECONDS = 50.0  # the web proxy gives this path 60 s
 MAX_REPLY_BYTES = 5_000_000
 PIT_KEEP_ALIVE = "2m"
-PIT_CLOSE_SECONDS = (
-    5  # closing runs in `finally`, often when OpenSearch is already slow
-)
+# OLD CODE START — NET-160: moved to storage/snapshot_search.py, which closes the PIT
+# PIT_CLOSE_SECONDS = (
+#     5  # closing runs in `finally`, often when OpenSearch is already slow
+# )
+# OLD CODE END
+PIT_CLOSE_SECONDS = snapshot_search.PIT_CLOSE_SECONDS
 MAX_TEXT = (
     1_000  # characters kept of a certificate's name fields, which the network controls
 )
@@ -53,35 +60,55 @@ _SESSION_FIELDS = (
 )
 
 
-class CertQueryFailed(Exception):
-    """A certificate query failed or was incomplete; never show partial figures as counts (#96)."""
-
-
-class CertTooSlow(CertQueryFailed):
-    """The pass ran past its time budget."""
+# OLD CODE START — NET-160: the exceptions and Budget moved to storage/snapshot_search.py,
+# shared with the drill-down pages; the names below are the same classes
+# class CertQueryFailed(Exception):
+#     """A certificate query failed or was incomplete; never show partial figures as counts (#96)."""
+#
+#
+# class CertTooSlow(CertQueryFailed):
+#     """The pass ran past its time budget."""
+#
+#
+# class CertTooBig(CertQueryFailed):
+#     """Too many distinct certificate uses, or a reply too large, to show for this window."""
+#
+#
+# class Budget:
+#     """One monotonic deadline for a whole request: queueing, searches and encoding."""
+#
+#     def __init__(
+#         self,
+#         seconds: float = BUDGET_SECONDS,
+#         clock: Callable[[], float] = time.monotonic,
+#     ) -> None:
+#         self._clock = clock
+#         self._end = clock() + seconds
+#
+#     def remaining(self) -> float:
+#         return self._end - self._clock()
+#
+#     def check(self, what: str) -> None:
+#         if self.remaining() <= 0:
+#             raise CertTooSlow(f"{what} took too long")
+# OLD CODE END
+CertQueryFailed = QueryFailed
+CertTooSlow = TooSlow
 
 
 class CertTooBig(CertQueryFailed):
     """Too many distinct certificate uses, or a reply too large, to show for this window."""
 
 
-class Budget:
-    """One monotonic deadline for a whole request: queueing, searches and encoding."""
+class Budget(snapshot_search.Budget):
+    """The shared deadline, defaulting to the certificate pass's BUDGET_SECONDS."""
 
     def __init__(
         self,
         seconds: float = BUDGET_SECONDS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._clock = clock
-        self._end = clock() + seconds
-
-    def remaining(self) -> float:
-        return self._end - self._clock()
-
-    def check(self, what: str) -> None:
-        if self.remaining() <= 0:
-            raise CertTooSlow(f"{what} took too long")
+        super().__init__(seconds, clock)
 
 
 # ---------------------------------------------------------------------------
@@ -140,16 +167,19 @@ def x509_fields(x509: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _checked(reply: Any, what: str) -> dict:
-    """A complete, well-formed reply, or CertQueryFailed."""
-    if not isinstance(reply, dict):
-        raise CertQueryFailed(f"{what}: malformed reply")
-    if reply.get("timed_out"):
-        raise CertQueryFailed(f"{what} timed out")
-    shards = reply.get("_shards")
-    if isinstance(shards, dict) and shards.get("failed"):
-        raise CertQueryFailed(f"{what}: {shards.get('failed')} shard(s) failed")
-    return reply
+# OLD CODE START — NET-160: moved to storage/snapshot_search.checked
+# def _checked(reply: Any, what: str) -> dict:
+#     """A complete, well-formed reply, or CertQueryFailed."""
+#     if not isinstance(reply, dict):
+#         raise CertQueryFailed(f"{what}: malformed reply")
+#     if reply.get("timed_out"):
+#         raise CertQueryFailed(f"{what} timed out")
+#     shards = reply.get("_shards")
+#     if isinstance(shards, dict) and shards.get("failed"):
+#         raise CertQueryFailed(f"{what}: {shards.get('failed')} shard(s) failed")
+#     return reply
+# OLD CODE END
+_checked = snapshot_search.checked
 
 
 def _hits(reply: dict, what: str) -> list[dict]:
@@ -202,44 +232,56 @@ class CertOverview:
 
     # -- OpenSearch I/O -------------------------------------------------------
 
+    # OLD CODE START — NET-160: moved to storage/snapshot_search.py, shared with the drill-downs
+    # def _search(self, body: dict, budget: Budget, what: str) -> dict:
+    #     budget.check(what)
+    #     timeout = max(1.0, budget.remaining())
+    #     body = {**body, "timeout": f"{int(timeout * 1000)}ms"}
+    #     try:
+    #         reply = self._client.search(body=body, request_timeout=timeout)
+    #     except OpenSearchException as exc:
+    #         logger.error("Failed to query %s: %s", what, exc)
+    #         raise CertQueryFailed(f"{what} query failed") from exc
+    #     return _checked(reply, what)
+    #
+    # def _open_pit(self, budget: Budget) -> str:
+    #     budget.check("opening a snapshot")
+    #     try:
+    #         # A partial snapshot would silently drop the failed shards' sessions from every count
+    #         reply = self._client.create_pit(
+    #             index=NETWORK_INDEX,
+    #             keep_alive=PIT_KEEP_ALIVE,
+    #             allow_partial_pit_creation="false",
+    #             request_timeout=max(1.0, budget.remaining()),
+    #         )
+    #     except OpenSearchException as exc:
+    #         logger.error("Failed to open a point in time: %s", exc)
+    #         raise CertQueryFailed("snapshot failed") from exc
+    #     pit = _checked(reply, "snapshot").get("pit_id")
+    #     if not pit:
+    #         raise CertQueryFailed("snapshot failed: no pit_id")
+    #     return str(pit)
+    #
+    # def _close_pit(self, pit: str) -> None:
+    #     try:
+    #         self._client.delete_pit(
+    #             body={"pit_id": [pit]}, request_timeout=PIT_CLOSE_SECONDS
+    #         )
+    #     except (
+    #         OpenSearchException
+    #     ) as exc:  # it expires on its own; the figures are already safe
+    #         logger.warning("Couldn't close point in time: %s", exc)
+    # OLD CODE END
     def _search(self, body: dict, budget: Budget, what: str) -> dict:
-        budget.check(what)
-        timeout = max(1.0, budget.remaining())
-        body = {**body, "timeout": f"{int(timeout * 1000)}ms"}
-        try:
-            reply = self._client.search(body=body, request_timeout=timeout)
-        except OpenSearchException as exc:
-            logger.error("Failed to query %s: %s", what, exc)
-            raise CertQueryFailed(f"{what} query failed") from exc
-        return _checked(reply, what)
+        return snapshot_search.search(self._client, body, budget, what)
 
     def _open_pit(self, budget: Budget) -> str:
-        budget.check("opening a snapshot")
-        try:
-            # A partial snapshot would silently drop the failed shards' sessions from every count
-            reply = self._client.create_pit(
-                index=NETWORK_INDEX,
-                keep_alive=PIT_KEEP_ALIVE,
-                allow_partial_pit_creation="false",
-                request_timeout=max(1.0, budget.remaining()),
-            )
-        except OpenSearchException as exc:
-            logger.error("Failed to open a point in time: %s", exc)
-            raise CertQueryFailed("snapshot failed") from exc
-        pit = _checked(reply, "snapshot").get("pit_id")
-        if not pit:
-            raise CertQueryFailed("snapshot failed: no pit_id")
-        return str(pit)
+        return snapshot_search.open_pit(
+            self._client, NETWORK_INDEX, PIT_KEEP_ALIVE, budget
+        )
 
     def _close_pit(self, pit: str) -> None:
-        try:
-            self._client.delete_pit(
-                body={"pit_id": [pit]}, request_timeout=PIT_CLOSE_SECONDS
-            )
-        except (
-            OpenSearchException
-        ) as exc:  # it expires on its own; the figures are already safe
-            logger.warning("Couldn't close point in time: %s", exc)
+        snapshot_search.close_pit(self._client, pit)
 
     # -- Steps ------------------------------------------------------------------
 
