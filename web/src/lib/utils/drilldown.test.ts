@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { byteFigure, canonicalName, certificatesHref, chartTime, isHostName, logsHrefForIp, measuredNote, rangeWindow } from './drilldown';
+import { alertsHrefForSignature, byteFigure, canonicalName, certificatesHref, chartTime, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, windowQuery } from './drilldown';
 
 const MB = 1000 ** 2; // decimal, as formatBytes prints (NET-166)
 
@@ -62,5 +62,44 @@ describe('drill-down wording', () => {
 		expect(canonicalName('example.com..')).toBe('example.com.');
 		for (const ok of ['example.com', 'Stream.Example.NET.', '_dmarc.example.org', 'a-b.c']) expect(isHostName(ok)).toBe(true);
 		for (const bad of ['', '(no name)', 'a..b', 'exa mple.com', 'x'.repeat(64) + '.com', 'example.com:443']) expect(isHostName(bad)).toBe(false);
+	});
+});
+
+// NET-160 slice 2a: a count links to a list over the count's own window
+describe('exact-window links', () => {
+	const win = { from: '2026-11-05T13:02:00.000Z', to: '2026-11-06T13:02:00.000Z' };
+	const params = (href: string) => new URL(href, 'http://x').searchParams;
+
+	it('writes the window, and the range when given', () => {
+		expect(Object.fromEntries(new URLSearchParams(windowQuery(win, '24h')))).toEqual({ ...win, range: '24h' });
+		expect(Object.fromEntries(new URLSearchParams(windowQuery(win)))).toEqual(win);
+	});
+
+	it('links a signature to the alerts list, with or without a window', () => {
+		const sig = 'ET POLICY "odd" & 100% <name>';
+		expect(new URL(alertsHrefForSignature(sig), 'http://x').pathname).toBe('/alerts');
+		expect(Object.fromEntries(params(alertsHrefForSignature(sig)))).toEqual({ signature: sig });
+		expect(Object.fromEntries(params(alertsHrefForSignature(sig, { ...win, range: '7d' })))).toEqual({ signature: sig, ...win, range: '7d' });
+	});
+
+	it('joins query clauses with AND and carries the exact window', () => {
+		const href = logsHrefForQuery(['event.provider:zeek', 'destination.ip:"2001:db8::1"', 'destination.port:443'], win, '30d');
+		expect(new URL(href, 'http://x').pathname).toBe('/logs');
+		expect(Object.fromEntries(params(href))).toEqual({
+			query: 'event.provider:zeek AND destination.ip:"2001:db8::1" AND destination.port:443',
+			...win,
+			range: '30d',
+		});
+	});
+
+	it('adds the window to an address link only when given', () => {
+		expect(params(logsHrefForIp('192.0.2.1', '7d')).get('from')).toBeNull();
+		const p = params(logsHrefForIp('192.0.2.1', '7d', win));
+		expect([p.get('range'), p.get('from'), p.get('to')]).toEqual(['7d', win.from, win.to]);
+	});
+
+	it('reads a link window back as Custom, exactly', () => {
+		expect(customRange(win.from, win.to)).toMatchObject({ value: 'custom', label: 'Custom', hours: 24, ...win });
+		expect(customRange(win.to, win.from)).toBeNull();
 	});
 });
