@@ -43,7 +43,8 @@ async def handle_cluster_health(request: web.Request) -> web.Response:
 def _byte_count(value: object) -> int | None:
     """A `_cat` size asked for with bytes=b: digits only. Anything else is unknown (None)."""
     text = str(value).strip() if value is not None else ""
-    return int(text) if text.isdigit() else None
+    # OLD CODE: return int(text) if text.isdigit() else None (isdigit passes "²", which int() rejects)
+    return int(text) if text.isdecimal() else None
 
 
 async def handle_indices(request: web.Request) -> web.Response:

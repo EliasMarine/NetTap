@@ -72,6 +72,7 @@ class TestOpenSearchClusterAPI(AioHTTPTestCase):
             {"index": "a", "store.size": "524288", "pri.store.size": "0"},
             {"index": "b", "store.size": "12.5mb", "pri.store.size": None},
             {"index": "c"},
+            {"index": "d", "store.size": "²", "pri.store.size": " 7 "},
         ]
         resp = await self.client.request("GET", "/api/opensearch/indices")
         self.assertEqual(resp.status, 200)
@@ -86,6 +87,10 @@ class TestOpenSearchClusterAPI(AioHTTPTestCase):
         )
         self.assertEqual(
             (rows["c"]["store_size"], rows["c"]["pri_store_size"]), (None, None)
+        )
+        # a digit int() can't read is unknown too, not a 500 for the whole list
+        self.assertEqual(
+            (rows["d"]["store_size"], rows["d"]["pri_store_size"]), (None, 7)
         )
 
     async def test_indices_empty(self):

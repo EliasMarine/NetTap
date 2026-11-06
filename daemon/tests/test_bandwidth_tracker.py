@@ -486,6 +486,28 @@ class TestSetCapIsDecimalGb(AioHTTPTestCase):
         self.assertEqual(body["monthly_cap_bytes"], 10**12)
         self.assertEqual(body["monthly_cap_gb"], 1000.0)
 
+    async def test_a_decimal_cap_is_exact(self):
+        resp = await self.client.request(
+            "PUT", "/api/settings/bandwidth-cap", json={"monthly_cap_gb": 4.1}
+        )
+        self.assertEqual(resp.status, 200)
+        self.tracker.save_cap.assert_called_once_with(4_100_000_000)
+
+    async def test_infinity_is_a_400_and_saves_nothing(self):
+        resp = await self.client.request(
+            "PUT", "/api/settings/bandwidth-cap", json={"monthly_cap_gb": float("inf")}
+        )
+        self.assertEqual(resp.status, 400)
+        self.tracker.save_cap.assert_not_called()
+
+    async def test_a_negative_cap_is_saved_and_reported_as_off(self):
+        resp = await self.client.request(
+            "PUT", "/api/settings/bandwidth-cap", json={"monthly_cap_gb": -5}
+        )
+        body = await resp.json()
+        self.tracker.save_cap.assert_called_once_with(0)
+        self.assertEqual((body["monthly_cap_bytes"], body["monthly_cap_gb"]), (0, 0.0))
+
 
 class TestHeatmapScriptsAndTimeZone(AioHTTPTestCase):
     """The heatmap counts in the viewer's zone with java.time getters OpenSearch 3.x still has."""

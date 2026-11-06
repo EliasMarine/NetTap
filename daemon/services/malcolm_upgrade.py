@@ -178,9 +178,15 @@ def malcolm_changelog(offered: str, latest: str, tested: bool) -> str:
     return text
 
 
-def _kib_as_gb(kib: int) -> str:
-    """A `df -k` / `du -k` count (1,024-byte blocks) in decimal GB, as every NetTap page shows sizes (NET-166)."""
-    return f"{kib * 1024 / 1e9:.1f} GB"
+def _kib_as_gb(kib: int, up: bool = False) -> str:
+    """A `df -k` / `du -k` count (1,024-byte blocks) in decimal GB, as every NetTap page shows sizes (NET-166).
+
+    Rounded down to a tenth, or up with `up`, in integers: a need rounded up never prints at or below
+    the space there is rounded down (rounding both to nearest could say "needs 23.0 GB … and 23.0 GB is").
+    """
+    # OLD CODE: return f"{kib * 1024 / 1e9:.1f} GB"
+    tenths = -(-kib * 1024 // 10**8) if up else kib * 1024 // 10**8
+    return f"{tenths / 10:.1f} GB"
 
 
 def _tail(text: str, limit: int = 400) -> str:
@@ -443,7 +449,7 @@ class MalcolmUpgrade:
             # )
             # OLD CODE END
             raise UpgradeError(
-                f"Not enough disk space: the update needs {_kib_as_gb(need_kb)} free (a copy of "
+                f"Not enough disk space: the update needs {_kib_as_gb(need_kb, up=True)} free (a copy of "
                 f"OpenSearch's {_kib_as_gb(used_kb)} of data plus the new images), and {_kib_as_gb(free_kb)} is."
             )
 

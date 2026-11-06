@@ -56,3 +56,10 @@
 - An index size sent as human text can't be re-expressed honestly in other units. Ask the source for raw bytes.
 
 **Device check:** `bash /home/nettap/NetTap/scripts/remote/deploy-decimal-units.sh` (after the merge). It checks each `*_gb` is its byte count / 10⁹, that `df` has a filesystem of exactly the daemon's total, and that every index size is whole bytes or null.
+
+**Review follow-ups (PR #181)**
+- **Bandwidth cap rounding:** `round()`, not `int()`. 4.1 GB was saved as 4,099,999,999 bytes because of float error.
+- **Bad cap values:** `Infinity` now gets a 400; it used to raise OverflowError and return a 500. A negative cap is saved as 0 (off), and the reply now says 0 too.
+- **Index sizes:** `_byte_count` uses `isdecimal()`. `isdigit()` accepts "²", which `int()` rejects.
+- **Disk-space message:** the need rounds up and the free space rounds down, both in integers, so it can't say "needs 23.0 GB … and 23.0 GB is".
+- **Setup check:** the Setup page's "100 GB free" check now means 100 decimal GB, matching its label. A drive with 95 GiB (102 GB) free used to fail and now passes.
