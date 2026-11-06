@@ -90,3 +90,32 @@ describe('Threats page', () => {
 	});
 });
 
+// NET-166: an investigation's byte figures are decimal (the page's own 1,024-based copy read 953.7 MB for 10^9 bytes)
+describe('Threats page — investigation byte figures', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('shows the bytes a host sent and its 7-day total in decimal units', async () => {
+		const investigation = {
+			alert: { signature: 'ET MALWARE Example CnC', severity_label: 'CRITICAL', category_label: 'Malware', source_ip: '192.168.1.42', destination_ip: '203.0.113.45', count: 3 },
+			generated_at: '',
+			sections: {
+				source_profile: { ip: '192.168.1.42', connection_count_24h: 120, unique_destinations: 8, total_bytes_24h: 1_000_000_000 },
+				connection_history: { total_connections_7d: 900, total_bytes_7d: 2_500_000, first_seen: '' },
+			},
+			recommendation: '',
+		};
+		stubDaemon({
+			'/api/threats/report': { ...REPORT, failed_checks: [], incomplete_checks: [], investigations: [investigation] },
+			'/api/threats/intel': { from: '', to: '', new_indicators: 0, feeds: {}, total_indicators: 0 },
+		});
+		render(ThreatsPage);
+		// the first investigation opens expanded
+		await screen.findByText('Source host profile');
+
+		const value = (label: string) => screen.getByText(label).nextElementSibling?.textContent;
+		expect(value('Bytes it sent in them (24h)')).toBe('1.0 GB');
+		expect(value('Total bytes')).toBe('2.5 MB');
+	});
+});

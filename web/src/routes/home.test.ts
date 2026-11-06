@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
 	captureStage,
+	formatBytes,
+	formatBytesShort,
 	kpiDelta,
 	kpiWindow,
 	localMidnight,
@@ -143,5 +145,20 @@ describe('capture pipeline stages', () => {
 		expect(openSearchStage(system(), false)).toMatchObject({ status: 'ok', detail: 'Connected' });
 		expect(openSearchStage(system({ opensearch_reachable: false }), false)).toMatchObject({ status: 'failing', detail: 'Unreachable' });
 		expect(openSearchStage(null, true).status).toBe('unknown');
+	});
+});
+
+// NET-166: decimal units, so a figure means what its label says (1,024-based read 954 MB for 10^9 bytes)
+describe('Home byte formats', () => {
+	it('formatBytes reads 10^9 bytes as 1.0 GB and 10^12 as 1.0 TB, whole numbers from 100', () => {
+		expect(formatBytes(1e9)).toBe('1.0 GB');
+		expect(formatBytes(1e12)).toBe('1.0 TB');
+		expect(formatBytes(250e9)).toBe('250 GB');
+		expect(formatBytes(999)).toBe('999 B');
+	});
+
+	it('formatBytesShort is the axis form: no space, whole numbers from 10', () => {
+		expect(formatBytesShort(1e9)).toBe('1.0GB');
+		expect(formatBytesShort(25e6)).toBe('25MB');
 	});
 });

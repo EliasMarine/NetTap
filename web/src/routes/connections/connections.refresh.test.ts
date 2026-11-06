@@ -276,3 +276,24 @@ describe('Connections refresh contract: the load guard', () => {
 		expect(await refreshPage()).toBe('skipped');
 	});
 });
+
+// NET-166: byte figures are decimal (the page's own 1,024-based copy read 976.6 KB for 10^6 bytes)
+describe('Connections byte figures', () => {
+	it('shows each row and the summary in decimal units', async () => {
+		vi.mocked(getConnectionStats).mockResolvedValue({ ...stats(5), bytes_in: 1_000_000, bytes_out: 500_000 });
+		vi.mocked(getConnections).mockResolvedValue({
+			...table('a'),
+			connections: [{ _id: 'a', _index: 'zeek-conn', '@timestamp': '2026-11-03T10:00:00Z',
+				source: { ip: '10.0.0.1', bytes: 1_000_000 }, destination: { ip: '8.8.8.8', bytes: 1_500 } }],
+		});
+		render(Page);
+		await flush();
+
+		const row = screen.getByRole('button', { name: /^Open connection from/ }).closest('tr')!;
+		const cells = [...row.querySelectorAll('.bytes > span:first-child')].map((el) => el.textContent);
+		expect(cells).toEqual(['1.0 MB', '1.5 KB']);
+		const data = [...document.querySelectorAll('.stat')].find((el) => el.querySelector('.stat-k')?.textContent === 'Data');
+		expect(data?.querySelector('.stat-v')?.textContent).toBe('1.5 MB');
+		expect(screen.getByText(/1\.0 MB sent by source, 500\.0 KB sent by destination/)).toBeInTheDocument();
+	});
+});
