@@ -17,7 +17,7 @@
 	import { domainHref, ipHref } from '$lib/stores/lan';
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { namesByIp } from '$lib/utils/device-names';
-	import { DRILL_RANGES, byteFigure, certificatesHref, fmt, logsHrefForIp, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown';
+	import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, logsHrefForIp, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { asString, getField } from '$lib/utils/tshark-filter';
 	import type { SortDir } from '$lib/utils/table-sort.svelte';
@@ -35,7 +35,10 @@
 	/** The connections endpoint pages through at most this many rows (daemon/api/devices.py). */
 	const CONN_REACH = 10_000;
 
-	const ip = $derived(decodeURIComponent(($page.params as Record<string, string>).ip ?? ''));
+	// OLD CODE START — SvelteKit has already decoded the param; decoding again threw on a zone id's "%" (fe80::1%eth0)
+	// const ip = $derived(decodeURIComponent(($page.params as Record<string, string>).ip ?? ''));
+	// OLD CODE END
+	const ip = $derived(($page.params as Record<string, string>).ip ?? '');
 
 	let rangeValue = $state<DrillRangeValue>('24h');
 	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES[0]);
@@ -65,7 +68,8 @@
 	let connSortDir = $state<SortDir>('desc');
 
 	const data = $derived(loaded?.data ?? null);
-	const words = $derived(loaded?.range.words ?? range.words);
+	const shown = $derived(loaded?.range ?? range);
+	const words = $derived(shown.words);
 
 	// --- Loading ---
 
@@ -187,12 +191,15 @@
 	const peerName = (p: AddressPeer): string | undefined => names.get(p.ip);
 	const timeline = $derived(data?.timeline ?? []);
 	const busiest = $derived(timeline.reduce((best, p, i) => (p.n > (timeline[best]?.n ?? -1) ? i : best), -1));
-	const chartTime = (t: number | string): string => {
-		const d = new Date(t);
-		return range.hours <= 24
-			? d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-			: d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-	};
+	// OLD CODE START — moved to utils/drilldown.ts: a week of 6-hour buckets needs the hour as well as the day
+	// const chartTime = (t: number | string): string => {
+	// 	const d = new Date(t);
+	// 	return range.hours <= 24
+	// 		? d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+	// 		: d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+	// };
+	// OLD CODE END
+	const chartTime = (t: number | string): string => timeLabel(t, shown.hours);
 	const chartLabel = $derived(
 		busiest >= 0 ? `Busiest at ${chartTime(timeline[busiest].t)}, with ${fmt(timeline[busiest].n)} connections` : 'No connections in this window',
 	);
@@ -215,6 +222,7 @@
 	];
 	const portColumns: Column<AddressPort>[] = [
 		{ key: 'port', label: 'Port', numeric: true, cell: portCell },
+		// a missing port, transport or service is null; the table sorts blanks last
 		{ key: 'transport', label: 'Transport', cell: transportCell },
 		{ key: 'service', label: 'Service', sortValue: (p) => p.service ?? '', cell: serviceCell },
 		{ key: 'connections', label: 'Connections', numeric: true, cell: portConnCell },
@@ -287,13 +295,22 @@
 {/snippet}
 {#snippet peerLanCell(p: AddressPeer)}{p.lan ? 'Your network' : 'Internet'}{/snippet}
 {#snippet peerConnCell(p: AddressPeer)}{fmt(p.connections)}{/snippet}
+<!-- OLD CODE START — a peer with no byte count read "at least 0 B"
 {#snippet peerToCell(p: AddressPeer)}{p.bytes_partial ? 'at least ' : ''}{formatBytes(p.bytes_to)}{/snippet}
 {#snippet peerFromCell(p: AddressPeer)}{p.bytes_partial ? 'at least ' : ''}{formatBytes(p.bytes_from)}{/snippet}
+OLD CODE END -->
+{#snippet peerToCell(p: AddressPeer)}{p.bytes_to === null ? 'Not measured' : `${p.bytes_partial ? 'at least ' : ''}${formatBytes(p.bytes_to)}`}{/snippet}
+{#snippet peerFromCell(p: AddressPeer)}{p.bytes_from === null ? 'Not measured' : `${p.bytes_partial ? 'at least ' : ''}${formatBytes(p.bytes_from)}`}{/snippet}
 {#snippet peerSeenCell(p: AddressPeer)}<span class="num">{formatWhen(p.last_seen)}</span>{/snippet}
 
+<!-- OLD CODE START — port and transport can be null (a row keeps connections with no port recorded); toUpperCase threw on null
 {#snippet portCell(p: AddressPort)}<span class="mono">{p.port}</span>{/snippet}
 {#snippet transportCell(p: AddressPort)}<span class="tag">{p.transport.toUpperCase()}</span>{/snippet}
 {#snippet serviceCell(p: AddressPort)}{#if p.service}<span class="mono">{p.service}</span>{:else}<span class="dim">Not identified</span>{/if}{/snippet}
+OLD CODE END -->
+{#snippet portCell(p: AddressPort)}{#if p.port === null}<span class="dim">Unknown port</span>{:else}<span class="mono">{p.port}</span>{/if}{/snippet}
+{#snippet transportCell(p: AddressPort)}{#if p.transport}<span class="tag">{p.transport.toUpperCase()}</span>{:else}<span class="dim">—</span>{/if}{/snippet}
+{#snippet serviceCell(p: AddressPort)}{#if p.service}<span class="mono">{p.service}</span>{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet portConnCell(p: AddressPort)}{fmt(p.connections)}{/snippet}
 
 {#snippet tlsNameCell(t: TlsName)}
@@ -396,7 +413,7 @@
 </div>
 
 <div class="grid">
-	<Card class="c-8" hero title="Connections over time" sub="Connections per interval · {words}">
+	<Card class="c-8" hero title="Connections over time" sub="Connections per {shown.interval} · {words}">
 		{#if !data}
 			{@render summaryState('connections over time')}
 		{:else if data.connections === 0}
@@ -497,6 +514,7 @@
 				<p class="notice is-warn" role="status"><Icon name="warn" /><span>Too many names to list them all: showing the first {fmt(data.tls_names.length)}.</span></p>
 			{/if}
 			<DataTable columns={tlsColumns} rows={data.tls_names} ariaLabel="Names it served" rowKey={(t) => t.name ?? '(no name)'} initialSort={{ key: 'sessions', dir: 'desc' }} />
+			<p class="dim tls-note">Names are as each device sent them. Sessions count every TLS session. Certificates counts only the sessions that showed a certificate (TLS 1.3 hides it, and a resumed session doesn't send it again), so its figures can be lower.</p>
 		{/if}
 	</Card>
 
@@ -536,6 +554,7 @@
 	.chips { margin-top: var(--sp-2); }
 	.two { display: inline-flex; flex-direction: column; line-height: 1.3; }
 	.who-links { margin-top: var(--sp-3); }
+	.tls-note { margin: var(--sp-3) 0 0; font-size: var(--text-sm); }
 	.link-btn { background: none; border: 0; padding: 0; color: var(--accent-strong); cursor: pointer; font: inherit; text-decoration: underline; }
 	.link-btn:hover { color: var(--text-1); }
 	.link-btn:disabled { color: var(--text-3); cursor: default; text-decoration: none; }

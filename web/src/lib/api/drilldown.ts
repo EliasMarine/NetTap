@@ -23,18 +23,19 @@ export interface AddressPeer {
 	ip: string;
 	lan: boolean;
 	connections: number;
-	/** Data to the page's address in this peer's sessions. */
-	bytes_to: number;
-	/** Data from the page's address in this peer's sessions. */
-	bytes_from: number;
+	/** Data to the page's address in this peer's sessions; null when none of them measured it. */
+	bytes_to: number | null;
+	/** Data from the page's address in this peer's sessions; null when none of them measured it. */
+	bytes_from: number | null;
 	/** Some sessions carried no byte count, so both figures are lower bounds. */
 	bytes_partial: boolean;
 	last_seen: string;
 }
 
+/** A row keeps connections whose port, transport or service is missing (null), so the rows add up. */
 export interface AddressPort {
-	port: number;
-	transport: string;
+	port: number | null;
+	transport: string | null;
 	service: string | null;
 	connections: number;
 }

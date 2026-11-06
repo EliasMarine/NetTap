@@ -12,7 +12,7 @@
 	import { outcome, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { domainHref, ipHref } from '$lib/stores/lan';
 	import { namesByIp } from '$lib/utils/device-names';
-	import { DRILL_RANGES, certificatesHref, fmt, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown';
+	import { DRILL_RANGES, certificatesHref, chartTime as timeLabel, fmt, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import IPAddress from '$components/IPAddress.svelte';
 	import BarList from '$lib/components/ui/BarList.svelte';
@@ -33,7 +33,10 @@
 	}
 
 	/** The name as the daemon matches it: one trailing dot dropped, lower case. */
-	const name = $derived(decodeURIComponent(($page.params as Record<string, string>).name ?? '').trim().replace(/\.$/, '').toLowerCase());
+	// OLD CODE START — SvelteKit has already decoded the param; decoding again threw on a stray "%"
+	// const name = $derived(decodeURIComponent(($page.params as Record<string, string>).name ?? '').trim().replace(/\.$/, '').toLowerCase());
+	// OLD CODE END
+	const name = $derived((($page.params as Record<string, string>).name ?? '').trim().replace(/\.$/, '').toLowerCase());
 
 	let rangeValue = $state<DrillRangeValue>('24h');
 	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES[0]);
@@ -45,7 +48,8 @@
 	let loadedView = '';
 
 	const data = $derived(loaded?.data ?? null);
-	const words = $derived(loaded?.range.words ?? range.words);
+	const shown = $derived(loaded?.range ?? range);
+	const words = $derived(shown.words);
 
 	const refresh = registerPageRefresh(load);
 	onDestroy(refresh.unregister);
@@ -93,12 +97,15 @@
 
 	const timeline = $derived(data?.dns.timeline ?? []);
 	const busiest = $derived(timeline.reduce((best, p, i) => (p.n > (timeline[best]?.n ?? -1) ? i : best), -1));
-	const chartTime = (t: number | string): string => {
-		const d = new Date(t);
-		return range.hours <= 24
-			? d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-			: d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-	};
+	// OLD CODE START — moved to utils/drilldown.ts: a week of 6-hour buckets needs the hour as well as the day
+	// const chartTime = (t: number | string): string => {
+	// 	const d = new Date(t);
+	// 	return range.hours <= 24
+	// 		? d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+	// 		: d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+	// };
+	// OLD CODE END
+	const chartTime = (t: number | string): string => timeLabel(t, shown.hours);
 	const chartLabel = $derived(
 		busiest >= 0 ? `Busiest at ${chartTime(timeline[busiest].t)}, with ${fmt(timeline[busiest].n)} lookups` : 'No lookups in this window',
 	);
@@ -196,7 +203,7 @@
 </div>
 
 <div class="grid">
-	<Card class="c-8" hero title="Lookups over time" sub="DNS lookups per interval · {words}">
+	<Card class="c-8" hero title="Lookups over time" sub="DNS lookups per {shown.interval} · {words}">
 		{#if !data}
 			{@render summaryState('lookups over time')}
 		{:else if data.dns.lookups === 0}
@@ -270,6 +277,10 @@
 					<DataTable columns={tlsColumns} rows={data.tls.clients} ariaLabel="Devices that opened TLS to this name" rowKey={(p) => p.ip} initialSort={{ key: 'sessions', dir: 'desc' }} />
 				</div>
 			</div>
+			<p class="dim small">
+				TLS sessions count every session that asked for this name. Certificates counts only the sessions that showed a certificate (TLS 1.3
+				hides it, and a resumed session doesn't send it again), so its figures can be lower.
+			</p>
 			<a class="link" href={certificatesHref({ site: name, ...span })}>Certificates seen for this name<Icon name="back" class="chev" /></a>
 		{/if}
 	</Card>

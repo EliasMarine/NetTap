@@ -67,6 +67,9 @@ describe('Domain page', () => {
 		expect(kpi('Devices that looked it up')).toHaveTextContent('3');
 		expect(kpi('Addresses it resolved to')).toHaveTextContent('2');
 		expect(kpi('TLS sessions')).toHaveTextContent('1,600');
+		expect(screen.getByText('DNS lookups per hour · last 24 hours')).toBeInTheDocument();
+		// every TLS session counts here; Certificates counts only those that sent one
+		expect(screen.getByText(/so its figures can be lower/)).toBeInTheDocument();
 		const alerts = card('Alerts tagged with this name');
 		expect(alerts).toHaveTextContent('1');
 		expect(alerts).toHaveTextContent('Only 12 of 57 alerts in this window carry a host name.');
