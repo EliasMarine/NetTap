@@ -30,6 +30,12 @@
 - Fixtures in `test_dhcp_gateway.py` and `test_mirror_manager.py` moved to the kernel semantics; old values kept as OLD CODE.
 - Web: validator, wording, Home branches, Infrastructure KPI, stale refresh and stage precedence.
 
+**Review fixes**
+- **Memory grows with request rate** (security review, LOW; the ponytail pass found the same): every stats request added a reading kept for an hour. `LossWindow.add` now keeps at most one reading per 5 s (`MIN_GAP_S`); reset checks still run on every reading. An hour holds at most 721 readings.
+- **Two daemon tests could not fail** (Python review): the sampler-shutdown check ran after `asyncio.run` had already cancelled every task, and the interface-change test also changed the ifindex. Both now fail when their rule is removed (checked by mutation).
+- **A window with packets but no rate read "No packets"** (TypeScript review): the validator now treats it as unavailable. Home's pipeline subtitle gained a render test.
+- /deep-review: no findings (`security-reviews/fix-capture-loss-window/security-review.md`).
+
 **Device check**
 - `bash /home/nettap/NetTap/scripts/remote/deploy-capture-loss-window.sh` rebuilds the daemon and web, checks `measuring` straight after the restart, then after 70 s checks: state ok, 60 to 3,600 s, lost ≤ arrived ≤ the interface's own count, on the capture interface.
 
