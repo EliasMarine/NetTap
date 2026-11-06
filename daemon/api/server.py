@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from aiohttp import web
+from opensearchpy import OpenSearch
 
 from storage.manager import StorageManager
 from smart.monitor import SmartMonitor
@@ -1221,7 +1222,15 @@ def create_app(
     register_changelog_routes(app, changelog_service)
 
     # Certificate monitor (TLS certificate tracking from Zeek SSL logs)
-    cert_monitor = CertificateMonitor(client=storage._client)
+    # OLD CODE START — NET-154: the shared client retries timeouts 3x, so one certificate pass
+    # could outlive the web proxy's timeout and keep loading OpenSearch after the page gave up
+    # cert_monitor = CertificateMonitor(client=storage._client)
+    # OLD CODE END
+    cert_monitor = CertificateMonitor(
+        client=OpenSearch(
+            **storage.client_kwargs(max_retries=0, retry_on_timeout=False)
+        )
+    )
     register_certificate_routes(app, cert_monitor)
 
     # DNS analytics (domain stats, NXDOMAIN, tunneling detection)

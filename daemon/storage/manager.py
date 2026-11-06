@@ -19,7 +19,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from opensearchpy import OpenSearch, OpenSearchException
 
@@ -221,6 +221,13 @@ class StorageManager:
     # Client helpers
     # ------------------------------------------------------------------
 
+    def client_kwargs(self, **overrides: Any) -> dict:
+        """The settings this manager's client uses, with overrides (e.g. a client that never retries)."""
+        return {
+            **self._client_kwargs(self.opensearch_url, self._http_auth),
+            **overrides,
+        }
+
     @staticmethod
     def _create_client(
         url: str,
@@ -237,6 +244,16 @@ class StorageManager:
             http_auth: Optional (username, password) tuple for Basic Auth.
                 Required after OpenSearch security bootstrap.
         """
+        kwargs = StorageManager._client_kwargs(url, http_auth)
+
+        # OLD CODE START — #93: terms top lists merged across daily indices lost counts
+        # return OpenSearch(**kwargs)
+        # OLD CODE END
+        return ExactTermsOpenSearch(**kwargs)
+
+    @staticmethod
+    def _client_kwargs(url: str, http_auth: tuple[str, str] | None = None) -> dict:
+        """OpenSearch client settings for a URL (moved out of _create_client, unchanged)."""
         use_ssl = url.startswith("https")
         # Strip protocol for host parsing
         host_part = url.replace("https://", "").replace("http://", "")
@@ -259,11 +276,7 @@ class StorageManager:
         }
         if http_auth:
             kwargs["http_auth"] = http_auth
-
-        # OLD CODE START — #93: terms top lists merged across daily indices lost counts
-        # return OpenSearch(**kwargs)
-        # OLD CODE END
-        return ExactTermsOpenSearch(**kwargs)
+        return kwargs
 
     # ------------------------------------------------------------------
     # Disk usage

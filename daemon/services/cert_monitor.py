@@ -1,98 +1,38 @@
 """
-NetTap CertificateMonitor — TLS certificate inventory from Zeek x509 logs.
+NetTap CertificateMonitor: TLS certificates from the sessions that presented them (NET-154).
 
-Zeek 6+ writes certificate details (subject, issuer, validity, key, SANs) to
-x509.log. ssl.log only carries the chain fingerprints (zeek.ssl.cert_chain_fps),
-the SNI and the validation status. So the inventory aggregates x509 records into
-one row per fingerprint, then joins ssl sessions in one bounded query for the
-server names and clients.
+Every figure comes from one complete pass (services/cert_overview.py): each ssl session
+with a certificate chain is credited to the first certificate of its chain, and the
+certificate's details come from the newest stored x509 record. The older endpoints are
+projections of that pass, never of a top-N list:
 
-Field names checked against Malcolm v26.02.0: logstash/pipelines/zeek/
-1069_zeek_x509.conf, 1200_zeek_mutate.conf, 1400_zeek_convert.conf and
-dashboards/templates/composable/component/zeek.json.
+- "self-signed" means the subject equals the issuer (self-issued);
+- expired/expiring counts are judged against now, not against when the certificate was used.
 
-TLS 1.3 encrypts the server certificate, so Zeek only sees certificates from
-TLS 1.2 and older handshakes.
+TLS 1.3 encrypts the server certificate, so only TLS 1.2-and-older handshakes are counted.
 """
 
 import logging
-import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from opensearchpy import OpenSearch, OpenSearchException
-
-from services.excluded_ips import build_excluded_ips_filter
-from storage.all_buckets import PAGE_SIZE, all_buckets
+from services.cert_findings import EXPIRY_WARN_DAYS, parse_time
+from services.cert_overview import NETWORK_INDEX, Budget, CertOverview, CertQueryFailed
 
 logger = logging.getLogger("nettap.services.cert_monitor")
 
-NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
-
-# Zeek SSL event filters for the unified Malcolm index
-_SSL_FILTERS = [
-    {"term": {"event.provider": "zeek"}},
-    {"term": {"event.dataset": "ssl"}},
+__all__ = [
+    "NETWORK_INDEX",
+    "CertificateMonitor",
+    "CertQueryFailed",
+    "CertStatsUnavailable",
 ]
 
-_X509_FILTERS = [
-    {"term": {"event.provider": "zeek"}},
-    {"term": {"event.dataset": "x509"}},
-]
-
-# End-host certs only. Chains also log intermediates and roots, and a root
-# always has subject == issuer. Zeek JSON logs the flag as true, TSV as T.
-_LEAF_CERT_FILTER = {"terms": {"zeek.x509.host_cert": ["true", "T"]}}
-
-_FINGERPRINT = "zeek.x509.fingerprint"
-_NOT_AFTER = "zeek.x509.certificate_not_valid_after"
-_CHAIN_FPS = "zeek.ssl.cert_chain_fps"
-
-_EXPIRY_WARN_DAYS = 30
 _MAX_EXPIRY_DAYS = 3650
-_MAX_CERTS = 1000
-
-# Cardinality is exact up to precision_threshold (40000 is OpenSearch's max)
-_DISTINCT_CERTS = {"cardinality": {"field": _FINGERPRINT, "precision_threshold": 40000}}
-
-_SELF_SIGNED_FILTER = {
-    "script": {
-        "script": {
-            "lang": "painless",
-            "source": (
-                "if (!doc.containsKey('zeek.x509.certificate_subject_full')"
-                " || !doc.containsKey('zeek.x509.certificate_issuer_full')) return false;"
-                " def s = doc['zeek.x509.certificate_subject_full'];"
-                " def i = doc['zeek.x509.certificate_issuer_full'];"
-                " return s.size() > 0 && i.size() > 0 && s.value == i.value;"
-            ),
-        }
-    }
-}
-
-# A row reads only the zeek.x509 object of the latest record
-_X509_SOURCE = ["zeek.x509"]
-# The issuer comparison reads only the CA and subject of a certificate
-_ISSUER_SOURCE = [
-    "zeek.x509.certificate_subject",
-    "zeek.x509.certificate_issuer",
-    "zeek.x509.certificate_issuer_full",
-]
-# (fingerprint, server name) pages carry no sub-aggregations: 10x fewer scans, far below max_buckets
-_PAIR_PAGE = 10_000
 
 
-def _time_range_filter(from_ts: str, to_ts: str) -> dict:
-    """Build an OpenSearch range filter on '@timestamp'."""
-    return {
-        "range": {
-            "@timestamp": {
-                "gte": from_ts,
-                "lte": to_ts,
-                "format": "strict_date_optional_time",
-            }
-        }
-    }
+class CertStatsUnavailable(CertQueryFailed):
+    """The stats query failed; callers must not show zeros as if they were counts."""
 
 
 def _default_range() -> tuple[str, str]:
@@ -101,538 +41,765 @@ def _default_range() -> tuple[str, str]:
     return (now - timedelta(days=7)).isoformat(), now.isoformat()
 
 
-# ---------------------------------------------------------------------------
-# Row building
-# ---------------------------------------------------------------------------
-
-
-def _first(value: Any) -> str:
-    """First item of a list-or-scalar field as a string ('' when missing)."""
-    if isinstance(value, list):
-        value = value[0] if value else ""
-    return "" if value is None else str(value)
-
-
-def _as_list(value: Any) -> list[str]:
-    """A list-or-scalar field as a list of strings."""
-    if value is None or value == "":
-        return []
-    return [str(v) for v in value] if isinstance(value, list) else [str(value)]
-
-
-def _dn_part(dn: Any, key: str) -> str:
-    """One attribute (CN, O, ...) of a DN that Malcolm split into an object."""
-    return _first(dn.get(key)) if isinstance(dn, dict) else ""
-
-
-def _keys(agg: dict | None) -> list[Any]:
-    """Bucket keys of a terms aggregation, biggest first."""
-    return [b.get("key") for b in (agg or {}).get("buckets", [])]
-
-
-def _top_terms(field: str, size: int) -> dict:
-    return {"terms": {"field": field, "size": size}}
-
-
-def _seen(agg_parent: dict, name: str) -> str:
-    """ISO string of a min/max date sub-aggregation ('' when empty)."""
-    return (agg_parent.get(name) or {}).get("value_as_string") or ""
-
-
-def _agg_count(aggs: dict, name: str) -> int:
-    """Value of a cardinality agg, directly or under a filter agg's 'n'."""
-    node = aggs.get(name) or {}
-    return int((node.get("n") or node).get("value") or 0)
-
-
-def _parse_date(value: str) -> datetime | None:
-    """Parse an ISO date from OpenSearch; None when missing or unparseable."""
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        logger.warning("Unparseable certificate date: %r", value)
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-
-
-def _status(expiry: datetime | None, self_signed: bool, now: datetime) -> str:
-    if self_signed:
-        return "self-signed"
-    if expiry is None:
-        return "valid"
-    if expiry <= now:
-        return "expired"
-    if expiry <= now + timedelta(days=_EXPIRY_WARN_DAYS):
-        return "expiring"
-    return "valid"
-
-
-def _x509_fields(x509: dict[str, Any]) -> dict[str, Any]:
-    """Certificate details from the latest x509 record of a fingerprint."""
-    subject, issuer = x509.get("certificate_subject"), x509.get("certificate_issuer")
-    subject_full = _first(x509.get("certificate_subject_full"))
-    issuer_full = _first(x509.get("certificate_issuer_full"))
-    return {
-        "subject": _dn_part(subject, "CN") or subject_full,
-        "subject_cn": _dn_part(subject, "CN"),
-        "subject_full": subject_full,
-        "issuer": _dn_part(issuer, "CN") or issuer_full,
-        "issuer_org": _dn_part(issuer, "O"),
-        "issuer_full": issuer_full,
-        "not_before": _first(x509.get("certificate_not_valid_before")),
-        "not_after": _first(x509.get("certificate_not_valid_after")),
-        "key_type": _first(x509.get("certificate_key_type")),
-        "key_length": x509.get("certificate_key_length"),
-        "sig_alg": _first(x509.get("certificate_sig_alg")),
-        "serial": _first(x509.get("certificate_serial")),
-        "san_dns": _as_list(x509.get("san_dns")),
-    }
-
-
-def _session_fields(session: dict[str, Any]) -> dict[str, Any]:
-    """Server names and clients from the ssl sessions that sent the cert."""
-    server_names = [str(k) for k in _keys(session.get("server_names"))]
-    clients = [str(k) for k in _keys(session.get("clients"))]
-    servers = _keys(session.get("servers"))
-    ports = _keys(session.get("ports"))
-    return {
-        "server_name": server_names[0] if server_names else "",
-        "server_names": server_names,
-        "clients": clients,
-        "source_ip": clients[0] if clients else "",
-        "destination_ip": str(servers[0]) if servers else "",
-        "destination_port": ports[0] if ports else "",
-        "tls_version": _first(_keys(session.get("versions"))),
-        "validation_status": _first(_keys(session.get("validation"))),
-    }
-
-
-def _cert_row(bucket: dict, session: dict, now: datetime) -> dict[str, Any]:
-    """One inventory row from an x509 fingerprint bucket and its sessions."""
-    hits = (bucket.get("latest") or {}).get("hits", {}).get("hits", [])
-    source = hits[0].get("_source", {}) if hits else {}
-    cert = {
-        **_x509_fields(source.get("zeek", {}).get("x509", {})),
-        **_session_fields(session),
-    }
-    fingerprint = str(bucket.get("key", ""))
-    self_signed = bool(cert["subject_full"]) and (
-        cert["subject_full"] == cert["issuer_full"]
-    )
-    expiry = _parse_date(cert["not_after"])
-    # Seen counts are TLS sessions. x509.log relogs a cert at most daily, so it
-    # only stands in when no ssl session in range carried the fingerprint.
-    seen = session if session.get("doc_count") else bucket
-    last_seen = _seen(seen, "last_seen")
-    return {
-        **cert,
-        "_id": fingerprint,
-        "fingerprint": fingerprint,
-        "hash_sha256": fingerprint,  # Zeek's X509::hash_function defaults to SHA-256
-        "domain": cert["server_name"] or cert["subject_cn"] or _first(cert["san_dns"]),
-        "first_seen": _seen(seen, "first_seen"),
-        "last_seen": last_seen,
-        "timestamp": last_seen,
-        "times_seen": int(seen.get("doc_count") or 0),
-        "days_until_expiry": max(0, (expiry - now).days) if expiry else None,
-        "self_signed": self_signed,
-        "status": _status(expiry, self_signed, now),
-    }
-
-
-def _issuer_changes(certs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Server names whose certificates come from more than one CA.
-
-    Compares the issuing organisation, not the issuer CN: Let's Encrypt and
-    others rotate intermediates (R10/R11, E5/E6), which is not a change of CA.
-    """
-    by_name: dict[str, dict[str, list[dict[str, Any]]]] = {}
-    for cert in certs:
-        ca = cert["issuer_org"] or cert["issuer"]
-        for name in cert["server_names"] or [cert["subject_cn"]]:
-            if ca and name:
-                by_name.setdefault(name, {}).setdefault(ca, []).append(cert)
-    return [
+def _issuer_changes(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Sites whose certificates in the window came from more than one known authority."""
+    rows = {c["fingerprint"]: c for c in data["certificates"]}
+    changes = [
         {
-            "domain": name,
-            "issuers": sorted(cas),
-            "issuer_count": len(cas),
-            "certificates": [c for group in cas.values() for c in group],
+            "domain": site["name"] or site["server"],
+            "site_id": site["id"],
+            "issuers": site["authorities"],
+            "issuer_count": len(site["authorities"]),
+            "certificates": [rows[fp] for fp in site["certificates"] if fp in rows],
+            "certificates_total": site["certificates_total"],
         }
-        for name, cas in sorted(by_name.items())
-        if len(cas) > 1
+        for site in data["sites"]
+        if len(site["authorities"]) > 1
     ]
-
-
-def _leaf_cert(bucket: dict, names: dict[str, list[str]]) -> dict[str, Any]:
-    """What _issuer_changes reads of one leaf certificate: its CA, subject and server names."""
-    fp = bucket["key"]["fp"]
-    hits = (bucket.get("latest") or {}).get("hits", {}).get("hits", [])
-    x509 = hits[0].get("_source", {}).get("zeek", {}).get("x509", {}) if hits else {}
-    return {**_x509_fields(x509), "fingerprint": fp, "server_names": names.get(fp, [])}
-
-
-# ---------------------------------------------------------------------------
-# Service
-# ---------------------------------------------------------------------------
-
-
-class CertQueryFailed(Exception):
-    """A certificate query failed; callers must not show an empty list or zeros as findings (#96)."""
-
-
-class CertStatsUnavailable(CertQueryFailed):
-    """The stats query failed; callers must not show zeros as if they were counts."""
+    return sorted(changes, key=lambda c: c["domain"] or "")
 
 
 class CertificateMonitor:
-    """TLS certificate inventory from Zeek x509 logs joined to ssl sessions."""
+    """Certificate inventory, findings and the older list endpoints, over complete data."""
 
-    def __init__(self, client: OpenSearch) -> None:
-        self._client = client
+    def __init__(self, client: Any) -> None:
+        self._overview = CertOverview(client)
 
-    def _search(self, body: dict, what: str) -> dict:
-        """Run a search on the network index; CertQueryFailed (logged) on failure."""
-        # OLD CODE START — #96: {} read as "no certificates", "none expiring", "no self-signed"
-        # try:
-        #     return self._client.search(index=NETWORK_INDEX, body=body) or {}
-        # except OpenSearchException as exc:
-        #     logger.error("Failed to query %s: %s", what, exc)
-        #     return {}
-        # OLD CODE END
-        try:
-            return self._client.search(index=NETWORK_INDEX, body=body) or {}
-        except OpenSearchException as exc:
-            logger.error("Failed to query %s: %s", what, exc)
-            raise CertQueryFailed(f"{what} query failed") from exc
-
-    def _all_buckets(
+    def overview(
         self,
-        query: dict,
-        sources: list[dict],
-        aggs: dict | None,
-        what: str,
-        page_size: int = PAGE_SIZE,
-    ) -> list[dict]:
-        """Every composite bucket on the network index; CertQueryFailed (logged) on failure."""
-        # OLD CODE START — #96: [] read as "no CA changes" and an issuer-change count of 0
-        # except OpenSearchException as exc:
-        #     logger.error("Failed to query %s: %s", what, exc)
-        #     return []
-        # OLD CODE END
-        try:
-            buckets, complete = all_buckets(
-                self._client, NETWORK_INDEX, query, sources, aggs, page_size
-            )
-        except OpenSearchException as exc:
-            logger.error("Failed to query %s: %s", what, exc)
-            raise CertQueryFailed(f"{what} query failed") from exc
-        if not complete:
-            logger.warning(
-                "%s stopped at %d buckets; result is partial", what, len(buckets)
-            )
-        return buckets
-
-    def _leaf_certs(
-        self, from_ts: str, to_ts: str, excluded_ips: list[str] | None
-    ) -> list[dict[str, Any]]:
-        """Every leaf certificate in range, with every server name ssl sessions sent it for."""
-        x509_query = {
-            "bool": {
-                "filter": [
-                    _time_range_filter(from_ts, to_ts),
-                    *_X509_FILTERS,
-                    _LEAF_CERT_FILTER,
-                ]
-            }
-        }
-        certs = self._all_buckets(
-            x509_query,
-            [{"fp": {"terms": {"field": _FINGERPRINT}}}],
-            {"latest": {"top_hits": {"size": 1, "_source": _ISSUER_SOURCE}}},
-            "certificate issuers",
-        )
-        if not certs:
-            return []
-        ssl_query: dict = {
-            "bool": {"filter": [_time_range_filter(from_ts, to_ts), *_SSL_FILTERS]}
-        }
-        excluded = build_excluded_ips_filter(excluded_ips or [])
-        if excluded:
-            ssl_query["bool"]["must_not"] = excluded
-        # The chain also lists intermediates; their pairs match no leaf and drop out
-        pairs = self._all_buckets(
-            ssl_query,
-            [
-                {"fp": {"terms": {"field": _CHAIN_FPS}}},
-                {"name": {"terms": {"field": "zeek.ssl.server_name"}}},
-            ],
-            None,
-            "certificate server names",
-            page_size=_PAIR_PAGE,
-        )
-        names: dict[str, list[str]] = {}
-        for pair in pairs:
-            names.setdefault(pair["key"]["fp"], []).append(str(pair["key"]["name"]))
-        return [_leaf_cert(b, names) for b in certs]
-
-    def _rows(
-        self,
-        fingerprints: list[str],
-        from_ts: str,
-        to_ts: str,
-        excluded_ips: list[str] | None,
-    ) -> list[dict[str, Any]]:
-        """Inventory rows for these fingerprints, _MAX_CERTS per query."""
-        chunks = [
-            fingerprints[i : i + _MAX_CERTS]
-            for i in range(0, len(fingerprints), _MAX_CERTS)
-        ]
-        return [
-            row
-            for chunk in chunks
-            for row in self._inventory(
-                from_ts,
-                to_ts,
-                [{"terms": {_FINGERPRINT: chunk}}],
-                len(chunk),
-                excluded_ips,
-            )
-        ]
-
-    def _inventory(
-        self,
-        from_ts: str | None,
-        to_ts: str | None,
-        extra_filters: list[dict],
-        limit: int,
-        excluded_ips: list[str] | None,
-    ) -> list[dict[str, Any]]:
-        """One row per certificate fingerprint, most recently seen first.
-
-        excluded_ips only narrows the clients: x509 records carry no IPs.
-        """
+        from_ts: str | None = None,
+        to_ts: str | None = None,
+        excluded_ips: list[str] | None = None,
+        budget: Budget | None = None,
+        pit_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Every figure the Certificates page shows (CertQueryFailed and subclasses on failure)."""
         if not from_ts or not to_ts:
             from_ts, to_ts = _default_range()
-        filters = [
-            _time_range_filter(from_ts, to_ts),
-            *_X509_FILTERS,
-            _LEAF_CERT_FILTER,
-            *extra_filters,
-        ]
-        latest = {"size": 1, "sort": [{"@timestamp": {"order": "desc"}}]}
-        body = {
-            "size": 0,
-            "query": {"bool": {"filter": filters}},
-            "aggs": {
-                "certs": {
-                    "terms": {
-                        "field": _FINGERPRINT,
-                        "size": max(1, min(limit, _MAX_CERTS)),
-                        "order": {"last_seen": "desc"},
-                    },
-                    "aggs": {
-                        "first_seen": {"min": {"field": "@timestamp"}},
-                        "last_seen": {"max": {"field": "@timestamp"}},
-                        "latest": {"top_hits": {**latest, "_source": _X509_SOURCE}},
-                    },
-                }
-            },
-        }
-        result = self._search(body, "certificate inventory")
-        buckets = (result.get("aggregations") or {}).get("certs", {}).get("buckets", [])
-        sessions = self._sessions_by_fingerprint(
-            [b["key"] for b in buckets], from_ts, to_ts, excluded_ips
+        return self._overview.overview(
+            from_ts, to_ts, excluded_ips, budget=budget, pit_id=pit_id
         )
-        now = datetime.now(timezone.utc)
-        return [_cert_row(b, sessions.get(b["key"], {}), now) for b in buckets]
-
-    def _sessions_by_fingerprint(
-        self,
-        fingerprints: list[str],
-        from_ts: str,
-        to_ts: str,
-        excluded_ips: list[str] | None,
-    ) -> dict[str, dict]:
-        """ssl session stats per fingerprint, in one query (CertQueryFailed on failure)."""
-        if not fingerprints:
-            return {}
-        bool_clause: dict = {
-            "filter": [
-                _time_range_filter(from_ts, to_ts),
-                *_SSL_FILTERS,
-                {"terms": {_CHAIN_FPS: fingerprints}},
-            ]
-        }
-        excluded = build_excluded_ips_filter(excluded_ips or [])
-        if excluded:
-            bool_clause["must_not"] = excluded
-        body = {
-            "size": 0,
-            "query": {"bool": bool_clause},
-            "aggs": {
-                "fps": {
-                    # include: the chain also lists intermediates' fingerprints
-                    "terms": {
-                        "field": _CHAIN_FPS,
-                        "include": fingerprints,
-                        "size": len(fingerprints),
-                    },
-                    "aggs": {
-                        "first_seen": {"min": {"field": "@timestamp"}},
-                        "last_seen": {"max": {"field": "@timestamp"}},
-                        "server_names": _top_terms("zeek.ssl.server_name", 10),
-                        "clients": _top_terms("source.ip", 10),
-                        "servers": _top_terms("destination.ip", 1),
-                        "ports": _top_terms("destination.port", 1),
-                        "versions": _top_terms("zeek.ssl.ssl_version", 1),
-                        "validation": _top_terms("zeek.ssl.validation_status", 1),
-                    },
-                }
-            },
-        }
-        result = self._search(body, "certificate sessions")
-        buckets = (result.get("aggregations") or {}).get("fps", {}).get("buckets", [])
-        return {b["key"]: b for b in buckets}
 
     def get_certificates(
         self,
         from_ts: str | None = None,
         to_ts: str | None = None,
-        limit: int = _MAX_CERTS,
         excluded_ips: list[str] | None = None,
+        budget: Budget | None = None,
     ) -> list[dict[str, Any]]:
-        """All certificates seen in the time range, one row per fingerprint."""
-        return self._inventory(from_ts, to_ts, [], limit, excluded_ips)
+        """Every certificate used in the window, most recently used first."""
+        return self.overview(from_ts, to_ts, excluded_ips, budget)["certificates"]
 
     def get_expiring_certs(
         self,
-        days: int = _EXPIRY_WARN_DAYS,
+        days: int = EXPIRY_WARN_DAYS,
         from_ts: str | None = None,
         to_ts: str | None = None,
         excluded_ips: list[str] | None = None,
+        budget: Budget | None = None,
     ) -> list[dict[str, Any]]:
-        """Certificates expiring within N days, including already expired ones."""
-        days = min(max(0, int(days)), _MAX_EXPIRY_DAYS)
-        expiring = {"range": {_NOT_AFTER: {"lte": f"now+{days}d"}}}
-        certs = self._inventory(from_ts, to_ts, [expiring], _MAX_CERTS, excluded_ips)
+        """Certificates used in the window that expire within N days of now, or already have."""
         now = datetime.now(timezone.utc)
-        return [
-            {**c, "status": "expired" if _is_expired(c, now) else "expiring"}
-            for c in certs
-        ]
+        horizon = now + timedelta(days=min(max(0, int(days)), _MAX_EXPIRY_DAYS))
+        found = []
+        for cert in self.get_certificates(from_ts, to_ts, excluded_ips, budget):
+            expiry = parse_time(cert["not_after"])
+            if expiry is not None and expiry <= horizon:
+                found.append(
+                    {**cert, "status": "expired" if expiry <= now else "expiring"}
+                )
+        return found
 
     def detect_self_signed(
         self,
         from_ts: str | None = None,
         to_ts: str | None = None,
         excluded_ips: list[str] | None = None,
+        budget: Budget | None = None,
     ) -> list[dict[str, Any]]:
-        """Certificates whose subject DN equals their issuer DN."""
-        certs = self._inventory(
-            from_ts, to_ts, [_SELF_SIGNED_FILTER], _MAX_CERTS, excluded_ips
-        )
-        return [{**c, "detection_reason": "subject matches issuer"} for c in certs]
+        """Certificates whose subject equals their issuer."""
+        return [
+            {**c, "detection_reason": "subject matches issuer"}
+            for c in self.get_certificates(from_ts, to_ts, excluded_ips, budget)
+            if c["self_signed"]
+        ]
 
     def detect_issuer_changes(
         self,
         from_ts: str | None = None,
         to_ts: str | None = None,
         excluded_ips: list[str] | None = None,
+        budget: Budget | None = None,
     ) -> list[dict[str, Any]]:
-        """Server names served by certificates from more than one CA."""
-        # OLD CODE START — #96: compared only the newest 1,000 certificates and each one's
-        # 10 busiest server names, so a CA change on a busier network went unseen
-        # certs = self.get_certificates(from_ts, to_ts, excluded_ips=excluded_ips)
-        # return _issuer_changes(certs)
-        # OLD CODE END
-        if not from_ts or not to_ts:
-            from_ts, to_ts = _default_range()
-        changes = _issuer_changes(self._leaf_certs(from_ts, to_ts, excluded_ips))
-        fps = sorted({c["fingerprint"] for ch in changes for c in ch["certificates"]})
-        rows = {
-            r["fingerprint"]: r for r in self._rows(fps, from_ts, to_ts, excluded_ips)
-        }
-        return [
-            {
-                **ch,
-                "certificates": [
-                    rows[c["fingerprint"]]
-                    for c in ch["certificates"]
-                    if c["fingerprint"] in rows
-                ],
-            }
-            for ch in changes
-        ]
+        """Sites served by certificates from more than one known authority."""
+        return _issuer_changes(self.overview(from_ts, to_ts, excluded_ips, budget))
 
     def get_cert_stats(
         self,
         from_ts: str | None = None,
         to_ts: str | None = None,
         excluded_ips: list[str] | None = None,
+        budget: Budget | None = None,
     ) -> dict[str, Any]:
-        """Hero card counts of distinct certificates (not capped by the list)."""
-        if not from_ts or not to_ts:
-            from_ts, to_ts = _default_range()
-        # Absolute times: a "now" range inside a filter aggregation intermittently fails
-        # on OpenSearch 2.x ("DateRangeIncludingNowQuery does not implement createWeight")
+        """Counts of distinct certificates used in the window; expiry judged against now."""
+        data = self.overview(from_ts, to_ts, excluded_ips, budget)
         now = datetime.now(timezone.utc)
-        within_warning = {
-            "gte": now.isoformat(),
-            "lte": (now + timedelta(days=_EXPIRY_WARN_DAYS)).isoformat(),
-        }
-        body = {
-            "size": 0,
-            "query": {
-                "bool": {
-                    "filter": [
-                        _time_range_filter(from_ts, to_ts),
-                        *_X509_FILTERS,
-                        _LEAF_CERT_FILTER,
-                    ]
-                }
-            },
-            "aggs": {
-                "total": _DISTINCT_CERTS,
-                "expiring": {
-                    "filter": {"range": {_NOT_AFTER: within_warning}},
-                    "aggs": {"n": _DISTINCT_CERTS},
-                },
-                "expired": {
-                    "filter": {"range": {_NOT_AFTER: {"lt": now.isoformat()}}},
-                    "aggs": {"n": _DISTINCT_CERTS},
-                },
-                "self_signed": {
-                    "filter": _SELF_SIGNED_FILTER,
-                    "aggs": {"n": _DISTINCT_CERTS},
-                },
-            },
-        }
-        aggs = self._search(body, "certificate stats").get("aggregations")
-        if aggs is None:
-            raise CertStatsUnavailable("certificate stats query failed")
-        # OLD CODE START — #96: counted changes among the newest 1,000 certificates only
-        # changes = self.detect_issuer_changes(from_ts, to_ts, excluded_ips=excluded_ips)
-        # OLD CODE END
-        # The count needs no inventory rows
-        changes = _issuer_changes(self._leaf_certs(from_ts, to_ts, excluded_ips))
+        warn = now + timedelta(days=EXPIRY_WARN_DAYS)
+        expiries = [parse_time(c["not_after"]) for c in data["certificates"]]
         return {
-            "total_certs": _agg_count(aggs, "total"),
-            "expiring_count": _agg_count(aggs, "expiring"),
-            "expired_count": _agg_count(aggs, "expired"),
-            "self_signed_count": _agg_count(aggs, "self_signed"),
-            "issuer_changes_count": len(changes),
-            "from": from_ts,
-            "to": to_ts,
+            "total_certs": len(data["certificates"]),
+            "expiring_count": sum(
+                1 for e in expiries if e is not None and now <= e <= warn
+            ),
+            "expired_count": sum(1 for e in expiries if e is not None and e < now),
+            "self_signed_count": sum(
+                1 for c in data["certificates"] if c["self_signed"]
+            ),
+            "issuer_changes_count": len(_issuer_changes(data)),
+            "from": data["from"],
+            "to": data["to"],
         }
 
 
-def _is_expired(cert: dict[str, Any], now: datetime) -> bool:
-    expiry = _parse_date(cert["not_after"])
-    return expiry is not None and expiry <= now
-
+# OLD CODE START — 2026-11-05 NET-154: the x509-window inventory. A certificate used in the
+# window but last relogged by x509.log the day before was missing; only the top validation
+# status was shown; sessions were credited to every fingerprint in the chain; and each row
+# kept only the top 10 server names and clients. Replaced by the complete overview pass above.
+# """
+# NetTap CertificateMonitor — TLS certificate inventory from Zeek x509 logs.
+#
+# Zeek 6+ writes certificate details (subject, issuer, validity, key, SANs) to
+# x509.log. ssl.log only carries the chain fingerprints (zeek.ssl.cert_chain_fps),
+# the SNI and the validation status. So the inventory aggregates x509 records into
+# one row per fingerprint, then joins ssl sessions in one bounded query for the
+# server names and clients.
+#
+# Field names checked against Malcolm v26.02.0: logstash/pipelines/zeek/
+# 1069_zeek_x509.conf, 1200_zeek_mutate.conf, 1400_zeek_convert.conf and
+# dashboards/templates/composable/component/zeek.json.
+#
+# TLS 1.3 encrypts the server certificate, so Zeek only sees certificates from
+# TLS 1.2 and older handshakes.
+# """
+#
+# import logging
+# import os
+# from datetime import datetime, timedelta, timezone
+# from typing import Any
+#
+# from opensearchpy import OpenSearch, OpenSearchException
+#
+# from services.excluded_ips import build_excluded_ips_filter
+# from storage.all_buckets import PAGE_SIZE, all_buckets
+#
+# logger = logging.getLogger("nettap.services.cert_monitor")
+#
+# NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
+#
+# # Zeek SSL event filters for the unified Malcolm index
+# _SSL_FILTERS = [
+#     {"term": {"event.provider": "zeek"}},
+#     {"term": {"event.dataset": "ssl"}},
+# ]
+#
+# _X509_FILTERS = [
+#     {"term": {"event.provider": "zeek"}},
+#     {"term": {"event.dataset": "x509"}},
+# ]
+#
+# # End-host certs only. Chains also log intermediates and roots, and a root
+# # always has subject == issuer. Zeek JSON logs the flag as true, TSV as T.
+# _LEAF_CERT_FILTER = {"terms": {"zeek.x509.host_cert": ["true", "T"]}}
+#
+# _FINGERPRINT = "zeek.x509.fingerprint"
+# _NOT_AFTER = "zeek.x509.certificate_not_valid_after"
+# _CHAIN_FPS = "zeek.ssl.cert_chain_fps"
+#
+# _EXPIRY_WARN_DAYS = 30
+# _MAX_EXPIRY_DAYS = 3650
+# _MAX_CERTS = 1000
+#
+# # Cardinality is exact up to precision_threshold (40000 is OpenSearch's max)
+# _DISTINCT_CERTS = {"cardinality": {"field": _FINGERPRINT, "precision_threshold": 40000}}
+#
+# _SELF_SIGNED_FILTER = {
+#     "script": {
+#         "script": {
+#             "lang": "painless",
+#             "source": (
+#                 "if (!doc.containsKey('zeek.x509.certificate_subject_full')"
+#                 " || !doc.containsKey('zeek.x509.certificate_issuer_full')) return false;"
+#                 " def s = doc['zeek.x509.certificate_subject_full'];"
+#                 " def i = doc['zeek.x509.certificate_issuer_full'];"
+#                 " return s.size() > 0 && i.size() > 0 && s.value == i.value;"
+#             ),
+#         }
+#     }
+# }
+#
+# # A row reads only the zeek.x509 object of the latest record
+# _X509_SOURCE = ["zeek.x509"]
+# # The issuer comparison reads only the CA and subject of a certificate
+# _ISSUER_SOURCE = [
+#     "zeek.x509.certificate_subject",
+#     "zeek.x509.certificate_issuer",
+#     "zeek.x509.certificate_issuer_full",
+# ]
+# # (fingerprint, server name) pages carry no sub-aggregations: 10x fewer scans, far below max_buckets
+# _PAIR_PAGE = 10_000
+#
+#
+# def _time_range_filter(from_ts: str, to_ts: str) -> dict:
+#     """Build an OpenSearch range filter on '@timestamp'."""
+#     return {
+#         "range": {
+#             "@timestamp": {
+#                 "gte": from_ts,
+#                 "lte": to_ts,
+#                 "format": "strict_date_optional_time",
+#             }
+#         }
+#     }
+#
+#
+# def _default_range() -> tuple[str, str]:
+#     """Return default time range (last 7 days)."""
+#     now = datetime.now(timezone.utc)
+#     return (now - timedelta(days=7)).isoformat(), now.isoformat()
+#
+#
+# # ---------------------------------------------------------------------------
+# # Row building
+# # ---------------------------------------------------------------------------
+#
+#
+# def _first(value: Any) -> str:
+#     """First item of a list-or-scalar field as a string ('' when missing)."""
+#     if isinstance(value, list):
+#         value = value[0] if value else ""
+#     return "" if value is None else str(value)
+#
+#
+# def _as_list(value: Any) -> list[str]:
+#     """A list-or-scalar field as a list of strings."""
+#     if value is None or value == "":
+#         return []
+#     return [str(v) for v in value] if isinstance(value, list) else [str(value)]
+#
+#
+# def _dn_part(dn: Any, key: str) -> str:
+#     """One attribute (CN, O, ...) of a DN that Malcolm split into an object."""
+#     return _first(dn.get(key)) if isinstance(dn, dict) else ""
+#
+#
+# def _keys(agg: dict | None) -> list[Any]:
+#     """Bucket keys of a terms aggregation, biggest first."""
+#     return [b.get("key") for b in (agg or {}).get("buckets", [])]
+#
+#
+# def _top_terms(field: str, size: int) -> dict:
+#     return {"terms": {"field": field, "size": size}}
+#
+#
+# def _seen(agg_parent: dict, name: str) -> str:
+#     """ISO string of a min/max date sub-aggregation ('' when empty)."""
+#     return (agg_parent.get(name) or {}).get("value_as_string") or ""
+#
+#
+# def _agg_count(aggs: dict, name: str) -> int:
+#     """Value of a cardinality agg, directly or under a filter agg's 'n'."""
+#     node = aggs.get(name) or {}
+#     return int((node.get("n") or node).get("value") or 0)
+#
+#
+# def _parse_date(value: str) -> datetime | None:
+#     """Parse an ISO date from OpenSearch; None when missing or unparseable."""
+#     if not value:
+#         return None
+#     try:
+#         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+#     except ValueError:
+#         logger.warning("Unparseable certificate date: %r", value)
+#         return None
+#     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+#
+#
+# def _status(expiry: datetime | None, self_signed: bool, now: datetime) -> str:
+#     if self_signed:
+#         return "self-signed"
+#     if expiry is None:
+#         return "valid"
+#     if expiry <= now:
+#         return "expired"
+#     if expiry <= now + timedelta(days=_EXPIRY_WARN_DAYS):
+#         return "expiring"
+#     return "valid"
+#
+#
+# def _x509_fields(x509: dict[str, Any]) -> dict[str, Any]:
+#     """Certificate details from the latest x509 record of a fingerprint."""
+#     subject, issuer = x509.get("certificate_subject"), x509.get("certificate_issuer")
+#     subject_full = _first(x509.get("certificate_subject_full"))
+#     issuer_full = _first(x509.get("certificate_issuer_full"))
+#     return {
+#         "subject": _dn_part(subject, "CN") or subject_full,
+#         "subject_cn": _dn_part(subject, "CN"),
+#         "subject_full": subject_full,
+#         "issuer": _dn_part(issuer, "CN") or issuer_full,
+#         "issuer_org": _dn_part(issuer, "O"),
+#         "issuer_full": issuer_full,
+#         "not_before": _first(x509.get("certificate_not_valid_before")),
+#         "not_after": _first(x509.get("certificate_not_valid_after")),
+#         "key_type": _first(x509.get("certificate_key_type")),
+#         "key_length": x509.get("certificate_key_length"),
+#         "sig_alg": _first(x509.get("certificate_sig_alg")),
+#         "serial": _first(x509.get("certificate_serial")),
+#         "san_dns": _as_list(x509.get("san_dns")),
+#     }
+#
+#
+# def _session_fields(session: dict[str, Any]) -> dict[str, Any]:
+#     """Server names and clients from the ssl sessions that sent the cert."""
+#     server_names = [str(k) for k in _keys(session.get("server_names"))]
+#     clients = [str(k) for k in _keys(session.get("clients"))]
+#     servers = _keys(session.get("servers"))
+#     ports = _keys(session.get("ports"))
+#     return {
+#         "server_name": server_names[0] if server_names else "",
+#         "server_names": server_names,
+#         "clients": clients,
+#         "source_ip": clients[0] if clients else "",
+#         "destination_ip": str(servers[0]) if servers else "",
+#         "destination_port": ports[0] if ports else "",
+#         "tls_version": _first(_keys(session.get("versions"))),
+#         "validation_status": _first(_keys(session.get("validation"))),
+#     }
+#
+#
+# def _cert_row(bucket: dict, session: dict, now: datetime) -> dict[str, Any]:
+#     """One inventory row from an x509 fingerprint bucket and its sessions."""
+#     hits = (bucket.get("latest") or {}).get("hits", {}).get("hits", [])
+#     source = hits[0].get("_source", {}) if hits else {}
+#     cert = {
+#         **_x509_fields(source.get("zeek", {}).get("x509", {})),
+#         **_session_fields(session),
+#     }
+#     fingerprint = str(bucket.get("key", ""))
+#     self_signed = bool(cert["subject_full"]) and (
+#         cert["subject_full"] == cert["issuer_full"]
+#     )
+#     expiry = _parse_date(cert["not_after"])
+#     # Seen counts are TLS sessions. x509.log relogs a cert at most daily, so it
+#     # only stands in when no ssl session in range carried the fingerprint.
+#     seen = session if session.get("doc_count") else bucket
+#     last_seen = _seen(seen, "last_seen")
+#     return {
+#         **cert,
+#         "_id": fingerprint,
+#         "fingerprint": fingerprint,
+#         "hash_sha256": fingerprint,  # Zeek's X509::hash_function defaults to SHA-256
+#         "domain": cert["server_name"] or cert["subject_cn"] or _first(cert["san_dns"]),
+#         "first_seen": _seen(seen, "first_seen"),
+#         "last_seen": last_seen,
+#         "timestamp": last_seen,
+#         "times_seen": int(seen.get("doc_count") or 0),
+#         "days_until_expiry": max(0, (expiry - now).days) if expiry else None,
+#         "self_signed": self_signed,
+#         "status": _status(expiry, self_signed, now),
+#     }
+#
+#
+# def _issuer_changes(certs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+#     """Server names whose certificates come from more than one CA.
+#
+#     Compares the issuing organisation, not the issuer CN: Let's Encrypt and
+#     others rotate intermediates (R10/R11, E5/E6), which is not a change of CA.
+#     """
+#     by_name: dict[str, dict[str, list[dict[str, Any]]]] = {}
+#     for cert in certs:
+#         ca = cert["issuer_org"] or cert["issuer"]
+#         for name in cert["server_names"] or [cert["subject_cn"]]:
+#             if ca and name:
+#                 by_name.setdefault(name, {}).setdefault(ca, []).append(cert)
+#     return [
+#         {
+#             "domain": name,
+#             "issuers": sorted(cas),
+#             "issuer_count": len(cas),
+#             "certificates": [c for group in cas.values() for c in group],
+#         }
+#         for name, cas in sorted(by_name.items())
+#         if len(cas) > 1
+#     ]
+#
+#
+# def _leaf_cert(bucket: dict, names: dict[str, list[str]]) -> dict[str, Any]:
+#     """What _issuer_changes reads of one leaf certificate: its CA, subject and server names."""
+#     fp = bucket["key"]["fp"]
+#     hits = (bucket.get("latest") or {}).get("hits", {}).get("hits", [])
+#     x509 = hits[0].get("_source", {}).get("zeek", {}).get("x509", {}) if hits else {}
+#     return {**_x509_fields(x509), "fingerprint": fp, "server_names": names.get(fp, [])}
+#
+#
+# # ---------------------------------------------------------------------------
+# # Service
+# # ---------------------------------------------------------------------------
+#
+#
+# class CertQueryFailed(Exception):
+#     """A certificate query failed; callers must not show an empty list or zeros as findings (#96)."""
+#
+#
+# class CertStatsUnavailable(CertQueryFailed):
+#     """The stats query failed; callers must not show zeros as if they were counts."""
+#
+#
+# class CertificateMonitor:
+#     """TLS certificate inventory from Zeek x509 logs joined to ssl sessions."""
+#
+#     def __init__(self, client: OpenSearch) -> None:
+#         self._client = client
+#
+#     def _search(self, body: dict, what: str) -> dict:
+#         """Run a search on the network index; CertQueryFailed (logged) on failure."""
+#         # OLD CODE START — #96: {} read as "no certificates", "none expiring", "no self-signed"
+#         # try:
+#         #     return self._client.search(index=NETWORK_INDEX, body=body) or {}
+#         # except OpenSearchException as exc:
+#         #     logger.error("Failed to query %s: %s", what, exc)
+#         #     return {}
+#         # OLD CODE END
+#         try:
+#             return self._client.search(index=NETWORK_INDEX, body=body) or {}
+#         except OpenSearchException as exc:
+#             logger.error("Failed to query %s: %s", what, exc)
+#             raise CertQueryFailed(f"{what} query failed") from exc
+#
+#     def _all_buckets(
+#         self,
+#         query: dict,
+#         sources: list[dict],
+#         aggs: dict | None,
+#         what: str,
+#         page_size: int = PAGE_SIZE,
+#     ) -> list[dict]:
+#         """Every composite bucket on the network index; CertQueryFailed (logged) on failure."""
+#         # OLD CODE START — #96: [] read as "no CA changes" and an issuer-change count of 0
+#         # except OpenSearchException as exc:
+#         #     logger.error("Failed to query %s: %s", what, exc)
+#         #     return []
+#         # OLD CODE END
+#         try:
+#             buckets, complete = all_buckets(
+#                 self._client, NETWORK_INDEX, query, sources, aggs, page_size
+#             )
+#         except OpenSearchException as exc:
+#             logger.error("Failed to query %s: %s", what, exc)
+#             raise CertQueryFailed(f"{what} query failed") from exc
+#         if not complete:
+#             logger.warning(
+#                 "%s stopped at %d buckets; result is partial", what, len(buckets)
+#             )
+#         return buckets
+#
+#     def _leaf_certs(
+#         self, from_ts: str, to_ts: str, excluded_ips: list[str] | None
+#     ) -> list[dict[str, Any]]:
+#         """Every leaf certificate in range, with every server name ssl sessions sent it for."""
+#         x509_query = {
+#             "bool": {
+#                 "filter": [
+#                     _time_range_filter(from_ts, to_ts),
+#                     *_X509_FILTERS,
+#                     _LEAF_CERT_FILTER,
+#                 ]
+#             }
+#         }
+#         certs = self._all_buckets(
+#             x509_query,
+#             [{"fp": {"terms": {"field": _FINGERPRINT}}}],
+#             {"latest": {"top_hits": {"size": 1, "_source": _ISSUER_SOURCE}}},
+#             "certificate issuers",
+#         )
+#         if not certs:
+#             return []
+#         ssl_query: dict = {
+#             "bool": {"filter": [_time_range_filter(from_ts, to_ts), *_SSL_FILTERS]}
+#         }
+#         excluded = build_excluded_ips_filter(excluded_ips or [])
+#         if excluded:
+#             ssl_query["bool"]["must_not"] = excluded
+#         # The chain also lists intermediates; their pairs match no leaf and drop out
+#         pairs = self._all_buckets(
+#             ssl_query,
+#             [
+#                 {"fp": {"terms": {"field": _CHAIN_FPS}}},
+#                 {"name": {"terms": {"field": "zeek.ssl.server_name"}}},
+#             ],
+#             None,
+#             "certificate server names",
+#             page_size=_PAIR_PAGE,
+#         )
+#         names: dict[str, list[str]] = {}
+#         for pair in pairs:
+#             names.setdefault(pair["key"]["fp"], []).append(str(pair["key"]["name"]))
+#         return [_leaf_cert(b, names) for b in certs]
+#
+#     def _rows(
+#         self,
+#         fingerprints: list[str],
+#         from_ts: str,
+#         to_ts: str,
+#         excluded_ips: list[str] | None,
+#     ) -> list[dict[str, Any]]:
+#         """Inventory rows for these fingerprints, _MAX_CERTS per query."""
+#         chunks = [
+#             fingerprints[i : i + _MAX_CERTS]
+#             for i in range(0, len(fingerprints), _MAX_CERTS)
+#         ]
+#         return [
+#             row
+#             for chunk in chunks
+#             for row in self._inventory(
+#                 from_ts,
+#                 to_ts,
+#                 [{"terms": {_FINGERPRINT: chunk}}],
+#                 len(chunk),
+#                 excluded_ips,
+#             )
+#         ]
+#
+#     def _inventory(
+#         self,
+#         from_ts: str | None,
+#         to_ts: str | None,
+#         extra_filters: list[dict],
+#         limit: int,
+#         excluded_ips: list[str] | None,
+#     ) -> list[dict[str, Any]]:
+#         """One row per certificate fingerprint, most recently seen first.
+#
+#         excluded_ips only narrows the clients: x509 records carry no IPs.
+#         """
+#         if not from_ts or not to_ts:
+#             from_ts, to_ts = _default_range()
+#         filters = [
+#             _time_range_filter(from_ts, to_ts),
+#             *_X509_FILTERS,
+#             _LEAF_CERT_FILTER,
+#             *extra_filters,
+#         ]
+#         latest = {"size": 1, "sort": [{"@timestamp": {"order": "desc"}}]}
+#         body = {
+#             "size": 0,
+#             "query": {"bool": {"filter": filters}},
+#             "aggs": {
+#                 "certs": {
+#                     "terms": {
+#                         "field": _FINGERPRINT,
+#                         "size": max(1, min(limit, _MAX_CERTS)),
+#                         "order": {"last_seen": "desc"},
+#                     },
+#                     "aggs": {
+#                         "first_seen": {"min": {"field": "@timestamp"}},
+#                         "last_seen": {"max": {"field": "@timestamp"}},
+#                         "latest": {"top_hits": {**latest, "_source": _X509_SOURCE}},
+#                     },
+#                 }
+#             },
+#         }
+#         result = self._search(body, "certificate inventory")
+#         buckets = (result.get("aggregations") or {}).get("certs", {}).get("buckets", [])
+#         sessions = self._sessions_by_fingerprint(
+#             [b["key"] for b in buckets], from_ts, to_ts, excluded_ips
+#         )
+#         now = datetime.now(timezone.utc)
+#         return [_cert_row(b, sessions.get(b["key"], {}), now) for b in buckets]
+#
+#     def _sessions_by_fingerprint(
+#         self,
+#         fingerprints: list[str],
+#         from_ts: str,
+#         to_ts: str,
+#         excluded_ips: list[str] | None,
+#     ) -> dict[str, dict]:
+#         """ssl session stats per fingerprint, in one query (CertQueryFailed on failure)."""
+#         if not fingerprints:
+#             return {}
+#         bool_clause: dict = {
+#             "filter": [
+#                 _time_range_filter(from_ts, to_ts),
+#                 *_SSL_FILTERS,
+#                 {"terms": {_CHAIN_FPS: fingerprints}},
+#             ]
+#         }
+#         excluded = build_excluded_ips_filter(excluded_ips or [])
+#         if excluded:
+#             bool_clause["must_not"] = excluded
+#         body = {
+#             "size": 0,
+#             "query": {"bool": bool_clause},
+#             "aggs": {
+#                 "fps": {
+#                     # include: the chain also lists intermediates' fingerprints
+#                     "terms": {
+#                         "field": _CHAIN_FPS,
+#                         "include": fingerprints,
+#                         "size": len(fingerprints),
+#                     },
+#                     "aggs": {
+#                         "first_seen": {"min": {"field": "@timestamp"}},
+#                         "last_seen": {"max": {"field": "@timestamp"}},
+#                         "server_names": _top_terms("zeek.ssl.server_name", 10),
+#                         "clients": _top_terms("source.ip", 10),
+#                         "servers": _top_terms("destination.ip", 1),
+#                         "ports": _top_terms("destination.port", 1),
+#                         "versions": _top_terms("zeek.ssl.ssl_version", 1),
+#                         "validation": _top_terms("zeek.ssl.validation_status", 1),
+#                     },
+#                 }
+#             },
+#         }
+#         result = self._search(body, "certificate sessions")
+#         buckets = (result.get("aggregations") or {}).get("fps", {}).get("buckets", [])
+#         return {b["key"]: b for b in buckets}
+#
+#     def get_certificates(
+#         self,
+#         from_ts: str | None = None,
+#         to_ts: str | None = None,
+#         limit: int = _MAX_CERTS,
+#         excluded_ips: list[str] | None = None,
+#     ) -> list[dict[str, Any]]:
+#         """All certificates seen in the time range, one row per fingerprint."""
+#         return self._inventory(from_ts, to_ts, [], limit, excluded_ips)
+#
+#     def get_expiring_certs(
+#         self,
+#         days: int = _EXPIRY_WARN_DAYS,
+#         from_ts: str | None = None,
+#         to_ts: str | None = None,
+#         excluded_ips: list[str] | None = None,
+#     ) -> list[dict[str, Any]]:
+#         """Certificates expiring within N days, including already expired ones."""
+#         days = min(max(0, int(days)), _MAX_EXPIRY_DAYS)
+#         expiring = {"range": {_NOT_AFTER: {"lte": f"now+{days}d"}}}
+#         certs = self._inventory(from_ts, to_ts, [expiring], _MAX_CERTS, excluded_ips)
+#         now = datetime.now(timezone.utc)
+#         return [
+#             {**c, "status": "expired" if _is_expired(c, now) else "expiring"}
+#             for c in certs
+#         ]
+#
+#     def detect_self_signed(
+#         self,
+#         from_ts: str | None = None,
+#         to_ts: str | None = None,
+#         excluded_ips: list[str] | None = None,
+#     ) -> list[dict[str, Any]]:
+#         """Certificates whose subject DN equals their issuer DN."""
+#         certs = self._inventory(
+#             from_ts, to_ts, [_SELF_SIGNED_FILTER], _MAX_CERTS, excluded_ips
+#         )
+#         return [{**c, "detection_reason": "subject matches issuer"} for c in certs]
+#
+#     def detect_issuer_changes(
+#         self,
+#         from_ts: str | None = None,
+#         to_ts: str | None = None,
+#         excluded_ips: list[str] | None = None,
+#     ) -> list[dict[str, Any]]:
+#         """Server names served by certificates from more than one CA."""
+#         # OLD CODE START — #96: compared only the newest 1,000 certificates and each one's
+#         # 10 busiest server names, so a CA change on a busier network went unseen
+#         # certs = self.get_certificates(from_ts, to_ts, excluded_ips=excluded_ips)
+#         # return _issuer_changes(certs)
+#         # OLD CODE END
+#         if not from_ts or not to_ts:
+#             from_ts, to_ts = _default_range()
+#         changes = _issuer_changes(self._leaf_certs(from_ts, to_ts, excluded_ips))
+#         fps = sorted({c["fingerprint"] for ch in changes for c in ch["certificates"]})
+#         rows = {
+#             r["fingerprint"]: r for r in self._rows(fps, from_ts, to_ts, excluded_ips)
+#         }
+#         return [
+#             {
+#                 **ch,
+#                 "certificates": [
+#                     rows[c["fingerprint"]]
+#                     for c in ch["certificates"]
+#                     if c["fingerprint"] in rows
+#                 ],
+#             }
+#             for ch in changes
+#         ]
+#
+#     def get_cert_stats(
+#         self,
+#         from_ts: str | None = None,
+#         to_ts: str | None = None,
+#         excluded_ips: list[str] | None = None,
+#     ) -> dict[str, Any]:
+#         """Hero card counts of distinct certificates (not capped by the list)."""
+#         if not from_ts or not to_ts:
+#             from_ts, to_ts = _default_range()
+#         # Absolute times: a "now" range inside a filter aggregation intermittently fails
+#         # on OpenSearch 2.x ("DateRangeIncludingNowQuery does not implement createWeight")
+#         now = datetime.now(timezone.utc)
+#         within_warning = {
+#             "gte": now.isoformat(),
+#             "lte": (now + timedelta(days=_EXPIRY_WARN_DAYS)).isoformat(),
+#         }
+#         body = {
+#             "size": 0,
+#             "query": {
+#                 "bool": {
+#                     "filter": [
+#                         _time_range_filter(from_ts, to_ts),
+#                         *_X509_FILTERS,
+#                         _LEAF_CERT_FILTER,
+#                     ]
+#                 }
+#             },
+#             "aggs": {
+#                 "total": _DISTINCT_CERTS,
+#                 "expiring": {
+#                     "filter": {"range": {_NOT_AFTER: within_warning}},
+#                     "aggs": {"n": _DISTINCT_CERTS},
+#                 },
+#                 "expired": {
+#                     "filter": {"range": {_NOT_AFTER: {"lt": now.isoformat()}}},
+#                     "aggs": {"n": _DISTINCT_CERTS},
+#                 },
+#                 "self_signed": {
+#                     "filter": _SELF_SIGNED_FILTER,
+#                     "aggs": {"n": _DISTINCT_CERTS},
+#                 },
+#             },
+#         }
+#         aggs = self._search(body, "certificate stats").get("aggregations")
+#         if aggs is None:
+#             raise CertStatsUnavailable("certificate stats query failed")
+#         # OLD CODE START — #96: counted changes among the newest 1,000 certificates only
+#         # changes = self.detect_issuer_changes(from_ts, to_ts, excluded_ips=excluded_ips)
+#         # OLD CODE END
+#         # The count needs no inventory rows
+#         changes = _issuer_changes(self._leaf_certs(from_ts, to_ts, excluded_ips))
+#         return {
+#             "total_certs": _agg_count(aggs, "total"),
+#             "expiring_count": _agg_count(aggs, "expiring"),
+#             "expired_count": _agg_count(aggs, "expired"),
+#             "self_signed_count": _agg_count(aggs, "self_signed"),
+#             "issuer_changes_count": len(changes),
+#             "from": from_ts,
+#             "to": to_ts,
+#         }
+#
+#
+# def _is_expired(cert: dict[str, Any], now: datetime) -> bool:
+#     expiry = _parse_date(cert["not_after"])
+#     return expiry is not None and expiry <= now
+# OLD CODE END
 
 # OLD CODE START — 2026-11-01: read cert fields from zeek.ssl.* / tls.server.*,
 # which Zeek 6+ ssl.log does not carry (they live in x509.log). Every row was a TLS
