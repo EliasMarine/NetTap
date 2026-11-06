@@ -8,6 +8,7 @@ or populated by the alert intelligence engine's Suricata data.
 Future: scheduled feed downloader.
 """
 
+import ipaddress
 import json
 import logging
 import os
@@ -24,6 +25,19 @@ _TI_CACHE_PATH = (
 
 # IP pages carry no sub-aggregations: 10x fewer scans than the default, far below max_buckets
 _IP_PAGE = 10_000
+# Caches without this version learned every alert's destination.ip, so inbound rules taught
+# them the network's own addresses (I7); they are dropped at load and rebuilt from alerts.
+_CACHE_VERSION = 2
+
+
+def _is_outside(ip: str) -> bool:
+    """An internet address: not LAN, private, CGNAT, link-local, loopback or multicast."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return addr.is_global and not addr.is_multicast
+
 
 # Known threat intel feed metadata
 TI_FEEDS = {
@@ -40,16 +54,56 @@ class ThreatIntelService:
     def __init__(self):
         self._ip_sets: dict[str, set[str]] = {}
         self._loaded = False
+        # The outside addresses the last populate_from_suricata saw in its window (I7)
+        self.seen_in_window: set[str] = set()
 
+    # OLD CODE START — I7: loaded every cached address, including LAN and own addresses
+    # learned from inbound rules, and an alert to one read as "confirmed malicious infrastructure"
+    # def load_cache(self) -> None:
+    #     """Load cached threat intel data from disk."""
+    #     try:
+    #         if _TI_CACHE_PATH.exists():
+    #             data = json.loads(_TI_CACHE_PATH.read_text())
+    #             for feed_id, ips in data.get("ip_feeds", {}).items():
+    #                 self._ip_sets[feed_id] = set(ips)
+    #             self._loaded = True
+    #             total = sum(len(s) for s in self._ip_sets.values())
+    #             logger.info(
+    #                 "Loaded %d threat intel indicators from %d feeds",
+    #                 total,
+    #                 len(self._ip_sets),
+    #             )
+    #     except Exception:
+    #         logger.warning("Failed to load threat intel cache", exc_info=True)
+    # OLD CODE END
     def load_cache(self) -> None:
-        """Load cached threat intel data from disk."""
+        """Load cached threat intel data from disk, keeping only internet addresses (I7).
+
+        A cache from before _CACHE_VERSION is dropped whole: it can't tell which of its
+        addresses were the network's own. Anything purged is written back at once, so an
+        old entry is never read again even if the rebuild from alerts then fails.
+        """
         try:
             if _TI_CACHE_PATH.exists():
                 data = json.loads(_TI_CACHE_PATH.read_text())
-                for feed_id, ips in data.get("ip_feeds", {}).items():
-                    self._ip_sets[feed_id] = set(ips)
+                feeds = data.get("ip_feeds", {})
+                if data.get("version") != _CACHE_VERSION:
+                    feeds = {}
+                self._ip_sets = {
+                    feed_id: {ip for ip in ips if _is_outside(ip)}
+                    for feed_id, ips in feeds.items()
+                }
                 self._loaded = True
                 total = sum(len(s) for s in self._ip_sets.values())
+                purged = (
+                    sum(len(ips) for ips in data.get("ip_feeds", {}).values()) - total
+                )
+                if purged:
+                    logger.warning(
+                        "Dropped %d cached threat intel indicators (not internet addresses, or an old cache)",
+                        purged,
+                    )
+                    self.save_cache()
                 logger.info(
                     "Loaded %d threat intel indicators from %d feeds",
                     total,
@@ -63,6 +117,7 @@ class ThreatIntelService:
         try:
             _TI_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
             data = {
+                "version": _CACHE_VERSION,
                 "ip_feeds": {k: list(v) for k, v in self._ip_sets.items()},
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -120,12 +175,13 @@ class ThreatIntelService:
 
         return alerts
 
-    def get_all_matches(self) -> dict:
-        """Return summary of all loaded feeds and their indicator counts."""
+    def get_all_matches(self, within: set[str] | None = None) -> dict:
+        """Return summary of all loaded feeds and their indicator counts; only the
+        indicators in `within` (e.g. seen_in_window) when given."""
         return {
             feed_id: {
                 "label": TI_FEEDS.get(feed_id, {}).get("label", feed_id),
-                "indicator_count": len(ips),
+                "indicator_count": len(ips if within is None else ips & within),
             }
             for feed_id, ips in self._ip_sets.items()
         }
@@ -206,20 +262,58 @@ class ThreatIntelService:
         #     logger.error("Failed to populate TI from Suricata", exc_info=True)
         #     return 0
         # OLD CODE END
+        # OLD CODE START — I7: every alert's destination.ip, so inbound rules (listed host ->
+        # this network) taught it the network's own addresses
+        # buckets, complete = all_buckets(
+        #     client,
+        #     NETWORK_INDEX,
+        #     {"bool": bool_clause},
+        #     [{"ip": {"terms": {"field": "destination.ip"}}}],
+        #     page_size=_IP_PAGE,
+        # )
+        # if not complete:
+        #     logger.warning(
+        #         "TI scan stopped at %d IPs; indicators are partial", len(buckets)
+        #     )
+        #
+        # known = self._ip_sets.get("et_compromised", set())
+        # new_ips = sorted({b["key"]["ip"] for b in buckets} - known)
+        # OLD CODE END
         buckets, complete = all_buckets(
             client,
             NETWORK_INDEX,
             {"bool": bool_clause},
-            [{"ip": {"terms": {"field": "destination.ip"}}}],
+            [
+                {"src": {"terms": {"field": "source.ip"}}},
+                {"dst": {"terms": {"field": "destination.ip"}}},
+            ],
             page_size=_IP_PAGE,
         )
         if not complete:
             logger.warning(
-                "TI scan stopped at %d IPs; indicators are partial", len(buckets)
+                "TI scan stopped at %d address pairs; indicators are partial",
+                len(buckets),
             )
 
+        # The listed host is the alert's one internet endpoint; with none or two (e.g. an
+        # inbound alert to this network's public address) it can't be told apart, so skip it
+        seen: set[str] = set()
+        ambiguous = 0
+        for b in buckets:
+            outside = [ip for ip in b["key"].values() if ip and _is_outside(ip)]
+            if len(outside) == 1:
+                seen.add(outside[0])
+            else:
+                ambiguous += 1
+        if ambiguous:
+            logger.info(
+                "TI scan skipped %d alert address pairs without exactly one internet endpoint",
+                ambiguous,
+            )
+        self.seen_in_window = seen
+
         known = self._ip_sets.get("et_compromised", set())
-        new_ips = sorted({b["key"]["ip"] for b in buckets} - known)
+        new_ips = sorted(seen - known)
         if new_ips:
             self.add_indicators("et_compromised", new_ips)
             self.save_cache()

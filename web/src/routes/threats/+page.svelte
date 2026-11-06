@@ -158,7 +158,12 @@
 		const groups = summary?.total_groups ?? 0;
 		const invCount = investigations.length;
 		if (groups === 0) return 'No actionable threats detected.';
-		return `Suricata generated ${formatNumber(summary?.total_events ?? 0)} alert events. NetTap found ${invCount} investigation${invCount !== 1 ? 's' : ''}.`;
+		// OLD CODE START — I8: total_events leaves out informational alerts, so it read as everything Suricata raised
+		// return `Suricata generated ${formatNumber(summary?.total_events ?? 0)} alert events. NetTap found ${invCount} investigation${invCount !== 1 ? 's' : ''}.`;
+		// OLD CODE END
+		const info = summary?.informational_events ?? 0;
+		const notCounted = info > 0 ? ` · ${formatNumber(info)} informational not counted` : '';
+		return `${formatNumber(summary?.total_events ?? 0)} alert events need attention${notCounted}. NetTap found ${invCount} investigation${invCount !== 1 ? 's' : ''}.`;
 	});
 
 	let subheadline = $derived.by(() => {
@@ -166,7 +171,8 @@
 		if (killChains.length > 0) parts.push(`${killChains.length} active kill chain${killChains.length > 1 ? 's' : ''}`);
 		if (beacons.length > 0) parts.push(`${beacons.length} beaconing suspect${beacons.length > 1 ? 's' : ''}`);
 		const tiTotal = threatIntel?.total_indicators ?? 0;
-		if (tiTotal > 0) parts.push(`${tiTotal} threat intel indicators`);
+		// OLD CODE START: if (tiTotal > 0) parts.push(`${tiTotal} threat intel indicators`); (I7: now the window's matches) OLD CODE END
+		if (tiTotal > 0) parts.push(`${tiTotal} threat intel matches`);
 		const failed = [...failedChecks].map((c) => CHECK_NAMES[c] ?? c);
 		if (failed.length > 0) parts.push(`Couldn't check ${failed.join(', ')}`);
 		// OLD CODE START — #96: shown after loading too, as if a scan were still running
@@ -412,7 +418,7 @@
 			label="Alert groups"
 			icon="alerts"
 			value={formatNumber(summary?.total_groups ?? 0)}
-			sub="{formatNumber(summary?.total_events ?? 0)} alert events · {rangeText}"
+			sub="{formatNumber(summary?.total_events ?? 0)} alert events need attention · {rangeText}"
 		/>
 		<KpiCard class="c-3" label="Kill chains" icon="warn" value={killChains.length} sub="Devices moving through attack stages" />
 		<KpiCard
@@ -432,12 +438,14 @@
 			{/if}
 		</Card>
 
-		<Card title="Threat intel matches" sub="Indicators loaded per feed · {rangeText}" class="c-4">
+		<!-- OLD CODE START: <Card title="Threat intel matches" sub="Indicators loaded per feed · {rangeText}" class="c-4"> (I7: every cached indicator, under the window's label) OLD CODE END -->
+		<Card title="Threat intel matches" sub="Listed internet addresses seen in alerts · {rangeText}" class="c-4">
 			{#snippet actions()}
 				<span class={['chip', (threatIntel?.total_indicators ?? 0) > 0 && 'is-warn']}
 					>{intelFailed ? 'load failed' : plural(threatIntel?.total_indicators ?? 0, 'indicator')}</span
 				>
 			{/snippet}
+			<!-- OLD CODE START — I7: cached indicators "loaded", and a bare request-failed state
 			{#if threatIntel && Object.keys(threatIntel.feeds).length > 0}
 				<BarList
 					items={Object.entries(threatIntel.feeds).map(([feedId, feed]) => ({
@@ -455,6 +463,29 @@
 					state="empty"
 					title="No threat intel indicators loaded"
 					message="Feeds populate from Suricata detections."
+					icon="threats"
+				/>
+			{/if}
+			OLD CODE END -->
+			{#if threatIntel && threatIntel.total_indicators > 0}
+				<BarList
+					items={Object.entries(threatIntel.feeds)
+						.filter(([, feed]) => feed.indicator_count > 0)
+						.map(([feedId, feed]) => ({
+							key: feedId,
+							label: feed.label,
+							value: feed.indicator_count,
+							display: feed.indicator_count.toLocaleString('en-GB'),
+							detail: 'seen',
+						}))}
+				/>
+			{:else if intelFailed}
+				<CardState state="error" title="Threat intel unavailable" message="Couldn't load threat intel: the request failed." onaction={reload} />
+			{:else}
+				<CardState
+					state="empty"
+					title="No threat intel matches"
+					message="Matches are internet addresses on Suricata's blocklist rules seen in this window."
 					icon="threats"
 				/>
 			{/if}
