@@ -2,10 +2,23 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import Page from './+page.svelte';
 
-const nav = vi.hoisted(() => ({ url: new URL('http://localhost/tools/dns-recon') }));
+// OLD CODE START — a store that never emits again, so a later $page emission couldn't be tested
+// const nav = vi.hoisted(() => ({ url: new URL('http://localhost/tools/dns-recon') }));
+// vi.mock('$app/stores', () => ({
+// 	page: { subscribe: (fn: (v: { url: URL }) => void) => (fn({ url: nav.url }), () => {}) },
+// }));
+// OLD CODE END
+const nav = vi.hoisted(() => ({ url: new URL('http://localhost/tools/dns-recon'), subs: new Set<(v: { url: URL; state?: object }) => void>() }));
 vi.mock('$app/stores', () => ({
-	page: { subscribe: (fn: (v: { url: URL }) => void) => (fn({ url: nav.url }), () => {}) },
+	page: {
+		subscribe: (fn: (v: { url: URL }) => void) => {
+			nav.subs.add(fn);
+			fn({ url: nav.url });
+			return () => nav.subs.delete(fn);
+		},
+	},
 }));
+const emit = (v: { url: URL; state?: object }) => nav.subs.forEach((fn) => fn(v));
 
 const RESULT = {
 	domain: 'example.com',
@@ -41,6 +54,20 @@ describe('DNS reconnaissance page', () => {
 		render(Page);
 		await vi.waitFor(() => expect(screen.getByLabelText('Domain')).toHaveValue('example.com'));
 		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	it('keeps what the user typed when $page emits again for the same navigation, and re-applies on a new one', async () => {
+		nav.url = new URL('http://localhost/tools/dns-recon?domain=example.com');
+		stubFetch(RESULT);
+		render(Page);
+		const box = screen.getByLabelText('Domain');
+		await vi.waitFor(() => expect(box).toHaveValue('example.com'));
+		await fireEvent.input(box, { target: { value: 'other.example' } });
+		emit({ url: nav.url, state: {} }); // e.g. shallow-routing state, same URL
+		await new Promise((r) => setTimeout(r, 0));
+		expect(box).toHaveValue('other.example');
+		emit({ url: new URL(nav.url.href) }); // the link clicked again
+		await vi.waitFor(() => expect(box).toHaveValue('example.com'));
 	});
 
 	it('starts empty, with the default record types pressed', async () => {

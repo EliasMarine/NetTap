@@ -87,4 +87,41 @@ describe('IPAddress', () => {
 		await fireEvent.contextMenu(screen.getByRole('link'));
 		expect(screen.queryByRole('menu')).not.toBeInTheDocument();
 	});
+
+	describe('long press', () => {
+		afterEach(() => {
+			vi.useRealTimers();
+			vi.restoreAllMocks();
+		});
+		const press = (el: Element) => {
+			const event = new Event('touchstart', { bubbles: true, cancelable: true }) as TouchEvent;
+			Object.defineProperty(event, 'touches', { value: [{ clientX: 10, clientY: 20 }] });
+			const preventDefault = vi.spyOn(event, 'preventDefault');
+			el.dispatchEvent(event);
+			return preventDefault;
+		};
+
+		it('opens the menu after half a second, leaving the finished touch event alone', async () => {
+			stubLan(['192.168.1.0/24']);
+			vi.useFakeTimers();
+			render(IPAddress, { ip: '203.0.113.9' });
+			const preventDefault = press(screen.getByRole('link'));
+			await vi.advanceTimersByTimeAsync(500);
+			expect(screen.getByRole('menu')).toBeInTheDocument();
+			expect(preventDefault).not.toHaveBeenCalled();
+		});
+
+		it('drops a pending long press when the address leaves the page', async () => {
+			stubLan(['192.168.1.0/24']);
+			vi.useFakeTimers();
+			const { unmount } = render(IPAddress, { ip: '203.0.113.9' });
+			const set = vi.spyOn(globalThis, 'setTimeout');
+			press(screen.getByRole('link'));
+			const timer = set.mock.results.find((_, i) => set.mock.calls[i][1] === 500)?.value;
+			expect(timer).toBeDefined();
+			const clear = vi.spyOn(globalThis, 'clearTimeout');
+			unmount();
+			expect(clear).toHaveBeenCalledWith(timer);
+		});
+	});
 });

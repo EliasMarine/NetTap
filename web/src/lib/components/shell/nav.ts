@@ -70,11 +70,18 @@ export function isActive(href: string, path: string): boolean {
 	return path === href || path.startsWith(`${href}/`);
 }
 
+/** Drill-down pages with no nav item of their own (NET-160) */
+const DRILL_TITLES: [string, string][] = [
+	['/address', 'Address'],
+	['/domain', 'Domain'],
+];
+
 /** The name of the current section, for the phone top bar. */
 export function pageTitle(path: string): string {
 	for (const group of NAV_GROUPS) {
 		for (const item of group.items) if (isActive(item.href, path)) return item.label;
 	}
+	for (const [href, title] of DRILL_TITLES) if (isActive(href, path)) return title;
 	return 'NetTap';
 }
 

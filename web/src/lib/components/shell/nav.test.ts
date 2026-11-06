@@ -33,6 +33,10 @@ describe('navigation', () => {
 	it('names the section for nested pages', () => {
 		expect(pageTitle('/devices/192.168.1.4')).toBe('Devices');
 		expect(pageTitle('/lookup/whois')).toBe('NetTap');
+		// the drill-down pages have no nav item of their own (NET-160)
+		expect(pageTitle('/address/198.51.100.10')).toBe('Address');
+		expect(pageTitle('/domain/example.com')).toBe('Domain');
+		expect(pageTitle('/addresses')).toBe('NetTap');
 	});
 
 	it('shows no shell on sign-in and setup only (Go Live keeps it, as before)', () => {
