@@ -175,3 +175,55 @@ describe('DNS page — refresh contract', () => {
 		expect(screen.getByRole('button', { name: '1h' })).toHaveAttribute('aria-pressed', 'true');
 	});
 });
+
+// I13 (accuracy audit 2026-11-06)
+describe('DNS page — DNS by device', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const domains = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => ({ domain: `${prefix}${i}.example`, count: n - i, query_types: [] }));
+
+	function stubDevice(answer: (hours: number) => unknown) {
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				if (!url.startsWith('/api/dns/device/')) return fail;
+				const q = new URL(url, 'http://x').searchParams;
+				const hours = (Date.parse(q.get('to') ?? '') - Date.parse(q.get('from') ?? '')) / 3_600_000;
+				return reply({ device_ip: '192.168.1.20', from: '', to: '', domains: answer(hours) });
+			}),
+		);
+	}
+
+	async function lookUp() {
+		await fireEvent.input(screen.getByPlaceholderText(/192\.168/), { target: { value: '192.168.1.20' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Lookup' }));
+	}
+
+	it("reloads the device for a new range instead of keeping the last range's domains", async () => {
+		stubDevice((hours) => domains(1, hours > 2 ? 'day' : 'hour'));
+		render(DnsPage);
+		await lookUp();
+		expect(await screen.findByText('day0.example')).toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('button', { name: '1h' }));
+		expect(await screen.findByText('hour0.example')).toBeInTheDocument();
+		expect(screen.queryByText('day0.example')).not.toBeInTheDocument();
+	});
+
+	it("names no total when the daemon's 200-domain cap is reached", async () => {
+		stubDevice(() => domains(200, 'd'));
+		render(DnsPage);
+		await lookUp();
+		expect(await screen.findByText('Showing 50 of the 200 most looked-up domains')).toBeInTheDocument();
+		expect(screen.queryByText('Showing 50 of 200 domains')).not.toBeInTheDocument();
+	});
+
+	it('gives the exact total under the cap', async () => {
+		stubDevice(() => domains(60, 'd'));
+		render(DnsPage);
+		await lookUp();
+		expect(await screen.findByText('Showing 50 of 60 domains')).toBeInTheDocument();
+	});
+});
