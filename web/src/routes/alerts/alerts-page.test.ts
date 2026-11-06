@@ -891,7 +891,9 @@ describe('Alerts — URL hand-off and exact windows (NET-160 slice 2a)', () => {
 		expect(listCalls().at(-1)).toMatchObject({ page: 2, from: first.from, to: first.to });
 	});
 
-	it('a page change during a refresh pages through the rows on screen, not the refresh\'s window', async () => {
+	// OLD CODE: 'a page change during a refresh pages through the rows on screen' expected page 2 to go out
+	// mid-refresh; its request discarded the refresh's rows, so the pager now waits for them
+	it('during a refresh the pager waits, then pages through the new rows\' window', async () => {
 		vi.useFakeTimers({ toFake: ['Date'] });
 		vi.setSystemTime(new Date('2026-11-06T12:00:30Z'));
 		succeedAll();
@@ -899,16 +901,48 @@ describe('Alerts — URL hand-off and exact windows (NET-160 slice 2a)', () => {
 		render(Page);
 		await flush();
 		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
-		const shown = listCalls().at(-1)!;
 		const held = deferred<ReturnType<typeof list>>();
 		vi.mocked(getAlerts).mockImplementationOnce(() => held.promise);
 		vi.setSystemTime(new Date('2026-11-06T12:06:00Z'));
 		void refreshPage();
 		await flush();
-		expect(listCalls().at(-1)!.from).not.toBe(shown.from);
+		const refreshed = listCalls().at(-1)!;
+		const next = screen.getByRole('button', { name: 'Next page' });
+		expect(next).toBeDisabled();
+		const sent = listCalls().length;
+		await fireEvent.click(next);
+		await flush();
+		expect(listCalls()).toHaveLength(sent);
+		held.resolve(list([alert('r1')], 1, 250));
+		await flush();
 		await fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
 		await flush();
-		expect(listCalls().at(-1)).toMatchObject({ page: 2, from: shown.from, to: shown.to });
+		expect(listCalls().at(-1)).toMatchObject({ page: 2, from: refreshed.from, to: refreshed.to });
+	});
+
+	it('a page asked for while a new search loads can\'t mix its filters with the old window or drop its rows', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date('2026-11-06T12:00:30Z'));
+		succeedAll();
+		vi.mocked(getAlerts).mockImplementation(async (opts = {}) => list([alert(`${opts.signature ?? 'all'}-${opts.page}`)], opts.page ?? 1, 250));
+		at(`?signature=A&from=${FROM}&to=${TO}`);
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
+		const held = deferred<ReturnType<typeof list>>();
+		vi.mocked(getAlerts).mockImplementationOnce(() => held.promise);
+		at('?signature=B&from=2026-11-02T08:00:00.000Z&to=2026-11-02T20:00:00.000Z');
+		await flush();
+		const sent = listCalls().length;
+		await fireEvent.click(screen.getByRole('button', { name: 'Page 2' }));
+		await flush();
+		expect(listCalls()).toHaveLength(sent);
+		held.resolve(list([alert('B-1')], 1, 250));
+		await flush();
+		expect(screen.getByRole('button', { name: 'Page 2' })).toBeEnabled();
+		await fireEvent.click(screen.getByRole('button', { name: 'Page 2' }));
+		await flush();
+		expect(listCalls().at(-1)).toMatchObject({ page: 2, signature: 'B', from: '2026-11-02T08:00:00.000Z', to: '2026-11-02T20:00:00.000Z' });
 	});
 
 	it("the table's signature links to that signature over the list's own window", async () => {

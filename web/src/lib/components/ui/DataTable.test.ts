@@ -273,6 +273,14 @@ describe('DataTable pager', () => {
 		return { onpage, container };
 	}
 
+	// jsdom still runs a disabled button's click handler (browsers don't), so the page's own guard is tested there
+	it('turns every page button off while disabled', () => {
+		renderPager({ page: 2, disabled: true });
+		const buttons = screen.getAllByRole('button', { name: /^(Page \d+|Previous page|Next page)$/ });
+		expect(buttons.length).toBeGreaterThan(2);
+		for (const b of buttons) expect(b).toBeDisabled();
+	});
+
 	it('shows the range and total in the table foot', () => {
 		const { container } = renderPager();
 		expect(container.querySelector('.tbl-foot')).toHaveTextContent('Showing 1 to 14 of 182,406');

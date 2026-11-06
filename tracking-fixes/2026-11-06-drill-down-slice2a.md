@@ -26,6 +26,7 @@
   - A severity tile opens the displayed counts' own `data.from`/`data.to`, with no other filter.
   - The pills are labels only.
   - Paging and the table's signature links both use the window of the rows on screen, set when they land, so a page change during a refresh can't mix two windows.
+  - The pager waits while a list request is out (`listPending`; `DataTable`'s pager takes `disabled`). A page asked for during a new search would have mixed the new filters with the shown rows' window, and its request would have discarded the new search's answer (found by Codex while reviewing slice 2b-1).
 - **Category page:** signature links keep the window of the figures shown, even while a refresh is still loading.
 - **Device page:**
   - Ports link to Log Explorer with the query behind each count.

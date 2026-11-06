@@ -674,6 +674,12 @@
 	// The list has its own generation as well, so a filter change mid-refresh drops only the
 	// refresh's stale list and keeps the rest of what it loaded
 	const listGuard = createLoadGuard();
+	/**
+	 * A list request is out. Its rows replace the ones on screen, so the pager waits for them: a page
+	 * asked for now would mix the new filters with the shown rows' window, and its request would
+	 * discard the new search's answer.
+	 */
+	let listPending = $state(false);
 	/** The snapshot window this page already loaded: loading it again is a refresh. */
 	let snapshotHoursLoaded: number | null = null;
 
@@ -684,6 +690,7 @@
 	async function loadAll(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
 		const lg = listGuard.begin();
+		listPending = true;
 		// OLD CODE START — 2026-11-06 (slice 2a): no Custom window
 		// const timeRange = TIME_RANGES.find((r) => r.value === selectedTimeRange) ?? TIME_RANGES[3];
 		// OLD CODE END
@@ -739,7 +746,11 @@
 		const sections = ['timeline', 'signatures', 'destIps', 'srcIps', 'categories', 'alerts', 'summary'];
 		failed = { ...Object.fromEntries(sections.map((name, i) => [name, results[i].status === 'rejected'])), alerts: failed.alerts ?? false };
 		// OLD CODE: if (listGuard.current(lg)) applyList(listResult);
-		if (listGuard.current(lg)) applyList(listResult, shown);
+		// OLD CODE: if (listGuard.current(lg)) applyList(listResult, shown); (the pager didn't wait)
+		if (listGuard.current(lg)) {
+			applyList(listResult, shown);
+			listPending = false;
+		}
 		loaded = true;
 
 		if (succeeded.every(Boolean)) return 'ok';
@@ -770,6 +781,7 @@
 	/** Page `pg` of the list over `win`: the current search's window unless a new search passes its own. */
 	async function fetchAlerts(pg: number = 1, win: DrillWindow = listWindow) {
 		const lg = listGuard.begin();
+		listPending = true;
 		listWindow = win;
 		const shown = { ...win, range: baseRange };
 		const params = listParams(pg, win);
@@ -778,7 +790,11 @@
 			(reason): PromiseSettledResult<AlertsListResponse> => ({ status: 'rejected', reason }),
 		);
 		// OLD CODE: if (listGuard.current(lg)) applyList(result);
-		if (listGuard.current(lg)) applyList(result, shown);
+		// OLD CODE: if (listGuard.current(lg)) applyList(result, shown); (the pager didn't wait)
+		if (listGuard.current(lg)) {
+			applyList(result, shown);
+			listPending = false;
+		}
 	}
 
 	function scrollToList() {
@@ -882,7 +898,8 @@
 
 	// Pagination
 	function goToPage(pg: number) {
-		if (pg < 1 || pg > totalPages) return;
+		// OLD CODE: if (pg < 1 || pg > totalPages) return; (a page during a new search mixed two queries)
+		if (pg < 1 || pg > totalPages || listPending) return;
 		// OLD CODE: fetchAlerts(pg); (listWindow can be a refresh still in flight, so page 2 came from a newer window than page 1)
 		// Page through the window of the rows on screen
 		fetchAlerts(pg, { from: shownWindow.from, to: shownWindow.to });
@@ -1254,7 +1271,7 @@ OLD CODE END -->
 					onrowactivate={openDrawer}
 					rowLabel={(a) => `Open alert ${a.alert?.signature || 'Unknown'}${a.src_ip ? ` from ${a.src_ip}` : ''}`}
 					selectedKey={selectedRowKey}
-					pager={totalPages > 1 ? { page: currentPage, pageCount: totalPages, total: totalAlerts, from: fromRow, to: toRow, onpage: goToPage } : undefined}
+					pager={totalPages > 1 ? { page: currentPage, pageCount: totalPages, total: totalAlerts, from: fromRow, to: toRow, onpage: goToPage, disabled: listPending } : undefined}
 				/>
 			{/if}
 		</div>
