@@ -61,6 +61,14 @@ class TestValidateTarget(unittest.TestCase):
         with self.assertRaises(NetworkDiagValidationError):
             self.svc.validate_target("`whoami`")
 
+    def test_leading_hyphen_would_be_an_option(self):
+        # NET-175: ping and traceroute would read these as options, not hosts
+        for target in ("-f", "-c100000", "--help", " -f"):
+            with self.assertRaises(NetworkDiagValidationError):
+                self.svc.validate_target(target)
+        # a hyphen inside a host name is fine
+        self.assertEqual(self.svc.validate_target("my-host.lan"), "my-host.lan")
+
 
 class TestValidateCount(unittest.TestCase):
     """Tests for NetworkDiagService.validate_count."""

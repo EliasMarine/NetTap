@@ -68,6 +68,13 @@ class NetworkDiagService:
                 f"Invalid target: {target!r} — only alphanumeric, dots, hyphens, and colons allowed"
             )
 
+        # NET-175: the target is ping's and traceroute's last argument, so "-f" would be read
+        # as an option; no host name or IP address starts with "-"
+        if target.startswith("-"):
+            raise NetworkDiagValidationError(
+                f"Invalid target: {target!r} — a host name or IP address can't start with '-'"
+            )
+
         return target
 
     def validate_count(self, count: int | None) -> int:
