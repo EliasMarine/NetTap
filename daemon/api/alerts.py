@@ -1689,13 +1689,23 @@ async def handle_smart_alerts(request: web.Request) -> web.Response:
     from services.alert_intelligence import get_smart_alerts
 
     try:
-        alerts = await get_smart_alerts(
+        # OLD CODE START — NET-158: fetched `limit` groups, so "total" was the capped list's
+        # length (the device page's "10 grouped" for a device with more)
+        # alerts = await get_smart_alerts(
+        #     client,
+        #     from_ts,
+        #     to_ts,
+        #     device_ip,
+        #     include_info,
+        #     limit,
+        # OLD CODE END
+        every_group = await get_smart_alerts(
             client,
             from_ts,
             to_ts,
             device_ip,
             include_info,
-            limit,
+            None,
             # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
             # excluded_ips=excluded,
             # OLD CODE END
@@ -1709,8 +1719,9 @@ async def handle_smart_alerts(request: web.Request) -> web.Response:
             "from": from_ts,
             "to": to_ts,
             "device_ip": device_ip,
-            "alerts": alerts,
-            "total": len(alerts),
+            # get_smart_alerts sorts worst first, so the first `limit` are the top groups
+            "alerts": every_group[:limit],
+            "total": len(every_group),
         }
     )
 

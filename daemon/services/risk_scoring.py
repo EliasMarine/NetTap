@@ -49,6 +49,10 @@ class RiskScorer:
         5900,
     }
 
+    # Local network services (DHCP, NTP, NetBIOS, SSDP, mDNS, LLMNR): never "unusual"
+    # (NET-158: ordinary LAN chatter scored 8 points as unusual ports)
+    LOCAL_SERVICE_PORTS = {67, 68, 123, 137, 138, 139, 1900, 5353, 5355}
+
     # Weight / max points per factor
     WEIGHT_ALERT_COUNT = 35
     WEIGHT_CONNECTION_ANOMALY = 20
@@ -242,7 +246,12 @@ class RiskScorer:
 
         port_set = set(ports)
         suspicious_found = port_set & self.SUSPICIOUS_PORTS
-        unusual_found = port_set - self.SAFE_PORTS - self.SUSPICIOUS_PORTS
+        # OLD CODE START — NET-158: local services counted as unusual
+        # unusual_found = port_set - self.SAFE_PORTS - self.SUSPICIOUS_PORTS
+        # OLD CODE END
+        unusual_found = (
+            port_set - self.SAFE_PORTS - self.SUSPICIOUS_PORTS - self.LOCAL_SERVICE_PORTS
+        )
 
         if suspicious_found:
             port_list = ", ".join(str(p) for p in sorted(suspicious_found))

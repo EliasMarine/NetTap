@@ -204,6 +204,13 @@ class TestSuspiciousPortsScoring(unittest.TestCase):
         points, _ = self.scorer.score_suspicious_ports([4444, 5555, 6666])
         self.assertEqual(points, 15)
 
+    def test_local_services_are_not_unusual(self):
+        """NET-158: NTP, mDNS, DHCP, SSDP and NetBIOS scored 8 points as unusual ports."""
+        points, desc = self.scorer.score_suspicious_ports(
+            [443, 123, 5353, 67, 68, 1900, 137, 138, 139, 5355]
+        )
+        self.assertEqual((points, desc), (0, "Only common protocols/ports used"))
+
     def test_suspicious_overrides_unusual(self):
         """Suspicious ports take priority over unusual ports."""
         points, _ = self.scorer.score_suspicious_ports([9200, 3000, 4444])

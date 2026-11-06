@@ -255,6 +255,19 @@ describe('devices API client', () => {
 			expect(url).toContain('order=asc');
 		});
 
+		it('sends the protocol filter to the daemon (NET-158)', async () => {
+			mockFetchSuccess({
+				from: '', to: '', ip: '192.168.1.100',
+				page: 1, size: 50, total: 0, total_pages: 0, connections: [],
+			});
+
+			await getDeviceConnections('192.168.1.100', { proto: 'udp', sort: 'direction' });
+
+			const url = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+			expect(url).toContain('proto=udp');
+			expect(url).toContain('sort=direction');
+		});
+
 		it('passes time range with pagination parameters', async () => {
 			mockFetchSuccess({
 				from: '', to: '', ip: '192.168.1.100',

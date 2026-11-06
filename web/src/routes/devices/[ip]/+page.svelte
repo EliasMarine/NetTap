@@ -172,7 +172,13 @@
 	// OLD CODE START — 2026-11-03 UI redesign: green/amber/red text; colour is reserved for data and severity
 	// let uploadRatioColor = $derived(uploadRatio < 40 ? 'var(--green)' : uploadRatio < 70 ? 'var(--amber)' : 'var(--red)');
 	// OLD CODE END
-	let uploadRatioLabel = $derived(uploadRatio < 40 ? 'Normal' : uploadRatio < 70 ? 'Elevated' : 'High');
+	// OLD CODE START — NET-158: "Normal" up to 40% while the risk factor (risk_scoring.py) calls
+	// 10% slightly elevated and 30% elevated
+	// let uploadRatioLabel = $derived(uploadRatio < 40 ? 'Normal' : uploadRatio < 70 ? 'Elevated' : 'High');
+	// OLD CODE END
+	// the data exfiltration factor's thresholds on the unrounded share, so the KPI and the risk card agree
+	const uploadShare = $derived(totalBytes > 0 ? origBytes / totalBytes : 0);
+	let uploadRatioLabel = $derived(uploadShare < 0.1 ? 'Normal' : uploadShare < 0.3 ? 'Slightly elevated' : uploadShare < 0.5 ? 'Elevated' : 'High');
 
 	// OLD CODE START — 2026-11-03 UI redesign: TimeSeriesChart / DualSeriesChart data; the AreaChart takes series
 	// let chartData = $derived(device?.bandwidth_series?.map((p) => ({ time: p.timestamp, value: p.bytes })) ?? []);
@@ -347,6 +353,8 @@
 				size: connectionsPageSize,
 				sort: connSort.key,
 				order: connSort.dir,
+				// NET-158: filtered on the daemon, so the total and the pager count the same rows
+				proto: protoFilter === 'all' ? undefined : protoFilter,
 			}),
 		]);
 		if (!connGuard.current(g)) return res;
@@ -513,20 +521,32 @@
 		selectedConnection = null;
 	}
 
-	// Filter connections by protocol (client-side)
-	let filteredConnections = $derived.by(() => {
-		if (protoFilter === 'all') return connections;
-		return connections.filter((c) => {
-			const proto = asString(getField(c, 'network.transport')).toLowerCase();
-			return proto === protoFilter;
-		});
-	});
+	// OLD CODE START — NET-158: filtered only the 25 rows on screen, while the total and pager
+	// counted every protocol; the daemon filters now (fetchConnections sends proto)
+	// // Filter connections by protocol (client-side)
+	// let filteredConnections = $derived.by(() => {
+	// 	if (protoFilter === 'all') return connections;
+	// 	return connections.filter((c) => {
+	// 		const proto = asString(getField(c, 'network.transport')).toLowerCase();
+	// 		return proto === protoFilter;
+	// 	});
+	// });
+	// OLD CODE END
 	// the rows of one server-sorted page, keyed by position so a missing _id can't collide
 	interface ConnRow {
 		conn: DeviceConnection;
 		key: string;
 	}
-	const connectionRows = $derived(filteredConnections.map((conn, i): ConnRow => ({ conn, key: `${String(conn._id)}-${i}` })));
+	const connectionRows = $derived(connections.map((conn, i): ConnRow => ({ conn, key: `${String(conn._id)}-${i}` })));
+
+	/** The bytes the device downloaded (dl) or uploaded (ul) on a session, from its own side. */
+	function deviceBytes(conn: DeviceConnection, way: 'dl' | 'ul'): number {
+		// the originator's (source) bytes are the device's upload on sessions it started, and
+		// its download on sessions it answered
+		const side = (conn.direction === 'in') === (way === 'dl') ? 'source' : 'destination';
+		const legacy = side === 'source' ? 'client' : 'server';
+		return Number(asString(getField(conn, `${side}.bytes`) ?? getField(conn, `${legacy}.bytes`))) || 0;
+	}
 	const selectedKey = $derived(connectionRows.find((r) => r.conn === selectedConnection)?.key);
 
 	const dnsRows = $derived(
@@ -567,6 +587,8 @@
 	// keys are the daemon's sort names: the table only reports the sort, the daemon applies it
 	const connectionColumns: Column<ConnRow>[] = [
 		{ key: 'time', label: 'Time', cell: timeCell },
+		// NET-158: sessions go both ways; DL and UL are the device's own
+		{ key: 'direction', label: 'Direction', cell: directionCell },
 		{ key: 'destination', label: 'Destination', cell: connDestCell },
 		{ key: 'proto', label: 'Proto', cell: protoCell },
 		{ key: 'service', label: 'Service', cell: svcCell },
@@ -594,8 +616,13 @@
 {#snippet svcCell(r: ConnRow)}{asString(getField(r.conn, 'network.protocol')) || asString(getField(r.conn, 'network.transport'))}{/snippet}
 <!-- OLD CODE START: <td class="mono td-sm">{formatDuration(getField(conn, 'event.start'), getField(conn, 'event.end'))}</td> OLD CODE END -->
 {#snippet durationCell(r: ConnRow)}{formatDuration(r.conn)}{/snippet}
+<!-- OLD CODE START — NET-158: on a session the device answered, these showed its upload as DL
 {#snippet dlCell(r: ConnRow)}{formatBytes(Number(asString(getField(r.conn, 'destination.bytes') ?? getField(r.conn, 'server.bytes'))) || 0)}{/snippet}
 {#snippet ulCell(r: ConnRow)}{formatBytes(Number(asString(getField(r.conn, 'source.bytes') ?? getField(r.conn, 'client.bytes'))) || 0)}{/snippet}
+OLD CODE END -->
+{#snippet directionCell(r: ConnRow)}<span class="tag">{r.conn.direction === 'in' ? 'In' : 'Out'}</span>{/snippet}
+{#snippet dlCell(r: ConnRow)}{formatBytes(deviceBytes(r.conn, 'dl'))}{/snippet}
+{#snippet ulCell(r: ConnRow)}{formatBytes(deviceBytes(r.conn, 'ul'))}{/snippet}
 
 <svelte:head>
 	<title>{device?.unifi_name ?? deviceIp} | Device Intelligence | NetTap</title>
@@ -824,12 +851,15 @@
 			{/if}
 		</Card>
 
+		<!-- OLD CODE START — NET-158: the list has both directions
 		<Card class="c-12" title="Recent connections" sub="Sessions from this device · {RANGE_LABEL[range].toLowerCase()}">
+		OLD CODE END -->
+		<Card class="c-12" title="Recent connections" sub="Sessions to or from this device · {RANGE_LABEL[range].toLowerCase()}">
 			{#snippet actions()}
 				<span class="chip">{connectionsFailed ? 'load failed' : `${formatNumber(connectionsTotal)} total`}</span>
 			{/snippet}
 			<div class="toolbar">
-				<Pills ariaLabel="Protocol" options={PROTO_OPTIONS} bind:value={protoFilter} />
+				<Pills ariaLabel="Protocol" options={PROTO_OPTIONS} bind:value={protoFilter} onchange={() => fetchConnections(1)} />
 			</div>
 			{#if connectionsLoading}
 				<CardState state="loading" title="Loading connections" />

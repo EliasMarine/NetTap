@@ -158,3 +158,67 @@ describe('Device detail — smart alerts request fails', () => {
 		expect(screen.getByText('No actionable alerts for this device.')).toBeInTheDocument();
 	});
 });
+
+// NET-158: Recent connections go both ways; the protocol filter and the upload share label
+describe('Device detail — connection direction, protocol filter and upload share', () => {
+	beforeEach(() => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+	});
+	afterEach(() => vi.clearAllMocks());
+
+	const row = (id: string, direction: 'in' | 'out', src: string, dst: string, srcBytes: number, dstBytes: number) => ({
+		_id: id, _index: 'i', direction, '@timestamp': '2026-10-29T00:30:00Z', network: { transport: 'tcp' },
+		source: { ip: src, port: 50000, bytes: srcBytes }, destination: { ip: dst, port: 443, bytes: dstBytes },
+	});
+
+	it("shows DL and UL from the device's side on sessions it answered", async () => {
+		const devices = await import('$api/devices');
+		vi.mocked(devices.getDeviceConnections).mockResolvedValue({
+			from: '', to: '', ip: IP, page: 1, size: 25, total: 2, total_pages: 1,
+			connections: [
+				row('a', 'out', IP, '8.8.8.8', 1024, 4096),
+				row('b', 'in', '192.168.1.7', IP, 2048, 512),
+			],
+		});
+		render(Page);
+		await flush();
+
+		expect(screen.getByText(/Sessions to or from this device/)).toBeInTheDocument();
+		const table = screen.getByRole('table', { name: 'Recent connections' });
+		const [, out, inbound] = Array.from(table.querySelectorAll('tr'));
+		// Time, Direction, Destination, Proto, Service, Duration, DL, UL
+		const cells = (tr: Element) => Array.from(tr.querySelectorAll('td'), (td) => td.textContent?.trim());
+		expect(cells(out)[1]).toBe('Out');
+		expect(cells(out).slice(-2)).toEqual(['4.0 KB', '1.0 KB']);
+		expect(cells(inbound)[1]).toBe('In');
+		// the other end sent 2 KB to the device (its download) and got 512 B back (its upload)
+		expect(cells(inbound).slice(-2)).toEqual(['2.0 KB', '512 B']);
+	});
+
+	it('asks the daemon for one protocol from page 1, so the total and pager match the rows', async () => {
+		const devices = await import('$api/devices');
+		render(Page);
+		await flush();
+		vi.mocked(devices.getDeviceConnections).mockClear();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'UDP' }));
+		await flush();
+
+		expect(devices.getDeviceConnections).toHaveBeenCalledTimes(1);
+		expect(vi.mocked(devices.getDeviceConnections).mock.calls[0][1]).toMatchObject({ proto: 'udp', page: 1 });
+	});
+
+	it('labels a 35% upload share as the risk factor does: elevated, not normal', async () => {
+		const devices = await import('$api/devices');
+		const { device } = await vi.mocked(devices.getDeviceDetail)(IP, {});
+		vi.mocked(devices.getDeviceDetail).mockResolvedValueOnce({
+			device: { ...device, total_bytes: 100_000, orig_bytes: 35_000, resp_bytes: 65_000 },
+		} as never);
+		render(Page);
+		await flush();
+
+		const kpi = screen.getAllByText('Upload share').map((el) => el.closest('.kpi')).find(Boolean) as HTMLElement;
+		expect(kpi).toHaveTextContent('Elevated');
+		expect(kpi).not.toHaveTextContent('Normal');
+	});
+});

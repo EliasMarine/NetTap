@@ -79,6 +79,8 @@ export interface DeviceConnection {
 	ts?: string;
 	proto?: string;
 	service?: string;
+	/** From the device's side: 'out' when it started the session, 'in' when it answered */
+	direction?: 'in' | 'out';
 	[key: string]: unknown;
 }
 
@@ -274,7 +276,11 @@ export async function getDeviceDetail(
  * Get paginated connections for a specific device.
  */
 /** Recent Connections columns the daemon sorts on (#140). */
-export type DeviceConnectionSort = 'time' | 'destination' | 'proto' | 'service' | 'duration' | 'dl' | 'ul';
+// OLD CODE START — NET-158: no direction column
+// export type DeviceConnectionSort = 'time' | 'destination' | 'proto' | 'service' | 'duration' | 'dl' | 'ul';
+// OLD CODE END
+/** dl, ul and direction sort on the device's side of each session (the daemon does it) */
+export type DeviceConnectionSort = 'time' | 'direction' | 'destination' | 'proto' | 'service' | 'duration' | 'dl' | 'ul';
 
 export async function getDeviceConnections(
 	ip: string,
@@ -286,6 +292,8 @@ export async function getDeviceConnections(
 		size?: number;
 		sort?: DeviceConnectionSort;
 		order?: 'asc' | 'desc';
+		/** tcp, udp or icmp: filtered on the daemon, so the total and pages match (NET-158) */
+		proto?: string;
 	} = {}
 ): Promise<DeviceConnectionsResponse> {
 	const query = buildQuery({
@@ -295,6 +303,7 @@ export async function getDeviceConnections(
 		size: opts.size,
 		sort: opts.sort,
 		order: opts.order,
+		proto: opts.proto,
 	});
 	const res = await fetch(`/api/devices/${encodeURIComponent(ip)}/connections${query}`);
 
