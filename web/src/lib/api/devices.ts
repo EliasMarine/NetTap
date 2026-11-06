@@ -285,7 +285,10 @@ export async function getDeviceDetail(
 // export type DeviceConnectionSort = 'time' | 'destination' | 'proto' | 'service' | 'duration' | 'dl' | 'ul';
 // OLD CODE END
 /** dl, ul and direction sort on the device's side of each session (the daemon does it) */
-export type DeviceConnectionSort = 'time' | 'direction' | 'destination' | 'proto' | 'service' | 'duration' | 'dl' | 'ul';
+// OLD CODE START — NET-160: no source column; the address page lists both sides
+// export type DeviceConnectionSort = 'time' | 'direction' | 'destination' | 'proto' | 'service' | 'duration' | 'dl' | 'ul';
+// OLD CODE END
+export type DeviceConnectionSort = 'time' | 'direction' | 'source' | 'destination' | 'proto' | 'service' | 'duration' | 'dl' | 'ul';
 
 export async function getDeviceConnections(
 	ip: string,
