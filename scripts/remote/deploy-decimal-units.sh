@@ -92,7 +92,8 @@ sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "nettap-web|ne
 echo ""
 
 if [ "$FAILED" -eq 0 ]; then
-    echo "=== Deploy complete: every check passed. Open System: the disk total now matches the drive's label (1 TB, not 931 GB). ==="
+    # OLD CODE: echo "=== Deploy complete: every check passed. Open System: the disk total now matches the drive's label (1 TB, not 931 GB). ===" (named a 1 TB drive whatever the box has)
+    echo "=== Deploy complete: every check passed. Open System: the disk total is now in decimal units, as on the drive's label. ==="
 else
     echo "=== Deploy complete with ✗ lines above: paste them back. ==="
 fi
