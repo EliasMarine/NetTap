@@ -832,6 +832,63 @@ class TestDeviceConnectionsHandler(AioHTTPTestCase):
         self.assertEqual(len(should_clause), 2)
 
     @unittest_run_loop
+    async def test_rows_carry_the_direction_from_the_device_side(self):
+        """NET-158: inbound rows showed the device's upload as DL; each row says which way."""
+        self.mock_client.search.return_value = {
+            "hits": {
+                "total": {"value": 2},
+                "hits": [
+                    {"_id": "out", "_source": {"source": {"ip": "192.168.1.100"}, "destination": {"ip": "8.8.8.8"}}},
+                    {"_id": "in", "_source": {"source": {"ip": "192.168.1.7"}, "destination": {"ip": "192.168.1.100"}}},
+                ],
+            }
+        }
+        resp = await self.client.request("GET", "/api/devices/192.168.1.100/connections")
+        rows = (await resp.json())["connections"]
+        self.assertEqual([(r["_id"], r["direction"]) for r in rows], [("out", "out"), ("in", "in")])
+
+    @unittest_run_loop
+    async def test_dl_ul_and_direction_sort_on_the_device_side_on_every_page(self):
+        self.mock_client.search.return_value = {"hits": {"total": {"value": 0}, "hits": []}}
+        for key, picks in (
+            ("dl", "'destination.bytes' : 'source.bytes'"),
+            ("ul", "'source.bytes' : 'destination.bytes'"),
+            ("direction", "? 1 : 0"),
+        ):
+            resp = await self.client.request(
+                "GET", f"/api/devices/192.168.1.100/connections?sort={key}&order=desc&page=2&size=25"
+            )
+            self.assertEqual(resp.status, 200)
+            body = self.mock_client.search.call_args.kwargs["body"]
+            script = body["sort"][0]["_script"]
+            self.assertEqual(script["order"], "desc")
+            self.assertEqual(script["script"]["params"], {"ip": "192.168.1.100"})
+            self.assertIn(picks, script["script"]["source"])
+            self.assertEqual(body["sort"][1], {"@timestamp": {"order": "desc"}})
+            self.assertEqual(body["from"], 25)
+
+    def test_the_connections_page_keeps_source_destination_sorts(self):
+        from api.devices import _connection_sort
+
+        self.assertEqual(
+            _connection_sort("dl", "asc")[0],
+            {"destination.bytes": {"order": "asc", "missing": "_last"}},
+        )
+
+    @unittest_run_loop
+    async def test_protocol_filter_reaches_the_query(self):
+        """NET-158: the filter hid rows of one page; the total and pager counted every protocol."""
+        self.mock_client.search.return_value = {"hits": {"total": {"value": 0}, "hits": []}}
+        await self.client.request("GET", "/api/devices/192.168.1.100/connections?proto=udp")
+        body = self.mock_client.search.call_args.kwargs["body"]
+        self.assertIn({"term": {"network.transport": "udp"}}, body["query"]["bool"]["filter"])
+
+        self.mock_client.search.reset_mock()
+        resp = await self.client.request("GET", "/api/devices/192.168.1.100/connections?proto=gre")
+        self.assertEqual(resp.status, 400)
+        self.mock_client.search.assert_not_called()
+
+    @unittest_run_loop
     async def test_connections_opensearch_error(self):
         """OpenSearch error returns 502."""
         from opensearchpy import ConnectionError as OSConnectionError
@@ -1026,6 +1083,44 @@ class TestDeviceCountHandler(AioHTTPTestCase):
         self.assertEqual(
             self.mock_client.search.call_count, 2
         )  # a full page of 1,000 and the short last one
+
+    @unittest_run_loop
+    async def test_active_since_counts_listed_devices_by_their_newest_record(self):
+        """NET-158: "Online now" counted a 5-minute range (3 records in it); the table calls a
+        listed device Online on its newest record, so the count now uses that rule."""
+
+        def seen(ip, doc_count, at):
+            ms = datetime.fromisoformat(at.replace("Z", "+00:00")).timestamp() * 1000
+            return {
+                **_device_bucket(ip, doc_count=doc_count),
+                "last_seen": {"value": ms, "value_as_string": at},
+            }
+
+        buckets = [
+            seen("192.168.1.10", 40, "2026-02-25T23:59:00Z"),  # one record in the last 5 min
+            seen("192.168.1.11", 40, "2026-02-25T23:50:00Z"),  # idle
+            seen("192.168.1.12", 2, "2026-02-25T23:59:30Z"),  # not a listed device
+        ]
+        self.mock_client.search.side_effect = _route_device_searches(
+            _device_list_response(buckets)
+        )
+
+        resp = await self.client.request(
+            "GET",
+            "/api/devices/count" + self._RANGE + "&active_since=2026-02-25T23:55:00Z",
+        )
+
+        self.assertEqual(resp.status, 200)
+        self.assertEqual((await resp.json())["count"], 1)
+        aggs = self._bodies()[0]["aggs"]["all"]["aggs"]
+        self.assertEqual(aggs["last_seen"], {"max": {"field": "@timestamp"}})
+
+    @unittest_run_loop
+    async def test_unreadable_active_since_is_400(self):
+        resp = await self.client.request(
+            "GET", "/api/devices/count" + self._RANGE + "&active_since=now-5m"
+        )
+        self.assertEqual(resp.status, 400)
 
 
 class TestDeviceListAlertSort(AioHTTPTestCase):

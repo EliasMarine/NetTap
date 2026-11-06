@@ -80,6 +80,60 @@ describe('Devices By type — device cards carry the range traffic', () => {
 	});
 });
 
+// NET-158: the card's figure is the listed addresses' traffic; the page said nothing about it, and
+// the "New" chip read is_new (cleared on the device's next update) while "New in 24 h" counts first_seen
+describe('Devices By type — what a card counts', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+	function stubCards(): void {
+		stubDaemon({
+			'/api/capture/mode': { mode: 'mirror', interface: 'enp4s0' },
+			'/api/devices/registry': {
+				devices: [
+					{ mac: 'D0:21:F9:5E:35:32', ips: ['192.168.1.1', '10.10.0.1', '192.168.1.200'], hostnames: [], manufacturer: null,
+					  friendly_name: null, display_name: 'Gateway', category: 'infrastructure', first_seen: hourAgo,
+					  last_seen: hourAgo, is_new: false },
+					{ mac: 'AA:00:00:00:00:02', ips: ['192.168.1.30'], hostnames: [], manufacturer: null,
+					  friendly_name: null, display_name: 'Old laptop', category: 'computer', first_seen: '2026-10-01T00:00:00Z',
+					  last_seen: hourAgo, is_new: true },
+				],
+				total: 2,
+			},
+			'/api/devices': {
+				from: FROM, to: '', limit: 500,
+				devices: [
+					{ ip: '192.168.1.1', total_bytes: 1024, connection_count: 10, last_seen: hourAgo },
+					{ ip: '10.10.0.1', total_bytes: 1024, connection_count: 5, last_seen: hourAgo },
+					{ ip: '192.168.1.30', total_bytes: 512, connection_count: 3, last_seen: hourAgo },
+				].map((d) => ({ mac: null, hostname: null, manufacturer: null, os_hint: null, first_seen: FROM, protocols: [], alert_count: 0, ...d })),
+			},
+		});
+	}
+
+	it('says the traffic is from the listed addresses, and how many of them were listed', async () => {
+		stubCards();
+		render(Page);
+		await screen.findByText('Gateway');
+		expect(screen.getByText('Traffic in the last 24 hours from the listed addresses each device has used.')).toBeInTheDocument();
+		const gateway = screen.getByRole('link', { name: /Gateway/ });
+		expect(within(gateway).getByText('(2 of 3 addresses listed)')).toBeInTheDocument();
+		const laptop = within(screen.getByRole('tabpanel', { name: 'By type' })).getByRole('link', { name: /Old laptop/ });
+		expect(within(laptop).queryByText(/addresses listed/)).not.toBeInTheDocument();
+	});
+
+	it('marks New by first seen in the last 24 hours, the "New in 24 h" rule', async () => {
+		stubCards();
+		render(Page);
+		await screen.findByText('Gateway');
+		const gateway = screen.getByRole('link', { name: /Gateway/ });
+		expect(within(gateway).getByText('New')).toBeInTheDocument(); // is_new already cleared
+		const laptop = within(screen.getByRole('tabpanel', { name: 'By type' })).getByRole('link', { name: /Old laptop/ });
+		expect(within(laptop).queryByText('New')).not.toBeInTheDocument(); // first seen in October
+	});
+});
+
 // ---- the mirror-mode condition and Home's failure messages ------------------------------------
 
 const DEVICE = {

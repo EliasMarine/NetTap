@@ -68,6 +68,46 @@ describe('Device by MAC page', () => {
 		// OLD CODE END
 		expect(screen.queryByRole('status')).not.toBeInTheDocument();
 	});
+
+	// NET-158: the figures match the MAC or any address the device used, over the whole range,
+	// and the "New" chip read is_new (cleared on the next update) instead of first_seen
+	it('says what its traffic matches and marks New by first seen in the last 24 hours', async () => {
+		const reg = REPLIES[`/api/devices/registry/${encodeURIComponent(MAC)}`] as { device: Record<string, unknown> };
+		const fresh = { device: { ...reg.device, first_seen: new Date(Date.now() - 60 * 60 * 1000).toISOString(), is_new: false } };
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const path = url.split('?')[0];
+				const body = path === `/api/devices/registry/${encodeURIComponent(MAC)}` ? fresh : REPLIES[path];
+				return { ok: true, status: 200, json: async () => body };
+			}),
+		);
+
+		render(Page);
+
+		expect(
+			await screen.findByText('Traffic matching its MAC or any address it has used; another device may have used one since.'),
+		).toBeInTheDocument();
+		expect(screen.getByText('New')).toBeInTheDocument();
+	});
+
+	it('shows no New chip for a device first seen days ago, even with is_new still set', async () => {
+		const reg = REPLIES[`/api/devices/registry/${encodeURIComponent(MAC)}`] as { device: Record<string, unknown> };
+		const old = { device: { ...reg.device, is_new: true } };
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const path = url.split('?')[0];
+				const body = path === `/api/devices/registry/${encodeURIComponent(MAC)}` ? old : REPLIES[path];
+				return { ok: true, status: 200, json: async () => body };
+			}),
+		);
+
+		render(Page);
+
+		await screen.findByText('Ubiquiti gateway');
+		expect(screen.queryByText('New')).not.toBeInTheDocument();
+	});
 });
 
 // #96: every failure read as "Device not found"

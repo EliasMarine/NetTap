@@ -43,6 +43,17 @@ describe('Changelog page (#96)', () => {
 		expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument();
 	});
 
+	// NET-158: it promised alerts, settings and devices leaving, none of which is recorded
+	it('names only the events NetTap records', async () => {
+		stubFetch(() => ({ ok: true, status: 200, body: { events: [], count: 0 } }));
+		render(Page);
+
+		expect(
+			await screen.findByText('Events appear here when a new device joins the network or a manual storage cleanup runs.'),
+		).toBeInTheDocument();
+		expect(screen.queryByText(/alerts fire|settings change/)).not.toBeInTheDocument();
+	});
+
 	it('says a failed filter change could not load, without showing the old filter\'s events', async () => {
 		let ok = true;
 		stubFetch(() => (ok

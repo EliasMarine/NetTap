@@ -109,7 +109,10 @@ describe('Devices — Online Now and New (24h) are exact', () => {
 			const [path, query = ''] = url.split('?');
 			const reply = (body: unknown) => ({ ok: true, status: 200, json: async () => body });
 			if (path === '/api/devices') return reply({ from: '', to: '', limit: 500, devices: DEVICES });
-			if (path === '/api/devices/count') return reply({ from: '', to: '', count: query.includes('from=') ? 7 : 350 });
+			// OLD CODE START — NET-158: Online now asked a 5-minute from/to range
+			// if (path === '/api/devices/count') return reply({ from: '', to: '', count: query.includes('from=') ? 7 : 350 });
+			// OLD CODE END
+			if (path === '/api/devices/count') return reply({ from: '', to: '', count: query.includes('active_since=') ? 7 : 350 });
 			if (path === '/api/devices/registry/new-count' && newCount.ok) return reply({ count: newCount.count, since: '' });
 			return { ok: false, status: 503, json: async () => ({}) };
 		});
@@ -125,7 +128,14 @@ describe('Devices — Online Now and New (24h) are exact', () => {
 		expect(kpiValue('Online now')).toBe('7');
 		const online = f.mock.calls.map((c) => String(c[0])).find((u) => u.startsWith('/api/devices/count?'));
 		const q = new URLSearchParams(online?.split('?')[1]);
-		expect(Date.parse(q.get('to') ?? '') - Date.parse(q.get('from') ?? '')).toBe(5 * 60 * 1000);
+		// OLD CODE START — NET-158: a 5-minute range needed 3 records in it; the table needs one
+		// expect(Date.parse(q.get('to') ?? '') - Date.parse(q.get('from') ?? '')).toBe(5 * 60 * 1000);
+		// OLD CODE END
+		// the table's population (the list's 24 h range) whose newest record is under 5 minutes old
+		expect(q.has('from')).toBe(false);
+		expect(Date.now() - Date.parse(q.get('active_since') ?? '')).toBeGreaterThanOrEqual(5 * 60 * 1000);
+		expect(Date.now() - Date.parse(q.get('active_since') ?? '')).toBeLessThan(6 * 60 * 1000);
+		expect(screen.getAllByText('Online').length).toBe(3); // the same rule on every listed row
 		// the list holds 3 of 350 devices, so the category pills say whose counts they are
 		expect(screen.getByText('counts for the 3 busiest devices')).toBeInTheDocument();
 	});

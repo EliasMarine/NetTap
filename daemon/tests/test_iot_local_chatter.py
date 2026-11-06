@@ -138,6 +138,8 @@ def iot(client: MagicMock) -> IoTMonitor:
             "classified_at": FROM_TS,
         }
     }
+    # discovery rebuilds the set per range (NET-158); these tests set it themselves
+    monitor._discover_iot_devices_from_arkime = lambda *a, **k: None
     return monitor
 
 
@@ -279,11 +281,12 @@ class TestEncryptionShare:
         assert fleet["devices"][0]["encryption_applicable"] is False
         assert fleet["unencrypted_count"] == 0
 
-    def test_not_applicable_keeps_full_encryption_points(self, iot):
+    def test_not_applicable_is_unavailable_not_full_points(self, iot):
+        """NET-158: no eligible traffic is no ratio; it used to earn the full 15 points."""
         stats = iot._build_device_stats(HUE_MAC, {}, {}, None, set())
         assert stats["encryption_applicable"] is False
         scored = iot._scorer.score_device(stats)
-        assert scored["security_breakdown"]["encryption_ratio"] == 15
+        assert scored["security_breakdown"]["encryption_ratio"] is None
 
     def test_relevant_traffic_still_measured(self, iot, client):
         conn = [

@@ -20,6 +20,8 @@ export interface RegistryDevice {
 	is_new: boolean;
 	total_bytes?: number;
 	connection_count?: number;
+	/** How many of `ips` the device list held when total_bytes was added up (withTraffic) */
+	ips_listed?: number;
 	enrichment_sources?: Record<string, unknown>;
 }
 
@@ -57,6 +59,18 @@ export async function getNewDeviceCount(since: string): Promise<{ count: number;
 	const res = await fetch(`/api/devices/registry/new-count?${new URLSearchParams({ since })}`);
 	if (!res.ok) throw new Error(`New device count failed: HTTP ${res.status}`);
 	return res.json();
+}
+
+/** "New" means first seen by NetTap in the last 24 hours: the "New in 24 h" count's rule. */
+export const NEW_DEVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The "New" chip's rule, the same as getNewDeviceCount(now - NEW_DEVICE_WINDOW_MS) counts
+ * (NET-158: the chip read is_new, which the registry clears on a device's next update).
+ */
+export function isNewDevice(device: Pick<RegistryDevice, 'first_seen'>, now: number = Date.now()): boolean {
+	const first = Date.parse(device.first_seen);
+	return Number.isFinite(first) && first >= now - NEW_DEVICE_WINDOW_MS;
 }
 
 export async function getRegistryDevices(

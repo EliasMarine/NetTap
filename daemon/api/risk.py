@@ -22,7 +22,9 @@ from api.devices import _lan_device_bool_query, _lan_device_buckets
 # OLD CODE START — #96: the population's filters come from api.devices._lan_device_bool_query now
 # from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
 # OLD CODE END
+from services.iot_monitor import ICMP_TRANSPORTS
 from services.risk_scoring import RiskScorer
+from services.threat_detection import NOT_INTERNET_CIDRS
 from storage.all_buckets import all_buckets
 from storage.manager import StorageManager
 
@@ -98,7 +100,15 @@ def _get_client(request: web.Request):
 
 def _ports_cut_short(conn_bucket: dict) -> bool:
     """True if the device used more ports than its top-50 ports_used list holds."""
-    return bool(conn_bucket.get("ports_used", {}).get("sum_other_doc_count", 0))
+    # OLD CODE START — NET-158: ports_used is a non-ICMP filter around the terms list now
+    # return bool(conn_bucket.get("ports_used", {}).get("sum_other_doc_count", 0))
+    # OLD CODE END
+    return bool(_port_terms(conn_bucket).get("sum_other_doc_count", 0))
+
+
+def _port_terms(conn_bucket: dict) -> dict:
+    """The device's destination-port terms list (ICMP left out, see _device_score_aggs)."""
+    return conn_bucket.get("ports_used", {}).get("ports", {})
 
 
 def _all_unsafe_ports(client, bool_query: dict, ips: list[str]) -> dict[str, list[int]]:
@@ -116,6 +126,7 @@ def _all_unsafe_ports(client, bool_query: dict, ips: list[str]) -> dict[str, lis
             "must_not": [
                 *bool_query.get("must_not", []),
                 {"terms": {"destination.port": sorted(RiskScorer.SAFE_PORTS)}},
+                _ICMP,  # NET-158: Zeek writes the ICMP code there, not a port
             ],
         }
     }
@@ -154,7 +165,10 @@ def _build_device_stats(
     resp_bytes = int(conn_bucket.get("total_resp_bytes", {}).get("value", 0) or 0)
 
     # Extract ports used
-    port_buckets = conn_bucket.get("ports_used", {}).get("buckets", [])
+    # OLD CODE START — NET-158: see _port_terms
+    # port_buckets = conn_bucket.get("ports_used", {}).get("buckets", [])
+    # OLD CODE END
+    port_buckets = _port_terms(conn_bucket).get("buckets", [])
     # OLD CODE START — #96: the top 50 ports only, so a busy device's rare port 4444 went unseen
     # ports = [int(pb["key"]) for pb in port_buckets]
     # OLD CODE END
@@ -178,22 +192,47 @@ def _build_device_stats(
 
 def _device_score_aggs() -> dict:
     """Per-device aggregations the scorer reads (connection count is the bucket's doc_count)."""
+    # OLD CODE START — NET-158: ICMP codes counted as ports (an "unusual port 0" for pings), and
+    # "external" was anything outside RFC1918, so multicast, broadcast, link-local and every
+    # IPv6 address (fe80::, ff02::fb) counted as internet
+    # return {
+    #     "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+    #     "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
+    #     "ports_used": {"terms": {"field": "destination.port", "size": 50}},
+    #     "external_conns": {
+    #         "filter": {
+    #             "bool": {
+    #                 "must_not": [
+    #                     {"term": {"destination.ip": "10.0.0.0/8"}},
+    #                     {"term": {"destination.ip": "172.16.0.0/12"}},
+    #                     {"term": {"destination.ip": "192.168.0.0/16"}},
+    #                 ]
+    #             }
+    #         }
+    #     },
+    # }
+    # OLD CODE END
     return {
         "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
         "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
-        "ports_used": {"terms": {"field": "destination.port", "size": 50}},
-        "external_conns": {
-            "filter": {
-                "bool": {
-                    "must_not": [
-                        {"term": {"destination.ip": "10.0.0.0/8"}},
-                        {"term": {"destination.ip": "172.16.0.0/12"}},
-                        {"term": {"destination.ip": "192.168.0.0/16"}},
-                    ]
-                }
-            }
-        },
+        **_PORTS_AND_EXTERNAL_AGGS,
     }
+
+
+_ICMP = {"terms": {"network.transport": ICMP_TRANSPORTS}}
+# The ports and external-share aggregations, shared by the list and the single device
+_PORTS_AND_EXTERNAL_AGGS = {
+    "ports_used": {
+        "filter": {"bool": {"must_not": [_ICMP]}},
+        "aggs": {"ports": {"terms": {"field": "destination.port", "size": 50}}},
+    },
+    # the shared not-internet list: private, loopback, link-local, multicast, broadcast
+    "external_conns": {
+        "filter": {
+            "bool": {"must_not": [{"terms": {"destination.ip": NOT_INTERNET_CIDRS}}]}
+        }
+    },
+}
 
 
 # ---------------------------------------------------------------------------
@@ -517,18 +556,21 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
             # OLD CODE END
             "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
             "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
-            "ports_used": {"terms": {"field": "destination.port", "size": 50}},
-            "external_conns": {
-                "filter": {
-                    "bool": {
-                        "must_not": [
-                            {"term": {"destination.ip": "10.0.0.0/8"}},
-                            {"term": {"destination.ip": "172.16.0.0/12"}},
-                            {"term": {"destination.ip": "192.168.0.0/16"}},
-                        ]
-                    }
-                }
-            },
+            # OLD CODE START — NET-158: see _device_score_aggs
+            # "ports_used": {"terms": {"field": "destination.port", "size": 50}},
+            # "external_conns": {
+            #     "filter": {
+            #         "bool": {
+            #             "must_not": [
+            #                 {"term": {"destination.ip": "10.0.0.0/8"}},
+            #                 {"term": {"destination.ip": "172.16.0.0/12"}},
+            #                 {"term": {"destination.ip": "192.168.0.0/16"}},
+            #             ]
+            #         }
+            #     }
+            # },
+            # OLD CODE END
+            **_PORTS_AND_EXTERNAL_AGGS,
         },
     }
 
