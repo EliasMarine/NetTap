@@ -99,8 +99,14 @@ describe('Address page', () => {
 		expect(kpi('Data to it')).toHaveTextContent('To it: 1,970 of 1,980 connections measured · from it: 1,970 of 1,980 connections measured');
 		expect(kpi('Devices that talked to it')).toHaveTextContent('3');
 		expect(kpi('Devices that talked to it')).toHaveTextContent('on your network, of 3 addresses in all');
-		expect(kpi('Alerts').closest('a')).toHaveAttribute('href', '/alerts?ip=198.51.100.10');
+		// OLD CODE START: expect(kpi('Alerts').closest('a')).toHaveAttribute('href', '/alerts?ip=198.51.100.10'); OLD CODE END
+		// the alerts page opens on this page's window, so its list matches the count
+		expect(kpi('Alerts').closest('a')).toHaveAttribute('href', '/alerts?ip=198.51.100.10&range=24h');
 		expect(screen.getByText('Not on a threat list')).toBeInTheDocument();
+		expect(screen.getByText("Checked this window's alerts and 5,400 cached indicators")).toBeInTheDocument();
+		// a port lists every service Zeek saw on it, each connection counted once
+		const quic = within(card('Ports on this address')).getByText('quic, ssl').closest('tr')!;
+		expect(quic).toHaveTextContent('250');
 		// the daemon buckets a 24-hour window by the hour
 		expect(screen.getByText('Connections per hour · last 24 hours')).toBeInTheDocument();
 		// the window is the request's
@@ -144,7 +150,9 @@ describe('Address page', () => {
 		const quietPeer = within(card('Devices that talked to it')).getByRole('link', { name: '192.168.1.50' }).closest('tr')!;
 		expect(quietPeer).toHaveTextContent('Not measured');
 		expect(quietPeer).not.toHaveTextContent('0 B');
-		expect(screen.getByText(/On a threat list: Example blocklist/)).toBeInTheDocument();
+		// OLD CODE START: expect(screen.getByText(/On a threat list: Example blocklist/)).toBeInTheDocument(); OLD CODE END
+		// a listing-rule alert in the window named it, with no indicator cache loaded
+		expect(screen.getByText(/On a threat list: ET Compromised IPs/)).toBeInTheDocument();
 		expect(screen.getByText('No name (SNI)')).toBeInTheDocument();
 		expect(screen.getByText(/Too many addresses to list them all/)).toBeInTheDocument();
 		expect(screen.getByText(/Too many ports to list them all/)).toBeInTheDocument();
@@ -162,14 +170,56 @@ describe('Address page', () => {
 		expectNoNestedInteractive(container);
 	});
 
-	it('says the address was not checked against threat lists when none are loaded, and shows empty states', async () => {
+	// OLD CODE START — null meant "no indicators loaded"; with no cache the daemon still checks the window's alerts
+	// it('says the address was not checked against threat lists when none are loaded, and shows empty states', async () => {
+	// 	stubDaemon(baseReplies(ADDRESS_EMPTY, 0));
+	// 	render(Page);
+	// 	await screen.findByText('Not checked: no threat indicators loaded yet');
+	// OLD CODE END
+	it('says what it checked with no indicator cache, and shows empty states', async () => {
 		stubDaemon(baseReplies(ADDRESS_EMPTY, 0));
 		render(Page);
-		await screen.findByText('Not checked: no threat indicators loaded yet');
+		await screen.findByText('Not on a threat list');
+		// zero cached indicators is still a check of the window's alerts, not "not checked"
+		expect(screen.getByText("Checked this window's alerts")).toBeInTheDocument();
+		expect(screen.queryByText('Not checked')).toBeNull();
 		expect(kpi('Connections')).toHaveTextContent('0');
 		expect(kpi('Data to it')).toHaveTextContent('0 B');
 		expect(screen.getAllByText('No connections in the last 24 hours').length).toBe(2);
 		expect(screen.getByText('Nothing talked to it in the last 24 hours')).toBeInTheDocument();
+	});
+
+	it('carries the loaded window to the alerts page and Log Explorer', async () => {
+		stubDaemon(baseReplies(ADDRESS, 25_000));
+		render(Page);
+		await vi.waitFor(() => expect(kpi('Connections')).toHaveTextContent('1,980'));
+		await fireEvent.click(screen.getByRole('button', { name: '30d' }));
+		await vi.waitFor(() => expect(kpi('Alerts').closest('a')).toHaveAttribute('href', '/alerts?ip=198.51.100.10&range=30d'));
+		const logs = await screen.findByRole('link', { name: 'search them all in Log Explorer' });
+		expect(new URL(logs.getAttribute('href')!, 'http://x').searchParams.get('range')).toBe('30d');
+	});
+
+	it('says Not checked only when the daemon could not check every alert and nothing matched', async () => {
+		stubDaemon(baseReplies({ ...ADDRESS, threat_intel: null }));
+		render(Page);
+		expect(await screen.findByText('Not checked')).toBeInTheDocument();
+		expect(screen.getByText("This window's alerts couldn't all be checked")).toBeInTheDocument();
+		expect(screen.queryByText('Not on a threat list')).toBeNull();
+	});
+
+	it.each([
+		[503, 'Working this out took too long. Try a shorter time range.'],
+		[500, 'Something went wrong working this out; the daemon log has the details.'],
+	])("shows the daemon's HTTP %s text as it is", async (status, reason) => {
+		stubDaemon(baseReplies(ADDRESS));
+		const fetchStub = vi.mocked(globalThis.fetch as (input: string) => Promise<unknown>);
+		const answer = fetchStub.getMockImplementation()!;
+		fetchStub.mockImplementation(async (input: string) =>
+			input.startsWith('/api/addresses/') ? { ok: false, status, json: async () => ({ error: reason }) } : answer(input),
+		);
+		render(Page);
+		await vi.waitFor(() => expect(screen.getAllByText(reason).length).toBeGreaterThan(0));
+		expect(kpi('Connections')).toHaveTextContent('—');
 	});
 
 	it("shows the daemon's reason when the summary fails, never zeros", async () => {
@@ -278,7 +328,10 @@ describe('Address page', () => {
 		const tls = await vi.waitFor(() => card('Names it served (TLS)'));
 		await vi.waitFor(() => expect(within(tls).getAllByRole('row')).toHaveLength(4));
 		expect(within(tls).getByText('No name (SNI)')).toBeInTheDocument();
-		expect(within(tls).getByRole('link', { name: '(no name)' })).toBeInTheDocument();
+		// OLD CODE START: expect(within(tls).getByRole('link', { name: '(no name)' })).toBeInTheDocument(); OLD CODE END
+		// not a host name: shown as sent, with no domain page or certificates link to fail on
+		expect(within(tls).getByText('(no name)').closest('a')).toBeNull();
+		expect(within(within(tls).getByText('(no name)').closest('tr')!).queryByRole('link')).toBeNull();
 	});
 
 	it('reports ok, partial and failed to the top bar, keeping the last figures', async () => {
@@ -300,7 +353,8 @@ describe('Address page', () => {
 		render(Page);
 		const notice = await screen.findByText(/Showing the newest 10,000 of 25,000\./);
 		const link = within(notice.closest('p')!).getByRole('link', { name: 'search them all in Log Explorer' });
-		expect(decodeURIComponent(link.getAttribute('href')!)).toBe('/logs?query=(source.ip:"198.51.100.10" OR destination.ip:"198.51.100.10")');
+		// OLD CODE START: expect(decodeURIComponent(link.getAttribute('href')!)).toBe('/logs?query=(source.ip:"198.51.100.10" OR destination.ip:"198.51.100.10")'); OLD CODE END
+		expect(decodeURIComponent(link.getAttribute('href')!)).toBe('/logs?query=(source.ip:"198.51.100.10" OR destination.ip:"198.51.100.10")&range=24h');
 		expect(screen.getByText('Showing 1 to 25 of 10,000')).toBeInTheDocument();
 		// a refresh of the same view stays on the page the user is reading
 		await fireEvent.click(screen.getByRole('button', { name: 'Page 2' }));

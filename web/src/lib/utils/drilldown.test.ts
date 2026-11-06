@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { byteFigure, certificatesHref, chartTime, logsHrefForIp, measuredNote, rangeWindow } from './drilldown';
+import { byteFigure, canonicalName, certificatesHref, chartTime, isHostName, logsHrefForIp, measuredNote, rangeWindow } from './drilldown';
 
 const MB = 1024 ** 2;
 
@@ -50,6 +50,17 @@ describe('drill-down wording', () => {
 	});
 
 	it('searches Log Explorer for either side, quoted', () => {
-		expect(decodeURIComponent(logsHrefForIp('2001:db8::1').split('=')[1])).toBe('(source.ip:"2001:db8::1" OR destination.ip:"2001:db8::1")');
+		// OLD CODE START: expect(decodeURIComponent(logsHrefForIp('2001:db8::1').split('=')[1])).toBe(…); OLD CODE END
+		const url = new URL(logsHrefForIp('2001:db8::1', '7d'), 'http://x');
+		expect(url.searchParams.get('query')).toBe('(source.ip:"2001:db8::1" OR destination.ip:"2001:db8::1")');
+		// Log Explorer opens on the window the link came from, not its own 24 hours
+		expect(url.searchParams.get('range')).toBe('7d');
+	});
+
+	it('canonicalises a name as the daemon matches it, and knows a host name by its rule', () => {
+		expect(canonicalName(' Example.COM. ')).toBe('example.com');
+		expect(canonicalName('example.com..')).toBe('example.com.');
+		for (const ok of ['example.com', 'Stream.Example.NET.', '_dmarc.example.org', 'a-b.c']) expect(isHostName(ok)).toBe(true);
+		for (const bad of ['', '(no name)', 'a..b', 'exa mple.com', 'x'.repeat(64) + '.com', 'example.com:443']) expect(isHostName(bad)).toBe(false);
 	});
 });

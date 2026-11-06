@@ -28,6 +28,9 @@ describe('drill-down clients', () => {
 		[400, { error: 'Invalid IP address: nope' }, 'Invalid IP address: nope'],
 		[503, { error: 'busy' }, 'busy'],
 		[502, {}, 'Address summary failed: HTTP 502'],
+		// the daemon's own words for a timeout and for anything unexpected reach the page as they are
+		[503, { error: 'Working this out took too long. Try a shorter time range.' }, 'Working this out took too long. Try a shorter time range.'],
+		[500, { error: 'Something went wrong working this out; the daemon log has the details.' }, 'Something went wrong working this out; the daemon log has the details.'],
 	])('throws the daemon reason on HTTP %s', async (status, body, message) => {
 		vi.stubGlobal('fetch', vi.fn(async () => reply(status, body)));
 		await expect(getAddressSummary('x', 'a', 'b')).rejects.toThrow(message);
@@ -75,6 +78,16 @@ describe('drill-down clients', () => {
 	])('rejects a domain reply without %s', async (path) => {
 		vi.stubGlobal('fetch', vi.fn(async () => reply(200, without(DOMAIN, path))));
 		await expect(getDomainSummary('x', 'a', 'b')).rejects.toThrow('malformed');
+	});
+
+	it.each([
+		['the old one-service shape', { port: 443, transport: 'tcp', service: 'ssl', connections: 1 }],
+		['a service that is not text', { port: 443, transport: 'tcp', services: [7], connections: 1 }],
+		['no connection count', { port: 443, transport: 'tcp', services: [] }],
+		['a port that is text', { port: '443', transport: 'tcp', services: [], connections: 1 }],
+	])('rejects a port row with %s', async (_what, row) => {
+		vi.stubGlobal('fetch', vi.fn(async () => reply(200, { ...ADDRESS, ports: [row] })));
+		await expect(getAddressSummary('x', 'a', 'b')).rejects.toThrow('malformed');
 	});
 
 	it('accepts every well-formed fixture, including the null cases', async () => {

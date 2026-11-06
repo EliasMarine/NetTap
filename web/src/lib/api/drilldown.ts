@@ -32,11 +32,22 @@ export interface AddressPeer {
 	last_seen: string;
 }
 
-/** A row keeps connections whose port, transport or service is missing (null), so the rows add up. */
+// OLD CODE START — one row per (port, transport, service) counted a connection Zeek logged with two
+// services once per service; the daemon now groups by port and transport
+// /** A row keeps connections whose port, transport or service is missing (null), so the rows add up. */
+// export interface AddressPort {
+// 	port: number | null;
+// 	transport: string | null;
+// 	service: string | null;
+// 	connections: number;
+// }
+// OLD CODE END
+/** One port reached on the address. A missing port or transport is null, so the rows add up. */
 export interface AddressPort {
 	port: number | null;
 	transport: string | null;
-	service: string | null;
+	/** The services Zeek saw on it, most common first; [] when none */
+	services: string[];
 	connections: number;
 }
 
@@ -130,7 +141,8 @@ export interface DomainSummary {
 	};
 }
 
-async function getJson(url: string, what: string): Promise<unknown> {
+/** The reply's JSON; a failure throws the daemon's own reason, or "<what> failed: HTTP n". */
+export async function getJson(url: string, what: string): Promise<unknown> {
 	const res = await fetch(url);
 	if (!res.ok) {
 		const reason = await res
@@ -151,6 +163,15 @@ const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.is
 const isBoolean = (v: unknown): v is boolean => typeof v === 'boolean';
 const isByteTotal = (v: unknown) => isObject(v) && ['total', 'measured', 'connections'].every((k) => isNumber(v[k])) && isBoolean(v.partial);
 /** null (no indicators loaded) or a checked result; a missing field is malformed, not "not checked" */
+const isNullable = (v: unknown, test: (x: unknown) => boolean) => v === null || test(v);
+const isString = (v: unknown): v is string => typeof v === 'string';
+const isPort = (v: unknown) =>
+	isObject(v) &&
+	isNullable(v.port, isNumber) &&
+	isNullable(v.transport, isString) &&
+	Array.isArray(v.services) &&
+	v.services.every(isString) &&
+	isNumber(v.connections);
 const isThreatIntel = (v: unknown) => v === null || (isObject(v) && isBoolean(v.matched) && Array.isArray(v.feeds) && isNumber(v.indicators));
 
 /** Everything the address page shows for `ip` in the window. */
@@ -174,6 +195,7 @@ export async function getAddressSummary(ip: string, from: string, to: string): P
 		isByteTotal(body.bytes_from) &&
 		[body.peers, body.ports, body.timeline, body.tls_names].every(Array.isArray) &&
 		[body.peers_complete, body.ports_complete, body.tls_complete].every(isBoolean) &&
+		(body.ports as unknown[]).every(isPort) &&
 		isThreatIntel(body.threat_intel);
 	if (!ok) throw new Error('Address summary failed: the reply was malformed');
 	return body as unknown as AddressSummary;

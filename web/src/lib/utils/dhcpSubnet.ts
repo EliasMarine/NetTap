@@ -22,15 +22,15 @@ const CIDR_RE = new RegExp(`^(${OCTET}\\.${OCTET}\\.${OCTET}\\.${OCTET})/(\\d{1,
 const MIN_PREFIX = 16;
 const MAX_PREFIX = 28;
 
-/** RFC 1918 ranges as [first address, prefix]. */
-const PRIVATE_RANGES: Array<[string, number]> = [
+/** RFC 1918 ranges as [first address, prefix]. Shared with the LAN rule (stores/lan.ts). */
+export const PRIVATE_RANGES: Array<[string, number]> = [
 	['10.0.0.0', 8],
 	['172.16.0.0', 12],
 	['192.168.0.0', 16],
 ];
 
-/** IPv4 dotted quad to an unsigned number, or null if it isn't one. */
-function toNumber(ip: string): number | null {
+/** IPv4 dotted quad to an unsigned number, or null if it isn't one (leading zeros rejected, as the daemon does). */
+export function toNumber(ip: string): number | null {
 	if (!IPV4_RE.test(ip)) return null;
 	return ip.split('.').reduce((acc, octet) => acc * 256 + Number(octet), 0);
 }
@@ -40,7 +40,7 @@ function toDotted(n: number): string {
 }
 
 /** True if `ip` falls inside the block that starts at `network` with `prefix`. */
-function inBlock(ip: number, network: number, prefix: number): boolean {
+export function inBlock(ip: number, network: number, prefix: number): boolean {
 	const size = 2 ** (32 - prefix);
 	return Math.floor(ip / size) === Math.floor(network / size);
 }

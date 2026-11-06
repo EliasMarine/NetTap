@@ -43,9 +43,10 @@ export const ADDRESS: AddressSummary = {
 	],
 	peers_complete: true,
 	ports: [
-		{ port: 443, transport: 'tcp', service: 'ssl', connections: 1700 },
-		{ port: 443, transport: 'udp', service: 'quic', connections: 250 },
-		{ port: 80, transport: 'tcp', service: null, connections: 30 },
+		{ port: 443, transport: 'tcp', services: ['ssl'], connections: 1700 },
+		// Zeek logs some QUIC sessions with two services; the row counts each connection once
+		{ port: 443, transport: 'udp', services: ['quic', 'ssl'], connections: 250 },
+		{ port: 80, transport: 'tcp', services: [], connections: 30 },
 	],
 	ports_complete: true,
 	timeline: hourly(1980),
@@ -73,9 +74,9 @@ export const ADDRESS_QUIET: AddressSummary = {
 	],
 	peers_complete: false,
 	ports: [
-		{ port: 8883, transport: 'tcp', service: null, connections: 1100 },
+		{ port: 8883, transport: 'tcp', services: [], connections: 1100 },
 		// connections with no port or transport recorded keep their own row
-		{ port: null, transport: null, service: null, connections: 90 },
+		{ port: null, transport: null, services: [], connections: 90 },
 	],
 	ports_complete: false,
 	timeline: hourly(1190),
@@ -85,10 +86,11 @@ export const ADDRESS_QUIET: AddressSummary = {
 	],
 	tls_complete: false,
 	alerts: 2,
+	// a listing-rule alert in the window named it, with no indicator cache loaded
 	threat_intel: {
 		matched: true,
-		feeds: [{ feed: 'example-feed', label: 'Example blocklist', indicator: QUIET.ip, type: 'ip' }],
-		indicators: 5400,
+		feeds: [{ feed: 'et_compromised', label: 'ET Compromised IPs', indicator: QUIET.ip, type: 'ip' }],
+		indicators: 0,
 	},
 };
 
@@ -109,7 +111,8 @@ export const ADDRESS_EMPTY: AddressSummary = {
 	tls_names: [],
 	tls_complete: true,
 	alerts: 0,
-	threat_intel: null,
+	// no indicator cache: still checked against this window's alerts
+	threat_intel: { matched: false, feeds: [], indicators: 0 },
 };
 
 export const DOMAIN: DomainSummary = {

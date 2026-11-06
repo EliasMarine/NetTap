@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { get } from 'svelte/store';
 import type { LanPolicy } from '$lib/api/network';
-import { LAN_REFRESH_MS, addressHref, domainHref, inCidr, ipHref, ipv4ToNumber, isIpAddress, isLan, lanPolicy, lanStatus } from './lan';
+// OLD CODE START: ipv4ToNumber came from './lan'; the maths is utils/dhcpSubnet.ts's now OLD CODE END
+import { toNumber as ipv4ToNumber } from '$lib/utils/dhcpSubnet';
+import { LAN_REFRESH_MS, addressHref, domainHref, inCidr, ipHref, isIpAddress, isLan, lanPolicy, lanStatus } from './lan';
 
 // NET-160: a link goes to a device page only when the daemon's own LAN policy says so
 
@@ -11,7 +13,8 @@ describe('LAN policy maths', () => {
 	it('reads dotted quads only', () => {
 		expect(ipv4ToNumber('0.0.0.0')).toBe(0);
 		expect(ipv4ToNumber('255.255.255.255')).toBe(2 ** 32 - 1);
-		for (const bad of ['256.1.1.1', '1.2.3', '1.2.3.4.5', '2001:db8::1', 'a.b.c.d', '', '1.2.3.-4']) {
+		// leading zeros are rejected, as the daemon's parser does
+		for (const bad of ['256.1.1.1', '1.2.3', '1.2.3.4.5', '2001:db8::1', 'a.b.c.d', '', '1.2.3.-4', '192.168.01.1']) {
 			expect(ipv4ToNumber(bad)).toBeNull();
 		}
 	});

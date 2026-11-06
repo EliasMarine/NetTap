@@ -17,7 +17,7 @@
 	import { domainHref, ipHref } from '$lib/stores/lan';
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { namesByIp } from '$lib/utils/device-names';
-	import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, logsHrefForIp, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown';
+	import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { asString, getField } from '$lib/utils/tshark-filter';
 	import type { SortDir } from '$lib/utils/table-sort.svelte';
@@ -325,7 +325,8 @@
 		{ key: 'port', label: 'Port', numeric: true, cell: portCell },
 		// a missing port, transport or service is null; the table sorts blanks last
 		{ key: 'transport', label: 'Transport', cell: transportCell },
-		{ key: 'service', label: 'Service', sortValue: (p) => p.service ?? '', cell: serviceCell },
+		// OLD CODE START: { key: 'service', label: 'Service', sortValue: (p) => p.service ?? '', cell: serviceCell }, — one service per row OLD CODE END
+		{ key: 'services', label: 'Services', sortValue: (p) => p.services.join(', '), cell: servicesCell },
 		{ key: 'connections', label: 'Connections', numeric: true, cell: portConnCell },
 	];
 	const tlsColumns: Column<TlsName>[] = [
@@ -415,11 +416,19 @@ OLD CODE END -->
 OLD CODE END -->
 {#snippet portCell(p: AddressPort)}{#if p.port === null}<span class="dim">Unknown port</span>{:else}<span class="mono">{p.port}</span>{/if}{/snippet}
 {#snippet transportCell(p: AddressPort)}{#if p.transport}<span class="tag">{p.transport.toUpperCase()}</span>{:else}<span class="dim">—</span>{/if}{/snippet}
-{#snippet serviceCell(p: AddressPort)}{#if p.service}<span class="mono">{p.service}</span>{:else}<span class="dim">—</span>{/if}{/snippet}
+<!-- OLD CODE START: {#snippet serviceCell(p: AddressPort)}{#if p.service}<span class="mono">{p.service}</span>{:else}<span class="dim">—</span>{/if}{/snippet} — a port now lists every service Zeek saw on it OLD CODE END -->
+{#snippet servicesCell(p: AddressPort)}{#if p.services.length}<span class="mono">{p.services.join(', ')}</span>{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet portConnCell(p: AddressPort)}{fmt(p.connections)}{/snippet}
 
+<!-- OLD CODE START — linked any name, so a value that isn't a host name opened a domain page that can only fail
 {#snippet tlsNameCell(t: TlsName)}
 	{#if t.name}<a class="mono" href={domainHref(t.name)}>{t.name}</a>{:else}<span class="dim">No name (SNI)</span>{/if}
+{/snippet}
+OLD CODE END -->
+{#snippet tlsNameCell(t: TlsName)}
+	{#if t.name === null}<span class="dim">No name (SNI)</span>
+	{:else if isHostName(t.name)}<a class="mono" href={domainHref(t.name)}>{t.name}</a>
+	{:else}<span class="mono" title="Not a host name, so there is no domain page for it">{t.name}</span>{/if}
 {/snippet}
 {#snippet tlsSessionsCell(t: TlsName)}{fmt(t.sessions)}{/snippet}
 {#snippet tlsStatusCell(t: TlsName)}<span class="trunc" title={statusList(t.statuses)}>{statusList(t.statuses) || '—'}</span>{/snippet}
@@ -427,7 +436,7 @@ OLD CODE END -->
 {#snippet tlsCertCell(t: TlsName)}<a class="link" href={tlsCertificates(t)}>Certificates seen<Icon name="back" class="chev" /></a>{/snippet}
 OLD CODE END -->
 {#snippet tlsCertCell(t: TlsName)}
-	{#if t.name}<a class="link" href={tlsCertificates(t)} aria-label="Certificates seen for {t.name}">Certificates seen<Icon name="back" class="chev" /></a>{:else}<span class="dim">—</span>{/if}
+	{#if t.name && isHostName(t.name)}<a class="link" href={tlsCertificates(t)} aria-label="Certificates seen for {t.name}">Certificates seen<Icon name="back" class="chev" /></a>{:else}<span class="dim">—</span>{/if}
 {/snippet}
 
 {#snippet connEnd(side: 'source' | 'destination', c: DeviceConnection)}
@@ -470,12 +479,28 @@ OLD CODE END -->
 		{#if data}
 			<div class="chips">
 				{#if data.lan}<span class="chip"><Icon name="devices" />On your network</span>{/if}
+				<!-- OLD CODE START — null meant "no indicators loaded"; the daemon now also checks the window's alerts
 				{#if data.threat_intel === null}
 					<span class="chip">Not checked: no threat indicators loaded yet</span>
 				{:else if data.threat_intel.matched}
 					<span class="chip is-bad"><Icon name="warn" />On a threat list: {data.threat_intel.feeds.map((f) => f.label).join(', ')}</span>
 				{:else}
 					<span class="chip is-ok" title="Checked against {fmt(data.threat_intel.indicators)} threat indicators"><Icon name="check" />Not on a threat list</span>
+				{/if}
+				OLD CODE END -->
+				{#if data.threat_intel === null}
+					<!-- only when nothing matched and some of the window's alerts couldn't be read -->
+					<span class="chip">Not checked</span>
+					<span class="chip-note">This window's alerts couldn't all be checked</span>
+				{:else if data.threat_intel.matched}
+					<span class="chip is-bad"><Icon name="warn" />On a threat list: {data.threat_intel.feeds.map((f) => f.label).join(', ')}</span>
+				{:else}
+					<span class="chip is-ok"><Icon name="check" />Not on a threat list</span>
+					<span class="chip-note"
+						>{data.threat_intel.indicators > 0
+							? `Checked this window's alerts and ${fmt(data.threat_intel.indicators)} cached ${data.threat_intel.indicators === 1 ? 'indicator' : 'indicators'}`
+							: "Checked this window's alerts"}</span
+					>
 				{/if}
 			</div>
 		{/if}
@@ -520,8 +545,9 @@ OLD CODE END -->
 		value={data ? fmt(data.alerts) : '—'}
 		sub={data ? 'with this address on either side' : undefined}
 		note={words}
-		href="/alerts?ip={encodeURIComponent(ip)}"
+		href="/alerts?ip={encodeURIComponent(ip)}&range={shown.value}"
 	/>
+	<!-- OLD CODE START: href="/alerts?ip={encodeURIComponent(ip)}" — /alerts opened on its own 24 hours, so "40 · last 7 days" could list 5 OLD CODE END -->
 </div>
 
 <div class="grid">
@@ -629,7 +655,7 @@ OLD CODE END -->
 				<p class="notice is-warn" role="status"><Icon name="warn" /><span>Too many ports to list them all: showing the first {fmt(data.ports.length)}.</span></p>
 			{/if}
 			<!-- OLD CODE START: rowKey={(p) => `${p.port}/${p.transport}/${p.service ?? ''}`} — a null and an empty service collided OLD CODE END -->
-			<DataTable columns={portColumns} rows={data.ports} ariaLabel="Ports on this address" rowKey={(p) => JSON.stringify([p.port, p.transport, p.service])} initialSort={{ key: 'connections', dir: 'desc' }} />
+			<DataTable columns={portColumns} rows={data.ports} ariaLabel="Ports on this address" rowKey={(p) => JSON.stringify([p.port, p.transport])} initialSort={{ key: 'connections', dir: 'desc' }} />
 		{/if}
 	</Card>
 
@@ -662,7 +688,7 @@ OLD CODE END -->
 						>{connSortKey === 'time' && connSortDir === 'desc'
 							? `Showing the newest ${fmt(CONN_REACH)} of ${fmt(connTotal)}.`
 							: `Showing the first ${fmt(CONN_REACH)} of ${fmt(connTotal)} in this order.`} Narrow the time range to reach older ones, or
-						<a href={logsHrefForIp(ip)}>search them all in Log Explorer</a>.</span
+						<a href={logsHrefForIp(ip, shown.value)}>search them all in Log Explorer</a>.</span
 					>
 				</p>
 			{/if}
@@ -682,7 +708,8 @@ OLD CODE END -->
 <style>
 	/* Layout glue the system lacks */
 	.chips { margin-top: var(--sp-2); }
-	.two { display: inline-flex; flex-direction: column; line-height: 1.3; }
+	/* OLD CODE START: .two { display: inline-flex; flex-direction: column; line-height: 1.3; } — system.css defines .two OLD CODE END */
+	.chip-note { align-self: center; color: var(--text-3); font-size: var(--text-sm); }
 	.who-links { margin-top: var(--sp-3); }
 	.who-note { margin: var(--sp-3) 0 0; font-size: var(--text-sm); }
 	.tls-note { margin: var(--sp-3) 0 0; font-size: var(--text-sm); }

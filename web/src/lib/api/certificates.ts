@@ -3,6 +3,8 @@
  * Wraps daemon endpoints at /api/certificates.
  */
 
+import { getJson } from './drilldown';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -393,15 +395,18 @@ export async function getCertificateOverview(
 	const qs = new URLSearchParams(buildTimeQuery(from, to));
 	if (filter.site) qs.set('site', filter.site);
 	if (filter.server) qs.set('server', filter.server);
-	const res = await fetch(`/api/certificates/overview?${qs.toString()}`);
-	if (!res.ok) {
-		const reason = await res
-			.json()
-			.then((body: unknown) => (body && typeof body === 'object' && 'error' in body ? String(body.error) : ''))
-			.catch(() => '');
-		throw new Error(reason || `Certificate overview failed: HTTP ${res.status}`);
-	}
-	const body: unknown = await res.json();
+	// OLD CODE START — a copy of api/drilldown.ts getJson's error-reason code
+	// const res = await fetch(`/api/certificates/overview?${qs.toString()}`);
+	// if (!res.ok) {
+	// 	const reason = await res
+	// 		.json()
+	// 		.then((body: unknown) => (body && typeof body === 'object' && 'error' in body ? String(body.error) : ''))
+	// 		.catch(() => '');
+	// 	throw new Error(reason || `Certificate overview failed: HTTP ${res.status}`);
+	// }
+	// const body: unknown = await res.json();
+	// OLD CODE END
+	const body = await getJson(`/api/certificates/overview?${qs.toString()}`, 'Certificate overview');
 	// Every part the page reads, so a malformed reply is an error, never a blank that reads as "none"
 	const o = body as Partial<CertificateOverview> | null;
 	const wellFormed =

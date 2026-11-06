@@ -4,6 +4,8 @@
  * forward requests to the nettap-storage-daemon.
  */
 
+import { getJson } from './drilldown';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -416,7 +418,9 @@ export async function getConnections(
 		state: opts.state,
 		ip: opts.ip,
 	});
-	const res = await fetch(`/api/traffic/connections${query}`);
+	// OLD CODE START — NET-160 review: getJson (api/drilldown.ts) reads the daemon's reason the same way
+	// const res = await fetch(`/api/traffic/connections${query}`);
+	// OLD CODE END
 
 	// OLD CODE START — #96: a failed request read as "No Connections"
 	// if (!res.ok) {
@@ -434,15 +438,18 @@ export async function getConnections(
 	// OLD CODE START — NET-160: the daemon's reason ("That is not an IP address.") was dropped
 	// if (!res.ok) throw new Error(`Connection list failed: HTTP ${res.status}`);
 	// OLD CODE END
-	if (!res.ok) {
-		const reason = await res
-			.json()
-			.then((body: unknown) => (body && typeof body === 'object' && 'error' in body ? String(body.error) : ''))
-			.catch(() => '');
-		throw new Error(reason || `Connection list failed: HTTP ${res.status}`);
-	}
-
-	return res.json();
+	// OLD CODE START — NET-160 review: the same reason-reading as getJson
+	// if (!res.ok) {
+	// 	const reason = await res
+	// 		.json()
+	// 		.then((body: unknown) => (body && typeof body === 'object' && 'error' in body ? String(body.error) : ''))
+	// 		.catch(() => '');
+	// 	throw new Error(reason || `Connection list failed: HTTP ${res.status}`);
+	// }
+	//
+	// return res.json();
+	// OLD CODE END
+	return (await getJson(`/api/traffic/connections${query}`, 'Connection list')) as ConnectionsResponse;
 }
 
 /**

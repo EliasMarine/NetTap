@@ -70,6 +70,11 @@ describe('Domain page', () => {
 		expect(screen.getByText('DNS lookups per hour · last 24 hours')).toBeInTheDocument();
 		// every TLS session counts here; Certificates counts only those that sent one
 		expect(screen.getByText(/so its figures can be lower/)).toBeInTheDocument();
+		// the TLS lists include excluded devices, unlike the DNS figures
+		expect(screen.getByText(/the TLS sessions and devices here include\s+them/)).toBeInTheDocument();
+		// links to pages with their own window carry this one
+		expect(within(card('Alerts tagged with this name')).getByRole('link', { name: /Open alerts/ })).toHaveAttribute('href', '/alerts?range=24h');
+		expect(new URL(screen.getByRole('link', { name: /Search Log Explorer for/ }).getAttribute('href')!, 'http://x').searchParams.get('range')).toBe('24h');
 		const alerts = card('Alerts tagged with this name');
 		expect(alerts).toHaveTextContent('1');
 		expect(alerts).toHaveTextContent('Only 12 of 57 alerts in this window carry a host name.');
