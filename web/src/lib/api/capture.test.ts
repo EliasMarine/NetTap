@@ -10,20 +10,81 @@ import {
 	updateCaptureSettings,
 	captureState,
 	formatLossPct,
-	packetsLost,
+	lossWords,
+	windowWords,
+	type LossWindow,
 } from './capture';
 
 // S9: one total-loss count (kernel drops + NIC misses) behind every zero-loss claim
 describe('packet loss', () => {
-	it('counts NIC misses as well as kernel drops', () => {
-		expect(packetsLost({ rx_dropped: 0, rx_missed_errors: 50 })).toBe(50);
-		expect(packetsLost({ rx_dropped: 7, rx_missed_errors: 3 })).toBe(10);
-	});
+	// OLD CODE START — NET-167: packetsLost is gone; the daemon's loss_window counts NIC misses
+	// it('counts NIC misses as well as kernel drops', () => {
+	// 	expect(packetsLost({ rx_dropped: 0, rx_missed_errors: 50 })).toBe(50);
+	// 	expect(packetsLost({ rx_dropped: 7, rx_missed_errors: 3 })).toBe(10);
+	// });
+	// OLD CODE END
 
 	it('never rounds a real loss down to 0', () => {
 		expect(formatLossPct(0.0000001, 1)).toBe('< 0.01%');
 		expect(formatLossPct(0, 0)).toBe('0.00%');
 		expect(formatLossPct(0.42, 900)).toBe('0.42%');
+	});
+});
+
+// NET-167: loss over a recent window, not since the counters reset
+const lossWindow = (window: LossWindow['window'], state: LossWindow['state'] = 'ok'): LossWindow => ({
+	state,
+	interface: 'br0',
+	window,
+	cumulative: { arrived: 5_000_000, lost: 900, drop_rate_pct: 0.018 },
+});
+
+describe('windowWords', () => {
+	it('says whole minutes rounded down, so the span is never overstated', () => {
+		expect(windowWords(3480)).toBe('last 58 min');
+		expect(windowWords(3539)).toBe('last 58 min');
+		expect(windowWords(60)).toBe('last 1 min');
+		expect(windowWords(3600)).toBe('last 60 min');
+	});
+});
+
+describe('lossWords', () => {
+	it('reads a loss over 0.1 % as failing, with the window and the count', () => {
+		expect(lossWords(lossWindow({ seconds: 3480, arrived: 293_810, lost: 1_234, drop_rate_pct: 0.42 }))).toEqual({
+			status: 'failing',
+			detail: '0.42% lost in the last 58 min · 1,234 packets',
+			pct: '0.42%',
+		});
+	});
+
+	it('reads a loss at or under 0.1 % as ok, and a tiny loss never as 0', () => {
+		expect(lossWords(lossWindow({ seconds: 3480, arrived: 1_000_000, lost: 1_000, drop_rate_pct: 0.1 })).status).toBe('ok');
+		expect(lossWords(lossWindow({ seconds: 3480, arrived: 98_765, lost: 12, drop_rate_pct: 0.00001 }))).toEqual({
+			status: 'ok',
+			detail: '< 0.01% lost in the last 58 min · 12 packets',
+			pct: '< 0.01%',
+		});
+	});
+
+	it('says no packets were lost, with how many arrived', () => {
+		expect(lossWords(lossWindow({ seconds: 3480, arrived: 98_765, lost: 0, drop_rate_pct: 0 }))).toEqual({
+			status: 'ok',
+			detail: 'No packets lost in the last 58 min · 98,765 received',
+			pct: '0.00%',
+		});
+	});
+
+	it('never shows a percentage when nothing arrived', () => {
+		expect(lossWords(lossWindow({ seconds: 3480, arrived: 0, lost: 0, drop_rate_pct: null }))).toEqual({
+			status: 'unknown',
+			detail: 'No packets in the last 58 min',
+			pct: null,
+		});
+	});
+
+	it('says when it is still measuring, or the counters are unavailable', () => {
+		expect(lossWords(lossWindow(null, 'measuring'))).toEqual({ status: 'unknown', detail: 'Measuring recent loss…', pct: null });
+		expect(lossWords(lossWindow(null, 'unavailable'))).toEqual({ status: 'unknown', detail: 'Loss counters unavailable', pct: null });
 	});
 });
 
@@ -228,6 +289,60 @@ describe('capture API client', () => {
 			mockFetchFailure(500);
 
 			await expect(getCaptureStats()).rejects.toThrow('HTTP 500');
+		});
+
+		// NET-167: a missing or malformed loss_window reads as unavailable, never as 0 loss
+		const UNAVAILABLE = { state: 'unavailable', interface: null, window: null, cumulative: null };
+		const GOOD = {
+			state: 'ok',
+			interface: 'br0',
+			window: { seconds: 3480, arrived: 98_765, lost: 12, drop_rate_pct: 0.01215 },
+			cumulative: { arrived: 123_456_789, lost: 345, drop_rate_pct: 0.000279 },
+		};
+		const lossWindowOf = async (loss_window: unknown) => {
+			mockFetchSuccess({ capture_interface: 'br0', drop_rate_pct: 0, loss_window });
+			return (await getCaptureStats()).loss_window;
+		};
+
+		it('keeps a well-formed loss_window, including measuring and a null rate', async () => {
+			expect(await lossWindowOf(GOOD)).toEqual(GOOD);
+			const measuring = { state: 'measuring', interface: 'br0', window: null, cumulative: { arrived: 0, lost: 0, drop_rate_pct: null } };
+			expect(await lossWindowOf(measuring)).toEqual(measuring);
+		});
+
+		it('reads an old daemon with no loss_window as unavailable', async () => {
+			mockFetchSuccess({ capture_interface: 'br0', rx_dropped: 0, rx_missed_errors: 0, drop_rate_pct: 0 });
+			const result = await getCaptureStats();
+			expect(result.loss_window).toEqual(UNAVAILABLE);
+			expect(result.capture_interface).toBe('br0');
+		});
+
+		it('reads a malformed window as unavailable', async () => {
+			for (const window of [
+				{ ...GOOD.window, lost: '12' },
+				{ ...GOOD.window, arrived: -1 },
+				{ ...GOOD.window, drop_rate_pct: undefined },
+				{ ...GOOD.window, seconds: 30 },
+				{ ...GOOD.window, seconds: undefined },
+				null, // state ok needs a window
+				'3480',
+			]) {
+				expect(await lossWindowOf({ ...GOOD, window })).toEqual(UNAVAILABLE);
+			}
+			// a window that state says isn't there
+			expect(await lossWindowOf({ ...GOOD, state: 'measuring' })).toEqual(UNAVAILABLE);
+		});
+
+		it('reads a malformed cumulative block as unavailable', async () => {
+			for (const cumulative of [{ arrived: 10, lost: Number.NaN, drop_rate_pct: null }, { arrived: 10 }, undefined, 0]) {
+				expect(await lossWindowOf({ ...GOOD, cumulative })).toEqual(UNAVAILABLE);
+			}
+		});
+
+		it('reads an unknown state or a non-string interface as unavailable', async () => {
+			expect(await lossWindowOf({ ...GOOD, state: 'fine' })).toEqual(UNAVAILABLE);
+			expect(await lossWindowOf({ ...GOOD, interface: 7 })).toEqual(UNAVAILABLE);
+			expect(await lossWindowOf('ok')).toEqual(UNAVAILABLE);
 		});
 
 		it('throws on network error', async () => {

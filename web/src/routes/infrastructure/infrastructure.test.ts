@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, within } from '@testing-library/svelte';
+import { cleanup, render, screen, within } from '@testing-library/svelte';
+import { LOSS_SCOPE } from '$api/capture';
 import InfrastructurePage from './+page.svelte';
 
 /** A capture-pipeline stage by its label (the strip replaced the clickable topology nodes). */
@@ -356,6 +357,12 @@ describe('Infrastructure figures', () => {
 		'/api/capture/stats': {
 			capture_interface: 'enp4s0', drop_rate_pct: 0.0000099, rx_packets: 101_000_000, tx_packets: 0, rx_dropped: 0,
 			rx_missed_errors: 10, link_speed_mbps: 1000,
+			// NET-167: the loss figures read this validated block, not the rx_* counters above
+			loss_window: {
+				state: 'ok', interface: 'enp4s0',
+				window: { seconds: 3480, arrived: 101_000_010, lost: 10, drop_rate_pct: 0.0000099 },
+				cumulative: { arrived: 101_000_010, lost: 10, drop_rate_pct: 0.0000099 },
+			},
 		},
 		'/api/system/health': { uptime: 7200, status: 'healthy', healthy: true, opensearch_reachable: true },
 		'/api/bridge/health': {
@@ -388,7 +395,8 @@ describe('Infrastructure figures', () => {
 
 		const kpi = screen.getByText('Packet loss', { selector: '.kpi-top span' }).closest('.kpi') as HTMLElement;
 		expect(within(kpi).getByText('< 0.01%')).toBeInTheDocument();
-		expect(within(kpi).getByText('Cumulative kernel interface counters; reset time unknown')).toBeInTheDocument();
+		// OLD CODE: expect(within(kpi).getByText('Cumulative kernel interface counters; reset time unknown')).toBeInTheDocument();
+		expect(within(kpi).getByText('< 0.01% lost in the last 58 min · 10 packets')).toBeInTheDocument();
 		expect(within(card('Packet capture')).getByText('10 · < 0.01%')).toBeInTheDocument();
 		expect(within(stage('Capture')).getByText(/< 0\.01% lost/)).toBeInTheDocument();
 	});
@@ -476,5 +484,158 @@ describe('Infrastructure bridge latency', () => {
 		const card = await latencyCard();
 
 		expect(card.textContent?.replace(/\s+/g, '')).toBe('Latency1.5ms');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// NET-167: packet loss over the last hour; the cumulative count is a labelled secondary
+// ---------------------------------------------------------------------------
+
+describe('Infrastructure packet loss window', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const QUIET = { seconds: 3480, arrived: 98_765, lost: 0, drop_rate_pct: 0 };
+	const CUMULATIVE = { arrived: 123_456_789, lost: 345, drop_rate_pct: 0.000279 };
+	const lossWindow = (over: Record<string, unknown> = {}) => ({
+		state: 'ok', interface: 'br0', window: QUIET, cumulative: CUMULATIVE, ...over,
+	});
+	const statsWith = (loss_window?: unknown) => ({
+		capture_interface: 'br0', drop_rate_pct: 0, rx_packets: 1, tx_packets: 1, rx_dropped: 0, rx_missed_errors: 0,
+		link_speed_mbps: 1000, ...(loss_window === undefined ? {} : { loss_window }),
+	});
+	const BRIDGE = { bridge_state: 'up', wan_link: true, lan_link: true, bypass_active: false, latency_us: 100, uptime_seconds: 60, issues: [] };
+	const HEALTH = { mode: 'bridge', status: 'normal', capture_interface: 'br0', link_up: true, promisc_enabled: true, issues: [] };
+
+	const readings = (stats: unknown, over: Record<string, unknown> = {}) => ({
+		'/api/capture/mode': { mode: 'bridge', interface: '' },
+		'/api/capture/stats': stats,
+		'/api/capture/health': HEALTH,
+		'/api/bridge/health': BRIDGE,
+		...over,
+	});
+
+	/** Answers by path; a function decides per call, and undefined is a failed request. */
+	function stubFetch(replies: Record<string, unknown>) {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const reply = replies[url.split('?')[0]];
+				const body = typeof reply === 'function' ? reply() : reply;
+				return body === undefined
+					? { ok: false, status: 503, json: async () => ({}) }
+					: { ok: true, status: 200, json: async () => body };
+			}),
+		);
+	}
+
+	async function renderPage() {
+		render(InfrastructurePage);
+		await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/capture/stats'));
+		await new Promise((r) => setTimeout(r, 0));
+	}
+
+	async function refresh() {
+		const { refreshPage } = await import('$lib/stores/pageRefresh');
+		await new Promise((r) => setTimeout(r, 5));
+		await refreshPage();
+	}
+
+	const kpi = () => screen.getByText('Packet loss', { selector: '.kpi-top span' }).closest('.kpi') as HTMLElement;
+	const kpiValue = () => kpi().querySelector('.kpi-num')?.textContent;
+	const captureStatus = () => within(stage('Capture')).getByRole('img').getAttribute('aria-label');
+	const lostSinceReset = () =>
+		within(card('Packet capture')).getByText('Packets lost since the counters reset').nextElementSibling?.textContent?.trim();
+
+	it.each([
+		['a loss over 0.1 %', lossWindow({ window: { seconds: 3480, arrived: 293_810, lost: 1_234, drop_rate_pct: 0.42 } }), '0.42%', '0.42% lost in the last 58 min · 1,234 packets'],
+		['no loss', lossWindow(), '0.00%', 'No packets lost in the last 58 min · 98,765 received'],
+		['no arrivals', lossWindow({ window: { seconds: 3480, arrived: 0, lost: 0, drop_rate_pct: null } }), '--', 'No packets in the last 58 min'],
+		['measuring', lossWindow({ state: 'measuring', window: null }), '--', 'Measuring recent loss…'],
+		['an old daemon with no loss_window', undefined, '--', 'Loss counters unavailable'],
+	])('Packet loss KPI: %s', async (_case, loss_window, value, sub) => {
+		stubFetch(readings(statsWith(loss_window)));
+		await renderPage();
+
+		expect(kpiValue()).toBe(value);
+		expect(within(kpi()).getByText(sub)).toBeInTheDocument();
+		// a percentage only shows when the window has one
+		if (value === '--') expect(kpi().textContent).not.toMatch(/%/);
+	});
+
+	it('a failed refresh reads the loss as unavailable, not the old window; the next good one shows the new window', async () => {
+		let reply: unknown = statsWith(lossWindow());
+		stubFetch(readings(() => reply));
+		await renderPage();
+		expect(within(kpi()).getByText('No packets lost in the last 58 min · 98,765 received')).toBeInTheDocument();
+		expect(lostSinceReset()).toBe('345 · < 0.01%');
+
+		reply = undefined;
+		await refresh();
+		expect(kpiValue()).toBe('--');
+		expect(within(kpi()).getByText("Couldn't refresh the loss figures")).toBeInTheDocument();
+		expect(within(stage('Capture')).getByText(/Couldn't refresh the loss figures/)).toBeInTheDocument();
+		expect(screen.queryAllByText(/last 58 min/)).toHaveLength(0);
+		expect(lostSinceReset()).toBe('Unavailable');
+		// the rest of the card keeps its last good reading
+		expect(within(card('Packet capture')).getByText('RX packets').nextElementSibling?.textContent).toBe('1');
+
+		reply = statsWith(lossWindow({ window: { seconds: 3540, arrived: 120_000, lost: 0, drop_rate_pct: 0 } }));
+		await refresh();
+		expect(within(kpi()).getByText('No packets lost in the last 59 min · 120,000 received')).toBeInTheDocument();
+		expect(lostSinceReset()).toBe('345 · < 0.01%');
+	});
+
+	it('capture stage: a loss over 0.1 % turns an ok stage failing', async () => {
+		stubFetch(readings(statsWith(lossWindow({ window: { seconds: 3480, arrived: 293_810, lost: 1_234, drop_rate_pct: 0.42 } }))));
+		await renderPage();
+		expect(captureStatus()).toBe('Failing');
+		expect(within(stage('Capture')).getByText('Promiscuous · 0.42% lost in the last 58 min · 1,234 packets')).toBeInTheDocument();
+	});
+
+	it('capture stage: a healthy window never turns bypass ok', async () => {
+		stubFetch(readings(statsWith(lossWindow()), { '/api/bridge/health': { ...BRIDGE, bypass_active: true } }));
+		await renderPage();
+		expect(captureStatus()).toBe('Failing');
+		expect(within(stage('Capture')).getByText('Bypass · No packets lost in the last 58 min · 98,765 received')).toBeInTheDocument();
+	});
+
+	it('capture stage: a healthy window never turns promiscuous-off ok', async () => {
+		stubFetch(
+			readings(statsWith(lossWindow({ interface: 'enp4s0' })), {
+				'/api/capture/mode': { mode: 'mirror', interface: 'enp4s0' },
+				'/api/capture/health': { ...HEALTH, mode: 'mirror', capture_interface: 'enp4s0', promisc_enabled: false },
+			}),
+		);
+		await renderPage();
+		expect(captureStatus()).toBe('Failing');
+		expect(within(stage('Capture')).getByText('Not promiscuous · No packets lost in the last 58 min · 98,765 received')).toBeInTheDocument();
+	});
+
+	it('capture stage: a healthy window and a healthy bridge stay ok', async () => {
+		stubFetch(readings(statsWith(lossWindow())));
+		await renderPage();
+		expect(captureStatus()).toBe('Healthy');
+	});
+
+	it('details: the validated count since the counters reset, its rate only when there is one, else Unavailable', async () => {
+		stubFetch(readings(statsWith(lossWindow())));
+		await renderPage();
+		const label = within(card('Packet capture')).getByText('Packets lost since the counters reset');
+		expect(label).toHaveAttribute('title', LOSS_SCOPE);
+		expect(lostSinceReset()).toBe('345 · < 0.01%');
+		cleanup();
+
+		// lost > arrived: the daemon sends no rate, and the page makes none up
+		stubFetch(readings(statsWith(lossWindow({ cumulative: { arrived: 100, lost: 150, drop_rate_pct: null } }))));
+		await renderPage();
+		expect(lostSinceReset()).toBe('150');
+		cleanup();
+
+		// the rx_* counters read 0 on error, so they never stand in for a missing block
+		stubFetch(readings(statsWith(lossWindow({ state: 'unavailable', window: null, cumulative: null }))));
+		await renderPage();
+		expect(lostSinceReset()).toBe('Unavailable');
 	});
 });

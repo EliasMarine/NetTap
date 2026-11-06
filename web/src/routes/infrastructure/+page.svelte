@@ -11,7 +11,8 @@
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { getBridgeHealth } from '$api/bridge.js';
-	import { getCaptureStats, getCaptureMode, getCaptureHealth, formatLossPct, packetsLost, LOSS_SCOPE } from '$api/capture';
+	// OLD CODE: import { …, formatLossPct, packetsLost, LOSS_SCOPE } (NET-167: loss figures read the daemon's loss_window)
+	import { getCaptureStats, getCaptureMode, getCaptureHealth, formatLossPct, lossWords, LOSS_SCOPE, type LossWords } from '$api/capture';
 	import { getSystemHealth, getStorageStatus } from '$api/system.js';
 	import {
 		getOpenSearchCluster,
@@ -874,11 +875,29 @@
 		return bridgeHealth.latency_us / 1000;
 	});
 
-	let dropRate = $derived.by(() => {
-		return captureStats?.drop_rate_pct ?? 0;
+	// OLD CODE START — NET-167: cumulative counters the managers read as 0 on error; a burst days ago
+	// never left these figures
+	// let dropRate = $derived.by(() => {
+	// 	return captureStats?.drop_rate_pct ?? 0;
+	// });
+	// // S9: kernel drops + NIC misses, the count every loss figure on the page reads
+	// let lost = $derived(captureStats ? packetsLost(captureStats) : 0);
+	// OLD CODE END
+	// NET-167: the loss figures come from the latest capture-stats request only. A failed refresh keeps
+	// the other counters (settle's keep-last-good) but must not leave the old "last 58 min" standing.
+	const statsRefreshFailed = $derived(failedSources['capture counters'] === true);
+	const LOSS_REFRESH_FAILED: LossWords = { status: 'unknown', detail: "Couldn't refresh the loss figures", pct: null };
+	const loss = $derived(!captureStats ? null : statsRefreshFailed ? LOSS_REFRESH_FAILED : lossWords(captureStats.loss_window));
+	/** The validated count since the counters last reset, with its rate only when there is one. */
+	const cumulativeLoss = $derived.by(() => {
+		const c = statsRefreshFailed ? null : captureStats?.loss_window.cumulative;
+		if (!c) return null;
+		if (c.drop_rate_pct == null) return { text: formatNumber(c.lost), tone: 'none' as const };
+		return {
+			text: `${formatNumber(c.lost)} · ${formatLossPct(c.drop_rate_pct, c.lost)}`,
+			tone: c.drop_rate_pct < 1 ? ('ok' as const) : ('medium' as const),
+		};
 	});
-	// S9: kernel drops + NIC misses, the count every loss figure on the page reads
-	let lost = $derived(captureStats ? packetsLost(captureStats) : 0);
 
 	// OLD CODE START — 2026-11-06 (S4): fell back to the bridge's time since its last state change,
 	// shown as "NetTap up"
@@ -921,9 +940,17 @@
 		return { status: bridgeHealth.bridge_state === 'up' ? 'ok' : 'failing', detail: `br0 ${state} · ${links}` };
 	}
 
+	/** NET-167: loss over 0.1 % can turn an ok capture stage failing, never the reverse. */
 	function captureStage(): StageState {
+		const own = captureOwnStage();
+		return own.status === 'ok' && loss?.status === 'failing' ? { ...own, status: 'failing' } : own;
+	}
+
+	/** The stage from its own reading: bypass, promiscuous off or no reading decide it whatever the loss says. */
+	function captureOwnStage(): StageState {
 		// OLD CODE: ` · ${dropRate.toFixed(2)}% dropped` (S9: kernel drops only, and a tiny loss read 0.00%)
-		const drop = captureStats ? ` · ${formatLossPct(dropRate, lost)} lost` : '';
+		// OLD CODE: ` · ${formatLossPct(dropRate, lost)} lost` (NET-167: since the counters reset, not recent)
+		const drop = loss ? ` · ${loss.detail}` : '';
 		if (isMirror || isGateway) {
 			if (!captureHealth) return { status: 'unknown', detail: NO_READING + drop };
 			return captureHealth.promisc_enabled
@@ -1267,13 +1294,11 @@
 	<!-- OLD CODE START — 2026-11-06 (S9): kernel drops only, rounded to 0.00, no scope
 	<KpiCard class="c-3" label="Drop rate" icon="pcap" value={captureStats ? dropRate.toFixed(2) : '--'} unit={captureStats ? '%' : undefined} />
 	OLD CODE END -->
-	<KpiCard
-		class="c-3"
-		label="Packet loss"
-		icon="pcap"
-		value={captureStats ? formatLossPct(dropRate, lost) : '--'}
-		sub={captureStats ? LOSS_SCOPE : undefined}
-	/>
+	<!-- OLD CODE START — NET-167: the cumulative rate, labelled with LOSS_SCOPE
+	<KpiCard class="c-3" label="Packet loss" icon="pcap" value={captureStats ? formatLossPct(dropRate, lost) : '--'} sub={captureStats ? LOSS_SCOPE : undefined} />
+	OLD CODE END -->
+	<!-- a percentage only when the window has one: zero arrivals or no window never reads 0% -->
+	<KpiCard class="c-3" label="Packet loss" icon="pcap" value={loss?.pct ?? '--'} sub={loss?.detail} />
 	{#if bridgeHealth && bridgeHealth.latency_us == null}
 		<KpiCard class="c-3" label="Latency" icon="live" value="Not measured" sub={bridgeHealth.latency_note || undefined} />
 	{:else}
@@ -1398,8 +1423,12 @@
 				<dt>TX packets</dt>
 				<dd class="num">{formatNumber(captureStats?.tx_packets)}</dd>
 				<!-- OLD CODE: Drop rate = `${dropRate.toFixed(2)}%` (S9: kernel drops only) -->
+				<!-- OLD CODE START — NET-167: the managers' rx_* counters, which read 0 when unreadable
 				<dt title={LOSS_SCOPE}>Packets lost</dt>
 				<dd>{#if captureStats}{@render word(`${formatNumber(lost)} · ${formatLossPct(dropRate, lost)}`, dropRate < 1 ? 'ok' : 'medium')}{:else}--{/if}</dd>
+				OLD CODE END -->
+				<dt title={LOSS_SCOPE}>Packets lost since the counters reset</dt>
+				<dd>{#if cumulativeLoss}{@render word(cumulativeLoss.text, cumulativeLoss.tone)}{:else}Unavailable{/if}</dd>
 				<dt>Link speed</dt>
 				<dd class="num">
 					{captureStats && captureStats.link_speed_mbps > 0 ? `${formatNumber(captureStats.link_speed_mbps)} Mbps` : '--'}
