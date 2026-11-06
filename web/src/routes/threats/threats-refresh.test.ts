@@ -98,7 +98,8 @@ describe('Threats page — card states', () => {
 		render(ThreatsPage);
 		await vi.waitFor(() => expect(screen.getByText('No active kill chains')).toBeInTheDocument());
 		for (const title of [
-			'No threat intel indicators loaded',
+			// OLD CODE START: 'No threat intel indicators loaded', (I7: the card counts the window's matches) OLD CODE END
+			'No threat intel matches',
 			'No beaconing patterns detected.',
 			'No DNS anomalies detected.',
 			'No lateral movement detected.',
@@ -256,3 +257,51 @@ describe('Threats page — refresh contract', () => {
 		expect(await refreshPage()).toBe('skipped');
 	});
 });
+
+// Accuracy audit 2026-11-06
+describe('Threats page — what the figures count', () => {
+	it('says the alert events need attention and how many informational ones are left out (I8)', async () => {
+		vi.mocked(getThreatReport).mockResolvedValue({ ...FULL, summary: { ...FULL.summary, informational_events: 83_490 } });
+		vi.mocked(getThreatIntel).mockResolvedValue(INTEL);
+		render(ThreatsPage);
+		await vi.waitFor(() =>
+			expect(screen.getByText('1.5K alert events need attention · 83.5K informational not counted. NetTap found 2 investigations.')).toBeInTheDocument(),
+		);
+		expect(screen.queryByText(/Suricata generated/)).not.toBeInTheDocument();
+	});
+
+	it('shows the matches seen in the window, and an unavailable state when the scan fails (I7)', async () => {
+		vi.mocked(getThreatReport).mockResolvedValue(FULL);
+		vi.mocked(getThreatIntel).mockResolvedValue({
+			...NO_INTEL,
+			feeds: { et_compromised: { label: 'ET Compromised IPs', indicator_count: 3 }, feodo: { label: 'Abuse.ch Feodo', indicator_count: 0 } },
+			total_indicators: 3,
+		});
+		const { unmount } = render(ThreatsPage);
+		await vi.waitFor(() => expect(screen.getByText('ET Compromised IPs')).toBeInTheDocument());
+		expect(screen.queryByText('Abuse.ch Feodo')).not.toBeInTheDocument();
+		expect(screen.getByText(/^Listed internet addresses seen in alerts · /)).toBeInTheDocument();
+		unmount();
+
+		vi.mocked(getThreatIntel).mockRejectedValue(new Error('HTTP 500'));
+		render(ThreatsPage);
+		await vi.waitFor(() => expect(screen.getByText('Threat intel unavailable')).toBeInTheDocument());
+	});
+});
+
+describe('Threats page — investigation profiles (I14)', () => {
+	it("says a host profile counts the connections it started, not every connection", async () => {
+		const [first, ...rest] = FULL.investigations;
+		const destination_profile = { ip: '203.0.113.45', connection_count_24h: 0, unique_destinations: 0, total_bytes_24h: 0 };
+		vi.mocked(getThreatReport).mockResolvedValue({
+			...FULL,
+			investigations: [{ ...first, sections: { ...first.sections, destination_profile } }, ...rest],
+		});
+		vi.mocked(getThreatIntel).mockResolvedValue(INTEL);
+		render(ThreatsPage);
+		await vi.waitFor(() => expect(screen.getByText('Destination host profile')).toBeInTheDocument());
+		expect(screen.getAllByText('Connections it started (24h)')).toHaveLength(2);
+		expect(screen.queryByText('Connections (24h)')).not.toBeInTheDocument();
+	});
+});
+

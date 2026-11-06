@@ -263,6 +263,82 @@ describe('Live feed motion', () => {
 	});
 });
 
+describe('Live figures (accuracy audit 2026-11-06)', () => {
+	/** The protocol donut's legend rows: label, count, share. */
+	const legend = (container: HTMLElement) =>
+		[...container.querySelectorAll('.kv li')].map((li) => [...li.querySelectorAll('span, b')].map((el) => el.textContent?.trim()).filter(Boolean));
+
+	it("O2: the Dir column is the daemon's direction, not a port guess", async () => {
+		vi.mocked(getLiveDashboard).mockResolvedValue(
+			dashboard([
+				// a LAN device's WireGuard session: port 51820 read "IN" under the old guess
+				conn(1, '192.168.1.20', 'NL', 'udp', { dest_port: 51820, direction: 'out' }),
+				conn(2, '192.168.1.21', 'DE', 'udp', { direction: 'local' }),
+				conn(3, '192.168.1.22', 'DE', 'tcp'),
+			]),
+		);
+		await renderLive();
+		const dirs = screen.getAllByRole('row').slice(1).map((r) => r.querySelectorAll('td')[2]?.textContent?.trim());
+		expect(dirs).toEqual(['Unknown', 'Local', 'Out']);
+	});
+
+	it('O6: the legend shows counts and shares; other and unknown show only above 0 and are never pills', async () => {
+		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard(CONNECTIONS, { protocols: { tcp: 30, udp: 8, icmp: 0, other: 2, unknown: 0 } }));
+		const { container } = await renderLive();
+		expect(legend(container)).toEqual([
+			['TCP', '30', '75%'],
+			['UDP', '8', '20%'],
+			['Other', '2', '5%'],
+		]);
+		const pills = within(screen.getByRole('group', { name: 'Protocol' })).getAllByRole('button').map((b) => b.textContent?.trim());
+		expect(pills).toEqual(['All', 'TCP', 'UDP']);
+	});
+
+	it('O7: with a filter on, top talkers and protocols come from the daemon with that filter', async () => {
+		const { container } = await renderLive();
+		vi.mocked(getLiveDashboard).mockImplementation(async (opts) =>
+			opts?.proto === 'udp'
+				? dashboard([], {
+						protocols: { tcp: 0, udp: 25, icmp: 0, other: 0, unknown: 0 },
+						stats: { ...dashboard().stats, connections_in_window: 25 },
+						top_talkers: [{ ip: '192.168.1.77', bytes: 5000, connections: 25 }],
+					})
+				: dashboard(),
+		);
+		await fireEvent.click(protocolPill('UDP'));
+		await flush();
+		expect(getLiveDashboard).toHaveBeenCalledWith({ country: undefined, proto: 'udp', device: undefined, limit: 1 });
+		// 25 UDP connections in the window, not the 2 UDP rows among the feed's newest
+		expect(legend(container)).toEqual([['UDP', '25', '100%']]);
+		expect(talker(/^192\.168\.1\.77/)).toBeInTheDocument();
+		expect(screen.getByText('Bytes and connections per LAN address · last 5 minutes, filtered')).toBeInTheDocument();
+	});
+
+	it('O7: a failed filtered request says so instead of showing unfiltered figures', async () => {
+		await renderLive();
+		vi.mocked(getLiveDashboard).mockImplementation(async (opts) => {
+			if (opts?.proto) throw new Error('HTTP 503');
+			return dashboard();
+		});
+		await fireEvent.click(protocolPill('UDP'));
+		await flush();
+		expect(screen.getByText("Couldn't load the filtered top talkers: the request failed.")).toBeInTheDocument();
+		expect(screen.getByText("Couldn't load the filtered protocols: the request failed.")).toBeInTheDocument();
+	});
+
+	it("O8: the stat is LAN addresses, not the Devices page's online devices", async () => {
+		await renderLive();
+		expect(screen.getByText('Active addresses (LAN)')).toBeInTheDocument();
+		expect(screen.queryByText('Active devices')).not.toBeInTheDocument();
+	});
+
+	it('O11: bytes use the shared 1024-based units', async () => {
+		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard(CONNECTIONS, { top_talkers: [{ ip: '192.168.1.20', bytes: 1_000_000, connections: 2 }] }));
+		await renderLive();
+		expect(talker(/976\.6 KB · 2 conn/)).toBeInTheDocument();
+	});
+});
+
 describe('Live card states', () => {
 	it('loading: each card says what it is loading', async () => {
 		vi.mocked(getLiveDashboard).mockReturnValue(new Promise(() => {}));

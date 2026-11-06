@@ -34,4 +34,11 @@ describe('device detail / registry proxy', () => {
 		await connections.GET({ params: { ip: '192.168.1.5' }, url } as never);
 		expect(daemonFetch).toHaveBeenCalledWith('/api/devices/192.168.1.5/connections?from=a&to=b&page=2&size=50&sort=dl&order=asc');
 	});
+
+	// NET-158: the page's protocol filter moved to the daemon; dropping it here showed every protocol
+	it("forwards a device's connection protocol filter", async () => {
+		const url = new URL('https://nettap.local/api/devices/192.168.1.5/connections?page=1&sort=direction&proto=udp');
+		await connections.GET({ params: { ip: '192.168.1.5' }, url } as never);
+		expect(daemonFetch).toHaveBeenCalledWith('/api/devices/192.168.1.5/connections?page=1&sort=direction&proto=udp');
+	});
 });

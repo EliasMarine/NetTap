@@ -26,7 +26,10 @@ _HOUR = "2026-11-01T10:00:00.000Z"
 
 
 def _doc(
-    sig: str, src: str = "203.0.113.1", dst: str = "192.168.1.10", sev: int = 2
+    sig: str,
+    src: str = "203.0.113.1",
+    dst: str = "192.168.1.10",
+    sev: int | None = 2,
 ) -> dict:
     return {"sig": sig, "src": src, "dst": dst, "sev": sev}
 
@@ -39,7 +42,9 @@ def _sig_aggs(docs: list[dict], aggs: dict) -> dict:
     """The per-signature sub-aggregations the category handlers ask for."""
     out: dict = {"doc_count": len(docs)}
     if "by_severity" in aggs:
-        out["by_severity"] = {"buckets": _top(Counter(d["sev"] for d in docs), 5)}
+        # a terms aggregation leaves out documents without the field
+        sevs = Counter(d["sev"] for d in docs if d["sev"] is not None)
+        out["by_severity"] = {"buckets": _top(sevs, 5)}
     if "over_time" in aggs:
         out["over_time"] = {
             "buckets": [{"key_as_string": _HOUR, "doc_count": len(docs)}]
@@ -95,16 +100,20 @@ def _timeline(docs: list[dict], body: dict) -> dict:
 
 
 def _ip_page(docs: list[dict], body: dict, comp: dict, sub: dict) -> dict:
-    """Every source or destination IP of the queried signatures, split by severity filter."""
+    """Every source or destination IP of the queried signatures, split by severity: per
+    signature-severity filter (the old shape) or by the alerts' own severity (I4)."""
     field = {"source.ip": "src", "destination.ip": "dst"}[
         comp["sources"][0]["ip"]["terms"]["field"]
     ]
     names = _names(body["query"]["bool"]["filter"][1])
     mine = [d for d in docs if d["sig"] in names]
-    per_sev = sub["sev"]["filters"]["filters"]
 
     def bucket(ip: str) -> dict:
         hits = [d for d in mine if d[field] == ip]
+        if "terms" in sub["sev"]:
+            sevs = Counter(d["sev"] for d in hits if d["sev"] is not None)
+            return {"doc_count": len(hits), "sev": {"buckets": _top(sevs, 10)}}
+        per_sev = sub["sev"]["filters"]["filters"]
         sev = {
             s: {"doc_count": sum(d["sig"] in _names(f) for d in hits)}
             for s, f in per_sev.items()
@@ -249,11 +258,65 @@ def test_category_detail_counts_every_source_and_target():
     assert counts["192.168.1.20"] == 5
 
 
-def test_device_severity_is_the_worst_signature_it_appears_in():
+# OLD CODE START — I4: an address took the worst severity of the signatures it appeared in;
+# it now takes its own alerts' worst (test_address_severity_comes_from_its_own_alerts)
+# def test_device_severity_is_the_worst_signature_it_appears_in():
+#     docs = [
+#         _doc("ET TROJAN Zeus", src="192.168.1.20", sev=1),
+#         _doc("ET DROP Dshield Block Listed Source", src="192.168.1.20", sev=3),
+#         _doc("ET DROP Dshield Block Listed Source", src="192.168.1.30", sev=3),
+#     ]
+#     body = _get(
+#         handle_alert_category_detail,
+#         _fake_client(docs),
+#         "/api/alerts/categories/malware_c2",
+#         "malware_c2",
+#     )
+#     severity = {d["ip"]: d["severity"] for d in body["affected_devices"]}
+#     by_sig = {s["signature"]: s["severity_label"] for s in body["top_signatures"]}
+#     worst = min(
+#         by_sig.values(), key=["critical", "high", "medium", "low", "info"].index
+#     )
+#
+#     assert severity["192.168.1.20"] == worst
+#     assert severity["192.168.1.30"] == by_sig["ET DROP Dshield Block Listed Source"]
+#     assert severity["192.168.1.10"] == worst  # the target of both
+# OLD CODE END
+
+
+def test_category_severity_is_suricatas_raw_severity_with_an_info_bucket():
+    """I4: the category pages showed NetTap's regraded scale (Suricata 1 read as "high" via
+    2, overrides as "critical"); the tiles, list and Home show Suricata's 1/2/3."""
     docs = [
-        _doc("ET TROJAN Zeus", src="192.168.1.20", sev=1),
-        _doc("ET DROP Dshield Block Listed Source", src="192.168.1.20", sev=3),
-        _doc("ET DROP Dshield Block Listed Source", src="192.168.1.30", sev=3),
+        _doc("ET TROJAN Zeus", sev=1),
+        _doc("ET TROJAN Zeus", sev=2),
+        _doc("ET TROJAN Zeus", sev=3),
+        _doc("ET TROJAN Zeus", sev=None),
+    ]
+    detail = _get(
+        handle_alert_category_detail,
+        _fake_client(docs),
+        "/api/alerts/categories/malware_c2",
+        "malware_c2",
+    )
+    listed = _get(
+        handle_alerts_categories, _fake_client(docs), "/api/alerts/categories"
+    )
+    raw = {"high": 1, "medium": 1, "low": 1, "info": 1}
+    assert detail["severity_breakdown"] == raw
+    assert {c["id"]: c for c in listed["categories"]}["malware_c2"][
+        "severity_breakdown"
+    ] == raw
+
+
+def test_address_severity_comes_from_its_own_alerts():
+    """I4: one signature at mixed severities across addresses, and one without a severity."""
+    sig = "ET DROP Dshield Block Listed Source"
+    docs = [
+        _doc(sig, src="198.51.100.1", dst="192.168.1.20", sev=1),
+        _doc(sig, src="198.51.100.2", dst="192.168.1.30", sev=3),
+        _doc(sig, src="198.51.100.2", dst="192.168.1.30", sev=3),
+        _doc(sig, src="198.51.100.3", dst="192.168.1.40", sev=None),
     ]
     body = _get(
         handle_alert_category_detail,
@@ -262,11 +325,9 @@ def test_device_severity_is_the_worst_signature_it_appears_in():
         "malware_c2",
     )
     severity = {d["ip"]: d["severity"] for d in body["affected_devices"]}
-    by_sig = {s["signature"]: s["severity_label"] for s in body["top_signatures"]}
-    worst = min(
-        by_sig.values(), key=["critical", "high", "medium", "low", "info"].index
-    )
 
-    assert severity["192.168.1.20"] == worst
-    assert severity["192.168.1.30"] == by_sig["ET DROP Dshield Block Listed Source"]
-    assert severity["192.168.1.10"] == worst  # the target of both
+    assert severity["192.168.1.20"] == "high"
+    assert severity["198.51.100.1"] == "high"
+    assert severity["192.168.1.30"] == "low"  # was "high", from the signature's worst
+    assert severity["192.168.1.40"] == "info"
+    assert body["top_signatures"][0]["severity_label"] == "low"  # its most common

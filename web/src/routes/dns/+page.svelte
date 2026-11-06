@@ -111,6 +111,10 @@
 	let selectedDeviceIp = $state('');
 	let deviceDns = $state<DeviceDnsEntry[]>([]);
 	let deviceLoading = $state(false);
+	// Only the newest lookup writes the table, so a slower answer for the last range never wins (I13)
+	let deviceLookupSeq = 0;
+	/** The daemon lists at most this many domains per device (its terms size). */
+	const DEVICE_DOMAIN_CAP = 200;
 
 	// Interaction state
 	let selectedDomain = $state<string | null>(null);
@@ -340,23 +344,47 @@
 		return outcome(results);
 	}
 
+	// OLD CODE START — I13: no guard, so the last range's slower answer could overwrite this range's
+	// async function lookupDevice() {
+	// 	const ip = deviceIpInput.trim() || selectedDeviceIp;
+	// 	if (!ip) return;
+	//
+	// 	deviceLoading = true;
+	// 	selectedDeviceIp = ip;
+	// 	const { from, to } = getTimeRange();
+	//
+	// 	try {
+	// 		const result = await getDeviceDns(ip, { from, to });
+	// 		deviceDns = result.domains;
+	// 		deviceDnsFailed = false;
+	// 	} catch {
+	// 		deviceDns = [];
+	// 		deviceDnsFailed = true;
+	// 	} finally {
+	// 		deviceLoading = false;
+	// 	}
+	// }
+	// OLD CODE END
 	async function lookupDevice() {
 		const ip = deviceIpInput.trim() || selectedDeviceIp;
 		if (!ip) return;
 
+		const seq = ++deviceLookupSeq;
 		deviceLoading = true;
 		selectedDeviceIp = ip;
 		const { from, to } = getTimeRange();
 
 		try {
 			const result = await getDeviceDns(ip, { from, to });
+			if (seq !== deviceLookupSeq) return;
 			deviceDns = result.domains;
 			deviceDnsFailed = false;
 		} catch {
+			if (seq !== deviceLookupSeq) return;
 			deviceDns = [];
 			deviceDnsFailed = true;
 		} finally {
-			deviceLoading = false;
+			if (seq === deviceLookupSeq) deviceLoading = false;
 		}
 	}
 
@@ -419,6 +447,9 @@
 		queryTypes = [];
 		timeline = [];
 		suspicious = [];
+		// I13: the device table kept the last range's domains under this range's label
+		deviceDns = [];
+		if (selectedDeviceIp) lookupDevice();
 		// OLD CODE START — PLAN §5.5: the guard drops the older range's load, so always reload
 		// if (initialized) fetchAll();
 		// OLD CODE END
@@ -707,8 +738,17 @@
 				rowLabel={(e) => `Select ${e.domain}`}
 				selectedKey={selectedDomain ?? undefined}
 			/>
+			<!-- OLD CODE START — I13: at the daemon's 200 cap, "of 200" read as the device's total
 			{#if deviceDns.length > 50}
 				<p class="tbl-foot">Showing 50 of {deviceDns.length} domains</p>
+			{/if}
+			OLD CODE END -->
+			{#if deviceDns.length > 50}
+				<p class="tbl-foot">
+					{deviceDns.length >= DEVICE_DOMAIN_CAP
+						? `Showing 50 of the ${DEVICE_DOMAIN_CAP} most looked-up domains`
+						: `Showing 50 of ${deviceDns.length} domains`}
+				</p>
 			{/if}
 		{/if}
 	</Card>

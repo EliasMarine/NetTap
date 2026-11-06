@@ -419,19 +419,31 @@
 			<KVRow label="Protocol" value={proto?.toUpperCase()} />
 			<KVRow label="Service" value={service} />
 			<KVRow label="Duration" value={formatDuration(duration)} mono />
+			<!-- OLD CODE START — I3: orig is what the source sent, so "in"/"out" were swapped for outbound sessions
 			<KVRow label="Bytes in (orig)" value={formatBytes(origBytes)} mono />
 			<KVRow label="Bytes out (resp)" value={formatBytes(respBytes)} mono />
 			<KVRow label="Packets in" value={origPkts} mono />
 			<KVRow label="Packets out" value={respPkts} mono />
+			OLD CODE END -->
+			<KVRow label="Sent by source" value={formatBytes(origBytes)} mono />
+			<KVRow label="Sent by destination" value={formatBytes(respBytes)} mono />
+			<KVRow label="Packets from source" value={origPkts} mono />
+			<KVRow label="Packets from destination" value={respPkts} mono />
 			<!-- Traffic ratio bar -->
 			{#if totalBytes > 0}
 				<div class="ratio-row">
 					<span class="ratio-label">Traffic ratio</span>
 					<div class="ratio-bar">
+						<!-- OLD CODE START — I3: the split is source/destination, not in/out
 						<div class="ratio-in" style="width: {origPct}%;" title="Inbound: {origPct}%"></div>
 						<div class="ratio-out" style="width: {100 - origPct}%;" title="Outbound: {100 - origPct}%"></div>
 					</div>
 					<span class="ratio-text num">{origPct}% in</span>
+						OLD CODE END -->
+						<div class="ratio-in" style="width: {origPct}%;" title="Sent by source: {origPct}%"></div>
+						<div class="ratio-out" style="width: {100 - origPct}%;" title="Sent by destination: {100 - origPct}%"></div>
+					</div>
+					<span class="ratio-text num">{origPct}% from source</span>
 				</div>
 			{/if}
 		</DrawerSection>

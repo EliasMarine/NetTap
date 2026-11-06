@@ -32,6 +32,13 @@ def iot(mock_client):
     return IoTMonitor(client=mock_client)
 
 
+@pytest.fixture
+def keep_preset_devices(iot, monkeypatch):
+    """For tests that set iot._iot_devices themselves: discovery rebuilds the set per
+    range (NET-158), and the mock's empty buckets would replace theirs."""
+    monkeypatch.setattr(iot, "_discover_iot_devices_from_arkime", lambda *a, **k: None)
+
+
 BASELINE_AGG_FIELDS = {
     "destination.ip": "destinations",
     "destination.port": "dest_ports",
@@ -376,6 +383,7 @@ class TestIoTDeviceRegistry:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("keep_preset_devices")
 class TestFleetSummary:
     def test_returns_health_score(self, iot, mock_client):
         """Fleet summary returns all required top-level keys."""
@@ -422,13 +430,14 @@ class TestFleetSummary:
         assert "subtitle" in result
 
     def test_empty_fleet(self, iot, mock_client):
-        """Fleet summary with no IoT devices returns healthy defaults."""
+        """Fleet summary with no IoT devices has no score (NET-158: it read 100, grade A)."""
         mock_client.search.return_value = {
             "aggregations": {"by_mac": {"buckets": []}},
         }
         result = iot.get_fleet_summary("2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z")
-        assert result["health_score"] == 100
-        assert result["health_grade"] == "A"
+        assert result["health_score"] is None
+        assert result["health_grade"] is None
+        assert result["privacy_score"] is None
         assert result["device_count"] == 0
         assert result["devices"] == []
 
@@ -483,11 +492,9 @@ class TestFleetSummary:
             },
         }
 
-        # First call: OUI discovery, then conn stats, alert counts, DNS stats,
+        # Discovery is patched out (keep_preset_devices): conn stats, alert counts, DNS stats,
         # then anomaly check calls (for check_anomalies per device)
         mock_client.search.side_effect = [
-            # OUI discovery (devices already registered, so no new additions)
-            {"aggregations": {"by_mac": {"buckets": []}}},
             # Conn stats batch
             {
                 "hits": {"total": {"value": 50}},
@@ -664,6 +671,7 @@ class TestFleetSummary:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("keep_preset_devices")
 class TestPrivacyReport:
     def _setup_devices(self, iot):
         iot._iot_devices = {
@@ -685,10 +693,8 @@ class TestPrivacyReport:
 
     def test_returns_device_privacy_data(self, iot, mock_client):
         self._setup_devices(iot)
-        # OUI discovery, conn stats batch, alert counts, DNS detail batch
+        # conn stats batch, alert counts, DNS detail batch (discovery is patched out)
         mock_client.search.side_effect = [
-            # OUI discovery (devices already registered)
-            {"aggregations": {"by_mac": {"buckets": []}}},
             # Conn stats
             {
                 "aggregations": {
@@ -932,6 +938,7 @@ class TestActivityTimeline:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("keep_preset_devices")
 class TestProtocolAudit:
     def _setup_devices(self, iot):
         iot._iot_devices = {
@@ -954,8 +961,6 @@ class TestProtocolAudit:
     def test_detects_unexpected_port(self, iot, mock_client):
         self._setup_devices(iot)
         mock_client.search.side_effect = [
-            # OUI discovery (devices already registered)
-            {"aggregations": {"by_mac": {"buckets": []}}},
             # Port detail batch, every port (#96), one page
             _per_mac_page("AA:BB:CC:DD:EE:FF", {443: 90, 8888: 5}),
             # Hardcoded DNS batch
@@ -976,8 +981,6 @@ class TestProtocolAudit:
     def test_compliant_device(self, iot, mock_client):
         self._setup_devices(iot)
         mock_client.search.side_effect = [
-            # OUI discovery (devices already registered)
-            {"aggregations": {"by_mac": {"buckets": []}}},
             # Port detail batch - only port 443
             _per_mac_page("AA:BB:CC:DD:EE:FF", {443: 100}),
             # Hardcoded DNS batch
@@ -1003,6 +1006,7 @@ class TestProtocolAudit:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("keep_preset_devices")
 class TestNetworkIsolation:
     def _setup_devices(self, iot):
         iot._iot_devices = {
@@ -1043,8 +1047,6 @@ class TestNetworkIsolation:
             "source_ip": {"buckets": [{"key": "192.168.1.50", "doc_count": 45}]},
         }
         mock_client.search.side_effect = [
-            # OUI discovery (devices already registered)
-            {"aggregations": {"all": {"buckets": []}}},
             # (MAC, LAN host) pairs, one page (#96)
             {"aggregations": {"all": {"buckets": [pair]}}},
         ]
@@ -1088,6 +1090,7 @@ class TestNetworkIsolation:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("keep_preset_devices")
 class TestManufacturerProfiles:
     def _setup_devices(self, iot):
         iot._iot_devices = {
@@ -1208,12 +1211,23 @@ class TestCategorizeDevice:
 # ---------------------------------------------------------------------------
 
 
+def _newest_ip(bucket: dict) -> dict:
+    """A fixture's latest_ip terms bucket as the top_hits newest record (NET-158)."""
+    ips = [b["key"] for b in bucket.get("latest_ip", {}).get("buckets", [])]
+    hits = [{"_source": {"source": {"ip": ip}}} for ip in ips[:1]]
+    return {**bucket, "latest_ip": {"hits": {"hits": hits}}}
+
+
 def _discovery_page(reply: dict) -> dict:
     """`reply`'s by_mac buckets as the last page of the paged discovery (#96)."""
     buckets = reply["aggregations"]["by_mac"]["buckets"]
     return {
         "aggregations": {
-            "all": {"buckets": [{**b, "key": {"mac": b["key"]}} for b in buckets]}
+            "all": {
+                "buckets": [
+                    {**_newest_ip(b), "key": {"mac": b["key"]}} for b in buckets
+                ]
+            }
         }
     }
 
@@ -1380,8 +1394,15 @@ class TestDiscoverIotDevicesFromArkime:
         devices = iot.get_iot_devices()
         assert len(devices) == 0
 
-    def test_skips_already_registered(self, iot, mock_client):
-        """Devices already in the registry are not re-classified."""
+    def test_rebuilds_the_set_for_each_range(self, iot, mock_client):
+        """NET-158: the set was cached for the daemon's lifetime. A device with no traffic
+        in the range was still scored, and its IP and last seen stayed frozen."""
+        iot._iot_devices["11:11:11:11:11:11"] = {
+            "mac": "11:11:11:11:11:11",
+            "manufacturer": "Ring",
+            "ip": "192.168.1.9",
+            "classified_at": "2026-04-01T00:00:00Z",
+        }
         iot._iot_devices["AA:BB:CC:DD:EE:FF"] = {
             "mac": "AA:BB:CC:DD:EE:FF",
             "manufacturer": "Ring",
@@ -1399,7 +1420,7 @@ class TestDiscoverIotDevicesFromArkime:
                                 "key": "AA:BB:CC:DD:EE:FF",
                                 "doc_count": 100,
                                 "oui": {"buckets": [{"key": "Ring LLC"}]},
-                                "latest_ip": {"buckets": [{"key": "192.168.1.50"}]},
+                                "latest_ip": {"buckets": [{"key": "192.168.1.77"}]},
                                 "last_seen": {
                                     "value_as_string": "2026-04-05T12:00:00Z"
                                 },
@@ -1413,10 +1434,16 @@ class TestDiscoverIotDevicesFromArkime:
         iot._discover_iot_devices_from_arkime(
             "2026-04-04T00:00:00Z", "2026-04-05T00:00:00Z"
         )
-        # Should still be 1 device, unchanged
-        devices = iot.get_iot_devices()
-        assert len(devices) == 1
-        assert devices[0]["manufacturer"] == "Ring"  # Original, not "Ring LLC"
+        [device] = iot.get_iot_devices()  # the quiet 11:11:… is gone
+        assert device["mac"] == "AA:BB:CC:DD:EE:FF"
+        assert device["ip"] == "192.168.1.77"  # the newest record's, not the cached one
+        assert device["last_seen"] == "2026-04-05T12:00:00Z"
+        assert device["manufacturer"] == "Ring LLC"
+        # the newest IP is the latest record's, not the most frequent one
+        agg = mock_client.search.call_args.kwargs["body"]["aggs"]["all"]["aggs"]
+        assert agg["latest_ip"]["top_hits"]["sort"] == [
+            {"@timestamp": {"order": "desc"}}
+        ]
 
     def test_espressif_matches(self, iot, mock_client):
         """Espressif Inc. matches via IOT_OUI_ALWAYS."""

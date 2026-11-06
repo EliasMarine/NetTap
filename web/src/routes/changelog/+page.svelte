@@ -261,8 +261,11 @@
 				state="empty"
 				icon="changelog"
 				title="No events found for the selected filters."
-				message="Events appear here as devices join or leave, alerts fire and settings change."
+				message="Events appear here when a new device joins the network or a manual storage cleanup runs."
 			/>
+			<!-- OLD CODE START — NET-158: promised event types nothing records (devices leaving, alerts, settings) -->
+			<!-- message="Events appear here as devices join or leave, alerts fire and settings change." -->
+			<!-- OLD CODE END -->
 		{:else}
 			<ol class="events">
 				{#each events as event}

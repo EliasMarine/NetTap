@@ -3,7 +3,7 @@
 	import { getSystemHealth, getStorageStatus, getSmartHealth } from '$api/system.js';
 	import { getTSharkStatus } from '$api/tshark.js';
 	import { getCyberChefStatus } from '$api/cyberchef.js';
-	import type { SystemHealth, StorageStatus, SmartHealth } from '$api/system.js';
+	import { healthStage, type SystemHealth, type StorageStatus, type SmartHealth } from '$api/system.js';
 	import type { TSharkStatus } from '$api/tshark.js';
 	import type { CyberChefStatus } from '$api/cyberchef.js';
 	import BridgeStatus from '$lib/components/BridgeStatus.svelte';
@@ -36,6 +36,14 @@
 		return `${val.toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
 	}
 
+	/** S10: SMART byte totals in decimal units (1 TB = 10^12 B), as smartctl and the drive's TBW rating count them. */
+	function formatDriveBytes(bytes: number): string {
+		if (!isFinite(bytes) || bytes <= 0) return '0 B';
+		const units = ['B', 'kB', 'MB', 'GB', 'TB', 'PB'];
+		const i = Math.min(Math.floor(Math.log10(bytes) / 3), units.length - 1);
+		return `${(bytes / 1000 ** i).toFixed(i > 0 ? 2 : 0)} ${units[i]}`;
+	}
+
 	function formatUptime(seconds: number): string {
 		if (seconds <= 0) return '—';
 		const days = Math.floor(seconds / 86400);
@@ -62,8 +70,18 @@
 	// 	return 'var(--success)';
 	// }
 	// OLD CODE END
-	// the old bar turned red above this share
-	const DISK_FULL_PERCENT = 85;
+	// OLD CODE START — 2026-11-06 (S6): a threshold of its own; the daemon prunes at its configured
+	// disk_threshold_percent (80) and emergency_threshold_percent (90), sent in the same response
+	// // the old bar turned red above this share
+	// const DISK_FULL_PERCENT = 85;
+	// OLD CODE END
+
+	// S7: the Settings → Retention wording, so both pages say what each setting governs
+	const RETENTION_ROWS = [
+		{ key: 'hot_days', label: 'Hot tier (Zeek metadata and Suricata alerts)', note: '' },
+		{ key: 'warm_days', label: 'Warm tier (separate Suricata indices)', note: " · this install doesn't create them; alerts follow the hot tier" },
+		{ key: 'cold_days', label: 'Cold tier (PCAP files)', note: ' · or sooner, once PCAP passes its share of the disk' },
+	];
 
 	// OLD CODE START — the page refresh contract (PLAN.md §5.5): the top bar's Refresh runs the
 	// page loader, which reports what loaded and drops a reply that lands after the page has gone
@@ -174,9 +192,21 @@
 			status: 'unknown',
 			detail: didFail ? 'Request failed' : 'Checking…',
 		});
+		// OLD CODE START — 2026-11-06 (S4, S5): "Up" read as the daemon's uptime (it is the host's), and
+		// a check that couldn't run read "Reports a problem"
+		// const daemon: PipelineStage =
+		// 	systemHealth && !failed.health
+		// 		? { key: 'daemon', label: 'NetTap', status: systemHealth.healthy ? 'ok' : 'failing', detail: systemHealth.healthy ? `Up ${formatUptime(systemHealth.uptime)}` : 'Reports a problem' }
+		// 		: waiting('daemon', 'NetTap', failed.health);
+		// OLD CODE END
 		const daemon: PipelineStage =
 			systemHealth && !failed.health
-				? { key: 'daemon', label: 'NetTap', status: systemHealth.healthy ? 'ok' : 'failing', detail: systemHealth.healthy ? `Up ${formatUptime(systemHealth.uptime)}` : 'Reports a problem' }
+				? {
+						key: 'daemon',
+						label: 'NetTap',
+						...healthStage(systemHealth.status),
+						...(systemHealth.status === 'healthy' && { detail: `Appliance up ${formatUptime(systemHealth.uptime)}` }),
+					}
 				: waiting('daemon', 'NetTap', failed.health);
 		const search: PipelineStage =
 			systemHealth && !failed.health
@@ -184,21 +214,41 @@
 				: waiting('opensearch', 'OpenSearch', failed.health);
 		const disk: PipelineStage =
 			storageStatus && !failed.storage
-				? {
-						key: 'storage',
-						label: 'Storage',
-						status: storageStatus.disk_usage_percent > DISK_FULL_PERCENT ? 'failing' : 'ok',
-						detail: `${storageStatus.disk_usage_percent.toFixed(1)}% used · ${formatBytes(storageStatus.disk_free_bytes)} free`,
-					}
+				? { key: 'storage', label: 'Storage', ...diskStage(storageStatus) }
 				: waiting('storage', 'Storage', failed.storage);
+		// S12: a passing drive with warnings says so, rather than a bare "SMART checks pass"
+		const warnings = smartHealth?.warnings?.length ?? 0;
 		const drive: PipelineStage =
 			smartHealth && !failed.smart && smartHealth.healthy !== null
-				? { key: 'drive', label: 'Drive', status: smartHealth.healthy ? 'ok' : 'failing', detail: smartHealth.healthy ? 'SMART checks pass' : 'SMART reports a problem' }
+				? {
+						key: 'drive',
+						label: 'Drive',
+						status: smartHealth.healthy ? 'ok' : 'failing',
+						detail: !smartHealth.healthy ? 'SMART reports a problem' : warnings ? `SMART checks pass · ${warnings} warning${warnings === 1 ? '' : 's'}` : 'SMART checks pass',
+					}
 				: smartHealth && !failed.smart
 					? { key: 'drive', label: 'Drive', status: 'unknown', detail: "Couldn't read the drive" }
 					: waiting('drive', 'Drive', failed.smart);
 		return [daemon, search, disk, drive];
 	});
+
+	/** S6: judged against the daemon's own pruning lines, from the same response. */
+	function diskStage(st: StorageStatus): Pick<PipelineStage, 'status' | 'detail'> {
+		const pct = st.disk_usage_percent;
+		const line =
+			pct >= st.emergency_threshold_percent
+				? ` · above the ${st.emergency_threshold_percent}% emergency line`
+				: pct >= st.disk_threshold_percent
+					? ` · above the ${st.disk_threshold_percent}% pruning line`
+					: '';
+		return {
+			status: pct >= st.emergency_threshold_percent ? 'failing' : 'ok',
+			detail: `${pct.toFixed(1)}% used · ${formatBytes(st.disk_free_bytes)} free${line}`,
+		};
+	}
+
+	/** S5: the overview chip; a check that couldn't run is "Incomplete", not "Degraded". */
+	const OVERVIEW_CHIP = { healthy: ['Healthy', 'is-ok'], problem: ['Problem', 'is-bad'], incomplete: ['Incomplete', ''] } as const;
 
 	const serviceRows = $derived([
 		{ key: 'tshark', name: 'TShark', status: tsharkStatus, didFail: failed.tshark },
@@ -225,10 +275,16 @@
 		<Pipeline {stages} />
 	</Card>
 
+	<!-- OLD CODE START — 2026-11-06 (S4, S5): the uptime is the appliance's, not the daemon's; and
+	     an incomplete check read "Degraded"
 	<Card title="System overview" sub="The NetTap daemon · uptime and last check" class="c-6">
+				<span class={['chip', systemHealth.healthy ? 'is-ok' : 'is-bad']}>{systemHealth.healthy ? 'Healthy' : 'Degraded'}</span>
+	OLD CODE END -->
+	<Card title="System overview" sub="This appliance · uptime and last check" class="c-6">
 		{#snippet actions()}
 			{#if systemHealth && !failed.health}
-				<span class={['chip', systemHealth.healthy ? 'is-ok' : 'is-bad']}>{systemHealth.healthy ? 'Healthy' : 'Degraded'}</span>
+				{@const [word, tone] = OVERVIEW_CHIP[systemHealth.status] ?? ['Unknown', '']}
+				<span class={['chip', tone]}>{word}</span>
 			{:else if !loading}
 				<span class="chip">Unknown</span>
 			{/if}
@@ -360,6 +416,8 @@
 			</dl>
 			{#if storageStatus.retention}
 				<h3 class="eyebrow section-label">Retention policy</h3>
+				<!-- OLD CODE START — 2026-11-06 (S7): raw keys ("hot_days 90") under "how long each kind
+				     of data is kept", though alerts go with the hot tier and PCAP is also size-capped
 				{#if typeof storageStatus.retention === 'object'}
 					<dl class="facts flush">
 						{#each Object.entries(storageStatus.retention) as [key, val] (key)}
@@ -370,6 +428,14 @@
 				{:else}
 					<p class="mono">{storageStatus.retention}</p>
 				{/if}
+				OLD CODE END -->
+				<dl class="facts flush">
+					{#each RETENTION_ROWS as row (row.key)}
+						{@const days = storageStatus.retention?.[row.key]}
+						<dt>{row.label}</dt>
+						<dd>{typeof days === 'number' ? `${days} days${row.note}` : '—'}</dd>
+					{/each}
+				</dl>
 			{/if}
 		{:else}
 			<CardState state="empty" title="Storage data unavailable" message="Disk figures appear here once the daemon reports them." />
@@ -380,6 +446,9 @@
 		{#snippet actions()}
 			{#if failed.smart || smartHealth?.healthy === null}
 				<span class="chip">Unknown</span>
+			<!-- OLD CODE: {:else if smartHealth} Healthy / Degraded (S12: green "Healthy" beside warnings) -->
+			{:else if smartHealth?.healthy && smartHealth.warnings?.length}
+				<span class="chip is-warn"><Icon name="warn" />Warnings</span>
 			{:else if smartHealth}
 				<span class={['chip', smartHealth.healthy ? 'is-ok' : 'is-bad']}>{smartHealth.healthy ? 'Healthy' : 'Degraded'}</span>
 			{:else if !loading}
@@ -427,10 +496,11 @@
 					{:else}
 						<dd class="dim" title="SMART power-on hours data could not be read. Check /dev mount and SYS_RAWIO capability.">Unavailable</dd>
 					{/if}
+					<!-- OLD CODE: formatBytes (1024-based but labelled TB, about 9% under smartctl's figure) (S10) -->
 					<dt>Total written</dt>
-					<dd class="mono">{smartHealth.total_bytes_written != null ? formatBytes(smartHealth.total_bytes_written) : '—'}</dd>
+					<dd class="mono">{smartHealth.total_bytes_written != null ? formatDriveBytes(smartHealth.total_bytes_written) : '—'}</dd>
 					<dt>Total read</dt>
-					<dd class="mono">{smartHealth.total_bytes_read != null ? formatBytes(smartHealth.total_bytes_read) : '—'}</dd>
+					<dd class="mono">{smartHealth.total_bytes_read != null ? formatDriveBytes(smartHealth.total_bytes_read) : '—'}</dd>
 					{#if smartHealth.device_type === 'nvme'}
 						<dt>Media errors</dt>
 						<dd class="num">

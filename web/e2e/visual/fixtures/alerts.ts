@@ -153,12 +153,12 @@ const CATEGORIES = {
 	...CATEGORIES_EMPTY,
 	// the counts add up to the 214 alerts in /api/alerts/count
 	categories: [
-		{ ...MALWARE, description: 'Known malware signatures, command-and-control callbacks, and threat intel matches.', count: 31, severity_breakdown: { critical: 9, high: 12, medium: 10, low: 0, info: 0 }, trend: 'increasing', sparkline: sparkline([2, 3, 4, 5, 7, 10]), sub_categories: [{ id: 'trojan', label: 'Trojan Activity', count: 14 }, { id: 'botnet', label: 'Botnet C2', count: 11 }, { id: 'threat_intel', label: 'Threat Intel Match', count: 6 }] },
-		{ id: 'reconnaissance', label: 'Reconnaissance', icon: 'search', color: '#ffa502', description: 'Port scanning, service enumeration, and network probing.', count: 22, severity_breakdown: { critical: 0, high: 7, medium: 15, low: 0, info: 0 }, trend: 'stable', sparkline: sparkline([4, 3, 4, 3, 4, 4]), sub_categories: [{ id: 'port_scan', label: 'Port Scan', count: 22 }] },
-		{ id: 'exploit', label: 'Exploit Attempt', icon: 'bug', color: '#ff4757', description: 'Active exploitation of known vulnerabilities (CVEs, RCE, injection).', count: 9, severity_breakdown: { critical: 0, high: 9, medium: 0, low: 0, info: 0 }, trend: 'decreasing', sparkline: sparkline([3, 2, 2, 1, 1, 0]), sub_categories: [] },
-		{ id: 'credential_abuse', label: 'Credential Abuse', icon: 'key', color: '#e74c3c', description: 'Brute force, password spraying, and credential theft attempts.', count: 12, severity_breakdown: { critical: 0, high: 12, medium: 0, low: 0, info: 0 }, trend: 'stable', sparkline: sparkline([2, 2, 1, 3, 2, 2]), sub_categories: [{ id: 'ssh_brute', label: 'SSH Brute Force', count: 12 }] },
-		{ id: 'policy', label: 'Policy Violation', icon: 'shield', color: '#2ed573', description: 'P2P usage, gaming traffic, Tor access, and other policy-violating activity.', count: 74, severity_breakdown: { critical: 0, high: 0, medium: 0, low: 74, info: 0 }, trend: 'stable', sparkline: sparkline([12, 13, 12, 14, 11, 12]), sub_categories: [] },
-		{ id: 'informational', label: 'Informational', icon: 'info', color: '#a4b0be', description: 'Low-priority observations and protocol metadata events.', count: 66, severity_breakdown: { critical: 0, high: 0, medium: 0, low: 0, info: 66 }, trend: 'stable', sparkline: sparkline([10, 11, 11, 12, 11, 11]), sub_categories: [] },
+		{ ...MALWARE, description: 'Known malware signatures, command-and-control callbacks, and threat intel matches.', count: 31, severity_breakdown: { high: 21, medium: 10, low: 0, info: 0 }, trend: 'increasing', sparkline: sparkline([2, 3, 4, 5, 7, 10]), sub_categories: [{ id: 'trojan', label: 'Trojan Activity', count: 14 }, { id: 'botnet', label: 'Botnet C2', count: 11 }, { id: 'threat_intel', label: 'Threat Intel Match', count: 6 }] },
+		{ id: 'reconnaissance', label: 'Reconnaissance', icon: 'search', color: '#ffa502', description: 'Port scanning, service enumeration, and network probing.', count: 22, severity_breakdown: { high: 7, medium: 15, low: 0, info: 0 }, trend: 'stable', sparkline: sparkline([4, 3, 4, 3, 4, 4]), sub_categories: [{ id: 'port_scan', label: 'Port Scan', count: 22 }] },
+		{ id: 'exploit', label: 'Exploit Attempt', icon: 'bug', color: '#ff4757', description: 'Active exploitation of known vulnerabilities (CVEs, RCE, injection).', count: 9, severity_breakdown: { high: 9, medium: 0, low: 0, info: 0 }, trend: 'decreasing', sparkline: sparkline([3, 2, 2, 1, 1, 0]), sub_categories: [] },
+		{ id: 'credential_abuse', label: 'Credential Abuse', icon: 'key', color: '#e74c3c', description: 'Brute force, password spraying, and credential theft attempts.', count: 12, severity_breakdown: { high: 12, medium: 0, low: 0, info: 0 }, trend: 'stable', sparkline: sparkline([2, 2, 1, 3, 2, 2]), sub_categories: [{ id: 'ssh_brute', label: 'SSH Brute Force', count: 12 }] },
+		{ id: 'policy', label: 'Policy Violation', icon: 'shield', color: '#2ed573', description: 'P2P usage, gaming traffic, Tor access, and other policy-violating activity.', count: 74, severity_breakdown: { high: 0, medium: 0, low: 74, info: 0 }, trend: 'stable', sparkline: sparkline([12, 13, 12, 14, 11, 12]), sub_categories: [] },
+		{ id: 'informational', label: 'Informational', icon: 'info', color: '#a4b0be', description: 'Low-priority observations and protocol metadata events.', count: 66, severity_breakdown: { high: 0, medium: 0, low: 0, info: 66 }, trend: 'stable', sparkline: sparkline([10, 11, 11, 12, 11, 11]), sub_categories: [] },
 	],
 } satisfies DaemonCategories;
 
@@ -169,7 +169,7 @@ const CATEGORY_DETAIL_EMPTY = {
 	to: TO,
 	category: { ...MALWARE, description: 'Known malware signatures, command-and-control callbacks, and threat intel matches.' },
 	stats: { total: 0, unique_sources: 0, unique_targets: 0, affected_devices: 0 },
-	severity_breakdown: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+	severity_breakdown: { high: 0, medium: 0, low: 0, info: 0 },
 	sub_categories: [],
 	affected_devices: [],
 	top_signatures: [],
@@ -179,12 +179,12 @@ const CATEGORY_DETAIL_EMPTY = {
 const CATEGORY_DETAIL = {
 	...CATEGORY_DETAIL_EMPTY,
 	stats: { total: 31, unique_sources: 2, unique_targets: 3, affected_devices: 5 },
-	severity_breakdown: { critical: 9, high: 12, medium: 10, low: 0, info: 0 },
+	severity_breakdown: { high: 21, medium: 10, low: 0, info: 0 },
 	sub_categories: [{ id: 'trojan', label: 'Trojan Activity', count: 14 }, { id: 'botnet', label: 'Botnet C2', count: 11 }, { id: 'threat_intel', label: 'Threat Intel Match', count: 6 }],
 	affected_devices: [
-		{ ip: '192.168.1.42', count: 24, severity: 'critical' },
-		{ ip: '203.0.113.45', count: 17, severity: 'critical' },
-		{ ip: '198.51.100.17', count: 7, severity: 'critical' },
+		{ ip: '192.168.1.42', count: 24, severity: 'high' },
+		{ ip: '203.0.113.45', count: 17, severity: 'high' },
+		{ ip: '198.51.100.17', count: 7, severity: 'high' },
 		{ ip: '192.168.1.80', count: 4, severity: 'high' },
 		{ ip: '192.0.2.150', count: 3, severity: 'medium' },
 	],

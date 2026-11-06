@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/svelte';
+import NewDeviceBanner from './NewDeviceBanner.svelte';
+import type { RegistryDevice as Device } from '$api/devices-registry';
 
 /**
  * Tests for NewDeviceBanner component logic.
@@ -117,5 +120,53 @@ describe('NewDeviceBanner logic', () => {
 		it('uses plural for 0 devices', () => {
 			expect(bannerText(0)).toBe('0 new devices detected');
 		});
+	});
+});
+
+// The component itself (PR #174 review): the New chip's 24-hour rule, not is_new
+describe('NewDeviceBanner', () => {
+	const NOW = Date.parse('2026-11-06T12:00:00Z');
+	const device = (mac: string, firstSeen: string, isNew: boolean): Device => ({
+		mac, ips: [], hostnames: [], manufacturer: null, friendly_name: null, display_name: mac,
+		category: 'unknown', first_seen: firstSeen, last_seen: firstSeen, is_new: isNew,
+	});
+
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(NOW);
+		localStorage.clear();
+		vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	it('lists devices first seen in the last 24 hours, whatever is_new says', () => {
+		render(NewDeviceBanner, {
+			devices: [
+				device('AA:01', '2026-11-06T08:00:00Z', false),
+				device('AA:02', '2026-11-01T08:00:00Z', true),
+			],
+		});
+		expect(screen.getByText('1 new device detected')).toBeInTheDocument();
+		expect(screen.getByText('AA:01')).toBeInTheDocument();
+		expect(screen.queryByText('AA:02')).toBeNull();
+	});
+
+	it('stays dismissed until a newer device appears', async () => {
+		const first = device('AA:01', '2026-11-06T08:00:00Z', false);
+		const { unmount } = render(NewDeviceBanner, { devices: [first] });
+		await fireEvent.click(screen.getByLabelText('Dismiss'));
+		expect(screen.queryByRole('alert')).toBeNull();
+		unmount();
+
+		const again = render(NewDeviceBanner, { devices: [first] });
+		expect(screen.queryByRole('alert')).toBeNull();
+		again.unmount();
+
+		render(NewDeviceBanner, { devices: [first, device('AA:02', '2026-11-06T10:00:00Z', false)] });
+		expect(screen.getByText('1 new device detected')).toBeInTheDocument();
+		expect(screen.getByText('AA:02')).toBeInTheDocument();
 	});
 });

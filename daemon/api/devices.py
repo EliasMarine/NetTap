@@ -7,6 +7,7 @@ a network device inventory with passive fingerprinting enrichment (MAC,
 hostname, manufacturer, OS hint).
 """
 
+import ipaddress
 import logging
 import os
 from collections.abc import Mapping
@@ -16,7 +17,7 @@ from typing import Any
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
-from api.time_range import parse_time_range
+from api.time_range import _utc, iso_param, parse_time_range
 from storage.all_buckets import PAGE_SIZE, all_buckets
 from storage.manager import StorageManager
 from storage.time_slots import histogram_buckets, time_slots
@@ -579,14 +580,41 @@ async def handle_device_list(request: web.Request) -> web.Response:
                                 }
                             }
                         },
-                        {"terms": {"source.ip": chunk}},
+                        # OLD CODE START — PR #174 review: alerts the device sent only, while
+                        # its detail page (NET-158, D4) counts alerts on its traffic both ways
+                        # {"terms": {"source.ip": chunk}},
+                        # OLD CODE END
+                        {
+                            "bool": {
+                                "should": [
+                                    {"terms": {"source.ip": chunk}},
+                                    {"terms": {"destination.ip": chunk}},
+                                ],
+                                "minimum_should_match": 1,
+                            }
+                        },
                         {"term": {"event.provider": "suricata"}},
                         {"term": {"event.dataset": "alert"}},
                     ],
                     "must_not": SURICATA_NOISE_EXCLUSION,
                 }
             },
-            "aggs": {"by_ip": {"terms": {"field": "source.ip", "size": len(chunk)}}},
+            # OLD CODE START — PR #174 review: source side only
+            # "aggs": {"by_ip": {"terms": {"field": "source.ip", "size": len(chunk)}}},
+            # OLD CODE END
+            # Each side's terms run inside a filter on this chunk, so every bucket is a device here.
+            # shortcut: an alert whose source and destination are the same device counts twice;
+            # the bridge never sees a device talk to itself, so this stays a sum
+            "aggs": {
+                side: {
+                    "filter": {"terms": {field: chunk}},
+                    "aggs": {"ips": {"terms": {"field": field, "size": len(chunk)}}},
+                }
+                for side, field in (
+                    ("by_ip", "source.ip"),
+                    ("by_dst", "destination.ip"),
+                )
+            },
         }
 
         try:
@@ -596,10 +624,18 @@ async def handle_device_list(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": f"OpenSearch query failed: {exc}"}, status=502
             )
-        for ab in (
-            alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
-        ):
-            alert_counts[ab["key"]] = ab["doc_count"]
+        # OLD CODE START — PR #174 review: source side only
+        # for ab in (
+        #     alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
+        # ):
+        #     alert_counts[ab["key"]] = ab["doc_count"]
+        # OLD CODE END
+        aggs = alert_result.get("aggregations", {})
+        for side in ("by_ip", "by_dst"):
+            for ab in aggs.get(side, {}).get("ips", {}).get("buckets", []):
+                alert_counts[ab["key"]] = (
+                    alert_counts.get(ab["key"], 0) + ab["doc_count"]
+                )
 
     if sort_field == "alerts":
         # Bytes (largest first) breaks ties, as the bytes-ordered list did before
@@ -882,7 +918,15 @@ async def handle_device_detail(request: web.Request) -> web.Response:
     protocols = [pb["key"] for pb in proto_buckets]
 
     # Top destinations
-    dest_buckets = aggs.get("top_destinations", {}).get("buckets", [])[:20]
+    # OLD CODE START — NET-158: the buckets come in connection-count order, so "By bytes"
+    # showed the 20 most frequent destinations, not the biggest transfers
+    # dest_buckets = aggs.get("top_destinations", {}).get("buckets", [])[:20]
+    # OLD CODE END
+    dest_buckets = sorted(
+        aggs.get("top_destinations", {}).get("buckets", []),
+        key=lambda b: b.get("bytes", {}).get("value", 0) or 0,
+        reverse=True,
+    )[:20]
     top_destinations = [
         {
             "ip": db["key"],
@@ -968,7 +1012,19 @@ async def handle_device_detail(request: web.Request) -> web.Response:
                             }
                         }
                     },
-                    {"term": {"source.ip": ip}},
+                    # OLD CODE START — NET-158: alerts the device sent only, while the
+                    # KPI says "on this device's traffic" and Smart alerts covers both ways
+                    # {"term": {"source.ip": ip}},
+                    # OLD CODE END
+                    {
+                        "bool": {
+                            "should": [
+                                {"term": {"source.ip": ip}},
+                                {"term": {"destination.ip": ip}},
+                            ],
+                            "minimum_should_match": 1,
+                        }
+                    },
                     {"term": {"event.provider": "suricata"}},
                     {"term": {"event.dataset": "alert"}},
                 ],
@@ -1074,11 +1130,53 @@ def _connection_sort(sort_key: str, order: str) -> list[dict]:
     return [*clauses, {"@timestamp": {"order": "desc"}}]
 
 
+# NET-158: the device page's DL/UL are the device's own download and upload, so on a session
+# the device answered (it is the destination) they are the other way round. These keys sort
+# on the device's side of each session; for this endpoint only (the Connections page keeps
+# its source/destination columns). params.ip is the canonical form ip doc values use.
+_DEVICE_STARTED = "doc['source.ip'].size() > 0 && doc['source.ip'].value == params.ip"
+_DEVICE_SIDE_SORT = {
+    # 1 when the device started the session (out), 0 when it answered (in)
+    "direction": f"{_DEVICE_STARTED} ? 1 : 0",
+    "dl": f"String f = {_DEVICE_STARTED} ? 'destination.bytes' : 'source.bytes';"
+    " return doc[f].size() > 0 ? doc[f].value : 0;",
+    "ul": f"String f = {_DEVICE_STARTED} ? 'source.bytes' : 'destination.bytes';"
+    " return doc[f].size() > 0 ? doc[f].value : 0;",
+}
+# The Recent connections protocol filter (NET-158: it filtered only the rows on screen)
+_DEVICE_CONNECTION_PROTOS = {"tcp", "udp", "icmp"}
+
+
+def _canonical_ip(ip: str) -> str:
+    """The address as OpenSearch prints an ip field (compressed IPv6); unparsable as is."""
+    try:
+        return str(ipaddress.ip_address(ip))
+    except ValueError:
+        return ip
+
+
+def _device_connection_sort(sort_key: str, order: str, ip: str) -> list[dict]:
+    """_connection_sort, with direction, DL and UL taken from the device's side."""
+    if sort_key not in _DEVICE_SIDE_SORT:
+        return _connection_sort(sort_key, order)
+    script = {
+        "lang": "painless",
+        "source": _DEVICE_SIDE_SORT[sort_key],
+        "params": {"ip": _canonical_ip(ip)},
+    }
+    return [
+        {"_script": {"type": "number", "script": script, "order": order}},
+        {"@timestamp": {"order": "desc"}},
+    ]
+
+
 async def handle_device_connections(request: web.Request) -> web.Response:
-    """GET /api/devices/{ip}/connections?page=1&size=50&from=&to=&sort=time&order=desc
+    """GET /api/devices/{ip}/connections?page=1&size=50&from=&to=&sort=time&order=desc&proto=
 
     Returns paginated connection logs for a specific device IP, where the
-    device appears as either source or destination.
+    device appears as either source or destination. Each row carries its
+    `direction` from the device's side: "out" if the device started it, else "in".
+    `proto` (tcp, udp or icmp) filters on the daemon, so the total and pages match.
     """
     ip = request.match_info["ip"]
     from_ts, to_ts = _parse_time_range(request)
@@ -1086,12 +1184,25 @@ async def handle_device_connections(request: web.Request) -> web.Response:
     size = min(_parse_int_param(request, "size", 50), 200)  # Cap at 200
     sort_key = request.query.get("sort", "time")
     order = request.query.get("order", "desc")
-    if sort_key not in _CONNECTION_SORT_FIELDS or order not in ("asc", "desc"):
+    proto = request.query.get("proto", "")
+    # OLD CODE START — NET-158: no direction sort for the device page
+    # if sort_key not in _CONNECTION_SORT_FIELDS or order not in ("asc", "desc"):
+    # OLD CODE END
+    sort_keys = [*_CONNECTION_SORT_FIELDS, "direction"]
+    if sort_key not in sort_keys or order not in ("asc", "desc"):
         return web.json_response(
             {
                 "error": "sort must be one of "
-                + ", ".join(_CONNECTION_SORT_FIELDS)
+                + ", ".join(sort_keys)
                 + " and order asc or desc"
+            },
+            status=400,
+        )
+    if proto and proto not in _DEVICE_CONNECTION_PROTOS:
+        return web.json_response(
+            {
+                "error": "proto must be one of "
+                + ", ".join(sorted(_DEVICE_CONNECTION_PROTOS))
             },
             status=400,
         )
@@ -1118,13 +1229,18 @@ async def handle_device_connections(request: web.Request) -> web.Response:
                     },
                     {"term": {"event.provider": "zeek"}},
                     {"term": {"event.dataset": "conn"}},
+                    *([{"term": {"network.transport": proto}}] if proto else []),
                 ]
             }
         },
         # OLD CODE START — #140: always newest first, so the page's columns couldn't sort
         # "sort": [{"@timestamp": {"order": "desc"}}],
         # OLD CODE END
-        "sort": _connection_sort(sort_key, order),
+        # OLD CODE START — NET-158: DL/UL sorted on destination/source bytes, the device's
+        # upload on the sessions it answered
+        # "sort": _connection_sort(sort_key, order),
+        # OLD CODE END
+        "sort": _device_connection_sort(sort_key, order, ip),
     }
 
     try:
@@ -1139,11 +1255,14 @@ async def handle_device_connections(request: web.Request) -> web.Response:
     total_raw = hits.get("total", {})
     total = total_raw.get("value", 0) if isinstance(total_raw, dict) else total_raw
 
+    device_ip = _canonical_ip(ip)
     connections = []
     for hit in hits.get("hits", []):
         source = hit.get("_source", {})
         source["_id"] = hit.get("_id", "")
         source["_index"] = hit.get("_index", "")
+        started_by = (source.get("source") or {}).get("ip") or ""
+        source["direction"] = "out" if _canonical_ip(started_by) == device_ip else "in"
         connections.append(source)
 
     return web.json_response(
@@ -1418,12 +1537,16 @@ async def handle_device_ports(request: web.Request) -> web.Response:
 
 
 async def handle_device_count(request: web.Request) -> web.Response:
-    """GET /api/devices/count?from=&to=
+    """GET /api/devices/count?from=&to=&active_since=
 
     Returns how many devices GET /api/devices would list for the same range:
-    same filters, same _MIN_CONNECTIONS threshold, same skip rules.
+    same filters, same _MIN_CONNECTIONS threshold, same skip rules. With active_since,
+    only those whose last_seen (the list's newest record) is at or after it.
     """
     from_ts, to_ts = _parse_time_range(request)
+    # NET-158: "Online now" counted a 5-minute range, so it needed 3 records in those 5 minutes
+    # while the table calls a listed device Online on its newest record alone
+    active_since = iso_param(request, "active_since")
     client = _get_client(request)
 
     # OLD CODE START — replaced 2026-11-01: a mirror on the uplink sees almost no DHCP, so this said 3 while the list showed 27
@@ -1463,7 +1586,15 @@ async def handle_device_count(request: web.Request) -> web.Response:
         # OLD CODE START — #96: the capped terms search above
         # result = client.search(index=NETWORK_INDEX, body=query)
         # OLD CODE END
-        devices = _lan_device_buckets(client, request.app, from_ts, to_ts)
+        devices = _lan_device_buckets(
+            client,
+            request.app,
+            from_ts,
+            to_ts,
+            aggs={"last_seen": {"max": {"field": "@timestamp"}}}
+            if active_since
+            else None,
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in devices/count: %s", exc)
         return web.json_response(
@@ -1478,6 +1609,13 @@ async def handle_device_count(request: web.Request) -> web.Response:
     # buckets = result.get("aggregations", {}).get("devices", {}).get("buckets", [])
     # count = sum(1 for b in buckets if not _is_skipped_device_ip(b["key"]))
     # OLD CODE END
+    if active_since:
+        cutoff_ms = _utc(active_since).timestamp() * 1000
+        devices = [
+            d
+            for d in devices
+            if (d.get("last_seen", {}).get("value") or 0) >= cutoff_ms
+        ]
     count = len(devices)
 
     return web.json_response(

@@ -43,3 +43,19 @@ describe('Connection drawer — Related tab', () => {
 		expect(screen.getByText('7')).toBeInTheDocument();
 	});
 });
+
+// I3 (accuracy audit 2026-11-06): source.bytes is what the source sent; "Bytes in" swapped it for outbound sessions
+describe('Connection drawer — byte labels', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('labels the byte counts by who sent them', () => {
+		stubRelated(null);
+		const conn = { ...CONNECTION, source: { ...CONNECTION.source, bytes: 2048 }, destination: { ...CONNECTION.destination, bytes: 4096 } };
+		render(ConnectionDrawerContent, { connection: conn, activeTab: 'summary' });
+		expect(screen.getByText('Sent by source')).toBeInTheDocument();
+		expect(screen.getByText('Sent by destination')).toBeInTheDocument();
+		expect(screen.queryByText('Bytes in (orig)')).not.toBeInTheDocument();
+	});
+});

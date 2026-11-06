@@ -296,7 +296,8 @@ class IoTMonitor:
         source MACs with OUI manufacturer data, then classifying them
         as IoT based on manufacturer keyword matching.
 
-        Populates ``self._iot_devices`` with discovered devices.
+        Replaces ``self._iot_devices`` with the devices that have traffic in this
+        window, each with its newest IP and last record from the query (NET-158).
 
         Args:
             from_ts: ISO timestamp for the start of the query window.
@@ -348,7 +349,16 @@ class IoTMonitor:
                 [{"mac": {"terms": {"field": "source.mac"}}}],
                 aggs={
                     "oui": {"terms": {"field": "source.oui", "size": 1}},
-                    "latest_ip": {"terms": {"field": "source.ip", "size": 1}},
+                    # OLD CODE START — NET-158: the device's most frequent IP, not its newest
+                    # "latest_ip": {"terms": {"field": "source.ip", "size": 1}},
+                    # OLD CODE END
+                    "latest_ip": {
+                        "top_hits": {
+                            "size": 1,
+                            "sort": [{"@timestamp": {"order": "desc"}}],
+                            "_source": ["source.ip"],
+                        }
+                    },
                     "last_seen": {"max": {"field": "@timestamp"}},
                 },
             )
@@ -361,33 +371,46 @@ class IoTMonitor:
         if not complete:
             logger.warning("IoT discovery stopped at %d MACs", len(buckets))
 
+        # NET-158: one set per window; a cached set ignored the range, kept scoring devices
+        # with no traffic in it, and froze each device's IP and last seen
+        devices: dict[str, dict[str, Any]] = {}
         for bucket in buckets:
             # OLD CODE START — #96: terms bucket key
             # mac = bucket["key"].upper()
             # OLD CODE END
             mac = bucket["key"]["mac"].upper()
 
-            # Already registered — skip re-classification
-            if mac in self._iot_devices:
-                continue
+            # OLD CODE START — NET-158: the first window's entry was kept for every later one
+            # # Already registered — skip re-classification
+            # if mac in self._iot_devices:
+            #     continue
+            # OLD CODE END
 
             oui_buckets = bucket.get("oui", {}).get("buckets", [])
             if not oui_buckets:
                 continue
             oui_name = oui_buckets[0]["key"]
 
-            ip_buckets = bucket.get("latest_ip", {}).get("buckets", [])
-            latest_ip = ip_buckets[0]["key"] if ip_buckets else None
+            # OLD CODE START — NET-158: terms bucket of the most frequent IP
+            # ip_buckets = bucket.get("latest_ip", {}).get("buckets", [])
+            # latest_ip = ip_buckets[0]["key"] if ip_buckets else None
+            # OLD CODE END
+            hits = bucket.get("latest_ip", {}).get("hits", {}).get("hits", [])
+            latest_ip = (
+                hits[0].get("_source", {}).get("source", {}).get("ip") if hits else None
+            )
 
             if self._is_iot_oui(oui_name):
-                self._iot_devices[mac] = {
+                devices[mac] = {
                     "mac": mac,
                     "manufacturer": oui_name,
                     "hostname": None,
                     "ip": latest_ip,
                     "classified_at": datetime.now(timezone.utc).isoformat(),
+                    "last_seen": bucket.get("last_seen", {}).get("value_as_string"),
                     "is_iot": True,
                 }
+        self._iot_devices = devices
 
         logger.info(
             "Arkime OUI discovery found %d IoT devices total",
@@ -474,8 +497,10 @@ class IoTMonitor:
 
         # ----- Score each device -----
         device_results: list[dict[str, Any]] = []
-        device_scores: list[int] = []
+        device_scores: list[int | None] = []
         total_anomaly_count = 0
+        # devices with a baseline: the only ones whose anomalies are checked (NET-158)
+        anomalies_checked = 0
         privacy_concern_count = 0
         unencrypted_count = 0
 
@@ -497,20 +522,37 @@ class IoTMonitor:
             score = score_result["score"]
             device_scores.append(score)
 
-            # Count anomalies from check_anomalies (uses cached baseline)
-            device_anomalies = self.check_anomalies(mac, excluded_ips=excluded_ips)
-            anomaly_count = len(device_anomalies)
-            total_anomaly_count += anomaly_count
+            # OLD CODE START — NET-158: a device with no baseline read 0 anomalies ("All
+            # clear"), but check_anomalies() returns [] without one: nothing was checked
+            # device_anomalies = self.check_anomalies(mac, excluded_ips=excluded_ips)
+            # anomaly_count = len(device_anomalies)
+            # total_anomaly_count += anomaly_count
+            # OLD CODE END
+            anomaly_count: int | None = None
+            if baseline:
+                anomaly_count = len(
+                    self.check_anomalies(mac, excluded_ips=excluded_ips)
+                )
+                total_anomaly_count += anomaly_count
+                anomalies_checked += 1
 
             # Privacy concern: tracker_domain_count > 5
             tracker_count = stats.get("tracker_domain_count", 0)
             if tracker_count > 5:
                 privacy_concern_count += 1
 
-            # Unencrypted: encryption_ratio < 0.5
-            encryption_ratio = stats.get("encryption_ratio", 1.0)
-            encryption_pct = int(round(encryption_ratio * 100))
-            if encryption_ratio < 0.5:
+            # OLD CODE START — NET-158: no eligible traffic is no ratio, not 100%
+            # # Unencrypted: encryption_ratio < 0.5
+            # encryption_ratio = stats.get("encryption_ratio", 1.0)
+            # encryption_pct = int(round(encryption_ratio * 100))
+            # if encryption_ratio < 0.5:
+            #     unencrypted_count += 1
+            # OLD CODE END
+            encryption_ratio = stats["encryption_ratio"]
+            encryption_pct = (
+                None if encryption_ratio is None else int(round(encryption_ratio * 100))
+            )
+            if encryption_ratio is not None and encryption_ratio < 0.5:
                 unencrypted_count += 1
 
             device_results.append(
@@ -522,6 +564,9 @@ class IoTMonitor:
                     "ip": dev_info.get("ip", ""),
                     "score": score,
                     "grade": score_result["grade"],
+                    "coverage": score_result["coverage"],
+                    "checks_available": score_result["checks_available"],
+                    "checks_total": score_result["checks_total"],
                     "privacy_score": score_result["privacy_score"],
                     "security_score": score_result["security_score"],
                     "behavior_score": score_result["behavior_score"],
@@ -529,18 +574,22 @@ class IoTMonitor:
                     "encryption_pct": encryption_pct,
                     "encryption_applicable": stats["encryption_applicable"],
                     "tracker_count": tracker_count,
-                    "last_seen": dev_info.get("classified_at", ""),
+                    # OLD CODE START — NET-158: when the daemon first classified it
+                    # "last_seen": dev_info.get("classified_at", ""),
+                    # OLD CODE END
+                    "last_seen": dev_info.get("last_seen"),
                 }
             )
 
         # ----- Fleet-level aggregation -----
         fleet_score = self._scorer.compute_fleet_score(device_scores)
         fleet_grade = self._scorer.score_to_grade(fleet_score)
+        scored = [d for d in device_results if d["score"] is not None]
 
-        # Average sub-scores across devices
-        avg_privacy = self._avg_field(device_results, "privacy_score")
-        avg_security = self._avg_field(device_results, "security_score")
-        avg_behavior = self._avg_field(device_results, "behavior_score")
+        # Average sub-scores across the scored devices
+        avg_privacy = self._avg_field(scored, "privacy_score")
+        avg_security = self._avg_field(scored, "security_score")
+        avg_behavior = self._avg_field(scored, "behavior_score")
 
         # Build subtitle
         subtitle = self._build_subtitle(
@@ -551,7 +600,10 @@ class IoTMonitor:
         )
 
         # Sort devices by score ascending (worst first) for attention priority
-        device_results.sort(key=lambda d: d["score"])
+        # OLD CODE START — NET-158: scores can be None now
+        # device_results.sort(key=lambda d: d["score"])
+        # OLD CODE END
+        device_results.sort(key=lambda d: (d["score"] is None, d["score"] or 0))
 
         return {
             "health_score": fleet_score,
@@ -560,7 +612,9 @@ class IoTMonitor:
             "security_score": avg_security,
             "behavior_score": avg_behavior,
             "device_count": len(devices),
+            "scored_device_count": len(scored),
             "anomaly_count": total_anomaly_count,
+            "anomalies_checked": anomalies_checked,
             "privacy_concerns": privacy_concern_count,
             "unencrypted_count": unencrypted_count,
             "subtitle": subtitle,
@@ -568,15 +622,25 @@ class IoTMonitor:
         }
 
     def _empty_fleet_summary(self) -> dict[str, Any]:
-        """Return a fleet summary with no devices."""
+        """Return a fleet summary with no devices: nothing measured, so no score."""
+        # OLD CODE START — NET-158: an empty fleet read 100, grade A
+        # return {
+        #     "health_score": 100,
+        #     "health_grade": "A",
+        #     "privacy_score": 100,
+        #     "security_score": 100,
+        #     "behavior_score": 100,
+        # OLD CODE END
         return {
-            "health_score": 100,
-            "health_grade": "A",
-            "privacy_score": 100,
-            "security_score": 100,
-            "behavior_score": 100,
+            "health_score": None,
+            "health_grade": None,
+            "privacy_score": None,
+            "security_score": None,
+            "behavior_score": None,
             "device_count": 0,
+            "scored_device_count": 0,
             "anomaly_count": 0,
+            "anomalies_checked": 0,
             "privacy_concerns": 0,
             "unencrypted_count": 0,
             "subtitle": "No IoT devices detected yet.",
@@ -584,16 +648,20 @@ class IoTMonitor:
         }
 
     @staticmethod
-    def _avg_field(devices: list[dict], field: str) -> int:
-        """Compute integer average of a field across device dicts."""
-        if not devices:
-            return 100
-        total = sum(d.get(field, 0) for d in devices)
-        return int(round(total / len(devices)))
+    def _avg_field(devices: list[dict], field: str) -> int | None:
+        """Integer average of a field over the devices that have it; None if none do."""
+        # OLD CODE START — NET-158: no devices read 100, and a missing value counted as 0
+        # if not devices:
+        #     return 100
+        # total = sum(d.get(field, 0) for d in devices)
+        # return int(round(total / len(devices)))
+        # OLD CODE END
+        values = [d[field] for d in devices if d.get(field) is not None]
+        return int(round(sum(values) / len(values))) if values else None
 
     @staticmethod
     def _build_subtitle(
-        score: int,
+        score: int | None,
         device_count: int,
         anomaly_count: int,
         privacy_concerns: int,
@@ -602,7 +670,9 @@ class IoTMonitor:
         if device_count == 0:
             return "No IoT devices detected yet."
 
-        if score >= 90:
+        if score is None:
+            prefix = "Not enough measured to score your smart home yet."
+        elif score >= 90:
             prefix = "Your smart home is healthy."
         elif score >= 75:
             prefix = "Your smart home is mostly healthy."
@@ -916,10 +986,26 @@ class IoTMonitor:
 
         Combines connection stats, DNS tracker stats, and baseline data
         into a single dict with all required keys.
+
+        Each input is measured or unavailable (None) here, at its source (NET-158). A
+        constant placeholder is never a measurement:
+          - telemetry bytes: nothing measures them;
+          - firmware: no signal ("unknown");
+          - encryption: no eligible traffic, so there is no ratio;
+          - all four behaviour checks: with no baseline there is nothing to compare, and
+            with one they don't yet measure what their names say. baseline_adherence
+            compares this window's destination ports with ports learned over the 14 days
+            before the baseline was built (not destinations, not this window) and falls
+            back to 1.0 / 0.5 constants; new_destinations counts new ports;
+            volume_spike sets the window's total against a daily average; unusual_timing
+            reads the hour of the request, not of the traffic. Correcting them is a
+            follow-up.
         """
         total_conns = conn_stats.get("total_connections", 0)
         encrypted_conns = conn_stats.get("encrypted_connections", 0)
-        total_bytes = conn_stats.get("total_bytes", 0)
+        # OLD CODE START — NET-158: only the baseline block below used it
+        # total_bytes = conn_stats.get("total_bytes", 0)
+        # OLD CODE END
         dest_ports = conn_stats.get("dest_ports", set())
         third_party_orgs = conn_stats.get("third_party_orgs", 0)
         alert_count = conn_stats.get("alert_count", 0)
@@ -927,10 +1013,13 @@ class IoTMonitor:
         tracker_domain_count = dns_stats.get("tracker_domain_count", 0)
 
         # Encryption ratio
-        if total_conns > 0:
-            encryption_ratio = encrypted_conns / total_conns
-        else:
-            encryption_ratio = 1.0  # No data = assume OK
+        # OLD CODE START — NET-158: no eligible traffic earned the full 15 points
+        # if total_conns > 0:
+        #     encryption_ratio = encrypted_conns / total_conns
+        # else:
+        #     encryption_ratio = 1.0  # No data = assume OK
+        # OLD CODE END
+        encryption_ratio = encrypted_conns / total_conns if total_conns > 0 else None
 
         # Protocol violations: ports not in expected set
         protocol_violations = 0
@@ -938,58 +1027,78 @@ class IoTMonitor:
             if port not in expected_ports:
                 protocol_violations += 1
 
-        # Baseline-derived stats
-        if baseline:
-            known_dests = set(baseline.get("known_destinations", []))
-            # OLD CODE START — all_dests was assigned but never used (F841)
-            # all_dests = set()  # We don't have current destinations here individually,
-            # OLD CODE END
-            # We don't have current destinations here individually,
-            # but dest_ports gives us a proxy. Use known_destinations count ratio.
-            known_count = len(known_dests)
-            # baseline_adherence: fraction of baseline destinations vs total seen
-            # Simplified: if baseline exists, use ratio of known ports to all ports
-            known_ports = set(baseline.get("known_ports", []))
-            total_port_count = len(dest_ports)
-            known_port_hits = len(dest_ports & known_ports) if dest_ports else 0
-            if total_port_count > 0:
-                baseline_adherence = known_port_hits / total_port_count
-            elif known_count > 0:
-                baseline_adherence = 1.0
-            else:
-                baseline_adherence = 0.5
-
-            new_destinations = max(0, total_port_count - known_port_hits)
-
-            # Volume spike: compare current bytes to baseline daily avg
-            daily_avg = baseline.get("daily_avg_bytes", 0)
-            volume_spike = total_bytes > daily_avg * 3 if daily_avg > 0 else False
-
-            # Unusual timing: check if current hour is outside baseline hours
-            active_hours = set(baseline.get("active_hours", []))
-            current_hour = datetime.now(timezone.utc).hour
-            unusual_timing = bool(active_hours) and current_hour not in active_hours
-        else:
-            # No baseline: use conservative defaults
-            baseline_adherence = 0.5
-            new_destinations = 0
-            volume_spike = False
-            unusual_timing = False
-
+        # OLD CODE START — NET-158: scored as measured; see the docstring for why each is
+        # unavailable now
+        # # Baseline-derived stats
+        # if baseline:
+        #     known_dests = set(baseline.get("known_destinations", []))
+        #     # OLD CODE START — all_dests was assigned but never used (F841)
+        #     # all_dests = set()  # We don't have current destinations here individually,
+        #     # OLD CODE END
+        #     # We don't have current destinations here individually,
+        #     # but dest_ports gives us a proxy. Use known_destinations count ratio.
+        #     known_count = len(known_dests)
+        #     # baseline_adherence: fraction of baseline destinations vs total seen
+        #     # Simplified: if baseline exists, use ratio of known ports to all ports
+        #     known_ports = set(baseline.get("known_ports", []))
+        #     total_port_count = len(dest_ports)
+        #     known_port_hits = len(dest_ports & known_ports) if dest_ports else 0
+        #     if total_port_count > 0:
+        #         baseline_adherence = known_port_hits / total_port_count
+        #     elif known_count > 0:
+        #         baseline_adherence = 1.0
+        #     else:
+        #         baseline_adherence = 0.5
+        #
+        #     new_destinations = max(0, total_port_count - known_port_hits)
+        #
+        #     # Volume spike: compare current bytes to baseline daily avg
+        #     daily_avg = baseline.get("daily_avg_bytes", 0)
+        #     volume_spike = total_bytes > daily_avg * 3 if daily_avg > 0 else False
+        #
+        #     # Unusual timing: check if current hour is outside baseline hours
+        #     active_hours = set(baseline.get("active_hours", []))
+        #     current_hour = datetime.now(timezone.utc).hour
+        #     unusual_timing = bool(active_hours) and current_hour not in active_hours
+        # else:
+        #     # No baseline: use conservative defaults
+        #     baseline_adherence = 0.5
+        #     new_destinations = 0
+        #     volume_spike = False
+        #     unusual_timing = False
+        #
+        # return {
+        #     "tracker_domain_count": tracker_domain_count,
+        #     "telemetry_bytes": 0,  # Would need IP-to-tracker resolution; simplified for now
+        #     "third_party_orgs": third_party_orgs,
+        #     "encryption_ratio": min(1.0, max(0.0, encryption_ratio)),
+        #     # False when only local chatter was seen: the ratio is then N/A, not 100%
+        #     "encryption_applicable": total_conns > 0,
+        #     "protocol_violations": protocol_violations,
+        #     "alert_count": alert_count,
+        #     "firmware_age_signal": "unknown",
+        #     "baseline_adherence": min(1.0, max(0.0, baseline_adherence)),
+        #     "new_destinations": new_destinations,
+        #     "volume_spike": volume_spike,
+        #     "unusual_timing": unusual_timing,
+        # }
+        # OLD CODE END
         return {
             "tracker_domain_count": tracker_domain_count,
-            "telemetry_bytes": 0,  # Would need IP-to-tracker resolution; simplified for now
+            "telemetry_bytes": None,
             "third_party_orgs": third_party_orgs,
-            "encryption_ratio": min(1.0, max(0.0, encryption_ratio)),
+            "encryption_ratio": None
+            if encryption_ratio is None
+            else min(1.0, max(0.0, encryption_ratio)),
             # False when only local chatter was seen: the ratio is then N/A, not 100%
             "encryption_applicable": total_conns > 0,
             "protocol_violations": protocol_violations,
             "alert_count": alert_count,
-            "firmware_age_signal": "unknown",
-            "baseline_adherence": min(1.0, max(0.0, baseline_adherence)),
-            "new_destinations": new_destinations,
-            "volume_spike": volume_spike,
-            "unusual_timing": unusual_timing,
+            "firmware_age_signal": None,
+            "baseline_adherence": None,
+            "new_destinations": None,
+            "volume_spike": None,
+            "unusual_timing": None,
         }
 
     def classify_as_iot(self, device_mac: str, device_info: dict[str, Any]) -> bool:
@@ -1439,6 +1548,7 @@ class IoTMonitor:
         except (ValueError, TypeError):
             window_hours = 24.0
 
+        expected_ports = self._get_expected_ports()
         device_results: list[dict[str, Any]] = []
         for mac, dev_info in devices.items():
             cs = conn_stats.get(mac, {})
@@ -1446,7 +1556,9 @@ class IoTMonitor:
 
             total_conns = cs.get("total_connections", 0)
             encrypted_conns = cs.get("encrypted_connections", 0)
-            total_bytes = cs.get("total_bytes", 0)
+            # OLD CODE START — NET-158: only the telemetry estimate below used it
+            # total_bytes = cs.get("total_bytes", 0)
+            # OLD CODE END
             third_party_orgs = cs.get("third_party_orgs", 0)
 
             encryption_ratio = encrypted_conns / total_conns if total_conns > 0 else 1.0
@@ -1454,26 +1566,46 @@ class IoTMonitor:
             tracker_domains_list = dd.get("tracker_domains", [])
             tracker_count = len(tracker_domains_list)
 
-            # Estimate telemetry bytes as a fraction of total bytes
-            # proportional to tracker queries vs total queries
+            # OLD CODE START — NET-158: an estimate shown as bytes; the lookup share is what
+            # was measured
+            # # Estimate telemetry bytes as a fraction of total bytes
+            # # proportional to tracker queries vs total queries
+            # total_queries = dd.get("total_dns_queries", 0)
+            # tracker_query_sum = sum(t["query_count"] for t in tracker_domains_list)
+            # if total_queries > 0 and total_bytes > 0:
+            #     telemetry_bytes = int(total_bytes * tracker_query_sum / total_queries)
+            # else:
+            #     telemetry_bytes = 0
+            # OLD CODE END
             total_queries = dd.get("total_dns_queries", 0)
             tracker_query_sum = sum(t["query_count"] for t in tracker_domains_list)
-            if total_queries > 0 and total_bytes > 0:
-                telemetry_bytes = int(total_bytes * tracker_query_sum / total_queries)
-            else:
-                telemetry_bytes = 0
+            tracker_lookup_share = (
+                round(tracker_query_sum / total_queries, 4) if total_queries else None
+            )
 
             phone_home_per_hour = (
                 round(total_conns / window_hours, 2) if window_hours > 0 else 0
             )
 
-            # Compute privacy score (0-100) based on metrics
-            privacy_score = self._compute_privacy_score(
-                tracker_count,
-                encryption_ratio,
-                third_party_orgs,
-                telemetry_bytes,
-            )
+            # OLD CODE START — NET-158: a second formula, so the drawer and the Privacy tab
+            # showed two different privacy scores for one device
+            # privacy_score = self._compute_privacy_score(
+            #     tracker_count,
+            #     encryption_ratio,
+            #     third_party_orgs,
+            #     telemetry_bytes,
+            # )
+            # OLD CODE END
+            # The trust score's privacy pillar, from the same inputs as the fleet summary
+            privacy_score = self._scorer.score_device(
+                self._build_device_stats(
+                    mac,
+                    cs,
+                    {"tracker_domain_count": tracker_count},
+                    None,
+                    expected_ports,
+                )
+            )["privacy_score"]
             privacy_grade = self._scorer.score_to_grade(privacy_score)
 
             device_results.append(
@@ -1485,7 +1617,10 @@ class IoTMonitor:
                     "privacy_score": privacy_score,
                     "tracker_domains": tracker_domains_list,
                     "tracker_count": tracker_count,
-                    "telemetry_bytes": telemetry_bytes,
+                    # OLD CODE START — NET-158: see the estimate above
+                    # "telemetry_bytes": telemetry_bytes,
+                    # OLD CODE END
+                    "tracker_lookup_share": tracker_lookup_share,
                     "third_party_orgs": third_party_orgs,
                     "encryption_ratio": round(min(1.0, max(0.0, encryption_ratio)), 4),
                     # Only local chatter seen: ratio stays 1.0 so nothing is penalised
@@ -1727,7 +1862,11 @@ class IoTMonitor:
                     "connection_count": b.get("doc_count", 0),
                     "first_seen": first_seen,
                     "last_seen": last_seen,
-                    "in_baseline": ip in baseline_dests,
+                    # OLD CODE START — NET-158: with no baseline every destination read "new"
+                    # "in_baseline": ip in baseline_dests,
+                    # OLD CODE END
+                    # None: no baseline, so "new" was not checked
+                    "in_baseline": (ip in baseline_dests) if baseline else None,
                 }
             )
 
@@ -2651,7 +2790,7 @@ class IoTMonitor:
         manufacturers: list[dict[str, Any]] = []
         for mfg_name, mfg_macs in mfg_groups.items():
             device_count = len(mfg_macs)
-            trust_scores: list[int] = []
+            trust_scores: list[int | None] = []
             privacy_scores: list[int] = []
             total_encrypted = 0
             total_conns = 0
@@ -2673,7 +2812,11 @@ class IoTMonitor:
                 )
                 score_result = self._scorer.score_device(stats)
                 trust_scores.append(score_result["score"])
-                privacy_scores.append(score_result["privacy_score"])
+                # OLD CODE START — NET-158: every device's pillar, scored or not
+                # privacy_scores.append(score_result["privacy_score"])
+                # OLD CODE END
+                if score_result["score"] is not None:
+                    privacy_scores.append(score_result["privacy_score"])
 
                 # Encryption stats
                 mc = cs.get("total_connections", 0)
@@ -2698,26 +2841,44 @@ class IoTMonitor:
                     if port not in cat_expected:
                         total_violations += 1
 
-            avg_trust = (
-                int(round(sum(trust_scores) / len(trust_scores))) if trust_scores else 0
-            )
+            # OLD CODE START — NET-158: an arithmetic mean over every device (unscored ones
+            # too), 0 for none, and 100% encrypted with no eligible traffic
+            # avg_trust = (
+            #     int(round(sum(trust_scores) / len(trust_scores))) if trust_scores else 0
+            # )
+            # avg_trust_grade = self._scorer.score_to_grade(avg_trust)
+            # avg_privacy = (
+            #     int(round(sum(privacy_scores) / len(privacy_scores)))
+            #     if privacy_scores
+            #     else 0
+            # )
+            # avg_privacy_grade = self._scorer.score_to_grade(avg_privacy)
+            # encryption_pct = (
+            #     int(round(total_encrypted / total_conns * 100))
+            #     if total_conns > 0
+            #     else 100
+            # )
+            # OLD CODE END
+            # The fleet rule: harmonic mean over the scored devices; none scored, no score
+            avg_trust = self._scorer.compute_fleet_score(trust_scores)
             avg_trust_grade = self._scorer.score_to_grade(avg_trust)
             avg_privacy = (
                 int(round(sum(privacy_scores) / len(privacy_scores)))
                 if privacy_scores
-                else 0
+                else None
             )
             avg_privacy_grade = self._scorer.score_to_grade(avg_privacy)
             encryption_pct = (
                 int(round(total_encrypted / total_conns * 100))
                 if total_conns > 0
-                else 100
+                else None
             )
 
             manufacturers.append(
                 {
                     "name": mfg_name,
                     "device_count": device_count,
+                    "scored_device_count": sum(s is not None for s in trust_scores),
                     "avg_trust_score": avg_trust,
                     "avg_trust_grade": avg_trust_grade,
                     "avg_privacy_grade": avg_privacy_grade,
@@ -2727,6 +2888,11 @@ class IoTMonitor:
                 }
             )
 
-        # Sort by worst trust score first
-        manufacturers.sort(key=lambda m: m["avg_trust_score"])
+        # Sort by worst trust score first; unscored last
+        # OLD CODE START — NET-158: scores can be None now
+        # manufacturers.sort(key=lambda m: m["avg_trust_score"])
+        # OLD CODE END
+        manufacturers.sort(
+            key=lambda m: (m["avg_trust_score"] is None, m["avg_trust_score"] or 0)
+        )
         return {"manufacturers": manufacturers}

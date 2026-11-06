@@ -45,6 +45,7 @@ class ChangelogService:
         title: str,
         description: str = "",
         metadata: dict[str, Any] | None = None,
+        timestamp: str | None = None,
     ) -> dict[str, Any]:
         """Record a network event to OpenSearch.
 
@@ -53,12 +54,17 @@ class ChangelogService:
             title: Short summary of the event.
             description: Detailed description.
             metadata: Additional key-value data.
+            timestamp: When it happened (ISO); now if not given.
 
         Returns:
             The indexed document with its assigned _id.
         """
         doc = {
-            "@timestamp": datetime.now(timezone.utc).isoformat(),
+            # OLD CODE START — NET-158: always the time of logging; a device join was stamped
+            # when the registry refresh ran, up to a refresh window after its first record
+            # "@timestamp": datetime.now(timezone.utc).isoformat(),
+            # OLD CODE END
+            "@timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
             "event_type": event_type,
             "title": title,
             "description": description,

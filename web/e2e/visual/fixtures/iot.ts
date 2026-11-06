@@ -78,6 +78,10 @@ const fleetDevice = (p: IotProfile): FleetDevice => ({
 	ip: p.device.ip,
 	score: trustScore(p),
 	grade: grade(trustScore(p)),
+	// NET-158: five measured checks (trackers, third parties, encryption, ports, alerts)
+	coverage: 55,
+	checks_available: 5,
+	checks_total: 11,
 	privacy_score: p.privacy,
 	security_score: p.security,
 	behavior_score: p.behavior,
@@ -98,7 +102,9 @@ const fleet = (): FleetSummary => ({
 	security_score: avg(PROFILES.map((p) => p.security)),
 	behavior_score: avg(PROFILES.map((p) => p.behavior)),
 	device_count: PROFILES.length,
+	scored_device_count: PROFILES.length,
 	anomaly_count: anomalyCount,
+	anomalies_checked: PROFILES.length,
 	privacy_concerns: privacyConcerns,
 	unencrypted_count: PROFILES.filter((p) => p.encryption < 0.9).length,
 	subtitle: `Your smart home is mostly healthy. ${anomalyCount} anomalies detected. ${privacyConcerns} devices have privacy concerns.`,
@@ -112,7 +118,7 @@ const privacyDevice = (p: IotProfile): PrivacyDevice => ({
 	privacy_score: p.privacy,
 	tracker_domains: p.trackerDomains.map((domain, i) => ({ domain, query_count: 140 - i * 17 })),
 	tracker_count: p.trackerDomains.length,
-	telemetry_bytes: p.telemetryBytes,
+	tracker_lookup_share: p.trackerDomains.length > 0 ? 0.2 : 0,
 	third_party_orgs: p.thirdPartyOrgs,
 	encryption_ratio: p.encryption,
 	phone_home_per_hour: p.phoneHomePerHour,
@@ -184,6 +190,7 @@ const manufacturers = (): ManufacturerProfilesResponse => ({
 	manufacturers: PROFILES.map((p) => ({
 		name: p.device.vendor,
 		device_count: 1,
+		scored_device_count: 1,
 		avg_trust_score: trustScore(p),
 		avg_trust_grade: grade(trustScore(p)),
 		avg_privacy_grade: grade(p.privacy),
@@ -240,16 +247,18 @@ const activityTimeline = (): ActivityTimeline => ({
 
 export const IOT_ROUTES: FixtureRoute[] = [
 	{
-		// the daemon's own empty fleet answers 100 / A with no devices
+		// the daemon's own empty fleet: nothing measured, so no score (NET-158; it read 100 / A)
 		path: '/api/iot/fleet-summary',
 		empty: {
-			health_score: 100,
-			health_grade: 'A',
-			privacy_score: 100,
-			security_score: 100,
-			behavior_score: 100,
+			health_score: null,
+			health_grade: null,
+			privacy_score: null,
+			security_score: null,
+			behavior_score: null,
 			device_count: 0,
+			scored_device_count: 0,
 			anomaly_count: 0,
+			anomalies_checked: 0,
 			privacy_concerns: 0,
 			unencrypted_count: 0,
 			subtitle: 'No IoT devices detected yet.',

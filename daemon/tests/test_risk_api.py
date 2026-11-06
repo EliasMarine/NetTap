@@ -68,7 +68,7 @@ def _make_device_bucket(
         "doc_count": doc_count,
         "total_orig_bytes": {"value": orig_bytes},
         "total_resp_bytes": {"value": resp_bytes},
-        "ports_used": {"buckets": port_buckets},
+        "ports_used": {"ports": {"buckets": port_buckets}},
         "external_conns": {"doc_count": int(doc_count * 0.3)},
     }
 
@@ -93,7 +93,7 @@ def _make_single_conn_result(total=100, orig_bytes=1000, resp_bytes=9000, ports=
         "aggregations": {
             "total_orig_bytes": {"value": orig_bytes},
             "total_resp_bytes": {"value": resp_bytes},
-            "ports_used": {"buckets": port_buckets},
+            "ports_used": {"ports": {"buckets": port_buckets}},
             "external_conns": {"doc_count": 30},
         },
     }
@@ -332,7 +332,7 @@ class TestRiskScoreSingleEndpoint(AioHTTPTestCase):
             "aggregations": {
                 "total_orig_bytes": {"value": 0},
                 "total_resp_bytes": {"value": 0},
-                "ports_used": {"buckets": []},
+                "ports_used": {"ports": {"buckets": []}},
                 "external_conns": {"doc_count": 0},
             },
         }
@@ -733,11 +733,14 @@ def _port_search(ports_by_ip: dict[str, dict[int, int]]):
 
     def ports_used(ports):
         top = sorted(ports, key=lambda port: -ports[port])[:50]
+        # the terms list sits inside the non-ICMP filter (NET-158)
         return {
-            "buckets": [{"key": port, "doc_count": ports[port]} for port in top],
-            "sum_other_doc_count": sum(
-                n for port, n in ports.items() if port not in top
-            ),
+            "ports": {
+                "buckets": [{"key": port, "doc_count": ports[port]} for port in top],
+                "sum_other_doc_count": sum(
+                    n for port, n in ports.items() if port not in top
+                ),
+            }
         }
 
     def device(ip, key):
@@ -920,6 +923,38 @@ class TestRiskRouteRegistration(AioHTTPTestCase):
         self.mock_storage._client.search.side_effect = OpenSearchException("test")
         resp = await self.client.request("GET", "/api/risk/scores/1.2.3.4")
         self.assertNotEqual(resp.status, 404)
+
+
+class TestRiskFactorScope(unittest.TestCase):
+    """NET-158: "external" is the internet only, and ICMP codes are not ports."""
+
+    def test_external_leaves_out_every_non_internet_address(self):
+        from api.risk import _device_score_aggs
+
+        [clause] = _device_score_aggs()["external_conns"]["filter"]["bool"]["must_not"]
+        excluded = set(clause["terms"]["destination.ip"])
+        # multicast (mDNS 224.0.0.251, ff02::fb), broadcast, link-local, IPv6 private
+        for cidr in (
+            "224.0.0.0/4",
+            "ff00::/8",
+            "255.255.255.255/32",
+            "169.254.0.0/16",
+            "fe80::/10",
+            "fc00::/7",
+        ):
+            self.assertIn(cidr, excluded)
+
+    def test_ports_leave_out_icmp_on_the_list_and_the_single_device(self):
+        from api.risk import _device_score_aggs, _build_device_stats
+
+        icmp = {"terms": {"network.transport": ["icmp", "icmp6", "ipv6-icmp"]}}
+        ports = _device_score_aggs()["ports_used"]
+        self.assertEqual(ports["filter"], {"bool": {"must_not": [icmp]}})
+        self.assertEqual(ports["aggs"]["ports"]["terms"]["field"], "destination.port")
+        bucket = {"doc_count": 3, "ports_used": {"ports": {"buckets": [{"key": 443}]}}}
+        self.assertEqual(
+            _build_device_stats("10.0.0.2", bucket, 0, 0, 0)["ports_used"], [443]
+        )
 
 
 if __name__ == "__main__":

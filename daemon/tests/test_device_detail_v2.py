@@ -661,5 +661,78 @@ class TestDeviceDetailV2Fields(AioHTTPTestCase):
         self.assertEqual(bw[1]["upload_bytes"], 2000)
 
 
+class TestDeviceDetailFigures(AioHTTPTestCase):
+    """NET-158: the detail page's top destinations and alert count."""
+
+    def setUp(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        super().setUp()
+
+    get_application = TestDeviceDetailV2Fields.get_application
+    _setup_detail_responses = TestDeviceDetailV2Fields._setup_detail_responses
+
+    @staticmethod
+    def _conn(dest_buckets):
+        return {
+            "hits": {"total": {"value": 100}},
+            "aggregations": {
+                "total_bytes": {"value": 0},
+                "total_orig_bytes": {"value": 0},
+                "total_resp_bytes": {"value": 0},
+                "unique_destinations": {"value": len(dest_buckets)},
+                "top_services": {"buckets": []},
+                "protocols": {"buckets": []},
+                "first_seen": {"value_as_string": "2026-03-12T00:00:00.000Z"},
+                "last_seen": {"value_as_string": "2026-03-12T23:59:59.000Z"},
+                "top_destinations": {"buckets": dest_buckets},
+                "bandwidth_series": {"buckets": []},
+            },
+        }
+
+    @unittest_run_loop
+    async def test_top_destinations_are_the_biggest_transfers(self):
+        """The buckets come by connection count (merged across shards); the biggest
+        transfer is the 25th most frequent destination, past the old slice of 20."""
+        frequent = [
+            {"key": f"10.0.0.{i}", "doc_count": 100 - i, "bytes": {"value": 1000 + i}}
+            for i in range(24)
+        ]
+        backup = {"key": "203.0.113.5", "doc_count": 2, "bytes": {"value": 9_000_000}}
+        self._setup_detail_responses(self._conn([*frequent, backup]))
+
+        resp = await self.client.request("GET", "/api/devices/192.168.1.100")
+        device = (await resp.json())["device"]
+        dests = device["top_destinations"]
+
+        self.assertEqual(dests[0]["ip"], "203.0.113.5")
+        self.assertEqual(len(dests), 20)
+        self.assertEqual(
+            [d["bytes"] for d in dests],
+            sorted((d["bytes"] for d in dests), reverse=True),
+        )
+        # the unique count stays exact: every bucket, not the 20 shown
+        self.assertEqual(device["unique_destinations"], 25)
+
+    @unittest_run_loop
+    async def test_alert_count_covers_both_directions(self):
+        self._setup_detail_responses(self._conn([]))
+        await self.client.request("GET", "/api/devices/192.168.1.100")
+        alert_body = self.mock_client.search.call_args_list[2].kwargs["body"]
+        either = [
+            f["bool"]["should"]
+            for f in alert_body["query"]["bool"]["filter"]
+            if "bool" in f
+        ]
+        self.assertEqual(
+            either,
+            [
+                [
+                    {"term": {"source.ip": "192.168.1.100"}},
+                    {"term": {"destination.ip": "192.168.1.100"}},
+                ]
+            ],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

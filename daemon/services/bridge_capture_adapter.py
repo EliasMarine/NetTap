@@ -23,6 +23,7 @@ from services.capture_manager import (
     CaptureManager,
     CaptureMode,
     CaptureStats,
+    packet_loss_pct,
 )
 
 logger = logging.getLogger("nettap.services.bridge_capture_adapter")
@@ -208,10 +209,14 @@ class BridgeCaptureAdapter(CaptureManager):
         rx_packets = counters.get("rx_packets", 0)
         rx_dropped = counters.get("rx_dropped", 0)
         rx_missed = counters.get("rx_missed_errors", 0)
-        total_drops = rx_dropped + rx_missed
-        drop_rate_pct = 0.0
-        if rx_packets > 0:
-            drop_rate_pct = round((total_drops / rx_packets) * 100, 6)
+        # OLD CODE START — 2026-11-06 (S9): a share of rx_packets alone (lost packets aren't in
+        # it), unlike the other modes; packet_loss_pct is the one formula for all of them
+        # total_drops = rx_dropped + rx_missed
+        # drop_rate_pct = 0.0
+        # if rx_packets > 0:
+        #     drop_rate_pct = round((total_drops / rx_packets) * 100, 6)
+        # OLD CODE END
+        drop_rate_pct = packet_loss_pct(rx_packets, rx_dropped, rx_missed)
 
         return CaptureStats(
             capture_interface=self._bridge_name,

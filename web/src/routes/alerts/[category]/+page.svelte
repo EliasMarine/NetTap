@@ -657,8 +657,18 @@
 		{ key: 'dest_port', label: 'Port', numeric: true, cell: portCell },
 	];
 
+	/** The daemon lists at most this many addresses and signatures. */
+	const LIST_CAP = 20;
+	/** "Top 20 of 412 addresses" when capped: the daemon's address total is exact, the list is not (I10). */
+	const addressesShown = (d: CategoryDetailResponse) => {
+		const n = d.affected_devices.length;
+		const total = d.stats.affected_devices;
+		return n < total ? `Top ${fmt(n)} of ${fmt(total)} addresses` : `${fmt(n)} ${n === 1 ? 'address' : 'addresses'}`;
+	};
+
 	const deviceColumns: Column<CategoryDetailDevice>[] = [
-		{ key: 'ip', label: 'Device', cell: deviceCell },
+		// OLD CODE START: { key: 'ip', label: 'Device', cell: deviceCell }, (I10: internet addresses too) OLD CODE END
+		{ key: 'ip', label: 'Address', cell: deviceCell },
 		{ key: 'count', label: 'Alerts', numeric: true, cell: deviceCountCell },
 		{ key: 'severity', label: 'Severity', sortValue: (d) => SEVERITY_RANK[d.severity ?? ''], cell: deviceSeverityCell },
 	];
@@ -745,7 +755,8 @@
 	<div class="grid">
 		<KpiCard class="c-4" label="Unique sources" icon="connections" value={formatNumber(data.stats.unique_sources)} note="Addresses that raised these alerts" />
 		<KpiCard class="c-4" label="Unique targets" icon="alerts" value={formatNumber(data.stats.unique_targets)} note="Addresses they were aimed at" />
-		<KpiCard class="c-4" label="Affected devices" icon="devices" value={formatNumber(data.stats.affected_devices)} note="Devices on your network" />
+		<!-- OLD CODE START: <KpiCard class="c-4" label="Affected devices" icon="devices" value={formatNumber(data.stats.affected_devices)} note="Devices on your network" /> (I10: it counts every source and target, internet addresses too) OLD CODE END -->
+		<KpiCard class="c-4" label="Addresses involved" icon="devices" value={formatNumber(data.stats.affected_devices)} note="Sources and targets, inside and outside your network" />
 
 		<Card class="c-12" title="Alerts by severity" sub="{fmt(data.stats.total)} alerts · {range.words}, by severity">
 			<div class="sev-sum">
@@ -799,6 +810,7 @@
 			{/if}
 		</Card>
 
+		<!-- OLD CODE START — I10: internet addresses counted as devices, and the daemon's 20-row cap read as the total
 		<Card class="c-6" title="Affected devices" sub="{data.affected_devices.length} devices · alerts per device · {range.words}">
 			{#if data.affected_devices.length === 0}
 				<CardState state="empty" title="No affected devices found" message="Devices appear here once alerts in this category name them." />
@@ -808,6 +820,20 @@
 		</Card>
 
 		<Card class="c-6 sig-bars" title="Top signatures" sub="{data.top_signatures.length} signatures · alerts per rule · last seen">
+		OLD CODE END -->
+		<Card class="c-6" title="Addresses involved" sub="{addressesShown(data)} · alerts per address · {range.words}">
+			{#if data.affected_devices.length === 0}
+				<CardState state="empty" title="No addresses found" message="Addresses appear here once alerts in this category name them." />
+			{:else}
+				<DataTable columns={deviceColumns} rows={data.affected_devices} ariaLabel="Addresses involved" rowKey={(d) => d.ip} initialSort={{ key: 'count', dir: 'desc' }} />
+			{/if}
+		</Card>
+
+		<Card
+			class="c-6 sig-bars"
+			title="Top signatures"
+			sub="{data.top_signatures.length >= LIST_CAP ? `The ${LIST_CAP} most common` : `${data.top_signatures.length} signatures`} · alerts per rule · last seen"
+		>
 			{#if data.top_signatures.length === 0}
 				<CardState state="empty" title="No signatures found" message="Rules appear here once this category has alerts." />
 			{:else}

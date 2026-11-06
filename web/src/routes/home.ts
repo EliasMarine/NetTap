@@ -4,8 +4,8 @@
  */
 import type { PipelineStage } from '$components/ui/Pipeline.svelte';
 import { modeLabel } from '$components/shell/status';
-import type { SystemHealth } from '$api/system';
-import type { CaptureHealthResponse, CaptureStatsResponse } from '$api/capture';
+import { healthStage, type SystemHealth } from '$api/system';
+import { formatLossPct, packetsLost, type CaptureHealthResponse, type CaptureStatsResponse } from '$api/capture';
 
 const CHECKING = 'Checking…';
 
@@ -120,10 +120,18 @@ export function captureStage(h: CaptureHealthResponse | null, failed: boolean): 
 export function packetsStage(s: CaptureStatsResponse | null, failed: boolean): PipelineStage {
 	const base = { key: 'packets', label: 'Packets' };
 	if (!s) return { ...base, status: 'unknown', detail: failed ? "Couldn't load capture counters: the request failed." : CHECKING };
+	// OLD CODE START — 2026-11-06 (S9, O10): counted kernel drops only, so a mirror port losing
+	// packets at the NIC (rx_missed_errors) read "No packet drops"
+	// const detail =
+	// 	s.rx_dropped > 0
+	// 		? `${s.drop_rate_pct.toFixed(3)}% dropped · ${formatNumber(s.rx_dropped)} packets`
+	// 		: `No packet drops · ${formatNumber(s.rx_packets)} received`;
+	// OLD CODE END
+	const lost = packetsLost(s);
 	const detail =
-		s.rx_dropped > 0
-			? `${s.drop_rate_pct.toFixed(3)}% dropped · ${formatNumber(s.rx_dropped)} packets`
-			: `No packet drops · ${formatNumber(s.rx_packets)} received`;
+		lost > 0
+			? `${formatLossPct(s.drop_rate_pct, lost)} lost · ${formatNumber(lost)} packets`
+			: `No packets lost · ${formatNumber(s.rx_packets)} received`;
 	// CaptureHealthPanel flagged a drop rate over 0.1 %
 	return { ...base, status: s.drop_rate_pct > 0.1 ? 'failing' : 'ok', detail };
 }
@@ -132,7 +140,10 @@ export function systemStage(health: SystemHealth | null, failed: boolean): Pipel
 	const base = { key: 'system', label: 'System' };
 	// #96: a failed check reads "Unknown", never "Degraded"
 	if (!health) return { ...base, status: 'unknown', detail: failed ? "Couldn't check: the request failed" : CHECKING };
-	return health.healthy ? { ...base, status: 'ok', detail: 'Healthy' } : { ...base, status: 'failing', detail: 'Degraded' };
+	// OLD CODE START — 2026-11-06 (S5): a check that couldn't run read as "Degraded"
+	// return health.healthy ? { ...base, status: 'ok', detail: 'Healthy' } : { ...base, status: 'failing', detail: 'Degraded' };
+	// OLD CODE END
+	return { ...base, ...healthStage(health.status) };
 }
 
 export function openSearchStage(health: SystemHealth | null, failed: boolean): PipelineStage {

@@ -174,9 +174,13 @@ async def handle_threat_intel(request: web.Request) -> web.Response:
             client, from_ts, to_ts, excluded_ips=excluded_ips_list
         )
     except Exception as exc:
+        # load_cache already wrote back its purge, so the old entries stay gone (I7)
         logger.error("Threat intel refresh from Suricata failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
-    feeds = ti.get_all_matches()
+    # OLD CODE START — I7: every indicator ever cached, shown under the selected window's label
+    # feeds = ti.get_all_matches()
+    # OLD CODE END
+    feeds = ti.get_all_matches(within=ti.seen_in_window)
 
     return web.json_response(
         {

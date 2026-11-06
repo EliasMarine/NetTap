@@ -33,6 +33,7 @@ from .capture_manager import (
     CaptureManager,
     CaptureMode,
     CaptureStats,
+    packet_loss_pct,
 )
 from .dhcp_gateway_host import replace_symlink
 
@@ -365,9 +366,12 @@ class MirrorManager(CaptureManager):
         except ValueError:
             link_speed_mbps = 0
 
-        # Calculate drop rate
-        total_rx = rx_packets + rx_dropped
-        drop_rate_pct = round((rx_dropped / total_rx) * 100, 4) if total_rx > 0 else 0.0
+        # OLD CODE START — 2026-11-06 (S9): left out rx_missed_errors (NIC misses), so a
+        # mirror port losing packets at the NIC read "No packet drops"; rounding hid tiny rates
+        # total_rx = rx_packets + rx_dropped
+        # drop_rate_pct = round((rx_dropped / total_rx) * 100, 4) if total_rx > 0 else 0.0
+        # OLD CODE END
+        drop_rate_pct = packet_loss_pct(rx_packets, rx_dropped, rx_missed_errors)
 
         return CaptureStats(
             capture_interface=self._interface,

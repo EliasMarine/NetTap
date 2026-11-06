@@ -427,6 +427,8 @@ class DeviceRegistry:
             f"New device {doc['mac']}",
             f"First seen{where} (source: {source})",
             {"mac": doc["mac"], "ip": ip, "source": source},
+            # NET-158: the device's first record, not when this refresh registered it
+            timestamp=doc["first_seen"],
         )
 
     def get_device(self, mac: str) -> dict | None:

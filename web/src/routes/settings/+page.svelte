@@ -133,7 +133,9 @@
 	// --- About state ---
 	let version = $state('…');
 	let uptime = $state('…');
-	let buildInfo = $state('…');
+	// OLD CODE: let buildInfo = $state('…'); (S11: the daemon sends no build, so it fell back to "Development build")
+	/** The build the daemon reports; null hides the row rather than claim one. */
+	let buildInfo = $state<string | null>(null);
 
 	async function loadNotificationConfig() {
 		try {
@@ -257,7 +259,8 @@
 					(v: { name?: string }) => v.name === 'nettap-daemon'
 				);
 				version = daemon?.current_version ?? 'Unknown';
-				buildInfo = data.build ?? data.commit ?? 'Development build';
+				// OLD CODE: buildInfo = data.build ?? data.commit ?? 'Development build';
+				buildInfo = data.build ?? data.commit ?? null;
 			}
 		} catch {
 			// Will use defaults
@@ -1506,8 +1509,10 @@
 				<dt>Stack</dt>
 				<!-- OLD CODE: Zeek + Suricata + Arkime + OpenSearch (Arkime off by default since 2026-11-02, #44) -->
 				<dd>Zeek + Suricata + OpenSearch</dd>
-				<dt>Build</dt>
-				<dd class="mono">{buildInfo}</dd>
+				{#if buildInfo}
+					<dt>Build</dt>
+					<dd class="mono">{buildInfo}</dd>
+				{/if}
 			</dl>
 			<div class="form-actions">
 				<a href="https://github.com/EliasMarine/NetTap" target="_blank" rel="noopener" class="btn">GitHub repository</a>

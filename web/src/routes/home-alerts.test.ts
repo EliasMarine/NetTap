@@ -32,6 +32,14 @@ describe('Home — Alert Summary', () => {
 		expect(screen.queryByText(/0 to review/)).not.toBeInTheDocument();
 	});
 
+	it('O9: with the summary failed, "to review" is left out, not filled with every alert', async () => {
+		stubDaemon({ '/api/alerts/count': { from: '', to: '', counts: { total: 57, high: 1, medium: 6, low: 50 } } });
+		render(HomePage);
+		expect(await screen.findByText("Couldn't load the alert summary: the request failed.")).toBeInTheDocument();
+		await screen.findByRole('img', { name: /^57 alerts in the/ });
+		expect(screen.queryByText(/to review/)).not.toBeInTheDocument();
+	});
+
 	it('still says none were detected when the request succeeds empty', async () => {
 		stubDaemon({ '/api/alerts/smart': { from: '', to: '', device_ip: null, alerts: [], total: 0 } });
 		render(HomePage);

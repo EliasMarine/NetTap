@@ -43,6 +43,7 @@ function health(uptimeSeconds: number, populated: boolean) {
 		storage: populated ? STORAGE_STATUS_POPULATED : STORAGE_STATUS_EMPTY,
 		smart: populated ? SMART_HEALTH_POPULATED : SMART_HEALTH_EMPTY,
 		opensearch_reachable: true,
+		status: 'healthy',
 		healthy: true,
 	} satisfies SystemHealth;
 }

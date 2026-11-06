@@ -54,6 +54,17 @@ class CaptureHealth:
         }
 
 
+def packet_loss_pct(rx_packets: int, rx_dropped: int, rx_missed_errors: int) -> float:
+    """S9: the one loss rate every capture mode reports, unrounded so a real loss never reads 0.
+
+    Lost = kernel drops + NIC misses (neither is in rx_packets), as a share of every
+    packet that reached the port. The counters are cumulative since they last reset.
+    """
+    lost = rx_dropped + rx_missed_errors
+    arrived = rx_packets + lost
+    return lost / arrived * 100 if arrived else 0.0
+
+
 @dataclass
 class CaptureStats:
     """Capture statistics for any capture mode."""

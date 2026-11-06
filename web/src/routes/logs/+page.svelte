@@ -81,9 +81,13 @@
 		'zeek.conn': ['@timestamp', 'source.ip', 'source.port', 'destination.ip', 'destination.port', 'network.transport', 'event.duration', 'source.bytes', 'destination.bytes', 'zeek.conn.conn_state'],
 		'zeek.dns': ['@timestamp', 'source.ip', 'zeek.dns.query', 'zeek.dns.qtype_name', 'zeek.dns.rcode_name', 'zeek.dns.answers'],
 		'zeek.http': ['@timestamp', 'source.ip', 'destination.ip', 'zeek.http.method', 'zeek.http.host', 'zeek.http.uri', 'zeek.http.status_code'],
-		'zeek.tls': ['@timestamp', 'source.ip', 'destination.ip', 'zeek.tls.server_name', 'zeek.tls.version', 'zeek.tls.cipher', 'zeek.tls.established'],
+		// OLD CODE START — I6: Malcolm writes zeek.ssl.*, zeek.dhcp.host_name/assigned_ip and source.mac; these columns read --
+		// 'zeek.tls': ['@timestamp', 'source.ip', 'destination.ip', 'zeek.tls.server_name', 'zeek.tls.version', 'zeek.tls.cipher', 'zeek.tls.established'],
+		// 'zeek.dhcp': ['@timestamp', 'source.ip', 'zeek.dhcp.client_addr', 'zeek.dhcp.mac', 'zeek.dhcp.hostname', 'zeek.dhcp.msg_types'],
+		// OLD CODE END
+		'zeek.tls': ['@timestamp', 'source.ip', 'destination.ip', 'zeek.ssl.server_name', 'zeek.ssl.ssl_version', 'zeek.ssl.cipher', 'zeek.ssl.established'],
 		'zeek.files': ['@timestamp', 'source.ip', 'destination.ip', 'zeek.files.filename', 'zeek.files.mime_type', 'zeek.files.total_bytes'],
-		'zeek.dhcp': ['@timestamp', 'source.ip', 'zeek.dhcp.client_addr', 'zeek.dhcp.mac', 'zeek.dhcp.hostname', 'zeek.dhcp.msg_types'],
+		'zeek.dhcp': ['@timestamp', 'source.ip', 'zeek.dhcp.assigned_ip', 'source.mac', 'zeek.dhcp.host_name', 'zeek.dhcp.msg_types'],
 		'zeek.smtp': ['@timestamp', 'source.ip', 'destination.ip', 'zeek.smtp.mailfrom', 'zeek.smtp.rcptto', 'zeek.smtp.subject'],
 		suricata: ['@timestamp', 'source.ip', 'destination.ip', 'suricata.alert.signature', 'suricata.alert.severity', 'suricata.alert.category'],
 	};
@@ -132,11 +136,20 @@
 		'1d': 'day',
 	};
 
-	const IP_FIELDS = new Set(['source.ip', 'destination.ip', 'zeek.dhcp.client_addr']);
+	// OLD CODE START — I6: the DHCP and TLS field names Malcolm doesn't write
+	// const IP_FIELDS = new Set(['source.ip', 'destination.ip', 'zeek.dhcp.client_addr']);
+	// const MONO_FIELDS = new Set([
+	// 	'source.ip', 'destination.ip', 'source.port', 'destination.port',
+	// 	'zeek.dhcp.client_addr', 'zeek.dhcp.mac', 'zeek.http.status_code',
+	// 	'zeek.tls.version', 'source.bytes', 'destination.bytes', 'event.duration',
+	// 	'suricata.alert.severity', 'zeek.files.total_bytes',
+	// ]);
+	// OLD CODE END
+	const IP_FIELDS = new Set(['source.ip', 'destination.ip', 'zeek.dhcp.assigned_ip']);
 	const MONO_FIELDS = new Set([
 		'source.ip', 'destination.ip', 'source.port', 'destination.port',
-		'zeek.dhcp.client_addr', 'zeek.dhcp.mac', 'zeek.http.status_code',
-		'zeek.tls.version', 'source.bytes', 'destination.bytes', 'event.duration',
+		'zeek.dhcp.assigned_ip', 'source.mac', 'zeek.http.status_code',
+		'zeek.ssl.ssl_version', 'source.bytes', 'destination.bytes', 'event.duration',
 		'suricata.alert.severity', 'zeek.files.total_bytes',
 	]);
 	/** Right-aligned, tabular columns (design system: numbers in tables). */
@@ -145,9 +158,11 @@
 		'zeek.http.status_code', 'suricata.alert.severity', 'zeek.files.total_bytes',
 	]);
 
-	// Protocol types used for timeline stacking (order matters for visual stacking)
-	// Alert data is excluded from log explorer aggregations (has its own Alerts page)
-	const PROTOCOL_KEYS = ['conn', 'dns', 'http', 'ssl', 'files', 'dhcp', 'smtp'] as const;
+	// OLD CODE START — I5: the timeline plots the daemon's per-slot total now, not a sum of these
+	// // Protocol types used for timeline stacking (order matters for visual stacking)
+	// // Alert data is excluded from log explorer aggregations (has its own Alerts page)
+	// const PROTOCOL_KEYS = ['conn', 'dns', 'http', 'ssl', 'files', 'dhcp', 'smtp'] as const;
+	// OLD CODE END
 
 	const RETRY_HINT = 'Check that NetTap is running on the System page, then try again.';
 
@@ -172,6 +187,9 @@
 	// A busy box logs 20+ protocols; all of them made the card three times the timeline's height
 	let showAllProtocols = $state(false);
 	const PROTOCOLS_SHOWN = 10;
+	/** The daemon's protocol-breakdown terms size: a full list may be cut off, so it has no total (I5). */
+	const PROTOCOL_CAP = 20;
+	const protocolsCapped = $derived(protocols.length >= PROTOCOL_CAP);
 	let topDestinations = $state<LogDestinationEntry[]>([]);
 	let topDns = $state<LogDnsEntry[]>([]);
 	// #96: a failed section keeps its last good figures and says so; it never reads as 0 or "No data"
@@ -237,7 +255,10 @@
 	// );
 	// OLD CODE END
 	/** Events per bucket across the protocols the chart used to stack. */
-	const bucketTotals = $derived(timeline.map((b) => PROTOCOL_KEYS.reduce((sum, k) => sum + (b[k] || 0), 0)));
+	// OLD CODE START — I5: seven named types only, so any other dataset in the slot was left out
+	// const bucketTotals = $derived(timeline.map((b) => PROTOCOL_KEYS.reduce((sum, k) => sum + (b[k] || 0), 0)));
+	// OLD CODE END
+	const bucketTotals = $derived(timeline.map((b) => b.total));
 	const busiest = $derived(bucketTotals.reduce((best, v, i) => (v > (bucketTotals[best] ?? -1) ? i : best), -1));
 
 	// OLD CODE START — max values now computed internally by HorizontalBarList component
@@ -771,7 +792,8 @@
 	const IP_CELLS: Record<string, Snippet<[LogRow]>> = {
 		'source.ip': sourceIpCell,
 		'destination.ip': destinationIpCell,
-		'zeek.dhcp.client_addr': dhcpIpCell,
+		// OLD CODE START: 'zeek.dhcp.client_addr': dhcpIpCell, (I6) OLD CODE END
+		'zeek.dhcp.assigned_ip': dhcpIpCell,
 	};
 
 	const logColumns = $derived<Column<LogRow>[]>(
@@ -856,7 +878,8 @@
 {/snippet}
 {#snippet sourceIpCell(r: LogRow)}{@render ipValue(getNestedValue(r.hit._source, 'source.ip'))}{/snippet}
 {#snippet destinationIpCell(r: LogRow)}{@render ipValue(getNestedValue(r.hit._source, 'destination.ip'))}{/snippet}
-{#snippet dhcpIpCell(r: LogRow)}{@render ipValue(getNestedValue(r.hit._source, 'zeek.dhcp.client_addr'))}{/snippet}
+<!-- OLD CODE START: {#snippet dhcpIpCell(r: LogRow)}{@render ipValue(getNestedValue(r.hit._source, 'zeek.dhcp.client_addr'))}{/snippet} (I6) OLD CODE END -->
+{#snippet dhcpIpCell(r: LogRow)}{@render ipValue(getNestedValue(r.hit._source, 'zeek.dhcp.assigned_ip'))}{/snippet}
 
 {#snippet timelineBody()}
 	<AreaChart
@@ -880,11 +903,25 @@
 			onclick: () => drillByProtocol(proto.protocol),
 		}))}
 	/>
+	<!-- OLD CODE START — I5: at the daemon's 20 cap, "of 20" and "Show all 20" claimed a total it never sent
 	{#if protocols.length > PROTOCOLS_SHOWN}
 		<div class="tbl-foot">
 			<span>Showing {partOfWhole(showAllProtocols ? protocols.length : PROTOCOLS_SHOWN, protocols.length)}</span>
 			<button class="btn" type="button" onclick={() => (showAllProtocols = !showAllProtocols)}>
 				{showAllProtocols ? 'Show fewer' : `Show all ${protocols.length}`}
+			</button>
+		</div>
+	{/if}
+	OLD CODE END -->
+	{#if protocols.length > PROTOCOLS_SHOWN}
+		<div class="tbl-foot">
+			{#if protocolsCapped}
+				<span>{showAllProtocols ? `The ${PROTOCOL_CAP} most common` : `Showing ${PROTOCOLS_SHOWN} of the ${PROTOCOL_CAP} most common`}</span>
+			{:else}
+				<span>Showing {partOfWhole(showAllProtocols ? protocols.length : PROTOCOLS_SHOWN, protocols.length)}</span>
+			{/if}
+			<button class="btn" type="button" onclick={() => (showAllProtocols = !showAllProtocols)}>
+				{showAllProtocols ? 'Show fewer' : protocolsCapped ? `Show the ${PROTOCOL_CAP} most common` : `Show all ${protocols.length}`}
 			</button>
 		</div>
 	{/if}

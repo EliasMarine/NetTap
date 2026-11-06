@@ -36,7 +36,7 @@
 	import { getNewDeviceCount } from '$api/devices-registry';
 	import { getSystemHealth } from '$api/system';
 	import type { SystemHealth } from '$api/system';
-	import { getCaptureHealth, getCaptureStats } from '$api/capture';
+	import { getCaptureHealth, getCaptureStats, LOSS_SCOPE } from '$api/capture';
 	import type { CaptureHealthResponse, CaptureStatsResponse } from '$api/capture';
 	import {
 		formatBytes, formatBytesShort, formatNumber, computePreviousPeriod, localMidnight, trendPercent, NO_TREND,
@@ -519,10 +519,23 @@
 
 	// The summary hides informational alerts, so "to review" can be below the total; it says so.
 	// #96: with both counts failed it would read "0 to review", so it is left out.
+	// OLD CODE START — 2026-11-06 (O9): with the summary failed, every alert (informational
+	// included) was shown as "to review"
+	// const toReview = $derived(
+	// 	smartAlertSummary || alertCount
+	// 		? ` · ${formatNumber(smartAlertSummary?.total_events ?? alertCount?.counts?.total ?? 0)} to review${
+	// 				smartAlertSummary?.informational_events
+	// 					? ` · ${formatNumber(smartAlertSummary.informational_events)} informational`
+	// 					: ''
+	// 			}`
+	// 		: '',
+	// );
+	// OLD CODE END
+	// Only the summary knows what is left to review, so without it the count is left out
 	const toReview = $derived(
-		smartAlertSummary || alertCount
-			? ` · ${formatNumber(smartAlertSummary?.total_events ?? alertCount?.counts?.total ?? 0)} to review${
-					smartAlertSummary?.informational_events
+		smartAlertSummary
+			? ` · ${formatNumber(smartAlertSummary.total_events)} to review${
+					smartAlertSummary.informational_events
 						? ` · ${formatNumber(smartAlertSummary.informational_events)} informational`
 						: ''
 				}`
@@ -751,7 +764,8 @@ OLD CODE END -->
 		</div>
 	</Card>
 
-	<Card title="Capture pipeline" sub="Each stage at the last refresh" class="c-12">
+	<!-- OLD CODE: sub="Each stage at the last refresh" (S9: the packet counts' scope wasn't stated) -->
+	<Card title="Capture pipeline" sub="Each stage at the last refresh · packets: {LOSS_SCOPE.toLowerCase()}" class="c-12">
 		{#snippet actions()}<a class="link" href="/infrastructure">View infrastructure</a>{/snippet}
 		<Pipeline {stages} />
 	</Card>

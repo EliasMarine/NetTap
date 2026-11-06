@@ -12,7 +12,7 @@
 	import { goto } from '$app/navigation';
 	import { getDevices, getDeviceCount } from '$api/devices';
 	import type { Device } from '$api/devices';
-	import { getNewDeviceCount, getRegistryDevices } from '$api/devices-registry';
+	import { getNewDeviceCount, getRegistryDevices, isNewDevice } from '$api/devices-registry';
 	import type { RegistryDevice, RegistryListResponse } from '$api/devices-registry';
 	import { getCaptureMode } from '$api/capture';
 	import type { CaptureMode } from '$api/capture';
@@ -52,6 +52,8 @@
 	let newFailed = $state(false);
 	const LIST_LIMIT = 500; // the daemon's largest device list
 	const DAY = 24 * 60 * 60 * 1000;
+	// the table's Online rule and the "Online now" count's (NET-158)
+	const ONLINE_MS = 5 * 60 * 1000;
 	let searchQuery = $state('');
 	let categoryFilter = $state('all');
 	let autoRefresh = $state(false);
@@ -170,8 +172,13 @@
 				// OLD CODE END
 				getDevices({ sort: 'bytes', order: 'desc', limit: LIST_LIMIT }),
 				getDeviceCount(),
-				// devices with traffic in the last 5 minutes, by the list's own device rules
-				getDeviceCount({ from: iso(now - 5 * 60 * 1000), to: iso(now) }),
+				// OLD CODE START — NET-158: a 5-minute range needs 3 records in it, but the table
+				// calls a listed device Online on its newest record alone
+				// // devices with traffic in the last 5 minutes, by the list's own device rules
+				// getDeviceCount({ from: iso(now - 5 * 60 * 1000), to: iso(now) }),
+				// OLD CODE END
+				// the listed devices (same 24 h range) the table shows as Online
+				getDeviceCount({ active_since: iso(now - ONLINE_MS) }),
 				getNewDeviceCount(iso(now - DAY)),
 			]),
 			loadRegistry(),
@@ -313,7 +320,7 @@
 	/** Traffic in the last 5 minutes is online; in the last hour, idle. */
 	function status(d: Device): { rank: number; label: string } {
 		const age = ageMs(d);
-		if (age !== null && age < 5 * 60 * 1000) return { rank: 2, label: 'Online' };
+		if (age !== null && age < ONLINE_MS) return { rank: 2, label: 'Online' };
 		if (age !== null && age < 60 * 60 * 1000) return { rank: 1, label: 'Idle' };
 		return { rank: 0, label: 'Offline' };
 	}
@@ -471,6 +478,8 @@
 			{#if registryFailed}
 				<p class="note">{loadFailed('devices', true)}</p>
 			{/if}
+			<!-- NET-158: a card adds up the device list's rows for its addresses; an address another device took since counts on both -->
+			<p class="note">Traffic in the last 24 hours from the listed addresses each device has used.</p>
 			<div class="type-groups">
 				{#each typeGroups as group (group.key)}
 					<section class="type-group" aria-labelledby="type-{group.key}">
@@ -487,7 +496,10 @@
 											<span class="dev-name">{device.display_name || device.mac}</span>
 											<span class="mono">{device.ips[0] ?? device.mac}</span>
 										</span>
-										{#if device.is_new}<span class="chip is-ok">New</span>{/if}
+										<!-- OLD CODE START — NET-158: is_new clears on the device's next update, so the chip rarely showed -->
+										<!-- {#if device.is_new}<span class="chip is-ok">New</span>{/if} -->
+										<!-- OLD CODE END -->
+										{#if isNewDevice(device)}<span class="chip is-ok">New</span>{/if}
 									</span>
 									{#if device.manufacturer}<span class="dim vendor">{device.manufacturer}</span>{/if}
 									<span class="dev-card-stats">
@@ -495,6 +507,9 @@
 										<span><span class="meta-k">Connections</span><span class="meta-v num">{device.connection_count?.toLocaleString() ?? '—'}</span></span>
 										<span><span class="meta-k">Last seen</span><span class="meta-v">{timeAgo(device.last_seen)}</span></span>
 									</span>
+									{#if device.ips_listed && device.ips_listed < device.ips.length}
+										<span class="dim vendor">({device.ips_listed} of {device.ips.length} addresses listed)</span>
+									{/if}
 								</a>
 							{/each}
 						</div>

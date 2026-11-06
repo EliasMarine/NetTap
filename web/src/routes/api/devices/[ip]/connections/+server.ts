@@ -23,6 +23,9 @@ export const GET: RequestHandler = async ({ url, params }) => {
 	const order = url.searchParams.get('order');
 	if (sort) queryParams.set('sort', sort);
 	if (order) queryParams.set('order', order);
+	// NET-158: the protocol filter runs on the daemon now, over every page
+	const proto = url.searchParams.get('proto');
+	if (proto) queryParams.set('proto', proto);
 
 	const query = queryParams.toString() ? `?${queryParams.toString()}` : '';
 	const res = await daemonFetch(`/api/devices/${encodeURIComponent(params.ip)}/connections${query}`);

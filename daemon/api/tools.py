@@ -133,10 +133,16 @@ async def handle_ping(request: web.Request) -> web.Response:
             "packets_sent": stats.get("packets_transmitted", 0),
             "packets_received": stats.get("packets_received", 0),
             "packet_loss_pct": stats.get("packet_loss_percent", 100),
-            "rtt_min": stats.get("rtt_min_ms", 0),
-            "rtt_avg": stats.get("rtt_avg_ms", 0),
-            "rtt_max": stats.get("rtt_max_ms", 0),
-            "rtt_mdev": stats.get("rtt_mdev_ms", 0),
+            # OLD CODE START — 2026-11-06 (S12): no replies (100% loss) read as a 0.0 ms round trip
+            # "rtt_min": stats.get("rtt_min_ms", 0),
+            # "rtt_avg": stats.get("rtt_avg_ms", 0),
+            # "rtt_max": stats.get("rtt_max_ms", 0),
+            # "rtt_mdev": stats.get("rtt_mdev_ms", 0),
+            # OLD CODE END
+            "rtt_min": stats.get("rtt_min_ms"),
+            "rtt_avg": stats.get("rtt_avg_ms"),
+            "rtt_max": stats.get("rtt_max_ms"),
+            "rtt_mdev": stats.get("rtt_mdev_ms"),
             "replies": [
                 {
                     "bytes": r.get("bytes", 0),
@@ -228,11 +234,17 @@ async def handle_ssl_cert(request: web.Request) -> web.Response:
                 chain_strings.append(c.get("subject", ""))
             else:
                 chain_strings.append(str(c))
+        # OLD CODE START — 2026-11-06 (S3): sent the one-line strings, but the page reads
+        # subject.CN and issuer.O, so both always showed "—"
+        #     "subject": result.get("subject") or {},
+        #     "issuer": result.get("issuer") or {},
+        # OLD CODE END
+        verify_code = result.get("verify_code")
         response = {
             "host": result.get("host", ""),
             "port": result.get("port", 443),
-            "subject": result.get("subject") or {},
-            "issuer": result.get("issuer") or {},
+            "subject": SslCertService.parse_dn(result.get("subject")),
+            "issuer": SslCertService.parse_dn(result.get("issuer")),
             "not_before": result.get("not_before") or "",
             "not_after": result.get("not_after") or "",
             "serial": result.get("serial") or "",
@@ -240,6 +252,14 @@ async def handle_ssl_cert(request: web.Request) -> web.Response:
             "san": result.get("sans", []),
             "chain": chain_strings,
             "raw": result.get("output", ""),
+            # S1: s_client's own verdict (chain and name); None when nothing was checked
+            # Trusted only when s_client's own result is 0 and its verify callback, on stderr
+            # where the server can't write, reported no error
+            "trusted": None
+            if verify_code is None
+            else verify_code == 0 and not result.get("verify_errors"),
+            "verify_errors": result.get("verify_errors", []),
+            "name_match": result.get("name_match"),
             "error": result.get("error"),
         }
         return web.json_response(response)

@@ -8,7 +8,12 @@ Tests cover tracker logic, filtering, rate calculation, and OpenSearch integrati
 import unittest
 from unittest.mock import MagicMock
 
-from services.live_connections import LiveConnectionTracker, RATE_WINDOW_SECONDS
+from services.excluded_ips import build_lan_filter, lan_subnets_of
+from services.live_connections import (
+    RATE_WINDOW_SECONDS,
+    LiveConnectionTracker,
+    connection_direction,
+)
 
 
 def _make_connection(
@@ -307,7 +312,10 @@ class TestLiveDashboardQueries(unittest.TestCase):
     def test_top_talkers_ordered_by_total_bytes(self):
         """Top talkers rank by bytes, not by doc count plus bucket_sort."""
         _, (conn_body, _) = self._run_dashboard()
-        agg = conn_body["aggs"]["top_talkers"]
+        # OLD CODE START — 2026-11-06 (O11): the terms agg moved under the LAN filter
+        # agg = conn_body["aggs"]["top_talkers"]
+        # OLD CODE END
+        agg = conn_body["aggs"]["top_talkers"]["aggs"]["ips"]
         self.assertEqual(agg["terms"]["order"], {"total_bytes": "desc"})
         self.assertIn("total_bytes", agg["aggs"])
         self.assertNotIn("bucket_sort", agg["aggs"])
@@ -332,6 +340,226 @@ class TestLiveDashboardQueries(unittest.TestCase):
         self.assertEqual(agg["filter"], lan)
         self.assertEqual(result["stats"]["active_devices"], 38)
         self.assertEqual(result["stats"]["connections_in_window"], 1690)
+
+
+LAN = [(192, 168, 1)]
+
+
+class TestConnectionDirection(unittest.TestCase):
+    """O2: direction from the LAN subnets, in the plan's order, not from dest_port < 1024."""
+
+    def test_special_addresses_are_local(self):
+        for src, dst in [
+            ("192.168.1.20", "224.0.0.251"),  # mDNS
+            ("0.0.0.0", "255.255.255.255"),  # DHCP discover
+            ("203.0.113.9", "192.168.1.255"),  # subnet broadcast, not "in"
+            ("169.254.10.2", "192.168.1.5"),  # link-local
+            ("127.0.0.1", "8.8.8.8"),  # loopback
+            ("fe80::1", "ff02::fb"),  # IPv6 link-local to mDNS
+        ]:
+            self.assertEqual(connection_direction(src, dst, LAN), "local", (src, dst))
+
+    def test_lan_to_lan_is_local(self):
+        self.assertEqual(
+            connection_direction("192.168.1.20", "192.168.1.30", LAN), "local"
+        )
+
+    def test_out_and_in_ignore_the_port(self):
+        # a LAN device to a WireGuard port above 1024 read "IN" under the port guess
+        self.assertEqual(
+            connection_direction("192.168.1.20", "93.184.216.34", LAN), "out"
+        )
+        self.assertEqual(
+            connection_direction("93.184.216.34", "192.168.1.20", LAN), "in"
+        )
+
+    def test_isp_private_and_cgnat_ends_are_unknown(self):
+        self.assertEqual(
+            connection_direction("10.181.2.3", "192.168.1.20", LAN), "unknown"
+        )
+        self.assertEqual(
+            connection_direction("192.168.1.20", "100.64.0.1", LAN), "unknown"
+        )
+
+    def test_ipv6_outside_the_ipv4_lan_rule_is_unknown(self):
+        self.assertEqual(
+            connection_direction("2a00:1450:4001::5", "2606:4700::1111", LAN), "unknown"
+        )
+
+    def test_no_detected_subnets_falls_back_to_rfc1918(self):
+        self.assertEqual(connection_direction("10.0.0.5", "8.8.8.8", []), "out")
+
+    def test_unreadable_address_is_unknown(self):
+        self.assertEqual(connection_direction("", "8.8.8.8", LAN), "unknown")
+
+    def test_lan_filter_carries_its_subnets(self):
+        self.assertEqual(
+            lan_subnets_of(build_lan_filter([(10, -1, -1), (192, 168, 1)])),
+            [(10, -1, -1), (192, 168, 1)],
+        )
+        self.assertEqual(lan_subnets_of(build_lan_filter([])), [])
+        self.assertEqual(lan_subnets_of({"terms": {"source.ip": []}}), [])
+
+    def test_dashboard_rows_carry_the_direction(self):
+        client = MagicMock()
+        inbound = _make_opensearch_hit("93.184.216.34", "192.168.1.100", dest_port=22)
+        client.search.side_effect = [
+            {
+                "hits": {
+                    "total": {"value": 2},
+                    "hits": [
+                        {"_source": _make_opensearch_hit(dest_port=51820)},
+                        {"_source": inbound},
+                    ],
+                },
+                "aggregations": {},
+            },
+            {"aggregations": {"alert_pairs": {"buckets": []}}},
+        ]
+        result = LiveConnectionTracker(client=client).fetch_dashboard_data(
+            lan_filter=build_lan_filter(LAN)
+        )
+        self.assertEqual([c["direction"] for c in result["connections"]], ["out", "in"])
+
+
+def _dashboard_with(aggregations, total=0, hits=()):
+    client = MagicMock()
+    client.search.side_effect = [
+        {
+            "hits": {"total": {"value": total}, "hits": [{"_source": h} for h in hits]},
+            "aggregations": aggregations,
+        },
+        {"aggregations": {"alert_pairs": {"buckets": []}}},
+    ]
+    lan = build_lan_filter(LAN)
+    result = LiveConnectionTracker(client=client).fetch_dashboard_data(lan_filter=lan)
+    return result, client.search.call_args_list[0].kwargs["body"], lan
+
+
+def _located(lat, lon):
+    source = {"destination": {"geo": {"location": {"lat": lat, "lon": lon}}}}
+    return {"hits": {"hits": [{"_source": source}]}}
+
+
+class TestLiveDashboardFigures(unittest.TestCase):
+    def test_map_counts_come_from_the_country_buckets(self):
+        """O3: NL has 12 connections but only 5 in its listed city; the dot said 5."""
+        cities = [
+            {
+                "key": "Amsterdam",
+                "doc_count": 5,
+                "country_code": {"buckets": [{"key": "NL"}]},
+                "location": _located(52.37, 4.9),
+            },
+            {
+                "key": "Frankfurt",
+                "doc_count": 3,
+                "country_code": {"buckets": [{"key": "DE"}]},
+                "location": _located(50.11, 8.68),
+            },
+        ]
+        countries = [
+            {
+                "key": "NL",
+                "doc_count": 12,
+                "country_name": {"buckets": [{"key": "Netherlands"}]},
+                "top_city": {"buckets": [{"key": "Amsterdam"}]},
+                "total_bytes": {"value": 1200},
+                "location": _located(51.9, 4.5),  # Rotterdam, the newest record
+            },
+            {
+                "key": "DE",
+                "doc_count": 3,
+                "country_name": {"buckets": [{"key": "Germany"}]},
+                "top_city": {"buckets": [{"key": "Frankfurt"}]},
+                "total_bytes": {"value": 300},
+                "location": _located(50.11, 8.68),
+            },
+            {
+                "key": "JP",
+                "doc_count": 2,
+                "country_name": {"buckets": [{"key": "Japan"}]},
+                "top_city": {"buckets": []},
+                "total_bytes": {"value": 200},
+                "location": _located(35.68, 139.69),
+            },
+        ]
+        result, _, _ = _dashboard_with(
+            {
+                "geo_destinations": {"buckets": cities},
+                "geo_countries": {"buckets": countries},
+            }
+        )
+        arcs = {a["country_code"]: a for a in result["geo_arcs"]}
+        self.assertEqual(len(result["geo_arcs"]), 3)  # one per country
+        self.assertEqual(
+            {cc: a["count"] for cc, a in arcs.items()}, {"NL": 12, "DE": 3, "JP": 2}
+        )
+        self.assertEqual((arcs["NL"]["lat"], arcs["NL"]["lon"]), (52.37, 4.9))
+        self.assertEqual(arcs["NL"]["bytes"], 1200)
+        self.assertEqual((arcs["JP"]["lat"], arcs["JP"]["lon"]), (35.68, 139.69))
+
+    def test_protocol_counts_partition_the_window(self):
+        """O6: counts, not percentages; other and unknown complete the split."""
+        result, body, _ = _dashboard_with(
+            {
+                "protocols": {
+                    "sum_other_doc_count": 1,
+                    "buckets": [
+                        {"key": "tcp", "doc_count": 70},
+                        {"key": "udp", "doc_count": 20},
+                        {"key": "icmp", "doc_count": 3},
+                        {"key": "ipv6-icmp", "doc_count": 2},
+                    ],
+                },
+                "protocols_missing": {"doc_count": 4},
+            },
+            total=100,
+        )
+        self.assertEqual(
+            body["aggs"]["protocols_missing"],
+            {"missing": {"field": "network.transport"}},
+        )
+        self.assertEqual(
+            result["protocols"],
+            {"tcp": 70, "udp": 20, "icmp": 3, "other": 3, "unknown": 4},
+        )
+        self.assertEqual(
+            sum(result["protocols"].values()), result["stats"]["connections_in_window"]
+        )
+
+    def test_top_talkers_are_lan_sources_only(self):
+        """O11: internet hosts and an ISP's gateway ranked among the "devices"."""
+        result, body, lan = _dashboard_with(
+            {
+                "top_talkers": {
+                    "doc_count": 9,
+                    "ips": {
+                        "buckets": [
+                            {
+                                "key": "192.168.1.20",
+                                "doc_count": 7,
+                                "total_bytes": {"value": 9000},
+                            }
+                        ]
+                    },
+                }
+            }
+        )
+        self.assertEqual(body["aggs"]["top_talkers"]["filter"], lan)
+        self.assertEqual(
+            result["top_talkers"],
+            [{"ip": "192.168.1.20", "bytes": 9000, "connections": 7}],
+        )
+
+    def test_feed_bytes_use_the_talkers_byte_basis(self):
+        """O11: rows summed payload bytes (client/server); talkers sum source + destination."""
+        hit = _make_opensearch_hit()
+        hit["source"]["bytes"], hit["destination"]["bytes"] = 1500, 9000
+        hit["client"]["bytes"], hit["server"]["bytes"] = 1000, 8000
+        self.assertEqual(
+            LiveConnectionTracker()._format_connection(hit)["bytes"], 10_500
+        )
 
 
 class TestLiveQueryFailures(unittest.TestCase):

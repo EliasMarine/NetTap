@@ -6,6 +6,7 @@ import {
 	getHeatmap,
 	getBandwidthCap,
 	setBandwidthCap,
+	utcMonthWindow,
 } from './bandwidth';
 
 // ---------------------------------------------------------------------------
@@ -243,5 +244,25 @@ describe('bandwidth API client', () => {
 
 			await expect(setBandwidthCap(0)).rejects.toThrow();
 		});
+	});
+});
+
+describe('utcMonthWindow (O5)', () => {
+	it('starts at the first instant of the UTC month and ends at now', () => {
+		expect(utcMonthWindow(new Date('2026-11-06T07:10:00Z'))).toEqual({
+			year: 2026, month: 11, from: '2026-11-01T00:00:00.000Z', to: '2026-11-06T07:10:00.000Z',
+		});
+	});
+
+	it('month rollover, positive offset: already December locally, still November in UTC', () => {
+		// 01:30 on 1 December in UTC+2 is 23:30 on 30 November UTC
+		const w = utcMonthWindow(new Date('2026-12-01T01:30:00+02:00'));
+		expect([w.year, w.month, w.from]).toEqual([2026, 11, '2026-11-01T00:00:00.000Z']);
+	});
+
+	it('year rollover, negative offset: still 31 December locally, already January in UTC', () => {
+		// 20:00 on 31 December in UTC-5 is 01:00 on 1 January UTC
+		const w = utcMonthWindow(new Date('2026-12-31T20:00:00-05:00'));
+		expect([w.year, w.month, w.from, w.to]).toEqual([2027, 1, '2027-01-01T00:00:00.000Z', '2027-01-01T01:00:00.000Z']);
 	});
 });

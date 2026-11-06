@@ -14,7 +14,7 @@ import json
 import logging
 import os
 
-from services.capture_manager import CaptureStats
+from services.capture_manager import CaptureStats, packet_loss_pct
 
 logger = logging.getLogger("nettap.services.dhcp_gateway")
 
@@ -282,9 +282,14 @@ def read_iface_stats(sys_net: str, iface: str) -> CaptureStats:
     # Kernel returns -1 or very large values when speed is unknown
     if speed < 0 or speed > 400000:
         speed = 0
-    total_rx = counters["rx_packets"] + counters["rx_dropped"]
-    drop_rate = (
-        round((counters["rx_dropped"] / total_rx) * 100, 4) if total_rx > 0 else 0.0
+    # OLD CODE START — 2026-11-06 (S9): left out rx_missed_errors; rounding hid tiny rates
+    # total_rx = counters["rx_packets"] + counters["rx_dropped"]
+    # drop_rate = (
+    #     round((counters["rx_dropped"] / total_rx) * 100, 4) if total_rx > 0 else 0.0
+    # )
+    # OLD CODE END
+    drop_rate = packet_loss_pct(
+        counters["rx_packets"], counters["rx_dropped"], counters["rx_missed_errors"]
     )
     return CaptureStats(
         capture_interface=iface,

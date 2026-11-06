@@ -21,8 +21,13 @@ export interface BridgeHealth {
 	latency_us: number | null;
 	/** Why latency_us is null. */
 	latency_note?: string;
+	/** Bytes since the previous check, over an interval the response doesn't state */
 	rx_bytes_delta: number;
 	tx_bytes_delta: number;
+	/** S12: bytes per second over the measured time since the previous sample; null or absent
+	 *  on the first sample or after a counter reset */
+	rx_bytes_per_sec?: number | null;
+	tx_bytes_per_sec?: number | null;
 	rx_packets_delta: number;
 	tx_packets_delta: number;
 	uptime_seconds: number;

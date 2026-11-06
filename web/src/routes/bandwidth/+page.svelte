@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { getMonthlyUsage, getDailyUsage, getDeviceUsage, getHeatmap } from '$lib/api/bandwidth';
+	import { getMonthlyUsage, getDailyUsage, getDeviceUsage, getHeatmap, utcMonthWindow } from '$lib/api/bandwidth';
 	import type { MonthlyUsage, DailyUsageEntry, DeviceUsage, HeatmapResponse } from '$lib/api/bandwidth';
 	// OLD CODE START — replaced by the system's DeviceList (Top consumers) and DataTable, which sorts
 	// import TopConsumers from '$lib/components/TopConsumers.svelte';
@@ -37,6 +37,8 @@
 	let heatmapFailed = $state(false);
 
 	const RETRY_HINT = 'Check that NetTap is running on the System page, then try again.';
+	/** The most rows the daemon's per-device endpoint returns. */
+	const DEVICE_LIMIT = 200;
 
 	// ---------------------------------------------------------------------------
 	// Helpers
@@ -296,14 +298,24 @@
 		const g = guard.begin();
 		loading = true;
 		const now = new Date();
-		const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-		const from = monthStart.toISOString();
-		const to = now.toISOString();
+		// OLD CODE START — 2026-11-06 (O5): the chart and table took the local month, the KPI the
+		// daemon's UTC month, so east of UTC they counted hours of last month (west, missed hours)
+		// const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+		// const from = monthStart.toISOString();
+		// const to = now.toISOString();
+		// OLD CODE END
+		const { year, month, from, to } = utcMonthWindow(now);
 
 		const results = await Promise.allSettled([
-			getMonthlyUsage(),
+			// OLD CODE START — 2026-11-06 (O5): the daemon picked its own "now" for the month
+			// getMonthlyUsage(),
+			// OLD CODE END
+			getMonthlyUsage({ year, month }),
 			getDailyUsage({ from, to }),
-			getDeviceUsage({ from, to, limit: 50 }),
+			// OLD CODE START — 2026-11-06 (O4): 50 rows were labelled as every device
+			// getDeviceUsage({ from, to, limit: 50 }),
+			// OLD CODE END
+			getDeviceUsage({ from, to, limit: DEVICE_LIMIT }),
 			getHeatmap({ from: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString(), to: to }),
 		]);
 		if (!guard.current(g)) return 'skipped';
@@ -440,7 +452,14 @@
 		{/if}
 	</Card>
 
+	<!-- OLD CODE START — 2026-11-06 (O4): a full page of rows read as every device
 	<Card class="c-12" title="Per-device breakdown" sub="This month · {devices.length} {devices.length === 1 ? 'device' : 'devices'}">
+	OLD CODE END -->
+	<Card
+		class="c-12"
+		title="Per-device breakdown"
+		sub="This month · {devices.length >= DEVICE_LIMIT ? `top ${DEVICE_LIMIT} devices` : `${devices.length} ${devices.length === 1 ? 'device' : 'devices'}`}"
+	>
 		{#if devices.length > 0}
 			<DataTable columns={DEVICE_COLUMNS} rows={devices} ariaLabel="Per-device breakdown" rowKey={(d) => d.ip} initialSort={{ key: 'total_bytes', dir: 'desc' }} />
 		{:else if devicesFailed}

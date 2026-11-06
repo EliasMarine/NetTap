@@ -21,13 +21,15 @@ vi.mock('$lib/api/iot', async (importOriginal) => ({
 
 const device = (mac: string, name: string, score: number, extra: Record<string, unknown> = {}) => ({
 	mac, name, manufacturer: 'Acme', ip: '192.168.1.60', score, grade: score >= 75 ? 'B' : 'D',
+	coverage: 55, checks_available: 5, checks_total: 11,
 	privacy_score: score, security_score: score, behavior_score: score,
 	anomaly_count: 0, encryption_pct: 90, tracker_count: 0, last_seen: null, ...extra,
 });
 
 const fleet = (devices: ReturnType<typeof device>[], extra: Record<string, unknown> = {}) => ({
 	health_score: 82, health_grade: 'B', privacy_score: 70, security_score: 85, behavior_score: 90,
-	device_count: devices.length, anomaly_count: 2, privacy_concerns: 1, unencrypted_count: 0,
+	device_count: devices.length, scored_device_count: devices.length, anomaly_count: 2, anomalies_checked: devices.length,
+	privacy_concerns: 1, unencrypted_count: 0,
 	subtitle: 'Most devices behave well.', devices, ...extra,
 });
 
@@ -122,7 +124,7 @@ describe('IoT page — layout', () => {
 	it('says N/A in the privacy tab for a device with only local chatter, not 0% encrypted', async () => {
 		vi.mocked(iotApi.getPrivacyReport).mockResolvedValue({
 			devices: [{ mac: 'm1', name: 'Doorbell', privacy_grade: 'A', privacy_score: 90, tracker_domains: [], tracker_count: 0,
-				telemetry_bytes: 0, third_party_orgs: 0, encryption_ratio: 0, encryption_applicable: false, phone_home_per_hour: 0 }],
+				tracker_lookup_share: null, third_party_orgs: 0, encryption_ratio: 0, encryption_applicable: false, phone_home_per_hour: 0 }],
 		});
 		render(IoTPage);
 		await flush();
@@ -131,6 +133,99 @@ describe('IoT page — layout', () => {
 		await fireEvent.click(within(screen.getByRole('complementary', { name: 'Detail panel' })).getByRole('button', { name: 'Privacy' }));
 		expect(screen.getByText(/^N\/A: only local traffic/)).toBeInTheDocument();
 		expect(screen.queryByRole('img', { name: /encrypted/ })).not.toBeInTheDocument();
+	});
+});
+
+// NET-158: the score counts only measured checks, and an unmeasured figure says so
+describe('IoT page — only measured figures', () => {
+	beforeEach(mockAll);
+	afterEach(() => vi.clearAllMocks());
+
+	const kpi = (label: string) => screen.getAllByText(label).map((el) => el.closest('.kpi')).find(Boolean) as HTMLElement;
+
+	it('shows no fleet score, not 0 or F, when no device has enough measured', async () => {
+		const unscored = device('m1', 'Doorbell', 0, { score: null, grade: null, coverage: 40, checks_available: 4, behavior_score: null, anomaly_count: null });
+		vi.mocked(iotApi.getFleetSummary).mockResolvedValue(fleet([unscored], {
+			health_score: null, health_grade: null, privacy_score: null, security_score: null, behavior_score: null,
+			scored_device_count: 0, anomalies_checked: 0,
+		}) as never);
+		render(IoTPage);
+		await flush();
+
+		expect(screen.queryByRole('img', { name: /Smart home health/ })).not.toBeInTheDocument();
+		expect(screen.getByText('Not enough measured')).toBeInTheDocument();
+		expect(screen.getByText(/from 0 of 1 devices/)).toBeInTheDocument();
+		const rows = document.querySelectorAll('.score-rows li');
+		expect(Array.from(rows, (li) => li.textContent?.trim())).toEqual(['Privacy—', 'Security—', 'Behaviour—']);
+		const row = within(screen.getByRole('table', { name: 'Device trust scores' })).getAllByRole('row')[1];
+		expect(row).toHaveTextContent('— Not enough measured');
+		expect(row).toHaveTextContent('Not checked');
+	});
+
+	it('says anomalies were not checked, over the last hour, when no device has a baseline', async () => {
+		vi.mocked(iotApi.getFleetSummary).mockResolvedValue(fleet([device('m1', 'Doorbell', 80)], { anomaly_count: 0, anomalies_checked: 0 }) as never);
+		render(IoTPage);
+		await flush();
+		const card = kpi('Anomalies');
+		expect(card.querySelector('.kpi-num')?.textContent).toBe('—');
+		expect(card).toHaveTextContent('Not checked: no device has a baseline');
+		expect(card).toHaveTextContent('last hour');
+		expect(card).not.toHaveTextContent('All clear');
+	});
+
+	it('states the over-5 tracker threshold behind the privacy concerns count', async () => {
+		vi.mocked(iotApi.getFleetSummary).mockResolvedValue(fleet([device('m1', 'Doorbell', 80)], { privacy_concerns: 0 }) as never);
+		render(IoTPage);
+		await flush();
+		expect(kpi('Privacy concerns')).toHaveTextContent('None with over 5 tracker domains');
+		expect(kpi('Privacy concerns')).not.toHaveTextContent('No trackers');
+	});
+
+	it('counts devices under 50% encrypted, and says when none could be measured', async () => {
+		vi.mocked(iotApi.getFleetSummary).mockResolvedValue(fleet([device('m1', 'Doorbell', 80), device('m2', 'Hub', 80, { encryption_pct: null })]) as never);
+		const { unmount } = render(IoTPage);
+		await flush();
+		expect(kpi('Unencrypted')).toHaveTextContent('None under 50% encrypted · 1 of 2 measured');
+		expect(kpi('Unencrypted')).not.toHaveTextContent('Fully encrypted');
+		unmount();
+
+		vi.mocked(iotApi.getFleetSummary).mockResolvedValue(fleet([device('m1', 'Doorbell', 80, { encryption_pct: null })]) as never);
+		render(IoTPage);
+		await flush();
+		expect(kpi('Unencrypted').querySelector('.kpi-num')?.textContent).toBe('—');
+		expect(kpi('Unencrypted')).toHaveTextContent('Not measured: no device had traffic to judge');
+	});
+
+	it('shows the coverage in the drawer and the share of lookups to trackers in the privacy tab', async () => {
+		vi.mocked(iotApi.getPrivacyReport).mockResolvedValue({
+			devices: [{ mac: 'm1', name: 'Doorbell', privacy_grade: 'B', privacy_score: 80, tracker_domains: [{ domain: 'doubleclick.net', query_count: 3 }],
+				tracker_count: 1, tracker_lookup_share: 0.25, third_party_orgs: 1, encryption_ratio: 1, encryption_applicable: true, phone_home_per_hour: 2 }],
+		});
+		render(IoTPage);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Open Doorbell' }));
+		await flush();
+		const panel = screen.getByRole('complementary', { name: 'Detail panel' });
+		expect(panel).toHaveTextContent('from 5 of 11 checks (55 of 100 points)');
+		await fireEvent.click(within(panel).getByRole('button', { name: 'Privacy' }));
+		expect(panel).toHaveTextContent('80/100'); // the same figure as the table's privacy pillar
+		expect(panel).toHaveTextContent('25%share of lookups to trackers');
+	});
+
+	it('does not tag destinations "new" when the device has no baseline', async () => {
+		vi.mocked(iotApi.getCommunicationMap).mockResolvedValue({
+			mac: 'm1',
+			destinations: [{ ip: '203.0.113.9', hostname: null, country: 'US', ports: [443], bytes_sent: 10, bytes_received: 90,
+				connection_count: 1, first_seen: '', last_seen: '', in_baseline: null }],
+		});
+		render(IoTPage);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Open Doorbell' }));
+		await flush();
+		const panel = screen.getByRole('complementary', { name: 'Detail panel' });
+		await fireEvent.click(within(panel).getByRole('button', { name: 'Comm Map' }));
+		expect(panel).toHaveTextContent('New destinations not checked: this device has no baseline yet.');
+		expect(within(panel).queryByText(/· new$/)).not.toBeInTheDocument();
 	});
 });
 

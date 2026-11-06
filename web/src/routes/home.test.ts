@@ -21,7 +21,7 @@ const stats = (over: Partial<CaptureStatsResponse> = {}): CaptureStatsResponse =
 	rx_missed_errors: 0, link_speed_mbps: 2500, drop_rate_pct: 0, ...over,
 });
 const system = (over: Partial<SystemHealth> = {}): SystemHealth => ({
-	uptime: 60, timestamp: '', storage: null, smart: null, opensearch_reachable: true, healthy: true, ...over,
+	uptime: 60, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true, ...over,
 });
 
 describe('KPI deltas', () => {
@@ -74,10 +74,22 @@ describe('capture pipeline stages', () => {
 	});
 
 	it('packets: no drops, drops under the 0.1 % flag, drops over it, and a failed request', () => {
-		expect(packetsStage(stats(), false)).toMatchObject({ status: 'ok', detail: 'No packet drops · 1.2M received' });
+		// OLD CODE START — 2026-11-06 (S9): kernel drops only, at 3 decimal places
+		// expect(packetsStage(stats(), false)).toMatchObject({ status: 'ok', detail: 'No packet drops · 1.2M received' });
+		// expect(packetsStage(stats({ rx_dropped: 12, drop_rate_pct: 0.001 }), false)).toMatchObject({
+		// 	status: 'ok',
+		// 	detail: '0.001% dropped · 12 packets',
+		// });
+		// OLD CODE END
+		expect(packetsStage(stats(), false)).toMatchObject({ status: 'ok', detail: 'No packets lost · 1.2M received' });
+		// a tiny real loss never reads as 0.00% or "none"
 		expect(packetsStage(stats({ rx_dropped: 12, drop_rate_pct: 0.001 }), false)).toMatchObject({
 			status: 'ok',
-			detail: '0.001% dropped · 12 packets',
+			detail: '< 0.01% lost · 12 packets',
+		});
+		// NIC misses count: rx_dropped 0 is not "no packets lost"
+		expect(packetsStage(stats({ rx_missed_errors: 600, drop_rate_pct: 0.05 }), false)).toMatchObject({
+			detail: '0.05% lost · 600 packets',
 		});
 		expect(packetsStage(stats({ rx_dropped: 5000, drop_rate_pct: 0.4 }), false).status).toBe('failing');
 		expect(packetsStage(null, true)).toMatchObject({ status: 'unknown', detail: "Couldn't load capture counters: the request failed." });
@@ -85,8 +97,15 @@ describe('capture pipeline stages', () => {
 
 	it('system and OpenSearch read the one health check; a failed check is unknown, never degraded', () => {
 		expect(systemStage(system(), false)).toMatchObject({ status: 'ok', detail: 'Healthy' });
-		expect(systemStage(system({ healthy: false }), false)).toMatchObject({ status: 'failing', detail: 'Degraded' });
+		// OLD CODE START — 2026-11-06 (S5): one boolean
+		// expect(systemStage(system({ healthy: false }), false)).toMatchObject({ status: 'failing', detail: 'Degraded' });
+		// OLD CODE END
+		expect(systemStage(system({ status: 'problem', healthy: false }), false)).toMatchObject({ status: 'failing', detail: 'Reports a problem' });
+		// an unreadable drive beside healthy checks is incomplete, never "Degraded"
+		expect(systemStage(system({ status: 'incomplete', healthy: null }), false)).toMatchObject({ status: 'unknown', detail: "Incomplete · some checks couldn't run" });
 		expect(systemStage(null, true)).toMatchObject({ status: 'unknown', detail: "Couldn't check: the request failed" });
+		// a daemon that predates the status field must not break the Home page
+		expect(systemStage(system({ status: undefined }), false)).toMatchObject({ status: 'unknown', detail: 'Unknown' });
 		expect(openSearchStage(system(), false)).toMatchObject({ status: 'ok', detail: 'Connected' });
 		expect(openSearchStage(system({ opensearch_reachable: false }), false)).toMatchObject({ status: 'failing', detail: 'Unreachable' });
 		expect(openSearchStage(null, true).status).toBe('unknown');

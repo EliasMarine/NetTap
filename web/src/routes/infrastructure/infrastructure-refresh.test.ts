@@ -9,7 +9,7 @@ import InfrastructurePage from './+page.svelte';
 
 const READINGS: Record<string, unknown> = {
 	'/api/capture/mode': { mode: 'bridge', interface: '' },
-	'/api/capture/stats': { capture_interface: 'br0', drop_rate_pct: 0, rx_packets: 1, tx_packets: 1, link_speed_mbps: 1000 },
+	'/api/capture/stats': { capture_interface: 'br0', drop_rate_pct: 0, rx_packets: 1, tx_packets: 1, rx_dropped: 0, rx_missed_errors: 0, link_speed_mbps: 1000 },
 	'/api/capture/health': { mode: 'bridge', status: 'normal', capture_interface: 'br0', link_up: true, promisc_enabled: true, issues: [] },
 	'/api/bridge/health': { bridge_state: 'up', wan_link: true, lan_link: true, bypass_active: false, latency_us: 100, uptime_seconds: 60, issues: [] },
 	'/api/system/health': { uptime: 60, healthy: true, opensearch_reachable: true },

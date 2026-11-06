@@ -165,7 +165,7 @@ describe('Device detail — recent connections', () => {
 		render(Page);
 		await flush();
 		const table = screen.getByRole('table', { name: 'Recent connections' });
-		expect(within(table).getAllByRole('columnheader')).toHaveLength(7);
+		expect(within(table).getAllByRole('columnheader')).toHaveLength(8); // NET-158: + Direction
 
 		vi.mocked(devices.getDeviceConnections).mockClear();
 		await fireEvent.click(within(table).getByRole('button', { name: 'Destination' }));
@@ -180,12 +180,20 @@ describe('Device detail — recent connections', () => {
 		expect(opts.from).toBe((vi.mocked(devices.getDeviceDetail).mock.calls[0][1] as { from: string }).from);
 	});
 
-	it('filters the page by protocol and says when nothing matches', async () => {
+	it('filters by protocol on the daemon and says when nothing matches', async () => {
+		// NET-158: the filter used to hide rows of the page on screen; the daemon filters now
+		vi.mocked(devices.getDeviceConnections).mockImplementation(async (_ip, opts) =>
+			(opts?.proto === 'udp'
+				? { connections: [], page: 1, total_pages: 0, total: 0 }
+				: { connections: [CONN], page: 1, total_pages: 3, total: 60 }) as never,
+		);
 		render(Page);
 		await flush();
 		await fireEvent.click(screen.getByRole('button', { name: 'UDP' }));
+		await flush();
 		expect(screen.getByText('No connections in this range')).toBeInTheDocument();
 		await fireEvent.click(screen.getByRole('button', { name: 'TCP' }));
+		await flush();
 		expect(screen.getByRole('table', { name: 'Recent connections' })).toBeInTheDocument();
 	});
 });

@@ -13,6 +13,7 @@ Security:
 """
 
 import asyncio
+import ipaddress
 import logging
 import re
 from typing import Any
@@ -23,6 +24,23 @@ logger = logging.getLogger("nettap.ssl_cert")
 HOST_PATTERN = re.compile(r"^[a-zA-Z0-9.\-:]+$")
 MAX_HOST_LENGTH = 253
 CERT_TIMEOUT = 10  # seconds
+# OpenSSL's X509_V_ERR_HOSTNAME_MISMATCH and X509_V_ERR_IP_ADDRESS_MISMATCH
+NAME_MISMATCH_CODES = {62, 64}
+# s_client's verify callback prints each error to stderr; the final "Verify return
+# code" keeps only the last one, so a self-signed cert with a wrong name shows just the name
+_VERIFY_ERROR = re.compile(r"^verify error:num=(\d+):(.+)$", re.MULTILINE)
+# OLD CODE START — PR #174 review: \s also matches newlines, so a server sending a long run
+# of them after the handshake made this quadratic on the event loop
+# _VERIFY_RESULT = re.compile(
+#     r"^\s*Verify return code:\s*(\d+)\s*\((.*)\)\s*$", re.MULTILINE
+# )
+# OLD CODE END
+_VERIFY_RESULT = re.compile(
+    r"^[ \t]*Verify return code:[ \t]*(\d+)[ \t]*\((.*)\)[ \t]*$", re.MULTILINE
+)
+# A new attribute starts at ", KEY=" ("C = US" in OpenSSL 1.1, "C=US" in 3.x); a comma
+# inside a value ("O=Test, Inc.") isn't followed by one
+_DN_SPLIT = re.compile(r",\s*(?=[A-Za-z][\w.]*\s*=)")
 
 
 class SslCertValidationError(Exception):
@@ -69,6 +87,43 @@ class SslCertService:
             )
 
         return port
+
+    @staticmethod
+    def parse_dn(dn: str | None) -> dict[str, str]:
+        """Split an openssl one-line name ("C = US, O = Let's Encrypt, CN = R3") into fields."""
+        fields: dict[str, str] = {}
+        for part in _DN_SPLIT.split(dn or ""):
+            key, sep, value = part.partition("=")
+            if sep and key.strip():
+                fields[key.strip()] = value.strip()
+        return fields
+
+    @staticmethod
+    def _parse_verify(stdout: str, stderr: str) -> dict[str, Any]:
+        """s_client's own verification: the chain against the system CAs, and the name.
+
+        verify_code is None when s_client printed no result (nothing was checked).
+        """
+        results = _VERIFY_RESULT.findall(stdout)
+        errors = [
+            (int(num), reason.strip()) for num, reason in _VERIFY_ERROR.findall(stderr)
+        ]
+        if not results:
+            return {"verify_code": None, "verify_errors": [], "name_match": None}
+        # OLD CODE START — PR #174 review: the last match can be text the server sent after
+        # the handshake ("Verify return code: 0 (ok)"); s_client prints its own result first
+        # code, reason = int(results[-1][0]), results[-1][1].strip()
+        # OLD CODE END
+        code, reason = int(results[0][0]), results[0][1].strip()
+        reasons = list(dict.fromkeys(r for _, r in errors)) or (
+            [] if code == 0 else [reason]
+        )
+        return {
+            "verify_code": code,
+            "verify_errors": reasons,
+            "name_match": not any(num in NAME_MISMATCH_CODES for num, _ in errors)
+            and code not in NAME_MISMATCH_CODES,
+        }
 
     def _parse_cert_text(self, text: str) -> dict[str, Any]:
         """Parse openssl x509 -text output for certificate details."""
@@ -151,8 +206,26 @@ class SslCertService:
         host = self.validate_host(host)
         port = self.validate_port(port)
 
+        procs: list[asyncio.subprocess.Process] = []
+        # S1: an IP is checked against the certificate's IP names, a host name against its DNS names
+        try:
+            ipaddress.ip_address(host)
+            name_check = ["-verify_ip", host]
+        except ValueError:
+            name_check = ["-verify_hostname", host]
+
         try:
             # Step 1: Get the PEM certificate and chain info via s_client
+            # OLD CODE START — 2026-11-06 (S1): no name check, and the verify result was ignored,
+            # so an untrusted or wrong-name certificate read "Valid" on its expiry date alone
+            # s_client_proc = await asyncio.create_subprocess_exec(
+            #     "openssl",
+            #     "s_client",
+            #     "-connect",
+            #     f"{host}:{port}",
+            #     "-servername",
+            #     host,
+            # OLD CODE END
             s_client_proc = await asyncio.create_subprocess_exec(
                 "openssl",
                 "s_client",
@@ -160,10 +233,12 @@ class SslCertService:
                 f"{host}:{port}",
                 "-servername",
                 host,
+                *name_check,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+            procs.append(s_client_proc)
             s_client_stdout, s_client_stderr = await asyncio.wait_for(
                 s_client_proc.communicate(input=b""),
                 timeout=CERT_TIMEOUT,
@@ -204,6 +279,7 @@ class SslCertService:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+            procs.append(x509_proc)
             x509_stdout, x509_stderr = await asyncio.wait_for(
                 x509_proc.communicate(input=pem_cert.encode()),
                 timeout=CERT_TIMEOUT,
@@ -211,6 +287,9 @@ class SslCertService:
             x509_output = x509_stdout.decode("utf-8", errors="replace")
 
             parsed = self._parse_cert_text(x509_output)
+            verify = self._parse_verify(
+                s_client_output, s_client_stderr.decode("utf-8", errors="replace")
+            )
 
             return {
                 "host": host,
@@ -223,6 +302,9 @@ class SslCertService:
                 "fingerprint_sha256": parsed.get("fingerprint_sha256"),
                 "sans": parsed.get("sans", []),
                 "chain": chain,
+                **verify,
+                # S3: the page's raw-output toggle read this key, which was never set
+                "output": x509_output,
                 "error": None,
             }
 
@@ -241,3 +323,10 @@ class SslCertService:
                 "port": port,
                 "error": f"SSL inspection failed: {exc}",
             }
+
+        finally:
+            # A timeout, an error or a cancelled request (the browser left) must not leave
+            # s_client holding a connection open
+            for proc in procs:
+                if proc.returncode is None:
+                    proc.kill()

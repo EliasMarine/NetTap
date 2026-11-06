@@ -47,6 +47,15 @@ class TestChangelogServiceLogEvent(unittest.TestCase):
         call_kwargs = self.mock_client.index.call_args
         self.assertTrue(call_kwargs[1]["index"].startswith("nettap-changelog-"))
 
+    def test_log_event_keeps_the_time_it_happened(self):
+        """NET-158: an event can carry when it happened; without one it is now."""
+        doc = self.service.log_event(
+            "device_joined", "New device", timestamp="2026-11-02T21:05:00+00:00"
+        )
+        self.assertEqual(doc["@timestamp"], "2026-11-02T21:05:00+00:00")
+        body = self.mock_client.index.call_args.kwargs["body"]
+        self.assertEqual(body["@timestamp"], "2026-11-02T21:05:00+00:00")
+
     def test_log_event_default_metadata(self):
         """log_event() defaults metadata to empty dict."""
         doc = self.service.log_event("config_changed", "Config Updated")
