@@ -23,10 +23,10 @@ import { verifyToken, hasUsers } from '$lib/server/auth.js';
 // const PUBLIC_PATHS = ['/login', '/api/auth', '/api/tools', '/api/lookup', '/tools', '/lookup'];
 // OLD CODE END
 
-/** Paths that never require authentication: the sign-in page and the three auth routes by
- * name. Not all of /api/auth/*: a path no auth route handles falls through to the catch-all
- * proxy, which forwards it to the daemon with the daemon token. */
-const PUBLIC_PATHS = ['/login', '/api/auth/login', '/api/auth/logout', '/api/auth/me'];
+/** Paths that never require authentication: the sign-in page and the three auth routes, matched
+ * exactly. Nothing below them: a path no auth route handles (`/api/auth/me/x`, `/api/auth/other`)
+ * falls through to the catch-all proxy, which forwards it to the daemon with the daemon token. */
+const PUBLIC_PATHS = new Set(['/login', '/api/auth/login', '/api/auth/logout', '/api/auth/me']);
 
 /** Paths that are public only until the first admin exists.
  * The setup wizard (/setup, /api/setup/*) and Go Live (/go-live, /api/bridge/*)
@@ -64,7 +64,7 @@ function isUnder(pathname: string, base: string): boolean {
 // }
 // OLD CODE END
 function isPublicPath(pathname: string): boolean {
-	return PUBLIC_PATHS.some((p) => isUnder(pathname, p));
+	return PUBLIC_PATHS.has(pathname);
 }
 
 function isFirstRunPath(method: string, pathname: string): boolean {
@@ -93,6 +93,15 @@ export const handle: Handle = async ({ event, resolve }) => {
 		if (payload) {
 			event.locals.user = payload;
 		}
+	}
+
+	// A remote-function call's pathname comes from the client's x-sveltekit-pathname header, so
+	// no path rule may open it: without a session it is refused (the app has no remote functions yet)
+	if (event.isRemoteRequest && !event.locals.user) {
+		return new Response(JSON.stringify({ error: 'Sign in first' }), {
+			status: 401,
+			headers: { 'content-type': 'application/json' },
+		});
 	}
 
 	// OLD CODE START — replaced by the first-run gate below (2026-10-29)

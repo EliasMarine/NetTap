@@ -128,7 +128,7 @@ describe('hooks.server', () => {
 			expect(mockResolve).toHaveBeenCalledWith(event);
 		});
 
-		it.each(['/api/auth/other', '/api/auth/..%2Ftools%2Fping', '/api/auth', '/api/auth/'])(
+		it.each(['/api/auth/other', '/api/auth/..%2Ftools%2Fping', '/api/auth', '/api/auth/', '/api/auth/me/x', '/api/auth/login/x', '/login/x'])(
 			'keeps the rest of /api/auth behind a login, so it never reaches the catch-all proxy: %s',
 			async (path) => {
 				mockHasUsers.mockReturnValue(true);
@@ -172,6 +172,24 @@ describe('hooks.server', () => {
 			const event = createMockEvent('/tools/ping');
 
 			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/setup' });
+		});
+
+		it('refuses a remote-function call without a session, whatever path it claims', async () => {
+			mockHasUsers.mockReturnValue(true);
+			const event = { ...createMockEvent('/login'), isRemoteRequest: true };
+
+			const res = await handle({ event, resolve: mockResolve });
+			expect(res.status).toBe(401);
+			expect(mockResolve).not.toHaveBeenCalled();
+		});
+
+		it('lets a remote-function call through with a session', async () => {
+			mockHasUsers.mockReturnValue(true);
+			mockVerifyToken.mockReturnValue({ username: 'admin', role: 'admin' });
+			const event = { ...createMockEvent('/devices', 'valid-token'), isRemoteRequest: true };
+
+			await handle({ event, resolve: mockResolve });
+			expect(mockResolve).toHaveBeenCalledWith(event);
 		});
 
 		it('keeps first-run paths segment-matched: /setupx goes to setup, not through', async () => {
