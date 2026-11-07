@@ -125,6 +125,7 @@ State lives on the `nettap-rules-state` volume (`/run/nettap-rules` in suricata-
 | `NETTAP_RULES_LOCK_WAIT` | `900` | Seconds an update waits for the rules lock |
 | `NETTAP_RULES_RELOAD_WAIT` | `300` | Seconds to wait for Suricata to load new or restored rules |
 | `NETTAP_RULES_RETRY_S` | `5` | Seconds between reload checks |
+| `NETTAP_RULES_UPDATE_MAX` | `900` | Seconds Malcolm's updater may run before it is stopped (so it can't hold the rules lock) |
 | `NETTAP_MALCOLM_UPDATE` | `/usr/local/bin/malcolm-suricata-update-rules.sh` | Malcolm's updater, kept beside the shim |
 | `NETTAP_RULES_SOURCES_FILE` | `/var/lib/suricata/update/nettap-enable-sources` | The source list the container started with (for `docker exec` updates) |
 | `NETTAP_SURICATA_SOCKET` | `/var/run/suricata/suricata-command.socket` | Suricata's command socket |

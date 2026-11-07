@@ -55,3 +55,17 @@ These changes came from the hardening note above and the over-engineering review
 * `check-rules-update-safety.sh`: the last check reads the new container's log with `grep -q` (prints nothing from the log). The shared preflight moved to `rules-checks.sh` unchanged.
 
 No findings.
+
+## Review round 2 (security-engineer review of 6abb4a81, fixes hand-checked)
+
+The security-engineer review found M1, L1–L4, I1, I3, I4 and I5; none critical. Each fix and its test is listed in `tracking-fixes/2026-11-06-detection-accuracy.md` under "Reviews (round 2)". These are the checks made on the fixes themselves:
+
+* `rules_lock.open_regular` (M1) is the only way the daemon opens a file on the rules state volume: `O_NOFOLLOW | O_NONBLOCK`, regular files only, and the status read is capped at 64 KiB. The marker check (`os.path.exists`) only yields a boolean, so a link there exposes nothing.
+* `start` (L1) refuses a linked parent before any wipe or write, and still installs the shim, so updates keep the lock. No process runs as `suricata` during `start`, so the check can't be raced.
+* `update` (L3) refuses uid 0 before it reads or writes anything. The startup update (`su -p $PUSER`), supercronic, "Update now" (`docker exec -u suricata`) and the gate (`--user $PUID:$PGID`) all run as the user.
+* Malcolm's output is redacted before it reaches the disk (I4), and the status reason has its control characters stripped (L4). Neither path prints the code.
+* The rollback removes slice 2's source files with `docker exec -u suricata`, so root never follows a link in that directory.
+* The legacy key cleanup (I5) logs the key name and the file path, never the value. An OSError logs only the exception type.
+* I3 (root in other containers that mount `/etc/nettap` can read the code) is recorded as a follow-up. Nothing was changed for it.
+
+Not re-run: the full multi-agent /deep-review. The round 2 diff is the fix set from a dedicated security review, checked by hand as above.

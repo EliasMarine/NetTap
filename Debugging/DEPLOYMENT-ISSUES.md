@@ -487,8 +487,14 @@ CHAIN 27: Malcolm's Suricata rule wiring (feature/detection-slice2, NET-191 slic
   - SURICATA_UPDATE_ETOPEN is not read by 26.10.0 (upstream turns it into --etopen, which would
     add ET Open beside ET Pro). Removed from compose as OLD CODE.
   - suricata-update only ever adds sources: its configs in /var/lib/suricata/update/sources
-    survive a `docker restart` (container filesystem), a removed ET Pro code included.
-  - /var/lib/suricata/rules is a volume (suricata-rules); /var/lib/suricata/update is not.
+    survive a restart and a recreate, a removed ET Pro code included.
+  - CORRECTED 2026-11-07 (review round 2, checked read-only on the G11): /var/lib/suricata is an
+    anonymous image VOLUME (so are /etc/suricata, /opt/suricata/include-configs, /opt/suricata/rules,
+    /var/log/suricata and /var/run/suricata); only /var/lib/suricata/rules is the named suricata-rules
+    volume. Compose keeps anonymous volumes across a recreate, so /var/lib/suricata/update (owned by
+    suricata:suricata, 755) and its sources survive one too. The rollback script therefore removes
+    slice 2's sources before it recreates. Earlier text said "/var/lib/suricata/update is not a volume".
+  - supercronic (the nightly update) runs as suricata, not root.
   - IPFire DBL ships four rules per category (DNS, HTTP, QUIC, TLS), each loading the category's
     dataset; the allowlist and the gate's check must cover all four, not only DNS.
   Fix: config/suricata/nettap-rules-update.sh. `start` (root, in the suricata-live entrypoint

@@ -172,6 +172,86 @@ Status: built and tested locally, pushed, no PR yet. Not on the device.
 - /deep-review: no findings. Root writing through a link Malcolm's user could plant in `/run/nettap-rules` was judged post-compromise only, and hardened anyway (`start` removes links, creates the lock file with O_EXCL, writes the sources file through a fresh temp file). A bats test plants the links.
 - /ponytail-review: no must-fix. Fixed: the safety script's "no update cut off" check could never fail (it now reads the new container's log for the recovery line); the DHCP and setup proxies' 60 s timeouts; a redundant `except`; the duplicated preflight; the HEAD preflight.
 
+### Reviews (round 2)
+
+Three reviews of `6abb4a81`: a security engineer, a correctness reviewer for the daemon and shell, and a TypeScript reviewer. None found anything critical. Every fix below has a test that fails on the code before it (checked by running the new tests against `6abb4a81`).
+
+Confirmed read-only on the G11: `/var/lib/suricata` is an anonymous image volume owned by `suricata` (only `rules/` is the named volume), and supercronic runs as `suricata`. Chain 27 is corrected.
+
+**Security**
+- **M1.** The daemon (root) opened `rules.lock` and `update-status.json` on the volume Malcolm's user owns. A planted link was followed (`O_CREAT` created its target), a FIFO blocked the event loop, and `/dev/zero` gave an endless read.
+  - Fix: `rules_lock.open_regular` opens with `O_NOFOLLOW | O_NONBLOCK` and refuses anything that isn't a regular file. The status record is read through it, with a 64 KiB cap.
+  - pytest: link, FIFO and oversized file, for both files.
+- **L1.** `start` checked only the last path part for a link.
+  - Fix: it now refuses, before wiping or writing anything, when a parent of the sources dir or the sources file isn't a real directory (`cd -P` differs from the literal path). No `suricata` process runs during `start`, so there is no race.
+  - bats: a linked parent.
+- **L2.** Malcolm's updater had no time limit, so a stalled download held the lock.
+  - Fix: `setsid timeout -k 30 ${NETTAP_RULES_UPDATE_MAX:-900}`. A timeout is a failed update and the last good rules are restored.
+  - The deploy and the rollback now recreate suricata-live anyway when the lock wait runs out. The stopped update leaves its marker, so the next start restores the last good rules first.
+  - bats: the time limit.
+- **L3.** `update` now refuses to run as root, pointing to `docker exec -u suricata`.
+  - Image bats now run as uid 1000.
+  - bats: a faked `id -u` of 0.
+- **L4.** `failure_reason` now strips control characters.
+- **I1.** The ET Pro code is checked with `re.fullmatch`, so `code\n` is refused.
+  - pytest: the trailing newline.
+- **I4 (canary script):**
+  - It searches after canary A, after canary B and after the clear. Every stage covers the docker logs, `/run/nettap-rules`, suricata-live's `/tmp`, `/etc/suricata` and `/var/log/suricata`, and the API answers. After the clear, `/etc/nettap` and `/var/lib/suricata/update` are searched too.
+  - A failed search or `docker logs` counts as a failure ("?").
+  - In the wrapper, Malcolm's output is redacted by a process substitution before it reaches `$OUT`. A SIGKILLed run leaves no code in `/tmp`.
+  - bats: the output file is checked while the update runs and again after a SIGKILL.
+- **I5.** At startup, the daemon removes a `SURICATA_ET_PRO_KEY` saved before the field was retired from `/opt/nettap/data/.env`. It logs the key name only.
+  - pytest.
+- **I3, follow-up, not changed now.** `/etc/nettap/suricata.env` is root-only (600), but root in any other container that mounts `/etc/nettap` can read it. Narrow those mounts, or move the code to a dedicated volume that only the daemon and suricata-live mount.
+
+**Correctness**
+1. **The first run could wedge for ever.** With no last good copy, every rollback failed, so the marker stayed and every later run stopped at "recovering".
+   - Fix: a missing, dangling or empty last good copy is "nothing to restore" (`restore` returns 3). The rollback succeeds without touching the files or the engine, so the marker clears. A generation without a non-empty `suricata.rules` never empties the live rules.
+   - Status reasons now say which happened.
+   - bats: a first run that fails, then succeeds; a dangling last good link.
+2. **Rollback didn't return to ET Open.**
+   - Fix: with the lock held and before the recreate, Step 4 removes `sources/*.yaml` and `nettap-enable-sources` as `suricata`.
+   - The ET Pro and "code cleared" checks use `test ! -e`, so they fail when the daemon container is down. `enabled_sources` fails when it can't ask.
+   - Deviation: the old compose file names no source, and suricata-update then uses ET Open without writing a source file. So "none named" stays accepted, but only when suricata-update answered and the rules file holds ET rules (new check "ET Open rules"). "Exactly `et/open`" would fail on every correct rollback.
+3. **Partial source set.**
+   - Fix: after a successful update, the wrapper compares the configured sources with the enabled source files and records `missing_sources` in the status record. There is no rollback.
+   - The daemon passes the field through (a list of names, `[]` by default).
+   - The web type and the contract test include it. The Settings status line shows it amber: "The last update worked, but these sources weren't enabled: …".
+   - Deviation: the wrapper reads the source files' `source:` lines (what the daemon's live status reads) rather than calling `suricata-update list-enabled-sources`. Same answer, no extra process.
+   - bats: a source that fails to enable.
+4. **Small fixes:**
+   - The Suricata `docker restart` under the rules lock now has a 120 s limit (pytest).
+   - A second ET Pro save or clear cancels the first readiness watch (pytest).
+5. **Test gaps:**
+   - **TERM with the engine running** (bats). The test found a real bug: a bare `return` in `reload_blocking`, called from the TERM trap, returned the status from before the trap (143). So every interrupted update with Suricata running recorded "engine not confirmed" and kept the marker. It now returns `$?`.
+   - `test_rules_lock.py` asserts the real 240 s default. The no-op monkeypatch is gone.
+   - The disk-full test runs in the image bats (256 KiB tmpfs, mode 1777); it skips only outside Linux.
+
+**Web**
+- **H1.** The 15 s ET Pro poll uses `refresh.runIfIdle()`.
+- **M2.** One `busy` flag turns off Update now, Save code and Remove code. Behaviour change: "Update rules now" is off while an ET Pro change applies.
+- **M3.** A save or remove failure shows in the card as `notice is-error` with `role="alert"`, until the next attempt.
+- **M4.** The field error has `role="alert"`.
+- **L5.** A save resets `confirmingRemove`.
+- **L6.** The status is read again after a failure as well.
+- **L7.** The green "active" line also needs `etpro.active`.
+- **L8.** A test checks the real `RULE_UPDATE_TIMEOUT_MS`.
+- **L9.** `error` is used only when it is a string.
+- 12 new page tests, plus the API test and the constant test.
+
+**Tests after round 2**
+
+| Suite | Result |
+|---|---|
+| Daemon pytest | 3,699 passed, 4 skipped |
+| Vitest | 3,813 passed |
+| svelte-check | 0 errors |
+| `check:colors`, `check:e2e`, `vite build` | clean |
+| Visual | 276 passed, 49 skipped (the reduced-motion project) |
+| bats on macOS | 204 tests, 0 failed, 24 skipped (they need Linux) |
+| `test_rules_update.bats` in the Malcolm 26.10.0 image, as uid 1000 | 30/30, 0 skipped |
+| shellcheck, ruff 0.17.3 | clean |
+
 ### Device run order (owner)
 
 1. `bash /home/nettap/NetTap/scripts/remote/deploy-detection-slice2.sh`: gate first; if it fails, nothing is built or restarted.
