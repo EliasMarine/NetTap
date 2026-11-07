@@ -66,3 +66,126 @@ G11, 2026-11-07 06:14–06:27 UTC, branch rebased on main 50e6f2f (after #196), 
 - Pages: /api/alerts, categories, top-signatures, smart summary, risk scores, devices count, IoT fleet summary all 200; activity list 704,768; `activity=yes` 400; 2,133 of 3,530 smart groups are activity, all level 5. No daemon errors since the restart.
 - Rules baseline for slice 2 saved on the device at `~/nettap-rules-baseline/rules`. Replay runs kept under `~/nettap-replay/` (~46 MB each; prune later).
 - Rollback of the suppression: write an empty `/etc/nettap/suricata-threshold.config` and recreate suricata-live.
+
+## Slice 2: more free sources, optional ET Pro code, one rules lock (branch `feature/detection-slice2`)
+
+Status: built and tested locally, pushed, no PR yet. Not on the device.
+
+### Changes
+
+- **Sources** (`docker/docker-compose.yml`, suricata-live): `SURICATA_UPDATE_ENABLE_SOURCES: "et/open,abuse.ch/sslbl-blacklist,echap/stalkerware,ipfire/dbl"`. `SURICATA_DISABLE_SIDS` adds the IPFire allowlist `re:msg:"IPFire DBL \[(?!Malware\]|Phishing\])`, so every update (startup, nightly, manual) keeps only IPFire's Malware and Phishing categories (4 rules each: DNS, HTTP, QUIC, TLS). `SURICATA_UPDATE_ETOPEN` removed (OLD CODE): 26.10.0 doesn't read it, and upstream would add ET Open beside ET Pro.
+- **One update path** (`config/suricata/nettap-rules-update.sh`, mounted ro): `start` runs as root in the entrypoint wrapper after the capture env loader. It wipes `/var/lib/suricata/update/sources/*.yaml`, records the start-time source list (600, PUID; `docker exec` doesn't get the loader's env), and installs a shim at Malcolm's `suricata-update-rules.sh` (Malcolm's kept as `malcolm-suricata-update-rules.sh`). Startup, the nightly cron and "Update now" all run `update`:
+  1. Take the flock on the `nettap-rules-state` volume.
+  2. Recover an unfinished attempt (marker), then run Malcolm's updater (its options, `--fail`).
+  3. Wait until the engine's reload time moves and it reports 0 failed rules.
+  4. Publish a verified `gen-*` last-good copy (atomic symlink swap; keep 2).
+  5. On a failure, restore the last good copy and reload it (blocking, retried while a reload is in progress).
+  6. Write `update-status.json` (`active`/`prepared`/`failed`/`interrupted`, a reason with any ET Pro code redacted, last success, last activation).
+
+  TERM/INT kill Malcolm's process group and roll back.
+- **Lock users:**
+  - The daemon (`services/rules_lock.py`, fcntl) holds it while it restarts suricata-live for a capture-mode change (240 s wait, then "try again") and while it saves or clears the ET Pro code (60 s).
+  - Deploy scripts take it from the host with a holder container (`scripts/remote/rules-lock.sh`: live image, PUID, no network, all caps dropped, `flock -w 900`, sleeps ≤ 30 min, `docker rm -f` releases). The device's sudo allows docker only, so `sudo flock` isn't possible.
+  - `verify-detection.sh` takes the snapshot holding it; with no lock yet, it keeps the 23:50–00:30 refusal.
+- **"Update now"** runs the shim as `suricata` (`docker exec -u suricata …`) and reports the status record. 200 = active/prepared, 202 = still running after 270 s, 500 = failed (the record's reason).
+- **Live status** adds `enabled_sources` (names only, from `source:` lines), `etpro_rules` (active SIDs 2800000–2899999), `engine` (`ruleset-stats`, `ruleset-reload-time`; null when Suricata doesn't answer) and `update` (the record; `prepared` reads `active` once the engine loaded later; `stale` after 48 h without success; `recovery_pending`).
+- **ET Pro code** (`services/etpro.py`, `POST/GET/DELETE /api/suricata/rules/commercial`):
+  - The code must be `^[A-Za-z0-9]{16,64}$`.
+  - Preflight: a one-byte GET (`Range: bytes=0-0`, redirects followed, body not read) of `https://rules.emergingthreatspro.com/<code>/suricata-<suricata-offline -V>/etpro.rules.tar.gz` (10 s). Anything but 200 or 206 is a plain 400 or 502 and changes nothing.
+  - Save holding the rules lock: `/etc/nettap/suricata.env` (600, atomic), then `docker restart` suricata-live. A failed restart puts the previous file back.
+  - The reply is 202, and a background watch records the activation: engine reload after the restart, rules loaded/failed, ET Pro SIDs, sources, update state.
+  - GET answers `{configured, active, last_update_ok, applying, activation}` and never the code. Logs carry the preflight result and the activation outcome, never the code.
+  - The capture env loader turns `et/open` into `et/pro|secret-code=…`. It ignores an invalid code with a message that doesn't echo it.
+  - Clear deletes the file and restarts; the wipe at start drops the stored ET Pro source.
+  - The old Snort Subscriber/ET Pro "commercial" methods and handlers are retired as OLD CODE.
+- **Web** (teammate web-etpro):
+  - Settings › Suricata rules shows a status line for the last update, worst news first, and the real enabled sources with friendly names.
+  - An ET Pro card replaces the commercial form: Saved / In use / Last update, save, and remove with a confirm step. It polls every 15 s while applying.
+  - "Update now" reads 202 as still running.
+  - The proxies allow 290 s and pass status codes through. So do the DHCP gateway enable/disable and setup save proxies (were 60 s), because a Suricata restart there can wait 240 s for the lock.
+  - The main Settings page's unconnected "Emerging Threats Pro key" field is retired (OLD CODE). A link to Settings › Suricata rules replaces it, and the daemon no longer accepts `SURICATA_ET_PRO_KEY` as an API key.
+- **Device scripts:**
+  - `gate-detection-slice2.sh`:
+    - Stages the new update path in a throwaway container: live image, network on, 1 GiB, 1 CPU, the source list and disable.conf lines from the pulled compose file, a fresh data dir.
+    - Then `check-staged`: allowlist, datasets resolved, owner SID range.
+    - Then fixtures on the staged rules (0 failed; the IPFire/Echap fixtures pass).
+    - Then own traffic, live vs staged, with the SID difference.
+  - `deploy-detection-slice2.sh`: gate first, then build, the daemon and web, and a recreate of suricata-live holding the lock. Then it checks the sources, allowlist, shim, startup update, last-good, engine, live status, memory and capture, the fixtures on live, "Update now" and the daemon log.
+  - `check-etpro-canary.sh` and `check-rules-update-safety.sh`: see the device run order below.
+  - `rollback-detection-slice2.sh`.
+  - Shared helpers in `rules-checks.sh`, including the canary and safety scripts' common preflight.
+- **Replay tool** (`verify_detection.py`):
+  - Fixtures drawn from the ruleset replayed: IPFire Malware/Phishing hits from each category's dataset; the owner's DoH name `dns.quad9.net` must fire no disabled IPFire category; an Echap stalkerware hit.
+  - New commands: `check-staged` (the gate's checks) and `diff-sids` (own traffic, live vs staged).
+
+### Tests
+
+- Daemon: 3,687 passed, 4 skipped. New:
+  - `test_etpro.py` (32): regex, the one-byte GET preflight, 200/206 accepted, 403/500/unreachable/timeout refused, 600 file, restart under the lock, failed restart restores, busy at once while an update runs, ≤ 60 s lock wait, activation and honest status, code never in replies or logs.
+  - `test_rules_lock.py` (9).
+  - `test_rules_update_status.py` (18).
+  - `test_rules_contract.py` (5): each reply's exact keys against the web's TypeScript interfaces. It found "Update now"'s record without `stale`, now fixed.
+  - `test_verify_detection_rules.py` (13).
+  - `test_settings_api.py`: +1, the retired key is never written.
+- Bats:
+  - `test_rules_update.bats` (22; 18 need Linux): 22/22 in `ghcr.io/idaholab/malcolm/suricata:26.10.0` with a 256 KiB tmpfs for the disk-full case. Each of 5 mutants (no redaction, no gen.tmp cleanup, no trap, no wipe, no atomic swap) fails a test.
+  - Capture env loader: +4.
+  - `test_verify_detection.bats`: rewritten, 5 tests, for the lock.
+  - Compose: +1 for the sources, allowlist, mounts and state volume. Two existing compose tests were adapted (the rules start step after the loader; the single-quoted value).
+  - macOS total: 196, 0 failed, 18 skipped.
+- Web: Vitest 3,798 passed (`suricata-rules-etpro.test.ts` 20 new; the DHCP and setup proxy tests now expect 290 s). svelte-check 0 errors; its 2 warnings were already there. `check:colors` and `check:e2e` clean. Visual 276 passed; the 49 skipped are the reduced-motion project.
+- shellcheck clean on every changed script (the loader as `sh`). ruff 0.17.3 check and format clean on every touched daemon file.
+- Local rehearsal of the gate's staged update with the real image (non-root, 1 CPU, fresh data dir): 64 s, status `prepared`, last-good published. The staged rules:
+  - 65,377 active rules of 81,409;
+  - IPFire Malware 4 and Phishing 4, nothing else;
+  - 2 datasets (17.5 MiB);
+  - 994 Echap rules and 10,957 SSLBL rules;
+  - no owner-range SID.
+
+### Deviations from the plan
+
+- **Host-side lock: a holder container instead of `sudo flock`.** The device's sudo allows docker only.
+- **Daemon lock waits:**
+  - Capture-mode restarts wait 240 s, not 900 s, so the answer comes back inside HTTP time limits.
+  - An ET Pro save or clear waits 60 s, and answers 409 at once while "Update now" runs in the daemon. The worst case is 210 s, under the web's 290 s.
+- **ET Pro save:**
+  - The lock is taken before the file is written, not after, so a running update never sees half a change.
+  - The reply is 202 once the restart is issued. Readiness is followed in the background: GET adds `applying` and `activation`. The restart plus the startup update can take minutes.
+  - The request body is `{code}`.
+- **Persisted start-time source list.** `docker exec` doesn't get the loader's ET Pro swap.
+- **Lock file opened read-only.** The daemon (root) may have created it.
+- **When a rollback reloads:** only when files were actually restored, or on interrupt or recovery. A failed download that wrote nothing needs no reload.
+- **Malcolm's `grep -v` quirk is not handled.** An empty output would fail the pipeline, but on 26.10.0 the three "conf file does not exist" warnings always print.
+- **DoH negative fixture:** a query for `dns.quad9.net` must fire no disabled IPFire category SID.
+- **"Update now" answers 202** when the update is still running after 270 s.
+- **Live status additions moved into slice 2:** engine facts and the status record (the plan had them in slice 3 step 1). The deploy checks and the Settings status line need them. The source toggles' retirement stays in slice 3.
+- **Overlap check:** a holder lock and a daemon flock probe stand in for "a custom-rule save", which is slice 3.
+- **Recreate while an update is queued:** an update waiting for the lock in the old container stops with it. It has written nothing, because the marker comes after the lock. The new container's startup update is the one that "runs after the new container is up".
+- **The gate stages the free sources only.** An ET Pro code is never passed on a `docker run` command line. "suricata -T: 0 failed" is covered by suricata-update's own `-T` plus the replay's "N loaded, 0 failed".
+- **First-deploy refusal window: 23:00–00:30 UTC**, because the gate runs before the recreate.
+- **`NETTAP_REPLAY_ROOT`** is a test override for `verify-detection.sh`.
+- **ET Pro preflight is a one-byte GET, not a HEAD.** suricata-update downloads with GET. A signed redirect can allow GET only and refuse HEAD, which would turn away a good code. 206 counts as accepted.
+- **DHCP gateway and setup save proxies wait 290 s (were 60 s).** Their Suricata restart can wait 240 s for the rules lock.
+
+### Pre-commit review
+
+- /deep-review: no findings. Root writing through a link Malcolm's user could plant in `/run/nettap-rules` was judged post-compromise only, and hardened anyway (`start` removes links, creates the lock file with O_EXCL, writes the sources file through a fresh temp file). A bats test plants the links.
+- /ponytail-review: no must-fix. Fixed: the safety script's "no update cut off" check could never fail (it now reads the new container's log for the recovery line); the DHCP and setup proxies' 60 s timeouts; a redundant `except`; the duplicated preflight; the HEAD preflight.
+
+### Device run order (owner)
+
+1. `bash /home/nettap/NetTap/scripts/remote/deploy-detection-slice2.sh`: gate first; if it fails, nothing is built or restarted.
+2. `bash /home/nettap/NetTap/scripts/remote/check-etpro-canary.sh`: three Suricata restarts.
+3. `bash /home/nettap/NetTap/scripts/remote/check-rules-update-safety.sh`: four downloads and one recreate.
+
+Rollback: `bash /home/nettap/NetTap/scripts/remote/rollback-detection-slice2.sh`. It removes the ET Pro code first, then goes back to `main` (or a given commit) and recreates suricata-live. `~/nettap-rules-baseline` is kept.
+
+### Not verifiable without the device
+
+- Proofpoint's real answer to a bad code.
+- The startup update's time against Malcolm's 300 s limit on the G11.
+- Memory and RSS with the IPFire datasets.
+- `docker compose config --format json` on the device's Compose version.
+- `dump-counters` field names for capture drops.
+- Whether Malcolm's crontab still points at the shim path after a restart.
+- The holder-container lock on the real volume. It was proved with Docker Desktop.

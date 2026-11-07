@@ -97,6 +97,41 @@ Complete reference for all environment variables used by NetTap. Set these in `/
 
 ---
 
+## Suricata rules
+
+Set in `docker/docker-compose.yml` for `suricata-live` (NET-191). Malcolm's updater reads them at every update.
+
+| Variable | Default | Description |
+|---|---|---|
+| `SURICATA_UPDATE_ENABLE_SOURCES` | `et/open,abuse.ch/sslbl-blacklist,echap/stalkerware,ipfire/dbl` | The rule sources, comma-separated. Each start enables exactly these (stored source configs are wiped first). With an ET Pro code saved, `et/open` becomes `et/pro` at start. |
+| `SURICATA_DISABLE_SIDS` | `2200121,2231001,re:msg:"IPFire DBL \[(?!Malware\]\|Phishing\])` | Lines for `/etc/suricata/disable.conf`: two decoder rules that fire on switch traffic, and the IPFire DBL allowlist (every category except Malware and Phishing off). |
+| `SURICATA_UPDATE_RULES` | `true` | Update rules at start, nightly at 00:00 UTC and on "Update now". |
+| `SURICATA_UPDATE_ETOPEN` | removed | Unused by Malcolm 26.10.0; upstream would add ET Open beside ET Pro. ET Open is chosen through the source list. |
+
+### ET Pro code
+
+Not an environment variable in `.env`. Settings › Suricata rules writes `/etc/nettap/suricata.env` (root, mode 600) with one line,
+`SURICATA_ETPRO_CODE=<16-64 letters and digits>`. `config/capture/nettap-capture-env.sh` reads it when suricata-live starts;
+an invalid value is ignored without being printed. The old `SURICATA_ET_PRO_KEY` API key field is retired.
+
+### Rule update wrapper (`config/suricata/nettap-rules-update.sh`)
+
+State lives on the `nettap-rules-state` volume (`/run/nettap-rules` in suricata-live, `/var/run/nettap-rules` in the daemon):
+`rules.lock`, `update-status.json`, `update-in-progress`, `last-good` and its `gen-*` copies. The overrides below exist for tests.
+
+| Variable | Default | Description |
+|---|---|---|
+| `NETTAP_RULES_STATE` | `/run/nettap-rules` | State directory (the daemon reads the same variable) |
+| `NETTAP_RULES_LOCK_WAIT` | `900` | Seconds an update waits for the rules lock |
+| `NETTAP_RULES_RELOAD_WAIT` | `300` | Seconds to wait for Suricata to load new or restored rules |
+| `NETTAP_RULES_RETRY_S` | `5` | Seconds between reload checks |
+| `NETTAP_MALCOLM_UPDATE` | `/usr/local/bin/malcolm-suricata-update-rules.sh` | Malcolm's updater, kept beside the shim |
+| `NETTAP_RULES_SOURCES_FILE` | `/var/lib/suricata/update/nettap-enable-sources` | The source list the container started with (for `docker exec` updates) |
+| `NETTAP_SURICATA_SOCKET` | `/var/run/suricata/suricata-command.socket` | Suricata's command socket |
+| `NETTAP_SURICATA_ENV` | `/etc/nettap/suricata.env` | Where the loader and the daemon find the ET Pro code |
+
+---
+
 ## Logstash
 
 | Variable | Default | Description |
