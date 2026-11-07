@@ -200,6 +200,8 @@ export async function getAlerts(
 		suricata_category?: string;
 		sort?: AlertSort;
 		order?: 'asc' | 'desc';
+		/** list the activity alerts (ET rates them informational or unknown, never counted) instead (NET-191) */
+		activity?: boolean;
 	} = {}
 ): Promise<AlertsListResponse> {
 	const query = buildQuery({
@@ -217,6 +219,7 @@ export async function getAlerts(
 		suricata_category: opts.suricata_category,
 		sort: opts.sort,
 		order: opts.order,
+		activity: opts.activity ? 'true' : undefined,
 	});
 	const res = await fetch(`/api/alerts${query}`);
 
@@ -241,10 +244,17 @@ export async function getAlerts(
 /**
  * Get alert counts grouped by severity.
  */
+// OLD CODE START — NET-191: counted alerts only
+// export async function getAlertCount(
+// 	opts: TimeRangeParams = {}
+// ): Promise<AlertCountResponse> {
+// 	const query = buildQuery({ from: opts.from, to: opts.to });
+// OLD CODE END
 export async function getAlertCount(
-	opts: TimeRangeParams = {}
+	/** `activity`: count the activity alerts (ET rates them informational or unknown) instead */
+	opts: TimeRangeParams & { activity?: boolean } = {}
 ): Promise<AlertCountResponse> {
-	const query = buildQuery({ from: opts.from, to: opts.to });
+	const query = buildQuery({ from: opts.from, to: opts.to, activity: opts.activity ? 'true' : undefined });
 	const res = await fetch(`/api/alerts/count${query}`);
 
 	// OLD CODE START — #96: a failure read as zero alerts
@@ -457,6 +467,8 @@ export interface SmartAlert {
 	 * Absent from an older daemon.
 	 */
 	key?: SmartAlertKey;
+	/** ET rates the group's alerts informational or unknown: activity, not counted (NET-191). Absent from an older daemon. */
+	activity?: boolean;
 }
 
 export interface SmartAlertKey {

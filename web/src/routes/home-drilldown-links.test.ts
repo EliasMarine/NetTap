@@ -148,6 +148,17 @@ describe('Home — drill-down links carry the window on screen (NET-160 slice 2b
 		expect(params(row('A friendlier shown name')).from).toBe(sent(batch, '/api/alerts/smart').get('from'));
 	});
 
+	it('an activity group opens the activity list, which is the only list holding it (NET-191)', async () => {
+		overrides['/api/alerts/smart'] = (from, to) => ({
+			from, to, device_ip: null, total: 2,
+			alerts: [{ ...group(KEY, 'Activity group'), severity: 5, activity: true }, group(KEY, 'Counted group')],
+		});
+		(await firstLoad()).forEach((c) => c.reply());
+		await settle();
+		expect(params(row('Activity group'))).toMatchObject({ signature: KEY.rule_name, activity: 'true', count: '7' });
+		expect(params(row('Counted group'))).not.toHaveProperty('activity');
+	});
+
 	it('a smart alert with a missing or empty key part is a plain row, not a link', async () => {
 		overrides['/api/alerts/smart'] = (from, to) => ({
 			from, to, device_ip: null, total: 2,

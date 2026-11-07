@@ -83,6 +83,14 @@ describe('alerts API client', () => {
 				expect.stringContaining('/api/alerts/count?')
 			);
 		});
+
+		it('counts the activity alerts only when asked (NET-191)', async () => {
+			mockFetchSuccess({ from: '', to: '', counts: { total: 0, high: 0, medium: 0, low: 0 } });
+			await getAlertCount({ from: 'a', to: 'b', activity: true });
+			await getAlertCount({ from: 'a', to: 'b', activity: false });
+			expect(fetch).toHaveBeenNthCalledWith(1, '/api/alerts/count?from=a&to=b&activity=true');
+			expect(fetch).toHaveBeenNthCalledWith(2, '/api/alerts/count?from=a&to=b');
+		});
 	});
 
 	// -- getAlerts -----------------------------------------------------------
@@ -163,6 +171,14 @@ describe('alerts API client', () => {
 			const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls.map((c) => new URL(c[0] as string, 'http://x').searchParams);
 			expect(calls[0].get('suricata_category')).toBe('A/B & C');
 			expect(calls[1].has('suricata_category')).toBe(false);
+		});
+
+		it('lists the activity alerts only when asked (NET-191)', async () => {
+			mockFetchSuccess({ from: '', to: '', page: 1, size: 50, total: 0, total_pages: 0, alerts: [] });
+			await getAlerts({ page: 1, activity: true });
+			await getAlerts({ page: 1 });
+			expect(fetch).toHaveBeenNthCalledWith(1, '/api/alerts?page=1&activity=true');
+			expect(fetch).toHaveBeenNthCalledWith(2, '/api/alerts?page=1');
 		});
 	});
 

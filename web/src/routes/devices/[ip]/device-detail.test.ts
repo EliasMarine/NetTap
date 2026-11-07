@@ -336,6 +336,14 @@ describe('Device detail — smart alert ×N links', () => {
 		expect(params(screen.getByRole('link', { name: 'A friendlier shown name' })).signature).toBe('ET SCAN The raw rule');
 	});
 
+	it('an activity group links to the activity list (NET-191)', async () => {
+		const activity = { ...ALERT, signature: 'ET INFO STUN binding request', severity: 5, activity: true };
+		vi.mocked(getSmartAlerts).mockResolvedValueOnce({ alerts: [activity], total: 1 } as never);
+		render(Page);
+		await flush();
+		expect(params(countLink(4, activity.signature))).toMatchObject({ ip: IP, activity: 'true', count: '4' });
+	});
+
 	it('a group with a missing or empty key part has no link, and says why', async () => {
 		const groups = [
 			{ ...ALERT, signature: 'No destination', key: { ...ALERT.key, destination_ip: null } },

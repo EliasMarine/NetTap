@@ -110,6 +110,8 @@ function deferred<T>() {
 // OLD CODE END
 /** A severity filter pill. */
 const severityPill = (word: string) => within(screen.getByRole('group', { name: 'Severity' })).getByRole('button', { name: word });
+/** The counted-alerts count requests (the severity card's), leaving out the activity count (NET-191). */
+const countedCalls = () => vi.mocked(getAlertCount).mock.calls.filter(([opts]) => !opts?.activity);
 
 async function flush() {
 	for (let i = 0; i < 5; i++) await Promise.resolve();
@@ -349,7 +351,8 @@ describe('Alerts — severity summary', () => {
 		await sidebar;
 		await flush();
 
-		expect(getAlertCount).toHaveBeenCalledTimes(1);
+		// OLD CODE: expect(getAlertCount).toHaveBeenCalledTimes(1); (NET-191: the page also counts the activity alerts)
+		expect(countedCalls()).toHaveLength(1);
 		expect(get(alertSnapshots)[24].data?.counts.total).toBe(37);
 		const gauge = screen.getByRole('img', { name: /^37 alerts in the last 24 hours/ });
 		expect(gauge).toHaveAccessibleName('37 alerts in the last 24 hours: 2 high, 5 medium, 20 low, 10 info');
@@ -364,7 +367,8 @@ describe('Alerts — severity summary', () => {
 		vi.mocked(getAlertCount).mockResolvedValue({ ...range, counts: { total: 50, high: 4, medium: 6, low: 30 } });
 		await refreshPage();
 		await flush();
-		expect(getAlertCount).toHaveBeenCalledTimes(2);
+		// OLD CODE: expect(getAlertCount).toHaveBeenCalledTimes(2); (NET-191: the page also counts the activity alerts)
+		expect(countedCalls()).toHaveLength(2);
 		expect(get(alertSnapshots)[24].data?.counts.total).toBe(50);
 		expect(screen.getByRole('img', { name: /^50 alerts/ })).toBeInTheDocument();
 	});
@@ -375,7 +379,8 @@ describe('Alerts — severity summary', () => {
 		await flush();
 		await fireEvent.click(severityPill('Medium'));
 		await flush();
-		expect(getAlertCount).toHaveBeenCalledTimes(1);
+		// OLD CODE: expect(getAlertCount).toHaveBeenCalledTimes(1); (NET-191: the page also counts the activity alerts)
+		expect(countedCalls()).toHaveLength(1);
 		expect(screen.getByRole('img', { name: /^40 alerts/ })).toBeInTheDocument();
 	});
 
@@ -744,8 +749,10 @@ describe('Alerts — URL hand-off and exact windows (NET-160 slice 2a)', () => {
 		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
 		expect(severityPill('High')).toHaveAttribute('aria-pressed', 'true');
 		// Custom counts are this page's own, over the same bounds, and the card shows them
-		expect(getAlertCount).toHaveBeenCalledTimes(1);
-		expect(getAlertCount).toHaveBeenCalledWith({ from: FROM, to: TO });
+		// OLD CODE: expect(getAlertCount).toHaveBeenCalledTimes(1); (NET-191: the page also counts the activity alerts)
+		expect(countedCalls()).toHaveLength(1);
+		// OLD CODE: expect(getAlertCount).toHaveBeenCalledWith({ from: FROM, to: TO }); (NET-191: the page also counts the activity alerts)
+		expect(countedCalls()).toEqual([[{ from: FROM, to: TO }]]);
 		expect(screen.getByRole('button', { name: 'Show high alerts (5)' })).toBeInTheDocument();
 		expect(screen.getByRole('img', { name: /^12 alerts in the window / })).toBeInTheDocument();
 	});
@@ -1266,3 +1273,119 @@ describe('Alerts — exact top lists (NET-160)', () => {
 });
 
 const listCallsOf = () => vi.mocked(getAlerts).mock.calls.map(([opts]) => opts!);
+
+// ---------------------------------------------------------------------------
+// Activity: alerts ET rates informational or unknown, stored but never counted (NET-191)
+// ---------------------------------------------------------------------------
+
+describe('Alerts — activity (NET-191)', () => {
+	const FROM = '2026-11-01T08:00:00.000Z';
+	const TO = '2026-11-01T20:00:00.000Z';
+	const NOTE = 'ET rates these informational. They are not counted as alerts.';
+	const at = (query: string) => (nav.url = new URL(`http://localhost/alerts${query}`));
+	const listCalls = () => vi.mocked(getAlerts).mock.calls.map(([opts]) => opts!);
+	const listSub = () => screen.getByRole('heading', { name: /^(Alerts by category|All alerts)$/ }).closest('.card')!.querySelector('.card-sub')!;
+	const notCounted = () => screen.queryByRole('button', { name: /informational events? not counted/ });
+	/** The severity card's counted figures, and `activity` (a number, or a failure) for the activity count. */
+	function counts(activity: number | Error) {
+		vi.mocked(getAlertCount).mockImplementation(async (opts = {}) => {
+			if (!opts.activity) return { ...range, counts: { total: 40, high: 3, medium: 7, low: 20 } };
+			if (activity instanceof Error) throw activity;
+			return { ...range, counts: { total: activity, high: 0, medium: 0, low: 0 } };
+		});
+	}
+
+	it('lists the activity alerts when the URL asks, with a chip and the note; the counts stay counted', async () => {
+		at(`?activity=true&from=${FROM}&to=${TO}`);
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(listCalls()).toEqual([expect.objectContaining({ page: 1, activity: true, from: FROM, to: TO })]);
+		expect(screen.getByRole('button', { name: 'Clear activity filter' }).closest('.chip')).toHaveTextContent('Activity: rated informational by ET');
+		expect(listSub()).toHaveTextContent(NOTE);
+		expect(countedCalls()).toEqual([[{ from: FROM, to: TO }]]);
+	});
+
+	it('an empty activity list says no activity, not that Suricata has never alerted', async () => {
+		at(`?activity=true&from=${FROM}&to=${TO}`);
+		succeedAll([]);
+		render(Page);
+		await flush();
+		expect(screen.getByText('No activity')).toBeInTheDocument();
+		expect(screen.queryByText('No alerts')).not.toBeInTheDocument();
+	});
+
+	it('without the parameter the list asks for counted alerts, with no chip or note', async () => {
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(listCalls()[0].activity).toBeUndefined();
+		expect(screen.queryByRole('button', { name: 'Clear activity filter' })).not.toBeInTheDocument();
+		expect(listSub()).not.toHaveTextContent(NOTE);
+	});
+
+	it('keeps activity across pages and a new range; clearing its chip drops only activity', async () => {
+		at('?activity=true&severity=low');
+		succeedAll();
+		vi.mocked(getAlerts).mockImplementation(async (opts = {}) => list([alert(`p${opts.page}`)], opts.page ?? 1, 250));
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+		await flush();
+		expect(listCalls().at(-1)).toMatchObject({ page: 2, activity: true, severity: 3 });
+
+		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
+		await flush();
+		expect([nav.url.searchParams.get('activity'), nav.url.searchParams.get('range')]).toEqual(['true', '7d']);
+		expect(listCalls().at(-1)).toMatchObject({ page: 1, activity: true });
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Clear activity filter' }));
+		await flush();
+		expect([nav.url.searchParams.get('activity'), nav.url.searchParams.get('severity'), nav.url.searchParams.get('range')]).toEqual([null, 'low', '7d']);
+		expect(listCalls().at(-1)).toMatchObject({ page: 1, activity: undefined, severity: 3 });
+	});
+
+	it('says how many informational events were not counted, and Show opens exactly them', async () => {
+		at('?ip=192.168.1.42&severity=high');
+		succeedAll();
+		counts(1234);
+		render(Page);
+		await flush();
+		const asked = vi.mocked(getAlertCount).mock.calls.find(([opts]) => opts?.activity)![0]!;
+		expect(asked).toEqual({ from: expect.any(String), to: expect.any(String), activity: true });
+		// the severity card still shows the counted figures
+		expect(screen.getByRole('img', { name: /^40 alerts/ })).toBeInTheDocument();
+
+		await fireEvent.click(screen.getByRole('button', { name: '1,234 informational events not counted · Show' }));
+		await flush();
+		expect(Object.fromEntries(nav.url.searchParams)).toEqual({ activity: 'true', from: asked.from, to: asked.to, range: '24h' });
+		expect(listCalls().at(-1)).toMatchObject({ page: 1, activity: true, from: asked.from, to: asked.to, ip: undefined, severity: undefined });
+	});
+
+	it('says "event" for one', async () => {
+		succeedAll();
+		counts(1);
+		render(Page);
+		await flush();
+		expect(notCounted()).toHaveAccessibleName('1 informational event not counted · Show');
+	});
+
+	it('hides the line when nothing was left out', async () => {
+		succeedAll();
+		counts(0);
+		render(Page);
+		await flush();
+		expect(notCounted()).not.toBeInTheDocument();
+		expect(screen.getByRole('img', { name: /^40 alerts/ })).toBeInTheDocument();
+	});
+
+	it('hides the line when its count fails, and the counted figures still show', async () => {
+		succeedAll();
+		counts(new Error('HTTP 502'));
+		render(Page);
+		await flush();
+		expect(notCounted()).not.toBeInTheDocument();
+		expect(screen.getByRole('img', { name: /^40 alerts/ })).toBeInTheDocument();
+	});
+});

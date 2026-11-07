@@ -769,7 +769,8 @@ OLD CODE END -->
 			{#if smartAlerts.length > 0}
 				<ul class="sa-list">
 					{#each (alertsExpanded ? smartAlerts : smartAlerts.slice(0, ALERTS_COLLAPSED_COUNT)) as sa, i (`${sa.signature_id}-${sa.source_ip}-${i}`)}
-						{@const exact = smartAlertsWindow ? smartAlertHref(sa.key, smartAlertsWindow, smartAlertsWindow.ip) : null}
+						<!-- OLD CODE: {@const exact = smartAlertsWindow ? smartAlertHref(sa.key, smartAlertsWindow, smartAlertsWindow.ip) : null} (NET-191: an activity group opens the activity list) -->
+						{@const exact = smartAlertsWindow ? smartAlertHref(sa.key, smartAlertsWindow, smartAlertsWindow.ip, sa.activity) : null}
 						<!-- NET-160 slice 2b-1: `exact` is the list holding this ×N, counted for this device over the stored window -->
 						<li class="sa">
 							<div class="sa-head">

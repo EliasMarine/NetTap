@@ -111,6 +111,13 @@ describe('exact-window links', () => {
 		expect(smartAlertHref(undefined, win)).toBeNull();
 	});
 
+	it('links an activity group to the activity list, and a counted group without it (NET-191)', () => {
+		const key = { rule_name: 'ET INFO STUN', source_ip: '192.168.1.20', destination_ip: '93.184.216.34' };
+		expect(params(smartAlertHref(key, win, '192.168.1.20', true) ?? '').get('activity')).toBe('true');
+		expect(params(smartAlertHref(key, win, undefined, false) ?? '').has('activity')).toBe(false);
+		expect(smartAlertHref({ ...key, rule_name: null }, win, undefined, true)).toBeNull();
+	});
+
 	it("links a traffic summary's conn records with its window and its excluded sources", () => {
 		const href = connLogsHref({ ...win, excluded_ips: ['192.168.1.199', '2001:db8::199'] }, '6h');
 		expect(new URL(href, 'http://x').pathname).toBe('/logs');
