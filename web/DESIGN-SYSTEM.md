@@ -129,6 +129,8 @@ From the system README: sentence case everywhere (titles, buttons, labels), UK s
 5. On phones a long pill group scrolls inside its track instead of pushing the page sideways.
 6. Severity count tiles share the row however many there are, and their counts shrink together to fit (the page sets `--sev-chars` on `.sev-counts`).
 7. On phones the head actions are capped at the page head's width, so a long range-pill group (seven on Alerts and Log Explorer) scrolls inside its track instead of scrolling the page sideways.
+8. At 1100 px and below, the last half-width card of a run of one, three or five (like the side card of a c-8 hero row) takes the full row, instead of sitting alone on half a row.
+9. In a `col` card the donut stacks above its legend and grows into the card's free height.
 
 Every `<button>` sets an explicit text colour (the browser default is black). Focus rings use `--focus`.
 

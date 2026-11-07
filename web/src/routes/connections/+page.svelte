@@ -947,12 +947,28 @@
 		{/if}
 	</Card>
 
+	<!-- OLD CODE START — NET-192: a bare article with the chart's own head and no CardState
 	<article class="card c-8">
 		<SessionTimeline buckets={timeline} {loading} emptyMessage={timelineFailed ? loadFailed('the session timeline') : undefined} />
 		{#if timelineFailed && timeline.length > 0}
 			<p class="load-note">{loadFailed('the session timeline', true)}</p>
 		{/if}
 	</article>
+	OLD CODE END -->
+	<Card class="c-8" title="Session volume" sub="Sessions over time, by protocol · {range}">
+		{#if timeline.length > 0}
+			<SessionTimeline buckets={timeline} />
+			{#if timelineFailed}
+				<p class="load-note">{loadFailed('the session timeline', true)}</p>
+			{/if}
+		{:else if timelineFailed}
+			<CardState state="error" title={loadFailed('the session timeline')} message={RETRY_HINT} onaction={() => refresh.run()} />
+		{:else if loading}
+			<CardState state="loading" title="Loading the session timeline" />
+		{:else}
+			<CardState state="empty" title="No sessions in this time range" message="Sessions appear here once NetTap sees traffic." />
+		{/if}
+	</Card>
 
 	<Card class="c-4" title="Protocols" sub="Sessions per protocol · {range}">
 		{#if protocolBarItems.length > 0}

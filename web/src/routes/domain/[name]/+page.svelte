@@ -214,7 +214,7 @@
 </div>
 
 <div class="grid">
-	<Card class="c-8" hero title="Lookups over time" sub="DNS lookups per {shown.interval} · {words}">
+	<Card class="c-8" hero col title="Lookups over time" sub="DNS lookups per {shown.interval} · {words}">
 		{#if !data}
 			{@render summaryState('lookups over time')}
 		{:else if data.dns.lookups === 0}

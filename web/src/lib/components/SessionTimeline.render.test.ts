@@ -19,4 +19,16 @@ describe('SessionTimeline — chart headline', () => {
 		render(SessionTimeline, { buckets });
 		expect(screen.getByRole('img', { name: /^Session volume, busiest at .+ with 30 sessions$/ })).toBeInTheDocument();
 	});
+
+	it('prints axis counts with separators and keeps the last time label inside the chart (NET-192)', () => {
+		const buckets: ConnectionTimelineBucket[] = [
+			{ timestamp: '2026-11-03T10:00:00Z', total: 1200, protocols: { tcp: 1200 } },
+			{ timestamp: '2026-11-03T11:00:00Z', total: 48_000, protocols: { tcp: 40_000, udp: 8_000 } },
+		];
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		const { container } = render(SessionTimeline, { buckets });
+		const labels = [...container.querySelectorAll('text.ax')];
+		expect(labels.map((t) => t.textContent?.trim())).toContain('48,000');
+		expect(labels.at(-1)?.getAttribute('text-anchor')).toBe('end');
+	});
 });

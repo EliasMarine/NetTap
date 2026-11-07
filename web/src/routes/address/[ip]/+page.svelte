@@ -585,7 +585,7 @@ OLD CODE END -->
 </div>
 
 <div class="grid">
-	<Card class="c-8" hero title="Connections over time" sub="Connections per {shown.interval} · {words}">
+	<Card class="c-8" hero col title="Connections over time" sub="Connections per {shown.interval} · {words}">
 		{#if !data}
 			{@render summaryState('connections over time')}
 		{:else if data.connections === 0}

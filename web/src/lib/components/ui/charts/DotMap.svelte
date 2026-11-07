@@ -34,7 +34,7 @@
 
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { polygonsOf, landDots, project, arcPath, type Point } from './geometry';
+	import { polygonsOf, landDots, project, arcPath, mapLabels, LABEL_FLIP, type Point } from './geometry';
 	import { observeWidth } from './resize';
 
 	let {
@@ -98,6 +98,9 @@
 			return { ...s, x, y, r: (4 + 12 * Math.sqrt(s.count / total)) * k };
 		});
 	});
+	const labelText = (s: Spot) => `${s.label ?? s.country} ${s.count.toLocaleString('en-GB')}`;
+	// busiest first; a label that would overlap one already placed is left off (NET-192)
+	const labelled = $derived(mapLabels(spots.map((s) => ({ ...s, text: labelText(s) })), w, LABELS));
 	const homeAt = $derived(home && Number.isFinite(home.lat) && Number.isFinite(home.lng) ? project(home.lng, home.lat, w, h) : null);
 	const dotR = $derived(Math.max(1, w / 560).toFixed(2));
 
@@ -119,8 +122,9 @@
 	{#if selected === s.key}
 		<circle class="hot-sel" cx={s.x.toFixed(1)} cy={s.y.toFixed(1)} r={(core + 4).toFixed(1)} />
 	{/if}
-	{#if i < LABELS}
-		{@const left = s.x > w * 0.82}
+	<!-- OLD CODE: {#if i < LABELS} {@const left = s.x > w * 0.82} (NET-192: close countries' labels overlapped) -->
+	{#if labelled[i]}
+		{@const left = s.x > w * LABEL_FLIP}
 		<text class="map-lbl" x={(left ? s.x - s.r - 6 : s.x + s.r + 6).toFixed(1)} y={(s.y + 4).toFixed(1)} text-anchor={left ? 'end' : 'start'}
 			>{s.label ?? s.country} <tspan>{s.count.toLocaleString('en-GB')}</tspan></text
 		>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { alertsHrefForSignature, byteFigure, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery } from './drilldown';
+import { alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery } from './drilldown';
 
 const MB = 1000 ** 2; // decimal, as formatBytes prints (NET-166)
 
@@ -209,5 +209,15 @@ describe('the figure clicked (section D)', () => {
 			`/logs?query=${encodeURIComponent('(source.ip:"10.0.0.5" OR destination.ip:"10.0.0.5")')}&range=24h&type=zeek.conn&from=A&to=B`
 		);
 		expect(logsHrefForIp('10.0.0.5', '24h')).not.toContain('type=');
+	});
+});
+
+describe('fitCount (NET-192)', () => {
+	it('keeps a count exact while it fits, and shortens it past 99,999', () => {
+		expect(fitCount(0)).toBe('0');
+		expect(fitCount(99_999)).toBe('99,999');
+		expect(fitCount(100_000)).toBe('100K');
+		expect(fitCount(214_000)).toBe('214K');
+		expect(fitCount(1_250_000)).toBe('1.3M');
 	});
 });

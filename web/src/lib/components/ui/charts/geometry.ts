@@ -190,6 +190,34 @@ export function tipBox(x: number, y: number, text: string, chartWidth: number): 
 	return { x: Math.max(2, Math.min(x - width / 2, chartWidth - width - 2)), y: Math.max(y - 38, 0), width };
 }
 
+/** A map label sits left of its dot once the dot is past this share of the width. */
+export const LABEL_FLIP = 0.82;
+
+export interface LabelSpot {
+	x: number;
+	y: number;
+	r: number;
+	text: string;
+}
+
+/**
+ * Which hotspots get a visible map label (NET-192): the first `max` in the order given (busiest
+ * first), skipping any whose label box, estimated from its text like tipBox, overlaps one already
+ * placed. A skipped hotspot keeps its dot and tooltip.
+ */
+export function mapLabels(spots: readonly LabelSpot[], width: number, max: number): boolean[] {
+	const placed: { l: number; r: number; t: number; b: number }[] = [];
+	return spots.map((s, i) => {
+		if (i >= max) return false;
+		const w = s.text.length * 6.2;
+		const x0 = s.x > width * LABEL_FLIP ? s.x - s.r - 6 - w : s.x + s.r + 6;
+		const box = { l: x0, r: x0 + w, t: s.y - 8, b: s.y + 6 };
+		if (placed.some((p) => box.l < p.r && p.l < box.r && box.t < p.b && p.t < box.b)) return false;
+		placed.push(box);
+		return true;
+	});
+}
+
 /**
  * SVG dash attributes for a donutSegments() segment on a `<circle>` rotated -90°, so the
  * ring starts at 12 o'clock and runs clockwise. A negative offset moves the dash forward.
