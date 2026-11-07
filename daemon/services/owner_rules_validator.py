@@ -42,7 +42,7 @@ FORBIDDEN = frozenset(
         "tls.store",
     }
 )
-_CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f\x85  ]")
+_CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f\x85\u2028\u2029]")
 _KEYWORD = re.compile(r"[a-z0-9_.-]+")  # every 8.0.7 keyword name has this shape
 _SID = re.compile(r"[0-9]{1,7}")
 
@@ -106,6 +106,12 @@ def check_line(line: str) -> str | None:
     if line[:1] in (" ", "\t") and line.strip(" \t"):
         return "Start each line at the left edge: Suricata skips a line that starts with a space."
     return None
+
+
+def rule_sids(content: str) -> set[int]:
+    """The sids of `content`, which validate() has accepted."""
+    lines = (raw.strip(" \t") for raw in content.split("\n"))
+    return {check_rule(line)[1] for line in lines if line and not line.startswith("#")}
 
 
 def validate(content: str) -> tuple[list[dict[str, Any]], int]:

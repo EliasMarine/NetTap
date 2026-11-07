@@ -74,11 +74,12 @@ class FakeDocker:
         self.during_test: dict = {}
 
     def _passed(self, candidate: str) -> tuple[int, str]:
-        sids = re.findall(r"sid:(\d+);", candidate)[self.dropped :]
+        rules = [ln for ln in candidate.split("\n") if "sid:" in ln][self.dropped :]
         matches = [{"name": name} for name in self.names]
         analysed = [
             json.dumps({"id": int(sid), "lists": {"payload": {"matches": matches}}})
-            for sid in sids
+            for rule in rules
+            for sid in re.findall(r"sid:(\d+);", rule) * (2 if " <> " in rule else 1)
         ]
         return 0, "\n".join([PASSED, *analysed])
 
@@ -231,6 +232,13 @@ class TestSave:
         assert script == orm.TEST_SH
         assert "-T -v" in script and "--set security.lua.allow-rules=false" in script
         assert "--engine-analysis -S /opt/suricata/rules/custom/owner.rules" in script
+        # both runs read the snapshot of suricata-live's own config: -c and the --set overrides
+        runs = [ln for ln in script.splitlines() if ln.startswith("/usr/bin/suricata ")]
+        assert len(runs) == 2 and all('"$@"' in ln for ln in runs)
+        assert run[run.index("nettap-test") + 1 :][:2] == (
+            "-c",
+            "/etc/suricata/suricata.yaml",
+        )
         name = run[run.index("--name") + 1]
         assert ("docker", "rm", "-f", name) in docker.calls
 
@@ -331,6 +339,26 @@ class TestFailures:
             str(error)
             == f'Suricata reads "{name}" in your rules, and it can\'t be used.'
         )
+        assert (custom / "owner.rules").read_text() == OLD and not execs(docker)
+
+    def test_a_bidirectional_rule_saves(self, env):
+        # Suricata analyses "<>" as two signatures with the same sid
+        owner, docker, custom, *_ = env
+        both_ways = NEW.replace("any any -> any any", "192.168.1.0/24 any <> any any")
+        assert save(owner, both_ways)["rule_count"] == 1
+        assert (custom / "owner.rules").read_text() == both_ways
+
+    def test_a_0_rules_failed_in_the_rule_text_is_not_suricatas_word(self, env):
+        # only Suricata's log counts: rules.json after it quotes the rule
+        owner, docker, custom, *_ = env
+        quoted = json.dumps(
+            {"id": 1999999, "raw": 'alert … (msg:"0 rules failed"; sid:1999999;)'}
+        )
+        docker.test = (
+            0,
+            "Info: detect: 1 rules successfully loaded, 1 rules failed\n" + quoted,
+        )
+        assert refused(owner).status == 502
         assert (custom / "owner.rules").read_text() == OLD and not execs(docker)
 
     def test_a_rule_that_doesnt_load_alone_is_refused(self, env):
@@ -555,23 +583,50 @@ def test_logs_carry_counts_never_rule_text(env, caplog):
 class TestAnalysis:
     def test_suricatas_own_analysis_of_the_quoted_semicolon_rule(self):
         out = PASSED + "\n" + ANALYSED_BYPASS
-        assert analysis_problem(out, 1) == (
+        assert analysis_problem(out, {1000001}) == (
             'Suricata reads "bypass" in your rules, and it can\'t be used.'
+        )
+
+    def test_a_flag_alone_is_enough(self):
+        # some keywords show only as a flag on the rule, not in a list of matches
+        flagged = json.dumps(
+            {"id": 1000001, "flags": ["src_any", "bypass"], "lists": {}}
+        )
+        assert analysis_problem(PASSED + "\n" + flagged, {1000001}) == (
+            'Suricata reads "bypass" in your rules, and it can\'t be used.'
+        )
+
+    def test_ids_are_compared_not_counts(self):
+        # the security re-check: a clean rule, a Lua rule (not loaded) and a "<>" rule
+        out = "\n".join(
+            [PASSED] + [json.dumps({"id": i}) for i in (1000201, 1000203, 1000203)]
+        )
+        assert analysis_problem(out, {1000201, 1000202, 1000203}) == (
+            "Only 2 of your 3 rules load on their own in Suricata. Lua rules can't be used."
+        )
+        assert analysis_problem(out, {1000201, 1000203}) is None
+
+    def test_a_rule_nobody_counted(self):
+        out = "\n".join([PASSED, '{"id": 1000001}', '{"id": 1000999}'])
+        assert analysis_problem(out, {1000001, 1000002}) == (
+            "Suricata reads rules NetTap didn't count (sid 1000999), so they can't be checked."
         )
 
     def test_a_clean_analysis(self):
         clean = ANALYSED_BYPASS.replace('"bypass"]', '"x"]').replace(
             '{"name":"bypass"}', '{"name":"content"}'
         )
-        assert analysis_problem(PASSED + "\n" + clean, 1) is None
-        assert analysis_problem(PASSED, 0) is None
+        assert analysis_problem(PASSED + "\n" + clean, {1000001}) is None
+        assert analysis_problem(PASSED, set()) is None
 
     def test_only_json_lines_with_an_id_count(self):
         out = "\n".join(
             [PASSED, "{not json", '{"no": "id"}', ' {"id": 5}', '{"id": 1000001}']
         )
-        assert analysis_problem(out, 1) is None
-        assert analysis_problem(out, 2).startswith("Only 1 of your 2 rules")
+        assert analysis_problem(out, {1000001}) is None
+        assert analysis_problem(out, {1000001, 1000002}).startswith(
+            "Only 1 of your 2 rules"
+        )
 
 
 class TestPrepareAndRead:

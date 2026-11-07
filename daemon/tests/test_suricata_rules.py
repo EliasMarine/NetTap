@@ -435,15 +435,16 @@ class TestParseLiveStatus:
         assert parse_live_status(_LIVE_OUTPUT + "OWNER 0\n")["owner_rules"] == 0
         assert parse_live_status(_LIVE_OUTPUT + "OWNER 3\n")["owner_rules"] == 3
 
-    def test_the_owner_count_includes_rules_indented_with_a_tab(self, tmp_path):
-        """P7: run the script's own OWNER line; Suricata loads a rule after a tab or spaces."""
+    def test_the_owner_count_reads_lines_as_suricata_does(self, tmp_path):
+        """Run the script's own OWNER line. Suricata skips a line that starts with a space or a
+        tab (the validator refuses one), and "alert<TAB>tcp" is a rule."""
         import subprocess
 
         from services.suricata_rules import _LIVE_STATUS_SCRIPT
 
         rules = tmp_path / "owner.rules"
         rules.write_text(
-            "alert tcp a\n\talert tcp b\n  alert\ttcp c\n# alert tcp d\nalerts e\n"
+            "alert tcp a\n\talert tcp b\n  alert\ttcp c\n# alert tcp d\nalerts e\nalert\ttcp f\n"
         )
         line = next(
             ln
@@ -457,7 +458,7 @@ class TestParseLiveStatus:
             text=True,
             check=True,
         ).stdout
-        assert parse_live_status(_LIVE_OUTPUT + out)["owner_rules"] == 3
+        assert parse_live_status(_LIVE_OUTPUT + out)["owner_rules"] == 2
 
 
 class TestGetLiveStatus:

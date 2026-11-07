@@ -33,7 +33,13 @@ from services import rules_lock
 from services.capture_config import write_file_atomic
 from services.etpro import _run
 from services.malcolm_upgrade import DAEMON_CONTAINER
-from services.owner_rules_validator import FORBIDDEN, MAX_BYTES, MAX_RULES, validate
+from services.owner_rules_validator import (
+    FORBIDDEN,
+    MAX_BYTES,
+    MAX_RULES,
+    rule_sids,
+    validate,
+)
 from services.rules_lock import RulesBusyError
 from services.suricata_rules import SuricataRuleManager, _engine_answer
 
@@ -70,7 +76,7 @@ STALE_AFTER_S = 3600
 YAML_MAX_BYTES = 4 * 1024 * 1024
 TEST_MEMORY, TEST_CPUS, ANALYSIS_TMPFS = "1g", "1", "size=64m"
 # "$@" is the config and its overrides. The analysis exits 0 even when a rule fails to load, so a
-# missing rule shows as a count short
+# missing rule shows as a sid short
 TEST_SH = (
     '/usr/bin/suricata -T -v -l /tmp "$@" || exit "$?"\n'
     f'/usr/bin/suricata --engine-analysis -S {LIVE_CUSTOM_DIR}/{OWNER} -l {ANALYSIS_DIR} "$@" '
@@ -130,22 +136,29 @@ def _keywords(node: Any) -> set[str]:
     return found.union(*map(_keywords, node.values()))
 
 
-def analysis_problem(output: str, count: int) -> str | None:
+def analysis_problem(output: str, sids: set[int]) -> str | None:
     """Why Suricata's own reading of the owner rules (alone, Lua off) refuses them, or None.
-    rules.json has one JSON object per rule; Suricata's log lines never start with "{"."""
+    rules.json has one JSON object per signature; Suricata's log lines never start with "{".
+    Ids, not counts: a "<>" rule is two signatures with one sid."""
     rules = []
     for line in output.splitlines():
         if line.startswith("{"):
             with contextlib.suppress(ValueError):
                 rule = json.loads(line)
-                if isinstance(rule, dict) and "id" in rule:
+                if isinstance(rule, dict) and isinstance(rule.get("id"), int):
                     rules.append(rule)
     used = _keywords(rules) & FORBIDDEN
     if used:
         return f'Suricata reads "{min(used)}" in your rules, and it can\'t be used.'
-    if len(rules) != count:
+    ids = {rule["id"] for rule in rules}
+    if ids - sids:
         return (
-            f"Only {len(rules)} of your {count} rules load on their own in Suricata. "
+            f"Suricata reads rules NetTap didn't count (sid {min(ids - sids)}), "
+            "so they can't be checked."
+        )
+    if ids != sids:
+        return (
+            f"Only {len(ids)} of your {len(sids)} rules load on their own in Suricata. "
             "Lua rules can't be used."
         )
     return None
@@ -315,7 +328,7 @@ class OwnerRules:
                 409,
             )
 
-    async def _test(self, stage: str, live: dict[str, str], count: int) -> None:
+    async def _test(self, stage: str, live: dict[str, str], sids: set[int]) -> None:
         name = f"nettap-sv-{os.path.basename(stage)}"
         src = os.path.join(live["staging_source"], os.path.basename(stage))
         mounts = [
@@ -348,8 +361,9 @@ class OwnerRules:
                 f"Suricata's test didn't finish within {TEST_TIMEOUT_S} s. Nothing was changed.",
                 500,
             )
-        if rc == 0 and _FAILED_RE.search(out):
-            problem = analysis_problem(out, count)
+        # Suricata's log only: the rules.json after it quotes the rules' text
+        if rc == 0 and _FAILED_RE.search(out.split("\n{", 1)[0]):
+            problem = analysis_problem(out, sids)
             if problem:
                 raise OwnerRulesError(problem, 422)
             return
@@ -418,7 +432,7 @@ class OwnerRules:
             stage = os.path.join(self._staging, uuid.uuid4().hex)
             try:
                 await self._snapshot(stage, content)
-                await self._test(stage, live, count)
+                await self._test(stage, live, await run_blocking(rule_sids, content))
                 logger.info("Owner rules: %d rules passed Suricata's test", count)
                 previous = await run_blocking(self._read, OWNER)
                 await run_blocking(write_file_atomic, self._path(PREV), previous)
