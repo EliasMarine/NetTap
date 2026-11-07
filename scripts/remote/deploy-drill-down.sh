@@ -18,6 +18,10 @@
 #   - the busiest Suricata categories' pages (slice 2b-2), over a settled window: total, list,
 #     OpenSearch _count, timeline and severity sums equal, and the first source and rule
 #     equal their lists
+#   - the Devices page's windows (slice 2b-3), over settled 1h, 24h, 7d and 30d windows: the
+#     count = the list's total = its rows, the first device's connections = OpenSearch's _count,
+#     Online now = the rows the same reading marks Online, and the 30-day list through the
+#     web container inside 80% of the route's timeout
 #   - a bad address is a 400 and no token is a 401
 #
 # Run as the normal user (NOT with sudo):
@@ -27,6 +31,9 @@ set -u
 REPO_DIR="/home/nettap/NetTap"
 BRANCH="main"
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
+# The device list route's daemon timeout (web/src/routes/api/devices/+server.ts); its vitest
+# reads this line, so the two can't drift apart. Step 7d gates the 30-day list at 80% of it.
+DEVICE_LIST_TIMEOUT_MS=10000
 FAILED=0
 TO_TS=$(date -u -d '15 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
 FROM_TS=$(date -u -d '75 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
@@ -527,6 +534,115 @@ check "a 1,025-character category is refused by the list" "$rc" "HTTP $BAD"
 OTHER=$(os_query "/arkime_sessions3-*/_mapping/field/alert.category,suricata.alert.category?filter_path=*.mappings.*.mapping.*.type" \
     | json_stdin "sorted({f for i in (r or {}).values() for f in (i.get('mappings') or {})}) or 'neither'")
 echo "   · alert.category / suricata.alert.category mapped: $OTHER"
+echo ""
+
+echo "→ Step 7d: The Devices page over Home's windows vs the count and OpenSearch (NET-160 slice 2b-3)..."
+# Settled windows that ended 10 minutes ago. Zeek logs a connection when it ends, stamped with its
+# start, so a settled window can still grow: OpenSearch's own counts bracket each figure (before <=
+# page <= after), as Step 6 does, and the page's own figures must agree exactly within one reply.
+D_TO=$(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+# The 30-day list first, while it is cold, on the web container's own path to the daemon, inside
+# 80% of the route's timeout
+D_GATE_MS=$((DEVICE_LIST_TIMEOUT_MS * 8 / 10))
+D_FROM=$(date -u -d '43210 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+WEB=$(sudo docker exec nettap-web node -e '
+const fs = require("fs");
+const [from, to, gate] = process.argv.slice(1);
+const base = process.env.DAEMON_URL || "http://nettap-storage-daemon:8880";
+const headers = { "X-NetTap-Daemon-Token": fs.readFileSync(process.env.DAEMON_TOKEN_FILE || "/run/nettap-auth/daemon-token", "utf8").trim() };
+const start = Date.now();
+fetch(`${base}/api/devices?from=${from}&to=${to}&limit=500`, { headers, signal: AbortSignal.timeout(Number(gate)) })
+    .then(async (r) => { const j = await r.json(); console.log(`${r.status} ${Date.now() - start} ${Array.isArray(j.devices)}`); })
+    .catch((e) => console.log(`0 ${Date.now() - start} ${e.name}`));
+' "$D_FROM" "$D_TO" "$D_GATE_MS" 2>&1 | tail -n 1)
+read -r w_code w_ms w_ok <<<"$WEB"
+if [ "${w_code:-}" = "200" ] && [ "${w_ok:-}" = "true" ] && [[ "${w_ms:-}" =~ ^[0-9]+$ ]] && [ "$w_ms" -lt "$D_GATE_MS" ]; then rc=0; else rc=1; fi
+check "30-day device list via the web container, cold, under ${D_GATE_MS} ms (80% of the route's timeout)" "$rc" "HTTP ${w_code:-?} in ${w_ms:-?} ms (${w_ok:-?})"
+# The daemon's count and list for a window; with an IP, that device's connections in the list
+D_FIGURES='
+import json, sys, urllib.error, urllib.parse, urllib.request
+def fetch(path):
+    headers = {"X-NetTap-Daemon-Token": open("/run/nettap-auth/daemon-token").read().strip()}
+    try:
+        with urllib.request.urlopen(urllib.request.Request("http://localhost:8880" + path, headers=headers), timeout=120) as r:
+            return r.status, json.load(r)
+    except urllib.error.HTTPError as e:
+        return e.code, None
+w = urllib.parse.urlencode({"from": sys.argv[1], "to": sys.argv[2]})
+code_c, c = fetch("/api/devices/count?" + w)
+code_l, l = fetch("/api/devices?" + w + "&limit=500")
+out = {"codes": [code_c, code_l]}
+if code_c == 200 and code_l == 200:
+    first = next(iter(l["devices"]), None)
+    mine = [d["connection_count"] for d in l["devices"] if len(sys.argv) > 3 and d["ip"] == sys.argv[3]]
+    out.update(count=c["count"], total=l["total"], rows=len(l["devices"]),
+               first=first and first["ip"], ip_count=mine[0] if mine else None)
+print(json.dumps(out))
+'
+# The device rule spelled out again from OpenSearch, so the check does not trust the code it
+# checks: LAN sources (the daemon's own subnets), minus excluded sources, at least 3 conn records,
+# never a .255, .0 or 224. address. With an IP, that source's conn records instead.
+D_RAW_BODY='
+import json, sys
+f = [
+    {"range": {"@timestamp": {"gte": sys.argv[1], "lte": sys.argv[2], "format": "strict_date_optional_time"}}},
+    {"term": {"event.provider": "zeek"}},
+    {"term": {"event.dataset": "conn"}},
+]
+if len(sys.argv) > 5:
+    print(json.dumps({"query": {"bool": {"filter": f + [{"term": {"source.ip": sys.argv[5]}}]}}}))
+else:
+    q = {"filter": f + [{"terms": {"source.ip": json.loads(sys.argv[3])["subnets"]}}]}
+    if json.loads(sys.argv[4]):
+        q["must_not"] = [{"terms": {"source.ip": json.loads(sys.argv[4])}}]
+    print(json.dumps({"size": 0, "query": {"bool": q}, "aggs": {"ips": {"terms": {"field": "source.ip", "size": 65000, "min_doc_count": 3}}}}))
+'
+raw_devices() {  # raw_devices <from> <to>: the device count from OpenSearch alone
+    local body
+    body=$(sudo docker exec nettap-storage-daemon python3 -c "$D_RAW_BODY" "$1" "$2" "$LAN" "$EXCL" 2>&1 | tail -n 1)
+    os_query "/arkime_sessions3-*/_search" "$body" | json_stdin "(lambda b: sum(1 for x in b if not (x['key'].endswith('.255') or x['key'].endswith('.0') or x['key'].startswith('224.'))) if len(b) < 65000 and (r.get('_shards') or {}).get('failed') == 0 else 'INCOMPLETE')(r['aggregations']['ips']['buckets'])"
+}
+raw_conns() {  # raw_conns <from> <to> <ip>: that source's conn records from OpenSearch
+    local body
+    body=$(sudo docker exec nettap-storage-daemon python3 -c "$D_RAW_BODY" "$1" "$2" "" "" "$3" 2>&1 | tail -n 1)
+    os_query "/arkime_sessions3-*/_count" "$body" | json_stdin "r['count'] if (r.get('_shards') or {}).get('failed') == 0 else 'INCOMPLETE'"
+}
+for D_MIN in 60 1440 10080 43200; do
+    D_FROM=$(date -u -d "$((D_MIN + 10)) minutes ago" +%Y-%m-%dT%H:%M:%SZ)
+    case "$D_MIN" in 60) D_LABEL="1 h" ;; 1440) D_LABEL="24 h" ;; 10080) D_LABEL="7 d" ;; *) D_LABEL="30 d" ;; esac
+    raw_before=$(raw_devices "$D_FROM" "$D_TO")
+    fig=$(sudo docker exec nettap-storage-daemon python3 -c "$D_FIGURES" "$D_FROM" "$D_TO" 2>&1 | tail -n 1)
+    raw_after=$(raw_devices "$D_FROM" "$D_TO")
+    read -r d_codes d_count d_total d_rows d_ip <<<"$(json_get "$fig" "' '.join(str(r.get(k)).replace(' ', '') for k in ('codes', 'count', 'total', 'rows', 'first'))")"
+    if [ "${d_codes:-}" = "[200,200]" ]; then rc=0; else rc=1; fi
+    check "$D_LABEL: the device count and list answer" "$rc" "HTTP ${d_codes:-?}"
+    if between "${raw_before:-}" "${d_count:-}" "${d_total:-}" && between "${d_count:-}" "${d_total:-}" "${raw_after:-}"; then rc=0; else rc=1; fi
+    check "$D_LABEL: OpenSearch before <= count <= list total <= OpenSearch after" "$rc" "${raw_before:-?} <= ${d_count:-?} <= ${d_total:-?} <= ${raw_after:-?}"
+    if [[ "${d_total:-}" =~ ^[0-9]+$ ]] && { [ "$d_total" -gt 500 ] || [ "$d_total" = "${d_rows:-}" ]; }; then rc=0; else rc=1; fi
+    check "$D_LABEL: the list holds its total (rows cap at 500)" "$rc" "total ${d_total:-?}, rows ${d_rows:-?}"
+    if [[ "${d_ip:-}" =~ ^[0-9a-fA-F.:]+$ ]]; then
+        c_before=$(raw_conns "$D_FROM" "$D_TO" "$d_ip")
+        fig2=$(sudo docker exec nettap-storage-daemon python3 -c "$D_FIGURES" "$D_FROM" "$D_TO" "$d_ip" 2>&1 | tail -n 1)
+        c_after=$(raw_conns "$D_FROM" "$D_TO" "$d_ip")
+        listed=$(json_get "$fig2" "r.get('ip_count')")
+        if between "${c_before:-}" "${listed:-}" "${c_after:-}"; then rc=0; else rc=1; fi
+        check "$D_LABEL: the first device's connections, between OpenSearch's counts" "$rc" "$d_ip: ${c_before:-?} <= ${listed:-?} <= ${c_after:-?}"
+    else
+        echo "   · $D_LABEL: no device in the window; the row check is skipped"
+    fi
+done
+# Online now and the table's Online rows, from one live reading (the window ends now)
+ONLINE=$(daemon "/api/devices?limit=500" "'%s %s %s' % (d['online_total'], sum(1 for x in d['devices'] if x['last_seen'] and round(__import__('datetime').datetime.fromisoformat(x['last_seen'].replace('Z', '+00:00')).timestamp() * 1000) >= round(__import__('datetime').datetime.fromisoformat(d['online_since'].replace('Z', '+00:00')).timestamp() * 1000)), d['total']) if code == 200 else 'HTTP_%d' % code")
+read -r o_total o_rows o_all <<<"$ONLINE"
+if [[ "${o_total:-}" =~ ^[0-9]+$ ]] && { [ "${o_all:-0}" -gt 500 ] || [ "$o_total" = "${o_rows:-}" ]; }; then rc=0; else rc=1; fi
+check "Online now = the rows the same reading marks Online" "$rc" "online_total ${o_total:-?}, Online rows ${o_rows:-?} of ${o_all:-?}"
+# Only that the route answers without a 5xx: an unsigned request gets the login redirect
+ROUTE=$(curl -sk -o /dev/null -w '%{http_code} %{redirect_url}' "https://localhost/devices?view=all&range=24h")
+case "$ROUTE" in
+    "200 "*|"302 https://localhost/login"*) rc=0 ;;
+    *) rc=1 ;;
+esac
+check "/devices?view=all&range=24h through nginx (the page, or the login redirect)" "$rc" "$ROUTE"
 echo ""
 
 echo "→ Step 8: Validation and the token..."

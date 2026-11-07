@@ -33,7 +33,7 @@
 	import { connLogsHref, NO_EXACT_ALERT_LIST, smartAlertHref, windowQuery, type DrillWindow } from '$lib/utils/drilldown';
 	import type { AlertCountResponse, SmartAlert, SmartAlertSummary } from '$api/alerts';
 	import { getDevices, getDeviceCount } from '$api/devices';
-	import type { Device } from '$api/devices';
+	import type { Device, DeviceCountResponse } from '$api/devices';
 	import { getNewDeviceCount } from '$api/devices-registry';
 	import { getSystemHealth } from '$api/system';
 	import type { SystemHealth } from '$api/system';
@@ -79,7 +79,12 @@
 	let protocols = $state<ProtocolEntry[]>([]);
 	let services = $state<ProtocolEntry[]>([]);
 	let categories = $state<TrafficCategory[]>([]);
-	let deviceCount = $state<number | null>(null); // null until a count loads
+	// OLD CODE START — NET-160 slice 2b-3: the figure alone; the card's link needs the window it was counted over
+	// let deviceCount = $state<number | null>(null); // null until a count loads
+	// OLD CODE END
+	/** The device count on screen, whole: its figure and the window it was counted over. Null until one loads */
+	let deviceCountReply = $state<DeviceCountResponse | null>(null);
+	const deviceCount = $derived(deviceCountReply?.count ?? null);
 	let newDeviceCount = $state<number | null>(null); // null when it failed: no chip, no number
 	let prevAlertCount = $state<AlertCountResponse | null>(null);
 	let systemHealth = $state<SystemHealth | null>(null);
@@ -158,7 +163,8 @@
 				services = v.services;
 			}),
 			settle(guard, g, 'categories', getTrafficCategories(win), (v) => (categories = v.categories)),
-			settle(guard, g, 'deviceCount', getDeviceCount(win), (v) => (deviceCount = v.count)),
+			// OLD CODE: settle(guard, g, 'deviceCount', getDeviceCount(win), (v) => (deviceCount = v.count)), (slice 2b-3: the card links to the reply's window)
+			settle(guard, g, 'deviceCount', getDeviceCount(win), (v) => (deviceCountReply = v)),
 			settle(guard, g, 'newDevices', getNewDeviceCount(since), (v) => (newDeviceCount = v.count), () => (newDeviceCount = null)),
 			// the store keeps one count per window for every screen; it never rejects
 			loadAlertSnapshot(hours).then((s) => s.status === 'ok'),
@@ -198,7 +204,8 @@
 		protocols = [];
 		services = [];
 		categories = [];
-		deviceCount = null;
+		// OLD CODE: deviceCount = null; (slice 2b-3: the reply carries the figure and its window)
+		deviceCountReply = null;
 		prevAlertCount = null;
 		topDevices = [];
 		failed = {};
@@ -653,11 +660,15 @@ OLD CODE END -->
 		{...kpiWindow(!!(alertCount && prevAlertCount), alertTrend, span.window, span.previous)}
 		sub={alertsSub}
 	/>
+	<!-- OLD CODE START — NET-160 slice 2b-3: the Devices card opened /iot, which counts something else;
+	     it opens the All devices list over the card's own window -->
+	<!-- href="/iot" -->
+	<!-- OLD CODE END -->
 	<KpiCard
 		class="c-3"
 		label="Devices"
 		icon="devices"
-		href="/iot"
+		href={deviceCountReply ? `/devices?view=all&${windowQuery(deviceCountReply, range)}` : `/devices?view=all&range=${range}`}
 		value={deviceCount !== null ? formatNumber(deviceCount) : '—'}
 		note={span.window}
 		sub={devicesSub}

@@ -216,6 +216,37 @@ describe('Home — drill-down links carry the window on screen (NET-160 slice 2b
 		expect(params(kpi('Alerts'))).toEqual({ from: count.get('from'), to: count.get('to'), range: '24h' });
 	});
 
+	// NET-160 slice 2b-3: the Devices card opened /iot, which counts something else
+	it("the Devices card opens All devices over the count reply's own window, and by range alone before it", async () => {
+		const REPLY = { from: '2026-11-05T12:00:00.123Z', to: '2026-11-06T12:00:00.123Z' };
+		overrides['/api/devices/count'] = () => ({ ...REPLY, count: 3 });
+		const first = await firstLoad();
+		const href = () => new URL(kpi('Devices').getAttribute('href')!, 'http://x');
+		expect(href().pathname).toBe('/devices');
+		expect(params(kpi('Devices'))).toEqual({ view: 'all', range: '24h' });
+
+		first.forEach((c) => c.reply());
+		await settle();
+		expect(kpi('Devices')).toHaveTextContent('3');
+		expect(href().pathname).toBe('/devices');
+		expect(params(kpi('Devices'))).toEqual({ view: 'all', ...REPLY, range: '24h' });
+	});
+
+	it("after 24h loads, choosing 7d links the Devices card by range alone while 7d loads and after its count fails", async () => {
+		(await firstLoad()).forEach((c) => c.reply());
+		await settle();
+		expect(params(kpi('Devices'))).toHaveProperty('from');
+
+		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
+		await vi.waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(REQUESTS * 2));
+		expect(params(kpi('Devices'))).toEqual({ view: 'all', range: '7d' });
+
+		calls.slice(REQUESTS).forEach((c) => (c.path === '/api/devices/count' ? c.fail() : c.reply()));
+		await settle();
+		expect(kpi('Devices')).toHaveTextContent('—');
+		expect(params(kpi('Devices'))).toEqual({ view: 'all', range: '7d' });
+	});
+
 	it('a card with no number links by range alone', async () => {
 		const first = await firstLoad();
 		first.forEach((c) => (c.path === '/api/traffic/summary' || c.path === '/api/alerts/count' ? c.fail() : c.reply()));
