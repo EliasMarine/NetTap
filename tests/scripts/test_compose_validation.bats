@@ -847,6 +847,22 @@ print('pcap writer: OK')
     [[ ",$sids," == *",2231001,"* ]]
 }
 
+@test "compose: suricata-live loads nettap.yaml as a Malcolm include that sets the device threshold file" {
+    # /etc/suricata/nettap.yaml was never included (CR-198); Malcolm includes include-configs/**/*.yaml (NET-191)
+    section=$(sed -n "/^  suricata-live:/,/^  [^ ]/p" "$COMPOSE_FILE")
+    echo "$section" | grep -q '^ *- ../config/suricata/nettap.yaml:/opt/suricata/include-configs/nettap.yaml:ro$'
+    ! echo "$section" | grep -q '^ *- ../config/suricata/nettap.yaml:/etc/suricata/'
+    echo "$section" | grep -q '^ *- /etc/nettap:/etc/nettap:ro$'
+
+    local include="${REPO_ROOT}/config/suricata/nettap.yaml"
+    # Suricata refuses an include without this header, and then Suricata doesn't start at all
+    [ "$(sed -n 1p "$include")" = "%YAML 1.1" ]
+    [ "$(sed -n 2p "$include")" = "---" ]
+    grep -q '^threshold-file: /etc/nettap/suricata-threshold.config$' "$include"
+    # nothing else active: no capture interface, outputs or defrag overrides
+    [ "$(grep -cv -e '^#' -e '^$' -e '^%YAML' -e '^---$' "$include")" -eq 1 ]
+}
+
 @test "compose: arkime-live is off by default (arkime profile, owner decision 2026-11-02)" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"

@@ -1,43 +1,58 @@
-# NetTap Suricata overrides
-# Merged with Malcolm's default suricata.yaml
+%YAML 1.1
+---
+# NetTap Suricata include. Mounted at /opt/suricata/include-configs/nettap.yaml; Malcolm adds every
+# include-configs/**/*.yaml to the end of the suricata.yaml it generates at container start, so these
+# keys override its defaults. Suricata needs the %YAML 1.1 header above in included files too.
 
-# Capture interface — the bridge
-af-packet:
-  - interface: br0
-    cluster-id: 99
-    cluster-type: cluster_flow
-    defrag: yes
-    use-mmap: yes
-    ring-size: 200000
+# Device-local suppressions (e.g. proxyware on a device the owner runs it on), written by the deploy
+# script; the file always exists, empty when there are none (NET-191).
+threshold-file: /etc/nettap/suricata-threshold.config
 
-# Emerging Threats Open ruleset (pre-loaded)
-default-rule-path: /var/lib/suricata/rules
-rule-files:
-  - suricata.rules
-
-# Output to Eve JSON for OpenSearch ingestion
-outputs:
-  - eve-log:
-      enabled: yes
-      filetype: regular
-      filename: eve.json
-      # ---------------------------------------------------------------
-      # Log rotation and compression
-      # ---------------------------------------------------------------
-      # Suricata writes uncompressed eve.json logs to disk.
-      # Actual zstd compression (~6:1 for Suricata alert JSON) is handled
-      # by Malcolm's filebeat/logstash pipeline, which picks up rotated
-      # logs and applies zstd compression before shipping to OpenSearch.
-      #
-      # This keeps Suricata's capture path CPU-efficient — compression
-      # happens asynchronously in the log shipping pipeline rather than
-      # on the real-time packet processing thread.
-      # ---------------------------------------------------------------
-      rotate-interval: day
-      types:
-        - alert
-        - dns
-        - tls
-        - http
-        - files
-        - flow
+# OLD CODE START — 2026-11-06 (NET-191, CR-198): this was mounted at /etc/suricata/nettap.yaml, which
+# Malcolm never includes, so none of it ever applied. It duplicated Malcolm's own defaults, pinned
+# af-packet to br0 (wrong in mirror and DHCP gateway modes), would have replaced Malcolm's eve outputs,
+# and its "defrag: yes" contradicts the accuracy #27 fix (SURICATA_AF_PACKET_DEFRAG=false).
+# # NetTap Suricata overrides
+# # Merged with Malcolm's default suricata.yaml
+#
+# # Capture interface — the bridge
+# af-packet:
+#   - interface: br0
+#     cluster-id: 99
+#     cluster-type: cluster_flow
+#     defrag: yes
+#     use-mmap: yes
+#     ring-size: 200000
+#
+# # Emerging Threats Open ruleset (pre-loaded)
+# default-rule-path: /var/lib/suricata/rules
+# rule-files:
+#   - suricata.rules
+#
+# # Output to Eve JSON for OpenSearch ingestion
+# outputs:
+#   - eve-log:
+#       enabled: yes
+#       filetype: regular
+#       filename: eve.json
+#       # ---------------------------------------------------------------
+#       # Log rotation and compression
+#       # ---------------------------------------------------------------
+#       # Suricata writes uncompressed eve.json logs to disk.
+#       # Actual zstd compression (~6:1 for Suricata alert JSON) is handled
+#       # by Malcolm's filebeat/logstash pipeline, which picks up rotated
+#       # logs and applies zstd compression before shipping to OpenSearch.
+#       #
+#       # This keeps Suricata's capture path CPU-efficient — compression
+#       # happens asynchronously in the log shipping pipeline rather than
+#       # on the real-time packet processing thread.
+#       # ---------------------------------------------------------------
+#       rotate-interval: day
+#       types:
+#         - alert
+#         - dns
+#         - tls
+#         - http
+#         - files
+#         - flow
+# OLD CODE END
