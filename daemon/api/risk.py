@@ -17,7 +17,7 @@ from opensearchpy import OpenSearchException
 
 from api.time_range import parse_time_range
 from api.alerts import SURICATA_NOISE_EXCLUSION
-from api.devices import _lan_device_bool_query, _lan_device_buckets
+from api.devices import _incomplete, _lan_device_bool_query, _lan_device_buckets
 
 # OLD CODE START — #96: the population's filters come from api.devices._lan_device_bool_query now
 # from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
@@ -27,6 +27,7 @@ from services.risk_scoring import RiskScorer
 from services.threat_detection import NOT_INTERNET_CIDRS
 from storage.all_buckets import all_buckets
 from storage.manager import StorageManager
+from storage.snapshot_search import QueryFailed, checked, total_hits
 
 logger = logging.getLogger("nettap.api.risk")
 
@@ -134,12 +135,19 @@ def _all_unsafe_ports(client, bool_query: dict, ips: list[str]) -> dict[str, lis
         {"ip": {"terms": {"field": "source.ip"}}},
         {"port": {"terms": {"field": "destination.port"}}},
     ]
-    buckets, complete = all_buckets(client, NETWORK_INDEX, query, sources)
+    # OLD CODE START — a capped or partial port read scored devices on the ports it held
+    # buckets, complete = all_buckets(client, NETWORK_INDEX, query, sources)
+    # if not complete:
+    #     logger.warning(
+    #         "Port lists stopped at %d device ports; scores cover those only",
+    #         len(buckets),
+    #     )
+    # OLD CODE END
+    buckets, complete = all_buckets(
+        client, NETWORK_INDEX, query, sources, what="risk score ports"
+    )
     if not complete:
-        logger.warning(
-            "Port lists stopped at %d device ports; scores cover those only",
-            len(buckets),
-        )
+        raise QueryFailed(f"risk score ports: stopped at {len(buckets)} device ports")
     # Composite buckets come in key order, so each IP's ports are together
     return {
         ip: [int(b["key"]["port"]) for b in group]
@@ -389,6 +397,7 @@ def _risk_scores(request: web.Request) -> web.Response:
             to_ts,
             aggs=_device_score_aggs(),
             page_size=_SCORE_PAGE_SIZE,
+            what="risk scores",
         )
         more_ports = _all_unsafe_ports(
             client,
@@ -400,6 +409,8 @@ def _risk_scores(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
+    except QueryFailed as exc:
+        return _incomplete("risk scores", exc)
     network_avg, network_stddev = _baseline(
         [b.get("doc_count", 0) for b in device_buckets]
     )
@@ -449,14 +460,26 @@ def _risk_scores(request: web.Request) -> web.Response:
 
         try:
             alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
+            what = "risk score alert counts"
+            got = checked(alert_result, what, ("by_ip",))["aggregations"]["by_ip"].get(
+                "buckets"
+            )
+            if not isinstance(got, list):
+                raise QueryFailed(f"{what}: missing buckets")
         except OpenSearchException as exc:
             logger.error("Alert count query failed in risk scores: %s", exc)
             return web.json_response(
                 {"error": f"OpenSearch query failed: {exc}"}, status=502
             )
-        for ab in (
-            alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
-        ):
+        except QueryFailed as exc:
+            return _incomplete("risk scores", exc)
+        # OLD CODE START — a timed-out or partly failed reply read as fewer alerts
+        # for ab in (
+        #     alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
+        # ):
+        #     alert_counts[ab["key"]] = ab["doc_count"]
+        # OLD CODE END
+        for ab in got:
             alert_counts[ab["key"]] = ab["doc_count"]
 
     # Score each device
@@ -576,16 +599,23 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
 
     try:
         conn_result = client.search(index=NETWORK_INDEX, body=conn_query)
+        what = "risk score connections"
+        checked(conn_result, what, tuple(conn_query["aggs"]))
+        total_conn = total_hits(conn_result, what)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in single risk score: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
+    except QueryFailed as exc:
+        return _incomplete("risk score", exc)
 
-    total_hits = conn_result.get("hits", {}).get("total", {})
-    total_conn = (
-        total_hits.get("value", 0) if isinstance(total_hits, dict) else total_hits
-    )
+    # OLD CODE START — a timed-out reply or a lower-bound total read as fewer connections
+    # total_hits = conn_result.get("hits", {}).get("total", {})
+    # total_conn = (
+    #     total_hits.get("value", 0) if isinstance(total_hits, dict) else total_hits
+    # )
+    # OLD CODE END
 
     if total_conn == 0:
         return web.json_response(
@@ -614,6 +644,8 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": f"OpenSearch query failed: {exc}"}, status=502
             )
+        except QueryFailed as exc:
+            return _incomplete("risk score", exc)
 
     # OLD CODE START — #96: the baseline came from the busiest 500 devices
     # # Get network-wide stats for anomaly detection
@@ -671,12 +703,16 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
     #     logger.warning("Network stats query failed: %s", exc)
     # OLD CODE END
     try:
-        devices = _lan_device_buckets(client, request.app, from_ts, to_ts)
+        devices = _lan_device_buckets(
+            client, request.app, from_ts, to_ts, what="risk score baseline"
+        )
     except OpenSearchException as exc:
         logger.error("Network stats query failed in single risk score: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
+    except QueryFailed as exc:
+        return _incomplete("risk score", exc)
     network_avg, network_stddev = _baseline([b.get("doc_count", 0) for b in devices])
 
     # Alert count for this device
@@ -707,12 +743,16 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
 
     try:
         alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
-        alert_total = alert_result.get("hits", {}).get("total", {})
-        alert_count = (
-            alert_total.get("value", 0)
-            if isinstance(alert_total, dict)
-            else alert_total
-        )
+        # OLD CODE START — a timed-out reply or a lower-bound total read as fewer alerts
+        # alert_total = alert_result.get("hits", {}).get("total", {})
+        # alert_count = (
+        #     alert_total.get("value", 0)
+        #     if isinstance(alert_total, dict)
+        #     else alert_total
+        # )
+        # OLD CODE END
+        what = "risk score alert count"
+        alert_count = total_hits(checked(alert_result, what), what)
     # OLD CODE START — #96: a failure scored the device as having no alerts
     # except OpenSearchException as exc:
     #     logger.warning("Alert count query failed for %s: %s", ip, exc)
@@ -722,6 +762,8 @@ async def handle_risk_score_single(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
+    except QueryFailed as exc:
+        return _incomplete("risk score", exc)
 
     device_stats = _build_device_stats(
         ip=ip,

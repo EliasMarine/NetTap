@@ -77,3 +77,55 @@ def test_a_reply_without_a_bucket_list_stops():
     )
     assert buckets == []
     assert complete is True
+
+
+# Follow-up to PR #191: a checked read never takes a malformed page as the end of the list
+
+
+def _checked(client, page_size=2):
+    return all_buckets(
+        client,
+        "x-*",
+        {},
+        [{"ip": {"terms": {"field": "f"}}}],
+        page_size=page_size,
+        what="devices",
+    )
+
+
+def test_checked_read_fails_on_a_later_page_with_no_bucket_list():
+    import pytest
+
+    from storage.snapshot_search import QueryFailed
+
+    client = MagicMock()
+    client.search.side_effect = [
+        _page(["a", "b"], {"ip": "b"}),
+        {"aggregations": {"all": {"after_key": {"ip": "z"}}}},
+    ]
+    with pytest.raises(QueryFailed, match="devices: malformed page"):
+        _checked(client)
+
+
+def test_checked_read_fails_on_a_full_page_with_no_next_key():
+    import pytest
+
+    from storage.snapshot_search import QueryFailed
+
+    client = MagicMock()
+    client.search.side_effect = [_page(["a", "b"], None)]
+    with pytest.raises(QueryFailed, match="malformed page"):
+        _checked(client)
+
+
+def test_unchecked_read_keeps_reading_a_malformed_page_as_the_end():
+    client = MagicMock()
+    client.search.side_effect = [
+        _page(["a", "b"], {"ip": "b"}),
+        {"aggregations": {"all": {"after_key": {"ip": "z"}}}},
+    ]
+    buckets, complete = all_buckets(
+        client, "x-*", {}, [{"ip": {"terms": {"field": "f"}}}], page_size=2
+    )
+    assert [b["key"]["ip"] for b in buckets] == ["a", "b"]
+    assert complete is True

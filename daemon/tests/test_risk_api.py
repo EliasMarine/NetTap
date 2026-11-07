@@ -959,3 +959,168 @@ class TestRiskFactorScope(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+INCOMPLETE = {"error": "The device search was incomplete"}
+
+
+def _spoil(answer, which: str, change):
+    """`answer` (a _risk_search side effect) with one kind of reply changed by `change`."""
+
+    def kind(body):
+        aggs = body.get("aggs", {})
+        if "all" in aggs:
+            sources = aggs["all"]["composite"]["sources"]
+            return "ports" if len(sources) == 2 else "devices"
+        if "by_ip" in aggs:
+            return "alerts"
+        is_alert = {"term": {"event.dataset": "alert"}} in body["query"]["bool"][
+            "filter"
+        ]
+        return "single_alert" if is_alert else "single_conn"
+
+    def search(index=None, body=None, **kwargs):
+        reply = answer(index=index, body=body, **kwargs)
+        return change(reply) if kind(body) == which else reply
+
+    return search
+
+
+def _timed_out(reply):
+    return {**reply, "timed_out": True}
+
+
+def _shard_failed(reply):
+    return {**reply, "_shards": {"total": 2, "successful": 1, "failed": 1}}
+
+
+class TestRiskReadsAreChecked(AioHTTPTestCase):
+    """Follow-up to PR #191: a partial read is a 502, never a lower score."""
+
+    CONNS = {f"192.168.1.{i + 1}": 50 for i in range(5)}
+
+    def setUp(self):
+        self.mock_storage = _make_mock_storage()
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.mock_storage
+        register_risk_routes(app, RiskScorer(), self.mock_storage)
+        return app
+
+    async def _get(self, path, which, change, conns=None):
+        self.mock_storage._client.search.side_effect = _spoil(
+            _risk_search(conns or self.CONNS), which, change
+        )
+        resp = await self.client.request("GET", path)
+        return resp.status, await resp.json()
+
+    @unittest_run_loop
+    async def test_list_fails_when_a_device_page_timed_out(self):
+        self.assertEqual(
+            await self._get("/api/risk/scores", "devices", _timed_out),
+            (502, INCOMPLETE),
+        )
+
+    @unittest_run_loop
+    async def test_list_fails_when_an_alert_chunk_lost_a_shard(self):
+        self.assertEqual(
+            await self._get("/api/risk/scores", "alerts", _shard_failed),
+            (502, INCOMPLETE),
+        )
+
+    @unittest_run_loop
+    async def test_list_fails_when_an_alert_reply_has_no_bucket_list(self):
+        def no_buckets(reply):
+            return {**reply, "aggregations": {"by_ip": {}}}
+
+        self.assertEqual(
+            await self._get("/api/risk/scores", "alerts", no_buckets),
+            (502, INCOMPLETE),
+        )
+
+    @unittest_run_loop
+    async def test_list_fails_when_the_port_read_lost_a_shard(self):
+        # a device whose top-50 port list was cut short sends the list to the port read
+        cut = _make_device_bucket("192.168.1.1", doc_count=50)
+        cut["ports_used"]["ports"]["sum_other_doc_count"] = 3
+
+        def answer(index=None, body=None, **kwargs):
+            if (
+                len(
+                    body.get("aggs", {})
+                    .get("all", {})
+                    .get("composite", {})
+                    .get("sources", [])
+                )
+                == 2
+            ):
+                return _shard_failed({"aggregations": {"all": {"buckets": []}}})
+            reply = _risk_search(self.CONNS)(index=index, body=body, **kwargs)
+            if "all" in body.get("aggs", {}):
+                buckets = reply["aggregations"]["all"]["buckets"]
+                reply["aggregations"]["all"]["buckets"] = [
+                    {**cut, "key": b["key"]} if b["key"]["ip"] == "192.168.1.1" else b
+                    for b in buckets
+                ]
+            return reply
+
+        self.mock_storage._client.search.side_effect = answer
+        resp = await self.client.request("GET", "/api/risk/scores")
+        self.assertEqual((resp.status, await resp.json()), (502, INCOMPLETE))
+
+    @unittest_run_loop
+    async def test_single_fails_when_its_connection_search_timed_out(self):
+        self.assertEqual(
+            await self._get("/api/risk/scores/192.168.1.1", "single_conn", _timed_out),
+            (502, INCOMPLETE),
+        )
+
+    @unittest_run_loop
+    async def test_single_fails_on_a_lower_bound_alert_total(self):
+        def lower_bound(reply):
+            return {**reply, "hits": {"total": {"value": 10000, "relation": "gte"}}}
+
+        self.assertEqual(
+            await self._get(
+                "/api/risk/scores/192.168.1.1", "single_alert", lower_bound
+            ),
+            (502, INCOMPLETE),
+        )
+
+    @unittest_run_loop
+    async def test_single_fails_when_a_baseline_page_lost_a_shard(self):
+        self.assertEqual(
+            await self._get("/api/risk/scores/192.168.1.1", "devices", _shard_failed),
+            (502, INCOMPLETE),
+        )
+
+    @unittest_run_loop
+    async def test_single_fails_when_its_port_read_lost_a_shard(self):
+        def cut_short(reply):
+            ports = reply["aggregations"]["ports_used"]["ports"]
+            return {
+                **reply,
+                "aggregations": {
+                    **reply["aggregations"],
+                    "ports_used": {"ports": {**ports, "sum_other_doc_count": 3}},
+                },
+            }
+
+        answer = _spoil(_risk_search(self.CONNS), "single_conn", cut_short)
+        self.mock_storage._client.search.side_effect = _spoil(
+            answer, "ports", _shard_failed
+        )
+        resp = await self.client.request("GET", "/api/risk/scores/192.168.1.1")
+        self.assertEqual((resp.status, await resp.json()), (502, INCOMPLETE))
+
+    @unittest_run_loop
+    async def test_complete_replies_still_score(self):
+        self.assertEqual(
+            (await self._get("/api/risk/scores", "none", _timed_out))[0], 200
+        )
+        status, data = await self._get(
+            "/api/risk/scores/192.168.1.1", "none", _timed_out
+        )
+        self.assertEqual((status, data["connection_count"]), (200, 100))

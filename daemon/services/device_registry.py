@@ -24,6 +24,7 @@ from opensearchpy import NotFoundError, OpenSearchException
 
 from services.device_fingerprint import _mac_from_hit
 from services.excluded_ips import CONN_RECORDS
+from storage.snapshot_search import QueryFailed, checked
 
 logger = logging.getLogger("nettap.services.device_registry")
 
@@ -769,7 +770,9 @@ class DeviceRegistry:
 
         count = 0
         try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
+            result = checked(
+                self._client.search(index=NETWORK_INDEX, body=query), "DHCP enrichment"
+            )
             seen_macs: set[str] = set()
             for hit in result.get("hits", {}).get("hits", []):
                 src = hit.get("_source", {})
@@ -823,7 +826,7 @@ class DeviceRegistry:
                 )
                 count += 1
 
-        except OpenSearchException as exc:
+        except (OpenSearchException, QueryFailed) as exc:
             logger.error("DHCP enrichment query failed: %s", exc)
 
         logger.info("DHCP enrichment: processed %d devices", count)
@@ -918,7 +921,9 @@ class DeviceRegistry:
 
         count = 0
         try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
+            result = checked(
+                self._client.search(index=NETWORK_INDEX, body=query), "mDNS enrichment"
+            )
             seen_macs: set[str] = set()
             for hit in result.get("hits", {}).get("hits", []):
                 src = hit.get("_source", {})
@@ -956,7 +961,7 @@ class DeviceRegistry:
                     )
                     count += 1
 
-        except OpenSearchException as exc:
+        except (OpenSearchException, QueryFailed) as exc:
             logger.error("mDNS enrichment query failed: %s", exc)
 
         logger.info("mDNS enrichment: processed %d devices", count)
@@ -1004,7 +1009,9 @@ class DeviceRegistry:
 
         count = 0
         try:
-            result = self._client.search(index=NETWORK_INDEX, body=query)
+            result = checked(
+                self._client.search(index=NETWORK_INDEX, body=query), "SSDP enrichment"
+            )
             seen_macs: set[str] = set()
             for hit in result.get("hits", {}).get("hits", []):
                 src = hit.get("_source", {})
@@ -1039,7 +1046,7 @@ class DeviceRegistry:
                 )
                 count += 1
 
-        except OpenSearchException as exc:
+        except (OpenSearchException, QueryFailed) as exc:
             logger.error("SSDP enrichment query failed: %s", exc)
 
         logger.info("SSDP enrichment: processed %d devices", count)

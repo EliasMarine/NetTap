@@ -22,6 +22,8 @@
 #     count = the list's total = its rows, the first device's connections = OpenSearch's _count,
 #     Online now = the rows the same reading marks Online, and the 30-day list through the
 #     web container inside 80% of the route's timeout
+#   - risk scores over a settled 24 h window (PR #191 follow-up): the scored devices against
+#     OpenSearch's device count, and the top device's scored connections against its _count
 #   - a bad address is a 400 and no token is a 401
 #
 # Run as the normal user (NOT with sudo):
@@ -643,6 +645,30 @@ case "$ROUTE" in
     *) rc=1 ;;
 esac
 check "/devices?view=all&range=24h through nginx (the page, or the login redirect)" "$rc" "$ROUTE"
+echo ""
+
+echo "→ Step 7e: Risk scores cover every device and score from complete reads (PR #191 follow-up)..."
+# Over the same settled 24 h window: the scored population is the device rule's population, and
+# a device's scored connections sit between OpenSearch's own counts. An incomplete read is a 502.
+R_FROM=$(date -u -d '1450 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+r_before=$(raw_devices "$R_FROM" "$D_TO")
+RISK=$(daemon "/api/risk/scores?from=$R_FROM&to=$D_TO" "'%s %s %s' % (code, d['device_count'], (d['devices'] or [{}])[0].get('ip')) if code == 200 else '%s - -' % code")
+r_after=$(raw_devices "$R_FROM" "$D_TO")
+read -r r_code r_count r_ip <<<"$RISK"
+if [ "${r_code:-}" = "200" ]; then rc=0; else rc=1; fi
+check "the risk score list answers over 24 h" "$rc" "HTTP ${r_code:-?}"
+if between "${r_before:-}" "${r_count:-}" "${r_after:-}"; then rc=0; else rc=1; fi
+check "24 h: OpenSearch before <= devices scored <= OpenSearch after" "$rc" "${r_before:-?} <= ${r_count:-?} <= ${r_after:-?}"
+if [[ "${r_ip:-}" =~ ^[0-9a-fA-F.:]+$ ]]; then
+    s_before=$(raw_conns "$R_FROM" "$D_TO" "$r_ip")
+    SINGLE=$(daemon "/api/risk/scores/$r_ip?from=$R_FROM&to=$D_TO" "'%s %s' % (code, d['connection_count']) if code == 200 else '%s -' % code")
+    s_after=$(raw_conns "$R_FROM" "$D_TO" "$r_ip")
+    read -r s_code s_conns <<<"$SINGLE"
+    if [ "${s_code:-}" = "200" ] && between "${s_before:-}" "${s_conns:-}" "${s_after:-}"; then rc=0; else rc=1; fi
+    check "24 h: the top-scored device's connections, between OpenSearch's counts" "$rc" "$r_ip: HTTP ${s_code:-?}, ${s_before:-?} <= ${s_conns:-?} <= ${s_after:-?}"
+else
+    echo "   · no scored device in the window; the single-score check is skipped"
+fi
 echo ""
 
 echo "→ Step 8: Validation and the token..."

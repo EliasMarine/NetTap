@@ -850,3 +850,28 @@ class TestLongMacs:
         assert client.store["AA:BB:CC:00:00:01"]["ips"] == [
             "10.10.0.9"
         ]  # no real entry: renamed
+
+
+class TestPartialReadsWriteNothing:
+    """Follow-up to PR #191: a partial conn read could pair an IP with the wrong MAC."""
+
+    def test_a_device_page_with_a_failed_shard_stops_the_refresh_before_any_write(self):
+        import pytest
+
+        from storage.snapshot_search import QueryFailed
+
+        client = _fake_client([_bucket("192.168.1.10", "aa:bb:cc:00:00:01")])
+        answer = client.search.side_effect
+
+        def search(index: str, body: dict) -> dict:
+            reply = answer(index=index, body=body)
+            if "all" in body.get("aggs", {}):
+                return {**reply, "_shards": {"total": 2, "successful": 1, "failed": 1}}
+            return reply
+
+        client.search.side_effect = search
+
+        with pytest.raises(QueryFailed, match="device registry refresh"):
+            refresh_device_registry(_app(client))
+        assert client.store == {}
+        client.index.assert_not_called()
