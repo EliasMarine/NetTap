@@ -87,9 +87,18 @@ def raw_device(os_client, ip: str, t: dict, conn: list, noise: list, dns_excl: l
         },
     })
     a = r["aggregations"]
+    # OLD CODE START — NET-194: since PR #174 Device detail counts the alerts on the device's traffic
+    # both ways; only Risk still counts the alerts it sent
+    # alerts = os_client.count(index=INDEX, body={"query": {"bool": {
+    #     "filter": [t, {"term": {"source.ip": ip}}, {"term": {"event.provider": "suricata"}}, {"term": {"event.dataset": "alert"}}],
+    #     "must_not": noise}}})["count"]
+    # OLD CODE END
+    suricata = [t, {"term": {"event.provider": "suricata"}}, {"term": {"event.dataset": "alert"}}]
+    sent_alerts = os_client.count(index=INDEX, body={"query": {"bool": {
+        "filter": [*suricata, {"term": {"source.ip": ip}}], "must_not": noise}}})["count"]
+    either_side = {"bool": {"should": [{"term": {"source.ip": ip}}, {"term": {"destination.ip": ip}}], "minimum_should_match": 1}}
     alerts = os_client.count(index=INDEX, body={"query": {"bool": {
-        "filter": [t, {"term": {"source.ip": ip}}, {"term": {"event.provider": "suricata"}}, {"term": {"event.dataset": "alert"}}],
-        "must_not": noise}}})["count"]
+        "filter": [*suricata, either_side], "must_not": noise}}})["count"]
     dns = os_client.search(index=INDEX, body={"size": 0, "query": {"bool": {
         "filter": [t, {"term": {"source.ip": ip}}, {"term": {"event.provider": "zeek"}}, {"term": {"event.dataset": "dns"}}],
         "must_not": dns_excl}},
@@ -98,7 +107,8 @@ def raw_device(os_client, ip: str, t: dict, conn: list, noise: list, dns_excl: l
         "conns": r["hits"]["total"]["value"], "total": a["total"]["value"], "orig": a["orig"]["value"],
         "resp": a["resp"]["value"], "dests": counts(a["dests"]["buckets"]),
         "dest_bytes": {b["key"]: b["b"]["value"] for b in a["dests"]["buckets"]}, "ports": counts(a["ports"]["buckets"]),
-        "asn_conns": a["asn"]["doc_count"], "alerts": alerts, "dns": counts(dns["aggregations"]["q"]["buckets"]),
+        "asn_conns": a["asn"]["doc_count"], "alerts": alerts, "sent_alerts": sent_alerts,
+        "dns": counts(dns["aggregations"]["q"]["buckets"]),
     }
 
 
@@ -106,10 +116,19 @@ def raw_all(os_client, t: dict, conn: list, noise: list) -> dict:
     """Connections, bytes and alerts per source IP for the whole window (the Devices list)."""
     r = os_client.search(index=INDEX, body={"size": 0, "query": {"bool": {"filter": [t, *conn]}},
         "aggs": {"ip": {"terms": {"field": "source.ip", "size": TOP_N_SIZE}, "aggs": {"total": {"sum": BYTES}}}}})
+    # OLD CODE START — NET-194: the Devices list counts alerts both ways since PR #174
+    # al = os_client.search(index=INDEX, body={"size": 0, "query": {"bool": {
+    #     "filter": [t, {"term": {"event.provider": "suricata"}}, {"term": {"event.dataset": "alert"}}], "must_not": noise}},
+    #     "aggs": {"ip": {"terms": {"field": "source.ip", "size": TOP_N_SIZE}}}})
+    # alerts = counts(al["aggregations"]["ip"]["buckets"])
+    # OLD CODE END
     al = os_client.search(index=INDEX, body={"size": 0, "query": {"bool": {
         "filter": [t, {"term": {"event.provider": "suricata"}}, {"term": {"event.dataset": "alert"}}], "must_not": noise}},
-        "aggs": {"ip": {"terms": {"field": "source.ip", "size": TOP_N_SIZE}}}})
-    alerts = counts(al["aggregations"]["ip"]["buckets"])
+        "aggs": {"src": {"terms": {"field": "source.ip", "size": TOP_N_SIZE}},
+                 "dst": {"terms": {"field": "destination.ip", "size": TOP_N_SIZE}}}})
+    # a device's alerts as sender plus as receiver, the daemon's sum (a device never alerts on itself)
+    sent, received = (counts(al["aggregations"][side]["buckets"]) for side in ("src", "dst"))
+    alerts = {k: sent.get(k, 0) + received.get(k, 0) for k in sent.keys() | received.keys()}
     return {b["key"]: {"conns": b["doc_count"], "total": b["total"]["value"], "alerts": alerts.get(b["key"], 0)}
             for b in r["aggregations"]["ip"]["buckets"]}
 
@@ -161,7 +180,10 @@ def check_ip(os_client, listed: dict, before_list: dict, q: str, f: dict, proble
     check_top(f"{p} DNS lookups", dns, "domain", "count", b["dns"], a["dns"], problems)
     bracket(f"{p} categories connections", b["asn_conns"], sum(c["connection_count"] for c in cats), a["asn_conns"], problems)
     bracket(f"{p} risk connections", b["conns"], risk["connection_count"], a["conns"], problems)
-    bracket(f"{p} risk alerts", b["alerts"], risk["alert_count"], a["alerts"], problems)
+    # OLD CODE START — NET-194: Risk counts the alerts the device sent; "alerts" is now both ways
+    # bracket(f"{p} risk alerts", b["alerts"], risk["alert_count"], a["alerts"], problems)
+    # OLD CODE END
+    bracket(f"{p} risk alerts", b["sent_alerts"], risk["alert_count"], a["sent_alerts"], problems)
     # the Devices list row was read before this device's raw reads, so its lower bound is the whole-window read
     for field, raw_key in (("connection_count", "conns"), ("total_bytes", "total"), ("alert_count", "alerts")):
         bracket(f"{p} Devices list {field}", before_list.get(ip, {}).get(raw_key, 0), listed[field], a[raw_key], problems)
