@@ -3,6 +3,7 @@
 #
 # Only nettap-web is rebuilt and recreated. Checks through nginx, with no cookie:
 #   /api/suricata/rules/live -> 401 application/json
+#   the same address opened as a page (Sec-Fetch-Dest: document) -> 302 to /login
 #   /alerts                  -> 302 to /login
 #   /api/health              -> 200
 # Prints status codes and content types only, never a token or a cookie.
@@ -22,9 +23,11 @@ check() {  # check "label" <0 pass / 1 fail> "detail"
     if [ "$2" -eq 0 ]; then echo "   ✓ $1: $3"; else echo "   ✗ $1: $3"; FAILED=1; fi
 }
 
-# reply <path> <curl -w format>: one request with no cookie, redirects not followed (-k: self-signed cert)
+# reply <path> <curl -w format> [curl args]: one request with no cookie, redirects not followed (-k: self-signed cert)
 reply() {
-    curl -sk -o /dev/null --max-time 20 -w "$2" "$BASE$1" || true
+    local path=$1 format=$2
+    shift 2
+    curl -sk -o /dev/null --max-time 20 -w "$format" "$@" "$BASE$path" || true
 }
 
 echo "=== Deploy: API calls without a session answer 401 (NET-197) from $BRANCH ==="
@@ -69,6 +72,10 @@ echo "→ Step 5: Without a session, through nginx..."
 OUT=$(reply /api/suricata/rules/live '%{http_code} %{content_type}')
 case "$OUT" in "401 application/json"*) rc=0 ;; *) rc=1 ;; esac
 check "/api/suricata/rules/live answers 401 JSON" "$rc" "$OUT"
+
+OUT=$(reply /api/suricata/rules/live '%{http_code} %{redirect_url}' -H 'Sec-Fetch-Dest: document')
+case "$OUT" in "302 "*/login) rc=0 ;; *) rc=1 ;; esac
+check "the same address opened as a page goes to /login" "$rc" "$OUT"
 
 OUT=$(reply /alerts '%{http_code} %{redirect_url}')
 case "$OUT" in "302 "*/login) rc=0 ;; *) rc=1 ;; esac
