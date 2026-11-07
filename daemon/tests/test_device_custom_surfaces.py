@@ -183,6 +183,19 @@ def test_a_bad_picture_restores_nothing(tmp_path):
     assert store.names() == {MAC: "TV"}
 
 
+def test_a_malformed_picture_entry_is_an_error_not_a_crash(tmp_path):
+    store = DeviceCustomStore(str(tmp_path))
+    data = {
+        "metadata": {
+            "nettap_version": _NETTAP_VERSION,
+            "schema_version": _SCHEMA_VERSION,
+        },
+        "sections": {"device_aliases": {}, "device_pictures": {MAC: {"icon": []}}},
+    }
+    result = _backup(tmp_path, store).import_config(data)
+    assert not result["success"] and result["errors"]
+
+
 def test_export_fails_rather_than_drop_a_missing_photo(tmp_path):
     store = DeviceCustomStore(str(tmp_path / "s"))
     store.set_photo(MAC, base64.b64encode(_png(1, 100)).decode())

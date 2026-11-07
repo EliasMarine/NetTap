@@ -203,6 +203,8 @@ class TestPictureRoutes(_RoutesBase):
             {"icon": "tv", "image": b64(PNG)},
             {"icon": "tv", "x": 1},
             {"colour": "red"},
+            {"icon": ["tv"]},
+            {"image": ["x"]},
         ):
             resp = await self.client.put(
                 f"/api/devices/registry/{MAC}/picture", json=body

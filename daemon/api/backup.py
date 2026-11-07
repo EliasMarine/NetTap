@@ -13,6 +13,8 @@ import logging
 
 from aiohttp import web
 
+from api.offload import run_blocking
+
 from services.config_backup import ConfigBackup
 
 logger = logging.getLogger("nettap.api.backup")
@@ -23,7 +25,8 @@ async def handle_export(request: web.Request) -> web.Response:
     backup: ConfigBackup = request.app["config_backup"]
 
     try:
-        config = backup.export_config()
+        # OLD CODE: config = backup.export_config() (NET-200: photos are read and hashed now, off the loop)
+        config = await run_blocking(backup.export_config)
     except Exception as exc:
         logger.error("Error exporting config: %s", exc)
         return web.json_response({"error": f"Config export failed: {exc}"}, status=500)
@@ -44,7 +47,8 @@ async def handle_import(request: web.Request) -> web.Response:
     backup: ConfigBackup = request.app["config_backup"]
 
     try:
-        result = backup.import_config(data)
+        # OLD CODE: result = backup.import_config(data) (NET-200: photo writes and fsyncs, off the loop)
+        result = await run_blocking(backup.import_config, data)
     except Exception as exc:
         logger.error("Error importing config: %s", exc)
         return web.json_response({"error": f"Config import failed: {exc}"}, status=500)

@@ -304,7 +304,8 @@ class ConfigBackup:
                     device_names, sections.get("device_pictures")
                 )
                 applied.extend(device_parts)
-            except (ValueError, RuntimeError, OSError) as exc:
+            # TypeError too: a malformed backup must never escape after other sections applied
+            except (ValueError, TypeError, RuntimeError, OSError) as exc:
                 logger.error("Device names and pictures not restored: %s", exc)
                 errors.append(f"Device names and pictures not restored: {exc}")
 

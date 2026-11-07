@@ -37,6 +37,8 @@ NAME_MAX = 64
 PHOTO_MAX_BYTES = 256 * 1024
 # All photos together; keeps an exported backup under the 16 MB body limits (PLAN size contract)
 PHOTOS_MAX_TOTAL = 8 * 1024 * 1024
+# bounds the file count and the metadata size: bytes alone allow ~400k 3-byte photos per backup
+DEVICES_MAX = 2000
 # The system's device-type icons (web/src/lib/components/ui/device-icon.ts)
 ICONS = frozenset(
     {
@@ -63,6 +65,9 @@ _ENTRY_KEYS = {"name", "icon", "photo"}
 BAD_TYPE = "Pictures must be PNG, JPEG or WebP."
 TOO_BIG = f"The picture is too large (the limit is {PHOTO_MAX_BYTES // 1024} KB)."
 STORAGE_FULL = f"Picture storage is full ({PHOTOS_MAX_TOTAL // (1024 * 1024)} MB). Remove a picture first."
+TOO_MANY = (
+    f"Names and pictures are limited to {DEVICES_MAX:,} devices. Remove some first."
+)
 
 
 class StoreUnavailable(RuntimeError):
@@ -129,6 +134,11 @@ def decode_image(value: Any) -> tuple[bytes, str]:
     return data, mime
 
 
+def _is_icon(value: Any) -> bool:
+    """A built-in icon name; a list or dict from JSON is simply not one (no TypeError)."""
+    return isinstance(value, str) and value in ICONS
+
+
 def _photo_record(mac: str, data: bytes, mime: str) -> dict:
     """The metadata for a photo: its content-named file, type and size."""
     digest = hashlib.sha256(data).hexdigest()[:16]
@@ -157,7 +167,7 @@ def _validated(raw: Any) -> dict[str, dict]:
             raise ValueError(f"entry for {mac} has both an icon and a photo")
         if "name" in entry and clean_name(entry["name"]) != entry["name"]:
             raise ValueError(f"name for {mac} is not stored clean")
-        if "icon" in entry and entry["icon"] not in ICONS:
+        if "icon" in entry and not _is_icon(entry["icon"]):
             raise ValueError(f"icon for {mac} is unknown")
         if "photo" in entry:
             _check_photo_meta(mac, entry["photo"])
@@ -172,6 +182,7 @@ def _check_photo_meta(mac: str, photo: Any) -> None:
     if (
         not match
         or match.group(1) != mac.replace(":", "").lower()
+        or not isinstance(photo.get("type"), str)
         or _EXT.get(photo.get("type")) != match.group(3)
         or not isinstance(photo.get("bytes"), int)
         or isinstance(photo.get("bytes"), bool)
@@ -302,7 +313,11 @@ class DeviceCustomStore:
             entry.update(update)
             devices = {k: v for k, v in self._devices.items() if k != mac}
             if entry:
+                if mac not in self._devices and len(devices) >= DEVICES_MAX:
+                    raise ValueError(TOO_MANY)
                 devices[mac] = entry
+            if devices == self._devices and not files:
+                return  # nothing changed (clearing what isn't set); no rewrite
             self._commit(devices, files or {})
 
     # ------------------------------------------------------------------
@@ -318,7 +333,7 @@ class DeviceCustomStore:
 
     def set_icon(self, mac: str, icon: Any) -> None:
         mac = normalize_mac(mac)
-        if icon not in ICONS:
+        if not _is_icon(icon):
             raise ValueError("Pick one of the built-in device icons.")
         self._change(mac, {"icon": icon}, ("photo",))
 
@@ -387,10 +402,15 @@ class DeviceCustomStore:
     def present(self, row: dict) -> dict:
         """A copy of a response row (with "mac" and "hostname") showing the owner's name first.
 
-        Presentation only: call it after any classification that reads the hostname.
+        Presentation only: call it after any classification that reads the hostname. When the
+        owner's name replaces the hostname, the original stays visible as `discovered_name`.
         """
         owner = self.owner_fields(row.get("mac"))
-        return {**row, **owner, "hostname": owner["custom_name"] or row.get("hostname")}
+        out = {**row, **owner}
+        if owner["custom_name"]:
+            out["discovered_name"] = row.get("hostname")
+            out["hostname"] = owner["custom_name"]
+        return out
 
     def photo(self, mac: str) -> tuple[bytes, str, str] | None:
         """(bytes, mime, hash) of the committed photo, read as one snapshot; None if absent or damaged."""
@@ -468,6 +488,8 @@ class DeviceCustomStore:
                     entry.update(new_pictures.get(mac, {}))
                 if entry:
                     devices[mac] = entry
+            if len(devices) > DEVICES_MAX:
+                raise ValueError(TOO_MANY)
             self._commit(devices, files)
 
 
@@ -482,7 +504,9 @@ def _restore_names(names: Any) -> tuple[dict[str, str] | None, list[str]]:
         try:
             out[normalize_mac(mac)] = clean_name(name)
         except ValueError as exc:
-            errors.append(f"name for {str(mac)[:32]}: {exc}")
+            errors.append(
+                f"name for {str(mac)[:32]!r}: {exc}"
+            )  # !r: no forged log lines
     return out, errors
 
 
@@ -498,13 +522,13 @@ def _restore_pictures(
     errors: list[str] = []
     total = 0
     for raw_mac, value in pictures.items():
-        label = str(raw_mac)[:32]
+        label = repr(str(raw_mac)[:32])  # repr: no forged log lines
         try:
             mac = normalize_mac(raw_mac)
             if not isinstance(value, dict) or len(value) != 1:
                 raise ValueError("needs exactly one of icon or image")
             if "icon" in value:
-                if value["icon"] not in ICONS:
+                if not _is_icon(value["icon"]):
                     raise ValueError("unknown icon")
                 out[mac] = {"icon": value["icon"]}
             elif "image" in value:

@@ -150,6 +150,31 @@ class TestPictures:
         with pytest.raises(ValueError):
             store.set_icon(MAC, "rocket")
 
+    @pytest.mark.parametrize("bad", [["tv"], {"tv": 1}, None, 3])
+    def test_a_non_string_icon_is_a_value_error(self, store, bad):
+        # an unhashable icon used to raise TypeError, which no caller maps
+        with pytest.raises(ValueError):
+            store.set_icon(MAC, bad)
+        with pytest.raises(ValueError):
+            store.restore(None, {MAC: {"icon": bad}})
+
+    def test_the_device_cap_refuses_a_new_mac_but_not_an_edit(self, store, monkeypatch):
+        monkeypatch.setattr(dc, "DEVICES_MAX", 1)
+        store.set_name(MAC, "TV")
+        with pytest.raises(ValueError, match="limited to"):
+            store.set_icon(MAC2, "tv")
+        store.set_icon(MAC, "tv")  # an existing device can still change
+        with pytest.raises(ValueError, match="limited to"):
+            store.restore({MAC: "TV", MAC2: "Laptop"}, None)
+        assert store.names() == {MAC: "TV"}
+
+    def test_clearing_nothing_does_not_rewrite_the_file(self, store):
+        store.set_name(MAC, "TV")
+        with patch.object(dc, "write_file_atomic") as write:
+            store.clear_picture(MAC)
+            store.clear_name(MAC2)
+        write.assert_not_called()
+
     def test_a_new_photo_deletes_the_old_file_only_after_commit(self, store, root):
         store.set_photo(MAC, b64(PNG))
         first = store.get(MAC)["photo"]["file"]
@@ -186,7 +211,8 @@ class TestPictures:
             "picture": f"/api/devices/registry/{MAC}/picture?v={digest}",
         }
         row = {"mac": MAC, "hostname": "android-123", "ip": "10.0.0.2"}
-        assert store.present(row)["hostname"] == "TV"
+        shown = store.present(row)
+        assert (shown["hostname"], shown["discovered_name"]) == ("TV", "android-123")
         assert row["hostname"] == "android-123"  # not mutated
         assert store.present({"mac": MAC2, "hostname": "x"})["hostname"] == "x"
         assert store.owner_fields(None)["custom_name"] is None
@@ -247,6 +273,21 @@ class TestStartup:
                             "photo": {
                                 "file": "../x.png",
                                 "type": "image/png",
+                                "bytes": 1,
+                            }
+                        }
+                    },
+                }
+            ),
+            json.dumps({"version": 1, "devices": {MAC: {"icon": []}}}),
+            json.dumps(
+                {
+                    "version": 1,
+                    "devices": {
+                        MAC: {
+                            "photo": {
+                                "file": "aabbccddee01-0123456789abcdef.png",
+                                "type": [],
                                 "bytes": 1,
                             }
                         }
