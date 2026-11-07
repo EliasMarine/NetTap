@@ -204,6 +204,19 @@ class TestSuspiciousPortsScoring(unittest.TestCase):
         points, _ = self.scorer.score_suspicious_ports([4444, 5555, 6666])
         self.assertEqual(points, 15)
 
+    def test_a_bounded_unusual_list_reads_as_a_lower_bound(self):
+        """PR #192 review: past the per-device list, the count is "at least"."""
+        assert self.scorer.score_suspicious_ports(
+            [80, 9200, 3000], more_unusual=True
+        ) == (
+            8,
+            "At least 2 unusual port(s) detected",
+        )
+        assert self.scorer.score_suspicious_ports([80, 9200, 3000]) == (
+            8,
+            "2 unusual port(s) detected",
+        )
+
     def test_local_services_are_not_unusual(self):
         """NET-158: NTP, mDNS, DHCP, SSDP and NetBIOS scored 8 points as unusual ports."""
         points, desc = self.scorer.score_suspicious_ports(

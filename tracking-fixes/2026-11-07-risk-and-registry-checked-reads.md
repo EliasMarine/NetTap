@@ -75,3 +75,20 @@ PR #191 made the device list and the device count return 502 when a search came 
 
 - **A fix to one reader of a shared helper is half a fix.** `_lan_device_buckets` had five callers. PR #191 checked two of them; the other three kept the old behaviour until this follow-up.
 - **"Checked" has to cover the page shape, not only the reply flags.** `checked()` looks at `timed_out`, `_shards` and the top-level aggregation. The bucket list inside the aggregation needs its own check.
+
+## Two-angle review (PR #192)
+
+- **Security, MEDIUM, fixed: a port scan could switch off the whole risk list.**
+  - **Problem:** the port read paged every (device, port) pair. About 8 LAN addresses each scanning every port pass the 500,000-pair cap, which this PR had made a 502 for every device.
+  - **Fix:** the read is now one bucket per device. Each bucket lists:
+    - every suspicious port (at most 8);
+    - up to 100 unusual ports;
+    - a flag when the device used more than that.
+  - **Result:** the read's size grows with the number of devices, which is capped at 20,000, so a scan cannot trip the cap.
+  - **What the scorer says:** "At least 100 unusual port(s) detected". The statement is true and the 8 points are unchanged. A connection to 4444 is still never missed.
+  - **Tests:** `test_a_port_scan_is_a_lower_bound_not_a_failure`, and `test_a_bounded_unusual_list_reads_as_a_lower_bound` in `test_risk_scoring.py`.
+- **Security, LOW, follow-up:** 20,001 fake LAN sources reach the 20,000-IP cap. Risk scores then return 502 and the registry refresh pauses. This needs a LAN filter wider than the detected /24s, and `GET /api/devices` already behaved this way since #191. The suggested follow-up is to raise a Changelog or notification event when the cap is hit.
+- **Python, LOW, follow-up: a fresh box with no `arkime_sessions3-*` index yet.**
+  - **Problem:** OpenSearch answers with `_shards.total: 0` and no `aggregations` key (confirmed on the G11 with a missing index pattern). `checked()` reads that as "missing aggregation", so the device list, the device count and the risk scores show "incomplete" instead of zero until the first traffic is indexed.
+  - **Why not here:** the fix has to give each kind of aggregation its own empty shape, and it touches every checked page.
+- **Python, LOW, fixed:** the new tests sat below the `__main__` guard. The guard is now at the end of the file.

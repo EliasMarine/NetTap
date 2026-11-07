@@ -751,11 +751,62 @@ def _port_search(ports_by_ip: dict[str, dict[int, int]]):
             "ports_used": ports_used(ports),
         }
 
+    def terms(ports, wanted, size):
+        """A terms list of `ports` (port -> count) kept by `wanted`, top `size` like OpenSearch."""
+        kept = {port: n for port, n in ports.items() if wanted(port)}
+        top = sorted(kept, key=lambda port: (-kept[port], port))[:size]
+        return {
+            "buckets": [{"key": port, "doc_count": kept[port]} for port in top],
+            "sum_other_doc_count": sum(
+                n for port, n in kept.items() if port not in top
+            ),
+        }
+
+    def unsafe_ports(ip, key, body):
+        """The bounded port read (PR #192 review): one bucket per device."""
+        safe = [
+            c["terms"]["destination.port"]
+            for c in body["query"]["bool"]["must_not"]
+            if "destination.port" in c.get("terms", {})
+        ][0]
+        ports = {p: n for p, n in ports_by_ip[ip].items() if p not in safe}
+        aggs = body["aggs"]["all"]["aggs"]
+        listed = aggs["suspicious"]["filter"]["terms"]["destination.port"]
+        not_unusual = aggs["unusual"]["filter"]["bool"]["must_not"][0]["terms"][
+            "destination.port"
+        ]
+        return {
+            "key": key,
+            "doc_count": sum(ports.values()),
+            "suspicious": {
+                "ports": terms(
+                    ports,
+                    lambda p: p in listed,
+                    aggs["suspicious"]["aggs"]["ports"]["terms"]["size"],
+                )
+            },
+            "unusual": {
+                "ports": terms(
+                    ports,
+                    lambda p: p not in not_unusual,
+                    aggs["unusual"]["aggs"]["ports"]["terms"]["size"],
+                )
+            },
+        }
+
     def composite_page(body):
         composite = body["aggs"]["all"]["composite"]
         names = [next(iter(source)) for source in composite["sources"]]
         bool_query = body["query"]["bool"]
-        if names == ["ip"]:
+        if "suspicious" in body["aggs"]["all"].get("aggs", {}):
+            ips = [
+                c["terms"]["source.ip"]
+                for c in bool_query["filter"]
+                if "source.ip" in c.get("terms", {})
+            ][-1]
+            keys = [{"ip": ip} for ip in sorted(ips)]
+            make = lambda key: unsafe_ports(key["ip"], key, body)  # noqa: E731
+        elif names == ["ip"]:
             keys = [{"ip": ip} for ip in sorted(ports_by_ip)]
             make = lambda key: device(key["ip"], key)  # noqa: E731
         else:
@@ -858,21 +909,57 @@ class TestRiskPortsAreComplete(AioHTTPTestCase):
             by_ip["192.168.1.40"]["description"], "Only common protocols/ports used"
         )
         # Only the two devices whose list was cut short are read in full
+        # OLD CODE START — PR #192 review: the port read is one bucket per device now
+        # port_bodies = [... if len(...["composite"]["sources"]) == 2]
+        # OLD CODE END
         port_bodies = [
             c.kwargs["body"]
             for c in self.mock_storage._client.search.call_args_list
-            if len(
-                c.kwargs["body"]
-                .get("aggs", {})
-                .get("all", {})
-                .get("composite", {})
-                .get("sources", [])
-            )
-            == 2
+            if "suspicious"
+            in c.kwargs["body"].get("aggs", {}).get("all", {}).get("aggs", {})
         ]
         self.assertIn(
             {"terms": {"source.ip": ["192.168.1.20", "192.168.1.30"]}},
             port_bodies[0]["query"]["bool"]["filter"],
+        )
+
+    @unittest_run_loop
+    async def test_a_port_scan_is_a_lower_bound_not_a_failure(self):
+        """PR #192 review: the port read is one bucket per device with bounded lists, so a
+        device using thousands of ports cannot push it past a cap and blank every score."""
+        scanner = {
+            443: 500,
+            **{50_000 + i: 1 for i in range(3_000)},
+        }  # no suspicious port
+        self.mock_storage._client.search.side_effect = _port_search(
+            {**self.PORTS, "192.168.1.50": scanner}
+        )
+
+        resp = await self.client.request("GET", "/api/risk/scores")
+        self.assertEqual(resp.status, 200)
+        by_ip = {d["ip"]: self._port_factor(d) for d in (await resp.json())["devices"]}
+
+        self.assertEqual(by_ip["192.168.1.50"]["score"], 8)
+        self.assertEqual(
+            by_ip["192.168.1.50"]["description"],
+            "At least 100 unusual port(s) detected",
+        )
+        # Under the list's size the count stays exact, and 4444 is still found
+        self.assertEqual(
+            by_ip["192.168.1.30"]["description"], "70 unusual port(s) detected"
+        )
+        self.assertEqual(
+            by_ip["192.168.1.20"]["description"], "Known suspicious ports used: 4444"
+        )
+        port_body = next(
+            c.kwargs["body"]
+            for c in self.mock_storage._client.search.call_args_list
+            if "suspicious"
+            in c.kwargs["body"].get("aggs", {}).get("all", {}).get("aggs", {})
+        )
+        self.assertEqual(
+            port_body["aggs"]["all"]["composite"]["sources"],
+            [{"ip": {"terms": {"field": "source.ip"}}}],
         )
 
     @unittest_run_loop
@@ -957,10 +1044,6 @@ class TestRiskFactorScope(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 INCOMPLETE = {"error": "The device search was incomplete"}
 
 
@@ -970,8 +1053,7 @@ def _spoil(answer, which: str, change):
     def kind(body):
         aggs = body.get("aggs", {})
         if "all" in aggs:
-            sources = aggs["all"]["composite"]["sources"]
-            return "ports" if len(sources) == 2 else "devices"
+            return "ports" if "suspicious" in aggs["all"].get("aggs", {}) else "devices"
         if "by_ip" in aggs:
             return "alerts"
         is_alert = {"term": {"event.dataset": "alert"}} in body["query"]["bool"][
@@ -1047,15 +1129,7 @@ class TestRiskReadsAreChecked(AioHTTPTestCase):
         cut["ports_used"]["ports"]["sum_other_doc_count"] = 3
 
         def answer(index=None, body=None, **kwargs):
-            if (
-                len(
-                    body.get("aggs", {})
-                    .get("all", {})
-                    .get("composite", {})
-                    .get("sources", [])
-                )
-                == 2
-            ):
+            if "suspicious" in body.get("aggs", {}).get("all", {}).get("aggs", {}):
                 return _shard_failed({"aggregations": {"all": {"buckets": []}}})
             reply = _risk_search(self.CONNS)(index=index, body=body, **kwargs)
             if "all" in body.get("aggs", {}):
@@ -1124,3 +1198,7 @@ class TestRiskReadsAreChecked(AioHTTPTestCase):
             "/api/risk/scores/192.168.1.1", "none", _timed_out
         )
         self.assertEqual((status, data["connection_count"]), (200, 100))
+
+
+if __name__ == "__main__":
+    unittest.main()
