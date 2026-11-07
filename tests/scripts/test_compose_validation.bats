@@ -717,7 +717,12 @@ print('nettap-web: OK')
         run _compose_query "
 svc = data['services']['${svc}']
 cmd = svc['entrypoint'][2]
-assert cmd.startswith('. /usr/local/bin/nettap-capture-env.sh && mkdir -p '), '${svc}: ' + cmd[:80]
+# OLD CODE START — NET-191 slice 2: suricata-live runs nettap-rules-update.sh start right after the loader
+# assert cmd.startswith('. /usr/local/bin/nettap-capture-env.sh && mkdir -p '), '${svc}: ' + cmd[:80]
+# OLD CODE END
+# the loader first: it turns et/open into et/pro, and nettap-rules-update.sh start records the result
+rules = 'bash /usr/local/bin/nettap-rules-update.sh start && ' if '${svc}' == 'suricata-live' else ''
+assert cmd.startswith('. /usr/local/bin/nettap-capture-env.sh && ' + rules + 'mkdir -p '), '${svc}: ' + cmd[:120]
 volumes = [str(v) for v in svc.get('volumes', [])]
 assert '/etc/nettap:/etc/nettap:ro' in volumes, '${svc}: /etc/nettap must be mounted read-only'
 assert '../config/capture/nettap-capture-env.sh:/usr/local/bin/nettap-capture-env.sh:ro' in volumes, '${svc}: loader not mounted'
@@ -842,9 +847,28 @@ print('pcap writer: OK')
 @test "compose: suricata-live disables the decoder rules that fire on normal switch traffic" {
     # STP/LLDP "Ethertype unknown" and "QUIC error on data" were two-thirds of all alerts (#57)
     section=$(sed -n "/^  suricata-live:/,/^  [^ ]/p" "$COMPOSE_FILE")
-    sids=$(echo "$section" | awk -F'"' '/SURICATA_DISABLE_SIDS:/ { print $2 }')
+    # OLD CODE START — NET-191 slice 2: the value is single-quoted now (it holds a regex with double quotes),
+    # and an OLD CODE comment line also names the variable
+    # sids=$(echo "$section" | awk -F'"' '/SURICATA_DISABLE_SIDS:/ { print $2 }')
+    # OLD CODE END
+    sids=$(echo "$section" | sed -nE "s/^ +SURICATA_DISABLE_SIDS: *['\"]?(.*[^'\"])['\"]?\$/\1/p")
     [[ ",$sids," == *",2200121,"* ]]
     [[ ",$sids," == *",2231001,"* ]]
+}
+
+@test "compose: suricata-live rule sources and the rules lock (NET-191 slice 2)" {
+    section=$(sed -n "/^  suricata-live:/,/^  [^ ]/p" "$COMPOSE_FILE")
+    # IPFire DBL: every category except Malware and Phishing is disabled, by every update (disable.conf)
+    sids=$(echo "$section" | sed -nE "s/^ +SURICATA_DISABLE_SIDS: *'(.*)'\$/\1/p")
+    [[ ",$sids," == *',re:msg:"IPFire DBL \[(?!Malware\]|Phishing\]),'* ]]
+    echo "$section" | grep -q '^ *SURICATA_UPDATE_ENABLE_SOURCES: "et/open,abuse.ch/sslbl-blacklist,echap/stalkerware,ipfire/dbl"$'
+    # upstream would turn it into --etopen, forcing ET Open beside ET Pro
+    [ "$(echo "$section" | grep -c '^ *SURICATA_UPDATE_ETOPEN:')" -eq 0 ]
+    echo "$section" | grep -q -- '- ../config/suricata/nettap-rules-update.sh:/usr/local/bin/nettap-rules-update.sh:ro$'
+    echo "$section" | grep -q -- '- nettap-rules-state:/run/nettap-rules$'
+    daemon=$(sed -n "/^  nettap-storage-daemon:/,/^  [^ ]/p" "$COMPOSE_FILE")
+    echo "$daemon" | grep -q -- '- nettap-rules-state:/var/run/nettap-rules$'
+    grep -q '^  nettap-rules-state:' "$COMPOSE_FILE"
 }
 
 @test "compose: suricata-live loads nettap.yaml as a Malcolm include that sets the device threshold file" {

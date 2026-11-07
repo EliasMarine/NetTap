@@ -157,3 +157,46 @@ EOF
         [[ "$output" == *"ROTATE=4096"* ]]
     done
 }
+
+# ---------------------------------------------------------------------------
+# ET Pro code (NET-191 slice 2): /etc/nettap/suricata.env turns et/open into et/pro
+# ---------------------------------------------------------------------------
+_run_sources() {  # $1 = SURICATA_UPDATE_ENABLE_SOURCES before the loader
+    run env -i PATH="$PATH" NETTAP_CAPTURE_ENV="${TEST_TMPDIR}/none.env" \
+        NETTAP_SURICATA_ENV="${TEST_TMPDIR}/suricata.env" SURICATA_UPDATE_ENABLE_SOURCES="$1" \
+        sh -c ". '${LOADER}' && echo \"SOURCES=\${SURICATA_UPDATE_ENABLE_SOURCES-unset}\""
+}
+
+@test "capture-env: a valid ET Pro code swaps et/open for et/pro, other sources kept in order" {
+    printf 'SURICATA_ETPRO_CODE=Abc123Def456Ghi789\n' > "${TEST_TMPDIR}/suricata.env"
+    _run_sources "et/open,abuse.ch/sslbl-blacklist,echap/stalkerware,ipfire/dbl"
+    [ "$status" -eq 0 ]
+    [ "$output" = "SOURCES=et/pro|secret-code=Abc123Def456Ghi789,abuse.ch/sslbl-blacklist,echap/stalkerware,ipfire/dbl" ]
+}
+
+@test "capture-env: no suricata.env leaves the sources unchanged" {
+    _run_sources "et/open,ipfire/dbl"
+    [ "$status" -eq 0 ]
+    [ "$output" = "SOURCES=et/open,ipfire/dbl" ]
+}
+
+@test "capture-env: an invalid ET Pro code is ignored and never echoed" {
+    for bad in 'short1234' 'Abc123Def456Ghi789;id' 'Abc123Def456Ghi789 x' '$(id)Abc123Def456Ghi' \
+        "$(printf 'A%.0s' $(seq 1 65))" 'Abc123Def456Ghi789|evil=1'; do
+        printf 'SURICATA_ETPRO_CODE=%s\n' "$bad" > "${TEST_TMPDIR}/suricata.env"
+        _run_sources "et/open,ipfire/dbl"
+        [ "$status" -eq 0 ]
+        [[ "$output" == *"SOURCES=et/open,ipfire/dbl"* ]]
+        [[ "$output" == *"ignoring an invalid SURICATA_ETPRO_CODE"* ]]
+        [[ "$output" != *"$bad"* ]]
+    done
+}
+
+@test "capture-env: containers without a source list (zeek, arkime, pcap) are not touched" {
+    printf 'SURICATA_ETPRO_CODE=Abc123Def456Ghi789\n' > "${TEST_TMPDIR}/suricata.env"
+    run env -i PATH="$PATH" NETTAP_CAPTURE_ENV="${TEST_TMPDIR}/none.env" \
+        NETTAP_SURICATA_ENV="${TEST_TMPDIR}/suricata.env" \
+        sh -c ". '${LOADER}' && echo \"SOURCES=\${SURICATA_UPDATE_ENABLE_SOURCES-unset}\""
+    [ "$status" -eq 0 ]
+    [ "$output" = "SOURCES=unset" ]
+}
