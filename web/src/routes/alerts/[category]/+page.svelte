@@ -69,19 +69,22 @@
 	// Constants
 	// ---------------------------------------------------------------------------
 
+	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. Live is the real-time page.
 	const TIME_RANGES = [
-		{ label: '15m', value: '15m', ms: 15 * 60 * 1000, words: 'last 15 minutes' },
+		// OLD CODE: { label: '15m', value: '15m', ms: 15 * 60 * 1000, words: 'last 15 minutes' }, (NET-192 PR 4)
 		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour' },
-		{ label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' },
+		// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' }, (NET-192 PR 4)
+		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, words: 'last 6 hours' },
 		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours' },
 		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days' },
 		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days' },
 	];
 
 	const INTERVAL_MAP: Record<string, string> = {
-		'15m': '1m',
+		// OLD CODE: '15m': '1m', (NET-192 PR 4)
 		'1h': '5m',
-		'4h': '15m',
+		// OLD CODE: '4h': '15m', (NET-192 PR 4)
+		'6h': '15m',
 		'24h': '1h',
 		'7d': '6h',
 		'30d': '12h',
@@ -264,7 +267,8 @@
 	// });
 	// OLD CODE END
 
-	const range = $derived(TIME_RANGES.find((r) => r.value === selectedRange) ?? TIME_RANGES[3]);
+	// OLD CODE: ?? TIME_RANGES[3]); (NET-192 PR 4: 15m and 4h dropped, 6h added: 24h is index 2)
+	const range = $derived(TIME_RANGES.find((r) => r.value === selectedRange) ?? TIME_RANGES[2]);
 	const buckets = $derived(
 		categoryData
 			? severityBuckets({ total: categoryData.stats.total, ...categoryData.severity_breakdown })
@@ -281,7 +285,8 @@
 
 	function getTimeRange(): { from: string; to: string } {
 		const now = Date.now();
-		const range = TIME_RANGES.find((r) => r.value === selectedRange) || TIME_RANGES[3];
+		// OLD CODE: || TIME_RANGES[3]; (NET-192 PR 4: 24h is index 2)
+		const range = TIME_RANGES.find((r) => r.value === selectedRange) || TIME_RANGES[2];
 		return {
 			from: new Date(now - range.ms).toISOString(),
 			to: new Date(now).toISOString(),

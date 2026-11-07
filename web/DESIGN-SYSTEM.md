@@ -106,7 +106,8 @@ Every chart has `role="img"` and an `aria-label` that states its headline, for e
 - **On Alerts the URL holds the list's filters** (`severity`, `signature`, `ip`, `src`, `dst`, `suricata_category`, `range`, `from`, `to`). Controls change only their own parameter. A severity tile and a Top signatures row open their counts' own window with no other filter, since those counts are unfiltered.
 - **A raw Suricata category links only where it is exact** (NET-160 slice 2b-2). `suricataCategoryHref(name)` opens `/alerts/suricata/<name>`, which filters on the stored `rule.category`. A shown category is a link only when the row's `rule_category` holds it (`linkedSuricataCategory`); otherwise it stays plain, as "Uncategorised" does. A "By category" heading links only when every alert under it carries its title, and its count of page rows stays plain. On the category page an Also tagged count is plain text: it counts the alerts carrying both categories, while that category's own page counts every alert carrying it.
 - **On Log Explorer the URL is a one-time hand-off** (`filter`, `ip`, `query`, `type`, `exclude_src`, `range`, `from`, `to`). Each hand-off replaces those filters; after it, every control, chip and "Clear all" changes local state only and never writes the URL.
-- **Every Home range exists on Alerts and Log Explorer** (1h, 6h, 24h, 7d, 30d), so a range link never falls back to 24 hours.
+<!-- OLD CODE: - **Every Home range exists on Alerts and Log Explorer** (1h, 6h, 24h, 7d, 30d), so a range link never falls back to 24 hours. (NET-192 PR 4: one set everywhere) -->
+- **One range set on every page with ranges: 1h, 6h, 24h, 7d, 30d** (Home's), so a range link never falls back to 24 hours. Live is the real-time page; there is no 15m or 4h, and an old `?range=15m` or `4h` link falls back like any unknown range.
 - **Outside look-ups run on click.** Reverse DNS and WHOIS about an address or name wait for a button: an automatic one tells whoever runs that server that we looked.
 
 ## Tables
@@ -128,7 +129,7 @@ From the system README: sentence case everywhere (titles, buttons, labels), UK s
 4. While the phone drawer is open the page doesn't scroll, and the drawer is one screen tall and scrolls inside itself.
 5. On phones a long pill group scrolls inside its track instead of pushing the page sideways.
 6. Severity count tiles share the row however many there are, and their counts shrink together to fit (the page sets `--sev-chars` on `.sev-counts`).
-7. On phones the head actions are capped at the page head's width, so a long range-pill group (seven on Alerts and Log Explorer) scrolls inside its track instead of scrolling the page sideways.
+7. On phones the head actions are capped at the page head's width, so a long range-pill group (six with Custom on Alerts and Log Explorer) scrolls inside its track instead of scrolling the page sideways.
 8. At 1100 px and below, the last half-width card of a run of one, three or five (like the side card of a c-8 hero row) takes the full row, instead of sitting alone on half a row.
 9. In a `col` card the donut stacks above its legend and grows into the card's free height.
 

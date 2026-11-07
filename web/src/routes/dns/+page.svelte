@@ -46,12 +46,15 @@
 	// Constants
 	// ---------------------------------------------------------------------------
 
+	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. Live is the real-time page.
 	const TIME_RANGES = [
-		{ label: '15m', value: '15m', ms: 15 * 60 * 1000, words: 'last 15 minutes' },
+		// OLD CODE: { label: '15m', value: '15m', ms: 15 * 60 * 1000, words: 'last 15 minutes' }, (NET-192 PR 4)
 		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour' },
-		{ label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' },
+		// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' }, (NET-192 PR 4)
+		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, words: 'last 6 hours' },
 		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours' },
 		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days' },
+		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days' },
 	];
 
 	// OLD CODE START — severity is now the system's SeverityPill (colour, shape and word)
@@ -68,11 +71,14 @@
 
 	/** The timeline's bucket per range, and how the chart names it. */
 	const INTERVALS: Record<string, { interval: string; words: string }> = {
-		'15m': { interval: '1m', words: 'minute' },
+		// OLD CODE: '15m': { interval: '1m', words: 'minute' }, (NET-192 PR 4)
 		'1h': { interval: '5m', words: '5 minutes' },
-		'4h': { interval: '10m', words: '10 minutes' },
+		// OLD CODE: '4h': { interval: '10m', words: '10 minutes' }, (NET-192 PR 4)
+		'6h': { interval: '10m', words: '10 minutes' },
 		'24h': { interval: '15m', words: '15 minutes' },
 		'7d': { interval: '1h', words: 'hour' },
+		// 120 buckets, near 7 d's 168; not yet timed on the G11 (NET-192 PR 4)
+		'30d': { interval: '6h', words: '6 hours' },
 	};
 
 	const RETRY_HINT = 'Check that NetTap is running on the System page, then try again.';

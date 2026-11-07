@@ -150,11 +150,13 @@
 	let autoRefresh = $state(false);
 
 	// #87: the range pills had no handlers, so every request used the daemon's 24 h default
-	const RANGE_HOURS = { '24h': 24, '7d': 168, '30d': 720 } as const;
+	// OLD CODE: const RANGE_HOURS = { '24h': 24, '7d': 168, '30d': 720 } as const; (NET-192 PR 4: Home's five ranges)
+	const RANGE_HOURS = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 } as const;
 	type RangeKey = keyof typeof RANGE_HOURS;
 	const RANGE_KEYS = Object.keys(RANGE_HOURS) as RangeKey[];
 	const RANGE_OPTIONS = RANGE_KEYS.map((key) => ({ value: key, label: key }));
-	const RANGE_LABEL: Record<RangeKey, string> = { '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' };
+	// OLD CODE: const RANGE_LABEL: Record<RangeKey, string> = { '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' }; (NET-192 PR 4)
+	const RANGE_LABEL: Record<RangeKey, string> = { '1h': 'Last hour', '6h': 'Last 6 hours', '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' };
 	let range = $state<RangeKey>('24h');
 	// The window of the last fetch; connection pages reuse it so paging doesn't slide in time
 	let span = $state<{ from: string; to: string }>({ from: '', to: '' });

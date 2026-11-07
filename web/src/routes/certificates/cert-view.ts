@@ -15,7 +15,8 @@ export type Names = ReadonlyMap<string, string>;
 // OLD CODE START — NET-160: a drill-down link carries its own window ("Custom")
 // export type RangeValue = '24h' | '7d' | '30d';
 // OLD CODE END
-export type RangeValue = '24h' | '7d' | '30d' | 'custom';
+// OLD CODE: export type RangeValue = '24h' | '7d' | '30d' | 'custom'; (NET-192 PR 4: Home's five ranges)
+export type RangeValue = '1h' | '6h' | '24h' | '7d' | '30d' | 'custom';
 
 export interface RangeOption {
 	value: RangeValue;
@@ -24,7 +25,10 @@ export interface RangeOption {
 	words: string;
 }
 
+/** One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. */
 export const RANGES: readonly RangeOption[] = [
+	{ value: '1h', label: '1h', hours: 1, words: 'last hour' },
+	{ value: '6h', label: '6h', hours: 6, words: 'last 6 hours' },
 	{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours' },
 	{ value: '7d', label: '7d', hours: 168, words: 'last 7 days' },
 	{ value: '30d', label: '30d', hours: 720, words: 'last 30 days' },

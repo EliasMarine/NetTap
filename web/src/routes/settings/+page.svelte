@@ -276,7 +276,8 @@
 				const parsed = JSON.parse(stored);
 				autoRefresh = parsed.autoRefresh ?? '30';
 				timezone = parsed.timezone ?? 'local';
-				defaultTimeRange = parsed.defaultTimeRange ?? '1h';
+				// OLD CODE: defaultTimeRange = parsed.defaultTimeRange ?? '1h'; (NET-192 PR 4: a saved 15m or 4h is no longer offered)
+				defaultTimeRange = ['1h', '6h', '24h', '7d', '30d'].includes(parsed.defaultTimeRange) ? parsed.defaultTimeRange : '1h';
 			}
 		} catch {
 			// Will use defaults
@@ -1496,11 +1497,18 @@
 					<div class="field">
 						<label class="label" for="default-range">Default time range</label>
 						<select class="select" id="default-range" bind:value={defaultTimeRange}>
+							<!-- OLD CODE START — NET-192 PR 4: one range set across the app (1h 6h 24h 7d 30d)
 							<option value="15m">Last 15 minutes</option>
 							<option value="1h">Last 1 hour</option>
 							<option value="4h">Last 4 hours</option>
 							<option value="24h">Last 24 hours</option>
 							<option value="7d">Last 7 days</option>
+							OLD CODE END -->
+							<option value="1h">Last hour</option>
+							<option value="6h">Last 6 hours</option>
+							<option value="24h">Last 24 hours</option>
+							<option value="7d">Last 7 days</option>
+							<option value="30d">Last 30 days</option>
 						</select>
 						<p class="field-help">Default time window for traffic and alert views.</p>
 					</div>

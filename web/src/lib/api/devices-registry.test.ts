@@ -227,6 +227,17 @@ describe('devices-registry API client', () => {
 			await expect(getDeviceTraffic('AA:BB:CC:DD:EE:FF')).rejects.toThrow('HTTP 500');
 		});
 
+		it('asks for the window it is given, and for none without one', async () => {
+			mockFetchSuccess({ from: '', to: '', traffic: null });
+			await getDeviceTraffic('AA:BB', { from: '2026-11-06T00:00:00.000Z', to: '2026-11-07T00:00:00.000Z' });
+			await getDeviceTraffic('AA:BB');
+			const urls = vi.mocked(fetch).mock.calls.map((c) => String(c[0]));
+			expect(urls).toEqual([
+				'/api/devices/registry/AA%3ABB/traffic?from=2026-11-06T00%3A00%3A00.000Z&to=2026-11-07T00%3A00%3A00.000Z',
+				'/api/devices/registry/AA%3ABB/traffic',
+			]);
+		});
+
 		it('rejects on network error', async () => {
 			mockFetchReject();
 			await expect(getDeviceTraffic('AA:BB:CC:DD:EE:FF')).rejects.toThrow();

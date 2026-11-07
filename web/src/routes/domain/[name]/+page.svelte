@@ -41,7 +41,8 @@
 	const name = $derived(canonicalName(($page.params as Record<string, string>).name ?? ''));
 
 	let rangeValue = $state<DrillRangeValue>('24h');
-	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES[0]);
+	// OLD CODE: ?? DRILL_RANGES[0]); (NET-192 PR 4: 1h and 6h added, 24h is index 2)
+	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES[2]);
 	let span = $state<{ from: string; to: string }>({ from: '', to: '' });
 	// OLD CODE: let loaded = $state<{ data: DomainSummary; range: DrillRange } | null>(null); (slice 2a: the figures keep their window)
 	/** The figures on screen, with the range and exact window they were counted over (their links carry it). */

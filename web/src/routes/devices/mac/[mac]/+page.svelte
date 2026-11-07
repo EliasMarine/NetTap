@@ -27,8 +27,9 @@
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import DeviceTile from '$lib/components/ui/DeviceTile.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import Pills from '$lib/components/ui/Pills.svelte';
 	import { domainHref } from '$lib/stores/lan';
-	import { alertsHrefForSignature, chartTime as timeLabel, fmt } from '$lib/utils/drilldown';
+	import { alertsHrefForSignature, chartTime as timeLabel, DRILL_RANGES, fmt, rangeWindow, type DrillRangeValue } from '$lib/utils/drilldown';
 	import { formatTime } from '$lib/utils/time';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 
@@ -46,6 +47,13 @@
 	let trafficFailed = $state(false);
 
 	let mac = $derived($page.params.mac);
+
+	// NET-192 PR 4: the same range pills as devices/[ip] (it read only the daemon's default 24 hours)
+	let rangeValue = $state<DrillRangeValue>('24h');
+	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES[2]);
+	const RANGE_OPTIONS = DRILL_RANGES.map((r) => ({ value: r.value, label: r.label }));
+	/** The device and range the traffic on screen was read for; another one must not show it. */
+	let trafficView = '';
 
 	// OLD CODE START — 2026-11-03 UI redesign: the loader goes through the page refresh contract
 	// (PLAN.md §5.5) with a load guard; the requests are unchanged
@@ -71,10 +79,14 @@
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
 		const m = mac;
+		const r = range;
 		if (!m) return 'skipped';
+		const view = `${m}|${r.value}`;
+		if (view !== trafficView) traffic = null;
 		loading = true;
 		error = false;
-		const results = await Promise.allSettled([getRegistryDevice(m), getDeviceTraffic(m)]);
+		// OLD CODE: const results = await Promise.allSettled([getRegistryDevice(m), getDeviceTraffic(m)]); (NET-192 PR 4: the range's window)
+		const results = await Promise.allSettled([getRegistryDevice(m), getDeviceTraffic(m, rangeWindow(r.hours))]);
 		if (!guard.current(g)) return 'skipped';
 		const [d, t] = results;
 		// OLD CODE START — #96: any failure read as "Device not found"
@@ -84,7 +96,11 @@
 		// OLD CODE END
 		// getRegistryDevice resolves null only for a real 404; a failed refresh keeps the last data
 		if (d.status === 'fulfilled') device = d.value;
-		if (t.status === 'fulfilled') traffic = t.value;
+		// OLD CODE: if (t.status === 'fulfilled') traffic = t.value; (NET-192 PR 4: remember which range it is)
+		if (t.status === 'fulfilled') {
+			traffic = t.value;
+			trafficView = view;
+		}
 		deviceFailed = d.status === 'rejected';
 		trafficFailed = t.status === 'rejected';
 		if (d.status === 'fulfilled' && !device) error = true;
@@ -96,6 +112,7 @@
 	onDestroy(() => refresh.unregister());
 	$effect(() => {
 		void mac; // reload for another device
+		void rangeValue; // or another range
 		untrack(() => refresh.run());
 	});
 
@@ -159,7 +176,7 @@
 	const series = $derived(traffic?.bandwidth_series ?? []);
 	const busiest = $derived(series.reduce((best, p, i) => (p.bytes > (series[best]?.bytes ?? -1) ? i : best), -1));
 	// OLD CODE: const chartTime = (t: number | string) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); (NET-192 PR 4: the browser's locale printed "07:00 PM")
-	const chartTime = (t: number | string) => timeLabel(t, 24);
+	const chartTime = (t: number | string) => timeLabel(t, range.hours);
 	const alertRows = $derived((traffic?.alerts ?? []).slice(0, 20).map((a, i): TrafficAlert => ({ ...a, key: `${a.timestamp}-${i}` })));
 	const totalParts = $derived(traffic ? formatBytes(traffic.total_bytes).split(' ') : null);
 
@@ -213,6 +230,9 @@
 				</div>
 			{/if}
 		</div>
+		<div class="head-actions">
+			<Pills ariaLabel="Time range" options={RANGE_OPTIONS} bind:value={rangeValue} />
+		</div>
 	</div>
 	{#if device}
 		<dl class="ident-meta">
@@ -248,21 +268,21 @@
 				: traffic
 					? `${formatBytesShort(traffic.inbound_bytes)} in / ${formatBytesShort(traffic.outbound_bytes)} out`
 					: 'No traffic recorded'}
-			note="Last 24 hours"
+			note={range.words}
 		/>
 		<KpiCard
 			class="c-6"
 			label="Connections"
 			icon="connections"
 			value={traffic ? fmt(traffic.connection_count) : '—'}
-			note="Last 24 hours"
+			note={range.words}
 		/>
 		<!-- NET-158: the daemon matches the MAC or any of the device's addresses over the whole range -->
 		<p class="c-12 dim">Traffic matching its MAC or any address it has used; another device may have used one since.</p>
 
 		<!-- the daemon doesn't send a bandwidth series yet; the card shows once it does -->
 		{#if traffic?.bandwidth_series}
-			<Card class="c-12" hero title="Bandwidth over time" sub="Bytes per interval · last 24 hours">
+			<Card class="c-12" hero title="Bandwidth over time" sub="Bytes per interval · {range.words}">
 				{#if busiest >= 0}
 					<AreaChart
 						bytes
@@ -274,12 +294,12 @@
 						ariaLabel="Busiest at {chartTime(series[busiest].timestamp)}, with {formatBytes(series[busiest].bytes)}"
 					/>
 				{:else}
-					<CardState state="empty" icon="bandwidth" title="No traffic in the last 24 hours" />
+					<CardState state="empty" icon="bandwidth" title="No traffic in the {range.words}" />
 				{/if}
 			</Card>
 		{/if}
 
-		<Card class="c-6" title="Top destinations" sub="By bytes · last 24 hours">
+		<Card class="c-6" title="Top destinations" sub="By bytes · {range.words}">
 			{#if traffic?.top_destinations?.length}
 				<DataTable
 					ariaLabel="Top destinations"
@@ -291,11 +311,11 @@
 			{:else if trafficFailed && !traffic}
 				<CardState state="error" title={loadFailed('traffic')} onaction={() => refresh.run()} />
 			{:else}
-				<CardState state="empty" icon="connections" title="No destinations in the last 24 hours" />
+				<CardState state="empty" icon="connections" title="No destinations in the {range.words}" />
 			{/if}
 		</Card>
 
-		<Card class="c-6" title="Protocols" sub="Connections by protocol · last 24 hours">
+		<Card class="c-6" title="Protocols" sub="Connections by protocol · {range.words}">
 			{#if traffic?.top_protocols?.length}
 				<BarList
 					items={traffic.top_protocols.map((p, i) => ({
@@ -308,23 +328,23 @@
 			{:else if trafficFailed && !traffic}
 				<CardState state="error" title={loadFailed('traffic')} onaction={() => refresh.run()} />
 			{:else}
-				<CardState state="empty" icon="connections" title="No protocols in the last 24 hours" />
+				<CardState state="empty" icon="connections" title="No protocols in the {range.words}" />
 			{/if}
 		</Card>
 
 		<!-- the daemon doesn't send DNS queries or alerts yet; their cards show once it does -->
 		{#if traffic?.dns_queries}
-			<Card class="c-6" title="DNS queries" sub="Lookups by domain · last 24 hours">
+			<Card class="c-6" title="DNS queries" sub="Lookups by domain · {range.words}">
 				{#if traffic.dns_queries.length}
 					<DataTable ariaLabel="DNS queries" rows={traffic.dns_queries.slice(0, 15)} rowKey={(q) => q.domain} initialSort={{ key: 'count', dir: 'desc' }} columns={dnsColumns} />
 				{:else}
-					<CardState state="empty" icon="dns" title="No DNS queries in the last 24 hours" />
+					<CardState state="empty" icon="dns" title="No DNS queries in the {range.words}" />
 				{/if}
 			</Card>
 		{/if}
 
 		{#if traffic?.alerts}
-			<Card class="c-12" title="Alerts" sub="{traffic.alerts.length} alert{traffic.alerts.length !== 1 ? 's' : ''} · last 24 hours">
+			<Card class="c-12" title="Alerts" sub="{traffic.alerts.length} alert{traffic.alerts.length !== 1 ? 's' : ''} · {range.words}">
 				{#if traffic.alerts.length}
 					<DataTable
 						ariaLabel="Alerts"
@@ -333,7 +353,7 @@
 						columns={alertColumns}
 					/>
 				{:else}
-					<CardState state="empty" icon="alerts" title="No alerts in the last 24 hours" />
+					<CardState state="empty" icon="alerts" title="No alerts in the {range.words}" />
 				{/if}
 			</Card>
 		{/if}
@@ -342,7 +362,7 @@
 
 <style>
 	/* Layout glue the system lacks */
-	.ident { grid-template-columns: auto minmax(0, 1fr); }
+	/* OLD CODE: .ident { grid-template-columns: auto minmax(0, 1fr); } (NET-192 PR 4: the range pills take the system's third column) */
 	.ident-meta > div { min-width: 0; }
 	.ident-meta dd { margin: 0; }
 </style>

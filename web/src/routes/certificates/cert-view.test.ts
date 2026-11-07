@@ -176,7 +176,7 @@ describe('site status', () => {
 
 describe('window notices', () => {
 	const at = new Date(2026, 10, 5, 10, 2);
-	const [day, week, month] = RANGES;
+	const [, , day, week, month] = RANGES;
 
 	it('names both windows when a different window failed, so the figures are never misread', () => {
 		expect(staleNotice(month, day, at, 'It took too long.')).toBe(

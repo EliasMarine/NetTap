@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { readable, get } from 'svelte/store';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
@@ -208,5 +208,23 @@ describe('Device by MAC page — page refresh contract', () => {
 		vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
 		render(Page);
 		expect(screen.getByRole('status')).toHaveTextContent('Loading device details');
+	});
+	// NET-192 PR 4: the same range pills as devices/[ip]; it read only the daemon's default 24 hours
+	it('reads the traffic over the range picked, and says which', async () => {
+		stub();
+		render(Page);
+		await screen.findByText('2.0MB in / 1.0MB out');
+		const traffic = () => vi.mocked(fetch).mock.calls.map((c) => String(c[0])).filter((u) => u.includes('/traffic?'));
+		const hours = (u: string) => {
+			const q = new URL(u, 'http://x').searchParams;
+			return (Date.parse(q.get('to')!) - Date.parse(q.get('from')!)) / 3_600_000;
+		};
+		expect(traffic().map(hours)).toEqual([24]);
+		expect(screen.getByRole('button', { name: '24h' })).toHaveAttribute('aria-pressed', 'true');
+		expect(screen.getByRole('group', { name: 'Time range' })).toHaveTextContent(/1h\s*6h\s*24h\s*7d\s*30d/);
+
+		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
+		await vi.waitFor(() => expect(traffic().map(hours)).toEqual([24, 168]));
+		expect(await screen.findByText('By bytes · last 7 days')).toBeInTheDocument();
 	});
 });

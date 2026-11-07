@@ -73,16 +73,21 @@
 		text: string;
 	}
 
+	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. Live is the real-time page.
 	const TIME_RANGES: TimeRange[] = [
-		{ label: '15m', value: '15m', ms: 15 * 60 * 1000, text: 'Last 15 minutes' },
+		// OLD CODE: { label: '15m', value: '15m', ms: 15 * 60 * 1000, text: 'Last 15 minutes' }, (NET-192 PR 4)
 		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, text: 'Last hour' },
-		{ label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, text: 'Last 4 hours' },
+		// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, text: 'Last 4 hours' }, (NET-192 PR 4)
+		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, text: 'Last 6 hours' },
 		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, text: 'Last 24 hours' },
 		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, text: 'Last 7 days' },
+		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, text: 'Last 30 days' },
 	];
 
+	// OLD CODE: '15m': '1m', '1h': '5m', '4h': '15m', '24h': '1h', '7d': '6h', (NET-192 PR 4)
+	// 30d: 30 day buckets, near 7 d's 28; not yet timed on the G11 (NET-192 PR 4)
 	const INTERVAL_MAP: Record<string, string> = {
-		'15m': '1m', '1h': '5m', '4h': '15m', '24h': '1h', '7d': '6h',
+		'1h': '5m', '6h': '15m', '24h': '1h', '7d': '6h', '30d': '1d',
 	};
 
 	const STATE_FILTERS: { value: StateFilter; label: string }[] = [
@@ -118,7 +123,8 @@
 	let loading = $state(false);
 
 	// Time range
-	let selectedTimeRange = $state<TimeRange>(TIME_RANGES[1]); // 1h
+	// OLD CODE: let selectedTimeRange = $state<TimeRange>(TIME_RANGES[1]); // 1h (NET-192 PR 4: 1h is index 0)
+	let selectedTimeRange = $state<TimeRange>(TIME_RANGES[0]); // 1h
 	let autoRefresh = $state(false);
 	let refreshInterval = $state<ReturnType<typeof setInterval> | null>(null);
 

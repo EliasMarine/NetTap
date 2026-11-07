@@ -83,7 +83,8 @@
 
 	type LogType = 'all' | 'zeek.conn' | 'zeek.dns' | 'zeek.http' | 'zeek.tls' | 'zeek.files' | 'zeek.dhcp' | 'zeek.smtp' | 'suricata';
 	// OLD CODE: type TimeRange = '15m' | '1h' | '4h' | '24h' | '7d' | '30d'; (slice 2b-1: 6h, as Home has)
-	type TimeRange = '15m' | '1h' | '4h' | '6h' | '24h' | '7d' | '30d';
+	// OLD CODE: type TimeRange = '15m' | '1h' | '4h' | '6h' | '24h' | '7d' | '30d'; (NET-192 PR 4: Home's five)
+	type TimeRange = '1h' | '6h' | '24h' | '7d' | '30d';
 
 	/** A table row: each column's display text by field, plus the hit the drawer opens. */
 	type LogRow = { _id: string; hit: LogHit } & Record<string, unknown>;
@@ -124,10 +125,11 @@
 		suricata: 'Suricata',
 	};
 
+	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. Live is the real-time page.
 	const TIME_RANGES: { value: TimeRange; label: string; ms: number; words: string }[] = [
-		{ value: '15m', label: '15m', ms: 15 * 60_000, words: 'last 15 minutes' },
+		// OLD CODE: { value: '15m', label: '15m', ms: 15 * 60_000, words: 'last 15 minutes' }, (NET-192 PR 4)
 		{ value: '1h', label: '1h', ms: 60 * 60_000, words: 'last hour' },
-		{ value: '4h', label: '4h', ms: 4 * 60 * 60_000, words: 'last 4 hours' },
+		// OLD CODE: { value: '4h', label: '4h', ms: 4 * 60 * 60_000, words: 'last 4 hours' }, (NET-192 PR 4)
 		{ value: '6h', label: '6h', ms: 6 * 60 * 60_000, words: 'last 6 hours' },
 		{ value: '24h', label: '24h', ms: 24 * 60 * 60_000, words: 'last 24 hours' },
 		{ value: '7d', label: '7d', ms: 7 * 24 * 60 * 60_000, words: 'last 7 days' },
@@ -135,9 +137,9 @@
 	];
 
 	const INTERVAL_MAP: Record<string, string> = {
-		'15m': '1m',
+		// OLD CODE: '15m': '1m', (NET-192 PR 4)
 		'1h': '5m',
-		'4h': '15m',
+		// OLD CODE: '4h': '15m', (NET-192 PR 4)
 		'6h': '15m',
 		'24h': '1h',
 		'7d': '6h',
@@ -324,7 +326,8 @@
 		if (rangeValue === 'custom' && custom) return { from: custom.from, to: custom.to };
 		const now = Date.now();
 		// OLD CODE: || TIME_RANGES[3]; (slice 2b-1: 6h moved 24h to index 4)
-		const range = TIME_RANGES.find((r) => r.value === rangeValue) || TIME_RANGES[4];
+		// OLD CODE: || TIME_RANGES[4]; (NET-192 PR 4: 15m and 4h dropped, 24h is index 2)
+		const range = TIME_RANGES.find((r) => r.value === rangeValue) || TIME_RANGES[2];
 		return {
 			from: new Date(now - range.ms).toISOString(),
 			to: new Date(now).toISOString(),

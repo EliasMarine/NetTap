@@ -6,18 +6,22 @@ import type { ByteTotal } from '$lib/api/drilldown';
 import type { SmartAlertKey } from '$lib/api/alerts';
 import { formatBytes } from '$lib/api/logs';
 
-export type DrillRangeValue = '24h' | '7d' | '30d';
+// OLD CODE: export type DrillRangeValue = '24h' | '7d' | '30d'; (NET-192 PR 4: Home's five ranges)
+export type DrillRangeValue = '1h' | '6h' | '24h' | '7d' | '30d';
 
 export interface DrillRange {
 	value: DrillRangeValue;
 	label: string;
 	hours: number;
 	words: string;
-	/** The timeline's bucket, as the daemon picks it for this window (up to 24 h: 1 h; 7 d: 6 h; longer: 1 day). */
+	/** The timeline's bucket, as the daemon picks it for this window (up to 6 h: 10 min; 24 h: 1 h; 7 d: 6 h; longer: 1 day). */
 	interval: string;
 }
 
+/** One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. */
 export const DRILL_RANGES: readonly DrillRange[] = [
+	{ value: '1h', label: '1h', hours: 1, words: 'last hour', interval: '10 minutes' },
+	{ value: '6h', label: '6h', hours: 6, words: 'last 6 hours', interval: '10 minutes' },
 	{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours', interval: 'hour' },
 	{ value: '7d', label: '7d', hours: 168, words: 'last 7 days', interval: '6 hours' },
 	{ value: '30d', label: '30d', hours: 720, words: 'last 30 days', interval: 'day' },

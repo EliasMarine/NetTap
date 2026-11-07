@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
-import { getConnections, getConnectionStats, getConnectionSankey } from '$api/traffic';
+import { getConnections, getConnectionStats, getConnectionSankey, getConnectionTimeline } from '$api/traffic';
 import { getLiveDashboard } from '$api/live';
 import Page from './+page.svelte';
 
@@ -373,5 +373,26 @@ describe('Connections — labels say what the figures count', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Unknown' }));
 		await flush();
 		expect(getConnections).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'NOT _exists_:destination.as.full' }));
+	});
+});
+
+// NET-192 PR 4: Home's five ranges; 15m and 4h are gone, 30d reads day buckets (near 7 d's 28)
+describe('Connections — the range set', () => {
+	beforeEach(() => {
+		vi.mocked(getConnections).mockImplementation(async (opts = {}) => connectionsPage(opts.page ?? 1));
+		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard(1));
+	});
+	afterEach(() => vi.clearAllMocks());
+
+	it('offers 1h 6h 24h 7d 30d, and asks for the timeline in 1-day buckets at 30d', async () => {
+		render(Page);
+		await flush();
+		const pills = within(screen.getByRole('group', { name: 'Time range' })).getAllByRole('button');
+		expect(pills.map((b) => b.textContent?.trim())).toEqual(['1h', '6h', '24h', '7d', '30d']);
+		await fireEvent.click(screen.getByRole('button', { name: '30d' }));
+		await flush();
+		const asked = vi.mocked(getConnectionTimeline).mock.lastCall![0]!;
+		expect(asked.interval).toBe('1d');
+		expect((Date.parse(asked.to!) - Date.parse(asked.from!)) / 86_400_000).toBeCloseTo(30);
 	});
 });

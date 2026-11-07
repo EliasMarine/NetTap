@@ -43,9 +43,11 @@
 	// Constants
 	// ---------------------------------------------------------------------------
 
+	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home
 	const TIME_RANGES = [
 		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour', bucket: '5 minutes' },
-		{ label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours', bucket: '20 minutes' },
+		// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours', bucket: '20 minutes' }, (NET-192 PR 4)
+		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, words: 'last 6 hours', bucket: '30 minutes' },
 		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours', bucket: 'hour' },
 		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days', bucket: '6 hours' },
 		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days', bucket: 'day' },
@@ -160,7 +162,8 @@
 		if (!fileList.length) return [];
 		const now = Date.now();
 		const rangeMs = TIME_RANGES.find((r) => r.value === range)?.ms ?? 86400000;
-		const bucketMs = range === '1h' ? 5 * 60000 : range === '4h' ? 20 * 60000 : range === '24h' ? 3600000 : range === '7d' ? 6 * 3600000 : 86400000;
+		// OLD CODE: const bucketMs = range === '1h' ? 5 * 60000 : range === '4h' ? 20 * 60000 : … (NET-192 PR 4: 6h, not 4h)
+		const bucketMs = range === '1h' ? 5 * 60000 : range === '6h' ? 30 * 60000 : range === '24h' ? 3600000 : range === '7d' ? 6 * 3600000 : 86400000;
 		const bucketCount = Math.ceil(rangeMs / bucketMs);
 		const startMs = now - rangeMs;
 		const buckets: TimelineBucket[] = Array.from({ length: bucketCount }, (_, i) => ({
