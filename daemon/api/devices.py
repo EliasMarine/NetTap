@@ -547,7 +547,9 @@ async def handle_device_list(request: web.Request) -> web.Response:
     # if excluded:
     #     bool_query["must_not"] = excluded
     # OLD CODE END
-    bool_query = _device_bool_query(request, from_ts, to_ts)
+    # OLD CODE START — slice 2b-3 review: _lan_device_buckets builds this query itself now
+    # bool_query = _device_bool_query(request, from_ts, to_ts)
+    # OLD CODE END
 
     # No DHCP pre-filter — DHCP data may not be available (NetTap captures
     # between modem and router, DHCP happens on the LAN side). Instead, use
@@ -573,29 +575,21 @@ async def handle_device_list(request: web.Request) -> web.Response:
     # }
     # OLD CODE END
     # Per device: the same sums and bounds the terms list carried
-    query = {
-        "size": 0,
-        "query": {"bool": bool_query},
-        "aggs": {
-            "devices": {
-                "aggs": {
-                    "total_bytes": {
-                        "sum": {
-                            "script": {
-                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
-                                "lang": "painless",
-                            }
-                        }
-                    },
-                    # Same split as handle_device_detail: sent (orig) vs received (resp)
-                    "orig_bytes": {"sum": {"field": "source.bytes"}},
-                    "resp_bytes": {"sum": {"field": "destination.bytes"}},
-                    "protocols": {"terms": {"field": "network.transport", "size": 10}},
-                    "first_seen": {"min": {"field": "@timestamp"}},
-                    "last_seen": {"max": {"field": "@timestamp"}},
-                },
+    device_aggs = {
+        "total_bytes": {
+            "sum": {
+                "script": {
+                    "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
+                    "lang": "painless",
+                }
             }
         },
+        # Same split as handle_device_detail: sent (orig) vs received (resp)
+        "orig_bytes": {"sum": {"field": "source.bytes"}},
+        "resp_bytes": {"sum": {"field": "destination.bytes"}},
+        "protocols": {"terms": {"field": "network.transport", "size": 10}},
+        "first_seen": {"min": {"field": "@timestamp"}},
+        "last_seen": {"max": {"field": "@timestamp"}},
     }
 
     try:
@@ -624,7 +618,7 @@ async def handle_device_list(request: web.Request) -> web.Response:
             request.app,
             from_ts,
             to_ts,
-            aggs=query["aggs"]["devices"]["aggs"],
+            aggs=device_aggs,
             what="device list",
         )
     except QueryFailed as exc:

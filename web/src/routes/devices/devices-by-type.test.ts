@@ -8,6 +8,11 @@ import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 // mirror-mode condition and the failure messages Home used.
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+// NET-160 slice 2b-3: the page reads its window from the URL; these tests use the default (24 hours)
+vi.mock('$app/stores', async () => {
+	const { readable } = await import('svelte/store');
+	return { page: readable({ url: new URL('http://localhost/devices') }) };
+});
 
 /** Replies by path; any path not listed answers 503. Returns the fetch mock. */
 function stubDaemon(replies: Record<string, unknown>): ReturnType<typeof vi.fn> {
@@ -44,7 +49,7 @@ function stubHomeDaemon(): void {
 			],
 		},
 		'/api/devices': {
-			from: FROM, to: '2026-11-02T22:00:00Z', limit: 500,
+			from: FROM, to: '2026-11-02T22:00:00Z', limit: 500, total: 2,
 			devices: [
 				// decimal units (NET-166): the two IPs' 2,000,000 bytes read 2.0 MB (1.9 MB in 1024-based units)
 				{ ip: '192.168.1.1', total_bytes: 1_000_000, connection_count: 1200, last_seen: '2026-11-02T21:50:00Z' },
@@ -70,6 +75,31 @@ function stat(device: string, label: string): string | undefined {
 
 describe('Devices By type — device cards carry the range traffic', () => {
 	afterEach(() => vi.unstubAllGlobals());
+
+	// slice 2b-3 review: completeness came from `length < 500`, so exactly 500 devices read as cut off
+	it('reads a quiet device as 0 B when the list holds all of exactly 500 devices', async () => {
+		stubDaemon({
+			'/api/capture/mode': { mode: 'mirror', interface: 'enp4s0' },
+			'/api/devices/registry': {
+				devices: [
+					{ mac: 'AA:00:00:00:00:01', ips: ['192.168.9.9'], hostnames: [], manufacturer: null,
+					  friendly_name: null, display_name: 'Old printer', category: 'infrastructure', first_seen: '2026-10-01T00:00:00Z',
+					  last_seen: '2026-11-01T10:00:00+00:00', is_new: false },
+				],
+				total: 1,
+			},
+			'/api/devices': {
+				from: FROM, to: '2026-11-02T22:00:00Z', limit: 500, total: 500,
+				devices: Array.from({ length: 500 }, (_, i) => ({
+					ip: `10.0.${Math.floor(i / 250)}.${(i % 250) + 1}`, total_bytes: 100, connection_count: 3, last_seen: '2026-11-02T21:00:00Z',
+					mac: null, hostname: null, manufacturer: null, os_hint: null, first_seen: FROM, protocols: [], alert_count: 0,
+				})),
+			},
+		});
+		render(Page);
+		await within(await screen.findByRole('tabpanel', { name: 'By type' })).findByText('Old printer');
+		await vi.waitFor(() => expect(stat('Old printer', 'Traffic')).toBe('0 B'));
+	});
 
 	it("sums a device's IPs from the device list, and a device quiet all range reads 0 B", async () => {
 		stubHomeDaemon();
@@ -104,7 +134,7 @@ describe('Devices By type — what a card counts', () => {
 				total: 2,
 			},
 			'/api/devices': {
-				from: FROM, to: '', limit: 500,
+				from: FROM, to: '', limit: 500, total: 3,
 				devices: [
 					{ ip: '192.168.1.1', total_bytes: 1000, connection_count: 10, last_seen: hourAgo },
 					{ ip: '10.10.0.1', total_bytes: 1000, connection_count: 5, last_seen: hourAgo },
@@ -308,7 +338,7 @@ describe('Devices By type — cards line up, and a List layout with the same fig
 			],
 		},
 		'/api/devices': {
-			from: LAYOUT_FROM, to: '', limit: 500,
+			from: LAYOUT_FROM, to: '', limit: 500, total: 4,
 			devices: [
 				listRow('192.168.1.12', 1024 * 1024, 10, ago(120 * MINUTE)),
 				listRow('192.168.1.11', 1024, 600, ago(45 * MINUTE)),

@@ -6,12 +6,21 @@
 	 *   with each card's traffic from the device list, grouped by device type. Mirror mode only,
 	 *   as on Home.
 	 * - All devices: the IP-keyed device list as a sortable table, with type filter and search.
+	 *
+	 * NET-160 slice 2b-3: the page reads its window from the URL (`range`, or an exact `from`/`to`
+	 * shown as Custom), so Home's Devices card opens the devices it counted. One list reply answers
+	 * the table, Total devices and Online now.
 	 */
 
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
+	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { getDevices, getDeviceCount } from '$api/devices';
+	// OLD CODE START — NET-160 slice 2b-3: Total devices and Online now came from separate count requests
+	// import { getDevices, getDeviceCount } from '$api/devices';
+	// OLD CODE END
+	import { getDevices } from '$api/devices';
 	import type { Device } from '$api/devices';
+	import { customRange, rangeWindow } from '$lib/utils/drilldown';
 	import { getNewDeviceCount, getRegistryDevices, isNewDevice } from '$api/devices-registry';
 	import type { RegistryDevice, RegistryListResponse } from '$api/devices-registry';
 	import { getCaptureMode } from '$api/capture';
@@ -38,23 +47,70 @@
 	// ---------------------------------------------------------------------------
 
 	let loading = $state(true);
-	let devices = $state<Device[]>([]);
+	// OLD CODE START — NET-160 slice 2b-3: the list, its total and the online count were separate
+	// states from separate requests, so a list and a total from different readings could show together
+	// let devices = $state<Device[]>([]);
+	// // the list's range start, once it has loaded (Home's deviceListFrom, for the card merge)
+	// let listFrom = $state<string | null>(null);
+	// // the list stops at LIST_LIMIT rows; Total Devices is the exact count, '—' until one loads
+	// let deviceCount = $state<number | null>(null);
+	// let deviceCountFailed = $state(false);
+	// // exact counts, not filters of the busiest-N list: '—' until loaded, a note if they fail
+	// let onlineCount = $state<number | null>(null);
+	// let onlineFailed = $state(false);
+	// OLD CODE END
+	/**
+	 * One reading of the device list: its rows, the devices before the cut, the online count and
+	 * the daemon clock it was counted by, with the window it answers and that window's words.
+	 * Replaced whole on success; a failed refresh of the same window keeps it; a window change clears it.
+	 */
+	interface Reading {
+		devices: Device[];
+		total: number;
+		online_total: number;
+		online_since: string;
+		as_of: string;
+		from: string;
+		to: string;
+		words: string;
+	}
+	let loaded = $state.raw<Reading | null>(null);
+	/** The window of the reading on screen (not reactive: only the loader reads it) */
+	let loadedWindow = '';
+	const devices = $derived(loaded?.devices ?? []);
+	// the list stops at LIST_LIMIT rows; Total devices is the reading's total, '—' until one loads
+	const deviceCount = $derived(loaded?.total ?? null);
 	// #96: a failed load keeps the last list and says so; it never reads as "No devices seen yet"
 	let devicesFailed = $state(false);
-	// the list's range start, once it has loaded (Home's deviceListFrom, for the card merge)
-	let listFrom = $state<string | null>(null);
-	// the list stops at LIST_LIMIT rows; Total Devices is the exact count, '—' until one loads
-	let deviceCount = $state<number | null>(null);
-	let deviceCountFailed = $state(false);
 	// exact counts, not filters of the busiest-N list: '—' until loaded, a note if they fail
-	let onlineCount = $state<number | null>(null);
-	let onlineFailed = $state(false);
 	let newCount = $state<number | null>(null);
 	let newFailed = $state(false);
 	const LIST_LIMIT = 500; // the daemon's largest device list
-	const DAY = 24 * 60 * 60 * 1000;
-	// the table's Online rule and the "Online now" count's (NET-158)
-	const ONLINE_MS = 5 * 60 * 1000;
+	const HOUR = 60 * 60 * 1000;
+	const DAY = 24 * HOUR;
+	// OLD CODE START — NET-160 slice 2b-3: the table's status now reads the reading's online_since and as_of
+	// // the table's Online rule and the "Online now" count's (NET-158)
+	// const ONLINE_MS = 5 * 60 * 1000;
+	// OLD CODE END
+
+	// The window: Home's five ranges (anything else is 24 hours), or the exact from/to a link brought (Custom)
+	const RANGES = [
+		{ value: '1h', label: '1h', hours: 1, words: 'last hour' },
+		{ value: '6h', label: '6h', hours: 6, words: 'last 6 hours' },
+		{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours' },
+		{ value: '7d', label: '7d', hours: 168, words: 'last 7 days' },
+		{ value: '30d', label: '30d', hours: 720, words: 'last 30 days' },
+	] as const;
+	const params = $derived($page.url.searchParams);
+	const custom = $derived(customRange(params.get('from'), params.get('to')));
+	const range = $derived(custom ?? RANGES.find((r) => r.value === params.get('range')) ?? RANGES[2]);
+	const windowKey = $derived(custom ? `${custom.from}|${custom.to}` : range.value);
+	const rangeOptions = $derived([...RANGES, ...(custom ? [custom] : [])].map(({ value, label }) => ({ value, label })));
+	// the loaded figures' words, not the URL's: a slow reply can't show under another window's words
+	const words = $derived(loaded?.words ?? range.words);
+	const windowNote = $derived(words.charAt(0).toUpperCase() + words.slice(1));
+	/** A Custom window that ended before the reading's last 5 minutes: its online count isn't "now". */
+	const windowEnded = $derived(loaded !== null && Date.parse(loaded.to) < Date.parse(loaded.online_since));
 	let searchQuery = $state('');
 	let categoryFilter = $state('all');
 	let autoRefresh = $state(false);
@@ -66,13 +122,17 @@
 	let registryFailed = $state(false);
 	const isMirrorMode = $derived(captureMode?.mode === 'mirror');
 
-	// The tab the user picked; until then By type in mirror mode, All devices otherwise
+	// The tab the user picked; until then the URL's `view`; else By type in mirror mode, All devices otherwise
 	let pickedView = $state<'type' | 'all' | null>(null);
-	const view = $derived(pickedView ?? (isMirrorMode ? 'type' : 'all'));
+	// OLD CODE START — NET-160 slice 2b-3: no URL view, so Home's card couldn't open All devices
+	// const view = $derived(pickedView ?? (isMirrorMode ? 'type' : 'all'));
+	// OLD CODE END
 	const VIEWS = [
 		{ value: 'type' as const, label: 'By type' },
 		{ value: 'all' as const, label: 'All devices' },
 	];
+	const urlView = $derived(VIEWS.find((v) => v.value === params.get('view'))?.value ?? null);
+	const view = $derived(pickedView ?? urlView ?? (isMirrorMode ? 'type' : 'all'));
 
 	// NET-180: By type as cards or compact rows, remembered per browser (a convenience, not data)
 	type Layout = 'cards' | 'list';
@@ -188,42 +248,79 @@
 		return { mode, registry };
 	}
 
+	// OLD CODE START — NET-160 slice 2b-3: a fixed 24 h list plus two count requests, each a separate
+	// reading, written to separate states
+	// async function load(guard: LoadGuard): Promise<LoadResult> {
+	// 	const g = guard.begin();
+	// 	// same (default 24 h) range for the list and the total: the page sends no from/to
+	// 	const now = Date.now();
+	// 	const iso = (ms: number) => new Date(ms).toISOString();
+	// 	const [[listRes, countRes, onlineRes, newRes], { mode: modeRes, registry: registryRes }] = await Promise.all([
+	// 		Promise.allSettled([
+	// 			// OLD CODE START — a 200-row list; Online Now and the category pills counted only it
+	// 			// getDevices({ sort: 'bytes', order: 'desc', limit: 200 }),
+	// 			// OLD CODE END
+	// 			getDevices({ sort: 'bytes', order: 'desc', limit: LIST_LIMIT }),
+	// 			getDeviceCount(),
+	// 			// OLD CODE START — NET-158: a 5-minute range needs 3 records in it, but the table
+	// 			// calls a listed device Online on its newest record alone
+	// 			// // devices with traffic in the last 5 minutes, by the list's own device rules
+	// 			// getDeviceCount({ from: iso(now - 5 * 60 * 1000), to: iso(now) }),
+	// 			// OLD CODE END
+	// 			// the listed devices (same 24 h range) the table shows as Online
+	// 			getDeviceCount({ active_since: iso(now - ONLINE_MS) }),
+	// 			getNewDeviceCount(iso(now - DAY)),
+	// 		]),
+	// 		loadRegistry(),
+	// 	]);
+	// 	if (!guard.current(g)) return 'skipped';
+	//
+	// 	if (onlineRes.status === 'fulfilled') onlineCount = onlineRes.value.count;
+	// 	onlineFailed = onlineRes.status === 'rejected';
+	// 	if (newRes.status === 'fulfilled') newCount = newRes.value.count;
+	// 	newFailed = newRes.status === 'rejected';
+	// 	if (listRes.status === 'fulfilled') {
+	// 		devices = listRes.value.devices;
+	// 		listFrom = listRes.value.from;
+	// 	}
+	// 	devicesFailed = listRes.status === 'rejected';
+	// 	if (countRes.status === 'fulfilled') deviceCount = countRes.value.count;
+	// 	deviceCountFailed = countRes.status === 'rejected';
+	// 	...the capture mode and registry, as below
+	// 	return outcome([listRes, countRes, onlineRes, newRes, modeRes, ...(registryRes ? [registryRes] : [])]);
+	// }
+	// OLD CODE END
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
-		// same (default 24 h) range for the list and the total: the page sends no from/to
-		const now = Date.now();
-		const iso = (ms: number) => new Date(ms).toISOString();
-		const [[listRes, countRes, onlineRes, newRes], { mode: modeRes, registry: registryRes }] = await Promise.all([
+		// the window, fixed before the first await: the link's exact one (Custom), else the range ending now
+		const key = windowKey;
+		const shownWords = range.words;
+		const win = custom ? { from: custom.from, to: custom.to } : rangeWindow(range.hours);
+		// A refresh of the same window keeps its last reading; another window must not show it
+		if (key !== loadedWindow) {
+			loaded = null;
+			devicesFailed = false;
+			loading = true;
+			// else Back to the last good window after a failed one skips this reset (PR #190 review)
+			loadedWindow = '';
+		}
+		const [[listRes, newRes], { mode: modeRes, registry: registryRes }] = await Promise.all([
 			Promise.allSettled([
-				// OLD CODE START — a 200-row list; Online Now and the category pills counted only it
-				// getDevices({ sort: 'bytes', order: 'desc', limit: 200 }),
-				// OLD CODE END
-				getDevices({ sort: 'bytes', order: 'desc', limit: LIST_LIMIT }),
-				getDeviceCount(),
-				// OLD CODE START — NET-158: a 5-minute range needs 3 records in it, but the table
-				// calls a listed device Online on its newest record alone
-				// // devices with traffic in the last 5 minutes, by the list's own device rules
-				// getDeviceCount({ from: iso(now - 5 * 60 * 1000), to: iso(now) }),
-				// OLD CODE END
-				// the listed devices (same 24 h range) the table shows as Online
-				getDeviceCount({ active_since: iso(now - ONLINE_MS) }),
-				getNewDeviceCount(iso(now - DAY)),
+				getDevices({ ...win, sort: 'bytes', order: 'desc', limit: LIST_LIMIT }),
+				getNewDeviceCount(new Date(Date.now() - DAY).toISOString()),
 			]),
 			loadRegistry(),
 		]);
 		if (!guard.current(g)) return 'skipped';
 
-		if (onlineRes.status === 'fulfilled') onlineCount = onlineRes.value.count;
-		onlineFailed = onlineRes.status === 'rejected';
 		if (newRes.status === 'fulfilled') newCount = newRes.value.count;
 		newFailed = newRes.status === 'rejected';
 		if (listRes.status === 'fulfilled') {
-			devices = listRes.value.devices;
-			listFrom = listRes.value.from;
+			const { devices, total, online_total, online_since, as_of, from, to } = listRes.value;
+			loaded = { devices, total, online_total, online_since, as_of, from, to, words: shownWords };
+			loadedWindow = key;
 		}
 		devicesFailed = listRes.status === 'rejected';
-		if (countRes.status === 'fulfilled') deviceCount = countRes.value.count;
-		deviceCountFailed = countRes.status === 'rejected';
 		// a failed mode keeps the last one; with none, By type says so instead of guessing bridge
 		if (modeRes.status === 'fulfilled') captureMode = modeRes.value;
 		modeFailed = modeRes.status === 'rejected';
@@ -232,15 +329,31 @@
 		registryFailed = registryRes?.status === 'rejected';
 		loading = false;
 
-		return outcome([listRes, countRes, onlineRes, newRes, modeRes, ...(registryRes ? [registryRes] : [])]);
+		return outcome([listRes, newRes, modeRes, ...(registryRes ? [registryRes] : [])]);
+	}
+
+	/** A range pill: a rolling window ending now, so the link's exact window (Custom) goes; the URL's tab stays. */
+	function pickRange(value: string) {
+		if (value === 'custom') return;
+		const q = new URLSearchParams({ range: value });
+		if (urlView) q.set('view', urlView);
+		void goto(`${$page.url.pathname}?${q}`, { replaceState: true, keepFocus: true, noScroll: true });
 	}
 
 	const refresh = registerPageRefresh(load);
 	onMount(() => {
 		layout = readLayout();
-		refresh.run();
+		// OLD CODE START — NET-160 slice 2b-3: one load on mount; the effect below also loads on a new URL window
+		// refresh.run();
+		// OLD CODE END
 	});
 	onDestroy(() => refresh.unregister());
+
+	// The first load, and a new one whenever the URL's window changes (a range pill, Back, a link)
+	$effect(() => {
+		void windowKey;
+		untrack(() => refresh.run());
+	});
 
 	// The page's own 30 s auto refresh, through the same contract so "Updated" stays honest
 	$effect(() => {
@@ -254,7 +367,10 @@
 	// ---------------------------------------------------------------------------
 
 	// Home's device cards: the range's traffic per IP; a list shorter than its limit holds every device
-	const deviceCards = $derived(withTraffic(registryDevices, listFrom ? devices : null, devices.length < LIST_LIMIT, listFrom ?? ''));
+	// OLD CODE: const deviceCards = $derived(withTraffic(registryDevices, listFrom ? devices : null, devices.length < LIST_LIMIT, listFrom ?? '')); (slice 2b-3: one reading)
+	// OLD CODE: const deviceCards = $derived(withTraffic(registryDevices, loaded ? devices : null, devices.length < LIST_LIMIT, loaded?.from ?? '')); (slice 2b-3 review: exactly LIST_LIMIT devices read as cut off)
+	// the list holds every device when it holds the reading's `total`
+	const deviceCards = $derived(withTraffic(registryDevices, loaded ? devices : null, loaded !== null && devices.length >= loaded.total, loaded?.from ?? ''));
 	const typeGroups = $derived(groupByType(deviceCards));
 
 	let filteredDevices = $derived.by(() => {
@@ -355,15 +471,29 @@
 		return n.toLocaleString();
 	}
 
-	function ageMs(d: Device): number | null {
-		return d.last_seen ? Date.now() - new Date(d.last_seen).getTime() : null;
-	}
+	// OLD CODE START — NET-160 slice 2b-3: the browser's clock at render time, a request's time
+	// after the count's cutoff, and a strict < where the count uses >=
+	// function ageMs(d: Device): number | null {
+	// 	return d.last_seen ? Date.now() - new Date(d.last_seen).getTime() : null;
+	// }
+	//
+	// /** Traffic in the last 5 minutes is online; in the last hour, idle. */
+	// function status(d: Device): { rank: number; label: string } {
+	// 	const age = ageMs(d);
+	// 	if (age !== null && age < ONLINE_MS) return { rank: 2, label: 'Online' };
+	// 	if (age !== null && age < 60 * 60 * 1000) return { rank: 1, label: 'Idle' };
+	// 	return { rank: 0, label: 'Offline' };
+	// }
+	// OLD CODE END
+	// The reading's own clock: online_total counted last_seen >= online_since, so the table does too
+	const onlineFrom = $derived(loaded ? Date.parse(loaded.online_since) : Infinity);
+	const idleFrom = $derived(loaded ? Date.parse(loaded.as_of) - HOUR : Infinity);
 
-	/** Traffic in the last 5 minutes is online; in the last hour, idle. */
+	/** Seen at or after the reading's online_since is online; within the hour before its as_of, idle. */
 	function status(d: Device): { rank: number; label: string } {
-		const age = ageMs(d);
-		if (age !== null && age < ONLINE_MS) return { rank: 2, label: 'Online' };
-		if (age !== null && age < 60 * 60 * 1000) return { rank: 1, label: 'Idle' };
+		const seen = d.last_seen ? Date.parse(d.last_seen) : NaN;
+		if (seen >= onlineFrom) return { rank: 2, label: 'Online' };
+		if (seen >= idleFrom) return { rank: 1, label: 'Idle' };
 		return { rank: 0, label: 'Offline' };
 	}
 
@@ -465,6 +595,7 @@
 		<p class="page-sub">{subtitle}</p>
 	</div>
 	<div class="head-actions">
+		<Pills options={rangeOptions} value={range.value} onchange={pickRange} ariaLabel="Seen in the last" />
 		<button class="btn" type="button" aria-pressed={autoRefresh} onclick={() => (autoRefresh = !autoRefresh)}>
 			<Icon name="refresh" />{autoRefresh ? 'Auto refresh on' : 'Auto refresh off'}
 		</button>
@@ -476,21 +607,33 @@
 	<NewDeviceBanner devices={registryDevices} />
 {/if}
 
+<!-- OLD CODE START — NET-160 slice 2b-3: Total devices and Online now came from their own count requests,
+     and the notes said "Last 24 hours" whatever the window
+<KpiCard class="c-3" label="Total devices" icon="devices" value={deviceCount ?? '—'}
+	sub={deviceCountFailed ? loadFailed('the device count', deviceCount !== null) : 'Seen on the network'} note="Last 24 hours" />
+<KpiCard class="c-3" label="Online now" icon="live" value={onlineCount ?? '—'}
+	sub={onlineFailed ? loadFailed('the online count', onlineCount !== null) : 'Traffic in the last 5 minutes'} />
+…Top consumer: note="Last 24 hours"
+OLD CODE END -->
 <div class="grid">
 	<KpiCard
 		class="c-3"
 		label="Total devices"
 		icon="devices"
 		value={deviceCount ?? '—'}
-		sub={deviceCountFailed ? loadFailed('the device count', deviceCount !== null) : 'Seen on the network'}
-		note="Last 24 hours"
+		sub={devicesFailed ? loadFailed('the device count', loaded !== null) : 'Seen on the network'}
+		note={windowNote}
 	/>
 	<KpiCard
 		class="c-3"
 		label="Online now"
 		icon="live"
-		value={onlineCount ?? '—'}
-		sub={onlineFailed ? loadFailed('the online count', onlineCount !== null) : 'Traffic in the last 5 minutes'}
+		value={windowEnded ? '—' : (loaded?.online_total ?? '—')}
+		sub={devicesFailed
+			? loadFailed('the online count', loaded !== null)
+			: windowEnded
+				? 'This window ended before the last 5 minutes'
+				: 'Traffic in the last 5 minutes'}
 	/>
 	<KpiCard
 		class="c-3"
@@ -507,7 +650,7 @@
 		value={topBytes?.[0] ?? '—'}
 		unit={topBytes?.[1]}
 		sub={topConsumer ? deviceName(topConsumer) : undefined}
-		note="Last 24 hours"
+		note={windowNote}
 	/>
 </div>
 
@@ -515,14 +658,18 @@
 	<Pills mode="tabs" idPrefix="devices" ariaLabel="Device view" options={VIEWS} value={view} onchange={(v) => (pickedView = v)} />
 </div>
 
+<!-- OLD CODE START — NET-160 slice 2b-3: By type's and All devices' subtitles and note said "the last 24 hours"
+     whatever the window: sub="Grouped by device type · traffic in the last 24 hours",
+     sub="Busiest first · traffic in the last 24 hours" and "Traffic in the last 24 hours from the listed addresses…"
+OLD CODE END -->
 <div role="tabpanel" id="devices-panel-type" aria-labelledby="devices-tab-type" hidden={view !== 'type'}>
 	{#if view === 'type'}
 		{#if loading && !captureMode}
-			<Card title="Devices by type" sub="Grouped by device type · traffic in the last 24 hours">
+			<Card title="Devices by type" sub="Grouped by device type · traffic in the {words}">
 				<CardState state="loading" title="Loading devices" />
 			</Card>
 		{:else if !captureMode}
-			<Card title="Devices by type" sub="Grouped by device type · traffic in the last 24 hours">
+			<Card title="Devices by type" sub="Grouped by device type · traffic in the {words}">
 				<CardState state="error" title={loadFailed('the capture mode')} message="By type needs the capture mode. Check that NetTap is running on the System page, then try again." onaction={() => refresh.run()} />
 			</Card>
 		{:else if !isMirrorMode}
@@ -537,11 +684,11 @@
 				/>
 			</Card>
 		{:else if registryFailed && registryDevices.length === 0}
-			<Card title="Devices by type" sub="Grouped by device type · traffic in the last 24 hours">
+			<Card title="Devices by type" sub="Grouped by device type · traffic in the {words}">
 				<CardState state="error" title={loadFailed('devices')} onaction={() => refresh.run()} />
 			</Card>
 		{:else if registryDevices.length === 0}
-			<Card title="Devices by type" sub="Grouped by device type · traffic in the last 24 hours">
+			<Card title="Devices by type" sub="Grouped by device type · traffic in the {words}">
 				<CardState state="empty" icon="devices" title="No devices yet" message="Devices appear here once NetTap sees their traffic." />
 			</Card>
 		{:else}
@@ -553,7 +700,7 @@
 			<!-- <p class="note">Traffic in the last 24 hours from the listed addresses each device has used.</p> -->
 			<!-- OLD CODE END -->
 			<div class="type-head">
-				<p class="note">Traffic in the last 24 hours from the listed addresses each device has used.</p>
+				<p class="note">Traffic in the {words} from the listed addresses each device has used.</p>
 				<Pills ariaLabel="Layout" options={LAYOUTS} value={layout} onchange={pickLayout} />
 			</div>
 			<div class="type-groups">
@@ -621,7 +768,7 @@
 
 <div role="tabpanel" id="devices-panel-all" aria-labelledby="devices-tab-all" hidden={view !== 'all'}>
 	{#if view === 'all'}
-		<Card title="All devices" sub="Busiest first · traffic in the last 24 hours">
+		<Card title="All devices" sub="Busiest first · traffic in the {words}">
 			{#if loading && devices.length === 0}
 				<CardState state="loading" title="Loading devices" />
 			{:else if devicesFailed && devices.length === 0}

@@ -53,10 +53,19 @@ const deviceRow = (d: LanDevice): Device => ({
 	category: d.kind,
 });
 
+/** NET-160 slice 2b-3: the list reply is one reading: its rows, the devices before the cut, and the online count by its own clock. */
+const reading = (devices: Device[]): Pick<DeviceListResponse, 'devices' | 'total' | 'as_of' | 'online_since' | 'online_total'> => ({
+	devices,
+	total: devices.length,
+	as_of: iso(0),
+	online_since: iso(5 * MIN),
+	online_total: devices.filter((d) => Date.parse(d.last_seen) >= Date.parse(iso(5 * MIN))).length,
+});
+
 const deviceList = (): DeviceListResponse => ({
 	...WINDOW,
 	limit: 200,
-	devices: [...LAN_DEVICES].sort((a, b) => totalBytes(b) - totalBytes(a)).map(deviceRow),
+	...reading([...LAN_DEVICES].sort((a, b) => totalBytes(b) - totalBytes(a)).map(deviceRow)),
 });
 
 const registryRow = (d: LanDevice): RegistryDevice => ({
@@ -217,7 +226,7 @@ type NewDeviceCount = Awaited<ReturnType<typeof getNewDeviceCount>>;
 export const DEVICES_ROUTES: FixtureRoute[] = [
 	{
 		path: '/api/devices',
-		empty: { ...WINDOW, limit: 200, devices: [] } satisfies DeviceListResponse,
+		empty: { ...WINDOW, limit: 200, ...reading([]) } satisfies DeviceListResponse,
 		populated: deviceList(),
 	},
 	{
@@ -336,5 +345,5 @@ export const BY_TYPE_LAYOUT = {
 		devices: [...BAND.map(bandRegistryRow), ...LAN_DEVICES.map(registryRow)],
 		total: BAND.length + LAN_DEVICES.length,
 	} satisfies RegistryListResponse,
-	list: { ...deviceList(), devices: [...BAND.flatMap(bandListRows), ...deviceList().devices] } satisfies DeviceListResponse,
+	list: { ...deviceList(), ...reading([...BAND.flatMap(bandListRows), ...deviceList().devices]) } satisfies DeviceListResponse,
 };

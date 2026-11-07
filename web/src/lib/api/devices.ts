@@ -39,6 +39,14 @@ export interface DeviceListResponse {
 	to: string;
 	limit: number;
 	devices: Device[];
+	/** Devices before the limit cut: the same set /api/devices/count counts over this window (NET-160 slice 2b-3). */
+	total: number;
+	/** The daemon's clock when it answered, ISO with exactly three fractional digits. */
+	as_of: string;
+	/** `as_of` minus exactly 5 minutes, same format: a device last seen at or after it is online. */
+	online_since: string;
+	/** Devices before the cut whose `last_seen` is at or after `online_since`. */
+	online_total: number;
 }
 
 export interface DeviceDestination {
