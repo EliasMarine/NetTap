@@ -926,6 +926,12 @@
 		<h1 class="page-title">Settings</h1>
 		<p class="page-sub">Alerts, storage, capture, credentials and display for this NetTap.</p>
 	</div>
+	<!-- NET-199: these pages had a back link to Settings but nothing led to them -->
+	<nav class="head-actions" aria-label="More settings">
+		<a class="btn" href="/settings/suricata-rules"><Icon name="threats" />Suricata rules</a>
+		<a class="btn" href="/settings/notifications"><Icon name="alerts" />Notification channels</a>
+		<a class="btn" href="/settings/backup"><Icon name="download" />Backup and restore</a>
+	</nav>
 </div>
 
 <div class="tabs-scroll">

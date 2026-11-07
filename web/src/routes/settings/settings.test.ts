@@ -447,6 +447,27 @@ describe('Settings — UniFi integration', () => {
 // Redesign: section tabs (Pills tabs mode), the switch, load states, no page refresh
 // ---------------------------------------------------------------------------
 
+describe('Settings — links to its own pages (NET-199)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('links Suricata rules, Notification channels and Backup and restore from the page head, on every tab', async () => {
+		stubFetch();
+		render(Page);
+
+		const nav = screen.getByRole('navigation', { name: 'More settings' });
+		const links = within(nav).getAllByRole('link');
+		expect(links.map((a) => [a.textContent?.trim(), a.getAttribute('href')])).toEqual([
+			['Suricata rules', '/settings/suricata-rules'],
+			['Notification channels', '/settings/notifications'],
+			['Backup and restore', '/settings/backup'],
+		]);
+
+		// The links sit outside the tab panel, so another tab keeps them
+		await fireEvent.click(screen.getByRole('tab', { name: 'Display' }));
+		expect(within(screen.getByRole('navigation', { name: 'More settings' })).getAllByRole('link')).toHaveLength(3);
+	});
+});
+
 describe('Settings — section tabs', () => {
 	afterEach(() => vi.unstubAllGlobals());
 
