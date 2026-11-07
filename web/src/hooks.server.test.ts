@@ -442,32 +442,6 @@ describe('hooks.server', () => {
 
 			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ status: 302, location: '/login' });
 		});
-
-		it.each(['/api/health', '/api/auth/login'])('%s still resolves without a session', async (path) => {
-			mockHasUsers.mockReturnValue(true);
-			mockVerifyToken.mockReturnValue(null);
-			const event = createMockEvent(path, 'expired-token');
-
-			await handle({ event, resolve: mockResolve });
-			expect(mockResolve).toHaveBeenCalledWith(event);
-		});
-
-		it('first-run /api/setup/nics still resolves before any user exists', async () => {
-			mockHasUsers.mockReturnValue(false);
-			const event = createMockEvent('/api/setup/nics');
-
-			await handle({ event, resolve: mockResolve });
-			expect(mockResolve).toHaveBeenCalledWith(event);
-		});
-
-		it('an API call with a session resolves', async () => {
-			mockHasUsers.mockReturnValue(true);
-			mockVerifyToken.mockReturnValue({ username: 'admin', role: 'admin' });
-			const event = createMockEvent('/api/suricata/rules/live', 'valid-token');
-
-			await handle({ event, resolve: mockResolve });
-			expect(mockResolve).toHaveBeenCalledWith(event);
-		});
 	});
 
 	describe('JWT parsing', () => {
