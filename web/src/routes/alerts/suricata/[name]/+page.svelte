@@ -32,7 +32,7 @@
 	const params = $derived($page.url.searchParams);
 	/** The exact window a link brought (?from=&to=), shown as "Custom". */
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
-	/** The URL's standard range (24h without one): a Custom window's links carry it for their words. */
+	/** The URL's standard range (without one, the saved default, else 24h): a Custom window's links carry it for their words. */
 	// OLD CODE: ?? CATEGORY_RANGES[4]); (NET-192 PR 4: 15m and 4h dropped, 24h is index 2)
 	// OLD CODE: ?? CATEGORY_RANGES[2] (NET-192 PR 4: the default by value, not by position)
 	// OLD CODE: … ?? CATEGORY_RANGES.find((r) => r.value === '24h')!); (NET-195: a link's range, else Settings › Display's default)

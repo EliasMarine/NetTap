@@ -94,7 +94,7 @@
 	// const ONLINE_MS = 5 * 60 * 1000;
 	// OLD CODE END
 
-	// The window: Home's five ranges (anything else is 24 hours), or the exact from/to a link brought (Custom)
+	// The window: Home's five ranges (anything else is the saved default, else 24 hours), or the exact from/to a link brought (Custom)
 	// OLD CODE START — NET-196: the app's one list (DRILL_RANGES)
 	// const RANGES = [
 	// 	{ value: '1h', label: '1h', hours: 1, words: 'last hour' },

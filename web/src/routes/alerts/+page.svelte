@@ -151,7 +151,7 @@
 	// OLD CODE END
 	/** One of TIME_RANGES, or 'custom' while a link's exact window (?from=&to=) is on. */
 	let selectedTimeRange = $state('24h');
-	/** The URL's standard range (24h without one): the words and fallback a Custom window travels with. */
+	/** The URL's standard range (without one, the saved default, else 24h): the words and fallback a Custom window travels with. */
 	let baseRange = $state('24h');
 	/** The exact window a link brought (?from=&to=, NET-160 slice 2a), shown as "Custom". */
 	let custom = $state<CustomWindow | null>(null);
