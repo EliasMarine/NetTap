@@ -18,15 +18,16 @@ describe('risk score proxies', () => {
 		daemonFetch.mockResolvedValue(new Response(JSON.stringify({ ok: true })));
 	});
 
-	it('the list forwards from, to and limit, and nothing else', async () => {
+	// PR 2 (reliability): the list takes 11.2 s cold on the G11, past the 10 s default
+	it('the list forwards from, to and limit, and nothing else, with 30 s to answer', async () => {
 		const url = new URL(`https://nettap.local/api/risk/scores?${RANGE}&limit=50&other=x`);
 		await list.GET({ url } as never);
-		expect(daemonFetch).toHaveBeenCalledWith(`/api/risk/scores?${RANGE}&limit=50`);
+		expect(daemonFetch).toHaveBeenCalledWith(`/api/risk/scores?${RANGE}&limit=50`, undefined, 30_000);
 	});
 
 	it('the list still works with no query', async () => {
 		await list.GET({ url: new URL('https://nettap.local/api/risk/scores') } as never);
-		expect(daemonFetch).toHaveBeenCalledWith('/api/risk/scores');
+		expect(daemonFetch).toHaveBeenCalledWith('/api/risk/scores', undefined, 30_000);
 	});
 
 	it('a single device forwards from and to', async () => {

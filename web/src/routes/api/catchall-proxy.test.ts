@@ -61,6 +61,12 @@ describe('API Catch-All Proxy Route ([...path]/+server.ts)', () => {
 		},
 	);
 
+	// PR 2 (reliability): 14.4 s cold at 7 d on the G11, past the 10 s default
+	it('gives the connection stats 30 s', async () => {
+		await GET(event('/api/traffic/connections/stats?from=a&to=b') as never);
+		expect(daemonFetch.mock.calls[0][2]).toBe(30_000);
+	});
+
 	// NET-188: the daemon stops a packet search or one packet's detail at ~48 s
 	it.each([
 		['/api/packets/search', 55_000],
