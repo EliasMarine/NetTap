@@ -30,7 +30,7 @@ describe('formatTime', () => {
 });
 
 // A call with no locale prints in the browser's: "07:00 PM", "11/6/2026", "1,234" or "1.234".
-const NO_LOCALE = /\.toLocale(?:Date|Time)?String\(\s*(?:\)|undefined\b|\[\s*\])/g;
+const NO_LOCALE = /\.toLocale(?:Date|Time)?String\(\s*(?:\)|undefined\b|\[\s*\])|new\s+Intl\.(?:DateTimeFormat|NumberFormat)\(\s*(?:\)|undefined\b|\[\s*\])/g;
 
 function sourceFiles(dir: string): string[] {
 	return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -60,6 +60,11 @@ describe('no-locale formatting', () => {
 		expect(find("d.toLocaleTimeString(undefined, { hour: '2-digit' })")).toBe(1);
 		expect(find("d.toLocaleDateString([], { month: 'short' })")).toBe(1);
 		expect(find("d.toLocaleString('en-GB', { month: 'short' })")).toBe(0);
+		expect(find('new Intl.NumberFormat()')).toBe(1);
+		expect(find("new Intl.DateTimeFormat(undefined, { hour: '2-digit' })")).toBe(1);
+		expect(find("new Intl.NumberFormat('en-GB')")).toBe(0);
+		// a time-zone lookup, not formatting (lib/api/bandwidth.ts)
+		expect(find('Intl.DateTimeFormat().resolvedOptions().timeZone')).toBe(0);
 		expect(find('// d.toLocaleString()')).toBe(0);
 		expect(find('<!-- {d.toLocaleString()} -->')).toBe(0);
 	});

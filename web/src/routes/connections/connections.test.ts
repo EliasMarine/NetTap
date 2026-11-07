@@ -5,10 +5,8 @@ import { getConnections, getConnectionStats, getConnectionSankey, getConnectionT
 import { getLiveDashboard } from '$api/live';
 import Page from './+page.svelte';
 
-// A link's URL, set per test (the range test opens an old ?range=30d link)
-const { pageUrl } = vi.hoisted(() => ({ pageUrl: { current: 'http://localhost/connections' } }));
 vi.mock('$app/stores', () => ({
-	page: { subscribe: (run: (v: { url: URL }) => void) => readable({ url: new URL(pageUrl.current) }).subscribe(run) },
+	page: readable({ url: new URL('http://localhost/connections') }),
 }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$api/traffic', async (importOriginal) => ({
@@ -385,7 +383,6 @@ describe('Connections — the range set', () => {
 		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard(1));
 	});
 	afterEach(() => {
-		pageUrl.current = 'http://localhost/connections';
 		vi.clearAllMocks();
 	});
 
@@ -403,13 +400,15 @@ describe('Connections — the range set', () => {
 		expect(hours(asked)).toBeCloseTo(168);
 	});
 
-	it('opens an old ?range=30d link on the default hour, as any unknown range', async () => {
-		pageUrl.current = 'http://localhost/connections?range=30d';
-		render(Page);
-		await flush();
-		expect(screen.getByRole('button', { name: '1h' })).toHaveAttribute('aria-pressed', 'true');
-		expect(screen.queryByRole('button', { name: '30d' })).not.toBeInTheDocument();
-		expect(hours(vi.mocked(getConnectionStats).mock.lastCall![0]!)).toBeCloseTo(1);
-		expect(vi.mocked(getConnectionTimeline).mock.lastCall![0]!.interval).toBe('5m');
-	});
+	// OLD CODE START — the page never reads ?range, so this only tested the mock (NET-192 PR 4 review)
+	// it('opens an old ?range=30d link on the default hour, as any unknown range', async () => {
+	// 	pageUrl.current = 'http://localhost/connections?range=30d';
+	// 	render(Page);
+	// 	await flush();
+	// 	expect(screen.getByRole('button', { name: '1h' })).toHaveAttribute('aria-pressed', 'true');
+	// 	expect(screen.queryByRole('button', { name: '30d' })).not.toBeInTheDocument();
+	// 	expect(hours(vi.mocked(getConnectionStats).mock.lastCall![0]!)).toBeCloseTo(1);
+	// 	expect(vi.mocked(getConnectionTimeline).mock.lastCall![0]!.interval).toBe('5m');
+	// });
+	// OLD CODE END
 });
