@@ -66,8 +66,23 @@ Kept as is: photos are cached `private, max-age=31536000, immutable`. The URL ca
 
 ## Test results
 
-- Daemon pytest: 3940 passed, 0 failed (baseline on main: 3863 passed, 0 failed).
-- Web: Vitest 3991 passed; svelte-check 0 errors (the same 2 warnings as main); colour gate clean.
+- Daemon pytest: 3949 passed, 0 failed (baseline on main: 3863 passed, 0 failed).
+- Web: Vitest 4029 passed; svelte-check 0 errors (the same 2 warnings as main); colour gate clean; visual 283 passed.
+- CI: all 18 checks green on the final head. Squash-merged as `351018e1` (PR #214).
+
+## Deploy (G11, 2026-11-07)
+
+`bash scripts/remote/deploy-device-names-pictures.sh` passed every check:
+
+- **Limits:** nginx serves 10m (server), 1m (web app) and 16m (backup restore); `BODY_SIZE_LIMIT` is 16M and the daemon's limit is 16777216.
+- **End to end**, on a real device (`BC:24:11:F2:AB:CB`, left as it was):
+  - rename and clear, with the discovered name still shown;
+  - pick an icon, then a photo, which is served as PNG with `nosniff`;
+  - a stale version gets a 404 with `no-store`, an SVG and an unknown device are refused;
+  - a backup carries both sections.
+- **Sign-in:** the page loads (200). A 2 MB sign-in POST gets 413 at nginx, and an unauthenticated 2 MB backup import gets 401 from the login check.
+
+Status: done. Not tried in a real browser: the photo crop (canvas WebP or JPEG) and the focus return; both are covered only under jsdom.
 
 ## Lessons
 
