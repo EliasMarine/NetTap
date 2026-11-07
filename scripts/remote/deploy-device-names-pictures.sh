@@ -76,9 +76,9 @@ NGINX_STATE=$(sudo docker inspect --format='{{.State.Status}}' nettap-nginx 2>/d
 check_eq "nginx running" "$NGINX_STATE" "running"
 echo ""
 
-echo "→ Step 5: Request limits (16 MB on all three layers)..."
-NGINX_LIMIT=$(sudo docker exec nettap-nginx nginx -T 2>/dev/null | grep -m1 -o 'client_max_body_size [^;]*' || echo "none")
-check_eq "nginx limit" "$NGINX_LIMIT" "client_max_body_size 16m"
+echo "→ Step 5: Request limits (16 MB for backup restore on all three layers, 1 MB for the rest of the web app)..."
+NGINX_LIMITS=$(sudo docker exec nettap-nginx nginx -T 2>/dev/null | grep -o 'client_max_body_size [^;]*' | tr '\n' ' ' || echo "none")
+check_eq "nginx limits (server, web app, backup)" "$NGINX_LIMITS" "client_max_body_size 10m client_max_body_size 1m client_max_body_size 16m "
 WEB_LIMIT=$(sudo docker exec nettap-web printenv BODY_SIZE_LIMIT 2>/dev/null || echo "unset")
 check_eq "web BODY_SIZE_LIMIT" "$WEB_LIMIT" "16M"
 DAEMON_LIMIT=$(sudo docker exec nettap-storage-daemon python3 -c "from api.server import MAX_REQUEST_BYTES; print(MAX_REQUEST_BYTES)" 2>/dev/null || echo "unknown")
