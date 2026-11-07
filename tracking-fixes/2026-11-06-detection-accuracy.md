@@ -531,3 +531,40 @@ Rollback: set `BRANCH="main"` (or the previous commit) in the deploy script and 
 - Malcolm's start with the custom dir mounted read-only inside its anonymous `/opt/suricata/rules` volume (PUSER_CHOWN can't chown it).
 - The `-T` and reload times with the G11's rules, and the test container's memory.
 - The engine's one-more/one-fewer counts after a save, a restart and a clear.
+
+### G11 run (2026-11-07, branch `feature/detection-slice3` @ `7e058c8e`)
+
+Both scripts passed. nettap-23 was told first.
+
+`deploy-detection-slice3.sh`:
+- **Gate 1:** slice 2 is live (65,451 rules, 0 failed), and Malcolm lists `SURICATA_CUSTOM_RULES_DIR=/opt/suricata/rules`.
+- **Daemon and web:** both rebuilt and healthy.
+- **Gate 2:**
+  - `owner.rules` is made at daemon start, and the staging dir is mounted.
+  - GET returns 0 rules, with caps of 2,000 rules and 262,144 bytes.
+  - The check endpoint answers 200 for an alert rule and 400 for a `drop` rule ("Only alert rules can be used.").
+- **suricata-live:** recreated holding the rules lock (16:21:23 UTC), and the engine started at 16:23:34.
+  - `suricata.yaml` lists `/opt/suricata/rules/custom/owner.rules`.
+  - The mount is read-only (RW=false).
+  - Neither `update-sources.yaml` nor the staging mount is attached.
+  - 65,451 rules loaded, 0 failed.
+- **Settings live status:** HTTP 200, own rules 0, update active.
+- **Errors:** none in the daemon log since the restart.
+
+`check-owner-rules.sh`:
+- **Save of the self-test rule (sid 1999999):** HTTP 200, and the engine went from 65,451 to 65,452 rules, 0 failed.
+  - Daemon log: "1 rules passed Suricata's test" at 16:24:48, and saved and reloaded at 16:25:34, so the reload took about 46 s.
+  - This is the save path's `-T` and `--engine-analysis` run against the G11's own generated `suricata.yaml`.
+- **Replay:** the `owner-selftest` fixture fires sid 1999999 (PASS, "self-test present").
+- **Restart of suricata-live under the lock:** the rule is still listed, with 1 own rule, 65,452 loaded and 0 failed.
+- **Clear:** HTTP 200, and the engine went from 65,452 back to 65,451, 0 failed.
+- **Replay:** the self-test no longer fires (PASS, "self-test absent").
+- **Logs:** the daemon logs counts only, never rule text.
+
+Answers to "Not verifiable without the device":
+- `docker cp` from the running suricata-live works, because the save's snapshot succeeded.
+- Malcolm starts with the read-only custom mount.
+- `-T` plus the analysis took about 1 min, and the reload about 46 s.
+- The engine counted one more rule on save and one fewer on clear.
+
+`deploy-detection-slice3.sh` now pulls `main` (OLD CODE keeps the branch line).

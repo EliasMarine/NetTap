@@ -21,7 +21,10 @@ set -u
 exec > >(tee "$HOME/nettap-detection-slice3.log") 2>&1
 
 REPO_DIR="${NETTAP_REPO_DIR:-/home/nettap/NetTap}"  # override for tests only
-BRANCH="feature/detection-slice3"  # set to main once the PR is merged
+# OLD CODE START — the branch is deleted once the PR merges
+# BRANCH="feature/detection-slice3"  # set to main once the PR is merged
+# OLD CODE END
+BRANCH="main"  # the slice 3 PR is merged; the G11 ran this script on feature/detection-slice3 @ 7e058c8e
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
 CUSTOM_DIR="/opt/suricata/rules/custom"
 OWNER_FILE="$CUSTOM_DIR/owner.rules"
