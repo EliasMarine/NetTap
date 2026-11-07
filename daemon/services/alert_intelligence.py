@@ -20,10 +20,12 @@ threat intelligence. Features:
 import logging
 import os
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
 
+from services.capture_config import write_file_atomic
 from storage.all_buckets import MAX_BUCKETS
 
 logger = logging.getLogger("nettap.services.alert_intelligence")
@@ -891,6 +893,8 @@ def generate_assessment(
 _SUPPRESS_PATH = (
     Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-suppress.json"
 )
+# One read-modify-write at a time: the POST routes write it while report threads read it
+_SUPPRESS_LOCK = threading.Lock()
 
 
 def load_suppress_list() -> dict:
@@ -907,7 +911,10 @@ def save_suppress_list(data: dict) -> None:
     """Save the suppress list to disk."""
     try:
         _SUPPRESS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _SUPPRESS_PATH.write_text(json.dumps(data, indent=2))
+        # OLD CODE START — PR 2 (reliability): a reader in another thread could see a half-written file
+        # _SUPPRESS_PATH.write_text(json.dumps(data, indent=2))
+        # OLD CODE END
+        write_file_atomic(str(_SUPPRESS_PATH), json.dumps(data, indent=2))
     except Exception:
         logger.error(
             "Failed to save suppress list to %s", _SUPPRESS_PATH, exc_info=True
@@ -921,7 +928,6 @@ def suppress_rule(
     ttl_days: int = 30,
 ) -> None:
     """Add a signature to the suppress list with optional TTL expiration."""
-    data = load_suppress_list()
     entry = {
         "signature_id": signature_id,
         "reason": reason,
@@ -931,31 +937,36 @@ def suppress_rule(
         ).isoformat(),
     }
 
-    if device_ip:
-        per_device = data.setdefault("per_device", {})
-        device_list = per_device.setdefault(device_ip, [])
-        if not any(e["signature_id"] == signature_id for e in device_list):
-            device_list.append(entry)
-    else:
-        if not any(e["signature_id"] == signature_id for e in data.get("global", [])):
-            data.setdefault("global", []).append(entry)
+    with _SUPPRESS_LOCK:
+        data = load_suppress_list()
+        if device_ip:
+            per_device = data.setdefault("per_device", {})
+            device_list = per_device.setdefault(device_ip, [])
+            if not any(e["signature_id"] == signature_id for e in device_list):
+                device_list.append(entry)
+        else:
+            if not any(
+                e["signature_id"] == signature_id for e in data.get("global", [])
+            ):
+                data.setdefault("global", []).append(entry)
 
-    save_suppress_list(data)
+        save_suppress_list(data)
 
 
 def mark_false_positive(signature_id: int, reason: str = "") -> None:
     """Mark a signature as a false positive (no TTL — permanent until removed)."""
-    data = load_suppress_list()
-    fps = data.setdefault("false_positives", [])
-    if not any(e["signature_id"] == signature_id for e in fps):
-        fps.append(
-            {
-                "signature_id": signature_id,
-                "reason": reason,
-                "marked_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
-    save_suppress_list(data)
+    with _SUPPRESS_LOCK:
+        data = load_suppress_list()
+        fps = data.setdefault("false_positives", [])
+        if not any(e["signature_id"] == signature_id for e in fps):
+            fps.append(
+                {
+                    "signature_id": signature_id,
+                    "reason": reason,
+                    "marked_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        save_suppress_list(data)
 
 
 def _is_entry_expired(entry: dict) -> bool:
@@ -999,6 +1010,8 @@ def is_suppressed(signature_id: int, device_ip: str | None = None) -> bool:
 _BASELINE_PATH = (
     Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-baselines.json"
 )
+# Summaries run in threads (the Alerts page, the threat report): one update at a time
+_BASELINE_LOCK = threading.Lock()
 
 
 def _window_hours(from_ts: str, to_ts: str) -> tuple[float, bool]:
@@ -1029,7 +1042,10 @@ def _save_baselines(data: dict) -> None:
     """Save baselines to disk."""
     try:
         _BASELINE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _BASELINE_PATH.write_text(json.dumps(data, indent=2))
+        # OLD CODE START — PR 2 (reliability): a reader in another thread could see a half-written file
+        # _BASELINE_PATH.write_text(json.dumps(data, indent=2))
+        # OLD CODE END
+        write_file_atomic(str(_BASELINE_PATH), json.dumps(data, indent=2))
     except Exception:
         logger.error("Failed to save baselines", exc_info=True)
 
@@ -1106,26 +1122,27 @@ def update_baseline(
     window = max(1, round(window_hours))
     rate = current_summary.get("total_events", 0) / max(window_hours, 1e-9)
 
-    # Per-request points from before #95 have no "hour" and are dropped
-    history = [
-        h
-        for h in _load_baselines().get("history", [])
-        if "hour" in h and h["hour"] >= hours_kept_from
-    ]
-    same_window = [h for h in history if h.get("window_hours") == window]
-    earlier = [h for h in same_window if h["hour"] != hour]
-    if record and len(earlier) == len(
-        same_window
-    ):  # nothing recorded for this hour yet
-        snapshot = {
-            "hour": hour,
-            "window_hours": window,
-            "events_per_hour": rate,
-            "threat_score": current_summary.get("threat_score", 0),
-        }
-        history = [*history, snapshot]
-        same_window = [*same_window, snapshot]
-        _save_baselines({"history": history})
+    with _BASELINE_LOCK:
+        # Per-request points from before #95 have no "hour" and are dropped
+        history = [
+            h
+            for h in _load_baselines().get("history", [])
+            if "hour" in h and h["hour"] >= hours_kept_from
+        ]
+        same_window = [h for h in history if h.get("window_hours") == window]
+        earlier = [h for h in same_window if h["hour"] != hour]
+        if record and len(earlier) == len(
+            same_window
+        ):  # nothing recorded for this hour yet
+            snapshot = {
+                "hour": hour,
+                "window_hours": window,
+                "events_per_hour": rate,
+                "threat_score": current_summary.get("threat_score", 0),
+            }
+            history = [*history, snapshot]
+            same_window = [*same_window, snapshot]
+            _save_baselines({"history": history})
 
     deviation, avg_rate, avg_score = 1.0, 0.0, 0.0
     if len(earlier) >= _MIN_BASELINE_HOURS:

@@ -163,20 +163,22 @@ async def handle_threat_intel(request: web.Request) -> web.Response:
     client = _get_client(request)
     excluded_ips_list = request.app.get("excluded_ips", [])
 
-    from services.threat_intel import ThreatIntelService
+    from services.threat_intel import CACHE_LOCK, ThreatIntelService
 
     ti = ThreatIntelService()
-    ti.load_cache()
+    # One load -> populate -> save at a time (another request, or the address drill-down)
+    with CACHE_LOCK:
+        ti.load_cache()
 
-    # Bootstrap from Suricata data
-    try:
-        new_count = ti.populate_from_suricata(
-            client, from_ts, to_ts, excluded_ips=excluded_ips_list
-        )
-    except Exception as exc:
-        # load_cache already wrote back its purge, so the old entries stay gone (I7)
-        logger.error("Threat intel refresh from Suricata failed: %s", exc)
-        return web.json_response({"error": str(exc)}, status=500)
+        # Bootstrap from Suricata data
+        try:
+            new_count = ti.populate_from_suricata(
+                client, from_ts, to_ts, excluded_ips=excluded_ips_list
+            )
+        except Exception as exc:
+            # load_cache already wrote back its purge, so the old entries stay gone (I7)
+            logger.error("Threat intel refresh from Suricata failed: %s", exc)
+            return web.json_response({"error": str(exc)}, status=500)
     # OLD CODE START — I7: every indicator ever cached, shown under the selected window's label
     # feeds = ti.get_all_matches()
     # OLD CODE END

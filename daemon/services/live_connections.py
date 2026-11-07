@@ -14,6 +14,7 @@ Extended in Phase 1 of the Live Network Monitor Redesign to add:
 import ipaddress
 import logging
 import os
+import threading
 import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
@@ -134,6 +135,8 @@ class LiveConnectionTracker:
         self._connections: deque[dict[str, Any]] = deque(maxlen=MAX_CONNECTIONS)
         self._rate_timestamps: deque[float] = deque()
         self._last_fetch_time: str | None = None
+        # The fetches run in threads; the deques are read and pruned from the loop too
+        self._lock = threading.Lock()
 
     def set_client(self, client: OpenSearch) -> None:
         """Set the OpenSearch client (for deferred initialization)."""
@@ -142,20 +145,22 @@ class LiveConnectionTracker:
     def _record_rate(self, count: int) -> None:
         """Record connection fetch count for rate calculation."""
         now = time.monotonic()
-        for _ in range(count):
-            self._rate_timestamps.append(now)
-        # Prune old timestamps outside the window
-        cutoff = now - RATE_WINDOW_SECONDS
-        while self._rate_timestamps and self._rate_timestamps[0] < cutoff:
-            self._rate_timestamps.popleft()
+        with self._lock:
+            for _ in range(count):
+                self._rate_timestamps.append(now)
+            # Prune old timestamps outside the window
+            cutoff = now - RATE_WINDOW_SECONDS
+            while self._rate_timestamps and self._rate_timestamps[0] < cutoff:
+                self._rate_timestamps.popleft()
 
     def get_connection_rate(self) -> dict[str, Any]:
         """Return current connections/sec over the last 60s window."""
         now = time.monotonic()
         cutoff = now - RATE_WINDOW_SECONDS
-        while self._rate_timestamps and self._rate_timestamps[0] < cutoff:
-            self._rate_timestamps.popleft()
-        count = len(self._rate_timestamps)
+        with self._lock:
+            while self._rate_timestamps and self._rate_timestamps[0] < cutoff:
+                self._rate_timestamps.popleft()
+            count = len(self._rate_timestamps)
         rate = count / RATE_WINDOW_SECONDS if RATE_WINDOW_SECONDS > 0 else 0
         return {
             "connections_per_second": round(rate, 2),
@@ -186,7 +191,9 @@ class LiveConnectionTracker:
             List of connection dicts, newest first.
         """
         results: list[dict[str, Any]] = []
-        for conn in reversed(self._connections):
+        with self._lock:  # a fetch in another thread may append while this iterates
+            cached = list(self._connections)
+        for conn in reversed(cached):
             if device:
                 src_ip = conn.get("source_ip", "")
                 dst_ip = conn.get("dest_ip", "")
@@ -296,7 +303,8 @@ class LiveConnectionTracker:
             src = hit.get("_source", {})
             conn = self._format_connection(src)
             connections.append(conn)
-            self._connections.append(conn)
+            with self._lock:
+                self._connections.append(conn)
 
         self._record_rate(len(connections))
         return connections
@@ -736,7 +744,8 @@ class LiveConnectionTracker:
                 conn["source_ip"], conn["dest_ip"], lan_subnets
             )
             connections.append(conn)
-            self._connections.append(conn)
+            with self._lock:
+                self._connections.append(conn)
 
         self._record_rate(len(connections))
 

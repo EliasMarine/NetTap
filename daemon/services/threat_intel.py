@@ -12,9 +12,11 @@ import ipaddress
 import json
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from services.capture_config import write_file_atomic
 from storage.all_buckets import all_buckets
 
 logger = logging.getLogger("nettap.services.threat_intel")
@@ -22,6 +24,9 @@ logger = logging.getLogger("nettap.services.threat_intel")
 _TI_CACHE_PATH = (
     Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-threat-intel.json"
 )
+# Held by callers around load_cache .. save_cache (load_cache can write back), so two
+# requests, or a request and the address drill-down, never interleave their transactions
+CACHE_LOCK = threading.Lock()
 
 # IP pages carry no sub-aggregations: 10x fewer scans than the default, far below max_buckets
 _IP_PAGE = 10_000
@@ -152,7 +157,10 @@ class ThreatIntelService:
                 "ip_feeds": {k: list(v) for k, v in self._ip_sets.items()},
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
-            _TI_CACHE_PATH.write_text(json.dumps(data))
+            # OLD CODE START — PR 2 (reliability): a reader in another thread could see a half-written file
+            # _TI_CACHE_PATH.write_text(json.dumps(data))
+            # OLD CODE END
+            write_file_atomic(str(_TI_CACHE_PATH), json.dumps(data))
         except Exception:
             logger.error("Failed to save threat intel cache", exc_info=True)
 

@@ -11,6 +11,7 @@ details, and acknowledgement tracking.
 import json
 import logging
 import os
+import threading
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -19,6 +20,7 @@ from opensearchpy import OpenSearchException
 
 from api.time_range import parse_time_range
 from services.alert_enrichment import AlertEnrichment
+from services.capture_config import write_file_atomic
 from services.excluded_ips import parse_single_ip
 
 # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
@@ -79,6 +81,8 @@ SURICATA_NOISE_EXCLUSION = _SURICATA_NOISE_EXCLUSION
 
 # Path for storing acknowledgement data (local JSON file)
 _ACK_FILE = os.environ.get("ALERT_ACK_FILE", "/opt/nettap/data/alert_acks.json")
+# One acknowledgement read-modify-write at a time; the alert lists read the file from threads
+_ACKS_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -392,8 +396,11 @@ def _save_acks(acks: dict, ack_file: str | None = None) -> None:
     path = ack_file or _ACK_FILE
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            json.dump(acks, f, indent=2)
+        # OLD CODE START — PR 2 (reliability): a list read in a thread could see a half-written file
+        # with open(path, "w") as f:
+        #     json.dump(acks, f, indent=2)
+        # OLD CODE END
+        write_file_atomic(path, json.dumps(acks, indent=2))
     except OSError as exc:
         logger.error("Failed to save ack file %s: %s", path, exc)
         raise
@@ -903,19 +910,21 @@ async def handle_alert_acknowledge(request: web.Request) -> web.Response:
         pass  # No body or invalid JSON is fine, use default
 
     ack_file = request.app.get("alert_ack_file")
-    acks = _load_acks(ack_file)
+    # A small file (sub-millisecond), so this stays on the request loop
+    with _ACKS_LOCK:
+        acks = _load_acks(ack_file)
 
-    acks[alert_id] = {
-        "acknowledged_at": datetime.now(timezone.utc).isoformat(),
-        "acknowledged_by": acknowledged_by,
-    }
+        acks[alert_id] = {
+            "acknowledged_at": datetime.now(timezone.utc).isoformat(),
+            "acknowledged_by": acknowledged_by,
+        }
 
-    try:
-        _save_acks(acks, ack_file)
-    except OSError as exc:
-        return web.json_response(
-            {"error": f"Failed to save acknowledgement: {exc}"}, status=500
-        )
+        try:
+            _save_acks(acks, ack_file)
+        except OSError as exc:
+            return web.json_response(
+                {"error": f"Failed to save acknowledgement: {exc}"}, status=500
+            )
 
     return web.json_response(
         {

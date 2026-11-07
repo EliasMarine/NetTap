@@ -11,6 +11,7 @@ Provides IP-to-location resolution using multiple strategies:
 import ipaddress
 import logging
 import os
+import threading
 from functools import lru_cache
 
 logger = logging.getLogger("nettap.geoip")
@@ -280,6 +281,8 @@ class GeoIPService:
         # In-memory cache for OpenSearch lookups (TTL managed by LRU eviction)
         self._os_cache: dict[str, GeoIPResult] = {}
         self._OS_CACHE_MAX = 2048
+        # Lookups run in request threads: the eviction must not race a read
+        self._os_lock = threading.Lock()
 
         # Try to load MaxMind database
         if db_path is None:
@@ -341,8 +344,9 @@ class GeoIPService:
             return None
 
         # Check in-memory cache first
-        if ip in self._os_cache:
-            return self._os_cache[ip]
+        with self._os_lock:
+            if ip in self._os_cache:
+                return self._os_cache[ip]
 
         try:
             # Search for this IP in recent sessions, try both source and destination
@@ -445,12 +449,13 @@ class GeoIPService:
             )
 
             # Cache the result
-            if len(self._os_cache) >= self._OS_CACHE_MAX:
-                # Evict oldest entries (simple strategy: clear half)
-                keys = list(self._os_cache.keys())
-                for k in keys[: len(keys) // 2]:
-                    del self._os_cache[k]
-            self._os_cache[ip] = result
+            with self._os_lock:
+                if len(self._os_cache) >= self._OS_CACHE_MAX:
+                    # Evict oldest entries (simple strategy: clear half)
+                    keys = list(self._os_cache.keys())
+                    for k in keys[: len(keys) // 2]:
+                        del self._os_cache[k]
+                self._os_cache[ip] = result
 
             return result
 

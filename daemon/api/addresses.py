@@ -40,6 +40,7 @@ from api.time_range import parse_time_range
 from services.hostnames import canonical_name
 from services.threat_intel import (
     ALERT_FEED,
+    CACHE_LOCK,
     LISTING_RULES,
     ThreatIntelService,
     feed_hit,
@@ -414,7 +415,8 @@ def threat_intel(ip: str, by_alerts: bool | None) -> dict | None:
     would add it). None only when nothing matched and the alerts couldn't all be checked.
     """
     ti = ThreatIntelService()
-    ti.load_cache()
+    with CACHE_LOCK:  # load_cache can write the cache back
+        ti.load_cache()
     hits = ti.lookup_ip(ip)
     if by_alerts and not any(h["feed"] == ALERT_FEED for h in hits):
         hits = [*hits, feed_hit(ALERT_FEED, ip)]
