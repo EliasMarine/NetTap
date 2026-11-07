@@ -27,6 +27,7 @@ SOCKET="${NETTAP_SURICATA_SOCKET:-${SURICATA_RUN_DIR:-/var/run/suricata}/suricat
 LOCK_WAIT="${NETTAP_RULES_LOCK_WAIT:-900}"
 RELOAD_WAIT="${NETTAP_RULES_RELOAD_WAIT:-300}"
 RETRY_S="${NETTAP_RULES_RETRY_S:-5}"
+UPDATE_MAX="${NETTAP_RULES_UPDATE_MAX:-900}"  # Malcolm's updater is stopped after this, so it can't hold the lock
 SHIM_MARK="nettap-rules-update shim"
 MARKER="$STATE/update-in-progress"
 STATUS="$STATE/update-status.json"
@@ -68,6 +69,17 @@ start() {
     # OLD CODE START — deep-review 2026-11-07: followed a symlinked sources dir
     # rm -f "$SOURCES_DIR"/*.yaml
     # OLD CODE END
+    # A parent replaced by a link (the user owns /var/lib/suricata) would point the wipe and the write below
+    # anywhere, so both are skipped unless every parent is a real directory.
+    local dir
+    for dir in "$(dirname "$SOURCES_DIR")" "$(dirname "$SOURCES_FILE")"; do
+        mkdir -p "$dir" 2>/dev/null
+        if [ "$(cd -P "$dir" 2>/dev/null && pwd)" != "$dir" ]; then
+            log "ERROR: $dir is a link or missing; not touching the rule sources (rule updates use the compose list)"
+            install_shim
+            return 0
+        fi
+    done
     if [ -L "$SOURCES_DIR" ]; then rm -f "$SOURCES_DIR"; else rm -f "$SOURCES_DIR"/*.yaml; fi
     # docker exec ("Update now") gets the compose environment, not the one the loader built at start
     # OLD CODE START — deep-review 2026-11-07: a fixed .tmp name written with ">" and chowned without -h
@@ -136,7 +148,7 @@ reload_blocking() {  # reload what is on disk now, waiting out a reload in progr
         out=$(sc reload-rules) || true
         if jq -e '.return == "OK"' >/dev/null 2>&1 <<<"$out"; then
             confirm_engine "$before" 0 "Suricata's reload of the restored rules did not take effect"
-            return
+            return $?  # a bare return in the TERM trap would return the status from before the trap (143)
         fi
         case "$out" in
             *"in progress"*) ;;
@@ -183,13 +195,22 @@ publish() {  # copy the rules dir to a new verified generation, then repoint las
     done
 }
 
-restore() {  # rules dir := the published generation. 0 restored, 2 already equal, 1 failed
+restore() {  # rules dir := the published generation. 0 restored, 2 already equal, 3 nothing to restore, 1 failed
     local src
-    if [ ! -L "$STATE/last-good" ]; then
-        REASON="no last good ruleset to restore"
-        return 1
+    # OLD CODE START — review round 2: no last good copy failed every rollback, so the marker stayed and every
+    # later run stopped at "recovering" (a fresh volume whose first update failed never updated again)
+    # if [ ! -L "$STATE/last-good" ]; then
+    #     REASON="no last good ruleset to restore"
+    #     return 1
+    # fi
+    # src="$STATE/$(readlink "$STATE/last-good")"
+    # OLD CODE END
+    src="$STATE/$(readlink "$STATE/last-good" 2>/dev/null)"
+    # A missing, dangling or empty generation must never empty the live rules
+    if [ ! -L "$STATE/last-good" ] || [ ! -s "$src/suricata.rules" ]; then
+        log "no last good rules were kept; nothing to restore"
+        return 3
     fi
-    src="$STATE/$(readlink "$STATE/last-good")"
     [ "$(manifest "$src")" = "$(manifest "$RULES")" ] && return 2
     if find "$RULES" -mindepth 1 -delete && cp -R --preserve=mode,timestamps "$src/." "$RULES/" &&
         [ "$(manifest "$src")" = "$(manifest "$RULES")" ]; then
@@ -199,11 +220,16 @@ restore() {  # rules dir := the published generation. 0 restored, 2 already equa
     return 1
 }
 
-rollback() {  # $1 = always: reload even when the files already were the last good ones
+rollback() {  # $1 = always: reload even when the files already were the last good ones. Sets ROLLED.
     local rc
     restore
     rc=$?
     [ "$rc" -eq 1 ] && return 1
+    ROLLED="the last good rules were restored"
+    if [ "$rc" -eq 3 ]; then  # nothing known good to go back to: leave the engine and the files as they are
+        ROLLED="no last good rules were kept to restore"
+        return 0
+    fi
     # No answer from the engine = it isn't running (startup): it loads the restored files when it starts
     engine_time >/dev/null || return 0
     if [ "$rc" -eq 0 ] || [ "$1" = always ]; then
@@ -221,11 +247,22 @@ write_status() {  # state exit_code reason
     case "$1" in active | prepared) success="$T0" ;; esac
     [ -n "${CONFIRMED:-}" ] && [ "$1" = active ] && activation="$CONFIRMED"
     jq -n --arg attempt "$T0" --argjson code "$2" --arg state "$1" --arg reason "$3" \
-        --arg success "$success" --arg activation "$activation" \
+        --arg success "$success" --arg activation "$activation" --arg missing "${MISSING:-}" \
         '{attempt: $attempt, exit_code: $code, state: $state, reason: $reason,
           last_success: (if $success == "" then null else $success end),
-          last_activation: (if $activation == "" then null else $activation end)}' \
+          last_activation: (if $activation == "" then null else $activation end),
+          missing_sources: ($missing | split("\n") | map(select(. != "")))}' \
         > "$STATUS.tmp" && mv -f "$STATUS.tmp" "$STATUS" || log "could not write $STATUS"
+}
+
+missing_sources() {  # configured sources with no source file: Malcolm only warns when one fails to enable
+    local have name
+    have=$(cat "$SOURCES_DIR"/*.yaml 2>/dev/null | sed -n 's/^source: *//p')
+    tr ',' '\n' <<<"${SURICATA_UPDATE_ENABLE_SOURCES:-}" | while IFS= read -r name; do
+        name="${name%%|*}"
+        name="${name//[[:space:]]/}"
+        [ -n "$name" ] && ! grep -qxF "$name" <<<"$have" && printf '%s\n' "$name"
+    done
 }
 
 # The line that says why: suricata-update's last error, else the last line, without its timestamp
@@ -233,24 +270,41 @@ failure_reason() {
     local line
     line=$(grep -E '<(Error|Critical)>|ERROR|[Ee]rror' <<<"$1" | tail -1)
     [ -n "$line" ] || line=$(grep -v '^[[:space:]]*$' <<<"$1" | tail -1)
-    sed -E 's/^[0-9/]+ -- [0-9:]+ - <[A-Za-z]+> -- //' <<<"$line" | cut -c1-300
+    # OLD CODE START — review round 2: feed text kept its control characters (printed raw over SSH, logged)
+    # sed -E 's/^[0-9/]+ -- [0-9:]+ - <[A-Za-z]+> -- //' <<<"$line" | cut -c1-300
+    # OLD CODE END
+    sed -E 's/^[0-9/]+ -- [0-9:]+ - <[A-Za-z]+> -- //' <<<"$line" | tr -d '\000-\010\013-\037\177' | cut -c1-300
 }
 
 # --- update ----------------------------------------------------------------------------------------
+
+output_done() {  # close the redactor's input and wait until it has written everything
+    [ -n "${REDACTOR:-}" ] || return 0
+    exec 8>&-
+    wait "$REDACTOR" 2>/dev/null
+    REDACTOR=""
+}
 
 on_signal() {
     trap '' TERM INT
     if [ -n "${CHILD:-}" ]; then
         kill -TERM -- "-$CHILD" 2>/dev/null
-        (sleep 5 && kill -KILL -- "-$CHILD" 2>/dev/null) &
+        (exec 8>&-; sleep 5 && kill -KILL -- "-$CHILD" 2>/dev/null) &  # without the redactor's pipe
         local killer=$!
         wait "$CHILD" 2>/dev/null
         kill "$killer" 2>/dev/null
     fi
-    [ -n "${OUT:-}" ] && [ -f "$OUT" ] && { redact < "$OUT"; rm -f "$OUT"; }
+    # OLD CODE START — review round 2: $OUT now holds redacted text only
+    # [ -n "${OUT:-}" ] && [ -f "$OUT" ] && { redact < "$OUT"; rm -f "$OUT"; }
+    # OLD CODE END
+    if [ -n "${OUT:-}" ] && [ -f "$OUT" ]; then
+        output_done
+        cat "$OUT"
+        rm -f "$OUT"
+    fi
     if rollback always; then
         rm -f "$MARKER"
-        write_status interrupted 143 "The update was stopped before it finished; the last good rules were restored"
+        write_status interrupted 143 "The update was stopped before it finished; $ROLLED"
     else
         write_status interrupted 143 "The update was stopped before it finished; ${REASON} (retried at the next update)"
     fi
@@ -258,6 +312,11 @@ on_signal() {
 }
 
 update() {
+    # Root would write the marker, the status and the rules through links Malcolm's user can plant
+    if [ "$(id -u)" -eq 0 ]; then
+        log "refusing to update the rules as root; run it as Malcolm's user: docker exec -u suricata <container> $ORIGINAL"
+        exit 1
+    fi
     [ "${SURICATA_UPDATE_RULES:-false}" = true ] || exec "$MALCOLM"  # Malcolm's: does nothing, exits 0
     if [ -r "$SOURCES_FILE" ]; then
         SURICATA_UPDATE_ENABLE_SOURCES=$(cat "$SOURCES_FILE")
@@ -278,6 +337,8 @@ update() {
     REASON=""
     NOTE=""
     CONFIRMED=""
+    MISSING=""
+    ROLLED=""
     rm -rf "$STATE"/gen.tmp-*
 
     if [ -e "$MARKER" ]; then
@@ -296,15 +357,26 @@ update() {
     echo "$T0" > "$MARKER"
     trap on_signal TERM INT
     OUT=$(mktemp)
-    # Own session, so a stop takes Malcolm's updater and suricata-update down with it.
+    # Redacted before it reaches the disk: a run killed with SIGKILL leaves no code in $OUT
+    exec 8> >(redact > "$OUT")
+    REDACTOR=$!
+    # Own session, so a stop takes Malcolm's updater and suricata-update down with it. A time limit, so a
+    # stalled download can't hold the rules lock (capture restarts, the ET Pro code, deploys wait on it).
     # Malcolm's script exits non-zero if its grep -v sees no line; its "enable-conf does not exist"
     # warnings always give it one on 26.10.0.
-    setsid "$MALCOLM" > "$OUT" 2>&1 &
+    # OLD CODE START — review round 2: no time limit, and the raw output went to $OUT
+    # setsid "$MALCOLM" > "$OUT" 2>&1 &
+    # OLD CODE END
+    setsid timeout -k 30 "$UPDATE_MAX" "$MALCOLM" >&8 2>&1 &
     CHILD=$!
     wait "$CHILD"
     RC=$?
     CHILD=""
-    LOGTEXT=$(redact < "$OUT")
+    # OLD CODE START — review round 2: redacted only after the raw output was on disk
+    # LOGTEXT=$(redact < "$OUT")
+    # OLD CODE END
+    output_done
+    LOGTEXT=$(cat "$OUT")
     rm -f "$OUT"
     OUT=""
     [ -n "$LOGTEXT" ] && printf '%s\n' "$LOGTEXT"
@@ -312,6 +384,7 @@ update() {
     if [ "$RC" -ne 0 ]; then
         local why
         why=$(failure_reason "$LOGTEXT")
+        [ "$RC" -eq 124 ] && why="the rule update did not finish within $UPDATE_MAX s and was stopped"
         [ -n "$why" ] || why="the rule update exited $RC"
         if rollback no; then
             rm -f "$MARKER"
@@ -321,6 +394,8 @@ update() {
         fi
         exit "$RC"
     fi
+    MISSING=$(missing_sources)
+    [ -z "$MISSING" ] || log "these configured rule sources were not enabled: $(paste -sd, - <<<"$MISSING")"
     if [ -z "$BEFORE" ]; then
         # Startup: Suricata starts after this and loads what suricata-update tested (-T) and installed
         publish || true
@@ -337,7 +412,7 @@ update() {
     local why="$REASON"
     if rollback always; then
         rm -f "$MARKER"
-        write_status failed 1 "$why; the last good rules were restored"
+        write_status failed 1 "$why; $ROLLED"
     else
         write_status failed 1 "$why; $REASON (retried at the next update)"
     fi

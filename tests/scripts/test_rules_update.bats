@@ -7,11 +7,12 @@
 # Desktop doesn't share /opt/homebrew), from the repo root:
 #
 #   cp -R /opt/homebrew/Cellar/bats-core/1.14.0 /tmp/bats
-#   docker run --rm --platform linux/amd64 --tmpfs /tinyfs:size=256k -e TINYFS=/tinyfs \
+#   docker run --rm --platform linux/amd64 --user 1000:1000 --tmpfs /tinyfs:size=256k,mode=1777 -e TINYFS=/tinyfs \
 #     -v "$PWD:/repo:ro" -v /tmp/bats:/bats:ro --entrypoint /bats/bin/bats \
 #     ghcr.io/idaholab/malcolm/suricata:26.10.0 /repo/tests/scripts/test_rules_update.bats
 #
-# Malcolm's updater and suricatasc are stubs driven by files in $ENG (see _stubs).
+# As Malcolm's user (1000): "update" refuses root. Malcolm's updater and suricatasc are stubs driven by
+# files in $ENG (see _stubs).
 
 REPO_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/../.." && pwd)"
 SCRIPT="${REPO_ROOT}/config/suricata/nettap-rules-update.sh"
@@ -29,6 +30,7 @@ _env() {
     export NETTAP_RULES_STATE="$STATE" SURICATA_MANAGED_RULES_DIR="$RULES_DIR"
     export NETTAP_MALCOLM_UPDATE="$TEST_TMPDIR/bin/malcolm-update" NETTAP_RULES_SOURCES_FILE="$TEST_TMPDIR/sources"
     export NETTAP_SURICATA_SOCKET="$TEST_TMPDIR/socket" SURICATA_UPDATE_RULES=true
+    export SURICATA_UPDATE_SOURCES_DIR="$TEST_TMPDIR/sources.d"
     export NETTAP_RULES_LOCK_WAIT=10 NETTAP_RULES_RELOAD_WAIT=2 NETTAP_RULES_RETRY_S=0.2
     export PATH="$TEST_TMPDIR/bin:$PATH"
     echo "T0" > "$ENG/time"
@@ -40,7 +42,14 @@ _stubs() {
     cat > "$TEST_TMPDIR/bin/malcolm-update" <<'EOF'
 #!/usr/bin/env bash
 echo "malcolm $$ start" >> "$ENG/log"
+echo "$$" > "$ENG/malcolm-pid"
 [ -f "$ENG/malcolm-print" ] && cat "$ENG/malcolm-print"
+IFS=',' read -ra specs <<< "${SURICATA_UPDATE_ENABLE_SOURCES:-}"
+for spec in "${specs[@]}"; do  # enable-source: one file per source; a listed one fails to enable
+    n="${spec%%|*}"
+    grep -qxF "$n" "$ENG/skip-source" 2>/dev/null && continue
+    mkdir -p "$SURICATA_UPDATE_SOURCES_DIR" && echo "source: $n" > "$SURICATA_UPDATE_SOURCES_DIR/${n//\//-}.yaml"
+done
 [ -f "$ENG/new-rules" ] && cp "$ENG/new-rules" "$RULES_DIR/suricata.rules"
 [ -f "$ENG/malcolm-sleep" ] && sleep "$(cat "$ENG/malcolm-sleep")"
 if [ -f "$ENG/malcolm-reload" ]; then
@@ -100,6 +109,7 @@ _good() { cat "$STATE/$(readlink "$STATE/last-good")/suricata.rules"; }
 # ---------------------------------------------------------------------------
 
 _start_env() {
+    TEST_TMPDIR=$(cd -P "$TEST_TMPDIR" && pwd)
     export NETTAP_RULES_STATE="$TEST_TMPDIR/state" SURICATA_UPDATE_SOURCES_DIR="$TEST_TMPDIR/sources.d"
     export NETTAP_RULES_SOURCES_FILE="$TEST_TMPDIR/update/nettap-enable-sources"
     export NETTAP_UPDATE_SCRIPT="$TEST_TMPDIR/suricata-update-rules.sh"
@@ -157,6 +167,22 @@ _start_env() {
     [ ! -e "$SURICATA_UPDATE_SOURCES_DIR" ]
 }
 
+@test "start: a parent dir replaced by a link → no wipe or write through it, the shim still installed" {
+    _start_env
+    export SURICATA_UPDATE_SOURCES_DIR="$TEST_TMPDIR/update/sources"
+    mkdir -p "$TEST_TMPDIR/victim/sources"
+    echo "keep: me" > "$TEST_TMPDIR/victim/sources/keep.yaml"
+    echo "keep me" > "$TEST_TMPDIR/victim/nettap-enable-sources"
+    ln -s "$TEST_TMPDIR/victim" "$TEST_TMPDIR/update"
+    SURICATA_UPDATE_ENABLE_SOURCES="et/open" run bash "$SCRIPT" start
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ERROR: $TEST_TMPDIR/update is a link or missing"* ]]
+    [ -f "$TEST_TMPDIR/victim/sources/keep.yaml" ]
+    [ "$(cat "$TEST_TMPDIR/victim/nettap-enable-sources")" = "keep me" ]
+    [ ! -e "$TEST_TMPDIR/victim/nettap-enable-sources.tmp" ]
+    grep -q "nettap-rules-update shim" "$NETTAP_UPDATE_SCRIPT"
+}
+
 @test "start: Malcolm's script missing → says so, installs nothing, still exits 0" {
     _start_env
     rm -f "$NETTAP_UPDATE_SCRIPT"
@@ -180,6 +206,7 @@ _start_env() {
     [ "$(_status exit_code)" = 0 ]
     [ "$(_status last_activation)" = T1 ]
     [ "$(_status last_success)" = "$(_status attempt)" ]
+    [ "$(jq -c .missing_sources "$STATE/update-status.json")" = "[]" ]
     [[ "$(_good)" == *v2* ]]
     [ -d "$STATE/gen-0" ]
     [ ! -e "$STATE/update-in-progress" ]
@@ -211,6 +238,66 @@ _start_env() {
     [[ "$(cat "$ENG/engine-loaded")" == *v1* ]]
     [[ "$(_good)" == *v1* ]]
     [ ! -e "$STATE/update-in-progress" ]
+}
+
+@test "update: as root → refused before anything runs (root would follow links Malcolm's user can plant)" {
+    _env; _stubs; _seed
+    printf '#!/usr/bin/env bash\n[ "$1" = -u ] && { echo 0; exit 0; }\nexec /usr/bin/id "$@"\n' > "$TEST_TMPDIR/bin/id"
+    chmod +x "$TEST_TMPDIR/bin/id"
+    _update
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"refusing to update the rules as root"*"docker exec -u suricata"* ]]
+    [ ! -e "$ENG/log" ]
+    [ ! -e "$STATE/update-in-progress" ]
+    [ ! -e "$STATE/update-status.json" ]
+}
+
+@test "update: a configured source that failed to enable → still active, recorded as missing" {
+    _linux_only; _env; _stubs; _seed
+    echo "et/open,ipfire/dbl|x=1,echap/stalkerware" > "$NETTAP_RULES_SOURCES_FILE"
+    echo "ipfire/dbl" > "$ENG/skip-source"
+    echo "1 T1" > "$ENG/malcolm-reload"
+    _update
+    [ "$status" -eq 0 ]
+    [ "$(_status state)" = active ]
+    [ "$(jq -c .missing_sources "$STATE/update-status.json")" = '["ipfire/dbl"]' ]
+    [[ "$output" == *"these configured rule sources were not enabled: ipfire/dbl"* ]]
+}
+
+@test "update: Malcolm's updater past its time limit → stopped, status failed, last good restored" {
+    _linux_only; _env; _stubs; _seed
+    export NETTAP_RULES_UPDATE_MAX=1
+    echo 30 > "$ENG/malcolm-sleep"
+    touch "$ENG/down"
+    SECONDS=0
+    _update
+    [ "$status" -eq 124 ]
+    [ "$SECONDS" -lt 15 ]
+    [ "$(_status state)" = failed ]
+    [ "$(_status reason)" = "the rule update did not finish within 1 s and was stopped" ]
+    [[ "$(_rules)" == *v1* ]]
+    [ "$(grep -c "malcolm .* end" "$ENG/log")" -eq 0 ]
+    [ ! -e "$STATE/update-in-progress" ]
+}
+
+@test "update: the updater's raw output never reaches the disk, even when the run is killed" {
+    _linux_only; _env; _stubs; _seed
+    export TMPDIR="$TEST_TMPDIR/tmp"
+    mkdir -p "$TMPDIR"
+    echo "et/pro|secret-code=CANARYz9y8x7w6v5u4t3,ipfire/dbl" > "$NETTAP_RULES_SOURCES_FILE"
+    echo "fetching https://rules.emergingthreatspro.com/CANARYz9y8x7w6v5u4t3/x.tar.gz" > "$ENG/malcolm-print"
+    echo 30 > "$ENG/malcolm-sleep"
+    touch "$ENG/down"
+    bash "$SCRIPT" update > "$TEST_TMPDIR/out" 2>&1 &
+    pid=$!
+    for _ in $(seq 1 50); do grep -q "malcolm .* start" "$ENG/log" 2>/dev/null && break; sleep 0.1; done
+    sleep 0.5
+    [ -n "$(ls "$TMPDIR")" ]  # the output file exists
+    [ "$(grep -rlF CANARY "$TMPDIR" | wc -l)" -eq 0 ]
+    kill -KILL "$pid"
+    kill -KILL -- "-$(awk '{ print $5 }' "/proc/$(cat "$ENG/malcolm-pid")/stat")" 2>/dev/null || true  # its group
+    sleep 0.5
+    [ "$(grep -rlF CANARY "$TMPDIR" | wc -l)" -eq 0 ]
 }
 
 @test "update: an ET Pro code never reaches the output or the status record" {
@@ -304,6 +391,37 @@ EOF
     [[ "$(_rules)" == *v1* ]]
 }
 
+@test "update: first run with no last good rules and a failed update → marker cleared, the next run updates" {
+    _linux_only; _env; _stubs
+    echo "alert ip any any -> any any (msg:\"v2\"; sid:2;)" > "$ENG/new-rules"
+    echo 1 > "$ENG/malcolm-rc"
+    _update
+    [ "$status" -eq 1 ]
+    [ "$(_status state)" = failed ]
+    [ ! -e "$STATE/update-in-progress" ]
+    [ "$(grep -c 'sc reload-rules' "$ENG/log")" -eq 0 ]
+    rm -f "$ENG/malcolm-rc"
+    echo "1 T1" > "$ENG/malcolm-reload"
+    _update
+    [ "$status" -eq 0 ]
+    [ "$(_status state)" = active ]
+    [ "$(grep -c "malcolm .* start" "$ENG/log")" -eq 2 ]
+    [[ "$(_good)" == *v2* ]]
+}
+
+@test "update: a marker with a dangling last good link → the live rules are kept, the update goes ahead" {
+    _linux_only; _env; _stubs; _seed
+    rm -rf "$STATE/gen-0"
+    echo "earlier" > "$STATE/update-in-progress"
+    echo "1 T1" > "$ENG/malcolm-reload"
+    rm -f "$ENG/new-rules"
+    _update
+    [ "$status" -eq 0 ]
+    [[ "$(_rules)" == *v1* ]]
+    [ "$(grep -c "malcolm .* start" "$ENG/log")" -eq 1 ]
+    [ "$(_status state)" = active ]
+}
+
 @test "update: a marker left by a killed run → last good restored and reloaded before anything else" {
     _linux_only; _env; _stubs; _seed
     echo "half-written" > "$RULES_DIR/suricata.rules"
@@ -330,6 +448,22 @@ EOF
     [[ "$(_rules)" == *v1* ]]
     [ ! -e "$STATE/update-in-progress" ]
     [ "$(grep -c "malcolm .* end" "$ENG/log")" -eq 0 ]  # the updater was stopped with it
+}
+
+@test "update: TERM with the engine running → last good restored and reloaded, status interrupted" {
+    _linux_only; _env; _stubs; _seed
+    echo 30 > "$ENG/malcolm-sleep"
+    bash "$SCRIPT" update > "$TEST_TMPDIR/out" 2>&1 &
+    pid=$!
+    for _ in $(seq 1 50); do grep -q "malcolm .* start" "$ENG/log" 2>/dev/null && [[ "$(_rules)" == *v2* ]] && break; sleep 0.1; done
+    kill -TERM "$pid"
+    wait "$pid" || true
+    [ "$(_status state)" = interrupted ]
+    [ "$(_status reason)" = "The update was stopped before it finished; the last good rules were restored" ]
+    [[ "$(_rules)" == *v1* ]]
+    [[ "$(cat "$ENG/engine-loaded")" == *v1* ]]
+    [ ! -e "$STATE/update-in-progress" ]
+    [ "$(grep -c "malcolm .* end" "$ENG/log")" -eq 0 ]
 }
 
 # ---------------------------------------------------------------------------
