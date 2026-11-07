@@ -85,9 +85,12 @@ _FILTERED_PREVIEW_SCRIPT = (
 class PcapSearchService:
     """Search and filter captured PCAP files."""
 
-    def __init__(self, pcap_dir: str | None = None) -> None:
+    def __init__(
+        self, pcap_dir: str | None = None, semaphore: asyncio.Semaphore | None = None
+    ) -> None:
         self._pcap_dir = Path(pcap_dir or _DEFAULT_PCAP_DIR)
-        self._semaphore = asyncio.Semaphore(_MAX_CONCURRENT_TSHARK)
+        # NET-188: the server passes TShark's semaphore so every reader shares 2 slots
+        self._semaphore = semaphore or asyncio.Semaphore(_MAX_CONCURRENT_TSHARK)
         self._search_seq = 0
         self._search_job: dict[str, Any] | None = None
         self._search_task: asyncio.Task | None = None

@@ -45,6 +45,7 @@ from api.daemon_auth import (
     DEFAULT_TOKEN_FILE,
 )
 from api.tshark import register_tshark_routes
+from api.packets import register_packet_routes
 from api.cyberchef import register_cyberchef_routes
 from api.traffic import register_traffic_routes
 from api.alerts import register_alert_routes
@@ -95,6 +96,8 @@ from api.addresses import register_address_routes
 from api.domains import register_domain_routes
 from api.suricata_categories import register_suricata_category_routes
 from services.tshark_service import TSharkService
+from services.capture_index import CaptureIndex
+from services.packet_search import PacketSearchService
 from services.cyberchef_service import CyberChefService
 from services.geoip_service import GeoIPService
 from services.risk_scoring import RiskScorer
@@ -1006,6 +1009,23 @@ def create_app(
     tshark_service = TSharkService(pcap_base_dir=pcap_dir)
     register_tshark_routes(app, tshark_service)
 
+    # Packet analysis (NET-188): shares TShark's two reader slots
+    capture_index = CaptureIndex(
+        pcap_dir,
+        os.environ.get("PACKET_INDEX_FILE", "/opt/nettap/data/packet-index.json"),
+        tshark_service.semaphore,
+    )
+    register_packet_routes(
+        app,
+        PacketSearchService(
+            pcap_dir,
+            capture_index,
+            tshark_service.semaphore,
+            tshark_service.get_version,
+        ),
+        capture_index,
+    )
+
     # CyberChef integration (containerized data analysis)
     cyberchef_url = os.environ.get("CYBERCHEF_URL", "http://nettap-cyberchef:8443")
     cyberchef_service = CyberChefService(base_url=cyberchef_url)
@@ -1265,7 +1285,12 @@ def create_app(
 
     # PCAP search (file listing, BPF filter search, preview, download)
     pcap_search_dir = os.environ.get("PCAP_DIR", "/opt/nettap/pcap")
-    pcap_search_service = PcapSearchService(pcap_dir=pcap_search_dir)
+    # OLD CODE START — NET-188: its own semaphore let 4 readers run on the 1-CPU container
+    # pcap_search_service = PcapSearchService(pcap_dir=pcap_search_dir)
+    # OLD CODE END
+    pcap_search_service = PcapSearchService(
+        pcap_dir=pcap_search_dir, semaphore=tshark_service.semaphore
+    )
     register_pcap_routes(app, pcap_search_service)
 
     # Capture control (PCAP collection on/off + file size config)

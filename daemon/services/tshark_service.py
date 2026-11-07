@@ -169,6 +169,11 @@ class TSharkService:
         self._fields_cache: dict[str, list[dict]] = {}
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_ANALYSES)
 
+    @property
+    def semaphore(self) -> asyncio.Semaphore:
+        """The reader slots, shared with PCAP Search and packet analysis (NET-188)."""
+        return self._semaphore
+
     # --- Validation methods ---
 
     def validate_pcap_path(self, pcap_path: str) -> str:
