@@ -509,7 +509,8 @@ describe('Infrastructure bridge latency', () => {
 		stubBridge({ latency_us: null, latency_note: NOTE });
 		const card = await latencyCard();
 
-		expect(within(card).getByText('Not measured')).toBeInTheDocument();
+		// OLD CODE: expect(within(card).getByText('Not measured')).toBeInTheDocument(); (NET-192: the figure is a dash, the words are in the sub)
+		expect(within(card).getByText('—')).toBeInTheDocument();
 		// the KPI card shows the reason under the figure; the bridge card keeps it as the title
 		expect(within(card).getByText(NOTE)).toBeInTheDocument();
 		expect(screen.getByText('Not measured', { selector: '[title]' })).toHaveAttribute('title', NOTE);

@@ -667,6 +667,7 @@
 		title="Queries over time"
 		sub="Queries per {INTERVALS[selectedTimeRange]?.words ?? '15 minutes'} · {rangeWords}"
 		hero
+		col
 		class="c-8"
 	>
 		{@render section(

@@ -799,7 +799,7 @@ OLD CODE END -->
 			</div>
 		</Card>
 
-		<Card class="c-8" hero title="Alert volume over time" sub="Alerts per {INTERVAL_MAP[selectedRange] ?? '1h'} · {range.words}">
+		<Card class="c-8" hero col title="Alert volume over time" sub="Alerts per {INTERVAL_MAP[selectedRange] ?? '1h'} · {range.words}">
 			{#if timelineFailed}
 				<CardState state="error" title="Couldn't load the alert volume over time: the request failed." onaction={() => refresh.run()} />
 			{:else if series.length === 0}

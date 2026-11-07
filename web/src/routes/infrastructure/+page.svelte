@@ -1288,10 +1288,7 @@ OLD CODE END -->
 {/if}
 
 <div class="grid">
-	<Card title="Capture pipeline" sub={pipelineSub} class="c-12">
-		<div class="pipe-wrap"><Pipeline {stages} /></div>
-	</Card>
-
+	<!-- NET-192: the Capture pipeline card moved below the KPI row (page recipe: KPIs first) -->
 	<KpiCard
 		class="c-3"
 		label="Disk used"
@@ -1316,7 +1313,8 @@ OLD CODE END -->
 	<!-- a percentage only when the window has one: zero arrivals or no window never reads 0% -->
 	<KpiCard class="c-3" label="Packet loss" icon="pcap" value={loss?.pct ?? '--'} sub={loss?.detail} />
 	{#if bridgeHealth && bridgeHealth.latency_us == null}
-		<KpiCard class="c-3" label="Latency" icon="live" value="Not measured" sub={bridgeHealth.latency_note || undefined} />
+		<!-- OLD CODE: value="Not measured" sub={bridgeHealth.latency_note || undefined} (NET-192: the words wrapped at figure size) -->
+		<KpiCard class="c-3" label="Latency" icon="live" value="—" sub={bridgeHealth.latency_note || 'Not measured'} />
 	{:else}
 		<KpiCard
 			class="c-3"
@@ -1326,6 +1324,10 @@ OLD CODE END -->
 			unit={latencyMs > 0 ? 'ms' : undefined}
 		/>
 	{/if}
+
+	<Card title="Capture pipeline" sub={pipelineSub} class="c-12">
+		<div class="pipe-wrap"><Pipeline {stages} /></div>
+	</Card>
 
 	<!-- The capture point: a mirror (SPAN) port or the DHCP gateway's LAN port, else the br0 bridge -->
 	{#if isMirror || isGateway}

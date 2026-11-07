@@ -784,7 +784,13 @@
 				onaction={() => refresh.run()}
 			/>
 		{:else}
+			<!-- OLD CODE START — NET-192: a centred custom layout left 177 px empty beside the radar
 			<div class="overall">
+				<Ring … />
+				<p class="trust-plain">{summary}</p>
+			</div>
+			OLD CODE END -->
+			<div class="trust-top">
 				<Ring
 					value={overallScore}
 					label="Grade {overallGrade}"
@@ -792,6 +798,14 @@
 				/>
 				<p class="trust-plain">{summary}</p>
 			</div>
+			<ul class="score-rows">
+				{#each categories as cat, i (cat.name)}
+					<li>
+						<span>{cat.name}</span><b>{cat.score ?? '—'}</b>
+						<span class="bar-track" aria-hidden="true"><span class="bar-fill c-d{i + 1}" style:--w="{Math.max(0, Math.min(100, cat.score ?? 0))}%"></span></span>
+					</li>
+				{/each}
+			</ul>
 		{/if}
 	</Card>
 
@@ -852,6 +866,7 @@
 </div>
 
 <style>
+	/* OLD CODE START — NET-192: replaced by the system .trust-top
 	.overall {
 		display: flex;
 		flex-direction: column;
@@ -859,6 +874,7 @@
 		gap: var(--sp-4);
 		text-align: center;
 	}
+	OLD CODE END */
 
 	.note {
 		margin-top: var(--sp-3);

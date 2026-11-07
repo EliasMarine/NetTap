@@ -648,7 +648,7 @@
 		{/if}
 	</Card>
 
-	<Card class="c-4" title="Protocols" sub="Share of connections · last 5 minutes{hasActiveFilter ? ', filtered' : ''}">
+	<Card class="c-4" col title="Protocols" sub="Share of connections · last 5 minutes{hasActiveFilter ? ', filtered' : ''}">
 		{#if protocolItems.some((p) => p.value > 0)}
 			<Donut
 				items={protocolItems}

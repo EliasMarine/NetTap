@@ -9,16 +9,19 @@
 	// Props
 	// ---------------------------------------------------------------------------
 
-	let {
-		buckets = [],
-		loading = false,
-		emptyMessage = 'Sessions appear here once NetTap sees traffic in this time range.',
-	}: {
-		buckets: ConnectionTimelineBucket[];
-		loading?: boolean;
-		/** #96: lets the page say the request failed instead of "no data" */
-		emptyMessage?: string;
-	} = $props();
+	// OLD CODE START — NET-192: the page's Card now owns the title and the loading/empty/error states
+	// let {
+	// 	buckets = [],
+	// 	loading = false,
+	// 	emptyMessage = 'Sessions appear here once NetTap sees traffic in this time range.',
+	// }: {
+	// 	buckets: ConnectionTimelineBucket[];
+	// 	loading?: boolean;
+	// 	/** #96: lets the page say the request failed instead of "no data" */
+	// 	emptyMessage?: string;
+	// } = $props();
+	// OLD CODE END
+	let { buckets }: { buckets: ConnectionTimelineBucket[] } = $props();
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -92,11 +95,14 @@
 </script>
 
 <div class="timeline-card">
+	<!-- OLD CODE START — NET-192: title and sub moved to the page's Card
 	<div class="card-head">
 		<div>
 			<h2 class="card-title">Session volume</h2>
 			<p class="card-sub">Sessions over time, by protocol</p>
 		</div>
+	OLD CODE END -->
+	<div class="legend-row">
 		<ul class="legend">
 			{#each activeProtocols as proto}
 				<li>
@@ -118,8 +124,9 @@
 						x1="50" y1={180 - frac * 160}
 						x2={chartWidth} y2={180 - frac * 160}
 					/>
+					<!-- OLD CODE: {Math.round(maxTotal * frac)} (NET-192: no thousands separator) -->
 					<text class="ax" x="45" y={180 - frac * 160 + 4} text-anchor="end">
-						{Math.round(maxTotal * frac)}
+						{Math.round(maxTotal * frac).toLocaleString('en-GB')}
 					</text>
 				{/each}
 
@@ -167,7 +174,9 @@
 					{@const idx = Math.round(li * (buckets.length - 1) / Math.max(1, Math.min(5, buckets.length - 1)))}
 					{@const stepW = (chartWidth - 60) / buckets.length}
 					{@const lx = 55 + idx * stepW + Math.max(2, stepW - 2) / 2}
-					<text class="ax" x={lx} y="196" text-anchor="middle">
+					{@const last = idx === buckets.length - 1}
+					<!-- OLD CODE: x={lx} text-anchor="middle" (NET-192: the last label ran past the right edge) -->
+					<text class="ax" x={last ? chartWidth - 2 : lx} y="196" text-anchor={last ? 'end' : 'middle'}>
 						{formatShortTimestamp(buckets[idx]?.timestamp || '')}
 					</text>
 				{/each}
@@ -190,8 +199,10 @@
 					{/each}
 				</div>
 			{/if}
+		<!-- OLD CODE START — NET-192: the page's CardState shows loading, empty and failed
 		{:else if !loading}
 			<p class="dim timeline-empty">{emptyMessage}</p>
+		OLD CODE END -->
 		{/if}
 	</div>
 </div>
@@ -206,9 +217,15 @@
 		position: relative;
 	}
 
+	/* OLD CODE START — NET-192: the empty line moved to the page's CardState
 	.timeline-empty {
 		padding: var(--sp-8);
 		text-align: center;
+	}
+	OLD CODE END */
+
+	.legend-row {
+		margin-bottom: var(--sp-3);
 	}
 
 	/* Chart tooltip: the system's light pill (pill-active-bg, on-light) */

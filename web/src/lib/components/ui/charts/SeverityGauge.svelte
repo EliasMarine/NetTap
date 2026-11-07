@@ -6,6 +6,7 @@
 <script lang="ts">
 	import { allocateTicks, polar } from './geometry';
 	import type { SeverityBucket } from '$lib/utils/severity';
+	import { fitCount } from '$lib/utils/drilldown';
 
 	let {
 		buckets,
@@ -40,7 +41,8 @@
 			{#each ticks as t, k (k)}
 				<line class="tick {t.cls}" x1={t.a[0].toFixed(1)} y1={t.a[1].toFixed(1)} x2={t.b[0].toFixed(1)} y2={t.b[1].toFixed(1)} />
 			{/each}
-			<text class="d-num" x={c} y={c + 6} text-anchor="middle">{shown.toLocaleString('en-GB')}</text>
+			<!-- OLD CODE: {shown.toLocaleString('en-GB')} (NET-192: "214,000" ran into the tick ring; the aria-label keeps the exact figure) -->
+			<text class="d-num" x={c} y={c + 6} text-anchor="middle">{fitCount(shown)}</text>
 			<text class="d-lbl" x={c} y={c + 26} text-anchor="middle">{centreLabel}</text>
 		</svg>
 	</div>

@@ -676,7 +676,7 @@
 		note="Among the packets in the preview below"
 	/>
 
-	<Card title="Capture timeline" sub="Files written per {range.bucket} · {range.words}" hero class="c-8">
+	<Card title="Capture timeline" sub="Files written per {range.bucket} · {range.words}" hero col class="c-8">
 		{#if filesFailed && !filesLoading}
 			<CardState state="error" title="Couldn't load the PCAP file list: the request failed." message="Check that NetTap is running on the System page, then try again." onaction={() => refresh.run()} />
 		{:else if captureTimeline.length === 0 && filesLoading}

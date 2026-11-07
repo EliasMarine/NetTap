@@ -1489,7 +1489,7 @@ OLD CODE END -->
 
 <div class="grid">
 	<!-- OLD CODE: sub="Alerts per {INTERVAL_MAP[selectedTimeRange] ?? '1h'} · …" (slice 2a: Custom has no entry) -->
-	<Card class="c-8" hero title="Alert timeline" sub="Alerts per {range.interval} · {range.words}">
+	<Card class="c-8" hero col title="Alert timeline" sub="Alerts per {range.interval} · {range.words}">
 		{#if !loaded}
 			<CardState state="loading" title="Loading the alert timeline" />
 		{:else if failed.timeline}
@@ -1514,7 +1514,8 @@ OLD CODE END -->
 		{:else if failed.summary || !smartSummary}
 			<CardState state="error" title="Couldn't load the threat summary: the request failed." onaction={() => refresh.run()} />
 		{:else}
-			<div class="threat-top">
+			<!-- OLD CODE: <div class="threat-top"> (NET-192: a copy of the system .trust-top) -->
+			<div class="trust-top">
 				<!-- OLD CODE: <Ring value={threatScore} label="threat score" …> (NET-164: read as a bare number; Ring's default label states the scale) -->
 				<Ring value={threatScore} ariaLabel="Threat score {threatScore} of 100, level {threatLevel}" />
 				<div class="chips">
@@ -1631,7 +1632,10 @@ OLD CODE END -->
 	.cat-cell { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
 	.row-actions { display: inline-flex; gap: var(--sp-1); }
 	.row-actions .btn { min-height: 28px; padding: 0 var(--sp-3); font-size: var(--text-xs); }
+	/* OLD CODE START — NET-192: the system .trust-top replaces .threat-top; its margin moves to .score-how
 	.threat-top { display: flex; align-items: center; gap: var(--sp-5); margin-bottom: var(--sp-4); }
 	.score-how { margin: 0 0 var(--sp-4); font-size: var(--text-xs); }
+	OLD CODE END */
+	.score-how { margin: var(--sp-4) 0; font-size: var(--text-xs); }
 	:global(.ip-bars) :global(.bar-label), :global(.ip-bars) :global(.bars li > span:first-child) { font-family: var(--font-mono); }
 </style>

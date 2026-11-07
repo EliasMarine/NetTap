@@ -18,6 +18,7 @@ import {
 	landDots,
 	project,
 	arcPath,
+	mapLabels,
 	MAP_TOP,
 	MAP_BOTTOM,
 	type Point,
@@ -349,5 +350,22 @@ describe('arcPath', () => {
 	it('bows a quadratic arc upward between the two points', () => {
 		expect(arcPath([0, 100], [100, 100])).toBe('M0,100 Q50,68 100,100');
 		expect(arcPath([10, 10], [10, 10])).not.toMatch(/NaN/);
+	});
+});
+
+describe('mapLabels (NET-192)', () => {
+	const spot = (x: number, y: number, text = 'Germany 40') => ({ x, y, r: 5, text });
+
+	it('labels the busiest spots up to the limit', () => {
+		expect(mapLabels([spot(100, 100), spot(100, 200), spot(100, 300)], 900, 2)).toEqual([true, true, false]);
+	});
+
+	it('leaves off a label that would overlap one already placed, keeping the busier one', () => {
+		// Germany and the Netherlands sit a few pixels apart: the second label would print over the first
+		expect(mapLabels([spot(480, 120), spot(476, 116, 'Netherlands 12'), spot(100, 300)], 900, 5)).toEqual([true, false, true]);
+	});
+
+	it('flips labels left near the right edge, so a right-edge label clears a spot to its left', () => {
+		expect(mapLabels([spot(860, 100), spot(700, 100)], 900, 5)).toEqual([true, true]);
 	});
 });

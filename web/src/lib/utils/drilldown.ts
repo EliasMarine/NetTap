@@ -38,6 +38,11 @@ export function rangeWindow(hours: number, now: Date = new Date()): { from: stri
 
 export const fmt = (n: number): string => n.toLocaleString('en-GB');
 
+// en-US, not en-GB: en-GB writes "1.3m", which reads as metres; the app's compact figures are K and M
+const COMPACT = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
+/** A count in a small space (a gauge centre, a nav badge): exact below 100,000, "214K" above. */
+export const fitCount = (n: number): string => (n < 100_000 ? fmt(n) : COMPACT.format(n));
+
 /**
  * A byte total as the page shows it: "Not measured" when no connection carried a byte count,
  * "at least 1.2 GB" when some didn't, the total otherwise. No connections is a measured 0 B.

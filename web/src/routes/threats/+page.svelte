@@ -752,6 +752,9 @@
 		padding: var(--sp-4); border-top: 1px solid var(--line);
 	}
 	.inv-body .eyebrow { margin-bottom: var(--sp-2); }
+	/* system.css breaks .facts values anywhere; in these three narrow columns an IP split mid-address (NET-192).
+	   break-word keeps a value whole and breaks it only when it can't fit a line on its own. */
+	.inv-body .facts dd { overflow-wrap: break-word; }
 	.inv-todo { grid-column: 1 / -1; }
 
 	@media (prefers-reduced-motion: reduce) {

@@ -8,6 +8,7 @@
 	import BrandMark from './BrandMark.svelte';
 	import { NAV_GROUPS, isActive } from './nav';
 	import type { CaptureChip, StorageFoot } from './status';
+	import { fitCount } from '$lib/utils/drilldown';
 
 	interface Props {
 		path: string;
@@ -51,7 +52,8 @@
 					<Icon name={item.icon} />
 					<span>{item.label}</span>
 					{#if item.href === '/alerts' && alertCount !== null && alertCount > 0}
-						<span class="count" aria-hidden="true">{alertCount}</span>
+						<!-- OLD CODE: {alertCount} (NET-192: printed "214000"; the sr-only line keeps the exact figure) -->
+						<span class="count" aria-hidden="true">{fitCount(alertCount)}</span>
 						<span class="sr-only">{alertCount} alerts in the last 24 hours</span>
 					{/if}
 				</a>

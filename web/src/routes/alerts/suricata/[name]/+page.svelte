@@ -218,7 +218,7 @@
 </div>
 
 <div class="grid">
-	<Card class="c-8" hero title="Alerts over time" sub="Alerts per {slotWords(shown.hours)} · {words}">
+	<Card class="c-8" hero col title="Alerts over time" sub="Alerts per {slotWords(shown.hours)} · {words}">
 		{#if !data}
 			{@render summaryState('alerts over time')}
 		{:else if data.total === 0}

@@ -47,3 +47,29 @@ html:has(.app.nav-open) { overflow: hidden; }
       (Alerts and Log Explorer, with 6h since NET-160 slice 2b-1) scrolled the page sideways. Capped
       at the head's width, the actions wrap and the pill track scrolls inside itself. */
 @container app (max-width: 760px) { .head-actions { max-width: 100%; } }
+
+/* 8. bundle.css:417-418 and :424 make c-5, c-7, c-8 and a .stack span 12 and c-3, c-4 and c-6
+      span 6 at 1100 px and below. Half-width cards pair up two to a row, so the last one of an odd
+      run (one c-4 beside a c-8 hero, three KPIs, four KPIs and a card) sat alone on half a row: 36
+      such rows on 26 pages at 1024 px (NET-192). The last half-width card of a run of one, three
+      or five, ending at a full-width card or the grid's end, takes the full row. Longer odd runs
+      stay as they are: CSS can't count a run, and each length needs its own selector. */
+@container app (max-width: 1100px) {
+  :is(.c-3, .c-4, .c-6):not(.stack):is(:last-child, :has(+ :is(.c-5, .c-7, .c-8, .c-12, .stack))):is(
+    :first-child,
+    :is(.c-5, .c-7, .c-8, .c-12, .stack) + *,
+    :is(.c-3, .c-4, .c-6):not(.stack):first-child + :is(.c-3, .c-4, .c-6):not(.stack) + *,
+    :is(.c-5, .c-7, .c-8, .c-12, .stack) + :is(.c-3, .c-4, .c-6):not(.stack) + :is(.c-3, .c-4, .c-6):not(.stack) + *,
+    :is(.c-3, .c-4, .c-6):not(.stack):first-child + :is(.c-3, .c-4, .c-6):not(.stack) + :is(.c-3, .c-4, .c-6):not(.stack) + :is(.c-3, .c-4, .c-6):not(.stack) + *,
+    :is(.c-5, .c-7, .c-8, .c-12, .stack) + :is(.c-3, .c-4, .c-6):not(.stack) + :is(.c-3, .c-4, .c-6):not(.stack) + :is(.c-3, .c-4, .c-6):not(.stack) + :is(.c-3, .c-4, .c-6):not(.stack) + *
+  ) { grid-column: span 12; }
+}
+
+/* 9. bundle.css:259-260 draws the donut at a fixed 160 px beside its legend, so in a card stretched
+      to a taller neighbour (Live's Protocols beside the connection feed) about 300 px stayed empty.
+      In a col card the donut stacks above its legend and its box takes the free height; the svg
+      fills the box and its viewBox keeps the ring round at min(width, height), like AreaChart's
+      absolutely placed svg (NET-192). */
+.card.col > .donut-wrap { flex: 1 0 auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(160px, 1fr) auto; align-items: stretch; }
+.card.col > .donut-wrap > .donut-box { position: relative; width: 100%; }
+.card.col > .donut-wrap > .donut-box > svg { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; }

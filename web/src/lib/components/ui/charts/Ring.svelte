@@ -30,3 +30,10 @@
 	<text class="d-num" x={c} y={c + 6} text-anchor="middle">{score}</text>
 	<text class="d-lbl" x={c} y={c + 25} text-anchor="middle">{label}</text>
 </svg>
+
+<style>
+	/* In .trust-top (a flex row) the svg shrank to 58 px beside long text; it keeps its size */
+	svg {
+		flex: none;
+	}
+</style>
