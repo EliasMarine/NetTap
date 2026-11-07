@@ -109,6 +109,35 @@ Audits on the fixture build (1440 and 1024 px) and on the G11 (real data, cold):
   - Should-fix items, all done: a dedicated route pool; the lock split; deleting the two loop-only locks.
 - **Pre-existing, not changed here:** the tshark `/tmp/nettap_merged.pcap` race, and prune running at the same time as the storage cycle.
 
+## PR 3: speed (daemon + web), branch `feature/net192-speed`
+
+First run: parts 1a (measurement), 2 (beaconing in the background) and 3 (reverse DNS and WHOIS). Part 1b (fix the dominant query in each slow handler) waits for the G11 timings.
+
+### What changed
+
+- **Measurement (1a):**
+  - `NETTAP_QUERY_TIMING=1` (compose default 0) gives every daemon client a transport (`storage/query_timing.py`, wired in `StorageManager._client_kwargs`) that logs one INFO line per OpenSearch request:
+    `query-timing caller=<module>.<function>:<line> POST _search index=arkime_sessions3-* took_ms=<OpenSearch took> wall_ms=<wall> outcome=ok|error`
+  - The caller is the first frame outside opensearch-py and `daemon/storage`. Document ids are never logged. An exact-terms re-send logs its own line.
+  - `scripts/remote/deploy-speed-timing.sh` restarts the daemon with timing on and the background scan off, runs `verify_page_speed.py pages` (cold, fresh `to`, one call at a time), prints the 60 slowest requests and the total per query site, then restarts the daemon normally and runs `verify_page_speed.py snapshot`.
+- **Beaconing in the background (2)** (`services/beacon_snapshots.py`):
+  - A task started in `on_startup` and cancelled in `on_cleanup` rescans 24h and 7d every 15 min and 30d hourly, one scan at a time, each one `run_blocking` call. It logs `beacon-snapshot window=… duration_s=… beacons=… outcome=…` per run.
+  - Only a complete scan is published. A bucket-cap scan keeps the previous rows as `stale` (`last_error: "scan hit the bucket cap"`), or `failed` with none.
+  - `/api/threats/report` and `/api/threats/beaconing` take `?snapshot=24h|7d|30d` and return `beaconing_snapshot` (`state`, `computed_at`, `last_success_at`, `last_error`, scanned `from`/`to`). An explicit from/to is always live; any other `snapshot` value is a 400.
+  - `NETTAP_BEACON_BACKGROUND=0` turns the task off; `snapshot=` is then live, as before.
+  - Web: `threatRequest(range)` maps 24h/7d/30d to `snapshot`, 1h/6h to live bounds. The KPI shows "—" while pending or failed; the brief says "no beaconing" only after a finished check; the card shows loading, error, stale (rows plus a warn notice) and "checked <time>"; a live partial scan shows "Partial scan". While pending the page re-asks every 20 s for at most 10 min.
+- **Reverse DNS and WHOIS (3)** (`api/lookup.py`, `services/ttl_cache.py`): on PR 2's lookup pool and 503 cap, one lookup per IP at a time, 6 s in all (`timed_out: true` and no name past that; the reverse name stands if the forward check fails), and a 2,048-entry LRU + TTL cache (name 1 h, no name or timeout 5 min, WHOIS 24 h). `RES_OPTIONS="timeout:1 attempts:2"` in the daemon's environment. The address and DNS lookup pages say "No reverse DNS name (lookup timed out)".
+
+### Tests
+
+- Daemon: 3,581 passed, 3 skipped (main: 3,532). New: `test_query_timing.py`, `test_beacon_snapshots.py`, `test_ttl_cache.py`, `test_lookup_cache.py`. `conftest.py` turns the background scan off for apps built in tests.
+- Web: 3,735 passed. New: `threats-beaconing.test.ts`, `lookup/dns/[ip]/dns-result.test.ts`, `threatRequest` tests, an address-page timeout test.
+- Swap checks: the partial-scan, report-skips-live-check, single-flight and 6 s bound tests fail with the old logic; every new web test fails on main's pages.
+
+### Measured on the G11
+
+- Pending: `BRANCH=feature/net192-speed bash scripts/remote/deploy-speed-timing.sh`.
+
 ## PR 4: one look on every page (web)
 
 ### What changed
