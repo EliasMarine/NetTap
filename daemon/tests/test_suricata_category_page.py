@@ -195,6 +195,8 @@ class TestEveryFigureOpensItsCount(CategoryCase):
             [(C2_SPACED, 1), (C2, 1)],
         )
         self.assertEqual((also["distinct"], also["complete"]), (2, True))
+        # examined counts every key read, the page's own name included (PR #190 review)
+        self.assertEqual(also["examined"], 3)
         # The count is p1 alone; C2's own page counts p1 and p2, so the count is no link to it
         c2 = await self.page(C2)
         self.assertEqual(c2["total"], 2)

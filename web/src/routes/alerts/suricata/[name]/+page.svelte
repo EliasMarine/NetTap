@@ -68,6 +68,8 @@
 		if (v !== loadedView) {
 			loaded = null;
 			failure = null;
+			// PR #190 review: else Back to the last good view skipped this reset and kept the failed view's error
+			loadedView = '';
 		}
 		const results = await Promise.allSettled([getSuricataCategory(target, win.from, win.to)]);
 		if (!guard.current(g)) return 'skipped';

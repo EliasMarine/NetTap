@@ -59,13 +59,18 @@ def _query(from_ts: str, to_ts: str, name: str, severity: str = "") -> dict:
 
 
 def _listing(
-    rows: list[dict], order: Callable, top: int | None, complete: bool
+    rows: list[dict],
+    order: Callable,
+    top: int | None,
+    complete: bool,
+    examined: int | None = None,
 ) -> dict:
-    """The busiest `top` rows; a distinct count only when every key was read."""
+    """The busiest `top` rows; a distinct count only when every key was read. `examined` is the
+    keys read, when rows leave one out (Also tagged drops the page's own name)."""
     return {
         "rows": sorted(rows, key=order)[:top],
         "distinct": len(rows) if complete else None,
-        "examined": len(rows),
+        "examined": len(rows) if examined is None else examined,
         "complete": complete,
     }
 
@@ -125,7 +130,10 @@ def _also_tagged(snap: SnapshotSearch, base: dict, name: str) -> dict:
         for b in buckets
         if b["key"]["key"] != name
     ]
-    return _listing(rows, lambda r: (-r["count"], r["category"]), None, complete)
+    # OLD CODE: return _listing(rows, lambda r: (-r["count"], r["category"]), None, complete) (PR #190 review: examined left out the page's own name, one short)
+    return _listing(
+        rows, lambda r: (-r["count"], r["category"]), None, complete, len(buckets)
+    )
 
 
 def suricata_category_figures(

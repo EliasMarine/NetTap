@@ -211,6 +211,20 @@ describe('Suricata category page', () => {
 		expect(screen.queryByRole('link', { name: /Show the high alerts/ })).not.toBeInTheDocument();
 	});
 
+	// PR #190 review: Back to the last good view skipped the reset and kept the failed view's error
+	it("going back to a loaded view after a failed one shows loading, not the failed view's error", async () => {
+		stubDaemon(SURICATA_CATEGORY);
+		render(Page);
+		await loaded();
+		stubDaemon(undefined);
+		goTo('Potentially Bad Traffic');
+		await screen.findByText("Couldn't load alerts over time: the request failed.");
+		stubDaemon(new Promise<never>(() => {}));
+		goTo(NAME);
+		await vi.waitFor(() => expect(screen.queryByText("Couldn't load alerts over time: the request failed.")).not.toBeInTheDocument());
+		expect(kpi('Alerts')).toHaveTextContent('—');
+	});
+
 	it('reports ok and failed to the top bar, keeping the last figures', async () => {
 		stubDaemon(SURICATA_CATEGORY);
 		render(Page);
