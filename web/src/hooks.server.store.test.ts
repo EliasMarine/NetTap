@@ -30,6 +30,15 @@ function run(pathname: string, method = 'GET', cookie?: string) {
 	return handle({ event: event(pathname, method, cookie), resolve });
 }
 
+/** NET-197: an API call with no session gets 401 JSON, not a redirect, and the route never runs. */
+async function expectUnauthorised(reply: Response | Promise<Response>): Promise<void> {
+	const res = await reply;
+	expect(res.status).toBe(401);
+	expect(res.headers.get('content-type')).toBe('application/json');
+	expect(await res.json()).toEqual({ error: 'Sign in first' });
+	expect(resolve).not.toHaveBeenCalled();
+}
+
 function writeStore(contents: string): void {
 	writeFileSync(join(dataDir, 'users.json'), contents, 'utf-8');
 }
@@ -38,7 +47,12 @@ const ADMIN_STORE = JSON.stringify({
 	users: [{ username: 'admin', passwordHash: 'x', role: 'admin', createdAt: '', updatedAt: '' }],
 });
 
-const FIRST_RUN_PATHS = ['/setup', '/api/setup/configure', '/api/bridge/create', '/go-live'];
+// OLD CODE START — NET-197: pages and API calls answer differently now, so the list is split
+// const FIRST_RUN_PATHS = ['/setup', '/api/setup/configure', '/api/bridge/create', '/go-live'];
+// OLD CODE END
+const FIRST_RUN_PAGES = ['/setup', '/go-live'];
+const FIRST_RUN_APIS = ['/api/setup/configure', '/api/bridge/create'];
+const FIRST_RUN_PATHS = [...FIRST_RUN_PAGES, ...FIRST_RUN_APIS];
 
 beforeEach(async () => {
 	dataDir = mkdtempSync(join(tmpdir(), 'nettap-hooks-'));
@@ -68,7 +82,36 @@ describe('first-run routes with a real user store', () => {
 		expect(resolve).toHaveBeenCalledTimes(1);
 	});
 
-	it.each(FIRST_RUN_PATHS)('%s needs a session once a user exists', async (path) => {
+	// OLD CODE START — NET-197: API calls answer 401 JSON now; split into pages and API calls below
+	// it.each(FIRST_RUN_PATHS)('%s needs a session once a user exists', async (path) => {
+	// 	writeStore(ADMIN_STORE);
+	// 	await expect(run(path, 'POST')).rejects.toMatchObject({ status: 302, location: '/login' });
+	// 	expect(resolve).not.toHaveBeenCalled();
+	//
+	// 	await run(path, 'POST', sessionToken);
+	// 	expect(resolve).toHaveBeenCalledTimes(1);
+	// });
+	//
+	// it.each([
+	// 	['corrupt JSON', '{"users": [ {'],
+	// 	['wrong shape', '{"accounts": []}'],
+	// 	['null', 'null'],
+	// ])('a %s store fails closed', async (_label, contents) => {
+	// 	writeStore(contents);
+	// 	for (const path of FIRST_RUN_PATHS) {
+	// 		await expect(run(path, 'POST')).rejects.toMatchObject({ location: '/login' });
+	// 	}
+	// 	expect(resolve).not.toHaveBeenCalled();
+	// });
+	//
+	// it.skipIf(process.getuid?.() === 0)('an unreadable store fails closed', async () => {
+	// 	writeStore(ADMIN_STORE);
+	// 	chmodSync(join(dataDir, 'users.json'), 0o000);
+	// 	await expect(run('/api/bridge/teardown', 'POST')).rejects.toMatchObject({ location: '/login' });
+	// 	expect(resolve).not.toHaveBeenCalled();
+	// });
+	// OLD CODE END
+	it.each(FIRST_RUN_PAGES)('page %s needs a session once a user exists', async (path) => {
 		writeStore(ADMIN_STORE);
 		await expect(run(path, 'POST')).rejects.toMatchObject({ status: 302, location: '/login' });
 		expect(resolve).not.toHaveBeenCalled();
@@ -77,23 +120,46 @@ describe('first-run routes with a real user store', () => {
 		expect(resolve).toHaveBeenCalledTimes(1);
 	});
 
-	it.each([
+	it.each(FIRST_RUN_APIS)('API %s needs a session once a user exists', async (path) => {
+		writeStore(ADMIN_STORE);
+		await expectUnauthorised(run(path, 'POST'));
+
+		await run(path, 'POST', sessionToken);
+		expect(resolve).toHaveBeenCalledTimes(1);
+	});
+
+	const DAMAGED: [string, string][] = [
 		['corrupt JSON', '{"users": [ {'],
 		['wrong shape', '{"accounts": []}'],
 		['null', 'null'],
-	])('a %s store fails closed', async (_label, contents) => {
+	];
+
+	it.each(DAMAGED)('a %s store fails closed for pages: they go to /login, not setup', async (_label, contents) => {
 		writeStore(contents);
-		for (const path of FIRST_RUN_PATHS) {
-			await expect(run(path, 'POST')).rejects.toMatchObject({ location: '/login' });
+		for (const path of FIRST_RUN_PAGES) {
+			await expect(run(path, 'POST')).rejects.toMatchObject({ status: 302, location: '/login' });
 		}
 		expect(resolve).not.toHaveBeenCalled();
 	});
 
-	it.skipIf(process.getuid?.() === 0)('an unreadable store fails closed', async () => {
+	it.each(DAMAGED)('a %s store fails closed for first-run API calls: 401, never resolved', async (_label, contents) => {
+		writeStore(contents);
+		for (const path of FIRST_RUN_APIS) {
+			await expectUnauthorised(run(path, 'POST'));
+		}
+	});
+
+	it.skipIf(process.getuid?.() === 0)('an unreadable store fails closed for a page', async () => {
 		writeStore(ADMIN_STORE);
 		chmodSync(join(dataDir, 'users.json'), 0o000);
-		await expect(run('/api/bridge/teardown', 'POST')).rejects.toMatchObject({ location: '/login' });
+		await expect(run('/setup', 'POST')).rejects.toMatchObject({ status: 302, location: '/login' });
 		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it.skipIf(process.getuid?.() === 0)('an unreadable store fails closed for an API call', async () => {
+		writeStore(ADMIN_STORE);
+		chmodSync(join(dataDir, 'users.json'), 0o000);
+		await expectUnauthorised(run('/api/bridge/teardown', 'POST'));
 	});
 
 	it('a damaged store cannot be overwritten by createUser', async () => {
@@ -115,9 +181,24 @@ describe('exact pre-Account wizard requests', () => {
 		expect(resolve).toHaveBeenCalledTimes(1);
 	});
 
+	// OLD CODE START — NET-197: these API calls answer 401 JSON now, not a redirect to /login
+	// it.each(BOOTSTRAP)('%s %s needs a session once a user exists', async (method, path) => {
+	// 	writeStore(ADMIN_STORE);
+	// 	await expect(run(path, method)).rejects.toMatchObject({ status: 302, location: '/login' });
+	//
+	// 	await run(path, method, sessionToken);
+	// 	expect(resolve).toHaveBeenCalledTimes(1);
+	// });
+	//
+	// it.each(BOOTSTRAP)('%s %s fails closed on a corrupt store', async (method, path) => {
+	// 	writeStore('{"users": [ {');
+	// 	await expect(run(path, method)).rejects.toMatchObject({ location: '/login' });
+	// 	expect(resolve).not.toHaveBeenCalled();
+	// });
+	// OLD CODE END
 	it.each(BOOTSTRAP)('%s %s needs a session once a user exists', async (method, path) => {
 		writeStore(ADMIN_STORE);
-		await expect(run(path, method)).rejects.toMatchObject({ status: 302, location: '/login' });
+		await expectUnauthorised(run(path, method));
 
 		await run(path, method, sessionToken);
 		expect(resolve).toHaveBeenCalledTimes(1);
@@ -125,8 +206,7 @@ describe('exact pre-Account wizard requests', () => {
 
 	it.each(BOOTSTRAP)('%s %s fails closed on a corrupt store', async (method, path) => {
 		writeStore('{"users": [ {');
-		await expect(run(path, method)).rejects.toMatchObject({ location: '/login' });
-		expect(resolve).not.toHaveBeenCalled();
+		await expectUnauthorised(run(path, method));
 	});
 
 	it.each([
@@ -138,7 +218,15 @@ describe('exact pre-Account wizard requests', () => {
 		['POST', '/api/integrations/unifi/test/'],
 		['GET', '/api/settings/excluded-ips/extra'],
 	])('%s %s stays protected even with no store', async (method, path) => {
-		await expect(run(path, method)).rejects.toMatchObject({ status: 302, location: '/setup' });
+		// OLD CODE START — NET-197: an API call answers 401 JSON now, not a redirect to /setup
+		// await expect(run(path, method)).rejects.toMatchObject({ status: 302, location: '/setup' });
+		// expect(resolve).not.toHaveBeenCalled();
+		// OLD CODE END
+		await expectUnauthorised(run(path, method));
+	});
+
+	it('a page with no store still goes to setup', async () => {
+		await expect(run('/alerts')).rejects.toMatchObject({ status: 302, location: '/setup' });
 		expect(resolve).not.toHaveBeenCalled();
 	});
 });

@@ -24,11 +24,11 @@ vi.mock('@sveltejs/kit', async (importOriginal) => {
 	};
 });
 
-function createMockEvent(pathname: string, token?: string, user?: any, method = 'GET') {
+function createMockEvent(pathname: string, token?: string, user?: any, method = 'GET', headers: Record<string, string> = {}) {
 	const url = new URL(`http://localhost${pathname}`);
 	return {
 		url,
-		request: new Request(url, { method }),
+		request: new Request(url, { method, headers }),
 		cookies: {
 			get: vi.fn().mockImplementation((name: string) => {
 				if (name === 'nettap_token') return token;
@@ -47,6 +47,15 @@ let handle: any;
 
 describe('hooks.server', () => {
 	const mockResolve = vi.fn().mockImplementation(async (event: any) => new Response('ok'));
+
+	/** NET-197: a 401 with the JSON body, not a redirect, and the route never runs. */
+	async function expectUnauthorised(reply: Promise<Response>): Promise<void> {
+		const res = await reply;
+		expect(res.status).toBe(401);
+		expect(res.headers.get('content-type')).toBe('application/json');
+		expect(await res.json()).toEqual({ error: 'Sign in first' });
+		expect(mockResolve).not.toHaveBeenCalled();
+	}
 
 	beforeEach(async () => {
 		vi.resetModules();
@@ -99,24 +108,51 @@ describe('hooks.server', () => {
 		// });
 		// OLD CODE END
 
+		// OLD CODE START — NET-197: the API paths answer 401 JSON now; split into pages and API calls below
+		// it.each([
+		// 	'/tools',
+		// 	'/tools/subnet-calc',
+		// 	'/tools/ping',
+		// 	'/lookup/dns',
+		// 	'/lookup/whois',
+		// 	'/api/tools',
+		// 	'/api/tools/ping',
+		// 	'/api/tools/mac-lookup/aa:bb:cc:dd:ee:ff',
+		// 	'/api/lookup/dns/1.1.1.1',
+		// 	'/api/lookup/whois/1.1.1.1',
+		// ])('sends %s to /login without a session (NET-193)', async (path) => {
+		// 	mockHasUsers.mockReturnValue(true);
+		// 	mockVerifyToken.mockReturnValue(null);
+		// 	const event = createMockEvent(path, 'bad-token');
+		//
+		// 	await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/login' });
+		// 	expect(mockResolve).not.toHaveBeenCalled();
+		// });
+		// OLD CODE END
+		it.each(['/tools', '/tools/subnet-calc', '/tools/ping', '/lookup/dns', '/lookup/whois'])(
+			'sends %s to /login without a session (NET-193)',
+			async (path) => {
+				mockHasUsers.mockReturnValue(true);
+				mockVerifyToken.mockReturnValue(null);
+				const event = createMockEvent(path, 'bad-token');
+
+				await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/login' });
+				expect(mockResolve).not.toHaveBeenCalled();
+			},
+		);
+
 		it.each([
-			'/tools',
-			'/tools/subnet-calc',
-			'/tools/ping',
-			'/lookup/dns',
-			'/lookup/whois',
 			'/api/tools',
 			'/api/tools/ping',
 			'/api/tools/mac-lookup/aa:bb:cc:dd:ee:ff',
 			'/api/lookup/dns/1.1.1.1',
 			'/api/lookup/whois/1.1.1.1',
-		])('sends %s to /login without a session (NET-193)', async (path) => {
+		])('refuses %s without a session (NET-193, NET-197)', async (path) => {
 			mockHasUsers.mockReturnValue(true);
 			mockVerifyToken.mockReturnValue(null);
 			const event = createMockEvent(path, 'bad-token');
 
-			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/login' });
-			expect(mockResolve).not.toHaveBeenCalled();
+			await expectUnauthorised(handle({ event, resolve: mockResolve }));
 		});
 
 		it('allows the tools with a session', async () => {
@@ -128,17 +164,38 @@ describe('hooks.server', () => {
 			expect(mockResolve).toHaveBeenCalledWith(event);
 		});
 
-		it.each(['/api/auth/other', '/api/auth/..%2Ftools%2Fping', '/api/auth', '/api/auth/', '/api/auth/me/x', '/api/auth/login/x', '/login/x'])(
+		// OLD CODE START — NET-197: the API paths answer 401 JSON now; split into API calls and /login/x below
+		// it.each(['/api/auth/other', '/api/auth/..%2Ftools%2Fping', '/api/auth', '/api/auth/', '/api/auth/me/x', '/api/auth/login/x', '/login/x'])(
+		// 	'keeps the rest of /api/auth behind a login, so it never reaches the catch-all proxy: %s',
+		// 	async (path) => {
+		// 		mockHasUsers.mockReturnValue(true);
+		// 		mockVerifyToken.mockReturnValue(null);
+		// 		const event = createMockEvent(path);
+		//
+		// 		await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/login' });
+		// 		expect(mockResolve).not.toHaveBeenCalled();
+		// 	},
+		// );
+		// OLD CODE END
+		it.each(['/api/auth/other', '/api/auth/..%2Ftools%2Fping', '/api/auth', '/api/auth/', '/api/auth/me/x', '/api/auth/login/x'])(
 			'keeps the rest of /api/auth behind a login, so it never reaches the catch-all proxy: %s',
 			async (path) => {
 				mockHasUsers.mockReturnValue(true);
 				mockVerifyToken.mockReturnValue(null);
 				const event = createMockEvent(path);
 
-				await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/login' });
-				expect(mockResolve).not.toHaveBeenCalled();
+				await expectUnauthorised(handle({ event, resolve: mockResolve }));
 			},
 		);
+
+		it('keeps /login/x behind a login', async () => {
+			mockHasUsers.mockReturnValue(true);
+			mockVerifyToken.mockReturnValue(null);
+			const event = createMockEvent('/login/x');
+
+			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/login' });
+			expect(mockResolve).not.toHaveBeenCalled();
+		});
 
 		it.each(['/api/auth/login', '/api/auth/logout', '/api/auth/me'])('keeps %s public', async (path) => {
 			mockHasUsers.mockReturnValue(true);
@@ -148,16 +205,33 @@ describe('hooks.server', () => {
 			expect(mockResolve).toHaveBeenCalledWith(event);
 		});
 
-		it.each(['/loginx', '/api/authx', '/api/auth-tokens'])(
-			'matches whole path segments: %s is not public',
-			async (path) => {
-				mockHasUsers.mockReturnValue(true);
-				mockVerifyToken.mockReturnValue(null);
-				const event = createMockEvent(path);
+		// OLD CODE START — NET-197: '/api/authx' and '/api/auth-tokens' answer 401 JSON now; split below
+		// it.each(['/loginx', '/api/authx', '/api/auth-tokens'])(
+		// 	'matches whole path segments: %s is not public',
+		// 	async (path) => {
+		// 		mockHasUsers.mockReturnValue(true);
+		// 		mockVerifyToken.mockReturnValue(null);
+		// 		const event = createMockEvent(path);
+		//
+		// 		await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/login' });
+		// 	},
+		// );
+		// OLD CODE END
+		it('matches whole path segments: /loginx is not public', async () => {
+			mockHasUsers.mockReturnValue(true);
+			mockVerifyToken.mockReturnValue(null);
+			const event = createMockEvent('/loginx');
 
-				await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/login' });
-			},
-		);
+			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/login' });
+		});
+
+		it.each(['/api/authx', '/api/auth-tokens'])('matches whole path segments: %s is not public', async (path) => {
+			mockHasUsers.mockReturnValue(true);
+			mockVerifyToken.mockReturnValue(null);
+			const event = createMockEvent(path);
+
+			await expectUnauthorised(handle({ event, resolve: mockResolve }));
+		});
 
 		it('keeps /api/auth/* public', async () => {
 			mockHasUsers.mockReturnValue(true);
@@ -239,17 +313,35 @@ describe('hooks.server', () => {
 	});
 
 	describe('setup and bridge routes after setup', () => {
-		it.each(['/setup', '/api/setup/nics', '/api/bridge/teardown', '/go-live'])(
-			'requires a session for %s once a user exists',
-			async (path) => {
-				mockHasUsers.mockReturnValue(true);
-				mockVerifyToken.mockReturnValue(null);
-				const event = createMockEvent(path);
+		// OLD CODE START — NET-197: the API paths answer 401 JSON now; split into pages and API calls below
+		// it.each(['/setup', '/api/setup/nics', '/api/bridge/teardown', '/go-live'])(
+		// 	'requires a session for %s once a user exists',
+		// 	async (path) => {
+		// 		mockHasUsers.mockReturnValue(true);
+		// 		mockVerifyToken.mockReturnValue(null);
+		// 		const event = createMockEvent(path);
+		//
+		// 		await expect(handle({ event, resolve: mockResolve })).rejects.toThrow();
+		// 		expect(mockResolve).not.toHaveBeenCalled();
+		// 	}
+		// );
+		// OLD CODE END
+		it.each(['/setup', '/go-live'])('requires a session for %s once a user exists', async (path) => {
+			mockHasUsers.mockReturnValue(true);
+			mockVerifyToken.mockReturnValue(null);
+			const event = createMockEvent(path);
 
-				await expect(handle({ event, resolve: mockResolve })).rejects.toThrow();
-				expect(mockResolve).not.toHaveBeenCalled();
-			}
-		);
+			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/login' });
+			expect(mockResolve).not.toHaveBeenCalled();
+		});
+
+		it.each(['/api/setup/nics', '/api/bridge/teardown'])('requires a session for %s once a user exists', async (path) => {
+			mockHasUsers.mockReturnValue(true);
+			mockVerifyToken.mockReturnValue(null);
+			const event = createMockEvent(path);
+
+			await expectUnauthorised(handle({ event, resolve: mockResolve }));
+		});
 
 		it('allows them with a session once a user exists', async () => {
 			mockHasUsers.mockReturnValue(true);
@@ -267,8 +359,11 @@ describe('hooks.server', () => {
 			mockVerifyToken.mockReturnValue(null);
 			const event = createMockEvent('/api/setup/configure');
 
-			await expect(handle({ event, resolve: mockResolve })).rejects.toThrow();
-			expect(mockResolve).not.toHaveBeenCalled();
+			// OLD CODE START — NET-197: an API call answers 401 JSON now, not a redirect
+			// await expect(handle({ event, resolve: mockResolve })).rejects.toThrow();
+			// expect(mockResolve).not.toHaveBeenCalled();
+			// OLD CODE END
+			await expectUnauthorised(handle({ event, resolve: mockResolve }));
 		});
 	});
 
@@ -279,11 +374,17 @@ describe('hooks.server', () => {
 			async (path) => {
 				mockHasUsers.mockReturnValue(true);
 				mockVerifyToken.mockReturnValue(null);
-				await expect(handle({ event: createMockEvent(path, undefined, undefined, 'POST'), resolve: mockResolve })).rejects.toThrow('redirect');
+				// OLD CODE START — NET-197: an API call answers 401 JSON now, after setup and during first run
+				// await expect(handle({ event: createMockEvent(path, undefined, undefined, 'POST'), resolve: mockResolve })).rejects.toThrow('redirect');
+				//
+				// mockHasUsers.mockReturnValue(false);
+				// await expect(handle({ event: createMockEvent(path, undefined, undefined, 'POST'), resolve: mockResolve })).rejects.toThrow('redirect');
+				// expect(mockResolve).not.toHaveBeenCalled();
+				// OLD CODE END
+				await expectUnauthorised(handle({ event: createMockEvent(path, undefined, undefined, 'POST'), resolve: mockResolve }));
 
 				mockHasUsers.mockReturnValue(false);
-				await expect(handle({ event: createMockEvent(path, undefined, undefined, 'POST'), resolve: mockResolve })).rejects.toThrow('redirect');
-				expect(mockResolve).not.toHaveBeenCalled();
+				await expectUnauthorised(handle({ event: createMockEvent(path, undefined, undefined, 'POST'), resolve: mockResolve }));
 
 				mockHasUsers.mockReturnValue(true);
 				mockVerifyToken.mockReturnValue({ username: 'admin', role: 'admin' });
@@ -311,6 +412,63 @@ describe('hooks.server', () => {
 			await handle({ event, resolve: mockResolve });
 			expect(event.locals.user).toEqual({ username: 'admin', role: 'admin' });
 			expect(mockResolve).toHaveBeenCalledWith(event);
+		});
+	});
+
+	describe('API calls without a session answer 401 JSON (NET-197)', () => {
+		it.each([
+			['GET', '/api/suricata/rules/live'],
+			['POST', '/api/suricata/rules/custom'],
+			['GET', '/api'],
+		])('%s %s with an expired session gets 401, not a redirect to /login', async (method, path) => {
+			mockHasUsers.mockReturnValue(true);
+			mockVerifyToken.mockReturnValue(null);
+			const event = createMockEvent(path, 'expired-token', undefined, method);
+
+			await expectUnauthorised(handle({ event, resolve: mockResolve }));
+		});
+
+		it.each(['GET', 'POST'])('%s to a non-first-run API path during first run gets 401, not a redirect to /setup', async (method) => {
+			mockHasUsers.mockReturnValue(false);
+			const event = createMockEvent('/api/alerts', undefined, undefined, method);
+
+			await expectUnauthorised(handle({ event, resolve: mockResolve }));
+		});
+
+		it('/apix is a page path: it still goes to /login', async () => {
+			mockHasUsers.mockReturnValue(true);
+			mockVerifyToken.mockReturnValue(null);
+			const event = createMockEvent('/apix');
+
+			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ status: 302, location: '/login' });
+		});
+
+		it.each([
+			[true, '/login'],
+			[false, '/setup'],
+		])('an /api address opened as a page keeps the redirect (users exist: %s → %s)', async (users, location) => {
+			mockHasUsers.mockReturnValue(users);
+			mockVerifyToken.mockReturnValue(null);
+			const event = createMockEvent('/api/packets/download', 'expired-token', undefined, 'POST', { 'sec-fetch-dest': 'document' });
+
+			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ status: 302, location });
+			expect(mockResolve).not.toHaveBeenCalled();
+		});
+
+		it.each([true, false])('a script call (Sec-Fetch-Dest: empty) gets 401 (users exist: %s)', async (users) => {
+			mockHasUsers.mockReturnValue(users);
+			mockVerifyToken.mockReturnValue(null);
+			const event = createMockEvent('/api/packets/download', 'expired-token', undefined, 'GET', { 'sec-fetch-dest': 'empty' });
+
+			await expectUnauthorised(handle({ event, resolve: mockResolve }));
+		});
+
+		it('during first run, an API call with a leftover valid cookie gets 401, not a redirect to /setup', async () => {
+			mockHasUsers.mockReturnValue(false);
+			mockVerifyToken.mockReturnValue({ username: 'admin', role: 'admin' });
+			const event = createMockEvent('/api/alerts', 'valid-token');
+
+			await expectUnauthorised(handle({ event, resolve: mockResolve }));
 		});
 	});
 

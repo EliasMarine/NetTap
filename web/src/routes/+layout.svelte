@@ -90,7 +90,7 @@
 	async function checkDaemon() {
 		try {
 			const res = await fetch('/api/system/ping');
-			// a lapsed session redirects to the login page, which is not the daemon answering
+			// a lapsed session answers 401 (NET-197), which is not the daemon answering
 			const body = res.ok ? await res.json() : null;
 			daemonOffline = body?.status !== 'ok';
 		} catch {

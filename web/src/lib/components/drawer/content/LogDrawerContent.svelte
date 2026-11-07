@@ -117,6 +117,9 @@
 				if (data.hits?.length > 0) {
 					fullDoc = data.hits[0]._source;
 				}
+			} else {
+				// a lapsed session answers 401 now (NET-197), not a login page that failed to parse
+				fullDocError = 'Failed to fetch full document';
 			}
 		} catch {
 			fullDocError = 'Failed to fetch full document';
