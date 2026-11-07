@@ -300,6 +300,19 @@ _start_env() {
     [ "$(grep -rlF CANARY "$TMPDIR" | wc -l)" -eq 0 ]
 }
 
+@test "update: Malcolm's startup time limit (TERM to the whole group) → the updater's output is still printed" {
+    _linux_only; _env; _stubs; _seed
+    echo "Fetching https://slow.example/rules.tar.gz" > "$ENG/malcolm-print"
+    echo 30 > "$ENG/malcolm-sleep"
+    touch "$ENG/down"
+    # as docker_entrypoint.sh runs it: timeout without --foreground signals the wrapper's whole group
+    run timeout 1 bash "$SCRIPT" update
+    [ "$status" -eq 124 ]
+    [[ "$output" == *"Fetching https://slow.example/rules.tar.gz"* ]]
+    [ "$(_status state)" = interrupted ]
+    [[ "$(_rules)" == *v1* ]]
+}
+
 @test "update: an ET Pro code never reaches the output or the status record" {
     _linux_only; _env; _stubs; _seed
     echo "et/pro|secret-code=CANARYa1b2c3d4e5f6g7,ipfire/dbl" > "$NETTAP_RULES_SOURCES_FILE"

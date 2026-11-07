@@ -88,7 +88,7 @@ start() {
     #     chown "$owner" "$SOURCES_FILE.tmp" && mv -f "$SOURCES_FILE.tmp" "$SOURCES_FILE" ||
     #     log "ERROR: could not record the enabled sources in $SOURCES_FILE"
     # OLD CODE END
-    mkdir -p "$(dirname "$SOURCES_FILE")" && rm -f "$SOURCES_FILE.tmp" &&
+    rm -f "$SOURCES_FILE.tmp" &&
         (umask 077 && set -C && printf '%s\n' "${SURICATA_UPDATE_ENABLE_SOURCES:-}" > "$SOURCES_FILE.tmp") &&
         chown -h "$owner" "$SOURCES_FILE.tmp" && mv -f "$SOURCES_FILE.tmp" "$SOURCES_FILE" ||
         log "ERROR: could not record the enabled sources in $SOURCES_FILE"
@@ -357,8 +357,10 @@ update() {
     echo "$T0" > "$MARKER"
     trap on_signal TERM INT
     OUT=$(mktemp)
-    # Redacted before it reaches the disk: a run killed with SIGKILL leaves no code in $OUT
-    exec 8> >(redact > "$OUT")
+    # Redacted before it reaches the disk: a run killed with SIGKILL leaves no code in $OUT. The redactor
+    # ignores TERM: Malcolm's startup `timeout 300s` signals the whole group, and on_signal still needs it to
+    # drain (it ends when the updater's group, which on_signal kills, closes the pipe).
+    exec 8> >(trap '' TERM INT; redact > "$OUT")
     REDACTOR=$!
     # Own session, so a stop takes Malcolm's updater and suricata-update down with it. A time limit, so a
     # stalled download can't hold the rules lock (capture restarts, the ET Pro code, deploys wait on it).
