@@ -188,6 +188,81 @@ def test_runs_one_scan_at_a_time_24h_first(monkeypatch):
     assert most[0] == 1
     assert order[:3] == [1, 7, 30]
     assert len(order) > 6  # it kept refreshing
+    assert order.count(30) < order.count(1)  # 30 d refreshes less often than 24 h
+
+
+def test_publishing_one_window_leaves_the_others_pending():
+    store, _, _ = _store(([ROW], True))
+    _refresh(store, "7d")
+    assert store.beacons("7d") == [ROW]
+    for other in ("24h", "30d"):
+        assert store.beacons(other) == []
+        assert store.snapshot(other)["state"] == "pending"
+
+
+# --- retrying a failed query ----------------------------------------------------------------
+
+
+def test_the_retry_wait_doubles_from_a_minute_up_to_the_interval():
+    waits, previous = [], None
+    for _ in range(7):
+        previous = beacon_snapshots._retry_delay(previous, 3600)
+        waits.append(previous)
+    assert waits == [60, 120, 240, 480, 960, 1920, 3600]
+    assert beacon_snapshots._retry_delay(480, 900) == 900
+    assert beacon_snapshots._retry_delay(None, 30) == 30  # never past the interval
+
+
+def _days(from_ts: str, to_ts: str) -> int:
+    return (datetime.fromisoformat(to_ts) - datetime.fromisoformat(from_ts)).days
+
+
+def _run_task(monkeypatch, scan, until, settle_s=0.2):
+    """Run the task with 60 s intervals and a 10 ms first retry until `until()`, then `settle_s` more."""
+    monkeypatch.setattr(
+        beacon_snapshots, "INTERVALS_S", {"24h": 60, "7d": 60, "30d": 60}
+    )
+    monkeypatch.setattr(beacon_snapshots, "RETRY_S", 0.01)
+
+    async def run():
+        store = BeaconSnapshots(scan)
+        store.start()
+        for _ in range(300):
+            if until():
+                break
+            await asyncio.sleep(0.01)
+        await asyncio.sleep(settle_s)
+        await store.stop()
+        return store
+
+    return asyncio.run(run())
+
+
+def test_a_failed_first_scan_is_retried_after_retry_s(monkeypatch):
+    scans = []  # scans run one at a time, so a plain list is safe
+
+    def scan(from_ts, to_ts):
+        scans.append(_days(from_ts, to_ts))
+        if scans == [1]:
+            raise RuntimeError("OpenSearch isn't up yet")
+        return [ROW], True
+
+    store = _run_task(monkeypatch, scan, until=lambda: scans.count(1) >= 2)
+    # failed, then retried after RETRY_S, not the 60 s interval
+    assert scans.count(1) == 2
+    assert scans.count(7) == scans.count(30) == 1
+    assert store.snapshot("24h")["state"] == "ready"
+
+
+def test_a_scan_the_cap_stopped_waits_the_normal_interval(monkeypatch):
+    scans = []
+
+    def scan(from_ts, to_ts):
+        scans.append(_days(from_ts, to_ts))
+        return [], False
+
+    _run_task(monkeypatch, scan, until=lambda: len(scans) >= 3)
+    assert scans == [1, 7, 30]  # no early retry: the cap would stop it again
 
 
 def _app(client, background: str, monkeypatch, run_task=False) -> web.Application:
@@ -294,6 +369,25 @@ def test_the_report_takes_beaconing_from_the_snapshot(monkeypatch):
         7 * 86400, abs=5
     )  # the other checks: the last 7 days
     assert body["beaconing_snapshot"]["state"] == "ready"
+
+
+def test_a_scan_that_publishes_during_the_report_does_not_relabel_its_rows(monkeypatch):
+    """Review fix: rows and state are read together, before the report's await."""
+    app = _app(MagicMock(), "1", monkeypatch)
+    store = app["beacon_snapshots"]
+    store._scan = lambda f, t: ([ROW], True)
+
+    async def report(client, from_ts, to_ts, excluded_ips=None, beaconing=None):
+        await store.refresh("7d")  # the background scan finishes while the report runs
+        return {"beaconing": beaconing}
+
+    with patch("services.investigation.generate_threat_report", report):
+        status, body = _get(app, "/api/threats/report?snapshot=7d")
+    assert status == 200
+    assert body["beaconing"] == []  # read while the first scan was still running
+    # not "ready": that would label the empty rows a clean "none found"
+    assert body["beaconing_snapshot"]["state"] == "pending"
+    assert store.snapshot("7d")["state"] == "ready"  # the next request gets the rows
 
 
 @pytest.mark.parametrize("route", ["/api/threats/report", "/api/threats/beaconing"])

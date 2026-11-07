@@ -31,6 +31,15 @@ WINDOWS = {
 INTERVALS_S = {"24h": 15 * 60, "7d": 15 * 60, "30d": 60 * 60}
 CAP_HIT = "scan hit the bucket cap"
 QUERY_FAILED = "the beaconing query failed"
+# After a reboot the daemon often starts before OpenSearch (or its auth bootstrap) is up, so a
+# failed query is retried after a minute, then 2, 4, 8… minutes, never later than the interval.
+# A scan the bucket cap stopped will stop there again, so it waits the normal interval.
+RETRY_S = 60
+
+
+def _retry_delay(previous: float | None, interval: float) -> float:
+    """The wait after a failed query: RETRY_S, then double the previous wait, up to `interval`."""
+    return min(RETRY_S if previous is None else 2 * previous, interval)
 
 
 def _iso(when: datetime | None) -> str | None:
@@ -114,9 +123,14 @@ class BeaconSnapshots:
         )
 
     async def run_forever(self) -> None:
-        """Refresh whichever window is due next, one at a time, forever (24h first at start)."""
+        """Refresh whichever window is due next, one at a time, forever (24h first at start).
+
+        A window whose query failed is retried sooner (RETRY_S, doubling, up to its interval).
+        """
         loop = asyncio.get_running_loop()
         due = {w: loop.time() for w in WINDOWS}
+        # window -> its last retry wait, while its query keeps failing
+        retry: dict[str, float] = {}
         while True:
             window = min(due, key=due.__getitem__)  # ties go to the first: 24h, then 7d
             wait = due[window] - loop.time()
@@ -124,7 +138,13 @@ class BeaconSnapshots:
                 await asyncio.sleep(wait)
             started = loop.time()
             await self.refresh(window)
-            due = {**due, window: started + INTERVALS_S[window]}
+            if self._windows[window].last_error == QUERY_FAILED:
+                delay = _retry_delay(retry.get(window), INTERVALS_S[window])
+                retry = {**retry, window: delay}
+            else:
+                delay = INTERVALS_S[window]
+                retry = {w: d for w, d in retry.items() if w != window}
+            due = {**due, window: started + delay}
 
     def start(self) -> None:
         self._task = asyncio.create_task(self.run_forever(), name="beacon-snapshots")

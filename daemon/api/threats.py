@@ -101,6 +101,10 @@ async def handle_threat_report(request: web.Request) -> web.Response:
 
     from services.investigation import generate_threat_report
 
+    # Rows and state from one moment: a scan that publishes during the multi-second report
+    # must not label the earlier (empty) rows "ready"
+    beacons = store.beacons(window) if snapshot else None
+    snap = store.snapshot(window) if snapshot else None
     try:
         # OLD CODE START — #139: the report's OpenSearch calls block, so on the request loop
         # they held up every other request for 8-13 s (the top bar said "Can't reach NetTap")
@@ -132,15 +136,15 @@ async def handle_threat_report(request: web.Request) -> web.Response:
                 from_ts,
                 to_ts,
                 excluded_ips=excluded_ips_list,
-                beaconing=store.beacons(window) if snapshot else None,
+                beaconing=beacons,
             ),
         )
     except Exception as exc:
         logger.error("Threat report generation failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
 
-    if snapshot:
-        report = {**report, "beaconing_snapshot": store.snapshot(window)}
+    if snap is not None:
+        report = {**report, "beaconing_snapshot": snap}
     return web.json_response({"from": from_ts, "to": to_ts, **report})
 
 
