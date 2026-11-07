@@ -40,6 +40,17 @@ describe('Home — real zeros and failed counts', () => {
 		await vi.waitFor(() => expect(cardValue('Devices')).toBe('0'));
 	});
 
+	// NET-192 PR 4: the KPI read "214.0K" over "9000 high, 47000 med, 158000 low"
+	it('writes a large alert count compactly, and its breakdown with separators', async () => {
+		stubDaemon({
+			'/api/alerts/count': { from: '', to: '', counts: { total: 214_000, high: 9000, medium: 47_000, low: 158_000 } },
+			'/api/traffic/summary': { from: '', to: '', total_bytes: 10, packets_total: 1, connection_count: 1, top_protocols: [] },
+		});
+		render(HomePage);
+		await screen.findByText('9,000 high, 47,000 med, 158,000 low');
+		expect(cardValue('Alerts')).toBe('214K');
+	});
+
 	it("says the alert count failed and shows '—' instead of a blank '--'", async () => {
 		// the traffic summary answers, so the page isn't the whole-daemon-down screen
 		stubDaemon({

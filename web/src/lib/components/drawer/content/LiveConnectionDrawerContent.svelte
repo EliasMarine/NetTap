@@ -234,7 +234,7 @@
 		{/if}
 	</DrawerSection>
 
-	<DrawerSection title="24h history">
+	<DrawerSection title="Last 24 hours">
 		{#if detailLoading}
 			<div class="loading-row">
 				<span class="loading-spinner"></span>

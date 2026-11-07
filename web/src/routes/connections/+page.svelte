@@ -70,19 +70,19 @@
 		label: string;
 		value: string;
 		ms: number;
-		/** The window in words, for card subtitles */
+		/** The window in words, for card subtitles (lower case: "Sessions per protocol · last hour") */
 		text: string;
 	}
 
 	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. Live is the real-time page.
 	const TIME_RANGES: TimeRange[] = [
 		// OLD CODE: { label: '15m', value: '15m', ms: 15 * 60 * 1000, text: 'Last 15 minutes' }, (NET-192 PR 4)
-		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, text: 'Last hour' },
+		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, text: 'last hour' },
 		// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, text: 'Last 4 hours' }, (NET-192 PR 4)
-		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, text: 'Last 6 hours' },
-		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, text: 'Last 24 hours' },
-		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, text: 'Last 7 days' },
-		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, text: 'Last 30 days' },
+		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, text: 'last 6 hours' },
+		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, text: 'last 24 hours' },
+		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, text: 'last 7 days' },
+		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, text: 'last 30 days' },
 	];
 
 	// OLD CODE: '15m': '1m', '1h': '5m', '4h': '15m', '24h': '1h', '7d': '6h', (NET-192 PR 4)

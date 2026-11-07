@@ -251,11 +251,19 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
- * Format a number with compact notation (e.g. 1.5K, 2.5M).
+ * Format a number with compact notation (e.g. 1.5K, 2.5M, 214K).
  */
+// OLD CODE START — a whole figure kept its ".0": Home's Alerts KPI read "214.0K" (NET-192 PR 4)
+// export function formatCompactNumber(n: number): string {
+// 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+// 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+// 	return String(n);
+// }
+// OLD CODE END
 export function formatCompactNumber(n: number): string {
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	const one = (v: number) => v.toFixed(1).replace(/\.0$/, '');
+	if (n >= 1_000_000) return `${one(n / 1_000_000)}M`;
+	if (n >= 1_000) return `${one(n / 1_000)}K`;
 	return String(n);
 }
 

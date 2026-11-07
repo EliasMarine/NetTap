@@ -95,7 +95,7 @@
 
 	const DRAWER_TABS: DrawerTab[] = [
 		{ id: 'overview', label: 'Overview' },
-		{ id: 'communication', label: 'Comm Map' },
+		{ id: 'communication', label: 'Comm map' },
 		{ id: 'privacy', label: 'Privacy' },
 		{ id: 'protocol', label: 'Protocol' },
 		{ id: 'timeline', label: 'Timeline' },
@@ -851,23 +851,23 @@ OLD CODE END -->
 		{:else if selectedDevice}
 			<!-- Tab 1: Overview -->
 			{#if activeTab === 'overview'}
-				<DrawerSection title="Trust Score Breakdown">
+				<DrawerSection title="Trust score breakdown">
 					{@render scores(scoreRows(selectedDevice))}
 				</DrawerSection>
 
-				<DrawerSection title="Device Info">
-					<KVRow label="IP Address" value={selectedDevice.ip} mono copyable />
-					<KVRow label="MAC Address" value={selectedDevice.mac} mono copyable />
+				<DrawerSection title="Device info">
+					<KVRow label="IP address" value={selectedDevice.ip} mono copyable />
+					<KVRow label="MAC address" value={selectedDevice.mac} mono copyable />
 					<KVRow label="Manufacturer" value={selectedDevice.manufacturer} />
 					<!-- OLD CODE START — NET-158: score and grade can be null; the coverage is stated
-					<KVRow label="Trust Grade" value={`${selectedDevice.grade} (${selectedDevice.score}/100)`} />
+					<KVRow label="Trust grade" value={`${selectedDevice.grade} (${selectedDevice.score}/100)`} />
 					OLD CODE END -->
-					<KVRow label="Trust Grade" value={selectedDevice.score === null ? 'Not enough measured' : `${selectedDevice.grade} (${selectedDevice.score}/100)`} />
+					<KVRow label="Trust grade" value={selectedDevice.score === null ? 'Not enough measured' : `${selectedDevice.grade} (${selectedDevice.score}/100)`} />
 					<KVRow label="Measured" value={`from ${selectedDevice.checks_available} of ${selectedDevice.checks_total} checks (${selectedDevice.coverage} of 100 points)`} />
-					<KVRow label="Last Seen" value={selectedDevice.last_seen ? timeAgo(selectedDevice.last_seen) : '—'} />
+					<KVRow label="Last seen" value={selectedDevice.last_seen ? timeAgo(selectedDevice.last_seen) : '—'} />
 				</DrawerSection>
 
-				<DrawerSection title="Quick Stats">
+				<DrawerSection title="Quick stats">
 					<!-- OLD CODE START — NET-158: null encryption and anomalies
 					<KVRow label="Encryption" value={selectedDevice.encryption_applicable === false ? 'N/A' : `${selectedDevice.encryption_pct}%`} mono />
 					<KVRow label="Anomalies" value={String(selectedDevice.anomaly_count)} mono />
@@ -879,7 +879,7 @@ OLD CODE END -->
 
 			<!-- Tab 2: Communication Map -->
 			{:else if activeTab === 'communication'}
-				<DrawerSection title="Top Destinations">
+				<DrawerSection title="Top destinations">
 					{#if commBarItems.length > 0}
 						{#if newNotChecked}<p class="note">New destinations not checked: this device has no baseline yet.</p>{/if}
 						<BarList items={commBarItems} />
@@ -894,7 +894,7 @@ OLD CODE END -->
 			{:else if activeTab === 'privacy'}
 				{#if selectedPrivacy}
 					<!-- NET-158: the trust score's privacy pillar, the same figure as the Overview tab -->
-					<DrawerSection title="Privacy Grade">
+					<DrawerSection title="Privacy grade">
 						{#if selectedPrivacy.privacy_grade === null || selectedPrivacy.privacy_score === null}
 							<p class="note">— Not enough measured</p>
 						{:else}
@@ -912,7 +912,7 @@ OLD CODE END -->
 					{/if}
 
 					{#if trackerBarItems.length > 0}
-						<DrawerSection title="Tracker Domains ({selectedPrivacy.tracker_count})">
+						<DrawerSection title="Tracker domains ({selectedPrivacy.tracker_count})">
 							<BarList items={trackerBarItems} />
 						</DrawerSection>
 					{/if}
@@ -936,7 +936,7 @@ OLD CODE END -->
 						{/if}
 					</DrawerSection>
 
-					<DrawerSection title="Phone Home Frequency">
+					<DrawerSection title="Phone-home frequency">
 						<div class="foot-stat"><b>{Math.round(selectedPrivacy.phone_home_per_hour)}</b>requests per hour</div>
 					</DrawerSection>
 				{:else if privacy === null}
@@ -948,7 +948,7 @@ OLD CODE END -->
 			<!-- Tab 4: Protocol Audit -->
 			{:else if activeTab === 'protocol'}
 				{#if selectedProtocol && selectedProtocol.findings.length > 0}
-					<DrawerSection title="Protocol Findings ({selectedProtocol.findings.length})">
+					<DrawerSection title="Protocol findings ({selectedProtocol.findings.length})">
 						<DataTable
 							ariaLabel="Protocol findings"
 							rows={protocolFindings}
@@ -958,18 +958,18 @@ OLD CODE END -->
 						/>
 					</DrawerSection>
 				{:else if protocol === null}
-					<DrawerSection title="Protocol Audit">
+					<DrawerSection title="Protocol audit">
 						<p class="note">Couldn't run the protocol audit: the request failed.</p>
 					</DrawerSection>
 				{:else}
-					<DrawerSection title="Protocol Audit">
+					<DrawerSection title="Protocol audit">
 						<p class="ok-line"><span class="chip is-ok">Compliant</span>All protocols within expected parameters.</p>
 					</DrawerSection>
 				{/if}
 
 			<!-- Tab 5: Activity Timeline -->
 			{:else if activeTab === 'timeline'}
-				<DrawerSection title="Connections Over Time">
+				<DrawerSection title="Connections over time">
 					{#if busiestBucket >= 0}
 						<AreaChart
 							series={[{ key: 'connections', label: 'Connections', colour: 1, points: timelineBuckets.map((b) => ({ t: b.time, v: b.connections })) }]}

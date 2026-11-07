@@ -223,7 +223,7 @@ describe('IoT page — only measured figures', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Open Doorbell' }));
 		await flush();
 		const panel = screen.getByRole('complementary', { name: 'Detail panel' });
-		await fireEvent.click(within(panel).getByRole('button', { name: 'Comm Map' }));
+		await fireEvent.click(within(panel).getByRole('button', { name: 'Comm map' }));
 		expect(panel).toHaveTextContent('New destinations not checked: this device has no baseline yet.');
 		expect(within(panel).queryByText(/· new$/)).not.toBeInTheDocument();
 	});
@@ -241,7 +241,7 @@ describe('IoT page — only measured figures', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Open Doorbell' }));
 		await flush();
 		const panel = screen.getByRole('complementary', { name: 'Detail panel' });
-		await fireEvent.click(within(panel).getByRole('button', { name: 'Comm Map' }));
+		await fireEvent.click(within(panel).getByRole('button', { name: 'Comm map' }));
 		expect(within(panel).getByText('1.0 GB')).toBeInTheDocument();
 		expect(within(panel).getByText('1.0 KB')).toBeInTheDocument();
 		expect(within(panel).getByText('999 B')).toBeInTheDocument();

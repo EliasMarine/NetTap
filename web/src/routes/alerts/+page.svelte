@@ -217,7 +217,7 @@
 	// let drawerTab = $state('summary');
 	// const ALERT_DRAWER_TABS = [
 	// 	{ id: 'summary', label: 'Summary' },
-	// 	{ id: 'related', label: 'Related Events' },
+	// 	{ id: 'related', label: 'Related events' },
 	// 	{ id: 'raw', label: 'Raw JSON' },
 	// ];
 	// let hoveredBarIndex = $state<number | null>(null);

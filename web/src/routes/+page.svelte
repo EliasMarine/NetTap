@@ -31,7 +31,7 @@
 	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTrafficCategories } from '$api/traffic';
 	import type { TrafficSummary, BandwidthPoint, ProtocolEntry, TrafficCategory } from '$api/traffic';
 	import { getAlertCount, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
-	import { connLogsHref, NO_EXACT_ALERT_LIST, smartAlertHref, windowQuery, withCount, type DrillWindow } from '$lib/utils/drilldown';
+	import { connLogsHref, fmt, NO_EXACT_ALERT_LIST, smartAlertHref, windowQuery, withCount, type DrillWindow } from '$lib/utils/drilldown';
 	import type { AlertCountResponse, SmartAlert, SmartAlertSummary } from '$api/alerts';
 	import { getDevices, getDeviceCount } from '$api/devices';
 	import type { Device, DeviceCountResponse } from '$api/devices';
@@ -468,7 +468,8 @@
 		alertCountFailed
 			? loadFailed('the alert count', alertCount !== null)
 			: alertCount
-				? `${alertCount.counts.high} high, ${alertCount.counts.medium} med, ${alertCount.counts.low} low`
+				// OLD CODE: ? `${alertCount.counts.high} high, ${alertCount.counts.medium} med, ${alertCount.counts.low} low` (NET-192 PR 4: "9000 high", no separators)
+				? `${fmt(alertCount.counts.high)} high, ${fmt(alertCount.counts.medium)} med, ${fmt(alertCount.counts.low)} low`
 				: 'Loading…',
 	);
 	const devicesSub = $derived(
@@ -565,7 +566,7 @@
 	);
 	const gaugeAria = $derived(
 		alertCount
-			? `${alertCount.counts.total.toLocaleString('en-GB')} alerts in the ${windowText}: ${alertCount.counts.high} high, ${alertCount.counts.medium} medium, ${alertCount.counts.low} low`
+			? `${alertCount.counts.total.toLocaleString('en-GB')} alerts in the ${windowText}: ${fmt(alertCount.counts.high)} high, ${fmt(alertCount.counts.medium)} medium, ${fmt(alertCount.counts.low)} low`
 			: '',
 	);
 

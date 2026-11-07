@@ -65,7 +65,7 @@
 	const INV_DRAWER_TABS = [
 		{ id: 'details', label: 'Details' },
 		{ id: 'notes', label: 'Notes' },
-		{ id: 'linked', label: 'Linked Items' },
+		{ id: 'linked', label: 'Linked items' },
 	];
 
 	function openDrawer(inv: Investigation) {
