@@ -51,7 +51,8 @@
 	import ConnectionDrawerContent from '$components/drawer/content/ConnectionDrawerContent.svelte';
 	import { buildTSharkFilter, getField, asString } from '$lib/utils/tshark-filter';
 	import { captureMode } from '$lib/stores/captureMode';
-	import { ipHref, isIpAddress, isLan } from '$lib/stores/lan';
+	import { ipHref, isIpAddress, isLan, lanPolicy } from '$lib/stores/lan';
+	import { packetsHrefFor } from '$lib/utils/connection-ref';
 	// OLD CODE START — #145: the client-side sort is gone
 	// import { compareValues } from '$lib/utils/table-sort.svelte';
 	// OLD CODE END
@@ -1103,6 +1104,7 @@
 			{@const srcIp = asString(getField(drawerConn, 'source.ip'))}
 			{@const dstIp = asString(getField(drawerConn, 'destination.ip'))}
 			{@const cid = asString(getField(drawerConn, 'network.community_id'))}
+			{@const packetsHref = packetsHrefFor(drawerConn, $lanPolicy)}
 			<!-- OLD CODE START — NET-160: the device page for every address, internet ones included
 			{#if srcIp}
 				<button class="btn" type="button" onclick={() => goto(`/devices/${encodeURIComponent(srcIp)}`)}>
@@ -1121,6 +1123,8 @@
 			{#if dstIp}
 				<a class="btn" href={$ipHref(dstIp)}>{$isLan(dstIp) === true ? 'Open destination device' : 'Open destination address'}</a>
 			{/if}
+			<!-- NET-188: the connection's exact packets over its own window -->
+			{#if packetsHref}<a class="btn" href={packetsHref}><Icon name="pcap" />Open these packets</a>{/if}
 			{#if cid}
 				<button class="btn" type="button" onclick={() => { navigator.clipboard.writeText(cid); }}>
 					Copy community ID
