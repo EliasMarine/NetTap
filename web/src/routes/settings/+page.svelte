@@ -991,7 +991,8 @@
 				<CardState state="error" title={loadFailed('the storage status')} message="Check that NetTap is running on the System page, then reload." />
 			{:else}
 				{#if storageStatusFailed}
-					{@render feedback(loadFailed('the storage status', true), true)}
+					<!-- OLD CODE: {@render feedback(loadFailed('the storage status', true), true)} (a red role="alert" box; stale figures are an amber status, NET-192 PR 4) -->
+					<p class="notice is-warn" role="status"><Icon name="warn" /><span>{loadFailed('the storage status', true)}</span></p>
 				{/if}
 				<dl class="facts flush">
 					<dt>ILM policies</dt>

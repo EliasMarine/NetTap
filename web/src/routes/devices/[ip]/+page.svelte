@@ -722,7 +722,8 @@ OLD CODE END -->
 
 {#if device && device.ip}
 	{#if deviceFailed}
-		<p class="note">{loadFailed('this device', true)}</p>
+		<!-- OLD CODE: <p class="note">{loadFailed('this device', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
+		<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('this device', true)}</span></p>
 	{/if}
 
 	<div class="grid">
@@ -757,7 +758,8 @@ OLD CODE END -->
 					<Ring value={riskScore} ariaLabel="Risk score {riskScore} of 100, {riskLevel}" />
 					{#if riskSeverity}<SeverityPill level={riskSeverity} />{/if}
 				</div>
-				{#if riskFailed}<p class="note">{loadFailed('the risk score', true)}</p>{/if}
+				<!-- OLD CODE: <p class="note">{loadFailed('the risk score', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
+				{#if riskFailed}<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('the risk score', true)}</span></p>{/if}
 				{#if riskFactors.length > 0}
 					<ul class="score-rows">
 						{#each riskFactors as factor, i (`${factor.name}-${i}`)}
@@ -850,7 +852,8 @@ OLD CODE END -->
 				{:else if categories.length === 0}
 					<CardState state="empty" icon="bandwidth" title="No category data available." />
 				{:else}
-					{#if categoriesFailed}<p class="note">{loadFailed('traffic categories', true)}</p>{/if}
+					<!-- OLD CODE: <p class="note">{loadFailed('traffic categories', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
+					{#if categoriesFailed}<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('traffic categories', true)}</span></p>{/if}
 					<BarList
 						items={categories.map((c, i) => ({
 							key: `${c.name}-${i}`,
@@ -907,7 +910,8 @@ OLD CODE END -->
 			{:else if ports.length === 0}
 				<CardState state="empty" icon="connections" title="No port data." />
 			{:else}
-				{#if portsFailed}<p class="note">{loadFailed('ports', true)}</p>{/if}
+				<!-- OLD CODE: <p class="note">{loadFailed('ports', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
+				{#if portsFailed}<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('ports', true)}</span></p>{/if}
 				<DataTable ariaLabel="Top ports" rows={ports.slice(0, 8)} rowKey={(p) => p.port} initialSort={{ key: 'connections', dir: 'desc' }} columns={portColumns} />
 			{/if}
 		</Card>
@@ -962,6 +966,7 @@ OLD CODE END -->
 	.ident-meta > div { min-width: 0; }
 	.ident-meta dd { margin: 0; }
 	.note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); }
+	.load-note { margin-bottom: var(--sp-3); }
 	.sa-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
 	.sa { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line); }
 	.sa-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; font-size: var(--text-sm); }

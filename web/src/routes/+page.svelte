@@ -629,7 +629,7 @@ OLD CODE END -->
 {/snippet}
 
 {#snippet staleNote(what: string)}
-	<p class="notice is-warn stale"><Icon name="warn" /><span>{loadFailed(what, true)}</span></p>
+	<p class="notice is-warn stale" role="status"><Icon name="warn" /><span>{loadFailed(what, true)}</span></p>
 {/snippet}
 
 <div class="grid">

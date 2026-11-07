@@ -1361,7 +1361,7 @@ OLD CODE END -->
 			<CardState state="error" title="Couldn't load the alert counts: the request failed." message="Check that NetTap is running on the System page, then try again." onaction={() => refresh.run()} />
 		{:else}
 			{#if snapshot.status === 'error'}
-				<p class="notice is-warn"><Icon name="warn" /><span>{loadFailed('the alert counts', true)}</span></p>
+				<p class="notice is-warn" role="status"><Icon name="warn" /><span>{loadFailed('the alert counts', true)}</span></p>
 			{/if}
 			<div class="sev-sum">
 				<div class="sev-left">

@@ -747,7 +747,8 @@ OLD CODE END -->
 			</Card>
 		{:else}
 			{#if registryFailed}
-				<p class="note">{loadFailed('devices', true)}</p>
+				<!-- OLD CODE: <p class="note">{loadFailed('devices', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
+				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('devices', true)}</span></p>
 			{/if}
 			<!-- NET-158: a card adds up the device list's rows for its addresses; an address another device took since counts on both -->
 			<!-- OLD CODE START — NET-180: the note stood alone; the Cards / List switch now sits beside it -->
@@ -890,4 +891,5 @@ OLD CODE END -->
 	.type { display: inline-flex; align-items: center; gap: var(--sp-2); }
 	.type :global(.ic) { color: var(--text-3); width: 16px; height: 16px; }
 	.note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); }
+	.load-note { margin-bottom: var(--sp-3); }
 </style>
