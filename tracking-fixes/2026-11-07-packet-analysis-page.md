@@ -1,6 +1,6 @@
 # 2026-11-07 — Packet analysis, PR 2: the /packets page (NET-188)
 
-**Status:** in review on `feature/packet-analysis-page`. Not yet merged or deployed.
+**Status:** merged as PR #198 (`0fc218b`) and deployed to the G11 on 2026-11-07: 39 ✓, 0 ✗.
 
 ## What changed
 
@@ -52,4 +52,7 @@
 ## Verification
 
 - **Web:** the full Vitest suite, svelte-check, the colour gate, the production build, and the visual tests for /packets.
-- **Device:** see the PR.
+- **Device:** `deploy-packet-analysis.sh` on the G11 at `main` `0fc218b` gave 39 ✓ and 0 ✗.
+  - The capture index holds 1,838 files.
+  - Search rows match an independent read of the same files: a boundary case gave 213 = 213, and the cut-short cases gave 528 = 528 and 256 = 256.
+  - Step 5b: the library has 37 filters in 6 groups, and the device's TShark accepted 46 of 46 (the library plus the "What" filters).
