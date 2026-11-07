@@ -16,7 +16,7 @@ set -u
 exec > >(tee "$HOME/nettap-detection-slice1.log") 2>&1
 
 REPO_DIR="/home/nettap/NetTap"
-BRANCH="feature/detection-accuracy"
+BRANCH="main"  # deployed from feature/detection-accuracy before #197 merged
 DEVICE="192.168.1.44"
 THRESHOLD="/etc/nettap/suricata-threshold.config"
 WORK="$HOME/nettap-replay/slice1"

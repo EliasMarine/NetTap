@@ -58,4 +58,11 @@ Only ET Open was fetched (Malcolm image default `SURICATA_UPDATE_ENABLE_SOURCES=
 
 ### Deploy and verification
 
-(filled in after the G11 run)
+G11, 2026-11-07 06:14–06:27 UTC, branch rebased on main 50e6f2f (after #196), `bash scripts/remote/deploy-detection-slice1.sh`: **verified, every check ✓.**
+
+- 7-day window 2026-10-31T06:14Z → 2026-11-07T06:14Z: before, the API counted 708,872 alerts; after, **4,104 counted + 704,768 activity = 708,872**, each equal to a raw OpenSearch query.
+- .44: 8 ET Informational "Bandwidth Sharing Tool" SIDs suppressed (Mysterium, Traffmonetizer, EarnApp, Grass; DNS and TLS SNI): 2067455, 2067457, 2067460, 2067462, 2067467, 2067469, 2067472, 2067474. Suricata: "Threshold config parsed: 8 rule(s) found"; 53,492 rules loaded, 0 failed. Fixtures passed before (with the candidate file) and after (live config): activity-stun, suppress-44, keep-2013075-44.
+- Live: 0 alerts from the suppressed SIDs from .44 in the 5 minutes after the engine started (225 alerts indexed overall; before, these SIDs fired ~11 a minute from .44).
+- Pages: /api/alerts, categories, top-signatures, smart summary, risk scores, devices count, IoT fleet summary all 200; activity list 704,768; `activity=yes` 400; 2,133 of 3,530 smart groups are activity, all level 5. No daemon errors since the restart.
+- Rules baseline for slice 2 saved on the device at `~/nettap-rules-baseline/rules`. Replay runs kept under `~/nettap-replay/` (~46 MB each; prune later).
+- Rollback of the suppression: write an empty `/etc/nettap/suricata-threshold.config` and recreate suricata-live.
