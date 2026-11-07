@@ -10,6 +10,7 @@ import logging
 
 from aiohttp import web
 
+from api.offload import run_blocking
 from services.etpro import EtProError, EtProManager
 from services.owner_rules import OwnerRules, OwnerRulesError, summary
 from services.owner_rules_validator import validate
@@ -191,7 +192,7 @@ async def handle_get_owner_rules(request: web.Request) -> web.Response:
     """GET /api/suricata/rules/custom: {content, rule_count, max_rules, max_bytes}."""
     owner: OwnerRules = request.app["owner_rules"]
     try:
-        return web.json_response(owner.read())
+        return web.json_response(await run_blocking(owner.read))
     except OSError as exc:
         logger.error("Owner rules: couldn't read (%s)", type(exc).__name__)
         return web.json_response({"error": "Couldn't read your rules."}, status=500)
@@ -202,10 +203,11 @@ async def handle_check_owner_rules(request: web.Request) -> web.Response:
     content = await _owner_body(request)
     if not isinstance(content, str):
         return web.json_response({"error": 'Send {"content": "<rules>"}.'}, status=400)
-    errors, count = validate(content)
+    errors, count = await run_blocking(validate, content)
     if errors:
         return web.json_response(
-            {"error": summary(errors), "errors": errors}, status=400
+            {"error": summary(errors, "Your rules have problems"), "errors": errors},
+            status=400,
         )
     return web.json_response({"ok": True, "rule_count": count})
 
@@ -214,7 +216,8 @@ async def handle_save_owner_rules(request: web.Request) -> web.Response:
     """POST /api/suricata/rules/custom  Body: {"content"}: check, test with Suricata, load.
 
     200 {saved, rule_count, engine}; 400 NetTap's checks; 409 busy or Suricata not set up;
-    422 Suricata refused (nothing changed); 502 not loaded (previous rules put back); 500.
+    422 Suricata refused (nothing changed); 502 not loaded (previous rules put back), or the
+    test couldn't run; 500 the test timed out, or anything unexpected.
     """
     owner: OwnerRules = request.app["owner_rules"]
     content = await _owner_body(request)

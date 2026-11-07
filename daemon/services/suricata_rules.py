@@ -82,7 +82,7 @@ for f in /var/lib/suricata/update/sources/*.yaml; do
     [ -f "$f" ] && sed -n 's/^source: *//p' "$f" | head -1 | sed 's/^/ENABLED_SOURCE /'
 done
 O=/opt/suricata/rules/custom/owner.rules
-[ -f "$O" ] && echo "OWNER $(grep -c '^ *alert ' "$O")"
+[ -f "$O" ] && echo "OWNER $(grep -c '^[[:space:]]*alert[[:space:]]' "$O")"
 S=/var/run/suricata/suricata-command.socket
 echo "STATS $(suricatasc "$S" -c ruleset-stats 2>/dev/null | tr -d '\n')"
 echo "RELOAD $(suricatasc "$S" -c ruleset-reload-time 2>/dev/null | tr -d '\n')"

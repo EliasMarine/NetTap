@@ -65,7 +65,8 @@ def read_code(path: str | None = None) -> str | None:
     return None
 
 
-async def _run(*cmd: str, timeout: float) -> tuple[int, str]:
+async def _run(*cmd: str, timeout: float) -> tuple[int | None, str]:
+    """(exit code, output); the code is None when the command was stopped after `timeout`."""
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
     )
@@ -74,7 +75,11 @@ async def _run(*cmd: str, timeout: float) -> tuple[int, str]:
     except asyncio.TimeoutError:
         with contextlib.suppress(ProcessLookupError):
             proc.kill()
-        return -1, f"no answer in {int(timeout)} s"
+        # OLD CODE START — NET-191 slice 3 review: -1 is also a process killed by SIGHUP; callers
+        # told a timeout apart by its text
+        # return -1, f"no answer in {int(timeout)} s"
+        # OLD CODE END
+        return None, f"no answer in {int(timeout)} s"
     return proc.returncode or 0, (out or b"").decode("utf-8", errors="replace").strip()
 
 

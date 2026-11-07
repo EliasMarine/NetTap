@@ -540,3 +540,17 @@ class TestApi:
             status, text = _run(run())
         assert status == 500
         assert CODE not in text and CODE not in caplog.text
+
+
+class TestRunCommand:
+    """NET-191 slice 3 review (P5): a timeout is told apart by its exit code, not by its text."""
+
+    def test_a_command_that_runs_too_long_has_no_exit_code(self):
+        rc, out = _run(etpro_mod._run("sleep", "30", timeout=0.2))
+        assert rc is None and out == "no answer in 0 s"
+
+    @pytest.mark.parametrize(
+        "cmd, rc", [(("true",), 0), (("false",), 1), (("sh", "-c", "kill -HUP $$"), -1)]
+    )
+    def test_a_finished_command_keeps_its_exit_code(self, cmd, rc):
+        assert _run(etpro_mod._run(*cmd, timeout=10))[0] == rc

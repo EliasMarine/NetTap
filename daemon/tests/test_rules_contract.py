@@ -264,6 +264,32 @@ class TestOwnerRules:
         assert set(bad[1]["errors"][0]) == ts_fields("OwnerRuleError")
         assert (custom / "owner.rules").read_text() == ""  # a check never saves
 
+    def test_read_and_check_run_off_the_event_loop(self, custom, monkeypatch):
+        # P4: owner.read() and validate() run on a worker thread, not the loop's
+        import threading
+
+        import api.suricata_rules as api_mod
+
+        loop_thread, threads = threading.get_ident(), []
+
+        def on_a_worker(fn):
+            def wrapped(*args):
+                threads.append(threading.get_ident())
+                return fn(*args)
+
+            return wrapped
+
+        monkeypatch.setattr(api_mod, "validate", on_a_worker(api_mod.validate))
+        monkeypatch.setattr(
+            owner_mod.OwnerRules, "read", on_a_worker(owner_mod.OwnerRules.read)
+        )
+        assert _call("GET", "/api/suricata/rules/custom")[0] == 200
+        check = _call(
+            "POST", "/api/suricata/rules/custom/check", body={"content": RULE}
+        )
+        assert check[0] == 200
+        assert len(threads) == 2 and loop_thread not in threads
+
     def test_save_keys_match_owner_rules_save_result(self, custom):
         status, body = _call(
             "POST", "/api/suricata/rules/custom", body={"content": RULE}
