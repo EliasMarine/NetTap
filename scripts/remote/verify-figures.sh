@@ -70,14 +70,28 @@ echo "   Excluded IPs (hidden from device and traffic views only): $EXCL"
 SRC_EXCL="{\"terms\":{\"source.ip\":$EXCL}}"
 echo ""
 
-echo "→ Alerts (Home card, Alerts page): excluded IPs stay visible, engine events left out"
-ALERTS="{\"filter\":[$T,{\"term\":{\"event.provider\":\"suricata\"}},{\"term\":{\"event.dataset\":\"alert\"}}],\"must_not\":[{\"prefix\":{\"rule.name\":\"SURICATA \"}}]}"
+# OLD CODE START — NET-194: since #197 (NET-191) the count leaves out the alerts ET rates
+# Informational or Unknown (listed as activity), so every raw alert no longer matches it
+# echo "→ Alerts (Home card, Alerts page): excluded IPs stay visible, engine events left out"
+# ALERTS="{\"filter\":[$T,{\"term\":{\"event.provider\":\"suricata\"}},{\"term\":{\"event.dataset\":\"alert\"}}],\"must_not\":[{\"prefix\":{\"rule.name\":\"SURICATA \"}}]}"
+# OLD CODE END
+echo "→ Alerts (Home card, Alerts page): excluded IPs stay visible, engine events left out, ET Informational/Unknown listed as activity, not counted"
+SURI='{"term":{"event.provider":"suricata"}},{"term":{"event.dataset":"alert"}}'
+ENGINE='{"prefix":{"rule.name":"SURICATA "}}'
+# Written out, not read from api.alerts, so this checks the rule rather than repeat it. A rule
+# without the field (other sources, owner rules) counts.
+ACTIVITY='{"terms":{"suricata.alert.metadata.signature_severity":["Informational","Unknown"]}}'
+ALERTS="{\"filter\":[$T,$SURI],\"must_not\":[$ENGINE,$ACTIVITY]}"
 raw_alerts() { raw "$ALERTS" '{}' "$TOTAL"; }
 api_alerts() { api "/api/alerts/count?$Q" 'r["counts"]["total"]'; }
 compare "alert total" raw_alerts api_alerts
 raw_high() { raw "$ALERTS" '{"s":{"terms":{"field":"suricata.alert.severity","size":10}}}' 'sum(b["doc_count"] for b in r["aggregations"]["s"]["buckets"] if int(b["key"]) == 1)'; }
 api_high() { api "/api/alerts/count?$Q" 'r["counts"]["high"]'; }
 compare "high-severity alerts" raw_high api_high
+ACTIVITY_ALERTS="{\"filter\":[$T,$SURI,$ACTIVITY],\"must_not\":[$ENGINE]}"
+raw_activity() { raw "$ACTIVITY_ALERTS" '{}' "$TOTAL"; }
+api_activity() { api "/api/alerts/count?$Q&activity=true" 'r["counts"]["total"]'; }
+compare "activity alerts" raw_activity api_activity
 echo ""
 
 echo "→ DNS page: lookups only (no pcap-monitor, mDNS/LLMNR/NetBIOS), excluded IPs hidden"
