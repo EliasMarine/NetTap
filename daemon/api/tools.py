@@ -11,6 +11,7 @@ Registers network tool endpoints with the aiohttp application:
 import logging
 from aiohttp import web
 
+from api.offload import in_thread
 from services.dns_recon_service import DnsReconService, DnsReconValidationError
 from services.mac_lookup_service import MacLookupService, MacLookupValidationError
 from services.network_diag_service import NetworkDiagService, NetworkDiagValidationError
@@ -85,7 +86,8 @@ async def handle_dns_recon(request: web.Request) -> web.Response:
 # OLD CODE END
 
 
-async def handle_mac_lookup(request: web.Request) -> web.Response:
+@in_thread
+def handle_mac_lookup(request: web.Request) -> web.Response:
     """GET /api/tools/mac-lookup/{mac} -- OUI vendor lookup for a MAC address."""
     raw_mac = request.match_info["mac"]
     mac_lookup: MacLookupService = request.app["mac_lookup"]

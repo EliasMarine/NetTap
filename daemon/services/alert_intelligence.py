@@ -1279,7 +1279,7 @@ def _all_composite_buckets(client, query: dict) -> list[dict]:
     return buckets
 
 
-async def get_smart_alerts(
+def get_smart_alerts(
     client,
     from_ts: str,
     to_ts: str,
@@ -1535,7 +1535,7 @@ async def get_smart_alerts(
     return groups[:limit]
 
 
-async def get_smart_alert_summary(
+def get_smart_alert_summary(
     client,
     from_ts: str,
     to_ts: str,
@@ -1550,7 +1550,7 @@ async def get_smart_alert_summary(
     #     excluded_ips=excluded_ips,
     # )
     # OLD CODE END
-    every_group = await get_smart_alerts(
+    every_group = get_smart_alerts(
         client,
         from_ts,
         to_ts,

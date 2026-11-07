@@ -953,7 +953,10 @@ class UpdateExecutor:
                 for rule_path in rule_paths:
                     if os.path.exists(rule_path):
                         dest = os.path.join(backup_path, os.path.basename(rule_path))
-                        shutil.copy2(rule_path, dest)
+                        # OLD CODE START — PR 2 (reliability): a large copy on the request loop
+                        # shutil.copy2(rule_path, dest)
+                        # OLD CODE END
+                        await asyncio.to_thread(shutil.copy2, rule_path, dest)
                         break
 
             elif component == "geoip-db":
@@ -962,7 +965,10 @@ class UpdateExecutor:
                 )
                 if os.path.exists(geoip_path):
                     dest = os.path.join(backup_path, os.path.basename(geoip_path))
-                    shutil.copy2(geoip_path, dest)
+                    # OLD CODE START — PR 2 (reliability): ~70 MB copied on the request loop
+                    # shutil.copy2(geoip_path, dest)
+                    # OLD CODE END
+                    await asyncio.to_thread(shutil.copy2, geoip_path, dest)
 
             elif component in (
                 "zeek",
@@ -1134,7 +1140,10 @@ class UpdateExecutor:
                     target_name = os.path.basename(target_path)
                     backup_file = os.path.join(ts_path, target_name)
                     if os.path.exists(backup_file):
-                        shutil.copy2(backup_file, target_path)
+                        # OLD CODE START — PR 2 (reliability): a large copy on the request loop
+                        # shutil.copy2(backup_file, target_path)
+                        # OLD CODE END
+                        await asyncio.to_thread(shutil.copy2, backup_file, target_path)
                         return {
                             "success": True,
                             "component": component,

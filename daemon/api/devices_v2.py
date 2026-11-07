@@ -37,6 +37,7 @@ from typing import Any
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.offload import in_thread
 from api.time_range import parse_time_range
 from api.devices import (
     _device_category,
@@ -342,7 +343,8 @@ def _get_unifi(request: web.Request) -> UnifiIntegration:
 # ---------------------------------------------------------------------------
 
 
-async def handle_registry_list(request: web.Request) -> web.Response:
+@in_thread
+def handle_registry_list(request: web.Request) -> web.Response:
     """GET /api/devices/registry?limit=100&offset=0"""
     registry = _get_registry(request)
     limit = min(_parse_int_param(request, "limit", 100), 500)
@@ -371,7 +373,8 @@ async def handle_registry_list(request: web.Request) -> web.Response:
     )
 
 
-async def handle_registry_detail(request: web.Request) -> web.Response:
+@in_thread
+def handle_registry_detail(request: web.Request) -> web.Response:
     """GET /api/devices/registry/{mac}"""
     registry = _get_registry(request)
     mac = request.match_info["mac"]
@@ -390,7 +393,8 @@ async def handle_registry_detail(request: web.Request) -> web.Response:
     return web.json_response({"device": device})
 
 
-async def handle_registry_traffic(request: web.Request) -> web.Response:
+@in_thread
+def handle_registry_traffic(request: web.Request) -> web.Response:
     """GET /api/devices/registry/{mac}/traffic?from=&to="""
     registry = _get_registry(request)
     mac = request.match_info["mac"]
@@ -415,7 +419,8 @@ async def handle_registry_traffic(request: web.Request) -> web.Response:
     )
 
 
-async def handle_registry_new_count(request: web.Request) -> web.Response:
+@in_thread
+def handle_registry_new_count(request: web.Request) -> web.Response:
     """GET /api/devices/registry/new-count?since=ISO (default: 24 h ago)
 
     Devices NetTap saw for the first time since then. The device list's first_seen is the
@@ -446,7 +451,8 @@ async def handle_registry_new_count(request: web.Request) -> web.Response:
     return web.json_response({"count": count, "since": since_iso})
 
 
-async def handle_registry_search(request: web.Request) -> web.Response:
+@in_thread
+def handle_registry_search(request: web.Request) -> web.Response:
     """GET /api/devices/registry/search?q="""
     registry = _get_registry(request)
     query_str = request.query.get("q", "").strip()

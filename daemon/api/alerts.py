@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.offload import in_thread
 from api.time_range import parse_time_range
 from services.alert_enrichment import AlertEnrichment
 from services.capture_config import write_file_atomic
@@ -439,7 +440,8 @@ def _alert_sort(sort_key: str, order: str) -> list[dict]:
     ]
 
 
-async def handle_alerts_list(request: web.Request) -> web.Response:
+@in_thread
+def handle_alerts_list(request: web.Request) -> web.Response:
     """GET /api/alerts?from=&to=&severity=&page=1&size=50&sort=time&order=desc&category=&sub=&signature=&ip=&src=&dst=&suricata_category=
 
     Returns a paginated list of Suricata alerts with optional severity filter,
@@ -751,7 +753,8 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
     )
 
 
-async def handle_alerts_count(request: web.Request) -> web.Response:
+@in_thread
+def handle_alerts_count(request: web.Request) -> web.Response:
     """GET /api/alerts/count?from=&to=
 
     Returns alert counts grouped by severity level.
@@ -836,7 +839,8 @@ async def handle_alerts_count(request: web.Request) -> web.Response:
     )
 
 
-async def handle_alert_detail(request: web.Request) -> web.Response:
+@in_thread
+def handle_alert_detail(request: web.Request) -> web.Response:
     """GET /api/alerts/{id}
 
     Returns a single alert document by its OpenSearch _id.
@@ -947,7 +951,8 @@ _ALLOWED_INTERVALS = {"1m", "5m", "10m", "15m", "30m", "1h", "6h", "12h", "1d"}
 _SEVERITY_MAP = {1: "high", 2: "medium", 3: "low"}
 
 
-async def handle_alerts_timeline(request: web.Request) -> web.Response:
+@in_thread
+def handle_alerts_timeline(request: web.Request) -> web.Response:
     """GET /api/alerts/timeline?from=&to=&interval=
 
     Returns time-series alert counts bucketed by interval and severity.
@@ -1098,7 +1103,8 @@ def _primary_severity(bucket: dict) -> int:
         return 3
 
 
-async def handle_alerts_top_signatures(request: web.Request) -> web.Response:
+@in_thread
+def handle_alerts_top_signatures(request: web.Request) -> web.Response:
     """GET /api/alerts/top-signatures?from=&to=&limit=
 
     Returns the most frequently triggered alert signatures with their
@@ -1222,7 +1228,8 @@ async def handle_alerts_top_signatures(request: web.Request) -> web.Response:
     )
 
 
-async def handle_alerts_top_ips(request: web.Request) -> web.Response:
+@in_thread
+def handle_alerts_top_ips(request: web.Request) -> web.Response:
     """GET /api/alerts/top-ips?from=&to=&limit=&direction=src|dest
 
     Returns the most frequently seen IPs in alerts, either as source
@@ -1439,7 +1446,8 @@ def _raw_severity_breakdown(bucket: dict) -> dict[str, int]:
     return {**counts, "info": max(0, bucket.get("doc_count", 0) - sum(counts.values()))}
 
 
-async def handle_alerts_categories(request: web.Request) -> web.Response:
+@in_thread
+def handle_alerts_categories(request: web.Request) -> web.Response:
     """GET /api/alerts/categories?from=&to=
 
     Returns enriched alert categories with counts, severity breakdown,
@@ -1666,7 +1674,8 @@ async def handle_alerts_categories(request: web.Request) -> web.Response:
     )
 
 
-async def handle_alert_category_detail(request: web.Request) -> web.Response:
+@in_thread
+def handle_alert_category_detail(request: web.Request) -> web.Response:
     """GET /api/alerts/categories/{category}?from=&to=
 
     Returns detailed stats for a single threat category: total count,
@@ -1932,7 +1941,8 @@ async def handle_alert_category_detail(request: web.Request) -> web.Response:
     )
 
 
-async def handle_alert_category_timeline(request: web.Request) -> web.Response:
+@in_thread
+def handle_alert_category_timeline(request: web.Request) -> web.Response:
     """GET /api/alerts/categories/{category}/timeline?from=&to=&interval=
 
     Returns time-series data for a single category, bucketed by interval,
@@ -2087,7 +2097,8 @@ async def handle_alert_category_timeline(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 
-async def handle_smart_alerts(request: web.Request) -> web.Response:
+@in_thread
+def handle_smart_alerts(request: web.Request) -> web.Response:
     """GET /api/alerts/smart?from=&to=&device_ip=&include_info=false&limit=50"""
     from_ts, to_ts = _parse_time_range(request)
     device_ip = request.query.get("device_ip", "").strip() or None
@@ -2111,7 +2122,7 @@ async def handle_smart_alerts(request: web.Request) -> web.Response:
         #     include_info,
         #     limit,
         # OLD CODE END
-        every_group = await get_smart_alerts(
+        every_group = get_smart_alerts(
             client,
             from_ts,
             to_ts,
@@ -2138,7 +2149,8 @@ async def handle_smart_alerts(request: web.Request) -> web.Response:
     )
 
 
-async def handle_smart_alert_summary(request: web.Request) -> web.Response:
+@in_thread
+def handle_smart_alert_summary(request: web.Request) -> web.Response:
     """GET /api/alerts/smart/summary?from=&to=&device_ip="""
     from_ts, to_ts = _parse_time_range(request)
     device_ip = request.query.get("device_ip", "").strip() or None
@@ -2150,7 +2162,7 @@ async def handle_smart_alert_summary(request: web.Request) -> web.Response:
     from services.alert_intelligence import get_smart_alert_summary
 
     try:
-        summary = await get_smart_alert_summary(
+        summary = get_smart_alert_summary(
             # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
             # client, from_ts, to_ts, device_ip, excluded_ips=excluded
             # OLD CODE END

@@ -18,6 +18,7 @@ from datetime import timedelta
 
 from aiohttp import web
 
+from api.offload import in_thread
 from api.time_range import parse_time_range
 from services.mac_correlator import MACCorrelator
 
@@ -54,7 +55,8 @@ def _parse_time_range(request: web.Request) -> tuple[str, str]:
     return parse_time_range(request, timedelta(hours=_DEFAULT_RANGE_HOURS))
 
 
-async def handle_randomized_macs(request: web.Request) -> web.Response:
+@in_thread
+def handle_randomized_macs(request: web.Request) -> web.Response:
     """GET /api/mac/randomized?from=&to= — Detected randomized MACs."""
     from_ts, to_ts = _parse_time_range(request)
     correlator: MACCorrelator = request.app["mac_correlator"]
@@ -77,7 +79,8 @@ async def handle_randomized_macs(request: web.Request) -> web.Response:
     )
 
 
-async def handle_fingerprint(request: web.Request) -> web.Response:
+@in_thread
+def handle_fingerprint(request: web.Request) -> web.Response:
     """GET /api/mac/fingerprint/{mac}?from=&to= — Behavioral fingerprint."""
     mac = request.match_info["mac"]
     from_ts, to_ts = _parse_time_range(request)
@@ -100,7 +103,8 @@ async def handle_fingerprint(request: web.Request) -> web.Response:
     )
 
 
-async def handle_merge_suggestions(request: web.Request) -> web.Response:
+@in_thread
+def handle_merge_suggestions(request: web.Request) -> web.Response:
     """GET /api/mac/merge-suggestions?from=&to= — Merge candidates."""
     from_ts, to_ts = _parse_time_range(request)
     correlator: MACCorrelator = request.app["mac_correlator"]

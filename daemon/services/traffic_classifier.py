@@ -615,7 +615,7 @@ def get_category_label(key: str) -> str:
     return CATEGORIES.get(key, key.replace("_", " ").title())
 
 
-async def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
+def get_category_stats(client, from_ts: str, to_ts: str) -> list[dict]:
     """Aggregate traffic bytes by ASN organisation, map to categories."""
     # OLD CODE START — #96: the top 500 ASNs only; past 500 the rest dropped out of every category
     # query = {
@@ -972,7 +972,7 @@ def _category_device_row(bucket: dict) -> dict:
     }
 
 
-async def get_category_devices(
+def get_category_devices(
     client,
     category: str,
     from_ts: str,
@@ -1132,7 +1132,7 @@ async def get_category_devices(
     }
 
 
-async def get_category_services(
+def get_category_services(
     client, category: str, from_ts: str, to_ts: str, limit: int = 10
 ) -> list[dict]:
     """Get top services (ASN orgs) within a traffic category, sorted by bytes."""
@@ -1231,7 +1231,7 @@ async def get_category_services(
     return sorted(services, key=lambda s: s["bytes"], reverse=True)[:limit]
 
 
-async def get_category_bandwidth(
+def get_category_bandwidth(
     client, category: str, from_ts: str, to_ts: str, interval: str = "15m"
 ) -> list[dict]:
     """Get bandwidth time-series for a traffic category, broken into download/upload."""

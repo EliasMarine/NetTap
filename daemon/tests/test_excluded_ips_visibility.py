@@ -5,7 +5,7 @@ hide ARP spoofing of the router)."""
 import json
 import os
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from aiohttp import web
@@ -66,8 +66,8 @@ async def test_lan_detections_ignore_excluded_ips(handler, method):
 
 @pytest.mark.asyncio
 async def test_threat_report_alerts_ignore_excluded_ips():
-    smart_alerts = AsyncMock(return_value=[])
-    summary = AsyncMock(return_value={})
+    smart_alerts = MagicMock(return_value=[])
+    summary = MagicMock(return_value={})
     with (
         patch("services.alert_intelligence.get_smart_alerts", smart_alerts),
         patch("services.alert_intelligence.get_smart_alert_summary", summary),

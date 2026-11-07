@@ -17,6 +17,7 @@ from datetime import timedelta
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.offload import in_thread
 from api.time_range import parse_time_range
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from api.devices import _incomplete, _lan_device_bool_query, _lan_device_buckets
@@ -605,7 +606,8 @@ def _risk_scores(request: web.Request) -> web.Response:
     )
 
 
-async def handle_risk_score_single(request: web.Request) -> web.Response:
+@in_thread
+def handle_risk_score_single(request: web.Request) -> web.Response:
     """GET /api/risk/scores/{ip}?from=&to=
 
     Returns risk score for a single device.

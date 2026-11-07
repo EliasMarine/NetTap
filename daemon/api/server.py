@@ -39,6 +39,7 @@ from smart.monitor import SmartMonitor
 from storage.ilm import apply_ilm_policies_from_config
 from storage.ilm_generator import generate_ilm_policies
 from storage.retention_config import RetentionConfigManager
+from api.offload import in_thread
 from api.daemon_auth import (
     load_or_create_token,
     make_auth_middleware,
@@ -219,7 +220,8 @@ async def handle_health(request: web.Request) -> web.Response:
     )
 
 
-async def handle_storage_status(request: web.Request) -> web.Response:
+@in_thread
+def handle_storage_status(request: web.Request) -> web.Response:
     """GET /api/storage/status -- Full storage status from StorageManager."""
     try:
         storage: StorageManager = request.app["storage"]
@@ -242,7 +244,8 @@ async def handle_storage_status(request: web.Request) -> web.Response:
         )
 
 
-async def handle_storage_retention(request: web.Request) -> web.Response:
+@in_thread
+def handle_storage_retention(request: web.Request) -> web.Response:
     """GET /api/storage/retention -- Retention configuration only."""
     try:
         storage: StorageManager = request.app["storage"]
@@ -256,14 +259,19 @@ async def handle_storage_retention(request: web.Request) -> web.Response:
         )
 
 
-async def handle_storage_prune(request: web.Request) -> web.Response:
+@in_thread
+def handle_storage_prune(request: web.Request) -> web.Response:
     """POST /api/storage/prune -- Trigger a manual prune/maintenance cycle."""
     try:
         storage: StorageManager = request.app["storage"]
-        # Run the synchronous run_cycle in a thread to avoid blocking the
-        # event loop (it performs disk I/O and OpenSearch HTTP calls).
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, storage.run_cycle)
+        # OLD CODE START — PR 2 (reliability): get_status() below ran on the loop after it
+        # # Run the synchronous run_cycle in a thread to avoid blocking the
+        # # event loop (it performs disk I/O and OpenSearch HTTP calls).
+        # loop = asyncio.get_running_loop()
+        # await loop.run_in_executor(None, storage.run_cycle)
+        # OLD CODE END
+        # The whole handler runs in a worker thread (disk I/O and OpenSearch calls)
+        storage.run_cycle()
         # Return current status after the prune cycle completes
         status = storage.get_status()
         return web.json_response(

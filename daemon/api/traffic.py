@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.offload import in_thread
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from api.drilldown_runner import either_side, ip_param
 from api.time_range import parse_time_range
@@ -137,7 +138,8 @@ def _get_client(request: web.Request):
 # ---------------------------------------------------------------------------
 
 
-async def handle_traffic_summary(request: web.Request) -> web.Response:
+@in_thread
+def handle_traffic_summary(request: web.Request) -> web.Response:
     """GET /api/traffic/summary?from=&to=
 
     Returns total bytes, packet count, connection count, and top protocol
@@ -227,7 +229,8 @@ async def handle_traffic_summary(request: web.Request) -> web.Response:
     )
 
 
-async def handle_top_talkers(request: web.Request) -> web.Response:
+@in_thread
+def handle_top_talkers(request: web.Request) -> web.Response:
     """GET /api/traffic/top-talkers?from=&to=&limit=20
 
     Returns top source IPs by total bytes (source.bytes + destination.bytes).
@@ -309,7 +312,8 @@ async def handle_top_talkers(request: web.Request) -> web.Response:
     )
 
 
-async def handle_top_destinations(request: web.Request) -> web.Response:
+@in_thread
+def handle_top_destinations(request: web.Request) -> web.Response:
     """GET /api/traffic/top-destinations?from=&to=&limit=20
 
     Returns top destination IPs by total bytes.
@@ -401,7 +405,8 @@ async def handle_top_destinations(request: web.Request) -> web.Response:
     )
 
 
-async def handle_protocols(request: web.Request) -> web.Response:
+@in_thread
+def handle_protocols(request: web.Request) -> web.Response:
     """GET /api/traffic/protocols?from=&to=
 
     Returns protocol distribution via terms aggregation on the
@@ -510,7 +515,8 @@ async def handle_protocols(request: web.Request) -> web.Response:
     )
 
 
-async def handle_bandwidth(request: web.Request) -> web.Response:
+@in_thread
+def handle_bandwidth(request: web.Request) -> web.Response:
     """GET /api/traffic/bandwidth?from=&to=&interval=5m
 
     Returns time-series bandwidth data using a date_histogram on '@timestamp'
@@ -624,7 +630,8 @@ async def handle_bandwidth(request: web.Request) -> web.Response:
     )
 
 
-async def handle_connections(request: web.Request) -> web.Response:
+@in_thread
+def handle_connections(request: web.Request) -> web.Response:
     """GET /api/traffic/connections?from=&to=&page=1&size=50&q=&ip=&sort=time&order=desc&state=all
 
     Returns a paginated list of Zeek connection log entries with optional
@@ -757,7 +764,8 @@ async def handle_connections(request: web.Request) -> web.Response:
     )
 
 
-async def handle_traffic_categories(request: web.Request) -> web.Response:
+@in_thread
+def handle_traffic_categories(request: web.Request) -> web.Response:
     """GET /api/traffic/categories?from=&to=
 
     Returns traffic data grouped by human-readable categories (Streaming,
@@ -767,7 +775,7 @@ async def handle_traffic_categories(request: web.Request) -> web.Response:
     client = _get_client(request)
 
     try:
-        categories = await get_category_stats(client, from_ts, to_ts)
+        categories = get_category_stats(client, from_ts, to_ts)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/categories: %s", exc)
         return web.json_response(
@@ -788,7 +796,8 @@ async def handle_traffic_categories(request: web.Request) -> web.Response:
     )
 
 
-async def handle_category_detail(request: web.Request) -> web.Response:
+@in_thread
+def handle_category_detail(request: web.Request) -> web.Response:
     """GET /api/traffic/categories/{category} -- per-device breakdown."""
     category = request.match_info["category"]
 
@@ -801,11 +810,20 @@ async def handle_category_detail(request: web.Request) -> web.Response:
     fingerprint = request.app.get("device_fingerprint")
 
     try:
-        breakdown, services = await asyncio.gather(
-            traffic_classifier.get_category_devices(
-                client, category, from_ts, to_ts, fingerprint=fingerprint
-            ),
-            traffic_classifier.get_category_services(client, category, from_ts, to_ts),
+        # OLD CODE START — PR 2 (reliability): both ran synchronously on the request loop
+        # (gather gave no concurrency); the handler now runs in a worker thread
+        # breakdown, services = await asyncio.gather(
+        #     traffic_classifier.get_category_devices(
+        #         client, category, from_ts, to_ts, fingerprint=fingerprint
+        #     ),
+        #     traffic_classifier.get_category_services(client, category, from_ts, to_ts),
+        # )
+        # OLD CODE END
+        breakdown = traffic_classifier.get_category_devices(
+            client, category, from_ts, to_ts, fingerprint=fingerprint
+        )
+        services = traffic_classifier.get_category_services(
+            client, category, from_ts, to_ts
         )
     except Exception as exc:
         logger.error("Error in category detail for %s: %s", category, exc)
@@ -856,7 +874,8 @@ async def handle_category_detail(request: web.Request) -> web.Response:
     )
 
 
-async def handle_category_bandwidth(request: web.Request) -> web.Response:
+@in_thread
+def handle_category_bandwidth(request: web.Request) -> web.Response:
     """GET /api/traffic/categories/{category}/bandwidth?from=&to=&interval="""
     category = request.match_info["category"]
 
@@ -874,7 +893,7 @@ async def handle_category_bandwidth(request: web.Request) -> web.Response:
     client = _get_client(request)
 
     try:
-        series = await traffic_classifier.get_category_bandwidth(
+        series = traffic_classifier.get_category_bandwidth(
             client, category, from_ts, to_ts, interval
         )
     except ValueError:  # more time slots than time_slots allows (#120)
@@ -1169,7 +1188,8 @@ def _sankey_destinations_query(
     }
 
 
-async def handle_connection_sankey(request: web.Request) -> web.Response:
+@in_thread
+def handle_connection_sankey(request: web.Request) -> web.Response:
     """GET /api/traffic/connections/sankey?from=&to=&limit=10
 
     Top sources by bytes → network.transport, then (second search) those sources'
@@ -1388,7 +1408,8 @@ async def handle_connection_sankey(request: web.Request) -> web.Response:
     )
 
 
-async def handle_connection_timeline(request: web.Request) -> web.Response:
+@in_thread
+def handle_connection_timeline(request: web.Request) -> web.Response:
     """GET /api/traffic/connections/timeline?from=&to=&interval=
 
     Date histogram with sub-agg on network.transport.keyword.
@@ -1495,7 +1516,8 @@ def _related_summary(result: dict) -> dict:
     }
 
 
-async def handle_connection_related(request: web.Request) -> web.Response:
+@in_thread
+def handle_connection_related(request: web.Request) -> web.Response:
     """GET /api/traffic/connections/related?src_ip=&dst_ip=&from=&to=
 
     The newest connections between a specific src-dst pair (up to 200),

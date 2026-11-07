@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.offload import in_thread
 from api.time_range import parse_time_range
 from services.bandwidth_tracker import BandwidthTracker
 
@@ -67,7 +68,8 @@ def _parse_time_range(request: web.Request) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
-async def handle_monthly(request: web.Request) -> web.Response:
+@in_thread
+def handle_monthly(request: web.Request) -> web.Response:
     """GET /api/bandwidth/monthly?year=&month=
 
     Returns monthly usage totals and projection.
@@ -105,7 +107,8 @@ async def handle_monthly(request: web.Request) -> web.Response:
     )
 
 
-async def handle_daily(request: web.Request) -> web.Response:
+@in_thread
+def handle_daily(request: web.Request) -> web.Response:
     """GET /api/bandwidth/daily?from=&to=
 
     Returns daily usage totals for a date range.
@@ -131,7 +134,8 @@ async def handle_daily(request: web.Request) -> web.Response:
     )
 
 
-async def handle_devices(request: web.Request) -> web.Response:
+@in_thread
+def handle_devices(request: web.Request) -> web.Response:
     """GET /api/bandwidth/devices?from=&to=&limit=50
 
     Returns per-device bandwidth breakdown.
@@ -170,7 +174,8 @@ async def handle_devices(request: web.Request) -> web.Response:
     )
 
 
-async def handle_heatmap(request: web.Request) -> web.Response:
+@in_thread
+def handle_heatmap(request: web.Request) -> web.Response:
     """GET /api/bandwidth/heatmap?from=&to=&tz=
 
     Returns a 7x24 hour-of-day x day-of-week bandwidth matrix, in the viewer's IANA
@@ -208,7 +213,8 @@ async def handle_heatmap(request: web.Request) -> web.Response:
     )
 
 
-async def handle_cap(request: web.Request) -> web.Response:
+@in_thread
+def handle_cap(request: web.Request) -> web.Response:
     """GET /api/bandwidth/cap
 
     Returns configured bandwidth cap and current usage percentage.

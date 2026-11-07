@@ -6,7 +6,6 @@ Validates time-series output shape, field presence, handling of
 unknown categories, and OpenSearch error resilience.
 """
 
-import asyncio
 import os
 import sys
 import unittest
@@ -74,13 +73,11 @@ class TestCategoryBandwidth(unittest.TestCase):
             ]
         )
 
-        result = asyncio.run(
-            get_category_bandwidth(
-                client,
-                "streaming",
-                "2026-03-01T00:00:00Z",
-                "2026-03-01T01:00:00Z",
-            )
+        result = get_category_bandwidth(
+            client,
+            "streaming",
+            "2026-03-01T00:00:00Z",
+            "2026-03-01T01:00:00Z",
         )
         self.assertEqual(len(result), 3)
         self.assertEqual(result[0]["download_bytes"], 1_000_000)
@@ -93,13 +90,11 @@ class TestCategoryBandwidth(unittest.TestCase):
         # Should never be called because the category has no ASN mappings
         client.search = MagicMock(return_value=_mock_bandwidth_response([]))
 
-        result = asyncio.run(
-            get_category_bandwidth(
-                client,
-                "nonexistent",
-                "2026-03-01T00:00:00Z",
-                "2026-03-02T00:00:00Z",
-            )
+        result = get_category_bandwidth(
+            client,
+            "nonexistent",
+            "2026-03-01T00:00:00Z",
+            "2026-03-02T00:00:00Z",
         )
         self.assertEqual(result, [])
         client.search.assert_not_called()
@@ -114,13 +109,11 @@ class TestCategoryBandwidth(unittest.TestCase):
                 else [_asn_page("AS2906 Netflix Inc"), Exception("Connection refused")]
             )
             with self.assertRaises(Exception, msg=failing):
-                asyncio.run(
-                    get_category_bandwidth(
-                        client,
-                        "streaming",
-                        "2026-03-01T00:00:00Z",
-                        "2026-03-02T00:00:00Z",
-                    )
+                get_category_bandwidth(
+                    client,
+                    "streaming",
+                    "2026-03-01T00:00:00Z",
+                    "2026-03-02T00:00:00Z",
                 )
 
     def test_series_includes_all_fields(self):
@@ -134,13 +127,11 @@ class TestCategoryBandwidth(unittest.TestCase):
             ]
         )
 
-        result = asyncio.run(
-            get_category_bandwidth(
-                client,
-                "streaming",
-                "2026-03-01T00:00:00Z",
-                "2026-03-01T01:00:00Z",
-            )
+        result = get_category_bandwidth(
+            client,
+            "streaming",
+            "2026-03-01T00:00:00Z",
+            "2026-03-01T01:00:00Z",
         )
         self.assertEqual(len(result), 1)
         item = result[0]

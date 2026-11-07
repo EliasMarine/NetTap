@@ -4,7 +4,6 @@ Composite pages come in key order, so a cap on pages drops the signatures that s
 25 pages of 200 left "ET TROJAN" out of a network with 5,000 "ET POLICY" groups.
 """
 
-import asyncio
 from unittest.mock import MagicMock, patch
 
 from services import alert_intelligence
@@ -66,7 +65,7 @@ def test_summary_counts_the_signatures_that_sort_last():
         patch.object(alert_intelligence, "is_suppressed", return_value=False),
         patch.object(alert_intelligence, "update_baseline", return_value=None),
     ):
-        summary = asyncio.run(get_smart_alert_summary(_client(groups), _FROM, _TO))
+        summary = get_smart_alert_summary(_client(groups), _FROM, _TO)
 
     assert summary["total_groups"] == 5_200
     assert summary["total_events"] == 15_600
@@ -80,7 +79,7 @@ def test_summary_counts_the_signatures_that_sort_last():
 
 def test_the_sample_fetches_only_the_fields_it_reads():
     client = _client([])
-    asyncio.run(alert_intelligence.get_smart_alerts(client, _FROM, _TO))
+    alert_intelligence.get_smart_alerts(client, _FROM, _TO)
     top_hits = client.search.call_args.kwargs["body"]["aggs"]["grouped"]["aggs"][
         "sample"
     ]["top_hits"]

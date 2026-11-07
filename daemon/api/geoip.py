@@ -12,6 +12,7 @@ import logging
 
 from aiohttp import web
 
+from api.offload import in_thread
 from services.geoip_service import GeoIPService
 
 logger = logging.getLogger("nettap.api.geoip")
@@ -22,7 +23,8 @@ logger = logging.getLogger("nettap.api.geoip")
 # ---------------------------------------------------------------------------
 
 
-async def handle_geoip_lookup(request: web.Request) -> web.Response:
+@in_thread
+def handle_geoip_lookup(request: web.Request) -> web.Response:
     """GET /api/geoip/{ip}
 
     Look up GeoIP data for a single IP address.
@@ -41,7 +43,8 @@ async def handle_geoip_lookup(request: web.Request) -> web.Response:
     return web.json_response(result.to_dict())
 
 
-async def handle_geoip_batch(request: web.Request) -> web.Response:
+@in_thread
+def handle_geoip_batch(request: web.Request) -> web.Response:
     """GET /api/geoip/batch?ips=1.1.1.1,8.8.8.8
 
     Look up GeoIP data for multiple comma-separated IP addresses.

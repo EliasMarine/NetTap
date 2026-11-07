@@ -13,6 +13,7 @@ from datetime import timedelta
 
 from aiohttp import web
 
+from api.offload import in_thread
 from api.time_range import parse_time_range
 from storage.manager import StorageManager
 
@@ -111,7 +112,8 @@ async def handle_beaconing(request: web.Request) -> web.Response:
     )
 
 
-async def handle_lateral_movement(request: web.Request) -> web.Response:
+@in_thread
+def handle_lateral_movement(request: web.Request) -> web.Response:
     """GET /api/threats/lateral?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
@@ -138,7 +140,8 @@ async def handle_lateral_movement(request: web.Request) -> web.Response:
     )
 
 
-async def handle_dns_anomalies(request: web.Request) -> web.Response:
+@in_thread
+def handle_dns_anomalies(request: web.Request) -> web.Response:
     """GET /api/threats/dns-anomalies?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
@@ -157,7 +160,8 @@ async def handle_dns_anomalies(request: web.Request) -> web.Response:
     return web.json_response({"from": from_ts, "to": to_ts, **anomalies})
 
 
-async def handle_threat_intel(request: web.Request) -> web.Response:
+@in_thread
+def handle_threat_intel(request: web.Request) -> web.Response:
     """GET /api/threats/intel?from=&to= — Populate TI from Suricata + return matches."""
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)

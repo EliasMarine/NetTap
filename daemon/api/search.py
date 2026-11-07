@@ -10,6 +10,8 @@ import logging
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.offload import in_thread
+
 # OLD CODE START — search no longer hides excluded IPs (unused import)
 # from services.excluded_ips import build_excluded_ips_filter
 # OLD CODE END
@@ -24,7 +26,8 @@ logger = logging.getLogger("nettap.api.search")
 # ---------------------------------------------------------------------------
 
 
-async def handle_search(request: web.Request) -> web.Response:
+@in_thread
+def handle_search(request: web.Request) -> web.Response:
     """GET /api/search?q={query}&size={size}
 
     Execute a natural language search query. The query is parsed into

@@ -8,6 +8,7 @@ that maps event types to channels with severity filtering.
 Channel and rule configs are persisted to a JSON file.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -39,6 +40,9 @@ EVENT_TYPES = {
 
 # Severity levels (1 = critical, 4 = low)
 SEVERITY_LEVELS = {1: "critical", 2: "high", 3: "medium", 4: "low"}
+
+# Seconds for the SMTP connect and each reply: an unreachable server must not hold a thread
+_SMTP_TIMEOUT_S = 10
 
 # Default config path
 _DEFAULT_CONFIG_PATH = os.environ.get(
@@ -267,23 +271,61 @@ class NotificationHub:
         msg["From"] = from_addr
         msg["To"] = ", ".join(recipients)
 
+        # OLD CODE START — PR 2 (reliability): connect, STARTTLS, login and send blocked the
+        # request loop, with no timeout (an unreachable server held every page)
+        # try:
+        #     if use_tls:
+        #         ctx = ssl.create_default_context()
+        #         with smtplib.SMTP(host, port) as server:
+        #             server.starttls(context=ctx)
+        #             if username and password:
+        #                 server.login(username, password)
+        #             server.sendmail(from_addr, recipients, msg.as_string())
+        #     else:
+        #         with smtplib.SMTP(host, port) as server:
+        #             if username and password:
+        #                 server.login(username, password)
+        #             server.sendmail(from_addr, recipients, msg.as_string())
+        #     return True
+        # except Exception as exc:
+        #     logger.error("SMTP send failed: %s", exc)
+        #     return False
+        # OLD CODE END
         try:
-            if use_tls:
-                ctx = ssl.create_default_context()
-                with smtplib.SMTP(host, port) as server:
-                    server.starttls(context=ctx)
-                    if username and password:
-                        server.login(username, password)
-                    server.sendmail(from_addr, recipients, msg.as_string())
-            else:
-                with smtplib.SMTP(host, port) as server:
-                    if username and password:
-                        server.login(username, password)
-                    server.sendmail(from_addr, recipients, msg.as_string())
+            await asyncio.to_thread(
+                self._smtp_send,
+                host,
+                port,
+                use_tls,
+                username,
+                password,
+                from_addr,
+                recipients,
+                msg.as_string(),
+            )
             return True
         except Exception as exc:
             logger.error("SMTP send failed: %s", exc)
             return False
+
+    @staticmethod
+    def _smtp_send(
+        host: str,
+        port: int,
+        use_tls: bool,
+        username: str,
+        password: str,
+        from_addr: str,
+        recipients: list[str],
+        text: str,
+    ) -> None:
+        """The whole SMTP transaction; it blocks, so it runs in a worker thread."""
+        with smtplib.SMTP(host, port, timeout=_SMTP_TIMEOUT_S) as server:
+            if use_tls:
+                server.starttls(context=ssl.create_default_context())
+            if username and password:
+                server.login(username, password)
+            server.sendmail(from_addr, recipients, text)
 
     async def _send_discord(
         self, config: dict, title: str, message: str, severity: int

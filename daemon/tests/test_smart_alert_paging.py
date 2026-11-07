@@ -4,8 +4,7 @@ One 200-group page saw only the first 200 (signature, src, dst) groups in key
 order, so the home Alert Summary said 394 while the Alerts card said 2.2K.
 """
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -99,9 +98,7 @@ def _two_page_client() -> MagicMock:
 def test_every_page_is_read():
     client = _two_page_client()
     with patch.object(alert_intelligence, "is_suppressed", return_value=False):
-        groups = asyncio.run(
-            get_smart_alerts(client, _FROM, _TO, limit=None, include_info=True)
-        )
+        groups = get_smart_alerts(client, _FROM, _TO, limit=None, include_info=True)
 
     assert len(groups) == 203
     # OLD CODE: first, second = (c.kwargs["body"] for c in client.search.call_args_list) (NET-191)
@@ -122,7 +119,7 @@ def test_summary_totals_cover_every_group():
         patch.object(alert_intelligence, "update_baseline", return_value=None),
         patch.object(alert_intelligence, "reclassify_severity", return_value=3),
     ):
-        summary = asyncio.run(get_smart_alert_summary(client, _FROM, _TO))
+        summary = get_smart_alert_summary(client, _FROM, _TO)
 
     assert summary["total_groups"] == 203
     assert summary["total_events"] == 406
@@ -136,9 +133,7 @@ def test_a_device_summary_has_no_network_baseline():
         patch.object(alert_intelligence, "update_baseline") as update,
         patch.object(alert_intelligence, "reclassify_severity", return_value=3),
     ):
-        summary = asyncio.run(
-            get_smart_alert_summary(client, _FROM, _TO, "192.168.1.44")
-        )
+        summary = get_smart_alert_summary(client, _FROM, _TO, "192.168.1.44")
     update.assert_not_called()
     assert summary["baseline"] is None
 
@@ -148,9 +143,9 @@ def test_first_page_failure_raises():
     client = MagicMock()
     client.search.side_effect = RuntimeError("opensearch down")
     with pytest.raises(RuntimeError):
-        asyncio.run(get_smart_alerts(client, _FROM, _TO))
+        get_smart_alerts(client, _FROM, _TO)
     with pytest.raises(RuntimeError):
-        asyncio.run(get_smart_alert_summary(client, _FROM, _TO))
+        get_smart_alert_summary(client, _FROM, _TO)
 
 
 def test_later_page_failure_raises():
@@ -164,7 +159,7 @@ def test_later_page_failure_raises():
         patch.object(alert_intelligence, "is_suppressed", return_value=False),
         pytest.raises(RuntimeError),
     ):
-        asyncio.run(get_smart_alerts(client, _FROM, _TO, limit=None, include_info=True))
+        get_smart_alerts(client, _FROM, _TO, limit=None, include_info=True)
 
 
 def test_summary_reports_the_informational_alerts_it_hides():
@@ -181,7 +176,7 @@ def test_summary_reports_the_informational_alerts_it_hides():
             alert_intelligence, "reclassify_severity", side_effect=every_other_is_info
         ),
     ):
-        summary = asyncio.run(get_smart_alert_summary(client, _FROM, _TO))
+        summary = get_smart_alert_summary(client, _FROM, _TO)
 
     # 203 groups of 2 events: 102 even (informational), 101 odd
     assert summary["total_groups"] == 101
@@ -196,7 +191,7 @@ def test_engine_events_are_left_out_like_the_alerts_page():
 
     client = MagicMock()
     client.search.return_value = _page([], None)
-    asyncio.run(get_smart_alerts(client, _FROM, _TO))
+    get_smart_alerts(client, _FROM, _TO)
     must_not = client.search.call_args.kwargs["body"]["query"]["bool"]["must_not"]
     for clause in _SURICATA_NOISE_EXCLUSION:
         assert clause in must_not
@@ -219,7 +214,7 @@ def test_summary_level_capped_for_medium_only_alerts():
         patch.object(alert_intelligence, "update_baseline", return_value=None),
         patch.object(alert_intelligence, "reclassify_severity", return_value=3),
     ):
-        summary = asyncio.run(get_smart_alert_summary(client, _FROM, _TO))
+        summary = get_smart_alert_summary(client, _FROM, _TO)
 
     assert summary["threat_score"] == 100  # 203 medium groups
     assert summary["threat_level"] == "medium"
@@ -239,12 +234,12 @@ def _score(severities, anomalous=False):
     baseline = {"is_anomalous": anomalous} if anomalous else None
     with (
         patch.object(
-            alert_intelligence, "get_smart_alerts", AsyncMock(return_value=groups)
+            alert_intelligence, "get_smart_alerts", MagicMock(return_value=groups)
         ),
         patch.object(alert_intelligence, "update_baseline", return_value=baseline),
         patch.object(alert_intelligence, "detect_kill_chains", return_value=[]),
     ):
-        summary = asyncio.run(get_smart_alert_summary(object(), _FROM, _TO))
+        summary = get_smart_alert_summary(object(), _FROM, _TO)
     return summary["threat_score"], summary["threat_level"]
 
 

@@ -271,7 +271,7 @@ class TestGetCategoryStats(unittest.TestCase):
         )
 
         async def run():
-            return await get_category_stats(
+            return get_category_stats(
                 mock_client, "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
             )
 
@@ -301,7 +301,7 @@ class TestGetCategoryStats(unittest.TestCase):
         mock_client.search = MagicMock(side_effect=Exception("Connection refused"))
 
         async def run():
-            return await get_category_stats(
+            return get_category_stats(
                 mock_client, "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
             )
 
@@ -314,7 +314,7 @@ class TestGetCategoryStats(unittest.TestCase):
         mock_client.search = MagicMock(return_value=self._asn_response([]))
 
         async def run():
-            return await get_category_stats(
+            return get_category_stats(
                 mock_client, "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
             )
 
@@ -334,7 +334,7 @@ class TestGetCategoryStats(unittest.TestCase):
         )
 
         async def run():
-            return await get_category_stats(
+            return get_category_stats(
                 mock_client, "2026-02-25T00:00:00Z", "2026-02-26T00:00:00Z"
             )
 

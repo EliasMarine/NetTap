@@ -9,6 +9,7 @@ from datetime import timedelta
 
 from aiohttp import web
 
+from api.offload import in_thread
 from api.time_range import parse_time_range
 from services.lan_anomaly_detector import LANAnomalyDetector
 from storage.manager import StorageManager
@@ -59,7 +60,8 @@ def _arp_coverage(detector: LANAnomalyDetector, from_ts: str, to_ts: str) -> dic
     return {"arp_recorded": False, "note": NO_ARP_NOTE}
 
 
-async def handle_all_anomalies(request: web.Request) -> web.Response:
+@in_thread
+def handle_all_anomalies(request: web.Request) -> web.Response:
     """GET /api/lan/anomalies?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     detector: LANAnomalyDetector = request.app["lan_anomaly_detector"]
@@ -86,7 +88,8 @@ async def handle_all_anomalies(request: web.Request) -> web.Response:
     )
 
 
-async def handle_arp_spoofing(request: web.Request) -> web.Response:
+@in_thread
+def handle_arp_spoofing(request: web.Request) -> web.Response:
     """GET /api/lan/arp-spoofing?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     detector: LANAnomalyDetector = request.app["lan_anomaly_detector"]
@@ -113,7 +116,8 @@ async def handle_arp_spoofing(request: web.Request) -> web.Response:
     )
 
 
-async def handle_rogue_dhcp(request: web.Request) -> web.Response:
+@in_thread
+def handle_rogue_dhcp(request: web.Request) -> web.Response:
     """GET /api/lan/rogue-dhcp?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     detector: LANAnomalyDetector = request.app["lan_anomaly_detector"]
