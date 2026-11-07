@@ -39,7 +39,7 @@
 	import SearchField from '$lib/components/ui/SearchField.svelte';
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import { domainHref } from '$lib/stores/lan';
-	import { chartTime, DRILL_RANGES, fmt, startRange } from '$lib/utils/drilldown';
+	import { chartTime, DRILL_RANGES, fmt, rangeWindow, startRange } from '$lib/utils/drilldown';
 	import { formatCompactNumber as formatNumber } from '$lib/api/logs';
 
 	// ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@
 	// 	{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days' },
 	// ];
 	// OLD CODE END
-	const TIME_RANGES = DRILL_RANGES.map((r) => ({ ...r, ms: r.hours * 3_600_000 }));
+	const TIME_RANGES = [...DRILL_RANGES]; // a copy: Pills takes a mutable list
 
 	// OLD CODE START — severity is now the system's SeverityPill (colour, shape and word)
 	// const SEVERITY_COLORS: Record<string, string> = {
@@ -246,13 +246,16 @@
 	// ---------------------------------------------------------------------------
 
 	function getTimeRange(rangeValue: string = selectedTimeRange): { from: string; to: string } {
-		const now = new Date();
-		const range = TIME_RANGES.find((r) => r.value === rangeValue);
-		const ms = range?.ms ?? 24 * 60 * 60 * 1000;
-		return {
-			from: new Date(now.getTime() - ms).toISOString(),
-			to: now.toISOString(),
-		};
+		// OLD CODE START — NET-196: the shared list's hours and rangeWindow, not milliseconds
+		// const now = new Date();
+		// const range = TIME_RANGES.find((r) => r.value === rangeValue);
+		// const ms = range?.ms ?? 24 * 60 * 60 * 1000;
+		// return {
+		// 	from: new Date(now.getTime() - ms).toISOString(),
+		// 	to: now.toISOString(),
+		// };
+		// OLD CODE END
+		return rangeWindow(TIME_RANGES.find((r) => r.value === rangeValue)?.hours ?? 24);
 	}
 
 	// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $lib/api/logs
@@ -273,7 +276,8 @@
 	// 	}
 	// }
 	// OLD CODE END
-	const rangeHours = $derived((TIME_RANGES.find((r) => r.value === selectedTimeRange)?.ms ?? 86_400_000) / 3_600_000);
+	// OLD CODE: const rangeHours = $derived((TIME_RANGES.find((r) => r.value === selectedTimeRange)?.ms ?? 86_400_000) / 3_600_000); (NET-196: the list has hours)
+	const rangeHours = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange)?.hours ?? 24);
 	const formatTimestamp = (ts: string) => chartTime(ts, rangeHours);
 
 	// OLD CODE START — DataTable draws the sort chevrons

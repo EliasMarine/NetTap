@@ -8,7 +8,7 @@
  */
 import type { CertDetail, CertDevice, CertFinding, CertSite, FindingKind } from '$lib/api/certificates';
 import { loadFailed } from '$lib/utils/load-failed';
-import { customRange, DRILL_RANGES, fmt, formatWhen } from '$lib/utils/drilldown';
+import { customRange, DRILL_RANGES, fmt, formatWhen, type DrillRangeValue } from '$lib/utils/drilldown';
 import { formatTime } from '$lib/utils/time';
 
 export type Names = ReadonlyMap<string, string>;
@@ -17,7 +17,8 @@ export type Names = ReadonlyMap<string, string>;
 // export type RangeValue = '24h' | '7d' | '30d';
 // OLD CODE END
 // OLD CODE: export type RangeValue = '24h' | '7d' | '30d' | 'custom'; (NET-192 PR 4: Home's five ranges)
-export type RangeValue = '1h' | '6h' | '24h' | '7d' | '30d' | 'custom';
+// OLD CODE: export type RangeValue = '1h' | '6h' | '24h' | '7d' | '30d' | 'custom'; (NET-196: the shared list's values)
+export type RangeValue = DrillRangeValue | 'custom';
 
 export interface RangeOption {
 	value: RangeValue;

@@ -24,17 +24,18 @@
 - PCAP keeps 1 hour (a day is about 185 GB to search, #137) and Certificates 7 days (Zeek logs a certificate at most once a day).
 
 **Fix (NET-196)**
-- Every page's table is `DRILL_RANGES`, or a `.map` of it that adds the page's own field: `ms`, PCAP's capture-timeline `bucket`, Home's `previous` words. `certificates/cert-view.ts` and `alerts/suricata/[name]/suricata-view.ts` export `DRILL_RANGES` under their old names.
+- Every page's table is `DRILL_RANGES`, or a `.map` of it that adds the page's own field: `ms` (Alerts, Logs, Connections: the Custom-window fit and their windows), PCAP's capture-timeline `bucket` and `bucketMs` (one `BUCKET` table holds each bar's words and width, replacing the separate width ternary), Home's `previous` words (built from `words`). DNS and `alerts/[category]` use `DRILL_RANGES` as is and `rangeWindow(hours)` (ponytail review). `certificates/cert-view.ts` and `alerts/suricata/[name]/suricata-view.ts` export `DRILL_RANGES` under their old names.
 - The parallel maps are lookups in it: IoT `RANGE_LABEL`/`RANGE_HOURS`, Traffic `RANGE_HOURS`, `devices/[ip]` `RANGE_HOURS`/`RANGE_LABEL`/`RANGE_KEYS`, Threats `RANGE_TEXT`. The `computeTimeParams` switches (IoT, Threats, Traffic) are `rangeWindow(hours)`.
-- The page extras stay: every `INTERVAL_MAP`/`INTERVALS`, PCAP's bucket, Home's `previous`, Logs' `INTERVAL_WORDS`.
-- Wording: Traffic now says "last 6 hours" and "vs previous 24 hours", not "6 h" and "24 h". No other page's words changed.
+- The page extras stay: every `INTERVAL_MAP`/`INTERVALS`, PCAP's bucket, Logs' `INTERVAL_WORDS`. `cert-view.ts`'s `RangeValue` is `DrillRangeValue | 'custom'`.
+- Wording: Traffic and Home now say "6 hours" and "24 hours" ("last 6 hours", "vs previous 24 hours"), not "6 h" and "24 h". No other page's words changed.
+- Departure from the plan: the plan kept Home's `previous` labels as a page extra. They now come from the shared `words` (`last …` → `previous …`), so Home and Traffic read the same; Home said "previous 6 h" while Traffic said "previous 6 hours".
 - Every old table is kept as OLD CODE.
 
 **Files**
 - `web/src/lib/utils/drilldown.ts`, `drilldown.test.ts`
 - `web/src/routes/settings/+page.svelte`, `settings.test.ts`
 - Pages: `+page.svelte` (Home), `alerts/+page.svelte`, `alerts/[category]/+page.svelte`, `alerts/suricata/[name]/+page.svelte` and `suricata-view.ts`, `certificates/cert-view.ts`, `connections/+page.svelte`, `devices/+page.svelte`, `devices/[ip]/+page.svelte`, `devices/mac/[mac]/+page.svelte`, `dns/+page.svelte`, `iot/+page.svelte`, `logs/+page.svelte`, `pcap/+page.svelte`, `threats/+page.svelte`, `traffic/[category]/+page.svelte`, `address/[ip]/+page.svelte`, `domain/[name]/+page.svelte`
-- Tests: `iot/iot-page.test.ts`, `alerts/alerts-page.test.ts`, `devices/devices.test.ts`, `connections/connections.test.ts`, `pcap/pcap.test.ts`, `logs/logs.test.ts`, `traffic/[category]/category-page.test.ts`
+- Tests: `home-trends.test.ts`, `iot/iot-page.test.ts`, `alerts/alerts-page.test.ts`, `devices/devices.test.ts`, `connections/connections.test.ts`, `pcap/pcap.test.ts`, `logs/logs.test.ts`, `traffic/[category]/category-page.test.ts`
 - `web/e2e/visual/default-range.visual.ts` (new)
 - `scripts/remote/deploy-display-default-range.sh` (new)
 
@@ -48,6 +49,7 @@
   - Connections (the stored object): the first list, stats and timeline ask for 7 days.
   - PCAP: still one 1-hour file request.
   - Logs: `/logs` with no window opens 7 days. A picked 1h survives a windowless hand-off (`/logs?query=x`) with one search and no card reload.
+- Home (`home-trends.test.ts`): picking 6h shows "vs previous 6 hours"; it fails on the page before the wording change.
 - Traffic: the trend assertion was "vs previous 24 h", a prefix of the new "vs previous 24 hours", so it passed either way. It now pins the full new wording (old kept as OLD CODE).
 - Browser (`e2e/visual/default-range.visual.ts`, no mocks): `addInitScript` saves 7d before the first navigation, then Home, Alerts and the Devices list are hard-loaded. Each asserts exactly one 7-day request to `/api/traffic/bandwidth`, `/api/alerts/timeline` or `/api/devices` (exact path), the 7d pill pressed after hydration, no console error or warning that mentions hydration, and no console errors.
 - **Fails without the change:**

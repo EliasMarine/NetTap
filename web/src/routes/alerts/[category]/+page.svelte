@@ -49,7 +49,7 @@
 	// OLD CODE END
 	import { severityBuckets, type SeverityLevel } from '$lib/utils/severity';
 	// OLD CODE: import { alertsHrefForSignature, type DrillWindow } from '$lib/utils/drilldown'; (section D)
-	import { alertsHrefForSignature, DRILL_RANGES, fmt, startRange, withCount, type DrillWindow } from '$lib/utils/drilldown';
+	import { alertsHrefForSignature, DRILL_RANGES, fmt, rangeWindow, startRange, withCount, type DrillWindow } from '$lib/utils/drilldown';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -81,7 +81,7 @@
 	// 	{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days' },
 	// ];
 	// OLD CODE END
-	const TIME_RANGES = DRILL_RANGES.map((r) => ({ ...r, ms: r.hours * 3_600_000 }));
+	const TIME_RANGES = DRILL_RANGES;
 
 	const INTERVAL_MAP: Record<string, string> = {
 		// OLD CODE: '15m': '1m', (NET-192 PR 4)
@@ -293,10 +293,13 @@
 		// OLD CODE: || TIME_RANGES[3]; (NET-192 PR 4: 24h is index 2)
 		// OLD CODE: || TIME_RANGES[2] (NET-192 PR 4: the default by value, not by position)
 		const range = TIME_RANGES.find((r) => r.value === selectedRange) || TIME_RANGES.find((r) => r.value === '24h')!;
-		return {
-			from: new Date(now - range.ms).toISOString(),
-			to: new Date(now).toISOString(),
-		};
+		// OLD CODE START — NET-196: the shared list's hours and rangeWindow, not milliseconds
+		// return {
+		// 	from: new Date(now - range.ms).toISOString(),
+		// 	to: new Date(now).toISOString(),
+		// };
+		// OLD CODE END
+		return rangeWindow(range.hours, new Date(now));
 	}
 
 	// ---------------------------------------------------------------------------

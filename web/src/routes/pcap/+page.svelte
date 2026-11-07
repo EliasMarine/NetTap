@@ -54,8 +54,15 @@
 	// 	{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days', bucket: 'day' },
 	// ];
 	// OLD CODE END
-	const BUCKET: Record<DrillRangeValue, string> = { '1h': '5 minutes', '6h': '30 minutes', '24h': 'hour', '7d': '6 hours', '30d': 'day' };
-	const TIME_RANGES = DRILL_RANGES.map((r) => ({ ...r, ms: r.hours * 3_600_000, bucket: BUCKET[r.value] }));
+	// The timeline's bar per range: its words for the subtitle and its width, kept together so they can't drift
+	const BUCKET: Record<DrillRangeValue, { words: string; minutes: number }> = {
+		'1h': { words: '5 minutes', minutes: 5 },
+		'6h': { words: '30 minutes', minutes: 30 },
+		'24h': { words: 'hour', minutes: 60 },
+		'7d': { words: '6 hours', minutes: 360 },
+		'30d': { words: 'day', minutes: 1440 },
+	};
+	const TIME_RANGES = DRILL_RANGES.map((r) => ({ ...r, ms: r.hours * 3_600_000, bucket: BUCKET[r.value].words, bucketMs: BUCKET[r.value].minutes * 60_000 }));
 
 	const SEARCH_POLL_MS = 3000;
 
@@ -168,7 +175,8 @@
 		const now = Date.now();
 		const rangeMs = TIME_RANGES.find((r) => r.value === range)?.ms ?? 86400000;
 		// OLD CODE: const bucketMs = range === '1h' ? 5 * 60000 : range === '4h' ? 20 * 60000 : … (NET-192 PR 4: 6h, not 4h)
-		const bucketMs = range === '1h' ? 5 * 60000 : range === '6h' ? 30 * 60000 : range === '24h' ? 3600000 : range === '7d' ? 6 * 3600000 : 86400000;
+		// OLD CODE: const bucketMs = range === '1h' ? 5 * 60000 : range === '6h' ? 30 * 60000 : range === '24h' ? 3600000 : range === '7d' ? 6 * 3600000 : 86400000; (NET-196: BUCKET holds the width beside its words)
+		const bucketMs = TIME_RANGES.find((r) => r.value === range)?.bucketMs ?? 86400000;
 		const bucketCount = Math.ceil(rangeMs / bucketMs);
 		const startMs = now - rangeMs;
 		const buckets: TimelineBucket[] = Array.from({ length: bucketCount }, (_, i) => ({
