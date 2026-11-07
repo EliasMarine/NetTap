@@ -1033,6 +1033,9 @@ services:
       # (CR-034). nginx overwrites X-Real-IP with $remote_addr; safe only while
       # port 3000 stays unpublished so nothing but nginx can set it.
       ADDRESS_HEADER: "x-real-ip"
+      # NET-200: adapter-node refuses bodies over 512K by default; a config backup with device
+      # photos is up to ~11 MB. Matches nginx client_max_body_size and the daemon's client_max_size.
+      BODY_SIZE_LIMIT: "16M"
     networks:
       - default
     depends_on:

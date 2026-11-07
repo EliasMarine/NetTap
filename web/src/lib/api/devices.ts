@@ -32,6 +32,10 @@ export interface Device {
 	alert_count: number;
 	category?: string;
 	unifi_name?: string;
+	/** NET-200: the owner's name, picked icon and photo URL; `hostname` already carries the name */
+	custom_name?: string | null;
+	icon?: string | null;
+	picture?: string | null;
 }
 
 export interface DeviceListResponse {

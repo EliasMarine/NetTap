@@ -681,7 +681,8 @@ OLD CODE END -->
 {#snippet ulCell(r: ConnRow)}{formatBytes(deviceBytes(r.conn, 'ul'))}{/snippet}
 
 <svelte:head>
-	<title>{device?.unifi_name ?? deviceIp} | Device Intelligence | NetTap</title>
+	<!-- OLD CODE: <title>{device?.unifi_name ?? deviceIp} | Device Intelligence | NetTap</title> (NET-200: the owner's name first) -->
+	<title>{device?.custom_name ?? device?.unifi_name ?? deviceIp} | Device Intelligence | NetTap</title>
 </svelte:head>
 
 <a class="back" href="/devices"><Icon name="back" />Devices</a>
@@ -689,13 +690,16 @@ OLD CODE END -->
 <!-- Identity hero: the h1 is here in every state, so loading and errors keep the page's heading -->
 <article class="card hero">
 	<div class="ident">
-		<DeviceTile size="lg" category={device?.category} />
+		<!-- OLD CODE: <DeviceTile size="lg" category={device?.category} /> (NET-200: the owner's picture) -->
+		<DeviceTile size="lg" category={device?.category} picture={device?.picture} icon={device?.icon} />
 		<div>
-			<h1 class={['page-title', !device?.unifi_name && 'mono']}>{device?.unifi_name ?? deviceIp}</h1>
+			<!-- OLD CODE: <h1 class={['page-title', !device?.unifi_name && 'mono']}>{device?.unifi_name ?? deviceIp}</h1> (NET-200) -->
+			<h1 class={['page-title', !(device?.custom_name ?? device?.unifi_name) && 'mono']}>{device?.custom_name ?? device?.unifi_name ?? deviceIp}</h1>
 			{#if device}
 				<div class="chips">
 					<span class={['chip', isOnline && 'is-ok']}>{statusLabel}</span>
-					{#if device.unifi_name}<span class="chip">UniFi</span>{/if}
+					<!-- OLD CODE: {#if device.unifi_name}<span class="chip">UniFi</span>{/if} (NET-200: only when the UniFi name is the one shown) -->
+					{#if device.unifi_name && !device.custom_name}<span class="chip">UniFi</span>{/if}
 					{#if device.os_hint}<span class="chip">{device.os_hint}</span>{/if}
 					{#each (device.protocols ?? []).slice(0, 8) as proto (proto)}<span class="tag">{proto}</span>{/each}
 				</div>

@@ -45,4 +45,10 @@ describe('namesByIp', () => {
 		expect(namesByIp([]).size).toBe(0);
 		expect(namesByIp([device({ ips: [] })]).size).toBe(0);
 	});
+
+	// NET-200
+	it("always takes the owner's name, even when it is the maker's", () => {
+		const names = namesByIp([device({ ips: ['10.0.0.9'], manufacturer: 'Sonos', display_name: 'Sonos', custom_name: 'Sonos' })]);
+		expect(names.get('10.0.0.9')).toBe('Sonos');
+	});
 });

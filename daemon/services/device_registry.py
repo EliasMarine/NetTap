@@ -8,8 +8,9 @@ OUI, JA3, UniFi) are merged incrementally — no data is ever overwritten,
 only appended or updated if newer.
 
 Name priority (highest wins):
+    0. The owner's name, set in NetTap (NET-200, services/device_custom.py; not in this index)
     1. UniFi alias (user-set in controller UI)
-    2. User-set friendly name (via API)
+    2. Friendly name (a source's own name for the device; no API sets it)
     3. DHCP hostname (option 12)
     4. mDNS name (.local domain)
     5. OUI manufacturer fallback
@@ -18,13 +19,16 @@ Name priority (highest wins):
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from opensearchpy import NotFoundError, OpenSearchException
 
 from services.device_fingerprint import _mac_from_hit
 from services.excluded_ips import CONN_RECORDS
 from storage.snapshot_search import QueryFailed, checked
+
+if TYPE_CHECKING:
+    from services.device_custom import DeviceCustomStore
 
 logger = logging.getLogger("nettap.services.device_registry")
 
@@ -91,10 +95,22 @@ class DeviceRegistry:
     device documents using the MAC address as the document ID.
     """
 
-    def __init__(self, client: Any, changelog: Any = None):
+    # NET-200: the owner's names and pictures; a class default so tests built with __new__ work
+    _custom: "DeviceCustomStore | None" = None
+
+    # OLD CODE START — NET-200: no owner names
+    # def __init__(self, client: Any, changelog: Any = None):
+    # OLD CODE END
+    def __init__(
+        self,
+        client: Any,
+        changelog: Any = None,
+        custom: "DeviceCustomStore | None" = None,
+    ):
         self._client = client
         # ChangelogService; when set, a device's first write logs "device_joined"
         self._changelog = changelog
+        self._custom = custom
         self._ensure_index()
 
     def _ensure_index(self) -> None:
@@ -670,12 +686,24 @@ class DeviceRegistry:
         result = self._client.search(index=DEVICES_INDEX, body=query)
         return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])]
 
-    def get_display_name(self, device: dict) -> str:
+    # OLD CODE START — NET-200: the owner's name comes first now
+    # def get_display_name(self, device: dict) -> str:
+    #     """Resolve the best display name for a device using priority rules.
+    #
+    #     Priority: UniFi alias > user-set friendly_name > DHCP hostname >
+    #               mDNS name > manufacturer fallback
+    #     """
+    # OLD CODE END
+    def get_display_name(self, device: dict, own: bool = True) -> str:
         """Resolve the best display name for a device using priority rules.
 
-        Priority: UniFi alias > user-set friendly_name > DHCP hostname >
-                  mDNS name > manufacturer fallback
+        Priority: the owner's name (when `own`) > UniFi alias > friendly_name >
+                  DHCP hostname > mDNS name > manufacturer fallback
+        `own=False` is the discovered name: what the network calls the device.
         """
+        if own and (name := self._owner_name(device)):
+            return name
+
         # Check enrichment sources for UniFi alias
         enrichment = device.get("enrichment_sources") or {}
         unifi_data = enrichment.get("unifi", {})
@@ -707,14 +735,41 @@ class DeviceRegistry:
 
         return device.get("mac", "Unknown")
 
-    def get_name(self, device: dict) -> str | None:
-        """The name Home shows for a device, or None where it would show the vendor or MAC."""
-        name = self.get_display_name(device)
+    # OLD CODE START — NET-200: owner names; classification needs the discovered name
+    # def get_name(self, device: dict) -> str | None:
+    #     """The name Home shows for a device, or None where it would show the vendor or MAC."""
+    #     name = self.get_display_name(device)
+    # OLD CODE END
+    def get_name(self, device: dict, own: bool = True) -> str | None:
+        """The name Home shows for a device, or None where it would show the vendor or MAC.
+
+        The owner's name always counts, even when it matches the maker ("Sonos").
+        """
+        if own and (owner := self._owner_name(device)):
+            return owner
+        name = self.get_display_name(device, own=False)
         return (
             None
             if name in (device.get("manufacturer"), device.get("mac", "Unknown"))
             else name
         )
+
+    def _owner_name(self, device: dict) -> str | None:
+        return self._custom.name_for(device.get("mac")) if self._custom else None
+
+    def with_names(self, device: dict) -> dict:
+        """A copy of `device` with display_name, discovered_name and the owner's fields (NET-200)."""
+        owner = (
+            self._custom.owner_fields(device.get("mac"))
+            if self._custom
+            else {"custom_name": None, "icon": None, "picture": None}
+        )
+        return {
+            **device,
+            "display_name": self.get_display_name(device),
+            "discovered_name": self.get_display_name(device, own=False),
+            **owner,
+        }
 
     # ------------------------------------------------------------------
     # Passive enrichment methods

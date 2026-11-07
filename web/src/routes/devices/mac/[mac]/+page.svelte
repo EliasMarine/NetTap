@@ -32,6 +32,7 @@
 	import { alertsHrefForSignature, chartTime as timeLabel, DRILL_RANGES, fmt, rangeWindow, startRange, type DrillRangeValue } from '$lib/utils/drilldown';
 	import { formatTime } from '$lib/utils/time';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
+	import DeviceCustomise from './DeviceCustomise.svelte';
 
 	type Destination = DeviceTraffic['top_destinations'][number];
 	type DnsQuery = NonNullable<DeviceTraffic['dns_queries']>[number];
@@ -56,6 +57,8 @@
 	const RANGE_OPTIONS = DRILL_RANGES.map((r) => ({ value: r.value, label: r.label }));
 	/** The device and range the traffic on screen was read for; another one must not show it. */
 	let trafficView = '';
+	/** NET-200: bumped by every saved name or picture, so a load that began before it keeps its older device to itself. */
+	let editRev = 0;
 
 	// OLD CODE START — 2026-11-03 UI redesign: the loader goes through the page refresh contract
 	// (PLAN.md §5.5) with a load guard; the requests are unchanged
@@ -84,6 +87,7 @@
 		const r = range;
 		if (!m) return 'skipped';
 		const view = `${m}|${r.value}`;
+		const rev = editRev;
 		if (view !== trafficView) traffic = null;
 		loading = true;
 		error = false;
@@ -97,7 +101,8 @@
 		// if (!device) error = true;
 		// OLD CODE END
 		// getRegistryDevice resolves null only for a real 404; a failed refresh keeps the last data
-		if (d.status === 'fulfilled') device = d.value;
+		// OLD CODE: if (d.status === 'fulfilled') device = d.value; (NET-200: a save during the load is newer)
+		if (d.status === 'fulfilled' && rev === editRev) device = d.value;
 		// OLD CODE: if (t.status === 'fulfilled') traffic = t.value; (NET-192 PR 4: remember which range it is)
 		if (t.status === 'fulfilled') {
 			traffic = t.value;
@@ -108,6 +113,20 @@
 		if (d.status === 'fulfilled' && !device) error = true;
 		loading = false;
 		return outcome(results);
+	}
+
+	/**
+	 * NET-200: run one name or picture save for the device on screen. The result shows only if the
+	 * page is still on the device the save began on; a failure throws to DeviceCustomise.
+	 */
+	async function customise(action: (mac: string) => Promise<RegistryDevice>): Promise<void> {
+		const m = mac;
+		const target = device?.mac;
+		if (!target) return;
+		const saved = await action(target);
+		if (m !== mac) return;
+		editRev += 1;
+		device = saved;
 	}
 
 	const refresh = registerPageRefresh(load);
@@ -219,7 +238,8 @@
 <!-- Identity hero: the h1 is here in every state, so loading and errors keep the page's heading -->
 <article class="card hero">
 	<div class="ident">
-		<DeviceTile size="lg" category={device?.category} />
+		<!-- OLD CODE: <DeviceTile size="lg" category={device?.category} /> (NET-200: the owner's picture) -->
+		<DeviceTile size="lg" category={device?.category} picture={device?.picture} icon={device?.icon} />
 		<div>
 			<h1 class={['page-title', !device?.display_name && 'mono']}>{device?.display_name || device?.mac || mac}</h1>
 			{#if device}
@@ -237,6 +257,8 @@
 		</div>
 	</div>
 	{#if device}
+		<!-- keyed: another device's page starts with its panels closed -->
+		{#key device.mac}<DeviceCustomise {device} onsave={customise} />{/key}
 		<dl class="ident-meta">
 			<div><dt class="meta-k">MAC address</dt><dd class="meta-v mono">{device.mac}</dd></div>
 			<div><dt class="meta-k">IP addresses</dt><dd class="meta-v mono">{device.ips.length > 0 ? device.ips.join(', ') : '—'}</dd></div>
@@ -244,6 +266,9 @@
 			<div><dt class="meta-k">Hostnames</dt><dd class="meta-v mono">{device.hostnames.length > 0 ? device.hostnames.join(', ') : '—'}</dd></div>
 			<div><dt class="meta-k">First seen</dt><dd class="meta-v">{formatTime(device.first_seen)}</dd></div>
 			<div><dt class="meta-k">Last seen</dt><dd class="meta-v">{formatTime(device.last_seen)}</dd></div>
+			{#if device.custom_name}
+				<div><dt class="meta-k">Found on the network as</dt><dd class="meta-v">{device.discovered_name || '—'}</dd></div>
+			{/if}
 			{#if device.friendly_name}
 				<div><dt class="meta-k">Friendly name</dt><dd class="meta-v">{device.friendly_name}</dd></div>
 			{/if}

@@ -228,3 +228,75 @@ describe('Device by MAC page — page refresh contract', () => {
 		expect(await screen.findByText('By bytes · last 7 days')).toBeInTheDocument();
 	});
 });
+
+// NET-200: the owner renames the device here; a refresh that began before the save never puts the old name back
+describe('Device by MAC page — owner name and picture', () => {
+	afterEach(() => vi.unstubAllGlobals());
+	const DEVICE_URL = `/api/devices/registry/${encodeURIComponent(MAC)}`;
+	const base = (REPLIES[DEVICE_URL] as { device: Record<string, unknown> }).device;
+	const renamed = { ...base, custom_name: 'Office router', display_name: 'Office router', discovered_name: 'Ubiquiti gateway' };
+
+	it('saves a new name, shows it, and shows the discovered name under it', async () => {
+		const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+			if (init?.method === 'PUT') return { ok: true, status: 200, json: async () => ({ device: renamed }) };
+			return { ok: true, status: 200, json: async () => REPLIES[url.split('?')[0]] };
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		render(Page);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Rename' }));
+		await fireEvent.input(screen.getByLabelText('Name'), { target: { value: '  Office router ' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+		await vi.waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Office router'));
+		expect(fetchMock).toHaveBeenCalledWith(`${DEVICE_URL}/name`, expect.objectContaining({ method: 'PUT', body: '{"name":"Office router"}' }));
+		expect(screen.getByText('Found on the network as')).toBeInTheDocument();
+		expect(screen.getByText('Ubiquiti gateway')).toBeInTheDocument();
+		expect(screen.queryByLabelText('Name')).not.toBeInTheDocument(); // the panel closed
+	});
+
+	it('keeps the saved name when an older refresh lands after the save', async () => {
+		let releaseTraffic: () => void = () => {};
+		let holdTraffic = false;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, init?: RequestInit) => {
+				const path = url.split('?')[0];
+				if (init?.method === 'PUT') return { ok: true, status: 200, json: async () => ({ device: renamed }) };
+				if (path.endsWith('/traffic') && holdTraffic) {
+					await new Promise<void>((resolve) => (releaseTraffic = resolve));
+				}
+				return { ok: true, status: 200, json: async () => REPLIES[path] };
+			}),
+		);
+		render(Page);
+		await screen.findByRole('button', { name: 'Rename' });
+
+		holdTraffic = true;
+		const refreshing = refreshPage(); // reads the old device at once, then waits on traffic
+		await fireEvent.click(screen.getByRole('button', { name: 'Rename' }));
+		await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Office router' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		await vi.waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Office router'));
+
+		releaseTraffic();
+		await refreshing;
+		expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Office router');
+	});
+
+	it("shows the daemon's reason and keeps the panel open when a save fails", async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string, init?: RequestInit) => {
+				if (init?.method === 'PUT') return { ok: false, status: 400, json: async () => ({ error: "Names can't contain control or formatting characters" }) };
+				return { ok: true, status: 200, json: async () => REPLIES[url.split('?')[0]] };
+			}),
+		);
+		render(Page);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Rename' }));
+		await fireEvent.input(screen.getByLabelText('Name'), { target: { value: 'Bad name' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		expect(await screen.findByRole('alert')).toHaveTextContent("Names can't contain control or formatting characters");
+		expect(screen.getByLabelText('Name')).toHaveAttribute('aria-invalid', 'true');
+		expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Ubiquiti gateway');
+	});
+});

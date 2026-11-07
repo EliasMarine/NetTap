@@ -338,7 +338,11 @@ async def _shutdown_iot_executor(app: web.Application) -> None:
 
 def register_iot_routes(app: web.Application, storage: StorageManager) -> None:
     """Register IoT monitoring API routes."""
-    iot_monitor = IoTMonitor(client=storage._client)
+    # OLD CODE: iot_monitor = IoTMonitor(client=storage._client) (NET-200: owner names)
+    custom = app.get("device_custom")
+    iot_monitor = IoTMonitor(
+        client=storage._client, owner_name=custom.name_for if custom else None
+    )
     app["iot_monitor"] = iot_monitor
     app[_EXECUTOR_KEY] = ThreadPoolExecutor(
         max_workers=1, thread_name_prefix="nettap-iot"
