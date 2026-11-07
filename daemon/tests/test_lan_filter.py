@@ -105,3 +105,33 @@ def test_redetection_sees_no_change_when_the_subnets_are_the_same(monkeypatch):
 
 def test_the_rfc1918_list_is_the_fallback_constant():
     assert build_lan_filter([])["terms"]["source.ip"] == RFC1918_CIDRS
+
+
+def test_an_invalid_lan_subnets_entry_is_skipped_and_valid_ones_kept(
+    monkeypatch, caplog
+):
+    """Security review L3: 192.168.300.0/24 went into the filter, and OpenSearch then
+    rejected every LAN-filtered query."""
+    monkeypatch.setenv(
+        "LAN_SUBNETS",
+        "192.168.300.0/24, 10.0.0.0/8, 192.168.1.7/24, a.b.c.d/24, 192.168.2.0/23,"
+        " 172.16.0.0/16, 192.168.9.9, ,fe80::/16",
+    )
+    with caplog.at_level("WARNING", logger=excluded_ips.logger.name):
+        subnets = excluded_ips._parse_manual_subnets()
+    assert subnets == [(10, -1, -1), (192, 168, 1), (172, 16, -1)]
+    assert build_lan_filter(subnets) == {
+        "terms": {"source.ip": ["10.0.0.0/8", "192.168.1.0/24", "172.16.0.0/16"]}
+    }
+
+
+def test_each_skipped_lan_subnets_entry_is_named_once(monkeypatch, caplog):
+    excluded_ips._warn_invalid_subnet.cache_clear()
+    monkeypatch.setenv("LAN_SUBNETS", "192.168.300.0/24, a.b.c.d/24, 192.168.9.9")
+    with caplog.at_level("WARNING", logger=excluded_ips.logger.name):
+        excluded_ips._parse_manual_subnets()
+        excluded_ips._parse_manual_subnets()  # /api/network/lan reads it on every request
+    warned = [r.getMessage() for r in caplog.records]
+    assert len(warned) == 3
+    for entry in ("192.168.300.0/24", "a.b.c.d/24", "192.168.9.9"):
+        assert sum(repr(entry) in m for m in warned) == 1

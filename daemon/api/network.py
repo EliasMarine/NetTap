@@ -12,23 +12,26 @@ from aiohttp import web
 from services.excluded_ips import (
     RFC1918_SOURCE_FILTER,
     _parse_manual_subnets,
+    cidr,
     lan_subnets_of,
 )
 
 logger = logging.getLogger("nettap.api.network")
 
 
-def _cidr(subnet: tuple[int, int, int]) -> str:
-    """(a, b, c) with -1 for any octet, as the filter stores it, in CIDR form."""
-    fixed = [o for o in subnet if o != -1]
-    octets = [*fixed, *[0] * (4 - len(fixed))]
-    return f"{'.'.join(map(str, octets))}/{8 * len(fixed)}"
+# OLD CODE START — NET-192 PR 3 review: excluded_ips.cidr() is the one copy (the LAN filter uses it)
+# def _cidr(subnet: tuple[int, int, int]) -> str:
+#     """(a, b, c) with -1 for any octet, as the filter stores it, in CIDR form."""
+#     fixed = [o for o in subnet if o != -1]
+#     octets = [*fixed, *[0] * (4 - len(fixed))]
+#     return f"{'.'.join(map(str, octets))}/{8 * len(fixed)}"
+# OLD CODE END
 
 
 async def handle_lan(request: web.Request) -> web.Response:
     """GET /api/network/lan → {version, subnets, source, ipv6}."""
     subnets = [
-        _cidr(s)
+        cidr(s)
         for s in lan_subnets_of(request.app.get("lan_filter", RFC1918_SOURCE_FILTER))
     ]
     if not subnets:

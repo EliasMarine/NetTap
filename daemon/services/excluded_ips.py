@@ -219,33 +219,57 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
         return []
 
 
+# lru_cache: /api/network/lan reads LAN_SUBNETS on every request, so warn once per entry
+@functools.lru_cache(maxsize=64)
+def _warn_invalid_subnet(entry: str) -> None:
+    logger.warning(
+        "Ignoring LAN_SUBNETS entry %r: not an IPv4 /8, /16 or /24 network", entry
+    )
+
+
 def _parse_manual_subnets() -> list[tuple[int, int, int]]:
     """Parse LAN_SUBNETS env var as manual override.
 
-    Supports /8, /16, /24 CIDR blocks.
+    Supports /8, /16, /24 CIDR blocks; any other entry is skipped with a warning.
     Returns empty list if env var is not set (triggers auto-detection).
     """
     raw = os.environ.get("LAN_SUBNETS", "")
     if not raw.strip():
         return []  # No manual override — use auto-detection
 
+    # OLD CODE START — security review L3: octets weren't range-checked (192.168.300.0/24 went
+    # into the filter and OpenSearch rejected every LAN-filtered query), and a non-number
+    # raised at import
+    # subnets: list[tuple[int, int, int]] = []
+    # for cidr in raw.split(","):
+    #     cidr = cidr.strip()
+    #     if "/" not in cidr:
+    #         continue
+    #     ip_part, prefix = cidr.split("/", 1)
+    #     octets = ip_part.split(".")
+    #     if len(octets) != 4:
+    #         continue
+    #     a, b, c = int(octets[0]), int(octets[1]), int(octets[2])
+    #     prefix_len = int(prefix)
+    #     if prefix_len == 8:
+    #         subnets.append((a, -1, -1))
+    #     elif prefix_len == 16:
+    #         subnets.append((a, b, -1))
+    #     elif prefix_len == 24:
+    #         subnets.append((a, b, c))
+    # OLD CODE END
     subnets: list[tuple[int, int, int]] = []
-    for cidr in raw.split(","):
-        cidr = cidr.strip()
-        if "/" not in cidr:
+    for entry in (e.strip() for e in raw.split(",")):
+        if not entry:
             continue
-        ip_part, prefix = cidr.split("/", 1)
-        octets = ip_part.split(".")
-        if len(octets) != 4:
+        try:
+            net = ipaddress.IPv4Network(entry, strict=False)
+        except ValueError:
+            net = None
+        if net is None or net.prefixlen not in (8, 16, 24):
+            _warn_invalid_subnet(entry)
             continue
-        a, b, c = int(octets[0]), int(octets[1]), int(octets[2])
-        prefix_len = int(prefix)
-        if prefix_len == 8:
-            subnets.append((a, -1, -1))
-        elif prefix_len == 16:
-            subnets.append((a, b, -1))
-        elif prefix_len == 24:
-            subnets.append((a, b, c))
+        subnets.append(_subnet(str(net)))
 
     if subnets:
         logger.info(
@@ -262,7 +286,7 @@ def _parse_manual_subnets() -> list[tuple[int, int, int]]:
 RFC1918_CIDRS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 
 
-def _cidr(subnet: tuple[int, int, int]) -> str:
+def cidr(subnet: tuple[int, int, int]) -> str:
     """(a, -1, -1) -> a.0.0.0/8, (a, b, -1) -> a.b.0.0/16, (a, b, c) -> a.b.c.0/24."""
     a, b, c = subnet
     if b == -1:
@@ -288,7 +312,7 @@ def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
     3.8-4.3 s with the script and 0.9-1.0 s with CIDR terms, with identical results (3,845,029
     docs, 59 IPs, the same doc counts and byte sums). Like the script, it matches IPv4 only.
     """
-    return {"terms": {"source.ip": [_cidr(s) for s in subnets] or RFC1918_CIDRS}}
+    return {"terms": {"source.ip": [cidr(s) for s in subnets] or RFC1918_CIDRS}}
 
 
 # OLD CODE START — NET-192 PR 3: a Painless script that parsed source.ip on every doc
