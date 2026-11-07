@@ -8,7 +8,12 @@ import { THREAT_SCORE_HOW } from '$api/alerts';
 import ThreatsPage from './+page.svelte';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
-vi.mock('$api/threats', () => ({ getThreatReport: vi.fn(), getThreatIntel: vi.fn() }));
+// OLD CODE: vi.mock('$api/threats', () => ({ getThreatReport: vi.fn(), getThreatIntel: vi.fn() })); (NET-192 PR 3: the page also uses threatRequest)
+vi.mock('$api/threats', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$api/threats')>()),
+	getThreatReport: vi.fn(),
+	getThreatIntel: vi.fn(),
+}));
 
 const EMPTY: ThreatReport = {
 	from: '',
@@ -232,9 +237,15 @@ describe('Threats page — refresh contract', () => {
 		vi.mocked(getThreatIntel).mockResolvedValue(NO_INTEL);
 		const { unmount } = render(ThreatsPage);
 		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
+		// OLD CODE START — NET-192 PR 3: 7d asks the report for the background beaconing snapshot
+		// const [, [weekParams]] = vi.mocked(getThreatReport).mock.calls;
+		// const span = Date.parse(weekParams!.to!) - Date.parse(weekParams!.from!);
+		// expect(span).toBe(7 * 24 * 3600 * 1000);
+		// OLD CODE END
 		const [, [weekParams]] = vi.mocked(getThreatReport).mock.calls;
-		const span = Date.parse(weekParams!.to!) - Date.parse(weekParams!.from!);
-		expect(span).toBe(7 * 24 * 3600 * 1000);
+		expect(weekParams).toEqual({ snapshot: '7d' });
+		const [, [weekIntel]] = vi.mocked(getThreatIntel).mock.calls;
+		expect(Date.parse(weekIntel!.to!) - Date.parse(weekIntel!.from!)).toBe(7 * 24 * 3600 * 1000);
 
 		week.resolve({ ...FULL, kill_chains: [chain('10.0.0.7')] });
 		await flush();

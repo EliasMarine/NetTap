@@ -132,6 +132,46 @@ export interface ThreatReport {
 	failed_checks?: string[];
 	/** #96: detectors a bucket cap stopped part way (their lists are partial) */
 	incomplete_checks?: string[];
+	/** NET-192 PR 3: present when beaconing came from the background scan (?snapshot=) */
+	beaconing_snapshot?: BeaconingSnapshot;
+}
+
+/** The Threats page's ranges that read the background beaconing scan. */
+export type SnapshotWindow = '24h' | '7d' | '30d';
+
+/**
+ * NET-192 PR 3: the background beaconing scan behind a ?snapshot= request.
+ * pending: no scan has finished yet; ready: the last scan succeeded and is recent;
+ * stale: the rows are from an older scan (the latest failed, or none has finished lately);
+ * failed: no scan has succeeded yet.
+ */
+export interface BeaconingSnapshot {
+	window: SnapshotWindow;
+	state: 'pending' | 'ready' | 'stale' | 'failed';
+	computed_at: string | null;
+	last_success_at: string | null;
+	last_error: string | null;
+	/** the window the served rows scanned */
+	from: string | null;
+	to: string | null;
+}
+
+/** What the page asks for: a background snapshot, or a live scan over exact bounds. */
+export type ThreatRequest = { snapshot: SnapshotWindow } | { from: string; to: string };
+
+const SNAPSHOT_WINDOWS: readonly string[] = ['24h', '7d', '30d'] satisfies SnapshotWindow[];
+const LIVE_SPAN_MS: Record<string, number> = { '1h': 3_600_000, '6h': 6 * 3_600_000 };
+
+/**
+ * The Threats page's range pill as a request (NET-192 PR 3): 24h, 7d and 30d read the
+ * background beaconing scan; 1h and 6h are scanned live, ending now. Anything else is 24h.
+ */
+export function threatRequest(range: string, now: Date = new Date()): ThreatRequest {
+	const span = LIVE_SPAN_MS[range];
+	if (span === undefined) {
+		return { snapshot: (SNAPSHOT_WINDOWS.includes(range) ? range : '24h') as SnapshotWindow };
+	}
+	return { from: new Date(now.getTime() - span).toISOString(), to: now.toISOString() };
 }
 
 export interface ThreatIntelInfo {
@@ -155,9 +195,10 @@ function buildQuery(params: Record<string, string | undefined>): string {
 
 // Fetch functions
 export async function getThreatReport(
-	opts: { from?: string; to?: string } = {}
+	opts: { from?: string; to?: string; snapshot?: SnapshotWindow } = {}
 ): Promise<ThreatReport> {
-	const q = buildQuery({ from: opts.from, to: opts.to });
+	// OLD CODE: const q = buildQuery({ from: opts.from, to: opts.to }); (NET-192 PR 3: ?snapshot=)
+	const q = buildQuery({ from: opts.from, to: opts.to, snapshot: opts.snapshot });
 	// OLD CODE: const res = await fetch(`/api/threats/report${q}`, { signal: AbortSignal.timeout(30_000) }); (below the scan's time on a busy network)
 	// Just above the route's THREAT_SCAN_TIMEOUT_MS (120 s), so the route's answer always arrives first
 	const res = await fetch(`/api/threats/report${q}`, { signal: AbortSignal.timeout(125_000) });
@@ -195,9 +236,10 @@ export async function getThreatReport(
 }
 
 export async function getBeaconing(
-	opts: { from?: string; to?: string } = {}
-): Promise<{ beacons: BeaconSuspect[]; total: number; complete: boolean }> {
-	const q = buildQuery({ from: opts.from, to: opts.to });
+	opts: { from?: string; to?: string; snapshot?: SnapshotWindow } = {}
+): Promise<{ beacons: BeaconSuspect[]; total: number; complete: boolean; beaconing_snapshot?: BeaconingSnapshot }> {
+	// OLD CODE: const q = buildQuery({ from: opts.from, to: opts.to }); (NET-192 PR 3: ?snapshot=)
+	const q = buildQuery({ from: opts.from, to: opts.to, snapshot: opts.snapshot });
 	const res = await fetch(`/api/threats/beaconing${q}`);
 	// OLD CODE START — #96: a failure read as "none found"
 	// if (!res.ok) return { beacons: [], total: 0 };
