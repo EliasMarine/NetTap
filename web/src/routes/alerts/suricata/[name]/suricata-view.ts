@@ -12,11 +12,11 @@ export interface CategoryRange {
 	words: string;
 }
 
-/** The Alerts page's ranges, so every link from here opens on a range it offers. */
+/** The Alerts page's ranges, so every link from here opens on a range it offers (NET-192 PR 4: Home's five). */
 export const CATEGORY_RANGES: readonly CategoryRange[] = [
-	{ value: '15m', label: '15m', hours: 0.25, words: 'last 15 minutes' },
+	// OLD CODE: { value: '15m', label: '15m', hours: 0.25, words: 'last 15 minutes' }, (NET-192 PR 4)
 	{ value: '1h', label: '1h', hours: 1, words: 'last hour' },
-	{ value: '4h', label: '4h', hours: 4, words: 'last 4 hours' },
+	// OLD CODE: { value: '4h', label: '4h', hours: 4, words: 'last 4 hours' }, (NET-192 PR 4)
 	{ value: '6h', label: '6h', hours: 6, words: 'last 6 hours' },
 	{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours' },
 	{ value: '7d', label: '7d', hours: 168, words: 'last 7 days' },

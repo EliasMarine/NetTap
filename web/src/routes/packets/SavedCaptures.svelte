@@ -10,6 +10,7 @@
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { sortRows, type SortDir } from '$lib/utils/table-sort.svelte';
 	import { formatBytes } from '$lib/api/logs';
@@ -136,7 +137,7 @@
 	{:else if files.length === 0}
 		<CardState state="empty" icon="pcap" title="No capture files yet" message="Files appear here while capture is on. Turn it on from PCAP Search." href="/pcap" actionLabel="Open PCAP Search" />
 	{:else}
-		{#if error}<p class="notice is-warn" role="status">{loadFailed('the capture files', true)}</p>{/if}
+		{#if error}<p class="notice is-warn" role="status"><Icon name="warn" /><span>{loadFailed('the capture files', true)}</span></p>{/if}
 		{#if strip}
 			<div class="strip" role="img" aria-label={stripLabel}>
 				{#each strip.bars as bar (bar.id)}

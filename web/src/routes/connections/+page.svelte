@@ -22,7 +22,7 @@
 	// OLD CODE END
 	import { getLiveDashboard } from '$api/live';
 	import { loadFailed } from '$lib/utils/load-failed';
-	import { formatBytes as sharedFormatBytes } from '$lib/api/logs';
+	import { formatBytes as sharedFormatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import IPAddress from '$components/IPAddress.svelte';
 	// OLD CODE START — replaced by the system's BarList (ui/BarList)
 	// import HorizontalBarList from '$components/HorizontalBarList.svelte';
@@ -38,6 +38,7 @@
 	import Bytes from '$lib/components/ui/Bytes.svelte';
 	import ConnResult, { type ConnResultKind } from '$lib/components/ui/ConnResult.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import { registerPageRefresh, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { SortDir } from '$lib/utils/table-sort.svelte';
 	// OLD CODE START — replaced by NetworkFlow (NET-151): uneven per-column scales, IPs only
@@ -57,6 +58,7 @@
 	// import { compareValues } from '$lib/utils/table-sort.svelte';
 	// OLD CODE END
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// Types & Constants
@@ -68,20 +70,26 @@
 		label: string;
 		value: string;
 		ms: number;
-		/** The window in words, for card subtitles */
+		/** The window in words, for card subtitles (lower case: "Sessions per protocol · last hour") */
 		text: string;
 	}
 
+	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. Live is the real-time page.
+	// shortcut: no 30d until PR 3 speeds up connections stats (14.5 s over 6 days of data on the G11), then add it back
 	const TIME_RANGES: TimeRange[] = [
-		{ label: '15m', value: '15m', ms: 15 * 60 * 1000, text: 'Last 15 minutes' },
-		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, text: 'Last hour' },
-		{ label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, text: 'Last 4 hours' },
-		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, text: 'Last 24 hours' },
-		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, text: 'Last 7 days' },
+		// OLD CODE: { label: '15m', value: '15m', ms: 15 * 60 * 1000, text: 'Last 15 minutes' }, (NET-192 PR 4)
+		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, text: 'last hour' },
+		// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, text: 'Last 4 hours' }, (NET-192 PR 4)
+		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, text: 'last 6 hours' },
+		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, text: 'last 24 hours' },
+		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, text: 'last 7 days' },
+		// OLD CODE: { label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, text: 'last 30 days' }, (the shortcut above)
 	];
 
+	// OLD CODE: '15m': '1m', '1h': '5m', '4h': '15m', '24h': '1h', '7d': '6h', (NET-192 PR 4)
+	// OLD CODE: … '7d': '6h', '30d': '1d', (30d: 30 day buckets, near 7 d's 28; back with 30d, see the shortcut above)
 	const INTERVAL_MAP: Record<string, string> = {
-		'15m': '1m', '1h': '5m', '4h': '15m', '24h': '1h', '7d': '6h',
+		'1h': '5m', '6h': '15m', '24h': '1h', '7d': '6h',
 	};
 
 	const STATE_FILTERS: { value: StateFilter; label: string }[] = [
@@ -117,7 +125,9 @@
 	let loading = $state(false);
 
 	// Time range
-	let selectedTimeRange = $state<TimeRange>(TIME_RANGES[1]); // 1h
+	// OLD CODE: let selectedTimeRange = $state<TimeRange>(TIME_RANGES[1]); // 1h (NET-192 PR 4: 1h is index 0)
+	// OLD CODE: $state<TimeRange>(TIME_RANGES[0]) (NET-192 PR 4: the default by value, not by position)
+	let selectedTimeRange = $state<TimeRange>(TIME_RANGES.find((r) => r.value === '1h')!);
 	let autoRefresh = $state(false);
 	let refreshInterval = $state<ReturnType<typeof setInterval> | null>(null);
 
@@ -361,10 +371,13 @@
 	// Display helpers
 	// ---------------------------------------------------------------------------
 
-	function formatTimestamp(ts: string | undefined): string {
-		if (!ts) return '—';
-		try { return new Date(ts).toLocaleString(); } catch { return ts; }
-	}
+	// OLD CODE START — the browser's locale printed "11/6/2026, 10:37:23 PM" (NET-192 PR 4: formatTime)
+	// function formatTimestamp(ts: string | undefined): string {
+	// 	if (!ts) return '—';
+	// 	try { return new Date(ts).toLocaleString(); } catch { return ts; }
+	// }
+	// OLD CODE END
+	const formatTimestamp = (ts: string | undefined) => formatTime(ts);
 
 	function formatBytes(bytes: number | undefined): string {
 		// OLD CODE START — 2026-11-06 (NET-166): a copy of formatBytes in $lib/api/logs, 1024-based under decimal labels
@@ -377,11 +390,13 @@
 		return bytes == null ? '—' : sharedFormatBytes(bytes);
 	}
 
-	function formatNumber(n: number): string {
-		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-		if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-		return String(n);
-	}
+	// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $lib/api/logs
+	// function formatNumber(n: number): string {
+	// 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	// 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	// 	return String(n);
+	// }
+	// OLD CODE END
 
 	function formatDuration(conn: Connection): string {
 		// OLD CODE START — #144: event.start/end are epoch-ms text on Malcolm 26.x, so every row read "--"
@@ -920,9 +935,12 @@
 	</div>
 	<div class="head-actions">
 		<Pills options={RANGE_PILLS} value={selectedTimeRange.value} onchange={handleTimeRangeChange} ariaLabel="Time range" />
+		<!-- OLD CODE START — NET-192 PR 4: Home's Auto / Paused button on every page
 		<button class="btn" type="button" title="Refresh every 15 seconds" onclick={toggleAutoRefresh}>
 			{autoRefresh ? 'Auto on' : 'Auto'}
 		</button>
+		OLD CODE END -->
+		<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={toggleAutoRefresh} />
 	</div>
 </div>
 
@@ -939,10 +957,10 @@
 		{:else}
 			<StatStrip stats={summaryStats} />
 			{#if statsFailed}
-				<p class="load-note">{loadFailed('connection stats', stats !== null)}</p>
+				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('connection stats', stats !== null)}</span></p>
 			{/if}
 			{#if liveFailed}
-				<p class="load-note">{loadFailed('active addresses', activeNow !== null)}</p>
+				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('active addresses', activeNow !== null)}</span></p>
 			{/if}
 		{/if}
 	</Card>
@@ -951,7 +969,7 @@
 	<article class="card c-8">
 		<SessionTimeline buckets={timeline} {loading} emptyMessage={timelineFailed ? loadFailed('the session timeline') : undefined} />
 		{#if timelineFailed && timeline.length > 0}
-			<p class="load-note">{loadFailed('the session timeline', true)}</p>
+			<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('the session timeline', true)}</span></p>
 		{/if}
 	</article>
 	OLD CODE END -->
@@ -959,7 +977,7 @@
 		{#if timeline.length > 0}
 			<SessionTimeline buckets={timeline} />
 			{#if timelineFailed}
-				<p class="load-note">{loadFailed('the session timeline', true)}</p>
+				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('the session timeline', true)}</span></p>
 			{/if}
 		{:else if timelineFailed}
 			<CardState state="error" title={loadFailed('the session timeline')} message={RETRY_HINT} onaction={() => refresh.run()} />
@@ -1005,7 +1023,7 @@
 				onNodeClick={handleSankeyNodeClick}
 			/>
 			{#if sankeyFailed}
-				<p class="load-note">{loadFailed('the flow diagram', true)}</p>
+				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('the flow diagram', true)}</span></p>
 			{/if}
 		{:else if loading}
 			<CardState state="loading" title="Loading the flow diagram" />
@@ -1152,7 +1170,8 @@
 
 <style>
 	/* Layout glue the system lacks */
-	.load-note { margin-top: var(--sp-3); font-size: var(--text-xs); color: var(--sev-medium); }
+	/* OLD CODE: .load-note { margin-top: var(--sp-3); font-size: var(--text-xs); color: var(--sev-medium); } (NET-192 PR 4: a stale note is the shared .notice.is-warn) */
+	.load-note { margin-top: var(--sp-3); }
 	.dest { display: inline-flex; flex-direction: column; line-height: 1.3; }
 	.org { color: var(--text-3); font-size: var(--text-xs); }
 	.result { display: inline-flex; align-items: center; gap: var(--sp-2); }

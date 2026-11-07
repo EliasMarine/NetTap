@@ -8,14 +8,16 @@
  */
 import type { CertDetail, CertDevice, CertFinding, CertSite, FindingKind } from '$lib/api/certificates';
 import { loadFailed } from '$lib/utils/load-failed';
-import { customRange, formatWhen } from '$lib/utils/drilldown';
+import { customRange, fmt, formatWhen } from '$lib/utils/drilldown';
+import { formatTime } from '$lib/utils/time';
 
 export type Names = ReadonlyMap<string, string>;
 
 // OLD CODE START — NET-160: a drill-down link carries its own window ("Custom")
 // export type RangeValue = '24h' | '7d' | '30d';
 // OLD CODE END
-export type RangeValue = '24h' | '7d' | '30d' | 'custom';
+// OLD CODE: export type RangeValue = '24h' | '7d' | '30d' | 'custom'; (NET-192 PR 4: Home's five ranges)
+export type RangeValue = '1h' | '6h' | '24h' | '7d' | '30d' | 'custom';
 
 export interface RangeOption {
 	value: RangeValue;
@@ -24,7 +26,10 @@ export interface RangeOption {
 	words: string;
 }
 
+/** One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. */
 export const RANGES: readonly RangeOption[] = [
+	{ value: '1h', label: '1h', hours: 1, words: 'last hour' },
+	{ value: '6h', label: '6h', hours: 6, words: 'last 6 hours' },
 	{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours' },
 	{ value: '7d', label: '7d', hours: 168, words: 'last 7 days' },
 	{ value: '30d', label: '30d', hours: 720, words: 'last 30 days' },
@@ -60,7 +65,7 @@ export interface CustomRange extends RangeOption {
 // OLD CODE END
 export { customRange };
 
-const fmt = (n: number): string => n.toLocaleString('en-GB');
+// OLD CODE: const fmt = (n: number): string => n.toLocaleString('en-GB'); (NET-192 PR 4: one fmt, from utils/drilldown)
 const plural = (n: number, one: string, many = `${one}s`): string => `${fmt(n)} ${n === 1 ? one : many}`;
 
 // ---------------------------------------------------------------------------
@@ -111,12 +116,15 @@ const failedOnly = (failed: Readonly<Record<string, number>> | undefined): strin
 		.sort()
 		.join('; ');
 
+// OLD CODE START — NET-192 PR 4: the same output as formatTime's date style, so it is that
+// export function formatDay(iso: string | null | undefined): string {
+// 	if (!iso) return '—';
+// 	const d = new Date(iso);
+// 	return Number.isFinite(d.getTime()) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : iso;
+// }
+// OLD CODE END
 /** "2 Mar 2026"; the raw text when it isn't a date; "—" when missing. */
-export function formatDay(iso: string | null | undefined): string {
-	if (!iso) return '—';
-	const d = new Date(iso);
-	return Number.isFinite(d.getTime()) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : iso;
-}
+export const formatDay = (iso: string | null | undefined): string => formatTime(iso, 'date');
 
 // OLD CODE START — slice 2a: moved to lib/utils/drilldown.ts with customRange, which words windows with it
 // /** "5 Nov, 21:05"; "—" when missing. */

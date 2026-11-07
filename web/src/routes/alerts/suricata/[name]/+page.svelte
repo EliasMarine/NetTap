@@ -33,7 +33,9 @@
 	/** The exact window a link brought (?from=&to=), shown as "Custom". */
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	/** The URL's standard range (24h without one): a Custom window's links carry it for their words. */
-	const baseRange = $derived(CATEGORY_RANGES.find((r) => r.value === params.get('range')) ?? CATEGORY_RANGES[4]);
+	// OLD CODE: ?? CATEGORY_RANGES[4]); (NET-192 PR 4: 15m and 4h dropped, 24h is index 2)
+	// OLD CODE: ?? CATEGORY_RANGES[2] (NET-192 PR 4: the default by value, not by position)
+	const baseRange = $derived(CATEGORY_RANGES.find((r) => r.value === params.get('range')) ?? CATEGORY_RANGES.find((r) => r.value === '24h')!);
 	const range = $derived<CategoryRange>(custom ?? baseRange);
 	const view = $derived(`${name}|${baseRange.value}|${custom?.from ?? ''}|${custom?.to ?? ''}`);
 

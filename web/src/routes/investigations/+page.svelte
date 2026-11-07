@@ -22,6 +22,8 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import type { SeverityLevel } from '$lib/utils/severity';
 	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
+	import { fmt } from '$lib/utils/drilldown';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -63,7 +65,7 @@
 	const INV_DRAWER_TABS = [
 		{ id: 'details', label: 'Details' },
 		{ id: 'notes', label: 'Notes' },
-		{ id: 'linked', label: 'Linked Items' },
+		{ id: 'linked', label: 'Linked items' },
 	];
 
 	function openDrawer(inv: Investigation) {
@@ -176,14 +178,17 @@
 		}
 	}
 
-	function formatTimestamp(ts: string): string {
-		try {
-			const d = new Date(ts);
-			return d.toLocaleString();
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — the browser's locale printed "11/6/2026, 10:37:23 PM" (NET-192 PR 4: formatTime)
+	// function formatTimestamp(ts: string): string {
+	// 	try {
+	// 		const d = new Date(ts);
+	// 		return d.toLocaleString();
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatTimestamp = (ts: string) => formatTime(ts);
 
 	function filterCount(filter: StatusFilter): number {
 		if (filter === 'all') return stats.total;
@@ -192,7 +197,7 @@
 
 	/** A count, or "—" while the stats are loading or after they failed (#96: never a stand-in 0). */
 	function countText(filter: StatusFilter): string {
-		return statsLoaded && !statsFailed ? filterCount(filter).toLocaleString() : '—';
+		return statsLoaded && !statsFailed ? fmt(filterCount(filter)) : '—';
 	}
 
 	let filterOptions = $derived(
@@ -456,7 +461,7 @@
 
 	<Card
 		title="All investigations"
-		sub={listFailed ? 'The list failed to load' : `${investigations.length.toLocaleString()} shown · all time`}
+		sub={listFailed ? 'The list failed to load' : `${fmt(investigations.length)} shown · all time`}
 		class={expanded ? 'c-8' : 'c-12'}
 	>
 		{#snippet actions()}

@@ -29,6 +29,7 @@
 		type PcapFile,
 	} from '$api/tshark';
 	import { page } from '$app/stores';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---- State ----
 	let pcapPath = $state('');
@@ -244,9 +245,12 @@
 		return `${(bytes / 1e9).toFixed(2)} GB`;
 	}
 
-	function formatFileDate(ts: number): string {
-		return new Date(ts * 1000).toLocaleString();
-	}
+	// OLD CODE START — the browser's locale printed "11/6/2026, 10:37:23 PM" (NET-192 PR 4: formatTime)
+	// function formatFileDate(ts: number): string {
+	// 	return new Date(ts * 1000).toLocaleString();
+	// }
+	// OLD CODE END
+	const formatFileDate = (ts: number) => formatTime(ts * 1000);
 </script>
 
 <div class="analysis-panel">

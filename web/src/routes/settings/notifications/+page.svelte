@@ -27,6 +27,7 @@
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
+	import { formatTime } from '$lib/utils/time';
 
 	// State
 	let channels = $state<NotificationChannel[]>([]);
@@ -297,7 +298,7 @@
 	<span class={['res', entry.success ? 'is-live' : 'is-high']}>{entry.success ? 'Sent' : 'Failed'}</span>
 {/snippet}
 {#snippet channelCell(entry: LogRow)}<span class="tag">{entry.channel_type}</span>{/snippet}
-{#snippet timeCell(entry: LogRow)}<span class="num">{new Date(entry.timestamp).toLocaleString()}</span>{/snippet}
+{#snippet timeCell(entry: LogRow)}<span class="num">{formatTime(entry.timestamp)}</span>{/snippet}
 
 <svelte:head>
 	<title>Notifications | NetTap</title>

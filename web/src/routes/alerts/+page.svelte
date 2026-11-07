@@ -57,6 +57,7 @@
 		alertsHrefForSignature,
 		countDifference,
 		customRange,
+		fmt,
 		linkedCount,
 		partialListNote,
 		suricataCategoryHref,
@@ -75,6 +76,7 @@
 	import AlertRow from '$lib/components/ui/AlertRow.svelte';
 	import AlertGroup from '$lib/components/ui/AlertGroup.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 	import SeverityGauge from '$lib/components/ui/charts/SeverityGauge.svelte';
@@ -82,15 +84,17 @@
 	import AlertDetail from './AlertDetail.svelte';
 	// OLD CODE: import { alertLevel, alertTitle, groupAlerts, shortSeen } from './alert-view'; (slice 2b-2)
 	import { alertLevel, alertTitle, groupAlerts, groupCategoryLinked, linkedSuricataCategory, shortSeen } from './alert-view';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// Constants
 	// ---------------------------------------------------------------------------
 
+	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. Live is the real-time page.
 	const TIME_RANGES = [
-		{ label: '15m', value: '15m', ms: 15 * 60 * 1000, words: 'last 15 minutes' },
+		// OLD CODE: { label: '15m', value: '15m', ms: 15 * 60 * 1000, words: 'last 15 minutes' }, (NET-192 PR 4)
 		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour' },
-		{ label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' },
+		// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' }, (NET-192 PR 4)
 		// NET-160 slice 2b-1: Home's 6h links here with its window
 		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, words: 'last 6 hours' },
 		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours' },
@@ -100,9 +104,9 @@
 	];
 
 	const INTERVAL_MAP: Record<string, string> = {
-		'15m': '1m',
+		// OLD CODE: '15m': '1m', (NET-192 PR 4)
 		'1h': '5m',
-		'4h': '15m',
+		// OLD CODE: '4h': '15m', (NET-192 PR 4)
 		'6h': '15m',
 		'24h': '1h',
 		'7d': '6h',
@@ -145,6 +149,7 @@
 	let baseRange = $state('24h');
 	/** The exact window a link brought (?from=&to=, NET-160 slice 2a), shown as "Custom". */
 	let custom = $state<CustomWindow | null>(null);
+	const AUTO_REFRESH_MS = 15_000;
 	let autoRefresh = $state(false);
 	let refreshInterval = $state<ReturnType<typeof setInterval> | null>(null);
 
@@ -214,7 +219,7 @@
 	// let drawerTab = $state('summary');
 	// const ALERT_DRAWER_TABS = [
 	// 	{ id: 'summary', label: 'Summary' },
-	// 	{ id: 'related', label: 'Related Events' },
+	// 	{ id: 'related', label: 'Related events' },
 	// 	{ id: 'raw', label: 'Raw JSON' },
 	// ];
 	// let hoveredBarIndex = $state<number | null>(null);
@@ -398,7 +403,9 @@
 			return { label: win.label, value: win.value, ms, words: win.words, interval: INTERVAL_MAP[fit.value] };
 		}
 		// OLD CODE: ?? TIME_RANGES[3]; (slice 2b-1: 6h moved 24h to index 4)
-		const r = TIME_RANGES.find((t) => t.value === value) ?? TIME_RANGES[4];
+		// OLD CODE: ?? TIME_RANGES[4]; (NET-192 PR 4: 15m and 4h dropped, 24h is index 2)
+		// OLD CODE: ?? TIME_RANGES[2] (NET-192 PR 4: the default by value, not by position)
+		const r = TIME_RANGES.find((t) => t.value === value) ?? TIME_RANGES.find((r) => r.value === '24h')!;
 		return { ...r, interval: INTERVAL_MAP[r.value] };
 	}
 
@@ -407,7 +414,9 @@
 		if (selectedTimeRange === 'custom' && custom) return { from: custom.from, to: custom.to };
 		const now = Date.now();
 		// OLD CODE: || TIME_RANGES[3]; (slice 2b-1: 6h moved 24h to index 4)
-		const range = TIME_RANGES.find((r) => r.value === selectedTimeRange) || TIME_RANGES[4];
+		// OLD CODE: || TIME_RANGES[4]; (NET-192 PR 4: 15m and 4h dropped, 24h is index 2)
+		// OLD CODE: || TIME_RANGES[2] (NET-192 PR 4: the default by value, not by position)
+		const range = TIME_RANGES.find((r) => r.value === selectedTimeRange) || TIME_RANGES.find((r) => r.value === '24h')!;
 		return {
 			from: new Date(now - range.ms).toISOString(),
 			to: new Date(now).toISOString(),
@@ -443,32 +452,38 @@
 		}
 	}
 
-	function formatTimestamp(ts: string): string {
-		try {
-			return new Date(ts).toLocaleString(undefined, {
-				month: 'short',
-				day: 'numeric',
-				hour: '2-digit',
-				minute: '2-digit',
-				second: '2-digit',
-			});
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — the browser's locale printed "Nov 6, 10:37:23 PM" (NET-192 PR 4: formatTime)
+	// function formatTimestamp(ts: string): string {
+	// 	try {
+	// 		return new Date(ts).toLocaleString(undefined, {
+	// 			month: 'short',
+	// 			day: 'numeric',
+	// 			hour: '2-digit',
+	// 			minute: '2-digit',
+	// 			second: '2-digit',
+	// 		});
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatTimestamp = (ts: string) => formatTime(ts);
 
-	function formatShortTimestamp(ts: string): string {
-		try {
-			return new Date(ts).toLocaleString(undefined, {
-				month: 'short',
-				day: 'numeric',
-				hour: '2-digit',
-				minute: '2-digit',
-			});
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — the browser's locale printed "Nov 6, 10:37 PM" (NET-192 PR 4: formatTime)
+	// function formatShortTimestamp(ts: string): string {
+	// 	try {
+	// 		return new Date(ts).toLocaleString(undefined, {
+	// 			month: 'short',
+	// 			day: 'numeric',
+	// 			hour: '2-digit',
+	// 			minute: '2-digit',
+	// 		});
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatShortTimestamp = (ts: string) => formatTime(ts, 'short');
 
 	// OLD CODE START — the DataTable owns the header buttons and reports the new sort (onsortchange)
 	// function toggleSort(key: SortKey) {
@@ -1030,7 +1045,7 @@
 			// OLD CODE START — the auto loop goes through the page refresh contract, so "Updated" stays honest
 			// refreshInterval = setInterval(() => fetchAll(), 15_000);
 			// OLD CODE END
-			refreshInterval = setInterval(() => refresh.runIfIdle(), 15_000);
+			refreshInterval = setInterval(() => refresh.runIfIdle(), AUTO_REFRESH_MS);
 		} else if (refreshInterval) {
 			clearInterval(refreshInterval);
 			refreshInterval = null;
@@ -1214,7 +1229,7 @@
 	// View data
 	// ---------------------------------------------------------------------------
 
-	const fmt = (n: number) => n.toLocaleString('en-GB');
+	// OLD CODE: const fmt = (n: number) => n.toLocaleString('en-GB'); (NET-192 PR 4: one fmt, from utils/drilldown)
 	const rowKey = (a: Alert) => `${a._id}-${alerts.indexOf(a)}`;
 	// After a reload the open alert is a new object: find its row by id
 	const selectedRowKey = $derived.by(() => {
@@ -1333,9 +1348,12 @@ OLD CODE END -->
 			onchange={handleTimeRangeChange}
 			ariaLabel="Time range"
 		/>
+		<!-- OLD CODE START — NET-192 PR 4: Home's Auto / Paused button on every page
 		<div class="pills" role="group" aria-label="Auto-refresh every 15 seconds">
 			<button class="pill" type="button" aria-pressed={autoRefresh} onclick={toggleAutoRefresh}>Auto</button>
 		</div>
+		OLD CODE END -->
+		<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={toggleAutoRefresh} />
 	</div>
 </header>
 
@@ -1347,7 +1365,7 @@ OLD CODE END -->
 			<CardState state="error" title="Couldn't load the alert counts: the request failed." message="Check that NetTap is running on the System page, then try again." onaction={() => refresh.run()} />
 		{:else}
 			{#if snapshot.status === 'error'}
-				<p class="notice is-warn"><Icon name="warn" /><span>{loadFailed('the alert counts', true)}</span></p>
+				<p class="notice is-warn" role="status"><Icon name="warn" /><span>{loadFailed('the alert counts', true)}</span></p>
 			{/if}
 			<div class="sev-sum">
 				<div class="sev-left">

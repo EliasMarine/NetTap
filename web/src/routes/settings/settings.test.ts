@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { get } from 'svelte/store';
-import { pageRefresh } from '$lib/stores/pageRefresh';
+import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import { previewCleanup, executeCleanup } from '$lib/api/storage';
 import Page from './+page.svelte';
 
@@ -486,11 +486,38 @@ describe('Settings — section tabs', () => {
 		expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'settings-panel-notifications');
 	});
 
-	it('registers no page refresh, so the top bar hides Refresh (forms-only page)', async () => {
-		stubFetch();
-		render(Page);
+	// OLD CODE START — NET-192 PR 4: the top bar's Refresh re-reads the status sections
+	// it('registers no page refresh, so the top bar hides Refresh (forms-only page)', async () => {
+	// 	stubFetch();
+	// 	render(Page);
+	// 	await flush();
+	//
+	// 	expect(get(pageRefresh).available).toBe(false);
+	// });
+	// OLD CODE END
+	it("the top bar's Refresh re-reads the status sections and keeps an unsaved form edit", async () => {
+		const fetchFn = stubFetch({
+			'/api/setup/storage': () => ({ body: { source: 'daemon', hot_days: 90, warm_days: 180, cold_days: 30, disk_threshold_percent: 80, emergency_threshold_percent: 90 } }),
+			'/api/storage/status': () => ({ body: { disk_usage_percent: 42 } }),
+		});
+		const reads = (path: string) => fetchFn.mock.calls.filter(([url]) => url === path).length;
+		const { unmount } = render(Page);
 		await flush();
+		expect(get(pageRefresh).available).toBe(true);
 
+		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
+		const hotDays = screen.getByLabelText('Hot tier (Zeek metadata and Suricata alerts)') as HTMLInputElement;
+		await vi.waitFor(() => expect(hotDays.value).toBe('90'));
+		await fireEvent.input(hotDays, { target: { value: '120' } });
+		expect([reads('/api/setup/storage'), reads('/api/storage/status')]).toEqual([1, 1]);
+
+		// About's reads answer 500 here, so the refresh is partial
+		expect(await refreshPage()).toBe('partial');
+		await flush();
+		expect(reads('/api/storage/status')).toBe(2);
+		expect(reads('/api/setup/storage')).toBe(1);
+		expect(hotDays.value).toBe('120');
+		unmount();
 		expect(get(pageRefresh).available).toBe(false);
 	});
 });

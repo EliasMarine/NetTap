@@ -4,20 +4,25 @@
  */
 import type { ByteTotal } from '$lib/api/drilldown';
 import type { SmartAlertKey } from '$lib/api/alerts';
-import { formatBytes } from '$lib/api/logs';
+import { formatBytes, formatCompactNumber } from '$lib/api/logs';
+import { formatTime } from './time';
 
-export type DrillRangeValue = '24h' | '7d' | '30d';
+// OLD CODE: export type DrillRangeValue = '24h' | '7d' | '30d'; (NET-192 PR 4: Home's five ranges)
+export type DrillRangeValue = '1h' | '6h' | '24h' | '7d' | '30d';
 
 export interface DrillRange {
 	value: DrillRangeValue;
 	label: string;
 	hours: number;
 	words: string;
-	/** The timeline's bucket, as the daemon picks it for this window (up to 24 h: 1 h; 7 d: 6 h; longer: 1 day). */
+	/** The timeline's bucket, as the daemon picks it for this window (up to 6 h: 10 min; 24 h: 1 h; 7 d: 6 h; longer: 1 day). */
 	interval: string;
 }
 
+/** One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. */
 export const DRILL_RANGES: readonly DrillRange[] = [
+	{ value: '1h', label: '1h', hours: 1, words: 'last hour', interval: '10 minutes' },
+	{ value: '6h', label: '6h', hours: 6, words: 'last 6 hours', interval: '10 minutes' },
 	{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours', interval: 'hour' },
 	{ value: '7d', label: '7d', hours: 168, words: 'last 7 days', interval: '6 hours' },
 	{ value: '30d', label: '30d', hours: 720, words: 'last 30 days', interval: 'day' },
@@ -38,10 +43,9 @@ export function rangeWindow(hours: number, now: Date = new Date()): { from: stri
 
 export const fmt = (n: number): string => n.toLocaleString('en-GB');
 
-// en-US, not en-GB: en-GB writes "1.3m", which reads as metres; the app's compact figures are K and M
-const COMPACT = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
+// OLD CODE: const COMPACT = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }); (moved to formatCompactNumber in api/logs.ts, NET-192 PR 4)
 /** A count in a small space (a gauge centre, a nav badge): exact below 100,000, "214K" above. */
-export const fitCount = (n: number): string => (n < 100_000 ? fmt(n) : COMPACT.format(n));
+export const fitCount = (n: number): string => (n < 100_000 ? fmt(n) : formatCompactNumber(n));
 
 /**
  * A byte total as the page shows it: "Not measured" when no connection carried a byte count,
@@ -123,14 +127,17 @@ export interface DrillWindow {
 	to: string;
 }
 
+// OLD CODE START — NET-192 PR 4: the same output as formatTime's short style, so it is that
+// export function formatWhen(iso: string | null | undefined): string {
+// 	if (!iso) return '—';
+// 	const d = new Date(iso);
+// 	return Number.isFinite(d.getTime())
+// 		? d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+// 		: iso;
+// }
+// OLD CODE END
 /** A day and time, as the windows are written ("6 Nov, 13:02"). */
-export function formatWhen(iso: string | null | undefined): string {
-	if (!iso) return '—';
-	const d = new Date(iso);
-	return Number.isFinite(d.getTime())
-		? d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
-		: iso;
-}
+export const formatWhen = (iso: string | null | undefined): string => formatTime(iso, 'short');
 
 /** A window a link brought (?from=&to=), shown as a "Custom" range. */
 export interface CustomWindow extends DrillWindow {

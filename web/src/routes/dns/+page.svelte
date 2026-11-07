@@ -39,17 +39,22 @@
 	import SearchField from '$lib/components/ui/SearchField.svelte';
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import { domainHref } from '$lib/stores/lan';
+	import { chartTime, fmt } from '$lib/utils/drilldown';
+	import { formatCompactNumber as formatNumber } from '$lib/api/logs';
 
 	// ---------------------------------------------------------------------------
 	// Constants
 	// ---------------------------------------------------------------------------
 
+	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. Live is the real-time page.
 	const TIME_RANGES = [
-		{ label: '15m', value: '15m', ms: 15 * 60 * 1000, words: 'last 15 minutes' },
+		// OLD CODE: { label: '15m', value: '15m', ms: 15 * 60 * 1000, words: 'last 15 minutes' }, (NET-192 PR 4)
 		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour' },
-		{ label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' },
+		// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' }, (NET-192 PR 4)
+		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, words: 'last 6 hours' },
 		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours' },
 		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days' },
+		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days' },
 	];
 
 	// OLD CODE START — severity is now the system's SeverityPill (colour, shape and word)
@@ -66,11 +71,14 @@
 
 	/** The timeline's bucket per range, and how the chart names it. */
 	const INTERVALS: Record<string, { interval: string; words: string }> = {
-		'15m': { interval: '1m', words: 'minute' },
+		// OLD CODE: '15m': { interval: '1m', words: 'minute' }, (NET-192 PR 4)
 		'1h': { interval: '5m', words: '5 minutes' },
-		'4h': { interval: '10m', words: '10 minutes' },
+		// OLD CODE: '4h': { interval: '10m', words: '10 minutes' }, (NET-192 PR 4)
+		'6h': { interval: '10m', words: '10 minutes' },
 		'24h': { interval: '15m', words: '15 minutes' },
 		'7d': { interval: '1h', words: 'hour' },
+		// 120 buckets, near 7 d's 168; not yet timed on the G11 (NET-192 PR 4)
+		'30d': { interval: '6h', words: '6 hours' },
 	};
 
 	const RETRY_HINT = 'Check that NetTap is running on the System page, then try again.';
@@ -243,20 +251,26 @@
 		};
 	}
 
-	function formatNumber(n: number): string {
-		if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-		if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
-		return n.toString();
-	}
+	// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $lib/api/logs
+	// function formatNumber(n: number): string {
+	// 	if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+	// 	if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+	// 	return n.toString();
+	// }
+	// OLD CODE END
 
-	function formatTimestamp(ts: string): string {
-		try {
-			const d = new Date(ts);
-			return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — the browser's locale ("07:00 PM"), and only the time of day at 7 d (NET-192 PR 4: chartTime)
+	// function formatTimestamp(ts: string): string {
+	// 	try {
+	// 		const d = new Date(ts);
+	// 		return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const rangeHours = $derived((TIME_RANGES.find((r) => r.value === selectedTimeRange)?.ms ?? 86_400_000) / 3_600_000);
+	const formatTimestamp = (ts: string) => chartTime(ts, rangeHours);
 
 	// OLD CODE START — DataTable draws the sort chevrons
 	// function sortIndicator(active: boolean, dir: 'asc' | 'desc'): string {
@@ -519,7 +533,7 @@
 	});
 </script>
 
-{#snippet countCell(row: { count: number })}{row.count.toLocaleString()}{/snippet}
+{#snippet countCell(row: { count: number })}{fmt(row.count)}{/snippet}
 {#snippet typesCell(entry: DeviceDnsEntry)}{typesOf(entry)}{/snippet}
 {#snippet copyCell(d: TopDomain)}
 	<button class="link" type="button" aria-label="Copy {d.domain}" onclick={() => copyDomain(d.domain)}>Copy</button>
@@ -539,10 +553,10 @@
 		series={[{ key: 'queries', label: 'Queries', colour: 1, points: timeline.map((t) => ({ t: t.timestamp, v: t.count })) }]}
 		formatX={(t) => formatTimestamp(String(t))}
 		formatY={formatNumber}
-		formatTip={(i) => `${formatTimestamp(timeline[i]?.timestamp ?? '')} · ${(timeline[i]?.count ?? 0).toLocaleString()} queries`}
+		formatTip={(i) => `${formatTimestamp(timeline[i]?.timestamp ?? '')} · ${fmt(timeline[i]?.count ?? 0)} queries`}
 		highlightIndex={busiest}
 		ariaLabel={busiest >= 0
-			? `Busiest at ${formatTimestamp(timeline[busiest].timestamp)}, with ${timeline[busiest].count.toLocaleString()} queries`
+			? `Busiest at ${formatTimestamp(timeline[busiest].timestamp)}, with ${fmt(timeline[busiest].count)} queries`
 			: 'DNS queries over time'}
 	/>
 {/snippet}
@@ -552,7 +566,7 @@
 			key: d.domain,
 			label: d.domain,
 			value: d.count,
-			display: d.count.toLocaleString(),
+			display: fmt(d.count),
 			detail: `${d.unique_clients} clients`,
 			onclick: () => selectDomain(d.domain),
 		}))}
@@ -581,7 +595,7 @@
 			key: qt.type,
 			label: qt.type,
 			value: qt.count,
-			display: qt.count.toLocaleString(),
+			display: fmt(qt.count),
 			detail: `${(totalQueryTypeCount > 0 ? (qt.count / totalQueryTypeCount) * 100 : 0).toFixed(1)}%`,
 		}))}
 	/>
@@ -786,7 +800,7 @@
 						<button class="link mono finding-domain" type="button" onclick={() => selectDomain(s.domain)}>{s.domain}</button>
 						<p class="finding-desc">{s.description}</p>
 						<p class="dim num finding-meta">
-							{s.count.toLocaleString()} queries{#if s.unique_clients} · {s.unique_clients} client(s){/if}{#if s.length} · {s.length} chars{/if}
+							{fmt(s.count)} queries{#if s.unique_clients} · {s.unique_clients} client(s){/if}{#if s.length} · {s.length} chars{/if}
 						</p>
 					</li>
 				{/each}

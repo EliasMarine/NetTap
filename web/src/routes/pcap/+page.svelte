@@ -36,14 +36,18 @@
 	import KpiCard from '$lib/components/ui/KpiCard.svelte';
 	import Pills from '$lib/components/ui/Pills.svelte';
 	import SearchField from '$lib/components/ui/SearchField.svelte';
+	import { chartTime, fmt } from '$lib/utils/drilldown';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// Constants
 	// ---------------------------------------------------------------------------
 
+	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home
 	const TIME_RANGES = [
 		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour', bucket: '5 minutes' },
-		{ label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours', bucket: '20 minutes' },
+		// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours', bucket: '20 minutes' }, (NET-192 PR 4)
+		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, words: 'last 6 hours', bucket: '30 minutes' },
 		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours', bucket: 'hour' },
 		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days', bucket: '6 hours' },
 		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days', bucket: 'day' },
@@ -140,7 +144,8 @@
 	let oldestCapture = $derived(files.length ? files.reduce((a, b) => a.modified < b.modified ? a : b).modified : '');
 	let maxFileSize = $derived(Math.max(1, ...files.map((f) => f.size_bytes)));
 
-	const range = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange) ?? TIME_RANGES[0]);
+	// OLD CODE: ?? TIME_RANGES[0] (NET-192 PR 4: the default by value, not by position)
+	const range = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange) ?? TIME_RANGES.find((r) => r.value === '1h')!);
 	// The file counts read as unknown, not 0, until the first listing arrives
 	const filesUnknown = $derived(filesFailed || (filesLoading && files.length === 0));
 
@@ -158,7 +163,8 @@
 		if (!fileList.length) return [];
 		const now = Date.now();
 		const rangeMs = TIME_RANGES.find((r) => r.value === range)?.ms ?? 86400000;
-		const bucketMs = range === '1h' ? 5 * 60000 : range === '4h' ? 20 * 60000 : range === '24h' ? 3600000 : range === '7d' ? 6 * 3600000 : 86400000;
+		// OLD CODE: const bucketMs = range === '1h' ? 5 * 60000 : range === '4h' ? 20 * 60000 : … (NET-192 PR 4: 6h, not 4h)
+		const bucketMs = range === '1h' ? 5 * 60000 : range === '6h' ? 30 * 60000 : range === '24h' ? 3600000 : range === '7d' ? 6 * 3600000 : 86400000;
 		const bucketCount = Math.ceil(rangeMs / bucketMs);
 		const startMs = now - rangeMs;
 		const buckets: TimelineBucket[] = Array.from({ length: bucketCount }, (_, i) => ({
@@ -285,11 +291,14 @@
 	// }
 	// OLD CODE END
 
-	function formatTimestamp(ts: string): string {
-		try {
-			return new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-		} catch { return ts; }
-	}
+	// OLD CODE START — the browser's locale ("07:00 PM"), and only the time of day at 7 d and 30 d (NET-192 PR 4: chartTime)
+	// function formatTimestamp(ts: string): string {
+	// 	try {
+	// 		return new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+	// 	} catch { return ts; }
+	// }
+	// OLD CODE END
+	const formatTimestamp = (ts: string) => chartTime(ts, range.ms / 3_600_000);
 
 	// OLD CODE START — #137: a shorter range doesn't make a large file any faster
 	// function timedOutNote(n: number): string {
@@ -608,8 +617,8 @@
 
 {#snippet fileSizeCell(f: PcapFile)}<Bytes value={f.size_bytes} max={maxFileSize} display={formatBytes(f.size_bytes)} />{/snippet}
 {#snippet sizeCell(r: PcapSearchResult)}{formatBytes(r.size_bytes)}{/snippet}
-{#snippet matchingCell(r: PcapSearchResult)}{r.matching_packets.toLocaleString()}{/snippet}
-{#snippet modifiedCell(f: { modified: string })}<span class="num">{new Date(f.modified).toLocaleString()}</span>{/snippet}
+{#snippet matchingCell(r: PcapSearchResult)}{fmt(r.matching_packets)}{/snippet}
+{#snippet modifiedCell(f: { modified: string })}<span class="num">{formatTime(f.modified)}</span>{/snippet}
 {#snippet protocolCell(pkt: PcapPacket)}{packetProtocol(pkt)}{/snippet}
 {#snippet downloadCell(r: { file: string; name: string })}
 	<button class="btn" type="button" aria-label="Download {r.name}" onclick={() => downloadFile(r.file)}><Icon name="download" />Download</button>
@@ -709,7 +718,7 @@
 				<dt>Name</dt><dd class="mono">{selectedFileObj?.name ?? previewName}</dd>
 				{#if selectedFileObj}
 					<dt>Size</dt><dd class="num">{formatBytes(selectedFileObj.size_bytes)}</dd>
-					<dt>Modified</dt><dd class="num">{new Date(selectedFileObj.modified).toLocaleString()}</dd>
+					<dt>Modified</dt><dd class="num">{formatTime(selectedFileObj.modified)}</dd>
 					<dt>Path</dt><dd class="mono">{selectedFileObj.relative_path}</dd>
 				{/if}
 			</dl>
@@ -879,7 +888,7 @@
 					key: proto.protocol,
 					label: proto.protocol,
 					value: proto.count,
-					display: proto.count.toLocaleString(),
+					display: fmt(proto.count),
 					detail: `${(previewPackets.length > 0 ? (proto.count / previewPackets.length) * 100 : 0).toFixed(1)}%`,
 					onclick: () => applyProtocolFilter(proto.protocol),
 				}))}

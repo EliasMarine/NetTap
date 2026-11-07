@@ -10,6 +10,7 @@
 	import { suricataLevel } from '$lib/utils/severity';
 	import IPAddress from '$components/IPAddress.svelte';
 	import type { Alert } from '$api/alerts';
+	import { formatTime } from '$lib/utils/time';
 
 	let {
 		alert,
@@ -66,17 +67,20 @@
 
 	let rawJson = $derived(JSON.stringify(alert, null, 2));
 
-	function formatTimestamp(ts: string | undefined): string {
-		if (!ts) return '--';
-		try {
-			return new Date(ts).toLocaleString(undefined, {
-				year: 'numeric', month: 'short', day: 'numeric',
-				hour: '2-digit', minute: '2-digit', second: '2-digit',
-			});
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — the browser's locale printed "Nov 6, 2026, 10:37:23 PM" (NET-192 PR 4: formatTime)
+	// function formatTimestamp(ts: string | undefined): string {
+	// 	if (!ts) return '--';
+	// 	try {
+	// 		return new Date(ts).toLocaleString(undefined, {
+	// 			year: 'numeric', month: 'short', day: 'numeric',
+	// 			hour: '2-digit', minute: '2-digit', second: '2-digit',
+	// 		});
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatTimestamp = (ts: string | undefined) => formatTime(ts);
 
 	function protoLabel(proto: string | undefined): string {
 		return proto ? proto.toUpperCase() : '?';

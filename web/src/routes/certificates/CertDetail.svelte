@@ -8,6 +8,7 @@
 	import type { CertDetail, CertFinding, CertSite } from '$lib/api/certificates';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { domainHref, ipHref, isLan } from '$lib/stores/lan';
+	import { fmt } from '$lib/utils/drilldown';
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import {
 		deviceName,
@@ -42,7 +43,7 @@
 		if (panel && getComputedStyle(panel).position === 'static') panel.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
 	});
 
-	const fmt = (n: number): string => n.toLocaleString('en-GB');
+	// OLD CODE: const fmt = (n: number): string => n.toLocaleString('en-GB'); (NET-192 PR 4: one fmt, from utils/drilldown)
 	const holder = $derived(finding ?? site);
 	const servers = $derived(finding ? finding.servers : (site?.servers ?? []));
 	const fingerprints = $derived(finding ? [finding.fingerprint] : (site?.certificates ?? []));

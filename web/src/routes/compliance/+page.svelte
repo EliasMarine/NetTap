@@ -27,6 +27,7 @@
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
+	import { fmt } from '$lib/utils/drilldown';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -285,11 +286,11 @@
 		// OLD CODE END
 
 		if (httpCount > 0) {
-			findings.push(`${httpCount.toLocaleString()} unencrypted HTTP connections detected`);
+			findings.push(`${fmt(httpCount)} unencrypted HTTP connections detected`);
 		}
 		if (totalConnections > 0 && encryptionEligible > 0) {
 			findings.push(
-				`${encrypted.toLocaleString()} of ${encryptionEligible.toLocaleString()} connections encrypted (${encryptionScore}%)`,
+				`${fmt(encrypted)} of ${fmt(encryptionEligible)} connections encrypted (${encryptionScore}%)`,
 			);
 		} else {
 			findings.push('No traffic data available yet');
@@ -311,10 +312,10 @@
 		const encryptedDns = dnsOverTls;
 
 		if (plainDns > 0) {
-			findings.push(`${plainDns.toLocaleString()} plain-text DNS lookups observed`);
+			findings.push(`${fmt(plainDns)} plain-text DNS lookups observed`);
 		}
 		if (encryptedDns > 0) {
-			findings.push(`${encryptedDns.toLocaleString()} DNS-over-TLS connections`);
+			findings.push(`${fmt(encryptedDns)} DNS-over-TLS connections`);
 		}
 		if (plainDns === 0 && encryptedDns === 0) {
 			findings.push('No DNS traffic data available yet');
@@ -351,7 +352,7 @@
 				.filter((s) => s.name.toLowerCase() === lp)
 				.reduce((sum, s) => sum + s.count, 0);
 			if (count > 0) {
-				findings.push(`${count.toLocaleString()} ${lp.toUpperCase()} connections (consider upgrading to encrypted variant)`);
+				findings.push(`${fmt(count)} ${lp.toUpperCase()} connections (consider upgrading to encrypted variant)`);
 			}
 		}
 		if (findings.length === 0) {
@@ -367,7 +368,7 @@
 		if (total === 0) {
 			findings.push('No alerts detected — your network looks clean');
 		} else {
-			findings.push(`${total.toLocaleString()} total alert(s) in the current period`);
+			findings.push(`${fmt(total)} total alert(s) in the current period`);
 			if (alertCounts.counts.high > 0) {
 				findings.push(`${alertCounts.counts.high} high-severity alert(s) require attention`);
 			}

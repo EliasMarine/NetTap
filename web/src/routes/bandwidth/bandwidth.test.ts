@@ -117,7 +117,7 @@ describe('Bandwidth — cards', () => {
 		const { container } = render(Page);
 		expect((await screen.findByText('Projected')).closest('.kpi')).toHaveTextContent('45.0GB');
 		expect(screen.getByText('Days remaining').closest('.kpi')).toHaveTextContent('28days');
-		expect(screen.getByRole('img', { name: /^Busiest day Nov 2, with 5\.0 GB/ })).toBeInTheDocument();
+		expect(screen.getByRole('img', { name: /^Busiest day 2 Nov, with 5\.0 GB/ })).toBeInTheDocument();
 		// OLD CODE START — NET-160: the table's address is a link now too, so there are two
 		// expect(screen.getByRole('link', { name: /192\.168\.1\.9/ })).toHaveAttribute('href', '/devices/192.168.1.9');
 		// OLD CODE END

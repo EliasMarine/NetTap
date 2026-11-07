@@ -13,6 +13,7 @@
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import type { IconName } from '$lib/components/ui/icons';
+	import { formatTime } from '$lib/utils/time';
 
 	// State
 	let events = $state<ChangelogEvent[]>([]);
@@ -184,13 +185,15 @@
 		URL.revokeObjectURL(url);
 	}
 
-	function formatTime(ts: string): string {
-		try {
-			return new Date(ts).toLocaleString();
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — the browser's locale printed "11/6/2026, 10:37:23 PM" (NET-192 PR 4: formatTime in utils/time)
+	// function formatTime(ts: string): string {
+	// 	try {
+	// 		return new Date(ts).toLocaleString();
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
 
 	// OLD CODE START — legacy status colours; the type now reads from its icon and label
 	// function eventColor(type: string): string {

@@ -306,7 +306,7 @@ describe('Alerts — the figure a link was clicked at (NET-160 section D)', () =
 		vi.mocked(getAlerts).mockReturnValueOnce(handOff.promise);
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('button', { name: 'Auto' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Paused' }));
 		const sent = { list: listCalls().length, dashboard: dashboardCalls() };
 		vi.advanceTimersByTime(15_000);
 		await flush();

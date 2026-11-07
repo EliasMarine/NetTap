@@ -242,3 +242,23 @@ describe('DNS page — DNS by device', () => {
 		expect(await screen.findByText('Showing 50 of 60 domains')).toBeInTheDocument();
 	});
 });
+
+// NET-192 PR 4: Home's five ranges; 15m and 4h are gone, 30d reads 6-hour buckets (120, near 7 d's 168)
+describe('DNS page — the range set', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('offers 1h 6h 24h 7d 30d, and asks for the timeline in 6-hour buckets at 30d', async () => {
+		stubDaemon(null);
+		render(DnsPage);
+		const group = screen.getByRole('group', { name: 'Time range' });
+		expect([...group.querySelectorAll('button')].map((b) => b.textContent?.trim())).toEqual(['1h', '6h', '24h', '7d', '30d']);
+		await fireEvent.click(screen.getByRole('button', { name: '30d' }));
+		await vi.waitFor(() => {
+			const timeline = vi.mocked(fetch).mock.calls.map((c) => String(c[0])).filter((u) => u.startsWith('/api/dns/timeline')).at(-1)!;
+			const q = new URL(timeline, 'http://x').searchParams;
+			expect(q.get('interval')).toBe('6h');
+			expect((Date.parse(q.get('to')!) - Date.parse(q.get('from')!)) / 86_400_000).toBeCloseTo(30);
+		});
+		expect(screen.getByText(/Queries per 6 hours · last 30 days/)).toBeInTheDocument();
+	});
+});

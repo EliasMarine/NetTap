@@ -9,6 +9,7 @@
 		canonicalName,
 		countDifference,
 		customRange,
+		fmt,
 		isHostName,
 		linkedCount,
 		type CustomWindow,
@@ -53,9 +54,11 @@
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import KpiCard from '$lib/components/ui/KpiCard.svelte';
 	import Pills from '$lib/components/ui/Pills.svelte';
 	import SearchField from '$lib/components/ui/SearchField.svelte';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -81,7 +84,8 @@
 
 	type LogType = 'all' | 'zeek.conn' | 'zeek.dns' | 'zeek.http' | 'zeek.tls' | 'zeek.files' | 'zeek.dhcp' | 'zeek.smtp' | 'suricata';
 	// OLD CODE: type TimeRange = '15m' | '1h' | '4h' | '24h' | '7d' | '30d'; (slice 2b-1: 6h, as Home has)
-	type TimeRange = '15m' | '1h' | '4h' | '6h' | '24h' | '7d' | '30d';
+	// OLD CODE: type TimeRange = '15m' | '1h' | '4h' | '6h' | '24h' | '7d' | '30d'; (NET-192 PR 4: Home's five)
+	type TimeRange = '1h' | '6h' | '24h' | '7d' | '30d';
 
 	/** A table row: each column's display text by field, plus the hit the drawer opens. */
 	type LogRow = { _id: string; hit: LogHit } & Record<string, unknown>;
@@ -122,10 +126,11 @@
 		suricata: 'Suricata',
 	};
 
+	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. Live is the real-time page.
 	const TIME_RANGES: { value: TimeRange; label: string; ms: number; words: string }[] = [
-		{ value: '15m', label: '15m', ms: 15 * 60_000, words: 'last 15 minutes' },
+		// OLD CODE: { value: '15m', label: '15m', ms: 15 * 60_000, words: 'last 15 minutes' }, (NET-192 PR 4)
 		{ value: '1h', label: '1h', ms: 60 * 60_000, words: 'last hour' },
-		{ value: '4h', label: '4h', ms: 4 * 60 * 60_000, words: 'last 4 hours' },
+		// OLD CODE: { value: '4h', label: '4h', ms: 4 * 60 * 60_000, words: 'last 4 hours' }, (NET-192 PR 4)
 		{ value: '6h', label: '6h', ms: 6 * 60 * 60_000, words: 'last 6 hours' },
 		{ value: '24h', label: '24h', ms: 24 * 60 * 60_000, words: 'last 24 hours' },
 		{ value: '7d', label: '7d', ms: 7 * 24 * 60 * 60_000, words: 'last 7 days' },
@@ -133,9 +138,9 @@
 	];
 
 	const INTERVAL_MAP: Record<string, string> = {
-		'15m': '1m',
+		// OLD CODE: '15m': '1m', (NET-192 PR 4)
 		'1h': '5m',
-		'4h': '15m',
+		// OLD CODE: '4h': '15m', (NET-192 PR 4)
 		'6h': '15m',
 		'24h': '1h',
 		'7d': '6h',
@@ -192,6 +197,7 @@
 	let selectedTimeRange = $state<TimeRange | 'custom'>('24h');
 	/** The window a drill-down link brought (?from=&to=), offered as "Custom" until another range is picked. */
 	let custom = $state<CustomWindow | null>(null);
+	const AUTO_REFRESH_MS = 30_000;
 	let autoRefresh = $state(false);
 	let refreshInterval = $state<ReturnType<typeof setInterval> | null>(null);
 
@@ -322,7 +328,9 @@
 		if (rangeValue === 'custom' && custom) return { from: custom.from, to: custom.to };
 		const now = Date.now();
 		// OLD CODE: || TIME_RANGES[3]; (slice 2b-1: 6h moved 24h to index 4)
-		const range = TIME_RANGES.find((r) => r.value === rangeValue) || TIME_RANGES[4];
+		// OLD CODE: || TIME_RANGES[4]; (NET-192 PR 4: 15m and 4h dropped, 24h is index 2)
+		// OLD CODE: || TIME_RANGES[2] (NET-192 PR 4: the default by value, not by position)
+		const range = TIME_RANGES.find((r) => r.value === rangeValue) || TIME_RANGES.find((r) => r.value === '24h')!;
 		return {
 			from: new Date(now - range.ms).toISOString(),
 			to: new Date(now).toISOString(),
@@ -337,30 +345,36 @@
 	// }
 	// OLD CODE END
 
-	function formatTimestamp(ts: string): string {
-		try {
-			const d = new Date(ts);
-			const mon = d.toLocaleString('en-US', { month: 'short' });
-			const day = d.getDate();
-			const time = d.toLocaleTimeString('en-US', { hour12: false });
-			return `${mon} ${day}, ${time}`;
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — US month-first order, "Nov 6, 22:37:23" (NET-192 PR 4: formatTime)
+	// function formatTimestamp(ts: string): string {
+	// 	try {
+	// 		const d = new Date(ts);
+	// 		const mon = d.toLocaleString('en-US', { month: 'short' });
+	// 		const day = d.getDate();
+	// 		const time = d.toLocaleTimeString('en-US', { hour12: false });
+	// 		return `${mon} ${day}, ${time}`;
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatTimestamp = (ts: string) => formatTime(ts);
 
-	function formatShortTimestamp(ts: string): string {
-		try {
-			return new Date(ts).toLocaleString(undefined, {
-				month: 'short',
-				day: 'numeric',
-				hour: '2-digit',
-				minute: '2-digit',
-			});
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — the browser's locale printed "Nov 6, 10:37 PM" (NET-192 PR 4: formatTime)
+	// function formatShortTimestamp(ts: string): string {
+	// 	try {
+	// 		return new Date(ts).toLocaleString(undefined, {
+	// 			month: 'short',
+	// 			day: 'numeric',
+	// 			hour: '2-digit',
+	// 			minute: '2-digit',
+	// 		});
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatShortTimestamp = (ts: string) => formatTime(ts, 'short');
 
 	function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
 		const parts = path.split('.');
@@ -907,7 +921,7 @@
 			// OLD CODE START — PLAN §5.5: auto-refresh goes through the contract, so "Updated" stays honest
 			// refreshInterval = setInterval(fetchAll, 30_000);
 			// OLD CODE END
-			refreshInterval = setInterval(() => refresh.runIfIdle(), 30_000);
+			refreshInterval = setInterval(() => refresh.runIfIdle(), AUTO_REFRESH_MS);
 		} else if (refreshInterval) {
 			clearInterval(refreshInterval);
 			refreshInterval = null;
@@ -1105,10 +1119,10 @@ OLD CODE END -->
 		series={[{ key: 'events', label: 'Events', colour: 1, points: timeline.map((b, i) => ({ t: b.timestamp, v: bucketTotals[i] })) }]}
 		formatX={(t) => formatShortTimestamp(String(t))}
 		formatY={formatCompactNumber}
-		formatTip={(i) => `${formatShortTimestamp(timeline[i]?.timestamp ?? '')} · ${(bucketTotals[i] ?? 0).toLocaleString()} events`}
+		formatTip={(i) => `${formatShortTimestamp(timeline[i]?.timestamp ?? '')} · ${fmt(bucketTotals[i] ?? 0)} events`}
 		highlightIndex={busiest}
 		ariaLabel={busiest >= 0
-			? `Busiest at ${formatShortTimestamp(timeline[busiest].timestamp)}, with ${bucketTotals[busiest].toLocaleString()} events`
+			? `Busiest at ${formatShortTimestamp(timeline[busiest].timestamp)}, with ${fmt(bucketTotals[busiest])} events`
 			: 'Log events over time'}
 	/>
 {/snippet}
@@ -1215,9 +1229,12 @@ OLD CODE END -->
 	<div class="head-actions">
 		<!-- OLD CODE: <Pills options={TIME_RANGES} value={selectedTimeRange} onchange={handleTimeRangeChange} ariaLabel="Time range" /> (slice 2a: Custom) -->
 		<Pills options={rangeOptions} value={selectedTimeRange} onchange={handleTimeRangeChange} ariaLabel="Time range" />
+		<!-- OLD CODE START — NET-192 PR 4: Home's Auto / Paused button on every page
 		<button class="btn" type="button" aria-pressed={autoRefresh} onclick={toggleAutoRefresh}>
 			<Icon name="refresh" />{autoRefresh ? 'Auto-refresh on' : 'Auto-refresh'}
 		</button>
+		OLD CODE END -->
+		<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={toggleAutoRefresh} />
 		<button class="btn" type="button" onclick={exportCSV} disabled={results.length === 0}>
 			<Icon name="download" />Export CSV
 		</button>
@@ -1350,7 +1367,7 @@ OLD CODE END -->
 			/>
 			<div class="tbl-foot">
 				<span aria-live="polite">
-					Showing <strong class="num">{results.length.toLocaleString()}</strong> of <strong class="num">{totalHits.toLocaleString()}</strong> results{tableLoading ? ' · searching…' : ''}
+					Showing <strong class="num">{fmt(results.length)}</strong> of <strong class="num">{fmt(totalHits)}</strong> results{tableLoading ? ' · searching…' : ''}
 				</span>
 				{#if searchAfter && results.length < totalHits}
 					<button class="btn" type="button" onclick={() => fetchLogs(true)} disabled={loadingMore}>

@@ -20,13 +20,13 @@
 	// OLD CODE END
 	import { getDevices } from '$api/devices';
 	import type { Device, DeviceListResponse } from '$api/devices';
-	import { countDifference, customRange, linkedCount, rangeWindow, type LinkedCount } from '$lib/utils/drilldown';
+	import { countDifference, customRange, fmt, linkedCount, rangeWindow, type LinkedCount } from '$lib/utils/drilldown';
 	import { getNewDeviceCount, getRegistryDevices, isNewDevice } from '$api/devices-registry';
 	import type { RegistryDevice, RegistryListResponse } from '$api/devices-registry';
 	import { getCaptureMode } from '$api/capture';
 	import type { CaptureMode } from '$api/capture';
 	import { loadFailed } from '$lib/utils/load-failed';
-	import { formatBytes } from '$lib/api/logs';
+	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import { withTraffic } from '$lib/utils/registry-traffic';
 	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import NewDeviceBanner from '$components/NewDeviceBanner.svelte';
@@ -39,6 +39,7 @@
 	import DeviceTile from '$lib/components/ui/DeviceTile.svelte';
 	import Bytes from '$lib/components/ui/Bytes.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import { deviceIcon } from '$lib/components/ui/device-icon';
 	import { groupByType } from './device-types';
 
@@ -103,7 +104,8 @@
 	] as const;
 	const params = $derived($page.url.searchParams);
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
-	const range = $derived(custom ?? RANGES.find((r) => r.value === params.get('range')) ?? RANGES[2]);
+	// OLD CODE: ?? RANGES[2] (NET-192 PR 4: the default by value, not by position)
+	const range = $derived(custom ?? RANGES.find((r) => r.value === params.get('range')) ?? RANGES.find((r) => r.value === '24h')!);
 	const windowKey = $derived(custom ? `${custom.from}|${custom.to}` : range.value);
 	/**
 	 * NET-160 section D: the Total devices figure the link was clicked at (Home's Devices card).
@@ -383,9 +385,10 @@
 	});
 
 	// The page's own 30 s auto refresh, through the same contract so "Updated" stays honest
+	const AUTO_REFRESH_MS = 30_000;
 	$effect(() => {
 		if (!autoRefresh) return;
-		const timer = setInterval(() => refresh.runIfIdle(), 30_000);
+		const timer = setInterval(() => refresh.runIfIdle(), AUTO_REFRESH_MS);
 		return () => clearInterval(timer);
 	});
 
@@ -484,7 +487,7 @@
 	// NET-180: the card and its List row read these, so both show the same figures
 	const cardName = (d: RegistryDevice) => d.display_name || d.mac;
 	const cardAddress = (d: RegistryDevice) => d.ips[0] ?? d.mac;
-	const cardConnections = (d: RegistryDevice) => d.connection_count?.toLocaleString() ?? '—';
+	const cardConnections = (d: RegistryDevice) => (d.connection_count != null ? fmt(d.connection_count) : '—');
 	/** Some of the device's addresses weren't in the device list, so its traffic is theirs only. */
 	const partlyListed = (d: RegistryDevice) => !!d.ips_listed && d.ips_listed < d.ips.length;
 	const openCard = (d: RegistryDevice) => goto(`/devices/mac/${encodeURIComponent(d.mac)}`);
@@ -492,11 +495,13 @@
 	const addressMore = (d: RegistryDevice) =>
 		(d.ips.length > 1 ? ` +${d.ips.length - 1}` : '') + (partlyListed(d) ? ` · ${d.ips_listed} of ${d.ips.length} listed` : '');
 
-	function formatNumber(n: number): string {
-		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-		if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-		return n.toLocaleString();
-	}
+	// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $lib/api/logs
+	// function formatNumber(n: number): string {
+	// 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	// 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	// 	return n.toLocaleString();
+	// }
+	// OLD CODE END
 
 	// OLD CODE START — NET-160 slice 2b-3: the browser's clock at render time, a request's time
 	// after the count's cutoff, and a strict < where the count uses >=
@@ -640,9 +645,12 @@
 	</div>
 	<div class="head-actions">
 		<Pills options={rangeOptions} value={range.value} onchange={pickRange} ariaLabel="Seen in the last" />
+		<!-- OLD CODE START — NET-192 PR 4: Home's Auto / Paused button on every page
 		<button class="btn" type="button" aria-pressed={autoRefresh} onclick={() => (autoRefresh = !autoRefresh)}>
 			<Icon name="refresh" />{autoRefresh ? 'Auto refresh on' : 'Auto refresh off'}
 		</button>
+		OLD CODE END -->
+		<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={() => (autoRefresh = !autoRefresh)} />
 	</div>
 </div>
 
@@ -741,7 +749,8 @@ OLD CODE END -->
 			</Card>
 		{:else}
 			{#if registryFailed}
-				<p class="note">{loadFailed('devices', true)}</p>
+				<!-- OLD CODE: <p class="note">{loadFailed('devices', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
+				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('devices', true)}</span></p>
 			{/if}
 			<!-- NET-158: a card adds up the device list's rows for its addresses; an address another device took since counts on both -->
 			<!-- OLD CODE START — NET-180: the note stood alone; the Cards / List switch now sits beside it -->
@@ -884,4 +893,5 @@ OLD CODE END -->
 	.type { display: inline-flex; align-items: center; gap: var(--sp-2); }
 	.type :global(.ic) { color: var(--text-3); width: 16px; height: 16px; }
 	.note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); }
+	.load-note { margin-bottom: var(--sp-3); }
 </style>

@@ -4,6 +4,8 @@
 -->
 <script lang="ts">
 	import type { ConnectionTimelineBucket } from '$api/traffic';
+	import { fmt } from '$lib/utils/drilldown';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// Props
@@ -68,19 +70,22 @@
 	// Formatting
 	// ---------------------------------------------------------------------------
 
-	function formatShortTimestamp(ts: string): string {
-		if (!ts) return '';
-		try {
-			const d = new Date(ts);
-			const h = d.getHours().toString().padStart(2, '0');
-			const m = d.getMinutes().toString().padStart(2, '0');
-			const mon = (d.getMonth() + 1).toString().padStart(2, '0');
-			const day = d.getDate().toString().padStart(2, '0');
-			return `${mon}/${day} ${h}:${m}`;
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — "11/06 22:00" put the month first, US order (NET-192 PR 4: formatTime)
+	// function formatShortTimestamp(ts: string): string {
+	// 	if (!ts) return '';
+	// 	try {
+	// 		const d = new Date(ts);
+	// 		const h = d.getHours().toString().padStart(2, '0');
+	// 		const m = d.getMinutes().toString().padStart(2, '0');
+	// 		const mon = (d.getMonth() + 1).toString().padStart(2, '0');
+	// 		const day = d.getDate().toString().padStart(2, '0');
+	// 		return `${mon}/${day} ${h}:${m}`;
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatShortTimestamp = (ts: string) => (ts ? formatTime(ts, 'short') : '');
 
 	function protoColor(proto: string): string {
 		return PROTO_COLORS[proto.toLowerCase()] || 'var(--text-3)';
@@ -90,7 +95,7 @@
 	let headline = $derived.by(() => {
 		if (buckets.length === 0) return 'Session volume';
 		const peak = buckets.reduce((a, b) => (b.total > a.total ? b : a));
-		return `Session volume, busiest at ${formatShortTimestamp(peak.timestamp)} with ${peak.total.toLocaleString()} sessions`;
+		return `Session volume, busiest at ${formatShortTimestamp(peak.timestamp)} with ${fmt(peak.total)} sessions`;
 	});
 </script>
 
@@ -188,12 +193,12 @@
 				{@const tooltipX = 55 + hoveredIndex * ((chartWidth - 60) / buckets.length)}
 				<div class="bar-tooltip" style="left: {Math.min(tooltipX, chartWidth - 200)}px; top: 10px;">
 					<div class="tooltip-time">{formatShortTimestamp(hb.timestamp)}</div>
-					<div class="tooltip-row"><strong>{hb.total.toLocaleString()}</strong> total</div>
+					<div class="tooltip-row"><strong>{fmt(hb.total)}</strong> total</div>
 					{#each activeProtocols as proto}
 						{#if hb.protocols[proto]}
 							<div class="tooltip-row">
 								<span class="sw" style="--c: {protoColor(proto)};"></span>
-								{proto.toUpperCase()}: <strong>{hb.protocols[proto].toLocaleString()}</strong>
+								{proto.toUpperCase()}: <strong>{fmt(hb.protocols[proto])}</strong>
 							</div>
 						{/if}
 					{/each}

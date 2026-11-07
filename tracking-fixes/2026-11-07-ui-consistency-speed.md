@@ -108,3 +108,68 @@ Audits on the fixture build (1440 and 1024 px) and on the G11 (real data, cold):
 - **Python/over-engineering:** verdict Ship.
   - Should-fix items, all done: a dedicated route pool; the lock split; deleting the two loop-only locks.
 - **Pre-existing, not changed here:** the tshark `/tmp/nettap_merged.pcap` race, and prune running at the same time as the storage cycle.
+
+## PR 4: one look on every page (web)
+
+### What changed
+
+- **One time and number format.** `lib/utils/time.ts` `formatTime(ts, 'short' | 'long' | 'clock' | 'date')` is en-GB and 24-hour. It replaced about 25 local formatter copies and about 90 locale-less `toLocale*String()` calls (Live's feed, SessionTimeline's "11/06 22:00"). The ten compact-number copies now use `formatCompactNumber`. `time.test.ts` fails on a `toLocale*String()` call with no locale anywhere in `web/src`.
+- **One range set: 1h 6h 24h 7d 30d.**
+  - DNS, Connections, Alerts, Alerts category, Suricata category, Log Explorer and PCAP drop 15m and 4h.
+  - Pages gain the ranges they lacked: 6h, 30d, or 1h and 6h.
+  - devices/mac gets the pills (`getDeviceTraffic` takes the window).
+  - Settings' default range offers the same five.
+  - An old `?range=15m` or `4h` link falls back to the page default.
+- **Connections stops at 7d for now.** Its stats took 14.5 s over the G11's 6 days of data (`shortcut:` comment in `connections/+page.svelte`). PR 3 adds 30d back once that query is fast.
+- **Auto-refresh:** `ui/AutoRefreshButton.svelte` ("Auto" with "Refreshes every N s", or "Paused") replaces every page's variant. Pages that start with refresh off read "Paused".
+- **Stale notes:** every "showing older figures" note is `.notice.is-warn` with the warn icon.
+- **Voice:**
+  - The IoT drawer and the tabs use sentence case. Live's "24h history" now reads "Last 24 hours".
+  - Connections writes its window in lower case mid-sentence.
+  - `formatCompactNumber` drops ".0" (Home's Alerts KPI shows "214K"), and Home's breakdown has thousands separators.
+- **Structure:**
+  - The Threats KPI sub reads "Higher is riskier · <window>", and the scoring paragraph sits in a disclosure.
+  - IoT's hero is the c-8 Findings card.
+  - Settings has `registerPageRefresh`, which re-reads only Retention health and About. An unsaved form edit survives a Refresh.
+
+### Measured on the G11 (2026-11-07, PR 2's daemon)
+
+- **Every long-range request answered in time.**
+  - Connections stats at 6 days of data took 14.5 s (its limit is 24 s).
+  - The sankey took 2.3 s and DNS suspicious 1.2 s. Everything else took 1.1 s or less.
+  - IoT's 30-day activity timeline (721 one-hour buckets) took 0.1 s.
+- `scripts/remote/verify_long_range_timings.py` runs these at deploy (`deploy-ui-consistency.sh`).
+
+### Tests
+
+- Vitest: 3,714 passed. svelte-check: 0 errors (the 2 old warnings). `check:colors` and `check:e2e` are clean.
+- `test:visual`: 276 passed, 49 skipped.
+- New tests cover:
+  - the formatter and the locale scan;
+  - the Auto/Paused button;
+  - the devices/mac pills;
+  - the DNS range set and its 30d buckets;
+  - the Connections four-range set and the `?range=30d` fallback;
+  - the compact Alerts KPI and the Threats disclosure;
+  - the Settings refresh keeping an unsaved edit (it fails with the earlier version).
+- Gates:
+  - `/deep-review`: no findings (`security-reviews/feature-ui-consistency-pr4/`).
+  - `/ponytail-review`: verdict "fix 1 and 2 first". All fixed in this PR:
+    - three pages' stale notes now use the amber style, with a scan test;
+    - one compact formatter, so 999,950 reads "1M", not "1000K";
+    - range defaults are picked by value;
+    - `formatWhen`/`formatDay` are aliases of `formatTime`;
+    - six `fmt` copies removed;
+    - one `AUTO_REFRESH_MS` per page;
+    - an empty URL test removed;
+    - the locale scan also catches `new Intl.*Format()` with no locale.
+  - Filed:
+    - NET-196: one range list instead of 14.
+    - NET-195: Settings > Display saves choices no page reads. This predates PR 4 and needs the owner's call.
+
+### Not changed
+
+- devices/mac's bandwidth card stays empty, because the registry traffic reply has no series. This predates PR 4.
+- Go-live keeps its own compact formatter.
+- Alerts category has a timer but no button.
+- KPI notes still mix "Last 24 hours" and "last 24 hours".

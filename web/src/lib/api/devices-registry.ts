@@ -128,7 +128,8 @@ export async function getRegistryDevice(mac: string): Promise<RegistryDevice | n
  * Get traffic data for a specific device by MAC address.
  * Resolves null only when the registry has no such device (404); any other failure throws.
  */
-export async function getDeviceTraffic(mac: string): Promise<DeviceTraffic | null> {
+/** `win`: the window to read (the daemon reads the last 24 hours without one). */
+export async function getDeviceTraffic(mac: string, win?: { from: string; to: string }): Promise<DeviceTraffic | null> {
 	// OLD CODE START — #96: a failure silently hid the device's traffic
 	// try {
 	// 	const res = await fetch(
@@ -144,7 +145,9 @@ export async function getDeviceTraffic(mac: string): Promise<DeviceTraffic | nul
 	// 	return null;
 	// }
 	// OLD CODE END
-	const res = await fetch(`/api/devices/registry/${encodeURIComponent(mac)}/traffic`);
+	// OLD CODE: const res = await fetch(`/api/devices/registry/${encodeURIComponent(mac)}/traffic`); (NET-192 PR 4: the page's range)
+	const query = win ? `?${new URLSearchParams(win)}` : '';
+	const res = await fetch(`/api/devices/registry/${encodeURIComponent(mac)}/traffic${query}`);
 	if (res.status === 404) return null;
 	if (!res.ok) throw new Error(`Device traffic failed: HTTP ${res.status}`);
 	const data = await res.json();

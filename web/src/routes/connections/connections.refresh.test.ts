@@ -219,7 +219,7 @@ describe('Connections card states', () => {
 });
 
 describe('Connections refresh contract: the load guard', () => {
-	it('responses in reverse order: a slow 24 h load does not overwrite a newer 4 h one', async () => {
+	it('responses in reverse order: a slow 24 h load does not overwrite a newer 6 h one', async () => {
 		render(Page);
 		await flush();
 		const day = { stats: deferred<ConnectionStatsResponse>(), rows: deferred<ConnectionsResponse>() };
@@ -228,7 +228,7 @@ describe('Connections refresh contract: the load guard', () => {
 		vi.mocked(getConnections).mockReturnValueOnce(day.rows.promise).mockReturnValueOnce(four.rows.promise);
 
 		await fireEvent.click(screen.getByRole('button', { name: '24h' }));
-		await fireEvent.click(screen.getByRole('button', { name: '4h' }));
+		await fireEvent.click(screen.getByRole('button', { name: '6h' }));
 		four.stats.resolve(stats(40));
 		four.rows.resolve(table('four'));
 		await flush();
@@ -238,7 +238,7 @@ describe('Connections refresh contract: the load guard', () => {
 
 		expect(sessions()).toBe('40');
 		expect(rowLabels()).toEqual(['Open connection from 10.0.0.4 to 8.8.8.8']);
-		expect(screen.getByRole('button', { name: '4h' })).toHaveAttribute('aria-pressed', 'true');
+		expect(screen.getByRole('button', { name: '6h' })).toHaveAttribute('aria-pressed', 'true');
 	});
 
 	it('a filter change during a refresh: the older table is dropped, and the pills and rows agree', async () => {

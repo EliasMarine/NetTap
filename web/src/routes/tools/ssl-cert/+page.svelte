@@ -115,7 +115,8 @@
 		// OLD CODE END
 		if (!d || !Number.isFinite(new Date(d).getTime())) return '—';
 		try {
-			return new Date(d).toLocaleDateString('en-US', {
+			// OLD CODE: return new Date(d).toLocaleDateString('en-US', { (NET-192 PR 4: "Nov 6, 2026, 10:37 PM"; the app writes en-GB, 24-hour)
+			return new Date(d).toLocaleDateString('en-GB', {
 				year: 'numeric',
 				month: 'short',
 				day: 'numeric',

@@ -13,7 +13,8 @@
 	 */
 
 	import { onDestroy, untrack } from 'svelte';
-	import { formatBytes } from '$lib/api/logs';
+	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
+	import { chartTime } from '$lib/utils/drilldown';
 	import DetailDrawer from '$lib/components/DetailDrawer.svelte';
 	import DrawerSection from '$lib/components/drawer/DrawerSection.svelte';
 	import KVRow from '$lib/components/drawer/KVRow.svelte';
@@ -82,13 +83,19 @@
 		{ label: '6h', value: '6h' },
 		{ label: '24h', value: '24h' },
 		{ label: '7d', value: '7d' },
+		// NET-192 PR 4: Home's five ranges; the daemon picks the timelines' buckets. Not yet timed on the G11.
+		{ label: '30d', value: '30d' },
 	];
-	const RANGE_LABEL: Record<string, string> = { '1h': 'last hour', '6h': 'last 6 hours', '24h': 'last 24 hours', '7d': 'last 7 days' };
+	// OLD CODE: const RANGE_LABEL: Record<string, string> = { '1h': 'last hour', '6h': 'last 6 hours', '24h': 'last 24 hours', '7d': 'last 7 days' }; (NET-192 PR 4: 30d)
+	const RANGE_LABEL: Record<string, string> = { '1h': 'last hour', '6h': 'last 6 hours', '24h': 'last 24 hours', '7d': 'last 7 days', '30d': 'last 30 days' };
 	const rangeLabel = $derived(RANGE_LABEL[selectedRange] ?? 'last 24 hours');
+	const RANGE_HOURS: Record<string, number> = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 };
+	// NET-192 PR 4: the browser's locale printed "07:00 PM", and a week of hourly buckets showed only times of day
+	const timelineTime = (t: number | string) => chartTime(t, RANGE_HOURS[selectedRange] ?? 24);
 
 	const DRAWER_TABS: DrawerTab[] = [
 		{ id: 'overview', label: 'Overview' },
-		{ id: 'communication', label: 'Comm Map' },
+		{ id: 'communication', label: 'Comm map' },
 		{ id: 'privacy', label: 'Privacy' },
 		{ id: 'protocol', label: 'Protocol' },
 		{ id: 'timeline', label: 'Timeline' },
@@ -106,6 +113,7 @@
 			case '6h': ms = 6 * 60 * 60 * 1000; break;
 			case '24h': ms = 24 * 60 * 60 * 1000; break;
 			case '7d': ms = 7 * 24 * 60 * 60 * 1000; break;
+			case '30d': ms = 30 * 24 * 60 * 60 * 1000; break;
 		}
 		return { from: new Date(now.getTime() - ms).toISOString(), to: now.toISOString() };
 	}
@@ -506,11 +514,13 @@
 	// }
 	// OLD CODE END
 
-	function formatNumber(n: number): string {
-		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-		if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-		return n.toLocaleString();
-	}
+	// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $lib/api/logs
+	// function formatNumber(n: number): string {
+	// 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	// 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	// 	return n.toLocaleString();
+	// }
+	// OLD CODE END
 
 	function timeAgo(dateStr: string | null): string {
 		if (!dateStr) return '—';
@@ -706,7 +716,8 @@ OLD CODE END -->
 				: `${fleet.unencrypted_count === 0 ? 'None' : 'Devices'} under 50% encrypted · ${encryptionMeasured} of ${fleet.device_count} measured`}
 			note={rangeLabel} />
 
-		<Card class="c-4" hero title="Smart home health" sub="Trust score out of 100 · from {fleet.scored_device_count} of {fleet.device_count} devices · {rangeLabel}">
+		<!-- OLD CODE: <Card class="c-4" hero title="Smart home health" …> (NET-192 PR 4: the hero is the row's c-8 card, Findings) -->
+		<Card class="c-4" title="Smart home health" sub="Trust score out of 100 · from {fleet.scored_device_count} of {fleet.device_count} devices · {rangeLabel}">
 			<div class="trust-top">
 				<!-- OLD CODE START — NET-158: no scored device drew 0, grade F
 				<Ring value={healthScore} ariaLabel="Smart home health {healthScore} of 100, grade {healthGrade}" />
@@ -724,7 +735,7 @@ OLD CODE END -->
 			{@render scores(scoreRows(fleet))}
 		</Card>
 
-		<Card class="c-8" title="Findings" sub="From the privacy and protocol checks · {rangeLabel}">
+		<Card class="c-8" hero title="Findings" sub="From the privacy and protocol checks · {rangeLabel}">
 			{#snippet actions()}
 				{#if findings.length > 0}<span class="chip is-warn">{findings.length} findings</span>{/if}
 			{/snippet}
@@ -841,23 +852,23 @@ OLD CODE END -->
 		{:else if selectedDevice}
 			<!-- Tab 1: Overview -->
 			{#if activeTab === 'overview'}
-				<DrawerSection title="Trust Score Breakdown">
+				<DrawerSection title="Trust score breakdown">
 					{@render scores(scoreRows(selectedDevice))}
 				</DrawerSection>
 
-				<DrawerSection title="Device Info">
-					<KVRow label="IP Address" value={selectedDevice.ip} mono copyable />
-					<KVRow label="MAC Address" value={selectedDevice.mac} mono copyable />
+				<DrawerSection title="Device info">
+					<KVRow label="IP address" value={selectedDevice.ip} mono copyable />
+					<KVRow label="MAC address" value={selectedDevice.mac} mono copyable />
 					<KVRow label="Manufacturer" value={selectedDevice.manufacturer} />
 					<!-- OLD CODE START — NET-158: score and grade can be null; the coverage is stated
-					<KVRow label="Trust Grade" value={`${selectedDevice.grade} (${selectedDevice.score}/100)`} />
+					<KVRow label="Trust grade" value={`${selectedDevice.grade} (${selectedDevice.score}/100)`} />
 					OLD CODE END -->
-					<KVRow label="Trust Grade" value={selectedDevice.score === null ? 'Not enough measured' : `${selectedDevice.grade} (${selectedDevice.score}/100)`} />
+					<KVRow label="Trust grade" value={selectedDevice.score === null ? 'Not enough measured' : `${selectedDevice.grade} (${selectedDevice.score}/100)`} />
 					<KVRow label="Measured" value={`from ${selectedDevice.checks_available} of ${selectedDevice.checks_total} checks (${selectedDevice.coverage} of 100 points)`} />
-					<KVRow label="Last Seen" value={selectedDevice.last_seen ? timeAgo(selectedDevice.last_seen) : '—'} />
+					<KVRow label="Last seen" value={selectedDevice.last_seen ? timeAgo(selectedDevice.last_seen) : '—'} />
 				</DrawerSection>
 
-				<DrawerSection title="Quick Stats">
+				<DrawerSection title="Quick stats">
 					<!-- OLD CODE START — NET-158: null encryption and anomalies
 					<KVRow label="Encryption" value={selectedDevice.encryption_applicable === false ? 'N/A' : `${selectedDevice.encryption_pct}%`} mono />
 					<KVRow label="Anomalies" value={String(selectedDevice.anomaly_count)} mono />
@@ -869,7 +880,7 @@ OLD CODE END -->
 
 			<!-- Tab 2: Communication Map -->
 			{:else if activeTab === 'communication'}
-				<DrawerSection title="Top Destinations">
+				<DrawerSection title="Top destinations">
 					{#if commBarItems.length > 0}
 						{#if newNotChecked}<p class="note">New destinations not checked: this device has no baseline yet.</p>{/if}
 						<BarList items={commBarItems} />
@@ -884,7 +895,7 @@ OLD CODE END -->
 			{:else if activeTab === 'privacy'}
 				{#if selectedPrivacy}
 					<!-- NET-158: the trust score's privacy pillar, the same figure as the Overview tab -->
-					<DrawerSection title="Privacy Grade">
+					<DrawerSection title="Privacy grade">
 						{#if selectedPrivacy.privacy_grade === null || selectedPrivacy.privacy_score === null}
 							<p class="note">— Not enough measured</p>
 						{:else}
@@ -902,7 +913,7 @@ OLD CODE END -->
 					{/if}
 
 					{#if trackerBarItems.length > 0}
-						<DrawerSection title="Tracker Domains ({selectedPrivacy.tracker_count})">
+						<DrawerSection title="Tracker domains ({selectedPrivacy.tracker_count})">
 							<BarList items={trackerBarItems} />
 						</DrawerSection>
 					{/if}
@@ -926,7 +937,7 @@ OLD CODE END -->
 						{/if}
 					</DrawerSection>
 
-					<DrawerSection title="Phone Home Frequency">
+					<DrawerSection title="Phone-home frequency">
 						<div class="foot-stat"><b>{Math.round(selectedPrivacy.phone_home_per_hour)}</b>requests per hour</div>
 					</DrawerSection>
 				{:else if privacy === null}
@@ -938,7 +949,7 @@ OLD CODE END -->
 			<!-- Tab 4: Protocol Audit -->
 			{:else if activeTab === 'protocol'}
 				{#if selectedProtocol && selectedProtocol.findings.length > 0}
-					<DrawerSection title="Protocol Findings ({selectedProtocol.findings.length})">
+					<DrawerSection title="Protocol findings ({selectedProtocol.findings.length})">
 						<DataTable
 							ariaLabel="Protocol findings"
 							rows={protocolFindings}
@@ -948,26 +959,26 @@ OLD CODE END -->
 						/>
 					</DrawerSection>
 				{:else if protocol === null}
-					<DrawerSection title="Protocol Audit">
+					<DrawerSection title="Protocol audit">
 						<p class="note">Couldn't run the protocol audit: the request failed.</p>
 					</DrawerSection>
 				{:else}
-					<DrawerSection title="Protocol Audit">
+					<DrawerSection title="Protocol audit">
 						<p class="ok-line"><span class="chip is-ok">Compliant</span>All protocols within expected parameters.</p>
 					</DrawerSection>
 				{/if}
 
 			<!-- Tab 5: Activity Timeline -->
 			{:else if activeTab === 'timeline'}
-				<DrawerSection title="Connections Over Time">
+				<DrawerSection title="Connections over time">
 					{#if busiestBucket >= 0}
 						<AreaChart
 							series={[{ key: 'connections', label: 'Connections', colour: 1, points: timelineBuckets.map((b) => ({ t: b.time, v: b.connections })) }]}
-							formatX={(t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+							formatX={timelineTime}
 							formatY={(n) => formatNumber(Math.round(n))}
-							formatTip={(i) => `${new Date(timelineBuckets[i].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${formatNumber(timelineBuckets[i].connections)} connections`}
+							formatTip={(i) => `${timelineTime(timelineBuckets[i].time)} · ${formatNumber(timelineBuckets[i].connections)} connections`}
 							highlightIndex={busiestBucket}
-							ariaLabel="Busiest at {new Date(timelineBuckets[busiestBucket].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}, with {formatNumber(timelineBuckets[busiestBucket].connections)} connections"
+							ariaLabel="Busiest at {timelineTime(timelineBuckets[busiestBucket].time)}, with {formatNumber(timelineBuckets[busiestBucket].connections)} connections"
 							height={200}
 						/>
 					{:else if timelineFailed}

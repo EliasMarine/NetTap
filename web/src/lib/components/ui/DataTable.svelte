@@ -44,6 +44,7 @@
 	import { untrack } from 'svelte';
 	import Icon from './Icon.svelte';
 	import { TableSort, type SortDir } from '$lib/utils/table-sort.svelte';
+	import { fmt } from '$lib/utils/drilldown';
 
 	interface Props {
 		columns: Column<T>[];
@@ -121,7 +122,7 @@
 		return Array.from({ length: Math.min(PAGE_WINDOW, count) }, (_, i) => start + i);
 	});
 
-	const fmt = (n: number) => n.toLocaleString('en-GB');
+	// OLD CODE: const fmt = (n: number) => n.toLocaleString('en-GB'); (NET-192 PR 4: one fmt, from utils/drilldown)
 </script>
 
 {#snippet content(column: Column<T>, row: T)}

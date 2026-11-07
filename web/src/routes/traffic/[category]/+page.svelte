@@ -15,7 +15,8 @@
 	 */
 
 	import { partOfWhole } from '$lib/utils/part-of-whole';
-	import { formatBytes } from '$lib/api/logs';
+	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
+	import { chartTime } from '$lib/utils/drilldown';
 	// OLD CODE START — the category colour tinted the chart and bars; system charts use data-1/2
 	// import { CATEGORY_COLORS } from '$lib/utils/category-colors';
 	// OLD CODE END
@@ -47,6 +48,7 @@
 	import BarList, { type BarItem } from '$lib/components/ui/BarList.svelte';
 	import Bytes from '$lib/components/ui/Bytes.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import AreaChart, { type AreaSeries } from '$lib/components/ui/charts/AreaChart.svelte';
 	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 
@@ -507,11 +509,13 @@
 	// }
 	// OLD CODE END
 
-	function formatNumber(n: number): string {
-		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-		if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-		return n.toLocaleString();
-	}
+	// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $lib/api/logs
+	// function formatNumber(n: number): string {
+	// 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	// 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	// 	return n.toLocaleString();
+	// }
+	// OLD CODE END
 
 	// OLD CODE START — the DataTable's header shows the sort
 	// function sortArrow(field: string): string {
@@ -521,13 +525,17 @@
 	// OLD CODE END
 
 	/** Chart axis and tooltip time: the hour for a day or less, the date beyond. */
-	function formatPointTime(t: number | string): string {
-		const d = new Date(t);
-		if (Number.isNaN(d.getTime())) return String(t);
-		return selectedRange === '7d' || selectedRange === '30d'
-			? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-			: d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-	}
+	// OLD CODE START — the browser's locale printed "07:00 PM" (NET-192 PR 4: the shared chartTime)
+	// function formatPointTime(t: number | string): string {
+	// 	const d = new Date(t);
+	// 	if (Number.isNaN(d.getTime())) return String(t);
+	// 	return selectedRange === '7d' || selectedRange === '30d'
+	// 		? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+	// 		: d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+	// }
+	// OLD CODE END
+	const RANGE_HOURS: Record<string, number> = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 };
+	const formatPointTime = (t: number | string) => chartTime(t, RANGE_HOURS[selectedRange] ?? 24);
 
 	const chartTip = (i: number) =>
 		`${formatPointTime(bandwidthSeries[i].timestamp)} · ↓ ${formatBytes(bandwidthSeries[i].download_bytes)} · ↑ ${formatBytes(bandwidthSeries[i].upload_bytes)}`;
@@ -571,14 +579,17 @@
 	</div>
 	<div class="head-actions">
 		<Pills options={TIME_RANGES} value={selectedRange} onchange={(v) => (selectedRange = v)} ariaLabel="Time range" />
+		<!-- OLD CODE START — NET-192 PR 4: Home's Auto / Paused button on every page
 		<button class="btn" type="button" title="Refresh every 30 seconds" onclick={() => (autoRefresh = !autoRefresh)}>
 			{autoRefresh ? 'Auto on' : 'Auto'}
 		</button>
+		OLD CODE END -->
+		<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={() => (autoRefresh = !autoRefresh)} />
 	</div>
 </div>
 
 {#if detailFailed && data && !loading}
-	<p class="notice is-warn" role="status">{loadFailed(`${displayName} traffic`, true)}</p>
+	<p class="notice is-warn" role="status"><Icon name="warn" /><span>{loadFailed(`${displayName} traffic`, true)}</span></p>
 {/if}
 
 <div class="grid">
@@ -625,7 +636,7 @@
 						: 'Bandwidth over time'}
 				/>
 				{#if bandwidthFailed}
-					<p class="load-note">{loadFailed('bandwidth over time', true)}</p>
+					<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('bandwidth over time', true)}</span></p>
 				{/if}
 			{:else if bandwidthFailed}
 				<CardState state="error" title={loadFailed('bandwidth over time')} message={RETRY_HINT} onaction={() => refresh.run()} />
@@ -661,7 +672,8 @@
 
 <style>
 	/* Layout glue the system lacks */
-	.load-note { margin-top: var(--sp-3); font-size: var(--text-xs); color: var(--sev-medium); }
+	/* OLD CODE: .load-note { margin-top: var(--sp-3); font-size: var(--text-xs); color: var(--sev-medium); } (NET-192 PR 4: a stale note is the shared .notice.is-warn) */
+	.load-note { margin-top: var(--sp-3); }
 	.device { display: inline-flex; flex-direction: column; line-height: 1.3; text-decoration: none; color: inherit; }
 	.hostname { color: var(--text-3); font-size: var(--text-xs); }
 </style>

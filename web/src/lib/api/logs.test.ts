@@ -303,14 +303,21 @@ describe('formatCompactNumber', () => {
 	});
 
 	it('formats thousands with K suffix', () => {
-		expect(formatCompactNumber(1000)).toBe('1.0K');
+		expect(formatCompactNumber(1000)).toBe('1K');
 		expect(formatCompactNumber(1500)).toBe('1.5K');
-		expect(formatCompactNumber(42000)).toBe('42.0K');
+		expect(formatCompactNumber(42000)).toBe('42K');
+		// NET-192 PR 4: Home's Alerts KPI read "214.0K"
+		expect(formatCompactNumber(214_000)).toBe('214K');
+		expect(formatCompactNumber(214_049)).toBe('214K');
+		expect(formatCompactNumber(214_050)).toBe('214.1K');
 	});
 
 	it('formats millions with M suffix', () => {
-		expect(formatCompactNumber(1000000)).toBe('1.0M');
+		expect(formatCompactNumber(1000000)).toBe('1M');
 		expect(formatCompactNumber(2500000)).toBe('2.5M');
+		// NET-192 PR 4: rounding up to the next unit, and billions
+		expect(formatCompactNumber(999_950)).toBe('1M');
+		expect(formatCompactNumber(1e9)).toBe('1B');
 	});
 });
 

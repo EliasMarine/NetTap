@@ -25,12 +25,13 @@
 	} from '$api/devices';
 	import { getSmartAlerts, suppressAlert } from '$api/alerts';
 	import { loadFailed } from '$lib/utils/load-failed';
-	import { formatBytes } from '$lib/api/logs';
+	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import { TableSort } from '$lib/utils/table-sort.svelte';
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { smartLevel, type SeverityLevel } from '$lib/utils/severity';
 	// OLD CODE: import { alertsHrefForSignature, logsHrefForQuery, type DrillWindow } from '$lib/utils/drilldown'; (slice 2b-1: smart alerts link by their key)
-	import { logsHrefForQuery, NO_EXACT_ALERT_LIST, smartAlertHref, withCount, type DrillWindow } from '$lib/utils/drilldown';
+	import { chartTime as timeLabel, logsHrefForQuery, NO_EXACT_ALERT_LIST, smartAlertHref, withCount, type DrillWindow } from '$lib/utils/drilldown';
+	import { formatTime } from '$lib/utils/time';
 	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { DeviceConnectionSort } from '$api/devices';
 	import type { SmartAlert } from '$api/alerts';
@@ -54,6 +55,7 @@
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import DeviceTile from '$lib/components/ui/DeviceTile.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import AreaChart, { type AreaSeries } from '$lib/components/ui/charts/AreaChart.svelte';
 	import Ring from '$lib/components/ui/charts/Ring.svelte';
 
@@ -149,11 +151,13 @@
 	let autoRefresh = $state(false);
 
 	// #87: the range pills had no handlers, so every request used the daemon's 24 h default
-	const RANGE_HOURS = { '24h': 24, '7d': 168, '30d': 720 } as const;
+	// OLD CODE: const RANGE_HOURS = { '24h': 24, '7d': 168, '30d': 720 } as const; (NET-192 PR 4: Home's five ranges)
+	const RANGE_HOURS = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 } as const;
 	type RangeKey = keyof typeof RANGE_HOURS;
 	const RANGE_KEYS = Object.keys(RANGE_HOURS) as RangeKey[];
 	const RANGE_OPTIONS = RANGE_KEYS.map((key) => ({ value: key, label: key }));
-	const RANGE_LABEL: Record<RangeKey, string> = { '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' };
+	// OLD CODE: const RANGE_LABEL: Record<RangeKey, string> = { '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' }; (NET-192 PR 4)
+	const RANGE_LABEL: Record<RangeKey, string> = { '1h': 'Last hour', '6h': 'Last 6 hours', '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' };
 	let range = $state<RangeKey>('24h');
 	// The window of the last fetch; connection pages reuse it so paging doesn't slide in time
 	let span = $state<{ from: string; to: string }>({ from: '', to: '' });
@@ -401,9 +405,10 @@
 	});
 
 	// The page's own 30 s auto refresh, through the same contract so "Updated" stays honest
+	const AUTO_REFRESH_MS = 30_000;
 	$effect(() => {
 		if (!autoRefresh) return;
-		const timer = setInterval(() => refresh.runIfIdle(), 30_000);
+		const timer = setInterval(() => refresh.runIfIdle(), AUTO_REFRESH_MS);
 		return () => clearInterval(timer);
 	});
 
@@ -420,16 +425,21 @@
 	// }
 	// OLD CODE END
 
-	function formatNumber(n: number): string {
-		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-		if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-		return n.toLocaleString();
-	}
+	// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $lib/api/logs
+	// function formatNumber(n: number): string {
+	// 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	// 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	// 	return n.toLocaleString();
+	// }
+	// OLD CODE END
 
-	function formatDate(dateStr: string): string {
-		if (!dateStr) return '—';
-		try { return new Date(dateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch { return dateStr; }
-	}
+	// OLD CODE START — the browser's locale printed "Nov 6" (NET-192 PR 4: formatTime)
+	// function formatDate(dateStr: string): string {
+	// 	if (!dateStr) return '—';
+	// 	try { return new Date(dateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch { return dateStr; }
+	// }
+	// OLD CODE END
+	const formatDate = (dateStr: string) => formatTime(dateStr, 'short');
 
 	function timeAgo(dateStr: string): string {
 		if (!dateStr) return '—';
@@ -442,13 +452,16 @@
 		return `${Math.floor(hours / 24)}d ago`;
 	}
 
-	/** A chart time: the hour in the 24 h view, the day otherwise. */
-	function chartTime(t: number | string): string {
-		const d = new Date(t);
-		return range === '24h'
-			? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-			: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-	}
+	/** A chart time, with the detail the window's length calls for (utils/drilldown.ts chartTime). */
+	// OLD CODE START — the browser's locale ("07:00 PM"), and only the day at 7 d (NET-192 PR 4: the shared chartTime)
+	// function chartTime(t: number | string): string {
+	// 	const d = new Date(t);
+	// 	return range === '24h'
+	// 		? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+	// 		: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+	// }
+	// OLD CODE END
+	const chartTime = (t: number | string) => timeLabel(t, RANGE_HOURS[range]);
 
 	function chartTip(i: number): string {
 		const p = bandwidth[i];
@@ -634,7 +647,8 @@ OLD CODE END -->
 {/snippet}
 {#snippet portConnCell(p: DevicePort)}{formatNumber(p.connections)}{/snippet}
 {#snippet timeCell(r: ConnRow)}
-	<span class="mono">{range === '24h' ? new Date(asString(getField(r.conn, '@timestamp'))).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : new Date(asString(getField(r.conn, '@timestamp'))).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+	<!-- OLD CODE: <span class="mono">{range === '24h' ? new Date(…).toLocaleTimeString([], { hour, minute, second }) : new Date(…).toLocaleString([], { month, day, hour, minute })}</span> (NET-192 PR 4: the browser's locale printed "10:37:23 PM") -->
+	<span class="mono">{formatTime(asString(getField(r.conn, '@timestamp')), RANGE_HOURS[range] <= 24 ? 'clock' : 'short')}</span>
 {/snippet}
 <!-- OLD CODE START: {#snippet connDestCell(r: ConnRow)}<span class="mono">{asString(getField(r.conn, 'destination.ip'))}:{asString(getField(r.conn, 'destination.port'))}</span>{/snippet} (slice 2a: the address wasn't a link) OLD CODE END -->
 {#snippet connDestCell(r: ConnRow)}
@@ -681,9 +695,12 @@ OLD CODE END -->
 			<button class="pill">30d</button>
 			OLD CODE END -->
 			<Pills ariaLabel="Time range" options={RANGE_OPTIONS} bind:value={range} />
+			<!-- OLD CODE START — NET-192 PR 4: Home's Auto / Paused button on every page
 			<button class="btn" type="button" aria-pressed={autoRefresh} onclick={() => (autoRefresh = !autoRefresh)}>
 				<Icon name="refresh" />Auto
 			</button>
+			OLD CODE END -->
+			<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={() => (autoRefresh = !autoRefresh)} />
 		</div>
 	</div>
 	{#if device && device.ip}
@@ -706,7 +723,8 @@ OLD CODE END -->
 
 {#if device && device.ip}
 	{#if deviceFailed}
-		<p class="note">{loadFailed('this device', true)}</p>
+		<!-- OLD CODE: <p class="note">{loadFailed('this device', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
+		<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('this device', true)}</span></p>
 	{/if}
 
 	<div class="grid">
@@ -741,7 +759,8 @@ OLD CODE END -->
 					<Ring value={riskScore} ariaLabel="Risk score {riskScore} of 100, {riskLevel}" />
 					{#if riskSeverity}<SeverityPill level={riskSeverity} />{/if}
 				</div>
-				{#if riskFailed}<p class="note">{loadFailed('the risk score', true)}</p>{/if}
+				<!-- OLD CODE: <p class="note">{loadFailed('the risk score', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
+				{#if riskFailed}<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('the risk score', true)}</span></p>{/if}
 				{#if riskFactors.length > 0}
 					<ul class="score-rows">
 						{#each riskFactors as factor, i (`${factor.name}-${i}`)}
@@ -834,7 +853,8 @@ OLD CODE END -->
 				{:else if categories.length === 0}
 					<CardState state="empty" icon="bandwidth" title="No category data available." />
 				{:else}
-					{#if categoriesFailed}<p class="note">{loadFailed('traffic categories', true)}</p>{/if}
+					<!-- OLD CODE: <p class="note">{loadFailed('traffic categories', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
+					{#if categoriesFailed}<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('traffic categories', true)}</span></p>{/if}
 					<BarList
 						items={categories.map((c, i) => ({
 							key: `${c.name}-${i}`,
@@ -891,7 +911,8 @@ OLD CODE END -->
 			{:else if ports.length === 0}
 				<CardState state="empty" icon="connections" title="No port data." />
 			{:else}
-				{#if portsFailed}<p class="note">{loadFailed('ports', true)}</p>{/if}
+				<!-- OLD CODE: <p class="note">{loadFailed('ports', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
+				{#if portsFailed}<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('ports', true)}</span></p>{/if}
 				<DataTable ariaLabel="Top ports" rows={ports.slice(0, 8)} rowKey={(p) => p.port} initialSort={{ key: 'connections', dir: 'desc' }} columns={portColumns} />
 			{/if}
 		</Card>
@@ -945,7 +966,8 @@ OLD CODE END -->
 	/* Layout glue the system lacks */
 	.ident-meta > div { min-width: 0; }
 	.ident-meta dd { margin: 0; }
-	.note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); }
+	/* OLD CODE: .note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); } (NET-192 PR 4: its stale notes are the amber notice) */
+	.load-note { margin-bottom: var(--sp-3); }
 	.sa-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
 	.sa { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line); }
 	.sa-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; font-size: var(--text-sm); }

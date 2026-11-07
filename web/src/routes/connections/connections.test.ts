@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
-import { getConnections, getConnectionStats, getConnectionSankey } from '$api/traffic';
+import { getConnections, getConnectionStats, getConnectionSankey, getConnectionTimeline } from '$api/traffic';
 import { getLiveDashboard } from '$api/live';
 import Page from './+page.svelte';
 
@@ -125,7 +125,7 @@ describe('Connections — auto-refresh', () => {
 		await flush();
 		expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'page');
 
-		await fireEvent.click(screen.getByRole('button', { name: 'Auto' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Paused' }));
 		vi.mocked(getConnections).mockClear();
 		vi.advanceTimersByTime(15_000);
 		await flush();
@@ -374,4 +374,41 @@ describe('Connections — labels say what the figures count', () => {
 		await flush();
 		expect(getConnections).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'NOT _exists_:destination.as.full' }));
 	});
+});
+
+// NET-192 PR 4: Home's ranges but 30d (the page's shortcut: connections stats is too slow at 30 days for now)
+describe('Connections — the range set', () => {
+	beforeEach(() => {
+		vi.mocked(getConnections).mockImplementation(async (opts = {}) => connectionsPage(opts.page ?? 1));
+		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard(1));
+	});
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
+
+	const hours = (asked: { from?: string; to?: string }) => (Date.parse(asked.to!) - Date.parse(asked.from!)) / 3_600_000;
+
+	it('offers 1h 6h 24h 7d, and asks for the timeline in 6-hour buckets at 7d', async () => {
+		render(Page);
+		await flush();
+		const pills = within(screen.getByRole('group', { name: 'Time range' })).getAllByRole('button');
+		expect(pills.map((b) => b.textContent?.trim())).toEqual(['1h', '6h', '24h', '7d']);
+		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
+		await flush();
+		const asked = vi.mocked(getConnectionTimeline).mock.lastCall![0]!;
+		expect(asked.interval).toBe('6h');
+		expect(hours(asked)).toBeCloseTo(168);
+	});
+
+	// OLD CODE START — the page never reads ?range, so this only tested the mock (NET-192 PR 4 review)
+	// it('opens an old ?range=30d link on the default hour, as any unknown range', async () => {
+	// 	pageUrl.current = 'http://localhost/connections?range=30d';
+	// 	render(Page);
+	// 	await flush();
+	// 	expect(screen.getByRole('button', { name: '1h' })).toHaveAttribute('aria-pressed', 'true');
+	// 	expect(screen.queryByRole('button', { name: '30d' })).not.toBeInTheDocument();
+	// 	expect(hours(vi.mocked(getConnectionStats).mock.lastCall![0]!)).toBeCloseTo(1);
+	// 	expect(vi.mocked(getConnectionTimeline).mock.lastCall![0]!.interval).toBe('5m');
+	// });
+	// OLD CODE END
 });

@@ -3,6 +3,7 @@
  * Wraps GET /api/capture/mode, /api/capture/health, /api/capture/stats,
  *        GET /api/capture/status, PUT /api/capture/toggle, PUT /api/capture/settings.
  */
+import { fmt } from '$lib/utils/drilldown';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -97,8 +98,8 @@ export function lossWords(lw: LossWindow): LossWords {
 	const status = w.drop_rate_pct > 0.1 ? 'failing' : 'ok';
 	const detail =
 		w.lost > 0
-			? `${pct} lost in the ${span} · ${w.lost.toLocaleString()} packets`
-			: `No packets lost in the ${span} · ${w.arrived.toLocaleString()} received`;
+			? `${pct} lost in the ${span} · ${fmt(w.lost)} packets`
+			: `No packets lost in the ${span} · ${fmt(w.arrived)} received`;
 	return { status, detail, pct };
 }
 

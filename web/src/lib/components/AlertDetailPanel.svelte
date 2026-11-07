@@ -11,6 +11,7 @@
 	import { acknowledgeAlert } from '$api/alerts';
 	import type { Alert } from '$api/alerts';
 	import IPAddress from '$components/IPAddress.svelte';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// Props
@@ -69,22 +70,25 @@
 	// Helpers
 	// ---------------------------------------------------------------------------
 
-	function formatTimestamp(ts: string | undefined): string {
-		if (!ts) return '--';
-		try {
-			const d = new Date(ts);
-			return d.toLocaleString(undefined, {
-				year: 'numeric',
-				month: 'short',
-				day: 'numeric',
-				hour: '2-digit',
-				minute: '2-digit',
-				second: '2-digit',
-			});
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — the browser's locale printed "11/6/2026, 10:37:23 PM" (NET-192 PR 4: formatTime)
+	// function formatTimestamp(ts: string | undefined): string {
+	// 	if (!ts) return '--';
+	// 	try {
+	// 		const d = new Date(ts);
+	// 		return d.toLocaleString(undefined, {
+	// 			year: 'numeric',
+	// 			month: 'short',
+	// 			day: 'numeric',
+	// 			hour: '2-digit',
+	// 			minute: '2-digit',
+	// 			second: '2-digit',
+	// 		});
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatTimestamp = (ts: string | undefined) => formatTime(ts);
 
 	function protoLabel(proto: string | undefined): string {
 		if (!proto) return '?';

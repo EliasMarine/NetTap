@@ -52,6 +52,8 @@
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { getTrafficSummary } from '$api/traffic';
 	import { getAlertCount } from '$api/alerts';
+	import { fmt } from '$lib/utils/drilldown';
+	import { formatTime } from '$lib/utils/time';
 
 	// OLD CODE START — the topology's click-to-open detail panels and the page Refresh button are gone: every
 	// stage card is always shown, and the top bar's Refresh runs the page loader
@@ -156,13 +158,16 @@
 
 	function formatNumber(n: number | null | undefined): string {
 		if (n == null || !isFinite(n)) return '--';
-		return n.toLocaleString();
+		return fmt(n);
 	}
 
-	function formatDate(d: string | null | undefined): string {
-		if (!d) return '--';
-		try { return new Date(d).toLocaleDateString(); } catch { return '--'; }
-	}
+	// OLD CODE START — the browser's locale printed "11/6/2026" (NET-192 PR 4: formatTime)
+	// function formatDate(d: string | null | undefined): string {
+	// 	if (!d) return '--';
+	// 	try { return new Date(d).toLocaleDateString(); } catch { return '--'; }
+	// }
+	// OLD CODE END
+	const formatDate = (d: string | null | undefined) => formatTime(d, 'date');
 
 	function formatUptime(seconds: number): string {
 		if (!seconds || seconds <= 0) return '--';

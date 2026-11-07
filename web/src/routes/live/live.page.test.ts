@@ -182,13 +182,13 @@ describe('Live refresh contract', () => {
 
 	it('paused: the loader reports skipped and makes no request', async () => {
 		await renderLive();
-		await fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Auto' }));
 		vi.mocked(getLiveDashboard).mockClear();
 		expect(await refreshPage()).toBe('skipped');
 		vi.advanceTimersByTime(9000);
 		await flush();
 		expect(getLiveDashboard).not.toHaveBeenCalled();
-		expect(screen.getByText('Paused')).toBeInTheDocument();
+		expect(screen.getAllByText('Paused')).toHaveLength(2); // the chip, and Home's Auto / Paused button
 	});
 
 	it('the 3 s loop goes through the loader and waits while a load is running', async () => {
@@ -258,11 +258,11 @@ describe('Live feed motion', () => {
 		await renderLive();
 		expect(getLiveDashboard).toHaveBeenCalledTimes(1);
 		expect(feed()).toHaveLength(4);
-		expect(screen.getByText('Paused')).toBeInTheDocument();
+		expect(screen.getAllByText('Paused')).toHaveLength(2); // the chip, and Home's Auto / Paused button
 		vi.advanceTimersByTime(9000);
 		await flush();
 		expect(getLiveDashboard).toHaveBeenCalledTimes(1);
-		expect(screen.getByRole('button', { name: 'Resume' })).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Paused' })).toBeInTheDocument();
 	});
 });
 

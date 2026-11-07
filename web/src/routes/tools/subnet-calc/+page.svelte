@@ -3,6 +3,7 @@
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { fmt } from '$lib/utils/drilldown';
 
 	// ---------------------------------------------------------------------------
 	// Helpers
@@ -98,8 +99,8 @@
 					{ label: 'Broadcast address', value: result.broadcastAddress, mono: true },
 					{ label: 'First usable IP', value: result.firstUsable, mono: true },
 					{ label: 'Last usable IP', value: result.lastUsable, mono: true },
-					{ label: 'Total hosts', value: result.totalHosts.toLocaleString() },
-					{ label: 'Usable hosts', value: result.usableHosts.toLocaleString() },
+					{ label: 'Total hosts', value: fmt(result.totalHosts) },
+					{ label: 'Usable hosts', value: fmt(result.usableHosts) },
 					{ label: 'Netmask', value: result.netmask, mono: true },
 					{ label: 'Wildcard mask', value: result.wildcardMask, mono: true },
 				]

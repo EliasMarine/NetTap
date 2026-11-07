@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
+	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { fetchCaptureStatus, toggleCapture, updateCaptureSettings } from '$lib/api/capture';
 	import { previewCleanup, executeCleanup, type CleanupPreview } from '$lib/api/storage';
 	import { getUnifiStatus } from '$lib/api/unifi';
@@ -13,6 +14,7 @@
 	import Pills, { type PillOption } from '$lib/components/ui/Pills.svelte';
 	import StatStrip from '$lib/components/ui/StatStrip.svelte';
 	import Meter from '$lib/components/ui/Meter.svelte';
+	import { formatTime } from '$lib/utils/time';
 
 	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'integrations' | 'display' | 'about';
 
@@ -232,7 +234,8 @@
 		return { status, ilmOk, ilmPending, pruneOk, pruneStale, diskPct, diskHigh, diskCritical };
 	});
 
-	async function loadAbout() {
+	/** True when both reads answered (the page loader's outcome). */
+	async function loadAbout(): Promise<boolean> {
 		try {
 			const [healthRes, versionsRes] = await Promise.all([
 				fetch('/api/system/health'),
@@ -263,8 +266,10 @@
 				// OLD CODE: buildInfo = data.build ?? data.commit ?? 'Development build';
 				buildInfo = data.build ?? data.commit ?? null;
 			}
+			return healthRes.ok && versionsRes.ok;
 		} catch {
 			// Will use defaults
+			return false;
 		}
 	}
 
@@ -275,7 +280,8 @@
 				const parsed = JSON.parse(stored);
 				autoRefresh = parsed.autoRefresh ?? '30';
 				timezone = parsed.timezone ?? 'local';
-				defaultTimeRange = parsed.defaultTimeRange ?? '1h';
+				// OLD CODE: defaultTimeRange = parsed.defaultTimeRange ?? '1h'; (NET-192 PR 4: a saved 15m or 4h is no longer offered)
+				defaultTimeRange = ['1h', '6h', '24h', '7d', '30d'].includes(parsed.defaultTimeRange) ? parsed.defaultTimeRange : '1h';
 			}
 		} catch {
 			// Will use defaults
@@ -638,16 +644,45 @@
 		return `${Math.floor(hours / 24)}d ago`;
 	}
 
+	// OLD CODE START — NET-192 PR 4: the top bar's Refresh did nothing here; the reads go through the page loader
+	// onMount(() => {
+	// 	loadNotificationConfig();
+	// 	loadRetention();
+	// 	loadDiskUsage();
+	// 	loadExcludedIps();
+	// 	loadApiKeys();
+	// 	loadAbout();
+	// 	loadDisplaySettings();
+	// 	loadCaptureSettings();
+	// 	loadUnifiStatus();
+	// });
+	// OLD CODE END
+	/**
+	 * The top bar's Refresh: the read-only status sections only (Retention health, About), never a
+	 * form, so an unsaved edit survives it. Capture and UniFi status share their loaders with their
+	 * forms, so they stay read once, with the forms.
+	 */
+	async function load(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		// shortcut: each read writes its own section unguarded; neither takes a range or filter, so an
+		// older reply answers the same question. Copy the query into locals if a section gains one.
+		const [, aboutOk] = await Promise.all([loadDiskUsage(), loadAbout()]);
+		if (!guard.current(g)) return 'skipped';
+		return outcome([storageStatusFailed, !aboutOk].map((bad): PromiseSettledResult<null> => (bad ? { status: 'rejected', reason: null } : { status: 'fulfilled', value: null })));
+	}
+
+	const refresh = registerPageRefresh(load);
+	onDestroy(refresh.unregister);
+	// The forms load once here, and again after a save, as before
 	onMount(() => {
 		loadNotificationConfig();
 		loadRetention();
-		loadDiskUsage();
 		loadExcludedIps();
 		loadApiKeys();
-		loadAbout();
 		loadDisplaySettings();
 		loadCaptureSettings();
 		loadUnifiStatus();
+		void refresh.run();
 	});
 
 	async function saveNotifications() {
@@ -938,7 +973,8 @@
 			</div>
 		</Card>
 	{:else if activeTab === 'retention'}
-		<Card title="Retention health" sub="Storage status · read when this page opened" class="c-4">
+		<!-- OLD CODE: sub="Storage status · read when this page opened" (NET-192 PR 4: the top bar's Refresh reads it again) -->
+		<Card title="Retention health" sub="Storage status · read when the page opened or was refreshed" class="c-4">
 			{#snippet actions()}
 				{#if !storageLoading}
 					<!-- OLD CODE START — no unknown state
@@ -955,7 +991,8 @@
 				<CardState state="error" title={loadFailed('the storage status')} message="Check that NetTap is running on the System page, then reload." />
 			{:else}
 				{#if storageStatusFailed}
-					{@render feedback(loadFailed('the storage status', true), true)}
+					<!-- OLD CODE: {@render feedback(loadFailed('the storage status', true), true)} (a red role="alert" box; stale figures are an amber status, NET-192 PR 4) -->
+					<p class="notice is-warn" role="status"><Icon name="warn" /><span>{loadFailed('the storage status', true)}</span></p>
 				{/if}
 				<dl class="facts flush">
 					<dt>ILM policies</dt>
@@ -1097,7 +1134,7 @@
 					<section class="preview" aria-labelledby="cleanup-preview-title">
 						<div class="preview-head">
 							<h3 class="eyebrow" id="cleanup-preview-title">Cleanup preview</h3>
-							<span class="dim">Data before {new Date(cleanupPreview.cutoff_date).toLocaleDateString()}</span>
+							<span class="dim">Data before {formatTime(cleanupPreview.cutoff_date, 'date')}</span>
 						</div>
 						<StatStrip
 							stats={[
@@ -1495,11 +1532,18 @@
 					<div class="field">
 						<label class="label" for="default-range">Default time range</label>
 						<select class="select" id="default-range" bind:value={defaultTimeRange}>
+							<!-- OLD CODE START — NET-192 PR 4: one range set across the app (1h 6h 24h 7d 30d)
 							<option value="15m">Last 15 minutes</option>
 							<option value="1h">Last 1 hour</option>
 							<option value="4h">Last 4 hours</option>
 							<option value="24h">Last 24 hours</option>
 							<option value="7d">Last 7 days</option>
+							OLD CODE END -->
+							<option value="1h">Last hour</option>
+							<option value="6h">Last 6 hours</option>
+							<option value="24h">Last 24 hours</option>
+							<option value="7d">Last 7 days</option>
+							<option value="30d">Last 30 days</option>
 						</select>
 						<p class="field-help">Default time window for traffic and alert views.</p>
 					</div>
@@ -1513,7 +1557,8 @@
 			</div>
 		</Card>
 	{:else if activeTab === 'about'}
-		<Card title="About NetTap" sub="This appliance · read when this page opened" class="c-6">
+		<!-- OLD CODE: sub="This appliance · read when this page opened" (NET-192 PR 4: the top bar's Refresh reads it again) -->
+		<Card title="About NetTap" sub="This appliance · read when the page opened or was refreshed" class="c-6">
 			<dl class="facts flush">
 				<dt>Version</dt>
 				<dd class="mono">{version}</dd>

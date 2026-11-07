@@ -16,6 +16,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	// OLD CODE: import { alertsHrefForSignature } from '$lib/utils/drilldown'; (slice 2b-2)
 	import { alertsHrefForSignature, suricataCategoryHref } from '$lib/utils/drilldown';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// Props
@@ -69,19 +70,22 @@
 		return `${Math.floor(totalMin / 60)}h ${totalMin % 60}m`;
 	}
 
-	function formatTimestamp(ts: string): string {
-		try {
-			return new Date(ts).toLocaleString(undefined, {
-				month: 'short',
-				day: 'numeric',
-				hour: '2-digit',
-				minute: '2-digit',
-				second: '2-digit',
-			});
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — the browser's locale printed "Nov 6, 10:37:23 PM" (NET-192 PR 4: formatTime)
+	// function formatTimestamp(ts: string): string {
+	// 	try {
+	// 		return new Date(ts).toLocaleString(undefined, {
+	// 			month: 'short',
+	// 			day: 'numeric',
+	// 			hour: '2-digit',
+	// 			minute: '2-digit',
+	// 			second: '2-digit',
+	// 		});
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatTimestamp = (ts: string) => formatTime(ts);
 
 	// Unused since the restyle: the design system allows no emoji, so the Country row no longer shows a flag.
 	function countryFlag(code: string): string {
@@ -230,7 +234,7 @@
 		{/if}
 	</DrawerSection>
 
-	<DrawerSection title="24h history">
+	<DrawerSection title="Last 24 hours">
 		{#if detailLoading}
 			<div class="loading-row">
 				<span class="loading-spinner"></span>

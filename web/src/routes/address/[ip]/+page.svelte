@@ -43,7 +43,9 @@
 	const ip = $derived(($page.params as Record<string, string>).ip ?? '');
 
 	let rangeValue = $state<DrillRangeValue>('24h');
-	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES[0]);
+	// OLD CODE: ?? DRILL_RANGES[0]); (NET-192 PR 4: 1h and 6h added, 24h is index 2)
+	// OLD CODE: ?? DRILL_RANGES[2] (NET-192 PR 4: the default by value, not by position)
+	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES.find((r) => r.value === '24h')!);
 	/** The window of the last load: links and connection pages use it, so they never slide in time. */
 	let span = $state<{ from: string; to: string }>({ from: '', to: '' });
 

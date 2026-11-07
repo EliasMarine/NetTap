@@ -15,6 +15,7 @@
 	import CardState from '$components/ui/CardState.svelte';
 	import KpiCard from '$components/ui/KpiCard.svelte';
 	import Pills from '$components/ui/Pills.svelte';
+	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import BarList from '$components/ui/BarList.svelte';
 	import DeviceList from '$components/ui/DeviceList.svelte';
 	import Pipeline from '$components/ui/Pipeline.svelte';
@@ -30,7 +31,7 @@
 	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTrafficCategories } from '$api/traffic';
 	import type { TrafficSummary, BandwidthPoint, ProtocolEntry, TrafficCategory } from '$api/traffic';
 	import { getAlertCount, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
-	import { connLogsHref, NO_EXACT_ALERT_LIST, smartAlertHref, windowQuery, withCount, type DrillWindow } from '$lib/utils/drilldown';
+	import { connLogsHref, fmt, NO_EXACT_ALERT_LIST, smartAlertHref, windowQuery, withCount, type DrillWindow } from '$lib/utils/drilldown';
 	import type { AlertCountResponse, SmartAlert, SmartAlertSummary } from '$api/alerts';
 	import { getDevices, getDeviceCount } from '$api/devices';
 	import type { Device, DeviceCountResponse } from '$api/devices';
@@ -66,7 +67,8 @@
 	const RANGE_OPTIONS = RANGES.map(({ value, label }) => ({ value, label }));
 
 	let range = $state<RangeKey>('24h');
-	const span = $derived(RANGES.find((r) => r.value === range) ?? RANGES[2]);
+	// OLD CODE: ?? RANGES[2] (NET-192 PR 4: the default by value, not by position)
+	const span = $derived(RANGES.find((r) => r.value === range) ?? RANGES.find((r) => r.value === '24h')!);
 	const windowText = $derived(span.window.toLowerCase());
 
 	let autoRefresh = $state(true);
@@ -467,7 +469,8 @@
 		alertCountFailed
 			? loadFailed('the alert count', alertCount !== null)
 			: alertCount
-				? `${alertCount.counts.high} high, ${alertCount.counts.medium} med, ${alertCount.counts.low} low`
+				// OLD CODE: ? `${alertCount.counts.high} high, ${alertCount.counts.medium} med, ${alertCount.counts.low} low` (NET-192 PR 4: "9000 high", no separators)
+				? `${fmt(alertCount.counts.high)} high, ${fmt(alertCount.counts.medium)} med, ${fmt(alertCount.counts.low)} low`
 				: 'Loading…',
 	);
 	const devicesSub = $derived(
@@ -564,7 +567,7 @@
 	);
 	const gaugeAria = $derived(
 		alertCount
-			? `${alertCount.counts.total.toLocaleString('en-GB')} alerts in the ${windowText}: ${alertCount.counts.high} high, ${alertCount.counts.medium} medium, ${alertCount.counts.low} low`
+			? `${alertCount.counts.total.toLocaleString('en-GB')} alerts in the ${windowText}: ${fmt(alertCount.counts.high)} high, ${fmt(alertCount.counts.medium)} medium, ${fmt(alertCount.counts.low)} low`
 			: '',
 	);
 
@@ -588,6 +591,7 @@
 	</div>
 	<div class="head-actions">
 		<Pills options={RANGE_OPTIONS} bind:value={range} onchange={changeRange} ariaLabel="Time range" />
+		<!-- OLD CODE START — NET-192 PR 4: this button, now AutoRefreshButton so every page has it
 		<button
 			class="btn"
 			type="button"
@@ -596,6 +600,8 @@
 		>
 			<Icon name={autoRefresh ? 'refresh' : 'pause'} />{autoRefresh ? 'Auto' : 'Paused'}
 		</button>
+		OLD CODE END -->
+		<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={() => (autoRefresh = !autoRefresh)} />
 	</div>
 </div>
 
@@ -624,7 +630,7 @@ OLD CODE END -->
 {/snippet}
 
 {#snippet staleNote(what: string)}
-	<p class="notice is-warn stale"><Icon name="warn" /><span>{loadFailed(what, true)}</span></p>
+	<p class="notice is-warn stale" role="status"><Icon name="warn" /><span>{loadFailed(what, true)}</span></p>
 {/snippet}
 
 <div class="grid">
