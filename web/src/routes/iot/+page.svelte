@@ -716,7 +716,8 @@ OLD CODE END -->
 				: `${fleet.unencrypted_count === 0 ? 'None' : 'Devices'} under 50% encrypted · ${encryptionMeasured} of ${fleet.device_count} measured`}
 			note={rangeLabel} />
 
-		<Card class="c-4" hero title="Smart home health" sub="Trust score out of 100 · from {fleet.scored_device_count} of {fleet.device_count} devices · {rangeLabel}">
+		<!-- OLD CODE: <Card class="c-4" hero title="Smart home health" …> (NET-192 PR 4: the hero is the row's c-8 card, Findings) -->
+		<Card class="c-4" title="Smart home health" sub="Trust score out of 100 · from {fleet.scored_device_count} of {fleet.device_count} devices · {rangeLabel}">
 			<div class="trust-top">
 				<!-- OLD CODE START — NET-158: no scored device drew 0, grade F
 				<Ring value={healthScore} ariaLabel="Smart home health {healthScore} of 100, grade {healthGrade}" />
@@ -734,7 +735,7 @@ OLD CODE END -->
 			{@render scores(scoreRows(fleet))}
 		</Card>
 
-		<Card class="c-8" title="Findings" sub="From the privacy and protocol checks · {rangeLabel}">
+		<Card class="c-8" hero title="Findings" sub="From the privacy and protocol checks · {rangeLabel}">
 			{#snippet actions()}
 				{#if findings.length > 0}<span class="chip is-warn">{findings.length} findings</span>{/if}
 			{/snippet}

@@ -418,17 +418,22 @@
 {:else}
 	<div class="grid">
 		<!-- KPI row -->
+		<!-- OLD CODE: sub={THREAT_SCORE_HOW} (NET-192 PR 4: a whole paragraph in a KPI; it is one click away in the foot now) -->
 		<KpiCard
 			class="c-3"
 			label="Threat score"
 			icon="threats"
 			value={threatScore}
 			unit="/100"
-			sub={THREAT_SCORE_HOW}
+			sub="Higher is riskier · {rangeText}"
 			note={baseline ? `${baseline.deviation}× ${baseline.is_anomalous ? 'above' : 'vs'} baseline` : undefined}
 		>
 			{#snippet foot()}
 				{#if threatLevelPill}<SeverityPill level={threatLevelPill} />{:else}<span class="dim">No threat level</span>{/if}
+				<details class="score-how">
+					<summary>How the score is worked out</summary>
+					<p>{THREAT_SCORE_HOW}</p>
+				</details>
 			{/snippet}
 		</KpiCard>
 		<KpiCard
@@ -766,4 +771,8 @@
 	@media (prefers-reduced-motion: reduce) {
 		.inv-head :global(.inv-chev) { transition: none; }
 	}
+	/* NET-192 PR 4: the threat score's explanation, under its level */
+	.score-how { margin-top: var(--sp-2); font-size: var(--text-xs); color: var(--text-3); }
+	.score-how summary { cursor: pointer; color: var(--text-2); }
+	.score-how p { margin: var(--sp-2) 0 0; }
 </style>

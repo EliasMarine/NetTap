@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
+	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { fetchCaptureStatus, toggleCapture, updateCaptureSettings } from '$lib/api/capture';
 	import { previewCleanup, executeCleanup, type CleanupPreview } from '$lib/api/storage';
 	import { getUnifiStatus } from '$lib/api/unifi';
@@ -640,17 +641,46 @@
 		return `${Math.floor(hours / 24)}d ago`;
 	}
 
-	onMount(() => {
-		loadNotificationConfig();
-		loadRetention();
-		loadDiskUsage();
-		loadExcludedIps();
-		loadApiKeys();
-		loadAbout();
-		loadDisplaySettings();
-		loadCaptureSettings();
-		loadUnifiStatus();
-	});
+	// OLD CODE START — NET-192 PR 4: the top bar's Refresh did nothing here; the reads go through the page loader
+	// onMount(() => {
+	// 	loadNotificationConfig();
+	// 	loadRetention();
+	// 	loadDiskUsage();
+	// 	loadExcludedIps();
+	// 	loadApiKeys();
+	// 	loadAbout();
+	// 	loadDisplaySettings();
+	// 	loadCaptureSettings();
+	// 	loadUnifiStatus();
+	// });
+	// OLD CODE END
+	/**
+	 * The first load and the top bar's Refresh: every read on the page. A refresh reloads the forms
+	 * too, as reloading the page would, so an unsaved edit is replaced by the saved value.
+	 */
+	async function load(guard: LoadGuard): Promise<LoadResult> {
+		const g = guard.begin();
+		// shortcut: each read writes its own section unguarded; none takes a range or filter, so an older
+		// reply answers the same question. Copy the query into locals if a section gains one.
+		await Promise.all([
+			loadNotificationConfig(),
+			loadRetention(),
+			loadDiskUsage(),
+			loadExcludedIps(),
+			loadApiKeys(),
+			loadAbout(),
+			loadDisplaySettings(),
+			loadCaptureSettings(),
+			loadUnifiStatus(),
+		]);
+		if (!guard.current(g)) return 'skipped';
+		const failed = [notifLoadFailed, retentionLoad === 'failed', storageStatusFailed, networkLoadFailed, captureLoadFailed, unifiStatusFailed];
+		return outcome(failed.map((bad): PromiseSettledResult<null> => (bad ? { status: 'rejected', reason: null } : { status: 'fulfilled', value: null })));
+	}
+
+	const refresh = registerPageRefresh(load);
+	onDestroy(refresh.unregister);
+	onMount(() => void refresh.run());
 
 	async function saveNotifications() {
 		notifSaving = true;

@@ -140,8 +140,9 @@ describe('Threats page — card states', () => {
 		render(ThreatsPage);
 		await vi.waitFor(() => expect(screen.getByText('72')).toBeInTheDocument());
 		expect(screen.getByText('High')).toBeInTheDocument(); // threat level as a SeverityPill
-		// NET-164: the score states how it is worked out
-		expect(screen.getByText(THREAT_SCORE_HOW)).toBeInTheDocument();
+		// NET-164: the score states how it is worked out; NET-192 PR 4: one click away, not as the KPI's sub
+		expect(screen.getByText(THREAT_SCORE_HOW).closest('details')).toHaveTextContent('How the score is worked out');
+		expect(screen.getByText(/^Higher is riskier · /)).toHaveClass('kpi-sub');
 		expect(screen.getByText('Abuse.ch Feodo')).toBeInTheDocument();
 		expect(screen.getByRole('img', { name: /Malware & C2 40/ })).toBeInTheDocument();
 

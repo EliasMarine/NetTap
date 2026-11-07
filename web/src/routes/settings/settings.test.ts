@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { get } from 'svelte/store';
-import { pageRefresh } from '$lib/stores/pageRefresh';
+import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import { previewCleanup, executeCleanup } from '$lib/api/storage';
 import Page from './+page.svelte';
 
@@ -486,11 +486,27 @@ describe('Settings — section tabs', () => {
 		expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'settings-panel-notifications');
 	});
 
-	it('registers no page refresh, so the top bar hides Refresh (forms-only page)', async () => {
-		stubFetch();
-		render(Page);
+	// OLD CODE START — NET-192 PR 4: the top bar's Refresh now reloads the page's reads
+	// it('registers no page refresh, so the top bar hides Refresh (forms-only page)', async () => {
+	// 	stubFetch();
+	// 	render(Page);
+	// 	await flush();
+	//
+	// 	expect(get(pageRefresh).available).toBe(false);
+	// });
+	// OLD CODE END
+	it("registers a page refresh: the top bar's Refresh reads the page again and reports what failed", async () => {
+		const fetchFn = stubFetch({ '/api/storage/status': () => ({ body: { disk_usage_percent: 42 } }) });
+		const { unmount } = render(Page);
 		await flush();
+		expect(get(pageRefresh).available).toBe(true);
+		const storageReads = () => fetchFn.mock.calls.filter(([url]) => url === '/api/storage/status').length;
+		expect(storageReads()).toBe(1);
 
+		// every other read answers 500 here, so the page reports a partial load
+		expect(await refreshPage()).toBe('partial');
+		expect(storageReads()).toBe(2);
+		unmount();
 		expect(get(pageRefresh).available).toBe(false);
 	});
 });
