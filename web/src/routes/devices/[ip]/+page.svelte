@@ -965,7 +965,7 @@ OLD CODE END -->
 	/* Layout glue the system lacks */
 	.ident-meta > div { min-width: 0; }
 	.ident-meta dd { margin: 0; }
-	.note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); }
+	/* OLD CODE: .note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); } (NET-192 PR 4: its stale notes are the amber notice) */
 	.load-note { margin-bottom: var(--sp-3); }
 	.sa-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
 	.sa { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line); }
