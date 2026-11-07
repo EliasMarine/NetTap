@@ -176,7 +176,7 @@ All four gave the identical top 10 sources and destinations, so the `asn` and `g
 Five reviews of `fc59a144` plus `733af24e` (`deploy-speed.sh`):
 
 - **/deep-review:** no findings (`security-reviews/feature-net192-speed/security-review.md`).
-- **security-engineer:** 3 Low. L1 and L3 are fixed below. L2 wasn't in the fix list for this round.
+- **security-engineer:** 3 Low, all fixed below. L1 is the IPv6 scope id; L2 is the WHOIS output cap (64 KiB); L3 is `LAN_SUBNETS` validation.
 - **Python reviewer, TypeScript reviewer, /ponytail-review:** no Critical or High.
 
 Fixed in this round, each with a test that fails without the fix (or a new test where the item is test-only):
