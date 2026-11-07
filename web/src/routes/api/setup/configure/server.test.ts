@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { daemonJSON } from '$lib/server/daemon.js';
 import { POST } from './+server';
 
-vi.mock('$lib/server/daemon.js', () => ({ daemonJSON: vi.fn() }));
+vi.mock('$lib/server/daemon.js', () => ({ daemonJSON: vi.fn(), RULE_UPDATE_TIMEOUT_MS: 290_000 }));
 
 async function post(body: unknown) {
 	const request = new Request('http://localhost/api/setup/configure', {
@@ -18,7 +18,7 @@ describe('POST /api/setup/configure', () => {
 		vi.mocked(daemonJSON).mockReset();
 	});
 
-	it('forwards the body to the daemon with a 60 s timeout', async () => {
+	it('forwards the body and waits as long as a rule update (Suricata restart)', async () => {
 		vi.mocked(daemonJSON).mockResolvedValue({ data: { status: 'ok' }, status: 200 });
 		const payload = { capture_mode: 'dhcp_gateway', capture_interface: 'eth1' };
 
@@ -27,7 +27,7 @@ describe('POST /api/setup/configure', () => {
 		expect(daemonJSON).toHaveBeenCalledWith(
 			'/api/setup/configure',
 			expect.objectContaining({ method: 'POST', body: JSON.stringify(payload) }),
-			60_000
+			290_000
 		);
 		expect(status).toBe(200);
 		expect(body).toEqual({ status: 'ok' });

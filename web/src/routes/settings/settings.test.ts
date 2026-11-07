@@ -613,3 +613,21 @@ describe('Settings — PCAP collection switch', () => {
 		expect(screen.getByRole('alert')).toHaveTextContent('Daemon unreachable');
 	});
 });
+
+describe('Settings — API keys: one place for the ET Pro code (NET-191)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('has no ET Pro key field, and links to Settings › Suricata rules instead', async () => {
+		stubFetch({ '/api/settings/api-keys': () => ({ body: { keys: { MAXMIND_LICENSE_KEY: false } } }) });
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('tab', { name: 'API keys' }));
+
+		expect(screen.getByLabelText('MaxMind licence key')).toBeInTheDocument();
+		expect(screen.queryByLabelText('Emerging Threats Pro key')).not.toBeInTheDocument();
+		expect(document.getElementById('et-pro-key')).toBeNull();
+		expect(screen.getByRole('link', { name: 'Settings › Suricata rules' })).toHaveAttribute('href', '/settings/suricata-rules');
+	});
+});

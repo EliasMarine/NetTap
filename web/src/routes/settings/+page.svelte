@@ -1286,6 +1286,8 @@
 
 					<section class="key-group" aria-labelledby="keys-ids">
 						<h3 class="eyebrow" id="keys-ids">IDS rules</h3>
+						<!-- OLD CODE START — NET-191 slice 2: this key was saved to the daemon's env file and never reached Suricata.
+						     The ET Pro code has one place now, Settings › Suricata rules.
 						<div class="form-grid">
 							<div class="field">
 								<div class="label-row"><label class="label" for="et-pro-key">Emerging Threats Pro key</label>{@render configured(apiKeysStatus['SURICATA_ET_PRO_KEY'])}</div>
@@ -1299,6 +1301,11 @@
 								<p class="field-help">Optional. Enables Proofpoint's commercial Suricata ruleset. Free ET Open rules are used by default.</p>
 							</div>
 						</div>
+						OLD CODE END -->
+						<p class="field-help">
+							The optional Emerging Threats Pro code is set in <a class="link" href="/settings/suricata-rules">Settings › Suricata rules</a>,
+							which checks it with Proofpoint before Suricata uses it.
+						</p>
 					</section>
 
 					<section class="key-group" aria-labelledby="keys-smtp">

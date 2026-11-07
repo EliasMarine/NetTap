@@ -17,6 +17,57 @@ export interface LiveRuleStatus {
 	sources: string[];
 	schedule: string | null; // cron expression, container time (UTC)
 	error: string | null;
+	// NET-191 slice 2; optional because an older daemon doesn't send them
+	/** suricata-update's enabled sources, e.g. "et/open". */
+	enabled_sources?: string[];
+	/** Active ET Pro rules. */
+	etpro_rules?: number;
+	/** What Suricata's socket reports; null when it didn't answer. */
+	engine?: { loaded: number; failed: number; reload_time: string | null } | null;
+	update?: RuleUpdateStatus;
+}
+
+/** The last rule update as the daemon recorded it (NET-191 slice 2). */
+export interface RuleUpdateStatus {
+	state: 'active' | 'prepared' | 'failed' | 'interrupted' | 'unknown';
+	attempt: string | null;
+	exit_code: number | null;
+	reason: string;
+	last_success: string | null;
+	last_activation: string | null;
+	/** No successful update in 48 hours. */
+	stale: boolean;
+	/** A restore of the last good rules isn't confirmed yet. */
+	recovery_pending: boolean;
+}
+
+/** The ET Pro code's status (GET /api/suricata/rules/commercial). The code itself is never returned. */
+export interface EtProStatus {
+	configured: boolean;
+	active: boolean;
+	last_update_ok: boolean | null;
+	/** Suricata is restarting with a new or removed code. */
+	applying: boolean;
+	activation: null | {
+		state: 'active' | 'failed' | 'timeout';
+		finished_at: string;
+		rules_loaded: number | null;
+		rules_failed: number | null;
+		etpro_rules: number;
+		enabled_sources: string[];
+		update_state: string;
+		message: string;
+	};
+}
+
+/** What saving or removing the ET Pro code answered; `error` is the daemon's plain-English reason. */
+export interface EtProChange {
+	ok: boolean;
+	status: number;
+	error?: string;
+	saved?: boolean;
+	cleared?: boolean;
+	applying?: boolean;
 }
 
 export interface RuleSource {
@@ -35,6 +86,9 @@ export interface RuleUpdateResult {
 	success: boolean;
 	output: string;
 	reload_output: string;
+	status?: RuleUpdateStatus;
+	/** Still running when the daemon stopped waiting (HTTP 202). */
+	running?: boolean;
 }
 
 export interface RuleStats {
@@ -56,12 +110,14 @@ export interface CustomRulesResult {
 	file: string;
 }
 
-export interface CommercialConfig {
-	configured: boolean;
-	source_type?: string;
-	license_key_masked?: string;
-	configured_at?: string;
-}
+// OLD CODE START — NET-191 slice 2: Snort Subscriber is retired; the ET Pro code has EtProStatus
+// export interface CommercialConfig {
+// 	configured: boolean;
+// 	source_type?: string;
+// 	license_key_masked?: string;
+// 	configured_at?: string;
+// }
+// OLD CODE END
 
 // ---------------------------------------------------------------------------
 // Fetch helpers
@@ -110,11 +166,21 @@ export async function updateRulesNow(): Promise<RuleUpdateResult> {
 		method: 'POST',
 	});
 
-	if (!res.ok) {
-		return { success: false, output: 'Request failed', reload_output: '' };
-	}
-
-	return res.json();
+	// OLD CODE START — NET-191 slice 2: every non-OK read "Request failed", losing the daemon's reason
+	// if (!res.ok) {
+	// 	return { success: false, output: 'Request failed', reload_output: '' };
+	// }
+	//
+	// return res.json();
+	// OLD CODE END
+	// 500 (failed) and 202 (still running) carry the daemon's own body; a proxy error carries `error`
+	const body = await res.json().catch(() => ({}));
+	return {
+		...body,
+		success: res.ok && body?.success === true,
+		output: typeof body?.output === 'string' ? body.output : (body?.error ?? `Request failed (HTTP ${res.status})`),
+		reload_output: body?.reload_output ?? '',
+	};
 }
 
 /**
@@ -194,40 +260,72 @@ export async function getCustomRules(): Promise<string> {
 	return data.content || '';
 }
 
-/**
- * Configure commercial rule source (ET Pro / Snort Subscriber).
- */
-export async function configureCommercial(
-	sourceType: string,
-	licenseKey: string
-): Promise<{ success: boolean }> {
-	const res = await fetch('/api/suricata/rules/commercial', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify({ source_type: sourceType, license_key: licenseKey }),
-	});
+// OLD CODE START — NET-191 slice 2: Snort Subscriber is retired; saveEtProCode, clearEtProCode and getEtProStatus replace these
+// /**
+//  * Configure commercial rule source (ET Pro / Snort Subscriber).
+//  */
+// export async function configureCommercial(
+// 	sourceType: string,
+// 	licenseKey: string
+// ): Promise<{ success: boolean }> {
+// 	const res = await fetch('/api/suricata/rules/commercial', {
+// 		method: 'POST',
+// 		headers: { 'Content-Type': 'application/json' },
+// 		body: JSON.stringify({ source_type: sourceType, license_key: licenseKey }),
+// 	});
+//
+// 	if (!res.ok) {
+// 		return { success: false };
+// 	}
+//
+// 	return res.json();
+// }
+//
+// /**
+//  * Get current commercial config (key masked).
+//  */
+// export async function getCommercialConfig(): Promise<CommercialConfig> {
+// 	const res = await fetch('/api/suricata/rules/commercial');
+//
+// 	// OLD CODE START — #96: a failure read as "no commercial license configured"
+// 	// if (!res.ok) {
+// 	// 	return { configured: false };
+// 	// }
+// 	// OLD CODE END
+// 	if (!res.ok) throw new Error(`Commercial config failed: HTTP ${res.status}`);
+//
+// 	return res.json();
+// }
+// OLD CODE END
 
-	if (!res.ok) {
-		return { success: false };
-	}
-
+/** Whether an ET Pro code is saved and in use. Throws on a failed request, so the page never reads "Not set" for "unknown". */
+export async function getEtProStatus(): Promise<EtProStatus> {
+	const res = await fetch('/api/suricata/rules/commercial');
+	if (!res.ok) throw new Error(`ET Pro status failed: HTTP ${res.status}`);
 	return res.json();
 }
 
-/**
- * Get current commercial config (key masked).
- */
-export async function getCommercialConfig(): Promise<CommercialConfig> {
-	const res = await fetch('/api/suricata/rules/commercial');
+/** Never throws on a 4xx/5xx: the daemon's `error` says why, and never contains the code. */
+async function changeEtPro(init: RequestInit): Promise<EtProChange> {
+	const res = await fetch('/api/suricata/rules/commercial', init);
+	const body = await res.json().catch(() => ({}));
+	if (res.ok) return { ...body, ok: true, status: res.status };
+	const error = typeof body?.error === 'string' && body.error ? body.error : `The request failed (HTTP ${res.status}).`;
+	return { ...body, ok: false, status: res.status, error };
+}
 
-	// OLD CODE START — #96: a failure read as "no commercial license configured"
-	// if (!res.ok) {
-	// 	return { configured: false };
-	// }
-	// OLD CODE END
-	if (!res.ok) throw new Error(`Commercial config failed: HTTP ${res.status}`);
+/** Save the ET Pro code (the daemon checks it with Proofpoint first, then restarts Suricata). */
+export function saveEtProCode(code: string): Promise<EtProChange> {
+	return changeEtPro({
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ code }),
+	});
+}
 
-	return res.json();
+/** Remove the ET Pro code; Suricata restarts on ET Open. */
+export function clearEtProCode(): Promise<EtProChange> {
+	return changeEtPro({ method: 'DELETE' });
 }
 
 /**

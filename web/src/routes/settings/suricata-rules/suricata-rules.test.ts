@@ -16,8 +16,10 @@ vi.mock('$lib/api/suricata-rules', () => ({
 	setUpdateSchedule: vi.fn(),
 	uploadCustomRules: vi.fn(),
 	getCustomRules: vi.fn(),
-	configureCommercial: vi.fn(),
-	getCommercialConfig: vi.fn(),
+	// OLD CODE START — NET-191 slice 2: retired with Snort Subscriber
+	// configureCommercial: vi.fn(),
+	// getCommercialConfig: vi.fn(),
+	// OLD CODE END
 }));
 
 import {
@@ -30,8 +32,10 @@ import {
 	setUpdateSchedule,
 	uploadCustomRules,
 	getCustomRules,
-	configureCommercial,
-	getCommercialConfig,
+	// OLD CODE START — NET-191 slice 2: retired with Snort Subscriber
+	// configureCommercial,
+	// getCommercialConfig,
+	// OLD CODE END
 } from '$lib/api/suricata-rules';
 
 describe('suricata-rules page data loading', () => {
@@ -116,23 +120,25 @@ describe('suricata-rules page data loading', () => {
 		expect(result.rules_written).toBe(2);
 	});
 
-	it('configureCommercial sends type and key', async () => {
-		vi.mocked(configureCommercial).mockResolvedValue({ success: true });
-
-		const result = await configureCommercial('etpro', 'ABCD12345678');
-		expect(result.success).toBe(true);
-		expect(configureCommercial).toHaveBeenCalledWith('etpro', 'ABCD12345678');
-	});
-
-	it('getCommercialConfig returns config', async () => {
-		vi.mocked(getCommercialConfig).mockResolvedValue({
-			configured: true,
-			source_type: 'etpro',
-			license_key_masked: 'ABCD****5678',
-		});
-
-		const result = await getCommercialConfig();
-		expect(result.configured).toBe(true);
-		expect(result.source_type).toBe('etpro');
-	});
+	// OLD CODE START — NET-191 slice 2: configureCommercial and getCommercialConfig are retired; the ET Pro calls are tested in $lib/api/suricata-rules.test.ts
+	// it('configureCommercial sends type and key', async () => {
+	// 	vi.mocked(configureCommercial).mockResolvedValue({ success: true });
+	//
+	// 	const result = await configureCommercial('etpro', 'ABCD12345678');
+	// 	expect(result.success).toBe(true);
+	// 	expect(configureCommercial).toHaveBeenCalledWith('etpro', 'ABCD12345678');
+	// });
+	//
+	// it('getCommercialConfig returns config', async () => {
+	// 	vi.mocked(getCommercialConfig).mockResolvedValue({
+	// 		configured: true,
+	// 		source_type: 'etpro',
+	// 		license_key_masked: 'ABCD****5678',
+	// 	});
+	//
+	// 	const result = await getCommercialConfig();
+	// 	expect(result.configured).toBe(true);
+	// 	expect(result.source_type).toBe('etpro');
+	// });
+	// OLD CODE END
 });

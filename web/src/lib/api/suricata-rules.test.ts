@@ -9,8 +9,13 @@ import {
 	setUpdateSchedule,
 	uploadCustomRules,
 	getCustomRules,
-	configureCommercial,
-	getCommercialConfig,
+	// OLD CODE START — NET-191 slice 2: retired with Snort Subscriber
+	// configureCommercial,
+	// getCommercialConfig,
+	// OLD CODE END
+	getEtProStatus,
+	saveEtProCode,
+	clearEtProCode,
 	getLiveRuleStatus,
 } from './suricata-rules';
 
@@ -142,6 +147,33 @@ describe('suricata-rules API client', () => {
 
 			expect(result.success).toBe(false);
 		});
+
+		// NET-191 slice 2: a 500 read "Request failed" and lost the daemon's reason
+		it("keeps the daemon's failure body on a 500", async () => {
+			const status = { state: 'failed', reason: 'ET Open download timed out', stale: false, recovery_pending: false };
+			mockFetchSuccess({ success: false, output: 'suricata-update exited 1', reload_output: '', status }, 500);
+
+			const result = await updateRulesNow();
+
+			expect(result).toMatchObject({ success: false, output: 'suricata-update exited 1', status });
+		});
+
+		it('says an update still running (202) is not a success', async () => {
+			mockFetchSuccess({ success: false, output: '', reload_output: '', running: true }, 202);
+
+			const result = await updateRulesNow();
+
+			expect(result.success).toBe(false);
+			expect(result.running).toBe(true);
+		});
+
+		it("carries a proxy error's text as the output", async () => {
+			mockFetchSuccess({ error: 'Daemon unavailable', daemonAvailable: false }, 502);
+
+			const result = await updateRulesNow();
+
+			expect(result).toMatchObject({ success: false, output: 'Daemon unavailable', reload_output: '' });
+		});
 	});
 
 	// -- getRuleStats -------------------------------------------------------
@@ -252,42 +284,115 @@ describe('suricata-rules API client', () => {
 		});
 	});
 
-	// -- configureCommercial / getCommercialConfig --------------------------
+	// OLD CODE START — NET-191 slice 2: configureCommercial and getCommercialConfig are retired
+	// // -- configureCommercial / getCommercialConfig --------------------------
+	//
+	// describe('configureCommercial', () => {
+	// 	it('sends POST with source type and license key', async () => {
+	// 		mockFetchSuccess({ success: true, source_type: 'etpro', configured_at: '2026-03-01' });
+	//
+	// 		const result = await configureCommercial('etpro', 'ABCDEFGH12345678');
+	//
+	// 		expect(fetch).toHaveBeenCalledWith('/api/suricata/rules/commercial', {
+	// 			method: 'POST',
+	// 			headers: { 'Content-Type': 'application/json' },
+	// 			body: JSON.stringify({ source_type: 'etpro', license_key: 'ABCDEFGH12345678' }),
+	// 		});
+	// 		expect(result.success).toBe(true);
+	// 	});
+	// });
+	//
+	// describe('getCommercialConfig', () => {
+	// 	it('returns config on success', async () => {
+	// 		mockFetchSuccess({
+	// 			configured: true,
+	// 			source_type: 'etpro',
+	// 			license_key_masked: 'ABCD****5678',
+	// 		});
+	//
+	// 		const result = await getCommercialConfig();
+	//
+	// 		expect(result.configured).toBe(true);
+	// 		expect(result.source_type).toBe('etpro');
+	// 	});
+	//
+	// 	// #96: "unconfigured" read as "no commercial license"
+	// 	it('throws on error', async () => {
+	// 		mockFetchFailure(500);
+	//
+	// 		await expect(getCommercialConfig()).rejects.toThrow('HTTP 500');
+	// 	});
+	// });
+	// OLD CODE END
 
-	describe('configureCommercial', () => {
-		it('sends POST with source type and license key', async () => {
-			mockFetchSuccess({ success: true, source_type: 'etpro', configured_at: '2026-03-01' });
+	// -- ET Pro (NET-191 slice 2) -------------------------------------------
 
-			const result = await configureCommercial('etpro', 'ABCDEFGH12345678');
+	describe('getEtProStatus', () => {
+		it('returns the status on success', async () => {
+			const body = { configured: true, active: true, last_update_ok: true, applying: false, activation: null };
+			mockFetchSuccess(body);
+
+			await expect(getEtProStatus()).resolves.toEqual(body);
+			expect(fetch).toHaveBeenCalledWith('/api/suricata/rules/commercial');
+		});
+
+		// "Not set" must never stand in for "unknown"
+		it('throws on error', async () => {
+			mockFetchFailure(500);
+
+			await expect(getEtProStatus()).rejects.toThrow('HTTP 500');
+		});
+	});
+
+	describe('saveEtProCode', () => {
+		it('POSTs the code as {code} and reports 202 as ok', async () => {
+			mockFetchSuccess({ saved: true, applying: true }, 202);
+
+			const result = await saveEtProCode('abcd1234ABCD5678');
 
 			expect(fetch).toHaveBeenCalledWith('/api/suricata/rules/commercial', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ source_type: 'etpro', license_key: 'ABCDEFGH12345678' }),
+				body: JSON.stringify({ code: 'abcd1234ABCD5678' }),
 			});
-			expect(result.success).toBe(true);
+			expect(result).toEqual({ ok: true, status: 202, saved: true, applying: true });
+		});
+
+		it("returns the daemon's error on a 400 instead of throwing", async () => {
+			mockFetchSuccess({ error: 'Proofpoint did not accept this code.' }, 400);
+
+			await expect(saveEtProCode('abcd1234ABCD5678')).resolves.toEqual({
+				ok: false,
+				status: 400,
+				error: 'Proofpoint did not accept this code.',
+			});
+		});
+
+		it('names the HTTP status when the reply has no error text', async () => {
+			mockFetchFailure(502);
+
+			const result = await saveEtProCode('abcd1234ABCD5678');
+
+			expect(result).toMatchObject({ ok: false, status: 502, error: 'The request failed (HTTP 502).' });
 		});
 	});
 
-	describe('getCommercialConfig', () => {
-		it('returns config on success', async () => {
-			mockFetchSuccess({
-				configured: true,
-				source_type: 'etpro',
-				license_key_masked: 'ABCD****5678',
-			});
+	describe('clearEtProCode', () => {
+		it('sends DELETE and reports what was cleared', async () => {
+			mockFetchSuccess({ cleared: true, applying: true }, 202);
 
-			const result = await getCommercialConfig();
+			const result = await clearEtProCode();
 
-			expect(result.configured).toBe(true);
-			expect(result.source_type).toBe('etpro');
+			expect(fetch).toHaveBeenCalledWith('/api/suricata/rules/commercial', { method: 'DELETE' });
+			expect(result).toEqual({ ok: true, status: 202, cleared: true, applying: true });
 		});
 
-		// #96: "unconfigured" read as "no commercial license"
-		it('throws on error', async () => {
-			mockFetchFailure(500);
+		it('returns the 409 error while a rule update runs', async () => {
+			mockFetchSuccess({ error: 'A rule update is running. Try again in a few minutes.' }, 409);
 
-			await expect(getCommercialConfig()).rejects.toThrow('HTTP 500');
+			const result = await clearEtProCode();
+
+			expect(result).toMatchObject({ ok: false, status: 409, error: 'A rule update is running. Try again in a few minutes.' });
 		});
 	});
 });
