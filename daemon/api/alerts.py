@@ -53,9 +53,26 @@ _SURICATA_ALERT_FILTERS: list[dict] = [
 # listings.  These fire millions of times (e.g., "SURICATA AF-PACKET
 # truncated packet", "SURICATA IPv4 truncated packet") and are not real
 # security alerts — they indicate capture-layer issues, not threats.
-_SURICATA_NOISE_EXCLUSION: list[dict] = [
+# OLD CODE START — NET-191: engine events were the only exclusion; ET's own informational
+# rules (STUN, DNS over HTTPS, …: 94% of the G11's alerts) counted like real threats
+# _SURICATA_NOISE_EXCLUSION: list[dict] = [
+#     {"prefix": {"rule.name": "SURICATA "}},
+# ]
+# OLD CODE END
+_SURICATA_ENGINE_EVENTS: list[dict] = [
     {"prefix": {"rule.name": "SURICATA "}},
 ]
+
+# ET rates these informational: they stay stored and are listed as activity (?activity=true) but
+# never counted (owner decision 2026-11-06: counts use ET's Minor, Major and Critical only).
+# A rule without the field (other sources, owner rules) counts.
+ET_ACTIVITY_CLAUSE: dict = {
+    "terms": {
+        "suricata.alert.metadata.signature_severity": ["Informational", "Unknown"]
+    }
+}
+
+_SURICATA_NOISE_EXCLUSION: list[dict] = [*_SURICATA_ENGINE_EVENTS, ET_ACTIVITY_CLAUSE]
 # Shared with the per-device alert counts (Devices, Risk) so every page counts alerts the
 # same way (dashboard data accuracy #60)
 SURICATA_NOISE_EXCLUSION = _SURICATA_NOISE_EXCLUSION
@@ -137,19 +154,34 @@ def alert_query(
     to_ts: str,
     narrow: list[dict] | tuple = (),
     exclude: list[dict] | tuple = (),
+    activity: bool = False,
 ) -> dict:
     """The alert list's query: Suricata alerts in the window without engine noise, plus `narrow`
-    filters and `exclude` must_nots. A drill-down counting with it equals the list it links to."""
+    filters and `exclude` must_nots. A drill-down counting with it equals the list it links to.
+
+    activity=True selects the alerts ET rates informational (listed, never counted) instead of
+    the counted ones (NET-191)."""
     return {
         "bool": {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
                 *_SURICATA_ALERT_FILTERS,
+                *([ET_ACTIVITY_CLAUSE] if activity else []),
                 *narrow,
             ],
-            "must_not": [*_SURICATA_NOISE_EXCLUSION, *exclude],
+            "must_not": [
+                *(_SURICATA_ENGINE_EVENTS if activity else _SURICATA_NOISE_EXCLUSION),
+                *exclude,
+            ],
         }
     }
+
+
+def activity_param(request: web.Request) -> bool | None:
+    """?activity=true lists the activity alerts (NET-191); absent or "false" the counted ones.
+    Anything else is None, a 400: a dropped filter would list other alerts than the link promised."""
+    raw = request.query.get("activity", "false")
+    return {"true": True, "false": False}.get(raw)
 
 
 def severity_clauses(raw: str) -> tuple[list[dict], list[dict]]:
@@ -446,6 +478,11 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": "suricata_category must be 1–1024 characters"}, status=400
             )
+    activity = activity_param(request)
+    if activity is None:
+        return web.json_response(
+            {"error": "activity must be true or false"}, status=400
+        )
     client = _get_client(request)
 
     offset = (page - 1) * size
@@ -579,15 +616,18 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
                 {"error": "unknown category, or a sub-category not in that category"},
                 status=400,
             )
-        base = {
-            "bool": {
-                "filter": [
-                    _time_range_filter(from_ts, to_ts),
-                    *_SURICATA_ALERT_FILTERS,
-                ],
-                "must_not": _SURICATA_NOISE_EXCLUSION,
-            }
-        }
+        # OLD CODE START — NET-191: the same query as alert_query(), which now also knows activity
+        # base = {
+        #     "bool": {
+        #         "filter": [
+        #             _time_range_filter(from_ts, to_ts),
+        #             *_SURICATA_ALERT_FILTERS,
+        #         ],
+        #         "must_not": _SURICATA_NOISE_EXCLUSION,
+        #     }
+        # }
+        # OLD CODE END
+        base = alert_query(from_ts, to_ts, activity=activity)
         try:
             names = [
                 b["key"]
@@ -625,7 +665,10 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
         #     }
         # },
         # OLD CODE END
-        "query": alert_query(from_ts, to_ts, filter_clauses, severity_must_not),
+        # OLD CODE: "query": alert_query(from_ts, to_ts, filter_clauses, severity_must_not), (NET-191)
+        "query": alert_query(
+            from_ts, to_ts, filter_clauses, severity_must_not, activity=activity
+        ),
         # OLD CODE START — Zeek-native sort field: "timestamp"
         # "sort": [{"timestamp": {"order": "desc"}}],
         # OLD CODE END
@@ -707,6 +750,11 @@ async def handle_alerts_count(request: web.Request) -> web.Response:
     Returns alert counts grouped by severity level.
     """
     from_ts, to_ts = _parse_time_range(request)
+    activity = activity_param(request)
+    if activity is None:
+        return web.json_response(
+            {"error": "activity must be true or false"}, status=400
+        )
     client = _get_client(request)
     # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
     # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
@@ -715,18 +763,22 @@ async def handle_alerts_count(request: web.Request) -> web.Response:
     query = {
         "size": 0,
         "track_total_hits": True,
-        "query": {
-            "bool": {
-                "filter": [
-                    _time_range_filter(from_ts, to_ts),
-                    *_SURICATA_ALERT_FILTERS,
-                ],
-                # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
-                # "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
-                # OLD CODE END
-                "must_not": _SURICATA_NOISE_EXCLUSION,
-            }
-        },
+        # OLD CODE START — NET-191: alert_query() is the list's query; ?activity=true counts the
+        # activity alerts with the same query the Activity list runs
+        # "query": {
+        #     "bool": {
+        #         "filter": [
+        #             _time_range_filter(from_ts, to_ts),
+        #             *_SURICATA_ALERT_FILTERS,
+        #         ],
+        #         # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+        #         # "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
+        #         # OLD CODE END
+        #         "must_not": _SURICATA_NOISE_EXCLUSION,
+        #     }
+        # },
+        # OLD CODE END
+        "query": alert_query(from_ts, to_ts, activity=activity),
         "aggs": {
             # OLD CODE START — Zeek-native: "alert.severity"
             # "by_severity": {"terms": {"field": "alert.severity", "size": 10}},

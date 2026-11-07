@@ -59,15 +59,40 @@ def _page(buckets: list[dict], after: dict | None) -> dict:
     return {"aggregations": {"grouped": grouped}}
 
 
+# OLD CODE START — NET-191: with include_info a second query reads the activity alerts (ET
+# informational); a fixed list of two pages ran out on it
+# def _two_page_client() -> MagicMock:
+#     client = MagicMock()
+#     client.search.side_effect = [
+#         _page(
+#             [_bucket(n) for n in range(200)],
+#             {"sig_name": "x", "src_ip": "y", "dst_ip": "z"},
+#         ),
+#         _page([_bucket(n) for n in range(200, 203)], None),
+#     ]
+#     return client
+# OLD CODE END
+def _is_activity(body: dict) -> bool:
+    from api.alerts import ET_ACTIVITY_CLAUSE
+
+    return ET_ACTIVITY_CLAUSE in body["query"]["bool"]["filter"]
+
+
 def _two_page_client() -> MagicMock:
+    """Two pages of counted groups; the activity query (NET-191) finds none."""
+    counted = iter(
+        [
+            _page(
+                [_bucket(n) for n in range(200)],
+                {"sig_name": "x", "src_ip": "y", "dst_ip": "z"},
+            ),
+            _page([_bucket(n) for n in range(200, 203)], None),
+        ]
+    )
     client = MagicMock()
-    client.search.side_effect = [
-        _page(
-            [_bucket(n) for n in range(200)],
-            {"sig_name": "x", "src_ip": "y", "dst_ip": "z"},
-        ),
-        _page([_bucket(n) for n in range(200, 203)], None),
-    ]
+    client.search.side_effect = lambda index, body: (
+        _page([], None) if _is_activity(body) else next(counted)
+    )
     return client
 
 
@@ -79,7 +104,9 @@ def test_every_page_is_read():
         )
 
     assert len(groups) == 203
-    first, second = (c.kwargs["body"] for c in client.search.call_args_list)
+    # OLD CODE: first, second = (c.kwargs["body"] for c in client.search.call_args_list) (NET-191)
+    bodies = [c.kwargs["body"] for c in client.search.call_args_list]
+    first, second = (b for b in bodies if not _is_activity(b))
     assert "after" not in first["aggs"]["grouped"]["composite"]
     assert second["aggs"]["grouped"]["composite"]["after"] == {
         "sig_name": "x",

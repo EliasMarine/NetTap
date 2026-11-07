@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.alerts import SURICATA_NOISE_EXCLUSION
 from api.drilldown_runner import either_side, ip_param
 from api.time_range import parse_time_range
 from api.devices import _CONNECTION_SORT_FIELDS, _connection_sort
@@ -909,9 +910,13 @@ _SURICATA_ALERT_FILTERS: list[dict] = [
     {"term": {"event.dataset": "alert"}},
 ]
 
-_SURICATA_NOISE_EXCLUSION: list[dict] = [
-    {"prefix": {"rule.name": "SURICATA "}},
-]
+# OLD CODE START — NET-191: a private copy missed ET's informational alerts, which every
+# other page stops counting; the shared rule lives in api/alerts.py
+# _SURICATA_NOISE_EXCLUSION: list[dict] = [
+#     {"prefix": {"rule.name": "SURICATA "}},
+# ]
+# OLD CODE END
+_SURICATA_NOISE_EXCLUSION: list[dict] = SURICATA_NOISE_EXCLUSION
 
 
 # ---------------------------------------------------------------------------
