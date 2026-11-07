@@ -92,6 +92,16 @@ The new page (PR 2) starts from a question: who, what and when. It needs a daemo
   - A failed save stays marked unsaved, so the shutdown flush retries it.
   - The TShark version lookup can't hold up a finished answer (2 s, then "unknown").
   - A bad time in TShark's own output is a 502 with a reason, not a 500.
+- **Second round (the Python reviewer re-checked the fix against TShark 4.0.17 built from `docker/Dockerfile.tshark`).**
+  - **The fix hid damaged files (medium).** editcap 4.0.17 exits 0 on every read error, not only a cut-short tail. A damaged record in a `cut:` file silently ended that file's packets. Now editcap's messages must all be the exact cut-short text, or the read is a failure. The same check covers the pre-2000 re-read.
+  - **capinfos escaped the kills (low).** Plain `timeout` moves its child into a new process group, out of reach of the group kill. It is now `timeout --foreground`.
+  - **Windows before 2000 (low).** These now get a 400: the index leaves those records out, so the answer could only be "complete, nothing found".
+  - **New test.** `daemon/tests/test_cut_shell.py` runs the real `cut()` shell wherever Wireshark's tools are installed.
+- **CI.** It was green on main before this PR. The "red baseline" in `.claude/rules/git-workflow.md` is out of date. PR #196 broke it four ways:
+  - **CodeQL, 3 high `py/path-injection` alerts on the capture-file route.** The route was safe in practice, but it touched the raw joined path before checking it. It now resolves the path first, checks containment and that the result equals the plain join (no symlink anywhere), and only then uses the checked path.
+  - **The web build (Trivy and Integration Tests).** `export const DOWNLOAD_HEADERS_TIMEOUT_MS` in `+server.ts`: SvelteKit refuses any non-handler export from an endpoint, and only `vite build` checks that. Moved to `limits.ts`.
+  - **Lint Python.** The two fixture generator scripts.
+- **The deploy script hid a failed build.** On the second G11 deploy the web build failed. The script then recreated the web container from the old image and still reported every check passed, because the checks talk to the daemon. A failed build now stops the deploy with a ✗.
 - **A filter could forge the job's control lines (security review, low).** When TShark refuses a filter, it echoes the filter with `\x0a` turned into a real line break. On 4.0.17 a filter printed bare `#nt-status tshark 0` and `#nt-pgid 1` lines. Line order made this harmless, but now every run gets a random tag. The job receives the tag as `$NT`, and only `#nt-<tag> …` lines count as control lines.
 - **Input checks.** The checks for window times, MD5 and the field prefix used `\d` and `$`, which accept non-ASCII digits and a trailing newline. A 12-digit time made the download route's file name fail with a 500. A manifest size of `"²"` passed `isdigit()` and then failed in `int()`, another 500. All of these are 400s now: ASCII digits, `\Z`, at most 11 digits.
 - **Web.**
@@ -106,6 +116,9 @@ The new page (PR 2) starts from a question: who, what and when. It needs a daemo
 
 **Lessons**
 
+- **Run `npm run build` before pushing web changes.** svelte-check and vitest pass on an endpoint that the production build refuses.
+- **A deploy script must fail on a failed build.** Otherwise it ships the old image and its checks still pass.
+- **editcap's exit code says nothing about read errors.** Only its message does.
 - **A tool's exit code can mean "I stopped early" in one version and "I skipped it" in another.** mergecap 4.6.9 merges past a cut-short file; 4.0.17 stops. Measure multi-file behaviour on the device's version, with a real crashed file, not one file at a time.
 - **Check the index's own summary against reality, not only a random sample.** The random check of 3 files passed while the summary said 1970; one crashed file in 1,480 is what a power cut leaves.
 

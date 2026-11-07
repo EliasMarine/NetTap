@@ -58,6 +58,7 @@ class TestParse:
             {"from": "1700000002.5"},  # empty window
             {"to": "1700001801"},  # longer than 30 minutes
             {"from": "17e8"},
+            {"from": "0", "to": "600"},  # before 2000: the index leaves those out
             {"from": "1700000001\n"},  # $ would accept the newline
             {"from": "١٧٠٠٠٠٠٠٠١"},  # \d would accept Arabic-Indic digits
             {

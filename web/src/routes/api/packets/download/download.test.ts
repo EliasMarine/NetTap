@@ -8,7 +8,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const daemonFetch = vi.fn();
 vi.mock('$lib/server/daemon.js', () => ({ daemonFetch: (...a: unknown[]) => daemonFetch(...a) }));
 
-const { POST, DOWNLOAD_HEADERS_TIMEOUT_MS } = await import('./+server.js');
+const { POST } = await import('./+server.js');
+const { DOWNLOAD_HEADERS_TIMEOUT_MS } = await import('./limits.js');
 
 const MANIFEST = {
 	from: '1700000000.25',

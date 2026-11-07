@@ -19,6 +19,8 @@ from collections.abc import Awaitable, Callable
 from decimal import Decimal
 
 from services.capture_index import (
+    TIME_FLOOR,
+    editcap_read_to_end,
     RECENT_SECONDS,
     CaptureIndex,
     Selection,
@@ -169,7 +171,8 @@ def cut_ok(result: ExecResult, cuts: int, suffix: str = "") -> bool:
     Every stage must report: `cuts` editcaps in front of mergecap (one per "cut:"
     file), mergecap and the window's editcap. 141 is a stage stopped by SIGPIPE
     because the reader had enough; mergecap's own exit 2 is a real failure, since no
-    partly written packet reaches it.
+    partly written packet reaches it. editcap exits 0 even on a damaged file, so its
+    messages must all be about a partly written last packet.
     """
     pre = [v for k, v in result.statuses.items() if k.startswith(f"pre{suffix}-")]
     stages = [
@@ -177,7 +180,11 @@ def cut_ok(result: ExecResult, cuts: int, suffix: str = "") -> bool:
         result.status(f"mergecap{suffix}"),
         result.status(f"editcap{suffix}"),
     ]
-    return len(pre) == cuts and all(v in (0, 141) for v in stages)
+    return (
+        len(pre) == cuts
+        and all(v in (0, 141) for v in stages)
+        and editcap_read_to_end(result.stderr)
+    )
 
 
 def _raise_unfinished(result: ExecResult, what: str) -> None:
@@ -295,6 +302,8 @@ class PacketSearchService:
             raise PacketError(400, "The window can be at most 30 minutes long.")
         if a >= now_ns:
             raise PacketError(400, "That time hasn't happened yet.")
+        if a < TIME_FLOOR * 1_000_000_000:  # the index leaves out records before it
+            raise PacketError(400, "NetTap has no captures from before 2000.")
         return a, b, min(b, now_ns)
 
     async def search(self, body: dict) -> dict:

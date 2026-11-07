@@ -205,15 +205,27 @@ async def test_a_file_that_may_end_mid_packet_goes_through_editcap(env):
     )
     assert (await svc.search(BODY))["termination"] == "eof"
     assert fake.calls[-1][1][4:] == ["cut:/pcap/a.pcap"]
-    for statuses in (
-        ALL_ZERO,  # the editcap in front never reported
-        {**ALL_ZERO, "pre-0": 1},
-        {**ALL_ZERO, "pre-0": 0, "mergecap": 2},  # no cut reaches mergecap now
+    damaged = 'editcap: The file "/pcap/a.pcap" appears to be damaged or corrupt.'
+    for statuses, stderr in (
+        (ALL_ZERO, ""),  # the editcap in front never reported
+        ({**ALL_ZERO, "pre-0": 1}, ""),
+        ({**ALL_ZERO, "pre-0": 0, "mergecap": 2}, ""),  # no cut reaches mergecap now
+        ({**ALL_ZERO, "pre-0": 0}, damaged),  # editcap 4.0.17 exits 0 even so
     ):
-        fake.search = result(rows_text(1), statuses)
+        fake.search = result(rows_text(1), statuses, stderr)
         with pytest.raises(PacketError) as err:
             await svc.search(BODY)
         assert err.value.status == 502
+
+
+@pytest.mark.asyncio
+async def test_windows_before_2000_are_refused(env):
+    """The index leaves out records stamped before 2000 (a crash's zeroed tail), so
+    a search there could only answer "complete, nothing found"."""
+    svc, *_ = env
+    with pytest.raises(PacketError) as err:
+        await svc.search({**BODY, "from": "0", "to": "600"})
+    assert err.value.status == 400
 
 
 @pytest.mark.asyncio

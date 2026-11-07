@@ -83,7 +83,10 @@ async def test_captures_lists_limits(tmp_path):
 async def test_capture_file_containment(tmp_path):
     (tmp_path / "a.pcap").write_bytes(b"pcapdata")
     (tmp_path / "outside").mkdir()
+    (tmp_path / "outside" / "b.pcap").write_bytes(b"other")
     os.symlink(tmp_path / "a.pcap", tmp_path / "link.pcap")
+    os.symlink(tmp_path / "outside", tmp_path / "dirlink")  # a symlink mid-id
+    (tmp_path / "folder.pcap").mkdir()
     client, _ = await client_for(tmp_path)
     try:
         ok = await client.get("/file", params={"id": "a.pcap"})
@@ -94,6 +97,11 @@ async def test_capture_file_containment(tmp_path):
         ).status == 400
         assert (await client.get("/file", params={"id": "link.pcap"})).status == 404
         assert (await client.get("/file", params={"id": "gone.pcap"})).status == 404
+        for refused in ("dirlink/b.pcap", "folder.pcap"):
+            assert (await client.get("/file", params={"id": refused})).status == 404
+        assert (
+            await client.get("/file", params={"id": "outside/b.pcap"})
+        ).status == 200
     finally:
         await client.close()
 

@@ -42,7 +42,15 @@ echo "   ✓ Code at $(git log --oneline -1)"
 echo ""
 
 echo "→ Step 2: Rebuild the daemon and web containers..."
-"${COMPOSE[@]}" build nettap-storage-daemon nettap-web
+# A failed build must stop here: recreating would bring back the OLD images, and the
+# checks below talk to the daemon, so a broken web build would go unnoticed.
+if "${COMPOSE[@]}" build nettap-storage-daemon nettap-web; then rc=0; else rc=1; fi
+check "images built" "$rc" "nettap-storage-daemon and nettap-web"
+if [ "$rc" -ne 0 ]; then
+    echo ""
+    echo "=== Stopped: a build failed; the running containers were left as they were ==="
+    exit 1
+fi
 echo ""
 
 echo "→ Step 3: Recreate the two containers..."

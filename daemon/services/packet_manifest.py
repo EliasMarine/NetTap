@@ -14,6 +14,7 @@ import stat
 from dataclasses import dataclass
 
 from services.capture_index import CAPTURE_EXTENSIONS, CONTAINER_ROOT
+from services.capture_index import TIME_FLOOR
 from services.packet_parse import EPOCH, MD5, Frame, epoch_ns
 
 MAX_WINDOW_NS = 30 * 60 * 1_000_000_000
@@ -74,7 +75,7 @@ def check_window(start: str, end: str) -> tuple[int, int]:
     if not (EPOCH.match(start) and EPOCH.match(end)):
         raise _bad("window")
     a, b = epoch_ns(start), epoch_ns(end)
-    if a >= b or b - a > MAX_WINDOW_NS:
+    if a >= b or b - a > MAX_WINDOW_NS or a < TIME_FLOOR * 1_000_000_000:
         raise _bad("window")
     return a, b
 

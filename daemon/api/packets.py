@@ -78,25 +78,26 @@ async def handle_capture_file(request: web.Request) -> web.StreamResponse:
     file_id = request.query.get("id", "")
     if not valid_file_id(file_id):
         return web.json_response({"error": "Name a capture file."}, status=400)
-    path = os.path.join(svc.root, file_id)
+    gone = web.json_response(
+        {"error": "That capture file no longer exists."}, status=404
+    )
+    # Resolve first, check, then touch only the checked path. A symlink anywhere in
+    # the id makes the resolved path differ from the plain join, so it is refused.
     real_root = os.path.realpath(svc.root)
-    try:
-        st = os.stat(path, follow_symlinks=False)
-    except OSError:
-        return web.json_response(
-            {"error": "That capture file no longer exists."}, status=404
-        )
-    if (
-        os.path.islink(path)
-        or not stat.S_ISREG(st.st_mode)
-        or not os.path.realpath(path).startswith(real_root + os.sep)
+    real = os.path.realpath(os.path.join(real_root, file_id))
+    if not real.startswith(real_root + os.sep) or real != os.path.join(
+        real_root, file_id
     ):
-        return web.json_response(
-            {"error": "That capture file no longer exists."}, status=404
-        )
+        return gone
+    try:
+        st = os.stat(real)
+    except OSError:
+        return gone
+    if not stat.S_ISREG(st.st_mode):
+        return gone
     name = os.path.basename(file_id).replace('"', "")
     return web.FileResponse(
-        path,
+        real,
         headers={
             "Content-Type": "application/vnd.tcpdump.pcap",
             "Content-Disposition": f'attachment; filename="{name}"',

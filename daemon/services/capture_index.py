@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import stat
 import time
 from dataclasses import asdict, dataclass, replace
@@ -53,16 +54,22 @@ CAPINFOS_SECONDS = 25
 INLINE_INDEX_LIMIT = 8
 CUT_SHORT = "appears to have been cut short in the middle of a packet"
 TIME_FLOOR = 946684800  # 2000-01-01T00:00:00Z
+# editcap 4.0.17 exits 0 on EVERY read error, not only a partly written last packet,
+# so its exit code can't say it read a file to the end; its message can.
+_EDITCAP_CUT_SHORT = re.compile(
+    r'^editcap: The file "(.+)" appears to have been cut short in the middle of a packet\.$'
+)
 INDEX_VERSION = 2  # 2: entries no longer count records stamped before TIME_FLOOR
 
 # For each file: a marker line, capinfos's table (and its messages), then its exit
-# code (124: GNU timeout stopped it).
+# code (124: GNU timeout stopped it). --foreground keeps capinfos in the job's process
+# group, so the watchdog's and the daemon's group kills reach it.
 _CAPINFOS_JOB = rf"""
 CAPINFOS_SECONDS={CAPINFOS_SECONDS}
 i=0
 for f in "$@"; do
   echo "#nt-file $i"
-  timeout "$CAPINFOS_SECONDS" capinfos -a -e -c -E -S -M -T -- "$f" 2>&1
+  timeout --foreground "$CAPINFOS_SECONDS" capinfos -a -e -c -E -S -M -T -- "$f" 2>&1
   echo "#nt-rc $?"
   i=$((i+1))
 done
@@ -74,6 +81,12 @@ _FLOOR_JOB = (
     '{ editcap -A "$1" "$2" -; echo "$NT status editcap $?" >&2; } | '
     '{ capinfos -a -e -c -E -S -M -T -; echo "$NT status capinfos $?" >&2; }\n'
 )
+
+
+def editcap_read_to_end(stderr: str) -> bool:
+    """True unless editcap reported anything but a partly written last packet."""
+    lines = (ln for ln in stderr.splitlines() if ln.startswith("editcap:"))
+    return all(_EDITCAP_CUT_SHORT.match(ln) for ln in lines)
 
 
 class StillIndexing(Exception):
@@ -329,7 +342,11 @@ class CaptureIndex:
             deadline_s=BATCH_DEADLINE_SECONDS,
             max_stdout=64 * 1024,
         )
-        if result.deadline or not result.all_zero(("editcap", "capinfos")):
+        if (
+            result.deadline
+            or not result.all_zero(("editcap", "capinfos"))
+            or not editcap_read_to_end(result.stderr)
+        ):
             return IndexEntry(
                 f.size,
                 f.mtime_ns,

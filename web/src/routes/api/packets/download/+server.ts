@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestEvent } from '@sveltejs/kit';
 import { daemonFetch } from '$lib/server/daemon.js';
+import { DOWNLOAD_HEADERS_TIMEOUT_MS } from './limits.js';
 
 /**
  * POST /api/packets/download (NET-188): a search's packets as one pcap.
@@ -12,7 +13,6 @@ import { daemonFetch } from '$lib/server/daemon.js';
  * complete-looking but short file.
  */
 
-export const DOWNLOAD_HEADERS_TIMEOUT_MS = 60_000;
 
 /** The manifest object from either body shape, or null when it is missing or not an object. */
 async function readManifest(request: Request): Promise<Record<string, unknown> | null> {

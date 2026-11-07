@@ -269,7 +269,9 @@ def test_capinfos_timeout_fails_the_file_instead_of_leaving_it_pending():
     e = parse_capinfos("", 124, 9, 1)  # GNU timeout stopped it
     assert e.state == "failed"
     assert e.error == f"capinfos took longer than {ci.CAPINFOS_SECONDS} s"
-    assert 'timeout "$CAPINFOS_SECONDS" capinfos' in ci._CAPINFOS_JOB
+    # --foreground: plain timeout moves capinfos out of the job's process group,
+    # where the deadline's and the daemon's group kills can't reach it
+    assert 'timeout --foreground "$CAPINFOS_SECONDS" capinfos' in ci._CAPINFOS_JOB
 
 
 def test_a_failed_save_stays_dirty_for_the_shutdown_flush(tmp_path):
@@ -359,14 +361,26 @@ async def test_zeroed_tail_after_a_crash_is_left_out(tmp_path, monkeypatch, capl
     assert idx.summary()["oldest_packet"] == "1794019107.174686"
 
 
+REAL = table("-", "1794019107.174686", "1794019200.000000", 50000)
+
+
 @pytest.mark.asyncio
-async def test_failed_reread_marks_the_file_failed(tmp_path, monkeypatch):
-    floor_fake(
-        monkeypatch,
-        ExecResult(
-            b"", "editcap: Can't open", {"editcap": 1, "capinfos": 0}, 0, False, 1, 0.1
+@pytest.mark.parametrize(
+    ("stdout", "stderr", "statuses"),
+    [
+        (b"", "editcap: Can't open", {"editcap": 1, "capinfos": 0}),
+        # editcap 4.0.17 exits 0 on a damaged file too; only its message says so
+        (
+            REAL.encode(),
+            'editcap: The file "/pcap/crash.pcap" appears to be damaged or corrupt.',
+            {"editcap": 0, "capinfos": 0},
         ),
-    )
+    ],
+)
+async def test_failed_reread_marks_the_file_failed(
+    tmp_path, monkeypatch, stdout, stderr, statuses
+):
+    floor_fake(monkeypatch, ExecResult(stdout, stderr, statuses, 0, False, 1, 0.1))
     make(tmp_path, "crash.pcap")
     idx = index_for(tmp_path)
     sel = await idx.select(Decimal("1794019100"), Decimal("1794019200"))
