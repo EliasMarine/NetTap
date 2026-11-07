@@ -13,9 +13,11 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { ipHref, isLan } from '$lib/stores/lan';
+	import type { DnsResult } from '$lib/api/lookup';
 
 	let ip = $derived($page.params.ip);
-	let result = $state<{ ip: string; hostname: string | null; aliases: string[]; addresses: string[]; error: string | null } | null>(null);
+	// OLD CODE: let result = $state<{ ip: string; hostname: string | null; aliases: string[]; addresses: string[]; error: string | null } | null>(null); (NET-192 PR 3: + timed_out)
+	let result = $state<DnsResult | null>(null);
 	let loading = $state(true);
 	let error = $state('');
 	let searchIp = $state('');
@@ -121,7 +123,10 @@
 				<dd class="mono">{result.ip}</dd>
 				<dt>Reverse DNS (PTR)</dt>
 				<dd>
-					{#if result.hostname}<span class="mono">{result.hostname}</span>{:else}<span class="dim">No reverse DNS record</span>{/if}
+					<!-- OLD CODE: {#if result.hostname}<span class="mono">{result.hostname}</span>{:else}<span class="dim">No reverse DNS record</span>{/if} (NET-192 PR 3: a timeout says so) -->
+				{#if result.hostname}<span class="mono">{result.hostname}</span>
+				{:else if result.timed_out}<span class="dim">No reverse DNS name (lookup timed out)</span>
+				{:else}<span class="dim">No reverse DNS record</span>{/if}
 				</dd>
 				<dt>Aliases</dt>
 				<dd>
