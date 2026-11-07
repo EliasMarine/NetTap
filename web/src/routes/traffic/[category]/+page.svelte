@@ -16,7 +16,7 @@
 
 	import { partOfWhole } from '$lib/utils/part-of-whole';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
-	import { chartTime, startRange } from '$lib/utils/drilldown';
+	import { chartTime, DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown';
 	// OLD CODE START — the category colour tinted the chart and bars; system charts use data-1/2
 	// import { CATEGORY_COLORS } from '$lib/utils/category-colors';
 	// OLD CODE END
@@ -79,13 +79,18 @@
 	// };
 	// OLD CODE END
 
-	const TIME_RANGES = [
-		{ label: '1h', value: '1h', text: 'hour' },
-		{ label: '6h', value: '6h', text: '6 h' },
-		{ label: '24h', value: '24h', text: '24 h' },
-		{ label: '7d', value: '7d', text: '7 days' },
-		{ label: '30d', value: '30d', text: '30 days' },
-	];
+	// OLD CODE START — NET-196: the app's one list (DRILL_RANGES), in its words ("6 hours", not "6 h")
+	// const TIME_RANGES = [
+	// 	{ label: '1h', value: '1h', text: 'hour' },
+	// 	{ label: '6h', value: '6h', text: '6 h' },
+	// 	{ label: '24h', value: '24h', text: '24 h' },
+	// 	{ label: '7d', value: '7d', text: '7 days' },
+	// 	{ label: '30d', value: '30d', text: '30 days' },
+	// ];
+	// OLD CODE END
+	const TIME_RANGES = DRILL_RANGES.map((r) => ({ value: r.value, label: r.label }));
+	/** The list's entry for a range; anything not in it is 24 hours. */
+	const rangeOf = (value: string) => DRILL_RANGES.find((r) => r.value === value) ?? DRILL_RANGES.find((r) => r.value === '24h')!;
 
 	/** Map time range to chart interval */
 	const INTERVAL_MAP: Record<string, string> = {
@@ -107,7 +112,9 @@
 	// OLD CODE START: let meta = $derived(CATEGORY_META[category] ?? CATEGORY_META['other']); OLD CODE END
 	// OLD CODE: let selectedRange = $state('24h'); (NET-195: Settings › Display's default, read where the range starts)
 	let selectedRange = $state<string>(startRange('24h'));
-	let rangeText = $derived(TIME_RANGES.find((r) => r.value === selectedRange)?.text ?? selectedRange);
+	// OLD CODE: let rangeText = $derived(TIME_RANGES.find((r) => r.value === selectedRange)?.text ?? selectedRange); (NET-196)
+	/** The window after "last" or "previous": "hour", "6 hours", "7 days". */
+	let rangeText = $derived(rangeOf(selectedRange).words.replace(/^last /, ''));
 
 	// Data
 	let data = $state<CategoryDetailResponse | null>(null);
@@ -283,29 +290,35 @@
 	// Time helpers
 	// ---------------------------------------------------------------------------
 
-	function computeTimeParams(range: string): { from: string; to: string } {
-		const now = new Date();
-		let from: Date;
-		switch (range) {
-			case '1h': from = new Date(now.getTime() - 60 * 60 * 1000); break;
-			case '6h': from = new Date(now.getTime() - 6 * 60 * 60 * 1000); break;
-			case '7d': from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); break;
-			case '30d': from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); break;
-			default: from = new Date(now.getTime() - 24 * 60 * 60 * 1000); break;
-		}
-		return { from: from.toISOString(), to: now.toISOString() };
-	}
+	// OLD CODE START — NET-196: the window ending now is rangeWindow, over the list's hours
+	// function computeTimeParams(range: string): { from: string; to: string } {
+	// 	const now = new Date();
+	// 	let from: Date;
+	// 	switch (range) {
+	// 		case '1h': from = new Date(now.getTime() - 60 * 60 * 1000); break;
+	// 		case '6h': from = new Date(now.getTime() - 6 * 60 * 60 * 1000); break;
+	// 		case '7d': from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); break;
+	// 		case '30d': from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); break;
+	// 		default: from = new Date(now.getTime() - 24 * 60 * 60 * 1000); break;
+	// 	}
+	// 	return { from: from.toISOString(), to: now.toISOString() };
+	// }
+	// OLD CODE END
+	const computeTimeParams = (range: string) => rangeWindow(rangeOf(range).hours);
 
 	function computePrevTimeParams(range: string): { from: string; to: string } {
 		const now = new Date();
-		let durationMs: number;
-		switch (range) {
-			case '1h': durationMs = 60 * 60 * 1000; break;
-			case '6h': durationMs = 6 * 60 * 60 * 1000; break;
-			case '7d': durationMs = 7 * 24 * 60 * 60 * 1000; break;
-			case '30d': durationMs = 30 * 24 * 60 * 60 * 1000; break;
-			default: durationMs = 24 * 60 * 60 * 1000; break;
-		}
+		// OLD CODE START — NET-196: the list's hours
+		// let durationMs: number;
+		// switch (range) {
+		// 	case '1h': durationMs = 60 * 60 * 1000; break;
+		// 	case '6h': durationMs = 6 * 60 * 60 * 1000; break;
+		// 	case '7d': durationMs = 7 * 24 * 60 * 60 * 1000; break;
+		// 	case '30d': durationMs = 30 * 24 * 60 * 60 * 1000; break;
+		// 	default: durationMs = 24 * 60 * 60 * 1000; break;
+		// }
+		// OLD CODE END
+		const durationMs = rangeOf(range).hours * 3_600_000;
 		const to = new Date(now.getTime() - durationMs);
 		const from = new Date(to.getTime() - durationMs);
 		return { from: from.toISOString(), to: to.toISOString() };
@@ -535,8 +548,11 @@
 	// 		: d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 	// }
 	// OLD CODE END
-	const RANGE_HOURS: Record<string, number> = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 };
-	const formatPointTime = (t: number | string) => chartTime(t, RANGE_HOURS[selectedRange] ?? 24);
+	// OLD CODE START — NET-196: the list's hours
+	// const RANGE_HOURS: Record<string, number> = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 };
+	// const formatPointTime = (t: number | string) => chartTime(t, RANGE_HOURS[selectedRange] ?? 24);
+	// OLD CODE END
+	const formatPointTime = (t: number | string) => chartTime(t, rangeOf(selectedRange).hours);
 
 	const chartTip = (i: number) =>
 		`${formatPointTime(bandwidthSeries[i].timestamp)} · ↓ ${formatBytes(bandwidthSeries[i].download_bytes)} · ↑ ${formatBytes(bandwidthSeries[i].upload_bytes)}`;

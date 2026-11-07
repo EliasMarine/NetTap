@@ -94,7 +94,8 @@ describe('Traffic category page', () => {
 		const total = (await screen.findByText('Total bandwidth')).closest('.kpi');
 		expect(total).toHaveTextContent('4.0 KB');
 		expect(total).toHaveTextContent('+100.0%');
-		expect(total).toHaveTextContent('vs previous 24 h');
+		// OLD CODE: expect(total).toHaveTextContent('vs previous 24 h'); (NET-196: the list's words; the old text is a prefix of the new, so it no longer pinned anything)
+		expect(total).toHaveTextContent(/vs previous 24 hours$/);
 		expect(screen.getByText('Share of network').closest('.kpi')).toHaveTextContent('50.0%');
 		expect(screen.getByRole('img', { name: /^Busiest at .*, with 3\.0 KB$/ })).toBeInTheDocument();
 		expect(screen.getByText('Netflix')).toBeInTheDocument();
