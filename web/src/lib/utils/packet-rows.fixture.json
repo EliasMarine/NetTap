@@ -1,0 +1,372 @@
+{
+ "_source": "daemon/tests/fixtures/packets/search_all.out (TShark 4.0.17) through services/packet_parse.parse_rows",
+ "rows": [
+  {
+   "n": 1,
+   "t": "1700000000.000001000",
+   "len": 54,
+   "cap_len": 54,
+   "md5": "2936238a14429d4e92fddc00624243e7",
+   "protocol": "TCP",
+   "info": "50000 → 443 [SYN] Seq=0 Win=64240 Len=0",
+   "fields": {
+    "eth.src": [
+     "02:00:00:00:00:01"
+    ],
+    "eth.dst": [
+     "02:00:00:00:00:02"
+    ],
+    "ip.src": [
+     "192.0.2.10"
+    ],
+    "ip.dst": [
+     "198.51.100.20"
+    ],
+    "ip.proto": [
+     "6"
+    ],
+    "ip.ttl": [
+     "64"
+    ],
+    "tcp.srcport": [
+     "50000"
+    ],
+    "tcp.dstport": [
+     "443"
+    ],
+    "tcp.stream": [
+     "0"
+    ],
+    "tcp.flags": [
+     "0x0002"
+    ],
+    "tcp.len": [
+     "0"
+    ],
+    "tcp.seq": [
+     "0"
+    ],
+    "tcp.ack": [
+     "0"
+    ],
+    "tcp.window_size": [
+     "64240"
+    ],
+    "_ws.expert.message": [
+     "Connection establish request (SYN): server port 443"
+    ],
+    "_ws.expert.severity": [
+     "2097152"
+    ],
+    "_ws.expert.group": [
+     "33554432"
+    ]
+   }
+  },
+  {
+   "n": 2,
+   "t": "1700000000.000001000",
+   "len": 54,
+   "cap_len": 54,
+   "md5": "18ef22bcd401ac69067329b1e7575c9b",
+   "protocol": "TCP",
+   "info": "443 → 50000 [SYN, ACK] Seq=0 Ack=1 Win=64240 Len=0",
+   "fields": {
+    "eth.src": [
+     "02:00:00:00:00:02"
+    ],
+    "eth.dst": [
+     "02:00:00:00:00:01"
+    ],
+    "ip.src": [
+     "198.51.100.20"
+    ],
+    "ip.dst": [
+     "192.0.2.10"
+    ],
+    "ip.proto": [
+     "6"
+    ],
+    "ip.ttl": [
+     "64"
+    ],
+    "tcp.srcport": [
+     "443"
+    ],
+    "tcp.dstport": [
+     "50000"
+    ],
+    "tcp.stream": [
+     "0"
+    ],
+    "tcp.flags": [
+     "0x0012"
+    ],
+    "tcp.len": [
+     "0"
+    ],
+    "tcp.seq": [
+     "0"
+    ],
+    "tcp.ack": [
+     "1"
+    ],
+    "tcp.window_size": [
+     "64240"
+    ],
+    "_ws.expert.message": [
+     "Connection establish acknowledge (SYN+ACK): server port 443"
+    ],
+    "_ws.expert.severity": [
+     "2097152"
+    ],
+    "_ws.expert.group": [
+     "33554432"
+    ]
+   }
+  },
+  {
+   "n": 3,
+   "t": "1700000000.250001000",
+   "len": 54,
+   "cap_len": 54,
+   "md5": "b548072b65acd5e099553201fc8898c3",
+   "protocol": "TCP",
+   "info": "50000 → 443 [ACK] Seq=1 Ack=1 Win=64240 Len=0",
+   "fields": {
+    "eth.src": [
+     "02:00:00:00:00:01"
+    ],
+    "eth.dst": [
+     "02:00:00:00:00:02"
+    ],
+    "ip.src": [
+     "192.0.2.10"
+    ],
+    "ip.dst": [
+     "198.51.100.20"
+    ],
+    "ip.proto": [
+     "6"
+    ],
+    "ip.ttl": [
+     "64"
+    ],
+    "tcp.srcport": [
+     "50000"
+    ],
+    "tcp.dstport": [
+     "443"
+    ],
+    "tcp.stream": [
+     "0"
+    ],
+    "tcp.flags": [
+     "0x0010"
+    ],
+    "tcp.len": [
+     "0"
+    ],
+    "tcp.seq": [
+     "1"
+    ],
+    "tcp.ack": [
+     "1"
+    ],
+    "tcp.window_size": [
+     "64240"
+    ],
+    "tcp.analysis.initial_rtt": [
+     "0.250000000"
+    ]
+   }
+  },
+  {
+   "n": 4,
+   "t": "1700000000.500001000",
+   "len": 103,
+   "cap_len": 103,
+   "md5": "e9a91352042978ff7e5415fda3cbb90c",
+   "protocol": "DNS",
+   "info": "Standard query response 0x1234 A example.com A 192.0.2.80 A 192.0.2.81",
+   "fields": {
+    "eth.src": [
+     "02:00:00:00:00:03"
+    ],
+    "eth.dst": [
+     "02:00:00:00:00:01"
+    ],
+    "ip.src": [
+     "198.51.100.53"
+    ],
+    "ip.dst": [
+     "192.0.2.10"
+    ],
+    "ip.proto": [
+     "17"
+    ],
+    "ip.ttl": [
+     "64"
+    ],
+    "udp.srcport": [
+     "53"
+    ],
+    "udp.dstport": [
+     "50001"
+    ],
+    "udp.stream": [
+     "0"
+    ],
+    "dns.id": [
+     "0x1234"
+    ],
+    "dns.flags.response": [
+     "1"
+    ],
+    "dns.flags.rcode": [
+     "0"
+    ],
+    "dns.qry.name": [
+     "example.com"
+    ],
+    "dns.qry.type": [
+     "1"
+    ],
+    "dns.a": [
+     "192.0.2.80",
+     "192.0.2.81"
+    ],
+    "dns.count.answers": [
+     "2"
+    ]
+   }
+  },
+  {
+   "n": 5,
+   "t": "1700000000.750001000",
+   "len": 1514,
+   "cap_len": 96,
+   "md5": "0e312a29f38c61b2eff41592550069fb",
+   "protocol": "SSL",
+   "info": "Continuation Data",
+   "fields": {
+    "eth.src": [
+     "02:00:00:00:00:01"
+    ],
+    "eth.dst": [
+     "02:00:00:00:00:02"
+    ],
+    "ip.src": [
+     "192.0.2.10"
+    ],
+    "ip.dst": [
+     "198.51.100.20"
+    ],
+    "ip.proto": [
+     "6"
+    ],
+    "ip.ttl": [
+     "64"
+    ],
+    "tcp.srcport": [
+     "50000"
+    ],
+    "tcp.dstport": [
+     "443"
+    ],
+    "tcp.stream": [
+     "0"
+    ],
+    "tcp.flags": [
+     "0x0018"
+    ],
+    "tcp.len": [
+     "1460"
+    ],
+    "tcp.seq": [
+     "1"
+    ],
+    "tcp.ack": [
+     "1"
+    ],
+    "tcp.window_size": [
+     "64240"
+    ],
+    "tcp.analysis.initial_rtt": [
+     "0.250000000"
+    ]
+   }
+  },
+  {
+   "n": 6,
+   "t": "1700000001.000001000",
+   "len": 94,
+   "cap_len": 94,
+   "md5": "3c54ac2ed265bf6ad24365febae37188",
+   "protocol": "HTTP",
+   "info": "GET /a\\tb HTTP/1.1 ",
+   "fields": {
+    "eth.src": [
+     "02:00:00:00:00:01"
+    ],
+    "eth.dst": [
+     "02:00:00:00:00:02"
+    ],
+    "ip.src": [
+     "192.0.2.10"
+    ],
+    "ip.dst": [
+     "198.51.100.30"
+    ],
+    "ip.proto": [
+     "6"
+    ],
+    "ip.ttl": [
+     "64"
+    ],
+    "tcp.srcport": [
+     "50002"
+    ],
+    "tcp.dstport": [
+     "80"
+    ],
+    "tcp.stream": [
+     "1"
+    ],
+    "tcp.flags": [
+     "0x0018"
+    ],
+    "tcp.len": [
+     "40"
+    ],
+    "tcp.seq": [
+     "1"
+    ],
+    "tcp.ack": [
+     "1"
+    ],
+    "tcp.window_size": [
+     "64240"
+    ],
+    "_ws.expert.message": [
+     "GET /a\\tb HTTP/1.1\\r\\n"
+    ],
+    "_ws.expert.severity": [
+     "2097152"
+    ],
+    "_ws.expert.group": [
+     "33554432"
+    ],
+    "http.request.method": [
+     "GET"
+    ],
+    "http.request.uri": [
+     "/a\\tb"
+    ],
+    "http.host": [
+     "example.com"
+    ]
+   }
+  }
+ ]
+}
