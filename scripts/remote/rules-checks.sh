@@ -31,11 +31,12 @@ status_field() {  # status_field <field>: from the update status record ("" when
 marker_present() { sudo docker exec "$LIVE" test -e "$MARKER_FILE"; }
 rules_sha() { sudo docker exec "$LIVE" sha256sum /var/lib/suricata/rules/suricata.rules 2>/dev/null | cut -c1-16; }
 
-enabled_sources() {  # the enabled rule sources, names only, sorted, comma-separated
-    sudo docker exec -u suricata "$LIVE" suricata-update list-enabled-sources --quiet \
+enabled_sources() {  # the enabled rule sources, names only, sorted, comma-separated; fails if it can't ask
+    local out
+    out=$(sudo docker exec -u suricata "$LIVE" suricata-update list-enabled-sources --quiet \
         --suricata /usr/bin/suricata-offline --data-dir /var/lib/suricata --config /etc/suricata/update.yaml \
-        --suricata-conf /etc/suricata/suricata.yaml 2>/dev/null |
-        sed -n '/^Enabled sources:/,$ s/^ *- *//p' | sed -E 's/[|=].*//' | sort | paste -sd, -
+        --suricata-conf /etc/suricata/suricata.yaml 2>/dev/null) || return 1
+    printf '%s\n' "$out" | sed -n '/^Enabled sources:/,$ s/^ *- *//p' | sed -E 's/[|=].*//' | sort | paste -sd, -
 }
 
 engine_started_since() {  # engine_started_since "<YYYY-mm-dd HH:MM:SS UTC>" <tries of 10 s>: ISO time or ""

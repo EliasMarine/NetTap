@@ -112,7 +112,11 @@ rules_lock_take "$LIVE"
 case $? in
     0) echo "   ✓ holding the rules lock" ;;
     2) echo "   - no rules lock on the running container yet (first deploy)" ;;
-    *) echo "   ✗ A rule update held the lock for 15 minutes — suricata-live was not recreated; run this again"; exit 1 ;;
+    # OLD CODE START — review round 2: gave up, so a stuck update could block the deploy for ever
+    # *) echo "   ✗ A rule update held the lock for 15 minutes — suricata-live was not recreated; run this again"; exit 1 ;;
+    # OLD CODE END
+    # Safe: the stopped update leaves its marker, and the next start restores the last good rules first
+    *) echo "   - A rule update held the lock for 15 minutes; recreating anyway (its marker makes the next start restore the last good rules)" ;;
 esac
 STARTED=$(date -u '+%Y-%m-%d %H:%M:%S')
 "${COMPOSE[@]}" up -d --no-deps --force-recreate suricata-live
