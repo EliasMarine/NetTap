@@ -88,6 +88,8 @@
 	let savingEtPro = $state(false);
 	let removingEtPro = $state(false);
 	let confirmingRemove = $state(false);
+	// Why the last save or remove failed, shown in the card until the next attempt
+	let etproError = $state('');
 
 	// Toggling state (track which source is being toggled)
 	let togglingSource = $state('');
@@ -118,6 +120,10 @@
 		}
 		if (u?.stale) {
 			return { tone: 'is-warn', text: `No successful rule update in 48 hours (last ${u.last_success ? formatTime(u.last_success) : 'never'}).` };
+		}
+		if (u?.missing_sources?.length) {
+			const names = u.missing_sources.map((s) => SOURCE_NAMES.get(s) ?? s).join(', ');
+			return { tone: 'is-warn', text: `The last update worked, but these sources weren't enabled: ${names}.` };
 		}
 		if (u?.state === 'active' || u?.state === 'prepared') {
 			const later = u.state === 'prepared' ? ' Suricata loads them when it next starts.' : '';
@@ -248,9 +254,12 @@
 	const applying = $derived(etpro?.applying === true);
 	$effect(() => {
 		if (!applying) return;
-		const poll = setInterval(() => void refresh.run(), APPLY_POLL_MS);
+		// runIfIdle: one load can take ~20 s while Suricata restarts, and run() would cancel it every tick
+		const poll = setInterval(() => void refresh.runIfIdle(), APPLY_POLL_MS);
 		return () => clearInterval(poll);
 	});
+	// One request at a time: a rule update, an ET Pro save or remove, or the restart they cause
+	const busy = $derived(updating || savingEtPro || removingEtPro || applying);
 
 	// OLD CODE START — #96: one failed request left every section on its defaults
 	/*
@@ -378,8 +387,12 @@
 	// }
 	// OLD CODE END
 
+	// A failure shows in the card (the top banner is off-screen and fades); the status is read again
+	// either way, and the buttons stay off until it lands
 	async function handleSaveEtPro(e: SubmitEvent) {
 		e.preventDefault();
+		confirmingRemove = false;
+		etproError = '';
 		const code = etproCode.trim();
 		if (!ETPRO_CODE.test(code)) {
 			etproCodeError = 'An ET Pro code is 16 to 64 letters and digits.';
@@ -392,13 +405,13 @@
 			if (result.ok) {
 				etproCode = '';
 				showMessage('Code saved. Suricata is restarting with ET Pro.');
-				await refresh.run();
 			} else {
-				showMessage(result.error ?? "Couldn't save the ET Pro code.", 'error');
+				etproError = result.error ?? "Couldn't save the ET Pro code.";
 			}
 		} catch {
-			showMessage("Couldn't save the ET Pro code: the request failed.", 'error');
+			etproError = "Couldn't save the ET Pro code: the request failed.";
 		} finally {
+			await refresh.run();
 			savingEtPro = false;
 		}
 	}
@@ -409,18 +422,19 @@
 			confirmingRemove = true;
 			return;
 		}
+		etproError = '';
 		removingEtPro = true;
 		try {
 			const result = await clearEtProCode();
 			if (result.ok) {
 				showMessage(result.cleared ? 'Code removed. Suricata is restarting with ET Open.' : 'No ET Pro code was set.');
-				await refresh.run();
 			} else {
-				showMessage(result.error ?? "Couldn't remove the ET Pro code.", 'error');
+				etproError = result.error ?? "Couldn't remove the ET Pro code.";
 			}
 		} catch {
-			showMessage("Couldn't remove the ET Pro code: the request failed.", 'error');
+			etproError = "Couldn't remove the ET Pro code: the request failed.";
 		} finally {
+			await refresh.run();
 			removingEtPro = false;
 			confirmingRemove = false;
 		}
@@ -473,7 +487,10 @@
 		<p class="page-sub">The threat detection rules Suricata runs, where they come from and when they refresh</p>
 	</div>
 	<div class="head-actions">
+		<!-- OLD CODE START — NET-191 slice 2: an update could start while an ET Pro change ran or Suricata restarted
 		<button class="btn primary" type="button" onclick={handleUpdateNow} disabled={updating}>
+		OLD CODE END -->
+		<button class="btn primary" type="button" onclick={handleUpdateNow} disabled={busy}>
 			<Icon name="refresh" />{updating ? 'Updating…' : 'Update rules now'}
 		</button>
 	</div>
@@ -662,7 +679,7 @@
 				<p class="notice is-warn" role="status">
 					<Icon name="warn" /><span>Suricata is restarting with the new rules. This takes a few minutes; this page refreshes by itself.</span>
 				</p>
-			{:else if etpro.activation?.state === 'active' && etpro.configured}
+			{:else if etpro.activation?.state === 'active' && etpro.configured && etpro.active}
 				<p class="notice is-ok" role="status">
 					<Icon name="check" /><span>ET Pro rules are active: {fmt(etpro.activation.etpro_rules)} rules loaded.</span>
 				</p>
@@ -690,18 +707,21 @@
 						aria-invalid={etproCodeError ? 'true' : undefined}
 						aria-describedby={etproCodeError ? 'etpro-code-error' : undefined}
 					/>
-					{#if etproCodeError}<p class="field-error" id="etpro-code-error">{etproCodeError}</p>{/if}
+					{#if etproCodeError}<p class="field-error" id="etpro-code-error" role="alert">{etproCodeError}</p>{/if}
 				</div>
+				{#if etproError}
+					<p class="notice is-error" role="alert"><Icon name="warn" /><span>{etproError}</span></p>
+				{/if}
 				<div class="form-actions">
 					{#if etpro.configured}
-						<button class="btn" type="button" onclick={handleRemoveEtPro} disabled={removingEtPro || savingEtPro || etpro.applying}>
+						<button class="btn" type="button" onclick={handleRemoveEtPro} disabled={busy}>
 							{confirmingRemove ? 'Confirm: remove and restart Suricata' : 'Remove code'}
 						</button>
 						{#if confirmingRemove}
 							<button class="btn" type="button" onclick={() => (confirmingRemove = false)} disabled={removingEtPro}>Cancel</button>
 						{/if}
 					{/if}
-					<button class="btn primary" type="submit" disabled={savingEtPro || removingEtPro || etpro.applying}>
+					<button class="btn primary" type="submit" disabled={busy}>
 						{savingEtPro ? 'Checking the code…' : 'Save code'}
 					</button>
 				</div>
@@ -719,5 +739,6 @@
 	.commercial-form { margin-top: var(--sp-4); }
 	OLD CODE END */
 	.etpro-form { margin-top: var(--sp-4); }
+	.etpro-form .notice { margin: var(--sp-3) 0 0; }
 	.update-line { margin: var(--sp-4) 0 0; }
 </style>

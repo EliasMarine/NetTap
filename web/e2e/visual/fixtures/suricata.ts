@@ -70,6 +70,7 @@ const LIVE = {
 		last_activation: iso(6 * HOUR),
 		stale: false,
 		recovery_pending: false,
+		missing_sources: [],
 	},
 } satisfies LiveRuleStatus;
 

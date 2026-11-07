@@ -174,6 +174,14 @@ describe('suricata-rules API client', () => {
 
 			expect(result).toMatchObject({ success: false, output: 'Daemon unavailable', reload_output: '' });
 		});
+
+		it.each([500, 202])('ignores a non-string error on HTTP %i', async (status) => {
+			mockFetchSuccess({ error: { detail: 'not text' }, running: status === 202 }, status);
+
+			const result = await updateRulesNow();
+
+			expect(result.output).toBe(`Request failed (HTTP ${status})`);
+		});
 	});
 
 	// -- getRuleStats -------------------------------------------------------

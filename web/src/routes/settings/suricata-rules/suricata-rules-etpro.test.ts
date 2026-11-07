@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/svelte';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/svelte';
 import { formatTime } from '$lib/utils/time';
 import Page from './+page.svelte';
 
@@ -24,6 +24,7 @@ const UPDATE = {
 	last_activation: '2026-11-07T00:01:00+00:00',
 	stale: false,
 	recovery_pending: false,
+	missing_sources: [],
 };
 
 const ETPRO_OFF = { configured: false, active: false, last_update_ok: null, applying: false, activation: null };
@@ -72,6 +73,21 @@ function page(live: object = {}, etpro: object = ETPRO_OFF) {
 
 const writesTo = (f: ReturnType<typeof stubApi>, method: string) =>
 	f.mock.calls.filter(([url, init]) => url === '/api/suricata/rules/commercial' && init?.method === method);
+
+/** GETs of the ET Pro status (getEtProStatus passes no init). */
+const statusReads = (f: ReturnType<typeof stubApi>) =>
+	f.mock.calls.filter(([url, init]) => url === '/api/suricata/rules/commercial' && !init).length;
+
+/** POST/DELETE never answer, so the page stays mid-request. */
+function holdWrites(f: ReturnType<typeof stubApi>) {
+	const answer = f.getMockImplementation()!;
+	f.mockImplementation(async (url, init) => {
+		if (init?.method) await new Promise(() => {});
+		return answer(url, init);
+	});
+}
+
+const VALID_CODE = 'abcd1234ABCD5678';
 
 afterEach(() => {
 	vi.unstubAllGlobals();
@@ -147,6 +163,25 @@ describe('Suricata rules page — last rule update', () => {
 
 		const note = await screen.findByText('The rule update is still running. Refresh this page in a few minutes to see the result.');
 		expect(note.closest('.notice')).toHaveClass('is-ok');
+	});
+
+	it('warns in amber about sources the last good update did not enable', async () => {
+		stubApi(page({ update: { ...UPDATE, missing_sources: ['ipfire/dbl', 'oisf/trafficid'] } }));
+		render(Page);
+
+		const line = await screen.findByText(
+			"The last update worked, but these sources weren't enabled: IPFire DBL (malware and phishing only), oisf/trafficid.",
+		);
+		expect(line.closest('.notice')).toHaveClass('is-warn');
+		expect(screen.queryByText(/^Rules last updated/)).not.toBeInTheDocument();
+	});
+
+	it('puts a failed update ahead of missing sources', async () => {
+		stubApi(page({ update: { ...UPDATE, state: 'failed', reason: 'the download timed out', missing_sources: ['ipfire/dbl'] } }));
+		render(Page);
+
+		expect(await screen.findByText(/^The last rule update failed/)).toBeInTheDocument();
+		expect(screen.queryByText(/weren't enabled/)).not.toBeInTheDocument();
 	});
 
 	it('says nothing is recorded when an older daemon sends no update', async () => {
@@ -235,7 +270,7 @@ describe('Suricata rules page — ET Pro card', () => {
 		await fireEvent.input(input, { target: { value: 'short-code!' } });
 		await fireEvent.click(screen.getByRole('button', { name: 'Save code' }));
 
-		expect(screen.getByText('An ET Pro code is 16 to 64 letters and digits.')).toBeInTheDocument();
+		expect(screen.getByRole('alert')).toHaveTextContent('An ET Pro code is 16 to 64 letters and digits.');
 		expect(input).toHaveAttribute('aria-invalid', 'true');
 		expect(writesTo(f, 'POST')).toHaveLength(0);
 	});
@@ -310,5 +345,152 @@ describe('Suricata rules page — ET Pro card', () => {
 		// done applying: the polling stops
 		await vi.advanceTimersByTimeAsync(45_000);
 		expect(statusReads(done)).toBe(1);
+	});
+});
+
+describe('Suricata rules page — ET Pro outcomes', () => {
+	it('keeps a refused save in the ET Pro card until the next attempt, and reads the status again', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		const f = stubApi(page(), { 'POST /api/suricata/rules/commercial': { status: 400, body: { error: 'Proofpoint did not accept this code.' } } });
+		render(Page);
+		const input = await screen.findByLabelText('ET Pro code');
+		const card = input.closest('.card') as HTMLElement;
+
+		await fireEvent.input(input, { target: { value: VALID_CODE } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save code' }));
+
+		const alert = await within(card).findByRole('alert');
+		expect(alert).toHaveTextContent('Proofpoint did not accept this code.');
+		expect(alert).toHaveClass('notice', 'is-error');
+		await waitFor(() => expect(statusReads(f)).toBe(2));
+		// still there after the top banner's 5 s
+		await vi.advanceTimersByTimeAsync(6_000);
+		expect(within(card).getByRole('alert')).toHaveTextContent('Proofpoint did not accept this code.');
+
+		await fireEvent.input(input, { target: { value: 'short' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save code' }));
+
+		expect(screen.queryByText('Proofpoint did not accept this code.')).not.toBeInTheDocument();
+		expect(within(card).getByRole('alert')).toHaveTextContent('An ET Pro code is 16 to 64 letters and digits.');
+	});
+
+	it('shows a failed remove in the ET Pro card and reads the status again', async () => {
+		const f = stubApi(page({}, ETPRO_ON), {
+			'DELETE /api/suricata/rules/commercial': { status: 409, body: { error: 'A rule update is running. Try again when it finishes.' } },
+		});
+		render(Page);
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Remove code' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Confirm: remove and restart Suricata' }));
+
+		const alert = await screen.findByRole('alert');
+		expect(alert).toHaveTextContent('A rule update is running. Try again when it finishes.');
+		expect(within(alert.closest('.card') as HTMLElement).getByLabelText('ET Pro code')).toBeInTheDocument();
+		await waitFor(() => expect(statusReads(f)).toBe(2));
+	});
+
+	it('drops a pending remove confirmation when a code is saved', async () => {
+		stubApi(page({}, ETPRO_ON), { 'POST /api/suricata/rules/commercial': { status: 400, body: { error: 'Proofpoint did not accept this code.' } } });
+		render(Page);
+
+		await fireEvent.click(await screen.findByRole('button', { name: 'Remove code' }));
+		await fireEvent.input(screen.getByLabelText('ET Pro code'), { target: { value: VALID_CODE } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save code' }));
+
+		await screen.findByText('Proofpoint did not accept this code.');
+		await waitFor(() => expect(screen.getByRole('button', { name: 'Remove code' })).toBeEnabled());
+		expect(screen.queryByRole('button', { name: /^Confirm/ })).not.toBeInTheDocument();
+	});
+
+	it('shows no green line while ET Pro is not in use, whatever the last activation said', async () => {
+		stubApi(page({}, { ...ETPRO_ON, active: false }));
+		render(Page);
+
+		expect(await screen.findByText('Saved')).toBeInTheDocument();
+		expect(screen.queryByText(/ET Pro rules are active/)).not.toBeInTheDocument();
+	});
+});
+
+describe('Suricata rules page — one change at a time', () => {
+	it('turns off Update rules now, Save code and Remove code while Suricata restarts', async () => {
+		stubApi(page({}, { ...ETPRO_ON, applying: true }));
+		render(Page);
+		await screen.findByText(/Suricata is restarting with the new rules/);
+
+		for (const name of ['Update rules now', 'Save code', 'Remove code']) {
+			expect(screen.getByRole('button', { name })).toBeDisabled();
+		}
+	});
+
+	it('turns off the ET Pro buttons while a rule update runs', async () => {
+		holdWrites(stubApi(page({}, ETPRO_ON)));
+		render(Page);
+		await screen.findByRole('button', { name: 'Remove code' });
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Update rules now' }));
+
+		expect(screen.getByRole('button', { name: 'Updating…' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Save code' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Remove code' })).toBeDisabled();
+	});
+
+	it('turns off Update rules now and Remove code while a code is checked', async () => {
+		holdWrites(stubApi(page({}, ETPRO_ON)));
+		render(Page);
+
+		await fireEvent.input(await screen.findByLabelText('ET Pro code'), { target: { value: VALID_CODE } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save code' }));
+
+		expect(screen.getByRole('button', { name: 'Checking the code…' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Update rules now' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Remove code' })).toBeDisabled();
+	});
+});
+
+describe('Suricata rules page — the 15 s look while Suricata restarts', () => {
+	const restarting = () => screen.findByText(/Suricata is restarting with the new rules/);
+
+	it('reads nothing before 15 s', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		const f = stubApi(page({}, { ...ETPRO_ON, applying: true }));
+		render(Page);
+		await restarting();
+
+		await vi.advanceTimersByTimeAsync(14_000);
+
+		expect(statusReads(f)).toBe(1);
+	});
+
+	it('stops when the page goes', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		const f = stubApi(page({}, { ...ETPRO_ON, applying: true }));
+		const { unmount } = render(Page);
+		await restarting();
+
+		unmount();
+		await vi.advanceTimersByTimeAsync(60_000);
+
+		expect(statusReads(f)).toBe(1);
+	});
+
+	it('lets a slow look land instead of starting another on top of it', async () => {
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		stubApi(page({}, { ...ETPRO_ON, applying: true }));
+		render(Page);
+		await restarting();
+
+		// While Suricata restarts, the live status takes 20 s to answer
+		const done = stubApi(page({ etpro_rules: 48211 }, ETPRO_ON));
+		const answer = done.getMockImplementation()!;
+		done.mockImplementation(async (url, init) => {
+			if (url === '/api/suricata/rules/live') await new Promise((r) => setTimeout(r, 20_000));
+			return answer(url, init);
+		});
+		await vi.advanceTimersByTimeAsync(15_000); // the first look starts
+		await vi.advanceTimersByTimeAsync(15_000); // the next tick finds it still running
+		await vi.advanceTimersByTimeAsync(6_000); // it answers at 35 s
+
+		expect(await screen.findByText('ET Pro rules are active: 48,211 rules loaded.')).toBeInTheDocument();
+		expect(done.mock.calls.filter(([url]) => url === '/api/suricata/rules/live')).toHaveLength(1);
 	});
 });

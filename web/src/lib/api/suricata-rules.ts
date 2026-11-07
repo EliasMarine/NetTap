@@ -39,6 +39,8 @@ export interface RuleUpdateStatus {
 	stale: boolean;
 	/** A restore of the last good rules isn't confirmed yet. */
 	recovery_pending: boolean;
+	/** Configured sources suricata-update didn't enable in an otherwise good update, e.g. "ipfire/dbl"; [] when none. */
+	missing_sources: string[];
 }
 
 /** The ET Pro code's status (GET /api/suricata/rules/commercial). The code itself is never returned. */
@@ -175,10 +177,12 @@ export async function updateRulesNow(): Promise<RuleUpdateResult> {
 	// OLD CODE END
 	// 500 (failed) and 202 (still running) carry the daemon's own body; a proxy error carries `error`
 	const body = await res.json().catch(() => ({}));
+	// a non-string `error` would break the page's output.slice()
+	const error = typeof body?.error === 'string' ? body.error : `Request failed (HTTP ${res.status})`;
 	return {
 		...body,
 		success: res.ok && body?.success === true,
-		output: typeof body?.output === 'string' ? body.output : (body?.error ?? `Request failed (HTTP ${res.status})`),
+		output: typeof body?.output === 'string' ? body.output : error,
 		reload_output: body?.reload_output ?? '',
 	};
 }
