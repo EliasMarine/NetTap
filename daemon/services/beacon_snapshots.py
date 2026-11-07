@@ -113,7 +113,7 @@ class BeaconSnapshots:
             "published" if error is None else f"kept previous ({error})",
         )
 
-    async def run_forever(self, sleep=asyncio.sleep) -> None:
+    async def run_forever(self) -> None:
         """Refresh whichever window is due next, one at a time, forever (24h first at start)."""
         loop = asyncio.get_running_loop()
         due = {w: loop.time() for w in WINDOWS}
@@ -121,7 +121,7 @@ class BeaconSnapshots:
             window = min(due, key=due.__getitem__)  # ties go to the first: 24h, then 7d
             wait = due[window] - loop.time()
             if wait > 0:
-                await sleep(wait)
+                await asyncio.sleep(wait)
             started = loop.time()
             await self.refresh(window)
             due = {**due, window: started + INTERVALS_S[window]}
