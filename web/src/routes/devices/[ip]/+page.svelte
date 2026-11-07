@@ -405,9 +405,10 @@
 	});
 
 	// The page's own 30 s auto refresh, through the same contract so "Updated" stays honest
+	const AUTO_REFRESH_MS = 30_000;
 	$effect(() => {
 		if (!autoRefresh) return;
-		const timer = setInterval(() => refresh.runIfIdle(), 30_000);
+		const timer = setInterval(() => refresh.runIfIdle(), AUTO_REFRESH_MS);
 		return () => clearInterval(timer);
 	});
 
@@ -699,7 +700,7 @@ OLD CODE END -->
 				<Icon name="refresh" />Auto
 			</button>
 			OLD CODE END -->
-			<AutoRefreshButton on={autoRefresh} seconds={30} ontoggle={() => (autoRefresh = !autoRefresh)} />
+			<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={() => (autoRefresh = !autoRefresh)} />
 		</div>
 	</div>
 	{#if device && device.ip}

@@ -149,6 +149,7 @@
 	let baseRange = $state('24h');
 	/** The exact window a link brought (?from=&to=, NET-160 slice 2a), shown as "Custom". */
 	let custom = $state<CustomWindow | null>(null);
+	const AUTO_REFRESH_MS = 15_000;
 	let autoRefresh = $state(false);
 	let refreshInterval = $state<ReturnType<typeof setInterval> | null>(null);
 
@@ -1044,7 +1045,7 @@
 			// OLD CODE START — the auto loop goes through the page refresh contract, so "Updated" stays honest
 			// refreshInterval = setInterval(() => fetchAll(), 15_000);
 			// OLD CODE END
-			refreshInterval = setInterval(() => refresh.runIfIdle(), 15_000);
+			refreshInterval = setInterval(() => refresh.runIfIdle(), AUTO_REFRESH_MS);
 		} else if (refreshInterval) {
 			clearInterval(refreshInterval);
 			refreshInterval = null;
@@ -1352,7 +1353,7 @@ OLD CODE END -->
 			<button class="pill" type="button" aria-pressed={autoRefresh} onclick={toggleAutoRefresh}>Auto</button>
 		</div>
 		OLD CODE END -->
-		<AutoRefreshButton on={autoRefresh} seconds={15} ontoggle={toggleAutoRefresh} />
+		<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={toggleAutoRefresh} />
 	</div>
 </header>
 

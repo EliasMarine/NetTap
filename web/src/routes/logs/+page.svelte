@@ -197,6 +197,7 @@
 	let selectedTimeRange = $state<TimeRange | 'custom'>('24h');
 	/** The window a drill-down link brought (?from=&to=), offered as "Custom" until another range is picked. */
 	let custom = $state<CustomWindow | null>(null);
+	const AUTO_REFRESH_MS = 30_000;
 	let autoRefresh = $state(false);
 	let refreshInterval = $state<ReturnType<typeof setInterval> | null>(null);
 
@@ -920,7 +921,7 @@
 			// OLD CODE START — PLAN §5.5: auto-refresh goes through the contract, so "Updated" stays honest
 			// refreshInterval = setInterval(fetchAll, 30_000);
 			// OLD CODE END
-			refreshInterval = setInterval(() => refresh.runIfIdle(), 30_000);
+			refreshInterval = setInterval(() => refresh.runIfIdle(), AUTO_REFRESH_MS);
 		} else if (refreshInterval) {
 			clearInterval(refreshInterval);
 			refreshInterval = null;
@@ -1233,7 +1234,7 @@ OLD CODE END -->
 			<Icon name="refresh" />{autoRefresh ? 'Auto-refresh on' : 'Auto-refresh'}
 		</button>
 		OLD CODE END -->
-		<AutoRefreshButton on={autoRefresh} seconds={30} ontoggle={toggleAutoRefresh} />
+		<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={toggleAutoRefresh} />
 		<button class="btn" type="button" onclick={exportCSV} disabled={results.length === 0}>
 			<Icon name="download" />Export CSV
 		</button>
