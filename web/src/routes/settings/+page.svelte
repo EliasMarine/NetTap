@@ -234,7 +234,8 @@
 		return { status, ilmOk, ilmPending, pruneOk, pruneStale, diskPct, diskHigh, diskCritical };
 	});
 
-	async function loadAbout() {
+	/** True when both reads answered (the page loader's outcome). */
+	async function loadAbout(): Promise<boolean> {
 		try {
 			const [healthRes, versionsRes] = await Promise.all([
 				fetch('/api/system/health'),
@@ -265,8 +266,10 @@
 				// OLD CODE: buildInfo = data.build ?? data.commit ?? 'Development build';
 				buildInfo = data.build ?? data.commit ?? null;
 			}
+			return healthRes.ok && versionsRes.ok;
 		} catch {
 			// Will use defaults
+			return false;
 		}
 	}
 
@@ -655,32 +658,32 @@
 	// });
 	// OLD CODE END
 	/**
-	 * The first load and the top bar's Refresh: every read on the page. A refresh reloads the forms
-	 * too, as reloading the page would, so an unsaved edit is replaced by the saved value.
+	 * The top bar's Refresh: the read-only status sections only (Retention health, About), never a
+	 * form, so an unsaved edit survives it. Capture and UniFi status share their loaders with their
+	 * forms, so they stay read once, with the forms.
 	 */
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
-		// shortcut: each read writes its own section unguarded; none takes a range or filter, so an older
-		// reply answers the same question. Copy the query into locals if a section gains one.
-		await Promise.all([
-			loadNotificationConfig(),
-			loadRetention(),
-			loadDiskUsage(),
-			loadExcludedIps(),
-			loadApiKeys(),
-			loadAbout(),
-			loadDisplaySettings(),
-			loadCaptureSettings(),
-			loadUnifiStatus(),
-		]);
+		// shortcut: each read writes its own section unguarded; neither takes a range or filter, so an
+		// older reply answers the same question. Copy the query into locals if a section gains one.
+		const [, aboutOk] = await Promise.all([loadDiskUsage(), loadAbout()]);
 		if (!guard.current(g)) return 'skipped';
-		const failed = [notifLoadFailed, retentionLoad === 'failed', storageStatusFailed, networkLoadFailed, captureLoadFailed, unifiStatusFailed];
-		return outcome(failed.map((bad): PromiseSettledResult<null> => (bad ? { status: 'rejected', reason: null } : { status: 'fulfilled', value: null })));
+		return outcome([storageStatusFailed, !aboutOk].map((bad): PromiseSettledResult<null> => (bad ? { status: 'rejected', reason: null } : { status: 'fulfilled', value: null })));
 	}
 
 	const refresh = registerPageRefresh(load);
 	onDestroy(refresh.unregister);
-	onMount(() => void refresh.run());
+	// The forms load once here, and again after a save, as before
+	onMount(() => {
+		loadNotificationConfig();
+		loadRetention();
+		loadExcludedIps();
+		loadApiKeys();
+		loadDisplaySettings();
+		loadCaptureSettings();
+		loadUnifiStatus();
+		void refresh.run();
+	});
 
 	async function saveNotifications() {
 		notifSaving = true;
@@ -970,7 +973,8 @@
 			</div>
 		</Card>
 	{:else if activeTab === 'retention'}
-		<Card title="Retention health" sub="Storage status · read when this page opened" class="c-4">
+		<!-- OLD CODE: sub="Storage status · read when this page opened" (NET-192 PR 4: the top bar's Refresh reads it again) -->
+		<Card title="Retention health" sub="Storage status · read when the page opened or was refreshed" class="c-4">
 			{#snippet actions()}
 				{#if !storageLoading}
 					<!-- OLD CODE START — no unknown state
@@ -1552,7 +1556,8 @@
 			</div>
 		</Card>
 	{:else if activeTab === 'about'}
-		<Card title="About NetTap" sub="This appliance · read when this page opened" class="c-6">
+		<!-- OLD CODE: sub="This appliance · read when this page opened" (NET-192 PR 4: the top bar's Refresh reads it again) -->
+		<Card title="About NetTap" sub="This appliance · read when the page opened or was refreshed" class="c-6">
 			<dl class="facts flush">
 				<dt>Version</dt>
 				<dd class="mono">{version}</dd>
