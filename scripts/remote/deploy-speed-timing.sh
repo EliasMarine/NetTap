@@ -71,7 +71,10 @@ echo ""
 
 echo "→ Step 3: Restart the daemon with query timing on and the background beaconing check off..."
 STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-sudo NETTAP_QUERY_TIMING=1 NETTAP_BEACON_BACKGROUND=0 docker compose -f "$COMPOSE_FILE" up -d --no-deps --force-recreate "$SERVICE"
+# OLD CODE START — the G11's docker-only sudo rule (no SETENV) refuses to set these variables
+# sudo NETTAP_QUERY_TIMING=1 NETTAP_BEACON_BACKGROUND=0 docker compose -f "$COMPOSE_FILE" up -d --no-deps --force-recreate "$SERVICE"
+# OLD CODE END
+sudo docker compose -f "$COMPOSE_FILE" -f scripts/remote/speed-timing.compose.yml up -d --no-deps --force-recreate "$SERVICE"
 wait_healthy
 echo ""
 
