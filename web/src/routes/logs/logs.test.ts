@@ -256,6 +256,34 @@ describe('Log Explorer — field descriptions on the table headers (NET-146)', (
 		const header = await screen.findByRole('columnheader', { name: 'source.ip' });
 		await vi.waitFor(() => expect(header.querySelector('button')).toHaveAttribute('title', 'Who opened the connection'));
 	});
+
+	it('keeps the picked type’s descriptions when an older reply lands after them (NET-160 section D)', async () => {
+		const replies: Record<string, unknown> = { ...AGGREGATIONS, '/api/logs/search': { hits: [hit('a', '10.0.0.5')], total: 1 } };
+		const fields = (description: string) => ({ ok: true, status: 200, json: async () => ({ fields: [{ name: 'source.ip', type: 'ip', description }] }) });
+		let releaseConn: () => void = () => {};
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const path = url.split('?')[0];
+				// the first load's conn descriptions answer only after the DNS ones
+				if (path === '/api/logs/fields/zeek.conn') {
+					await new Promise<void>((resolve) => (releaseConn = resolve));
+					return fields('Conn: who opened it');
+				}
+				if (path === '/api/logs/fields/zeek.dns') return fields('DNS: who asked');
+				const body = replies[path];
+				return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 503, json: async () => ({}) };
+			}),
+		);
+		render(Page);
+		await fireEvent.click(await screen.findByRole('button', { name: 'DNS' }));
+		const header = await screen.findByRole('columnheader', { name: 'source.ip' });
+		await vi.waitFor(() => expect(header.querySelector('button')).toHaveAttribute('title', 'DNS: who asked'));
+		releaseConn();
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		expect(header.querySelector('button')).toHaveAttribute('title', 'DNS: who asked');
+	});
 });
 
 // A busy box logs 20+ protocols: listing them all made the breakdown card three times the

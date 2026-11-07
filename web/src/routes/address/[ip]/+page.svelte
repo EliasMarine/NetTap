@@ -18,7 +18,8 @@
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { namesByIp } from '$lib/utils/device-names';
 	// OLD CODE: import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown'; (slice 2a)
-	import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
+	// OLD CODE: import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown'; (section D)
+	import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, windowQuery, withCount, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { asString, getField } from '$lib/utils/tshark-filter';
 	import type { SortDir } from '$lib/utils/table-sort.svelte';
@@ -403,8 +404,18 @@
 	function portLogs(p: AddressPort): string | null {
 		if (p.port === null || !p.transport || !data || !addressWindow) return null;
 		const clauses = ['event.provider:zeek', 'event.dataset:conn', `destination.ip:"${data.ip}"`, `destination.port:${p.port}`, `network.transport:${p.transport}`];
-		return logsHrefForQuery(clauses, addressWindow, shown.value);
+		// OLD CODE: return logsHrefForQuery(clauses, addressWindow, shown.value); (section D: the link carries the row's figure)
+		return withCount(logsHrefForQuery(clauses, addressWindow, shown.value), p.connections);
 	}
+	/**
+	 * The alerts the Alerts card counts: over the card's own window once its figures land, carrying
+	 * that figure (NET-160 section D); by range alone before, when there is no figure to carry.
+	 */
+	const alertsHref = $derived(
+		addressWindow && data
+			? withCount(`/alerts?ip=${encodeURIComponent(ip)}&${windowQuery(addressWindow, shown.value)}`, data.alerts)
+			: `/alerts?ip=${encodeURIComponent(ip)}&range=${shown.value}`,
+	);
 </script>
 
 {#snippet peerCell(p: AddressPeer)}
@@ -567,8 +578,9 @@ OLD CODE END -->
 		value={data ? fmt(data.alerts) : '—'}
 		sub={data ? 'with this address on either side' : undefined}
 		note={words}
-		href="/alerts?ip={encodeURIComponent(ip)}&range={shown.value}"
+		href={alertsHref}
 	/>
+	<!-- OLD CODE START: href="/alerts?ip={encodeURIComponent(ip)}&range={shown.value}" — section D: the list opened on a window anchored at click time, not the card's OLD CODE END -->
 	<!-- OLD CODE START: href="/alerts?ip={encodeURIComponent(ip)}" — /alerts opened on its own 24 hours, so "40 · last 7 days" could list 5 OLD CODE END -->
 </div>
 
@@ -711,7 +723,8 @@ OLD CODE END -->
 							? `Showing the newest ${fmt(CONN_REACH)} of ${fmt(connTotal)}.`
 							: `Showing the first ${fmt(CONN_REACH)} of ${fmt(connTotal)} in this order.`} Narrow the time range to reach older ones, or
 						<!-- OLD CODE: <a href={logsHrefForIp(ip, shown.value)}>search them all in Log Explorer</a>.</span (slice 2a: the count's own window) -->
-						<a href={logsHrefForIp(ip, shown.value, connWindow ?? undefined)}>search them all in Log Explorer</a>.</span
+						<!-- OLD CODE: <a href={logsHrefForIp(ip, shown.value, connWindow ?? undefined)}> (section D: every log type, while connTotal counts conn records) -->
+						<a href={withCount(logsHrefForIp(ip, shown.value, connWindow ?? undefined, 'zeek.conn'), connTotal)}>search them all in Log Explorer</a>.</span
 					>
 				</p>
 			{/if}

@@ -93,7 +93,8 @@ describe('Suricata category page', () => {
 		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
 		expect(screen.getByText(/Alerts per hour · window /)).toBeInTheDocument();
 		// the links carry the URL's range for their words, beside the response's bounds
-		expect(query(kpi('Alerts').getAttribute('href'))).toEqual({ suricata_category: NAME, from: WIN.from, to: WIN.to, range: '6h' });
+		// OLD CODE: …toEqual({ suricata_category: NAME, from: WIN.from, to: WIN.to, range: '6h' }) (section D: each link carries the figure it opens)
+		expect(query(kpi('Alerts').getAttribute('href'))).toEqual({ suricata_category: NAME, from: WIN.from, to: WIN.to, range: '6h', count: '1240' });
 		await fireEvent.click(screen.getByRole('button', { name: '30d' }));
 		expect(goto).toHaveBeenCalledWith('/alerts/suricata/Misc%20activity?range=30d', { replaceState: true, keepFocus: true, noScroll: true });
 	});
@@ -105,10 +106,14 @@ describe('Suricata category page', () => {
 		// the request's window is now; the links keep the bounds the figures answered for
 		expect(figuresCall().searchParams.get('from')).not.toBe(WIN.from);
 		expect(new URL(kpi('Alerts').getAttribute('href')!, 'http://x').pathname).toBe('/alerts');
-		expect(query(kpi('Alerts').getAttribute('href'))).toEqual({ suricata_category: NAME, ...WIN });
+		// OLD CODE START (section D: each link carries the figure it opens)
+		// expect(query(kpi('Alerts').getAttribute('href'))).toEqual({ suricata_category: NAME, ...WIN });
+		// …and each tile: toEqual({ severity: level, suricata_category: NAME, ...WIN })
+		// OLD CODE END
+		expect(query(kpi('Alerts').getAttribute('href'))).toEqual({ suricata_category: NAME, ...WIN, count: '1240' });
 		for (const [level, n] of [['high', '40'], ['medium', '300'], ['low', '880'], ['info', '20']]) {
 			const tile = screen.getByRole('link', { name: `Show the ${level} alerts in this category (${n})` });
-			expect(query(tile.getAttribute('href'))).toEqual({ severity: level, suricata_category: NAME, ...WIN });
+			expect(query(tile.getAttribute('href'))).toEqual({ severity: level, suricata_category: NAME, ...WIN, count: n });
 		}
 	});
 
@@ -118,13 +123,15 @@ describe('Suricata category page', () => {
 		await loaded();
 		const rules = card('Rules');
 		const rule = within(rules).getByRole('link', { name: 'ET INFO Observed DNS Query to .cloud TLD' });
-		expect(query(rule.getAttribute('href'))).toEqual({ signature: 'ET INFO Observed DNS Query to .cloud TLD', suricata_category: NAME, ...WIN });
+		// OLD CODE: …toEqual({ signature: 'ET INFO Observed DNS Query to .cloud TLD', suricata_category: NAME, ...WIN }) (section D)
+		expect(query(rule.getAttribute('href'))).toEqual({ signature: 'ET INFO Observed DNS Query to .cloud TLD', suricata_category: NAME, ...WIN, count: '700' });
 		// null and "" are two rows that read the same, neither a link
 		const none = within(rules).getAllByText('No rule name');
 		expect(none).toHaveLength(2);
 		for (const n of none) expect(n.closest('a')).toBeNull();
 		// a rule literally named "Unknown" is an ordinary rule
-		expect(query(within(rules).getByRole('link', { name: 'Unknown' }).getAttribute('href'))).toEqual({ signature: 'Unknown', suricata_category: NAME, ...WIN });
+		// OLD CODE: …toEqual({ signature: 'Unknown', suricata_category: NAME, ...WIN }) (section D)
+		expect(query(within(rules).getByRole('link', { name: 'Unknown' }).getAttribute('href'))).toEqual({ signature: 'Unknown', suricata_category: NAME, ...WIN, count: '4' });
 		expect(within(rules).getByText('5 rules')).toBeInTheDocument();
 		expectNoNestedInteractive(container);
 	});
@@ -136,11 +143,13 @@ describe('Suricata category page', () => {
 		const sources = card('Sources');
 		await vi.waitFor(() => expect(within(sources).getByRole('link', { name: '192.168.1.20' })).toHaveAttribute('href', '/devices/192.168.1.20'));
 		expect(within(sources).getByRole('link', { name: '2001:db8::5' })).toHaveAttribute('href', '/address/2001%3Adb8%3A%3A5');
-		expect(query(within(sources).getByRole('link', { name: '800' }).getAttribute('href'))).toEqual({ src: '192.168.1.20', suricata_category: NAME, ...WIN });
+		// OLD CODE: …toEqual({ src: '192.168.1.20', suricata_category: NAME, ...WIN }) (section D)
+		expect(query(within(sources).getByRole('link', { name: '800' }).getAttribute('href'))).toEqual({ src: '192.168.1.20', suricata_category: NAME, ...WIN, count: '800' });
 		expect(within(sources).getByText('3 addresses')).toBeInTheDocument();
 		expect(within(sources).getByText("20 alerts had no source address, so they aren't listed.")).toBeInTheDocument();
 		const targets = card('Targets');
-		expect(query(within(targets).getByRole('link', { name: '600' }).getAttribute('href'))).toEqual({ dst: '198.51.100.10', suricata_category: NAME, ...WIN });
+		// OLD CODE: …toEqual({ dst: '198.51.100.10', suricata_category: NAME, ...WIN }) (section D)
+		expect(query(within(targets).getByRole('link', { name: '600' }).getAttribute('href'))).toEqual({ dst: '198.51.100.10', suricata_category: NAME, ...WIN, count: '600' });
 		expect(within(targets).queryByText(/had no destination address/)).not.toBeInTheDocument();
 		expectNoNestedInteractive(container);
 	});

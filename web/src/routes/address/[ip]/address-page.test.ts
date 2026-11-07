@@ -69,6 +69,7 @@ const baseReplies = (summary: AddressSummary | undefined, total = 1): Record<str
 });
 
 const kpi = (label: string) => screen.getAllByText(label).map((e) => e.closest('.kpi')).find(Boolean) as HTMLElement;
+const params = (el: Element) => Object.fromEntries(new URL(el.getAttribute('href')!, 'http://x').searchParams);
 const card = (title: string) => screen.getByRole('heading', { name: title }).closest('.card') as HTMLElement;
 
 function goTo(ip: string) {
@@ -88,6 +89,8 @@ describe('Address page', () => {
 		expect(kpi('Connections')).toHaveTextContent('—');
 		expect(kpi('Data to it')).toHaveTextContent('—');
 		expect(screen.getAllByRole('status').some((s) => s.getAttribute('aria-busy') === 'true')).toBe(true);
+		// NET-160 section D: no figure yet, so the Alerts card links by range alone and carries no count
+		expect(kpi('Alerts').closest('a')).toHaveAttribute('href', '/alerts?ip=198.51.100.10&range=24h');
 	});
 
 	it('shows the exact figures, with partial byte totals as lower bounds', async () => {
@@ -102,7 +105,9 @@ describe('Address page', () => {
 		expect(kpi('Devices that talked to it')).toHaveTextContent('on your network, of 3 addresses in all');
 		// OLD CODE START: expect(kpi('Alerts').closest('a')).toHaveAttribute('href', '/alerts?ip=198.51.100.10'); OLD CODE END
 		// the alerts page opens on this page's window, so its list matches the count
-		expect(kpi('Alerts').closest('a')).toHaveAttribute('href', '/alerts?ip=198.51.100.10&range=24h');
+		// OLD CODE: expect(kpi('Alerts').closest('a')).toHaveAttribute('href', '/alerts?ip=198.51.100.10&range=24h'); (section D: the figures' own window, and the figure)
+		const asked = calls.find((u) => u.pathname === '/api/addresses/198.51.100.10')!.searchParams;
+		expect(params(kpi('Alerts').closest('a')!)).toEqual({ ip: '198.51.100.10', from: asked.get('from'), to: asked.get('to'), range: '24h', count: String(ADDRESS.alerts) });
 		expect(screen.getByText('Not on a threat list')).toBeInTheDocument();
 		expect(screen.getByText("Checked this window's alerts and 5,400 cached indicators")).toBeInTheDocument();
 		// a port lists every service Zeek saw on it, each connection counted once
@@ -195,7 +200,12 @@ describe('Address page', () => {
 		render(Page);
 		await vi.waitFor(() => expect(kpi('Connections')).toHaveTextContent('1,980'));
 		await fireEvent.click(screen.getByRole('button', { name: '30d' }));
-		await vi.waitFor(() => expect(kpi('Alerts').closest('a')).toHaveAttribute('href', '/alerts?ip=198.51.100.10&range=30d'));
+		// OLD CODE: await vi.waitFor(() => expect(kpi('Alerts').closest('a')).toHaveAttribute('href', '/alerts?ip=198.51.100.10&range=30d')); (section D)
+		await vi.waitFor(() => expect(params(kpi('Alerts').closest('a')!)).toMatchObject({ range: '30d', count: String(ADDRESS.alerts) }));
+		const asked = calls.filter((u) => u.pathname === '/api/addresses/198.51.100.10').at(-1)!.searchParams;
+		expect(Date.parse(asked.get('to')!) - Date.parse(asked.get('from')!)).toBe(720 * 3_600_000);
+		// NET-160 section D: the 30-day figures' own window, and the figure, so the list can say if it differs
+		expect(params(kpi('Alerts').closest('a')!)).toEqual({ ip: '198.51.100.10', from: asked.get('from'), to: asked.get('to'), range: '30d', count: String(ADDRESS.alerts) });
 		const logs = await screen.findByRole('link', { name: 'search them all in Log Explorer' });
 		expect(new URL(logs.getAttribute('href')!, 'http://x').searchParams.get('range')).toBe('30d');
 	});
@@ -358,8 +368,13 @@ describe('Address page', () => {
 		// OLD CODE START: expect(decodeURIComponent(link.getAttribute('href')!)).toBe('/logs?query=(source.ip:"198.51.100.10" OR destination.ip:"198.51.100.10")'); OLD CODE END
 		// OLD CODE: expect(decodeURIComponent(link.getAttribute('href')!)).toBe('/logs?query=(source.ip:"198.51.100.10" OR destination.ip:"198.51.100.10")&range=24h'); (slice 2a: the count's own window too)
 		const conn = calls.find((u) => u.pathname.endsWith('/connections'))!;
+		// OLD CODE START (section D: every log type, while 25,000 counts conn records; no figure carried)
+		// expect(decodeURIComponent(link.getAttribute('href')!)).toBe(
+		// 	`/logs?query=(source.ip:"198.51.100.10" OR destination.ip:"198.51.100.10")&range=24h&from=${conn.searchParams.get('from')}&to=${conn.searchParams.get('to')}`,
+		// );
+		// OLD CODE END
 		expect(decodeURIComponent(link.getAttribute('href')!)).toBe(
-			`/logs?query=(source.ip:"198.51.100.10" OR destination.ip:"198.51.100.10")&range=24h&from=${conn.searchParams.get('from')}&to=${conn.searchParams.get('to')}`,
+			`/logs?query=(source.ip:"198.51.100.10" OR destination.ip:"198.51.100.10")&range=24h&type=zeek.conn&from=${conn.searchParams.get('from')}&to=${conn.searchParams.get('to')}&count=25000`,
 		);
 		expect(screen.getByText('Showing 1 to 25 of 10,000')).toBeInTheDocument();
 		// a refresh of the same view stays on the page the user is reading
@@ -466,6 +481,8 @@ describe('Address page — port links', () => {
 
 		const links = within(card('Ports on this address')).getAllByRole('link').map((a) => new URL(a.getAttribute('href')!, 'http://x'));
 		expect(links.map((u) => u.searchParams.get('query'))).toEqual([conn(443, 'tcp'), conn(443, 'udp'), conn(80, 'tcp')]);
+		// NET-160 section D: each carries the row's connection count, the figure clicked
+		expect(links.map((u) => u.searchParams.get('count'))).toEqual(['1700', '250', '30']);
 		for (const u of links) {
 			expect(u.pathname).toBe('/logs');
 			expect(u.searchParams.get('query')).not.toContain('source.ip');

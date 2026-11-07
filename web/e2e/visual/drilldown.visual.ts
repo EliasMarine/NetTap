@@ -81,6 +81,22 @@ test.describe('Suricata category page', () => {
 		await expect(kpi(page, 'Alerts')).toContainText('1,240');
 	});
 
+	test('Alerts opened from a figure states the difference when its own search finds more (section D)', async ({ page }, testInfo) => {
+		const path = '/alerts?range=24h&count=210';
+		await setMode('populated');
+		const errors = watchConsole(page);
+		const apiIdle = watchApi(page);
+		await stubUpstreams(page, 'populated');
+		await page.setViewportSize({ width: 1440, height: 900 });
+		await page.goto(path);
+		await expectReached(page, '/alerts', 'Alerts');
+		await apiIdle();
+		// The fixture's list total is 214
+		await expect(page.locator('main p.notice[role="status"]')).toContainText('You clicked 210. This search now matches 214 alerts (4 more).');
+		await sweep(page, testInfo, { route: path, mode: 'populated' }, { viewports: [{ width: 1440, height: 900 }, { width: 390, height: 844 }] });
+		expectNoConsoleErrors(errors, { route: path, mode: 'populated' });
+	});
+
 	test('the populated page also fits 1024 and 768 in every theme (the route sweep covers 1920, 1440 and 390)', async ({ page }, testInfo) => {
 		const path = '/alerts/suricata/Misc%20activity';
 		await setMode('populated');

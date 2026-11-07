@@ -75,6 +75,8 @@ describe('Domain page', () => {
 		// links to pages with their own window carry this one
 		expect(within(card('Alerts tagged with this name')).getByRole('link', { name: /Open alerts/ })).toHaveAttribute('href', '/alerts?range=24h');
 		expect(new URL(screen.getByRole('link', { name: /Search Log Explorer for/ }).getAttribute('href')!, 'http://x').searchParams.get('range')).toBe('24h');
+		// NET-160 section D: neither list holds exactly a figure here (case-insensitive count; every alert), so neither carries one
+		expect(new URL(screen.getByRole('link', { name: /Search Log Explorer for/ }).getAttribute('href')!, 'http://x').searchParams.has('count')).toBe(false);
 		const alerts = card('Alerts tagged with this name');
 		expect(alerts).toHaveTextContent('1');
 		expect(alerts).toHaveTextContent('Only 12 of 57 alerts in this window carry a host name.');

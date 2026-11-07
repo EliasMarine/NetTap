@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, within } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
@@ -140,6 +140,9 @@ describe('Alert category page — signature links', () => {
 				name, shown.get('from'), shown.get('to'), '24h',
 			]);
 		}
+		// NET-160 section D: the bar carries its figure; the table row's link counts nothing, so carries none
+		expect(new URL(screen.getByRole('link', { name: 'ET SCAN Nmap' }).getAttribute('href')!, 'http://localhost').searchParams.get('count')).toBe('3');
+		expect(new URL(screen.getByRole('link', { name: 'Sig a' }).getAttribute('href')!, 'http://localhost').searchParams.has('count')).toBe(false);
 		expectNoNestedInteractive(container);
 
 		// a refresh still in flight (minutes later) leaves the links on the figures on screen
@@ -151,5 +154,31 @@ describe('Alert category page — signature links', () => {
 		const bar = new URL(screen.getByRole('link', { name: 'ET SCAN Nmap' }).getAttribute('href')!, 'http://localhost');
 		expect(bar.searchParams.get('to')).toBe(shown.get('to'));
 		vi.useRealTimers();
+	});
+
+	// NET-160 section D: "Unknown" is the daemon's bucket for alerts with no rule name, and the list
+	// matches the literal name only; an empty name makes the list drop the filter. Neither can list its figure.
+	it('the "Unknown" and empty-name bars are plain rows, with no link and no count', async () => {
+		const detail = {
+			...DETAIL,
+			top_signatures: [
+				{ signature: 'ET SCAN Nmap', count: 3, last_seen: '2026-11-06T10:00:00Z' },
+				{ signature: 'Unknown', count: 5, last_seen: '2026-11-06T10:00:00Z' },
+				{ signature: '', count: 2, last_seen: '2026-11-06T10:00:00Z' },
+			],
+		};
+		stubDaemon({ '/api/alerts/categories/scan': detail });
+		const { container } = render(Page);
+		const card = await vi.waitFor(() => screen.getByRole('heading', { name: 'Top signatures' }).closest('.card') as HTMLElement);
+		const rows = [...card.querySelectorAll('.bar-row')];
+		expect(rows).toHaveLength(3);
+		const links = within(card).getAllByRole('link');
+		expect(links.map((a) => a.textContent)).toEqual(['ET SCAN Nmap']);
+		for (const row of rows.slice(1)) {
+			expect(row.querySelector('a, button, [href]')).toBeNull();
+		}
+		expect(rows[1]).toHaveTextContent('Unknown');
+		expect(rows[1]).toHaveTextContent('5');
+		expectNoNestedInteractive(container);
 	});
 });

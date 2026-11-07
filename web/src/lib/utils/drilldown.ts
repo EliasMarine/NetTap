@@ -91,12 +91,20 @@ export function certificatesHref(opts: { site?: string | null; server?: string |
 // 	return `/logs?query=${encodeURIComponent(`(source.ip:"${ip}" OR destination.ip:"${ip}")`)}&range=${range}`;
 // }
 // OLD CODE END
+// OLD CODE START — section D: every log type, while the address page's figure counts conn records only
+// export function logsHrefForIp(ip: string, range: DrillRangeValue, win?: DrillWindow): string {
+// 	const href = `/logs?query=${encodeURIComponent(`(source.ip:"${ip}" OR destination.ip:"${ip}")`)}&range=${range}`;
+// 	return win ? `${href}&${windowQuery(win)}` : href;
+// }
+// OLD CODE END
 /**
  * Log Explorer over `range`, searching both sides for an address (quoted, so IPv6 colons aren't
- * query syntax). With `win`, the list opens on that exact window (Custom), the count's own.
+ * query syntax). With `win`, the list opens on that exact window (Custom), the count's own; with
+ * `type`, on that log type only (e.g. `zeek.conn` for a connection count).
  */
-export function logsHrefForIp(ip: string, range: DrillRangeValue, win?: DrillWindow): string {
-	const href = `/logs?query=${encodeURIComponent(`(source.ip:"${ip}" OR destination.ip:"${ip}")`)}&range=${range}`;
+export function logsHrefForIp(ip: string, range: DrillRangeValue, win?: DrillWindow, type?: string): string {
+	let href = `/logs?query=${encodeURIComponent(`(source.ip:"${ip}" OR destination.ip:"${ip}")`)}&range=${range}`;
+	if (type) href += `&type=${encodeURIComponent(type)}`;
 	return win ? `${href}&${windowQuery(win)}` : href;
 }
 
@@ -254,4 +262,50 @@ export function suricataAlertsHref(name: string, win: DrillWindow & { range?: st
 	}
 	q.set('suricata_category', name);
 	return `/alerts?${q.toString()}&${windowQuery(win, win.range)}`;
+}
+
+// ---------------------------------------------------------------------------
+// The figure clicked (NET-160 section D, option A): a list says when its own total differs
+// ---------------------------------------------------------------------------
+
+/** `href` with `count=<n>` when `n` is a whole number of 0 or more; unchanged otherwise. */
+export function withCount(href: string, n: number | null | undefined): string {
+	if (typeof n !== 'number' || !Number.isSafeInteger(n) || n < 0) return href;
+	return `${href}${href.includes('?') ? '&' : '?'}count=${n}`;
+}
+
+/** A link's `count` parameter: up to 15 digits and nothing else, or null (it is only informational). */
+export function linkedCount(raw: string | null): number | null {
+	return raw !== null && /^[0-9]{1,15}$/.test(raw) ? Number(raw) : null;
+}
+
+/** How a list names its own total: "This search now matches" + "1 alert" / "2 alerts". */
+export interface CountWords {
+	lead: string;
+	one: string;
+	many: string;
+}
+
+/**
+ * The line a list shows when its total differs from the figure the user clicked, or null when they
+ * agree. It states the net difference and the two ways it happens, not which records changed.
+ */
+export function countDifference(expected: number, observed: number, words: CountWords): string | null {
+	if (expected === observed) return null;
+	const gap = Math.abs(observed - expected);
+	const direction = observed > expected ? 'more' : 'fewer';
+	return (
+		`You clicked ${fmt(expected)}. ${words.lead} ${fmt(observed)} ${observed === 1 ? words.one : words.many} (${fmt(gap)} ${direction}). ` +
+		'Records can be logged after a figure is counted (a connection is logged when it ends), and old records are deleted to free disk space.'
+	);
+}
+
+/**
+ * One comparison, tied to the list request a counted link started: `gen` is that request's guard
+ * generation, `observed` its total. Any other load replaces it with null.
+ */
+export interface LinkedCount {
+	expected: number;
+	gen: number | null;
+	observed: number | null;
 }

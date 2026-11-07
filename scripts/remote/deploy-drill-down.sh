@@ -24,6 +24,8 @@
 #     web container inside 80% of the route's timeout
 #   - risk scores over a settled 24 h window (PR #191 follow-up): the scored devices against
 #     OpenSearch's device count, and the top device's scored connections against its _count
+#   - the address page's counted links (NET-160 section D): its Alerts figure = the alert list
+#     over its window, its connection figure between two readings of the conn-only log search
 #   - a bad address is a 400 and no token is a 401
 #
 # Run as the normal user (NOT with sudo):
@@ -669,6 +671,55 @@ if [[ "${r_ip:-}" =~ ^[0-9a-fA-F.:]+$ ]]; then
 else
     echo "   · no scored device in the window; the single-score check is skipped"
 fi
+echo ""
+
+echo "→ Step 7f: The address page's counted links open lists that hold their figures (NET-160 section D)..."
+# Section D adds count=<figure> to every cross-page count link and the list states any difference.
+# Two address-page links were fixed so a count could ride on them: the Alerts card now carries its
+# window, and "search them all" opens conn records only. Over the settled 24 h window, each figure
+# must equal (alerts) or sit between two readings of (connections) the list its link opens.
+F_LINKS='
+import json, sys, urllib.error, urllib.parse, urllib.request
+def fetch(path):
+    headers = {"X-NetTap-Daemon-Token": open("/run/nettap-auth/daemon-token").read().strip()}
+    try:
+        with urllib.request.urlopen(urllib.request.Request("http://localhost:8880" + path, headers=headers), timeout=120) as r:
+            return r.status, json.load(r)
+    except urllib.error.HTTPError as e:
+        return e.code, None
+frm, to, ip = sys.argv[1:4]
+w = {"from": frm, "to": to}
+logs = "/api/logs/search?" + urllib.parse.urlencode({**w, "log_type": "zeek.conn", "size": 1, "query": "(source.ip:\"%s\" OR destination.ip:\"%s\")" % (ip, ip)})
+c1, l1 = fetch(logs)
+c2, conn = fetch("/api/devices/%s/connections?" % urllib.parse.quote(ip) + urllib.parse.urlencode({**w, "size": 1}))
+c3, l2 = fetch(logs)
+c4, addr = fetch("/api/addresses/%s?" % urllib.parse.quote(ip) + urllib.parse.urlencode(w))
+c5, alerts = fetch("/api/alerts?" + urllib.parse.urlencode({**w, "ip": ip, "size": 1}))
+ok = [c1, c2, c3, c4, c5] == [200] * 5
+print(json.dumps({"codes": [c1, c2, c3, c4, c5]} if not ok else {
+    "codes": "ok", "logs_before": l1.get("total"), "conn": conn.get("total"), "logs_after": l2.get("total"),
+    "addr_alerts": addr.get("alerts"), "list_alerts": alerts.get("total")}))
+'
+L_IP="${r_ip:-}"
+if [[ "$L_IP" =~ ^[0-9a-fA-F.:]+$ ]]; then
+    LINKS=$(sudo docker exec nettap-storage-daemon python3 -c "$F_LINKS" "$R_FROM" "$D_TO" "$L_IP" 2>&1 | tail -n 1)
+    read -r l_codes l_before l_conn l_after a_addr a_list <<<"$(json_get "$LINKS" "' '.join(str(r.get(k)).replace(' ', '') for k in ('codes', 'logs_before', 'conn', 'logs_after', 'addr_alerts', 'list_alerts'))")"
+    if [ "${l_codes:-}" = "ok" ]; then rc=0; else rc=1; fi
+    check "$L_IP: the address page's figures and their lists answer" "$rc" "${l_codes:-?}"
+    if between "${l_before:-}" "${l_conn:-}" "${l_after:-}"; then rc=0; else rc=1; fi
+    check "24 h: \"search them all\" (conn records only) <= the connection figure <= a later reading" "$rc" "$L_IP: ${l_before:-?} <= ${l_conn:-?} <= ${l_after:-?}"
+    if [[ "${a_addr:-}" =~ ^[0-9]+$ ]] && [ "$a_addr" = "${a_list:-}" ]; then rc=0; else rc=1; fi
+    check "24 h: the address Alerts card = the alert list over its window" "$rc" "$L_IP: card ${a_addr:-?}, list ${a_list:-?}"
+else
+    echo "   · no scored device in the window; the address checks are skipped"
+fi
+# The count parameter is informational: a link carrying it answers like any other
+ROUTE=$(curl -sk -o /dev/null -w '%{http_code} %{redirect_url}' "https://localhost/alerts?range=24h&count=5")
+case "$ROUTE" in
+    "200 "*|"302 https://localhost/login"*) rc=0 ;;
+    *) rc=1 ;;
+esac
+check "/alerts?range=24h&count=5 through nginx (the page, or the login redirect)" "$rc" "$ROUTE"
 echo ""
 
 echo "→ Step 8: Validation and the token..."

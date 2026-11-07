@@ -30,7 +30,7 @@
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { smartLevel, type SeverityLevel } from '$lib/utils/severity';
 	// OLD CODE: import { alertsHrefForSignature, logsHrefForQuery, type DrillWindow } from '$lib/utils/drilldown'; (slice 2b-1: smart alerts link by their key)
-	import { logsHrefForQuery, NO_EXACT_ALERT_LIST, smartAlertHref, type DrillWindow } from '$lib/utils/drilldown';
+	import { logsHrefForQuery, NO_EXACT_ALERT_LIST, smartAlertHref, withCount, type DrillWindow } from '$lib/utils/drilldown';
 	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { DeviceConnectionSort } from '$api/devices';
 	import type { SmartAlert } from '$api/alerts';
@@ -622,8 +622,11 @@
 {#snippet countCell(q: DeviceDNSQuery)}{formatNumber(q.count)}{/snippet}
 <!-- OLD CODE START: {#snippet portCell(p: DevicePort)}<span class="mono">{p.port}</span>{/snippet} (slice 2a: not a link) OLD CODE END -->
 <!-- The port's connections in Log Explorer: the count's own filters, written out, over its window -->
-{#snippet portCell(p: DevicePort)}
+<!-- OLD CODE START (section D: the link carries the port's connection count)
 	{#if portsWindow}<a class="mono" href={logsHrefForQuery(['event.provider:zeek', 'event.dataset:conn', `source.ip:"${portsWindow.ip}"`, `destination.port:${p.port}`], portsWindow, portsWindow.range)}>{p.port}</a>
+OLD CODE END -->
+{#snippet portCell(p: DevicePort)}
+	{#if portsWindow}<a class="mono" href={withCount(logsHrefForQuery(['event.provider:zeek', 'event.dataset:conn', `source.ip:"${portsWindow.ip}"`, `destination.port:${p.port}`], portsWindow, portsWindow.range), p.connections)}>{p.port}</a>
 	{:else}<span class="mono">{p.port}</span>{/if}
 {/snippet}
 {#snippet serviceCell(p: DevicePort)}
@@ -773,8 +776,9 @@ OLD CODE END -->
 								<SeverityPill level={smartLevel(sa.severity)} />
 								<b>{sa.category_label}</b>
 								<!-- OLD CODE: <span class="dim num">×{formatNumber(sa.count)}</span> (slice 2b-1: the count wasn't a link) -->
+								<!-- OLD CODE: <a class="num" href={exact} …> (section D: the ×N link carries its figure) -->
 								{#if exact}
-									<a class="num" href={exact} aria-label="×{formatNumber(sa.count)} alerts: {sa.signature}">×{formatNumber(sa.count)}</a>
+									<a class="num" href={withCount(exact, sa.count)} aria-label="×{formatNumber(sa.count)} alerts: {sa.signature}">×{formatNumber(sa.count)}</a>
 								{:else}
 									<span class="dim num" title={NO_EXACT_ALERT_LIST}>×{formatNumber(sa.count)}</span>
 								{/if}
@@ -786,8 +790,9 @@ OLD CODE END -->
 							</div>
 							<!-- OLD CODE: <div class="sig wrap">{sa.signature}</div> (slice 2a: not a link) -->
 							<!-- OLD CODE: <a class="sig wrap" href={alertsHrefForSignature(sa.signature, smartAlertsWindow ?? undefined, smartAlertsWindow?.ip)}>{sa.signature}</a> (slice 2b-1: the shown name can differ from rule.name, and ip alone listed the device's other pairs) -->
+							<!-- OLD CODE: <a class="sig wrap" href={exact}> (section D: same list as the ×N, so the same figure) -->
 							{#if exact}
-								<a class="sig wrap" href={exact}>{sa.signature}</a>
+								<a class="sig wrap" href={withCount(exact, sa.count)}>{sa.signature}</a>
 							{:else}
 								<div class="sig wrap">{sa.signature}</div>
 							{/if}

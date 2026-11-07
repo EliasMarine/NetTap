@@ -52,7 +52,18 @@
 	import { severityBuckets, type SeverityLevel } from '$lib/utils/severity';
 	import { alertSnapshots, loadAlertSnapshot, refreshAlertSnapshots, type AlertSnapshot } from '$lib/stores/alertSnapshot';
 	// OLD CODE: import { alertsHrefForSignature, customRange, type CustomWindow, type DrillWindow } from '$lib/utils/drilldown'; (slice 2b-2)
-	import { alertsHrefForSignature, customRange, partialListNote, suricataCategoryHref, type CustomWindow, type DrillWindow } from '$lib/utils/drilldown';
+	// OLD CODE: import { alertsHrefForSignature, customRange, partialListNote, suricataCategoryHref, type CustomWindow, type DrillWindow } from '$lib/utils/drilldown'; (section D)
+	import {
+		alertsHrefForSignature,
+		countDifference,
+		customRange,
+		linkedCount,
+		partialListNote,
+		suricataCategoryHref,
+		type CustomWindow,
+		type DrillWindow,
+		type LinkedCount,
+	} from '$lib/utils/drilldown';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -185,6 +196,8 @@
 	let totalPages = $state(0);
 	let totalAlerts = $state(0);
 	const pageSize = 50;
+	/** A counted link's figure against the total of the one list request it started (NET-160 section D). */
+	let linked = $state<LinkedCount | null>(null);
 
 	// OLD CODE START — replaced by DetailDrawer
 	// let selectedAlert = $state<Alert | null>(null);
@@ -326,6 +339,12 @@
 	const groups = $derived(groupAlerts(sortedAlerts));
 	const fromRow = $derived(totalAlerts > 0 ? (currentPage - 1) * pageSize + 1 : 0);
 	const toRow = $derived(Math.min(totalAlerts, fromRow + alerts.length - 1));
+	/** "You clicked N. This search now matches M alerts (…)", once the counted link's request answers with another total. */
+	const countLine = $derived(
+		linked && linked.observed !== null
+			? countDifference(linked.expected, linked.observed, { lead: 'This search now matches', one: 'alert', many: 'alerts' })
+			: null,
+	);
 
 	// OLD CODE START — the counts come from the shared alert snapshot, and info from severityBuckets
 	// function filterCountForTab(filter: SeverityFilter): number {
@@ -673,7 +692,8 @@
 	}
 
 	// OLD CODE: function applyList(result: PromiseSettledResult<AlertsListResponse>) { (slice 2a: rows didn't keep their window)
-	function applyList(result: PromiseSettledResult<AlertsListResponse>, shown: DrillWindow & { range: string }) {
+	// OLD CODE: function applyList(result: PromiseSettledResult<AlertsListResponse>, shown: DrillWindow & { range: string }) { (section D: `lg`)
+	function applyList(result: PromiseSettledResult<AlertsListResponse>, shown: DrillWindow & { range: string }, lg: number) {
 		if (result.status === 'fulfilled') {
 			const r = result.value;
 			shownWindow = shown;
@@ -681,6 +701,8 @@
 			totalPages = r.total_pages;
 			totalAlerts = r.total;
 			currentPage = r.page;
+			// Only the counted link's own request records the total it is compared with
+			if (linked?.gen === lg) linked = { ...linked, observed: r.total };
 		} else {
 			// a failure clears the list: the rows on screen may be another filter's or range's
 			alerts = [];
@@ -694,6 +716,15 @@
 	// The list has its own generation as well, so a filter change mid-refresh drops only the
 	// refresh's stale list and keeps the rest of what it loaded
 	const listGuard = createLoadGuard();
+	/**
+	 * Start a list request. The URL hand-off's own request takes the comparison it set up (gen null);
+	 * every other list load (sort, page, refresh, retry, an action) ends any comparison (section D).
+	 */
+	function beginList(): number {
+		const lg = listGuard.begin();
+		linked = linked && linked.gen === null ? { ...linked, gen: lg } : null;
+		return lg;
+	}
 	/**
 	 * A list request is out. Its rows replace the ones on screen, so the pager waits for them: a page
 	 * asked for now would mix the new filters with the shown rows' window, and its request would
@@ -709,7 +740,8 @@
 	 */
 	async function loadAll(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
-		const lg = listGuard.begin();
+		// OLD CODE: const lg = listGuard.begin(); (section D: a load also starts or ends the count comparison)
+		const lg = beginList();
 		listPending = true;
 		// OLD CODE START — 2026-11-06 (slice 2a): no Custom window
 		// const timeRange = TIME_RANGES.find((r) => r.value === selectedTimeRange) ?? TIME_RANGES[3];
@@ -781,7 +813,8 @@
 		// OLD CODE: if (listGuard.current(lg)) applyList(listResult);
 		// OLD CODE: if (listGuard.current(lg)) applyList(listResult, shown); (the pager didn't wait)
 		if (listGuard.current(lg)) {
-			applyList(listResult, shown);
+			// OLD CODE: applyList(listResult, shown); (section D)
+			applyList(listResult, shown, lg);
 			listPending = false;
 		}
 		loaded = true;
@@ -813,7 +846,8 @@
 	// OLD CODE END
 	/** Page `pg` of the list over `win`: the current search's window unless a new search passes its own. */
 	async function fetchAlerts(pg: number = 1, win: DrillWindow = listWindow) {
-		const lg = listGuard.begin();
+		// OLD CODE: const lg = listGuard.begin(); (section D: a load also starts or ends the count comparison)
+		const lg = beginList();
 		listPending = true;
 		listWindow = win;
 		const shown = { ...win, range: baseRange };
@@ -825,7 +859,8 @@
 		// OLD CODE: if (listGuard.current(lg)) applyList(result);
 		// OLD CODE: if (listGuard.current(lg)) applyList(result, shown); (the pager didn't wait)
 		if (listGuard.current(lg)) {
-			applyList(result, shown);
+			// OLD CODE: applyList(result, shown); (section D)
+			applyList(result, shown, lg);
 			listPending = false;
 		}
 	}
@@ -851,6 +886,8 @@
 			if (value) url.searchParams.set(key, value);
 			else url.searchParams.delete(key);
 		}
+		// A control's own search: the figure a link was clicked at no longer describes it (section D)
+		url.searchParams.delete('count');
 		return goto(`${url.pathname}${url.search}`, { replaceState: true, keepFocus: true, noScroll: true });
 	}
 
@@ -1079,16 +1116,24 @@
 	// OLD CODE END
 	/** The list parameters last applied from the URL; null before the first load. */
 	let appliedUrl: string[] | null = null;
+	/**
+	 * The link's `count` last applied (section D). It is a key of its own, never in LIST_PARAMS, so the
+	 * window comparison below is unchanged: a change of `count` alone is one list search.
+	 */
+	let appliedCount: number | null = null;
 	// The URL is the one source of the list's filters and window. A change applies them all together from
-	// page 1 with one request: a list search when only severity, signature, ip, src or dst changed,
+	// page 1 with one request: a list search when only severity, signature, ip, src, dst or count changed,
 	// otherwise a full reload on the new window. The first run is the page's first load.
 	$effect(() => {
 		const params = $page.url.searchParams;
 		const next = LIST_PARAMS.map((key) => params.get(key) ?? '');
+		const count = linkedCount(params.get('count'));
 		untrack(() => {
 			const prev = appliedUrl;
-			if (prev && next.every((v, i) => v === prev[i])) return;
+			// OLD CODE: if (prev && next.every((v, i) => v === prev[i])) return; (section D: a new count is a new hand-off)
+			if (prev && next.every((v, i) => v === prev[i]) && count === appliedCount) return;
 			appliedUrl = next;
+			appliedCount = count;
 			// OLD CODE: const [severity, signature, ip, rangeParam, from, to] = next; (slice 2b-1: src and dst)
 			// OLD CODE: const [severity, signature, ip, src, dst, rangeParam, from, to] = next; (slice 2b-2: suricata_category)
 			const [severity, signature, ip, src, dst, suricataCategory, rangeParam, from, to] = next;
@@ -1104,6 +1149,8 @@
 			currentPage = 1;
 			// OLD CODE: next.slice(3).every((v, i) => v === prev[i + 3]); (slice 2b-1: src and dst moved the window along)
 			const sameWindow = prev !== null && next.slice(WINDOW_AT).every((v, i) => v === prev[i + WINDOW_AT]);
+			// A counted link: the page-1 request started next takes this comparison (beginList sets its gen)
+			linked = count === null ? null : { expected: count, gen: null, observed: null };
 			if (sameWindow) void fetchAlerts(1, getTimeRange());
 			else void refresh.run();
 		});
@@ -1334,6 +1381,10 @@ OLD CODE END -->
 			</div>
 			{#if actionError}
 				<p class="notice is-error" role="alert"><Icon name="warn" />Not applied: {actionError}</p>
+			{/if}
+			<!-- NET-160 section D: the link's figure, when this search's own total differs from it -->
+			{#if countLine}
+				<p class="notice" role="status">{countLine}</p>
 			{/if}
 			{#if !listLoaded}
 				<CardState state="loading" title="Loading alerts" />
