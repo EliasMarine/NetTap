@@ -6,7 +6,8 @@ const HREFS = [
 	'/tools/ping',
 	'/tools/subnet-calc',
 	'/tools/port-reference',
-	'/tools/tshark',
+	// OLD CODE: '/tools/tshark', (NET-188: the tool is Packet analysis now)
+	'/packets',
 	'/tools/cyberchef',
 	'/tools/base64',
 	'/tools/dns-recon',
