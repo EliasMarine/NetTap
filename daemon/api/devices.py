@@ -10,8 +10,9 @@ hostname, manufacturer, OS hint).
 import ipaddress
 import logging
 import os
+import time
 from collections.abc import Mapping
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from aiohttp import web
@@ -20,6 +21,7 @@ from opensearchpy import OpenSearchException
 from api.time_range import _utc, iso_param, parse_time_range
 from storage.all_buckets import PAGE_SIZE, all_buckets
 from storage.manager import StorageManager
+from storage.snapshot_search import QueryFailed, checked
 from storage.time_slots import histogram_buckets, time_slots
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.device_fingerprint import DeviceFingerprint
@@ -49,6 +51,9 @@ _ALLOWED_SORT_FIELDS = {"bytes", "connections", "alerts", "last_seen", "first_se
 
 # Fewest conn records an IP needs to be a device; 3 keeps quiet phones/IoT but drops stray packets
 _MIN_CONNECTIONS = 3
+
+# A listed device whose newest record is this recent is Online (the Devices table's rule)
+_ONLINE_MS = 5 * 60 * 1000
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +196,59 @@ def _is_skipped_device_ip(ip: str) -> bool:
     return ip.endswith(".255") or ip.endswith(".0") or ip.startswith("224.")
 
 
+def _now_ms() -> int:
+    """The daemon's clock in whole epoch milliseconds, so JavaScript reads the same instant."""
+    return time.time_ns() // 1_000_000
+
+
+def _iso_ms(ms: int) -> str:
+    """Whole epoch milliseconds as ISO UTC with exactly three fractional digits."""
+    when = datetime.fromtimestamp(ms // 1000, tz=timezone.utc)
+    return f"{when:%Y-%m-%dT%H:%M:%S}.{ms % 1000:03d}Z"
+
+
+# The list's sorts, read from each device bucket (alerts are counted separately)
+_SORT_VALUE = {
+    "bytes": lambda b: b.get("total_bytes", {}).get("value") or 0,
+    "connections": lambda b: b.get("doc_count", 0),
+    "last_seen": lambda b: b.get("last_seen", {}).get("value") or 0,
+    "first_seen": lambda b: b.get("first_seen", {}).get("value") or 0,
+}
+
+
+def _ip_order(ip: str) -> tuple:
+    """IPv4 before IPv6, each in numeric order; anything unparsable last, by text."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return (99, 0, ip)
+    return (addr.version, int(addr), "")
+
+
+def _ranked(buckets: list[dict], key: Any, descending: bool) -> list[dict]:
+    """Buckets by `key`; ties by bytes (largest first), then IP, so the order is stable."""
+    by_ip = sorted(buckets, key=lambda b: _ip_order(b["key"]))
+    by_bytes = sorted(by_ip, key=_SORT_VALUE["bytes"], reverse=True)
+    return sorted(by_bytes, key=key, reverse=descending)
+
+
+def _alert_sides(reply: Any) -> list[list[dict]]:
+    """Both sides' per-IP buckets from an alert-count reply; QueryFailed if it is incomplete."""
+    aggs = checked(reply, "device alert counts", ("by_ip", "by_dst"))["aggregations"]
+    sides = [
+        (aggs[side].get("ips") or {}).get("buckets") for side in ("by_ip", "by_dst")
+    ]
+    if any(not isinstance(side, list) for side in sides):
+        raise QueryFailed("device alert counts: missing aggregation")
+    return sides
+
+
+def _incomplete(where: str, exc: QueryFailed) -> web.Response:
+    """The 502 for a search that answered only in part, never a smaller figure."""
+    logger.error("Incomplete search in %s: %s", where, exc)
+    return web.json_response({"error": "The device search was incomplete"}, status=502)
+
+
 def _lan_device_buckets(
     client: Any,
     app: Mapping[str, Any],
@@ -198,11 +256,13 @@ def _lan_device_buckets(
     to_ts: str,
     aggs: dict | None = None,
     page_size: int = PAGE_SIZE,
+    what: str | None = None,
 ) -> list[dict]:
     """Every device GET /api/devices can list, however many there are (#96).
 
     Same filters, _MIN_CONNECTIONS threshold and skip rules as the list. Each bucket is
-    shaped like a terms bucket ("key" is the IP), with `aggs` per device.
+    shaped like a terms bucket ("key" is the IP), with `aggs` per device. With `what`, an
+    incomplete page raises QueryFailed instead of reading as fewer devices.
     """
     buckets, complete = all_buckets(
         client,
@@ -211,6 +271,7 @@ def _lan_device_buckets(
         [{"ip": {"terms": {"field": "source.ip"}}}],
         aggs=aggs,
         page_size=page_size,
+        what=what,
     )
     if not complete:
         logger.warning(
@@ -452,22 +513,26 @@ async def handle_device_list(request: web.Request) -> web.Response:
     # _MIN_CONNECTIONS = 20
     # OLD CODE END
 
-    # Map user-facing sort names to aggregation sort keys
-    sort_map = {
-        "bytes": "total_bytes",
-        "connections": "_count",
-        "last_seen": "last_seen",
-        "first_seen": "first_seen",
-        "alerts": "total_bytes",  # Alert sort handled post-query
-    }
-    agg_sort_key = sort_map.get(sort_field, "total_bytes")
+    # OLD CODE START — slice 2b-3: the terms list's order; every sort is ranked in Python now
+    # # Map user-facing sort names to aggregation sort keys
+    # sort_map = {
+    #     "bytes": "total_bytes",
+    #     "connections": "_count",
+    #     "last_seen": "last_seen",
+    #     "first_seen": "first_seen",
+    #     "alerts": "total_bytes",  # Alert sort handled post-query
+    # }
+    # agg_sort_key = sort_map.get(sort_field, "total_bytes")
+    # OLD CODE END
 
     # OLD CODE START — #96: the alert sort only saw the top 2 x limit devices by bytes, so a
     # quieter device with more alerts was never listed
     # # Fetch more than needed if sorting by alerts (post-query sort)
     # fetch_size = limit * 2 if sort_field == "alerts" else limit
     # OLD CODE END
-    fetch_size = limit
+    # OLD CODE START — slice 2b-3: the terms list's size; every device is read now
+    # fetch_size = limit
+    # OLD CODE END
 
     # OLD CODE START — replaced 2026-11-01: moved into _device_bool_query so the count uses the same filters
     # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
@@ -488,17 +553,31 @@ async def handle_device_list(request: web.Request) -> web.Response:
     # between modem and router, DHCP happens on the LAN side). Instead, use
     # min_doc_count on the terms aggregation to filter noise IPs.
 
+    # OLD CODE START — slice 2b-3: a terms list ordered by a sub-aggregation with size = the
+    # limit is approximate across shards once a shard holds more IPs than its shard_size, and
+    # skipped IPs came off after the cut, so the list could disagree with the count
+    # query = {
+    #     "size": 0,
+    #     "query": {"bool": bool_query},
+    #     "aggs": {
+    #         "devices": {
+    #             "terms": {
+    #                 "field": "source.ip",
+    #                 "size": fetch_size,
+    #                 "min_doc_count": _MIN_CONNECTIONS,
+    #                 "order": {agg_sort_key: sort_order},
+    #             },
+    #             "aggs": { ...the per-device aggregations below... },
+    #         }
+    #     },
+    # }
+    # OLD CODE END
+    # Per device: the same sums and bounds the terms list carried
     query = {
         "size": 0,
         "query": {"bool": bool_query},
         "aggs": {
             "devices": {
-                "terms": {
-                    "field": "source.ip",
-                    "size": fetch_size,
-                    "min_doc_count": _MIN_CONNECTIONS,
-                    "order": {agg_sort_key: sort_order},
-                },
                 "aggs": {
                     "total_bytes": {
                         "sum": {
@@ -523,25 +602,53 @@ async def handle_device_list(request: web.Request) -> web.Response:
         # OLD CODE START — #96: the alert sort read the same capped list
         # result = client.search(index=NETWORK_INDEX, body=query)
         # OLD CODE END
-        if sort_field == "alerts":
-            # Every device: alert counts aren't in conn records, so the top `limit` is picked below
-            buckets = _lan_device_buckets(
-                client,
-                request.app,
-                from_ts,
-                to_ts,
-                aggs=query["aggs"]["devices"]["aggs"],
-            )
-        else:
-            result = client.search(index=NETWORK_INDEX, body=query)
-            buckets = (
-                result.get("aggregations", {}).get("devices", {}).get("buckets", [])
-            )
+        # OLD CODE START — slice 2b-3: only the alert sort read every device
+        # if sort_field == "alerts":
+        #     # Every device: alert counts aren't in conn records, so the top `limit` is picked below
+        #     buckets = _lan_device_buckets(
+        #         client,
+        #         request.app,
+        #         from_ts,
+        #         to_ts,
+        #         aggs=query["aggs"]["devices"]["aggs"],
+        #     )
+        # else:
+        #     result = client.search(index=NETWORK_INDEX, body=query)
+        #     buckets = (
+        #         result.get("aggregations", {}).get("devices", {}).get("buckets", [])
+        #     )
+        # OLD CODE END
+        # Every device, through the count's own helper, so the list and the count agree
+        buckets = _lan_device_buckets(
+            client,
+            request.app,
+            from_ts,
+            to_ts,
+            aggs=query["aggs"]["devices"]["aggs"],
+            what="device list",
+        )
+    except QueryFailed as exc:
+        return _incomplete("devices list", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in devices list: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
+
+    # The page's device figures come from this one reading (slice 2b-3), not separate counts
+    as_of_ms = _now_ms()
+    online_since_ms = as_of_ms - _ONLINE_MS
+    total = len(buckets)
+    online_total = sum(
+        1
+        for b in buckets
+        if (b.get("last_seen", {}).get("value") or 0) >= online_since_ms
+    )
+    if sort_field != "alerts":
+        # Alert counts are asked below for the listed devices only
+        buckets = _ranked(buckets, _SORT_VALUE[sort_field], sort_order == "desc")[
+            :limit
+        ]
 
     # OLD CODE START — #96: moved into the try above
     # buckets = result.get("aggregations", {}).get("devices", {}).get("buckets", [])
@@ -619,6 +726,10 @@ async def handle_device_list(request: web.Request) -> web.Response:
 
         try:
             alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
+            # slice 2b-3: a timed-out or partly failed reply read as 0 alerts
+            sides = _alert_sides(alert_result)
+        except QueryFailed as exc:
+            return _incomplete("devices list alert counts", exc)
         except OpenSearchException as exc:
             logger.error("Alert count query failed in devices list: %s", exc)
             return web.json_response(
@@ -630,24 +741,36 @@ async def handle_device_list(request: web.Request) -> web.Response:
         # ):
         #     alert_counts[ab["key"]] = ab["doc_count"]
         # OLD CODE END
-        aggs = alert_result.get("aggregations", {})
-        for side in ("by_ip", "by_dst"):
-            for ab in aggs.get(side, {}).get("ips", {}).get("buckets", []):
+        # OLD CODE START — slice 2b-3: read the reply unchecked; _alert_sides checks it above
+        # aggs = alert_result.get("aggregations", {})
+        # for side in ("by_ip", "by_dst"):
+        #     for ab in aggs.get(side, {}).get("ips", {}).get("buckets", []):
+        #         alert_counts[ab["key"]] = (
+        #             alert_counts.get(ab["key"], 0) + ab["doc_count"]
+        #         )
+        # OLD CODE END
+        for side in sides:
+            for ab in side:
                 alert_counts[ab["key"]] = (
                     alert_counts.get(ab["key"], 0) + ab["doc_count"]
                 )
 
     if sort_field == "alerts":
-        # Bytes (largest first) breaks ties, as the bytes-ordered list did before
-        by_bytes = sorted(
-            buckets,
-            key=lambda b: b.get("total_bytes", {}).get("value", 0) or 0,
-            reverse=True,
-        )
-        buckets = sorted(
-            by_bytes,
-            key=lambda b: alert_counts.get(b["key"], 0),
-            reverse=(sort_order == "desc"),
+        # OLD CODE START — slice 2b-3: the same rule, now shared with every sort (and IP last)
+        # # Bytes (largest first) breaks ties, as the bytes-ordered list did before
+        # by_bytes = sorted(
+        #     buckets,
+        #     key=lambda b: b.get("total_bytes", {}).get("value", 0) or 0,
+        #     reverse=True,
+        # )
+        # buckets = sorted(
+        #     by_bytes,
+        #     key=lambda b: alert_counts.get(b["key"], 0),
+        #     reverse=(sort_order == "desc"),
+        # )[:limit]
+        # OLD CODE END
+        buckets = _ranked(
+            buckets, lambda b: alert_counts.get(b["key"], 0), sort_order == "desc"
         )[:limit]
 
     # Build device list with enrichment — skip broadcast/gateway IPs
@@ -747,6 +870,11 @@ async def handle_device_list(request: web.Request) -> web.Response:
             "to": to_ts,
             "limit": limit,
             "devices": devices,
+            # slice 2b-3: Total devices and Online now on the Devices page, from this reading
+            "total": total,
+            "online_total": online_total,
+            "as_of": _iso_ms(as_of_ms),
+            "online_since": _iso_ms(online_since_ms),
         }
     )
 
@@ -1594,7 +1722,10 @@ async def handle_device_count(request: web.Request) -> web.Response:
             aggs={"last_seen": {"max": {"field": "@timestamp"}}}
             if active_since
             else None,
+            what="device count",
         )
+    except QueryFailed as exc:
+        return _incomplete("devices/count", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in devices/count: %s", exc)
         return web.json_response(

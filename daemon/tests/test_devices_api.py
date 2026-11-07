@@ -48,10 +48,17 @@ def _make_mock_storage():
 
 
 def _device_list_response(buckets=None):
-    """Build a mock OpenSearch response for the device list aggregation."""
+    """A mock reply for the device search: the one composite page the list reads (slice 2b-3),
+    in key order with no after_key, and the terms shape _route_device_searches routes from."""
     if buckets is None:
         buckets = []
-    return {"aggregations": {"devices": {"buckets": buckets}}}
+    # OLD CODE START — slice 2b-3: the list read a terms aggregation
+    # return {"aggregations": {"devices": {"buckets": buckets}}}
+    # OLD CODE END
+    page = [
+        {**b, "key": {"ip": b["key"]}} for b in sorted(buckets, key=lambda b: b["key"])
+    ]
+    return {"aggregations": {"devices": {"buckets": buckets}, "all": {"buckets": page}}}
 
 
 def _empty_alert_response():
@@ -250,7 +257,10 @@ class TestDeviceListHandler(AioHTTPTestCase):
 
         call_args = self.mock_client.search.call_args_list[0]
         body = call_args.kwargs.get("body") or call_args[1].get("body")
-        sub_aggs = body["aggs"]["devices"]["aggs"]
+        # OLD CODE START — slice 2b-3: the list's terms aggregation
+        # sub_aggs = body["aggs"]["devices"]["aggs"]
+        # OLD CODE END
+        sub_aggs = body["aggs"]["all"]["aggs"]
         self.assertEqual(sub_aggs["orig_bytes"], {"sum": {"field": "source.bytes"}})
         self.assertEqual(
             sub_aggs["resp_bytes"], {"sum": {"field": "destination.bytes"}}
@@ -287,47 +297,56 @@ class TestDeviceListHandler(AioHTTPTestCase):
             self.assertEqual(devices[ip]["orig_bytes"], 0)
             self.assertEqual(devices[ip]["resp_bytes"], 0)
 
+    # OLD CODE START — slice 2b-3: these checked the terms aggregation's `order`; every sort is
+    # ranked in Python over every device now, so the tests check the listed order instead
+    # async def test_device_list_sort_by_connections(self):
+    #     ... terms = body["aggs"]["devices"]["terms"]
+    #     self.assertEqual(terms["order"], {"_count": "asc"})
+    # async def test_device_list_sort_by_last_seen(self):
+    #     ... self.assertEqual(terms["order"], {"last_seen": "desc"})
+    # async def test_device_list_invalid_sort_falls_back(self):
+    #     ... self.assertEqual(terms["order"], {"total_bytes": "desc"})
+    # OLD CODE END
+    async def _order(self, query, buckets):
+        self._setup_search_responses(_device_list_response(buckets))
+        resp = await self.client.request("GET", "/api/devices" + query)
+        self.assertEqual(resp.status, 200)
+        return [d["ip"] for d in (await resp.json())["devices"]]
+
     @unittest_run_loop
     async def test_device_list_sort_by_connections(self):
-        """Sort=connections passes _count sort to OpenSearch."""
-        self._setup_search_responses(_device_list_response([]))
-
-        resp = await self.client.request(
-            "GET", "/api/devices?sort=connections&order=asc"
+        """Sort=connections&order=asc lists the fewest records first."""
+        listed = await self._order(
+            "?sort=connections&order=asc",
+            [
+                _device_bucket("192.168.1.1", doc_count=50),
+                _device_bucket("192.168.1.2", doc_count=5),
+                _device_bucket("192.168.1.3", doc_count=20),
+            ],
         )
-        self.assertEqual(resp.status, 200)
-
-        # Verify the aggregation sort was set correctly
-        call_args = self.mock_client.search.call_args_list[0]
-        body = call_args.kwargs.get("body") or call_args[1].get("body")
-        terms = body["aggs"]["devices"]["terms"]
-        self.assertEqual(terms["order"], {"_count": "asc"})
+        self.assertEqual(listed, ["192.168.1.2", "192.168.1.3", "192.168.1.1"])
 
     @unittest_run_loop
     async def test_device_list_sort_by_last_seen(self):
-        """Sort=last_seen passes last_seen sort to OpenSearch."""
-        self._setup_search_responses(_device_list_response([]))
-
-        resp = await self.client.request("GET", "/api/devices?sort=last_seen")
-        self.assertEqual(resp.status, 200)
-
-        call_args = self.mock_client.search.call_args_list[0]
-        body = call_args.kwargs.get("body") or call_args[1].get("body")
-        terms = body["aggs"]["devices"]["terms"]
-        self.assertEqual(terms["order"], {"last_seen": "desc"})
+        """Sort=last_seen lists the newest record first."""
+        newest = {**_device_bucket("192.168.1.1"), "last_seen": {"value": 3_000}}
+        oldest = {**_device_bucket("192.168.1.2"), "last_seen": {"value": 1_000}}
+        middle = {**_device_bucket("192.168.1.3"), "last_seen": {"value": 2_000}}
+        listed = await self._order("?sort=last_seen", [oldest, newest, middle])
+        self.assertEqual(listed, ["192.168.1.1", "192.168.1.3", "192.168.1.2"])
 
     @unittest_run_loop
     async def test_device_list_invalid_sort_falls_back(self):
-        """Invalid sort field falls back to bytes."""
-        self._setup_search_responses(_device_list_response([]))
-
-        resp = await self.client.request("GET", "/api/devices?sort=invalid_field")
-        self.assertEqual(resp.status, 200)
-
-        call_args = self.mock_client.search.call_args_list[0]
-        body = call_args.kwargs.get("body") or call_args[1].get("body")
-        terms = body["aggs"]["devices"]["terms"]
-        self.assertEqual(terms["order"], {"total_bytes": "desc"})
+        """Invalid sort field falls back to bytes, largest first."""
+        listed = await self._order(
+            "?sort=invalid_field",
+            [
+                _device_bucket("192.168.1.1", total_bytes=10),
+                _device_bucket("192.168.1.2", total_bytes=30),
+                _device_bucket("192.168.1.3", total_bytes=20),
+            ],
+        )
+        self.assertEqual(listed, ["192.168.1.2", "192.168.1.3", "192.168.1.1"])
 
     @unittest_run_loop
     async def test_device_list_with_time_range(self):
@@ -1124,11 +1143,15 @@ class TestDeviceCountHandler(AioHTTPTestCase):
         #     self.assertEqual(terms["field"], "source.ip")
         #     self.assertEqual(terms["min_doc_count"], devices._MIN_CONNECTIONS)
         # OLD CODE END
-        terms = list_body["aggs"]["devices"]["terms"]
-        self.assertEqual(terms["field"], "source.ip")
-        self.assertEqual(terms["min_doc_count"], devices._MIN_CONNECTIONS)
-        sources = count_body["aggs"]["all"]["composite"]["sources"]
-        self.assertEqual(sources, [{"ip": {"terms": {"field": "source.ip"}}}])
+        # OLD CODE START — slice 2b-3: the list was a terms aggregation with min_doc_count
+        # terms = list_body["aggs"]["devices"]["terms"]
+        # self.assertEqual(terms["field"], "source.ip")
+        # self.assertEqual(terms["min_doc_count"], devices._MIN_CONNECTIONS)
+        # OLD CODE END
+        # Both are the same composite now; _lan_device_buckets applies the threshold to both
+        for body in (list_body, count_body):
+            sources = body["aggs"]["all"]["composite"]["sources"]
+            self.assertEqual(sources, [{"ip": {"terms": {"field": "source.ip"}}}])
 
     @unittest_run_loop
     async def test_count_drops_ips_under_min_connections(self):
@@ -1257,6 +1280,174 @@ class TestDeviceListAlertSort(AioHTTPTestCase):
     async def test_fewest_alerts_first_bytes_breaks_ties(self):
         listed = await self._listed("?sort=alerts&order=asc&limit=2")
         self.assertEqual(listed, [("192.168.1.10", 0), ("192.168.1.12", 0)])
+
+
+class TestDeviceListOneReading(AioHTTPTestCase):
+    """Slice 2b-3: the Devices page's list, Total devices and Online now come from one reading,
+    with the same devices as GET /api/devices/count."""
+
+    _RANGE = "?from=2026-02-25T00:00:00Z&to=2026-02-26T00:00:00Z"
+
+    def setUp(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.storage
+        register_device_routes(app, self.storage)
+        return app
+
+    async def _get(self, path, buckets, alerts=None, search=None):
+        self.mock_client.search.side_effect = search or _route_device_searches(
+            _device_list_response(buckets), alerts
+        )
+        resp = await self.client.request("GET", path)
+        return resp.status, await resp.json()
+
+    @unittest_run_loop
+    async def test_every_sort_lists_the_devices_the_count_counts(self):
+        buckets = [
+            _device_bucket("192.168.1.10", doc_count=40, total_bytes=500),
+            _device_bucket("192.168.1.11", doc_count=3, total_bytes=900),  # exactly 3
+            _device_bucket("192.168.1.12", doc_count=2, total_bytes=99_999),  # under 3
+            _device_bucket("192.168.1.255", doc_count=50),  # broadcast, not a device
+            _device_bucket("192.168.1.13", doc_count=7, total_bytes=100),
+        ]
+        _, counted = await self._get("/api/devices/count" + self._RANGE, buckets)
+        for sort in ("bytes", "connections", "last_seen", "first_seen", "alerts"):
+            for order in ("desc", "asc"):
+                status, data = await self._get(
+                    f"/api/devices{self._RANGE}&sort={sort}&order={order}", buckets
+                )
+                self.assertEqual(status, 200, sort)
+                ips = {d["ip"] for d in data["devices"]}
+                self.assertEqual(
+                    ips, {"192.168.1.10", "192.168.1.11", "192.168.1.13"}, sort
+                )
+                self.assertEqual(data["total"], counted["count"], sort)
+
+    @unittest_run_loop
+    async def test_total_counts_every_device_across_pages_before_the_cut(self):
+        buckets = [
+            _device_bucket(f"192.168.{i // 200}.{i % 200 + 1}", doc_count=5)
+            for i in range(1200)
+        ]
+        _, counted = await self._get("/api/devices/count" + self._RANGE, buckets)
+        status, data = await self._get(
+            "/api/devices" + self._RANGE + "&limit=500", buckets
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(data["devices"]), 500)
+        self.assertEqual(data["total"], 1200)
+        self.assertEqual(counted["count"], 1200)
+
+    @unittest_run_loop
+    async def test_ties_break_by_bytes_then_ip_in_numeric_order(self):
+        buckets = [
+            _device_bucket("192.168.1.10", doc_count=9, total_bytes=100),
+            _device_bucket("192.168.1.9", doc_count=9, total_bytes=100),
+            _device_bucket("192.168.1.2", doc_count=9, total_bytes=500),
+        ]
+        _, data = await self._get(
+            "/api/devices" + self._RANGE + "&sort=connections", buckets
+        )
+        self.assertEqual(
+            [d["ip"] for d in data["devices"]],
+            ["192.168.1.2", "192.168.1.9", "192.168.1.10"],
+        )
+
+    @unittest_run_loop
+    async def test_a_non_alert_sort_asks_alert_counts_for_the_listed_devices_only(self):
+        buckets = [
+            _device_bucket(f"192.168.1.{i}", total_bytes=i * 10) for i in range(1, 6)
+        ]
+        _, data = await self._get(
+            "/api/devices" + self._RANGE + "&limit=2", buckets, {"192.168.1.5": 1}
+        )
+        self.assertEqual(
+            [d["ip"] for d in data["devices"]], ["192.168.1.5", "192.168.1.4"]
+        )
+        (body,) = _alert_bodies(self.mock_client.search)
+        self.assertEqual(
+            body["aggs"]["by_ip"]["filter"]["terms"]["source.ip"],
+            ["192.168.1.5", "192.168.1.4"],
+        )
+
+    @unittest_run_loop
+    async def test_online_cutoff_is_whole_milliseconds_with_the_boundary_counted(self):
+        # 2026-02-25T12:00:00.123456Z on the daemon's clock
+        noon = datetime.fromisoformat("2026-02-25T12:00:00+00:00")
+        now_ns = int(noon.timestamp()) * 10**9 + 123_456_000
+        cutoff_ms = (now_ns // 1_000_000) - 5 * 60 * 1000
+
+        def seen(ip, ms):
+            return {**_device_bucket(ip), "last_seen": {"value": float(ms)}}
+
+        buckets = [
+            seen("192.168.1.10", cutoff_ms),  # exactly the cutoff: online
+            seen("192.168.1.11", cutoff_ms - 1),  # a millisecond older: not
+            seen("192.168.1.12", cutoff_ms + 60_000),
+        ]
+        with patch("api.devices.time") as clock:
+            clock.time_ns.return_value = now_ns
+            _, data = await self._get("/api/devices" + self._RANGE, buckets)
+        self.assertEqual(data["as_of"], "2026-02-25T12:00:00.123Z")
+        self.assertEqual(data["online_since"], "2026-02-25T11:55:00.123Z")
+        self.assertEqual(data["online_total"], 2)
+        self.assertEqual(data["total"], 3)
+
+    async def _incomplete(self, path, bad_reply, stage):
+        """search(): the device composite answers, then `stage` ('devices' or 'alerts') is bad."""
+        good = _route_device_searches(
+            _device_list_response([_device_bucket("192.168.1.10")])
+        )
+
+        def _search(index=None, body=None, **kw):
+            aggs = (body or {}).get("aggs", {})
+            if (stage == "devices" and "all" in aggs) or (
+                stage == "alerts" and "by_ip" in aggs
+            ):
+                return bad_reply
+            return good(index=index, body=body, **kw)
+
+        return await self._get(path, [], search=_search)
+
+    @unittest_run_loop
+    async def test_an_incomplete_device_search_is_502_for_the_list_and_the_count(self):
+        page = _device_list_response([_device_bucket("192.168.1.10")])
+        for bad in (
+            {**page, "timed_out": True},
+            {**page, "_shards": {"total": 8, "failed": 1}},
+            {"aggregations": {}},
+        ):
+            for path in ("/api/devices", "/api/devices/count"):
+                status, data = await self._incomplete(
+                    path + self._RANGE, bad, "devices"
+                )
+                self.assertEqual(status, 502, (path, bad))
+                self.assertEqual(data, {"error": "The device search was incomplete"})
+
+    @unittest_run_loop
+    async def test_an_incomplete_alert_count_is_502_not_zero_alerts(self):
+        whole = {
+            "aggregations": {
+                "by_ip": {"ips": {"buckets": []}},
+                "by_dst": {"ips": {"buckets": []}},
+            }
+        }
+        for bad in (
+            {**whole, "timed_out": True},
+            {**whole, "_shards": {"total": 8, "failed": 2}},
+            {"aggregations": {"by_ip": {"ips": {"buckets": []}}}},
+            {"aggregations": {"by_ip": {"ips": {"buckets": []}}, "by_dst": {}}},
+        ):
+            for sort in ("bytes", "alerts"):
+                status, data = await self._incomplete(
+                    f"/api/devices{self._RANGE}&sort={sort}", bad, "alerts"
+                )
+                self.assertEqual(status, 502, (sort, bad))
+                self.assertEqual(data, {"error": "The device search was incomplete"})
 
 
 class TestDeviceTimeRange(AioHTTPTestCase):
