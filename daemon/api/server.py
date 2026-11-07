@@ -39,7 +39,7 @@ from smart.monitor import SmartMonitor
 from storage.ilm import apply_ilm_policies_from_config
 from storage.ilm_generator import generate_ilm_policies
 from storage.retention_config import RetentionConfigManager
-from api.offload import in_thread
+from api.offload import in_thread, run_blocking
 from api.daemon_auth import (
     load_or_create_token,
     make_auth_middleware,
@@ -308,10 +308,14 @@ async def handle_cleanup_preview(request: web.Request) -> web.Response:
 
     try:
         storage: StorageManager = request.app["storage"]
-        loop = asyncio.get_running_loop()
-        preview = await loop.run_in_executor(
-            None, storage.preview_cleanup, older_than_days
-        )
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # loop = asyncio.get_running_loop()
+        # preview = await loop.run_in_executor(
+        #     None, storage.preview_cleanup, older_than_days
+        # )
+        # OLD CODE END
+        preview = await run_blocking(storage.preview_cleanup, older_than_days)
         return web.json_response(preview)
     except Exception as exc:
         logger.exception("Error previewing cleanup")
@@ -341,10 +345,14 @@ async def handle_cleanup_execute(request: web.Request) -> web.Response:
 
     try:
         storage: StorageManager = request.app["storage"]
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None, storage.execute_cleanup, older_than_days
-        )
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # loop = asyncio.get_running_loop()
+        # result = await loop.run_in_executor(
+        #     None, storage.execute_cleanup, older_than_days
+        # )
+        # OLD CODE END
+        result = await run_blocking(storage.execute_cleanup, older_than_days)
 
         # Log to changelog if available
         try:
@@ -361,8 +369,12 @@ async def handle_cleanup_execute(request: web.Request) -> web.Response:
                 # await loop.run_in_executor(None, changelog.log_event, "storage_pruned",
                 #     f"Manual cleanup: ...", {...})
                 # OLD CODE END
-                await loop.run_in_executor(
-                    None,
+                # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+                # the drill-downs and health checks
+                # await loop.run_in_executor(
+                #     None,
+                # OLD CODE END
+                await run_blocking(
                     functools.partial(
                         changelog.log_event,
                         "storage_pruned",
@@ -396,9 +408,14 @@ async def handle_smart_health(request: web.Request) -> web.Response:
     """GET /api/smart/health -- SMART drive health status."""
     try:
         smart: SmartMonitor = request.app["smart"]
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # # Run the synchronous get_status in a thread (it shells out to smartctl)
+        # loop = asyncio.get_running_loop()
+        # status = await loop.run_in_executor(None, smart.get_status)
+        # OLD CODE END
         # Run the synchronous get_status in a thread (it shells out to smartctl)
-        loop = asyncio.get_running_loop()
-        status = await loop.run_in_executor(None, smart.get_status)
+        status = await run_blocking(smart.get_status)
         return web.json_response(status)
     except Exception as exc:
         logger.exception("Error fetching SMART health")
@@ -412,8 +429,12 @@ async def handle_smart_diagnostics(request: web.Request) -> web.Response:
     """GET /api/smart/diagnostics -- SMART self-test diagnostics."""
     try:
         smart: SmartMonitor = request.app["smart"]
-        loop = asyncio.get_running_loop()
-        diagnostics = await loop.run_in_executor(None, smart.get_diagnostics)
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # loop = asyncio.get_running_loop()
+        # diagnostics = await loop.run_in_executor(None, smart.get_diagnostics)
+        # OLD CODE END
+        diagnostics = await run_blocking(smart.get_diagnostics)
         return web.json_response(diagnostics)
     except Exception as exc:
         logger.exception("Error fetching SMART diagnostics")
@@ -427,11 +448,18 @@ async def handle_smart_test(request: web.Request) -> web.Response:
     """POST /api/smart/test -- Trigger on-demand SMART check with fresh results."""
     try:
         smart: SmartMonitor = request.app["smart"]
-        loop = asyncio.get_running_loop()
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # loop = asyncio.get_running_loop()
+        # # Run self-test for diagnostics
+        # diagnostics = await loop.run_in_executor(None, smart.run_self_test)
+        # # Also get fresh metrics
+        # status = await loop.run_in_executor(None, smart.get_status)
+        # OLD CODE END
         # Run self-test for diagnostics
-        diagnostics = await loop.run_in_executor(None, smart.run_self_test)
+        diagnostics = await run_blocking(smart.run_self_test)
         # Also get fresh metrics
-        status = await loop.run_in_executor(None, smart.get_status)
+        status = await run_blocking(smart.get_status)
         return web.json_response(
             {
                 "diagnostics": diagnostics,
@@ -450,8 +478,12 @@ async def handle_indices(request: web.Request) -> web.Response:
     """GET /api/indices -- List all tracked OpenSearch indices."""
     try:
         storage: StorageManager = request.app["storage"]
-        loop = asyncio.get_running_loop()
-        indices = await loop.run_in_executor(None, storage.list_indices)
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # loop = asyncio.get_running_loop()
+        # indices = await loop.run_in_executor(None, storage.list_indices)
+        # OLD CODE END
+        indices = await run_blocking(storage.list_indices)
         # Convert datetime objects to ISO strings for JSON serialization
         serializable = []
         for idx in indices:
@@ -523,8 +555,12 @@ async def handle_system_health(request: web.Request) -> web.Response:
     # Storage status
     try:
         storage: StorageManager = request.app["storage"]
-        loop = asyncio.get_running_loop()
-        result["storage"] = await loop.run_in_executor(None, storage.get_status)
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # loop = asyncio.get_running_loop()
+        # result["storage"] = await loop.run_in_executor(None, storage.get_status)
+        # OLD CODE END
+        result["storage"] = await run_blocking(storage.get_status)
     except Exception as exc:
         logger.warning("System health: storage status unavailable: %s", exc)
         result["storage"] = {"error": str(exc)}
@@ -533,8 +569,12 @@ async def handle_system_health(request: web.Request) -> web.Response:
     # SMART health
     try:
         smart: SmartMonitor = request.app["smart"]
-        loop = asyncio.get_running_loop()
-        smart_status = await loop.run_in_executor(None, smart.get_status)
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # loop = asyncio.get_running_loop()
+        # smart_status = await loop.run_in_executor(None, smart.get_status)
+        # OLD CODE END
+        smart_status = await run_blocking(smart.get_status)
         result["smart"] = smart_status
         # healthy: None means the drive couldn't be read (#96), not that it failed
         if smart_status.get("healthy") is False:
@@ -549,8 +589,12 @@ async def handle_system_health(request: web.Request) -> web.Response:
     # OpenSearch reachability
     try:
         storage_mgr: StorageManager = request.app["storage"]
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, storage_mgr._client.info)
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # loop = asyncio.get_running_loop()
+        # await loop.run_in_executor(None, storage_mgr._client.info)
+        # OLD CODE END
+        await run_blocking(storage_mgr._client.info)
         result["opensearch_reachable"] = True
     except Exception as exc:
         logger.warning("System health: OpenSearch unreachable: %s", exc)
@@ -572,8 +616,12 @@ async def handle_ilm_apply(request: web.Request) -> web.Response:
         # loop = asyncio.get_running_loop()
         # results = await loop.run_in_executor(None, apply_ilm_policies, opensearch_url)
         # OLD CODE END
-        loop = asyncio.get_running_loop()
-        results = await loop.run_in_executor(None, _apply_current_ilm, request.app)
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # loop = asyncio.get_running_loop()
+        # results = await loop.run_in_executor(None, _apply_current_ilm, request.app)
+        # OLD CODE END
+        results = await run_blocking(_apply_current_ilm, request.app)
         return web.json_response(
             {
                 "result": "ilm_policies_applied",
@@ -915,10 +963,15 @@ async def handle_storage_config(request: web.Request) -> web.Response:
 async def _run_ilm_worker(
     app: web.Application,
 ) -> tuple[dict[str, str] | None, str | None]:
-    """Run ``_apply_latest_ilm`` in the executor; return (results, error)."""
-    loop = asyncio.get_running_loop()
+    """Run ``_apply_latest_ilm`` on the route pool; return (results, error)."""
+    # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+    # the drill-downs and health checks
+    # loop = asyncio.get_running_loop()
+    # try:
+    #     return await loop.run_in_executor(None, _apply_latest_ilm, app), None
+    # OLD CODE END
     try:
-        return await loop.run_in_executor(None, _apply_latest_ilm, app), None
+        return await run_blocking(_apply_latest_ilm, app), None
     except Exception as exc:
         return None, str(exc)
 

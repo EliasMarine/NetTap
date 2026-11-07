@@ -349,6 +349,29 @@ def test_a_full_route_pool_leaves_the_default_pool_free():
     assert asyncio.run(main()) == "ran"
 
 
+def test_request_handlers_stay_off_the_default_pool():
+    """PR #200 review: the default pool is left to the drill-downs and the ILM retry task."""
+    import pathlib
+    import re
+
+    default_pool = re.compile(
+        r"run_in_executor\(\s*None|asyncio\.to_thread\(|get_event_loop\("
+    )
+    api = pathlib.Path(__file__).resolve().parents[1] / "api"
+    found = set()
+    for path in sorted(api.glob("*.py")):
+        code = "\n".join(
+            line
+            for line in path.read_text().splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        found |= {(path.name, m.group(0)) for m in default_pool.finditer(code)}
+    assert found == {
+        ("drilldown_runner.py", "run_in_executor(None"),
+        ("server.py", "run_in_executor(None"),  # _ilm_retry_background, not a request
+    }
+
+
 def _get(server, path: str) -> tuple[int, dict, float]:
     """(status, JSON body, seconds) for one authenticated GET."""
     request = urllib.request.Request(

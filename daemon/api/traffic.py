@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
-from api.offload import in_thread
+from api.offload import in_thread, run_blocking
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from api.drilldown_runner import either_side, ip_param
 from api.time_range import parse_time_range
@@ -1063,13 +1063,20 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
     }
 
     try:
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # conn_result, alert_result = await asyncio.gather(
+        #     asyncio.get_event_loop().run_in_executor(
+        #         None, lambda: client.search(index=NETWORK_INDEX, body=conn_query)
+        #     ),
+        #     asyncio.get_event_loop().run_in_executor(
+        #         None, lambda: client.search(index=NETWORK_INDEX, body=alert_query)
+        #     ),
+        # )
+        # OLD CODE END
         conn_result, alert_result = await asyncio.gather(
-            asyncio.get_event_loop().run_in_executor(
-                None, lambda: client.search(index=NETWORK_INDEX, body=conn_query)
-            ),
-            asyncio.get_event_loop().run_in_executor(
-                None, lambda: client.search(index=NETWORK_INDEX, body=alert_query)
-            ),
+            run_blocking(lambda: client.search(index=NETWORK_INDEX, body=conn_query)),
+            run_blocking(lambda: client.search(index=NETWORK_INDEX, body=alert_query)),
         )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in connections/stats: %s", exc)

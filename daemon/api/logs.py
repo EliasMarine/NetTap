@@ -6,7 +6,6 @@ Supports filtering by log type, full-text search, time range,
 field projection, sorting, and cursor-based pagination.
 """
 
-import asyncio
 import json
 import logging
 import os
@@ -18,6 +17,7 @@ from opensearchpy import OpenSearchException
 # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
 # from services.excluded_ips import build_excluded_ips_filter
 # OLD CODE END
+from api.offload import run_blocking
 from api.time_range import parse_time_range
 from services.excluded_ips import build_excluded_ips_filter, parse_single_ip
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
@@ -662,9 +662,15 @@ async def handle_log_search(request: web.Request) -> web.Response:
         body["_source"] = [f.strip() for f in fields.split(",")]
 
     try:
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # loop = asyncio.get_running_loop()
+        # result = await loop.run_in_executor(
+        #     None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        # )
+        # OLD CODE END
+        result = await run_blocking(
+            lambda: storage._client.search(index=NETWORK_INDEX, body=body)
         )
 
         hits = result.get("hits", {})
@@ -743,9 +749,15 @@ async def handle_log_stats(request: web.Request) -> web.Response:
     }
 
     try:
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # loop = asyncio.get_running_loop()
+        # result = await loop.run_in_executor(
+        #     None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        # )
+        # OLD CODE END
+        result = await run_blocking(
+            lambda: storage._client.search(index=NETWORK_INDEX, body=body)
         )
 
         aggs = result.get("aggregations", {})
@@ -822,9 +834,15 @@ async def handle_log_timeline(request: web.Request) -> web.Response:
         )
 
     try:
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # loop = asyncio.get_running_loop()
+        # result = await loop.run_in_executor(
+        #     None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        # )
+        # OLD CODE END
+        result = await run_blocking(
+            lambda: storage._client.search(index=NETWORK_INDEX, body=body)
         )
 
         # OLD CODE START — #120: date_histogram buckets (see above)
@@ -889,9 +907,15 @@ async def handle_log_top_talkers(request: web.Request) -> web.Response:
     }
 
     try:
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # loop = asyncio.get_running_loop()
+        # result = await loop.run_in_executor(
+        #     None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        # )
+        # OLD CODE END
+        result = await run_blocking(
+            lambda: storage._client.search(index=NETWORK_INDEX, body=body)
         )
 
         raw = result.get("aggregations", {}).get("top_sources", {}).get("buckets", [])
@@ -938,9 +962,15 @@ async def handle_log_protocol_breakdown(request: web.Request) -> web.Response:
     }
 
     try:
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # loop = asyncio.get_running_loop()
+        # result = await loop.run_in_executor(
+        #     None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        # )
+        # OLD CODE END
+        result = await run_blocking(
+            lambda: storage._client.search(index=NETWORK_INDEX, body=body)
         )
 
         raw = result.get("aggregations", {}).get("protocols", {}).get("buckets", [])
@@ -996,9 +1026,15 @@ async def handle_log_top_destinations(request: web.Request) -> web.Response:
     }
 
     try:
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # loop = asyncio.get_running_loop()
+        # result = await loop.run_in_executor(
+        #     None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        # )
+        # OLD CODE END
+        result = await run_blocking(
+            lambda: storage._client.search(index=NETWORK_INDEX, body=body)
         )
 
         raw = (
@@ -1058,9 +1094,15 @@ async def handle_log_top_dns(request: web.Request) -> web.Response:
     }
 
     try:
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(
-            None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # loop = asyncio.get_running_loop()
+        # result = await loop.run_in_executor(
+        #     None, lambda: storage._client.search(index=NETWORK_INDEX, body=body)
+        # )
+        # OLD CODE END
+        result = await run_blocking(
+            lambda: storage._client.search(index=NETWORK_INDEX, body=body)
         )
 
         raw = result.get("aggregations", {}).get("top_queries", {}).get("buckets", [])

@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 
 from aiohttp import web
 
+from api.offload import run_blocking
 from services.capture_index import CaptureIndex
 from services.packet_manifest import (
     MAX_BYTES,
@@ -63,7 +64,7 @@ def _service(request: web.Request) -> PacketSearchService:
 
 async def handle_captures(request: web.Request) -> web.Response:
     svc = _service(request)
-    summary = await asyncio.to_thread(svc.index.summary)
+    summary = await run_blocking(svc.index.summary)  # the route pool (PR #200)
     summary["limits"] = {
         "max_window_seconds": MAX_WINDOW_NS // 1_000_000_000,
         "max_files": MAX_FILES,

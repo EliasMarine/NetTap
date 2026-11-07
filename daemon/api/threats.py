@@ -7,13 +7,14 @@ auto-investigations.
 """
 
 import asyncio
+import functools
 import logging
 import os
 from datetime import timedelta
 
 from aiohttp import web
 
-from api.offload import in_thread
+from api.offload import in_thread, run_blocking
 from api.time_range import parse_time_range
 from storage.manager import StorageManager
 
@@ -67,7 +68,16 @@ async def handle_threat_report(request: web.Request) -> web.Response:
         #     client, from_ts, to_ts, excluded_ips=excluded_ips_list
         # )
         # OLD CODE END
-        report = await asyncio.to_thread(
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # report = await asyncio.to_thread(
+        #     asyncio.run,
+        #     generate_threat_report(
+        #         client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        #     ),
+        # )
+        # OLD CODE END
+        report = await run_blocking(
             asyncio.run,
             generate_threat_report(
                 client, from_ts, to_ts, excluded_ips=excluded_ips_list
@@ -94,8 +104,16 @@ async def handle_beaconing(request: web.Request) -> web.Response:
         #     client, from_ts, to_ts, excluded_ips=excluded_ips_list
         # )
         # OLD CODE END
-        beacons, complete = await asyncio.to_thread(
-            detect_beaconing, client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # beacons, complete = await asyncio.to_thread(
+        #     detect_beaconing, client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        # )
+        # OLD CODE END
+        beacons, complete = await run_blocking(
+            functools.partial(
+                detect_beaconing, client, from_ts, to_ts, excluded_ips=excluded_ips_list
+            )
         )
     except Exception as exc:
         logger.error("Beaconing detection failed: %s", exc)

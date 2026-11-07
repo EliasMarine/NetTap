@@ -7,7 +7,6 @@ a network device inventory with passive fingerprinting enrichment (MAC,
 hostname, manufacturer, OS hint).
 """
 
-import asyncio
 import ipaddress
 import logging
 import os
@@ -19,7 +18,7 @@ from typing import Any
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
-from api.offload import in_thread
+from api.offload import in_thread, run_blocking
 from api.time_range import _utc, iso_param, parse_time_range
 from storage.all_buckets import PAGE_SIZE, all_buckets
 from storage.manager import StorageManager
@@ -1741,8 +1740,13 @@ async def handle_device_count(request: web.Request) -> web.Response:
         # result = client.search(index=NETWORK_INDEX, body=query)
         # OLD CODE END
         # PR #191 review: off the event loop, as the list does
-        devices = await asyncio.get_running_loop().run_in_executor(
-            None,
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # devices = await asyncio.get_running_loop().run_in_executor(
+        #     None,
+        #     lambda: _lan_device_buckets(
+        # OLD CODE END
+        devices = await run_blocking(
             lambda: _lan_device_buckets(
                 client,
                 request.app,
