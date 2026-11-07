@@ -28,9 +28,12 @@
 		onacknowledge: () => Promise<void>;
 		onsuppress: () => Promise<void>;
 		onfalsepositive: () => Promise<void>;
+		/** Opened from the activity list (NET-191): its rule link stays there, and there is no category page for it */
+		activity?: boolean;
 	}
 
-	let { alert, onclose, onacknowledge, onsuppress, onfalsepositive }: Props = $props();
+	// OLD CODE: let { alert, onclose, onacknowledge, onsuppress, onfalsepositive }: Props = $props(); (NET-191: activity)
+	let { alert, onclose, onacknowledge, onsuppress, onfalsepositive, activity = false }: Props = $props();
 
 	let error = $state('');
 	let busy = $state(false);
@@ -81,7 +84,8 @@
 		<h2>{alertTitle(alert)}</h2>
 		<!-- OLD CODE: <p class="sig wrap">{alert.alert?.signature || 'Unknown signature'}</p> (slice 2a: not a link) -->
 		<!-- OLD CODE: <p class="sig wrap">{#if alert.alert?.signature}<a href={alertsHrefForSignature(alert.alert.signature)}>{alert.alert.signature}</a>{:else}Unknown signature{/if}</p> (slice 2b-1: the list's filter matches rule.name, not the shown signature) -->
-		<p class="sig wrap">{#if alert.rule?.name}<a href={alertsHrefForSignature(alert.rule.name)}>{alert.alert?.signature || alert.rule.name}</a>{:else}{alert.alert?.signature || 'Unknown signature'}{/if}</p>
+		<!-- OLD CODE: <a href={alertsHrefForSignature(alert.rule.name)}> (NET-191: from the activity list it opened the counted list) -->
+		<p class="sig wrap">{#if alert.rule?.name}<a href={alertsHrefForSignature(alert.rule.name, undefined, { activity })}>{alert.alert?.signature || alert.rule.name}</a>{:else}{alert.alert?.signature || 'Unknown signature'}{/if}</p>
 	</div>
 	{#if explanation}<p class="drawer-plain">{explanation}</p>{/if}
 	<div class="todo"><b>What to do</b>{alertAdvice(alert)}</div>
@@ -98,7 +102,8 @@
 		<dd class="mono">{alert.proto ? alert.proto.toUpperCase() : '—'}</dd>
 		<dt>Category</dt>
 		<!-- OLD CODE: <dd>{alert.alert?.category || '—'}</dd> (slice 2b-2: its page, over the default 24 hours, as the drawer's other links) -->
-		<dd>{#if suricataCategory}<a href={suricataCategoryHref(suricataCategory)}>{suricataCategory}</a>{:else}{alert.alert?.category || '—'}{/if}</dd>
+		<!-- OLD CODE: <dd>{#if suricataCategory}<a … (NET-191: no category page for activity) -->
+		<dd>{#if suricataCategory && !activity}<a href={suricataCategoryHref(suricataCategory)}>{suricataCategory}</a>{:else}{alert.alert?.category || '—'}{/if}</dd>
 		<dt>Seen</dt>
 		<dd class="num">{formatTimestamp(alert.timestamp)}</dd>
 		<dt>Signature ID</dt>

@@ -1286,6 +1286,7 @@ describe('Alerts — activity (NET-191)', () => {
 	const listCalls = () => vi.mocked(getAlerts).mock.calls.map(([opts]) => opts!);
 	const listSub = () => screen.getByRole('heading', { name: /^(Alerts by category|All alerts)$/ }).closest('.card')!.querySelector('.card-sub')!;
 	const notCounted = () => screen.queryByRole('button', { name: /informational events? not counted/ });
+	const params = (href: string | null) => Object.fromEntries(new URL(href!, 'http://localhost').searchParams);
 	/** The severity card's counted figures, and `activity` (a number, or a failure) for the activity count. */
 	function counts(activity: number | Error) {
 		vi.mocked(getAlertCount).mockImplementation(async (opts = {}) => {
@@ -1378,6 +1379,57 @@ describe('Alerts — activity (NET-191)', () => {
 		await flush();
 		expect(notCounted()).not.toBeInTheDocument();
 		expect(screen.getByRole('img', { name: /^40 alerts/ })).toBeInTheDocument();
+	});
+
+	it('a rule link from the activity list stays in it, and nothing links to a counted-only category page', async () => {
+		at(`?activity=true&from=${FROM}&to=${TO}`);
+		succeedAll([alert('i1', { signature: 'ET INFO STUN Binding Request', category: 'Misc activity', rule_category: ['Misc activity'] })]);
+		const { container } = render(Page);
+		await flush();
+		const heading = [...container.querySelectorAll('.group-title')].find((h) => h.textContent === 'Misc activity')!;
+		expect(heading.querySelector('a')).toBeNull();
+
+		await fireEvent.click(screen.getByRole('button', { name: /Misc activity/ }));
+		const drawer = screen.getByRole('complementary', { name: 'Alert details' });
+		expect(params(within(drawer).getByRole('link', { name: 'ET INFO STUN Binding Request' }).getAttribute('href'))).toMatchObject({ activity: 'true' });
+		expect(within(drawer).getByText('Misc activity', { selector: 'dd' }).querySelector('a')).toBeNull();
+		await fireEvent.click(within(drawer).getByRole('button', { name: /close/i }));
+
+		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
+		const table = screen.getByRole('table', { name: /Alerts, newest first/ });
+		expect(params(within(table).getByRole('link', { name: 'ET INFO STUN Binding Request' }).getAttribute('href'))).toEqual({
+			signature: 'ET INFO STUN Binding Request',
+			activity: 'true',
+			from: FROM,
+			to: TO,
+			range: '24h',
+		});
+		expect(within(table).getByText('Misc activity').closest('a')).toBeNull();
+	});
+
+	it("a new window hides the last window's line until its own count arrives", async () => {
+		succeedAll();
+		counts(1234);
+		render(Page);
+		await flush();
+		expect(notCounted()).toBeInTheDocument();
+
+		const later = new Promise<never>(() => {});
+		vi.mocked(getAlertCount).mockImplementation(async (opts = {}) => (opts.activity ? later : { ...range, counts: { total: 40, high: 3, medium: 7, low: 20 } }));
+		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
+		await flush();
+		expect(notCounted()).not.toBeInTheDocument();
+	});
+
+	it('a failed refresh of the same window keeps the last count, as the cards above keep theirs', async () => {
+		succeedAll();
+		counts(1234);
+		render(Page);
+		await flush();
+		counts(new Error('HTTP 502'));
+		expect(await refreshPage()).toBe('partial');
+		await flush();
+		expect(notCounted()).toHaveAccessibleName('1,234 informational events not counted · Show');
 	});
 
 	it('hides the line when its count fails, and the counted figures still show', async () => {

@@ -172,11 +172,15 @@ export function windowQuery(win: DrillWindow, range?: string): string {
 // 	return win ? `/alerts?${q.toString()}&${windowQuery(win, win.range)}` : `/alerts?${q.toString()}`;
 // }
 // OLD CODE END
-/** The Alerts list's address filters: `ip` at either end, `src` the source, `dst` the destination. */
+/**
+ * The Alerts list's address filters: `ip` at either end, `src` the source, `dst` the destination.
+ * `activity`: the list of alerts ET rates informational or unknown, which the counted list leaves out (NET-191).
+ */
 export interface AlertNarrow {
 	ip?: string;
 	src?: string;
 	dst?: string;
+	activity?: boolean;
 }
 
 /**
@@ -188,6 +192,7 @@ export function alertsHrefForSignature(signature: string, win?: DrillWindow & { 
 	for (const key of ['ip', 'src', 'dst'] as const) {
 		if (narrow[key]) q.set(key, narrow[key]);
 	}
+	if (narrow.activity) q.set('activity', 'true');
 	return win ? `/alerts?${q.toString()}&${windowQuery(win, win.range)}` : `/alerts?${q.toString()}`;
 }
 
@@ -209,8 +214,7 @@ export const NO_EXACT_ALERT_LIST = "This group has no signature, source or desti
 // OLD CODE END
 export function smartAlertHref(key: SmartAlertKey | undefined, win: DrillWindow & { range?: string }, device?: string, activity = false): string | null {
 	if (!key?.rule_name || !key.source_ip || !key.destination_ip) return null;
-	const href = alertsHrefForSignature(key.rule_name, win, { ip: device, src: key.source_ip, dst: key.destination_ip });
-	return activity ? `${href}&activity=true` : href;
+	return alertsHrefForSignature(key.rule_name, win, { ip: device, src: key.source_ip, dst: key.destination_ip, activity });
 }
 
 /**

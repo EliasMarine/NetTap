@@ -816,7 +816,8 @@
 			threatScore = summary.value.threat_score;
 			threatLevel = summary.value.threat_level;
 		}
-		activityCount = activity.status === 'fulfilled' ? { from, to, total: activity.value.counts.total } : null;
+		// A failed count keeps the last one, as the cards above keep theirs; a new window cleared it already
+		if (activity.status === 'fulfilled') activityCount = { from, to, total: activity.value.counts.total };
 		const sections = ['timeline', 'signatures', 'destIps', 'srcIps', 'categories', 'alerts', 'summary'];
 		failed = { ...Object.fromEntries(sections.map((name, i) => [name, results[i].status === 'rejected'])), alerts: failed.alerts ?? false };
 		// OLD CODE: if (listGuard.current(lg)) applyList(listResult);
@@ -1175,7 +1176,11 @@
 			// A counted link: the page-1 request started next takes this comparison (beginList sets its gen)
 			linked = count === null ? null : { expected: count, gen: null, observed: null };
 			if (sameWindow) void fetchAlerts(1, getTimeRange());
-			else void refresh.run();
+			else {
+				// NET-191: the "not counted" line must not show another window's number while this one loads
+				activityCount = null;
+				void refresh.run();
+			}
 		});
 	});
 
@@ -1283,8 +1288,9 @@ OLD CODE END -->
 {/snippet}
 OLD CODE END -->
 <!-- Every alert with this rule, over the list's own window; no link without a rule.name, which the filter matches -->
+<!-- OLD CODE: {#if a.rule?.name}<a class="mono" href={alertsHrefForSignature(a.rule.name, shownWindow)} … (NET-191: a row of the activity list opened the counted list, which leaves it out) -->
 {#snippet signatureCell(a: Alert)}
-	{#if a.rule?.name}<a class="mono" href={alertsHrefForSignature(a.rule.name, shownWindow)} title={a.alert?.signature || a.rule.name}>{a.alert?.signature || a.rule.name}</a>{:else}<span class="mono" title={a.alert?.signature || 'Unknown'}>{a.alert?.signature || 'Unknown'}</span>{/if}
+	{#if a.rule?.name}<a class="mono" href={alertsHrefForSignature(a.rule.name, shownWindow, { activity: activityFilter })} title={a.alert?.signature || a.rule.name}>{a.alert?.signature || a.rule.name}</a>{:else}<span class="mono" title={a.alert?.signature || 'Unknown'}>{a.alert?.signature || 'Unknown'}</span>{/if}
 {/snippet}
 {#snippet srcCell(a: Alert)}{#if a.src_ip}<IPAddress ip={a.src_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet destCell(a: Alert)}{#if a.dest_ip}<IPAddress ip={a.dest_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
@@ -1293,7 +1299,8 @@ OLD CODE END -->
 	{@const linkedCategory = linkedSuricataCategory(a)}
 	<span class="cat-cell">
 		<!-- OLD CODE: <span>{a.alert?.category || '—'}</span> (slice 2b-2: links when rule.category holds it, over the list's window) -->
-		{#if linkedCategory}
+		<!-- OLD CODE: {#if linkedCategory} (NET-191: a category page counts only counted alerts, so the activity list doesn't link to it) -->
+		{#if linkedCategory && !activityFilter}
 			<a href={suricataCategoryHref(linkedCategory, shownWindow)} title="Every alert in this Suricata category over the list's window">{linkedCategory}</a>
 		{:else}
 			<span>{a.alert?.category || '—'}</span>
@@ -1433,7 +1440,8 @@ OLD CODE END -->
 			{:else if view === 'category'}
 				{#each groups as group (group.title)}
 					<!-- OLD CODE: <AlertGroup title={group.title} count={group.count}> (slice 2b-2: the title opens its category's page) -->
-					<AlertGroup title={group.title} count={group.count} href={groupCategoryLinked(sortedAlerts, group.title) ? suricataCategoryHref(group.title, shownWindow) : undefined}>
+					<!-- OLD CODE: href={groupCategoryLinked(sortedAlerts, group.title) ? … : undefined} (NET-191: not from the activity list; the category page counts only counted alerts) -->
+					<AlertGroup title={group.title} count={group.count} href={!activityFilter && groupCategoryLinked(sortedAlerts, group.title) ? suricataCategoryHref(group.title, shownWindow) : undefined}>
 						{#each group.lines as line (line.key)}
 							<AlertRow
 								severity={line.level}
@@ -1469,6 +1477,7 @@ OLD CODE END -->
 		{#key open._id}
 			<AlertDetail
 				alert={open}
+				activity={activityFilter}
 				onclose={closeDrawer}
 				onacknowledge={() => handleDrawerAcknowledge(open._id)}
 				onsuppress={() => drawerAction(open, (sigId) => suppressAlert(sigId))}
