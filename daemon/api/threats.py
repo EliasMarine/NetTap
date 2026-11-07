@@ -170,19 +170,35 @@ def handle_threat_intel(request: web.Request) -> web.Response:
     from services.threat_intel import CACHE_LOCK, ThreatIntelService
 
     ti = ThreatIntelService()
-    # One load -> populate -> save at a time (another request, or the address drill-down)
+    # OLD CODE START — PR 2 review: the lock was held through the OpenSearch scan (up to 30 s
+    # a page), so the address drill-down waited on it with one of its two slots
+    # # One load -> populate -> save at a time (another request, or the address drill-down)
+    # with CACHE_LOCK:
+    #     ti.load_cache()
+    #
+    #     # Bootstrap from Suricata data
+    #     try:
+    #         new_count = ti.populate_from_suricata(
+    #             client, from_ts, to_ts, excluded_ips=excluded_ips_list
+    #         )
+    #     except Exception as exc:
+    #         # load_cache already wrote back its purge, so the old entries stay gone (I7)
+    #         logger.error("Threat intel refresh from Suricata failed: %s", exc)
+    #         return web.json_response({"error": str(exc)}, status=500)
+    # OLD CODE END
+    # Bootstrap from Suricata data: the scan reads OpenSearch only, so no lock
+    try:
+        seen = ti.scan_suricata(client, from_ts, to_ts, excluded_ips=excluded_ips_list)
+    except Exception as exc:
+        # The load still writes back its purge, so the old entries stay gone (I7)
+        with CACHE_LOCK:
+            ti.load_cache()
+        logger.error("Threat intel refresh from Suricata failed: %s", exc)
+        return web.json_response({"error": str(exc)}, status=500)
+    # One load -> merge -> save at a time (another request, or the address drill-down)
     with CACHE_LOCK:
         ti.load_cache()
-
-        # Bootstrap from Suricata data
-        try:
-            new_count = ti.populate_from_suricata(
-                client, from_ts, to_ts, excluded_ips=excluded_ips_list
-            )
-        except Exception as exc:
-            # load_cache already wrote back its purge, so the old entries stay gone (I7)
-            logger.error("Threat intel refresh from Suricata failed: %s", exc)
-            return web.json_response({"error": str(exc)}, status=500)
+        new_count = ti.merge_seen(seen)
     # OLD CODE START — I7: every indicator ever cached, shown under the selected window's label
     # feeds = ti.get_all_matches()
     # OLD CODE END

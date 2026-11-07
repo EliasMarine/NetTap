@@ -249,6 +249,16 @@ class ThreatIntelService:
         building a local blocklist from Suricata's own detections.
         ``excluded_ips`` is ignored (kept for callers): excluded IPs stay visible here.
         """
+        return self.merge_seen(self.scan_suricata(client, from_ts, to_ts, excluded_ips))
+
+    def scan_suricata(
+        self, client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
+    ) -> set[str]:
+        """The listed hosts in the window's listing-rule alerts (the OpenSearch scan).
+
+        Touches no cache, so it runs without CACHE_LOCK (PR 2 review: the scan pages for
+        up to 30 s, and the address drill-down waited on the lock all that time).
+        """
         import os
         # OLD CODE START — excluded IPs stay visible in threat detections
         # from services.excluded_ips import build_excluded_ips_filter
@@ -375,7 +385,13 @@ class ThreatIntelService:
                 ambiguous,
             )
         self.seen_in_window = seen
+        return seen
 
+    def merge_seen(self, seen: set[str]) -> int:
+        """Add the scan's new indicators to the loaded cache and save it; how many were new.
+
+        Callers hold CACHE_LOCK from load_cache through this (milliseconds, no OpenSearch).
+        """
         known = self._ip_sets.get(ALERT_FEED, set())
         new_ips = sorted(seen - known)
         if new_ips:

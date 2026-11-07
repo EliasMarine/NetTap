@@ -1,8 +1,8 @@
 """PR 2 (reliability): files and caches that request threads share stay whole.
 
 Handlers now run in worker threads, so a reader can meet a writer mid-file and two
-read-modify-writes can interleave. The saves go through a temp file + os.replace and each
-read-modify-write holds its module's lock.
+read-modify-writes can interleave. The saves go through a temp file + os.replace, and the
+threat-intel cache's load -> merge -> save holds its lock.
 """
 
 import asyncio
@@ -59,8 +59,15 @@ def test_suppress_writes_from_many_threads_all_land(tmp_path, monkeypatch):
     assert ids == set(range(20))
 
 
+def _intel_request() -> MagicMock:
+    request = MagicMock()
+    request.query = {}
+    request.app = {"storage": MagicMock(), "excluded_ips": []}
+    return request
+
+
 def test_threat_intel_transactions_never_interleave(tmp_path, monkeypatch):
-    """Load -> populate -> save runs whole, against another request and the drill-down."""
+    """Load -> merge -> save runs whole, against another request and the drill-down."""
     monkeypatch.setattr(threat_intel, "_TI_CACHE_PATH", tmp_path / "ti.json")
     events: list[tuple[int, str]] = []
 
@@ -68,23 +75,20 @@ def test_threat_intel_transactions_never_interleave(tmp_path, monkeypatch):
         events.append((id(self), "load"))
         time.sleep(0.02)
 
-    def populate(self, *_args, **_kwargs):
-        events.append((id(self), "populate"))
+    def merge(self, _seen):
+        events.append((id(self), "merge"))
         time.sleep(0.05)
         events.append((id(self), "saved"))
-        self.seen_in_window = set()
         return 0
 
     monkeypatch.setattr(threat_intel.ThreatIntelService, "load_cache", load)
-    monkeypatch.setattr(
-        threat_intel.ThreatIntelService, "populate_from_suricata", populate
-    )
-    request = MagicMock()
-    request.query = {}
-    request.app = {"storage": MagicMock(), "excluded_ips": []}
+    monkeypatch.setattr(threat_intel.ThreatIntelService, "scan_suricata", MagicMock())
+    monkeypatch.setattr(threat_intel.ThreatIntelService, "merge_seen", merge)
 
     threads = [
-        threading.Thread(target=lambda: asyncio.run(handle_threat_intel(request)))
+        threading.Thread(
+            target=lambda: asyncio.run(handle_threat_intel(_intel_request()))
+        )
         for _ in range(2)
     ] + [
         threading.Thread(target=address_threat_intel, args=("203.0.113.9", None))
@@ -97,7 +101,35 @@ def test_threat_intel_transactions_never_interleave(tmp_path, monkeypatch):
 
     assert len(events) == 2 * 3 + 2
     for i, (owner, step) in enumerate(events):
-        if step == "populate":
+        if step == "merge":
             # the same request loaded just before and saves just after: nobody in between
             assert events[i - 1] == (owner, "load")
             assert events[i + 1] == (owner, "saved")
+
+
+def test_the_drill_down_never_waits_for_a_threat_intel_scan(tmp_path, monkeypatch):
+    """PR 2 review: the scan (up to 30 s a page) ran under the lock the drill-down needs."""
+    monkeypatch.setattr(threat_intel, "_TI_CACHE_PATH", tmp_path / "ti.json")
+    scanning, release = threading.Event(), threading.Event()
+
+    def scan(self, *_args, **_kwargs):
+        scanning.set()
+        release.wait(5)
+        return set()
+
+    monkeypatch.setattr(threat_intel.ThreatIntelService, "scan_suricata", scan)
+    refresh = threading.Thread(
+        target=lambda: asyncio.run(handle_threat_intel(_intel_request()))
+    )
+    refresh.start()
+    try:
+        assert scanning.wait(5)
+        drill_down = threading.Thread(
+            target=address_threat_intel, args=("203.0.113.9", None)
+        )
+        drill_down.start()
+        drill_down.join(1)
+        assert not drill_down.is_alive(), "the drill-down waited for the scan"
+    finally:
+        release.set()
+        refresh.join(5)
