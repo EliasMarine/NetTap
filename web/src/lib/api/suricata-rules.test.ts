@@ -7,8 +7,13 @@ import {
 	getRuleStats,
 	getUpdateSchedule,
 	setUpdateSchedule,
-	uploadCustomRules,
-	getCustomRules,
+	// OLD CODE START — NET-191 slice 3: getOwnerRules, checkOwnerRules and saveOwnerRules replace these
+	// uploadCustomRules,
+	// getCustomRules,
+	// OLD CODE END
+	getOwnerRules,
+	checkOwnerRules,
+	saveOwnerRules,
 	// OLD CODE START — NET-191 slice 2: retired with Snort Subscriber
 	// configureCommercial,
 	// getCommercialConfig,
@@ -249,46 +254,153 @@ describe('suricata-rules API client', () => {
 		});
 	});
 
-	// -- uploadCustomRules / getCustomRules ---------------------------------
+	// OLD CODE START — NET-191 slice 3: uploadCustomRules and getCustomRules are retired; the owner rules calls are tested below
+	// // -- uploadCustomRules / getCustomRules ---------------------------------
+	//
+	// describe('uploadCustomRules', () => {
+	// 	it('sends POST with rules content', async () => {
+	// 		mockFetchSuccess({ success: true, rules_written: 3, file: '/tmp/custom.rules' });
+	//
+	// 		const result = await uploadCustomRules('alert tcp any any -> any any (msg:"test"; sid:1000001;)');
+	//
+	// 		expect(fetch).toHaveBeenCalledWith('/api/suricata/rules/custom', {
+	// 			method: 'POST',
+	// 			headers: { 'Content-Type': 'application/json' },
+	// 			body: expect.any(String),
+	// 		});
+	// 		expect(result.success).toBe(true);
+	// 		expect(result.rules_written).toBe(3);
+	// 	});
+	//
+	// 	it('returns failure on HTTP error', async () => {
+	// 		mockFetchFailure(400);
+	//
+	// 		const result = await uploadCustomRules('bad');
+	//
+	// 		expect(result.success).toBe(false);
+	// 	});
+	// });
+	//
+	// describe('getCustomRules', () => {
+	// 	it('returns content on success', async () => {
+	// 		mockFetchSuccess({ content: 'alert tcp any any -> any any (msg:"test"; sid:1;)' });
+	//
+	// 		const result = await getCustomRules();
+	//
+	// 		expect(result).toContain('alert tcp');
+	// 	});
+	//
+	// 	// #96: an empty editor read as "no custom rules saved"
+	// 	it('throws on error', async () => {
+	// 		mockFetchFailure(500);
+	//
+	// 		await expect(getCustomRules()).rejects.toThrow('HTTP 500');
+	// 	});
+	// });
+	// OLD CODE END
 
-	describe('uploadCustomRules', () => {
-		it('sends POST with rules content', async () => {
-			mockFetchSuccess({ success: true, rules_written: 3, file: '/tmp/custom.rules' });
+	// -- Owner rules (NET-191 slice 3) ----------------------------------------
 
-			const result = await uploadCustomRules('alert tcp any any -> any any (msg:"test"; sid:1000001;)');
+	describe('getOwnerRules', () => {
+		it('returns the file, its count and the limits', async () => {
+			const body = { content: 'alert ip any any -> any any (msg:"x"; sid:1000001;)\n', rule_count: 1, max_rules: 2000, max_bytes: 262144 };
+			mockFetchSuccess(body);
+
+			await expect(getOwnerRules()).resolves.toEqual(body);
+			expect(fetch).toHaveBeenCalledWith('/api/suricata/rules/custom');
+		});
+
+		// "no rules yet" must never stand in for "unknown"
+		it("throws the daemon's error on a 500", async () => {
+			mockFetchSuccess({ error: 'The owner rules file could not be read.' }, 500);
+
+			await expect(getOwnerRules()).rejects.toThrow('The owner rules file could not be read.');
+		});
+
+		it('throws HTTP <status> when the error is not a string', async () => {
+			mockFetchSuccess({ error: { detail: 'x' } }, 502);
+
+			await expect(getOwnerRules()).rejects.toThrow('HTTP 502');
+		});
+	});
+
+	describe('checkOwnerRules', () => {
+		const RULES = 'alert tcp any any -> any 23 (msg:"telnet"; sid:1000001;)';
+
+		it('POSTs {content} to the check route and reports the count', async () => {
+			mockFetchSuccess({ ok: true, rule_count: 1 });
+
+			const result = await checkOwnerRules(RULES);
+
+			expect(fetch).toHaveBeenCalledWith('/api/suricata/rules/custom/check', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ content: RULES }),
+			});
+			expect(result).toEqual({ ok: true, status: 200, rule_count: 1, errors: [] });
+		});
+
+		it("returns a 400's sentence and per-line reasons instead of throwing", async () => {
+			const errors = [
+				{ line: 3, message: 'Only alert rules can be used.' },
+				{ line: null, message: 'At most 2,000 rules.' },
+			];
+			mockFetchSuccess({ error: 'Two lines need fixing.', errors }, 400);
+
+			await expect(checkOwnerRules('pass ip any any -> any any (sid:1;)')).resolves.toEqual({
+				ok: false,
+				status: 400,
+				error: 'Two lines need fixing.',
+				errors,
+			});
+		});
+
+		it('drops malformed reasons and names the HTTP status when error is not a string', async () => {
+			mockFetchSuccess({ error: ['x'], errors: [{ line: 1 }, null, { line: 2, message: 'Duplicate sid.' }] }, 400);
+
+			const result = await checkOwnerRules('x');
+
+			expect(result).toMatchObject({ ok: false, status: 400, error: 'The request failed (HTTP 400).' });
+			expect(result.errors).toEqual([{ line: 2, message: 'Duplicate sid.' }]);
+		});
+
+		it('names the HTTP status when the reply is not JSON', async () => {
+			mockFetchFailure(502);
+
+			await expect(checkOwnerRules('x')).resolves.toEqual({
+				ok: false,
+				status: 502,
+				error: 'The request failed (HTTP 502).',
+				errors: [],
+			});
+		});
+	});
+
+	describe('saveOwnerRules', () => {
+		it('POSTs {content} to the save route and reports what loaded', async () => {
+			mockFetchSuccess({ saved: true, rule_count: 2, engine: { loaded: 65432, failed: 0 } });
+
+			const result = await saveOwnerRules('');
 
 			expect(fetch).toHaveBeenCalledWith('/api/suricata/rules/custom', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: expect.any(String),
+				body: JSON.stringify({ content: '' }),
 			});
-			expect(result.success).toBe(true);
-			expect(result.rules_written).toBe(3);
+			expect(result).toEqual({ ok: true, status: 200, saved: true, rule_count: 2, engine: { loaded: 65432, failed: 0 }, errors: [] });
 		});
 
-		it('returns failure on HTTP error', async () => {
-			mockFetchFailure(400);
+		it.each([
+			[409, { error: 'A Suricata rule update is running. Try again in a few minutes.' }],
+			[422, { error: 'Suricata refused the rules: bad option', errors: [{ line: 2, message: 'unknown keyword' }] }],
+			[502, { error: "Suricata didn't reload. The previous rules were put back." }],
+			[500, { error: 'The rules could not be written.' }],
+		])("returns a %i's error without throwing", async (status, body) => {
+			mockFetchSuccess(body, status);
 
-			const result = await uploadCustomRules('bad');
+			const result = await saveOwnerRules('x');
 
-			expect(result.success).toBe(false);
-		});
-	});
-
-	describe('getCustomRules', () => {
-		it('returns content on success', async () => {
-			mockFetchSuccess({ content: 'alert tcp any any -> any any (msg:"test"; sid:1;)' });
-
-			const result = await getCustomRules();
-
-			expect(result).toContain('alert tcp');
-		});
-
-		// #96: an empty editor read as "no custom rules saved"
-		it('throws on error', async () => {
-			mockFetchFailure(500);
-
-			await expect(getCustomRules()).rejects.toThrow('HTTP 500');
+			expect(result).toEqual({ ok: false, status, error: body.error, errors: 'errors' in body ? body.errors : [] });
 		});
 	});
 

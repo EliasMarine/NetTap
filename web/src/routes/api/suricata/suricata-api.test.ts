@@ -5,6 +5,8 @@ vi.mock('$lib/server/daemon.js', () => ({ daemonFetch: (...a: unknown[]) => daem
 
 const commercial = await import('./rules/commercial/+server.js');
 const update = await import('./rules/update/+server.js');
+const custom = await import('./rules/custom/+server.js');
+const customCheck = await import('./rules/custom/check/+server.js');
 
 describe('Suricata API', () => {
 	it('should have route handlers defined', () => {
@@ -80,5 +82,71 @@ describe('Suricata rule proxies', () => {
 		expect(daemonFetch).toHaveBeenCalledWith('/api/suricata/rules/update', { method: 'POST' }, 290_000);
 		expect(res.status).toBe(500);
 		expect(await res.json()).toEqual(failed);
+	});
+});
+
+/** NET-191 slice 3: saving the owner rules runs Suricata's own test and a reload, up to about 4 minutes. */
+describe('Owner rules proxies', () => {
+	beforeEach(() => {
+		daemonFetch.mockReset();
+	});
+
+	const answer = (status: number, body: unknown) => daemonFetch.mockResolvedValue(new Response(JSON.stringify(body), { status }));
+	const post = (path: string, body: string) => ({ request: new Request(`http://localhost${path}`, { method: 'POST', body }) }) as never;
+	const BODY = JSON.stringify({ content: 'alert ip any any -> any any (msg:"x"; sid:1000001;)' });
+
+	it('reads the owner rules with the default timeout', async () => {
+		const rules = { content: '', rule_count: 0, max_rules: 2000, max_bytes: 262144 };
+		answer(200, rules);
+
+		const res = await custom.GET({} as never);
+
+		expect(daemonFetch).toHaveBeenCalledWith('/api/suricata/rules/custom');
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual(rules);
+	});
+
+	it('saves with 290 s, forwarding the body unchanged', async () => {
+		answer(200, { saved: true, rule_count: 1, engine: { loaded: 65432, failed: 0 } });
+
+		const res = await custom.POST(post('/api/suricata/rules/custom', BODY));
+
+		expect(daemonFetch).toHaveBeenCalledWith('/api/suricata/rules/custom', { method: 'POST', body: BODY }, 290_000);
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ saved: true, rule_count: 1, engine: { loaded: 65432, failed: 0 } });
+	});
+
+	it.each([
+		[400, { error: 'One line needs fixing.', errors: [{ line: 1, message: 'Only alert rules can be used.' }] }],
+		[409, { error: 'A Suricata rule update is running. Try again in a few minutes.' }],
+		[422, { error: 'Suricata refused the rules: bad option', errors: [] }],
+		[502, { error: "Suricata didn't reload. The previous rules were put back." }],
+	])("passes a save's %i and body through", async (status, body) => {
+		answer(status, body);
+
+		const res = await custom.POST(post('/api/suricata/rules/custom', BODY));
+
+		expect(res.status).toBe(status);
+		expect(await res.json()).toEqual(body);
+	});
+
+	it('checks with the default timeout and passes a 400 with line reasons through', async () => {
+		const refused = { error: 'One line needs fixing.', errors: [{ line: 3, message: 'Only alert rules can be used.' }] };
+		answer(400, refused);
+
+		const res = await customCheck.POST(post('/api/suricata/rules/custom/check', BODY));
+
+		expect(daemonFetch).toHaveBeenCalledWith('/api/suricata/rules/custom/check', { method: 'POST', body: BODY });
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual(refused);
+	});
+
+	it("says so when the daemon's reply isn't JSON", async () => {
+		daemonFetch.mockResolvedValue(new Response('<html>', { status: 502 }));
+
+		const res = await customCheck.POST(post('/api/suricata/rules/custom/check', BODY));
+
+		expect(res.status).toBe(502);
+		expect(await res.json()).toEqual({ error: 'Failed to parse daemon response' });
 	});
 });
