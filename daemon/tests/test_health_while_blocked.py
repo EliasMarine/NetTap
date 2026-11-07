@@ -9,8 +9,11 @@ main these fail (health times out). Only the first blocking call of a request wa
 
 import asyncio
 import contextlib
+import json
+import socket
 import threading
 import time
+import urllib.error
 import urllib.request
 from unittest.mock import MagicMock, patch
 
@@ -344,3 +347,59 @@ def test_a_full_route_pool_leaves_the_default_pool_free():
             await asyncio.gather(*routes)
 
     assert asyncio.run(main()) == "ran"
+
+
+def _get(server, path: str) -> tuple[int, dict, float]:
+    """(status, JSON body, seconds) for one authenticated GET."""
+    request = urllib.request.Request(
+        f"{server['base']}{path}", headers={TOKEN_HEADER: server["token"]}
+    )
+    start = time.monotonic()
+    try:
+        with urllib.request.urlopen(request, timeout=10) as resp:
+            status, body = resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        status, body = exc.code, exc.read()
+    return status, json.loads(body), time.monotonic() - start
+
+
+def test_a_fifth_public_lookup_is_turned_away_at_once(server):
+    """PR #200 review: the public lookups (no login) ran uncapped on the shared pool."""
+    from api import offload
+
+    release = threading.Event()
+    running: list[str] = []
+
+    def slow_reverse_dns(ip):
+        running.append(ip)
+        release.wait(_WAIT_S)
+        raise socket.herror("no record")
+
+    answers: list[int] = []
+
+    def look_up(n: int) -> None:
+        answers.append(_get(server, f"/api/lookup/dns/9.9.8.{n}")[0])
+
+    with patch("api.lookup.socket.gethostbyaddr", slow_reverse_dns):
+        senders = [threading.Thread(target=look_up, args=(n,)) for n in range(4)]
+        for t in senders:
+            t.start()
+        try:
+            deadline = time.monotonic() + _WAIT_S
+            while not (len(running) == 2 and offload._LOOKUP_SLOTS.locked()):
+                assert time.monotonic() < deadline, "the lookups never filled up"
+                time.sleep(0.01)
+
+            status, body, seconds = _get(server, "/api/lookup/dns/9.9.8.9")
+            assert (status, body) == (503, {"error": offload.LOOKUPS_BUSY})
+            assert seconds < 1
+            assert _get(server, "/api/tools/mac-lookup/fc:ff:01:00:00:02")[0] == 503
+            # everything else still answers: health, and a route on the route pool
+            assert _health_seconds(server["base"]) < HEALTH_BUDGET_S
+            assert _get(server, "/api/dns/stats")[0] == 200
+            assert len(running) == 2  # two run, two wait
+        finally:
+            release.set()
+            for t in senders:
+                t.join(_WAIT_S)
+    assert answers == [200] * 4

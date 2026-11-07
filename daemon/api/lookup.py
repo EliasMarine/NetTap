@@ -13,6 +13,8 @@ import socket
 
 from aiohttp import web
 
+from api.offload import lookup_slot, run_lookup
+
 logger = logging.getLogger("nettap.api.lookup")
 
 # Common WHOIS field patterns (case-insensitive)
@@ -47,6 +49,7 @@ def _parse_whois(raw: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+@lookup_slot
 async def handle_whois_lookup(request: web.Request) -> web.Response:
     """GET /api/lookup/whois/{ip}
 
@@ -95,6 +98,7 @@ async def handle_whois_lookup(request: web.Request) -> web.Response:
         return web.json_response({"error": f"WHOIS lookup failed: {exc}"}, status=500)
 
 
+@lookup_slot
 async def handle_dns_lookup(request: web.Request) -> web.Response:
     """GET /api/lookup/dns/{ip}
 
@@ -108,12 +112,16 @@ async def handle_dns_lookup(request: web.Request) -> web.Response:
     except ValueError:
         return web.json_response({"error": f"Invalid IP address: {raw_ip}"}, status=400)
 
-    loop = asyncio.get_event_loop()
-
+    # OLD CODE START — PR #200 review: a public route on the shared default pool, uncapped
+    # loop = asyncio.get_event_loop()
+    #
+    # try:
+    #     hostname, aliases, addrs = await loop.run_in_executor(
+    #         None, socket.gethostbyaddr, raw_ip
+    #     )
+    # OLD CODE END
     try:
-        hostname, aliases, addrs = await loop.run_in_executor(
-            None, socket.gethostbyaddr, raw_ip
-        )
+        hostname, aliases, addrs = await run_lookup(socket.gethostbyaddr, raw_ip)
     except socket.herror:
         return web.json_response(
             {
@@ -131,7 +139,10 @@ async def handle_dns_lookup(request: web.Request) -> web.Response:
     # Forward lookup to get all addresses for the hostname
     forward_addrs: list[str] = []
     try:
-        addrinfo = await loop.run_in_executor(None, socket.getaddrinfo, hostname, None)
+        # OLD CODE START — PR #200 review: the shared default pool
+        # addrinfo = await loop.run_in_executor(None, socket.getaddrinfo, hostname, None)
+        # OLD CODE END
+        addrinfo = await run_lookup(socket.getaddrinfo, hostname, None)
         forward_addrs = list({ai[4][0] for ai in addrinfo})
     except socket.gaierror:
         # Forward lookup failed; return what we have from reverse
