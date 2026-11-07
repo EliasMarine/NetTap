@@ -169,6 +169,72 @@ All four gave the identical top 10 sources and destinations, so the `asn` and `g
 - Web: 3,764 passed, including the Connections range set with 30d and a 30d request test. Visual: 276 passed, 49 skipped.
 - On the G11 next: `deploy-speed-timing.sh` again, then `verify-figures.sh`, `verify-device-figures.sh` and `verify-split-invariance.sh`.
 
+**1b on the G11 (`fc59a144`).** connections/stats at 7d 13.65 s → 2.43 s; the devices list at 30d 7.92 s → 3.30 s; risk at 24h 2.45 s → 0.79 s. `verify-figures`, `verify-device-figures` and `verify-split-invariance` all pass.
+
+### Reviews
+
+Five reviews of `fc59a144` plus `733af24e` (`deploy-speed.sh`):
+
+- **/deep-review:** no findings (`security-reviews/feature-net192-speed/security-review.md`).
+- **security-engineer:** 3 Low. L1 and L3 are fixed below. L2 wasn't in the fix list for this round.
+- **Python reviewer, TypeScript reviewer, /ponytail-review:** no Critical or High.
+
+Fixed in this round, each with a test that fails without the fix (or a new test where the item is test-only):
+
+- **The report's beaconing rows and state** (`api/threats.py`). Both are now read before the multi-second report. Before, the rows were read before it and the state after, so a scan that published in between gave empty rows labelled "ready": a false "No beaconing".
+- **A failed scan is retried sooner** (`services/beacon_snapshots.py`).
+  - After `QUERY_FAILED` the next try is 60 s later, doubling on each further failure, never past the window's interval.
+  - `CAP_HIT` keeps the normal interval, because the cap would stop the scan again.
+  - Reason: after a reboot the daemon often starts before OpenSearch or its auth bootstrap, so all three first scans failed, and the page said "failed" for 15 to 60 minutes.
+  - Also tested: publishing one window leaves the others empty and pending, and over a run 30d scans fewer times than 24h.
+- **WHOIS** (`api/lookup.py`).
+  - Output is cut at 64 KiB before decoding.
+  - A non-zero exit, empty output or no parsed fields gives `error: "WHOIS lookup failed"`, kept 5 min instead of 24 h.
+- **Reverse DNS.** `socket.herror` TRY_AGAIN (errno 2), which glibc raises when `RES_OPTIONS`' tries run out, is `timed_out`. Other `herror` values stay "no record".
+- **Lookup validation (security L1).** The routes use `parse_single_ip`, which refuses IPv6 scope ids. `ipaddress` keeps any scope id, newlines included, so `::1%25%0Ax` could forge a daemon log line. It is now a 400.
+- **Dead code.** The cache stats only ever logged at DEBUG, and the daemon logs at INFO. Removed: `_log_cache_stats`, `STATS_EVERY_S`, `TTLCache.hits`/`misses` and their test.
+- **LAN_SUBNETS (security L3)** (`services/excluded_ips.py`).
+  - Each entry is parsed with `ipaddress.IPv4Network(strict=False)` and must be a /8, /16 or /24. Anything else is skipped with one warning per entry.
+  - Before, `192.168.300.0/24` went into the filter and OpenSearch then rejected every LAN-filtered query, and a non-number raised at import.
+  - `cidr()` is now public, and `api/network.py` uses it instead of its own copy (kept as OLD CODE).
+- **Tests only.**
+  - Single-flight: when the first reverse lookup or WHOIS raises, every concurrent waiter gets a 500, `_in_flight` is empty, and the next call succeeds.
+  - The blackhole tests no longer use wall-clock limits. Health answers while the lookups are still blocked, and the lookups end well before the fake resolver's 10 s hang.
+- **`RES_OPTIONS`** is now `"timeout:2 attempts:2"`. It applies to the whole process (whois, the threat-intel feeds, the update check, UniFi), and 2 × 2 s stays under the 6 s lookup bound.
+- **Threats polling** (web).
+  - While the check is pending the page polls `/api/threats/beaconing?snapshot=`, not the whole report, and merges `beaconing` and `beaconing_snapshot`.
+  - When the state leaves pending, it reloads the page once, so "Updated" moves.
+  - The 20 s interval, the 10-minute cap and the stale-response guard are unchanged.
+  - New tests: no requests after unmount; a poll in flight across a range change doesn't overwrite; a rejected poll retries and recovers.
+- **Threats copy.**
+  - After the 10-minute cap, the KPI sub says "Still running. Refresh to check again." and the card's note and loading text say "Beaconing check still running. Refresh to check again." Before, they still promised "a few minutes".
+  - When the state is stale, the KPI sub reads "Last checked {time}", so the count isn't read as live.
+- **`threatRequest`.** 1h and 6h take their bounds from the page's `computeTimeParams(range)`, so the report and the threat intel count one window. `LIVE_SPAN_MS` and the `now` parameter are gone, and an `isSnapshotWindow` type guard replaces the `as` cast.
+- **Copy.** "Reverse DNS lookup timed out" on the address and DNS lookup pages, since a timeout doesn't mean there's no name. Also fixed the DNS page's `{#if}` indent.
+- **Web proxy.** The Connections sankey and timeline get 30 s, like connections stats. With 30d back, the sankey (2.3 s at 6 days on the G11) could pass the 10 s default at a real 30 days.
+
+**Plan deviations.**
+
+- **The LAN filter is CIDR terms.** The plan's 1b fixes were the Painless→field byte sum or reshaping the dominant aggregation. On the devices list the dominant cost was the LAN filter's Painless script, so it became CIDR `terms` on `source.ip`, with identical results.
+- **Retry after a failed query.** The plan had a fixed 15/15/60 min schedule. A failed query now retries after 60 s, doubling up to the interval.
+- **No 8-waiter cap on lookups.** The plan said a new lookup answers `timed_out` at once when 8 are waiting. PR 2's `lookup_slot` (`Semaphore(4)`: 2 running, 2 waiting) already answers 503 at once when full, so a second cap would never be reached.
+- **The page polls the beaconing route, not the whole report**, and reloads once when the check finishes.
+- **`RES_OPTIONS` is `timeout:2`**, not the plan's `timeout:1`, because it applies to the whole process.
+- **The timeout copy** is "Reverse DNS lookup timed out", not "No reverse DNS name (lookup timed out)".
+
+**Review-round tests.**
+- Daemon: 3,621 passed, 3 skipped.
+- Ruff check and format: clean.
+- Web: 3,768 passed.
+- svelte-check: 0 errors.
+- check:colors and check:e2e: clean.
+- Visual: 276 passed, 49 skipped.
+- Swap checks:
+  - The report race and LAN_SUBNETS tests fail on the old code.
+  - The WHOIS failure and 64 KiB, TRY_AGAIN and scope-id tests fail on the old code.
+  - The retry test fails with the plain interval, and the cap test fails if every failure retried early.
+  - Every new poll test, and the stale KPI test, fail on the old page.
+
 ## PR 4: one look on every page (web)
 
 ### What changed
