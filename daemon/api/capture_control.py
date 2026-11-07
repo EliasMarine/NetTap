@@ -28,6 +28,7 @@ from services.capture_config import (
     save_capture_config,
     write_env_file_if_changed,
 )
+from services.rules_lock import rules_lock
 
 logger = logging.getLogger("nettap.api.capture_control")
 
@@ -41,6 +42,7 @@ CONTAINER_NAME = "nettap-pcap-capture"
 #     CONTAINER_NAME,
 # )
 # OLD CODE END
+SURICATA_CONTAINER = "nettap-suricata-live"
 # Containers whose entrypoint reads /etc/nettap/capture.env
 CAPTURE_CONTAINERS = (
     "nettap-zeek-live",
@@ -165,8 +167,16 @@ async def _restart_if_running(container: str) -> tuple[bool, str]:
         if not status["running"]:
             logger.info("Not restarting %s: it is %s", container, status["status"])
             return False, ""
-        returncode, output = await _docker_cmd("restart", container)
-    except Exception as exc:  # docker CLI missing, socket unreachable
+        # OLD CODE START — NET-191 slice 2: Suricata is restarted only between rule updates
+        # returncode, output = await _docker_cmd("restart", container)
+        # OLD CODE END
+        if container == SURICATA_CONTAINER:
+            # Held until docker restart returns, so the new container's startup update can take it
+            async with rules_lock():
+                returncode, output = await _docker_cmd("restart", container)
+        else:
+            returncode, output = await _docker_cmd("restart", container)
+    except Exception as exc:  # docker CLI missing, socket unreachable, rules lock busy
         returncode, output = -1, str(exc)
     if returncode != 0:
         logger.warning(

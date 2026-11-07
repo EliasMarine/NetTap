@@ -38,7 +38,10 @@ API_KEY_FIELDS = {
     "SMTP_PASSWORD": "SMTP_PASSWORD",
     "SMTP_SENDER_EMAIL": "SMTP_SENDER_EMAIL",
     "WEBHOOK_URL": "WEBHOOK_URL",
-    "SURICATA_ET_PRO_KEY": "SURICATA_ET_PRO_KEY",
+    # OLD CODE START — NET-191 slice 2: saved here, this key never reached Suricata. The ET Pro code has one
+    # place now, Settings › Suricata rules (/etc/nettap/suricata.env, checked with Proofpoint first).
+    # "SURICATA_ET_PRO_KEY": "SURICATA_ET_PRO_KEY",
+    # OLD CODE END
 }
 
 

@@ -10,6 +10,8 @@ import logging
 
 from aiohttp import web
 
+from services.etpro import EtProError, EtProManager
+from services.rules_lock import RulesBusyError
 from services.suricata_rules import SuricataRuleManager
 
 logger = logging.getLogger("nettap.api.suricata_rules")
@@ -78,7 +80,10 @@ async def handle_update_rules(request: web.Request) -> web.Response:
 
     try:
         result = await manager.update_rules()
-        status = 200 if result["success"] else 500
+        # OLD CODE START — NET-191 slice 2: an update still running after the wait is 202
+        # status = 200 if result["success"] else 500
+        # OLD CODE END
+        status = 200 if result["success"] else 202 if result.get("running") else 500
         return web.json_response(result, status=status)
     except Exception as exc:
         logger.exception("Error updating rules")
@@ -169,38 +174,100 @@ async def handle_get_custom_rules(request: web.Request) -> web.Response:
     return web.json_response({"content": content})
 
 
-async def handle_commercial_config(request: web.Request) -> web.Response:
-    """POST /api/suricata/rules/commercial
+# OLD CODE START — NET-191 slice 2: wrote the key in plain text to config/suricata/commercial.yaml,
+# which nothing read (Snort Subscriber is retired: ET Pro only, below)
+# async def handle_commercial_config(request: web.Request) -> web.Response:
+#     """POST /api/suricata/rules/commercial
+#
+#     Configure commercial rule source. Body: {"source_type": "etpro"|"snort", "license_key": "..."}
+#     """
+#     manager: SuricataRuleManager = request.app["suricata_rule_manager"]
+#
+#     try:
+#         body = await request.json()
+#     except Exception:
+#         return web.json_response({"error": "Invalid JSON body"}, status=400)
+#
+#     source_type = body.get("source_type", "")
+#     license_key = body.get("license_key", "")
+#
+#     try:
+#         result = manager.configure_commercial(source_type, license_key)
+#         return web.json_response(result)
+#     except ValueError as exc:
+#         return web.json_response({"error": str(exc)}, status=400)
+#
+#
+# async def handle_get_commercial_config(request: web.Request) -> web.Response:
+#     """GET /api/suricata/rules/commercial
+#
+#     Get current commercial source config (key masked).
+#     """
+#     manager: SuricataRuleManager = request.app["suricata_rule_manager"]
+#     config = manager.get_commercial_config()
+#     if config is None:
+#         return web.json_response({"configured": False})
+#     return web.json_response({"configured": True, **config})
+# OLD CODE END
 
-    Configure commercial rule source. Body: {"source_type": "etpro"|"snort", "license_key": "..."}
+
+async def _etpro_change(change) -> web.Response:
+    """Run a save/clear; map its refusals to plain answers. The code never appears in either."""
+    try:
+        return await change()
+    except EtProError as exc:
+        return web.json_response({"error": str(exc)}, status=exc.status)
+    except RulesBusyError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    except (
+        Exception
+    ) as exc:  # e.g. /etc/nettap not writable; the type only, never the text
+        logger.error("ET Pro change failed: %s", type(exc).__name__)
+        return web.json_response(
+            {"error": "Couldn't change the ET Pro code. Nothing was changed."},
+            status=500,
+        )
+
+
+async def handle_etpro_save(request: web.Request) -> web.Response:
+    """POST /api/suricata/rules/commercial  Body: {"code": "<ET Pro code>"}
+
+    Checks the code with Proofpoint, saves it and restarts Suricata with ET Pro (202). The page
+    follows the restart with GET.
     """
-    manager: SuricataRuleManager = request.app["suricata_rule_manager"]
-
+    etpro: EtProManager = request.app["etpro_manager"]
     try:
         body = await request.json()
     except Exception:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
+    code = body.get("code") if isinstance(body, dict) else None
 
-    source_type = body.get("source_type", "")
-    license_key = body.get("license_key", "")
+    async def change() -> web.Response:
+        await etpro.save(code)
+        return web.json_response({"saved": True, "applying": True}, status=202)
 
-    try:
-        result = manager.configure_commercial(source_type, license_key)
-        return web.json_response(result)
-    except ValueError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+    return await _etpro_change(change)
 
 
-async def handle_get_commercial_config(request: web.Request) -> web.Response:
+async def handle_etpro_clear(request: web.Request) -> web.Response:
+    """DELETE /api/suricata/rules/commercial: remove the code, restart Suricata with ET Open."""
+    etpro: EtProManager = request.app["etpro_manager"]
+
+    async def change() -> web.Response:
+        if await etpro.clear():
+            return web.json_response({"cleared": True, "applying": True}, status=202)
+        return web.json_response({"cleared": False})
+
+    return await _etpro_change(change)
+
+
+async def handle_etpro_status(request: web.Request) -> web.Response:
     """GET /api/suricata/rules/commercial
 
-    Get current commercial source config (key masked).
+    {configured, active, last_update_ok, applying, activation}. Never the code.
     """
-    manager: SuricataRuleManager = request.app["suricata_rule_manager"]
-    config = manager.get_commercial_config()
-    if config is None:
-        return web.json_response({"configured": False})
-    return web.json_response({"configured": True, **config})
+    etpro: EtProManager = request.app["etpro_manager"]
+    return web.json_response(await etpro.status())
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +281,7 @@ def register_suricata_rules_routes(
 ) -> None:
     """Register all Suricata rules API routes on the given aiohttp application."""
     app["suricata_rule_manager"] = manager
+    app["etpro_manager"] = EtProManager(manager)
 
     # Static routes first (before parameterized)
     app.router.add_get("/api/suricata/rules/live", handle_live_status)
@@ -223,8 +291,13 @@ def register_suricata_rules_routes(
     app.router.add_post("/api/suricata/rules/update", handle_update_rules)
     app.router.add_post("/api/suricata/rules/custom", handle_custom_rules)
     app.router.add_get("/api/suricata/rules/custom", handle_get_custom_rules)
-    app.router.add_post("/api/suricata/rules/commercial", handle_commercial_config)
-    app.router.add_get("/api/suricata/rules/commercial", handle_get_commercial_config)
+    # OLD CODE START — NET-191 slice 2: ET Pro only, saved where Suricata reads it
+    # app.router.add_post("/api/suricata/rules/commercial", handle_commercial_config)
+    # app.router.add_get("/api/suricata/rules/commercial", handle_get_commercial_config)
+    # OLD CODE END
+    app.router.add_post("/api/suricata/rules/commercial", handle_etpro_save)
+    app.router.add_get("/api/suricata/rules/commercial", handle_etpro_status)
+    app.router.add_delete("/api/suricata/rules/commercial", handle_etpro_clear)
 
     # Source listing + parameterized routes
     app.router.add_get("/api/suricata/rules/sources", handle_list_sources)
@@ -235,4 +308,4 @@ def register_suricata_rules_routes(
         "/api/suricata/rules/sources/{id:.+}/disable", handle_disable_source
     )
 
-    logger.info("Suricata rules API routes registered (11 endpoints)")
+    logger.info("Suricata rules API routes registered (12 endpoints)")

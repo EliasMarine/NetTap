@@ -68,10 +68,13 @@ class TestGetApiKeys(AioHTTPTestCase):
             "SMTP_PASSWORD",
             "SMTP_SENDER_EMAIL",
             "WEBHOOK_URL",
-            "SURICATA_ET_PRO_KEY",
+            # OLD CODE START — NET-191 slice 2: retired; the ET Pro code is set in Settings › Suricata rules
+            # "SURICATA_ET_PRO_KEY",
+            # OLD CODE END
         ]
         for field in expected_fields:
             self.assertIn(field, keys)
+        self.assertNotIn("SURICATA_ET_PRO_KEY", keys)
 
 
 class TestGetApiKeysEmptyFile(AioHTTPTestCase):
@@ -187,6 +190,25 @@ class TestSaveApiKeys(AioHTTPTestCase):
         self.assertEqual(data["saved_count"], 1)
         self.assertIn("warnings", data)
         self.assertTrue(any("RANDOM_KEY" in w for w in data["warnings"]))
+
+    @unittest_run_loop
+    async def test_the_retired_et_pro_key_is_not_written(self):
+        """NET-191 slice 2: SURICATA_ET_PRO_KEY is no longer an API key field; it is never saved."""
+        resp = await self.client.request(
+            "POST",
+            "/api/settings/api-keys",
+            json={
+                "MAXMIND_LICENSE_KEY": "valid",
+                "SURICATA_ET_PRO_KEY": "CANARYa1b2c3d4e5f6g7h8",
+            },
+        )
+        self.assertEqual(resp.status, 200)
+        text = await resp.text()
+        self.assertNotIn("CANARYa1b2c3d4e5f6g7h8", text)
+        with open(self.tmp.name) as fh:
+            saved = fh.read()
+        self.assertNotIn("SURICATA_ET_PRO_KEY", saved)
+        self.assertNotIn("CANARYa1b2c3d4e5f6g7h8", saved)
 
     @unittest_run_loop
     async def test_save_empty_body_returns_400(self):
