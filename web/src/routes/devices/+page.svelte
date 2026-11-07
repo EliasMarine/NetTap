@@ -19,7 +19,7 @@
 	// import { getDevices, getDeviceCount } from '$api/devices';
 	// OLD CODE END
 	import { getDevices } from '$api/devices';
-	import type { Device } from '$api/devices';
+	import type { Device, DeviceListResponse } from '$api/devices';
 	import { customRange, rangeWindow } from '$lib/utils/drilldown';
 	import { getNewDeviceCount, getRegistryDevices, isNewDevice } from '$api/devices-registry';
 	import type { RegistryDevice, RegistryListResponse } from '$api/devices-registry';
@@ -306,7 +306,7 @@
 		}
 		const [[listRes, newRes], { mode: modeRes, registry: registryRes }] = await Promise.all([
 			Promise.allSettled([
-				getDevices({ ...win, sort: 'bytes', order: 'desc', limit: LIST_LIMIT }),
+				getDevices({ ...win, sort: 'bytes', order: 'desc', limit: LIST_LIMIT }).then(checkedReading),
 				getNewDeviceCount(new Date(Date.now() - DAY).toISOString()),
 			]),
 			loadRegistry(),
@@ -489,8 +489,24 @@
 	const onlineFrom = $derived(loaded ? Date.parse(loaded.online_since) : Infinity);
 	const idleFrom = $derived(loaded ? Date.parse(loaded.as_of) - HOUR : Infinity);
 
-	/** Seen at or after the reading's online_since is online; within the hour before its as_of, idle. */
+	/**
+	 * A list reply without the reading's fields (an older daemon) is a failed load: read as it is,
+	 * every row would say Offline and the figures "—" with no error (PR #191 review).
+	 */
+	function checkedReading(r: DeviceListResponse): DeviceListResponse {
+		const times = [r.as_of, r.online_since].map((t) => Date.parse(t));
+		if (!Number.isFinite(r.total) || !Number.isFinite(r.online_total) || times.some(Number.isNaN)) {
+			throw new Error('The device list reply has no reading');
+		}
+		return r;
+	}
+
+	/**
+	 * Seen at or after the reading's online_since is online; within the hour before its as_of, idle.
+	 * A window that ended before the last 5 minutes can't say what is online now (PR #191 review).
+	 */
 	function status(d: Device): { rank: number; label: string } {
+		if (windowEnded) return { rank: -1, label: '—' };
 		const seen = d.last_seen ? Date.parse(d.last_seen) : NaN;
 		if (seen >= onlineFrom) return { rank: 2, label: 'Online' };
 		if (seen >= idleFrom) return { rank: 1, label: 'Idle' };
@@ -517,7 +533,8 @@
 	const columns: Column<Device>[] = [
 		{ key: 'ip', label: 'IP address', cell: ipCell },
 		{ key: 'name', label: 'Name', cell: nameCell, sortValue: (d) => d.unifi_name ?? d.hostname },
-		{ key: 'status', label: 'Status', cell: statusCell, sortValue: (d) => status(d).rank },
+		// OLD CODE: { key: 'status', label: 'Status', cell: statusCell, sortValue: (d) => status(d).rank }, (PR #191 review: a past window has no status)
+		{ key: 'status', label: 'Status', cell: statusCell, sortValue: (d) => (windowEnded ? null : status(d).rank) },
 		{ key: 'category', label: 'Type', cell: typeCell, sortValue: (d) => d.category ?? 'unknown' },
 		{ key: 'os_hint', label: 'OS', cell: osCell },
 		{ key: 'manufacturer', label: 'Manufacturer', cell: vendorCell },

@@ -1334,13 +1334,55 @@ class TestDeviceListOneReading(AioHTTPTestCase):
             for i in range(1200)
         ]
         _, counted = await self._get("/api/devices/count" + self._RANGE, buckets)
-        status, data = await self._get(
-            "/api/devices" + self._RANGE + "&limit=500", buckets
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(len(data["devices"]), 500)
-        self.assertEqual(data["total"], 1200)
         self.assertEqual(counted["count"], 1200)
+        for sort in ("bytes", "connections", "last_seen", "first_seen", "alerts"):
+            status, data = await self._get(
+                f"/api/devices{self._RANGE}&limit=500&sort={sort}", buckets
+            )
+            self.assertEqual(status, 200, sort)
+            self.assertEqual(len(data["devices"]), 500, sort)
+            self.assertEqual(data["total"], 1200, sort)
+
+    @unittest_run_loop
+    async def test_online_total_counts_every_device_not_only_the_listed_ones(self):
+        now_ms = 1_772_020_800_000
+        seen = [
+            {**_device_bucket(f"192.168.1.{i}"), "last_seen": {"value": float(now_ms)}}
+            for i in (1, 2, 3)
+        ]
+        with patch("api.devices.time") as clock:
+            clock.time_ns.return_value = now_ms * 1_000_000
+            _, data = await self._get("/api/devices" + self._RANGE + "&limit=1", seen)
+        self.assertEqual(len(data["devices"]), 1)
+        self.assertEqual(data["online_total"], 3)
+
+    @unittest_run_loop
+    async def test_first_seen_sorts_by_the_first_record(self):
+        def first(ip, ms):
+            return {**_device_bucket(ip), "first_seen": {"value": float(ms)}}
+
+        buckets = [
+            first("192.168.1.1", 2_000),
+            first("192.168.1.2", 3_000),
+            first("192.168.1.3", 1_000),
+        ]
+        _, data = await self._get(
+            "/api/devices" + self._RANGE + "&sort=first_seen&order=asc", buckets
+        )
+        self.assertEqual(
+            [d["ip"] for d in data["devices"]],
+            ["192.168.1.3", "192.168.1.1", "192.168.1.2"],
+        )
+
+    @unittest_run_loop
+    async def test_a_skipped_address_never_takes_a_listed_slot(self):
+        buckets = [
+            _device_bucket("192.168.1.255", total_bytes=9_999_999),  # broadcast
+            _device_bucket("192.168.1.7", total_bytes=10),
+        ]
+        _, data = await self._get("/api/devices" + self._RANGE + "&limit=1", buckets)
+        self.assertEqual([d["ip"] for d in data["devices"]], ["192.168.1.7"])
+        self.assertEqual(data["total"], 1)
 
     @unittest_run_loop
     async def test_ties_break_by_bytes_then_ip_in_numeric_order(self):
@@ -1426,6 +1468,19 @@ class TestDeviceListOneReading(AioHTTPTestCase):
                     path + self._RANGE, bad, "devices"
                 )
                 self.assertEqual(status, 502, (path, bad))
+                self.assertEqual(data, {"error": "The device search was incomplete"})
+
+    @unittest_run_loop
+    async def test_a_read_stopped_at_the_cap_is_502_not_a_smaller_figure(self):
+        """PR #191 review: past the cap the list and count read a partial set as every device."""
+        buckets = [
+            _device_bucket(f"192.168.{i // 200}.{i % 200 + 1}", doc_count=5)
+            for i in range(1200)
+        ]
+        with patch("api.devices._DEVICE_CAP", 1000):
+            for path in ("/api/devices", "/api/devices/count"):
+                status, data = await self._get(path + self._RANGE, buckets)
+                self.assertEqual(status, 502, path)
                 self.assertEqual(data, {"error": "The device search was incomplete"})
 
     @unittest_run_loop

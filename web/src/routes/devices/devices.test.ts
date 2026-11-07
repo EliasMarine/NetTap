@@ -53,7 +53,8 @@ describe('Devices — failed request', () => {
 	});
 
 	it('still says "No devices seen yet." when the network really has none', async () => {
-		stubDevices({ ok: true, status: 200, body: { from: '', to: '', limit: 200, devices: [] } });
+		// OLD CODE: body { from: '', to: '', limit: 200, devices: [] } (slice 2b-3: the page refuses a reply without its reading)
+		stubDevices({ ok: true, status: 200, body: listReply([]) });
 		render(Page);
 		expect(await screen.findByText('No devices seen yet.')).toBeInTheDocument();
 	});
@@ -447,6 +448,32 @@ describe('Devices — the URL window and one reading', () => {
 		await vi.waitFor(() => expect(kpiValue('Total devices')).toBe('1'));
 		expect(kpiValue('Online now')).toBe('—');
 		expect(sub('Online now')).toBe('This window ended before the last 5 minutes');
+		// PR #191 review: the rows can't say Online, Idle or Offline for a window that ended either
+		expect(await statusOf(DEVICE.ip)).toBe('—');
+	});
+
+	// PR #191 review: back to the last good window after a failed one kept the failed one's error
+	it('going back to a loaded window after a failed one shows loading, not the error', async () => {
+		let answer: 'ok' | 'fail' | 'hold' = 'ok';
+		stub((url) => (answer === 'ok' ? reading(url, [DEVICE], { total: 4 }) : answer === 'fail' ? undefined : new Promise(() => {})));
+		render(Page);
+		await vi.waitFor(() => expect(kpiValue('Total devices')).toBe('4'));
+		answer = 'fail';
+		goTo('?range=7d');
+		expect(await screen.findByText("Couldn't load devices: the request failed.")).toBeInTheDocument();
+		answer = 'hold';
+		goTo('');
+		await vi.waitFor(() => expect(screen.getByText('Loading devices')).toBeInTheDocument());
+		expect(screen.queryByText("Couldn't load devices: the request failed.")).not.toBeInTheDocument();
+		expect(sub('Total devices')).toBe('Seen on the network');
+	});
+
+	it('reads a list reply without the reading (an older daemon) as a failed load, not all offline', async () => {
+		stub((url) => ({ from: url.searchParams.get('from'), to: url.searchParams.get('to'), limit: 500, devices: [DEVICE] }));
+		render(Page);
+		expect(await screen.findByText("Couldn't load devices: the request failed.")).toBeInTheDocument();
+		expect(kpiValue('Total devices')).toBe('—');
+		expect(screen.queryByRole('table', { name: 'All devices' })).not.toBeInTheDocument();
 	});
 
 	it('a failed refresh of the same window keeps the list and its total together', async () => {

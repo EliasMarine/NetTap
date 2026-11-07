@@ -7,6 +7,7 @@ a network device inventory with passive fingerprinting enrichment (MAC,
 hostname, manufacturer, OS hint).
 """
 
+import asyncio
 import ipaddress
 import logging
 import os
@@ -54,6 +55,10 @@ _MIN_CONNECTIONS = 3
 
 # A listed device whose newest record is this recent is Online (the Devices table's rule)
 _ONLINE_MS = 5 * 60 * 1000
+
+# shortcut: the checked device reads (the list and the count) stop at 20,000 IPs and answer 502,
+# far above a household; a site with more needs a paged list instead of every device per request
+_DEVICE_CAP = 20_000
 
 
 # ---------------------------------------------------------------------------
@@ -271,8 +276,12 @@ def _lan_device_buckets(
         [{"ip": {"terms": {"field": "source.ip"}}}],
         aggs=aggs,
         page_size=page_size,
+        **({"max_buckets": _DEVICE_CAP} if what else {}),
         what=what,
     )
+    # PR #191 review: a capped read is not every device, so a checked one fails instead
+    if not complete and what:
+        raise QueryFailed(f"{what}: stopped at {len(buckets)} IPs")
     if not complete:
         logger.warning(
             "Device buckets stopped at %d IPs; figures cover those only", len(buckets)
@@ -612,14 +621,18 @@ async def handle_device_list(request: web.Request) -> web.Response:
         #         result.get("aggregations", {}).get("devices", {}).get("buckets", [])
         #     )
         # OLD CODE END
-        # Every device, through the count's own helper, so the list and the count agree
-        buckets = _lan_device_buckets(
-            client,
-            request.app,
-            from_ts,
-            to_ts,
-            aggs=device_aggs,
-            what="device list",
+        # Every device, through the count's own helper, so the list and the count agree.
+        # PR #191 review: off the event loop, so a long read never stalls /api/health
+        buckets = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: _lan_device_buckets(
+                client,
+                request.app,
+                from_ts,
+                to_ts,
+                aggs=device_aggs,
+                what="device list",
+            ),
         )
     except QueryFailed as exc:
         return _incomplete("devices list", exc)
@@ -1708,15 +1721,19 @@ async def handle_device_count(request: web.Request) -> web.Response:
         # OLD CODE START — #96: the capped terms search above
         # result = client.search(index=NETWORK_INDEX, body=query)
         # OLD CODE END
-        devices = _lan_device_buckets(
-            client,
-            request.app,
-            from_ts,
-            to_ts,
-            aggs={"last_seen": {"max": {"field": "@timestamp"}}}
-            if active_since
-            else None,
-            what="device count",
+        # PR #191 review: off the event loop, as the list does
+        devices = await asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: _lan_device_buckets(
+                client,
+                request.app,
+                from_ts,
+                to_ts,
+                aggs={"last_seen": {"max": {"field": "@timestamp"}}}
+                if active_since
+                else None,
+                what="device count",
+            ),
         )
     except QueryFailed as exc:
         return _incomplete("devices/count", exc)

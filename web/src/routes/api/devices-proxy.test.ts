@@ -66,7 +66,7 @@ describe('device list proxy', () => {
 		const url = new URL('https://nettap.local/api/devices?from=a&to=b&sort=bytes&order=desc&limit=500');
 		const res = await list.GET({ url } as never);
 		expect(daemonFetch).toHaveBeenCalledWith('/api/devices?from=a&to=b&sort=bytes&order=desc&limit=500', undefined, scriptTimeout());
-		expect(scriptTimeout()).toBe(10_000);
+		// OLD CODE: expect(scriptTimeout()).toBe(10_000); (PR #191 review: blocked a change made in both places)
 		expect(await res.json()).toEqual(reply);
 	});
 });

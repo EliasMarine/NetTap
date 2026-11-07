@@ -1,6 +1,6 @@
 # 2026-11-06 — Home's Devices card opens the devices it counted (NET-160, slice 2b-3)
 
-**Status:** built on `feature/drill-down-slice2b3`; PR pending. Plan: `plans/2026-11-06-net160-drill-down-slice2b3.md`. Codex approved it in round 3; the log is beside it.
+**Status:** PR #191. Plan: `plans/2026-11-06-net160-drill-down-slice2b3.md`. Codex approved it in round 3; the log is beside it.
 
 ## Problem
 
@@ -60,7 +60,7 @@
 
 ## Tests
 
-- **Daemon:** 3,240 passed, 7 of them new, in `TestDeviceListOneReading`:
+- **Daemon:** 3,244 passed, 12 of them new, in `TestDeviceListOneReading`:
   - every sort lists the counted devices: an exactly-3-record device, an under-3 one and a broadcast address;
   - `total` across 2 composite pages before the cut;
   - the tie-break;
@@ -69,7 +69,7 @@
   - 502 for incomplete device and alert-count searches.
 
   The list tests moved to composite replies.
-- **Web:** vitest 3,363 passed, svelte-check 0 errors, the colour gate clean, and `test:visual` 223 passed.
+- **Web:** vitest 3,365 passed, svelte-check 0 errors, the colour gate clean, and `test:visual` 223 passed.
 - **Swap check:** each new test fails on its file's HEAD version.
 
 ## Review gates
@@ -78,6 +78,28 @@
 - **`/ponytail-review`:** two findings, both fixed.
   - The list handler kept a `query` wrapper and a `bool_query` that only carried the per-device aggregations. They are now `device_aggs`, with the old lines kept as OLD CODE.
   - By type decided completeness with `devices.length < 500`, so a list of exactly 500 devices read as cut off. It now compares against the reading's `total`, with a test that fails on the old rule.
+
+## Two-angle review (PR #191)
+
+Neither reviewer found anything CRITICAL or HIGH. Everything was fixed except one item, which is explained at the end.
+- **Security, MEDIUM, and LOW.**
+  - A flood of spoofed LAN sources could make the every-device read long, and a read stopped at the 500,000-bucket cap returned a partial set as exact.
+  - The checked reads (the list and the count) now stop at `_DEVICE_CAP = 20,000` IPs and return 502 there.
+  - Both reads now run off the event loop (`run_in_executor`), so a long read can't stall `/api/health`.
+- **Daemon review: Step 7d.**
+  - **Brackets.** An independent OpenSearch recount (the daemon's LAN subnets, excluded IPs, at least 3 records, the skip rules) brackets the chain `before <= count <= total <= after`. The first device's connections sit between a `_count` taken before and one taken after. Zeek logs late, so a settled window can still grow.
+  - **Cold timing.** The 30-day web-path timing runs first, while the window is cold.
+  - **Labels** now read 1 h, 24 h, 7 d and 30 d.
+  - **Before the merge, on the G11:** the recount equalled the daemon's count at 36 (1 h), 53 (24 h) and 58 (30 d).
+- **Daemon review: tests.** New tests cover `online_total` with `limit=1`, the `first_seen` order, a top-bytes `.255` that never takes a slot, and every sort across 2 pages.
+- **Web review, MEDIUM.**
+  - A Custom window that ended more than 5 minutes ago showed "—" for Online now, but the rows still said Idle or Offline against the reading time. A device online right now could read Offline.
+  - The status column now reads "—" there, and it sorts as unknown.
+- **Web review, LOW.**
+  - A test now covers A loaded, then B failed, then back to A; a mutation check shows it catches a missing reset.
+  - A list reply without its reading (an older daemon) now reads as a failed load.
+  - The route test no longer hard-codes 10,000, which would have blocked a change made in both places.
+- **Not taken: aborting superseded requests on fast pill clicks.** The guard already drops their replies, and the daemon read is now off the event loop.
 
 ## Known limits
 
