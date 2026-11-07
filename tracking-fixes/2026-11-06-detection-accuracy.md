@@ -239,6 +239,22 @@ Confirmed read-only on the G11: `/var/lib/suricata` is an anonymous image volume
 - **L9.** `error` is used only when it is a string.
 - 12 new page tests, plus the API test and the constant test.
 
+**Reviews (round 2, gates)**
+
+- **/deep-review** (delta `6abb4a81..c0afbd75`): no findings. Its record is in the security review.
+- **/ponytail-review**: one must-fix and four small findings, all fixed.
+  - **Must-fix:** Malcolm's startup `timeout 300s` sends TERM to the whole process group, so it also killed the `sed` redactor with its output still buffered, and the stopped run printed nothing. The redactor now ignores TERM and INT and drains once `on_signal` has killed the updater's group. A bats test runs `timeout 1 bash … update` (as docker_entrypoint.sh does) and requires the updater's line in the output. It fails on `c0afbd75`.
+  - **Lock message:** the deploy and rollback "couldn't take the rules lock" message now covers both causes: the lock was busy for 15 minutes, or the holder container didn't start.
+  - **Restart timeout:** `capture_control` uses etpro's `RESTART_TIMEOUT_S`; its own constant is kept as OLD CODE. `proc.kill()` ignores `ProcessLookupError`, with a pytest.
+  - **Test cleanup:** the duplicate `statusReads` helper is gone. The 240 s and 290 s constant tests stay, each with a comment saying it pins the daemon-to-proxy timing contract.
+  - **Leftovers:** the dead `mkdir -p` in `start` is removed. The legacy key cleanup now logs the key name it removed.
+- **Tests after the gate fixes:**
+  - daemon 3,700 passed, 4 skipped
+  - Vitest 3,813 passed; svelte-check 0 errors
+  - bats on macOS: 205 tests, 0 failed, 25 skipped
+  - image `test_rules_update.bats` as uid 1000: 31/31
+  - shellcheck and ruff clean
+
 **Tests after round 2**
 
 | Suite | Result |

@@ -69,3 +69,17 @@ The security-engineer review found M1, L1–L4, I1, I3, I4 and I5; none critical
 * I3 (root in other containers that mount `/etc/nettap` can read the code) is recorded as a follow-up. Nothing was changed for it.
 
 Not re-run: the full multi-agent /deep-review. The round 2 diff is the fix set from a dedicated security review, checked by hand as above.
+
+## Delta re-run over 6abb4a81..c0afbd75 (/deep-review, round 2)
+
+* Base Ref: `6abb4a81` (commit date 2026-11-07T04:43:54-08:00); Current Commit: `c0afbd75`; scope: committed delta, 26 files (+942/−91), clean working tree.
+* Changed symbols analyzed: 14. They are `start` (the parent link check), `restore`/`rollback` (return 3), `update` (the root refusal, redaction before disk, the time limit), `on_signal`, `failure_reason`, `missing_sources`, `open_regular`, `rules_lock`, `read_update_status`, `_docker_cmd` (timeout), `_drop_legacy_keys`, `EtProManager.save`/`read_code`, the rollback, deploy and canary steps, and `updateRulesNow` plus the Settings page.
+* Trust boundaries traced:
+  * The root daemon and the root `start` act on files in volumes the `suricata` user can write.
+  * The ET Pro code's path through Malcolm's output, the status record, the logs and the API answers.
+  * The daemon token middleware and the web session gate on the status and ET Pro routes. These are unchanged.
+* Checked on the G11 (read-only): Malcolm's `docker_entrypoint.sh` runs the startup update through `su -s /bin/bash -p $PUSER`, and supercronic runs as `suricata`. The new uid 0 refusal therefore blocks only a manual root `docker exec`.
+* Checked by the coordinator: `missing_sources` cuts each name at `|`, and the loader writes the ET Pro entry as `et/pro|secret-code=…` (`config/capture/nettap-capture-env.sh:100`), so the code can't reach `missing_sources` in the status record, the log line or the API.
+* Limitations: the Malcolm image internals beyond the entrypoint were not read. DoS, rate limiting and generic hardening are excluded by design.
+
+No findings.
