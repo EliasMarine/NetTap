@@ -124,9 +124,9 @@
 				<dt>Reverse DNS (PTR)</dt>
 				<dd>
 					<!-- OLD CODE: {#if result.hostname}<span class="mono">{result.hostname}</span>{:else}<span class="dim">No reverse DNS record</span>{/if} (NET-192 PR 3: a timeout says so) -->
-				{#if result.hostname}<span class="mono">{result.hostname}</span>
-				{:else if result.timed_out}<span class="dim">No reverse DNS name (lookup timed out)</span>
-				{:else}<span class="dim">No reverse DNS record</span>{/if}
+					{#if result.hostname}<span class="mono">{result.hostname}</span>
+					{:else if result.timed_out}<span class="dim">Reverse DNS lookup timed out</span>
+					{:else}<span class="dim">No reverse DNS record</span>{/if}
 				</dd>
 				<dt>Aliases</dt>
 				<dd>

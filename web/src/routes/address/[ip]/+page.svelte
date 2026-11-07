@@ -634,7 +634,7 @@ OLD CODE END -->
 					{#if rdns?.hostname}<span class="mono">{rdns.hostname}</span>
 					{:else if rdns?.error}<span class="dim">{rdnsFailed(rdns) ? `Couldn't look it up: ${rdns.error}` : rdns.error}</span>
 					<!-- NET-192 PR 3: the daemon gives the resolver 6 s, then answers with no name -->
-					{:else if rdns?.timed_out}<span class="dim">No reverse DNS name (lookup timed out)</span>
+					{:else if rdns?.timed_out}<span class="dim">Reverse DNS lookup timed out</span>
 					<!-- OLD CODE START — looked up on every visit
 					{:else}<span class="dim">{rdns ? 'None' : 'Looking up…'}</span>{/if}
 					OLD CODE END -->

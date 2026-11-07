@@ -279,7 +279,7 @@ describe('Address page', () => {
 		render(Page);
 		await fireEvent.click(await screen.findByRole('button', { name: 'Look up its name' }));
 		const who = card('Who it is');
-		expect(await within(who).findByText('No reverse DNS name (lookup timed out)')).toBeInTheDocument();
+		expect(await within(who).findByText('Reverse DNS lookup timed out')).toBeInTheDocument();
 		expect(within(who).queryByText('None')).not.toBeInTheDocument();
 	});
 

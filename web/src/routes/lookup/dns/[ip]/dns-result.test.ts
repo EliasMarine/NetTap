@@ -27,7 +27,7 @@ describe('DNS lookup result', () => {
 	it('says the lookup timed out instead of "no record"', async () => {
 		answer({ hostname: null, timed_out: true });
 		render(DnsResultPage);
-		expect(await screen.findByText('No reverse DNS name (lookup timed out)')).toBeInTheDocument();
+		expect(await screen.findByText('Reverse DNS lookup timed out')).toBeInTheDocument();
 		expect(screen.queryByText('No reverse DNS record')).not.toBeInTheDocument();
 	});
 
