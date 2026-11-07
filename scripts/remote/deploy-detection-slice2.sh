@@ -164,7 +164,12 @@ echo ""
 echo "→ Step 10: Memory and capture..."
 echo "   suricata-live memory: ${RSS_BEFORE:-n/a} before → $(sudo docker stats --no-stream --format '{{.MemUsage}}' "$LIVE" 2>/dev/null | cut -d/ -f1)"
 echo "   host MemAvailable: $(awk '/^MemAvailable:/ {printf "%.0f MiB", $2 / 1024}' /proc/meminfo)"
-echo "   capture since start: $(live_jq dump-counters '.message.capture | "\(.kernel_packets) packets, \(.kernel_drops) dropped"')"
+# OLD CODE START — G11 run 2026-11-07: Malcolm's suricata.yaml has stats disabled, so dump-counters answers
+# "stats are disabled in the config" and this printed nothing
+# echo "   capture since start: $(live_jq dump-counters '.message.capture | "\(.kernel_packets) packets, \(.kernel_drops) dropped"')"
+# OLD CODE END
+IFACE=$(live_jq iface-list '.message.ifaces[0] // empty')
+echo "   capture since start: $(live_jq "iface-stat $IFACE" '.message | "\(.pkts) packets, \(.drop) dropped"') on ${IFACE:-no interface}"
 echo ""
 
 echo "→ Step 11: Replay the fixtures against the live rules..."
