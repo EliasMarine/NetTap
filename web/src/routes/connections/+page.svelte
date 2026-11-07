@@ -75,6 +75,7 @@
 	}
 
 	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. Live is the real-time page.
+	// shortcut: no 30d until PR 3 speeds up connections stats (14.5 s over 6 days of data on the G11), then add it back
 	const TIME_RANGES: TimeRange[] = [
 		// OLD CODE: { label: '15m', value: '15m', ms: 15 * 60 * 1000, text: 'Last 15 minutes' }, (NET-192 PR 4)
 		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, text: 'last hour' },
@@ -82,13 +83,13 @@
 		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, text: 'last 6 hours' },
 		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, text: 'last 24 hours' },
 		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, text: 'last 7 days' },
-		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, text: 'last 30 days' },
+		// OLD CODE: { label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, text: 'last 30 days' }, (the shortcut above)
 	];
 
 	// OLD CODE: '15m': '1m', '1h': '5m', '4h': '15m', '24h': '1h', '7d': '6h', (NET-192 PR 4)
-	// 30d: 30 day buckets, near 7 d's 28; not yet timed on the G11 (NET-192 PR 4)
+	// OLD CODE: … '7d': '6h', '30d': '1d', (30d: 30 day buckets, near 7 d's 28; back with 30d, see the shortcut above)
 	const INTERVAL_MAP: Record<string, string> = {
-		'1h': '5m', '6h': '15m', '24h': '1h', '7d': '6h', '30d': '1d',
+		'1h': '5m', '6h': '15m', '24h': '1h', '7d': '6h',
 	};
 
 	const STATE_FILTERS: { value: StateFilter; label: string }[] = [
