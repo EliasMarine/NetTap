@@ -145,8 +145,8 @@ describe('Alerts — failed requests', () => {
 		vi.mocked(getAlerts).mockResolvedValue({ ...range, page: 1, size: 50, total: 0, total_pages: 0, alerts: [] });
 		vi.mocked(getAlertCount).mockResolvedValue({ ...range, counts: { total: 0, high: 0, medium: 0, low: 0 } });
 		vi.mocked(getAlertTimeline).mockResolvedValue({ ...range, interval: '1h', buckets: [] });
-		vi.mocked(getAlertTopSignatures).mockResolvedValue({ ...range, signatures: [] });
-		vi.mocked(getAlertTopIps).mockResolvedValue({ ...range, direction: 'dest', ips: [] });
+		vi.mocked(getAlertTopSignatures).mockResolvedValue({ ...range, signatures: [], complete: true, examined: 0 });
+		vi.mocked(getAlertTopIps).mockResolvedValue({ ...range, direction: 'dest', ips: [], complete: true, examined: 0 });
 		vi.mocked(getEnhancedCategories).mockResolvedValue({ ...range, categories: [] });
 		vi.mocked(getSmartAlertSummary).mockResolvedValue({
 			...range, threat_score: 0, threat_level: 'none', total_groups: 0, total_events: 0, categories: {}, top_threats: [],

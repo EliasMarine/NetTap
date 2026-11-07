@@ -18,6 +18,8 @@ export const APP_ROUTES: readonly RouteCase[] = [
 	{ path: '/address/192.0.2.80', marker: '192.0.2.80' },
 	{ path: '/alerts', marker: 'Alerts' },
 	{ path: '/alerts/malware', marker: /malware/i },
+	// NET-160 slice 2b-2: a raw Suricata category's page (the heading is the name, in every mode)
+	{ path: '/alerts/suricata/Misc%20activity', marker: 'Misc activity' },
 	{ path: '/bandwidth', marker: 'Bandwidth' },
 	{ path: '/certificates', marker: 'Certificates' },
 	{ path: '/changelog', marker: 'Changelog' },

@@ -39,6 +39,21 @@ export function logExplorerHref(alert: Alert): string {
 	return `/logs?query=${encodeURIComponent(query)}`;
 }
 
+/**
+ * The shown category when the alert's stored rule.category values hold it, so the category's page
+ * lists this alert (NET-160 slice 2b-2); null when it came from another field, or there is none.
+ */
+export function linkedSuricataCategory(alert: Alert): string | null {
+	const shown = text(alert.alert?.category);
+	return shown && alert.alert?.rule_category?.includes(shown) ? shown : null;
+}
+
+/** A "By category" heading links only when every loaded alert under it carries its title in rule.category. */
+export function groupCategoryLinked(alerts: readonly Alert[], title: string): boolean {
+	const members = alerts.filter((a) => (text(a.alert?.category) ?? 'Uncategorised') === title);
+	return members.length > 0 && members.every((a) => linkedSuricataCategory(a) === title);
+}
+
 /** One signature from one source within the loaded alerts. */
 export interface AlertLine {
 	key: string;

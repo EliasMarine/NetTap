@@ -26,6 +26,7 @@ from services.excluded_ips import parse_single_ip
 # OLD CODE END
 from storage.all_buckets import all_buckets
 from storage.manager import StorageManager
+from storage.snapshot_search import QueryFailed, checked, total_hits
 from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.api.alerts")
@@ -131,6 +132,65 @@ def _time_range_filter(from_ts: str, to_ts: str) -> dict:
     }
 
 
+def alert_query(
+    from_ts: str,
+    to_ts: str,
+    narrow: list[dict] | tuple = (),
+    exclude: list[dict] | tuple = (),
+) -> dict:
+    """The alert list's query: Suricata alerts in the window without engine noise, plus `narrow`
+    filters and `exclude` must_nots. A drill-down counting with it equals the list it links to."""
+    return {
+        "bool": {
+            "filter": [
+                _time_range_filter(from_ts, to_ts),
+                *_SURICATA_ALERT_FILTERS,
+                *narrow,
+            ],
+            "must_not": [*_SURICATA_NOISE_EXCLUSION, *exclude],
+        }
+    }
+
+
+def severity_clauses(raw: str) -> tuple[list[dict], list[dict]]:
+    """(filters, must_nots) for the list's severity=: 1, 2 or 3 is that Suricata severity, "info"
+    is what the Info tile counts (no 1, 2 or 3), anything else narrows nothing."""
+    if raw == "info":
+        return [], [{"terms": {"suricata.alert.severity": [1, 2, 3]}}]
+    try:
+        severity = int(raw)
+    except (ValueError, TypeError):
+        return [], []
+    if severity in (1, 2, 3):
+        return [{"term": {"suricata.alert.severity": severity}}], []
+    return [], []
+
+
+# rule.category's ignore_above on the G11: a longer value is never indexed, so never matched
+_SURICATA_CATEGORY_MAX = 1_024
+
+
+def valid_suricata_category(raw: object) -> str | None:
+    """A raw Suricata category (rule.category) exactly as given, or None: 1–1,024 characters,
+    not only whitespace. A term on the keyword matches the stored value, which links send."""
+    if isinstance(raw, str) and 0 < len(raw) <= _SURICATA_CATEGORY_MAX and raw.strip():
+        return raw
+    return None
+
+
+def suricata_category_clause(name: str) -> dict:
+    """Alerts carrying `name` among their rule.category values (NET-160 slice 2b-2)."""
+    return {"term": {"rule.category": name}}
+
+
+def rule_categories(rule: object) -> list[str]:
+    """The stored rule.category values of a `rule` object a category page exists for: a scalar
+    is one, a list each of its own, missing none."""
+    raw = rule.get("category") if isinstance(rule, dict) else None
+    found = raw if isinstance(raw, list) else [raw]
+    return [v for v in found if valid_suricata_category(v) is not None]
+
+
 def _get_client(request: web.Request):
     """Retrieve the OpenSearch client from the StorageManager on the app."""
     storage: StorageManager = request.app["storage"]
@@ -203,11 +263,22 @@ def _normalize_alert_source(source: dict) -> dict:
         category = raw_category
     severity = _extract_severity(existing_alert, suricata, suricata_alert)
 
+    # OLD CODE START — NET-160 slice 2b-2: no stored rule.category values to link a category by
+    # source["alert"] = {
+    #     "signature": signature,
+    #     "signature_id": signature_id,
+    #     "severity": severity,
+    #     "category": str(category),
+    # }
+    # OLD CODE END
     source["alert"] = {
         "signature": signature,
         "signature_id": signature_id,
         "severity": severity,
         "category": str(category),
+        # The shown category links to its page only when it is one of these (it can come from
+        # alert.category, which the page's term on rule.category never matches)
+        "rule_category": rule_categories(rule),
     }
 
     # --- Flatten network endpoints ---
@@ -330,7 +401,7 @@ def _alert_sort(sort_key: str, order: str) -> list[dict]:
 
 
 async def handle_alerts_list(request: web.Request) -> web.Response:
-    """GET /api/alerts?from=&to=&severity=&page=1&size=50&sort=time&order=desc&category=&sub=&signature=&ip=&src=&dst=
+    """GET /api/alerts?from=&to=&severity=&page=1&size=50&sort=time&order=desc&category=&sub=&signature=&ip=&src=&dst=&suricata_category=
 
     Returns a paginated list of Suricata alerts with optional severity filter,
     sorted by any of the alert tables' columns across every page (#146).
@@ -366,30 +437,47 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
                 status=400,
             )
         addresses[name] = parsed
+    # A raw Suricata category (NET-160 slice 2b-2); a dropped one would list every category
+    suricata_category = None
+    if "suricata_category" in request.query:
+        suricata_category = valid_suricata_category(request.query["suricata_category"])
+        if suricata_category is None:
+            logger.debug("Alerts list: invalid suricata_category parameter")
+            return web.json_response(
+                {"error": "suricata_category must be 1–1024 characters"}, status=400
+            )
     client = _get_client(request)
 
     offset = (page - 1) * size
 
-    filter_clauses: list[dict] = [
-        _time_range_filter(from_ts, to_ts),
-        *_SURICATA_ALERT_FILTERS,
-    ]
+    # OLD CODE START — NET-160 slice 2b-2: alert_query() adds the window and the alert filters, so
+    # the Suricata category page counts with the very query this list runs
+    # filter_clauses: list[dict] = [
+    #     _time_range_filter(from_ts, to_ts),
+    #     *_SURICATA_ALERT_FILTERS,
+    # ]
+    # OLD CODE END
+    filter_clauses: list[dict] = []
 
     # Optional severity filter
     # OLD CODE START — Zeek-native field: "alert.severity"
     # filter_clauses.append({"term": {"alert.severity": severity}})
     # OLD CODE END
     # "info" is what the Info tile counts: total minus 1, 2 and 3 (it was ignored, so Info listed every alert)
-    severity_must_not: list[dict] = []
-    if severity_raw == "info":
-        severity_must_not.append({"terms": {"suricata.alert.severity": [1, 2, 3]}})
-    elif severity_raw:
-        try:
-            severity = int(severity_raw)
-            if severity in (1, 2, 3):
-                filter_clauses.append({"term": {"suricata.alert.severity": severity}})
-        except (ValueError, TypeError):
-            pass
+    # OLD CODE START — NET-160 slice 2b-2: moved to severity_clauses(), shared with the category page
+    # severity_must_not: list[dict] = []
+    # if severity_raw == "info":
+    #     severity_must_not.append({"terms": {"suricata.alert.severity": [1, 2, 3]}})
+    # elif severity_raw:
+    #     try:
+    #         severity = int(severity_raw)
+    #         if severity in (1, 2, 3):
+    #             filter_clauses.append({"term": {"suricata.alert.severity": severity}})
+    #     except (ValueError, TypeError):
+    #         pass
+    # OLD CODE END
+    severity_filters, severity_must_not = severity_clauses(severity_raw)
+    filter_clauses.extend(severity_filters)
 
     # Optional signature filter (exact match on rule.name)
     sig_filter = request.query.get("signature", "")
@@ -422,6 +510,8 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
         filter_clauses.append({"term": {"source.ip": addresses["src"]}})
     if "dst" in addresses:
         filter_clauses.append({"term": {"destination.ip": addresses["dst"]}})
+    if suricata_category is not None:
+        filter_clauses.append(suricata_category_clause(suricata_category))
 
     # OLD CODE START — #147: any of the category's patterns, while the category's own totals give each
     # signature its first matching category (informational when none): Exploit listed 99 alerts
@@ -524,15 +614,18 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
         "from": offset,
         # The UI shows this total; without it OpenSearch stops counting at 10,000
         "track_total_hits": True,
-        "query": {
-            "bool": {
-                "filter": filter_clauses,
-                # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
-                # "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
-                # OLD CODE END
-                "must_not": _SURICATA_NOISE_EXCLUSION + severity_must_not,
-            }
-        },
+        # OLD CODE START — NET-160 slice 2b-2: built by alert_query(), shared with the category page
+        # "query": {
+        #     "bool": {
+        #         "filter": filter_clauses,
+        #         # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+        #         # "must_not": _SURICATA_NOISE_EXCLUSION + excluded,
+        #         # OLD CODE END
+        #         "must_not": _SURICATA_NOISE_EXCLUSION + severity_must_not,
+        #     }
+        # },
+        # OLD CODE END
+        "query": alert_query(from_ts, to_ts, filter_clauses, severity_must_not),
         # OLD CODE START — Zeek-native sort field: "timestamp"
         # "sort": [{"timestamp": {"order": "desc"}}],
         # OLD CODE END
@@ -542,17 +635,35 @@ async def handle_alerts_list(request: web.Request) -> web.Response:
         "sort": _alert_sort(sort_key, order),
     }
 
+    # OLD CODE START — NET-160 slice 2b-2: a timed-out or partly failed search, or a missing total,
+    # showed a smaller list (or 0) as if complete
+    # try:
+    #     result = client.search(index=NETWORK_INDEX, body=query)
+    # except OpenSearchException as exc:
+    #     logger.error("OpenSearch error in alerts list: %s", exc)
+    #     return web.json_response(
+    #         {"error": f"OpenSearch query failed: {exc}"}, status=502
+    #     )
+    #
+    # hits = result.get("hits", {})
+    # total_raw = hits.get("total", {})
+    # total = total_raw.get("value", 0) if isinstance(total_raw, dict) else total_raw
+    # OLD CODE END
     try:
-        result = client.search(index=NETWORK_INDEX, body=query)
+        result = checked(client.search(index=NETWORK_INDEX, body=query), "alert list")
+        total = total_hits(result, "alert list")
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alerts list: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
+    except QueryFailed as exc:
+        logger.warning("Alerts list: %s", exc)
+        return web.json_response(
+            {"error": "The alert search was incomplete"}, status=502
+        )
 
     hits = result.get("hits", {})
-    total_raw = hits.get("total", {})
-    total = total_raw.get("value", 0) if isinstance(total_raw, dict) else total_raw
 
     # Load acks to annotate results
     acks = _load_acks(request.app.get("alert_ack_file"))
@@ -887,6 +998,45 @@ async def handle_alerts_timeline(request: web.Request) -> web.Response:
     )
 
 
+# Keys per composite page, and in all: past the cap a top list is the busiest among those read
+_TOP_PAGE = 5_000
+_TOP_CAP = 50_000
+
+
+def _every_key(
+    client,
+    from_ts: str,
+    to_ts: str,
+    terms: dict,
+    aggs: dict | None,
+    what: str,
+) -> tuple[list[dict], bool]:
+    """Every value of one field among the list's alerts with its exact count ("key"), checked;
+    False if the cap stopped the paging. A terms aggregation's counts are per-shard estimates."""
+    buckets, complete = all_buckets(
+        client,
+        NETWORK_INDEX,
+        alert_query(from_ts, to_ts),
+        [{"key": {"terms": terms}}],
+        aggs,
+        page_size=_TOP_PAGE,
+        max_buckets=_TOP_CAP,
+        what=what,
+    )
+    if not complete:
+        logger.warning("%s stopped at %d keys", what, len(buckets))
+    return buckets, complete
+
+
+def _primary_severity(bucket: dict) -> int:
+    """The severity most of a row's alerts carry; 3 (low) when none or unreadable."""
+    sev_buckets = (bucket.get("severity") or {}).get("buckets") or []
+    try:
+        return int(sev_buckets[0].get("key", 3)) if sev_buckets else 3
+    except (ValueError, TypeError):
+        return 3
+
+
 async def handle_alerts_top_signatures(request: web.Request) -> web.Response:
     """GET /api/alerts/top-signatures?from=&to=&limit=
 
@@ -900,67 +1050,113 @@ async def handle_alerts_top_signatures(request: web.Request) -> web.Response:
     # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
     # OLD CODE END
 
-    query = {
-        "size": 0,
-        "query": {
-            "bool": {
-                "filter": [
-                    _time_range_filter(from_ts, to_ts),
-                    *_SURICATA_ALERT_FILTERS,
-                ],
-                # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
-                # "must_not": excluded,
-                # OLD CODE END
-                # Same engine-event rule as the alert count, so the panels add up to the total
-                "must_not": _SURICATA_NOISE_EXCLUSION,
-            }
-        },
-        "aggs": {
-            "top_sigs": {
-                "terms": {
-                    "field": "rule.name",
-                    "size": limit,
-                    "missing": "Unknown",
-                },
-                "aggs": {
-                    "severity": {
-                        "terms": {"field": "suricata.alert.severity", "size": 3}
-                    }
-                },
-            }
-        },
-    }
-
+    # OLD CODE START — NET-160 slice 2b-2: a terms aggregation across shards miscounted some rows
+    # (doc_count_error_upper_bound > 0 on the G11), and `missing` merged unnamed alerts with a rule
+    # named "Unknown", so a row and the signature= list it opens could disagree
+    # query = {
+    #     "size": 0,
+    #     "query": {
+    #         "bool": {
+    #             "filter": [
+    #                 _time_range_filter(from_ts, to_ts),
+    #                 *_SURICATA_ALERT_FILTERS,
+    #             ],
+    #             # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+    #             # "must_not": excluded,
+    #             # OLD CODE END
+    #             # Same engine-event rule as the alert count, so the panels add up to the total
+    #             "must_not": _SURICATA_NOISE_EXCLUSION,
+    #         }
+    #     },
+    #     "aggs": {
+    #         "top_sigs": {
+    #             "terms": {
+    #                 "field": "rule.name",
+    #                 "size": limit,
+    #                 "missing": "Unknown",
+    #             },
+    #             "aggs": {
+    #                 "severity": {
+    #                     "terms": {"field": "suricata.alert.severity", "size": 3}
+    #                 }
+    #             },
+    #         }
+    #     },
+    # }
+    #
+    # try:
+    #     result = client.search(index=NETWORK_INDEX, body=query)
+    # except OpenSearchException as exc:
+    #     logger.error("OpenSearch error in alerts/top-signatures: %s", exc)
+    #     return web.json_response(
+    #         {"error": f"OpenSearch query failed: {exc}"}, status=502
+    #     )
+    #
+    # signatures = []
+    # for bucket in result.get("aggregations", {}).get("top_sigs", {}).get("buckets", []):
+    #     sev_buckets = bucket.get("severity", {}).get("buckets", [])
+    #     primary_severity = 3  # default: low
+    #     if sev_buckets:
+    #         try:
+    #             primary_severity = int(sev_buckets[0].get("key", 3))
+    #         except (ValueError, TypeError):
+    #             primary_severity = 3
+    #     signatures.append(
+    #         {
+    #             "signature": bucket.get("key", "Unknown"),
+    #             "count": bucket.get("doc_count", 0),
+    #             "severity": primary_severity,
+    #         }
+    #     )
+    #
+    # return web.json_response(
+    #     {
+    #         "from": from_ts,
+    #         "to": to_ts,
+    #         "signatures": signatures,
+    #     }
+    # )
+    # OLD CODE END
+    severity = {"severity": {"terms": {"field": "suricata.alert.severity", "size": 3}}}
     try:
-        result = client.search(index=NETWORK_INDEX, body=query)
+        # missing_bucket: an unnamed alert is its own row (null), apart from "" and "Unknown"
+        buckets, complete = _every_key(
+            client,
+            from_ts,
+            to_ts,
+            {"field": "rule.name", "missing_bucket": True},
+            severity,
+            "alert top signatures",
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alerts/top-signatures: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
-
-    signatures = []
-    for bucket in result.get("aggregations", {}).get("top_sigs", {}).get("buckets", []):
-        sev_buckets = bucket.get("severity", {}).get("buckets", [])
-        primary_severity = 3  # default: low
-        if sev_buckets:
-            try:
-                primary_severity = int(sev_buckets[0].get("key", 3))
-            except (ValueError, TypeError):
-                primary_severity = 3
-        signatures.append(
-            {
-                "signature": bucket.get("key", "Unknown"),
-                "count": bucket.get("doc_count", 0),
-                "severity": primary_severity,
-            }
+    except QueryFailed as exc:
+        logger.warning("Alert top signatures: %s", exc)
+        return web.json_response(
+            {"error": "The alert search was incomplete"}, status=502
         )
-
+    signatures = [
+        {
+            "signature": b["key"]["key"],
+            "count": b["doc_count"],
+            "severity": _primary_severity(b),
+        }
+        for b in buckets
+    ]
+    signatures.sort(
+        key=lambda s: (-s["count"], s["signature"] is None, s["signature"] or "")
+    )
     return web.json_response(
         {
             "from": from_ts,
             "to": to_ts,
-            "signatures": signatures,
+            "signatures": signatures[:limit],
+            # False: the rows are the busiest among the signatures read before the cap
+            "complete": complete,
+            "examined": len(buckets),  # keys read, the null name included
         }
     )
 
@@ -983,47 +1179,80 @@ async def handle_alerts_top_ips(request: web.Request) -> web.Response:
     # OLD CODE END
     field = "source.ip" if direction == "src" else "destination.ip"
 
-    query = {
-        "size": 0,
-        "query": {
-            "bool": {
-                "filter": [
-                    _time_range_filter(from_ts, to_ts),
-                    *_SURICATA_ALERT_FILTERS,
-                ],
-                # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
-                # "must_not": excluded,
-                # OLD CODE END
-                # Same engine-event rule as the alert count, so the panels add up to the total
-                "must_not": _SURICATA_NOISE_EXCLUSION,
-            }
-        },
-        "aggs": {"top_ips": {"terms": {"field": field, "size": limit}}},
-    }
-
+    # OLD CODE START — NET-160 slice 2b-2: a terms aggregation across shards could miscount a row,
+    # so its number and the src=/dst= list could disagree
+    # query = {
+    #     "size": 0,
+    #     "query": {
+    #         "bool": {
+    #             "filter": [
+    #                 _time_range_filter(from_ts, to_ts),
+    #                 *_SURICATA_ALERT_FILTERS,
+    #             ],
+    #             # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
+    #             # "must_not": excluded,
+    #             # OLD CODE END
+    #             # Same engine-event rule as the alert count, so the panels add up to the total
+    #             "must_not": _SURICATA_NOISE_EXCLUSION,
+    #         }
+    #     },
+    #     "aggs": {"top_ips": {"terms": {"field": field, "size": limit}}},
+    # }
+    #
+    # try:
+    #     result = client.search(index=NETWORK_INDEX, body=query)
+    # except OpenSearchException as exc:
+    #     logger.error("OpenSearch error in alerts/top-ips: %s", exc)
+    #     return web.json_response(
+    #         {"error": f"OpenSearch query failed: {exc}"}, status=502
+    #     )
+    #
+    # ips = []
+    # for bucket in result.get("aggregations", {}).get("top_ips", {}).get("buckets", []):
+    #     ips.append(
+    #         {
+    #             "ip": bucket.get("key", ""),
+    #             "count": bucket.get("doc_count", 0),
+    #         }
+    #     )
+    #
+    # return web.json_response(
+    #     {
+    #         "from": from_ts,
+    #         "to": to_ts,
+    #         "direction": direction,
+    #         "ips": ips,
+    #     }
+    # )
+    # OLD CODE END
     try:
-        result = client.search(index=NETWORK_INDEX, body=query)
+        # A row counts alerts with the address on this side only: the src= or dst= list
+        buckets, complete = _every_key(
+            client, from_ts, to_ts, {"field": field}, None, "alert top IPs"
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alerts/top-ips: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
-
-    ips = []
-    for bucket in result.get("aggregations", {}).get("top_ips", {}).get("buckets", []):
-        ips.append(
-            {
-                "ip": bucket.get("key", ""),
-                "count": bucket.get("doc_count", 0),
-            }
+    except QueryFailed as exc:
+        logger.warning("Alert top IPs: %s", exc)
+        return web.json_response(
+            {"error": "The alert search was incomplete"}, status=502
         )
-
+    ips = sorted(
+        ({"ip": b["key"]["key"], "count": b["doc_count"]} for b in buckets),
+        key=lambda r: (-r["count"], r["ip"]),
+    )
     return web.json_response(
         {
             "from": from_ts,
             "to": to_ts,
             "direction": direction,
-            "ips": ips,
+            "ips": ips[:limit],
+            # False: the rows are the busiest among the addresses read before the cap
+            "complete": complete,
+            "examined": len(buckets),  # addresses read
         }
     )
 

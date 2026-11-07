@@ -30,6 +30,9 @@ export const GET: RequestHandler = async ({ url }) => {
 	if (signature) params.set('signature', signature);
 	const category = url.searchParams.get('category');
 	if (category) params.set('category', category);
+	// NET-160 slice 2b-2: one raw Suricata category (rule.category); the daemon validates it
+	const suricataCategory = url.searchParams.get('suricata_category');
+	if (suricataCategory) params.set('suricata_category', suricataCategory);
 	// #146: the alert tables' sort; #147: a category's sub-category. The daemon validates them
 	for (const key of ['sort', 'order', 'sub']) {
 		const value = url.searchParams.get(key);

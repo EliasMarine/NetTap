@@ -70,6 +70,13 @@ describe('catch-all proxy timeouts with the real daemonFetch', () => {
 		expect((await pending).status).toBe(200);
 	});
 
+	it('lets a 12 s Suricata category answer through (NET-160 slice 2b-2)', async () => {
+		slowDaemon();
+		const pending = GET(event(`/api/alerts/suricata/${encodeURIComponent('A/B & C')}?from=a&to=b`) as never);
+		await vi.advanceTimersByTimeAsync(DELAY_MS);
+		expect((await pending).status).toBe(200);
+	});
+
 	it('would have cut the same answer off at the 10 s default (the check above is real)', async () => {
 		slowDaemon();
 		const pending = GET(event('/api/live/dashboard') as never);

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { getAddressSummary, getDomainSummary } from './drilldown';
+import { getAddressSummary, getDomainSummary, getSuricataCategory } from './drilldown';
 import { ADDRESS, ADDRESS_EMPTY, ADDRESS_QUIET, DOMAIN, DOMAIN_EMPTY, DOMAIN_QUIET } from '../../../e2e/visual/fixtures/drilldown';
+import { SURICATA_CATEGORY, SURICATA_CATEGORY_EMPTY } from '../../../e2e/visual/fixtures/suricata-category';
 
 const reply = (status: number, body: unknown) => ({ ok: status < 400, status, json: async () => body });
 
@@ -112,5 +113,34 @@ describe('drill-down clients', () => {
 			vi.stubGlobal('fetch', vi.fn(async () => reply(200, body)));
 			await expect(getDomainSummary('x', 'a', 'b')).resolves.toEqual(body);
 		}
+	});
+
+	// NET-160 slice 2b-2
+	it('asks for a Suricata category encoded once, "/" included, and accepts both fixtures', async () => {
+		for (const body of [SURICATA_CATEGORY, SURICATA_CATEGORY_EMPTY]) {
+			const fetchMock = vi.fn(async () => reply(200, body));
+			vi.stubGlobal('fetch', fetchMock);
+			await expect(getSuricataCategory('A/B & C 50%', 'a', 'b')).resolves.toEqual(body);
+			expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toBe('/api/alerts/suricata/A%2FB%20%26%20C%2050%25?from=a&to=b');
+		}
+	});
+
+	it("throws the daemon's reason for a bad Suricata category name", async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => reply(400, { error: "That isn't a Suricata category name." })));
+		await expect(getSuricataCategory(' ', 'a', 'b')).rejects.toThrow("That isn't a Suricata category name.");
+	});
+
+	it.each(['total', 'from', 'severity.info', 'timeline', 'rules.complete', 'rules.examined', 'sources.missing', 'targets.distinct', 'also_tagged.rows'])(
+		'rejects a Suricata category reply without %s',
+		async (path) => {
+			vi.stubGlobal('fetch', vi.fn(async () => reply(200, without(SURICATA_CATEGORY, path))));
+			await expect(getSuricataCategory('x', 'a', 'b')).rejects.toThrow('malformed');
+		},
+	);
+
+	it('rejects a Suricata category row without a count', async () => {
+		const rows = [{ ip: '192.0.2.1' }];
+		vi.stubGlobal('fetch', vi.fn(async () => reply(200, { ...SURICATA_CATEGORY, sources: { ...SURICATA_CATEGORY.sources, rows } })));
+		await expect(getSuricataCategory('x', 'a', 'b')).rejects.toThrow('malformed');
 	});
 });

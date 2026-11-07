@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Alert } from '$api/alerts';
-import { alertAdvice, alertLevel, alertTitle, groupAlerts, logExplorerHref, shortSeen } from './alert-view';
+import { alertAdvice, alertLevel, alertTitle, groupAlerts, groupCategoryLinked, linkedSuricataCategory, logExplorerHref, shortSeen } from './alert-view';
 
 const alert = (id: string, over: { sev?: number; sig?: string; sid?: number; cat?: string; src?: string; ts?: string } = {}): Alert => ({
 	_id: id,
@@ -74,5 +74,29 @@ describe('shortSeen', () => {
 		expect(shortSeen(new Date(2026, 10, 3, 21, 5).toISOString(), now)).toBe('21:05');
 		expect(shortSeen(new Date(2026, 10, 2, 23, 59).toISOString(), now)).toBe('2 Nov');
 		expect(shortSeen('not a time', now)).toBe('not a time');
+	});
+});
+
+// NET-160 slice 2b-2: a shown category links to its page only when that page lists the alert
+describe('linkedSuricataCategory and groupCategoryLinked', () => {
+	// the daemon nests rule_category beside the shown category: alert.alert.rule_category
+	const tagged = (id: string, cat: string | undefined, stored?: string[]): Alert => ({ ...alert(id), alert: { category: cat, rule_category: stored } });
+
+	it('gives the shown category only when rule.category holds it', () => {
+		expect(linkedSuricataCategory(tagged('a', 'Misc activity', ['Misc activity', 'Discovery']))).toBe('Misc activity');
+		expect(linkedSuricataCategory(tagged('b', 'Misc activity', ['Discovery']))).toBeNull();
+		expect(linkedSuricataCategory(tagged('c', 'Misc activity'))).toBeNull();
+		expect(linkedSuricataCategory(tagged('d', '  ', ['  ']))).toBeNull();
+		expect(linkedSuricataCategory(tagged('e', undefined, []))).toBeNull();
+		// a top-level copy is not where the daemon puts it, so it never makes a link
+		expect(linkedSuricataCategory({ ...alert('f'), alert: { category: 'Misc' }, rule_category: ['Misc'] })).toBeNull();
+	});
+
+	it('links a group only when every alert under its title carries it', () => {
+		const rows = [tagged('a', 'Trojan', ['Trojan']), tagged('b', 'Trojan', ['Trojan']), tagged('c', 'Misc', ['Misc']), tagged('d', 'Misc', [])];
+		expect(groupCategoryLinked(rows, 'Trojan')).toBe(true);
+		expect(groupCategoryLinked(rows, 'Misc')).toBe(false);
+		expect(groupCategoryLinked(rows, 'Absent')).toBe(false);
+		expect(groupCategoryLinked([tagged('e', undefined, ['Uncategorised'])], 'Uncategorised')).toBe(false);
 	});
 });

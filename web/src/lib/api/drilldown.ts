@@ -249,3 +249,72 @@ export async function getDomainSummary(name: string, from: string, to: string): 
 	if (!ok) throw new Error('Domain summary failed: the reply was malformed');
 	return body as unknown as DomainSummary;
 }
+
+// ---------------------------------------------------------------------------
+// A raw Suricata category (NET-160 slice 2b-2): GET /api/alerts/suricata/{name}
+// (daemon/api/suricata_categories.py). One snapshot; every figure filters on rule.category.
+// ---------------------------------------------------------------------------
+
+/** A top list from the snapshot. `distinct` is null when `complete` is false: the keys were too many to read. */
+export interface SuricataTopList<R> {
+	rows: R[];
+	distinct: number | null;
+	/** Keys read before the cap; the incomplete wording names it. */
+	examined: number;
+	complete: boolean;
+}
+
+export interface SuricataRuleRow {
+	/** null when the alert has no rule.name; "" is kept as recorded. */
+	rule_name: string | null;
+	count: number;
+	last_seen: string | null;
+}
+
+export interface SuricataAddressRow {
+	ip: string;
+	count: number;
+}
+
+export interface SuricataCategoryFigures {
+	name: string;
+	from: string;
+	to: string;
+	total: number;
+	/** high, medium and low are Suricata severity 1, 2 and 3; info is everything else. They add up to total. */
+	severity: { high: number; medium: number; low: number; info: number };
+	timeline: TimelinePoint[];
+	rules: SuricataTopList<SuricataRuleRow>;
+	/** Alerts per source address; `missing` alerts had none. */
+	sources: SuricataTopList<SuricataAddressRow> & { missing: number };
+	targets: SuricataTopList<SuricataAddressRow> & { missing: number };
+	/** The other categories these alerts carry, with how many carry both. */
+	also_tagged: SuricataTopList<{ category: string; count: number }>;
+}
+
+const isTopList = (v: unknown) =>
+	isObject(v) &&
+	Array.isArray(v.rows) &&
+	v.rows.every((r) => isObject(r) && isNumber(r.count)) &&
+	isNullable(v.distinct, isNumber) &&
+	isNumber(v.examined) &&
+	isBoolean(v.complete);
+
+/** Everything the Suricata category page shows for `name` in the window. */
+export async function getSuricataCategory(name: string, from: string, to: string): Promise<SuricataCategoryFigures> {
+	const body = await getJson(`/api/alerts/suricata/${encodeURIComponent(name)}?${windowQuery(from, to)}`, 'Suricata category');
+	const { severity, sources, targets } = isObject(body) ? body : ({} as Record<string, unknown>);
+	const ok =
+		isObject(body) &&
+		[body.name, body.from, body.to].every(isString) &&
+		isNumber(body.total) &&
+		isObject(severity) &&
+		[severity.high, severity.medium, severity.low, severity.info].every(isNumber) &&
+		Array.isArray(body.timeline) &&
+		[body.rules, sources, targets, body.also_tagged].every(isTopList) &&
+		isObject(sources) &&
+		isObject(targets) &&
+		[sources.missing, targets.missing].every(isNumber);
+	if (!ok) throw new Error('Suricata category failed: the reply was malformed');
+	return body as unknown as SuricataCategoryFigures;
+}

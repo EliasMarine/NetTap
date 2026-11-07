@@ -118,13 +118,16 @@ async function flush() {
 
 const range = { from: '', to: '' };
 
-function alert(id: string, over: Partial<Alert> & { severity?: number; signature?: string; sid?: number; category?: string } = {}): Alert {
-	const { severity = 2, signature = `Sig ${id}`, sid = 2000, category = 'Potentially Bad Traffic', ...rest } = over;
+// OLD CODE: function alert(id: string, over: Partial<Alert> & { severity?: number; signature?: string; sid?: number; category?: string } = {}): Alert { (slice 2b-2: rule_category)
+function alert(id: string, over: Partial<Alert> & { severity?: number; signature?: string; sid?: number; category?: string; rule_category?: string[] } = {}): Alert {
+	// OLD CODE: const { severity = 2, signature = `Sig ${id}`, sid = 2000, category = 'Potentially Bad Traffic', ...rest } = over; (slice 2b-2)
+	const { severity = 2, signature = `Sig ${id}`, sid = 2000, category = 'Potentially Bad Traffic', rule_category, ...rest } = over;
 	return {
 		_id: id,
 		_index: 'suricata-x',
 		timestamp: '2026-11-03T10:00:00Z',
-		alert: { signature, signature_id: sid, severity, category },
+		// OLD CODE: alert: { signature, signature_id: sid, severity, category }, (slice 2b-2: the daemon nests rule_category here)
+		alert: { signature, signature_id: sid, severity, category, ...(rule_category ? { rule_category } : {}) },
 		// Malcolm's rule.name, which the list's signature filter matches (slice 2b-1); override with `rule`
 		rule: { name: signature },
 		src_ip: '192.168.1.42',
@@ -153,8 +156,8 @@ function succeedAll(rows: Alert[] = [alert('a1')]) {
 			{ timestamp: '2026-11-03T10:00:00Z', high: 2, medium: 5, low: 17 },
 		],
 	});
-	vi.mocked(getAlertTopSignatures).mockResolvedValue({ ...range, signatures: [{ signature: 'ET SCAN Port sweep', count: 12, severity: 2 }] });
-	vi.mocked(getAlertTopIps).mockResolvedValue({ ...range, direction: 'dest', ips: [{ ip: '192.168.1.42', count: 9 }] });
+	vi.mocked(getAlertTopSignatures).mockResolvedValue({ ...range, signatures: [{ signature: 'ET SCAN Port sweep', count: 12, severity: 2 }], complete: true, examined: 1 });
+	vi.mocked(getAlertTopIps).mockResolvedValue({ ...range, direction: 'dest', ips: [{ ip: '192.168.1.42', count: 9 }], complete: true, examined: 1 });
 	vi.mocked(getEnhancedCategories).mockResolvedValue({
 		...range,
 		categories: [
@@ -1087,3 +1090,179 @@ describe('Alerts — source, destination, rule-name links and 6h (NET-160 slice 
 		expect(getAlertTimeline).toHaveBeenCalledWith(expect.objectContaining({ interval: '15m' }));
 	});
 });
+
+// ---------------------------------------------------------------------------
+// NET-160 slice 2b-2: a raw Suricata category on the list, its links, and Top signatures' window
+// ---------------------------------------------------------------------------
+
+describe('Alerts — Suricata category (NET-160 slice 2b-2)', () => {
+	const FROM = '2026-11-01T08:00:00.000Z';
+	const TO = '2026-11-01T20:00:00.000Z';
+	const CAT = 'A/B & C';
+	const at = (query: string) => (nav.url = new URL(`http://localhost/alerts${query}`));
+	const listCalls = () => vi.mocked(getAlerts).mock.calls.map(([opts]) => opts!);
+	const catQuery = `?suricata_category=${encodeURIComponent(CAT)}&severity=high&src=192.168.1.42&from=${FROM}&to=${TO}&range=7d`;
+	const params = (href: string | null) => Object.fromEntries(new URL(href!, 'http://localhost').searchParams);
+
+	it('passes suricata_category to the list with the other filters, shown as a chip', async () => {
+		at(catQuery);
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(listCalls()).toEqual([expect.objectContaining({ page: 1, suricata_category: CAT, severity: 1, src: '192.168.1.42', from: FROM, to: TO })]);
+		expect(screen.getByRole('button', { name: 'Clear Suricata category filter' }).closest('.chip')).toHaveTextContent(`Suricata category: ${CAT}`);
+	});
+
+	it('clearing the Suricata category chip changes only its own parameter', async () => {
+		at(catQuery);
+		succeedAll();
+		render(Page);
+		await flush();
+		vi.mocked(getAlertTimeline).mockClear();
+		await fireEvent.click(screen.getByRole('button', { name: 'Clear Suricata category filter' }));
+		await flush();
+		const q = nav.url.searchParams;
+		expect([q.get('suricata_category'), q.get('severity'), q.get('src'), q.get('from'), q.get('to'), q.get('range')]).toEqual([null, 'high', '192.168.1.42', FROM, TO, '7d']);
+		expect(listCalls().at(-1)).toMatchObject({ suricata_category: undefined, severity: 1, src: '192.168.1.42', from: FROM, to: TO });
+		// a filter, not a window: one list request, no reload
+		expect(getAlertTimeline).not.toHaveBeenCalled();
+		expect(screen.queryByRole('button', { name: 'Clear Suricata category filter' })).not.toBeInTheDocument();
+	});
+
+	it("a Top signatures row opens exactly its count: that signature over the card's window, every other filter cleared", async () => {
+		at(`?suricata_category=${encodeURIComponent(CAT)}&src=192.168.1.42`);
+		succeedAll();
+		render(Page);
+		await flush();
+		const counted = vi.mocked(getAlertTopSignatures).mock.calls[0][0]!;
+		await fireEvent.click(screen.getByRole('button', { name: 'Filter alerts by ET SCAN Port sweep' }));
+		await flush();
+		expect(Object.fromEntries(nav.url.searchParams)).toEqual({ signature: 'ET SCAN Port sweep', from: counted.from, to: counted.to, range: '24h' });
+		expect(listCalls().at(-1)).toMatchObject({ signature: 'ET SCAN Port sweep', suricata_category: undefined, src: undefined, from: counted.from, to: counted.to, page: 1 });
+		// selecting it again still clears only the signature
+		await fireEvent.click(screen.getByRole('button', { name: 'Clear the filter for ET SCAN Port sweep' }));
+		await flush();
+		expect(nav.url.searchParams.has('signature')).toBe(false);
+		expect([nav.url.searchParams.get('from'), nav.url.searchParams.get('to')]).toEqual([counted.from, counted.to]);
+	});
+
+	it("links a row's category to its page over the list's window only when rule.category holds it", async () => {
+		succeedAll([
+			alert('a1', { category: 'Misc activity', rule_category: ['Misc activity', 'Discovery'] }),
+			alert('a2', { category: 'From another field', rule_category: ['Something else'] }),
+			alert('a3', { category: 'No stored values' }),
+		]);
+		const { container } = render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
+		const first = listCalls()[0];
+		const table = screen.getByRole('table', { name: /Alerts, newest first/ });
+		const link = within(table).getByRole('link', { name: 'Misc activity' });
+		expect(new URL(link.getAttribute('href')!, 'http://localhost').pathname).toBe('/alerts/suricata/Misc%20activity');
+		expect(params(link.getAttribute('href'))).toEqual({ from: first.from, to: first.to, range: '24h' });
+		for (const plain of ['From another field', 'No stored values']) {
+			expect(within(table).getByText(plain).closest('a')).toBeNull();
+		}
+		expectNoNestedInteractive(container);
+	});
+
+	it('links a By category heading only when every alert under it carries the title, with its count plain', async () => {
+		succeedAll([
+			alert('t1', { category: 'Trojan', rule_category: ['Trojan'], signature: 'One' }),
+			alert('t2', { category: 'Trojan', rule_category: ['Trojan', 'Command_And_Control'], signature: 'Two' }),
+			alert('m1', { category: 'Misc activity', rule_category: ['Misc activity'], signature: 'Three' }),
+			alert('m2', { category: 'Misc activity', signature: 'Four' }),
+		]);
+		const { container } = render(Page);
+		await flush();
+		const first = listCalls()[0];
+		const trojan = screen.getByRole('link', { name: 'Trojan' });
+		expect(trojan).toHaveAttribute('title', "Every alert in this Suricata category over the list's window");
+		expect(new URL(trojan.getAttribute('href')!, 'http://localhost').pathname).toBe('/alerts/suricata/Trojan');
+		expect(params(trojan.getAttribute('href'))).toEqual({ from: first.from, to: first.to, range: '24h' });
+		expect(trojan.closest('.alert-group')!.querySelector('.group-head .num')!.closest('a')).toBeNull();
+		// one alert under Misc activity has no stored rule.category, so the page wouldn't list it
+		const misc = [...container.querySelectorAll('.group-title')].find((h) => h.textContent === 'Misc activity')!;
+		expect(misc.querySelector('a')).toBeNull();
+		expectNoNestedInteractive(container);
+	});
+
+	it("the drawer's Category links with no window, and only when rule.category holds it", async () => {
+		succeedAll([
+			alert('a1', { signature: 'Linked', category: 'Misc activity', rule_category: ['Misc activity'] }),
+			alert('a2', { signature: 'Plain', category: 'Other field', rule_category: [] }),
+		]);
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: /Misc activity/ }));
+		let drawer = screen.getByRole('complementary', { name: 'Alert details' });
+		expect(within(drawer).getByRole('link', { name: 'Misc activity' })).toHaveAttribute('href', '/alerts/suricata/Misc%20activity');
+		await fireEvent.click(screen.getByRole('button', { name: /Other field/ }));
+		drawer = screen.getByRole('complementary', { name: 'Alert details' });
+		// the title reads the category too; the fact is the one that could link
+		expect(within(drawer.querySelector('.facts') as HTMLElement).getByText('Other field').closest('a')).toBeNull();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// NET-160: exact top lists. A row with no rule name can't be listed, and a partial list says so
+// ---------------------------------------------------------------------------
+
+describe('Alerts — exact top lists (NET-160)', () => {
+	const sigTable = () => screen.getByRole('table', { name: 'Top signatures' });
+	const sub = (title: string) => screen.getByRole('heading', { name: title }).closest('.card')!.querySelector('.card-sub')!;
+
+	it('a Top signatures row with no rule name or an empty one is plain; a literal "Unknown" filters', async () => {
+		succeedAll();
+		vi.mocked(getAlertTopSignatures).mockResolvedValue({
+			...range,
+			complete: true,
+			examined: 4,
+			signatures: [
+				{ signature: 'ET SCAN Port sweep', count: 12, severity: 2 },
+				{ signature: null, count: 7, severity: 3 },
+				{ signature: '', count: 2, severity: 3 },
+				{ signature: 'Unknown', count: 1, severity: 3 },
+			],
+		});
+		const { container } = render(Page);
+		await flush();
+		const plain = within(sigTable()).getAllByText('No rule name');
+		expect(plain).toHaveLength(2);
+		for (const cell of plain) {
+			expect(cell.closest('button')).toBeNull();
+			expect(cell.closest('tr')).not.toHaveClass('is-activatable');
+		}
+		const before = nav.url.href;
+		await fireEvent.click(plain[0].closest('tr')!);
+		await fireEvent.click(plain[1].closest('tr')!);
+		await flush();
+		expect(nav.url.href).toBe(before);
+		await fireEvent.click(screen.getByRole('button', { name: 'Filter alerts by Unknown' }));
+		await flush();
+		expect(nav.url.searchParams.get('signature')).toBe('Unknown');
+		expect(listCallsOf().at(-1)).toMatchObject({ signature: 'Unknown', page: 1 });
+		expectNoNestedInteractive(container);
+	});
+
+	it('says a partial list holds the highest counts among those read, not "N rules"', async () => {
+		succeedAll();
+		vi.mocked(getAlertTopSignatures).mockResolvedValue({ ...range, complete: false, examined: 5000, signatures: [{ signature: 'ET SCAN Port sweep', count: 12, severity: 2 }] });
+		vi.mocked(getAlertTopIps).mockImplementation(async (opts = {}) => ({
+			...range,
+			direction: opts.direction ?? 'dest',
+			ips: [{ ip: '192.168.1.42', count: 9 }],
+			complete: opts.direction !== 'src',
+			examined: opts.direction === 'src' ? 2500 : 1,
+		}));
+		render(Page);
+		await flush();
+		expect(sub('Top signatures')).toHaveTextContent(/^Highest counts among the 5,000 rules read; the full set was too large to read · alerts per rule/);
+		expect(sub('Top signatures')).not.toHaveTextContent('1 rules');
+		expect(sub('Top source IPs')).toHaveTextContent('Alerts per source · Highest counts among the 2,500 addresses read; the full set was too large to read · last 24 hours');
+		// the destination list is complete, so it says nothing extra
+		expect(sub('Top affected devices')).toHaveTextContent(/^Alerts per destination · last 24 hours$/);
+	});
+});
+
+const listCallsOf = () => vi.mocked(getAlerts).mock.calls.map(([opts]) => opts!);

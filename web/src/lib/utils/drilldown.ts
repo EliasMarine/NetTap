@@ -214,3 +214,44 @@ export function connLogsHref(summary: DrillWindow & { excluded_ips?: string[] },
 export function logsHrefForQuery(clauses: readonly string[], win: DrillWindow, range: DrillRangeValue): string {
 	return `/logs?${new URLSearchParams({ query: clauses.join(' AND ') }).toString()}&${windowQuery(win, range)}`;
 }
+
+// ---------------------------------------------------------------------------
+// Raw Suricata categories (NET-160 slice 2b-2): rule.category, matched exactly
+// ---------------------------------------------------------------------------
+
+/**
+ * A raw Suricata category's own page, over `win` when given (the list's window), else its 24 hours.
+ * Link only a value the row's `rule_category` holds: the page filters on rule.category.
+ */
+export function suricataCategoryHref(name: string, win?: DrillWindow & { range?: string }): string {
+	// shortcut: a category named "." or ".." can't be a path segment (the browser resolves it); Suricata classtypes are words
+	const path = `/alerts/suricata/${encodeURIComponent(name)}`;
+	return win ? `${path}?${windowQuery(win, win.range)}` : path;
+}
+
+/**
+ * A top list the daemon couldn't read in full: its rows are the highest counts among the keys it
+ * read, not a true top N (NET-160). `examined` is how many keys it read, when the reply says.
+ */
+export function partialListNote(noun: string, examined?: number | null): string {
+	const read = examined == null ? `the ${noun} read` : `the ${fmt(examined)} ${noun} read`;
+	return `Highest counts among ${read}; the full set was too large to read`;
+}
+
+/** The Alerts list filters a Suricata category page's figures narrow by; empty ones are left out. */
+export interface SuricataNarrow {
+	severity?: string;
+	signature?: string;
+	src?: string;
+	dst?: string;
+}
+
+/** The Alerts list for one Suricata category, narrowed like the figure it opens, over that figure's window. */
+export function suricataAlertsHref(name: string, win: DrillWindow & { range?: string }, narrow: SuricataNarrow = {}): string {
+	const q = new URLSearchParams();
+	for (const [key, value] of Object.entries(narrow)) {
+		if (value) q.set(key, value);
+	}
+	q.set('suricata_category', name);
+	return `/alerts?${q.toString()}&${windowQuery(win, win.range)}`;
+}

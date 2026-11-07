@@ -16,7 +16,7 @@ import { MB, PEERS, WINDOW } from './net-world.ts';
 export const LAN_POLICY: LanPolicy = { version: 'fx-1', subnets: ['192.168.1.0/24'], source: 'env', ipv6: 'not-lan' };
 
 /** `total` spread over the last 24 hours, oldest first, with a busier evening. */
-function hourly(total: number): TimelinePoint[] {
+export function hourly(total: number): TimelinePoint[] {
 	const weights = Array.from({ length: 24 }, (_, i) => 1 + ((i * 7) % 5) + (i > 17 ? 4 : 0));
 	const sumW = weights.reduce((a, b) => a + b, 0);
 	const counts = weights.map((w) => Math.floor((total * w) / sumW));

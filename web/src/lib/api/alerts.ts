@@ -36,6 +36,8 @@ export interface Alert {
 		signature_id?: number;
 		severity?: number;
 		category?: string;
+		/** The stored rule.category values that pass the daemon's name check, which the list's `suricata_category` matches (NET-160 slice 2b-2) */
+		rule_category?: string[];
 	};
 	src_ip?: string;
 	src_port?: number;
@@ -87,7 +89,9 @@ export interface AlertTimelineResponse {
 }
 
 export interface AlertSignature {
-	signature: string;
+	// OLD CODE: signature: string; (NET-160: alerts with no rule.name come back as their own null row)
+	/** The rule.name; null for the alerts that have none ("" and "Unknown" are rows of their own). */
+	signature: string | null;
 	count: number;
 	severity: number;
 }
@@ -96,6 +100,10 @@ export interface AlertTopSignaturesResponse {
 	from: string;
 	to: string;
 	signatures: AlertSignature[];
+	/** false: too many rule names to read them all, so the rows are the busiest among those read (NET-160) */
+	complete: boolean;
+	/** Rule names read; every distinct one when complete */
+	examined: number;
 }
 
 export interface AlertIpEntry {
@@ -106,8 +114,13 @@ export interface AlertIpEntry {
 export interface AlertTopIpsResponse {
 	from: string;
 	to: string;
-	direction: string;
+	// OLD CODE: direction: string; (NET-160: the daemon answers one of the two)
+	direction: 'src' | 'dest';
 	ips: AlertIpEntry[];
+	/** false: too many addresses to read them all, so the rows are the busiest among those read (NET-160) */
+	complete: boolean;
+	/** Addresses read; every distinct one when complete */
+	examined: number;
 }
 
 export interface AlertCategoryEntry {
@@ -183,6 +196,8 @@ export async function getAlerts(
 		category?: string;
 		/** a sub-category of `category` (#147) */
 		sub?: string;
+		/** one raw Suricata category, an exact match on rule.category (NET-160 slice 2b-2) */
+		suricata_category?: string;
 		sort?: AlertSort;
 		order?: 'asc' | 'desc';
 	} = {}
@@ -199,6 +214,7 @@ export async function getAlerts(
 		signature: opts.signature,
 		category: opts.category,
 		sub: opts.sub,
+		suricata_category: opts.suricata_category,
 		sort: opts.sort,
 		order: opts.order,
 	});
@@ -329,7 +345,8 @@ export async function getAlertTopSignatures(
  * Get top IPs seen in alerts (source or destination).
  */
 export async function getAlertTopIps(
-	opts: TimeRangeParams & { limit?: number; direction?: string } = {}
+	// OLD CODE: opts: TimeRangeParams & { limit?: number; direction?: string } = {} (NET-160: src or dest only)
+	opts: TimeRangeParams & { limit?: number; direction?: 'src' | 'dest' } = {}
 ): Promise<AlertTopIpsResponse> {
 	const query = buildQuery({
 		from: opts.from,

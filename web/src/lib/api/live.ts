@@ -166,6 +166,8 @@ export interface ConnectionDetailAlert {
 	signature: string;
 	severity: number;
 	category: string;
+	/** The stored rule.category values (NET-160 slice 2b-2): the category links only when it is one of them */
+	rule_category?: string[];
 }
 
 export interface ConnectionDetailHistory {

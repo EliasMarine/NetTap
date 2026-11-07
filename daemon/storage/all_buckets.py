@@ -7,6 +7,8 @@ pages through every bucket in key order, so it is the tool for complete sets.
 
 from typing import Any
 
+from storage.snapshot_search import checked
+
 PAGE_SIZE = 1_000
 # shortcut: stops after this many buckets and reports complete=False; raise it if a site needs more
 MAX_BUCKETS = 500_000
@@ -20,11 +22,13 @@ def all_buckets(
     aggs: dict | None = None,
     page_size: int = PAGE_SIZE,
     max_buckets: int = MAX_BUCKETS,
+    what: str | None = None,
 ) -> tuple[list[dict], bool]:
     """(every composite bucket for `sources`, with `aggs` per bucket; False if max_buckets stopped it).
 
     `sources` are composite sources, e.g. [{"ip": {"terms": {"field": "source.ip"}}}]; each
-    bucket's "key" is a dict keyed by those names.
+    bucket's "key" is a dict keyed by those names. With `what`, every page is checked: a timed
+    out, partly failed or aggregation-less reply raises QueryFailed instead of reading as fewer.
     """
     buckets: list[dict] = []
     after = None
@@ -38,6 +42,8 @@ def all_buckets(
         reply = client.search(
             index=index, body={"size": 0, "query": query, "aggs": {"all": agg}}
         )
+        if what is not None:
+            reply = checked(reply, what, ("all",))
         page = (reply.get("aggregations") or {}).get("all") or {}
         # OLD CODE START — a reply with an after_key and no bucket list paged forever, and a
         # short last page cost one more (empty) search
