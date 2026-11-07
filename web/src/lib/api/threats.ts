@@ -158,7 +158,9 @@ export async function getThreatReport(
 	opts: { from?: string; to?: string } = {}
 ): Promise<ThreatReport> {
 	const q = buildQuery({ from: opts.from, to: opts.to });
-	const res = await fetch(`/api/threats/report${q}`, { signal: AbortSignal.timeout(30_000) });
+	// OLD CODE: const res = await fetch(`/api/threats/report${q}`, { signal: AbortSignal.timeout(30_000) }); (below the scan's time on a busy network)
+	// Just above the route's THREAT_SCAN_TIMEOUT_MS (120 s), so the route's answer always arrives first
+	const res = await fetch(`/api/threats/report${q}`, { signal: AbortSignal.timeout(125_000) });
 	// OLD CODE START — #96: a failed report read as threat level "none" with nothing detected
 	// if (!res.ok) {
 	// 	return {

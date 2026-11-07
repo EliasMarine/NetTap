@@ -37,6 +37,13 @@ export interface DaemonError {
 }
 
 /**
+ * The threat report and its beaconing scan read every internet pair's timings: on the G11 that is
+ * ~13 s for 24 h and ~65 s for 7 days (2026-11-07), past the 10 s default. The browser's own limit
+ * (getThreatReport) sits just above this one, so the route always answers first.
+ */
+export const THREAT_SCAN_TIMEOUT_MS = 120_000;
+
+/**
  * Fetch a path from the NetTap daemon API.
  * Handles connection errors gracefully — returns an error Response
  * instead of throwing if the daemon is unreachable.
