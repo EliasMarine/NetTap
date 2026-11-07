@@ -67,10 +67,17 @@
 	// type RangeKey = (typeof RANGES)[number]['value'];
 	// OLD CODE END
 	type RangeKey = DrillRangeValue;
-	const PREVIOUS: Record<RangeKey, string> = {
-		'1h': 'previous hour', '6h': 'previous 6 h', '24h': 'previous 24 h', '7d': 'previous 7 days', '30d': 'previous 30 days',
-	};
-	const RANGES = DRILL_RANGES.map((r) => ({ ...r, window: r.words.charAt(0).toUpperCase() + r.words.slice(1), previous: PREVIOUS[r.value] }));
+	// OLD CODE START — one voice with Traffic: "previous 24 hours", not "previous 24 h"
+	// const PREVIOUS: Record<RangeKey, string> = {
+	// 	'1h': 'previous hour', '6h': 'previous 6 h', '24h': 'previous 24 h', '7d': 'previous 7 days', '30d': 'previous 30 days',
+	// };
+	// const RANGES = DRILL_RANGES.map((r) => ({ ...r, window: r.words.charAt(0).toUpperCase() + r.words.slice(1), previous: PREVIOUS[r.value] }));
+	// OLD CODE END
+	const RANGES = DRILL_RANGES.map((r) => ({
+		...r,
+		window: r.words.charAt(0).toUpperCase() + r.words.slice(1),
+		previous: r.words.replace(/^last /, 'previous '),
+	}));
 	const RANGE_OPTIONS = RANGES.map(({ value, label }) => ({ value, label }));
 
 	// OLD CODE: let range = $state<RangeKey>('24h'); (NET-195: Settings › Display's default, read where the range starts so the first load uses it)
