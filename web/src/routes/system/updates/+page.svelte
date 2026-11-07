@@ -23,6 +23,7 @@
 	import Meter from '$lib/components/ui/Meter.svelte';
 	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import { loadFailed } from '$lib/utils/load-failed';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -647,7 +648,7 @@
 {/snippet}
 
 {#snippet historyDateCell(result: UpdateResult)}
-	<span class="dim">{new Date(result.completed_at).toLocaleDateString()}</span>
+	<span class="dim">{formatTime(result.completed_at, 'date')}</span>
 {/snippet}
 
 {#snippet historyDurationCell(result: UpdateResult)}

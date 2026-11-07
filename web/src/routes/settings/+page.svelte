@@ -13,6 +13,7 @@
 	import Pills, { type PillOption } from '$lib/components/ui/Pills.svelte';
 	import StatStrip from '$lib/components/ui/StatStrip.svelte';
 	import Meter from '$lib/components/ui/Meter.svelte';
+	import { formatTime } from '$lib/utils/time';
 
 	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'integrations' | 'display' | 'about';
 
@@ -1097,7 +1098,7 @@
 					<section class="preview" aria-labelledby="cleanup-preview-title">
 						<div class="preview-head">
 							<h3 class="eyebrow" id="cleanup-preview-title">Cleanup preview</h3>
-							<span class="dim">Data before {new Date(cleanupPreview.cutoff_date).toLocaleDateString()}</span>
+							<span class="dim">Data before {formatTime(cleanupPreview.cutoff_date, 'date')}</span>
 						</div>
 						<StatStrip
 							stats={[

@@ -15,6 +15,8 @@
 	import Pipeline, { type PipelineStage } from '$lib/components/ui/Pipeline.svelte';
 	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import { loadFailed } from '$lib/utils/load-failed';
+	import { fmt } from '$lib/utils/drilldown';
+	import { formatTime } from '$lib/utils/time';
 
 	let systemHealth = $state<SystemHealth | null>(null);
 	let storageStatus = $state<StorageStatus | null>(null);
@@ -311,7 +313,7 @@
 				<dt>Uptime</dt>
 				<dd class="mono">{systemHealth ? formatUptime(systemHealth.uptime) : '—'}</dd>
 				<dt>Last check</dt>
-				<dd class="mono">{systemHealth ? new Date(systemHealth.timestamp).toLocaleString() : '—'}</dd>
+				<dd class="mono">{formatTime(systemHealth?.timestamp)}</dd>
 			</dl>
 		{/if}
 	</Card>
@@ -497,7 +499,7 @@
 					{/if}
 					<dt>Power-on hours</dt>
 					{#if smartHealth.power_on_hours != null}
-						<dd class="num">{smartHealth.power_on_hours.toLocaleString()}</dd>
+						<dd class="num">{fmt(smartHealth.power_on_hours)}</dd>
 					{:else}
 						<dd class="dim" title="SMART power-on hours data could not be read. Check /dev mount and SYS_RAWIO capability.">Unavailable</dd>
 					{/if}
@@ -512,7 +514,7 @@
 							{#if smartHealth.media_errors == null}
 								—
 							{:else if smartHealth.media_errors > 0}
-								<span class="chip is-warn">{smartHealth.media_errors.toLocaleString()} found</span>
+								<span class="chip is-warn">{fmt(smartHealth.media_errors)} found</span>
 							{:else}
 								0
 							{/if}
@@ -524,7 +526,7 @@
 							{#if smartHealth.reallocated_sectors == null}
 								—
 							{:else if smartHealth.reallocated_sectors > 0}
-								<span class="chip is-warn">{smartHealth.reallocated_sectors.toLocaleString()} found</span>
+								<span class="chip is-warn">{fmt(smartHealth.reallocated_sectors)} found</span>
 							{:else}
 								0
 							{/if}
@@ -544,7 +546,7 @@
 					</dd>
 					{#if smartHealth.timestamp}
 						<dt>Last updated</dt>
-						<dd class="dim">{new Date(smartHealth.timestamp).toLocaleString()}</dd>
+						<dd class="dim">{formatTime(smartHealth.timestamp)}</dd>
 					{/if}
 				</dl>
 				{#if smartHealth.temperature_c == null && smartHealth.power_on_hours == null && smartHealth.percentage_used == null}

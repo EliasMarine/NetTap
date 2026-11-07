@@ -29,6 +29,7 @@
 	import { alertsHrefForSignature } from '$lib/utils/drilldown';
 	import { lanPolicy } from '$lib/stores/lan';
 	import { packetsHrefFor } from '$lib/utils/connection-ref';
+	import { formatTime } from '$lib/utils/time';
 
 	interface Connection {
 		_id: string;
@@ -185,10 +186,13 @@
 	// }
 	// OLD CODE END
 
-	function formatTimestamp(ts: string): string {
-		if (!ts) return '--';
-		try { return new Date(ts).toLocaleString(); } catch { return ts; }
-	}
+	// OLD CODE START — the browser's locale printed "11/6/2026, 10:37:23 PM" (NET-192 PR 4: formatTime)
+	// function formatTimestamp(ts: string): string {
+	// 	if (!ts) return '--';
+	// 	try { return new Date(ts).toLocaleString(); } catch { return ts; }
+	// }
+	// OLD CODE END
+	const formatTimestamp = (ts: string) => formatTime(ts);
 
 	function copyJson() {
 		navigator.clipboard.writeText(rawJson);

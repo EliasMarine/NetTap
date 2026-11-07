@@ -82,6 +82,7 @@
 	import AlertDetail from './AlertDetail.svelte';
 	// OLD CODE: import { alertLevel, alertTitle, groupAlerts, shortSeen } from './alert-view'; (slice 2b-2)
 	import { alertLevel, alertTitle, groupAlerts, groupCategoryLinked, linkedSuricataCategory, shortSeen } from './alert-view';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -443,32 +444,38 @@
 		}
 	}
 
-	function formatTimestamp(ts: string): string {
-		try {
-			return new Date(ts).toLocaleString(undefined, {
-				month: 'short',
-				day: 'numeric',
-				hour: '2-digit',
-				minute: '2-digit',
-				second: '2-digit',
-			});
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — the browser's locale printed "Nov 6, 10:37:23 PM" (NET-192 PR 4: formatTime)
+	// function formatTimestamp(ts: string): string {
+	// 	try {
+	// 		return new Date(ts).toLocaleString(undefined, {
+	// 			month: 'short',
+	// 			day: 'numeric',
+	// 			hour: '2-digit',
+	// 			minute: '2-digit',
+	// 			second: '2-digit',
+	// 		});
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatTimestamp = (ts: string) => formatTime(ts);
 
-	function formatShortTimestamp(ts: string): string {
-		try {
-			return new Date(ts).toLocaleString(undefined, {
-				month: 'short',
-				day: 'numeric',
-				hour: '2-digit',
-				minute: '2-digit',
-			});
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — the browser's locale printed "Nov 6, 10:37 PM" (NET-192 PR 4: formatTime)
+	// function formatShortTimestamp(ts: string): string {
+	// 	try {
+	// 		return new Date(ts).toLocaleString(undefined, {
+	// 			month: 'short',
+	// 			day: 'numeric',
+	// 			hour: '2-digit',
+	// 			minute: '2-digit',
+	// 		});
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatShortTimestamp = (ts: string) => formatTime(ts, 'short');
 
 	// OLD CODE START — the DataTable owns the header buttons and reports the new sort (onsortchange)
 	// function toggleSort(key: SortKey) {

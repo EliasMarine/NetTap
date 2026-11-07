@@ -32,6 +32,8 @@
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import StatStrip from '$lib/components/ui/StatStrip.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { fmt } from '$lib/utils/drilldown';
+	import { formatTime } from '$lib/utils/time';
 
 	// What Suricata really runs (#58). The source toggles, schedule picker, custom rules and
 	// commercial keys below are not wired into suricata-update yet, so they are shown as such.
@@ -283,14 +285,17 @@
 		}
 	}
 
-	function formatDate(iso: string | null): string {
-		if (!iso) return 'Never';
-		try {
-			return new Date(iso).toLocaleString();
-		} catch {
-			return iso;
-		}
-	}
+	// OLD CODE START — the browser's locale printed "11/6/2026, 10:37:23 PM" (NET-192 PR 4: formatTime)
+	// function formatDate(iso: string | null): string {
+	// 	if (!iso) return 'Never';
+	// 	try {
+	// 		return new Date(iso).toLocaleString();
+	// 	} catch {
+	// 		return iso;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatDate = (iso: string | null) => (iso ? formatTime(iso) : 'Never');
 
 	// OLD CODE START — the page refresh contract (PLAN §5.5): the first load goes through refresh.run()
 	// // Load data on mount
@@ -302,7 +307,7 @@
 	const liveStats = $derived(
 		live
 			? [
-					{ key: 'rules', label: 'Enabled rules', value: live.enabled_rules.toLocaleString() },
+					{ key: 'rules', label: 'Enabled rules', value: fmt(live.enabled_rules) },
 					{ key: 'sources', label: 'Sources', value: String(live.sources.length) },
 					{ key: 'updated', label: 'Last updated', value: formatDate(live.last_updated) },
 				]

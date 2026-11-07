@@ -20,13 +20,13 @@
 	// OLD CODE END
 	import { getDevices } from '$api/devices';
 	import type { Device, DeviceListResponse } from '$api/devices';
-	import { countDifference, customRange, linkedCount, rangeWindow, type LinkedCount } from '$lib/utils/drilldown';
+	import { countDifference, customRange, fmt, linkedCount, rangeWindow, type LinkedCount } from '$lib/utils/drilldown';
 	import { getNewDeviceCount, getRegistryDevices, isNewDevice } from '$api/devices-registry';
 	import type { RegistryDevice, RegistryListResponse } from '$api/devices-registry';
 	import { getCaptureMode } from '$api/capture';
 	import type { CaptureMode } from '$api/capture';
 	import { loadFailed } from '$lib/utils/load-failed';
-	import { formatBytes } from '$lib/api/logs';
+	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import { withTraffic } from '$lib/utils/registry-traffic';
 	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import NewDeviceBanner from '$components/NewDeviceBanner.svelte';
@@ -484,7 +484,7 @@
 	// NET-180: the card and its List row read these, so both show the same figures
 	const cardName = (d: RegistryDevice) => d.display_name || d.mac;
 	const cardAddress = (d: RegistryDevice) => d.ips[0] ?? d.mac;
-	const cardConnections = (d: RegistryDevice) => d.connection_count?.toLocaleString() ?? '—';
+	const cardConnections = (d: RegistryDevice) => (d.connection_count != null ? fmt(d.connection_count) : '—');
 	/** Some of the device's addresses weren't in the device list, so its traffic is theirs only. */
 	const partlyListed = (d: RegistryDevice) => !!d.ips_listed && d.ips_listed < d.ips.length;
 	const openCard = (d: RegistryDevice) => goto(`/devices/mac/${encodeURIComponent(d.mac)}`);
@@ -492,11 +492,13 @@
 	const addressMore = (d: RegistryDevice) =>
 		(d.ips.length > 1 ? ` +${d.ips.length - 1}` : '') + (partlyListed(d) ? ` · ${d.ips_listed} of ${d.ips.length} listed` : '');
 
-	function formatNumber(n: number): string {
-		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-		if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-		return n.toLocaleString();
-	}
+	// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $lib/api/logs
+	// function formatNumber(n: number): string {
+	// 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	// 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	// 	return n.toLocaleString();
+	// }
+	// OLD CODE END
 
 	// OLD CODE START — NET-160 slice 2b-3: the browser's clock at render time, a request's time
 	// after the count's cutoff, and a strict < where the count uses >=

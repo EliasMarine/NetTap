@@ -13,7 +13,8 @@
 	 */
 
 	import { onDestroy, untrack } from 'svelte';
-	import { formatBytes } from '$lib/api/logs';
+	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
+	import { chartTime } from '$lib/utils/drilldown';
 	import DetailDrawer from '$lib/components/DetailDrawer.svelte';
 	import DrawerSection from '$lib/components/drawer/DrawerSection.svelte';
 	import KVRow from '$lib/components/drawer/KVRow.svelte';
@@ -85,6 +86,9 @@
 	];
 	const RANGE_LABEL: Record<string, string> = { '1h': 'last hour', '6h': 'last 6 hours', '24h': 'last 24 hours', '7d': 'last 7 days' };
 	const rangeLabel = $derived(RANGE_LABEL[selectedRange] ?? 'last 24 hours');
+	const RANGE_HOURS: Record<string, number> = { '1h': 1, '6h': 6, '24h': 24, '7d': 168 };
+	// NET-192 PR 4: the browser's locale printed "07:00 PM", and a week of hourly buckets showed only times of day
+	const timelineTime = (t: number | string) => chartTime(t, RANGE_HOURS[selectedRange] ?? 24);
 
 	const DRAWER_TABS: DrawerTab[] = [
 		{ id: 'overview', label: 'Overview' },
@@ -506,11 +510,13 @@
 	// }
 	// OLD CODE END
 
-	function formatNumber(n: number): string {
-		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-		if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-		return n.toLocaleString();
-	}
+	// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $lib/api/logs
+	// function formatNumber(n: number): string {
+	// 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	// 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	// 	return n.toLocaleString();
+	// }
+	// OLD CODE END
 
 	function timeAgo(dateStr: string | null): string {
 		if (!dateStr) return '—';
@@ -963,11 +969,11 @@ OLD CODE END -->
 					{#if busiestBucket >= 0}
 						<AreaChart
 							series={[{ key: 'connections', label: 'Connections', colour: 1, points: timelineBuckets.map((b) => ({ t: b.time, v: b.connections })) }]}
-							formatX={(t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+							formatX={timelineTime}
 							formatY={(n) => formatNumber(Math.round(n))}
-							formatTip={(i) => `${new Date(timelineBuckets[i].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · ${formatNumber(timelineBuckets[i].connections)} connections`}
+							formatTip={(i) => `${timelineTime(timelineBuckets[i].time)} · ${formatNumber(timelineBuckets[i].connections)} connections`}
 							highlightIndex={busiestBucket}
-							ariaLabel="Busiest at {new Date(timelineBuckets[busiestBucket].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}, with {formatNumber(timelineBuckets[busiestBucket].connections)} connections"
+							ariaLabel="Busiest at {timelineTime(timelineBuckets[busiestBucket].time)}, with {formatNumber(timelineBuckets[busiestBucket].connections)} connections"
 							height={200}
 						/>
 					{:else if timelineFailed}

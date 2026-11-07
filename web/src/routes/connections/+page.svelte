@@ -22,7 +22,7 @@
 	// OLD CODE END
 	import { getLiveDashboard } from '$api/live';
 	import { loadFailed } from '$lib/utils/load-failed';
-	import { formatBytes as sharedFormatBytes } from '$lib/api/logs';
+	import { formatBytes as sharedFormatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import IPAddress from '$components/IPAddress.svelte';
 	// OLD CODE START — replaced by the system's BarList (ui/BarList)
 	// import HorizontalBarList from '$components/HorizontalBarList.svelte';
@@ -57,6 +57,7 @@
 	// import { compareValues } from '$lib/utils/table-sort.svelte';
 	// OLD CODE END
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// Types & Constants
@@ -361,10 +362,13 @@
 	// Display helpers
 	// ---------------------------------------------------------------------------
 
-	function formatTimestamp(ts: string | undefined): string {
-		if (!ts) return '—';
-		try { return new Date(ts).toLocaleString(); } catch { return ts; }
-	}
+	// OLD CODE START — the browser's locale printed "11/6/2026, 10:37:23 PM" (NET-192 PR 4: formatTime)
+	// function formatTimestamp(ts: string | undefined): string {
+	// 	if (!ts) return '—';
+	// 	try { return new Date(ts).toLocaleString(); } catch { return ts; }
+	// }
+	// OLD CODE END
+	const formatTimestamp = (ts: string | undefined) => formatTime(ts);
 
 	function formatBytes(bytes: number | undefined): string {
 		// OLD CODE START — 2026-11-06 (NET-166): a copy of formatBytes in $lib/api/logs, 1024-based under decimal labels
@@ -377,11 +381,13 @@
 		return bytes == null ? '—' : sharedFormatBytes(bytes);
 	}
 
-	function formatNumber(n: number): string {
-		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-		if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-		return String(n);
-	}
+	// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $lib/api/logs
+	// function formatNumber(n: number): string {
+	// 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	// 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	// 	return String(n);
+	// }
+	// OLD CODE END
 
 	function formatDuration(conn: Connection): string {
 		// OLD CODE START — #144: event.start/end are epoch-ms text on Malcolm 26.x, so every row read "--"

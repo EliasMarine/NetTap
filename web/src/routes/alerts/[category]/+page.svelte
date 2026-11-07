@@ -63,6 +63,7 @@
 	import SeverityGauge from '$lib/components/ui/charts/SeverityGauge.svelte';
 	import AlertDetail from '../AlertDetail.svelte';
 	import { alertLevel } from '../alert-view';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -512,27 +513,33 @@
 		fetchAlerts(1);
 	}
 
-	function formatTimestamp(ts: string): string {
-		try {
-			return new Date(ts).toLocaleString(undefined, {
-				month: 'short',
-				day: 'numeric',
-				hour: '2-digit',
-				minute: '2-digit',
-				second: '2-digit',
-			});
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — the browser's locale printed "Nov 6, 10:37:23 PM" (NET-192 PR 4: formatTime)
+	// function formatTimestamp(ts: string): string {
+	// 	try {
+	// 		return new Date(ts).toLocaleString(undefined, {
+	// 			month: 'short',
+	// 			day: 'numeric',
+	// 			hour: '2-digit',
+	// 			minute: '2-digit',
+	// 			second: '2-digit',
+	// 		});
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatTimestamp = (ts: string) => formatTime(ts);
 
-	function formatShortTimestamp(ts: string): string {
-		try {
-			return new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — the browser's locale printed "Nov 6, 10:37 PM" (NET-192 PR 4: formatTime)
+	// function formatShortTimestamp(ts: string): string {
+	// 	try {
+	// 		return new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatShortTimestamp = (ts: string) => formatTime(ts, 'short');
 
 	function formatRelativeTime(ts: string): string {
 		try {

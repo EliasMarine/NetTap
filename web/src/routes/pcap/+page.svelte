@@ -36,6 +36,8 @@
 	import KpiCard from '$lib/components/ui/KpiCard.svelte';
 	import Pills from '$lib/components/ui/Pills.svelte';
 	import SearchField from '$lib/components/ui/SearchField.svelte';
+	import { chartTime, fmt } from '$lib/utils/drilldown';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -285,11 +287,14 @@
 	// }
 	// OLD CODE END
 
-	function formatTimestamp(ts: string): string {
-		try {
-			return new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-		} catch { return ts; }
-	}
+	// OLD CODE START — the browser's locale ("07:00 PM"), and only the time of day at 7 d and 30 d (NET-192 PR 4: chartTime)
+	// function formatTimestamp(ts: string): string {
+	// 	try {
+	// 		return new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+	// 	} catch { return ts; }
+	// }
+	// OLD CODE END
+	const formatTimestamp = (ts: string) => chartTime(ts, range.ms / 3_600_000);
 
 	// OLD CODE START — #137: a shorter range doesn't make a large file any faster
 	// function timedOutNote(n: number): string {
@@ -608,8 +613,8 @@
 
 {#snippet fileSizeCell(f: PcapFile)}<Bytes value={f.size_bytes} max={maxFileSize} display={formatBytes(f.size_bytes)} />{/snippet}
 {#snippet sizeCell(r: PcapSearchResult)}{formatBytes(r.size_bytes)}{/snippet}
-{#snippet matchingCell(r: PcapSearchResult)}{r.matching_packets.toLocaleString()}{/snippet}
-{#snippet modifiedCell(f: { modified: string })}<span class="num">{new Date(f.modified).toLocaleString()}</span>{/snippet}
+{#snippet matchingCell(r: PcapSearchResult)}{fmt(r.matching_packets)}{/snippet}
+{#snippet modifiedCell(f: { modified: string })}<span class="num">{formatTime(f.modified)}</span>{/snippet}
 {#snippet protocolCell(pkt: PcapPacket)}{packetProtocol(pkt)}{/snippet}
 {#snippet downloadCell(r: { file: string; name: string })}
 	<button class="btn" type="button" aria-label="Download {r.name}" onclick={() => downloadFile(r.file)}><Icon name="download" />Download</button>
@@ -709,7 +714,7 @@
 				<dt>Name</dt><dd class="mono">{selectedFileObj?.name ?? previewName}</dd>
 				{#if selectedFileObj}
 					<dt>Size</dt><dd class="num">{formatBytes(selectedFileObj.size_bytes)}</dd>
-					<dt>Modified</dt><dd class="num">{new Date(selectedFileObj.modified).toLocaleString()}</dd>
+					<dt>Modified</dt><dd class="num">{formatTime(selectedFileObj.modified)}</dd>
 					<dt>Path</dt><dd class="mono">{selectedFileObj.relative_path}</dd>
 				{/if}
 			</dl>
@@ -879,7 +884,7 @@
 					key: proto.protocol,
 					label: proto.protocol,
 					value: proto.count,
-					display: proto.count.toLocaleString(),
+					display: fmt(proto.count),
 					detail: `${(previewPackets.length > 0 ? (proto.count / previewPackets.length) * 100 : 0).toFixed(1)}%`,
 					onclick: () => applyProtocolFilter(proto.protocol),
 				}))}

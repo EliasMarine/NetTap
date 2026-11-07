@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { sendNotification } from '$lib/server/notifications.js';
 import { daemonFetch } from '$lib/server/daemon.js';
+import { fmt } from '$lib/utils/drilldown';
 
 export const GET = async () => {
     // Fetch smart alerts (critical + high only)
@@ -42,7 +43,7 @@ export const GET = async () => {
                 type: 'alert',
                 severity: severity as 'critical' | 'high',
                 title: `${batch.count} ${category} alert${batch.count > 1 ? 's' : ''}`,
-                message: `${batch.devices.size} device(s) affected \u00b7 ${batch.events.toLocaleString()} events \u00b7 Top: ${batch.topSig}`,
+                message: `${batch.devices.size} device(s) affected \u00b7 ${fmt(batch.events)} events \u00b7 Top: ${batch.topSig}`,
                 source: { signature: batch.topSig },
             });
             created++;

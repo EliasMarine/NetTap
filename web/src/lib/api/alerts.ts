@@ -3,6 +3,7 @@
  * These functions call the SvelteKit server proxy routes which in turn
  * forward requests to the nettap-storage-daemon.
  */
+import { formatCompactNumber } from './logs';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -402,11 +403,14 @@ export async function getAlertCategories(
 /**
  * Format a number with compact notation (e.g. 1.2K, 3.4M).
  */
-export function formatNumber(n: number): string {
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-	return String(n);
-}
+// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $lib/api/logs
+// export function formatNumber(n: number): string {
+// 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+// 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+// 	return String(n);
+// }
+// OLD CODE END
+export const formatNumber = formatCompactNumber;
 
 /**
  * Severity number to human label.

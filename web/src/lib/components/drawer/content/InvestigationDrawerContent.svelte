@@ -7,6 +7,7 @@
 	import DrawerSection from '../DrawerSection.svelte';
 	import KVRow from '../KVRow.svelte';
 	import type { Investigation } from '$api/investigations';
+	import { formatTime } from '$lib/utils/time';
 
 	let {
 		investigation,
@@ -24,17 +25,20 @@
 	let noteText = $state('');
 	let noteSaving = $state(false);
 
-	function formatTimestamp(ts: string): string {
-		if (!ts) return '--';
-		try {
-			return new Date(ts).toLocaleString(undefined, {
-				year: 'numeric', month: 'short', day: 'numeric',
-				hour: '2-digit', minute: '2-digit',
-			});
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — the browser's locale printed "Nov 6, 2026, 10:37 PM" (NET-192 PR 4: formatTime)
+	// function formatTimestamp(ts: string): string {
+	// 	if (!ts) return '--';
+	// 	try {
+	// 		return new Date(ts).toLocaleString(undefined, {
+	// 			year: 'numeric', month: 'short', day: 'numeric',
+	// 			hour: '2-digit', minute: '2-digit',
+	// 		});
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatTimestamp = (ts: string) => formatTime(ts);
 
 	function timeAgo(ts: string): string {
 		const diff = Date.now() - new Date(ts).getTime();

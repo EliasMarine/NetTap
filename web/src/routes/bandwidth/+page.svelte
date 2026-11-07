@@ -18,6 +18,7 @@
 	import AreaChart, { type AreaSeries } from '$lib/components/ui/charts/AreaChart.svelte';
 	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import { ipHref } from '$lib/stores/lan';
+	import { fmt } from '$lib/utils/drilldown';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -108,7 +109,8 @@
 			// return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 			// OLD CODE END
 			// Daily buckets are UTC days (as is "this month"), so label them as such
-			return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+			// OLD CODE: return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }); (NET-192 PR 4: "Nov 6" in a US browser; the app writes en-GB)
+			return d.toLocaleDateString('en-GB', { month: 'short', day: 'numeric', timeZone: 'UTC' });
 		} catch {
 			return dateStr;
 		}
@@ -372,7 +374,7 @@
 {#snippet totalCell(d: DeviceUsage)}<Bytes value={d.total_bytes} max={maxDeviceBytes} display={formatBytes(d.total_bytes)} />{/snippet}
 {#snippet uploadCell(d: DeviceUsage)}{formatBytes(d.orig_bytes)}{/snippet}
 {#snippet downloadCell(d: DeviceUsage)}{formatBytes(d.resp_bytes)}{/snippet}
-{#snippet connectionsCell(d: DeviceUsage)}{d.connection_count.toLocaleString()}{/snippet}
+{#snippet connectionsCell(d: DeviceUsage)}{fmt(d.connection_count)}{/snippet}
 {#snippet percentCell(d: DeviceUsage)}{d.percent_of_total}%{/snippet}
 
 <div class="page-head">

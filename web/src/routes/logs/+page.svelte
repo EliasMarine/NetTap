@@ -9,6 +9,7 @@
 		canonicalName,
 		countDifference,
 		customRange,
+		fmt,
 		isHostName,
 		linkedCount,
 		type CustomWindow,
@@ -56,6 +57,7 @@
 	import KpiCard from '$lib/components/ui/KpiCard.svelte';
 	import Pills from '$lib/components/ui/Pills.svelte';
 	import SearchField from '$lib/components/ui/SearchField.svelte';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -337,30 +339,36 @@
 	// }
 	// OLD CODE END
 
-	function formatTimestamp(ts: string): string {
-		try {
-			const d = new Date(ts);
-			const mon = d.toLocaleString('en-US', { month: 'short' });
-			const day = d.getDate();
-			const time = d.toLocaleTimeString('en-US', { hour12: false });
-			return `${mon} ${day}, ${time}`;
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — US month-first order, "Nov 6, 22:37:23" (NET-192 PR 4: formatTime)
+	// function formatTimestamp(ts: string): string {
+	// 	try {
+	// 		const d = new Date(ts);
+	// 		const mon = d.toLocaleString('en-US', { month: 'short' });
+	// 		const day = d.getDate();
+	// 		const time = d.toLocaleTimeString('en-US', { hour12: false });
+	// 		return `${mon} ${day}, ${time}`;
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatTimestamp = (ts: string) => formatTime(ts);
 
-	function formatShortTimestamp(ts: string): string {
-		try {
-			return new Date(ts).toLocaleString(undefined, {
-				month: 'short',
-				day: 'numeric',
-				hour: '2-digit',
-				minute: '2-digit',
-			});
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — the browser's locale printed "Nov 6, 10:37 PM" (NET-192 PR 4: formatTime)
+	// function formatShortTimestamp(ts: string): string {
+	// 	try {
+	// 		return new Date(ts).toLocaleString(undefined, {
+	// 			month: 'short',
+	// 			day: 'numeric',
+	// 			hour: '2-digit',
+	// 			minute: '2-digit',
+	// 		});
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const formatShortTimestamp = (ts: string) => formatTime(ts, 'short');
 
 	function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
 		const parts = path.split('.');
@@ -1105,10 +1113,10 @@ OLD CODE END -->
 		series={[{ key: 'events', label: 'Events', colour: 1, points: timeline.map((b, i) => ({ t: b.timestamp, v: bucketTotals[i] })) }]}
 		formatX={(t) => formatShortTimestamp(String(t))}
 		formatY={formatCompactNumber}
-		formatTip={(i) => `${formatShortTimestamp(timeline[i]?.timestamp ?? '')} · ${(bucketTotals[i] ?? 0).toLocaleString()} events`}
+		formatTip={(i) => `${formatShortTimestamp(timeline[i]?.timestamp ?? '')} · ${fmt(bucketTotals[i] ?? 0)} events`}
 		highlightIndex={busiest}
 		ariaLabel={busiest >= 0
-			? `Busiest at ${formatShortTimestamp(timeline[busiest].timestamp)}, with ${bucketTotals[busiest].toLocaleString()} events`
+			? `Busiest at ${formatShortTimestamp(timeline[busiest].timestamp)}, with ${fmt(bucketTotals[busiest])} events`
 			: 'Log events over time'}
 	/>
 {/snippet}
@@ -1350,7 +1358,7 @@ OLD CODE END -->
 			/>
 			<div class="tbl-foot">
 				<span aria-live="polite">
-					Showing <strong class="num">{results.length.toLocaleString()}</strong> of <strong class="num">{totalHits.toLocaleString()}</strong> results{tableLoading ? ' · searching…' : ''}
+					Showing <strong class="num">{fmt(results.length)}</strong> of <strong class="num">{fmt(totalHits)}</strong> results{tableLoading ? ' · searching…' : ''}
 				</span>
 				{#if searchAfter && results.length < totalHits}
 					<button class="btn" type="button" onclick={() => fetchLogs(true)} disabled={loadingMore}>

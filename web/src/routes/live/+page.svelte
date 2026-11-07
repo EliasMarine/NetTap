@@ -44,6 +44,7 @@
 	import DotMap, { type Hotspot } from '$lib/components/ui/charts/DotMap.svelte';
 	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { compareValues } from '$lib/utils/table-sort.svelte';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -334,13 +335,16 @@
 		return `${formatBytes(Math.round(bytesPerSec))}/s`;
 	}
 
-	function formatTime(ts: string): string {
-		try {
-			return new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-		} catch {
-			return ts;
-		}
-	}
+	// OLD CODE START — the browser's locale printed "11:35:42 PM" (NET-192 PR 4: formatTime in utils/time)
+	// function formatTime(ts: string): string {
+	// 	try {
+	// 		return new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+	// 	} catch {
+	// 		return ts;
+	// 	}
+	// }
+	// OLD CODE END
+	const clockTime = (ts: string) => formatTime(ts, 'clock');
 
 	function formatDuration(seconds: number): string {
 		if (seconds < 0.001) return '<1ms';
@@ -544,7 +548,7 @@
 	<title>Live Monitor | NetTap</title>
 </svelte:head>
 
-{#snippet timeCell(c: FeedRow)}<span class={['mono', newKeys.has(c.key) && 'row-new']}>{formatTime(c.timestamp)}</span>{/snippet}
+{#snippet timeCell(c: FeedRow)}<span class={['mono', newKeys.has(c.key) && 'row-new']}>{clockTime(c.timestamp)}</span>{/snippet}
 
 {#snippet sourceCell(c: FeedRow)}
 	<span class="who">

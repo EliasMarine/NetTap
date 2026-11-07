@@ -15,7 +15,7 @@
 	import { goto } from '$app/navigation';
 	import { getThreatReport, getThreatIntel } from '$api/threats';
 	import { THREAT_SCORE_HOW } from '$api/alerts';
-	import { formatBytes } from '$lib/api/logs';
+	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import type {
 		ThreatReport,
 		BeaconSuspect,
@@ -35,6 +35,7 @@
 	import StackBar from '$lib/components/ui/charts/StackBar.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import IPAddress from '$components/IPAddress.svelte';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -333,11 +334,13 @@
 	// Formatters
 	// ---------------------------------------------------------------------------
 
-	function formatNumber(n: number): string {
-		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-		if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-		return n.toLocaleString();
-	}
+	// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $lib/api/logs
+	// function formatNumber(n: number): string {
+	// 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	// 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	// 	return n.toLocaleString();
+	// }
+	// OLD CODE END
 
 	// OLD CODE START — 2026-11-06 (NET-166): a copy of formatBytes in $lib/api/logs, 1024-based under decimal labels; the shared one is decimal
 	// function formatBytes(bytes: number): string {
@@ -348,12 +351,15 @@
 	// }
 	// OLD CODE END
 
-	function formatTimestamp(ts: string): string {
-		if (!ts) return '--';
-		try {
-			return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-		} catch { return ts; }
-	}
+	// OLD CODE START — the browser's locale printed "Nov 6, 2026, 10:37 PM" (NET-192 PR 4: formatTime)
+	// function formatTimestamp(ts: string): string {
+	// 	if (!ts) return '--';
+	// 	try {
+	// 		return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+	// 	} catch { return ts; }
+	// }
+	// OLD CODE END
+	const formatTimestamp = (ts: string) => formatTime(ts);
 
 	const plural = (n: number, word: string) => `${n.toLocaleString('en-GB')} ${word}${n === 1 ? '' : 's'}`;
 

@@ -2,6 +2,7 @@
 	import { getBridgeHealth, getBypassStatus, enableBypass, disableBypass } from '$api/bridge.js';
 	import type { BridgeHealth, BypassStatus } from '$api/bridge.js';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { formatTime } from '$lib/utils/time';
 
 	let health = $state<BridgeHealth | null>(null);
 	let bypassStatus = $state<BypassStatus | null>(null);
@@ -324,7 +325,7 @@
 				</p>
 				{#if bypassStatus.activated_at}
 					<p class="bypass-since dim">
-						Since: {new Date(bypassStatus.activated_at).toLocaleString()}
+						Since: {formatTime(bypassStatus.activated_at)}
 					</p>
 				{/if}
 			{/if}
@@ -389,7 +390,7 @@
 			</span>
 			{#if health.last_check}
 				<span class="footer-item dim">
-					Last check: {new Date(health.last_check).toLocaleTimeString()}
+					Last check: {formatTime(health.last_check, 'clock')}
 				</span>
 			{/if}
 		</div>

@@ -9,6 +9,7 @@
 	import type { ValidationResult, ImportResult } from '$lib/api/backup';
 	import Card from '$lib/components/ui/Card.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -43,7 +44,7 @@
 
 		try {
 			await downloadConfigFile();
-			lastExportDate = new Date().toLocaleString();
+			lastExportDate = formatTime(Date.now());
 			exportMessage = 'Configuration exported successfully';
 		} catch (e) {
 			exportError = true;

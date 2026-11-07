@@ -15,7 +15,8 @@
 	 */
 
 	import { partOfWhole } from '$lib/utils/part-of-whole';
-	import { formatBytes } from '$lib/api/logs';
+	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
+	import { chartTime } from '$lib/utils/drilldown';
 	// OLD CODE START — the category colour tinted the chart and bars; system charts use data-1/2
 	// import { CATEGORY_COLORS } from '$lib/utils/category-colors';
 	// OLD CODE END
@@ -507,11 +508,13 @@
 	// }
 	// OLD CODE END
 
-	function formatNumber(n: number): string {
-		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-		if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-		return n.toLocaleString();
-	}
+	// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $lib/api/logs
+	// function formatNumber(n: number): string {
+	// 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	// 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	// 	return n.toLocaleString();
+	// }
+	// OLD CODE END
 
 	// OLD CODE START — the DataTable's header shows the sort
 	// function sortArrow(field: string): string {
@@ -521,13 +524,17 @@
 	// OLD CODE END
 
 	/** Chart axis and tooltip time: the hour for a day or less, the date beyond. */
-	function formatPointTime(t: number | string): string {
-		const d = new Date(t);
-		if (Number.isNaN(d.getTime())) return String(t);
-		return selectedRange === '7d' || selectedRange === '30d'
-			? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-			: d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-	}
+	// OLD CODE START — the browser's locale printed "07:00 PM" (NET-192 PR 4: the shared chartTime)
+	// function formatPointTime(t: number | string): string {
+	// 	const d = new Date(t);
+	// 	if (Number.isNaN(d.getTime())) return String(t);
+	// 	return selectedRange === '7d' || selectedRange === '30d'
+	// 		? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+	// 		: d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+	// }
+	// OLD CODE END
+	const RANGE_HOURS: Record<string, number> = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 };
+	const formatPointTime = (t: number | string) => chartTime(t, RANGE_HOURS[selectedRange] ?? 24);
 
 	const chartTip = (i: number) =>
 		`${formatPointTime(bandwidthSeries[i].timestamp)} · ↓ ${formatBytes(bandwidthSeries[i].download_bytes)} · ↑ ${formatBytes(bandwidthSeries[i].upload_bytes)}`;

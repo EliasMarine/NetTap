@@ -25,12 +25,13 @@
 	} from '$api/devices';
 	import { getSmartAlerts, suppressAlert } from '$api/alerts';
 	import { loadFailed } from '$lib/utils/load-failed';
-	import { formatBytes } from '$lib/api/logs';
+	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import { TableSort } from '$lib/utils/table-sort.svelte';
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { smartLevel, type SeverityLevel } from '$lib/utils/severity';
 	// OLD CODE: import { alertsHrefForSignature, logsHrefForQuery, type DrillWindow } from '$lib/utils/drilldown'; (slice 2b-1: smart alerts link by their key)
-	import { logsHrefForQuery, NO_EXACT_ALERT_LIST, smartAlertHref, withCount, type DrillWindow } from '$lib/utils/drilldown';
+	import { chartTime as timeLabel, logsHrefForQuery, NO_EXACT_ALERT_LIST, smartAlertHref, withCount, type DrillWindow } from '$lib/utils/drilldown';
+	import { formatTime } from '$lib/utils/time';
 	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { DeviceConnectionSort } from '$api/devices';
 	import type { SmartAlert } from '$api/alerts';
@@ -420,16 +421,21 @@
 	// }
 	// OLD CODE END
 
-	function formatNumber(n: number): string {
-		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-		if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-		return n.toLocaleString();
-	}
+	// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $lib/api/logs
+	// function formatNumber(n: number): string {
+	// 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+	// 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+	// 	return n.toLocaleString();
+	// }
+	// OLD CODE END
 
-	function formatDate(dateStr: string): string {
-		if (!dateStr) return '—';
-		try { return new Date(dateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch { return dateStr; }
-	}
+	// OLD CODE START — the browser's locale printed "Nov 6" (NET-192 PR 4: formatTime)
+	// function formatDate(dateStr: string): string {
+	// 	if (!dateStr) return '—';
+	// 	try { return new Date(dateStr).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch { return dateStr; }
+	// }
+	// OLD CODE END
+	const formatDate = (dateStr: string) => formatTime(dateStr, 'short');
 
 	function timeAgo(dateStr: string): string {
 		if (!dateStr) return '—';
@@ -442,13 +448,16 @@
 		return `${Math.floor(hours / 24)}d ago`;
 	}
 
-	/** A chart time: the hour in the 24 h view, the day otherwise. */
-	function chartTime(t: number | string): string {
-		const d = new Date(t);
-		return range === '24h'
-			? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-			: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-	}
+	/** A chart time, with the detail the window's length calls for (utils/drilldown.ts chartTime). */
+	// OLD CODE START — the browser's locale ("07:00 PM"), and only the day at 7 d (NET-192 PR 4: the shared chartTime)
+	// function chartTime(t: number | string): string {
+	// 	const d = new Date(t);
+	// 	return range === '24h'
+	// 		? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+	// 		: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+	// }
+	// OLD CODE END
+	const chartTime = (t: number | string) => timeLabel(t, RANGE_HOURS[range]);
 
 	function chartTip(i: number): string {
 		const p = bandwidth[i];
@@ -634,7 +643,8 @@ OLD CODE END -->
 {/snippet}
 {#snippet portConnCell(p: DevicePort)}{formatNumber(p.connections)}{/snippet}
 {#snippet timeCell(r: ConnRow)}
-	<span class="mono">{range === '24h' ? new Date(asString(getField(r.conn, '@timestamp'))).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : new Date(asString(getField(r.conn, '@timestamp'))).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+	<!-- OLD CODE: <span class="mono">{range === '24h' ? new Date(…).toLocaleTimeString([], { hour, minute, second }) : new Date(…).toLocaleString([], { month, day, hour, minute })}</span> (NET-192 PR 4: the browser's locale printed "10:37:23 PM") -->
+	<span class="mono">{formatTime(asString(getField(r.conn, '@timestamp')), RANGE_HOURS[range] <= 24 ? 'clock' : 'short')}</span>
 {/snippet}
 <!-- OLD CODE START: {#snippet connDestCell(r: ConnRow)}<span class="mono">{asString(getField(r.conn, 'destination.ip'))}:{asString(getField(r.conn, 'destination.port'))}</span>{/snippet} (slice 2a: the address wasn't a link) OLD CODE END -->
 {#snippet connDestCell(r: ConnRow)}

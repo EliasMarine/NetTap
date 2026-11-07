@@ -28,7 +28,8 @@
 	import DeviceTile from '$lib/components/ui/DeviceTile.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { domainHref } from '$lib/stores/lan';
-	import { alertsHrefForSignature } from '$lib/utils/drilldown';
+	import { alertsHrefForSignature, chartTime as timeLabel, fmt } from '$lib/utils/drilldown';
+	import { formatTime } from '$lib/utils/time';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 
 	type Destination = DeviceTraffic['top_destinations'][number];
@@ -157,7 +158,8 @@
 
 	const series = $derived(traffic?.bandwidth_series ?? []);
 	const busiest = $derived(series.reduce((best, p, i) => (p.bytes > (series[best]?.bytes ?? -1) ? i : best), -1));
-	const chartTime = (t: number | string) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	// OLD CODE: const chartTime = (t: number | string) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); (NET-192 PR 4: the browser's locale printed "07:00 PM")
+	const chartTime = (t: number | string) => timeLabel(t, 24);
 	const alertRows = $derived((traffic?.alerts ?? []).slice(0, 20).map((a, i): TrafficAlert => ({ ...a, key: `${a.timestamp}-${i}` })));
 	const totalParts = $derived(traffic ? formatBytes(traffic.total_bytes).split(' ') : null);
 
@@ -180,14 +182,14 @@
 
 {#snippet destCell(d: Destination)}<span class="mono"><IPAddress ip={d.ip} /></span>{/snippet}
 {#snippet destBytesCell(d: Destination)}{formatBytesShort(d.bytes)}{/snippet}
-{#snippet destConnCell(d: Destination)}{d.connections.toLocaleString()}{/snippet}
+{#snippet destConnCell(d: Destination)}{fmt(d.connections)}{/snippet}
 <!-- OLD CODE START: {#snippet domainCell(q: DnsQuery)}<span class="mono trunc" title={q.domain}>{q.domain}</span>{/snippet} (NET-160: not a link) OLD CODE END -->
 {#snippet domainCell(q: DnsQuery)}<a class="mono trunc" href={domainHref(q.domain)} title={q.domain}>{q.domain}</a>{/snippet}
-{#snippet dnsCountCell(q: DnsQuery)}{q.count.toLocaleString()}{/snippet}
+{#snippet dnsCountCell(q: DnsQuery)}{fmt(q.count)}{/snippet}
 {#snippet sevCell(a: TrafficAlert)}<SeverityPill level={alertLevel(a.severity)} />{/snippet}
 <!-- OLD CODE: {#snippet sigCell(a: TrafficAlert)}<span class="sig trunc" title={a.signature}>{a.signature}</span>{/snippet} (slice 2a: not a link) -->
 {#snippet sigCell(a: TrafficAlert)}<a class="sig trunc" href={alertsHrefForSignature(a.signature)} title={a.signature}>{a.signature}</a>{/snippet}
-{#snippet timeCell(a: TrafficAlert)}<span class="mono">{new Date(a.timestamp).toLocaleString()}</span>{/snippet}
+{#snippet timeCell(a: TrafficAlert)}<span class="mono">{formatTime(a.timestamp)}</span>{/snippet}
 
 <svelte:head>
 	<title>{device?.display_name || mac} | NetTap</title>
@@ -218,8 +220,8 @@
 			<div><dt class="meta-k">IP addresses</dt><dd class="meta-v mono">{device.ips.length > 0 ? device.ips.join(', ') : '—'}</dd></div>
 			<div><dt class="meta-k">Manufacturer</dt><dd class="meta-v">{device.manufacturer ?? '—'}</dd></div>
 			<div><dt class="meta-k">Hostnames</dt><dd class="meta-v mono">{device.hostnames.length > 0 ? device.hostnames.join(', ') : '—'}</dd></div>
-			<div><dt class="meta-k">First seen</dt><dd class="meta-v">{device.first_seen ? new Date(device.first_seen).toLocaleString() : '—'}</dd></div>
-			<div><dt class="meta-k">Last seen</dt><dd class="meta-v">{device.last_seen ? new Date(device.last_seen).toLocaleString() : '—'}</dd></div>
+			<div><dt class="meta-k">First seen</dt><dd class="meta-v">{formatTime(device.first_seen)}</dd></div>
+			<div><dt class="meta-k">Last seen</dt><dd class="meta-v">{formatTime(device.last_seen)}</dd></div>
 			{#if device.friendly_name}
 				<div><dt class="meta-k">Friendly name</dt><dd class="meta-v">{device.friendly_name}</dd></div>
 			{/if}
@@ -252,7 +254,7 @@
 			class="c-6"
 			label="Connections"
 			icon="connections"
-			value={traffic ? traffic.connection_count.toLocaleString() : '—'}
+			value={traffic ? fmt(traffic.connection_count) : '—'}
 			note="Last 24 hours"
 		/>
 		<!-- NET-158: the daemon matches the MAC or any of the device's addresses over the whole range -->
@@ -300,7 +302,7 @@
 						key: `${p.name}-${i}`,
 						label: p.name,
 						value: p.count,
-						display: p.count.toLocaleString(),
+						display: fmt(p.count),
 					}))}
 				/>
 			{:else if trafficFailed && !traffic}

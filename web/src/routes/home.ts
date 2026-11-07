@@ -7,6 +7,7 @@ import { modeLabel } from '$components/shell/status';
 import { healthStage, type SystemHealth } from '$api/system';
 // OLD CODE: import { formatLossPct, packetsLost, … } (NET-167: the packets stage reads lossWords)
 import { lossWords, type CaptureHealthResponse, type CaptureStatsResponse } from '$api/capture';
+import { formatCompactNumber } from '$api/logs';
 
 const CHECKING = 'Checking…';
 
@@ -31,11 +32,14 @@ export function formatBytesShort(bytes: number): string {
 	return `${value.toFixed(value >= 10 ? 0 : 1)}${units[i]}`;
 }
 
-export function formatNumber(n: number): string {
-	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-	return n.toLocaleString();
-}
+// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $api/logs
+// export function formatNumber(n: number): string {
+// 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+// 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+// 	return n.toLocaleString();
+// }
+// OLD CODE END
+export const formatNumber = formatCompactNumber;
 
 /**
  * Compute the previous-period time range for trend comparison.
