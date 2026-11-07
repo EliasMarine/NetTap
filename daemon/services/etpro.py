@@ -60,7 +60,7 @@ def read_code(path: str | None = None) -> str | None:
         return None
     for line in lines:
         key, _, value = line.partition("=")
-        if key == "SURICATA_ETPRO_CODE" and CODE_RE.match(value):
+        if key == "SURICATA_ETPRO_CODE" and CODE_RE.fullmatch(value):
             return value
     return None
 
@@ -136,7 +136,9 @@ class EtProManager:
         return match.group(1)
 
     async def save(self, code: str) -> None:
-        if not isinstance(code, str) or not CODE_RE.match(code):
+        if not isinstance(code, str) or not CODE_RE.fullmatch(
+            code
+        ):  # match() takes "code\n"
             raise EtProError("An ET Pro code is 16 to 64 letters and digits.")
         status = await preflight(code, await self._suricata_version())
         logger.info(
@@ -191,6 +193,8 @@ class EtProManager:
                     502,
                 )
         self._activation = None
+        if self._watch and not self._watch.done():
+            self._watch.cancel()  # it would record the earlier change's outcome over this one's
         self._watch = asyncio.create_task(self._await_activation(started))
 
     def _set_file(self, content: str | None) -> None:

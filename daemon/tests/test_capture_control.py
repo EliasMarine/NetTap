@@ -408,7 +408,7 @@ class TestRestartCaptureContainers(unittest.TestCase):
 
     def test_restarts_all_three_running_containers(self):
         result, mock_cmd = self._run(
-            lambda c: _mock_container_status(True), lambda a, c: (0, "")
+            lambda c: _mock_container_status(True), lambda a, c, **kw: (0, "")
         )
         self.assertEqual(result, {"restarted": self.ALL, "errors": []})
         self.assertEqual(
@@ -417,7 +417,7 @@ class TestRestartCaptureContainers(unittest.TestCase):
         )
 
     def test_one_failure_does_not_stop_the_others(self):
-        def cmd(action, container):
+        def cmd(action, container, **kw):  # Suricata's restart also gets a timeout
             if container == "nettap-suricata-live":
                 return (1, "Error response from daemon: boom")
             return (0, "")
@@ -432,7 +432,7 @@ class TestRestartCaptureContainers(unittest.TestCase):
         self.assertIn("boom", result["errors"][0])
 
     def test_never_raises_when_docker_is_missing(self):
-        def cmd(action, container):
+        def cmd(action, container, **kw):  # Suricata's restart also gets a timeout
             raise FileNotFoundError("docker")
 
         result, _ = self._run(lambda c: _mock_container_status(True), cmd)
@@ -443,7 +443,7 @@ class TestRestartCaptureContainers(unittest.TestCase):
         """arkime-live is off by default (compose profile "arkime", #44): even a
         running one is never restarted, since restarting would keep it going."""
         result, mock_cmd = self._run(
-            lambda c: _mock_container_status(True), lambda a, c: (0, "")
+            lambda c: _mock_container_status(True), lambda a, c, **kw: (0, "")
         )
         self.assertNotIn("nettap-arkime-live", result["restarted"])
         self.assertNotIn(
@@ -456,7 +456,7 @@ class TestRestartCaptureContainers(unittest.TestCase):
         def status(container):
             return _mock_container_status(container != "nettap-pcap-capture")
 
-        result, mock_cmd = self._run(status, lambda a, c: (0, ""))
+        result, mock_cmd = self._run(status, lambda a, c, **kw: (0, ""))
         self.assertNotIn("nettap-pcap-capture", result["restarted"])
         self.assertEqual(result["errors"], [])
         self.assertNotIn(

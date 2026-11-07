@@ -102,7 +102,10 @@ _RECORD_FIELDS = (
     "reason",
     "last_success",
     "last_activation",
+    "missing_sources",
 )
+# The record is a few hundred bytes; the volume is writable by Malcolm's user, so a read is capped
+_STATUS_MAX_BYTES = 64 * 1024
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -119,9 +122,18 @@ def _parse_time(value: Any) -> datetime | None:
 def read_update_status(state_dir: str | None = None) -> dict[str, Any]:
     """update-status.json written by nettap-rules-update.sh. Missing = "unknown", never guessed."""
     state = state_dir or rules_lock.RULES_STATE_DIR
+    # OLD CODE START — review round 2: followed links, blocked on a FIFO, read without a size limit
+    # try:
+    #     with open(os.path.join(state, "update-status.json"), encoding="utf-8") as fh:
+    #         data = json.load(fh)
+    # except (OSError, ValueError):
+    #     data = {}
+    # OLD CODE END
     try:
-        with open(os.path.join(state, "update-status.json"), encoding="utf-8") as fh:
-            data = json.load(fh)
+        fd = rules_lock.open_regular(os.path.join(state, "update-status.json"))
+        with os.fdopen(fd, "rb") as fh:
+            raw = fh.read(_STATUS_MAX_BYTES + 1)
+        data = json.loads(raw) if len(raw) <= _STATUS_MAX_BYTES else {}
     except (OSError, ValueError):
         data = {}
     if not isinstance(data, dict):
@@ -129,6 +141,10 @@ def read_update_status(state_dir: str | None = None) -> dict[str, Any]:
     record: dict[str, Any] = {field: data.get(field) for field in _RECORD_FIELDS}
     record["state"] = record["state"] or "unknown"
     record["reason"] = record["reason"] or ""
+    missing = record["missing_sources"]
+    record["missing_sources"] = (
+        [s for s in missing if isinstance(s, str)] if isinstance(missing, list) else []
+    )
     # The script keeps the marker after a failure only when restoring the last good rules wasn't confirmed
     marker = os.path.exists(os.path.join(state, "update-in-progress"))
     record["recovery_pending"] = marker and record["state"] in ("failed", "interrupted")

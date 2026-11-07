@@ -13,6 +13,7 @@ import contextlib
 import fcntl
 import logging
 import os
+import stat
 
 logger = logging.getLogger("nettap.services.rules_lock")
 
@@ -21,6 +22,16 @@ RULES_STATE_DIR = os.environ.get("NETTAP_RULES_STATE", "/run/nettap-rules")
 # Interactive requests must answer before the web proxy's 290 s limit; a nightly update with every
 # source takes one to two minutes (the plan's 900 s is the shell side's wait)
 LOCK_WAIT_S = 240.0
+
+
+def open_regular(path: str, flags: int = os.O_RDONLY) -> int:
+    """Open a file in the rules state volume, which Malcolm's user owns: no link is followed (nothing is
+    created through one), a FIFO can't block the event loop, and only a regular file is accepted."""
+    fd = os.open(path, flags | os.O_NOFOLLOW | os.O_NONBLOCK, 0o644)
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise OSError(f"{path} is not a regular file")
+    return fd
 
 
 class RulesBusyError(Exception):
@@ -38,8 +49,13 @@ async def rules_lock(wait_s: float = LOCK_WAIT_S):
         logger.warning("No %s: running without the rules lock", RULES_STATE_DIR)
         yield
         return
-    fd = os.open(
-        os.path.join(RULES_STATE_DIR, "rules.lock"), os.O_RDONLY | os.O_CREAT, 0o644
+    # OLD CODE START — review round 2: root followed a planted link (creating its target) or blocked on a FIFO
+    # fd = os.open(
+    #     os.path.join(RULES_STATE_DIR, "rules.lock"), os.O_RDONLY | os.O_CREAT, 0o644
+    # )
+    # OLD CODE END
+    fd = open_regular(
+        os.path.join(RULES_STATE_DIR, "rules.lock"), os.O_RDONLY | os.O_CREAT
     )
     try:
         loop = asyncio.get_running_loop()

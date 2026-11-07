@@ -57,7 +57,18 @@ def _run(coro):
 
 class TestSave:
     @pytest.mark.parametrize(
-        "bad", ["", "short", "a" * 65, CODE + ";", CODE + " ", "$(id)" + CODE, None, 12]
+        "bad",
+        [
+            "",
+            "short",
+            "a" * 65,
+            CODE + ";",
+            CODE + " ",
+            CODE + "\n",
+            "$(id)" + CODE,
+            None,
+            12,
+        ],
     )
     def test_shape_is_checked_before_anything_else(self, env_file, bad):
         manager = _manager(env_file)
@@ -261,6 +272,27 @@ LIVE_PRO = {
 
 
 class TestActivationAndStatus:
+    def test_a_second_change_cancels_the_first_watch(self, env_file):
+        manager = _manager(env_file)
+
+        async def slow_watch(started):
+            await asyncio.sleep(10)
+
+        async def run():
+            with (
+                patch.object(etpro_mod, "_run", _Docker()),
+                patch.object(etpro_mod, "preflight", AsyncMock(return_value=200)),
+                patch.object(manager, "_await_activation", slow_watch),
+            ):
+                await manager.save(CODE)
+                first = manager._watch
+                await manager.save(OTHER)
+                done, _ = await asyncio.wait({first}, timeout=1)
+                manager._watch.cancel()
+                return first in done and first.cancelled()
+
+        assert _run(run()) is True
+
     def test_waits_for_the_restarted_engine_then_reports_and_logs(
         self, env_file, monkeypatch, caplog
     ):

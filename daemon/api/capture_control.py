@@ -43,6 +43,9 @@ CONTAINER_NAME = "nettap-pcap-capture"
 # )
 # OLD CODE END
 SURICATA_CONTAINER = "nettap-suricata-live"
+SURICATA_RESTART_TIMEOUT_S = (
+    120  # the restart holds the rules lock, so a hung one must not hold it for ever
+)
 # Containers whose entrypoint reads /etc/nettap/capture.env
 CAPTURE_CONTAINERS = (
     "nettap-zeek-live",
@@ -98,7 +101,9 @@ def _effective_rotate_mb() -> int:
     return saved or _env_int("PCAP_ROTATE_MB", DEFAULT_MAX_FILE_SIZE_MB)
 
 
-async def _docker_cmd(action: str, container: str) -> tuple[int, str]:
+async def _docker_cmd(
+    action: str, container: str, timeout: float | None = None
+) -> tuple[int, str]:
     """Run a docker command (start/stop/restart) on a container.
 
     Uses create_subprocess_exec with explicit argument arrays to prevent
@@ -107,6 +112,7 @@ async def _docker_cmd(action: str, container: str) -> tuple[int, str]:
     Args:
         action: One of "start", "stop", "restart".
         container: The Docker container name.
+        timeout: Seconds before the docker command is killed (None = no limit).
 
     Returns:
         Tuple of (return_code, combined_output).
@@ -118,7 +124,18 @@ async def _docker_cmd(action: str, container: str) -> tuple[int, str]:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await proc.communicate()
+    # OLD CODE START — review round 2: no time limit, so a hung restart held the rules lock indefinitely
+    # stdout, stderr = await proc.communicate()
+    # OLD CODE END
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return (
+            -1,
+            f"docker {action} {container} did not finish within {timeout:.0f} s",
+        )
     output = (stdout.decode() + stderr.decode()).strip()
     return (proc.returncode, output)
 
@@ -173,7 +190,9 @@ async def _restart_if_running(container: str) -> tuple[bool, str]:
         if container == SURICATA_CONTAINER:
             # Held until docker restart returns, so the new container's startup update can take it
             async with rules_lock():
-                returncode, output = await _docker_cmd("restart", container)
+                returncode, output = await _docker_cmd(
+                    "restart", container, timeout=SURICATA_RESTART_TIMEOUT_S
+                )
         else:
             returncode, output = await _docker_cmd("restart", container)
     except Exception as exc:  # docker CLI missing, socket unreachable, rules lock busy

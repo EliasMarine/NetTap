@@ -115,6 +115,36 @@ def _save_env_file(env_file: str, updates: dict[str, str]) -> None:
     path.write_text("\n".join(new_lines) + "\n")
 
 
+# Retired keys: a value saved before they were retired would stay in plain text with no way to clear it
+LEGACY_KEYS = (
+    "SURICATA_ET_PRO_KEY",
+)  # NET-191 slice 2: the ET Pro code moved to /etc/nettap/suricata.env
+
+
+def _drop_legacy_keys(env_file: str) -> None:
+    """Remove retired keys from the env file, logging the key name only (never the value)."""
+    path = Path(env_file)
+    try:
+        if not path.exists():
+            return
+        lines = path.read_text().splitlines()
+        kept = [
+            line
+            for line in lines
+            if line.strip().partition("=")[0].strip() not in LEGACY_KEYS
+        ]
+        if len(kept) == len(lines):
+            return
+        path.write_text("\n".join(kept) + "\n")
+        logger.info("Removed the legacy ET Pro key from %s", env_file)
+    except OSError as exc:
+        logger.warning(
+            "Could not remove the legacy ET Pro key from %s (%s)",
+            env_file,
+            type(exc).__name__,
+        )
+
+
 def _check_configured(env_vars: dict[str, str]) -> dict[str, bool]:
     """Return a dict indicating which API keys are configured (non-empty)."""
     result: dict[str, bool] = {}
@@ -284,6 +314,7 @@ def register_settings_routes(app: web.Application, env_file: str | None = None) 
         app["env_file"] = env_file
     else:
         app["env_file"] = os.environ.get("NETTAP_ENV_FILE", DEFAULT_ENV_FILE)
+    _drop_legacy_keys(app["env_file"])
 
     app.router.add_get("/api/settings/api-keys", handle_get_api_keys)
     app.router.add_post("/api/settings/api-keys", handle_save_api_keys)

@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -136,7 +137,34 @@ class TestReadUpdateStatus:
         assert record == {
             "state": "failed", "attempt": "a", "exit_code": 1, "reason": "r",
             "last_success": "2026-11-06T00:00:01Z", "last_activation": "x", "recovery_pending": False,
+            "missing_sources": [],
         }  # fmt: skip
+
+    def test_missing_sources_are_names_or_nothing(self, state):
+        _record(state, state="active", missing_sources=["ipfire/dbl", 3, None])
+        assert read_update_status()["missing_sources"] == ["ipfire/dbl"]
+        _record(state, state="active", missing_sources="ipfire/dbl")
+        assert read_update_status()["missing_sources"] == []
+
+    def test_a_link_is_not_followed(self, state, tmp_path_factory):
+        elsewhere = tmp_path_factory.mktemp("elsewhere") / "record.json"
+        elsewhere.write_text(json.dumps({"state": "active"}))
+        (state / "update-status.json").symlink_to(elsewhere)
+        assert read_update_status()["state"] == "unknown"
+
+    def test_a_fifo_does_not_block(self, state):
+        os.mkfifo(state / "update-status.json")
+        done = []
+        reader = threading.Thread(
+            target=lambda: done.append(read_update_status()), daemon=True
+        )
+        reader.start()
+        reader.join(2)
+        assert done and done[0]["state"] == "unknown"
+
+    def test_an_oversized_record_is_not_read(self, state):
+        _record(state, state="active", reason="x" * (64 * 1024))
+        assert read_update_status()["state"] == "unknown"
 
     def test_marker_after_a_failure_means_recovery_pending(self, state):
         _record(state, state="failed", reason="engine not confirmed")
@@ -158,7 +186,8 @@ NOW = datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc)
 
 def _update(**fields):
     base = {"state": "unknown", "attempt": None, "exit_code": None, "reason": "",
-            "last_success": None, "last_activation": None, "recovery_pending": False}  # fmt: skip
+            "last_success": None, "last_activation": None, "recovery_pending": False,
+            "missing_sources": []}  # fmt: skip
     return {**base, **fields}
 
 
