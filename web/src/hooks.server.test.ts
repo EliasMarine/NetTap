@@ -100,9 +100,12 @@ describe('hooks.server', () => {
 		// OLD CODE END
 
 		it.each([
+			'/tools',
 			'/tools/subnet-calc',
 			'/tools/ping',
+			'/lookup/dns',
 			'/lookup/whois',
+			'/api/tools',
 			'/api/tools/ping',
 			'/api/tools/mac-lookup/aa:bb:cc:dd:ee:ff',
 			'/api/lookup/dns/1.1.1.1',
@@ -110,7 +113,7 @@ describe('hooks.server', () => {
 		])('sends %s to /login without a session (NET-193)', async (path) => {
 			mockHasUsers.mockReturnValue(true);
 			mockVerifyToken.mockReturnValue(null);
-			const event = createMockEvent(path);
+			const event = createMockEvent(path, 'bad-token');
 
 			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/login' });
 			expect(mockResolve).not.toHaveBeenCalled();
@@ -120,6 +123,26 @@ describe('hooks.server', () => {
 			mockHasUsers.mockReturnValue(true);
 			mockVerifyToken.mockReturnValue({ username: 'admin', role: 'admin' });
 			const event = createMockEvent('/api/tools/ping', 'valid-token');
+
+			await handle({ event, resolve: mockResolve });
+			expect(mockResolve).toHaveBeenCalledWith(event);
+		});
+
+		it.each(['/api/auth/other', '/api/auth/..%2Ftools%2Fping', '/api/auth', '/api/auth/'])(
+			'keeps the rest of /api/auth behind a login, so it never reaches the catch-all proxy: %s',
+			async (path) => {
+				mockHasUsers.mockReturnValue(true);
+				mockVerifyToken.mockReturnValue(null);
+				const event = createMockEvent(path);
+
+				await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/login' });
+				expect(mockResolve).not.toHaveBeenCalled();
+			},
+		);
+
+		it.each(['/api/auth/login', '/api/auth/logout', '/api/auth/me'])('keeps %s public', async (path) => {
+			mockHasUsers.mockReturnValue(true);
+			const event = createMockEvent(path);
 
 			await handle({ event, resolve: mockResolve });
 			expect(mockResolve).toHaveBeenCalledWith(event);
@@ -142,6 +165,13 @@ describe('hooks.server', () => {
 
 			await handle({ event, resolve: mockResolve });
 			expect(mockResolve).toHaveBeenCalledWith(event);
+		});
+
+		it('sends the tools to setup during first run, like every other app page', async () => {
+			mockHasUsers.mockReturnValue(false);
+			const event = createMockEvent('/tools/ping');
+
+			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/setup' });
 		});
 
 		it('keeps first-run paths segment-matched: /setupx goes to setup, not through', async () => {

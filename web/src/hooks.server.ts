@@ -23,8 +23,10 @@ import { verifyToken, hasUsers } from '$lib/server/auth.js';
 // const PUBLIC_PATHS = ['/login', '/api/auth', '/api/tools', '/api/lookup', '/tools', '/lookup'];
 // OLD CODE END
 
-/** Paths that never require authentication. */
-const PUBLIC_PATHS = ['/login', '/api/auth'];
+/** Paths that never require authentication: the sign-in page and the three auth routes by
+ * name. Not all of /api/auth/*: a path no auth route handles falls through to the catch-all
+ * proxy, which forwards it to the daemon with the daemon token. */
+const PUBLIC_PATHS = ['/login', '/api/auth/login', '/api/auth/logout', '/api/auth/me'];
 
 /** Paths that are public only until the first admin exists.
  * The setup wizard (/setup, /api/setup/*) and Go Live (/go-live, /api/bridge/*)
