@@ -358,7 +358,7 @@ Status: built and tested locally, pushed, no PR yet. Not on the device.
   5. Suricata's test: `docker run --rm` of the live image, no network, no container log, 1 GiB, 1 CPU, the live UID/GID, all caps dropped except the three its binary's file caps need, and no-new-privileges.
      - Mounts, all ro: the snapshot at the live paths, the live rules volume, the candidate at the custom dir, and the threshold file when it is a regular file. A 64 MB tmpfs for the analysis.
      - First `-T -v` with every rule: it must exit 0 and print "0 rules failed" within 180 s. Exit 1 with Suricata's errors is a 422; any other exit is a 502 ("Suricata's test couldn't run (exit N)").
-     - Then `--engine-analysis -S owner.rules` with `security.lua.allow-rules=false`: each owner rule must load on its own, and no keyword Suricata parsed may be on the refused list.
+     - Then `--engine-analysis -S owner.rules` with `security.lua.allow-rules=false`: the analysed ids must be exactly the sids the validator accepted (a `<>` rule is two signatures with one id), and no keyword Suricata parsed may be on the refused list.
      - `docker rm -f` always runs afterwards, so a timeout or a cancel leaves no container behind.
   6. Write `owner.rules.prev` (the previous rules), then `owner.rules`, each with `services.capture_config.write_file_atomic` (temp file, fsync, 0644, `os.replace`), on a worker thread.
   7. A blocking `reload-rules` (120 s) must answer OK, and `ruleset-stats` must show 0 failed. While the answer is "in progress", it asks again every 5 s until 120 s.
@@ -375,7 +375,7 @@ Status: built and tested locally, pushed, no PR yet. Not on the device.
     - 502: not loaded, previous rules put back; or suricata-live couldn't be inspected or copied.
     - 500: test timeout, or anything unexpected.
   - The old handlers that wrote the unwired `config/suricata/custom.rules` are retired as OLD CODE. `SuricataRuleManager.add_custom_rules/get_custom_rules` stay, unrouted.
-- **Live status:** `owner_rules` counts the `alert` lines (indented ones too) in suricata-live's `owner.rules`, or is null when that file isn't there (suricata-live not recreated with the mount).
+- **Live status:** `owner_rules` counts the lines that start with `alert` and a space or tab, as Suricata reads them, in suricata-live's `owner.rules`, or is null when that file isn't there (suricata-live not recreated with the mount).
 - **Web** (teammate web-slice3):
   - Settings › Suricata rules retires the unwired source toggles and schedule picker as OLD CODE. It shows the engine facts: loaded/failed, last reload, own rule count, and the update record, with "downloaded" (file) kept apart from "active" (engine).
   - A "Your own rules" card (`OwnerRulesCard.svelte`): a monospace editor with loading, empty, error, validating and saving states; **Check rules** and **Save and load**; each refusal shown on its line.
@@ -487,6 +487,36 @@ Deviations from the review:
 - **S3 is built**, not a follow-up: about 40 lines, run in the same container.
 - **A check's summary starts "Your rules have problems"**, not "Nothing was saved".
 - **M4 also covers a lost request** (fetch throws), since it may have reached the daemon.
+
+#### Gates on `861dafae`
+
+Results:
+- `/deep-review` delta: no findings. The report is committed in `security-reviews/feature-detection-slice3/security-review.md`.
+- Security-engineer re-check: no way past both layers. One Low and one Info.
+- `/ponytail-review`: ship. One should-fix and three nice-to-haves.
+
+All six points are fixed. Each new test fails when its fix is undone, and passes again when it is restored.
+
+| # | Finding | Fix | Test |
+|---|---|---|---|
+| 1 | The analysis compared counts. A `<>` rule is two signatures with one id, so the security engineer's file (a clean rule, a Lua rule and a `<>` rule) analysed as ids `1000201, 1000203, 1000203`. That passed the count, although the Lua rule never loaded. A valid `<>` rule on its own was refused. | The set of analysed ids must equal the set of sids the validator accepted (`rule_sids()`). If ids are missing, the message stays "Only N of your M rules load…". If there is an id NetTap didn't count, the message is "Suricata reads rules NetTap didn't count (sid N), so they can't be checked." | `test_a_bidirectional_rule_saves`, `test_ids_are_compared_not_counts`, `test_a_rule_nobody_counted` |
+| 2 | No test covered the `flags` branch of `_keywords()` | — | `test_a_flag_alone_is_enough` (`bypass` only in `"flags"`) |
+| 3 | The live count counted indented lines, which Suricata skips and the validator refuses | `grep -c '^alert[[:space:]]'` | `test_the_owner_count_reads_lines_as_suricata_does`: indented lines don't count; `alert<TAB>tcp` does |
+| 4 | U+2028 and U+2029 were raw characters in `_CONTROL` | Written as `  ` escapes | none (no behaviour change; the control-character tests still cover it) |
+| 5 | `_FAILED_RE` scanned the whole output, which now includes `rules.json` and the rules' text | It searches only Suricata's log, before the first line that starts with `{` | `test_a_0_rules_failed_in_the_rule_text_is_not_suricatas_word` |
+| 6 | Did the analysis use the device's config, and does that config write `rules.json`? | Yes to both. Both Suricata runs take the same `"$@"`: `-c /etc/suricata/suricata.yaml` and the two `--set`s. `/etc/suricata` and `/opt/suricata/include-configs` in the test container are the snapshot of suricata-live's own files. The analysis adds only `-S owner.rules` and `--set security.lua.allow-rules=false`. | `test_the_runner_is_boxed` asserts both runs carry `"$@"` and the config path |
+
+Item 6 on the real config. The G11's generated `suricata.yaml` has `engine-analysis: rules: yes` (lines 1325–1329) and includes `/opt/suricata/include-configs/nettap.yaml`. Both files were copied read-only from `nettap-suricata-live`, after a scan for anything secret-like; nothing was found. They went into a created container of the live image, and `_snapshot` and `_test` ran against it. With both the image's config and the G11's:
+- The self-test rule passed, an unknown keyword was refused on line 2, and empty content passed.
+- The self-test rule plus a valid `<>` rule passed.
+- `tls.store` was refused as `tls_store`.
+- A Lua rule whose script exists was refused: "Only 0 of your 1".
+- The security engineer's clean + Lua + `<>` file was refused: "Only 2 of your 3".
+- The quoted-`;` rule was refused in both, with different reasons. With the image's config, the analysis named `bypass`. With the G11's config, `-T` itself refused the rule ("Loading signatures failed").
+
+So `rules.json` is written with the device's config; otherwise the good rules would have been refused. `check-owner-rules.sh` on the G11 remains the end-to-end proof.
+
+Suites: daemon 3,863 passed, 4 skipped. The touched files pass on Linux: 245. ruff 0.17.3 check and format are clean. No web or script file changed this round.
 
 ### Device run order (owner)
 
