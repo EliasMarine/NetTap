@@ -104,7 +104,8 @@
 	] as const;
 	const params = $derived($page.url.searchParams);
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
-	const range = $derived(custom ?? RANGES.find((r) => r.value === params.get('range')) ?? RANGES[2]);
+	// OLD CODE: ?? RANGES[2] (NET-192 PR 4: the default by value, not by position)
+	const range = $derived(custom ?? RANGES.find((r) => r.value === params.get('range')) ?? RANGES.find((r) => r.value === '24h')!);
 	const windowKey = $derived(custom ? `${custom.from}|${custom.to}` : range.value);
 	/**
 	 * NET-160 section D: the Total devices figure the link was clicked at (Home's Devices card).

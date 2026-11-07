@@ -268,7 +268,8 @@
 	// OLD CODE END
 
 	// OLD CODE: ?? TIME_RANGES[3]); (NET-192 PR 4: 15m and 4h dropped, 6h added: 24h is index 2)
-	const range = $derived(TIME_RANGES.find((r) => r.value === selectedRange) ?? TIME_RANGES[2]);
+	// OLD CODE: ?? TIME_RANGES[2] (NET-192 PR 4: the default by value, not by position)
+	const range = $derived(TIME_RANGES.find((r) => r.value === selectedRange) ?? TIME_RANGES.find((r) => r.value === '24h')!);
 	const buckets = $derived(
 		categoryData
 			? severityBuckets({ total: categoryData.stats.total, ...categoryData.severity_breakdown })
@@ -286,7 +287,8 @@
 	function getTimeRange(): { from: string; to: string } {
 		const now = Date.now();
 		// OLD CODE: || TIME_RANGES[3]; (NET-192 PR 4: 24h is index 2)
-		const range = TIME_RANGES.find((r) => r.value === selectedRange) || TIME_RANGES[2];
+		// OLD CODE: || TIME_RANGES[2] (NET-192 PR 4: the default by value, not by position)
+		const range = TIME_RANGES.find((r) => r.value === selectedRange) || TIME_RANGES.find((r) => r.value === '24h')!;
 		return {
 			from: new Date(now - range.ms).toISOString(),
 			to: new Date(now).toISOString(),

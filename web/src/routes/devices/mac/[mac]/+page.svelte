@@ -50,7 +50,8 @@
 
 	// NET-192 PR 4: the same range pills as devices/[ip] (it read only the daemon's default 24 hours)
 	let rangeValue = $state<DrillRangeValue>('24h');
-	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES[2]);
+	// OLD CODE: ?? DRILL_RANGES[2] (NET-192 PR 4: the default by value, not by position)
+	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES.find((r) => r.value === '24h')!);
 	const RANGE_OPTIONS = DRILL_RANGES.map((r) => ({ value: r.value, label: r.label }));
 	/** The device and range the traffic on screen was read for; another one must not show it. */
 	let trafficView = '';

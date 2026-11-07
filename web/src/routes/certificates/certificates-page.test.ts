@@ -239,6 +239,17 @@ describe('Certificates page — drill-down filter', () => {
 		expect(Date.parse(q.get('to')!) - Date.parse(q.get('from')!)).toBe(168 * 3_600_000);
 		expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument();
 	});
+
+	// NET-192 PR 4: the default is 7d, the fourth range, found by value
+	it('opens an unknown ?range= on its own 7-day default', async () => {
+		openUrl('?range=15m');
+		stubDaemon({ '/api/certificates/overview': OVERVIEW, '/api/devices/registry': REGISTRY, '/api/network/lan': LAN_POLICY });
+		render(CertificatesPage);
+		await vi.waitFor(() => expect(overviewCalls().length).toBe(1));
+		const q = overviewCalls()[0].searchParams;
+		expect(Date.parse(q.get('to')!) - Date.parse(q.get('from')!)).toBe(168 * 3_600_000);
+		expect(screen.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
+	});
 });
 
 // OLD CODE START — 2026-11-05 NET-154: tests of the previous page (four list endpoints, the MITM

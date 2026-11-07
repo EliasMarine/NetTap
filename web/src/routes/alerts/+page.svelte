@@ -402,7 +402,8 @@
 		}
 		// OLD CODE: ?? TIME_RANGES[3]; (slice 2b-1: 6h moved 24h to index 4)
 		// OLD CODE: ?? TIME_RANGES[4]; (NET-192 PR 4: 15m and 4h dropped, 24h is index 2)
-		const r = TIME_RANGES.find((t) => t.value === value) ?? TIME_RANGES[2];
+		// OLD CODE: ?? TIME_RANGES[2] (NET-192 PR 4: the default by value, not by position)
+		const r = TIME_RANGES.find((t) => t.value === value) ?? TIME_RANGES.find((r) => r.value === '24h')!;
 		return { ...r, interval: INTERVAL_MAP[r.value] };
 	}
 
@@ -412,7 +413,8 @@
 		const now = Date.now();
 		// OLD CODE: || TIME_RANGES[3]; (slice 2b-1: 6h moved 24h to index 4)
 		// OLD CODE: || TIME_RANGES[4]; (NET-192 PR 4: 15m and 4h dropped, 24h is index 2)
-		const range = TIME_RANGES.find((r) => r.value === selectedTimeRange) || TIME_RANGES[2];
+		// OLD CODE: || TIME_RANGES[2] (NET-192 PR 4: the default by value, not by position)
+		const range = TIME_RANGES.find((r) => r.value === selectedTimeRange) || TIME_RANGES.find((r) => r.value === '24h')!;
 		return {
 			from: new Date(now - range.ms).toISOString(),
 			to: new Date(now).toISOString(),

@@ -67,7 +67,8 @@
 	const RANGE_OPTIONS = RANGES.map(({ value, label }) => ({ value, label }));
 
 	let range = $state<RangeKey>('24h');
-	const span = $derived(RANGES.find((r) => r.value === range) ?? RANGES[2]);
+	// OLD CODE: ?? RANGES[2] (NET-192 PR 4: the default by value, not by position)
+	const span = $derived(RANGES.find((r) => r.value === range) ?? RANGES.find((r) => r.value === '24h')!);
 	const windowText = $derived(span.window.toLowerCase());
 
 	let autoRefresh = $state(true);

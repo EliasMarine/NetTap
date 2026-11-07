@@ -144,7 +144,8 @@
 	let oldestCapture = $derived(files.length ? files.reduce((a, b) => a.modified < b.modified ? a : b).modified : '');
 	let maxFileSize = $derived(Math.max(1, ...files.map((f) => f.size_bytes)));
 
-	const range = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange) ?? TIME_RANGES[0]);
+	// OLD CODE: ?? TIME_RANGES[0] (NET-192 PR 4: the default by value, not by position)
+	const range = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange) ?? TIME_RANGES.find((r) => r.value === '1h')!);
 	// The file counts read as unknown, not 0, until the first listing arrives
 	const filesUnknown = $derived(filesFailed || (filesLoading && files.length === 0));
 

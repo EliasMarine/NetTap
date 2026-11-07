@@ -126,7 +126,8 @@
 
 	// Time range
 	// OLD CODE: let selectedTimeRange = $state<TimeRange>(TIME_RANGES[1]); // 1h (NET-192 PR 4: 1h is index 0)
-	let selectedTimeRange = $state<TimeRange>(TIME_RANGES[0]); // 1h
+	// OLD CODE: $state<TimeRange>(TIME_RANGES[0]) (NET-192 PR 4: the default by value, not by position)
+	let selectedTimeRange = $state<TimeRange>(TIME_RANGES.find((r) => r.value === '1h')!);
 	let autoRefresh = $state(false);
 	let refreshInterval = $state<ReturnType<typeof setInterval> | null>(null);
 

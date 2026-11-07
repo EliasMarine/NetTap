@@ -118,7 +118,8 @@
 		// const from = new Date(to.getTime() - range.hours * 3_600_000);
 		// OLD CODE END
 		// OLD CODE: … : (RANGES.find((r) => r.value === rangeValue) ?? RANGES[1]); (NET-192 PR 4: 1h and 6h added, 7d is index 3)
-		const range: RangeOption = rangeValue === 'custom' && custom ? custom : (RANGES.find((r) => r.value === rangeValue) ?? RANGES[3]);
+		// OLD CODE: ?? RANGES[3] (NET-192 PR 4: the default by value, not by position)
+		const range: RangeOption = rangeValue === 'custom' && custom ? custom : (RANGES.find((r) => r.value === rangeValue) ?? RANGES.find((r) => r.value === '7d')!);
 		const to = range === custom && custom ? new Date(custom.to) : new Date();
 		const from = range === custom && custom ? new Date(custom.from) : new Date(to.getTime() - range.hours * 3_600_000);
 		const wanted = filter;
