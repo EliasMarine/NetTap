@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { alertsHrefForSignature, byteFigure, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery } from './drilldown';
+import { alertsHrefForSignature, byteFigure, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery } from './drilldown';
 
 const MB = 1000 ** 2; // decimal, as formatBytes prints (NET-166)
 
@@ -163,5 +163,44 @@ describe('partialListNote', () => {
 	it('says the rows are the highest among those read, with how many when the reply says', () => {
 		expect(partialListNote('addresses', 5000)).toBe('Highest counts among the 5,000 addresses read; the full set was too large to read');
 		expect(partialListNote('rules')).toBe('Highest counts among the rules read; the full set was too large to read');
+	});
+});
+
+describe('the figure clicked (section D)', () => {
+	const ALERTS = { lead: 'This search now matches', one: 'alert', many: 'alerts' };
+
+	it('withCount appends count to a link with or without a query, and only a whole number of 0 or more', () => {
+		expect(withCount('/alerts?from=a&to=b', 1234)).toBe('/alerts?from=a&to=b&count=1234');
+		expect(withCount('/devices', 0)).toBe('/devices?count=0');
+		expect(withCount('/alerts?x=1', -1)).toBe('/alerts?x=1');
+		expect(withCount('/alerts?x=1', 1.5)).toBe('/alerts?x=1');
+		expect(withCount('/alerts?x=1', Number.NaN)).toBe('/alerts?x=1');
+		expect(withCount('/alerts?x=1', null)).toBe('/alerts?x=1');
+		expect(withCount('/alerts?x=1', undefined)).toBe('/alerts?x=1');
+	});
+
+	it('linkedCount takes up to 15 digits and nothing else', () => {
+		expect(linkedCount('1204')).toBe(1204);
+		expect(linkedCount('0')).toBe(0);
+		expect(linkedCount('999999999999999')).toBe(999_999_999_999_999);
+		for (const bad of ['', '1e3', '-1', ' 5', '5 ', '1.0', '1234567890123456', 'abc']) expect(linkedCount(bad)).toBeNull();
+		expect(linkedCount(null)).toBeNull();
+	});
+
+	it('countDifference states the net difference in en-GB figures, or nothing when they agree', () => {
+		expect(countDifference(1234, 1234, ALERTS)).toBeNull();
+		expect(countDifference(1234, 1240, ALERTS)).toBe(
+			'You clicked 1,234. This search now matches 1,240 alerts (6 more). Records can be logged after a figure is counted (a connection is logged when it ends), and old records are deleted to free disk space.'
+		);
+		expect(countDifference(1234, 1200, ALERTS)).toMatch(/^You clicked 1,234\. This search now matches 1,200 alerts \(34 fewer\)\. /);
+		expect(countDifference(2, 1, ALERTS)).toMatch(/matches 1 alert \(1 fewer\)/);
+		expect(countDifference(53, 54, { lead: 'This window now has', one: 'device', many: 'devices' })).toMatch(/^You clicked 53\. This window now has 54 devices \(1 more\)\./);
+	});
+
+	it('logsHrefForIp opens one log type when given one', () => {
+		expect(logsHrefForIp('10.0.0.5', '24h', { from: 'A', to: 'B' }, 'zeek.conn')).toBe(
+			`/logs?query=${encodeURIComponent('(source.ip:"10.0.0.5" OR destination.ip:"10.0.0.5")')}&range=24h&type=zeek.conn&from=A&to=B`
+		);
+		expect(logsHrefForIp('10.0.0.5', '24h')).not.toContain('type=');
 	});
 });
