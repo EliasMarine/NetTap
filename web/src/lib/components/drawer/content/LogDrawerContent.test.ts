@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen } from '@testing-library/svelte';
+import LogDrawerContent from './LogDrawerContent.svelte';
+
+vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 /**
  * Tests for LogDrawerContent component logic.
@@ -298,5 +302,18 @@ describe('LogDrawerContent logic', () => {
 
 			expect(writeText).toHaveBeenCalledWith(rawJson);
 		});
+	});
+});
+
+describe('LogDrawerContent full document', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	// NET-197: a lapsed session answers 401 JSON; before, the login page's HTML failed to parse and showed this
+	it('shows the error when the search is refused', async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"Sign in first"}', { status: 401 })));
+		render(LogDrawerContent, { hit: { _id: 'l1', _source: { message: 'x' } }, activeTab: 'fields' });
+		expect(await screen.findByText('Failed to fetch full document')).toBeInTheDocument();
 	});
 });
