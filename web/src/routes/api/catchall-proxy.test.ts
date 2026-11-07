@@ -67,6 +67,15 @@ describe('API Catch-All Proxy Route ([...path]/+server.ts)', () => {
 		expect(daemonFetch.mock.calls[0][2]).toBe(30_000);
 	});
 
+	// NET-192 PR 3: Connections offers 30d again, so its sankey and timeline get the same 30 s
+	it.each(['/api/traffic/connections/sankey?from=a&to=b', '/api/traffic/connections/timeline?from=a&to=b&interval=1d'])(
+		'gives %s 30 s',
+		async (path) => {
+			await GET(event(path) as never);
+			expect(daemonFetch.mock.calls[0][2]).toBe(30_000);
+		},
+	);
+
 	// NET-188: the daemon stops a packet search or one packet's detail at ~48 s
 	it.each([
 		['/api/packets/search', 55_000],

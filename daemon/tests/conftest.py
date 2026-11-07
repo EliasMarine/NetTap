@@ -12,6 +12,15 @@ import pytest
 from storage.manager import RetentionConfig
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _no_background_beaconing():
+    """NET-192 PR 3: an app built in a test doesn't start the background beaconing scan, which
+    would query the test's mock client at startup; tests of the scan turn it back on."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("NETTAP_BEACON_BACKGROUND", "0")
+        yield
+
+
 # ---------------------------------------------------------------------------
 # OpenSearch client mock
 # ---------------------------------------------------------------------------

@@ -962,6 +962,42 @@ def _sparkline_interval(from_ts: str, to_ts: str) -> str:
     return "6h"
 
 
+# NET-192 PR 3: bytes of a conn doc. network.bytes = source.bytes + destination.bytes on every
+# Zeek conn doc (checked on the G11; only Zeek `files` docs differ), so use this only in a
+# query filtered to event.dataset conn.
+_CONN_BYTES_SUM = {"sum": {"field": "network.bytes"}}
+
+
+def _destination_details_query(from_ts: str, to_ts: str, winners: list[str]) -> dict:
+    """ASN and country of each of `winners`, from the same conn docs the stats counted."""
+    return {
+        "size": 0,
+        "query": {
+            "bool": {
+                "filter": [
+                    _time_range_filter(from_ts, to_ts),
+                    *_ZEEK_CONN_FILTERS,
+                    {"terms": {"destination.ip": winners}},
+                ]
+            }
+        },
+        "aggs": {
+            "by_ip": {
+                "terms": {"field": "destination.ip", "size": len(winners)},
+                "aggs": {
+                    "asn": {"terms": {"field": "destination.as.full", "size": 1}},
+                    "geo": {
+                        "terms": {
+                            "field": "destination.geo.country_iso_code",
+                            "size": 1,
+                        }
+                    },
+                },
+            }
+        },
+    }
+
+
 async def handle_connection_stats(request: web.Request) -> web.Response:
     """GET /api/traffic/connections/stats?from=&to=
 
@@ -998,14 +1034,18 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
                     "order": {"total_bytes": "desc"},
                 },
                 "aggs": {
-                    "total_bytes": {
-                        "sum": {
-                            "script": {
-                                "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
-                                "lang": "painless",
-                            }
-                        }
-                    },
+                    # OLD CODE START — NET-192 PR 3: a Painless sum per doc; network.bytes is the
+                    # same sum on every conn doc (measured on the G11) and reads a field
+                    # "total_bytes": {
+                    #     "sum": {
+                    #         "script": {
+                    #             "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
+                    #             "lang": "painless",
+                    #         }
+                    #     }
+                    # },
+                    # OLD CODE END
+                    "total_bytes": _CONN_BYTES_SUM,
                     # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
                     # "bucket_sort": {
                     #     "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
@@ -1023,21 +1063,27 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
                     "order": {"total_bytes": "desc"},
                 },
                 "aggs": {
-                    "total_bytes": {
-                        "sum": {
-                            "script": {
-                                "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
-                                "lang": "painless",
-                            }
-                        }
-                    },
-                    "asn": {"terms": {"field": "destination.as.full", "size": 1}},
-                    "geo": {
-                        "terms": {
-                            "field": "destination.geo.country_iso_code",
-                            "size": 1,
-                        }
-                    },
+                    # OLD CODE START — NET-192 PR 3: the Painless sum (see top_sources), and asn/geo
+                    # terms under every destination bucket: with >10k destinations per shard they
+                    # were most of the 6-7 s this search took at 7 days on the G11 (1.2-1.4 s
+                    # without them, same top 10). They are looked up for the 10 winners below.
+                    # "total_bytes": {
+                    #     "sum": {
+                    #         "script": {
+                    #             "source": "(doc.containsKey('source.bytes') && doc['source.bytes'].size()>0 ? doc['source.bytes'].value : 0) + (doc.containsKey('destination.bytes') && doc['destination.bytes'].size()>0 ? doc['destination.bytes'].value : 0)",
+                    #             "lang": "painless",
+                    #         }
+                    #     }
+                    # },
+                    # "asn": {"terms": {"field": "destination.as.full", "size": 1}},
+                    # "geo": {
+                    #     "terms": {
+                    #         "field": "destination.geo.country_iso_code",
+                    #         "size": 1,
+                    #     }
+                    # },
+                    # OLD CODE END
+                    "total_bytes": _CONN_BYTES_SUM,
                     # OLD CODE START — top-N by doc count then bucket_sort missed the real top-N by bytes
                     # "bucket_sort": {
                     #     "bucket_sort": {"sort": [{"total_bytes": {"order": "desc"}}]}
@@ -1105,10 +1151,36 @@ async def handle_connection_stats(request: web.Request) -> web.Response:
         for b in aggs.get("top_sources", {}).get("buckets", [])
     ]
 
+    # NET-192 PR 3: ASN and country for the winners only, in one small follow-up search
+    dest_buckets = aggs.get("top_destinations", {}).get("buckets", [])
+    winners = [b["key"] for b in dest_buckets]
+    details: dict = {}
+    if winners:
+        detail_query = _destination_details_query(from_ts, to_ts, winners)
+        try:
+            detail_result = await run_blocking(
+                lambda: client.search(index=NETWORK_INDEX, body=detail_query)
+            )
+        except OpenSearchException as exc:
+            logger.error("OpenSearch error in connections/stats details: %s", exc)
+            return web.json_response({"error": str(exc)}, status=502)
+        details = {
+            d["key"]: d
+            for d in detail_result.get("aggregations", {})
+            .get("by_ip", {})
+            .get("buckets", [])
+        }
+
     top_destinations = []
-    for b in aggs.get("top_destinations", {}).get("buckets", []):
-        asn_buckets = b.get("asn", {}).get("buckets", [])
-        geo_buckets = b.get("geo", {}).get("buckets", [])
+    # OLD CODE START — NET-192 PR 3: asn/geo came from the main search's buckets
+    # for b in aggs.get("top_destinations", {}).get("buckets", []):
+    #     asn_buckets = b.get("asn", {}).get("buckets", [])
+    #     geo_buckets = b.get("geo", {}).get("buckets", [])
+    # OLD CODE END
+    for b in dest_buckets:
+        detail = details.get(b["key"], {})
+        asn_buckets = detail.get("asn", {}).get("buckets", [])
+        geo_buckets = detail.get("geo", {}).get("buckets", [])
         top_destinations.append(
             {
                 "ip": b["key"],

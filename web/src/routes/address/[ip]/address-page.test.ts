@@ -270,6 +270,19 @@ describe('Address page', () => {
 		expect(await within(card('Who it is')).findByText('stream.example.net')).toBeInTheDocument();
 	});
 
+	// NET-192 PR 3: the daemon gives the resolver 6 s, then answers 200 with no name
+	it('says the reverse lookup timed out, instead of "None"', async () => {
+		stubDaemon({
+			...baseReplies(ADDRESS),
+			'/api/lookup/dns/*': { ip: ADDRESS.ip, hostname: null, aliases: [], addresses: [], error: null, timed_out: true },
+		});
+		render(Page);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Look up its name' }));
+		const who = card('Who it is');
+		expect(await within(who).findByText('Reverse DNS lookup timed out')).toBeInTheDocument();
+		expect(within(who).queryByText('None')).not.toBeInTheDocument();
+	});
+
 	it('shows the figures as soon as they land, without waiting for the location lookup', async () => {
 		stubDaemon({ ...baseReplies(ADDRESS), '/api/geoip/*': () => new Promise(() => {}) });
 		render(Page);

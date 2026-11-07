@@ -322,7 +322,7 @@ async def _redetect_lan(
         # current.clear()
         # current.update(new)
         # OLD CODE END
-        current.update(new)  # replaces the "script" key in one step: never seen empty
+        current.update(new)  # swaps its one key in one step: never seen empty
         for stale in [key for key in current if key not in new]:
             del current[stale]
         logger.info("LAN subnets changed since startup; the LAN filter is updated")

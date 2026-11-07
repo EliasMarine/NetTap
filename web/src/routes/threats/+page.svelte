@@ -13,7 +13,8 @@
 
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { getThreatReport, getThreatIntel } from '$api/threats';
+	// OLD CODE: import { getThreatReport, getThreatIntel } from '$api/threats'; (NET-192 PR 3: the pill → request helper)
+	import { getBeaconing, getThreatReport, getThreatIntel, threatRequest, type ThreatRequest } from '$api/threats';
 	import { THREAT_SCORE_HOW } from '$api/alerts';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import type {
@@ -97,6 +98,29 @@
 	let incompleteChecks = $derived(new Set(report?.incomplete_checks ?? []));
 	let baseline = $derived(summary?.baseline);
 
+	// NET-192 PR 3: 24h, 7d and 30d read the background beaconing scan; its state decides what
+	// the KPI, the brief and the card may say (never "none found" before a scan has finished)
+	let beaconSnap = $derived(report?.beaconing_snapshot);
+	let beaconPending = $derived(beaconSnap?.state === 'pending');
+	let beaconFailed = $derived(failedChecks.has('beaconing') || beaconSnap?.state === 'failed');
+	// a live scan the bucket cap stopped part way (a snapshot is only ever a complete scan)
+	let beaconPartial = $derived(incompleteChecks.has('beaconing'));
+	let beaconCheckedAt = $derived(beaconSnap?.last_success_at ? formatTime(beaconSnap.last_success_at, 'short') : null);
+	// live: the report's query failed; snapshot: no background check has succeeded yet
+	let beaconFailReason = $derived(failedChecks.has('beaconing') ? 'the query failed' : 'the latest check failed');
+	// the page stopped asking after 10 min with the check still running: no more "a few minutes"
+	let pollGaveUp = $state(false);
+	let beaconPendingText = $derived(
+		pollGaveUp ? 'Beaconing check still running. Refresh to check again.' : 'Beaconing check running, ready in a few minutes.',
+	);
+	let beaconKpiSub = $derived.by(() => {
+		if (beaconPending) return pollGaveUp ? 'Still running. Refresh to check again.' : 'Check running, ready in a few minutes';
+		if (beaconFailed) return `Not checked: ${beaconFailReason}`;
+		// an older scan's count: say when, so it isn't read as live
+		if (beaconSnap?.state === 'stale') return `Last checked ${beaconCheckedAt}`;
+		return 'Devices calling one server on a schedule';
+	});
+
 	let threatScore = $derived(summary?.threat_score ?? 0);
 	let threatLevel = $derived(summary?.threat_level ?? 'none');
 	let rangeText = $derived(RANGE_TEXT[selectedRange] ?? selectedRange);
@@ -177,7 +201,10 @@
 		const tiTotal = threatIntel?.total_indicators ?? 0;
 		// OLD CODE START: if (tiTotal > 0) parts.push(`${tiTotal} threat intel indicators`); (I7: now the window's matches) OLD CODE END
 		if (tiTotal > 0) parts.push(`${tiTotal} threat intel matches`);
-		const failed = [...failedChecks].map((c) => CHECK_NAMES[c] ?? c);
+		if (beaconPending) parts.push('Beaconing check running');
+		if (beaconPartial && beacons.length === 0) parts.push('Partial beaconing scan');
+		// OLD CODE: const failed = [...failedChecks].map((c) => CHECK_NAMES[c] ?? c); (NET-192 PR 3: or the background check failed)
+		const failed = [...new Set([...failedChecks, ...(beaconFailed ? ['beaconing'] : [])])].map((c) => CHECK_NAMES[c] ?? c);
 		if (failed.length > 0) parts.push(`Couldn't check ${failed.join(', ')}`);
 		// OLD CODE START — #96: shown after loading too, as if a scan were still running
 		// return parts.join(' · ') || 'Scanning network activity...';
@@ -305,16 +332,55 @@
 	// 	fetchAll(range);
 	// });
 	// OLD CODE END
+	// NET-192 PR 3: while the background beaconing check hasn't finished, ask for its state every
+	// 20 s (the beaconing route, not the whole report), for at most 10 min per range; once it has
+	// finished, load the page again so the other cards and "Updated" move with it
+	const POLL_MS = 20_000;
+	const POLL_FOR_MS = 10 * 60_000;
+	let pollTimer: ReturnType<typeof setTimeout> | undefined;
+	let pendingSince = { range: '', at: 0 };
+
+	function pollWhilePending(g: number, range: string, request: ThreatRequest) {
+		clearTimeout(pollTimer);
+		if (report?.beaconing_snapshot?.state !== 'pending' || !('snapshot' in request)) {
+			pendingSince = { range: '', at: 0 };
+			pollGaveUp = false;
+			return;
+		}
+		if (pendingSince.range !== range) pendingSince = { range, at: Date.now() };
+		pollGaveUp = Date.now() - pendingSince.at >= POLL_FOR_MS;
+		if (pollGaveUp) return;
+		const { snapshot } = request;
+		pollTimer = setTimeout(async () => {
+			const next = await getBeaconing({ snapshot }).catch(() => null);
+			if (!refresh.guard.current(g)) return;
+			if (next) {
+				report = report && { ...report, beaconing: next.beacons, beaconing_snapshot: next.beaconing_snapshot };
+				if (next.beaconing_snapshot?.state !== 'pending') {
+					reload();
+					return;
+				}
+			}
+			pollWhilePending(g, range, request);
+		}, POLL_MS);
+	}
+
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
-		const params = computeTimeParams(selectedRange);
+		clearTimeout(pollTimer);
+		const range = selectedRange;
+		const params = computeTimeParams(range);
+		// one window for the report and the threat intel
+		const request = threatRequest(range, params);
 		loading = true;
-		const [reportRes, tiRes] = await Promise.allSettled([getThreatReport(params), getThreatIntel(params)]);
+		// OLD CODE: const [reportRes, tiRes] = await Promise.allSettled([getThreatReport(params), getThreatIntel(params)]); (NET-192 PR 3: 24h/7d/30d ask for the snapshot)
+		const [reportRes, tiRes] = await Promise.allSettled([getThreatReport(request), getThreatIntel(params)]);
 		if (!guard.current(g)) return 'skipped';
 		report = reportRes.status === 'fulfilled' ? reportRes.value : null;
 		threatIntel = tiRes.status === 'fulfilled' ? tiRes.value : null;
 		intelFailed = tiRes.status === 'rejected';
 		loading = false;
+		pollWhilePending(g, range, request);
 		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
 		// const succeeded = [reportRes, tiRes].filter((r) => r.status === 'fulfilled').length;
 		// return succeeded === 2 ? 'ok' : succeeded === 1 ? 'partial' : 'failed';
@@ -327,7 +393,10 @@
 
 	onMount(() => {
 		reload();
-		return () => refresh.unregister();
+		return () => {
+			clearTimeout(pollTimer);
+			refresh.unregister();
+		};
 	});
 
 	// ---------------------------------------------------------------------------
@@ -444,12 +513,21 @@
 			sub="{formatNumber(summary?.total_events ?? 0)} alert events need attention · {rangeText}"
 		/>
 		<KpiCard class="c-3" label="Kill chains" icon="warn" value={killChains.length} sub="Devices moving through attack stages" />
+		<!-- OLD CODE START (NET-192 PR 3: "—" too while the background check is pending or has never succeeded)
 		<KpiCard
 			class="c-3"
 			label="Beaconing"
 			icon="connections"
 			value={failedChecks.has('beaconing') ? '—' : beacons.length}
 			sub={failedChecks.has('beaconing') ? 'Not checked: the query failed' : 'Devices calling one server on a schedule'}
+		/>
+		OLD CODE END -->
+		<KpiCard
+			class="c-3"
+			label="Beaconing"
+			icon="connections"
+			value={beaconFailed || beaconPending ? '—' : beacons.length}
+			sub={beaconKpiSub}
 		/>
 
 		<!-- Threat brief + threat intel -->
@@ -555,6 +633,7 @@
 		</Card>
 
 		<!-- Beaconing -->
+		<!-- OLD CODE START (NET-192 PR 3: the background check's state: pending, stale, failed; and a live partial scan)
 		<Card title="Beaconing" sub="Connections repeated on a schedule · {rangeText}" class="c-6">
 			{#snippet actions()}
 				<span class={['chip', beacons.length > 0 && 'is-warn']}
@@ -578,15 +657,65 @@
 			{/if}
 			{#if !failedChecks.has('beaconing')}
 				{#each manyHostSources as m (m.ip)}
+					<p class="note">(the many-hosts note, unchanged below)</p>
+				{/each}
+			{/if}
+			{#if incompleteChecks.has('beaconing')}
+				<p class="note">Not every connection pair was checked: this window has more than the scan's limit.</p>
+			{/if}
+		</Card>
+		OLD CODE END -->
+		<Card
+			title="Beaconing"
+			sub="Connections repeated on a schedule · {rangeText}{beaconCheckedAt ? ` · checked ${beaconCheckedAt}` : ''}"
+			class="c-6"
+		>
+			{#snippet actions()}
+				<span class={['chip', beacons.length > 0 && 'is-warn']}
+					>{beaconFailed ? 'check failed' : beaconPending ? 'checking…' : plural(beacons.length, 'suspect')}</span
+				>
+			{/snippet}
+			{#if beaconFailed}
+				<CardState state="error" title="Couldn't check for beaconing: {beaconFailReason}." onaction={reload} />
+			{:else if beaconPending}
+				<p class="note" aria-hidden="true">{beaconPendingText}</p>
+				<CardState state="loading" title={beaconPendingText} />
+			{:else}
+				{#if beaconSnap?.state === 'stale'}
+					<p class="notice is-warn" role="status">
+						<Icon name="warn" /><span
+							>Last checked {beaconCheckedAt};
+							{beaconSnap.last_error ? 'the latest check failed.' : "a newer check hasn't finished yet."}</span
+						>
+					</p>
+				{/if}
+				{#if beaconPartial}
+					<p class="notice is-warn" role="status">
+						<Icon name="warn" /><span>Partial scan: not every connection pair was checked, because this window has more than the scan's limit.</span>
+					</p>
+				{/if}
+				{#if beacons.length > 0}
+					<DataTable columns={BEACON_COLUMNS} rows={beaconRows} ariaLabel="Beaconing suspects" rowKey={(b) => b.key} />
+					{#if beacons.length > BEACONS_SHOWN}
+						<p class="note">Showing the {BEACONS_SHOWN} most confident of {beacons.length.toLocaleString('en-US')} suspects.</p>
+					{/if}
+				{:else if !beaconPartial}
+					<CardState
+						state="empty"
+						title="No beaconing patterns detected."
+						message="A device that calls the same server at a steady interval appears here."
+						icon="connections"
+					/>
+				{/if}
+			{/if}
+			{#if !beaconFailed && !beaconPending}
+				{#each manyHostSources as m (m.ip)}
 					<p class="note">
 						<span class="mono">{m.ip}</span> contacts {m.hosts.toLocaleString('en-US')} internet hosts on regular schedules.
 						Malware usually calls one or a few servers; this many usually means peer-to-peer software (such as BitTorrent)
 						or a device syncing with many services, so these aren't counted as suspects.
 					</p>
 				{/each}
-			{/if}
-			{#if incompleteChecks.has('beaconing')}
-				<p class="note">Not every connection pair was checked: this window has more than the scan's limit.</p>
 			{/if}
 		</Card>
 

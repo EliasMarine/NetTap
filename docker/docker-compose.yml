@@ -924,6 +924,14 @@ services:
       MGMT_INTERFACE: "${MGMT_INTERFACE:-}"
       # Optional LAN override, e.g. 192.168.1.0/24,10.10.0.0/24; empty = detect from traffic (#47)
       LAN_SUBNETS: "${LAN_SUBNETS:-}"
+      # 1 = log one "query-timing" line per OpenSearch request (NET-192 PR 3 measurement;
+      # scripts/remote/deploy-speed-timing.sh turns it on for one run)
+      NETTAP_QUERY_TIMING: "${NETTAP_QUERY_TIMING:-0}"
+      # 0 = no background beaconing scan; the Threats page's 24h/7d/30d are then scanned live,
+      # as before NET-192 PR 3 (rollback switch)
+      NETTAP_BEACON_BACKGROUND: "${NETTAP_BEACON_BACKGROUND:-1}"
+      # Process-wide (whois, threat-intel feeds, update check, UniFi); 2 x 2 s stays under the 6 s lookup bound (NET-192 PR 3)
+      RES_OPTIONS: "timeout:2 attempts:2"
     # OLD CODE START — expose not needed with network_mode: host (port is
     # directly on the host network, no Docker port mapping required)
     # expose:

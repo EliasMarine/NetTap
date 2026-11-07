@@ -207,9 +207,17 @@ def _generate_recommendation(alert: dict) -> str:
 
 
 async def generate_threat_report(
-    client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
+    client,
+    from_ts: str,
+    to_ts: str,
+    excluded_ips: list[str] | None = None,
+    beaconing: list[dict] | None = None,
 ) -> dict:
-    """Unified threat report — the single API call that powers the /threats page."""
+    """Unified threat report — the single API call that powers the /threats page.
+
+    ``beaconing``: rows from the background snapshot (NET-192 PR 3); the beaconing check then
+    doesn't run here. None runs it live, as before.
+    """
     from services.alert_intelligence import (
         get_smart_alerts,
         get_smart_alert_summary,
@@ -238,6 +246,18 @@ async def generate_threat_report(
     # #139: the three checks block on OpenSearch and don't depend on each other or on the
     # alerts: run them side by side in threads, so the report waits for the slowest one only
     loop = asyncio.get_running_loop()
+    # OLD CODE START — NET-192 PR 3: beaconing may come from the background snapshot
+    # running = {
+    #     name: loop.run_in_executor(
+    #         None, partial(detect, client, from_ts, to_ts, excluded_ips=excluded_ips)
+    #     )
+    #     for name, detect in (
+    #         ("beaconing", detect_beaconing),
+    #         ("dns_anomalies", analyze_dns_anomalies),
+    #         ("lateral_movement", detect_lateral_movement),
+    #     )
+    # }
+    # OLD CODE END
     running = {
         name: loop.run_in_executor(
             None, partial(detect, client, from_ts, to_ts, excluded_ips=excluded_ips)
@@ -247,6 +267,7 @@ async def generate_threat_report(
             ("dns_anomalies", analyze_dns_anomalies),
             ("lateral_movement", detect_lateral_movement),
         )
+        if not (name == "beaconing" and beaconing is not None)
     }
     try:
         summary = get_smart_alert_summary(client, from_ts, to_ts)
@@ -268,7 +289,10 @@ async def generate_threat_report(
         # "dns_anomalies": analyze_dns_anomalies(client, from_ts, to_ts, excluded_ips=excluded_ips),
         # "lateral_movement": detect_lateral_movement(client, from_ts, to_ts, excluded_ips=excluded_ips),
         # OLD CODE END
-        "beaconing": [],
+        # OLD CODE START — NET-192 PR 3: or the background snapshot's rows
+        # "beaconing": [],
+        # OLD CODE END
+        "beaconing": beaconing if beaconing is not None else [],
         "dns_anomalies": {
             "dga_suspects": [],
             "tunnel_suspects": [],

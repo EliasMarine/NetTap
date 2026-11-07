@@ -16,6 +16,8 @@ export interface DnsResult {
 	aliases: string[];
 	addresses: string[];
 	error: string | null;
+	/** NET-192 PR 3: the resolver didn't answer within the daemon's 6 s (hostname is null) */
+	timed_out?: boolean;
 }
 
 /**

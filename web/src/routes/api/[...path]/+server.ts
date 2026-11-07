@@ -40,6 +40,9 @@ const SLOW_PATH_TIMEOUT_MS: Record<string, number> = {
 	'/api/packets/check-filter': 25_000,
 	// PR 2 (reliability): 14.4 s cold at 7 d on the G11, so the 10 s default showed an error card
 	'/api/traffic/connections/stats': 30_000,
+	// NET-192 PR 3: Connections offers 30d again; the sankey took 2.3 s at 6 days on the G11
+	'/api/traffic/connections/sankey': 30_000,
+	'/api/traffic/connections/timeline': 30_000,
 };
 // NET-160: the address, domain and Suricata category pages stop themselves at 25 s and answer 503, so 30 s gets the reason
 const SLOW_PREFIX_TIMEOUT_MS: [string, number][] = [

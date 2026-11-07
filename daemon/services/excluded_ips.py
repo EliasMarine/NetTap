@@ -219,33 +219,57 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
         return []
 
 
+# lru_cache: /api/network/lan reads LAN_SUBNETS on every request, so warn once per entry
+@functools.lru_cache(maxsize=64)
+def _warn_invalid_subnet(entry: str) -> None:
+    logger.warning(
+        "Ignoring LAN_SUBNETS entry %r: not an IPv4 /8, /16 or /24 network", entry
+    )
+
+
 def _parse_manual_subnets() -> list[tuple[int, int, int]]:
     """Parse LAN_SUBNETS env var as manual override.
 
-    Supports /8, /16, /24 CIDR blocks.
+    Supports /8, /16, /24 CIDR blocks; any other entry is skipped with a warning.
     Returns empty list if env var is not set (triggers auto-detection).
     """
     raw = os.environ.get("LAN_SUBNETS", "")
     if not raw.strip():
         return []  # No manual override — use auto-detection
 
+    # OLD CODE START — security review L3: octets weren't range-checked (192.168.300.0/24 went
+    # into the filter and OpenSearch rejected every LAN-filtered query), and a non-number
+    # raised at import
+    # subnets: list[tuple[int, int, int]] = []
+    # for cidr in raw.split(","):
+    #     cidr = cidr.strip()
+    #     if "/" not in cidr:
+    #         continue
+    #     ip_part, prefix = cidr.split("/", 1)
+    #     octets = ip_part.split(".")
+    #     if len(octets) != 4:
+    #         continue
+    #     a, b, c = int(octets[0]), int(octets[1]), int(octets[2])
+    #     prefix_len = int(prefix)
+    #     if prefix_len == 8:
+    #         subnets.append((a, -1, -1))
+    #     elif prefix_len == 16:
+    #         subnets.append((a, b, -1))
+    #     elif prefix_len == 24:
+    #         subnets.append((a, b, c))
+    # OLD CODE END
     subnets: list[tuple[int, int, int]] = []
-    for cidr in raw.split(","):
-        cidr = cidr.strip()
-        if "/" not in cidr:
+    for entry in (e.strip() for e in raw.split(",")):
+        if not entry:
             continue
-        ip_part, prefix = cidr.split("/", 1)
-        octets = ip_part.split(".")
-        if len(octets) != 4:
+        try:
+            net = ipaddress.IPv4Network(entry, strict=False)
+        except ValueError:
+            net = None
+        if net is None or net.prefixlen not in (8, 16, 24):
+            _warn_invalid_subnet(entry)
             continue
-        a, b, c = int(octets[0]), int(octets[1]), int(octets[2])
-        prefix_len = int(prefix)
-        if prefix_len == 8:
-            subnets.append((a, -1, -1))
-        elif prefix_len == 16:
-            subnets.append((a, b, -1))
-        elif prefix_len == 24:
-            subnets.append((a, b, c))
+        subnets.append(_subnet(str(net)))
 
     if subnets:
         logger.info(
@@ -258,8 +282,22 @@ def _parse_manual_subnets() -> list[tuple[int, int, int]]:
     return subnets
 
 
+# Matched when no LAN subnet is known; lan_subnets_of() reads this list as [] ("all of RFC1918")
+RFC1918_CIDRS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+
+
+def cidr(subnet: tuple[int, int, int]) -> str:
+    """(a, -1, -1) -> a.0.0.0/8, (a, b, -1) -> a.b.0.0/16, (a, b, c) -> a.b.c.0/24."""
+    a, b, c = subnet
+    if b == -1:
+        return f"{a}.0.0.0/8"
+    if c == -1:
+        return f"{a}.{b}.0.0/16"
+    return f"{a}.{b}.{c}.0/24"
+
+
 def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
-    """Build an OpenSearch painless script filter matching only given subnets.
+    """An OpenSearch filter matching a source.ip in the given subnets (all of RFC1918 if none).
 
     Args:
         subnets: List of (a, b, c) tuples. -1 means wildcard for that octet.
@@ -268,71 +306,110 @@ def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
 
     Returns:
         OpenSearch query filter clause.
+
+    NET-192 PR 3: CIDR terms on the ip field instead of a Painless script that split
+    source.ip as text on every doc. On the G11 over 30 days the device list's composite took
+    3.8-4.3 s with the script and 0.9-1.0 s with CIDR terms, with identical results (3,845,029
+    docs, 59 IPs, the same doc counts and byte sums). Like the script, it matches IPv4 only.
     """
-    if not subnets:
-        # Fallback: match all RFC1918 (broad, but safe default)
-        return {
-            "script": {
-                "script": {
-                    "source": """
-                        def ip = doc['source.ip'].size() > 0 ? doc['source.ip'].value : '';
-                        if (ip.length() == 0) return false;
-                        def parts = ip.splitOnToken('.');
-                        if (parts.length != 4) return false;
-                        int a = Integer.parseInt(parts[0]);
-                        int b = Integer.parseInt(parts[1]);
-                        if (a == 10) return true;
-                        if (a == 172 && b >= 16 && b <= 31) return true;
-                        if (a == 192 && b == 168) return true;
-                        return false;
-                    """,
-                    "lang": "painless",
-                    # Unused by the script: lets Python apply the same rule (lan_subnets_of)
-                    "params": {"lan_subnets": []},
-                }
-            }
-        }
+    return {"terms": {"source.ip": [cidr(s) for s in subnets] or RFC1918_CIDRS}}
 
-    conditions = []
-    for a, b, c in subnets:
-        if b == -1:
-            conditions.append(f"(a == {a})")
-        elif c == -1:
-            conditions.append(f"(a == {a} && b == {b})")
-        else:
-            conditions.append(f"(a == {a} && b == {b} && c == {c})")
 
-    condition_str = " || ".join(conditions)
+# OLD CODE START — NET-192 PR 3: a Painless script that parsed source.ip on every doc
+# (about 4x slower than CIDR terms on the G11's 30 days)
+# def build_lan_filter(subnets: list[tuple[int, int, int]]) -> dict:
+#     """Build an OpenSearch painless script filter matching only given subnets.
+#
+#     Args:
+#         subnets: List of (a, b, c) tuples. -1 means wildcard for that octet.
+#             e.g. (192, 168, 1) matches 192.168.1.x
+#                  (10, -1, -1)   matches 10.x.x.x
+#
+#     Returns:
+#         OpenSearch query filter clause.
+#     """
+#     if not subnets:
+#         # Fallback: match all RFC1918 (broad, but safe default)
+#         return {
+#             "script": {
+#                 "script": {
+#                     "source": """
+#                         def ip = doc['source.ip'].size() > 0 ? doc['source.ip'].value : '';
+#                         if (ip.length() == 0) return false;
+#                         def parts = ip.splitOnToken('.');
+#                         if (parts.length != 4) return false;
+#                         int a = Integer.parseInt(parts[0]);
+#                         int b = Integer.parseInt(parts[1]);
+#                         if (a == 10) return true;
+#                         if (a == 172 && b >= 16 && b <= 31) return true;
+#                         if (a == 192 && b == 168) return true;
+#                         return false;
+#                     """,
+#                     "lang": "painless",
+#                     # Unused by the script: lets Python apply the same rule (lan_subnets_of)
+#                     "params": {"lan_subnets": []},
+#                 }
+#             }
+#         }
+#
+#     conditions = []
+#     for a, b, c in subnets:
+#         if b == -1:
+#             conditions.append(f"(a == {a})")
+#         elif c == -1:
+#             conditions.append(f"(a == {a} && b == {b})")
+#         else:
+#             conditions.append(f"(a == {a} && b == {b} && c == {c})")
+#
+#     condition_str = " || ".join(conditions)
+#
+#     return {
+#         "script": {
+#             "script": {
+#                 "source": f"""
+#                     def ip = doc['source.ip'].size() > 0 ? doc['source.ip'].value : '';
+#                     if (ip.length() == 0) return false;
+#                     def parts = ip.splitOnToken('.');
+#                     if (parts.length != 4) return false;
+#                     int a = Integer.parseInt(parts[0]);
+#                     int b = Integer.parseInt(parts[1]);
+#                     int c = Integer.parseInt(parts[2]);
+#                     return {condition_str};
+#                 """,
+#                 "lang": "painless",
+#                 # Unused by the script: lets Python apply the same rule (lan_subnets_of)
+#                 "params": {"lan_subnets": [list(s) for s in subnets]},
+#             }
+#         }
+#     }
+#
+# def lan_subnets_of(lan_filter: dict | None) -> list[tuple[int, int, int]]:
+#     """The subnets a build_lan_filter() filter matches ([] means all of RFC1918)."""
+#     try:
+#         return [
+#             tuple(s) for s in lan_filter["script"]["script"]["params"]["lan_subnets"]
+#         ]
+#     except (KeyError, TypeError):
+#         return []
+# OLD CODE END
 
-    return {
-        "script": {
-            "script": {
-                "source": f"""
-                    def ip = doc['source.ip'].size() > 0 ? doc['source.ip'].value : '';
-                    if (ip.length() == 0) return false;
-                    def parts = ip.splitOnToken('.');
-                    if (parts.length != 4) return false;
-                    int a = Integer.parseInt(parts[0]);
-                    int b = Integer.parseInt(parts[1]);
-                    int c = Integer.parseInt(parts[2]);
-                    return {condition_str};
-                """,
-                "lang": "painless",
-                # Unused by the script: lets Python apply the same rule (lan_subnets_of)
-                "params": {"lan_subnets": [list(s) for s in subnets]},
-            }
-        }
-    }
+
+def _subnet(cidr: str) -> tuple[int, int, int]:
+    """a.0.0.0/8 -> (a, -1, -1), a.b.0.0/16 -> (a, b, -1), a.b.c.0/24 -> (a, b, c)."""
+    net = ipaddress.ip_network(cidr)
+    a, b, c, _ = net.network_address.packed
+    return (a, -1 if net.prefixlen < 16 else b, -1 if net.prefixlen < 24 else c)
 
 
 def lan_subnets_of(lan_filter: dict | None) -> list[tuple[int, int, int]]:
     """The subnets a build_lan_filter() filter matches ([] means all of RFC1918)."""
     try:
-        return [
-            tuple(s) for s in lan_filter["script"]["script"]["params"]["lan_subnets"]
-        ]
+        cidrs = lan_filter["terms"]["source.ip"]
     except (KeyError, TypeError):
         return []
+    if cidrs == RFC1918_CIDRS:
+        return []
+    return [_subnet(c) for c in cidrs]
 
 
 def detect_and_build_lan_filter(client) -> dict:

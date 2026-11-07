@@ -1,0 +1,8 @@
+# NET-192 PR 3 part 1a: deploy-speed-timing.sh layers this on docker/docker-compose.yml for the
+# timed run only. The device's docker-only sudo rule has no SETENV, so `sudo VAR=1 docker compose`
+# is refused; compose merges this map into the service's environment instead.
+services:
+  nettap-storage-daemon:
+    environment:
+      NETTAP_QUERY_TIMING: "1"
+      NETTAP_BEACON_BACKGROUND: "0"
