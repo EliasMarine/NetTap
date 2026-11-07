@@ -320,3 +320,27 @@ def test_the_smart_check_leaves_the_loop_free():
 
     asyncio.run(main())
     assert waited == [True]
+
+
+def test_a_full_route_pool_leaves_the_default_pool_free():
+    """PR #200 review: routes shared asyncio's default pool (8 threads on the N100) with the
+    drill-downs, the certificate pass and the health checks, which then queued behind them."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from api.offload import in_thread
+
+    release = threading.Event()
+    slow_route = in_thread(lambda _request: release.wait(_WAIT_S))
+
+    async def main():
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(ThreadPoolExecutor(max_workers=8))  # as on the N100
+        routes = [asyncio.ensure_future(slow_route(None)) for _ in range(8)]
+        try:
+            # a drill-down or health check on the default pool doesn't queue behind them
+            return await asyncio.wait_for(asyncio.to_thread(lambda: "ran"), 1)
+        finally:
+            release.set()
+            await asyncio.gather(*routes)
+
+    assert asyncio.run(main()) == "ran"

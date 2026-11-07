@@ -17,7 +17,7 @@ import time
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
-from api.offload import in_thread
+from api.offload import in_thread, run_blocking
 from services.live_connections import LiveConnectionTracker
 
 logger = logging.getLogger("nettap.api.live")
@@ -192,7 +192,7 @@ async def handle_live_dashboard(request: web.Request) -> web.Response:
     #     _enrich_connections_geoip(dashboard.get("connections", []), geoip)
     # OLD CODE END
     try:
-        dashboard = await asyncio.to_thread(fetch_and_enrich)
+        dashboard = await run_blocking(fetch_and_enrich)
     except Exception as exc:
         logger.error("Error fetching live dashboard data: %s", exc)
         return web.json_response(

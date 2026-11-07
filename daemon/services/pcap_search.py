@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from api.offload import run_blocking
 from services.tshark_service import (
     bounded_exec,
     filter_check_cmd,
@@ -244,7 +245,7 @@ class PcapSearchService:
             #     self._search_task.cancel()
             # pcaps = self.get_available_pcaps(from_ts, to_ts)
             # OLD CODE END
-            pcaps = await asyncio.to_thread(self.get_available_pcaps, from_ts, to_ts)
+            pcaps = await run_blocking(self.get_available_pcaps, from_ts, to_ts)
             # Another poll may have started this search while the files were listed
             job = self._search_job
             if job is not None and job["key"] == key:
@@ -619,7 +620,7 @@ class PcapSearchService:
         # OLD CODE START — PR 2 (reliability): the file walk ran on the request loop
         # pcaps = self.get_available_pcaps(from_ts, to_ts)
         # OLD CODE END
-        pcaps = await asyncio.to_thread(self.get_available_pcaps, from_ts, to_ts)
+        pcaps = await run_blocking(self.get_available_pcaps, from_ts, to_ts)
         if not pcaps:
             return None
 
@@ -717,7 +718,7 @@ class PcapSearchService:
             # with open(tmp_path, "wb") as f:
             #     f.write(stdout_bytes)
             # OLD CODE END
-            await asyncio.to_thread(Path(tmp_path).write_bytes, stdout_bytes)
+            await run_blocking(Path(tmp_path).write_bytes, stdout_bytes)
 
             # Clean up merged temp file inside the container
             await self._cleanup_container_tmp(container_merged_path, pcap_files)
