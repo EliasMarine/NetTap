@@ -139,7 +139,10 @@ def test_a_name_is_kept_for_an_hour(clock, resolver):
         },
     )
     assert again == first and still == first
-    assert resolver.ptr_calls() == ["8.8.8.8", "8.8.8.8"]  # asked again only after the hour
+    assert resolver.ptr_calls() == [
+        "8.8.8.8",
+        "8.8.8.8",
+    ]  # asked again only after the hour
 
 
 def test_no_name_is_kept_for_five_minutes(clock, resolver):
@@ -174,7 +177,9 @@ def test_one_lookup_per_ip_at_a_time(clock, resolver):
 
     answers = _run(scenario)
     assert resolver.ptr_calls() == ["8.8.8.8"]
-    assert all(status == 200 and body["hostname"] == "dns.google" for status, body in answers)
+    assert all(
+        status == 200 and body["hostname"] == "dns.google" for status, body in answers
+    )
 
 
 # --- a resolver that doesn't answer ---------------------------------------------------------
@@ -204,15 +209,16 @@ def test_a_blackholed_resolver_times_out_fast_and_health_answers(clock, resolver
         retried = await _json(client, "/api/lookup/dns/8.8.8.8")
         return health.status, health_s, answers, took, recovered, retried
 
-    _run_result = _run(scenario)
-    health_status, health_s, answers, took, recovered, retried = _run_result
+    health_status, health_s, answers, took, recovered, retried = _run(scenario)
     assert health_status == 200 and health_s < HEALTH_BUDGET_S
     assert took < BOUND_S + 0.5
     for status, body in answers:
         assert status == 200
         assert body["hostname"] is None and body["timed_out"] is True
         assert body["error"] is None
-    assert recovered[1]["timed_out"] is True  # 1.1.1.1 timed out a moment ago: kept 5 min
+    assert (
+        recovered[1]["timed_out"] is True
+    )  # 1.1.1.1 timed out a moment ago: kept 5 min
     assert retried == (
         200,
         {
@@ -270,7 +276,9 @@ def test_a_bad_address_is_a_400_and_asks_nobody(clock, resolver):
 
 # --- WHOIS --------------------------------------------------------------------------------------
 
-WHOIS_TEXT = b"NetRange: 1.1.1.0 - 1.1.1.255\nCIDR: 1.1.1.0/24\nOrgName: APNIC and Cloudflare\n"
+WHOIS_TEXT = (
+    b"NetRange: 1.1.1.0 - 1.1.1.255\nCIDR: 1.1.1.0/24\nOrgName: APNIC and Cloudflare\n"
+)
 
 
 class FakeWhois:
