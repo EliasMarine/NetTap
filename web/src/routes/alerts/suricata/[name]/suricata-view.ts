@@ -3,7 +3,7 @@
  * and what a top list says when the snapshot couldn't read every key.
  */
 import type { SuricataTopList } from '$lib/api/drilldown';
-import { fmt, partialListNote } from '$lib/utils/drilldown';
+import { DRILL_RANGES, fmt, partialListNote } from '$lib/utils/drilldown';
 
 export interface CategoryRange {
 	value: string;
@@ -12,16 +12,19 @@ export interface CategoryRange {
 	words: string;
 }
 
+// OLD CODE START — NET-196: the app's one list (DRILL_RANGES)
+// export const CATEGORY_RANGES: readonly CategoryRange[] = [
+// 	// OLD CODE: { value: '15m', label: '15m', hours: 0.25, words: 'last 15 minutes' }, (NET-192 PR 4)
+// 	{ value: '1h', label: '1h', hours: 1, words: 'last hour' },
+// 	// OLD CODE: { value: '4h', label: '4h', hours: 4, words: 'last 4 hours' }, (NET-192 PR 4)
+// 	{ value: '6h', label: '6h', hours: 6, words: 'last 6 hours' },
+// 	{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours' },
+// 	{ value: '7d', label: '7d', hours: 168, words: 'last 7 days' },
+// 	{ value: '30d', label: '30d', hours: 720, words: 'last 30 days' },
+// ];
+// OLD CODE END
 /** The Alerts page's ranges, so every link from here opens on a range it offers (NET-192 PR 4: Home's five). */
-export const CATEGORY_RANGES: readonly CategoryRange[] = [
-	// OLD CODE: { value: '15m', label: '15m', hours: 0.25, words: 'last 15 minutes' }, (NET-192 PR 4)
-	{ value: '1h', label: '1h', hours: 1, words: 'last hour' },
-	// OLD CODE: { value: '4h', label: '4h', hours: 4, words: 'last 4 hours' }, (NET-192 PR 4)
-	{ value: '6h', label: '6h', hours: 6, words: 'last 6 hours' },
-	{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours' },
-	{ value: '7d', label: '7d', hours: 168, words: 'last 7 days' },
-	{ value: '30d', label: '30d', hours: 720, words: 'last 30 days' },
-];
+export const CATEGORY_RANGES: readonly CategoryRange[] = DRILL_RANGES;
 
 /** The timeline's slot as the daemon picks it for a window this long (api/alerts.py _sparkline_interval). */
 export function slotWords(hours: number): string {

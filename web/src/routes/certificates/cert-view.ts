@@ -8,7 +8,7 @@
  */
 import type { CertDetail, CertDevice, CertFinding, CertSite, FindingKind } from '$lib/api/certificates';
 import { loadFailed } from '$lib/utils/load-failed';
-import { customRange, fmt, formatWhen } from '$lib/utils/drilldown';
+import { customRange, DRILL_RANGES, fmt, formatWhen } from '$lib/utils/drilldown';
 import { formatTime } from '$lib/utils/time';
 
 export type Names = ReadonlyMap<string, string>;
@@ -26,14 +26,17 @@ export interface RangeOption {
 	words: string;
 }
 
+// OLD CODE START — NET-196: the app's one list (DRILL_RANGES)
+// export const RANGES: readonly RangeOption[] = [
+// 	{ value: '1h', label: '1h', hours: 1, words: 'last hour' },
+// 	{ value: '6h', label: '6h', hours: 6, words: 'last 6 hours' },
+// 	{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours' },
+// 	{ value: '7d', label: '7d', hours: 168, words: 'last 7 days' },
+// 	{ value: '30d', label: '30d', hours: 720, words: 'last 30 days' },
+// ];
+// OLD CODE END
 /** One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. */
-export const RANGES: readonly RangeOption[] = [
-	{ value: '1h', label: '1h', hours: 1, words: 'last hour' },
-	{ value: '6h', label: '6h', hours: 6, words: 'last 6 hours' },
-	{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours' },
-	{ value: '7d', label: '7d', hours: 168, words: 'last 7 days' },
-	{ value: '30d', label: '30d', hours: 720, words: 'last 30 days' },
-];
+export const RANGES: readonly RangeOption[] = DRILL_RANGES;
 
 /** A window a link brought (?from=&to=), shown as "Custom". */
 export interface CustomRange extends RangeOption {

@@ -14,7 +14,7 @@
 
 	import { onDestroy, untrack } from 'svelte';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
-	import { chartTime, startRange } from '$lib/utils/drilldown';
+	import { chartTime, DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown';
 	import DetailDrawer from '$lib/components/DetailDrawer.svelte';
 	import DrawerSection from '$lib/components/drawer/DrawerSection.svelte';
 	import KVRow from '$lib/components/drawer/KVRow.svelte';
@@ -79,20 +79,28 @@
 	// Constants
 	// ---------------------------------------------------------------------------
 
-	const TIME_RANGES = [
-		{ label: '1h', value: '1h' },
-		{ label: '6h', value: '6h' },
-		{ label: '24h', value: '24h' },
-		{ label: '7d', value: '7d' },
-		// NET-192 PR 4: Home's five ranges; the daemon picks the timelines' buckets. Not yet timed on the G11.
-		{ label: '30d', value: '30d' },
-	];
-	// OLD CODE: const RANGE_LABEL: Record<string, string> = { '1h': 'last hour', '6h': 'last 6 hours', '24h': 'last 24 hours', '7d': 'last 7 days' }; (NET-192 PR 4: 30d)
-	const RANGE_LABEL: Record<string, string> = { '1h': 'last hour', '6h': 'last 6 hours', '24h': 'last 24 hours', '7d': 'last 7 days', '30d': 'last 30 days' };
-	const rangeLabel = $derived(RANGE_LABEL[selectedRange] ?? 'last 24 hours');
-	const RANGE_HOURS: Record<string, number> = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 };
+	// OLD CODE START — NET-196: the app's one list (DRILL_RANGES) and lookups in it
+	// const TIME_RANGES = [
+	// 	{ label: '1h', value: '1h' },
+	// 	{ label: '6h', value: '6h' },
+	// 	{ label: '24h', value: '24h' },
+	// 	{ label: '7d', value: '7d' },
+	// 	// NET-192 PR 4: Home's five ranges; the daemon picks the timelines' buckets. Not yet timed on the G11.
+	// 	{ label: '30d', value: '30d' },
+	// ];
+	// // OLD CODE: const RANGE_LABEL: Record<string, string> = { '1h': 'last hour', '6h': 'last 6 hours', '24h': 'last 24 hours', '7d': 'last 7 days' }; (NET-192 PR 4: 30d)
+	// const RANGE_LABEL: Record<string, string> = { '1h': 'last hour', '6h': 'last 6 hours', '24h': 'last 24 hours', '7d': 'last 7 days', '30d': 'last 30 days' };
+	// const rangeLabel = $derived(RANGE_LABEL[selectedRange] ?? 'last 24 hours');
+	// const RANGE_HOURS: Record<string, number> = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 };
+	// // NET-192 PR 4: the browser's locale printed "07:00 PM", and a week of hourly buckets showed only times of day
+	// const timelineTime = (t: number | string) => chartTime(t, RANGE_HOURS[selectedRange] ?? 24);
+	// OLD CODE END
+	// NET-192 PR 4: Home's five ranges; the daemon picks the timelines' buckets. Not yet timed on the G11.
+	const TIME_RANGES = DRILL_RANGES.map((r) => ({ value: r.value, label: r.label }));
+	const span = $derived(DRILL_RANGES.find((r) => r.value === selectedRange) ?? DRILL_RANGES.find((r) => r.value === '24h')!);
+	const rangeLabel = $derived(span.words);
 	// NET-192 PR 4: the browser's locale printed "07:00 PM", and a week of hourly buckets showed only times of day
-	const timelineTime = (t: number | string) => chartTime(t, RANGE_HOURS[selectedRange] ?? 24);
+	const timelineTime = (t: number | string) => chartTime(t, span.hours);
 
 	const DRAWER_TABS: DrawerTab[] = [
 		{ id: 'overview', label: 'Overview' },
@@ -106,18 +114,22 @@
 	// Time helpers
 	// ---------------------------------------------------------------------------
 
-	function computeTimeParams(range: string): { from: string; to: string } {
-		const now = new Date();
-		let ms = 24 * 60 * 60 * 1000;
-		switch (range) {
-			case '1h': ms = 60 * 60 * 1000; break;
-			case '6h': ms = 6 * 60 * 60 * 1000; break;
-			case '24h': ms = 24 * 60 * 60 * 1000; break;
-			case '7d': ms = 7 * 24 * 60 * 60 * 1000; break;
-			case '30d': ms = 30 * 24 * 60 * 60 * 1000; break;
-		}
-		return { from: new Date(now.getTime() - ms).toISOString(), to: now.toISOString() };
-	}
+	// OLD CODE START — NET-196: the window ending now is rangeWindow, over the list's hours
+	// function computeTimeParams(range: string): { from: string; to: string } {
+	// 	const now = new Date();
+	// 	let ms = 24 * 60 * 60 * 1000;
+	// 	switch (range) {
+	// 		case '1h': ms = 60 * 60 * 1000; break;
+	// 		case '6h': ms = 6 * 60 * 60 * 1000; break;
+	// 		case '24h': ms = 24 * 60 * 60 * 1000; break;
+	// 		case '7d': ms = 7 * 24 * 60 * 60 * 1000; break;
+	// 		case '30d': ms = 30 * 24 * 60 * 60 * 1000; break;
+	// 	}
+	// 	return { from: new Date(now.getTime() - ms).toISOString(), to: now.toISOString() };
+	// }
+	// OLD CODE END
+	/** The window ending now for a range; anything not in the list is 24 hours. */
+	const computeTimeParams = (range: string) => rangeWindow(DRILL_RANGES.find((r) => r.value === range)?.hours ?? 24);
 
 	// ---------------------------------------------------------------------------
 	// Fetching

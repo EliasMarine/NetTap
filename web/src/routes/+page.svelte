@@ -31,7 +31,7 @@
 	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTrafficCategories } from '$api/traffic';
 	import type { TrafficSummary, BandwidthPoint, ProtocolEntry, TrafficCategory } from '$api/traffic';
 	import { getAlertCount, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
-	import { connLogsHref, fmt, NO_EXACT_ALERT_LIST, smartAlertHref, startRange, windowQuery, withCount, type DrillWindow } from '$lib/utils/drilldown';
+	import { connLogsHref, DRILL_RANGES, fmt, NO_EXACT_ALERT_LIST, smartAlertHref, startRange, windowQuery, withCount, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
 	import type { AlertCountResponse, SmartAlert, SmartAlertSummary } from '$api/alerts';
 	import { getDevices, getDeviceCount } from '$api/devices';
 	import type { Device, DeviceCountResponse } from '$api/devices';
@@ -56,14 +56,21 @@
 	const TOP_SERVICES = 8;
 
 	// DashboardFilters' time ranges, as head pills (its device and protocol filters were never applied)
-	const RANGES = [
-		{ value: '1h', label: '1h', hours: 1, window: 'Last hour', previous: 'previous hour' },
-		{ value: '6h', label: '6h', hours: 6, window: 'Last 6 hours', previous: 'previous 6 h' },
-		{ value: '24h', label: '24h', hours: 24, window: 'Last 24 hours', previous: 'previous 24 h' },
-		{ value: '7d', label: '7d', hours: 168, window: 'Last 7 days', previous: 'previous 7 days' },
-		{ value: '30d', label: '30d', hours: 720, window: 'Last 30 days', previous: 'previous 30 days' },
-	] as const;
-	type RangeKey = (typeof RANGES)[number]['value'];
+	// OLD CODE START — NET-196: the app's one list (DRILL_RANGES), with Home's comparison words beside it
+	// const RANGES = [
+	// 	{ value: '1h', label: '1h', hours: 1, window: 'Last hour', previous: 'previous hour' },
+	// 	{ value: '6h', label: '6h', hours: 6, window: 'Last 6 hours', previous: 'previous 6 h' },
+	// 	{ value: '24h', label: '24h', hours: 24, window: 'Last 24 hours', previous: 'previous 24 h' },
+	// 	{ value: '7d', label: '7d', hours: 168, window: 'Last 7 days', previous: 'previous 7 days' },
+	// 	{ value: '30d', label: '30d', hours: 720, window: 'Last 30 days', previous: 'previous 30 days' },
+	// ] as const;
+	// type RangeKey = (typeof RANGES)[number]['value'];
+	// OLD CODE END
+	type RangeKey = DrillRangeValue;
+	const PREVIOUS: Record<RangeKey, string> = {
+		'1h': 'previous hour', '6h': 'previous 6 h', '24h': 'previous 24 h', '7d': 'previous 7 days', '30d': 'previous 30 days',
+	};
+	const RANGES = DRILL_RANGES.map((r) => ({ ...r, window: r.words.charAt(0).toUpperCase() + r.words.slice(1), previous: PREVIOUS[r.value] }));
 	const RANGE_OPTIONS = RANGES.map(({ value, label }) => ({ value, label }));
 
 	// OLD CODE: let range = $state<RangeKey>('24h'); (NET-195: Settings › Display's default, read where the range starts so the first load uses it)

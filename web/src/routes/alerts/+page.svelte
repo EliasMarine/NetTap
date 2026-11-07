@@ -57,6 +57,7 @@
 		alertsHrefForSignature,
 		countDifference,
 		customRange,
+		DRILL_RANGES,
 		fmt,
 		linkedCount,
 		partialListNote,
@@ -92,17 +93,21 @@
 	// ---------------------------------------------------------------------------
 
 	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. Live is the real-time page.
-	const TIME_RANGES = [
-		// OLD CODE: { label: '15m', value: '15m', ms: 15 * 60 * 1000, words: 'last 15 minutes' }, (NET-192 PR 4)
-		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour' },
-		// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' }, (NET-192 PR 4)
-		// NET-160 slice 2b-1: Home's 6h links here with its window
-		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, words: 'last 6 hours' },
-		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours' },
-		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days' },
-		// NET-160: the address and domain pages link here with their 30-day window
-		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days' },
-	];
+	// OLD CODE START — NET-196: the app's one list (DRILL_RANGES), with this page's ms beside it
+	// const TIME_RANGES = [
+	// 	// OLD CODE: { label: '15m', value: '15m', ms: 15 * 60 * 1000, words: 'last 15 minutes' }, (NET-192 PR 4)
+	// 	{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour' },
+	// 	// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' }, (NET-192 PR 4)
+	// 	// NET-160 slice 2b-1: Home's 6h links here with its window
+	// 	{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, words: 'last 6 hours' },
+	// 	{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours' },
+	// 	{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days' },
+	// 	// NET-160: the address and domain pages link here with their 30-day window
+	// 	{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days' },
+	// ];
+	// OLD CODE END
+	// rangeFor sets each range's interval from INTERVAL_MAP below (DRILL_RANGES' interval is Home's wording)
+	const TIME_RANGES = DRILL_RANGES.map((r) => ({ ...r, ms: r.hours * 3_600_000 }));
 
 	const INTERVAL_MAP: Record<string, string> = {
 		// OLD CODE: '15m': '1m', (NET-192 PR 4)

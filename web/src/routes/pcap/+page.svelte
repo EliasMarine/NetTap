@@ -36,7 +36,7 @@
 	import KpiCard from '$lib/components/ui/KpiCard.svelte';
 	import Pills from '$lib/components/ui/Pills.svelte';
 	import SearchField from '$lib/components/ui/SearchField.svelte';
-	import { chartTime, fmt } from '$lib/utils/drilldown';
+	import { chartTime, DRILL_RANGES, fmt, type DrillRangeValue } from '$lib/utils/drilldown';
 	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
@@ -44,14 +44,18 @@
 	// ---------------------------------------------------------------------------
 
 	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home
-	const TIME_RANGES = [
-		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour', bucket: '5 minutes' },
-		// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours', bucket: '20 minutes' }, (NET-192 PR 4)
-		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, words: 'last 6 hours', bucket: '30 minutes' },
-		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours', bucket: 'hour' },
-		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days', bucket: '6 hours' },
-		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days', bucket: 'day' },
-	];
+	// OLD CODE START — NET-196: the app's one list (DRILL_RANGES), with this page's ms and capture-timeline bucket beside it
+	// const TIME_RANGES = [
+	// 	{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour', bucket: '5 minutes' },
+	// 	// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours', bucket: '20 minutes' }, (NET-192 PR 4)
+	// 	{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, words: 'last 6 hours', bucket: '30 minutes' },
+	// 	{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours', bucket: 'hour' },
+	// 	{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days', bucket: '6 hours' },
+	// 	{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days', bucket: 'day' },
+	// ];
+	// OLD CODE END
+	const BUCKET: Record<DrillRangeValue, string> = { '1h': '5 minutes', '6h': '30 minutes', '24h': 'hour', '7d': '6 hours', '30d': 'day' };
+	const TIME_RANGES = DRILL_RANGES.map((r) => ({ ...r, ms: r.hours * 3_600_000, bucket: BUCKET[r.value] }));
 
 	const SEARCH_POLL_MS = 3000;
 
