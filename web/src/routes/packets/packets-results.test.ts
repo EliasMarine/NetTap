@@ -145,7 +145,7 @@ describe('Packet analysis: a search', () => {
 		vi.mocked(api.searchPackets).mockRejectedValue(new api.PacketApiError(message, status));
 		render(Page);
 		await screen.findByText(title);
-		expect(screen.getByText(new RegExp(message.replace(/[.()]/g, '\\$&')))).toBeInTheDocument();
+		expect(screen.getByText(message, { exact: false })).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
 	});
 
