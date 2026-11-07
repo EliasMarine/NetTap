@@ -1,6 +1,13 @@
 # 2026-11-07 — Packet analysis, PR 1: the daemon reads windows of the saved captures exactly
 
-**Status:** PR #196. The branch passed every check on the G11 (2026-11-07 05:17 UTC); the review fixes below are deployed with the merge.
+**Status:** merged as PR #196 (squash `50e6f2f`) and deployed. The G11 runs `main` at that commit, and `deploy-packet-analysis.sh` passed 32 ✓, 0 ✗ (2026-11-07 06:15 UTC).
+- **The index:** 1,618 files, 0 unreadable.
+- **Cut-short files:** both match TShark reading the whole file.
+- **Searches against an independent read:** 573 = 573 across a file boundary; 528 = 528 and 256 = 256 across each cut-short file's end.
+- **Leftovers:** none.
+
+The final commit before the merge (`95b6b19`) had already passed the same checks on the branch. The page is PR 2.
+
 - **Linear:** NET-188.
 - **Plan:** `.codex-review/2026-11-07-0400-packet-analysis/PLAN.md`. Codex reviewed it for 5 rounds and raised 38 findings, all accepted. The log has the build's measured departures under "Implementation notes".
 - **Mockup:** https://claude.ai/artifact/EhF7D2N8ngPrY49DgKTVWP
