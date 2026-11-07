@@ -17,6 +17,7 @@ import { LIVE_ROUTES } from './live.ts';
 import { LOGS_ROUTES } from './logs.ts';
 import { LOOKUP_ROUTES } from './lookup.ts';
 import { NOTIFICATION_ROUTES } from './notifications.ts';
+import { PACKETS_ROUTES } from './packets.ts';
 import { PCAP_ROUTES } from './pcap.ts';
 import { RISK_ROUTES } from './risk.ts';
 import { SETTINGS_ROUTES } from './settings.ts';
@@ -48,6 +49,7 @@ export const ROUTES: readonly FixtureRoute[] = [
 	...LOGS_ROUTES,
 	...LOOKUP_ROUTES,
 	...NOTIFICATION_ROUTES,
+	...PACKETS_ROUTES,
 	...PCAP_ROUTES,
 	...RISK_ROUTES,
 	...SETTINGS_ROUTES,

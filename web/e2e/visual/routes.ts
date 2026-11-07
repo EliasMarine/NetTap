@@ -43,6 +43,8 @@ export const APP_ROUTES: readonly RouteCase[] = [
 	{ path: '/lookup/dns/203.0.113.5', marker: 'DNS lookup' },
 	{ path: '/lookup/whois', marker: 'WHOIS lookup' },
 	{ path: '/lookup/whois/203.0.113.5', marker: 'WHOIS lookup' },
+	// NET-188: the first visit; packets.visual.ts covers a search's answer and the packet drawer
+	{ path: '/packets', marker: 'Packet analysis' },
 	{ path: '/pcap', marker: 'PCAP search' },
 	{ path: '/settings', marker: 'Settings' },
 	{ path: '/settings/backup', marker: 'Backup and restore' },
@@ -61,6 +63,6 @@ export const APP_ROUTES: readonly RouteCase[] = [
 	{ path: '/tools/port-reference', marker: 'Port reference' },
 	{ path: '/tools/ssl-cert', marker: 'SSL certificate viewer' },
 	{ path: '/tools/subnet-calc', marker: 'Subnet calculator' },
-	{ path: '/tools/tshark', marker: 'TShark packet analysis' },
+	// OLD CODE: { path: '/tools/tshark', marker: 'TShark packet analysis' }, (NET-188: it redirects to /packets)
 	{ path: '/traffic/streaming', marker: /streaming/i },
 ];

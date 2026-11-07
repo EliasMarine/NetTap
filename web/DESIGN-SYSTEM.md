@@ -51,7 +51,7 @@ The old names (`--bg-tertiary`, `--text-primary`, `--cyan`, `--red`, `--space-md
 
 `+layout.svelte` draws the system shell: skip link, `.app > .shell`, `Sidebar`, then `main#main` with `TopBar` and the page. Components live in `src/lib/components/shell/`.
 
-- **Sidebar:** 19 links in 4 groups (`nav.ts`), the Alerts count from the shared alert snapshot, the capture chip and storage meter, and Sign out (a `POST /api/auth/logout` form).
+- **Sidebar:** 20 links in 4 groups (`nav.ts`; Packet analysis joined Investigate in NET-188), the Alerts count from the shared alert snapshot, the capture chip and storage meter, and Sign out (a `POST /api/auth/logout` form).
 - **TopBar:** search combobox (Ctrl-K), Refresh (runs the page's registered loader), the "Updated" time and the notification bell. **Pages have no Refresh button or "Updated" text of their own.**
 - **Phone (≤ 760 px app width):** a top bar with a menu button opens the sidebar as a drawer: focus moves in, Tab is trapped, and Escape, the scrim or a link closes it.
 - `/login` and `/setup` render bare (no shell).
