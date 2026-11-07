@@ -5,6 +5,7 @@
 import type { ByteTotal } from '$lib/api/drilldown';
 import type { SmartAlertKey } from '$lib/api/alerts';
 import { formatBytes, formatCompactNumber } from '$lib/api/logs';
+import { formatTime } from './time';
 
 // OLD CODE: export type DrillRangeValue = '24h' | '7d' | '30d'; (NET-192 PR 4: Home's five ranges)
 export type DrillRangeValue = '1h' | '6h' | '24h' | '7d' | '30d';
@@ -126,14 +127,17 @@ export interface DrillWindow {
 	to: string;
 }
 
+// OLD CODE START — NET-192 PR 4: the same output as formatTime's short style, so it is that
+// export function formatWhen(iso: string | null | undefined): string {
+// 	if (!iso) return '—';
+// 	const d = new Date(iso);
+// 	return Number.isFinite(d.getTime())
+// 		? d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+// 		: iso;
+// }
+// OLD CODE END
 /** A day and time, as the windows are written ("6 Nov, 13:02"). */
-export function formatWhen(iso: string | null | undefined): string {
-	if (!iso) return '—';
-	const d = new Date(iso);
-	return Number.isFinite(d.getTime())
-		? d.toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
-		: iso;
-}
+export const formatWhen = (iso: string | null | undefined): string => formatTime(iso, 'short');
 
 /** A window a link brought (?from=&to=), shown as a "Custom" range. */
 export interface CustomWindow extends DrillWindow {

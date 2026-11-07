@@ -9,6 +9,7 @@
 import type { CertDetail, CertDevice, CertFinding, CertSite, FindingKind } from '$lib/api/certificates';
 import { loadFailed } from '$lib/utils/load-failed';
 import { customRange, formatWhen } from '$lib/utils/drilldown';
+import { formatTime } from '$lib/utils/time';
 
 export type Names = ReadonlyMap<string, string>;
 
@@ -115,12 +116,15 @@ const failedOnly = (failed: Readonly<Record<string, number>> | undefined): strin
 		.sort()
 		.join('; ');
 
+// OLD CODE START — NET-192 PR 4: the same output as formatTime's date style, so it is that
+// export function formatDay(iso: string | null | undefined): string {
+// 	if (!iso) return '—';
+// 	const d = new Date(iso);
+// 	return Number.isFinite(d.getTime()) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : iso;
+// }
+// OLD CODE END
 /** "2 Mar 2026"; the raw text when it isn't a date; "—" when missing. */
-export function formatDay(iso: string | null | undefined): string {
-	if (!iso) return '—';
-	const d = new Date(iso);
-	return Number.isFinite(d.getTime()) ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : iso;
-}
+export const formatDay = (iso: string | null | undefined): string => formatTime(iso, 'date');
 
 // OLD CODE START — slice 2a: moved to lib/utils/drilldown.ts with customRange, which words windows with it
 // /** "5 Nov, 21:05"; "—" when missing. */
