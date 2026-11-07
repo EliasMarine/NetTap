@@ -11,7 +11,7 @@
 	import { getSuricataCategory, type SuricataAddressRow, type SuricataCategoryFigures, type SuricataRuleRow, type SuricataTopList } from '$lib/api/drilldown';
 	import { outcome, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	// OLD CODE: import { chartTime, customRange, fmt, formatWhen, rangeWindow, suricataAlertsHref, suricataCategoryHref, type SuricataNarrow } from '$lib/utils/drilldown'; (section D)
-	import { chartTime, customRange, fmt, formatWhen, rangeWindow, suricataAlertsHref, suricataCategoryHref, withCount, type SuricataNarrow } from '$lib/utils/drilldown';
+	import { chartTime, customRange, fmt, formatWhen, rangeWindow, startRange, suricataAlertsHref, suricataCategoryHref, withCount, type SuricataNarrow } from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import IPAddress from '$components/IPAddress.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -32,10 +32,11 @@
 	const params = $derived($page.url.searchParams);
 	/** The exact window a link brought (?from=&to=), shown as "Custom". */
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
-	/** The URL's standard range (24h without one): a Custom window's links carry it for their words. */
+	/** The URL's standard range (without one, the saved default, else 24h): a Custom window's links carry it for their words. */
 	// OLD CODE: ?? CATEGORY_RANGES[4]); (NET-192 PR 4: 15m and 4h dropped, 24h is index 2)
 	// OLD CODE: ?? CATEGORY_RANGES[2] (NET-192 PR 4: the default by value, not by position)
-	const baseRange = $derived(CATEGORY_RANGES.find((r) => r.value === params.get('range')) ?? CATEGORY_RANGES.find((r) => r.value === '24h')!);
+	// OLD CODE: … ?? CATEGORY_RANGES.find((r) => r.value === '24h')!); (NET-195: a link's range, else Settings › Display's default)
+	const baseRange = $derived(CATEGORY_RANGES.find((r) => r.value === params.get('range')) ?? CATEGORY_RANGES.find((r) => r.value === startRange('24h'))!);
 	const range = $derived<CategoryRange>(custom ?? baseRange);
 	const view = $derived(`${name}|${baseRange.value}|${custom?.from ?? ''}|${custom?.to ?? ''}`);
 

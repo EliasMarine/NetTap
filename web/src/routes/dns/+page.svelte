@@ -39,7 +39,7 @@
 	import SearchField from '$lib/components/ui/SearchField.svelte';
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import { domainHref } from '$lib/stores/lan';
-	import { chartTime, fmt } from '$lib/utils/drilldown';
+	import { chartTime, DRILL_RANGES, fmt, rangeWindow, startRange } from '$lib/utils/drilldown';
 	import { formatCompactNumber as formatNumber } from '$lib/api/logs';
 
 	// ---------------------------------------------------------------------------
@@ -47,15 +47,18 @@
 	// ---------------------------------------------------------------------------
 
 	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. Live is the real-time page.
-	const TIME_RANGES = [
-		// OLD CODE: { label: '15m', value: '15m', ms: 15 * 60 * 1000, words: 'last 15 minutes' }, (NET-192 PR 4)
-		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour' },
-		// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' }, (NET-192 PR 4)
-		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, words: 'last 6 hours' },
-		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours' },
-		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days' },
-		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days' },
-	];
+	// OLD CODE START — NET-196: the app's one list (DRILL_RANGES), with this page's ms beside it
+	// const TIME_RANGES = [
+	// 	// OLD CODE: { label: '15m', value: '15m', ms: 15 * 60 * 1000, words: 'last 15 minutes' }, (NET-192 PR 4)
+	// 	{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour' },
+	// 	// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' }, (NET-192 PR 4)
+	// 	{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, words: 'last 6 hours' },
+	// 	{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours' },
+	// 	{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days' },
+	// 	{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days' },
+	// ];
+	// OLD CODE END
+	const TIME_RANGES = [...DRILL_RANGES]; // a copy: Pills takes a mutable list
 
 	// OLD CODE START — severity is now the system's SeverityPill (colour, shape and word)
 	// const SEVERITY_COLORS: Record<string, string> = {
@@ -87,7 +90,8 @@
 	// State
 	// ---------------------------------------------------------------------------
 
-	let selectedTimeRange = $state('24h');
+	// OLD CODE: let selectedTimeRange = $state('24h'); (NET-195: Settings › Display's default, read where the range starts)
+	let selectedTimeRange = $state<string>(startRange('24h'));
 	let loading = $state(true);
 	// OLD CODE START — PLAN §5.5: a range change during the first load now starts a new, guarded load
 	// let initialized = $state(false);
@@ -242,13 +246,16 @@
 	// ---------------------------------------------------------------------------
 
 	function getTimeRange(rangeValue: string = selectedTimeRange): { from: string; to: string } {
-		const now = new Date();
-		const range = TIME_RANGES.find((r) => r.value === rangeValue);
-		const ms = range?.ms ?? 24 * 60 * 60 * 1000;
-		return {
-			from: new Date(now.getTime() - ms).toISOString(),
-			to: now.toISOString(),
-		};
+		// OLD CODE START — NET-196: the shared list's hours and rangeWindow, not milliseconds
+		// const now = new Date();
+		// const range = TIME_RANGES.find((r) => r.value === rangeValue);
+		// const ms = range?.ms ?? 24 * 60 * 60 * 1000;
+		// return {
+		// 	from: new Date(now.getTime() - ms).toISOString(),
+		// 	to: now.toISOString(),
+		// };
+		// OLD CODE END
+		return rangeWindow(TIME_RANGES.find((r) => r.value === rangeValue)?.hours ?? 24);
 	}
 
 	// OLD CODE START — one compact format for the app (NET-192 PR 4): formatCompactNumber in $lib/api/logs
@@ -269,7 +276,8 @@
 	// 	}
 	// }
 	// OLD CODE END
-	const rangeHours = $derived((TIME_RANGES.find((r) => r.value === selectedTimeRange)?.ms ?? 86_400_000) / 3_600_000);
+	// OLD CODE: const rangeHours = $derived((TIME_RANGES.find((r) => r.value === selectedTimeRange)?.ms ?? 86_400_000) / 3_600_000); (NET-196: the list has hours)
+	const rangeHours = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange)?.hours ?? 24);
 	const formatTimestamp = (ts: string) => chartTime(ts, rangeHours);
 
 	// OLD CODE START — DataTable draws the sort chevrons

@@ -430,4 +430,22 @@ describe('Connections — the range set', () => {
 	// 	expect(vi.mocked(getConnectionTimeline).mock.lastCall![0]!.interval).toBe('5m');
 	// });
 	// OLD CODE END
+
+	// NET-195: the page keeps the range object; it starts on the saved default's, and loads in onMount
+	describe('the saved default range (NET-195)', () => {
+		beforeEach(() => {
+			localStorage.clear();
+			localStorage.setItem('nettap-display-settings', JSON.stringify({ defaultRange: '7d' }));
+		});
+		afterEach(() => localStorage.clear());
+
+		it('opens on the saved range, so the first requests ask for 7 days', async () => {
+			render(Page);
+			await flush();
+			expect(vi.mocked(getConnections).mock.calls.map(([opts]) => hours(opts!))).toEqual([168]);
+			expect(hours(vi.mocked(getConnectionStats).mock.calls[0][0]!)).toBe(168);
+			expect(vi.mocked(getConnectionTimeline).mock.calls[0][0]!.interval).toBe('6h');
+			expect(screen.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
+		});
+	});
 });

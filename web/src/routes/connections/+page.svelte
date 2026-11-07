@@ -22,6 +22,7 @@
 	// OLD CODE END
 	import { getLiveDashboard } from '$api/live';
 	import { loadFailed } from '$lib/utils/load-failed';
+	import { DRILL_RANGES, startRange, type DrillRangeValue } from '$lib/utils/drilldown';
 	import { formatBytes as sharedFormatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import IPAddress from '$components/IPAddress.svelte';
 	// OLD CODE START — replaced by the system's BarList (ui/BarList)
@@ -68,7 +69,8 @@
 
 	interface TimeRange {
 		label: string;
-		value: string;
+		// OLD CODE: value: string; (NET-196: the app's one list's type)
+		value: DrillRangeValue;
 		ms: number;
 		/** The window in words, for card subtitles (lower case: "Sessions per protocol · last hour") */
 		text: string;
@@ -77,15 +79,18 @@
 	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. Live is the real-time page.
 	// OLD CODE: // shortcut: no 30d until PR 3 speeds up connections stats (14.5 s over 6 days of data on the G11), then add it back
 	// (NET-192 PR 3: stats no longer looks up ASN and country under every destination, so 30d is back)
-	const TIME_RANGES: TimeRange[] = [
-		// OLD CODE: { label: '15m', value: '15m', ms: 15 * 60 * 1000, text: 'Last 15 minutes' }, (NET-192 PR 4)
-		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, text: 'last hour' },
-		// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, text: 'Last 4 hours' }, (NET-192 PR 4)
-		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, text: 'last 6 hours' },
-		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, text: 'last 24 hours' },
-		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, text: 'last 7 days' },
-		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, text: 'last 30 days' },
-	];
+	// OLD CODE START — NET-196: the app's one list (DRILL_RANGES), with this page's ms beside it
+	// const TIME_RANGES: TimeRange[] = [
+	// 	// OLD CODE: { label: '15m', value: '15m', ms: 15 * 60 * 1000, text: 'Last 15 minutes' }, (NET-192 PR 4)
+	// 	{ label: '1h', value: '1h', ms: 60 * 60 * 1000, text: 'last hour' },
+	// 	// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, text: 'Last 4 hours' }, (NET-192 PR 4)
+	// 	{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, text: 'last 6 hours' },
+	// 	{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, text: 'last 24 hours' },
+	// 	{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, text: 'last 7 days' },
+	// 	{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, text: 'last 30 days' },
+	// ];
+	// OLD CODE END
+	const TIME_RANGES: TimeRange[] = DRILL_RANGES.map((r) => ({ label: r.label, value: r.value, ms: r.hours * 3_600_000, text: r.words }));
 
 	// OLD CODE: '15m': '1m', '1h': '5m', '4h': '15m', '24h': '1h', '7d': '6h', (NET-192 PR 4)
 	// OLD CODE: '1h': '5m', '6h': '15m', '24h': '1h', '7d': '6h', (NET-192 PR 3: 30d is back)
@@ -129,7 +134,8 @@
 	// Time range
 	// OLD CODE: let selectedTimeRange = $state<TimeRange>(TIME_RANGES[1]); // 1h (NET-192 PR 4: 1h is index 0)
 	// OLD CODE: $state<TimeRange>(TIME_RANGES[0]) (NET-192 PR 4: the default by value, not by position)
-	let selectedTimeRange = $state<TimeRange>(TIME_RANGES.find((r) => r.value === '1h')!);
+	// OLD CODE: $state<TimeRange>(TIME_RANGES.find((r) => r.value === '1h')!) (NET-195: Settings › Display's default, read where the range starts)
+	let selectedTimeRange = $state<TimeRange>(TIME_RANGES.find((r) => r.value === startRange('1h'))!);
 	let autoRefresh = $state(false);
 	let refreshInterval = $state<ReturnType<typeof setInterval> | null>(null);
 

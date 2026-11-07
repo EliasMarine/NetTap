@@ -37,6 +37,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import IPAddress from '$components/IPAddress.svelte';
 	import { formatTime } from '$lib/utils/time';
+	import { DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -54,21 +55,25 @@
 		lateral_movement: 'lateral movement',
 		investigations: 'auto-investigations',
 	};
-	const RANGES = [
-		{ value: '1h', label: '1h' },
-		{ value: '6h', label: '6h' },
-		{ value: '24h', label: '24h' },
-		{ value: '7d', label: '7d' },
-		{ value: '30d', label: '30d' },
-	];
-	const RANGE_TEXT: Record<string, string> = {
-		'1h': 'last hour',
-		'6h': 'last 6 hours',
-		'24h': 'last 24 hours',
-		'7d': 'last 7 days',
-		'30d': 'last 30 days',
-	};
-	let selectedRange = $state('24h');
+	// OLD CODE START — NET-196: the app's one list (DRILL_RANGES)
+	// const RANGES = [
+	// 	{ value: '1h', label: '1h' },
+	// 	{ value: '6h', label: '6h' },
+	// 	{ value: '24h', label: '24h' },
+	// 	{ value: '7d', label: '7d' },
+	// 	{ value: '30d', label: '30d' },
+	// ];
+	// const RANGE_TEXT: Record<string, string> = {
+	// 	'1h': 'last hour',
+	// 	'6h': 'last 6 hours',
+	// 	'24h': 'last 24 hours',
+	// 	'7d': 'last 7 days',
+	// 	'30d': 'last 30 days',
+	// };
+	// OLD CODE END
+	const RANGES = DRILL_RANGES.map((r) => ({ value: r.value, label: r.label }));
+	// OLD CODE: let selectedRange = $state('24h'); (NET-195: Settings › Display's default, read where the range starts)
+	let selectedRange = $state<string>(startRange('24h'));
 	// OLD CODE START — the top bar's "Updated N s ago" (page refresh contract) replaces "Last scan";
 	// this derived never re-ran as time passed, so it read "just now" until the next load
 	// let lastUpdated = $state(new Date());
@@ -123,7 +128,8 @@
 
 	let threatScore = $derived(summary?.threat_score ?? 0);
 	let threatLevel = $derived(summary?.threat_level ?? 'none');
-	let rangeText = $derived(RANGE_TEXT[selectedRange] ?? selectedRange);
+	// OLD CODE: let rangeText = $derived(RANGE_TEXT[selectedRange] ?? selectedRange); (NET-196: the list's words)
+	let rangeText = $derived(DRILL_RANGES.find((r) => r.value === selectedRange)?.words ?? selectedRange);
 
 	// OLD CODE START — the hand-drawn gauge, legacy level colours and min-2% category bar are
 	// replaced by the KPI card, SeverityPill and StackBar (data-1..6, 6 px minimum, topSeries)
@@ -284,18 +290,22 @@
 	// Time helpers
 	// ---------------------------------------------------------------------------
 
-	function computeTimeParams(range: string): { from: string; to: string } {
-		const now = new Date();
-		let from: Date;
-		switch (range) {
-			case '1h': from = new Date(now.getTime() - 60 * 60 * 1000); break;
-			case '6h': from = new Date(now.getTime() - 6 * 60 * 60 * 1000); break;
-			case '7d': from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); break;
-			case '30d': from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); break;
-			default: from = new Date(now.getTime() - 24 * 60 * 60 * 1000); break;
-		}
-		return { from: from.toISOString(), to: now.toISOString() };
-	}
+	// OLD CODE START — NET-196: the window ending now is rangeWindow, over the list's hours
+	// function computeTimeParams(range: string): { from: string; to: string } {
+	// 	const now = new Date();
+	// 	let from: Date;
+	// 	switch (range) {
+	// 		case '1h': from = new Date(now.getTime() - 60 * 60 * 1000); break;
+	// 		case '6h': from = new Date(now.getTime() - 6 * 60 * 60 * 1000); break;
+	// 		case '7d': from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000); break;
+	// 		case '30d': from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); break;
+	// 		default: from = new Date(now.getTime() - 24 * 60 * 60 * 1000); break;
+	// 	}
+	// 	return { from: from.toISOString(), to: now.toISOString() };
+	// }
+	// OLD CODE END
+	/** The window ending now for a range; anything not in the list is 24 hours. */
+	const computeTimeParams = (range: string) => rangeWindow(DRILL_RANGES.find((r) => r.value === range)?.hours ?? 24);
 
 	// ---------------------------------------------------------------------------
 	// Fetching

@@ -339,6 +339,35 @@ describe('Alerts — window from a link (NET-160)', () => {
 	});
 });
 
+// NET-195: Alerts starts its range in the URL hand-off's first run, whose fallback is the saved default.
+describe('Alerts — the saved default range (NET-195)', () => {
+	const spans = () =>
+		vi.mocked(getAlertTimeline).mock.calls.map(([opts]) => (Date.parse(opts!.to!) - Date.parse(opts!.from!)) / 3_600_000);
+
+	beforeEach(() => {
+		localStorage.clear();
+		localStorage.setItem('nettap-display-settings', JSON.stringify({ defaultRange: '7d' }));
+	});
+	afterEach(() => localStorage.clear());
+
+	it('opens on the saved range when the link has none, with one load', async () => {
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(spans()).toEqual([168]);
+		expect(screen.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
+	});
+
+	it("opens on the link's range over the saved one", async () => {
+		nav.url = new URL('http://localhost/alerts?range=1h');
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(spans()).toEqual([1]);
+		expect(screen.getByRole('button', { name: '1h' })).toHaveAttribute('aria-pressed', 'true');
+	});
+});
+
 describe('Alerts — severity summary', () => {
 	it('shares the sidebar\'s in-flight count instead of asking again, and shows the same numbers', async () => {
 		succeedAll();

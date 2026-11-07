@@ -293,3 +293,40 @@ describe('IoT page — page refresh contract', () => {
 		expect(screen.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
 	});
 });
+
+// NET-195: a setting needs a reader. IoT starts its range in a $state initializer and loads in an $effect.
+describe('IoT page — the saved default range (NET-195)', () => {
+	const save = (value: unknown) => localStorage.setItem('nettap-display-settings', JSON.stringify(value));
+	/** The span of every fleet-summary request, in hours. */
+	const spans = () =>
+		vi.mocked(iotApi.getFleetSummary).mock.calls.map(([p]) => (Date.parse(p!.to!) - Date.parse(p!.from!)) / 3_600_000);
+
+	beforeEach(() => {
+		localStorage.clear();
+		mockAll();
+	});
+	afterEach(() => {
+		localStorage.clear();
+		vi.clearAllMocks();
+	});
+
+	it('opens on the saved range with one load', async () => {
+		save({ defaultRange: '7d' });
+		render(IoTPage);
+		await flush();
+		expect(spans()).toEqual([168]);
+		expect(screen.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
+	});
+
+	it.each([
+		[{ defaultTimeRange: '7d' }, 168, '7d'],
+		[{ defaultTimeRange: '1h' }, 24, '24h'],
+		[{ defaultRange: '24h', defaultTimeRange: '7d' }, 24, '24h'],
+	])('reads the legacy field only when it was picked: %j opens on %i hours', async (stored, hours, pill) => {
+		save(stored);
+		render(IoTPage);
+		await flush();
+		expect(spans()).toEqual([hours]);
+		expect(screen.getByRole('button', { name: pill })).toHaveAttribute('aria-pressed', 'true');
+	});
+});

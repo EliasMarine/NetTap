@@ -49,7 +49,7 @@
 	// OLD CODE END
 	import { severityBuckets, type SeverityLevel } from '$lib/utils/severity';
 	// OLD CODE: import { alertsHrefForSignature, type DrillWindow } from '$lib/utils/drilldown'; (section D)
-	import { alertsHrefForSignature, fmt, withCount, type DrillWindow } from '$lib/utils/drilldown';
+	import { alertsHrefForSignature, DRILL_RANGES, fmt, rangeWindow, startRange, withCount, type DrillWindow } from '$lib/utils/drilldown';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -70,15 +70,18 @@
 	// ---------------------------------------------------------------------------
 
 	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. Live is the real-time page.
-	const TIME_RANGES = [
-		// OLD CODE: { label: '15m', value: '15m', ms: 15 * 60 * 1000, words: 'last 15 minutes' }, (NET-192 PR 4)
-		{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour' },
-		// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' }, (NET-192 PR 4)
-		{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, words: 'last 6 hours' },
-		{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours' },
-		{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days' },
-		{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days' },
-	];
+	// OLD CODE START — NET-196: the app's one list (DRILL_RANGES), with this page's ms beside it
+	// const TIME_RANGES = [
+	// 	// OLD CODE: { label: '15m', value: '15m', ms: 15 * 60 * 1000, words: 'last 15 minutes' }, (NET-192 PR 4)
+	// 	{ label: '1h', value: '1h', ms: 60 * 60 * 1000, words: 'last hour' },
+	// 	// OLD CODE: { label: '4h', value: '4h', ms: 4 * 60 * 60 * 1000, words: 'last 4 hours' }, (NET-192 PR 4)
+	// 	{ label: '6h', value: '6h', ms: 6 * 60 * 60 * 1000, words: 'last 6 hours' },
+	// 	{ label: '24h', value: '24h', ms: 24 * 60 * 60 * 1000, words: 'last 24 hours' },
+	// 	{ label: '7d', value: '7d', ms: 7 * 24 * 60 * 60 * 1000, words: 'last 7 days' },
+	// 	{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days' },
+	// ];
+	// OLD CODE END
+	const TIME_RANGES = DRILL_RANGES;
 
 	const INTERVAL_MAP: Record<string, string> = {
 		// OLD CODE: '15m': '1m', (NET-192 PR 4)
@@ -109,7 +112,8 @@
 	// ---------------------------------------------------------------------------
 
 	let category = $derived(($page.params as Record<string, string>).category ?? '');
-	let selectedRange = $state('24h');
+	// OLD CODE: let selectedRange = $state('24h'); (NET-195: Settings › Display's default, read where the range starts)
+	let selectedRange = $state<string>(startRange('24h'));
 
 	// Data
 	let categoryData = $state<CategoryDetailResponse | null>(null);
@@ -289,10 +293,13 @@
 		// OLD CODE: || TIME_RANGES[3]; (NET-192 PR 4: 24h is index 2)
 		// OLD CODE: || TIME_RANGES[2] (NET-192 PR 4: the default by value, not by position)
 		const range = TIME_RANGES.find((r) => r.value === selectedRange) || TIME_RANGES.find((r) => r.value === '24h')!;
-		return {
-			from: new Date(now - range.ms).toISOString(),
-			to: new Date(now).toISOString(),
-		};
+		// OLD CODE START — NET-196: the shared list's hours and rangeWindow, not milliseconds
+		// return {
+		// 	from: new Date(now - range.ms).toISOString(),
+		// 	to: new Date(now).toISOString(),
+		// };
+		// OLD CODE END
+		return rangeWindow(range.hours, new Date(now));
 	}
 
 	// ---------------------------------------------------------------------------

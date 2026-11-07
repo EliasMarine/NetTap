@@ -19,7 +19,7 @@
 	import { namesByIp } from '$lib/utils/device-names';
 	// OLD CODE: import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown'; (slice 2a)
 	// OLD CODE: import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown'; (section D)
-	import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, windowQuery, withCount, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
+	import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, startRange, windowQuery, withCount, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { asString, getField } from '$lib/utils/tshark-filter';
 	import type { SortDir } from '$lib/utils/table-sort.svelte';
@@ -42,7 +42,8 @@
 	// OLD CODE END
 	const ip = $derived(($page.params as Record<string, string>).ip ?? '');
 
-	let rangeValue = $state<DrillRangeValue>('24h');
+	// OLD CODE: let rangeValue = $state<DrillRangeValue>('24h'); (NET-195: Settings › Display's default, read where the range starts)
+	let rangeValue = $state<DrillRangeValue>(startRange('24h'));
 	// OLD CODE: ?? DRILL_RANGES[0]); (NET-192 PR 4: 1h and 6h added, 24h is index 2)
 	// OLD CODE: ?? DRILL_RANGES[2] (NET-192 PR 4: the default by value, not by position)
 	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES.find((r) => r.value === '24h')!);

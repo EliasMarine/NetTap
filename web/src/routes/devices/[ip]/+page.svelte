@@ -30,7 +30,7 @@
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { smartLevel, type SeverityLevel } from '$lib/utils/severity';
 	// OLD CODE: import { alertsHrefForSignature, logsHrefForQuery, type DrillWindow } from '$lib/utils/drilldown'; (slice 2b-1: smart alerts link by their key)
-	import { chartTime as timeLabel, logsHrefForQuery, NO_EXACT_ALERT_LIST, smartAlertHref, withCount, type DrillWindow } from '$lib/utils/drilldown';
+	import { chartTime as timeLabel, DRILL_RANGES, logsHrefForQuery, NO_EXACT_ALERT_LIST, rangeWindow, smartAlertHref, startRange, withCount, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
 	import { formatTime } from '$lib/utils/time';
 	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { DeviceConnectionSort } from '$api/devices';
@@ -152,21 +152,32 @@
 
 	// #87: the range pills had no handlers, so every request used the daemon's 24 h default
 	// OLD CODE: const RANGE_HOURS = { '24h': 24, '7d': 168, '30d': 720 } as const; (NET-192 PR 4: Home's five ranges)
-	const RANGE_HOURS = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 } as const;
-	type RangeKey = keyof typeof RANGE_HOURS;
-	const RANGE_KEYS = Object.keys(RANGE_HOURS) as RangeKey[];
-	const RANGE_OPTIONS = RANGE_KEYS.map((key) => ({ value: key, label: key }));
-	// OLD CODE: const RANGE_LABEL: Record<RangeKey, string> = { '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' }; (NET-192 PR 4)
-	const RANGE_LABEL: Record<RangeKey, string> = { '1h': 'Last hour', '6h': 'Last 6 hours', '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' };
-	let range = $state<RangeKey>('24h');
+	// OLD CODE START — NET-196: the app's one list (DRILL_RANGES) and lookups in it
+	// const RANGE_HOURS = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 } as const;
+	// type RangeKey = keyof typeof RANGE_HOURS;
+	// const RANGE_KEYS = Object.keys(RANGE_HOURS) as RangeKey[];
+	// const RANGE_OPTIONS = RANGE_KEYS.map((key) => ({ value: key, label: key }));
+	// // OLD CODE: const RANGE_LABEL: Record<RangeKey, string> = { '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' }; (NET-192 PR 4)
+	// const RANGE_LABEL: Record<RangeKey, string> = { '1h': 'Last hour', '6h': 'Last 6 hours', '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' };
+	// OLD CODE END
+	type RangeKey = DrillRangeValue;
+	const RANGE_OPTIONS = DRILL_RANGES.map((r) => ({ value: r.value, label: r.label }));
+	const rangeOf = (key: RangeKey) => DRILL_RANGES.find((r) => r.value === key)!;
+	/** The window as a KPI note says it ("Last 7 days"); card subtitles use the list's lower-case words. */
+	const RANGE_LABEL = Object.fromEntries(DRILL_RANGES.map((r) => [r.value, r.words.charAt(0).toUpperCase() + r.words.slice(1)])) as Record<RangeKey, string>;
+	// OLD CODE: let range = $state<RangeKey>('24h'); (NET-195: Settings › Display's default, read where the range starts)
+	let range = $state<RangeKey>(startRange('24h'));
 	// The window of the last fetch; connection pages reuse it so paging doesn't slide in time
 	let span = $state<{ from: string; to: string }>({ from: '', to: '' });
 
-	function rangeSpan(key: RangeKey): { from: string; to: string } {
-		const to = new Date();
-		const from = new Date(to.getTime() - RANGE_HOURS[key] * 3_600_000);
-		return { from: from.toISOString(), to: to.toISOString() };
-	}
+	// OLD CODE START — NET-196: the window ending now is rangeWindow, over the list's hours
+	// function rangeSpan(key: RangeKey): { from: string; to: string } {
+	// 	const to = new Date();
+	// 	const from = new Date(to.getTime() - RANGE_HOURS[key] * 3_600_000);
+	// 	return { from: from.toISOString(), to: to.toISOString() };
+	// }
+	// OLD CODE END
+	const rangeSpan = (key: RangeKey) => rangeWindow(rangeOf(key).hours);
 	let selectedConnection = $state<Record<string, unknown> | null>(null);
 	let drawerOpen = $state(false);
 
@@ -461,7 +472,8 @@
 	// 		: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 	// }
 	// OLD CODE END
-	const chartTime = (t: number | string) => timeLabel(t, RANGE_HOURS[range]);
+	// OLD CODE: const chartTime = (t: number | string) => timeLabel(t, RANGE_HOURS[range]); (NET-196)
+	const chartTime = (t: number | string) => timeLabel(t, rangeOf(range).hours);
 
 	function chartTip(i: number): string {
 		const p = bandwidth[i];
@@ -648,7 +660,8 @@ OLD CODE END -->
 {#snippet portConnCell(p: DevicePort)}{formatNumber(p.connections)}{/snippet}
 {#snippet timeCell(r: ConnRow)}
 	<!-- OLD CODE: <span class="mono">{range === '24h' ? new Date(…).toLocaleTimeString([], { hour, minute, second }) : new Date(…).toLocaleString([], { month, day, hour, minute })}</span> (NET-192 PR 4: the browser's locale printed "10:37:23 PM") -->
-	<span class="mono">{formatTime(asString(getField(r.conn, '@timestamp')), RANGE_HOURS[range] <= 24 ? 'clock' : 'short')}</span>
+	<!-- OLD CODE: RANGE_HOURS[range] <= 24 (NET-196: the list's hours) -->
+	<span class="mono">{formatTime(asString(getField(r.conn, '@timestamp')), rangeOf(range).hours <= 24 ? 'clock' : 'short')}</span>
 {/snippet}
 <!-- OLD CODE START: {#snippet connDestCell(r: ConnRow)}<span class="mono">{asString(getField(r.conn, 'destination.ip'))}:{asString(getField(r.conn, 'destination.port'))}</span>{/snippet} (slice 2a: the address wasn't a link) OLD CODE END -->
 {#snippet connDestCell(r: ConnRow)}

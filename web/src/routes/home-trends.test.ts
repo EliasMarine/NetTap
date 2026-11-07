@@ -69,6 +69,10 @@ describe('Home — trend indicators', () => {
 
 		await vi.waitFor(() => expect(trendTexts()).toEqual(['−50.0%']));
 		expect(screen.getByText('vs previous 7 days')).toBeInTheDocument();
+
+		// the comparison words come from the shared list: "previous 6 hours", as on Traffic, not "previous 6 h"
+		await fireEvent.click(screen.getByRole('button', { name: '6h' }));
+		expect(await screen.findByText('vs previous 6 hours')).toBeInTheDocument();
 		// fewer alerts is good news, so the chip is not the warning colour
 		expect(document.querySelector('.kpi-meta > .chip')).not.toHaveClass('is-warn');
 	});

@@ -10,9 +10,12 @@
 		countDifference,
 		customRange,
 		fmt,
+		DRILL_RANGES,
 		isHostName,
 		linkedCount,
+		startRange,
 		type CustomWindow,
+		type DrillRangeValue,
 		type DrillWindow,
 		type LinkedCount,
 	} from '$lib/utils/drilldown';
@@ -85,7 +88,8 @@
 	type LogType = 'all' | 'zeek.conn' | 'zeek.dns' | 'zeek.http' | 'zeek.tls' | 'zeek.files' | 'zeek.dhcp' | 'zeek.smtp' | 'suricata';
 	// OLD CODE: type TimeRange = '15m' | '1h' | '4h' | '24h' | '7d' | '30d'; (slice 2b-1: 6h, as Home has)
 	// OLD CODE: type TimeRange = '15m' | '1h' | '4h' | '6h' | '24h' | '7d' | '30d'; (NET-192 PR 4: Home's five)
-	type TimeRange = '1h' | '6h' | '24h' | '7d' | '30d';
+	// OLD CODE: type TimeRange = '1h' | '6h' | '24h' | '7d' | '30d'; (NET-196: the app's one list's type)
+	type TimeRange = DrillRangeValue;
 
 	/** A table row: each column's display text by field, plus the hit the drawer opens. */
 	type LogRow = { _id: string; hit: LogHit } & Record<string, unknown>;
@@ -127,15 +131,18 @@
 	};
 
 	// One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. Live is the real-time page.
-	const TIME_RANGES: { value: TimeRange; label: string; ms: number; words: string }[] = [
-		// OLD CODE: { value: '15m', label: '15m', ms: 15 * 60_000, words: 'last 15 minutes' }, (NET-192 PR 4)
-		{ value: '1h', label: '1h', ms: 60 * 60_000, words: 'last hour' },
-		// OLD CODE: { value: '4h', label: '4h', ms: 4 * 60 * 60_000, words: 'last 4 hours' }, (NET-192 PR 4)
-		{ value: '6h', label: '6h', ms: 6 * 60 * 60_000, words: 'last 6 hours' },
-		{ value: '24h', label: '24h', ms: 24 * 60 * 60_000, words: 'last 24 hours' },
-		{ value: '7d', label: '7d', ms: 7 * 24 * 60 * 60_000, words: 'last 7 days' },
-		{ value: '30d', label: '30d', ms: 30 * 24 * 60 * 60_000, words: 'last 30 days' },
-	];
+	// OLD CODE START — NET-196: the app's one list (DRILL_RANGES), with this page's ms beside it
+	// const TIME_RANGES: { value: TimeRange; label: string; ms: number; words: string }[] = [
+	// 	// OLD CODE: { value: '15m', label: '15m', ms: 15 * 60_000, words: 'last 15 minutes' }, (NET-192 PR 4)
+	// 	{ value: '1h', label: '1h', ms: 60 * 60_000, words: 'last hour' },
+	// 	// OLD CODE: { value: '4h', label: '4h', ms: 4 * 60 * 60_000, words: 'last 4 hours' }, (NET-192 PR 4)
+	// 	{ value: '6h', label: '6h', ms: 6 * 60 * 60_000, words: 'last 6 hours' },
+	// 	{ value: '24h', label: '24h', ms: 24 * 60 * 60_000, words: 'last 24 hours' },
+	// 	{ value: '7d', label: '7d', ms: 7 * 24 * 60 * 60_000, words: 'last 7 days' },
+	// 	{ value: '30d', label: '30d', ms: 30 * 24 * 60 * 60_000, words: 'last 30 days' },
+	// ];
+	// OLD CODE END
+	const TIME_RANGES = DRILL_RANGES.map((r) => ({ ...r, ms: r.hours * 3_600_000 }));
 
 	const INTERVAL_MAP: Record<string, string> = {
 		// OLD CODE: '15m': '1m', (NET-192 PR 4)
@@ -194,7 +201,8 @@
 	let initialized = $state(false);
 	let loading = $state(false);
 	// OLD CODE: let selectedTimeRange = $state<TimeRange>('24h'); (slice 2a: a link's exact window shows as "Custom")
-	let selectedTimeRange = $state<TimeRange | 'custom'>('24h');
+	// OLD CODE: let selectedTimeRange = $state<TimeRange | 'custom'>('24h'); (NET-195: Settings › Display's default, read where the range starts)
+	let selectedTimeRange = $state<TimeRange | 'custom'>(startRange('24h'));
 	/** The window a drill-down link brought (?from=&to=), offered as "Custom" until another range is picked. */
 	let custom = $state<CustomWindow | null>(null);
 	const AUTO_REFRESH_MS = 30_000;
@@ -1055,12 +1063,14 @@
 			// A link from a page with its own window (NET-160) opens on that window: the exact one
 			// (?from=&to=, "Custom") when it gives it, otherwise its ?range=
 			custom = customRange(urlFrom, urlTo);
+			// OLD CODE: : selectedTimeRange === 'custom' ? '24h' : selectedTimeRange; (NET-195: Custom falls back to Settings › Display's default)
+			// A hand-off without a window keeps the range on screen (a pill's or a link's: the page can't tell)
 			selectedTimeRange = custom
 				? 'custom'
 				: TIME_RANGES.some((r) => r.value === urlRange)
 					? (urlRange as TimeRange)
 					: selectedTimeRange === 'custom'
-						? '24h'
+						? startRange('24h')
 						: selectedTimeRange;
 			// A hand-off replaces the last one's IP filter and text; the first load starts from neither
 			activeIpFilter = urlFilter || urlIp || '';

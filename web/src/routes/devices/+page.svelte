@@ -20,7 +20,7 @@
 	// OLD CODE END
 	import { getDevices } from '$api/devices';
 	import type { Device, DeviceListResponse } from '$api/devices';
-	import { countDifference, customRange, fmt, linkedCount, rangeWindow, type LinkedCount } from '$lib/utils/drilldown';
+	import { countDifference, customRange, DRILL_RANGES, fmt, linkedCount, rangeWindow, startRange, type LinkedCount } from '$lib/utils/drilldown';
 	import { getNewDeviceCount, getRegistryDevices, isNewDevice } from '$api/devices-registry';
 	import type { RegistryDevice, RegistryListResponse } from '$api/devices-registry';
 	import { getCaptureMode } from '$api/capture';
@@ -94,18 +94,22 @@
 	// const ONLINE_MS = 5 * 60 * 1000;
 	// OLD CODE END
 
-	// The window: Home's five ranges (anything else is 24 hours), or the exact from/to a link brought (Custom)
-	const RANGES = [
-		{ value: '1h', label: '1h', hours: 1, words: 'last hour' },
-		{ value: '6h', label: '6h', hours: 6, words: 'last 6 hours' },
-		{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours' },
-		{ value: '7d', label: '7d', hours: 168, words: 'last 7 days' },
-		{ value: '30d', label: '30d', hours: 720, words: 'last 30 days' },
-	] as const;
+	// The window: Home's five ranges (anything else is the saved default, else 24 hours), or the exact from/to a link brought (Custom)
+	// OLD CODE START — NET-196: the app's one list (DRILL_RANGES)
+	// const RANGES = [
+	// 	{ value: '1h', label: '1h', hours: 1, words: 'last hour' },
+	// 	{ value: '6h', label: '6h', hours: 6, words: 'last 6 hours' },
+	// 	{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours' },
+	// 	{ value: '7d', label: '7d', hours: 168, words: 'last 7 days' },
+	// 	{ value: '30d', label: '30d', hours: 720, words: 'last 30 days' },
+	// ] as const;
+	// OLD CODE END
+	const RANGES = DRILL_RANGES;
 	const params = $derived($page.url.searchParams);
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	// OLD CODE: ?? RANGES[2] (NET-192 PR 4: the default by value, not by position)
-	const range = $derived(custom ?? RANGES.find((r) => r.value === params.get('range')) ?? RANGES.find((r) => r.value === '24h')!);
+	// OLD CODE: … ?? RANGES.find((r) => r.value === '24h')!); (NET-195: a link's window or range, else Settings › Display's default)
+	const range = $derived(custom ?? RANGES.find((r) => r.value === params.get('range')) ?? RANGES.find((r) => r.value === startRange('24h'))!);
 	const windowKey = $derived(custom ? `${custom.from}|${custom.to}` : range.value);
 	/**
 	 * NET-160 section D: the Total devices figure the link was clicked at (Home's Devices card).

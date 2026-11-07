@@ -28,6 +28,34 @@ export const DRILL_RANGES: readonly DrillRange[] = [
 	{ value: '30d', label: '30d', hours: 720, words: 'last 30 days', interval: 'day' },
 ];
 
+/** Settings › Display's key in this browser's localStorage (NET-195). */
+export const DISPLAY_SETTINGS_KEY = 'nettap-display-settings';
+
+/**
+ * A legacy `defaultTimeRange` someone must have picked. '1h' was Settings' own fallback, written by
+ * any Display save, so it may be an accident; '15m' and '4h' are no longer offered.
+ */
+const LEGACY_PICKED: readonly string[] = ['6h', '24h', '7d', '30d'];
+
+/**
+ * The range Settings › Display saved, or null: nothing saved, a value not offered, bad JSON, storage
+ * that throws, or the server (no localStorage). A legacy `defaultTimeRange` counts only when the new
+ * `defaultRange` is absent, and only for a value that can't be an accident.
+ */
+export function savedDefaultRange(): DrillRangeValue | null {
+	try {
+		const saved = JSON.parse(localStorage.getItem(DISPLAY_SETTINGS_KEY) ?? 'null');
+		if (saved === null || typeof saved !== 'object') return null;
+		if ('defaultRange' in saved) return DRILL_RANGES.some((r) => r.value === saved.defaultRange) ? saved.defaultRange : null;
+		return LEGACY_PICKED.includes(saved.defaultTimeRange) ? saved.defaultTimeRange : null;
+	} catch {
+		return null;
+	}
+}
+
+/** The range a page opens on: the saved default, else the page's own. Read it where the page's range starts. */
+export const startRange = (pageDefault: DrillRangeValue): DrillRangeValue => savedDefaultRange() ?? pageDefault;
+
 /** A timeline label: the time within a day, day and time for a week of 6-hour buckets, the day beyond. */
 export function chartTime(t: number | string, hours: number): string {
 	const d = new Date(t);
