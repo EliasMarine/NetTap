@@ -78,7 +78,10 @@ def raw_device(os_client, ip: str, t: dict, conn: list, noise: list, dns_excl: l
             "total": {"sum": BYTES},
             "orig": {"sum": {"field": "source.bytes"}},
             "resp": {"sum": {"field": "destination.bytes"}},
-            "dests": {"terms": {"field": "destination.ip", "size": TOP_N_SIZE}},
+            # OLD CODE START — NET-194: Device detail lists its top destinations by bytes since NET-158
+            # "dests": {"terms": {"field": "destination.ip", "size": TOP_N_SIZE}},
+            # OLD CODE END
+            "dests": {"terms": {"field": "destination.ip", "size": TOP_N_SIZE}, "aggs": {"b": {"sum": BYTES}}},
             "ports": {"terms": {"field": "destination.port", "size": TOP_N_SIZE}},
             "asn": {"filter": {"exists": {"field": "destination.as.full"}}},
         },
@@ -93,7 +96,8 @@ def raw_device(os_client, ip: str, t: dict, conn: list, noise: list, dns_excl: l
         "aggs": {"q": {"terms": {"field": "zeek.dns.query", "size": TOP_N_SIZE}}}})
     return {
         "conns": r["hits"]["total"]["value"], "total": a["total"]["value"], "orig": a["orig"]["value"],
-        "resp": a["resp"]["value"], "dests": counts(a["dests"]["buckets"]), "ports": counts(a["ports"]["buckets"]),
+        "resp": a["resp"]["value"], "dests": counts(a["dests"]["buckets"]),
+        "dest_bytes": {b["key"]: b["b"]["value"] for b in a["dests"]["buckets"]}, "ports": counts(a["ports"]["buckets"]),
         "asn_conns": a["asn"]["doc_count"], "alerts": alerts, "dns": counts(dns["aggregations"]["q"]["buckets"]),
     }
 
@@ -145,7 +149,13 @@ def check_ip(os_client, listed: dict, before_list: dict, q: str, f: dict, proble
     same_reply_sum(f"{p} chart sum = total", sum(s["bytes"] for s in series), d["total_bytes"], problems)
     same_reply_sum(f"{p} chart upload = sent", sum(s["upload_bytes"] for s in series), d["orig_bytes"], problems)
     bracket(f"{p} unique destinations", len(b["dests"]), d["unique_destinations"], len(a["dests"]), problems)
-    check_top(f"{p} top destinations", d["top_destinations"], "ip", "connections", b["dests"], a["dests"], problems)
+    # OLD CODE START — NET-194: NET-158 sorts Device detail's top destinations by bytes, not connections
+    # check_top(f"{p} top destinations", d["top_destinations"], "ip", "connections", b["dests"], a["dests"], problems)
+    # OLD CODE END
+    check_top(f"{p} top destinations", d["top_destinations"], "ip", "bytes", b["dest_bytes"], a["dest_bytes"], problems)
+    for e in d["top_destinations"]:
+        bracket(f"{p} destination {e['ip']} connections", b["dests"].get(e["ip"], 0), e["connections"],
+                a["dests"].get(e["ip"], 0), problems)
     check_top(f"{p} ports", ports, "port", "connections", b["ports"], a["ports"], problems)
     dns = [{"domain": x["domain"], "count": x["count"]} for x in d.get("dns_queries") or []]
     check_top(f"{p} DNS lookups", dns, "domain", "count", b["dns"], a["dns"], problems)
