@@ -184,6 +184,10 @@
 	let dstFilter = $state('');
 	/** One raw Suricata category, rule.category (NET-160 slice 2b-2) */
 	let suricataCategoryFilter = $state('');
+	/** The list shows the activity alerts (ET rates them informational or unknown, never counted) instead (NET-191) */
+	let activityFilter = $state(false);
+	/** The activity alerts over the window loadAll asked about; null while unknown or when the request failed */
+	let activityCount = $state<(DrillWindow & { total: number }) | null>(null);
 
 	// Pagination
 	/** The current search's window: paging reuses it, so rows arriving between pages don't shift the list. */
@@ -686,6 +690,7 @@
 			dst: dstFilter || undefined,
 			signature: signatureFilter || undefined,
 			suricata_category: suricataCategoryFilter || undefined,
+			activity: activityFilter || undefined,
 			sort: SERVER_SORT[sortKey],
 			order: sortDir,
 		};
@@ -778,9 +783,12 @@
 				getEnhancedCategories({ from, to }),
 				getAlerts(list),
 				getSmartAlertSummary({ from, to }),
+				// NET-191: last, so it never takes a count reply meant for the snapshot above
+				getAlertCount({ from, to, activity: true }),
 			] as const),
 		]);
-		const [tl, sigs, dest, src, cats, listResult, summary] = results;
+		// OLD CODE: const [tl, sigs, dest, src, cats, listResult, summary] = results; (NET-191: the activity count)
+		const [tl, sigs, dest, src, cats, listResult, summary, activity] = results;
 		const succeeded = [snap.status === 'ok', ...results.map((r) => r.status === 'fulfilled')];
 		if (!guard.current(g)) return 'skipped';
 
@@ -808,6 +816,8 @@
 			threatScore = summary.value.threat_score;
 			threatLevel = summary.value.threat_level;
 		}
+		// A failed count keeps the last one, as the cards above keep theirs; a new window cleared it already
+		if (activity.status === 'fulfilled') activityCount = { from, to, total: activity.value.counts.total };
 		const sections = ['timeline', 'signatures', 'destIps', 'srcIps', 'categories', 'alerts', 'summary'];
 		failed = { ...Object.fromEntries(sections.map((name, i) => [name, results[i].status === 'rejected'])), alerts: failed.alerts ?? false };
 		// OLD CODE: if (listGuard.current(lg)) applyList(listResult);
@@ -875,7 +885,8 @@
 	// The list's filters and window, in the URL (slice 2a)
 	// OLD CODE: const LIST_PARAMS = ['severity', 'signature', 'ip', 'range', 'from', 'to'] as const; (slice 2b-1: src and dst)
 	// OLD CODE: const LIST_PARAMS = ['severity', 'signature', 'ip', 'src', 'dst', 'range', 'from', 'to'] as const; (slice 2b-2: suricata_category)
-	const LIST_PARAMS = ['severity', 'signature', 'ip', 'src', 'dst', 'suricata_category', 'range', 'from', 'to'] as const;
+	// OLD CODE: const LIST_PARAMS = ['severity', 'signature', 'ip', 'src', 'dst', 'suricata_category', 'range', 'from', 'to'] as const; (NET-191: activity)
+	const LIST_PARAMS = ['severity', 'signature', 'ip', 'src', 'dst', 'suricata_category', 'activity', 'range', 'from', 'to'] as const;
 	/** Where the window's parameters start in LIST_PARAMS: range, from, to. */
 	const WINDOW_AT = LIST_PARAMS.indexOf('range');
 
@@ -959,6 +970,17 @@
 		const data = snapshot?.data;
 		if (!data) return;
 		const q = new URLSearchParams({ severity: level, from: data.from, to: data.to, range: baseRange });
+		void goto(`/alerts?${q.toString()}`, { keepFocus: true, noScroll: true });
+		scrollToList();
+	}
+
+	/**
+	 * The "not counted" line opens exactly the activity it counted, as a severity tile does: the
+	 * activity alerts alone over that count's window, every other filter cleared (NET-191).
+	 */
+	function showActivity() {
+		if (!activityCount) return;
+		const q = new URLSearchParams({ activity: 'true', from: activityCount.from, to: activityCount.to, range: baseRange });
 		void goto(`/alerts?${q.toString()}`, { keepFocus: true, noScroll: true });
 		scrollToList();
 	}
@@ -1136,13 +1158,15 @@
 			appliedCount = count;
 			// OLD CODE: const [severity, signature, ip, rangeParam, from, to] = next; (slice 2b-1: src and dst)
 			// OLD CODE: const [severity, signature, ip, src, dst, rangeParam, from, to] = next; (slice 2b-2: suricata_category)
-			const [severity, signature, ip, src, dst, suricataCategory, rangeParam, from, to] = next;
+			// OLD CODE: const [severity, signature, ip, src, dst, suricataCategory, rangeParam, from, to] = next; (NET-191: activity)
+			const [severity, signature, ip, src, dst, suricataCategory, activity, rangeParam, from, to] = next;
 			activeFilter = SEVERITY_FILTERS.find((f) => f.value === severity)?.value ?? 'all';
 			signatureFilter = signature;
 			ipFilter = ip;
 			srcFilter = src;
 			dstFilter = dst;
 			suricataCategoryFilter = suricataCategory;
+			activityFilter = activity === 'true';
 			custom = customRange(from, to);
 			baseRange = TIME_RANGES.some((r) => r.value === rangeParam) ? rangeParam : '24h';
 			selectedTimeRange = custom ? 'custom' : baseRange;
@@ -1152,7 +1176,11 @@
 			// A counted link: the page-1 request started next takes this comparison (beginList sets its gen)
 			linked = count === null ? null : { expected: count, gen: null, observed: null };
 			if (sameWindow) void fetchAlerts(1, getTimeRange());
-			else void refresh.run();
+			else {
+				// NET-191: the "not counted" line must not show another window's number while this one loads
+				activityCount = null;
+				void refresh.run();
+			}
 		});
 	});
 
@@ -1260,8 +1288,9 @@ OLD CODE END -->
 {/snippet}
 OLD CODE END -->
 <!-- Every alert with this rule, over the list's own window; no link without a rule.name, which the filter matches -->
+<!-- OLD CODE: {#if a.rule?.name}<a class="mono" href={alertsHrefForSignature(a.rule.name, shownWindow)} … (NET-191: a row of the activity list opened the counted list, which leaves it out) -->
 {#snippet signatureCell(a: Alert)}
-	{#if a.rule?.name}<a class="mono" href={alertsHrefForSignature(a.rule.name, shownWindow)} title={a.alert?.signature || a.rule.name}>{a.alert?.signature || a.rule.name}</a>{:else}<span class="mono" title={a.alert?.signature || 'Unknown'}>{a.alert?.signature || 'Unknown'}</span>{/if}
+	{#if a.rule?.name}<a class="mono" href={alertsHrefForSignature(a.rule.name, shownWindow, { activity: activityFilter })} title={a.alert?.signature || a.rule.name}>{a.alert?.signature || a.rule.name}</a>{:else}<span class="mono" title={a.alert?.signature || 'Unknown'}>{a.alert?.signature || 'Unknown'}</span>{/if}
 {/snippet}
 {#snippet srcCell(a: Alert)}{#if a.src_ip}<IPAddress ip={a.src_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet destCell(a: Alert)}{#if a.dest_ip}<IPAddress ip={a.dest_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
@@ -1270,7 +1299,8 @@ OLD CODE END -->
 	{@const linkedCategory = linkedSuricataCategory(a)}
 	<span class="cat-cell">
 		<!-- OLD CODE: <span>{a.alert?.category || '—'}</span> (slice 2b-2: links when rule.category holds it, over the list's window) -->
-		{#if linkedCategory}
+		<!-- OLD CODE: {#if linkedCategory} (NET-191: a category page counts only counted alerts, so the activity list doesn't link to it) -->
+		{#if linkedCategory && !activityFilter}
 			<a href={suricataCategoryHref(linkedCategory, shownWindow)} title="Every alert in this Suricata category over the list's window">{linkedCategory}</a>
 		{:else}
 			<span>{a.alert?.category || '—'}</span>
@@ -1331,12 +1361,19 @@ OLD CODE END -->
 				</div>
 				<SeverityGauge {buckets} total={counts.total} ariaLabel={gaugeLabel} />
 			</div>
+			<!-- NET-191: ET's informational ratings are stored as activity, never counted above -->
+			{#if activityCount && activityCount.total > 0}
+				<button class="link activity-link" type="button" onclick={showActivity}>
+					{fmt(activityCount.total)} informational {activityCount.total === 1 ? 'event' : 'events'} not counted · Show
+				</button>
+			{/if}
 		{/if}
 	</Card>
 </div>
 
 <div class="grid alert-layout" class:no-drawer={!drawerAlert}>
-	<Card class="c-8 alert-list-card" title={view === 'category' ? 'Alerts by category' : 'All alerts'} sub={listLoaded && !failed.alerts ? `${fmt(totalAlerts)} matching · ${range.words}${view === 'category' && totalAlerts > 0 ? ` · alerts ${fmt(fromRow)} to ${fmt(toRow)}, grouped` : ''}` : range.words}>
+	<!-- OLD CODE: <Card class="c-8 alert-list-card" title={view === 'category' ? 'Alerts by category' : 'All alerts'} sub={listLoaded && !failed.alerts ? `${fmt(totalAlerts)} matching · ${range.words}${view === 'category' && totalAlerts > 0 ? ` · alerts ${fmt(fromRow)} to ${fmt(toRow)}, grouped` : ''}` : range.words}> (NET-191: the activity note) -->
+	<Card class="c-8 alert-list-card" title={view === 'category' ? 'Alerts by category' : 'All alerts'} sub={`${listLoaded && !failed.alerts ? `${fmt(totalAlerts)} matching · ${range.words}${view === 'category' && totalAlerts > 0 ? ` · alerts ${fmt(fromRow)} to ${fmt(toRow)}, grouped` : ''}` : range.words}${activityFilter ? ' · ET rates these informational. They are not counted as alerts.' : ''}`}>
 		{#snippet actions()}
 			<Pills
 				options={[{ value: 'category', label: 'By category' }, { value: 'all', label: 'All alerts' }]}
@@ -1378,6 +1415,12 @@ OLD CODE END -->
 						<button class="chip-x" type="button" onclick={() => setListParams({ suricata_category: null })} aria-label="Clear Suricata category filter"><Icon name="close" /></button>
 					</span>
 				{/if}
+				{#if activityFilter}
+					<span class="chip">
+						Activity: rated informational by ET
+						<button class="chip-x" type="button" onclick={() => setListParams({ activity: null })} aria-label="Clear activity filter"><Icon name="close" /></button>
+					</span>
+				{/if}
 			</div>
 			{#if actionError}
 				<p class="notice is-error" role="alert"><Icon name="warn" />Not applied: {actionError}</p>
@@ -1390,12 +1433,15 @@ OLD CODE END -->
 				<CardState state="loading" title="Loading alerts" />
 			{:else if failed.alerts}
 				<CardState state="error" title="Couldn't load alerts: the request failed." message="Check that NetTap is running on the System page, then try again." onaction={() => fetchAlerts(currentPage)} />
+			{:else if alerts.length === 0 && activityFilter}
+				<CardState state="empty" icon="alerts" title="No activity" message="Nothing ET rates informational matched in this window." />
 			{:else if alerts.length === 0}
 				<CardState state="empty" icon="alerts" title="No alerts" message="Alerts will appear here once Suricata is running and generating detections." />
 			{:else if view === 'category'}
 				{#each groups as group (group.title)}
 					<!-- OLD CODE: <AlertGroup title={group.title} count={group.count}> (slice 2b-2: the title opens its category's page) -->
-					<AlertGroup title={group.title} count={group.count} href={groupCategoryLinked(sortedAlerts, group.title) ? suricataCategoryHref(group.title, shownWindow) : undefined}>
+					<!-- OLD CODE: href={groupCategoryLinked(sortedAlerts, group.title) ? … : undefined} (NET-191: not from the activity list; the category page counts only counted alerts) -->
+					<AlertGroup title={group.title} count={group.count} href={!activityFilter && groupCategoryLinked(sortedAlerts, group.title) ? suricataCategoryHref(group.title, shownWindow) : undefined}>
 						{#each group.lines as line (line.key)}
 							<AlertRow
 								severity={line.level}
@@ -1431,6 +1477,7 @@ OLD CODE END -->
 		{#key open._id}
 			<AlertDetail
 				alert={open}
+				activity={activityFilter}
 				onclose={closeDrawer}
 				onacknowledge={() => handleDrawerAcknowledge(open._id)}
 				onsuppress={() => drawerAction(open, (sigId) => suppressAlert(sigId))}
@@ -1577,6 +1624,9 @@ OLD CODE END -->
 	}
 	.chip-x:hover { color: var(--text-1); }
 	.chip-x:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+	/* .link sets the text colour; a button needs the browser's own box taken off */
+	.activity-link { background: none; border: 0; padding: 0; margin-top: var(--sp-4); cursor: pointer; }
+	.activity-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 	.notice { margin-bottom: var(--sp-4); }
 	.cat-cell { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
 	.row-actions { display: inline-flex; gap: var(--sp-1); }

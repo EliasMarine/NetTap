@@ -1310,9 +1310,24 @@ async def get_smart_alerts(
     #     bool_clause["must_not"] = excluded_ips
     # OLD CODE END
     # Same engine-event rule as the Alerts page (api/alerts.py _SURICATA_NOISE_EXCLUSION)
+    # OLD CODE START — NET-191: ET's informational alerts were grouped with the counted ones, and a
+    # group's level came from its newest sample, so one group could mix activity and real alerts
+    # bool_clause: dict = {
+    #     "filter": filters,
+    #     "must_not": [{"prefix": {"rule.name": "SURICATA "}}, *(excluded_ips or [])],
+    # }
+    # OLD CODE END
+    from api.alerts import ET_ACTIVITY_CLAUSE
+
+    # The counted alerts. With include_info the activity alerts (ET informational) are a second,
+    # separate query, so a signature/address group is never part activity, part counted.
     bool_clause: dict = {
         "filter": filters,
-        "must_not": [{"prefix": {"rule.name": "SURICATA "}}, *(excluded_ips or [])],
+        "must_not": [
+            {"prefix": {"rule.name": "SURICATA "}},
+            ET_ACTIVITY_CLAUSE,
+            *(excluded_ips or []),
+        ],
     }
 
     query = {
@@ -1380,7 +1395,15 @@ async def get_smart_alerts(
     # if buckets is None:
     #     return []
     # OLD CODE END
-    buckets = _all_composite_buckets(client, query)
+    # OLD CODE: buckets = _all_composite_buckets(client, query) (NET-191: one partition per query)
+    buckets = [(b, False) for b in _all_composite_buckets(client, query)]
+    if include_info:
+        activity_bool = {
+            "filter": [*filters, ET_ACTIVITY_CLAUSE],
+            "must_not": [{"prefix": {"rule.name": "SURICATA "}}, *(excluded_ips or [])],
+        }
+        activity_query = {**query, "query": {"bool": activity_bool}}
+        buckets += [(b, True) for b in _all_composite_buckets(client, activity_query)]
 
     # Optionally enrich device context
     device_context = None
@@ -1399,7 +1422,8 @@ async def get_smart_alerts(
     # buckets = result.get("aggregations", {}).get("grouped", {}).get("buckets", [])
     # OLD CODE END
 
-    for bucket in buckets:
+    # OLD CODE: for bucket in buckets: (NET-191: each bucket knows its partition)
+    for bucket, activity in buckets:
         sig_name_key = bucket["key"].get("sig_name", "") or ""
         src_ip = bucket["key"].get("src_ip", "") or ""
         dst_ip = bucket["key"].get("dst_ip", "") or ""
@@ -1440,6 +1464,9 @@ async def get_smart_alerts(
         new_severity = reclassify_severity(
             signature, original_severity, dst_port, dst_ip
         )
+        # Activity is informational whatever its prefix or port: never boosted, never scored
+        if activity:
+            new_severity = _INFO_SEVERITY
 
         if new_severity >= _INFO_SEVERITY and not include_info:
             continue
@@ -1475,6 +1502,8 @@ async def get_smart_alerts(
                 "trend": trend,
                 "assessment": assessment,
                 "destination_port": dst_port,
+                # ET rates it informational: its drill-down lists it with ?activity=true (NET-191)
+                "activity": activity,
                 # The bucket's own values (null when missing), for an exact drill-down link: the
                 # displayed signature can come from the sample's alert.signature (NET-160 slice 2b-1)
                 "key": {

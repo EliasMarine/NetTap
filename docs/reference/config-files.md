@@ -54,51 +54,21 @@ redef LogAscii::enable_utf_8 = T;
 
 ### `config/suricata/nettap.yaml`
 
-Suricata configuration overrides merged with Malcolm's defaults. Mounted at `/etc/suricata/nettap.yaml`.
+A Suricata include file. Mounted at `/opt/suricata/include-configs/nettap.yaml`; Malcolm's `suricata_config_populate.py` adds every `*.yaml` there to the end of the `suricata.yaml` it generates, so these settings override Malcolm's.
 
 ```yaml title="config/suricata/nettap.yaml"
-# Capture interface — the bridge
-af-packet:
-  - interface: br0
-    cluster-id: 99
-    cluster-type: cluster_flow
-    defrag: yes
-    use-mmap: yes
-    ring-size: 200000
-
-# Emerging Threats Open ruleset
-default-rule-path: /var/lib/suricata/rules
-rule-files:
-  - suricata.rules
-
-# Output — Eve JSON for OpenSearch ingestion
-outputs:
-  - eve-log:
-      enabled: yes
-      filetype: regular
-      filename: eve.json
-      rotate-interval: day
-      types:
-        - alert
-        - dns
-        - tls
-        - http
-        - files
-        - flow
+%YAML 1.1
+---
+threshold-file: /etc/nettap/suricata-threshold.config
 ```
-
-**Key settings:**
 
 | Setting | Value | Purpose |
 |---|---|---|
-| `af-packet.interface` | `br0` | Capture from the bridge interface |
-| `cluster-type` | `cluster_flow` | Flow-based load balancing across workers |
-| `use-mmap` | yes | Memory-mapped I/O for higher capture throughput |
-| `ring-size` | 200000 | Large ring buffer to prevent drops under burst |
-| Eve log types | alert, dns, tls, http, files, flow | Which event types to log |
-| `rotate-interval` | day | Daily log file rotation |
+| `threshold-file` | `/etc/nettap/suricata-threshold.config` | Device-local `suppress`/`threshold` lines, e.g. one device's alerts for one rule (NET-191). The file lives on the host (`/etc/nettap` is mounted read-only). If it is missing, Suricata logs a warning and runs with no thresholds. |
 
-**Compression strategy:** Like Zeek, Suricata writes uncompressed eve.json. The Filebeat/Logstash pipeline handles zstd compression (~6:1) asynchronously.
+The file **must** start with `%YAML 1.1` and `---`. Without them Suricata refuses the include ("Failed to include configuration file") and suricata-live does not start.
+
+Until 2026-11-07 this file was mounted at `/etc/suricata/nettap.yaml`, which Malcolm never includes, so its capture and output settings never applied. Capture and eve output come from Malcolm's generated config and the compose environment (`SURICATA_*`).
 
 ---
 

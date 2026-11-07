@@ -498,7 +498,13 @@ services:
     volumes:
       - suricata-live-logs:/var/log/suricata
       - suricata-rules:/var/lib/suricata/rules
-      - ../config/suricata/nettap.yaml:/etc/suricata/nettap.yaml:ro
+      # OLD CODE START — 2026-11-06 (NET-191, CR-198): Malcolm never includes /etc/suricata/nettap.yaml
+      # - ../config/suricata/nettap.yaml:/etc/suricata/nettap.yaml:ro
+      # OLD CODE END
+      # Malcolm appends include-configs/**/*.yaml to the suricata.yaml it generates at start. This one
+      # sets threshold-file: /etc/nettap/suricata-threshold.config (device-local suppressions; /etc/nettap
+      # is mounted below). Missing file = a Suricata warning, not a failure.
+      - ../config/suricata/nettap.yaml:/opt/suricata/include-configs/nettap.yaml:ro
       - ../config/suricata/update-sources.yaml:/etc/suricata/update-sources.yaml:ro
       # Capture settings written by the daemon (capture.env) + their loader
       - /etc/nettap:/etc/nettap:ro

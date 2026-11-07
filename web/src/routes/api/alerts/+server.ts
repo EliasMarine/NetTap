@@ -38,6 +38,8 @@ export const GET: RequestHandler = async ({ url }) => {
 		const value = url.searchParams.get(key);
 		if (value) params.set(key, value);
 	}
+	// NET-191: the activity alerts (ET rates them informational or unknown) instead of the counted ones
+	if (url.searchParams.get('activity') === 'true') params.set('activity', 'true');
 
 	const query = params.toString() ? `?${params.toString()}` : '';
 	const res = await daemonFetch(`/api/alerts${query}`);

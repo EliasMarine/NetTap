@@ -172,11 +172,15 @@ export function windowQuery(win: DrillWindow, range?: string): string {
 // 	return win ? `/alerts?${q.toString()}&${windowQuery(win, win.range)}` : `/alerts?${q.toString()}`;
 // }
 // OLD CODE END
-/** The Alerts list's address filters: `ip` at either end, `src` the source, `dst` the destination. */
+/**
+ * The Alerts list's address filters: `ip` at either end, `src` the source, `dst` the destination.
+ * `activity`: the list of alerts ET rates informational or unknown, which the counted list leaves out (NET-191).
+ */
 export interface AlertNarrow {
 	ip?: string;
 	src?: string;
 	dst?: string;
+	activity?: boolean;
 }
 
 /**
@@ -188,6 +192,7 @@ export function alertsHrefForSignature(signature: string, win?: DrillWindow & { 
 	for (const key of ['ip', 'src', 'dst'] as const) {
 		if (narrow[key]) q.set(key, narrow[key]);
 	}
+	if (narrow.activity) q.set('activity', 'true');
 	return win ? `/alerts?${q.toString()}&${windowQuery(win, win.range)}` : `/alerts?${q.toString()}`;
 }
 
@@ -198,11 +203,18 @@ export const NO_EXACT_ALERT_LIST = "This group has no signature, source or desti
  * The Alerts list holding exactly a smart alert's ×N: its bucket's rule name, source and
  * destination over the window it was counted in, plus `device` when the groups were counted for
  * one (either end, as the count was). Null when a key part is missing or empty: dropping that
- * filter would list more than ×N.
+ * filter would list more than ×N. `activity`: the group is activity (NET-191), which the list
+ * shows only with `activity=true`.
  */
-export function smartAlertHref(key: SmartAlertKey | undefined, win: DrillWindow & { range?: string }, device?: string): string | null {
+// OLD CODE START — NET-191: an activity group's link opened the counted list, which leaves its alerts out
+// export function smartAlertHref(key: SmartAlertKey | undefined, win: DrillWindow & { range?: string }, device?: string): string | null {
+// 	if (!key?.rule_name || !key.source_ip || !key.destination_ip) return null;
+// 	return alertsHrefForSignature(key.rule_name, win, { ip: device, src: key.source_ip, dst: key.destination_ip });
+// }
+// OLD CODE END
+export function smartAlertHref(key: SmartAlertKey | undefined, win: DrillWindow & { range?: string }, device?: string, activity = false): string | null {
 	if (!key?.rule_name || !key.source_ip || !key.destination_ip) return null;
-	return alertsHrefForSignature(key.rule_name, win, { ip: device, src: key.source_ip, dst: key.destination_ip });
+	return alertsHrefForSignature(key.rule_name, win, { ip: device, src: key.source_ip, dst: key.destination_ip, activity });
 }
 
 /**

@@ -4,6 +4,7 @@ const daemonFetch = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/daemon.js', () => ({ daemonFetch }));
 
 import { GET } from './+server';
+import { GET as countGET } from './count/+server';
 
 // NET-160 slice 2b-1: a smart alert's link narrows the list to its source → destination pair
 describe('GET /api/alerts proxy', () => {
@@ -35,5 +36,32 @@ describe('GET /api/alerts proxy', () => {
 
 		await call('?suricata_category=');
 		expect(sent(2).has('suricata_category')).toBe(false);
+	});
+
+	// NET-191: only the literal `true` asks for the activity alerts
+	it('forwards activity=true, and drops any other activity value', async () => {
+		daemonFetch.mockReset();
+		daemonFetch.mockResolvedValue(new Response(JSON.stringify({ alerts: [] }), { status: 200 }));
+		const call = (query: string) => GET({ url: new URL(`http://x/api/alerts${query}`) } as unknown as Parameters<typeof GET>[0]);
+
+		for (const query of ['?activity=true', '?activity=1', '?activity=TRUE', '?activity=true%26x%3D1', '?activity=']) await call(query);
+		expect(daemonFetch.mock.calls.map(([path]) => path)).toEqual(['/api/alerts?activity=true', '/api/alerts', '/api/alerts', '/api/alerts', '/api/alerts']);
+	});
+});
+
+describe('GET /api/alerts/count proxy', () => {
+	it('forwards activity=true with the window, and drops any other activity value (NET-191)', async () => {
+		daemonFetch.mockReset();
+		daemonFetch.mockResolvedValue(new Response(JSON.stringify({ counts: {} }), { status: 200 }));
+		const call = (query: string) => countGET({ url: new URL(`http://x/api/alerts/count${query}`) } as unknown as Parameters<typeof countGET>[0]);
+
+		await call('?from=a&to=b&activity=true');
+		await call('?from=a&to=b&activity=yes');
+		await call('?from=a&to=b');
+		expect(daemonFetch.mock.calls.map(([path]) => path)).toEqual([
+			'/api/alerts/count?from=a&to=b&activity=true',
+			'/api/alerts/count?from=a&to=b',
+			'/api/alerts/count?from=a&to=b',
+		]);
 	});
 });

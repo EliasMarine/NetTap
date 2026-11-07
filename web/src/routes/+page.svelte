@@ -775,7 +775,8 @@ OLD CODE END -->
 				{/if}
 				<div class="top-cats">
 					{#each smartAlerts.slice(0, TOP_ALERT_GROUPS) as sa, i (`sa-${sa.signature_id}-${i}`)}
-						{@const exact = smartWindow ? smartAlertHref(sa.key, smartWindow) : null}
+						<!-- OLD CODE: {@const exact = smartWindow ? smartAlertHref(sa.key, smartWindow) : null} (NET-191: an activity group opens the activity list) -->
+						{@const exact = smartWindow ? smartAlertHref(sa.key, smartWindow, undefined, sa.activity) : null}
 						<!-- OLD CODE: <a class="top-cat" href="/threats"> (slice 2b-1: the ×N opens the alerts it counts) -->
 						<!-- OLD CODE: href={exact ?? undefined} (section D: the ×N link carries its figure) -->
 						<svelte:element this={exact ? 'a' : 'div'} class="top-cat" href={exact ? withCount(exact, sa.count) : undefined} title={exact ? undefined : NO_EXACT_ALERT_LIST}>

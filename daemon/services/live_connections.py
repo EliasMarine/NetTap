@@ -21,7 +21,7 @@ from typing import Any
 
 from opensearchpy import OpenSearch, OpenSearchException
 
-from api.alerts import rule_categories
+from api.alerts import SURICATA_NOISE_EXCLUSION, rule_categories
 from services.excluded_ips import RFC1918_SOURCE_FILTER, lan_subnets_of
 from storage.time_slots import histogram_buckets, time_slots
 
@@ -417,9 +417,13 @@ class LiveConnectionTracker:
     ]
 
     # Exclude Suricata decoder/stream noise (same as alerts.py)
-    _SURICATA_NOISE_EXCLUSION: list[dict] = [
-        {"prefix": {"rule.name": "SURICATA "}},
-    ]
+    # OLD CODE START — NET-191: a private copy missed ET's informational alerts, which every
+    # other page stops counting; the shared rule lives in api/alerts.py
+    # _SURICATA_NOISE_EXCLUSION: list[dict] = [
+    #     {"prefix": {"rule.name": "SURICATA "}},
+    # ]
+    # OLD CODE END
+    _SURICATA_NOISE_EXCLUSION: list[dict] = SURICATA_NOISE_EXCLUSION
 
     # Painless byte-sum script (matches traffic.py pattern)
     _PAINLESS_BYTE_SUM = (
