@@ -23,6 +23,7 @@ from typing import Any, Optional
 
 from opensearchpy import OpenSearch, OpenSearchException
 
+from storage import query_timing
 from storage.exact_terms import ExactTermsOpenSearch
 
 from api.capture_control import (
@@ -282,6 +283,9 @@ class StorageManager:
             # ("Connection pool is full, discarding connection"). Not a concurrency limit.
             "pool_maxsize": 16,
         }
+        # NET-192 PR 3: one timing line per OpenSearch request (measurement)
+        if query_timing.enabled():
+            kwargs["transport_class"] = query_timing.TimedTransport
         if http_auth:
             kwargs["http_auth"] = http_auth
         return kwargs
