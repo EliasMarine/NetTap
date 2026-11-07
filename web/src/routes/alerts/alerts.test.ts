@@ -100,7 +100,7 @@ describe('Alerts — auto-refresh', () => {
 		await flush();
 		expect(screen.getByText('Sig on page 2')).toBeInTheDocument();
 
-		await fireEvent.click(screen.getByRole('button', { name: 'Auto' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Paused' }));
 		vi.mocked(getAlerts).mockClear();
 		vi.advanceTimersByTime(15_000);
 		await flush();

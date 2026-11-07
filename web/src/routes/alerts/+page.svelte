@@ -75,6 +75,7 @@
 	import AlertRow from '$lib/components/ui/AlertRow.svelte';
 	import AlertGroup from '$lib/components/ui/AlertGroup.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 	import SeverityGauge from '$lib/components/ui/charts/SeverityGauge.svelte';
@@ -1343,9 +1344,12 @@ OLD CODE END -->
 			onchange={handleTimeRangeChange}
 			ariaLabel="Time range"
 		/>
+		<!-- OLD CODE START — NET-192 PR 4: Home's Auto / Paused button on every page
 		<div class="pills" role="group" aria-label="Auto-refresh every 15 seconds">
 			<button class="pill" type="button" aria-pressed={autoRefresh} onclick={toggleAutoRefresh}>Auto</button>
 		</div>
+		OLD CODE END -->
+		<AutoRefreshButton on={autoRefresh} seconds={15} ontoggle={toggleAutoRefresh} />
 	</div>
 </header>
 

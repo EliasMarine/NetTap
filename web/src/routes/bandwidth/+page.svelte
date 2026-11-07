@@ -9,6 +9,7 @@
 	import IPAddress from '$components/IPAddress.svelte';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import Card from '$lib/components/ui/Card.svelte';
+	import Icon from '$lib/components/ui/Icon.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import KpiCard from '$lib/components/ui/KpiCard.svelte';
 	import Meter from '$lib/components/ui/Meter.svelte';
@@ -385,7 +386,7 @@
 </div>
 
 {#if monthlyFailed && monthly}
-	<p class="notice is-warn" role="status">{loadFailed("this month's usage", true)}</p>
+	<p class="notice is-warn" role="status"><Icon name="warn" /><span>{loadFailed("this month's usage", true)}</span></p>
 {/if}
 
 <div class="grid">
@@ -448,7 +449,7 @@
 				ariaLabel={busiestDay >= 0 ? `Busiest day ${formatDate(daily[busiestDay].date)}, with ${formatBytes(daily[busiestDay].total_bytes)}` : 'Daily usage'}
 			/>
 			{#if dailyFailed}
-				<p class="load-note">{loadFailed('daily usage', true)}</p>
+				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('daily usage', true)}</span></p>
 			{/if}
 		{:else if dailyFailed}
 			<CardState state="error" title={loadFailed('daily usage')} message={RETRY_HINT} onaction={() => refresh.run()} />
@@ -463,7 +464,7 @@
 		{#if topConsumers.length > 0}
 			<DeviceList items={topConsumers} />
 			{#if devicesFailed}
-				<p class="load-note">{loadFailed('per-device usage', true)}</p>
+				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('per-device usage', true)}</span></p>
 			{/if}
 		{:else if devicesFailed}
 			<CardState state="error" title={loadFailed('per-device usage')} message={RETRY_HINT} onaction={() => refresh.run()} />
@@ -500,7 +501,7 @@
 		{/snippet}
 		{#if heatmap && heatmap.matrix}
 			{#if heatmapFailed}
-				<p class="load-note">{loadFailed('the time-of-day heatmap', true)}</p>
+				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('the time-of-day heatmap', true)}</span></p>
 			{/if}
 			<div class="heatmap-scroll">
 				<div
@@ -536,7 +537,8 @@
 
 <style>
 	/* Layout glue the system lacks */
-	.load-note { margin-top: var(--sp-3); font-size: var(--text-xs); color: var(--sev-medium); }
+	/* OLD CODE: .load-note { margin-top: var(--sp-3); font-size: var(--text-xs); color: var(--sev-medium); } (NET-192 PR 4: a stale note is the shared .notice.is-warn) */
+	.load-note { margin-top: var(--sp-3); }
 	.cap { font-size: var(--text-xs); color: var(--text-2); }
 	.heatmap-scroll { overflow-x: auto; }
 	.heatmap { display: grid; grid-template-columns: var(--sp-8) repeat(24, minmax(16px, 1fr)); gap: 2px; min-width: 480px; }

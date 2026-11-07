@@ -38,6 +38,7 @@
 	import Bytes from '$lib/components/ui/Bytes.svelte';
 	import ConnResult, { type ConnResultKind } from '$lib/components/ui/ConnResult.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import { registerPageRefresh, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { SortDir } from '$lib/utils/table-sort.svelte';
 	// OLD CODE START — replaced by NetworkFlow (NET-151): uneven per-column scales, IPs only
@@ -932,9 +933,12 @@
 	</div>
 	<div class="head-actions">
 		<Pills options={RANGE_PILLS} value={selectedTimeRange.value} onchange={handleTimeRangeChange} ariaLabel="Time range" />
+		<!-- OLD CODE START — NET-192 PR 4: Home's Auto / Paused button on every page
 		<button class="btn" type="button" title="Refresh every 15 seconds" onclick={toggleAutoRefresh}>
 			{autoRefresh ? 'Auto on' : 'Auto'}
 		</button>
+		OLD CODE END -->
+		<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={toggleAutoRefresh} />
 	</div>
 </div>
 
@@ -951,10 +955,10 @@
 		{:else}
 			<StatStrip stats={summaryStats} />
 			{#if statsFailed}
-				<p class="load-note">{loadFailed('connection stats', stats !== null)}</p>
+				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('connection stats', stats !== null)}</span></p>
 			{/if}
 			{#if liveFailed}
-				<p class="load-note">{loadFailed('active addresses', activeNow !== null)}</p>
+				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('active addresses', activeNow !== null)}</span></p>
 			{/if}
 		{/if}
 	</Card>
@@ -963,7 +967,7 @@
 	<article class="card c-8">
 		<SessionTimeline buckets={timeline} {loading} emptyMessage={timelineFailed ? loadFailed('the session timeline') : undefined} />
 		{#if timelineFailed && timeline.length > 0}
-			<p class="load-note">{loadFailed('the session timeline', true)}</p>
+			<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('the session timeline', true)}</span></p>
 		{/if}
 	</article>
 	OLD CODE END -->
@@ -971,7 +975,7 @@
 		{#if timeline.length > 0}
 			<SessionTimeline buckets={timeline} />
 			{#if timelineFailed}
-				<p class="load-note">{loadFailed('the session timeline', true)}</p>
+				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('the session timeline', true)}</span></p>
 			{/if}
 		{:else if timelineFailed}
 			<CardState state="error" title={loadFailed('the session timeline')} message={RETRY_HINT} onaction={() => refresh.run()} />
@@ -1017,7 +1021,7 @@
 				onNodeClick={handleSankeyNodeClick}
 			/>
 			{#if sankeyFailed}
-				<p class="load-note">{loadFailed('the flow diagram', true)}</p>
+				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('the flow diagram', true)}</span></p>
 			{/if}
 		{:else if loading}
 			<CardState state="loading" title="Loading the flow diagram" />
@@ -1164,7 +1168,8 @@
 
 <style>
 	/* Layout glue the system lacks */
-	.load-note { margin-top: var(--sp-3); font-size: var(--text-xs); color: var(--sev-medium); }
+	/* OLD CODE: .load-note { margin-top: var(--sp-3); font-size: var(--text-xs); color: var(--sev-medium); } (NET-192 PR 4: a stale note is the shared .notice.is-warn) */
+	.load-note { margin-top: var(--sp-3); }
 	.dest { display: inline-flex; flex-direction: column; line-height: 1.3; }
 	.org { color: var(--text-3); font-size: var(--text-xs); }
 	.result { display: inline-flex; align-items: center; gap: var(--sp-2); }

@@ -54,6 +54,7 @@
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import KpiCard from '$lib/components/ui/KpiCard.svelte';
 	import Pills from '$lib/components/ui/Pills.svelte';
 	import SearchField from '$lib/components/ui/SearchField.svelte';
@@ -1226,9 +1227,12 @@ OLD CODE END -->
 	<div class="head-actions">
 		<!-- OLD CODE: <Pills options={TIME_RANGES} value={selectedTimeRange} onchange={handleTimeRangeChange} ariaLabel="Time range" /> (slice 2a: Custom) -->
 		<Pills options={rangeOptions} value={selectedTimeRange} onchange={handleTimeRangeChange} ariaLabel="Time range" />
+		<!-- OLD CODE START — NET-192 PR 4: Home's Auto / Paused button on every page
 		<button class="btn" type="button" aria-pressed={autoRefresh} onclick={toggleAutoRefresh}>
 			<Icon name="refresh" />{autoRefresh ? 'Auto-refresh on' : 'Auto-refresh'}
 		</button>
+		OLD CODE END -->
+		<AutoRefreshButton on={autoRefresh} seconds={30} ontoggle={toggleAutoRefresh} />
 		<button class="btn" type="button" onclick={exportCSV} disabled={results.length === 0}>
 			<Icon name="download" />Export CSV
 		</button>

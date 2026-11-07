@@ -39,6 +39,7 @@
 	import DeviceTile from '$lib/components/ui/DeviceTile.svelte';
 	import Bytes from '$lib/components/ui/Bytes.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import { deviceIcon } from '$lib/components/ui/device-icon';
 	import { groupByType } from './device-types';
 
@@ -642,9 +643,12 @@
 	</div>
 	<div class="head-actions">
 		<Pills options={rangeOptions} value={range.value} onchange={pickRange} ariaLabel="Seen in the last" />
+		<!-- OLD CODE START — NET-192 PR 4: Home's Auto / Paused button on every page
 		<button class="btn" type="button" aria-pressed={autoRefresh} onclick={() => (autoRefresh = !autoRefresh)}>
 			<Icon name="refresh" />{autoRefresh ? 'Auto refresh on' : 'Auto refresh off'}
 		</button>
+		OLD CODE END -->
+		<AutoRefreshButton on={autoRefresh} seconds={30} ontoggle={() => (autoRefresh = !autoRefresh)} />
 	</div>
 </div>
 

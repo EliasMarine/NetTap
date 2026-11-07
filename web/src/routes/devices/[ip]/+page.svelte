@@ -55,6 +55,7 @@
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import DeviceTile from '$lib/components/ui/DeviceTile.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import AreaChart, { type AreaSeries } from '$lib/components/ui/charts/AreaChart.svelte';
 	import Ring from '$lib/components/ui/charts/Ring.svelte';
 
@@ -693,9 +694,12 @@ OLD CODE END -->
 			<button class="pill">30d</button>
 			OLD CODE END -->
 			<Pills ariaLabel="Time range" options={RANGE_OPTIONS} bind:value={range} />
+			<!-- OLD CODE START — NET-192 PR 4: Home's Auto / Paused button on every page
 			<button class="btn" type="button" aria-pressed={autoRefresh} onclick={() => (autoRefresh = !autoRefresh)}>
 				<Icon name="refresh" />Auto
 			</button>
+			OLD CODE END -->
+			<AutoRefreshButton on={autoRefresh} seconds={30} ontoggle={() => (autoRefresh = !autoRefresh)} />
 		</div>
 	</div>
 	{#if device && device.ip}

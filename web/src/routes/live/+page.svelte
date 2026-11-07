@@ -40,6 +40,7 @@
 	import DeviceList, { type DeviceListItem } from '$lib/components/ui/DeviceList.svelte';
 	import Bytes from '$lib/components/ui/Bytes.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import Donut from '$lib/components/ui/charts/Donut.svelte';
 	import DotMap, { type Hotspot } from '$lib/components/ui/charts/DotMap.svelte';
 	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
@@ -591,9 +592,12 @@
 	</div>
 	<div class="head-actions">
 		<LiveChip {paused} />
+		<!-- OLD CODE START — NET-192 PR 4: Home's Auto / Paused button on every page
 		<button class={['btn', paused && 'primary']} type="button" onclick={togglePause}>
 			<Icon name={paused ? 'play' : 'pause'} />{paused ? 'Resume' : 'Pause'}
 		</button>
+		OLD CODE END -->
+		<AutoRefreshButton on={!paused} seconds={REFRESH_INTERVAL_MS / 1000} ontoggle={togglePause} />
 	</div>
 </div>
 

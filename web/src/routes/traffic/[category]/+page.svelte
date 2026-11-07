@@ -48,6 +48,7 @@
 	import BarList, { type BarItem } from '$lib/components/ui/BarList.svelte';
 	import Bytes from '$lib/components/ui/Bytes.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import AreaChart, { type AreaSeries } from '$lib/components/ui/charts/AreaChart.svelte';
 	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 
@@ -578,14 +579,17 @@
 	</div>
 	<div class="head-actions">
 		<Pills options={TIME_RANGES} value={selectedRange} onchange={(v) => (selectedRange = v)} ariaLabel="Time range" />
+		<!-- OLD CODE START — NET-192 PR 4: Home's Auto / Paused button on every page
 		<button class="btn" type="button" title="Refresh every 30 seconds" onclick={() => (autoRefresh = !autoRefresh)}>
 			{autoRefresh ? 'Auto on' : 'Auto'}
 		</button>
+		OLD CODE END -->
+		<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={() => (autoRefresh = !autoRefresh)} />
 	</div>
 </div>
 
 {#if detailFailed && data && !loading}
-	<p class="notice is-warn" role="status">{loadFailed(`${displayName} traffic`, true)}</p>
+	<p class="notice is-warn" role="status"><Icon name="warn" /><span>{loadFailed(`${displayName} traffic`, true)}</span></p>
 {/if}
 
 <div class="grid">
@@ -632,7 +636,7 @@
 						: 'Bandwidth over time'}
 				/>
 				{#if bandwidthFailed}
-					<p class="load-note">{loadFailed('bandwidth over time', true)}</p>
+					<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('bandwidth over time', true)}</span></p>
 				{/if}
 			{:else if bandwidthFailed}
 				<CardState state="error" title={loadFailed('bandwidth over time')} message={RETRY_HINT} onaction={() => refresh.run()} />
@@ -668,7 +672,8 @@
 
 <style>
 	/* Layout glue the system lacks */
-	.load-note { margin-top: var(--sp-3); font-size: var(--text-xs); color: var(--sev-medium); }
+	/* OLD CODE: .load-note { margin-top: var(--sp-3); font-size: var(--text-xs); color: var(--sev-medium); } (NET-192 PR 4: a stale note is the shared .notice.is-warn) */
+	.load-note { margin-top: var(--sp-3); }
 	.device { display: inline-flex; flex-direction: column; line-height: 1.3; text-decoration: none; color: inherit; }
 	.hostname { color: var(--text-3); font-size: var(--text-xs); }
 </style>

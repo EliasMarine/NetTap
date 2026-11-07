@@ -72,7 +72,7 @@ Every card has a title and a sub that states the unit and the window ("GB per ho
 Build pages from these; read each file for its props.
 
 - **Layout and state:** `Card`, `CardState` (loading, empty, error; "Try again" only when `onaction` is set), `KpiCard`, `StatStrip`, `Pipeline` (stage states: `ok` green check, `warn` amber triangle for a check that couldn't run, `failing` orange triangle, `unknown` grey clock; each icon names its state)
-- **Controls:** `Pills` (toggle, tabs or nav mode), `SearchField`, `LiveChip`
+- **Controls:** `Pills` (toggle, tabs or nav mode), `SearchField`, `LiveChip`, `AutoRefreshButton` (Home's "Auto" / "Paused" toggle; every page with auto-refresh uses it)
 - **Data:** `DataTable`, `BarList`, `Meter`, `Bytes`, `Who`, `ConnResult`, `SeverityPill`, `DeviceList`, `DeviceTile` (with `deviceIcon()` from `device-icon.ts`), `AlertRow`, `AlertGroup`, `Icon` (the system's 48 icons; a test fails if they drift from `nettap-design-system/assets/Icons/`)
 - **Charts (`ui/charts/`):** `AreaChart`, `Donut`, `SeverityGauge` (fed by `severityBuckets()` from `utils/severity.ts`), `Ring`, `Sparkline`, `StackBar`, `Radar`, `DotMap`. Chart maths lives in `ui/charts/geometry.ts`.
 - **Device cards** (Devices, By type): every card has the same three rows (top; the maker line, "Maker unknown" when the lookup found none, with any addresses note under it; stats), on a subgrid of the group's grid, so the stats line up across a row of cards; the List layout's rows use the same helpers, so both layouts show the same figures (NET-180).
@@ -83,7 +83,7 @@ Every chart has `role="img"` and an `aria-label` that states its headline, for e
 ## Data on a page
 
 - **Only show numbers the page loads.** Never invent, default or estimate a figure. A failed request shows its error state, never `0`, `0 B` or "No data".
-- **Keep the last figures on a failed refresh** and say so: `loadFailed(what, true)` gives "Couldn't refresh … ; showing the last figures loaded." (#96).
+- **Keep the last figures on a failed refresh** and say so: `loadFailed(what, true)` gives "Couldn't refresh … ; showing the last figures loaded." (#96), always as `<p class="notice is-warn" role="status"><Icon name="warn" /><span>…</span></p>`.
 - **One source per number.** A number on two screens comes from one place. The alert count is `alertSnapshots` (`stores/alertSnapshot.ts`): Home, Alerts and the sidebar read the same snapshot per window.
 - **Refresh contract** (`stores/pageRefresh.ts`): a page that loads data calls `registerPageRefresh(loader)`. The loader awaits every request behind visible data and returns `'ok' | 'partial' | 'failed' | 'skipped'`; `outcome(results)` computes that from `Promise.allSettled`. Auto-refresh loops call the same loader.
 - **Load guard:** `const g = guard.begin()`, copy the query (range, filters, page, sort) into locals before the first `await`, and check `guard.current(g)` before every state write after an `await`. A slow, older response then never overwrites a newer one.

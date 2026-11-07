@@ -125,7 +125,7 @@ describe('Connections — auto-refresh', () => {
 		await flush();
 		expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'page');
 
-		await fireEvent.click(screen.getByRole('button', { name: 'Auto' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Paused' }));
 		vi.mocked(getConnections).mockClear();
 		vi.advanceTimersByTime(15_000);
 		await flush();

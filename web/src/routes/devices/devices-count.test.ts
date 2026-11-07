@@ -183,7 +183,7 @@ describe('Devices — the Total devices figure a link was clicked at', () => {
 		stub();
 		render(Page);
 		await requests(1);
-		await fireEvent.click(screen.getByRole('button', { name: 'Auto refresh off' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Paused' }));
 
 		vi.advanceTimersByTime(30_000); // the load is still out: runIfIdle skips
 		await settle();

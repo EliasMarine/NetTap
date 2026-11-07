@@ -187,7 +187,8 @@
 					<div class="dropdown-empty">No notifications</div>
 				{:else}
 					{#if fetchFailed}
-						<div class="dropdown-stale">Couldn't refresh notifications: showing the last ones.</div>
+						<!-- OLD CODE: <div class="dropdown-stale">Couldn't refresh notifications: showing the last ones.</div> (NET-192 PR 4: the shared stale note) -->
+						<div class="notice is-warn dropdown-stale" role="status"><Icon name="warn" /><span>Couldn't refresh notifications: showing the last ones.</span></div>
 					{/if}
 					{#each notifications as notification (notification.id)}
 						<button
@@ -282,11 +283,14 @@
 		font-size: var(--text-sm);
 	}
 
+	/* OLD CODE START — NET-192 PR 4: the shared .notice.is-warn sets the look
 	.dropdown-stale {
 		padding: var(--sp-2) var(--sp-4);
 		color: var(--sev-medium);
 		font-size: var(--text-xs);
 	}
+	OLD CODE END */
+	.dropdown-stale { margin: var(--sp-2) var(--sp-4); }
 
 	.notification-item {
 		display: flex;

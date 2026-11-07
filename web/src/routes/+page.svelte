@@ -15,6 +15,7 @@
 	import CardState from '$components/ui/CardState.svelte';
 	import KpiCard from '$components/ui/KpiCard.svelte';
 	import Pills from '$components/ui/Pills.svelte';
+	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import BarList from '$components/ui/BarList.svelte';
 	import DeviceList from '$components/ui/DeviceList.svelte';
 	import Pipeline from '$components/ui/Pipeline.svelte';
@@ -588,6 +589,7 @@
 	</div>
 	<div class="head-actions">
 		<Pills options={RANGE_OPTIONS} bind:value={range} onchange={changeRange} ariaLabel="Time range" />
+		<!-- OLD CODE START — NET-192 PR 4: this button, now AutoRefreshButton so every page has it
 		<button
 			class="btn"
 			type="button"
@@ -596,6 +598,8 @@
 		>
 			<Icon name={autoRefresh ? 'refresh' : 'pause'} />{autoRefresh ? 'Auto' : 'Paused'}
 		</button>
+		OLD CODE END -->
+		<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={() => (autoRefresh = !autoRefresh)} />
 	</div>
 </div>
 
