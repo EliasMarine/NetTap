@@ -12,6 +12,8 @@ import { daemonFetch } from '$lib/server/daemon.js';
  * complete-looking but short file.
  */
 
+export const DOWNLOAD_HEADERS_TIMEOUT_MS = 60_000;
+
 /** The manifest object from either body shape, or null when it is missing or not an object. */
 async function readManifest(request: Request): Promise<Record<string, unknown> | null> {
 	const type = request.headers.get('content-type') ?? '';
@@ -37,12 +39,30 @@ export const POST = async ({ request }: RequestEvent): Promise<Response> => {
 		return json({ error: 'Send the search’s manifest to download its packets.' }, { status: 400 });
 	}
 
-	// No timeout: the download lasts as long as the browser keeps reading
-	const res = await daemonFetch('/api/packets/download', {
-		method: 'POST',
-		body: JSON.stringify({ manifest }),
-		signal: request.signal,
-	});
+	// OLD CODE START — NET-188 review: request.signal never fires once the body has been read,
+	// and passing a signal turned off daemonFetch's own timeout, so a daemon that never answered
+	// left this request waiting forever
+	// const res = await daemonFetch('/api/packets/download', {
+	// 	method: 'POST',
+	// 	body: JSON.stringify({ manifest }),
+	// 	signal: request.signal,
+	// });
+	// OLD CODE END
+	// The daemon answers once the first packet is verified (its job stops itself by ~45 s).
+	// Only that wait is timed: after the headers, the download lasts as long as the browser
+	// reads, and a browser that leaves cancels the body, which closes the daemon's stream.
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), DOWNLOAD_HEADERS_TIMEOUT_MS);
+	let res: Response;
+	try {
+		res = await daemonFetch('/api/packets/download', {
+			method: 'POST',
+			body: JSON.stringify({ manifest }),
+			signal: controller.signal,
+		});
+	} finally {
+		clearTimeout(timer);
+	}
 
 	if (!res.ok) {
 		const data = await res.json().catch(() => ({ error: 'Failed to parse daemon response' }));

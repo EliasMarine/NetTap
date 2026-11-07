@@ -96,7 +96,7 @@ def _int(value: object, what: str) -> int:
         raise _bad(what)
     if isinstance(value, int) and value >= 0:
         return value
-    if isinstance(value, str) and value.isdigit():
+    if isinstance(value, str) and value.isascii() and value.isdigit():  # not "²"
         return int(value)
     raise _bad(what)
 

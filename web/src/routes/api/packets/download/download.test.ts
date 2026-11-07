@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const daemonFetch = vi.fn();
 vi.mock('$lib/server/daemon.js', () => ({ daemonFetch: (...a: unknown[]) => daemonFetch(...a) }));
 
-const { POST } = await import('./+server.js');
+const { POST, DOWNLOAD_HEADERS_TIMEOUT_MS } = await import('./+server.js');
 
 const MANIFEST = {
 	from: '1700000000.25',
@@ -57,8 +57,8 @@ describe('POST /api/packets/download', () => {
 		daemonFetch.mockResolvedValue(pcapStream(false));
 	});
 
-	it('forwards a JSON manifest unchanged, tied to the browser request', async () => {
-		const { event, controller } = post(JSON.stringify({ manifest: MANIFEST }), 'application/json');
+	it('forwards a JSON manifest unchanged', async () => {
+		const { event } = post(JSON.stringify({ manifest: MANIFEST }), 'application/json');
 		const res = await POST(event);
 
 		const [path, options, timeout] = daemonFetch.mock.calls[0];
@@ -67,8 +67,7 @@ describe('POST /api/packets/download', () => {
 		expect(options.body).toBe(JSON.stringify({ manifest: MANIFEST }));
 		expect(options.body).toContain('"mtime_ns":"9223372036854775807"');
 		expect(timeout).toBeUndefined();
-		controller.abort();
-		expect((options.signal as AbortSignal).aborted).toBe(true); // no 10 s cut-off
+		expect((options.signal as AbortSignal).aborted).toBe(false); // no 10 s cut-off mid-file
 
 		expect(res.status).toBe(200);
 		expect(res.headers.get('content-type')).toBe('application/vnd.tcpdump.pcap');
@@ -120,6 +119,38 @@ describe('POST /api/packets/download', () => {
 		const res = await POST(post(JSON.stringify({ manifest: MANIFEST }), 'application/json').event);
 		expect(res.status).toBe(status);
 		expect(await res.json()).toEqual({ error: 'The saved captures changed.', detail: 'a.pcap' });
+	});
+
+	it('gives up when the daemon sends no headers in time', async () => {
+		vi.useFakeTimers();
+		try {
+			let signal: AbortSignal | undefined;
+			daemonFetch.mockImplementation(
+				(_path: string, options: RequestInit) =>
+					new Promise((_resolve, reject) => {
+						signal = options.signal ?? undefined;
+						signal?.addEventListener('abort', () => reject(new Error('aborted')));
+					}),
+			);
+			const outcome = POST(post(JSON.stringify({ manifest: MANIFEST }), 'application/json').event).then(
+				() => 'answered',
+				(e: Error) => e.message,
+			);
+			await vi.advanceTimersByTimeAsync(DOWNLOAD_HEADERS_TIMEOUT_MS - 1);
+			expect(signal?.aborted).toBe(false);
+			await vi.advanceTimersByTimeAsync(1);
+			expect(signal?.aborted).toBe(true);
+			expect(await outcome).toBe('aborted');
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('keeps the status when the daemon error is not JSON', async () => {
+		daemonFetch.mockResolvedValue(new Response('<html>oops</html>', { status: 500 }));
+		const res = await POST(post(JSON.stringify({ manifest: MANIFEST }), 'application/json').event);
+		expect(res.status).toBe(500);
+		expect((await res.json()).error).toBe('Failed to parse daemon response');
 	});
 
 	it('fails the download when the daemon stream errors after two chunks', async () => {

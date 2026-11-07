@@ -3,15 +3,19 @@
 # and check them on real captures against an independent reading of the files.
 #
 # The daemon and web containers are rebuilt and recreated; nothing else is touched. On the
-# first run the daemon indexes every capture file (about 0.35 s per 100 MB file, one at a
-# time), so Step 5 may wait several minutes. Then, read-only, verify-packet-analysis.py:
-#   - compares the index's packet times with a fresh capinfos (3 random files)
-#   - searches a 60 s window across a file boundary and checks the files it read and every
-#     row against each file read whole by TShark (no mergecap, no editcap)
+# first run, and after the index format changes (version 2: records stamped before 2000 are
+# a crash's zeroed tail, not packets), the daemon indexes every capture file (about 0.35 s
+# per 100 MB file), so Step 5 may wait several minutes. Then, read-only,
+# verify-packet-analysis.py:
+#   - compares the index's packet times with a fresh capinfos (3 random files), and every
+#     cut-short file's times and packet count with TShark reading it whole
+#   - searches a 60 s window across a file boundary, and a window across each cut-short
+#     file's end into the next file, and checks the files read and every row against
+#     each file read whole by TShark (no mergecap, no editcap)
 #   - downloads that search and reads it back; opens one packet's detail
 #   - checks field suggestions, the filter check and a hostile filter
 #   - checks a search over the last 60 s is marked provisional
-#   - checks no job is left running in nettap-tshark
+#   - checks no job or FIFO is left behind in nettap-tshark
 #
 # Run as the normal user (NOT with sudo). BRANCH defaults to main; to try a branch first:
 #   BRANCH=feature/packet-analysis-redesign bash /home/nettap/NetTap/scripts/remote/deploy-packet-analysis.sh

@@ -126,6 +126,13 @@ describe('packets API client', () => {
 		expect([err.status, err.message, err.detail]).toEqual([502, 'HTTP 502', undefined]);
 	});
 
+	it('rejects a 200 that is not JSON (a sign-in page) with a readable error', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>Sign in</html>', { status: 200 })));
+		const err = await caught(getCaptures());
+		expect(err).toBeInstanceOf(PacketApiError);
+		expect([err.status, err.message]).toEqual([200, 'NetTap sent an unexpected reply. Sign in again and retry.']);
+	});
+
 	it('lets a network error through', async () => {
 		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
 		await expect(getCaptures()).rejects.toThrow('Failed to fetch');

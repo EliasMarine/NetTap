@@ -78,9 +78,12 @@ class TestEpoch:
         assert ns_epoch(1_700_000_000_000_001_000) == "1700000000.000001000"
         assert epoch_ns("1700000000") == 1_700_000_000 * 10**9
 
-    @pytest.mark.parametrize("bad", ["", "1e9", "-1", "1.0000000001", "1.", " 1"])
+    @pytest.mark.parametrize(
+        "bad",
+        ["", "1e9", "-1", "1.0000000001", "1.", " 1", "1\n", "١", "999999999999"],
+    )
     def test_refuses(self, bad):
-        with pytest.raises(ValueError):
+        with pytest.raises(ParseError):  # a 502 with a reason, never a bare 500
             epoch_ns(bad)
 
 

@@ -131,6 +131,7 @@ def capinfos(monkeypatch):
         return ExecResult("\n".join(out).encode() + b"\n", "", {}, 0, False, 1, 0.1)
 
     monkeypatch.setattr(ci, "run_in_tshark", fake_run)
+    monkeypatch.setattr(ci, "TIME_FLOOR", 0)  # these tests use tiny epoch times
     return answers, calls
 
 
@@ -262,6 +263,116 @@ async def test_index_survives_a_restart_and_drops_deleted_files(tmp_path, capinf
 def test_corrupt_index_file_starts_again(tmp_path):
     (tmp_path / "index.json").write_text("{not json")
     assert index_for(tmp_path).entry("a.pcap") is None
+
+
+def test_capinfos_timeout_fails_the_file_instead_of_leaving_it_pending():
+    e = parse_capinfos("", 124, 9, 1)  # GNU timeout stopped it
+    assert e.state == "failed"
+    assert e.error == f"capinfos took longer than {ci.CAPINFOS_SECONDS} s"
+    assert 'timeout "$CAPINFOS_SECONDS" capinfos' in ci._CAPINFOS_JOB
+
+
+def test_a_failed_save_stays_dirty_for_the_shutdown_flush(tmp_path):
+    idx = CaptureIndex(
+        str(tmp_path), str(tmp_path / "missing" / "index.json"), asyncio.Semaphore(2)
+    )
+    idx._dirty = True
+    idx._save(set())
+    assert idx._dirty
+
+
+@pytest.mark.asyncio
+async def test_a_file_indexed_while_waiting_for_the_lock_is_not_read_again(
+    tmp_path, capinfos
+):
+    answers, calls = capinfos
+    make(tmp_path, "a.pcap")
+    answers["a.pcap"] = (0, table("/pcap/a.pcap", "1", "2"))
+    idx = index_for(tmp_path)
+    [f] = scan_captures(str(tmp_path))
+    await idx.index_files([f])
+    await idx.index_files([f])  # e.g. a search that waited behind the background pass
+    assert len(calls) == 1
+
+
+def test_index_from_an_older_format_starts_again(tmp_path):
+    entry = {"size": 10, "mtime_ns": "1", "state": "indexed", "first": "0.000000"}
+    (tmp_path / "index.json").write_text(
+        json.dumps({"version": 1, "entries": {"a.pcap": entry}})
+    )
+    assert index_for(tmp_path).entry("a.pcap") is None
+
+
+CRASHED = (
+    'capinfos: The file "/pcap/crash.pcap" appears to have been cut short in the '
+    "middle of a packet.\n"
+    + table("/pcap/crash.pcap", "0.000000", "1794019342.449881", 94282)
+)
+
+
+def floor_fake(monkeypatch, floor_result):
+    """The batch sees a crash's zeroed tail (first packet 1970); the re-read answers."""
+    jobs: list[tuple[str, list[str]]] = []
+
+    async def fake_run(job, args, **_kw):
+        jobs.append((job, list(args)))
+        if job == ci._FLOOR_JOB:
+            return floor_result
+        out = f"#nt-file 0\n{CRASHED}\n#nt-rc 1\n".encode()
+        return ExecResult(out, "", {}, 0, False, 1, 0.1)
+
+    monkeypatch.setattr(ci, "run_in_tshark", fake_run)
+    return jobs
+
+
+@pytest.mark.asyncio
+async def test_zeroed_tail_after_a_crash_is_left_out(tmp_path, monkeypatch, caplog):
+    real = table("-", "1794019107.174686", "1794019342.449881", 94208)
+    jobs = floor_fake(
+        monkeypatch,
+        ExecResult(
+            real.encode(),
+            CRASHED.splitlines()[0],
+            {"editcap": 0, "capinfos": 0},
+            0,
+            False,
+            1,
+            0.1,
+        ),
+    )
+    make(tmp_path, "crash.pcap")
+    idx = index_for(tmp_path)
+    sel = await idx.select(Decimal("1794019100"), Decimal("1794019200"))
+    assert [f.id for f, _ in sel.files] == ["crash.pcap"]
+    e = idx.entry("crash.pcap")
+    assert (e.state, e.first, e.last, e.packets, e.cut_short) == (
+        "indexed",
+        "1794019107.174686",
+        "1794019342.449881",
+        94208,
+        True,
+    )
+    assert jobs[1] == (ci._FLOOR_JOB, ["946684800", "/pcap/crash.pcap"])
+    assert "left out 74 records stamped before 2000" in caplog.text
+    # an older window no longer reads it, and the summary no longer says 1970
+    assert (await idx.select(Decimal("1000"), Decimal("2000"))).files == []
+    assert idx.summary()["oldest_packet"] == "1794019107.174686"
+
+
+@pytest.mark.asyncio
+async def test_failed_reread_marks_the_file_failed(tmp_path, monkeypatch):
+    floor_fake(
+        monkeypatch,
+        ExecResult(
+            b"", "editcap: Can't open", {"editcap": 1, "capinfos": 0}, 0, False, 1, 0.1
+        ),
+    )
+    make(tmp_path, "crash.pcap")
+    idx = index_for(tmp_path)
+    sel = await idx.select(Decimal("1794019100"), Decimal("1794019200"))
+    e = idx.entry("crash.pcap")
+    assert e.state == "failed" and "reading past them failed" in e.error
+    assert [f.id for f, _ in sel.failed] == ["crash.pcap"]  # every search names it
 
 
 @pytest.mark.asyncio

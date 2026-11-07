@@ -18,7 +18,6 @@ import { daemonFetch } from '$lib/server/daemon.js';
 // OLD CODE START — NET-154: the certificate overview's 50 s budget needs the same allowance
 // const SLOW_PATH_TIMEOUT_MS: Record<string, number> = { '/api/pcap/preview': 60_000 };
 // OLD CODE END
-// The certificate overview stops itself at 50 s and answers 503, so 60 s always gets its reason
 // OLD CODE START — NET-188: packet analysis needs its own allowances
 // const SLOW_PATH_TIMEOUT_MS: Record<string, number> = {
 // 	'/api/pcap/preview': 60_000,
@@ -26,6 +25,7 @@ import { daemonFetch } from '$lib/server/daemon.js';
 // 	'/api/certificates/overview': 60_000,
 // };
 // OLD CODE END
+// The certificate overview stops itself at 50 s and answers 503, so 60 s always gets its reason
 const SLOW_PATH_TIMEOUT_MS: Record<string, number> = {
 	'/api/pcap/preview': 60_000,
 	// Filtered (?site=&server=) requests too: the lookup is by path
@@ -33,10 +33,11 @@ const SLOW_PATH_TIMEOUT_MS: Record<string, number> = {
 	// NET-188: a packet search or one packet's detail stops itself at ~48 s, so 55 s gets its reason
 	'/api/packets/search': 55_000,
 	'/api/packets/packet': 55_000,
-	// Listing captures, suggesting fields and checking a filter each run a short tshark job
+	// Listing captures walks the capture folder and reads the index (no tshark)
 	'/api/packets/captures': 15_000,
-	'/api/packets/fields': 15_000,
-	'/api/packets/check-filter': 15_000,
+	// Up to 5 s waiting for a reader slot, then a 10 s tshark job and its clean-up
+	'/api/packets/fields': 25_000,
+	'/api/packets/check-filter': 25_000,
 };
 // NET-160: the address, domain and Suricata category pages stop themselves at 25 s and answer 503, so 30 s gets the reason
 const SLOW_PREFIX_TIMEOUT_MS: [string, number][] = [

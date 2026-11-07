@@ -44,8 +44,10 @@ COLUMN_FIELDS = ("_ws.col.Protocol", "_ws.col.Info")  # Info last: it may hold t
 ALL_FIELDS = IDENTITY_FIELDS + DETAIL_FIELDS + COLUMN_FIELDS
 AGGREGATOR = "\x1f"  # joins repeated values (every answer of a DNS reply)
 
-EPOCH = re.compile(r"^\d{1,12}(\.\d{1,9})?$")
-MD5 = re.compile(r"^[0-9a-f]{32}$")
+# ASCII digits only, and \Z: `$` would let a trailing newline through. 11 digits
+# (to year 5138) keeps every time a datetime can print.
+EPOCH = re.compile(r"^[0-9]{1,11}(\.[0-9]{1,9})?\Z")
+MD5 = re.compile(r"^[0-9a-f]{32}\Z")
 
 
 class ParseError(Exception):
@@ -65,7 +67,7 @@ class Frame:
 def epoch_ns(value: str) -> int:
     """'1794026064.094483' to nanoseconds, exactly."""
     if not EPOCH.match(value):
-        raise ValueError(f"not an epoch time: {value!r}")
+        raise ParseError(f"not an epoch time: {value!r}")
     whole, _, frac = value.partition(".")
     return int(whole) * 1_000_000_000 + int(frac.ljust(9, "0"))
 

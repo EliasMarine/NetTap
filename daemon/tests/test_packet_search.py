@@ -7,6 +7,7 @@ container is replaced by a fake that returns them.
 import asyncio
 import os
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -186,20 +187,74 @@ async def test_silent_death_is_502(env):
     assert err.value.status == 502
 
 
+def flag_cut_short(index):
+    index._entries["a.pcap"] = replace(index._entries["a.pcap"], cut_short=True)
+
+
 @pytest.mark.asyncio
-async def test_cut_short_file_still_ends_cleanly(env):
-    svc, fake, *_ = env
+async def test_a_file_that_may_end_mid_packet_goes_through_editcap(env):
+    """TShark 4.0.17's mergecap stops merging EVERY file at a partly written packet
+    (exit 2; on the G11 a crashed file hid all of the next file's packets), so such
+    a file reaches mergecap through editcap (_CUT), whose stage must report."""
+    svc, fake, tmp_path, index = env
+    await svc.search(BODY)
+    assert fake.calls[-1][1][4:] == ["/pcap/a.pcap"]  # finished and whole: direct
+    flag_cut_short(index)
     fake.search = result(
-        (FIX / "search_all.out").read_bytes(),
-        {**ALL_ZERO, "mergecap": 2},
-        'mergecap: The file "/pcap/a.pcap" appears to have been cut short in the middle of a packet.',
+        (FIX / "search_all.out").read_bytes(), {**ALL_ZERO, "pre-0": 0}
     )
     assert (await svc.search(BODY))["termination"] == "eof"
-    fake.search = result(
-        rows_text(1), {**ALL_ZERO, "mergecap": 2}, "mergecap: read error"
+    assert fake.calls[-1][1][4:] == ["cut:/pcap/a.pcap"]
+    for statuses in (
+        ALL_ZERO,  # the editcap in front never reported
+        {**ALL_ZERO, "pre-0": 1},
+        {**ALL_ZERO, "pre-0": 0, "mergecap": 2},  # no cut reaches mergecap now
+    ):
+        fake.search = result(rows_text(1), statuses)
+        with pytest.raises(PacketError) as err:
+            await svc.search(BODY)
+        assert err.value.status == 502
+
+
+@pytest.mark.asyncio
+async def test_a_file_still_being_written_goes_through_editcap(env):
+    svc, fake, tmp_path, index = env
+    os.utime(tmp_path / "a.pcap")  # written just now
+    index._entries["a.pcap"] = replace(
+        index._entries["a.pcap"], mtime_ns=(tmp_path / "a.pcap").stat().st_mtime_ns
     )
+    fake.search = result(
+        (FIX / "search_all.out").read_bytes(), {**ALL_ZERO, "pre-0": 0}
+    )
+    await svc.search(BODY)
+    assert fake.calls[-1][1][4:] == ["cut:/pcap/a.pcap"]
+
+
+@pytest.mark.asyncio
+async def test_detail_and_download_send_a_cut_short_file_through_editcap(env):
+    svc, fake, _, index = env
+    flag_cut_short(index)
+    fake.search = result(
+        (FIX / "search_all.out").read_bytes(), {**ALL_ZERO, "pre-0": 0}
+    )
+    m = await manifest_of(svc)
+    with pytest.raises(PacketError):  # neither pass's editcap reported
+        await svc.packet({"manifest": m, "frame": 1})
+    fake.detail = result(
+        fake.detail.stdout, {**fake.detail.statuses, "pre1-0": 0, "pre2-0": 0}
+    )
+    assert (await svc.packet({"manifest": m, "frame": 1}))["cap_len"] == 54
+    assert fake.calls[-1][1][3:] == ["cut:/pcap/a.pcap"]
+
+    async def write(_chunk):
+        pass
+
+    dm = svc.prepare_download(_download_manifest(m))
     with pytest.raises(PacketError):
-        await svc.search(BODY)
+        await svc.download(dm, write)
+    fake.download_statuses = {**fake.download_statuses, "pre-0": 0}
+    assert await svc.download(dm, write) == 3
+    assert fake.calls[-1][1][4:] == ["cut:/pcap/a.pcap"]
 
 
 @pytest.mark.asyncio
@@ -457,7 +512,7 @@ async def test_fields_failure_is_not_an_empty_list(env):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("prefix", ["ab", "TLS", "a b", "x;y", "a" * 81])
+@pytest.mark.parametrize("prefix", ["ab", "TLS", "a b", "x;y", "a" * 81, "tls\n"])
 async def test_fields_prefix_checked(env, prefix):
     svc, *_ = env
     with pytest.raises(PacketError) as err:

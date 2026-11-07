@@ -58,6 +58,14 @@ class TestParse:
             {"from": "1700000002.5"},  # empty window
             {"to": "1700001801"},  # longer than 30 minutes
             {"from": "17e8"},
+            {"from": "1700000001\n"},  # $ would accept the newline
+            {"from": "١٧٠٠٠٠٠٠٠١"},  # \d would accept Arabic-Indic digits
+            {
+                "from": "999999999999",
+                "to": "999999999999.5",
+            },  # past year 9999: was a 500
+            {"files": [{"id": "a.pcap", "size": 1, "mtime_ns": "²"}]},  # was a 500
+            {"frames": [{"n": 1, "t": "1", "cap_len": 1, "md5": "a" * 32 + "\n"}]},
             {"files": []},
             {"files": [{"id": "../etc/passwd.pcap", "size": 1, "mtime_ns": "1"}]},
             {"files": [{"id": "/abs.pcap", "size": 1, "mtime_ns": "1"}]},

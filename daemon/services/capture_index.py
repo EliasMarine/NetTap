@@ -8,6 +8,11 @@ window's packets; they only label files on the page.
 An entry is keyed by the file's size and mtime. A file that changes (the one being
 written, or a replaced one) is indexed again. A file capinfos can't read is kept as
 ``failed`` and counts as possibly holding any window, so every search reports it.
+
+A record stamped before 2000 is not a packet NetTap captured: it is the zero-filled
+tail a crash can leave (the file's size was saved, its last blocks were not). On the
+G11 one such file read 74 records of time 0 and length 0 after its real packets, and
+capinfos called its first packet 1970. A file like that is read again from 2000 on.
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ import logging
 import os
 import stat
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -41,19 +46,34 @@ POLL_SECONDS = 10
 SAVE_SECONDS = 60
 BATCH_FILES = 8
 BATCH_DEADLINE_SECONDS = 30
+# One file's own limit, below the batch's: a file capinfos can't read in time is
+# recorded as failed (named by every search) instead of staying pending, which
+# would make every search answer "still indexing".
+CAPINFOS_SECONDS = 25
 INLINE_INDEX_LIMIT = 8
 CUT_SHORT = "appears to have been cut short in the middle of a packet"
+TIME_FLOOR = 946684800  # 2000-01-01T00:00:00Z
+INDEX_VERSION = 2  # 2: entries no longer count records stamped before TIME_FLOOR
 
-# For each file: a marker line, capinfos's table (and its messages), then its exit code.
-_CAPINFOS_JOB = r"""
+# For each file: a marker line, capinfos's table (and its messages), then its exit
+# code (124: GNU timeout stopped it).
+_CAPINFOS_JOB = rf"""
+CAPINFOS_SECONDS={CAPINFOS_SECONDS}
 i=0
 for f in "$@"; do
   echo "#nt-file $i"
-  capinfos -a -e -c -E -S -M -T -- "$f" 2>&1
+  timeout "$CAPINFOS_SECONDS" capinfos -a -e -c -E -S -M -T -- "$f" 2>&1
   echo "#nt-rc $?"
   i=$((i+1))
 done
 """
+
+
+# One file's packets from $1 (TIME_FLOOR) on. editcap exits 0 on a cut-short file.
+_FLOOR_JOB = (
+    '{ editcap -A "$1" "$2" -; echo "$NT status editcap $?" >&2; } | '
+    '{ capinfos -a -e -c -E -S -M -T -; echo "$NT status capinfos $?" >&2; }\n'
+)
 
 
 class StillIndexing(Exception):
@@ -158,6 +178,8 @@ def parse_capinfos(text: str, rc: int, size: int, mtime_ns: int) -> IndexEntry:
     cut_short = any(CUT_SHORT in line for line in messages)
     if table is None or len(table) != 5 or (rc != 0 and not cut_short):
         error = " ".join(m.strip() for m in messages if m.strip())[:300]
+        if rc == 124:
+            error = f"capinfos took longer than {CAPINFOS_SECONDS} s"
         return IndexEntry(
             size, mtime_ns, "failed", error=error or f"capinfos exited {rc}"
         )
@@ -207,6 +229,9 @@ class CaptureIndex:
         try:
             with open(self.index_path, encoding="utf-8") as fh:
                 raw = json.load(fh)
+            if raw.get("version") != INDEX_VERSION:
+                logger.info("Capture index format changed; indexing every file again")
+                return {}
             entries = {
                 k: IndexEntry(**{**v, "mtime_ns": int(v["mtime_ns"])})
                 for k, v in raw["entries"].items()
@@ -220,15 +245,16 @@ class CaptureIndex:
             return {}
 
     def _save(self, present: set[str]) -> None:
+        """Write the index, dropping files no longer `present`. A failed write
+        leaves it dirty, so the shutdown flush tries again."""
         self._entries = {k: v for k, v in self._entries.items() if k in present}
         payload = {
-            "version": 1,
+            "version": INDEX_VERSION,
             "entries": {
                 k: {**asdict(v), "mtime_ns": str(v.mtime_ns)}
                 for k, v in self._entries.items()
             },
         }
-        self._dirty = False
         self._saved_at = time.monotonic()
         tmp = f"{self.index_path}.tmp"
         try:
@@ -237,11 +263,19 @@ class CaptureIndex:
             os.replace(tmp, self.index_path)
         except OSError as exc:
             logger.error("Could not save the capture index: %s", exc)
+            return
+        self._dirty = False
 
-    def _save_soon(self, present: set[str]) -> None:
-        """Save when something changed, at most once every SAVE_SECONDS."""
-        changed = self._dirty or any(k not in present for k in self._entries)
-        if changed and time.monotonic() - self._saved_at >= SAVE_SECONDS:
+    def _save_soon(self) -> None:
+        """Save when something changed, at most once every SAVE_SECONDS.
+
+        The files present come from a scan taken now: a caller's own scan may be
+        older than entries another caller added meanwhile.
+        """
+        if time.monotonic() - self._saved_at < SAVE_SECONDS:
+            return
+        present = {f.id for f in scan_captures(self.root)}
+        if self._dirty or any(k not in present for k in self._entries):
             self._save(present)
 
     # --- indexing ----------------------------------------------------------
@@ -258,6 +292,10 @@ class CaptureIndex:
         if not files:
             return
         async with self._lock:
+            # The background pass may have indexed some while this caller waited.
+            files = [f for f in files if self.fresh_entry(f) is None]
+            if not files:
+                return
             result: ExecResult = await run_in_tshark(
                 _CAPINFOS_JOB,
                 [f.container_path for f in files],
@@ -268,7 +306,10 @@ class CaptureIndex:
             for i, f in enumerate(files):
                 if i in parsed:
                     rc, text = parsed[i]
-                    self._entries[f.id] = parse_capinfos(text, rc, f.size, f.mtime_ns)
+                    entry = parse_capinfos(text, rc, f.size, f.mtime_ns)
+                    if entry.first is not None and Decimal(entry.first) < TIME_FLOOR:
+                        entry = await self._without_junk(f, entry)
+                    self._entries[f.id] = entry
                     self._dirty = True
                 # A file the batch never reached stays pending and is tried again.
             if result.deadline or len(parsed) < len(files):
@@ -279,6 +320,37 @@ class CaptureIndex:
                     result.deadline,
                     result.stderr[:300],
                 )
+
+    async def _without_junk(self, f: CaptureFile, entry: IndexEntry) -> IndexEntry:
+        """Index `f` again from TIME_FLOOR on, leaving out a crash's zeroed records."""
+        result = await run_in_tshark(
+            _FLOOR_JOB,
+            [str(TIME_FLOOR), f.container_path],
+            deadline_s=BATCH_DEADLINE_SECONDS,
+            max_stdout=64 * 1024,
+        )
+        if result.deadline or not result.all_zero(("editcap", "capinfos")):
+            return IndexEntry(
+                f.size,
+                f.mtime_ns,
+                "failed",
+                error=(
+                    "records stamped before 2000, and reading past them failed "
+                    f"({result.statuses}): {result.stderr[:200]}"
+                ),
+            )
+        real = parse_capinfos(
+            result.stdout.decode("utf-8", "replace"), 0, f.size, f.mtime_ns
+        )
+        if real.state == "indexed":
+            logger.warning(
+                "%s: left out %d records stamped before 2000 (a zero-filled tail, "
+                "e.g. after a crash)",
+                f.id,
+                (entry.packets or 0) - (real.packets or 0),
+            )
+            real = replace(real, cut_short=entry.cut_short)
+        return real
 
     async def select(self, start: Decimal, end: Decimal) -> Selection:
         """The files holding packets in [start, end). The caller holds a reader slot.
@@ -291,7 +363,7 @@ class CaptureIndex:
             raise StillIndexing(len(pending))
         if pending:
             await self.index_files(pending)
-            self._save_soon({f.id for f in files})
+            self._save_soon()
         chosen: list[tuple[CaptureFile, IndexEntry]] = []
         failed: list[tuple[CaptureFile, IndexEntry]] = []
         for f in files:
@@ -334,13 +406,13 @@ class CaptureIndex:
                 reverse=True,
             )
             if not pending:
-                self._save_soon({f.id for f in files})
+                self._save_soon()
                 return
             while self._slot.locked():  # let people's searches go first
                 await asyncio.sleep(1)
             async with reader_slot(self._slot, wait_seconds=30):
                 await self.index_files(pending[:BATCH_FILES])
-            self._save_soon({f.id for f in files})
+            self._save_soon()
             await asyncio.sleep(0.2)
 
     # --- listing -----------------------------------------------------------

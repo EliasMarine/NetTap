@@ -5,12 +5,17 @@ Every packet-analysis job runs as ``docker exec nettap-tshark sh -c SUPERVISOR _
 positional argument, so nothing the user typed is ever parsed by a shell.
 
 The supervisor puts the job in its own process group (``setsid``) and prints
-``#nt-pgid``. A watchdog prints ``#nt-deadline`` and then sends TERM and, 2 s later,
-KILL to the group. When the job leader exits, the supervisor kills the group anyway,
-so no stage can outlive the job. Each stage of a job reports ``#nt-status <stage>
-<code>`` on stderr. The daemon decides how a job ended from those lines and from what
-it printed, never from the exit code alone (the job's own 143 can arrive while the
-watchdog is still in its grace period).
+``<marker> pgid``. A watchdog prints ``<marker> deadline`` and then sends TERM and,
+2 s later, KILL to the group. When the job leader exits, the supervisor kills the
+group anyway, so no stage can outlive the job, and removes the job's FIFOs (``/tmp/nt-<pgid>-…``,
+see packet_search._CUT). Each stage of a job reports
+``$NT status <stage> <code>`` on stderr. The daemon decides how a job ended from
+those lines and from what it printed, never from the exit code alone (the job's own
+143 can arrive while the watchdog is still in its grace period).
+
+The marker is ``#nt-<random tag>``, new for every run and passed to the job as $NT.
+A TShark error message can echo a user's filter with its escapes turned into real
+line breaks, so an untagged ``#nt-…`` line is just text, never a control line.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ import asyncio
 import contextlib
 import logging
 import re
+import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -27,25 +33,26 @@ logger = logging.getLogger("nettap.container_exec")
 
 TSHARK_CONTAINER = "nettap-tshark"
 
-# $1 deadline seconds, $2 job script, then the job's own arguments.
+# $1 the run's tag, $2 deadline seconds, $3 job script, then the job's own arguments.
 SUPERVISOR = r"""
-d="$1"; job="$2"; shift 2
-setsid sh -c "$job" _ "$@" &
+t="#nt-$1"; d="$2"; job="$3"; shift 3
+NT="$t" setsid sh -c "$job" _ "$@" &
 pg=$!
-echo "#nt-pgid $pg" >&2
-setsid sh -c 'sleep "$1"; echo "#nt-deadline" >&2; kill -TERM -"$2" 2>/dev/null; sleep 2; kill -KILL -"$2" 2>/dev/null' _ "$d" "$pg" >/dev/null &
+echo "$t pgid $pg" >&2
+setsid sh -c 'sleep "$1"; echo "$3 deadline" >&2; kill -TERM -"$2" 2>/dev/null; sleep 2; kill -KILL -"$2" 2>/dev/null' _ "$d" "$pg" "$t" >/dev/null &
 wd=$!
 wait "$pg"; rc=$?
 kill -KILL -"$wd" 2>/dev/null
 kill -KILL -"$pg" 2>/dev/null
+rm -f /tmp/nt-"$pg"-*
 exit "$rc"
 """
 
 KILL_GROUP = 'kill -KILL -"$1" 2>/dev/null; exit 0'
 
 _ROOT_WARNING = 'Running as user "root"'
-_STATUS = re.compile(r"^#nt-status (\S+) (\d+)$")
-_PGID = re.compile(r"^#nt-pgid (\d+)$")
+_STATUS = re.compile(r"status (\S+) ([0-9]+)")
+_PGID = re.compile(r"pgid ([0-9]+)")
 _READ_CHUNK = 64 * 1024
 # The watchdog's KILL lands 2 s after the deadline; the supervisor exits right after.
 _GRACE_SECONDS = 5
@@ -84,6 +91,7 @@ class ExecResult:
 
 @dataclass
 class _StderrState:
+    marker: str  # "#nt-<this run's tag>"
     pgid: int | None = None
     deadline: bool = False
     statuses: dict[str, int] = field(default_factory=dict)
@@ -105,16 +113,16 @@ async def reader_slot(slot: asyncio.Semaphore, wait_seconds: float):
 
 
 def _note_stderr_line(state: _StderrState, line: str) -> None:
-    if (
-        m := _PGID.match(line)
-    ) and state.pgid is None:  # the supervisor prints it first
+    marker, _, rest = line.partition(" ")
+    if marker != state.marker:
+        if line and not line.startswith(_ROOT_WARNING):
+            state.lines.append(line)
+    elif m := _PGID.fullmatch(rest):
         state.pgid = int(m.group(1))
-    elif line == "#nt-deadline":
+    elif rest == "deadline":
         state.deadline = True
-    elif m := _STATUS.match(line):
+    elif m := _STATUS.fullmatch(rest):
         state.statuses[m.group(1)] = int(m.group(2))
-    elif line and not line.startswith(_ROOT_WARNING):
-        state.lines.append(line)
 
 
 async def _pump_stderr(
@@ -144,12 +152,34 @@ async def _pump_stdout(
             await sink(chunk)
 
 
-async def _stop(proc: asyncio.subprocess.Process, pgid: int | None) -> None:
+async def _discard(stream: asyncio.StreamReader) -> None:
+    while await stream.read(_READ_CHUNK):
+        pass
+
+
+async def _stop(
+    proc: asyncio.subprocess.Process, pgid: int | None, pumps: list[asyncio.Task]
+) -> None:
     """Kill the job's group inside the container, then wait for docker exec to end.
 
     Killing the local docker exec client would leave the job running in the
-    container, so the group is killed there first.
+    container, so the group is killed there first. Both pipes are read to the end
+    meanwhile: asyncio stops reading a full pipe and never sees its EOF, and
+    Process.wait() returns only once the pipes close, so an unread pipe would hang
+    here for ever and keep the reader slot.
     """
+    for task in pumps:
+        task.cancel()
+    await asyncio.gather(*pumps, return_exceptions=True)
+    drains = [asyncio.create_task(_discard(s)) for s in (proc.stdout, proc.stderr) if s]
+    try:
+        await _kill_and_wait(proc, pgid)
+    finally:
+        for task in drains:
+            task.cancel()
+
+
+async def _kill_and_wait(proc: asyncio.subprocess.Process, pgid: int | None) -> None:
     if pgid is not None:
         killer = await asyncio.create_subprocess_exec(
             "docker",
@@ -172,7 +202,10 @@ async def _stop(proc: asyncio.subprocess.Process, pgid: int | None) -> None:
         await asyncio.wait_for(proc.wait(), timeout=_CLEANUP_SECONDS)
     except TimeoutError:
         proc.kill()
-        await proc.wait()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=_CLEANUP_SECONDS)
+        except TimeoutError:
+            logger.error("docker exec for job group %s did not exit", pgid)
 
 
 async def run_in_tshark(
@@ -193,6 +226,7 @@ async def run_in_tshark(
     """
     started = time.monotonic()
     deadline = max(1, int(deadline_s))
+    tag = secrets.token_hex(8)
     proc = await asyncio.create_subprocess_exec(
         "docker",
         "exec",
@@ -201,6 +235,7 @@ async def run_in_tshark(
         "-c",
         SUPERVISOR,
         "_",
+        tag,
         str(deadline),
         job,
         *args,
@@ -209,9 +244,10 @@ async def run_in_tshark(
         stderr=asyncio.subprocess.PIPE,
         limit=_LINE_LIMIT,
     )
-    state = _StderrState()
+    state = _StderrState(marker=f"#nt-{tag}")
     chunks: list[bytes] = []
     if proc.stdout is None or proc.stderr is None:
+        proc.kill()
         raise RuntimeError("docker exec started without pipes")
     pumps = [
         asyncio.create_task(_pump_stdout(proc.stdout, max_stdout, sink, chunks)),
@@ -219,18 +255,13 @@ async def run_in_tshark(
     ]
     try:
         async with asyncio.timeout(deadline + _GRACE_SECONDS):
-            done, pending = await asyncio.wait(
-                pumps, return_when=asyncio.FIRST_EXCEPTION
-            )
+            # Returns when both pumps are done, or one failed (the other is pending).
+            done, _ = await asyncio.wait(pumps, return_when=asyncio.FIRST_EXCEPTION)
             for task in done:
                 task.result()  # re-raise a pump's failure
-            if pending:
-                await asyncio.gather(*pending)
             returncode = await proc.wait()
     except BaseException:
-        for task in pumps:
-            task.cancel()
-        await asyncio.shield(_stop(proc, state.pgid))
+        await asyncio.shield(_stop(proc, state.pgid, pumps))
         raise
     return ExecResult(
         stdout=b"".join(chunks),

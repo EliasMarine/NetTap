@@ -66,8 +66,8 @@ describe('API Catch-All Proxy Route ([...path]/+server.ts)', () => {
 		['/api/packets/search', 55_000],
 		['/api/packets/packet', 55_000],
 		['/api/packets/captures', 15_000],
-		['/api/packets/fields?prefix=http.re', 15_000],
-		['/api/packets/check-filter', 15_000],
+		['/api/packets/fields?prefix=http.re', 25_000],
+		['/api/packets/check-filter', 25_000],
 	])('gives %s %i ms', async (path, ms) => {
 		await GET(event(path) as never);
 		expect(daemonFetch.mock.calls[0][2]).toBe(ms);

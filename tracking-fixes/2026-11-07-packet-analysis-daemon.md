@@ -1,6 +1,6 @@
 # 2026-11-07 — Packet analysis, PR 1: the daemon reads windows of the saved captures exactly
 
-**Status:** built and tested on `feature/packet-analysis-redesign`. Gates, PR, merge and the G11 check are pending.
+**Status:** PR #196. The branch passed every check on the G11 (2026-11-07 05:17 UTC); the review fixes below are deployed with the merge.
 - **Linear:** NET-188.
 - **Plan:** `.codex-review/2026-11-07-0400-packet-analysis/PLAN.md`. Codex reviewed it for 5 rounds and raised 38 findings, all accepted. The log has the build's measured departures under "Implementation notes".
 - **Mockup:** https://claude.ai/artifact/EhF7D2N8ngPrY49DgKTVWP
@@ -72,12 +72,42 @@ The new page (PR 2) starts from a question: who, what and when. It needs a daemo
   - A job that traps TERM was killed at the deadline.
   - `/proc` was clean afterwards.
 
+**Found by the first G11 run and the PR reviews (fixed before merge)**
+
+- **A crash leaves a zero-filled tail, and capinfos called it 1970.** `mnetsniff-enp4s0_1794019107.pcap` had 94,208 real packets (02:38:27 to 02:42:22 UTC on 2026-11-07), then 74 records of time 0 and length 0. ext4 had saved the file's size but not its last blocks. capinfos reported the first packet as 1970-01-01, so:
+  - the summary's oldest packet read 1970;
+  - the file counted as overlapping every window before 02:42 that day;
+  - its packet count included the junk records.
+  
+  Searches never returned the junk as rows, because `editcap -A` drops it. The fix: when capinfos reports anything before 2000, the index reads that file again through `editcap -A 946684800 | capinfos -` and logs how many records it left out. The index format is now version 2, so the G11 re-indexes every file once after deploy. The verifier now checks each cut-short file against TShark reading it whole, and checks that the oldest packet is after 2000.
+- **A crashed file hid every later file's packets (Python review, critical).** TShark 4.0.17's mergecap stops merging all files at the first partly written packet. It exits 2 and prints only the cut-short line, which the daemon accepted as clean. On the G11, the crashed file plus the next one (which starts at 02:53, after the reboot) gave 94,282 packets: the crashed file's alone. All 77,870 of the next file's were missing. A search across the outage returned 322 SYN rows marked complete; the truth is 339.
+  - **Fix:** every file that may end in a partly written packet goes to mergecap through `editcap` and a FIFO. That is a file the index flagged as cut short, a recent file that may still be written, or one whose index entry is for another version of the file. editcap stops at the cut and exits 0, and each one reports its own stage. mergecap's exit 2 is a real failure again.
+  - **Measured on the G11:** 339 rows, equal to each file read whole (322 + 17). Every stage reported 0, and no FIFO was left.
+  - **Verifier:** it now also searches across every cut-short file's end into the next file, against the files read whole.
+- **A stuck cleanup could hold a reader slot for ever (Python review, high).** After a cap, a failed sink or a cancel, the cleanup stopped reading the pipes. A job still writing filled them, and on Python 3.12 `Process.wait()` returns only once the pipes close, so the cleanup never ended. Two such events took both shared slots, and TShark, PCAP Search and packet analysis all answered 503 until the daemon restarted. The cleanup now reads both pipes to the end and limits its waits. The test fails without the reads.
+- **One slow file stopped every search (Python review, medium).** A file capinfos couldn't read within the batch's 30 s stayed pending, so every search answered "still indexing", and the background pass spun on it. Each file now has its own 25 s limit (GNU `timeout`). A file over it is recorded as failed and named by every search.
+- **Smaller ones (Python review, low).**
+  - A search waiting behind the background pass no longer reads files that pass just indexed.
+  - The index prunes deleted files from a scan taken when it saves, not from a caller's older one.
+  - A failed save stays marked unsaved, so the shutdown flush retries it.
+  - The TShark version lookup can't hold up a finished answer (2 s, then "unknown").
+  - A bad time in TShark's own output is a 502 with a reason, not a 500.
+- **A filter could forge the job's control lines (security review, low).** When TShark refuses a filter, it echoes the filter with `\x0a` turned into a real line break. On 4.0.17 a filter printed bare `#nt-status tshark 0` and `#nt-pgid 1` lines. Line order made this harmless, but now every run gets a random tag. The job receives the tag as `$NT`, and only `#nt-<tag> …` lines count as control lines.
+- **Input checks.** The checks for window times, MD5 and the field prefix used `\d` and `$`, which accept non-ASCII digits and a trailing newline. A 12-digit time made the download route's file name fail with a 500. A manifest size of `"²"` passed `isdigit()` and then failed in `int()`, another 500. All of these are 400s now: ASCII digits, `\Z`, at most 11 digits.
+- **Web.**
+  - The download route has its own 60 s limit on the daemon's headers. It no longer depends on the browser's request signal.
+  - A 200 that isn't JSON (a sign-in page) becomes a readable error.
+  - Field suggestions and the filter check have a 25 s proxy timeout.
+
 **Tests**
 
 - 132 new daemon tests in `test_container_exec.py`, `test_capture_index.py`, `test_packet_parse.py`, `test_packet_manifest.py`, `test_packet_search.py` and `test_packets_api.py`. Two of them need setsid and run on Linux only.
-- Full daemon suite: 3,397 passed, 0 failed.
+- Full daemon suite: 3,417 passed, 0 failed (after the review fixes). Web: 3,446 passed.
 
 **Lessons**
+
+- **A tool's exit code can mean "I stopped early" in one version and "I skipped it" in another.** mergecap 4.6.9 merges past a cut-short file; 4.0.17 stops. Measure multi-file behaviour on the device's version, with a real crashed file, not one file at a time.
+- **Check the index's own summary against reality, not only a random sample.** The random check of 3 files passed while the summary said 1970; one crashed file in 1,480 is what a power cut leaves.
 
 - **Measure the device before trusting the plan's numbers.** The plan assumed a recent file was rare. On the G11, 24 files can be "recent" at once.
 - **Record fixtures from the real binary.** The fragment fixture from planning held a real router MAC address, so it was regenerated from crafted packets before commit.
