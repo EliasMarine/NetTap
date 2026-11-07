@@ -57,6 +57,7 @@
 		alertsHrefForSignature,
 		countDifference,
 		customRange,
+		fmt,
 		linkedCount,
 		partialListNote,
 		suricataCategoryHref,
@@ -1227,7 +1228,7 @@
 	// View data
 	// ---------------------------------------------------------------------------
 
-	const fmt = (n: number) => n.toLocaleString('en-GB');
+	// OLD CODE: const fmt = (n: number) => n.toLocaleString('en-GB'); (NET-192 PR 4: one fmt, from utils/drilldown)
 	const rowKey = (a: Alert) => `${a._id}-${alerts.indexOf(a)}`;
 	// After a reload the open alert is a new object: find its row by id
 	const selectedRowKey = $derived.by(() => {

@@ -8,7 +8,7 @@
  */
 import type { CertDetail, CertDevice, CertFinding, CertSite, FindingKind } from '$lib/api/certificates';
 import { loadFailed } from '$lib/utils/load-failed';
-import { customRange, formatWhen } from '$lib/utils/drilldown';
+import { customRange, fmt, formatWhen } from '$lib/utils/drilldown';
 import { formatTime } from '$lib/utils/time';
 
 export type Names = ReadonlyMap<string, string>;
@@ -65,7 +65,7 @@ export interface CustomRange extends RangeOption {
 // OLD CODE END
 export { customRange };
 
-const fmt = (n: number): string => n.toLocaleString('en-GB');
+// OLD CODE: const fmt = (n: number): string => n.toLocaleString('en-GB'); (NET-192 PR 4: one fmt, from utils/drilldown)
 const plural = (n: number, one: string, many = `${one}s`): string => `${fmt(n)} ${n === 1 ? one : many}`;
 
 // ---------------------------------------------------------------------------

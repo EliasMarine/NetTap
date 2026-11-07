@@ -21,6 +21,7 @@
 	import { outcome, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { ipHref } from '$lib/stores/lan';
 	import { namesByIp } from '$lib/utils/device-names';
+	import { fmt } from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { sortRows, type SortDir } from '$lib/utils/table-sort.svelte';
 	import AlertRow from '$lib/components/ui/AlertRow.svelte';
@@ -159,7 +160,7 @@
 		refresh.run();
 	}
 
-	const fmt = (n: number): string => n.toLocaleString('en-GB');
+	// OLD CODE: const fmt = (n: number): string => n.toLocaleString('en-GB'); (NET-192 PR 4: one fmt, from utils/drilldown)
 	const data = $derived(loaded?.data ?? null);
 	const words = $derived(loaded?.range.words ?? '');
 	const summary = $derived(data?.summary ?? null);

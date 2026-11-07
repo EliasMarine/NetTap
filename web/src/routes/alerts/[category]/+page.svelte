@@ -49,7 +49,7 @@
 	// OLD CODE END
 	import { severityBuckets, type SeverityLevel } from '$lib/utils/severity';
 	// OLD CODE: import { alertsHrefForSignature, type DrillWindow } from '$lib/utils/drilldown'; (section D)
-	import { alertsHrefForSignature, withCount, type DrillWindow } from '$lib/utils/drilldown';
+	import { alertsHrefForSignature, fmt, withCount, type DrillWindow } from '$lib/utils/drilldown';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -657,7 +657,7 @@
 	// View data
 	// ---------------------------------------------------------------------------
 
-	const fmt = (n: number) => n.toLocaleString('en-GB');
+	// OLD CODE: const fmt = (n: number) => n.toLocaleString('en-GB'); (NET-192 PR 4: one fmt, from utils/drilldown)
 	const rowKey = (a: Alert) => `${a._id}-${alerts.indexOf(a)}`;
 	// After a reload the open alert is a new object: find its row by id
 	const selectedRowKey = $derived.by(() => {
