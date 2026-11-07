@@ -71,12 +71,25 @@ if ! FOUND=$(verify sids "$DEVICE" 2>&1); then
     echo "   ✗ Could not read $DEVICE's alerts from OpenSearch — nothing was changed"
     exit 1
 fi
-# Plus the SIDs already suppressed for it: once suppression has run 14 days they no longer show above
+printf '%s\n' "$FOUND" | awk -F'\t' 'NF == 4 {printf "   %s  %7d  %-13s %s\n", $1, $2, $3, $4}'
+# Plus the SIDs already suppressed for it (once suppressed they never reach OpenSearch, so they drop out of
+# the list above), each kept only while the live rule is still an ET Informational/Unknown bandwidth-sharing rule
+CARRIED=""
+OLD_SIDS=$([ -f "$THRESHOLD" ] && sed -n "s/^suppress gen_id 1, sig_id \([0-9]*\), track by_src, ip $DEVICE\$/\1/p" "$THRESHOLD")
+for sid in $OLD_SIDS; do
+    RULE=$(sudo docker exec nettap-suricata-live grep -h -m1 "sid:$sid;" /var/lib/suricata/rules/suricata.rules 2>/dev/null)
+    if printf '%s' "$RULE" | grep -q 'Bandwidth Sharing Tool' &&
+        printf '%s' "$RULE" | grep -Eq 'signature_severity (Informational|Unknown)'; then
+        CARRIED="$CARRIED $sid"
+    else
+        echo "   - $sid no longer suppressed: the live rule is gone or no longer an ET Informational/Unknown bandwidth-sharing rule"
+    fi
+done
+# shellcheck disable=SC2086  # CARRIED is a space-separated SID list
 SIDS=$({
     printf '%s\n' "$FOUND" | awk -F'\t' '$1 ~ /^[0-9]+$/ {print $1}'
-    [ -f "$THRESHOLD" ] && sed -n "s/^suppress gen_id 1, sig_id \([0-9]*\), track by_src, ip $DEVICE\$/\1/p" "$THRESHOLD"
-} | sort -un)
-printf '%s\n' "$FOUND" | awk -F'\t' 'NF == 4 {printf "   %s  %7d  %-13s %s\n", $1, $2, $3, $4}'
+    printf '%s\n' $CARRIED
+} | grep -E '^[0-9]+$' | sort -un)
 {
     echo "# NetTap device-local Suricata suppressions (NET-191), written by deploy-detection-slice1.sh $(date -u +%Y-%m-%dT%H:%M:%SZ)."
     echo "# $DEVICE runs bandwidth-sharing tools on purpose; ET rates these rules Informational/Unknown."

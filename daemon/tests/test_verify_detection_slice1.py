@@ -33,7 +33,9 @@ class _Client:
         return {"aggregations": {"sid": {"buckets": self.buckets}}}
 
 
-def test_only_activity_rated_proxyware_rules_are_suppressed(monkeypatch, capsys):
+def test_only_activity_rated_bandwidth_sharing_rules_are_suppressed(
+    monkeypatch, capsys
+):
     fake = _Client(
         [
             _bucket(
@@ -66,7 +68,8 @@ def test_only_activity_rated_proxyware_rules_are_suppressed(monkeypatch, capsys)
     vs.sids("192.168.1.44")
 
     chosen = [line.split("\t")[0] for line in capsys.readouterr().out.splitlines()]
-    assert chosen == ["2067457", "2060251", "2024897"]
+    # not the Go HTTP client rules: any Go program on .44 matches them
+    assert chosen == ["2067457"]
     # Only alerts the device itself raised: the suppress lines are track by_src
     assert {"term": {"source.ip": "192.168.1.44"}} in fake.bodies[0]["query"]["bool"][
         "filter"

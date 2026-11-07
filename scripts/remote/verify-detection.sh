@@ -15,8 +15,8 @@
 #   --rules <dir>        use this rules dir instead of the snapshot's /var/lib/suricata/rules (staged ruleset)
 #   --threshold <file>   use this threshold file instead of the device's and make Suricata load it
 #                        (tests a threshold file before suricata-live is recreated with it)
-# Each run keeps /home/nettap/nettap-replay/<run-id>/ (snapshot/ ~50 MB, pcap/, out/ with eve,
-# suricata.log and report.txt) so a failed fixture can be inspected.
+# Each run keeps /home/nettap/nettap-replay/<run-id>/ (snapshot/ ~50 MB, pcap/, out/ with report.txt
+# and engine/ with eve and suricata.log) so a failed fixture can be inspected.
 # Exit: 0 ok, 1 a fixture failed, 2 bad usage or the replay failed, 3 refused to start.
 set -u
 
@@ -90,7 +90,10 @@ trap 'echo ""; echo "   interrupted, removing $RUNNER"; sudo docker rm -f "$RUNN
 RUN="$REPLAY_ROOT/$RUN_ID"
 SNAP="$RUN/snapshot"
 OUT="$RUN/out"
-mkdir -p "$SNAP" "$RUN/pcap" "$OUT" || exit 3
+# The runner writes only $ENGINE (eve, suricata.log, memory.peak). Every file this script writes stays
+# in $OUT, so a link the runner plants can't redirect a host write (report.txt, a threshold file).
+ENGINE="$OUT/engine"
+mkdir -p "$SNAP" "$RUN/pcap" "$ENGINE" || exit 3
 
 echo "→ Step 2: Snapshot the live config and rules into $SNAP..."
 # $1 = path in the live container, copied to $SNAP$1. A tar stream keeps the files ours, not root's.
@@ -183,7 +186,7 @@ MOUNTS=(-v "$SNAP/etc/suricata:/etc/suricata:ro"
     -v "$RULES_DIR:/var/lib/suricata/rules:ro"
     -v "$SNAP/etc/nettap:/etc/nettap:ro"
     -v "$PCAP_DIR:/pcap:ro"
-    -v "$OUT:/out")
+    -v "$ENGINE:/out")
 if [ -d "$SNAP/opt/suricata/rules" ]; then
     MOUNTS+=(-v "$SNAP/opt/suricata/rules:/opt/suricata/rules:ro")
 fi

@@ -30,8 +30,9 @@ ALERTS = [
     {"term": {"event.dataset": "alert"}},
 ]
 ENGINE = {"prefix": {"rule.name": "SURICATA "}}
-# The owner runs Mysterium/Traffmonetizer (and their Go client) on purpose (2026-11-06)
-PROXYWARE = re.compile(r"Bandwidth Sharing Tool|Go[- ]HTTP[- ]Client User-Agent", re.I)
+# The owner runs Mysterium/Traffmonetizer on purpose (2026-11-06). Not the Go HTTP client rules: any Go
+# program on .44 (which carries strangers' traffic) matches them, so they stay recorded as activity.
+PROXYWARE = re.compile(r"Bandwidth Sharing Tool", re.I)
 # Major: large DNS query, possible covert channel; must keep firing
 NEVER_SUPPRESS = {"2013075"}
 PROBLEMS: list[str] = []
@@ -58,6 +59,8 @@ def call(path: str, **params: str) -> tuple[int, dict]:
             return resp.status, json.load(resp)
     except urllib.error.HTTPError as exc:
         return exc.code, {}
+    except (urllib.error.URLError, TimeoutError):
+        return 0, {}  # no answer: that check fails and the rest still run
 
 
 def check(label: str, ok: bool, detail: str) -> None:
@@ -191,7 +194,8 @@ def pages(frm: str, to: str) -> None:
     )
     code, _ = call("/api/alerts", **win, activity="yes")
     check("activity=yes is refused", code == 400, f"HTTP {code}")
-    code, smart = call("/api/alerts/smart", **win, include_info="true", limit="500")
+    # Every group: activity groups sort last, behind what can be hundreds of counted ones
+    code, smart = call("/api/alerts/smart", **win, include_info="true", limit="1000000")
     groups = smart.get("alerts", [])
     act = [g for g in groups if g.get("activity")]
     wrong = [g.get("signature") for g in act if g.get("severity") != 5]

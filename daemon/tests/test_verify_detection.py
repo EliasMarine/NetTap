@@ -174,12 +174,15 @@ def _out_dir(
     threshold: str = "active (include-configs/nettap.yaml)",
     rc: str = "0",
 ):
-    (tmp_path / "eve-20261107_051052.json").write_text(eve)
-    (tmp_path / "suricata.log").write_text(LOG)
+    # the runner's files are in engine/ (the only folder it can write); the script's beside it
+    engine = tmp_path / "engine"
+    engine.mkdir()
+    (engine / "eve-20261107_051052.json").write_text(eve)
+    (engine / "suricata.log").write_text(LOG)
+    (engine / "memory.peak").write_text(str(581 * 2**20) + "\n")
     (tmp_path / "runner-console.log").write_text(CONSOLE)
     (tmp_path / "runner-exit").write_text(rc + "\n")
     (tmp_path / "threshold-state").write_text(threshold + "\n")
-    (tmp_path / "memory.peak").write_text(str(581 * 2**20) + "\n")
     (tmp_path / "sha256.txt").write_text("# pcap (/x)\nabc  ./a.pcap\n")
     return str(tmp_path)
 

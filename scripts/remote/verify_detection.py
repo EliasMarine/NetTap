@@ -6,9 +6,10 @@ Suricata image (no network), never on the host:
   python3 verify_detection.py write-fixtures <pcap-dir>
   python3 verify_detection.py report <fixtures|own> <out-dir>
 
-The report reads what the shell script and the runner left in <out-dir> (eve*.json,
-suricata.log, runner-console.log, memory.peak, runner-exit, threshold-state, sha256.txt)
-and prints it; the shell script saves the output as report.txt.
+The report reads what the runner left in <out-dir>/engine (eve*.json, suricata.log, memory.peak)
+and what the shell script wrote in <out-dir> (runner-console.log, runner-exit, threshold-state,
+sha256.txt), and prints it; the shell script saves the output as report.txt. The runner can write
+only engine/, so nothing it plants can redirect a file the host writes.
 Exit codes: 0 ok, 1 a fixture failed, 2 the replay itself failed.
 """
 
@@ -267,13 +268,14 @@ def summary_lines(alerts: list, bad: int) -> list:
 
 
 def report(mode: str, out_dir: str) -> int:
-    alerts, bad = read_alerts(out_dir)
+    engine = os.path.join(out_dir, "engine")
+    alerts, bad = read_alerts(engine)
     facts = log_facts(
-        read_text(os.path.join(out_dir, "suricata.log")),
+        read_text(os.path.join(engine, "suricata.log")),
         read_text(os.path.join(out_dir, "runner-console.log")),
     )
     runner_exit = read_text(os.path.join(out_dir, "runner-exit"), "?").strip()
-    peak = read_text(os.path.join(out_dir, "memory.peak")).strip()
+    peak = read_text(os.path.join(engine, "memory.peak")).strip()
     threshold = read_text(os.path.join(out_dir, "threshold-state"), "unknown").strip()
     print(f"=== Replay report ({mode}) ===")
     print(f"Runner exit code: {runner_exit}")
