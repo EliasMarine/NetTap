@@ -61,15 +61,16 @@ cd "$REPO_DIR" || { echo "   ✗ $REPO_DIR not found"; exit 1; }
 preflight_clean ""
 CUSTOM=$(api GET /api/suricata/rules/custom)
 COUNT=$(json_get "${CUSTOM#* }" '.rule_count')
+SIZE=$(json_get "${CUSTOM#* }" '.content | length')  # comments count too: the save replaces the file
 if [ "${CUSTOM%% *}" != 200 ] || [ "$(owner_count)" = none ]; then
     echo "   ✗ Own rules are not set up (HTTP ${CUSTOM%% *}, owner rules in suricata-live: $(owner_count)). Run deploy-detection-slice3.sh first."
     exit 3
 fi
-if [ "$COUNT" != 0 ]; then
-    echo "   ✗ There are $COUNT own rules; this check would replace them. Copy them from Settings › Suricata rules, clear them, run this, then paste them back."
+if [ "$COUNT" != 0 ] || [ "$SIZE" != 0 ]; then
+    echo "   ✗ Your own rules aren't empty ($COUNT rules, $SIZE characters); this check would replace them. Copy them from Settings › Suricata rules, clear them, run this, then paste them back."
     exit 3
 fi
-echo "   ✓ no own rules yet"
+echo "   ✓ the own rules are empty"
 echo ""
 
 echo "→ Step 2: Save the self-test rule through the daemon (Suricata's test, then a reload)..."

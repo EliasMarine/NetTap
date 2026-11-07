@@ -54,3 +54,14 @@ EOF
     grep -q "docker compose -f docker/docker-compose.yml up -d --no-deps --force-recreate nettap-storage-daemon nettap-web" "$CALLS"
     ! grep -q "force-recreate suricata-live" "$CALLS"
 }
+
+@test "deploys of slices 2 and 3: the daemon log check starts at the daemon's own restart" {
+    # D1: one start time per container; suricata-live's restart must not move the daemon's
+    for script in deploy-detection-slice2.sh deploy-detection-slice3.sh; do
+        f="$REPO_ROOT/scripts/remote/$script"
+        var=$(grep -v '^ *#' "$f" | grep -o 'docker logs --since "\${[A-Z_]*' | sed 's/.*{//')
+        [ -n "$var" ]
+        [ "$(grep -c "^$var=" "$f")" -eq 1 ]
+        grep -A1 "^$var=" "$f" | grep -q -- "--force-recreate nettap-storage-daemon"
+    done
+}

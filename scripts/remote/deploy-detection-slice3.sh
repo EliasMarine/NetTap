@@ -71,7 +71,8 @@ done
 echo ""
 
 echo "→ Step 4: Recreate the daemon and the web container..."
-STARTED=$(date -u '+%Y-%m-%d %H:%M:%S')
+# its own name: Step 6 sets STARTED for suricata-live
+DAEMON_STARTED=$(date -u '+%Y-%m-%d %H:%M:%S')
 "${COMPOSE[@]}" up -d --no-deps --force-recreate nettap-storage-daemon nettap-web
 for svc in nettap-storage-daemon nettap-web; do
     STATUS="unknown"
@@ -144,11 +145,11 @@ check "Settings live status" "$rc" "HTTP ${LIVE_STATUS%% *}, own rules $OWNER (s
 echo ""
 
 echo "→ Step 9: Daemon errors since the restart, container status..."
-ERRS=$(sudo docker logs --since "${STARTED/ /T}Z" "$DAEMON" 2>&1 | grep -E "Traceback|ERROR" | sed 's/^[0-9T:., -]*//' | sort | uniq -c | sort -rn | head -10)
+ERRS=$(sudo docker logs --since "${DAEMON_STARTED/ /T}Z" "$DAEMON" 2>&1 | grep -E "Traceback|ERROR" | sed 's/^[0-9T:., -]*//' | sort | uniq -c | sort -rn | head -10)
 if [ -z "$ERRS" ]; then
-    check "daemon log" 0 "no errors or tracebacks since $STARTED UTC"
+    check "daemon log" 0 "no errors or tracebacks since $DAEMON_STARTED UTC"
 else
-    check "daemon log" 1 "errors since $STARTED UTC:"
+    check "daemon log" 1 "errors since $DAEMON_STARTED UTC:"
     echo "      ${ERRS//$'\n'/$'\n'      }"
 fi
 sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "NAMES|storage-daemon|nettap-web|suricata-live"

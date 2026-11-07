@@ -14,7 +14,7 @@ load 'helpers/setup'
 _stub() {
     mkdir -p "$TEST_TMPDIR/bin" "$TEST_TMPDIR/home"
     export CALLS="$TEST_TMPDIR/calls" BODIES="$TEST_TMPDIR/bodies" HOME="$TEST_TMPDIR/home"
-    export NETTAP_REPO_DIR="$REPO_ROOT" MOCK_COUNT="${MOCK_COUNT:-0}" MOCK_OWNER="${MOCK_OWNER:-0}"
+    export NETTAP_REPO_DIR="$REPO_ROOT" MOCK_COUNT="${MOCK_COUNT:-0}" MOCK_OWNER="${MOCK_OWNER:-0}" MOCK_CONTENT="${MOCK_CONTENT:-}"
     : > "$CALLS"
     : > "$BODIES"
     cat > "$TEST_TMPDIR/bin/sudo" <<'EOF'
@@ -26,7 +26,7 @@ case "$1" in
     -i) shift 3; exec jq "$@" ;;  # json_get: docker exec -i <live> jq -r <filter>
     nettap-storage-daemon)  # api: python3 -c <script> <method> <path> [<body>]
         case "$5 $6" in
-            "GET /api/suricata/rules/custom") echo "200 {\"content\": \"\", \"rule_count\": $MOCK_COUNT}" ;;
+            "GET /api/suricata/rules/custom") echo "200 {\"content\": \"$MOCK_CONTENT\", \"rule_count\": $MOCK_COUNT}" ;;
             "GET /api/suricata/rules/live") echo "200 {\"owner_rules\": $MOCK_OWNER}" ;;
             "POST /api/suricata/rules/custom") printf '%s\n' "$7" >> "$BODIES"; echo '200 {"saved": true}' ;;
             *) echo "0 unexpected" ;;
@@ -49,7 +49,15 @@ EOF
     export MOCK_COUNT=2 MOCK_OWNER=2; _stub
     run bash "$SCRIPT"
     [ "$status" -eq 3 ]
-    [[ "$output" == *"There are 2 own rules; this check would replace them"* ]]
+    [[ "$output" == *"Your own rules aren't empty (2 rules, 0 characters); this check would replace them"* ]]
+    [ ! -s "$BODIES" ]
+}
+
+@test "check-owner-rules: refuses when the own rules hold only comments (the save would drop them)" {
+    export MOCK_CONTENT='# my notes\n# alert is coming'; _stub
+    run bash "$SCRIPT"
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"Your own rules aren't empty (0 rules, 28 characters)"* ]]
     [ ! -s "$BODIES" ]
 }
 
