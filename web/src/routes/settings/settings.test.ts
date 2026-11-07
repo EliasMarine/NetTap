@@ -631,3 +631,57 @@ describe('Settings — API keys: one place for the ET Pro code (NET-191)', () =>
 		expect(screen.getByRole('link', { name: 'Settings › Suricata rules' })).toHaveAttribute('href', '/settings/suricata-rules');
 	});
 });
+
+describe('Settings — Display: the default time range (NET-195)', () => {
+	const KEY = 'nettap-display-settings';
+	beforeEach(() => localStorage.clear());
+	afterEach(() => {
+		localStorage.clear();
+		vi.unstubAllGlobals();
+	});
+
+	async function openDisplay() {
+		stubFetch();
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('tab', { name: 'Display' }));
+		return screen.getByLabelText('Default time range') as HTMLSelectElement;
+	}
+
+	it("offers each page's own first, then the five ranges, and saves the pick as defaultRange", async () => {
+		const select = await openDisplay();
+		expect(Array.from(select.options, (o) => o.textContent?.trim())).toEqual([
+			"Each page's own (most open on 24 hours)", 'Last hour', 'Last 6 hours', 'Last 24 hours', 'Last 7 days', 'Last 30 days',
+		]);
+		expect(select.value).toBe('');
+
+		await fireEvent.change(select, { target: { value: '7d' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save display settings' }));
+		expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({ defaultRange: '7d' });
+		expect(screen.getByText('Display settings saved.')).toBeInTheDocument();
+	});
+
+	it("removes the key when each page's own is saved", async () => {
+		localStorage.setItem(KEY, JSON.stringify({ defaultRange: '7d', autoRefresh: '30', timezone: 'local' }));
+		const select = await openDisplay();
+		await fireEvent.change(select, { target: { value: '' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save display settings' }));
+		expect(localStorage.getItem(KEY)).toBeNull();
+	});
+
+	it('shows a saved range selected', async () => {
+		localStorage.setItem(KEY, JSON.stringify({ defaultRange: '30d' }));
+		expect((await openDisplay()).value).toBe('30d');
+	});
+
+	it("shows each page's own for a legacy 1h, which any old Display save wrote", async () => {
+		localStorage.setItem(KEY, JSON.stringify({ autoRefresh: '30', timezone: 'utc', defaultTimeRange: '1h' }));
+		expect((await openDisplay()).value).toBe('');
+	});
+
+	it('has no auto-refresh or timezone control', async () => {
+		await openDisplay();
+		expect(screen.queryByLabelText('Auto-refresh interval')).not.toBeInTheDocument();
+		expect(screen.queryByLabelText('Timezone')).not.toBeInTheDocument();
+	});
+});

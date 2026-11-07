@@ -15,6 +15,7 @@
 	import StatStrip from '$lib/components/ui/StatStrip.svelte';
 	import Meter from '$lib/components/ui/Meter.svelte';
 	import { formatTime } from '$lib/utils/time';
+	import { DISPLAY_SETTINGS_KEY, DRILL_RANGES, savedDefaultRange, type DrillRangeValue } from '$lib/utils/drilldown';
 
 	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'integrations' | 'display' | 'about';
 
@@ -108,9 +109,13 @@
 	let captureError = $state(false);
 
 	// --- Display state ---
-	let autoRefresh = $state('30');
-	let timezone = $state('local');
-	let defaultTimeRange = $state('1h');
+	// OLD CODE START — NET-195: no page read these; each page owns its Auto toggle, and times are browser-local
+	// let autoRefresh = $state('30');
+	// let timezone = $state('local');
+	// let defaultTimeRange = $state('1h');
+	// OLD CODE END
+	/** The range pages open on (NET-195); '' is each page's own. */
+	let defaultRange = $state<DrillRangeValue | ''>('');
 	let displaySaving = $state(false);
 	let displayMessage = $state('');
 	let displayError = $state(false);
@@ -273,19 +278,24 @@
 		}
 	}
 
-	async function loadDisplaySettings() {
-		try {
-			const stored = localStorage.getItem('nettap-display-settings');
-			if (stored) {
-				const parsed = JSON.parse(stored);
-				autoRefresh = parsed.autoRefresh ?? '30';
-				timezone = parsed.timezone ?? 'local';
-				// OLD CODE: defaultTimeRange = parsed.defaultTimeRange ?? '1h'; (NET-192 PR 4: a saved 15m or 4h is no longer offered)
-				defaultTimeRange = ['1h', '6h', '24h', '7d', '30d'].includes(parsed.defaultTimeRange) ? parsed.defaultTimeRange : '1h';
-			}
-		} catch {
-			// Will use defaults
-		}
+	// OLD CODE START — NET-195: auto-refresh and timezone are gone, and the range is read as the pages read it
+	// async function loadDisplaySettings() {
+	// 	try {
+	// 		const stored = localStorage.getItem('nettap-display-settings');
+	// 		if (stored) {
+	// 			const parsed = JSON.parse(stored);
+	// 			autoRefresh = parsed.autoRefresh ?? '30';
+	// 			timezone = parsed.timezone ?? 'local';
+	// 			// OLD CODE: defaultTimeRange = parsed.defaultTimeRange ?? '1h'; (NET-192 PR 4: a saved 15m or 4h is no longer offered)
+	// 			defaultTimeRange = ['1h', '6h', '24h', '7d', '30d'].includes(parsed.defaultTimeRange) ? parsed.defaultTimeRange : '1h';
+	// 		}
+	// 	} catch {
+	// 		// Will use defaults
+	// 	}
+	// }
+	// OLD CODE END
+	function loadDisplaySettings() {
+		defaultRange = savedDefaultRange() ?? '';
 	}
 
 	async function loadExcludedIps() {
@@ -870,10 +880,14 @@
 		displayMessage = '';
 		displayError = false;
 		try {
-			localStorage.setItem(
-				'nettap-display-settings',
-				JSON.stringify({ autoRefresh, timezone, defaultTimeRange })
-			);
+			// OLD CODE START — NET-195: the new field only; "Each page's own" saves nothing
+			// localStorage.setItem(
+			// 	'nettap-display-settings',
+			// 	JSON.stringify({ autoRefresh, timezone, defaultTimeRange })
+			// );
+			// OLD CODE END
+			if (defaultRange) localStorage.setItem(DISPLAY_SETTINGS_KEY, JSON.stringify({ defaultRange }));
+			else localStorage.removeItem(DISPLAY_SETTINGS_KEY);
 			displayMessage = 'Display settings saved.';
 		} catch {
 			displayMessage = 'Failed to save display settings.';
@@ -1511,12 +1525,14 @@
 			{/if}
 		</Card>
 	{:else if activeTab === 'display'}
-		<Card title="Display preferences" sub="Theme, refresh and time settings · saved in this browser" class="c-12">
+		<!-- OLD CODE: sub="Theme, refresh and time settings · saved in this browser" (NET-195: the refresh and timezone controls are gone) -->
+		<Card title="Display preferences" sub="Theme and the default time range · saved in this browser" class="c-12">
 			<div class="stack">
 				<ThemePicker />
 				{@render feedback(displayMessage, displayError)}
 
 				<div class="form-grid">
+					<!-- OLD CODE START — NET-195: no page read these; each page owns its Auto toggle, and times are browser-local
 					<div class="field">
 						<label class="label" for="auto-refresh">Auto-refresh interval</label>
 						<select class="select" id="auto-refresh" bind:value={autoRefresh}>
@@ -1536,9 +1552,11 @@
 						</select>
 						<p class="field-help">Timezone used for displaying timestamps.</p>
 					</div>
+					OLD CODE END -->
 					<div class="field">
 						<label class="label" for="default-range">Default time range</label>
-						<select class="select" id="default-range" bind:value={defaultTimeRange}>
+						<!-- OLD CODE: bind:value={defaultTimeRange} (NET-195: saved as defaultRange, '' for each page's own) -->
+						<select class="select" id="default-range" bind:value={defaultRange}>
 							<!-- OLD CODE START — NET-192 PR 4: one range set across the app (1h 6h 24h 7d 30d)
 							<option value="15m">Last 15 minutes</option>
 							<option value="1h">Last 1 hour</option>
@@ -1546,13 +1564,23 @@
 							<option value="24h">Last 24 hours</option>
 							<option value="7d">Last 7 days</option>
 							OLD CODE END -->
+							<!-- OLD CODE START — NET-195: from DRILL_RANGES, after "Each page's own"
 							<option value="1h">Last hour</option>
 							<option value="6h">Last 6 hours</option>
 							<option value="24h">Last 24 hours</option>
 							<option value="7d">Last 7 days</option>
 							<option value="30d">Last 30 days</option>
+							OLD CODE END -->
+							<option value="">Each page's own (most open on 24 hours)</option>
+							{#each DRILL_RANGES as r (r.value)}
+								<option value={r.value}>{r.words.charAt(0).toUpperCase() + r.words.slice(1)}</option>
+							{/each}
 						</select>
-						<p class="field-help">Default time window for traffic and alert views.</p>
+						<!-- OLD CODE: <p class="field-help">Default time window for traffic and alert views.</p> (NET-195) -->
+						<p class="field-help">
+							The window traffic, alert and device pages open on. A link from a figure still opens on that figure's window.
+							PCAP and Certificates keep their own (1 hour, 7 days).
+						</p>
 					</div>
 				</div>
 
