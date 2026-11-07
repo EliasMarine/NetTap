@@ -5,6 +5,7 @@
   this component reports the daemon's reason when a save fails. One save at a time.
 -->
 <script lang="ts">
+	import { tick } from 'svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import DeviceTile from '$lib/components/ui/DeviceTile.svelte';
 	import {
@@ -13,6 +14,7 @@
 		clearDeviceName,
 		setDevicePicture,
 		clearDevicePicture,
+		type DeviceIcon,
 		type RegistryDevice,
 	} from '$api/devices-registry';
 	import { squarePicture } from '$lib/utils/device-picture';
@@ -21,7 +23,7 @@
 	let { device, onsave }: { device: RegistryDevice; onsave: Save } = $props();
 
 	/** Plain names for the built-in icons, read by screen readers and shown on hover. */
-	const ICON_LABELS: Record<(typeof DEVICE_ICONS)[number], string> = {
+	const ICON_LABELS: Record<DeviceIcon, string> = {
 		laptop: 'Computer',
 		phone: 'Phone',
 		tablet: 'Tablet',
@@ -41,8 +43,12 @@
 	let error = $state<string | null>(null);
 	let nameDraft = $state('');
 	/** The picture the owner has chosen in the panel, not saved yet. */
-	let choice = $state<{ icon: string } | { image: string } | null>(null);
+	let choice = $state<{ icon: DeviceIcon } | { image: string } | null>(null);
 	let reading = $state(false);
+	/** Read out politely after a save (a screen reader otherwise hears nothing as the panel closes). */
+	let announcement = $state('');
+	let nameButton = $state<HTMLButtonElement>();
+	let pictureButton = $state<HTMLButtonElement>();
 
 	// Locally administered (randomised, "private") MACs set bit 0x02 of the first octet
 	const randomised = $derived((parseInt(device.mac.slice(0, 2), 16) & 0x02) === 0x02);
@@ -59,23 +65,54 @@
 		choice = null;
 	}
 
-	function close(): void {
+	// OLD CODE START — PR #214 review: focus was lost when the panel closed, and nothing was announced
+	// function close(): void {
+	// 	panel = 'none';
+	// 	error = null;
+	// 	choice = null;
+	// }
+	//
+	// async function run(action: (mac: string) => Promise<RegistryDevice>): Promise<void> {
+	// 	if (saving) return;
+	// 	saving = true;
+	// 	error = null;
+	// 	try {
+	// 		await onsave(action);
+	// 		close();
+	// 	} catch (e) {
+	// 		error = e instanceof Error ? e.message : "Couldn't save the device.";
+	// 	} finally {
+	// 		saving = false;
+	// 	}
+	// }
+	// OLD CODE END
+	/** Close the open panel and put focus back on the button that opened it. */
+	async function close(): Promise<void> {
+		const trigger = panel === 'name' ? nameButton : pictureButton;
 		panel = 'none';
 		error = null;
 		choice = null;
+		await tick();
+		trigger?.focus();
 	}
 
-	async function run(action: (mac: string) => Promise<RegistryDevice>): Promise<void> {
+	async function run(action: (mac: string) => Promise<RegistryDevice>, done: string): Promise<void> {
 		if (saving) return;
 		saving = true;
 		error = null;
+		announcement = '';
+		let saved = false;
 		try {
 			await onsave(action);
-			close();
+			saved = true;
 		} catch (e) {
 			error = e instanceof Error ? e.message : "Couldn't save the device.";
 		} finally {
 			saving = false;
+		}
+		if (saved) {
+			announcement = done;
+			await close(); // after `saving` clears, so the trigger can take focus again
 		}
 	}
 
@@ -83,10 +120,11 @@
 		event.preventDefault();
 		const name = nameDraft.trim();
 		if (!name) {
-			error = 'Enter a name, or use the discovered name.';
+			// OLD CODE: error = 'Enter a name, or use the discovered name.'; (PR #214 review)
+			error = 'Enter a name, or cancel.';
 			return;
 		}
-		void run((mac) => setDeviceName(mac, name));
+		void run((mac) => setDeviceName(mac, name), 'Name saved.');
 	}
 
 	async function pickPhoto(event: Event): Promise<void> {
@@ -98,7 +136,7 @@
 		try {
 			choice = { image: await squarePicture(file) };
 		} catch (e) {
-			choice = null;
+			// OLD CODE: choice = null; (PR #214 review: a refused file kept no earlier choice)
 			error = e instanceof Error ? e.message : "Couldn't read that picture.";
 		} finally {
 			reading = false;
@@ -106,25 +144,45 @@
 		}
 	}
 
-	function pickIcon(icon: string): void {
+	function pickIcon(icon: DeviceIcon): void {
 		choice = { icon };
 		error = null;
 	}
 
 	function savePicture(): void {
 		const picked = choice;
-		if (picked) void run((mac) => setDevicePicture(mac, picked));
+		if (picked) void run((mac) => setDevicePicture(mac, picked), 'Picture saved.');
 	}
 
 	const chosenIcon = $derived(choice && 'icon' in choice ? choice.icon : null);
 	const chosenImage = $derived(choice && 'image' in choice ? choice.image : null);
+	/** Pressed: the icon just chosen, or with nothing chosen the saved icon (unless a photo shows). */
+	const isPressed = (name: DeviceIcon): boolean =>
+		choice ? chosenIcon === name : !device.picture && device.icon === name;
 </script>
 
 <div class="customise">
 	<div class="cust-actions">
-		<button class="btn" type="button" aria-expanded={panel === 'name'} aria-controls="device-name-panel" onclick={() => open('name')} disabled={saving}>Rename</button>
-		<button class="btn" type="button" aria-expanded={panel === 'picture'} aria-controls="device-picture-panel" onclick={() => open('picture')} disabled={saving}>Change picture</button>
+		<button
+			class="btn"
+			type="button"
+			bind:this={nameButton}
+			aria-expanded={panel === 'name'}
+			aria-controls={panel === 'name' ? 'device-name-panel' : undefined}
+			onclick={() => open('name')}
+			disabled={saving}>Rename</button
+		>
+		<button
+			class="btn"
+			type="button"
+			bind:this={pictureButton}
+			aria-expanded={panel === 'picture'}
+			aria-controls={panel === 'picture' ? 'device-picture-panel' : undefined}
+			onclick={() => open('picture')}
+			disabled={saving}>Change picture</button
+		>
 	</div>
+	<p class="sr-only" role="status">{announcement}</p>
 
 	{#if panel !== 'none' && randomised}
 		<p class="notice is-warn" role="note">
@@ -150,7 +208,7 @@
 			</div>
 			<div class="form-actions">
 				{#if device.custom_name}
-					<button class="btn" type="button" onclick={() => run((mac) => clearDeviceName(mac))} disabled={saving}>Use the discovered name</button>
+					<button class="btn" type="button" onclick={() => run((mac) => clearDeviceName(mac), 'Name cleared.')} disabled={saving}>Use the discovered name</button>
 				{/if}
 				<button class="btn" type="button" onclick={close} disabled={saving}>Cancel</button>
 				<button class="btn primary" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
@@ -173,11 +231,11 @@
 								<button
 									class="icon-choice"
 									type="button"
-									aria-pressed={chosenIcon === name}
+									aria-pressed={isPressed(name)}
 									aria-label={ICON_LABELS[name]}
 									title={ICON_LABELS[name]}
 									onclick={() => pickIcon(name)}
-									disabled={saving}><Icon {name} /></button
+									disabled={saving || reading}><Icon {name} /></button
 								>
 							{/each}
 						</div>
@@ -192,7 +250,7 @@
 			{#if error}<p class="field-error" role="alert">{error}</p>{/if}
 			<div class="form-actions">
 				{#if hasPicture}
-					<button class="btn" type="button" onclick={() => run((mac) => clearDevicePicture(mac))} disabled={saving}>Reset to default</button>
+					<button class="btn" type="button" onclick={() => run((mac) => clearDevicePicture(mac), 'Picture reset.')} disabled={saving}>Reset to default</button>
 				{/if}
 				<button class="btn" type="button" onclick={close} disabled={saving}>Cancel</button>
 				<button class="btn primary" type="button" onclick={savePicture} disabled={saving || reading || !choice}>{saving ? 'Saving…' : 'Save'}</button>

@@ -59,6 +59,8 @@
 	let trafficView = '';
 	/** NET-200: bumped by every saved name or picture, so a load that began before it keeps its older device to itself. */
 	let editRev = 0;
+	/** NET-200: the route `mac` the device on screen was loaded for; it lags `mac` while another device loads. */
+	let loadedFor = '';
 
 	// OLD CODE START — 2026-11-03 UI redesign: the loader goes through the page refresh contract
 	// (PLAN.md §5.5) with a load guard; the requests are unchanged
@@ -102,7 +104,10 @@
 		// OLD CODE END
 		// getRegistryDevice resolves null only for a real 404; a failed refresh keeps the last data
 		// OLD CODE: if (d.status === 'fulfilled') device = d.value; (NET-200: a save during the load is newer)
-		if (d.status === 'fulfilled' && rev === editRev) device = d.value;
+		if (d.status === 'fulfilled' && rev === editRev) {
+			device = d.value;
+			loadedFor = m;
+		}
 		// OLD CODE: if (t.status === 'fulfilled') traffic = t.value; (NET-192 PR 4: remember which range it is)
 		if (t.status === 'fulfilled') {
 			traffic = t.value;
@@ -115,18 +120,38 @@
 		return outcome(results);
 	}
 
+	// OLD CODE START — PR #214 review: a save while the next device loaded went to the old one, and its
+	// whole reply replaced the device (traffic-era fields included)
+	// async function customise(action: (mac: string) => Promise<RegistryDevice>): Promise<void> {
+	// 	const m = mac;
+	// 	const target = device?.mac;
+	// 	if (!target) return;
+	// 	const saved = await action(target);
+	// 	if (m !== mac) return;
+	// 	editRev += 1;
+	// 	device = saved;
+	// }
+	// OLD CODE END
 	/**
-	 * NET-200: run one name or picture save for the device on screen. The result shows only if the
-	 * page is still on the device the save began on; a failure throws to DeviceCustomise.
+	 * NET-200: run one name or picture save for the device on screen. It refuses while the page is
+	 * still loading another device, shows its result only if the page is still on that device, and
+	 * takes only the owner's fields from the reply. A failure throws to DeviceCustomise.
 	 */
 	async function customise(action: (mac: string) => Promise<RegistryDevice>): Promise<void> {
 		const m = mac;
-		const target = device?.mac;
-		if (!target) return;
-		const saved = await action(target);
-		if (m !== mac) return;
+		const current = device;
+		if (!current || loadedFor !== m) throw new Error('This page is still loading another device. Try again in a moment.');
+		const saved = await action(current.mac);
+		if (m !== mac || !device || device.mac !== saved.mac) return;
 		editRev += 1;
-		device = saved;
+		device = {
+			...device,
+			custom_name: saved.custom_name,
+			icon: saved.icon,
+			picture: saved.picture,
+			display_name: saved.display_name,
+			discovered_name: saved.discovered_name,
+		};
 	}
 
 	const refresh = registerPageRefresh(load);

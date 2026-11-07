@@ -73,7 +73,8 @@ describe('Device by MAC page', () => {
 		// OLD CODE START — 2026-11-03 UI redesign: the spinner's class; the loading state is now a CardState status
 		// expect(document.querySelector('.loading-state')).toBeNull();
 		// OLD CODE END
-		expect(screen.queryByRole('status')).not.toBeInTheDocument();
+		// OLD CODE: expect(screen.queryByRole('status')).not.toBeInTheDocument(); (NET-200: the rename panel's live region is a status too)
+		expect(screen.queryByText('Loading device details')).not.toBeInTheDocument();
 	});
 
 	// NET-158: the figures match the MAC or any address the device used, over the whole range,

@@ -725,7 +725,8 @@ OLD CODE END -->
 			<div><dt class="meta-k">IP address</dt><dd class="meta-v mono">{device.ip}</dd></div>
 			<div><dt class="meta-k">MAC</dt><dd class="meta-v mono">{device.mac ?? '—'}</dd></div>
 			<div><dt class="meta-k">Vendor</dt><dd class="meta-v">{device.manufacturer ?? '—'}</dd></div>
-			<div><dt class="meta-k">Hostname</dt><dd class="meta-v mono">{device.hostname ?? '—'}</dd></div>
+			<!-- OLD CODE: <dd class="meta-v mono">{device.hostname ?? '—'}</dd> (NET-200: hostname carries the owner's name; the real one stays visible) -->
+			<div><dt class="meta-k">Hostname</dt><dd class="meta-v mono">{device.discovered_name ?? device.hostname ?? '—'}</dd></div>
 			<div><dt class="meta-k">First seen in range</dt><dd class="meta-v">{formatDate(device.first_seen)}</dd></div>
 			<div><dt class="meta-k">Last seen</dt><dd class="meta-v">{timeAgo(device.last_seen)}</dd></div>
 		</dl>

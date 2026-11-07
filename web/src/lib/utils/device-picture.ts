@@ -28,6 +28,7 @@ export function centreSquare(width: number, height: number): { sx: number; sy: n
 /**
  * The file as a PICTURE_SIZE square data URL: WebP, or PNG where the browser can't encode WebP
  * (toDataURL falls back by itself; the daemon takes both). Rejects with a plain-English reason.
+ * Where the browser can't encode WebP it gives JPEG on white, not the far larger PNG.
  */
 export async function squarePicture(file: File): Promise<string> {
 	const problem = pictureFileError(file);
@@ -45,11 +46,19 @@ export async function squarePicture(file: File): Promise<string> {
 		canvas.height = PICTURE_SIZE;
 		const context = canvas.getContext('2d');
 		if (!context) throw new Error("This browser can't resize pictures.");
+		context.imageSmoothingEnabled = true;
+		context.imageSmoothingQuality = 'high';
 		context.drawImage(bitmap, sx, sy, side, side, 0, 0, PICTURE_SIZE, PICTURE_SIZE);
 		// OLD CODE: return canvas.toDataURL('image/webp', 0.85); (review: the PNG fallback of a noisy photo can pass the daemon's 256 KB cap)
 		const webp = canvas.toDataURL('image/webp', 0.85);
-		// A browser that can't encode WebP hands back PNG; JPEG stays small (a transparent picture loses its transparency)
-		return webp.startsWith('data:image/webp') ? webp : canvas.toDataURL('image/jpeg', 0.85);
+		// A browser that can't encode WebP hands back PNG; JPEG stays small
+		if (webp.startsWith('data:image/webp')) return webp;
+		// JPEG has no transparency: paint white under the picture, not the default black (PR #214 review)
+		context.globalCompositeOperation = 'destination-over';
+		// colour-gate: allow-next-line canvas fill can't read CSS variables
+		context.fillStyle = '#ffffff';
+		context.fillRect(0, 0, PICTURE_SIZE, PICTURE_SIZE);
+		return canvas.toDataURL('image/jpeg', 0.85);
 	} finally {
 		bitmap.close();
 	}

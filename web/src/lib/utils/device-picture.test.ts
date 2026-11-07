@@ -43,32 +43,46 @@ describe('squarePicture', () => {
 		await expect(squarePicture(new File(['x'], 'a.png', { type: 'image/png' }))).rejects.toThrow("Couldn't read that picture");
 	});
 
-	it('draws the centre square at 256 px and asks for WebP', async () => {
-		const close = vi.fn();
-		vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue({ width: 400, height: 300, close }));
-		const drawImage = vi.fn();
-		const toDataURL = vi.fn().mockReturnValue('data:image/webp;base64,AAAA');
+	/** A fake canvas whose toDataURL answers each type with `encode(type)`. */
+	function fakeCanvas(encode: (type: string) => string) {
+		const context = {
+			drawImage: vi.fn(),
+			fillRect: vi.fn(),
+			fillStyle: '',
+			globalCompositeOperation: 'source-over',
+			imageSmoothingEnabled: false,
+			imageSmoothingQuality: 'low',
+		};
+		const toDataURL = vi.fn((type: string) => encode(type));
 		const realCreate = document.createElement.bind(document);
 		vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
 			if (tag !== 'canvas') return realCreate(tag);
-			return { width: 0, height: 0, getContext: () => ({ drawImage }), toDataURL } as unknown as HTMLCanvasElement;
+			return { width: 0, height: 0, getContext: () => context, toDataURL } as unknown as HTMLCanvasElement;
 		});
+		return { context, toDataURL };
+	}
+
+	it('draws the centre square at 256 px, smoothly, and asks for WebP', async () => {
+		const close = vi.fn();
+		vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue({ width: 400, height: 300, close }));
+		const { context, toDataURL } = fakeCanvas(() => 'data:image/webp;base64,AAAA');
 		await expect(squarePicture(new File(['x'], 'a.jpg', { type: 'image/jpeg' }))).resolves.toBe('data:image/webp;base64,AAAA');
-		expect(drawImage).toHaveBeenCalledWith(expect.anything(), 50, 0, 300, 300, 0, 0, PICTURE_SIZE, PICTURE_SIZE);
+		expect(context.drawImage).toHaveBeenCalledWith(expect.anything(), 50, 0, 300, 300, 0, 0, PICTURE_SIZE, PICTURE_SIZE);
+		expect(context.imageSmoothingQuality).toBe('high');
 		expect(toDataURL).toHaveBeenCalledWith('image/webp', 0.85);
+		expect(toDataURL).toHaveBeenCalledTimes(1);
+		expect(context.fillRect).not.toHaveBeenCalled();
 		expect(close).toHaveBeenCalled();
 		vi.restoreAllMocks();
 	});
 
-	it('falls back to JPEG where the browser hands back PNG for WebP', async () => {
+	it('falls back to JPEG on white where the browser hands back PNG for WebP', async () => {
 		vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue({ width: 300, height: 300, close: vi.fn() }));
-		const toDataURL = vi.fn((type: string) => (type === 'image/jpeg' ? 'data:image/jpeg;base64,BBBB' : 'data:image/png;base64,CCCC'));
-		const realCreate = document.createElement.bind(document);
-		vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
-			if (tag !== 'canvas') return realCreate(tag);
-			return { width: 0, height: 0, getContext: () => ({ drawImage: vi.fn() }), toDataURL } as unknown as HTMLCanvasElement;
-		});
+		const { context, toDataURL } = fakeCanvas((type) => (type === 'image/jpeg' ? 'data:image/jpeg;base64,BBBB' : 'data:image/png;base64,CCCC'));
 		await expect(squarePicture(new File(['x'], 'a.png', { type: 'image/png' }))).resolves.toBe('data:image/jpeg;base64,BBBB');
+		expect(context.globalCompositeOperation).toBe('destination-over');
+		expect(context.fillStyle).toBe('#ffffff');
+		expect(context.fillRect).toHaveBeenCalledWith(0, 0, PICTURE_SIZE, PICTURE_SIZE);
 		expect(toDataURL).toHaveBeenLastCalledWith('image/jpeg', 0.85);
 		vi.restoreAllMocks();
 	});

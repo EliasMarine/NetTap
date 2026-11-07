@@ -21,6 +21,9 @@ const BY_CATEGORY: Record<string, IconName> = {
 	camera: 'camera',
 	speaker: 'speaker',
 	printer: 'printer',
+	// NET-200: every icon the owner can pick maps to itself ('infra' read as unknown before)
+	infra: 'infra',
+	devices: 'devices',
 };
 
 export function deviceIcon(category: string | null | undefined): IconName {

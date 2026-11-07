@@ -239,6 +239,24 @@ describe('Devices — All devices table', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Reset filters' }));
 		expect(screen.getByRole('table', { name: 'All devices' })).toBeInTheDocument();
 	});
+
+	// NET-200: the owner's name heads the Name cell (over the UniFi name, with no UniFi tag) and search finds it
+	it("shows the owner's name in the Name cell and finds the device by it", async () => {
+		const named = listReply([
+			{ ...DEVICE, ip: '192.168.1.10', hostname: 'eli-mbp', custom_name: 'Work laptop', unifi_name: 'MacBook', category: 'computer', total_bytes: 5000 },
+			{ ...DEVICE, ip: '192.168.1.9', hostname: 'phone', category: 'phone', total_bytes: 100 },
+		], { from: LIST_FROM });
+		stubDaemon({ '/api/capture/mode': BRIDGE, '/api/devices': named, '/api/devices/count': { count: 2 } });
+		render(Page);
+		const table = await screen.findByRole('table', { name: 'All devices' });
+		const row = within(table).getAllByRole('row')[1];
+		expect(row).toHaveTextContent('Work laptop');
+		expect(within(row).queryByText('UniFi')).not.toBeInTheDocument();
+
+		await fireEvent.input(screen.getByLabelText('Search devices'), { target: { value: 'work lap' } });
+		expect(within(table).getAllByRole('row')).toHaveLength(2);
+		expect(within(table).getAllByRole('row')[1]).toHaveTextContent('192.168.1.10');
+	});
 });
 
 // PLAN.md §5.5: the top bar's Refresh and "Updated" go through the page's loader

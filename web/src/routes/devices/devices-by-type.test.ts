@@ -515,4 +515,22 @@ describe('Devices By type — cards line up, and a List layout with the same fig
 		await showList();
 		expectNoNestedInteractive(container);
 	});
+
+	// NET-200: the owner's photo on the card's tile and in the List row, which falls back to the icon when it fails
+	it("shows the owner's photo on the card and in the List row, and the icon if it fails to load", async () => {
+		const PHOTO = '/api/devices/registry/aa:10/picture?v=0123456789abcdef';
+		const reg = LAYOUT_REPLIES['/api/devices/registry'] as { total: number; devices: Record<string, unknown>[] };
+		const withPhoto = {
+			...LAYOUT_REPLIES,
+			'/api/devices/registry': { ...reg, devices: reg.devices.map((d) => (d.display_name === A ? { ...d, picture: PHOTO } : d)) },
+		};
+		await openByType(withPhoto);
+		expect(card(A).querySelector('.tile img')).toHaveAttribute('src', PHOTO);
+		await showList();
+		const photo = row(A).querySelector('img.who-photo')!;
+		expect(photo).toHaveAttribute('src', PHOTO);
+		await fireEvent.error(photo);
+		expect(row(A).querySelector('img.who-photo')).toBeNull();
+		expect(row(A).querySelector('.who svg')).toBeInTheDocument();
+	});
 });

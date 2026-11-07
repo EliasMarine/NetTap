@@ -169,24 +169,44 @@ export async function getDeviceTraffic(mac: string, win?: { from: string; to: st
 
 /** The built-in icons the owner can pick: the daemon's allowlist, all in ui/icons.ts. */
 export const DEVICE_ICONS = ['laptop', 'phone', 'tablet', 'tv', 'nas', 'gamepad', 'camera', 'speaker', 'printer', 'iot', 'infra', 'devices'] as const;
+export type DeviceIcon = (typeof DEVICE_ICONS)[number];
 
-/** One save; resolves to the device as the daemon now has it, or throws the daemon's reason. */
+// OLD CODE START — PR #214 review: a dropped connection threw the browser's own words, and a
+// 413 on a name read "The picture is too large"
+// async function saveDevice(mac: string, part: 'name' | 'picture', method: 'PUT' | 'DELETE', body?: object): Promise<RegistryDevice> {
+// 	const res = await fetch(`/api/devices/registry/${encodeURIComponent(mac)}/${part}`, {
+// 		method,
+// 		...(body ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}),
+// 	});
+// 	// nginx or the web server refuses an oversize body before the daemon sees it
+// 	if (res.status === 413) throw new Error('The picture is too large');
+// 	const data = await res.json().catch(() => null);
+// 	if (!res.ok || !data?.device) throw new Error(data?.error ?? `Couldn't save the device: HTTP ${res.status}`);
+// 	return data.device;
+// }
+// OLD CODE END
+/** One save; resolves to the device as the daemon now has it, or throws a reason fit to show. */
 async function saveDevice(mac: string, part: 'name' | 'picture', method: 'PUT' | 'DELETE', body?: object): Promise<RegistryDevice> {
-	const res = await fetch(`/api/devices/registry/${encodeURIComponent(mac)}/${part}`, {
-		method,
-		...(body ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}),
-	});
+	let res: Response;
+	try {
+		res = await fetch(`/api/devices/registry/${encodeURIComponent(mac)}/${part}`, {
+			method,
+			...(body ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}),
+		});
+	} catch {
+		throw new Error("Couldn't reach NetTap. Check the connection and try again.");
+	}
 	// nginx or the web server refuses an oversize body before the daemon sees it
-	if (res.status === 413) throw new Error('The picture is too large');
+	if (res.status === 413) throw new Error(part === 'picture' ? 'The picture is too large.' : 'The request is too large.');
 	const data = await res.json().catch(() => null);
-	if (!res.ok || !data?.device) throw new Error(data?.error ?? `Couldn't save the device: HTTP ${res.status}`);
+	if (!res.ok || !data?.device) throw new Error(data?.error ?? `Couldn't save the change (HTTP ${res.status}).`);
 	return data.device;
 }
 
 export const setDeviceName = (mac: string, name: string) => saveDevice(mac, 'name', 'PUT', { name });
 export const clearDeviceName = (mac: string) => saveDevice(mac, 'name', 'DELETE');
 /** `image` is a data URL (PNG, JPEG or WebP); the daemon checks its bytes. */
-export const setDevicePicture = (mac: string, picture: { icon: string } | { image: string }) =>
+export const setDevicePicture = (mac: string, picture: { icon: DeviceIcon } | { image: string }) =>
 	saveDevice(mac, 'picture', 'PUT', picture);
 export const clearDevicePicture = (mac: string) => saveDevice(mac, 'picture', 'DELETE');
 

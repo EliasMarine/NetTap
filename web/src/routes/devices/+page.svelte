@@ -492,6 +492,11 @@
 
 	// NET-180: the card and its List row read these, so both show the same figures
 	const cardName = (d: RegistryDevice) => d.display_name || d.mac;
+	/** NET-200: List-row photo URLs that failed to load; those rows show the icon instead. */
+	let failedPhotos = $state(new Set<string>());
+	const photoFailed = (url: string | null | undefined) => {
+		if (url) failedPhotos = new Set([...failedPhotos, url]);
+	};
 	const cardAddress = (d: RegistryDevice) => d.ips[0] ?? d.mac;
 	const cardConnections = (d: RegistryDevice) => (d.connection_count != null ? fmt(d.connection_count) : '—');
 	/** Some of the device's addresses weren't in the device list, so its traffic is theirs only. */
@@ -632,7 +637,8 @@
 <!-- NET-180: By type's List rows. The Device cell sits inside the row's button: no links or buttons in it -->
 {#snippet listDeviceCell(d: RegistryDevice)}
 	<!-- OLD CODE: <span class="who"><Icon name={deviceIcon(d.category)} /> … (NET-200: the owner's photo or picked icon) -->
-	<span class="who">{#if d.picture}<img class="who-photo" src={d.picture} alt="" width="20" height="20" onerror={(e) => ((e.currentTarget as HTMLImageElement).hidden = true)} />{:else}<Icon name={deviceIcon(d.icon ?? d.category)} />{/if}<span class="who-name">{cardName(d)}</span>{#if isNewDevice(d)}<span class="chip is-ok">New</span>{/if}</span>
+	<!-- PR #214 review: a photo that fails to load falls back to the icon, as DeviceTile does (it hid the image and left a gap) -->
+	<span class="who">{#if d.picture && !failedPhotos.has(d.picture)}<img class="who-photo" src={d.picture} alt="" width="20" height="20" loading="lazy" onerror={() => photoFailed(d.picture)} />{:else}<Icon name={deviceIcon(d.icon ?? d.category)} />{/if}<span class="who-name">{cardName(d)}</span>{#if isNewDevice(d)}<span class="chip is-ok">New</span>{/if}</span>
 {/snippet}
 {#snippet listAddressCell(d: RegistryDevice)}
 	<span class="mono">{cardAddress(d)}</span>{#if addressMore(d)}<span class="dim">{addressMore(d)}</span>{/if}

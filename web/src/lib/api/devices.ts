@@ -34,6 +34,8 @@ export interface Device {
 	unifi_name?: string;
 	/** NET-200: the owner's name, picked icon and photo URL; `hostname` already carries the name */
 	custom_name?: string | null;
+	/** NET-200: the hostname before the owner's name replaced it (sent only when it did) */
+	discovered_name?: string | null;
 	icon?: string | null;
 	picture?: string | null;
 }

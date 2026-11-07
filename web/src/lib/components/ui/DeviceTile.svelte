@@ -26,7 +26,7 @@
 <span class={['tile', size === 'lg' && 'lg', showPhoto && 'has-photo']}>
 	{#if showPhoto}
 		<!-- decorative: the device's name is always beside the tile -->
-		<img src={picture} alt="" width={px} height={px} onerror={() => (failed = picture)} />
+		<img src={picture} alt="" width={px} height={px} loading="lazy" onerror={() => (failed = picture)} />
 	{:else}
 		<Icon name={deviceIcon(icon ?? category)} />
 	{/if}

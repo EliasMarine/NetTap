@@ -325,14 +325,20 @@ describe('device name and picture saves', () => {
 		await expect(setDevicePicture('AA:BB:CC:DD:EE:FF', { image: 'x' })).rejects.toThrow('Pictures must be PNG, JPEG or WebP');
 	});
 
-	it('says the picture is too large on a 413 from the server in front', async () => {
+	it('says the picture is too large on a 413 from the server in front, and a name request too large', async () => {
 		mockFetchFailure(413);
-		await expect(setDevicePicture('AA:BB:CC:DD:EE:FF', { image: 'x' })).rejects.toThrow('The picture is too large');
+		await expect(setDevicePicture('AA:BB:CC:DD:EE:FF', { image: 'x' })).rejects.toThrow('The picture is too large.');
+		await expect(setDeviceName('AA:BB:CC:DD:EE:FF', 'x')).rejects.toThrow('The request is too large.');
 	});
 
 	it('throws on a reply without a device, naming the status', async () => {
 		mockFetchFailure(502);
-		await expect(setDeviceName('AA:BB:CC:DD:EE:FF', 'x')).rejects.toThrow("Couldn't save the device: HTTP 502");
+		await expect(setDeviceName('AA:BB:CC:DD:EE:FF', 'x')).rejects.toThrow("Couldn't save the change (HTTP 502).");
+	});
+
+	it('says NetTap is unreachable when the request never gets an answer', async () => {
+		mockFetchReject();
+		await expect(clearDevicePicture('AA:BB:CC:DD:EE:FF')).rejects.toThrow("Couldn't reach NetTap. Check the connection and try again.");
 	});
 
 	it('offers only icons the icon set has', async () => {
