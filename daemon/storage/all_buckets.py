@@ -7,7 +7,7 @@ pages through every bucket in key order, so it is the tool for complete sets.
 
 from typing import Any
 
-from storage.snapshot_search import checked
+from storage.snapshot_search import QueryFailed, checked
 
 PAGE_SIZE = 1_000
 # shortcut: stops after this many buckets and reports complete=False; raise it if a site needs more
@@ -53,9 +53,14 @@ def all_buckets(
         #     return buckets, True
         # OLD CODE END
         got = page.get("buckets")
+        after = page.get("after_key")
+        # a checked read never takes a malformed page, or a full one with no next key, as the end
+        if what is not None and (
+            not isinstance(got, list) or (len(got) >= page_size and after is None)
+        ):
+            raise QueryFailed(f"{what}: malformed page")
         got = got if isinstance(got, list) else []
         buckets = [*buckets, *got]
-        after = page.get("after_key")
         # a composite fills every page it can, so a short page is the last one
         if len(got) < page_size or after is None:
             return buckets, True

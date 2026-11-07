@@ -751,11 +751,62 @@ def _port_search(ports_by_ip: dict[str, dict[int, int]]):
             "ports_used": ports_used(ports),
         }
 
+    def terms(ports, wanted, size):
+        """A terms list of `ports` (port -> count) kept by `wanted`, top `size` like OpenSearch."""
+        kept = {port: n for port, n in ports.items() if wanted(port)}
+        top = sorted(kept, key=lambda port: (-kept[port], port))[:size]
+        return {
+            "buckets": [{"key": port, "doc_count": kept[port]} for port in top],
+            "sum_other_doc_count": sum(
+                n for port, n in kept.items() if port not in top
+            ),
+        }
+
+    def unsafe_ports(ip, key, body):
+        """The bounded port read (PR #192 review): one bucket per device."""
+        safe = [
+            c["terms"]["destination.port"]
+            for c in body["query"]["bool"]["must_not"]
+            if "destination.port" in c.get("terms", {})
+        ][0]
+        ports = {p: n for p, n in ports_by_ip[ip].items() if p not in safe}
+        aggs = body["aggs"]["all"]["aggs"]
+        listed = aggs["suspicious"]["filter"]["terms"]["destination.port"]
+        not_unusual = aggs["unusual"]["filter"]["bool"]["must_not"][0]["terms"][
+            "destination.port"
+        ]
+        return {
+            "key": key,
+            "doc_count": sum(ports.values()),
+            "suspicious": {
+                "ports": terms(
+                    ports,
+                    lambda p: p in listed,
+                    aggs["suspicious"]["aggs"]["ports"]["terms"]["size"],
+                )
+            },
+            "unusual": {
+                "ports": terms(
+                    ports,
+                    lambda p: p not in not_unusual,
+                    aggs["unusual"]["aggs"]["ports"]["terms"]["size"],
+                )
+            },
+        }
+
     def composite_page(body):
         composite = body["aggs"]["all"]["composite"]
         names = [next(iter(source)) for source in composite["sources"]]
         bool_query = body["query"]["bool"]
-        if names == ["ip"]:
+        if "suspicious" in body["aggs"]["all"].get("aggs", {}):
+            ips = [
+                c["terms"]["source.ip"]
+                for c in bool_query["filter"]
+                if "source.ip" in c.get("terms", {})
+            ][-1]
+            keys = [{"ip": ip} for ip in sorted(ips)]
+            make = lambda key: unsafe_ports(key["ip"], key, body)  # noqa: E731
+        elif names == ["ip"]:
             keys = [{"ip": ip} for ip in sorted(ports_by_ip)]
             make = lambda key: device(key["ip"], key)  # noqa: E731
         else:
@@ -858,21 +909,57 @@ class TestRiskPortsAreComplete(AioHTTPTestCase):
             by_ip["192.168.1.40"]["description"], "Only common protocols/ports used"
         )
         # Only the two devices whose list was cut short are read in full
+        # OLD CODE START — PR #192 review: the port read is one bucket per device now
+        # port_bodies = [... if len(...["composite"]["sources"]) == 2]
+        # OLD CODE END
         port_bodies = [
             c.kwargs["body"]
             for c in self.mock_storage._client.search.call_args_list
-            if len(
-                c.kwargs["body"]
-                .get("aggs", {})
-                .get("all", {})
-                .get("composite", {})
-                .get("sources", [])
-            )
-            == 2
+            if "suspicious"
+            in c.kwargs["body"].get("aggs", {}).get("all", {}).get("aggs", {})
         ]
         self.assertIn(
             {"terms": {"source.ip": ["192.168.1.20", "192.168.1.30"]}},
             port_bodies[0]["query"]["bool"]["filter"],
+        )
+
+    @unittest_run_loop
+    async def test_a_port_scan_is_a_lower_bound_not_a_failure(self):
+        """PR #192 review: the port read is one bucket per device with bounded lists, so a
+        device using thousands of ports cannot push it past a cap and blank every score."""
+        scanner = {
+            443: 500,
+            **{50_000 + i: 1 for i in range(3_000)},
+        }  # no suspicious port
+        self.mock_storage._client.search.side_effect = _port_search(
+            {**self.PORTS, "192.168.1.50": scanner}
+        )
+
+        resp = await self.client.request("GET", "/api/risk/scores")
+        self.assertEqual(resp.status, 200)
+        by_ip = {d["ip"]: self._port_factor(d) for d in (await resp.json())["devices"]}
+
+        self.assertEqual(by_ip["192.168.1.50"]["score"], 8)
+        self.assertEqual(
+            by_ip["192.168.1.50"]["description"],
+            "At least 100 unusual port(s) detected",
+        )
+        # Under the list's size the count stays exact, and 4444 is still found
+        self.assertEqual(
+            by_ip["192.168.1.30"]["description"], "70 unusual port(s) detected"
+        )
+        self.assertEqual(
+            by_ip["192.168.1.20"]["description"], "Known suspicious ports used: 4444"
+        )
+        port_body = next(
+            c.kwargs["body"]
+            for c in self.mock_storage._client.search.call_args_list
+            if "suspicious"
+            in c.kwargs["body"].get("aggs", {}).get("all", {}).get("aggs", {})
+        )
+        self.assertEqual(
+            port_body["aggs"]["all"]["composite"]["sources"],
+            [{"ip": {"terms": {"field": "source.ip"}}}],
         )
 
     @unittest_run_loop
@@ -955,6 +1042,162 @@ class TestRiskFactorScope(unittest.TestCase):
         self.assertEqual(
             _build_device_stats("10.0.0.2", bucket, 0, 0, 0)["ports_used"], [443]
         )
+
+
+INCOMPLETE = {"error": "The device search was incomplete"}
+
+
+def _spoil(answer, which: str, change):
+    """`answer` (a _risk_search side effect) with one kind of reply changed by `change`."""
+
+    def kind(body):
+        aggs = body.get("aggs", {})
+        if "all" in aggs:
+            return "ports" if "suspicious" in aggs["all"].get("aggs", {}) else "devices"
+        if "by_ip" in aggs:
+            return "alerts"
+        is_alert = {"term": {"event.dataset": "alert"}} in body["query"]["bool"][
+            "filter"
+        ]
+        return "single_alert" if is_alert else "single_conn"
+
+    def search(index=None, body=None, **kwargs):
+        reply = answer(index=index, body=body, **kwargs)
+        return change(reply) if kind(body) == which else reply
+
+    return search
+
+
+def _timed_out(reply):
+    return {**reply, "timed_out": True}
+
+
+def _shard_failed(reply):
+    return {**reply, "_shards": {"total": 2, "successful": 1, "failed": 1}}
+
+
+class TestRiskReadsAreChecked(AioHTTPTestCase):
+    """Follow-up to PR #191: a partial read is a 502, never a lower score."""
+
+    CONNS = {f"192.168.1.{i + 1}": 50 for i in range(5)}
+
+    def setUp(self):
+        self.mock_storage = _make_mock_storage()
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.mock_storage
+        register_risk_routes(app, RiskScorer(), self.mock_storage)
+        return app
+
+    async def _get(self, path, which, change, conns=None):
+        self.mock_storage._client.search.side_effect = _spoil(
+            _risk_search(conns or self.CONNS), which, change
+        )
+        resp = await self.client.request("GET", path)
+        return resp.status, await resp.json()
+
+    @unittest_run_loop
+    async def test_list_fails_when_a_device_page_timed_out(self):
+        self.assertEqual(
+            await self._get("/api/risk/scores", "devices", _timed_out),
+            (502, INCOMPLETE),
+        )
+
+    @unittest_run_loop
+    async def test_list_fails_when_an_alert_chunk_lost_a_shard(self):
+        self.assertEqual(
+            await self._get("/api/risk/scores", "alerts", _shard_failed),
+            (502, INCOMPLETE),
+        )
+
+    @unittest_run_loop
+    async def test_list_fails_when_an_alert_reply_has_no_bucket_list(self):
+        def no_buckets(reply):
+            return {**reply, "aggregations": {"by_ip": {}}}
+
+        self.assertEqual(
+            await self._get("/api/risk/scores", "alerts", no_buckets),
+            (502, INCOMPLETE),
+        )
+
+    @unittest_run_loop
+    async def test_list_fails_when_the_port_read_lost_a_shard(self):
+        # a device whose top-50 port list was cut short sends the list to the port read
+        cut = _make_device_bucket("192.168.1.1", doc_count=50)
+        cut["ports_used"]["ports"]["sum_other_doc_count"] = 3
+
+        def answer(index=None, body=None, **kwargs):
+            if "suspicious" in body.get("aggs", {}).get("all", {}).get("aggs", {}):
+                return _shard_failed({"aggregations": {"all": {"buckets": []}}})
+            reply = _risk_search(self.CONNS)(index=index, body=body, **kwargs)
+            if "all" in body.get("aggs", {}):
+                buckets = reply["aggregations"]["all"]["buckets"]
+                reply["aggregations"]["all"]["buckets"] = [
+                    {**cut, "key": b["key"]} if b["key"]["ip"] == "192.168.1.1" else b
+                    for b in buckets
+                ]
+            return reply
+
+        self.mock_storage._client.search.side_effect = answer
+        resp = await self.client.request("GET", "/api/risk/scores")
+        self.assertEqual((resp.status, await resp.json()), (502, INCOMPLETE))
+
+    @unittest_run_loop
+    async def test_single_fails_when_its_connection_search_timed_out(self):
+        self.assertEqual(
+            await self._get("/api/risk/scores/192.168.1.1", "single_conn", _timed_out),
+            (502, INCOMPLETE),
+        )
+
+    @unittest_run_loop
+    async def test_single_fails_on_a_lower_bound_alert_total(self):
+        def lower_bound(reply):
+            return {**reply, "hits": {"total": {"value": 10000, "relation": "gte"}}}
+
+        self.assertEqual(
+            await self._get(
+                "/api/risk/scores/192.168.1.1", "single_alert", lower_bound
+            ),
+            (502, INCOMPLETE),
+        )
+
+    @unittest_run_loop
+    async def test_single_fails_when_a_baseline_page_lost_a_shard(self):
+        self.assertEqual(
+            await self._get("/api/risk/scores/192.168.1.1", "devices", _shard_failed),
+            (502, INCOMPLETE),
+        )
+
+    @unittest_run_loop
+    async def test_single_fails_when_its_port_read_lost_a_shard(self):
+        def cut_short(reply):
+            ports = reply["aggregations"]["ports_used"]["ports"]
+            return {
+                **reply,
+                "aggregations": {
+                    **reply["aggregations"],
+                    "ports_used": {"ports": {**ports, "sum_other_doc_count": 3}},
+                },
+            }
+
+        answer = _spoil(_risk_search(self.CONNS), "single_conn", cut_short)
+        self.mock_storage._client.search.side_effect = _spoil(
+            answer, "ports", _shard_failed
+        )
+        resp = await self.client.request("GET", "/api/risk/scores/192.168.1.1")
+        self.assertEqual((resp.status, await resp.json()), (502, INCOMPLETE))
+
+    @unittest_run_loop
+    async def test_complete_replies_still_score(self):
+        self.assertEqual(
+            (await self._get("/api/risk/scores", "none", _timed_out))[0], 200
+        )
+        status, data = await self._get(
+            "/api/risk/scores/192.168.1.1", "none", _timed_out
+        )
+        self.assertEqual((status, data["connection_count"]), (200, 100))
 
 
 if __name__ == "__main__":

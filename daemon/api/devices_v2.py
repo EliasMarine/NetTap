@@ -242,8 +242,14 @@ def refresh_device_registry(app: Mapping[str, Any]) -> int:
     # query = _conn_devices_query(app, from_ts, to_ts)
     # result = registry._client.search(index=NETWORK_INDEX, body=query)
     # OLD CODE END
+    # A partial read could pair an IP with the wrong MAC, which drop_reassigned_ips then acts on
     buckets = _lan_device_buckets(
-        registry._client, app, from_ts, to_ts, aggs=_conn_device_aggs()
+        registry._client,
+        app,
+        from_ts,
+        to_ts,
+        aggs=_conn_device_aggs(),
+        what="device registry refresh",
     )
     # OLD CODE START — #26: the {ip: mac} pairs are needed to drop IPs that moved
     # count = _register_conn_devices(registry, result)

@@ -795,6 +795,53 @@ class TestSSDPEnrichment:
         assert count == 1
 
 
+class TestEnrichmentSkipsPartialReplies:
+    """Follow-up to PR #191: a partial reply could re-add an old lease's IP to a MAC."""
+
+    HIT = {
+        "_source": {
+            "source": {"mac": "AA:BB:CC:DD:EE:FF", "ip": "192.168.1.100"},
+            "zeek": {"dhcp": {"host_name": "laptop", "assigned_ip": "192.168.1.100"}},
+            "dns": {"host": ["laptop.local"]},
+            "http": {"useragent": "Google-Home/1.0"},
+        }
+    }
+
+    @pytest.mark.parametrize(
+        "method", ["enrich_from_dhcp", "enrich_from_mdns", "enrich_from_ssdp"]
+    )
+    def test_a_reply_with_a_failed_shard_registers_nothing(
+        self, registry, mock_client, method
+    ):
+        from opensearchpy import NotFoundError
+
+        mock_client.get.side_effect = NotFoundError(404, "not found", {})
+        mock_client.search.return_value = {
+            "_shards": {"total": 2, "successful": 1, "failed": 1},
+            "hits": {"hits": [self.HIT]},
+        }
+
+        assert (
+            getattr(registry, method)("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+            == 0
+        )
+        mock_client.index.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "method", ["enrich_from_dhcp", "enrich_from_mdns", "enrich_from_ssdp"]
+    )
+    def test_the_same_reply_complete_registers(self, registry, mock_client, method):
+        from opensearchpy import NotFoundError
+
+        mock_client.get.side_effect = NotFoundError(404, "not found", {})
+        mock_client.search.return_value = {"hits": {"hits": [self.HIT]}}
+
+        assert (
+            getattr(registry, method)("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+            == 1
+        )
+
+
 # ---------------------------------------------------------------------------
 # OUI enrichment
 # ---------------------------------------------------------------------------

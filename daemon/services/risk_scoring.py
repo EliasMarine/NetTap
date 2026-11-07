@@ -130,7 +130,8 @@ class RiskScorer:
 
         # Factor 4: Suspicious port usage
         port_points, port_desc = self.score_suspicious_ports(
-            device_stats.get("ports_used", [])
+            device_stats.get("ports_used", []),
+            device_stats.get("more_unusual_ports", False),
         )
         factors.append(
             {
@@ -235,8 +236,13 @@ class RiskScorer:
         else:
             return (15, f"{pct:.0f}% external connections -- high")
 
-    def score_suspicious_ports(self, ports: list[int]) -> tuple[int, str]:
+    def score_suspicious_ports(
+        self, ports: list[int], more_unusual: bool = False
+    ) -> tuple[int, str]:
         """Score based on suspicious port usage.
+
+        more_unusual: the device used more unusual ports than `ports` holds, so the
+        count is a lower bound (PR #192 review: the port read is bounded per device).
 
         Returns:
             (points, description) tuple.
@@ -261,7 +267,11 @@ class RiskScorer:
             return (15, f"Known suspicious ports used: {port_list}")
         elif unusual_found:
             count = len(unusual_found)
-            return (8, f"{count} unusual port(s) detected")
+            # OLD CODE START — PR #192 review: a bounded list's count read as exact
+            # return (8, f"{count} unusual port(s) detected")
+            # OLD CODE END
+            at_least = "At least " if more_unusual else ""
+            return (8, f"{at_least}{count} unusual port(s) detected")
         else:
             return (0, "Only common protocols/ports used")
 
