@@ -116,7 +116,7 @@ case $? in
     # *) echo "   ✗ A rule update held the lock for 15 minutes — suricata-live was not recreated; run this again"; exit 1 ;;
     # OLD CODE END
     # Safe: the stopped update leaves its marker, and the next start restores the last good rules first
-    *) echo "   - A rule update held the lock for 15 minutes; recreating anyway (its marker makes the next start restore the last good rules)" ;;
+    *) echo "   - Couldn't take the rules lock (busy for 15 minutes, or the holder didn't start); recreating anyway (an interrupted update's marker makes the next start restore the last good rules)" ;;
 esac
 STARTED=$(date -u '+%Y-%m-%d %H:%M:%S')
 "${COMPOSE[@]}" up -d --no-deps --force-recreate suricata-live

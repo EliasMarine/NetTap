@@ -97,6 +97,7 @@ class TestLockFileIsOpenedSafely:
     """The volume is writable by Malcolm's user; the daemon opens rules.lock as root."""
 
     def test_the_default_wait_is_240_s(self):
+        # pins the daemon-to-proxy timing contract: 240 s lock + restart must fit the web's 290 s
         assert rules_lock.LOCK_WAIT_S == 240
         default = inspect.signature(rules_lock.rules_lock).parameters["wait_s"].default
         assert default == 240
@@ -189,6 +190,31 @@ class TestCaptureRestartTakesTheLock:
                 capture_control._docker_cmd("restart", "live", timeout=0.1)
             )
         assert rc == -1 and "did not finish within" in out and Proc.killed
+
+    def test_docker_cmd_survives_a_process_gone_at_the_deadline(self):
+        from api import capture_control
+
+        class Proc:
+            returncode = 0
+
+            async def communicate(self):
+                await asyncio.sleep(10)
+
+            def kill(self):
+                raise ProcessLookupError
+
+            async def wait(self):
+                return 0
+
+        with patch.object(
+            capture_control.asyncio,
+            "create_subprocess_exec",
+            AsyncMock(return_value=Proc()),
+        ):
+            rc, out = asyncio.run(
+                capture_control._docker_cmd("restart", "live", timeout=0.1)
+            )
+        assert rc == -1 and "did not finish within" in out
 
     def test_released_when_the_restart_fails(self, state):
         def cmd(action, container, **kw):

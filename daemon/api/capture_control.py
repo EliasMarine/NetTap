@@ -15,6 +15,7 @@ changes so the capture containers' entrypoints re-read it.
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 from dataclasses import replace
@@ -28,6 +29,7 @@ from services.capture_config import (
     save_capture_config,
     write_env_file_if_changed,
 )
+from services.etpro import RESTART_TIMEOUT_S
 from services.rules_lock import rules_lock
 
 logger = logging.getLogger("nettap.api.capture_control")
@@ -43,9 +45,11 @@ CONTAINER_NAME = "nettap-pcap-capture"
 # )
 # OLD CODE END
 SURICATA_CONTAINER = "nettap-suricata-live"
-SURICATA_RESTART_TIMEOUT_S = (
-    120  # the restart holds the rules lock, so a hung one must not hold it for ever
-)
+# OLD CODE START — review round 2 gates: one restart timeout, shared with the ET Pro change (etpro.py)
+# SURICATA_RESTART_TIMEOUT_S = (
+#     120  # the restart holds the rules lock, so a hung one must not hold it for ever
+# )
+# OLD CODE END
 # Containers whose entrypoint reads /etc/nettap/capture.env
 CAPTURE_CONTAINERS = (
     "nettap-zeek-live",
@@ -130,7 +134,10 @@ async def _docker_cmd(
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout)
     except asyncio.TimeoutError:
-        proc.kill()
+        with contextlib.suppress(
+            ProcessLookupError
+        ):  # it may have exited right at the deadline
+            proc.kill()
         await proc.wait()
         return (
             -1,
@@ -191,7 +198,9 @@ async def _restart_if_running(container: str) -> tuple[bool, str]:
             # Held until docker restart returns, so the new container's startup update can take it
             async with rules_lock():
                 returncode, output = await _docker_cmd(
-                    "restart", container, timeout=SURICATA_RESTART_TIMEOUT_S
+                    "restart",
+                    container,
+                    timeout=RESTART_TIMEOUT_S,  # the lock is held: never for ever
                 )
         else:
             returncode, output = await _docker_cmd("restart", container)

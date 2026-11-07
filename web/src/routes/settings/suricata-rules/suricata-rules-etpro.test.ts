@@ -332,7 +332,6 @@ describe('Suricata rules page — ET Pro card', () => {
 			await screen.findByText('Suricata is restarting with the new rules. This takes a few minutes; this page refreshes by itself.'),
 		).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Save code' })).toBeDisabled();
-		const statusReads = (m: typeof f) => m.mock.calls.filter(([url, init]) => url === '/api/suricata/rules/commercial' && !init).length;
 		expect(statusReads(f)).toBe(1);
 
 		const done = stubApi(page({ etpro_rules: 48211 }, ETPRO_ON));

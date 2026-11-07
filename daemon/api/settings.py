@@ -128,18 +128,17 @@ def _drop_legacy_keys(env_file: str) -> None:
         if not path.exists():
             return
         lines = path.read_text().splitlines()
-        kept = [
-            line
-            for line in lines
-            if line.strip().partition("=")[0].strip() not in LEGACY_KEYS
-        ]
-        if len(kept) == len(lines):
+        keys = [line.strip().partition("=")[0].strip() for line in lines]
+        removed = sorted({key for key in keys if key in LEGACY_KEYS})
+        if not removed:
             return
+        kept = [line for line, key in zip(lines, keys) if key not in LEGACY_KEYS]
         path.write_text("\n".join(kept) + "\n")
-        logger.info("Removed the legacy ET Pro key from %s", env_file)
+        for key in removed:
+            logger.info("Removed the retired key %s from %s", key, env_file)
     except OSError as exc:
         logger.warning(
-            "Could not remove the legacy ET Pro key from %s (%s)",
+            "Could not remove retired keys from %s (%s)",
             env_file,
             type(exc).__name__,
         )

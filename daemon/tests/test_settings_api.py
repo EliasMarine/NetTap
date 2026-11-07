@@ -297,13 +297,13 @@ class TestLegacyEtProKey(unittest.TestCase):
             'MAXMIND_LICENSE_KEY="keep"\nSURICATA_ET_PRO_KEY="CANARYq1w2e3r4t5y6u7"\n# note\n'
         )
         self.assertEqual(saved, 'MAXMIND_LICENSE_KEY="keep"\n# note\n')
-        self.assertIn("Removed the legacy ET Pro key", logs)
+        self.assertIn("Removed the retired key SURICATA_ET_PRO_KEY from", logs)
         self.assertNotIn("CANARY", logs)
 
     def test_a_file_without_it_is_left_alone(self):
         saved, logs = self._register('MAXMIND_LICENSE_KEY="keep"\n')
         self.assertEqual(saved, 'MAXMIND_LICENSE_KEY="keep"\n')
-        self.assertNotIn("legacy", logs)
+        self.assertNotIn("retired key", logs)
 
 
 class TestRouteRegistration(AioHTTPTestCase):

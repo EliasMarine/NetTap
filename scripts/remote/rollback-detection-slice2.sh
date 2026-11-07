@@ -57,7 +57,7 @@ case $? in
     # *) echo "   ✗ A rule update held the lock for 15 minutes — not recreated; run this again"; exit 1 ;;
     # OLD CODE END
     # Safe: the stopped update leaves its marker, and the next start restores the last good rules first
-    *) echo "   - A rule update held the lock for 15 minutes; recreating anyway (its marker makes the next start restore the last good rules)" ;;
+    *) echo "   - Couldn't take the rules lock (busy for 15 minutes, or the holder didn't start); recreating anyway (an interrupted update's marker makes the next start restore the last good rules)" ;;
 esac
 # /var/lib/suricata is an anonymous volume that survives the recreate: drop slice 2's enabled sources
 # (an ET Pro source carries the code) and its source list, so the old compose file is back on ET Open.

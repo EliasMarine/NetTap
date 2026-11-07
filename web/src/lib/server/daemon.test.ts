@@ -301,6 +301,7 @@ describe('daemonFetch token', () => {
 });
 
 // The daemon answers a rule update or an ET Pro change by ~270 s; the proxy must outwait it (NET-191 slice 2)
+// Pins the daemon-to-proxy timing contract (the daemon's 240 s lock wait is pinned in test_rules_lock.py)
 describe('RULE_UPDATE_TIMEOUT_MS', () => {
 	it('is 290 s', () => {
 		expect(RULE_UPDATE_TIMEOUT_MS).toBe(290_000);
