@@ -77,8 +77,17 @@ print(urllib.request.urlopen(req, timeout=5).status)
 " 2>/dev/null || echo error)"
 echo ""
 
-echo "→ Step 8: Web → daemon works through the app (public MAC lookup, also proves the OUI DB shipped)..."
-LOOKUP=$(curl -sk --max-time 10 "https://localhost/api/tools/mac-lookup/B8:27:EB:00:00:01")
+# OLD CODE START — NET-193: the tools need a login now, so an anonymous curl gets the sign-in redirect
+# echo "→ Step 8: Web → daemon works through the app (public MAC lookup, also proves the OUI DB shipped)..."
+# LOOKUP=$(curl -sk --max-time 10 "https://localhost/api/tools/mac-lookup/B8:27:EB:00:00:01")
+# OLD CODE END
+echo "→ Step 8: MAC lookup with the daemon token (proves the OUI DB shipped)..."
+LOOKUP=$(sudo docker exec nettap-storage-daemon python3 -c "
+import urllib.request
+token = open('$TOKEN_PATH').read().strip()
+req = urllib.request.Request('http://localhost:8880/api/tools/mac-lookup/B8:27:EB:00:00:01', headers={'X-NetTap-Daemon-Token': token})
+print(urllib.request.urlopen(req, timeout=10).read().decode())
+" 2>/dev/null || echo error)
 echo "   response: $LOOKUP"
 check "lookup returns a vendor" "yes" "$(echo "$LOOKUP" | grep -qi 'raspberry' && echo yes || echo no)"
 echo ""

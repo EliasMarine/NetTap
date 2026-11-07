@@ -60,7 +60,7 @@ echo "→ Step 5: Without a session, the tools and lookups send you to /login...
 status() {  # status <path>: "<code> <location>" for a request with no cookie, redirects not followed
     sudo docker exec nettap-web node -e "fetch('http://localhost:3000$1', {redirect: 'manual'}).then(r => console.log(r.status, r.headers.get('location') || '-')).catch(() => console.log('0 -'))"
 }
-for path in /tools /tools/ping /lookup/whois /api/tools/ping /api/tools/mac-lookup/00:00:00:00:00:00 /api/lookup/dns/1.1.1.1 /api/lookup/whois/1.1.1.1 /api/auth/other /api/auth/..%2Ftools%2Fping; do
+for path in /tools /tools/ping /lookup/whois /api/tools/ping /api/tools/mac-lookup/00:00:00:00:00:00 /api/lookup/dns/1.1.1.1 /api/lookup/whois/1.1.1.1 /api/auth/other /api/auth/me/x /api/auth/..%2Ftools%2Fping; do
     OUT=$(status "$path")
     if [ "${OUT%% *}" = "302" ] && [ "${OUT#* }" = "/login" ]; then rc=0; else rc=1; fi
     check "$path without a session" "$rc" "$OUT"
