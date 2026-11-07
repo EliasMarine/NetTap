@@ -11,6 +11,7 @@ The G11 holds data from 2026-11-02, so until December a "30-day" window covers f
 import json
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import UTC, datetime, timedelta
@@ -56,56 +57,65 @@ def first_mac(path, key):
         return None
 
 
+# (label, request): a device's MAC goes in the request only; the label says {mac}
 calls = [
-    "/api/dns/stats" + q(),
-    "/api/dns/top-domains" + q(limit=50),
-    "/api/dns/nxdomain" + q(),
-    "/api/dns/types" + q(),
-    "/api/dns/suspicious" + q(),
-    "/api/dns/timeline" + q(interval="6h"),
-    "/api/traffic/connections/stats" + q(week),
-    "/api/traffic/connections/sankey" + q(week, limit=10),
-    "/api/traffic/connections/timeline" + q(week, interval="6h"),
-    "/api/traffic/connections" + q(week, page=1, size=50),
-    "/api/live/dashboard" + q(week, limit=1),
-    "/api/iot/fleet-summary" + q(),
-    "/api/iot/privacy-report" + q(),
-    "/api/iot/protocol-audit" + q(),
-    "/api/iot/network-isolation" + q(),
-    "/api/iot/manufacturer-profiles" + q(),
+    (p.split("?")[0], p)
+    for p in [
+        "/api/dns/stats" + q(),
+        "/api/dns/top-domains" + q(limit=50),
+        "/api/dns/nxdomain" + q(),
+        "/api/dns/types" + q(),
+        "/api/dns/suspicious" + q(),
+        "/api/dns/timeline" + q(interval="6h"),
+        "/api/traffic/connections/stats" + q(week),
+        "/api/traffic/connections/sankey" + q(week, limit=10),
+        "/api/traffic/connections/timeline" + q(week, interval="6h"),
+        "/api/traffic/connections" + q(week, page=1, size=50),
+        "/api/live/dashboard" + q(week, limit=1),
+        "/api/iot/fleet-summary" + q(),
+        "/api/iot/privacy-report" + q(),
+        "/api/iot/protocol-audit" + q(),
+        "/api/iot/network-isolation" + q(),
+        "/api/iot/manufacturer-profiles" + q(),
+    ]
 ]
 iot_mac = first_mac("/api/iot/devices", "devices")
 if iot_mac:
     m = urllib.parse.quote(iot_mac, safe="")
-    calls += [
-        f"/api/iot/devices/{m}/communication-map" + q(),
-        f"/api/iot/devices/{m}/activity-timeline" + q(),
-    ]
+    for tail in ("communication-map", "activity-timeline"):
+        calls.append(
+            (f"/api/iot/devices/{{mac}}/{tail}", f"/api/iot/devices/{m}/{tail}" + q())
+        )
 reg_mac = first_mac("/api/devices/registry?limit=1", "devices")
 if reg_mac:
+    r = urllib.parse.quote(reg_mac, safe="")
     calls.append(
-        f"/api/devices/registry/{urllib.parse.quote(reg_mac, safe='')}/traffic" + q()
+        (
+            "/api/devices/registry/{mac}/traffic",
+            f"/api/devices/registry/{r}/traffic" + q(),
+        )
     )
 
 results, failed = [], False
-for path in calls:
-    route = path.split("?")[0]
-    limit = PROXY_TIMEOUT_S.get(route, DEFAULT_PROXY_TIMEOUT_S) * MARGIN
+for label, path in calls:
+    limit = PROXY_TIMEOUT_S.get(label, DEFAULT_PROXY_TIMEOUT_S) * MARGIN
     t0 = time.monotonic()
     try:
         get(path)
         err = ""
+    except urllib.error.HTTPError as exc:
+        err = f" (HTTP {exc.code})"
     except Exception as exc:
-        err = f" ({type(exc).__name__}: {str(exc)[:60]})"
+        err = f" ({type(exc).__name__})"
     secs = time.monotonic() - t0
     bad = bool(err) or secs > limit
     failed |= bad
     results.append(
-        (secs, f"{'✗' if bad else '✓'} {route} {secs:.1f} s (limit {limit:.0f} s){err}")
+        (secs, f"{'✗' if bad else '✓'} {label} {secs:.1f} s (limit {limit:.0f} s){err}")
     )
 
 for _, line in sorted(results, reverse=True):
     print(line)
 if not iot_mac or not reg_mac:
-    print(f"(info) no device for the drawer calls: iot={iot_mac} registry={reg_mac}")
+    print("(info) no IoT or registry device found, so its drawer calls were not timed")
 sys.exit(1 if failed else 0)
