@@ -154,7 +154,18 @@ Audits on the fixture build (1440 and 1024 px) and on the G11 (real data, cold):
   - the Settings refresh keeping an unsaved edit (it fails with the earlier version).
 - Gates:
   - `/deep-review`: no findings (`security-reviews/feature-ui-consistency-pr4/`).
-  - `/ponytail-review`: see the PR.
+  - `/ponytail-review`: verdict "fix 1 and 2 first". All fixed in this PR:
+    - three pages' stale notes now use the amber style, with a scan test;
+    - one compact formatter, so 999,950 reads "1M", not "1000K";
+    - range defaults are picked by value;
+    - `formatWhen`/`formatDay` are aliases of `formatTime`;
+    - six `fmt` copies removed;
+    - one `AUTO_REFRESH_MS` per page;
+    - an empty URL test removed;
+    - the locale scan also catches `new Intl.*Format()` with no locale.
+  - Filed:
+    - NET-196: one range list instead of 14.
+    - NET-195: Settings > Display saves choices no page reads. This predates PR 4 and needs the owner's call.
 
 ### Not changed
 
