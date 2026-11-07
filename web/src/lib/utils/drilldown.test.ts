@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery } from './drilldown';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { DISPLAY_SETTINGS_KEY, savedDefaultRange, startRange, alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery } from './drilldown';
 
 const MB = 1000 ** 2; // decimal, as formatBytes prints (NET-166)
 
@@ -219,5 +219,58 @@ describe('fitCount (NET-192)', () => {
 		expect(fitCount(100_000)).toBe('100K');
 		expect(fitCount(214_000)).toBe('214K');
 		expect(fitCount(1_250_000)).toBe('1.3M');
+	});
+});
+
+describe('the saved default range (NET-195)', () => {
+	const save = (value: unknown) => localStorage.setItem(DISPLAY_SETTINGS_KEY, JSON.stringify(value));
+	afterEach(() => {
+		localStorage.clear();
+		vi.restoreAllMocks();
+	});
+
+	it('is null when nothing is saved, the JSON is bad, or storage throws', () => {
+		expect(savedDefaultRange()).toBeNull();
+		localStorage.setItem(DISPLAY_SETTINGS_KEY, '{not json');
+		expect(savedDefaultRange()).toBeNull();
+		save({ defaultRange: '7d' });
+		vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+			throw new Error('SecurityError');
+		});
+		expect(savedDefaultRange()).toBeNull();
+	});
+
+	it.each([
+		[{ defaultRange: '7d' }, '7d'],
+		[{ defaultRange: '15m' }, null],
+		// an invalid new field is present: no fallback to the legacy one
+		[{ defaultRange: '15m', defaultTimeRange: '7d' }, null],
+		[{ defaultTimeRange: '6h' }, '6h'],
+		[{ defaultTimeRange: '24h' }, '24h'],
+		[{ defaultTimeRange: '7d' }, '7d'],
+		[{ defaultTimeRange: '30d' }, '30d'],
+		// Settings' own fallback, written by any Display save, and the ranges no longer offered
+		[{ defaultTimeRange: '1h' }, null],
+		[{ defaultTimeRange: '15m' }, null],
+		[{ defaultTimeRange: '4h' }, null],
+		[{ defaultRange: '24h', defaultTimeRange: '7d' }, '24h'],
+	])('reads %j as %s', (stored, expected) => {
+		save(stored);
+		expect(savedDefaultRange()).toBe(expected);
+	});
+
+	it('is null for JSON that is not an object', () => {
+		for (const stored of ['7d', 7, null, ['7d']]) {
+			save(stored);
+			expect(savedDefaultRange()).toBeNull();
+		}
+	});
+
+	it("startRange gives the saved range, else the page's own", () => {
+		expect(startRange('24h')).toBe('24h');
+		save({ defaultRange: '30d' });
+		expect(startRange('24h')).toBe('30d');
+		save({ defaultTimeRange: '1h' });
+		expect(startRange('24h')).toBe('24h');
 	});
 });
