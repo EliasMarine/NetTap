@@ -131,6 +131,19 @@ State lives on the `nettap-rules-state` volume (`/run/nettap-rules` in suricata-
 | `NETTAP_SURICATA_SOCKET` | `/var/run/suricata/suricata-command.socket` | Suricata's command socket |
 | `NETTAP_SURICATA_ENV` | `/etc/nettap/suricata.env` | Where the loader and the daemon find the ET Pro code |
 
+### Own rules (daemon, NET-191 slice 3)
+
+`owner.rules` lives on the `suricata-custom-rules` volume: rw in the daemon, ro in suricata-live at
+`/opt/suricata/rules/custom` (Malcolm lists `SURICATA_CUSTOM_RULES_DIR/**/*.rules` in `rule-files` at start). Suricata's test
+of a save runs on snapshots in the `nettap-rules-staging` volume, which suricata-live never mounts. The limits (2,000 rules,
+256 KB) are constants in `daemon/services/owner_rules_validator.py`. The overrides below exist for tests.
+
+| Variable | Default | Description |
+|---|---|---|
+| `NETTAP_CUSTOM_RULES_DIR` | `/var/lib/nettap-suricata-custom` | The daemon's mount of `suricata-custom-rules` |
+| `NETTAP_RULES_STAGING_DIR` | `/var/lib/nettap-rules-staging` | The daemon's mount of `nettap-rules-staging`; must not be inside the custom rules dir |
+| `NETTAP_DAEMON_CONTAINER` | `nettap-storage-daemon` | The daemon's own container, inspected for the staging volume's host path (the test container mounts it from the host) |
+
 ---
 
 ## Logstash
