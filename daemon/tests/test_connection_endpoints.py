@@ -29,6 +29,176 @@ def _make_mock_storage():
     return storage, mock_client
 
 
+def _stats_replies(conn: dict, alert: dict, details: dict):
+    """A search stand-in for connections/stats: the reply that matches each body."""
+
+    def search(index=None, body=None, **_kwargs):
+        aggs = (body or {}).get("aggs", {})
+        if "by_ip" in aggs:
+            return details
+        return conn if aggs else alert
+
+    return search
+
+
+def _filters(body: dict) -> list:
+    return body["query"]["bool"]["filter"]
+
+
+CONN_FILTER = {"term": {"event.dataset": "conn"}}
+
+
+class TestConnectionStatsQueries(AioHTTPTestCase):
+    """NET-192 PR 3: the destinations' ASN and country come from a follow-up search for the
+    10 winners, and the byte sums read network.bytes (only on conn-filtered queries)."""
+
+    async def get_application(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        app = web.Application()
+        app["storage"] = self.storage
+        register_traffic_routes(app, self.storage)
+        return app
+
+    def _conn(self, destinations: list[str]) -> dict:
+        return {
+            "hits": {"total": {"value": 10}},
+            "aggregations": {
+                "top_sources": {"buckets": []},
+                "top_destinations": {
+                    "buckets": [
+                        {"key": ip, "doc_count": 5, "total_bytes": {"value": 9}}
+                        for ip in destinations
+                    ]
+                },
+            },
+        }
+
+    def _bodies(self) -> list[dict]:
+        return [c.kwargs["body"] for c in self.mock_client.search.call_args_list]
+
+    @unittest_run_loop
+    async def test_the_main_search_has_no_per_destination_asn_or_geo(self):
+        self.mock_client.search.side_effect = _stats_replies(
+            self._conn([]), {"hits": {"total": {"value": 0}}}, {}
+        )
+        resp = await self.client.request("GET", "/api/traffic/connections/stats")
+        self.assertEqual(resp.status, 200)
+        conn_body = next(
+            b for b in self._bodies() if "top_destinations" in b.get("aggs", {})
+        )
+        self.assertEqual(
+            set(conn_body["aggs"]["top_destinations"]["aggs"]), {"total_bytes"}
+        )
+
+    @unittest_run_loop
+    async def test_the_winners_asn_and_country_come_from_one_follow_up(self):
+        winners = ["8.8.8.8", "1.1.1.1", "2606:4700::1111"]
+        details = {
+            "aggregations": {
+                "by_ip": {
+                    "buckets": [
+                        {
+                            "key": "1.1.1.1",
+                            "asn": {"buckets": [{"key": "AS13335 Cloudflare"}]},
+                            "geo": {"buckets": [{"key": "AU"}]},
+                        },
+                        {
+                            "key": "8.8.8.8",
+                            "asn": {"buckets": [{"key": "AS15169 Google LLC"}]},
+                            "geo": {"buckets": []},
+                        },
+                    ]
+                }
+            }
+        }
+        self.mock_client.search.side_effect = _stats_replies(
+            self._conn(winners), {"hits": {"total": {"value": 0}}}, details
+        )
+        resp = await self.client.request(
+            "GET",
+            "/api/traffic/connections/stats?from=2026-11-01T00:00:00Z&to=2026-11-08T00:00:00Z",
+        )
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(
+            [(d["ip"], d["asn"], d["country"]) for d in data["top_destinations"]],
+            [
+                ("8.8.8.8", "AS15169 Google LLC", ""),
+                ("1.1.1.1", "AS13335 Cloudflare", "AU"),
+                ("2606:4700::1111", "", ""),  # no conn docs carried an ASN or country
+            ],
+        )
+        self.assertEqual(data["top_destinations"][0]["total_bytes"], 9)
+
+        (follow_up,) = [b for b in self._bodies() if "by_ip" in b.get("aggs", {})]
+        conn_body = next(
+            b for b in self._bodies() if "top_destinations" in b.get("aggs", {})
+        )
+        # the same window and conn filters as the stats, narrowed to the winners
+        self.assertEqual(_filters(follow_up)[:-1], _filters(conn_body))
+        self.assertEqual(
+            _filters(follow_up)[-1], {"terms": {"destination.ip": winners}}
+        )
+        by_ip = follow_up["aggs"]["by_ip"]
+        self.assertEqual(by_ip["terms"], {"field": "destination.ip", "size": 3})
+        self.assertEqual(
+            by_ip["aggs"]["asn"]["terms"], {"field": "destination.as.full", "size": 1}
+        )
+        self.assertEqual(
+            by_ip["aggs"]["geo"]["terms"],
+            {"field": "destination.geo.country_iso_code", "size": 1},
+        )
+
+    @unittest_run_loop
+    async def test_no_follow_up_without_destinations(self):
+        self.mock_client.search.side_effect = _stats_replies(
+            self._conn([]), {"hits": {"total": {"value": 0}}}, {}
+        )
+        resp = await self.client.request("GET", "/api/traffic/connections/stats")
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(self.mock_client.search.call_count, 2)
+        self.assertEqual((await resp.json())["top_destinations"], [])
+
+    @unittest_run_loop
+    async def test_a_failed_follow_up_is_a_502(self):
+        from opensearchpy import OpenSearchException
+
+        replies = _stats_replies(
+            self._conn(["8.8.8.8"]), {"hits": {"total": {"value": 0}}}, {}
+        )
+
+        def search(index=None, body=None, **kwargs):
+            if "by_ip" in body.get("aggs", {}):
+                raise OpenSearchException("timeout")
+            return replies(index=index, body=body, **kwargs)
+
+        self.mock_client.search.side_effect = search
+        resp = await self.client.request("GET", "/api/traffic/connections/stats")
+        self.assertEqual(resp.status, 502)
+
+    @unittest_run_loop
+    async def test_network_bytes_is_summed_only_in_conn_filtered_queries(self):
+        """network.bytes = source + destination bytes only on conn docs (not Zeek `files`)."""
+        self.mock_client.search.side_effect = _stats_replies(
+            self._conn(["8.8.8.8"]), {"hits": {"total": {"value": 0}}}, {}
+        )
+        resp = await self.client.request("GET", "/api/traffic/connections/stats")
+        self.assertEqual(resp.status, 200)
+        conn_body = next(
+            b for b in self._bodies() if "top_destinations" in b.get("aggs", {})
+        )
+        for name in ("top_sources", "top_destinations"):
+            self.assertEqual(
+                conn_body["aggs"][name]["aggs"]["total_bytes"],
+                {"sum": {"field": "network.bytes"}},
+                name,
+            )
+        summing = [b for b in self._bodies() if "network.bytes" in str(b.get("aggs"))]
+        self.assertTrue(summing)
+        for body in summing:
+            self.assertIn(CONN_FILTER, _filters(body))
+
+
 class TestConnectionStats(AioHTTPTestCase):
     """Tests for GET /api/traffic/connections/stats"""
 
@@ -42,7 +212,11 @@ class TestConnectionStats(AioHTTPTestCase):
     @unittest_run_loop
     async def test_stats_success(self):
         """Should return aggregated stats with protocols, sources, destinations."""
-        self.mock_client.search.side_effect = [
+        # OLD CODE START — NET-192 PR 3: a third search (the winners' ASN and country); replies
+        # are picked by body, since the first two run side by side
+        # self.mock_client.search.side_effect = [
+        # OLD CODE END
+        conn, alert = [
             # First call: conn stats
             {
                 "hits": {"total": {"value": 5000}},
@@ -70,8 +244,10 @@ class TestConnectionStats(AioHTTPTestCase):
                                 "key": "8.8.8.8",
                                 "doc_count": 100,
                                 "total_bytes": {"value": 300000},
-                                "asn": {"buckets": [{"key": "AS15169 Google LLC"}]},
-                                "geo": {"buckets": [{"key": "US"}]},
+                                # OLD CODE START — NET-192 PR 3: from the follow-up search now
+                                # "asn": {"buckets": [{"key": "AS15169 Google LLC"}]},
+                                # "geo": {"buckets": [{"key": "US"}]},
+                                # OLD CODE END
                             },
                         ]
                     },
@@ -82,6 +258,21 @@ class TestConnectionStats(AioHTTPTestCase):
                 "hits": {"total": {"value": 42}},
             },
         ]
+        details = {
+            "aggregations": {
+                "by_ip": {
+                    "buckets": [
+                        {
+                            "key": "8.8.8.8",
+                            "doc_count": 100,
+                            "asn": {"buckets": [{"key": "AS15169 Google LLC"}]},
+                            "geo": {"buckets": [{"key": "US"}]},
+                        }
+                    ]
+                }
+            }
+        }
+        self.mock_client.search.side_effect = _stats_replies(conn, alert, details)
 
         resp = await self.client.request("GET", "/api/traffic/connections/stats")
         self.assertEqual(resp.status, 200)
