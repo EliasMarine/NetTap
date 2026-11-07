@@ -6,15 +6,14 @@ These endpoints provide on-demand IP investigation tools for the web dashboard.
 """
 
 import asyncio
-import ipaddress
 import logging
 import re
 import socket
-import time
 
 from aiohttp import web
 
 from api.offload import lookup_slot, run_lookup
+from services.excluded_ips import parse_single_ip
 from services.ttl_cache import TTLCache
 
 logger = logging.getLogger("nettap.api.lookup")
@@ -28,13 +27,16 @@ CACHE_SIZE = 2048
 HIT_TTL_S = 3600
 MISS_TTL_S = 300
 WHOIS_TTL_S = 24 * 3600
-STATS_EVERY_S = 3600
+# A WHOIS record is a few KiB; anything past this is cut before it is decoded and cached
+WHOIS_MAX_BYTES = 64 * 1024
+# glibc's h_errno TRY_AGAIN: the resolver gave up (RES_OPTIONS' timeout x attempts), which is a
+# timeout, not "no record"
+_TRY_AGAIN = 2
 
 _dns_cache = TTLCache(CACHE_SIZE)
 _whois_cache = TTLCache(CACHE_SIZE)
 # (kind, ip) -> the lookup in flight; other requests for that IP wait for its answer
 _in_flight: dict[tuple[str, str], asyncio.Future] = {}
-_stats_logged_at = time.monotonic()
 
 # Common WHOIS field patterns (case-insensitive)
 _WHOIS_FIELD_MAP = {
@@ -108,8 +110,12 @@ async def _resolve(ip: str) -> dict:
         answer = _dns_answer(ip, timed_out=True)
         _dns_cache.set(ip, answer, MISS_TTL_S)
         return answer
-    except socket.herror:
-        answer = _dns_answer(ip, error="No reverse DNS record found")
+    except socket.herror as exc:
+        answer = (
+            _dns_answer(ip, timed_out=True)
+            if exc.errno == _TRY_AGAIN
+            else _dns_answer(ip, error="No reverse DNS record found")
+        )
         _dns_cache.set(ip, answer, MISS_TTL_S)
         return answer
 
@@ -147,39 +153,19 @@ async def _whois(ip: str) -> dict:
         answer = {"ip": ip, "raw": "", "parsed": {}, "error": "WHOIS lookup timed out"}
         _whois_cache.set(ip, answer, MISS_TTL_S)
         return answer
-    raw_output = stdout.decode("utf-8", errors="replace")
+    raw_output = stdout[:WHOIS_MAX_BYTES].decode("utf-8", errors="replace")
+    parsed = _parse_whois(raw_output)
+    # whois exits non-zero, or prints nothing we can read, when its server can't be reached:
+    # say so, and ask again in 5 minutes rather than keeping the failure for a day
+    failed = proc.returncode != 0 or not raw_output.strip() or not parsed
     answer = {
         "ip": ip,
         "raw": raw_output,
-        "parsed": _parse_whois(raw_output),
-        "error": None,
+        "parsed": parsed,
+        "error": "WHOIS lookup failed" if failed else None,
     }
-    _whois_cache.set(ip, answer, WHOIS_TTL_S)
+    _whois_cache.set(ip, answer, MISS_TTL_S if failed else WHOIS_TTL_S)
     return answer
-
-
-def _log_cache_stats() -> None:
-    """At most once an hour (on a lookup), the caches' size and hit counts at DEBUG."""
-    global _stats_logged_at
-    if time.monotonic() - _stats_logged_at < STATS_EVERY_S:
-        return
-    _stats_logged_at = time.monotonic()
-    for name, cache in (("reverse DNS", _dns_cache), ("WHOIS", _whois_cache)):
-        logger.debug(
-            "Lookup cache %s: %d entries, %d hits, %d misses",
-            name,
-            len(cache),
-            cache.hits,
-            cache.misses,
-        )
-
-
-def _valid_ip(raw: str) -> str | None:
-    """The address in its normal form, or None if `raw` isn't one."""
-    try:
-        return str(ipaddress.ip_address(raw))
-    except ValueError:
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +181,8 @@ async def handle_whois_lookup(request: web.Request) -> web.Response:
     Returns raw output plus parsed structured fields.
     """
     raw_ip = request.match_info["ip"]
-    ip = _valid_ip(raw_ip)
+    # parse_single_ip refuses IPv6 scope ids, which may hold a newline (a forged log line)
+    ip = parse_single_ip(raw_ip)
     if ip is None:
         return web.json_response({"error": f"Invalid IP address: {raw_ip}"}, status=400)
 
@@ -208,7 +195,6 @@ async def handle_whois_lookup(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": f"WHOIS lookup failed: {exc}"}, status=500
             )
-    _log_cache_stats()
     return web.json_response(answer)
 
 
@@ -267,7 +253,8 @@ async def handle_dns_lookup(request: web.Request) -> web.Response:
     resolver didn't answer in DNS_TIMEOUT_S (the answer is then 200 with no hostname).
     """
     raw_ip = request.match_info["ip"]
-    ip = _valid_ip(raw_ip)
+    # parse_single_ip refuses IPv6 scope ids, which may hold a newline (a forged log line)
+    ip = parse_single_ip(raw_ip)
     if ip is None:
         return web.json_response({"error": f"Invalid IP address: {raw_ip}"}, status=400)
 
@@ -278,7 +265,6 @@ async def handle_dns_lookup(request: web.Request) -> web.Response:
         except Exception as exc:
             logger.exception("DNS lookup failed for %s", ip)
             return web.json_response({"error": f"DNS lookup failed: {exc}"}, status=500)
-    _log_cache_stats()
     return web.json_response(answer)
 
 

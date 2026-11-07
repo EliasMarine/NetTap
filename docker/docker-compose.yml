@@ -930,9 +930,8 @@ services:
       # 0 = no background beaconing scan; the Threats page's 24h/7d/30d are then scanned live,
       # as before NET-192 PR 3 (rollback switch)
       NETTAP_BEACON_BACKGROUND: "${NETTAP_BEACON_BACKGROUND:-1}"
-      # glibc waits 1 s per resolver try, twice, instead of 5 s (the reverse DNS lookup's own
-      # limit is 6 s; NET-192 PR 3). Remove to get glibc's defaults back.
-      RES_OPTIONS: "timeout:1 attempts:2"
+      # Process-wide (whois, threat-intel feeds, update check, UniFi); 2 x 2 s stays under the 6 s lookup bound (NET-192 PR 3)
+      RES_OPTIONS: "timeout:2 attempts:2"
     # OLD CODE START — expose not needed with network_mode: host (port is
     # directly on the host network, no Docker port mapping required)
     # expose:

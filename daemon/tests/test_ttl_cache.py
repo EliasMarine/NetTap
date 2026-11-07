@@ -46,12 +46,3 @@ def test_setting_again_refreshes_the_value_and_ttl():
     cache.set("a", 2, ttl=10)
     clock.t += 9
     assert cache.get("a") == 2
-
-
-def test_counts_hits_and_misses():
-    cache = TTLCache(2, Clock())
-    cache.set("a", 1, ttl=60)
-    cache.get("a")
-    cache.get("a")
-    cache.get("b")
-    assert (cache.hits, cache.misses) == (2, 1)

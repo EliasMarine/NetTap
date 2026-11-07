@@ -17,17 +17,13 @@ class TTLCache:
         self.maxsize = maxsize
         self._clock = clock
         self._data: OrderedDict[Any, tuple[float, Any]] = OrderedDict()
-        self.hits = 0
-        self.misses = 0
 
     def get(self, key: Any, default: Any = None) -> Any:
         entry = self._data.get(key)
         if entry is None or entry[0] <= self._clock():
             self._data.pop(key, None)
-            self.misses += 1
             return default
         self._data.move_to_end(key)
-        self.hits += 1
         return entry[1]
 
     def set(self, key: Any, value: Any, ttl: float) -> None:

@@ -18,7 +18,7 @@ from api import lookup
 from services.ttl_cache import TTLCache
 
 BOUND_S = 0.3  # DNS_TIMEOUT_S in these tests (6 s on the device)
-HEALTH_BUDGET_S = 0.2
+HANG_S = 10  # how long a closed fake resolver hangs
 
 
 class Clock:
@@ -41,11 +41,18 @@ class Resolver:
         self.forward_open = threading.Event()
         self.forward_open.set()
         self.forward_fails = False
+        self.ptr_error: Exception | None = (
+            None  # raised by the next PTR query, once open
+        )
 
     def gethostbyaddr(self, ip):
         with self._lock:
             self.calls.append(("ptr", ip))
-        self.ptr_open.wait(10)
+        self.ptr_open.wait(HANG_S)
+        with self._lock:
+            error, self.ptr_error = self.ptr_error, None
+        if error is not None:
+            raise error
         if ip not in self.names:
             raise socket.herror(1, "Unknown host")
         return self.names[ip], [], [ip]
@@ -53,7 +60,7 @@ class Resolver:
     def getaddrinfo(self, host, port):
         with self._lock:
             self.calls.append(("forward", host))
-        self.forward_open.wait(10)
+        self.forward_open.wait(HANG_S)
         if self.forward_fails:
             raise socket.gaierror(-2, "Name or service not known")
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.9", 0))]
@@ -195,9 +202,8 @@ def test_a_blackholed_resolver_times_out_fast_and_health_answers(clock, resolver
             asyncio.create_task(_json(client, f"/api/lookup/dns/{ip}")) for ip in ips
         ]
         await asyncio.sleep(0.05)
-        t0 = time.monotonic()
         health = await client.get("/api/health")
-        health_s = time.monotonic() - t0
+        blocked = not any(ask.done() for ask in asks)  # health answered mid-lookup
         answers = await asyncio.gather(*asks)
         took = time.monotonic() - started
 
@@ -207,11 +213,11 @@ def test_a_blackholed_resolver_times_out_fast_and_health_answers(clock, resolver
         recovered = await _json(client, "/api/lookup/dns/1.1.1.1")
         clock.t += lookup.MISS_TTL_S + 1
         retried = await _json(client, "/api/lookup/dns/8.8.8.8")
-        return health.status, health_s, answers, took, recovered, retried
+        return health.status, blocked, answers, took, recovered, retried
 
-    health_status, health_s, answers, took, recovered, retried = _run(scenario)
-    assert health_status == 200 and health_s < HEALTH_BUDGET_S
-    assert took < BOUND_S + 0.5
+    health_status, blocked, answers, took, recovered, retried = _run(scenario)
+    assert health_status == 200 and blocked
+    assert took < HANG_S / 2  # the bound answered, not the resolver
     for status, body in answers:
         assert status == 200
         assert body["hostname"] is None and body["timed_out"] is True
@@ -255,7 +261,7 @@ def test_the_name_stands_when_the_forward_check_times_out(clock, resolver):
         return answer, time.monotonic() - t0
 
     (status, body), took = _run(scenario)
-    assert took < BOUND_S + 0.5
+    assert took < HANG_S / 2  # the bound answered, not the hung forward check
     assert status == 200
     assert body["hostname"] == "dns.google" and body["timed_out"] is False
     assert body["addresses"] == ["8.8.8.8"]  # the reverse answer's own addresses
@@ -288,6 +294,11 @@ class FakeWhois:
         self.runs: list[str] = []
         self.gate: asyncio.Event | None = None
         self.killed = 0
+        self.output = WHOIS_TEXT
+        self.returncode = 0
+        self.error: Exception | None = (
+            None  # raised by the next run, once its gate opens
+        )
 
     async def exec(self, program, ip, **_kwargs):
         assert program == "whois"
@@ -295,10 +306,16 @@ class FakeWhois:
         fake = self
 
         class Proc:
+            returncode = None  # set when the process ends, like asyncio's
+
             async def communicate(self):
                 if fake.gate is not None:
                     await fake.gate.wait()
-                return WHOIS_TEXT, b""
+                error, fake.error = fake.error, None
+                if error is not None:
+                    raise error
+                self.returncode = fake.returncode
+                return fake.output, b""
 
             def kill(self):
                 fake.killed += 1
@@ -358,4 +375,108 @@ def test_a_whois_timeout_is_kept_five_minutes(clock, whois, monkeypatch):
     )
     assert again == first and whois.killed == 1
     assert later[1]["error"] is None
+    assert whois.runs == ["1.1.1.1", "1.1.1.1"]
+
+
+@pytest.mark.parametrize(
+    "output, returncode",
+    [
+        (WHOIS_TEXT, 2),  # whois exited with an error
+        (b"", 0),  # printed nothing
+        (b"% connect: Connection timed out\n", 0),  # printed nothing we can read
+    ],
+)
+def test_a_whois_that_fails_says_so_and_is_kept_five_minutes(
+    clock, whois, output, returncode
+):
+    whois.output, whois.returncode = output, returncode
+
+    async def scenario(client):
+        first = await _json(client, "/api/lookup/whois/1.1.1.1")
+        clock.t += lookup.MISS_TTL_S - 1
+        await _json(client, "/api/lookup/whois/1.1.1.1")
+        clock.t += 2
+        await _json(client, "/api/lookup/whois/1.1.1.1")
+        return first
+
+    status, body = _run(scenario)
+    assert status == 200 and body["error"] == "WHOIS lookup failed"
+    assert whois.runs == [
+        "1.1.1.1",
+        "1.1.1.1",
+    ]  # asked again after 5 minutes, not a day
+
+
+def test_whois_output_is_cut_at_64_kib(clock, whois):
+    whois.output = WHOIS_TEXT + b"x" * (2 * lookup.WHOIS_MAX_BYTES)
+    status, body = _run(lambda client: _json(client, "/api/lookup/whois/1.1.1.1"))
+    assert status == 200 and body["error"] is None
+    assert len(body["raw"]) == lookup.WHOIS_MAX_BYTES == 64 * 1024
+    assert body["parsed"]["orgname"] == "APNIC and Cloudflare"
+
+
+def test_a_resolver_that_gives_up_is_a_timeout_not_no_record(clock, resolver):
+    # glibc raises herror TRY_AGAIN (2) when RES_OPTIONS' tries run out
+    resolver.ptr_error = socket.herror(2, "Host name lookup failure")
+    status, body = _run(lambda client: _json(client, "/api/lookup/dns/8.8.8.8"))
+    assert status == 200
+    assert body["timed_out"] is True
+    assert body["hostname"] is None and body["error"] is None
+
+
+@pytest.mark.parametrize("kind", ["dns", "whois"])
+@pytest.mark.parametrize("raw", ["::1%25%0Ax", "fe80::1%25eth0", "::1%0Ax"])
+def test_an_ipv6_scope_id_is_a_400_and_asks_nobody(clock, resolver, whois, kind, raw):
+    """Security review L1: ip_address keeps any scope id, newlines included (a forged log line)."""
+    status, body = _run(lambda client: _json(client, f"/api/lookup/{kind}/{raw}"))
+    assert status == 400 and "Invalid IP address" in body["error"]
+    assert resolver.calls == [] and whois.runs == []
+
+
+async def _three_asks_one_failing_lookup(client, path, started, release):
+    """Three requests for one IP while its lookup is held, then the lookup is let go to fail."""
+    asks = [asyncio.create_task(_json(client, path)) for _ in range(3)]
+    while not started():
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0.05)  # the other two have arrived and are waiting on it
+    release()
+    failed = await asyncio.gather(*asks)
+    return failed, dict(lookup._in_flight), await _json(client, path)
+
+
+def test_a_reverse_lookup_that_raises_is_a_500_for_every_waiter_then_runs_again(
+    clock, resolver
+):
+    resolver.ptr_open.clear()
+    resolver.ptr_error = RuntimeError("resolver crashed")
+    failed, in_flight, after = _run(
+        lambda client: _three_asks_one_failing_lookup(
+            client,
+            "/api/lookup/dns/8.8.8.8",
+            resolver.ptr_calls,
+            resolver.ptr_open.set,
+        )
+    )
+    assert [status for status, _ in failed] == [500, 500, 500]
+    assert in_flight == {}
+    assert after[0] == 200 and after[1]["hostname"] == "dns.google"
+    assert resolver.ptr_calls() == [
+        "8.8.8.8",
+        "8.8.8.8",
+    ]  # one for the three, one after
+
+
+def test_a_whois_that_raises_is_a_500_for_every_waiter_then_runs_again(clock, whois):
+    whois.error = RuntimeError("whois crashed")
+
+    async def scenario(client):
+        whois.gate = asyncio.Event()
+        return await _three_asks_one_failing_lookup(
+            client, "/api/lookup/whois/1.1.1.1", lambda: whois.runs, whois.gate.set
+        )
+
+    failed, in_flight, after = _run(scenario)
+    assert [status for status, _ in failed] == [500, 500, 500]
+    assert in_flight == {}
+    assert after[0] == 200 and after[1]["parsed"]["orgname"] == "APNIC and Cloudflare"
     assert whois.runs == ["1.1.1.1", "1.1.1.1"]
