@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const daemonFetch = vi.fn();
 vi.mock('$lib/server/daemon.js', () => ({ daemonFetch: (...a: unknown[]) => daemonFetch(...a) }));
 
-const { GET } = await import('./[...path]/+server.js');
+const { GET, POST } = await import('./[...path]/+server.js');
 
 function event(path: string) {
 	const url = new URL(`https://nettap.local${path}`);
@@ -60,6 +60,43 @@ describe('API Catch-All Proxy Route ([...path]/+server.ts)', () => {
 			expect(daemonFetch.mock.calls[0][2]).toBe(30_000);
 		},
 	);
+
+	// NET-188: the daemon stops a packet search or one packet's detail at ~48 s
+	it.each([
+		['/api/packets/search', 55_000],
+		['/api/packets/packet', 55_000],
+		['/api/packets/captures', 15_000],
+		['/api/packets/fields?prefix=http.re', 25_000],
+		['/api/packets/check-filter', 25_000],
+	])('gives %s %i ms', async (path, ms) => {
+		await GET(event(path) as never);
+		expect(daemonFetch.mock.calls[0][2]).toBe(ms);
+	});
+
+	it('posts a packet search with its body, timed and not tied to the browser', async () => {
+		const url = new URL('https://nettap.local/api/packets/search');
+		const body = JSON.stringify({ filter: 'dns', from: '1700000000.25', to: '1700000600', limit: 100 });
+		await POST({ url, request: new Request(url, { method: 'POST', body, headers: { 'Content-Type': 'application/json' } }) } as never);
+		const [path, options, timeout] = daemonFetch.mock.calls[0];
+		expect([path, options.method, options.body, timeout]).toEqual(['/api/packets/search', 'POST', body, 55_000]);
+		expect(options.signal).toBeUndefined();
+	});
+
+	it('streams a saved capture file for as long as the browser keeps reading', async () => {
+		daemonFetch.mockResolvedValue(
+			new Response('pcapbytes', {
+				headers: { 'Content-Type': 'application/vnd.tcpdump.pcap', 'Content-Disposition': 'attachment; filename="b.pcap"' },
+			}),
+		);
+		const ev = event('/api/packets/capture-file?id=2026%2Fb.pcap');
+		const res = await GET(ev as never);
+		const [path, options, timeout] = daemonFetch.mock.calls[0];
+		expect([path, timeout]).toEqual(['/api/packets/capture-file?id=2026%2Fb.pcap', undefined]);
+		ev.controller.abort();
+		expect((options.signal as AbortSignal).aborted).toBe(true);
+		expect(await res.text()).toBe('pcapbytes');
+		expect(res.headers.get('content-disposition')).toContain('b.pcap');
+	});
 
 	it('passes a daemon 503 through with its reason', async () => {
 		daemonFetch.mockResolvedValue(

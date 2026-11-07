@@ -1,0 +1,21 @@
+F	tls.handshake.extensions_length	Extensions Length	FT_UINT16	Length of hello extensions
+F	tls.handshake.extension.type	Type	FT_UINT16	Hello extension type
+F	tls.handshake.extension.len	Length	FT_UINT16	Length of a hello extension
+F	tls.handshake.extension.data	Data	FT_BYTES	Hello Extension data
+F	tls.handshake.extensions_supported_groups_length	Supported Groups List Length	FT_UINT16	
+F	tls.handshake.extensions_supported_groups	Supported Groups List	FT_NONE	List of supported groups (formerly Supported Elliptic Curves)
+F	tls.handshake.extensions_supported_group	Supported Group	FT_UINT16	
+F	tls.handshake.extensions_ec_point_formats_length	EC point formats Length	FT_UINT8	Length of elliptic curves point formats field
+F	tls.handshake.extensions_ec_point_formats	EC point formats	FT_NONE	List of elliptic curves point format
+F	tls.handshake.extensions_ec_point_format	EC point format	FT_UINT8	Elliptic curves point format
+F	tls.handshake.extensions_srp_len	SRP username length	FT_UINT8	Length of Secure Remote Password username field
+F	tls.handshake.extensions_srp_username	SRP username	FT_STRING	Secure Remote Password username
+F	tls.handshake.extensions_alpn_len	ALPN Extension Length	FT_UINT16	Length of the ALPN Extension
+F	tls.handshake.extensions_alpn_list	ALPN Protocol	FT_NONE	
+F	tls.handshake.extensions_alpn_str_len	ALPN string length	FT_UINT8	Length of ALPN string
+F	tls.handshake.extensions_alpn_str	ALPN Next Protocol	FT_STRING	
+F	tls.handshake.extensions_npn_str_len	Protocol string length	FT_UINT8	Length of next protocol string
+F	tls.handshake.extensions_npn	Next Protocol	FT_STRING	
+F	tls.handshake.extensions_reneg_info_len	Renegotiation info extension length	FT_UINT8	
+F	tls.handshake.extensions_reneg_info	Renegotiation info	FT_BYTES	
+F	tls.handshake.extensions_key_share_client_length	Client Key Share Length	FT_UINT16	
