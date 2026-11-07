@@ -871,6 +871,27 @@ print('pcap writer: OK')
     grep -q '^  nettap-rules-state:' "$COMPOSE_FILE"
 }
 
+@test "compose: owner rules volume and staging (NET-191 slice 3)" {
+    section=$(sed -n "/^  suricata-live:/,/^  [^ ]/p" "$COMPOSE_FILE")
+    # read-only at Malcolm's custom rules dir; the daemon must exist before suricata-live lists the file
+    echo "$section" | grep -q -- '- suricata-custom-rules:/opt/suricata/rules/custom:ro$'
+    echo "$section" | grep -q 'condition: service_healthy'
+    # staging is never mounted where Suricata could load it, and update-sources.yaml is retired
+    [ "$(echo "$section" | grep -c 'nettap-rules-staging')" -eq 0 ]
+    [ "$(echo "$section" | grep -c '^ *- ../config/suricata/update-sources.yaml')" -eq 0 ]
+    daemon=$(sed -n "/^  nettap-storage-daemon:/,/^  [^ ]/p" "$COMPOSE_FILE")
+    echo "$daemon" | grep -q -- '- suricata-custom-rules:/var/lib/nettap-suricata-custom$'
+    echo "$daemon" | grep -q -- '- nettap-rules-staging:/var/lib/nettap-rules-staging$'
+    grep -q '^  suricata-custom-rules:' "$COMPOSE_FILE"
+    grep -q '^  nettap-rules-staging:' "$COMPOSE_FILE"
+    # the daemon's defaults match the mounts
+    grep -q '"NETTAP_CUSTOM_RULES_DIR", "/var/lib/nettap-suricata-custom"' "${REPO_ROOT}/daemon/services/owner_rules.py"
+    grep -q '"NETTAP_RULES_STAGING_DIR", "/var/lib/nettap-rules-staging"' "${REPO_ROOT}/daemon/services/owner_rules.py"
+    # no other service mounts either volume
+    [ "$(grep -c 'suricata-custom-rules:/' "$COMPOSE_FILE")" -eq 2 ]
+    [ "$(grep -c 'nettap-rules-staging:/' "$COMPOSE_FILE")" -eq 1 ]
+}
+
 @test "compose: suricata-live loads nettap.yaml as a Malcolm include that sets the device threshold file" {
     # /etc/suricata/nettap.yaml was never included (CR-198); Malcolm includes include-configs/**/*.yaml (NET-191)
     section=$(sed -n "/^  suricata-live:/,/^  [^ ]/p" "$COMPOSE_FILE")

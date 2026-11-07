@@ -81,6 +81,8 @@ grep suricata-update-rules /etc/crontab 2>/dev/null | awk '{ print "CRON", $1, $
 for f in /var/lib/suricata/update/sources/*.yaml; do
     [ -f "$f" ] && sed -n 's/^source: *//p' "$f" | head -1 | sed 's/^/ENABLED_SOURCE /'
 done
+O=/opt/suricata/rules/custom/owner.rules
+[ -f "$O" ] && echo "OWNER $(grep -c '^ *alert ' "$O")"
 S=/var/run/suricata/suricata-command.socket
 echo "STATS $(suricatasc "$S" -c ruleset-stats 2>/dev/null | tr -d '\n')"
 echo "RELOAD $(suricatasc "$S" -c ruleset-reload-time 2>/dev/null | tr -d '\n')"
@@ -208,6 +210,7 @@ def parse_live_status(output: str) -> dict[str, Any]:
         "enabled_sources": [],
         "etpro_rules": 0,
         "engine": None,
+        "owner_rules": None,  # NET-191 slice 3: None = no owner rules file in suricata-live
     }
     engine: dict[str, Any] = {}
     for line in output.splitlines():
@@ -228,6 +231,8 @@ def parse_live_status(output: str) -> dict[str, Any]:
             status = {**status, "etpro_rules": int(value)}
         elif key == "ENABLED_SOURCE" and value:
             status = {**status, "enabled_sources": [*status["enabled_sources"], value]}
+        elif key == "OWNER" and value.isdigit():
+            status = {**status, "owner_rules": int(value)}
         elif key == "STATS" and (answer := _engine_answer(value)):
             engine = {
                 **engine,

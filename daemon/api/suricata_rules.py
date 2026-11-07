@@ -11,6 +11,8 @@ import logging
 from aiohttp import web
 
 from services.etpro import EtProError, EtProManager
+from services.owner_rules import OwnerRules, OwnerRulesError, summary
+from services.owner_rules_validator import validate
 from services.rules_lock import RulesBusyError
 from services.suricata_rules import SuricataRuleManager
 
@@ -144,34 +146,91 @@ async def handle_set_schedule(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=400)
 
 
-async def handle_custom_rules(request: web.Request) -> web.Response:
-    """POST /api/suricata/rules/custom
+# OLD CODE START — NET-191 slice 3: wrote config/suricata/custom.rules, which Suricata never read;
+# own rules are now checked, tested by Suricata and loaded (services/owner_rules.py)
+# async def handle_custom_rules(request: web.Request) -> web.Response:
+#     """POST /api/suricata/rules/custom
+#
+#     Upload custom rules content. Body: {"content": "rule text..."}
+#     """
+#     manager: SuricataRuleManager = request.app["suricata_rule_manager"]
+#
+#     try:
+#         body = await request.json()
+#     except Exception:
+#         return web.json_response({"error": "Invalid JSON body"}, status=400)
+#
+#     content = body.get("content", "")
+#     if not content.strip():
+#         return web.json_response({"error": "No rule content provided"}, status=400)
+#
+#     result = manager.add_custom_rules(content)
+#     return web.json_response(result)
+#
+#
+# async def handle_get_custom_rules(request: web.Request) -> web.Response:
+#     """GET /api/suricata/rules/custom
+#
+#     Get current custom rules content.
+#     """
+#     manager: SuricataRuleManager = request.app["suricata_rule_manager"]
+#     content = manager.get_custom_rules()
+#     return web.json_response({"content": content})
+# OLD CODE END
 
-    Upload custom rules content. Body: {"content": "rule text..."}
-    """
-    manager: SuricataRuleManager = request.app["suricata_rule_manager"]
 
+async def _owner_body(request: web.Request) -> object:
     try:
         body = await request.json()
     except Exception:
-        return web.json_response({"error": "Invalid JSON body"}, status=400)
-
-    content = body.get("content", "")
-    if not content.strip():
-        return web.json_response({"error": "No rule content provided"}, status=400)
-
-    result = manager.add_custom_rules(content)
-    return web.json_response(result)
+        return None
+    return body.get("content") if isinstance(body, dict) else None
 
 
-async def handle_get_custom_rules(request: web.Request) -> web.Response:
-    """GET /api/suricata/rules/custom
+async def handle_get_owner_rules(request: web.Request) -> web.Response:
+    """GET /api/suricata/rules/custom: {content, rule_count, max_rules, max_bytes}."""
+    owner: OwnerRules = request.app["owner_rules"]
+    try:
+        return web.json_response(owner.read())
+    except OSError as exc:
+        logger.error("Owner rules: couldn't read (%s)", type(exc).__name__)
+        return web.json_response({"error": "Couldn't read your rules."}, status=500)
 
-    Get current custom rules content.
+
+async def handle_check_owner_rules(request: web.Request) -> web.Response:
+    """POST /api/suricata/rules/custom/check  Body: {"content"}: NetTap's checks only, nothing saved."""
+    content = await _owner_body(request)
+    if not isinstance(content, str):
+        return web.json_response({"error": 'Send {"content": "<rules>"}.'}, status=400)
+    errors, count = validate(content)
+    if errors:
+        return web.json_response(
+            {"error": summary(errors), "errors": errors}, status=400
+        )
+    return web.json_response({"ok": True, "rule_count": count})
+
+
+async def handle_save_owner_rules(request: web.Request) -> web.Response:
+    """POST /api/suricata/rules/custom  Body: {"content"}: check, test with Suricata, load.
+
+    200 {saved, rule_count, engine}; 400 NetTap's checks; 409 busy or Suricata not set up;
+    422 Suricata refused (nothing changed); 502 not loaded (previous rules put back); 500.
     """
-    manager: SuricataRuleManager = request.app["suricata_rule_manager"]
-    content = manager.get_custom_rules()
-    return web.json_response({"content": content})
+    owner: OwnerRules = request.app["owner_rules"]
+    content = await _owner_body(request)
+    try:
+        return web.json_response(await owner.save(content))
+    except OwnerRulesError as exc:
+        return web.json_response(
+            {"error": str(exc), "errors": exc.errors}, status=exc.status
+        )
+    except RulesBusyError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    except Exception as exc:  # the type only: the text could quote a rule
+        logger.error("Owner rules: save failed (%s)", type(exc).__name__)
+        return web.json_response(
+            {"error": "Couldn't save your rules. Check the daemon log."}, status=500
+        )
 
 
 # OLD CODE START — NET-191 slice 2: wrote the key in plain text to config/suricata/commercial.yaml,
@@ -282,6 +341,8 @@ def register_suricata_rules_routes(
     """Register all Suricata rules API routes on the given aiohttp application."""
     app["suricata_rule_manager"] = manager
     app["etpro_manager"] = EtProManager(manager)
+    app["owner_rules"] = owner = OwnerRules(manager)
+    owner.prepare()
 
     # Static routes first (before parameterized)
     app.router.add_get("/api/suricata/rules/live", handle_live_status)
@@ -289,8 +350,13 @@ def register_suricata_rules_routes(
     app.router.add_get("/api/suricata/rules/schedule", handle_get_schedule)
     app.router.add_put("/api/suricata/rules/schedule", handle_set_schedule)
     app.router.add_post("/api/suricata/rules/update", handle_update_rules)
-    app.router.add_post("/api/suricata/rules/custom", handle_custom_rules)
-    app.router.add_get("/api/suricata/rules/custom", handle_get_custom_rules)
+    # OLD CODE START — NET-191 slice 3: the unwired custom.rules file
+    # app.router.add_post("/api/suricata/rules/custom", handle_custom_rules)
+    # app.router.add_get("/api/suricata/rules/custom", handle_get_custom_rules)
+    # OLD CODE END
+    app.router.add_get("/api/suricata/rules/custom", handle_get_owner_rules)
+    app.router.add_post("/api/suricata/rules/custom", handle_save_owner_rules)
+    app.router.add_post("/api/suricata/rules/custom/check", handle_check_owner_rules)
     # OLD CODE START — NET-191 slice 2: ET Pro only, saved where Suricata reads it
     # app.router.add_post("/api/suricata/rules/commercial", handle_commercial_config)
     # app.router.add_get("/api/suricata/rules/commercial", handle_get_commercial_config)

@@ -429,6 +429,12 @@ class TestParseLiveStatus:
         assert status["available"] is False
         assert status["error"]
 
+    def test_owner_rule_count(self):
+        """NET-191 slice 3: None when suricata-live has no owner rules file, else its alert rules."""
+        assert parse_live_status(_LIVE_OUTPUT)["owner_rules"] is None
+        assert parse_live_status(_LIVE_OUTPUT + "OWNER 0\n")["owner_rules"] == 0
+        assert parse_live_status(_LIVE_OUTPUT + "OWNER 3\n")["owner_rules"] == 3
+
 
 class TestGetLiveStatus:
     def _run(self, coro):
@@ -501,11 +507,23 @@ class TestLiveStatusScript:
             )
             .replace("/etc/suricata/update.yaml", str(update))
             .replace("/etc/crontab", str(cron))
+            .replace(
+                "/opt/suricata/rules/custom/owner.rules", str(tmp_path / "owner.rules")
+            )
+        )
+        out = subprocess.run(
+            ["sh", "-c", script], capture_output=True, text=True, check=True
+        ).stdout
+        assert parse_live_status(out)["owner_rules"] is None
+        (tmp_path / "owner.rules").write_text(
+            'alert dns any any -> any any (msg:"a"; sid:1000001;)\n# alert x\n\n'
+            'alert dns any any -> any any (msg:"b"; sid:1000002;)\n'
         )
         out = subprocess.run(
             ["sh", "-c", script], capture_output=True, text=True, check=True
         ).stdout
         status = parse_live_status(out)
+        assert status["owner_rules"] == 2
         assert status["enabled_rules"] == 2
         assert status["disabled_rules"] == 1
         assert status["sources"] == [
