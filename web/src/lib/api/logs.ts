@@ -260,12 +260,17 @@ export function formatBytes(bytes: number): string {
 // 	return String(n);
 // }
 // OLD CODE END
-export function formatCompactNumber(n: number): string {
-	const one = (v: number) => v.toFixed(1).replace(/\.0$/, '');
-	if (n >= 1_000_000) return `${one(n / 1_000_000)}M`;
-	if (n >= 1_000) return `${one(n / 1_000)}K`;
-	return String(n);
-}
+// OLD CODE START — one compact formatter for the app (NET-192 PR 4): 999,950 read "1000K" and there was no B
+// export function formatCompactNumber(n: number): string {
+// 	const one = (v: number) => v.toFixed(1).replace(/\.0$/, '');
+// 	if (n >= 1_000_000) return `${one(n / 1_000_000)}M`;
+// 	if (n >= 1_000) return `${one(n / 1_000)}K`;
+// 	return String(n);
+// }
+// OLD CODE END
+// en-US, not en-GB: en-GB writes "1.3m", which reads as metres; the app's compact figures are K, M and B
+const COMPACT = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
+export const formatCompactNumber = (n: number): string => COMPACT.format(n);
 
 /**
  * Get the CSS custom property color for a protocol type.

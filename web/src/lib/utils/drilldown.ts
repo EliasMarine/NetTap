@@ -4,7 +4,7 @@
  */
 import type { ByteTotal } from '$lib/api/drilldown';
 import type { SmartAlertKey } from '$lib/api/alerts';
-import { formatBytes } from '$lib/api/logs';
+import { formatBytes, formatCompactNumber } from '$lib/api/logs';
 
 // OLD CODE: export type DrillRangeValue = '24h' | '7d' | '30d'; (NET-192 PR 4: Home's five ranges)
 export type DrillRangeValue = '1h' | '6h' | '24h' | '7d' | '30d';
@@ -42,10 +42,9 @@ export function rangeWindow(hours: number, now: Date = new Date()): { from: stri
 
 export const fmt = (n: number): string => n.toLocaleString('en-GB');
 
-// en-US, not en-GB: en-GB writes "1.3m", which reads as metres; the app's compact figures are K and M
-const COMPACT = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
+// OLD CODE: const COMPACT = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }); (moved to formatCompactNumber in api/logs.ts, NET-192 PR 4)
 /** A count in a small space (a gauge centre, a nav badge): exact below 100,000, "214K" above. */
-export const fitCount = (n: number): string => (n < 100_000 ? fmt(n) : COMPACT.format(n));
+export const fitCount = (n: number): string => (n < 100_000 ? fmt(n) : formatCompactNumber(n));
 
 /**
  * A byte total as the page shows it: "Not measured" when no connection carried a byte count,

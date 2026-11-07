@@ -315,6 +315,9 @@ describe('formatCompactNumber', () => {
 	it('formats millions with M suffix', () => {
 		expect(formatCompactNumber(1000000)).toBe('1M');
 		expect(formatCompactNumber(2500000)).toBe('2.5M');
+		// NET-192 PR 4: rounding up to the next unit, and billions
+		expect(formatCompactNumber(999_950)).toBe('1M');
+		expect(formatCompactNumber(1e9)).toBe('1B');
 	});
 });
 
