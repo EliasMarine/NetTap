@@ -8,6 +8,7 @@ auto-investigations.
 
 import asyncio
 import functools
+import json
 import logging
 import os
 from datetime import timedelta
@@ -16,6 +17,8 @@ from aiohttp import web
 
 from api.offload import in_thread, run_blocking
 from api.time_range import parse_time_range
+from services.beacon_snapshots import WINDOWS as SNAPSHOT_WINDOWS
+from services.beacon_snapshots import BeaconSnapshots
 from storage.manager import StorageManager
 
 logger = logging.getLogger("nettap.api.threats")
@@ -53,9 +56,46 @@ def _get_client(request: web.Request):
     return storage._client
 
 
+def _snapshot_param(request: web.Request) -> str | None:
+    """The `snapshot` window asked for (24h, 7d or 30d), or None; any other value is a 400.
+
+    An explicit from/to is always computed live, so it wins over `snapshot`.
+    """
+    window = request.query.get("snapshot")
+    if not window:
+        return None
+    if window not in SNAPSHOT_WINDOWS:
+        raise web.HTTPBadRequest(
+            text=json.dumps(
+                {"error": f"snapshot must be one of {', '.join(SNAPSHOT_WINDOWS)}"}
+            ),
+            content_type="application/json",
+        )
+    if request.query.get("from") or request.query.get("to"):
+        return None
+    return window
+
+
+def _snapshot_window(request: web.Request) -> tuple[str | None, tuple[str, str]]:
+    """(snapshot window or None, the report's from/to). Without from/to a snapshot window is
+    the last 24h/7d/30d up to now; the store may be off (NETTAP_BEACON_BACKGROUND=0)."""
+    window = _snapshot_param(request)
+    span = SNAPSHOT_WINDOWS[window] if window else timedelta(hours=_DEFAULT_RANGE_HOURS)
+    return window, parse_time_range(request, span)
+
+
 async def handle_threat_report(request: web.Request) -> web.Response:
-    """GET /api/threats/report?from=&to= — Unified threat report."""
-    from_ts, to_ts = _parse_time_range(request)
+    """GET /api/threats/report?from=&to= or ?snapshot=24h|7d|30d — Unified threat report.
+
+    With `snapshot=` (NET-192 PR 3) beaconing comes from the background scan, with its state in
+    `beaconing_snapshot`; the other checks run live over the same window.
+    """
+    # OLD CODE START — NET-192 PR 3: ?snapshot= reads beaconing from the background scan
+    # from_ts, to_ts = _parse_time_range(request)
+    # OLD CODE END
+    window, (from_ts, to_ts) = _snapshot_window(request)
+    store: BeaconSnapshots | None = request.app.get("beacon_snapshots")
+    snapshot = store is not None and window is not None
     client = _get_client(request)
     excluded_ips_list = request.app.get("excluded_ips", [])
 
@@ -77,22 +117,54 @@ async def handle_threat_report(request: web.Request) -> web.Response:
         #     ),
         # )
         # OLD CODE END
+        # OLD CODE START — NET-192 PR 3: beaconing from the background scan with ?snapshot=
+        # report = await run_blocking(
+        #     asyncio.run,
+        #     generate_threat_report(
+        #         client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        #     ),
+        # )
+        # OLD CODE END
         report = await run_blocking(
             asyncio.run,
             generate_threat_report(
-                client, from_ts, to_ts, excluded_ips=excluded_ips_list
+                client,
+                from_ts,
+                to_ts,
+                excluded_ips=excluded_ips_list,
+                beaconing=store.beacons(window) if snapshot else None,
             ),
         )
     except Exception as exc:
         logger.error("Threat report generation failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
 
+    if snapshot:
+        report = {**report, "beaconing_snapshot": store.snapshot(window)}
     return web.json_response({"from": from_ts, "to": to_ts, **report})
 
 
 async def handle_beaconing(request: web.Request) -> web.Response:
-    """GET /api/threats/beaconing?from=&to="""
-    from_ts, to_ts = _parse_time_range(request)
+    """GET /api/threats/beaconing?from=&to= or ?snapshot=24h|7d|30d (the background scan)."""
+    # OLD CODE START — NET-192 PR 3: ?snapshot= answers from the background scan
+    # from_ts, to_ts = _parse_time_range(request)
+    # OLD CODE END
+    window, (from_ts, to_ts) = _snapshot_window(request)
+    store: BeaconSnapshots | None = request.app.get("beacon_snapshots")
+    if store is not None and window is not None:
+        snap = store.snapshot(window)
+        beacons = store.beacons(window)
+        return web.json_response(
+            {
+                "from": snap["from"],
+                "to": snap["to"],
+                "beacons": beacons,
+                "total": len(beacons),
+                # only a complete scan is ever published
+                "complete": snap["last_success_at"] is not None,
+                "beaconing_snapshot": snap,
+            }
+        )
     client = _get_client(request)
     excluded_ips_list = request.app.get("excluded_ips", [])
 
@@ -242,3 +314,23 @@ def register_threat_routes(
     app.router.add_get("/api/threats/dns-anomalies", handle_dns_anomalies)
     app.router.add_get("/api/threats/intel", handle_threat_intel)
     logger.info("Threat Intelligence API routes registered (5 endpoints)")
+
+    # NET-192 PR 3: beaconing for the 24h/7d/30d pills, refreshed in the background
+    if os.environ.get("NETTAP_BEACON_BACKGROUND", "1") == "0":
+        logger.info("Background beaconing is off; snapshot= requests are computed live")
+        return
+    from services.threat_detection import detect_beaconing
+
+    store = BeaconSnapshots(
+        functools.partial(detect_beaconing, storage_manager._client)
+    )
+    app["beacon_snapshots"] = store
+
+    async def start(_app: web.Application) -> None:
+        store.start()
+
+    async def stop(_app: web.Application) -> None:
+        await store.stop()
+
+    app.on_startup.append(start)
+    app.on_cleanup.append(stop)
