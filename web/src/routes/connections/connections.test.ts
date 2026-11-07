@@ -376,7 +376,7 @@ describe('Connections — labels say what the figures count', () => {
 	});
 });
 
-// NET-192 PR 4: Home's ranges but 30d (the page's shortcut: connections stats is too slow at 30 days for now)
+// NET-192 PR 4: Home's ranges (PR 3 put 30d back once connections stats was fast enough)
 describe('Connections — the range set', () => {
 	beforeEach(() => {
 		vi.mocked(getConnections).mockImplementation(async (opts = {}) => connectionsPage(opts.page ?? 1));
@@ -388,16 +388,35 @@ describe('Connections — the range set', () => {
 
 	const hours = (asked: { from?: string; to?: string }) => (Date.parse(asked.to!) - Date.parse(asked.from!)) / 3_600_000;
 
-	it('offers 1h 6h 24h 7d, and asks for the timeline in 6-hour buckets at 7d', async () => {
+	// OLD CODE START — NET-192 PR 3: 30d is back (connections stats looks up ASN and country for the winners only)
+	// it('offers 1h 6h 24h 7d, and asks for the timeline in 6-hour buckets at 7d', async () => {
+	// 	render(Page);
+	// 	await flush();
+	// 	const pills = within(screen.getByRole('group', { name: 'Time range' })).getAllByRole('button');
+	// 	expect(pills.map((b) => b.textContent?.trim())).toEqual(['1h', '6h', '24h', '7d']);
+	// OLD CODE END
+	it("offers Home's 1h 6h 24h 7d 30d, and asks for the timeline in 6-hour buckets at 7d", async () => {
 		render(Page);
 		await flush();
 		const pills = within(screen.getByRole('group', { name: 'Time range' })).getAllByRole('button');
-		expect(pills.map((b) => b.textContent?.trim())).toEqual(['1h', '6h', '24h', '7d']);
+		expect(pills.map((b) => b.textContent?.trim())).toEqual(['1h', '6h', '24h', '7d', '30d']);
 		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
 		await flush();
 		const asked = vi.mocked(getConnectionTimeline).mock.lastCall![0]!;
 		expect(asked.interval).toBe('6h');
 		expect(hours(asked)).toBeCloseTo(168);
+	});
+
+	it('asks for 30 days of stats and the timeline in day buckets at 30d', async () => {
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: '30d' }));
+		await flush();
+		expect(hours(vi.mocked(getConnectionStats).mock.lastCall![0]!)).toBeCloseTo(720);
+		const asked = vi.mocked(getConnectionTimeline).mock.lastCall![0]!;
+		expect(asked.interval).toBe('1d');
+		expect(hours(asked)).toBeCloseTo(720);
+		expect(screen.getByRole('button', { name: '30d' })).toHaveAttribute('aria-pressed', 'true');
 	});
 
 	// OLD CODE START — the page never reads ?range, so this only tested the mock (NET-192 PR 4 review)
