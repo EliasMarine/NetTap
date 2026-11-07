@@ -14,7 +14,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	// OLD CODE: import { getThreatReport, getThreatIntel } from '$api/threats'; (NET-192 PR 3: the pill → request helper)
-	import { getThreatReport, getThreatIntel, threatRequest, type ThreatRequest } from '$api/threats';
+	import { getBeaconing, getThreatReport, getThreatIntel, threatRequest, type ThreatRequest } from '$api/threats';
 	import { THREAT_SCORE_HOW } from '$api/alerts';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import type {
@@ -108,6 +108,18 @@
 	let beaconCheckedAt = $derived(beaconSnap?.last_success_at ? formatTime(beaconSnap.last_success_at, 'short') : null);
 	// live: the report's query failed; snapshot: no background check has succeeded yet
 	let beaconFailReason = $derived(failedChecks.has('beaconing') ? 'the query failed' : 'the latest check failed');
+	// the page stopped asking after 10 min with the check still running: no more "a few minutes"
+	let pollGaveUp = $state(false);
+	let beaconPendingText = $derived(
+		pollGaveUp ? 'Beaconing check still running. Refresh to check again.' : 'Beaconing check running, ready in a few minutes.',
+	);
+	let beaconKpiSub = $derived.by(() => {
+		if (beaconPending) return pollGaveUp ? 'Still running. Refresh to check again.' : 'Check running, ready in a few minutes';
+		if (beaconFailed) return `Not checked: ${beaconFailReason}`;
+		// an older scan's count: say when, so it isn't read as live
+		if (beaconSnap?.state === 'stale') return `Last checked ${beaconCheckedAt}`;
+		return 'Devices calling one server on a schedule';
+	});
 
 	let threatScore = $derived(summary?.threat_score ?? 0);
 	let threatLevel = $derived(summary?.threat_level ?? 'none');
@@ -320,8 +332,9 @@
 	// 	fetchAll(range);
 	// });
 	// OLD CODE END
-	// NET-192 PR 3: while the background beaconing check hasn't finished, ask for the report again
-	// every 20 s, for at most 10 min per range
+	// NET-192 PR 3: while the background beaconing check hasn't finished, ask for its state every
+	// 20 s (the beaconing route, not the whole report), for at most 10 min per range; once it has
+	// finished, load the page again so the other cards and "Updated" move with it
 	const POLL_MS = 20_000;
 	const POLL_FOR_MS = 10 * 60_000;
 	let pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -329,16 +342,25 @@
 
 	function pollWhilePending(g: number, range: string, request: ThreatRequest) {
 		clearTimeout(pollTimer);
-		if (report?.beaconing_snapshot?.state !== 'pending') {
+		if (report?.beaconing_snapshot?.state !== 'pending' || !('snapshot' in request)) {
 			pendingSince = { range: '', at: 0 };
+			pollGaveUp = false;
 			return;
 		}
 		if (pendingSince.range !== range) pendingSince = { range, at: Date.now() };
-		if (Date.now() - pendingSince.at >= POLL_FOR_MS) return;
+		pollGaveUp = Date.now() - pendingSince.at >= POLL_FOR_MS;
+		if (pollGaveUp) return;
+		const { snapshot } = request;
 		pollTimer = setTimeout(async () => {
-			const next = await getThreatReport(request).catch(() => null);
+			const next = await getBeaconing({ snapshot }).catch(() => null);
 			if (!refresh.guard.current(g)) return;
-			if (next) report = next;
+			if (next) {
+				report = report && { ...report, beaconing: next.beacons, beaconing_snapshot: next.beaconing_snapshot };
+				if (next.beaconing_snapshot?.state !== 'pending') {
+					reload();
+					return;
+				}
+			}
 			pollWhilePending(g, range, request);
 		}, POLL_MS);
 	}
@@ -348,7 +370,8 @@
 		clearTimeout(pollTimer);
 		const range = selectedRange;
 		const params = computeTimeParams(range);
-		const request = threatRequest(range);
+		// one window for the report and the threat intel
+		const request = threatRequest(range, params);
 		loading = true;
 		// OLD CODE: const [reportRes, tiRes] = await Promise.allSettled([getThreatReport(params), getThreatIntel(params)]); (NET-192 PR 3: 24h/7d/30d ask for the snapshot)
 		const [reportRes, tiRes] = await Promise.allSettled([getThreatReport(request), getThreatIntel(params)]);
@@ -504,11 +527,7 @@
 			label="Beaconing"
 			icon="connections"
 			value={beaconFailed || beaconPending ? '—' : beacons.length}
-			sub={beaconPending
-				? 'Check running, ready in a few minutes'
-				: beaconFailed
-					? `Not checked: ${beaconFailReason}`
-					: 'Devices calling one server on a schedule'}
+			sub={beaconKpiSub}
 		/>
 
 		<!-- Threat brief + threat intel -->
@@ -659,8 +678,8 @@
 			{#if beaconFailed}
 				<CardState state="error" title="Couldn't check for beaconing: {beaconFailReason}." onaction={reload} />
 			{:else if beaconPending}
-				<p class="note" aria-hidden="true">Beaconing check running, ready in a few minutes.</p>
-				<CardState state="loading" title="Beaconing check running, ready in a few minutes" />
+				<p class="note" aria-hidden="true">{beaconPendingText}</p>
+				<CardState state="loading" title={beaconPendingText} />
 			{:else}
 				{#if beaconSnap?.state === 'stale'}
 					<p class="notice is-warn" role="status">

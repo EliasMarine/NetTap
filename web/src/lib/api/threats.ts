@@ -160,18 +160,18 @@ export interface BeaconingSnapshot {
 export type ThreatRequest = { snapshot: SnapshotWindow } | { from: string; to: string };
 
 const SNAPSHOT_WINDOWS: readonly string[] = ['24h', '7d', '30d'] satisfies SnapshotWindow[];
-const LIVE_SPAN_MS: Record<string, number> = { '1h': 3_600_000, '6h': 6 * 3_600_000 };
+
+export function isSnapshotWindow(range: string): range is SnapshotWindow {
+	return SNAPSHOT_WINDOWS.includes(range);
+}
 
 /**
  * The Threats page's range pill as a request (NET-192 PR 3): 24h, 7d and 30d read the
- * background beaconing scan; 1h and 6h are scanned live, ending now. Anything else is 24h.
+ * background beaconing scan; 1h and 6h are scanned live over `bounds`, the page's own window,
+ * so the report and the threat intel count the same span.
  */
-export function threatRequest(range: string, now: Date = new Date()): ThreatRequest {
-	const span = LIVE_SPAN_MS[range];
-	if (span === undefined) {
-		return { snapshot: (SNAPSHOT_WINDOWS.includes(range) ? range : '24h') as SnapshotWindow };
-	}
-	return { from: new Date(now.getTime() - span).toISOString(), to: now.toISOString() };
+export function threatRequest(range: string, bounds: { from: string; to: string }): ThreatRequest {
+	return isSnapshotWindow(range) ? { snapshot: range } : bounds;
 }
 
 export interface ThreatIntelInfo {

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 // OLD CODE: import { getThreatReport, getBeaconing, getLateralMovement, getDnsAnomalies, getThreatIntel } from './threats'; (NET-192 PR 3: threatRequest)
-import { getThreatReport, getBeaconing, getLateralMovement, getDnsAnomalies, getThreatIntel, threatRequest } from './threats';
+import { getThreatReport, getBeaconing, getLateralMovement, getDnsAnomalies, getThreatIntel, isSnapshotWindow, threatRequest } from './threats';
 
 describe('threats API client', () => {
 	it('exports all fetch functions', () => {
@@ -14,22 +14,16 @@ describe('threats API client', () => {
 
 // NET-192 PR 3: the Threats page's pills, as requests
 describe('threatRequest', () => {
-	const NOW = new Date('2026-11-07T12:00:00Z');
+	const BOUNDS = { from: '2026-11-07T11:00:00.000Z', to: '2026-11-07T12:00:00.000Z' };
 
 	it.each(['24h', '7d', '30d'] as const)('reads the background beaconing scan for %s', (range) => {
-		expect(threatRequest(range, NOW)).toEqual({ snapshot: range });
+		expect(isSnapshotWindow(range)).toBe(true);
+		expect(threatRequest(range, BOUNDS)).toEqual({ snapshot: range });
 	});
 
-	it.each([
-		['1h', 3600_000],
-		['6h', 6 * 3600_000],
-	])('scans %s live, ending now', (range, ms) => {
-		const r = threatRequest(range, NOW);
-		expect(r).toEqual({ from: new Date(NOW.getTime() - ms).toISOString(), to: NOW.toISOString() });
-	});
-
-	it('treats an unknown range as 24h, like the page', () => {
-		expect(threatRequest('15m', NOW)).toEqual({ snapshot: '24h' });
+	it.each(['1h', '6h'])('scans %s live over the page’s own bounds', (range) => {
+		expect(isSnapshotWindow(range)).toBe(false);
+		expect(threatRequest(range, BOUNDS)).toEqual(BOUNDS);
 	});
 });
 
