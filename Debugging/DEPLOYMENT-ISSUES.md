@@ -1,6 +1,6 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-11-06 (Chain 26: the domain page was a 502 on the G11 because one alert host field is mapped as text; it now answers with an exact lower bound. The same run found PCAP capture stopped for 21 h. Earlier, 2026-11-01, Chain 25: dashboard figures checked against OpenSearch; host-network DNS names, a pcap-monitor DNS storm, the 1970 record and ISM yellow fixed. Chain 24: malcolm_template's index pattern was never filled in, so indices guessed field types and Zeek records were rejected; the daemon's .keyword queries from Chain 13 are dropped. Chain 23 verified on the G11)
+> **Last updated:** 2026-11-07 (Chain 27: Malcolm's Suricata rule wiring. More free rule sources, an optional ET Pro code, and one lock, last-good recovery and a status record around every rule update; built on feature/detection-slice2, not yet on the device. Chain 26: the domain page was a 502 on the G11 because one alert host field is mapped as text; it now answers with an exact lower bound. The same run found PCAP capture stopped for 21 h. Earlier, 2026-11-01, Chain 25: dashboard figures checked against OpenSearch; host-network DNS names, a pcap-monitor DNS storm, the 1970 record and ISM yellow fixed. Chain 24: malcolm_template's index pattern was never filled in, so indices guessed field types and Zeek records were rejected; the daemon's .keyword queries from Chain 13 are dropped. Chain 23 verified on the G11)
 > **Status:** 58 issues tracked. 58 RESOLVED. Latest: Fixed category drill-down page crash (`each_key_duplicate`) — 3 daemon→frontend data contract mismatches in `handle_alert_category_detail()` and `handle_alert_category_timeline()`. Lessons 97–99 added.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
@@ -59,6 +59,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | NetTap daemon API (:8880) | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 20: token required on every call except `GET /api/health`. Verify with `bash scripts/remote/deploy-pr110-review-fixes.sh`. |
 | Domain drill-down page | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 26 (NET-178): a 502 on the G11 because `tls.client.server_name` is mapped text. The page now answers; the alert tagged count says "At least N" and names the field it can't search. Verify with `bash scripts/remote/deploy-drill-down.sh`. |
 | PCAP capture (nettap-pcap-capture) | **STOPPED ON THE G11 (2026-11-06), CAUSE UNKNOWN** | Chain 26 (NET-179): "Exited (0)" for 21 h, so something ran `docker stop`. `bash scripts/remote/fix-pcap-capture-stopped.sh` shows who could have and restarts it if Settings want it on. |
+| Suricata rule updates | **BUILT, NOT YET ON THE DEVICE** | Chain 27 (NET-191 slice 2): four free sources (ET Open, abuse.ch SSLBL, Echap stalkerware, IPFire DBL Malware/Phishing), optional ET Pro code, every update through `nettap-rules-update.sh` (lock, last-good, status record). Deploy with `bash scripts/remote/deploy-detection-slice2.sh` (the gate runs first). |
 
 ---
 
@@ -468,6 +469,47 @@ CHAIN 26: the domain page was a 502 on the G11, and PCAP capture had stopped (fi
   Verify: bash scripts/remote/fix-pcap-capture-stopped.sh, then (once NET-178 is on main)
   bash scripts/remote/deploy-drill-down.sh (Step 4 and Step 6 with no ✗ lines).
   Tracking: tracking-fixes/2026-11-06-domain-host-fields.md.
+
+CHAIN 27: Malcolm's Suricata rule wiring (feature/detection-slice2, NET-191 slice 2)
+  Found 2026-11-07 while building more free rule sources and an optional ET Pro code.
+  How Malcolm 26.10.0's suricata image updates rules (read from the image, not the docs):
+  - /usr/local/bin/suricata-update-rules.sh (set -e -u -o pipefail) runs update-sources, then
+    `enable-source` for each SURICATA_UPDATE_ENABLE_SOURCES item ("," between sources, "|" before
+    parameters, e.g. et/pro|secret-code=X), then `suricata-update update --fail` through
+    `grep -v 'with same revision'`, then `ruleset-reload-nonblocking` on each command socket.
+    suricata-update needs `--suricata /usr/bin/suricata-offline`; plain `suricata` fails
+    --build-info (exit 127).
+  - docker_entrypoint.sh runs it at start as PUSER under timeout ${SURICATA_UPDATE_STARTUP_TIMEOUT:-300}s,
+    before Suricata starts, and writes a crontab `0 0 * * *` for it (supercronic). The nightly
+    and startup updates and NetTap's "Update now" therefore all call the same path.
+  - SURICATA_DISABLE_SIDS is split on commas, trimmed and appended to /etc/suricata/disable.conf;
+    a `re:` item is a Python regex over the whole rule, so one item can allowlist IPFire categories.
+  - SURICATA_UPDATE_ETOPEN is not read by 26.10.0 (upstream turns it into --etopen, which would
+    add ET Open beside ET Pro). Removed from compose as OLD CODE.
+  - suricata-update only ever adds sources: its configs in /var/lib/suricata/update/sources
+    survive a restart and a recreate, a removed ET Pro code included.
+  - CORRECTED 2026-11-07 (review round 2, checked read-only on the G11): /var/lib/suricata is an
+    anonymous image VOLUME (so are /etc/suricata, /opt/suricata/include-configs, /opt/suricata/rules,
+    /var/log/suricata and /var/run/suricata); only /var/lib/suricata/rules is the named suricata-rules
+    volume. Compose keeps anonymous volumes across a recreate, so /var/lib/suricata/update (owned by
+    suricata:suricata, 755) and its sources survive one too. The rollback script therefore removes
+    slice 2's sources before it recreates. Earlier text said "/var/lib/suricata/update is not a volume".
+  - supercronic (the nightly update) runs as suricata, not root.
+  - IPFire DBL ships four rules per category (DNS, HTTP, QUIC, TLS), each loading the category's
+    dataset; the allowlist and the gate's check must cover all four, not only DNS.
+  Fix: config/suricata/nettap-rules-update.sh. `start` (root, in the suricata-live entrypoint
+  wrapper, after the capture env loader) wipes sources/*.yaml, records the start-time source list
+  (docker exec doesn't get the loader's env), and installs a shim at Malcolm's path that execs
+  `nettap-rules-update.sh update` (Malcolm's script kept as malcolm-suricata-update-rules.sh).
+  `update` runs Malcolm's script inside one flock on the nettap-rules-state volume, waits until
+  the engine loaded the result with 0 failed rules, publishes a verified last-good generation,
+  restores and reloads it on any failure, and writes update-status.json. The daemon takes the same
+  lock (fcntl) before restarting suricata-live; deploy scripts take it with a holder container
+  (scripts/remote/rules-lock.sh) because the device's sudo allows docker only (no flock).
+  Verify: bash scripts/remote/deploy-detection-slice2.sh (gate first: nothing is built or restarted
+  if it fails), then bash scripts/remote/check-etpro-canary.sh and
+  bash scripts/remote/check-rules-update-safety.sh. Rollback: bash scripts/remote/rollback-detection-slice2.sh.
+  Tracking: tracking-fixes/2026-11-06-detection-accuracy.md (slice 2).
 ```
 
 ---
@@ -1783,6 +1825,11 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `daemon/api/domains.py` | NET-160, NET-178 | `require_keyword` on the three Zeek name fields only; the alert host fields go through `keyword_paths`. Alerts reply carries `tagged_partial`, `matched_fields`, `unmatched_fields`. |
 | `scripts/remote/deploy-drill-down.sh` | NET-160, NET-178 | Step 4: strict check on the Zeek name fields, alert host fields shown with their path. Step 6: the alert figures and the matched/unmatched fields checked against OpenSearch. |
 | `scripts/remote/fix-pcap-capture-stopped.sh` | #183 (NET-179) | NEW: why nettap-pcap-capture stopped (record, logs, Docker events, sudo journal); starts it only when Settings want capture on and no storage stop flag is set. |
+| `config/suricata/nettap-rules-update.sh` | NET-191 | NEW (Chain 27): `start` (wipe sources, record the source list, install the shim) and `update` (lock, Malcolm's updater, engine confirmation, last-good generations, rollback with reload, status record). |
+| `scripts/remote/rules-lock.sh`, `rules-checks.sh` | NET-191 | NEW: the rules lock from the host via a holder container; shared checks for the slice 2 scripts. |
+| `scripts/remote/gate-detection-slice2.sh`, `deploy-detection-slice2.sh`, `rollback-detection-slice2.sh`, `check-etpro-canary.sh`, `check-rules-update-safety.sh` | NET-191 | NEW: deploy gate (staged update + checks + replays), deploy, rollback, ET Pro credential checks, update safety checks. |
+| `daemon/services/rules_lock.py`, `daemon/services/etpro.py` | NET-191 | NEW: the daemon side of the rules lock; ET Pro save/clear (preflight, 600 file, restart under the lock, activation watch). |
+| `config/capture/nettap-capture-env.sh` | NET-191 | Reads `/etc/nettap/suricata.env` and swaps `et/open` for `et/pro|secret-code=…`; an invalid code is ignored and never printed. |
 
 ---
 
@@ -2001,6 +2048,9 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 174. **Check strictly only what a page's main figures need (Chain 26, NET-178)** — the domain page ran its keyword check on seven fields, four of which only fed one side figure, so one text field (`tls.client.server_name` on the G11) made every domain page a 502. Keep the hard check for the fields the page can't answer without; for optional ones, use what can be matched exactly and make the figure say it is partial ("At least N", naming what it couldn't search). A text field still answers `exists`, so it can count toward coverage even when it can't be matched.
 175. **A `.keyword` subfield or keyword field only matches whole names up to its `ignore_above` (Chain 26, NET-178)** — values longer than `ignore_above` are not indexed, so neither `term` nor `exists` sees them, and a subfield can hold a value its parent dropped. Read `ignore_above` with the type before trusting a field for exact matching (>= 254 for a host name with its trailing dot), and count coverage over every path the match uses.
 176. **A container that stays "Exited (0)" under `restart: unless-stopped` was stopped on purpose (Chain 26, NET-179)** — Docker restarts a container that exits by itself, so a lasting Exited means a `docker stop` (a person, a script or the daemon). Look at `docker events`, the sudo journal and the app's own stop flags before restarting it, and restart only what Settings want running.
+177. **Route every caller of an image's script through one wrapper by replacing the script, not its callers (Chain 27, NET-191)** — Malcolm's entrypoint, its crontab and NetTap's "Update now" all call `/usr/local/bin/suricata-update-rules.sh`. A shim at that path (the original kept beside it, copied once) covers all three without touching Malcolm's entrypoint or crontab. Copy the original only while it doesn't carry the shim's marker, or a restart copies the shim over it.
+178. **A device sudo rule of `docker` only means host-side locks go through a container (Chain 27)** — `sudo flock` and `sudo VAR=x docker` both need a password there. A throwaway container of the live image, on the same volume, takes `flock` and sleeps; `docker rm -f` releases it, and a sleep cap stops a dead script from holding it.
+179. **`docker exec` gets the image and compose environment, not what the entrypoint exported (Chain 27)** — anything an entrypoint wrapper computes (here the ET Pro source swap) must be written to a file that later `docker exec` calls read.
 
 ---
 
@@ -2040,6 +2090,9 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | Suricata alert exclusion is hardcoded in logs.py | If event.dataset naming changes in Malcolm upgrade, alerts may leak back into log stats | Check `event.dataset` values after Malcolm version bumps. The `_EXCLUDE_ALERTS_FILTER` constant uses `{"term": {"event.dataset": "alert"}}`. |
 | pcap-monitor DNS exclusion is query-name based | If Zeek internal monitoring changes, the exclusion pattern breaks | The `_EXCLUDE_DNS_NOISE` filter matches `zeek.dns.query.keyword: "pcap-monitor"` literally. Check after Zeek/Malcolm upgrades. |
 | An alert host field mapped as text (Chain 26) | On the G11 `tls.client.server_name` is text, so "Alerts tagged with this name" is a lower bound ("At least N") on every domain page | The page names the field it can't search. A Malcolm template change would only reach new daily indices; if one ever adds a `.keyword` subfield (ignore_above >= 254), the daemon uses it with no code change. Step 4 of `deploy-drill-down.sh` shows which path each field uses. |
+| Malcolm's startup rule update runs under a 300 s timeout (Chain 27) | With four sources the startup update downloads and tests more; if it hits the limit, the wrapper restores the last good rules and Suricata starts on them (status "interrupted"); the nightly update, which has no limit, brings the new rules | `gate-detection-slice2.sh` prints the staged update's time (64 s locally on 1 CPU) and warns above 240 s. If it warns on the device, set `SURICATA_UPDATE_STARTUP_TIMEOUT` for suricata-live. |
+| The shim depends on Malcolm's script path and options (Chain 27) | A Malcolm upgrade that renames `/usr/local/bin/suricata-update-rules.sh` leaves updates without the lock and status record (the wrapper logs an ERROR and leaves Malcolm's behaviour alone) | After a Malcolm tag bump, check `docker logs nettap-suricata-live` for `nettap-rules: ERROR` and that the shim is in place (deploy-detection-slice2.sh Step 9 checks it). |
+| An expired ET Pro code fails every nightly update (`--fail`) | All sources stop updating, not only ET Pro | Settings › Suricata rules turns amber after 48 h without success; renew or remove the code. |
 
 ---
 

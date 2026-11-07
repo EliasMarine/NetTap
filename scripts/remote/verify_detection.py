@@ -3,14 +3,18 @@
 
 Standard library only. On the device it runs inside a throwaway container of the live
 Suricata image (no network), never on the host:
-  python3 verify_detection.py write-fixtures <pcap-dir>
-  python3 verify_detection.py report <fixtures|own> <out-dir>
+  python3 verify_detection.py write-fixtures <pcap-dir> [<rules-dir>]
+  python3 verify_detection.py report <fixtures|own> <out-dir> [<rules-dir>]
+  python3 verify_detection.py check-staged <rules-dir>        (slice 2 deploy gate)
+  python3 verify_detection.py diff-sids <out-dir-a> <out-dir-b>  (own traffic: live vs staged rules)
 
 The report reads what the runner left in <out-dir>/engine (eve*.json, suricata.log, memory.peak)
 and what the shell script wrote in <out-dir> (runner-console.log, runner-exit, threshold-state,
 sha256.txt), and prints it; the shell script saves the output as report.txt. The runner can write
 only engine/, so nothing it plants can redirect a file the host writes.
-Exit codes: 0 ok, 1 a fixture failed, 2 the replay itself failed.
+With <rules-dir>, the fixtures also cover the rules found there (IPFire DBL, Echap stalkerware): their
+domains are drawn from that ruleset, the same way in write-fixtures and report.
+Exit codes: 0 ok, 1 a fixture (or a staged-rules check) failed, 2 the replay itself failed.
 """
 
 import glob
@@ -137,8 +141,238 @@ FIXTURES = [
 ]
 
 
-def write_fixtures(pcap_dir: str) -> None:
-    for i, fixture in enumerate(FIXTURES):
+# --- rules-driven fixtures and checks (slice 2) ----------------------------------------------
+
+ACTIVE_RE = re.compile(r"^(alert|drop|pass|reject|rejectsrc|rejectdst|rejectboth) ")
+DISABLED_RE = re.compile(r"^# ?(alert|drop|pass|reject) ")
+MSG_RE = re.compile(r'msg: *"((?:[^"\\]|\\.)*)"')
+SID_RE = re.compile(r"[ ;(]sid: *(\d+) *;")
+LOAD_RE = re.compile(r"\b(?:dataset|datarep): *[^;]*?\bload +([^,; ]+)")
+IPFIRE_RE = re.compile(r"^IPFire DBL \[([^\]]+)\] Blocked DNS Query$")
+IPFIRE_ANY_RE = re.compile(
+    r"^IPFire DBL \[([^\]]+)\] "
+)  # DNS, HTTP, QUIC and TLS rules per category
+IPFIRE_KEPT = ("Malware", "Phishing")  # the category allowlist in SURICATA_DISABLE_SIDS
+OWNER_SIDS = range(1000000, 2000000)  # reserved for the owner's own rules (slice 3)
+HOME_DEVICE = "192.168.1.50"
+# The owner's own DNS over HTTPS resolver: a disabled IPFire category (DNS-over-HTTPS) must not fire on it
+OWN_DOH = "dns.quad9.net"
+PLAIN_DOMAIN = re.compile(r"^[a-z0-9-]{1,63}\.[a-z]{2,24}$")
+HOSTNAME_RE = re.compile(
+    r'dns\.query; *content: *"([a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63})+)";'
+)
+
+
+def read_rules(rules_dir: str) -> list:
+    """[(active, msg, sid, line)] for every rule line, active or commented out, in suricata.rules."""
+    rules = []
+    path = os.path.join(rules_dir, "suricata.rules")
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            active = bool(ACTIVE_RE.match(line))
+            if not active and not DISABLED_RE.match(line):
+                continue
+            msg, sid = MSG_RE.search(line), SID_RE.search(line)
+            rules.append(
+                (
+                    active,
+                    msg.group(1) if msg else "",
+                    int(sid.group(1)) if sid else None,
+                    line,
+                )
+            )
+    return rules
+
+
+def dataset_path(rules_dir: str, load: str) -> str:
+    """Where Suricata finds a dataset the rule loads: relative = beside suricata.rules."""
+    prefix = "/var/lib/suricata/rules/"
+    if load.startswith(prefix):
+        load = load[len(prefix) :]
+    return load if os.path.isabs(load) else os.path.join(rules_dir, load)
+
+
+def first_domain(path: str) -> str | None:
+    """First plain name.tld in a Suricata string dataset (one base64 value per line)."""
+    import base64
+    import binascii
+
+    with open(path, encoding="ascii", errors="replace") as f:
+        for line in f:
+            try:
+                value = base64.b64decode(line.strip(), validate=True).decode("ascii")
+            except (binascii.Error, UnicodeDecodeError):
+                continue
+            if PLAIN_DOMAIN.match(value):
+                return value
+    return None
+
+
+def dns_fixture(name: str, domain: str, expect: list) -> dict:
+    return {
+        "name": name,
+        "packets": [(HOME_DEVICE, 50010, RESOLVER, 53, dns_query(domain, 0x5000))],
+        "expect": expect,
+        "domain": domain,
+    }
+
+
+def rule_fixtures(rules_dir: str | None) -> list:
+    """IPFire Malware/Phishing hits, no disabled IPFire category on the owner's DoH, and an Echap
+    stalkerware hit, built from the ruleset in rules_dir. SKIPPED when it doesn't have the rule."""
+    names = (
+        "ipfire-malware",
+        "ipfire-phishing",
+        "ipfire-disabled-doh",
+        "echap-stalkerware",
+    )
+    if not rules_dir:
+        return [{"name": n, "skip": "no ruleset given"} for n in names]
+    rules = read_rules(rules_dir)
+    fixtures = []
+    for category in IPFIRE_KEPT:
+        name = f"ipfire-{category.lower()}"
+        hit = next(
+            (
+                r
+                for r in rules
+                if r[0]
+                and IPFIRE_RE.match(r[1])
+                and IPFIRE_RE.match(r[1]).group(1) == category
+            ),
+            None,
+        )
+        load = LOAD_RE.search(hit[3]) if hit else None
+        domain = first_domain(dataset_path(rules_dir, load.group(1))) if load else None
+        if not domain:
+            fixtures.append(
+                {
+                    "name": name,
+                    "skip": f"no active IPFire DBL [{category}] DNS rule with a dataset",
+                }
+            )
+            continue
+        fixtures.append(
+            dns_fixture(
+                name, domain, [{"sid": hit[2], "src": HOME_DEVICE, "present": True}]
+            )
+        )
+    disabled = [
+        r[2]
+        for r in rules
+        if IPFIRE_RE.match(r[1]) and IPFIRE_RE.match(r[1]).group(1) not in IPFIRE_KEPT
+    ]
+    if disabled:
+        expect = [
+            {"sid": sid, "src": HOME_DEVICE, "present": False} for sid in disabled
+        ]
+        fixtures.append(dns_fixture("ipfire-disabled-doh", OWN_DOH, expect))
+    else:
+        fixtures.append(
+            {
+                "name": "ipfire-disabled-doh",
+                "skip": "no IPFire DBL category other than Malware/Phishing in the ruleset",
+            }
+        )
+    # dns.query; content:"copy9.com"; depth:9; nocase; endswith → a query for exactly that name
+    stalker = next(
+        (
+            r
+            for r in rules
+            if r[0] and r[1].startswith("PTS STALKERWARE") and HOSTNAME_RE.search(r[3])
+        ),
+        None,
+    )
+    if stalker:
+        domain = HOSTNAME_RE.search(stalker[3]).group(1)
+        fixtures.append(
+            dns_fixture(
+                "echap-stalkerware",
+                domain,
+                [{"sid": stalker[2], "src": HOME_DEVICE, "present": True}],
+            )
+        )
+    else:
+        fixtures.append(
+            {
+                "name": "echap-stalkerware",
+                "skip": "no active Echap stalkerware DNS rule",
+            }
+        )
+    return fixtures
+
+
+def check_staged(rules_dir: str) -> int:
+    """The deploy gate's checks on a staged ruleset. 0 = all pass."""
+    rules = read_rules(rules_dir)
+    active = [r for r in rules if r[0]]
+    problems = []
+    categories = Counter(
+        IPFIRE_ANY_RE.match(r[1]).group(1) for r in active if IPFIRE_ANY_RE.match(r[1])
+    )
+    print(f"Rules: {len(rules)} ({len(active)} active)")
+    print(f"IPFire DBL categories active (rule count): {dict(categories) or 'none'}")
+    extra = sorted(set(categories) - set(IPFIRE_KEPT))
+    if extra:
+        problems.append(
+            f"IPFire categories outside the allowlist are active: {', '.join(extra)}"
+        )
+    missing = [c for c in IPFIRE_KEPT if c not in categories]
+    if missing:
+        problems.append(
+            f"IPFire categories missing (the allowlist or the feed changed): {', '.join(missing)}"
+        )
+    loads = sorted({m.group(1) for r in active for m in LOAD_RE.finditer(r[3])})
+    unresolved = [p for p in loads if not os.path.isfile(dataset_path(rules_dir, p))]
+    size = sum(
+        os.path.getsize(dataset_path(rules_dir, p))
+        for p in loads
+        if p not in unresolved
+    )
+    print(f"Datasets loaded by active rules: {len(loads)} ({size / 2**20:.1f} MiB)")
+    if unresolved:
+        problems.append(f"datasets not in the staged rules: {', '.join(unresolved)}")
+    owner = sorted({r[2] for r in rules if r[2] in OWNER_SIDS})
+    if owner:
+        problems.append(
+            f"SIDs in the owner range 1000000-1999999: {', '.join(map(str, owner[:20]))}"
+        )
+    print(
+        f"Echap stalkerware rules active: {sum(r[1].startswith('PTS STALKERWARE') for r in active)}"
+    )
+    print(
+        f"abuse.ch SSLBL rules active: {sum(r[1].startswith('SSLBL') for r in active)}"
+    )
+    for problem in problems:
+        print(f"✗ {problem}")
+    if not problems:
+        print("✓ allowlist, datasets and SID range")
+    return 1 if problems else 0
+
+
+def diff_sids(out_a: str, out_b: str) -> int:
+    """SIDs that fire in one replay and not the other (own traffic: live rules vs staged)."""
+    runs = [read_alerts(os.path.join(d, "engine"))[0] for d in (out_a, out_b)]
+    counts = [Counter(a["sid"] for a in run) for run in runs]
+    first = {a["sid"]: a for run in runs for a in run}
+    for label, mine, other in (
+        ("only with the new rules", counts[1], counts[0]),
+        ("only with the current rules", counts[0], counts[1]),
+    ):
+        new = sorted(set(mine) - set(other), key=lambda s: -mine[s])
+        print(f"SIDs {label}: {len(new)}")
+        for sid in new[:30]:
+            print(
+                f"   {mine[sid]:>8}  {sid}  [{first[sid]['severity']}]  {first[sid]['msg']}"
+            )
+    return 0
+
+
+def write_fixtures(pcap_dir: str, rules_dir: str | None = None) -> None:
+    for i, fixture in enumerate(FIXTURES + rule_fixtures(rules_dir)):
+        if "skip" in fixture:
+            print(f"   skipped {fixture['name']}: {fixture['skip']}")
+            continue
         frames = [udp_frame(*packet) for packet in fixture["packets"]]
         write_pcap(
             os.path.join(pcap_dir, f"{fixture['name']}.pcap"),
@@ -150,6 +384,8 @@ def write_fixtures(pcap_dir: str) -> None:
 
 def check_fixture(fixture: dict, seen: set, met: dict) -> tuple:
     """(PASS|FAIL|SKIPPED, reason). seen holds (sid, src_ip) of every alert in the run."""
+    if "skip" in fixture:
+        return "SKIPPED", fixture["skip"]
     need = fixture.get("needs")
     if need and not met.get(need, (False, ""))[0]:
         return "SKIPPED", met.get(need, (False, f"unknown precondition {need!r}"))[1]
@@ -267,7 +503,7 @@ def summary_lines(alerts: list, bad: int) -> list:
     return lines
 
 
-def report(mode: str, out_dir: str) -> int:
+def report(mode: str, out_dir: str, rules_dir: str | None = None) -> int:
     engine = os.path.join(out_dir, "engine")
     alerts, bad = read_alerts(engine)
     facts = log_facts(
@@ -295,20 +531,20 @@ def report(mode: str, out_dir: str) -> int:
         print(line)
     status = 0 if runner_exit == "0" and facts["loaded"] else 2
     if mode == "fixtures":
-        status = max(status, print_fixtures(alerts, out_dir))
+        status = max(status, print_fixtures(alerts, out_dir, rules_dir))
     print()
     print("SHA-256 of every input:")
     print(read_text(os.path.join(out_dir, "sha256.txt"), "   (missing)\n").rstrip())
     return status
 
 
-def print_fixtures(alerts: list, out_dir: str) -> int:
+def print_fixtures(alerts: list, out_dir: str, rules_dir: str | None = None) -> int:
     seen = {(a["sid"], a["src"]) for a in alerts}
     met = {"threshold": threshold_met(out_dir)}
     print()
     print("Fixtures:")
     failed = 0
-    for fixture in FIXTURES:
+    for fixture in FIXTURES + rule_fixtures(rules_dir):
         result, reason = check_fixture(fixture, seen, met)
         failed += result == "FAIL"
         print(f"   {result:<8} {fixture['name']}" + (f" — {reason}" if reason else ""))
@@ -318,11 +554,15 @@ def print_fixtures(alerts: list, out_dir: str) -> int:
 
 
 def main(argv: list) -> int:
-    if len(argv) == 3 and argv[1] == "write-fixtures":
-        write_fixtures(argv[2])
+    if len(argv) in (3, 4) and argv[1] == "write-fixtures":
+        write_fixtures(*argv[2:])
         return 0
-    if len(argv) == 4 and argv[1] == "report" and argv[2] in ("fixtures", "own"):
-        return report(argv[2], argv[3])
+    if len(argv) in (4, 5) and argv[1] == "report" and argv[2] in ("fixtures", "own"):
+        return report(*argv[2:])
+    if len(argv) == 3 and argv[1] == "check-staged":
+        return check_staged(argv[2])
+    if len(argv) == 4 and argv[1] == "diff-sids":
+        return diff_sids(argv[2], argv[3])
     print(__doc__, file=sys.stderr)
     return 2
 

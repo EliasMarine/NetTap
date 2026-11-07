@@ -15,6 +15,7 @@ changes so the capture containers' entrypoints re-read it.
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 from dataclasses import replace
@@ -28,6 +29,8 @@ from services.capture_config import (
     save_capture_config,
     write_env_file_if_changed,
 )
+from services.etpro import RESTART_TIMEOUT_S
+from services.rules_lock import rules_lock
 
 logger = logging.getLogger("nettap.api.capture_control")
 
@@ -39,6 +42,12 @@ CONTAINER_NAME = "nettap-pcap-capture"
 #     "nettap-suricata-live",
 #     "nettap-arkime-live",
 #     CONTAINER_NAME,
+# )
+# OLD CODE END
+SURICATA_CONTAINER = "nettap-suricata-live"
+# OLD CODE START — review round 2 gates: one restart timeout, shared with the ET Pro change (etpro.py)
+# SURICATA_RESTART_TIMEOUT_S = (
+#     120  # the restart holds the rules lock, so a hung one must not hold it for ever
 # )
 # OLD CODE END
 # Containers whose entrypoint reads /etc/nettap/capture.env
@@ -96,7 +105,9 @@ def _effective_rotate_mb() -> int:
     return saved or _env_int("PCAP_ROTATE_MB", DEFAULT_MAX_FILE_SIZE_MB)
 
 
-async def _docker_cmd(action: str, container: str) -> tuple[int, str]:
+async def _docker_cmd(
+    action: str, container: str, timeout: float | None = None
+) -> tuple[int, str]:
     """Run a docker command (start/stop/restart) on a container.
 
     Uses create_subprocess_exec with explicit argument arrays to prevent
@@ -105,6 +116,7 @@ async def _docker_cmd(action: str, container: str) -> tuple[int, str]:
     Args:
         action: One of "start", "stop", "restart".
         container: The Docker container name.
+        timeout: Seconds before the docker command is killed (None = no limit).
 
     Returns:
         Tuple of (return_code, combined_output).
@@ -116,7 +128,21 @@ async def _docker_cmd(action: str, container: str) -> tuple[int, str]:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await proc.communicate()
+    # OLD CODE START — review round 2: no time limit, so a hung restart held the rules lock indefinitely
+    # stdout, stderr = await proc.communicate()
+    # OLD CODE END
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout)
+    except asyncio.TimeoutError:
+        with contextlib.suppress(
+            ProcessLookupError
+        ):  # it may have exited right at the deadline
+            proc.kill()
+        await proc.wait()
+        return (
+            -1,
+            f"docker {action} {container} did not finish within {timeout:.0f} s",
+        )
     output = (stdout.decode() + stderr.decode()).strip()
     return (proc.returncode, output)
 
@@ -165,8 +191,20 @@ async def _restart_if_running(container: str) -> tuple[bool, str]:
         if not status["running"]:
             logger.info("Not restarting %s: it is %s", container, status["status"])
             return False, ""
-        returncode, output = await _docker_cmd("restart", container)
-    except Exception as exc:  # docker CLI missing, socket unreachable
+        # OLD CODE START — NET-191 slice 2: Suricata is restarted only between rule updates
+        # returncode, output = await _docker_cmd("restart", container)
+        # OLD CODE END
+        if container == SURICATA_CONTAINER:
+            # Held until docker restart returns, so the new container's startup update can take it
+            async with rules_lock():
+                returncode, output = await _docker_cmd(
+                    "restart",
+                    container,
+                    timeout=RESTART_TIMEOUT_S,  # the lock is held: never for ever
+                )
+        else:
+            returncode, output = await _docker_cmd("restart", container)
+    except Exception as exc:  # docker CLI missing, socket unreachable, rules lock busy
         returncode, output = -1, str(exc)
     if returncode != 0:
         logger.warning(

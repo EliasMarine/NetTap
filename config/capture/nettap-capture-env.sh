@@ -17,7 +17,7 @@
 #
 # No file means no change. Always ends with status 0 (chained with &&).
 #
-# Override the path with NETTAP_CAPTURE_ENV (used by tests).
+# Override the paths with NETTAP_CAPTURE_ENV and NETTAP_SURICATA_ENV (used by tests).
 # POSIX sh compatible.
 
 _nettap_env_file="${NETTAP_CAPTURE_ENV:-/etc/nettap/capture.env}"
@@ -74,5 +74,40 @@ if [ -f "$_nettap_env_file" ] && [ -r "$_nettap_env_file" ]; then
     done < "$_nettap_env_file"
 fi
 
-unset _nettap_env_file _nettap_line _nettap_val
+# ET Pro (NET-191): the daemon writes SURICATA_ETPRO_CODE to /etc/nettap/suricata.env (root, 600) from
+# Settings → Suricata rules. A valid code turns et/open into et/pro in SURICATA_UPDATE_ENABLE_SOURCES (set
+# only in suricata-live). Same whitelist parsing as above; the code is never echoed.
+_nettap_suricata_env="${NETTAP_SURICATA_ENV:-/etc/nettap/suricata.env}"
+if [ -n "${SURICATA_UPDATE_ENABLE_SOURCES:-}" ] && [ -f "$_nettap_suricata_env" ] && [ -r "$_nettap_suricata_env" ]; then
+    _nettap_code=""
+    while IFS= read -r _nettap_line || [ -n "$_nettap_line" ]; do
+        case "$_nettap_line" in
+            SURICATA_ETPRO_CODE=*) _nettap_code="${_nettap_line#*=}" ;;
+        esac
+    done < "$_nettap_suricata_env"
+    # Same rule as the daemon: ^[A-Za-z0-9]{16,64}$
+    case "$_nettap_code" in
+        '') ;;
+        *[!A-Za-z0-9]*)
+            echo "nettap-capture-env: ignoring an invalid SURICATA_ETPRO_CODE in $_nettap_suricata_env" >&2
+            ;;
+        *)
+            if [ "${#_nettap_code}" -ge 16 ] && [ "${#_nettap_code}" -le 64 ]; then
+                _nettap_sources=""
+                _nettap_ifs="$IFS"
+                IFS=,
+                for _nettap_val in $SURICATA_UPDATE_ENABLE_SOURCES; do
+                    [ "$_nettap_val" = "et/open" ] && _nettap_val="et/pro|secret-code=$_nettap_code"
+                    _nettap_sources="${_nettap_sources:+$_nettap_sources,}$_nettap_val"
+                done
+                IFS="$_nettap_ifs"
+                export SURICATA_UPDATE_ENABLE_SOURCES="$_nettap_sources"
+            else
+                echo "nettap-capture-env: ignoring an invalid SURICATA_ETPRO_CODE in $_nettap_suricata_env" >&2
+            fi
+            ;;
+    esac
+fi
+
+unset _nettap_env_file _nettap_line _nettap_val _nettap_suricata_env _nettap_code _nettap_sources _nettap_ifs
 true

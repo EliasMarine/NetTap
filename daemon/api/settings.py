@@ -38,7 +38,10 @@ API_KEY_FIELDS = {
     "SMTP_PASSWORD": "SMTP_PASSWORD",
     "SMTP_SENDER_EMAIL": "SMTP_SENDER_EMAIL",
     "WEBHOOK_URL": "WEBHOOK_URL",
-    "SURICATA_ET_PRO_KEY": "SURICATA_ET_PRO_KEY",
+    # OLD CODE START — NET-191 slice 2: saved here, this key never reached Suricata. The ET Pro code has one
+    # place now, Settings › Suricata rules (/etc/nettap/suricata.env, checked with Proofpoint first).
+    # "SURICATA_ET_PRO_KEY": "SURICATA_ET_PRO_KEY",
+    # OLD CODE END
 }
 
 
@@ -110,6 +113,35 @@ def _save_env_file(env_file: str, updates: dict[str, str]) -> None:
             new_lines.append(f'{key}="{value}"')
 
     path.write_text("\n".join(new_lines) + "\n")
+
+
+# Retired keys: a value saved before they were retired would stay in plain text with no way to clear it
+LEGACY_KEYS = (
+    "SURICATA_ET_PRO_KEY",
+)  # NET-191 slice 2: the ET Pro code moved to /etc/nettap/suricata.env
+
+
+def _drop_legacy_keys(env_file: str) -> None:
+    """Remove retired keys from the env file, logging the key name only (never the value)."""
+    path = Path(env_file)
+    try:
+        if not path.exists():
+            return
+        lines = path.read_text().splitlines()
+        keys = [line.strip().partition("=")[0].strip() for line in lines]
+        removed = sorted({key for key in keys if key in LEGACY_KEYS})
+        if not removed:
+            return
+        kept = [line for line, key in zip(lines, keys) if key not in LEGACY_KEYS]
+        path.write_text("\n".join(kept) + "\n")
+        for key in removed:
+            logger.info("Removed the retired key %s from %s", key, env_file)
+    except OSError as exc:
+        logger.warning(
+            "Could not remove retired keys from %s (%s)",
+            env_file,
+            type(exc).__name__,
+        )
 
 
 def _check_configured(env_vars: dict[str, str]) -> dict[str, bool]:
@@ -281,6 +313,7 @@ def register_settings_routes(app: web.Application, env_file: str | None = None) 
         app["env_file"] = env_file
     else:
         app["env_file"] = os.environ.get("NETTAP_ENV_FILE", DEFAULT_ENV_FILE)
+    _drop_legacy_keys(app["env_file"])
 
     app.router.add_get("/api/settings/api-keys", handle_get_api_keys)
     app.router.add_post("/api/settings/api-keys", handle_save_api_keys)

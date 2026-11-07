@@ -68,10 +68,13 @@ class TestGetApiKeys(AioHTTPTestCase):
             "SMTP_PASSWORD",
             "SMTP_SENDER_EMAIL",
             "WEBHOOK_URL",
-            "SURICATA_ET_PRO_KEY",
+            # OLD CODE START — NET-191 slice 2: retired; the ET Pro code is set in Settings › Suricata rules
+            # "SURICATA_ET_PRO_KEY",
+            # OLD CODE END
         ]
         for field in expected_fields:
             self.assertIn(field, keys)
+        self.assertNotIn("SURICATA_ET_PRO_KEY", keys)
 
 
 class TestGetApiKeysEmptyFile(AioHTTPTestCase):
@@ -189,6 +192,25 @@ class TestSaveApiKeys(AioHTTPTestCase):
         self.assertTrue(any("RANDOM_KEY" in w for w in data["warnings"]))
 
     @unittest_run_loop
+    async def test_the_retired_et_pro_key_is_not_written(self):
+        """NET-191 slice 2: SURICATA_ET_PRO_KEY is no longer an API key field; it is never saved."""
+        resp = await self.client.request(
+            "POST",
+            "/api/settings/api-keys",
+            json={
+                "MAXMIND_LICENSE_KEY": "valid",
+                "SURICATA_ET_PRO_KEY": "CANARYa1b2c3d4e5f6g7h8",
+            },
+        )
+        self.assertEqual(resp.status, 200)
+        text = await resp.text()
+        self.assertNotIn("CANARYa1b2c3d4e5f6g7h8", text)
+        with open(self.tmp.name) as fh:
+            saved = fh.read()
+        self.assertNotIn("SURICATA_ET_PRO_KEY", saved)
+        self.assertNotIn("CANARYa1b2c3d4e5f6g7h8", saved)
+
+    @unittest_run_loop
     async def test_save_empty_body_returns_400(self):
         """POST /api/settings/api-keys with no valid keys returns 400."""
         resp = await self.client.request(
@@ -255,6 +277,33 @@ class TestEnvFileHelpers(unittest.TestCase):
             import shutil
 
             shutil.rmtree(tmp_dir)
+
+
+class TestLegacyEtProKey(unittest.TestCase):
+    """NET-191 slice 2: a SURICATA_ET_PRO_KEY saved before the field was retired is removed at startup."""
+
+    def _register(self, text):
+        tmp = tempfile.NamedTemporaryFile(suffix=".env", delete=False, mode="w")
+        tmp.write(text)
+        tmp.close()
+        self.addCleanup(os.unlink, tmp.name)
+        with self.assertLogs("nettap.api.settings", level="INFO") as logs:
+            register_settings_routes(web.Application(), env_file=tmp.name)
+        with open(tmp.name) as fh:
+            return fh.read(), "\n".join(logs.output)
+
+    def test_removed_at_startup_and_the_value_never_logged(self):
+        saved, logs = self._register(
+            'MAXMIND_LICENSE_KEY="keep"\nSURICATA_ET_PRO_KEY="CANARYq1w2e3r4t5y6u7"\n# note\n'
+        )
+        self.assertEqual(saved, 'MAXMIND_LICENSE_KEY="keep"\n# note\n')
+        self.assertIn("Removed the retired key SURICATA_ET_PRO_KEY from", logs)
+        self.assertNotIn("CANARY", logs)
+
+    def test_a_file_without_it_is_left_alone(self):
+        saved, logs = self._register('MAXMIND_LICENSE_KEY="keep"\n')
+        self.assertEqual(saved, 'MAXMIND_LICENSE_KEY="keep"\n')
+        self.assertNotIn("retired key", logs)
 
 
 class TestRouteRegistration(AioHTTPTestCase):

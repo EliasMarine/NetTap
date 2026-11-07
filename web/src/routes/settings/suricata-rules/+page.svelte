@@ -3,8 +3,8 @@
 	 * Suricata Rule Management — IDS rule sources, updates, custom rules.
 	 *
 	 * Manage rule feeds (ET Open, abuse.ch, tgreen, etc.), trigger updates,
-	 * set auto-update schedule, upload custom rules, and configure commercial
-	 * license keys (ET Pro, Snort Subscriber).
+	 * set auto-update schedule, upload custom rules, and save an optional
+	 * ET Pro code (NET-191 slice 2; Snort Subscriber is retired).
 	 */
 
 	import { onDestroy, onMount } from 'svelte';
@@ -18,14 +18,23 @@
 		setUpdateSchedule,
 		uploadCustomRules,
 		getCustomRules,
-		configureCommercial,
-		getCommercialConfig,
+		// OLD CODE START — NET-191 slice 2: the ET Pro card replaces the commercial licence form
+		// configureCommercial,
+		// getCommercialConfig,
+		// OLD CODE END
+		getEtProStatus,
+		saveEtProCode,
+		clearEtProCode,
 		getLiveRuleStatus,
 		type LiveRuleStatus,
 		type RuleSource,
 		type RuleStats,
+		type RuleUpdateStatus,
 		type UpdateSchedule,
-		type CommercialConfig,
+		// OLD CODE START — NET-191 slice 2
+		// type CommercialConfig,
+		// OLD CODE END
+		type EtProStatus,
 	} from '$lib/api/suricata-rules';
 	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -34,9 +43,10 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { fmt } from '$lib/utils/drilldown';
 	import { formatTime } from '$lib/utils/time';
+	import { loadFailed } from '$lib/utils/load-failed';
 
-	// What Suricata really runs (#58). The source toggles, schedule picker, custom rules and
-	// commercial keys below are not wired into suricata-update yet, so they are shown as such.
+	// What Suricata really runs (#58). The source toggles, schedule picker and custom rules
+	// below are not wired into suricata-update yet, so they are shown as such.
 	let live = $state<LiveRuleStatus | null>(null);
 	let liveError = $state('');
 
@@ -44,7 +54,10 @@
 	let sources = $state<RuleSource[]>([]);
 	let stats = $state<RuleStats | null>(null);
 	let schedule = $state<UpdateSchedule>({ interval: 'daily', enabled: true });
-	let commercialConfig = $state<CommercialConfig>({ configured: false });
+	// OLD CODE START — NET-191 slice 2: the ET Pro status replaces the commercial config
+	// let commercialConfig = $state<CommercialConfig>({ configured: false });
+	// OLD CODE END
+	let etpro = $state<EtProStatus | null>(null);
 	let lastUpdate = $state<string | null>(null);
 	// OLD CODE START — the whole page hid behind one loading line; each card now shows its own
 	// loading state until the first load lands
@@ -59,11 +72,24 @@
 	let customRulesContent = $state('');
 	let savingCustomRules = $state(false);
 
-	// Commercial form
-	let showCommercialForm = $state(false);
-	let commercialType = $state('etpro');
-	let commercialKey = $state('');
-	let savingCommercial = $state(false);
+	// OLD CODE START — NET-191 slice 2: the ET Pro form replaces the commercial licence form
+	// // Commercial form
+	// let showCommercialForm = $state(false);
+	// let commercialType = $state('etpro');
+	// let commercialKey = $state('');
+	// let savingCommercial = $state(false);
+	// OLD CODE END
+
+	// ET Pro form. The code lives only in the input until a save succeeds, then it is cleared.
+	const ETPRO_CODE = /^[A-Za-z0-9]{16,64}$/;
+	const APPLY_POLL_MS = 15_000;
+	let etproCode = $state('');
+	let etproCodeError = $state('');
+	let savingEtPro = $state(false);
+	let removingEtPro = $state(false);
+	let confirmingRemove = $state(false);
+	// Why the last save or remove failed, shown in the card until the next attempt
+	let etproError = $state('');
 
 	// Toggling state (track which source is being toggled)
 	let togglingSource = $state('');
@@ -72,6 +98,38 @@
 		message = text;
 		messageType = type;
 		setTimeout(() => { message = ''; }, 5000);
+	}
+
+	// suricata-update's source names (NET-191 slice 2); anything else shows its own name
+	const SOURCE_NAMES = new Map([
+		['et/open', 'Emerging Threats Open'],
+		['et/pro', 'Emerging Threats Pro'],
+		['abuse.ch/sslbl-blacklist', 'abuse.ch SSL Blacklist'],
+		['echap/stalkerware', 'Echap stalkerware indicators'],
+		['ipfire/dbl', 'IPFire DBL (malware and phishing only)'],
+	]);
+
+	/** One line on the last rule update, worst news first. */
+	function updateNotice(u: RuleUpdateStatus | undefined): { tone: 'is-ok' | 'is-warn' | 'is-error' | null; text: string } {
+		const reason = u?.reason || 'no reason was recorded';
+		if (u?.recovery_pending) {
+			return { tone: 'is-error', text: `Restoring the last good rules isn't confirmed: ${reason}. It is retried at the next update or restart.` };
+		}
+		if (u?.state === 'failed' || u?.state === 'interrupted') {
+			return { tone: 'is-warn', text: `The last rule update failed ${formatTime(u.attempt)}: ${reason}. Suricata keeps running the last good rules.` };
+		}
+		if (u?.stale) {
+			return { tone: 'is-warn', text: `No successful rule update in 48 hours (last ${u.last_success ? formatTime(u.last_success) : 'never'}).` };
+		}
+		if (u?.missing_sources?.length) {
+			const names = u.missing_sources.map((s) => SOURCE_NAMES.get(s) ?? s).join(', ');
+			return { tone: 'is-warn', text: `The last update worked, but these sources weren't enabled: ${names}.` };
+		}
+		if (u?.state === 'active' || u?.state === 'prepared') {
+			const later = u.state === 'prepared' ? ' Suricata loads them when it next starts.' : '';
+			return { tone: 'is-ok', text: `Rules last updated ${formatTime(u.last_success)}.${later}` };
+		}
+		return { tone: null, text: 'No rule update has been recorded yet.' };
 	}
 
 	function sourceName(url: string): string {
@@ -92,7 +150,10 @@
 
 	// #96: custom rules and the commercial key load on their own; a failure says so in its section
 	let customFailed = $state(false);
-	let commercialFailed = $state(false);
+	// OLD CODE START — NET-191 slice 2
+	// let commercialFailed = $state(false);
+	// OLD CODE END
+	let etproFailed = $state(false);
 
 	// OLD CODE START — the page refresh contract (PLAN §5.5): one guarded loader that reports what loaded
 	// async function loadLive() {
@@ -131,12 +192,21 @@
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
 		const [liveRes] = await Promise.allSettled([getLiveRuleStatus()]);
-		const [sourcesRes, statsRes, scheduleRes, customRes, commRes] = await Promise.allSettled([
+		// OLD CODE START — NET-191 slice 2: the ET Pro status replaces the commercial config
+		// const [sourcesRes, statsRes, scheduleRes, customRes, commRes] = await Promise.allSettled([
+		// 	getRuleSources(),
+		// 	getRuleStats(),
+		// 	getUpdateSchedule(),
+		// 	getCustomRules(),
+		// 	getCommercialConfig(),
+		// ]);
+		// OLD CODE END
+		const [sourcesRes, statsRes, scheduleRes, customRes, etproRes] = await Promise.allSettled([
 			getRuleSources(),
 			getRuleStats(),
 			getUpdateSchedule(),
 			getCustomRules(),
-			getCommercialConfig(),
+			getEtProStatus(),
 		]);
 		if (!guard.current(g)) return 'skipped';
 		if (liveRes.status === 'fulfilled') {
@@ -154,12 +224,20 @@
 		if (scheduleRes.status === 'fulfilled') schedule = scheduleRes.value;
 		if (customRes.status === 'fulfilled') customRulesContent = customRes.value;
 		customFailed = customRes.status === 'rejected';
-		if (commRes.status === 'fulfilled') commercialConfig = commRes.value;
-		commercialFailed = commRes.status === 'rejected';
+		// OLD CODE START — NET-191 slice 2
+		// if (commRes.status === 'fulfilled') commercialConfig = commRes.value;
+		// commercialFailed = commRes.status === 'rejected';
+		// OLD CODE END
+		// A failed refresh keeps the last ET Pro status and says so
+		if (etproRes.status === 'fulfilled') etpro = etproRes.value;
+		etproFailed = etproRes.status === 'rejected';
 		loaded = true;
 		// Only these feed what the page shows; the source list, stats and schedule replies only
 		// back the controls that aren't wired up yet (#58)
-		const shown = [liveRes, customRes, commRes];
+		// OLD CODE START — NET-191 slice 2
+		// const shown = [liveRes, customRes, commRes];
+		// OLD CODE END
+		const shown = [liveRes, customRes, etproRes];
 		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
 		// const failures = shown.filter((r) => r.status === 'rejected').length;
 		// return failures === 0 ? 'ok' : failures === shown.length ? 'failed' : 'partial';
@@ -170,6 +248,18 @@
 	const refresh = registerPageRefresh(load);
 	onDestroy(refresh.unregister);
 	onMount(() => void refresh.run());
+
+	// While Suricata restarts with a new or removed code, look again every 15 s. The effect's
+	// teardown clears the interval when applying turns false and when the page goes.
+	const applying = $derived(etpro?.applying === true);
+	$effect(() => {
+		if (!applying) return;
+		// runIfIdle: one load can take ~20 s while Suricata restarts, and run() would cancel it every tick
+		const poll = setInterval(() => void refresh.runIfIdle(), APPLY_POLL_MS);
+		return () => clearInterval(poll);
+	});
+	// One request at a time: a rule update, an ET Pro save or remove, or the restart they cause
+	const busy = $derived(updating || savingEtPro || removingEtPro || applying);
 
 	// OLD CODE START — #96: one failed request left every section on its defaults
 	/*
@@ -222,12 +312,22 @@
 		updating = true;
 		try {
 			const result = await updateRulesNow();
-			if (result.success) {
+			// OLD CODE START — NET-191 slice 2: a failure didn't refresh the status line, and "still running" read as failed
+			// if (result.success) {
+			// 	showMessage('Rules updated and reloaded successfully');
+			// 	await refresh.run();
+			// } else {
+			// 	showMessage('Rule update failed: ' + result.output.slice(0, 200), 'error');
+			// }
+			// OLD CODE END
+			if (result.running) {
+				showMessage('The rule update is still running. Refresh this page in a few minutes to see the result.');
+			} else if (result.success) {
 				showMessage('Rules updated and reloaded successfully');
-				await refresh.run();
 			} else {
-				showMessage('Rule update failed: ' + result.output.slice(0, 200), 'error');
+				showMessage('Rule update failed: ' + (result.status?.reason || result.output.slice(0, 200)), 'error');
 			}
+			await refresh.run();
 		} catch {
 			showMessage('Failed to trigger rule update', 'error');
 		} finally {
@@ -262,26 +362,81 @@
 		}
 	}
 
-	async function handleSaveCommercial() {
-		if (!commercialKey || commercialKey.length < 8) {
-			showMessage('Licence key must be at least 8 characters', 'error');
+	// OLD CODE START — NET-191 slice 2: the ET Pro form replaces the commercial licence form
+	// async function handleSaveCommercial() {
+	// 	if (!commercialKey || commercialKey.length < 8) {
+	// 		showMessage('Licence key must be at least 8 characters', 'error');
+	// 		return;
+	// 	}
+	// 	savingCommercial = true;
+	// 	try {
+	// 		const result = await configureCommercial(commercialType, commercialKey);
+	// 		if (result.success) {
+	// 			showMessage(`${commercialType === 'etpro' ? 'ET Pro' : 'Snort Subscriber'} configured`);
+	// 			commercialConfig = await getCommercialConfig();
+	// 			showCommercialForm = false;
+	// 			commercialKey = '';
+	// 		} else {
+	// 			showMessage('Failed to configure commercial source', 'error');
+	// 		}
+	// 	} catch {
+	// 		showMessage('Error configuring commercial source', 'error');
+	// 	} finally {
+	// 		savingCommercial = false;
+	// 	}
+	// }
+	// OLD CODE END
+
+	// A failure shows in the card (the top banner is off-screen and fades); the status is read again
+	// either way, and the buttons stay off until it lands
+	async function handleSaveEtPro(e: SubmitEvent) {
+		e.preventDefault();
+		confirmingRemove = false;
+		etproError = '';
+		const code = etproCode.trim();
+		if (!ETPRO_CODE.test(code)) {
+			etproCodeError = 'An ET Pro code is 16 to 64 letters and digits.';
 			return;
 		}
-		savingCommercial = true;
+		etproCodeError = '';
+		savingEtPro = true;
 		try {
-			const result = await configureCommercial(commercialType, commercialKey);
-			if (result.success) {
-				showMessage(`${commercialType === 'etpro' ? 'ET Pro' : 'Snort Subscriber'} configured`);
-				commercialConfig = await getCommercialConfig();
-				showCommercialForm = false;
-				commercialKey = '';
+			const result = await saveEtProCode(code);
+			if (result.ok) {
+				etproCode = '';
+				showMessage('Code saved. Suricata is restarting with ET Pro.');
 			} else {
-				showMessage('Failed to configure commercial source', 'error');
+				etproError = result.error ?? "Couldn't save the ET Pro code.";
 			}
 		} catch {
-			showMessage('Error configuring commercial source', 'error');
+			etproError = "Couldn't save the ET Pro code: the request failed.";
 		} finally {
-			savingCommercial = false;
+			await refresh.run();
+			savingEtPro = false;
+		}
+	}
+
+	// The first click asks; the same button then confirms, so focus stays put
+	async function handleRemoveEtPro() {
+		if (!confirmingRemove) {
+			confirmingRemove = true;
+			return;
+		}
+		etproError = '';
+		removingEtPro = true;
+		try {
+			const result = await clearEtProCode();
+			if (result.ok) {
+				showMessage(result.cleared ? 'Code removed. Suricata is restarting with ET Open.' : 'No ET Pro code was set.');
+			} else {
+				etproError = result.error ?? "Couldn't remove the ET Pro code.";
+			}
+		} catch {
+			etproError = "Couldn't remove the ET Pro code: the request failed.";
+		} finally {
+			await refresh.run();
+			removingEtPro = false;
+			confirmingRemove = false;
 		}
 	}
 
@@ -308,12 +463,17 @@
 		live
 			? [
 					{ key: 'rules', label: 'Enabled rules', value: fmt(live.enabled_rules) },
-					{ key: 'sources', label: 'Sources', value: String(live.sources.length) },
+					// OLD CODE START — NET-191 slice 2: counts suricata-update's enabled sources when the daemon sends them
+					// { key: 'sources', label: 'Sources', value: String(live.sources.length) },
+					// OLD CODE END
+					{ key: 'sources', label: 'Sources', value: String(live.enabled_sources?.length || live.sources.length) },
 					{ key: 'updated', label: 'Last updated', value: formatDate(live.last_updated) },
 				]
 			: [],
 	);
 	const retryMessage = 'Check that Suricata is running on the System page, then try again.';
+	const update = $derived(updateNotice(live?.update));
+	const enabledSources = $derived(live?.enabled_sources ?? []);
 </script>
 
 <svelte:head>
@@ -327,7 +487,10 @@
 		<p class="page-sub">The threat detection rules Suricata runs, where they come from and when they refresh</p>
 	</div>
 	<div class="head-actions">
+		<!-- OLD CODE START — NET-191 slice 2: an update could start while an ET Pro change ran or Suricata restarted
 		<button class="btn primary" type="button" onclick={handleUpdateNow} disabled={updating}>
+		OLD CODE END -->
+		<button class="btn primary" type="button" onclick={handleUpdateNow} disabled={busy}>
 			<Icon name="refresh" />{updating ? 'Updating…' : 'Update rules now'}
 		</button>
 	</div>
@@ -352,6 +515,13 @@
 			/>
 		{:else}
 			<StatStrip stats={liveStats} />
+			{#if update.tone}
+				<p class={['notice', 'update-line', update.tone]} role="status">
+					<Icon name={update.tone === 'is-ok' ? 'check' : 'warn'} /><span>{update.text}</span>
+				</p>
+			{:else}
+				<p class="card-text update-line">{update.text}</p>
+			{/if}
 		{/if}
 	</Card>
 
@@ -366,6 +536,13 @@
 				message={retryMessage}
 				onaction={() => refresh.run()}
 			/>
+		{:else if enabledSources.length > 0}
+			<p class="card-text">Turning feeds on or off from this page is not available yet.</p>
+			<ul class="rows">
+				{#each enabledSources as name}
+					<li class="two"><b>{SOURCE_NAMES.get(name) ?? name}</b><span class="mono">{name}</span></li>
+				{/each}
+			</ul>
 		{:else if live.sources.length === 0}
 			<CardState
 				state="empty"
@@ -425,6 +602,7 @@
 		</div>
 	</Card>
 
+	<!-- OLD CODE START — NET-191 slice 2: Snort Subscriber is retired and the ET Pro card below is wired to suricata-update
 	<Card title="Commercial rule sources" sub="ET Pro or Snort Subscriber licence keys" class="c-6">
 		<p class="card-text">Configure ET Pro or Snort Subscriber licence keys for premium rule feeds.</p>
 		<div class="notice is-warn" role="status">
@@ -477,6 +655,79 @@
 			</div>
 		{/if}
 	</Card>
+	OLD CODE END -->
+
+	<Card title="ET Pro" sub="Emerging Threats Pro from Proofpoint · optional, needs a paid code" class="c-6">
+		{#if !loaded}
+			<CardState state="loading" title="Loading the ET Pro status" />
+		{:else if !etpro}
+			<CardState
+				state="error"
+				title="Couldn't read the ET Pro status: the request failed."
+				message="Try again in a moment. If it keeps failing, check the System page."
+				onaction={() => refresh.run()}
+			/>
+		{:else}
+			<p class="card-text">
+				With a code, NetTap downloads ET Pro instead of ET Open. The code is checked with Proofpoint before it is saved,
+				stays on this device and is never shown again.
+			</p>
+			{#if etproFailed}
+				<p class="notice is-warn" role="status"><Icon name="warn" /><span>{loadFailed('the ET Pro status', true)}</span></p>
+			{/if}
+			{#if etpro.applying}
+				<p class="notice is-warn" role="status">
+					<Icon name="warn" /><span>Suricata is restarting with the new rules. This takes a few minutes; this page refreshes by itself.</span>
+				</p>
+			{:else if etpro.activation?.state === 'active' && etpro.configured && etpro.active}
+				<p class="notice is-ok" role="status">
+					<Icon name="check" /><span>ET Pro rules are active: {fmt(etpro.activation.etpro_rules)} rules loaded.</span>
+				</p>
+			{:else if etpro.activation && etpro.activation.state !== 'active'}
+				<p class="notice is-warn" role="status"><Icon name="warn" /><span>{etpro.activation.message}</span></p>
+			{/if}
+			<dl class="facts">
+				<dt>Code</dt>
+				<dd>{etpro.configured ? 'Saved' : 'Not set'}</dd>
+				<dt>In use</dt>
+				<dd>{etpro.active ? (live?.etpro_rules != null ? `Yes — ${fmt(live.etpro_rules)} ET Pro rules active` : 'Yes') : 'No'}</dd>
+				<dt>Last update</dt>
+				<dd>{etpro.last_update_ok === true ? 'OK' : etpro.last_update_ok === false ? 'Failed' : 'Unknown'}</dd>
+			</dl>
+			<form class="etpro-form" onsubmit={handleSaveEtPro} novalidate>
+				<div class="field">
+					<label class="label" for="etpro-code">ET Pro code</label>
+					<input
+						class="input mono"
+						id="etpro-code"
+						type="password"
+						autocomplete="off"
+						spellcheck="false"
+						bind:value={etproCode}
+						aria-invalid={etproCodeError ? 'true' : undefined}
+						aria-describedby={etproCodeError ? 'etpro-code-error' : undefined}
+					/>
+					{#if etproCodeError}<p class="field-error" id="etpro-code-error" role="alert">{etproCodeError}</p>{/if}
+				</div>
+				{#if etproError}
+					<p class="notice is-error" role="alert"><Icon name="warn" /><span>{etproError}</span></p>
+				{/if}
+				<div class="form-actions">
+					{#if etpro.configured}
+						<button class="btn" type="button" onclick={handleRemoveEtPro} disabled={busy}>
+							{confirmingRemove ? 'Confirm: remove and restart Suricata' : 'Remove code'}
+						</button>
+						{#if confirmingRemove}
+							<button class="btn" type="button" onclick={() => (confirmingRemove = false)} disabled={removingEtPro}>Cancel</button>
+						{/if}
+					{/if}
+					<button class="btn primary" type="submit" disabled={busy}>
+						{savingEtPro ? 'Checking the code…' : 'Save code'}
+					</button>
+				</div>
+			</form>
+		{/if}
+	</Card>
 </div>
 
 <style>
@@ -484,5 +735,10 @@
 	.notice { margin-bottom: var(--sp-3); }
 	.rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); font-size: var(--text-sm); }
 	.rows .mono { overflow-wrap: anywhere; }
+	/* OLD CODE START — NET-191 slice 2: the commercial form is retired
 	.commercial-form { margin-top: var(--sp-4); }
+	OLD CODE END */
+	.etpro-form { margin-top: var(--sp-4); }
+	.etpro-form .notice { margin: var(--sp-3) 0 0; }
+	.update-line { margin: var(--sp-4) 0 0; }
 </style>

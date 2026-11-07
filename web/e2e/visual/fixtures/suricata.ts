@@ -1,6 +1,9 @@
 /** Fixtures for /api/suricata/rules/* (daemon/api/suricata_rules.py), reached through explicit web routes and the catch-all. */
 import type {
-	CommercialConfig,
+	// OLD CODE START — NET-191 slice 2: the commercial config became the ET Pro status
+	// CommercialConfig,
+	// OLD CODE END
+	EtProStatus,
 	LiveRuleStatus,
 	RuleSourcesResponse,
 	RuleStats,
@@ -55,6 +58,20 @@ const LIVE = {
 	sources: ['et/open', 'oisf/trafficid'],
 	schedule: '0 3 * * *',
 	error: null,
+	enabled_sources: ['et/open', 'abuse.ch/sslbl-blacklist', 'echap/stalkerware', 'ipfire/dbl'],
+	etpro_rules: 0,
+	engine: { loaded: 41250, failed: 0, reload_time: iso(6 * HOUR) },
+	update: {
+		state: 'active',
+		attempt: iso(6 * HOUR),
+		exit_code: 0,
+		reason: '',
+		last_success: iso(6 * HOUR),
+		last_activation: iso(6 * HOUR),
+		stale: false,
+		recovery_pending: false,
+		missing_sources: [],
+	},
 } satisfies LiveRuleStatus;
 
 const CUSTOM_EMPTY = { content: '' } satisfies CustomRulesContent;
@@ -62,8 +79,27 @@ const CUSTOM = {
 	content: 'alert tcp $HOME_NET any -> any 4444 (msg:"EXAMPLE Outbound connection to port 4444"; sid:9000001; rev:1;)\n',
 } satisfies CustomRulesContent;
 
-const COMMERCIAL_EMPTY = { configured: false } satisfies CommercialConfig;
-const COMMERCIAL = { configured: true, source_type: 'etpro', license_key_masked: 'ABCD****WXYZ', configured_at: iso(30 * DAY) } satisfies CommercialConfig;
+// OLD CODE START — NET-191 slice 2: the commercial config became the ET Pro status
+// const COMMERCIAL_EMPTY = { configured: false } satisfies CommercialConfig;
+// const COMMERCIAL = { configured: true, source_type: 'etpro', license_key_masked: 'ABCD****WXYZ', configured_at: iso(30 * DAY) } satisfies CommercialConfig;
+// OLD CODE END
+const COMMERCIAL_EMPTY = { configured: false, active: false, last_update_ok: null, applying: false, activation: null } satisfies EtProStatus;
+const COMMERCIAL = {
+	configured: true,
+	active: false,
+	last_update_ok: false,
+	applying: false,
+	activation: {
+		state: 'failed',
+		finished_at: iso(30 * DAY),
+		rules_loaded: null,
+		rules_failed: null,
+		etpro_rules: 0,
+		enabled_sources: ['et/open'],
+		update_state: 'failed',
+		message: 'Example: the ET Pro download failed, so Suricata kept the last good rules.',
+	},
+} satisfies EtProStatus;
 
 export const SURICATA_ROUTES: FixtureRoute[] = [
 	{ path: '/api/suricata/rules/sources', empty: SOURCES_EMPTY, populated: SOURCES },

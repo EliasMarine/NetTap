@@ -125,110 +125,112 @@ class TestEnableDisable:
 # ---------------------------------------------------------------------------
 
 
-class TestUpdateRules:
-    def test_successful_update(self, manager):
-        async def run():
-            with patch("asyncio.create_subprocess_exec") as mock_exec:
-                # Mock suricata-update process
-                update_proc = AsyncMock()
-                update_proc.returncode = 0
-                update_proc.communicate = AsyncMock(
-                    return_value=(b"Rules updated: 30000 loaded", None)
-                )
-
-                # Mock suricatasc reload process
-                reload_proc = AsyncMock()
-                reload_proc.returncode = 0
-                reload_proc.communicate = AsyncMock(
-                    return_value=(b"Rules reloaded", None)
-                )
-
-                mock_exec.side_effect = [update_proc, reload_proc]
-
-                result = await manager.update_rules()
-                assert result["success"] is True
-                assert "30000" in result["output"]
-                assert result["reload_output"] == "Rules reloaded"
-
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(run())
-        finally:
-            loop.close()
-
-    def test_failed_reload_is_not_success(self, manager):
-        """#96: rules downloaded but not loaded into Suricata is not a success."""
-
-        async def run():
-            with patch("asyncio.create_subprocess_exec") as mock_exec:
-                update_proc = AsyncMock()
-                update_proc.returncode = 0
-                update_proc.communicate = AsyncMock(
-                    return_value=(b"30000 loaded", None)
-                )
-                reload_proc = AsyncMock()
-                reload_proc.returncode = 1
-                reload_proc.communicate = AsyncMock(
-                    return_value=(b'{"return": "NOK", "message": "busy"}', None)
-                )
-                mock_exec.side_effect = [update_proc, reload_proc]
-
-                result = await manager.update_rules()
-                assert result["success"] is False
-                assert "NOK" in result["reload_output"]
-
-        asyncio.run(run())
-
-    def test_reload_exception_is_not_success(self, manager):
-        async def run():
-            update_proc = AsyncMock()
-            update_proc.returncode = 0
-            update_proc.communicate = AsyncMock(return_value=(b"ok", None))
-            with patch(
-                "asyncio.create_subprocess_exec",
-                side_effect=[update_proc, OSError("docker socket gone")],
-            ):
-                result = await manager.update_rules()
-            assert result["success"] is False
-            assert "Reload failed" in result["reload_output"]
-
-        asyncio.run(run())
-
-    def test_failed_update(self, manager):
-        async def run():
-            with patch("asyncio.create_subprocess_exec") as mock_exec:
-                proc = AsyncMock()
-                proc.returncode = 1
-                proc.communicate = AsyncMock(
-                    return_value=(b"Error: update failed", None)
-                )
-                mock_exec.return_value = proc
-
-                result = await manager.update_rules()
-                assert result["success"] is False
-                assert "Error" in result["output"]
-
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(run())
-        finally:
-            loop.close()
-
-    def test_exec_exception(self, manager):
-        async def run():
-            with patch(
-                "asyncio.create_subprocess_exec",
-                side_effect=FileNotFoundError("docker not found"),
-            ):
-                result = await manager.update_rules()
-                assert result["success"] is False
-                assert "docker not found" in result["output"]
-
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(run())
-        finally:
-            loop.close()
+# OLD CODE START — NET-191 slice 2: Update now runs the shim (one docker exec); TestUpdateRulesThroughTheShim below
+# class TestUpdateRules:
+#     def test_successful_update(self, manager):
+#         async def run():
+#             with patch("asyncio.create_subprocess_exec") as mock_exec:
+#                 # Mock suricata-update process
+#                 update_proc = AsyncMock()
+#                 update_proc.returncode = 0
+#                 update_proc.communicate = AsyncMock(
+#                     return_value=(b"Rules updated: 30000 loaded", None)
+#                 )
+#
+#                 # Mock suricatasc reload process
+#                 reload_proc = AsyncMock()
+#                 reload_proc.returncode = 0
+#                 reload_proc.communicate = AsyncMock(
+#                     return_value=(b"Rules reloaded", None)
+#                 )
+#
+#                 mock_exec.side_effect = [update_proc, reload_proc]
+#
+#                 result = await manager.update_rules()
+#                 assert result["success"] is True
+#                 assert "30000" in result["output"]
+#                 assert result["reload_output"] == "Rules reloaded"
+#
+#         loop = asyncio.new_event_loop()
+#         try:
+#             loop.run_until_complete(run())
+#         finally:
+#             loop.close()
+#
+#     def test_failed_reload_is_not_success(self, manager):
+#         """#96: rules downloaded but not loaded into Suricata is not a success."""
+#
+#         async def run():
+#             with patch("asyncio.create_subprocess_exec") as mock_exec:
+#                 update_proc = AsyncMock()
+#                 update_proc.returncode = 0
+#                 update_proc.communicate = AsyncMock(
+#                     return_value=(b"30000 loaded", None)
+#                 )
+#                 reload_proc = AsyncMock()
+#                 reload_proc.returncode = 1
+#                 reload_proc.communicate = AsyncMock(
+#                     return_value=(b'{"return": "NOK", "message": "busy"}', None)
+#                 )
+#                 mock_exec.side_effect = [update_proc, reload_proc]
+#
+#                 result = await manager.update_rules()
+#                 assert result["success"] is False
+#                 assert "NOK" in result["reload_output"]
+#
+#         asyncio.run(run())
+#
+#     def test_reload_exception_is_not_success(self, manager):
+#         async def run():
+#             update_proc = AsyncMock()
+#             update_proc.returncode = 0
+#             update_proc.communicate = AsyncMock(return_value=(b"ok", None))
+#             with patch(
+#                 "asyncio.create_subprocess_exec",
+#                 side_effect=[update_proc, OSError("docker socket gone")],
+#             ):
+#                 result = await manager.update_rules()
+#             assert result["success"] is False
+#             assert "Reload failed" in result["reload_output"]
+#
+#         asyncio.run(run())
+#
+#     def test_failed_update(self, manager):
+#         async def run():
+#             with patch("asyncio.create_subprocess_exec") as mock_exec:
+#                 proc = AsyncMock()
+#                 proc.returncode = 1
+#                 proc.communicate = AsyncMock(
+#                     return_value=(b"Error: update failed", None)
+#                 )
+#                 mock_exec.return_value = proc
+#
+#                 result = await manager.update_rules()
+#                 assert result["success"] is False
+#                 assert "Error" in result["output"]
+#
+#         loop = asyncio.new_event_loop()
+#         try:
+#             loop.run_until_complete(run())
+#         finally:
+#             loop.close()
+#
+#     def test_exec_exception(self, manager):
+#         async def run():
+#             with patch(
+#                 "asyncio.create_subprocess_exec",
+#                 side_effect=FileNotFoundError("docker not found"),
+#             ):
+#                 result = await manager.update_rules()
+#                 assert result["success"] is False
+#                 assert "docker not found" in result["output"]
+#
+#         loop = asyncio.new_event_loop()
+#         try:
+#             loop.run_until_complete(run())
+#         finally:
+#             loop.close()
+# OLD CODE END
 
 
 # ---------------------------------------------------------------------------
@@ -342,39 +344,41 @@ class TestCustomRules:
 # ---------------------------------------------------------------------------
 
 
-class TestCommercialConfig:
-    def test_configure_etpro(self, manager):
-        result = manager.configure_commercial("etpro", "ABCDEFGH12345678")
-        assert result["success"] is True
-        assert result["source_type"] == "etpro"
-        assert "configured_at" in result
-
-    def test_configure_snort(self, manager):
-        result = manager.configure_commercial("snort", "OINKCODE12345678")
-        assert result["success"] is True
-        assert result["source_type"] == "snort"
-
-    def test_invalid_source_type(self, manager):
-        with pytest.raises(ValueError, match="Invalid source type"):
-            manager.configure_commercial("invalid", "ABCDEFGH12345678")
-
-    def test_short_key_raises(self, manager):
-        with pytest.raises(ValueError, match="at least 8"):
-            manager.configure_commercial("etpro", "short")
-
-    def test_get_commercial_config(self, manager):
-        manager.configure_commercial("etpro", "ABCDEFGH12345678")
-        config = manager.get_commercial_config()
-        assert config is not None
-        assert config["source_type"] == "etpro"
-        assert "ABCD" in config["license_key_masked"]
-        assert "5678" in config["license_key_masked"]
-        # Full key should not be exposed
-        assert "ABCDEFGH12345678" not in config["license_key_masked"]
-
-    def test_no_commercial_config(self, manager):
-        config = manager.get_commercial_config()
-        assert config is None
+# OLD CODE START — NET-191 slice 2: configure_commercial/get_commercial_config retired (test_etpro.py covers ET Pro)
+# class TestCommercialConfig:
+#     def test_configure_etpro(self, manager):
+#         result = manager.configure_commercial("etpro", "ABCDEFGH12345678")
+#         assert result["success"] is True
+#         assert result["source_type"] == "etpro"
+#         assert "configured_at" in result
+#
+#     def test_configure_snort(self, manager):
+#         result = manager.configure_commercial("snort", "OINKCODE12345678")
+#         assert result["success"] is True
+#         assert result["source_type"] == "snort"
+#
+#     def test_invalid_source_type(self, manager):
+#         with pytest.raises(ValueError, match="Invalid source type"):
+#             manager.configure_commercial("invalid", "ABCDEFGH12345678")
+#
+#     def test_short_key_raises(self, manager):
+#         with pytest.raises(ValueError, match="at least 8"):
+#             manager.configure_commercial("etpro", "short")
+#
+#     def test_get_commercial_config(self, manager):
+#         manager.configure_commercial("etpro", "ABCDEFGH12345678")
+#         config = manager.get_commercial_config()
+#         assert config is not None
+#         assert config["source_type"] == "etpro"
+#         assert "ABCD" in config["license_key_masked"]
+#         assert "5678" in config["license_key_masked"]
+#         # Full key should not be exposed
+#         assert "ABCDEFGH12345678" not in config["license_key_masked"]
+#
+#     def test_no_commercial_config(self, manager):
+#         config = manager.get_commercial_config()
+#         assert config is None
+# OLD CODE END
 
 
 # ---------------------------------------------------------------------------

@@ -449,11 +449,17 @@ services:
     # The loader runs first: it exports PCAP_IFACE / PCAP_FILTER / CAPTURE_FILTER
     # from /etc/nettap/capture.env when the daemon has written one (capture mode
     # set from the wizard, e.g. DHCP gateway). No file = compose env below.
+    # The loader also turns et/open into et/pro when /etc/nettap/suricata.env holds an ET Pro code.
+    # nettap-rules-update.sh start (NET-191): wipes the enabled rule sources so each start enables
+    # exactly SURICATA_UPDATE_ENABLE_SOURCES, prepares the rules-state volume, and puts a shim at
+    # Malcolm's suricata-update-rules.sh so the startup, nightly and manual updates all take the rules
+    # lock and write the status record. Always exits 0.
     entrypoint:
       - /bin/bash
       - -c
       - >-
         . /usr/local/bin/nettap-capture-env.sh
+        && bash /usr/local/bin/nettap-rules-update.sh start
         && mkdir -p /var/log/suricata/live
         && chown -R $${PUID:-1000}:$${PGID:-1000} /var/log/suricata
         && exec /usr/bin/tini --
@@ -489,9 +495,20 @@ services:
       #   2200121 "SURICATA Ethertype unknown": STP BPDUs (802.3/LLC frames) and LLDP
       #   2231001 "SURICATA QUIC error on data": QUIC packets Suricata's parser cannot read
       # Malcolm's entrypoint writes these to disable.conf and regenerates the rules at start.
-      SURICATA_DISABLE_SIDS: "2200121,2231001"
+      # OLD CODE START — NET-191 slice 2: the IPFire DBL category allowlist joins the list
+      # SURICATA_DISABLE_SIDS: "2200121,2231001"
+      # OLD CODE END
+      # The re: item disables every IPFire DBL category except Malware and Phishing (Python regex on the
+      # rule text; disable.conf applies to every update: startup, nightly, manual). No commas allowed.
+      SURICATA_DISABLE_SIDS: '2200121,2231001,re:msg:"IPFire DBL \[(?!Malware\]|Phishing\])'
       SURICATA_UPDATE_RULES: "true"
-      SURICATA_UPDATE_ETOPEN: "true"
+      # OLD CODE START — NET-191 slice 2: read by nothing in Malcolm 26.10.0; upstream Malcolm turns it
+      # into --etopen, which would fetch ET Open beside ET Pro. ET Open comes from the source list below.
+      # SURICATA_UPDATE_ETOPEN: "true"
+      # OLD CODE END
+      # Free rule sources (NET-191 slice 2). The loader swaps et/open for et/pro when an ET Pro code is
+      # set. Owner rules use SIDs 1000000-1999999; none of these sources does (checked by the deploy gate).
+      SURICATA_UPDATE_ENABLE_SOURCES: "et/open,abuse.ch/sslbl-blacklist,echap/stalkerware,ipfire/dbl"
       SURICATA_ROTATED_PCAP: "false"
       # upload-common.env — EXTRA_TAGS required by Malcolm supervisord config
       EXTRA_TAGS: ""
@@ -509,6 +526,10 @@ services:
       # Capture settings written by the daemon (capture.env) + their loader
       - /etc/nettap:/etc/nettap:ro
       - ../config/capture/nettap-capture-env.sh:/usr/local/bin/nettap-capture-env.sh:ro
+      # NET-191 slice 2: the rule update wrapper, and its lock, status record and last good rules
+      # (shared with the daemon, which takes the same lock before it reloads or restarts Suricata)
+      - ../config/suricata/nettap-rules-update.sh:/usr/local/bin/nettap-rules-update.sh:ro
+      - nettap-rules-state:/run/nettap-rules
     depends_on:
       nettap-storage-daemon:
         condition: service_healthy
@@ -892,6 +913,9 @@ services:
       # so it lands inside the /var/run tmpfs above (/var/run -> /run in the
       # image) instead of racing it; the daemon reads /run/nettap-auth.
       - daemon-auth:/var/run/nettap-auth
+      # Suricata's rules lock and update status record (NET-191; rw in suricata-live too). Under
+      # /var/run like daemon-auth so it lands in the tmpfs; the daemon reads /run/nettap-rules.
+      - nettap-rules-state:/var/run/nettap-rules
     environment:
       <<: *opensearch-env
       # Override OPENSEARCH_URL for host networking — Docker DNS (opensearch:9200)
@@ -1197,6 +1221,8 @@ volumes:
   zeek-live-logs:
   suricata-live-logs:
   suricata-rules:
+  # Suricata rule updates (NET-191): rules.lock, update-status.json, update-in-progress, last-good → gen-*
+  nettap-rules-state:
 
   # NetTap data volumes
   storage-data:

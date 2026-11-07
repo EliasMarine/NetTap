@@ -19,7 +19,9 @@ const KEYS_EMPTY = {
 		SMTP_PASSWORD: false,
 		SMTP_SENDER_EMAIL: false,
 		WEBHOOK_URL: false,
-		SURICATA_ET_PRO_KEY: false,
+		// OLD CODE START — NET-191 slice 2: the daemon no longer has this key (the ET Pro code is in Settings › Suricata rules)
+		// SURICATA_ET_PRO_KEY: false,
+		// OLD CODE END
 	},
 } satisfies ApiKeysResponse;
 

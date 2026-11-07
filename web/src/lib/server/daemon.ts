@@ -44,6 +44,12 @@ export interface DaemonError {
 export const THREAT_SCAN_TIMEOUT_MS = 120_000;
 
 /**
+ * A rule update, or saving/removing the ET Pro code, can take minutes: the daemon waits up to 240 s for
+ * the rules lock, runs suricata-update and restarts Suricata, and answers 202 by ~270 s (NET-191 slice 2).
+ */
+export const RULE_UPDATE_TIMEOUT_MS = 290_000;
+
+/**
  * Fetch a path from the NetTap daemon API.
  * Handles connection errors gracefully — returns an error Response
  * instead of throwing if the daemon is unreachable.

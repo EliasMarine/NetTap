@@ -19,6 +19,8 @@ const LIVE = {
 	error: null,
 };
 
+const ETPRO_OFF = { configured: false, active: false, last_update_ok: null, applying: false, activation: null };
+
 function stubFetch(live: { status: number; body: unknown }) {
 	vi.stubGlobal(
 		'fetch',
@@ -71,7 +73,10 @@ describe('Suricata rules page — live status', () => {
 		await screen.findByText('64,307');
 
 		expect(screen.getByRole('button', { name: 'Save custom rules' })).toBeDisabled();
-		expect(screen.getByRole('button', { name: 'Add commercial licence' })).toBeDisabled();
+		// OLD CODE START — NET-191 slice 2: the commercial licence form is gone; the ET Pro card is wired up
+		// expect(screen.getByRole('button', { name: 'Add commercial licence' })).toBeDisabled();
+		// OLD CODE END
+		expect(screen.queryByRole('button', { name: 'Add commercial licence' })).not.toBeInTheDocument();
 		expect(screen.queryByRole('combobox', { name: /Auto-update interval/ })).not.toBeInTheDocument();
 	});
 
@@ -82,7 +87,10 @@ describe('Suricata rules page — live status', () => {
 		await screen.findByText('64,307');
 
 		expect(screen.getByText("Couldn't load the saved custom rules: the request failed.")).toBeInTheDocument();
-		expect(screen.getByText("Couldn't load the commercial licence status: the request failed.")).toBeInTheDocument();
+		// OLD CODE START — NET-191 slice 2: the ET Pro card shows its own error state instead
+		// expect(screen.getByText("Couldn't load the commercial licence status: the request failed.")).toBeInTheDocument();
+		// OLD CODE END
+		expect(screen.getByText("Couldn't read the ET Pro status: the request failed.")).toBeInTheDocument();
 	});
 
 	it('shows the saved custom rules and license without a failure note when they load', async () => {
@@ -92,7 +100,10 @@ describe('Suricata rules page — live status', () => {
 				const replies: Record<string, unknown> = {
 					'/api/suricata/rules/live': LIVE,
 					'/api/suricata/rules/custom': { content: 'alert tcp any any -> any any (sid:9999001;)' },
-					'/api/suricata/rules/commercial': { configured: false },
+					// OLD CODE START — NET-191 slice 2: the ET Pro status shape
+					// '/api/suricata/rules/commercial': { configured: false },
+					// OLD CODE END
+					'/api/suricata/rules/commercial': ETPRO_OFF,
 				};
 				const body = replies[url];
 				return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 500, json: async () => ({}) };
@@ -120,7 +131,10 @@ function stubReplies(replies: Record<string, unknown>) {
 const SHOWN = {
 	'/api/suricata/rules/live': LIVE,
 	'/api/suricata/rules/custom': { content: '' },
-	'/api/suricata/rules/commercial': { configured: false },
+	// OLD CODE START — NET-191 slice 2: the ET Pro status shape
+	// '/api/suricata/rules/commercial': { configured: false },
+	// OLD CODE END
+	'/api/suricata/rules/commercial': ETPRO_OFF,
 };
 
 describe('Suricata rules page — card states', () => {

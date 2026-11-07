@@ -3,7 +3,7 @@ import { daemonFetch } from '$lib/server/daemon.js';
 import { POST as enablePOST } from './enable/+server';
 import { POST as disablePOST } from './disable/+server';
 
-vi.mock('$lib/server/daemon.js', () => ({ daemonFetch: vi.fn() }));
+vi.mock('$lib/server/daemon.js', () => ({ daemonFetch: vi.fn(), RULE_UPDATE_TIMEOUT_MS: 290_000 }));
 
 function daemonReply(status: number, body: unknown) {
 	vi.mocked(daemonFetch).mockResolvedValue(
@@ -21,12 +21,12 @@ function post(path: string, body?: unknown) {
 type Event = Parameters<typeof enablePOST>[0];
 type DisableEvent = Parameters<typeof disablePOST>[0];
 
-describe('DHCP gateway proxy routes (60 s timeout)', () => {
+describe('DHCP gateway proxy routes (rule-update timeout)', () => {
 	afterEach(() => {
 		vi.mocked(daemonFetch).mockReset();
 	});
 
-	it('enable forwards the confirm body to the daemon with a 60 s timeout', async () => {
+	it('enable forwards the confirm body and waits as long as a rule update (Suricata restart)', async () => {
 		daemonReply(200, { dhcp_enabled: true, capture_restart: { restarted: [], errors: [] } });
 
 		const res = await enablePOST({ request: post('/api/capture/dhcp/enable', { confirm: true }) } as Event);
@@ -34,7 +34,7 @@ describe('DHCP gateway proxy routes (60 s timeout)', () => {
 		expect(daemonFetch).toHaveBeenCalledWith(
 			'/api/capture/dhcp/enable',
 			{ method: 'POST', body: '{"confirm":true}' },
-			60_000
+			290_000
 		);
 		expect(res.status).toBe(200);
 		expect(await res.json()).toMatchObject({ dhcp_enabled: true });
@@ -59,12 +59,12 @@ describe('DHCP gateway proxy routes (60 s timeout)', () => {
 		expect((await res.json()).error).toMatch(/timeout/);
 	});
 
-	it('disable forwards a POST with a 60 s timeout', async () => {
+	it('disable forwards a POST and waits as long as a rule update', async () => {
 		daemonReply(200, { dhcp_enabled: false });
 
 		const res = await disablePOST({ request: post('/api/capture/dhcp/disable') } as DisableEvent);
 
-		expect(daemonFetch).toHaveBeenCalledWith('/api/capture/dhcp/disable', { method: 'POST' }, 60_000);
+		expect(daemonFetch).toHaveBeenCalledWith('/api/capture/dhcp/disable', { method: 'POST' }, 290_000);
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ dhcp_enabled: false });
 	});
