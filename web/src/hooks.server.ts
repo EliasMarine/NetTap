@@ -1,5 +1,5 @@
 import type { Handle } from '@sveltejs/kit';
-import { redirect } from '@sveltejs/kit';
+import { json, redirect } from '@sveltejs/kit';
 import { verifyToken, hasUsers } from '$lib/server/auth.js';
 
 // OLD CODE START — setup, bridge and go-live stayed public forever, so anyone on
@@ -83,6 +83,11 @@ function isFirstRun(): boolean {
 	}
 }
 
+/** The reply to an API or remote-function call with no session: JSON the caller can check. */
+function unauthorised(): Response {
+	return json({ error: 'Sign in first' }, { status: 401 });
+}
+
 export const handle: Handle = async ({ event, resolve }) => {
 	const { pathname } = event.url;
 
@@ -98,10 +103,13 @@ export const handle: Handle = async ({ event, resolve }) => {
 	// A remote-function call's pathname comes from the client's x-sveltekit-pathname header, so
 	// no path rule may open it: without a session it is refused (the app has no remote functions yet)
 	if (event.isRemoteRequest && !event.locals.user) {
-		return new Response(JSON.stringify({ error: 'Sign in first' }), {
-			status: 401,
-			headers: { 'content-type': 'application/json' },
-		});
+		// OLD CODE START — NET-197: /api calls get the same reply now, so it lives in unauthorised()
+		// return new Response(JSON.stringify({ error: 'Sign in first' }), {
+		// 	status: 401,
+		// 	headers: { 'content-type': 'application/json' },
+		// });
+		// OLD CODE END
+		return unauthorised();
 	}
 
 	// OLD CODE START — replaced by the first-run gate below (2026-10-29)
@@ -141,6 +149,11 @@ export const handle: Handle = async ({ event, resolve }) => {
 		const firstRun = isFirstRun();
 		if (firstRun && isFirstRunPath(event.request.method, pathname)) {
 			return resolve(event);
+		}
+		// NET-197: an API call gets 401 JSON, not the redirects below: fetch follows a redirect,
+		// so the login or setup page's HTML reached the caller as a 200 and looked like success
+		if (!event.locals.user && isUnder(pathname, '/api')) {
+			return unauthorised();
 		}
 		if (firstRun) {
 			throw redirect(302, '/setup');
