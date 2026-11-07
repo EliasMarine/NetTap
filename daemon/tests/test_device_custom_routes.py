@@ -115,7 +115,9 @@ class _RoutesBase(AioHTTPTestCase):
 class TestNameRoutes(_RoutesBase):
     @unittest_run_loop
     async def test_put_sets_and_answers_with_the_device(self):
-        resp = await self.client.put(f"/api/devices/registry/{MAC}/name", json={"name": " TV "})
+        resp = await self.client.put(
+            f"/api/devices/registry/{MAC}/name", json={"name": " TV "}
+        )
         body = await resp.json()
         assert resp.status == 200
         assert body["device"]["display_name"] == "TV"
@@ -125,7 +127,8 @@ class TestNameRoutes(_RoutesBase):
     @unittest_run_loop
     async def test_percent_encoded_and_lower_case_macs_work(self):
         resp = await self.client.put(
-            "/api/devices/registry/aa%3Abb%3Acc%3Add%3Aee%3A01/name", json={"name": "TV"}
+            "/api/devices/registry/aa%3Abb%3Acc%3Add%3Aee%3A01/name",
+            json={"name": "TV"},
         )
         assert resp.status == 200 and self.store.name_for(MAC) == "TV"
 
@@ -135,10 +138,14 @@ class TestNameRoutes(_RoutesBase):
             resp = await self.client.put(f"/api/devices/registry/{MAC}/name", json=body)
             assert resp.status == 400, body
         resp = await self.client.put(
-            f"/api/devices/registry/{MAC}/name", data="not json", headers={"Content-Type": "application/json"}
+            f"/api/devices/registry/{MAC}/name",
+            data="not json",
+            headers={"Content-Type": "application/json"},
         )
         assert resp.status == 400
-        resp = await self.client.put("/api/devices/registry/nope/name", json={"name": "TV"})
+        resp = await self.client.put(
+            "/api/devices/registry/nope/name", json={"name": "TV"}
+        )
         assert resp.status == 400
 
     @unittest_run_loop
@@ -151,7 +158,9 @@ class TestNameRoutes(_RoutesBase):
     @unittest_run_loop
     async def test_opensearch_down_is_a_502_for_a_put(self):
         self.os.get.side_effect = OpenSearchException("down")
-        resp = await self.client.put(f"/api/devices/registry/{MAC}/name", json={"name": "TV"})
+        resp = await self.client.put(
+            f"/api/devices/registry/{MAC}/name", json={"name": "TV"}
+        )
         assert resp.status == 502 and self.store.names() == {}
 
     @unittest_run_loop
@@ -164,31 +173,48 @@ class TestNameRoutes(_RoutesBase):
     @unittest_run_loop
     async def test_an_unreadable_store_is_a_503(self):
         self.store._problem = "Device names file is unreadable: x"
-        resp = await self.client.put(f"/api/devices/registry/{MAC}/name", json={"name": "TV"})
+        resp = await self.client.put(
+            f"/api/devices/registry/{MAC}/name", json={"name": "TV"}
+        )
         assert resp.status == 503
 
 
 class TestPictureRoutes(_RoutesBase):
     @unittest_run_loop
     async def test_icon_then_photo_then_clear(self):
-        resp = await self.client.put(f"/api/devices/registry/{MAC}/picture", json={"icon": "tv"})
+        resp = await self.client.put(
+            f"/api/devices/registry/{MAC}/picture", json={"icon": "tv"}
+        )
         assert (await resp.json())["device"]["icon"] == "tv"
-        resp = await self.client.put(f"/api/devices/registry/{MAC}/picture", json={"image": b64(PNG)})
+        resp = await self.client.put(
+            f"/api/devices/registry/{MAC}/picture", json={"image": b64(PNG)}
+        )
         device = (await resp.json())["device"]
-        assert device["icon"] is None and device["picture"].startswith(f"/api/devices/registry/{MAC}/picture?v=")
+        assert device["icon"] is None and device["picture"].startswith(
+            f"/api/devices/registry/{MAC}/picture?v="
+        )
         resp = await self.client.delete(f"/api/devices/registry/{MAC}/picture")
         assert (await resp.json())["device"]["picture"] is None
 
     @unittest_run_loop
     async def test_exactly_one_of_icon_or_image(self):
-        for body in ({}, {"icon": "tv", "image": b64(PNG)}, {"icon": "tv", "x": 1}, {"colour": "red"}):
-            resp = await self.client.put(f"/api/devices/registry/{MAC}/picture", json=body)
+        for body in (
+            {},
+            {"icon": "tv", "image": b64(PNG)},
+            {"icon": "tv", "x": 1},
+            {"colour": "red"},
+        ):
+            resp = await self.client.put(
+                f"/api/devices/registry/{MAC}/picture", json=body
+            )
             assert resp.status == 400, body
 
     @unittest_run_loop
     async def test_svg_is_a_400_in_plain_english(self):
         svg = "data:image/svg+xml;base64," + base64.b64encode(b"<svg/>").decode()
-        resp = await self.client.put(f"/api/devices/registry/{MAC}/picture", json={"image": svg})
+        resp = await self.client.put(
+            f"/api/devices/registry/{MAC}/picture", json={"image": svg}
+        )
         assert resp.status == 400
         assert (await resp.json())["error"] == "Pictures must be PNG, JPEG or WebP."
 
@@ -237,9 +263,14 @@ def test_registry_list_and_search_carry_owner_fields(tmp_path):
     app["device_registry"] = _registry(client, store)
     app["device_custom"] = store
 
-    resp = asyncio.run(handle_registry_search(make_mocked_request("GET", "/x?q=kitchen", app=app)))
+    resp = asyncio.run(
+        handle_registry_search(make_mocked_request("GET", "/x?q=kitchen", app=app))
+    )
     (device,) = json.loads(resp.text)["devices"]
-    assert device["display_name"] == "Kitchen speaker" and device["custom_name"] == "Kitchen speaker"
+    assert (
+        device["display_name"] == "Kitchen speaker"
+        and device["custom_name"] == "Kitchen speaker"
+    )
 
     client.search.return_value = {"hits": {"hits": [{"_source": TV}]}}
     resp = asyncio.run(handle_registry_list(make_mocked_request("GET", "/x", app=app)))
@@ -282,9 +313,16 @@ class TestLegacyListPresentationOnly(AioHTTPTestCase):
             _device_list_response([_device_bucket("192.168.1.188")]),
             _empty_alert_response(),
         ] + [{"hits": {"hits": []}}] * 10
-        dhcp = {"hits": {"hits": [{"_source": {"source": {"mac": "bc:89:c1:e1:8a:d6"}}}]}}
+        dhcp = {
+            "hits": {"hits": [{"_source": {"source": {"mac": "bc:89:c1:e1:8a:d6"}}}]}
+        }
         self.mock_client.msearch.return_value = {
-            "responses": [dhcp, {"aggregations": {}}, {"aggregations": {}}, {"aggregations": {}}]
+            "responses": [
+                dhcp,
+                {"aggregations": {}},
+                {"aggregations": {}},
+                {"aggregations": {}},
+            ]
         }
         resp = await self.client.request("GET", "/api/devices")
         (device,) = (await resp.json())["devices"]

@@ -74,7 +74,9 @@ async def _run(request: web.Request, change, need_device: bool) -> web.Response:
         return _error(str(exc), 400)
     except StoreUnavailable as exc:
         logger.error("Device customisation for %s refused: %s", mac, exc)
-        return _error("Device names and pictures can't be saved: their file is unreadable.", 503)
+        return _error(
+            "Device names and pictures can't be saved: their file is unreadable.", 503
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error customising %s: %s", mac, exc)
         return _error(f"OpenSearch query failed: {exc}", 502)
@@ -143,7 +145,9 @@ async def handle_get_picture(request: web.Request) -> web.Response:
     return web.Response(body=data, content_type=mime, headers=_PICTURE_HEADERS)
 
 
-def register_device_custom_routes(app: web.Application, store: DeviceCustomStore) -> None:
+def register_device_custom_routes(
+    app: web.Application, store: DeviceCustomStore
+) -> None:
     """Register the owner's name and picture routes (needs app["device_registry"])."""
     app["device_custom"] = store
     base = "/api/devices/registry/{mac}"

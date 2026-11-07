@@ -203,9 +203,13 @@ class DeviceCustomStore:
             with open(self._meta_path, encoding="utf-8") as fh:
                 self._devices = _validated(json.load(fh))
         except (OSError, ValueError) as exc:  # JSONDecodeError is a ValueError
-            self._problem = f"Device names file is unreadable: {self._meta_path} ({exc})"
+            self._problem = (
+                f"Device names file is unreadable: {self._meta_path} ({exc})"
+            )
             self._devices = {}
-            logger.error("%s; names and pictures are off until it is fixed", self._problem)
+            logger.error(
+                "%s; names and pictures are off until it is fixed", self._problem
+            )
             return
         self._sweep(_refs(self._devices))
 
@@ -357,7 +361,11 @@ class DeviceCustomStore:
 
     def owner_fields(self, mac: Any) -> dict[str, str | None]:
         """{custom_name, icon, picture} for a response row; all None when there is nothing."""
-        empty: dict[str, str | None] = {"custom_name": None, "icon": None, "picture": None}
+        empty: dict[str, str | None] = {
+            "custom_name": None,
+            "icon": None,
+            "picture": None,
+        }
         try:
             mac = normalize_mac(mac)
         except ValueError:
@@ -370,7 +378,11 @@ class DeviceCustomStore:
         if "photo" in entry:
             digest = _FILE_RE.match(entry["photo"]["file"]).group(2)
             picture = f"/api/devices/registry/{mac}/picture?v={digest}"
-        return {"custom_name": entry.get("name"), "icon": entry.get("icon"), "picture": picture}
+        return {
+            "custom_name": entry.get("name"),
+            "icon": entry.get("icon"),
+            "picture": picture,
+        }
 
     def present(self, row: dict) -> dict:
         """A copy of a response row (with "mac" and "hostname") showing the owner's name first.
@@ -442,7 +454,9 @@ class DeviceCustomStore:
         with self._lock:
             self._require_healthy()
             devices: dict[str, dict] = {}
-            for mac in set(self._devices) | set(new_names or {}) | set(new_pictures or {}):
+            for mac in (
+                set(self._devices) | set(new_names or {}) | set(new_pictures or {})
+            ):
                 entry = copy.deepcopy(self._devices.get(mac, {}))
                 if new_names is not None:
                     entry.pop("name", None)

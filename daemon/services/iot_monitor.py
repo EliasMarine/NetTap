@@ -2681,7 +2681,9 @@ class IoTMonitor:
         Display only: _categorize_device never sees the owner's name.
         """
         owner = self._owner_name(mac) if self._owner_name else None
-        return owner or dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown")
+        return (
+            owner or dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown")
+        )
 
     def _isolation_pair(self, bucket: dict, devices: dict) -> dict[str, Any]:
         """One IoT-device-to-LAN-host pair from a (mac, dest) composite bucket."""

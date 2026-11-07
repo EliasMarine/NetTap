@@ -470,7 +470,9 @@ def handle_registry_search(request: web.Request) -> web.Response:
         devices = registry.search_devices(query_str)
         # NET-200: owner names live outside the index, so their matches are fetched by MAC
         found = {d.get("mac") for d in devices}
-        owned = [m for m in (custom.matching(query_str) if custom else []) if m not in found]
+        owned = [
+            m for m in (custom.matching(query_str) if custom else []) if m not in found
+        ]
         if owned:
             devices = [*devices, *registry.get_devices(owned).values()]
     except OpenSearchException as exc:

@@ -282,7 +282,9 @@ class ConfigBackup:
         #         errors.append("Failed to write device_aliases")
         # OLD CODE END
         # Device names and pictures: each present section replaces the owner's set, all or nothing
-        device_parts = [s for s in ("device_aliases", "device_pictures") if s in sections]
+        device_parts = [
+            s for s in ("device_aliases", "device_pictures") if s in sections
+        ]
         device_names = sections.get("device_aliases")
         notes: list[str] = []
         if "device_aliases" in sections and "device_pictures" not in sections:

@@ -22,17 +22,28 @@ def test_category_rows_get_their_mac_from_one_batched_lookup():
     client = MagicMock()
     client.search.side_effect = [
         _asn_page("AS2906 Netflix Inc"),
-        _mock_device_response([("10.0.0.5", 3, 900, 800, 100), ("10.0.0.6", 1, 100, 90, 10)]),
+        _mock_device_response(
+            [("10.0.0.5", 3, 900, 800, 100), ("10.0.0.6", 1, 100, 90, 10)]
+        ),
     ]
     fingerprint = MagicMock()
-    fingerprint.lookup_many.return_value = {"10.0.0.5": ("aa:bb:cc:dd:ee:01", "tv.local", None)}
+    fingerprint.lookup_many.return_value = {
+        "10.0.0.5": ("aa:bb:cc:dd:ee:01", "tv.local", None)
+    }
     result = get_category_devices(
-        client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z", fingerprint=fingerprint
+        client,
+        "streaming",
+        "2026-03-01T00:00:00Z",
+        "2026-03-02T00:00:00Z",
+        fingerprint=fingerprint,
     )
     fingerprint.lookup_many.assert_called_once()
     fingerprint.get_hostname_for_ip.assert_not_called()
     by_ip = {d["ip"]: d for d in result["devices"]}
-    assert (by_ip["10.0.0.5"]["mac"], by_ip["10.0.0.5"]["hostname"]) == ("aa:bb:cc:dd:ee:01", "tv.local")
+    assert (by_ip["10.0.0.5"]["mac"], by_ip["10.0.0.5"]["hostname"]) == (
+        "aa:bb:cc:dd:ee:01",
+        "tv.local",
+    )
     assert (by_ip["10.0.0.6"]["mac"], by_ip["10.0.0.6"]["hostname"]) == (None, None)
 
 
@@ -45,7 +56,11 @@ def test_a_failed_name_lookup_keeps_the_figures():
     fingerprint = MagicMock()
     fingerprint.lookup_many.side_effect = RuntimeError("msearch down")
     result = get_category_devices(
-        client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z", fingerprint=fingerprint
+        client,
+        "streaming",
+        "2026-03-01T00:00:00Z",
+        "2026-03-02T00:00:00Z",
+        fingerprint=fingerprint,
     )
     assert result["total_bytes"] == 900 and result["devices"][0]["hostname"] is None
 
@@ -53,7 +68,9 @@ def test_a_failed_name_lookup_keeps_the_figures():
 def test_present_puts_the_owner_name_on_a_category_row(tmp_path):
     store = DeviceCustomStore(str(tmp_path))
     store.set_name(MAC, "Living room TV")
-    row = store.present({"ip": "10.0.0.5", "mac": "aa:bb:cc:dd:ee:01", "hostname": "tv.local"})
+    row = store.present(
+        {"ip": "10.0.0.5", "mac": "aa:bb:cc:dd:ee:01", "hostname": "tv.local"}
+    )
     assert (row["hostname"], row["custom_name"]) == ("Living room TV", "Living room TV")
 
 
@@ -75,7 +92,10 @@ def test_iot_names_prefer_the_owner_name_and_categories_ignore_it(tmp_path):
 def test_iot_without_a_store_keeps_its_old_names():
     monitor = IoTMonitor.__new__(IoTMonitor)
     monitor._owner_name = None
-    assert monitor._device_name(MAC, {"hostname": "plug", "manufacturer": "Tuya"}) == "plug"
+    assert (
+        monitor._device_name(MAC, {"hostname": "plug", "manufacturer": "Tuya"})
+        == "plug"
+    )
 
 
 # --------------------------------------------------------------------------- backup
@@ -86,7 +106,17 @@ def _png(seed: int, size: int) -> bytes:
 
 
 def _backup(tmp_path, store) -> ConfigBackup:
-    paths = {k: str(tmp_path / f"{k}.json") for k in ("notification_config", "excluded_ips", "bandwidth_cap", "capture_config", "retention_config", "device_baseline")}
+    paths = {
+        k: str(tmp_path / f"{k}.json")
+        for k in (
+            "notification_config",
+            "excluded_ips",
+            "bandwidth_cap",
+            "capture_config",
+            "retention_config",
+            "device_baseline",
+        )
+    }
     return ConfigBackup(config_paths=paths, device_custom=store)
 
 
@@ -118,8 +148,13 @@ def test_a_backup_from_before_net_200_keeps_current_names(tmp_path):
     store = DeviceCustomStore(str(tmp_path))
     store.set_name(MAC, "TV")
     old = {
-        "metadata": {"nettap_version": _NETTAP_VERSION, "schema_version": _SCHEMA_VERSION},
-        "sections": {"device_aliases": {}},  # what the dead baseline code always exported
+        "metadata": {
+            "nettap_version": _NETTAP_VERSION,
+            "schema_version": _SCHEMA_VERSION,
+        },
+        "sections": {
+            "device_aliases": {}
+        },  # what the dead baseline code always exported
     }
     result = _backup(tmp_path, store).import_config(old)
     assert result["success"] and "device_aliases" not in result["applied"]
@@ -131,21 +166,31 @@ def test_a_bad_picture_restores_nothing(tmp_path):
     store = DeviceCustomStore(str(tmp_path))
     store.set_name(MAC, "TV")
     data = {
-        "metadata": {"nettap_version": _NETTAP_VERSION, "schema_version": _SCHEMA_VERSION},
+        "metadata": {
+            "nettap_version": _NETTAP_VERSION,
+            "schema_version": _SCHEMA_VERSION,
+        },
         "sections": {
             "device_aliases": {"AA:BB:CC:DD:EE:02": "Laptop"},
             "device_pictures": {MAC: {"image": "data:image/svg+xml;base64,PHN2Zy8+"}},
         },
     }
     result = _backup(tmp_path, store).import_config(data)
-    assert not result["success"] and "Device names and pictures not restored" in result["errors"][0]
+    assert (
+        not result["success"]
+        and "Device names and pictures not restored" in result["errors"][0]
+    )
     assert store.names() == {MAC: "TV"}
 
 
 def test_export_fails_rather_than_drop_a_missing_photo(tmp_path):
     store = DeviceCustomStore(str(tmp_path / "s"))
     store.set_photo(MAC, base64.b64encode(_png(1, 100)).decode())
-    os.unlink(os.path.join(str(tmp_path / "s"), "device-pictures", store.get(MAC)["photo"]["file"]))
+    os.unlink(
+        os.path.join(
+            str(tmp_path / "s"), "device-pictures", store.get(MAC)["photo"]["file"]
+        )
+    )
     try:
         _backup(tmp_path, store).export_config()
     except ValueError as exc:

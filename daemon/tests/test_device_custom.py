@@ -58,7 +58,9 @@ class TestNames:
         store.set_name(MAC, "x" * 64)
         assert store.name_for(MAC) == "x" * 64
 
-    @pytest.mark.parametrize("bad", ["../../etc/passwd", "AA:BB", "ZZ:BB:CC:DD:EE:01", 7])
+    @pytest.mark.parametrize(
+        "bad", ["../../etc/passwd", "AA:BB", "ZZ:BB:CC:DD:EE:01", 7]
+    )
     def test_bad_macs_are_refused(self, store, bad):
         with pytest.raises(ValueError):
             store.set_name(bad, "TV")
@@ -71,7 +73,10 @@ class TestNames:
         store.set_name(MAC, "TV")
         store.clear_name(MAC)
         assert store.get(MAC) is None
-        assert json.loads(open(os.path.join(root, "device_custom.json")).read())["devices"] == {}
+        assert (
+            json.loads(open(os.path.join(root, "device_custom.json")).read())["devices"]
+            == {}
+        )
 
     def test_matching_ignores_case(self, store):
         store.set_name(MAC, "Living room TV")
@@ -85,7 +90,12 @@ class TestNames:
 
 class TestPictures:
     @pytest.mark.parametrize(
-        "data,mime,ext", [(PNG, "image/png", "png"), (JPEG, "image/jpeg", "jpg"), (WEBP, "image/webp", "webp")]
+        "data,mime,ext",
+        [
+            (PNG, "image/png", "png"),
+            (JPEG, "image/jpeg", "jpg"),
+            (WEBP, "image/webp", "webp"),
+        ],
     )
     def test_types_come_from_the_bytes(self, store, data, mime, ext):
         store.set_photo(MAC, b64(data, "image/gif"))  # the declared type is ignored
@@ -124,7 +134,9 @@ class TestPictures:
         store.set_photo(MAC, b64(PNG))  # 48 bytes
         with pytest.raises(ValueError, match="storage is full"):
             store.set_photo(MAC2, b64(PNG + b"\x01" * 60))
-        store.set_photo(MAC, b64(PNG + b"\x02" * 10))  # replacing its own photo doesn't count twice
+        store.set_photo(
+            MAC, b64(PNG + b"\x02" * 10)
+        )  # replacing its own photo doesn't count twice
 
     def test_icon_and_photo_replace_each_other(self, store, root):
         store.set_photo(MAC, b64(PNG))
@@ -221,11 +233,31 @@ class TestStartup:
             "{not json",
             json.dumps({"version": 2, "devices": {}}),
             json.dumps({"version": 1, "devices": []}),
-            json.dumps({"version": 1, "devices": {"aa:bb:cc:dd:ee:01": {"name": "lower-case key"}}}),
-            json.dumps({"version": 1, "devices": {MAC: {"photo": {"file": "../x.png", "type": "image/png", "bytes": 1}}}}),
+            json.dumps(
+                {
+                    "version": 1,
+                    "devices": {"aa:bb:cc:dd:ee:01": {"name": "lower-case key"}},
+                }
+            ),
+            json.dumps(
+                {
+                    "version": 1,
+                    "devices": {
+                        MAC: {
+                            "photo": {
+                                "file": "../x.png",
+                                "type": "image/png",
+                                "bytes": 1,
+                            }
+                        }
+                    },
+                }
+            ),
         ],
     )
-    def test_bad_metadata_deletes_nothing_and_refuses_writes(self, store, root, content):
+    def test_bad_metadata_deletes_nothing_and_refuses_writes(
+        self, store, root, content
+    ):
         store.set_photo(MAC, b64(PNG))
         files = pictures(root)
         meta = os.path.join(root, "device_custom.json")
@@ -255,7 +287,9 @@ class TestBackup:
 
     def test_export_fails_on_a_missing_photo(self, store, root):
         store.set_photo(MAC, b64(PNG))
-        os.unlink(os.path.join(root, "device-pictures", store.get(MAC)["photo"]["file"]))
+        os.unlink(
+            os.path.join(root, "device-pictures", store.get(MAC)["photo"]["file"])
+        )
         with pytest.raises(ValueError, match=MAC):
             store.export()
 
