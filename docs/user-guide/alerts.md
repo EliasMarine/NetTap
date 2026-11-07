@@ -31,6 +31,14 @@ Suricata assigns a numeric severity (1--3) to each rule. NetTap maps these to hu
 | 3 | **LOW** | Blue | Informational or policy-level detection. Usually benign. |
 | (none) | **INFO** | Grey | Miscellaneous detection with no severity assigned. |
 
+### What counts as an alert
+
+Emerging Threats rates each of its rules as Critical, Major, Minor, Informational or Unknown. NetTap counts an alert only when ET rates it Critical, Major or Minor. Rules from other sources, and your own rules, always count.
+
+Rules that ET rates Informational or Unknown match ordinary traffic: video-call STUN, DNS over HTTPS, apps checking for updates. NetTap still stores these. It lists them as **activity**, but leaves them out of every alert total, the Home page, device risk scores and the threat summary. On a home network they are usually most of what Suricata reports.
+
+To see them, open **Alerts**. Under the severity tiles, the line "… informational events not counted · Show" opens the list filtered to activity. The **Activity** chip above the list shows the filter is on; clear it to go back to counted alerts.
+
 ---
 
 ## Alerts Page
@@ -107,6 +115,7 @@ On a typical home network, you should expect:
 - **0--5 HIGH alerts per day** (investigate all of these)
 - **5--20 MEDIUM alerts per day** (review periodically)
 - **20--100+ LOW/INFO alerts per day** (normal background noise)
+- **Thousands of activity events per day** (ET Informational; listed, not counted)
 
 If you see significantly more HIGH alerts than expected, it could indicate a compromised device on your network.
 
