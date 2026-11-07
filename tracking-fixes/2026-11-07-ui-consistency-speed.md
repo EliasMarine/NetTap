@@ -137,6 +137,37 @@ First run: parts 1a (measurement), 2 (beaconing in the background) and 3 (revers
 ### Measured on the G11
 
 - Pending: `BRANCH=feature/net192-speed bash scripts/remote/deploy-speed-timing.sh`.
+- Update: the timing run passed (`aa42bc29` runs the timed restart through `scripts/remote/speed-timing.compose.yml`, because the G11's sudo rule has no SETENV). The background snapshot took the Threats 7d report from 72 s to 3.3 s; warm reverse DNS answers in 0.00 s.
+
+### 1b: the measured fixes
+
+**connections/stats, 13.65 s at 7d.** Two requests from `traffic.py:1078` in a row, 7.5 s then 6.2 s: `top_destinations` has more than 10k terms per shard (`doc_count_error_upper_bound` -1), so the exact-terms client re-sends at shard size 100k. Read-only variants at shard 100k, request cache off, two runs each (ms):
+
+| Variant | Run 1 | Run 2 |
+|---|---|---|
+| Painless sum, asn/geo kept (as it was) | 6,093 | 7,265 |
+| field sum, asn/geo kept | 7,281 | 6,525 |
+| Painless sum, no asn/geo | 2,146 | 1,943 |
+| field sum, no asn/geo | 1,190 | 1,425 |
+
+All four gave the identical top 10 sources and destinations, so the `asn` and `geo` terms under every destination bucket dominate.
+
+- Fix: `top_destinations` keeps only `total_bytes`. One follow-up search looks up `asn` and `geo` for the 10 winners: the same window and conn filters, `destination.ip` in the winners, and terms `destination.ip` (size = the number of winners) with the same size-1 sub-aggs. It is skipped when there are no winners, and a failure is a 502. The response shape is unchanged.
+- `top_sources` and `top_destinations` sum `network.bytes` (equal to source + destination bytes on every conn doc). A test checks that every query summing it filters `event.dataset: conn`.
+- Connections offers 30d again: the `shortcut:` from PR 4 is gone, and 30d asks for day buckets.
+
+**devices list, 7.9 s at 30d.** In `_lan_device_buckets` the composite alone took 3.6 s, and the cost was the LAN filter. `build_lan_filter` was a Painless script that split `source.ip` as text on every doc.
+- Script vs CIDR `terms` on `source.ip`: 3,839 / 4,311 ms against 998 / 929 ms.
+- Identical over 30 days: 3,845,029 docs, 59 IPs, the same per-IP doc counts and byte sums.
+- Detected subnets `(192,168,1) (10,10,0) (192,168,40)` become `192.168.1.0/24 10.10.0.0/24 192.168.40.0/24`.
+- Fix: `build_lan_filter` returns `{"terms": {"source.ip": [cidrs]}}` (/8, /16, /24; none gives the RFC1918 three). `lan_subnets_of` parses the CIDRs back (the RFC1918 list reads as `[]`).
+- No reader depended on the script shape. `main.py`'s in-place update still swaps the filter's one key at once, and `changed_lan_filter`'s equality still works.
+- Not changed: the devices list's own Painless→field swap barely mattered (5.0 vs 4.7 s), so `device_aggs` stays as it is.
+
+**1b tests.**
+- Daemon: 3,602 passed, 3 skipped. New: `TestConnectionStatsQueries` (no per-destination asn/geo; one follow-up for the winners; none without winners; a failed follow-up is a 502; `network.bytes` only in conn-filtered queries), and `test_lan_filter.py` (each subnet form, the round trip, the fallback, re-detection, and that the CIDRs match the same addresses as the old script's rule). The stats tests fail on main's `traffic.py`.
+- Web: 3,764 passed, including the Connections range set with 30d and a 30d request test. Visual: 276 passed, 49 skipped.
+- On the G11 next: `deploy-speed-timing.sh` again, then `verify-figures.sh`, `verify-device-figures.sh` and `verify-split-invariance.sh`.
 
 ## PR 4: one look on every page (web)
 
