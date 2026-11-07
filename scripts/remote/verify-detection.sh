@@ -15,12 +15,15 @@
 #   --rules <dir>        use this rules dir instead of the snapshot's /var/lib/suricata/rules (staged ruleset)
 #   --threshold <file>   use this threshold file instead of the device's and make Suricata load it
 #                        (tests a threshold file before suricata-live is recreated with it)
+# The snapshot is taken holding Suricata's rules lock (scripts/remote/rules-lock.sh), so no rule update
+# changes the rules while they are copied. Before slice 2 there is no lock: it refuses 23:50-00:30 UTC.
+# Fixtures for IPFire DBL and Echap stalkerware are drawn from the rules replayed (the snapshot's or --rules).
 # Each run keeps /home/nettap/nettap-replay/<run-id>/ (snapshot/ ~50 MB, pcap/, out/ with report.txt
 # and engine/ with eve and suricata.log) so a failed fixture can be inspected.
 # Exit: 0 ok, 1 a fixture failed, 2 bad usage or the replay failed, 3 refused to start.
 set -u
 
-REPLAY_ROOT="/home/nettap/nettap-replay"
+REPLAY_ROOT="${NETTAP_REPLAY_ROOT:-/home/nettap/nettap-replay}"  # override for tests only
 LIVE="nettap-suricata-live"
 TIMEOUT_S=600
 MIN_AVAILABLE_KIB=$((1536 * 1024))
@@ -61,12 +64,6 @@ if [ "${AVAILABLE_KIB:-0}" -lt "$MIN_AVAILABLE_KIB" ]; then
     echo "   ✗ Only $((AVAILABLE_KIB / 1024)) MiB available; need 1536 MiB. Not starting."
     exit 3
 fi
-# shortcut: no rules lock yet (slice 2 adds it), so stay clear of Malcolm's 00:00 UTC rule update
-NOW_HHMM=$((10#$(date -u +%H%M)))
-if [ "$NOW_HHMM" -ge 2350 ] || [ "$NOW_HHMM" -lt 30 ]; then
-    echo "   ✗ $(date -u +%H:%M) UTC is inside 23:50-00:30, around the nightly rule update. Try after 00:30 UTC."
-    exit 3
-fi
 if ! IMAGE=$(sudo docker inspect -f '{{.Config.Image}}' "$LIVE" 2>/dev/null); then
     echo "   ✗ $LIVE not found"
     exit 3
@@ -80,13 +77,33 @@ if [ "$(id -u)" != "$PUID" ]; then
     echo "   ✗ Run this as the user with UID $PUID (the live Suricata's), not $(id -un): the replay writes into your run dir as that UID."
     exit 3
 fi
-echo "   ✓ $((AVAILABLE_KIB / 1024)) MiB available; image $IMAGE; UID:GID $PUID:$PGID"
+# shellcheck source=scripts/remote/rules-lock.sh
+. "$SCRIPT_DIR/rules-lock.sh"
+trap rules_lock_release EXIT
+rules_lock_take "$LIVE"
+case $? in
+    0) LOCK_STATE="holding the rules lock for the snapshot" ;;
+    2)
+        # No rules lock on this device yet (before slice 2): stay clear of Malcolm's 00:00 UTC rule update
+        NOW_HHMM=$((10#$(date -u +%H%M)))
+        if [ "$NOW_HHMM" -ge 2350 ] || [ "$NOW_HHMM" -lt 30 ]; then
+            echo "   ✗ $(date -u +%H:%M) UTC is inside 23:50-00:30, around the nightly rule update. Try after 00:30 UTC."
+            exit 3
+        fi
+        LOCK_STATE="no rules lock on this device yet"
+        ;;
+    *)
+        echo "   ✗ Could not take the rules lock in 15 minutes (a rule update or rule change is running). Try again later."
+        exit 3
+        ;;
+esac
+echo "   ✓ $((AVAILABLE_KIB / 1024)) MiB available; image $IMAGE; UID:GID $PUID:$PGID; $LOCK_STATE"
 echo ""
 
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$(cut -c1-8 /proc/sys/kernel/random/uuid)"
 RUNNER="nettap-sv-$RUN_ID"
 # Ctrl-C or kill: the runner container must not outlive the script
-trap 'echo ""; echo "   interrupted, removing $RUNNER"; sudo docker rm -f "$RUNNER" >/dev/null 2>&1; exit 130' INT TERM
+trap 'echo ""; echo "   interrupted, removing $RUNNER"; sudo docker rm -f "$RUNNER" >/dev/null 2>&1; rules_lock_release; exit 130' INT TERM
 RUN="$REPLAY_ROOT/$RUN_ID"
 SNAP="$RUN/snapshot"
 OUT="$RUN/out"
@@ -127,7 +144,11 @@ elif [ -f "$THRESHOLD_FILE" ]; then
 else
     echo "   - $THRESHOLD_FILE not on the host"
 fi
+rules_lock_release
 echo ""
+
+RULES_DIR="${RULES_OVERRIDE:+$(cd "$RULES_OVERRIDE" && pwd)}"
+RULES_DIR="${RULES_DIR:-$SNAP/var/lib/suricata/rules}"
 
 echo "→ Step 3: PCAPs..."
 PY_RUN=(sudo docker run --rm --network none --memory 512m --cpus 1 --user "$PUID:$PGID"
@@ -135,7 +156,8 @@ PY_RUN=(sudo docker run --rm --network none --memory 512m --cpus 1 --user "$PUID
     -v "$PY:/opt/verify_detection.py:ro" --entrypoint python3)
 if [ "$MODE" = "fixtures" ]; then
     PCAP_DIR="$RUN/pcap"
-    "${PY_RUN[@]}" -v "$PCAP_DIR:/pcap" "$IMAGE" /opt/verify_detection.py write-fixtures /pcap || exit 2
+    "${PY_RUN[@]}" -v "$PCAP_DIR:/pcap" -v "$RULES_DIR:/rules:ro" "$IMAGE" \
+        /opt/verify_detection.py write-fixtures /pcap /rules || exit 2
 else
     PCAP_DIR="$(cd "$PCAP_SRC" 2>/dev/null && pwd)" || { echo "   ✗ $PCAP_SRC is not a directory"; exit 2; }
     COUNT=$(find "$PCAP_DIR" -maxdepth 1 -type f | wc -l)
@@ -143,9 +165,6 @@ else
     echo "   ✓ $COUNT file(s) in $PCAP_DIR ($(du -sh "$PCAP_DIR" | cut -f1))"
 fi
 echo ""
-
-RULES_DIR="${RULES_OVERRIDE:+$(cd "$RULES_OVERRIDE" && pwd)}"
-RULES_DIR="${RULES_DIR:-$SNAP/var/lib/suricata/rules}"
 
 echo "→ Step 4: Hash every input..."
 hash_dir() {  # $1 = label, $2 = dir
@@ -217,7 +236,8 @@ echo ""
 
 echo "→ Step 6: Report..."
 echo ""
-"${PY_RUN[@]}" -v "$OUT:/out:ro" "$IMAGE" /opt/verify_detection.py report "$MODE" /out | tee "$OUT/report.txt"
+"${PY_RUN[@]}" -v "$OUT:/out:ro" -v "$RULES_DIR:/rules:ro" "$IMAGE" \
+    /opt/verify_detection.py report "$MODE" /out /rules | tee "$OUT/report.txt"
 REPORT_RC=${PIPESTATUS[0]}
 echo ""
 echo "Run kept in $RUN (report: $OUT/report.txt)"
