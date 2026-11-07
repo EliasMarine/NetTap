@@ -1,13 +1,15 @@
 """NET-192 PR 2: the daemon keeps answering while pages load.
 
 Runs inside nettap-storage-daemon (python3 -c "$(cat ...)"). Five Home pages load at once
-(the 15 calls the Home page makes, 24 h); meanwhile /api/health is asked every 0.25 s.
+(the 15 calls the Home page makes, 24 h); meanwhile a separate process asks /api/health every
+0.25 s (in this process its timings would include waiting on the 75 client threads).
 Prints one line: health's slowest answer, failed page calls, the slowest page call.
 Exit 1 if health ever took longer than 1 s or a page call failed.
 """
 
+import multiprocessing
+import statistics
 import sys
-import threading
 import time
 import urllib.parse
 import urllib.request
@@ -56,7 +58,9 @@ HOME = [
 def call(path, timeout=120):
     t0 = time.monotonic()
     try:
-        req = urllib.request.Request(BASE + path, headers={"X-NetTap-Daemon-Token": TOKEN})
+        req = urllib.request.Request(
+            BASE + path, headers={"X-NetTap-Daemon-Token": TOKEN}
+        )
         with urllib.request.urlopen(req, timeout=timeout) as r:
             r.read()
             ok = r.status == 200
@@ -65,31 +69,32 @@ def call(path, timeout=120):
     return ok, time.monotonic() - t0, path.split("?")[0]
 
 
-done = threading.Event()
-health = []
-
-
-def watch_health():
+def watch_health(done, health):
     while not done.is_set():
         ok, secs, _ = call("/api/health", timeout=30)
         health.append(secs if ok else 30.0)
         time.sleep(0.25)
 
 
-watcher = threading.Thread(target=watch_health)
-watcher.start()
-with ThreadPoolExecutor(max_workers=HOMES * len(HOME)) as pool:
-    results = list(pool.map(call, HOME * HOMES))
-done.set()
-watcher.join()
+if __name__ == "__main__":
+    with multiprocessing.Manager() as mgr:
+        done, health = mgr.Event(), mgr.list()
+        watcher = multiprocessing.Process(target=watch_health, args=(done, health))
+        watcher.start()
+        time.sleep(1)  # a few unloaded answers first
+        with ThreadPoolExecutor(max_workers=HOMES * len(HOME)) as pool:
+            results = list(pool.map(call, HOME * HOMES))
+        done.set()
+        watcher.join()
+        health = list(health)
 
-failed = sorted({p for ok, _, p in results if not ok})
-slowest = max(results, key=lambda r: r[1])
-worst_health = max(health, default=30.0)
-print(
-    f"health slowest {worst_health:.2f} s over {len(health)} asks; "
-    f"{len(results) - sum(ok for ok, _, _ in results)} of {len(results)} page calls failed"
-    + (f" ({', '.join(failed)})" if failed else "")
-    + f"; slowest page call {slowest[2]} {slowest[1]:.1f} s"
-)
-sys.exit(0 if worst_health < HEALTH_LIMIT_S and not failed else 1)
+    failed = sorted({p for ok, _, p in results if not ok})
+    slowest = max(results, key=lambda r: r[1])
+    worst_health = max(health, default=30.0)
+    print(
+        f"health slowest {worst_health:.2f} s, median {statistics.median(health or [30.0]):.2f} s over {len(health)} asks; "
+        f"{len(results) - sum(ok for ok, _, _ in results)} of {len(results)} page calls failed"
+        + (f" ({', '.join(failed)})" if failed else "")
+        + f"; slowest page call {slowest[2]} {slowest[1]:.1f} s"
+    )
+    sys.exit(0 if worst_health < HEALTH_LIMIT_S and not failed else 1)

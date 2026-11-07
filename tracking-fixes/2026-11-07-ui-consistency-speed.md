@@ -79,6 +79,16 @@ Audits on the fixture build (1440 and 1024 px) and on the G11 (real data, cold):
 
 - With five Home pages loading at once (75 calls), `/api/health` answered only 4 times in about 6 s, and its slowest answer took 2.79 s. The request loop was blocked by OpenSearch calls.
 
+### Measured on the G11 after PR 2 (`deploy-daemon-reliability.sh`, 2026-11-07)
+
+- **Same check as before** (the health watcher shares a process with the 75 load threads): health's slowest answer was 1.20 s cold (9 answers) and 1.00 s warm (18 answers), against 2.79 s (4 answers) on main. No page call failed; OpenSearch rejected 0 searches.
+- **Health watcher in its own process:** in the first version, the watcher's timings included waiting for its own process's GIL behind the 75 client threads. Measured from a separate process, the slowest answer was 0.65 s and 0.10 s and the median 0.01 s, during five Home loads. `verify_event_loop.py` now runs the watcher this way.
+- **Figures:** split invariance passed (88 same, 2 moving). Page figures matched OpenSearch for DNS, traffic, connections, certificates, security posture and IoT. No daemon errors since the restart.
+- **Two stale checks, not PR 2:**
+  - `verify-figures.sh` "alert total" compares raw alerts with `/api/alerts/count`. Since #197 (NET-191 slice 1) that endpoint counts by ET severity and sets the .44 activity apart: 17 counted against 2,645 raw.
+  - `verify_device_figures.py` expects a device's top destinations in connection order. NET-158 sorts them by bytes, which gave 67 "not sorted" and "left out" lines.
+  - Both checks are filed as a follow-up.
+
 ### Tests
 
 - Daemon:
