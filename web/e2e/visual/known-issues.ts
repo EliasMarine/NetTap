@@ -25,11 +25,21 @@ export const KNOWN_ISSUES: readonly KnownIssue[] = [
 		match: '[traffic/category] detail failed',
 		note: "the page's own console.error on the expected 503 (traffic/[category]/+page.svelte)",
 	},
+	// OLD CODE START — NET-197: API calls without a session answer 401 now, not a redirect to /setup
+	// {
+	// 	route: '/go-live',
+	// 	modes: ['empty', 'error'],
+	// 	match: 'EventSource\'s response has a MIME type ("text/html") that is not "text/event-stream"',
+	// 	note: 'first run: the layout EventSource to /api/notifications/stream is redirected to /setup',
+	// },
+	// OLD CODE END
 	{
+		// shortcut: matches any 401 on this page, so a first-run path (/api/bridge/*) that started
+		// refusing would hide here too; hooks.server.store.test.ts is what guards those paths
 		route: '/go-live',
 		modes: ['empty', 'error'],
-		match: 'EventSource\'s response has a MIME type ("text/html") that is not "text/event-stream"',
-		note: 'first run: the layout EventSource to /api/notifications/stream is redirected to /setup',
+		match: 'the server responded with a status of 401 (Unauthorized)',
+		note: "first run with no session: the shell's calls and Go Live's capture mode get 401 (NET-197); in the real flow the Account step signs in first",
 	},
 ];
 
