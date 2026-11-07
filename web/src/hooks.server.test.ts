@@ -89,12 +89,114 @@ describe('hooks.server', () => {
 			expect(mockResolve).toHaveBeenCalledWith(event);
 		});
 
-		it('allows /tools without auth', async () => {
+		// OLD CODE START — NET-193: the tools and lookups need a login now
+		// it('allows /tools without auth', async () => {
+		// 	mockHasUsers.mockReturnValue(true);
+		// 	const event = createMockEvent('/tools/subnet-calc');
+		//
+		// 	await handle({ event, resolve: mockResolve });
+		// 	expect(mockResolve).toHaveBeenCalledWith(event);
+		// });
+		// OLD CODE END
+
+		it.each([
+			'/tools',
+			'/tools/subnet-calc',
+			'/tools/ping',
+			'/lookup/dns',
+			'/lookup/whois',
+			'/api/tools',
+			'/api/tools/ping',
+			'/api/tools/mac-lookup/aa:bb:cc:dd:ee:ff',
+			'/api/lookup/dns/1.1.1.1',
+			'/api/lookup/whois/1.1.1.1',
+		])('sends %s to /login without a session (NET-193)', async (path) => {
 			mockHasUsers.mockReturnValue(true);
-			const event = createMockEvent('/tools/subnet-calc');
+			mockVerifyToken.mockReturnValue(null);
+			const event = createMockEvent(path, 'bad-token');
+
+			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/login' });
+			expect(mockResolve).not.toHaveBeenCalled();
+		});
+
+		it('allows the tools with a session', async () => {
+			mockHasUsers.mockReturnValue(true);
+			mockVerifyToken.mockReturnValue({ username: 'admin', role: 'admin' });
+			const event = createMockEvent('/api/tools/ping', 'valid-token');
 
 			await handle({ event, resolve: mockResolve });
 			expect(mockResolve).toHaveBeenCalledWith(event);
+		});
+
+		it.each(['/api/auth/other', '/api/auth/..%2Ftools%2Fping', '/api/auth', '/api/auth/', '/api/auth/me/x', '/api/auth/login/x', '/login/x'])(
+			'keeps the rest of /api/auth behind a login, so it never reaches the catch-all proxy: %s',
+			async (path) => {
+				mockHasUsers.mockReturnValue(true);
+				mockVerifyToken.mockReturnValue(null);
+				const event = createMockEvent(path);
+
+				await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/login' });
+				expect(mockResolve).not.toHaveBeenCalled();
+			},
+		);
+
+		it.each(['/api/auth/login', '/api/auth/logout', '/api/auth/me'])('keeps %s public', async (path) => {
+			mockHasUsers.mockReturnValue(true);
+			const event = createMockEvent(path);
+
+			await handle({ event, resolve: mockResolve });
+			expect(mockResolve).toHaveBeenCalledWith(event);
+		});
+
+		it.each(['/loginx', '/api/authx', '/api/auth-tokens'])(
+			'matches whole path segments: %s is not public',
+			async (path) => {
+				mockHasUsers.mockReturnValue(true);
+				mockVerifyToken.mockReturnValue(null);
+				const event = createMockEvent(path);
+
+				await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/login' });
+			},
+		);
+
+		it('keeps /api/auth/* public', async () => {
+			mockHasUsers.mockReturnValue(true);
+			const event = createMockEvent('/api/auth/login', undefined, undefined, 'POST');
+
+			await handle({ event, resolve: mockResolve });
+			expect(mockResolve).toHaveBeenCalledWith(event);
+		});
+
+		it('sends the tools to setup during first run, like every other app page', async () => {
+			mockHasUsers.mockReturnValue(false);
+			const event = createMockEvent('/tools/ping');
+
+			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/setup' });
+		});
+
+		it('refuses a remote-function call without a session, whatever path it claims', async () => {
+			mockHasUsers.mockReturnValue(true);
+			const event = { ...createMockEvent('/login'), isRemoteRequest: true };
+
+			const res = await handle({ event, resolve: mockResolve });
+			expect(res.status).toBe(401);
+			expect(mockResolve).not.toHaveBeenCalled();
+		});
+
+		it('lets a remote-function call through with a session', async () => {
+			mockHasUsers.mockReturnValue(true);
+			mockVerifyToken.mockReturnValue({ username: 'admin', role: 'admin' });
+			const event = { ...createMockEvent('/devices', 'valid-token'), isRemoteRequest: true };
+
+			await handle({ event, resolve: mockResolve });
+			expect(mockResolve).toHaveBeenCalledWith(event);
+		});
+
+		it('keeps first-run paths segment-matched: /setupx goes to setup, not through', async () => {
+			mockHasUsers.mockReturnValue(false);
+			const event = createMockEvent('/setupx');
+
+			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/setup' });
 		});
 
 		it('allows /api/health without auth', async () => {
@@ -225,7 +327,8 @@ describe('hooks.server', () => {
 		it('does not set user for invalid token', async () => {
 			mockHasUsers.mockReturnValue(true);
 			mockVerifyToken.mockReturnValue(null);
-			const event = createMockEvent('/tools', 'bad-token');
+			// OLD CODE: const event = createMockEvent('/tools', 'bad-token'); (NET-193: /tools needs a login)
+			const event = createMockEvent('/login', 'bad-token');
 
 			await handle({ event, resolve: mockResolve });
 			expect(event.locals.user).toBeUndefined();
