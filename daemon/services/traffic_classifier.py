@@ -1110,15 +1110,33 @@ def get_category_devices(
     )
     devices = every[:limit]
 
+    # OLD CODE START — NET-200: one search per device, and no MAC to find the owner's name by
+    # if fingerprint:
+    #     for d in devices:
+    #         try:
+    #             hostname = fingerprint.get_hostname_for_ip(
+    #                 client, d["ip"], from_ts, to_ts
+    #             )
+    #             d["hostname"] = hostname
+    #         except Exception:
+    #             d["hostname"] = None
+    # OLD CODE END
     if fingerprint:
-        for d in devices:
-            try:
-                hostname = fingerprint.get_hostname_for_ip(
-                    client, d["ip"], from_ts, to_ts
-                )
-                d["hostname"] = hostname
-            except Exception:
-                d["hostname"] = None
+        try:
+            found = fingerprint.lookup_many(
+                client, [d["ip"] for d in devices], from_ts, to_ts
+            )
+        except Exception as exc:
+            logger.warning("get_category_devices: device names unavailable: %s", exc)
+            found = {}
+        devices = [
+            {
+                **d,
+                "mac": found.get(d["ip"], (None, None, None))[0],
+                "hostname": found.get(d["ip"], (None, None, None))[1],
+            }
+            for d in devices
+        ]
 
     # OLD CODE START — #96: `every` is already ranked by bytes and the caller needs the totals
     # devices.sort(key=lambda d: d["total_bytes"], reverse=True)

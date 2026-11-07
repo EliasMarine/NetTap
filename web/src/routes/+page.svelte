@@ -547,9 +547,12 @@
 	const deviceItems = $derived(
 		topDevices.slice(0, TOP_DEVICES).map((d) => ({
 			key: d.ip,
-			name: d.unifi_name || d.hostname || d.ip,
+			// OLD CODE: name: d.unifi_name || d.hostname || d.ip, (NET-200: the owner's name first, and their picture)
+			name: d.custom_name || d.unifi_name || d.hostname || d.ip,
 			ip: d.ip,
 			category: d.category,
+			picture: d.picture,
+			icon: d.icon,
 			value: d.total_bytes,
 			display: formatBytes(d.total_bytes),
 			href: `/devices/${encodeURIComponent(d.ip)}`,

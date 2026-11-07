@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render } from '@testing-library/svelte';
+import { render, fireEvent } from '@testing-library/svelte';
 import DeviceTile from './DeviceTile.svelte';
 import { ICONS, type IconName } from './icons';
 
@@ -29,5 +29,34 @@ describe('DeviceTile', () => {
 	it('grows to the large tile', () => {
 		const { container } = render(DeviceTile, { category: 'nas', size: 'lg' });
 		expect(container.querySelector('.tile')).toHaveClass('lg');
+	});
+});
+
+// NET-200: the owner's photo or picked icon
+describe('DeviceTile picture and icon', () => {
+	it("shows the owner's photo in place of the icon, as decoration", () => {
+		const { container } = render(DeviceTile, { category: 'phone', picture: '/api/devices/registry/AA:BB:CC:DD:EE:FF/picture?v=0123456789abcdef' });
+		const img = container.querySelector('.tile img')!;
+		expect(img).toHaveAttribute('src', '/api/devices/registry/AA:BB:CC:DD:EE:FF/picture?v=0123456789abcdef');
+		expect(img).toHaveAttribute('alt', '');
+		expect(img).toHaveAttribute('width', '36');
+		expect(container.querySelector('.tile svg')).toBeNull();
+	});
+
+	it('sizes the photo to the large tile', () => {
+		const { container } = render(DeviceTile, { size: 'lg', picture: '/p?v=1' });
+		expect(container.querySelector('.tile img')).toHaveAttribute('height', '72');
+	});
+
+	it('falls back to the icon when the photo fails to load', async () => {
+		const { container } = render(DeviceTile, { category: 'phone', picture: '/p?v=1' });
+		await fireEvent.error(container.querySelector('.tile img')!);
+		expect(container.querySelector('.tile img')).toBeNull();
+		expect(container.querySelector('.tile svg')!.innerHTML).toBe(iconMarkup('phone'));
+	});
+
+	it("uses the owner's icon over the category's", () => {
+		const { container } = render(DeviceTile, { category: 'phone', icon: 'printer' });
+		expect(container.querySelector('.tile svg')!.innerHTML).toBe(iconMarkup('printer'));
 	});
 });

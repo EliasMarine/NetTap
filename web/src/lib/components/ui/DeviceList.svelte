@@ -13,6 +13,9 @@
 		name: string;
 		ip: string;
 		category?: string;
+		/** NET-200: the owner's photo URL and picked icon, passed to the tile */
+		picture?: string | null;
+		icon?: string | null;
 		value: number;
 		/** The formatted value: "14.2 GB", "38.2 Mbps". */
 		display: string;
@@ -50,7 +53,8 @@
 </script>
 
 {#snippet body(item: DeviceListItem)}
-	<DeviceTile category={item.category} />
+	<!-- OLD CODE: <DeviceTile category={item.category} /> (NET-200: the owner's picture) -->
+	<DeviceTile category={item.category} picture={item.picture} icon={item.icon} />
 	<span><span class="dev-name">{item.name}</span><span class="dev-ip mono">{item.ip}</span></span>
 	<span class="dev-v"
 		>{item.display}{#if item.spark && item.spark.length > 1}<svg

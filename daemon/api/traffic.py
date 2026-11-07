@@ -822,6 +822,13 @@ def handle_category_detail(request: web.Request) -> web.Response:
         breakdown = traffic_classifier.get_category_devices(
             client, category, from_ts, to_ts, fingerprint=fingerprint
         )
+        # NET-200: the owner's names, icons and pictures on the device rows
+        custom = request.app.get("device_custom")
+        if custom is not None:
+            breakdown = {
+                **breakdown,
+                "devices": [custom.present(d) for d in breakdown["devices"]],
+            }
         services = traffic_classifier.get_category_services(
             client, category, from_ts, to_ts
         )

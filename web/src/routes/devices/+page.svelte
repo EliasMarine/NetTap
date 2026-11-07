@@ -422,7 +422,9 @@
 				d.ip.toLowerCase().includes(q) ||
 				(d.hostname && d.hostname.toLowerCase().includes(q)) ||
 				(d.manufacturer && d.manufacturer.toLowerCase().includes(q)) ||
-				(d.unifi_name && d.unifi_name.toLowerCase().includes(q)),
+				(d.unifi_name && d.unifi_name.toLowerCase().includes(q)) ||
+				// NET-200
+				(d.custom_name && d.custom_name.toLowerCase().includes(q)),
 			);
 		}
 
@@ -490,6 +492,11 @@
 
 	// NET-180: the card and its List row read these, so both show the same figures
 	const cardName = (d: RegistryDevice) => d.display_name || d.mac;
+	/** NET-200: List-row photo URLs that failed to load; those rows show the icon instead. */
+	let failedPhotos = $state(new Set<string>());
+	const photoFailed = (url: string | null | undefined) => {
+		if (url) failedPhotos = new Set([...failedPhotos, url]);
+	};
 	const cardAddress = (d: RegistryDevice) => d.ips[0] ?? d.mac;
 	const cardConnections = (d: RegistryDevice) => (d.connection_count != null ? fmt(d.connection_count) : '—');
 	/** Some of the device's addresses weren't in the device list, so its traffic is theirs only. */
@@ -560,7 +567,8 @@
 		return `${Math.floor(hours / 24)}d ago`;
 	}
 
-	const deviceName = (d: Device) => d.unifi_name ?? d.hostname ?? d.ip;
+	// OLD CODE: const deviceName = (d: Device) => d.unifi_name ?? d.hostname ?? d.ip; (NET-200: the owner's name first)
+	const deviceName = (d: Device) => d.custom_name ?? d.unifi_name ?? d.hostname ?? d.ip;
 	const openDevice = (d: Device) => goto(`/devices/${encodeURIComponent(d.ip)}`);
 	// "1.2 GB" as the KPI's value and unit
 	const topBytes = $derived(topConsumer ? formatBytes(topConsumer.total_bytes).split(' ') : null);
@@ -568,7 +576,8 @@
 	// Every column sorts (design system); the snippets are at the top of the markup
 	const columns: Column<Device>[] = [
 		{ key: 'ip', label: 'IP address', cell: ipCell },
-		{ key: 'name', label: 'Name', cell: nameCell, sortValue: (d) => d.unifi_name ?? d.hostname },
+		// OLD CODE: { key: 'name', label: 'Name', cell: nameCell, sortValue: (d) => d.unifi_name ?? d.hostname }, (NET-200)
+		{ key: 'name', label: 'Name', cell: nameCell, sortValue: (d) => d.custom_name ?? d.unifi_name ?? d.hostname },
 		// OLD CODE: { key: 'status', label: 'Status', cell: statusCell, sortValue: (d) => status(d).rank }, (PR #191 review: a past window has no status)
 		{ key: 'status', label: 'Status', cell: statusCell, sortValue: (d) => (windowEnded ? null : status(d).rank) },
 		{ key: 'category', label: 'Type', cell: typeCell, sortValue: (d) => d.category ?? 'unknown' },
@@ -602,7 +611,10 @@
 
 {#snippet ipCell(d: Device)}<span class="mono">{d.ip}</span>{/snippet}
 {#snippet nameCell(d: Device)}
-	{#if d.unifi_name}
+	<!-- NET-200: the owner's name is in hostname already; the UniFi tag only when the UniFi name is the one shown -->
+	{#if d.custom_name}
+		{d.custom_name}
+	{:else if d.unifi_name}
 		<span class="two"><span>{d.unifi_name} <span class="tag">UniFi</span></span><span class="mono">{d.hostname ?? '—'}</span></span>
 	{:else}
 		{d.hostname ?? '—'}
@@ -624,7 +636,9 @@
 
 <!-- NET-180: By type's List rows. The Device cell sits inside the row's button: no links or buttons in it -->
 {#snippet listDeviceCell(d: RegistryDevice)}
-	<span class="who"><Icon name={deviceIcon(d.category)} /><span class="who-name">{cardName(d)}</span>{#if isNewDevice(d)}<span class="chip is-ok">New</span>{/if}</span>
+	<!-- OLD CODE: <span class="who"><Icon name={deviceIcon(d.category)} /> … (NET-200: the owner's photo or picked icon) -->
+	<!-- PR #214 review: a photo that fails to load falls back to the icon, as DeviceTile does (it hid the image and left a gap) -->
+	<span class="who">{#if d.picture && !failedPhotos.has(d.picture)}<img class="who-photo" src={d.picture} alt="" width="20" height="20" loading="lazy" onerror={() => photoFailed(d.picture)} />{:else}<Icon name={deviceIcon(d.icon ?? d.category)} />{/if}<span class="who-name">{cardName(d)}</span>{#if isNewDevice(d)}<span class="chip is-ok">New</span>{/if}</span>
 {/snippet}
 {#snippet listAddressCell(d: RegistryDevice)}
 	<span class="mono">{cardAddress(d)}</span>{#if addressMore(d)}<span class="dim">{addressMore(d)}</span>{/if}
@@ -788,7 +802,8 @@ OLD CODE END -->
 								{#each group.devices as device (device.mac)}
 									<a class="card dev-card c-4" href="/devices/mac/{encodeURIComponent(device.mac)}">
 										<span class="dev-card-top">
-											<DeviceTile category={device.category} />
+											<!-- OLD CODE: <DeviceTile category={device.category} /> (NET-200) -->
+											<DeviceTile category={device.category} picture={device.picture} icon={device.icon} />
 											<span class="two">
 												<span class="dev-name">{cardName(device)}</span>
 												<span class="mono">{cardAddress(device)}</span>
@@ -898,4 +913,6 @@ OLD CODE END -->
 	.type :global(.ic) { color: var(--text-3); width: 16px; height: 16px; }
 	.note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); }
 	.load-note { margin-bottom: var(--sp-3); }
+	/* NET-200: the owner's photo in a List row, the size of the row's icon slot */
+	.who-photo { width: 20px; height: 20px; flex: none; border-radius: var(--r-xs); object-fit: cover; }
 </style>

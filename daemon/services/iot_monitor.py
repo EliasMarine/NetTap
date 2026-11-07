@@ -14,6 +14,7 @@ the IoT dashboard hero section.
 import json
 import logging
 import os
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -209,8 +210,13 @@ def _time_range_filter(from_ts: str, to_ts: str) -> dict:
 class IoTMonitor:
     """IoT device classification, baseline building, and anomaly detection."""
 
-    def __init__(self, client: Any):
+    # OLD CODE: def __init__(self, client: Any): (NET-200: the owner's device names)
+    def __init__(
+        self, client: Any, owner_name: Callable[[str], str | None] | None = None
+    ):
         self._client = client
+        # MAC → the owner's name for the device (DeviceCustomStore.name_for); display only
+        self._owner_name = owner_name
         # In-memory baselines keyed by MAC address
         self._baselines: dict[str, dict[str, Any]] = {}
         # In-memory IoT device registry
@@ -558,8 +564,8 @@ class IoTMonitor:
             device_results.append(
                 {
                     "mac": mac,
-                    "name": dev_info.get("hostname")
-                    or dev_info.get("manufacturer", "Unknown"),
+                    # OLD CODE: "name": dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown"), (NET-200)
+                    "name": self._device_name(mac, dev_info),
                     "manufacturer": dev_info.get("manufacturer", "Unknown"),
                     "ip": dev_info.get("ip", ""),
                     "score": score,
@@ -1611,8 +1617,8 @@ class IoTMonitor:
             device_results.append(
                 {
                     "mac": mac,
-                    "name": dev_info.get("hostname")
-                    or dev_info.get("manufacturer", "Unknown"),
+                    # OLD CODE: "name": dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown"), (NET-200)
+                    "name": self._device_name(mac, dev_info),
                     "privacy_grade": privacy_grade,
                     "privacy_score": privacy_score,
                     "tracker_domains": tracker_domains_list,
@@ -2181,8 +2187,8 @@ class IoTMonitor:
             device_results.append(
                 {
                     "mac": mac,
-                    "name": dev_info.get("hostname")
-                    or dev_info.get("manufacturer", "Unknown"),
+                    # OLD CODE: "name": dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown"), (NET-200)
+                    "name": self._device_name(mac, dev_info),
                     "category": category,
                     "findings": findings,
                     "violation_count": len(findings),
@@ -2669,12 +2675,23 @@ class IoTMonitor:
             "recommendation": recommendation,
         }
 
+    def _device_name(self, mac: str, dev_info: dict) -> str:
+        """The name a device shows: the owner's (NET-200), its hostname, else its maker.
+
+        Display only: _categorize_device never sees the owner's name.
+        """
+        owner = self._owner_name(mac) if self._owner_name else None
+        return (
+            owner or dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown")
+        )
+
     def _isolation_pair(self, bucket: dict, devices: dict) -> dict[str, Any]:
         """One IoT-device-to-LAN-host pair from a (mac, dest) composite bucket."""
         raw_mac = bucket["key"]["mac"].upper()
         dest_ip = bucket["key"]["dest"]
         dev_info = devices.get(raw_mac, {})
-        dev_name = dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown")
+        # OLD CODE: dev_name = dev_info.get("hostname") or dev_info.get("manufacturer", "Unknown") (NET-200)
+        dev_name = self._device_name(raw_mac, dev_info)
 
         not_icmp = bucket.get("not_icmp", {})
         top = [pb["key"] for pb in not_icmp.get("ports", {}).get("buckets", [])]

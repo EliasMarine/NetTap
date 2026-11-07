@@ -51,6 +51,8 @@ _VALID_SECTIONS = {
     "notification_channels",
     "notification_rules",
     "device_aliases",
+    # NET-200: the owner's device icons and photos ({MAC: {"icon"} | {"image": data URL}})
+    "device_pictures",
     "excluded_ips",
     "bandwidth_cap",
 }
@@ -59,8 +61,16 @@ _VALID_SECTIONS = {
 class ConfigBackup:
     """Export/import all NetTap configuration settings."""
 
-    def __init__(self, config_paths: dict[str, str] | None = None) -> None:
+    # OLD CODE START — NET-200: device names come from the DeviceCustomStore now
+    # def __init__(self, config_paths: dict[str, str] | None = None) -> None:
+    #     self._paths = {**_DEFAULT_PATHS, **(config_paths or {})}
+    # OLD CODE END
+    def __init__(
+        self, config_paths: dict[str, str] | None = None, device_custom: Any = None
+    ) -> None:
         self._paths = {**_DEFAULT_PATHS, **(config_paths or {})}
+        # DeviceCustomStore: the owner's device names, icons and photos (NET-200)
+        self._device_custom = device_custom
 
     # ------------------------------------------------------------------
     # Export
@@ -98,9 +108,18 @@ class ConfigBackup:
         config["sections"]["notification_channels"] = notif_data.get("channels", {})
         config["sections"]["notification_rules"] = notif_data.get("rules", {})
 
-        # Device aliases (from baseline file)
-        baseline = self._read_json(self._paths.get("device_baseline", ""), default={})
-        config["sections"]["device_aliases"] = baseline.get("aliases", {})
+        # OLD CODE START — NET-200: device_baseline.json is a flat {MAC: info} map with no
+        # "aliases" key, so this always exported {} (and its import planted an "aliases" MAC)
+        # # Device aliases (from baseline file)
+        # baseline = self._read_json(self._paths.get("device_baseline", ""), default={})
+        # config["sections"]["device_aliases"] = baseline.get("aliases", {})
+        # OLD CODE END
+        # The owner's names and pictures; an unreadable store or a missing photo raises, so
+        # the export fails rather than hand back a backup without them
+        if self._device_custom is not None:
+            names, pictures = self._device_custom.export()
+            config["sections"]["device_aliases"] = names
+            config["sections"]["device_pictures"] = pictures
 
         # Excluded IPs
         config["sections"]["excluded_ips"] = self._read_json(
@@ -249,17 +268,46 @@ class ConfigBackup:
             else:
                 errors.append("Failed to write notification config")
 
-        # Apply device aliases
-        if "device_aliases" in sections:
-            existing = self._read_json(
-                self._paths.get("device_baseline", ""), default={}, lenient=True
+        # OLD CODE START — NET-200: wrote an "aliases" key into the flat baseline map
+        # # Apply device aliases
+        # if "device_aliases" in sections:
+        #     existing = self._read_json(
+        #         self._paths.get("device_baseline", ""), default={}, lenient=True
+        #     )
+        #     existing["aliases"] = sections["device_aliases"]
+        #     ok = self._write_json(self._paths.get("device_baseline", ""), existing)
+        #     if ok:
+        #         applied.append("device_aliases")
+        #     else:
+        #         errors.append("Failed to write device_aliases")
+        # OLD CODE END
+        # Device names and pictures: each present section replaces the owner's set, all or nothing
+        device_parts = [
+            s for s in ("device_aliases", "device_pictures") if s in sections
+        ]
+        device_names = sections.get("device_aliases")
+        notes: list[str] = []
+        if "device_aliases" in sections and "device_pictures" not in sections:
+            # A backup from before NET-200: its device_aliases came from the dead baseline
+            # code and is always {}, so replacing with it would wipe every owner's name
+            device_parts.remove("device_aliases")
+            device_names = None
+            notes.append(
+                "This backup was made before device names could be backed up; "
+                "the current device names are kept."
             )
-            existing["aliases"] = sections["device_aliases"]
-            ok = self._write_json(self._paths.get("device_baseline", ""), existing)
-            if ok:
-                applied.append("device_aliases")
-            else:
-                errors.append("Failed to write device_aliases")
+        if device_parts and self._device_custom is None:
+            errors.append("Device names and pictures can't be restored here")
+        elif device_parts:
+            try:
+                self._device_custom.restore(
+                    device_names, sections.get("device_pictures")
+                )
+                applied.extend(device_parts)
+            # TypeError too: a malformed backup must never escape after other sections applied
+            except (ValueError, TypeError, RuntimeError, OSError) as exc:
+                logger.error("Device names and pictures not restored: %s", exc)
+                errors.append(f"Device names and pictures not restored: {exc}")
 
         # Apply excluded IPs
         if "excluded_ips" in sections:
@@ -293,7 +341,8 @@ class ConfigBackup:
             "success": len(errors) == 0,
             "applied": applied,
             "errors": errors,
-            "warnings": validation.get("warnings", []),
+            # OLD CODE: "warnings": validation.get("warnings", []), (NET-200: plus the device notes)
+            "warnings": [*validation.get("warnings", []), *notes],
         }
 
     # ------------------------------------------------------------------

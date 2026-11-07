@@ -321,11 +321,27 @@ def _registry_names(request: web.Request, macs: list[str]) -> dict[str, str]:
             "Device names from the registry unavailable, using DNS names: %s", exc
         )
         return {}
+    # OLD CODE START — NET-200: the owner's name would reach _device_category; it is applied after
+    # return {
+    #     mac: name
+    #     for mac, device in known.items()
+    #     if (name := registry.get_name(device))
+    # }
+    # OLD CODE END
     return {
         mac: name
         for mac, device in known.items()
-        if (name := registry.get_name(device))
+        if (name := registry.get_name(device, own=False))
     }
+
+
+def _with_owner(request: web.Request, device: dict) -> dict:
+    """NET-200: a copy with the owner's name, icon and picture, for presentation only.
+
+    Applied after classification, so a cosmetic rename never moves a device between categories.
+    """
+    custom = request.app.get("device_custom")
+    return custom.present(device) if custom is not None else device
 
 
 def _get_fingerprint(request: web.Request) -> DeviceFingerprint:
@@ -870,7 +886,8 @@ def handle_device_list(request: web.Request) -> web.Response:
             if alias:
                 device["unifi_name"] = alias
 
-        devices.append(device)
+        # OLD CODE: devices.append(device) (NET-200: the owner's fields, after classification)
+        devices.append(_with_owner(request, device))
 
     # OLD CODE START — #96: sorted the capped list; the buckets are sorted above now
     # # Post-query sort by alerts if requested
@@ -1242,7 +1259,8 @@ def handle_device_detail(request: web.Request) -> web.Response:
         if alias:
             device["unifi_name"] = alias
 
-    return web.json_response({"device": device})
+    # OLD CODE: return web.json_response({"device": device}) (NET-200: the owner's fields)
+    return web.json_response({"device": _with_owner(request, device)})
 
 
 # Recent Connections columns the device page can sort on, and the field behind each (#140).

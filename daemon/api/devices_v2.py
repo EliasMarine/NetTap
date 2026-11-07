@@ -359,9 +359,12 @@ def handle_registry_list(request: web.Request) -> web.Response:
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
 
-    # Add display_name to each device
-    for device in devices:
-        device["display_name"] = registry.get_display_name(device)
+    # OLD CODE START — NET-200: with_names adds the owner's name, icon and picture too
+    # # Add display_name to each device
+    # for device in devices:
+    #     device["display_name"] = registry.get_display_name(device)
+    # OLD CODE END
+    devices = [registry.with_names(device) for device in devices]
 
     return web.json_response(
         {
@@ -389,8 +392,8 @@ def handle_registry_detail(request: web.Request) -> web.Response:
     if device is None:
         return web.json_response({"error": f"Device not found: {mac}"}, status=404)
 
-    device["display_name"] = registry.get_display_name(device)
-    return web.json_response({"device": device})
+    # OLD CODE: device["display_name"] = registry.get_display_name(device) (NET-200: with_names)
+    return web.json_response({"device": registry.with_names(device)})
 
 
 @in_thread
@@ -462,15 +465,26 @@ def handle_registry_search(request: web.Request) -> web.Response:
             {"error": "Query parameter 'q' is required"}, status=400
         )
 
+    custom = request.app.get("device_custom")
     try:
         devices = registry.search_devices(query_str)
+        # NET-200: owner names live outside the index, so their matches are fetched by MAC
+        found = {d.get("mac") for d in devices}
+        owned = [
+            m for m in (custom.matching(query_str) if custom else []) if m not in found
+        ]
+        if owned:
+            devices = [*devices, *registry.get_devices(owned).values()]
     except OpenSearchException as exc:
         logger.error("OpenSearch error in device registry: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
-    for device in devices:
-        device["display_name"] = registry.get_display_name(device)
+    # OLD CODE START — NET-200: with_names adds the owner's fields
+    # for device in devices:
+    #     device["display_name"] = registry.get_display_name(device)
+    # OLD CODE END
+    devices = [registry.with_names(device) for device in devices]
 
     return web.json_response(
         {

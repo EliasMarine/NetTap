@@ -102,8 +102,20 @@ async function proxyToDaemon(
 		});
 	}
 
+	// NET-200: a device's photo, with the daemon's caching and the headers that keep it an image
+	if (contentType.startsWith('image/')) {
+		const headers = new Headers({ 'Content-Type': contentType });
+		for (const name of ['cache-control', 'x-content-type-options', 'content-security-policy']) {
+			const value = res.headers.get(name);
+			if (value) headers.set(name, value);
+		}
+		return new Response(res.body, { status: res.status, headers });
+	}
+
 	const data = await res.json().catch(() => ({ error: 'Failed to parse daemon response' }));
-	return json(data, { status: res.status });
+	// OLD CODE: return json(data, { status: res.status }); (NET-200: a picture's 404 no-store must reach the browser, or a stale miss is cached)
+	const cacheControl = res.headers.get('cache-control');
+	return json(data, { status: res.status, headers: cacheControl ? { 'Cache-Control': cacheControl } : undefined });
 }
 
 export const GET = async (event: RequestEvent) => proxyToDaemon(event, 'GET');

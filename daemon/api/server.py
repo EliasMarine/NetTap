@@ -78,6 +78,7 @@ from api.tools import register_tools_routes
 from api.capture import register_capture_routes
 from api.dhcp_gateway import register_dhcp_gateway_routes
 from api.devices_v2 import register_devices_v2_routes
+from api.device_custom import register_device_custom_routes
 from api.live import register_live_routes
 from api.bandwidth import register_bandwidth_routes
 from api.notifications_hub import register_notification_hub_routes
@@ -119,6 +120,7 @@ from services.update_checker import UpdateChecker
 from services.malcolm_upgrade import MalcolmUpgrade
 from services.update_executor import UpdateExecutor
 from services.device_registry import DeviceRegistry
+from services.device_custom import DeviceCustomStore
 from services.unifi_integration import UnifiIntegration
 from services.live_connections import LiveConnectionTracker
 from services.bandwidth_tracker import BandwidthTracker
@@ -132,6 +134,9 @@ from services.config_backup import ConfigBackup
 from services.capture_mode_stub import CaptureManagerStub
 
 logger = logging.getLogger("nettap.api")
+
+# NET-200: the largest request body (a config backup with photos); nginx and nettap-web match it
+MAX_REQUEST_BYTES = 16 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -1036,8 +1041,15 @@ def create_app(
     # app = web.Application(middlewares=[cors_middleware, logging_middleware])
     # OLD CODE END
     # Auth runs first so unauthenticated requests never reach any handler.
+    # OLD CODE START — NET-200: aiohttp's default 1 MiB body cap refused a backup holding photos
+    # app = web.Application(
+    #     middlewares=[make_auth_middleware(_load_daemon_token()), logging_middleware]
+    # )
+    # OLD CODE END
     app = web.Application(
-        middlewares=[make_auth_middleware(_load_daemon_token()), logging_middleware]
+        middlewares=[make_auth_middleware(_load_daemon_token()), logging_middleware],
+        # Matches nginx and nettap-web (BODY_SIZE_LIMIT): photos ≤ 8 MiB in all, base64 in a backup
+        client_max_size=MAX_REQUEST_BYTES,
     )
 
     # Store subsystem references for handler access
@@ -1276,13 +1288,21 @@ def create_app(
     # OLD CODE START — 2026-11-01: the registry now logs new devices to the changelog
     # device_registry = DeviceRegistry(client=storage._client)
     # OLD CODE END
+    # NET-200: the owner's names and pictures; built first so the registry, IoT and backup share it
+    device_custom = DeviceCustomStore()
+    # OLD CODE START — NET-200: no owner names
+    # device_registry = DeviceRegistry(
+    #     client=storage._client, changelog=changelog_service
+    # )
+    # OLD CODE END
     device_registry = DeviceRegistry(
-        client=storage._client, changelog=changelog_service
+        client=storage._client, changelog=changelog_service, custom=device_custom
     )
     unifi_integration = UnifiIntegration()
     if unifi_integration.load_config():
         logger.info("UniFi integration restored from saved config")
     register_devices_v2_routes(app, device_registry, unifi_integration)
+    register_device_custom_routes(app, device_custom)
 
     # Live connection tracking (real-time connection monitor)
     live_tracker = LiveConnectionTracker(client=storage._client)
@@ -1358,7 +1378,8 @@ def create_app(
     register_capture_control_routes(app, env_file=env_file)
 
     # Config backup/restore (export/import all settings)
-    config_backup = ConfigBackup()
+    # OLD CODE: config_backup = ConfigBackup() (NET-200: names and pictures are backed up)
+    config_backup = ConfigBackup(device_custom=device_custom)
     register_backup_routes(app, config_backup)
 
     # Threat Intelligence (unified report, beaconing, lateral movement, DNS anomalies, TI)

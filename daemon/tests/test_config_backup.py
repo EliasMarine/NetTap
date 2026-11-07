@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from services.config_backup import ConfigBackup, _SCHEMA_VERSION, _NETTAP_VERSION
+from services.device_custom import DeviceCustomStore
 
 
 # ---------------------------------------------------------------------------
@@ -87,10 +88,18 @@ def config_paths(tmp_path):
     return paths
 
 
+# OLD CODE START — NET-200: device names come from the DeviceCustomStore, not the baseline file
+# @pytest.fixture
+# def backup(config_paths):
+#     """Return a ConfigBackup with temp config paths."""
+#     return ConfigBackup(config_paths=config_paths)
+# OLD CODE END
 @pytest.fixture
-def backup(config_paths):
-    """Return a ConfigBackup with temp config paths."""
-    return ConfigBackup(config_paths=config_paths)
+def backup(config_paths, tmp_path):
+    """Return a ConfigBackup with temp config paths and one owner-named device."""
+    store = DeviceCustomStore(str(tmp_path / "appdata"))
+    store.set_name("00:11:22:33:44:55", "My Laptop")
+    return ConfigBackup(config_paths=config_paths, device_custom=store)
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +127,7 @@ class TestExport:
         assert "notification_channels" in sections
         assert "notification_rules" in sections
         assert "device_aliases" in sections
+        assert "device_pictures" in sections
         assert "excluded_ips" in sections
         assert "bandwidth_cap" in sections
 

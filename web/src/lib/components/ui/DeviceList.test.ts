@@ -74,3 +74,11 @@ describe('DeviceList sparkline', () => {
 		expect(container.querySelector('.mini')).toBeInTheDocument();
 	});
 });
+
+// NET-200: a row's tile shows the owner's photo
+describe('DeviceList pictures', () => {
+	it("passes an item's photo to its tile", () => {
+		const { container } = render(DeviceList, { items: [{ ...ITEMS[0], picture: '/api/devices/registry/AA:BB:CC:DD:EE:FF/picture?v=1' }] });
+		expect(container.querySelector('.tile img')).toHaveAttribute('src', '/api/devices/registry/AA:BB:CC:DD:EE:FF/picture?v=1');
+	});
+});
