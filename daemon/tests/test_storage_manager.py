@@ -638,3 +638,19 @@ class TestGetStatus:
         with patch.object(mgr, "check_disk_usage", side_effect=OSError("gone")):
             with pytest.raises(OSError):
                 mgr.get_status()
+
+
+class TestClientSettings:
+    """PR 2 (reliability): a timed-out request isn't re-sent, and threads share a real pool."""
+
+    def test_no_retry_on_timeout_and_a_pool_of_16(self):
+        from opensearchpy import OpenSearch
+
+        kwargs = StorageManager._client_kwargs("https://opensearch:9200", ("u", "p"))
+        assert kwargs["retry_on_timeout"] is False
+        assert kwargs["pool_maxsize"] == 16
+
+        # The installed client takes the setting: the urllib3 pool keeps 16 connections
+        transport = OpenSearch(**kwargs).transport
+        assert transport.retry_on_timeout is False
+        assert transport.get_connection().pool.pool.maxsize == 16

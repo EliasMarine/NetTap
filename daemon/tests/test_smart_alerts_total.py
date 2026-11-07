@@ -3,7 +3,7 @@
 The device page showed "10 grouped" (its limit) for a device with more alert groups.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
@@ -29,7 +29,7 @@ class TestSmartAlertTotal(AioHTTPTestCase):
     @unittest_run_loop
     async def test_total_counts_every_group_past_the_limit(self):
         groups = [{"signature_id": i, "severity": 2, "count": 1} for i in range(15)]
-        fetch = AsyncMock(return_value=groups)
+        fetch = MagicMock(return_value=groups)
         with patch("services.alert_intelligence.get_smart_alerts", fetch):
             resp = await self.client.request(
                 "GET", "/api/alerts/smart?device_ip=192.168.1.5&limit=10"

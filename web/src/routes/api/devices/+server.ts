@@ -4,7 +4,10 @@ import { daemonFetch } from '$lib/server/daemon.js';
 
 // NET-160 slice 2b-3: a 30-day list pages every device's buckets. scripts/remote/deploy-drill-down.sh
 // declares the same value and gates the device's 30-day list at 80% of it; the vitest checks they match.
-const DEVICE_LIST_TIMEOUT_MS = 10_000;
+// OLD CODE START — PR 2 (reliability): 6-7 s cold on the G11 left little room; 30-day lists failed
+// const DEVICE_LIST_TIMEOUT_MS = 10_000;
+// OLD CODE END
+const DEVICE_LIST_TIMEOUT_MS = 30_000;
 
 /**
  * GET /api/devices?from=&to=&sort=bytes&order=desc&limit=100

@@ -5,12 +5,12 @@ Provides cluster health, index listing, shard allocation, and template
 information from the local OpenSearch instance.
 """
 
-import asyncio
 import logging
 
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.offload import run_blocking
 from storage.manager import StorageManager
 
 logger = logging.getLogger("nettap.api.opensearch_cluster")
@@ -20,11 +20,9 @@ async def handle_cluster_health(request: web.Request) -> web.Response:
     """GET /api/opensearch/cluster — Cluster health + stats."""
     storage: StorageManager = request.app["storage"]
     try:
-        loop = asyncio.get_running_loop()
-        health = await loop.run_in_executor(None, storage._client.cluster.health)
-        stats = await loop.run_in_executor(
-            None, lambda: storage._client.cluster.stats()
-        )
+        # OLD CODE: loop.run_in_executor(None, …), asyncio's default pool (PR #200 review)
+        health = await run_blocking(storage._client.cluster.health)
+        stats = await run_blocking(lambda: storage._client.cluster.stats())
         return web.json_response(
             {
                 **health,
@@ -51,9 +49,8 @@ async def handle_indices(request: web.Request) -> web.Response:
     """GET /api/opensearch/indices — Index list with details."""
     storage: StorageManager = request.app["storage"]
     try:
-        loop = asyncio.get_running_loop()
-        raw_indices = await loop.run_in_executor(
-            None,
+        # OLD CODE: loop.run_in_executor(None, …), asyncio's default pool (PR #200 review)
+        raw_indices = await run_blocking(
             # NET-166: bytes="b" asks for exact byte counts; the default "512kb"/"1.2gb" text is
             # base 1,024 and already rounded, so the page couldn't show it in decimal units honestly
             lambda: storage._client.cat.indices(
@@ -89,9 +86,8 @@ async def handle_shards(request: web.Request) -> web.Response:
     """GET /api/opensearch/shards — Shard allocation details."""
     storage: StorageManager = request.app["storage"]
     try:
-        loop = asyncio.get_running_loop()
-        shards = await loop.run_in_executor(
-            None,
+        # OLD CODE: loop.run_in_executor(None, …), asyncio's default pool (PR #200 review)
+        shards = await run_blocking(
             lambda: storage._client.cat.shards(
                 format="json",
                 h="index,shard,prirep,state,docs,store,node",
@@ -108,9 +104,8 @@ async def handle_templates(request: web.Request) -> web.Response:
     """GET /api/opensearch/templates — Index template list."""
     storage: StorageManager = request.app["storage"]
     try:
-        loop = asyncio.get_running_loop()
-        templates = await loop.run_in_executor(
-            None,
+        # OLD CODE: loop.run_in_executor(None, …), asyncio's default pool (PR #200 review)
+        templates = await run_blocking(
             lambda: storage._client.cat.templates(
                 format="json",
                 h="name,index_patterns,order,version",

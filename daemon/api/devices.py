@@ -7,7 +7,6 @@ a network device inventory with passive fingerprinting enrichment (MAC,
 hostname, manufacturer, OS hint).
 """
 
-import asyncio
 import ipaddress
 import logging
 import os
@@ -19,6 +18,7 @@ from typing import Any
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.offload import in_thread, run_blocking
 from api.time_range import _utc, iso_param, parse_time_range
 from storage.all_buckets import PAGE_SIZE, all_buckets
 from storage.manager import StorageManager
@@ -497,7 +497,8 @@ def _device_category(
 # ---------------------------------------------------------------------------
 
 
-async def handle_device_list(request: web.Request) -> web.Response:
+@in_thread
+def handle_device_list(request: web.Request) -> web.Response:
     """GET /api/devices?from=&to=&sort=bytes&order=desc&limit=100
 
     Returns a list of discovered devices (unique source IPs) with
@@ -622,17 +623,29 @@ async def handle_device_list(request: web.Request) -> web.Response:
         #     )
         # OLD CODE END
         # Every device, through the count's own helper, so the list and the count agree.
-        # PR #191 review: off the event loop, so a long read never stalls /api/health
-        buckets = await asyncio.get_running_loop().run_in_executor(
-            None,
-            lambda: _lan_device_buckets(
-                client,
-                request.app,
-                from_ts,
-                to_ts,
-                aggs=device_aggs,
-                what="device list",
-            ),
+        # OLD CODE START — PR 2 (reliability): only this read was off the loop; the alert
+        # counts, fingerprint and registry lookups below still blocked it
+        # # PR #191 review: off the event loop, so a long read never stalls /api/health
+        # buckets = await asyncio.get_running_loop().run_in_executor(
+        #     None,
+        #     lambda: _lan_device_buckets(
+        #         client,
+        #         request.app,
+        #         from_ts,
+        #         to_ts,
+        #         aggs=device_aggs,
+        #         what="device list",
+        #     ),
+        # )
+        # OLD CODE END
+        # The whole handler runs in a worker thread, so /api/health never waits on it
+        buckets = _lan_device_buckets(
+            client,
+            request.app,
+            from_ts,
+            to_ts,
+            aggs=device_aggs,
+            what="device list",
         )
     except QueryFailed as exc:
         return _incomplete("devices list", exc)
@@ -886,7 +899,8 @@ async def handle_device_list(request: web.Request) -> web.Response:
     )
 
 
-async def handle_device_detail(request: web.Request) -> web.Response:
+@in_thread
+def handle_device_detail(request: web.Request) -> web.Response:
     """GET /api/devices/{ip}
 
     Returns detailed information for a single device, including top
@@ -1305,7 +1319,8 @@ def _device_connection_sort(sort_key: str, order: str, ip: str) -> list[dict]:
     ]
 
 
-async def handle_device_connections(request: web.Request) -> web.Response:
+@in_thread
+def handle_device_connections(request: web.Request) -> web.Response:
     """GET /api/devices/{ip}/connections?page=1&size=50&from=&to=&sort=time&order=desc&proto=
 
     Returns paginated connection logs for a specific device IP, where the
@@ -1419,7 +1434,8 @@ async def handle_device_connections(request: web.Request) -> web.Response:
     )
 
 
-async def handle_device_categories(request: web.Request) -> web.Response:
+@in_thread
+def handle_device_categories(request: web.Request) -> web.Response:
     """GET /api/devices/{ip}/categories?from=&to=
 
     Returns traffic category breakdown for this device (what percentage
@@ -1494,7 +1510,8 @@ async def handle_device_categories(request: web.Request) -> web.Response:
     )
 
 
-async def handle_device_alerts(request: web.Request) -> web.Response:
+@in_thread
+def handle_device_alerts(request: web.Request) -> web.Response:
     """GET /api/devices/{ip}/alerts?from=&to=&limit=20
 
     Returns recent Suricata alerts with details for a specific device,
@@ -1579,7 +1596,8 @@ async def handle_device_alerts(request: web.Request) -> web.Response:
     )
 
 
-async def handle_device_ports(request: web.Request) -> web.Response:
+@in_thread
+def handle_device_ports(request: web.Request) -> web.Response:
     """GET /api/devices/{ip}/ports?from=&to=
 
     Returns top destination ports used by this device with service
@@ -1722,8 +1740,13 @@ async def handle_device_count(request: web.Request) -> web.Response:
         # result = client.search(index=NETWORK_INDEX, body=query)
         # OLD CODE END
         # PR #191 review: off the event loop, as the list does
-        devices = await asyncio.get_running_loop().run_in_executor(
-            None,
+        # OLD CODE START — PR #200 review: asyncio's default pool, which must stay free for
+        # the drill-downs and health checks
+        # devices = await asyncio.get_running_loop().run_in_executor(
+        #     None,
+        #     lambda: _lan_device_buckets(
+        # OLD CODE END
+        devices = await run_blocking(
             lambda: _lan_device_buckets(
                 client,
                 request.app,

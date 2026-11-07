@@ -5,7 +5,6 @@ Validates that OpenSearch ASN aggregation responses are correctly
 mapped to traffic categories, aggregated, and sorted.
 """
 
-import asyncio
 import os
 import sys
 import unittest
@@ -42,8 +41,8 @@ class TestCategoryStats(unittest.TestCase):
         client = MagicMock()
         client.search = MagicMock(return_value=_mock_os_response([]))
 
-        result = asyncio.run(
-            get_category_stats(client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
+        result = get_category_stats(
+            client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
         )
         self.assertEqual(result, [])
 
@@ -57,8 +56,8 @@ class TestCategoryStats(unittest.TestCase):
             )
         )
 
-        result = asyncio.run(
-            get_category_stats(client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
+        result = get_category_stats(
+            client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
         )
         streaming = next((c for c in result if c["name"] == "streaming"), None)
         self.assertIsNotNone(streaming)
@@ -76,8 +75,8 @@ class TestCategoryStats(unittest.TestCase):
             )
         )
 
-        result = asyncio.run(
-            get_category_stats(client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
+        result = get_category_stats(
+            client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
         )
         streaming = next((c for c in result if c["name"] == "streaming"), None)
         self.assertIsNotNone(streaming)
@@ -94,8 +93,8 @@ class TestCategoryStats(unittest.TestCase):
             )
         )
 
-        result = asyncio.run(
-            get_category_stats(client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
+        result = get_category_stats(
+            client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
         )
         other = next((c for c in result if c["name"] == "other"), None)
         self.assertIsNotNone(other)
@@ -112,8 +111,8 @@ class TestCategoryStats(unittest.TestCase):
             )
         )
 
-        result = asyncio.run(
-            get_category_stats(client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
+        result = get_category_stats(
+            client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
         )
         self.assertGreaterEqual(result[0]["total_bytes"], result[-1]["total_bytes"])
 
@@ -128,8 +127,8 @@ class TestCategoryStats(unittest.TestCase):
             )
         )
 
-        result = asyncio.run(
-            get_category_stats(client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
+        result = get_category_stats(
+            client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
         )
         streaming = next(c for c in result if c["name"] == "streaming")
         self.assertGreaterEqual(len(streaming["top_services"]), 1)
@@ -141,11 +140,7 @@ class TestCategoryStats(unittest.TestCase):
         client.search = MagicMock(side_effect=Exception("Connection refused"))
 
         with self.assertRaises(Exception):
-            asyncio.run(
-                get_category_stats(
-                    client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
-                )
-            )
+            get_category_stats(client, "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z")
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 import asyncio
 import threading
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from services.investigation import _generate_recommendation, generate_threat_report
 
@@ -42,11 +42,11 @@ def test_threat_report_kill_chains_match_the_summary():
         "alert_count": 2,
         "alerts": [],
     }
-    summary = AsyncMock(return_value={"kill_chains": [chain]})
+    summary = MagicMock(return_value={"kill_chains": [chain]})
     with (
         patch("services.alert_intelligence.get_smart_alert_summary", summary),
         patch(
-            "services.alert_intelligence.get_smart_alerts", AsyncMock(return_value=[])
+            "services.alert_intelligence.get_smart_alerts", MagicMock(return_value=[])
         ),
         patch("services.threat_detection.detect_beaconing", return_value=([], True)),
         patch(
@@ -65,10 +65,10 @@ def test_threat_report_names_failed_and_partial_checks():
     with (
         patch(
             "services.alert_intelligence.get_smart_alert_summary",
-            AsyncMock(return_value={}),
+            MagicMock(return_value={}),
         ),
         patch(
-            "services.alert_intelligence.get_smart_alerts", AsyncMock(return_value=[])
+            "services.alert_intelligence.get_smart_alerts", MagicMock(return_value=[])
         ),
         patch(
             "services.threat_detection.detect_beaconing",
@@ -112,10 +112,10 @@ def test_threat_report_runs_its_checks_side_by_side():
     with (
         patch(
             "services.alert_intelligence.get_smart_alert_summary",
-            AsyncMock(return_value={}),
+            MagicMock(return_value={}),
         ),
         patch(
-            "services.alert_intelligence.get_smart_alerts", AsyncMock(return_value=[])
+            "services.alert_intelligence.get_smart_alerts", MagicMock(return_value=[])
         ),
         patch(
             "services.threat_detection.detect_beaconing",
@@ -149,11 +149,11 @@ def test_failed_investigation_is_a_failed_check_not_zero_counts():
     with (
         patch(
             "services.alert_intelligence.get_smart_alert_summary",
-            AsyncMock(return_value={}),
+            MagicMock(return_value={}),
         ),
         patch(
             "services.alert_intelligence.get_smart_alerts",
-            AsyncMock(return_value=[critical]),
+            MagicMock(return_value=[critical]),
         ),
         patch("services.threat_detection.detect_beaconing", return_value=([], True)),
         patch(

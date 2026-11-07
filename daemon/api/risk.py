@@ -6,7 +6,6 @@ These endpoints compute per-device risk scores (0-100) based on network
 telemetry data from OpenSearch indices.
 """
 
-import asyncio
 import logging
 import os
 from datetime import timedelta
@@ -17,6 +16,7 @@ from datetime import timedelta
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.offload import in_thread, run_blocking
 from api.time_range import parse_time_range
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from api.devices import _incomplete, _lan_device_bool_query, _lan_device_buckets
@@ -330,7 +330,7 @@ _PORTS_AND_EXTERNAL_AGGS = {
 # OLD CODE END
 async def handle_risk_scores(request: web.Request) -> web.Response:
     """GET /api/risk/scores?from=&to=&limit= — scored in a worker thread (#139)."""
-    return await asyncio.to_thread(_risk_scores, request)
+    return await run_blocking(_risk_scores, request)
 
 
 def _risk_scores(request: web.Request) -> web.Response:
@@ -605,7 +605,8 @@ def _risk_scores(request: web.Request) -> web.Response:
     )
 
 
-async def handle_risk_score_single(request: web.Request) -> web.Response:
+@in_thread
+def handle_risk_score_single(request: web.Request) -> web.Response:
     """GET /api/risk/scores/{ip}?from=&to=
 
     Returns risk score for a single device.

@@ -272,7 +272,15 @@ class StorageManager:
             "ssl_show_warn": False,
             "timeout": 30,
             "max_retries": 3,
-            "retry_on_timeout": True,
+            # OLD CODE START — PR 2 (reliability): a request that timed out at 30 s was sent
+            # again up to 3 times, so one slow query could hold a page for 2 minutes
+            # "retry_on_timeout": True,
+            # OLD CODE END
+            # Connection errors and 502/503/504 are still retried; a timeout is not
+            "retry_on_timeout": False,
+            # Handlers run in threads now; one pooled connection made each extra one churn
+            # ("Connection pool is full, discarding connection"). Not a concurrency limit.
+            "pool_maxsize": 16,
         }
         if http_auth:
             kwargs["http_auth"] = http_auth

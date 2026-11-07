@@ -249,10 +249,8 @@ async def generate_threat_report(
         )
     }
     try:
-        summary = await get_smart_alert_summary(client, from_ts, to_ts)
-        alerts = await get_smart_alerts(
-            client, from_ts, to_ts, include_info=False, limit=200
-        )
+        summary = get_smart_alert_summary(client, from_ts, to_ts)
+        alerts = get_smart_alerts(client, from_ts, to_ts, include_info=False, limit=200)
     except BaseException:
         await asyncio.gather(*running.values(), return_exceptions=True)
         raise

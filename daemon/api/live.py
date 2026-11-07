@@ -17,6 +17,7 @@ import time
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.offload import in_thread, run_blocking
 from services.live_connections import LiveConnectionTracker
 
 logger = logging.getLogger("nettap.api.live")
@@ -67,7 +68,8 @@ class ThroughputSampler:
 # ---------------------------------------------------------------------------
 
 
-async def handle_live_connections(request: web.Request) -> web.Response:
+@in_thread
+def handle_live_connections(request: web.Request) -> web.Response:
     """GET /api/live/connections?device=&proto=&country=&limit=100
 
     Returns a snapshot of recent active connections from the tracker.
@@ -144,32 +146,58 @@ async def handle_live_dashboard(request: web.Request) -> web.Response:
     # Exclude appliance IPs from live monitor queries
     excluded_ips = request.app.get("excluded_ips", [])
 
-    # Run the synchronous OpenSearch queries in a thread executor to avoid
-    # blocking the event loop (matches server.py pattern).
-    loop = asyncio.get_running_loop()
-    try:
-        dashboard = await loop.run_in_executor(
-            None,
-            lambda: tracker.fetch_dashboard_data(
-                device=device,
-                proto=proto,
-                country=country,
-                limit=limit,
-                excluded_ips=excluded_ips,
-                lan_filter=request.app.get("lan_filter"),
-            ),
+    geoip = request.app.get("geoip")
+
+    def fetch_and_enrich() -> dict:
+        data = tracker.fetch_dashboard_data(
+            device=device,
+            proto=proto,
+            country=country,
+            limit=limit,
+            excluded_ips=excluded_ips,
+            lan_filter=request.app.get("lan_filter"),
         )
+        # GeoIP fallback enrichment: fill in missing lat/lon for connections
+        # that OpenSearch didn't have geo data for (it can query OpenSearch too).
+        if geoip:
+            _enrich_connections_geoip(data.get("connections", []), geoip)
+        return data
+
+    # OLD CODE START — PR 2 (reliability): the GeoIP fallback ran on the loop after the fetch
+    # # Run the synchronous OpenSearch queries in a thread executor to avoid
+    # # blocking the event loop (matches server.py pattern).
+    # loop = asyncio.get_running_loop()
+    # try:
+    #     dashboard = await loop.run_in_executor(
+    #         None,
+    #         lambda: tracker.fetch_dashboard_data(
+    #             device=device,
+    #             proto=proto,
+    #             country=country,
+    #             limit=limit,
+    #             excluded_ips=excluded_ips,
+    #             lan_filter=request.app.get("lan_filter"),
+    #         ),
+    #     )
+    # except Exception as exc:
+    #     logger.error("Error fetching live dashboard data: %s", exc)
+    #     return web.json_response(
+    #         {"error": f"Dashboard query failed: {exc}"}, status=502
+    #     )
+    #
+    # # GeoIP fallback enrichment: fill in missing lat/lon for connections
+    # # that OpenSearch didn't have geo data for.
+    # geoip = request.app.get("geoip")
+    # if geoip:
+    #     _enrich_connections_geoip(dashboard.get("connections", []), geoip)
+    # OLD CODE END
+    try:
+        dashboard = await run_blocking(fetch_and_enrich)
     except Exception as exc:
         logger.error("Error fetching live dashboard data: %s", exc)
         return web.json_response(
             {"error": f"Dashboard query failed: {exc}"}, status=502
         )
-
-    # GeoIP fallback enrichment: fill in missing lat/lon for connections
-    # that OpenSearch didn't have geo data for.
-    geoip = request.app.get("geoip")
-    if geoip:
-        _enrich_connections_geoip(dashboard.get("connections", []), geoip)
 
     sampler: ThroughputSampler = request.app["live_throughput"]
     # OLD CODE START — 2026-11-06 (O7): a filtered request (the Live page's side cards) took a
@@ -191,7 +219,8 @@ async def handle_live_dashboard(request: web.Request) -> web.Response:
     return web.json_response(dashboard)
 
 
-async def handle_live_connection_detail(request: web.Request) -> web.Response:
+@in_thread
+def handle_live_connection_detail(request: web.Request) -> web.Response:
     """GET /api/live/connection/detail?src=&dst=&port=
 
     Returns detailed information for a specific source→destination pair:
@@ -218,16 +247,25 @@ async def handle_live_connection_detail(request: web.Request) -> web.Response:
         except (ValueError, TypeError):
             pass
 
-    # Run queries in thread executor
-    loop = asyncio.get_running_loop()
+    # OLD CODE START — PR 2 (reliability): the GeoIP fallback below still ran on the loop
+    # # Run queries in thread executor
+    # loop = asyncio.get_running_loop()
+    # try:
+    #     detail = await loop.run_in_executor(
+    #         None,
+    #         lambda: tracker.fetch_connection_detail(
+    #             src_ip=src,
+    #             dst_ip=dst,
+    #             dst_port=dst_port,
+    #         ),
+    #     )
+    # OLD CODE END
+    # The whole handler runs in a worker thread (OpenSearch queries, then the GeoIP fallback)
     try:
-        detail = await loop.run_in_executor(
-            None,
-            lambda: tracker.fetch_connection_detail(
-                src_ip=src,
-                dst_ip=dst,
-                dst_port=dst_port,
-            ),
+        detail = tracker.fetch_connection_detail(
+            src_ip=src,
+            dst_ip=dst,
+            dst_port=dst_port,
         )
     except Exception as exc:
         logger.error("Error fetching connection detail: %s", exc)

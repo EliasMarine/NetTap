@@ -6,7 +6,6 @@ Validates device aggregation, sorting, field presence, and handling
 of unknown categories.
 """
 
-import asyncio
 import os
 import sys
 import unittest
@@ -72,10 +71,8 @@ class TestCategoryDevices(unittest.TestCase):
             ]
         )
 
-        result = asyncio.run(
-            get_category_devices(
-                client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
-            )
+        result = get_category_devices(
+            client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
         )
         devices = result["devices"]
         self.assertEqual(len(devices), 2)
@@ -89,10 +86,8 @@ class TestCategoryDevices(unittest.TestCase):
         client = MagicMock()
         client.search = MagicMock(return_value=_mock_device_response([]))
 
-        result = asyncio.run(
-            get_category_devices(
-                client, "nonexistent", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
-            )
+        result = get_category_devices(
+            client, "nonexistent", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
         )
         self.assertEqual(result, _EMPTY)
 
@@ -107,10 +102,8 @@ class TestCategoryDevices(unittest.TestCase):
             ]
         )
 
-        result = asyncio.run(
-            get_category_devices(
-                client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
-            )
+        result = get_category_devices(
+            client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
         )
         device = result["devices"][0]
         self.assertIn("ip", device)
@@ -129,23 +122,19 @@ class TestCategoryDevices(unittest.TestCase):
                 else [_asn_page("AS2906 Netflix Inc"), Exception("Connection refused")]
             )
             with self.assertRaises(Exception, msg=failing):
-                asyncio.run(
-                    get_category_devices(
-                        client,
-                        "streaming",
-                        "2026-03-01T00:00:00Z",
-                        "2026-03-02T00:00:00Z",
-                    )
+                get_category_devices(
+                    client,
+                    "streaming",
+                    "2026-03-01T00:00:00Z",
+                    "2026-03-02T00:00:00Z",
                 )
 
     def test_no_asn_in_the_category_is_empty(self):
         client = MagicMock()
         client.search = MagicMock(side_effect=[_asn_page("AS64500 Unlisted Org")])
 
-        result = asyncio.run(
-            get_category_devices(
-                client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
-            )
+        result = get_category_devices(
+            client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
         )
         self.assertEqual(result, _EMPTY)
         self.assertEqual(client.search.call_count, 1)
@@ -164,10 +153,8 @@ class TestCategoryDevices(unittest.TestCase):
             ]
         )
 
-        asyncio.run(
-            get_category_devices(
-                client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
-            )
+        get_category_devices(
+            client, "streaming", "2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"
         )
         body = client.search.call_args_list[1].kwargs["body"]
         self.assertNotIn("wildcard", str(body))

@@ -15,13 +15,15 @@ import os
 
 from aiohttp import web
 
+from api.offload import in_thread
 from api.time_range import iso_param
 from services.pcap_search import PcapSearchService
 
 logger = logging.getLogger("nettap.api.pcap")
 
 
-async def handle_pcap_files(request: web.Request) -> web.Response:
+@in_thread
+def handle_pcap_files(request: web.Request) -> web.Response:
     """GET /api/pcap/files?from=&to= — List available PCAP files."""
     pcap_service: PcapSearchService = request.app["pcap_search"]
 

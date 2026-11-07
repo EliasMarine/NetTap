@@ -10,6 +10,7 @@ from datetime import timedelta
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.offload import in_thread
 from api.time_range import parse_time_range
 from services.dns_analytics import DNSAnalytics
 from storage.manager import StorageManager
@@ -47,7 +48,8 @@ def _parse_time_range(request: web.Request) -> tuple[str, str]:
     return parse_time_range(request, timedelta(hours=_DEFAULT_RANGE_HOURS))
 
 
-async def handle_top_domains(request: web.Request) -> web.Response:
+@in_thread
+def handle_top_domains(request: web.Request) -> web.Response:
     """GET /api/dns/top-domains?from=&to=&limit=50"""
     from_ts, to_ts = _parse_time_range(request)
     limit = int(request.query.get("limit", "50"))
@@ -65,7 +67,8 @@ async def handle_top_domains(request: web.Request) -> web.Response:
     return web.json_response({"from": from_ts, "to": to_ts, "domains": result})
 
 
-async def handle_device_dns(request: web.Request) -> web.Response:
+@in_thread
+def handle_device_dns(request: web.Request) -> web.Response:
     """GET /api/dns/device/{ip}?from=&to="""
     device_ip = request.match_info["ip"]
     from_ts, to_ts = _parse_time_range(request)
@@ -85,7 +88,8 @@ async def handle_device_dns(request: web.Request) -> web.Response:
     )
 
 
-async def handle_nxdomain(request: web.Request) -> web.Response:
+@in_thread
+def handle_nxdomain(request: web.Request) -> web.Response:
     """GET /api/dns/nxdomain?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     dns: DNSAnalytics = request.app["dns_analytics"]
@@ -100,7 +104,8 @@ async def handle_nxdomain(request: web.Request) -> web.Response:
     return web.json_response({"from": from_ts, "to": to_ts, "nxdomains": result})
 
 
-async def handle_query_types(request: web.Request) -> web.Response:
+@in_thread
+def handle_query_types(request: web.Request) -> web.Response:
     """GET /api/dns/types?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     dns: DNSAnalytics = request.app["dns_analytics"]
@@ -117,7 +122,8 @@ async def handle_query_types(request: web.Request) -> web.Response:
     return web.json_response({"from": from_ts, "to": to_ts, "types": result})
 
 
-async def handle_timeline(request: web.Request) -> web.Response:
+@in_thread
+def handle_timeline(request: web.Request) -> web.Response:
     """GET /api/dns/timeline?from=&to=&interval=1m"""
     from_ts, to_ts = _parse_time_range(request)
     interval = request.query.get("interval", "1m")
@@ -144,7 +150,8 @@ async def handle_timeline(request: web.Request) -> web.Response:
     )
 
 
-async def handle_suspicious(request: web.Request) -> web.Response:
+@in_thread
+def handle_suspicious(request: web.Request) -> web.Response:
     """GET /api/dns/suspicious?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     dns: DNSAnalytics = request.app["dns_analytics"]
@@ -159,7 +166,8 @@ async def handle_suspicious(request: web.Request) -> web.Response:
     return web.json_response({"from": from_ts, "to": to_ts, "suspicious": result})
 
 
-async def handle_stats(request: web.Request) -> web.Response:
+@in_thread
+def handle_stats(request: web.Request) -> web.Response:
     """GET /api/dns/stats?from=&to="""
     from_ts, to_ts = _parse_time_range(request)
     dns: DNSAnalytics = request.app["dns_analytics"]

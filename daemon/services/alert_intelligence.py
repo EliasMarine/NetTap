@@ -20,10 +20,12 @@ threat intelligence. Features:
 import logging
 import os
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
 
+from services.capture_config import write_file_atomic
 from storage.all_buckets import MAX_BUCKETS
 
 logger = logging.getLogger("nettap.services.alert_intelligence")
@@ -907,7 +909,10 @@ def save_suppress_list(data: dict) -> None:
     """Save the suppress list to disk."""
     try:
         _SUPPRESS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _SUPPRESS_PATH.write_text(json.dumps(data, indent=2))
+        # OLD CODE START — PR 2 (reliability): a reader in another thread could see a half-written file
+        # _SUPPRESS_PATH.write_text(json.dumps(data, indent=2))
+        # OLD CODE END
+        write_file_atomic(str(_SUPPRESS_PATH), json.dumps(data, indent=2))
     except Exception:
         logger.error(
             "Failed to save suppress list to %s", _SUPPRESS_PATH, exc_info=True
@@ -999,6 +1004,8 @@ def is_suppressed(signature_id: int, device_ip: str | None = None) -> bool:
 _BASELINE_PATH = (
     Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-baselines.json"
 )
+# Summaries run in threads (the Alerts page, the threat report): one update at a time
+_BASELINE_LOCK = threading.Lock()
 
 
 def _window_hours(from_ts: str, to_ts: str) -> tuple[float, bool]:
@@ -1029,7 +1036,10 @@ def _save_baselines(data: dict) -> None:
     """Save baselines to disk."""
     try:
         _BASELINE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _BASELINE_PATH.write_text(json.dumps(data, indent=2))
+        # OLD CODE START — PR 2 (reliability): a reader in another thread could see a half-written file
+        # _BASELINE_PATH.write_text(json.dumps(data, indent=2))
+        # OLD CODE END
+        write_file_atomic(str(_BASELINE_PATH), json.dumps(data, indent=2))
     except Exception:
         logger.error("Failed to save baselines", exc_info=True)
 
@@ -1106,26 +1116,27 @@ def update_baseline(
     window = max(1, round(window_hours))
     rate = current_summary.get("total_events", 0) / max(window_hours, 1e-9)
 
-    # Per-request points from before #95 have no "hour" and are dropped
-    history = [
-        h
-        for h in _load_baselines().get("history", [])
-        if "hour" in h and h["hour"] >= hours_kept_from
-    ]
-    same_window = [h for h in history if h.get("window_hours") == window]
-    earlier = [h for h in same_window if h["hour"] != hour]
-    if record and len(earlier) == len(
-        same_window
-    ):  # nothing recorded for this hour yet
-        snapshot = {
-            "hour": hour,
-            "window_hours": window,
-            "events_per_hour": rate,
-            "threat_score": current_summary.get("threat_score", 0),
-        }
-        history = [*history, snapshot]
-        same_window = [*same_window, snapshot]
-        _save_baselines({"history": history})
+    with _BASELINE_LOCK:
+        # Per-request points from before #95 have no "hour" and are dropped
+        history = [
+            h
+            for h in _load_baselines().get("history", [])
+            if "hour" in h and h["hour"] >= hours_kept_from
+        ]
+        same_window = [h for h in history if h.get("window_hours") == window]
+        earlier = [h for h in same_window if h["hour"] != hour]
+        if record and len(earlier) == len(
+            same_window
+        ):  # nothing recorded for this hour yet
+            snapshot = {
+                "hour": hour,
+                "window_hours": window,
+                "events_per_hour": rate,
+                "threat_score": current_summary.get("threat_score", 0),
+            }
+            history = [*history, snapshot]
+            same_window = [*same_window, snapshot]
+            _save_baselines({"history": history})
 
     deviation, avg_rate, avg_score = 1.0, 0.0, 0.0
     if len(earlier) >= _MIN_BASELINE_HOURS:
@@ -1262,7 +1273,7 @@ def _all_composite_buckets(client, query: dict) -> list[dict]:
     return buckets
 
 
-async def get_smart_alerts(
+def get_smart_alerts(
     client,
     from_ts: str,
     to_ts: str,
@@ -1518,7 +1529,7 @@ async def get_smart_alerts(
     return groups[:limit]
 
 
-async def get_smart_alert_summary(
+def get_smart_alert_summary(
     client,
     from_ts: str,
     to_ts: str,
@@ -1533,7 +1544,7 @@ async def get_smart_alert_summary(
     #     excluded_ips=excluded_ips,
     # )
     # OLD CODE END
-    every_group = await get_smart_alerts(
+    every_group = get_smart_alerts(
         client,
         from_ts,
         to_ts,

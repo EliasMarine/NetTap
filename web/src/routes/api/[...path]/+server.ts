@@ -38,6 +38,8 @@ const SLOW_PATH_TIMEOUT_MS: Record<string, number> = {
 	// Up to 5 s waiting for a reader slot, then a 10 s tshark job and its clean-up
 	'/api/packets/fields': 25_000,
 	'/api/packets/check-filter': 25_000,
+	// PR 2 (reliability): 14.4 s cold at 7 d on the G11, so the 10 s default showed an error card
+	'/api/traffic/connections/stats': 30_000,
 };
 // NET-160: the address, domain and Suricata category pages stop themselves at 25 s and answer 503, so 30 s gets the reason
 const SLOW_PREFIX_TIMEOUT_MS: [string, number][] = [

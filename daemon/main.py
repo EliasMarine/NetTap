@@ -281,7 +281,10 @@ async def smart_loop(
     logger.info("SMART monitor loop started (interval=%ds)", interval)
     while not shutdown_event.is_set():
         try:
-            smart.check_health()
+            # OLD CODE START — PR 2 (reliability): nvme/smartctl (up to 30 s) ran on the request loop
+            # smart.check_health()
+            # OLD CODE END
+            await asyncio.to_thread(smart.check_health)
         except Exception:
             logger.exception("Unhandled error in SMART check")
 

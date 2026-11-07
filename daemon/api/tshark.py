@@ -8,6 +8,7 @@ These endpoints provide on-demand packet analysis via the containerized TShark s
 import logging
 from aiohttp import web
 
+from api.offload import in_thread
 from services.tshark_service import (
     TSharkService,
     TSharkRequest,
@@ -80,7 +81,8 @@ async def handle_tshark_status(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
 
-async def handle_tshark_pcaps(request: web.Request) -> web.Response:
+@in_thread
+def handle_tshark_pcaps(request: web.Request) -> web.Response:
     """GET /api/tshark/pcaps -- List available PCAP files."""
     tshark: TSharkService = request.app["tshark"]
     try:

@@ -9,6 +9,7 @@ import logging
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.offload import in_thread
 from api.time_range import iso_param
 from services.changelog import ChangelogService
 
@@ -33,7 +34,8 @@ def _parse_time_range(request: web.Request) -> tuple[str | None, str | None]:
 # ---------------------------------------------------------------------------
 
 
-async def handle_get_events(request: web.Request) -> web.Response:
+@in_thread
+def handle_get_events(request: web.Request) -> web.Response:
     """GET /api/changelog?from=&to=&type=&limit= — Query changelog events."""
     changelog: ChangelogService = request.app["changelog"]
     from_ts, to_ts = _parse_time_range(request)

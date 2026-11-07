@@ -12,9 +12,11 @@ import ipaddress
 import json
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from services.capture_config import write_file_atomic
 from storage.all_buckets import all_buckets
 
 logger = logging.getLogger("nettap.services.threat_intel")
@@ -22,6 +24,9 @@ logger = logging.getLogger("nettap.services.threat_intel")
 _TI_CACHE_PATH = (
     Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-threat-intel.json"
 )
+# Held by callers around load_cache .. save_cache (load_cache can write back), so two
+# requests, or a request and the address drill-down, never interleave their transactions
+CACHE_LOCK = threading.Lock()
 
 # IP pages carry no sub-aggregations: 10x fewer scans than the default, far below max_buckets
 _IP_PAGE = 10_000
@@ -152,7 +157,10 @@ class ThreatIntelService:
                 "ip_feeds": {k: list(v) for k, v in self._ip_sets.items()},
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
-            _TI_CACHE_PATH.write_text(json.dumps(data))
+            # OLD CODE START — PR 2 (reliability): a reader in another thread could see a half-written file
+            # _TI_CACHE_PATH.write_text(json.dumps(data))
+            # OLD CODE END
+            write_file_atomic(str(_TI_CACHE_PATH), json.dumps(data))
         except Exception:
             logger.error("Failed to save threat intel cache", exc_info=True)
 
@@ -240,6 +248,16 @@ class ThreatIntelService:
         This bootstraps the TI database from alerts that already fired,
         building a local blocklist from Suricata's own detections.
         ``excluded_ips`` is ignored (kept for callers): excluded IPs stay visible here.
+        """
+        return self.merge_seen(self.scan_suricata(client, from_ts, to_ts, excluded_ips))
+
+    def scan_suricata(
+        self, client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
+    ) -> set[str]:
+        """The listed hosts in the window's listing-rule alerts (the OpenSearch scan).
+
+        Touches no cache, so it runs without CACHE_LOCK (PR 2 review: the scan pages for
+        up to 30 s, and the address drill-down waited on the lock all that time).
         """
         import os
         # OLD CODE START — excluded IPs stay visible in threat detections
@@ -367,7 +385,13 @@ class ThreatIntelService:
                 ambiguous,
             )
         self.seen_in_window = seen
+        return seen
 
+    def merge_seen(self, seen: set[str]) -> int:
+        """Add the scan's new indicators to the loaded cache and save it; how many were new.
+
+        Callers hold CACHE_LOCK from load_cache through this (milliseconds, no OpenSearch).
+        """
         known = self._ip_sets.get(ALERT_FEED, set())
         new_ips = sorted(seen - known)
         if new_ips:

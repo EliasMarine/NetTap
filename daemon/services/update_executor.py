@@ -7,10 +7,12 @@ system package updates. Creates pre-update snapshots for safety.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import shutil
+import tempfile
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Any
@@ -953,7 +955,10 @@ class UpdateExecutor:
                 for rule_path in rule_paths:
                     if os.path.exists(rule_path):
                         dest = os.path.join(backup_path, os.path.basename(rule_path))
-                        shutil.copy2(rule_path, dest)
+                        # OLD CODE START — PR 2 (reliability): a large copy on the request loop
+                        # shutil.copy2(rule_path, dest)
+                        # OLD CODE END
+                        await asyncio.to_thread(shutil.copy2, rule_path, dest)
                         break
 
             elif component == "geoip-db":
@@ -962,7 +967,10 @@ class UpdateExecutor:
                 )
                 if os.path.exists(geoip_path):
                     dest = os.path.join(backup_path, os.path.basename(geoip_path))
-                    shutil.copy2(geoip_path, dest)
+                    # OLD CODE START — PR 2 (reliability): ~70 MB copied on the request loop
+                    # shutil.copy2(geoip_path, dest)
+                    # OLD CODE END
+                    await asyncio.to_thread(shutil.copy2, geoip_path, dest)
 
             elif component in (
                 "zeek",
@@ -1134,7 +1142,12 @@ class UpdateExecutor:
                     target_name = os.path.basename(target_path)
                     backup_file = os.path.join(ts_path, target_name)
                     if os.path.exists(backup_file):
-                        shutil.copy2(backup_file, target_path)
+                        # OLD CODE START — PR 2 (reliability): a large copy on the request loop,
+                        # and (PR #200 review) it rewrote the live file in place: request threads
+                        # have the GeoIP database memory-mapped, so its reads fault (SIGBUS)
+                        # shutil.copy2(backup_file, target_path)
+                        # OLD CODE END
+                        await asyncio.to_thread(_swap_in, backup_file, target_path)
                         return {
                             "success": True,
                             "component": component,
@@ -1152,6 +1165,25 @@ class UpdateExecutor:
                 "component": component,
                 "message": f"File restore failed: {exc}",
             }
+
+
+def _swap_in(source: str, target: str) -> None:
+    """Copy ``source`` beside ``target``, then rename it over ``target``.
+
+    Whoever has the old file open or memory-mapped keeps reading the old inode whole; a
+    copy in place would truncate it under them.
+    """
+    fd, tmp = tempfile.mkstemp(
+        dir=os.path.dirname(target) or ".", prefix=f".{os.path.basename(target)}."
+    )
+    os.close(fd)
+    try:
+        shutil.copy2(source, tmp)
+        os.replace(tmp, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def _unfinished_entry(state: dict) -> dict:

@@ -11,6 +11,7 @@ Registers network tool endpoints with the aiohttp application:
 import logging
 from aiohttp import web
 
+from api.offload import lookup_slot, run_lookup
 from services.dns_recon_service import DnsReconService, DnsReconValidationError
 from services.mac_lookup_service import MacLookupService, MacLookupValidationError
 from services.network_diag_service import NetworkDiagService, NetworkDiagValidationError
@@ -85,13 +86,15 @@ async def handle_dns_recon(request: web.Request) -> web.Response:
 # OLD CODE END
 
 
+@lookup_slot
 async def handle_mac_lookup(request: web.Request) -> web.Response:
     """GET /api/tools/mac-lookup/{mac} -- OUI vendor lookup for a MAC address."""
     raw_mac = request.match_info["mac"]
     mac_lookup: MacLookupService = request.app["mac_lookup"]
 
     try:
-        result = mac_lookup.lookup(raw_mac)
+        # Unknown vendors query OpenSearch, so it runs on the lookup pool
+        result = await run_lookup(mac_lookup.lookup, raw_mac)
         # OLD CODE START — handler-level fallback, now inside MacLookupService.lookup (#26)
         # if not result["found"]:
         #     vendor = _vendor_seen_on_network(request.app, result["oui_prefix"])

@@ -5,7 +5,6 @@ ET rates 94% of the G11's alerts Informational (STUN, DNS over HTTPS, …). The 
 them, and a smart-alert group is never part activity, part counted.
 """
 
-import asyncio
 import os
 import sys
 import tempfile
@@ -224,7 +223,7 @@ _SIG, _SRC, _DST = "ET TROJAN Mixed metadata", "203.0.113.5", "192.168.1.24"
 def test_without_info_only_the_counted_query_runs():
     client = _partitioned_client([_bucket(_SIG, _SRC, _DST, 3)], [])
     with patch.object(alert_intelligence, "is_suppressed", return_value=False):
-        groups = asyncio.run(get_smart_alerts(client, _FROM, _TO, limit=None))
+        groups = get_smart_alerts(client, _FROM, _TO, limit=None)
     assert client.search.call_count == 1
     assert (
         ET_ACTIVITY_CLAUSE
@@ -238,9 +237,7 @@ def test_a_pair_seen_in_both_partitions_is_two_groups():
         [_bucket(_SIG, _SRC, _DST, 3)], [_bucket(_SIG, _SRC, _DST, 40)]
     )
     with patch.object(alert_intelligence, "is_suppressed", return_value=False):
-        groups = asyncio.run(
-            get_smart_alerts(client, _FROM, _TO, limit=None, include_info=True)
-        )
+        groups = get_smart_alerts(client, _FROM, _TO, limit=None, include_info=True)
     by_activity = {g["activity"]: g for g in groups}
     assert by_activity[False]["count"] == 3
     assert by_activity[True]["count"] == 40
@@ -257,21 +254,17 @@ def test_activity_adds_nothing_to_the_threat_summary():
         patch.object(alert_intelligence, "is_suppressed", return_value=False),
         patch.object(alert_intelligence, "update_baseline", return_value=None),
     ):
-        alone = asyncio.run(
-            get_smart_alert_summary(_partitioned_client(counted, []), _FROM, _TO)
-        )
-        with_activity = asyncio.run(
-            get_smart_alert_summary(
-                _partitioned_client(
-                    counted,
-                    [
-                        _bucket(_SIG, _SRC, _DST, 40),
-                        _bucket("ET INFO STUN", "a", "b", 500),
-                    ],
-                ),
-                _FROM,
-                _TO,
-            )
+        alone = get_smart_alert_summary(_partitioned_client(counted, []), _FROM, _TO)
+        with_activity = get_smart_alert_summary(
+            _partitioned_client(
+                counted,
+                [
+                    _bucket(_SIG, _SRC, _DST, 40),
+                    _bucket("ET INFO STUN", "a", "b", 500),
+                ],
+            ),
+            _FROM,
+            _TO,
         )
     for key in (
         "threat_score",

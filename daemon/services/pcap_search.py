@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from api.offload import run_blocking
 from services.tshark_service import (
     bounded_exec,
     filter_check_cmd,
@@ -239,9 +240,18 @@ class PcapSearchService:
             valid, err = self.validate_bpf_filter(bpf_filter)
             if not valid:
                 raise ValueError(f"Invalid display filter: {err}")
+            # OLD CODE START — PR 2 (reliability): the file walk ran on the request loop
+            # if self._search_task is not None:
+            #     self._search_task.cancel()
+            # pcaps = self.get_available_pcaps(from_ts, to_ts)
+            # OLD CODE END
+            pcaps = await run_blocking(self.get_available_pcaps, from_ts, to_ts)
+            # Another poll may have started this search while the files were listed
+            job = self._search_job
+            if job is not None and job["key"] == key:
+                return await self.search_progress(bpf_filter, from_ts, to_ts)
             if self._search_task is not None:
                 self._search_task.cancel()
-            pcaps = self.get_available_pcaps(from_ts, to_ts)
             self._search_seq += 1
             self._search_job = {
                 "id": self._search_seq,
@@ -607,7 +617,10 @@ class PcapSearchService:
         if not valid:
             raise ValueError(f"Invalid display filter: {err}")
 
-        pcaps = self.get_available_pcaps(from_ts, to_ts)
+        # OLD CODE START — PR 2 (reliability): the file walk ran on the request loop
+        # pcaps = self.get_available_pcaps(from_ts, to_ts)
+        # OLD CODE END
+        pcaps = await run_blocking(self.get_available_pcaps, from_ts, to_ts)
         if not pcaps:
             return None
 
@@ -701,8 +714,11 @@ class PcapSearchService:
 
             # Write captured binary PCAP data to daemon-side temp file
             # (outside semaphore -- no docker exec needed)
-            with open(tmp_path, "wb") as f:
-                f.write(stdout_bytes)
+            # OLD CODE START — PR 2 (reliability): up to ~100 MB written on the request loop
+            # with open(tmp_path, "wb") as f:
+            #     f.write(stdout_bytes)
+            # OLD CODE END
+            await run_blocking(Path(tmp_path).write_bytes, stdout_bytes)
 
             # Clean up merged temp file inside the container
             await self._cleanup_container_tmp(container_merged_path, pcap_files)
