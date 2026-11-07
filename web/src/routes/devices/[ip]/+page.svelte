@@ -30,7 +30,7 @@
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { smartLevel, type SeverityLevel } from '$lib/utils/severity';
 	// OLD CODE: import { alertsHrefForSignature, logsHrefForQuery, type DrillWindow } from '$lib/utils/drilldown'; (slice 2b-1: smart alerts link by their key)
-	import { chartTime as timeLabel, logsHrefForQuery, NO_EXACT_ALERT_LIST, smartAlertHref, withCount, type DrillWindow } from '$lib/utils/drilldown';
+	import { chartTime as timeLabel, logsHrefForQuery, NO_EXACT_ALERT_LIST, smartAlertHref, startRange, withCount, type DrillWindow } from '$lib/utils/drilldown';
 	import { formatTime } from '$lib/utils/time';
 	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { DeviceConnectionSort } from '$api/devices';
@@ -158,7 +158,8 @@
 	const RANGE_OPTIONS = RANGE_KEYS.map((key) => ({ value: key, label: key }));
 	// OLD CODE: const RANGE_LABEL: Record<RangeKey, string> = { '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' }; (NET-192 PR 4)
 	const RANGE_LABEL: Record<RangeKey, string> = { '1h': 'Last hour', '6h': 'Last 6 hours', '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' };
-	let range = $state<RangeKey>('24h');
+	// OLD CODE: let range = $state<RangeKey>('24h'); (NET-195: Settings › Display's default, read where the range starts)
+	let range = $state<RangeKey>(startRange('24h'));
 	// The window of the last fetch; connection pages reuse it so paging doesn't slide in time
 	let span = $state<{ from: string; to: string }>({ from: '', to: '' });
 

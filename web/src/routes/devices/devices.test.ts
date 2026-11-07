@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { get, type Writable } from 'svelte/store';
 import { goto } from '$app/navigation';
@@ -373,6 +373,33 @@ describe('Devices — the URL window and one reading', () => {
 		expect(pressed('24h')).toBe('true');
 		expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument();
 		expect(note('Total devices')).toBe('Last 24 hours');
+	});
+
+	// NET-195: the list derives its range from the URL; with none, the fallback is the saved default
+	describe('the saved default range (NET-195)', () => {
+		beforeEach(() => {
+			localStorage.clear();
+			localStorage.setItem('nettap-display-settings', JSON.stringify({ defaultRange: '7d' }));
+		});
+		afterEach(() => localStorage.clear());
+
+		it('opens on the saved range when the link has none, with one reading', async () => {
+			stub((url) => reading(url, [DEVICE]));
+			render(Page);
+			await vi.waitFor(() => expect(kpiValue('Total devices')).toBe('1'));
+			expect(listCalls.map(hoursAsked)).toEqual([168]);
+			expect(pressed('7d')).toBe('true');
+			expect(note('Total devices')).toBe('Last 7 days');
+		});
+
+		it("opens on the link's range over the saved one", async () => {
+			goTo('?range=1h');
+			stub((url) => reading(url, [DEVICE]));
+			render(Page);
+			await vi.waitFor(() => expect(kpiValue('Total devices')).toBe('1'));
+			expect(listCalls.map(hoursAsked)).toEqual([1]);
+			expect(pressed('1h')).toBe('true');
+		});
 	});
 
 	it('opens All devices from view=all, even in mirror mode', async () => {

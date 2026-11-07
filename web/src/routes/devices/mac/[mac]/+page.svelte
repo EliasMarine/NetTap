@@ -29,7 +29,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Pills from '$lib/components/ui/Pills.svelte';
 	import { domainHref } from '$lib/stores/lan';
-	import { alertsHrefForSignature, chartTime as timeLabel, DRILL_RANGES, fmt, rangeWindow, type DrillRangeValue } from '$lib/utils/drilldown';
+	import { alertsHrefForSignature, chartTime as timeLabel, DRILL_RANGES, fmt, rangeWindow, startRange, type DrillRangeValue } from '$lib/utils/drilldown';
 	import { formatTime } from '$lib/utils/time';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 
@@ -49,7 +49,8 @@
 	let mac = $derived($page.params.mac);
 
 	// NET-192 PR 4: the same range pills as devices/[ip] (it read only the daemon's default 24 hours)
-	let rangeValue = $state<DrillRangeValue>('24h');
+	// OLD CODE: let rangeValue = $state<DrillRangeValue>('24h'); (NET-195: Settings › Display's default, read where the range starts)
+	let rangeValue = $state<DrillRangeValue>(startRange('24h'));
 	// OLD CODE: ?? DRILL_RANGES[2] (NET-192 PR 4: the default by value, not by position)
 	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES.find((r) => r.value === '24h')!);
 	const RANGE_OPTIONS = DRILL_RANGES.map((r) => ({ value: r.value, label: r.label }));

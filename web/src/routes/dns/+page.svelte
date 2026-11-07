@@ -39,7 +39,7 @@
 	import SearchField from '$lib/components/ui/SearchField.svelte';
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import { domainHref } from '$lib/stores/lan';
-	import { chartTime, fmt } from '$lib/utils/drilldown';
+	import { chartTime, fmt, startRange } from '$lib/utils/drilldown';
 	import { formatCompactNumber as formatNumber } from '$lib/api/logs';
 
 	// ---------------------------------------------------------------------------
@@ -87,7 +87,8 @@
 	// State
 	// ---------------------------------------------------------------------------
 
-	let selectedTimeRange = $state('24h');
+	// OLD CODE: let selectedTimeRange = $state('24h'); (NET-195: Settings › Display's default, read where the range starts)
+	let selectedTimeRange = $state<string>(startRange('24h'));
 	let loading = $state(true);
 	// OLD CODE START — PLAN §5.5: a range change during the first load now starts a new, guarded load
 	// let initialized = $state(false);

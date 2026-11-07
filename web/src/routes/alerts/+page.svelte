@@ -60,6 +60,7 @@
 		fmt,
 		linkedCount,
 		partialListNote,
+		startRange,
 		suricataCategoryHref,
 		type CustomWindow,
 		type DrillWindow,
@@ -1183,7 +1184,8 @@
 			suricataCategoryFilter = suricataCategory;
 			activityFilter = activity === 'true';
 			custom = customRange(from, to);
-			baseRange = TIME_RANGES.some((r) => r.value === rangeParam) ? rangeParam : '24h';
+			// OLD CODE: baseRange = TIME_RANGES.some((r) => r.value === rangeParam) ? rangeParam : '24h'; (NET-195: a link's range, else Settings › Display's default)
+			baseRange = TIME_RANGES.some((r) => r.value === rangeParam) ? rangeParam : startRange('24h');
 			selectedTimeRange = custom ? 'custom' : baseRange;
 			currentPage = 1;
 			// OLD CODE: next.slice(3).every((v, i) => v === prev[i + 3]); (slice 2b-1: src and dst moved the window along)

@@ -20,7 +20,7 @@
 	// OLD CODE END
 	import { getDevices } from '$api/devices';
 	import type { Device, DeviceListResponse } from '$api/devices';
-	import { countDifference, customRange, fmt, linkedCount, rangeWindow, type LinkedCount } from '$lib/utils/drilldown';
+	import { countDifference, customRange, fmt, linkedCount, rangeWindow, startRange, type LinkedCount } from '$lib/utils/drilldown';
 	import { getNewDeviceCount, getRegistryDevices, isNewDevice } from '$api/devices-registry';
 	import type { RegistryDevice, RegistryListResponse } from '$api/devices-registry';
 	import { getCaptureMode } from '$api/capture';
@@ -105,7 +105,8 @@
 	const params = $derived($page.url.searchParams);
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	// OLD CODE: ?? RANGES[2] (NET-192 PR 4: the default by value, not by position)
-	const range = $derived(custom ?? RANGES.find((r) => r.value === params.get('range')) ?? RANGES.find((r) => r.value === '24h')!);
+	// OLD CODE: … ?? RANGES.find((r) => r.value === '24h')!); (NET-195: a link's window or range, else Settings › Display's default)
+	const range = $derived(custom ?? RANGES.find((r) => r.value === params.get('range')) ?? RANGES.find((r) => r.value === startRange('24h'))!);
 	const windowKey = $derived(custom ? `${custom.from}|${custom.to}` : range.value);
 	/**
 	 * NET-160 section D: the Total devices figure the link was clicked at (Home's Devices card).

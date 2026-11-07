@@ -37,6 +37,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import IPAddress from '$components/IPAddress.svelte';
 	import { formatTime } from '$lib/utils/time';
+	import { startRange } from '$lib/utils/drilldown';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -68,7 +69,8 @@
 		'7d': 'last 7 days',
 		'30d': 'last 30 days',
 	};
-	let selectedRange = $state('24h');
+	// OLD CODE: let selectedRange = $state('24h'); (NET-195: Settings › Display's default, read where the range starts)
+	let selectedRange = $state<string>(startRange('24h'));
 	// OLD CODE START — the top bar's "Updated N s ago" (page refresh contract) replaces "Last scan";
 	// this derived never re-ran as time passed, so it read "just now" until the next load
 	// let lastUpdated = $state(new Date());

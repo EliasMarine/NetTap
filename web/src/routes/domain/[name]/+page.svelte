@@ -13,7 +13,7 @@
 	import { domainHref, ipHref } from '$lib/stores/lan';
 	import { namesByIp } from '$lib/utils/device-names';
 	// OLD CODE: import { DRILL_RANGES, canonicalName, certificatesHref, chartTime as timeLabel, fmt, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown'; (slice 2a)
-	import { DRILL_RANGES, canonicalName, certificatesHref, chartTime as timeLabel, fmt, logsHrefForQuery, rangeWindow, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
+	import { DRILL_RANGES, canonicalName, certificatesHref, chartTime as timeLabel, fmt, logsHrefForQuery, rangeWindow, startRange, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import IPAddress from '$components/IPAddress.svelte';
 	import BarList from '$lib/components/ui/BarList.svelte';
@@ -40,7 +40,8 @@
 	// OLD CODE START: const name = $derived((($page.params as Record<string, string>).name ?? '').trim().replace(/\.$/, '').toLowerCase()); OLD CODE END
 	const name = $derived(canonicalName(($page.params as Record<string, string>).name ?? ''));
 
-	let rangeValue = $state<DrillRangeValue>('24h');
+	// OLD CODE: let rangeValue = $state<DrillRangeValue>('24h'); (NET-195: Settings › Display's default, read where the range starts)
+	let rangeValue = $state<DrillRangeValue>(startRange('24h'));
 	// OLD CODE: ?? DRILL_RANGES[0]); (NET-192 PR 4: 1h and 6h added, 24h is index 2)
 	// OLD CODE: ?? DRILL_RANGES[2] (NET-192 PR 4: the default by value, not by position)
 	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES.find((r) => r.value === '24h')!);

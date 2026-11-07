@@ -22,6 +22,7 @@
 	// OLD CODE END
 	import { getLiveDashboard } from '$api/live';
 	import { loadFailed } from '$lib/utils/load-failed';
+	import { startRange } from '$lib/utils/drilldown';
 	import { formatBytes as sharedFormatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import IPAddress from '$components/IPAddress.svelte';
 	// OLD CODE START — replaced by the system's BarList (ui/BarList)
@@ -129,7 +130,8 @@
 	// Time range
 	// OLD CODE: let selectedTimeRange = $state<TimeRange>(TIME_RANGES[1]); // 1h (NET-192 PR 4: 1h is index 0)
 	// OLD CODE: $state<TimeRange>(TIME_RANGES[0]) (NET-192 PR 4: the default by value, not by position)
-	let selectedTimeRange = $state<TimeRange>(TIME_RANGES.find((r) => r.value === '1h')!);
+	// OLD CODE: $state<TimeRange>(TIME_RANGES.find((r) => r.value === '1h')!) (NET-195: Settings › Display's default, read where the range starts)
+	let selectedTimeRange = $state<TimeRange>(TIME_RANGES.find((r) => r.value === startRange('1h'))!);
 	let autoRefresh = $state(false);
 	let refreshInterval = $state<ReturnType<typeof setInterval> | null>(null);
 

@@ -12,6 +12,7 @@
 		fmt,
 		isHostName,
 		linkedCount,
+		startRange,
 		type CustomWindow,
 		type DrillWindow,
 		type LinkedCount,
@@ -194,7 +195,8 @@
 	let initialized = $state(false);
 	let loading = $state(false);
 	// OLD CODE: let selectedTimeRange = $state<TimeRange>('24h'); (slice 2a: a link's exact window shows as "Custom")
-	let selectedTimeRange = $state<TimeRange | 'custom'>('24h');
+	// OLD CODE: let selectedTimeRange = $state<TimeRange | 'custom'>('24h'); (NET-195: Settings › Display's default, read where the range starts)
+	let selectedTimeRange = $state<TimeRange | 'custom'>(startRange('24h'));
 	/** The window a drill-down link brought (?from=&to=), offered as "Custom" until another range is picked. */
 	let custom = $state<CustomWindow | null>(null);
 	const AUTO_REFRESH_MS = 30_000;
@@ -1055,12 +1057,14 @@
 			// A link from a page with its own window (NET-160) opens on that window: the exact one
 			// (?from=&to=, "Custom") when it gives it, otherwise its ?range=
 			custom = customRange(urlFrom, urlTo);
+			// OLD CODE: : selectedTimeRange === 'custom' ? '24h' : selectedTimeRange; (NET-195: Custom falls back to Settings › Display's default)
+			// A hand-off without a window keeps the range on screen (a pill's or a link's: the page can't tell)
 			selectedTimeRange = custom
 				? 'custom'
 				: TIME_RANGES.some((r) => r.value === urlRange)
 					? (urlRange as TimeRange)
 					: selectedTimeRange === 'custom'
-						? '24h'
+						? startRange('24h')
 						: selectedTimeRange;
 			// A hand-off replaces the last one's IP filter and text; the first load starts from neither
 			activeIpFilter = urlFilter || urlIp || '';

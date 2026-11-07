@@ -31,7 +31,7 @@
 	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTrafficCategories } from '$api/traffic';
 	import type { TrafficSummary, BandwidthPoint, ProtocolEntry, TrafficCategory } from '$api/traffic';
 	import { getAlertCount, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
-	import { connLogsHref, fmt, NO_EXACT_ALERT_LIST, smartAlertHref, windowQuery, withCount, type DrillWindow } from '$lib/utils/drilldown';
+	import { connLogsHref, fmt, NO_EXACT_ALERT_LIST, smartAlertHref, startRange, windowQuery, withCount, type DrillWindow } from '$lib/utils/drilldown';
 	import type { AlertCountResponse, SmartAlert, SmartAlertSummary } from '$api/alerts';
 	import { getDevices, getDeviceCount } from '$api/devices';
 	import type { Device, DeviceCountResponse } from '$api/devices';
@@ -66,7 +66,8 @@
 	type RangeKey = (typeof RANGES)[number]['value'];
 	const RANGE_OPTIONS = RANGES.map(({ value, label }) => ({ value, label }));
 
-	let range = $state<RangeKey>('24h');
+	// OLD CODE: let range = $state<RangeKey>('24h'); (NET-195: Settings › Display's default, read where the range starts so the first load uses it)
+	let range = $state<RangeKey>(startRange('24h'));
 	// OLD CODE: ?? RANGES[2] (NET-192 PR 4: the default by value, not by position)
 	const span = $derived(RANGES.find((r) => r.value === range) ?? RANGES.find((r) => r.value === '24h')!);
 	const windowText = $derived(span.window.toLowerCase());

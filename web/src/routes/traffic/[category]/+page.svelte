@@ -16,7 +16,7 @@
 
 	import { partOfWhole } from '$lib/utils/part-of-whole';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
-	import { chartTime } from '$lib/utils/drilldown';
+	import { chartTime, startRange } from '$lib/utils/drilldown';
 	// OLD CODE START — the category colour tinted the chart and bars; system charts use data-1/2
 	// import { CATEGORY_COLORS } from '$lib/utils/category-colors';
 	// OLD CODE END
@@ -105,7 +105,8 @@
 
 	let category = $derived(($page.params as Record<string, string>).category ?? 'other');
 	// OLD CODE START: let meta = $derived(CATEGORY_META[category] ?? CATEGORY_META['other']); OLD CODE END
-	let selectedRange = $state('24h');
+	// OLD CODE: let selectedRange = $state('24h'); (NET-195: Settings › Display's default, read where the range starts)
+	let selectedRange = $state<string>(startRange('24h'));
 	let rangeText = $derived(TIME_RANGES.find((r) => r.value === selectedRange)?.text ?? selectedRange);
 
 	// Data

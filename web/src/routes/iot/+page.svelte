@@ -14,7 +14,7 @@
 
 	import { onDestroy, untrack } from 'svelte';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
-	import { chartTime } from '$lib/utils/drilldown';
+	import { chartTime, startRange } from '$lib/utils/drilldown';
 	import DetailDrawer from '$lib/components/DetailDrawer.svelte';
 	import DrawerSection from '$lib/components/drawer/DrawerSection.svelte';
 	import KVRow from '$lib/components/drawer/KVRow.svelte';
@@ -61,7 +61,8 @@
 	let manufacturers = $state<ManufacturerProfilesResponse | null>(null);
 
 	let loading = $state(true);
-	let selectedRange = $state('24h');
+	// OLD CODE: let selectedRange = $state('24h'); (NET-195: Settings › Display's default, read where the range starts)
+	let selectedRange = $state<string>(startRange('24h'));
 
 	// Detail drawer state
 	let drawerOpen = $state(false);

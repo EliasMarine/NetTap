@@ -145,6 +145,51 @@ describe('Log Explorer — URL hand-off', () => {
 	});
 });
 
+// NET-195: the saved default is where the page starts; a later hand-off without a window keeps the range on screen
+describe('Log Explorer — the saved default range (NET-195)', () => {
+	/** Every request to `path` so far. */
+	const asked = (path: string) =>
+		vi.mocked(fetch).mock.calls.map(([u]) => new URL(String(u), 'http://x')).filter((u) => u.pathname === path);
+	const hours = (u: URL) => (Date.parse(u.searchParams.get('to')!) - Date.parse(u.searchParams.get('from')!)) / 3_600_000;
+
+	beforeEach(() => {
+		localStorage.clear();
+		localStorage.setItem('nettap-display-settings', JSON.stringify({ defaultRange: '7d' }));
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [], total: 0 } });
+	});
+	afterEach(() => {
+		localStorage.clear();
+		vi.unstubAllGlobals();
+	});
+
+	it('opens /logs with no window on the saved range', async () => {
+		render(Page);
+		await vi.waitFor(() => expect(asked('/api/logs/search')).toHaveLength(1));
+		await vi.waitFor(() => expect(asked('/api/logs/stats')).toHaveLength(1));
+		expect(hours(asked('/api/logs/search')[0])).toBe(168);
+		expect(hours(asked('/api/logs/stats')[0])).toBe(168);
+		expect(screen.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
+	});
+
+	it('keeps a picked range through a windowless hand-off, with one reload', async () => {
+		render(Page);
+		await vi.waitFor(() => expect(asked('/api/logs/stats')).toHaveLength(1));
+		await fireEvent.click(screen.getByRole('button', { name: '1h' }));
+		await vi.waitFor(() => expect(asked('/api/logs/stats')).toHaveLength(2));
+		await vi.waitFor(() => expect(asked('/api/logs/search')).toHaveLength(2));
+
+		goTo('/logs?query=x');
+		await vi.waitFor(() => expect(asked('/api/logs/search')).toHaveLength(3));
+		await new Promise((r) => setTimeout(r, 0));
+		// the search alone: no card reloads, and the hour stays
+		expect(asked('/api/logs/stats')).toHaveLength(2);
+		expect(asked('/api/logs/search')).toHaveLength(3);
+		expect(asked('/api/logs/search')[2].searchParams.get('query')).toBe('x');
+		expect(hours(asked('/api/logs/search')[2])).toBe(1);
+		expect(screen.getByRole('button', { name: '1h' })).toHaveAttribute('aria-pressed', 'true');
+	});
+});
+
 // PLAN §5.5: the loader is the top bar's Refresh; it reports what loaded, and older answers never win.
 describe('Log Explorer — refresh contract', () => {
 	afterEach(() => vi.unstubAllGlobals());

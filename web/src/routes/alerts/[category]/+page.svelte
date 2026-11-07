@@ -49,7 +49,7 @@
 	// OLD CODE END
 	import { severityBuckets, type SeverityLevel } from '$lib/utils/severity';
 	// OLD CODE: import { alertsHrefForSignature, type DrillWindow } from '$lib/utils/drilldown'; (section D)
-	import { alertsHrefForSignature, fmt, withCount, type DrillWindow } from '$lib/utils/drilldown';
+	import { alertsHrefForSignature, fmt, startRange, withCount, type DrillWindow } from '$lib/utils/drilldown';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -109,7 +109,8 @@
 	// ---------------------------------------------------------------------------
 
 	let category = $derived(($page.params as Record<string, string>).category ?? '');
-	let selectedRange = $state('24h');
+	// OLD CODE: let selectedRange = $state('24h'); (NET-195: Settings › Display's default, read where the range starts)
+	let selectedRange = $state<string>(startRange('24h'));
 
 	// Data
 	let categoryData = $state<CategoryDetailResponse | null>(null);

@@ -610,3 +610,26 @@ describe('PCAP page — refresh contract', () => {
 		expect(screen.getByText('a.pcap')).toBeInTheDocument();
 	});
 });
+
+// NET-195: PCAP keeps its own hour whatever Settings › Display saved (a whole day is ~185 GB to search, #137)
+describe('PCAP page — not the saved default range (NET-195)', () => {
+	beforeEach(() => localStorage.setItem('nettap-display-settings', JSON.stringify({ defaultRange: '7d' })));
+	afterEach(() => {
+		localStorage.clear();
+		vi.unstubAllGlobals();
+	});
+
+	it('still opens on 1 hour', async () => {
+		const f = vi.fn(async (url: string) =>
+			url.startsWith('/api/pcap/files')
+				? { ok: true, status: 200, json: async () => ({ count: 0, files: [] }) }
+				: { ok: false, status: 503, json: async () => ({}) },
+		);
+		vi.stubGlobal('fetch', f);
+		render(PcapPage);
+		expect(await screen.findByText('No PCAP files in this time range.')).toBeInTheDocument();
+		const asked = f.mock.calls.map(([u]) => new URL(u, 'http://x')).filter((u) => u.pathname === '/api/pcap/files');
+		expect(asked.map((q) => (Date.parse(q.searchParams.get('to')!) - Date.parse(q.searchParams.get('from')!)) / 3_600_000)).toEqual([1]);
+		expect(screen.getByRole('button', { name: '1h' })).toHaveAttribute('aria-pressed', 'true');
+	});
+});
