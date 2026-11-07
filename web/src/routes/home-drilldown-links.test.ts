@@ -131,9 +131,10 @@ describe('Home — drill-down links carry the window on screen (NET-160 slice 2b
 		const asked = sent(first, '/api/alerts/smart');
 		const link = row('A friendlier shown name');
 		expect(link.tagName).toBe('A');
+		// OLD CODE: …toEqual({ signature, src, dst, from, to, range: '24h' }) (section D: the link carries the ×N)
 		expect(params(link)).toEqual({
 			signature: KEY.rule_name, src: KEY.source_ip, dst: KEY.destination_ip,
-			from: asked.get('from'), to: asked.get('to'), range: '24h',
+			from: asked.get('from'), to: asked.get('to'), range: '24h', count: '7',
 		});
 
 		vi.setSystemTime(new Date('2026-11-06T12:10:30Z'));
@@ -172,7 +173,8 @@ describe('Home — drill-down links carry the window on screen (NET-160 slice 2b
 		await settle();
 		const count = sent(sixHours, '/api/alerts/count');
 		expect(kpi('Alerts')).toHaveTextContent('12');
-		expect(params(kpi('Alerts'))).toEqual({ from: count.get('from'), to: count.get('to'), range: '6h' });
+		// OLD CODE: expect(params(kpi('Alerts'))).toEqual({ from: count.get('from'), to: count.get('to'), range: '6h' }); (section D)
+		expect(params(kpi('Alerts'))).toEqual({ from: count.get('from'), to: count.get('to'), range: '6h', count: '12' });
 	});
 
 	it('Connections and Bandwidth open the conn records the summary counted, leaving out its excluded sources', async () => {
@@ -181,7 +183,8 @@ describe('Home — drill-down links carry the window on screen (NET-160 slice 2b
 		await settle();
 		const asked = sent(first, '/api/traffic/summary');
 		const expected = { type: 'zeek.conn', exclude_src: '192.168.1.199,2001:db8::199', from: asked.get('from'), to: asked.get('to'), range: '24h' };
-		expect(params(kpi('Connections'))).toEqual(expected);
+		// OLD CODE: expect(params(kpi('Connections'))).toEqual(expected); (section D: Connections carries its figure; Bandwidth, a byte sum, does not)
+		expect(params(kpi('Connections'))).toEqual({ ...expected, count: '321' });
 		expect(params(kpi('Bandwidth'))).toEqual(expected);
 		expect(kpi('Bandwidth')).toHaveAttribute('title', 'Opens the connections this total is summed from');
 	});
@@ -211,9 +214,10 @@ describe('Home — drill-down links carry the window on screen (NET-160 slice 2b
 		expect(sent(batch, '/api/traffic/summary').get('from')).not.toBe(summary.get('from'));
 
 		expect(kpi('Connections')).toHaveTextContent('321');
-		expect(params(kpi('Connections'))).toMatchObject({ from: summary.get('from'), to: summary.get('to'), exclude_src: '192.168.1.199,2001:db8::199' });
+		// OLD CODE: …toMatchObject({ from, to, exclude_src }) and Alerts …toEqual({ from, to, range: '24h' }) (section D: the kept figures too)
+		expect(params(kpi('Connections'))).toMatchObject({ from: summary.get('from'), to: summary.get('to'), exclude_src: '192.168.1.199,2001:db8::199', count: '321' });
 		expect(kpi('Alerts')).toHaveTextContent('12');
-		expect(params(kpi('Alerts'))).toEqual({ from: count.get('from'), to: count.get('to'), range: '24h' });
+		expect(params(kpi('Alerts'))).toEqual({ from: count.get('from'), to: count.get('to'), range: '24h', count: '12' });
 	});
 
 	// NET-160 slice 2b-3: the Devices card opened /iot, which counts something else
@@ -229,7 +233,8 @@ describe('Home — drill-down links carry the window on screen (NET-160 slice 2b
 		await settle();
 		expect(kpi('Devices')).toHaveTextContent('3');
 		expect(href().pathname).toBe('/devices');
-		expect(params(kpi('Devices'))).toEqual({ view: 'all', ...REPLY, range: '24h' });
+		// OLD CODE: expect(params(kpi('Devices'))).toEqual({ view: 'all', ...REPLY, range: '24h' }); (section D: the figure too)
+		expect(params(kpi('Devices'))).toEqual({ view: 'all', ...REPLY, range: '24h', count: '3' });
 	});
 
 	it("after 24h loads, choosing 7d links the Devices card by range alone while 7d loads and after its count fails", async () => {

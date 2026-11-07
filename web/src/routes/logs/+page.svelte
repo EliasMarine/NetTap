@@ -4,7 +4,17 @@
 	import IPAddress from '$components/IPAddress.svelte';
 	// OLD CODE: import { isIpAddress } from '$lib/stores/lan'; (slice 2a: domain cells and the drawer's source link)
 	import { domainHref, ipHref, isIpAddress } from '$lib/stores/lan';
-	import { canonicalName, customRange, isHostName, type CustomWindow, type DrillWindow } from '$lib/utils/drilldown';
+	// OLD CODE: import { canonicalName, customRange, isHostName, type CustomWindow, type DrillWindow } from '$lib/utils/drilldown'; (NET-160 section D: the figure clicked)
+	import {
+		canonicalName,
+		countDifference,
+		customRange,
+		isHostName,
+		linkedCount,
+		type CustomWindow,
+		type DrillWindow,
+		type LinkedCount,
+	} from '$lib/utils/drilldown';
 	// OLD CODE START — replaced by the design system's BarList
 	// import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	// OLD CODE END
@@ -245,6 +255,14 @@
 	let activeDnsFilter = $state('');
 	/** Sources a link's count left out (?exclude_src=, Home's Connections, NET-160 slice 2b-1) */
 	let excludeSrc = $state<string[]>([]);
+
+	/** A counted link's figure (?count=) against the total of the one search its hand-off started (NET-160 section D). */
+	let linked = $state<LinkedCount | null>(null);
+	const countLine = $derived(
+		linked?.observed != null
+			? countDifference(linked.expected, linked.observed, { lead: 'This search now matches', one: 'record', many: 'records' })
+			: null,
+	);
 
 	// OLD CODE START — the hand-drawn stacked chart's hover and width; AreaChart handles both
 	// // Chart interaction
@@ -556,6 +574,8 @@
 	/** A new search over `win` (a new window when not given), or with `append`, the next page in the rows' window. */
 	async function fetchLogs(append = false, win?: DrillWindow): Promise<LoadResult> {
 		const g = tableGuard.begin();
+		// The hand-off's own search takes the comparison it set up (gen null); any other search ends it (section D)
+		linked = linked?.gen === null ? { ...linked, gen: g } : null;
 		// "load more" never moves the window, so no row is listed twice or skipped
 		const w = append && tableWindow ? tableWindow : (win ?? getTimeRange());
 		if (append) {
@@ -613,6 +633,7 @@
 				results = data.hits;
 			}
 			totalHits = data.total;
+			if (linked?.gen === g) linked = { ...linked, observed: data.total };
 			searchAfter = data.search_after;
 			tableWindow = w;
 			return 'ok';
@@ -635,6 +656,8 @@
 			const res = await fetch(`/api/logs/fields/${lt}`);
 			if (!res.ok) return;
 			const data: { fields: FieldDef[] } = await res.json();
+			// A type picked since this request asked for its own descriptions; an older reply may land after it
+			if (lt !== (logType === 'all' ? 'zeek.conn' : logType)) return;
 			const map: Record<string, string> = {};
 			for (const f of data.fields) {
 				// OLD CODE: map[f.field]; the daemon sends `name`, so every description went under "undefined" (NET-146)
@@ -701,12 +724,21 @@
 		if (e.key === 'Enter') fetchLogs();
 	}
 
+	// OLD CODE START — NET-160 section D: the controls below searched only once the first load had finished,
+	// dashboard included, so a type picked during it neither replaced the table request nor ended a comparison
+	// function setLogType(lt: LogType) {
+	// 	logType = lt;
+	// 	if (initialized) {
+	// 		fetchLogs();
+	// 		fetchFieldDefs();
+	// 	}
+	// }
+	// OLD CODE END
+	// A search change always searches, and its column descriptions follow (each drops an older reply)
 	function setLogType(lt: LogType) {
 		logType = lt;
-		if (initialized) {
-			fetchLogs();
-			fetchFieldDefs();
-		}
+		fetchLogs();
+		fetchFieldDefs();
 	}
 
 	// OLD CODE START — DataTable owns the header toggle and reports the new sort
@@ -728,15 +760,65 @@
 	}
 
 	// Click-to-drill handlers
+	// OLD CODE START — NET-160 section D: searched only after the first load (see setLogType)
+	// function drillByProtocol(dataset: string) {
+	// 	const lt = DATASET_TO_LOG_TYPE[dataset];
+	// 	if (lt) {
+	// 		logType = lt;
+	// 		if (initialized) {
+	// 			fetchLogs();
+	// 			fetchFieldDefs();
+	// 			document.getElementById('log-table')?.scrollIntoView({ behavior: 'smooth' });
+	// 		}
+	// 	}
+	// }
+	//
+	// function drillByIp(ip: string) {
+	// 	if (activeIpFilter === ip) {
+	// 		activeIpFilter = '';
+	// 	} else {
+	// 		activeIpFilter = ip;
+	// 	}
+	// 	if (initialized) {
+	// 		fetchLogs();
+	// 		document.getElementById('log-table')?.scrollIntoView({ behavior: 'smooth' });
+	// 	}
+	// }
+	//
+	// function drillByDns(domain: string) {
+	// 	if (activeDnsFilter === domain) {
+	// 		activeDnsFilter = '';
+	// 	} else {
+	// 		activeDnsFilter = domain;
+	// 		// Switch to DNS tab for best context
+	// 		logType = 'zeek.dns';
+	// 	}
+	// 	if (initialized) {
+	// 		fetchLogs();
+	// 		fetchFieldDefs();
+	// 		document.getElementById('log-table')?.scrollIntoView({ behavior: 'smooth' });
+	// 	}
+	// }
+	//
+	// function clearAllFilters() {
+	// 	activeIpFilter = '';
+	// 	activeDnsFilter = '';
+	// 	excludeSrc = [];
+	// 	logType = 'all';
+	// 	query = '';
+	// 	if (initialized) {
+	// 		fetchLogs();
+	// 		fetchFieldDefs();
+	// 	}
+	// }
+	// OLD CODE END
 	function drillByProtocol(dataset: string) {
 		const lt = DATASET_TO_LOG_TYPE[dataset];
 		if (lt) {
 			logType = lt;
-			if (initialized) {
-				fetchLogs();
-				fetchFieldDefs();
-				document.getElementById('log-table')?.scrollIntoView({ behavior: 'smooth' });
-			}
+			fetchLogs();
+			fetchFieldDefs();
+			if (initialized) document.getElementById('log-table')?.scrollIntoView({ behavior: 'smooth' });
 		}
 	}
 
@@ -746,10 +828,8 @@
 		} else {
 			activeIpFilter = ip;
 		}
-		if (initialized) {
-			fetchLogs();
-			document.getElementById('log-table')?.scrollIntoView({ behavior: 'smooth' });
-		}
+		fetchLogs();
+		if (initialized) document.getElementById('log-table')?.scrollIntoView({ behavior: 'smooth' });
 	}
 
 	function drillByDns(domain: string) {
@@ -760,11 +840,9 @@
 			// Switch to DNS tab for best context
 			logType = 'zeek.dns';
 		}
-		if (initialized) {
-			fetchLogs();
-			fetchFieldDefs();
-			document.getElementById('log-table')?.scrollIntoView({ behavior: 'smooth' });
-		}
+		fetchLogs();
+		fetchFieldDefs();
+		if (initialized) document.getElementById('log-table')?.scrollIntoView({ behavior: 'smooth' });
 	}
 
 	function clearAllFilters() {
@@ -773,10 +851,8 @@
 		excludeSrc = [];
 		logType = 'all';
 		query = '';
-		if (initialized) {
-			fetchLogs();
-			fetchFieldDefs();
-		}
+		fetchLogs();
+		fetchFieldDefs();
 	}
 
 	// OLD CODE START — row expansion replaced by DetailDrawer
@@ -939,6 +1015,8 @@
 	// OLD CODE END
 	/** The ?filter= / ?ip= / ?query= / ?range= / ?from= / ?to= / ?type= / ?exclude_src= last applied; null before the first load. */
 	let appliedSearch: string | null = null;
+	/** The ?count= last applied, kept out of the search key: it changes no window and no filter (NET-160 section D). */
+	let appliedCount: number | null = null;
 
 	$effect(() => {
 		// Deep links from other pages (e.g., /logs?filter=1.2.3.4) and the top-bar search hand-off
@@ -951,11 +1029,14 @@
 		const keys = ['filter', 'ip', 'query', 'range', 'from', 'to', 'type', 'exclude_src'] as const;
 		const [urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo, urlType, urlExclude] = keys.map((k) => params.get(k));
 		const search = JSON.stringify([urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo, urlType, urlExclude]);
+		const count = linkedCount(params.get('count'));
 		untrack(() => {
 			// The hash changes too (the KPI links); only a new search runs one
-			if (search === appliedSearch) return;
+			// OLD CODE: if (search === appliedSearch) return; (NET-160 section D: a new count alone is a new hand-off, rebuilt from the URL)
+			if (search === appliedSearch && count === appliedCount) return;
 			const first = appliedSearch === null;
 			appliedSearch = search;
+			appliedCount = count;
 			const windowBefore = JSON.stringify([selectedTimeRange, custom?.from, custom?.to]);
 			// A link from a page with its own window (NET-160) opens on that window: the exact one
 			// (?from=&to=, "Custom") when it gives it, otherwise its ?range=
@@ -974,7 +1055,11 @@
 			const typeBefore = logType;
 			logType = Object.keys(LOG_TYPE_LABELS).includes(urlType ?? '') ? (urlType as LogType) : 'all';
 			excludeSrc = (urlExclude ?? '').split(',').map((ip) => ip.trim()).filter(Boolean);
+			// No URL carries a DNS-bar choice, so none outlives a hand-off (NET-160 section D)
+			activeDnsFilter = '';
 			if (!first && logType !== typeBefore) fetchFieldDefs();
+			// The table search each path below starts takes this comparison (fetchLogs sets its gen)
+			linked = count === null ? null : { expected: count, gen: null, observed: null };
 			if (first) {
 				refresh.run().then(() => {
 					initialized = true;
@@ -1232,6 +1317,11 @@ OLD CODE END -->
 			</div>
 		{/if}
 
+		<!-- The figure a link was clicked at, when this search's total differs (NET-160 section D) -->
+		{#if countLine}
+			<p class="notice linked" role="status">{countLine}</p>
+		{/if}
+
 		{#if error && results.length === 0}
 			<CardState state="error" title="Couldn't search the logs: the request failed." message={error} onaction={() => fetchLogs()} />
 		{:else if tableLoading && results.length === 0}
@@ -1314,7 +1404,8 @@ OLD CODE END -->
 	/* Layout glue the system lacks */
 	/* In-card anchors for the KPI links and the drill scrolls; the margin keeps the card head in view */
 	.anchor { display: block; scroll-margin-top: calc(var(--sp-8) * 3); }
-	.stale { margin-bottom: var(--sp-3); }
+	/* OLD CODE: .stale { margin-bottom: var(--sp-3); } (NET-160 section D: the count line too) */
+	.stale, .linked { margin-bottom: var(--sp-3); }
 	/* The log search takes the toolbar's free width (the system caps a toolbar search at 360px) */
 	.search-wide { display: flex; flex: 1 1 28rem; min-width: 0; }
 	.search-wide :global(.search) { max-width: none; }

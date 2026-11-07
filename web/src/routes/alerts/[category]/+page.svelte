@@ -48,7 +48,8 @@
 	// import { TableSort } from '$lib/utils/table-sort.svelte';
 	// OLD CODE END
 	import { severityBuckets, type SeverityLevel } from '$lib/utils/severity';
-	import { alertsHrefForSignature, type DrillWindow } from '$lib/utils/drilldown';
+	// OLD CODE: import { alertsHrefForSignature, type DrillWindow } from '$lib/utils/drilldown'; (section D)
+	import { alertsHrefForSignature, withCount, type DrillWindow } from '$lib/utils/drilldown';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -664,6 +665,13 @@
 
 	/** Every alert with this signature over the window of the figures on screen (NET-160 slice 2a). */
 	const sigHref = (sig: string) => alertsHrefForSignature(sig, { ...shownWindow, range: selectedRange });
+	/**
+	 * A Top signatures bar's link, carrying its figure (NET-160 section D). None for "Unknown", the
+	 * daemon's bucket for alerts with no rule name (the list matches the literal name only), or for
+	 * an empty name (the list drops an empty filter and lists every alert), since neither lists its count.
+	 */
+	const sigBarHref = (sig: { signature: string; count: number }) =>
+		sig.signature && sig.signature !== 'Unknown' ? withCount(sigHref(sig.signature), sig.count) : undefined;
 
 	/** The daemon lists at most this many addresses and signatures. */
 	const LIST_CAP = 20;
@@ -862,7 +870,8 @@ OLD CODE END -->
 						value: sig.count,
 						display: formatNumber(sig.count),
 						detail: formatRelativeTime(sig.last_seen),
-						href: sigHref(sig.signature),
+						// OLD CODE: href: sigHref(sig.signature), (section D)
+						href: sigBarHref(sig),
 					}))}
 				/>
 			{/if}

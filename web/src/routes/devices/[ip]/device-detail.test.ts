@@ -276,6 +276,8 @@ describe('Device detail — port, signature and connection links', () => {
 		expect(port.pathname).toBe('/logs');
 		expect(port.searchParams.get('query')).toBe(`event.provider:zeek AND event.dataset:conn AND source.ip:"${IP}" AND destination.port:443`);
 		expect(['from', 'to', 'range'].map((k) => port.searchParams.get(k))).toEqual([portsSent.from, portsSent.to, '24h']);
+		// NET-160 section D: the link carries the port's connection count, the figure clicked
+		expect(port.searchParams.get('count')).toBe('12');
 
 		const sig = new URL(screen.getByRole('link', { name: ALERT.signature }).getAttribute('href')!, 'http://x');
 		expect(sig.pathname).toBe('/alerts');
@@ -284,6 +286,7 @@ describe('Device detail — port, signature and connection links', () => {
 		expect(['signature', 'ip', 'src', 'dst', 'from', 'to', 'range'].map((k) => sig.searchParams.get(k))).toEqual([
 			ALERT.signature, IP, IP, '10.0.0.5', alertsSent.from, alertsSent.to, '24h',
 		]);
+		expect(sig.searchParams.get('count')).toBe(String(ALERT.count));
 	});
 
 	it("links a connection's destination address beside the row's button", async () => {
@@ -318,7 +321,8 @@ describe('Device detail — smart alert ×N links', () => {
 		const sent = vi.mocked(getSmartAlerts).mock.calls[0][0] as { from: string; to: string };
 		const count = countLink(4, ALERT.signature);
 		expect(count).toHaveTextContent('×4');
-		expect(params(count)).toEqual({ signature: ALERT.key.rule_name, ip: IP, src: IP, dst: '10.0.0.5', from: sent.from, to: sent.to, range: '24h' });
+		// OLD CODE: expect(params(count)).toEqual({ signature: ALERT.key.rule_name, ip: IP, src: IP, dst: '10.0.0.5', from: sent.from, to: sent.to, range: '24h' }); (section D: the link carries the ×N)
+		expect(params(count)).toEqual({ signature: ALERT.key.rule_name, ip: IP, src: IP, dst: '10.0.0.5', from: sent.from, to: sent.to, range: '24h', count: '4' });
 		expect(screen.getByRole('link', { name: ALERT.signature })).toHaveAttribute('href', count.getAttribute('href'));
 		expectNoNestedInteractive(container);
 	});

@@ -10,7 +10,8 @@
 	import { goto } from '$app/navigation';
 	import { getSuricataCategory, type SuricataAddressRow, type SuricataCategoryFigures, type SuricataRuleRow, type SuricataTopList } from '$lib/api/drilldown';
 	import { outcome, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
-	import { chartTime, customRange, fmt, formatWhen, rangeWindow, suricataAlertsHref, suricataCategoryHref, type SuricataNarrow } from '$lib/utils/drilldown';
+	// OLD CODE: import { chartTime, customRange, fmt, formatWhen, rangeWindow, suricataAlertsHref, suricataCategoryHref, type SuricataNarrow } from '$lib/utils/drilldown'; (section D)
+	import { chartTime, customRange, fmt, formatWhen, rangeWindow, suricataAlertsHref, suricataCategoryHref, withCount, type SuricataNarrow } from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import IPAddress from '$components/IPAddress.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -89,8 +90,13 @@
 		if (value !== 'custom') void goto(`${$page.url.pathname}?range=${value}`, { replaceState: true, keepFocus: true, noScroll: true });
 	}
 
-	/** The Alerts list holding a figure on screen: this category, narrowed as the figure was. */
-	const listHref = (narrow: SuricataNarrow = {}): string => (loaded && figuresWindow ? suricataAlertsHref(loaded.data.name, figuresWindow, narrow) : '');
+	// OLD CODE START (section D: the link carries the figure it opens, so the list can say if it differs)
+	// /** The Alerts list holding a figure on screen: this category, narrowed as the figure was. */
+	// const listHref = (narrow: SuricataNarrow = {}): string => (loaded && figuresWindow ? suricataAlertsHref(loaded.data.name, figuresWindow, narrow) : '');
+	// OLD CODE END
+	/** The Alerts list holding a figure on screen: this category, narrowed as the figure was, carrying that figure. */
+	const listHref = (narrow: SuricataNarrow, count: number): string =>
+		loaded && figuresWindow ? withCount(suricataAlertsHref(loaded.data.name, figuresWindow, narrow), count) : '';
 
 	// --- Figures ---
 
@@ -126,14 +132,14 @@
 
 <!-- No rule name: the list can't filter on a missing or empty rule.name, so a link would open the whole category -->
 {#snippet ruleCell(r: RuleRow)}
-	{#if r.rule_name}<a class="mono" href={listHref({ signature: r.rule_name })} title="These alerts with this rule over the same window">{r.rule_name}</a>
+	{#if r.rule_name}<a class="mono" href={listHref({ signature: r.rule_name }, r.count)} title="These alerts with this rule over the same window">{r.rule_name}</a>
 	{:else}<span class="dim">No rule name</span>{/if}
 {/snippet}
 {#snippet ruleCountCell(r: RuleRow)}{fmt(r.count)}{/snippet}
 {#snippet ruleSeenCell(r: RuleRow)}<span class="num">{formatWhen(r.last_seen)}</span>{/snippet}
 {#snippet ipCell(r: SuricataAddressRow)}<IPAddress ip={r.ip} />{/snippet}
-{#snippet sourceCountCell(r: SuricataAddressRow)}<a href={listHref({ src: r.ip })} title="These alerts from this address over the same window">{fmt(r.count)}</a>{/snippet}
-{#snippet targetCountCell(r: SuricataAddressRow)}<a href={listHref({ dst: r.ip })} title="These alerts to this address over the same window">{fmt(r.count)}</a>{/snippet}
+{#snippet sourceCountCell(r: SuricataAddressRow)}<a href={listHref({ src: r.ip }, r.count)} title="These alerts from this address over the same window">{fmt(r.count)}</a>{/snippet}
+{#snippet targetCountCell(r: SuricataAddressRow)}<a href={listHref({ dst: r.ip }, r.count)} title="These alerts to this address over the same window">{fmt(r.count)}</a>{/snippet}
 {#snippet taggedNameCell(c: TaggedRow)}<a href={suricataCategoryHref(c.category, figuresWindow)}>{c.category}</a>{/snippet}
 <!-- Plain: the other category's page counts every alert carrying it, not only these -->
 {#snippet taggedCountCell(c: TaggedRow)}{fmt(c.count)} of these {alertWord(c.count)}{/snippet}
@@ -193,7 +199,7 @@
 		value={data ? fmt(data.total) : '—'}
 		sub={data ? 'carrying this category' : undefined}
 		note={words}
-		href={data ? listHref() : undefined}
+		href={data ? listHref({}, data.total) : undefined}
 		title={data ? 'Every alert in this category over the same window' : undefined}
 	/>
 	<Card class="c-8" title="By severity" sub="Alerts · {words}, by Suricata severity">
@@ -202,7 +208,7 @@
 		{:else}
 			<div class="sev-counts" style:--sev-chars={Math.max(...LEVELS.map((l) => fmt(data.severity[l]).length))}>
 				{#each LEVELS as level (level)}
-					<a class="sev-tile" href={listHref({ severity: level })} aria-label="Show the {level} alerts in this category ({fmt(data.severity[level])})">
+					<a class="sev-tile" href={listHref({ severity: level }, data.severity[level])} aria-label="Show the {level} alerts in this category ({fmt(data.severity[level])})">
 						<SeverityPill {level} count={data.severity[level]} />
 					</a>
 				{/each}

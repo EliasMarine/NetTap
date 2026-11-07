@@ -20,7 +20,7 @@
 	// OLD CODE END
 	import { getDevices } from '$api/devices';
 	import type { Device, DeviceListResponse } from '$api/devices';
-	import { customRange, rangeWindow } from '$lib/utils/drilldown';
+	import { countDifference, customRange, linkedCount, rangeWindow, type LinkedCount } from '$lib/utils/drilldown';
 	import { getNewDeviceCount, getRegistryDevices, isNewDevice } from '$api/devices-registry';
 	import type { RegistryDevice, RegistryListResponse } from '$api/devices-registry';
 	import { getCaptureMode } from '$api/capture';
@@ -105,6 +105,17 @@
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	const range = $derived(custom ?? RANGES.find((r) => r.value === params.get('range')) ?? RANGES[2]);
 	const windowKey = $derived(custom ? `${custom.from}|${custom.to}` : range.value);
+	/**
+	 * NET-160 section D: the Total devices figure the link was clicked at (Home's Devices card).
+	 * Its own key beside windowKey, never inside it: a count-only change keeps the loaded reading.
+	 */
+	const appliedCount = $derived(linkedCount(params.get('count')));
+	/** The one comparison a counted hand-off's load makes; any other load ends it (null). */
+	let linked = $state.raw<LinkedCount | null>(null);
+	// compared with Total devices (loaded.total): the local search, type pills and sort never change it
+	const linkedLine = $derived(
+		linked?.observed == null ? null : countDifference(linked.expected, linked.observed, { lead: 'This window now has', one: 'device', many: 'devices' }),
+	);
 	const rangeOptions = $derived([...RANGES, ...(custom ? [custom] : [])].map(({ value, label }) => ({ value, label })));
 	// the loaded figures' words, not the URL's: a slow reply can't show under another window's words
 	const words = $derived(loaded?.words ?? range.words);
@@ -292,6 +303,8 @@
 	// OLD CODE END
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
+		// Section D: the hand-off's own load takes the comparison it set up (gen null); any other load ends it
+		linked = linked?.gen === null ? { ...linked, gen: g } : null;
 		// the window, fixed before the first await: the link's exact one (Custom), else the range ending now
 		const key = windowKey;
 		const shownWords = range.words;
@@ -319,6 +332,7 @@
 			const { devices, total, online_total, online_since, as_of, from, to } = listRes.value;
 			loaded = { devices, total, online_total, online_since, as_of, from, to, words: shownWords };
 			loadedWindow = key;
+			if (linked?.gen === g) linked = { ...linked, observed: total };
 		}
 		devicesFailed = listRes.status === 'rejected';
 		// a failed mode keeps the last one; with none, By type says so instead of guessing bridge
@@ -349,10 +363,23 @@
 	});
 	onDestroy(() => refresh.unregister());
 
-	// The first load, and a new one whenever the URL's window changes (a range pill, Back, a link)
+	// OLD CODE START — NET-160 section D: only the window started a load; a new `count` (a hand-off
+	// over the same window) now starts one too, keeping the loaded reading
+	// // The first load, and a new one whenever the URL's window changes (a range pill, Back, a link)
+	// $effect(() => {
+	// 	void windowKey;
+	// 	untrack(() => refresh.run());
+	// });
+	// OLD CODE END
+	// The first load, and a new one whenever the URL's window or count changes (a range pill, Back, a
+	// link). A valid count starts a comparison, which the load this starts claims.
 	$effect(() => {
 		void windowKey;
-		untrack(() => refresh.run());
+		const expected = appliedCount;
+		untrack(() => {
+			linked = expected === null ? null : { expected, gen: null, observed: null };
+			void refresh.run();
+		});
 	});
 
 	// The page's own 30 s auto refresh, through the same contract so "Updated" stays honest
@@ -669,6 +696,10 @@ OLD CODE END -->
 		sub={topConsumer ? deviceName(topConsumer) : undefined}
 		note={windowNote}
 	/>
+	<!-- NET-160 section D: a full row under the KPIs, starting under Total devices, the figure it compares -->
+	{#if linkedLine}
+		<p class="notice c-12" role="status">{linkedLine}</p>
+	{/if}
 </div>
 
 <div>

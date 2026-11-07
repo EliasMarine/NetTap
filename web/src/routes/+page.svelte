@@ -30,7 +30,7 @@
 	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTrafficCategories } from '$api/traffic';
 	import type { TrafficSummary, BandwidthPoint, ProtocolEntry, TrafficCategory } from '$api/traffic';
 	import { getAlertCount, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
-	import { connLogsHref, NO_EXACT_ALERT_LIST, smartAlertHref, windowQuery, type DrillWindow } from '$lib/utils/drilldown';
+	import { connLogsHref, NO_EXACT_ALERT_LIST, smartAlertHref, windowQuery, withCount, type DrillWindow } from '$lib/utils/drilldown';
 	import type { AlertCountResponse, SmartAlert, SmartAlertSummary } from '$api/alerts';
 	import { getDevices, getDeviceCount } from '$api/devices';
 	import type { Device, DeviceCountResponse } from '$api/devices';
@@ -640,21 +640,23 @@ OLD CODE END -->
 		{...kpiWindow(!!(trafficSummary && prevTrafficSummary), bandwidthTrend, span.window, span.previous)}
 		sub={bandwidthSub}
 	/>
+	<!-- OLD CODE: href={trafficHref} (section D: the link carries the figure clicked; Bandwidth, a byte sum, does not) -->
 	<KpiCard
 		class="c-3"
 		label="Connections"
 		icon="connections"
-		href={trafficHref}
+		href={withCount(trafficHref, trafficSummary?.connection_count)}
 		value={trafficSummary ? formatNumber(trafficSummary.connection_count) : '—'}
 		delta={kpiDelta(connectionTrend)}
 		{...kpiWindow(!!(trafficSummary && prevTrafficSummary), connectionTrend, span.window, span.previous)}
 		sub={connectionsSub}
 	/>
+	<!-- OLD CODE: href={alertCount ? `/alerts?${windowQuery(alertCount, range)}` : `/alerts?range=${range}`} (section D: the window's link carries the figure clicked) -->
 	<KpiCard
 		class="c-3"
 		label="Alerts"
 		icon="alerts"
-		href={alertCount ? `/alerts?${windowQuery(alertCount, range)}` : `/alerts?range=${range}`}
+		href={alertCount ? withCount(`/alerts?${windowQuery(alertCount, range)}`, alertCount.counts.total) : `/alerts?range=${range}`}
 		value={alertCount ? formatNumber(alertCount.counts.total) : '—'}
 		delta={kpiDelta(alertTrend, true)}
 		{...kpiWindow(!!(alertCount && prevAlertCount), alertTrend, span.window, span.previous)}
@@ -664,11 +666,12 @@ OLD CODE END -->
 	     it opens the All devices list over the card's own window -->
 	<!-- href="/iot" -->
 	<!-- OLD CODE END -->
+	<!-- OLD CODE: href={deviceCountReply ? `/devices?view=all&${windowQuery(deviceCountReply, range)}` : `/devices?view=all&range=${range}`} (section D: the window's link carries the figure clicked) -->
 	<KpiCard
 		class="c-3"
 		label="Devices"
 		icon="devices"
-		href={deviceCountReply ? `/devices?view=all&${windowQuery(deviceCountReply, range)}` : `/devices?view=all&range=${range}`}
+		href={deviceCountReply ? withCount(`/devices?view=all&${windowQuery(deviceCountReply, range)}`, deviceCountReply.count) : `/devices?view=all&range=${range}`}
 		value={deviceCount !== null ? formatNumber(deviceCount) : '—'}
 		note={span.window}
 		sub={devicesSub}
@@ -774,7 +777,8 @@ OLD CODE END -->
 					{#each smartAlerts.slice(0, TOP_ALERT_GROUPS) as sa, i (`sa-${sa.signature_id}-${i}`)}
 						{@const exact = smartWindow ? smartAlertHref(sa.key, smartWindow) : null}
 						<!-- OLD CODE: <a class="top-cat" href="/threats"> (slice 2b-1: the ×N opens the alerts it counts) -->
-						<svelte:element this={exact ? 'a' : 'div'} class="top-cat" href={exact ?? undefined} title={exact ? undefined : NO_EXACT_ALERT_LIST}>
+						<!-- OLD CODE: href={exact ?? undefined} (section D: the ×N link carries its figure) -->
+						<svelte:element this={exact ? 'a' : 'div'} class="top-cat" href={exact ? withCount(exact, sa.count) : undefined} title={exact ? undefined : NO_EXACT_ALERT_LIST}>
 							<span class="group-name"><SeverityPill level={smartLevel(sa.severity)} /><span>{sa.category_label}</span></span>
 							<b class="num">&times;{formatNumber(sa.count)}</b>
 							<p class="sig">{sa.signature}</p>
