@@ -343,23 +343,25 @@ Status: built and tested locally, pushed, no PR yet. Not on the device.
   - The daemon creates an empty `owner.rules` (0644) at start, and suricata-live waits for the daemon to be healthy, so Malcolm lists the file.
   - `nettap-rules-staging` is rw in the daemon at `/var/lib/nettap-rules-staging` and never mounted in suricata-live.
   - The `update-sources.yaml` mount on suricata-live is retired (OLD CODE). The file stays for the legacy source endpoints.
-- **Validator** (`daemon/services/owner_rules_validator.py`):
-  - Each non-blank line is a `#` comment or one rule whose action is exactly `alert`.
-  - The options are split on `;` by a quote- and backslash-aware parser, so a `;` or a keyword inside `msg`/`content` text is just text.
-  - Refused keywords: `lua`, `luajit`, `luaxform`, `config`, `bypass`, `dataset`, `datarep`, `filestore`.
-  - Exactly one `sid`, from 1000000 to 1999999, unique across the file.
-  - At most 2,000 rules and 256 KB of UTF-8 text. Empty content is allowed and clears the rules.
+- **Validator** (`daemon/services/owner_rules_validator.py`), reading a file the way Suricata 8.0.7 does (rewritten in the review round, below):
+  - Lines end at LF only. A line with any other control character, a line ending in `\`, a line over 8,190 bytes and an indented line are refused.
+  - Each non-blank line is a `#` comment or one rule: exactly 7 header fields with `alert` first, then `( … )` with one `(`.
+  - The options are split at every `;` without a backslash before it, as Suricata does. Quotes don't protect a `;`. An empty option or a name outside `[a-z0-9_.-]` is refused.
+  - Refused keywords: `lua`, `luajit`, `luaxform`, `config`, `bypass`, `dataset`, `datarep`, `datajson`, `filestore`, `filemd5`, `filesha1`, `filesha256`, `tls_store`, `tls.store`.
+  - Exactly one `sid`, 1 to 7 ASCII digits, from 1000000 to 1999999, unique across the file.
+  - At most 2,000 rules and 256 KB of UTF-8 text. Empty content is allowed and clears the rules. Text that isn't valid Unicode is a 400.
 - **Save** (`daemon/services/owner_rules.py`). It holds the daemon's rule-operation lock and the slice 2 rules lock from start to end (30 s wait, then 409):
   1. Remove staging dirs older than 1 h.
   2. `docker inspect` suricata-live and the daemon: image, PUID/PGID, the live rules volume's name, and the staging volume's host path.
   3. Snapshot into `nettap-rules-staging/<uuid>/`: `docker cp` of `/etc/suricata` and `/opt/suricata/include-configs`, plus `custom/owner.rules` = the candidate.
   4. Refuse (409) if the snapshot's `suricata.yaml` doesn't list `/opt/suricata/rules/custom/owner.rules`. That means suricata-live started before the volume existed, and a reload would never read the file.
-  5. Suricata's test: `docker run --rm` of the live image with `-T -v`, no network, 1 GiB, 1 CPU, the live UID/GID, all caps dropped except the three its binary's file caps need, and no-new-privileges.
-     - Mounts, all ro: the snapshot at the live paths, the live rules volume, the candidate at the custom dir, and the threshold file when it is a regular file.
-     - It must exit 0 and print "0 rules failed" within 180 s.
+  5. Suricata's test: `docker run --rm` of the live image, no network, no container log, 1 GiB, 1 CPU, the live UID/GID, all caps dropped except the three its binary's file caps need, and no-new-privileges.
+     - Mounts, all ro: the snapshot at the live paths, the live rules volume, the candidate at the custom dir, and the threshold file when it is a regular file. A 64 MB tmpfs for the analysis.
+     - First `-T -v` with every rule: it must exit 0 and print "0 rules failed" within 180 s. Exit 1 with Suricata's errors is a 422; any other exit is a 502 ("Suricata's test couldn't run (exit N)").
+     - Then `--engine-analysis -S owner.rules` with `security.lua.allow-rules=false`: each owner rule must load on its own, and no keyword Suricata parsed may be on the refused list.
      - `docker rm -f` always runs afterwards, so a timeout or a cancel leaves no container behind.
-  6. Write `owner.rules.prev` (the previous rules), then `owner.rules`. Each write goes through `.owner.rules.tmp-<uuid>` (O_EXCL, O_NOFOLLOW, fsync, 0644) and `os.replace`.
-  7. A blocking `reload-rules` (120 s) must answer OK, and `ruleset-stats` must show 0 failed.
+  6. Write `owner.rules.prev` (the previous rules), then `owner.rules`, each with `services.capture_config.write_file_atomic` (temp file, fsync, 0644, `os.replace`), on a worker thread.
+  7. A blocking `reload-rules` (120 s) must answer OK, and `ruleset-stats` must show 0 failed. While the answer is "in progress", it asks again every 5 s until 120 s.
   8. On any failure in 7, put the previous rules back, reload again, and answer 502 ("… The previous rules were put back.", or that Suricata didn't confirm it).
   9. The staging dir is removed in `finally`.
   - Logs carry counts and results only, never rule text. An unexpected error logs its type only.
@@ -373,7 +375,7 @@ Status: built and tested locally, pushed, no PR yet. Not on the device.
     - 502: not loaded, previous rules put back; or suricata-live couldn't be inspected or copied.
     - 500: test timeout, or anything unexpected.
   - The old handlers that wrote the unwired `config/suricata/custom.rules` are retired as OLD CODE. `SuricataRuleManager.add_custom_rules/get_custom_rules` stay, unrouted.
-- **Live status:** `owner_rules` counts the `alert` lines in suricata-live's `owner.rules`, or is null when that file isn't there (suricata-live not recreated with the mount).
+- **Live status:** `owner_rules` counts the `alert` lines (indented ones too) in suricata-live's `owner.rules`, or is null when that file isn't there (suricata-live not recreated with the mount).
 - **Web** (teammate web-slice3):
   - Settings › Suricata rules retires the unwired source toggles and schedule picker as OLD CODE. It shows the engine facts: loaded/failed, last reload, own rule count, and the update record, with "downloaded" (file) kept apart from "active" (engine).
   - A "Your own rules" card (`OwnerRulesCard.svelte`): a monospace editor with loading, empty, error, validating and saving states; **Check rules** and **Save and load**; each refusal shown on its line.
@@ -424,6 +426,67 @@ Status: built and tested locally, pushed, no PR yet. Not on the device.
 - **The live status counts own rules from the file** in suricata-live. The engine reports totals only, so "loaded" is shown by the reload's 0 failed and, on the G11, by `check-owner-rules.sh`'s one-more/one-fewer count.
 - **Engine facts and the update record were built in slice 2** (recorded there). Slice 3 adds the own rule count and the page.
 - **Rollback is a redeploy**, not a script: suricata-live recreated without the mount has no own rules.
+
+### Reviews (slice 3)
+
+Five reviews ran on `bb5087df`: security-engineer, `/deep-review`, the Python reviewer, typescript-reviewer and `/ponytail-review`. Every finding below is fixed. Each change of behaviour has a test that fails without it; P3 and P6 are refactors that the existing save tests cover. Checked by running the new tests against the reviewed code: 38 of the 39 new validator tests, 18 owner-save tests, the P4 handler test and the P7 count test fail there.
+
+**The bypass, proved on the real image.** The first validator read a rule differently from Suricata. Each input below was run alone through Suricata 8.0.7's `--engine-analysis` in `ghcr.io/idaholab/malcolm/suricata:26.10.0`, and every one of them loaded `bypass`. The first validator accepted 5 of the 8:
+
+| Input | First validator | Suricata 8.0.7 | New validator |
+|---|---|---|---|
+| `metadata:a"; bypass; metadata:b"` (quoted `;`) | accepted | loads `bypass` | `"bypass" can't be used` |
+| `((bypass; sid:…;)` (doubled `(`) | accepted | loads `bypass` | `The options start with one "("` |
+| `metadata:a\` + NUL, then `#; bypass; sid:1000002;)` | accepted | loads sid 1000002 with `bypass` | control character |
+| `metadata:a\\;)` + CR + `#\` + LF + `#; bypass;)` | accepted | loads `bypass` | control character |
+| `alert tcp any any -> any any bypass; metadata:a (b; sid:…;)` (header gap) | accepted | loads `bypass` | 7 header fields, then `( … )` |
+| `… bypass; msg:"(x"; sid:…;)` (header gap, the review's) | refused (open quote) | loads `bypass` | 7 header fields |
+| `metadata:a` + CR + `#; metadata:b\` + LF + `; bypass; …` | refused | loads `bypass` | control character |
+| one 8,243-byte line | refused (2 sids) | cut at 8 KiB: loads sids 1000001 and 1000002, the second with `bypass` | over 8,190 bytes |
+
+| # | Finding | Fix | Test |
+|---|---|---|---|
+| S1 | The validator's parse differed from Suricata's: quotes, a second `(`, CR/NUL/`\` line joins, a loose header | Split lines on LF only. Refuse other control characters (`\x00-\x08`, `\x0b-\x1f`, `\x7f`, `\x85`, U+2028/9), a last non-space `\`, and anything but 7 header fields then `(`. Split options with `re.split(r"(?<!\\);")`, no quote tracking; refuse empty options | `TestSuricataReadsItTheSameWay` (each input above, each control character), `test_split_options_as_suricata`; the two quote tests are kept as OLD CODE |
+| S2 | File keywords missing | `filemd5`, `filesha1`, `filesha256`, `datajson`, plus `tls_store`/`tls.store` (it writes certificates to disk), found in `suricata --list-keywords=csv` | `test_keywords_that_read_or_write_files` |
+| S3 | Nothing checked the keywords as Suricata parsed them | Same throwaway container, after `-T`: `--engine-analysis -S owner.rules --set security.lua.allow-rules=false` into a 64 MB tmpfs. Each owner rule must load alone, and no parsed keyword or flag may be refused (so `tls.store` shows as `tls_store`). About 40 lines | `TestAnalysis`, `test_the_analysis_finds_a_forbidden_keyword` (4), `test_a_rule_that_doesnt_load_alone_is_refused`; real image below |
+| S4 | `sid:²;`, a 5,000-digit sid and a lone surrogate raised | `re.fullmatch(r"[0-9]{1,7}")` before `int()`; a lone surrogate is a 400 with `line: null` | `test_sids_that_used_to_raise` (3), `test_a_lone_surrogate` |
+| S5 | `-T -v` quotes rule text into the container log | `--log-driver none` | `test_the_runner_is_boxed` |
+| S6 | `check-owner-rules.sh` checked `rule_count` only, so it would overwrite comments | Refuses when `content` isn't empty too | bats: "refuses when the own rules hold only comments" |
+| P1 | Any non-zero exit was "Suricata refused" | Only exit 1 with Suricata's errors is a 422. Anything else (125 docker, 137 out of memory, 139) is a 502 "Suricata's test couldn't run (exit N). Nothing was changed." | `test_a_test_that_couldnt_run_is_not_a_refusal` (137, 125, 139, 1 without errors, 0 without "0 failed"); `owner.rules` unchanged |
+| P2 | A reload answering "in progress" failed the save | Ask again every 5 s while the answer says "in progress", up to `RELOAD_TIMEOUT_S` | `test_a_reload_in_progress_is_waited_out`, `test_a_timed_out_reload_is_waited_out_before_the_put_back`, `test_a_reload_in_progress_for_too_long_gives_up` |
+| P3 | Reinvented helpers | `write_file_atomic` from `services.capture_config`; `ruleset-stats` read through `suricata_rules._engine_answer`; `DAEMON_CONTAINER` from `services.malcolm_upgrade`, and `NETTAP_DAEMON_CONTAINER` and its docs row dropped | `test_an_interrupted_save_leaves_no_extra_rules_file` kept |
+| P4 | File I/O and `validate()` on the event loop | `api.offload.run_blocking` for the writes, the staging `rmtree`, the snapshot's file work, `owner.read()` in GET, and `validate()` in both handlers and `save()` | `test_file_work_and_the_check_run_off_the_event_loop`, `test_read_and_check_run_off_the_event_loop` |
+| P5 | A timeout was recognised by its text | `etpro._run` returns `None` as the exit code on timeout; the old `-1` is OLD CODE | `test_a_real_timeout_stops_the_test_and_removes_its_container` (the real `_run` against a `docker` that never answers), `TestRunCommand` |
+| P6 | `save()` over 50 lines; bare numbers | The put-back is `_put_back()`; `save()` is 35 lines. Named constants for every timeout, `YAML_MAX_BYTES`, `TEST_MEMORY`, `TEST_CPUS`, `ANALYSIS_TMPFS` | covered by the save tests |
+| P7 | The live count missed tab-indented rules | `grep -c '^[[:space:]]*alert[[:space:]]'` | `test_the_owner_count_includes_rules_indented_with_a_tab` runs the script's own line |
+| D1 | Each deploy set `STARTED` again for suricata-live, so the daemon log check started too late | `DAEMON_STARTED` in `deploy-detection-slice3.sh` and `deploy-detection-slice2.sh` (OLD CODE kept there) | bats: "the daemon log check starts at the daemon's own restart" |
+| H1 | A 2xx login page or `{}` read as success or as "no rules" | `getOwnerRules` needs `content` string and finite limits; check and save need `saved === true` or `ok === true` and no `error`; both proxies answer 502 to a reply that isn't JSON | Vitest: a 200 HTML page and a 200 `{}` for each, plus the proxies |
+| M1 | A result stayed after editing | Typing clears it; the editor is read-only during a check | Vitest (3) |
+| M2 | `engine.loaded` null printed "null" | `typeof` number check; `rule_count` coerced | Vitest |
+| M3 | Focus was lost | Focus stays on the button; "Write a rule" focuses the editor; a failure focuses the editor, which points at the error list | Vitest |
+| M4 | An unanswered save read as refused | `daemonAvailable: false` (and a lost request) shows amber: "NetTap couldn't confirm the result. Check Rules active before saving again." | Vitest |
+| Lows | | A failed refresh shows in the empty state; the result shows before the reload; `line` must be a number; `owner_rules` optional with one `== null` check; editor `c-12`; byte size checked with `TextEncoder` before sending; a refused check shows the daemon's text as is | Vitest |
+
+Suites after the round:
+- Daemon: 3,858 passed, 4 skipped on macOS. The touched files pass in `python:3.12-slim` on Linux: 240, none skipped.
+- Web: Vitest 3,906 passed. svelte-check 0 errors, with the same 2 warnings as before. `check:colors`, `check:e2e` and `npm run build` are clean. Visual: 276 passed, 49 skipped (reduced motion).
+- Bats: 214 tests on macOS, 0 failed. The two slice 3 files (7 tests) also pass in `bats/bats:1.11.0` on Linux.
+- shellcheck at CI's severity is clean on `scripts/remote/`. ruff 0.17.3 check and format are clean on `daemon/`.
+
+Coordinator follow-up: the ET Pro card is `c-12` too, so the two settings cards stack at full width (OLD CODE kept; Vitest checks the class; the visual suite passed).
+
+**Real image, through the daemon's code** (`OwnerRules._snapshot` and `_test` against a created container of the live image, `rule-files` set as Malcolm sets it):
+- The self-test rule passed; an unknown keyword was refused on line 2; empty content passed.
+- Past the validator, straight into Suricata's test: the quoted-`;` rule gave 422 `Suricata reads "bypass"…`; `tls.store` gave 422 `Suricata reads "tls_store"…`; a Lua rule whose script exists passed `-T` (Lua is on in 8.0.7 by default) and gave 422 "Only 0 of your 1 rules load on their own in Suricata. Lua rules can't be used."
+- A container name docker refuses gave 502 "Suricata's test couldn't run (exit 125)" (a harness slip, which exercised P1 for real).
+
+Deviations from the review:
+- **Extra validator rules** beyond S1. A line over 8,190 bytes is refused, because Suricata's `fgets` reads 8 KiB and reads the rest as another rule (proved above). An indented line is refused, because Suricata skips it and the count would be wrong. An option name must match `[a-z0-9_.-]`, the shape of every 8.0.7 keyword.
+- **Lists in `[ ]` can't contain spaces.** Suricata allows them; NetTap's 7-field split doesn't. The message says so.
+- **`tls_store` and `tls.store` are refused.** The review didn't list them; they were found in the keyword list.
+- **S3 is built**, not a follow-up: about 40 lines, run in the same container.
+- **A check's summary starts "Your rules have problems"**, not "Nothing was saved".
+- **M4 also covers a lost request** (fetch throws), since it may have reached the daemon.
 
 ### Device run order (owner)
 

@@ -169,8 +169,12 @@ They raise alerts like any other rule and always count. What you can use:
 - Only `alert` rules. `pass`, `drop` and `reject` are refused: NetTap watches traffic, it doesn't block it.
 - Each rule needs its own `sid` from 1000000 to 1999999. No rule source uses that range.
 - No keywords that run code, change the engine or touch files: `lua`, `luajit`, `luaxform`, `config`, `bypass`,
-  `dataset`, `datarep` and `filestore`.
-- Up to 2,000 rules and 256 KB of text.
+  `dataset`, `datarep`, `datajson`, `filestore`, `filemd5`, `filesha1`, `filesha256` and `tls.store`.
+- Up to 2,000 rules and 256 KB of text, and up to 8,190 bytes on one line.
+- Write each rule the way Suricata reads it. Start each rule at the start of its line. Don't end a line with `\`,
+  because Suricata joins it to the next line. Use only tabs, spaces and line breaks; no other control characters.
+  Put `\` before a `;` that is part of a value, even inside quotes (`content:"a\;b";`): Suricata ends an option at
+  every `;` that has no `\` before it. Lists in `[ ]` can't contain spaces.
 
 **Check rules** runs NetTap's checks without saving. **Save and load** checks again, then has Suricata test your rules together with every
 installed rule in a separate, throwaway copy; only if that test passes are they put in place and loaded. A refused rule is

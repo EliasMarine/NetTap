@@ -142,7 +142,9 @@ of a save runs on snapshots in the `nettap-rules-staging` volume, which suricata
 |---|---|---|
 | `NETTAP_CUSTOM_RULES_DIR` | `/var/lib/nettap-suricata-custom` | The daemon's mount of `suricata-custom-rules` |
 | `NETTAP_RULES_STAGING_DIR` | `/var/lib/nettap-rules-staging` | The daemon's mount of `nettap-rules-staging`; must not be inside the custom rules dir |
-| `NETTAP_DAEMON_CONTAINER` | `nettap-storage-daemon` | The daemon's own container, inspected for the staging volume's host path (the test container mounts it from the host) |
+
+The test container mounts the staging volume from the host, so the daemon inspects its own container for the volume's
+host path. That container's name is `DAEMON_CONTAINER_NAME`, the variable the Malcolm update already uses.
 
 ---
 
