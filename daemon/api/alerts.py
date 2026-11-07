@@ -11,7 +11,6 @@ details, and acknowledgement tracking.
 import json
 import logging
 import os
-import threading
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -82,8 +81,6 @@ SURICATA_NOISE_EXCLUSION = _SURICATA_NOISE_EXCLUSION
 
 # Path for storing acknowledgement data (local JSON file)
 _ACK_FILE = os.environ.get("ALERT_ACK_FILE", "/opt/nettap/data/alert_acks.json")
-# One acknowledgement read-modify-write at a time; the alert lists read the file from threads
-_ACKS_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -914,21 +911,19 @@ async def handle_alert_acknowledge(request: web.Request) -> web.Response:
         pass  # No body or invalid JSON is fine, use default
 
     ack_file = request.app.get("alert_ack_file")
-    # A small file (sub-millisecond), so this stays on the request loop
-    with _ACKS_LOCK:
-        acks = _load_acks(ack_file)
+    acks = _load_acks(ack_file)
 
-        acks[alert_id] = {
-            "acknowledged_at": datetime.now(timezone.utc).isoformat(),
-            "acknowledged_by": acknowledged_by,
-        }
+    acks[alert_id] = {
+        "acknowledged_at": datetime.now(timezone.utc).isoformat(),
+        "acknowledged_by": acknowledged_by,
+    }
 
-        try:
-            _save_acks(acks, ack_file)
-        except OSError as exc:
-            return web.json_response(
-                {"error": f"Failed to save acknowledgement: {exc}"}, status=500
-            )
+    try:
+        _save_acks(acks, ack_file)
+    except OSError as exc:
+        return web.json_response(
+            {"error": f"Failed to save acknowledgement: {exc}"}, status=500
+        )
 
     return web.json_response(
         {

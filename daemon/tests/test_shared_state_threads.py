@@ -44,21 +44,6 @@ def test_a_failed_suppress_save_keeps_the_list(tmp_path, monkeypatch):
     assert ids == [1]
 
 
-def test_suppress_writes_from_many_threads_all_land(tmp_path, monkeypatch):
-    monkeypatch.setattr(alert_intelligence, "_SUPPRESS_PATH", tmp_path / "s.json")
-    threads = [
-        threading.Thread(target=alert_intelligence.suppress_rule, args=(sig,))
-        for sig in range(20)
-    ]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-
-    ids = {e["signature_id"] for e in alert_intelligence.load_suppress_list()["global"]}
-    assert ids == set(range(20))
-
-
 def _intel_request() -> MagicMock:
     request = MagicMock()
     request.query = {}

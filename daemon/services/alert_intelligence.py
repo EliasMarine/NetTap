@@ -893,8 +893,6 @@ def generate_assessment(
 _SUPPRESS_PATH = (
     Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-suppress.json"
 )
-# One read-modify-write at a time: the POST routes write it while report threads read it
-_SUPPRESS_LOCK = threading.Lock()
 
 
 def load_suppress_list() -> dict:
@@ -928,6 +926,7 @@ def suppress_rule(
     ttl_days: int = 30,
 ) -> None:
     """Add a signature to the suppress list with optional TTL expiration."""
+    data = load_suppress_list()
     entry = {
         "signature_id": signature_id,
         "reason": reason,
@@ -937,36 +936,31 @@ def suppress_rule(
         ).isoformat(),
     }
 
-    with _SUPPRESS_LOCK:
-        data = load_suppress_list()
-        if device_ip:
-            per_device = data.setdefault("per_device", {})
-            device_list = per_device.setdefault(device_ip, [])
-            if not any(e["signature_id"] == signature_id for e in device_list):
-                device_list.append(entry)
-        else:
-            if not any(
-                e["signature_id"] == signature_id for e in data.get("global", [])
-            ):
-                data.setdefault("global", []).append(entry)
+    if device_ip:
+        per_device = data.setdefault("per_device", {})
+        device_list = per_device.setdefault(device_ip, [])
+        if not any(e["signature_id"] == signature_id for e in device_list):
+            device_list.append(entry)
+    else:
+        if not any(e["signature_id"] == signature_id for e in data.get("global", [])):
+            data.setdefault("global", []).append(entry)
 
-        save_suppress_list(data)
+    save_suppress_list(data)
 
 
 def mark_false_positive(signature_id: int, reason: str = "") -> None:
     """Mark a signature as a false positive (no TTL — permanent until removed)."""
-    with _SUPPRESS_LOCK:
-        data = load_suppress_list()
-        fps = data.setdefault("false_positives", [])
-        if not any(e["signature_id"] == signature_id for e in fps):
-            fps.append(
-                {
-                    "signature_id": signature_id,
-                    "reason": reason,
-                    "marked_at": datetime.now(timezone.utc).isoformat(),
-                }
-            )
-        save_suppress_list(data)
+    data = load_suppress_list()
+    fps = data.setdefault("false_positives", [])
+    if not any(e["signature_id"] == signature_id for e in fps):
+        fps.append(
+            {
+                "signature_id": signature_id,
+                "reason": reason,
+                "marked_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+    save_suppress_list(data)
 
 
 def _is_entry_expired(entry: dict) -> bool:
