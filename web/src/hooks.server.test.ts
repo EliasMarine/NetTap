@@ -24,11 +24,11 @@ vi.mock('@sveltejs/kit', async (importOriginal) => {
 	};
 });
 
-function createMockEvent(pathname: string, token?: string, user?: any, method = 'GET') {
+function createMockEvent(pathname: string, token?: string, user?: any, method = 'GET', headers: Record<string, string> = {}) {
 	const url = new URL(`http://localhost${pathname}`);
 	return {
 		url,
-		request: new Request(url, { method }),
+		request: new Request(url, { method, headers }),
 		cookies: {
 			get: vi.fn().mockImplementation((name: string) => {
 				if (name === 'nettap_token') return token;
@@ -441,6 +441,34 @@ describe('hooks.server', () => {
 			const event = createMockEvent('/apix');
 
 			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ status: 302, location: '/login' });
+		});
+
+		it.each([
+			[true, '/login'],
+			[false, '/setup'],
+		])('an /api address opened as a page keeps the redirect (users exist: %s → %s)', async (users, location) => {
+			mockHasUsers.mockReturnValue(users);
+			mockVerifyToken.mockReturnValue(null);
+			const event = createMockEvent('/api/packets/download', 'expired-token', undefined, 'POST', { 'sec-fetch-dest': 'document' });
+
+			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ status: 302, location });
+			expect(mockResolve).not.toHaveBeenCalled();
+		});
+
+		it.each([true, false])('a script call (Sec-Fetch-Dest: empty) gets 401 (users exist: %s)', async (users) => {
+			mockHasUsers.mockReturnValue(users);
+			mockVerifyToken.mockReturnValue(null);
+			const event = createMockEvent('/api/packets/download', 'expired-token', undefined, 'GET', { 'sec-fetch-dest': 'empty' });
+
+			await expectUnauthorised(handle({ event, resolve: mockResolve }));
+		});
+
+		it('during first run, an API call with a leftover valid cookie gets 401, not a redirect to /setup', async () => {
+			mockHasUsers.mockReturnValue(false);
+			mockVerifyToken.mockReturnValue({ username: 'admin', role: 'admin' });
+			const event = createMockEvent('/api/alerts', 'valid-token');
+
+			await expectUnauthorised(handle({ event, resolve: mockResolve }));
 		});
 	});
 

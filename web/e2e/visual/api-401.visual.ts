@@ -35,6 +35,12 @@ test.describe('without a session (NET-197)', () => {
 		await page.goto('/alerts');
 		expect(new URL(page.url()).pathname).toBe('/login');
 	});
+
+	// A form post, a new tab or a typed address sends Sec-Fetch-Dest: document, so it gets the sign-in page
+	test('an /api address opened as a page goes to /login, not raw JSON', async ({ page }) => {
+		await page.goto(API);
+		expect(new URL(page.url()).pathname).toBe('/login');
+	});
 });
 
 test('with a session the same call reaches the daemon (NET-197)', async ({ page }) => {

@@ -150,9 +150,20 @@ export const handle: Handle = async ({ event, resolve }) => {
 		if (firstRun && isFirstRunPath(event.request.method, pathname)) {
 			return resolve(event);
 		}
-		// NET-197: an API call gets 401 JSON, not the redirects below: fetch follows a redirect,
-		// so the login or setup page's HTML reached the caller as a 200 and looked like success
-		if (!event.locals.user && isUnder(pathname, '/api')) {
+		// OLD CODE START — NET-197 review: an /api address opened as a page (form post, new tab) got raw
+		// JSON, and an API call during first run with a leftover valid cookie still got the setup redirect
+		// // NET-197: an API call gets 401 JSON, not the redirects below: fetch follows a redirect,
+		// // so the login or setup page's HTML reached the caller as a 200 and looked like success
+		// if (!event.locals.user && isUnder(pathname, '/api')) {
+		// 	return unauthorised();
+		// }
+		// OLD CODE END
+		// NET-197: a script's call to /api (fetch, EventSource, <a download>) gets 401 JSON, not the
+		// redirects below: fetch follows a redirect, so the login or setup page's HTML reached it as a 200.
+		// An /api address opened as a page keeps the redirect. The browser sets Sec-Fetch-Dest and page
+		// script can't, and it only chooses between two refusals.
+		const openedAsPage = event.request.headers.get('sec-fetch-dest') === 'document';
+		if ((firstRun || !event.locals.user) && isUnder(pathname, '/api') && !openedAsPage) {
 			return unauthorised();
 		}
 		if (firstRun) {
