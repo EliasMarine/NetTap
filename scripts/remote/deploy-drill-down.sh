@@ -27,6 +27,9 @@ set -u
 REPO_DIR="/home/nettap/NetTap"
 BRANCH="main"
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
+# The device list route's daemon timeout (web/src/routes/api/devices/+server.ts); its vitest
+# reads this line, so the two can't drift apart. Step 7d gates the 30-day list at 80% of it.
+DEVICE_LIST_TIMEOUT_MS=10000
 FAILED=0
 TO_TS=$(date -u -d '15 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
 FROM_TS=$(date -u -d '75 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
