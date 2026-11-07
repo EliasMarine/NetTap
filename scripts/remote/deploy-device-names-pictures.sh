@@ -3,10 +3,11 @@
 #
 # Rebuilds the daemon (the names and pictures store, its routes, owner names on every device
 # list) and the web container (the Rename and Change picture panels, the image proxy). The
-# nginx container is recreated too: its request limit rose from 10 MB to 16 MB, matching the
-# web container's BODY_SIZE_LIMIT and the daemon's, so a backup holding photos can be restored.
+# nginx container is recreated too: backup restore now takes 16 MB (matching the web
+# container's BODY_SIZE_LIMIT and the daemon's) so a backup holding photos can be restored,
+# and the rest of the web app is held to 1 MB.
 # Then:
-#   - checks the three request limits are live;
+#   - checks the request limits are live;
 #   - runs scripts/remote/verify-device-names.py inside the daemon container: sets and clears a
 #     name, an icon and a photo on one uncustomised device, checks the replies, the photo's
 #     headers and version rule, the refusals, and the backup sections. The device ends as it began.
