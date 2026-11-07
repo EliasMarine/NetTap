@@ -112,3 +112,22 @@ _copied() { grep -c "docker cp" "$CALLS"; }
     released=$(grep -n "docker rm -f nettap-rules-lock-" "$CALLS" | tail -1 | cut -d: -f1)
     [ "$taken" -lt "$copied" ] && [ "$copied" -lt "$released" ]
 }
+
+@test "verify-detection: --owner-rule takes present or absent only (NET-191 slice 3)" {
+    _stub_commands
+    for bad in "" bogus PRESENT; do
+        run bash "$SCRIPT" fixtures --owner-rule "$bad"
+        [ "$status" -eq 2 ]
+    done
+    run bash "$SCRIPT" fixtures --owner-rule
+    [ "$status" -eq 2 ]
+    [ ! -s "$CALLS" ]
+    _meminfo 3145728
+    export MOCK_HHMM=1200
+    for good in present absent; do
+        run bash "$SCRIPT" fixtures --owner-rule "$good"
+        [[ "$output" == *"Could not copy /etc/suricata out of nettap-suricata-live"* ]]  # parsed, went on
+    done
+    # the choice reaches both Python containers (write-fixtures and report) as NETTAP_OWNER_FIXTURE
+    grep -qF 'PY_RUN+=(-e "NETTAP_OWNER_FIXTURE=$OWNER_FIXTURE")' "$SCRIPT"
+}

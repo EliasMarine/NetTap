@@ -19,7 +19,7 @@ set -u
 exec > >(tee "$HOME/nettap-detection-slice2.log") 2>&1
 
 REPO_DIR="/home/nettap/NetTap"
-BRANCH="feature/detection-slice2"  # set to main once the PR is merged
+BRANCH="main"  # PR #206 is merged
 BASELINE="$HOME/nettap-rules-baseline"
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
 
