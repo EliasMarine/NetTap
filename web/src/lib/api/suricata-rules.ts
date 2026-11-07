@@ -302,13 +302,13 @@ export async function setUpdateSchedule(interval: string): Promise<UpdateSchedul
 // }
 // OLD CODE END
 
-/** The JSON object in a reply, or {} for anything else (an HTML login page, an array, no body). */
+/** The JSON object in a reply, or {} for anything else (an HTML page, an array, no body). */
 async function replyObject(res: Response): Promise<Record<string, unknown>> {
 	const body = await res.json().catch(() => null);
 	return body && typeof body === 'object' && !Array.isArray(body) ? body : {};
 }
 
-/** What a 2xx that isn't a rules answer means: most likely a login page after the session ended. */
+/** What a 2xx that isn't a rules answer means: something other than the daemon replied. A lapsed session gets 401 (NET-197). */
 const NOT_A_RULES_REPLY = "NetTap's reply wasn't about your rules. Reload the page; you may need to sign in again.";
 
 /** The owner's own rules. Throws on a failed request, so the editor never reads "no rules" for "unknown". */
@@ -316,7 +316,7 @@ export async function getOwnerRules(): Promise<OwnerRules> {
 	const res = await fetch('/api/suricata/rules/custom');
 	const data = await replyObject(res);
 	if (!res.ok) throw new Error(typeof data.error === 'string' && data.error ? data.error : `HTTP ${res.status}`);
-	// a login redirect answers 200 HTML: that must never read as "no rules yet"
+	// a 2xx that isn't a rules answer must never read as "no rules yet"
 	if (typeof data.content !== 'string' || !Number.isFinite(data.max_rules) || !Number.isFinite(data.max_bytes)) {
 		throw new Error(NOT_A_RULES_REPLY);
 	}
@@ -338,7 +338,7 @@ async function sendOwnerRules(url: string, content: string): Promise<OwnerRulesR
 				.map((e) => ({ line: typeof e.line === 'number' ? e.line : null, message: e.message }))
 		: [];
 	const error = typeof body.error === 'string' && body.error ? body.error : undefined;
-	// success only with the expected shape: a 200 login page or {} is not a save
+	// success only with the expected shape: a 200 HTML page or {} is not a save
 	if (res.ok && (body.saved === true || body.ok === true) && error === undefined) {
 		return { ...body, ok: true, status: res.status, errors };
 	}

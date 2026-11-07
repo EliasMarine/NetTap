@@ -167,7 +167,7 @@ async function failure(res: Response): Promise<PacketApiError> {
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
 	const res = await fetch(url, init);
 	if (!res.ok) throw await failure(res);
-	// A signed-out request is redirected to the login page: HTML, not the daemon's JSON
+	// A signed-out request gets 401 above (NET-197); a 2xx that isn't JSON is not the daemon's answer either
 	return res.json().catch(() => {
 		throw new PacketApiError('NetTap sent an unexpected reply. Sign in again and retry.', res.status);
 	});
