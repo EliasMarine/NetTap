@@ -16,6 +16,8 @@
 #   - checks field suggestions, the filter check and a hostile filter
 #   - checks a search over the last 60 s is marked provisional
 #   - checks no job or FIFO is left behind in nettap-tshark
+# Then verify-packet-library.py (PR 2, the /packets page) asks the device's TShark to compile
+# every ready-made filter and "What" kind in web/src/lib/utils/packet-library.json.
 #
 # Run as the normal user (NOT with sudo). BRANCH defaults to main; to try a branch first:
 #   BRANCH=feature/packet-analysis-redesign bash /home/nettap/NetTap/scripts/remote/deploy-packet-analysis.sh
@@ -78,6 +80,18 @@ echo "→ Step 5: Check against an independent reading (waits for the first inde
 sudo docker exec -i nettap-storage-daemon python3 - < "$REPO_DIR/scripts/remote/verify-packet-analysis.py" 2>&1 | grep -v "Warning"
 rc=${PIPESTATUS[0]}
 check "independent check" "$rc" "verify-packet-analysis.py exited $rc"
+echo ""
+
+echo "→ Step 5b: The device's TShark compiles every ready-made filter on the page..."
+LIBRARY="$REPO_DIR/web/src/lib/utils/packet-library.json"
+if [ -f "$LIBRARY" ]; then
+    # shellcheck disable=SC2024  # the files are the repo's, readable without sudo
+    sudo docker exec -i nettap-storage-daemon python3 - "$(cat "$LIBRARY")" < "$REPO_DIR/scripts/remote/verify-packet-library.py" 2>&1 | grep -v "Warning"
+    rc=${PIPESTATUS[0]}
+    check "filter library" "$rc" "verify-packet-library.py exited $rc"
+else
+    echo "   (no packet-library.json on $BRANCH yet; skipped)"
+fi
 echo ""
 
 echo "→ Step 6: Daemon log lines for packet analysis..."

@@ -5,9 +5,15 @@
 //  * the menu, as before.
 //  */
 // OLD CODE END
+// OLD CODE START — NET-188: Packet analysis joined the Investigate group
+// /**
+//  * Sidebar navigation (PLAN.md §5.5): 19 pages, grouped as the design system's Sidebar shows
+//  * them. Investigations and Security posture joined in NET-160.
+//  */
+// OLD CODE END
 /**
- * Sidebar navigation (PLAN.md §5.5): 19 pages, grouped as the design system's Sidebar shows
- * them. Investigations and Security posture joined in NET-160.
+ * Sidebar navigation (PLAN.md §5.5): 20 pages, grouped as the design system's Sidebar shows
+ * them. Investigations and Security posture joined in NET-160, Packet analysis in NET-188.
  */
 import type { IconName } from '$lib/components/ui/icons';
 
@@ -41,6 +47,7 @@ export const NAV_GROUPS: NavGroup[] = [
 			{ href: '/dns', label: 'DNS Analytics', icon: 'dns' },
 			{ href: '/certificates', label: 'Certificates', icon: 'certs' },
 			{ href: '/pcap', label: 'PCAP Search', icon: 'pcap' },
+			{ href: '/packets', label: 'Packet analysis', icon: 'filter' },
 			{ href: '/investigations', label: 'Investigations', icon: 'search' },
 		],
 	},

@@ -1,3 +1,9 @@
+<!--
+  NET-188: /tools/tshark redirects to /packets (+page.ts), so this page no longer renders.
+  The old components in $lib/components/tshark/ stay in place, unreferenced.
+-->
+<!-- OLD CODE START — NET-188: the old page asked for a PCAP path and Wireshark syntax and showed
+     raw JSON; Packet analysis starts from a question and explains each packet
 <script lang="ts">
 	/** TShark packet analysis: the restyled AnalysisPanel as it is, under the page head. */
 	import AnalysisPanel from '$lib/components/tshark/AnalysisPanel.svelte';
@@ -17,3 +23,4 @@
 </div>
 
 <AnalysisPanel />
+OLD CODE END -->

@@ -48,13 +48,23 @@
 			tags: ['TCP', 'UDP', 'reference'],
 			icon: 'connections',
 		},
+		// OLD CODE START — NET-188: /tools/tshark redirects to Packet analysis
+		// {
+		// 	name: 'TShark packet analysis',
+		// 	description: 'Inspect saved PCAP files with Wireshark display filters.',
+		// 	href: '/tools/tshark',
+		// 	category: 'analysis',
+		// 	tags: ['PCAP', 'Wireshark', 'deep inspect'],
+		// 	icon: 'pcap',
+		// },
+		// OLD CODE END
 		{
-			name: 'TShark packet analysis',
-			description: 'Inspect saved PCAP files with Wireshark display filters.',
-			href: '/tools/tshark',
+			name: 'Packet analysis',
+			description: 'See what crossed your network, packet by packet, from the saved captures.',
+			href: '/packets',
 			category: 'analysis',
-			tags: ['PCAP', 'Wireshark', 'deep inspect'],
-			icon: 'pcap',
+			tags: ['PCAP', 'TShark', 'Wireshark', 'deep inspect'],
+			icon: 'filter',
 		},
 		{
 			name: 'CyberChef',

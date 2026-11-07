@@ -27,6 +27,8 @@
 	import { getAlerts } from '$api/alerts';
 	import type { Alert } from '$api/alerts';
 	import { alertsHrefForSignature } from '$lib/utils/drilldown';
+	import { lanPolicy } from '$lib/stores/lan';
+	import { packetsHrefFor } from '$lib/utils/connection-ref';
 
 	interface Connection {
 		_id: string;
@@ -107,13 +109,18 @@
 	let timestamp = $derived(asString(getField(connection, '@timestamp')));
 	let displayFilter = $derived(buildTSharkFilter(connection));
 
-	// TShark tool URL
-	let tsharkToolUrl = $derived.by(() => {
-		const params = new URLSearchParams({ auto: '1' });
-		if (displayFilter) params.set('filter', displayFilter);
-		if (timestamp) params.set('ts', timestamp);
-		return `/tools/tshark?${params}`;
-	});
+	// OLD CODE START — NET-188: /tools/tshark became Packet analysis; this link opened it with the
+	// IPs + service port and the record's timestamp, not the exact connection or its window
+	// // TShark tool URL
+	// let tsharkToolUrl = $derived.by(() => {
+	// 	const params = new URLSearchParams({ auto: '1' });
+	// 	if (displayFilter) params.set('filter', displayFilter);
+	// 	if (timestamp) params.set('ts', timestamp);
+	// 	return `/tools/tshark?${params}`;
+	// });
+	// OLD CODE END
+	/** The exact five-tuple over the connection's own window (NET-188); null when the record can't say */
+	let packetsHref = $derived(packetsHrefFor(connection, $lanPolicy));
 
 	// GeoIP/ASN enrichment from connection source
 	let srcAsn = $derived(asString(getField(connection, 'source.as.full')));
@@ -567,7 +574,8 @@
 						onclick={() => tsharkMode = 'follow'}
 					>Follow stream</button>
 				</div>
-				<a href={tsharkToolUrl} class="btn">Open in TShark tool</a>
+				<!-- OLD CODE: <a href={tsharkToolUrl} class="btn">Open in TShark tool</a> (NET-188: Packet analysis) -->
+				{#if packetsHref}<a href={packetsHref} class="btn">Open these packets</a>{/if}
 			</div>
 
 			{#if analyzing}

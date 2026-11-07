@@ -13,7 +13,8 @@
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { unwrap, getPacketSummary, formatDuration, formatBytes, CONN_STATE_DESC } from '$lib/utils/tshark-helpers';
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import { domainHref, ipHref, isLan } from '$lib/stores/lan';
+	import { domainHref, ipHref, isLan, lanPolicy } from '$lib/stores/lan';
+	import { packetsHrefFor } from '$lib/utils/connection-ref';
 
 	// ---------------------------------------------------------------------------
 	// Props
@@ -146,13 +147,18 @@
 	let bpfFilter = $derived(connection ? buildBpfFilter(connection) : '');
 	let displayFilter = $derived(connection ? buildTSharkFilter(connection) : '');
 
-	// TShark tool URL
-	let tsharkToolUrl = $derived.by(() => {
-		const params = new URLSearchParams({ auto: '1' });
-		if (displayFilter) params.set('filter', displayFilter);
-		if (timestamp) params.set('ts', timestamp);
-		return `/tools/tshark?${params}`;
-	});
+	// OLD CODE START — NET-188: /tools/tshark became Packet analysis; this link opened it with the
+	// IPs + service port and the record's timestamp, not the exact connection or its window
+	// // TShark tool URL
+	// let tsharkToolUrl = $derived.by(() => {
+	// 	const params = new URLSearchParams({ auto: '1' });
+	// 	if (displayFilter) params.set('filter', displayFilter);
+	// 	if (timestamp) params.set('ts', timestamp);
+	// 	return `/tools/tshark?${params}`;
+	// });
+	// OLD CODE END
+	/** The exact five-tuple over the connection's own window (NET-188); null when the record can't say */
+	let packetsHref = $derived(connection ? packetsHrefFor(connection, $lanPolicy) : null);
 
 	// OLD CODE START — STATE_DESC moved to CONN_STATE_DESC in $lib/utils/tshark-helpers.ts
 	// const STATE_DESC: Record<string, string> = {
@@ -522,7 +528,8 @@
 								onclick={() => tsharkMode = 'follow'}
 							>Follow stream</button>
 						</div>
-						<a href={tsharkToolUrl} class="btn">Open in TShark tool</a>
+						<!-- OLD CODE: <a href={tsharkToolUrl} class="btn">Open in TShark tool</a> (NET-188: Packet analysis) -->
+						{#if packetsHref}<a href={packetsHref} class="btn">Open these packets</a>{/if}
 					</div>
 
 					<!-- Status / output -->

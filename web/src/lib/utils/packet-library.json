@@ -1,0 +1,95 @@
+{
+	"kinds": [
+		{ "id": "all", "label": "All traffic", "filter": "" },
+		{ "id": "lookups", "label": "Name lookups", "filter": "dns && dns.flags.response == 0" },
+		{ "id": "sites", "label": "Sites opened", "filter": "tls.handshake.type == 1" },
+		{ "id": "unencrypted-web", "label": "Unencrypted web pages", "filter": "http.request" },
+		{ "id": "new-connections", "label": "New connections", "filter": "tcp.flags.syn == 1 && tcp.flags.ack == 0" },
+		{ "id": "resent", "label": "Resent data", "filter": "tcp.analysis.retransmission" },
+		{ "id": "pings", "label": "Pings", "filter": "icmp.type == 8 || icmp.type == 0" },
+		{ "id": "leases", "label": "Address leases", "filter": "dhcp" },
+		{ "id": "remote-logins", "label": "Remote logins", "filter": "ssh || rdp || telnet || vnc" }
+	],
+	"groups": [
+		{
+			"id": "dns",
+			"label": "Name lookups",
+			"filters": [
+				{ "id": "dns-asked", "label": "Every name looked up", "filter": "dns.flags.response == 0", "explain": "Questions sent to a name server" },
+				{ "id": "dns-failed", "label": "Lookups that failed", "filter": "dns.flags.rcode != 0", "explain": "The name server answered with an error" },
+				{ "id": "dns-no-such-name", "label": "Names that don't exist", "filter": "dns.flags.rcode == 3", "explain": "Often a typo, a retired service or a blocked name" },
+				{ "id": "dns-slow", "label": "Slow lookups", "filter": "dns.time > 0.5", "explain": "Answers that took over half a second" },
+				{ "id": "dns-skips-router", "label": "Lookups that skip your router", "filter": "dns && !(ip.addr == 192.168.1.1)", "explain": "A device using its own name server · your router's address is filled in" },
+				{ "id": "dns-private", "label": "Private DNS", "filter": "tcp.port == 853 || udp.port == 853", "explain": "Encrypted lookups over TLS or QUIC · the names can't be read" }
+			]
+		},
+		{
+			"id": "web",
+			"label": "Web and secure sites",
+			"filters": [
+				{ "id": "tls-sites", "label": "Sites opened", "filter": "tls.handshake.type == 1", "explain": "The site name each secure connection started with" },
+				{ "id": "http-requests", "label": "Unencrypted web requests", "filter": "http.request", "explain": "Pages and forms sent over plain HTTP" },
+				{ "id": "http-errors", "label": "Web errors", "filter": "http.response.code >= 400", "explain": "Not found, refused and server errors · plain HTTP only" },
+				{ "id": "http-slow", "label": "Slow web replies", "filter": "http.time > 1", "explain": "Over a second to answer · plain HTTP only" },
+				{ "id": "quic", "label": "QUIC and HTTP/3", "filter": "quic", "explain": "Used by YouTube, Google and others · the content is encrypted" },
+				{ "id": "tls-old", "label": "Old encryption", "filter": "tls.handshake.type == 2 && tls.handshake.version < 0x0303", "explain": "Servers that agreed to TLS 1.1 or older" },
+				{ "id": "tls-alert", "label": "Secure setup refused", "filter": "tls.alert_message", "explain": "An alert such as an untrusted certificate, when it's sent before encryption starts" }
+			]
+		},
+		{
+			"id": "tcp",
+			"label": "Connection problems",
+			"filters": [
+				{ "id": "tcp-new", "label": "New connections", "filter": "tcp.flags.syn == 1 && tcp.flags.ack == 0", "explain": "The first packet of each connection" },
+				{ "id": "tcp-syn-resent", "label": "Attempts with no answer", "filter": "tcp.flags.syn == 1 && tcp.analysis.retransmission", "explain": "The device asked again because nothing came back" },
+				{ "id": "tcp-reset", "label": "Cut off or refused", "filter": "tcp.flags.reset == 1", "explain": "One side ended the connection abruptly" },
+				{ "id": "tcp-resent", "label": "Lost and resent data", "filter": "tcp.analysis.retransmission", "explain": "Data sent again because it went missing" },
+				{ "id": "tcp-zero-window", "label": "Receiver full", "filter": "tcp.analysis.zero_window", "explain": "One side asked the other to stop sending for now" },
+				{ "id": "tcp-problems", "label": "Every problem TShark noticed", "filter": "tcp.analysis.flags && !tcp.analysis.window_update && !tcp.analysis.keep_alive && !tcp.analysis.keep_alive_ack", "explain": "Wireshark's own \"Bad TCP\" rule" },
+				{ "id": "tcp-slow-connect", "label": "Slow to connect", "filter": "tcp.analysis.initial_rtt > 0.2", "explain": "Connections whose first round trip took over 200 ms" },
+				{ "id": "unreachable", "label": "Couldn't be reached", "filter": "icmp.type == 3 || icmpv6.type == 1", "explain": "A router or device said the address or port can't be reached" }
+			]
+		},
+		{
+			"id": "lan",
+			"label": "Local network",
+			"filters": [
+				{ "id": "dhcp", "label": "Address leases", "filter": "dhcp", "explain": "Devices joining and renewing their address" },
+				{ "id": "dhcp-refused", "label": "Lease refused", "filter": "dhcp.option.dhcp == 6", "explain": "The DHCP server said no" },
+				{ "id": "arp", "label": "Who has this address?", "filter": "arp", "explain": "Devices finding each other's hardware address" },
+				{ "id": "arp-duplicate", "label": "Two devices, one address", "filter": "arp.duplicate-address-detected", "explain": "Two hardware addresses claimed the same IP address" },
+				{ "id": "announcements", "label": "Devices announcing themselves", "filter": "mdns || ssdp || llmnr || nbns", "explain": "Printers, TVs, speakers and computers saying hello" },
+				{ "id": "ping", "label": "Pings", "filter": "icmp.type == 8 || icmp.type == 0", "explain": "Echo requests and their replies" },
+				{ "id": "broadcasts", "label": "Broadcasts", "filter": "eth.dst == ff:ff:ff:ff:ff:ff", "explain": "Packets sent to every device on the network" },
+				{ "id": "ipv6", "label": "IPv6", "filter": "ipv6", "explain": "Traffic using the newer address format" }
+			]
+		},
+		{
+			"id": "login",
+			"label": "Logins and remote access",
+			"filters": [
+				{ "id": "remote-login", "label": "Remote logins", "filter": "ssh || rdp || telnet || vnc", "explain": "Remote desktop and command line sessions" },
+				{ "id": "readable-passwords", "label": "Passwords that may be readable", "filter": "http.authbasic || ftp || telnet || pop || imap", "explain": "Basic web logins, and older mail and file protocols that can send them unencrypted" },
+				{ "id": "file-sharing", "label": "File sharing", "filter": "smb || smb2", "explain": "Windows shares and many NAS drives" },
+				{ "id": "vpn", "label": "VPN tunnels", "filter": "wg || openvpn || isakmp || esp", "explain": "WireGuard, OpenVPN and IPsec" },
+				{ "id": "p2p", "label": "Peer-to-peer downloads", "filter": "bittorrent || bt-dht", "explain": "BitTorrent traffic that TShark recognises" }
+			]
+		},
+		{
+			"id": "narrow",
+			"label": "Narrow it down",
+			"filters": [
+				{ "id": "hide-chatter", "label": "Hide background chatter", "filter": "!(arp || mdns || ssdp || llmnr || nbns || igmp)", "explain": "Removes the announcements and address checks every network makes" },
+				{ "id": "web-only", "label": "Web traffic only", "filter": "tcp.port == 80 || tcp.port == 443 || udp.port == 443", "explain": "Ports 80 and 443, including QUIC" },
+				{ "id": "one-conversation", "label": "One conversation", "filter": "tcp.stream == 12", "explain": "Every packet of one connection · the number is in any packet's details" }
+			]
+		}
+	],
+	"common": [
+		{ "id": "sites-opened", "label": "Which sites did a device open?", "explain": "The site name each secure connection started with", "question": { "other": { "kind": "anyone" }, "port": null, "kinds": ["sites"], "when": { "kind": "last", "seconds": 900 } } },
+		{ "id": "looked-up", "label": "What did a device look up?", "explain": "Every name it asked a name server for", "question": { "other": { "kind": "anyone" }, "port": null, "kinds": ["dns-asked"], "when": { "kind": "last", "seconds": 900 } } },
+		{ "id": "unencrypted", "label": "Was anything sent without encryption?", "explain": "Web pages and forms over plain HTTP", "question": { "other": { "kind": "anyone" }, "port": null, "kinds": ["unencrypted-web"], "when": { "kind": "last", "seconds": 900 } } },
+		{ "id": "connection-failed", "label": "Why did a connection fail?", "explain": "Refused, cut off, or lost and resent", "question": { "other": { "kind": "anyone" }, "port": null, "kinds": ["tcp-reset", "tcp-resent"], "when": { "kind": "last", "seconds": 900 } } },
+		{ "id": "lookup-failed", "label": "Did a name fail to look up?", "explain": "The name server answered with an error", "question": { "other": { "kind": "anyone" }, "port": null, "kinds": ["dns-failed"], "when": { "kind": "last", "seconds": 900 } } }
+	]
+}

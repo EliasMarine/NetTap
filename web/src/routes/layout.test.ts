@@ -170,13 +170,16 @@ describe('layout sidebar', () => {
 	// OLD CODE START — NET-160: 17 links before Investigations and Security posture joined
 	// it('keeps all 17 page links', () => { … expect(new Set(hrefs).size).toBe(17); });
 	// OLD CODE END
-	it('keeps all 19 page links', () => {
+	// OLD CODE START — NET-188: 19 links before Packet analysis joined
+	// it('keeps all 19 page links', () => { … expect(new Set(hrefs).size).toBe(19); … });
+	// OLD CODE END
+	it('keeps all 20 page links', () => {
 		renderLayout();
 		const nav = screen.getByRole('navigation', { name: 'Main' });
-		// the brand link also points home, so 20 links share 19 hrefs
+		// the brand link also points home, so 21 links share 20 hrefs
 		const hrefs = within(nav).getAllByRole('link').map((a) => a.getAttribute('href'));
-		expect(new Set(hrefs).size).toBe(19);
-		expect(hrefs).toEqual(expect.arrayContaining(['/investigations', '/compliance']));
+		expect(new Set(hrefs).size).toBe(20);
+		expect(hrefs).toEqual(expect.arrayContaining(['/investigations', '/compliance', '/packets']));
 	});
 
 	it('shows the storage used and free space', async () => {

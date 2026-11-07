@@ -1,7 +1,7 @@
 import { getField } from '$lib/utils/tshark-filter';
 
 /** Epoch ms from Malcolm's epoch-ms text ("1793613468348"), a number, or an ISO date; NaN when none. */
-function epochMs(value: unknown): number {
+export function epochMs(value: unknown): number {
 	if (typeof value === 'number') return value;
 	const text = String(value ?? '');
 	return /^\d+$/.test(text) ? Number(text) : Date.parse(text);

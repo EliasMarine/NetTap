@@ -174,6 +174,11 @@ describe('Connections — address filter', () => {
 		const dialog = await screen.findByRole('complementary', { name: 'Detail panel' });
 		expect(within(dialog).getByRole('link', { name: 'Open source device' })).toHaveAttribute('href', '/devices/192.168.1.20');
 		expect(within(dialog).getByRole('link', { name: 'Open destination address' })).toHaveAttribute('href', '/address/203.0.113.9');
+		// NET-188: this record has no ports, so its packets link is all traffic between the two addresses, labelled inexact
+		const packets = new URL(within(dialog).getByRole('link', { name: 'Open these packets' }).getAttribute('href')!, 'http://localhost');
+		expect(packets.pathname).toBe('/packets');
+		expect(packets.searchParams.get('filter')).toBe('ip.addr == 192.168.1.20 && ip.addr == 203.0.113.9');
+		expect(packets.searchParams.get('exact')).toBe('0');
 		expectNoNestedInteractive(container);
 	});
 });
