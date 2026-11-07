@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { alertsHrefForSignature, byteFigure, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, smartAlertHref, windowQuery } from './drilldown';
+import { alertsHrefForSignature, byteFigure, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery } from './drilldown';
 
 const MB = 1000 ** 2; // decimal, as formatBytes prints (NET-166)
 
@@ -137,5 +137,31 @@ describe('exact-window links', () => {
 	it('reads a link window back as Custom, exactly', () => {
 		expect(customRange(win.from, win.to)).toMatchObject({ value: 'custom', label: 'Custom', hours: 24, ...win });
 		expect(customRange(win.to, win.from)).toBeNull();
+	});
+});
+
+// NET-160 slice 2b-2: a raw Suricata category's page and the lists its figures open
+describe('Suricata category links', () => {
+	const win = { from: '2026-11-05T13:02:00.000Z', to: '2026-11-06T13:02:00.000Z', range: '7d' };
+
+	it('encodes "/", "&", "%" and spaces into one path segment, with the window only when given', () => {
+		expect(suricataCategoryHref('A/B & C 50%')).toBe('/alerts/suricata/A%2FB%20%26%20C%2050%25');
+		const href = new URL(suricataCategoryHref('Misc activity', win), 'http://x');
+		expect(decodeURIComponent(href.pathname.split('/').at(-1)!)).toBe('Misc activity');
+		expect(Object.fromEntries(href.searchParams)).toEqual(win);
+	});
+
+	it("opens the Alerts list for the category, narrowed as the figure was, over the figure's window", () => {
+		const href = suricataAlertsHref('A/B & C', win, { signature: 'ET SCAN x', src: '192.0.2.1', dst: '' });
+		expect(new URL(href, 'http://x').pathname).toBe('/alerts');
+		expect(Object.fromEntries(new URL(href, 'http://x').searchParams)).toEqual({ signature: 'ET SCAN x', src: '192.0.2.1', suricata_category: 'A/B & C', ...win });
+		expect(Object.fromEntries(new URL(suricataAlertsHref('X', win), 'http://x').searchParams)).toEqual({ suricata_category: 'X', ...win });
+	});
+});
+
+describe('partialListNote', () => {
+	it('says the rows are the highest among those read, with how many when the reply says', () => {
+		expect(partialListNote('addresses', 5000)).toBe('Highest counts among the 5,000 addresses read; the full set was too large to read');
+		expect(partialListNote('rules')).toBe('Highest counts among the rules read; the full set was too large to read');
 	});
 });

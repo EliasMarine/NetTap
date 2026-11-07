@@ -51,7 +51,8 @@
 	import { severityRank } from '$lib/utils/table-sort.svelte';
 	import { severityBuckets, type SeverityLevel } from '$lib/utils/severity';
 	import { alertSnapshots, loadAlertSnapshot, refreshAlertSnapshots, type AlertSnapshot } from '$lib/stores/alertSnapshot';
-	import { alertsHrefForSignature, customRange, type CustomWindow, type DrillWindow } from '$lib/utils/drilldown';
+	// OLD CODE: import { alertsHrefForSignature, customRange, type CustomWindow, type DrillWindow } from '$lib/utils/drilldown'; (slice 2b-2)
+	import { alertsHrefForSignature, customRange, partialListNote, suricataCategoryHref, type CustomWindow, type DrillWindow } from '$lib/utils/drilldown';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -68,7 +69,8 @@
 	import SeverityGauge from '$lib/components/ui/charts/SeverityGauge.svelte';
 	import Ring from '$lib/components/ui/charts/Ring.svelte';
 	import AlertDetail from './AlertDetail.svelte';
-	import { alertLevel, alertTitle, groupAlerts, shortSeen } from './alert-view';
+	// OLD CODE: import { alertLevel, alertTitle, groupAlerts, shortSeen } from './alert-view'; (slice 2b-2)
+	import { alertLevel, alertTitle, groupAlerts, groupCategoryLinked, linkedSuricataCategory, shortSeen } from './alert-view';
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -143,6 +145,8 @@
 	let topSignatures = $state<AlertSignature[]>([]);
 	let topDestIps = $state<AlertIpEntry[]>([]);
 	let topSrcIps = $state<AlertIpEntry[]>([]);
+	/** Each top list's note when the daemon couldn't read every key (its rows aren't a true top N); null otherwise */
+	let topPartial = $state<{ signatures: string | null; destIps: string | null; srcIps: string | null }>({ signatures: null, destIps: null, srcIps: null });
 	let enhancedCategories = $state<AlertCategory[]>([]);
 	let alerts = $state<Alert[]>([]);
 	let threatScore = $state(0);
@@ -167,12 +171,16 @@
 	/** A smart alert's source and destination (NET-160 slice 2b-1) */
 	let srcFilter = $state('');
 	let dstFilter = $state('');
+	/** One raw Suricata category, rule.category (NET-160 slice 2b-2) */
+	let suricataCategoryFilter = $state('');
 
 	// Pagination
 	/** The current search's window: paging reuses it, so rows arriving between pages don't shift the list. */
 	let listWindow = $state<DrillWindow>({ from: '', to: '' });
 	/** The window and range words of the rows on screen; set when a list lands, so links never run ahead of the rows. */
 	let shownWindow = $state<DrillWindow & { range: string }>({ from: '', to: '', range: '24h' });
+	/** The window the Top signatures counts on screen came from; a row opens the list over it (slice 2b-2). */
+	let signaturesWindow = $state<DrillWindow & { range: string }>({ from: '', to: '', range: '24h' });
 	let currentPage = $state(1);
 	let totalPages = $state(0);
 	let totalAlerts = $state(0);
@@ -225,7 +233,8 @@
 	let filteredSignatures = $derived.by(() => {
 		if (!signatureSearch) return topSignatures;
 		const q = signatureSearch.toLowerCase();
-		return topSignatures.filter((s) => s.signature.toLowerCase().includes(q));
+		// OLD CODE: return topSignatures.filter((s) => s.signature.toLowerCase().includes(q)); (a row with no rule name is null)
+		return topSignatures.filter((s) => (s.signature ?? '').toLowerCase().includes(q));
 	});
 
 	// OLD CODE START — 2026-11-03: BarList scales to its largest item
@@ -657,6 +666,7 @@
 			src: srcFilter || undefined,
 			dst: dstFilter || undefined,
 			signature: signatureFilter || undefined,
+			suricata_category: suricataCategoryFilter || undefined,
 			sort: SERVER_SORT[sortKey],
 			order: sortDir,
 		};
@@ -744,9 +754,22 @@
 
 		if (customWindow) customCounts = snap;
 		if (tl.status === 'fulfilled') timeline = tl.value.buckets;
-		if (sigs.status === 'fulfilled') topSignatures = sigs.value.signatures;
-		if (dest.status === 'fulfilled') topDestIps = dest.value.ips;
-		if (src.status === 'fulfilled') topSrcIps = src.value.ips;
+		// OLD CODE: if (sigs.status === 'fulfilled') topSignatures = sigs.value.signatures; (slice 2b-2: the rows keep their window)
+		if (sigs.status === 'fulfilled') {
+			topSignatures = sigs.value.signatures;
+			signaturesWindow = shown;
+			topPartial = { ...topPartial, signatures: partialNote(sigs.value, 'rules') };
+		}
+		// OLD CODE: if (dest.status === 'fulfilled') topDestIps = dest.value.ips; (NET-160: the list says when it is partial)
+		if (dest.status === 'fulfilled') {
+			topDestIps = dest.value.ips;
+			topPartial = { ...topPartial, destIps: partialNote(dest.value, 'addresses') };
+		}
+		// OLD CODE: if (src.status === 'fulfilled') topSrcIps = src.value.ips; (NET-160: the list says when it is partial)
+		if (src.status === 'fulfilled') {
+			topSrcIps = src.value.ips;
+			topPartial = { ...topPartial, srcIps: partialNote(src.value, 'addresses') };
+		}
 		if (cats.status === 'fulfilled') enhancedCategories = cats.value.categories;
 		if (summary.status === 'fulfilled') {
 			smartSummary = summary.value;
@@ -807,13 +830,17 @@
 		}
 	}
 
+	/** A top list's partial note, or null when the daemon read every key. */
+	const partialNote = (reply: { complete: boolean; examined: number }, noun: string) => (reply.complete ? null : partialListNote(noun, reply.examined));
+
 	function scrollToList() {
 		document.getElementById('alerts-table')?.scrollIntoView?.({ behavior: 'smooth' });
 	}
 
 	// The list's filters and window, in the URL (slice 2a)
 	// OLD CODE: const LIST_PARAMS = ['severity', 'signature', 'ip', 'range', 'from', 'to'] as const; (slice 2b-1: src and dst)
-	const LIST_PARAMS = ['severity', 'signature', 'ip', 'src', 'dst', 'range', 'from', 'to'] as const;
+	// OLD CODE: const LIST_PARAMS = ['severity', 'signature', 'ip', 'src', 'dst', 'range', 'from', 'to'] as const; (slice 2b-2: suricata_category)
+	const LIST_PARAMS = ['severity', 'signature', 'ip', 'src', 'dst', 'suricata_category', 'range', 'from', 'to'] as const;
 	/** Where the window's parameters start in LIST_PARAMS: range, from, to. */
 	const WINDOW_AT = LIST_PARAMS.indexOf('range');
 
@@ -899,9 +926,25 @@
 		scrollToList();
 	}
 
-	/** A top signature filters the list; selecting it again clears the filter. */
+	// OLD CODE START — slice 2b-2 (Codex r2 #6): the other filters stayed, so the list held fewer alerts than the row's window-wide count
+	// /** A top signature filters the list; selecting it again clears the filter. */
+	// async function filterBySignature(sig: string) {
+	// 	await setListParams({ signature: signatureFilter === sig ? null : sig });
+	// 	scrollToList();
+	// }
+	// OLD CODE END
+	/**
+	 * A top signature opens exactly its row's count: that signature alone, over the window the
+	 * counts came from, every other filter cleared. Selecting it again clears only the signature.
+	 */
 	async function filterBySignature(sig: string) {
-		await setListParams({ signature: signatureFilter === sig ? null : sig });
+		if (signatureFilter === sig) {
+			await setListParams({ signature: null });
+		} else {
+			const { from, to, range } = signaturesWindow;
+			const q = new URLSearchParams({ signature: sig, from, to, range });
+			await goto(`/alerts?${q.toString()}`, { keepFocus: true, noScroll: true });
+		}
 		scrollToList();
 	}
 
@@ -1047,12 +1090,14 @@
 			if (prev && next.every((v, i) => v === prev[i])) return;
 			appliedUrl = next;
 			// OLD CODE: const [severity, signature, ip, rangeParam, from, to] = next; (slice 2b-1: src and dst)
-			const [severity, signature, ip, src, dst, rangeParam, from, to] = next;
+			// OLD CODE: const [severity, signature, ip, src, dst, rangeParam, from, to] = next; (slice 2b-2: suricata_category)
+			const [severity, signature, ip, src, dst, suricataCategory, rangeParam, from, to] = next;
 			activeFilter = SEVERITY_FILTERS.find((f) => f.value === severity)?.value ?? 'all';
 			signatureFilter = signature;
 			ipFilter = ip;
 			srcFilter = src;
 			dstFilter = dst;
+			suricataCategoryFilter = suricataCategory;
 			custom = customRange(from, to);
 			baseRange = TIME_RANGES.some((r) => r.value === rangeParam) ? rangeParam : '24h';
 			selectedTimeRange = custom ? 'custom' : baseRange;
@@ -1142,8 +1187,14 @@
 		{ key: 'category', label: 'Category', cell: categoryCell },
 	];
 
+	/**
+	 * A null and an empty rule name are separate rows that read the same; neither filters the list,
+	 * which drops signature="", so it would open every alert instead of the row's count.
+	 */
+	const sigRowKey = (s: AlertSignature) => s.signature ?? '\u0000no rule name';
 	const signatureColumns: Column<AlertSignature>[] = [
-		{ key: 'signature', label: 'Signature', cell: sigNameCell },
+		// OLD CODE: { key: 'signature', label: 'Signature', cell: sigNameCell }, (a null signature sorts as "")
+		{ key: 'signature', label: 'Signature', sortValue: (s) => s.signature ?? '', cell: sigNameCell },
 		{ key: 'severity', label: 'Severity', sortValue: (s) => severityRank(s.severity), cell: sigSeverityCell },
 		{ key: 'count', label: 'Alerts', numeric: true, cell: sigCountCell },
 	];
@@ -1169,15 +1220,22 @@ OLD CODE END -->
 {#snippet destCell(a: Alert)}{#if a.dest_ip}<IPAddress ip={a.dest_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet protoCell(a: Alert)}{#if a.proto}<span class="tag">{a.proto.toUpperCase()}</span>{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet categoryCell(a: Alert)}
+	{@const linkedCategory = linkedSuricataCategory(a)}
 	<span class="cat-cell">
-		<span>{a.alert?.category || '—'}</span>
+		<!-- OLD CODE: <span>{a.alert?.category || '—'}</span> (slice 2b-2: links when rule.category holds it, over the list's window) -->
+		{#if linkedCategory}
+			<a href={suricataCategoryHref(linkedCategory, shownWindow)} title="Every alert in this Suricata category over the list's window">{linkedCategory}</a>
+		{:else}
+			<span>{a.alert?.category || '—'}</span>
+		{/if}
 		<span class="row-actions">
 			<button class="btn" type="button" title="Suppress this signature" onclick={(e) => { e.stopPropagation(); handleSuppressAlert(a); }}>Suppress</button>
 			<button class="btn" type="button" title="Mark as false positive" onclick={(e) => { e.stopPropagation(); handleFalsePositive(a); }}>False positive</button>
 		</span>
 	</span>
 {/snippet}
-{#snippet sigNameCell(s: AlertSignature)}<span class="mono">{s.signature}</span>{/snippet}
+<!-- OLD CODE: {#snippet sigNameCell(s: AlertSignature)}<span class="mono">{s.signature}</span>{/snippet} (a null or empty rule name reads as such) -->
+{#snippet sigNameCell(s: AlertSignature)}{#if s.signature}<span class="mono">{s.signature}</span>{:else}<span class="dim">No rule name</span>{/if}{/snippet}
 {#snippet sigSeverityCell(s: AlertSignature)}<SeverityPill level={alertLevel(s.severity)} />{/snippet}
 {#snippet sigCountCell(s: AlertSignature)}{fmt(s.count)}{/snippet}
 
@@ -1267,6 +1325,12 @@ OLD CODE END -->
 						<button class="chip-x" type="button" onclick={() => setListParams({ dst: null })} aria-label="Clear destination filter"><Icon name="close" /></button>
 					</span>
 				{/if}
+				{#if suricataCategoryFilter}
+					<span class="chip">
+						Suricata category: {suricataCategoryFilter.length > 40 ? suricataCategoryFilter.slice(0, 40) + '…' : suricataCategoryFilter}
+						<button class="chip-x" type="button" onclick={() => setListParams({ suricata_category: null })} aria-label="Clear Suricata category filter"><Icon name="close" /></button>
+					</span>
+				{/if}
 			</div>
 			{#if actionError}
 				<p class="notice is-error" role="alert"><Icon name="warn" />Not applied: {actionError}</p>
@@ -1279,7 +1343,8 @@ OLD CODE END -->
 				<CardState state="empty" icon="alerts" title="No alerts" message="Alerts will appear here once Suricata is running and generating detections." />
 			{:else if view === 'category'}
 				{#each groups as group (group.title)}
-					<AlertGroup title={group.title} count={group.count}>
+					<!-- OLD CODE: <AlertGroup title={group.title} count={group.count}> (slice 2b-2: the title opens its category's page) -->
+					<AlertGroup title={group.title} count={group.count} href={groupCategoryLinked(sortedAlerts, group.title) ? suricataCategoryHref(group.title, shownWindow) : undefined}>
 						{#each group.lines as line (line.key)}
 							<AlertRow
 								severity={line.level}
@@ -1393,7 +1458,8 @@ OLD CODE END -->
 		{/if}
 	</Card>
 
-	<Card class="c-8" title="Top signatures" sub={failed.signatures ? 'Check failed' : `${topSignatures.length} rules · alerts per rule · select one to filter the list`}>
+	<!-- OLD CODE: sub={failed.signatures ? 'Check failed' : `${topSignatures.length} rules · alerts per rule · select one to filter the list`} (NET-160: a partial list says so) -->
+	<Card class="c-8" title="Top signatures" sub={failed.signatures ? 'Check failed' : `${topPartial.signatures ?? `${topSignatures.length} rules`} · alerts per rule · select one to filter the list`}>
 		{#snippet actions()}
 			<SearchField id="alerts-signature-search" label="Search signatures" placeholder="Search signatures…" size="toolbar" bind:value={signatureSearch} />
 		{/snippet}
@@ -1404,20 +1470,23 @@ OLD CODE END -->
 		{:else if filteredSignatures.length === 0}
 			<CardState state="empty" title="No signatures found" message={signatureSearch ? 'No rule matches that search.' : 'Rules appear here once Suricata reports alerts in this window.'} />
 		{:else}
+			<!-- OLD CODE: rowKey={(s) => s.signature} onrowactivate={(s) => filterBySignature(s.signature)} (a null or empty rule name is a plain row with its own key) -->
 			<DataTable
 				columns={signatureColumns}
 				rows={filteredSignatures}
 				ariaLabel="Top signatures"
-				rowKey={(s) => s.signature}
+				rowKey={sigRowKey}
 				initialSort={{ key: 'count', dir: 'desc' }}
-				onrowactivate={(s) => filterBySignature(s.signature)}
+				onrowactivate={(s) => s.signature && filterBySignature(s.signature)}
+				rowActivatable={(s) => !!s.signature}
 				rowLabel={(s) => (signatureFilter === s.signature ? `Clear the filter for ${s.signature}` : `Filter alerts by ${s.signature}`)}
 				selectedKey={signatureFilter || undefined}
 			/>
 		{/if}
 	</Card>
 
-	<Card class="c-6 ip-bars" title="Top affected devices" sub="Alerts per destination · {range.words}">
+	<!-- OLD CODE: sub="Alerts per destination · {range.words}" (NET-160: a partial list says so) -->
+	<Card class="c-6 ip-bars" title="Top affected devices" sub="Alerts per destination · {topPartial.destIps ? `${topPartial.destIps} · ` : ''}{range.words}">
 		{#if !loaded}
 			<CardState state="loading" title="Loading affected devices" />
 		{:else if failed.destIps}
@@ -1429,7 +1498,8 @@ OLD CODE END -->
 		{/if}
 	</Card>
 
-	<Card class="c-6 ip-bars" title="Top source IPs" sub="Alerts per source · {range.words}">
+	<!-- OLD CODE: sub="Alerts per source · {range.words}" (NET-160: a partial list says so) -->
+	<Card class="c-6 ip-bars" title="Top source IPs" sub="Alerts per source · {topPartial.srcIps ? `${topPartial.srcIps} · ` : ''}{range.words}">
 		{#if !loaded}
 			<CardState state="loading" title="Loading source IPs" />
 		{:else if failed.srcIps}

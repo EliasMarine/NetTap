@@ -259,6 +259,16 @@ describe('DataTable row activation', () => {
 		expect(rows[0]).not.toHaveAttribute('aria-current');
 	});
 
+	it('leaves a row rowActivatable rejects plain: no button, and a click on it does nothing', async () => {
+		const { onrowactivate } = renderActivatable({ rowActivatable: (row: Row) => row.id !== 'b' });
+		expect(screen.getByRole('button', { name: 'Open connection from Work laptop' })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Open connection from Living-room TV' })).not.toBeInTheDocument();
+		const plain = screen.getAllByRole('row')[2];
+		expect(plain).not.toHaveClass('is-activatable');
+		await fireEvent.click(within(plain).getAllByRole('cell')[2]);
+		expect(onrowactivate).not.toHaveBeenCalled();
+	});
+
 	it('has no activation button or forwarding without onrowactivate', async () => {
 		render(Table, { columns: COLUMNS, rows: ROWS, ariaLabel: 'Connections', rowKey });
 		expect(screen.getAllByRole('button')).toHaveLength(3); // the three header buttons

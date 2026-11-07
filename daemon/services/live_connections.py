@@ -21,6 +21,7 @@ from typing import Any
 
 from opensearchpy import OpenSearch, OpenSearchException
 
+from api.alerts import rule_categories
 from services.excluded_ips import RFC1918_SOURCE_FILTER, lan_subnets_of
 from storage.time_slots import histogram_buckets, time_slots
 
@@ -1308,11 +1309,21 @@ class LiveConnectionTracker:
         else:
             category = raw_category
 
+        # OLD CODE START — NET-160 slice 2b-2: no stored rule.category values to link a category by
+        # return {
+        #     "timestamp": source.get("@timestamp", ""),
+        #     "signature": signature,
+        #     "severity": severity,
+        #     "category": category,
+        # }
+        # OLD CODE END
         return {
             "timestamp": source.get("@timestamp", ""),
             "signature": signature,
             "severity": severity,
             "category": category,
+            # the alert list's rule: the shown category links only when it is one of these
+            "rule_category": rule_categories(rule),
         }
 
     @staticmethod

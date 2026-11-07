@@ -14,7 +14,8 @@
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import { suricataLevel } from '$lib/utils/severity';
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import { alertsHrefForSignature } from '$lib/utils/drilldown';
+	// OLD CODE: import { alertsHrefForSignature } from '$lib/utils/drilldown'; (slice 2b-2)
+	import { alertsHrefForSignature, suricataCategoryHref } from '$lib/utils/drilldown';
 
 	// ---------------------------------------------------------------------------
 	// Props
@@ -221,7 +222,8 @@
 						</div>
 						<!-- OLD CODE: <div class="alert-sig">{alert.signature}</div> (slice 2a: not a link) -->
 						<div class="alert-sig">{#if alert.signature}<a href={alertsHrefForSignature(alert.signature)}>{alert.signature}</a>{/if}</div>
-						<div class="alert-cat">{alert.category}</div>
+						<!-- OLD CODE: <div class="alert-cat">{alert.category}</div> (slice 2b-2: links when rule.category holds it, so its page lists this alert) -->
+						<div class="alert-cat">{#if alert.category && alert.rule_category?.includes(alert.category)}<a href={suricataCategoryHref(alert.category)}>{alert.category}</a>{:else}{alert.category}{/if}</div>
 					</div>
 				{/each}
 			</div>

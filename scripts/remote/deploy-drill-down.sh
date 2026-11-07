@@ -15,6 +15,9 @@
 #     threat-intel answer included
 #   - the domain page's alert figures (in the window, carrying a host name, tagged) against
 #     OpenSearch, and the host fields it says it matched and couldn't match
+#   - the busiest Suricata categories' pages (slice 2b-2), over a settled window: total, list,
+#     OpenSearch _count, timeline and severity sums equal, and the first source and rule
+#     equal their lists
 #   - a bad address is a 400 and no token is a 401
 #
 # Run as the normal user (NOT with sudo):
@@ -416,6 +419,114 @@ fi
 case "${CONN_CARD:-x}${CONN_LIST:-x}" in *[!0-9]*|"") rc=1 ;; *) if [ "$CONN_CARD" -gt 0 ] && [ "$CONN_LIST" -eq 0 ]; then rc=1; else rc=0; fi ;; esac
 check "Home's Connections card opens Log Explorer's conn list (${CONN_EXCL:-?} excluded sources)" "$rc" "card ${CONN_CARD:-?}, list ${CONN_LIST:-?}, difference $(( ${CONN_LIST:-0} - ${CONN_CARD:-0} ))"
 [ -z "${SA_COUNT:-}" ] && [ -z "${CONN_CARD:-}" ] && echo "   · reply: $EXACT_LISTS"
+echo ""
+
+echo "→ Step 7c: A Suricata category page vs its lists and OpenSearch (NET-160 slice 2b-2)..."
+# Strict: a settled window that ended 10 minutes ago, so no record lands in it during the check,
+# and every figure must equal its list and OpenSearch's own _count exactly. Category names are
+# data: they travel as JSON-encoded arguments, never through eval or a hand-built JSON string.
+C_TO=$(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+C_FROM=$(date -u -d '1450 minutes ago' +%Y-%m-%dT%H:%M:%SZ)
+C_T="{\"range\":{\"@timestamp\":{\"gte\":\"$C_FROM\",\"lte\":\"$C_TO\",\"format\":\"strict_date_optional_time\"}}}"
+echo "   Window: $C_FROM → $C_TO"
+# The page, then the lists its total, first source and first named rule open (the token stays in fetch)
+C_FIGURES='
+import json, sys, time, urllib.error, urllib.parse, urllib.request
+def fetch(path):
+    headers = {"X-NetTap-Daemon-Token": open("/run/nettap-auth/daemon-token").read().strip()}
+    try:
+        with urllib.request.urlopen(urllib.request.Request("http://localhost:8880" + path, headers=headers), timeout=120) as r:
+            return r.status, json.load(r)
+    except urllib.error.HTTPError as e:
+        return e.code, None
+w = {"from": sys.argv[1], "to": sys.argv[2]}
+name = json.loads(sys.argv[3])
+def listed(**narrow):
+    code, body = fetch("/api/alerts?" + urllib.parse.urlencode({**w, "suricata_category": name, "size": 1, **narrow}))
+    return body["total"] if code == 200 else "HTTP_%d" % code
+start = time.monotonic()
+code, p = fetch("/api/alerts/suricata/" + urllib.parse.quote(name, safe="") + "?" + urllib.parse.urlencode(w))
+out = {"code": code, "seconds": round(time.monotonic() - start, 1)}
+if code == 200:
+    src = next(iter(p["sources"]["rows"]), None)
+    rule = next((x for x in p["rules"]["rows"] if x["rule_name"]), None)
+    out.update(
+        page=p["total"],
+        list=listed(),
+        timeline=sum(s["n"] for s in p["timeline"]),
+        severity=sum(p["severity"].values()),
+        source=src and [src["ip"], src["count"], listed(src=src["ip"])],
+        rule=rule and [rule["rule_name"], rule["count"], listed(signature=rule["rule_name"])],
+        also=[[a["category"], a["count"]] for a in p["also_tagged"]["rows"][:3]],
+        complete={k: p[k]["complete"] for k in ("rules", "sources", "targets", "also_tagged")},
+    )
+print(json.dumps(out))
+'
+# The Alerts list filters spelled out again, so the check does not trust the code it checks
+C_COUNT_BODY='
+import json, sys
+print(json.dumps({"query": {"bool": {
+    "filter": [
+        {"range": {"@timestamp": {"gte": sys.argv[1], "lte": sys.argv[2], "format": "strict_date_optional_time"}}},
+        {"term": {"event.provider": "suricata"}},
+        {"term": {"event.dataset": "alert"}},
+        {"term": {"rule.category": json.loads(sys.argv[3])}},
+    ],
+    "must_not": [{"prefix": {"rule.name": "SURICATA "}}],
+}}}))
+'
+category_check() {  # category_check <name as a JSON string> <1 when it must share alerts with another category>
+    local label fig body count code secs total list line sev rc found part
+    label=$(json_get "$1" "r")
+    fig=$(sudo docker exec nettap-storage-daemon python3 -c "$C_FIGURES" "$C_FROM" "$C_TO" "$1" 2>&1 | tail -n 1)
+    body=$(sudo docker exec nettap-storage-daemon python3 -c "$C_COUNT_BODY" "$C_FROM" "$C_TO" "$1" 2>&1 | tail -n 1)
+    count=$(os_query "/arkime_sessions3-*/_count" "$body" | json_stdin "r['count'] if (r.get('_shards') or {}).get('failed') == 0 else 'INCOMPLETE'")
+    read -r code secs total list line sev <<<"$(json_get "$fig" "' '.join(str(r.get(k)) for k in ('code', 'seconds', 'page', 'list', 'timeline', 'severity'))")"
+    if [ "${code:-}" = "200" ]; then rc=0; else rc=1; fi
+    check "page for '$label' answers" "$rc" "HTTP ${code:-?} in ${secs:-?} s"
+    if [[ "${total:-}" =~ ^[0-9]+$ ]] && [ "$total" = "${list:-}" ] && [ "$total" = "${count:-}" ] && [ "$total" = "${line:-}" ] && [ "$total" = "${sev:-}" ]; then rc=0; else rc=1; fi
+    check "'$label': page total = list total = OpenSearch _count = timeline sum = severity sum" "$rc" "page ${total:-?}, list ${list:-?}, _count ${count:-?}, timeline ${line:-?}, severity ${sev:-?}"
+    for part in source rule; do
+        found=$(json_get "$fig" "'NONE' if not r.get('$part') else ('OK ' if r['$part'][1] == r['$part'][2] else 'DIFFERENT ') + json.dumps(r['$part'])")
+        case "$found" in
+            NONE) echo "   · '$label' has no $part to link" ;;
+            "OK "*) check "'$label': the first $part's count = its list ([name, page, list])" 0 "${found#OK }" ;;
+            *) check "'$label': the first $part's count = its list ([name, page, list])" 1 "$found" ;;
+        esac
+    done
+    if [ "$2" = "1" ]; then
+        found=$(json_get "$fig" "len(r.get('also') or [])")
+        if [[ "$found" =~ ^[1-9][0-9]*$ ]]; then rc=0; else rc=1; fi
+        check "'$label' lists the categories its alerts also carry" "$rc" "$(json_get "$fig" "r.get('also')")"
+    fi
+    echo "   · '$label' lists complete: $(json_get "$fig" "r.get('complete')")"
+}
+# The busiest category, then the busiest other one that shares an alert with a second category
+C_CATS=$(os_query "/arkime_sessions3-*/_search" "{\"size\":0,\"query\":{\"bool\":{\"filter\":[$C_T,$SURICATA],\"must_not\":[$NOISE]}},\"aggs\":{\"c\":{\"terms\":{\"field\":\"rule.category\",\"size\":100},\"aggs\":{\"with\":{\"terms\":{\"field\":\"rule.category\",\"size\":100}}}}}}" \
+    | json_stdin "json.dumps((lambda b: ([b[0]['key']] + [x['key'] for x in b[1:] if any(y['key'] != x['key'] for y in x['with']['buckets'])][:1]) if b else [])(r['aggregations']['c']['buckets']))")
+case "$C_CATS" in
+    \[\]) echo "   · no Suricata alert in the window; category checks skipped" ;;
+    \[*\])
+        category_check "$(json_get "$C_CATS" "json.dumps(r[0])")" 0
+        if [ "$(json_get "$C_CATS" "len(r)")" = "2" ]; then
+            category_check "$(json_get "$C_CATS" "json.dumps(r[1])")" 1
+        else
+            echo "   · no other category shares an alert with a second one; the two-valued check is skipped"
+        fi
+        ;;
+    *) check "the busiest Suricata categories read" 1 "$C_CATS" ;;
+esac
+LONG=$(printf '%*s' 1025 '' | tr ' ' x)
+BAD=$(daemon "/api/alerts/suricata/$LONG?from=$C_FROM&to=$C_TO" status)
+if [ "$BAD" = "400" ]; then rc=0; else rc=1; fi
+check "a 1,025-character category name is refused by the page" "$rc" "HTTP $BAD"
+BAD=$(daemon "/api/alerts?suricata_category=$LONG" status)
+if [ "$BAD" = "400" ]; then rc=0; else rc=1; fi
+check "a 1,025-character category is refused by the list" "$rc" "HTTP $BAD"
+# Information: a shown category from one of these is plain text unless rule.category holds it too
+OTHER=$(os_query "/arkime_sessions3-*/_mapping/field/alert.category,suricata.alert.category?filter_path=*.mappings.*.mapping.*.type" \
+    | json_stdin "sorted({f for i in (r or {}).values() for f in (i.get('mappings') or {})}) or 'neither'")
+echo "   · alert.category / suricata.alert.category mapped: $OTHER"
 echo ""
 
 echo "→ Step 8: Validation and the token..."

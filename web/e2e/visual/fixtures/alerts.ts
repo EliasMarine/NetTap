@@ -105,9 +105,10 @@ const TIMELINE = {
 
 // --- /api/alerts/top-signatures and /top-ips -------------------------------------------------
 
-const TOP_SIGNATURES_EMPTY = { from: FROM, to: TO, signatures: [] } satisfies AlertTopSignaturesResponse;
+const TOP_SIGNATURES_EMPTY = { from: FROM, to: TO, signatures: [], complete: true, examined: 0 } satisfies AlertTopSignaturesResponse;
 const TOP_SIGNATURES = {
 	...TOP_SIGNATURES_EMPTY,
+	examined: 10, // complete: every distinct rule name, all listed
 	signatures: [
 		{ signature: 'ET INFO Example External IP Lookup Domain', count: 33, severity: 4 },
 		{ signature: 'ET POLICY Example Outbound Connection To Tor Relay', count: 31, severity: 3 },
@@ -123,9 +124,10 @@ const TOP_SIGNATURES = {
 } satisfies AlertTopSignaturesResponse;
 
 // The same path answers direction=src and direction=dest (queries are ignored), so the list mixes both
-const TOP_IPS_EMPTY = { from: FROM, to: TO, direction: 'dest', ips: [] } satisfies AlertTopIpsResponse;
+const TOP_IPS_EMPTY = { from: FROM, to: TO, direction: 'dest', ips: [], complete: true, examined: 0 } satisfies AlertTopIpsResponse;
 const TOP_IPS = {
 	...TOP_IPS_EMPTY,
+	examined: 6, // complete: every distinct address, all listed
 	ips: [
 		{ ip: '192.168.1.42', count: 61 },
 		{ ip: '203.0.113.45', count: 38 },

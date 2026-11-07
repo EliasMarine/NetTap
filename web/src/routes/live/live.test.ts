@@ -76,3 +76,25 @@ describe('Live Monitor — signature links', () => {
 		expect(screen.getByRole('link', { name: 'ET DNS Query' })).toHaveAttribute('href', '/alerts?signature=ET+DNS+Query');
 	});
 });
+
+// NET-160 slice 2b-2: an alert's category opens its page only when rule.category holds it
+describe('Live Monitor — category links', () => {
+	it('links the category to its page with no window, and leaves one from another field plain', () => {
+		const connection = { source_ip: '192.168.1.20', dest_ip: '8.8.8.8', dest_port: 53, protocol: 'udp' };
+		const detail = {
+			alerts: [
+				{ timestamp: '2026-11-06T10:00:00Z', severity: 2, signature: 'ET DNS Query', category: 'A/B & C', rule_category: ['A/B & C', 'Discovery'] },
+				{ timestamp: '2026-11-06T10:01:00Z', severity: 3, signature: 'ET INFO x', category: 'Other field', rule_category: [] },
+			],
+		};
+		render(LiveConnectionDrawerContent, {
+			connection: connection as never,
+			detail: detail as never,
+			detailLoading: false,
+			detailFailed: false,
+			activeTab: 'alerts',
+		});
+		expect(screen.getByRole('link', { name: 'A/B & C' })).toHaveAttribute('href', '/alerts/suricata/A%2FB%20%26%20C');
+		expect(screen.getByText('Other field').closest('a')).toBeNull();
+	});
+});

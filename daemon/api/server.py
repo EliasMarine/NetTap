@@ -93,6 +93,7 @@ from api.threats import register_threat_routes
 from api.network import register_network_routes
 from api.addresses import register_address_routes
 from api.domains import register_domain_routes
+from api.suricata_categories import register_suricata_category_routes
 from services.tshark_service import TSharkService
 from services.cyberchef_service import CyberChefService
 from services.geoip_service import GeoIPService
@@ -1277,7 +1278,8 @@ def create_app(
     # Threat Intelligence (unified report, beaconing, lateral movement, DNS anomalies, TI)
     register_threat_routes(app, storage)
 
-    # Drill-down pages (NET-160): one address, one domain, and the LAN rule the web links by.
+    # Drill-down pages (NET-160): an address, a domain, a Suricata category, and the LAN rule
+    # the web links by.
     # A client without retries, as for certificates, so a request can't outlive its budget
     drill_client = OpenSearch(
         **storage.client_kwargs(max_retries=0, retry_on_timeout=False)
@@ -1285,6 +1287,7 @@ def create_app(
     register_network_routes(app)
     register_address_routes(app, drill_client)
     register_domain_routes(app, drill_client)
+    register_suricata_category_routes(app, drill_client)
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 

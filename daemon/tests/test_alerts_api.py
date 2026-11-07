@@ -647,7 +647,10 @@ class TestAlertPanelsMatchTheTotal(AioHTTPTestCase):
         return app
 
     async def _must_not(self, path: str) -> list:
-        self.mock_client.search.return_value = {"aggregations": {}}
+        # OLD CODE: self.mock_client.search.return_value = {"aggregations": {}} (slice 2b-2: the top lists' composite pages are checked, and a missing aggregation is a 502)
+        self.mock_client.search.return_value = {
+            "aggregations": {"all": {"buckets": []}}
+        }
         resp = await self.client.request("GET", path)
         self.assertEqual(resp.status, 200)
         body = self.mock_client.search.call_args.kwargs["body"]

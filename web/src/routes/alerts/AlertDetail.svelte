@@ -16,8 +16,10 @@
 	import DrawerSection from '$components/drawer/DrawerSection.svelte';
 	import KVRow from '$components/drawer/KVRow.svelte';
 	import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
-	import { alertAdvice, alertExplanation, alertLevel, alertTitle, logExplorerHref } from './alert-view';
-	import { alertsHrefForSignature } from '$lib/utils/drilldown';
+	// OLD CODE: import { alertAdvice, alertExplanation, alertLevel, alertTitle, logExplorerHref } from './alert-view'; (slice 2b-2)
+	import { alertAdvice, alertExplanation, alertLevel, alertTitle, linkedSuricataCategory, logExplorerHref } from './alert-view';
+	// OLD CODE: import { alertsHrefForSignature } from '$lib/utils/drilldown'; (slice 2b-2)
+	import { alertsHrefForSignature, suricataCategoryHref } from '$lib/utils/drilldown';
 
 	interface Props {
 		alert: Alert;
@@ -41,6 +43,7 @@
 
 	const explanation = $derived(alertExplanation(alert));
 	const hasSignatureId = $derived(Boolean(alert.alert?.signature_id));
+	const suricataCategory = $derived(linkedSuricataCategory(alert));
 
 	async function act(action: () => Promise<void>) {
 		error = '';
@@ -94,7 +97,8 @@
 		<dt>Protocol</dt>
 		<dd class="mono">{alert.proto ? alert.proto.toUpperCase() : '—'}</dd>
 		<dt>Category</dt>
-		<dd>{alert.alert?.category || '—'}</dd>
+		<!-- OLD CODE: <dd>{alert.alert?.category || '—'}</dd> (slice 2b-2: its page, over the default 24 hours, as the drawer's other links) -->
+		<dd>{#if suricataCategory}<a href={suricataCategoryHref(suricataCategory)}>{suricataCategory}</a>{:else}{alert.alert?.category || '—'}{/if}</dd>
 		<dt>Seen</dt>
 		<dd class="num">{formatTimestamp(alert.timestamp)}</dd>
 		<dt>Signature ID</dt>

@@ -7,6 +7,7 @@
     Enter and Space work. A click elsewhere on the row is forwarded to it, except from a
     nested control or while text is selected (PLAN.md §5.3). The first column's cell must
     not hold links or buttons of its own, because they would sit inside that button.
+    `rowActivatable` leaves out the rows it rejects: no button, no forwarding, a plain row.
   - `selectedKey` marks the row whose details are open with aria-current="true", the
     AlertRow convention; aria-selected only means something inside a grid widget.
 -->
@@ -54,6 +55,8 @@
 		onrowactivate?: (row: T) => void;
 		/** The activation button's accessible name: "Open connection from Kitchen iPad". */
 		rowLabel?: (row: T) => string;
+		/** With `onrowactivate`: false makes that row plain (nothing to open). Every row by default. */
+		rowActivatable?: (row: T) => boolean;
 		selectedKey?: string | number;
 		pager?: TablePager;
 		/** Shown in a full-width row when there are no rows. */
@@ -69,6 +72,7 @@
 		onsortchange,
 		onrowactivate,
 		rowLabel,
+		rowActivatable,
 		selectedKey,
 		pager,
 		empty,
@@ -140,16 +144,18 @@
 		<tbody>
 			{#each shown as row (rowKey(row))}
 				{@const current = selectedKey !== undefined && rowKey(row) === selectedKey ? 'true' : undefined}
+				{@const active = !!onrowactivate && (rowActivatable?.(row) ?? true)}
 				<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 				<!-- The keyboard path is the row's own button; this only widens the mouse target -->
+				<!-- OLD CODE: class={[onrowactivate && 'is-activatable']} … onclick={onrowactivate ? forwardRowClick : undefined}, and {#if i === 0 && onrowactivate} (slice 2b-2: rowActivatable) -->
 				<tr
-					class={[onrowactivate && 'is-activatable']}
+					class={[active && 'is-activatable']}
 					aria-current={current}
-					onclick={onrowactivate ? forwardRowClick : undefined}
+					onclick={active ? forwardRowClick : undefined}
 				>
 					{#each columns as column, i (column.key)}
 						<td class={[column.numeric && 'num', column.class]}>
-							{#if i === 0 && onrowactivate}
+							{#if i === 0 && active}
 								<button
 									class="row-btn"
 									type="button"

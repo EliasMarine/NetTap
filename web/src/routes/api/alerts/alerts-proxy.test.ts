@@ -19,4 +19,21 @@ describe('GET /api/alerts proxy', () => {
 		const empty = new URL(daemonFetch.mock.calls[1][0], 'http://daemon').searchParams;
 		expect([empty.has('src'), empty.has('dst')]).toEqual([false, false]);
 	});
+
+	// NET-160 slice 2b-2 (Codex #1): this explicit route forwards only what it names
+	it('forwards suricata_category exactly as given, and leaves out an empty one', async () => {
+		daemonFetch.mockReset();
+		daemonFetch.mockResolvedValue(new Response(JSON.stringify({ alerts: [] }), { status: 200 }));
+		const call = (query: string) => GET({ url: new URL(`http://x/api/alerts${query}`) } as unknown as Parameters<typeof GET>[0]);
+		const sent = (i: number) => new URL(daemonFetch.mock.calls[i][0], 'http://daemon').searchParams;
+
+		await call('?suricata_category=Misc+activity&src=192.168.1.20');
+		expect([sent(0).get('suricata_category'), sent(0).get('src')]).toEqual(['Misc activity', '192.168.1.20']);
+
+		await call(`?suricata_category=${encodeURIComponent('A/B & C')}`);
+		expect(sent(1).get('suricata_category')).toBe('A/B & C');
+
+		await call('?suricata_category=');
+		expect(sent(2).has('suricata_category')).toBe(false);
+	});
 });

@@ -155,6 +155,15 @@ describe('alerts API client', () => {
 			const sent = new URL((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string, 'http://x').searchParams;
 			expect([sent.get('signature'), sent.get('src'), sent.get('dst')]).toEqual(['ET SCAN x', '192.168.1.20', '2001:db8::1']);
 		});
+
+		it('sends one raw Suricata category, and leaves out an empty one (NET-160 slice 2b-2)', async () => {
+			mockFetchSuccess({ from: '', to: '', page: 1, size: 50, total: 0, total_pages: 0, alerts: [] });
+			await getAlerts({ suricata_category: 'A/B & C' });
+			await getAlerts({ suricata_category: '' });
+			const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls.map((c) => new URL(c[0] as string, 'http://x').searchParams);
+			expect(calls[0].get('suricata_category')).toBe('A/B & C');
+			expect(calls[1].has('suricata_category')).toBe(false);
+		});
 	});
 
 	// -- getAlertTimeline ----------------------------------------------------
