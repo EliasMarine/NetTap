@@ -469,6 +469,39 @@ class TestRollback(unittest.TestCase):
         self.assertIn("component", result)
         self.assertIn("message", result)
 
+    def test_geoip_rollback_swaps_the_file_under_open_readers(self):
+        """PR #200 review: the rollback rewrote the live database in place; request threads
+        have it memory-mapped, so a truncate under them faults their reads (SIGBUS)."""
+        import mmap
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = os.path.join(tmp, "GeoLite2-City.mmdb")
+            with open(db, "wb") as f:
+                f.write(b"live database")
+            saved = os.path.join(tmp, "backups", "geoip-db", "20261106_120000")
+            os.makedirs(saved)
+            with open(os.path.join(saved, "GeoLite2-City.mmdb"), "wb") as f:
+                f.write(b"restored")
+            old_inode = os.stat(db).st_ino
+
+            with open(db, "rb") as reader:
+                mapped = mmap.mmap(reader.fileno(), 0, access=mmap.ACCESS_READ)
+                ue = UpdateExecutor(backup_dir=os.path.join(tmp, "backups"))
+                with patch.dict(os.environ, {"GEOIP_DB_PATH": db}):
+                    result = asyncio.run(ue.rollback("geoip-db"))
+                # the reader still sees the old database whole
+                self.assertEqual(mapped[:], b"live database")
+                mapped.close()
+
+            self.assertTrue(result["success"])
+            with open(db, "rb") as f:
+                self.assertEqual(f.read(), b"restored")
+            self.assertNotEqual(
+                os.stat(db).st_ino, old_inode
+            )  # renamed in, not rewritten
+            self.assertEqual(sorted(os.listdir(tmp)), ["GeoLite2-City.mmdb", "backups"])
+
 
 class TestCreateBackup(unittest.TestCase):
     """Tests for UpdateExecutor._create_backup()."""
