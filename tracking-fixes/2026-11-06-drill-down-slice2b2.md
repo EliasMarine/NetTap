@@ -1,6 +1,6 @@
 # 2026-11-06 — A page for each raw Suricata category; exact top lists on Alerts (NET-160, slice 2b-2)
 
-**Status:** built on `feature/drill-down-slice2b2`; PR pending. Plan: `plans/2026-11-06-net160-drill-down-slice2b2.md`. Codex approved it in round 3; the log is beside it.
+**Status:** built on `feature/drill-down-slice2b2`; PR #190. Plan: `plans/2026-11-06-net160-drill-down-slice2b2.md`. Codex approved it in round 3; the log is beside it.
 
 ## Problem
 
@@ -71,6 +71,14 @@
 - **Web:** vitest 3,346 passed, 48 of them new. svelte-check shows 0 errors. `test:visual` passed 223.
   - A Playwright test opens `/alerts/suricata/A%2FB%20%26%20C%2050%25`. The request is encoded exactly once and the h1 reads "A/B & C 50%".
 - **Swap check:** every new test fails when its source file's HEAD version is swapped in.
+
+## Review follow-ups (PR #190, commit b4745a6)
+
+The code review found three LOW issues and nothing higher.
+- **Fixed: a stale error card.** If a view change failed and you then went back to a view that had already loaded, the page kept the failed view's error. The reset branch now clears `loaded`, `failure` and `loadedView`.
+- **Fixed: `also_tagged.examined` was one short.** `_listing` takes an optional `examined`, and `_also_tagged` passes the number of buckets actually read.
+- **Noted, not fixed: a list of exactly 5,000 keys reads as incomplete.** `LIST_CAP` equals `GROUP_PAGE`, so a list that holds exactly the cap looks cut off. This is shared `snapshot_search` code, and the wording ("among the N read") stays true.
+- Both fixes have a test that fails on the previous code.
 
 ## Known limits
 
