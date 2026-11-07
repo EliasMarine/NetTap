@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import OwnerRulesCard from './OwnerRulesCard.svelte';
 
 /** NET-191 slice 3: the "Your own rules" editor's states, check and save. The page's wiring is in suricata-rules-owner.test.ts. */
@@ -198,7 +199,7 @@ describe('OwnerRulesCard — Save and load', () => {
 		const note = await screen.findByText('Saved and loaded 2 rules of your own. Suricata has 65,432 rules loaded.');
 		expect(note.closest('.notice')).toHaveClass('is-ok');
 		expect(sent(f, SAVE_URL)).toEqual([JSON.stringify({ content: TWO_RULES })]);
-		expect(p.reload).toHaveBeenCalledTimes(1);
+		await waitFor(() => expect(p.reload).toHaveBeenCalledTimes(1));
 	});
 
 	it('removes every rule from an empty box and keeps the editor open', async () => {
@@ -266,15 +267,17 @@ describe('OwnerRulesCard — Save and load', () => {
 		expect(alert).toHaveClass('is-error');
 	});
 
-	it('says the request failed when it never reaches the daemon, and still reads the page again', async () => {
+	// The browser can lose the request after the daemon got it, so a failed request is "unknown", not a refusal
+	it("says the result can't be confirmed when the request fails, and still reads the page again", async () => {
 		vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new TypeError('Failed to fetch'))));
 		const p = props();
 		render(OwnerRulesCard, p);
 
 		await fireEvent.click(button('Save and load'));
 
-		expect(await screen.findByText("Couldn't save the rules: the request failed.")).toBeInTheDocument();
-		expect(p.reload).toHaveBeenCalledTimes(1);
+		const alert = await screen.findByText("NetTap couldn't confirm the result. Check Rules active before saving again.");
+		expect(alert.closest('.notice')).toHaveClass('is-warn');
+		await waitFor(() => expect(p.reload).toHaveBeenCalledTimes(1));
 	});
 
 	it('says it can take minutes, locks the box and turns off both buttons while it saves', async () => {
@@ -289,5 +292,241 @@ describe('OwnerRulesCard — Save and load', () => {
 		expect(button('Check rules')).toBeDisabled();
 		expect(box()).toHaveAttribute('readonly');
 		expect(p.reload).not.toHaveBeenCalled();
+	});
+});
+
+/** Slice 3 review round: stale results, odd replies, focus and the result arriving early. */
+describe('OwnerRulesCard — editing clears a stale answer (M1)', () => {
+	const errors = [{ line: 2, message: 'Lua scripts are not allowed.' }];
+
+	it('drops the line reasons, aria-invalid and the banner as soon as the text changes', async () => {
+		stubPosts({ [CHECK_URL]: { status: 400, body: { error: 'One line needs fixing.', errors } } });
+		render(OwnerRulesCard, props());
+		await fireEvent.click(button('Check rules'));
+		await screen.findByText('Line 2: Lua scripts are not allowed.');
+
+		await fireEvent.input(box(), { target: { value: TWO_RULES.split('\n')[0] } });
+
+		expect(screen.queryByText('One line needs fixing.')).not.toBeInTheDocument();
+		expect(document.getElementById('owner-rules-errors')).toBeNull();
+		expect(box()).not.toHaveAttribute('aria-invalid');
+		expect(box()).not.toHaveAttribute('aria-describedby');
+	});
+
+	it('drops a stale green answer too', async () => {
+		stubPosts({ [CHECK_URL]: { status: 200, body: { ok: true, rule_count: 2 } } });
+		render(OwnerRulesCard, props());
+		await fireEvent.click(button('Check rules'));
+		await screen.findByText(/^No problems found/);
+
+		await fireEvent.input(box(), { target: { value: 'pass ip any any -> any any (sid:1000003;)' } });
+
+		expect(screen.queryByText(/^No problems found/)).not.toBeInTheDocument();
+	});
+
+	it('locks the box while a check runs, so the answer is about the text on screen', async () => {
+		holdPosts();
+		render(OwnerRulesCard, props());
+
+		await fireEvent.click(button('Check rules'));
+
+		expect(box()).toHaveAttribute('readonly');
+	});
+});
+
+describe('OwnerRulesCard — odd replies (M2, M4)', () => {
+	it('shows a save whose engine count is null as saved, without a loaded count', async () => {
+		stubPosts({ [SAVE_URL]: { status: 200, body: { saved: true, rule_count: 2, engine: { loaded: null, failed: null } } } });
+		render(OwnerRulesCard, props());
+
+		await fireEvent.click(button('Save and load'));
+
+		const note = await screen.findByText('Saved and loaded 2 rules of your own.');
+		expect(note.closest('.notice')).toHaveClass('is-ok');
+	});
+
+	it("doesn't call a save with no rule count a removal", async () => {
+		stubPosts({ [SAVE_URL]: { status: 200, body: { saved: true, engine: { loaded: 65432, failed: 0 } } } });
+		render(OwnerRulesCard, props());
+
+		await fireEvent.click(button('Save and load'));
+
+		expect(await screen.findByText('Saved and loaded. Suricata has 65,432 rules loaded.')).toBeInTheDocument();
+	});
+
+	it('shows a check with no rule count as passed, without a count', async () => {
+		stubPosts({ [CHECK_URL]: { status: 200, body: { ok: true } } });
+		render(OwnerRulesCard, props());
+
+		await fireEvent.click(button('Check rules'));
+
+		expect(await screen.findByText('No problems found. Suricata tests them again when you save.')).toBeInTheDocument();
+	});
+
+	it("shows a proxy timeout as unconfirmed in amber, not as Suricata's refusal", async () => {
+		stubPosts({
+			[SAVE_URL]: { status: 502, body: { error: 'Daemon unreachable: The operation was aborted due to timeout', daemonAvailable: false } },
+		});
+		render(OwnerRulesCard, props());
+
+		await fireEvent.click(button('Save and load'));
+
+		const alert = await screen.findByRole('alert');
+		expect(alert).toHaveTextContent("NetTap couldn't confirm the result. Check Rules active before saving again.");
+		expect(alert).toHaveClass('is-warn');
+		expect(screen.queryByText(/Daemon unreachable/)).not.toBeInTheDocument();
+	});
+
+	it("shows the daemon's own 502 (its test couldn't run) as a red failure", async () => {
+		stubPosts({ [SAVE_URL]: { status: 502, body: { error: "Suricata's test couldn't run (exit 137). Nothing was changed." } } });
+		render(OwnerRulesCard, props());
+
+		await fireEvent.click(button('Save and load'));
+
+		const alert = await screen.findByRole('alert');
+		expect(alert).toHaveTextContent("Suricata's test couldn't run (exit 137). Nothing was changed.");
+		expect(alert).toHaveClass('is-error');
+	});
+
+	it("shows a refused check's summary as the daemon wrote it, with nothing added in front", async () => {
+		stubPosts({
+			[CHECK_URL]: { status: 400, body: { error: 'Your rules have problems: line 1 ends in a backslash (and 1 more)', errors: [] } },
+		});
+		render(OwnerRulesCard, props());
+
+		await fireEvent.click(button('Check rules'));
+
+		expect((await screen.findByRole('alert')).textContent).toBe('Your rules have problems: line 1 ends in a backslash (and 1 more)');
+	});
+
+	it('treats a 200 login page as not saved', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => ({ ok: true, status: 200, json: async () => Promise.reject(new SyntaxError('Unexpected token <')) })),
+		);
+		render(OwnerRulesCard, props());
+
+		await fireEvent.click(button('Save and load'));
+
+		const alert = await screen.findByRole('alert');
+		expect(alert).toHaveTextContent('you may need to sign in again');
+		expect(screen.queryByText(/^Saved/)).not.toBeInTheDocument();
+	});
+});
+
+describe('OwnerRulesCard — too big to send', () => {
+	it('refuses rules over the byte limit without sending them, counting bytes rather than characters', async () => {
+		const f = stubPosts();
+		render(OwnerRulesCard, props({ owner: { ...OWNER, max_bytes: 2048 } }));
+		// 1,025 characters, 2,048 bytes: at the limit, so it is sent
+		await fireEvent.input(box(), { target: { value: '# ' + 'é'.repeat(1023) } });
+		await fireEvent.click(button('Check rules'));
+		await waitFor(() => expect(sent(f, CHECK_URL)).toHaveLength(1));
+
+		// 1,026 characters, 2,050 bytes: over it
+		await fireEvent.input(box(), { target: { value: '# ' + 'é'.repeat(1024) } });
+		await fireEvent.click(button('Check rules'));
+
+		const alert = await screen.findByText("Your rules are over 2 KB, so they weren't sent. Remove some rules and try again.");
+		expect(alert.closest('.notice')).toHaveClass('is-error');
+		expect(sent(f, CHECK_URL)).toHaveLength(1);
+	});
+
+	it('says the limit in KB as the daemon does', async () => {
+		const f = stubPosts();
+		render(OwnerRulesCard, props());
+		await fireEvent.input(box(), { target: { value: 'a'.repeat(262_145) } });
+
+		await fireEvent.click(button('Save and load'));
+
+		expect(await screen.findByText("Your rules are over 256 KB, so they weren't sent. Remove some rules and try again.")).toBeInTheDocument();
+		expect(sent(f, SAVE_URL)).toHaveLength(0);
+	});
+});
+
+describe('OwnerRulesCard — focus (M3)', () => {
+	it('moves focus into the box after Write a rule', async () => {
+		render(OwnerRulesCard, props({ owner: OWNER_EMPTY }));
+
+		await fireEvent.click(button('Write a rule'));
+
+		await waitFor(() => expect(document.activeElement).toBe(box()));
+	});
+
+	it('moves focus to the box after a refused check', async () => {
+		stubPosts({ [CHECK_URL]: { status: 400, body: { error: 'One line needs fixing.', errors: [{ line: 1, message: 'Bad.' }] } } });
+		render(OwnerRulesCard, props());
+
+		await fireEvent.click(button('Check rules'));
+
+		await screen.findByText('Line 1: Bad.');
+		await waitFor(() => expect(document.activeElement).toBe(box()));
+	});
+
+	it('moves focus to the box after a failed save', async () => {
+		stubPosts({ [SAVE_URL]: { status: 409, body: { error: 'A Suricata rule update is running. Try again in a few minutes.' } } });
+		render(OwnerRulesCard, props());
+
+		await fireEvent.click(button('Save and load'));
+
+		await waitFor(() => expect(document.activeElement).toBe(box()));
+	});
+
+	it('puts focus back on the button after a successful save', async () => {
+		stubPosts({ [SAVE_URL]: { status: 200, body: { saved: true, rule_count: 2, engine: { loaded: 65432, failed: 0 } } } });
+		render(OwnerRulesCard, props());
+		const save = button('Save and load');
+
+		await fireEvent.click(save);
+
+		await screen.findByText(/^Saved and loaded/);
+		await waitFor(() => expect(save).toBeEnabled());
+		await waitFor(() => expect(document.activeElement).toBe(save));
+	});
+
+	it('leaves focus alone when the owner has moved it elsewhere meanwhile', async () => {
+		let answer: () => void = () => {};
+		const gate = new Promise<void>((resolve) => (answer = resolve));
+		const refusal = { error: 'One line needs fixing.', errors: [] };
+		vi.stubGlobal('fetch', vi.fn(async () => (await gate, { ok: false, status: 400, json: async () => refusal })));
+		const elsewhere = document.body.appendChild(document.createElement('input'));
+		render(OwnerRulesCard, props());
+
+		await fireEvent.click(button('Check rules'));
+		elsewhere.focus();
+		answer();
+
+		await screen.findByText('One line needs fixing.');
+		await tick();
+		expect(document.activeElement).toBe(elsewhere);
+		elsewhere.remove();
+	});
+});
+
+describe('OwnerRulesCard — the answer arrives before the page has refreshed', () => {
+	it('shows the result at once and keeps the buttons off until the page has read the counts again', async () => {
+		stubPosts({ [SAVE_URL]: { status: 200, body: { saved: true, rule_count: 2, engine: { loaded: 65432, failed: 0 } } } });
+		let finish: () => void = () => {};
+		const reload = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));
+		render(OwnerRulesCard, props({ reload }));
+
+		await fireEvent.click(button('Save and load'));
+
+		expect(await screen.findByText('Saved and loaded 2 rules of your own. Suricata has 65,432 rules loaded.')).toBeInTheDocument();
+		expect(screen.queryByText(/Suricata is testing and loading your rules/)).not.toBeInTheDocument();
+		expect(button('Saving and loading…')).toBeDisabled();
+		expect(button('Check rules')).toBeDisabled();
+
+		finish();
+
+		await waitFor(() => expect(button('Save and load')).toBeEnabled());
+		expect(button('Check rules')).toBeEnabled();
+	});
+
+	it('says a refresh failed in the empty state too', () => {
+		render(OwnerRulesCard, props({ owner: OWNER_EMPTY, failed: true }));
+
+		expect(screen.getByText('No rules of your own yet')).toBeInTheDocument();
+		expect(screen.getByText("Couldn't refresh your own rules; showing the last figures loaded.")).toBeInTheDocument();
 	});
 });

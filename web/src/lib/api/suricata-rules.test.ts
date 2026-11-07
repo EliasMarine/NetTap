@@ -39,6 +39,18 @@ function mockFetchSuccess(body: unknown, status = 200): void {
 	);
 }
 
+/** What fetch sees after an expired session's 302 to /login: a 200 HTML page. */
+function mockLoginPage(): void {
+	vi.stubGlobal(
+		'fetch',
+		vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			json: () => Promise.reject(new SyntaxError('Unexpected token < in JSON')),
+		}),
+	);
+}
+
 function mockFetchFailure(status = 500): void {
 	vi.stubGlobal(
 		'fetch',
@@ -322,6 +334,25 @@ describe('suricata-rules API client', () => {
 
 			await expect(getOwnerRules()).rejects.toThrow('HTTP 502');
 		});
+
+		// An expired session's login page must never read as "no rules yet"
+		it('throws on a 200 login page', async () => {
+			mockLoginPage();
+
+			await expect(getOwnerRules()).rejects.toThrow('you may need to sign in again');
+		});
+
+		it.each([
+			['{}', {}],
+			['a missing content', { rule_count: 0, max_rules: 2000, max_bytes: 262144 }],
+			['a limit that is not a number', { content: '', rule_count: 0, max_rules: '2000', max_bytes: 262144 }],
+			['a missing byte limit', { content: '', rule_count: 0, max_rules: 2000 }],
+			['an array', [{ content: '' }]],
+		])('throws on a 200 with %s', async (_what, body) => {
+			mockFetchSuccess(body);
+
+			await expect(getOwnerRules()).rejects.toThrow('you may need to sign in again');
+		});
 	});
 
 	describe('checkOwnerRules', () => {
@@ -374,6 +405,31 @@ describe('suricata-rules API client', () => {
 				errors: [],
 			});
 		});
+
+		it('is not a pass on a 200 login page or a 200 {}', async () => {
+			mockLoginPage();
+			await expect(checkOwnerRules('x')).resolves.toMatchObject({ ok: false, status: 200, error: expect.stringContaining('sign in again') });
+
+			mockFetchSuccess({});
+			await expect(checkOwnerRules('x')).resolves.toMatchObject({ ok: false, status: 200, error: expect.stringContaining('sign in again') });
+		});
+
+		it('is not a pass when a 200 carries an error', async () => {
+			mockFetchSuccess({ ok: true, rule_count: 1, error: 'The validator crashed.' });
+
+			await expect(checkOwnerRules('x')).resolves.toMatchObject({ ok: false, error: 'The validator crashed.' });
+		});
+
+		it('reads a reason whose line is not a number as file-wide', async () => {
+			mockFetchSuccess({ error: 'Fix these.', errors: [{ line: '3', message: 'Bad header.' }, { message: 'Too many rules.' }] }, 400);
+
+			const result = await checkOwnerRules('x');
+
+			expect(result.errors).toEqual([
+				{ line: null, message: 'Bad header.' },
+				{ line: null, message: 'Too many rules.' },
+			]);
+		});
 	});
 
 	describe('saveOwnerRules', () => {
@@ -401,6 +457,36 @@ describe('suricata-rules API client', () => {
 			const result = await saveOwnerRules('x');
 
 			expect(result).toEqual({ ok: false, status, error: body.error, errors: 'errors' in body ? body.errors : [] });
+		});
+
+		// An expired session's POST is redirected to the login page: nothing was sent to the daemon
+		it('is not a save on a 200 login page', async () => {
+			mockLoginPage();
+
+			const result = await saveOwnerRules('');
+
+			expect(result).toEqual({
+				ok: false,
+				status: 200,
+				error: "NetTap's reply wasn't about your rules. Reload the page; you may need to sign in again.",
+				errors: [],
+			});
+		});
+
+		it.each([
+			['{}', {}],
+			['saved false', { saved: false, rule_count: 0 }],
+			['an error beside saved', { saved: true, rule_count: 0, error: 'Half done.' }],
+		])('is not a save on a 200 with %s', async (_what, body) => {
+			mockFetchSuccess(body);
+
+			await expect(saveOwnerRules('')).resolves.toMatchObject({ ok: false, status: 200 });
+		});
+
+		it('keeps daemonAvailable so the card can tell an unknown result from a refusal', async () => {
+			mockFetchSuccess({ error: 'Daemon unreachable: The operation was aborted due to timeout', daemonAvailable: false }, 502);
+
+			await expect(saveOwnerRules('x')).resolves.toMatchObject({ ok: false, status: 502, daemonAvailable: false });
 		});
 	});
 

@@ -301,8 +301,9 @@
 	// const busy = $derived(updating || savingEtPro || removingEtPro || applying);
 	// OLD CODE END
 	const busy = $derived(updating || savingEtPro || removingEtPro || applying || savingOwner);
-	// Suricata can't read the owner rules folder yet (the daemon says null), so a save would load nothing
-	const ownerUnmounted = $derived(live?.owner_rules === null);
+	// Suricata can't read the owner rules folder yet (null, or an older daemon that doesn't say), so a save would load nothing.
+	// Unknown while the live status hasn't loaded. The same == null check as "Not connected" below.
+	const ownerUnmounted = $derived(live != null && live.owner_rules == null);
 
 	// OLD CODE START — #96: one failed request left every section on its defaults
 	/*
@@ -746,7 +747,10 @@
 	</Card>
 	OLD CODE END -->
 
+	<!-- OLD CODE START — NET-191 slice 3: the own-rules editor is full width, so ET Pro is too
 	<Card title="ET Pro" sub="Emerging Threats Pro from Proofpoint · optional, needs a paid code" class="c-6">
+	OLD CODE END -->
+	<Card title="ET Pro" sub="Emerging Threats Pro from Proofpoint · optional, needs a paid code" class="c-12">
 		{#if !loaded}
 			<CardState state="loading" title="Loading the ET Pro status" />
 		{:else if !etpro}

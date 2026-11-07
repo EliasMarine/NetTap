@@ -119,6 +119,33 @@ describe('Suricata rules page — downloaded and active', () => {
 		expect(screen.getByRole('button', { name: 'Save and load' })).toBeDisabled();
 		expect(screen.getByRole('button', { name: 'Check rules' })).toBeEnabled();
 	});
+
+	it("treats an older daemon that doesn't send owner_rules the same as not connected", async () => {
+		const { owner_rules: _owner, ...olderLive } = LIVE;
+		stubApi({ ...page(), [LIVE_URL]: olderLive });
+		render(Page);
+		await editor();
+
+		expect(figure('Your rules')).toHaveTextContent(/^Not connected$/);
+		expect(screen.getByRole('button', { name: 'Save and load' })).toBeDisabled();
+	});
+
+	it("doesn't turn off Save and load just because the live status failed to load", async () => {
+		const { [LIVE_URL]: _live, ...withoutLive } = page();
+		stubApi(withoutLive);
+		render(Page);
+		await editor();
+
+		expect(screen.queryByText(/Suricata isn't connected to your rules folder yet/)).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Save and load' })).toBeEnabled();
+	});
+
+	it('gives the editor the full width', async () => {
+		stubApi(page());
+		render(Page);
+
+		expect(card(await editor())).toHaveClass('c-12');
+	});
 });
 
 describe('Suricata rules page — retired controls', () => {
@@ -209,8 +236,9 @@ describe('Suricata rules page — feeding your own rules', () => {
 
 		expect(await screen.findByText('Saved and loaded 2 rules of your own. Suricata has 65,432 rules loaded.')).toBeInTheDocument();
 		expect(posts(f, OWNER_URL)).toHaveLength(1);
-		await waitFor(() => expect(gets(f, LIVE_URL)).toHaveLength(2));
-		expect(gets(f, OWNER_URL)).toHaveLength(2);
+		// the result shows as soon as it arrives; the page's counts are read after it
+		await waitFor(() => expect(gets(f, OWNER_URL)).toHaveLength(2));
+		expect(gets(f, LIVE_URL)).toHaveLength(2);
 	});
 });
 

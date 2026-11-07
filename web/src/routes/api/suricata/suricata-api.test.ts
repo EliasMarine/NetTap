@@ -141,12 +141,43 @@ describe('Owner rules proxies', () => {
 		expect(await res.json()).toEqual(refused);
 	});
 
-	it("says so when the daemon's reply isn't JSON", async () => {
-		daemonFetch.mockResolvedValue(new Response('<html>', { status: 502 }));
+	// A 200 that isn't JSON must never reach the browser as a 200: it would read as a save or an empty file
+	const UNREADABLE = { error: "NetTap's daemon sent a reply that couldn't be read." };
+
+	it.each([200, 502])("answers 502 to a check when the daemon's %i reply isn't JSON", async (status) => {
+		daemonFetch.mockResolvedValue(new Response('<html>', { status }));
 
 		const res = await customCheck.POST(post('/api/suricata/rules/custom/check', BODY));
 
 		expect(res.status).toBe(502);
-		expect(await res.json()).toEqual({ error: 'Failed to parse daemon response' });
+		expect(await res.json()).toEqual(UNREADABLE);
+	});
+
+	it("answers 502 to a save when the daemon's 200 reply isn't JSON", async () => {
+		daemonFetch.mockResolvedValue(new Response('<html>', { status: 200 }));
+
+		const res = await custom.POST(post('/api/suricata/rules/custom', BODY));
+
+		expect(res.status).toBe(502);
+		expect(await res.json()).toEqual(UNREADABLE);
+	});
+
+	it("answers 502 to a read when the daemon's 200 reply isn't JSON", async () => {
+		daemonFetch.mockResolvedValue(new Response('', { status: 200 }));
+
+		const res = await custom.GET({} as never);
+
+		expect(res.status).toBe(502);
+		expect(await res.json()).toEqual(UNREADABLE);
+	});
+
+	it('passes the daemon-unreachable 502 and its daemonAvailable flag through', async () => {
+		const unreachable = { error: 'Daemon unreachable: The operation was aborted due to timeout', daemonAvailable: false };
+		answer(502, unreachable);
+
+		const res = await custom.POST(post('/api/suricata/rules/custom', BODY));
+
+		expect(res.status).toBe(502);
+		expect(await res.json()).toEqual(unreachable);
 	});
 });

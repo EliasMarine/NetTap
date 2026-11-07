@@ -26,7 +26,7 @@ export interface LiveRuleStatus {
 	engine?: { loaded: number; failed: number; reload_time: string | null } | null;
 	update?: RuleUpdateStatus;
 	/** NET-191 slice 3: alert rules in the owner rules file as suricata-live sees it; null when that folder isn't mounted there. */
-	owner_rules: number | null;
+	owner_rules?: number | null;
 }
 
 /** The last rule update as the daemon recorded it (NET-191 slice 2). */
@@ -134,7 +134,7 @@ export interface OwnerRuleError {
 export interface OwnerRulesSaveResult {
 	saved: boolean;
 	rule_count: number;
-	engine: { loaded: number; failed: number };
+	engine: { loaded: number | null; failed: number | null };
 }
 
 /** What checking or saving the owner rules answered; `error` and `errors` are the daemon's reasons. */
@@ -143,6 +143,8 @@ export interface OwnerRulesReply extends Partial<OwnerRulesSaveResult> {
 	status: number;
 	error?: string;
 	errors: OwnerRuleError[];
+	/** false when the web server got no answer from the daemon (timeout or unreachable): the save may or may not have happened. */
+	daemonAvailable?: boolean;
 }
 
 // OLD CODE START — NET-191 slice 2: Snort Subscriber is retired; the ET Pro code has EtProStatus
@@ -300,12 +302,25 @@ export async function setUpdateSchedule(interval: string): Promise<UpdateSchedul
 // }
 // OLD CODE END
 
+/** The JSON object in a reply, or {} for anything else (an HTML login page, an array, no body). */
+async function replyObject(res: Response): Promise<Record<string, unknown>> {
+	const body = await res.json().catch(() => null);
+	return body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+}
+
+/** What a 2xx that isn't a rules answer means: most likely a login page after the session ended. */
+const NOT_A_RULES_REPLY = "NetTap's reply wasn't about your rules. Reload the page; you may need to sign in again.";
+
 /** The owner's own rules. Throws on a failed request, so the editor never reads "no rules" for "unknown". */
 export async function getOwnerRules(): Promise<OwnerRules> {
 	const res = await fetch('/api/suricata/rules/custom');
-	const data = await res.json().catch(() => ({}));
-	if (!res.ok) throw new Error(typeof data?.error === 'string' && data.error ? data.error : `HTTP ${res.status}`);
-	return data as OwnerRules;
+	const data = await replyObject(res);
+	if (!res.ok) throw new Error(typeof data.error === 'string' && data.error ? data.error : `HTTP ${res.status}`);
+	// a login redirect answers 200 HTML: that must never read as "no rules yet"
+	if (typeof data.content !== 'string' || !Number.isFinite(data.max_rules) || !Number.isFinite(data.max_bytes)) {
+		throw new Error(NOT_A_RULES_REPLY);
+	}
+	return data as unknown as OwnerRules;
 }
 
 /** Never throws on a 4xx/5xx: `error` is the daemon's sentence and `errors` its per-line reasons. */
@@ -315,14 +330,20 @@ async function sendOwnerRules(url: string, content: string): Promise<OwnerRulesR
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ content }),
 	});
-	const body = await res.json().catch(() => ({}));
-	// a malformed entry would print "Line undefined" or crash the list
-	const errors: OwnerRuleError[] = Array.isArray(body?.errors)
-		? body.errors.filter((e: OwnerRuleError) => typeof e?.message === 'string')
+	const body = await replyObject(res);
+	// a malformed entry would print "Line undefined" or crash the list; a line that isn't a number reads as file-wide
+	const errors: OwnerRuleError[] = Array.isArray(body.errors)
+		? body.errors
+				.filter((e) => typeof e?.message === 'string')
+				.map((e) => ({ line: typeof e.line === 'number' ? e.line : null, message: e.message }))
 		: [];
-	if (res.ok) return { ...body, ok: true, status: res.status, errors };
-	const error = typeof body?.error === 'string' && body.error ? body.error : `The request failed (HTTP ${res.status}).`;
-	return { ...body, ok: false, status: res.status, error, errors };
+	const error = typeof body.error === 'string' && body.error ? body.error : undefined;
+	// success only with the expected shape: a 200 login page or {} is not a save
+	if (res.ok && (body.saved === true || body.ok === true) && error === undefined) {
+		return { ...body, ok: true, status: res.status, errors };
+	}
+	const fallback = res.ok ? NOT_A_RULES_REPLY : `The request failed (HTTP ${res.status}).`;
+	return { ...body, ok: false, status: res.status, error: error ?? fallback, errors };
 }
 
 /** Run the validator only: fast, and changes nothing. */
