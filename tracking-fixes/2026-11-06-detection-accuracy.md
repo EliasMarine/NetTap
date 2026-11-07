@@ -285,3 +285,47 @@ Rollback: `bash /home/nettap/NetTap/scripts/remote/rollback-detection-slice2.sh`
 - `dump-counters` field names for capture drops.
 - Whether Malcolm's crontab still points at the shim path after a restart.
 - The holder-container lock on the real volume. It was proved with Docker Desktop.
+
+### G11 run (2026-11-07, branch `feature/detection-slice2` @ `bde17614`)
+
+All three scripts passed, run in order with nettap-23 told first. The G11 stays on the branch until the PR merges.
+
+**`deploy-detection-slice2.sh`:**
+- **The gate:** the staged update took 109 s.
+  - The staged rules load 65,451 rules with 0 failed. The live rules before held 53,492.
+  - All 7 fixtures pass.
+  - The G11's own traffic gives the same 427 alerts and 7 SIDs on the live and staged rules ("SIDs only with the new rules: 0").
+- **The recreate (14:00:31 UTC):**
+  - The startup update finished at 14:01:08, 37 s, well inside Malcolm's 300 s limit.
+  - The engine started at 14:04:07.
+  - Enabled sources: `abuse.ch/sslbl-blacklist,echap/stalkerware,et/open,ipfire/dbl`.
+  - The IPFire allowlist and the shim are in place, a last good generation was kept, 65,451 rules loaded and 0 failed.
+- **The replay against the live rules:** the IPFire Malware and Phishing fixtures, the IPFire disabled-DoH fixture and the Echap stalkerware fixture all pass.
+- **"Update now"** through the daemon was active within 47 s.
+- **Errors:** none in the daemon log.
+- **Memory:** suricata-live used about 0.9–1.0 GiB, and the host had 2.4–2.7 GiB available.
+- **Capture:** enp4s0, 0 dropped.
+  - The deploy's own capture line printed nothing. Malcolm's `suricata.yaml` has `stats: enabled: no`, so `dump-counters` answers "stats are disabled in the config".
+  - Fixed in `9d87ba69` to use `iface-stat`. Checked on the G11: "6515 packets, 0 dropped on enp4s0".
+
+**`check-etpro-canary.sh`:**
+- Canary A and canary B were each saved as root 600. Each update was refused with Proofpoint's real answer, `HTTP Error 404: Not Found`, and logged with `<code>` in place of the code.
+- After each one, the previous rules stayed loaded (same rules hash, 65,451 loaded, 0 failed), and Settings showed "configured true, active false".
+- After the clear, the sources were back to the four free ones.
+- No canary appeared at any stage in:
+  - the docker logs of suricata-live or the daemon;
+  - `/run/nettap-rules`, `/tmp`, `/etc/suricata` or `/var/log/suricata`;
+  - any of the 6 daemon API answers;
+  - (after the clear) `/etc/nettap` and `/var/lib/suricata/update`.
+
+**`check-rules-update-safety.sh`:**
+- An unreachable source and a source with a broken rule each failed and kept the previous rules, and neither left the marker behind.
+- A lock taker waited out "Update now".
+- A recreate during manual updates cut no update off.
+
+**Answers to "Not verifiable without the device":**
+- Proofpoint answers a bad code with HTTP 404.
+- The startup update takes 37 s on the G11.
+- Malcolm's crontab still runs `/usr/local/bin/suricata-update-rules.sh`, which is the shim, after the restarts.
+- The holder-container lock works on the real volume (safety check B).
+- Capture drops come from `iface-stat`, not `dump-counters`.
