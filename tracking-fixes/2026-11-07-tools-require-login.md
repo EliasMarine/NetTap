@@ -30,7 +30,7 @@ The tools were made public so their pages would work before anyone signed in. Th
 ## Tests
 
 - `hooks.server.test.ts`:
-  - each of seven tools and lookup paths (pages and APIs) redirects to `/login` without a session, and passes with one;
+  - each of ten tools and lookup paths (pages and APIs) redirects to `/login` without a session, and passes with one;
   - `/loginx`, `/api/authx` and `/api/auth-tokens` are not public;
   - `/api/auth`, `/api/auth/other` and `/api/auth/..%2Ftools%2Fping` are not public;
   - the three auth routes still are;
