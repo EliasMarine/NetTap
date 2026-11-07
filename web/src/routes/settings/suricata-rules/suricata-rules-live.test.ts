@@ -20,6 +20,7 @@ const LIVE = {
 };
 
 const ETPRO_OFF = { configured: false, active: false, last_update_ok: null, applying: false, activation: null };
+const OWNER_EMPTY = { content: '', rule_count: 0, max_rules: 2000, max_bytes: 262144 };
 
 function stubFetch(live: { status: number; body: unknown }) {
 	vi.stubGlobal(
@@ -72,7 +73,10 @@ describe('Suricata rules page — live status', () => {
 		render(Page);
 		await screen.findByText('64,307');
 
-		expect(screen.getByRole('button', { name: 'Save custom rules' })).toBeDisabled();
+		// OLD CODE START — NET-191 slice 3: the read-only custom rules box is gone; "Your own rules" loads its rules
+		// expect(screen.getByRole('button', { name: 'Save custom rules' })).toBeDisabled();
+		// OLD CODE END
+		expect(screen.queryByRole('button', { name: 'Save custom rules' })).not.toBeInTheDocument();
 		// OLD CODE START — NET-191 slice 2: the commercial licence form is gone; the ET Pro card is wired up
 		// expect(screen.getByRole('button', { name: 'Add commercial licence' })).toBeDisabled();
 		// OLD CODE END
@@ -86,7 +90,10 @@ describe('Suricata rules page — live status', () => {
 		render(Page);
 		await screen.findByText('64,307');
 
-		expect(screen.getByText("Couldn't load the saved custom rules: the request failed.")).toBeInTheDocument();
+		// OLD CODE START — NET-191 slice 3: the owner rules card shows its own error state
+		// expect(screen.getByText("Couldn't load the saved custom rules: the request failed.")).toBeInTheDocument();
+		// OLD CODE END
+		expect(screen.getByText("Couldn't load your own rules: the request failed.")).toBeInTheDocument();
 		// OLD CODE START — NET-191 slice 2: the ET Pro card shows its own error state instead
 		// expect(screen.getByText("Couldn't load the commercial licence status: the request failed.")).toBeInTheDocument();
 		// OLD CODE END
@@ -99,7 +106,10 @@ describe('Suricata rules page — live status', () => {
 			vi.fn(async (url: string) => {
 				const replies: Record<string, unknown> = {
 					'/api/suricata/rules/live': LIVE,
-					'/api/suricata/rules/custom': { content: 'alert tcp any any -> any any (sid:9999001;)' },
+					// OLD CODE START — NET-191 slice 3: the owner rules shape, with a sid in the owner range
+					// '/api/suricata/rules/custom': { content: 'alert tcp any any -> any any (sid:9999001;)' },
+					// OLD CODE END
+					'/api/suricata/rules/custom': { ...OWNER_EMPTY, content: 'alert tcp any any -> any any (sid:1000001;)', rule_count: 1 },
 					// OLD CODE START — NET-191 slice 2: the ET Pro status shape
 					// '/api/suricata/rules/commercial': { configured: false },
 					// OLD CODE END
@@ -112,7 +122,10 @@ describe('Suricata rules page — live status', () => {
 		render(Page);
 		await screen.findByText('64,307');
 
-		expect(screen.getByDisplayValue('alert tcp any any -> any any (sid:9999001;)')).toBeInTheDocument();
+		// OLD CODE START — NET-191 slice 3
+		// expect(screen.getByDisplayValue('alert tcp any any -> any any (sid:9999001;)')).toBeInTheDocument();
+		// OLD CODE END
+		expect(screen.getByDisplayValue('alert tcp any any -> any any (sid:1000001;)')).toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument();
 	});
 });
@@ -130,7 +143,10 @@ function stubReplies(replies: Record<string, unknown>) {
 
 const SHOWN = {
 	'/api/suricata/rules/live': LIVE,
-	'/api/suricata/rules/custom': { content: '' },
+	// OLD CODE START — NET-191 slice 3: the owner rules shape
+	// '/api/suricata/rules/custom': { content: '' },
+	// OLD CODE END
+	'/api/suricata/rules/custom': OWNER_EMPTY,
 	// OLD CODE START — NET-191 slice 2: the ET Pro status shape
 	// '/api/suricata/rules/commercial': { configured: false },
 	// OLD CODE END

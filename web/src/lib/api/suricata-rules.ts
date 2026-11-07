@@ -25,6 +25,8 @@ export interface LiveRuleStatus {
 	/** What Suricata's socket reports; null when it didn't answer. */
 	engine?: { loaded: number; failed: number; reload_time: string | null } | null;
 	update?: RuleUpdateStatus;
+	/** NET-191 slice 3: alert rules in the owner rules file as suricata-live sees it; null when that folder isn't mounted there. */
+	owner_rules?: number | null;
 }
 
 /** The last rule update as the daemon recorded it (NET-191 slice 2). */
@@ -106,10 +108,43 @@ export interface UpdateSchedule {
 	enabled: boolean;
 }
 
-export interface CustomRulesResult {
-	success: boolean;
-	rules_written: number;
-	file: string;
+// OLD CODE START — NET-191 slice 3: the owner rules editor replaces the unwired custom rules form
+// export interface CustomRulesResult {
+// 	success: boolean;
+// 	rules_written: number;
+// 	file: string;
+// }
+// OLD CODE END
+
+/** The owner's own rules file (GET /api/suricata/rules/custom, NET-191 slice 3). */
+export interface OwnerRules {
+	content: string;
+	rule_count: number;
+	max_rules: number;
+	max_bytes: number;
+}
+
+/** Why the validator or Suricata refused the rules; `line` is null for a file-wide problem. */
+export interface OwnerRuleError {
+	line: number | null;
+	message: string;
+}
+
+/** What a successful save answers (POST /api/suricata/rules/custom, HTTP 200). */
+export interface OwnerRulesSaveResult {
+	saved: boolean;
+	rule_count: number;
+	engine: { loaded: number | null; failed: number | null };
+}
+
+/** What checking or saving the owner rules answered; `error` and `errors` are the daemon's reasons. */
+export interface OwnerRulesReply extends Partial<OwnerRulesSaveResult> {
+	ok: boolean;
+	status: number;
+	error?: string;
+	errors: OwnerRuleError[];
+	/** false when the web server got no answer from the daemon (timeout or unreachable): the save may or may not have happened. */
+	daemonAvailable?: boolean;
 }
 
 // OLD CODE START — NET-191 slice 2: Snort Subscriber is retired; the ET Pro code has EtProStatus
@@ -230,38 +265,95 @@ export async function setUpdateSchedule(interval: string): Promise<UpdateSchedul
 	return res.json();
 }
 
-/**
- * Upload custom rules.
- */
-export async function uploadCustomRules(content: string): Promise<CustomRulesResult> {
-	const res = await fetch('/api/suricata/rules/custom', {
+// OLD CODE START — NET-191 slice 3: getOwnerRules, checkOwnerRules and saveOwnerRules replace these; the save now
+// tests and loads the rules, and its reply has another shape
+// /**
+//  * Upload custom rules.
+//  */
+// export async function uploadCustomRules(content: string): Promise<CustomRulesResult> {
+// 	const res = await fetch('/api/suricata/rules/custom', {
+// 		method: 'POST',
+// 		headers: { 'Content-Type': 'application/json' },
+// 		body: JSON.stringify({ content }),
+// 	});
+//
+// 	if (!res.ok) {
+// 		return { success: false, rules_written: 0, file: '' };
+// 	}
+//
+// 	return res.json();
+// }
+//
+// /**
+//  * Get current custom rules content.
+//  */
+// export async function getCustomRules(): Promise<string> {
+// 	const res = await fetch('/api/suricata/rules/custom');
+//
+// 	// OLD CODE START — #96: a failure showed an empty editor, as if no custom rules were saved
+// 	// if (!res.ok) {
+// 	// 	return '';
+// 	// }
+// 	// OLD CODE END
+// 	if (!res.ok) throw new Error(`Custom rules failed: HTTP ${res.status}`);
+//
+// 	const data = await res.json();
+// 	return data.content || '';
+// }
+// OLD CODE END
+
+/** The JSON object in a reply, or {} for anything else (an HTML login page, an array, no body). */
+async function replyObject(res: Response): Promise<Record<string, unknown>> {
+	const body = await res.json().catch(() => null);
+	return body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+}
+
+/** What a 2xx that isn't a rules answer means: most likely a login page after the session ended. */
+const NOT_A_RULES_REPLY = "NetTap's reply wasn't about your rules. Reload the page; you may need to sign in again.";
+
+/** The owner's own rules. Throws on a failed request, so the editor never reads "no rules" for "unknown". */
+export async function getOwnerRules(): Promise<OwnerRules> {
+	const res = await fetch('/api/suricata/rules/custom');
+	const data = await replyObject(res);
+	if (!res.ok) throw new Error(typeof data.error === 'string' && data.error ? data.error : `HTTP ${res.status}`);
+	// a login redirect answers 200 HTML: that must never read as "no rules yet"
+	if (typeof data.content !== 'string' || !Number.isFinite(data.max_rules) || !Number.isFinite(data.max_bytes)) {
+		throw new Error(NOT_A_RULES_REPLY);
+	}
+	return data as unknown as OwnerRules;
+}
+
+/** Never throws on a 4xx/5xx: `error` is the daemon's sentence and `errors` its per-line reasons. */
+async function sendOwnerRules(url: string, content: string): Promise<OwnerRulesReply> {
+	const res = await fetch(url, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ content }),
 	});
-
-	if (!res.ok) {
-		return { success: false, rules_written: 0, file: '' };
+	const body = await replyObject(res);
+	// a malformed entry would print "Line undefined" or crash the list; a line that isn't a number reads as file-wide
+	const errors: OwnerRuleError[] = Array.isArray(body.errors)
+		? body.errors
+				.filter((e) => typeof e?.message === 'string')
+				.map((e) => ({ line: typeof e.line === 'number' ? e.line : null, message: e.message }))
+		: [];
+	const error = typeof body.error === 'string' && body.error ? body.error : undefined;
+	// success only with the expected shape: a 200 login page or {} is not a save
+	if (res.ok && (body.saved === true || body.ok === true) && error === undefined) {
+		return { ...body, ok: true, status: res.status, errors };
 	}
-
-	return res.json();
+	const fallback = res.ok ? NOT_A_RULES_REPLY : `The request failed (HTTP ${res.status}).`;
+	return { ...body, ok: false, status: res.status, error: error ?? fallback, errors };
 }
 
-/**
- * Get current custom rules content.
- */
-export async function getCustomRules(): Promise<string> {
-	const res = await fetch('/api/suricata/rules/custom');
+/** Run the validator only: fast, and changes nothing. */
+export function checkOwnerRules(content: string): Promise<OwnerRulesReply> {
+	return sendOwnerRules('/api/suricata/rules/custom/check', content);
+}
 
-	// OLD CODE START — #96: a failure showed an empty editor, as if no custom rules were saved
-	// if (!res.ok) {
-	// 	return '';
-	// }
-	// OLD CODE END
-	if (!res.ok) throw new Error(`Custom rules failed: HTTP ${res.status}`);
-
-	const data = await res.json();
-	return data.content || '';
+/** Validate, test with Suricata and load the rules; up to about 4 minutes. Empty content removes them all. */
+export function saveOwnerRules(content: string): Promise<OwnerRulesReply> {
+	return sendOwnerRules('/api/suricata/rules/custom', content);
 }
 
 // OLD CODE START — NET-191 slice 2: Snort Subscriber is retired; saveEtProCode, clearEtProCode and getEtProStatus replace these

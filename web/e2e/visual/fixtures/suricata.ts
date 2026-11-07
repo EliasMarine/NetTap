@@ -5,16 +5,19 @@ import type {
 	// OLD CODE END
 	EtProStatus,
 	LiveRuleStatus,
+	OwnerRules,
 	RuleSourcesResponse,
 	RuleStats,
 	UpdateSchedule,
 } from '../../../src/lib/api/suricata-rules.ts';
 import { DAY, HOUR, iso, type FixtureRoute } from './types.ts';
 
-// getCustomRules() reads only `content`; the daemon sends nothing else, and no exported type names it
-interface CustomRulesContent {
-	content: string;
-}
+// OLD CODE START — NET-191 slice 3: the owner rules GET has its own type (OwnerRules)
+// // getCustomRules() reads only `content`; the daemon sends nothing else, and no exported type names it
+// interface CustomRulesContent {
+// 	content: string;
+// }
+// OLD CODE END
 
 const CATEGORY_PREFIXES = {
 	'ET MALWARE': 'Malware',
@@ -49,7 +52,10 @@ const STATS = {
 const SCHEDULE = { interval: 'daily', enabled: true } satisfies UpdateSchedule;
 
 // An empty shape that still loads: getLiveRuleStatus() throws unless `available` is true
-const LIVE_EMPTY = { available: true, enabled_rules: 0, disabled_rules: 0, last_updated: null, sources: [], schedule: null, error: null } satisfies LiveRuleStatus;
+// OLD CODE START — NET-191 slice 3: the live status gained owner_rules
+// const LIVE_EMPTY = { available: true, enabled_rules: 0, disabled_rules: 0, last_updated: null, sources: [], schedule: null, error: null } satisfies LiveRuleStatus;
+// OLD CODE END
+const LIVE_EMPTY = { available: true, enabled_rules: 0, disabled_rules: 0, last_updated: null, sources: [], schedule: null, error: null, owner_rules: 0 } satisfies LiveRuleStatus;
 const LIVE = {
 	available: true,
 	enabled_rules: 41250,
@@ -60,7 +66,11 @@ const LIVE = {
 	error: null,
 	enabled_sources: ['et/open', 'abuse.ch/sslbl-blacklist', 'echap/stalkerware', 'ipfire/dbl'],
 	etpro_rules: 0,
-	engine: { loaded: 41250, failed: 0, reload_time: iso(6 * HOUR) },
+	// OLD CODE START — NET-191 slice 3: the engine also loads the one owner rule below
+	// engine: { loaded: 41250, failed: 0, reload_time: iso(6 * HOUR) },
+	// OLD CODE END
+	engine: { loaded: 41251, failed: 0, reload_time: iso(6 * HOUR) },
+	owner_rules: 1,
 	update: {
 		state: 'active',
 		attempt: iso(6 * HOUR),
@@ -74,10 +84,19 @@ const LIVE = {
 	},
 } satisfies LiveRuleStatus;
 
-const CUSTOM_EMPTY = { content: '' } satisfies CustomRulesContent;
+// OLD CODE START — NET-191 slice 3: owner rules carry their count and limits, and owner SIDs are 1000000–1999999
+// const CUSTOM_EMPTY = { content: '' } satisfies CustomRulesContent;
+// const CUSTOM = {
+// 	content: 'alert tcp $HOME_NET any -> any 4444 (msg:"EXAMPLE Outbound connection to port 4444"; sid:9000001; rev:1;)\n',
+// } satisfies CustomRulesContent;
+// OLD CODE END
+const OWNER_LIMITS = { max_rules: 2000, max_bytes: 262_144 };
+const CUSTOM_EMPTY = { content: '', rule_count: 0, ...OWNER_LIMITS } satisfies OwnerRules;
 const CUSTOM = {
-	content: 'alert tcp $HOME_NET any -> any 4444 (msg:"EXAMPLE Outbound connection to port 4444"; sid:9000001; rev:1;)\n',
-} satisfies CustomRulesContent;
+	content: '# Example owner rule\nalert tcp $HOME_NET any -> any 4444 (msg:"EXAMPLE Outbound connection to port 4444"; sid:1000001; rev:1;)\n',
+	rule_count: 1,
+	...OWNER_LIMITS,
+} satisfies OwnerRules;
 
 // OLD CODE START — NET-191 slice 2: the commercial config became the ET Pro status
 // const COMMERCIAL_EMPTY = { configured: false } satisfies CommercialConfig;

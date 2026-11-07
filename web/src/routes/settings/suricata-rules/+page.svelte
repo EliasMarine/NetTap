@@ -2,22 +2,27 @@
 	/**
 	 * Suricata Rule Management — IDS rule sources, updates, custom rules.
 	 *
-	 * Manage rule feeds (ET Open, abuse.ch, tgreen, etc.), trigger updates,
-	 * set auto-update schedule, upload custom rules, and save an optional
-	 * ET Pro code (NET-191 slice 2; Snort Subscriber is retired).
+	 * Shows what Suricata downloaded and what it has loaded, triggers updates, saves an optional
+	 * ET Pro code (NET-191 slice 2; Snort Subscriber is retired) and edits the owner's own
+	 * alert rules (NET-191 slice 3).
 	 */
 
 	import { onDestroy, onMount } from 'svelte';
 	import {
-		getRuleSources,
-		enableRuleSource,
-		disableRuleSource,
+		// OLD CODE START — NET-191 slice 3: the source toggles, schedule picker and custom rules box never reached Suricata
+		// getRuleSources,
+		// enableRuleSource,
+		// disableRuleSource,
+		// OLD CODE END
 		updateRulesNow,
-		getRuleStats,
-		getUpdateSchedule,
-		setUpdateSchedule,
-		uploadCustomRules,
-		getCustomRules,
+		// OLD CODE START — NET-191 slice 3
+		// getRuleStats,
+		// getUpdateSchedule,
+		// setUpdateSchedule,
+		// uploadCustomRules,
+		// getCustomRules,
+		// OLD CODE END
+		getOwnerRules,
 		// OLD CODE START — NET-191 slice 2: the ET Pro card replaces the commercial licence form
 		// configureCommercial,
 		// getCommercialConfig,
@@ -27,10 +32,15 @@
 		clearEtProCode,
 		getLiveRuleStatus,
 		type LiveRuleStatus,
-		type RuleSource,
-		type RuleStats,
+		// OLD CODE START — NET-191 slice 3
+		// type RuleSource,
+		// type RuleStats,
+		// OLD CODE END
 		type RuleUpdateStatus,
-		type UpdateSchedule,
+		// OLD CODE START — NET-191 slice 3
+		// type UpdateSchedule,
+		// OLD CODE END
+		type OwnerRules,
 		// OLD CODE START — NET-191 slice 2
 		// type CommercialConfig,
 		// OLD CODE END
@@ -44,21 +54,25 @@
 	import { fmt } from '$lib/utils/drilldown';
 	import { formatTime } from '$lib/utils/time';
 	import { loadFailed } from '$lib/utils/load-failed';
+	import OwnerRulesCard from './OwnerRulesCard.svelte';
 
-	// What Suricata really runs (#58). The source toggles, schedule picker and custom rules
-	// below are not wired into suricata-update yet, so they are shown as such.
+	// What Suricata really runs (#58)
 	let live = $state<LiveRuleStatus | null>(null);
 	let liveError = $state('');
 
 	// State
-	let sources = $state<RuleSource[]>([]);
-	let stats = $state<RuleStats | null>(null);
-	let schedule = $state<UpdateSchedule>({ interval: 'daily', enabled: true });
+	// OLD CODE START — NET-191 slice 3: these only backed the source toggles and schedule picker, which Suricata never read
+	// let sources = $state<RuleSource[]>([]);
+	// let stats = $state<RuleStats | null>(null);
+	// let schedule = $state<UpdateSchedule>({ interval: 'daily', enabled: true });
+	// OLD CODE END
 	// OLD CODE START — NET-191 slice 2: the ET Pro status replaces the commercial config
 	// let commercialConfig = $state<CommercialConfig>({ configured: false });
 	// OLD CODE END
 	let etpro = $state<EtProStatus | null>(null);
-	let lastUpdate = $state<string | null>(null);
+	// OLD CODE START — NET-191 slice 3: set from the retired source list, never shown
+	// let lastUpdate = $state<string | null>(null);
+	// OLD CODE END
 	// OLD CODE START — the whole page hid behind one loading line; each card now shows its own
 	// loading state until the first load lands
 	// let loading = $state(true);
@@ -68,9 +82,15 @@
 	let message = $state('');
 	let messageType = $state<'success' | 'error'>('success');
 
-	// Custom rules
-	let customRulesContent = $state('');
-	let savingCustomRules = $state(false);
+	// OLD CODE START — NET-191 slice 3: the owner rules editor replaces the read-only custom rules box
+	// // Custom rules
+	// let customRulesContent = $state('');
+	// let savingCustomRules = $state(false);
+	// OLD CODE END
+
+	// Your own rules (NET-191 slice 3): loaded here with the page, edited in OwnerRulesCard
+	let owner = $state<OwnerRules | null>(null);
+	let savingOwner = $state(false);
 
 	// OLD CODE START — NET-191 slice 2: the ET Pro form replaces the commercial licence form
 	// // Commercial form
@@ -91,8 +111,10 @@
 	// Why the last save or remove failed, shown in the card until the next attempt
 	let etproError = $state('');
 
-	// Toggling state (track which source is being toggled)
-	let togglingSource = $state('');
+	// OLD CODE START — NET-191 slice 3: the source toggles are retired
+	// // Toggling state (track which source is being toggled)
+	// let togglingSource = $state('');
+	// OLD CODE END
 
 	function showMessage(text: string, type: 'success' | 'error' = 'success') {
 		message = text;
@@ -149,7 +171,10 @@
 	}
 
 	// #96: custom rules and the commercial key load on their own; a failure says so in its section
-	let customFailed = $state(false);
+	// OLD CODE START — NET-191 slice 3: the owner rules load replaces the custom rules load
+	// let customFailed = $state(false);
+	// OLD CODE END
+	let ownerFailed = $state(false);
 	// OLD CODE START — NET-191 slice 2
 	// let commercialFailed = $state(false);
 	// OLD CODE END
@@ -201,13 +226,16 @@
 		// 	getCommercialConfig(),
 		// ]);
 		// OLD CODE END
-		const [sourcesRes, statsRes, scheduleRes, customRes, etproRes] = await Promise.allSettled([
-			getRuleSources(),
-			getRuleStats(),
-			getUpdateSchedule(),
-			getCustomRules(),
-			getEtProStatus(),
-		]);
+		// OLD CODE START — NET-191 slice 3: the source list, stats and schedule fed nothing on screen
+		// const [sourcesRes, statsRes, scheduleRes, customRes, etproRes] = await Promise.allSettled([
+		// 	getRuleSources(),
+		// 	getRuleStats(),
+		// 	getUpdateSchedule(),
+		// 	getCustomRules(),
+		// 	getEtProStatus(),
+		// ]);
+		// OLD CODE END
+		const [ownerRes, etproRes] = await Promise.allSettled([getOwnerRules(), getEtProStatus()]);
 		if (!guard.current(g)) return 'skipped';
 		if (liveRes.status === 'fulfilled') {
 			live = liveRes.value;
@@ -216,14 +244,19 @@
 			live = null;
 			liveError = liveRes.reason instanceof Error ? liveRes.reason.message : 'unknown error';
 		}
-		if (sourcesRes.status === 'fulfilled') {
-			sources = sourcesRes.value.sources;
-			lastUpdate = sourcesRes.value.last_update;
-		}
-		if (statsRes.status === 'fulfilled') stats = statsRes.value;
-		if (scheduleRes.status === 'fulfilled') schedule = scheduleRes.value;
-		if (customRes.status === 'fulfilled') customRulesContent = customRes.value;
-		customFailed = customRes.status === 'rejected';
+		// OLD CODE START — NET-191 slice 3
+		// if (sourcesRes.status === 'fulfilled') {
+		// 	sources = sourcesRes.value.sources;
+		// 	lastUpdate = sourcesRes.value.last_update;
+		// }
+		// if (statsRes.status === 'fulfilled') stats = statsRes.value;
+		// if (scheduleRes.status === 'fulfilled') schedule = scheduleRes.value;
+		// if (customRes.status === 'fulfilled') customRulesContent = customRes.value;
+		// customFailed = customRes.status === 'rejected';
+		// OLD CODE END
+		// A failed refresh keeps the last rules and says so; the card keeps what the owner is typing
+		if (ownerRes.status === 'fulfilled') owner = ownerRes.value;
+		ownerFailed = ownerRes.status === 'rejected';
 		// OLD CODE START — NET-191 slice 2
 		// if (commRes.status === 'fulfilled') commercialConfig = commRes.value;
 		// commercialFailed = commRes.status === 'rejected';
@@ -232,12 +265,17 @@
 		if (etproRes.status === 'fulfilled') etpro = etproRes.value;
 		etproFailed = etproRes.status === 'rejected';
 		loaded = true;
-		// Only these feed what the page shows; the source list, stats and schedule replies only
-		// back the controls that aren't wired up yet (#58)
+		// OLD CODE START — NET-191 slice 3: the source list, stats and schedule are no longer loaded
+		// // Only these feed what the page shows; the source list, stats and schedule replies only
+		// // back the controls that aren't wired up yet (#58)
+		// OLD CODE END
 		// OLD CODE START — NET-191 slice 2
 		// const shown = [liveRes, customRes, commRes];
 		// OLD CODE END
-		const shown = [liveRes, customRes, etproRes];
+		// OLD CODE START — NET-191 slice 3
+		// const shown = [liveRes, customRes, etproRes];
+		// OLD CODE END
+		const shown = [liveRes, ownerRes, etproRes];
 		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
 		// const failures = shown.filter((r) => r.status === 'rejected').length;
 		// return failures === 0 ? 'ok' : failures === shown.length ? 'failed' : 'partial';
@@ -259,7 +297,13 @@
 		return () => clearInterval(poll);
 	});
 	// One request at a time: a rule update, an ET Pro save or remove, or the restart they cause
-	const busy = $derived(updating || savingEtPro || removingEtPro || applying);
+	// OLD CODE START — NET-191 slice 3: saving your own rules reloads Suricata under the same rules lock
+	// const busy = $derived(updating || savingEtPro || removingEtPro || applying);
+	// OLD CODE END
+	const busy = $derived(updating || savingEtPro || removingEtPro || applying || savingOwner);
+	// Suricata can't read the owner rules folder yet (null, or an older daemon that doesn't say), so a save would load nothing.
+	// Unknown while the live status hasn't loaded. The same == null check as "Not connected" below.
+	const ownerUnmounted = $derived(live != null && live.owner_rules == null);
 
 	// OLD CODE START — #96: one failed request left every section on its defaults
 	/*
@@ -289,6 +333,8 @@
 	*/
 	// OLD CODE END
 
+	// OLD CODE START — NET-191 slice 3: suricata-update never read these toggles
+	/*
 	async function toggleSource(source: RuleSource) {
 		togglingSource = source.id;
 		try {
@@ -307,6 +353,8 @@
 			togglingSource = '';
 		}
 	}
+	*/
+	// OLD CODE END
 
 	async function handleUpdateNow() {
 		updating = true;
@@ -335,6 +383,8 @@
 		}
 	}
 
+	// OLD CODE START — NET-191 slice 3: Suricata's cron never read this schedule, and the custom rules box never loaded its rules
+	/*
 	async function handleScheduleChange(e: Event) {
 		const target = e.target as HTMLSelectElement;
 		const interval = target.value;
@@ -361,6 +411,8 @@
 			savingCustomRules = false;
 		}
 	}
+	*/
+	// OLD CODE END
 
 	// OLD CODE START — NET-191 slice 2: the ET Pro form replaces the commercial licence form
 	// async function handleSaveCommercial() {
@@ -459,15 +511,27 @@
 	// });
 	// OLD CODE END
 
+	// OLD CODE START — NET-191 slice 3: "downloaded" (the rules file) and "active" (what the engine loaded) were one figure
+	// const liveStats = $derived(
+	// 	live
+	// 		? [
+	// 				{ key: 'rules', label: 'Enabled rules', value: fmt(live.enabled_rules) },
+	// 				// OLD CODE START — NET-191 slice 2: counts suricata-update's enabled sources when the daemon sends them
+	// 				// { key: 'sources', label: 'Sources', value: String(live.sources.length) },
+	// 				// OLD CODE END
+	// 				{ key: 'sources', label: 'Sources', value: String(live.enabled_sources?.length || live.sources.length) },
+	// 				{ key: 'updated', label: 'Last updated', value: formatDate(live.last_updated) },
+	// 			]
+	// 		: [],
+	// );
+	// OLD CODE END
 	const liveStats = $derived(
 		live
 			? [
-					{ key: 'rules', label: 'Enabled rules', value: fmt(live.enabled_rules) },
-					// OLD CODE START — NET-191 slice 2: counts suricata-update's enabled sources when the daemon sends them
-					// { key: 'sources', label: 'Sources', value: String(live.sources.length) },
-					// OLD CODE END
+					{ key: 'rules', label: 'Rules downloaded', value: fmt(live.enabled_rules) },
+					{ key: 'active', label: 'Rules active', value: live.engine ? fmt(live.engine.loaded) : 'Unknown' },
+					{ key: 'owner', label: 'Your rules', value: live.owner_rules == null ? 'Not connected' : fmt(live.owner_rules) },
 					{ key: 'sources', label: 'Sources', value: String(live.enabled_sources?.length || live.sources.length) },
-					{ key: 'updated', label: 'Last updated', value: formatDate(live.last_updated) },
 				]
 			: [],
 	);
@@ -515,6 +579,20 @@
 			/>
 		{:else}
 			<StatStrip stats={liveStats} />
+			<!-- NET-191 slice 3: "downloaded" is the rules file, "active" is what Suricata's engine says it loaded -->
+			{#if !live.engine}
+				<p class="notice is-warn engine-line" role="status">
+					<Icon name="warn" /><span>Suricata didn't answer, so how many rules it has loaded is unknown.</span>
+				</p>
+			{/if}
+			<dl class="facts engine-facts">
+				<dt>Rules that failed to load</dt>
+				<dd class="num">{live.engine ? fmt(live.engine.failed) : 'Unknown'}</dd>
+				<dt>Rules last loaded</dt>
+				<dd class="num">{live.engine?.reload_time ? formatTime(live.engine.reload_time) : 'Unknown'}</dd>
+				<dt>Rules file updated</dt>
+				<dd class="num">{formatDate(live.last_updated)}</dd>
+			</dl>
 			{#if update.tone}
 				<p class={['notice', 'update-line', update.tone]} role="status">
 					<Icon name={update.tone === 'is-ok' ? 'check' : 'warn'} /><span>{update.text}</span>
@@ -576,6 +654,7 @@
 		{/if}
 	</Card>
 
+	<!-- OLD CODE START — NET-191 slice 3: the read-only box never reached Suricata; the "Your own rules" editor below loads its rules
 	<Card title="Custom rules" sub="One rule per line · lines starting with # are comments" class="c-6">
 		<p class="card-text">Add your own Suricata rules.</p>
 		<div class="notice is-warn" role="status">
@@ -601,6 +680,17 @@
 			</button>
 		</div>
 	</Card>
+	OLD CODE END -->
+
+	<OwnerRulesCard
+		{loaded}
+		{owner}
+		failed={ownerFailed}
+		unmounted={ownerUnmounted}
+		{busy}
+		reload={() => refresh.run()}
+		bind:saving={savingOwner}
+	/>
 
 	<!-- OLD CODE START — NET-191 slice 2: Snort Subscriber is retired and the ET Pro card below is wired to suricata-update
 	<Card title="Commercial rule sources" sub="ET Pro or Snort Subscriber licence keys" class="c-6">
@@ -657,7 +747,10 @@
 	</Card>
 	OLD CODE END -->
 
+	<!-- OLD CODE START — NET-191 slice 3: the own-rules editor is full width, so ET Pro is too
 	<Card title="ET Pro" sub="Emerging Threats Pro from Proofpoint · optional, needs a paid code" class="c-6">
+	OLD CODE END -->
+	<Card title="ET Pro" sub="Emerging Threats Pro from Proofpoint · optional, needs a paid code" class="c-12">
 		{#if !loaded}
 			<CardState state="loading" title="Loading the ET Pro status" />
 		{:else if !etpro}
@@ -741,4 +834,7 @@
 	.etpro-form { margin-top: var(--sp-4); }
 	.etpro-form .notice { margin: var(--sp-3) 0 0; }
 	.update-line { margin: var(--sp-4) 0 0; }
+	/* NET-191 slice 3 */
+	.engine-line { margin: var(--sp-4) 0 0; }
+	.engine-facts { margin-top: var(--sp-4); }
 </style>

@@ -212,3 +212,36 @@ def test_report_with_rules_checks_the_rule_fixtures(tmp_path, capsys):
     assert (
         "FAIL     ipfire-disabled-doh — sid 12000501 from 192.168.1.50 present" in text
     )
+
+
+class TestOwnerFixture:
+    """NET-191 slice 3: the owner rule self-test, only when check-owner-rules.sh asks for it."""
+
+    def test_off_unless_asked(self, monkeypatch):
+        monkeypatch.delenv("NETTAP_OWNER_FIXTURE", raising=False)
+        assert vd.owner_fixtures() == []
+        monkeypatch.setenv("NETTAP_OWNER_FIXTURE", "yes")
+        assert vd.owner_fixtures() == []
+
+    def test_writes_the_self_test_query(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("NETTAP_OWNER_FIXTURE", "present")
+        vd.write_fixtures(str(tmp_path))
+        assert b"nettap-selftest" in (tmp_path / "owner-selftest.pcap").read_bytes()
+
+    def test_matches_the_rule_the_check_script_saves(self):
+        script = (_PATH.parent / "check-owner-rules.sh").read_text()
+        assert f"sid:{vd.OWNER_TEST_SID};" in script
+        assert f'content:"{vd.OWNER_TEST_DOMAIN}"' in script
+        assert vd.OWNER_TEST_SID in vd.OWNER_SIDS
+
+    def test_present_and_absent_are_checked(self, tmp_path, monkeypatch, capsys):
+        alerts = [{"sid": vd.OWNER_TEST_SID, "src": vd.HOME_DEVICE}]
+        monkeypatch.setenv("NETTAP_OWNER_FIXTURE", "present")
+        vd.print_fixtures(alerts, str(tmp_path))
+        assert "PASS     owner-selftest" in capsys.readouterr().out
+        monkeypatch.setenv("NETTAP_OWNER_FIXTURE", "absent")
+        assert vd.print_fixtures(alerts, str(tmp_path)) == 1
+        assert (
+            "FAIL     owner-selftest — sid 1999999 from 192.168.1.50 present"
+            in capsys.readouterr().out
+        )

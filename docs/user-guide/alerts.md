@@ -160,3 +160,32 @@ ET Open; this takes a few minutes and the page follows it. The code stays on the
 readable by root only) and is never shown again or written to a log. **Remove code** goes back to ET Open.
 
 When the code expires, every nightly update fails until you renew or remove it; Suricata keeps the last good rules meanwhile.
+
+### Your own rules
+
+Settings › Suricata rules has a box for your own Suricata rules, one per line (lines starting with `#` are notes).
+They raise alerts like any other rule and always count. What you can use:
+
+- Only `alert` rules. `pass`, `drop` and `reject` are refused: NetTap watches traffic, it doesn't block it.
+- Each rule needs its own `sid` from 1000000 to 1999999. No rule source uses that range.
+- No keywords that run code, change the engine or touch files: `lua`, `luajit`, `luaxform`, `config`, `bypass`,
+  `dataset`, `datarep`, `datajson`, `filestore`, `filemd5`, `filesha1`, `filesha256` and `tls.store`.
+- Up to 2,000 rules and 256 KB of text, and up to 8,190 bytes on one line.
+- Write each rule the way Suricata reads it. Start each rule at the start of its line. Don't end a line with `\`,
+  because Suricata joins it to the next line. Use only tabs, spaces and line breaks; no other control characters.
+  Put `\` before a `;` that is part of a value, even inside quotes (`content:"a\;b";`): Suricata ends an option at
+  every `;` that has no `\` before it. Lists in `[ ]` can't contain spaces.
+
+**Check rules** runs NetTap's checks without saving. **Save and load** checks again, then has Suricata test your rules together with every
+installed rule in a separate, throwaway copy; only if that test passes are they put in place and loaded. A refused rule is
+shown on its line with Suricata's reason, and nothing changes. If Suricata can't load saved rules, the previous ones are put
+back. A save can take a few minutes; it waits for a rule update that is running, and **Update now** waits for a save.
+
+To remove all your rules, clear the box and save. The previous version is kept as `owner.rules.prev` on the
+`suricata-custom-rules` volume.
+
+Example: alert when any device looks up `example.invalid`:
+
+```
+alert dns any any -> any any (msg:"Lookup of example.invalid"; dns.query; content:"example.invalid"; nocase; sid:1000001; rev:1;)
+```

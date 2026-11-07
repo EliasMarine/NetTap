@@ -15,6 +15,8 @@
 #   --rules <dir>        use this rules dir instead of the snapshot's /var/lib/suricata/rules (staged ruleset)
 #   --threshold <file>   use this threshold file instead of the device's and make Suricata load it
 #                        (tests a threshold file before suricata-live is recreated with it)
+#   --owner-rule present|absent   add the owner rule self-test fixture (check-owner-rules.sh): sid 1999999
+#                        must fire on nettap-selftest.invalid, or must not
 # The snapshot is taken holding Suricata's rules lock (scripts/remote/rules-lock.sh), so no rule update
 # changes the rules while they are copied. Before slice 2 there is no lock: it refuses 23:50-00:30 UTC.
 # Fixtures for IPFire DBL and Echap stalkerware are drawn from the rules replayed (the snapshot's or --rules).
@@ -33,7 +35,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY="$SCRIPT_DIR/verify_detection.py"
 
 usage() {
-    sed -n '11,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '11,19p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     exit 2
 }
 
@@ -42,6 +44,7 @@ MODE="${1:-}"
 PCAP_SRC=""
 RULES_OVERRIDE=""
 THRESHOLD_OVERRIDE=""
+OWNER_FIXTURE=""
 case "$MODE" in
     fixtures) ;;
     own) PCAP_SRC="${1:-}"; [ -n "$PCAP_SRC" ] || usage; shift ;;
@@ -51,6 +54,11 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --rules) RULES_OVERRIDE="${2:-}"; [ -d "$RULES_OVERRIDE" ] || usage; shift 2 ;;
         --threshold) THRESHOLD_OVERRIDE="${2:-}"; [ -f "$THRESHOLD_OVERRIDE" ] || usage; shift 2 ;;
+        --owner-rule)
+            OWNER_FIXTURE="${2:-}"
+            [ "$OWNER_FIXTURE" = present ] || [ "$OWNER_FIXTURE" = absent ] || usage
+            shift 2
+            ;;
         *) usage ;;
     esac
 done
@@ -154,6 +162,7 @@ echo "→ Step 3: PCAPs..."
 PY_RUN=(sudo docker run --rm --network none --memory 512m --cpus 1 --user "$PUID:$PGID"
     --cap-drop ALL --security-opt no-new-privileges
     -v "$PY:/opt/verify_detection.py:ro" --entrypoint python3)
+[ -n "$OWNER_FIXTURE" ] && PY_RUN+=(-e "NETTAP_OWNER_FIXTURE=$OWNER_FIXTURE")
 if [ "$MODE" = "fixtures" ]; then
     PCAP_DIR="$RUN/pcap"
     "${PY_RUN[@]}" -v "$PCAP_DIR:/pcap" -v "$RULES_DIR:/rules:ro" "$IMAGE" \

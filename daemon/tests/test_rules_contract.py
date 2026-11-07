@@ -21,6 +21,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from api.suricata_rules import register_suricata_rules_routes
 from services import etpro as etpro_mod
+from services import owner_rules as owner_mod
 from services import rules_lock
 from services import suricata_rules as sr
 from services.etpro import EtProManager
@@ -72,7 +73,7 @@ STATS = (
 RELOAD = '{"message": [{"id": 0, "last_reload": "2026-11-07T00:01:12.123456+0000"}], "return": "OK"}'
 LIVE_OUT = (
     "ENABLED 65378\nDISABLED 16031\nETPRO 0\nMTIME 1793577636\nSOURCE et/open\nCRON 0 0 * * *\n"
-    f"ENABLED_SOURCE et/open\nSTATS {STATS}\nRELOAD {RELOAD}\n"
+    f"ENABLED_SOURCE et/open\nOWNER 1\nSTATS {STATS}\nRELOAD {RELOAD}\n"
 ).encode()
 
 
@@ -125,6 +126,7 @@ class TestLiveStatus:
             == ts_object_fields("LiveRuleStatus", "engine")
         )
         assert set(body["update"]) == ts_fields("RuleUpdateStatus")
+        assert body["owner_rules"] == 1
 
 
 class TestUpdateNow:
@@ -221,3 +223,105 @@ class TestEtPro:
         assert refused[0] == 400 and set(refused[1]) == {"error"}
         for _, body in (saved, cleared, again, refused):
             assert set(body) <= change
+
+
+RULE = 'alert dns any any -> any any (msg:"t"; dns.query; content:"x.invalid"; sid:1000001; rev:1;)\n'
+
+
+class TestOwnerRules:
+    """NET-191 slice 3: GET, check and save answer with the fields web/src/lib/api/suricata-rules.ts names."""
+
+    @pytest.fixture
+    def custom(self, state, tmp_path, monkeypatch):
+        from tests.test_owner_rules import FakeDocker
+
+        custom, staging = tmp_path / "custom", tmp_path / "staging"
+        custom.mkdir()
+        staging.mkdir()
+        monkeypatch.setattr(owner_mod, "CUSTOM_DIR", str(custom))
+        monkeypatch.setattr(owner_mod, "STAGING_DIR", str(staging))
+        monkeypatch.setattr(owner_mod, "THRESHOLD_FILE", str(tmp_path / "none"))
+        monkeypatch.setattr(owner_mod, "_run", FakeDocker("/host/staging", str(custom)))
+        return custom
+
+    def test_get_keys_match_owner_rules(self, custom):
+        status, body = _call("GET", "/api/suricata/rules/custom")
+        assert status == 200
+        assert set(body) == ts_fields("OwnerRules")
+        assert (
+            body["content"] == "" and (custom / "owner.rules").exists()
+        )  # made at start
+
+    def test_check_keys(self, custom):
+        good = _call("POST", "/api/suricata/rules/custom/check", body={"content": RULE})
+        bad = _call(
+            "POST",
+            "/api/suricata/rules/custom/check",
+            body={"content": "drop" + RULE[5:]},
+        )
+        assert good == (200, {"ok": True, "rule_count": 1})
+        assert bad[0] == 400 and set(bad[1]) == {"error", "errors"}
+        assert set(bad[1]["errors"][0]) == ts_fields("OwnerRuleError")
+        assert (custom / "owner.rules").read_text() == ""  # a check never saves
+
+    def test_read_and_check_run_off_the_event_loop(self, custom, monkeypatch):
+        # P4: owner.read() and validate() run on a worker thread, not the loop's
+        import threading
+
+        import api.suricata_rules as api_mod
+
+        loop_thread, threads = threading.get_ident(), []
+
+        def on_a_worker(fn):
+            def wrapped(*args):
+                threads.append(threading.get_ident())
+                return fn(*args)
+
+            return wrapped
+
+        monkeypatch.setattr(api_mod, "validate", on_a_worker(api_mod.validate))
+        monkeypatch.setattr(
+            owner_mod.OwnerRules, "read", on_a_worker(owner_mod.OwnerRules.read)
+        )
+        assert _call("GET", "/api/suricata/rules/custom")[0] == 200
+        check = _call(
+            "POST", "/api/suricata/rules/custom/check", body={"content": RULE}
+        )
+        assert check[0] == 200
+        assert len(threads) == 2 and loop_thread not in threads
+
+    def test_save_keys_match_owner_rules_save_result(self, custom):
+        status, body = _call(
+            "POST", "/api/suricata/rules/custom", body={"content": RULE}
+        )
+        assert status == 200
+        assert set(body) == ts_fields("OwnerRulesSaveResult")
+        assert set(body["engine"]) == ts_object_fields("OwnerRulesSaveResult", "engine")
+        assert (custom / "owner.rules").read_text() == RULE
+
+    @pytest.mark.parametrize("body", [None, {"content": 5}, ["x"]])
+    def test_save_without_text_is_400(self, custom, body):
+        status, reply = _call("POST", "/api/suricata/rules/custom", body=body)
+        assert status == 400 and set(reply) == {"error", "errors"}
+
+    def test_save_refused_by_suricata_is_422_with_lines(self, custom):
+        from tests.test_owner_rules import REFUSED
+
+        owner_mod._run.test = (1, REFUSED)
+        status, body = _call(
+            "POST", "/api/suricata/rules/custom", body={"content": RULE}
+        )
+        assert status == 422
+        assert body["errors"] == [
+            {"line": 2, "message": "unknown rule keyword 'nosuchkeyword'."}
+        ]
+        assert (custom / "owner.rules").read_text() == ""
+
+    def test_unexpected_failure_is_500_without_detail(self, custom, monkeypatch):
+        monkeypatch.setattr(
+            owner_mod.OwnerRules, "save", AsyncMock(side_effect=OSError(RULE))
+        )
+        status, body = _call(
+            "POST", "/api/suricata/rules/custom", body={"content": RULE}
+        )
+        assert status == 500 and RULE not in json.dumps(body)

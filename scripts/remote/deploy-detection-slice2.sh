@@ -19,7 +19,7 @@ set -u
 exec > >(tee "$HOME/nettap-detection-slice2.log") 2>&1
 
 REPO_DIR="/home/nettap/NetTap"
-BRANCH="feature/detection-slice2"  # set to main once the PR is merged
+BRANCH="main"  # PR #206 is merged
 BASELINE="$HOME/nettap-rules-baseline"
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
 
@@ -93,7 +93,11 @@ done
 echo ""
 
 echo "→ Step 6: Recreate the daemon and the web container..."
-STARTED=$(date -u '+%Y-%m-%d %H:%M:%S')
+# OLD CODE START — NET-191 slice 3 review (D1): Step 7 sets STARTED again for suricata-live, so
+# Step 13 read the daemon's log only from then on
+# STARTED=$(date -u '+%Y-%m-%d %H:%M:%S')
+# OLD CODE END
+DAEMON_STARTED=$(date -u '+%Y-%m-%d %H:%M:%S')
 "${COMPOSE[@]}" up -d --no-deps --force-recreate nettap-storage-daemon nettap-web
 for svc in nettap-storage-daemon nettap-web; do
     STATUS="unknown"
@@ -198,11 +202,19 @@ fi
 echo ""
 
 echo "→ Step 13: Daemon errors since the restart, container status..."
-ERRS=$(sudo docker logs --since "${STARTED/ /T}Z" "$DAEMON" 2>&1 | grep -E "Traceback|ERROR" | sed 's/^[0-9T:., -]*//' | sort | uniq -c | sort -rn | head -10)
+# OLD CODE START — NET-191 slice 3 review (D1): Step 7 sets STARTED again for suricata-live, so
+# Step 13 read the daemon's log only from then on
+# ERRS=$(sudo docker logs --since "${STARTED/ /T}Z" "$DAEMON" 2>&1 | grep -E "Traceback|ERROR" | sed 's/^[0-9T:., -]*//' | sort | uniq -c | sort -rn | head -10)
+# if [ -z "$ERRS" ]; then
+#     check "daemon log" 0 "no errors or tracebacks since $STARTED UTC"
+# else
+#     check "daemon log" 1 "errors since $STARTED UTC:"
+# OLD CODE END
+ERRS=$(sudo docker logs --since "${DAEMON_STARTED/ /T}Z" "$DAEMON" 2>&1 | grep -E "Traceback|ERROR" | sed 's/^[0-9T:., -]*//' | sort | uniq -c | sort -rn | head -10)
 if [ -z "$ERRS" ]; then
-    check "daemon log" 0 "no errors or tracebacks since $STARTED UTC"
+    check "daemon log" 0 "no errors or tracebacks since $DAEMON_STARTED UTC"
 else
-    check "daemon log" 1 "errors since $STARTED UTC:"
+    check "daemon log" 1 "errors since $DAEMON_STARTED UTC:"
     echo "      ${ERRS//$'\n'/$'\n'      }"
 fi
 sudo docker ps --format "table {{.Names}}\t{{.Status}}" | grep -E "NAMES|storage-daemon|nettap-web|suricata-live"

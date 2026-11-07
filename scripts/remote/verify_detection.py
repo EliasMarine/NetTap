@@ -217,6 +217,23 @@ def dns_fixture(name: str, domain: str, expect: list) -> dict:
     }
 
 
+# The owner rule self-test (NET-191 slice 3, scripts/remote/check-owner-rules.sh saves this rule):
+#   alert dns any any -> any any (msg:"NetTap owner rule self-test"; dns.query;
+#     content:"nettap-selftest.invalid"; nocase; sid:1999999; rev:1;)
+OWNER_TEST_SID = 1999999
+OWNER_TEST_DOMAIN = "nettap-selftest.invalid"
+
+
+def owner_fixtures() -> list:
+    """The self-test query, expected to alert or not as NETTAP_OWNER_FIXTURE (present|absent) says.
+    None unless the check script asks: the rule is only loaded while it runs."""
+    expect = os.environ.get("NETTAP_OWNER_FIXTURE")
+    if expect not in ("present", "absent"):
+        return []
+    hit = {"sid": OWNER_TEST_SID, "src": HOME_DEVICE, "present": expect == "present"}
+    return [dns_fixture("owner-selftest", OWNER_TEST_DOMAIN, [hit])]
+
+
 def rule_fixtures(rules_dir: str | None) -> list:
     """IPFire Malware/Phishing hits, no disabled IPFire category on the owner's DoH, and an Echap
     stalkerware hit, built from the ruleset in rules_dir. SKIPPED when it doesn't have the rule."""
@@ -369,7 +386,7 @@ def diff_sids(out_a: str, out_b: str) -> int:
 
 
 def write_fixtures(pcap_dir: str, rules_dir: str | None = None) -> None:
-    for i, fixture in enumerate(FIXTURES + rule_fixtures(rules_dir)):
+    for i, fixture in enumerate(FIXTURES + rule_fixtures(rules_dir) + owner_fixtures()):
         if "skip" in fixture:
             print(f"   skipped {fixture['name']}: {fixture['skip']}")
             continue
@@ -544,7 +561,7 @@ def print_fixtures(alerts: list, out_dir: str, rules_dir: str | None = None) -> 
     print()
     print("Fixtures:")
     failed = 0
-    for fixture in FIXTURES + rule_fixtures(rules_dir):
+    for fixture in FIXTURES + rule_fixtures(rules_dir) + owner_fixtures():
         result, reason = check_fixture(fixture, seen, met)
         failed += result == "FAIL"
         print(f"   {result:<8} {fixture['name']}" + (f" — {reason}" if reason else ""))

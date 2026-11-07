@@ -66,7 +66,10 @@ function stubApi(gets: Record<string, unknown>, writes: Record<string, Reply> = 
 function page(live: object = {}, etpro: object = ETPRO_OFF) {
 	return {
 		'/api/suricata/rules/live': { ...LIVE, ...live },
-		'/api/suricata/rules/custom': { content: '' },
+		// OLD CODE START — NET-191 slice 3: the owner rules reply must carry its limits, or the card shows its error state
+		// '/api/suricata/rules/custom': { content: '' },
+		// OLD CODE END
+		'/api/suricata/rules/custom': { content: '', rule_count: 0, max_rules: 2000, max_bytes: 262144 },
 		'/api/suricata/rules/commercial': etpro,
 	};
 }
@@ -222,6 +225,14 @@ describe('Suricata rules page — ET Pro card', () => {
 		render(Page);
 
 		expect(screen.getByText('Loading the ET Pro status')).toBeInTheDocument();
+	});
+
+	it('takes the full width, like the own-rules editor', async () => {
+		stubApi(page());
+		render(Page);
+
+		const field = await screen.findByLabelText('ET Pro code');
+		expect(field.closest('.card')).toHaveClass('c-12');
 	});
 
 	it('shows its error state and retries', async () => {

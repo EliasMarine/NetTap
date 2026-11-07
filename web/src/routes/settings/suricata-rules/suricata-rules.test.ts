@@ -14,8 +14,10 @@ vi.mock('$lib/api/suricata-rules', () => ({
 	getRuleStats: vi.fn(),
 	getUpdateSchedule: vi.fn(),
 	setUpdateSchedule: vi.fn(),
-	uploadCustomRules: vi.fn(),
-	getCustomRules: vi.fn(),
+	// OLD CODE START — NET-191 slice 3: retired; the owner rules calls are tested in $lib/api/suricata-rules.test.ts
+	// uploadCustomRules: vi.fn(),
+	// getCustomRules: vi.fn(),
+	// OLD CODE END
 	// OLD CODE START — NET-191 slice 2: retired with Snort Subscriber
 	// configureCommercial: vi.fn(),
 	// getCommercialConfig: vi.fn(),
@@ -30,8 +32,10 @@ import {
 	getRuleStats,
 	getUpdateSchedule,
 	setUpdateSchedule,
-	uploadCustomRules,
-	getCustomRules,
+	// OLD CODE START — NET-191 slice 3: retired
+	// uploadCustomRules,
+	// getCustomRules,
+	// OLD CODE END
 	// OLD CODE START — NET-191 slice 2: retired with Snort Subscriber
 	// configureCommercial,
 	// getCommercialConfig,
@@ -109,16 +113,18 @@ describe('suricata-rules page data loading', () => {
 		expect(setUpdateSchedule).toHaveBeenCalledWith('weekly');
 	});
 
-	it('uploadCustomRules sends content', async () => {
-		vi.mocked(uploadCustomRules).mockResolvedValue({
-			success: true,
-			rules_written: 2,
-			file: '/tmp/custom.rules',
-		});
-
-		const result = await uploadCustomRules('alert tcp any any -> any any (msg:"test";)');
-		expect(result.rules_written).toBe(2);
-	});
+	// OLD CODE START — NET-191 slice 3: uploadCustomRules is retired; saveOwnerRules is tested in $lib/api/suricata-rules.test.ts
+	// it('uploadCustomRules sends content', async () => {
+	// 	vi.mocked(uploadCustomRules).mockResolvedValue({
+	// 		success: true,
+	// 		rules_written: 2,
+	// 		file: '/tmp/custom.rules',
+	// 	});
+	//
+	// 	const result = await uploadCustomRules('alert tcp any any -> any any (msg:"test";)');
+	// 	expect(result.rules_written).toBe(2);
+	// });
+	// OLD CODE END
 
 	// OLD CODE START — NET-191 slice 2: configureCommercial and getCommercialConfig are retired; the ET Pro calls are tested in $lib/api/suricata-rules.test.ts
 	// it('configureCommercial sends type and key', async () => {

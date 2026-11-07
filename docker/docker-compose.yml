@@ -522,7 +522,14 @@ services:
       # sets threshold-file: /etc/nettap/suricata-threshold.config (device-local suppressions; /etc/nettap
       # is mounted below). Missing file = a Suricata warning, not a failure.
       - ../config/suricata/nettap.yaml:/opt/suricata/include-configs/nettap.yaml:ro
-      - ../config/suricata/update-sources.yaml:/etc/suricata/update-sources.yaml:ro
+      # OLD CODE START — NET-191 slice 3: suricata-update never read it (the sources come from
+      # SURICATA_UPDATE_ENABLE_SOURCES); the file stays for the legacy source endpoints
+      # - ../config/suricata/update-sources.yaml:/etc/suricata/update-sources.yaml:ro
+      # OLD CODE END
+      # NET-191 slice 3: the owner's own rules (owner.rules), written by the daemon after Suricata's
+      # test. Malcolm lists SURICATA_CUSTOM_RULES_DIR/**/*.rules (/opt/suricata/rules) in rule-files at
+      # start; the daemon creates owner.rules before this container starts (depends_on below).
+      - suricata-custom-rules:/opt/suricata/rules/custom:ro
       # Capture settings written by the daemon (capture.env) + their loader
       - /etc/nettap:/etc/nettap:ro
       - ../config/capture/nettap-capture-env.sh:/usr/local/bin/nettap-capture-env.sh:ro
@@ -916,6 +923,10 @@ services:
       # Suricata's rules lock and update status record (NET-191; rw in suricata-live too). Under
       # /var/run like daemon-auth so it lands in the tmpfs; the daemon reads /run/nettap-rules.
       - nettap-rules-state:/var/run/nettap-rules
+      # NET-191 slice 3: the owner rules (rw here, ro in suricata-live) and the snapshots Suricata's
+      # test runs on. Staging is never mounted in suricata-live, so nothing in it is ever loaded.
+      - suricata-custom-rules:/var/lib/nettap-suricata-custom
+      - nettap-rules-staging:/var/lib/nettap-rules-staging
     environment:
       <<: *opensearch-env
       # Override OPENSEARCH_URL for host networking — Docker DNS (opensearch:9200)
@@ -1223,6 +1234,11 @@ volumes:
   suricata-rules:
   # Suricata rule updates (NET-191): rules.lock, update-status.json, update-in-progress, last-good → gen-*
   nettap-rules-state:
+  # Owner rules (NET-191 slice 3): owner.rules and owner.rules.prev only. Back up owner.rules
+  # before removing this volume.
+  suricata-custom-rules:
+  # Snapshots for Suricata's test of owner rules; never mounted in suricata-live
+  nettap-rules-staging:
 
   # NetTap data volumes
   storage-data:
