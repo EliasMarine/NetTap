@@ -15,10 +15,16 @@ import { verifyToken, hasUsers } from '$lib/server/auth.js';
 // const PUBLIC_PATHS = ['/login', '/setup', '/api/auth', '/api/setup', '/api/bridge', '/go-live', '/api/tools', '/api/lookup', '/tools', '/lookup'];
 // OLD CODE END
 
-/** Paths that never require authentication.
- * /api/tools/* and /api/lookup/* are public so tools pages work without auth.
- */
-const PUBLIC_PATHS = ['/login', '/api/auth', '/api/tools', '/api/lookup', '/tools', '/lookup'];
+// OLD CODE START — NET-193: the tools and lookups answered without a login, so anyone on the
+// LAN could make the appliance ping, trace and resolve hosts and read device names (2026-11-07)
+// /** Paths that never require authentication.
+//  * /api/tools/* and /api/lookup/* are public so tools pages work without auth.
+//  */
+// const PUBLIC_PATHS = ['/login', '/api/auth', '/api/tools', '/api/lookup', '/tools', '/lookup'];
+// OLD CODE END
+
+/** Paths that never require authentication. */
+const PUBLIC_PATHS = ['/login', '/api/auth'];
 
 /** Paths that are public only until the first admin exists.
  * The setup wizard (/setup, /api/setup/*) and Go Live (/go-live, /api/bridge/*)
@@ -38,13 +44,30 @@ const FIRST_RUN_REQUESTS = new Set([
 	'POST /api/integrations/unifi/test',
 ]);
 
+/** `pathname` is `base` or below it: whole path segments, so '/login' never opens '/loginx'. */
+function isUnder(pathname: string, base: string): boolean {
+	return pathname === base || pathname.startsWith(`${base}/`);
+}
+
+// OLD CODE START — NET-193: a bare prefix, so a future '/api/auth-tokens' or '/setupx' would be open too
+// function isPublicPath(pathname: string): boolean {
+// 	return PUBLIC_PATHS.some((p) => pathname.startsWith(p));
+// }
+//
+// function isFirstRunPath(method: string, pathname: string): boolean {
+// 	return (
+// 		FIRST_RUN_PATHS.some((p) => pathname.startsWith(p)) ||
+// 		FIRST_RUN_REQUESTS.has(`${method} ${pathname}`)
+// 	);
+// }
+// OLD CODE END
 function isPublicPath(pathname: string): boolean {
-	return PUBLIC_PATHS.some((p) => pathname.startsWith(p));
+	return PUBLIC_PATHS.some((p) => isUnder(pathname, p));
 }
 
 function isFirstRunPath(method: string, pathname: string): boolean {
 	return (
-		FIRST_RUN_PATHS.some((p) => pathname.startsWith(p)) ||
+		FIRST_RUN_PATHS.some((p) => isUnder(pathname, p)) ||
 		FIRST_RUN_REQUESTS.has(`${method} ${pathname}`)
 	);
 }
