@@ -127,6 +127,28 @@ def connection_direction(src: Any, dst: Any, lan_subnets: list) -> str:
     return "unknown"
 
 
+def country_filter(country: str) -> dict:
+    """Rows whose place (see _format_connection) is in this country: the destination's
+    country, or the source's when the destination has none."""
+    code = country.upper()
+    return {
+        "bool": {
+            "should": [
+                {"term": {"destination.geo.country_iso_code": code}},
+                {
+                    "bool": {
+                        "must": [{"term": {"source.geo.country_iso_code": code}}],
+                        "must_not": [
+                            {"exists": {"field": "destination.geo.country_iso_code"}}
+                        ],
+                    }
+                },
+            ],
+            "minimum_should_match": 1,
+        }
+    }
+
+
 class LiveConnectionTracker:
     """Tracks active connections from OpenSearch with in-memory caching."""
 
@@ -273,10 +295,14 @@ class LiveConnectionTracker:
         if proto:
             filters.append({"term": {"network.transport": proto.lower()}})
 
+        # OLD CODE START — 2026-11-07 (live globe): destination only, so an inbound row never matched
+        # if country:
+        #     filters.append(
+        #         {"term": {"destination.geo.country_iso_code": country.upper()}}
+        #     )
+        # OLD CODE END
         if country:
-            filters.append(
-                {"term": {"destination.geo.country_iso_code": country.upper()}}
-            )
+            filters.append(country_filter(country))
 
         query = {
             "size": min(limit, 500),
@@ -312,7 +338,9 @@ class LiveConnectionTracker:
     def _format_connection(self, source: dict[str, Any]) -> dict[str, Any]:
         """Format a raw OpenSearch hit _source into a clean connection dict.
 
-        Includes geo coordinates, city, ASN, and org for map visualization.
+        Includes geo coordinates, city, ASN, and org for map visualization. They describe the
+        remote end: the destination, or the source when only the source has a country (an
+        inbound row); ``geo_ip`` is that end's address, or "" when neither end has a country.
         The ``has_alert`` flag is initialized to False and set by the caller
         after cross-referencing with Suricata alerts.
         """
@@ -325,8 +353,22 @@ class LiveConnectionTracker:
         # OLD CODE END
         network = source.get("network", {}) or {}
         event = source.get("event", {}) or {}
-        geo = dst.get("geo", {}) or {}
-        dst_as = dst.get("as", {}) or {}
+        # OLD CODE START — 2026-11-07 (live globe): the destination only, so an inbound row
+        # (Malcolm geolocates public addresses only) had no place
+        # geo = dst.get("geo", {}) or {}
+        # dst_as = dst.get("as", {}) or {}
+        # OLD CODE END
+        # The row's place: the destination's when it has a country, else the source's when that
+        # has one. The dest_* fields keep their names and mean "the remote end" (geo_ip says which).
+        dst_geo = dst.get("geo", {}) or {}
+        src_geo = src.get("geo", {}) or {}
+        use_src = not dst_geo.get("country_iso_code") and bool(
+            src_geo.get("country_iso_code")
+        )
+        place = src if use_src else dst
+        geo = src_geo if use_src else dst_geo
+        dst_as = place.get("as", {}) or {}
+        geo_ip = place.get("ip", "") if geo.get("country_iso_code") else ""
 
         # OLD CODE START — 2026-11-06 (O11): payload bytes, while the top talkers, bandwidth and
         # the drawer's 24 h total sum source.bytes + destination.bytes
@@ -405,6 +447,7 @@ class LiveConnectionTracker:
             "dest_city": geo.get("city_name", ""),
             "dest_asn": dst_as.get("number"),
             "dest_org": org_name,
+            "geo_ip": geo_ip,
             "has_alert": False,
         }
 
@@ -493,10 +536,14 @@ class LiveConnectionTracker:
         if proto:
             conn_filters.append({"term": {"network.transport": proto.lower()}})
 
+        # OLD CODE START — 2026-11-07 (live globe): destination only, so an inbound row never matched
+        # if country:
+        #     conn_filters.append(
+        #         {"term": {"destination.geo.country_iso_code": country.upper()}}
+        #     )
+        # OLD CODE END
         if country:
-            conn_filters.append(
-                {"term": {"destination.geo.country_iso_code": country.upper()}}
-            )
+            conn_filters.append(country_filter(country))
 
         # --- Build must_not clauses (excluded IPs) ---
         must_not_clauses: list[dict] = []
@@ -987,6 +1034,7 @@ class LiveConnectionTracker:
         src_ip: str,
         dst_ip: str,
         dst_port: int | None = None,
+        geo_ip: str | None = None,
     ) -> dict[str, Any]:
         """Fetch detailed information for a specific src→dst connection pair.
 
@@ -999,6 +1047,7 @@ class LiveConnectionTracker:
             src_ip: Source IP address.
             dst_ip: Destination IP address.
             dst_port: Optional destination port filter.
+            geo_ip: The end to locate (the row's geo_ip); None means dst_ip.
 
         Returns:
             Detail payload dict with geo, alerts, alert_count, and history.
@@ -1159,7 +1208,11 @@ class LiveConnectionTracker:
         history_result = self._client.search(index=NETWORK_INDEX, body=history_query)
 
         # --- Parse session geo/ASN ---
-        geo_info = self._parse_session_geo(session_result, dst_ip)
+        # OLD CODE START — 2026-11-07 (live globe): always the destination, so an inbound row's
+        # drawer showed the LAN device instead of the remote end
+        # geo_info = self._parse_session_geo(session_result, dst_ip)
+        # OLD CODE END
+        geo_info = self._parse_session_geo(session_result, geo_ip or dst_ip)
 
         # --- Parse alerts ---
         alert_hits = alert_result.get("hits", {}).get("hits", [])

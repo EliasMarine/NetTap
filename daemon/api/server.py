@@ -57,6 +57,7 @@ from api.baseline import register_baseline_routes
 from api.health_monitor import register_health_monitor_routes
 from api.investigations import register_investigation_routes
 from api.settings import register_settings_routes
+from api.home_location import register_home_location_routes
 from services.capture_config import load_capture_config
 from services.excluded_ips import (
     load_excluded_ips,
@@ -1189,6 +1190,7 @@ def create_app(
     app["lan_filter"] = detect_and_build_lan_filter(storage._client)
     logger.info("LAN filter initialized")
     register_settings_routes(app, env_file=env_file)
+    register_home_location_routes(app)
 
     # Natural language search (query parser + OpenSearch execution)
     nl_search_parser = NLSearchParser()
