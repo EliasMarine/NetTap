@@ -27,9 +27,9 @@
 </p>
 
 <p align="center">
-  <a href="docs/assets/media/nettap-tour.mp4"><img src="docs/assets/media/nettap-tour.gif" alt="A short captioned tour of the NetTap dashboard: Home, the Live monitor globe, Devices, Alerts, Threats and Certificates" width="800"></a>
+  <a href="https://eliasmarine.github.io/NetTap/"><img src="docs/assets/media/nettap-tour.gif" alt="A short captioned tour of the NetTap dashboard: Home, the Live monitor globe, Devices, Alerts, Threats and Certificates" width="800"></a>
   <br>
-  <sub>A short tour (demo data). Click for the full-quality video.</sub>
+  <sub>A short tour (demo data). Click to watch the full-quality video on the docs site.</sub>
 </p>
 
 NetTap is a self-hosted network monitor for homes and small businesses. Put it on a small x86 box on your network and it records the traffic, flags threats and shows it all in a web dashboard. It runs CISA's [Malcolm](https://github.com/cisagov/Malcolm) stack (Zeek, Suricata, OpenSearch) and adds an installer, a setup wizard, its own dashboard and automatic storage management.
