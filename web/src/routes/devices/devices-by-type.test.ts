@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, within, cleanup } from '@testing-library/svelte';
+// OLD CODE: import { render, screen, fireEvent, within, cleanup } from '@testing-library/svelte'; (NET-201: cleanup only served the removed layout test)
+import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
@@ -71,11 +72,24 @@ function stubHomeDaemon(): void {
 // 	return labelEl?.nextElementSibling?.textContent?.trim();
 // }
 // OLD CODE END
-/** A By type card's figure, found by the card's device name and the figure's label. */
+// OLD CODE START — NET-201: By type has no cards now, only its list
+// /** A By type card's figure, found by the card's device name and the figure's label. */
+// function stat(device: string, label: string): string | undefined {
+// 	const card = screen.getByText(device).closest('.dev-card');
+// 	const labelEl = Array.from(card?.querySelectorAll('.meta-k') ?? []).find((el) => el.textContent?.trim() === label);
+// 	return labelEl?.nextElementSibling?.textContent?.trim();
+// }
+// OLD CODE END
+/** A By type row, found by its device's name (the new-device banner links devices too, so only the By type panel). */
+function typeRow(device: string): HTMLTableRowElement {
+	return within(screen.getByRole('tabpanel', { name: 'By type' })).getByRole('button', { name: `Open ${device}` }).closest('tr')!;
+}
+
+/** A By type row's figure, found by its device's name and the column's header. */
 function stat(device: string, label: string): string | undefined {
-	const card = screen.getByText(device).closest('.dev-card');
-	const labelEl = Array.from(card?.querySelectorAll('.meta-k') ?? []).find((el) => el.textContent?.trim() === label);
-	return labelEl?.nextElementSibling?.textContent?.trim();
+	const row = typeRow(device);
+	const headers = [...row.closest('table')!.querySelectorAll('thead th')].map((th) => th.textContent?.trim());
+	return row.children[headers.indexOf(label)]?.textContent?.trim();
 }
 
 describe('Devices By type — device cards carry the range traffic', () => {
@@ -154,22 +168,23 @@ describe('Devices By type — what a card counts', () => {
 		render(Page);
 		await within(await screen.findByRole('tabpanel', { name: 'By type' })).findByText('Gateway');
 		expect(screen.getByText('Traffic in the last 24 hours from the listed addresses each device has used.')).toBeInTheDocument();
-		// the new-device banner links Gateway too, so read the card in the By type panel
-		const gateway = within(screen.getByRole('tabpanel', { name: 'By type' })).getByRole('link', { name: /Gateway/ });
-		expect(within(gateway).getByText('(2 of 3 addresses listed)')).toBeInTheDocument();
-		const laptop = within(screen.getByRole('tabpanel', { name: 'By type' })).getByRole('link', { name: /Old laptop/ });
-		expect(within(laptop).queryByText(/addresses listed/)).not.toBeInTheDocument();
+		// OLD CODE START — NET-201: the card's "(2 of 3 addresses listed)" note; the row's Address cell says it
+		// const gateway = within(screen.getByRole('tabpanel', { name: 'By type' })).getByRole('link', { name: /Gateway/ });
+		// expect(within(gateway).getByText('(2 of 3 addresses listed)')).toBeInTheDocument();
+		// const laptop = within(screen.getByRole('tabpanel', { name: 'By type' })).getByRole('link', { name: /Old laptop/ });
+		// expect(within(laptop).queryByText(/addresses listed/)).not.toBeInTheDocument();
+		// OLD CODE END
+		expect(stat('Gateway', 'Address')).toBe('192.168.1.1 +2 · 2 of 3 listed');
+		expect(stat('Old laptop', 'Address')).toBe('192.168.1.30');
 	});
 
 	it('marks New by first seen in the last 24 hours, the "New in 24 h" rule', async () => {
 		stubCards();
 		render(Page);
 		await within(await screen.findByRole('tabpanel', { name: 'By type' })).findByText('Gateway');
-		// the new-device banner links Gateway too, so read the card in the By type panel
-		const gateway = within(screen.getByRole('tabpanel', { name: 'By type' })).getByRole('link', { name: /Gateway/ });
-		expect(within(gateway).getByText('New')).toBeInTheDocument(); // is_new already cleared
-		const laptop = within(screen.getByRole('tabpanel', { name: 'By type' })).getByRole('link', { name: /Old laptop/ });
-		expect(within(laptop).queryByText('New')).not.toBeInTheDocument(); // first seen in October
+		// OLD CODE: the same checks on the cards' links (NET-201: By type is the list only)
+		expect(within(typeRow('Gateway')).getByText('New')).toBeInTheDocument(); // is_new already cleared
+		expect(within(typeRow('Old laptop')).queryByText('New')).not.toBeInTheDocument(); // first seen in October
 	});
 });
 
@@ -204,7 +219,8 @@ describe('Devices — By type', () => {
 		vi.clearAllMocks();
 	});
 
-	it('opens on By type in mirror mode, with the cards grouped by type and the list traffic merged', async () => {
+	// OLD CODE: it('opens on By type in mirror mode, with the cards grouped by type and the list traffic merged', … (NET-201: rows, not cards)
+	it('opens on By type in mirror mode, with the rows grouped by type and the list traffic merged', async () => {
 		stubDaemon({
 			'/api/capture/mode': MIRROR,
 			'/api/devices/registry': { devices: [PHONE, PLUG], total: 2 },
@@ -216,15 +232,23 @@ describe('Devices — By type', () => {
 		const phones = await screen.findByRole('region', { name: 'Phones and tablets' });
 		expect(screen.getByRole('tab', { name: 'By type' })).toHaveAttribute('aria-selected', 'true');
 		expect(screen.getByRole('region', { name: 'IoT devices' })).toBeInTheDocument();
-		const card = within(phones).getByRole('link');
-		expect(card).toHaveAttribute('href', `/devices/mac/${encodeURIComponent('aa:01')}`);
-		expect(within(card).getByText('Kitchen iPad')).toBeInTheDocument();
-		expect(within(card).getByText('192.168.1.21')).toBeInTheDocument();
+		// OLD CODE START — NET-201: the phone's card link and the plug's card
+		// const card = within(phones).getByRole('link');
+		// expect(card).toHaveAttribute('href', `/devices/mac/${encodeURIComponent('aa:01')}`);
+		// const plug = within(screen.getByRole('region', { name: 'IoT devices' })).getByRole('link');
+		// OLD CODE END
+		expect(within(phones).queryByRole('link')).not.toBeInTheDocument();
+		const row = typeRow('Kitchen iPad');
+		expect(within(row).getByText('Kitchen iPad')).toBeInTheDocument();
+		expect(within(row).getByText('192.168.1.21')).toBeInTheDocument();
 		// the list's traffic for its IP, as Home merged it
-		expect(within(card).getByText('2.0 KB')).toBeInTheDocument();
-		expect(within(card).getByText('12')).toBeInTheDocument();
+		expect(within(row).getByText('2.0 KB')).toBeInTheDocument();
+		expect(within(row).getByText('12')).toBeInTheDocument();
+		await fireEvent.click(within(row).getByRole('button', { name: 'Open Kitchen iPad' }));
+		const { goto } = await import('$app/navigation');
+		expect(goto).toHaveBeenCalledWith(`/devices/mac/${encodeURIComponent('aa:01')}`);
 		// the plug's IP isn't in a complete list and it was seen in range: still unknown, not 0
-		const plug = within(screen.getByRole('region', { name: 'IoT devices' })).getByRole('link');
+		const plug = typeRow('Smart plug');
 		expect(within(plug).getAllByText('—')).toHaveLength(2);
 		// the new-device banner moved here from Home, fed from the same registry
 		expect(screen.getByText('1 new device detected')).toBeInTheDocument();
@@ -299,8 +323,10 @@ describe('Devices — By type', () => {
 // ---- NET-180: cards that line up, and a compact List layout ----------------------------------
 // The owner: some cards had Traffic, Connections and Last seen higher than their neighbours (a card
 // with no maker was a line shorter), and By type had no list view.
+// NET-201: the owner then asked to drop the cards, so By type is the List layout only.
 
-describe('Devices By type — cards line up, and a List layout with the same figures', () => {
+// OLD CODE: describe('Devices By type — cards line up, and a List layout with the same figures', () => {
+describe('Devices By type — one list per type, with the same figures the cards had', () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
 		vi.clearAllMocks();
@@ -355,30 +381,36 @@ describe('Devices By type — cards line up, and a List layout with the same fig
 
 	const panel = () => screen.getByRole('tabpanel', { name: 'By type' });
 	const computers = () => screen.getByRole('region', { name: 'Computers' });
-	const showList = () => fireEvent.click(within(screen.getByRole('group', { name: 'Layout' })).getByRole('button', { name: 'List' }));
-	const showCards = () => fireEvent.click(within(screen.getByRole('group', { name: 'Layout' })).getByRole('button', { name: 'Cards' }));
+	// OLD CODE START — NET-201: no Layout switch, so nothing to show
+	// const showList = () => fireEvent.click(within(screen.getByRole('group', { name: 'Layout' })).getByRole('button', { name: 'List' }));
+	// const showCards = () => fireEvent.click(within(screen.getByRole('group', { name: 'Layout' })).getByRole('button', { name: 'Cards' }));
+	// OLD CODE END
 	const listTable = () => screen.getByRole('table', { name: 'Computers, as a list' });
 	const bodyRows = () => within(listTable()).getAllByRole('row').slice(1);
 	const rowNames = () => bodyRows().map((r) => r.querySelector('.who-name')?.textContent);
-	const cardNames = () => [...computers().querySelectorAll('.dev-card .dev-name')].map((el) => el.textContent);
-	const card = (name: string) => within(panel()).getByRole('link', { name: new RegExp(name) });
+	// OLD CODE START — NET-201: no cards
+	// const cardNames = () => [...computers().querySelectorAll('.dev-card .dev-name')].map((el) => el.textContent);
+	// const card = (name: string) => within(panel()).getByRole('link', { name: new RegExp(name) });
+	// OLD CODE END
 	const row = (name: string) => within(listTable()).getByRole('button', { name: `Open ${name}` }).closest('tr')!;
 
-	/** What a card says: maker line, address, the three figures. */
-	function cardFigures(name: string) {
-		const el = card(name);
-		const fig = (label: string) =>
-			[...el.querySelectorAll('.meta-k')].find((k) => k.textContent === label)?.nextElementSibling?.textContent?.trim();
-		return {
-			maker: el.querySelector('.dev-card-about > span')?.textContent?.trim(),
-			address: el.querySelector('.dev-card-top .mono')?.textContent?.trim(),
-			traffic: fig('Traffic'),
-			connections: fig('Connections'),
-			lastSeen: fig('Last seen'),
-		};
-	}
+	// OLD CODE START — NET-201: no cards
+	// /** What a card says: maker line, address, the three figures. */
+	// function cardFigures(name: string) {
+	// 	const el = card(name);
+	// 	const fig = (label: string) =>
+	// 		[...el.querySelectorAll('.meta-k')].find((k) => k.textContent === label)?.nextElementSibling?.textContent?.trim();
+	// 	return {
+	// 		maker: el.querySelector('.dev-card-about > span')?.textContent?.trim(),
+	// 		address: el.querySelector('.dev-card-top .mono')?.textContent?.trim(),
+	// 		traffic: fig('Traffic'),
+	// 		connections: fig('Connections'),
+	// 		lastSeen: fig('Last seen'),
+	// 	};
+	// }
+	// OLD CODE END
 
-	/** What a List row says, in the same shape. */
+	/** What a List row says: maker, address, the three figures. */
 	function rowFigures(name: string) {
 		const cells = within(row(name)).getAllByRole('cell').map((c) => c.textContent?.trim());
 		return {
@@ -394,41 +426,62 @@ describe('Devices By type — cards line up, and a List layout with the same fig
 		stubDaemon(replies);
 		const view = render(Page);
 		await within(await screen.findByRole('tabpanel', { name: 'By type' })).findByText(A);
-		// the list's traffic has merged, in either layout
+		// the list's traffic has merged
 		await vi.waitFor(() => expect(within(panel()).getByText('1.0 MB')).toBeInTheDocument());
 		return view;
 	}
 
-	it('gives every card the same rows: top, maker line ("Maker unknown" if none, then any addresses note), stats', async () => {
-		await openByType();
-		for (const el of computers().querySelectorAll('.dev-card')) {
-			const rows = [...el.children].map((c) => ['dev-card-top', 'dev-card-about', 'dev-card-stats'].find((k) => c.classList.contains(k)));
-			expect(rows).toEqual(['dev-card-top', 'dev-card-about', 'dev-card-stats']);
-		}
-		expect(within(card(A)).getByText('Maker unknown')).toBeInTheDocument();
-		// the note sits above the stats, in the maker row
-		const note = within(card(B)).getByText('(2 of 3 addresses listed)');
-		expect(note.closest('.dev-card-about')).not.toBeNull();
-		expect(note.compareDocumentPosition(card(B).querySelector('.dev-card-stats')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-	});
+	// OLD CODE START — NET-201: the cards (and this check that their rows line up) are gone
+	// it('gives every card the same rows: top, maker line ("Maker unknown" if none, then any addresses note), stats', async () => {
+	// 	await openByType();
+	// 	for (const el of computers().querySelectorAll('.dev-card')) {
+	// 		const rows = [...el.children].map((c) => ['dev-card-top', 'dev-card-about', 'dev-card-stats'].find((k) => c.classList.contains(k)));
+	// 		expect(rows).toEqual(['dev-card-top', 'dev-card-about', 'dev-card-stats']);
+	// 	}
+	// 	expect(within(card(A)).getByText('Maker unknown')).toBeInTheDocument();
+	// 	// the note sits above the stats, in the maker row
+	// 	const note = within(card(B)).getByText('(2 of 3 addresses listed)');
+	// 	expect(note.closest('.dev-card-about')).not.toBeNull();
+	// 	expect(note.compareDocumentPosition(card(B).querySelector('.dev-card-stats')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+	// });
+	// OLD CODE END
 
-	it('shows the same devices in the same order with the same figures in List as in Cards', async () => {
+	// OLD CODE START — NET-201: Cards first, then the same figures in List
+	// it('shows the same devices in the same order with the same figures in List as in Cards', async () => {
+	// 	await openByType();
+	// 	const order = cardNames();
+	// 	// most recent first, though C has far more traffic than A
+	// 	expect(order).toEqual([A, B, C, D, E]);
+	// 	const figures = Object.fromEntries(order.map((n) => [n, cardFigures(n!)]));
+	// 	expect(figures[A]).toMatchObject({ maker: 'Maker unknown', traffic: '512 B', connections: '9' });
+	// 	expect(figures[D]).toMatchObject({ traffic: '—', connections: '—' }); // unknown, not 0
+	// 	expect(figures[E]).toMatchObject({ traffic: '0 B', connections: '0' }); // a real zero
+	// 	expect(figures[B]).toMatchObject({ traffic: '2.0 KB', connections: (1200).toLocaleString() });
+	//
+	// 	await showList();
+	// 	expect(screen.queryByRole('link', { name: new RegExp(A) })).not.toBeInTheDocument();
+	// 	// one table per type group, under the same group head
+	// 	expect(within(computers()).getByRole('table')).toBe(listTable());
+	// 	expect(rowNames()).toEqual(order);
+	// 	for (const name of order) expect(rowFigures(name!), name!).toEqual(figures[name!]);
+	// 	// partial address coverage: the first address, how many more, and how many were listed
+	// 	expect(row(B).querySelector('td:nth-child(2)')?.textContent).toBe('192.168.1.11 +2 · 2 of 3 listed');
+	// 	expect(row(A).querySelector('td:nth-child(2)')?.textContent).toBe('192.168.1.10');
+	// });
+	// OLD CODE END
+	// OLD CODE: it('shows the same devices in the same order with the same figures in List as in Cards', … (NET-201: the list alone, with the figures the cards had)
+	it('lists the devices most recent first, with the figures the cards had', async () => {
 		await openByType();
-		const order = cardNames();
-		// most recent first, though C has far more traffic than A
-		expect(order).toEqual([A, B, C, D, E]);
-		const figures = Object.fromEntries(order.map((n) => [n, cardFigures(n!)]));
-		expect(figures[A]).toMatchObject({ maker: 'Maker unknown', traffic: '512 B', connections: '9' });
-		expect(figures[D]).toMatchObject({ traffic: '—', connections: '—' }); // unknown, not 0
-		expect(figures[E]).toMatchObject({ traffic: '0 B', connections: '0' }); // a real zero
-		expect(figures[B]).toMatchObject({ traffic: '2.0 KB', connections: (1200).toLocaleString() });
-
-		await showList();
+		expect(screen.queryByRole('group', { name: 'Layout' })).not.toBeInTheDocument();
 		expect(screen.queryByRole('link', { name: new RegExp(A) })).not.toBeInTheDocument();
 		// one table per type group, under the same group head
 		expect(within(computers()).getByRole('table')).toBe(listTable());
-		expect(rowNames()).toEqual(order);
-		for (const name of order) expect(rowFigures(name!), name!).toEqual(figures[name!]);
+		// most recent first, though C has far more traffic than A
+		expect(rowNames()).toEqual([A, B, C, D, E]);
+		expect(rowFigures(A)).toMatchObject({ maker: 'Maker unknown', traffic: '512 B', connections: '9' });
+		expect(rowFigures(D)).toMatchObject({ traffic: '—', connections: '—' }); // unknown, not 0
+		expect(rowFigures(E)).toMatchObject({ traffic: '0 B', connections: '0' }); // a real zero
+		expect(rowFigures(B)).toMatchObject({ traffic: '2.0 KB', connections: (1200).toLocaleString() });
 		// partial address coverage: the first address, how many more, and how many were listed
 		expect(row(B).querySelector('td:nth-child(2)')?.textContent).toBe('192.168.1.11 +2 · 2 of 3 listed');
 		expect(row(A).querySelector('td:nth-child(2)')?.textContent).toBe('192.168.1.10');
@@ -436,7 +489,7 @@ describe('Devices By type — cards line up, and a List layout with the same fig
 
 	it('sorts every List column both ways, figures by value, unknowns last', async () => {
 		await openByType();
-		await showList();
+		// OLD CODE: await showList(); (NET-201: the list is all there is)
 		expect(screen.getByRole('columnheader', { name: 'Last seen' })).toHaveAttribute('aria-sort', 'descending');
 		// [header, descending, ascending]: Traffic by bytes, Connections by count, Last seen by time, not by their text
 		const SORTS: [string, string[], string[]][] = [
@@ -461,14 +514,15 @@ describe('Devices By type — cards line up, and a List layout with the same fig
 	it('opens the device page from a List row', async () => {
 		const { goto } = await import('$app/navigation');
 		await openByType();
-		await showList();
+		// OLD CODE: await showList(); (NET-201)
 		await fireEvent.click(within(listTable()).getByRole('button', { name: `Open ${B}` }));
 		expect(goto).toHaveBeenCalledWith(`/devices/mac/${encodeURIComponent('aa:11')}`);
 	});
 
-	it('keeps the last figures on a failed refresh, the same in both layouts', async () => {
+	// OLD CODE: it('keeps the last figures on a failed refresh, the same in both layouts', … (NET-201: one layout)
+	it('keeps the last figures on a failed refresh', async () => {
 		await openByType();
-		await showList();
+		// OLD CODE: await showList(); (NET-201)
 		const before = Object.fromEntries([A, B, C, D, E].map((n) => [n, rowFigures(n)]));
 
 		const { refreshPage } = await import('$lib/stores/pageRefresh');
@@ -476,48 +530,56 @@ describe('Devices By type — cards line up, and a List layout with the same fig
 		await refreshPage();
 		expect(await within(panel()).findByText("Couldn't refresh devices; showing the last figures loaded.")).toBeInTheDocument();
 		for (const name of [A, B, C, D, E]) expect(rowFigures(name), name).toEqual(before[name]);
-		await showCards();
-		for (const name of [A, B, C, D, E]) expect(cardFigures(name), name).toEqual(before[name]);
+		// OLD CODE: await showCards(); and the same check on the cards (NET-201: no cards)
 	});
 
-	it('remembers the layout in this browser, and shows Cards when the stored value is unknown', async () => {
-		const first = await openByType();
-		await showList();
-		expect(localStorage.getItem('nettap-devices-layout')).toBe('list');
-		first.unmount();
-
+	// OLD CODE START — NET-201: no layout to remember (or to fall back from when storage is blocked)
+	// it('remembers the layout in this browser, and shows Cards when the stored value is unknown', async () => {
+	// 	const first = await openByType();
+	// 	await showList();
+	// 	expect(localStorage.getItem('nettap-devices-layout')).toBe('list');
+	// 	first.unmount();
+	//
+	// 	await openByType();
+	// 	expect(listTable()).toBeInTheDocument();
+	// 	expect(within(screen.getByRole('group', { name: 'Layout' })).getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
+	// 	cleanup();
+	//
+	// 	localStorage.setItem('nettap-devices-layout', 'grid');
+	// 	await openByType();
+	// 	expect(card(A)).toBeInTheDocument();
+	// 	expect(screen.queryByRole('table', { name: 'Computers, as a list' })).not.toBeInTheDocument();
+	// });
+	//
+	// it('falls back to Cards, and still switches, when storage is blocked', async () => {
+	// 	const blocked = () => {
+	// 		throw new DOMException('blocked', 'SecurityError');
+	// 	};
+	// 	vi.spyOn(Storage.prototype, 'getItem').mockImplementation(blocked);
+	// 	vi.spyOn(Storage.prototype, 'setItem').mockImplementation(blocked);
+	// 	await openByType();
+	// 	expect(card(A)).toBeInTheDocument();
+	// 	await showList();
+	// 	expect(listTable()).toBeInTheDocument();
+	// });
+	// OLD CODE END
+	it('shows the list even when this browser remembered the Cards layout', async () => {
+		localStorage.setItem('nettap-devices-layout', 'cards');
 		await openByType();
 		expect(listTable()).toBeInTheDocument();
-		expect(within(screen.getByRole('group', { name: 'Layout' })).getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
-		cleanup();
-
-		localStorage.setItem('nettap-devices-layout', 'grid');
-		await openByType();
-		expect(card(A)).toBeInTheDocument();
-		expect(screen.queryByRole('table', { name: 'Computers, as a list' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('group', { name: 'Layout' })).not.toBeInTheDocument();
+		expect(screen.queryByRole('link', { name: new RegExp(A) })).not.toBeInTheDocument();
 	});
 
-	it('falls back to Cards, and still switches, when storage is blocked', async () => {
-		const blocked = () => {
-			throw new DOMException('blocked', 'SecurityError');
-		};
-		vi.spyOn(Storage.prototype, 'getItem').mockImplementation(blocked);
-		vi.spyOn(Storage.prototype, 'setItem').mockImplementation(blocked);
-		await openByType();
-		expect(card(A)).toBeInTheDocument();
-		await showList();
-		expect(listTable()).toBeInTheDocument();
-	});
-
-	it('nests no link or button inside another, in either layout', async () => {
+	// OLD CODE: it('nests no link or button inside another, in either layout', … await showList(); and the check again (NET-201: one layout)
+	it('nests no link or button inside another', async () => {
 		const { container } = await openByType();
-		expectNoNestedInteractive(container);
-		await showList();
 		expectNoNestedInteractive(container);
 	});
 
 	// NET-200: the owner's photo on the card's tile and in the List row, which falls back to the icon when it fails
-	it("shows the owner's photo on the card and in the List row, and the icon if it fails to load", async () => {
+	// OLD CODE: it("shows the owner's photo on the card and in the List row, and the icon if it fails to load", … (NET-201: no card)
+	it("shows the owner's photo in the row, and the icon if it fails to load", async () => {
 		const PHOTO = '/api/devices/registry/aa:10/picture?v=0123456789abcdef';
 		const reg = LAYOUT_REPLIES['/api/devices/registry'] as { total: number; devices: Record<string, unknown>[] };
 		const withPhoto = {
@@ -525,8 +587,7 @@ describe('Devices By type — cards line up, and a List layout with the same fig
 			'/api/devices/registry': { ...reg, devices: reg.devices.map((d) => (d.display_name === A ? { ...d, picture: PHOTO } : d)) },
 		};
 		await openByType(withPhoto);
-		expect(card(A).querySelector('.tile img')).toHaveAttribute('src', PHOTO);
-		await showList();
+		// OLD CODE: expect(card(A).querySelector('.tile img')).toHaveAttribute('src', PHOTO); await showList(); (NET-201: no card)
 		const photo = row(A).querySelector('img.who-photo')!;
 		expect(photo).toHaveAttribute('src', PHOTO);
 		await fireEvent.error(photo);

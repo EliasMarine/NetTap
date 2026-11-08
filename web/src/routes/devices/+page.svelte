@@ -36,7 +36,7 @@
 	import Pills from '$lib/components/ui/Pills.svelte';
 	import SearchField from '$lib/components/ui/SearchField.svelte';
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
-	import DeviceTile from '$lib/components/ui/DeviceTile.svelte';
+	// OLD CODE: import DeviceTile from '$lib/components/ui/DeviceTile.svelte'; (NET-201: only the Cards layout used it)
 	import Bytes from '$lib/components/ui/Bytes.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
@@ -151,32 +151,34 @@
 	const urlView = $derived(VIEWS.find((v) => v.value === params.get('view'))?.value ?? null);
 	const view = $derived(pickedView ?? urlView ?? (isMirrorMode ? 'type' : 'all'));
 
-	// NET-180: By type as cards or compact rows, remembered per browser (a convenience, not data)
-	type Layout = 'cards' | 'list';
-	const LAYOUT_KEY = 'nettap-devices-layout';
-	const LAYOUTS = [
-		{ value: 'cards' as const, label: 'Cards' },
-		{ value: 'list' as const, label: 'List' },
-	];
-	let layout = $state<Layout>('cards');
-
-	/** A missing or unknown value is Cards. */
-	function readLayout(): Layout {
-		try {
-			return localStorage.getItem(LAYOUT_KEY) === 'list' ? 'list' : 'cards';
-		} catch {
-			return 'cards'; // storage blocked: the default
-		}
-	}
-
-	function pickLayout(next: Layout) {
-		layout = next;
-		try {
-			localStorage.setItem(LAYOUT_KEY, next);
-		} catch {
-			// storage blocked: the choice lasts until the page reloads
-		}
-	}
+	// OLD CODE START — NET-201: By type is the list only (the owner asked to drop the cards), so there is no layout to pick
+	// // NET-180: By type as cards or compact rows, remembered per browser (a convenience, not data)
+	// type Layout = 'cards' | 'list';
+	// const LAYOUT_KEY = 'nettap-devices-layout';
+	// const LAYOUTS = [
+	// 	{ value: 'cards' as const, label: 'Cards' },
+	// 	{ value: 'list' as const, label: 'List' },
+	// ];
+	// let layout = $state<Layout>('cards');
+	//
+	// /** A missing or unknown value is Cards. */
+	// function readLayout(): Layout {
+	// 	try {
+	// 		return localStorage.getItem(LAYOUT_KEY) === 'list' ? 'list' : 'cards';
+	// 	} catch {
+	// 		return 'cards'; // storage blocked: the default
+	// 	}
+	// }
+	//
+	// function pickLayout(next: Layout) {
+	// 	layout = next;
+	// 	try {
+	// 		localStorage.setItem(LAYOUT_KEY, next);
+	// 	} catch {
+	// 		// storage blocked: the choice lasts until the page reloads
+	// 	}
+	// }
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// Category config
@@ -362,7 +364,7 @@
 
 	const refresh = registerPageRefresh(load);
 	onMount(() => {
-		layout = readLayout();
+		// OLD CODE: layout = readLayout(); (NET-201: no layout to pick)
 		// OLD CODE START — NET-160 slice 2b-3: one load on mount; the effect below also loads on a new URL window
 		// refresh.run();
 		// OLD CODE END
@@ -776,7 +778,7 @@ OLD CODE END -->
 			<!-- OLD CODE END -->
 			<div class="type-head">
 				<p class="note">Traffic in the {words} from the listed addresses each device has used.</p>
-				<Pills ariaLabel="Layout" options={LAYOUTS} value={layout} onchange={pickLayout} />
+				<!-- OLD CODE: <Pills ariaLabel="Layout" options={LAYOUTS} value={layout} onchange={pickLayout} /> (NET-201: the list only) -->
 			</div>
 			<div class="type-groups">
 				{#each typeGroups as group (group.key)}
@@ -785,7 +787,7 @@ OLD CODE END -->
 							<h2 class="card-title" id="type-{group.key}">{group.label}</h2>
 							<span class="chip">{group.devices.length}</span>
 						</div>
-						{#if layout === 'list'}
+						<!-- OLD CODE: {#if layout === 'list'} (NET-201: By type is the list only; the Cards markup is kept below) -->
 							<div class="card dev-list">
 								<DataTable
 									ariaLabel="{group.label}, as a list"
@@ -797,31 +799,33 @@ OLD CODE END -->
 									columns={listColumns}
 								/>
 							</div>
+						<!-- OLD CODE START — NET-201: the Cards layout (NET-180), dropped at the owner's request. Its own
+						     comments are written <! - - … - - > so this one stays whole.
 						{:else}
 							<div class="grid">
 								{#each group.devices as device (device.mac)}
 									<a class="card dev-card c-4" href="/devices/mac/{encodeURIComponent(device.mac)}">
 										<span class="dev-card-top">
-											<!-- OLD CODE: <DeviceTile category={device.category} /> (NET-200) -->
+											<! - - OLD CODE: <DeviceTile category={device.category} /> (NET-200) - - >
 											<DeviceTile category={device.category} picture={device.picture} icon={device.icon} />
 											<span class="two">
 												<span class="dev-name">{cardName(device)}</span>
 												<span class="mono">{cardAddress(device)}</span>
 											</span>
-											<!-- OLD CODE START — NET-158: is_new clears on the device's next update, so the chip rarely showed -->
-											<!-- {#if device.is_new}<span class="chip is-ok">New</span>{/if} -->
-											<!-- OLD CODE END -->
+											<! - - OLD CODE START — NET-158: is_new clears on the device's next update, so the chip rarely showed - - >
+											<! - - {#if device.is_new}<span class="chip is-ok">New</span>{/if} - - >
+											<! - - OLD CODE END - - >
 											{#if isNewDevice(device)}<span class="chip is-ok">New</span>{/if}
 										</span>
-										<!-- OLD CODE START — NET-180: a card with no maker was a line shorter, so its stats sat higher
-										     than its neighbours', and the addresses note came after the stats -->
-										<!-- {#if device.manufacturer}<span class="dim vendor">{device.manufacturer}</span>{/if} -->
-										<!-- …the stats… -->
-										<!-- {#if device.ips_listed && device.ips_listed < device.ips.length}
+										<! - - OLD CODE START — NET-180: a card with no maker was a line shorter, so its stats sat higher
+										     than its neighbours', and the addresses note came after the stats - - >
+										<! - - {#if device.manufacturer}<span class="dim vendor">{device.manufacturer}</span>{/if} - - >
+										<! - - …the stats… - - >
+										<! - - {#if device.ips_listed && device.ips_listed < device.ips.length}
 											<span class="dim vendor">({device.ips_listed} of {device.ips.length} addresses listed)</span>
-										{/if} -->
-										<!-- OLD CODE END -->
-										<!-- NET-180: every card has the same three rows (top, maker, stats), each as tall as the band's tallest -->
+										{/if} - - >
+										<! - - OLD CODE END - - >
+										<! - - NET-180: every card has the same three rows (top, maker, stats), each as tall as the band's tallest - - >
 										<span class="dim vendor dev-card-about">
 											<span>{device.manufacturer || 'Maker unknown'}</span>
 											{#if partlyListed(device)}<span>({device.ips_listed} of {device.ips.length} addresses listed)</span>{/if}
@@ -835,6 +839,7 @@ OLD CODE END -->
 								{/each}
 							</div>
 						{/if}
+						OLD CODE END -->
 					</section>
 				{/each}
 			</div>
@@ -885,30 +890,35 @@ OLD CODE END -->
 </div>
 
 <style>
-	/* Layout glue the system lacks: the By type groups and their device cards */
+	/* OLD CODE: Layout glue the system lacks: the By type groups and their device cards (NET-201: no cards) */
+	/* Layout glue the system lacks: the By type groups and their lists */
 	.type-groups { display: flex; flex-direction: column; gap: var(--sp-6); }
 	.type-group { display: flex; flex-direction: column; gap: var(--sp-3); }
 	.group-head { display: flex; align-items: center; gap: var(--sp-2); }
+	/* OLD CODE START — NET-201: the Cards layout's styles (its own comments written (* … *))
 	.dev-card { display: flex; flex-direction: column; gap: var(--sp-3); text-decoration: none; color: var(--text-1); }
 	.dev-card:hover { border-color: var(--line-strong); }
-	/* NET-180: without subgrid, equal-height cards at least end level */
+	(* NET-180: without subgrid, equal-height cards at least end level *)
 	.dev-card-stats { margin-top: auto; }
-	/* NET-180: each card spans three rows of its group's grid and shares their heights, so every
-	   card's stats start at the same height in a band, whatever wraps above or inside them */
+	(* NET-180: each card spans three rows of its group's grid and shares their heights, so every
+	   card's stats start at the same height in a band, whatever wraps above or inside them *)
 	@supports (grid-template-rows: subgrid) {
 		.dev-card { display: grid; grid-row: span 3; grid-template-rows: subgrid; grid-template-columns: minmax(0, 1fr); row-gap: var(--sp-3); }
 		.dev-card-stats { margin-top: 0; }
 	}
 	.dev-card-about { display: flex; flex-direction: column; }
+	OLD CODE END */
 	.type-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-3); margin-bottom: var(--sp-3); }
 	.type-head .note { margin-bottom: 0; }
 	/* compact rows: one line each */
 	.dev-list :global(tbody td) { padding-top: var(--sp-2); padding-bottom: var(--sp-2); }
+	/* OLD CODE START — NET-201: the Cards layout's styles
 	.dev-card-top { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--sp-3); align-items: center; }
 	.dev-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.vendor { font-size: var(--text-xs); }
 	.dev-card-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
 	.dev-card-stats > span { display: flex; flex-direction: column; min-width: 0; }
+	OLD CODE END */
 	.type { display: inline-flex; align-items: center; gap: var(--sp-2); }
 	.type :global(.ic) { color: var(--text-3); width: 16px; height: 16px; }
 	.note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); }

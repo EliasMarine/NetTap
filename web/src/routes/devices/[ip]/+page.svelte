@@ -35,6 +35,8 @@
 	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { DeviceConnectionSort } from '$api/devices';
 	import type { SmartAlert } from '$api/alerts';
+	import type { RegistryDevice } from '$api/devices-registry';
+	import DeviceCustomise from '$components/DeviceCustomise.svelte';
 	import type {
 		DeviceDetail,
 		DeviceConnection,
@@ -112,6 +114,46 @@
 	let connectionsFailed = $state(false);
 	/** ip|range of the figures on screen (not reactive: only the loader reads it) */
 	let loadedView = '';
+
+	// NET-201: Rename and Change picture, as on the MAC page. Saves are kept per MAC, so a detail
+	// read before a save (a refresh, a range change) gets the save laid over it, not the old name.
+	/** Bumped by every finished save; a load remembers the value it began at. */
+	let editRev = 0;
+	/** The last finished save per MAC (lower case), with the editRev it got. */
+	const edits = new Map<string, { rev: number; saved: RegistryDevice }>();
+	/** MACs (lower case) with a save still running: one at a time, even when a range change remounts the panel. */
+	const savingMacs = new Set<string>();
+
+	/** The detail with one save's owner fields, shaped as the daemon's present() shapes an IP row. */
+	function withOwner(d: DeviceDetail, saved: RegistryDevice): DeviceDetail {
+		// the name the network gives it: the hostname, unless an owner's name already replaced it
+		const original = d.custom_name ? (d.discovered_name ?? null) : d.hostname;
+		return {
+			...d,
+			custom_name: saved.custom_name ?? null,
+			icon: saved.icon ?? null,
+			picture: saved.picture ?? null,
+			hostname: saved.custom_name ?? original,
+			discovered_name: saved.custom_name ? original : undefined,
+		};
+	}
+
+	/** Run one name or picture save for the device on screen; a failure throws to DeviceCustomise. */
+	async function customise(action: (mac: string) => Promise<RegistryDevice>): Promise<void> {
+		const mac = device?.mac;
+		if (!mac) throw new Error('This page is still loading the device. Try again in a moment.');
+		const key = mac.toLowerCase();
+		if (savingMacs.has(key)) throw new Error('A change to this device is still saving. Try again in a moment.');
+		savingMacs.add(key);
+		try {
+			const saved = await action(mac);
+			editRev += 1;
+			edits.set(key, { rev: editRev, saved });
+			if (device?.mac?.toLowerCase() === key) device = withOwner(device, saved);
+		} finally {
+			savingMacs.delete(key);
+		}
+	}
 
 	// OLD CODE START — 2026-11-03 UI redesign: these wrappers wrote their failure flags after an await,
 	// outside the load guard; the loader now settles every request and writes only while current
@@ -293,6 +335,7 @@
 		const s = rangeSpan(range);
 		const view = `${ip}|${range}`;
 		if (!ip) return 'skipped';
+		const rev = editRev;
 		loading = true;
 		span = s;
 		// A refresh of the same view keeps its last good figures; another view must not show them
@@ -315,7 +358,10 @@
 
 		// #96: a failed detail is not "Device not found"; a refresh keeps the last one
 		if (deviceRes.status === 'fulfilled') {
-			device = deviceRes.value.device;
+			// OLD CODE: device = deviceRes.value.device; (NET-201: a save that finished since this load began is laid over it)
+			const d = deviceRes.value.device;
+			const edit = d.mac ? edits.get(d.mac.toLowerCase()) : undefined;
+			device = edit && edit.rev > rev ? withOwner(d, edit.saved) : d;
 			loadedView = view;
 		}
 		deviceFailed = deviceRes.status === 'rejected';
@@ -721,12 +767,20 @@ OLD CODE END -->
 		</div>
 	</div>
 	{#if device && device.ip}
+		<!-- NET-201: the owner's name and picture, as on the MAC page; they are kept by MAC, so a device without one has no buttons -->
+		{#if device.mac}
+			{@const mac = device.mac}
+			<!-- keyed: another device starts with its panels closed -->
+			<!-- discovered_name comes only with an owner's name; without one the hostname is the network's name, for the Name hint -->
+			{#key mac}<DeviceCustomise device={{ ...device, mac, discovered_name: device.custom_name ? device.discovered_name : device.hostname }} onsave={customise} />{/key}
+		{/if}
 		<dl class="ident-meta">
 			<div><dt class="meta-k">IP address</dt><dd class="meta-v mono">{device.ip}</dd></div>
 			<div><dt class="meta-k">MAC</dt><dd class="meta-v mono">{device.mac ?? '—'}</dd></div>
 			<div><dt class="meta-k">Vendor</dt><dd class="meta-v">{device.manufacturer ?? '—'}</dd></div>
 			<!-- OLD CODE: <dd class="meta-v mono">{device.hostname ?? '—'}</dd> (NET-200: hostname carries the owner's name; the real one stays visible) -->
-			<div><dt class="meta-k">Hostname</dt><dd class="meta-v mono">{device.discovered_name ?? device.hostname ?? '—'}</dd></div>
+			<!-- OLD CODE: <dd class="meta-v mono">{device.discovered_name ?? device.hostname ?? '—'}</dd> (NET-201: an owner's name with no discovered name showed as the hostname) -->
+			<div><dt class="meta-k">Hostname</dt><dd class="meta-v mono">{device.custom_name ? (device.discovered_name ?? '—') : (device.hostname ?? '—')}</dd></div>
 			<div><dt class="meta-k">First seen in range</dt><dd class="meta-v">{formatDate(device.first_seen)}</dd></div>
 			<div><dt class="meta-k">Last seen</dt><dd class="meta-v">{timeAgo(device.last_seen)}</dd></div>
 		</dl>

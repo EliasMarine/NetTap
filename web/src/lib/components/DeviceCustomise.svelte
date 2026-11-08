@@ -20,7 +20,17 @@
 	import { squarePicture } from '$lib/utils/device-picture';
 
 	type Save = (action: (mac: string) => Promise<RegistryDevice>) => Promise<void>;
-	let { device, onsave }: { device: RegistryDevice; onsave: Save } = $props();
+	// OLD CODE: let { device, onsave }: { device: RegistryDevice; onsave: Save } = $props(); (NET-201: the IP page's device fits too)
+	/** What the panels read: a registry device, or an IP page's device once its MAC is known. */
+	type Customisable = {
+		mac: string;
+		category?: string;
+		custom_name?: string | null;
+		discovered_name?: string | null;
+		icon?: string | null;
+		picture?: string | null;
+	};
+	let { device, onsave }: { device: Customisable; onsave: Save } = $props();
 
 	/** Plain names for the built-in icons, read by screen readers and shown on hover. */
 	const ICON_LABELS: Record<DeviceIcon, string> = {
