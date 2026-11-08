@@ -288,4 +288,29 @@ other sources. The alert and the volume are matched by device and window, not by
 
 ## Before and after on the G11
 
-Filled in after the deploy. See the NET-209 tracking note.
+Measured by `scripts/remote/deploy-threat-accuracy.sh` on 2026-11-08: before #223, after #223, and after
+#225 (the matching fix).
+
+| | Before | After #223 | After #225 |
+|---|---|---|---|
+| 24 h threat score | 100 critical | 50 high | 44 medium |
+| 24 h counted alerts | 478 | 149 | 141 |
+| 7 d threat score | 100 critical | 100 high | 100 high |
+| 7 d counted alerts | 2,772 | 471 | 453 |
+| 7 d kill chains | 5, all internet attackers | .24 (stages 1, 2) | none |
+| 91.92.40.12 device page and risk | "Windows 10/11", risk 58 high | 404, not on your network | 404 |
+
+Device risk (24 h), before → after #225: .188 78 critical → 0; .146 73 high → 0; .44 70 high → 50 high;
+.205 60 high → 20 low; .1 33 medium → 0; .148 23 → 10; 10.10.0.27 25 medium → 25 medium; .24 8 → 0.
+
+**Why 7 days still reads 100.** The points add up to about 140, and the score is capped at 100; the level is
+high because no alert is critical. Most of it is real:
+
+- **192.168.1.44, 48 points.** IPFire DBL malware and phishing lookups and connections, plus CINS and
+  DShield contacts. .44 runs bandwidth-sharing apps on purpose (NET-191), so this is other people's traffic
+  leaving through the owner's connection.
+- **192.168.1.205, 20 points.** Contacts with Spamhaus DROP and CINS-listed addresses, mostly peers on
+  UDP port 32021 that .205 talked to first (a BitTorrent-style client).
+- **192.168.1.24, 18 points.** About 27 distinct exploit and scan signatures against the port-forwarded
+  server, at 0.5 each, plus 3 blocklist packets Zeek never logged (see Known limits).
+- **10.10.0.27, 5 points.** An abuse.ch JA3 fingerprint for possible adware.

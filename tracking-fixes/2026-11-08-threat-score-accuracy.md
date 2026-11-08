@@ -1,6 +1,6 @@
 # NET-209: threat and risk scores count only real threats; internet addresses are never devices
 
-**Date:** 2026-11-08 · **Branch:** `fix/threat-score-accuracy` · **Linear:** NET-209 · **Status:** merged (PR #223 → `89d09980`)
+**Date:** 2026-11-08 · **Branch:** `fix/threat-score-accuracy` · **Linear:** NET-209 · **Status:** done. PR #223 → `89d09980`, PR #225 → `4ae69e9b`, both deployed on the G11 2026-11-08
 
 ## What was wrong
 
@@ -135,7 +135,19 @@ Dev (macOS), on the merged head `fed7f05c`:
 Reviews: `/codex-review` approved the plan; `/deep-review` no findings; `/ponytail-review` findings cut
 or fixed; two-angle review (security + Python), all findings fixed (F1–F4 above).
 
-G11: _see below._
+G11 (`deploy-threat-accuracy.sh`, every check passed both times):
+
+| | Before | After #223 | After #225 |
+|---|---|---|---|
+| 24 h threat score | 100 critical | 50 high | 44 medium |
+| 7 d threat score | 100 critical | 100 high | 100 high (points ~140, capped) |
+| 7 d counted alerts | 2,772 | 471 | 453 |
+| 7 d kill chains | 5 internet attackers | .24 | none |
+| 91.92.40.12 device and risk | 200, risk 58 high | 404 | 404 |
+| .24 device risk (24 h) | 8 | 15 | 0 |
+
+The history cross-check matched independent searches for 192.168.1.44 and 10.10.0.27 (8 day ranges, list and
+single). PR #225: 81 tests in `test_alert_findings.py`, daemon 4093 passed, 4 skipped; CI 18/18.
 
 ## Lessons
 
@@ -145,5 +157,11 @@ G11: _see below._
   the vendor's own rating.
 - **Reputation rules without `flow:` keywords fire both ways.** "Inbound" in the name does not mean the
   internet started the connection.
+- **Suricata stamps a flow-timeout alert with the timeout time,** up to 600 s after the last packet. Any
+  join from alerts to Zeek records by time needs that window.
+- **Zeek's history letters say who opened a connection; its originator does not always.** Only a pure SYN
+  proves it. A late FIN after a close is logged as its own record, flipped.
+- **Simulate a scoring change on the device's live data before deploying it.** A read-only script that
+  swaps in the new module found these flaws in minutes, where the unit tests had passed.
 - **Score findings, not alert groups.** One signature on one host is one finding, however many addresses
   it touches.
