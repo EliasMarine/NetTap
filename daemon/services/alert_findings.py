@@ -35,6 +35,9 @@ REPUTATION_OWN_SEVERITY = 3
 ATTEMPT_MAX_WEIGHT = 0.5
 # Zeek and Suricata stamp the same packets from separate processes: a little slack (G11: 1 ms)
 CONN_SLACK_MS = 10_000
+# Alert times are read per minute, so a flood on one connection is one bucket a minute, not one
+# per alert (security review F3); a minute's alerts match a conn that overlaps that minute
+_INSTANT, INSTANT_MS = "1m", 60_000
 # An alert with no conn record yet: Zeek writes the record when the connection ends (idle TCP after
 # 5 min) and Malcolm indexes it within a minute. Younger alerts wait for it as attempts; older ones
 # are a connection still held open, whose opener is unknown (a C2 session must not vanish)
@@ -120,7 +123,8 @@ def alert_instants(
         {"src": {"terms": {"field": "source.ip", "missing_bucket": True}}},
         {"dst": {"terms": {"field": "destination.ip", "missing_bucket": True}}},
         {"cid": {"terms": {"field": "network.community_id", "missing_bucket": True}}},
-        {"ts": {"terms": {"field": "@timestamp"}}},
+        # OLD CODE: {"ts": {"terms": {"field": "@timestamp"}}}, (review F3: a bucket per alert)
+        {"ts": {"date_histogram": {"field": "@timestamp", "fixed_interval": _INSTANT}}},
     ]
     buckets, complete = all_buckets(
         client, index, query, sources, page_size=_INSTANT_PAGE, what="alert instants"
@@ -166,6 +170,12 @@ def connection_spans(
             {"orig": {"terms": {"field": "source.ip"}}},
             {"start": {"terms": {"field": "event.start"}}},
             {"end": {"terms": {"field": "event.end", "missing_bucket": True}}},
+            {"hist": {"terms": {"field": "zeek.conn.history", "missing_bucket": True}}},
+            {
+                "proto": {
+                    "terms": {"field": "network.transport", "missing_bucket": True}
+                }
+            },
         ]
         buckets, complete = all_buckets(
             client,
@@ -179,18 +189,30 @@ def connection_spans(
             raise QueryFailed(f"alert connections: stopped at {len(buckets)}")
         for b in buckets:
             k = b["key"]
+            if not _opener_trusted(k.get("hist"), k.get("proto")):
+                continue  # who opened it is a guess: the alert falls back to "no record"
             spans[k["cid"]].append(
                 (k["orig"], _key_ms(k["start"]), _key_ms(k["end"] or k["start"]))
             )
     return spans
 
 
+def _opener_trusted(history: str | None, transport: str | None) -> bool:
+    """Zeek's originator is the opener unless it flipped the direction (`^`, e.g. UDP from port
+    5353 to a high port) or picked a TCP connection up mid-stream (no SYN first): review F2."""
+    if not history:
+        return True
+    return "^" not in history and (transport != "tcp" or history.startswith("S"))
+
+
 def opener_at(spans: list[tuple[str, int, int]], ts: int) -> str | None:
-    """The one originator of the conns whose span holds `ts`; None if none or they disagree."""
+    """The one originator of the conns that overlap the minute starting at `ts`; None if none
+    or they disagree."""
+    # OLD CODE: if start - CONN_SLACK_MS <= ts <= end + CONN_SLACK_MS (review F3: per-minute times)
     found = {
         orig
         for orig, start, end in spans
-        if start - CONN_SLACK_MS <= ts <= end + CONN_SLACK_MS
+        if start - CONN_SLACK_MS < ts + INSTANT_MS and ts <= end + CONN_SLACK_MS
     }
     return next(iter(found)) if len(found) == 1 else None
 
@@ -237,8 +259,9 @@ def findings_by_group(
 ) -> dict[tuple, list[dict]]:
     """Per (rule, src, dst): findings {device, own, count, times[(ms, count)]}, sorted by time.
 
-    `settled_before` (epoch ms): an alert after it with no conn record yet is an attempt while
-    its record is on the way; one before it has an unknown opener. None: every one is unknown.
+    `settled_before` (epoch ms): an inbound alert after it with no conn record yet is an
+    attempt while its record is on the way; one before it is the device's own traffic (a
+    connection held open). None: every unmatched one counts as own.
     """
     parts: dict[tuple, dict[tuple, dict]] = defaultdict(dict)
     for inst in instants:
@@ -247,11 +270,19 @@ def findings_by_group(
         device, own = charge(src, dst, opener, client_targets.get(sig, False), is_lan)
         if device is None:
             continue
-        # an attempt is known only when a conn record shows the other side opened it; an open
-        # connection has no record yet (deep-review: a held-open C2 session must not vanish)
-        # OLD CODE: known = own or opener is not None (review: fresh hits flickered as counted)
+        # OLD CODE START — reviews: unknown openers were attempts (a held-open C2 session scored
+        # 0.5 and left device risk), then listed reputation hits only
+        # known = own or opener is not None
+        # OLD CODE END
+        # No record matched: while the record may still be on its way it is an attempt; after
+        # SETTLE_MS it is a connection held open, and counts as the device's own traffic
+        # (with no community ID there was nothing to look up: packet direction, an attempt)
+        unmatched = (
+            opener is None and device == dst and not is_lan(src) and bool(inst["cid"])
+        )
         fresh = settled_before is not None and ts > settled_before
-        known = own or opener is not None or fresh
+        own = own or (unmatched and not fresh)
+        known = not unmatched
         part = parts[(sig, src, dst)].setdefault(
             (device, own, known),
             {
@@ -282,14 +313,16 @@ def findings_by_group(
 
 
 def finding_severity(base: int, finding: dict, reputation: bool) -> int:
-    """The finding's effective severity: a reputation hit counts as the device's own traffic, and is
-    left out only when a conn record shows the other side opened the connection."""
+    """The finding's effective severity: a reputation hit counts only as the device's own traffic
+    (which includes a connection still unmatched after SETTLE_MS)."""
     if not reputation:
         return base
-    # OLD CODE: return max(base, REPUTATION_OWN_SEVERITY) if finding["own"] else _COUNTED
-    if finding["own"] or not finding.get("opener_known", True):
-        return max(base, REPUTATION_OWN_SEVERITY)
-    return _COUNTED
+    # OLD CODE START — reviews: an unmatched hit is own after SETTLE_MS (findings_by_group) now
+    # if finding["own"] or not finding.get("opener_known", True):
+    #     return max(base, REPUTATION_OWN_SEVERITY)
+    # return _COUNTED
+    # OLD CODE END
+    return max(base, REPUTATION_OWN_SEVERITY) if finding["own"] else _COUNTED
 
 
 def public(group: dict) -> dict:

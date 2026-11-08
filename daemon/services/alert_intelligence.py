@@ -1623,8 +1623,12 @@ def get_smart_alerts(
             #     [f["severity"] for f in findings if f["own"]], default=_INFO_SEVERITY
             # )
             # OLD CODE END
-            new_severity = min(
-                [f["severity"] for f in findings], default=_INFO_SEVERITY
+            # review F4: with no LAN party (a subnet outside the LAN rule, IPv6) nobody can be
+            # charged, so it stays listed at medium rather than vanishing
+            new_severity = (
+                min([f["severity"] for f in findings], default=_INFO_SEVERITY)
+                if found
+                else max(new_severity, alert_findings.REPUTATION_OWN_SEVERITY)
             )
         # alerts no device was charged with (no LAN party, or unattributed); suppressed ones are not
         unattributed = max(0, count - sum(f["count"] for f in found))
@@ -1632,7 +1636,8 @@ def get_smart_alerts(
             0
             if new_severity >= _INFO_SEVERITY
             else sum(f["count"] for f in findings if f["severity"] < _INFO_SEVERITY)
-            + (0 if reputation else unattributed)
+            # OLD CODE: + (0 if reputation else unattributed) (review F4)
+            + (0 if reputation and found else unattributed)
         )
 
         if new_severity >= _INFO_SEVERITY and not include_info:
@@ -1923,7 +1928,8 @@ def _finding_points(groups: list[dict]) -> float:
                 weight = min(weight, alert_findings.ATTEMPT_MAX_WEIGHT)
             key = (g["signature"], f["device"])
             best[key] = max(best.get(key, 0), weight)
-        if g.get("unattributed") and not g.get("reputation"):
+        # OLD CODE: if g.get("unattributed") and not g.get("reputation"): (review F4)
+        if g.get("unattributed") and not (g.get("reputation") and g.get("findings")):
             key = (g["signature"], g["source_ip"], g["destination_ip"])
             best[key] = max(best.get(key, 0), SEVERITY_WEIGHTS[g["severity"]])
     return sum(best.values())

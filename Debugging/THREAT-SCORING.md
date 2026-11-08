@@ -135,10 +135,17 @@ compromise, and the boost also lifted informational alerts into the counted ones
 ### Who acted: the device's own traffic, or an attempt against it
 
 NetTap uses the daemon's LAN rule (`/api/network/lan`). It classifies every alert toward a LAN address on its
-own, by its own timestamp, before any counts are merged. The alert's `network.community_id` is matched to
-the Zeek connection record with the same ID whose time span (`event.start` to `event.end`, ±10 s) contains
-the alert. That record's source is the side that opened the connection. A community ID is a hash of the
-addresses and ports, with no time and no direction, which is why the time has to match as well.
+own, by the minute it fired in, before any counts are merged. Alert times are read per minute, so a flood
+of alerts on one connection is one entry a minute, not one per alert. The alert's `network.community_id` is
+matched to the Zeek connection record with the same ID whose time span (`event.start` to `event.end`,
+±10 s) overlaps that minute. That record's source is the side that opened the connection. A community ID is
+a hash of the addresses and ports, with no time and no direction, which is why the time has to match as well.
+
+A record counts only when Zeek is sure who opened it. Zeek marks a connection whose direction it guessed
+and then flipped with `^` in `zeek.conn.history`, for example UDP sent from port 5353 to a high port, and a
+TCP connection it picked up mid-stream has no SYN (`S`) first. Such records are skipped, so a C2 server
+can never be read as the opener of a connection the device made
+(<https://docs.zeek.org/en/master/scripts/base/protocols/conn/main.zeek.html>).
 
 Each alert is charged to exactly one finding, for one device and one role:
 
@@ -146,7 +153,8 @@ Each alert is charged to exactly one finding, for one device and one role:
 |---|---|
 | LAN device → internet | The LAN device, as **its own traffic**. That covers its requests and its responses, for example an `ATTACK_RESPONSE` from a port-forwarded server. |
 | Internet → LAN device, on a connection the device opened | The device, as **its own traffic**. That covers a malware server's reply or a blocklisted server answering it. Rule 3. |
-| Internet → LAN device, otherwise | The device, as **an attempt against it**. That means the internet opened the connection, or no record matched (Zeek writes the record when a connection ends), or the matches disagree. |
+| Internet → LAN device, the record shows the internet opened it | The device, as **an attempt against it**. The same when two matching records disagree, or the alert has no community ID. |
+| Internet → LAN device, no record matched | Zeek writes the record when a connection ends, and Malcolm indexes it within a minute. For the first 10 minutes the alert is **an attempt** while its record is on the way. After that it is a connection held open, as a C2 server can do for hours, and counts as **the device's own traffic**. |
 | LAN device → LAN device | One device, chosen by the rule's ET `attack_target`. A client-only target (`Client_Endpoint`, `Mobile_Client`) charges the device that opened the connection, so a proxy relaying a client's malware traffic is not charged. With no matching record, nobody is charged: the alert counts on the Threats page but goes to no device. Any other target charges the sender. |
 
 Each finding keeps its own counts and times.
@@ -161,10 +169,11 @@ An `ET DROP`, `ET CINS`, `ET COMPROMISED`, `ET TOR` or `ET 3CORESec` hit:
 
 - **Is not counted when a connection record shows the internet side opened the connection.** When the
   device opened it, the hit counts, capped at medium.
-- **Is never hidden when no record matched for 10 minutes.** Zeek writes a connection's record when it
-  ends, and Malcolm indexes it within a minute, so a younger hit waits for its record as an attempt. A hit
-  still unmatched after 10 minutes is a connection held open, as a C2 server can do for hours. It is listed
-  at medium and weighs as an attempt (0.5) until the record shows who opened it.
+- **Is never hidden when no record matched for 10 minutes.** A younger hit waits for its record as an
+  attempt. A hit still unmatched after 10 minutes is a connection held open, so it counts as the device's
+  own traffic, at medium.
+- **Is listed at medium when neither side is a LAN device.** No device can be charged, so the hit stays on
+  the Threats page with its raw count.
 - **Never makes a kill-chain stage.** An address being on a list is not command-and-control evidence.
 
 A hit that is not counted moves to "not counted". The Alerts page and its drill-down link still show its
@@ -219,10 +228,18 @@ other sources. The alert and the volume are matched by device and window, not by
 - **A weekly backup still shows as an upload spike on its day.** It is only described, and scores 0 unless
   the device also has a counted alert.
 - **A fresh install has under 3 days of history.** Both spike factors say so and score 0.
-- **An open connection has no Zeek record yet.** Its alerts fall back to packet direction, so an internet
-  packet counts as an attempt. They are still listed. A blocklist hit on such a connection is left out for
-  its first 10 minutes, then listed at medium. The record lookup reaches one day before the window, so a connection that started
-  earlier is treated the same way.
+- **An open connection has no Zeek record yet.** For its first 10 minutes an internet packet counts as an
+  attempt; after that the alerts count as the device's own traffic. A long inbound session the internet
+  really opened, such as a scanner holding a port-forwarded server's connection open, therefore counts as
+  the server's own until it ends and its record arrives. The record lookup reaches one day before the
+  window, so a connection that started earlier is treated the same way.
+- **An established inbound session from a blocklisted address is left out once its record shows the
+  internet opened it.** That is rule 8: a port-forwarded server answering a listed scanner is the
+  normal case. A compromise over such a session still shows through its other alerts (an exploit,
+  `ATTACK_RESPONSE`, malware), which are not reputation hits.
+- **ET's context categories outrank its severity metadata.** `ET INFO`, `HUNTING`, `TOR`, `P2P`, `GAMES`
+  and `CHAT` are activity even when a rule's `signature_severity` says Major. ET files those rules as
+  policy and context, not as compromise (rule 2); the raw alerts stay on the Alerts page.
 - **A reused address-and-port pair can be ambiguous.** When two connection records cover the same alert
   time with different openers, the flow falls back to packet direction.
 - **IPv6 alert groups have no LAN device.** They score as before, keyed by signature, source and destination.

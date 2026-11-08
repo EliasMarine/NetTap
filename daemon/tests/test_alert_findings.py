@@ -434,7 +434,7 @@ def test_a_device_suppression_hides_the_attempts_against_it():
 
 
 def test_a_blocklist_hit_on_a_still_open_connection_stays_listed(quiet):
-    """No Zeek record yet (the C2 keeps the session open): unknown is not an attempt; never hidden."""
+    """No Zeek record past the settle time (the C2 keeps the session open): the device's own."""
     groups = [_bucket(_DROP, C2, PC, 12, "Minor", sid=2400011)]
     instants = [_instant(_DROP, C2, PC, "1:open", _T, 12)]
     listed = get_smart_alerts(_client(groups, instants, []), _FROM, _TO, limit=None)
@@ -442,11 +442,11 @@ def test_a_blocklist_hit_on_a_still_open_connection_stays_listed(quiet):
     assert group["severity"] == 3
     assert group["counted_events"] == 12
     (finding,) = group["findings"]
-    assert (finding["own"], finding["opener_known"]) == (False, False)
+    assert (finding["own"], finding["opener_known"]) == (True, False)
 
     summary = get_smart_alert_summary(_client(groups, instants, []), _FROM, _TO)
     assert summary["total_events"] == 12
-    assert summary["threat_score"] == 0  # attempt weight: 0.5, rounded down
+    assert summary["threat_score"] == 2  # an own medium
 
 
 def test_unknown_and_known_attempts_are_separate_findings():
@@ -471,11 +471,11 @@ def test_unknown_and_known_attempts_are_separate_findings():
         },
     ]
     found = af.findings_by_group(instants, spans, {}, is_lan)[("S", SCANNER, SERVER)]
-    assert sorted((f["opener_known"], f["count"]) for f in found) == [
-        (False, 3),
-        (True, 2),
+    assert sorted((f["opener_known"], f["own"], f["count"]) for f in found) == [
+        (False, True, 3),  # no record covers the later alert: held open, own
+        (True, False, 2),  # the record shows the scanner opened it: an attempt
     ]
-    assert af.finding_severity(2, {"own": False, "opener_known": False}, True) == 3
+    assert af.finding_severity(2, {"own": False, "opener_known": True}, True) == 5
 
 
 # ---------------------------------------------------------------------------
@@ -570,8 +570,16 @@ def test_a_fresh_alert_waits_for_its_record_as_an_attempt():
     inst = [{"sig": _DROP, "src": C2, "dst": PC, "cid": "1:x", "ts": _T, "count": 1}]
     fresh = af.findings_by_group(inst, {}, {}, is_lan, settled_before=_T - 1)
     held = af.findings_by_group(inst, {}, {}, is_lan, settled_before=_T + 1)
-    assert fresh[(_DROP, C2, PC)][0]["opener_known"] is True
-    assert held[(_DROP, C2, PC)][0]["opener_known"] is False
+    assert (
+        fresh[(_DROP, C2, PC)][0]["own"] is False
+    )  # its record may still be on the way
+    assert held[(_DROP, C2, PC)][0]["own"] is True  # held open past the settle time
+    no_cid = [
+        {**inst[0], "cid": None}
+    ]  # nothing to look up: packet direction, an attempt
+    assert (
+        af.findings_by_group(no_cid, {}, {}, is_lan)[(_DROP, C2, PC)][0]["own"] is False
+    )
 
 
 def test_epoch_ms_is_exact_and_reads_no_zone_as_utc():
@@ -629,3 +637,81 @@ def test_a_partial_read_raises(read):
             af.alert_instants(MagicMock(), "idx", {"filter": []}, ["10.0.0.0/8"])
         else:
             af.connection_spans(MagicMock(), "idx", ["a"], _FROM, _TO)
+
+
+# ---------------------------------------------------------------------------
+# NET-209 security review: F1 held-open C2, F2 flipped records, F3 minute buckets, F4 no LAN party
+# ---------------------------------------------------------------------------
+
+
+def test_a_c2_alert_on_a_session_held_open_is_the_devices_own(quiet):
+    """F1: a RAT's C2 certificate alert (C2 to device) with no conn record past the settle time."""
+    sig = "ET MALWARE Observed Malicious SSL Cert (AsyncRAT)"
+    groups = [_bucket(sig, C2, PC, 3, "Critical")]
+    instants = [_instant(sig, C2, PC, "1:rat", _T, 3)]
+    summary = get_smart_alert_summary(_client(groups, instants, []), _FROM, _TO)
+    assert summary["threat_score"] == 10  # own critical, not an attempt's 0.5
+
+
+@pytest.mark.parametrize(
+    "history, transport, trusted",
+    [
+        ("ShADadFf", "tcp", True),
+        ("Dd", "udp", True),
+        ("^Dd", "udp", False),  # Zeek flipped it: UDP from a "server" port such as 5353
+        ("DadA", "tcp", False),  # picked up mid-stream: no SYN first
+        (None, None, True),
+    ],
+)
+def test_the_opener_is_trusted_only_from_a_clean_record(history, transport, trusted):
+    assert af._opener_trusted(history, transport) is trusted
+
+
+def test_a_flipped_record_never_makes_the_c2_look_like_the_opener():
+    """F2: malware sends UDP from local port 5353; Zeek records the C2 as the originator."""
+    key = {
+        "cid": "1:u",
+        "orig": C2,
+        "start": _T,
+        "end": _T + 1,
+        "hist": "^Dd",
+        "proto": "udp",
+    }
+    client = _page_client([{"key": key, "doc_count": 1}])
+    assert af.connection_spans(client, "idx", ["1:u"], _FROM, _TO) == {}
+    sources = client.search.call_args.kwargs["body"]["aggs"]["all"]["composite"][
+        "sources"
+    ]
+    assert {
+        "hist": {"terms": {"field": "zeek.conn.history", "missing_bucket": True}}
+    } in sources
+
+
+def test_alert_times_are_read_per_minute():
+    """F3: a flood on one connection is one bucket a minute, not one per alert."""
+    client = _page_client([])
+    af.alert_instants(client, "idx", {"filter": []}, ["10.0.0.0/8"])
+    sources = client.search.call_args.kwargs["body"]["aggs"]["all"]["composite"][
+        "sources"
+    ]
+    assert sources[-1] == {
+        "ts": {"date_histogram": {"field": "@timestamp", "fixed_interval": "1m"}}
+    }
+    # a minute bucket matches a conn that overlaps that minute, and no other
+    assert af.opener_at([(PC, _MON + 30_000, _MON + 40_000)], _MON) == PC
+    late = _MON + af.INSTANT_MS + af.CONN_SLACK_MS
+    assert af.opener_at([(PC, late, late + _HOUR)], _MON) is None
+
+
+def test_a_blocklist_hit_with_no_lan_party_stays_listed(quiet):
+    """F4: 172.20.0.9 is outside the LAN rule (192.168.1.0/24), so no device can be charged."""
+    groups = [_bucket(_DROP, SCANNER, "172.20.0.9", 5, "Major")]
+    instants = [_instant(_DROP, SCANNER, "172.20.0.9", "1:v", _T, 5)]
+    (group,) = get_smart_alerts(
+        _client(groups, instants, []),
+        _FROM,
+        _TO,
+        limit=None,
+        lan_cidrs=["192.168.1.0/24"],
+    )
+    assert (group["severity"], group["counted_events"], group["findings"]) == (3, 5, [])
