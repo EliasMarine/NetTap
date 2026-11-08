@@ -2,6 +2,7 @@
 name = "nettap-daemon"
 version = "0.2.0"
 description = "NetTap storage & health monitoring daemon"
+license = "GPL-3.0-only"
 requires-python = ">=3.11"
 dependencies = [
     "opensearch-py>=2.4.0,<3.0",

@@ -1,6 +1,7 @@
 {
 	"name": "nettap-web",
 	"private": true,
+	"license": "GPL-3.0-only",
 	"version": "0.3.0",
 	"type": "module",
 	"scripts": {

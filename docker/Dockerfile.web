@@ -23,7 +23,7 @@ LABEL maintainer="NetTap Contributors <https://github.com/EliasMarine/NetTap>"
 LABEL org.opencontainers.image.title="nettap-web"
 LABEL org.opencontainers.image.description="NetTap web dashboard — SvelteKit-based network visibility UI"
 LABEL org.opencontainers.image.source="https://github.com/EliasMarine/NetTap"
-LABEL org.opencontainers.image.licenses="LicenseRef-NetTap-Personal-Use"
+LABEL org.opencontainers.image.licenses="GPL-3.0-only"
 
 WORKDIR /app
 

@@ -1,5 +1,9 @@
 # Third-Party Licenses
 
+NetTap-original code, documentation and tooling are licensed under the
+[GNU General Public License version 3 only](LICENSE) (`GPL-3.0-only`). Third-party components and assets retain their own
+licenses; NetTap's GPLv3 license does not replace those terms.
+
 NetTap integrates the following third-party components. Each runs in its own
 isolated Docker container with no code linking to NetTap's own codebase.
 
