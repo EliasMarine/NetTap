@@ -358,7 +358,13 @@ export function mountGlobe(canvas, opts) {
 	});
 	on(canvas, 'pointerup', (e) => {
 		const moved = Math.hypot(e.clientX - pointer.downX, e.clientY - pointer.downY);
-		if (moved < 6 && performance.now() - pointer.downT < 500 && state.hover && state.hover.kind !== 'list') opts.onSelect?.(state.hover.code);
+		if (moved >= 6 || performance.now() - pointer.downT >= 500) return;
+		// Test where it came up: a tap on a touch screen has no pointermove before it
+		const r = canvas.getBoundingClientRect();
+		pointer.x = e.clientX - r.left;
+		pointer.y = e.clientY - r.top;
+		const hit = hitTest();
+		if (hit) opts.onSelect?.(hit.code);
 	});
 
 	function hitTest() {
@@ -482,7 +488,7 @@ export function mountGlobe(canvas, opts) {
 	}
 
 	const io = new IntersectionObserver((entries) => {
-		state.visible = entries.some((e) => e.isIntersecting);
+		state.visible = entries[entries.length - 1].isIntersecting; // the newest entry is the current state
 		syncLoop();
 	});
 	io.observe(canvas);
@@ -493,6 +499,20 @@ export function mountGlobe(canvas, opts) {
 	let pending = null;
 	/** renderer.init() succeeded: only then is there a backend for dispose() to release. */
 	let started = false;
+
+	function flushPending() {
+		if (!pending) return;
+		setDestinations(pending.geo_arcs);
+		spawn(pending.fresh ?? [], { prime: true });
+		pending = null;
+	}
+
+	// WebGPU device lost or WebGL context lost: a frozen canvas would still read "Drawn with …"
+	renderer.onDeviceLost = (info) => {
+		if (state.destroyed) return; // our own dispose()
+		console.warn('NetTap globe: the graphics device was lost, showing the flat map instead.', info);
+		opts.onStatus?.({ ready: false, failed: true, error: info?.message || 'the graphics device was lost' });
+	};
 
 	(async () => {
 		try {
@@ -508,14 +528,13 @@ export function mountGlobe(canvas, opts) {
 			resize();
 			startView();
 			applyInputMode();
-			if (pending) {
-				setDestinations(pending.geo_arcs);
-				spawn(pending.fresh ?? [], { prime: true });
-				pending = null;
-			}
+			flushPending();
 			await renderer.compileAsync(scene, camera);
 			if (state.destroyed) return;
 			state.ready = true;
+			// A home or a poll that came in while the shaders compiled
+			setHome(state.home);
+			flushPending();
 			opts.onStatus?.({ ready: true, backend: renderer.backend.isWebGPUBackend ? 'WebGPU' : 'WebGL 2' });
 			syncLoop();
 		} catch (err) {

@@ -26,7 +26,7 @@
 </script>
 
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import type { GeoArc, LiveConnection } from '$lib/api/live';
 	import { formatBytes } from '$lib/api/logs';
 	import { loadLandMask } from './globe/land.js';
@@ -130,7 +130,9 @@
 	$effect(() => {
 		const snapshot = { geo_arcs: arcs, fresh };
 		if (!engine) return;
-		engine.ingest(snapshot, { prime: !primed });
+		const target = engine;
+		// The engine reads every row; only a new snapshot should re-run this
+		untrack(() => target.ingest(snapshot, { prime: !primed }));
 		primed = true;
 	});
 	$effect(() => {

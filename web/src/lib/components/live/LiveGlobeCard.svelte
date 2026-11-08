@@ -73,7 +73,7 @@
 		rows,
 		stats,
 		home,
-		homeFailed = false,
+		homeState = 'ok',
 		loaded,
 		error = '',
 		selected = null,
@@ -88,8 +88,8 @@
 		rows: (LiveConnection & { key: string })[];
 		stats: Stat[];
 		home: HomeLocation | null;
-		/** The saved location couldn't be read: say so, never draw a made-up home. */
-		homeFailed?: boolean;
+		/** Whether `home` has been read: 'failed' says so (never a made-up home); 'loading' says nothing yet. */
+		homeState?: 'loading' | 'ok' | 'failed';
 		/** A dashboard has loaded at least once. */
 		loaded: boolean;
 		error?: string;
@@ -164,8 +164,8 @@
 			e.stopPropagation();
 			void setExpanded(false);
 		} else if (e.key === 'Tab') {
-			// Wrap inside the dialog; read the list now, since rows come and go
-			const items = [...card.querySelectorAll<HTMLElement>(FOCUSABLE)];
+			// Wrap inside the dialog; read the list now, since rows come and go (and a narrow window hides the side list)
+			const items = [...card.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.checkVisibility?.() ?? true);
 			const first = items[0];
 			const last = items[items.length - 1];
 			if (e.shiftKey && document.activeElement === first) {
@@ -185,7 +185,9 @@
 	}
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions (Esc closes the expanded dialog) -->
+<!-- On the window, not the card: a drag on the globe leaves focus on <body>, and Esc must still close -->
+<svelte:window {onkeydown} />
+
 <article
 	bind:this={card}
 	class={['card', 'hero', 'c-12', 'globe-card', expanded && 'is-expanded']}
@@ -193,7 +195,6 @@
 	aria-modal={expanded ? 'true' : undefined}
 	aria-labelledby="{uid}-title"
 	data-backend={flat ? 'flat' : backend || undefined}
-	{onkeydown}
 >
 	<div class="card-head">
 		<div>
@@ -251,7 +252,7 @@
 						{fresh}
 						{home}
 						{selected}
-						highlight={hoverCode}
+						highlight={shown.some((d) => d.code === hoverCode) ? hoverCode : null}
 						{paused}
 						{reduced}
 						{expanded}
@@ -262,9 +263,9 @@
 					/>
 				{/if}
 
-				{#if homeFailed}
+				{#if homeState === 'failed'}
 					<p class="notice is-warn globe-notice" role="status"><Icon name="warn" /><span>Couldn't load your network's location, so the globe shows destinations only.</span></p>
-				{:else if !home}
+				{:else if homeState === 'ok' && !home}
 					<p class="notice globe-notice"><Icon name="home" /><span>Your network's location isn't set, so the globe shows destinations only. Set it in <a class="link" href="/settings?tab=network">Settings › Network</a>.</span></p>
 				{:else if fellBack}
 					<p class="notice globe-notice" role="status"><Icon name="warn" /><span>This browser can't draw the 3D globe, so the flat map is shown.</span></p>

@@ -1,6 +1,6 @@
 # 2026-11-07 — The Live monitor globe (NET-207)
 
-**Status:** built on `feature/live-globe`; PR, merge and G11 deploy pending. Plan approved by Codex in round 3 (`.codex-review/2026-11-07-2130-live-globe/`, git-ignored).
+**Status:** PR #220 (`feature/live-globe`); merge and G11 deploy pending. Plan approved by Codex in round 3 (`.codex-review/2026-11-07-2130-live-globe/`, git-ignored).
 
 ## Problem
 
@@ -65,6 +65,32 @@ The old Live map showed packets flying across the earth. The 2026-11 redesign re
     - The chosen flat map shows its home ring, arcs and pause.
     - Forced fallback without WebGPU or WebGL 2.
 
+## Review fixes (PR #220)
+
+- **/deep-review:** no findings.
+- **/ponytail-review:** removed the engine's unused `stats()`/`refreshTheme()` and alert sums. `land.js` now uses `geometry.ts`'s `unwrapRing` instead of a second copy of the date-line rule.
+- **Security** (nothing above LOW):
+  - The WAN look-up follows no redirects.
+  - Its failure log names only the error type. An undecodable reply's error carried the whole body, public IP included.
+- **Python:**
+  - An empty destination country counts as present, exactly as `country_filter`'s `exists` does.
+  - The label drops control characters per part.
+  - The file is fsynced before the rename.
+  - The public-LAN-address limit is a `shortcut:` comment.
+- **TypeScript:**
+  - Esc is handled on the window. A drag on the globe left focus on `<body>`, so Esc did nothing. A new visual test drags, then presses Esc; it failed on the old handler.
+  - A home or a poll that arrives while the shaders compile is applied once ready.
+  - A lost GPU device or WebGL context falls back to the flat map.
+  - A tap selects on touch screens.
+  - The home has a loading state, and a failed read is retried with the next load.
+  - Replies without a usable location are refused.
+  - The coordinate fields drop `inputmode="decimal"`: iOS has no minus key on that keypad.
+  - The Tab trap skips hidden controls.
+  - A highlight can't stick after its list row is gone.
+- **Left as they are:**
+  - The home-location file handlers do their small file I/O on the event loop, as the excluded-IPs handlers next to them do.
+  - No timeout on a renderer that stalls while starting. Settings › Display › Flat map is the way out.
+
 ## Lessons
 
 - The countries file has rings that jump from -180° to 180°. A canvas raster fills them as thin bands across the whole map unless they are unwrapped onto 0..360 and drawn twice.
@@ -73,4 +99,7 @@ The old Live map showed packets flying across the earth. The 2026-11 redesign re
 ## Next steps
 
 - Deploy with `scripts/remote/deploy-live-globe.sh` and check on the owner's Mac.
-- Follow-ups not built: an inbound places list (it needs source-geo aggregations), and backing up the home location file.
+- Follow-ups not built:
+  - Inbound places in `geo_arcs` (a source-geo aggregation). Today a country's count is destinations only, while its filter also matches inbound rows.
+  - The home location file in `config_backup.py`.
+  - Placing inbound rows whose LAN end has a public, geolocated address (IPv6, or a public WAN IP inline).

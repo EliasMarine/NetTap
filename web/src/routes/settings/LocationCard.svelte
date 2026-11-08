@@ -117,12 +117,12 @@
 				</div>
 				<div class="field">
 					<label class="label" for="home-lat">Latitude</label>
-					<input class="input mono" id="home-lat" type="text" inputmode="decimal" bind:value={lat} placeholder="51.5074" />
+					<input class="input mono" id="home-lat" type="text" bind:value={lat} placeholder="51.5074" />
 					<p class="field-help">−90 to 90, north is positive.</p>
 				</div>
 				<div class="field">
 					<label class="label" for="home-lon">Longitude</label>
-					<input class="input mono" id="home-lon" type="text" inputmode="decimal" bind:value={lon} placeholder="-0.1278" />
+					<input class="input mono" id="home-lon" type="text" bind:value={lon} placeholder="-0.1278" />
 					<p class="field-help">−180 to 180, east is positive.</p>
 				</div>
 			</div>

@@ -88,7 +88,19 @@
 	let freshRows = $state.raw<LiveConnection[]>([]);
 	/** Where the network is (Settings › Network location); null until loaded or when not set. */
 	let home = $state.raw<HomeLocation | null>(null);
-	let homeFailed = $state(false);
+	/** 'failed' is retried with the next load, so a daemon restart doesn't lose it until a reload. */
+	let homeState = $state<'loading' | 'ok' | 'failed'>('loading');
+
+	function loadHome() {
+		getHomeLocation()
+			.then((h) => {
+				home = h;
+				homeState = 'ok';
+			})
+			.catch(() => {
+				homeState = 'failed';
+			});
+	}
 
 	// ---------------------------------------------------------------------------
 	// State — cross-filtering
@@ -408,6 +420,7 @@
 	// }
 	// OLD CODE END
 	async function fetchData(guard: LoadGuard): Promise<LoadResult> {
+		if (homeState === 'failed') loadHome();
 		if (paused) return 'skipped';
 		const g = guard.begin();
 		loading = true;
@@ -553,14 +566,8 @@
 	// OLD CODE END
 	onMount(() => {
 		void refresh.run();
-		// Read once: a new location is saved in Settings, and the next visit picks it up
-		getHomeLocation()
-			.then((h) => {
-				home = h;
-			})
-			.catch(() => {
-				homeFailed = true;
-			});
+		// Read once (again only after a failure): a new location is saved in Settings, and the next visit picks it up
+		loadHome();
 		// The first load has already checked `paused` (before its first await). Under reduced
 		// motion the feed then starts paused (PLAN.md §4.5): no new rows until Resume.
 		if (prefersReducedMotion()) paused = true;
@@ -677,7 +684,7 @@
 		rows={feedRows}
 		stats={liveStats}
 		{home}
-		{homeFailed}
+		{homeState}
 		loaded={dashboard !== null}
 		{error}
 		selected={countryFilter}

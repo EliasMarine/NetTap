@@ -448,6 +448,16 @@ describe('Live globe', () => {
 		expect(document.querySelector('.home-ring')).toBeNull();
 	});
 
+	it("a location that couldn't be read is read again with the next load", async () => {
+		vi.mocked(getHomeLocation).mockClear().mockRejectedValueOnce(new Error('HTTP 503')).mockResolvedValueOnce({ lat: 51.5, lon: -0.13, label: 'London' });
+		await renderLive();
+		expect(screen.getByText(/Couldn't load your network's location/)).toBeInTheDocument();
+		await refreshPage();
+		await flush();
+		expect(getHomeLocation).toHaveBeenCalledTimes(2);
+		expect(screen.queryByText(/Couldn't load your network's location/)).toBeNull();
+	});
+
 	it('a saved location reaches the flat map as its home ring', async () => {
 		vi.mocked(getHomeLocation).mockResolvedValueOnce({ lat: 51.5, lon: -0.13, label: 'London' });
 		await renderLive();

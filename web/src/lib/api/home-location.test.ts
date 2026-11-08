@@ -37,6 +37,14 @@ describe('home location client', () => {
 		expect(calls()).toEqual([['/api/settings/home-location/wan-lookup', 'POST', null]]);
 	});
 
+	it('refuses a 200 reply with no usable location, rather than draw a blank globe', async () => {
+		reply(200, {});
+		await expect(lookupWanLocation()).rejects.toThrow('no usable location');
+		reply(200, { home: { lat: 'north', lon: 0, label: '' } });
+		await expect(getHomeLocation()).rejects.toThrow('no usable location');
+		await expect(saveHomeLocation(LONDON)).rejects.toThrow('no usable location');
+	});
+
 	it("throws the daemon's message, else one with the status", async () => {
 		reply(400, { error: "'lat' must be between -90 and 90" });
 		await expect(saveHomeLocation(LONDON)).rejects.toThrow("'lat' must be between -90 and 90");

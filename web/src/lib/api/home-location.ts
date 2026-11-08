@@ -13,6 +13,15 @@ export interface HomeLocation {
 const ENDPOINT = '/api/settings/home-location';
 const MAX_LABEL = 80;
 
+/** A location from the daemon's reply, checked: a reply without one is an error, not a blank globe. */
+function asHome(value: unknown): HomeLocation {
+	const h = value as Partial<HomeLocation> | null;
+	if (!h || !Number.isFinite(h.lat) || !Number.isFinite(h.lon) || typeof h.label !== 'string') {
+		throw new Error("NetTap's reply had no usable location.");
+	}
+	return { lat: h.lat as number, lon: h.lon as number, label: h.label };
+}
+
 /** The daemon's error message, else a plain one with the status. */
 async function failure(res: Response, what: string): Promise<Error> {
 	const body = await res.json().catch(() => null);
@@ -24,13 +33,13 @@ export async function getHomeLocation(): Promise<HomeLocation | null> {
 	const res = await fetch(ENDPOINT);
 	if (!res.ok) throw await failure(res, "Couldn't load the network location");
 	const body = await res.json();
-	return body?.home ?? null;
+	return body?.home == null ? null : asHome(body.home);
 }
 
 export async function saveHomeLocation(home: HomeLocation): Promise<HomeLocation> {
 	const res = await fetch(ENDPOINT, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(home) });
 	if (!res.ok) throw await failure(res, "Couldn't save the location");
-	return (await res.json()).home;
+	return asHome((await res.json())?.home);
 }
 
 export async function clearHomeLocation(): Promise<void> {
@@ -42,7 +51,7 @@ export async function clearHomeLocation(): Promise<void> {
 export async function lookupWanLocation(): Promise<HomeLocation> {
 	const res = await fetch(`${ENDPOINT}/wan-lookup`, { method: 'POST' });
 	if (!res.ok) throw await failure(res, "Couldn't look up your WAN location");
-	return (await res.json()).suggestion;
+	return asHome((await res.json())?.suggestion);
 }
 
 /** The form's text as a location, or what's wrong with it (the daemon's rules). */

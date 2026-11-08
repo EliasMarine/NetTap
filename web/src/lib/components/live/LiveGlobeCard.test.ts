@@ -106,8 +106,14 @@ describe('LiveGlobeCard', () => {
 		expect(screen.getByText(/isn't set, so the globe shows destinations only/)).toBeInTheDocument();
 	});
 
+	it('says nothing about the location while it is still being read', () => {
+		render(LiveGlobeCard, props({ home: null, homeState: 'loading' }));
+		expect(screen.queryByRole('link', { name: 'Settings › Network' })).toBeNull();
+		expect(screen.queryByText(/Couldn't load your network's location/)).toBeNull();
+	});
+
 	it("says when the saved location couldn't be read", () => {
-		render(LiveGlobeCard, props({ home: null, homeFailed: true }));
+		render(LiveGlobeCard, props({ home: null, homeState: 'failed' }));
 		expect(screen.getByText(/Couldn't load your network's location/).closest('[role="status"]')).not.toBeNull();
 		expect(screen.queryByRole('link', { name: 'Settings › Network' })).toBeNull();
 	});
@@ -195,6 +201,18 @@ describe('LiveGlobeCard expanded', () => {
 		expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Expand' }));
 		expect(document.getElementById('sidebar')).not.toHaveAttribute('inert');
 		expect(document.documentElement.style.overflow).toBe('');
+	});
+
+	it('Esc still closes after a drag on the globe left focus on the page body', async () => {
+		const target = layout();
+		render(LiveGlobeCard, { target, props: props() });
+		await fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+		await tick();
+		(document.activeElement as HTMLElement | null)?.blur();
+		expect(document.activeElement).toBe(document.body);
+		await fireEvent.keyDown(document.body, { key: 'Escape' });
+		await tick();
+		expect(screen.queryByRole('dialog')).toBeNull();
 	});
 
 	it('keeps Tab and Shift+Tab inside the dialog', async () => {

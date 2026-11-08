@@ -68,6 +68,31 @@ test('/live populated: the 3D globe starts and moves', async ({ page }, testInfo
 	expectNoConsoleErrors(errors, LIVE);
 });
 
+test('/live populated: Expand fills the window as a modal, and Esc closes it even after a drag', async ({ page }) => {
+	const errors = await openLive(page);
+	await expect(card(page)).toHaveAttribute('data-backend', /^(WebGPU|WebGL 2)$/, { timeout: 20_000 });
+	const expand = card(page).getByRole('button', { name: 'Expand' });
+	await expand.click();
+
+	const dialog = page.getByRole('dialog', { name: 'Where your traffic goes' });
+	await expect(dialog).toHaveAttribute('aria-modal', 'true');
+	const box = await dialog.boundingBox();
+	expect(box, 'the dialog covers the window').toEqual({ x: 0, y: 0, ...page.viewportSize()! });
+	await expect(page.locator('nav').first(), 'the rest of the page is inert').toHaveJSProperty('inert', true);
+
+	// a drag on the globe takes focus off the dialog's controls
+	const stage = await card(page).locator('.globe-stage canvas').boundingBox();
+	await page.mouse.move(stage!.x + stage!.width / 2, stage!.y + stage!.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(stage!.x + stage!.width / 2 + 80, stage!.y + stage!.height / 2, { steps: 4 });
+	await page.mouse.up();
+	await page.keyboard.press('Escape');
+	await expect(dialog).toHaveCount(0);
+	await expect(expand).toBeFocused();
+	await expect(page.locator('nav').first()).toHaveJSProperty('inert', false);
+	expectNoConsoleErrors(errors, LIVE);
+});
+
 test('/live populated: the flat map this browser picked', async ({ page }, testInfo) => {
 	const reduced = testInfo.project.name === 'reduced-motion';
 	const errors = await openLive(page, () => localStorage.setItem('nettap-display-settings', JSON.stringify({ liveMap: 'flat' })));
