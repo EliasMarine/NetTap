@@ -5,13 +5,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { get } from 'svelte/store';
-import { getLiveDashboard } from '$lib/api/live';
+import { getLiveDashboard, getLiveConnectionDetail } from '$lib/api/live';
+import { getHomeLocation } from '$lib/api/home-location';
 import type { LiveConnection, LiveDashboardResponse } from '$lib/api/live';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+// The saved home location: none by default (the globe card says where to set it)
+vi.mock('$lib/api/home-location', () => ({ getHomeLocation: vi.fn().mockResolvedValue(null) }));
 vi.mock('$lib/api/live', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/api/live')>()),
 	getLiveDashboard: vi.fn(),
@@ -384,7 +387,8 @@ describe('Live card states', () => {
 		await renderLive();
 		const loading = screen.getAllByRole('status').map((el) => el.textContent?.trim());
 		expect(loading).toEqual(
-			expect.arrayContaining(['Loading live data', 'Loading the map', 'Loading top talkers', 'Loading protocols', 'Loading live connections']),
+			// OLD CODE: 'Loading the map' (the full-width globe card replaced the map card)
+			expect.arrayContaining(['Loading live data', 'Loading the globe', 'Loading top talkers', 'Loading protocols', 'Loading live connections']),
 		);
 	});
 
@@ -404,5 +408,51 @@ describe('Live card states', () => {
 		await fireEvent.click(screen.getAllByRole('button', { name: 'Try again' })[0]);
 		await flush();
 		expect(feed()).toHaveLength(4);
+	});
+});
+
+describe('Live globe', () => {
+	it("an inbound row's country sits beside its source, an outbound row's beside its destination", async () => {
+		vi.mocked(getLiveDashboard).mockResolvedValue(
+			dashboard([
+				conn(1, '192.168.1.20', 'NL', 'tcp', { direction: 'out', geo_ip: '203.0.113.1' }),
+				conn(2, '198.51.100.7', 'US', 'tcp', { direction: 'in', dest_ip: '192.168.1.21', geo_ip: '198.51.100.7' }),
+			]),
+		);
+		await renderLive();
+		const cells = screen.getAllByRole('row').slice(1).map((r) => [...r.querySelectorAll('td')].map((td) => td.querySelector('.country')?.textContent ?? ''));
+		// [source, destination] columns per row, newest first
+		expect(cells.map((c) => [c[1], c[3]])).toEqual([
+			['US', ''],
+			['', 'NL'],
+		]);
+	});
+
+	it("the drawer asks the daemon for the row's located end", async () => {
+		vi.mocked(getLiveDashboard).mockResolvedValue(
+			dashboard([conn(2, '198.51.100.7', 'US', 'tcp', { direction: 'in', dest_ip: '192.168.1.21', dest_port: 22, geo_ip: '198.51.100.7' })]),
+		);
+		await renderLive();
+		vi.mocked(getLiveConnectionDetail).mockClear();
+		await fireEvent.click(screen.getByRole('button', { name: /^Open connection from/ }));
+		expect(getLiveConnectionDetail).toHaveBeenCalledWith('198.51.100.7', '192.168.1.21', 22, '198.51.100.7');
+	});
+
+	it("says where to set the location, or that it couldn't be loaded, and never draws a made-up home", async () => {
+		await renderLive();
+		expect(screen.getByRole('link', { name: 'Settings › Network' })).toHaveAttribute('href', '/settings?tab=network');
+		document.body.innerHTML = '';
+		vi.mocked(getHomeLocation).mockRejectedValueOnce(new Error('HTTP 503'));
+		await renderLive();
+		expect(screen.getByText(/Couldn't load your network's location/)).toBeInTheDocument();
+		expect(document.querySelector('.home-ring')).toBeNull();
+	});
+
+	it('a saved location reaches the flat map as its home ring', async () => {
+		vi.mocked(getHomeLocation).mockResolvedValueOnce({ lat: 51.5, lon: -0.13, label: 'London' });
+		await renderLive();
+		await flush();
+		expect(document.querySelector('.home-ring')).not.toBeNull();
+		expect(screen.queryByRole('link', { name: 'Settings › Network' })).toBeNull();
 	});
 });

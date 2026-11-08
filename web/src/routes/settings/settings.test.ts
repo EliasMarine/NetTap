@@ -706,3 +706,63 @@ describe('Settings — Display: the default time range (NET-195)', () => {
 		expect(screen.queryByLabelText('Timezone')).not.toBeInTheDocument();
 	});
 });
+
+describe('Settings — Display: the Live map', () => {
+	const KEY = 'nettap-display-settings';
+	beforeEach(() => localStorage.clear());
+	afterEach(() => {
+		localStorage.clear();
+		vi.unstubAllGlobals();
+	});
+
+	async function openDisplay() {
+		stubFetch();
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('tab', { name: 'Display' }));
+		return screen.getByLabelText('Live map') as HTMLSelectElement;
+	}
+
+	it('offers the globe or the lighter flat map, and saves the flat map beside the range', async () => {
+		const select = await openDisplay();
+		expect(Array.from(select.options, (o) => o.textContent?.trim())).toEqual(['3D globe', 'Flat map (lighter on this computer)']);
+		expect(select.value).toBe('globe');
+		await fireEvent.change(select, { target: { value: 'flat' } });
+		await fireEvent.change(screen.getByLabelText('Default time range'), { target: { value: '7d' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save display settings' }));
+		expect(JSON.parse(localStorage.getItem(KEY)!)).toEqual({ defaultRange: '7d', liveMap: 'flat' });
+	});
+
+	it('shows a saved flat map, and the globe saves nothing (it is the default)', async () => {
+		localStorage.setItem(KEY, JSON.stringify({ liveMap: 'flat' }));
+		const select = await openDisplay();
+		expect(select.value).toBe('flat');
+		await fireEvent.change(select, { target: { value: 'globe' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save display settings' }));
+		expect(localStorage.getItem(KEY)).toBeNull();
+	});
+});
+
+describe('Settings — links into a tab', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		window.history.replaceState(null, '', '/');
+	});
+
+	it('?tab=network opens Network, with the network location card', async () => {
+		window.history.replaceState(null, '', '/settings?tab=network');
+		stubFetch({ '/api/settings/home-location': () => ({ body: { home: null } }) });
+		render(Page);
+		await flush();
+		expect(screen.getByRole('tab', { name: 'Network' })).toHaveAttribute('aria-selected', 'true');
+		expect(screen.getByRole('heading', { name: 'Network location' })).toBeInTheDocument();
+	});
+
+	it('an unknown tab is ignored', async () => {
+		window.history.replaceState(null, '', '/settings?tab=nope');
+		stubFetch();
+		render(Page);
+		await flush();
+		expect(screen.getByRole('tab', { name: 'Notifications' })).toHaveAttribute('aria-selected', 'true');
+	});
+});

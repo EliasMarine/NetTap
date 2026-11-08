@@ -54,7 +54,15 @@ export default defineConfig({
 	globalTeardown: './e2e/visual/global-teardown.ts',
 	// No traces by default: the screenshots are the output, and ~80 soft-failing tests each saving a
 	// trace hung one test's teardown (ENOENT on the artifact zip). Debug with --trace on.
-	use: { ...devices['Desktop Chrome'], baseURL: APP_URL, trace: 'off' },
+	// OLD CODE: use: { ...devices['Desktop Chrome'], baseURL: APP_URL, trace: 'off' },
+	// Headless Chromium has no WebGL 2 unless software rendering is allowed: the Live globe (NET-207) must really
+	// start here, so its test fails on a fallback instead of passing on the flat map.
+	use: {
+		...devices['Desktop Chrome'],
+		baseURL: APP_URL,
+		trace: 'off',
+		launchOptions: { args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] },
+	},
 	// Playwright starts these one at a time, each after the previous `url` answers,
 	// so `firstrun` (no build) starts only once `app` has built and is serving.
 	webServer: [

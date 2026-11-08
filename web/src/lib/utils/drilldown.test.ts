@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { DISPLAY_SETTINGS_KEY, savedDefaultRange, startRange, alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery } from './drilldown';
+import { DISPLAY_SETTINGS_KEY, savedDefaultRange, savedLiveMap, startRange, alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery } from './drilldown';
 
 const MB = 1000 ** 2; // decimal, as formatBytes prints (NET-166)
 
@@ -272,5 +272,41 @@ describe('the saved default range (NET-195)', () => {
 		expect(startRange('24h')).toBe('30d');
 		save({ defaultTimeRange: '1h' });
 		expect(startRange('24h')).toBe('24h');
+	});
+});
+
+describe('the Live map choice', () => {
+	const save = (value: unknown) => localStorage.setItem(DISPLAY_SETTINGS_KEY, JSON.stringify(value));
+	afterEach(() => {
+		localStorage.clear();
+		vi.restoreAllMocks();
+	});
+
+	it('is the globe unless this browser picked the flat map', () => {
+		expect(savedLiveMap()).toBe('globe');
+		save({ liveMap: 'flat' });
+		expect(savedLiveMap()).toBe('flat');
+		save({ liveMap: 'flat', defaultRange: '7d' });
+		expect(savedLiveMap()).toBe('flat');
+		expect(savedDefaultRange()).toBe('7d');
+		for (const stored of [{ liveMap: 'FLAT' }, { liveMap: 1 }, { defaultRange: '7d' }, 'flat', null]) {
+			save(stored);
+			expect(savedLiveMap()).toBe('globe');
+		}
+	});
+
+	it('is the globe when the JSON is bad or storage throws', () => {
+		localStorage.setItem(DISPLAY_SETTINGS_KEY, '{not json');
+		expect(savedLiveMap()).toBe('globe');
+		save({ liveMap: 'flat' });
+		vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+			throw new Error('SecurityError');
+		});
+		expect(savedLiveMap()).toBe('globe');
+	});
+
+	it("a saved flat map doesn't count as a default range", () => {
+		save({ liveMap: 'flat' });
+		expect(savedDefaultRange()).toBeNull();
 	});
 });

@@ -33,8 +33,15 @@ function conn(i: number, arc: GeoArc, dest: string, hasAlert: boolean): LiveConn
 		dest_city: arc.city,
 		dest_asn: 64_496 + i,
 		dest_org: 'Example Hosting',
+		geo_ip: dest,
 		has_alert: hasAlert,
+		direction: 'out',
 	};
+}
+
+/** An internet address reaching a LAN device (a port forward): the place is the source's. */
+function inbound(i: number, arc: GeoArc, src: string): LiveConnection {
+	return { ...conn(i, arc, '192.168.1.30', false), source_ip: src, source_port: 40_000 + i, dest_port: 22, geo_ip: src, direction: 'in', device_name: '' };
 }
 
 const CONNECTIONS = [
@@ -44,6 +51,7 @@ const CONNECTIONS = [
 	conn(3, ARCS[3], '198.51.100.80', false),
 	conn(4, ARCS[4], '203.0.113.90', false),
 	conn(5, ARCS[5], '192.0.2.10', false),
+	inbound(6, ARCS[2], '198.51.100.140'),
 ];
 
 export const LIVE_ROUTES: FixtureRoute[] = [

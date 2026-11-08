@@ -130,6 +130,17 @@ describe('live API client', () => {
 			mockFetchFailure(503);
 			await expect(getLiveConnectionDetail('10.0.0.5', '8.8.8.8', 53)).rejects.toThrow('HTTP 503');
 		});
+
+		it('asks for the located end when the row names one, else leaves it to the daemon', async () => {
+			mockFetchSuccess({ geo: {}, alerts: [], alert_count: 0, history: {} });
+			await getLiveConnectionDetail('203.0.113.9', '192.168.1.20', 22, '203.0.113.9');
+			await getLiveConnectionDetail('192.168.1.20', '8.8.8.8', 53);
+			const urls = vi.mocked(fetch).mock.calls.map((c) => String(c[0]));
+			expect(urls).toEqual([
+				'/api/live/connection/detail?src=203.0.113.9&dst=192.168.1.20&port=22&geo=203.0.113.9',
+				'/api/live/connection/detail?src=192.168.1.20&dst=8.8.8.8&port=53',
+			]);
+		});
 	});
 });
 

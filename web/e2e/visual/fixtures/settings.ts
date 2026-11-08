@@ -32,8 +32,17 @@ const EXCLUDED_EMPTY = { excluded_ips: [] } satisfies ExcludedIpsResponse;
 // The appliance's own management address and the household's public address.
 const EXCLUDED_POPULATED = { excluded_ips: ['192.168.1.50', '203.0.113.45'] } satisfies ExcludedIpsResponse;
 
+/** GET /api/settings/home-location: where the network is, for the Live globe. */
+interface HomeLocationResponse {
+	home: { lat: number; lon: number; label: string } | null;
+}
+
+const HOME_EMPTY = { home: null } satisfies HomeLocationResponse;
+const HOME_POPULATED = { home: { lat: 51.5074, lon: -0.1278, label: 'London' } } satisfies HomeLocationResponse;
+
 // `method` because both paths also take a POST/PUT with a different body.
 export const SETTINGS_ROUTES: FixtureRoute[] = [
+	{ path: '/api/settings/home-location', method: 'GET', empty: HOME_EMPTY, populated: HOME_POPULATED },
 	{ path: '/api/settings/api-keys', method: 'GET', empty: KEYS_EMPTY, populated: KEYS_POPULATED },
 	{ path: '/api/settings/excluded-ips', method: 'GET', empty: EXCLUDED_EMPTY, populated: EXCLUDED_POPULATED },
 ];

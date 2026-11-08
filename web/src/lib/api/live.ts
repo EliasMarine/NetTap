@@ -16,6 +16,10 @@ export interface LiveConnection {
 	service: string;
 	bytes: number;
 	duration: number;
+	/**
+	 * The place fields (country, country_name and the dest_* geo/AS fields) describe the remote end: the
+	 * destination, or the source when only the source has a country (an inbound row). geo_ip says which.
+	 */
 	country: string;
 	country_name: string;
 	device_name: string;
@@ -24,6 +28,8 @@ export interface LiveConnection {
 	dest_city: string;
 	dest_asn: number | null;
 	dest_org: string;
+	/** The address the place belongs to (source_ip or dest_ip); '' when neither end was located. Absent from older daemons. */
+	geo_ip?: string;
 	has_alert: boolean;
 	/** From the daemon's LAN subnets (O2); absent from /api/live/connections and older daemons. */
 	direction?: ConnectionDirection;
@@ -234,9 +240,11 @@ export async function getLiveDashboard(
 export async function getLiveConnectionDetail(
 	src: string,
 	dst: string,
-	port?: number
+	port?: number,
+	/** The end to locate (the row's geo_ip); the daemon takes dst when absent. */
+	geo?: string
 ): Promise<ConnectionDetailResponse> {
-	const query = buildQuery({ src, dst, port });
+	const query = buildQuery({ src, dst, port, geo });
 	const res = await fetch(`/api/live/connection/detail${query}`);
 
 	// OLD CODE START — #96: a failed request read as "No alerts for this connection"
