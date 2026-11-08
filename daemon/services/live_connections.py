@@ -360,9 +360,13 @@ class LiveConnectionTracker:
         # OLD CODE END
         # The row's place: the destination's when it has a country, else the source's when that
         # has one. The dest_* fields keep their names and mean "the remote end" (geo_ip says which).
+        # shortcut: a LAN host with a public address that Malcolm geolocates (IPv6, a public WAN
+        # IP inline) wins as the destination, so such an inbound row is placed at home; placing it
+        # right needs the LAN's IPv6 prefixes or the WAN address.
         dst_geo = dst.get("geo", {}) or {}
         src_geo = src.get("geo", {}) or {}
-        use_src = not dst_geo.get("country_iso_code") and bool(
+        # "Missing", exactly as country_filter's `exists` reads it: an empty string counts as present
+        use_src = dst_geo.get("country_iso_code") is None and bool(
             src_geo.get("country_iso_code")
         )
         place = src if use_src else dst

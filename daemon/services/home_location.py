@@ -75,6 +75,10 @@ def save_home(home: dict, file_path: str | None = None) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(home, f)
+            f.flush()
+            os.fsync(
+                f.fileno()
+            )  # on disk before the rename, so a power cut never leaves it empty
         os.replace(tmp, path)
     except Exception:
         try:

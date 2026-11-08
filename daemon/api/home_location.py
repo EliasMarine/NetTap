@@ -40,8 +40,12 @@ async def fetch_wan_geo():
     """The outside service's JSON reply, size- and time-capped. Raises on any failure."""
     timeout = aiohttp.ClientTimeout(total=_WAN_TIMEOUT_S)
     async with aiohttp.ClientSession(timeout=timeout) as session:
+        # No redirects: ipinfo answers /json directly, and the daemon (host network) must never be
+        # sent on to a LAN address
         async with session.get(
-            WAN_LOOKUP_URL, headers={"Accept": "application/json"}
+            WAN_LOOKUP_URL,
+            headers={"Accept": "application/json"},
+            allow_redirects=False,
         ) as resp:
             if resp.status != 200:
                 raise ValueError(f"the lookup service answered HTTP {resp.status}")
@@ -64,10 +68,14 @@ def wan_suggestion(data) -> dict:
         lat, lon = (float(part) for part in loc.split(","))
     except ValueError:
         raise ValueError("the reply's location wasn't two numbers") from None
-    parts = [data.get(k) for k in ("city", "region", "country")]
-    label = ", ".join(p.strip() for p in parts if isinstance(p, str) and p.strip())
-    # Drop control characters an odd reply might carry, rather than refuse the whole lookup
-    label = "".join(ch for ch in label if not unicodedata.category(ch).startswith("C"))
+    # Drop control characters an odd reply might carry, rather than refuse the whole lookup; per
+    # part, so a part that was only control characters leaves no stray comma
+    parts = [
+        "".join(ch for ch in p if not unicodedata.category(ch).startswith("C")).strip()
+        for p in (data.get(k) for k in ("city", "region", "country"))
+        if isinstance(p, str)
+    ]
+    label = ", ".join(p for p in parts if p)
     return parse_home({"lat": lat, "lon": lon, "label": label[:MAX_LABEL]})
 
 
@@ -128,7 +136,10 @@ async def handle_wan_lookup(request: web.Request) -> web.Response:
         suggestion = wan_suggestion(await fetch_wan_geo())
     except Exception as exc:  # network, timeout, bad JSON, unusable reply: one message
         reason = _plain_reason(exc)
-        logger.warning("WAN location lookup failed: %s (%r)", reason, exc)
+        # The type only: an undecodable reply's error carries the whole body, the public IP with it
+        logger.warning(
+            "WAN location lookup failed: %s (%s)", reason, type(exc).__name__
+        )
         return web.json_response(
             {
                 "error": f"Couldn't look up your WAN location: {reason}. "

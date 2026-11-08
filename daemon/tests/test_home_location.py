@@ -120,6 +120,13 @@ def test_wan_suggestion_strips_control_characters_and_truncates():
     assert len(label) == 80
 
 
+def test_wan_suggestion_drops_a_part_that_was_only_control_characters():
+    assert (
+        wan_suggestion({"loc": "1,2", "city": "\x00", "region": "Bavaria"})["label"]
+        == "Bavaria"
+    )
+
+
 @pytest.mark.parametrize(
     "reply, message",
     [

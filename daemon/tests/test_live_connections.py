@@ -695,6 +695,16 @@ class TestRowPlace(unittest.TestCase):
         self.assertEqual((conn["dest_lat"], conn["dest_lon"]), (40.7, -74.0))
         self.assertEqual(conn["geo_ip"], A_IP)
 
+    def test_empty_destination_country_counts_as_present_like_the_filter(self):
+        """OpenSearch's `exists` matches "", so country_filter never places such a row at its
+        source; the formatter must not either, or a filtered row would show another country."""
+        dest = _end(LAN_IP)
+        dest["geo"] = {"country_iso_code": ""}
+        conn = LiveConnectionTracker()._format_connection(
+            _hit(_end(B_IP, "GB", 51.5, -0.12, "B Org"), dest)
+        )
+        self.assertEqual((conn["country"], conn["geo_ip"]), ("", ""))
+
     def test_outbound_row_keeps_its_destination(self):
         hit = _hit(_end(LAN_IP), _end(A_IP, "US", 40.7, -74.0, "A Org"))
         conn = LiveConnectionTracker()._format_connection(hit)
