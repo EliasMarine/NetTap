@@ -74,12 +74,18 @@ def test_charge(src, dst, opener, client_target, expected):
     assert af.charge(src, dst, opener, client_target, is_lan) == expected
 
 
-def test_opener_needs_one_answer_within_the_slack():
+def test_a_minute_takes_the_record_it_is_in_then_one_that_just_ended():
     spans = [(PC, 1_000_000, 2_000_000)]
-    assert af.opener_at(spans, 2_000_000 + af.CONN_SLACK_MS) == PC
-    assert af.opener_at(spans, 2_000_001 + af.CONN_SLACK_MS) is None
-    # the same community ID reused by two conns opened from different ends
-    assert af.opener_at([*spans, (SCANNER, 1_500_000, 1_600_000)], 1_550_000) is None
+    assert af.minute_state(spans, 2_000_000 + af.CONN_SLACK_MS) == ("direct", PC)
+    # a flow-timeout alert, stamped up to FLOW_TIMEOUT_MS after the last packet
+    assert af.minute_state(spans, 2_000_001 + af.CONN_SLACK_MS) == ("after", PC)
+    assert af.minute_state(spans, 2_000_000 + af.FLOW_TIMEOUT_MS + 1) == ("none", None)
+    # the same community ID reused by two conns opened from different ends: either could be it
+    reused = [*spans, (SCANNER, 1_500_000, 1_600_000)]
+    assert af.minute_state(reused, 1_550_000) == ("unknown", None)
+    # two records that ended together, opened from different ends
+    tie = [*spans, (SCANNER, 1_900_000, 2_000_000)]
+    assert af.minute_state(tie, 2_100_000) == ("unknown", None)
 
 
 def test_a_reused_tuple_splits_into_own_traffic_and_an_attempt():
@@ -654,17 +660,50 @@ def test_a_c2_alert_on_a_session_held_open_is_the_devices_own(quiet):
 
 
 @pytest.mark.parametrize(
-    "history, transport, trusted",
+    "history, transport, orig_bytes, resp_bytes, who",
     [
-        ("ShADadFf", "tcp", True),
-        ("Dd", "udp", True),
-        ("^Dd", "udp", False),  # Zeek flipped it: UDP from a "server" port such as 5353
-        ("DadA", "tcp", False),  # picked up mid-stream: no SYN first
-        (None, None, True),
+        ("ShADadfF", "tcp", None, None, "orig"),
+        (
+            "DShR",
+            "tcp",
+            None,
+            None,
+            "orig",
+        ),  # a scanner's data probe, then its handshake (G11)
+        (
+            "Hs^",
+            "tcp",
+            None,
+            None,
+            "orig",
+        ),  # SYN-ACK seen first, flipped after (Zeek source)
+        ("^f", "tcp", None, None, af.DEBRIS),  # a late FIN logged on its own (G11)
+        ("D", "tcp", None, None, af.DEBRIS),  # a lone data packet, never answered (G11)
+        ("Dr", "tcp", None, None, af.DEBRIS),  # answered only by a reset
+        ("H", "tcp", None, None, af.DEBRIS),  # a SYN-ACK scan or backscatter
+        ("Hr", "tcp", None, None, af.DEBRIS),
+        ("^hR", "tcp", None, None, af.DEBRIS),
+        ("DadA", "tcp", None, None, af.UNKNOWN),  # a live session picked up mid-stream
+        ("^hADad", "tcp", None, None, af.UNKNOWN),  # its SYN missed, then a session
+        ("fA", "tcp", 0, 120, af.UNKNOWN),  # a command carried in a FIN
+        ("fA", "tcp", 0, 0, af.DEBRIS),  # a bare teardown
+        ("Ff", "tcp", None, None, af.UNKNOWN),  # no byte counters: assume payload
+        ("Dd", "udp", None, None, "orig"),
+        (
+            "^dD",
+            "udp",
+            None,
+            None,
+            "resp",
+        ),  # malware sends from port 5353; Zeek flips it
+        (None, None, None, None, "orig"),
     ],
 )
-def test_the_opener_is_trusted_only_from_a_clean_record(history, transport, trusted):
-    assert af._opener_trusted(history, transport) is trusted
+def test_who_opened_a_connection_comes_from_its_handshake(
+    history, transport, orig_bytes, resp_bytes, who
+):
+    expected = {"orig": C2, "resp": PC}.get(who, who)
+    assert af._verdict(C2, PC, history, transport, orig_bytes, resp_bytes) == expected
 
 
 def test_a_flipped_record_never_makes_the_c2_look_like_the_opener():
@@ -672,19 +711,26 @@ def test_a_flipped_record_never_makes_the_c2_look_like_the_opener():
     key = {
         "cid": "1:u",
         "orig": C2,
+        "resp": PC,
         "start": _T,
         "end": _T + 1,
-        "hist": "^Dd",
+        "hist": "^dD",
         "proto": "udp",
     }
     client = _page_client([{"key": key, "doc_count": 1}])
-    assert af.connection_spans(client, "idx", ["1:u"], _FROM, _TO) == {}
+    assert af.connection_spans(client, "idx", ["1:u"], _FROM, _TO) == {
+        "1:u": [(PC, _T, _T + 1)]
+    }
     sources = client.search.call_args.kwargs["body"]["aggs"]["all"]["composite"][
         "sources"
     ]
-    assert {
-        "hist": {"terms": {"field": "zeek.conn.history", "missing_bucket": True}}
-    } in sources
+    for name, field in (
+        ("hist", "zeek.conn.history"),
+        ("resp", "destination.ip"),
+        ("ob", "zeek.conn.orig_bytes"),
+        ("rb", "zeek.conn.resp_bytes"),
+    ):
+        assert {name: {"terms": {"field": field, "missing_bucket": True}}} in sources
 
 
 def test_alert_times_are_read_per_minute():
@@ -697,10 +743,12 @@ def test_alert_times_are_read_per_minute():
     assert sources[-1] == {
         "ts": {"date_histogram": {"field": "@timestamp", "fixed_interval": "1m"}}
     }
+    flow = {"flow": {"terms": {"field": "suricata.flow_id", "missing_bucket": True}}}
+    assert flow in sources
     # a minute bucket matches a conn that overlaps that minute, and no other
-    assert af.opener_at([(PC, _MON + 30_000, _MON + 40_000)], _MON) == PC
+    assert af.minute_state([(PC, _MON + 30_000, _MON + 40_000)], _MON) == ("direct", PC)
     late = _MON + af.INSTANT_MS + af.CONN_SLACK_MS
-    assert af.opener_at([(PC, late, late + _HOUR)], _MON) is None
+    assert af.minute_state([(PC, late, late + _HOUR)], _MON) == ("none", None)
 
 
 def test_a_blocklist_hit_with_no_lan_party_stays_listed(quiet):
@@ -715,3 +763,205 @@ def test_a_blocklist_hit_with_no_lan_party_stays_listed(quiet):
         lan_cidrs=["192.168.1.0/24"],
     )
     assert (group["severity"], group["counted_events"], group["findings"]) == (3, 5, [])
+
+
+# ---------------------------------------------------------------------------
+# NET-209 G11 trace: flow-timeout alerts, late fragments, probes, reused tuples (Codex rounds 1-5)
+# ---------------------------------------------------------------------------
+
+_MIN = 60_000
+
+
+def _at(h, m, sec=0):
+    return _MON + h * _HOUR + m * _MIN + sec * 1000
+
+
+def _alert(ts, flow="f1", src=C2, dst=PC, sig="S", cid="1:t"):
+    minute = ts // _MIN * _MIN
+    return {
+        "sig": sig,
+        "src": src,
+        "dst": dst,
+        "cid": cid,
+        "flow": flow,
+        "ts": minute,
+        "count": 1,
+    }
+
+
+def _roles(instants, spans, settled_before=None):
+    """(own, opener_known) of each alert, in order."""
+    found = af.findings_by_group(instants, {"1:t": spans}, {}, is_lan, settled_before)
+    out = []
+    for inst in instants:
+        (f,) = [
+            f
+            for f in found[(inst["sig"], inst["src"], inst["dst"])]
+            if any(t == inst["ts"] for t, _ in f["times"])
+        ]
+        out.append((f["own"], f["opener_known"]))
+    return out
+
+
+def test_a_flow_timeout_alert_is_judged_by_its_connection():
+    """G11: a scanner's conn ran 02:46:06-02:47:31; Suricata's 600 s timeout alert came 02:57:33."""
+    spans = [(SCANNER, _at(2, 46, 6), _at(2, 47, 31))]
+    assert _roles([_alert(_at(2, 57, 33), src=SCANNER, dst=SERVER)], spans) == [
+        (False, True)
+    ]
+
+
+def test_late_fragments_never_outvote_the_real_record():
+    """G11: `ShADaFf` (scanner) and three `^f` FIN fragments from the server after it closed."""
+    spans = [
+        (SCANNER, _at(20, 32, 52), _at(20, 33, 3)),
+        (af.DEBRIS, _at(20, 33, 11), _at(20, 33, 11)),
+        (af.DEBRIS, _at(20, 33, 19), _at(20, 33, 19)),
+        (af.DEBRIS, _at(20, 33, 35), _at(20, 33, 35)),
+    ]
+    assert _roles([_alert(_at(20, 33, 3), src=SCANNER, dst=SERVER)], spans) == [
+        (False, True)
+    ]
+
+
+def test_a_probe_answered_by_nothing_is_an_attempt():
+    """G11: a lone `D` from 64.62.197.57 to the server's port 80 decides nothing: packet direction."""
+    spans = [(af.DEBRIS, _at(3, 17, 31), _at(3, 17, 31))]
+    assert _roles([_alert(_at(3, 17, 31), src=SCANNER, dst=SERVER)], spans) == [
+        (False, True)
+    ]
+
+
+def test_one_clear_minute_decides_the_whole_flow():
+    """Codex R3: same tuple, internet-opened 10:00:00-10:00:10, device-opened 10:00:30-10:20."""
+    spans = [(C2, _at(10, 0), _at(10, 0, 10)), (PC, _at(10, 0, 30), _at(10, 20))]
+    alerts = [_alert(_at(10, 0, 31)), _alert(_at(10, 12))]
+    assert af.minute_state(spans, _at(10, 0)) == ("unknown", None)
+    assert _roles(alerts, spans) == [(True, True), (True, True)]
+
+
+@pytest.mark.parametrize("first, second, own", [(C2, PC, False), (PC, C2, True)])
+def test_a_delayed_alert_stays_with_its_own_flow(first, second, own):
+    """Codex R2: flow A 10:00-10:01 (wire alert 10:00, timeout alert 10:11); flow B reuses the
+    tuple 10:10-10:12 from the other end."""
+    spans = [(first, _at(10, 0), _at(10, 1)), (second, _at(10, 10), _at(10, 12))]
+    alerts = [_alert(_at(10, 0)), _alert(_at(10, 11))]
+    assert _roles(alerts, spans) == [(own, True), (own, True)]
+    # a flow seen only through its timeout alert: either record could be it
+    assert _roles([_alert(_at(10, 11))], spans) == [(True, False)]
+
+
+@pytest.mark.parametrize("opener, own", [(PC, True), (C2, False)])
+def test_a_late_fragment_never_hides_the_record_that_timed_out(opener, own):
+    """Codex R2: the record ends 10:01, a `^f` fragment at 10:01:30, the timeout alert at 10:11."""
+    spans = [
+        (opener, _at(10, 0), _at(10, 1)),
+        (af.DEBRIS, _at(10, 1, 30), _at(10, 1, 30)),
+    ]
+    assert _roles([_alert(_at(10, 11))], spans) == [(own, True)]
+
+
+def test_an_old_record_never_speaks_for_a_session_still_open():
+    """Codex R4: an internet-opened record ends 10:01; the device's C2 session on the same tuple
+    from 10:04 has no record yet. The 10:30 alert stays the device's own (held open)."""
+    spans = [(C2, _at(9, 59), _at(10, 1))]
+    alerts = [_alert(_at(10, 4)), _alert(_at(10, 30))]
+    assert _roles(alerts, spans) == [(False, True), (True, False)]
+
+
+def test_a_session_resumed_after_idle_counts_once_settled(quiet):
+    """Codex R1: the handshake record is out of reach; the resumed session's record is `DadA`."""
+    malware = "ET MALWARE Win32/AsyncRAT CnC Command"
+    groups = [
+        _bucket(_DROP, C2, PC, 2, "Minor"),
+        _bucket(malware, C2, PC, 1, "Critical"),
+    ]
+    instants = [
+        _instant(_DROP, C2, PC, "1:idle", _T, 2),
+        _instant(malware, C2, PC, "1:idle", _T, 1),
+    ]
+    resumed = {
+        "key": {
+            "cid": "1:idle",
+            "orig": C2,
+            "resp": PC,
+            "start": _T - 5_000,
+            "end": _T + 5_000,
+            "hist": "DadA",
+            "proto": "tcp",
+        },
+        "doc_count": 1,
+    }
+    summary = get_smart_alert_summary(_client(groups, instants, [resumed]), _FROM, _TO)
+    assert summary["threat_score"] == 12  # own critical 10 + own blocklist medium 2
+    fresh = af.findings_by_group(
+        [{**i["key"], "count": i["doc_count"]} for i in instants],
+        {"1:idle": [(af.UNKNOWN, _T - 5_000, _T + 5_000)]},
+        {},
+        is_lan,
+        settled_before=_T - 1,
+    )
+    assert (
+        fresh[(malware, C2, PC)][0]["own"] is False
+    )  # its record may still be on the way
+
+
+# ---------------------------------------------------------------------------
+# NET-209 security review of the matching: UDP after a pause, a session resumed mid-stream
+# ---------------------------------------------------------------------------
+
+
+def _conn(start, end, hist, proto, orig=PC, resp=C2, ob=None, rb=None):
+    key = {
+        "cid": "1:t",
+        "orig": orig,
+        "resp": resp,
+        "start": start,
+        "end": end,
+        "hist": hist,
+        "proto": proto,
+        "ob": ob,
+        "rb": rb,
+    }
+    return {"key": key, "doc_count": 1}
+
+
+@pytest.mark.parametrize("first, own", [(PC, True), (C2, False)])
+def test_a_udp_peer_speaking_first_after_a_pause_does_not_open_the_flow(first, own):
+    """Zeek closes UDP after 60 s of silence; the router's NAT mapping lives longer. A C2 that
+    speaks first 90 s later (`^d`: its packet from port 443) is still on the device's flow; and
+    a port-forwarded UDP service answering a scanner never becomes the opener."""
+    beacon = "Dd" if first == PC else "dD"  # PC is the record's originator
+    pause = _at(10, 0, 1) + 90_000
+    client = _page_client(
+        [
+            _conn(_at(10, 0), _at(10, 0, 1), beacon, "udp"),
+            _conn(pause, pause + 1_000, "^dD" if first == PC else "Dd", "udp"),
+            _conn(
+                pause + 2 * _HOUR, pause + 2 * _HOUR + 1, "^dD", "udp"
+            ),  # NAT long gone
+        ]
+    )
+    spans = af.connection_spans(client, "idx", ["1:t"], _FROM, _TO)["1:t"]
+    assert [who for who, _, _ in spans] == [first, first, C2]
+    alert = _alert(pause // _MIN * _MIN + _MIN)  # C2 to PC, after the second record
+    assert _roles([alert], spans) == [(own, True)]
+
+
+def test_keepalives_on_a_session_held_open_keep_its_opener():
+    """The device opened the session to a blocklisted host hours ago; it resumes with zero-byte
+    keepalives (`Aa`, debris on its own). The session's handshake record names the opener."""
+    spans = [(PC, _at(6, 0), _at(6, 5)), (af.DEBRIS, _at(9, 0), _at(9, 0, 1))]
+    assert af.minute_state(spans, _at(9, 0)) == ("after", PC)
+    assert _roles([_alert(_at(9, 0))], spans) == [(True, True)]
+
+
+def test_a_scanner_that_waits_before_its_payload_stays_an_attempt():
+    """A scanner handshakes (its SYN), waits 301 s past Zeek's idle timeout, then sends payload
+    (`DadA`, opener unknown on its own): the handshake record still says who opened it."""
+    spans = [
+        (SCANNER, _at(4, 0), _at(4, 0, 2)),
+        (af.UNKNOWN, _at(4, 5, 3), _at(4, 5, 9)),
+    ]
+    alert = _alert(_at(4, 5, 3), src=SCANNER, dst=SERVER)
+    assert _roles([alert], spans) == [(False, True)]

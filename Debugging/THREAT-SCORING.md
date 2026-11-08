@@ -136,16 +136,43 @@ compromise, and the boost also lifted informational alerts into the counted ones
 
 NetTap uses the daemon's LAN rule (`/api/network/lan`). It classifies every alert toward a LAN address on its
 own, by the minute it fired in, before any counts are merged. Alert times are read per minute, so a flood
-of alerts on one connection is one entry a minute, not one per alert. The alert's `network.community_id` is
-matched to the Zeek connection record with the same ID whose time span (`event.start` to `event.end`,
-±10 s) overlaps that minute. That record's source is the side that opened the connection. A community ID is
-a hash of the addresses and ports, with no time and no direction, which is why the time has to match as well.
+of alerts on one connection is one entry a minute, not one per alert. A community ID is a hash of the
+addresses and ports, with no time and no direction, so the alert's `network.community_id` is matched to the
+Zeek connection records with the same ID by time as well.
 
-A record counts only when Zeek is sure who opened it. Zeek marks a connection whose direction it guessed
-and then flipped with `^` in `zeek.conn.history`, for example UDP sent from port 5353 to a high port, and a
-TCP connection it picked up mid-stream has no SYN (`S`) first. Such records are skipped, so a C2 server
-can never be read as the opener of a connection the device made
-(<https://docs.zeek.org/en/master/scripts/base/protocols/conn/main.zeek.html>).
+**Who opened a record's connection** comes from its `zeek.conn.history`
+(<https://docs.zeek.org/en/master/scripts/base/protocols/conn/main.zeek.html>). Upper-case letters are
+packets from the record's source, lower-case from its destination. Zeek's direction flip (`^`) swaps the two
+ends without rewriting the letters before it, so those letters are swapped back first.
+
+- **TCP: only a pure SYN shows the opener.** `S` is a SYN from the source, `s` from the destination. A
+  SYN-ACK does not count: SYN-ACK scans and backscatter send one with no connection behind it.
+- **TCP with no SYN, where both sides sent something other than a reset and there was payload**
+  (`D`/`d`, or the byte counters `zeek.conn.orig_bytes`/`resp_bytes` above 0, or no counters) is a live
+  session picked up mid-stream, opener unknown. That is what a device's C2 session looks like when it
+  resumes after Zeek's 5-minute idle expiry. It counts like a missing record (below).
+- **Any other TCP record is debris**: one side only, or answered only by a reset, or a bare teardown. A
+  scanner's lone data packet (`D`), a late FIN logged on its own after a close (`^f`) and a SYN-ACK probe
+  answered by a reset (`Hr`) are debris. Debris shows no live session on the device; it never decides.
+- **UDP and ICMP**: whoever sent the first packet. Malware sending UDP from port 5353 makes Zeek flip the
+  record, so its first letter is the device's (`^dD`), and the device is the opener. Zeek closes a UDP
+  record after 60 s of silence, but the outside can reach the device only while the router's NAT mapping
+  from the earlier traffic lives, so a UDP record that starts within 11 minutes of the previous one on the
+  same addresses and ports continues it and keeps its opener. A C2 server that speaks first after a pause
+  is not the opener.
+
+**Which record an alert belongs to.** A record the alert's minute falls in (`event.start` to `event.end`,
+±10 s) comes first. Otherwise the record that ended most recently, up to 11 minutes before, counts, debris
+left out. When the minute's own records were picked up mid-stream (debris or opener unknown, for example a
+session resuming with keepalives after hours idle), the session's handshake record on the same addresses
+and ports names the opener, however old it is within the lookup. Suricata stamps an alert raised when a flow times out with the timeout time: on the G11 that is
+600 s after the last packet for established TCP, and alerts arrived 600 to 608 s after their connection's
+end. Records naming different openers make the alert's opener unknown, never an attempt.
+
+**One decision per Suricata flow.** All alerts with the same community ID and `suricata.flow_id` are one
+connection. When a record the flow's alerts fall in names one opener, every alert of the flow takes it, so a
+timeout alert is judged by the connection its earlier alerts were in. A guess from a record that ended
+before an alert applies to that alert only.
 
 Each alert is charged to exactly one finding, for one device and one role:
 
@@ -153,8 +180,8 @@ Each alert is charged to exactly one finding, for one device and one role:
 |---|---|
 | LAN device → internet | The LAN device, as **its own traffic**. That covers its requests and its responses, for example an `ATTACK_RESPONSE` from a port-forwarded server. |
 | Internet → LAN device, on a connection the device opened | The device, as **its own traffic**. That covers a malware server's reply or a blocklisted server answering it. Rule 3. |
-| Internet → LAN device, the record shows the internet opened it | The device, as **an attempt against it**. The same when two matching records disagree, or the alert has no community ID. |
-| Internet → LAN device, no record matched | Zeek writes the record when a connection ends, and Malcolm indexes it within a minute. For the first 10 minutes the alert is **an attempt** while its record is on the way. After that it is a connection held open, as a C2 server can do for hours, and counts as **the device's own traffic**. |
+| Internet → LAN device, the record shows the internet opened it | The device, as **an attempt against it**. The same when only debris matched, or the alert has no community ID. |
+| Internet → LAN device, no record matched, or the opener is unknown | Zeek writes the record when a connection ends, and Malcolm indexes it within a minute. For the first 10 minutes the alert is **an attempt** while its record is on the way. After that it is a connection held open, as a C2 server can do for hours, and counts as **the device's own traffic**. |
 | LAN device → LAN device | One device, chosen by the rule's ET `attack_target`. A client-only target (`Client_Endpoint`, `Mobile_Client`) charges the device that opened the connection, so a proxy relaying a client's malware traffic is not charged. With no matching record, nobody is charged: the alert counts on the Threats page but goes to no device. Any other target charges the sender. |
 
 Each finding keeps its own counts and times.
@@ -233,6 +260,13 @@ other sources. The alert and the volume are matched by device and window, not by
   really opened, such as a scanner holding a port-forwarded server's connection open, therefore counts as
   the server's own until it ends and its record arrives. The record lookup reaches one day before the
   window, so a connection that started earlier is treated the same way.
+- **A packet Zeek never logged counts like a connection held open.** Zeek and Suricata capture separately,
+  so now and then Suricata alerts on a packet Zeek has no record for. On the G11 over 7 days that was 9
+  findings, all blocklist hits from scanners at medium (2 points each).
+- **A session picked up mid-stream whose handshake record is out of reach counts like a held-open
+  connection.** The lookup reaches one day before the time range; an older session's handshake is not read.
+- **UDP has no handshake.** A UDP conversation that resumes more than 11 minutes after its last packet is
+  opened by whoever sends first after the gap.
 - **An established inbound session from a blocklisted address is left out once its record shows the
   internet opened it.** That is rule 8: a port-forwarded server answering a listed scanner is the
   normal case. A compromise over such a session still shows through its other alerts (an exploit,
@@ -240,8 +274,12 @@ other sources. The alert and the volume are matched by device and window, not by
 - **ET's context categories outrank its severity metadata.** `ET INFO`, `HUNTING`, `TOR`, `P2P`, `GAMES`
   and `CHAT` are activity even when a rule's `signature_severity` says Major. ET files those rules as
   policy and context, not as compromise (rule 2); the raw alerts stay on the Alerts page.
-- **A reused address-and-port pair can be ambiguous.** When two connection records cover the same alert
-  time with different openers, the flow falls back to packet direction.
+- **A reused address-and-port pair can be ambiguous.** When two connection records with different openers
+  could hold the same alert, its opener is unknown. A flow's alerts outside the time range, and its
+  informational alerts, are not read, so they cannot settle it. Both need the same addresses and ports used
+  again from the other end within 11 minutes.
+- **An alert on a still-open connection, up to 11 minutes after an earlier connection on the same addresses
+  and ports ended, takes that earlier connection's opener** until its own record arrives.
 - **IPv6 alert groups have no LAN device.** They score as before, keyed by signature, source and destination.
 - **No corroboration from Zeek intel or notices yet.** NIST SP 800-61r2 §3.2.4 says to validate alerts
   against other sources, and Malcolm weights an intel match at 80 against 30 for a bare alert
