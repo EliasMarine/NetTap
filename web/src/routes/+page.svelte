@@ -573,12 +573,13 @@
 	// 		: '',
 	// );
 	// OLD CODE END
+	// OLD CODE: ` · ${formatNumber(smartAlertSummary.informational_events)} informational` (NET-209: it also holds context categories and blocklist hits devices did not start)
 	// Only the summary knows what is left to review, so without it the count is left out
 	const toReview = $derived(
 		smartAlertSummary
 			? ` · ${formatNumber(smartAlertSummary.total_events)} to review${
 					smartAlertSummary.informational_events
-						? ` · ${formatNumber(smartAlertSummary.informational_events)} informational`
+						? ` · ${formatNumber(smartAlertSummary.informational_events)} not counted`
 						: ''
 				}`
 			: '',

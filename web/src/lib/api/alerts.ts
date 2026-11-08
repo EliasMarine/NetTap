@@ -493,8 +493,12 @@ export interface SmartAlertsResponse {
  * NET-164: how the threat score is worked out, as daemon/services/alert_intelligence.py does it
  * (get_smart_alert_summary). Its rules are pinned by tests in daemon/tests/test_smart_alert_paging.py.
  */
+// OLD CODE START — NET-209: the score now counts findings (one signature on one device), caps inbound attempts and skips blocklist hits devices did not start
+// export const THREAT_SCORE_HOW =
+// 	'Each alert group adds 10 (critical), 5 (high), 2 (medium) or 0.5 (low), rounded down and capped at 100. A busier-than-usual window adds 15 while the score is under 75. The level never exceeds the worst alert.';
+// OLD CODE END
 export const THREAT_SCORE_HOW =
-	'Each alert group adds 10 (critical), 5 (high), 2 (medium) or 0.5 (low), rounded down and capped at 100. A busier-than-usual window adds 15 while the score is under 75. The level never exceeds the worst alert.';
+	'Each finding, one signature on one device, adds 10 (critical), 5 (high), 2 (medium) or 0.5 (low). An attempt from the internet against a device adds at most 0.5, and blocklist hits your devices did not start are not counted. Rounded down and capped at 100. A busier-than-usual window adds 15 while the score is under 75. The level never exceeds the worst alert.';
 
 export interface SmartAlertSummary {
 	from: string;

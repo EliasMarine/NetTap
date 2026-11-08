@@ -228,7 +228,8 @@ describe('Device detail — connection direction, protocol filter and upload sha
 		expect(vi.mocked(devices.getDeviceConnections).mock.calls[0][1]).toMatchObject({ proto: 'udp', page: 1 });
 	});
 
-	it('labels a 35% upload share as the risk factor does: elevated, not normal', async () => {
+	// OLD CODE: it('labels a 35% upload share as the risk factor does: elevated, not normal', … (NET-209: the share no longer scores, so it gets no risk word)
+	it('describes a 35% upload share as balanced, with no risk word', async () => {
 		const devices = await import('$api/devices');
 		const { device } = await vi.mocked(devices.getDeviceDetail)(IP, {});
 		vi.mocked(devices.getDeviceDetail).mockResolvedValueOnce({
@@ -238,8 +239,12 @@ describe('Device detail — connection direction, protocol filter and upload sha
 		await flush();
 
 		const kpi = screen.getAllByText('Upload share').map((el) => el.closest('.kpi')).find(Boolean) as HTMLElement;
-		expect(kpi).toHaveTextContent('Elevated');
-		expect(kpi).not.toHaveTextContent('Normal');
+		// OLD CODE START — NET-209: risk words
+		// expect(kpi).toHaveTextContent('Elevated');
+		// expect(kpi).not.toHaveTextContent('Normal');
+		// OLD CODE END
+		expect(kpi).toHaveTextContent('Balanced');
+		expect(kpi).not.toHaveTextContent('Elevated');
 	});
 });
 
