@@ -1,6 +1,6 @@
 # 2026-11-07 — The Live monitor globe (NET-207)
 
-**Status:** PR #220 (`feature/live-globe`); merge and G11 deploy pending. Plan approved by Codex in round 3 (`.codex-review/2026-11-07-2130-live-globe/`, git-ignored).
+**Status:** merged to `main` as `f811e63f` (PR #220), and deployed on the G11 on 2026-11-08 (every deploy check passed). Plan approved by Codex in round 3 (`.codex-review/2026-11-07-2130-live-globe/`, git-ignored).
 
 ## Problem
 
@@ -91,6 +91,27 @@ The old Live map showed packets flying across the earth. The 2026-11 redesign re
   - The home-location file handlers do their small file I/O on the event loop, as the excluded-IPs handlers next to them do.
   - No timeout on a renderer that stalls while starting. Settings › Display › Flat map is the way out.
 
+## Deploy on the G11 (2026-11-08)
+
+`scripts/remote/deploy-live-globe.sh` from `main`. Every check passed:
+- Both containers healthy.
+- `GET /api/settings/home-location` answers "not set yet".
+- A latitude of 95 is refused (400).
+- Dashboard rows carry `geo_ip`.
+- A `geo=` that is neither end is refused (400).
+- The built app has the globe and the location card.
+- `/live` and `/settings` redirect to `/login`, and `/api/health` answers 200.
+
+Of the newest 200 rows:
+- **out:** 74 placed at the destination.
+- **in:** all 50 placed at the source, which the old code could not place at all.
+- **local:** 44 with no place, and 13 at the destination (6 of them IPv6).
+- **unknown direction:** 19 at the destination.
+
+Only `in` and `out` rows launch packets. The 13 local rows placed at the destination are the public-LAN-address case left to NET-208.
+
+The G11 was on `feature/device-live-bandwidth` (NET-205, unmerged, CPU gate failed) and now runs `main`. That branch's empty `clsact` qdisc on `enp4s0` (0 filters) is still there. NET-205 redeploys its branch when its work resumes.
+
 ## Lessons
 
 - The countries file has rings that jump from -180° to 180°. A canvas raster fills them as thin bands across the whole map unless they are unwrapped onto 0..360 and drawn twice.
@@ -98,7 +119,7 @@ The old Live map showed packets flying across the earth. The 2026-11 redesign re
 
 ## Next steps
 
-- Deploy with `scripts/remote/deploy-live-globe.sh` and check on the owner's Mac.
+- The owner sets the location (Settings › Network › Use my WAN location, then Save) and checks the globe on their Mac.
 - Follow-ups not built:
   - Inbound places in `geo_arcs` (a source-geo aggregation). Today a country's count is destinations only, while its filter also matches inbound rows.
   - The home location file in `config_backup.py`.
