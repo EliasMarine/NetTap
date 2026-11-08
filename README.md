@@ -100,6 +100,24 @@ See the [developer guide](docs/developer-guide/dev-setup.md) and the [full docs]
 - [ ] DHCP gateway mode tested on hardware, and changing capture mode after setup
 - [ ] v1.0 community release
 
+## Acknowledgements
+
+NetTap builds on the work of upstream maintainers and communities. Thank you for making these tools available. NetTap adds installation, onboarding, its dashboard and storage management; the underlying traffic analysis comes from the projects below.
+
+| Project | Contribution to NetTap |
+| --- | --- |
+| [Malcolm](https://github.com/cisagov/Malcolm) — CISA, Idaho National Laboratory and contributors | The integrated network traffic analysis stack and container images |
+| [Zeek](https://zeek.org/) | Connection and protocol metadata |
+| [Suricata](https://suricata.io/) — OISF and contributors | Network intrusion detection |
+| [Emerging Threats](https://rules.emergingthreats.net/) — Proofpoint and contributors | Detection signatures, alongside the additional rule providers credited in [CREDITS.md](CREDITS.md) |
+| [OpenSearch](https://opensearch.org/) and OpenSearch Dashboards | Storage, indexing, search and exploration of network records |
+| [netsniff-ng](https://github.com/netsniff-ng/netsniff-ng) | Packet capture |
+| [Wireshark / TShark](https://www.wireshark.org/) | Packet decoding and protocol inspection |
+| [CyberChef](https://github.com/gchq/CyberChef) — GCHQ and contributors | Data decoding, transformation and analysis |
+| [Arkime](https://arkime.com/) and [Grafana](https://grafana.com/oss/grafana/) | Optional session exploration and dashboard integrations |
+
+The interface also builds on [Svelte and SvelteKit](https://svelte.dev/), [Three.js](https://threejs.org/) and the libraries, datasets and fonts listed in [CREDITS.md](CREDITS.md). See [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) for third-party license information. NetTap is an independent project; these acknowledgements do not imply upstream endorsement.
+
 ## Contributing
 
 Bug reports and feature requests are welcome in the issue tracker. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.

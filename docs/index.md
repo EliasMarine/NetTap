@@ -98,6 +98,10 @@ NetTap is in active development. The current release covers:
 
 ---
 
+## Acknowledgements
+
+NetTap builds on Malcolm, Zeek, Suricata, OpenSearch and many other upstream projects. See the [project credits](https://github.com/EliasMarine/NetTap/blob/main/CREDITS.md) for the maintainers, tools, rule providers, datasets and fonts behind NetTap, and what each contributes.
+
 ## License
 
 NetTap-original code, documentation and tooling are licensed under the [GNU General Public License version 3 only](https://github.com/EliasMarine/NetTap/blob/main/LICENSE) (`GPL-3.0-only`). Commercial use is permitted. If you distribute modified versions, you must license them under GPLv3 and provide recipients with the corresponding source code as required by the license. Preserve copyright and license notices and identify your changes. Running a hosted service alone does not require source disclosure under GPLv3. Third-party components retain their own licenses; see [Third-Party Licenses](https://github.com/EliasMarine/NetTap/blob/main/THIRD-PARTY-LICENSES.md).
