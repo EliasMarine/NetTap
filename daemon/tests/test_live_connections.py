@@ -622,5 +622,303 @@ class TestLiveQueryFailures(unittest.TestCase):
         self.assertEqual(resp.status, 502)
 
 
+# --------------------------------------------------------------------------- live globe: the place
+
+
+A_IP = "93.184.216.34"  # US
+B_IP = "81.2.69.142"  # GB
+LAN_IP = "192.168.1.100"
+
+
+def _end(ip, country=None, lat=None, lon=None, org=None):
+    end = {"ip": ip, "port": 443, "bytes": 100}
+    if country:
+        end["geo"] = {"country_iso_code": country, "country_name": country + " name"}
+        if lat is not None:
+            end["geo"]["location"] = {"lat": lat, "lon": lon}
+        end["geo"]["city_name"] = country + " city"
+    if org:
+        end["as"] = {"number": 64500, "organization": {"name": org}}
+    return end
+
+
+def _hit(source, destination):
+    return {
+        "@timestamp": "2026-11-07T10:00:00Z",
+        "source": source,
+        "destination": destination,
+        "network": {"transport": "tcp"},
+        "event": {},
+    }
+
+
+GLOBE_COUNTRY_CLAUSE = {
+    "bool": {
+        "should": [
+            {"term": {"destination.geo.country_iso_code": "DE"}},
+            {
+                "bool": {
+                    "must": [{"term": {"source.geo.country_iso_code": "DE"}}],
+                    "must_not": [
+                        {"exists": {"field": "destination.geo.country_iso_code"}}
+                    ],
+                }
+            },
+        ],
+        "minimum_should_match": 1,
+    }
+}
+
+
+class TestRowPlace(unittest.TestCase):
+    """A row's place is its destination's when that has a country, else its source's."""
+
+    def test_inbound_row_is_placed_at_its_source(self):
+        hit = _hit(_end(B_IP, "GB", 51.5, -0.12, "B Org"), _end(LAN_IP))
+        conn = LiveConnectionTracker()._format_connection(hit)
+        self.assertEqual(
+            {k: conn[k] for k in ("country", "country_name", "dest_city")},
+            {"country": "GB", "country_name": "GB name", "dest_city": "GB city"},
+        )
+        self.assertEqual((conn["dest_lat"], conn["dest_lon"]), (51.5, -0.12))
+        self.assertEqual((conn["dest_asn"], conn["dest_org"]), (64500, "B Org"))
+        self.assertEqual(conn["geo_ip"], B_IP)
+        self.assertEqual(conn["dest_ip"], LAN_IP)  # the addresses keep their places
+
+    def test_both_ends_located_the_destination_wins(self):
+        hit = _hit(
+            _end(B_IP, "GB", 51.5, -0.12, "B Org"),
+            _end(A_IP, "US", 40.7, -74.0, "A Org"),
+        )
+        conn = LiveConnectionTracker()._format_connection(hit)
+        self.assertEqual((conn["country"], conn["dest_org"]), ("US", "A Org"))
+        self.assertEqual((conn["dest_lat"], conn["dest_lon"]), (40.7, -74.0))
+        self.assertEqual(conn["geo_ip"], A_IP)
+
+    def test_empty_destination_country_counts_as_present_like_the_filter(self):
+        """OpenSearch's `exists` matches "", so country_filter never places such a row at its
+        source; the formatter must not either, or a filtered row would show another country."""
+        dest = _end(LAN_IP)
+        dest["geo"] = {"country_iso_code": ""}
+        conn = LiveConnectionTracker()._format_connection(
+            _hit(_end(B_IP, "GB", 51.5, -0.12, "B Org"), dest)
+        )
+        self.assertEqual((conn["country"], conn["geo_ip"]), ("", ""))
+
+    def test_outbound_row_keeps_its_destination(self):
+        hit = _hit(_end(LAN_IP), _end(A_IP, "US", 40.7, -74.0, "A Org"))
+        conn = LiveConnectionTracker()._format_connection(hit)
+        self.assertEqual((conn["country"], conn["geo_ip"]), ("US", A_IP))
+
+    def test_no_country_at_either_end_has_no_place(self):
+        conn = LiveConnectionTracker()._format_connection(
+            _hit(_end(LAN_IP), _end("192.168.1.1"))
+        )
+        self.assertEqual(
+            (conn["country"], conn["geo_ip"], conn["dest_lat"]), ("", "", None)
+        )
+        self.assertEqual(LiveConnectionTracker()._format_connection({})["geo_ip"], "")
+
+    def test_destination_as_without_a_country_stays_as_today(self):
+        """An address GeoIP knows the AS of but not the country keeps its organisation."""
+        hit = _hit(_end(LAN_IP), _end(A_IP, org="Anycast Org"))
+        conn = LiveConnectionTracker()._format_connection(hit)
+        self.assertEqual((conn["dest_org"], conn["geo_ip"]), ("Anycast Org", ""))
+
+    def test_dashboard_places_an_inbound_row_at_its_source(self):
+        inbound = _hit(_end(B_IP, "GB", 51.5, -0.12, "B Org"), _end(LAN_IP))
+        result, _, _ = _dashboard_with({}, total=1, hits=[inbound])
+        (conn,) = result["connections"]
+        self.assertEqual((conn["direction"], conn["country"]), ("in", "GB"))
+        self.assertEqual((conn["dest_lat"], conn["geo_ip"]), (51.5, B_IP))
+
+    def test_dashboard_country_filter_takes_a_sourced_place(self):
+        client = MagicMock()
+        client.search.side_effect = [
+            {"hits": {"total": {"value": 0}, "hits": []}, "aggregations": {}},
+            {"aggregations": {"alert_pairs": {"buckets": []}}},
+        ]
+        LiveConnectionTracker(client=client).fetch_dashboard_data(country="de")
+        filters = client.search.call_args_list[0].kwargs["body"]["query"]["bool"][
+            "filter"
+        ]
+        self.assertIn(GLOBE_COUNTRY_CLAUSE, filters)
+        self.assertNotIn(
+            {"term": {"destination.geo.country_iso_code": "DE"}}, filters
+        )  # not ANDed on its own
+
+    def test_connections_country_filter_takes_a_sourced_place(self):
+        client = MagicMock()
+        client.search.return_value = {"hits": {"hits": []}}
+        LiveConnectionTracker(client=client).fetch_from_opensearch(country="de")
+        filters = client.search.call_args.kwargs["body"]["query"]["bool"]["filter"]
+        self.assertIn(GLOBE_COUNTRY_CLAUSE, filters)
+
+    def test_a_filtered_row_carries_the_filter_country(self):
+        """Regression fixture: both ends located in different countries is the destination's row,
+        so the client-side filter (conn["country"]) agrees with the server clause."""
+        tracker = LiveConnectionTracker()
+        both = _hit(_end(B_IP, "GB", 1, 1), _end(A_IP, "US", 2, 2))
+        tracker._connections.append(tracker._format_connection(both))
+        self.assertEqual(len(tracker.get_active_connections(country="US")), 1)
+        self.assertEqual(tracker.get_active_connections(country="GB"), [])
+
+
+# --------------------------------------------------------------------------- live globe: GeoIP
+
+
+class _GeoIP:
+    """Records lookups; every address is public and located."""
+
+    def __init__(self):
+        self.calls = []
+
+    def lookup(self, ip):
+        from services.geoip_service import GeoIPResult
+
+        self.calls.append(ip)
+        return GeoIPResult(
+            ip,
+            country="Land " + ip,
+            country_code="L" + ip[-1],
+            city="City " + ip,
+            latitude=10.0,
+            longitude=20.0,
+            asn=1,
+            organization="Org " + ip,
+        )
+
+
+def _row(**kw):
+    row = {"source_ip": LAN_IP, "dest_ip": A_IP, "dest_lat": None, "dest_lon": None}
+    return {**row, **kw}
+
+
+class TestGeoIPFallbackTarget(unittest.TestCase):
+    def _enrich(self, row):
+        from api.live import _enrich_connections_geoip
+
+        geoip = _GeoIP()
+        _enrich_connections_geoip([row], geoip)
+        return geoip.calls
+
+    def test_uses_the_rows_chosen_end(self):
+        row = _row(source_ip=B_IP, dest_ip=LAN_IP, geo_ip=B_IP, direction="unknown")
+        self.assertEqual(self._enrich(row), [B_IP])
+        self.assertEqual((row["dest_lat"], row["geo_ip"]), (10.0, B_IP))
+
+    def test_without_a_place_inbound_looks_up_the_source(self):
+        row = _row(source_ip=B_IP, dest_ip=LAN_IP, geo_ip="", direction="in")
+        self.assertEqual(self._enrich(row), [B_IP])
+        self.assertEqual((row["dest_org"], row["geo_ip"]), ("Org " + B_IP, B_IP))
+
+    def test_without_a_place_otherwise_looks_up_the_destination(self):
+        for direction in ("out", "unknown", None):
+            row = _row(geo_ip="", direction=direction)
+            self.assertEqual(self._enrich(row), [A_IP], direction)
+            self.assertEqual(row["geo_ip"], A_IP)
+
+    def test_located_rows_are_left_alone(self):
+        row = _row(dest_lat=1.0, dest_lon=2.0, geo_ip="")
+        self.assertEqual(self._enrich(row), [])
+        self.assertEqual(row["geo_ip"], "")
+
+    def test_source_with_a_country_but_no_coordinates_is_looked_up_not_the_destination(
+        self,
+    ):
+        """Regression: unknown direction, source has a country but no coordinates, the
+        destination has none. Was a lookup of the destination, mixed into the source's fields."""
+        hit = _hit(_end(B_IP, "GB", org="B Org"), _end("100.64.0.9"))
+        conn = LiveConnectionTracker()._format_connection(hit)
+        conn["direction"] = connection_direction(B_IP, "100.64.0.9", LAN)
+        self.assertEqual((conn["direction"], conn["geo_ip"]), ("unknown", B_IP))
+        self.assertEqual(self._enrich(conn), [B_IP])
+        self.assertEqual((conn["country"], conn["dest_org"]), ("GB", "B Org"))
+        self.assertEqual((conn["dest_lat"], conn["dest_lon"]), (10.0, 20.0))
+
+
+# --------------------------------------------------------------------------- live globe: detail
+
+
+def _detail(query, tracker, geoip=None):
+    import asyncio
+    import json
+
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    from api.live import handle_live_connection_detail
+
+    app = web.Application()
+    app["live_tracker"] = tracker
+    if geoip:
+        app["geoip"] = geoip
+    resp = asyncio.run(
+        handle_live_connection_detail(
+            make_mocked_request("GET", "/api/live/connection/detail?" + query, app=app)
+        )
+    )
+    return resp.status, json.loads(resp.body)
+
+
+class TestDetailGeoEnd(unittest.TestCase):
+    def test_geo_must_be_one_of_the_pair(self):
+        tracker = MagicMock()
+        status, body = _detail(f"src={A_IP}&dst={B_IP}&geo=10.9.9.9", tracker)
+        self.assertEqual(status, 400)
+        self.assertIn("'geo'", body["error"])
+        tracker.fetch_connection_detail.assert_not_called()
+
+    def test_geo_is_passed_on_and_defaults_to_dst(self):
+        tracker = MagicMock()
+        tracker.fetch_connection_detail.return_value = {"geo": {}}
+        _detail(f"src={A_IP}&dst={B_IP}&geo={A_IP}", tracker)
+        self.assertEqual(
+            tracker.fetch_connection_detail.call_args.kwargs["geo_ip"], A_IP
+        )
+        _detail(f"src={A_IP}&dst={B_IP}", tracker)
+        self.assertEqual(
+            tracker.fetch_connection_detail.call_args.kwargs["geo_ip"], B_IP
+        )
+
+    def test_newer_reversed_session_keeps_the_requested_end(self):
+        """Row A→B with geo=A; the newest session is B→A; both ends located in different
+        countries. The drawer shows A's country and organisation, not B's."""
+        empty = {"hits": {"total": {"value": 0}, "hits": []}, "aggregations": {}}
+        session = {
+            "hits": {
+                "hits": [
+                    {
+                        "_source": _hit(
+                            _end(B_IP, "GB", 51.5, -0.12, "B Org"),
+                            _end(A_IP, "US", 40.7, -74.0, "A Org"),
+                        )
+                    }
+                ]
+            }
+        }
+        client = MagicMock()
+        client.search.side_effect = [session, empty, empty]
+        status, body = _detail(
+            f"src={A_IP}&dst={B_IP}&geo={A_IP}", LiveConnectionTracker(client=client)
+        )
+        self.assertEqual(status, 200)
+        geo = body["geo"]
+        self.assertEqual(
+            (geo["ip"], geo["country_code"], geo["organization"]), (A_IP, "US", "A Org")
+        )
+        self.assertEqual((geo["lat"], geo["lon"]), (40.7, -74.0))
+
+    def test_geoip_fallback_looks_up_the_same_end(self):
+        geoip = _GeoIP()
+        # No client: the empty detail names no ip, so the fallback must use geo itself
+        status, body = _detail(
+            f"src={B_IP}&dst={LAN_IP}&geo={B_IP}", LiveConnectionTracker(), geoip
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(geoip.calls, [B_IP])
+        self.assertEqual(body["geo"]["organization"], "Org " + B_IP)
+
+
 if __name__ == "__main__":
     unittest.main()

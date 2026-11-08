@@ -75,6 +75,10 @@ Build pages from these; read each file for its props.
 - **Controls:** `Pills` (toggle, tabs or nav mode), `SearchField`, `LiveChip`, `AutoRefreshButton` (Home's "Auto" / "Paused" toggle; every page with auto-refresh uses it)
 - **Data:** `DataTable`, `BarList`, `Meter`, `Bytes`, `Who`, `ConnResult`, `SeverityPill`, `DeviceList`, `DeviceTile` (with `deviceIcon()` from `device-icon.ts`; pass a device's `picture` and `icon` so the owner's photo or chosen icon shows, NET-200), `AlertRow`, `AlertGroup`, `Icon` (the system's 48 icons; a test fails if they drift from `nettap-design-system/assets/Icons/`)
 - **Charts (`ui/charts/`):** `AreaChart`, `Donut`, `SeverityGauge` (fed by `severityBuckets()` from `utils/severity.ts`), `Ring`, `Sparkline`, `StackBar`, `Radar`, `DotMap`. Chart maths lives in `ui/charts/geometry.ts`.
+- **The Live globe (NET-207):**
+  - `ui/charts/Globe.svelte` with its engine in `ui/charts/globe/` (three.js WebGPU, WebGL 2 where WebGPU is missing, TSL materials). three is dynamic-imported, so only `/live` downloads it.
+  - `components/live/LiveGlobeCard.svelte` wraps it, and falls back to `DotMap` when the browser can draw neither, or when Settings › Display › Live map is "Flat map". The choice is `savedLiveMap()` in `utils/drilldown.ts`.
+  - The globe reads its colours from the tokens at runtime, so it follows the theme. Its JS files are `@ts-nocheck`, because three ships no types.
 - **Device cards** (Devices, By type): every card has the same three rows (top; the maker line, "Maker unknown" when the lookup found none, with any addresses note under it; stats), on a subgrid of the group's grid, so the stats line up across a row of cards; the List layout's rows use the same helpers, so both layouts show the same figures (NET-180).
 - **Network flow** (`components/NetworkFlow.svelte`, maths in `ui/charts/flow.ts`): device → protocol → destination on one scale, coloured by protocol only (TCP `data-1`, UDP `data-2`, ICMP `data-5`), with an "Other destinations" node so every column adds up. Devices show their registry name (`utils/device-names.ts`), else their IP. Below 640 px of card width, or when the endpoint's two searches disagree beyond rounding, it shows `NetworkFlowTable` instead, with the reported figures unchanged.
 
@@ -109,7 +113,7 @@ Every chart has `role="img"` and an `aria-label` that states its headline, for e
 <!-- OLD CODE: - **Every Home range exists on Alerts and Log Explorer** (1h, 6h, 24h, 7d, 30d), so a range link never falls back to 24 hours. (NET-192 PR 4: one set everywhere) -->
 <!-- OLD CODE: - **One range set on every page with ranges: 1h, 6h, 24h, 7d, 30d** (Home's), … For now Connections stops at 7d: its stats take 14.5 s over 6 days of data on the G11, so 30d waits for the speed work. (NET-192 PR 3: Connections has 30d again) -->
 - **One range set on every page with ranges: 1h, 6h, 24h, 7d, 30d** (Home's), so a range link never falls back to 24 hours. Live is the real-time page; there is no 15m or 4h, and an old `?range=15m` or `4h` link falls back like any unknown range.
-- **Outside look-ups run on click.** Reverse DNS and WHOIS about an address or name wait for a button: an automatic one tells whoever runs that server that we looked.
+- **Outside look-ups run on click.** Reverse DNS and WHOIS about an address or name wait for a button: an automatic one tells whoever runs that server that we looked. Settings › Network location's "Use my WAN location" (ipinfo.io) follows the same rule, and only fills the form.
 
 ## Tables
 

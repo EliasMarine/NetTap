@@ -255,7 +255,8 @@ export function polygonsOf(geojson: unknown): Rings[] {
 	return polygons.filter(Array.isArray).map((rings) => rings.filter(Array.isArray).map(unwrapRing));
 }
 
-function unwrapRing(ring: readonly Point[]): readonly Point[] {
+/** A ring that crosses 180°, moved onto 0–360°; any other ring is returned as it is (the same array). */
+export function unwrapRing(ring: readonly Point[]): readonly Point[] {
 	const crosses = ring.some((p, i) => i > 0 && Math.abs(p[0] - ring[i - 1][0]) > 180);
 	return crosses ? ring.map(([x, y]) => [x < 0 ? x + 360 : x, y] as const) : ring;
 }

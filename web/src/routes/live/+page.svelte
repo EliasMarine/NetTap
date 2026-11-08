@@ -1,8 +1,9 @@
 <!--
   Live Network Monitor: what is talking to the world right now, refreshed every 3 s.
-  Stat strip, the destination dot map beside the top talkers, the protocol split and the live feed.
-  Three filters narrow the feed and the side cards together: a country (map hotspots), a protocol
-  (pills above the feed) and a device (top-talker rows).
+  Stat strip, the full-width globe (LiveGlobeCard: packets between your network and each place, or
+  the flat DotMap), then the top talkers and the protocol split beside the live feed.
+  Three filters narrow the feed and the side cards together: a country (the globe's destinations
+  list or the flat map's hotspots), a protocol (pills above the feed) and a device (top-talker rows).
 -->
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
@@ -42,7 +43,11 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import Donut from '$lib/components/ui/charts/Donut.svelte';
-	import DotMap, { type Hotspot } from '$lib/components/ui/charts/DotMap.svelte';
+	// OLD CODE START — the map moved into LiveGlobeCard, which draws DotMap as its flat fallback
+	// import DotMap, { type Hotspot } from '$lib/components/ui/charts/DotMap.svelte';
+	// OLD CODE END
+	import LiveGlobeCard from '$components/live/LiveGlobeCard.svelte';
+	import { getHomeLocation, type HomeLocation } from '$lib/api/home-location';
 	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { compareValues } from '$lib/utils/table-sort.svelte';
 	import { formatTime } from '$lib/utils/time';
@@ -79,6 +84,23 @@
 	let seenKeys = new Set<string>();
 	/** Bytes per top talker at each poll, oldest first: the rows' sparklines. */
 	let talkerHistory = $state.raw<Map<string, number[]>>(new Map());
+	/** Rows new with the latest poll (all of them on the first): each launches packets on the globe. */
+	let freshRows = $state.raw<LiveConnection[]>([]);
+	/** Where the network is (Settings › Network location); null until loaded or when not set. */
+	let home = $state.raw<HomeLocation | null>(null);
+	/** 'failed' is retried with the next load, so a daemon restart doesn't lose it until a reload. */
+	let homeState = $state<'loading' | 'ok' | 'failed'>('loading');
+
+	function loadHome() {
+		getHomeLocation()
+			.then((h) => {
+				home = h;
+				homeState = 'ok';
+			})
+			.catch(() => {
+				homeState = 'failed';
+			});
+	}
 
 	// ---------------------------------------------------------------------------
 	// State — cross-filtering
@@ -281,15 +303,17 @@
 		].map((p) => ({ value: p, label: p.toUpperCase() })),
 	]);
 
-	let hotspots = $derived<Hotspot[]>(
-		(dashboard?.geo_arcs ?? []).map((a) => ({
-			country: a.country || a.country_code,
-			code: a.country_code,
-			lat: a.lat,
-			lng: a.lon,
-			count: a.count,
-		})),
-	);
+	// OLD CODE START — LiveGlobeCard builds the flat map's hotspots from the same geo_arcs
+	// let hotspots = $derived<Hotspot[]>(
+	// 	(dashboard?.geo_arcs ?? []).map((a) => ({
+	// 		country: a.country || a.country_code,
+	// 		code: a.country_code,
+	// 		lat: a.lat,
+	// 		lng: a.lon,
+	// 		count: a.count,
+	// 	})),
+	// );
+	// OLD CODE END
 
 	let liveStats = $derived<Stat[]>(
 		dashboard
@@ -396,6 +420,7 @@
 	// }
 	// OLD CODE END
 	async function fetchData(guard: LoadGuard): Promise<LoadResult> {
+		if (homeState === 'failed') loadHome();
 		if (paused) return 'skipped';
 		const g = guard.begin();
 		loading = true;
@@ -404,7 +429,11 @@
 		try {
 			const next = await getLiveDashboard({ limit: PAGE_SIZE });
 			if (!guard.current(g)) return 'skipped';
-			markNewRows(withKeys(next.connections));
+			// OLD CODE: markNewRows(withKeys(next.connections)); (the globe launches packets for the new rows)
+			const rows = withKeys(next.connections);
+			const first = seenKeys.size === 0;
+			markNewRows(rows);
+			freshRows = first ? rows : rows.filter((r) => newKeys.has(r.key));
 			recordTalkers(next.top_talkers);
 			dashboard = next;
 			error = next._error ?? '';
@@ -479,7 +508,8 @@
 		drawerDetail = null;
 		drawerDetailLoading = true;
 		drawerDetailFailed = false;
-		getLiveConnectionDetail(conn.source_ip, conn.dest_ip, conn.dest_port)
+		// OLD CODE: getLiveConnectionDetail(conn.source_ip, conn.dest_ip, conn.dest_port) (the drawer locates the row's own end)
+		getLiveConnectionDetail(conn.source_ip, conn.dest_ip, conn.dest_port, conn.geo_ip || undefined)
 			.then((d) => { drawerDetail = d; })
 			.catch(() => { drawerDetail = null; drawerDetailFailed = true; })
 			.finally(() => { drawerDetailLoading = false; });
@@ -517,6 +547,9 @@
 		{ key: 'has_alert', label: 'Alert', sortValue: (c) => (c.has_alert ? 1 : 0), cell: alertCell },
 	];
 
+	/** The row's place is its source's (an inbound row): its country sits beside the source. */
+	const placedAtSource = (c: LiveConnection) => !!c.geo_ip && c.geo_ip === c.source_ip && c.geo_ip !== c.dest_ip;
+
 	const rowLabel = (c: FeedRow) => `Open connection from ${c.device_name || c.source_ip} to ${c.dest_ip}`;
 
 	// ---------------------------------------------------------------------------
@@ -533,6 +566,8 @@
 	// OLD CODE END
 	onMount(() => {
 		void refresh.run();
+		// Read once (again only after a failure): a new location is saved in Settings, and the next visit picks it up
+		loadHome();
 		// The first load has already checked `paused` (before its first await). Under reduced
 		// motion the feed then starts paused (PLAN.md §4.5): no new rows until Resume.
 		if (prefersReducedMotion()) paused = true;
@@ -559,6 +594,7 @@
 		{:else}
 			<IPAddress ip={c.source_ip} />
 		{/if}
+		{#if c.country && placedAtSource(c)}<span class="mono country" title={c.country_name || c.country}>{c.country}</span>{/if}
 	</span>
 {/snippet}
 
@@ -567,7 +603,8 @@
 {#snippet destinationCell(c: FeedRow)}
 	<span class="dest">
 		<IPAddress ip={c.dest_ip} />
-		{#if c.country}<span class="mono country" title={c.country_name || c.country}>{c.country}</span>{/if}
+		<!-- OLD CODE: {#if c.country}…{/if} (an inbound row's country is its source's) -->
+		{#if c.country && !placedAtSource(c)}<span class="mono country" title={c.country_name || c.country}>{c.country}</span>{/if}
 	</span>
 {/snippet}
 
@@ -609,7 +646,8 @@
 	<p class="notice is-warn" role="status"><Icon name="warn" />{loadFailed('the filtered figures', true)}</p>
 {/if}
 
-<div class="grid">
+<!-- OLD CODE: <div class="grid"> (the side cards stack beside the feed) -->
+<div class="grid live-grid">
 	<!-- OLD CODE START: sub="Connections, throughput and devices · last 5 minutes" (O8) OLD CODE END -->
 	<Card class="c-12" title="Right now" sub="Connections, throughput and LAN addresses · last 5 minutes">
 		{#if dashboard}
@@ -621,6 +659,7 @@
 		{/if}
 	</Card>
 
+	<!-- OLD CODE START — the c-8 DotMap card, replaced by the full-width globe (its flat map is DotMap)
 	<Card class="c-8 map-card" hero title="Where your traffic goes" sub="Connections by destination country · last 5 minutes">
 		{#if hotspots.length > 0}
 			<DotMap
@@ -638,9 +677,24 @@
 			<CardState state="loading" title="Loading the map" />
 		{/if}
 	</Card>
+	OLD CODE END -->
+	<LiveGlobeCard
+		arcs={dashboard?.geo_arcs ?? []}
+		fresh={freshRows}
+		rows={feedRows}
+		stats={liveStats}
+		{home}
+		{homeState}
+		loaded={dashboard !== null}
+		{error}
+		selected={countryFilter}
+		{paused}
+		onselect={setCountryFilter}
+		onretry={() => refresh.run()}
+	/>
 
 	<!-- OLD CODE START: sub="Bytes and connections per device · last 5 minutes" (O11: LAN sources only; O7: filtered from the daemon) OLD CODE END -->
-	<Card class="c-4" title="Top talkers" sub="Bytes and connections per LAN address · last 5 minutes{hasActiveFilter ? ', filtered' : ''}">
+	<Card class="c-4 live-side" title="Top talkers" sub="Bytes and connections per LAN address · last 5 minutes{hasActiveFilter ? ', filtered' : ''}">
 		{#if talkerItems.length > 0}
 			<DeviceList items={talkerItems} mode="select" selectedKey={deviceFilter ?? undefined} onselect={(item) => setDeviceFilter(item.key)} />
 		{:else if hasActiveFilter && filteredFailed}
@@ -656,7 +710,7 @@
 		{/if}
 	</Card>
 
-	<Card class="c-4" col title="Protocols" sub="Share of connections · last 5 minutes{hasActiveFilter ? ', filtered' : ''}">
+	<Card class="c-4 live-side" col title="Protocols" sub="Share of connections · last 5 minutes{hasActiveFilter ? ', filtered' : ''}">
 		{#if protocolItems.some((p) => p.value > 0)}
 			<Donut
 				items={protocolItems}
@@ -768,4 +822,11 @@
 	/* The system's new-row flash (tr.new, bundle.css:310) on a row the DataTable renders; the system
 	   CSS stops it under reduced motion */
 	:global(.live-feed tr:has(.row-new) td) { animation: rowin 900ms var(--ease); }
+	/* Top talkers and Protocols stack in the first four columns, beside the feed; below 1100 px the
+	   system's own spans apply */
+	@container app (min-width: 1101px) {
+		.live-grid { grid-auto-flow: row dense; }
+		.live-grid > :global(.live-side) { grid-column: 1 / span 4; }
+		.live-grid > :global(.live-feed) { grid-column: 5 / span 8; grid-row: span 2; }
+	}
 </style>

@@ -53,6 +53,19 @@ export function savedDefaultRange(): DrillRangeValue | null {
 	}
 }
 
+/** How the Live page draws its map in this browser: the 3D globe, or the lighter flat map. */
+export type LiveMap = 'globe' | 'flat';
+
+/** Settings › Display's Live map choice; anything else (nothing saved, bad JSON, no storage) is the globe. */
+export function savedLiveMap(): LiveMap {
+	try {
+		const saved = JSON.parse(localStorage.getItem(DISPLAY_SETTINGS_KEY) ?? 'null');
+		return saved?.liveMap === 'flat' ? 'flat' : 'globe';
+	} catch {
+		return 'globe';
+	}
+}
+
 /** The range a page opens on: the saved default, else the page's own. Read it where the page's range starts. */
 export const startRange = (pageDefault: DrillRangeValue): DrillRangeValue => savedDefaultRange() ?? pageDefault;
 

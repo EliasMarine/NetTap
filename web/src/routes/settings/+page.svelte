@@ -15,7 +15,8 @@
 	import StatStrip from '$lib/components/ui/StatStrip.svelte';
 	import Meter from '$lib/components/ui/Meter.svelte';
 	import { formatTime } from '$lib/utils/time';
-	import { DISPLAY_SETTINGS_KEY, DRILL_RANGES, savedDefaultRange, type DrillRangeValue } from '$lib/utils/drilldown';
+	import LocationCard from './LocationCard.svelte';
+	import { DISPLAY_SETTINGS_KEY, DRILL_RANGES, savedDefaultRange, savedLiveMap, type DrillRangeValue, type LiveMap } from '$lib/utils/drilldown';
 
 	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'integrations' | 'display' | 'about';
 
@@ -116,6 +117,7 @@
 	// OLD CODE END
 	/** The range pages open on (NET-195); '' is each page's own. */
 	let defaultRange = $state<DrillRangeValue | ''>('');
+	let liveMap = $state<LiveMap>('globe');
 	let displaySaving = $state(false);
 	let displayMessage = $state('');
 	let displayError = $state(false);
@@ -296,6 +298,7 @@
 	// OLD CODE END
 	function loadDisplaySettings() {
 		defaultRange = savedDefaultRange() ?? '';
+		liveMap = savedLiveMap();
 	}
 
 	async function loadExcludedIps() {
@@ -692,6 +695,9 @@
 		loadDisplaySettings();
 		loadCaptureSettings();
 		loadUnifiStatus();
+		// A link can open a tab: /settings?tab=network (the Live globe's "location isn't set" note)
+		const tab = new URLSearchParams(location.search).get('tab');
+		if (TABS.some((t) => t.value === tab)) activeTab = tab as TabId;
 		void refresh.run();
 	});
 
@@ -886,7 +892,13 @@
 			// 	JSON.stringify({ autoRefresh, timezone, defaultTimeRange })
 			// );
 			// OLD CODE END
-			if (defaultRange) localStorage.setItem(DISPLAY_SETTINGS_KEY, JSON.stringify({ defaultRange }));
+			// OLD CODE START — the Live map choice is saved beside the range now
+			// if (defaultRange) localStorage.setItem(DISPLAY_SETTINGS_KEY, JSON.stringify({ defaultRange }));
+			// else localStorage.removeItem(DISPLAY_SETTINGS_KEY);
+			// OLD CODE END
+			// Only what differs from the default is saved; nothing at all removes the key
+			const saved = { ...(defaultRange && { defaultRange }), ...(liveMap === 'flat' && { liveMap }) };
+			if (Object.keys(saved).length) localStorage.setItem(DISPLAY_SETTINGS_KEY, JSON.stringify(saved));
 			else localStorage.removeItem(DISPLAY_SETTINGS_KEY);
 			displayMessage = 'Display settings saved.';
 		} catch {
@@ -1386,6 +1398,7 @@
 			{/if}
 		</Card>
 	{:else if activeTab === 'network'}
+		<LocationCard />
 		<Card title="Excluded IPs" sub="Hidden from device views · still in logs, alerts and connections" class="c-12">
 			{#if networkLoading}
 				<CardState state="loading" title="Loading the excluded IP list" />
@@ -1532,7 +1545,8 @@
 		</Card>
 	{:else if activeTab === 'display'}
 		<!-- OLD CODE: sub="Theme, refresh and time settings · saved in this browser" (NET-195: the refresh and timezone controls are gone) -->
-		<Card title="Display preferences" sub="Theme and the default time range · saved in this browser" class="c-12">
+		<!-- OLD CODE: sub="Theme and the default time range · saved in this browser" (the Live map choice joined them) -->
+		<Card title="Display preferences" sub="Theme, the default time range and the Live map · saved in this browser" class="c-12">
 			<div class="stack">
 				<ThemePicker />
 				{@render feedback(displayMessage, displayError)}
@@ -1586,6 +1600,17 @@
 						<p class="field-help">
 							The window traffic, alert and device pages open on. A link from a figure still opens on that figure's window.
 							PCAP and Certificates keep their own (1 hour, 7 days).
+						</p>
+					</div>
+					<div class="field">
+						<label class="label" for="live-map">Live map</label>
+						<select class="select" id="live-map" bind:value={liveMap}>
+							<option value="globe">3D globe</option>
+							<option value="flat">Flat map (lighter on this computer)</option>
+						</select>
+						<p class="field-help">
+							The globe draws with WebGPU, or WebGL 2 where WebGPU is missing, and shows the flat map by itself when this browser can do
+							neither. Pick the flat map to save this computer's graphics and battery.
 						</p>
 					</div>
 				</div>

@@ -221,10 +221,10 @@ async def handle_live_dashboard(request: web.Request) -> web.Response:
 
 @in_thread
 def handle_live_connection_detail(request: web.Request) -> web.Response:
-    """GET /api/live/connection/detail?src=&dst=&port=
+    """GET /api/live/connection/detail?src=&dst=&port=&geo=
 
     Returns detailed information for a specific source→destination pair:
-    - geo: Full GeoIP + ASN info for the destination
+    - geo: Full GeoIP + ASN info for `geo` (the row's geo_ip: src or dst; default dst)
     - alerts: Related Suricata alerts (last 24h)
     - history: Connection timeline with byte volumes (last 24h)
     """
@@ -237,6 +237,13 @@ def handle_live_connection_detail(request: web.Request) -> web.Response:
     if not src or not dst:
         return web.json_response(
             {"error": "Both 'src' and 'dst' query parameters are required"},
+            status=400,
+        )
+
+    geo_ip = request.query.get("geo", "").strip() or dst
+    if geo_ip not in (src, dst):
+        return web.json_response(
+            {"error": "'geo' must be the 'src' or the 'dst' address"},
             status=400,
         )
 
@@ -261,22 +268,34 @@ def handle_live_connection_detail(request: web.Request) -> web.Response:
     #     )
     # OLD CODE END
     # The whole handler runs in a worker thread (OpenSearch queries, then the GeoIP fallback)
+    # OLD CODE START — 2026-11-07 (live globe): always located the destination
+    # try:
+    #     detail = tracker.fetch_connection_detail(
+    #         src_ip=src,
+    #         dst_ip=dst,
+    #         dst_port=dst_port,
+    #     )
+    # OLD CODE END
     try:
         detail = tracker.fetch_connection_detail(
             src_ip=src,
             dst_ip=dst,
             dst_port=dst_port,
+            geo_ip=geo_ip,
         )
     except Exception as exc:
         logger.error("Error fetching connection detail: %s", exc)
         return web.json_response({"error": f"Detail query failed: {exc}"}, status=502)
 
-    # GeoIP fallback: if OpenSearch had no geo data for the destination
+    # GeoIP fallback: if OpenSearch had no geo data for the located end
     geo = detail.get("geo", {})
     if geo and not geo.get("lat") and not geo.get("lon"):
         geoip = request.app.get("geoip")
         if geoip:
-            target_ip = geo.get("ip") or dst
+            # OLD CODE START — 2026-11-07 (live globe): the destination when the detail had no ip
+            # target_ip = geo.get("ip") or dst
+            # OLD CODE END
+            target_ip = geo.get("ip") or geo_ip
             result = geoip.lookup(target_ip)
             if result and not result.is_private:
                 geo["country"] = result.country or geo.get("country", "")
@@ -299,22 +318,40 @@ def _enrich_connections_geoip(connections: list[dict], geoip) -> None:
     """Enrich connections that are missing geo coordinates via GeoIPService.
 
     Modifies connection dicts in-place. Only enriches connections where
-    dest_lat/dest_lon are None (OpenSearch had no geo data).
+    dest_lat/dest_lon are None (OpenSearch had no geo data). It looks up one end
+    only, the row's own place (geo_ip), so the fields never mix two addresses;
+    with no geo_ip, the source of an inbound row, else the destination.
     """
     for conn in connections:
         if conn.get("dest_lat") is not None and conn.get("dest_lon") is not None:
             continue
 
-        dest_ip = conn.get("dest_ip", "")
-        if not dest_ip:
+        # OLD CODE START — 2026-11-07 (live globe): always the destination, even when the row's
+        # other fields came from its source
+        # dest_ip = conn.get("dest_ip", "")
+        # if not dest_ip:
+        #     continue
+        #
+        # try:
+        #     result = geoip.lookup(dest_ip)
+        # except Exception:
+        #     continue
+        # OLD CODE END
+        target = conn.get("geo_ip") or (
+            conn.get("source_ip", "")
+            if conn.get("direction") == "in"
+            else conn.get("dest_ip", "")
+        )
+        if not target:
             continue
 
         try:
-            result = geoip.lookup(dest_ip)
+            result = geoip.lookup(target)
         except Exception:
             continue
 
         if result and not result.is_private:
+            conn["geo_ip"] = target  # whatever is filled below belongs to this address
             if result.latitude is not None and result.longitude is not None:
                 conn["dest_lat"] = result.latitude
                 conn["dest_lon"] = result.longitude
