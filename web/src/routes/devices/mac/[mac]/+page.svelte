@@ -32,7 +32,8 @@
 	import { alertsHrefForSignature, chartTime as timeLabel, DRILL_RANGES, fmt, rangeWindow, startRange, type DrillRangeValue } from '$lib/utils/drilldown';
 	import { formatTime } from '$lib/utils/time';
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
-	import DeviceCustomise from './DeviceCustomise.svelte';
+	// OLD CODE: import DeviceCustomise from './DeviceCustomise.svelte'; (NET-201: the IP device page uses it too)
+	import DeviceCustomise from '$components/DeviceCustomise.svelte';
 
 	type Destination = DeviceTraffic['top_destinations'][number];
 	type DnsQuery = NonNullable<DeviceTraffic['dns_queries']>[number];
