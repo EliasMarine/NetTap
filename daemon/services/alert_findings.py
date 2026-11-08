@@ -74,7 +74,9 @@ def client_only_target(attack_target: Any) -> bool:
 def epoch_ms(ts: str) -> int:
     """An ISO time as epoch ms; no zone means UTC, as OpenSearch and api/time_range read it."""
     when = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    return int((when if when.tzinfo else when.replace(tzinfo=timezone.utc)).timestamp() * 1000)
+    return int(
+        (when if when.tzinfo else when.replace(tzinfo=timezone.utc)).timestamp() * 1000
+    )
 
 
 def _key_ms(value: Any) -> int:
@@ -128,8 +130,12 @@ def connection_spans(
 ) -> dict[str, list[tuple[str, int, int]]]:
     """Zeek conn records per community ID: (originator, start ms, end ms)."""
     # a conn is stamped with its start, and written when it ends
-    start = (datetime.fromisoformat(from_ts.replace("Z", "+00:00")) - timedelta(days=1)).isoformat()
-    end = (datetime.fromisoformat(to_ts.replace("Z", "+00:00")) + timedelta(hours=1)).isoformat()
+    start = (
+        datetime.fromisoformat(from_ts.replace("Z", "+00:00")) - timedelta(days=1)
+    ).isoformat()
+    end = (
+        datetime.fromisoformat(to_ts.replace("Z", "+00:00")) + timedelta(hours=1)
+    ).isoformat()
     spans: dict[str, list[tuple[str, int, int]]] = defaultdict(list)
     for i in range(0, len(cids), _CID_CHUNK):
         query = {
@@ -157,7 +163,12 @@ def connection_spans(
             {"end": {"terms": {"field": "event.end", "missing_bucket": True}}},
         ]
         buckets, complete = all_buckets(
-            client, index, query, sources, page_size=_INSTANT_PAGE, what="alert connections"
+            client,
+            index,
+            query,
+            sources,
+            page_size=_INSTANT_PAGE,
+            what="alert connections",
         )
         if not complete:
             raise QueryFailed(f"alert connections: stopped at {len(buckets)}")
@@ -194,11 +205,19 @@ def charge(
     """(device, own traffic) for one alert, or (None, False) when it concerns no one device."""
     src_lan, dst_lan = is_lan(src), is_lan(dst)
     if src_lan and not dst_lan:
-        return src, True  # its request, or its response on an internet-opened connection
+        return (
+            src,
+            True,
+        )  # its request, or its response on an internet-opened connection
     if dst_lan and not src_lan:
-        return dst, opener == dst  # a reply to its own connection, or an attempt against it
+        return (
+            dst,
+            opener == dst,
+        )  # a reply to its own connection, or an attempt against it
     if src_lan and dst_lan:
-        if client_target:  # the client (opener) is affected, not a proxy relaying for it
+        if (
+            client_target
+        ):  # the client (opener) is affected, not a proxy relaying for it
             return (opener, True) if opener in (src, dst) else (None, False)
         return src, True
     return None, False
@@ -223,7 +242,13 @@ def findings_by_group(
         known = own or opener is not None
         part = parts[(sig, src, dst)].setdefault(
             (device, own, known),
-            {"device": device, "own": own, "opener_known": known, "count": 0, "times": []},
+            {
+                "device": device,
+                "own": own,
+                "opener_known": known,
+                "count": 0,
+                "times": [],
+            },
         )
         part["count"] += inst["count"]
         part["times"].append((ts, inst["count"]))

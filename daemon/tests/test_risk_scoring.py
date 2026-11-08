@@ -42,13 +42,16 @@ class TestAlertsFactor(unittest.TestCase):
 
     def test_no_signatures_is_zero(self):
         self.assertEqual(
-            self.scorer.score_alerts({}, 0), (0, "No alerts in this device's own traffic")
+            self.scorer.score_alerts({}, 0),
+            (0, "No alerts in this device's own traffic"),
         )
 
     def test_points_per_severity(self):
         for severity, points in ((1, 50), (2, 25), (3, 5), (4, 1)):
             with self.subTest(severity=severity):
-                self.assertEqual(self.scorer.score_alerts({"S": severity}, 1)[0], points)
+                self.assertEqual(
+                    self.scorer.score_alerts({"S": severity}, 1)[0], points
+                )
 
     def test_distinct_signatures_add_up(self):
         self.assertEqual(self.scorer.score_alerts({"A": 3, "B": 3, "C": 4}, 9)[0], 11)
@@ -67,7 +70,9 @@ class TestAlertsFactor(unittest.TestCase):
         )
 
     def test_one_critical_own_signature_is_high_alone(self):
-        result = self.scorer.score_device({"signatures": {"ET MALWARE x": 1}, "alert_count": 1})
+        result = self.scorer.score_device(
+            {"signatures": {"ET MALWARE x": 1}, "alert_count": 1}
+        )
         self.assertEqual((result["score"], result["level"]), (50, "high"))
 
 
@@ -78,7 +83,9 @@ class TestConnectionAnomaly(unittest.TestCase):
         self.scorer = RiskScorer()
 
     def _points(self, count, usual, window_days=1.0, corroborated=True):
-        return self.scorer.score_connection_anomaly(count, usual, window_days, corroborated)
+        return self.scorer.score_connection_anomaly(
+            count, usual, window_days, corroborated
+        )
 
     def test_tiers(self):
         usual = [200] * 7
@@ -98,7 +105,9 @@ class TestConnectionAnomaly(unittest.TestCase):
         )
 
     def test_description_gives_the_facts(self):
-        self.assertEqual(self._points(1000, [200] * 7)[1], "1,000 connections, 5.0× its usual")
+        self.assertEqual(
+            self._points(1000, [200] * 7)[1], "1,000 connections, 5.0× its usual"
+        )
 
     def test_days_without_traffic_are_not_part_of_the_usual_day(self):
         # Three active days of 300: 1,000 is 3.3× (10). Counting the four quiet days, the
@@ -208,9 +217,7 @@ class TestCorroboration(unittest.TestCase):
                 "corroborated": True,
             }
         )
-        self.assertEqual(
-            [f["score"] for f in result["factors"]], [25, 25, 25]
-        )
+        self.assertEqual([f["score"] for f in result["factors"]], [25, 25, 25])
         self.assertEqual((result["score"], result["level"]), (75, "critical"))
 
 

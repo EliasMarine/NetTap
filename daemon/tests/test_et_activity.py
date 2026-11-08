@@ -234,7 +234,9 @@ def test_without_info_only_the_counted_query_runs():
     # )
     # OLD CODE END
     grouped = [
-        c.kwargs["body"] for c in client.search.call_args_list if "grouped" in c.kwargs["body"]["aggs"]
+        c.kwargs["body"]
+        for c in client.search.call_args_list
+        if "grouped" in c.kwargs["body"]["aggs"]
     ]
     assert len(grouped) == 1
     assert ET_ACTIVITY_CLAUSE in grouped[0]["query"]["bool"]["must_not"]

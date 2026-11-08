@@ -561,9 +561,24 @@ class TestSeverityOrder:
         [
             ("ET INFO Spotify P2P Client", 1, ["Major"], 5),  # context beats everything
             ("ET HUNTING Suspicious UA", 2, None, 5),
-            ("ET POLICY curl User-Agent", 2, ["Critical"], 1),  # ET's rating beats the table
-            ("ET MALWARE Agent CnC", 1, "Minor", 3),  # a plain string, as some feeds send it
-            ("ET MALWARE Agent CnC", 1, ["Unknown"], 1),  # no usable rating: the prefix table
+            (
+                "ET POLICY curl User-Agent",
+                2,
+                ["Critical"],
+                1,
+            ),  # ET's rating beats the table
+            (
+                "ET MALWARE Agent CnC",
+                1,
+                "Minor",
+                3,
+            ),  # a plain string, as some feeds send it
+            (
+                "ET MALWARE Agent CnC",
+                1,
+                ["Unknown"],
+                1,
+            ),  # no usable rating: the prefix table
             ("Custom rule", 1, None, 2),  # last: Suricata's priority, 1 is high
             ("Custom rule", 2, None, 3),
             ("Custom rule", 3, None, 4),
@@ -689,7 +704,11 @@ class TestBaselineMetric:
         path = tmp_path / "baselines.json"
         monkeypatch.setattr(alert_intelligence, "_BASELINE_PATH", path)
         old = [
-            {"hour": f"2026-11-02T{h:02d}", "window_hours": 24, "events_per_hour": 100.0}
+            {
+                "hour": f"2026-11-02T{h:02d}",
+                "window_hours": 24,
+                "events_per_hour": 100.0,
+            }
             for h in range(10)
         ]
         path.write_text(json.dumps({"history": old}))

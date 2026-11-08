@@ -678,7 +678,9 @@ ET_SEVERITY = {"CRITICAL": 1, "MAJOR": 2, "MINOR": 3}
 def _et_severity(et_severity: Any) -> int | None:
     """Our severity for ET's signature_severity (a string or Malcolm's one-item list), or None."""
     values = et_severity if isinstance(et_severity, list) else [et_severity]
-    found = [ET_SEVERITY[str(v).upper()] for v in values if str(v).upper() in ET_SEVERITY]
+    found = [
+        ET_SEVERITY[str(v).upper()] for v in values if str(v).upper() in ET_SEVERITY
+    ]
     return min(found) if found else None
 
 
@@ -1562,14 +1564,23 @@ def get_smart_alerts(
         # if sig_id and is_suppressed(sig_id, check_ip):
         #     continue
         # OLD CODE END
-        found = findings_map.get(
-            (bucket["key"].get("sig_name"), bucket["key"].get("src_ip"), bucket["key"].get("dst_ip"))
-        ) or []
+        found = (
+            findings_map.get(
+                (
+                    bucket["key"].get("sig_name"),
+                    bucket["key"].get("src_ip"),
+                    bucket["key"].get("dst_ip"),
+                )
+            )
+            or []
+        )
         if sig_id and is_suppressed(sig_id, device_ip):
             continue
         if sig_id and not found and is_suppressed(sig_id, src_ip):
             continue  # no LAN device: as before, by the packet's source
-        findings = [f for f in found if not (sig_id and is_suppressed(sig_id, f["device"]))]
+        findings = [
+            f for f in found if not (sig_id and is_suppressed(sig_id, f["device"]))
+        ]
         if found and not findings:
             continue  # suppressed on every device it concerns
 
@@ -1584,7 +1595,9 @@ def get_smart_alerts(
         #     signature, original_severity, dst_port, dst_ip
         # )
         # OLD CODE END
-        et_meta = ((sample_src.get("suricata") or {}).get("alert") or {}).get("metadata") or {}
+        et_meta = ((sample_src.get("suricata") or {}).get("alert") or {}).get(
+            "metadata"
+        ) or {}
         new_severity = reclassify_severity(
             signature, original_severity, et_severity=et_meta.get("signature_severity")
         )
@@ -1609,7 +1622,9 @@ def get_smart_alerts(
             #     [f["severity"] for f in findings if f["own"]], default=_INFO_SEVERITY
             # )
             # OLD CODE END
-            new_severity = min([f["severity"] for f in findings], default=_INFO_SEVERITY)
+            new_severity = min(
+                [f["severity"] for f in findings], default=_INFO_SEVERITY
+            )
         # alerts no device was charged with (no LAN party, or unattributed); suppressed ones are not
         unattributed = max(0, count - sum(f["count"] for f in found))
         counted_events = (
@@ -1663,7 +1678,9 @@ def get_smart_alerts(
                     "destination_ip": bucket["key"].get("dst_ip"),
                 },
                 # NET-209: which device each alert concerns, and whether it was its own traffic
-                "lan_device": src_ip if is_lan(src_ip) else (dst_ip if is_lan(dst_ip) else None),
+                "lan_device": src_ip
+                if is_lan(src_ip)
+                else (dst_ip if is_lan(dst_ip) else None),
                 "own_traffic": any(f["own"] for f in findings),
                 "reputation": reputation,
                 "findings": findings,
@@ -1675,7 +1692,11 @@ def get_smart_alerts(
 
     groups.sort(key=lambda g: (g["severity"], -g["count"]))
     # OLD CODE: return groups[:limit] (NET-209: occurrence lists stay out of API replies)
-    return groups[:limit] if with_times else [alert_findings.public(g) for g in groups[:limit]]
+    return (
+        groups[:limit]
+        if with_times
+        else [alert_findings.public(g) for g in groups[:limit]]
+    )
 
 
 def _counted_findings(

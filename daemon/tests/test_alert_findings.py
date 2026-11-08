@@ -35,14 +35,38 @@ SCANNER, C2 = "91.92.40.12", "203.0.113.9"
     "src, dst, opener, client_target, expected",
     [
         (PC, C2, None, False, (PC, True)),  # its request out
-        (SERVER, SCANNER, SCANNER, False, (SERVER, True)),  # its response on an inbound conn
+        (
+            SERVER,
+            SCANNER,
+            SCANNER,
+            False,
+            (SERVER, True),
+        ),  # its response on an inbound conn
         (C2, PC, PC, False, (PC, True)),  # a reply to a connection it opened
         (SCANNER, SERVER, SCANNER, False, (SERVER, False)),  # an attempt against it
-        (SCANNER, SERVER, None, False, (SERVER, False)),  # opener unknown: never its own
-        (PROXY, PC, PC, True, (PC, True)),  # proxy relays a client-side alert to the client
+        (
+            SCANNER,
+            SERVER,
+            None,
+            False,
+            (SERVER, False),
+        ),  # opener unknown: never its own
+        (
+            PROXY,
+            PC,
+            PC,
+            True,
+            (PC, True),
+        ),  # proxy relays a client-side alert to the client
         (PC, PROXY, PC, True, (PC, True)),
         (PROXY, PC, None, True, (None, False)),  # client-side alert, opener unknown
-        (PC, SERVER, None, False, (PC, True)),  # LAN to LAN otherwise: the packet's source
+        (
+            PC,
+            SERVER,
+            None,
+            False,
+            (PC, True),
+        ),  # LAN to LAN otherwise: the packet's source
         (SCANNER, C2, None, False, (None, False)),  # no LAN party
     ],
 )
@@ -64,7 +88,14 @@ def test_a_reused_tuple_splits_into_own_traffic_and_an_attempt():
     spans = {cid: [(PC, _MON, _MON + _HOUR), (C2, _MON + 5 * _HOUR, _MON + 6 * _HOUR)]}
     instants = [
         {"sig": "S", "src": C2, "dst": PC, "cid": cid, "ts": _MON + 10_000, "count": 2},
-        {"sig": "S", "src": C2, "dst": PC, "cid": cid, "ts": _MON + 5 * _HOUR + 1, "count": 3},
+        {
+            "sig": "S",
+            "src": C2,
+            "dst": PC,
+            "cid": cid,
+            "ts": _MON + 5 * _HOUR + 1,
+            "count": 3,
+        },
     ]
     found = af.findings_by_group(instants, spans, {}, is_lan)[("S", C2, PC)]
     by_own = {f["own"]: f["count"] for f in found}
@@ -73,7 +104,14 @@ def test_a_reused_tuple_splits_into_own_traffic_and_an_attempt():
 
 def test_dates_come_as_epoch_ms_or_iso():
     instants = [
-        {"sig": "S", "src": PC, "dst": C2, "cid": None, "ts": "2025-11-03T00:00:00Z", "count": 1}
+        {
+            "sig": "S",
+            "src": PC,
+            "dst": C2,
+            "cid": None,
+            "ts": "2025-11-03T00:00:00Z",
+            "count": 1,
+        }
     ]
     (finding,) = af.findings_by_group(instants, {}, {}, is_lan)[("S", PC, C2)]
     assert finding["times"] == [(_MON, 1)]
@@ -212,7 +250,9 @@ def test_informational_findings_make_no_stage():
     assert not _chains(
         [
             _group("scan", "reconnaissance", [_finding(PC, True, _MON)]),
-            _group("exploit", "exploit", [_finding(PC, True, _MON + _HOUR, severity=5)]),
+            _group(
+                "exploit", "exploit", [_finding(PC, True, _MON + _HOUR, severity=5)]
+            ),
         ]
     )
 
@@ -264,9 +304,13 @@ def _client(groups, instants, spans):
         aggs = body["aggs"]
         if "grouped" in aggs:
             activity = ET_ACTIVITY_CLAUSE in body["query"]["bool"]["filter"]
-            return {"aggregations": {"grouped": {"buckets": [] if activity else groups}}}
+            return {
+                "aggregations": {"grouped": {"buckets": [] if activity else groups}}
+            }
         names = [next(iter(s)) for s in aggs["all"]["composite"]["sources"]]
-        return {"aggregations": {"all": {"buckets": instants if "ts" in names else spans}}}
+        return {
+            "aggregations": {"all": {"buckets": instants if "ts" in names else spans}}
+        }
 
     client = MagicMock()
     client.search.side_effect = search
@@ -279,7 +323,10 @@ _T = 1_762_509_600_000  # 2025-11-07T10:00:00Z
 
 
 def _instant(sig, src, dst, cid, ts, count=1):
-    return {"key": {"sig": sig, "src": src, "dst": dst, "cid": cid, "ts": ts}, "doc_count": count}
+    return {
+        "key": {"sig": sig, "src": src, "dst": dst, "cid": cid, "ts": ts},
+        "doc_count": count,
+    }
 
 
 def _scanner_client():
@@ -293,7 +340,10 @@ def _scanner_client():
         _instant(_EXPLOIT, SCANNER, SERVER, "1:b", _T + _HOUR, 9),
     ]
     spans = [
-        {"key": {"cid": cid, "orig": SCANNER, "start": t - 1_000, "end": t + 1_000}, "doc_count": 1}
+        {
+            "key": {"cid": cid, "orig": SCANNER, "start": t - 1_000, "end": t + 1_000},
+            "doc_count": 1,
+        }
         for cid, t in (("1:a", _T), ("1:b", _T + _HOUR))
     ]
     return _client(groups, instants, spans)
@@ -319,12 +369,16 @@ def test_the_scanner_is_never_a_device_and_its_attempts_barely_score(quiet):
     (top,) = summary["top_threats"]
     assert top["signature"] == _EXPLOIT
     assert top["lan_device"] == SERVER and top["own_traffic"] is False
-    assert [(f["device"], f["own"], f["count"]) for f in top["findings"]] == [(SERVER, False, 9)]
+    assert [(f["device"], f["own"], f["count"]) for f in top["findings"]] == [
+        (SERVER, False, 9)
+    ]
     assert "times" not in top["findings"][0]
 
 
 def test_the_blocklist_hit_is_activity_when_nobody_on_the_lan_started_it(quiet):
-    groups = get_smart_alerts(_scanner_client(), _FROM, _TO, include_info=True, limit=None)
+    groups = get_smart_alerts(
+        _scanner_client(), _FROM, _TO, include_info=True, limit=None
+    )
     drop = next(g for g in groups if g["signature"] == _DROP)
     assert drop["reputation"] is True
     assert drop["severity"] == 5
@@ -354,8 +408,12 @@ def test_one_signature_on_one_device_scores_once(quiet):
 
 
 def test_attempts_from_many_scanners_weigh_low_once_per_signature(quiet):
-    groups = [_bucket(_EXPLOIT, f"198.51.100.{n}", SERVER, 1, "Critical") for n in range(30)]
-    instants = [_instant(_EXPLOIT, f"198.51.100.{n}", SERVER, None, _T + n) for n in range(30)]
+    groups = [
+        _bucket(_EXPLOIT, f"198.51.100.{n}", SERVER, 1, "Critical") for n in range(30)
+    ]
+    instants = [
+        _instant(_EXPLOIT, f"198.51.100.{n}", SERVER, None, _T + n) for n in range(30)
+    ]
     summary = get_smart_alert_summary(_client(groups, instants, []), _FROM, _TO)
     assert summary["threat_score"] == 0  # 0.5, rounded down
     assert summary["total_events"] == 30
@@ -369,7 +427,9 @@ def test_a_device_suppression_hides_the_attempts_against_it():
         patch.object(alert_intelligence, "is_suppressed", side_effect=suppressed),
         patch.object(alert_intelligence, "update_baseline", return_value=None),
     ):
-        groups = get_smart_alerts(_scanner_client(), _FROM, _TO, include_info=True, limit=None)
+        groups = get_smart_alerts(
+            _scanner_client(), _FROM, _TO, include_info=True, limit=None
+        )
     assert groups == []
 
 
@@ -393,9 +453,26 @@ def test_unknown_and_known_attempts_are_separate_findings():
     cid = "1:mixed"
     spans = {cid: [(SCANNER, _MON, _MON + _HOUR)]}
     instants = [
-        {"sig": "S", "src": SCANNER, "dst": SERVER, "cid": cid, "ts": _MON + 1, "count": 2},
-        {"sig": "S", "src": SCANNER, "dst": SERVER, "cid": cid, "ts": _MON + 5 * _HOUR, "count": 3},
+        {
+            "sig": "S",
+            "src": SCANNER,
+            "dst": SERVER,
+            "cid": cid,
+            "ts": _MON + 1,
+            "count": 2,
+        },
+        {
+            "sig": "S",
+            "src": SCANNER,
+            "dst": SERVER,
+            "cid": cid,
+            "ts": _MON + 5 * _HOUR,
+            "count": 3,
+        },
     ]
     found = af.findings_by_group(instants, spans, {}, is_lan)[("S", SCANNER, SERVER)]
-    assert sorted((f["opener_known"], f["count"]) for f in found) == [(False, 3), (True, 2)]
+    assert sorted((f["opener_known"], f["count"]) for f in found) == [
+        (False, 3),
+        (True, 2),
+    ]
     assert af.finding_severity(2, {"own": False, "opener_known": False}, True) == 3

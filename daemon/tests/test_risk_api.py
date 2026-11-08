@@ -179,7 +179,10 @@ def _a_day_renamed(reply):
                     {
                         **b,
                         "days": {
-                            "buckets": [*b["days"]["buckets"][:-1], {**b["days"]["buckets"][-1], "key": "x"}]
+                            "buckets": [
+                                *b["days"]["buckets"][:-1],
+                                {**b["days"]["buckets"][-1], "key": "x"},
+                            ]
                         },
                     }
                     for b in page["buckets"]
@@ -240,7 +243,9 @@ class _RiskCase(AioHTTPTestCase):
         return resp.status, await resp.json()
 
     def bodies(self):
-        return [c.kwargs["body"] for c in self.mock_storage._client.search.call_args_list]
+        return [
+            c.kwargs["body"] for c in self.mock_storage._client.search.call_args_list
+        ]
 
 
 class TestRiskScoresEndpoint(_RiskCase):
@@ -614,9 +619,7 @@ class TestRiskVolumeFactors(_RiskCase):
     @unittest_run_loop
     async def test_an_attempt_against_it_does_not_unlock_volume(self):
         self.answer_server()
-        self.smart.return_value = [
-            _group("ET EXPLOIT x", [(self.SERVER, False, 9, 1)])
-        ]
+        self.smart.return_value = [_group("ET EXPLOIT x", [(self.SERVER, False, 9, 1)])]
         _, data = await self.get("/api/risk/scores")
         self.assertEqual(data["devices"][0]["score"], 0)
 
@@ -743,7 +746,9 @@ class TestRiskReadsAreChecked(_RiskCase):
     @unittest_run_loop
     async def test_single_fails_when_its_connection_search_timed_out(self):
         self.assertEqual(
-            await self.spoiled("/api/risk/scores/192.168.1.1", "single_conn", _timed_out),
+            await self.spoiled(
+                "/api/risk/scores/192.168.1.1", "single_conn", _timed_out
+            ),
             (502, INCOMPLETE),
         )
 
@@ -753,7 +758,9 @@ class TestRiskReadsAreChecked(_RiskCase):
             return {**reply, "hits": {"total": {"value": 10000, "relation": "gte"}}}
 
         self.assertEqual(
-            await self.spoiled("/api/risk/scores/192.168.1.1", "single_conn", lower_bound),
+            await self.spoiled(
+                "/api/risk/scores/192.168.1.1", "single_conn", lower_bound
+            ),
             (502, INCOMPLETE),
         )
 

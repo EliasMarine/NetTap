@@ -97,7 +97,9 @@ def _two_page_client() -> MagicMock:
     client.search.side_effect = lambda index, body: (
         _NO_INSTANTS
         if "all" in body["aggs"]
-        else _page([], None) if _is_activity(body) else next(counted)
+        else _page([], None)
+        if _is_activity(body)
+        else next(counted)
     )
     return client
 
@@ -114,7 +116,9 @@ def test_every_page_is_read():
     # OLD CODE: first, second = (c.kwargs["body"] for c in client.search.call_args_list) (NET-191)
     bodies = [c.kwargs["body"] for c in client.search.call_args_list]
     # OLD CODE: first, second = (b for b in bodies if not _is_activity(b)) (NET-209: + instants)
-    first, second = (b for b in bodies if "grouped" in b["aggs"] and not _is_activity(b))
+    first, second = (
+        b for b in bodies if "grouped" in b["aggs"] and not _is_activity(b)
+    )
     assert "after" not in first["aggs"]["grouped"]["composite"]
     assert second["aggs"]["grouped"]["composite"]["after"] == {
         "sig_name": "x",
@@ -305,7 +309,9 @@ _NEXT = {"sig_name": "x", "src_ip": "y", "dst_ip": "z"}
     "bad",
     [
         {"aggregations": {"grouped": {"after_key": _NEXT}}},  # no bucket list
-        {"aggregations": {"grouped": {"buckets": _FULL_PAGE}}},  # full page, no next key
+        {
+            "aggregations": {"grouped": {"buckets": _FULL_PAGE}}
+        },  # full page, no next key
         {"timed_out": True, "aggregations": {"grouped": {"buckets": []}}},
         {"_shards": {"failed": 1}, "aggregations": {"grouped": {"buckets": []}}},
         {"aggregations": {}},  # the aggregation is missing

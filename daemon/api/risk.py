@@ -18,6 +18,7 @@ from opensearchpy import OpenSearchException
 
 from api.offload import in_thread, run_blocking
 from api.time_range import parse_time_range
+
 # OLD CODE: from api.alerts import SURICATA_NOISE_EXCLUSION (NET-209: alerts come from findings)
 # OLD CODE: from api.devices import _incomplete, _lan_device_bool_query, _lan_device_buckets
 from api.devices import (
@@ -398,7 +399,12 @@ def _history(
     }
     sides = (
         ("source.ip", opened, _days_agg(ranges, to_internet, "source.bytes"), True),
-        ("destination.ip", answered, _days_agg(ranges, {"match_all": {}}, "destination.bytes"), False),
+        (
+            "destination.ip",
+            answered,
+            _days_agg(ranges, {"match_all": {}}, "destination.bytes"),
+            False,
+        ),
     )
     rows: dict[str, list[dict]] = {}
     for field, query, aggs, counts_connections in sides:
@@ -415,9 +421,9 @@ def _history(
             raise QueryFailed(f"risk score history: stopped at {len(buckets)} devices")
         for b in buckets:
             days = b.get("days", {}).get("buckets")
-            if not isinstance(days, list) or sorted(d.get("key") for d in days) != sorted(
-                r["key"] for r in ranges
-            ):
+            if not isinstance(days, list) or sorted(
+                d.get("key") for d in days
+            ) != sorted(r["key"] for r in ranges):
                 raise QueryFailed("risk score history: malformed day ranges")
             before = rows.get(b["key"]["ip"], [_NO_TRAFFIC] * len(ranges))
             got = {d["key"]: d for d in days}
@@ -433,7 +439,9 @@ def _history(
     return rows
 
 
-def _own_alerts(client, app, from_ts: str, to_ts: str, ip: str | None = None) -> dict[str, dict]:
+def _own_alerts(
+    client, app, from_ts: str, to_ts: str, ip: str | None = None
+) -> dict[str, dict]:
     """Per device: each signature in its own traffic at its worst severity, their alert count, and
     whether one is a high or critical alert that is not a reputation hit (rule 5, plan F).
 
@@ -452,10 +460,18 @@ def _own_alerts(client, app, from_ts: str, to_ts: str, ip: str | None = None) ->
     devices: dict[str, dict] = {}
     for g in groups:
         for f in g["findings"]:
-            if not f["own"] or f["severity"] >= _INFO_SEVERITY or (ip and f["device"] != ip):
+            if (
+                not f["own"]
+                or f["severity"] >= _INFO_SEVERITY
+                or (ip and f["device"] != ip)
+            ):
                 continue
-            d = devices.get(f["device"], {"signatures": {}, "alert_count": 0, "corroborated": False})
-            worst = min(d["signatures"].get(g["signature"], _INFO_SEVERITY), f["severity"])
+            d = devices.get(
+                f["device"], {"signatures": {}, "alert_count": 0, "corroborated": False}
+            )
+            worst = min(
+                d["signatures"].get(g["signature"], _INFO_SEVERITY), f["severity"]
+            )
             devices[f["device"]] = {
                 "signatures": {**d["signatures"], g["signature"]: worst},
                 "alert_count": d["alert_count"] + f["count"],
@@ -669,103 +685,105 @@ def _risk_scores(request: web.Request) -> web.Response:
 
     # OLD CODE START — NET-209: every alert whose source was the device, including blocklist hits
     # it never started and ET INFO activity; the alerts factor now reads the device's own findings
-#     # Collect all device IPs for batch alert count query
-#     device_ips = [b["key"] for b in device_buckets]
-#
-#     # Batch alert count query
-#     # OLD CODE START — #96: one terms filter of every IP failed past 65,536 devices
-#     # (index.max_terms_count), and any failure scored every device as having no alerts
-#     # alert_counts: dict[str, int] = {}
-#     # if device_ips:
-#     #     alert_query = {... {"terms": {"source.ip": device_ips}} ... size len(device_ips)}
-#     #     try:
-#     #         alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
-#     #         for ab in alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", []):
-#     #             alert_counts[ab["key"]] = ab["doc_count"]
-#     #     except OpenSearchException as exc:
-#     #         logger.warning("Alert count query failed: %s", exc)
-#     # OLD CODE END
-#     alert_counts: dict[str, int] = {}
-#     for start in range(0, len(device_ips), _ALERT_IP_CHUNK):
-#         chunk = device_ips[start : start + _ALERT_IP_CHUNK]
-#         alert_query = {
-#             "size": 0,
-#             "query": {
-#                 "bool": {
-#                     "filter": [
-#                         {
-#                             "range": {
-#                                 "@timestamp": {
-#                                     "gte": from_ts,
-#                                     "lte": to_ts,
-#                                     "format": "strict_date_optional_time",
-#                                 }
-#                             }
-#                         },
-#                         {"terms": {"source.ip": chunk}},
-#                         {"term": {"event.provider": "suricata"}},
-#                         {"term": {"event.dataset": "alert"}},
-#                     ],
-#                     "must_not": SURICATA_NOISE_EXCLUSION,
-#                 }
-#             },
-#             "aggs": {"by_ip": {"terms": {"field": "source.ip", "size": len(chunk)}}},
-#         }
-#
-#         try:
-#             alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
-#             what = "risk score alert counts"
-#             got = checked(alert_result, what, ("by_ip",))["aggregations"]["by_ip"].get(
-#                 "buckets"
-#             )
-#             if not isinstance(got, list):
-#                 raise QueryFailed(f"{what}: missing buckets")
-#         except OpenSearchException as exc:
-#             logger.error("Alert count query failed in risk scores: %s", exc)
-#             return web.json_response(
-#                 {"error": f"OpenSearch query failed: {exc}"}, status=502
-#             )
-#         except QueryFailed as exc:
-#             return _incomplete("risk scores", exc)
-#         # OLD CODE START — a timed-out or partly failed reply read as fewer alerts
-#         # for ab in (
-#         #     alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
-#         # ):
-#         #     alert_counts[ab["key"]] = ab["doc_count"]
-#         # OLD CODE END
-#         for ab in got:
-#             alert_counts[ab["key"]] = ab["doc_count"]
-#
-#     # Score each device
-#     scored_devices = []
-#     for bucket in device_buckets:
-#         ip = bucket["key"]
-#         device_stats = _build_device_stats(
-#             ip=ip,
-#             conn_bucket=bucket,
-#             alert_count=alert_counts.get(ip, 0),
-#             network_avg=network_avg,
-#             network_stddev=network_stddev,
-#             # OLD CODE START — PR #192 review: the port read returns (ports, more) now
-#             # more_ports=more_ports.get(ip),
-#             # OLD CODE END
-#             more_ports=more_ports.get(ip, ([], False))[0],
-#             more_unusual=more_ports.get(ip, ([], False))[1],
-#         )
-#         score_result = risk_scorer.score_device(device_stats)
-#         scored_devices.append(
-#             {
-#                 "ip": ip,
-#                 "connection_count": bucket.get("doc_count", 0),
-#                 "alert_count": alert_counts.get(ip, 0),
-#                 **score_result,
-#             }
-#         )
+    #     # Collect all device IPs for batch alert count query
+    #     device_ips = [b["key"] for b in device_buckets]
+    #
+    #     # Batch alert count query
+    #     # OLD CODE START — #96: one terms filter of every IP failed past 65,536 devices
+    #     # (index.max_terms_count), and any failure scored every device as having no alerts
+    #     # alert_counts: dict[str, int] = {}
+    #     # if device_ips:
+    #     #     alert_query = {... {"terms": {"source.ip": device_ips}} ... size len(device_ips)}
+    #     #     try:
+    #     #         alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
+    #     #         for ab in alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", []):
+    #     #             alert_counts[ab["key"]] = ab["doc_count"]
+    #     #     except OpenSearchException as exc:
+    #     #         logger.warning("Alert count query failed: %s", exc)
+    #     # OLD CODE END
+    #     alert_counts: dict[str, int] = {}
+    #     for start in range(0, len(device_ips), _ALERT_IP_CHUNK):
+    #         chunk = device_ips[start : start + _ALERT_IP_CHUNK]
+    #         alert_query = {
+    #             "size": 0,
+    #             "query": {
+    #                 "bool": {
+    #                     "filter": [
+    #                         {
+    #                             "range": {
+    #                                 "@timestamp": {
+    #                                     "gte": from_ts,
+    #                                     "lte": to_ts,
+    #                                     "format": "strict_date_optional_time",
+    #                                 }
+    #                             }
+    #                         },
+    #                         {"terms": {"source.ip": chunk}},
+    #                         {"term": {"event.provider": "suricata"}},
+    #                         {"term": {"event.dataset": "alert"}},
+    #                     ],
+    #                     "must_not": SURICATA_NOISE_EXCLUSION,
+    #                 }
+    #             },
+    #             "aggs": {"by_ip": {"terms": {"field": "source.ip", "size": len(chunk)}}},
+    #         }
+    #
+    #         try:
+    #             alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
+    #             what = "risk score alert counts"
+    #             got = checked(alert_result, what, ("by_ip",))["aggregations"]["by_ip"].get(
+    #                 "buckets"
+    #             )
+    #             if not isinstance(got, list):
+    #                 raise QueryFailed(f"{what}: missing buckets")
+    #         except OpenSearchException as exc:
+    #             logger.error("Alert count query failed in risk scores: %s", exc)
+    #             return web.json_response(
+    #                 {"error": f"OpenSearch query failed: {exc}"}, status=502
+    #             )
+    #         except QueryFailed as exc:
+    #             return _incomplete("risk scores", exc)
+    #         # OLD CODE START — a timed-out or partly failed reply read as fewer alerts
+    #         # for ab in (
+    #         #     alert_result.get("aggregations", {}).get("by_ip", {}).get("buckets", [])
+    #         # ):
+    #         #     alert_counts[ab["key"]] = ab["doc_count"]
+    #         # OLD CODE END
+    #         for ab in got:
+    #             alert_counts[ab["key"]] = ab["doc_count"]
+    #
+    #     # Score each device
+    #     scored_devices = []
+    #     for bucket in device_buckets:
+    #         ip = bucket["key"]
+    #         device_stats = _build_device_stats(
+    #             ip=ip,
+    #             conn_bucket=bucket,
+    #             alert_count=alert_counts.get(ip, 0),
+    #             network_avg=network_avg,
+    #             network_stddev=network_stddev,
+    #             # OLD CODE START — PR #192 review: the port read returns (ports, more) now
+    #             # more_ports=more_ports.get(ip),
+    #             # OLD CODE END
+    #             more_ports=more_ports.get(ip, ([], False))[0],
+    #             more_unusual=more_ports.get(ip, ([], False))[1],
+    #         )
+    #         score_result = risk_scorer.score_device(device_stats)
+    #         scored_devices.append(
+    #             {
+    #                 "ip": ip,
+    #                 "connection_count": bucket.get("doc_count", 0),
+    #                 "alert_count": alert_counts.get(ip, 0),
+    #                 **score_result,
+    #             }
+    #         )
     # OLD CODE END
     scored_devices = []
     for bucket in device_buckets:
         ip = bucket["key"]
-        stats = _device_stats(ip, bucket.get("doc_count", 0), history, alerts, from_ts, to_ts)
+        stats = _device_stats(
+            ip, bucket.get("doc_count", 0), history, alerts, from_ts, to_ts
+        )
         scored_devices.append(
             {
                 "ip": ip,
@@ -834,43 +852,43 @@ def handle_risk_score_single(request: web.Request) -> web.Response:
             }
         },
         # OLD CODE START — NET-209: byte sums, ports and external share; only the count is read now
-#         "aggs": {
-#             # OLD CODE START — replaced 2026-11-01: Arkime client/server.bytes are inflated; match traffic.py's source/destination.bytes
-#             # "total_orig_bytes": {
-#             #     "sum": {
-#             #         "script": {
-#             #             "source": "doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0",
-#             #             "lang": "painless",
-#             #         }
-#             #     }
-#             # },
-#             # "total_resp_bytes": {
-#             #     "sum": {
-#             #         "script": {
-#             #             "source": "doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0",
-#             #             "lang": "painless",
-#             #         }
-#             #     }
-#             # },
-#             # OLD CODE END
-#             "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
-#             "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
-#             # OLD CODE START — NET-158: see _device_score_aggs
-#             # "ports_used": {"terms": {"field": "destination.port", "size": 50}},
-#             # "external_conns": {
-#             #     "filter": {
-#             #         "bool": {
-#             #             "must_not": [
-#             #                 {"term": {"destination.ip": "10.0.0.0/8"}},
-#             #                 {"term": {"destination.ip": "172.16.0.0/12"}},
-#             #                 {"term": {"destination.ip": "192.168.0.0/16"}},
-#             #             ]
-#             #         }
-#             #     }
-#             # },
-#             # OLD CODE END
-#             **_PORTS_AND_EXTERNAL_AGGS,
-#         },
+        #         "aggs": {
+        #             # OLD CODE START — replaced 2026-11-01: Arkime client/server.bytes are inflated; match traffic.py's source/destination.bytes
+        #             # "total_orig_bytes": {
+        #             #     "sum": {
+        #             #         "script": {
+        #             #             "source": "doc['client.bytes'].size() > 0 ? doc['client.bytes'].value : 0",
+        #             #             "lang": "painless",
+        #             #         }
+        #             #     }
+        #             # },
+        #             # "total_resp_bytes": {
+        #             #     "sum": {
+        #             #         "script": {
+        #             #             "source": "doc['server.bytes'].size() > 0 ? doc['server.bytes'].value : 0",
+        #             #             "lang": "painless",
+        #             #         }
+        #             #     }
+        #             # },
+        #             # OLD CODE END
+        #             "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+        #             "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
+        #             # OLD CODE START — NET-158: see _device_score_aggs
+        #             # "ports_used": {"terms": {"field": "destination.port", "size": 50}},
+        #             # "external_conns": {
+        #             #     "filter": {
+        #             #         "bool": {
+        #             #             "must_not": [
+        #             #                 {"term": {"destination.ip": "10.0.0.0/8"}},
+        #             #                 {"term": {"destination.ip": "172.16.0.0/12"}},
+        #             #                 {"term": {"destination.ip": "192.168.0.0/16"}},
+        #             #             ]
+        #             #         }
+        #             #     }
+        #             # },
+        #             # OLD CODE END
+        #             **_PORTS_AND_EXTERNAL_AGGS,
+        #         },
         # OLD CODE END
     }
 
@@ -902,165 +920,165 @@ def handle_risk_score_single(request: web.Request) -> web.Response:
 
     # OLD CODE START — NET-209: ports, a network-wide connection baseline and every alert from the
     # address; the score now reads the device's own findings and its own last week
-#     aggs = conn_result.get("aggregations", {})
-#
-#     # Build a pseudo-bucket for _build_device_stats
-#     pseudo_bucket = {
-#         "doc_count": total_conn,
-#         "total_orig_bytes": aggs.get("total_orig_bytes", {}),
-#         "total_resp_bytes": aggs.get("total_resp_bytes", {}),
-#         "ports_used": aggs.get("ports_used", {}),
-#         "external_conns": aggs.get("external_conns", {}),
-#     }
-#
-#     more_ports: list[int] = []
-#     more_unusual = False
-#     if _ports_cut_short(pseudo_bucket):
-#         try:
-#             # OLD CODE START — PR #192 review: the port read returns (ports, more) now
-#             # more_ports = _all_unsafe_ports(
-#             #     client, conn_query["query"]["bool"], [ip]
-#             # ).get(ip, [])
-#             # OLD CODE END
-#             more_ports, more_unusual = _all_unsafe_ports(
-#                 client, conn_query["query"]["bool"], [ip]
-#             ).get(ip, ([], False))
-#         except OpenSearchException as exc:
-#             logger.error("OpenSearch error in single risk score ports: %s", exc)
-#             return web.json_response(
-#                 {"error": f"OpenSearch query failed: {exc}"}, status=502
-#             )
-#         except QueryFailed as exc:
-#             return _incomplete("risk score", exc)
-#
-#     # OLD CODE START — #96: the baseline came from the busiest 500 devices
-#     # # Get network-wide stats for anomaly detection
-#     # net_excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
-#     # net_bool: dict = {
-#     #     "filter": [
-#     #         {
-#     #             "range": {
-#     #                 "@timestamp": {
-#     #                     "gte": from_ts,
-#     #                     "lte": to_ts,
-#     #                     "format": "strict_date_optional_time",
-#     #                 }
-#     #             }
-#     #         },
-#     #         {"term": {"event.provider": "zeek"}},
-#     #         {"term": {"event.dataset": "conn"}},
-#     #         # Same LAN population as /api/risk/scores, so the baseline matches the list view
-#     #         request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
-#     #     ],
-#     # }
-#     # if net_excluded:
-#     #     net_bool["must_not"] = net_excluded
-#     #
-#     # network_query = {
-#     #     "size": 0,
-#     #     "query": {"bool": net_bool},
-#     #     "aggs": {"devices": {"terms": {"field": "source.ip", "size": _BASELINE_DEVICES}}},
-#     # }
-#     #
-#     # network_avg = 0.0
-#     # network_stddev = 0.0
-#     # try:
-#     #     network_result = client.search(index=NETWORK_INDEX, body=network_query)
-#     #     net_buckets = (
-#     #         network_result.get("aggregations", {}).get("devices", {}).get("buckets", [])
-#     #     )
-#     #     if net_buckets:
-#     #         counts = [b.get("doc_count", 0) for b in net_buckets]
-#     #         network_avg = sum(counts) / len(counts)
-#     #         if len(counts) > 1:
-#     #             variance = sum((c - network_avg) ** 2 for c in counts) / len(counts)
-#     #             network_stddev = variance**0.5
-#     # except OpenSearchException as exc:
-#     #     logger.warning("Network stats query failed: %s", exc)
-#     # OLD CODE END
-#     # Network-wide baseline over the list view's population: every device the device list can show
-#     # OLD CODE START — #96: a failure scored the device against a 0 ± 0 baseline
-#     # network_avg = 0.0
-#     # network_stddev = 0.0
-#     # try:
-#     #     devices = _lan_device_buckets(client, request.app, from_ts, to_ts)
-#     #     network_avg, network_stddev = _baseline([b.get("doc_count", 0) for b in devices])
-#     # except OpenSearchException as exc:
-#     #     logger.warning("Network stats query failed: %s", exc)
-#     # OLD CODE END
-#     try:
-#         devices = _lan_device_buckets(
-#             client, request.app, from_ts, to_ts, what="risk score baseline"
-#         )
-#     except OpenSearchException as exc:
-#         logger.error("Network stats query failed in single risk score: %s", exc)
-#         return web.json_response(
-#             {"error": f"OpenSearch query failed: {exc}"}, status=502
-#         )
-#     except QueryFailed as exc:
-#         return _incomplete("risk score", exc)
-#     network_avg, network_stddev = _baseline([b.get("doc_count", 0) for b in devices])
-#
-#     # Alert count for this device
-#     alert_count = 0
-#     alert_query = {
-#         "size": 0,
-#         "track_total_hits": True,  # #83: same 10,000 cap as the connection count
-#         "query": {
-#             "bool": {
-#                 "filter": [
-#                     {
-#                         "range": {
-#                             "@timestamp": {
-#                                 "gte": from_ts,
-#                                 "lte": to_ts,
-#                                 "format": "strict_date_optional_time",
-#                             }
-#                         }
-#                     },
-#                     {"term": {"source.ip": ip}},
-#                     {"term": {"event.provider": "suricata"}},
-#                     {"term": {"event.dataset": "alert"}},
-#                 ],
-#                 "must_not": SURICATA_NOISE_EXCLUSION,
-#             }
-#         },
-#     }
-#
-#     try:
-#         alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
-#         # OLD CODE START — a timed-out reply or a lower-bound total read as fewer alerts
-#         # alert_total = alert_result.get("hits", {}).get("total", {})
-#         # alert_count = (
-#         #     alert_total.get("value", 0)
-#         #     if isinstance(alert_total, dict)
-#         #     else alert_total
-#         # )
-#         # OLD CODE END
-#         what = "risk score alert count"
-#         alert_count = total_hits(checked(alert_result, what), what)
-#     # OLD CODE START — #96: a failure scored the device as having no alerts
-#     # except OpenSearchException as exc:
-#     #     logger.warning("Alert count query failed for %s: %s", ip, exc)
-#     # OLD CODE END
-#     except OpenSearchException as exc:
-#         logger.error("Alert count query failed for %s: %s", ip, exc)
-#         return web.json_response(
-#             {"error": f"OpenSearch query failed: {exc}"}, status=502
-#         )
-#     except QueryFailed as exc:
-#         return _incomplete("risk score", exc)
-#
-#     device_stats = _build_device_stats(
-#         ip=ip,
-#         conn_bucket=pseudo_bucket,
-#         alert_count=alert_count,
-#         network_avg=network_avg,
-#         network_stddev=network_stddev,
-#         more_ports=more_ports,
-#         more_unusual=more_unusual,
-#     )
-#     score_result = risk_scorer.score_device(device_stats)
+    #     aggs = conn_result.get("aggregations", {})
+    #
+    #     # Build a pseudo-bucket for _build_device_stats
+    #     pseudo_bucket = {
+    #         "doc_count": total_conn,
+    #         "total_orig_bytes": aggs.get("total_orig_bytes", {}),
+    #         "total_resp_bytes": aggs.get("total_resp_bytes", {}),
+    #         "ports_used": aggs.get("ports_used", {}),
+    #         "external_conns": aggs.get("external_conns", {}),
+    #     }
+    #
+    #     more_ports: list[int] = []
+    #     more_unusual = False
+    #     if _ports_cut_short(pseudo_bucket):
+    #         try:
+    #             # OLD CODE START — PR #192 review: the port read returns (ports, more) now
+    #             # more_ports = _all_unsafe_ports(
+    #             #     client, conn_query["query"]["bool"], [ip]
+    #             # ).get(ip, [])
+    #             # OLD CODE END
+    #             more_ports, more_unusual = _all_unsafe_ports(
+    #                 client, conn_query["query"]["bool"], [ip]
+    #             ).get(ip, ([], False))
+    #         except OpenSearchException as exc:
+    #             logger.error("OpenSearch error in single risk score ports: %s", exc)
+    #             return web.json_response(
+    #                 {"error": f"OpenSearch query failed: {exc}"}, status=502
+    #             )
+    #         except QueryFailed as exc:
+    #             return _incomplete("risk score", exc)
+    #
+    #     # OLD CODE START — #96: the baseline came from the busiest 500 devices
+    #     # # Get network-wide stats for anomaly detection
+    #     # net_excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
+    #     # net_bool: dict = {
+    #     #     "filter": [
+    #     #         {
+    #     #             "range": {
+    #     #                 "@timestamp": {
+    #     #                     "gte": from_ts,
+    #     #                     "lte": to_ts,
+    #     #                     "format": "strict_date_optional_time",
+    #     #                 }
+    #     #             }
+    #     #         },
+    #     #         {"term": {"event.provider": "zeek"}},
+    #     #         {"term": {"event.dataset": "conn"}},
+    #     #         # Same LAN population as /api/risk/scores, so the baseline matches the list view
+    #     #         request.app.get("lan_filter", RFC1918_SOURCE_FILTER),
+    #     #     ],
+    #     # }
+    #     # if net_excluded:
+    #     #     net_bool["must_not"] = net_excluded
+    #     #
+    #     # network_query = {
+    #     #     "size": 0,
+    #     #     "query": {"bool": net_bool},
+    #     #     "aggs": {"devices": {"terms": {"field": "source.ip", "size": _BASELINE_DEVICES}}},
+    #     # }
+    #     #
+    #     # network_avg = 0.0
+    #     # network_stddev = 0.0
+    #     # try:
+    #     #     network_result = client.search(index=NETWORK_INDEX, body=network_query)
+    #     #     net_buckets = (
+    #     #         network_result.get("aggregations", {}).get("devices", {}).get("buckets", [])
+    #     #     )
+    #     #     if net_buckets:
+    #     #         counts = [b.get("doc_count", 0) for b in net_buckets]
+    #     #         network_avg = sum(counts) / len(counts)
+    #     #         if len(counts) > 1:
+    #     #             variance = sum((c - network_avg) ** 2 for c in counts) / len(counts)
+    #     #             network_stddev = variance**0.5
+    #     # except OpenSearchException as exc:
+    #     #     logger.warning("Network stats query failed: %s", exc)
+    #     # OLD CODE END
+    #     # Network-wide baseline over the list view's population: every device the device list can show
+    #     # OLD CODE START — #96: a failure scored the device against a 0 ± 0 baseline
+    #     # network_avg = 0.0
+    #     # network_stddev = 0.0
+    #     # try:
+    #     #     devices = _lan_device_buckets(client, request.app, from_ts, to_ts)
+    #     #     network_avg, network_stddev = _baseline([b.get("doc_count", 0) for b in devices])
+    #     # except OpenSearchException as exc:
+    #     #     logger.warning("Network stats query failed: %s", exc)
+    #     # OLD CODE END
+    #     try:
+    #         devices = _lan_device_buckets(
+    #             client, request.app, from_ts, to_ts, what="risk score baseline"
+    #         )
+    #     except OpenSearchException as exc:
+    #         logger.error("Network stats query failed in single risk score: %s", exc)
+    #         return web.json_response(
+    #             {"error": f"OpenSearch query failed: {exc}"}, status=502
+    #         )
+    #     except QueryFailed as exc:
+    #         return _incomplete("risk score", exc)
+    #     network_avg, network_stddev = _baseline([b.get("doc_count", 0) for b in devices])
+    #
+    #     # Alert count for this device
+    #     alert_count = 0
+    #     alert_query = {
+    #         "size": 0,
+    #         "track_total_hits": True,  # #83: same 10,000 cap as the connection count
+    #         "query": {
+    #             "bool": {
+    #                 "filter": [
+    #                     {
+    #                         "range": {
+    #                             "@timestamp": {
+    #                                 "gte": from_ts,
+    #                                 "lte": to_ts,
+    #                                 "format": "strict_date_optional_time",
+    #                             }
+    #                         }
+    #                     },
+    #                     {"term": {"source.ip": ip}},
+    #                     {"term": {"event.provider": "suricata"}},
+    #                     {"term": {"event.dataset": "alert"}},
+    #                 ],
+    #                 "must_not": SURICATA_NOISE_EXCLUSION,
+    #             }
+    #         },
+    #     }
+    #
+    #     try:
+    #         alert_result = client.search(index=NETWORK_INDEX, body=alert_query)
+    #         # OLD CODE START — a timed-out reply or a lower-bound total read as fewer alerts
+    #         # alert_total = alert_result.get("hits", {}).get("total", {})
+    #         # alert_count = (
+    #         #     alert_total.get("value", 0)
+    #         #     if isinstance(alert_total, dict)
+    #         #     else alert_total
+    #         # )
+    #         # OLD CODE END
+    #         what = "risk score alert count"
+    #         alert_count = total_hits(checked(alert_result, what), what)
+    #     # OLD CODE START — #96: a failure scored the device as having no alerts
+    #     # except OpenSearchException as exc:
+    #     #     logger.warning("Alert count query failed for %s: %s", ip, exc)
+    #     # OLD CODE END
+    #     except OpenSearchException as exc:
+    #         logger.error("Alert count query failed for %s: %s", ip, exc)
+    #         return web.json_response(
+    #             {"error": f"OpenSearch query failed: {exc}"}, status=502
+    #         )
+    #     except QueryFailed as exc:
+    #         return _incomplete("risk score", exc)
+    #
+    #     device_stats = _build_device_stats(
+    #         ip=ip,
+    #         conn_bucket=pseudo_bucket,
+    #         alert_count=alert_count,
+    #         network_avg=network_avg,
+    #         network_stddev=network_stddev,
+    #         more_ports=more_ports,
+    #         more_unusual=more_unusual,
+    #     )
+    #     score_result = risk_scorer.score_device(device_stats)
     # OLD CODE END
     try:
         history = _history(client, request.app, from_ts, to_ts, ip)

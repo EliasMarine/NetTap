@@ -360,14 +360,18 @@ class RiskScorer:
         high or critical alert that is not a reputation hit), connections, upload_bytes,
         window_days, and history: one {"connections", "upload_bytes"} per day before the window.
         """
-        days = [d for d in stats.get("history", []) if d["connections"] or d["upload_bytes"]]
+        days = [
+            d for d in stats.get("history", []) if d["connections"] or d["upload_bytes"]
+        ]
         window_days = max(1.0, stats.get("window_days", 1.0))
         corroborated = stats.get("corroborated", False)
         factors = [
             self._factor(
                 "alert_count",
                 self.WEIGHT_ALERTS,
-                *self.score_alerts(stats.get("signatures", {}), stats.get("alert_count", 0)),
+                *self.score_alerts(
+                    stats.get("signatures", {}), stats.get("alert_count", 0)
+                ),
             ),
             self._factor(
                 "connection_anomaly",
@@ -394,15 +398,23 @@ class RiskScorer:
         return {"score": total, "level": self.risk_level(total), "factors": factors}
 
     @staticmethod
-    def _factor(name: str, weight: int, points: int, description: str) -> dict[str, Any]:
-        return {"name": name, "score": points, "max": weight, "description": description}
+    def _factor(
+        name: str, weight: int, points: int, description: str
+    ) -> dict[str, Any]:
+        return {
+            "name": name,
+            "score": points,
+            "max": weight,
+            "description": description,
+        }
 
     def score_alerts(self, signatures: dict[str, int], events: int) -> tuple[int, str]:
         """Distinct signatures in the device's own traffic, each at its worst severity."""
         if not signatures:
             return (0, "No alerts in this device's own traffic")
         points = min(
-            self.WEIGHT_ALERTS, sum(SIGNATURE_POINTS.get(s, 0) for s in signatures.values())
+            self.WEIGHT_ALERTS,
+            sum(SIGNATURE_POINTS.get(s, 0) for s in signatures.values()),
         )
         worst = _SEVERITY_WORD.get(min(signatures.values()), "low")
         n = len(signatures)
@@ -417,7 +429,10 @@ class RiskScorer:
     ) -> tuple[int, str]:
         """Connections opened vs the device's median day (scaled to the window)."""
         if len(usual_days) < MIN_HISTORY_DAYS:
-            return (0, f"{count:,} connections; not enough earlier days to compare with")
+            return (
+                0,
+                f"{count:,} connections; not enough earlier days to compare with",
+            )
         ratio = count / max(1.0, median(usual_days) * window_days)
         facts = f"{count:,} connections, {ratio:.1f}× its usual"
         points = 0
