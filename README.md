@@ -15,12 +15,15 @@
   <a href="https://eliasmarine.github.io/NetTap/getting-started/setup-guide/#3-install-ubuntu-server"><img alt="Ubuntu 22.04 or 24.04" src="https://img.shields.io/badge/Ubuntu-22.04%20%7C%2024.04-E95420?logo=ubuntu&logoColor=white"></a>
   <img alt="Platform: x86-64" src="https://img.shields.io/badge/platform-x86--64-555555">
   <a href="docker/docker-compose.yml"><img alt="Docker Compose" src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white"></a>
+  <a href="daemon/"><img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white"></a>
+  <a href="web/"><img alt="SvelteKit with Svelte 5" src="https://img.shields.io/badge/SvelteKit-Svelte%205-FF3E00?logo=svelte&logoColor=white"></a>
+</p>
+
+<p align="center">
   <a href="https://github.com/cisagov/Malcolm"><img alt="Stack: Malcolm 26.10.0" src="https://img.shields.io/badge/stack-Malcolm%2026.10.0-0B5394"></a>
   <a href="https://zeek.org"><img alt="Metadata: Zeek" src="https://img.shields.io/badge/metadata-Zeek-1E4D8C"></a>
   <a href="https://suricata.io"><img alt="IDS: Suricata" src="https://img.shields.io/badge/IDS-Suricata-E5532D"></a>
   <a href="https://opensearch.org"><img alt="Search: OpenSearch" src="https://img.shields.io/badge/search-OpenSearch-005EB8?logo=opensearch&logoColor=white"></a>
-  <a href="daemon/"><img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white"></a>
-  <a href="web/"><img alt="SvelteKit with Svelte 5" src="https://img.shields.io/badge/SvelteKit-Svelte%205-FF3E00?logo=svelte&logoColor=white"></a>
 </p>
 
 NetTap is a self-hosted network monitor for homes and small businesses. Put it on a small x86 box on your network and it records the traffic, flags threats and shows it all in a web dashboard. It runs CISA's [Malcolm](https://github.com/cisagov/Malcolm) stack (Zeek, Suricata, OpenSearch) and adds an installer, a setup wizard, its own dashboard and automatic storage management.
