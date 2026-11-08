@@ -38,7 +38,7 @@
 - **`scripts/install/validate-hardware.sh`**
   - The checks use `status_line`.
   - No header box under the installer. Run on its own, it keeps it.
-- **`tests/scripts/test_install_ui.bats`** (new): 29 tests.
+- **`tests/scripts/test_install_ui.bats`** (new): 31 tests.
 
 ## Plain vs interactive output
 
@@ -63,8 +63,8 @@
 
 ## Tests
 
-- 29 new bats tests in `tests/scripts/test_install_ui.bats`; on Ubuntu 24.04 (bash 5.2) all 29 pass too.
-- Full bats suite: 243/243 on macOS bash 3.2.
+- 31 new bats tests in `tests/scripts/test_install_ui.bats`. All 31 pass on macOS bash 3.2, and on Ubuntu 24.04 bash 5.2 in three runs in a row.
+- Full bats suite: 245/245 on macOS bash 3.2.
 - In an Ubuntu 24.04 container the suite has the same 32 environment failures on `main` and on this branch. None are new.
 - Daemon pytest: 3,959 passed.
 - `shellcheck -x` at warning level is clean on all install scripts.
@@ -87,9 +87,24 @@ Three runs in an x86-64 Ubuntu 24.04 container, on a copy of the repo:
 
 - **bash 3.2 prints a stray `\177` for an empty `"$*"` inside `${*:+...}`.** Test for an empty `$*` first.
 - **A non-interactive shell starts background jobs with SIGINT ignored.** A spinner must kill its child itself on Ctrl-C.
+- **In bats on bash < 4.1, a `[[ ]]` or `! cmd` in the middle of a test never fails it.** End `[[ ]]` with `|| false` and use `run` for negative checks.
+- **`pgrep -f "text"` matches any process whose command line holds the text, including the script that runs pgrep.** Write one character as a class (`32[.]3`).
 - **Colour codes between characters break substring checks in tests.** Strip them, or test the plain layout.
 
 ## Pre-commit reviews
 
-- `/deep-review`: no findings (`security-reviews/feature-install-experience/security-review.md`). Root running `git describe` with `safe.directory` adds no boundary: the checkout's owner already controls every script root runs.
+- `/deep-review`: no findings (`security-reviews/feature-install-experience/security-review.md`).
 - `/ponytail-review`: two findings, both fixed. (1) When `mktemp` fails, `UI_SPIN_LOG` is empty, and the pull's success branch ran `rm -f ""` as root under `set -e`. It now removes the file only when the path is set, and two tests cover a missing `TMPDIR`. (2) Two copies of the duration formatter became one, `_ui_duration`.
+
+## Two-angle review
+
+- **security-engineer:** nothing at MEDIUM or above. One LOW, fixed: `installer_version` ran `git describe` as root with a `safe.directory` override. It now runs git as the checkout's owner (`runuser -u <owner>`), with no override.
+- **Code reviewer:** one Medium and some Lows, all fixed.
+  - Medium: with stdout closed (ssh dropped), a failing `printf` in an exit handler could replace the exit status under `set -e`. Both handlers now run `set +e` first. A test closes stdout and checks the status survives.
+  - `! pgrep` in the middle of a test never fails it under `set -e`; the tests now use `run pgrep` and check the status.
+  - On bash 3.2, a `[[ ]]` in the middle of a test does not fail it. Every one now ends in `|| false`. That exposed one test that only passed by accident (macOS `wc -l` pads the count), now fixed.
+  - Plain mode printed "Review the ✗ lines above"; it now says `[FAIL]`.
+  - The two signal tests waited a fixed time. They now poll until the spinner's child is running. The poll pattern is `sleep 32[.]3`, so it cannot match the launcher's own command line.
+  - A new test checks every failure hint names a real step title.
+- **Accepted, not changed:** in plain mode the skip lines ("Skipped (--skip-bridge)") read differently, and step 8 now prints "UFW not active, nothing to change".
+- **Follow-up:** `scripts/bridge/setup-bridge.sh` and `harden-bridge.sh` still echo 26 raw `[ OK ]` lines, which are not indented under the step header. The bridge path is high-stakes, so they are left for their own change.

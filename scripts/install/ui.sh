@@ -223,6 +223,8 @@ ui_spin() {
 # the cursor; an INT exits 130 even though the reaped child reports 143.
 _ui_spin_cancel() {
     local status="$1"
+    # Nothing below may stop us reaching exit "$status", not even a dead terminal.
+    set +e
     if [[ -n "$_UI_SPIN_PID" ]]; then
         kill -TERM "$_UI_SPIN_PID" 2>/dev/null || true
         wait "$_UI_SPIN_PID" 2>/dev/null || true
@@ -314,7 +316,9 @@ ui_summary_installed() {
     printf '\n'
     if (( failed > 0 )); then
         ui_card_line "${_UI_FAILC}${_UI_BOLD}NetTap is installed, but ${failed} check(s) failed${_UI_OFF}"
-        ui_card_line "${_UI_DIM}Review the ${_UI_G_FAIL} lines above.${_UI_OFF}"
+        local mark="[FAIL]"
+        if [[ "$NETTAP_UI" == "fancy" ]]; then mark="$_UI_G_FAIL"; fi
+        ui_card_line "${_UI_DIM}Review the ${mark} lines above.${_UI_OFF}"
     else
         ui_card_line "${_UI_OKC}${_UI_BOLD}NetTap is installed${_UI_OFF}"
     fi

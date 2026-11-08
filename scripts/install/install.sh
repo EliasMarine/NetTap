@@ -773,16 +773,20 @@ main() {
     step_verify
 }
 
-# A v* release tag when there is one; nothing otherwise. Runs as root on a
-# checkout owned by the install user, hence safe.directory.
+# A v* release tag when there is one; nothing otherwise. git runs as the
+# checkout's owner, not root: no safe.directory override, so root never reads
+# that user's .git/config (and old git that ignores -c safe.directory works).
 installer_version() {
-    git -c safe.directory="$PROJECT_ROOT" -C "$PROJECT_ROOT" \
-        describe --tags --match 'v[0-9]*' 2>/dev/null || true
+    local owner
+    owner=$(stat -c %U "$PROJECT_ROOT" 2>/dev/null) || return 0
+    runuser -u "$owner" -- git -C "$PROJECT_ROOT" describe --tags --match 'v[0-9]*' 2>/dev/null || true
 }
 
 # Keeps the real exit status; only adds the closing message.
 _install_on_exit() {
     local status=$?
+    # A dead terminal (ssh drop) makes printf fail; that must not replace the status.
+    set +e
     printf '%s' "${_UI_CURSOR_SHOW:-}"
     case "$status" in
         0)           ;;
