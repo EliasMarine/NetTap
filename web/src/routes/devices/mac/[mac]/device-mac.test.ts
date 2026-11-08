@@ -13,6 +13,11 @@ const { MAC } = vi.hoisted(() => ({ MAC: 'D0:21:F9:5E:35:32' }));
 vi.mock('$app/stores', () => ({
 	page: readable({ url: new URL(`http://localhost/devices/mac/${MAC}`), params: { mac: MAC } }),
 }));
+// NET-205: the live bandwidth card polls its own endpoint; here it stays loading, and the tests read its key
+const { getLiveBandwidth } = vi.hoisted(() => ({
+	getLiveBandwidth: vi.fn((_key: { mac: string } | { ip: string }, _signal?: AbortSignal) => new Promise<never>(() => {})),
+}));
+vi.mock('$api/live-bandwidth', async (importOriginal) => ({ ...(await importOriginal<typeof import('$api/live-bandwidth')>()), getLiveBandwidth }));
 
 const REPLIES: Record<string, unknown> = {
 	[`/api/devices/registry/${encodeURIComponent(MAC)}`]: {
@@ -115,6 +120,22 @@ describe('Device by MAC page', () => {
 
 		await screen.findByText('Ubiquiti gateway');
 		expect(screen.queryByText('New')).not.toBeInTheDocument();
+	});
+});
+
+describe('Device by MAC page — live bandwidth (NET-205)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('shows the live card measured by the device’s MAC', async () => {
+		getLiveBandwidth.mockClear();
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => ({ ok: true, status: 200, json: async () => REPLIES[url.split('?')[0]] })),
+		);
+		render(Page);
+		expect(await screen.findByRole('heading', { name: 'Live bandwidth' })).toBeInTheDocument();
+		expect(getLiveBandwidth).toHaveBeenCalledWith({ mac: MAC }, expect.any(AbortSignal));
+		expect(getLiveBandwidth.mock.calls.every(([key]) => !('ip' in key))).toBe(true);
 	});
 });
 

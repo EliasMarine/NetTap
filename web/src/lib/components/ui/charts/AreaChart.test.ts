@@ -107,6 +107,60 @@ describe('AreaChart', () => {
 		}
 	});
 
+	// NET-205: the live chart has missing ticks; `gaps` breaks the line there instead of bridging it
+	describe('gaps', () => {
+		const NaN_ = Number.NaN;
+		const paths = (container: HTMLElement) => {
+			const line = container.querySelector('.line.ln-1')!.getAttribute('d') ?? '';
+			const area = container.querySelector('path[fill]')!.getAttribute('d') ?? '';
+			return { line, area, moves: (line.match(/M/g) ?? []).length, closes: (area.match(/Z/g) ?? []).length };
+		};
+
+		it('is off by default: a missing point is bridged by one line, as before', () => {
+			const { container } = draw([toSeries('down', 1, [1, 2, NaN_, 3, 4])]);
+			expect(paths(container)).toMatchObject({ moves: 1, closes: 1 });
+		});
+
+		it('splits the line and the fill in two at an interior missing point', () => {
+			const { container } = draw([toSeries('down', 1, [1, 2, NaN_, 3, 4])], { gaps: true });
+			expect(paths(container)).toMatchObject({ moves: 2, closes: 2 });
+			noNaN(container);
+		});
+
+		it('leaves a long outage empty: two runs, nothing drawn across it', () => {
+			const values = [1, 2, ...Array(100).fill(NaN_), 3, 4];
+			const { container } = draw([toSeries('down', 1, values)], { gaps: true });
+			const { line, moves } = paths(container);
+			expect(moves).toBe(2);
+			// the second run starts at the 103rd point's x, not straight after the second
+			const starts = [...line.matchAll(/M([\d.]+),/g)].map((m) => Number(m[1]));
+			expect(starts[1] - starts[0]).toBeGreaterThan(100 * ((640 - 62) / 103) - 1);
+		});
+
+		it('starts after leading padding, with one run', () => {
+			const values = [...Array(148).fill(NaN_), 5, 6];
+			const { container } = draw([toSeries('down', 1, values)], { gaps: true });
+			const { line, moves } = paths(container);
+			expect(moves).toBe(1);
+			expect(Number(line.match(/^M([\d.]+),/)![1])).toBeGreaterThan(600);
+			noNaN(container);
+		});
+
+		it('draws the same paths either way when nothing is missing', () => {
+			const off = paths(draw([toSeries('down', 1, DOWN)]).container);
+			const on = paths(draw([toSeries('down', 1, DOWN)], { gaps: true }).container);
+			expect(on.line).toBe(off.line);
+			expect(on.area).toBe(off.area);
+		});
+
+		it('draws axes but no line when every point is missing', () => {
+			const { container } = draw([toSeries('down', 1, Array(150).fill(NaN_))], { gaps: true });
+			expect(container.querySelector('svg')).not.toBeNull();
+			expect(paths(container).line).toBe('');
+			noNaN(container);
+		});
+	});
+
 	it('ignores a highlight index outside the data', () => {
 		const { container } = draw([toSeries('down', 1, DOWN)], { highlightIndex: 99 });
 		expect(container.querySelector('rect.band')).toBeNull();

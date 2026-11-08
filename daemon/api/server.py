@@ -82,6 +82,7 @@ from api.devices_v2 import register_devices_v2_routes
 from api.device_custom import register_device_custom_routes
 from api.live import register_live_routes
 from api.bandwidth import register_bandwidth_routes
+from api.live_bandwidth import register_live_bandwidth_routes
 from api.notifications_hub import register_notification_hub_routes
 from api.changelog import register_changelog_routes
 from api.certificates import register_certificate_routes
@@ -1313,6 +1314,9 @@ def create_app(
     # Bandwidth tracking (monthly/daily usage, data cap, heatmap)
     bandwidth_tracker = BandwidthTracker(client=storage._client)
     register_bandwidth_routes(app, bandwidth_tracker)
+
+    # Live bandwidth per device: kernel byte counters on the capture interface (NET-205)
+    register_live_bandwidth_routes(app)
 
     # Notification hub (multi-channel notifications + routing rules)
     notification_config = os.environ.get(

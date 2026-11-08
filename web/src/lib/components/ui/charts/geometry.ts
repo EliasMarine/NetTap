@@ -57,6 +57,16 @@ function fmt(v: number): string {
 	return String(Math.round(v * 100) / 100);
 }
 
+/** The runs of points with a finite y, so a missing value stays a gap instead of a line across it (NET-205). */
+export function finiteRuns(points: readonly Point[]): Point[][] {
+	const breaks = points.flatMap(([, y], i) => (Number.isFinite(y) ? [] : [i]));
+	const bounds = [-1, ...breaks, points.length];
+	return bounds
+		.slice(1)
+		.map((end, k) => points.slice(bounds[k] + 1, end))
+		.filter((run) => run.length > 0);
+}
+
 export interface DonutSegment {
 	/** Index into the caller's original array (zero values keep their index but are not drawn). */
 	index: number;

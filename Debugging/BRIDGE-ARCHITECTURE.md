@@ -1100,6 +1100,50 @@ Give a laptop a fixed address in the router's network, open the router's admin p
 
 ---
 
+## 17. Live bandwidth per device (added 2026-11-07, NET-205)
+
+The **Live bandwidth** card on both device pages shows a device's download and upload rate every 2 s, with a 5-minute chart. Code: `daemon/services/live_bandwidth.py` (the meter), `daemon/services/live_bandwidth_tc.py` (filter lines, dump parser, tool runner), `daemon/api/live_bandwidth.py` (`GET /api/live-bandwidth?mac=` or `?ip=`), `web/src/lib/components/LiveBandwidthCard.svelte`.
+
+### How it counts
+
+- **Kernel byte counters, not a reader.** The daemon puts tc flower filters on the capture interface's **ingress** hook (a `clsact` qdisc). The kernel counts each matching frame; the daemon reads the counters once per tick (`tc -s -j filter show`) and divides the byte change by the time between reads. Nothing is copied to user space and nothing is written to disk.
+- **The count is the Ethernet payload** (`skb->len` at ingress): the IP packet, plus padding for packets under 46 bytes. The 802.1Q tag isn't counted (the kernel moves it to metadata before tc runs).
+- **The MAC page counts by MAC** (`dst_mac` = download, `src_mac` = upload, `protocol all`): everything the device sends, and unicast addressed to it. Broadcast and multicast it receives aren't counted. **The IP page counts by IPv4 address** (`dst_ip`/`src_ip`, plus the `802.1Q` forms for tagged frames).
+- **Six shared stages.** Every watch's filters sit in six fixed prefs, 49152–49157 (MAC down/up, IP down/up, 802.1Q IP down/up), so a frame costs at most six hash lookups however many devices are watched. Each watch takes one handle (slot + 1) in its prefs.
+- **`action continue`, never `pass`.** A terminal action ends classification, and every later filter would count nothing (found in the first G11 spike).
+- **Ownership by cookie.** Every NetTap filter's action carries a cookie: `4e4554544150424d` ("NETTAPBM"), the slot, and a generation. NetTap deletes only filters with that cookie, only by exact `pref` + `protocol` + `handle`, and never deletes `clsact`. If any other filter or a plain `ingress` qdisc is on the interface, the card says "Another traffic rule on <iface> runs first, so NetTap can't count reliably." and nothing is installed.
+
+### Lifecycle
+
+- **Each poll is the keepalive.** The first poll for a device starts its watch; every viewer shares it; it stops 15 s after the last poll. At most 8 watches (the 9th gets 503 "Too many live views are open").
+- **One lock** covers installs, removals and sampling; a keepalive for a running watch never waits on it. Every tc call has its own deadline and admission has a 6 s one, so a request answers before the web proxy's 10 s limit.
+- **Startup and shutdown clean-up.** After the capture manager is installed (`main.py`), and on daemon shutdown (`on_cleanup`), the meter deletes every NetTap-cookie filter on every interface. After a crash, its filters stay until the next daemon start removes them.
+- **Invalid samples are shown, never hidden.** A tick is invalid (with its reason) when the counters were read late (interval outside 1.5–4 s), the two reads took more than 2% of the interval, a counter went backwards, a filter is missing or carries another generation, a foreign rule appeared, or capture settings are changing (`capture_config_lock` held). The headline goes blank when the latest reading is more than 5 s old.
+
+### Modes
+
+| Mode | Supported | Why |
+|------|-----------|-----|
+| Mirror | Yes | The mirror port sees every device's own MAC and LAN address |
+| Bridge | No | NetTap sits in front of the router and sees only its public address |
+| DHCP gateway | No | NetTap's own NAT readdresses replies before tc ingress sees them |
+
+### Known issues / risks (live bandwidth)
+
+| Issue | Impact | Status |
+|-------|--------|--------|
+| Leftover NetTap filters after a daemon crash | They keep counting (cheaply) until the next daemon start, which removes them. By hand: `sudo tc -s -j filter show dev <iface> ingress`, then for each filter whose action cookie starts `4e4554544150424d`: `sudo tc filter del dev <iface> ingress pref <pref> protocol <proto> handle <handle> flower` | MITIGATED (startup + shutdown reconcile) |
+| **Capture safety isn't verified by engine telemetry** | Suricata's stats are disabled and Zeek writes no stats or capture-loss log, so there's no live engine drop counter to compare with the meter off and on. The meter's per-packet CPU cost is measured instead (`verify_live_bandwidth.py bench`) | OPEN — follow-up: enable Suricata `stats`, compare `capture.kernel_drops` off vs on |
+| GRO on the capture NIC | Merged super-frames carry fewer Ethernet headers, so rates read about 3% low; the API reports `offloads.gro` and the daemon logs a warning | DOCUMENTED |
+| Intel i226-V (target hardware) | Not verified (no bench). `skip_hw` keeps the filters in software, so the path is driver-independent | DOCUMENTED |
+| A `clsact` qdisc stays on the capture interface | Harmless when empty; NetTap never deletes it | BY DESIGN |
+
+### Verification
+
+`scripts/remote/deploy-device-live-bandwidth.sh` runs the release gate in the daemon container: exact counts on a throwaway veth pair (`verify_live_bandwidth.py kernel`), the per-packet CPU cost (`bench`) and the API lifecycle (`lifecycle`). The accuracy gate (±5% per 2 s window against `scripts/remote/live_bandwidth_reference.py`, an AF_PACKET reader with kernel timestamps) runs during a known download and upload. Results: `tracking-fixes/2026-11-07-device-live-bandwidth.md`.
+
+---
+
 **Document Status:** COMPLETE & VERIFIED
 **Next Review:** After Phase 2 completion (Storage Management)
 **Maintainer:** NetTap Project Team

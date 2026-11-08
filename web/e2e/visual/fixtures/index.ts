@@ -14,6 +14,7 @@ import { INFRASTRUCTURE_ROUTES } from './infrastructure.ts';
 import { INVESTIGATION_ROUTES } from './investigations.ts';
 import { IOT_ROUTES } from './iot.ts';
 import { LIVE_ROUTES } from './live.ts';
+import { LIVE_BANDWIDTH_ROUTES } from './live-bandwidth.ts';
 import { LOGS_ROUTES } from './logs.ts';
 import { LOOKUP_ROUTES } from './lookup.ts';
 import { NOTIFICATION_ROUTES } from './notifications.ts';
@@ -46,6 +47,7 @@ export const ROUTES: readonly FixtureRoute[] = [
 	...INVESTIGATION_ROUTES,
 	...IOT_ROUTES,
 	...LIVE_ROUTES,
+	...LIVE_BANDWIDTH_ROUTES,
 	...LOGS_ROUTES,
 	...LOOKUP_ROUTES,
 	...NOTIFICATION_ROUTES,
