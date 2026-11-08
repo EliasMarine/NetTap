@@ -77,11 +77,10 @@ extra:
 nav:
   - Home: index.md
   - Getting Started:
+    - getting-started/setup-guide.md
     - getting-started/requirements.md
     - getting-started/hardware-guide.md
     - getting-started/installation.md
-    - getting-started/first-run-wizard.md
-    - getting-started/quick-start.md
   - User Guide:
     - user-guide/dashboard-overview.md
     - user-guide/alerts.md

@@ -36,7 +36,7 @@ The result: you see exactly what every device on your network is doing, which ex
 
 | I want to... | Go to... |
 |---|---|
-| Get NetTap running in 5 minutes | [Quick Start](getting-started/quick-start.md) |
+| Set up NetTap from start to finish | [Setup guide](getting-started/setup-guide.md) |
 | Check if my hardware is compatible | [Hardware Guide](getting-started/hardware-guide.md) |
 | Understand the installation process | [Installation](getting-started/installation.md) |
 | Learn the dashboard | [Dashboard Overview](user-guide/dashboard-overview.md) |

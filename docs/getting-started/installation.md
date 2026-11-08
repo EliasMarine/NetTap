@@ -1,8 +1,11 @@
 # Installation
 
-This guide walks through the full NetTap installation process using the automated install script.
+This page is the reference for the install script: what each step does and every option. For a start-to-finish walkthrough, including choosing a capture mode and the setup wizard, follow the [setup guide](setup-guide.md).
 
-NetTap uses a two-phase workflow: **Install** (with internet, bridge activates automatically) → **Rewire** (physical cables, traffic flows immediately). The bridge activates during install with no cables — it sits idle until you plug in. This means you never lose your management connection.
+!!! warning "Mirror and DHCP gateway modes"
+    Run the installer with `--skip-bridge` in mirror and DHCP gateway modes. Without it, the installer joins two ports into a bridge, and a bridged port loses its IP address, which can cut off your SSH session and the box's internet mid-install. The two-phase workflow below is for inline bridge mode.
+
+In inline bridge mode, NetTap uses a two-phase workflow: **Install** (with internet, bridge activates automatically) → **Rewire** (physical cables, traffic flows immediately). The bridge activates during install with no cables — it sits idle until you plug in. This means you never lose your management connection.
 
 ---
 
@@ -24,26 +27,17 @@ See [Requirements](requirements.md) for full details.
 
 ### Step 1: Clone the Repository
 
-```bash
-git clone https://github.com/EliasMarine/NetTap.git /opt/nettap
-cd /opt/nettap
-```
-
-### Step 2: Generate Secrets
-
-Generate cryptographically random passwords for all services:
+Clone into the home folder of the `nettap` user. NetTap's helper scripts in `scripts/remote/` expect `/home/nettap/NetTap`:
 
 ```bash
-sudo scripts/generate-secrets.sh
+cd ~
+git clone https://github.com/EliasMarine/NetTap.git
+cd ~/NetTap
 ```
 
-This writes `OPENSEARCH_ADMIN_PASSWORD`, `GRAFANA_ADMIN_PASSWORD`, `JWT_SECRET` and `API_KEY_SALT` to your `.env` file (`ARKIME_SECRET` comes from `scripts/install/malcolm-config.sh`). You can preview what would be generated without writing:
+The installer generates every password, secret and certificate it needs (in `docker/.env`, `docker/certs/`, `docker/ssl/`, `docker/curlrc/` and `docker/auth/`), and records your port roles in the repo-root `.env`. There's no separate secrets step. Don't copy `.env.example` to `.env`: the installer would skip asking which port is which. The one exception, for inline bridge mode with a wired management port, is in the [setup guide](setup-guide.md#5-run-the-installer).
 
-```bash
-scripts/generate-secrets.sh --stdout
-```
-
-### Step 3: Run the Installer
+### Step 2: Run the Installer
 
 ```bash
 sudo scripts/install/install.sh
@@ -152,7 +146,7 @@ Wi-Fi downtime is only the ~30 seconds it takes to physically swap two cables.
     ```bash
     sudo ethtool -p enp1s0 10
     ```
-    This blinks the LEDs on `enp1s0` for 10 seconds.
+    This blinks the LEDs on `enp1s0` for 10 seconds. It doesn't work on every chip (Intel i226-V on Ubuntu's 6.8 kernel doesn't). Run `ip -br link`, plug in a cable, and run it again: the port that changes to `UP` is the one you plugged in.
 
 ---
 
@@ -164,11 +158,12 @@ After rewiring, you should see all services running:
 docker compose -f docker/docker-compose.yml ps
 ```
 
-!!! warning "OpenSearch startup time"
-    OpenSearch may take 2--5 minutes to fully start and become healthy. If the verification shows "OpenSearch not responding yet," wait a few minutes and check again with:
+!!! warning "OpenSearch not responding yet"
+    The installer's own OpenSearch check doesn't sign in, so it often reports "OpenSearch not responding yet" even when all is well. Check with NetTap's login instead. `"status"` should be `green` or `yellow`:
     ```bash
-    curl -sk https://localhost:9200/_cluster/health | python3 -m json.tool
+    sudo docker exec nettap-opensearch curl --config /var/local/curlrc/.opensearch.primary.curlrc --cacert /usr/share/opensearch/config/certs/ca.crt --insecure -s 'https://localhost:9200/_cluster/health'
     ```
+    If it says `Unauthorized`, run `bash scripts/remote/fix-opensearch.sh` from `~/NetTap`.
 
 ---
 
@@ -189,7 +184,7 @@ https://192.168.1.100
 !!! note "Self-signed certificate"
     The first time you access the dashboard, your browser will warn about a self-signed TLS certificate. This is expected --- accept the warning to proceed. See [TLS Certificates](../admin-guide/tls-certificates.md) to configure a custom certificate.
 
-If this is a fresh installation, you will be redirected to the [Setup Wizard](first-run-wizard.md) to complete initial configuration.
+If this is a fresh installation, you will be redirected to the setup wizard. The [setup guide](setup-guide.md#6-run-the-setup-wizard) walks through it.
 
 ---
 
@@ -267,9 +262,13 @@ The activation script validates cable carrier status, creates the bridge, and st
 
 ## Uninstallation
 
+These steps are for inline bridge mode only. In mirror and DHCP gateway modes, `--teardown` takes down the ports recorded as WAN and LAN, which can include your management port, and NetTap leaves network settings behind that set a fixed address and routing at boot. Reinstall Ubuntu instead. Reinstalling is also the only way to undo every system change in bridge mode.
+
 To remove NetTap:
 
 ```bash
+cd ~/NetTap
+
 # Stop services
 sudo systemctl stop nettap
 
@@ -282,14 +281,15 @@ sudo systemctl daemon-reload
 sudo scripts/bridge/setup-bridge.sh --teardown
 
 # Remove Docker containers and volumes (WARNING: deletes all data)
-docker compose -f docker/docker-compose.yml down -v
+sudo docker compose -f docker/docker-compose.yml down -v
 
 # Remove kernel tuning
 sudo rm /etc/sysctl.d/99-nettap.conf
 sudo sysctl --system
 
 # Remove the installation directory
-sudo rm -rf /opt/nettap
+cd ~
+sudo rm -rf ~/NetTap
 ```
 
 !!! danger "Data loss"

@@ -731,11 +731,12 @@ Deduplication: In-memory LRU cache keyed by `${signature_id}:${src_ip}:${dest_ip
 docs/
   index.md                          # Landing page
   getting-started/
+    setup-guide.md                  # End-to-end setup walkthrough (NET-210)
     requirements.md                 # Hardware + OS requirements
     hardware-guide.md               # Compatibility list with tested models
     installation.md                 # Step-by-step install guide
-    first-run-wizard.md             # Wizard walkthrough
-    quick-start.md                  # 5-minute quick start
+    first-run-wizard.md             # Pointer to setup-guide.md (NET-210)
+    quick-start.md                  # Pointer to setup-guide.md (NET-210)
   user-guide/
     dashboard-overview.md           # Panel-by-panel explanation
     alerts.md                       # Managing Suricata alerts
@@ -835,6 +836,7 @@ docs/
 **Documentation:**
 - [x] Docs site deployed to GitHub Pages — docs.yml workflow exists
 - [x] Installation guide complete — installation.md (290 lines)
+- [x] End-to-end setup guide — `docs/getting-started/setup-guide.md` (2026-11-08, NET-210): mode choice, Ubuntu, installer, wizard, Go Live, checks, updates, troubleshooting, removal; every claim checked against source. Installer/Go Live bugs it surfaced are NET-211
 - [x] Hardware compatibility list seeded (3+ models) — 5 models in hardware-compat.md
 - [x] Troubleshooting guide covers top 10 failures — troubleshooting.md (316 lines)
 
