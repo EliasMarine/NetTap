@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types.js';
-import { daemonFetch } from '$lib/server/daemon.js';
+// OLD CODE: import { daemonFetch } from '$lib/server/daemon.js'; (NET-203)
+import { daemonFetch, TOOL_TIMEOUT_MS } from '$lib/server/daemon.js';
 
 /**
  * POST /api/tools/traceroute
@@ -14,10 +15,15 @@ export const POST: RequestHandler = async ({ request }) => {
 		return json({ error: 'Invalid JSON request body.' }, { status: 400 });
 	}
 
-	const res = await daemonFetch('/api/tools/traceroute', {
-		method: 'POST',
-		body: JSON.stringify(body),
-	});
+	// OLD CODE: the same call with daemonFetch's 10 s default (NET-203: below the daemon's own limit)
+	const res = await daemonFetch(
+		'/api/tools/traceroute',
+		{
+			method: 'POST',
+			body: JSON.stringify(body),
+		},
+		TOOL_TIMEOUT_MS.traceroute
+	);
 
 	const data = await res.json().catch(() => ({ error: 'Failed to parse daemon response' }));
 	return json(data, { status: res.status });

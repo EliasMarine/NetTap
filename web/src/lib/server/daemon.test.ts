@@ -93,6 +93,31 @@ describe('daemonFetch', () => {
 		expect(callArgs.signal).toBe(customSignal);
 	});
 
+	// NET-203: the Tools routes' longer limits only help if they reach the abort signal
+	it('gives the fetch a time limit of the timeout it was called with', async () => {
+		const timeout = vi.spyOn(AbortSignal, 'timeout');
+		vi.mocked(globalThis.fetch).mockResolvedValue(new Response('{}', { status: 200 }));
+
+		await daemonFetch('/api/tools/traceroute', { method: 'POST' }, 35_000);
+
+		expect(timeout).toHaveBeenCalledWith(35_000);
+		timeout.mockRestore();
+	});
+
+	// NET-203: a 15 s DNS lookup on the G11 read "Daemon unreachable" while the daemon was still answering
+	it('says NetTap took too long, not that it is unreachable, when its own time limit runs out', async () => {
+		vi.mocked(globalThis.fetch).mockRejectedValue(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
+
+		const result = await daemonFetch('/api/test');
+		const body = await result.json();
+
+		expect(result.status).toBe(502);
+		expect(body.error).toBe('NetTap took too long to answer. Try again.');
+		expect(body.error).not.toContain('unreachable');
+		// the answer never reached the web server, so a save behind it is still unconfirmed
+		expect(body.daemonAvailable).toBe(false);
+	});
+
 	it('returns 502 Response on connection error', async () => {
 		vi.mocked(globalThis.fetch).mockRejectedValue(new Error('ECONNREFUSED'));
 

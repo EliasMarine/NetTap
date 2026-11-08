@@ -50,6 +50,18 @@ export const THREAT_SCAN_TIMEOUT_MS = 120_000;
 export const RULE_UPDATE_TIMEOUT_MS = 290_000;
 
 /**
+ * NET-203: each Tools page's daemon call, 5 s above the daemon's own limit for that tool, so a slow
+ * but working tool answers instead of being cut off. The 10 s default sat below all four: a 15 s DNS
+ * lookup on the G11 (2026-11-07) read "Daemon unreachable". All stay under nginx's 60 s proxy_read_timeout.
+ */
+export const TOOL_TIMEOUT_MS = {
+	'dns-recon': 15_000, // daemon/services/dns_recon_service.py QUERY_TIMEOUT (10 s; its queries run at once)
+	ping: 20_000, // daemon/services/network_diag_service.py PING_TIMEOUT (15 s)
+	traceroute: 35_000, // daemon/services/network_diag_service.py TRACEROUTE_TIMEOUT (30 s)
+	'ssl-cert': 25_000, // daemon/services/ssl_cert_service.py CERT_TIMEOUT (10 s), twice: s_client, then x509
+} as const;
+
+/**
  * Fetch a path from the NetTap daemon API.
  * Handles connection errors gracefully — returns an error Response
  * instead of throwing if the daemon is unreachable.
@@ -101,9 +113,13 @@ export async function daemonFetch(
 	} catch (err) {
 		const message =
 			err instanceof Error ? err.message : 'Unknown error connecting to daemon';
+		// NET-203: a time limit running out is not "unreachable"; the daemon may still be working.
+		// AbortSignal.timeout rejects with a DOMException named TimeoutError.
+		const timedOut = (err as { name?: unknown } | null)?.name === 'TimeoutError';
 		return new Response(
 			JSON.stringify({
-				error: `Daemon unreachable: ${message}`,
+				// OLD CODE: error: `Daemon unreachable: ${message}`, (NET-203: a timeout read as the daemon being down)
+				error: timedOut ? 'NetTap took too long to answer. Try again.' : `Daemon unreachable: ${message}`,
 				daemonAvailable: false,
 			} satisfies DaemonError),
 			{

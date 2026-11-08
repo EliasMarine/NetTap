@@ -3,7 +3,7 @@
 **Date:** 2026-11-07
 **Branch:** `fix/devices-rename-all-devices-list-view`
 **Linear:** NET-201 (devices), NET-202 (search)
-**Status:** Built and tested. PR, merge and the G11 deploy follow.
+**Status:** Merged (PR #216, squash `0baac9bb`) and deployed to the G11 on 2026-11-07. Every check passed.
 
 ## What the owner reported
 
@@ -67,6 +67,14 @@
 ## Deploy
 
 `bash /home/nettap/NetTap/scripts/remote/deploy-devices-rename-search.sh` (web only).
+
+**Result on the G11 (2026-11-07), every check passed:**
+
+- web healthy;
+- the build carries Rename on the IP device page;
+- search opens devices, IPs and domains;
+- By type has no Cards / List switch;
+- the sign-in page answers HTTP 200.
 
 ## Lessons
 
