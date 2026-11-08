@@ -7,6 +7,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../common.sh
 source "${SCRIPT_DIR}/../common.sh"
+# shellcheck source=ui.sh
+source "${SCRIPT_DIR}/ui.sh"
 # shellcheck source=malcolm-versions.conf
 source "${SCRIPT_DIR}/malcolm-versions.conf"
 
@@ -119,6 +121,23 @@ pull_images() {
     for img in "${images[@]}"; do
         (( ++count ))
         local full_image="${MALCOLM_IMAGE_REGISTRY}/${img}:${MALCOLM_IMAGE_TAG}"
+
+        # Installer on a terminal (NET-204): one spinner line per image instead of docker's output.
+        if [[ "$NETTAP_UI" == "fancy" && "$NETTAP_DRY_RUN" != "true" ]]; then
+            if ui_spin "Pulling images  ${count}/${total}  ${img}" docker pull "$full_image"; then
+                # Empty when mktemp failed and the output went to /dev/null
+                if [[ -n "$UI_SPIN_LOG" ]]; then rm -f -- "$UI_SPIN_LOG"; fi
+            else
+                warn "Failed to pull ${full_image}"
+                if [[ -n "$UI_SPIN_LOG" ]]; then
+                    tail -n 10 "$UI_SPIN_LOG" | sed "s/^/${_UI_PAD}  /" >&2 || true
+                    warn "Full output: ${UI_SPIN_LOG}"
+                fi
+                (( ++failed ))
+            fi
+            continue
+        fi
+
         log "[${count}/${total}] Pulling ${img}..."
 
         if run docker pull "$full_image"; then
@@ -706,12 +725,17 @@ print(json.dumps(policy))
 # Main
 # ---------------------------------------------------------------------------
 deploy_malcolm() {
-    log ""
-    log "=========================================="
-    log "  NetTap Malcolm Deployment"
-    log "  Images: ${MALCOLM_IMAGE_REGISTRY}:${MALCOLM_IMAGE_TAG}"
-    log "=========================================="
-    log ""
+    if [[ "$NETTAP_UI" == "fancy" ]]; then
+        # Under the installer's "Deploying Malcolm stack" header (NET-204)
+        log "Images: ${MALCOLM_IMAGE_REGISTRY}:${MALCOLM_IMAGE_TAG}"
+    else
+        log ""
+        log "=========================================="
+        log "  NetTap Malcolm Deployment"
+        log "  Images: ${MALCOLM_IMAGE_REGISTRY}:${MALCOLM_IMAGE_TAG}"
+        log "=========================================="
+        log ""
+    fi
 
     preflight
 
