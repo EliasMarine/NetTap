@@ -339,3 +339,9 @@ def test_the_page_cap_raises_instead_of_returning_part(monkeypatch):
     client.search.return_value = _page(_FULL_PAGE, _NEXT)
     with pytest.raises(QueryFailed, match="stopped at 400 groups"):
         get_smart_alerts(client, _FROM, _TO, limit=None)
+
+
+def test_the_bonus_sets_the_level_too():
+    """NET-209 review: 0 + 15 read score 15 with level "none"; 20 + 15 stayed "low"."""
+    assert _score([4], anomalous=True) == (15, "low")
+    assert _score([1, 1, 3], anomalous=True) == (37, "medium")

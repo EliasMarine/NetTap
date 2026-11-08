@@ -161,9 +161,10 @@ An `ET DROP`, `ET CINS`, `ET COMPROMISED`, `ET TOR` or `ET 3CORESec` hit:
 
 - **Is not counted when a connection record shows the internet side opened the connection.** When the
   device opened it, the hit counts, capped at medium.
-- **Is never hidden when no record matched.** A connection still open has no Zeek record yet, and a C2
-  server can hold a session open for hours. Such a hit is listed at medium and weighs as an attempt (0.5)
-  until the record shows who opened it.
+- **Is never hidden when no record matched for 10 minutes.** Zeek writes a connection's record when it
+  ends, and Malcolm indexes it within a minute, so a younger hit waits for its record as an attempt. A hit
+  still unmatched after 10 minutes is a connection held open, as a C2 server can do for hours. It is listed
+  at medium and weighs as an attempt (0.5) until the record shows who opened it.
 - **Never makes a kill-chain stage.** An address being on a list is not command-and-control evidence.
 
 A hit that is not counted moves to "not counted". The Alerts page and its drill-down link still show its
@@ -219,8 +220,8 @@ other sources. The alert and the volume are matched by device and window, not by
   the device also has a counted alert.
 - **A fresh install has under 3 days of history.** Both spike factors say so and score 0.
 - **An open connection has no Zeek record yet.** Its alerts fall back to packet direction, so an internet
-  packet counts as an attempt. They are still listed. A blocklist hit on such a connection is listed at
-  medium, not left out. The record lookup reaches one day before the window, so a connection that started
+  packet counts as an attempt. They are still listed. A blocklist hit on such a connection is left out for
+  its first 10 minutes, then listed at medium. The record lookup reaches one day before the window, so a connection that started
   earlier is treated the same way.
 - **A reused address-and-port pair can be ambiguous.** When two connection records cover the same alert
   time with different openers, the flow falls back to packet direction.

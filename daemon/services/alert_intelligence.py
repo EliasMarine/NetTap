@@ -21,6 +21,7 @@ import logging
 import os
 import json
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
@@ -1677,10 +1678,12 @@ def get_smart_alerts(
                     "source_ip": bucket["key"].get("src_ip"),
                     "destination_ip": bucket["key"].get("dst_ip"),
                 },
-                # NET-209: which device each alert concerns, and whether it was its own traffic
-                "lan_device": src_ip
-                if is_lan(src_ip)
-                else (dst_ip if is_lan(dst_ip) else None),
+                # NET-209: whether it was a device's own traffic; findings name the device
+                # OLD CODE START — review: the packet's LAN side, not the charged device (a proxy)
+                # "lan_device": src_ip
+                # if is_lan(src_ip)
+                # else (dst_ip if is_lan(dst_ip) else None),
+                # OLD CODE END
                 "own_traffic": any(f["own"] for f in findings),
                 "reputation": reputation,
                 "findings": findings,
@@ -1737,7 +1740,10 @@ def _counted_findings(
         client_targets[b["key"].get("sig_name")] = alert_findings.client_only_target(
             meta.get("attack_target")
         )
-    return alert_findings.findings_by_group(instants, spans, client_targets, is_lan)
+    settled_before = int(time.time() * 1000) - alert_findings.SETTLE_MS
+    return alert_findings.findings_by_group(
+        instants, spans, client_targets, is_lan, settled_before
+    )
 
 
 def get_smart_alert_summary(
@@ -1824,15 +1830,18 @@ def get_smart_alert_summary(
     raw_score = _finding_points(alerts)
     threat_score = min(100, int(raw_score))
 
-    threat_level = "none"
-    if threat_score >= 75:
-        threat_level = "critical"
-    elif threat_score >= 50:
-        threat_level = "high"
-    elif threat_score >= 25:
-        threat_level = "medium"
-    elif threat_score > 0:
-        threat_level = "low"
+    # OLD CODE START — NET-209 review: the same bands as _score_level, which the bonus now reuses
+    # threat_level = "none"
+    # if threat_score >= 75:
+    #     threat_level = "critical"
+    # elif threat_score >= 50:
+    #     threat_level = "high"
+    # elif threat_score >= 25:
+    #     threat_level = "medium"
+    # elif threat_score > 0:
+    #     threat_level = "low"
+    # OLD CODE END
+    threat_level = _score_level(threat_score)
 
     # Kill chain detection
     kill_chains = detect_kill_chains(alerts)
@@ -1860,10 +1869,13 @@ def get_smart_alert_summary(
     # Boost threat score if baseline deviation is anomalous
     if baseline and baseline.get("is_anomalous") and threat_score < 75:
         threat_score = min(100, threat_score + 15)
-        if threat_score >= 75:
-            threat_level = "critical"
-        elif threat_score >= 50:
-            threat_level = "high"
+        # OLD CODE START — NET-209 review: only high and critical were re-derived, so 0 + 15 read "none"
+        # if threat_score >= 75:
+        #     threat_level = "critical"
+        # elif threat_score >= 50:
+        #     threat_level = "high"
+        # OLD CODE END
+        threat_level = _score_level(threat_score)
 
     # The level never exceeds the worst alert present: on the G11, 48 groups of
     # high/medium alerts summed to 100 and the Alerts page read "CRITICAL" with 0 critical
@@ -1885,6 +1897,14 @@ def get_smart_alert_summary(
 
 # Points per finding on the Threats page: unchanged from before NET-209
 SEVERITY_WEIGHTS = {1: 10, 2: 5, 3: 2, 4: 0.5, 5: 0}
+
+
+def _score_level(score: int) -> str:
+    """The level for a threat score: 75+ critical, 50+ high, 25+ medium, above 0 low."""
+    for floor, level in ((75, "critical"), (50, "high"), (25, "medium"), (1, "low")):
+        if score >= floor:
+            return level
+    return "none"
 
 
 def _finding_points(groups: list[dict]) -> float:

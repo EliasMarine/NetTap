@@ -368,7 +368,7 @@ def test_the_scanner_is_never_a_device_and_its_attempts_barely_score(quiet):
     assert summary["informational_events"] == 26
     (top,) = summary["top_threats"]
     assert top["signature"] == _EXPLOIT
-    assert top["lan_device"] == SERVER and top["own_traffic"] is False
+    assert top["own_traffic"] is False
     assert [(f["device"], f["own"], f["count"]) for f in top["findings"]] == [
         (SERVER, False, 9)
     ]
@@ -476,3 +476,156 @@ def test_unknown_and_known_attempts_are_separate_findings():
         (True, 2),
     ]
     assert af.finding_severity(2, {"own": False, "opener_known": False}, True) == 3
+
+
+# ---------------------------------------------------------------------------
+# NET-209 review: chain timing, the proxy case, demoted alerts, and the two new reads
+# ---------------------------------------------------------------------------
+
+
+def test_the_chain_uses_the_c2_after_the_attempt_not_the_one_before():
+    """Own C2 at 08:00 and 11:00, an exploit attempt at 10:00: 10:00 → 11:00 is the chain."""
+    chains = _chains(
+        [
+            _group(
+                "c2",
+                "malware_c2",
+                [_finding(PC, True, _MON + 8 * _HOUR, _MON + 11 * _HOUR)],
+            ),
+            _group("exploit", "exploit", [_finding(PC, False, _MON + 10 * _HOUR)]),
+        ]
+    )
+    assert [c["stages"] for c in chains] == [[2, 3]]
+    assert chains[0]["first_seen"] == af._iso_ms(_MON + 10 * _HOUR)
+    assert chains[0]["last_seen"] == af._iso_ms(_MON + 11 * _HOUR)
+
+
+def test_the_chain_is_found_among_c2_check_ins_days_apart():
+    day = 24 * _HOUR
+    c2_times = (
+        _MON + 8 * _HOUR,
+        _MON + 2 * day + 11 * _HOUR,
+        _MON + 4 * day + 11 * _HOUR,
+    )
+    chains = _chains(
+        [
+            _group("c2", "malware_c2", [_finding(PC, True, *c2_times)]),
+            _group(
+                "exploit", "exploit", [_finding(PC, False, _MON + 2 * day + 10 * _HOUR)]
+            ),
+        ]
+    )
+    assert [c["stages"] for c in chains] == [[2, 3]]
+    assert chains[0]["first_seen"] == af._iso_ms(_MON + 2 * day + 10 * _HOUR)
+
+
+def test_a_proxied_client_alert_is_charged_to_the_client(quiet):
+    """A client-side rule seen between the proxy and the client: the client opened the connection."""
+    sig = "ET MALWARE Agent CnC Checkin"
+    groups = [_bucket(sig, PROXY, PC, 3, "Major", attack_target="Client_Endpoint")]
+    instants = [_instant(sig, PROXY, PC, "1:p", _T, 3)]
+    spans = [
+        {
+            "key": {"cid": "1:p", "orig": PC, "start": _T - 500, "end": _T + 500},
+            "doc_count": 1,
+        }
+    ]
+    (group,) = get_smart_alerts(
+        _client(groups, instants, spans), _FROM, _TO, limit=None
+    )
+    assert [(f["device"], f["own"], f["count"]) for f in group["findings"]] == [
+        (PC, True, 3)
+    ]
+    assert group["unattributed"] == 0
+
+    (unknown,) = get_smart_alerts(_client(groups, instants, []), _FROM, _TO, limit=None)
+    assert unknown["findings"] == [] and unknown["unattributed"] == 3  # nobody charged
+
+
+def test_demoted_alerts_move_neither_the_score_nor_the_events(quiet):
+    """C2 → PC in one group: 4 on PC's own connection, then 10,000 the C2 opened."""
+    groups = [_bucket(_DROP, C2, PC, 4, "Major")]
+    own = [_instant(_DROP, C2, PC, "1:own", _T, 4)]
+    spans = [
+        {
+            "key": {"cid": "1:own", "orig": PC, "start": _T - 500, "end": _T + 500},
+            "doc_count": 1,
+        },
+        {
+            "key": {"cid": "1:in", "orig": C2, "start": _T, "end": _T + _HOUR},
+            "doc_count": 1,
+        },
+    ]
+    alone = get_smart_alert_summary(_client(groups, own, spans), _FROM, _TO)
+    noisy = [{**groups[0], "doc_count": 10_004}]
+    flood = [*own, _instant(_DROP, C2, PC, "1:in", _T + 60_000, 10_000)]
+    mixed = get_smart_alert_summary(_client(noisy, flood, spans), _FROM, _TO)
+    for key in ("threat_score", "threat_level", "total_events"):
+        assert mixed[key] == alone[key]
+    assert (alone["total_events"], mixed["informational_events"]) == (4, 10_000)
+
+
+def test_a_fresh_alert_waits_for_its_record_as_an_attempt():
+    """No record yet, under SETTLE_MS old: an attempt (left out), so the page does not flicker."""
+    inst = [{"sig": _DROP, "src": C2, "dst": PC, "cid": "1:x", "ts": _T, "count": 1}]
+    fresh = af.findings_by_group(inst, {}, {}, is_lan, settled_before=_T - 1)
+    held = af.findings_by_group(inst, {}, {}, is_lan, settled_before=_T + 1)
+    assert fresh[(_DROP, C2, PC)][0]["opener_known"] is True
+    assert held[(_DROP, C2, PC)][0]["opener_known"] is False
+
+
+def test_epoch_ms_is_exact_and_reads_no_zone_as_utc():
+    assert af.epoch_ms("2025-11-03T00:00:00.123Z") == _MON + 123
+    assert af.epoch_ms("2025-11-03T00:00:00.123") == _MON + 123
+
+
+def _page_client(buckets):
+    client = MagicMock()
+    client.search.return_value = {"aggregations": {"all": {"buckets": buckets}}}
+    return client
+
+
+def test_the_instant_read_keeps_alerts_with_a_lan_party():
+    client = _page_client([])
+    base = {"filter": [{"term": {"event.dataset": "alert"}}], "must_not": [{"x": 1}]}
+    af.alert_instants(client, "idx", base, ["192.168.1.0/24"])
+    query = client.search.call_args.kwargs["body"]["query"]["bool"]
+    assert query["must_not"] == [{"x": 1}]
+    lan_party = query["filter"][-1]["bool"]
+    assert lan_party["minimum_should_match"] == 1
+    assert lan_party["should"] == [
+        {"terms": {"source.ip": ["192.168.1.0/24"]}},
+        {"terms": {"destination.ip": ["192.168.1.0/24"]}},
+    ]
+
+
+def test_the_conn_read_spans_a_day_before_and_an_hour_after_in_chunks(monkeypatch):
+    monkeypatch.setattr(af, "_CID_CHUNK", 2)
+    client = _page_client([])
+    af.connection_spans(client, "idx", ["a", "b", "c", "d", "e"], _FROM, _TO)
+    bodies = [
+        c.kwargs["body"]["query"]["bool"]["filter"]
+        for c in client.search.call_args_list
+    ]
+    assert [f[-1]["terms"]["network.community_id"] for f in bodies] == [
+        ["a", "b"],
+        ["c", "d"],
+        ["e"],
+    ]
+    window = bodies[0][0]["range"]["@timestamp"]
+    assert af.epoch_ms(window["gte"]) == af.epoch_ms(_FROM) - 24 * _HOUR
+    assert af.epoch_ms(window["lte"]) == af.epoch_ms(_TO) + _HOUR
+
+
+@pytest.mark.parametrize("read", ["instants", "conns"])
+def test_a_partial_read_raises(read):
+    from storage.snapshot_search import QueryFailed
+
+    with (
+        patch.object(af, "all_buckets", return_value=([], False)),
+        pytest.raises(QueryFailed),
+    ):
+        if read == "instants":
+            af.alert_instants(MagicMock(), "idx", {"filter": []}, ["10.0.0.0/8"])
+        else:
+            af.connection_spans(MagicMock(), "idx", ["a"], _FROM, _TO)

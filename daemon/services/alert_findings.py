@@ -35,6 +35,11 @@ REPUTATION_OWN_SEVERITY = 3
 ATTEMPT_MAX_WEIGHT = 0.5
 # Zeek and Suricata stamp the same packets from separate processes: a little slack (G11: 1 ms)
 CONN_SLACK_MS = 10_000
+# An alert with no conn record yet: Zeek writes the record when the connection ends (idle TCP after
+# 5 min) and Malcolm indexes it within a minute. Younger alerts wait for it as attempts; older ones
+# are a connection still held open, whose opener is unknown (a C2 session must not vanish)
+SETTLE_MS = 10 * 60 * 1000
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 # Kill chain: each step at most this long after the previous one (NetTap's choice, see the brief)
 CHAIN_STEP_MS = 24 * 3600 * 1000
 # Attempts against a device can only be these stages: reconnaissance, exploit attempt
@@ -74,9 +79,9 @@ def client_only_target(attack_target: Any) -> bool:
 def epoch_ms(ts: str) -> int:
     """An ISO time as epoch ms; no zone means UTC, as OpenSearch and api/time_range read it."""
     when = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    return int(
-        (when if when.tzinfo else when.replace(tzinfo=timezone.utc)).timestamp() * 1000
-    )
+    when = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+    # exact: float seconds × 1000 can land 1 ms low (….123 read as ….122)
+    return (when - _EPOCH) // timedelta(milliseconds=1)
 
 
 def _key_ms(value: Any) -> int:
@@ -228,8 +233,13 @@ def findings_by_group(
     spans: dict[str, list[tuple[str, int, int]]],
     client_targets: dict[str, bool],
     is_lan: Callable[[str | None], bool],
+    settled_before: int | None = None,
 ) -> dict[tuple, list[dict]]:
-    """Per (rule, src, dst): findings {device, own, count, times[(ms, count)]}, sorted by time."""
+    """Per (rule, src, dst): findings {device, own, count, times[(ms, count)]}, sorted by time.
+
+    `settled_before` (epoch ms): an alert after it with no conn record yet is an attempt while
+    its record is on the way; one before it has an unknown opener. None: every one is unknown.
+    """
     parts: dict[tuple, dict[tuple, dict]] = defaultdict(dict)
     for inst in instants:
         sig, src, dst, ts = inst["sig"], inst["src"], inst["dst"], _key_ms(inst["ts"])
@@ -239,7 +249,9 @@ def findings_by_group(
             continue
         # an attempt is known only when a conn record shows the other side opened it; an open
         # connection has no record yet (deep-review: a held-open C2 session must not vanish)
-        known = own or opener is not None
+        # OLD CODE: known = own or opener is not None (review: fresh hits flickered as counted)
+        fresh = settled_before is not None and ts > settled_before
+        known = own or opener is not None or fresh
         part = parts[(sig, src, dst)].setdefault(
             (device, own, known),
             {
