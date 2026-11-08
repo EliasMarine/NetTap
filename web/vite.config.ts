@@ -4,8 +4,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
 	plugins: [sveltekit()],
 	test: {
-		// e2e/visual: unit tests of the visual harness's own helpers and fixtures
-		include: ['src/**/*.{test,spec}.{js,ts}', 'e2e/visual/**/*.test.ts'],
+		// e2e/visual: unit tests of the visual harness's own helpers and fixtures, and of its config
+		include: ['src/**/*.{test,spec}.{js,ts}', 'e2e/visual/**/*.test.ts', 'playwright.visual.config.test.ts'],
 		environment: 'jsdom',
 		setupFiles: ['src/tests/setup.ts'],
 	},
