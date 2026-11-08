@@ -27,27 +27,79 @@ _setup_colors() {
 _setup_colors
 
 # ---------------------------------------------------------------------------
+# Installer layout (NET-204)
+# ---------------------------------------------------------------------------
+# install.sh sets NETTAP_UI=fancy on an interactive terminal (scripts/install/ui.sh)
+# and exports it, so the scripts it runs indent their lines under its step
+# headers. "plain" (the default) keeps the timestamped format below.
+NETTAP_UI="${NETTAP_UI:-plain}"
+_UI_PAD="        "
+# The Linux text console font has no check mark or ballot X.
+if [[ "${TERM:-}" == "linux" ]]; then
+    _UI_G_OK="+" _UI_G_FAIL="x"
+else
+    _UI_G_OK="✓" _UI_G_FAIL="✗"
+fi
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 _ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
 log() {
+    if [[ "$NETTAP_UI" == "fancy" ]]; then
+        # Not "${*:+...}": bash 3.2 prints a stray \177 for an empty $* there.
+        if [[ -n "$*" ]]; then echo "${_UI_PAD}$*"; else echo; fi
+        return 0
+    fi
     echo "${_CLR_GRN}[NetTap]${_CLR_RST} $(_ts) $*"
 }
 
 warn() {
+    if [[ "$NETTAP_UI" == "fancy" ]]; then
+        echo "${_UI_PAD}${_CLR_YLW}!${_CLR_RST} $*" >&2
+        return 0
+    fi
     echo "${_CLR_YLW}[NetTap] WARN:${_CLR_RST} $(_ts) $*" >&2
 }
 
 error() {
+    if [[ "$NETTAP_UI" == "fancy" ]]; then
+        echo "${_UI_PAD}${_CLR_RED}${_UI_G_FAIL}${_CLR_RST} $*" >&2
+        exit 1
+    fi
     echo "${_CLR_RED}[NetTap] ERROR:${_CLR_RST} $(_ts) $*" >&2
     exit 1
 }
 
 debug() {
     if [[ "$NETTAP_VERBOSE" == "true" ]]; then
+        if [[ "$NETTAP_UI" == "fancy" ]]; then
+            echo "${_UI_PAD}${_CLR_CYN}debug${_CLR_RST} $*" >&2
+            return 0
+        fi
         echo "${_CLR_CYN}[NetTap] DEBUG:${_CLR_RST} $(_ts) $*" >&2
     fi
+}
+
+# One check result on stdout. Always returns 0: callers keep the outcome in
+# their own counters and return codes.
+# Usage: status_line OK|WARN|FAIL|SKIP "message"
+status_line() {
+    local tag="$1" msg="$2" colour glyph label
+    case "$tag" in
+        OK)   colour="$_CLR_GRN" glyph="$_UI_G_OK"   label="[ OK ]" ;;
+        WARN) colour="$_CLR_YLW" glyph="!"           label="[WARN]" ;;
+        FAIL) colour="$_CLR_RED" glyph="$_UI_G_FAIL" label="[FAIL]" ;;
+        SKIP) colour="$_CLR_YLW" glyph="-"           label="[SKIP]" ;;
+        *)    colour=""          glyph="?"           label="[${tag}]" ;;
+    esac
+    if [[ "$NETTAP_UI" == "fancy" ]]; then
+        printf '%s%s%s%s %s\n' "$_UI_PAD" "$colour" "$glyph" "$_CLR_RST" "$msg"
+    else
+        printf '%s%s%s %s\n' "$colour" "$label" "$_CLR_RST" "$msg"
+    fi
+    return 0
 }
 
 # ---------------------------------------------------------------------------

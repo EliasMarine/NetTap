@@ -80,33 +80,39 @@ Then the installer runs through its steps automatically:
 | Step | What It Does |
 |---|---|
 | **NIC preflight** | Discovers NICs, assigns MGMT/WAN/LAN roles, writes to `.env` |
-| **0. Pre-flight** | Validates root access, OS version, architecture, and hardware (CPU, RAM, disk, NICs) |
-| **1. Dependencies** | Installs Docker, bridge-utils, net-tools, ethtool, smartmontools, Python 3, Avahi |
-| **2. Kernel tuning** | Sets `vm.max_map_count=262144` (required by OpenSearch), increases network buffer sizes |
-| **3. Bridge setup** | Creates the transparent `br0` bridge between WAN and LAN NICs (no cables needed yet) |
-| **4. Malcolm deploy** | Pulls Malcolm container images, generates TLS certificates, and starts services |
-| **5. Systemd** | Installs and enables `nettap.service` for automatic start on boot |
-| **6. mDNS** | Configures Avahi so the dashboard is accessible at `nettap.local` |
-| **7. Firewall** | Adds UFW rules for the dashboard port, Malcolm port, and mDNS (if UFW is active) |
-| **8. Verification** | Checks Docker, systemd, mDNS, kernel tuning, and prints rewiring instructions |
+| **1. Pre-flight** | Validates root access, OS version, architecture, and hardware (CPU, RAM, disk, NICs) |
+| **2. Dependencies** | Installs Docker, bridge-utils, net-tools, ethtool, smartmontools, Python 3, Avahi |
+| **3. Kernel tuning** | Sets `vm.max_map_count=262144` (required by OpenSearch), increases network buffer sizes |
+| **4. Bridge setup** | Creates the transparent `br0` bridge between WAN and LAN NICs (no cables needed yet) |
+| **5. Malcolm deploy** | Pulls Malcolm container images (a spinner per image on a terminal), generates TLS certificates, and starts services |
+| **6. Systemd** | Installs and enables `nettap.service` for automatic start on boot |
+| **7. mDNS** | Configures Avahi so the dashboard is accessible at `nettap.local` |
+| **8. Firewall** | Adds UFW rules for the dashboard port, Malcolm port, and mDNS (if UFW is active) |
+| **9. Verification** | Checks the bridge, Docker, containers, OpenSearch, systemd, mDNS and kernel tuning, then prints the summary card |
 
-At the end, the installer prints rewiring instructions:
+On a terminal, the installer shows the NetTap logo and a "Before we start" card (your WAN and LAN ports with their cable state, the dashboard address, and what happens to the bridge), then each step as `[N/9]` with a progress bar and ✓ / ! / ✗ check lines. Unless you pass `--non-interactive`, it then waits 5 seconds: Enter starts at once, Ctrl-C cancels. When the output is piped or logged it keeps the plain `[NetTap] <timestamp>` lines with no colour; force either look with `sudo NETTAP_COLOR=never scripts/install/install.sh` or `NETTAP_COLOR=always`. If a step fails, the installer names the step (for example "Install stopped at step 1/9: Pre-flight checks"), gives a hint, and prints the same command to run again.
+
+At the end, the installer prints a summary card with the rewiring steps:
 
 ```
-==========================================
-  INSTALL COMPLETE — Now Rewire Cables
-==========================================
-
-The bridge is active and services are running.
-Plug in your cables — traffic will flow immediately.
-
-1. Plug ISP modem  --> enp2s0 (WAN)
-2. Plug enp3s0 (LAN) --> Router WAN port
-3. Keep enp1s0 (MGMT) connected for dashboard access
-
-   [ISP Modem] --> [enp2s0] ==BRIDGE== [enp3s0] --> [Router]
-                            NetTap
-   [enp1s0 MGMT] --> dashboard at https://nettap.local
+  ┃ NetTap is installed
+  ┃
+  ┃ Dashboard   https://nettap.local
+  ┃ Malcolm     https://localhost:9443  on this box
+  ┃ Checks      6 passed, 1 warning, 0 failed
+  ┃ Time taken  14m 32s
+  ┃
+  ┃ Last step: move the cables
+  ┃   1. ISP modem ──▸ enp2s0 (WAN)
+  ┃   2. enp3s0 (LAN) ──▸ your router's WAN port
+  ┃   3. Keep enp1s0 (MGMT) connected for the dashboard
+  ┃
+  ┃   Modem ──▸ enp2s0 ━━ NetTap ━━ enp3s0 ──▸ Router
+  ┃   The bridge is on, so traffic flows as soon as both cables are in.
+  ┃
+  ┃ Manage      systemctl {start|stop|restart} nettap
+  ┃ Logs        journalctl -u nettap -f
+  ┃ Containers  docker compose -f docker/docker-compose.yml ps
 ```
 
 No additional commands are needed — just plug in the cables and traffic flows.

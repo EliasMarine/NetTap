@@ -27,6 +27,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 # shellcheck source=../common.sh
 source "${SCRIPT_DIR}/../common.sh"
+# shellcheck source=ui.sh
+source "${SCRIPT_DIR}/ui.sh"
 
 # ---------------------------------------------------------------------------
 # Defaults & flags
@@ -38,7 +40,13 @@ PERSIST_BRIDGE="true"
 DEFER_BRIDGE="false"
 NON_INTERACTIVE="false"
 RECONFIGURE_NICS="false"
+# The three below are read by the cards and step headers in ui.sh.
+# shellcheck disable=SC2034
 INSTALL_START_TIME=$(date +%s)
+# shellcheck disable=SC2034
+INSTALL_ARGS=()
+# shellcheck disable=SC2034
+UI_TOTAL_STEPS=9
 
 # ---------------------------------------------------------------------------
 # Usage
@@ -65,22 +73,25 @@ EOF
     exit 0
 }
 
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --skip-bridge)       SKIP_BRIDGE="true"; shift ;;
-        --skip-pull)         SKIP_PULL="true"; shift ;;
-        --skip-malcolm)      SKIP_MALCOLM="true"; shift ;;
-        --no-persist-bridge) PERSIST_BRIDGE="false"; shift ;;
-        --defer-bridge)      DEFER_BRIDGE="true"; shift ;;
-        --immediate-bridge)  shift ;;  # No-op, bridge activates by default now
-        --non-interactive)   NON_INTERACTIVE="true"; shift ;;
-        --reconfigure-nics)  RECONFIGURE_NICS="true"; shift ;;
-        --dry-run)           NETTAP_DRY_RUN="true"; export NETTAP_DRY_RUN; shift ;;
-        -v|--verbose)        NETTAP_VERBOSE="true"; export NETTAP_VERBOSE; shift ;;
-        -h|--help)           usage ;;
-        *)                   echo "Unknown option: $1"; usage ;;
-    esac
-done
+# Runs from install_entry, not at source time, so tests can source this file.
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --skip-bridge)       SKIP_BRIDGE="true"; shift ;;
+            --skip-pull)         SKIP_PULL="true"; shift ;;
+            --skip-malcolm)      SKIP_MALCOLM="true"; shift ;;
+            --no-persist-bridge) PERSIST_BRIDGE="false"; shift ;;
+            --defer-bridge)      DEFER_BRIDGE="true"; shift ;;
+            --immediate-bridge)  shift ;;  # No-op, bridge activates by default now
+            --non-interactive)   NON_INTERACTIVE="true"; shift ;;
+            --reconfigure-nics)  RECONFIGURE_NICS="true"; shift ;;
+            --dry-run)           NETTAP_DRY_RUN="true"; export NETTAP_DRY_RUN; shift ;;
+            -v|--verbose)        NETTAP_VERBOSE="true"; export NETTAP_VERBOSE; shift ;;
+            -h|--help)           usage ;;
+            *)                   echo "Unknown option: $1"; usage ;;
+        esac
+    done
+}
 
 # ===========================================================================
 # NIC PREFLIGHT: Discover and assign NICs before main install
@@ -131,17 +142,19 @@ step_nic_preflight() {
 # STEP 0: Pre-flight checks
 # ===========================================================================
 step_preflight() {
-    log ""
-    log "=========================================="
-    log "  NetTap Installation"
-    log "  $(date '+%Y-%m-%d %H:%M:%S')"
-    log "=========================================="
-    log ""
+    # OLD CODE START — NET-204: the logo banner (ui_banner, first thing in main) replaces this header
+    # log ""
+    # log "=========================================="
+    # log "  NetTap Installation"
+    # log "  $(date '+%Y-%m-%d %H:%M:%S')"
+    # log "=========================================="
+    # log ""
+    # OLD CODE END
 
     require_root
     load_env "${PROJECT_ROOT}/.env"
 
-    log "[Step 0/8] Pre-flight checks..."
+    ui_step "Pre-flight checks"
 
     # OS and architecture
     check_ubuntu
@@ -165,7 +178,7 @@ step_preflight() {
 # STEP 1: System dependencies
 # ===========================================================================
 step_dependencies() {
-    log "[Step 1/8] Installing system dependencies..."
+    ui_step "Installing system dependencies"
 
     run apt-get update -qq
 
@@ -262,7 +275,7 @@ DAEMONJSON
 # STEP 2: Kernel tuning
 # ===========================================================================
 step_kernel_tuning() {
-    log "[Step 2/8] Applying kernel tuning..."
+    ui_step "Applying kernel tuning"
 
     # Increase max map count for OpenSearch
     local sysctl_file="/etc/sysctl.d/99-nettap.conf"
@@ -296,18 +309,18 @@ SYSCTLEOF
 # STEP 3: Network bridge
 # ===========================================================================
 step_bridge() {
+    ui_step "Configuring network bridge"
+
     if [[ "$SKIP_BRIDGE" == "true" ]]; then
-        log "[Step 3/8] Skipping bridge configuration (--skip-bridge)"
+        log "Skipped (--skip-bridge)"
         return 0
     fi
 
     if [[ "$DEFER_BRIDGE" == "true" ]]; then
-        log "[Step 3/8] Bridge activation DEFERRED (--defer-bridge)"
+        log "Deferred (--defer-bridge)"
         log "  Run 'sudo scripts/install/activate-bridge.sh' after rewiring cables."
         return 0
     fi
-
-    log "[Step 3/8] Configuring network bridge..."
 
     local bridge_args=()
     bridge_args+=(--wan "${WAN_INTERFACE:-eth0}")
@@ -336,12 +349,12 @@ step_bridge() {
 # STEP 4: Malcolm deployment
 # ===========================================================================
 step_malcolm() {
+    ui_step "Deploying Malcolm stack"
+
     if [[ "$SKIP_MALCOLM" == "true" ]]; then
-        log "[Step 4/8] Skipping Malcolm deployment (--skip-malcolm)"
+        log "Skipped (--skip-malcolm)"
         return 0
     fi
-
-    log "[Step 4/8] Deploying Malcolm stack..."
 
     local deploy_args=()
 
@@ -369,7 +382,7 @@ step_malcolm() {
 # STEP 5: Systemd services
 # ===========================================================================
 step_systemd() {
-    log "[Step 5/8] Installing systemd services..."
+    ui_step "Installing systemd services"
 
     local service_file="/etc/systemd/system/nettap.service"
     local compose_file="${PROJECT_ROOT}/docker/docker-compose.yml"
@@ -421,7 +434,7 @@ SERVICEEOF
 # STEP 6: mDNS / Avahi
 # ===========================================================================
 step_mdns() {
-    log "[Step 6/8] Configuring mDNS (${NETTAP_HOSTNAME:-nettap.local})..."
+    ui_step "Configuring mDNS (${NETTAP_HOSTNAME:-nettap.local})"
 
     local hostname="${NETTAP_HOSTNAME:-nettap.local}"
     # Strip .local suffix for hostnamectl
@@ -458,7 +471,7 @@ step_mdns() {
 # STEP 7: Firewall (if UFW is active)
 # ===========================================================================
 step_firewall() {
-    log "[Step 7/8] Configuring firewall rules..."
+    ui_step "Configuring firewall rules"
 
     if command -v ufw &>/dev/null && ufw status | grep -q "active"; then
         log "UFW is active, adding NetTap rules..."
@@ -477,7 +490,10 @@ step_firewall() {
 
         log "Firewall rules added"
     else
-        debug "UFW not active, skipping firewall configuration"
+        # OLD CODE START — NET-204: debug-only, so step 8 printed nothing when UFW was off
+        # debug "UFW not active, skipping firewall configuration"
+        # OLD CODE END
+        log "UFW not active, nothing to change"
     fi
 }
 
@@ -485,8 +501,7 @@ step_firewall() {
 # STEP 8: Post-install verification
 # ===========================================================================
 step_verify() {
-    log "[Step 8/8] Running post-install verification..."
-    echo ""
+    ui_step "Running post-install verification"
 
     # --- Deferred bridge mode: skip bridge/container checks, print rewiring guide ---
     if [[ "$DEFER_BRIDGE" == "true" ]]; then
@@ -495,28 +510,28 @@ step_verify() {
 
         # Docker check
         if docker info &>/dev/null; then
-            echo "${_CLR_GRN}[ OK ]${_CLR_RST} Docker is running"
+            status_line OK "Docker is running"
             (( ++checks_passed ))
         else
-            echo "${_CLR_YLW}[WARN]${_CLR_RST} Docker is not running"
+            status_line WARN "Docker is not running"
             (( ++checks_warned ))
         fi
 
         # Systemd check
         if systemctl is-enabled nettap.service &>/dev/null; then
-            echo "${_CLR_GRN}[ OK ]${_CLR_RST} nettap.service enabled"
+            status_line OK "nettap.service enabled"
             (( ++checks_passed ))
         else
-            echo "${_CLR_YLW}[WARN]${_CLR_RST} nettap.service not enabled"
+            status_line WARN "nettap.service not enabled"
             (( ++checks_warned ))
         fi
 
         # mDNS check
         if systemctl is-active avahi-daemon &>/dev/null; then
-            echo "${_CLR_GRN}[ OK ]${_CLR_RST} Avahi mDNS active (${NETTAP_HOSTNAME:-nettap.local})"
+            status_line OK "Avahi mDNS active (${NETTAP_HOSTNAME:-nettap.local})"
             (( ++checks_passed ))
         else
-            echo "${_CLR_YLW}[WARN]${_CLR_RST} Avahi mDNS not running"
+            status_line WARN "Avahi mDNS not running"
             (( ++checks_warned ))
         fi
 
@@ -524,56 +539,60 @@ step_verify() {
         local map_count
         map_count=$(sysctl -n vm.max_map_count 2>/dev/null) || map_count=0
         if (( map_count >= 262144 )); then
-            echo "${_CLR_GRN}[ OK ]${_CLR_RST} vm.max_map_count = ${map_count}"
+            status_line OK "vm.max_map_count = ${map_count}"
             (( ++checks_passed ))
         else
-            echo "${_CLR_YLW}[WARN]${_CLR_RST} vm.max_map_count = ${map_count} (should be >= 262144)"
+            status_line WARN "vm.max_map_count = ${map_count} (should be >= 262144)"
             (( ++checks_warned ))
         fi
 
-        local elapsed=$(( $(date +%s) - INSTALL_START_TIME ))
-        local minutes=$(( elapsed / 60 ))
-        local seconds=$(( elapsed % 60 ))
-
-        echo ""
-        echo "=========================================="
-        echo "  Installation Summary (bridge deferred)"
-        echo "=========================================="
-        echo "  Passed:   ${checks_passed}"
-        echo "  Warnings: ${checks_warned}"
-        echo "  Time:     ${minutes}m ${seconds}s"
-        echo ""
-
-        # Print rewiring instructions using .env values
+        # OLD CODE START — NET-204: the "====" summary became a card (ui_summary_deferred in ui.sh)
+        # local elapsed=$(( $(date +%s) - INSTALL_START_TIME ))
+        # local minutes=$(( elapsed / 60 ))
+        # local seconds=$(( elapsed % 60 ))
+        #
+        # echo ""
+        # echo "=========================================="
+        # echo "  Installation Summary (bridge deferred)"
+        # echo "=========================================="
+        # echo "  Passed:   ${checks_passed}"
+        # echo "  Warnings: ${checks_warned}"
+        # echo "  Time:     ${minutes}m ${seconds}s"
+        # echo ""
+        #
+        # # Print rewiring instructions using .env values
+        # load_env "${PROJECT_ROOT}/.env"
+        # local wan="${WAN_INTERFACE:-eth0}"
+        # local lan="${LAN_INTERFACE:-eth1}"
+        # local mgmt="${MGMT_INTERFACE:-}"
+        #
+        # echo "  =========================================="
+        # echo "    NEXT STEPS — Physical Rewiring"
+        # echo "  =========================================="
+        # echo ""
+        # echo "  1. Plug ISP modem  --> ${wan} (WAN)"
+        # echo "  2. Plug ${lan} (LAN) --> Router WAN port"
+        # if [[ -n "$mgmt" ]]; then
+        #     echo "  3. Keep ${mgmt} (MGMT) connected for dashboard"
+        # else
+        #     echo "  3. Keep Wi-Fi connected — it's your dashboard access"
+        # fi
+        # echo ""
+        # echo "     [ISP Modem] --> [${wan}] ==BRIDGE== [${lan}] --> [Router]"
+        # echo "                              NetTap"
+        # if [[ -n "$mgmt" ]]; then
+        #     echo "     [${mgmt} MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
+        # else
+        #     echo "     [Wi-Fi MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
+        # fi
+        # echo ""
+        # echo "  Then run:  sudo scripts/install/activate-bridge.sh"
+        # echo ""
+        # echo "=========================================="
+        # echo ""
+        # OLD CODE END
         load_env "${PROJECT_ROOT}/.env"
-        local wan="${WAN_INTERFACE:-eth0}"
-        local lan="${LAN_INTERFACE:-eth1}"
-        local mgmt="${MGMT_INTERFACE:-}"
-
-        echo "  =========================================="
-        echo "    NEXT STEPS — Physical Rewiring"
-        echo "  =========================================="
-        echo ""
-        echo "  1. Plug ISP modem  --> ${wan} (WAN)"
-        echo "  2. Plug ${lan} (LAN) --> Router WAN port"
-        if [[ -n "$mgmt" ]]; then
-            echo "  3. Keep ${mgmt} (MGMT) connected for dashboard"
-        else
-            echo "  3. Keep Wi-Fi connected — it's your dashboard access"
-        fi
-        echo ""
-        echo "     [ISP Modem] --> [${wan}] ==BRIDGE== [${lan}] --> [Router]"
-        echo "                              NetTap"
-        if [[ -n "$mgmt" ]]; then
-            echo "     [${mgmt} MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
-        else
-            echo "     [Wi-Fi MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
-        fi
-        echo ""
-        echo "  Then run:  sudo scripts/install/activate-bridge.sh"
-        echo ""
-        echo "=========================================="
-        echo ""
+        ui_summary_deferred "$checks_passed" "$checks_warned"
         return 0
     fi
 
@@ -584,23 +603,23 @@ step_verify() {
 
     # Bridge check
     if ip link show br0 &>/dev/null; then
-        echo "${_CLR_GRN}[ OK ]${_CLR_RST} Bridge br0 exists"
+        status_line OK "Bridge br0 exists"
         (( ++checks_passed ))
     else
         if [[ "$SKIP_BRIDGE" == "true" ]]; then
-            echo "${_CLR_YLW}[SKIP]${_CLR_RST} Bridge check skipped"
+            status_line SKIP "Bridge check skipped"
         else
-            echo "${_CLR_RED}[FAIL]${_CLR_RST} Bridge br0 not found"
+            status_line FAIL "Bridge br0 not found"
             (( ++checks_failed ))
         fi
     fi
 
     # Docker check
     if docker info &>/dev/null; then
-        echo "${_CLR_GRN}[ OK ]${_CLR_RST} Docker is running"
+        status_line OK "Docker is running"
         (( ++checks_passed ))
     else
-        echo "${_CLR_RED}[FAIL]${_CLR_RST} Docker is not running"
+        status_line FAIL "Docker is not running"
         (( ++checks_failed ))
     fi
 
@@ -609,10 +628,10 @@ step_verify() {
         local running
         running=$(docker compose -f "${PROJECT_ROOT}/docker/docker-compose.yml" ps -q 2>/dev/null | wc -l) || running=0
         if (( running > 0 )); then
-            echo "${_CLR_GRN}[ OK ]${_CLR_RST} ${running} container(s) running"
+            status_line OK "${running} container(s) running"
             (( ++checks_passed ))
         else
-            echo "${_CLR_YLW}[WARN]${_CLR_RST} No containers detected (may still be starting)"
+            status_line WARN "No containers detected (may still be starting)"
             (( ++checks_warned ))
         fi
 
@@ -621,33 +640,33 @@ step_verify() {
             local health
             health=$(curl -sk "https://localhost:9200/_cluster/health" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null) || health="unknown"
             if [[ "$health" == "green" || "$health" == "yellow" ]]; then
-                echo "${_CLR_GRN}[ OK ]${_CLR_RST} OpenSearch cluster health: ${health}"
+                status_line OK "OpenSearch cluster health: ${health}"
                 (( ++checks_passed ))
             else
-                echo "${_CLR_YLW}[WARN]${_CLR_RST} OpenSearch cluster health: ${health}"
+                status_line WARN "OpenSearch cluster health: ${health}"
                 (( ++checks_warned ))
             fi
         else
-            echo "${_CLR_YLW}[WARN]${_CLR_RST} OpenSearch not responding yet (may need a few minutes)"
+            status_line WARN "OpenSearch not responding yet (may need a few minutes)"
             (( ++checks_warned ))
         fi
     fi
 
     # Systemd check
     if systemctl is-enabled nettap.service &>/dev/null; then
-        echo "${_CLR_GRN}[ OK ]${_CLR_RST} nettap.service enabled"
+        status_line OK "nettap.service enabled"
         (( ++checks_passed ))
     else
-        echo "${_CLR_YLW}[WARN]${_CLR_RST} nettap.service not enabled"
+        status_line WARN "nettap.service not enabled"
         (( ++checks_warned ))
     fi
 
     # mDNS check
     if systemctl is-active avahi-daemon &>/dev/null; then
-        echo "${_CLR_GRN}[ OK ]${_CLR_RST} Avahi mDNS active (${NETTAP_HOSTNAME:-nettap.local})"
+        status_line OK "Avahi mDNS active (${NETTAP_HOSTNAME:-nettap.local})"
         (( ++checks_passed ))
     else
-        echo "${_CLR_YLW}[WARN]${_CLR_RST} Avahi mDNS not running"
+        status_line WARN "Avahi mDNS not running"
         (( ++checks_warned ))
     fi
 
@@ -655,84 +674,94 @@ step_verify() {
     local map_count
     map_count=$(sysctl -n vm.max_map_count 2>/dev/null) || map_count=0
     if (( map_count >= 262144 )); then
-        echo "${_CLR_GRN}[ OK ]${_CLR_RST} vm.max_map_count = ${map_count}"
+        status_line OK "vm.max_map_count = ${map_count}"
         (( ++checks_passed ))
     else
-        echo "${_CLR_YLW}[WARN]${_CLR_RST} vm.max_map_count = ${map_count} (should be >= 262144)"
+        status_line WARN "vm.max_map_count = ${map_count} (should be >= 262144)"
         (( ++checks_warned ))
     fi
 
-    # Summary
-    local elapsed=$(( $(date +%s) - INSTALL_START_TIME ))
-    local minutes=$(( elapsed / 60 ))
-    local seconds=$(( elapsed % 60 ))
-
-    echo ""
-    echo "=========================================="
-    echo "  Installation Summary"
-    echo "=========================================="
-    echo "  Passed:   ${checks_passed}"
-    echo "  Warnings: ${checks_warned}"
-    echo "  Failed:   ${checks_failed}"
-    echo "  Time:     ${minutes}m ${seconds}s"
-    echo ""
-
-    if (( checks_failed > 0 )); then
-        echo "${_CLR_RED}  Some checks failed. Review the output above.${_CLR_RST}"
-    else
-        echo "${_CLR_GRN}  NetTap installation complete!${_CLR_RST}"
-    fi
-
-    echo ""
-    echo "  Malcolm Dashboards:  https://localhost:${MALCOLM_HTTPS_PORT:-9443}"
-    echo "  NetTap Dashboard:    https://${NETTAP_HOSTNAME:-nettap.local}:${DASHBOARD_PORT:-443}"
-    echo ""
-    echo "  Manage services:     systemctl {start|stop|restart} nettap"
-    echo "  View logs:           journalctl -u nettap -f"
-    echo "  Container status:    docker compose -f docker/docker-compose.yml ps"
-    echo "=========================================="
-    echo ""
-
-    # Print rewiring instructions (bridge is active, just needs cables)
+    # OLD CODE START — NET-204: the "====" summary and rewiring box became one card (ui_summary_installed in ui.sh)
+    # # Summary
+    # local elapsed=$(( $(date +%s) - INSTALL_START_TIME ))
+    # local minutes=$(( elapsed / 60 ))
+    # local seconds=$(( elapsed % 60 ))
+    #
+    # echo ""
+    # echo "=========================================="
+    # echo "  Installation Summary"
+    # echo "=========================================="
+    # echo "  Passed:   ${checks_passed}"
+    # echo "  Warnings: ${checks_warned}"
+    # echo "  Failed:   ${checks_failed}"
+    # echo "  Time:     ${minutes}m ${seconds}s"
+    # echo ""
+    #
+    # if (( checks_failed > 0 )); then
+    #     echo "${_CLR_RED}  Some checks failed. Review the output above.${_CLR_RST}"
+    # else
+    #     echo "${_CLR_GRN}  NetTap installation complete!${_CLR_RST}"
+    # fi
+    #
+    # echo ""
+    # echo "  Malcolm Dashboards:  https://localhost:${MALCOLM_HTTPS_PORT:-9443}"
+    # echo "  NetTap Dashboard:    https://${NETTAP_HOSTNAME:-nettap.local}:${DASHBOARD_PORT:-443}"
+    # echo ""
+    # echo "  Manage services:     systemctl {start|stop|restart} nettap"
+    # echo "  View logs:           journalctl -u nettap -f"
+    # echo "  Container status:    docker compose -f docker/docker-compose.yml ps"
+    # echo "=========================================="
+    # echo ""
+    #
+    # # Print rewiring instructions (bridge is active, just needs cables)
+    # load_env "${PROJECT_ROOT}/.env"
+    # local wan="${WAN_INTERFACE:-eth0}"
+    # local lan="${LAN_INTERFACE:-eth1}"
+    # local mgmt="${MGMT_INTERFACE:-}"
+    #
+    # echo "  =========================================="
+    # echo "    INSTALL COMPLETE — Now Rewire Cables"
+    # echo "  =========================================="
+    # echo ""
+    # echo "  The bridge is active and services are running."
+    # echo "  Plug in your cables — traffic will flow immediately."
+    # echo ""
+    # echo "  1. Plug ISP modem  --> ${wan} (WAN)"
+    # echo "  2. Plug ${lan} (LAN) --> Router WAN port"
+    # if [[ -n "$mgmt" ]]; then
+    #     echo "  3. Keep ${mgmt} (MGMT) connected for dashboard access"
+    # else
+    #     echo "  3. Keep Wi-Fi connected for dashboard access"
+    # fi
+    # echo ""
+    # echo "     [ISP Modem] --> [${wan}] ==BRIDGE== [${lan}] --> [Router]"
+    # echo "                              NetTap"
+    # if [[ -n "$mgmt" ]]; then
+    #     echo "     [${mgmt} MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
+    # else
+    #     echo "     [Wi-Fi MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
+    # fi
+    # echo ""
+    # echo "  Dashboard: https://${NETTAP_HOSTNAME:-nettap.local}:${DASHBOARD_PORT:-443}"
+    # echo ""
+    # echo "=========================================="
+    # echo ""
+    # OLD CODE END
     load_env "${PROJECT_ROOT}/.env"
-    local wan="${WAN_INTERFACE:-eth0}"
-    local lan="${LAN_INTERFACE:-eth1}"
-    local mgmt="${MGMT_INTERFACE:-}"
-
-    echo "  =========================================="
-    echo "    INSTALL COMPLETE — Now Rewire Cables"
-    echo "  =========================================="
-    echo ""
-    echo "  The bridge is active and services are running."
-    echo "  Plug in your cables — traffic will flow immediately."
-    echo ""
-    echo "  1. Plug ISP modem  --> ${wan} (WAN)"
-    echo "  2. Plug ${lan} (LAN) --> Router WAN port"
-    if [[ -n "$mgmt" ]]; then
-        echo "  3. Keep ${mgmt} (MGMT) connected for dashboard access"
-    else
-        echo "  3. Keep Wi-Fi connected for dashboard access"
-    fi
-    echo ""
-    echo "     [ISP Modem] --> [${wan}] ==BRIDGE== [${lan}] --> [Router]"
-    echo "                              NetTap"
-    if [[ -n "$mgmt" ]]; then
-        echo "     [${mgmt} MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
-    else
-        echo "     [Wi-Fi MGMT] --> dashboard at https://${NETTAP_HOSTNAME:-nettap.local}"
-    fi
-    echo ""
-    echo "  Dashboard: https://${NETTAP_HOSTNAME:-nettap.local}:${DASHBOARD_PORT:-443}"
-    echo ""
-    echo "=========================================="
-    echo ""
+    ui_summary_installed "$checks_passed" "$checks_warned" "$checks_failed"
 }
 
 # ===========================================================================
 # MAIN
 # ===========================================================================
 main() {
+    ui_banner "$(installer_version)"
+    # Root first, so a non-root run stops before preflight.sh starts asking.
+    require_root
     step_nic_preflight
+    # preflight.sh runs as a child and can only hand its choices back via .env.
+    load_env "${PROJECT_ROOT}/.env"
+    ui_before_we_start
     step_preflight
     step_dependencies
     step_kernel_tuning
@@ -744,4 +773,39 @@ main() {
     step_verify
 }
 
-main
+# A v* release tag when there is one; nothing otherwise. Runs as root on a
+# checkout owned by the install user, hence safe.directory.
+installer_version() {
+    git -c safe.directory="$PROJECT_ROOT" -C "$PROJECT_ROOT" \
+        describe --tags --match 'v[0-9]*' 2>/dev/null || true
+}
+
+# Keeps the real exit status; only adds the closing message.
+_install_on_exit() {
+    local status=$?
+    printf '%s' "${_UI_CURSOR_SHOW:-}"
+    case "$status" in
+        0)           ;;
+        129|130|143) ui_cancelled_line ;;
+        *)           ui_failure_card ;;
+    esac
+}
+
+install_entry() {
+    # shellcheck disable=SC2034  # read by ui_failure_card
+    INSTALL_ARGS=("$@")
+    parse_args "$@"
+    ui_enable
+    trap _install_on_exit EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
+    main
+}
+
+# OLD CODE START — NET-204: main ran unconditionally, so the file could not be sourced by tests
+# main
+# OLD CODE END
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    install_entry "$@"
+fi

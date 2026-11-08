@@ -18,6 +18,12 @@ MIN_NIC_COUNT=2
 MIN_CPU_CORES=2
 RECOMMENDED_CPU_CORES=4
 
+# Detail lines sit under the check text: after "[ OK ] " (7 columns), or after
+# the installer's "        ✓ " (10) when NETTAP_UI=fancy (NET-204).
+_hw_detail_pad() {
+    if [[ "$NETTAP_UI" == "fancy" ]]; then echo "${_UI_PAD}  "; else echo "       "; fi
+}
+
 # ---------------------------------------------------------------------------
 # Individual checks — each returns 0 on pass, 1 on warning, 2 on hard fail.
 # They print their own log/warn/error messages but do NOT call error() so the
@@ -28,22 +34,22 @@ check_cpu() {
     local arch cores
     arch=$(uname -m)
     if [[ "$arch" != "x86_64" ]]; then
-        echo "${_CLR_RED}[FAIL]${_CLR_RST} Architecture: ${arch} (x86-64 required)"
+        status_line FAIL "Architecture: ${arch} (x86-64 required)"
         return 2
     fi
 
     cores=$(nproc 2>/dev/null || echo 1)
     if (( cores < MIN_CPU_CORES )); then
-        echo "${_CLR_RED}[FAIL]${_CLR_RST} CPU cores: ${cores} (minimum ${MIN_CPU_CORES})"
+        status_line FAIL "CPU cores: ${cores} (minimum ${MIN_CPU_CORES})"
         return 2
     elif (( cores < RECOMMENDED_CPU_CORES )); then
-        echo "${_CLR_YLW}[WARN]${_CLR_RST} CPU cores: ${cores} (${RECOMMENDED_CPU_CORES}+ recommended)"
+        status_line WARN "CPU cores: ${cores} (${RECOMMENDED_CPU_CORES}+ recommended)"
         return 1
     fi
 
     local model
     model=$(grep -m1 'model name' /proc/cpuinfo 2>/dev/null | cut -d: -f2 | xargs) || model="unknown"
-    echo "${_CLR_GRN}[ OK ]${_CLR_RST} CPU: ${model} (${cores} cores, ${arch})"
+    status_line OK "CPU: ${model} (${cores} cores, ${arch})"
     return 0
 }
 
@@ -53,14 +59,14 @@ check_ram() {
     ram_mb=$(( ram_kb / 1024 ))
 
     if (( ram_mb < MIN_RAM_MB )); then
-        echo "${_CLR_RED}[FAIL]${_CLR_RST} RAM: ${ram_mb} MB (minimum 8 GB required)"
+        status_line FAIL "RAM: ${ram_mb} MB (minimum 8 GB required)"
         return 2
     elif (( ram_mb < RECOMMENDED_RAM_MB )); then
-        echo "${_CLR_YLW}[WARN]${_CLR_RST} RAM: ${ram_mb} MB (16 GB recommended for best performance)"
+        status_line WARN "RAM: ${ram_mb} MB (16 GB recommended for best performance)"
         return 1
     fi
 
-    echo "${_CLR_GRN}[ OK ]${_CLR_RST} RAM: ${ram_mb} MB"
+    status_line OK "RAM: ${ram_mb} MB"
     return 0
 }
 
@@ -71,7 +77,7 @@ check_disk() {
     disk_gb=$(( disk_kb / 1024 / 1024 ))
 
     if (( disk_gb < MIN_DISK_GB )); then
-        echo "${_CLR_YLW}[WARN]${_CLR_RST} Disk: ${disk_gb} GB total (512 GB+ recommended)"
+        status_line WARN "Disk: ${disk_gb} GB total (512 GB+ recommended)"
         return 1
     fi
 
@@ -81,7 +87,7 @@ check_disk() {
         disk_type="NVMe"
     fi
 
-    echo "${_CLR_GRN}[ OK ]${_CLR_RST} Disk: ${disk_gb} GB (${disk_type})"
+    status_line OK "Disk: ${disk_gb} GB (${disk_type})"
     return 0
 }
 
@@ -93,14 +99,14 @@ check_nics() {
     done < <(list_physical_nics)
 
     if (( ${#nics[@]} < MIN_NIC_COUNT )); then
-        echo "${_CLR_RED}[FAIL]${_CLR_RST} NICs: found ${#nics[@]} physical NIC(s) (minimum ${MIN_NIC_COUNT} required)"
+        status_line FAIL "NICs: found ${#nics[@]} physical NIC(s) (minimum ${MIN_NIC_COUNT} required)"
         if (( ${#nics[@]} > 0 )); then
-            echo "       Detected: ${nics[*]}"
+            echo "$(_hw_detail_pad)Detected: ${nics[*]}"
         fi
         return 2
     fi
 
-    echo "${_CLR_GRN}[ OK ]${_CLR_RST} NICs: ${#nics[@]} physical interface(s) detected"
+    status_line OK "NICs: ${#nics[@]} physical interface(s) detected"
 
     # Detail each NIC
     for nic in "${nics[@]}"; do
@@ -122,7 +128,7 @@ check_nics() {
                 driver_note=" (Realtek — Intel recommended)" ;;
         esac
 
-        echo "       ${nic}: ${driver}${driver_note}, ${speed}, ${mac}, ${carrier_str}"
+        echo "$(_hw_detail_pad)${nic}: ${driver}${driver_note}, ${speed}, ${mac}, ${carrier_str}"
     done
     return 0
 }
@@ -130,11 +136,11 @@ check_nics() {
 check_kernel() {
     local version
     version=$(uname -r)
-    echo "${_CLR_GRN}[ OK ]${_CLR_RST} Kernel: ${version}"
+    status_line OK "Kernel: ${version}"
 
     # Verify bridge module is available
     if ! modprobe -n bridge 2>/dev/null; then
-        echo "${_CLR_YLW}[WARN]${_CLR_RST} Bridge kernel module not available"
+        status_line WARN "Bridge kernel module not available"
         return 1
     fi
     return 0
@@ -145,11 +151,11 @@ check_virtualization() {
         local virt
         virt=$(systemd-detect-virt 2>/dev/null) || virt="none"
         if [[ "$virt" != "none" ]]; then
-            echo "${_CLR_YLW}[WARN]${_CLR_RST} Virtualization detected: ${virt} (performance may differ from bare metal)"
+            status_line WARN "Virtualization detected: ${virt} (performance may differ from bare metal)"
             return 1
         fi
     fi
-    echo "${_CLR_GRN}[ OK ]${_CLR_RST} Running on bare metal"
+    status_line OK "Running on bare metal"
     return 0
 }
 
@@ -193,13 +199,18 @@ detect_nics() {
 # Main validation — runs all checks, returns 0 if all pass, 1 if warnings, 2 if hard fail
 # ---------------------------------------------------------------------------
 validate_hardware() {
-    local errors=0 warnings=0
+    local errors=0 warnings=0 pad=""
 
-    echo ""
-    echo "=========================================="
-    echo "  NetTap Hardware Validation"
-    echo "=========================================="
-    echo ""
+    # Under the installer's "Pre-flight checks" header the box is redundant (NET-204).
+    if [[ "$NETTAP_UI" == "fancy" ]]; then
+        pad="$_UI_PAD"
+    else
+        echo ""
+        echo "=========================================="
+        echo "  NetTap Hardware Validation"
+        echo "=========================================="
+        echo ""
+    fi
 
     # Run each check and capture its exit code without triggering set -e
     local rc
@@ -210,18 +221,20 @@ validate_hardware() {
     check_kernel;         rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
     check_virtualization; rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
 
-    echo ""
-    echo "------------------------------------------"
+    if [[ "$NETTAP_UI" != "fancy" ]]; then
+        echo ""
+        echo "------------------------------------------"
+    fi
     if (( errors > 0 )); then
-        echo "${_CLR_RED}RESULT: ${errors} error(s), ${warnings} warning(s) — hardware does not meet minimum requirements${_CLR_RST}"
+        echo "${pad}${_CLR_RED}RESULT: ${errors} error(s), ${warnings} warning(s) — hardware does not meet minimum requirements${_CLR_RST}"
         echo ""
         return 2
     elif (( warnings > 0 )); then
-        echo "${_CLR_YLW}RESULT: ${warnings} warning(s) — hardware meets minimum requirements with caveats${_CLR_RST}"
+        echo "${pad}${_CLR_YLW}RESULT: ${warnings} warning(s) — hardware meets minimum requirements with caveats${_CLR_RST}"
         echo ""
         return 1
     else
-        echo "${_CLR_GRN}RESULT: All checks passed — hardware meets recommended specifications${_CLR_RST}"
+        echo "${pad}${_CLR_GRN}RESULT: All checks passed — hardware meets recommended specifications${_CLR_RST}"
         echo ""
         return 0
     fi
