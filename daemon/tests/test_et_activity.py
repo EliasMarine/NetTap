@@ -208,6 +208,8 @@ def _partitioned_client(counted, activity):
     client = MagicMock()
 
     def search(index, body):
+        if "all" in body["aggs"]:  # NET-209: the alert-instant read finds none here
+            return {"aggregations": {"all": {"buckets": []}}}
         is_activity = ET_ACTIVITY_CLAUSE in body["query"]["bool"]["filter"]
         return _page(activity if is_activity else counted)
 
@@ -224,11 +226,18 @@ def test_without_info_only_the_counted_query_runs():
     client = _partitioned_client([_bucket(_SIG, _SRC, _DST, 3)], [])
     with patch.object(alert_intelligence, "is_suppressed", return_value=False):
         groups = get_smart_alerts(client, _FROM, _TO, limit=None)
-    assert client.search.call_count == 1
-    assert (
-        ET_ACTIVITY_CLAUSE
-        in client.search.call_args.kwargs["body"]["query"]["bool"]["must_not"]
-    )
+    # OLD CODE START — NET-209: the alert-instant read is a second search now
+    # assert client.search.call_count == 1
+    # assert (
+    #     ET_ACTIVITY_CLAUSE
+    #     in client.search.call_args.kwargs["body"]["query"]["bool"]["must_not"]
+    # )
+    # OLD CODE END
+    grouped = [
+        c.kwargs["body"] for c in client.search.call_args_list if "grouped" in c.kwargs["body"]["aggs"]
+    ]
+    assert len(grouped) == 1
+    assert ET_ACTIVITY_CLAUSE in grouped[0]["query"]["bool"]["must_not"]
     assert [g["activity"] for g in groups] == [False]
 
 

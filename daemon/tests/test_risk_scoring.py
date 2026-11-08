@@ -1,9 +1,9 @@
 """
 Tests for daemon/services/risk_scoring.py
 
-Covers each scoring factor individually, combined scoring, risk level
-boundaries, and edge cases. All tests are self-contained with no external
-dependencies.
+NET-209: three factors (alerts 50, connection anomaly 25, upload spike 25), each device compared
+with its own usual day, and the volume factors scored only alongside a high or critical alert in
+the device's own traffic. Rules: Debugging/THREAT-SCORING.md.
 """
 
 import unittest
@@ -16,265 +16,230 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services.risk_scoring import RiskScorer
 
+# OLD CODE: the five-factor tests (alert tiers by count, stddev anomaly, external ratio, port
+# lists, upload ratio) went with those factors in NET-209; see
+# `git show origin/main:daemon/tests/test_risk_scoring.py`
 
-class TestAlertCountScoring(unittest.TestCase):
-    """Tests for score_alert_count()."""
-
-    def setUp(self):
-        self.scorer = RiskScorer()
-
-    def test_zero_alerts(self):
-        """Zero alerts should score 0 points."""
-        points, desc = self.scorer.score_alert_count(0)
-        self.assertEqual(points, 0)
-        self.assertIn("No alerts", desc)
-
-    def test_one_alert(self):
-        """1 alert scores 10 points."""
-        points, _ = self.scorer.score_alert_count(1)
-        self.assertEqual(points, 10)
-
-    def test_two_alerts(self):
-        """2 alerts scores 10 points."""
-        points, _ = self.scorer.score_alert_count(2)
-        self.assertEqual(points, 10)
-
-    def test_three_alerts(self):
-        """3 alerts scores 20 points."""
-        points, _ = self.scorer.score_alert_count(3)
-        self.assertEqual(points, 20)
-
-    def test_five_alerts(self):
-        """5 alerts scores 20 points."""
-        points, _ = self.scorer.score_alert_count(5)
-        self.assertEqual(points, 20)
-
-    def test_six_alerts(self):
-        """6 alerts scores 30 points."""
-        points, _ = self.scorer.score_alert_count(6)
-        self.assertEqual(points, 30)
-
-    def test_ten_alerts(self):
-        """10 alerts scores 30 points."""
-        points, _ = self.scorer.score_alert_count(10)
-        self.assertEqual(points, 30)
-
-    def test_eleven_alerts(self):
-        """11 alerts (10+) scores 35 points (max)."""
-        points, _ = self.scorer.score_alert_count(11)
-        self.assertEqual(points, 35)
-
-    def test_large_alert_count(self):
-        """Very large alert count still scores 35."""
-        points, _ = self.scorer.score_alert_count(1000)
-        self.assertEqual(points, 35)
-
-    def test_negative_alerts(self):
-        """Negative alert count treated as zero."""
-        points, _ = self.scorer.score_alert_count(-5)
-        self.assertEqual(points, 0)
+MB, GB = 1000**2, 1000**3
+NOT_SCORED = "not scored without a high or critical alert"
 
 
-class TestConnectionAnomalyScoring(unittest.TestCase):
-    """Tests for score_connection_anomaly()."""
+def _days(conns, sent=None):
+    """History rows, one per earlier day."""
+    sent = sent or [0] * len(conns)
+    return [{"connections": c, "upload_bytes": b} for c, b in zip(conns, sent)]
+
+
+def _factor(result, name):
+    return next(f for f in result["factors"] if f["name"] == name)
+
+
+class TestAlertsFactor(unittest.TestCase):
+    """Distinct signatures in the device's own traffic, each at its worst severity (rule 5)."""
 
     def setUp(self):
         self.scorer = RiskScorer()
 
-    def test_within_one_stddev(self):
-        """Count within 1 stddev of avg scores 0."""
-        points, _ = self.scorer.score_connection_anomaly(100, 100.0, 50.0)
-        self.assertEqual(points, 0)
-
-    def test_one_to_two_stddev(self):
-        """Count 1-2 stddev above avg scores 10."""
-        # avg=100, stddev=50, count=175 -> deviation=1.5
-        points, _ = self.scorer.score_connection_anomaly(175, 100.0, 50.0)
-        self.assertEqual(points, 10)
-
-    def test_two_to_three_stddev(self):
-        """Count 2-3 stddev above avg scores 15."""
-        # avg=100, stddev=50, count=225 -> deviation=2.5
-        points, _ = self.scorer.score_connection_anomaly(225, 100.0, 50.0)
-        self.assertEqual(points, 15)
-
-    def test_above_three_stddev(self):
-        """Count 3+ stddev above avg scores 20."""
-        # avg=100, stddev=50, count=300 -> deviation=4.0
-        points, _ = self.scorer.score_connection_anomaly(300, 100.0, 50.0)
-        self.assertEqual(points, 20)
-
-    def test_zero_stddev(self):
-        """Zero stddev returns 0 (cannot compute)."""
-        points, desc = self.scorer.score_connection_anomaly(100, 100.0, 0.0)
-        self.assertEqual(points, 0)
-        self.assertIn("Insufficient", desc)
-
-    def test_zero_avg(self):
-        """Zero avg returns 0 (cannot compute)."""
-        points, _ = self.scorer.score_connection_anomaly(100, 0.0, 10.0)
-        self.assertEqual(points, 0)
-
-    def test_below_avg(self):
-        """Count below avg scores 0."""
-        points, _ = self.scorer.score_connection_anomaly(50, 100.0, 50.0)
-        self.assertEqual(points, 0)
-
-    def test_negative_stddev(self):
-        """Negative stddev returns 0 (invalid data)."""
-        points, _ = self.scorer.score_connection_anomaly(100, 100.0, -10.0)
-        self.assertEqual(points, 0)
-
-
-class TestExternalRatioScoring(unittest.TestCase):
-    """Tests for score_external_ratio()."""
-
-    def setUp(self):
-        self.scorer = RiskScorer()
-
-    def test_no_connections(self):
-        """Zero total connections scores 0."""
-        points, _ = self.scorer.score_external_ratio(0, 0)
-        self.assertEqual(points, 0)
-
-    def test_low_external_ratio(self):
-        """<30% external connections scores 0."""
-        points, _ = self.scorer.score_external_ratio(20, 100)
-        self.assertEqual(points, 0)
-
-    def test_moderate_external_ratio(self):
-        """30-60% external scores 5."""
-        points, _ = self.scorer.score_external_ratio(45, 100)
-        self.assertEqual(points, 5)
-
-    def test_elevated_external_ratio(self):
-        """60-80% external scores 10."""
-        points, _ = self.scorer.score_external_ratio(70, 100)
-        self.assertEqual(points, 10)
-
-    def test_high_external_ratio(self):
-        """>80% external scores 15."""
-        points, _ = self.scorer.score_external_ratio(85, 100)
-        self.assertEqual(points, 15)
-
-    def test_all_external(self):
-        """100% external scores 15."""
-        points, _ = self.scorer.score_external_ratio(100, 100)
-        self.assertEqual(points, 15)
-
-    def test_boundary_thirty_percent(self):
-        """Exactly 30% scores 5 (30-60% range)."""
-        points, _ = self.scorer.score_external_ratio(30, 100)
-        self.assertEqual(points, 5)
-
-
-class TestSuspiciousPortsScoring(unittest.TestCase):
-    """Tests for score_suspicious_ports()."""
-
-    def setUp(self):
-        self.scorer = RiskScorer()
-
-    def test_empty_ports(self):
-        """Empty port list scores 0."""
-        points, _ = self.scorer.score_suspicious_ports([])
-        self.assertEqual(points, 0)
-
-    def test_only_safe_ports(self):
-        """Only common ports scores 0."""
-        points, _ = self.scorer.score_suspicious_ports([80, 443, 53, 22])
-        self.assertEqual(points, 0)
-
-    def test_unusual_ports(self):
-        """Non-standard, non-suspicious ports scores 8."""
-        points, _ = self.scorer.score_suspicious_ports([80, 443, 9200, 3000])
-        self.assertEqual(points, 8)
-
-    def test_suspicious_port_4444(self):
-        """Port 4444 (known suspicious) scores 15."""
-        points, _ = self.scorer.score_suspicious_ports([80, 4444])
-        self.assertEqual(points, 15)
-
-    def test_suspicious_port_31337(self):
-        """Port 31337 (eleet) scores 15."""
-        points, _ = self.scorer.score_suspicious_ports([31337])
-        self.assertEqual(points, 15)
-
-    def test_multiple_suspicious_ports(self):
-        """Multiple suspicious ports still scores 15."""
-        points, _ = self.scorer.score_suspicious_ports([4444, 5555, 6666])
-        self.assertEqual(points, 15)
-
-    def test_a_bounded_unusual_list_reads_as_a_lower_bound(self):
-        """PR #192 review: past the per-device list, the count is "at least"."""
-        assert self.scorer.score_suspicious_ports(
-            [80, 9200, 3000], more_unusual=True
-        ) == (
-            8,
-            "At least 2 unusual port(s) detected",
-        )
-        assert self.scorer.score_suspicious_ports([80, 9200, 3000]) == (
-            8,
-            "2 unusual port(s) detected",
+    def test_no_signatures_is_zero(self):
+        self.assertEqual(
+            self.scorer.score_alerts({}, 0), (0, "No alerts in this device's own traffic")
         )
 
-    def test_local_services_are_not_unusual(self):
-        """NET-158: NTP, mDNS, DHCP, SSDP and NetBIOS scored 8 points as unusual ports."""
-        points, desc = self.scorer.score_suspicious_ports(
-            [443, 123, 5353, 67, 68, 1900, 137, 138, 139, 5355]
+    def test_points_per_severity(self):
+        for severity, points in ((1, 50), (2, 25), (3, 5), (4, 1)):
+            with self.subTest(severity=severity):
+                self.assertEqual(self.scorer.score_alerts({"S": severity}, 1)[0], points)
+
+    def test_distinct_signatures_add_up(self):
+        self.assertEqual(self.scorer.score_alerts({"A": 3, "B": 3, "C": 4}, 9)[0], 11)
+
+    def test_capped_at_50(self):
+        self.assertEqual(self.scorer.score_alerts({"A": 2, "B": 2, "C": 2}, 3)[0], 50)
+
+    def test_description_counts_signatures_and_alerts(self):
+        self.assertEqual(
+            self.scorer.score_alerts({"A": 3, "B": 4}, 1234)[1],
+            "2 signatures in its own traffic (1,234 alerts), worst medium",
         )
-        self.assertEqual((points, desc), (0, "Only common protocols/ports used"))
+        self.assertEqual(
+            self.scorer.score_alerts({"A": 1}, 1)[1],
+            "1 signature in its own traffic (1 alert), worst critical",
+        )
 
-    def test_suspicious_overrides_unusual(self):
-        """Suspicious ports take priority over unusual ports."""
-        points, _ = self.scorer.score_suspicious_ports([9200, 3000, 4444])
-        self.assertEqual(points, 15)
-
-    def test_known_suspicious_ports_list(self):
-        """All known suspicious ports are in the set."""
-        expected = {4444, 5555, 6666, 8888, 9999, 31337, 12345, 65535}
-        self.assertEqual(RiskScorer.SUSPICIOUS_PORTS, expected)
+    def test_one_critical_own_signature_is_high_alone(self):
+        result = self.scorer.score_device({"signatures": {"ET MALWARE x": 1}, "alert_count": 1})
+        self.assertEqual((result["score"], result["level"]), (50, "high"))
 
 
-class TestDataExfiltrationScoring(unittest.TestCase):
-    """Tests for score_data_exfiltration()."""
+class TestConnectionAnomaly(unittest.TestCase):
+    """Connections opened vs the device's median day (rule 11)."""
 
     def setUp(self):
         self.scorer = RiskScorer()
 
-    def test_no_traffic(self):
-        """Zero traffic scores 0."""
-        points, _ = self.scorer.score_data_exfiltration(0, 0)
+    def _points(self, count, usual, window_days=1.0, corroborated=True):
+        return self.scorer.score_connection_anomaly(count, usual, window_days, corroborated)
+
+    def test_tiers(self):
+        usual = [200] * 7
+        for count, points in ((590, 0), (600, 10), (900, 10), (1000, 25)):
+            with self.subTest(count=count):
+                self.assertEqual(self._points(count, usual)[0], points)
+
+    def test_needs_500_connections(self):
+        self.assertEqual(self._points(499, [10] * 7)[0], 0)
+        self.assertEqual(self._points(500, [10] * 7)[0], 25)
+
+    def test_needs_three_earlier_days(self):
+        points, description = self._points(5000, [100, 100])
         self.assertEqual(points, 0)
+        self.assertEqual(
+            description, "5,000 connections; not enough earlier days to compare with"
+        )
 
-    def test_normal_upload_ratio(self):
-        """<10% upload scores 0."""
-        points, _ = self.scorer.score_data_exfiltration(5, 95)
-        self.assertEqual(points, 0)
+    def test_description_gives_the_facts(self):
+        self.assertEqual(self._points(1000, [200] * 7)[1], "1,000 connections, 5.0× its usual")
 
-    def test_slightly_elevated_upload(self):
-        """10-30% upload scores 5."""
-        points, _ = self.scorer.score_data_exfiltration(20, 80)
-        self.assertEqual(points, 5)
+    def test_days_without_traffic_are_not_part_of_the_usual_day(self):
+        # Three active days of 300: 1,000 is 3.3× (10). Counting the four quiet days, the
+        # median would be 0 and any count a spike (25).
+        result = RiskScorer().score_device(
+            {
+                "connections": 1000,
+                "history": _days([300, 0, 300, 0, 0, 300, 0]),
+                "corroborated": True,
+            }
+        )
+        self.assertEqual(_factor(result, "connection_anomaly")["score"], 10)
 
-    def test_elevated_upload(self):
-        """30-50% upload scores 10."""
-        points, _ = self.scorer.score_data_exfiltration(40, 60)
-        self.assertEqual(points, 10)
+    def test_a_sub_day_window_is_compared_with_a_whole_usual_day(self):
+        # One hour of 600 vs a usual day of 200 is 3× (10); scaled to the hour it would be 72×
+        result = RiskScorer().score_device(
+            {
+                "connections": 600,
+                "history": _days([200] * 7),
+                "window_days": 1 / 24,
+                "corroborated": True,
+            }
+        )
+        self.assertEqual(_factor(result, "connection_anomaly")["score"], 10)
 
-    def test_high_upload(self):
-        """>50% upload scores 15."""
-        points, _ = self.scorer.score_data_exfiltration(60, 40)
-        self.assertEqual(points, 15)
+    def test_a_multi_day_window_is_compared_with_as_many_usual_days(self):
+        # 7 days of 4,200 vs 7 × 200 is 3× (10), not 21×
+        result = RiskScorer().score_device(
+            {
+                "connections": 4200,
+                "history": _days([200] * 7),
+                "window_days": 7.0,
+                "corroborated": True,
+            }
+        )
+        self.assertEqual(_factor(result, "connection_anomaly")["score"], 10)
 
-    def test_all_upload(self):
-        """100% upload scores 15."""
-        points, _ = self.scorer.score_data_exfiltration(100, 0)
-        self.assertEqual(points, 15)
 
-    def test_boundary_ten_percent(self):
-        """Exactly 10% upload scores 5 (10-30% range)."""
-        points, _ = self.scorer.score_data_exfiltration(10, 90)
-        self.assertEqual(points, 5)
+class TestUploadSpike(unittest.TestCase):
+    """Bytes sent to the internet vs the device's median day, with published floors (rule 13)."""
+
+    def setUp(self):
+        self.scorer = RiskScorer()
+
+    def _points(self, sent, usual, corroborated=True):
+        return self.scorer.score_upload_spike(sent, usual, 1.0, corroborated)
+
+    def test_a_few_kilobytes_never_score(self):
+        # the screenshot's 11.7 KB at 77% upload scored 15/15 as "data exfiltration"
+        self.assertEqual(self._points(11_700, [100] * 7)[0], 0)
+
+    def test_needs_100_mb(self):
+        self.assertEqual(self._points(99 * MB, [1 * MB] * 7)[0], 0)
+        self.assertEqual(self._points(100 * MB, [1 * MB] * 7)[0], 10)
+
+    def test_three_times_usual_is_10(self):
+        self.assertEqual(self._points(150 * MB, [10 * MB] * 7)[0], 10)
+
+    def test_three_times_usual_and_a_gigabyte_is_25(self):
+        self.assertEqual(self._points(2 * GB, [100 * MB] * 7)[0], 25)
+
+    def test_under_three_times_usual_is_zero(self):
+        self.assertEqual(self._points(2 * GB, [1 * GB] * 7)[0], 0)
+
+    def test_needs_three_earlier_days(self):
+        self.assertEqual(
+            self._points(5 * GB, [1 * MB, 1 * MB]),
+            (0, "Sent 5.0 GB; not enough earlier days to compare with"),
+        )
+
+    def test_description_gives_the_facts(self):
+        self.assertEqual(
+            self._points(2 * GB, [100 * MB] * 7)[1],
+            "Sent 2.0 GB to the internet, 20.0× its usual",
+        )
+
+
+class TestCorroboration(unittest.TestCase):
+    """The volume factors score only with a high or critical alert in the device's own traffic."""
+
+    BACKUP = {
+        "connections": 5000,
+        "upload_bytes": 5 * GB,
+        "history": _days([500] * 7, [100 * MB] * 7),
+    }
+
+    def test_a_backup_alone_scores_nothing(self):
+        result = RiskScorer().score_device(self.BACKUP)
+        self.assertEqual(result["score"], 0)
+        for name in ("connection_anomaly", "upload_spike"):
+            factor = _factor(result, name)
+            self.assertEqual(factor["score"], 0)
+            self.assertTrue(factor["description"].endswith(NOT_SCORED), factor)
+
+    def test_a_backup_with_a_low_alert_scores_only_the_alert(self):
+        result = RiskScorer().score_device(
+            {**self.BACKUP, "signatures": {"ET POLICY x": 4}, "alert_count": 2}
+        )
+        self.assertEqual(result["score"], 1)
+
+    def test_a_backup_with_a_high_own_alert_is_scored(self):
+        result = RiskScorer().score_device(
+            {
+                **self.BACKUP,
+                "signatures": {"ET MALWARE x": 2},
+                "alert_count": 3,
+                "corroborated": True,
+            }
+        )
+        self.assertEqual(
+            [f["score"] for f in result["factors"]], [25, 25, 25]
+        )
+        self.assertEqual((result["score"], result["level"]), (75, "critical"))
+
+
+class TestScoreDevice(unittest.TestCase):
+    def test_three_factors_with_their_weights(self):
+        result = RiskScorer().score_device({})
+        self.assertEqual(
+            [(f["name"], f["max"]) for f in result["factors"]],
+            [("alert_count", 50), ("connection_anomaly", 25), ("upload_spike", 25)],
+        )
+        for f in result["factors"]:
+            self.assertEqual(set(f), {"name", "score", "max", "description"})
+
+    def test_empty_stats_are_zero_and_low(self):
+        result = RiskScorer().score_device({})
+        self.assertEqual((result["score"], result["level"]), (0, "low"))
+
+    def test_everything_at_once_is_100(self):
+        result = RiskScorer().score_device(
+            {
+                "signatures": {"A": 1, "B": 1},
+                "alert_count": 9,
+                "corroborated": True,
+                "connections": 50_000,
+                "upload_bytes": 50 * GB,
+                "history": _days([500] * 7, [100 * MB] * 7),
+            }
+        )
+        self.assertEqual((result["score"], result["level"]), (100, "critical"))
 
 
 class TestRiskLevel(unittest.TestCase):
@@ -307,144 +272,6 @@ class TestRiskLevel(unittest.TestCase):
     def test_negative_score(self):
         """Negative score should map to 'low'."""
         self.assertEqual(RiskScorer.risk_level(-10), "low")
-
-
-class TestCombinedScoring(unittest.TestCase):
-    """Tests for score_device() combined scoring."""
-
-    def setUp(self):
-        self.scorer = RiskScorer()
-
-    def test_benign_device(self):
-        """A device with no risk indicators scores low."""
-        stats = {
-            "alert_count": 0,
-            "connection_count": 50,
-            "network_avg_connections": 100.0,
-            "network_stddev_connections": 50.0,
-            "external_connection_count": 10,
-            "total_connection_count": 50,
-            "ports_used": [80, 443],
-            "orig_bytes": 1000,
-            "resp_bytes": 99000,
-        }
-        result = self.scorer.score_device(stats)
-        self.assertLessEqual(result["score"], 24)
-        self.assertEqual(result["level"], "low")
-        self.assertEqual(len(result["factors"]), 5)
-
-    def test_highly_suspicious_device(self):
-        """A device with many risk indicators scores critical."""
-        stats = {
-            "alert_count": 50,
-            "connection_count": 5000,
-            "network_avg_connections": 100.0,
-            "network_stddev_connections": 50.0,
-            "external_connection_count": 90,
-            "total_connection_count": 100,
-            "ports_used": [4444, 31337, 65535],
-            "orig_bytes": 80000,
-            "resp_bytes": 20000,
-        }
-        result = self.scorer.score_device(stats)
-        self.assertGreaterEqual(result["score"], 75)
-        self.assertEqual(result["level"], "critical")
-
-    def test_score_clamped_to_100(self):
-        """Total score should never exceed 100."""
-        stats = {
-            "alert_count": 999,
-            "connection_count": 99999,
-            "network_avg_connections": 10.0,
-            "network_stddev_connections": 1.0,
-            "external_connection_count": 100,
-            "total_connection_count": 100,
-            "ports_used": [4444, 31337],
-            "orig_bytes": 99999,
-            "resp_bytes": 1,
-        }
-        result = self.scorer.score_device(stats)
-        self.assertLessEqual(result["score"], 100)
-
-    def test_empty_stats(self):
-        """Empty/default stats should score 0."""
-        result = self.scorer.score_device({})
-        self.assertEqual(result["score"], 0)
-        self.assertEqual(result["level"], "low")
-
-    def test_factors_have_required_keys(self):
-        """Each factor should have name, score, max, description."""
-        stats = {
-            "alert_count": 5,
-            "connection_count": 200,
-            "network_avg_connections": 100.0,
-            "network_stddev_connections": 50.0,
-            "external_connection_count": 40,
-            "total_connection_count": 100,
-            "ports_used": [80, 443, 9200],
-            "orig_bytes": 5000,
-            "resp_bytes": 45000,
-        }
-        result = self.scorer.score_device(stats)
-        for factor in result["factors"]:
-            self.assertIn("name", factor)
-            self.assertIn("score", factor)
-            self.assertIn("max", factor)
-            self.assertIn("description", factor)
-            self.assertGreaterEqual(factor["score"], 0)
-            self.assertLessEqual(factor["score"], factor["max"])
-
-    def test_max_score_is_100(self):
-        """Sum of all max weights equals 100."""
-        total_max = (
-            RiskScorer.WEIGHT_ALERT_COUNT
-            + RiskScorer.WEIGHT_CONNECTION_ANOMALY
-            + RiskScorer.WEIGHT_EXTERNAL_RATIO
-            + RiskScorer.WEIGHT_SUSPICIOUS_PORTS
-            + RiskScorer.WEIGHT_DATA_EXFILTRATION
-        )
-        self.assertEqual(total_max, 100)
-
-    def test_medium_risk_device(self):
-        """A device with moderate indicators scores medium."""
-        stats = {
-            "alert_count": 3,
-            "connection_count": 200,
-            "network_avg_connections": 100.0,
-            "network_stddev_connections": 50.0,
-            "external_connection_count": 50,
-            "total_connection_count": 100,
-            "ports_used": [80, 443, 9200],
-            "orig_bytes": 15000,
-            "resp_bytes": 85000,
-        }
-        result = self.scorer.score_device(stats)
-        self.assertGreaterEqual(result["score"], 25)
-        self.assertLessEqual(result["score"], 49)
-        self.assertEqual(result["level"], "medium")
-
-
-class TestEdgeCases(unittest.TestCase):
-    """Edge case tests for RiskScorer."""
-
-    def setUp(self):
-        self.scorer = RiskScorer()
-
-    def test_score_device_missing_keys(self):
-        """Missing keys should default to zero/empty without error."""
-        result = self.scorer.score_device({"alert_count": 5})
-        self.assertIsInstance(result["score"], int)
-        self.assertIn(result["level"], ("low", "medium", "high", "critical"))
-
-    def test_zero_total_bytes(self):
-        """Zero total bytes should not cause division error."""
-        points, _ = self.scorer.score_data_exfiltration(0, 0)
-        self.assertEqual(points, 0)
-
-    def test_zero_total_connections(self):
-        """Zero total connections should not cause division error."""
-        points, _ = self.scorer.score_external_ratio(0, 0)
-        self.assertEqual(points, 0)
 
 
 if __name__ == "__main__":

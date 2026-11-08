@@ -64,7 +64,12 @@ def test_beaconing_leaves_the_request_loop_free():
 
 def test_risk_scores_leave_the_request_loop_free():
     loop_ran = threading.Event()
-    with patch("api.risk._lan_device_buckets", side_effect=_blocks_until(loop_ran, [])):
+    # OLD CODE: only _lan_device_buckets was patched (NET-209: history and findings read too)
+    with patch(
+        "api.risk._lan_device_buckets", side_effect=_blocks_until(loop_ran, [])
+    ), patch("api.risk._history", return_value={}), patch(
+        "api.risk.get_smart_alerts", return_value=[]
+    ):
         status = _status_while_loop_runs(
             handle_risk_scores, _request(risk_scorer=RiskScorer()), loop_ran
         )

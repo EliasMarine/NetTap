@@ -683,6 +683,21 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
         self.assertEqual(device["bandwidth_series"], [])
 
     @unittest_run_loop
+    async def test_an_internet_address_is_not_a_device(self):
+        """NET-209: an internet scanner opened as a device page (Ubiquiti, Windows, risk 58).
+
+        The 404 comes before any search or fingerprint, so nothing about it is looked up.
+        """
+        with patch("api.devices._get_fingerprint") as fingerprint:
+            resp = await self.client.request("GET", "/api/devices/91.92.40.12")
+            self.assertEqual(resp.status, 404)
+            self.assertEqual(
+                await resp.json(), {"error": "91.92.40.12 is not on your network"}
+            )
+        self.mock_client.search.assert_not_called()
+        fingerprint.assert_not_called()
+
+    @unittest_run_loop
     async def test_device_detail_opensearch_error(self):
         """OpenSearch error returns 502."""
         from opensearchpy import ConnectionError as OSConnectionError

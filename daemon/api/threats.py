@@ -99,6 +99,7 @@ async def handle_threat_report(request: web.Request) -> web.Response:
     client = _get_client(request)
     excluded_ips_list = request.app.get("excluded_ips", [])
 
+    from api.drilldown_runner import lan_cidrs
     from services.investigation import generate_threat_report
 
     # Rows and state from one moment: a scan that publishes during the multi-second report
@@ -137,6 +138,7 @@ async def handle_threat_report(request: web.Request) -> web.Response:
                 to_ts,
                 excluded_ips=excluded_ips_list,
                 beaconing=beacons,
+                lan_cidrs=lan_cidrs(request.app),
             ),
         )
     except Exception as exc:

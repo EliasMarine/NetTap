@@ -89,10 +89,20 @@ def _two_page_client() -> MagicMock:
         ]
     )
     client = MagicMock()
+    # OLD CODE START — NET-209: the alert-instant read (its "all" composite) finds none here
+    # client.search.side_effect = lambda index, body: (
+    #     _page([], None) if _is_activity(body) else next(counted)
+    # )
+    # OLD CODE END
     client.search.side_effect = lambda index, body: (
-        _page([], None) if _is_activity(body) else next(counted)
+        _NO_INSTANTS
+        if "all" in body["aggs"]
+        else _page([], None) if _is_activity(body) else next(counted)
     )
     return client
+
+
+_NO_INSTANTS = {"aggregations": {"all": {"buckets": []}}}
 
 
 def test_every_page_is_read():
@@ -103,7 +113,8 @@ def test_every_page_is_read():
     assert len(groups) == 203
     # OLD CODE: first, second = (c.kwargs["body"] for c in client.search.call_args_list) (NET-191)
     bodies = [c.kwargs["body"] for c in client.search.call_args_list]
-    first, second = (b for b in bodies if not _is_activity(b))
+    # OLD CODE: first, second = (b for b in bodies if not _is_activity(b)) (NET-209: + instants)
+    first, second = (b for b in bodies if "grouped" in b["aggs"] and not _is_activity(b))
     assert "after" not in first["aggs"]["grouped"]["composite"]
     assert second["aggs"]["grouped"]["composite"]["after"] == {
         "sig_name": "x",
@@ -166,7 +177,7 @@ def test_summary_reports_the_informational_alerts_it_hides():
     """The home card read "394 total" next to "2.2K alerts" with no hint why."""
     client = _two_page_client()
 
-    def every_other_is_info(signature, *_args):
+    def every_other_is_info(signature, *_args, **_kwargs):
         return 5 if int(signature[-4:]) % 2 == 0 else 3
 
     with (
@@ -227,8 +238,25 @@ def test_summary_level_capped_for_medium_only_alerts():
 
 def _score(severities, anomalous=False):
     """The summary's score and level for one alert group per severity given."""
+    # OLD CODE START — NET-209: groups carry their findings and counted alerts now
+    # groups = [
+    #     {"severity": s, "count": 1, "category": "policy", "signature": f"sig {i}"}
+    #     for i, s in enumerate(severities)
+    # ]
+    # OLD CODE END
     groups = [
-        {"severity": s, "count": 1, "category": "policy", "signature": f"sig {i}"}
+        {
+            "severity": s,
+            "count": 1,
+            "counted_events": 1,
+            "unattributed": 1,  # no LAN party: scored per (signature, source, destination)
+            "findings": [],
+            "reputation": False,
+            "category": "policy",
+            "signature": f"sig {i}",
+            "source_ip": "203.0.113.1",
+            "destination_ip": "198.51.100.1",
+        }
         for i, s in enumerate(severities)
     ]
     baseline = {"is_anomalous": anomalous} if anomalous else None
@@ -263,3 +291,45 @@ def test_busier_than_usual_adds_15_only_under_75():
 def test_level_never_exceeds_the_worst_alert():
     # 38 medium groups score 76, which alone would read "critical"
     assert _score([3] * 38) == (76, "medium")
+
+
+# ---------------------------------------------------------------------------
+# NET-209: a page that answered only in part raises, never reads as fewer threats
+# ---------------------------------------------------------------------------
+
+_FULL_PAGE = [_bucket(n) for n in range(200)]
+_NEXT = {"sig_name": "x", "src_ip": "y", "dst_ip": "z"}
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"aggregations": {"grouped": {"after_key": _NEXT}}},  # no bucket list
+        {"aggregations": {"grouped": {"buckets": _FULL_PAGE}}},  # full page, no next key
+        {"timed_out": True, "aggregations": {"grouped": {"buckets": []}}},
+        {"_shards": {"failed": 1}, "aggregations": {"grouped": {"buckets": []}}},
+        {"aggregations": {}},  # the aggregation is missing
+    ],
+)
+@pytest.mark.parametrize("on_page", [1, 2])
+def test_an_incomplete_page_raises(bad, on_page):
+    from storage.snapshot_search import QueryFailed
+
+    pages = [bad] if on_page == 1 else [_page(_FULL_PAGE, _NEXT), bad]
+    client = MagicMock()
+    client.search.side_effect = pages
+    with (
+        patch.object(alert_intelligence, "is_suppressed", return_value=False),
+        pytest.raises(QueryFailed),
+    ):
+        get_smart_alerts(client, _FROM, _TO, limit=None)
+
+
+def test_the_page_cap_raises_instead_of_returning_part(monkeypatch):
+    from storage.snapshot_search import QueryFailed
+
+    monkeypatch.setattr(alert_intelligence, "_MAX_GROUP_PAGES", 2)
+    client = MagicMock()
+    client.search.return_value = _page(_FULL_PAGE, _NEXT)
+    with pytest.raises(QueryFailed, match="stopped at 400 groups"):
+        get_smart_alerts(client, _FROM, _TO, limit=None)

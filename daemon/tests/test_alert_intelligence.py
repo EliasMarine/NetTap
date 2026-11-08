@@ -380,38 +380,86 @@ class TestComputeTrend:
 class TestKillChainDetection:
     """Tests for kill chain correlation."""
 
+    # OLD CODE START — NET-209: chains are built from each finding's real alert times now, so
+    # groups without findings make none (see tests/test_alert_findings.py for the timing rules)
+    # def test_detects_two_stage_chain(self):
+    #     from services.alert_intelligence import detect_kill_chains
+    #
+    #     alerts = [
+    #         {
+    #             "source_ip": "10.0.0.5",
+    #             "category": "reconnaissance",
+    #             "signature": "ET SCAN",
+    #         },
+    #         {"source_ip": "10.0.0.5", "category": "exploit", "signature": "ET EXPLOIT"},
+    #     ]
+    #     chains = detect_kill_chains(alerts)
+    #     assert len(chains) == 1
+    #     assert chains[0]["source_ip"] == "10.0.0.5"
+    #     assert len(chains[0]["stages"]) == 2
+    #     assert 1 in chains[0]["stages"]  # recon
+    #     assert 2 in chains[0]["stages"]  # exploit
+    #
+    # def test_full_kill_chain(self):
+    #     from services.alert_intelligence import detect_kill_chains
+    #
+    #     alerts = [
+    #         {
+    #             "source_ip": "10.0.0.5",
+    #             "category": "reconnaissance",
+    #             "signature": "scan",
+    #         },
+    #         {"source_ip": "10.0.0.5", "category": "exploit", "signature": "exploit"},
+    #         {"source_ip": "10.0.0.5", "category": "malware_c2", "signature": "c2"},
+    #         {"source_ip": "10.0.0.5", "category": "exfiltration", "signature": "exfil"},
+    #     ]
+    #     chains = detect_kill_chains(alerts)
+    #     assert len(chains) == 1
+    #     assert len(chains[0]["stages"]) == 4
+    #     assert "active intrusion" in chains[0]["assessment"]
+    # OLD CODE END
+    @staticmethod
+    def _own(category, signature, hour):
+        start = 1_762_128_000_000  # 2025-11-03T00:00:00Z
+        return {
+            "source_ip": "10.0.0.5",
+            "category": category,
+            "signature": signature,
+            "findings": [
+                {
+                    "device": "10.0.0.5",
+                    "own": True,
+                    "count": 1,
+                    "severity": 2,
+                    "times": [(start + hour * 3_600_000, 1)],
+                }
+            ],
+        }
+
     def test_detects_two_stage_chain(self):
         from services.alert_intelligence import detect_kill_chains
 
-        alerts = [
-            {
-                "source_ip": "10.0.0.5",
-                "category": "reconnaissance",
-                "signature": "ET SCAN",
-            },
-            {"source_ip": "10.0.0.5", "category": "exploit", "signature": "ET EXPLOIT"},
-        ]
-        chains = detect_kill_chains(alerts)
+        chains = detect_kill_chains(
+            [
+                self._own("reconnaissance", "ET SCAN", 0),
+                self._own("exploit", "ET EXPLOIT", 1),
+            ]
+        )
         assert len(chains) == 1
         assert chains[0]["source_ip"] == "10.0.0.5"
-        assert len(chains[0]["stages"]) == 2
-        assert 1 in chains[0]["stages"]  # recon
-        assert 2 in chains[0]["stages"]  # exploit
+        assert chains[0]["stages"] == [1, 2]
 
     def test_full_kill_chain(self):
         from services.alert_intelligence import detect_kill_chains
 
-        alerts = [
-            {
-                "source_ip": "10.0.0.5",
-                "category": "reconnaissance",
-                "signature": "scan",
-            },
-            {"source_ip": "10.0.0.5", "category": "exploit", "signature": "exploit"},
-            {"source_ip": "10.0.0.5", "category": "malware_c2", "signature": "c2"},
-            {"source_ip": "10.0.0.5", "category": "exfiltration", "signature": "exfil"},
-        ]
-        chains = detect_kill_chains(alerts)
+        chains = detect_kill_chains(
+            [
+                self._own("reconnaissance", "scan", 0),
+                self._own("exploit", "exploit", 1),
+                self._own("malware_c2", "c2", 2),
+                self._own("exfiltration", "exfil", 3),
+            ]
+        )
         assert len(chains) == 1
         assert len(chains[0]["stages"]) == 4
         assert "active intrusion" in chains[0]["assessment"]
@@ -459,39 +507,72 @@ class TestKillChainDetection:
         assert len(chains) == 0
 
 
-class TestDestinationAwareBoost:
-    """Tests for severity boosting on sensitive internal ports."""
+# OLD CODE START — NET-209: the internal-port boost and its parameters are gone (THREAT-SCORING.md
+# rule 14); TestSeverityOrder below covers the new order
+# class TestDestinationAwareBoost:
+#     """Tests for severity boosting on sensitive internal ports."""
+#
+#     def test_exploit_on_internal_ssh_boosted(self):
+#         from services.alert_intelligence import reclassify_severity
+#
+#         # OLD CODE START — NET-209: no port boost (THREAT-SCORING.md rule 14: a port list is not
+#         # a sound indicator); a scan of an internal SSH port keeps its own severity
+#         # # ET EXPLOIT = severity 1, but let's test ET SCAN (3) getting boosted
+#         # sev = reclassify_severity(
+#         #     "ET SCAN portscan", 3, dst_port=22, dst_ip="192.168.1.10"
+#         # )
+#         # assert sev == 2  # Boosted from 3 → 2
+#         # OLD CODE END
+#         sev = reclassify_severity(
+#             "ET SCAN portscan", 3, dst_port=22, dst_ip="192.168.1.10"
+#         )
+#         assert sev == 3
+#
+#     def test_no_boost_on_external_ip(self):
+#         from services.alert_intelligence import reclassify_severity
+#
+#         sev = reclassify_severity("ET SCAN portscan", 3, dst_port=22, dst_ip="8.8.8.8")
+#         assert sev == 3  # No boost — external IP
+#
+#     def test_no_boost_on_safe_port(self):
+#         from services.alert_intelligence import reclassify_severity
+#
+#         sev = reclassify_severity(
+#             "ET SCAN portscan", 3, dst_port=443, dst_ip="192.168.1.10"
+#         )
+#         assert sev == 3  # 443 not in SENSITIVE_PORTS
+#
+#     def test_critical_not_boosted_past_1(self):
+#         from services.alert_intelligence import reclassify_severity
+#
+#         sev = reclassify_severity(
+#             "ET MALWARE bad", 1, dst_port=22, dst_ip="192.168.1.10"
+#         )
+#         assert sev == 1  # Already critical, can't go higher
+# OLD CODE END
 
-    def test_exploit_on_internal_ssh_boosted(self):
+
+class TestSeverityOrder:
+    """NET-209: context categories, then ET's own signature_severity, then the prefix table, then
+    Suricata's classtype priority."""
+
+    @pytest.mark.parametrize(
+        "signature, priority, et, expected",
+        [
+            ("ET INFO Spotify P2P Client", 1, ["Major"], 5),  # context beats everything
+            ("ET HUNTING Suspicious UA", 2, None, 5),
+            ("ET POLICY curl User-Agent", 2, ["Critical"], 1),  # ET's rating beats the table
+            ("ET MALWARE Agent CnC", 1, "Minor", 3),  # a plain string, as some feeds send it
+            ("ET MALWARE Agent CnC", 1, ["Unknown"], 1),  # no usable rating: the prefix table
+            ("Custom rule", 1, None, 2),  # last: Suricata's priority, 1 is high
+            ("Custom rule", 2, None, 3),
+            ("Custom rule", 3, None, 4),
+        ],
+    )
+    def test_order(self, signature, priority, et, expected):
         from services.alert_intelligence import reclassify_severity
 
-        # ET EXPLOIT = severity 1, but let's test ET SCAN (3) getting boosted
-        sev = reclassify_severity(
-            "ET SCAN portscan", 3, dst_port=22, dst_ip="192.168.1.10"
-        )
-        assert sev == 2  # Boosted from 3 → 2
-
-    def test_no_boost_on_external_ip(self):
-        from services.alert_intelligence import reclassify_severity
-
-        sev = reclassify_severity("ET SCAN portscan", 3, dst_port=22, dst_ip="8.8.8.8")
-        assert sev == 3  # No boost — external IP
-
-    def test_no_boost_on_safe_port(self):
-        from services.alert_intelligence import reclassify_severity
-
-        sev = reclassify_severity(
-            "ET SCAN portscan", 3, dst_port=443, dst_ip="192.168.1.10"
-        )
-        assert sev == 3  # 443 not in SENSITIVE_PORTS
-
-    def test_critical_not_boosted_past_1(self):
-        from services.alert_intelligence import reclassify_severity
-
-        sev = reclassify_severity(
-            "ET MALWARE bad", 1, dst_port=22, dst_ip="192.168.1.10"
-        )
-        assert sev == 1  # Already critical, can't go higher
+        assert reclassify_severity(signature, priority, et_severity=et) == expected
 
 
 class TestSuppressTTL:
@@ -577,6 +658,7 @@ class TestBaseline:
             "history": [
                 {
                     "hour": f"2026-11-02T{h:02d}",
+                    "metric": "counted-v2",  # NET-209
                     "window_hours": 24,
                     "events_per_hour": 10 / 24,
                     "threat_score": 5,
@@ -594,6 +676,31 @@ class TestBaseline:
         assert result["deviation"] == 10.0
         assert result["avg_events"] == 10.0
         assert result["is_anomalous"] is True
+
+
+class TestBaselineMetric:
+    """NET-209: snapshots of the old count (every alert) are not compared with the new one."""
+
+    def test_snapshots_from_before_are_dropped(self, monkeypatch, tmp_path):
+        from datetime import datetime, timezone
+
+        from services import alert_intelligence
+
+        path = tmp_path / "baselines.json"
+        monkeypatch.setattr(alert_intelligence, "_BASELINE_PATH", path)
+        old = [
+            {"hour": f"2026-11-02T{h:02d}", "window_hours": 24, "events_per_hour": 100.0}
+            for h in range(10)
+        ]
+        path.write_text(json.dumps({"history": old}))
+
+        now = datetime(2026, 11, 2, 12, 30, tzinfo=timezone.utc)
+        result = alert_intelligence.update_baseline({"total_events": 24}, 24.0, now=now)
+
+        assert result["history_points"] == 1  # only this hour's new snapshot
+        assert result["deviation"] == 1.0
+        saved = json.loads(path.read_text())["history"]
+        assert [h["metric"] for h in saved] == ["counted-v2"]
 
 
 class TestBaselineIsFactual:

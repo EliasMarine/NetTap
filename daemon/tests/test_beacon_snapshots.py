@@ -357,7 +357,7 @@ def test_the_report_takes_beaconing_from_the_snapshot(monkeypatch):
     _with_rows(app)
     seen = {}
 
-    async def report(client, from_ts, to_ts, excluded_ips=None, beaconing=None):
+    async def report(client, from_ts, to_ts, excluded_ips=None, beaconing=None, lan_cidrs=None):
         seen.update(beaconing=beaconing, span=_span(from_ts, to_ts))
         return {"beaconing": beaconing}
 
@@ -377,7 +377,7 @@ def test_a_scan_that_publishes_during_the_report_does_not_relabel_its_rows(monke
     store = app["beacon_snapshots"]
     store._scan = lambda f, t: ([ROW], True)
 
-    async def report(client, from_ts, to_ts, excluded_ips=None, beaconing=None):
+    async def report(client, from_ts, to_ts, excluded_ips=None, beaconing=None, lan_cidrs=None):
         await store.refresh("7d")  # the background scan finishes while the report runs
         return {"beaconing": beaconing}
 
@@ -396,7 +396,7 @@ def test_an_explicit_window_is_always_live(monkeypatch, route):
     _with_rows(app)
     seen = {}
 
-    async def report(client, from_ts, to_ts, excluded_ips=None, beaconing=None):
+    async def report(client, from_ts, to_ts, excluded_ips=None, beaconing=None, lan_cidrs=None):
         seen.update(beaconing=beaconing, live=True)
         return {"beaconing": []}
 
@@ -421,7 +421,7 @@ def test_with_the_background_off_a_snapshot_request_runs_live(monkeypatch):
     assert "beacon_snapshots" not in app
     seen = {}
 
-    async def report(client, from_ts, to_ts, excluded_ips=None, beaconing=None):
+    async def report(client, from_ts, to_ts, excluded_ips=None, beaconing=None, lan_cidrs=None):
         seen.update(beaconing=beaconing, span=_span(from_ts, to_ts))
         return {"beaconing": []}
 

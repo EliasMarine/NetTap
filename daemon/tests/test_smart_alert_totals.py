@@ -44,6 +44,8 @@ def _client(groups: list[dict]) -> MagicMock:
     """Answers each composite page with as many groups as it asks for, after the last one."""
 
     def search(index, body):
+        if "all" in body["aggs"]:  # NET-209: the alert-instant read finds none here
+            return {"aggregations": {"all": {"buckets": []}}}
         comp = body["aggs"]["grouped"]["composite"]
         start = comp.get("after", {}).get("n", -1) + 1
         page = groups[start : start + comp["size"]]
