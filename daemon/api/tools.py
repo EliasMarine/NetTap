@@ -12,7 +12,13 @@ import logging
 from aiohttp import web
 
 from api.offload import lookup_slot, run_lookup
-from services.dns_recon_service import DnsReconService, DnsReconValidationError
+
+# OLD CODE: from services.dns_recon_service import DnsReconService, DnsReconValidationError (NET-203)
+from services.dns_recon_service import (
+    DnsReconBusyError,
+    DnsReconService,
+    DnsReconValidationError,
+)
 from services.mac_lookup_service import MacLookupService, MacLookupValidationError
 from services.network_diag_service import NetworkDiagService, NetworkDiagValidationError
 from services.ssl_cert_service import SslCertService, SslCertValidationError
@@ -42,6 +48,8 @@ async def handle_dns_recon(request: web.Request) -> web.Response:
         return web.json_response(result)
     except DnsReconValidationError as e:
         return web.json_response({"error": str(e)}, status=400)
+    except DnsReconBusyError as e:  # NET-203: too many lookups at once
+        return web.json_response({"error": str(e)}, status=503)
     except Exception as exc:
         logger.exception("DNS recon failed")
         return web.json_response({"error": f"DNS recon failed: {exc}"}, status=500)

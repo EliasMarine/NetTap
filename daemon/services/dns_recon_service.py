@@ -8,10 +8,12 @@ Security:
     - Domain names validated against strict regex (no shell metacharacters)
     - Record types validated against an explicit whitelist
     - Commands run via asyncio.create_subprocess_exec (NEVER shell=True)
-    - 10 second timeout per query
+    - 10 second timeout per query; the queries of one lookup run at the same time (NET-203)
+    - Record types deduplicated, so a lookup starts at most one dig per allowed type
 """
 
 import asyncio
+import contextlib
 import logging
 import re
 from typing import Any
@@ -24,6 +26,19 @@ DEFAULT_RECORD_TYPES = ["A", "AAAA", "CNAME", "MX", "NS", "TXT", "SOA"]
 DOMAIN_PATTERN = re.compile(r"^[a-zA-Z0-9]([a-zA-Z0-9\-\.]*[a-zA-Z0-9])?$")
 MAX_DOMAIN_LENGTH = 253
 QUERY_TIMEOUT = 10  # seconds
+# NET-203: each lookup starts up to 9 dig processes at once, so cap the lookups too
+MAX_CONCURRENT_LOOKUPS = 4
+LOOKUPS_BUSY = "DNS reconnaissance is busy. Try again in a moment."
+
+
+def _dig_failure(stdout: str, stderr: bytes, code: int) -> str:
+    """dig's own reason for a failed query: its first ';;' or 'dig:' line, else its exit code."""
+    text = stdout + "\n" + stderr.decode("utf-8", errors="replace")
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith((";;", "dig:")):
+            return line.lstrip("; ").strip()
+    return f"dig exited with code {code}"
 
 
 class DnsReconValidationError(Exception):
@@ -32,8 +47,16 @@ class DnsReconValidationError(Exception):
     pass
 
 
+class DnsReconBusyError(Exception):
+    """Raised when MAX_CONCURRENT_LOOKUPS lookups are already running (NET-203)."""
+
+
 class DnsReconService:
     """Performs structured DNS lookups via the dig command."""
+
+    def __init__(self) -> None:
+        # Rejects instead of queueing: a wait here would count against the web's 15 s limit
+        self._slots = asyncio.Semaphore(MAX_CONCURRENT_LOOKUPS)
 
     def validate_domain(self, domain: str) -> str:
         """Validate and normalize a domain name.
@@ -66,7 +89,7 @@ class DnsReconService:
         if not record_types:
             return list(DEFAULT_RECORD_TYPES)
 
-        validated = []
+        validated: list[str] = []
         for rt in record_types:
             rt_upper = rt.strip().upper()
             if rt_upper not in ALLOWED_RECORD_TYPES:
@@ -74,7 +97,10 @@ class DnsReconService:
                     f"Invalid record type: {rt_upper!r} — "
                     f"allowed: {', '.join(sorted(ALLOWED_RECORD_TYPES))}"
                 )
-            validated.append(rt_upper)
+            # NET-203: each type once, first occurrence first; the queries run at the same time,
+            # so a repeated type would start another dig process
+            if rt_upper not in validated:
+                validated.append(rt_upper)
 
         return validated
 
@@ -114,6 +140,52 @@ class DnsReconService:
 
         return records
 
+    async def _query(
+        self, domain: str, rtype: str
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """One dig query: its records, or no records and the reason (NET-203).
+
+        A child still running when this ends (a timeout, an error, a cancelled lookup) is
+        killed and reaped; a cancellation still propagates.
+        """
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "dig",
+                "+noall",
+                "+answer",
+                "+authority",
+                "+comments",
+                # a slow resolver is retried after 2 s, twice, so dig gives up (8 s over two
+                # servers) inside QUERY_TIMEOUT instead of after its default 5 s x 3 tries
+                "+time=2",
+                "+tries=2",
+                domain,
+                rtype,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(), timeout=QUERY_TIMEOUT
+            )
+            stdout = stdout_bytes.decode("utf-8", errors="replace")
+            if proc.returncode != 0:
+                reason = _dig_failure(stdout, stderr_bytes, proc.returncode)
+                logger.warning("dig failed for %s %s: %s", domain, rtype, reason)
+                return [], f"{rtype}: {reason}"
+            return self._parse_dig_output(stdout), None
+        except asyncio.TimeoutError:
+            logger.warning("dig query timed out for %s %s", domain, rtype)
+            return [], f"Timeout querying {rtype} records"
+        except Exception as exc:
+            logger.exception("dig query failed for %s %s", domain, rtype)
+            return [], f"Error querying {rtype}: {exc}"
+        finally:
+            if proc is not None and proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+                await proc.wait()
+
     async def lookup(
         self,
         domain: str,
@@ -126,41 +198,56 @@ class DnsReconService:
         domain = self.validate_domain(domain)
         record_types = self.validate_record_types(record_types)
 
-        all_records: dict[str, list[dict]] = {}
-        errors: list[str] = []
-
-        for rtype in record_types:
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "dig",
-                    "+noall",
-                    "+answer",
-                    "+authority",
-                    "+comments",
-                    domain,
-                    rtype,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(), timeout=QUERY_TIMEOUT
-                )
-                stdout = stdout_bytes.decode("utf-8", errors="replace")
-                parsed = self._parse_dig_output(stdout)
-                if parsed:
-                    all_records[rtype] = parsed
-
-            except asyncio.TimeoutError:
-                logger.warning("dig query timed out for %s %s", domain, rtype)
-                errors.append(f"Timeout querying {rtype} records")
-                try:
-                    proc.kill()  # type: ignore[possibly-undefined]
-                except ProcessLookupError:
-                    pass
-
-            except Exception as exc:
-                logger.exception("dig query failed for %s %s", domain, rtype)
-                errors.append(f"Error querying {rtype}: {exc}")
+        # OLD CODE START — NET-203: one dig after another, so 7 types took up to 70 s and the web
+        # proxy (10 s) said "Daemon unreachable"; a failed dig read as an empty answer
+        # all_records: dict[str, list[dict]] = {}
+        # errors: list[str] = []
+        #
+        # for rtype in record_types:
+        #     try:
+        #         proc = await asyncio.create_subprocess_exec(
+        #             "dig",
+        #             "+noall",
+        #             "+answer",
+        #             "+authority",
+        #             "+comments",
+        #             domain,
+        #             rtype,
+        #             stdout=asyncio.subprocess.PIPE,
+        #             stderr=asyncio.subprocess.PIPE,
+        #         )
+        #         stdout_bytes, stderr_bytes = await asyncio.wait_for(
+        #             proc.communicate(), timeout=QUERY_TIMEOUT
+        #         )
+        #         stdout = stdout_bytes.decode("utf-8", errors="replace")
+        #         parsed = self._parse_dig_output(stdout)
+        #         if parsed:
+        #             all_records[rtype] = parsed
+        #
+        #     except asyncio.TimeoutError:
+        #         logger.warning("dig query timed out for %s %s", domain, rtype)
+        #         errors.append(f"Timeout querying {rtype} records")
+        #         try:
+        #             proc.kill()  # type: ignore[possibly-undefined]
+        #         except ProcessLookupError:
+        #             pass
+        #
+        #     except Exception as exc:
+        #         logger.exception("dig query failed for %s %s", domain, rtype)
+        #         errors.append(f"Error querying {rtype}: {exc}")
+        # OLD CODE END
+        if self._slots.locked():  # checked first, so acquiring below never waits
+            raise DnsReconBusyError(LOOKUPS_BUSY)
+        async with self._slots:
+            results = await asyncio.gather(
+                *(self._query(domain, rtype) for rtype in record_types)
+            )
+        all_records = {
+            rtype: records
+            for rtype, (records, _) in zip(record_types, results)
+            if records
+        }
+        errors = [error for _, error in results if error]
 
         total = sum(len(recs) for recs in all_records.values())
 
