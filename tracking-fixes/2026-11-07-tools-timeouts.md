@@ -3,7 +3,7 @@
 **Date:** 2026-11-07
 **Branch:** `fix/tools-timeouts`
 **Linear:** NET-203
-**Status:** Built and tested. PR, merge and the G11 deploy follow.
+**Status:** Merged (PR #217, squash `759c4603`) and deployed to the G11 on 2026-11-07. Every check passed.
 
 ## What the owner reported
 
@@ -71,6 +71,13 @@ The daemon was up. Its log shows `POST /api/tools/dns-recon -> 200 (14950.0ms)`:
 - both containers are healthy;
 - a DNS lookup for example.com through the daemon API answers in under 10 s with records;
 - the sign-in page answers.
+
+**Result on the G11 (2026-11-07), every check passed:**
+
+- both images carry the change, and both containers are healthy;
+- a DNS lookup for example.com through the daemon API: HTTP 200 in 2.7 s, 10 records, 0 errors (right after the restart, cold DNS cache);
+- the owner's own domain, the one that failed: 0.6 s, 11 records (A, AAAA, MX, NS, SOA, TXT), no errors;
+- the sign-in page answers HTTP 200.
 
 ## Lessons
 
