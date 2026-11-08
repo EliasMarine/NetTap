@@ -1,6 +1,6 @@
 # NET-209: threat and risk scores count only real threats; internet addresses are never devices
 
-**Date:** 2026-11-08 · **Branch:** `fix/threat-score-accuracy` · **Linear:** NET-209 · **Status:** in review
+**Date:** 2026-11-08 · **Branch:** `fix/threat-score-accuracy` · **Linear:** NET-209 · **Status:** merged (PR #223 → `89d09980`)
 
 ## What was wrong
 
@@ -43,6 +43,50 @@ The research and every rule, with citations: `Debugging/THREAT-SCORING.md`.
   week. The volume factors need a high or critical own alert.
 - **Checked reads:** every smart-alert page and history page must be complete, or the request fails
   (500 for the alert APIs, 502 for the risk APIs).
+- **Security-review fixes (`fed7f05c`).** F1: an alert with no Zeek record after 10 minutes is a
+  connection held open and counts as the device's own traffic, so a C2 session can't hide as an attempt.
+  F2: a conn record whose direction Zeek guessed (`^` in the history, or TCP with no SYN first) is
+  skipped. F3: alert times are read per minute, so a flood on one connection can't exhaust the page cap.
+  F4: a blocklist hit with no LAN party stays listed at medium.
+
+## Follow-up: matching alerts to their connection (branch `fix/alert-conn-matching`)
+
+**Found on the G11 after the PR #223 deploy.** Over 7 days the port-forwarded server .24 still had 49.5
+threat points and a kill chain, almost all from internet scanners counted as its own traffic. 30 counted
+findings had no matching record. Three causes, traced alert by alert:
+
+- **Suricata's flow-timeout alerts.** Suricata stamps an alert raised when a flow times out with the
+  timeout time, 600 s after the last packet on the G11 (`flow-timeouts: tcp: established: 600`). A
+  Next.js-bypass probe ran 02:46:06–02:47:31; its last alert is stamped 02:57:33. The match allowed 10 s.
+- **Zeek fragments.** Late FINs after a close are logged as one-packet records (`^f`) that named the
+  server as opener and "disagreed" with the real record; a disagreement fell through to "no record".
+- **F2 skipped scanner probes.** A lone data packet (`D`) or a data-then-handshake probe (`DShR`) does not
+  start with `S`, so it was skipped, and F1 then counted the alert as the server's own.
+
+**Fix** (plan approved by Codex after 5 rounds; `.codex-review/2026-11-08-120542-alert-conn-matching/`):
+Zeek's history letters are re-oriented after `^` flips and only a pure SYN names a TCP opener. Records
+without one are a live session (opener unknown, counted like a held-open connection) or debris (decides
+nothing). An alert matches the record its minute is in, else the latest non-debris record that ended up
+to 11 minutes before. Records naming different openers make the opener unknown. All alerts of one
+Suricata flow (`suricata.flow_id`) share the decision of any record they fall in.
+
+Security review of the follow-up (security-engineer agent), both fixed with tests:
+- **Medium:** a UDP C2 that speaks first after a 61–119 s pause made Zeek start a record naming it as the
+  first sender, turning the device's C2 flow into attempts. A UDP/ICMP record starting within 11 minutes of
+  the previous one on the same tuple now keeps its opener (the router's NAT mapping links them).
+- **Low:** a held-open session resuming with zero-byte keepalives (`Aa`) was debris, so its blocklist hits
+  were dropped. A mid-stream minute now takes the opener from the session's handshake record, however old;
+  a scanner that handshakes, waits 301 s and then sends payload stays an attempt the same way.
+
+**Simulated on the G11's live data before deploying** (read-only):
+
+| | Deployed (#223) | With the fix |
+|---|---|---|
+| 24 h score | 50 high | 44 medium |
+| 24 h, .24 points | 8 | 2 |
+| 7 d, .24 points | 49.5 | 18 (mostly distinct exploit attempts at 0.5 each) |
+| 7 d kill chains | .24 (stages 1, 2) | none |
+| Counted findings with no record or unknown opener, 7 d | 30 | 9 (packets Zeek never logged) |
 
 ## Files
 
@@ -82,7 +126,16 @@ Deploy:
 
 ## Test results
 
-_Filled in below._
+Dev (macOS), on the merged head `fed7f05c`:
+- Daemon pytest: 4067 passed, 4 skipped. `ruff check` and `ruff format --check` (0.17.3) clean.
+- Web: Vitest 4131 passed; svelte-check 0 errors; `check:colors` clean; visual 286 passed, 49 skipped.
+- ShellCheck clean on `deploy-threat-accuracy.sh`.
+- CI on PR #223: all 18 checks passed, including Integration Tests.
+
+Reviews: `/codex-review` approved the plan; `/deep-review` no findings; `/ponytail-review` findings cut
+or fixed; two-angle review (security + Python), all findings fixed (F1–F4 above).
+
+G11: _see below._
 
 ## Lessons
 

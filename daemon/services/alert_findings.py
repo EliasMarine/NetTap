@@ -38,6 +38,13 @@ CONN_SLACK_MS = 10_000
 # Alert times are read per minute, so a flood on one connection is one bucket a minute, not one
 # per alert (security review F3); a minute's alerts match a conn that overlaps that minute
 _INSTANT, INSTANT_MS = "1m", 60_000
+# Suricata stamps an alert raised when a flow times out with the timeout time: on the G11 600 s
+# (established TCP) after the last packet, seen 600-608 s. A record that ended this long before
+# the alert minute can still be its connection
+FLOW_TIMEOUT_MS = 11 * 60_000
+# A conn record that cannot say who opened its connection: no live session on the device
+# (late fragments, a probe answered only by a reset), or a live session picked up mid-stream
+DEBRIS, UNKNOWN = "debris", "unknown"
 # An alert with no conn record yet: Zeek writes the record when the connection ends (idle TCP after
 # 5 min) and Malcolm indexes it within a minute. Younger alerts wait for it as attempts; older ones
 # are a connection still held open, whose opener is unknown (a C2 session must not vanish)
@@ -123,6 +130,8 @@ def alert_instants(
         {"src": {"terms": {"field": "source.ip", "missing_bucket": True}}},
         {"dst": {"terms": {"field": "destination.ip", "missing_bucket": True}}},
         {"cid": {"terms": {"field": "network.community_id", "missing_bucket": True}}},
+        # one Suricata flow is one connection: its alerts share one decision
+        {"flow": {"terms": {"field": "suricata.flow_id", "missing_bucket": True}}},
         # OLD CODE: {"ts": {"terms": {"field": "@timestamp"}}}, (review F3: a bucket per alert)
         {"ts": {"date_histogram": {"field": "@timestamp", "fixed_interval": _INSTANT}}},
     ]
@@ -137,7 +146,8 @@ def alert_instants(
 def connection_spans(
     client: Any, index: str, cids: list[str], from_ts: str, to_ts: str
 ) -> dict[str, list[tuple[str, int, int]]]:
-    """Zeek conn records per community ID: (originator, start ms, end ms)."""
+    """Zeek conn records per community ID: (who opened it, start ms, end ms), where "who" is an
+    address, DEBRIS or UNKNOWN (`_verdict`)."""
     # a conn is stamped with its start, and written when it ends
     start = (
         datetime.fromisoformat(from_ts.replace("Z", "+00:00")) - timedelta(days=1)
@@ -145,7 +155,7 @@ def connection_spans(
     end = (
         datetime.fromisoformat(to_ts.replace("Z", "+00:00")) + timedelta(hours=1)
     ).isoformat()
-    spans: dict[str, list[tuple[str, int, int]]] = defaultdict(list)
+    records: dict[str, list[tuple[int, int, str, bool]]] = defaultdict(list)
     for i in range(0, len(cids), _CID_CHUNK):
         query = {
             "bool": {
@@ -168,12 +178,23 @@ def connection_spans(
         sources = [
             {"cid": {"terms": {"field": "network.community_id"}}},
             {"orig": {"terms": {"field": "source.ip"}}},
+            {"resp": {"terms": {"field": "destination.ip", "missing_bucket": True}}},
             {"start": {"terms": {"field": "event.start"}}},
             {"end": {"terms": {"field": "event.end", "missing_bucket": True}}},
             {"hist": {"terms": {"field": "zeek.conn.history", "missing_bucket": True}}},
             {
                 "proto": {
                     "terms": {"field": "network.transport", "missing_bucket": True}
+                }
+            },
+            {
+                "ob": {
+                    "terms": {"field": "zeek.conn.orig_bytes", "missing_bucket": True}
+                }
+            },
+            {
+                "rb": {
+                    "terms": {"field": "zeek.conn.resp_bytes", "missing_bucket": True}
                 }
             },
         ]
@@ -189,32 +210,198 @@ def connection_spans(
             raise QueryFailed(f"alert connections: stopped at {len(buckets)}")
         for b in buckets:
             k = b["key"]
-            if not _opener_trusted(k.get("hist"), k.get("proto")):
-                continue  # who opened it is a guess: the alert falls back to "no record"
-            spans[k["cid"]].append(
-                (k["orig"], _key_ms(k["start"]), _key_ms(k["end"] or k["start"]))
+            # OLD CODE START — G11 trace: skipping these made scanner probes "no record", then own
+            # if not _opener_trusted(k.get("hist"), k.get("proto")):
+            #     continue  # who opened it is a guess: the alert falls back to "no record"
+            # spans[k["cid"]].append(
+            #     (k["orig"], _key_ms(k["start"]), _key_ms(k["end"] or k["start"]))
+            # )
+            # OLD CODE END
+            who = _verdict(
+                k["orig"],
+                k.get("resp"),
+                k.get("hist"),
+                k.get("proto"),
+                k.get("ob"),
+                k.get("rb"),
             )
+            start_ms = _key_ms(k["start"])
+            end_ms = _key_ms(k["end"] or k["start"])
+            records[k["cid"]].append((start_ms, end_ms, who, k.get("proto") == "tcp"))
+    return {cid: _chained(recs) for cid, recs in records.items()}
+
+
+def _chained(records: list[tuple[int, int, str, bool]]) -> list[tuple[str, int, int]]:
+    """Spans of one community ID. A UDP/ICMP record that starts within FLOW_TIMEOUT_MS of the
+    previous one continues it: Zeek closes UDP after 60 s of silence, but the outside can only
+    reach the device while the router's NAT mapping from the earlier traffic lives (security
+    review: a C2 that speaks first after a pause is not the opener)."""
+    spans, prev = [], None
+    for start, end, who, tcp in sorted(records, key=lambda r: r[:2]):
+        if not tcp:
+            if prev and start - prev[0] <= FLOW_TIMEOUT_MS:
+                who = prev[1]
+            prev = (end, who)
+        spans.append((who, start, end))
     return spans
 
 
-def _opener_trusted(history: str | None, transport: str | None) -> bool:
-    """Zeek's originator is the opener unless it flipped the direction (`^`, e.g. UDP from port
-    5353 to a high port) or picked a TCP connection up mid-stream (no SYN first): review F2."""
+# OLD CODE START — G11 trace: a scanner's lone data packet (`D`, `DShR`) was skipped too
+# def _opener_trusted(history: str | None, transport: str | None) -> bool:
+#     """Zeek's originator is the opener unless it flipped the direction (`^`, e.g. UDP from port
+#     5353 to a high port) or picked a TCP connection up mid-stream (no SYN first): review F2."""
+#     if not history:
+#         return True
+#     return "^" not in history and (transport != "tcp" or history.startswith("S"))
+# OLD CODE END
+
+
+def _oriented(history: str) -> str:
+    """The history with every letter relative to the record's final originator (upper case) and
+    responder (lower case): Zeek's flip (`^`) swaps the endpoints without rewriting earlier letters."""
+    letters, flips = [], 0
+    for ch in reversed(history):
+        if ch == "^":
+            flips += 1
+        else:
+            letters.append(ch.swapcase() if flips % 2 else ch)
+    return "".join(reversed(letters))
+
+
+def _verdict(
+    orig: str,
+    resp: str | None,
+    history: str | None,
+    transport: str | None,
+    orig_bytes: int | None,
+    resp_bytes: int | None,
+) -> str:
+    """Who opened a conn record's connection: an address, DEBRIS or UNKNOWN (rules in the brief)."""
     if not history:
-        return True
-    return "^" not in history and (transport != "tcp" or history.startswith("S"))
+        return orig
+    h = _oriented(history)
+    if transport != "tcp":  # no handshake: whoever sent the first packet
+        return orig if not h or h[0].isupper() else resp
+    # only a pure SYN shows the opener; a SYN-ACK can be a scan or backscatter
+    if "S" in h and "s" not in h:
+        return orig
+    if "s" in h and "S" not in h:
+        return resp
+    two_sided = any(c.isupper() and c != "R" for c in h) and any(
+        c.islower() and c != "r" for c in h
+    )
+    if not two_sided:  # one side only, or answered by a reset: no live session
+        return DEBRIS
+    # a FIN can carry payload too (`F`), so the byte counters count; none indexed: assume payload
+    payload = (
+        "D" in h
+        or "d" in h
+        or (orig_bytes is None and resp_bytes is None)
+        or (orig_bytes or 0) + (resp_bytes or 0) > 0
+    )
+    return UNKNOWN if payload else DEBRIS
 
 
-def opener_at(spans: list[tuple[str, int, int]], ts: int) -> str | None:
-    """The one originator of the conns that overlap the minute starting at `ts`; None if none
-    or they disagree."""
-    # OLD CODE: if start - CONN_SLACK_MS <= ts <= end + CONN_SLACK_MS (review F3: per-minute times)
-    found = {
-        orig
-        for orig, start, end in spans
+# OLD CODE START — G11 trace: 10 s after the end missed flow-timeout alerts, and a disagreement
+# (a late `^f` fragment beside the real record) fell through to "no record"
+# def opener_at(spans: list[tuple[str, int, int]], ts: int) -> str | None:
+#     found = {
+#         orig
+#         for orig, start, end in spans
+#         if start - CONN_SLACK_MS < ts + INSTANT_MS and ts <= end + CONN_SLACK_MS
+#     }
+#     return next(iter(found)) if len(found) == 1 else None
+# OLD CODE END
+
+
+def minute_state(spans: list[tuple[str, int, int]], ts: int) -> tuple[str, str | None]:
+    """What the records say about the connection of an alert minute [ts, ts + 60 s):
+    ("direct", opener) from a record the minute is in, ("after", opener) from the latest record
+    that ended up to FLOW_TIMEOUT_MS before it, or ("unknown" | "undecided" | "none", None)."""
+    direct = {
+        who
+        for who, start, end in spans
         if start - CONN_SLACK_MS < ts + INSTANT_MS and ts <= end + CONN_SLACK_MS
     }
-    return next(iter(found)) if len(found) == 1 else None
+    ended = [
+        (end, who)
+        for who, start, end in spans
+        if end + CONN_SLACK_MS < ts <= end + FLOW_TIMEOUT_MS
+    ]
+    after = _latest([(end, who) for end, who in ended if who != DEBRIS])
+    openers = direct - {DEBRIS, UNKNOWN}
+    if len(openers) > 1:
+        return "unknown", None
+    if openers:
+        (opener,) = openers
+        # a reused tuple: the record the minute is in, or the one that just timed out
+        if after not in (None, UNKNOWN, opener):
+            return "unknown", None
+        return "direct", opener
+    if direct or after == UNKNOWN:
+        # picked up mid-stream (a resumed session, keepalives): the session's handshake record,
+        # however old, names the opener (security review: a held-open C2 must not turn debris)
+        prior = _latest(
+            [
+                (end, who)
+                for who, start, end in spans
+                if end + CONN_SLACK_MS < ts and who not in (DEBRIS, UNKNOWN)
+            ]
+        )
+        if prior not in (None, UNKNOWN):
+            return "after", prior
+        if UNKNOWN in direct or after == UNKNOWN:
+            return "unknown", None
+        return "undecided", None
+    if after:
+        return "after", after
+    return ("undecided", None) if ended else ("none", None)
+
+
+def _latest(ended: list[tuple[int, str]]) -> str | None:
+    """The verdict of the record that ended last; UNKNOWN when records tied on it disagree."""
+    last = max((end for end, _ in ended), default=None)
+    found = {who for end, who in ended if end == last}
+    return (next(iter(found)) if len(found) == 1 else UNKNOWN) if found else None
+
+
+def flow_states(
+    instants: list[dict],
+    spans: dict[str, list[tuple[str, int, int]]],
+    is_lan: Callable[[str | None], bool],
+) -> list[tuple[str, str | None]]:
+    """minute_state for each instant toward a LAN address, decided per Suricata flow: one direct
+    opener in any of the flow's minutes decides all of them, two make them all "unknown"; an
+    "after" inference stays with its own minute."""
+    local: list[tuple[str, str | None]] = []
+    direct: dict[tuple, set] = defaultdict(set)
+    for inst in instants:
+        ts = _key_ms(inst["ts"])
+        state = (
+            minute_state(spans.get(inst["cid"]) or [], ts)
+            if inst["cid"] and is_lan(inst["dst"])
+            else ("none", None)
+        )
+        local.append(state)
+        if state[0] == "direct":
+            direct[_flow(inst, ts)].add(state[1])
+    out = []
+    for inst, state in zip(instants, local):
+        found = direct.get(_flow(inst, _key_ms(inst["ts"])), set())
+        if len(found) == 1:
+            out.append(("direct", next(iter(found))))
+        elif found:
+            out.append(("unknown", None))
+        else:
+            out.append(state)
+    return out
+
+
+def _flow(inst: dict, ts: int) -> tuple:
+    """An alert's connection: its Suricata flow, or (with no flow ID) its own minute."""
+    return (
+        (inst["cid"], inst.get("flow")) if inst.get("flow") else (inst["cid"], None, ts)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -264,9 +451,10 @@ def findings_by_group(
     connection held open). None: every unmatched one counts as own.
     """
     parts: dict[tuple, dict[tuple, dict]] = defaultdict(dict)
-    for inst in instants:
+    for inst, (state, who) in zip(instants, flow_states(instants, spans, is_lan)):
         sig, src, dst, ts = inst["sig"], inst["src"], inst["dst"], _key_ms(inst["ts"])
-        opener = opener_at(spans.get(inst["cid"]) or [], ts) if is_lan(dst) else None
+        # OLD CODE: opener = opener_at(spans.get(inst["cid"]) or [], ts) if is_lan(dst) else None
+        opener = who if state in ("direct", "after") else None
         device, own = charge(src, dst, opener, client_targets.get(sig, False), is_lan)
         if device is None:
             continue
@@ -274,11 +462,15 @@ def findings_by_group(
         # 0.5 and left device risk), then listed reputation hits only
         # known = own or opener is not None
         # OLD CODE END
-        # No record matched: while the record may still be on its way it is an attempt; after
-        # SETTLE_MS it is a connection held open, and counts as the device's own traffic
-        # (with no community ID there was nothing to look up: packet direction, an attempt)
+        # No record matched, or a live session of unknown origin: while the record may still be on
+        # its way it is an attempt; after SETTLE_MS it is a connection held open, and counts as the
+        # device's own traffic. "undecided" (debris only) and no community ID: packet direction.
+        # OLD CODE: unmatched = (opener is None and device == dst and not is_lan(src) and bool(inst["cid"]))
         unmatched = (
-            opener is None and device == dst and not is_lan(src) and bool(inst["cid"])
+            state in ("none", "unknown")
+            and device == dst
+            and not is_lan(src)
+            and bool(inst["cid"])
         )
         fresh = settled_before is not None and ts > settled_before
         own = own or (unmatched and not fresh)
