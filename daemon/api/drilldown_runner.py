@@ -19,7 +19,9 @@ from aiohttp import web
 
 from api.alerts import _sparkline_interval
 from services.excluded_ips import (
+    RFC1918_CIDRS,
     RFC1918_SOURCE_FILTER,
+    cidr,
     lan_subnets_of,
     parse_single_ip,
 )
@@ -71,6 +73,11 @@ def lan_check(app: web.Application) -> Callable[[str], bool]:
             return False
 
     return is_lan
+
+
+def lan_cidrs(app: web.Application) -> list[str]:
+    """The same LAN rule as CIDRs, for the alert findings (NET-209)."""
+    return [cidr(s) for s in lan_subnets_of(app.get("lan_filter"))] or RFC1918_CIDRS
 
 
 # OLD CODE START — NET-160 review: the same filter as api/alerts.py's _time_range_filter

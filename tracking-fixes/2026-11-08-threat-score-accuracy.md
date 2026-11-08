@@ -1,0 +1,96 @@
+# NET-209: threat and risk scores count only real threats; internet addresses are never devices
+
+**Date:** 2026-11-08 · **Branch:** `fix/threat-score-accuracy` · **Linear:** NET-209 · **Status:** in review
+
+## What was wrong
+
+- **An internet scanner showed as a LAN device.** 91.92.40.12, on Spamhaus DROP, probed the port-forwarded
+  web server 192.168.1.24 on ports 80, 443 and 3000. The Threats page made a kill chain of it with a
+  "Investigate device" button, and its device page read "Windows 10/11, Ubiquiti, risk 58 High". The MAC
+  was the UDM Pro's: every routed frame on the uplink mirror carries it. `/api/devices/{ip}` and
+  `/api/risk/scores/{ip}` never checked that the address was on the LAN.
+- **The threat score counted attempts and noise as threats.** Every (signature, source, destination)
+  group added points, so each internet scanner address added points again, and a blocked exploit
+  attempt weighed as much as a compromise. Blocklist rules (ET DROP, DShield, CINS, ...) fire on replies
+  to connections a device opened too, and they were all counted.
+- **Kill chains ignored direction and time.** Any address with alerts in two stages, in any order, over
+  the whole window, was a chain.
+- **The device risk score used signals with no published basis:** share of internet connections, a
+  port list, and the upload/download ratio (11.7 KB "77% upload" scored 15/15 "data exfiltration").
+  Its alert factor counted ET INFO activity such as Spotify.
+- **Partial reads looked like fewer threats.** A timed-out or partly failed smart-alert page, or the
+  page cap, returned what it had.
+
+## What changed
+
+The research and every rule, with citations: `Debugging/THREAT-SCORING.md`.
+
+- **LAN guard.** `GET /api/devices/{ip}` and `GET /api/risk/scores/{ip}` answer 404 "<ip> is not on your
+  network" before any search for an address outside the LAN rule. The device page sends a non-LAN address
+  to `/address/<ip>`. The kill-chain button links through `$ipHref`.
+- **Who acted, per alert** (`daemon/services/alert_findings.py`). Each alert instant is joined to its
+  Zeek connection by Community ID and time, and charged to one device as its own traffic or as an attempt
+  against it.
+- **Severity from ET's own metadata** (`signature_severity`). ET INFO, HUNTING, TOR, P2P, GAMES and CHAT
+  are activity. The internal-port boost is gone.
+- **Reputation hits** count only when the device started the connection, at medium at most.
+- **Threat score:** each (signature, device) once at its highest weight. An attempt adds at most 0.5.
+  "Events" are the alerts that score; the rest are "not counted". Baseline snapshots are versioned
+  (`counted-v2`), so the old count is never compared with the new one.
+- **Kill chains:** per device, real alert times, stages in order, steps of at most 24 h, and at least one
+  step from the device's own traffic.
+- **Device risk:** alerts 50, connection anomaly 25, upload spike 25, each against the device's own last
+  week. The volume factors need a high or critical own alert.
+- **Checked reads:** every smart-alert page and history page must be complete, or the request fails
+  (500 for the alert APIs, 502 for the risk APIs).
+
+## Files
+
+Daemon:
+- `services/alert_findings.py` (new)
+- `services/alert_intelligence.py`
+- `services/risk_scoring.py`
+- `services/investigation.py`
+- `api/risk.py`
+- `api/devices.py`
+- `api/alerts.py`
+- `api/threats.py`
+- `api/drilldown_runner.py` (`lan_cidrs`)
+
+Web:
+- `routes/devices/[ip]/+page.svelte`
+- `routes/threats/+page.svelte`
+- `routes/+page.svelte`
+- `lib/api/alerts.ts`
+
+Tests:
+- `tests/test_alert_findings.py` (new)
+- `tests/test_smart_alert_paging.py`
+- `tests/test_smart_alert_totals.py`
+- `tests/test_alert_intelligence.py`
+- `tests/test_risk_scoring.py`
+- `tests/test_risk_api.py`
+- `tests/test_devices_api.py`
+- `tests/test_et_activity.py`
+- `tests/test_beacon_snapshots.py`
+- `tests/test_request_loop_free.py`
+- the web route tests
+
+Deploy:
+- `scripts/remote/deploy-threat-accuracy.sh`
+- `scripts/remote/verify_threat_accuracy.py`
+
+## Test results
+
+_Filled in below._
+
+## Lessons
+
+- **On a mirror of the router's uplink, the router's MAC is on every routed frame.** A MAC or vendor
+  never proves an address is a LAN device; the LAN subnets do.
+- **Suricata's `severity` is a classtype priority, not a verdict.** ET's `signature_severity` metadata is
+  the vendor's own rating.
+- **Reputation rules without `flow:` keywords fire both ways.** "Inbound" in the name does not mean the
+  internet started the connection.
+- **Score findings, not alert groups.** One signature on one host is one finding, however many addresses
+  it touches.

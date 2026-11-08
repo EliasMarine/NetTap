@@ -12,9 +12,10 @@
 	 */
 
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
 	import IPAddress from '$components/IPAddress.svelte';
-	import { domainHref } from '$lib/stores/lan';
+	import { domainHref, lanPolicy, lanStatus } from '$lib/stores/lan';
 	import ConnectionDrawer from '$components/ConnectionDrawer.svelte';
 	import {
 		getDeviceDetail,
@@ -241,9 +242,13 @@
 	// 10% slightly elevated and 30% elevated
 	// let uploadRatioLabel = $derived(uploadRatio < 40 ? 'Normal' : uploadRatio < 70 ? 'Elevated' : 'High');
 	// OLD CODE END
-	// the data exfiltration factor's thresholds on the unrounded share, so the KPI and the risk card agree
 	const uploadShare = $derived(totalBytes > 0 ? origBytes / totalBytes : 0);
-	let uploadRatioLabel = $derived(uploadShare < 0.1 ? 'Normal' : uploadShare < 0.3 ? 'Slightly elevated' : uploadShare < 0.5 ? 'Elevated' : 'High');
+	// OLD CODE START — NET-209: risk words on the data exfiltration factor's thresholds; that factor is gone
+	// // the data exfiltration factor's thresholds on the unrounded share, so the KPI and the risk card agree
+	// let uploadRatioLabel = $derived(uploadShare < 0.1 ? 'Normal' : uploadShare < 0.3 ? 'Slightly elevated' : uploadShare < 0.5 ? 'Elevated' : 'High');
+	// OLD CODE END
+	// NET-209: the share describes the traffic; it no longer scores, so it gets no risk word
+	let uploadRatioLabel = $derived(uploadShare < 0.35 ? 'Mostly download' : uploadShare < 0.65 ? 'Balanced' : 'Mostly upload');
 
 	// OLD CODE START — 2026-11-03 UI redesign: TimeSeriesChart / DualSeriesChart data; the AreaChart takes series
 	// let chartData = $derived(device?.bandwidth_series?.map((p) => ({ time: p.timestamp, value: p.bytes })) ?? []);
@@ -459,6 +464,11 @@
 		void range; // refetch when the range changes
 		// the loader writes and reads state; untracked so those writes can't rerun this effect
 		untrack(() => refresh.run());
+	});
+
+	// NET-209: the daemon has no device for an address off the LAN (404), so show its address page; null (policy not loaded) stays
+	$effect(() => {
+		if (lanStatus($lanPolicy, deviceIp) === false) void goto(`/address/${encodeURIComponent(deviceIp)}`, { replaceState: true });
 	});
 
 	// The page's own 30 s auto refresh, through the same contract so "Updated" stays honest

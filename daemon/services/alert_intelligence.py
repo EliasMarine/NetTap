@@ -21,12 +21,16 @@ import logging
 import os
 import json
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections import defaultdict
+from typing import Any
 
+from services import alert_findings
 from services.capture_config import write_file_atomic
 from storage.all_buckets import MAX_BUCKETS
+from storage.snapshot_search import QueryFailed, checked
 
 logger = logging.getLogger("nettap.services.alert_intelligence")
 
@@ -91,22 +95,24 @@ ENGINE_NOISE_SIGNATURES = {
 SEVERITY_NAMES = {1: "critical", 2: "high", 3: "medium", 4: "low", 5: "info"}
 SEVERITY_LABELS = {1: "CRITICAL", 2: "HIGH", 3: "MEDIUM", 4: "LOW", 5: "INFO"}
 
-# Sensitive internal ports — alerts targeting these get severity boosted
-SENSITIVE_PORTS = {
-    22,
-    23,
-    445,
-    3389,
-    5900,
-    3306,
-    5432,
-    1433,
-    6379,
-    27017,
-    8080,
-    8443,
-    9200,
-}
+# OLD CODE START — NET-209: the internal-port boost is gone (THREAT-SCORING.md rule 14)
+# # Sensitive internal ports — alerts targeting these get severity boosted
+# SENSITIVE_PORTS = {
+#     22,
+#     23,
+#     445,
+#     3389,
+#     5900,
+#     3306,
+#     5432,
+#     1433,
+#     6379,
+#     27017,
+#     8080,
+#     8443,
+#     9200,
+# }
+# OLD CODE END
 
 # ---------------------------------------------------------------------------
 # Smart Categories + Kill Chain
@@ -662,65 +668,106 @@ KILL_CHAIN_STAGES = {
 # ---------------------------------------------------------------------------
 
 
-def reclassify_severity(
-    signature: str,
-    original_severity: int,
-    dst_port: int | None = None,
-    dst_ip: str | None = None,
-) -> int:
-    """Reclassify alert severity based on signature prefix.
+# Context, not threats: shown as activity, never counted (THREAT-SCORING.md rule 6). ET INFO was
+# already in SEVERITY_OVERRIDES; HUNTING "can provide false positives on legitimate traffic"
+CONTEXT_PREFIXES = ("ET INFO", "ET HUNTING", "ET TOR", "ET P2P", "ET GAMES", "ET CHAT")
+# ET's own signature_severity (rule 1): Critical = likely compromised, Major = active attempt,
+# Minor = recon/scanning/profiling
+ET_SEVERITY = {"CRITICAL": 1, "MAJOR": 2, "MINOR": 3}
 
-    Enhancement #6: Destination-aware boosting — alerts targeting internal
-    assets on sensitive ports get severity bumped by 1 level.
+
+def _et_severity(et_severity: Any) -> int | None:
+    """Our severity for ET's signature_severity (a string or Malcolm's one-item list), or None."""
+    values = et_severity if isinstance(et_severity, list) else [et_severity]
+    found = [
+        ET_SEVERITY[str(v).upper()] for v in values if str(v).upper() in ET_SEVERITY
+    ]
+    return min(found) if found else None
+
+
+# OLD CODE START — NET-209: NetTap's prefix table outranked ET's own rating, and the
+# sensitive-port boost turned an attempt on port 22/445 into "critical" and lifted ET INFO (5) to 4
+# def reclassify_severity(
+#     signature: str,
+#     original_severity: int,
+#     dst_port: int | None = None,
+#     dst_ip: str | None = None,
+# ) -> int:
+#     """Reclassify alert severity based on signature prefix.
+#
+#     Enhancement #6: Destination-aware boosting — alerts targeting internal
+#     assets on sensitive ports get severity bumped by 1 level.
+#     """
+#     sig_upper = (signature or "").upper()
+#     severity = 4  # default
+#
+#     for prefix, sev in SEVERITY_OVERRIDES.items():
+#         if sig_upper.startswith(prefix.upper()):
+#             severity = sev
+#             break
+#     else:
+#         # Fall back to Suricata original
+#         if original_severity == 1:
+#             severity = 2
+#         elif original_severity == 2:
+#             severity = 3
+#
+#     # Destination-aware boost: if targeting sensitive internal port, bump severity
+#     if dst_port and dst_port in SENSITIVE_PORTS and severity > 1:
+#         if dst_ip and _is_internal_ip(dst_ip):
+#             severity = max(1, severity - 1)  # Bump up one level
+#
+#     return severity
+# OLD CODE END
+def reclassify_severity(
+    signature: str, original_severity: int, et_severity: Any = None
+) -> int:
+    """1 critical … 4 low, 5 context (THREAT-SCORING.md, "Alert severity").
+
+    Order: context categories, then ET's signature_severity, then the prefix table, then
+    Suricata's priority (a classtype priority, not a measure of maliciousness). The destination
+    port no longer changes it (NET-209).
     """
     sig_upper = (signature or "").upper()
-    severity = 4  # default
-
+    if sig_upper.startswith(CONTEXT_PREFIXES):
+        return 5
+    from_et = _et_severity(et_severity)
+    if from_et is not None:
+        return from_et
     for prefix, sev in SEVERITY_OVERRIDES.items():
         if sig_upper.startswith(prefix.upper()):
-            severity = sev
-            break
-    else:
-        # Fall back to Suricata original
-        if original_severity == 1:
-            severity = 2
-        elif original_severity == 2:
-            severity = 3
-
-    # Destination-aware boost: if targeting sensitive internal port, bump severity
-    if dst_port and dst_port in SENSITIVE_PORTS and severity > 1:
-        if dst_ip and _is_internal_ip(dst_ip):
-            severity = max(1, severity - 1)  # Bump up one level
-
-    return severity
+            return sev
+    return {1: 2, 2: 3}.get(original_severity, 4)
 
 
-# Use the same INTERNAL_PREFIXES tuple from threat_detection
-_INTERNAL_PREFIXES = (
-    "10.",
-    "192.168.",
-    "172.16.",
-    "172.17.",
-    "172.18.",
-    "172.19.",
-    "172.20.",
-    "172.21.",
-    "172.22.",
-    "172.23.",
-    "172.24.",
-    "172.25.",
-    "172.26.",
-    "172.27.",
-    "172.28.",
-    "172.29.",
-    "172.30.",
-    "172.31.",
-)
-
-
-def _is_internal_ip(ip: str) -> bool:
-    """Check if an IP is RFC1918 private."""
-    return ip.startswith(_INTERNAL_PREFIXES)
+# OLD CODE START — NET-209: only the internal-port boost used these
+# # Use the same INTERNAL_PREFIXES tuple from threat_detection
+# _INTERNAL_PREFIXES = (
+#     "10.",
+#     "192.168.",
+#     "172.16.",
+#     "172.17.",
+#     "172.18.",
+#     "172.19.",
+#     "172.20.",
+#     "172.21.",
+#     "172.22.",
+#     "172.23.",
+#     "172.24.",
+#     "172.25.",
+#     "172.26.",
+#     "172.27.",
+#     "172.28.",
+#     "172.29.",
+#     "172.30.",
+#     "172.31.",
+# )
+#
+#
+# def _is_internal_ip(ip: str) -> bool:
+#     """Check if an IP is RFC1918 private."""
+#     return ip.startswith(_INTERNAL_PREFIXES)
+# OLD CODE END
 
 
 def categorize_alert(signature: str) -> str:
@@ -777,48 +824,64 @@ def compute_trend(first_seen: str, last_seen: str, count: int) -> str:
         return "stable"
 
 
+# OLD CODE START — NET-209: keyed by the packet's source whatever the direction, so an internet
+# attacker's own inbound alerts made it an "active kill chain", and stages had no time order
+# def detect_kill_chains(alerts: list[dict]) -> list[dict]:
+#     """Find source IPs progressing through multiple kill chain stages.
+#
+#     Enhancement #2: If the same source IP triggers reconnaissance,
+#     then exploit, then malware/C2 — that's a kill chain, not three
+#     unrelated alerts.
+#     """
+#     by_src: dict[str, list[tuple[int, dict]]] = defaultdict(list)
+#     for a in alerts:
+#         stage = KILL_CHAIN_STAGES.get(a["category"])
+#         if stage:
+#             by_src[a["source_ip"]].append((stage, a))
+#
+#     chains = []
+#     for ip, staged_alerts in by_src.items():
+#         stages_seen = sorted(set(s for s, _ in staged_alerts))
+#         if len(stages_seen) >= 2:
+#             stage_names = []
+#             for s in stages_seen:
+#                 for cat, num in KILL_CHAIN_STAGES.items():
+#                     if num == s:
+#                         stage_names.append(
+#                             THREAT_CATEGORIES.get(cat, {}).get("label", cat)
+#                         )
+#                         break
+#
+#             chains.append(
+#                 {
+#                     "source_ip": ip,
+#                     "stages": stages_seen,
+#                     "stage_labels": stage_names,
+#                     "alert_count": len(staged_alerts),
+#                     "alerts": [a for _, a in staged_alerts],
+#                     "assessment": (
+#                         f"{ip} shows activity across {len(stages_seen)} attack stages "
+#                         f"({' → '.join(stage_names)}) — possible active intrusion."
+#                     ),
+#                 }
+#             )
+#
+#     chains.sort(key=lambda c: len(c["stages"]), reverse=True)
+#     return chains
+# OLD CODE END
+def _stage_label(stage: int) -> str:
+    cat = next((c for c, n in KILL_CHAIN_STAGES.items() if n == stage), "")
+    return THREAT_CATEGORIES.get(cat, {}).get("label", cat)
+
+
 def detect_kill_chains(alerts: list[dict]) -> list[dict]:
-    """Find source IPs progressing through multiple kill chain stages.
+    """Per LAN device: stages in order, ≤24 h apart, with its own traffic (THREAT-SCORING.md).
 
-    Enhancement #2: If the same source IP triggers reconnaissance,
-    then exploit, then malware/C2 — that's a kill chain, not three
-    unrelated alerts.
+    `alerts` are smart-alert groups read with_times=True: the chain runs over the findings'
+    real alert instants. Reputation hits and context make no stage; an attempt against a device
+    is at most reconnaissance or an exploit attempt; an internet address is never a chain.
     """
-    by_src: dict[str, list[tuple[int, dict]]] = defaultdict(list)
-    for a in alerts:
-        stage = KILL_CHAIN_STAGES.get(a["category"])
-        if stage:
-            by_src[a["source_ip"]].append((stage, a))
-
-    chains = []
-    for ip, staged_alerts in by_src.items():
-        stages_seen = sorted(set(s for s, _ in staged_alerts))
-        if len(stages_seen) >= 2:
-            stage_names = []
-            for s in stages_seen:
-                for cat, num in KILL_CHAIN_STAGES.items():
-                    if num == s:
-                        stage_names.append(
-                            THREAT_CATEGORIES.get(cat, {}).get("label", cat)
-                        )
-                        break
-
-            chains.append(
-                {
-                    "source_ip": ip,
-                    "stages": stages_seen,
-                    "stage_labels": stage_names,
-                    "alert_count": len(staged_alerts),
-                    "alerts": [a for _, a in staged_alerts],
-                    "assessment": (
-                        f"{ip} shows activity across {len(stages_seen)} attack stages "
-                        f"({' → '.join(stage_names)}) — possible active intrusion."
-                    ),
-                }
-            )
-
-    chains.sort(key=lambda c: len(c["stages"]), reverse=True)
-    return chains
+    return alert_findings.kill_chains(alerts, KILL_CHAIN_STAGES.get, _stage_label)
 
 
 def generate_assessment(
@@ -1097,6 +1160,8 @@ def _save_baselines(data: dict) -> None:
 _MIN_BASELINE_HOURS = (
     6  # earlier hours of the same window length before a deviation is shown
 )
+# NET-209: snapshots count only alerts that score; older ones are dropped on read
+_BASELINE_METRIC = "counted-v2"
 
 
 def update_baseline(
@@ -1118,10 +1183,19 @@ def update_baseline(
 
     with _BASELINE_LOCK:
         # Per-request points from before #95 have no "hour" and are dropped
+        # OLD CODE START — NET-209: snapshots of the old event count (every alert) mixed with the new
+        # history = [
+        #     h
+        #     for h in _load_baselines().get("history", [])
+        #     if "hour" in h and h["hour"] >= hours_kept_from
+        # ]
+        # OLD CODE END
         history = [
             h
             for h in _load_baselines().get("history", [])
-            if "hour" in h and h["hour"] >= hours_kept_from
+            if "hour" in h
+            and h["hour"] >= hours_kept_from
+            and h.get("metric") == _BASELINE_METRIC
         ]
         same_window = [h for h in history if h.get("window_hours") == window]
         earlier = [h for h in same_window if h["hour"] != hour]
@@ -1130,6 +1204,7 @@ def update_baseline(
         ):  # nothing recorded for this hour yet
             snapshot = {
                 "hour": hour,
+                "metric": _BASELINE_METRIC,
                 "window_hours": window,
                 "events_per_hour": rate,
                 "threat_score": current_summary.get("threat_score", 0),
@@ -1264,13 +1339,26 @@ def _all_composite_buckets(client, query: dict) -> list[dict]:
         #     return None if page == 0 else buckets
         # OLD CODE END
         result = client.search(index=NETWORK_INDEX, body=body)
-        agg = result.get("aggregations", {}).get("grouped", {})
-        buckets.extend(agg.get("buckets", []))
-        after = agg.get("after_key")
-        if not after or len(agg.get("buckets", [])) < composite["size"]:
+        # OLD CODE START — NET-209: a timed-out, partly failed or malformed page read as fewer
+        # (or no) threats, and the page cap returned a partial list
+        # agg = result.get("aggregations", {}).get("grouped", {})
+        # buckets.extend(agg.get("buckets", []))
+        # after = agg.get("after_key")
+        # if not after or len(agg.get("buckets", [])) < composite["size"]:
+        #     return buckets
+        # OLD CODE END
+        agg = checked(result, "smart alerts", ("grouped",))["aggregations"]["grouped"]
+        got, after = agg.get("buckets"), agg.get("after_key")
+        if not isinstance(got, list) or (len(got) >= composite["size"] and not after):
+            raise QueryFailed("smart alerts: malformed page")
+        buckets.extend(got)
+        if not after or len(got) < composite["size"]:
             return buckets
-    logger.warning("Smart alerts stopped at %d groups", len(buckets))
-    return buckets
+    # OLD CODE START — NET-209: see above
+    # logger.warning("Smart alerts stopped at %d groups", len(buckets))
+    # return buckets
+    # OLD CODE END
+    raise QueryFailed(f"smart alerts: stopped at {len(buckets)} groups")
 
 
 def get_smart_alerts(
@@ -1281,10 +1369,15 @@ def get_smart_alerts(
     include_info: bool = False,
     limit: int | None = 50,
     excluded_ips: list[dict] | None = None,
+    lan_cidrs: list[str] | None = None,
+    with_times: bool = False,
 ) -> list[dict]:
     """Get deduplicated, reclassified, grouped alerts with full context.
 
-    limit=None returns every group (the summary totals need all of them).
+    limit=None returns every group (the summary totals need all of them). `lan_cidrs` is the
+    daemon's LAN rule (RFC 1918 when None); each group's `findings` say which device each of its
+    alerts concerns and whether it was that device's own traffic (NET-209). `with_times` keeps the
+    findings' occurrence lists, which the kill chains need and the API never sends.
     """
 
     filters = [
@@ -1408,6 +1501,10 @@ def get_smart_alerts(
     # OLD CODE END
     # OLD CODE: buckets = _all_composite_buckets(client, query) (NET-191: one partition per query)
     buckets = [(b, False) for b in _all_composite_buckets(client, query)]
+    is_lan = alert_findings.lan_test(lan_cidrs)
+    findings_map = _counted_findings(
+        client, bool_clause, [b for b, _a in buckets], lan_cidrs, is_lan, from_ts, to_ts
+    )
     if include_info:
         activity_bool = {
             "filter": [*filters, ET_ACTIVITY_CLAUSE],
@@ -1462,22 +1559,86 @@ def get_smart_alerts(
         original_severity = alert_data.get("severity", 3)
         category_raw = alert_data.get("category", "Unknown")
 
-        check_ip = device_ip or src_ip
-        if sig_id and is_suppressed(sig_id, check_ip):
+        # OLD CODE START — NET-209: a per-device suppression matched only the packet's source, so
+        # suppressing a signature on an attacked device never hid the attempts against it
+        # check_ip = device_ip or src_ip
+        # if sig_id and is_suppressed(sig_id, check_ip):
+        #     continue
+        # OLD CODE END
+        found = (
+            findings_map.get(
+                (
+                    bucket["key"].get("sig_name"),
+                    bucket["key"].get("src_ip"),
+                    bucket["key"].get("dst_ip"),
+                )
+            )
+            or []
+        )
+        if sig_id and is_suppressed(sig_id, device_ip):
             continue
+        if sig_id and not found and is_suppressed(sig_id, src_ip):
+            continue  # no LAN device: as before, by the packet's source
+        findings = [
+            f for f in found if not (sig_id and is_suppressed(sig_id, f["device"]))
+        ]
+        if found and not findings:
+            continue  # suppressed on every device it concerns
 
-        # Get destination port for severity boosting
+        # OLD CODE: # Get destination port for severity boosting (NET-209: shown only)
         dst_port = None
         dst_obj = sample_src.get("destination")
         if isinstance(dst_obj, dict):
             dst_port = dst_obj.get("port")
 
+        # OLD CODE START — NET-209: ET's own signature_severity was never read
+        # new_severity = reclassify_severity(
+        #     signature, original_severity, dst_port, dst_ip
+        # )
+        # OLD CODE END
+        et_meta = ((sample_src.get("suricata") or {}).get("alert") or {}).get(
+            "metadata"
+        ) or {}
         new_severity = reclassify_severity(
-            signature, original_severity, dst_port, dst_ip
+            signature, original_severity, et_severity=et_meta.get("signature_severity")
         )
         # Activity is informational whatever its prefix or port: never boosted, never scored
         if activity:
             new_severity = _INFO_SEVERITY
+
+        # NET-209: each finding's own severity; a reputation hit counts only as the device's own traffic
+        reputation = alert_findings.is_reputation(signature)
+        findings = [
+            {
+                **f,
+                "severity": _INFO_SEVERITY
+                if activity
+                else alert_findings.finding_severity(new_severity, f, reputation),
+            }
+            for f in findings
+        ]
+        if reputation and not activity:
+            # OLD CODE START — deep-review: an unknown opener (an open connection) hid the group
+            # new_severity = min(
+            #     [f["severity"] for f in findings if f["own"]], default=_INFO_SEVERITY
+            # )
+            # OLD CODE END
+            # review F4: with no LAN party (a subnet outside the LAN rule, IPv6) nobody can be
+            # charged, so it stays listed at medium rather than vanishing
+            new_severity = (
+                min([f["severity"] for f in findings], default=_INFO_SEVERITY)
+                if found
+                else max(new_severity, alert_findings.REPUTATION_OWN_SEVERITY)
+            )
+        # alerts no device was charged with (no LAN party, or unattributed); suppressed ones are not
+        unattributed = max(0, count - sum(f["count"] for f in found))
+        counted_events = (
+            0
+            if new_severity >= _INFO_SEVERITY
+            else sum(f["count"] for f in findings if f["severity"] < _INFO_SEVERITY)
+            # OLD CODE: + (0 if reputation else unattributed) (review F4)
+            + (0 if reputation and found else unattributed)
+        )
 
         if new_severity >= _INFO_SEVERITY and not include_info:
             continue
@@ -1522,11 +1683,72 @@ def get_smart_alerts(
                     "source_ip": bucket["key"].get("src_ip"),
                     "destination_ip": bucket["key"].get("dst_ip"),
                 },
+                # NET-209: whether it was a device's own traffic; findings name the device
+                # OLD CODE START — review: the packet's LAN side, not the charged device (a proxy)
+                # "lan_device": src_ip
+                # if is_lan(src_ip)
+                # else (dst_ip if is_lan(dst_ip) else None),
+                # OLD CODE END
+                "own_traffic": any(f["own"] for f in findings),
+                "reputation": reputation,
+                "findings": findings,
+                "unattributed": unattributed,
+                # the alerts that count: each in exactly one finding, demoted ones left out
+                "counted_events": counted_events,
             }
         )
 
     groups.sort(key=lambda g: (g["severity"], -g["count"]))
-    return groups[:limit]
+    # OLD CODE: return groups[:limit] (NET-209: occurrence lists stay out of API replies)
+    return (
+        groups[:limit]
+        if with_times
+        else [alert_findings.public(g) for g in groups[:limit]]
+    )
+
+
+def _counted_findings(
+    client,
+    bool_clause: dict,
+    buckets: list[dict],
+    lan_cidrs: list[str] | None,
+    is_lan,
+    from_ts: str,
+    to_ts: str,
+) -> dict[tuple, list[dict]]:
+    """Per (rule, src, dst) group: its findings, one alert instant at a time (NET-209)."""
+    if not buckets:
+        return {}
+    from services.excluded_ips import RFC1918_CIDRS
+
+    cidrs = lan_cidrs or RFC1918_CIDRS
+    instants = alert_findings.alert_instants(client, NETWORK_INDEX, bool_clause, cidrs)
+    cids = sorted(
+        {i["cid"] for i in instants if i["cid"] and is_lan(i["dst"])}
+    )  # only alerts toward a LAN address need their opener
+    spans = (
+        alert_findings.connection_spans(client, NETWORK_INDEX, cids, from_ts, to_ts)
+        if cids
+        else {}
+    )
+    client_targets = {}
+    for b in buckets:
+        hits = b.get("sample", {}).get("hits", {}).get("hits", [])
+        meta = (
+            ((hits[0].get("_source", {}).get("suricata") or {}).get("alert") or {}).get(
+                "metadata"
+            )
+            or {}
+            if hits
+            else {}
+        )
+        client_targets[b["key"].get("sig_name")] = alert_findings.client_only_target(
+            meta.get("attack_target")
+        )
+    settled_before = int(time.time() * 1000) - alert_findings.SETTLE_MS
+    return alert_findings.findings_by_group(
+        instants, spans, client_targets, is_lan, settled_before
+    )
 
 
 def get_smart_alert_summary(
@@ -1535,8 +1757,13 @@ def get_smart_alert_summary(
     to_ts: str,
     device_ip: str | None = None,
     excluded_ips: list[dict] | None = None,
+    lan_cidrs: list[str] | None = None,
 ) -> dict:
-    """Get high-level threat summary with kill chains and baseline deviation."""
+    """Get high-level threat summary with kill chains and baseline deviation.
+
+    NET-209 (Debugging/THREAT-SCORING.md): the score is per finding (signature × device), an
+    attempt against a device weighs at most low, and only alerts that score are "events".
+    """
     # OLD CODE START — replaced 2026-11-01: totals came from the top 200 groups only, and
     # the hidden informational alerts were not counted, so "394 total" sat next to "2.2K"
     # alerts = await get_smart_alerts(
@@ -1552,10 +1779,18 @@ def get_smart_alert_summary(
         include_info=True,
         limit=None,
         excluded_ips=excluded_ips,
+        lan_cidrs=lan_cidrs,
+        with_times=True,
     )
     alerts = [a for a in every_group if a["severity"] < _INFO_SEVERITY]
-    informational_events = sum(
-        a["count"] for a in every_group if a["severity"] >= _INFO_SEVERITY
+    # OLD CODE START — NET-209: demoted alerts inside a counted group (blocklist hits the device
+    # did not start) were counted as needing attention
+    # informational_events = sum(
+    #     a["count"] for a in every_group if a["severity"] >= _INFO_SEVERITY
+    # )
+    # OLD CODE END
+    informational_events = sum(a["count"] for a in every_group) - sum(
+        a["counted_events"] for a in alerts
     )
 
     if not alerts:
@@ -1571,14 +1806,16 @@ def get_smart_alert_summary(
             "baseline": None,
         }
 
-    total_events = sum(a["count"] for a in alerts)
+    # OLD CODE: total_events = sum(a["count"] for a in alerts) (NET-209: only alerts that score)
+    total_events = sum(a["counted_events"] for a in alerts)
 
     # Category breakdown
     cat_counts: dict[str, int] = defaultdict(int)
     cat_events: dict[str, int] = defaultdict(int)
     for a in alerts:
         cat_counts[a["category"]] += 1
-        cat_events[a["category"]] += a["count"]
+        # OLD CODE: cat_events[a["category"]] += a["count"] (NET-209)
+        cat_events[a["category"]] += a["counted_events"]
 
     categories = {}
     for cat_key in cat_counts:
@@ -1590,19 +1827,26 @@ def get_smart_alert_summary(
         }
 
     # Threat score
-    SEVERITY_WEIGHTS = {1: 10, 2: 5, 3: 2, 4: 0.5, 5: 0}
-    raw_score = sum(SEVERITY_WEIGHTS.get(a["severity"], 0) for a in alerts)
+    # OLD CODE START — NET-209: every (signature, source, destination) group scored, so each
+    # internet scanner address added points, and an attempt weighed like a compromise
+    # SEVERITY_WEIGHTS = {1: 10, 2: 5, 3: 2, 4: 0.5, 5: 0}
+    # raw_score = sum(SEVERITY_WEIGHTS.get(a["severity"], 0) for a in alerts)
+    # OLD CODE END
+    raw_score = _finding_points(alerts)
     threat_score = min(100, int(raw_score))
 
-    threat_level = "none"
-    if threat_score >= 75:
-        threat_level = "critical"
-    elif threat_score >= 50:
-        threat_level = "high"
-    elif threat_score >= 25:
-        threat_level = "medium"
-    elif threat_score > 0:
-        threat_level = "low"
+    # OLD CODE START — NET-209 review: the same bands as _score_level, which the bonus now reuses
+    # threat_level = "none"
+    # if threat_score >= 75:
+    #     threat_level = "critical"
+    # elif threat_score >= 50:
+    #     threat_level = "high"
+    # elif threat_score >= 25:
+    #     threat_level = "medium"
+    # elif threat_score > 0:
+    #     threat_level = "low"
+    # OLD CODE END
+    threat_level = _score_level(threat_score)
 
     # Kill chain detection
     kill_chains = detect_kill_chains(alerts)
@@ -1630,10 +1874,13 @@ def get_smart_alert_summary(
     # Boost threat score if baseline deviation is anomalous
     if baseline and baseline.get("is_anomalous") and threat_score < 75:
         threat_score = min(100, threat_score + 15)
-        if threat_score >= 75:
-            threat_level = "critical"
-        elif threat_score >= 50:
-            threat_level = "high"
+        # OLD CODE START — NET-209 review: only high and critical were re-derived, so 0 + 15 read "none"
+        # if threat_score >= 75:
+        #     threat_level = "critical"
+        # elif threat_score >= 50:
+        #     threat_level = "high"
+        # OLD CODE END
+        threat_level = _score_level(threat_score)
 
     # The level never exceeds the worst alert present: on the G11, 48 groups of
     # high/medium alerts summed to 100 and the Alerts page read "CRITICAL" with 0 critical
@@ -1646,7 +1893,43 @@ def get_smart_alert_summary(
         "total_events": total_events,
         "informational_events": informational_events,
         "categories": categories,
-        "top_threats": alerts[:5],
+        # OLD CODE: "top_threats": alerts[:5], (NET-209: without the occurrence lists)
+        "top_threats": [alert_findings.public(a) for a in alerts[:5]],
         "kill_chains": kill_chains,
         "baseline": baseline,
     }
+
+
+# Points per finding on the Threats page: unchanged from before NET-209
+SEVERITY_WEIGHTS = {1: 10, 2: 5, 3: 2, 4: 0.5, 5: 0}
+
+
+def _score_level(score: int) -> str:
+    """The level for a threat score: 75+ critical, 50+ high, 25+ medium, above 0 low."""
+    for floor, level in ((75, "critical"), (50, "high"), (25, "medium"), (1, "low")):
+        if score >= floor:
+            return level
+    return "none"
+
+
+def _finding_points(groups: list[dict]) -> float:
+    """Each (signature, device) once at its highest weight; an attempt weighs at most low.
+
+    Alerts no device was charged with keep the old (signature, source, destination) key;
+    reputation hits never do (THREAT-SCORING.md, "Threats page threat score").
+    """
+    best: dict[tuple, float] = {}
+    for g in groups:
+        for f in g.get("findings") or []:
+            if f["severity"] >= _INFO_SEVERITY:
+                continue
+            weight = SEVERITY_WEIGHTS[f["severity"]]
+            if not f["own"]:
+                weight = min(weight, alert_findings.ATTEMPT_MAX_WEIGHT)
+            key = (g["signature"], f["device"])
+            best[key] = max(best.get(key, 0), weight)
+        # OLD CODE: if g.get("unattributed") and not g.get("reputation"): (review F4)
+        if g.get("unattributed") and not (g.get("reputation") and g.get("findings")):
+            key = (g["signature"], g["source_ip"], g["destination_ip"])
+            best[key] = max(best.get(key, 0), SEVERITY_WEIGHTS[g["severity"]])
+    return sum(best.values())

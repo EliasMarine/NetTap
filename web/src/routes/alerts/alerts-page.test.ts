@@ -500,7 +500,8 @@ describe('Alerts — card states', () => {
 		// NET-164: the ring states its scale, and the card says how the score is worked out
 		expect(screen.getByText('of 100')).toBeInTheDocument();
 		expect(screen.queryByText('threat score')).not.toBeInTheDocument();
-		expect(screen.getByText(/rounded down and capped at 100/)).toHaveTextContent(THREAT_SCORE_HOW);
+		// OLD CODE: expect(screen.getByText(/rounded down and capped at 100/)).toHaveTextContent(THREAT_SCORE_HOW); (NET-209: new wording)
+		expect(screen.getByText(/Rounded down and capped at 100/)).toHaveTextContent(THREAT_SCORE_HOW);
 		expect(screen.getByText('Malware / C2')).toBeInTheDocument();
 		// NET-160: every 192.168.1.42 link (top affected devices, the table) goes to its device page
 		const links = screen.getAllByRole('link', { name: '192.168.1.42' });

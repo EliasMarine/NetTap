@@ -160,8 +160,14 @@ def _composite(docs: list, body: dict, sub: dict) -> dict:
     for doc in docs:
         per_source = []
         for source in body["sources"]:
-            spec = next(iter(source.values()))["terms"]
+            # OLD CODE: spec = next(iter(source.values()))["terms"] (NET-209: + date_histogram)
+            ((kind, spec),) = next(iter(source.values())).items()
             found = list(dict.fromkeys(values(doc, spec["field"])))
+            if (
+                kind == "date_histogram"
+            ):  # fixed_interval in minutes ("1m"), keyed by epoch ms
+                step = int(spec["fixed_interval"].rstrip("m")) * 60_000
+                found = list(dict.fromkeys(epoch_ms(v) // step * step for v in found))
             per_source.append(found or ([None] if spec.get("missing_bucket") else []))
         for key in itertools.product(*per_source):
             groups.setdefault(key, []).append(doc)

@@ -36,6 +36,7 @@
 	import StackBar from '$lib/components/ui/charts/StackBar.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import IPAddress from '$components/IPAddress.svelte';
+	import { ipHref } from '$lib/stores/lan';
 	import { formatTime } from '$lib/utils/time';
 	import { DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown';
 
@@ -196,7 +197,10 @@
 		// return `Suricata generated ${formatNumber(summary?.total_events ?? 0)} alert events. NetTap found ${invCount} investigation${invCount !== 1 ? 's' : ''}.`;
 		// OLD CODE END
 		const info = summary?.informational_events ?? 0;
-		const notCounted = info > 0 ? ` · ${formatNumber(info)} informational not counted` : '';
+		// OLD CODE START — NET-209: the figure now also holds context categories and blocklist hits devices did not start
+		// const notCounted = info > 0 ? ` · ${formatNumber(info)} informational not counted` : '';
+		// OLD CODE END
+		const notCounted = info > 0 ? ` · ${formatNumber(info)} not counted` : '';
 		return `${formatNumber(summary?.total_events ?? 0)} alert events need attention${notCounted}. NetTap found ${invCount} investigation${invCount !== 1 ? 's' : ''}.`;
 	});
 
@@ -624,9 +628,10 @@
 							</ol>
 							<p class="kc-text">{kc.assessment}</p>
 							<div class="actions">
-								<button class="btn primary" type="button" onclick={() => goto(`/devices/${encodeURIComponent(kc.source_ip)}`)}
-									>Investigate device</button
-								>
+								<!-- OLD CODE START — NET-209: an internet source has no device page; ipHref picks device or address
+								onclick={() => goto(`/devices/${encodeURIComponent(kc.source_ip)}`)}
+								OLD CODE END -->
+								<button class="btn primary" type="button" onclick={() => goto($ipHref(kc.source_ip))}>Investigate device</button>
 								<button class="btn" type="button" onclick={() => goto(`/connections?ip=${encodeURIComponent(kc.source_ip)}`)}>View connections</button>
 							</div>
 						</section>

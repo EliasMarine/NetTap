@@ -212,6 +212,7 @@ async def generate_threat_report(
     to_ts: str,
     excluded_ips: list[str] | None = None,
     beaconing: list[dict] | None = None,
+    lan_cidrs: list[str] | None = None,
 ) -> dict:
     """Unified threat report — the single API call that powers the /threats page.
 
@@ -270,8 +271,14 @@ async def generate_threat_report(
         if not (name == "beaconing" and beaconing is not None)
     }
     try:
-        summary = get_smart_alert_summary(client, from_ts, to_ts)
-        alerts = get_smart_alerts(client, from_ts, to_ts, include_info=False, limit=200)
+        # OLD CODE START — NET-209: the LAN rule decides which device each alert concerns
+        # summary = get_smart_alert_summary(client, from_ts, to_ts)
+        # alerts = get_smart_alerts(client, from_ts, to_ts, include_info=False, limit=200)
+        # OLD CODE END
+        summary = get_smart_alert_summary(client, from_ts, to_ts, lan_cidrs=lan_cidrs)
+        alerts = get_smart_alerts(
+            client, from_ts, to_ts, include_info=False, limit=200, lan_cidrs=lan_cidrs
+        )
     except BaseException:
         await asyncio.gather(*running.values(), return_exceptions=True)
         raise

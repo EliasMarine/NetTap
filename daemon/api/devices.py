@@ -18,6 +18,7 @@ from typing import Any
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.drilldown_runner import lan_check
 from api.offload import in_thread, run_blocking
 from api.time_range import _utc, iso_param, parse_time_range
 from storage.all_buckets import PAGE_SIZE, all_buckets
@@ -924,6 +925,9 @@ def handle_device_detail(request: web.Request) -> web.Response:
     destinations, DNS queries, and bandwidth time-series.
     """
     ip = request.match_info["ip"]
+    # NET-209: an internet address is never a device; checked before any search or fingerprint
+    if not lan_check(request.app)(ip):
+        return web.json_response({"error": f"{ip} is not on your network"}, status=404)
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
     fingerprint = _get_fingerprint(request)

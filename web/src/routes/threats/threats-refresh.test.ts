@@ -161,7 +161,8 @@ describe('Threats page — card states', () => {
 		}
 
 		await fireEvent.click(screen.getByRole('button', { name: 'Investigate device' }));
-		expect(goto).toHaveBeenCalledWith('/devices/192.168.1.42');
+		// OLD CODE: expect(goto).toHaveBeenCalledWith('/devices/192.168.1.42'); (NET-209: the LAN-aware link; no LAN policy loads here, so the address page, which offers the device page)
+		expect(goto).toHaveBeenCalledWith('/address/192.168.1.42');
 		await fireEvent.click(screen.getByRole('button', { name: 'View connections' }));
 		expect(goto).toHaveBeenCalledWith('/connections?ip=192.168.1.42');
 
@@ -275,12 +276,13 @@ describe('Threats page — refresh contract', () => {
 
 // Accuracy audit 2026-11-06
 describe('Threats page — what the figures count', () => {
-	it('says the alert events need attention and how many informational ones are left out (I8)', async () => {
+	// OLD CODE: it('says the alert events need attention and how many informational ones are left out (I8)', … '83.5K informational not counted' (NET-209: the figure also holds context and blocklist hits)
+	it('says the alert events need attention and how many are not counted (I8, NET-209)', async () => {
 		vi.mocked(getThreatReport).mockResolvedValue({ ...FULL, summary: { ...FULL.summary, informational_events: 83_490 } });
 		vi.mocked(getThreatIntel).mockResolvedValue(INTEL);
 		render(ThreatsPage);
 		await vi.waitFor(() =>
-			expect(screen.getByText('1.5K alert events need attention · 83.5K informational not counted. NetTap found 2 investigations.')).toBeInTheDocument(),
+			expect(screen.getByText('1.5K alert events need attention · 83.5K not counted. NetTap found 2 investigations.')).toBeInTheDocument(),
 		);
 		expect(screen.queryByText(/Suricata generated/)).not.toBeInTheDocument();
 	});

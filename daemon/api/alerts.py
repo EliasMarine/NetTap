@@ -2104,6 +2104,7 @@ def handle_smart_alerts(request: web.Request) -> web.Response:
     # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
     # OLD CODE END
 
+    from api.drilldown_runner import lan_cidrs
     from services.alert_intelligence import get_smart_alerts
 
     try:
@@ -2127,6 +2128,7 @@ def handle_smart_alerts(request: web.Request) -> web.Response:
             # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
             # excluded_ips=excluded,
             # OLD CODE END
+            lan_cidrs=lan_cidrs(request.app),
         )
     except Exception as exc:
         logger.error("Smart alerts query failed: %s", exc)
@@ -2154,6 +2156,7 @@ def handle_smart_alert_summary(request: web.Request) -> web.Response:
     # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
     # OLD CODE END
 
+    from api.drilldown_runner import lan_cidrs
     from services.alert_intelligence import get_smart_alert_summary
 
     try:
@@ -2165,6 +2168,7 @@ def handle_smart_alert_summary(request: web.Request) -> web.Response:
             from_ts,
             to_ts,
             device_ip,
+            lan_cidrs=lan_cidrs(request.app),
         )
     except Exception as exc:
         logger.error("Smart alert summary failed: %s", exc)

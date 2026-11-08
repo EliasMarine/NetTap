@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, fireEvent } from '@testing-library/svelte';
+import { goto } from '$app/navigation';
 import ThreatsPage from './+page.svelte';
 import { LAN_POLICY } from '../../../e2e/visual/fixtures/drilldown';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
+
+vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 // #96: a failed detector returned [] and the page said "No beaconing patterns detected"; a
 // failed report request was replaced with an all-zero report reading threat level "none".
@@ -91,6 +94,23 @@ describe('Threats page', () => {
 		await vi.waitFor(() => expect(screen.getByRole('link', { name: '198.51.100.7' })).toHaveAttribute('href', '/address/198.51.100.7'));
 		await vi.waitFor(() => expect(screen.getByRole('link', { name: '192.168.1.66' })).toHaveAttribute('href', '/devices/192.168.1.66'));
 		expectNoNestedInteractive(container);
+	});
+
+	// NET-209: an internet source has no device page, so its kill chain opens the address page
+	it("sends a kill chain's Investigate device to the address page for an internet source", async () => {
+		const chain = (ip: string) => ({ source_ip: ip, stages: [1, 3], stage_labels: [], alert_count: 4, assessment: `Chain from ${ip}` });
+		stubDaemon({
+			'/api/threats/report': { ...REPORT, kill_chains: [chain('91.92.40.12'), chain('192.168.1.66')], failed_checks: [], incomplete_checks: [] },
+			'/api/network/lan': LAN_POLICY,
+		});
+		render(ThreatsPage);
+		// the lateral movement link shows the LAN policy has loaded
+		await vi.waitFor(() => expect(screen.getByRole('link', { name: '192.168.1.66' })).toHaveAttribute('href', '/devices/192.168.1.66'));
+		const [internet, lan] = screen.getAllByRole('button', { name: 'Investigate device' });
+		await fireEvent.click(internet);
+		expect(goto).toHaveBeenLastCalledWith('/address/91.92.40.12');
+		await fireEvent.click(lan);
+		expect(goto).toHaveBeenLastCalledWith('/devices/192.168.1.66');
 	});
 
 	it('says a failed auto-investigation failed instead of hiding it', async () => {
