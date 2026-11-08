@@ -14,6 +14,8 @@ NetTap is a self-hosted network monitor for homes and small businesses. Put it o
 
 > **Pre-release.** No version has been tagged yet. It runs on test hardware, but expect rough edges.
 
+**New here?** The [setup guide](docs/getting-started/setup-guide.md) walks you through everything from choosing hardware to a dashboard full of live data.
+
 ## What you get
 
 - **Devices**: every device on the network, with its traffic, alerts and a risk score
