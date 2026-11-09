@@ -69,6 +69,8 @@ export interface ProtocolsResponse {
 	encryption?: { eligible: number; encrypted: number };
 	/** Plain DNS lookups (mDNS/LLMNR left out) and DNS-over-TLS connections (#86) */
 	dns?: { plain: number; over_tls: number };
+	/** The `unknown` service split three ways; they add up to it (NET-219) */
+	unidentified?: { conversations: number; one_way: number; icmp: number };
 }
 
 export interface BandwidthPoint {

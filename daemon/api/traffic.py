@@ -24,12 +24,14 @@ from services.excluded_ips import build_excluded_ips_filter, valid_excluded_ips
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
 from services.iot_monitor import (
     ENCRYPTED_CONN_FILTER,
+    ICMP_TRANSPORTS,
     LOCAL_CHATTER_EXCLUSION,
     NO_PAYLOAD_PROTOCOLS,
 )
 from services import traffic_classifier
 from services.traffic_classifier import get_category_stats
 from storage.manager import StorageManager
+from storage.snapshot_search import QueryFailed, checked
 from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.api.traffic")
@@ -57,6 +59,76 @@ _CONN_STATE_CODES = {
     "rejected": ["REJ", "RSTR", "RSTO"],
     "timeout": ["S0"],
 }
+
+
+# NET-219: Home's "Unidentified" bar. The unlabelled connections, split by what was observed:
+# ICMP (pings and network notices), and "one way" = both payload counters present and one of
+# them 0. A connection whose counters are missing isn't shown to be one-way, so it stays.
+_ICMP_FILTER = {"terms": {"network.transport": ICMP_TRANSPORTS}}
+_PAYLOAD_FIELDS = ("zeek.conn.orig_bytes", "zeek.conn.resp_bytes")
+_UNLABELLED_AGG = {
+    "filter": {"bool": {"must_not": [{"exists": {"field": "network.protocol"}}]}},
+    "aggs": {
+        "icmp": {"filter": _ICMP_FILTER},
+        "one_way": {
+            "filter": {
+                "bool": {
+                    "filter": [{"exists": {"field": f}} for f in _PAYLOAD_FIELDS],
+                    "should": [{"range": {f: {"lte": 0}}} for f in _PAYLOAD_FIELDS],
+                    "minimum_should_match": 1,
+                    "must_not": [_ICMP_FILTER],
+                }
+            }
+        },
+    },
+}
+# A QUIC connection carries two labels, quic and ssl. Exact counts (terms buckets can be
+# approximate or missing) replace the quic, ssl and unknown entries, so QUIC counts once.
+_QUIC = {"term": {"network.protocol": "quic"}}
+_EXACT_SERVICE_AGGS = {
+    "quic": {"filter": _QUIC},
+    "ssl_only": {
+        "filter": {
+            "bool": {
+                "filter": [{"term": {"network.protocol": "ssl"}}],
+                "must_not": [_QUIC],
+            }
+        }
+    },
+    "unlabelled": _UNLABELLED_AGG,
+}
+
+
+def _services_and_unidentified(aggs: dict) -> tuple[list[dict], dict]:
+    """The service list with exact quic/ssl/unknown counts, and the unknown count's split."""
+    unlabelled = aggs["unlabelled"]
+    total = unlabelled["doc_count"]
+    icmp = unlabelled["icmp"]["doc_count"]
+    one_way = unlabelled["one_way"]["doc_count"]
+    exact = {
+        "quic": aggs["quic"]["doc_count"],
+        "ssl": aggs["ssl_only"]["doc_count"],
+        "unknown": total,
+    }
+    # shortcut: other multi-label connections (about 48 a day on the G11, e.g. ssl,http) still
+    # count once per label; only a per-document script fixes that, on every Home load
+    counts = {
+        b["key"]: b["doc_count"]
+        for b in aggs["by_service"].get("buckets", [])
+        if b["key"] not in exact
+    }
+    counts.update(exact)
+    services = sorted(
+        ({"name": name, "count": n} for name, n in counts.items() if n > 0),
+        key=lambda s: -s["count"],
+    )
+    unidentified = {
+        # icmp and one_way are disjoint sub-filters of the same set, so this is never negative
+        "conversations": total - icmp - one_way,
+        "one_way": one_way,
+        "icmp": icmp,
+    }
+    return services, unidentified
 
 
 # ---------------------------------------------------------------------------
@@ -476,24 +548,42 @@ def handle_protocols(request: web.Request) -> web.Response:
                 }
             },
             "dns_over_tls": {"filter": {"term": {"destination.port": 853}}},
+            **_EXACT_SERVICE_AGGS,
         },
     }
 
+    # OLD CODE START — NET-219: an incomplete search (timeout, failed shards) read as zeros
+    # try:
+    #     result = client.search(index=NETWORK_INDEX, body=query)
+    # except OpenSearchException as exc:
+    # OLD CODE END
     try:
-        result = client.search(index=NETWORK_INDEX, body=query)
+        result = checked(
+            client.search(index=NETWORK_INDEX, body=query),
+            "protocol distribution",
+            tuple(query["aggs"]),
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/protocols: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
+    except QueryFailed as exc:
+        logger.warning("Protocol distribution: %s", exc)
+        return web.json_response(
+            {"error": "The protocol search was incomplete"}, status=502
+        )
 
     aggs = result.get("aggregations", {})
 
     proto_buckets = aggs.get("by_proto", {}).get("buckets", [])
-    service_buckets = aggs.get("by_service", {}).get("buckets", [])
+    # OLD CODE START — NET-219: terms buckets only; a QUIC connection counted under quic and ssl
+    # service_buckets = aggs.get("by_service", {}).get("buckets", [])
+    # OLD CODE END
 
     protocols = [{"name": b["key"], "count": b["doc_count"]} for b in proto_buckets]
-    services = [{"name": b["key"], "count": b["doc_count"]} for b in service_buckets]
+    # OLD CODE: services = [{"name": b["key"], "count": b["doc_count"]} for b in service_buckets]
+    services, unidentified = _services_and_unidentified(aggs)
 
     return web.json_response(
         {
@@ -501,6 +591,7 @@ def handle_protocols(request: web.Request) -> web.Response:
             "to": to_ts,
             "protocols": protocols,
             "services": services,
+            "unidentified": unidentified,
             "encryption": {
                 "eligible": aggs.get("encryption", {}).get("doc_count", 0),
                 "encrypted": aggs.get("encryption", {})

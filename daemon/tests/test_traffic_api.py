@@ -38,6 +38,39 @@ def _make_mock_storage():
     return storage, mock_client
 
 
+def _protocols_reply(
+    services=(),
+    quic=0,
+    ssl_only=0,
+    unlabelled=0,
+    icmp=0,
+    one_way=0,
+    **aggs,
+):
+    """A complete /api/traffic/protocols search reply; aggs overrides or adds aggregations."""
+    return {
+        "timed_out": False,
+        "_shards": {"total": 1, "successful": 1, "failed": 0},
+        "aggregations": {
+            "by_proto": {"buckets": []},
+            "by_service": {
+                "buckets": [{"key": k, "doc_count": n} for k, n in services]
+            },
+            "encryption": {"doc_count": 0, "encrypted": {"doc_count": 0}},
+            "dns_plain": {"doc_count": 0},
+            "dns_over_tls": {"doc_count": 0},
+            "quic": {"doc_count": quic},
+            "ssl_only": {"doc_count": ssl_only},
+            "unlabelled": {
+                "doc_count": unlabelled,
+                "icmp": {"doc_count": icmp},
+                "one_way": {"doc_count": one_way},
+            },
+            **aggs,
+        },
+    }
+
+
 class TestParseTimeRange(unittest.TestCase):
     """Tests for _parse_time_range helper."""
 
@@ -361,22 +394,15 @@ class TestProtocolsHandler(AioHTTPTestCase):
     @unittest_run_loop
     async def test_protocols_success(self):
         """Returns protocol and service distribution."""
-        self.mock_client.search.return_value = {
-            "aggregations": {
-                "by_proto": {
-                    "buckets": [
-                        {"key": "tcp", "doc_count": 5000},
-                        {"key": "udp", "doc_count": 2000},
-                    ]
-                },
-                "by_service": {
-                    "buckets": [
-                        {"key": "dns", "doc_count": 1500},
-                        {"key": "http", "doc_count": 1000},
-                    ]
-                },
-            }
-        }
+        self.mock_client.search.return_value = _protocols_reply(
+            services=[("dns", 1500), ("http", 1000)],
+            by_proto={
+                "buckets": [
+                    {"key": "tcp", "doc_count": 5000},
+                    {"key": "udp", "doc_count": 2000},
+                ]
+            },
+        )
 
         resp = await self.client.request("GET", "/api/traffic/protocols")
         self.assertEqual(resp.status, 200)
@@ -394,13 +420,11 @@ class TestProtocolsHandler(AioHTTPTestCase):
         could never rise above 0% (Zeek has no dns_over_tls service; DoT is ssl on 853)."""
         from services.iot_monitor import ENCRYPTED_CONN_FILTER, LOCAL_CHATTER_EXCLUSION
 
-        self.mock_client.search.return_value = {
-            "aggregations": {
-                "encryption": {"doc_count": 200, "encrypted": {"doc_count": 120}},
-                "dns_plain": {"doc_count": 90},
-                "dns_over_tls": {"doc_count": 10},
-            }
-        }
+        self.mock_client.search.return_value = _protocols_reply(
+            encryption={"doc_count": 200, "encrypted": {"doc_count": 120}},
+            dns_plain={"doc_count": 90},
+            dns_over_tls={"doc_count": 10},
+        )
         resp = await self.client.request("GET", "/api/traffic/protocols")
         data = await resp.json()
         self.assertEqual(data["encryption"], {"eligible": 200, "encrypted": 120})
@@ -417,6 +441,131 @@ class TestProtocolsHandler(AioHTTPTestCase):
         self.assertEqual(
             aggs["dns_over_tls"], {"filter": {"term": {"destination.port": 853}}}
         )
+
+
+class TestProtocolsUnidentified(AioHTTPTestCase):
+    """NET-219: Unidentified split by what was observed, and QUIC counted once."""
+
+    def setUp(self):
+        self.storage, self.mock_client = _make_mock_storage()
+        super().setUp()
+
+    async def get_application(self):
+        app = web.Application()
+        app["storage"] = self.storage
+        register_traffic_routes(app, self.storage)
+        return app
+
+    async def _get(self, reply):
+        self.mock_client.search.return_value = reply
+        resp = await self.client.request("GET", "/api/traffic/protocols")
+        return resp.status, await resp.json()
+
+    def _aggs(self):
+        return self.mock_client.search.call_args.kwargs["body"]["aggs"]
+
+    @unittest_run_loop
+    async def test_the_unknown_count_is_split_and_the_remainder_is_conversations(self):
+        status, data = await self._get(
+            _protocols_reply(
+                services=[("unknown", 999), ("dns", 50)],
+                unlabelled=1000,
+                icmp=100,
+                one_way=700,
+            )
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            data["unidentified"], {"conversations": 200, "one_way": 700, "icmp": 100}
+        )
+        # services keeps its meaning (Compliance adds it up), with the exact count
+        self.assertEqual(
+            data["services"],
+            [{"name": "unknown", "count": 1000}, {"name": "dns", "count": 50}],
+        )
+
+    @unittest_run_loop
+    async def test_quic_and_ssl_take_the_exact_counts_and_the_list_is_resorted(self):
+        # the ssl bucket counted QUIC too; quic fell outside the returned buckets
+        _, data = await self._get(
+            _protocols_reply(
+                services=[("ssl", 900), ("dns", 400), ("http", 100)],
+                quic=600,
+                ssl_only=300,
+            )
+        )
+        self.assertEqual(
+            data["services"],
+            [
+                {"name": "quic", "count": 600},
+                {"name": "dns", "count": 400},
+                {"name": "ssl", "count": 300},
+                {"name": "http", "count": 100},
+            ],
+        )
+
+    @unittest_run_loop
+    async def test_a_short_ssl_bucket_is_replaced_and_zero_entries_are_dropped(self):
+        _, data = await self._get(
+            _protocols_reply(
+                services=[("ssl", 10), ("quic", 5), ("unknown", 3)],
+                quic=40,
+                ssl_only=0,
+                unlabelled=0,
+            )
+        )
+        self.assertEqual(data["services"], [{"name": "quic", "count": 40}])
+
+    @unittest_run_loop
+    async def test_incomplete_searches_are_502_never_zeros(self):
+        timed_out = {**_protocols_reply(), "timed_out": True}
+        shards = {**_protocols_reply(), "_shards": {"total": 2, "failed": 1}}
+        missing = _protocols_reply()
+        del missing["aggregations"]["unlabelled"]
+        for reply in (timed_out, shards, missing):
+            status, data = await self._get(reply)
+            self.assertEqual(status, 502)
+            self.assertEqual(data, {"error": "The protocol search was incomplete"})
+
+    @unittest_run_loop
+    async def test_the_query_has_the_exact_filters(self):
+        await self._get(_protocols_reply())
+        aggs = self._aggs()
+        icmp = {"terms": {"network.transport": ["icmp", "icmp6", "ipv6-icmp"]}}
+        self.assertEqual(
+            aggs["quic"], {"filter": {"term": {"network.protocol": "quic"}}}
+        )
+        self.assertEqual(
+            aggs["ssl_only"]["filter"]["bool"],
+            {
+                "filter": [{"term": {"network.protocol": "ssl"}}],
+                "must_not": [{"term": {"network.protocol": "quic"}}],
+            },
+        )
+        unlabelled = aggs["unlabelled"]
+        self.assertEqual(
+            unlabelled["filter"],
+            {"bool": {"must_not": [{"exists": {"field": "network.protocol"}}]}},
+        )
+        self.assertEqual(unlabelled["aggs"]["icmp"], {"filter": icmp})
+        # one way only when BOTH counters exist and one is 0; missing counters stay unidentified
+        one_way = unlabelled["aggs"]["one_way"]["filter"]["bool"]
+        self.assertEqual(
+            one_way["filter"],
+            [
+                {"exists": {"field": "zeek.conn.orig_bytes"}},
+                {"exists": {"field": "zeek.conn.resp_bytes"}},
+            ],
+        )
+        self.assertEqual(
+            one_way["should"],
+            [
+                {"range": {"zeek.conn.orig_bytes": {"lte": 0}}},
+                {"range": {"zeek.conn.resp_bytes": {"lte": 0}}},
+            ],
+        )
+        self.assertEqual(one_way["minimum_should_match"], 1)
+        self.assertEqual(one_way["must_not"], [icmp])
 
 
 class TestBandwidthHandler(AioHTTPTestCase):
@@ -823,6 +972,7 @@ class TestBandwidthFiltersMatch(AioHTTPTestCase):
     async def test_protocol_counts_leave_out_what_the_connection_count_leaves_out(self):
         # Home's protocol total (516K) sat beside "Connections (24h)" (477K) on the G11
         summary = await self._api_body("/api/traffic/summary")
+        self.mock_client.search.return_value = _protocols_reply()
         protocols = await self._api_body("/api/traffic/protocols")
 
         self.assertEqual(
