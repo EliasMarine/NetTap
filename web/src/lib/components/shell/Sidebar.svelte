@@ -15,6 +15,8 @@
 		capture: CaptureChip;
 		/** Alerts in the last 24 hours (the same snapshot Home and Alerts show); null hides the badge. */
 		alertCount: number | null;
+		/** NET-228 (audit HON-49): the count couldn't be loaded, which must not read as zero (no badge) */
+		alertCountFailed?: boolean;
 		storage: StorageFoot | null;
 		username: string | null;
 		/** Called when a link is chosen, so the phone drawer can close. */
@@ -22,7 +24,8 @@
 		sidebarEl?: HTMLElement;
 	}
 
-	let { path, capture, alertCount, storage, username, onnavigate, sidebarEl = $bindable() }: Props = $props();
+	// OLD CODE: let { path, capture, alertCount, storage, username, onnavigate, sidebarEl = $bindable() }: Props = $props(); (NET-228: + alertCountFailed)
+	let { path, capture, alertCount, alertCountFailed = false, storage, username, onnavigate, sidebarEl = $bindable() }: Props = $props();
 </script>
 
 <nav class="sidebar" id="app-sidebar" aria-label="Main" bind:this={sidebarEl}>
@@ -51,7 +54,10 @@
 				>
 					<Icon name={item.icon} />
 					<span>{item.label}</span>
-					{#if item.href === '/alerts' && alertCount !== null && alertCount > 0}
+					{#if item.href === '/alerts' && alertCountFailed}
+						<span class="count unknown" aria-hidden="true">?</span>
+						<span class="sr-only">Couldn't load the alert count</span>
+					{:else if item.href === '/alerts' && alertCount !== null && alertCount > 0}
 						<!-- OLD CODE: {alertCount} (NET-192: printed "214000"; the sr-only line keeps the exact figure) -->
 						<span class="count" aria-hidden="true">{fitCount(alertCount)}</span>
 						<span class="sr-only">{alertCount} alerts in the last 24 hours</span>
@@ -92,6 +98,8 @@
 	.tone-medium { background: var(--sev-medium); }
 	.tone-high { background: var(--sev-high); }
 	.tone-muted { background: var(--text-3); }
+	/* a count that couldn't be loaded: muted, so it doesn't read as alerts */
+	.count.unknown { color: var(--text-2); background: var(--surface-3); }
 
 	.user form {
 		margin-left: auto;

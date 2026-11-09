@@ -494,3 +494,36 @@ class TestThresholdPercentRounding:
             "emergency_threshold_percent": 57,
         }
         assert "EMERGENCY_THRESHOLD_PERCENT=57" in env_file.read_text()
+
+
+class TestIlmFailureRecord:
+    """A15: a failure after a success must not leave the card on the success."""
+
+    def test_failure_keeps_the_last_success_and_says_why(self, tmp_path):
+        config_file = tmp_path / "retention.json"
+        mgr = RetentionConfigManager(
+            config_path=str(config_file), env_file=str(tmp_path / ".env")
+        )
+        mgr.load()
+        mgr.mark_ilm_applied({"nettap-hot-policy": "updated"})
+        success = mgr.get_ilm_status()["last_success"]
+
+        mgr.mark_ilm_failed("error: ConnectionError(Connection refused)")
+
+        status = mgr.get_ilm_status()
+        assert status["last_success"] == success
+        assert status["last_error"] == "error: ConnectionError(Connection refused)"
+        assert status["last_attempt"] >= success
+        on_disk = json.loads(config_file.read_text())["ilm_applied"]
+        assert on_disk["last_error"] == status["last_error"]
+
+        mgr.mark_ilm_applied({"nettap-hot-policy": "unchanged"})
+        assert "last_error" not in mgr.get_ilm_status()
+
+    def test_a_long_error_is_cut(self, tmp_path):
+        mgr = RetentionConfigManager(
+            config_path=str(tmp_path / "r.json"), env_file=str(tmp_path / ".env")
+        )
+        mgr.load()
+        mgr.mark_ilm_failed("x" * 2000)
+        assert len(mgr.get_ilm_status()["last_error"]) == 500

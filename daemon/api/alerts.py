@@ -17,9 +17,16 @@ from datetime import datetime, timedelta, timezone
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.error_replies import incomplete, public_json
 from api.offload import in_thread
 from api.time_range import parse_time_range
 from services.alert_enrichment import AlertEnrichment
+from services.alert_findings import (
+    ACTIVITY_RATINGS,
+    CREDENTIAL_MARKERS,
+    CREDENTIAL_NOT,
+    ET_RATINGS,
+)
 from services.capture_config import write_file_atomic
 from services.excluded_ips import parse_single_ip
 
@@ -27,6 +34,7 @@ from services.excluded_ips import parse_single_ip
 # from services.excluded_ips import build_excluded_ips_filter
 # OLD CODE END
 from storage.all_buckets import all_buckets
+from storage.exact_terms import PartialResultsError
 from storage.manager import StorageManager
 from storage.snapshot_search import QueryFailed, checked, total_hits
 from storage.time_slots import histogram_buckets, time_slots
@@ -68,9 +76,45 @@ _SURICATA_ENGINE_EVENTS: list[dict] = [
 # ET rates these informational: they stay stored and are listed as activity (?activity=true) but
 # never counted (owner decision 2026-11-06: counts use ET's Minor, Major and Critical only).
 # A rule without the field (other sources, owner rules) counts.
+# OLD CODE START — NET-228 (audit B-i): a password sent in the clear was activity too
+# ET_ACTIVITY_CLAUSE: dict = {
+#     "terms": {
+#         "suricata.alert.metadata.signature_severity": ["Informational", "Unknown"]
+#     }
+# }
+# OLD CODE END
+# alert_findings.is_credential_exposure as a query: rated only Informational/Unknown, and the rule
+# names a secret in the clear. These count (the owner can act on them); the rest stay activity.
+CREDENTIAL_EXPOSURE_CLAUSE: dict = {
+    "bool": {
+        "should": [
+            {"wildcard": {"rule.name": {"value": f"*{m}*", "case_insensitive": True}}}
+            for m in CREDENTIAL_MARKERS
+        ],
+        "minimum_should_match": 1,
+        "must_not": [
+            {"terms": {"suricata.alert.metadata.signature_severity": list(ET_RATINGS)}},
+            *(
+                {
+                    "wildcard": {
+                        "rule.name": {"value": f"*{x}*", "case_insensitive": True}
+                    }
+                }
+                for x in CREDENTIAL_NOT
+            ),
+        ],
+    }
+}
 ET_ACTIVITY_CLAUSE: dict = {
-    "terms": {
-        "suricata.alert.metadata.signature_severity": ["Informational", "Unknown"]
+    "bool": {
+        "filter": [
+            {
+                "terms": {
+                    "suricata.alert.metadata.signature_severity": list(ACTIVITY_RATINGS)
+                }
+            }
+        ],
+        "must_not": [CREDENTIAL_EXPOSURE_CLAUSE],
     }
 }
 
@@ -644,6 +688,8 @@ def handle_alerts_list(request: web.Request) -> web.Response:
                     or categorize_sub_category(b["key"], category_filter) == sub_filter
                 )
             ]
+        except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+            return incomplete("alert", exc)
         except OpenSearchException as exc:
             logger.error("OpenSearch error in alerts list (category): %s", exc)
             return web.json_response(
@@ -701,6 +747,8 @@ def handle_alerts_list(request: web.Request) -> web.Response:
     try:
         result = checked(client.search(index=NETWORK_INDEX, body=query), "alert list")
         total = total_hits(result, "alert list")
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("alert", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alerts list: %s", exc)
         return web.json_response(
@@ -708,9 +756,7 @@ def handle_alerts_list(request: web.Request) -> web.Response:
         )
     except QueryFailed as exc:
         logger.warning("Alerts list: %s", exc)
-        return web.json_response(
-            {"error": "The alert search was incomplete"}, status=502
-        )
+        return public_json({"error": "The alert search was incomplete"}, status=502)
 
     hits = result.get("hits", {})
 
@@ -1190,6 +1236,8 @@ def handle_alerts_top_signatures(request: web.Request) -> web.Response:
             severity,
             "alert top signatures",
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("alert", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alerts/top-signatures: %s", exc)
         return web.json_response(
@@ -1197,9 +1245,7 @@ def handle_alerts_top_signatures(request: web.Request) -> web.Response:
         )
     except QueryFailed as exc:
         logger.warning("Alert top signatures: %s", exc)
-        return web.json_response(
-            {"error": "The alert search was incomplete"}, status=502
-        )
+        return public_json({"error": "The alert search was incomplete"}, status=502)
     signatures = [
         {
             "signature": b["key"]["key"],
@@ -1293,6 +1339,8 @@ def handle_alerts_top_ips(request: web.Request) -> web.Response:
         buckets, complete = _every_key(
             client, from_ts, to_ts, {"field": field}, None, "alert top IPs"
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("alert", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alerts/top-ips: %s", exc)
         return web.json_response(
@@ -1300,9 +1348,7 @@ def handle_alerts_top_ips(request: web.Request) -> web.Response:
         )
     except QueryFailed as exc:
         logger.warning("Alert top IPs: %s", exc)
-        return web.json_response(
-            {"error": "The alert search was incomplete"}, status=502
-        )
+        return public_json({"error": "The alert search was incomplete"}, status=502)
     ips = sorted(
         ({"ip": b["key"]["key"], "count": b["doc_count"]} for b in buckets),
         key=lambda r: (-r["count"], r["ip"]),
@@ -1338,8 +1384,12 @@ def _every_signature(
     buckets, complete = all_buckets(
         client, NETWORK_INDEX, query, sources, aggs, page_size=page_size
     )
+    # OLD CODE START — NET-237 (ALR-11): the cap was only logged, so categories lost signatures silently
+    # if not complete:
+    #     logger.warning("Alert signatures stopped at %d", len(buckets))
+    # OLD CODE END
     if not complete:
-        logger.warning("Alert signatures stopped at %d", len(buckets))
+        raise PartialResultsError(f"alert signatures stopped at {len(buckets)}")
     return [
         {
             **b,
@@ -1410,8 +1460,12 @@ def _alerts_by_ip(
         [{"ip": {"terms": {"field": field}}}],
         {"sev": {"terms": {"field": "suricata.alert.severity", "size": 10}}},
     )
+    # OLD CODE START — NET-237 (ALR-11): the cap was only logged, so the address lists were short
+    # if not complete:
+    #     logger.warning("Alert %s values stopped at %d", field, len(buckets))
+    # OLD CODE END
     if not complete:
-        logger.warning("Alert %s values stopped at %d", field, len(buckets))
+        raise PartialResultsError(f"alert {field} values stopped at {len(buckets)}")
     return {
         b["key"]["ip"]: (
             b.get("doc_count", 0),
@@ -1439,6 +1493,35 @@ def _raw_severity_breakdown(bucket: dict) -> dict[str, int]:
         if level:
             counts[_SEVERITY_MAP[level]] += sev_bucket["doc_count"]
     return {**counts, "info": max(0, bucket.get("doc_count", 0) - sum(counts.values()))}
+
+
+TREND_MIN_SLOTS = 4  # whole slots compared, two a half at least
+TREND_MIN_ALERTS = 20  # fewer and a ×1.5 swing is a few alerts either way
+
+
+def category_trend(sparkline: dict) -> str:
+    """Rising or falling between two equal halves of whole slots, or "not_enough_data" (NET-228).
+
+    time_slots' first and last slots only partly overlap the window, so they are left out, and so
+    is the oldest slot of an odd count. A half with no alerts may be a half with no data, which the
+    counts can't tell apart, so it is not enough data either.
+    """
+    vals = [sparkline[k] for k in sorted(sparkline)][1:-1]
+    vals = vals[len(vals) % 2 :]
+    mid = len(vals) // 2
+    first_half, second_half = sum(vals[:mid]), sum(vals[mid:])
+    if (
+        len(vals) < TREND_MIN_SLOTS
+        or first_half + second_half < TREND_MIN_ALERTS
+        or not first_half
+        or not second_half
+    ):
+        return "not_enough_data"
+    if second_half > first_half * 1.5:
+        return "increasing"
+    if first_half > second_half * 1.5:
+        return "decreasing"
+    return "stable"
 
 
 @in_thread
@@ -1529,6 +1612,8 @@ def handle_alerts_categories(request: web.Request) -> web.Response:
         signatures = _every_signature(
             client, query["query"], per_signature, _SPARKLINE_SIGNATURE_PAGE
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("alert", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alerts/categories: %s", exc)
         return web.json_response(
@@ -1614,26 +1699,30 @@ def handle_alerts_categories(request: web.Request) -> web.Response:
                 subs[sub_id] = {"id": sub_id, "label": sub_label, "count": 0}
             subs[sub_id]["count"] += doc_count
 
-    # Compute trend from sparkline data
-    def _compute_trend_from_sparkline(sparkline: dict) -> str:
-        vals = list(sparkline.values())
-        if len(vals) < 4:
-            return "stable"
-        mid = len(vals) // 2
-        first_half = sum(vals[:mid])
-        second_half = sum(vals[mid:])
-        if second_half > first_half * 1.5:
-            return "increasing"
-        elif first_half > second_half * 1.5:
-            return "decreasing"
-        return "stable"
+    # OLD CODE START — NET-228: split by slot count, so the partial first and last slots and an odd
+    # count (one more slot in the second half) tilted it; now category_trend
+    # # Compute trend from sparkline data
+    # def _compute_trend_from_sparkline(sparkline: dict) -> str:
+    #     vals = list(sparkline.values())
+    #     if len(vals) < 4:
+    #         return "stable"
+    #     mid = len(vals) // 2
+    #     first_half = sum(vals[:mid])
+    #     second_half = sum(vals[mid:])
+    #     if second_half > first_half * 1.5:
+    #         return "increasing"
+    #     elif first_half > second_half * 1.5:
+    #         return "decreasing"
+    #     return "stable"
+    # OLD CODE END
 
     # Build final response
     categories = []
     for cat_id, entry in cat_data.items():
         if entry["count"] == 0:
             continue
-        trend = _compute_trend_from_sparkline(entry["sparkline"])
+        # OLD CODE: trend = _compute_trend_from_sparkline(entry["sparkline"]) (NET-228)
+        trend = category_trend(entry["sparkline"])
         categories.append(
             {
                 "id": entry["id"],
@@ -1752,6 +1841,8 @@ def handle_alert_category_detail(request: web.Request) -> web.Response:
         # signatures = _every_signature(client, query["query"], per_signature, 500)
         # OLD CODE END
         signatures = _every_signature(client, query["query"], per_signature)
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("alert", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alert category detail: %s", exc)
         return web.json_response(
@@ -1864,6 +1955,8 @@ def handle_alert_category_detail(request: web.Request) -> web.Response:
         targets = _alerts_by_ip(
             client, query["query"], "destination.ip", list(sig_severity)
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("alert", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alert category IPs: %s", exc)
         return web.json_response(
@@ -2026,6 +2119,8 @@ def handle_alert_category_timeline(request: web.Request) -> web.Response:
             "aggs": {"over_time": over_time},
         }
         result = client.search(index=NETWORK_INDEX, body=body)
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("alert", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in category timeline: %s", exc)
         return web.json_response(

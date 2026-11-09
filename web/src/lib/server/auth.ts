@@ -1,8 +1,9 @@
 import * as argon2 from 'argon2';
 import jwt from 'jsonwebtoken';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, rmSync } from 'fs';
 import { dirname } from 'path';
-import { randomBytes } from 'crypto';
+import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'crypto';
+import { DATA_DIR } from './data-dir.js';
 
 // ----- Constants -----
 
@@ -10,7 +11,7 @@ import { randomBytes } from 'crypto';
 // const JWT_SECRET = process.env.JWT_SECRET || 'nettap-dev-secret-change-in-production';
 // OLD CODE END
 const TOKEN_EXPIRY = '24h';
-const DATA_DIR = process.env.DATA_DIR || '/var/lib/nettap-web';
+// OLD CODE: const DATA_DIR = process.env.DATA_DIR || '/var/lib/nettap-web'; (review L4: shared with notifications.ts)
 const USERS_FILE = `${DATA_DIR}/users.json`;
 
 // ----- JWT Secret (auto-generated, file-persisted) -----
@@ -248,4 +249,83 @@ export async function updatePassword(username: string, newPassword: string): Pro
 export function hasUsers(): boolean {
 	const store = readUsers();
 	return store.users.length > 0;
+}
+
+// ----- First-run setup code (A13, NET-229) -----
+
+const SETUP_CODE_FILE = `${DATA_DIR}/setup-code`;
+// No 0/O, 1/I/L or U, so it reads and types without mix-ups; 12 of 30 symbols is ~59 bits
+const SETUP_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
+const SETUP_CODE_SHAPE = new RegExp(`^[${SETUP_CODE_ALPHABET}]{12}$`);
+
+/** Upper case, letters and digits only, so spaces, dashes and case never make a right code wrong. */
+function normaliseSetupCode(code: string): string {
+	return code.toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/**
+ * The one-time code that proves whoever creates the first admin can run commands on the box.
+ * It lives in DATA_DIR, which only nettap-web mounts. Made while no user exists (a missing, short or
+ * damaged file is replaced), removed once one does, and then this returns null. A damaged user
+ * store throws, so first run stays closed.
+ */
+export function ensureSetupCode(): string | null {
+	if (hasUsers()) {
+		clearSetupCode();
+		return null;
+	}
+	try {
+		const stored = readFileSync(SETUP_CODE_FILE, 'utf-8').trim();
+		if (SETUP_CODE_SHAPE.test(normaliseSetupCode(stored))) return stored;
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+	}
+	const symbols = Array.from({ length: 12 }, () => SETUP_CODE_ALPHABET[randomInt(SETUP_CODE_ALPHABET.length)]);
+	const code = [0, 4, 8].map((i) => symbols.slice(i, i + 4).join('')).join('-');
+	ensureDataDir();
+	// Write then rename, so a crash never leaves a short code behind
+	const tmpFile = `${SETUP_CODE_FILE}.tmp`;
+	writeFileSync(tmpFile, `${code}\n`, { mode: 0o600 });
+	renameSync(tmpFile, SETUP_CODE_FILE);
+	return code;
+}
+
+/** Constant-time string comparison (hashed first, so different lengths compare too). */
+function sameText(a: string, b: string): boolean {
+	const digest = (s: string) => createHash('sha256').update(s).digest();
+	return timingSafeEqual(digest(a), digest(b));
+}
+
+/** Constant-time check of a typed code; false when it isn't 12 code symbols or setup is done. */
+export function setupCodeMatches(input: string): boolean {
+	const typed = normaliseSetupCode(input);
+	if (!SETUP_CODE_SHAPE.test(typed)) return false;
+	const code = ensureSetupCode();
+	if (!code) return false;
+	// OLD CODE START — NET-229 follow-up: the comparison moved to sameText(), shared with the setup cookie
+	// const digest = (s: string) => createHash('sha256').update(s).digest();
+	// return timingSafeEqual(digest(typed), digest(normaliseSetupCode(code)));
+	// OLD CODE END
+	return sameText(typed, normaliseSetupCode(code));
+}
+
+/**
+ * The setup cookie's value: proof that this browser typed the current setup code on the Welcome
+ * step, so the wizard's API calls may run (NET-229 follow-up). An HMAC, not a JWT, so it never
+ * passes verifyToken as a session, and it stops matching once the code is gone or replaced.
+ * Null once an admin exists.
+ */
+export function setupToken(): string | null {
+	const code = ensureSetupCode();
+	if (!code) return null;
+	return createHmac('sha256', getJwtSecret()).update(`setup:${normaliseSetupCode(code)}`).digest('base64url');
+}
+
+export function setupTokenValid(token: string | undefined): boolean {
+	const expected = token ? setupToken() : null;
+	return expected !== null && sameText(token ?? '', expected);
+}
+
+export function clearSetupCode(): void {
+	rmSync(SETUP_CODE_FILE, { force: true });
 }

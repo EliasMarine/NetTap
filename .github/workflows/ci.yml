@@ -31,11 +31,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # OLD CODE START — the action downloads shellcheck "stable" on every run, and since
+      # 2026-11-09 the runner gets a file that isn't an archive ("This does not look like a tar
+      # archive"), failing main and every PR. The runner image already ships shellcheck.
+      # - name: Run ShellCheck on all scripts
+      #   uses: ludeeus/action-shellcheck@2.0.0
+      #   with:
+      #     scandir: scripts/
+      #     severity: warning
+      # OLD CODE END
       - name: Run ShellCheck on all scripts
-        uses: ludeeus/action-shellcheck@2.0.0
-        with:
-          scandir: scripts/
-          severity: warning
+        run: |
+          shellcheck --version
+          find scripts -type f \( -name '*.sh' -o -name '*.bash' \) -print0 | xargs -0 shellcheck -S warning
 
   # ========================================================================
   # Python Linting (ruff)

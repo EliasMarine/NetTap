@@ -38,6 +38,9 @@ export const MOCK_TRAFFIC_SUMMARY = {
 	total_bytes: 1_000_000_000,
 	orig_bytes: 500_000_000,
 	resp_bytes: 500_000_000,
+	upload_bytes: 500_000_000,
+	download_bytes: 500_000_000,
+	local_bytes: 0,
 	connection_count: 12_345,
 	top_protocol: 'tcp',
 	unique_sources: 42,
@@ -50,6 +53,9 @@ export const MOCK_BANDWIDTH_SERIES = {
 		total_bytes: Math.floor(Math.random() * 50_000_000),
 		orig_bytes: Math.floor(Math.random() * 25_000_000),
 		resp_bytes: Math.floor(Math.random() * 25_000_000),
+		upload_bytes: Math.floor(Math.random() * 25_000_000),
+		download_bytes: Math.floor(Math.random() * 25_000_000),
+		local_bytes: 0,
 	})),
 };
 

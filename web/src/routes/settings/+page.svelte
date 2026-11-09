@@ -40,6 +40,11 @@
 	let emailEnabled = $state(false);
 	let emailAddress = $state('');
 	let webhookUrl = $state('');
+	// NET-224: the daemon keeps these; it never sends the saved URL back, only a hint of it
+	let webhookEnabled = $state(false);
+	let webhookHasUrl = $state(false);
+	let webhookHint = $state('');
+	let smtpConfigured = $state(false);
 	let notifSaving = $state(false);
 	let notifMessage = $state('');
 	let notifError = $state(false);
@@ -48,6 +53,13 @@
 	let testingSending = $state(false);
 	let testMessage = $state('');
 	let testError = $state(false);
+	// review L3: the test sends through the saved settings, so it waits while the form differs
+	const notifForm = () =>
+		JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl]);
+	// the blank form until the load lands, so nothing reads as unsaved while it loads
+	let notifSavedForm = $state(notifForm());
+	// a failed load leaves nothing to compare with; the test then reports the daemon's own answer
+	const notifUnsaved = $derived(!notifLoadFailed && notifForm() !== notifSavedForm);
 
 	// --- Retention state ---
 	let retentionConfig = $state({
@@ -61,7 +73,9 @@
 	let lastPruneAt = $state<string | null>(null);
 	let storageStatusFailed = $state(false);
 	let storageLoading = $state(true);
-	let ilmStatus = $state<{ synced: boolean; last_applied: string | null; pending_retry: boolean; policies: Record<string, string> } | null>(null);
+	// OLD CODE: let ilmStatus = $state<{ synced: boolean; last_applied: string | null; pending_retry: boolean; policies: Record<string, string> } | null>(null);
+	// A15: last_attempt and last_error say why ILM isn't in sync
+	let ilmStatus = $state<{ synced: boolean; last_applied: string | null; pending_retry: boolean; policies: Record<string, string>; last_attempt?: string | null; last_error?: string | null } | null>(null);
 	let retentionSaving = $state(false);
 	let retentionMessage = $state('');
 	let retentionError = $state(false);
@@ -81,6 +95,8 @@
 
 	// --- Network state (excluded IPs) ---
 	let excludedIps = $state<string[]>([]);
+	/** NetTap's own IP: excluded automatically, so it's not the owner's to edit or save */
+	let applianceIp = $state<string | null>(null);
 	let newExcludedIp = $state('');
 	let networkSaving = $state(false);
 	let networkMessage = $state('');
@@ -148,15 +164,50 @@
 	/** The build the daemon reports; null hides the row rather than claim one. */
 	let buildInfo = $state<string | null>(null);
 
+	// OLD CODE START — NET-224: the web route read env vars compose never set; the daemon keeps the settings now
+	// async function loadNotificationConfig() {
+	// 	try {
+	// 		const res = await fetch('/api/notifications/config');
+	// 		if (res.ok) {
+	// 			const data = await res.json();
+	// 			severityThreshold = data.severityThreshold ?? 'medium';
+	// 			emailEnabled = data.email?.enabled ?? false;
+	// 			emailAddress = data.email?.recipients?.[0] ?? '';
+	// 			webhookUrl = data.webhook?.url ?? '';
+	// 			notifLoadFailed = false;
+	// 			return;
+	// 		}
+	// 	} catch {
+	// 		// Falls through to failed
+	// 	}
+	// 	notifLoadFailed = true;
+	// }
+	// OLD CODE END
+	// The daemon's 1 (critical) … 4 (low) as the select's values
+	const SEVERITY_VALUES = ['critical', 'high', 'medium', 'low'];
+
+	/** The Settings tab's notification setup as the daemon returns it (GET and a saved PUT). */
+	function applyNotificationConfig(data: {
+		min_severity?: number;
+		email?: { enabled?: boolean; recipients?: string[]; smtp_configured?: boolean };
+		webhook?: { enabled?: boolean; has_url?: boolean; url_hint?: string };
+	}) {
+		severityThreshold = SEVERITY_VALUES[(data.min_severity ?? 2) - 1] ?? 'high';
+		emailEnabled = data.email?.enabled ?? false;
+		emailAddress = (data.email?.recipients ?? []).join(', ');
+		smtpConfigured = data.email?.smtp_configured ?? false;
+		webhookEnabled = data.webhook?.enabled ?? false;
+		webhookHasUrl = data.webhook?.has_url ?? false;
+		webhookHint = data.webhook?.url_hint ?? '';
+		webhookUrl = '';
+		notifSavedForm = notifForm();
+	}
+
 	async function loadNotificationConfig() {
 		try {
 			const res = await fetch('/api/notifications/config');
 			if (res.ok) {
-				const data = await res.json();
-				severityThreshold = data.severityThreshold ?? 'medium';
-				emailEnabled = data.email?.enabled ?? false;
-				emailAddress = data.email?.recipients?.[0] ?? '';
-				webhookUrl = data.webhook?.url ?? '';
+				applyNotificationConfig(await res.json());
 				notifLoadFailed = false;
 				return;
 			}
@@ -169,20 +220,35 @@
 	async function loadRetention() {
 		try {
 			const res = await fetch('/api/setup/storage');
+			// OLD CODE START — L11: the route answers 503 now instead of mock figures (A16), so a 200
+			// is always the daemon's
+			// if (res.ok) {
+			// 	const data = await res.json();
+			// 	// source 'mock' = the daemon didn't answer and these are built-in defaults
+			// 	if (data.source !== 'mock') {
+			// 		// GET /api/setup/storage returns a FLAT StorageStatus object
+			// 		// (hot_days, warm_days, etc. are top-level, not nested under retention)
+			// 		retentionConfig.hot_days = data.hot_days ?? 90;
+			// 		retentionConfig.warm_days = data.warm_days ?? 180;
+			// 		retentionConfig.cold_days = data.cold_days ?? 30;
+			// 		retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
+			// 		retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
+			// 		retentionLoad = 'ok';
+			// 		return;
+			// 	}
+			// }
+			// OLD CODE END
 			if (res.ok) {
 				const data = await res.json();
-				// source 'mock' = the daemon didn't answer and these are built-in defaults
-				if (data.source !== 'mock') {
-					// GET /api/setup/storage returns a FLAT StorageStatus object
-					// (hot_days, warm_days, etc. are top-level, not nested under retention)
-					retentionConfig.hot_days = data.hot_days ?? 90;
-					retentionConfig.warm_days = data.warm_days ?? 180;
-					retentionConfig.cold_days = data.cold_days ?? 30;
-					retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
-					retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
-					retentionLoad = 'ok';
-					return;
-				}
+				// GET /api/setup/storage returns a FLAT StorageStatus object
+				// (hot_days, warm_days, etc. are top-level, not nested under retention)
+				retentionConfig.hot_days = data.hot_days ?? 90;
+				retentionConfig.warm_days = data.warm_days ?? 180;
+				retentionConfig.cold_days = data.cold_days ?? 30;
+				retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
+				retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
+				retentionLoad = 'ok';
+				return;
 			}
 		} catch {
 			// Falls through to 'failed'
@@ -308,7 +374,10 @@
 			const res = await fetch('/api/settings/excluded-ips');
 			if (res.ok) {
 				const data = await res.json();
-				excludedIps = data.excluded_ips ?? [];
+				// OLD CODE: excludedIps = data.excluded_ips ?? []; (a save then stored NetTap's own
+				// IP, which outlived an address change and hid whichever device got it next, #79)
+				applianceIp = data.appliance_ip ?? null;
+				excludedIps = (data.excluded_ips ?? []).filter((ip: string) => ip !== applianceIp);
 				networkLoadFailed = false;
 				return;
 			}
@@ -707,29 +776,64 @@
 		notifMessage = '';
 		notifError = false;
 		try {
+			// OLD CODE START — NET-224: POSTed to a route that couldn't save (F3: 501)
+			// const res = await fetch('/api/notifications/config', {
+			// 	method: 'POST',
+			// 	headers: { 'Content-Type': 'application/json' },
+			// 	body: JSON.stringify({
+			// 		severityThreshold,
+			// 		email: {
+			// 			enabled: emailEnabled,
+			// 			recipients: emailAddress ? [emailAddress] : [],
+			// 		},
+			// 		webhook: {
+			// 			url: webhookUrl || null,
+			// 		},
+			// 	}),
+			// });
+			// if (res.ok) {
+			// 	notifMessage = 'Notification settings saved successfully.';
+			// } else {
+			// OLD CODE END
 			const res = await fetch('/api/notifications/config', {
-				method: 'POST',
+				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					severityThreshold,
+					min_severity: SEVERITY_VALUES.indexOf(severityThreshold) + 1,
 					email: {
 						enabled: emailEnabled,
-						recipients: emailAddress ? [emailAddress] : [],
+						recipients: emailAddress.split(',').map((a) => a.trim()).filter(Boolean),
 					},
-					webhook: {
-						url: webhookUrl || null,
-					},
+					// a blank URL keeps the saved one
+					webhook: { enabled: webhookEnabled, url: webhookUrl.trim() },
 				}),
 			});
-			if (res.ok) {
-				notifMessage = 'Notification settings saved successfully.';
-			} else {
-				const data = await res.json();
-				notifMessage = data.error || 'Failed to save notification settings.';
+			// OLD CODE START — review L2: a body that couldn't be read, even after the daemon saved, said "Failed to connect"
+			// if (res.ok) {
+			// 	applyNotificationConfig(await res.json());
+			// 	notifMessage = 'Notification settings saved.';
+			// } else {
+			// 	const data = await res.json();
+			// 	notifMessage = data.error || 'Failed to save notification settings.';
+			// 	notifError = true;
+			// }
+			// OLD CODE END
+			const data = await res.json().catch(() => null);
+			if (!res.ok) {
+				notifMessage = data?.error || `Not saved: NetTap answered ${res.status}.`;
+				notifError = true;
+				return;
+			}
+			try {
+				applyNotificationConfig(data);
+				notifMessage = 'Notification settings saved.';
+			} catch {
+				notifMessage = "Saved, but the page couldn't read the settings back. Reload the page to see them.";
 				notifError = true;
 			}
 		} catch {
-			notifMessage = 'Failed to connect to server.';
+			// OLD CODE: notifMessage = 'Failed to connect to server.'; (review L2: only fetch itself throws here now)
+			notifMessage = "Couldn't reach NetTap, so nothing was saved.";
 			notifError = true;
 		} finally {
 			notifSaving = false;
@@ -953,7 +1057,8 @@
 
 <div class="grid" role="tabpanel" id="settings-panel-{activeTab}" aria-labelledby="settings-tab-{activeTab}" tabindex="0">
 	{#if activeTab === 'notifications'}
-		<Card title="Notification preferences" sub="Which alerts reach you · by email and webhook" class="c-12">
+		<!-- OLD CODE: sub="Which alerts reach you · by email and webhook" (NET-224: the daemon sends them now) -->
+		<Card title="Notification preferences" sub="Which alerts reach you · by email and webhook, with or without this page open" class="c-12">
 			<div class="stack">
 				{#if notifLoadFailed}
 					{@render feedback('Could not load the current notification settings, so saving is off. Reload the page to try again.', true)}
@@ -970,38 +1075,72 @@
 						</select>
 						<p class="field-help">Only notify for alerts at or above this severity level.</p>
 					</div>
+					<!-- OLD CODE START — NET-224: the URL field had no on/off, and blank meant "no webhook"; the daemon never sends the saved URL back, so blank now keeps it
 					<div class="field">
 						<label class="label" for="webhook-url">Webhook URL</label>
 						<input class="input mono" id="webhook-url" type="url" bind:value={webhookUrl} placeholder="https://hooks.example.com/nettap" />
 						<p class="field-help">POST JSON payloads will be sent to this URL for each alert.</p>
 					</div>
+					OLD CODE END -->
 				</div>
+
+				<div class="switch-row">
+					<input type="checkbox" role="switch" class="switch" id="webhook-toggle" bind:checked={webhookEnabled} aria-describedby="webhook-toggle-help" />
+					<div>
+						<label class="label" for="webhook-toggle">Send alerts to a webhook</label>
+						<p class="field-help" id="webhook-toggle-help">NetTap POSTs a JSON message for each batch of alerts, with or without this page open. Turning it off keeps the URL.</p>
+					</div>
+				</div>
+
+				{#if webhookEnabled}
+					<div class="form-grid">
+						<div class="field">
+							<label class="label" for="webhook-url">Webhook URL</label>
+							<input
+								class="input mono"
+								id="webhook-url"
+								type="url"
+								bind:value={webhookUrl}
+								placeholder={webhookHasUrl ? `Saved (${webhookHint}): leave blank to keep it` : 'https://hooks.example.com/nettap'}
+							/>
+							<p class="field-help">http:// or https:// only. An address on your network works (ntfy, Gotify).</p>
+						</div>
+					</div>
+				{/if}
 
 				<div class="switch-row">
 					<input type="checkbox" role="switch" class="switch" id="email-toggle" bind:checked={emailEnabled} aria-describedby="email-toggle-help" />
 					<div>
 						<label class="label" for="email-toggle">Enable email alerts</label>
-						<p class="field-help" id="email-toggle-help">Send alert notifications to the email address below. Requires SMTP to be configured in API keys.</p>
+						<p class="field-help" id="email-toggle-help">Send alert notifications to the addresses below, through the SMTP server in API keys.</p>
 					</div>
 				</div>
 
 				{#if emailEnabled}
+					{#if !smtpConfigured}
+						<p class="notice is-warn" role="status"><Icon name="warn" /><span>Email needs an SMTP server: set it in the API keys tab first.</span></p>
+					{/if}
 					<div class="form-grid">
 						<div class="field">
-							<label class="label" for="email-address">Recipient email</label>
-							<input class="input" id="email-address" type="email" bind:value={emailAddress} placeholder="admin@example.com" />
+							<!-- OLD CODE: <label …>Recipient email</label> with type="email" (NET-224: several recipients, comma-separated) -->
+							<label class="label" for="email-address">Recipient emails</label>
+							<input class="input" id="email-address" type="text" bind:value={emailAddress} placeholder="admin@example.com, ops@example.com" />
 						</div>
 					</div>
 				{/if}
 
 				<div class="form-actions">
-					<button class="btn" type="button" onclick={sendTestNotification} disabled={testingSending}>
+					<!-- OLD CODE: <button … disabled={testingSending}> (review L3: it tested the saved settings, whatever the form said) -->
+					<button class="btn" type="button" onclick={sendTestNotification} disabled={testingSending || notifUnsaved} aria-describedby={notifUnsaved ? 'notif-test-help' : undefined}>
 						{testingSending ? 'Sending…' : 'Send test notification'}
 					</button>
 					<button class="btn primary" type="button" onclick={saveNotifications} disabled={notifSaving || notifLoadFailed}>
 						{notifSaving ? 'Saving…' : 'Save notification settings'}
 					</button>
 				</div>
+				{#if notifUnsaved}
+					<p class="field-help" id="notif-test-help">Save first: the test uses the saved settings.</p>
+				{/if}
 				{@render feedback(testMessage, testError)}
 			</div>
 		</Card>
@@ -1042,6 +1181,12 @@
 							<span class="chip is-ok"><Icon name="check" />{policyCount === 1 ? 'Policy synced' : `${policyCount || 'All'} policies synced`}</span>
 						{:else}
 							<span class="chip is-bad"><Icon name="warn" />Out of sync</span>
+						{/if}
+						{#if ilmStatus && !retentionHealth.ilmOk && ilmStatus.last_error}
+							<!-- A15: the real reason, not the last success -->
+							<p class="dim ilm-error">
+								{ilmStatus.last_attempt ? `Last try ${timeAgo(ilmStatus.last_attempt)}: ` : ''}{ilmStatus.last_error}{retentionHealth.ilmPending ? ' NetTap tries again automatically.' : ''}
+							</p>
 						{/if}
 					</dd>
 					<dt>Disk usage</dt>
@@ -1374,6 +1519,7 @@
 						</div>
 					</section>
 
+					<!-- OLD CODE START — NET-224: nothing read this URL; the Notifications tab sets the webhook the daemon uses
 					<section class="key-group" aria-labelledby="keys-webhook">
 						<h3 class="eyebrow" id="keys-webhook">Webhook</h3>
 						<div class="form-grid">
@@ -1390,6 +1536,7 @@
 							</div>
 						</div>
 					</section>
+					OLD CODE END -->
 
 					<div class="form-actions">
 						<button class="btn primary" type="button" onclick={saveApiKeys} disabled={apiKeysSaving}>
@@ -1422,7 +1569,7 @@
 								id="excluded-ip-new"
 								type="text"
 								bind:value={newExcludedIp}
-								placeholder="e.g. 99.10.70.92"
+								placeholder="e.g. 203.0.113.10"
 								onkeydown={(e) => {
 									if (e.key === 'Enter') addExcludedIp();
 								}}
@@ -1431,6 +1578,9 @@
 						</div>
 					</div>
 
+					{#if applianceIp}
+						<p class="dim">NetTap's own address, <span class="mono">{applianceIp}</span>, is always left out and isn't listed here.</p>
+					{/if}
 					{#if excludedIps.length === 0}
 						<p class="dim">No IPs excluded. All IPs appear in device views.</p>
 					{:else}
@@ -1712,6 +1862,7 @@
 		max-width: 360px;
 	}
 
+	.ilm-error { margin-top: var(--sp-1); font-size: var(--text-sm); overflow-wrap: anywhere; }
 	.meter-row {
 		margin-top: var(--sp-4);
 	}

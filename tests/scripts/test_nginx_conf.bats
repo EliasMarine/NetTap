@@ -41,11 +41,24 @@ _location() {
     echo "$output" | grep -q 'error_page 401 = @nettap_login;'
 }
 
+@test "nginx: /cyberchef/ requires a NetTap login (NET-229)" {
+    run _location '/cyberchef/'
+    echo "$output" | grep -q 'auth_request /_nettap_auth;'
+    echo "$output" | grep -q 'error_page 401 = @nettap_login;'
+}
+
 @test "nginx: CSP lets same-origin blob Web Workers run (CyberChef)" {
     # CyberChef inlines its workers as blob: URLs; without worker-src they fall back to
     # script-src and are blocked, so CyberChef never leaves its loading screen
     csp=$(grep -v '^\s*#' "$NGINX_CONF" | grep 'add_header Content-Security-Policy')
     echo "$csp" | grep -q "worker-src 'self' blob:"
+}
+
+@test "nginx: response header buffer fits SvelteKit's Link header (NET-223)" {
+    # Home's Link header was 4.5 KB; at the 4 KB default every logged-in reload was a 502
+    live=$(grep -v '^[[:space:]]*#' "$NGINX_CONF")
+    echo "$live" | grep -Eq '^[[:space:]]*proxy_buffer_size 16k;'
+    echo "$live" | grep -Eq '^[[:space:]]*proxy_buffers 8 16k;'
 }
 
 @test "nginx: every upstream re-resolves a recreated container's IP (#138)" {

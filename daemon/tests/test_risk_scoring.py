@@ -101,12 +101,14 @@ class TestConnectionAnomaly(unittest.TestCase):
         points, description = self._points(5000, [100, 100])
         self.assertEqual(points, 0)
         self.assertEqual(
-            description, "5,000 connections; not enough earlier days to compare with"
+            description,
+            "5,000 connections it opened; not enough earlier days to compare with",
         )
 
     def test_description_gives_the_facts(self):
         self.assertEqual(
-            self._points(1000, [200] * 7)[1], "1,000 connections, 5.0× its usual"
+            self._points(1000, [200] * 7)[1],
+            "1,000 connections it opened, 5.0× its usual",
         )
 
     def test_days_without_traffic_are_not_part_of_the_usual_day(self):

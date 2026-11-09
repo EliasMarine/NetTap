@@ -153,7 +153,9 @@ describe('Settings — retention save', () => {
 	});
 
 	it('will not save the built-in defaults when the daemon did not answer', async () => {
-		stubFetch({ '/api/setup/storage': () => ({ body: { source: 'mock', hot_days: 90 } }) });
+		// OLD CODE: stubFetch({ '/api/setup/storage': () => ({ body: { source: 'mock', hot_days: 90 } }) });
+		// L11: a dead daemon is a 503 from the route now (A16), not mock figures
+		stubFetch({ '/api/setup/storage': () => ({ status: 503, body: { error: "The NetTap service isn't answering" } }) });
 		render(Page);
 		await flush();
 		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
@@ -244,6 +246,24 @@ describe('Settings — retention health', () => {
 		expect(screen.queryByText('Problem')).not.toBeInTheDocument();
 		expect(screen.queryByText('Loading the storage status')).not.toBeInTheDocument();
 		expect(screen.queryByText('Never (daemon starting…)')).not.toBeInTheDocument();
+	});
+
+	// A15: a failed startup apply was never retried and the card kept saying "Policy synced"
+	it('shows why ILM is out of sync, and that it is retrying', async () => {
+		stubFetch({
+			'/api/storage/status': () => ({
+				body: { disk_usage_percent: 6.8, last_prune_at: new Date().toISOString(),
+					ilm_status: { synced: false, last_applied: '2026-11-08T00:00:00Z', pending_retry: true, policies: { 'nettap-hot-policy': 'updated' },
+						last_attempt: new Date().toISOString(), last_error: 'error: ConnectionError(Connection refused)' } },
+			}),
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
+
+		expect(screen.getByText('Syncing…')).toBeInTheDocument();
+		expect(screen.getByText('Last try just now: error: ConnectionError(Connection refused) NetTap tries again automatically.')).toBeInTheDocument();
+		expect(screen.queryByText(/Policy synced/)).not.toBeInTheDocument();
 	});
 
 	it('still reads Healthy when the storage status loads in sync', async () => {
@@ -339,20 +359,198 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 
 		expect(screen.getByText(/Could not load the current notification settings/)).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Save notification settings' })).toBeDisabled();
+		// review L3: nothing to save, so no "save first"; the test reports the daemon's own answer
+		expect(screen.queryByText('Save first: the test uses the saved settings.')).not.toBeInTheDocument();
 	});
 
-	it('Notifications: Save works once the config has loaded', async () => {
-		stubFetch({
-			'/api/notifications/config': () => ({
-				body: { severityThreshold: 'high', email: { enabled: false, recipients: [] }, webhook: { url: 'https://hooks.example.com/x' } },
-			}),
-		});
+	// OLD CODE START — NET-224: the env-shaped config, a POST the route answered 501, and the URL read back
+	// it('Notifications: Save works once the config has loaded', async () => {
+	// 	stubFetch({
+	// 		'/api/notifications/config': () => ({
+	// 			body: { severityThreshold: 'high', email: { enabled: false, recipients: [] }, webhook: { url: 'https://hooks.example.com/x' } },
+	// 		}),
+	// 	});
+	// 	render(Page);
+	// 	await flush();
+	//
+	// 	expect(screen.queryByText(/Could not load the current notification settings/)).not.toBeInTheDocument();
+	// 	expect(screen.getByDisplayValue('https://hooks.example.com/x')).toBeInTheDocument();
+	// 	expect(screen.getByRole('button', { name: 'Save notification settings' })).toBeEnabled();
+	// });
+	//
+	// // F3: the config POST answers 501 and the test 409/502; each must read as an error, not a success
+	// it('Notifications: a save the server refuses shows its reason as an error', async () => {
+	// 	const message = "Not saved: email and webhook notifications can't be set from this page in this version.";
+	// 	stubFetch({
+	// 		'/api/notifications/config': (init) =>
+	// 			init?.method === 'POST'
+	// 				? { status: 501, body: { error: message } }
+	// 				: { body: { severityThreshold: 'high', email: { enabled: false, recipients: [] }, webhook: { url: '' } } },
+	// 	});
+	// 	render(Page);
+	// 	await flush();
+	//
+	// 	await fireEvent.click(screen.getByRole('button', { name: 'Save notification settings' }));
+	// 	await flush();
+	//
+	// 	expect(screen.getByRole('alert')).toHaveTextContent(message);
+	// 	expect(screen.queryByText(/saved successfully/)).not.toBeInTheDocument();
+	// });
+	//
+	// it.each([
+	// 	[409, 'No email or webhook is set up, so there is nothing to test.'],
+	// 	[502, "The test didn't go through: webhook (HTTP 500)."],
+	// ])('Notifications: a test answered %i shows its reason as an error', async (status, message) => {
+	// 	stubFetch({
+	// 		'/api/notifications/config': () => ({ body: { severityThreshold: 'high', email: { enabled: false, recipients: [] }, webhook: { url: '' } } }),
+	// 		'/api/notifications/test': () => ({ status, body: { error: message } }),
+	// 	});
+	// 	render(Page);
+	// 	await flush();
+	//
+	// 	await fireEvent.click(screen.getByRole('button', { name: 'Send test notification' }));
+	// 	await flush();
+	//
+	// 	expect(screen.getByRole('alert')).toHaveTextContent(message);
+	// 	expect(screen.queryByText(/sent successfully/)).not.toBeInTheDocument();
+	// });
+	// OLD CODE END
+
+	// NET-224: the daemon keeps these settings; it returns a hint of the saved URL, never the URL
+	const SAVED = {
+		min_severity: 2,
+		email: { enabled: false, recipients: [], smtp_configured: true },
+		webhook: { enabled: true, has_url: true, url_hint: 'https://hooks.example.com/…' },
+	};
+
+	it('Notifications: Save works once the config has loaded, without the saved URL in the page', async () => {
+		stubFetch({ '/api/notifications/config': () => ({ body: SAVED }) });
 		render(Page);
 		await flush();
 
 		expect(screen.queryByText(/Could not load the current notification settings/)).not.toBeInTheDocument();
-		expect(screen.getByDisplayValue('https://hooks.example.com/x')).toBeInTheDocument();
+		expect(screen.getByLabelText('Alert severity threshold')).toHaveValue('high');
+		expect(screen.getByLabelText('Webhook URL')).toHaveValue('');
+		expect(screen.getByLabelText('Webhook URL')).toHaveAttribute('placeholder', 'Saved (https://hooks.example.com/…): leave blank to keep it');
 		expect(screen.getByRole('button', { name: 'Save notification settings' })).toBeEnabled();
+	});
+
+	it('Notifications: saves with PUT, the severity as 1 to 4, the recipients as a list and a blank URL to keep it', async () => {
+		const fetchMock = stubFetch({
+			'/api/notifications/config': (init) =>
+				init?.method === 'PUT' ? { body: { ...SAVED, min_severity: 3, email: { enabled: true, recipients: ['a@example.com', 'b@example.com'], smtp_configured: true } } } : { body: SAVED },
+		});
+		render(Page);
+		await flush();
+
+		await fireEvent.change(screen.getByLabelText('Alert severity threshold'), { target: { value: 'medium' } });
+		await fireEvent.click(screen.getByRole('switch', { name: 'Enable email alerts' }));
+		await fireEvent.input(screen.getByLabelText('Recipient emails'), { target: { value: 'a@example.com, b@example.com' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save notification settings' }));
+		await flush();
+
+		const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT');
+		expect(JSON.parse(String(put?.[1]?.body))).toEqual({
+			min_severity: 3,
+			email: { enabled: true, recipients: ['a@example.com', 'b@example.com'] },
+			webhook: { enabled: true, url: '' },
+		});
+		expect(screen.getByRole('status')).toHaveTextContent('Notification settings saved.');
+	});
+
+	it('Notifications: a save the daemon refuses shows its reason as an error', async () => {
+		const message = 'Webhook: the URL must start with http:// or https://';
+		stubFetch({
+			'/api/notifications/config': (init) => (init?.method === 'PUT' ? { status: 400, body: { error: message } } : { body: SAVED }),
+		});
+		render(Page);
+		await flush();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Save notification settings' }));
+		await flush();
+
+		expect(screen.getByRole('alert')).toHaveTextContent(message);
+		expect(screen.queryByText(/saved/)).not.toBeInTheDocument();
+	});
+
+	it('Notifications: email says it needs the SMTP server when API keys has none', async () => {
+		stubFetch({ '/api/notifications/config': () => ({ body: { ...SAVED, email: { enabled: true, recipients: ['a@example.com'], smtp_configured: false } } }) });
+		render(Page);
+		await flush();
+
+		expect(screen.getByText('Email needs an SMTP server: set it in the API keys tab first.')).toBeInTheDocument();
+		expect(screen.getByLabelText('Recipient emails')).toHaveValue('a@example.com');
+	});
+
+	// review L2: say what failed; a parse failure after the daemon saved isn't "couldn't connect"
+	it('Notifications: a save that never reached NetTap says nothing was saved', async () => {
+		const ok = stubFetch({ '/api/notifications/config': () => ({ body: SAVED }) });
+		render(Page);
+		await flush();
+		vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+			if (init?.method === 'PUT') throw new TypeError('Failed to fetch');
+			return ok(url, init);
+		}));
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Save notification settings' }));
+		await flush();
+
+		expect(screen.getByRole('alert')).toHaveTextContent("Couldn't reach NetTap, so nothing was saved.");
+	});
+
+	it("Notifications: a save the page can't read back says it was saved and to reload", async () => {
+		const ok = stubFetch({ '/api/notifications/config': () => ({ body: SAVED }) });
+		render(Page);
+		await flush();
+		vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+			if (init?.method === 'PUT') return { ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token <'); } };
+			return ok(url, init);
+		}));
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Save notification settings' }));
+		await flush();
+
+		expect(screen.getByRole('alert')).toHaveTextContent("Saved, but the page couldn't read the settings back. Reload the page to see them.");
+		expect(screen.queryByText('Notification settings saved.')).not.toBeInTheDocument();
+		expect(screen.queryByText(/Failed to connect/)).not.toBeInTheDocument();
+	});
+
+	// review L3: the test uses what is saved, so it waits while the form has unsaved changes
+	it('Notifications: the test waits for unsaved changes to be saved', async () => {
+		stubFetch({
+			'/api/notifications/config': (init) => (init?.method === 'PUT' ? { body: { ...SAVED, min_severity: 3 } } : { body: SAVED }),
+		});
+		render(Page);
+		await flush();
+		const test = () => screen.getByRole('button', { name: 'Send test notification' });
+		expect(test()).toBeEnabled();
+
+		await fireEvent.change(screen.getByLabelText('Alert severity threshold'), { target: { value: 'medium' } });
+		expect(test()).toBeDisabled();
+		expect(screen.getByText('Save first: the test uses the saved settings.')).toBeInTheDocument();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Save notification settings' }));
+		await flush();
+		expect(test()).toBeEnabled();
+		expect(screen.queryByText('Save first: the test uses the saved settings.')).not.toBeInTheDocument();
+	});
+
+	it.each([
+		[409, 'No notification channel is set up, so there is nothing to test.'],
+		[502, "The test didn't go through: Webhook (Settings) (HTTP 500)."],
+	])('Notifications: a test answered %i shows its reason as an error', async (status, message) => {
+		stubFetch({
+			'/api/notifications/config': () => ({ body: SAVED }),
+			'/api/notifications/test': () => ({ status, body: { error: message } }),
+		});
+		render(Page);
+		await flush();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Send test notification' }));
+		await flush();
+
+		expect(screen.getByRole('alert')).toHaveTextContent(message);
+		expect(screen.queryByText(/sent successfully/)).not.toBeInTheDocument();
 	});
 
 	it('Network: no list editor or Save when the excluded IPs cannot be read', async () => {
@@ -366,14 +564,35 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 		expect(screen.queryByText(/No IPs excluded/)).not.toBeInTheDocument();
 	});
 
-	it('Network: shows the saved list when it loads', async () => {
-		stubFetch({ '/api/settings/excluded-ips': () => ({ body: { excluded_ips: ['99.10.70.92'] } }) });
+	it("Network: leaves NetTap's own IP out of the list, so a save never stores it", async () => {
+		const fetchFn = stubFetch({
+			'/api/settings/excluded-ips': (init) =>
+				init?.method === 'PUT'
+					? { body: { result: 'saved' } }
+					: { body: { excluded_ips: ['203.0.113.10', '192.0.2.1'], appliance_ip: '192.0.2.1' } },
+		});
 		render(Page);
 		await flush();
 		await fireEvent.click(screen.getByRole('tab', { name: 'Network' }));
 
-		expect(screen.getByText('99.10.70.92')).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Remove 192.0.2.1' })).not.toBeInTheDocument();
+		expect(screen.getByText(/always left out and isn't listed here/)).toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('button', { name: 'Save excluded IPs' }));
+		await flush();
+		const put = fetchFn.mock.calls.find(([, init]) => init?.method === 'PUT');
+		expect(JSON.parse(String(put?.[1]?.body))).toEqual({ excluded_ips: ['203.0.113.10'] });
+	});
+
+	it('Network: shows the saved list when it loads', async () => {
+		stubFetch({ '/api/settings/excluded-ips': () => ({ body: { excluded_ips: ['203.0.113.10'] } }) });
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('tab', { name: 'Network' }));
+
+		expect(screen.getByText('203.0.113.10')).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Save excluded IPs' })).toBeEnabled();
+		// F7: the placeholder is a documentation address (RFC 5737), not a real network's WAN IP
+		expect(screen.getByLabelText('IP address to exclude')).toHaveAttribute('placeholder', 'e.g. 203.0.113.10');
 	});
 });
 

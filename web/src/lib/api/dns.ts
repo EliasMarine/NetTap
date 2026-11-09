@@ -44,12 +44,27 @@ export interface SuspiciousEntry {
 	unique_clients?: number;
 }
 
+// OLD CODE START — NET-225: no median, and a window with nothing answered read 0 ms
+// export interface DnsStats {
+// 	total_queries: number;
+// 	unique_domains: number;
+// 	nxdomain_count: number;
+// 	avg_resolution_ms: number;
+// }
+// OLD CODE END
 export interface DnsStats {
 	total_queries: number;
 	unique_domains: number;
 	nxdomain_count: number;
-	avg_resolution_ms: number;
+	/** null when no lookup in the window was answered, so nothing was timed */
+	avg_resolution_ms: number | null;
+	/** the typical lookup: a few 20 s retries pull the mean far above it */
+	median_resolution_ms: number | null;
 }
+
+/** NET-225 (DNS-1): Zeek's dns.log holds plain DNS only. */
+export const ENCRYPTED_DNS_NOTE =
+	"Only plain DNS shows here. Lookups sent over DNS over HTTPS (DoH) or DNS over TLS (DoT) are encrypted, so NetTap can't see the names they ask for.";
 
 // ---------------------------------------------------------------------------
 // Helper

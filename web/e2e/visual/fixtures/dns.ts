@@ -62,7 +62,7 @@ const SUSPICIOUS = [
 		count: 520,
 		unique_clients: 2,
 		severity: 'medium',
-		description: 'High-frequency queries (520) from few clients — potential beaconing',
+		description: 'High-frequency queries (520) from few source addresses — possible beaconing. A router or resolver address can stand for several devices.',
 	},
 	{
 		type: 'long_domain',
@@ -84,12 +84,14 @@ const SUSPICIOUS = [
 export const DNS_ROUTES: FixtureRoute[] = [
 	{
 		path: '/api/dns/stats',
-		empty: { total_queries: 0, unique_domains: 0, nxdomain_count: 0, avg_resolution_ms: 0 } satisfies DnsStats,
+		// NET-225: nothing answered means nothing timed (null), never 0 ms
+		empty: { total_queries: 0, unique_domains: 0, nxdomain_count: 0, avg_resolution_ms: null, median_resolution_ms: null } satisfies DnsStats,
 		populated: {
 			total_queries: TOTAL_QUERIES,
 			unique_domains: 412,
 			nxdomain_count: sum(NXDOMAINS.map((n) => n.count)),
 			avg_resolution_ms: 18,
+			median_resolution_ms: 6,
 		} satisfies DnsStats,
 	},
 	{

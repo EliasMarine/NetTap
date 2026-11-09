@@ -18,6 +18,7 @@ from typing import Any
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.error_replies import public_json
 from api.drilldown_runner import lan_check
 from api.offload import in_thread, run_blocking
 from api.time_range import _utc, iso_param, parse_time_range
@@ -29,7 +30,28 @@ from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.device_fingerprint import DeviceFingerprint
 from services.device_registry import DeviceRegistry
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
-from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
+from services.excluded_ips import (
+    CONN_ACCOUNTING,
+    build_excluded_ips_filter,
+    RFC1918_SOURCE_FILTER,
+)
+from services.device_accounting import (
+    BYTE_SUMS as _BYTE_SUMS,
+    IPV4_ALL,
+    STARTED,
+    add,
+    answered_by_ip,
+    bucket_bytes as _bucket_bytes,
+    side_bytes as _device_side_bytes,
+    side_sums as _side_sums,
+    fold_ipv6,
+    forwarded_macs,
+    gateway_macs,
+    ipv6_by_mac,
+    ipv6_clause,
+    lan_cidrs,
+    totals,
+)
 from services.traffic_classifier import classify_asn, CATEGORIES
 from api.alerts import _normalize_alert_source
 
@@ -168,7 +190,10 @@ def _lan_device_bool_query(app: Mapping[str, Any], from_ts: str, to_ts: str) -> 
         "filter": [
             _time_range_filter(from_ts, to_ts),
             {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "conn"}},
+            # OLD CODE START — F1: also counted conn_long.log interim records
+            # {"term": {"event.dataset": "conn"}},
+            # OLD CODE END
+            CONN_ACCOUNTING,
             app.get("lan_filter", RFC1918_SOURCE_FILTER),
         ],
     }
@@ -214,9 +239,14 @@ def _iso_ms(ms: int) -> str:
 
 
 # The list's sorts, read from each device bucket (alerts are counted separately)
+# OLD CODE START — NET-226: bytes and connections were the started side's, from the bucket
+#     "bytes": lambda b: b.get("total_bytes", {}).get("value") or 0,
+#     "connections": lambda b: b.get("doc_count", 0),
+# OLD CODE END
 _SORT_VALUE = {
-    "bytes": lambda b: b.get("total_bytes", {}).get("value") or 0,
-    "connections": lambda b: b.get("doc_count", 0),
+    # both sides and IPv6, from _accounted_devices
+    "bytes": lambda b: b.get("total_bytes") or 0,
+    "connections": lambda b: b.get("connection_count", 0),
     "last_seen": lambda b: b.get("last_seen", {}).get("value") or 0,
     "first_seen": lambda b: b.get("first_seen", {}).get("value") or 0,
 }
@@ -252,7 +282,159 @@ def _alert_sides(reply: Any) -> list[list[dict]]:
 def _incomplete(where: str, exc: QueryFailed) -> web.Response:
     """The 502 for a search that answered only in part, never a smaller figure."""
     logger.error("Incomplete search in %s: %s", where, exc)
-    return web.json_response({"error": "The device search was incomplete"}, status=502)
+    return public_json({"error": "The device search was incomplete"}, status=502)
+
+
+# A record its responder answered: a probe of an empty address is no device (NET-226 follow-up)
+_RESPONDED = {"range": {"destination.packets": {"gt": 0}}}
+# Answer-only devices per search of their other aggregations
+_ANSWER_CHUNK = 1_000
+# shortcut: an answer-only device's MAC is the first non-gateway one among its 10 most common
+# answered-to MACs; more than 9 routers on one device's path is no home network
+_ANSWERED_MACS = 10
+_OTHER_SIDE = {"source": "destination", "destination": "source"}
+
+
+def _swapped(body: Any) -> Any:
+    """`body` with every source.* and destination.* field name swapped: the answering side's view."""
+    if isinstance(body, dict):
+        return {_swapped(k): _swapped(v) for k, v in body.items()}
+    if isinstance(body, list):
+        return [_swapped(v) for v in body]
+    if not isinstance(body, str):
+        return body
+    side, dot, rest = body.partition(".")
+    return f"{_OTHER_SIDE[side]}.{rest}" if dot and side in _OTHER_SIDE else body
+
+
+def _lan_answer_bool_query(app: Mapping[str, Any], from_ts: str, to_ts: str) -> dict:
+    """_lan_device_bool_query seen from the answering side: records a LAN address answered.
+
+    The LAN rule comes from the subnets that start internet connections, so a VLAN whose hosts
+    only answer is in it only when LAN_SUBNETS lists it.
+    """
+    query = _swapped(_lan_device_bool_query(app, from_ts, to_ts))
+    return {**query, "filter": [*query["filter"], _RESPONDED]}
+
+
+def _ip_buckets(
+    client: Any, query: dict, field: str, aggs, page_size: int, what: str | None
+) -> dict[str, dict]:
+    """{ip: composite bucket} of `field` over `query`, checked and capped as the device reads are."""
+    buckets, complete = all_buckets(
+        client,
+        NETWORK_INDEX,
+        {"bool": query},
+        [{"ip": {"terms": {"field": field}}}],
+        aggs=aggs,
+        page_size=page_size,
+        **({"max_buckets": _DEVICE_CAP} if what else {}),
+        what=what,
+    )
+    # PR #191 review: a capped read is not every device, so a checked one fails instead
+    if not complete and what:
+        raise QueryFailed(f"{what}: stopped at {len(buckets)} IPs")
+    if not complete:
+        logger.warning(
+            "Device buckets stopped at %d IPs; figures cover those only", len(buckets)
+        )
+    return {b["key"]["ip"]: {**b, "key": b["key"]["ip"]} for b in buckets}
+
+
+def _time_bounds(aggs: dict | None) -> dict[str, str]:
+    """{name: "min" or "max"} for the aggregations that are a bound of @timestamp."""
+    return {
+        name: kind
+        for name, agg in (aggs or {}).items()
+        for kind in ("min", "max")
+        if (agg.get(kind) or {}).get("field") == "@timestamp"
+    }
+
+
+def _merged_bounds(bucket: dict, answered: dict | None, bounds: dict[str, str]) -> dict:
+    """`bucket` with each time bound the earlier (min) or later (max) of its own and `answered`'s."""
+    pick = {"min": min, "max": max}
+    merged = {}
+    for name, kind in bounds.items():
+        seen = [
+            b
+            for b in (bucket.get(name), (answered or {}).get(name))
+            if b and b.get("value") is not None
+        ]
+        if seen:
+            merged[name] = pick[kind](seen, key=lambda b: b["value"])
+    return {**bucket, **merged}
+
+
+def _answered_aggs(
+    client: Any, query: dict, ips: list[str], aggs: dict, what: str
+) -> dict[str, dict]:
+    """{ip: `aggs` over the records each IP answered, read from its side}; every IP must come back."""
+    out: dict[str, dict] = {}
+    for start in range(0, len(ips), _ANSWER_CHUNK):
+        chunk = ips[start : start + _ANSWER_CHUNK]
+        filters = [*query["filter"], {"terms": {"destination.ip": chunk}}]
+        body = {
+            "size": 0,
+            "query": {"bool": {**query, "filter": filters}},
+            "aggs": {
+                "ips": {
+                    "terms": {"field": "destination.ip", "size": len(chunk)},
+                    "aggs": _swapped(aggs),
+                }
+            },
+        }
+        reply = checked(client.search(index=NETWORK_INDEX, body=body), what, ("ips",))
+        got = {b["key"]: b for b in reply["aggregations"]["ips"].get("buckets") or []}
+        if set(chunk) - set(got):
+            raise QueryFailed(f"{what}: {len(set(chunk) - set(got))} IPs missing")
+        out = {**out, **got}
+    return out
+
+
+def _without_router_macs(
+    client: Any,
+    app: Mapping[str, Any],
+    from_ts: str,
+    to_ts: str,
+    buckets: dict[str, dict],
+    what: str,
+) -> dict[str, dict]:
+    """`buckets` with the gateways' MACs out of with_mac (an answering side's MACs, _ANSWERED_MACS
+    of them), so the first left is the most common one that is not a router's.
+
+    A router on one cable passes a routed flow twice and Zeek keeps the first leg's MACs, client
+    to router, so the side that answered carries the router's MAC, not its own (review).
+    """
+    # OLD CODE START — delta review: one MAC per device, cleared when it was a gateway's, so a NAS
+    # answering more routed flows than on-link ones lost its own MAC
+    # macs = sorted({m for b in buckets.values() if (m := _bucket_mac(b))})
+    # filters = _conn_filters(from_ts, to_ts)
+    # routers = gateway_macs(client, filters, app.get("lan_filter"), macs, what) or set()
+    # return {
+    #     key: {**b, "with_mac": {"buckets": []}} if _bucket_mac(b) in routers else b
+    #     for key, b in buckets.items()
+    # }
+    # OLD CODE END
+
+    def macs(b: dict) -> list[dict]:
+        return (b.get("with_mac") or {}).get("buckets") or []
+
+    seen = sorted({m["key"] for b in buckets.values() for m in macs(b)})
+    filters = _conn_filters(from_ts, to_ts)
+    routers = gateway_macs(client, filters, app.get("lan_filter"), seen, what) or set()
+    return {
+        key: {
+            **b,
+            "with_mac": {"buckets": [m for m in macs(b) if m["key"] not in routers]},
+        }
+        for key, b in buckets.items()
+    }
+
+
+def _with_room_for_routers(agg: dict) -> dict:
+    """A with_mac terms aggregation that keeps _ANSWERED_MACS MACs, for _without_router_macs."""
+    return {**agg, "terms": {**agg["terms"], "size": _ANSWERED_MACS}}
 
 
 def _lan_device_buckets(
@@ -269,30 +451,246 @@ def _lan_device_buckets(
     Same filters, _MIN_CONNECTIONS threshold and skip rules as the list. Each bucket is
     shaped like a terms bucket ("key" is the IP), with `aggs` per device. With `what`, an
     incomplete page raises QueryFailed instead of reading as fewer devices.
+
+    NET-226 follow-up: a LAN address that answered _MIN_CONNECTIONS connections is a device
+    too (a NAS, a media server). A time bound in `aggs` (a min or max of @timestamp) covers
+    the records it started and the ones it answered. A device that started none is
+    {"answer_only": True, "doc_count": 0}, with the other aggs except sums read from its side
+    of the records it answered.
     """
-    buckets, complete = all_buckets(
+    # OLD CODE START — NET-226 follow-up: only the IPs that started connections were devices
+    # buckets, complete = all_buckets(
+    #     client,
+    #     NETWORK_INDEX,
+    #     {"bool": _lan_device_bool_query(app, from_ts, to_ts)},
+    #     [{"ip": {"terms": {"field": "source.ip"}}}],
+    #     aggs=aggs,
+    #     page_size=page_size,
+    #     **({"max_buckets": _DEVICE_CAP} if what else {}),
+    #     what=what,
+    # )
+    # # PR #191 review: a capped read is not every device, so a checked one fails instead
+    # if not complete and what:
+    #     raise QueryFailed(f"{what}: stopped at {len(buckets)} IPs")
+    # if not complete:
+    #     logger.warning(
+    #         "Device buckets stopped at %d IPs; figures cover those only", len(buckets)
+    #     )
+    # return [
+    #     {**b, "key": b["key"]["ip"]}
+    #     for b in buckets
+    #     if b.get("doc_count", 0) >= _MIN_CONNECTIONS
+    #     and not _is_skipped_device_ip(b["key"]["ip"])
+    # ]
+    # OLD CODE END
+    bounds = _time_bounds(aggs)
+    started = _ip_buckets(
         client,
-        NETWORK_INDEX,
-        {"bool": _lan_device_bool_query(app, from_ts, to_ts)},
-        [{"ip": {"terms": {"field": "source.ip"}}}],
-        aggs=aggs,
-        page_size=page_size,
-        **({"max_buckets": _DEVICE_CAP} if what else {}),
-        what=what,
+        _lan_device_bool_query(app, from_ts, to_ts),
+        "source.ip",
+        aggs,
+        page_size,
+        what,
     )
-    # PR #191 review: a capped read is not every device, so a checked one fails instead
-    if not complete and what:
-        raise QueryFailed(f"{what}: stopped at {len(buckets)} IPs")
-    if not complete:
-        logger.warning(
-            "Device buckets stopped at %d IPs; figures cover those only", len(buckets)
+    answer_query = _lan_answer_bool_query(app, from_ts, to_ts)
+    answered = _ip_buckets(
+        client,
+        answer_query,
+        "destination.ip",
+        {name: aggs[name] for name in bounds} or None,
+        page_size,
+        what,
+    )
+    members = [
+        ip
+        for ip in {**started, **answered}
+        if not _is_skipped_device_ip(ip)
+        and max(
+            (started.get(ip) or {}).get("doc_count", 0),
+            (answered.get(ip) or {}).get("doc_count", 0),
+        )
+        >= _MIN_CONNECTIONS
+    ]
+    only_answered = [ip for ip in members if ip not in started]
+    others = {
+        n: a for n, a in (aggs or {}).items() if n not in bounds and "sum" not in a
+    }
+    if "with_mac" in others:
+        others = {**others, "with_mac": _with_room_for_routers(others["with_mac"])}
+    extra = (
+        _answered_aggs(
+            client, answer_query, only_answered, others, what or "answer-only devices"
+        )
+        if others and only_answered
+        else {}
+    )
+    if "with_mac" in others:
+        extra = _without_router_macs(
+            client, app, from_ts, to_ts, extra, what or "answer-only devices"
         )
     return [
-        {**b, "key": b["key"]["ip"]}
-        for b in buckets
-        if b.get("doc_count", 0) >= _MIN_CONNECTIONS
-        and not _is_skipped_device_ip(b["key"]["ip"])
+        _merged_bounds(started[ip], answered.get(ip), bounds)
+        if ip in started
+        else {
+            **answered[ip],
+            **extra.get(ip, {}),
+            "key": ip,
+            "doc_count": 0,
+            "answer_only": True,
+        }
+        for ip in members
     ]
+
+
+# ---------------------------------------------------------------------------
+# NET-226: a device's traffic is both sides of its connections, plus its IPv6 by MAC
+# ---------------------------------------------------------------------------
+
+# Per device, from the connections it started: sums, bounds and its most common MAC. The
+# Painless total_bytes sum is gone: the list ranks in Python, and it was half the search's time.
+_DEVICE_AGGS = {
+    **STARTED,
+    "protocols": {"terms": {"field": "network.transport", "size": 10}},
+    "first_seen": {"min": {"field": "@timestamp"}},
+    "last_seen": {"max": {"field": "@timestamp"}},
+    "with_mac": {"terms": {"field": "source.mac", "size": 1}},
+}
+
+
+def _conn_filters(from_ts: str, to_ts: str) -> list[dict]:
+    """Every final conn record in the window, whoever took part (the answered and IPv6 reads)."""
+    return [
+        _time_range_filter(from_ts, to_ts),
+        {"term": {"event.provider": "zeek"}},
+        CONN_ACCOUNTING,
+    ]
+
+
+def _bucket_mac(bucket: dict) -> str | None:
+    """The MAC most of a device bucket's started connections carry (its with_mac terms)."""
+    macs = (bucket.get("with_mac") or {}).get("buckets") or []
+    return macs[0]["key"] if macs else None
+
+
+def _ipv6_owners(rows: list[tuple[str, str | None, int]]) -> dict[str, str]:
+    """{mac: ip} from (ip, mac, started connections) rows of listed devices.
+
+    A MAC's IPv6 goes to one row only: the one with most started connections, ties to the
+    lowest address. The list and the device page both decide through this.
+    """
+    owners: dict[str, str] = {}
+    for ip, mac, _ in sorted(rows, key=lambda r: (-r[2], _ip_order(r[0]))):
+        if mac:
+            owners.setdefault(mac, ip)
+    return owners
+
+
+def _ipv6_shares(
+    client: Any, app: Mapping[str, Any], filters: list[dict], macs: list[str], what: str
+) -> dict[str, dict]:
+    """fold_ipv6() for `macs`; gateways are only asked about MACs whose IPv6 could be forwarded."""
+    per_mac = ipv6_by_mac(client, filters, macs, f"{what} (IPv6)")
+    gateways = gateway_macs(
+        client,
+        filters,
+        app.get("lan_filter"),
+        forwarded_macs(per_mac),
+        f"{what} (gateways)",
+    )
+    return fold_ipv6(per_mac, gateways)
+
+
+def _accounted_devices(
+    client: Any, app: Mapping[str, Any], from_ts: str, to_ts: str, what: str
+) -> list[dict]:
+    """Every listed device with its traffic from both sides and its IPv6 (NET-226).
+
+    Membership and first/last seen come from _lan_device_buckets, so the count, the registry
+    and risk still agree with the list. Each bucket gains connection_count, upload_bytes,
+    download_bytes, total_bytes, ipv6_connections, ipv6_left_out(_reason) and mac.
+    QueryFailed if any read is incomplete.
+    """
+    buckets = _lan_device_buckets(
+        client, app, from_ts, to_ts, aggs=_DEVICE_AGGS, what=what
+    )
+    filters = _conn_filters(from_ts, to_ts)
+    answered = answered_by_ip(
+        client, filters, [b["key"] for b in buckets], f"{what} (answered)"
+    )
+    # OLD CODE START — NET-226 follow-up: every row could own IPv6; the device page's
+    # _ipv6_mac_of only lets one that started _MIN_CONNECTIONS
+    # owners = _ipv6_owners(
+    #     [(b["key"], _bucket_mac(b), b.get("doc_count", 0)) for b in buckets]
+    # )
+    # OLD CODE END
+    owners = _ipv6_owners(
+        [
+            (b["key"], _bucket_mac(b), b.get("doc_count", 0))
+            for b in buckets
+            if b.get("doc_count", 0) >= _MIN_CONNECTIONS
+        ]
+    )
+    shares = _ipv6_shares(client, app, filters, sorted(owners), what)
+    by_ip = {owners[mac]: share for mac, share in shares.items()}
+    rows = []
+    for b in buckets:
+        v6 = by_ip.get(b["key"]) or {}
+        both = add(totals(b), answered.get(b["key"]), v6.get("totals"))
+        rows.append(
+            {
+                **b,
+                "mac": _bucket_mac(b),
+                "connection_count": both["connections"],
+                "upload_bytes": both["upload"],
+                "download_bytes": both["download"],
+                "total_bytes": both["upload"] + both["download"],
+                "ipv6_connections": (v6.get("totals") or {}).get("connections", 0),
+                "ipv6_left_out": v6.get("left_out", 0),
+                "ipv6_left_out_reason": v6.get("reason"),
+            }
+        )
+    return rows
+
+
+def _ipv6_mac_of(
+    client: Any, app: Mapping[str, Any], ip: str, from_ts: str, to_ts: str
+) -> str | None:
+    """The MAC whose IPv6 the device list folds into this IP's row, or None (NET-226).
+
+    The list's rule on the list's records: the IP must be a listed device, the MAC its most
+    common, and _ipv6_owners must pick it over every other device with that MAC.
+    """
+    base = _lan_device_bool_query(app, from_ts, to_ts)
+
+    def rows(clause: dict) -> list[tuple[str, str | None, int]]:
+        body = {
+            "size": 0,
+            "query": {"bool": {**base, "filter": [*base["filter"], clause]}},
+            "aggs": {
+                "ips": {
+                    "terms": {"field": "source.ip", "size": _ALL_TERMS},
+                    "aggs": {"with_mac": _DEVICE_AGGS["with_mac"]},
+                }
+            },
+        }
+        reply = checked(
+            client.search(index=NETWORK_INDEX, body=body), "device IPv6 owner", ("ips",)
+        )
+        return [
+            (b["key"], _bucket_mac(b), b.get("doc_count", 0))
+            for b in reply["aggregations"]["ips"].get("buckets") or []
+            if b.get("doc_count", 0) >= _MIN_CONNECTIONS
+            and not _is_skipped_device_ip(b["key"])
+        ]
+
+    own = rows({"term": {"source.ip": ip}})
+    mac = own[0][1] if own else None
+    if mac is None:
+        return None
+    # Other devices whose records carry this MAC; only those whose most common MAC it is count
+    others = [r[0] for r in rows({"term": {"source.mac": mac}}) if r[0] != own[0][0]]
+    rivals = rows({"terms": {"source.ip": others}}) if others else []
+    return mac if _ipv6_owners([*own, *rivals]).get(mac) == own[0][0] else None
 
 
 def _get_client(request: web.Request):
@@ -509,6 +907,65 @@ def _device_category(
     return _vendor_category(manufacturer)
 
 
+def _category_basis(
+    os_hint: str | None, hostname: str | None, manufacturer: str | None
+) -> str | None:
+    """What _device_category's guess rests on: "name", "os", "vendor", or None when unknown.
+
+    Follows its order: a console or streamer name, then a recognised OS, then other name hints,
+    then the vendor.
+    """
+    if _device_category(os_hint, hostname, manufacturer) == "unknown":
+        return None
+    if hostname and any(x in hostname.lower() for x in _MEDIA_HOSTNAME_HINTS):
+        return "name"
+    if os_hint and _device_category(os_hint, None, None) != "unknown":
+        return "os"
+    if _device_category(os_hint, hostname, None) != "unknown":
+        return "name"
+    return "vendor"
+
+
+def _guesses(
+    os_hint: str | None, hostname: str | None, manufacturer: str | None
+) -> dict:
+    """B-h: the type and OS guesses with what each rests on, so the page can say so."""
+    return {
+        "category": _device_category(os_hint, hostname, manufacturer),
+        "category_basis": _category_basis(os_hint, hostname, manufacturer),
+        # the OS hint only ever comes from plaintext HTTP user agents (fingerprint)
+        "os_basis": "web traffic" if os_hint else None,
+    }
+
+
+def _device_sides(ip: str, mac: str | None, link_local_only: bool) -> tuple[dict, dict]:
+    """(started, answered) clauses for one device: its address, and its IPv6 by MAC."""
+
+    def side(field: str) -> dict:
+        own = [{"term": {f"{field}.ip": ip}}]
+        if mac:
+            own = [*own, ipv6_clause(field, mac, link_local_only)]
+        return {"bool": {"should": own, "minimum_should_match": 1}}
+
+    return side("source"), side("destination")
+
+
+# The traffic figures _accounted_devices adds to each device bucket
+_TRAFFIC_FIELDS = (
+    "connection_count",
+    "upload_bytes",
+    "download_bytes",
+    "total_bytes",
+    "ipv6_connections",
+    "ipv6_left_out",
+    "ipv6_left_out_reason",
+)
+
+
+def _traffic_fields(bucket: dict) -> dict:
+    return {k: bucket[k] for k in _TRAFFIC_FIELDS}
+
+
 # ---------------------------------------------------------------------------
 # Route handlers
 # ---------------------------------------------------------------------------
@@ -601,23 +1058,18 @@ def handle_device_list(request: web.Request) -> web.Response:
     #     },
     # }
     # OLD CODE END
-    # Per device: the same sums and bounds the terms list carried
-    device_aggs = {
-        "total_bytes": {
-            "sum": {
-                "script": {
-                    "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
-                    "lang": "painless",
-                }
-            }
-        },
-        # Same split as handle_device_detail: sent (orig) vs received (resp)
-        "orig_bytes": {"sum": {"field": "source.bytes"}},
-        "resp_bytes": {"sum": {"field": "destination.bytes"}},
-        "protocols": {"terms": {"field": "network.transport", "size": 10}},
-        "first_seen": {"min": {"field": "@timestamp"}},
-        "last_seen": {"max": {"field": "@timestamp"}},
-    }
+    # OLD CODE START — NET-226: started-side sums only; _DEVICE_AGGS + _accounted_devices now
+    # # Per device: the same sums and bounds the terms list carried
+    # device_aggs = {
+    #     "total_bytes": {"sum": {"script": {"source": "(doc['source.bytes']...) + (doc['destination.bytes']...)", "lang": "painless"}}},
+    #     # Same split as handle_device_detail: sent (orig) vs received (resp)
+    #     "orig_bytes": {"sum": {"field": "source.bytes"}},
+    #     "resp_bytes": {"sum": {"field": "destination.bytes"}},
+    #     "protocols": {"terms": {"field": "network.transport", "size": 10}},
+    #     "first_seen": {"min": {"field": "@timestamp"}},
+    #     "last_seen": {"max": {"field": "@timestamp"}},
+    # }
+    # OLD CODE END
 
     try:
         # OLD CODE START — #96: the alert sort read the same capped list
@@ -656,14 +1108,12 @@ def handle_device_list(request: web.Request) -> web.Response:
         # )
         # OLD CODE END
         # The whole handler runs in a worker thread, so /api/health never waits on it
-        buckets = _lan_device_buckets(
-            client,
-            request.app,
-            from_ts,
-            to_ts,
-            aggs=device_aggs,
-            what="device list",
-        )
+        # OLD CODE START — NET-226: the started side only
+        # buckets = _lan_device_buckets(
+        #     client, request.app, from_ts, to_ts, aggs=device_aggs, what="device list"
+        # )
+        # OLD CODE END
+        buckets = _accounted_devices(client, request.app, from_ts, to_ts, "device list")
     except QueryFailed as exc:
         return _incomplete("devices list", exc)
     except OpenSearchException as exc:
@@ -831,10 +1281,12 @@ def handle_device_list(request: web.Request) -> web.Response:
         if _is_skipped_device_ip(ip):
             continue
 
-        total_bytes = b.get("total_bytes", {}).get("value", 0) or 0
-        orig_bytes = int(b.get("orig_bytes", {}).get("value", 0) or 0)
-        resp_bytes = int(b.get("resp_bytes", {}).get("value", 0) or 0)
-        connection_count = b.get("doc_count", 0)
+        # OLD CODE START — NET-226: the started side's bytes and connections only
+        # total_bytes = b.get("total_bytes", {}).get("value", 0) or 0
+        # orig_bytes = int(b.get("orig_bytes", {}).get("value", 0) or 0)
+        # resp_bytes = int(b.get("resp_bytes", {}).get("value", 0) or 0)
+        # connection_count = b.get("doc_count", 0)
+        # OLD CODE END
         proto_buckets = b.get("protocols", {}).get("buckets", [])
         protocols = [pb["key"] for pb in proto_buckets]
         first_seen = b.get("first_seen", {}).get("value_as_string", "")
@@ -848,6 +1300,8 @@ def handle_device_list(request: web.Request) -> web.Response:
         # os_hint = fingerprint.get_os_hint(client, ip, from_ts, to_ts)
         # OLD CODE END
         mac, hostname, os_hint = lookups.get(ip, (None, None, None))
+        # an answer-only device has no MAC of its own records; its answered ones carry it
+        mac = mac or b.get("mac")
         hostname = names.get(_mac_key(mac)) or hostname
         manufacturer = fingerprint.get_manufacturer(mac) if mac else None
 
@@ -865,13 +1319,17 @@ def handle_device_list(request: web.Request) -> web.Response:
             "hostname": hostname,
             "manufacturer": manufacturer,
             "os_hint": os_hint,
-            "category": _device_category(os_hint, hostname, manufacturer),
+            # OLD CODE: "category": _device_category(os_hint, hostname, manufacturer), (B-h: with its basis)
+            **_guesses(os_hint, hostname, manufacturer),
             "first_seen": first_seen,
             "last_seen": last_seen,
-            "total_bytes": total_bytes,
-            "orig_bytes": orig_bytes,
-            "resp_bytes": resp_bytes,
-            "connection_count": connection_count,
+            # OLD CODE START — NET-226: the started side's figures, orig/resp named
+            # "total_bytes": total_bytes,
+            # "orig_bytes": orig_bytes,
+            # "resp_bytes": resp_bytes,
+            # "connection_count": connection_count,
+            # OLD CODE END
+            **_traffic_fields(b),
             "protocols": protocols,
             "alert_count": alert_count,
         }
@@ -932,105 +1390,319 @@ def handle_device_detail(request: web.Request) -> web.Response:
     client = _get_client(request)
     fingerprint = _get_fingerprint(request)
 
-    # Main device aggregation query
+    # OLD CODE START — NET-226: only the connections the device started (source.ip), IPv4
+    # only, with orig/resp as upload/download; replaced by the device-side query below
+    # # Main device aggregation query
+    # device_query = {
+    #     "size": 0,
+    #     "track_total_hits": True,  # #84: hits.total stops at 10,000 without it (the router read 10,000)
+    #     "query": {
+    #         "bool": {
+    #             "filter": [
+    #                 _time_range_filter(from_ts, to_ts),
+    #                 {"term": {"source.ip": ip}},
+    #                 {"term": {"event.provider": "zeek"}},
+    #                 # OLD CODE START — F1: also counted conn_long.log interim records
+    #                 # {"term": {"event.dataset": "conn"}},
+    #                 # OLD CODE END
+    #                 CONN_ACCOUNTING,
+    #             ]
+    #         }
+    #     },
+    #     "aggs": {
+    #         "total_bytes": {
+    #             "sum": {
+    #                 "script": {
+    #                     "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
+    #                     "lang": "painless",
+    #                 }
+    #             }
+    #         },
+    #         "total_orig_bytes": {"sum": {"field": "source.bytes"}},
+    #         "total_resp_bytes": {"sum": {"field": "destination.bytes"}},
+    #         "unique_destinations": {"cardinality": {"field": "destination.ip"}},
+    #         # OLD CODE START — #96: the 10 ASNs with the most connections, then shown in bytes
+    #         # order, so a service with fewer but bigger flows was left out
+    #         # "top_services": {
+    #         #     "terms": {"field": "destination.as.full", "size": 10, "shard_size": _ALL_TERMS},
+    #         # OLD CODE END
+    #         # Every ASN (biggest first if a device has more), so the top 10 by bytes is exact
+    #         # after ASNs of one organisation are merged
+    #         "top_services": {
+    #             "terms": {
+    #                 "field": "destination.as.full",
+    #                 "size": _ALL_TERMS,
+    #                 "shard_size": _ALL_TERMS,
+    #                 "order": {"bytes": "desc"},
+    #             },
+    #             "aggs": {
+    #                 "bytes": {
+    #                     "sum": {
+    #                         "script": {
+    #                             "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
+    #                             "lang": "painless",
+    #                         }
+    #                     }
+    #                 },
+    #             },
+    #         },
+    #         "protocols": {"terms": {"field": "network.transport", "size": 10}},
+    #         "first_seen": {"min": {"field": "@timestamp"}},
+    #         "last_seen": {"max": {"field": "@timestamp"}},
+    #         # OLD CODE START — #90: top 20 only; unique_destinations came from cardinality, an
+    #         # estimate (2,390 for 2,391 on the G11)
+    #         # "top_destinations": {
+    #         #     "terms": {"field": "destination.ip", "size": 20},
+    #         # OLD CODE END
+    #         # Every destination, so the top 20 and the unique count are exact
+    #         "top_destinations": {
+    #             "terms": {"field": "destination.ip", "size": _ALL_TERMS},
+    #             "aggs": {
+    #                 "bytes": {
+    #                     "sum": {
+    #                         "script": {
+    #                             "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
+    #                             "lang": "painless",
+    #                         }
+    #                     }
+    #                 },
+    #             },
+    #         },
+    #         "bandwidth_series": {
+    #             # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
+    #             # "date_histogram": {
+    #             #     "field": "@timestamp",
+    #             #     # OLD CODE START — #87: 5 minutes for every range
+    #             #     # "fixed_interval": "5m",
+    #             #     # OLD CODE END
+    #             #     "fixed_interval": _bandwidth_interval(from_ts, to_ts),
+    #             #     "min_doc_count": 0,
+    #             #     "extended_bounds": {"min": from_ts, "max": to_ts},
+    #             # },
+    #             # OLD CODE END
+    #             **time_slots(
+    #                 from_ts, to_ts, _bandwidth_interval(from_ts, to_ts)
+    #             ),  # at most ~720 slots
+    #             "aggs": {
+    #                 "bytes": {
+    #                     "sum": {
+    #                         "script": {
+    #                             "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
+    #                             "lang": "painless",
+    #                         }
+    #                     }
+    #                 },
+    #                 "download_bytes": {"sum": {"field": "destination.bytes"}},
+    #                 "upload_bytes": {"sum": {"field": "source.bytes"}},
+    #             },
+    #         },
+    #     },
+    # }
+    #
+    # try:
+    #     result = client.search(index=NETWORK_INDEX, body=device_query)
+    # except OpenSearchException as exc:
+    #     logger.error("OpenSearch error in device detail: %s", exc)
+    #     return web.json_response(
+    #         {"error": f"OpenSearch query failed: {exc}"}, status=502
+    #     )
+    #
+    # aggs = result.get("aggregations", {})
+    # hits_total = result.get("hits", {}).get("total", {})
+    # connection_count = (
+    #     hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    # )
+    #
+    # total_bytes = aggs.get("total_bytes", {}).get("value", 0) or 0
+    # orig_bytes = int(aggs.get("total_orig_bytes", {}).get("value", 0) or 0)
+    # resp_bytes = int(aggs.get("total_resp_bytes", {}).get("value", 0) or 0)
+    # unique_dest_count = int(aggs.get("unique_destinations", {}).get("value", 0) or 0)
+    # all_dests = aggs.get("top_destinations", {})
+    # if all_dests.get("buckets") and not all_dests.get("sum_other_doc_count"):
+    #     unique_dest_count = len(
+    #         all_dests["buckets"]
+    #     )  # #90: exact; the estimate stays past _ALL_TERMS
+    #
+    # # Top services: strip ASN prefix and merge duplicates
+    # svc_merged: dict[str, dict] = {}
+    # for sb in aggs.get("top_services", {}).get("buckets", []):
+    #     asn_full = sb["key"]
+    #     service_name = asn_full.split(" ", 1)[1] if " " in asn_full else asn_full
+    #     if service_name not in svc_merged:
+    #         svc_merged[service_name] = {"bytes": 0, "connections": 0}
+    #     svc_merged[service_name]["bytes"] += int(
+    #         sb.get("bytes", {}).get("value", 0) or 0
+    #     )
+    #     svc_merged[service_name]["connections"] += sb.get("doc_count", 0)
+    # top_services_list = [
+    #     {"name": name, "bytes": m["bytes"], "connections": m["connections"]}
+    #     for name, m in svc_merged.items()
+    # ]
+    # # OLD CODE START — #96: sorted the 10 ASNs with the most connections
+    # # top_services_list.sort(key=lambda s: s["bytes"], reverse=True)
+    # # OLD CODE END
+    # top_services_list = sorted(
+    #     top_services_list, key=lambda s: s["bytes"], reverse=True
+    # )[:10]
+    #
+    # first_seen = aggs.get("first_seen", {}).get("value_as_string", "")
+    # last_seen = aggs.get("last_seen", {}).get("value_as_string", "")
+    # proto_buckets = aggs.get("protocols", {}).get("buckets", [])
+    # protocols = [pb["key"] for pb in proto_buckets]
+    #
+    # # Top destinations
+    # # OLD CODE START — NET-158: the buckets come in connection-count order, so "By bytes"
+    # # showed the 20 most frequent destinations, not the biggest transfers
+    # # dest_buckets = aggs.get("top_destinations", {}).get("buckets", [])[:20]
+    # # OLD CODE END
+    # dest_buckets = sorted(
+    #     aggs.get("top_destinations", {}).get("buckets", []),
+    #     key=lambda b: b.get("bytes", {}).get("value", 0) or 0,
+    #     reverse=True,
+    # )[:20]
+    # top_destinations = [
+    #     {
+    #         "ip": db["key"],
+    #         "bytes": db.get("bytes", {}).get("value", 0) or 0,
+    #         "connections": db.get("doc_count", 0),
+    #     }
+    #     for db in dest_buckets
+    # ]
+    #
+    # # Bandwidth series
+    # bw_buckets = histogram_buckets(
+    #     aggs.get("bandwidth_series")
+    # )  # date_histogram before #120
+    # bandwidth_series = [
+    #     {
+    #         "timestamp": bwb.get("key_as_string", bwb.get("key")),
+    #         "bytes": bwb.get("bytes", {}).get("value", 0) or 0,
+    #         "download_bytes": int(bwb.get("download_bytes", {}).get("value", 0) or 0),
+    #         "upload_bytes": int(bwb.get("upload_bytes", {}).get("value", 0) or 0),
+    #     }
+    #     for bwb in bw_buckets
+    # ]
+    #
+    # OLD CODE END
+    # NET-226: the device's side of every connection, and its IPv6 by MAC as the list folds it
+    try:
+        v6_mac = _ipv6_mac_of(client, request.app, ip, from_ts, to_ts)
+        filters = _conn_filters(from_ts, to_ts)
+        v6 = (
+            _ipv6_shares(client, request.app, filters, [v6_mac], "device detail")
+            if v6_mac
+            else {}
+        ).get(v6_mac, {})
+    except QueryFailed as exc:
+        return _incomplete("device detail", exc)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in device detail: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
+    # A reason means fold_ipv6 kept only the link-local part of this MAC's IPv6
+    started, answered = _device_sides(ip, v6_mac, v6.get("reason") is not None)
+    # The list's activity rule (_lan_device_buckets): its IPv4 records, started or answered
+    responded = {"bool": {"filter": [{"term": {"destination.ip": ip}}, _RESPONDED]}}
+    # review L10: connections with another subnet of the LAN rule, whose bytes can count twice
+    # (a router on one cable passes a routed flow twice, and Zeek merges both legs)
+    other_subnets = [
+        c
+        for c in lan_cidrs(request.app.get("lan_filter"))
+        if ipaddress.ip_address(ip) not in ipaddress.ip_network(c)
+    ]
     device_query = {
         "size": 0,
         "track_total_hits": True,  # #84: hits.total stops at 10,000 without it (the router read 10,000)
         "query": {
             "bool": {
                 "filter": [
-                    _time_range_filter(from_ts, to_ts),
-                    {"term": {"source.ip": ip}},
-                    {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
+                    *filters,
+                    {
+                        "bool": {
+                            "should": [started, answered],
+                            "minimum_should_match": 1,
+                        }
+                    },
                 ]
             }
         },
         "aggs": {
-            "total_bytes": {
-                "sum": {
-                    "script": {
-                        "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
-                        "lang": "painless",
-                    }
-                }
-            },
-            "total_orig_bytes": {"sum": {"field": "source.bytes"}},
-            "total_resp_bytes": {"sum": {"field": "destination.bytes"}},
-            "unique_destinations": {"cardinality": {"field": "destination.ip"}},
-            # OLD CODE START — #96: the 10 ASNs with the most connections, then shown in bytes
-            # order, so a service with fewer but bigger flows was left out
-            # "top_services": {
-            #     "terms": {"field": "destination.as.full", "size": 10, "shard_size": _ALL_TERMS},
-            # OLD CODE END
-            # Every ASN (biggest first if a device has more), so the top 10 by bytes is exact
-            # after ASNs of one organisation are merged
-            "top_services": {
-                "terms": {
-                    "field": "destination.as.full",
-                    "size": _ALL_TERMS,
-                    "shard_size": _ALL_TERMS,
-                    "order": {"bytes": "desc"},
-                },
-                "aggs": {
-                    "bytes": {
-                        "sum": {
-                            "script": {
-                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
-                                "lang": "painless",
-                            }
-                        }
-                    },
-                },
-            },
-            "protocols": {"terms": {"field": "network.transport", "size": 10}},
-            "first_seen": {"min": {"field": "@timestamp"}},
-            "last_seen": {"max": {"field": "@timestamp"}},
-            # OLD CODE START — #90: top 20 only; unique_destinations came from cardinality, an
-            # estimate (2,390 for 2,391 on the G11)
-            # "top_destinations": {
-            #     "terms": {"field": "destination.ip", "size": 20},
-            # OLD CODE END
-            # Every destination, so the top 20 and the unique count are exact
-            "top_destinations": {
-                "terms": {"field": "destination.ip", "size": _ALL_TERMS},
-                "aggs": {
-                    "bytes": {
-                        "sum": {
-                            "script": {
-                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
-                                "lang": "painless",
-                            }
-                        }
-                    },
-                },
+            **_side_sums(answered),
+            "ipv6": {
+                "filter": {"bool": {"must_not": [{"terms": {"source.ip": IPV4_ALL}}]}}
             },
             "bandwidth_series": {
-                # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
-                # "date_histogram": {
-                #     "field": "@timestamp",
-                #     # OLD CODE START — #87: 5 minutes for every range
-                #     # "fixed_interval": "5m",
-                #     # OLD CODE END
-                #     "fixed_interval": _bandwidth_interval(from_ts, to_ts),
-                #     "min_doc_count": 0,
-                #     "extended_bounds": {"min": from_ts, "max": to_ts},
-                # },
-                # OLD CODE END
-                **time_slots(
-                    from_ts, to_ts, _bandwidth_interval(from_ts, to_ts)
-                ),  # at most ~720 slots
+                **time_slots(from_ts, to_ts, _bandwidth_interval(from_ts, to_ts)),
+                "aggs": _side_sums(answered),
+            },
+            "activity": {
+                "filter": {
+                    "bool": {
+                        "should": [{"term": {"source.ip": ip}}, responded],
+                        "minimum_should_match": 1,
+                    }
+                },
                 "aggs": {
-                    "bytes": {
-                        "sum": {
-                            "script": {
-                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
-                                "lang": "painless",
-                            }
-                        }
+                    "first_seen": {"min": {"field": "@timestamp"}},
+                    "last_seen": {"max": {"field": "@timestamp"}},
+                },
+            },
+            # the device's own address is in neither list, so a match is the other party's
+            "other_subnets": {
+                "filter": {
+                    "bool": {
+                        "should": [
+                            {"terms": {"source.ip": other_subnets}},
+                            {"terms": {"destination.ip": other_subnets}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                }
+                if other_subnets
+                else {"match_none": {}}
+            },
+            # what an answer-only device's row reads (its side of the records it answered)
+            "responded": {
+                "filter": responded,
+                "aggs": _swapped(
+                    {
+                        "protocols": _DEVICE_AGGS["protocols"],
+                        # OLD CODE: "with_mac": _DEVICE_AGGS["with_mac"], (delta review: room for routers)
+                        "with_mac": _with_room_for_routers(_DEVICE_AGGS["with_mac"]),
+                    }
+                ),
+            },
+            # Where the device connected to: the started side, as before
+            "started": {
+                "filter": started,
+                "aggs": {
+                    "protocols": {"terms": {"field": "network.transport", "size": 10}},
+                    # OLD CODE START — NET-226 follow-up: the bounds are "activity" now
+                    # "first_seen": {"min": {"field": "@timestamp"}},
+                    # "last_seen": {"max": {"field": "@timestamp"}},
+                    # OLD CODE END
+                    "unique_destinations": {"cardinality": {"field": "destination.ip"}},
+                    # Every ASN (biggest first if a device has more), so the top 10 by bytes is
+                    # exact after ASNs of one organisation are merged
+                    "top_services": {
+                        "terms": {
+                            "field": "destination.as.full",
+                            "size": _ALL_TERMS,
+                            "shard_size": _ALL_TERMS,
+                            "order": {"order_bytes": "desc"},
+                        },
+                        "aggs": {
+                            **_BYTE_SUMS,
+                            # Malcolm's sum of both IP byte counts, for the order only
+                            "order_bytes": {"sum": {"field": "network.bytes"}},
+                        },
                     },
-                    "download_bytes": {"sum": {"field": "destination.bytes"}},
-                    "upload_bytes": {"sum": {"field": "source.bytes"}},
+                    # Every destination, so the top 20 and the unique count are exact
+                    "top_destinations": {
+                        "terms": {"field": "destination.ip", "size": _ALL_TERMS},
+                        "aggs": _BYTE_SUMS,
+                    },
                 },
             },
         },
@@ -1049,12 +1721,13 @@ def handle_device_detail(request: web.Request) -> web.Response:
     connection_count = (
         hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
     )
+    upload_bytes, download_bytes = _device_side_bytes(aggs)
+    started_aggs = aggs.get("started", {})
 
-    total_bytes = aggs.get("total_bytes", {}).get("value", 0) or 0
-    orig_bytes = int(aggs.get("total_orig_bytes", {}).get("value", 0) or 0)
-    resp_bytes = int(aggs.get("total_resp_bytes", {}).get("value", 0) or 0)
-    unique_dest_count = int(aggs.get("unique_destinations", {}).get("value", 0) or 0)
-    all_dests = aggs.get("top_destinations", {})
+    unique_dest_count = int(
+        started_aggs.get("unique_destinations", {}).get("value", 0) or 0
+    )
+    all_dests = started_aggs.get("top_destinations", {})
     if all_dests.get("buckets") and not all_dests.get("sum_other_doc_count"):
         unique_dest_count = len(
             all_dests["buckets"]
@@ -1062,63 +1735,69 @@ def handle_device_detail(request: web.Request) -> web.Response:
 
     # Top services: strip ASN prefix and merge duplicates
     svc_merged: dict[str, dict] = {}
-    for sb in aggs.get("top_services", {}).get("buckets", []):
+    for sb in started_aggs.get("top_services", {}).get("buckets", []):
         asn_full = sb["key"]
         service_name = asn_full.split(" ", 1)[1] if " " in asn_full else asn_full
-        if service_name not in svc_merged:
-            svc_merged[service_name] = {"bytes": 0, "connections": 0}
-        svc_merged[service_name]["bytes"] += int(
-            sb.get("bytes", {}).get("value", 0) or 0
-        )
-        svc_merged[service_name]["connections"] += sb.get("doc_count", 0)
-    top_services_list = [
-        {"name": name, "bytes": m["bytes"], "connections": m["connections"]}
-        for name, m in svc_merged.items()
-    ]
-    # OLD CODE START — #96: sorted the 10 ASNs with the most connections
-    # top_services_list.sort(key=lambda s: s["bytes"], reverse=True)
-    # OLD CODE END
+        seen = svc_merged.get(service_name, {"bytes": 0, "connections": 0})
+        svc_merged = {
+            **svc_merged,
+            service_name: {
+                "bytes": seen["bytes"] + _bucket_bytes(sb),
+                "connections": seen["connections"] + sb.get("doc_count", 0),
+            },
+        }
     top_services_list = sorted(
-        top_services_list, key=lambda s: s["bytes"], reverse=True
+        (
+            {"name": name, "bytes": m["bytes"], "connections": m["connections"]}
+            for name, m in svc_merged.items()
+        ),
+        key=lambda svc: svc["bytes"],
+        reverse=True,
     )[:10]
 
-    first_seen = aggs.get("first_seen", {}).get("value_as_string", "")
-    last_seen = aggs.get("last_seen", {}).get("value_as_string", "")
-    proto_buckets = aggs.get("protocols", {}).get("buckets", [])
-    protocols = [pb["key"] for pb in proto_buckets]
-
-    # Top destinations
-    # OLD CODE START — NET-158: the buckets come in connection-count order, so "By bytes"
-    # showed the 20 most frequent destinations, not the biggest transfers
-    # dest_buckets = aggs.get("top_destinations", {}).get("buckets", [])[:20]
+    # OLD CODE START — NET-226 follow-up: the started side's bounds, its IPv6 included, where
+    # the list reads its IPv4 records started and answered; and no protocols if it started none
+    # first_seen = started_aggs.get("first_seen", {}).get("value_as_string", "")
+    # last_seen = started_aggs.get("last_seen", {}).get("value_as_string", "")
+    # protocols = [
+    #     pb["key"] for pb in started_aggs.get("protocols", {}).get("buckets", [])
+    # ]
     # OLD CODE END
-    dest_buckets = sorted(
-        aggs.get("top_destinations", {}).get("buckets", []),
-        key=lambda b: b.get("bytes", {}).get("value", 0) or 0,
-        reverse=True,
-    )[:20]
+    activity = aggs.get("activity", {})
+    first_seen = activity.get("first_seen", {}).get("value_as_string", "")
+    last_seen = activity.get("last_seen", {}).get("value_as_string", "")
+    protocols = [
+        pb["key"]
+        for pb in (
+            started_aggs.get("protocols", {}).get("buckets")
+            or aggs.get("responded", {}).get("protocols", {}).get("buckets", [])
+        )
+    ]
+
+    # Top destinations, by bytes (NET-158)
     top_destinations = [
         {
             "ip": db["key"],
-            "bytes": db.get("bytes", {}).get("value", 0) or 0,
+            "bytes": _bucket_bytes(db),
             "connections": db.get("doc_count", 0),
         }
-        for db in dest_buckets
+        for db in sorted(all_dests.get("buckets", []), key=_bucket_bytes, reverse=True)[
+            :20
+        ]
     ]
 
-    # Bandwidth series
-    bw_buckets = histogram_buckets(
-        aggs.get("bandwidth_series")
-    )  # date_histogram before #120
-    bandwidth_series = [
-        {
-            "timestamp": bwb.get("key_as_string", bwb.get("key")),
-            "bytes": bwb.get("bytes", {}).get("value", 0) or 0,
-            "download_bytes": int(bwb.get("download_bytes", {}).get("value", 0) or 0),
-            "upload_bytes": int(bwb.get("upload_bytes", {}).get("value", 0) or 0),
-        }
-        for bwb in bw_buckets
-    ]
+    # Bandwidth series, download and upload from the device's side
+    bandwidth_series = []
+    for bwb in histogram_buckets(aggs.get("bandwidth_series")):
+        up, down = _device_side_bytes(bwb)
+        bandwidth_series.append(
+            {
+                "timestamp": bwb.get("key_as_string", bwb.get("key")),
+                "bytes": up + down,
+                "download_bytes": down,
+                "upload_bytes": up,
+            }
+        )
 
     # DNS queries from unified index (zeek dns events)
     dns_query = {
@@ -1223,7 +1902,31 @@ def handle_device_detail(request: web.Request) -> web.Response:
     )
 
     # Passive fingerprinting enrichment
+    # OLD CODE: mac = fingerprint.get_mac_for_ip(client, ip, from_ts, to_ts) (an answer-only device had none)
+    # OLD CODE START — review: a routed answer's MAC can be the router's (_without_router_macs)
+    # mac = fingerprint.get_mac_for_ip(client, ip, from_ts, to_ts) or _bucket_mac(
+    #     aggs.get("responded", {})
+    # )
+    # OLD CODE END
     mac = fingerprint.get_mac_for_ip(client, ip, from_ts, to_ts)
+    try:
+        mac = mac or _bucket_mac(
+            _without_router_macs(
+                client,
+                request.app,
+                from_ts,
+                to_ts,
+                {ip: aggs.get("responded", {})},
+                "device detail (MAC)",
+            )[ip]
+        )
+    except QueryFailed as exc:
+        return _incomplete("device detail", exc)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in device detail: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
     hostname = fingerprint.get_hostname_for_ip(client, ip, from_ts, to_ts)
     hostname = (
         _registry_names(request, [mac] if mac else []).get(_mac_key(mac)) or hostname
@@ -1237,14 +1940,24 @@ def handle_device_detail(request: web.Request) -> web.Response:
         "hostname": hostname,
         "manufacturer": manufacturer,
         "os_hint": os_hint,
+        **_guesses(os_hint, hostname, manufacturer),
         "first_seen": first_seen,
         "last_seen": last_seen,
-        "total_bytes": total_bytes,
-        "orig_bytes": orig_bytes,
-        "resp_bytes": resp_bytes,
+        # OLD CODE START — NET-226: started side only, orig/resp named
+        # "total_bytes": total_bytes,
+        # "orig_bytes": orig_bytes,
+        # "resp_bytes": resp_bytes,
+        # OLD CODE END
+        "total_bytes": upload_bytes + download_bytes,
+        "upload_bytes": upload_bytes,
+        "download_bytes": download_bytes,
         "unique_destinations": unique_dest_count,
+        "inter_vlan_connections": aggs.get("other_subnets", {}).get("doc_count", 0),
         "top_services": top_services_list,
         "connection_count": connection_count,
+        "ipv6_connections": aggs.get("ipv6", {}).get("doc_count", 0),
+        "ipv6_left_out": v6.get("left_out", 0),
+        "ipv6_left_out_reason": v6.get("reason"),
         "protocols": protocols,
         "alert_count": alert_count,
         "top_destinations": top_destinations,
@@ -1400,7 +2113,10 @@ def handle_device_connections(request: web.Request) -> web.Response:
                         }
                     },
                     {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
+                    # OLD CODE START — F1: also counted conn_long.log interim records
+                    # {"term": {"event.dataset": "conn"}},
+                    # OLD CODE END
+                    CONN_ACCOUNTING,
                     *([{"term": {"network.transport": proto}}] if proto else []),
                 ]
             }
@@ -1476,7 +2192,10 @@ def handle_device_categories(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     {"term": {"source.ip": ip}},
                     {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
+                    # OLD CODE START — F1: also counted conn_long.log interim records
+                    # {"term": {"event.dataset": "conn"}},
+                    # OLD CODE END
+                    CONN_ACCOUNTING,
                 ]
             }
         },
@@ -1486,16 +2205,19 @@ def handle_device_categories(request: web.Request) -> web.Response:
                 # "terms": {"field": "destination.as.full", "size": 200},
                 # OLD CODE END
                 "terms": {"field": "destination.as.full", "size": _ALL_TERMS},
-                "aggs": {
-                    "total_bytes": {
-                        "sum": {
-                            "script": {
-                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
-                                "lang": "painless",
-                            }
-                        }
-                    },
-                },
+                # OLD CODE START — NET-226 follow-up: a Painless sum per record, as the list had
+                # "aggs": {
+                #     "total_bytes": {
+                #         "sum": {
+                #             "script": {
+                #                 "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
+                #                 "lang": "painless",
+                #             }
+                #         }
+                #     },
+                # },
+                # OLD CODE END
+                "aggs": _BYTE_SUMS,
             }
         },
     }
@@ -1512,7 +2234,8 @@ def handle_device_categories(request: web.Request) -> web.Response:
     ):
         asn_full = bucket["key"]
         cat_key = classify_asn(asn_full)
-        total_bytes = int(bucket.get("total_bytes", {}).get("value", 0))
+        # OLD CODE: total_bytes = int(bucket.get("total_bytes", {}).get("value", 0)) (the Painless sum)
+        total_bytes = _bucket_bytes(bucket)
 
         if cat_key not in cat_data:
             cat_data[cat_key] = {
@@ -1637,7 +2360,10 @@ def handle_device_ports(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     {"term": {"source.ip": ip}},
                     {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
+                    # OLD CODE START — F1: also counted conn_long.log interim records
+                    # {"term": {"event.dataset": "conn"}},
+                    # OLD CODE END
+                    CONN_ACCOUNTING,
                 ]
             }
         },

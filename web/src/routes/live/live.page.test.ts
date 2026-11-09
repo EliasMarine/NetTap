@@ -10,6 +10,7 @@ import { getHomeLocation } from '$lib/api/home-location';
 import type { LiveConnection, LiveDashboardResponse } from '$lib/api/live';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
+import { formatTime } from '$lib/utils/time';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
@@ -38,7 +39,8 @@ async function flush() {
 
 function conn(i: number, src: string, country: string, protocol: string, extra: Partial<LiveConnection> = {}): LiveConnection {
 	return {
-		timestamp: `2026-11-03T10:00:0${i}Z`, source_ip: src, source_port: 50_000 + i, dest_ip: `203.0.113.${i}`, dest_port: 443,
+		// NET-237: rows carry their end; the feed sorts by it
+		timestamp: `2026-11-03T10:00:0${i}Z`, ended_at: `2026-11-03T10:00:0${i}Z`, source_ip: src, source_port: 50_000 + i, dest_ip: `203.0.113.${i}`, dest_port: 443,
 		protocol, service: '', bytes: 1000 * i, duration: 1, country, country_name: country, device_name: '',
 		dest_lat: null, dest_lon: null, dest_city: '', dest_asn: null, dest_org: '', has_alert: false, ...extra,
 	};
@@ -169,6 +171,23 @@ describe('Live refresh contract', () => {
 		// the last good feed stays, marked stale
 		expect(feed()).toHaveLength(4);
 		expect(screen.getByText("Couldn't refresh live data; showing the last figures loaded.")).toBeInTheDocument();
+	});
+
+	it('NET-237: the chip says "Not updating" while polls fail, and "Live" again once one works', async () => {
+		await renderLive();
+		const head = () => screen.getByRole('heading', { level: 1 }).closest('.page-head') as HTMLElement;
+		expect(within(head()).getByText('Live')).toBeInTheDocument();
+
+		vi.mocked(getLiveDashboard).mockRejectedValue(new Error('HTTP 503'));
+		expect(await refreshPage()).toBe('failed');
+		expect(within(head()).getByText('Not updating').closest('.chip')).toHaveClass('is-warn');
+		expect(within(head()).queryByText('Live')).not.toBeInTheDocument();
+		expect(head()).toHaveTextContent('not updating: the last refresh failed, retrying every 3 s');
+
+		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard());
+		expect(await refreshPage()).toBe('ok');
+		expect(within(head()).getByText('Live')).toBeInTheDocument();
+		expect(head()).toHaveTextContent('refreshing every 3 s');
 	});
 
 	it('a request still pending: the loader has not returned', async () => {
@@ -317,7 +336,8 @@ describe('Live figures (accuracy audit 2026-11-06)', () => {
 		// 25 UDP connections in the window, not the 2 UDP rows among the feed's newest
 		expect(legend(container)).toEqual([['UDP', '25', '100%']]);
 		expect(talker(/^192\.168\.1\.77/)).toBeInTheDocument();
-		expect(screen.getByText('Bytes and connections per LAN address · last 5 minutes, filtered')).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText('Bytes and connections per LAN address · last 5 minutes, filtered')).toBeInTheDocument(); (NET-237)
+		expect(screen.getByText('Bytes and connections per LAN address · ended in the last 5 minutes, filtered')).toBeInTheDocument();
 	});
 
 	it('O7: a failed filtered request says so instead of showing unfiltered figures', async () => {
@@ -395,7 +415,8 @@ describe('Live card states', () => {
 	it('empty: each card names what will appear, not zeros', async () => {
 		vi.mocked(getLiveDashboard).mockResolvedValue({ ...dashboard([]), protocols: {}, top_talkers: [], geo_arcs: [] });
 		await renderLive();
-		for (const title of ['No destinations yet', 'No devices talking yet', 'No protocols yet', 'No connections right now']) {
+		// OLD CODE: … 'No connections right now'] (NET-237: the window is connections that ended)
+		for (const title of ['No destinations yet', 'No devices talking yet', 'No protocols yet', 'No connections in the last 5 minutes']) {
 			expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
 		}
 	});
@@ -464,5 +485,32 @@ describe('Live globe', () => {
 		await flush();
 		expect(document.querySelector('.home-ring')).not.toBeNull();
 		expect(screen.queryByRole('link', { name: 'Settings › Network' })).toBeNull();
+	});
+});
+
+// NET-237 (TRF-1): Zeek logs a connection when it closes, stamped with its start
+describe('Live window by end time', () => {
+	it('says the figures are connections that ended, and why a stream that is still open is missing', async () => {
+		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard());
+		await renderLive();
+		expect(screen.getByText('Bandwidth is live · the rest counts connections that ended in the last 5 minutes')).toBeInTheDocument();
+		expect(screen.getByText(/a stream that is still open shows up here once it ends/)).toBeInTheDocument();
+		expect(screen.getByText('Share of connections · ended in the last 5 minutes')).toBeInTheDocument();
+	});
+
+	it('lists a long connection that just ended first and shows its end, in the feed and the globe list', async () => {
+		// started 45 minutes earlier than the short one, ended after it
+		const long = conn(1, '192.168.1.30', 'US', 'tcp', { timestamp: '2026-11-03T09:15:00Z', ended_at: '2026-11-03T10:04:30Z', dest_ip: '203.0.113.90', direction: 'out' });
+		const short = conn(2, '192.168.1.31', 'US', 'udp', { timestamp: '2026-11-03T10:03:00Z', ended_at: '2026-11-03T10:03:01Z', dest_ip: '203.0.113.91', direction: 'out' });
+		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard([long, short]));
+		await renderLive();
+		const rows = screen.getAllByRole('row').slice(1);
+		expect(rows[0]).toHaveTextContent('203.0.113.90');
+		expect(rows[0]).toHaveTextContent(formatTime('2026-11-03T10:04:30Z', 'clock'));
+		expect(rows[0]).not.toHaveTextContent(formatTime('2026-11-03T09:15:00Z', 'clock'));
+		await fireEvent.click(screen.getByRole('button', { name: /Expand/ }));
+		const listed = within(screen.getByRole('region', { name: 'Newest connections' })).getAllByRole('listitem');
+		expect(listed[0]).toHaveTextContent(formatTime('2026-11-03T10:04:30Z', 'clock'));
+		expect(listed[0]).not.toHaveTextContent(formatTime('2026-11-03T09:15:00Z', 'clock'));
 	});
 });

@@ -17,6 +17,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from services.excluded_ips import CONN_ACCOUNTING  # noqa: E402
 from services.iot_monitor import IoTMonitor  # noqa: E402
 
 FROM_TS = "2026-11-01T00:00:00Z"
@@ -274,8 +275,11 @@ class TestEncryptionShare:
         client.search.side_effect = _fake_search(conn=[])
         privacy = iot.get_privacy_report(FROM_TS, TO_TS)["devices"][0]
         assert privacy["encryption_applicable"] is False
-        # 1.0 keeps /iot from listing "has only 0% encrypted connections"
-        assert privacy["encryption_ratio"] == 1.0
+        # OLD CODE START — DEV-10: 1.0 read as 100% encrypted from nothing measured
+        # # 1.0 keeps /iot from listing "has only 0% encrypted connections"
+        # assert privacy["encryption_ratio"] == 1.0
+        # OLD CODE END
+        assert privacy["encryption_ratio"] is None
 
         fleet = iot.get_fleet_summary(FROM_TS, TO_TS)
         assert fleet["devices"][0]["encryption_applicable"] is False
@@ -297,6 +301,7 @@ class TestEncryptionShare:
                 "dest_ports": {"buckets": [{"key": 443, "doc_count": 9}]},
                 "encrypted": {"doc_count": 9},
                 "third_party_orgs": {"value": 1},
+                "with_asn": {"doc_count": 1},
             }
         ]
         client.search.side_effect = _fake_search(conn=conn)
@@ -334,12 +339,14 @@ class TestEncryptionShare:
                 "encrypted": {"doc_count": 0},
                 "no_payload": {"doc_count": 591},
                 "third_party_orgs": {"value": 1},
+                "with_asn": {"doc_count": 1},
             }
         ]
         client.search.side_effect = _fake_search(conn=conn)
         privacy = iot.get_privacy_report(FROM_TS, TO_TS)["devices"][0]
         assert privacy["encryption_applicable"] is False
-        assert privacy["encryption_ratio"] == 1.0
+        # OLD CODE: assert privacy["encryption_ratio"] == 1.0 (DEV-10: no ratio is None)
+        assert privacy["encryption_ratio"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +355,8 @@ class TestEncryptionShare:
 
 
 class TestConnectionRecordsOnly:
-    CONN_ONLY = {"term": {"event.dataset": "conn"}}
+    # OLD CODE: CONN_ONLY = {"term": {"event.dataset": "conn"}} (F1: final records only)
+    CONN_ONLY = CONN_ACCOUNTING
 
     def test_connection_queries_skip_alerts_and_other_logs(self, iot, client):
         """An ESP device read 1% encrypted: 162 alert records + 2 TLS connections."""
@@ -368,12 +376,18 @@ class TestConnectionRecordsOnly:
         """Arkime sessions (no event.dataset) duplicate Zeek conn flows."""
         client.search.side_effect = _fake_search()
         iot.get_privacy_report(FROM_TS, TO_TS)
-        assert "must_not" not in json.dumps(
-            [
-                f
-                for f in _body_with_agg(client, "encrypted")["query"]["bool"]["filter"]
-                if "bool" in f
-            ]
+        # OLD CODE START — F1: CONN_ACCOUNTING's must_not drops conn_long.log, not Arkime sessions
+        # assert "must_not" not in json.dumps(
+        #     [
+        #         f
+        #         for f in _body_with_agg(client, "encrypted")["query"]["bool"]["filter"]
+        #         if "bool" in f
+        #     ]
+        # )
+        # OLD CODE END
+        # The old clause matched Arkime sessions by a missing event.dataset
+        assert '"exists": {"field": "event.dataset"}' not in json.dumps(
+            _body_with_agg(client, "encrypted")["query"]["bool"]["filter"]
         )
 
 
@@ -393,6 +407,7 @@ class TestNoDuplicateEncryptionFinding:
                 "dest_ports": {"buckets": [{"key": 80, "doc_count": 194}]},
                 "encrypted": {"doc_count": 0},
                 "third_party_orgs": {"value": 1},
+                "with_asn": {"doc_count": 1},
             }
         ]
         client.search.side_effect = _fake_search(conn=conn)

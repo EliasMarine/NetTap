@@ -148,91 +148,73 @@ class TestCategorizeAlert:
 
 
 class TestGenerateAssessment:
-    """Tests for generate_assessment()."""
+    """Tests for generate_assessment(): a rule matched, scoped to the results (NET-228, B-j)."""
 
-    def test_generate_assessment_targeted(self):
-        """device_count=1 should mention 'targeted' in the assessment."""
-        result = generate_assessment(
-            signature="ET MALWARE Something",
-            category="malware_c2",
-            count=5,
-            device_count=1,
-            trend="stable",
+    # OLD CODE START — NET-228: the old wording ("targeted", "noisy rule", "limited spread",
+    # "investigate promptly", "declining", "warrants attention", "expected services") is gone;
+    # these tests assert the hedged replacements below
+    # def test_generate_assessment_targeted(self): ... assert "targeted" in result.lower()
+    # def test_generate_assessment_noisy(self): ... assert "noisy rule" in result.lower()
+    # def test_generate_assessment_limited_spread(self): ... assert "limited spread" in ...
+    # OLD CODE END
+
+    def _assess(self, **kw):
+        args = {
+            "signature": "ET MALWARE Something",
+            "category": "malware_c2",
+            "count": 5,
+            "device_count": None,
+            "trend": "stable",
+        }
+        return generate_assessment(**{**args, **kw})
+
+    def test_one_device_is_scoped_to_these_results(self):
+        result = self._assess(device_count=1)
+        assert "Only this device triggered this rule in these results." in result
+        assert "targeted" not in result.lower()
+
+    def test_many_devices_are_a_count_not_a_verdict(self):
+        result = self._assess(category="informational", count=500, device_count=30)
+        assert "Triggered by 30 devices in these results." in result
+        assert "noisy" not in result.lower()
+
+    def test_two_devices(self):
+        assert "Triggered by 2 devices in these results." in self._assess(
+            device_count=2
         )
-        assert "targeted" in result.lower()
 
-    def test_generate_assessment_noisy(self):
-        """device_count=30 should mention 'noisy rule' in the assessment."""
-        result = generate_assessment(
-            signature="ET INFO Something",
-            category="informational",
-            count=500,
-            device_count=30,
-            trend="stable",
+    def test_unknown_device_count_says_nothing_about_devices(self):
+        result = self._assess(device_count=None)
+        assert "device" not in result.lower()
+
+    def test_increasing_high_volume_names_the_rate(self):
+        result = self._assess(count=200, device_count=1, trend="increasing")
+        assert "more than 20 an hour between the first and last" in result
+        assert "investigate promptly" not in result.lower()
+
+    def test_increasing_low_volume_names_the_rate(self):
+        result = self._assess(trend="increasing")
+        assert (
+            "More than 20 matches an hour between the first and last match." in result
         )
-        assert "noisy rule" in result.lower()
 
-    def test_generate_assessment_limited_spread(self):
-        """device_count=2 should mention 'limited spread'."""
-        result = generate_assessment(
-            signature="ET SCAN Something",
-            category="reconnaissance",
-            count=10,
-            device_count=2,
-            trend="stable",
-        )
-        assert "limited spread" in result.lower()
+    def test_decreasing_is_few_matches_spread_out(self):
+        result = self._assess(category="reconnaissance", trend="decreasing")
+        assert "Few matches, spread out over time." in result
+        assert "declining" not in result.lower()
 
-    def test_generate_assessment_increasing_high_volume(self):
-        """count>100 with increasing trend should mention 'investigate promptly'."""
-        result = generate_assessment(
-            signature="ET MALWARE Something",
-            category="malware_c2",
-            count=200,
-            device_count=1,
-            trend="increasing",
-        )
-        assert "investigate promptly" in result.lower()
+    def test_device_type_mobile_malware(self):
+        result = self._assess(device_count=1, device_type="iOS")
+        assert "Unusual for an iOS device: worth a look." in result
 
-    def test_generate_assessment_decreasing(self):
-        """Decreasing trend should mention 'declining'."""
-        result = generate_assessment(
-            signature="ET SCAN Something",
-            category="reconnaissance",
-            count=5,
-            device_count=1,
-            trend="decreasing",
-        )
-        assert "declining" in result.lower()
+    def test_device_type_linux(self):
+        result = self._assess(device_count=1, device_type="Linux")
+        assert "check it runs only the services you expect" in result
 
-    def test_generate_assessment_device_type_mobile_malware(self):
-        """iOS device with malware_c2 should mention 'warrants attention'."""
-        result = generate_assessment(
-            signature="ET MALWARE Something",
-            category="malware_c2",
-            count=5,
-            device_count=1,
-            trend="stable",
-            device_type="iOS",
-        )
-        assert "warrants attention" in result.lower()
-
-    def test_generate_assessment_device_type_linux(self):
-        """Linux device with malware_c2 should mention 'expected services'."""
-        result = generate_assessment(
-            signature="ET MALWARE Something",
-            category="malware_c2",
-            count=5,
-            device_count=1,
-            trend="stable",
-            device_type="Linux",
-        )
-        assert "expected services" in result.lower()
-
-    def test_generate_assessment_category_messages(self):
-        """Each category should produce a distinct opening sentence."""
+    def test_every_opener_says_a_rule_matched(self):
+        """Each category opens with what matched, never a finding stated as fact."""
         categories = {
-            "malware_c2": "malicious",
+            "malware_c2": "command-and-control",
             "credential_abuse": "credential abuse",
             "exfiltration": "data transfer",
             "reconnaissance": "scanning",
@@ -241,22 +223,17 @@ class TestGenerateAssessment:
             "protocol_anomaly": "protocol",
             "geo_anomaly": "geographic",
             "encrypted_threats": "encrypted traffic",
-            "iot_anomaly": "device behavior",
+            "iot_anomaly": "device behaviour",
             "dos": "denial of service",
             "sensitive_data": "sensitive data",
             "informational": "informational",
         }
         for cat, keyword in categories.items():
-            result = generate_assessment(
-                signature="TEST",
-                category=cat,
-                count=1,
-                device_count=1,
-                trend="stable",
-            )
-            assert keyword in result.lower(), (
-                f"Category '{cat}' should contain '{keyword}', got: {result}"
-            )
+            result = self._assess(signature="TEST", category=cat, count=1)
+            opener = result.split(". ")[0]
+            assert keyword in opener.lower(), f"{cat}: {opener}"
+            assert " rule " in opener and opener.endswith("matched."), opener
+            assert "detected" not in opener.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -462,7 +439,8 @@ class TestKillChainDetection:
         )
         assert len(chains) == 1
         assert len(chains[0]["stages"]) == 4
-        assert "active intrusion" in chains[0]["assessment"]
+        # OLD CODE: assert "active intrusion" in chains[0]["assessment"] (NET-228, audit ALR-18)
+        assert "not a confirmed step" in chains[0]["assessment"]
 
     def test_no_chain_single_stage(self):
         from services.alert_intelligence import detect_kill_chains

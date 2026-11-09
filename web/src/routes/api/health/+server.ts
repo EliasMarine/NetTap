@@ -14,9 +14,18 @@ export const GET: RequestHandler = async () => {
 	// Try to get daemon health
 	let daemonHealth: Record<string, unknown> | null = null;
 	try {
-		const res = await daemonFetch('/api/system/health');
+		// OLD CODE START — F6: this route is public, and the full system health it passed on
+		// carried the drive's SMART serial and model and the storage figures
+		// const res = await daemonFetch('/api/system/health');
+		// if (res.ok) {
+		// 	daemonHealth = await res.json();
+		// } else {
+		// OLD CODE END
+		// The daemon's liveness check; only its status leaves (Docker and the setup wizard need no more)
+		const res = await daemonFetch('/api/health');
 		if (res.ok) {
-			daemonHealth = await res.json();
+			const body = await res.json();
+			daemonHealth = { status: body?.status ?? 'unknown' };
 		} else {
 			daemonHealth = {
 				status: 'unreachable',

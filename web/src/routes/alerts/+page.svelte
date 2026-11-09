@@ -44,7 +44,9 @@
 	// import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
 	// OLD CODE END
 	// OLD CODE: import { acknowledgeAlert } from '$api/alerts'; (NET-164: the score's method)
-	import { acknowledgeAlert, THREAT_SCORE_HOW } from '$api/alerts';
+	// OLD CODE: import { acknowledgeAlert, THREAT_SCORE_HOW } from '$api/alerts'; (NET-225: and the bridge-mode line)
+	import { acknowledgeAlert, THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts';
+	import { captureMode, initCaptureMode } from '$lib/stores/captureMode';
 	// OLD CODE START — #146: the alert table sorts on the daemon now
 	// import { compareValues, severityRank } from '$lib/utils/table-sort.svelte';
 	// OLD CODE END
@@ -87,6 +89,10 @@
 	// OLD CODE: import { alertLevel, alertTitle, groupAlerts, shortSeen } from './alert-view'; (slice 2b-2)
 	import { alertLevel, alertTitle, groupAlerts, groupCategoryLinked, linkedSuricataCategory, shortSeen } from './alert-view';
 	import { formatTime } from '$lib/utils/time';
+	// NET-228 (audit B5): every "nothing found" message carries the pipeline's current state
+	// OLD CODE: import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system'; (review L7)
+	import { nothingFound } from '$api/system';
+	import { HEALTH_CHECKING, readHealth, type HealthCheck } from '$lib/utils/read-health';
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -198,7 +204,11 @@
 	/** The list shows the activity alerts (ET rates them informational or unknown, never counted) instead (NET-191) */
 	let activityFilter = $state(false);
 	/** The activity alerts over the window loadAll asked about; null while unknown or when the request failed */
-	let activityCount = $state<(DrillWindow & { total: number }) | null>(null);
+	// OLD CODE: let activityCount = $state<(DrillWindow & { total: number }) | null>(null); (NET-228: and how many have Suricata priority high)
+	let activityCount = $state<(DrillWindow & { total: number; high: number }) | null>(null);
+	/** NET-228: the system health, for the pipeline state beside a zero; null until it loads or when it failed */
+	// OLD CODE: let health = $state<SystemHealth | null>(null); let healthFailed = $state(false); (review L7: one health helper for the loaders; its failure marks only the lines that read it)
+	let healthCheck = $state<HealthCheck>(HEALTH_CHECKING);
 
 	// Pagination
 	/** The current search's window: paging reuses it, so rows arriving between pages don't shift the list. */
@@ -766,6 +776,8 @@
 	 */
 	async function loadAll(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
+		// NET-225: the score's bridge-mode line; asks again if the startup request failed, never blocks the alerts
+		void initCaptureMode();
 		// OLD CODE: const lg = listGuard.begin(); (section D: a load also starts or ends the count comparison)
 		const lg = beginList();
 		listPending = true;
@@ -793,7 +805,8 @@
 			snapshotHoursLoaded = hours;
 		}
 
-		const [snap, results] = await Promise.all([
+		// OLD CODE: const [snap, results] = await Promise.all([ (review L7: the health beside them, outside the page's own results)
+		const [snap, results, checked] = await Promise.all([
 			// OLD CODE: loadAlertSnapshot(hours), (slice 2a: a Custom window counts on this page)
 			customWindow ? loadCustomCounts(customWindow, hours) : loadAlertSnapshot(hours),
 			Promise.allSettled([
@@ -806,9 +819,13 @@
 				getSmartAlertSummary({ from, to }),
 				// NET-191: last, so it never takes a count reply meant for the snapshot above
 				getAlertCount({ from, to, activity: true }),
+				// OLD CODE: getSystemHealth(), (review L7)
 			] as const),
+			readHealth(),
 		]);
 		// OLD CODE: const [tl, sigs, dest, src, cats, listResult, summary] = results; (NET-191: the activity count)
+		// OLD CODE: const [tl, sigs, dest, src, cats, listResult, summary, activity] = results; (NET-228: the health)
+		// OLD CODE: const [tl, sigs, dest, src, cats, listResult, summary, activity, healthRes] = results; (review L7)
 		const [tl, sigs, dest, src, cats, listResult, summary, activity] = results;
 		const succeeded = [snap.status === 'ok', ...results.map((r) => r.status === 'fulfilled')];
 		if (!guard.current(g)) return 'skipped';
@@ -838,7 +855,10 @@
 			threatLevel = summary.value.threat_level;
 		}
 		// A failed count keeps the last one, as the cards above keep theirs; a new window cleared it already
-		if (activity.status === 'fulfilled') activityCount = { from, to, total: activity.value.counts.total };
+		// OLD CODE: if (activity.status === 'fulfilled') activityCount = { from, to, total: activity.value.counts.total }; (NET-228)
+		if (activity.status === 'fulfilled') activityCount = { from, to, total: activity.value.counts.total, high: activity.value.counts.high };
+		// OLD CODE: health = healthRes.status === 'fulfilled' ? healthRes.value : null; healthFailed = healthRes.status === 'rejected'; (review L7)
+		healthCheck = checked;
 		const sections = ['timeline', 'signatures', 'destIps', 'srcIps', 'categories', 'alerts', 'summary'];
 		failed = { ...Object.fromEntries(sections.map((name, i) => [name, results[i].status === 'rejected'])), alerts: failed.alerts ?? false };
 		// OLD CODE: if (listGuard.current(lg)) applyList(listResult);
@@ -1265,6 +1285,11 @@
 			.sort((a, b) => b.events - a.events || a.label.localeCompare(b.label)),
 	);
 	const threatPill = $derived(THREAT_LEVELS.find((l) => l === threatLevel));
+	/** NET-228 (audit B5): zero counted alerts, with the pipeline's state beside it */
+	const zero = $derived(nothingFound('No counted rule matches in this period', healthCheck.health, healthCheck.failed));
+	const noGroups = $derived(nothingFound('No alert groups to review in this period', healthCheck.health, healthCheck.failed, "Can't tell if anything needs review"));
+	/** Any list filter on: an empty list then says so, not that nothing matched at all (audit HON-29) */
+	const listFiltered = $derived(activeFilter !== 'all' || !!(signatureFilter || ipFilter || srcFilter || dstFilter || suricataCategoryFilter));
 
 	// OLD CODE START — NET-160: the device page for every address, unencoded
 	// const ipBars = (entries: AlertIpEntry[]) =>
@@ -1386,10 +1411,20 @@ OLD CODE END -->
 				</div>
 				<SeverityGauge {buckets} total={counts.total} ariaLabel={gaugeLabel} />
 			</div>
+			{#if counts.total === 0}
+				<p class={['notice', 'zero-note', !zero.trusted && 'is-warn']} role="status"><Icon name={zero.trusted ? 'empty' : 'warn'} /><span>{zero.title} · {zero.detail}</span></p>
+			{/if}
 			<!-- NET-191: ET's informational ratings are stored as activity, never counted above -->
+			<!-- OLD CODE START — NET-228 (audit B-i): never said why, nor that some have Suricata priority high
 			{#if activityCount && activityCount.total > 0}
 				<button class="link activity-link" type="button" onclick={showActivity}>
 					{fmt(activityCount.total)} informational {activityCount.total === 1 ? 'event' : 'events'} not counted · Show
+				</button>
+			{/if}
+			OLD CODE END -->
+			{#if activityCount && activityCount.total > 0}
+				<button class="link activity-link" type="button" onclick={showActivity}>
+					{fmt(activityCount.total)} rule {activityCount.total === 1 ? 'match' : 'matches'} not counted: ET rates {activityCount.total === 1 ? 'its rule' : 'their rules'} Informational or Unknown{activityCount.high > 0 ? ` (${fmt(activityCount.high)} with Suricata priority high)` : ''} · Show
 				</button>
 			{/if}
 		{/if}
@@ -1398,7 +1433,8 @@ OLD CODE END -->
 
 <div class="grid alert-layout" class:no-drawer={!drawerAlert}>
 	<!-- OLD CODE: <Card class="c-8 alert-list-card" title={view === 'category' ? 'Alerts by category' : 'All alerts'} sub={listLoaded && !failed.alerts ? `${fmt(totalAlerts)} matching · ${range.words}${view === 'category' && totalAlerts > 0 ? ` · alerts ${fmt(fromRow)} to ${fmt(toRow)}, grouped` : ''}` : range.words}> (NET-191: the activity note) -->
-	<Card class="c-8 alert-list-card" title={view === 'category' ? 'Alerts by category' : 'All alerts'} sub={`${listLoaded && !failed.alerts ? `${fmt(totalAlerts)} matching · ${range.words}${view === 'category' && totalAlerts > 0 ? ` · alerts ${fmt(fromRow)} to ${fmt(toRow)}, grouped` : ''}` : range.words}${activityFilter ? ' · ET rates these informational. They are not counted as alerts.' : ''}`}>
+	<!-- OLD CODE: …${activityFilter ? ' · ET rates these informational. They are not counted as alerts.' : ''}… (NET-228: ET rates them Informational or Unknown) -->
+	<Card class="c-8 alert-list-card" title={view === 'category' ? 'Alerts by category' : 'All alerts'} sub={`${listLoaded && !failed.alerts ? `${fmt(totalAlerts)} matching · ${range.words}${view === 'category' && totalAlerts > 0 ? ` · alerts ${fmt(fromRow)} to ${fmt(toRow)}, grouped` : ''}` : range.words}${activityFilter ? ' · ET rates these rules Informational or Unknown. They are not counted as alerts.' : ''}`}>
 		{#snippet actions()}
 			<Pills
 				options={[{ value: 'category', label: 'By category' }, { value: 'all', label: 'All alerts' }]}
@@ -1442,7 +1478,8 @@ OLD CODE END -->
 				{/if}
 				{#if activityFilter}
 					<span class="chip">
-						Activity: rated informational by ET
+						<!-- OLD CODE: Activity: rated informational by ET (NET-228) -->
+						Activity: rated Informational or Unknown by ET
 						<button class="chip-x" type="button" onclick={() => setListParams({ activity: null })} aria-label="Clear activity filter"><Icon name="close" /></button>
 					</span>
 				{/if}
@@ -1458,10 +1495,18 @@ OLD CODE END -->
 				<CardState state="loading" title="Loading alerts" />
 			{:else if failed.alerts}
 				<CardState state="error" title="Couldn't load alerts: the request failed." message="Check that NetTap is running on the System page, then try again." onaction={() => fetchAlerts(currentPage)} />
+			<!-- OLD CODE START — NET-228 (audit B5, HON-29): no pipeline state, and the "once Suricata is running" text showed under a filter too
 			{:else if alerts.length === 0 && activityFilter}
 				<CardState state="empty" icon="alerts" title="No activity" message="Nothing ET rates informational matched in this window." />
 			{:else if alerts.length === 0}
 				<CardState state="empty" icon="alerts" title="No alerts" message="Alerts will appear here once Suricata is running and generating detections." />
+			OLD CODE END -->
+			{:else if alerts.length === 0 && activityFilter}
+				<CardState state="empty" icon="alerts" title="No activity" message="Nothing ET rates Informational or Unknown matched in this window. {zero.detail}." />
+			{:else if alerts.length === 0 && listFiltered}
+				<CardState state="empty" icon="alerts" title="No alerts match these filters" message="{zero.detail}." />
+			{:else if alerts.length === 0}
+				<CardState state="empty" icon={zero.trusted ? 'alerts' : 'warn'} title={zero.title} message="{zero.detail}." />
 			{:else if view === 'category'}
 				{#each groups as group (group.title)}
 					<!-- OLD CODE: <AlertGroup title={group.title} count={group.count}> (slice 2b-2: the title opens its category's page) -->
@@ -1549,14 +1594,21 @@ OLD CODE END -->
 				</div>
 			</div>
 			<p class="dim score-how">{THREAT_SCORE_HOW}</p>
+			{#if $captureMode === 'bridge'}<p class="dim score-how">{THREAT_SCORE_BRIDGE}</p>{/if}
 			{#if smartCategories.length > 0}
 				<ul class="kv">
 					{#each smartCategories as c (c.key)}
 						<li><span>{c.label}</span><span></span><b>{fmt(c.events)}</b><span class="pct">events</span></li>
 					{/each}
 				</ul>
+			<!-- OLD CODE START — NET-228: no pipeline state
 			{:else}
 				<p class="dim">No actionable alert groups in this window.</p>
+			OLD CODE END -->
+			{:else}
+				<p class={noGroups.trusted ? 'dim' : 'notice is-warn'} role="status">
+					{#if !noGroups.trusted}<Icon name="warn" />{/if}<span>{noGroups.title} · {noGroups.detail}</span>
+				</p>
 			{/if}
 		{/if}
 	</Card>
@@ -1575,7 +1627,8 @@ OLD CODE END -->
 					label: cat.label,
 					value: cat.count,
 					display: formatNumber(cat.count),
-					detail: cat.trend.direction === 'stable' ? undefined : cat.trend.direction,
+					// OLD CODE: detail: cat.trend.direction === 'stable' ? undefined : cat.trend.direction, (NET-228)
+					detail: cat.trend.direction === 'stable' ? undefined : cat.trend.direction === 'not_enough_data' ? 'not enough data' : cat.trend.direction,
 					href: `/alerts/${cat.id}`,
 				}))}
 			/>
@@ -1651,7 +1704,9 @@ OLD CODE END -->
 	.chip-x:hover { color: var(--text-1); }
 	.chip-x:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 	/* .link sets the text colour; a button needs the browser's own box taken off */
-	.activity-link { background: none; border: 0; padding: 0; margin-top: var(--sp-4); cursor: pointer; }
+	.zero-note { margin-top: var(--sp-4); }
+	/* OLD CODE: .activity-link { background: none; border: 0; padding: 0; margin-top: var(--sp-4); cursor: pointer; } (NET-228: the longer line ran past a phone's width, .link keeps to one line) */
+	.activity-link { background: none; border: 0; padding: 0; margin-top: var(--sp-4); cursor: pointer; white-space: normal; text-align: left; }
 	.activity-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 	.notice { margin-bottom: var(--sp-4); }
 	.cat-cell { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }

@@ -22,6 +22,7 @@ from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from api.devices import register_device_routes
 from storage.manager import StorageManager, RetentionConfig
+from tests.test_devices_api import _alert_bodies, _answering
 
 
 def _make_mock_storage():
@@ -55,6 +56,7 @@ class TestDeviceCategoriesHandler(AioHTTPTestCase):
     @unittest_run_loop
     async def test_device_categories_returns_data(self):
         """Mock ASN buckets are classified into categories correctly."""
+        # OLD CODE: each bucket carried "total_bytes" (a Painless sum); NET-226 follow-up: both byte sums
         self.mock_client.search.return_value = {
             "aggregations": {
                 "asn_breakdown": {
@@ -62,22 +64,26 @@ class TestDeviceCategoriesHandler(AioHTTPTestCase):
                         {
                             "key": "AS2906 Netflix Inc",
                             "doc_count": 100,
-                            "total_bytes": {"value": 5000000},
+                            "src": {"value": 1000000},
+                            "dst": {"value": 4000000},
                         },
                         {
                             "key": "AS15169 Google LLC",
                             "doc_count": 200,
-                            "total_bytes": {"value": 3000000},
+                            "src": {"value": 500000},
+                            "dst": {"value": 2500000},
                         },
                         {
                             "key": "AS32934 Facebook, Inc.",
                             "doc_count": 50,
-                            "total_bytes": {"value": 1000000},
+                            "src": {"value": 1000000},
+                            "dst": {"value": 0},
                         },
                         {
                             "key": "AS99999 Unknown Corp",
                             "doc_count": 10,
-                            "total_bytes": {"value": 100000},
+                            "src": {"value": 40000},
+                            "dst": {"value": 60000},
                         },
                     ]
                 }
@@ -115,6 +121,17 @@ class TestDeviceCategoriesHandler(AioHTTPTestCase):
         other = next(c for c in categories if c["name"] == "other")
         self.assertEqual(other["total_bytes"], 100000)
 
+        # NET-226 follow-up: plain sums of both byte fields, no Painless script per record
+        body = self.mock_client.search.call_args.kwargs["body"]
+        self.assertNotIn("script", str(body))
+        self.assertEqual(
+            body["aggs"]["asn_breakdown"]["aggs"],
+            {
+                "src": {"sum": {"field": "source.bytes", "missing": 0}},
+                "dst": {"sum": {"field": "destination.bytes", "missing": 0}},
+            },
+        )
+
     @unittest_run_loop
     async def test_device_categories_empty(self):
         """Empty ASN buckets return empty categories list."""
@@ -151,12 +168,14 @@ class TestDeviceCategoriesHandler(AioHTTPTestCase):
                         {
                             "key": "AS32934 Facebook, Inc.",
                             "doc_count": 10,
-                            "total_bytes": {"value": 100},
+                            "src": {"value": 40},
+                            "dst": {"value": 60},
                         },
                         {
                             "key": "AS2906 Netflix Inc",
                             "doc_count": 50,
-                            "total_bytes": {"value": 5000},
+                            "src": {"value": 1000},
+                            "dst": {"value": 4000},
                         },
                     ]
                 }
@@ -465,6 +484,29 @@ class TestDevicePortsHandler(AioHTTPTestCase):
 # ---------------------------------------------------------------------------
 
 
+def _detail_reply(hits, src=0, dst=0, answered=None, started=None, series=None):
+    """The detail search's reply (NET-226): both IP byte counts over every session the
+    device took part in, the same over those it answered, and the started side's lists."""
+    a_src, a_dst = answered or (0, 0)
+    return {
+        "hits": {"total": {"value": hits}},
+        "aggregations": {
+            "src": {"value": src},
+            "dst": {"value": dst},
+            "answered": {"src": {"value": a_src}, "dst": {"value": a_dst}},
+            "started": {
+                "protocols": {"buckets": []},
+                "first_seen": {"value_as_string": "2026-03-12T00:00:00.000Z"},
+                "last_seen": {"value_as_string": "2026-03-12T23:59:59.000Z"},
+                "top_services": {"buckets": []},
+                "top_destinations": {"buckets": []},
+                **(started or {}),
+            },
+            "bandwidth_series": {"buckets": series or []},
+        },
+    }
+
+
 class TestDeviceDetailV2Fields(AioHTTPTestCase):
     """Tests for new fields added to GET /api/devices/{ip} in v2."""
 
@@ -497,56 +539,72 @@ class TestDeviceDetailV2Fields(AioHTTPTestCase):
         for _ in range(20):
             responses.append(empty_hits)
             responses.append(empty_aggs)
-        self.mock_client.search.side_effect = responses
+        # OLD CODE START — NET-226: the detail now also asks who owns the device's IPv6 first
+        # self.mock_client.search.side_effect = responses
+        # OLD CODE END
+        self.mock_client.search.side_effect = _answering(responses)
+
+    # OLD CODE START — NET-226: orig/resp were the originator's bytes, so a device that answered
+    # a connection read its download as upload; upload_bytes/download_bytes replace them
+    # @unittest_run_loop
+    # async def test_detail_includes_orig_resp_bytes(self):
+    #     """Device detail includes orig_bytes and resp_bytes fields."""
+    #     self._setup_detail_responses(
+    #         {
+    #             "hits": {"total": {"value": 100}},
+    #             "aggregations": {
+    #                 "total_bytes": {"value": 3000000},
+    #                 "total_orig_bytes": {"value": 1000000},
+    #                 "total_resp_bytes": {"value": 2000000},
+    #                 "unique_destinations": {"value": 42},
+    #                 "top_services": {"buckets": []},
+    #                 "protocols": {"buckets": [{"key": "tcp", "doc_count": 90}]},
+    #                 "first_seen": {"value_as_string": "2026-03-12T00:00:00.000Z"},
+    #                 "last_seen": {"value_as_string": "2026-03-12T23:59:59.000Z"},
+    #                 "top_destinations": {"buckets": []},
+    #                 "bandwidth_series": {"buckets": []},
+    #             },
+    #         }
+    #     )
+    #
+    #     resp = await self.client.request("GET", "/api/devices/192.168.1.100")
+    #     self.assertEqual(resp.status, 200)
+    #     data = await resp.json()
+    #     device = data["device"]
+    #
+    #     self.assertEqual(device["orig_bytes"], 1000000)
+    #     self.assertEqual(device["resp_bytes"], 2000000)
+    # OLD CODE END
 
     @unittest_run_loop
-    async def test_detail_includes_orig_resp_bytes(self):
-        """Device detail includes orig_bytes and resp_bytes fields."""
+    async def test_detail_upload_and_download_follow_the_device(self):
+        """NET-226: on a session the device answered, the responder's bytes are its upload."""
         self._setup_detail_responses(
-            {
-                "hits": {"total": {"value": 100}},
-                "aggregations": {
-                    "total_bytes": {"value": 3000000},
-                    "total_orig_bytes": {"value": 1000000},
-                    "total_resp_bytes": {"value": 2000000},
-                    "unique_destinations": {"value": 42},
-                    "top_services": {"buckets": []},
-                    "protocols": {"buckets": [{"key": "tcp", "doc_count": 90}]},
-                    "first_seen": {"value_as_string": "2026-03-12T00:00:00.000Z"},
-                    "last_seen": {"value_as_string": "2026-03-12T23:59:59.000Z"},
-                    "top_destinations": {"buckets": []},
-                    "bandwidth_series": {"buckets": []},
-                },
-            }
+            # started: sent 700 KB, got 1.9 MB; answered: sent 100 KB, got 300 KB
+            _detail_reply(
+                100, src=1_000_000, dst=2_000_000, answered=(300_000, 100_000)
+            )
         )
 
         resp = await self.client.request("GET", "/api/devices/192.168.1.100")
         self.assertEqual(resp.status, 200)
-        data = await resp.json()
-        device = data["device"]
+        device = (await resp.json())["device"]
 
-        self.assertEqual(device["orig_bytes"], 1000000)
-        self.assertEqual(device["resp_bytes"], 2000000)
+        self.assertEqual(device["upload_bytes"], 800_000)
+        self.assertEqual(device["download_bytes"], 2_200_000)
+        self.assertEqual(device["total_bytes"], 3_000_000)
+        self.assertNotIn("orig_bytes", device)
 
     @unittest_run_loop
     async def test_detail_includes_unique_destinations(self):
         """Device detail includes unique_destinations count."""
         self._setup_detail_responses(
-            {
-                "hits": {"total": {"value": 50}},
-                "aggregations": {
-                    "total_bytes": {"value": 500000},
-                    "total_orig_bytes": {"value": 200000},
-                    "total_resp_bytes": {"value": 300000},
-                    "unique_destinations": {"value": 25},
-                    "top_services": {"buckets": []},
-                    "protocols": {"buckets": []},
-                    "first_seen": {"value_as_string": "2026-03-12T00:00:00.000Z"},
-                    "last_seen": {"value_as_string": "2026-03-12T23:59:59.000Z"},
-                    "top_destinations": {"buckets": []},
-                    "bandwidth_series": {"buckets": []},
-                },
-            }
+            _detail_reply(
+                50,
+                src=200000,
+                dst=300000,
+                started={"unique_destinations": {"value": 25}},
+            )
         )
 
         resp = await self.client.request("GET", "/api/devices/192.168.1.100")
@@ -557,40 +615,36 @@ class TestDeviceDetailV2Fields(AioHTTPTestCase):
     @unittest_run_loop
     async def test_detail_includes_top_services(self):
         """Device detail includes top_services with merged ASN names."""
+        # NET-226: a service's bytes are both IP byte counts of the sessions to it
         self._setup_detail_responses(
-            {
-                "hits": {"total": {"value": 200}},
-                "aggregations": {
-                    "total_bytes": {"value": 1000000},
-                    "total_orig_bytes": {"value": 400000},
-                    "total_resp_bytes": {"value": 600000},
+            _detail_reply(
+                200,
+                src=400000,
+                dst=600000,
+                started={
                     "unique_destinations": {"value": 15},
                     "top_services": {
                         "buckets": [
                             {
                                 "key": "AS16509 Amazon.com, Inc.",
                                 "doc_count": 80,
-                                "bytes": {"value": 500000},
+                                "src": {"value": 100000},
+                                "dst": {"value": 400000},
                             },
                             {
                                 "key": "AS14618 Amazon.com, Inc.",
                                 "doc_count": 40,
-                                "bytes": {"value": 200000},
+                                "src": {"value": 200000},
                             },
                             {
                                 "key": "AS2906 Netflix Inc",
                                 "doc_count": 60,
-                                "bytes": {"value": 300000},
+                                "dst": {"value": 300000},
                             },
                         ]
                     },
-                    "protocols": {"buckets": []},
-                    "first_seen": {"value_as_string": "2026-03-12T00:00:00.000Z"},
-                    "last_seen": {"value_as_string": "2026-03-12T23:59:59.000Z"},
-                    "top_destinations": {"buckets": []},
-                    "bandwidth_series": {"buckets": []},
                 },
-            }
+            )
         )
 
         resp = await self.client.request("GET", "/api/devices/192.168.1.100")
@@ -613,39 +667,28 @@ class TestDeviceDetailV2Fields(AioHTTPTestCase):
     @unittest_run_loop
     async def test_detail_bandwidth_includes_dl_ul(self):
         """Bandwidth series items include download_bytes and upload_bytes."""
+        # NET-226: the first slot's sessions the device started, the second's it answered
         self._setup_detail_responses(
-            {
-                "hits": {"total": {"value": 100}},
-                "aggregations": {
-                    "total_bytes": {"value": 500000},
-                    "total_orig_bytes": {"value": 200000},
-                    "total_resp_bytes": {"value": 300000},
-                    "unique_destinations": {"value": 10},
-                    "top_services": {"buckets": []},
-                    "protocols": {"buckets": []},
-                    "first_seen": {"value_as_string": "2026-03-12T00:00:00.000Z"},
-                    "last_seen": {"value_as_string": "2026-03-12T23:59:59.000Z"},
-                    "top_destinations": {"buckets": []},
-                    "bandwidth_series": {
-                        "buckets": [
-                            {
-                                "key_as_string": "2026-03-12T00:00:00.000Z",
-                                "doc_count": 10,
-                                "bytes": {"value": 5000},
-                                "download_bytes": {"value": 3000},
-                                "upload_bytes": {"value": 2000},
-                            },
-                            {
-                                "key_as_string": "2026-03-12T00:05:00.000Z",
-                                "doc_count": 15,
-                                "bytes": {"value": 8000},
-                                "download_bytes": {"value": 6000},
-                                "upload_bytes": {"value": 2000},
-                            },
-                        ]
+            _detail_reply(
+                100,
+                src=200000,
+                dst=300000,
+                series=[
+                    {
+                        "key_as_string": "2026-03-12T00:00:00.000Z",
+                        "doc_count": 10,
+                        "src": {"value": 2000},
+                        "dst": {"value": 3000},
                     },
-                },
-            }
+                    {
+                        "key_as_string": "2026-03-12T00:05:00.000Z",
+                        "doc_count": 15,
+                        "src": {"value": 6000},
+                        "dst": {"value": 2000},
+                        "answered": {"src": {"value": 6000}, "dst": {"value": 2000}},
+                    },
+                ],
+            )
         )
 
         resp = await self.client.request("GET", "/api/devices/192.168.1.100")
@@ -673,31 +716,23 @@ class TestDeviceDetailFigures(AioHTTPTestCase):
 
     @staticmethod
     def _conn(dest_buckets):
-        return {
-            "hits": {"total": {"value": 100}},
-            "aggregations": {
-                "total_bytes": {"value": 0},
-                "total_orig_bytes": {"value": 0},
-                "total_resp_bytes": {"value": 0},
+        return _detail_reply(
+            100,
+            started={
                 "unique_destinations": {"value": len(dest_buckets)},
-                "top_services": {"buckets": []},
-                "protocols": {"buckets": []},
-                "first_seen": {"value_as_string": "2026-03-12T00:00:00.000Z"},
-                "last_seen": {"value_as_string": "2026-03-12T23:59:59.000Z"},
                 "top_destinations": {"buckets": dest_buckets},
-                "bandwidth_series": {"buckets": []},
             },
-        }
+        )
 
     @unittest_run_loop
     async def test_top_destinations_are_the_biggest_transfers(self):
         """The buckets come by connection count (merged across shards); the biggest
         transfer is the 25th most frequent destination, past the old slice of 20."""
         frequent = [
-            {"key": f"10.0.0.{i}", "doc_count": 100 - i, "bytes": {"value": 1000 + i}}
+            {"key": f"10.0.0.{i}", "doc_count": 100 - i, "src": {"value": 1000 + i}}
             for i in range(24)
         ]
-        backup = {"key": "203.0.113.5", "doc_count": 2, "bytes": {"value": 9_000_000}}
+        backup = {"key": "203.0.113.5", "doc_count": 2, "src": {"value": 9_000_000}}
         self._setup_detail_responses(self._conn([*frequent, backup]))
 
         resp = await self.client.request("GET", "/api/devices/192.168.1.100")
@@ -717,7 +752,8 @@ class TestDeviceDetailFigures(AioHTTPTestCase):
     async def test_alert_count_covers_both_directions(self):
         self._setup_detail_responses(self._conn([]))
         await self.client.request("GET", "/api/devices/192.168.1.100")
-        alert_body = self.mock_client.search.call_args_list[2].kwargs["body"]
+        # OLD CODE: alert_body = self.mock_client.search.call_args_list[2].kwargs["body"] (NET-226: no longer the third search)
+        (alert_body,) = _alert_bodies(self.mock_client.search)
         either = [
             f["bool"]["should"]
             for f in alert_body["query"]["bool"]["filter"]

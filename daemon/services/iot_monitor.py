@@ -14,15 +14,17 @@ the IoT dashboard hero section.
 import json
 import logging
 import os
+import re
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
-from services.excluded_ips import CONN_RECORDS, build_excluded_ips_filter
+from services.excluded_ips import CONN_ACCOUNTING, build_excluded_ips_filter
 from services.iot_trust_scorer import IoTTrustScorer
 from storage.all_buckets import all_buckets, complete_terms
+from storage.exact_terms import PartialResultsError
 from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.iot_monitor")
@@ -156,6 +158,18 @@ IOT_MANUFACTURERS = {
     "ai-link",
     "sichuan ai-link",
 }
+
+
+def _word_pattern(keywords) -> re.Pattern:
+    """Any of `keywords` as a whole word (lower case), longest first."""
+    alternatives = "|".join(
+        re.escape(k) for k in sorted(keywords, key=len, reverse=True)
+    )
+    return re.compile(rf"\b(?:{alternatives})\b")
+
+
+# DEV-9: whole words, so "ring" no longer matches "Murata Manufacturing" or "Engineering"
+_IOT_KEYWORD_RE = _word_pattern(IOT_MANUFACTURERS)
 
 # OUI names that are ALWAYS IoT, regardless of keyword matching
 IOT_OUI_ALWAYS = {
@@ -374,8 +388,12 @@ class IoTMonitor:
             # return
             # OLD CODE END
             raise
+        # OLD CODE START — NET-237 (caps): only logged, so the fleet read as every IoT device
+        # if not complete:
+        #     logger.warning("IoT discovery stopped at %d MACs", len(buckets))
+        # OLD CODE END
         if not complete:
-            logger.warning("IoT discovery stopped at %d MACs", len(buckets))
+            raise PartialResultsError(f"IoT discovery stopped at {len(buckets)} MACs")
 
         # NET-158: one set per window; a cached set ignored the range, kept scoring devices
         # with no traffic in it, and froze each device's IP and last seen
@@ -430,7 +448,7 @@ class IoTMonitor:
         Uses three layers:
         1. IOT_OUI_NEVER — always reject (infrastructure, NAS, etc.)
         2. IOT_OUI_ALWAYS — always accept (known IoT chip/product makers)
-        3. IOT_MANUFACTURERS keyword substring match (case-insensitive)
+        3. IOT_MANUFACTURERS keywords as whole words (case-insensitive)
 
         Args:
             oui_name: The OUI manufacturer string from Arkime.
@@ -448,8 +466,12 @@ class IoTMonitor:
         if oui_lower in IOT_OUI_ALWAYS:
             return True
 
-        # Layer 3: substring matching against IoT manufacturer keywords
-        return any(keyword in oui_lower for keyword in IOT_MANUFACTURERS)
+        # OLD CODE START — DEV-9: substrings, so "ring" matched "Murata Manufacturing"
+        # # Layer 3: substring matching against IoT manufacturer keywords
+        # return any(keyword in oui_lower for keyword in IOT_MANUFACTURERS)
+        # OLD CODE END
+        # Layer 3: IoT manufacturer keywords as whole words
+        return bool(_IOT_KEYWORD_RE.search(oui_lower))
 
     # -----------------------------------------------------------------
     # Fleet Summary
@@ -543,8 +565,12 @@ class IoTMonitor:
                 anomalies_checked += 1
 
             # Privacy concern: tracker_domain_count > 5
-            tracker_count = stats.get("tracker_domain_count", 0)
-            if tracker_count > 5:
+            # OLD CODE START — DEV-10: the count can be None (no DNS seen)
+            # tracker_count = stats.get("tracker_domain_count", 0)
+            # if tracker_count > 5:
+            # OLD CODE END
+            tracker_count = stats["tracker_domain_count"]
+            if tracker_count is not None and tracker_count > 5:
                 privacy_concern_count += 1
 
             # OLD CODE START — NET-158: no eligible traffic is no ratio, not 100%
@@ -676,18 +702,33 @@ class IoTMonitor:
         if device_count == 0:
             return "No IoT devices detected yet."
 
+        # OLD CODE START — DEV-10: a health verdict from a few checks (telemetry, firmware and
+        # behaviour are never measured)
+        # if score is None:
+        #     prefix = "Not enough measured to score your smart home yet."
+        # elif score >= 90:
+        #     prefix = "Your smart home is healthy."
+        # elif score >= 75:
+        #     prefix = "Your smart home is mostly healthy."
+        # elif score >= 60:
+        #     prefix = "Your smart home needs some attention."
+        # elif score >= 40:
+        #     prefix = "Your smart home has significant concerns."
+        # else:
+        #     prefix = "Your smart home needs immediate attention."
+        # OLD CODE END
         if score is None:
             prefix = "Not enough measured to score your smart home yet."
         elif score >= 90:
-            prefix = "Your smart home is healthy."
+            prefix = "No concerns in the checks NetTap could measure."
         elif score >= 75:
-            prefix = "Your smart home is mostly healthy."
+            prefix = "A few concerns in the checks NetTap could measure."
         elif score >= 60:
-            prefix = "Your smart home needs some attention."
+            prefix = "Some checks need attention."
         elif score >= 40:
-            prefix = "Your smart home has significant concerns."
+            prefix = "Several checks show significant concerns."
         else:
-            prefix = "Your smart home needs immediate attention."
+            prefix = "Checks show serious concerns that need attention now."
 
         parts = []
         if anomaly_count > 0:
@@ -735,7 +776,10 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                CONN_RECORDS,
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # CONN_RECORDS,
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 {"terms": {"source.mac": mac_terms}},
             ],
             "must_not": [*excluded, *LOCAL_CHATTER_EXCLUSION],
@@ -788,6 +832,10 @@ class IoTMonitor:
                                 "field": "destination.as.full",
                             }
                         },
+                        # DEV-10: no ASN-enriched connection means the count wasn't measured
+                        "with_asn": {
+                            "filter": {"exists": {"field": "destination.as.full"}}
+                        },
                     },
                 }
             },
@@ -820,13 +868,15 @@ class IoTMonitor:
             # OLD CODE END
             ports = set(ports_by_mac.get(raw_mac, {}))
             third_party = bucket.get("third_party_orgs", {}).get("value", 0) or 0
+            with_asn = bucket.get("with_asn", {}).get("doc_count", 0)
 
             out[raw_mac] = {
                 "total_connections": total_conns,
                 "encrypted_connections": encrypted_conns,
                 "total_bytes": total_bytes,
                 "dest_ports": ports,
-                "third_party_orgs": int(third_party),
+                # OLD CODE: "third_party_orgs": int(third_party), (DEV-10: 0 when no ASN was known)
+                "third_party_orgs": int(third_party) if with_asn else None,
             }
 
         # Now query Suricata alert counts per device
@@ -1013,10 +1063,21 @@ class IoTMonitor:
         # total_bytes = conn_stats.get("total_bytes", 0)
         # OLD CODE END
         dest_ports = conn_stats.get("dest_ports", set())
-        third_party_orgs = conn_stats.get("third_party_orgs", 0)
+        # OLD CODE START — DEV-10: an input never observed read 0, a perfect score
+        # third_party_orgs = conn_stats.get("third_party_orgs", 0)
+        # OLD CODE END
+        # None unless ASN-enriched connections were seen
+        third_party_orgs = conn_stats.get("third_party_orgs")
         alert_count = conn_stats.get("alert_count", 0)
 
-        tracker_domain_count = dns_stats.get("tracker_domain_count", 0)
+        # OLD CODE START — DEV-10: no DNS seen (DoH, DoT, DNS past the capture point) read 0 trackers
+        # tracker_domain_count = dns_stats.get("tracker_domain_count", 0)
+        # OLD CODE END
+        tracker_domain_count = (
+            dns_stats.get("tracker_domain_count", 0)
+            if dns_stats.get("total_dns_queries")
+            else None
+        )
 
         # Encryption ratio
         # OLD CODE START — NET-158: no eligible traffic earned the full 15 points
@@ -1032,6 +1093,9 @@ class IoTMonitor:
         for port in dest_ports:
             if port not in expected_ports:
                 protocol_violations += 1
+        # DEV-10: no destination port seen is not "no violations"
+        if not dest_ports:
+            protocol_violations = None
 
         # OLD CODE START — NET-158: scored as measured; see the docstring for why each is
         # unavailable now
@@ -1121,8 +1185,13 @@ class IoTMonitor:
         manufacturer = (device_info.get("manufacturer") or "").lower()
         hostname = (device_info.get("hostname") or "").lower()
 
-        is_iot = any(
-            vendor in manufacturer or vendor in hostname for vendor in IOT_MANUFACTURERS
+        # OLD CODE START — DEV-9: substrings, so "ring" matched "Murata Manufacturing"
+        # is_iot = any(
+        #     vendor in manufacturer or vendor in hostname for vendor in IOT_MANUFACTURERS
+        # )
+        # OLD CODE END
+        is_iot = bool(
+            _IOT_KEYWORD_RE.search(manufacturer) or _IOT_KEYWORD_RE.search(hostname)
         )
 
         if is_iot:
@@ -1160,7 +1229,10 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_iso, to_iso),
-                CONN_RECORDS,
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # CONN_RECORDS,
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 {
                     "bool": {
                         "should": [
@@ -1286,9 +1358,15 @@ class IoTMonitor:
             buckets, complete = all_buckets(
                 self._client, NETWORK_INDEX, query, [{"value": source}]
             )
+            # OLD CODE START — NET-237 (caps): only logged, so values past it read as new (anomalies)
+            # if not complete:
+            #     logger.warning(
+            #         "Baseline %s for %s stopped at %d values", name, mac, len(buckets)
+            #     )
+            # OLD CODE END
             if not complete:
-                logger.warning(
-                    "Baseline %s for %s stopped at %d values", name, mac, len(buckets)
+                raise PartialResultsError(
+                    f"baseline {name} for {mac} stopped at {len(buckets)} values"
                 )
             known[name] = [
                 "Unknown" if b["key"]["value"] is None else b["key"]["value"]
@@ -1321,7 +1399,10 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_iso, to_iso),
-                CONN_RECORDS,
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # CONN_RECORDS,
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 {
                     "bool": {
                         "should": [
@@ -1565,12 +1646,22 @@ class IoTMonitor:
             # OLD CODE START — NET-158: only the telemetry estimate below used it
             # total_bytes = cs.get("total_bytes", 0)
             # OLD CODE END
-            third_party_orgs = cs.get("third_party_orgs", 0)
-
-            encryption_ratio = encrypted_conns / total_conns if total_conns > 0 else 1.0
-
+            # OLD CODE START — DEV-10: unobserved inputs read as measured (0 orgs, 100% encrypted,
+            # 0 trackers)
+            # third_party_orgs = cs.get("third_party_orgs", 0)
+            # encryption_ratio = encrypted_conns / total_conns if total_conns > 0 else 1.0
+            # tracker_domains_list = dd.get("tracker_domains", [])
+            # tracker_count = len(tracker_domains_list)
+            # OLD CODE END
+            third_party_orgs = cs.get("third_party_orgs")
+            encryption_ratio = (
+                encrypted_conns / total_conns if total_conns > 0 else None
+            )
             tracker_domains_list = dd.get("tracker_domains", [])
-            tracker_count = len(tracker_domains_list)
+            # None when no DNS lookup from the device was seen
+            tracker_count = (
+                len(tracker_domains_list) if dd.get("total_dns_queries") else None
+            )
 
             # OLD CODE START — NET-158: an estimate shown as bytes; the lookup share is what
             # was measured
@@ -1607,7 +1698,11 @@ class IoTMonitor:
                 self._build_device_stats(
                     mac,
                     cs,
-                    {"tracker_domain_count": tracker_count},
+                    # OLD CODE: {"tracker_domain_count": tracker_count}, (DEV-10: + the DNS seen)
+                    {
+                        "tracker_domain_count": tracker_count,
+                        "total_dns_queries": total_queries,
+                    },
                     None,
                     expected_ports,
                 )
@@ -1628,15 +1723,26 @@ class IoTMonitor:
                     # OLD CODE END
                     "tracker_lookup_share": tracker_lookup_share,
                     "third_party_orgs": third_party_orgs,
-                    "encryption_ratio": round(min(1.0, max(0.0, encryption_ratio)), 4),
-                    # Only local chatter seen: ratio stays 1.0 so nothing is penalised
+                    # OLD CODE START — DEV-10: 1.0 when nothing qualified
+                    # "encryption_ratio": round(min(1.0, max(0.0, encryption_ratio)), 4),
+                    # # Only local chatter seen: ratio stays 1.0 so nothing is penalised
+                    # OLD CODE END
+                    "encryption_ratio": None
+                    if encryption_ratio is None
+                    else round(min(1.0, max(0.0, encryption_ratio)), 4),
+                    # Only local chatter seen: no ratio, so nothing is scored either way
                     "encryption_applicable": total_conns > 0,
                     "phone_home_per_hour": phone_home_per_hour,
                 }
             )
 
         # Sort worst privacy first
-        device_results.sort(key=lambda d: d["privacy_score"])
+        # OLD CODE START — DEV-10: a None score (not enough measured) raised TypeError
+        # device_results.sort(key=lambda d: d["privacy_score"])
+        # OLD CODE END
+        device_results.sort(
+            key=lambda d: (d["privacy_score"] is None, d["privacy_score"] or 0)
+        )
         return {"devices": device_results}
 
     @staticmethod
@@ -1784,7 +1890,10 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                CONN_RECORDS,
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # CONN_RECORDS,
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 mac_filter,
             ]
         }
@@ -1971,7 +2080,10 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                CONN_RECORDS,
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # CONN_RECORDS,
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 mac_filter,
             ]
         }
@@ -2064,11 +2176,21 @@ class IoTMonitor:
         hostname = (dev_info.get("hostname") or "").lower()
         combined = manufacturer + " " + hostname
 
-        for keywords, category in self._CATEGORY_KEYWORDS:
-            for kw in keywords:
-                if kw in combined:
-                    return category
-        return "default"
+        # OLD CODE START — DEV-9: substrings, so a Murata ("manufactu-ring") phone was a doorbell
+        # for keywords, category in self._CATEGORY_KEYWORDS:
+        #     for kw in keywords:
+        #         if kw in combined:
+        #             return category
+        # return "default"
+        # OLD CODE END
+        return next(
+            (
+                category
+                for keywords, category in self._CATEGORY_KEYWORDS
+                if _word_pattern(keywords).search(combined)
+            ),
+            "default",
+        )
 
     def get_protocol_audit(
         self,
@@ -2221,7 +2343,10 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                CONN_RECORDS,
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # CONN_RECORDS,
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 {"terms": {"source.mac": mac_terms}},
             ],
             "must_not": [*excluded, *LOCAL_CHATTER_EXCLUSION],
@@ -2284,8 +2409,14 @@ class IoTMonitor:
                 {"value": {"terms": {"field": field}}},
             ],
         )
+        # OLD CODE START — NET-237 (caps): only logged, so devices past it read as using nothing
+        # if not complete:
+        #     logger.warning("%s per device stopped at %d pairs", field, len(buckets))
+        # OLD CODE END
         if not complete:
-            logger.warning("%s per device stopped at %d pairs", field, len(buckets))
+            raise PartialResultsError(
+                f"{field} per device stopped at {len(buckets)} pairs"
+            )
         counts: dict[str, dict[Any, int]] = {}
         for b in buckets:
             per_mac = counts.setdefault(b["key"]["mac"].upper(), {})
@@ -2331,7 +2462,10 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                CONN_RECORDS,
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # CONN_RECORDS,
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 {"terms": {"source.mac": mac_terms}},
                 {"term": {"destination.port": 53}},
                 {"terms": {"destination.ip": well_known_dns}},
@@ -2405,9 +2539,14 @@ class IoTMonitor:
 
         devices = self._iot_devices
         if not devices:
+            # OLD CODE START — DEV-11: nothing measured read 100, grade A
+            # return {
+            #     "segmentation_score": 100,
+            #     "segmentation_grade": "A",
+            # OLD CODE END
             return {
-                "segmentation_score": 100,
-                "segmentation_grade": "A",
+                "segmentation_score": None,
+                "segmentation_grade": None,
                 "pairs": [],
                 "recommendation": "No IoT devices detected yet.",
             }
@@ -2433,7 +2572,10 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                CONN_RECORDS,
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # CONN_RECORDS,
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 {"terms": {"source.mac": mac_terms}},
                 # Destination is RFC1918 (internal) — use script filter
                 {
@@ -2601,8 +2743,14 @@ class IoTMonitor:
             # }
             # OLD CODE END
             raise
+        # OLD CODE START — NET-237 (caps): only logged, so the score counted only the pairs read
+        # if not complete:
+        #     logger.warning("Network isolation stopped at %d pairs", len(buckets))
+        # OLD CODE END
         if not complete:
-            logger.warning("Network isolation stopped at %d pairs", len(buckets))
+            raise PartialResultsError(
+                f"network isolation stopped at {len(buckets)} pairs"
+            )
 
         # A destination that is also an IoT device is not an isolation finding
         pairs = [
@@ -2640,7 +2788,10 @@ class IoTMonitor:
             )
         )
         if not pairs:
-            recommendation = "Your IoT devices are well-isolated from internal hosts."
+            # OLD CODE START — DEV-11: a mirror of the router uplink never carries same-switch traffic
+            # recommendation = "Your IoT devices are well-isolated from internal hosts."
+            # OLD CODE END
+            recommendation = "No IoT-to-LAN traffic seen in the traffic NetTap can see."
         elif all(p["risk"] == "low" for p in pairs):
             recommendation = (
                 "Only pings from IoT devices to internal hosts were seen. "

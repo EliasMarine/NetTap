@@ -15,7 +15,7 @@ export const GET: RequestHandler = async () => {
 /**
  * PUT /api/settings/excluded-ips
  * Replace the excluded IP list.
- * Body: { "excluded_ips": ["99.10.70.92", "192.168.1.1"] }
+ * Body: { "excluded_ips": ["203.0.113.10", "192.168.1.1"] }
  */
 export const PUT: RequestHandler = async ({ request }) => {
 	let body: Record<string, unknown> = {};

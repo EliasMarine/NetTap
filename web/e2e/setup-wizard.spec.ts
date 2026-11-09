@@ -37,8 +37,11 @@ async function walkToAccountStep(page: Page): Promise<void> {
 	await page.goto('/setup');
 	expect(new URL(page.url()).pathname).toBe('/setup');
 
-	// Welcome: the requirements check runs on load, and Get started enables once it has finished
+	// Welcome: the setup code first (NET-229 follow-up), then the requirements check runs, and
+	// Get started enables once it has finished
 	await expect(page.getByRole('heading', { name: 'Welcome to NetTap' })).toBeVisible({ timeout: 10_000 });
+	await page.getByLabel('Setup code').fill(fs.readFileSync(path.join(E2E_DATA_DIR, 'setup-code'), 'utf-8').trim());
+	await page.getByRole('button', { name: 'Continue', exact: true }).click();
 	const start = page.getByRole('button', { name: 'Get started', exact: true });
 	await expect(start).toBeEnabled({ timeout: 10_000 });
 	await start.click();
@@ -104,6 +107,8 @@ test.describe('Setup wizard', () => {
 		await expect(steps.locator('[aria-current="step"]')).toContainText('Account');
 
 		// The account form, with its submit disabled until the form is valid
+		// OLD CODE: await expect(page.getByLabel('Setup code')).toBeVisible(); (NET-229 follow-up: typed on Welcome)
+		await expect(page.getByLabel('Setup code')).toHaveCount(0);
 		await expect(page.getByLabel('Username')).toBeVisible();
 		await expect(page.getByLabel('Password', { exact: true })).toBeVisible();
 		await expect(page.getByLabel('Confirm password')).toBeVisible();
@@ -119,6 +124,10 @@ test.describe('Setup wizard', () => {
 		await mockWizardApis(page);
 		await walkToAccountStep(page);
 
+		// OLD CODE START — NET-229 follow-up: the code is typed on the Welcome step (walkToAccountStep)
+		// // NET-229: the one-time setup code the wizard's load made in DATA_DIR
+		// await page.getByLabel('Setup code').fill(fs.readFileSync(path.join(E2E_DATA_DIR, 'setup-code'), 'utf-8').trim());
+		// OLD CODE END
 		await page.getByLabel('Username').fill(USERNAME);
 		await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
 		await page.getByLabel('Confirm password').fill(PASSWORD);

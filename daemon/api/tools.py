@@ -11,6 +11,7 @@ Registers network tool endpoints with the aiohttp application:
 import logging
 from aiohttp import web
 
+from api.error_replies import public_json
 from api.offload import lookup_slot, run_lookup
 
 # OLD CODE: from services.dns_recon_service import DnsReconService, DnsReconValidationError (NET-203)
@@ -49,7 +50,8 @@ async def handle_dns_recon(request: web.Request) -> web.Response:
     except DnsReconValidationError as e:
         return web.json_response({"error": str(e)}, status=400)
     except DnsReconBusyError as e:  # NET-203: too many lookups at once
-        return web.json_response({"error": str(e)}, status=503)
+        # NET-229 follow-up: its text is the plain LOOKUPS_BUSY line
+        return public_json({"error": str(e)}, status=503)
     except Exception as exc:
         logger.exception("DNS recon failed")
         return web.json_response({"error": f"DNS recon failed: {exc}"}, status=500)

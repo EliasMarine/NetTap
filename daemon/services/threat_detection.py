@@ -15,6 +15,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
+from services.excluded_ips import CONN_ACCOUNTING
 from storage.all_buckets import all_buckets
 
 # OLD CODE START — excluded IPs stay visible in threat detections
@@ -485,7 +486,10 @@ def detect_beaconing(
         "filter": [
             {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
             {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "conn"}},
+            # OLD CODE START — F1: also counted conn_long.log interim records
+            # {"term": {"event.dataset": "conn"}},
+            # OLD CODE END
+            CONN_ACCOUNTING,
         ]
     }
     # OLD CODE START — excluded IPs stay visible in threat detections
@@ -586,7 +590,10 @@ def detect_lateral_movement(
         "filter": [
             {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
             {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "conn"}},
+            # OLD CODE START — F1: also counted conn_long.log interim records
+            # {"term": {"event.dataset": "conn"}},
+            # OLD CODE END
+            CONN_ACCOUNTING,
             {"bool": {"should": port_filters, "minimum_should_match": 1}},
             # only internal-to-internal pairs can be lateral movement; inbound scans aren't paged
             {"terms": {"source.ip": INTERNAL_CIDRS}},

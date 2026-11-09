@@ -27,20 +27,20 @@ describe('setup wizard Docker check', () => {
 
 	it('fails when the daemon is not answering', async () => {
 		stubHealth(new Response(JSON.stringify({ status: 'healthy', daemon: { status: 'unreachable' } })));
-		render(SetupPage, { props: { form: null } });
+		render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 		expect(await screen.findByText("Docker: the NetTap daemon isn't answering")).toBeInTheDocument();
 		expect(screen.queryByText('Docker is running')).not.toBeInTheDocument();
 	});
 
 	it("says it couldn't check when the request fails", async () => {
 		stubHealth(new Response('', { status: 502 }));
-		render(SetupPage, { props: { form: null } });
+		render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 		expect(await screen.findByText("Docker: couldn't check")).toBeInTheDocument();
 	});
 
 	it('passes when the daemon answers', async () => {
 		stubHealth(new Response(JSON.stringify({ status: 'healthy', daemon: { status: 'healthy' } })));
-		render(SetupPage, { props: { form: null } });
+		render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 		expect(await screen.findByText('Docker is running')).toBeInTheDocument();
 		expect(screen.queryByText(/Docker: /)).not.toBeInTheDocument();
 	});

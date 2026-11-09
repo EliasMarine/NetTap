@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import MagicMock
 
 from services.excluded_ips import build_lan_filter, lan_subnets_of
+from services.geoip_service import ANYCAST_IPS
 from services.live_connections import (
     RATE_WINDOW_SECONDS,
     LiveConnectionTracker,
@@ -484,10 +485,13 @@ class TestLiveDashboardFigures(unittest.TestCase):
                 "location": _located(35.68, 139.69),
             },
         ]
+        # OLD CODE: geo_destinations and geo_countries at the top level (NET-237: under "geo")
         result, _, _ = _dashboard_with(
             {
-                "geo_destinations": {"buckets": cities},
-                "geo_countries": {"buckets": countries},
+                "geo": {
+                    "geo_destinations": {"buckets": cities},
+                    "geo_countries": {"buckets": countries},
+                }
             }
         )
         arcs = {a["country_code"]: a for a in result["geo_arcs"]}
@@ -498,6 +502,28 @@ class TestLiveDashboardFigures(unittest.TestCase):
         self.assertEqual((arcs["NL"]["lat"], arcs["NL"]["lon"]), (52.37, 4.9))
         self.assertEqual(arcs["NL"]["bytes"], 1200)
         self.assertEqual((arcs["JP"]["lat"], arcs["JP"]["lon"]), (35.68, 139.69))
+
+    def test_anycast_destinations_add_to_no_country(self):
+        """GEO-5: 8.8.8.8 is "United States" in GeoLite2, so DNS made the US the top country."""
+        result, body, _ = _dashboard_with(
+            {
+                "geo": {
+                    "top_country": {"buckets": [{"key": "Germany"}]},
+                    "geo_countries": {"buckets": []},
+                },
+                "anycast": {"doc_count": 40, "total_bytes": {"value": 9000}},
+            }
+        )
+        anycast = {"terms": {"destination.ip": sorted(ANYCAST_IPS)}}
+        geo = body["aggs"]["geo"]
+        self.assertEqual(geo["filter"], {"bool": {"must_not": [anycast]}})
+        self.assertEqual(
+            set(geo["aggs"]), {"geo_destinations", "geo_countries", "top_country"}
+        )
+        self.assertFalse({"geo_countries", "top_country"} & set(body["aggs"]))
+        self.assertEqual(body["aggs"]["anycast"]["filter"], anycast)
+        self.assertEqual(result["stats"]["top_country"], "Germany")
+        self.assertEqual(result["geo_anycast"], {"count": 40, "bytes": 9000})
 
     def test_protocol_counts_partition_the_window(self):
         """O6: counts, not percentages; other and unknown complete the split."""
@@ -918,6 +944,154 @@ class TestDetailGeoEnd(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(geoip.calls, [B_IP])
         self.assertEqual(body["geo"]["organization"], "Org " + B_IP)
+
+
+# --------------------------------------------------------------------------- NET-237
+
+
+class TestLiveWindowByEnd(unittest.TestCase):
+    """TRF-1: a conn record's @timestamp is its start, so the window and feed go by its end."""
+
+    WINDOW = {"range": {"event.end": {"gte": "now-5m", "lte": "now"}}}
+
+    def test_dashboard_selects_and_sorts_by_end_and_alerts_keep_their_time(self):
+        _, bodies = TestLiveDashboardQueries()._run_dashboard()
+        conn, alerts = bodies
+        self.assertIn(self.WINDOW, conn["query"]["bool"]["filter"])
+        self.assertNotIn(
+            {"range": {"@timestamp": {"gte": "now-5m", "lte": "now"}}},
+            conn["query"]["bool"]["filter"],
+        )
+        self.assertEqual(conn["sort"], [{"event.end": {"order": "desc"}}])
+        self.assertIn(
+            {"range": {"@timestamp": {"gte": "now-5m", "lte": "now"}}},
+            alerts["query"]["bool"]["filter"],
+        )
+
+    def test_connections_endpoint_selects_and_sorts_by_end(self):
+        client = MagicMock()
+        client.search.return_value = {"hits": {"hits": []}}
+        LiveConnectionTracker(client=client).fetch_from_opensearch()
+        body = client.search.call_args.kwargs["body"]
+        self.assertIn(self.WINDOW, body["query"]["bool"]["filter"])
+        self.assertEqual(body["sort"], [{"event.end": {"order": "desc"}}])
+
+    def test_rows_carry_their_end_time(self):
+        fmt = LiveConnectionTracker()._format_connection
+        hit = _hit(_end(LAN_IP), _end(A_IP))
+        self.assertEqual(
+            fmt({**hit, "event": {"end": "1794234940052"}})["ended_at"],
+            "2026-11-09T14:35:40.052000Z",
+        )
+        self.assertEqual(
+            fmt({**hit, "lastPacket": 1794234940052})["ended_at"],
+            "2026-11-09T14:35:40.052000Z",
+        )
+        self.assertEqual(fmt(hit)["ended_at"], "")
+
+
+ANYCAST_IP = "1.1.1.1"
+
+
+class TestLiveAnycast(unittest.TestCase):
+    """P3: an anycast address has no one city or point, whichever path located it."""
+
+    def test_an_enriched_anycast_row_has_no_city_or_point(self):
+        hit = _hit(
+            _end(LAN_IP), _end(ANYCAST_IP, "AU", -33.494, 143.2104, "Cloudflare")
+        )
+        row = LiveConnectionTracker()._format_connection(hit)
+        self.assertTrue(row["anycast"])
+        self.assertEqual(
+            (row["dest_city"], row["dest_lat"], row["dest_lon"]), ("", None, None)
+        )
+        self.assertEqual(row["country"], "AU")  # what GeoLite2 says, flagged as anycast
+        other = LiveConnectionTracker()._format_connection(
+            _hit(_end(LAN_IP), _end(A_IP, "US", 40.7, -74.0))
+        )
+        self.assertFalse(other["anycast"])
+        self.assertEqual((other["dest_lat"], other["dest_city"]), (40.7, "US city"))
+
+    def test_detail_from_an_enriched_anycast_session_has_no_city_or_point(self):
+        session = {
+            "hits": {
+                "hits": [
+                    {
+                        "_source": _hit(
+                            _end(LAN_IP), _end(ANYCAST_IP, "AU", -33.5, 143.2)
+                        )
+                    }
+                ]
+            }
+        }
+        geo = LiveConnectionTracker()._parse_session_geo(session, ANYCAST_IP)
+        self.assertTrue(geo["anycast"])
+        self.assertEqual((geo["city"], geo["lat"], geo["lon"]), ("", None, None))
+
+    def _geoip(self):
+        from services.geoip_service import GeoIPService
+
+        client = MagicMock()
+        client.search.return_value = {
+            "hits": {
+                "hits": [
+                    {
+                        "_source": _hit(
+                            _end(LAN_IP), _end(ANYCAST_IP, "AU", -33.5, 143.2)
+                        )
+                    }
+                ]
+            }
+        }
+        return GeoIPService(db_path="/nonexistent", opensearch_client=client)
+
+    def test_an_unlocated_anycast_row_the_fallback_locates_stays_flagged_and_unplaced(
+        self,
+    ):
+        from api.live import _enrich_connections_geoip
+
+        row = {
+            "source_ip": LAN_IP,
+            "dest_ip": ANYCAST_IP,
+            "direction": "out",
+            "dest_lat": None,
+            "dest_lon": None,
+        }
+        _enrich_connections_geoip([row], self._geoip())
+        self.assertTrue(row["anycast"])
+        self.assertEqual(row["country"], "AU")
+        self.assertEqual(
+            (row.get("dest_city", ""), row["dest_lat"], row["dest_lon"]),
+            ("", None, None),
+        )
+
+    def test_the_detail_fallback_flags_anycast(self):
+        tracker = MagicMock()
+        tracker.fetch_connection_detail.return_value = {
+            "geo": {"ip": ANYCAST_IP, "lat": None, "lon": None}
+        }
+        status, body = _detail(f"src={LAN_IP}&dst={ANYCAST_IP}", tracker, self._geoip())
+        self.assertEqual(status, 200)
+        self.assertTrue(body["geo"]["anycast"])
+        self.assertEqual((body["geo"]["city"], body["geo"]["lat"]), ("", None))
+
+    def test_the_detail_stands_when_the_fallback_lookup_fails(self):
+        from services.geoip_service import GeoIPService
+
+        client = MagicMock()
+        client.search.side_effect = RuntimeError("opensearch down")
+        tracker = MagicMock()
+        tracker.fetch_connection_detail.return_value = {
+            "geo": {"ip": A_IP, "lat": None, "lon": None},
+            "alerts": [],
+        }
+        status, body = _detail(
+            f"src={LAN_IP}&dst={A_IP}",
+            tracker,
+            GeoIPService(db_path="/x", opensearch_client=client),
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["geo"], {"ip": A_IP, "lat": None, "lon": None})
 
 
 if __name__ == "__main__":

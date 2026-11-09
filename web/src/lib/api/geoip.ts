@@ -19,6 +19,38 @@ export interface GeoIPResult {
 	asn: number | null;
 	organization: string | null;
 	is_private: boolean;
+	/** NET-237 (GEO-3): where the answer came from */
+	source: GeoSource;
+	/** For a "traffic" answer: when the session it was read from was seen */
+	seen_at: string | null;
+	/** An anycast service: answered from many places, so there is no city or point */
+	anycast: boolean;
+}
+
+/**
+ * traffic: Malcolm's GeoLite2 lookup, stored with a session · maxmind: a local GeoLite2 file ·
+ * builtin: NetTap's list of well-known services · private: not looked up · none: no answer yet
+ */
+export type GeoSource = 'traffic' | 'maxmind' | 'builtin' | 'private' | 'none';
+
+/**
+ * What a GeoIP answer can honestly place (NET-237, GEO-2). GeoLite2 gives a city's centre, or only
+ * a country's when it knows no city, with no accuracy radius. A country centre says nothing local,
+ * and an anycast address has no one place, so both get no coordinates. A city centre is shown to
+ * one decimal (about 11 km) and called an estimate.
+ */
+export function geoEstimate(
+	lat: number | null | undefined,
+	lon: number | null | undefined,
+	city: string | null | undefined,
+	anycast = false,
+): { coordinates: string | null; note: string } {
+	if (anycast) return { coordinates: null, note: 'Anycast: location varies' };
+	if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) {
+		return { coordinates: null, note: '—' };
+	}
+	if (!city) return { coordinates: null, note: 'Country-level estimate, no local position' };
+	return { coordinates: `${lat.toFixed(1)}, ${lon.toFixed(1)}`, note: 'city estimate, accuracy unknown' };
 }
 
 /** Response from the batch GeoIP lookup endpoint. */

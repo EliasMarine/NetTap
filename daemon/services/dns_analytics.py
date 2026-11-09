@@ -14,7 +14,9 @@ from typing import Any
 
 from services.excluded_ips import build_excluded_ips_filter
 from storage.all_buckets import all_buckets
-from storage.time_slots import histogram_buckets, time_slots
+from storage.exact_terms import PartialResultsError
+from storage.snapshot_search import QueryFailed
+from storage.time_slots import _epoch, histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.dns_analytics")
 
@@ -156,18 +158,41 @@ class DNSAnalytics:
         extra_filters: list[dict] | None = None,
     ) -> list[dict[str, Any]]:
         """Every queried name (get_top_domains' shape), most-queried first, paged to the end (#96)."""
-        buckets, complete = all_buckets(
-            self._client,
-            NETWORK_INDEX,
-            {"bool": self._bool_clause(from_ts, to_ts, excluded_ips, extra_filters)},
-            [{"domain": {"terms": {"field": "zeek.dns.query"}}}],
-            aggs={"unique_clients": {"cardinality": {"field": "source.ip"}}},
-        )
-        if not complete:
-            logger.warning(
-                "DNS: the name scan hit its bucket cap at %d names; later names were not checked",
-                len(buckets),
+        # OLD CODE START — NET-237 review: unchecked pages, so a page without aggregations read as the end
+        # buckets, complete = all_buckets(
+        #     self._client,
+        #     NETWORK_INDEX,
+        #     {"bool": self._bool_clause(from_ts, to_ts, excluded_ips, extra_filters)},
+        #     [{"domain": {"terms": {"field": "zeek.dns.query"}}}],
+        #     aggs={"unique_clients": {"cardinality": {"field": "source.ip"}}},
+        # )
+        # OLD CODE END
+        try:
+            buckets, complete = all_buckets(
+                self._client,
+                NETWORK_INDEX,
+                {
+                    "bool": self._bool_clause(
+                        from_ts, to_ts, excluded_ips, extra_filters
+                    )
+                },
+                [{"domain": {"terms": {"field": "zeek.dns.query"}}}],
+                aggs={"unique_clients": {"cardinality": {"field": "source.ip"}}},
+                what="DNS names",
             )
+        except (
+            QueryFailed
+        ) as exc:  # the routes answer OpenSearchException with an error
+            raise PartialResultsError(str(exc)) from exc
+        # OLD CODE START — NET-237 (caps): only logged, so suspicious names past it were never checked
+        # if not complete:
+        #     logger.warning(
+        #         "DNS: the name scan hit its bucket cap at %d names; later names were not checked",
+        #         len(buckets),
+        #     )
+        # OLD CODE END
+        if not complete:
+            raise PartialResultsError(f"DNS name scan stopped at {len(buckets)} names")
         names = [
             {
                 "domain": b["key"]["domain"],
@@ -401,9 +426,14 @@ class DNSAnalytics:
                     }
                 )
 
+        # NET-225 (DNS-2): the thresholds below are per day; fixed counts flagged 17 lookups a day
+        # as "high-frequency" over a 30-day window, so findings grew with the range, not behaviour
+        days = _window_days(from_ts, to_ts)
+
         # 2. High frequency single-domain queries (beaconing)
         for entry in top:
-            if entry["count"] > 500 and entry["unique_clients"] <= 2:
+            # OLD CODE: if entry["count"] > 500 and entry["unique_clients"] <= 2:
+            if entry["count"] > 500 * days and entry["unique_clients"] <= 2:
                 suspicious.append(
                     {
                         "type": "high_frequency",
@@ -411,7 +441,9 @@ class DNSAnalytics:
                         "count": entry["count"],
                         "unique_clients": entry["unique_clients"],
                         "severity": "medium",
-                        "description": f"High-frequency queries ({entry['count']}) from few clients — potential beaconing",
+                        # OLD CODE: f"High-frequency queries ({entry['count']}) from few clients — potential beaconing",
+                        # (NET-225: unique_clients counts source addresses; behind NAT one is many devices)
+                        "description": f"High-frequency queries ({entry['count']}) from few source addresses — possible beaconing. A router or resolver address can stand for several devices.",
                     }
                 )
 
@@ -456,7 +488,8 @@ class DNSAnalytics:
             extra_filters=[{"term": {"zeek.dns.qtype_name": "TXT"}}],
         )
         for entry in txt:
-            if entry["count"] > 50:
+            # OLD CODE: if entry["count"] > 50:
+            if entry["count"] > 50 * days:
                 suspicious.append(
                     {
                         "type": "txt_abuse",
@@ -562,19 +595,36 @@ class DNSAnalytics:
             hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
         )
 
+        # OLD CODE START — NET-225 (DNS-3): nothing answered (null aggregation) read 0 ms, which looks perfect
+        # "avg_resolution_ms": round(
+        #     (aggs.get("avg_rtt", {}).get("value", 0) or 0) * 1000, 2
+        # ),
+        # "median_resolution_ms": round(
+        #     (aggs.get("median_rtt", {}).get("values", {}).get("50.0") or 0) * 1000,
+        #     2,
+        # ),
+        # OLD CODE END
+        avg_s = aggs.get("avg_rtt", {}).get("value")
+        median_s = aggs.get("median_rtt", {}).get("values", {}).get("50.0")
         return {
             "total_queries": total_queries,
             "unique_domains": aggs.get("unique_domains", {}).get("value", 0),
             "nxdomain_count": aggs.get("nxdomain_count", {}).get("doc_count", 0),
-            "avg_resolution_ms": round(
-                (aggs.get("avg_rtt", {}).get("value", 0) or 0) * 1000, 2
-            ),
-            # zeek.dns.rtt is in seconds; a few 20 s retries skew the average, so show the median too
-            "median_resolution_ms": round(
-                (aggs.get("median_rtt", {}).get("values", {}).get("50.0") or 0) * 1000,
-                2,
-            ),
+            # zeek.dns.rtt is in seconds; None when no lookup was answered, so nothing was timed
+            "avg_resolution_ms": None if avg_s is None else round(avg_s * 1000, 2),
+            # a few 20 s retries skew the average, so show the median too
+            "median_resolution_ms": None
+            if median_s is None
+            else round(median_s * 1000, 2),
         }
+
+
+def _window_days(from_ts: str, to_ts: str) -> float:
+    """The window's length in days, never under 1, so a day or less keeps the per-day thresholds."""
+    try:
+        return max(1.0, (_epoch(to_ts) - _epoch(from_ts)) / 86400)
+    except ValueError:
+        return 1.0
 
 
 def _shannon_entropy(s: str) -> float:

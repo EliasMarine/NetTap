@@ -19,7 +19,7 @@ from pathlib import Path
 
 from aiohttp import web
 
-from services.excluded_ips import parse_single_ip, save_excluded_ips
+from services.excluded_ips import parse_single_ip, save_excluded_ips, with_appliance_ip
 
 logger = logging.getLogger("nettap.api.settings")
 
@@ -230,17 +230,21 @@ async def handle_save_api_keys(request: web.Request) -> web.Response:
 async def handle_get_excluded_ips(request: web.Request) -> web.Response:
     """GET /api/settings/excluded-ips
 
-    Returns the list of IPs excluded from device-centric views.
+    Returns the list of IPs excluded from device-centric views, and which of them is
+    NetTap's own (``appliance_ip``, excluded automatically and not the owner's to edit).
     """
     ips = request.app.get("excluded_ips", [])
-    return web.json_response({"excluded_ips": ips})
+    # OLD CODE: return web.json_response({"excluded_ips": ips})
+    return web.json_response(
+        {"excluded_ips": ips, "appliance_ip": request.app.get("appliance_ip")}
+    )
 
 
 async def handle_put_excluded_ips(request: web.Request) -> web.Response:
     """PUT /api/settings/excluded-ips
 
     Replace the excluded IP list. Accepts JSON body:
-    { "excluded_ips": ["99.10.70.92", "192.168.1.1"] }
+    { "excluded_ips": ["203.0.113.10", "192.168.1.1"] }
     """
     try:
         body = await request.json()
@@ -286,13 +290,16 @@ async def handle_put_excluded_ips(request: web.Request) -> web.Response:
         )
 
     # Update in-memory list so it takes effect immediately
-    request.app["excluded_ips"] = clean_ips
+    # OLD CODE: request.app["excluded_ips"] = clean_ips (dropped NetTap's own IP until a restart)
+    running = with_appliance_ip(clean_ips, request.app.get("appliance_ip"))
+    request.app["excluded_ips"] = running
 
     return web.json_response(
         {
             "result": "saved",
-            "excluded_ips": clean_ips,
-            "count": len(clean_ips),
+            # OLD CODE: "excluded_ips": clean_ips, (the running list, as GET returns it)
+            "excluded_ips": running,
+            "count": len(running),
         }
     )
 

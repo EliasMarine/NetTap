@@ -162,6 +162,9 @@ describe('Domain page', () => {
 		render(Page);
 		await screen.findAllByText('No lookups in the last 24 hours');
 		expect(kpi('Lookups')).toHaveTextContent('0');
+		// NET-225 (DNS-1): DoH and DoT lookups never show, so no lookups is not "none of your devices asked"
+		expect(card('Lookups over time')).toHaveTextContent('NetTap saw no plain DNS lookups for this name in this window. Lookups over DoH or DoT are encrypted');
+		expect(screen.queryByText(/None of your devices asked/)).not.toBeInTheDocument();
 		expect(screen.getByText('No TLS sessions for this name in the last 24 hours')).toBeInTheDocument();
 		expect(card('Alerts tagged with this name')).toHaveTextContent('No alerts in this window, so none carry a host name.');
 	});

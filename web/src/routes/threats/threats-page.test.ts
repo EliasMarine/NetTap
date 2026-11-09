@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import { goto } from '$app/navigation';
 import ThreatsPage from './+page.svelte';
+import { THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts';
+import { captureMode } from '$lib/stores/captureMode';
 import { LAN_POLICY } from '../../../e2e/visual/fixtures/drilldown';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
@@ -113,6 +115,23 @@ describe('Threats page', () => {
 		expect(goto).toHaveBeenLastCalledWith('/devices/192.168.1.66');
 	});
 
+	// NET-228 (audit ALR-18): a stage is NetTap's reading of a rule match, and a stage outside this
+	// chain's order can still have matches, so it is "not in this chain", not "not seen"
+	it('words a kill chain as a reading of rule matches', async () => {
+		const chain = { source_ip: '192.168.1.66', stages: [1, 3], stage_labels: [], alert_count: 4, assessment: 'Chain' };
+		stubDaemon({
+			'/api/threats/report': { ...REPORT, kill_chains: [chain], failed_checks: [], incomplete_checks: [] },
+			'/api/threats/intel': { from: '', to: '', new_indicators: 0, feeds: {}, total_indicators: 0 },
+		});
+		render(ThreatsPage);
+		await vi.waitFor(() => expect(screen.getByText('Possible kill chains')).toBeInTheDocument());
+		expect(screen.getByText('Stage 1 · Reconnaissance · Rule matched')).toBeInTheDocument();
+		expect(screen.getByText('Stage 2 · Exploit · Not in this chain')).toBeInTheDocument();
+		expect(screen.getByText('1 found')).toBeInTheDocument();
+		expect(screen.getByText(/1 possible kill chain\b/)).toBeInTheDocument();
+		expect(screen.queryByText(/Detected|active kill chain/)).not.toBeInTheDocument();
+	});
+
 	it('says a failed auto-investigation failed instead of hiding it', async () => {
 		stubDaemon({
 			'/api/threats/report': { ...REPORT, failed_checks: ['investigations'], incomplete_checks: [] },
@@ -151,5 +170,33 @@ describe('Threats page — investigation byte figures', () => {
 		const value = (label: string) => screen.getByText(label).nextElementSibling?.textContent;
 		expect(value('Bytes it sent in them (24h)')).toBe('1.0 GB');
 		expect(value('Total bytes')).toBe('2.5 MB');
+	});
+});
+
+// NET-225 (ALR-3): post-NAT, alerts can't be charged to the device behind the router, so they score at full weight
+describe('Threats page — the score in inline bridge mode', () => {
+	afterEach(() => {
+		captureMode.set(null);
+		vi.unstubAllGlobals();
+	});
+
+	it('says what the score counts in bridge mode', async () => {
+		captureMode.set('bridge');
+		stubDaemon({ '/api/threats/report': REPORT });
+		render(ThreatsPage);
+		expect(await screen.findByRole('note')).toHaveTextContent(THREAT_SCORE_BRIDGE);
+		expect(THREAT_SCORE_BRIDGE).toMatch(/even for unsolicited scans from the internet that your router blocks/);
+	});
+
+	it('says nothing about bridge mode in mirror mode', async () => {
+		captureMode.set('mirror');
+		stubDaemon({ '/api/threats/report': REPORT });
+		render(ThreatsPage);
+		await screen.findByText(THREAT_SCORE_HOW);
+		expect(screen.queryByText(THREAT_SCORE_BRIDGE)).not.toBeInTheDocument();
+	});
+
+	it('states that alerts no device is charged with score at full weight, in every mode', () => {
+		expect(THREAT_SCORE_HOW).toMatch(/neither address in NetTap's LAN subnets .* adds its full weight once per signature, source and destination/);
 	});
 });

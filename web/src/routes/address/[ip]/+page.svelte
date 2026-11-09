@@ -530,6 +530,14 @@ OLD CODE END -->
 					<span class="chip-note">This window's alerts couldn't all be checked</span>
 				{:else if data.threat_intel.matched}
 					<span class="chip is-bad"><Icon name="warn" />On a threat list: {data.threat_intel.feeds.map((f) => f.label).join(', ')}</span>
+					<!-- NET-228 (audit ALR-12): when it was listed, as far as NetTap knows -->
+					{#if data.threat_intel.in_window === true}
+						<span class="chip-note">A Suricata blocklist rule named it in this window</span>
+					{:else if data.threat_intel.in_window === false}
+						<span class="chip-note">Named on an earlier Threats scan; NetTap doesn't keep the date</span>
+					{:else if data.threat_intel.in_window === null}
+						<span class="chip-note">Named on an earlier Threats scan; this window's alerts couldn't all be checked</span>
+					{/if}
 				{:else}
 					<span class="chip is-ok"><Icon name="check" />Not on a threat list</span>
 					<span class="chip-note"
@@ -622,7 +630,8 @@ OLD CODE END -->
 				<dd>
 					{#if geoFailed && !geo}<span class="dim">Couldn't look it up</span>
 					{:else if geo?.is_private}Private address
-					{:else if geo}{[geo.city, geo.country].filter(Boolean).join(', ') || '—'}{#if geo.country_code}<span class="mono dim"> ({geo.country_code})</span>{/if}
+					<!-- OLD CODE: {:else if geo}{[geo.city, geo.country].filter(Boolean).join(', ') || '—'}{#if geo.country_code}<span class="mono dim"> ({geo.country_code})</span>{/if} (NET-237: anycast) -->
+					{:else if geo}{[geo.city, geo.country].filter(Boolean).join(', ') || '—'}{#if geo.country_code}<span class="mono dim"> ({geo.country_code})</span>{/if}{#if geo.anycast}<span class="dim"> · anycast, location varies</span>{/if}
 					{:else}<span class="dim">Looking up…</span>{/if}
 				</dd>
 				<dt>Network</dt>

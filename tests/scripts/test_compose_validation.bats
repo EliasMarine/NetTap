@@ -228,6 +228,19 @@ print('${svc}: OK')
     done
 }
 
+@test "compose: nettap-tshark has no network and runs as nobody (A14, NET-229)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+    run _compose_query "
+svc = data['services']['nettap-tshark']
+assert svc.get('network_mode') == 'none', svc.get('network_mode')
+assert 'networks' not in svc, 'network_mode: none cannot be combined with networks'
+assert svc.get('user') == '65534:65534', svc.get('user')
+"
+    [ "$status" -eq 0 ]
+}
+
 # ==========================================================================
 # Security: no-new-privileges
 # ==========================================================================

@@ -80,10 +80,11 @@ if [ -z "$TOKEN" ]; then
 else
     api() {  # api <method> <path> [body]: prints "<status> <body>"
         if [ $# -ge 3 ]; then
-            curl -s --max-time 30 -X "$1" -H "X-NetTap-Daemon-Token: $TOKEN" -H "Content-Type: application/json" \
+            # OLD CODE (NET-237: the token was on the command line, visible in ps): curl ... -H "X-NetTap-Daemon-Token: $TOKEN" ...
+            printf 'X-NetTap-Daemon-Token: %s\n' "$TOKEN" | curl -s --max-time 30 -X "$1" -H @- -H "Content-Type: application/json" \
                 -d "$3" -w ' %{http_code}' "$DAEMON$2" || true
         else
-            curl -s --max-time 30 -X "$1" -H "X-NetTap-Daemon-Token: $TOKEN" -w ' %{http_code}' "$DAEMON$2" || true
+            printf 'X-NetTap-Daemon-Token: %s\n' "$TOKEN" | curl -s --max-time 30 -X "$1" -H @- -w ' %{http_code}' "$DAEMON$2" || true
         fi
     }
 

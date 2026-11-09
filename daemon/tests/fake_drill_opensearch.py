@@ -5,11 +5,14 @@ counts are checked against what OpenSearch would answer, not against canned repl
 
 - queries: bool (filter/must/should/must_not, minimum_should_match), term (with
   case_insensitive), terms (CIDRs match IPs), range on @timestamp, exists, prefix,
-  wildcard, match_all, match_none;
-- aggregations: filter, sum/min/max/value_count, terms (with size and
-  sum_other_doc_count), composite (paged with `after`, with missing_bucket, one bucket per
-  value of a multi-valued field), date_range and top_hits (size, from, sort, _source);
-- hits.total exact with track_total_hits, else stopped at 10,000 as OpenSearch does;
+  wildcard (with case_insensitive), match_all, match_none;
+- aggregations: filter, missing, sum/min/max/value_count/cardinality (exact), terms (with
+  size, sum_other_doc_count and sub-aggregations), composite (paged with `after`, with
+  missing_bucket, one bucket per value of a multi-valued field), date_range and top_hits
+  (size, from, sort, _source);
+- hits.total exact with track_total_hits, else stopped at 10,000 as OpenSearch does
+  (terminate_after is ignored: the total stays exact, so "any match" reads the same);
+- msearch as a list of header/body pairs;
 - hits.hits: the matching documents after `sort` (missing values last; a multi-valued field
   sorts by its smallest value ascending, its largest descending), `from` and `size`
   (default 10), each `_source` projected and expanded to the nested shape OpenSearch stores.
@@ -48,6 +51,11 @@ def epoch_ms(iso: str) -> float:
     when = datetime.fromisoformat(iso.replace("Z", "+00:00"))
     when = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
     return when.timestamp() * 1000
+
+
+def _num(value) -> float:
+    """A number as itself, anything else as a time in epoch ms (range bounds take both)."""
+    return value if isinstance(value, (int, float)) else epoch_ms(value)
 
 
 def iso(ms: float) -> str:
@@ -133,9 +141,7 @@ def matches(doc: dict, query: dict) -> bool:
         }
         return any(
             all(
-                checks[op](epoch_ms(v), epoch_ms(b))
-                for op, b in bounds.items()
-                if op in checks
+                checks[op](_num(v), _num(b)) for op, b in bounds.items() if op in checks
             )
             for v in values(doc, field)
         )
@@ -144,9 +150,15 @@ def matches(doc: dict, query: dict) -> bool:
     if kind == "prefix":
         ((field, start),) = body.items()
         return any(str(v).startswith(start) for v in values(doc, field))
-    if kind == "wildcard":  # on a keyword field: case-sensitive, * and ?
+    if kind == "wildcard":  # on a keyword field: case-sensitive unless asked, * and ?
         ((field, pattern),) = body.items()
-        return any(fnmatch.fnmatchcase(str(v), pattern) for v in values(doc, field))
+        # OLD CODE: return any(fnmatch.fnmatchcase(str(v), pattern) …) (NET-228: + case_insensitive)
+        spec = pattern if isinstance(pattern, dict) else {"value": pattern}
+        fold = str.lower if spec.get("case_insensitive") else str
+        return any(
+            fnmatch.fnmatchcase(fold(str(v)), fold(spec["value"]))
+            for v in values(doc, field)
+        )
     raise NotImplementedError(kind)
 
 
@@ -197,6 +209,8 @@ def _metric(docs: list, kind: str, field: str) -> dict:
         return {"value": float(sum(found))}
     if kind == "value_count":
         return {"value": len(found)}
+    if kind == "cardinality":  # exact, where OpenSearch estimates
+        return {"value": len(set(found))}
     value = (min if kind == "min" else max)(found) if found else None
     if field == "@timestamp" and value is not None:
         return {"value": value, "value_as_string": iso(value)}
@@ -269,32 +283,58 @@ def _one(docs: list, spec: dict) -> dict:
     if kind == "filter":
         hit = [d for d in docs if matches(d, body)]
         return {"doc_count": len(hit), **aggregate(hit, sub)}
-    if kind in ("sum", "min", "max", "value_count"):
+    if kind in ("sum", "min", "max", "value_count", "cardinality"):
         return _metric(docs, kind, body["field"])
+    if kind == "missing":  # NET-228: the documents without the field
+        hit = [d for d in docs if not values(d, body["field"])]
+        return {"doc_count": len(hit), **aggregate(hit, sub)}
     if kind == "composite":
         return _composite(docs, body, sub)
     if kind == "terms":  # count desc, then key; cut at size like OpenSearch
-        counts: dict = {}
+        # OLD CODE START — NET-226: buckets carried no sub-aggregations
+        # counts: dict = {}
+        # for d in docs:
+        #     for v in dict.fromkeys(values(d, body["field"])):
+        #         counts[v] = counts.get(v, 0) + 1
+        # ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        # size = body.get("size", 10)
+        # return {
+        #     "buckets": [{"key": k, "doc_count": n} for k, n in ranked[:size]],
+        #     "sum_other_doc_count": sum(n for _, n in ranked[size:]),
+        # }
+        # OLD CODE END
+        groups: dict = {}
         for d in docs:
             for v in dict.fromkeys(values(d, body["field"])):
-                counts[v] = counts.get(v, 0) + 1
-        ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+                groups[v] = [*groups.get(v, []), d]
+        if isinstance(body.get("include"), list):  # the exact-values form of include
+            groups = {k: v for k, v in groups.items() if k in body["include"]}
+        ranked = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
         size = body.get("size", 10)
         return {
-            "buckets": [{"key": k, "doc_count": n} for k, n in ranked[:size]],
-            "sum_other_doc_count": sum(n for _, n in ranked[size:]),
+            "buckets": [
+                {"key": k, "doc_count": len(hit), **aggregate(hit, sub)}
+                for k, hit in ranked[:size]
+            ],
+            "sum_other_doc_count": sum(len(hit) for _, hit in ranked[size:]),
         }
     if kind == "date_range":
         buckets = []
         for r in body["ranges"]:
-            lo, hi = epoch_ms(r["from"]), epoch_ms(r["to"])
+            lo, hi = _num(r["from"]), _num(r["to"])
             hit = [
                 d
                 for d in docs
                 if any(lo <= epoch_ms(v) < hi for v in values(d, "@timestamp"))
             ]
             buckets.append(
-                {"from": lo, "to": hi, "doc_count": len(hit), **aggregate(hit, sub)}
+                {
+                    **({"key": r["key"]} if "key" in r else {}),
+                    "from": lo,
+                    "to": hi,
+                    "doc_count": len(hit),
+                    **aggregate(hit, sub),
+                }
             )
         return {"buckets": buckets}
     if kind == "top_hits":  # OpenSearch's default size is 3
@@ -457,6 +497,15 @@ class DrillOpenSearch:
         if "aggs" in body:
             reply["aggregations"] = aggregate(docs, body["aggs"])
         return self.tamper(body, reply)
+
+    def msearch(self, body, index=None, **params):
+        """_msearch as a list of header/body pairs, each answered like search()."""
+        return {
+            "responses": [
+                self.search(b, index=h.get("index", index))
+                for h, b in zip(body[::2], body[1::2])
+            ]
+        }
 
 
 def make_app(client, *registers, lan_filter=None, excluded_ips=None) -> web.Application:

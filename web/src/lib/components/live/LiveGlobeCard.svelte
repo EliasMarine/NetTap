@@ -69,6 +69,7 @@
 
 	let {
 		arcs,
+		anycast = 0,
 		fresh,
 		rows,
 		stats,
@@ -82,6 +83,8 @@
 		onretry,
 	}: {
 		arcs: GeoArc[];
+		/** Connections to anycast addresses: in no country, so left off the map and the list. */
+		anycast?: number;
 		/** Rows new since the last poll: each launches packets. */
 		fresh: LiveConnection[];
 		/** The newest rows, for the expanded view's feed. */
@@ -125,7 +128,8 @@
 	let hotspots = $derived<Hotspot[]>(arcs.map((a) => ({ country: a.country || a.country_code, code: a.country_code, lat: a.lat, lng: a.lon, count: a.count })));
 	let feed = $derived(rows.filter((r) => r.direction !== 'local').slice(0, FEED));
 
-	let sub = $derived(home ? 'Packets between your network and each destination · last 5 minutes' : 'Connections by destination · last 5 minutes');
+	// OLD CODE: let sub = $derived(home ? 'Packets between your network and each destination · last 5 minutes' : 'Connections by destination · last 5 minutes'); (NET-237)
+	let sub = $derived(home ? 'Packets between your network and each destination · connections that ended in the last 5 minutes' : 'Connections by destination · ended in the last 5 minutes');
 	let ariaLabel = $derived(
 		dests.length
 			? `Connections from your network to ${dests.length} countries, most to ${dests[0].name}. Choose a country in the list to filter the feed.`
@@ -220,16 +224,19 @@
 		<div class="globe-body">
 			{#if expanded}
 				<section class="globe-feed" aria-label="Newest connections">
-					<span class="eyebrow">Newest connections</span>
+					<!-- OLD CODE: <span class="eyebrow">Newest connections</span> (NET-237: listed by when they ended) -->
+					<span class="eyebrow">Newest connections · by end time</span>
 					<ul class="feed-rows">
 						{#each feed as r (r.key)}
 							<li class="feed-row">
-								<span class="mono">{formatTime(r.timestamp, 'clock')}</span>
+								<!-- OLD CODE: <span class="mono">{formatTime(r.timestamp, 'clock')}</span> (NET-237: the start of a connection that just ended) -->
+								<span class="mono" title="Ended">{r.ended_at ? formatTime(r.ended_at, 'clock') : '—'}</span>
 								<span class="feed-what"><b>{r.device_name || (r.direction === 'in' ? r.dest_ip : r.source_ip)}</b><span>{where(r)}</span></span>
 								<span class="feed-v">{formatBytes(r.bytes)}{#if r.has_alert}<span class="feed-alert">Alert</span>{/if}</span>
 							</li>
 						{:else}
-							<li class="dim">No connections to or from the internet right now.</li>
+							<!-- OLD CODE: <li class="dim">No connections to or from the internet right now.</li> (NET-237) -->
+							<li class="dim">No connections to or from the internet ended in the last 5 minutes.</li>
 						{/each}
 					</ul>
 				</section>
@@ -306,12 +313,15 @@
 									onblur={() => (hoverCode = null)}
 								>
 									<span class="tag">{d.code}</span>
-									<span class="dest-name"><b>{d.name}</b>{#if d.cities.length}<span>{d.cities.join(', ')}</span>{/if}</span>
+									<!-- OLD CODE: <span>{d.cities.join(', ')}</span> (NET-237, GEO-5: the count is the country's, not the city's) -->
+									<span class="dest-name"><b>{d.name}</b>{#if d.cities.length}<span>Busiest city {d.cities[0]}</span>{/if}</span>
 									<span class="dest-v">{d.count.toLocaleString('en-GB')}<span class="mini" aria-hidden="true"><span style:--w="{Math.round((d.count / maxCount) * 100)}%"></span></span></span>
 								</button>
 							</li>
 						{/each}
 					</ul>
+				{:else if anycast}
+					<CardState state="empty" title="No destinations to place" message="Every connection went to an anycast service, which has no single location." />
 				{:else}
 					<CardState state="empty" title="No destinations yet" message="Places appear here once your devices connect to the internet." />
 				{/if}
@@ -321,6 +331,11 @@
 				</div>
 			</aside>
 		</div>
+		{#if anycast}
+			<p class="globe-anycast">
+				{anycast.toLocaleString('en-GB')} {anycast === 1 ? 'connection' : 'connections'} to anycast services, such as public DNS, aren't on the map or in the countries: they have no single location.
+			</p>
+		{/if}
 	{/if}
 </article>
 
@@ -349,6 +364,7 @@
 		font-size: var(--text-xs); color: var(--text-3); text-align: right;
 	}
 	.globe-hint kbd { font: 500 var(--text-micro)/1 var(--font-mono); padding: 2px var(--sp-1); border-radius: var(--r-xs); background: var(--surface-3); color: var(--text-2); }
+	.globe-anycast { margin: var(--sp-3) 0 0; font-size: var(--text-xs); color: var(--text-3); }
 	.globe-notice {
 		position: absolute; left: 50%; top: var(--sp-4); z-index: 2; transform: translateX(-50%);
 		width: max-content; max-width: calc(100% - var(--sp-8)); margin: 0;

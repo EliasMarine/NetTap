@@ -17,6 +17,8 @@
 	import type { RegistryDevice, DeviceTraffic } from '$api/devices-registry';
 	import IPAddress from '$components/IPAddress.svelte';
 	import { loadFailed } from '$lib/utils/load-failed';
+	import { likelyType } from '$lib/utils/device-guess';
+	import { ipv6LeftOutText } from '$lib/utils/ipv6-coverage';
 	import { suricataLevel } from '$lib/utils/severity';
 	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -271,7 +273,8 @@
 			<h1 class={['page-title', !device?.display_name && 'mono']}>{device?.display_name || device?.mac || mac}</h1>
 			{#if device}
 				<div class="chips">
-					<span class="chip">{device.category || 'unknown'}</span>
+					<!-- OLD CODE: <span class="chip">{device.category || 'unknown'}</span> (NET-226: the type is a guess) -->
+					<span class="chip">{likelyType(device.category === 'iot' ? 'IoT' : device.category || 'unknown', device.category)}</span>
 					<!-- OLD CODE START — NET-158: is_new clears on the device's next update, so the chip rarely showed -->
 					<!-- {#if device.is_new}<span class="chip is-ok">New</span>{/if} -->
 					<!-- OLD CODE END -->
@@ -332,7 +335,11 @@
 			note={range.words}
 		/>
 		<!-- NET-158: the daemon matches the MAC or any of the device's addresses over the whole range -->
-		<p class="c-12 dim">Traffic matching its MAC or any address it has used; another device may have used one since.</p>
+		<!-- OLD CODE: <p class="c-12 dim">Traffic matching its MAC or any address it has used; another device may have used one since.</p> (NET-226: both directions, IPv6 by MAC) -->
+		<p class="c-12 dim">Traffic to and from any address it has used, plus its IPv6 matched by its MAC; another device may have used one of those addresses since.</p>
+		{#if traffic && (traffic.ipv6_left_out ?? 0) > 0 && ipv6LeftOutText(traffic.ipv6_left_out_reason)}
+			<p class="c-12 notice is-warn" role="note"><Icon name="warn" /><span>{ipv6LeftOutText(traffic.ipv6_left_out_reason)}</span></p>
+		{/if}
 
 		<!-- NET-205: counted by the MAC itself, live -->
 		<LiveBandwidthCard key={{ mac: device.mac }} />
@@ -356,7 +363,8 @@
 			</Card>
 		{/if}
 
-		<Card class="c-6" title="Top destinations" sub="By bytes · {range.words}">
+		<!-- OLD CODE: sub="By bytes · {range.words}" (NET-226 follow-up: it reads the connections the device started) -->
+		<Card class="c-6" title="Top destinations" sub="By bytes · connections it started · {range.words}">
 			{#if traffic?.top_destinations?.length}
 				<DataTable
 					ariaLabel="Top destinations"
@@ -368,7 +376,8 @@
 			{:else if trafficFailed && !traffic}
 				<CardState state="error" title={loadFailed('traffic')} onaction={() => refresh.run()} />
 			{:else}
-				<CardState state="empty" icon="connections" title="No destinations in the {range.words}" />
+				<!-- OLD CODE: title="No destinations in the {range.words}" -->
+				<CardState state="empty" icon="connections" title="No destinations for connections it started in the {range.words}" />
 			{/if}
 		</Card>
 

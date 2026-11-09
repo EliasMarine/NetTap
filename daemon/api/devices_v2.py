@@ -37,6 +37,7 @@ from typing import Any
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.error_replies import public_json
 from api.offload import in_thread
 from api.time_range import parse_time_range
 from api.devices import (
@@ -48,6 +49,7 @@ from api.devices import (
 from services.device_fingerprint import _mac_from_hit, _oui_from_hit
 from services.device_registry import DeviceRegistry, record_time
 from services.unifi_integration import UnifiIntegration, normalize_controller_url
+from storage.snapshot_search import QueryFailed
 
 logger = logging.getLogger("nettap.api.devices_v2")
 
@@ -138,15 +140,19 @@ def _register_conn_devices(
         ip = bucket["key"]
         macs = bucket.get("with_mac", {}).get("buckets", [])
         hits = macs[0].get("latest", {}).get("hits", {}).get("hits", []) if macs else []
-        mac = _mac_from_hit(hits[0]) if hits else None
+        # an answer-only device's hits are of the records it answered (_lan_device_buckets)
+        side = "destination" if bucket.get("answer_only") else "source"
+        # OLD CODE: mac = _mac_from_hit(hits[0]) if hits else None
+        mac = _mac_from_hit(hits[0], side) if hits else None
         # shortcut: an IP with no MAC in its conn records can't be keyed, so it stays out of the registry
         if _is_skipped_device_ip(ip) or not mac:
             continue
         # OLD CODE START — the vendor came only from the bundled 208-prefix table (#26)
         # registry.register_device(mac=mac, ip=ip, source="conn")
         # OLD CODE END
+        # OLD CODE: oui = _oui_from_hit(hits[0])
         oui = _oui_from_hit(
-            hits[0]
+            hits[0], side
         )  # Malcolm's IEEE vendor name, absent for randomized MACs
         metadata = (
             {"manufacturer": oui, "category": _vendor_category(oui)} if oui else None
@@ -407,7 +413,13 @@ def handle_registry_traffic(request: web.Request) -> web.Response:
         device = registry.get_device(mac)
         if device is None:
             return web.json_response({"error": f"Device not found: {mac}"}, status=404)
-        traffic = registry.get_device_traffic(mac, from_ts, to_ts)
+        # OLD CODE: traffic = registry.get_device_traffic(mac, from_ts, to_ts) (NET-226: + the LAN rule)
+        traffic = registry.get_device_traffic(
+            mac, from_ts, to_ts, request.app.get("lan_filter")
+        )
+    except QueryFailed as exc:
+        logger.error("Incomplete search in device registry traffic: %s", exc)
+        return public_json({"error": "The device search was incomplete"}, status=502)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in device registry: %s", exc)
         return web.json_response(

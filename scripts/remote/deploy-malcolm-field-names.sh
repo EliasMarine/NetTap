@@ -20,7 +20,9 @@ FAILED=0
 api() {
     local token
     token=$(sudo docker exec nettap-storage-daemon cat /run/nettap-auth/daemon-token 2>/dev/null)
-    curl -s -m 20 -H "X-NetTap-Daemon-Token: $token" "http://localhost:8880$1"
+    # OLD CODE (NET-237: the token was on the command line, visible in ps):
+    # curl -s -m 20 -H "X-NetTap-Daemon-Token: $token" "http://localhost:8880$1"
+    printf 'X-NetTap-Daemon-Token: %s\n' "$token" | curl -s -m 20 -H @- "http://localhost:8880$1"
 }
 
 echo "=== Deploy: daemon + web use Malcolm's field names ==="

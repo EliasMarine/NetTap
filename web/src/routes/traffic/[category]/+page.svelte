@@ -21,16 +21,19 @@
 	// import { CATEGORY_COLORS } from '$lib/utils/category-colors';
 	// OLD CODE END
 	import { loadFailed } from '$lib/utils/load-failed';
+	import { compareHalves, trendWindow, withCoverage, type HalvesResult, type TrendWindow } from '$lib/utils/window-trend';
 	import { page } from '$app/stores';
 	import { onDestroy, untrack } from 'svelte';
 	import {
 		getCategoryDetail,
 		getCategoryBandwidth,
 		getTrafficSummary,
+		getBandwidthTimeSeries,
 	} from '$api/traffic';
 	import type {
 		CategoryDetailResponse,
 		CategoryBandwidthPoint,
+		BandwidthPoint,
 		CategoryDevice,
 		TrafficCategoryService,
 	} from '$api/traffic';
@@ -124,7 +127,13 @@
 	let networkPercent = $state<number | null>(null);
 
 	// Trend data
-	let prevData = $state<CategoryDetailResponse | null>(null);
+	// OLD CODE: let prevData = $state<CategoryDetailResponse | null>(null); (NET-228, audit TRF-6: the window ending now vs the one before)
+	/** NET-228: the category's series over two equal settled windows (lib/utils/window-trend.ts) */
+	let trendSeries = $state<CategoryBandwidthPoint[] | null>(null);
+	let trendWin = $state<TrendWindow | null>(null);
+	/** review D1: all traffic over the same window says whether data arrived; a quiet category slot is 0 */
+	let trendCoverage = $state<BandwidthPoint[] | null>(null);
+	let trendFailed = $state(false);
 
 	// #96: a failed request says so instead of "No traffic data"
 	let detailFailed = $state(false);
@@ -226,49 +235,81 @@
 		})),
 	);
 
-	// Trend calculations
-	let trendBytes = $derived.by(() => {
-		if (!data || !prevData || !prevData.total_bytes) return null;
-		const diff = data.total_bytes - prevData.total_bytes;
-		return {
-			pct: ((diff / prevData.total_bytes) * 100).toFixed(1),
-			direction: diff > 0 ? 'up' : diff < 0 ? 'down' : 'neutral',
-		};
-	});
+	// OLD CODE START — NET-228 (audit TRF-6): the window ending now, still filling in, against the one before;
+	// distinct devices don't add up across slots, so the devices delta has no honest equal-halves form
+	// // Trend calculations
+	// let trendBytes = $derived.by(() => {
+	// 	if (!data || !prevData || !prevData.total_bytes) return null;
+	// 	const diff = data.total_bytes - prevData.total_bytes;
+	// 	return {
+	// 		pct: ((diff / prevData.total_bytes) * 100).toFixed(1),
+	// 		direction: diff > 0 ? 'up' : diff < 0 ? 'down' : 'neutral',
+	// 	};
+	// });
+	//
+	// let trendDevices = $derived.by(() => {
+	// 	if (!data || !prevData) return null;
+	// 	const diff = data.device_count - prevData.device_count;
+	// 	if (diff > 0) return { label: `+${diff} new`, direction: 'up' };
+	// 	if (diff < 0) return { label: `${diff}`, direction: 'down' };
+	// 	return { label: 'stable', direction: 'neutral' };
+	// });
+	//
+	// let trendConns = $derived.by(() => {
+	// 	if (!data || !prevData || !prevData.connection_count) return null;
+	// 	const diff = data.connection_count - prevData.connection_count;
+	// 	const pct = ((diff / prevData.connection_count) * 100).toFixed(1);
+	// 	return {
+	// 		pct,
+	// 		direction: diff > 0 ? 'up' : diff < 0 ? 'down' : 'neutral',
+	// 	};
+	// });
+	//
+	// /** A trend as the KPI's delta chip and comparison line; no trend shows the window instead. */
+	// function kpiTrend(trend: { text: string; direction: string } | null) {
+	// 	if (!trend) return { delta: undefined, comparison: undefined, note: `Last ${rangeText}` };
+	// 	if (trend.direction === 'neutral') return { delta: undefined, comparison: `No change vs previous ${rangeText}`, note: undefined };
+	// 	return {
+	// 		delta: { text: trend.text, direction: trend.direction as 'up' | 'down' },
+	// 		comparison: `vs previous ${rangeText}`,
+	// 		note: undefined,
+	// 	};
+	// }
+	//
+	// const pctText = (t: { pct: string; direction: string }) => `${t.direction === 'up' ? '+' : ''}${t.pct}%`;
+	// let bytesKpi = $derived(kpiTrend(trendBytes && { text: pctText(trendBytes), direction: trendBytes.direction }));
+	// let devicesKpi = $derived(kpiTrend(trendDevices && { text: trendDevices.label, direction: trendDevices.direction }));
+	// let connsKpi = $derived(kpiTrend(trendConns && { text: pctText(trendConns), direction: trendConns.direction }));
+	// OLD CODE END
+	/** Two equal settled windows of the category's own series, or why there is no trend */
+	function halves(value: (p: CategoryBandwidthPoint) => number): HalvesResult | 'failed' | null {
+		if (trendFailed) return 'failed';
+		// OLD CODE: if (!trendSeries || !trendWin) return null; (review D1: + the coverage)
+		// OLD CODE: return compareHalves(trendSeries.map((p) => ({ timestamp: p.timestamp, value: value(p), connections: p.connections })), trendWin); (review D1: one quiet category slot was "not enough data")
+		if (!trendSeries || !trendCoverage || !trendWin) return null;
+		return compareHalves(withCoverage(trendSeries, value, trendCoverage), trendWin);
+	}
+	let trendUpTo = $derived(trendWin ? chartTime(Date.parse(trendWin.to), rangeOf(selectedRange).hours) : '');
 
-	let trendDevices = $derived.by(() => {
-		if (!data || !prevData) return null;
-		const diff = data.device_count - prevData.device_count;
-		if (diff > 0) return { label: `+${diff} new`, direction: 'up' };
-		if (diff < 0) return { label: `${diff}`, direction: 'down' };
-		return { label: 'stable', direction: 'neutral' };
-	});
-
-	let trendConns = $derived.by(() => {
-		if (!data || !prevData || !prevData.connection_count) return null;
-		const diff = data.connection_count - prevData.connection_count;
-		const pct = ((diff / prevData.connection_count) * 100).toFixed(1);
+	/** A trend as the KPI's delta chip and comparison line; no trend shows the window, or why there is none. */
+	function kpiTrend(h: HalvesResult | 'failed' | null) {
+		if (h === 'failed') return { delta: undefined, comparison: undefined, note: "Couldn't load the comparison" };
+		if (h === 'not_enough_data') return { delta: undefined, comparison: undefined, note: 'Not enough data to compare' };
+		if (!h || !h.older) return { delta: undefined, comparison: undefined, note: `Last ${rangeText}` };
+		const diff = h.newer - h.older;
+		const vs = `vs previous ${rangeText}, up to ${trendUpTo}`;
+		if (diff === 0) return { delta: undefined, comparison: `No change ${vs}`, note: undefined };
+		const pct = ((diff / h.older) * 100).toFixed(1);
 		return {
-			pct,
-			direction: diff > 0 ? 'up' : diff < 0 ? 'down' : 'neutral',
-		};
-	});
-
-	/** A trend as the KPI's delta chip and comparison line; no trend shows the window instead. */
-	function kpiTrend(trend: { text: string; direction: string } | null) {
-		if (!trend) return { delta: undefined, comparison: undefined, note: `Last ${rangeText}` };
-		if (trend.direction === 'neutral') return { delta: undefined, comparison: `No change vs previous ${rangeText}`, note: undefined };
-		return {
-			delta: { text: trend.text, direction: trend.direction as 'up' | 'down' },
-			comparison: `vs previous ${rangeText}`,
+			delta: { text: `${diff > 0 ? '+' : ''}${pct}%`, direction: diff > 0 ? ('up' as const) : ('down' as const) },
+			comparison: vs,
 			note: undefined,
 		};
 	}
 
-	const pctText = (t: { pct: string; direction: string }) => `${t.direction === 'up' ? '+' : ''}${t.pct}%`;
-	let bytesKpi = $derived(kpiTrend(trendBytes && { text: pctText(trendBytes), direction: trendBytes.direction }));
-	let devicesKpi = $derived(kpiTrend(trendDevices && { text: trendDevices.label, direction: trendDevices.direction }));
-	let connsKpi = $derived(kpiTrend(trendConns && { text: pctText(trendConns), direction: trendConns.direction }));
+	let bytesKpi = $derived(kpiTrend(halves((p) => p.total_bytes)));
+	let devicesKpi = $derived(kpiTrend(null));
+	let connsKpi = $derived(kpiTrend(halves((p) => p.connections)));
 
 	// OLD CODE START — "Updated N s ago" is the top bar's, from the page refresh contract
 	// // "Last updated X ago" text
@@ -306,23 +347,25 @@
 	// OLD CODE END
 	const computeTimeParams = (range: string) => rangeWindow(rangeOf(range).hours);
 
-	function computePrevTimeParams(range: string): { from: string; to: string } {
-		const now = new Date();
-		// OLD CODE START — NET-196: the list's hours
-		// let durationMs: number;
-		// switch (range) {
-		// 	case '1h': durationMs = 60 * 60 * 1000; break;
-		// 	case '6h': durationMs = 6 * 60 * 60 * 1000; break;
-		// 	case '7d': durationMs = 7 * 24 * 60 * 60 * 1000; break;
-		// 	case '30d': durationMs = 30 * 24 * 60 * 60 * 1000; break;
-		// 	default: durationMs = 24 * 60 * 60 * 1000; break;
-		// }
-		// OLD CODE END
-		const durationMs = rangeOf(range).hours * 3_600_000;
-		const to = new Date(now.getTime() - durationMs);
-		const from = new Date(to.getTime() - durationMs);
-		return { from: from.toISOString(), to: to.toISOString() };
-	}
+	// OLD CODE START — NET-228: the trend reads trendWindow's settled halves
+	// function computePrevTimeParams(range: string): { from: string; to: string } {
+	// 	const now = new Date();
+	// 	// OLD CODE START — NET-196: the list's hours
+	// 	// let durationMs: number;
+	// 	// switch (range) {
+	// 	// 	case '1h': durationMs = 60 * 60 * 1000; break;
+	// 	// 	case '6h': durationMs = 6 * 60 * 60 * 1000; break;
+	// 	// 	case '7d': durationMs = 7 * 24 * 60 * 60 * 1000; break;
+	// 	// 	case '30d': durationMs = 30 * 24 * 60 * 60 * 1000; break;
+	// 	// 	default: durationMs = 24 * 60 * 60 * 1000; break;
+	// 	// }
+	// 	// OLD CODE END
+	// 	const durationMs = rangeOf(range).hours * 3_600_000;
+	// 	const to = new Date(now.getTime() - durationMs);
+	// 	const from = new Date(to.getTime() - durationMs);
+	// 	return { from: from.toISOString(), to: to.toISOString() };
+	// }
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// Data fetching
@@ -434,14 +477,19 @@
 		const range = selectedRange;
 		loading = true;
 		const timeParams = computeTimeParams(range);
-		const prevParams = computePrevTimeParams(range);
+		// OLD CODE: const prevParams = computePrevTimeParams(range); (NET-228)
+		const tw = trendWindow(rangeOf(range).hours, Date.now());
 		const interval = INTERVAL_MAP[range] ?? '15m';
 
 		// A refresh of the same view keeps its last good figures; another view must not show them
 		const view = `${cat}|${range}`;
 		if (view !== loadedView) {
 			data = null;
-			prevData = null;
+			// OLD CODE: prevData = null; (NET-228)
+			trendSeries = null;
+			trendCoverage = null;
+			trendWin = null;
+			trendFailed = false;
 			topServices = [];
 			bandwidthSeries = [];
 			networkPercent = null;
@@ -451,10 +499,14 @@
 			getCategoryDetail(cat, timeParams),
 			getCategoryBandwidth(cat, { ...timeParams, interval }),
 			getTrafficSummary(timeParams),
-			getCategoryDetail(cat, prevParams),
+			// OLD CODE: getCategoryDetail(cat, prevParams), (NET-228)
+			getCategoryBandwidth(cat, { from: tw.from, to: tw.to, interval: tw.interval }),
+			// review D1: the coverage the trend reads
+			getBandwidthTimeSeries({ from: tw.from, to: tw.to, interval: tw.interval }),
 		]);
 		if (!guard.current(g)) return 'skipped';
-		const [detailRes, bandwidthRes, summaryRes, prevRes] = results;
+		// OLD CODE: const [detailRes, bandwidthRes, summaryRes, prevRes] = results; (review D1)
+		const [detailRes, bandwidthRes, summaryRes, prevRes, coverageRes] = results;
 		detailFailed = detailRes.status === 'rejected';
 		bandwidthFailed = bandwidthRes.status === 'rejected';
 
@@ -466,8 +518,16 @@
 			console.error('[traffic/category] detail failed:', detailRes.reason);
 		}
 		if (bandwidthRes.status === 'fulfilled') bandwidthSeries = bandwidthRes.value.series ?? [];
-		// a failed previous period hides the trend instead of comparing against zero
-		if (prevRes.status === 'fulfilled') prevData = prevRes.value;
+		// OLD CODE START — NET-228: a failed refresh kept the last reply as the comparison
+		// // a failed previous period hides the trend instead of comparing against zero
+		// if (prevRes.status === 'fulfilled') prevData = prevRes.value;
+		// OLD CODE END
+		// OLD CODE: trendFailed = prevRes.status === 'rejected'; (review D1: or its coverage)
+		// OLD CODE: trendWin = prevRes.status === 'fulfilled' ? tw : null;
+		trendFailed = prevRes.status === 'rejected' || coverageRes.status === 'rejected';
+		trendSeries = prevRes.status === 'fulfilled' ? (prevRes.value.series ?? []) : null;
+		trendCoverage = coverageRes.status === 'fulfilled' ? coverageRes.value.series : null;
+		trendWin = trendFailed ? null : tw;
 		// % of total network needs both figures; without them the card shows a dash
 		if (detailRes.status === 'fulfilled' && summaryRes.status === 'fulfilled') {
 			const total = summaryRes.value.total_bytes;

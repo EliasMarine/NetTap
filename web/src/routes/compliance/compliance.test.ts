@@ -128,14 +128,17 @@ describe('Security Posture page when an input fails', () => {
 		vi.unstubAllGlobals();
 	});
 
-	function stubDaemon(failing: Record<string, 'http' | 'network'>): void {
+	// OLD CODE START — F5: every test answered from DAEMON_REPLIES, where no alerts now reads "Not measured"
+	// function stubDaemon(failing: Record<string, 'http' | 'network'>): void {
+	// OLD CODE END
+	function stubDaemon(failing: Record<string, 'http' | 'network'>, replies: Record<string, unknown> = DAEMON_REPLIES): void {
 		vi.stubGlobal(
 			'fetch',
 			vi.fn(async (url: string) => {
 				const path = url.split('?')[0];
 				if (failing[path] === 'network') throw new TypeError('Failed to fetch');
 				if (failing[path] === 'http') return { ok: false, status: 502, json: async () => ({}) };
-				return { ok: true, status: 200, json: async () => DAEMON_REPLIES[path] };
+				return { ok: true, status: 200, json: async () => replies[path] };
 			}),
 		);
 	}
@@ -170,7 +173,14 @@ describe('Security Posture page when an input fails', () => {
 	});
 
 	it('shows the overall score when every input loads', async () => {
-		stubDaemon({});
+		// OLD CODE START — F5: with no alerts Alert response is "Not measured", so all six need some
+		// stubDaemon({});
+		// OLD CODE END
+		stubDaemon({}, {
+			...DAEMON_REPLIES,
+			'/api/alerts/count': { from: '', to: '', counts: { total: 3, high: 1, medium: 2, low: 0 } },
+			'/api/investigations/stats': { total: 2, by_status: { resolved: 1 } },
+		});
 		render(CompliancePage);
 
 		// the overall figure is the ring's (its centre reads the number without a % sign)
@@ -180,14 +190,43 @@ describe('Security Posture page when an input fails', () => {
 		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
 		// all six categories
 		expect(screen.getAllByText(/^\d+%$/)).toHaveLength(6);
+		expect(screen.getByText('Scored on 6 of 6 areas')).toBeInTheDocument();
+	});
+
+	// NET-228 (audit B5): the zero-alert finding says what it can mean, beside the pipeline's state
+	it("no counted alerts reads \"can't tell\" with Suricata stopped, and says how fresh the data is otherwise", async () => {
+		const pipeline = { state: 'sensor_stopped', newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: { 'nettap-suricata-live': 'exited' }, checked_at: '' };
+		const health = { status: 'problem', healthy: false, opensearch_reachable: true, pipeline };
+		stubDaemon({}, { ...DAEMON_REPLIES, '/api/system/health': health });
+		const { unmount } = render(CompliancePage);
+		await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
+		expect(
+			within(categoryCard('Alert response')).getAllByText("Can't tell if any rule matched, so there is nothing to score · Data pipeline now: Suricata stopped").length,
+		).toBeGreaterThan(0);
+		unmount();
+
+		stubDaemon({}, { ...DAEMON_REPLIES, '/api/system/health': { ...health, pipeline: { ...pipeline, state: 'fresh' } } });
+		render(CompliancePage);
+		await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
+		expect(
+			within(categoryCard('Alert response')).getAllByText('No counted rule matches in this period, so there is nothing to score · Data pipeline now: Newest record 40 s ago').length,
+		).toBeGreaterThan(0);
 	});
 
 	it('needs investigation stats for Alert Response only when there are alerts', async () => {
 		stubDaemon({ '/api/investigations/stats': 'http' });
 		const { unmount } = render(CompliancePage);
-		// no alerts: the score is 100 whatever the investigations
+		// OLD CODE START — F5: no alerts scored 100; it is "Not measured" now
+		// // no alerts: the score is 100 whatever the investigations
+		// await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
+		// expect(within(categoryCard('Alert response')).getByText('100%')).toBeInTheDocument();
+		// OLD CODE END
+		// no alerts: nothing to score, whatever the investigations, and no failure either
 		await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
-		expect(within(categoryCard('Alert response')).getByText('100%')).toBeInTheDocument();
+		expect(within(categoryCard('Alert response')).getByText('Not measured')).toBeInTheDocument();
+		expect(within(categoryCard('Alert response')).queryByText(/Couldn't load/)).not.toBeInTheDocument();
+		// no rule matching is not proof of a clean network
+		expect(within(categoryCard('Alert response')).queryByText(/looks clean/)).not.toBeInTheDocument();
 		unmount();
 
 		DAEMON_REPLIES['/api/alerts/count'] = { from: '', to: '', counts: { total: 3, high: 1, medium: 2, low: 0 } };
@@ -200,5 +239,106 @@ describe('Security Posture page when an input fails', () => {
 		} finally {
 			DAEMON_REPLIES['/api/alerts/count'] = { from: '', to: '', counts: { total: 0, high: 0, medium: 0, low: 0 } };
 		}
+	});
+});
+
+// F5: every input that came back empty scored 100, so a box that had seen nothing graded A,
+// "Excellent… across all categories". Empty (nothing to score) is now separate from failed.
+describe('Security Posture page with nothing to score', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	const EMPTY: Record<string, unknown> = {
+		'/api/traffic/protocols': {
+			protocols: [],
+			services: [],
+			encryption: { eligible: 0, encrypted: 0 },
+			dns: { plain: 0, over_tls: 0 },
+		},
+		'/api/alerts/count': { from: '', to: '', counts: { total: 0, high: 0, medium: 0, low: 0 } },
+		'/api/devices/count': { from: '', to: '', count: 0 },
+		'/api/risk/scores': { devices: [] },
+		'/api/investigations/stats': { total: 0, by_status: {} },
+	};
+
+	/** Traffic seen (Encryption 60, DNS 10, Patch 80), but no devices and no alerts yet. */
+	const TRAFFIC_ONLY: Record<string, unknown> = {
+		...EMPTY,
+		'/api/traffic/protocols': {
+			protocols: [],
+			services: [{ name: 'ssl', count: 80 }, { name: 'http', count: 20 }],
+			encryption: { eligible: 200, encrypted: 120 },
+			dns: { plain: 90, over_tls: 10 },
+		},
+	};
+
+	function stub(replies: Record<string, unknown>, failing: string[] = []): void {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const path = url.split('?')[0];
+				return failing.includes(path)
+					? { ok: false, status: 502, json: async () => ({}) }
+					: { ok: true, status: 200, json: async () => replies[path] };
+			}),
+		);
+	}
+
+	const overallCard = () => screen.getByRole('heading', { name: 'Overall security posture' }).closest('.card') as HTMLElement;
+	const radarCard = () => screen.getByRole('heading', { name: 'Score by category' }).closest('.card') as HTMLElement;
+
+	it('gives no grade and no "Excellent" when every area is empty', async () => {
+		stub(EMPTY);
+		render(CompliancePage);
+
+		await vi.waitFor(() => expect(within(overallCard()).getByText('Not enough data to score yet')).toBeInTheDocument());
+		expect(screen.queryByRole('img', { name: /^Overall score/ })).not.toBeInTheDocument();
+		expect(screen.queryByText(/\bGrade [A-F]\b/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/excellent/i)).not.toBeInTheDocument();
+		expect(screen.queryByText(/all categories/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/^\d+%$/)).not.toBeInTheDocument();
+		// six "Not measured" chips, and none of them counted as Good
+		expect(screen.getAllByText('Not measured', { selector: '.chip' })).toHaveLength(6);
+		const good = screen.getByText('Good', { selector: '.kpi-top span' }).closest('.kpi') as HTMLElement;
+		expect(within(good).getByText('0')).toBeInTheDocument();
+		// not a failure: nothing says a request failed
+		expect(screen.queryByText(/request failed/)).not.toBeInTheDocument();
+		expect(within(radarCard()).getByText('Not enough measured to draw the chart yet')).toBeInTheDocument();
+	});
+
+	it('grades on the measured areas only, with their weights renormalised', async () => {
+		stub(TRAFFIC_ONLY);
+		render(CompliancePage);
+
+		// (60 × 0.25 + 10 × 0.15 + 80 × 0.15) / 0.55 = 51.8; scoring the empty areas as 100 gave 74
+		await vi.waitFor(() =>
+			expect(screen.getByRole('img', { name: 'Overall score 52 out of 100, grade F' })).toBeInTheDocument(),
+		);
+		const overall = overallCard();
+		expect(within(overall).getByText('Scored on 3 of 6 areas')).toBeInTheDocument();
+		for (const name of ['Network segmentation', 'Alert response', 'Monitoring coverage']) {
+			const row = within(overall).getByText(name).closest('li') as HTMLElement;
+			expect(row).toHaveTextContent('Not measured');
+		}
+		// the radar draws the measured areas only, and picks the weakest among them
+		const labels = [...radarCard().querySelectorAll('text.radar-lbl')].map((t) => t.firstChild?.textContent?.trim());
+		expect(labels).toEqual(['Encryption', 'DNS security', 'Patch currency']);
+		expect(within(radarCard()).getByRole('img', { name: 'Score by category: lowest is DNS security at 10 out of 100' })).toBeInTheDocument();
+		expect(within(radarCard()).getByText(/^Not measured yet: Network segmentation, Alert response, Monitoring coverage/)).toBeInTheDocument();
+		expect(screen.queryByText(/all categories/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/looks excellent/)).not.toBeInTheDocument();
+	});
+
+	it('gives no grade while a request failed, even with the rest empty', async () => {
+		stub(EMPTY, ['/api/risk/scores']);
+		render(CompliancePage);
+
+		await vi.waitFor(() => expect(within(overallCard()).getByText("Couldn't compute the overall score")).toBeInTheDocument());
+		expect(screen.queryByRole('img', { name: /^Overall score/ })).not.toBeInTheDocument();
+		expect(screen.queryByText('Not enough data to score yet')).not.toBeInTheDocument();
+		// failed categories say so; they are not "Not measured"
+		expect(within(categoryCard('Monitoring coverage')).getAllByText("Couldn't load risk scores: the request failed.").length).toBeGreaterThan(0);
+		expect(within(categoryCard('Monitoring coverage')).queryByText('Not measured')).not.toBeInTheDocument();
 	});
 });

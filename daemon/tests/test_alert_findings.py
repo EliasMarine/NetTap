@@ -183,7 +183,24 @@ def test_recon_exploit_c2_within_a_day_is_a_chain():
     )
     assert [c["stages"] for c in chains] == [[1, 2, 3]]
     assert chains[0]["source_ip"] == PC
-    assert "active intrusion" in chains[0]["assessment"]
+    # OLD CODE: assert "active intrusion" in chains[0]["assessment"] (NET-228, audit ALR-18)
+    said = chains[0]["assessment"]
+    assert "NetTap's reading of a rule match, not a confirmed step" in said
+    assert "no more than 24 hours between successive stages" in said
+    assert "active intrusion" not in said
+
+
+def test_a_chain_can_span_more_than_a_day_and_says_only_the_gap_is_bounded():
+    """NET-228: hours 0, 23 and 46 make a chain; "within 24 hours of each other" was wrong."""
+    chains = _chains(
+        [
+            _group("scan", "reconnaissance", [_finding(PC, True, _MON)]),
+            _group("exploit", "exploit", [_finding(PC, True, _MON + 23 * _HOUR)]),
+            _group("c2", "malware_c2", [_finding(PC, True, _MON + 46 * _HOUR)]),
+        ]
+    )
+    assert [c["stages"] for c in chains] == [[1, 2, 3]]
+    assert "within 24 hours of each other" not in chains[0]["assessment"]
 
 
 def test_monday_wednesday_friday_is_not_a_chain():
@@ -965,3 +982,60 @@ def test_a_scanner_that_waits_before_its_payload_stays_an_attempt():
     ]
     alert = _alert(_at(4, 5, 3), src=SCANNER, dst=SERVER)
     assert _roles([alert], spans) == [(False, True)]
+
+
+# ---------------------------------------------------------------------------
+# NET-228 (audit B-j): the assessment's device sentence is true of these results
+# ---------------------------------------------------------------------------
+
+_CNC = "ET MALWARE Win32 Agent CnC Checkin"
+_OTHER_CNC = "ET MALWARE Other Family CnC Beacon"
+PC2 = "192.168.1.149"
+
+
+def _two_device_client():
+    groups = [
+        _bucket(_CNC, PC, C2, 1, "Critical"),
+        _bucket(_CNC, PC2, C2, 1, "Critical"),
+        _bucket(_OTHER_CNC, PC, C2, 1, "Critical"),
+        _bucket(_OTHER_CNC, "198.51.100.7", C2, 1, "Critical"),  # no LAN side
+    ]
+    instants = [
+        _instant(_CNC, PC, C2, None, _T),
+        _instant(_CNC, PC2, C2, None, _T + 1),
+        _instant(_OTHER_CNC, PC, C2, None, _T + 2),
+        _instant(_OTHER_CNC, "198.51.100.7", C2, None, _T + 3),
+    ]
+    return _client(groups, instants, [])
+
+
+def test_the_assessment_counts_every_device_that_triggered_the_rule(quiet):
+    """Every group said "Only this device triggers this alert", even with two devices on it."""
+    listed = get_smart_alerts(_two_device_client(), _FROM, _TO, limit=None)
+    said = {(g["signature"], g["source_ip"]): g["assessment"] for g in listed}
+
+    assert "Triggered by 2 devices in these results." in said[(_CNC, PC)]
+    assert "Triggered by 2 devices in these results." in said[(_CNC, PC2)]
+    # the external source adds no device, so PC is the only one for this rule
+    for src in (PC, "198.51.100.7"):
+        assert (
+            "Only this device triggered this rule in these results."
+            in said[(_OTHER_CNC, src)]
+        )
+
+
+def test_a_device_scoped_list_says_nothing_about_other_devices(quiet):
+    listed = get_smart_alerts(
+        _two_device_client(), _FROM, _TO, device_ip=PC, limit=None
+    )
+    assert listed
+    for g in listed:
+        assert "device" not in g["assessment"].lower()
+
+
+def test_a_rule_with_no_attributed_device_says_nothing_about_devices(quiet):
+    groups = [_bucket(_CNC, "198.51.100.7", C2, 1, "Critical")]
+    instants = [_instant(_CNC, "198.51.100.7", C2, None, _T)]
+    (group,) = get_smart_alerts(_client(groups, instants, []), _FROM, _TO, limit=None)
+    assert group["findings"] == []
+    assert "device" not in group["assessment"].lower()

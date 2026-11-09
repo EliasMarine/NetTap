@@ -15,12 +15,24 @@ from datetime import datetime, timedelta
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from storage.exact_terms import PartialResultsError
+from api.error_replies import incomplete, public_json
 from api.offload import in_thread, run_blocking
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from api.drilldown_runner import either_side, ip_param
 from api.time_range import parse_time_range
 from api.devices import _CONNECTION_SORT_FIELDS, _connection_sort
-from services.excluded_ips import build_excluded_ips_filter, valid_excluded_ips
+from services.excluded_ips import (
+    CONN_ACCOUNTING,
+    build_excluded_ips_filter,
+    valid_excluded_ips,
+)
+from services.device_accounting import (
+    direction_aggs,
+    gateways_if_needed,
+    pair_gateways,
+    split_direction,
+)
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
 from services.iot_monitor import (
     ENCRYPTED_CONN_FILTER,
@@ -46,9 +58,15 @@ NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
 # Zeek conn event filters — Malcolm routes all data into arkime_sessions3-*;
 # these term filters select only Zeek connection logs from the unified index.
+# OLD CODE START — F1: also summed conn_long.log interim records with the final record
+# _ZEEK_CONN_FILTERS = [
+#     {"term": {"event.provider": "zeek"}},
+#     {"term": {"event.dataset": "conn"}},
+# ]
+# OLD CODE END
 _ZEEK_CONN_FILTERS = [
     {"term": {"event.provider": "zeek"}},
-    {"term": {"event.dataset": "conn"}},
+    CONN_ACCOUNTING,
 ]
 
 # The Connections page's State pills as Zeek conn_state codes, filtered in the query so the total
@@ -282,18 +300,31 @@ def handle_traffic_summary(request: web.Request) -> web.Response:
             "total_orig_pkts": {"sum": {"field": "source.packets", "missing": 0}},
             "total_resp_pkts": {"sum": {"field": "destination.packets", "missing": 0}},
             "top_protocol": {"terms": {"field": "network.transport", "size": 1}},
+            # NET-226 (B-d): upload/download from the LAN's side, and local traffic apart
+            **direction_aggs(request.app.get("lan_filter")),
         },
     }
 
     try:
         result = client.search(index=NETWORK_INDEX, body=query)
+        aggs = result.get("aggregations", {})
+        gateways = gateways_if_needed(
+            client,
+            [aggs],
+            query["query"]["bool"]["filter"],
+            request.app.get("lan_filter"),
+            "traffic summary",
+        )
+    except QueryFailed as exc:
+        logger.error("Incomplete search in traffic/summary: %s", exc)
+        return public_json({"error": "The traffic search was incomplete"}, status=502)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/summary: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
 
-    aggs = result.get("aggregations", {})
+    # OLD CODE: aggs = result.get("aggregations", {}) (NET-226: read inside the try, for the gateways)
     hits_total = result.get("hits", {}).get("total", {})
     connection_count = (
         hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
@@ -314,6 +345,7 @@ def handle_traffic_summary(request: web.Request) -> web.Response:
             "total_bytes": orig_bytes + resp_bytes,
             "orig_bytes": orig_bytes,
             "resp_bytes": resp_bytes,
+            **split_direction(orig_bytes, resp_bytes, aggs, gateways),
             "packet_count": orig_pkts + resp_pkts,
             "connection_count": connection_count,
             "top_protocol": top_protocol,
@@ -591,9 +623,7 @@ def handle_protocols(request: web.Request) -> web.Response:
         )
     except QueryFailed as exc:
         logger.warning("Protocol distribution: %s", exc)
-        return web.json_response(
-            {"error": "The protocol search was incomplete"}, status=502
-        )
+        return public_json({"error": "The protocol search was incomplete"}, status=502)
 
     aggs = result.get("aggregations", {})
 
@@ -698,13 +728,41 @@ def handle_bandwidth(request: web.Request) -> web.Response:
                 "aggs": {
                     "orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
                     "resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
+                    # NET-226 (B-d): upload/download from the LAN's side, local apart
+                    # OLD CODE: **direction_aggs(request.app.get("lan_filter")), (review: added below, once the gateways are known)
                 },
             }
         },
     }
 
+    lan_filter = request.app.get("lan_filter")
     try:
-        result = client.search(index=NETWORK_INDEX, body=query)
+        # OLD CODE START — review: v6_pairs' terms by MAC pair in every slot could pass
+        # search.max_buckets; the gateways come first now, and a slot sums one filter
+        # result = client.search(index=NETWORK_INDEX, body=query)
+        # buckets = histogram_buckets(
+        #     result.get("aggregations", {}).get("bandwidth_over_time")
+        # )
+        # gateways = gateways_if_needed(
+        #     client,
+        #     buckets,
+        #     query["query"]["bool"]["filter"],
+        #     request.app.get("lan_filter"),
+        #     "traffic bandwidth",
+        # )
+        # OLD CODE END
+        filters = query["query"]["bool"]["filter"]
+        gateways = pair_gateways(client, filters, lan_filter, "traffic bandwidth")
+        slot = query["aggs"]["bandwidth_over_time"]
+        slot_aggs = {**slot["aggs"], **direction_aggs(lan_filter, gateways)}
+        body = {**query, "aggs": {"bandwidth_over_time": {**slot, "aggs": slot_aggs}}}
+        result = client.search(index=NETWORK_INDEX, body=body)
+        buckets = histogram_buckets(
+            result.get("aggregations", {}).get("bandwidth_over_time")
+        )
+    except QueryFailed as exc:
+        logger.error("Incomplete search in traffic/bandwidth: %s", exc)
+        return public_json({"error": "The traffic search was incomplete"}, status=502)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/bandwidth: %s", exc)
         return web.json_response(
@@ -716,9 +774,11 @@ def handle_bandwidth(request: web.Request) -> web.Response:
     #     result.get("aggregations", {}).get("bandwidth_over_time", {}).get("buckets", [])
     # )
     # OLD CODE END
-    buckets = histogram_buckets(
-        result.get("aggregations", {}).get("bandwidth_over_time")
-    )
+    # OLD CODE START — NET-226: read inside the try above, for the gateways
+    # buckets = histogram_buckets(
+    #     result.get("aggregations", {}).get("bandwidth_over_time")
+    # )
+    # OLD CODE END
 
     series = [
         {
@@ -727,6 +787,12 @@ def handle_bandwidth(request: web.Request) -> web.Response:
             "resp_bytes": b.get("resp_bytes", {}).get("value", 0) or 0,
             "total_bytes": (b.get("orig_bytes", {}).get("value", 0) or 0)
             + (b.get("resp_bytes", {}).get("value", 0) or 0),
+            **split_direction(
+                b.get("orig_bytes", {}).get("value", 0) or 0,
+                b.get("resp_bytes", {}).get("value", 0) or 0,
+                b,
+                gateways,
+            ),
             "connections": b.get("doc_count", 0),
         }
         for b in buckets
@@ -888,6 +954,8 @@ def handle_traffic_categories(request: web.Request) -> web.Response:
 
     try:
         categories = get_category_stats(client, from_ts, to_ts)
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("traffic", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/categories: %s", exc)
         return web.json_response(
@@ -944,6 +1012,8 @@ def handle_category_detail(request: web.Request) -> web.Response:
         services = traffic_classifier.get_category_services(
             client, category, from_ts, to_ts
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("traffic", exc)
     except Exception as exc:
         logger.error("Error in category detail for %s: %s", category, exc)
         return web.json_response(
@@ -1022,6 +1092,8 @@ def handle_category_bandwidth(request: web.Request) -> web.Response:
             },
             status=400,
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("traffic", exc)
     except Exception as exc:
         logger.error("Error in category bandwidth for %s: %s", category, exc)
         return web.json_response(

@@ -14,12 +14,24 @@ import logging
 import os
 
 from aiohttp import web
+from aiohttp.abc import AbstractStreamWriter
 
 from api.offload import in_thread
 from api.time_range import iso_param
 from services.pcap_search import PcapSearchService
 
 logger = logging.getLogger("nettap.api.pcap")
+
+
+class _TempFileResponse(web.FileResponse):
+    """Sends a temp file, then deletes it, however the send ends (F8: the daemon's /tmp is a
+    50 MB tmpfs, so every leaked download shrank it until downloads failed)."""
+
+    async def prepare(self, request: web.BaseRequest) -> AbstractStreamWriter | None:
+        try:
+            return await super().prepare(request)
+        finally:
+            self._path.unlink(missing_ok=True)
 
 
 @in_thread
@@ -200,16 +212,26 @@ async def handle_pcap_download(request: web.Request) -> web.Response:
         return web.json_response({"error": "No matching PCAP data found"}, status=404)
 
     try:
-        response = web.FileResponse(
+        # OLD CODE START — F8: nothing read _tmp_path, so every download leaked its temp file
+        # response = web.FileResponse(
+        #     tmp_path,
+        #     headers={
+        #         "Content-Disposition": "attachment; filename=nettap_filtered.pcap",
+        #         "Content-Type": "application/vnd.tcpdump.pcap",
+        #     },
+        # )
+        # # Schedule cleanup after response is sent
+        # response._tmp_path = tmp_path  # type: ignore[attr-defined]
+        # return response
+        # OLD CODE END
+        # aiohttp calls prepare() once, in finish_response; it deletes the file afterwards
+        return _TempFileResponse(
             tmp_path,
             headers={
                 "Content-Disposition": "attachment; filename=nettap_filtered.pcap",
                 "Content-Type": "application/vnd.tcpdump.pcap",
             },
         )
-        # Schedule cleanup after response is sent
-        response._tmp_path = tmp_path  # type: ignore[attr-defined]
-        return response
     except Exception as exc:
         # Clean up temp file on error
         if os.path.exists(tmp_path):

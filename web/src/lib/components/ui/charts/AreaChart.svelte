@@ -8,8 +8,8 @@
 	export interface AreaSeries {
 		key: string;
 		label: string;
-		/** The `--data-N` token: 1 download, 2 upload. */
-		colour: 1 | 2;
+		/** The `--data-N` token: 1 download, 2 upload, 3 local (NET-226). */
+		colour: 1 | 2 | 3;
 		points: { t: number | string; v: number }[];
 	}
 </script>
@@ -192,4 +192,7 @@
 		top: 0;
 		left: 0;
 	}
+	/* NET-226: a third series; system.css colours the gradient and dot of 1 and 2 only */
+	.chart :global(.g-3 stop) { stop-color: var(--data-3); }
+	.chart :global(.dot-3) { fill: var(--data-3); }
 </style>

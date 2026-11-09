@@ -1,0 +1,182 @@
+"""
+Notification channels in a config backup (A9, NET-224).
+
+Exported without their secrets; restored with the box's own secrets, but only where they would
+still go to the same server, account, transport and recipients, so a crafted backup can't
+redirect them. A channel to anywhere new comes back off.
+"""
+
+from typing import Any
+
+# OLD CODE: from services.notification_config import QUICK_WEBHOOK (security delta D2: the Settings email gets its own note)
+from services.notification_config import QUICK_EMAIL, QUICK_WEBHOOK
+
+# A backup carries only these; passwords, tokens, webhook URLs, headers and any unknown key stay
+# on the box. The same keys as NET-224's public view (notification_config._PUBLIC_KEYS).
+PUBLIC_KEYS = (
+    "name",
+    "smtp_host",
+    "smtp_port",
+    "smtp_user",
+    "from_address",
+    "recipients",
+    "use_tls",
+    "chat_id",
+)
+_CHANNEL_KEYS = ("id", "type", "name", "created_at", "enabled")
+# A kept secret must still go to the same SMTP server, account and transport...
+# OLD CODE: _DESTINATION_KEYS = ("smtp_host", "smtp_port", "smtp_user", "use_tls") (review L2: a new chat_id kept the bot token)
+# OLD CODE: _DESTINATION_KEYS = ("smtp_host", "smtp_port", "smtp_user", "use_tls", "chat_id") (security delta D2: new recipients kept the SMTP password)
+_DESTINATION_KEYS = (
+    "smtp_host",
+    "smtp_port",
+    "smtp_user",
+    "use_tls",
+    "chat_id",
+    "recipients",
+)
+# ...and, when an older or crafted backup carries a URL or a Pushover user key (an address too:
+# whoever holds it gets the message), to that same one
+# OLD CODE: _URL_KEYS = ("url", "webhook_url") (security delta D2: a carried user_key kept the box's API token)
+_URL_KEYS = ("url", "webhook_url", "user_key")
+# Where a channel sends. One the box doesn't already send to comes back off (review L2)
+# OLD CODE: _ADDRESS_KEYS = ("url", "webhook_url", "smtp_host", "chat_id") (security delta D2: recipients and user keys are addresses)
+_ADDRESS_KEYS = (*_URL_KEYS, "smtp_host", "chat_id", "recipients")
+
+
+def redact_channels(channels: Any) -> dict:
+    """Channels for a backup: public keys only, plus the names of the keys left out."""
+    if not isinstance(channels, dict):
+        return {}
+    out = {}
+    for cid, channel in channels.items():
+        if not isinstance(channel, dict):
+            continue
+        config = channel.get("config")
+        config = config if isinstance(config, dict) else {}
+        out[cid] = {
+            **{k: channel[k] for k in _CHANNEL_KEYS if k in channel},
+            "config": {k: v for k, v in config.items() if k in PUBLIC_KEYS},
+            "secrets_left_out": sorted(k for k in config if k not in PUBLIC_KEYS),
+        }
+    return out
+
+
+def _valid_channel(channel: Any) -> bool:
+    if not isinstance(channel, dict) or not isinstance(channel.get("type"), str):
+        return False
+    left_out = channel.get("secrets_left_out", [])
+    return isinstance(channel.get("config", {}), dict) and (
+        isinstance(left_out, list) and all(isinstance(k, str) for k in left_out)
+    )
+
+
+def _same_destination(config: dict, old_config: dict) -> bool:
+    if any(config.get(k) != old_config.get(k) for k in _DESTINATION_KEYS):
+        return False
+    return all(config[k] == old_config.get(k) for k in _URL_KEYS if k in config)
+
+
+def restore_channels(
+    backup: Any, current: Any, smtp_host_set: bool
+) -> tuple[dict, list[str]]:
+    """The channels to store and the warnings for the report. ValueError if the section is bad.
+
+    ``smtp_host_set``: Settings › API keys has an SMTP server, which email channels without
+    their own ``smtp_host`` send through.
+    """
+    if not isinstance(backup, dict) or not all(
+        _valid_channel(c) for c in backup.values()
+    ):
+        raise ValueError("Notification channels in this backup aren't valid")
+    current = current if isinstance(current, dict) else {}
+
+    channels: dict = {}
+    turned_off: list[str] = []
+    quick_off: list[str] = []
+    quick_email_off = False
+    redirected: list[str] = []
+    no_smtp: list[str] = []
+    for cid, channel in backup.items():
+        config = dict(channel.get("config") or {})
+        old = current.get(cid) if isinstance(current.get(cid), dict) else {}
+        old_config = old.get("config") if isinstance(old.get("config"), dict) else {}
+        same = channel["type"] == old.get("type") and _same_destination(
+            config, old_config
+        )
+        if same:
+            secrets = {k: v for k, v in old_config.items() if k not in PUBLIC_KEYS}
+            config = {**secrets, **config}
+        # a crafted (or schema-1) backup sending somewhere new: off, and a URL is never kept, so
+        # turning the Settings webhook back on asks for one
+        new_address = not same and any(config.get(k) for k in _ADDRESS_KEYS)
+        if new_address:
+            config = {k: v for k, v in config.items() if k not in _URL_KEYS}
+        stored = {k: v for k, v in channel.items() if k != "secrets_left_out"}
+        stored["config"] = config
+        label = str(channel.get("name") or cid)
+        if cid == QUICK_WEBHOOK and new_address:
+            stored["enabled"] = False
+            quick_off.append(label)
+        elif cid == QUICK_EMAIL and new_address:
+            # kept, so the Settings tab shows the addresses before the owner turns it on
+            stored["enabled"] = False
+            quick_email_off = True
+        elif any(k not in config for k in channel.get("secrets_left_out", [])):
+            stored["enabled"] = False
+            # OLD CODE: turned_off.append(label) (NET-224: the Settings webhook is fixed elsewhere)
+            (quick_off if cid == QUICK_WEBHOOK else turned_off).append(label)
+        elif new_address:
+            stored["enabled"] = False
+            redirected.append(label)
+        elif (
+            channel["type"] == "email"
+            and stored.get("enabled", True) is not False
+            and not config.get("smtp_host")
+            and not smtp_host_set
+        ):
+            no_smtp.append(label)
+        channels[cid] = stored
+
+    warnings = []
+    # OLD CODE START — NET-224: those channels have no edit or on switch; only the Settings tab's
+    # webhook can be turned on with a new URL, so this asked for something the page can't do
+    # if turned_off:
+    #     warnings.append(
+    #         "Notification channels restored without their passwords, URLs or tokens, "
+    #         f"and turned off: {', '.join(turned_off)}. Enter them again in "
+    #         "Settings › Notifications, then turn them on."
+    #     )
+    # OLD CODE END
+    if quick_off:
+        warnings.append(
+            "The webhook restored without its URL and turned off. Turn it on in "
+            "Settings › Notifications and enter its URL."
+        )
+    if quick_email_off:
+        warnings.append(
+            "The alert email restored turned off, because it sends to addresses this NetTap "
+            "doesn't already use. Check them in Settings › Notifications, then turn it on."
+        )
+    if turned_off:
+        # a new channel gets a new id, so the restored rules don't reach it
+        warnings.append(
+            "Notification channels restored without their passwords, URLs or tokens, "
+            f"and turned off: {', '.join(turned_off)}. On the Notification channels page, "
+            "add each again with its secret and add its routing rules again for the new "
+            "channel, then delete the old channel and rules."
+        )
+    if redirected:
+        warnings.append(
+            "Notification channels in this backup send to a server, URL, chat, email address "
+            "or Pushover user this NetTap "
+            f"doesn't already use, so they were restored turned off: {', '.join(redirected)}. "
+            "If you set them up, add each again on the Notification channels page with its "
+            "routing rules, then delete these."
+        )
+    if no_smtp:
+        warnings.append(
+            f"Email notifications ({', '.join(no_smtp)}) can't send until the SMTP server "
+            "is set in Settings › API keys."
+        )
+    return channels, warnings

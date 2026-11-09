@@ -6,6 +6,7 @@ env file parsing, saving, unknown key handling, validation, and
 edge cases.
 """
 
+import json
 import os
 import tempfile
 import unittest
@@ -345,7 +346,7 @@ class TestExcludedIpsGet(AioHTTPTestCase):
 
     async def get_application(self):
         app = web.Application()
-        app["excluded_ips"] = ["99.10.70.92", "192.168.1.1"]
+        app["excluded_ips"] = ["203.0.113.10", "192.168.1.1"]
         register_settings_routes(app, env_file=self.tmp.name)
         return app
 
@@ -355,7 +356,17 @@ class TestExcludedIpsGet(AioHTTPTestCase):
         resp = await self.client.request("GET", "/api/settings/excluded-ips")
         self.assertEqual(resp.status, 200)
         data = await resp.json()
-        self.assertEqual(data["excluded_ips"], ["99.10.70.92", "192.168.1.1"])
+        self.assertEqual(data["excluded_ips"], ["203.0.113.10", "192.168.1.1"])
+
+    @unittest_run_loop
+    async def test_get_names_netaps_own_ip(self):
+        """The Settings form leaves it out, so a save never stores the automatic IP."""
+        self.app["appliance_ip"] = "192.168.1.1"
+        data = await (
+            await self.client.request("GET", "/api/settings/excluded-ips")
+        ).json()
+        self.assertEqual(data["appliance_ip"], "192.168.1.1")
+        self.assertEqual(data["excluded_ips"], ["203.0.113.10", "192.168.1.1"])
 
     @unittest_run_loop
     async def test_get_returns_empty_list_when_not_set(self):
@@ -399,7 +410,7 @@ class TestExcludedIpsPut(AioHTTPTestCase):
         resp = await self.client.request(
             "PUT",
             "/api/settings/excluded-ips",
-            json={"excluded_ips": ["10.0.0.1", "99.10.70.92"]},
+            json={"excluded_ips": ["10.0.0.1", "203.0.113.10"]},
         )
         self.assertEqual(resp.status, 200)
         data = await resp.json()
@@ -407,7 +418,21 @@ class TestExcludedIpsPut(AioHTTPTestCase):
         self.assertEqual(data["count"], 2)
         self.assertIn("10.0.0.1", data["excluded_ips"])
         # Verify in-memory update
-        self.assertEqual(self.app["excluded_ips"], ["10.0.0.1", "99.10.70.92"])
+        self.assertEqual(self.app["excluded_ips"], ["10.0.0.1", "203.0.113.10"])
+
+    @unittest_run_loop
+    async def test_put_keeps_netaps_own_ip_excluded_but_out_of_the_file(self):
+        """The box's own IP is runtime-only (#79): still excluded after a save, never saved."""
+        self.app["appliance_ip"] = "192.0.2.1"
+        self.app["excluded_ips"] = ["192.0.2.1"]  # as create_app leaves it
+        resp = await self.client.request(
+            "PUT", "/api/settings/excluded-ips", json={"excluded_ips": ["192.0.2.7"]}
+        )
+        self.assertEqual(resp.status, 200)
+        # old code: ["192.0.2.7"], so NetTap's own traffic counted until a restart
+        self.assertEqual(self.app["excluded_ips"], ["192.0.2.7", "192.0.2.1"])
+        with open(self.tmp_ips.name) as f:
+            self.assertEqual(json.load(f), ["192.0.2.7"])
 
     @unittest_run_loop
     async def test_put_deduplicates(self):
@@ -505,7 +530,7 @@ class TestExcludedIpsService(unittest.TestCase):
         tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
         tmp.close()
         try:
-            ips = ["10.0.0.1", "99.10.70.92"]
+            ips = ["10.0.0.1", "203.0.113.10"]
             save_excluded_ips(ips, tmp.name)
             loaded = load_excluded_ips(tmp.name)
             self.assertEqual(loaded, ips)
@@ -521,9 +546,9 @@ class TestExcludedIpsService(unittest.TestCase):
     def test_build_filter_with_ips(self):
         from services.excluded_ips import build_excluded_ips_filter
 
-        result = build_excluded_ips_filter(["10.0.0.1", "99.10.70.92"])
+        result = build_excluded_ips_filter(["10.0.0.1", "203.0.113.10"])
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["terms"]["source.ip"], ["10.0.0.1", "99.10.70.92"])
+        self.assertEqual(result[0]["terms"]["source.ip"], ["10.0.0.1", "203.0.113.10"])
 
     def test_build_filter_skips_and_logs_invalid_stored_entries(self):
         """Entries saved before validation (CIDR, junk) are skipped and logged."""

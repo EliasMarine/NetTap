@@ -15,7 +15,9 @@
 	import { goto } from '$app/navigation';
 	// OLD CODE: import { getThreatReport, getThreatIntel } from '$api/threats'; (NET-192 PR 3: the pill → request helper)
 	import { getBeaconing, getThreatReport, getThreatIntel, threatRequest, type ThreatRequest } from '$api/threats';
-	import { THREAT_SCORE_HOW } from '$api/alerts';
+	// OLD CODE: import { THREAT_SCORE_HOW } from '$api/alerts'; (NET-225: and the bridge-mode line)
+	import { THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts';
+	import { captureMode, initCaptureMode } from '$lib/stores/captureMode';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import type {
 		ThreatReport,
@@ -39,6 +41,10 @@
 	import { ipHref } from '$lib/stores/lan';
 	import { formatTime } from '$lib/utils/time';
 	import { DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown';
+	// NET-228 (audit B5): "nothing needs attention" carries the pipeline's current state
+	// OLD CODE: import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system'; (review L7)
+	import { nothingFound } from '$api/system';
+	import { HEALTH_CHECKING, readHealth, type HealthCheck } from '$lib/utils/read-health';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -49,6 +55,9 @@
 	let threatIntel = $state<ThreatIntelInfo | null>(null);
 	// #96: a failed check must not read as "none detected"
 	let intelFailed = $state(false);
+	/** NET-228: the system health, for the pipeline state beside a zero; null until it loads or when it failed */
+	// OLD CODE: let health = $state<SystemHealth | null>(null); let healthFailed = $state(false); (review L7: one health helper for the loaders; its failure marks only the lines that read it)
+	let healthCheck = $state<HealthCheck>(HEALTH_CHECKING);
 	const BEACONS_SHOWN = 20;
 	const CHECK_NAMES: Record<string, string> = {
 		beaconing: 'beaconing',
@@ -188,11 +197,17 @@
 		`Alert events by category: ${categoryItems.map((c) => `${c.label} ${formatNumber(c.value)}`).join(', ')}`,
 	);
 
+	/** NET-228 (audit B5): no groups is "can't tell" unless current data is arriving */
+	let noGroups = $derived(
+		nothingFound('No alert groups need attention in this period', healthCheck.health, healthCheck.failed, "Can't tell if any alert needs attention"),
+	);
+
 	// Headline
 	let headline = $derived.by(() => {
 		const groups = summary?.total_groups ?? 0;
 		const invCount = investigations.length;
-		if (groups === 0) return 'No actionable threats detected.';
+		// OLD CODE: if (groups === 0) return 'No actionable threats detected.'; (NET-228: no sign of whether data was arriving)
+		if (groups === 0) return `${noGroups.title}. ${noGroups.detail}.`;
 		// OLD CODE START — I8: total_events leaves out informational alerts, so it read as everything Suricata raised
 		// return `Suricata generated ${formatNumber(summary?.total_events ?? 0)} alert events. NetTap found ${invCount} investigation${invCount !== 1 ? 's' : ''}.`;
 		// OLD CODE END
@@ -206,7 +221,8 @@
 
 	let subheadline = $derived.by(() => {
 		const parts: string[] = [];
-		if (killChains.length > 0) parts.push(`${killChains.length} active kill chain${killChains.length > 1 ? 's' : ''}`);
+		// OLD CODE: …`${killChains.length} active kill chain…` (NET-228, audit ALR-18: a reading of rule matches, not an attack)
+		if (killChains.length > 0) parts.push(`${killChains.length} possible kill chain${killChains.length > 1 ? 's' : ''}`);
 		if (beacons.length > 0) parts.push(`${beacons.length} beaconing suspect${beacons.length > 1 ? 's' : ''}`);
 		const tiTotal = threatIntel?.total_indicators ?? 0;
 		// OLD CODE START: if (tiTotal > 0) parts.push(`${tiTotal} threat intel indicators`); (I7: now the window's matches) OLD CODE END
@@ -382,23 +398,31 @@
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
 		clearTimeout(pollTimer);
+		// NET-225: the score's bridge-mode line; asks again if the startup request failed, never blocks the report
+		void initCaptureMode();
 		const range = selectedRange;
 		const params = computeTimeParams(range);
 		// one window for the report and the threat intel
 		const request = threatRequest(range, params);
 		loading = true;
 		// OLD CODE: const [reportRes, tiRes] = await Promise.allSettled([getThreatReport(params), getThreatIntel(params)]); (NET-192 PR 3: 24h/7d/30d ask for the snapshot)
-		const [reportRes, tiRes] = await Promise.allSettled([getThreatReport(request), getThreatIntel(params)]);
+		// OLD CODE: const [reportRes, tiRes] = await Promise.allSettled([getThreatReport(request), getThreatIntel(params)]); (NET-228: and the health)
+		// OLD CODE: const [reportRes, tiRes, healthRes] = await Promise.allSettled([getThreatReport(request), getThreatIntel(params), getSystemHealth()]); (review L7)
+		const [[reportRes, tiRes], checked] = await Promise.all([Promise.allSettled([getThreatReport(request), getThreatIntel(params)]), readHealth()]);
 		if (!guard.current(g)) return 'skipped';
 		report = reportRes.status === 'fulfilled' ? reportRes.value : null;
 		threatIntel = tiRes.status === 'fulfilled' ? tiRes.value : null;
 		intelFailed = tiRes.status === 'rejected';
+		// OLD CODE: health = healthRes.status === 'fulfilled' ? healthRes.value : null; healthFailed = healthRes.status === 'rejected'; (review L7)
+		healthCheck = checked;
 		loading = false;
 		pollWhilePending(g, range, request);
 		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
 		// const succeeded = [reportRes, tiRes].filter((r) => r.status === 'fulfilled').length;
 		// return succeeded === 2 ? 'ok' : succeeded === 1 ? 'partial' : 'failed';
 		// OLD CODE END
+		// OLD CODE: return outcome([reportRes, tiRes]); (NET-228)
+		// OLD CODE: return outcome([reportRes, tiRes, healthRes]); (review L7)
 		return outcome([reportRes, tiRes]);
 	}
 
@@ -483,6 +507,10 @@
 	</div>
 </div>
 
+{#if $captureMode === 'bridge'}
+	<p class="notice" role="note"><Icon name="infra" /><span>{THREAT_SCORE_BRIDGE}</span></p>
+{/if}
+
 {#if !report}
 	<div class="grid">
 		<Card title="Threat report" sub="Kill chains, beaconing, DNS and lateral movement · {rangeText}" class="c-12">
@@ -512,7 +540,8 @@
 			note={baseline ? `${baseline.deviation}× ${baseline.is_anomalous ? 'above' : 'vs'} baseline` : undefined}
 		>
 			{#snippet foot()}
-				{#if threatLevelPill}<SeverityPill level={threatLevelPill} />{:else}<span class="dim">No threat level</span>{/if}
+				<!-- OLD CODE: {#if threatLevelPill}<SeverityPill level={threatLevelPill} />{:else}<span class="dim">No threat level</span>{/if} (NET-228: 0 read as good news with data not arriving) -->
+				{#if threatLevelPill}<SeverityPill level={threatLevelPill} />{:else if (summary?.total_groups ?? 0) === 0 && !noGroups.trusted}<span class="chip is-warn">Can't tell</span>{:else}<span class="dim">No threat level</span>{/if}
 				<details class="score-how">
 					<summary>How the score is worked out</summary>
 					<p>{THREAT_SCORE_HOW}</p>
@@ -526,7 +555,8 @@
 			value={formatNumber(summary?.total_groups ?? 0)}
 			sub="{formatNumber(summary?.total_events ?? 0)} alert events need attention · {rangeText}"
 		/>
-		<KpiCard class="c-3" label="Kill chains" icon="warn" value={killChains.length} sub="Devices moving through attack stages" />
+		<!-- OLD CODE: sub="Devices moving through attack stages" (NET-228, audit ALR-18) -->
+		<KpiCard class="c-3" label="Kill chains" icon="warn" value={killChains.length} sub="Rule matches mapped to attack stages" />
 		<!-- OLD CODE START (NET-192 PR 3: "—" too while the background check is pending or has never succeeded)
 		<KpiCard
 			class="c-3"
@@ -607,9 +637,10 @@
 		</Card>
 
 		<!-- Active kill chains -->
-		<Card title="Active kill chains" sub="Devices seen at more than one attack stage · {rangeText}" class="c-12">
+		<!-- OLD CODE: <Card title="Active kill chains" sub="Devices seen at more than one attack stage · {rangeText}"> … {killChains.length} detected (NET-228, audit ALR-18: stated as fact) -->
+		<Card title="Possible kill chains" sub="Devices whose rule matches map to more than one attack stage, in order · {rangeText}" class="c-12">
 			{#snippet actions()}
-				<span class={['chip', killChains.length > 0 && 'is-warn']}>{killChains.length} detected</span>
+				<span class={['chip', killChains.length > 0 && 'is-warn']}>{killChains.length} found</span>
 			{/snippet}
 			{#if killChains.length > 0}
 				<div class="kill-chains">
@@ -622,7 +653,8 @@
 							<ol class="chips kc-stages">
 								{#each [1, 2, 3, 4] as stage (stage)}
 									<li class={['chip', kc.stages.includes(stage) && 'is-warn']}>
-										Stage {stage} · {STAGE_NAMES[stage]} · {kc.stages.includes(stage) ? 'Detected' : 'Not seen'}
+										<!-- OLD CODE: … {kc.stages.includes(stage) ? 'Detected' : 'Not seen'} (NET-228: a stage is a rule match; one outside this chain's order can exist) -->
+										Stage {stage} · {STAGE_NAMES[stage]} · {kc.stages.includes(stage) ? 'Rule matched' : 'Not in this chain'}
 									</li>
 								{/each}
 							</ol>
@@ -638,10 +670,11 @@
 					{/each}
 				</div>
 			{:else}
+				<!-- OLD CODE: title="No active kill chains" message="A kill chain appears when one device shows several attack stages, such as scanning and then contacting a control server." (NET-228, audit ALR-18) -->
 				<CardState
 					state="empty"
-					title="No active kill chains"
-					message="A kill chain appears when one device shows several attack stages, such as scanning and then contacting a control server."
+					title="No possible kill chains"
+					message="A kill chain appears when one device's rule matches map to several attack stages in order, such as a scanning rule and then a control-server rule. Each stage is NetTap's reading of a rule match."
 					icon="threats"
 				/>
 			{/if}

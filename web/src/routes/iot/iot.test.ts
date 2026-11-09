@@ -2,6 +2,14 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import * as iotApi from '$lib/api/iot';
 import IoTPage from './+page.svelte';
+import { ICONS, type IconName } from '$lib/components/ui/icons';
+
+/** The markup an icon renders, serialised the way the DOM serialises it (as CardState.test.ts). */
+function iconMarkup(name: IconName): string {
+	const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	svg.innerHTML = ICONS[name];
+	return svg.innerHTML;
+}
 
 vi.mock('$lib/api/iot', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/api/iot')>()),
@@ -95,7 +103,9 @@ describe('IoT page — failed endpoints', () => {
 		expect(screen.getByText(/Couldn't load manufacturer profiles/)).toBeInTheDocument();
 	});
 
-	it('still says all devices look healthy when every check ran and found nothing', async () => {
+	// OLD CODE: it('still says all devices look healthy when every check ran and found nothing', … (DEV-10/11:
+	// nothing found is not health, and an uplink mirror never sees same-switch traffic)
+	it('says what NetTap can see when every check ran and found nothing', async () => {
 		mockSections('ok', 'ok');
 
 		render(IoTPage);
@@ -104,9 +114,53 @@ describe('IoT page — failed endpoints', () => {
 		// OLD CODE START — 2026-11-03 UI redesign: the empty text lost its "--"
 		// expect(screen.getByText('No findings -- all devices look healthy.')).toBeInTheDocument();
 		// OLD CODE END
-		expect(screen.getByText('No findings. All devices look healthy.')).toBeInTheDocument();
-		expect(screen.getByText('No cross-segment IoT communication detected.')).toBeInTheDocument();
+		// OLD CODE START — DEV-10/11
+		// expect(screen.getByText('No findings. All devices look healthy.')).toBeInTheDocument();
+		// expect(screen.getByText('No cross-segment IoT communication detected.')).toBeInTheDocument();
+		// OLD CODE END
+		expect(screen.getByText('No findings in the traffic NetTap can see.')).toBeInTheDocument();
+		expect(screen.getByText('No IoT-to-LAN traffic seen in the traffic NetTap can see.')).toBeInTheDocument();
+		expect(screen.queryByText(/healthy/)).not.toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
+	});
+
+	// DEV-11: with no IoT devices the daemon sends no score; the card read "100/100 A"
+	it('shows network isolation as not measured when there is no score', async () => {
+		mockSections('ok', 'ok');
+		vi.mocked(iotApi.getNetworkIsolation).mockResolvedValue({
+			segmentation_score: null, segmentation_grade: null, pairs: [], recommendation: 'No IoT devices detected yet.',
+		});
+
+		render(IoTPage);
+		await flush();
+
+		expect(screen.getByText('Not measured')).toBeInTheDocument();
+		expect(screen.getByText('No IoT devices detected yet.')).toBeInTheDocument();
+		expect(screen.queryByText('null/100')).not.toBeInTheDocument();
+		// review L9: a tick beside "Not measured" read as all clear
+		const state = screen.getByText('No IoT devices detected yet.').closest('.state') as HTMLElement;
+		expect(state.querySelector('.state-ic svg')!.innerHTML).toBe(iconMarkup('empty'));
+	});
+
+	// DEV-10: no device's DNS seen read "0 · None with over 5 tracker domains"
+	it('shows privacy concerns as not measured when no DNS lookup was seen', async () => {
+		mockSections('ok', 'ok');
+		vi.mocked(iotApi.getFleetSummary).mockResolvedValue({
+			...FLEET,
+			device_count: 1,
+			devices: [{
+				mac: 'AA:BB:CC:DD:EE:03', name: 'Plug', manufacturer: 'Acme', ip: '192.168.1.62',
+				score: null, grade: null, coverage: 10, checks_available: 1, checks_total: 11,
+				privacy_score: null, security_score: 100, behavior_score: null,
+				anomaly_count: null, encryption_pct: null, tracker_count: null, last_seen: null,
+			}],
+		});
+
+		render(IoTPage);
+		await flush();
+
+		expect(screen.getByText('Not measured: no DNS lookups seen')).toBeInTheDocument();
+		expect(screen.queryByText('None with over 5 tracker domains')).not.toBeInTheDocument();
 	});
 
 	// #96: a failed protocol audit showed a green "All protocols within expected parameters."

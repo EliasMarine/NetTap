@@ -139,6 +139,16 @@ describe('backup API client', () => {
 			expect(result.errors).toContain('Schema too new');
 		});
 
+		it('A9: asks for the capture mode only when told to, since it restarts capture', async () => {
+			mockFetchSuccess({ success: true, applied: [], skipped: [], errors: [], warnings: [] });
+			const fetchMock = vi.mocked(fetch);
+
+			await importConfig({ metadata: {}, sections: {} });
+			await importConfig({ metadata: {}, sections: {} }, true);
+
+			expect(fetchMock.mock.calls.map((c) => c[0])).toEqual(['/api/backup/import', '/api/backup/import?apply_capture=1']);
+		});
+
 		it("throws with the daemon's reason when the import itself fails (500)", async () => {
 			vi.stubGlobal(
 				'fetch',

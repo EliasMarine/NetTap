@@ -281,6 +281,24 @@ describe('System page health strip', () => {
 		expect(screen.getByText('Unknown', { selector: '.chip' })).toBeInTheDocument();
 	});
 
+	// F2: the same words as Home's Data stage
+	it('says which sensor stopped in the Data and sensors row', async () => {
+		const sensors = { 'nettap-zeek-live': 'running', 'nettap-suricata-live': 'exited', 'nettap-logstash': 'running', 'nettap-filebeat': 'running' };
+		const pipeline = { state: 'sensor_stopped', newest_record_at: null, age_seconds: 30, threshold_seconds: 900, sensors, checked_at: '2026-11-08T21:00:00Z' };
+		stubReplies({ ...OK_REPLIES, '/api/system/health': { uptime: 60, timestamp: '2026-11-08T21:00:00Z', status: 'problem', healthy: false, opensearch_reachable: true, pipeline } });
+		render(SystemPage);
+		await screen.findByText('42.0% used');
+		expect(stage('Data and sensors')).toEqual({ word: 'Failing', detail: 'Suricata stopped' });
+		expect(stage('NetTap').word).toBe('Failing');
+	});
+
+	it('says unknown for the Data and sensors row when the daemon sends no pipeline', async () => {
+		stubReplies(OK_REPLIES);
+		render(SystemPage);
+		await screen.findByText('42.0% used');
+		expect(stage('Data and sensors')).toEqual({ word: 'Unknown', detail: 'Unknown' });
+	});
+
 	it('says unknown, never healthy, for a part whose request failed', async () => {
 		stubFetch('mirror');
 		render(SystemPage);
@@ -390,7 +408,8 @@ describe('System page figures', () => {
 		});
 		render(SystemPage);
 		const fact = async (label: string) => (await screen.findByText(label, { selector: 'dt' })).nextElementSibling?.textContent;
-		expect(await fact('Total')).toBe('1.0 TB');
+		// OLD CODE: expect(await fact('Total')).toBe('1.0 TB'); (STO-3: the usable size, reserved blocks out)
+		expect(await fact('Usable')).toBe('1.0 TB');
 		expect(await fact('Used')).toBe('400.0 GB');
 		expect(await fact('Free')).toBe('600.0 GB');
 	});

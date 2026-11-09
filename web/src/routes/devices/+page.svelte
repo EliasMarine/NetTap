@@ -23,11 +23,13 @@
 	import { countDifference, customRange, DRILL_RANGES, fmt, linkedCount, rangeWindow, startRange, type LinkedCount } from '$lib/utils/drilldown';
 	import { getNewDeviceCount, getRegistryDevices, isNewDevice } from '$api/devices-registry';
 	import type { RegistryDevice, RegistryListResponse } from '$api/devices-registry';
-	import { getCaptureMode } from '$api/capture';
+	import { BRIDGE_NO_DEVICES, getCaptureMode } from '$api/capture';
 	import type { CaptureMode } from '$api/capture';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import { withTraffic } from '$lib/utils/registry-traffic';
+	import { likelyType, osBasis, typeBasis } from '$lib/utils/device-guess';
+	import { ipv6ListNotes } from '$lib/utils/ipv6-coverage';
 	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import NewDeviceBanner from '$components/NewDeviceBanner.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -138,6 +140,8 @@
 	let registryDevices = $state<RegistryDevice[]>([]);
 	let registryFailed = $state(false);
 	const isMirrorMode = $derived(captureMode?.mode === 'mirror');
+	// NET-225: post-NAT, every device's IPv4 traffic carries the router's address
+	const isBridgeMode = $derived(captureMode?.mode === 'bridge');
 
 	// The tab the user picked; until then the URL's `view`; else By type in mirror mode, All devices otherwise
 	let pickedView = $state<'type' | 'all' | null>(null);
@@ -626,10 +630,22 @@
 	{@const s = status(d)}
 	<span class={['res', s.rank === 2 && 'is-live']}>{s.label}</span>
 {/snippet}
+<!-- OLD CODE START — NET-226 (DEV-7/8): the guessed type and OS read as fact
 {#snippet typeCell(d: Device)}
 	<span class="type"><Icon name={deviceIcon(d.category)} />{CATEGORY_LABELS[d.category ?? 'unknown'] ?? d.category}</span>
 {/snippet}
 {#snippet osCell(d: Device)}{d.os_hint ?? '—'}{/snippet}
+OLD CODE END -->
+{#snippet typeCell(d: Device)}
+	{@const basis = typeBasis(d.category, d.category_basis)}
+	<span class="type"><Icon name={deviceIcon(d.category)} /><span class="two"><span>{likelyType(CATEGORY_LABELS[d.category ?? 'unknown'] ?? d.category ?? 'Unknown', d.category)}</span>{#if basis}<span class="basis">{basis}</span>{/if}</span></span>
+{/snippet}
+{#snippet osCell(d: Device)}
+	{#if d.os_hint}
+		{@const basis = osBasis(d.os_basis)}
+		<span class="two"><span>Likely {d.os_hint}</span>{#if basis}<span class="basis">{basis}</span>{/if}</span>
+	{:else}—{/if}
+{/snippet}
 {#snippet vendorCell(d: Device)}{d.manufacturer ?? '—'}{/snippet}
 {#snippet bytesCell(d: Device)}<Bytes value={d.total_bytes} max={maxBytes} display={formatBytes(d.total_bytes)} />{/snippet}
 {#snippet connCell(d: Device)}{formatNumber(d.connection_count)}{/snippet}
@@ -673,6 +689,10 @@
 		<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={() => (autoRefresh = !autoRefresh)} />
 	</div>
 </div>
+
+{#if isBridgeMode}
+	<p class="notice" role="note"><Icon name="infra" /><span>{BRIDGE_NO_DEVICES}</span></p>
+{/if}
 
 <!-- New device detection banner (mirror mode), fed from the registry as on Home -->
 {#if isMirrorMode && registryDevices.length > 0}
@@ -750,11 +770,14 @@ OLD CODE END -->
 			</Card>
 		{:else if !isMirrorMode}
 			<Card title="Devices by type" sub="Grouped by device type">
+				<!-- OLD CODE: message="All devices lists every device NetTap sees in this capture mode." (NET-225: in bridge mode it sees none) -->
 				<CardState
 					state="empty"
 					icon="devices"
 					title="Device cards by type show in mirror mode"
-					message="All devices lists every device NetTap sees in this capture mode."
+					message={isBridgeMode
+						? "In inline bridge mode your devices share the router's IPv4 address, so they can't be listed by type."
+						: 'All devices lists every device NetTap sees in this capture mode.'}
 					actionLabel="Show all devices"
 					onaction={() => (pickedView = 'all')}
 				/>
@@ -857,12 +880,17 @@ OLD CODE END -->
 			{:else if devices.length === 0}
 				<!-- OLD CODE START — 2026-11-01: "No DHCP-leased devices found." / "...obtain an IP from the network's DHCP server." -->
 				<!-- OLD CODE END -->
-				<CardState
-					state="empty"
-					icon="devices"
-					title="No devices seen yet."
-					message="Devices appear once they make a few connections through the monitored link."
-				/>
+				<!-- OLD CODE: the empty state below in every mode; in bridge mode it promised devices that never appear (NET-225) -->
+				{#if isBridgeMode}
+					<CardState state="empty" icon="devices" title="No devices to show in inline bridge mode" message={BRIDGE_NO_DEVICES} />
+				{:else}
+					<CardState
+						state="empty"
+						icon="devices"
+						title="No devices seen yet."
+						message="Devices appear once they make a few connections through the monitored link."
+					/>
+				{/if}
 			{:else}
 				<div class="toolbar">
 					<Pills ariaLabel="Device type" options={categoryOptions} bind:value={categoryFilter} />
@@ -884,6 +912,10 @@ OLD CODE END -->
 						{columns}
 					/>
 				{/if}
+				<p class="note table-note">Traffic and connections count both directions and include IPv6, matched to each device by its MAC address.</p>
+				{#each ipv6ListNotes(devices) as note (note)}
+					<p class="notice is-warn table-note" role="note"><Icon name="warn" /><span>{note}</span></p>
+				{/each}
 			{/if}
 		</Card>
 	{/if}
@@ -922,6 +954,9 @@ OLD CODE END -->
 	.type { display: inline-flex; align-items: center; gap: var(--sp-2); }
 	.type :global(.ic) { color: var(--text-3); width: 16px; height: 16px; }
 	.note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); }
+	/* NET-226: what the table's figures count, under it */
+	.table-note { margin-top: var(--sp-3); margin-bottom: 0; }
+	.basis { color: var(--text-3); font-size: var(--text-xs); }
 	.load-note { margin-bottom: var(--sp-3); }
 	/* NET-200: the owner's photo in a List row, the size of the row's icon slot */
 	.who-photo { width: 20px; height: 20px; flex: none; border-radius: var(--r-xs); object-fit: cover; }

@@ -43,12 +43,17 @@ const SLOW_PATH_TIMEOUT_MS: Record<string, number> = {
 	// NET-192 PR 3: Connections offers 30d again; the sankey took 2.3 s at 6 days on the G11
 	'/api/traffic/connections/sankey': 30_000,
 	'/api/traffic/connections/timeline': 30_000,
+	// A9: restoring a capture mode restarts the capture containers, and Suricata's restart can wait
+	// on the rules lock; the same allowance as setup configure (RULE_UPDATE_TIMEOUT_MS)
+	'/api/backup/import': 290_000,
 };
 // NET-160: the address, domain and Suricata category pages stop themselves at 25 s and answer 503, so 30 s gets the reason
 const SLOW_PREFIX_TIMEOUT_MS: [string, number][] = [
 	['/api/addresses/', 30_000],
 	['/api/domains/', 30_000],
 	['/api/alerts/suricata/', 30_000],
+	// NET-224: a channel test waits for the daemon's send (SMTP: 10 s to connect, 30 s for the rest)
+	['/api/notifications/channels/', 60_000],
 ];
 
 function timeoutFor(path: string): number | undefined {

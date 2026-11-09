@@ -59,16 +59,31 @@
 	let testingChannelId = $state('');
 
 	// Channel type configs
-	const channelTypeConfigs: Record<string, { label: string; fields: { key: string; label: string; type: string; placeholder: string }[] }> = {
+	// OLD CODE START — NET-224: every SMTP field looked required; blank now uses the server in API keys
+	// const channelTypeConfigs: Record<string, { label: string; fields: { key: string; label: string; type: string; placeholder: string }[] }> = {
+	// 	email: {
+	// 		label: 'Email (SMTP)',
+	// 		fields: [
+	// 			{ key: 'smtp_host', label: 'SMTP host', type: 'text', placeholder: 'smtp.gmail.com' },
+	// 			{ key: 'smtp_port', label: 'SMTP port', type: 'number', placeholder: '587' },
+	// 			{ key: 'smtp_user', label: 'SMTP username', type: 'text', placeholder: 'user@example.com' },
+	// 			{ key: 'smtp_pass', label: 'SMTP password', type: 'password', placeholder: 'App password' },
+	// 			{ key: 'from_address', label: 'From address', type: 'email', placeholder: 'nettap@yourdomain.com' },
+	// 			{ key: 'recipients', label: 'Recipients (comma-separated)', type: 'text', placeholder: 'admin@example.com, ops@example.com' },
+	// 		],
+	// 	},
+	// OLD CODE END
+	const channelTypeConfigs: Record<string, { label: string; help?: string; fields: { key: string; label: string; type: string; placeholder: string }[] }> = {
 		email: {
 			label: 'Email (SMTP)',
+			help: 'Leave the server fields blank to use the SMTP server saved in Settings › API keys.',
 			fields: [
-				{ key: 'smtp_host', label: 'SMTP host', type: 'text', placeholder: 'smtp.gmail.com' },
-				{ key: 'smtp_port', label: 'SMTP port', type: 'number', placeholder: '587' },
-				{ key: 'smtp_user', label: 'SMTP username', type: 'text', placeholder: 'user@example.com' },
-				{ key: 'smtp_pass', label: 'SMTP password', type: 'password', placeholder: 'App password' },
-				{ key: 'from_address', label: 'From address', type: 'email', placeholder: 'nettap@yourdomain.com' },
 				{ key: 'recipients', label: 'Recipients (comma-separated)', type: 'text', placeholder: 'admin@example.com, ops@example.com' },
+				{ key: 'smtp_host', label: 'SMTP host (optional)', type: 'text', placeholder: 'Blank uses API keys' },
+				{ key: 'smtp_port', label: 'SMTP port (optional)', type: 'number', placeholder: '587' },
+				{ key: 'smtp_user', label: 'SMTP username (optional)', type: 'text', placeholder: 'user@example.com' },
+				{ key: 'smtp_pass', label: 'SMTP password (optional)', type: 'password', placeholder: 'App password' },
+				{ key: 'from_address', label: 'From address (optional)', type: 'email', placeholder: 'nettap@yourdomain.com' },
 			],
 		},
 		discord: {
@@ -105,6 +120,7 @@
 		},
 	};
 
+	// Labels for every event type a stored rule can name
 	const eventTypes = [
 		{ value: 'new_device', label: 'New device' },
 		{ value: 'alert', label: 'Alert' },
@@ -114,6 +130,9 @@
 		{ value: 'capture_error', label: 'Capture error' },
 		{ value: 'system_error', label: 'System error' },
 	];
+	// NET-224: only alerts have a sender (the daemon's dispatcher); a rule for the others never fired
+	// OLD CODE: the rule form offered every entry of eventTypes
+	const ruleEventTypes = eventTypes.filter((e) => e.value === 'alert');
 
 	// OLD CODE START — the page refresh contract (PLAN §5.5): every load goes through refresh.run()
 	// // Load data on mount
@@ -186,14 +205,15 @@
 			(config as Record<string, unknown>).recipients = config.recipients.split(',').map((s: string) => s.trim()).filter(Boolean);
 		}
 		const result = await createChannel(newChannelType, newChannelName, config);
-		if (result) {
+		// OLD CODE: if (result) { … } else { showMessage('Failed to create channel.', 'error'); } (NET-224: no reason)
+		if (result.ok) {
 			showMessage(`Channel "${newChannelName}" created.`, 'success');
 			showAddForm = false;
 			newChannelName = '';
 			newChannelConfig = {};
 			await refresh.run();
 		} else {
-			showMessage('Failed to create channel.', 'error');
+			showMessage(`Couldn't create the channel: ${result.error}.`, 'error');
 		}
 		addingChannel = false;
 	}
@@ -209,37 +229,49 @@
 
 	async function handleTestChannel(id: string) {
 		testingChannelId = id;
-		const success = await testChannel(id);
-		if (success) {
-			showMessage('Test notification sent successfully.', 'success');
+		// OLD CODE START — NET-224: a failed test had no reason, and only the log was reloaded
+		// const success = await testChannel(id);
+		// if (success) {
+		// 	showMessage('Test notification sent successfully.', 'success');
+		// } else {
+		// 	showMessage('Test notification failed.', 'error');
+		// }
+		// testingChannelId = '';
+		// // Refresh delivery log
+		// // OLD CODE START — #96: getDeliveryLog now throws on failure
+		// // const logRes = await getDeliveryLog();
+		// // deliveryLog = logRes.log;
+		// // OLD CODE END
+		// try {
+		// 	deliveryLog = (await getDeliveryLog()).log;
+		// 	failed = { ...failed, log: false };
+		// } catch {
+		// 	failed = { ...failed, log: true };
+		// }
+		// OLD CODE END
+		const result = await testChannel(id);
+		if (result.success) {
+			showMessage('Test notification sent.', 'success');
 		} else {
-			showMessage('Test notification failed.', 'error');
+			showMessage(`The test didn't go through${result.error ? `: ${result.error}` : ''}.`, 'error');
 		}
 		testingChannelId = '';
-		// Refresh delivery log
-		// OLD CODE START — #96: getDeliveryLog now throws on failure
-		// const logRes = await getDeliveryLog();
-		// deliveryLog = logRes.log;
-		// OLD CODE END
-		try {
-			deliveryLog = (await getDeliveryLog()).log;
-			failed = { ...failed, log: false };
-		} catch {
-			failed = { ...failed, log: true };
-		}
+		// the channel's last delivery and the log both changed
+		await refresh.run();
 	}
 
 	// Rule actions
 	async function handleAddRule() {
 		addingRule = true;
 		const result = await createRule(newRuleEventType, newRuleChannels, newRuleSeverity);
-		if (result) {
+		// OLD CODE: if (result) { … } else { showMessage('Failed to create rule.', 'error'); } (NET-224: no reason)
+		if (result.ok) {
 			showMessage('Routing rule created.', 'success');
 			showRuleForm = false;
 			newRuleChannels = [];
 			await refresh.run();
 		} else {
-			showMessage('Failed to create rule.', 'error');
+			showMessage(`Couldn't create the rule: ${result.error}.`, 'error');
 		}
 		addingRule = false;
 	}
@@ -328,6 +360,9 @@
 
 		{#if showAddForm}
 			<div class="add-form">
+				{#if channelTypeConfigs[newChannelType]?.help}
+					<p class="field-help form-help">{channelTypeConfigs[newChannelType].help}</p>
+				{/if}
 				<div class="form-grid">
 					<div class="field">
 						<label class="label" for="channel-type">Channel type</label>
@@ -379,7 +414,15 @@
 			<ul class="rows">
 				{#each channels as ch}
 					<li>
-						<span class="row-main"><span class="tag">{channelTypeBadge(ch.type)}</span><b>{ch.name}</b></span>
+						<span class="row-main">
+							<span class="tag">{channelTypeBadge(ch.type)}</span><b>{ch.name}</b>
+							{#if ch.enabled === false}<span class="tag">Off</span>{/if}
+							{#if ch.last_delivery}
+								<span class={['res', ch.last_delivery.ok ? 'is-live' : 'is-high']}>
+									{ch.last_delivery.ok ? 'Sent' : 'Failed'} {formatTime(ch.last_delivery.at)}{ch.last_delivery.error ? `: ${ch.last_delivery.error}` : ''}
+								</span>
+							{/if}
+						</span>
 						<span class="actions">
 							<button class="btn" type="button" onclick={() => handleTestChannel(ch.id)} disabled={testingChannelId === ch.id}>
 								{testingChannelId === ch.id ? 'Testing…' : 'Test'}
@@ -412,7 +455,7 @@
 					<div class="field">
 						<label class="label" for="rule-event">Event type</label>
 						<select class="select" id="rule-event" bind:value={newRuleEventType}>
-							{#each eventTypes as et}
+							{#each ruleEventTypes as et}
 								<option value={et.value}>{et.label}</option>
 							{/each}
 						</select>
@@ -519,4 +562,5 @@
 	.row-main { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; min-width: 0; color: var(--text-2); }
 	.row-main b { color: var(--text-1); }
 	.notice { margin-bottom: var(--sp-3); }
+	.form-help { margin: 0 0 var(--sp-3); }
 </style>

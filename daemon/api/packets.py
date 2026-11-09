@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 
 from aiohttp import web
 
+from api.error_replies import public_json
 from api.offload import run_blocking
 from services.capture_index import CaptureIndex
 from services.packet_manifest import (
@@ -36,7 +37,11 @@ logger = logging.getLogger("nettap.api.packets")
 
 def _error(exc: PacketError) -> web.Response:
     body = {"error": exc.message}
-    if exc.detail:
+    # OLD CODE START — NET-229 follow-up: a 5xx detail is raw TShark/Docker stderr
+    # if exc.detail:
+    #     body["detail"] = exc.detail
+    # OLD CODE END
+    if exc.detail and exc.status < 500:
         body["detail"] = exc.detail
     if exc.status >= 500:
         logger.warning(
@@ -45,7 +50,8 @@ def _error(exc: PacketError) -> web.Response:
             exc.message,
             exc.detail or "",
         )
-    return web.json_response(body, status=exc.status)
+    # PacketError messages are written for the user (services/packet_search.py)
+    return public_json(body, status=exc.status)
 
 
 async def _json_body(request: web.Request) -> dict:

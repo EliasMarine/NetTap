@@ -7,7 +7,8 @@ threat intelligence. Features:
 1. Severity reclassification — overrides Suricata's broken defaults
 2. Deduplication & grouping — by (signature, src_ip, dst_ip)
 3. Smart categorization — 13 threat categories with sub-categories
-4. Trend detection — temporal bucketing (first half vs second half)
+4. Trend detection — alerts per hour between first and last seen (the window-halves
+   comparison is category_trend in api/alerts.py)
 5. Kill chain correlation — detects multi-stage attack progression
 6. Baseline-aware scoring — deviation from rolling 7-day average
 7. Device context enrichment — OS/UA fingerprinting from sessions
@@ -728,6 +729,9 @@ def reclassify_severity(
     Suricata's priority (a classtype priority, not a measure of maliciousness). The destination
     port no longer changes it (NET-209).
     """
+    # NET-228 (audit B-i): a secret in the clear that ET rates only Informational/Unknown counts
+    if alert_findings.is_credential_exposure(signature, et_severity):
+        return alert_findings.CREDENTIAL_SEVERITY
     sig_upper = (signature or "").upper()
     if sig_upper.startswith(CONTEXT_PREFIXES):
         return 5
@@ -798,10 +802,11 @@ def categorize_sub_category(signature: str, category: str) -> str | None:
 
 
 def compute_trend(first_seen: str, last_seen: str, count: int) -> str:
-    """Compute trend by comparing alert density in first vs second half of window.
+    """A group's trend from its rate: alerts per hour between first and last seen.
 
-    Enhancement #1: Splits the time window at the midpoint and compares
-    event density. A burst at the end = increasing; burst at start = decreasing.
+    Over 20 an hour reads "increasing"; under 0.5 an hour with fewer than 10 alerts reads
+    "decreasing"; anything else, or fewer than 4 alerts, "stable". It does not compare the
+    window's halves: category_trend in api/alerts.py does that.
     """
     if count < 4:
         return "stable"
@@ -884,67 +889,138 @@ def detect_kill_chains(alerts: list[dict]) -> list[dict]:
     return alert_findings.kill_chains(alerts, KILL_CHAIN_STAGES.get, _stage_label)
 
 
+# OLD CODE START — NET-228 (audit B-j, ALR-14): stated findings as fact ("Credential abuse
+# detected."), and every caller passed device_count=1, so every group said "Only this device
+# triggers this alert — may be targeted"; "increasing rapidly" was an absolute rate, not a trend
+# def generate_assessment(
+#     signature: str,
+#     category: str,
+#     count: int,
+#     device_count: int,
+#     trend: str,
+#     device_type: str | None = None,
+# ) -> str:
+#     """Generate a plain-English assessment for a grouped alert."""
+#     parts = []
+#
+#     if category == "malware_c2":
+#         parts.append("This alert indicates potential malicious activity.")
+#     elif category == "credential_abuse":
+#         parts.append("Credential abuse detected.")
+#     elif category == "exfiltration":
+#         parts.append("Unusual data transfer pattern detected.")
+#     elif category == "reconnaissance":
+#         parts.append("Network scanning or enumeration activity.")
+#     elif category == "exploit":
+#         parts.append("Possible exploitation attempt.")
+#     elif category == "policy":
+#         parts.append("Network policy violation detected.")
+#     elif category == "protocol_anomaly":
+#         parts.append("Non-standard protocol behavior.")
+#     elif category == "geo_anomaly":
+#         parts.append("Geographic anomaly flagged.")
+#     elif category == "encrypted_threats":
+#         parts.append("Suspicious encrypted traffic detected.")
+#     elif category == "iot_anomaly":
+#         parts.append("Device behavior anomaly detected.")
+#     elif category == "dos":
+#         parts.append("Denial of service activity detected.")
+#     elif category == "sensitive_data":
+#         parts.append("Sensitive data exposure detected.")
+#     else:
+#         parts.append("Informational network observation.")
+#
+#     if device_count == 1:
+#         parts.append("Only this device triggers this alert — may be targeted.")
+#     elif device_count <= 3:
+#         parts.append(f"Seen on {device_count} devices — limited spread.")
+#     else:
+#         parts.append(
+#             f"Triggered by {device_count} devices network-wide — likely a noisy rule."
+#         )
+#
+#     if count > 100 and trend == "increasing":
+#         parts.append("Frequency is increasing rapidly — investigate promptly.")
+#     elif count > 100 and trend == "stable":
+#         parts.append("High volume but stable — may be background noise.")
+#     elif trend == "increasing":
+#         parts.append("Alert frequency is rising.")
+#     elif trend == "decreasing":
+#         parts.append("Alert frequency is declining.")
+#
+#     if device_type and category == "malware_c2":
+#         if device_type.lower() in ("ios", "android"):
+#             parts.append(f"Unusual for a {device_type} device — warrants attention.")
+#         elif device_type.lower() == "linux":
+#             parts.append("Linux device — check if running expected services.")
+#
+#     return " ".join(parts)
+# OLD CODE END
 def generate_assessment(
     signature: str,
     category: str,
     count: int,
-    device_count: int,
+    device_count: int | None,
     trend: str,
     device_type: str | None = None,
 ) -> str:
-    """Generate a plain-English assessment for a grouped alert."""
+    """A plain-English assessment of a grouped alert: what matched, scoped to the results.
+
+    device_count: the LAN devices that triggered this rule in these results; None when the
+    caller can't know (a device-scoped query, or no attributed device), and then it says nothing.
+    """
     parts = []
 
     if category == "malware_c2":
-        parts.append("This alert indicates potential malicious activity.")
+        parts.append("A malware or command-and-control rule matched.")
     elif category == "credential_abuse":
-        parts.append("Credential abuse detected.")
+        parts.append("A credential abuse rule matched.")
     elif category == "exfiltration":
-        parts.append("Unusual data transfer pattern detected.")
+        parts.append("A data transfer rule matched.")
     elif category == "reconnaissance":
-        parts.append("Network scanning or enumeration activity.")
+        parts.append("A scanning or enumeration rule matched.")
     elif category == "exploit":
-        parts.append("Possible exploitation attempt.")
+        parts.append("An exploitation attempt rule matched.")
     elif category == "policy":
-        parts.append("Network policy violation detected.")
+        parts.append("A policy violation rule matched.")
     elif category == "protocol_anomaly":
-        parts.append("Non-standard protocol behavior.")
+        parts.append("A non-standard protocol rule matched.")
     elif category == "geo_anomaly":
-        parts.append("Geographic anomaly flagged.")
+        parts.append("A geographic anomaly rule matched.")
     elif category == "encrypted_threats":
-        parts.append("Suspicious encrypted traffic detected.")
+        parts.append("A rule for suspicious encrypted traffic matched.")
     elif category == "iot_anomaly":
-        parts.append("Device behavior anomaly detected.")
+        parts.append("A device behaviour rule matched.")
     elif category == "dos":
-        parts.append("Denial of service activity detected.")
+        parts.append("A denial of service rule matched.")
     elif category == "sensitive_data":
-        parts.append("Sensitive data exposure detected.")
+        parts.append("A sensitive data exposure rule matched.")
     else:
-        parts.append("Informational network observation.")
+        parts.append("An informational rule matched.")
 
     if device_count == 1:
-        parts.append("Only this device triggers this alert — may be targeted.")
-    elif device_count <= 3:
-        parts.append(f"Seen on {device_count} devices — limited spread.")
-    else:
-        parts.append(
-            f"Triggered by {device_count} devices network-wide — likely a noisy rule."
-        )
+        parts.append("Only this device triggered this rule in these results.")
+    elif device_count:
+        parts.append(f"Triggered by {device_count} devices in these results.")
 
+    # compute_trend's "increasing" is a rate between the first and last match, not a trend
     if count > 100 and trend == "increasing":
-        parts.append("Frequency is increasing rapidly — investigate promptly.")
+        parts.append(
+            "Over 100 matches, more than 20 an hour between the first and last: worth "
+            "checking soon."
+        )
     elif count > 100 and trend == "stable":
-        parts.append("High volume but stable — may be background noise.")
+        parts.append("High volume at a steady rate: often background noise.")
     elif trend == "increasing":
-        parts.append("Alert frequency is rising.")
+        parts.append("More than 20 matches an hour between the first and last match.")
     elif trend == "decreasing":
-        parts.append("Alert frequency is declining.")
+        parts.append("Few matches, spread out over time.")
 
     if device_type and category == "malware_c2":
         if device_type.lower() in ("ios", "android"):
-            parts.append(f"Unusual for a {device_type} device — warrants attention.")
+            parts.append(f"Unusual for an {device_type} device: worth a look.")
         elif device_type.lower() == "linux":
-            parts.append("Linux device — check if running expected services.")
+            parts.append("Linux device: check it runs only the services you expect.")
 
     return " ".join(parts)
 
@@ -953,8 +1029,13 @@ def generate_assessment(
 # Suppress List Management (Enhancement #5: TTL decay)
 # ---------------------------------------------------------------------------
 
+# OLD CODE START — F4: /tmp is a tmpfs in the daemon container, so every restart forgot this
+# _SUPPRESS_PATH = (
+#     Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-suppress.json"
+# )
+# OLD CODE END
 _SUPPRESS_PATH = (
-    Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-suppress.json"
+    Path(os.environ.get("NETTAP_DATA_DIR", "/opt/nettap/data")) / "nettap-suppress.json"
 )
 
 
@@ -1064,8 +1145,14 @@ def is_suppressed(signature_id: int, device_ip: str | None = None) -> bool:
 # Baseline Management (Enhancement #3)
 # ---------------------------------------------------------------------------
 
+# OLD CODE START — F4: /tmp is a tmpfs in the daemon container, so every restart forgot this
+# _BASELINE_PATH = (
+#     Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-baselines.json"
+# )
+# OLD CODE END
 _BASELINE_PATH = (
-    Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-baselines.json"
+    Path(os.environ.get("NETTAP_DATA_DIR", "/opt/nettap/data"))
+    / "nettap-baselines.json"
 )
 # Summaries run in threads (the Alerts page, the threat report): one update at a time
 _BASELINE_LOCK = threading.Lock()
@@ -1474,6 +1561,10 @@ def get_smart_alerts(
                 "aggs": {
                     "first_seen": {"min": {"field": "@timestamp"}},
                     "last_seen": {"max": {"field": "@timestamp"}},
+                    # NET-228: every ET rating in the group, so its severity is the strongest
+                    # record's, not the newest's (a promoted record can share a group)
+                    "et_ratings": {"terms": {"field": _ET_RATING, "size": 10}},
+                    "et_unrated": {"missing": {"field": _ET_RATING}},
                     "sample": {
                         "top_hits": {
                             "size": 1,
@@ -1599,8 +1690,14 @@ def get_smart_alerts(
         et_meta = ((sample_src.get("suricata") or {}).get("alert") or {}).get(
             "metadata"
         ) or {}
-        new_severity = reclassify_severity(
-            signature, original_severity, et_severity=et_meta.get("signature_severity")
+        # OLD CODE START — NET-228: the newest sample's rating decided the whole group
+        # new_severity = reclassify_severity(
+        #     signature, original_severity, et_severity=et_meta.get("signature_severity")
+        # )
+        # OLD CODE END
+        new_severity = min(
+            reclassify_severity(signature, original_severity, et_severity=rating)
+            for rating in _rating_classes(bucket, et_meta.get("signature_severity"))
         )
         # Activity is informational whatever its prefix or port: never boosted, never scored
         if activity:
@@ -1646,14 +1743,16 @@ def get_smart_alerts(
         smart_category = categorize_alert(signature)
         trend = compute_trend(first_seen, last_seen, count)
 
-        assessment = generate_assessment(
-            signature=signature,
-            category=smart_category,
-            count=count,
-            device_count=1,
-            trend=trend,
-            device_type=device_type,
-        )
+        # OLD CODE START — NET-228: device_count=1 for every group (see the groups below)
+        # assessment = generate_assessment(
+        #     signature=signature,
+        #     category=smart_category,
+        #     count=count,
+        #     device_count=1,
+        #     trend=trend,
+        #     device_type=device_type,
+        # )
+        # OLD CODE END
 
         groups.append(
             {
@@ -1672,7 +1771,7 @@ def get_smart_alerts(
                 "first_seen": first_seen,
                 "last_seen": last_seen,
                 "trend": trend,
-                "assessment": assessment,
+                # OLD CODE: "assessment": assessment, (NET-228: set below, once every group is known)
                 "destination_port": dst_port,
                 # ET rates it informational: its drill-down lists it with ?activity=true (NET-191)
                 "activity": activity,
@@ -1698,6 +1797,27 @@ def get_smart_alerts(
             }
         )
 
+    # NET-228 (audit B-j): the LAN devices that triggered each rule across every group, so the
+    # assessment's "only this device" is true of these results; a device-scoped query can't know
+    devices_by_rule: dict[str, set[str]] = defaultdict(set)
+    for g in groups:
+        devices_by_rule[g["signature"]] |= {f["device"] for f in g["findings"]}
+    groups = [
+        {
+            **g,
+            "assessment": generate_assessment(
+                signature=g["signature"],
+                category=g["category"],
+                count=g["count"],
+                device_count=None
+                if device_ip
+                else len(devices_by_rule[g["signature"]]) or None,
+                trend=g["trend"],
+                device_type=device_type,
+            ),
+        }
+        for g in groups
+    ]
     groups.sort(key=lambda g: (g["severity"], -g["count"]))
     # OLD CODE: return groups[:limit] (NET-209: occurrence lists stay out of API replies)
     return (
@@ -1705,6 +1825,22 @@ def get_smart_alerts(
         if with_times
         else [alert_findings.public(g) for g in groups[:limit]]
     )
+
+
+_ET_RATING = "suricata.alert.metadata.signature_severity"
+
+
+def _rating_classes(bucket: dict, sample_rating: Any) -> list:
+    """Each ET rating in the group as its own class, plus None for unrated records; the sample's
+    rating when the reply has no et_ratings. In a counted group a record holds either no
+    Informational/Unknown, or those without Minor+ (anything else is activity), so classifying each
+    value alone is classifying each record."""
+    if "et_ratings" not in bucket:
+        return [sample_rating]
+    classes = [[b["key"]] for b in bucket["et_ratings"].get("buckets", [])]
+    if bucket.get("et_unrated", {}).get("doc_count", 0) > 0:
+        classes.append(None)
+    return classes or [sample_rating]
 
 
 def _counted_findings(

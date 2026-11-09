@@ -8,6 +8,7 @@
 <script lang="ts">
 	import type { LiveConnection, ConnectionDetailResponse } from '$lib/api/live';
 	import { directionLabel } from '$lib/api/live';
+	import { geoEstimate } from '$lib/api/geoip';
 	import { formatBytes } from '$lib/api/logs';
 	import DrawerSection from '../DrawerSection.svelte';
 	import KVRow from '../KVRow.svelte';
@@ -98,9 +99,17 @@
 		);
 	}
 
+	// OLD CODE START — NET-237 (GEO-2): a city or country centre to 11 m; geoEstimate says what it can place
+	// function formatCoordinates(lat: number | null, lon: number | null): string {
+	// 	if (lat == null || lon == null) return '--';
+	// 	return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+	// }
+	// OLD CODE END
 	function formatCoordinates(lat: number | null, lon: number | null): string {
-		if (lat == null || lon == null) return '--';
-		return `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+		if (geoAnycast) return '--';
+		const est = geoEstimate(lat, lon, geoCity === '--' ? null : geoCity);
+		if (est.coordinates) return `${est.coordinates} · ${est.note}`;
+		return est.note === '—' ? '--' : est.note;
 	}
 
 	// OLD CODE START — 2026-11-06 (O2): guessed from the port; the daemon's direction is shared
@@ -157,9 +166,15 @@
 
 	let geoCountry = $derived(detail?.geo?.country || connection.country_name || connection.country || '--');
 	let geoCountryCode = $derived(detail?.geo?.country_code || connection.country || '');
-	let geoCity = $derived(detail?.geo?.city || connection.dest_city || '--');
-	let geoLat = $derived(detail?.geo?.lat ?? connection.dest_lat);
-	let geoLon = $derived(detail?.geo?.lon ?? connection.dest_lon);
+	// OLD CODE START — NET-237: an anycast address kept a city and point from the row's fallback
+	// let geoCity = $derived(detail?.geo?.city || connection.dest_city || '--');
+	// let geoLat = $derived(detail?.geo?.lat ?? connection.dest_lat);
+	// let geoLon = $derived(detail?.geo?.lon ?? connection.dest_lon);
+	// OLD CODE END
+	let geoAnycast = $derived(Boolean(detail?.geo?.anycast || connection.anycast));
+	let geoCity = $derived(geoAnycast ? 'Anycast: location varies' : detail?.geo?.city || connection.dest_city || '--');
+	let geoLat = $derived(geoAnycast ? null : (detail?.geo?.lat ?? connection.dest_lat));
+	let geoLon = $derived(geoAnycast ? null : (detail?.geo?.lon ?? connection.dest_lon));
 	let geoAsn = $derived(detail?.geo?.asn ?? connection.dest_asn);
 	let geoOrg = $derived(detail?.geo?.organization || connection.dest_org || '--');
 </script>
@@ -176,7 +191,9 @@
 		<KVRow label="Bytes" value={formatBytes(connection.bytes)} mono />
 		<KVRow label="Duration" value={formatDuration(connection.duration)} mono />
 		<KVRow label="Device" value={connection.device_name || '--'} />
-		<KVRow label="Timestamp" value={formatTimestamp(connection.timestamp)} mono />
+		<!-- OLD CODE: <KVRow label="Timestamp" value={formatTimestamp(connection.timestamp)} mono /> (NET-237: the feed goes by the end) -->
+		<KVRow label="Started" value={formatTimestamp(connection.timestamp)} mono />
+		<KVRow label="Ended" value={connection.ended_at ? formatTimestamp(connection.ended_at) : '--'} mono />
 	</DrawerSection>
 
 	<DrawerSection title="GeoIP information">

@@ -4,31 +4,31 @@
       "signature": "ET MALWARE Win32/Emotet Activity",
       "description": "A device on your network may be infected with Emotet, a dangerous banking trojan that steals credentials and spreads to other computers.",
       "risk_context": "Emotet is one of the most destructive malware families. It can steal passwords, banking credentials, and install additional malware like ransomware.",
-      "recommendation": "Immediately isolate the affected device from your network. Run a full antivirus scan. Change all passwords that were used on this device."
+      "recommendation": "Check the device with up-to-date security software. If you find signs of infection, disconnect it from the network while you clean it, then change the passwords that were used on it."
     },
     "2025391": {
       "signature": "ET MALWARE Possible Trickbot Activity",
       "description": "A device may be infected with Trickbot, a banking trojan that targets financial credentials and can deploy ransomware.",
       "risk_context": "Trickbot is often used as a precursor to ransomware attacks (Ryuk, Conti). It spreads laterally across networks.",
-      "recommendation": "Isolate the affected device immediately. Scan all network devices. Check for unauthorized file changes and credential theft."
+      "recommendation": "Check the device with up-to-date security software, and look for file changes nobody made. If you find signs of infection, disconnect it from the network while you clean it, and check your other devices too."
     },
     "2027865": {
       "signature": "ET MALWARE Cobalt Strike Beacon Activity",
-      "description": "A device appears to be communicating with a Cobalt Strike command-and-control server, indicating a sophisticated targeted attack.",
+      "description": "A device appears to be talking to a Cobalt Strike command-and-control server. Cobalt Strike is also used for authorised security testing.",
       "risk_context": "Cobalt Strike is a commercial penetration testing tool frequently abused by threat actors for advanced persistent threat (APT) operations.",
-      "recommendation": "This is a critical incident. Isolate the device, engage your incident response team, and preserve forensic evidence."
+      "recommendation": "Check whether anyone is running authorised security testing. If not, disconnect the device from the network while you investigate, and keep its logs."
     },
     "2024897": {
       "signature": "ET MALWARE QBot/Qakbot Activity",
       "description": "A device may be infected with QBot (Qakbot), a banking trojan that steals financial data and email conversations.",
       "risk_context": "QBot can hijack email threads to spread to contacts, steal banking credentials, and deploy ransomware.",
-      "recommendation": "Isolate the device. Check for suspicious emails sent from the user's account. Change all financial and email passwords."
+      "recommendation": "Check the device with up-to-date security software, and look for emails sent from the user's account that they didn't write. If you find signs of infection, disconnect it from the network while you clean it, then change financial and email passwords."
     },
     "2014726": {
       "signature": "ET TROJAN DNS Query for Known Ransomware Domain",
       "description": "A device looked up a domain associated with ransomware activity, which may indicate an infection attempting to communicate with its operators.",
       "risk_context": "Ransomware can encrypt all files on a device and across network shares, demanding payment for recovery.",
-      "recommendation": "Immediately isolate the device. Check for encrypted files. Ensure backups are intact and not connected to the network."
+      "recommendation": "Check the device for encrypted or renamed files, and make sure your backups are intact and not connected to the network. If you find signs of ransomware, disconnect the device at once."
     },
     "2016150": {
       "signature": "ET INFO Observed DNS Query to .onion TLD",
@@ -74,9 +74,9 @@
     },
     "2100498": {
       "signature": "GPL ATTACK_RESPONSE id check returned root",
-      "description": "A system returned a response indicating root-level access, suggesting a successful privilege escalation attack.",
+      "description": "A response matched a rule for root-level command output, such as `id` reporting uid=0. This can follow a successful privilege escalation, or come from a legitimate administrator session.",
       "risk_context": "Root access means complete control over a system. An attacker with root can install backdoors, steal data, and pivot to other systems.",
-      "recommendation": "This is critical. Immediately isolate the system, investigate the attack vector, and rebuild the system from known-good backups."
+      "recommendation": "Check whether an administrator was working on this system at the time. If not, disconnect it from the network while you find out how it was reached, and restore it from a known-good backup if you find a compromise."
     },
     "2019284": {
       "signature": "ET EXPLOIT Possible Apache Struts OGNL Injection",
@@ -148,55 +148,55 @@
       "signature": "ET MALWARE Win32/IcedID Banking Trojan",
       "description": "A device may be infected with IcedID (BokBot), a banking trojan that targets financial institutions and steals credentials.",
       "risk_context": "IcedID uses web injection attacks to steal banking credentials and can deploy additional malware including ransomware.",
-      "recommendation": "Isolate the affected device. Change all banking credentials. Monitor financial accounts for unauthorized transactions."
+      "recommendation": "Check the device with up-to-date security software. If you find signs of infection, disconnect it from the network while you clean it, change banking passwords and watch your accounts for transactions you didn't make."
     },
     "2019232": {
       "signature": "ET MALWARE Possible Dridex Activity",
       "description": "A device may be infected with Dridex, a banking trojan known for stealing financial credentials and distributing ransomware.",
       "risk_context": "Dridex targets online banking and can deploy BitPaymer or DoppelPaymer ransomware on enterprise networks.",
-      "recommendation": "Isolate the device. Check for unusual financial transactions. Scan all network endpoints for Dridex indicators."
+      "recommendation": "Check the device with up-to-date security software, and watch for unusual financial transactions. If you find signs of infection, disconnect it from the network while you clean it, and check your other devices too."
     },
     "2025019": {
       "signature": "ET MALWARE Possible Raccoon Stealer Activity",
       "description": "A device may be infected with Raccoon Stealer, malware that harvests passwords, browser cookies, and cryptocurrency wallets.",
       "risk_context": "Raccoon Stealer targets saved browser credentials, autofill data, and cryptocurrency wallets across multiple applications.",
-      "recommendation": "Isolate the device. Change all passwords stored in browsers. Check cryptocurrency wallets for unauthorized access."
+      "recommendation": "Check the device with up-to-date security software. If you find signs of infection, disconnect it from the network while you clean it, then change the passwords saved in its browsers and check any cryptocurrency wallets."
     },
     "2027371": {
       "signature": "ET MALWARE Possible AsyncRAT C2 Communication",
       "description": "A device appears to be communicating with an AsyncRAT command-and-control server, giving an attacker remote access.",
       "risk_context": "AsyncRAT provides attackers with keylogging, screen capture, credential theft, and full remote control capabilities.",
-      "recommendation": "Immediately isolate the device. Check for keylogger artifacts. Change all credentials used on this device."
+      "recommendation": "Check the device with up-to-date security software, including for keyloggers. If you find signs of infection, disconnect it from the network while you clean it, then change the passwords used on it."
     },
     "2028401": {
       "signature": "ET MALWARE AgentTesla Activity",
       "description": "A device may be infected with Agent Tesla, a spyware that captures keystrokes, screenshots, and credentials.",
       "risk_context": "Agent Tesla is a popular information stealer sold on underground forums. It captures everything typed and can access saved credentials.",
-      "recommendation": "Isolate the device. Change all credentials. Check email for phishing messages that may have delivered the malware."
+      "recommendation": "Check the device with up-to-date security software, and look for the phishing email that may have delivered it. If you find signs of infection, disconnect it from the network while you clean it, then change its passwords."
     },
     "2031711": {
       "signature": "ET MALWARE Possible RedLine Stealer Activity",
       "description": "A device may be infected with RedLine Stealer, malware that extracts passwords, cookies, and cryptocurrency data from browsers.",
       "risk_context": "RedLine is one of the most prevalent info-stealers. It targets browser data, FTP credentials, and cryptocurrency wallets.",
-      "recommendation": "Isolate the device. Change all browser-saved passwords. Enable 2FA on all critical accounts."
+      "recommendation": "Check the device with up-to-date security software. If you find signs of infection, disconnect it from the network while you clean it, change its browser-saved passwords and turn on two-factor sign-in for important accounts."
     },
     "2014411": {
       "signature": "ET TROJAN Possible Zeus GameOver Activity",
       "description": "A device may be part of the Zeus GameOver botnet, one of the most sophisticated banking trojans ever created.",
       "risk_context": "Zeus GameOver uses peer-to-peer communication to resist takedown and can steal banking credentials with high effectiveness.",
-      "recommendation": "Isolate the device. Contact your bank about potential credential compromise. Run comprehensive malware removal tools."
+      "recommendation": "Check the device with up-to-date security software. If you find signs of infection, disconnect it from the network while you clean it, and tell your bank its credentials may be exposed."
     },
     "2018959": {
       "signature": "ET TROJAN CryptoLocker Ransomware Activity",
       "description": "A device may be infected with CryptoLocker ransomware, which encrypts personal files and demands payment for decryption.",
       "risk_context": "CryptoLocker encrypts documents, photos, and other files using strong encryption. Without backups, file recovery may be impossible.",
-      "recommendation": "Immediately disconnect the device. Do NOT pay the ransom. Check backup integrity. Consult a cybersecurity professional."
+      "recommendation": "Check the device for encrypted or renamed files. If you find them, disconnect it at once, don't pay the ransom, check your backups and get professional help."
     },
     "2024218": {
       "signature": "ET TROJAN Observed Possible WannaCry Ransomware Activity",
       "description": "Activity consistent with WannaCry ransomware was detected. WannaCry can spread automatically across networks via SMB.",
       "risk_context": "WannaCry exploits the EternalBlue vulnerability to spread without user interaction. It can encrypt an entire network in minutes.",
-      "recommendation": "Apply MS17-010 patch immediately. Block SMB ports at the firewall. Isolate affected devices and check all endpoints."
+      "recommendation": "Apply the MS17-010 patch and block SMB ports at the firewall. Check the devices involved, and disconnect any that show signs of infection."
     },
     "2016149": {
       "signature": "ET INFO Possible Bitcoin Mining Activity",
@@ -302,15 +302,15 @@
     },
     "2023549": {
       "signature": "ET DROP Spamhaus DROP Listed Traffic Inbound",
-      "description": "Traffic from an IP on the Spamhaus DROP (Don't Route Or Peer) list was detected. This IP is known to be malicious.",
-      "risk_context": "The Spamhaus DROP list contains IP ranges allocated to known cybercriminals. All traffic from these IPs is considered hostile.",
-      "recommendation": "Block all traffic from this IP range at the firewall. Investigate any internal devices that communicated with this source."
+      "description": "A rule matched traffic with an address on the Spamhaus DROP (Don't Route Or Peer) list. Suricata also matches replies to connections your own devices opened.",
+      "risk_context": "The Spamhaus DROP list holds address ranges run or hijacked by criminals. A match shows contact with such a range, not that anything was harmed.",
+      "recommendation": "Check which of your devices talked to this address, and whether it opened the connection. Consider blocking the range at your firewall."
     },
     "2400000": {
       "signature": "ET DROP Dshield Block Listed Source",
       "description": "Traffic from an IP on the DShield block list was detected. This IP has been reported for malicious activity.",
-      "risk_context": "DShield aggregates firewall logs from around the world. Listed IPs are consistently attacking internet-connected systems.",
-      "recommendation": "Block the source IP. Check for any successful connections from this IP to internal services."
+      "risk_context": "DShield collects firewall logs from around the world; listed addresses were reported for attacking internet-connected systems.",
+      "recommendation": "Consider blocking the address. Check whether any connection from it to your services succeeded."
     },
     "2210000": {
       "signature": "SURICATA STREAM excessive retransmissions",
@@ -333,8 +333,8 @@
     "9000001": {
       "signature": "SSLBL Malicious SSL Certificate Detected",
       "description": "A TLS connection used a certificate that matches the abuse.ch SSL Blacklist, indicating communication with a known malicious server.",
-      "risk_context": "Malicious SSL certificates are used by malware C2 servers and phishing sites to appear legitimate. This is a high-confidence indicator of compromise.",
-      "recommendation": "Isolate the device immediately. Investigate the destination IP and domain. Check for malware on the connecting device."
+      "risk_context": "Malicious SSL certificates are used by malware command-and-control servers and phishing sites to look legitimate. A match is strong evidence to check, not proof on its own.",
+      "recommendation": "Check the device that made the connection with up-to-date security software, and look up the destination address and domain. If you find signs of infection, disconnect the device while you clean it."
     },
     "9000002": {
       "signature": "SSLBL Malicious JA3 Fingerprint Detected",

@@ -20,6 +20,14 @@ vi.mock('$api/devices', () => ({
 	getDeviceRiskScore: vi.fn(),
 	getDeviceConnections: vi.fn(),
 }));
+// NET-228: the Smart alerts empty state reads the pipeline's state; fresh unless a test says not
+vi.mock('$api/system', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$api/system')>()),
+	getSystemHealth: vi.fn(async () => ({
+		uptime: 1, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true,
+		pipeline: { state: 'fresh', newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: {}, checked_at: '' },
+	})),
+}));
 vi.mock('$api/alerts', () => ({
 	getSmartAlerts: vi.fn(async () => ({ alerts: [], total: 0 })),
 	suppressAlert: vi.fn(),
@@ -88,16 +96,24 @@ describe('Device detail — failed requests', () => {
 		await flush();
 
 		expect(screen.getByText("Couldn't load ports: the request failed.")).toBeInTheDocument();
-		expect(screen.queryByText('No port data.')).not.toBeInTheDocument();
+		// OLD CODE: queryByText('No port data.') and queryByText('No category data available.') (NET-226 follow-up wording)
+		expect(screen.queryByText('No port data for connections it started.')).not.toBeInTheDocument();
 		expect(screen.getByText("Couldn't load traffic categories: the request failed.")).toBeInTheDocument();
-		expect(screen.queryByText('No category data available.')).not.toBeInTheDocument();
+		expect(screen.queryByText('No category data for connections it started.')).not.toBeInTheDocument();
 	});
 
 	it('still says "No port data." and shows the score when everything loads empty', async () => {
 		render(Page);
 		await flush();
 
-		expect(screen.getByText('No port data.')).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText('No port data.')).toBeInTheDocument();
+		// NET-226 follow-up: these cards read the connections the device started, and say so
+		for (const empty of ['port', 'category', 'service', 'destination']) {
+			expect(screen.getByText(`No ${empty} data for connections it started.`)).toBeInTheDocument();
+		}
+		for (const sub of ['Bytes by category', 'Bytes by service', 'By bytes', 'By connections']) {
+			expect(screen.getByText(`${sub} · connections it started · last 24 hours`)).toBeInTheDocument();
+		}
 		// OLD CODE START — 2026-11-03 UI redesign: the LOW badge and "12 / 100" became a severity pill and the Ring
 		// expect(screen.getByText('LOW')).toBeInTheDocument();
 		// expect(screen.getByText('12 / 100')).toBeInTheDocument();

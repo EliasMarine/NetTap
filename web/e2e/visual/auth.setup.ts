@@ -4,7 +4,9 @@
  * No users file is hand-written, so the harness can't drift from the real auth format.
  */
 import { test as setup, expect } from '@playwright/test';
-import { APP_URL, STORAGE_STATE } from '../../playwright.visual.config.ts';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { APP_DATA_DIR, APP_URL, STORAGE_STATE } from '../../playwright.visual.config.ts';
 
 // Synthetic credentials for a throwaway temp data dir; they satisfy setup/+page.server.ts validation.
 const USERNAME = 'visual-admin';
@@ -13,8 +15,11 @@ const PASSWORD = 'Visual-Harness-2026';
 setup('create the first admin, then sign in through /login', async ({ browser }) => {
 	// 1. Submit the real createAdmin action, as the wizard's enhanced form does.
 	const setupContext = await browser.newContext({ baseURL: APP_URL });
+	// NET-229: the action needs the one-time setup code; opening the wizard makes sure it exists
+	await setupContext.request.get('/setup');
+	const setupCode = readFileSync(path.join(APP_DATA_DIR, 'setup-code'), 'utf-8').trim();
 	const res = await setupContext.request.post('/setup?/createAdmin', {
-		form: { username: USERNAME, password: PASSWORD, confirmPassword: PASSWORD },
+		form: { setupCode, username: USERNAME, password: PASSWORD, confirmPassword: PASSWORD },
 		headers: { Origin: APP_URL, Accept: 'application/json', 'x-sveltekit-action': 'true' },
 		maxRedirects: 0,
 	});

@@ -25,7 +25,12 @@
 		getDeviceRiskScore,
 	} from '$api/devices';
 	import { getSmartAlerts, suppressAlert } from '$api/alerts';
+	// OLD CODE: import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system'; (review L7)
+	import { nothingFound } from '$api/system';
+	import { HEALTH_CHECKING, readHealth, type HealthCheck } from '$lib/utils/read-health';
 	import { loadFailed } from '$lib/utils/load-failed';
+	import { likelyType, osBasis, typeBasis } from '$lib/utils/device-guess';
+	import { ipv6LeftOutText } from '$lib/utils/ipv6-coverage';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import { TableSort } from '$lib/utils/table-sort.svelte';
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
@@ -59,6 +64,8 @@
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import DeviceTile from '$lib/components/ui/DeviceTile.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { ENCRYPTED_DNS_NOTE } from '$lib/api/dns';
+	import { captureMode, initCaptureMode } from '$lib/stores/captureMode';
 	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import AreaChart, { type AreaSeries } from '$lib/components/ui/charts/AreaChart.svelte';
 	import Ring from '$lib/components/ui/charts/Ring.svelte';
@@ -83,8 +90,24 @@
 	let smartAlerts = $state<SmartAlert[]>([]);
 	let smartAlertsTotal = $state(0);
 	let smartAlertsFailed = $state(false);
+	/** NET-228: the system health, for the pipeline state beside an empty alert list; null until it loads or when it failed */
+	// OLD CODE: let health = $state<SystemHealth | null>(null); let healthFailed = $state(false); (review L7: one health helper for the loaders; its failure marks only the lines that read it)
+	let healthCheck = $state<HealthCheck>(HEALTH_CHECKING);
+	// groups, not rule matches: suppressed and context groups are left out of this list
+	const noGroups = $derived(
+		nothingFound('No alert groups to review for this device in this period', healthCheck.health, healthCheck.failed, "Can't tell if this device has any alert to review"),
+	);
 	let alertsExpanded = $state(false);
 	const ALERTS_COLLAPSED_COUNT = 3;
+	// OLD CODE START — review L10: shown under every chart, and "count twice … counts once" read as a contradiction
+	// // NET-226 follow-up: a router on one cable passes a routed flow twice; Zeek keeps one record with both legs' bytes
+	// const INTER_VLAN_NOTE =
+	// 	'Traffic your router routes between two of your VLANs can be seen on both, so its bytes count twice here; each connection counts once.';
+	// OLD CODE END
+	/** A router on one cable passes a routed flow twice, and Zeek keeps one record with both legs' bytes. */
+	function interVlanNote(n: number): string {
+		return `${formatNumber(n)} of its connections ${n === 1 ? 'was' : 'were'} with another of your subnets. If your router carries that traffic over the link NetTap watches, NetTap sees both legs of each one, so their bytes count twice in these figures.`;
+	}
 	let suppressFailedId = $state<number | null>(null);
 
 	// Remove the row only once the daemon confirms; suppressAlert throws on failure
@@ -232,10 +255,14 @@
 	let isOnline = $derived(device?.last_seen ? (Date.now() - new Date(device.last_seen).getTime()) < 5 * 60 * 1000 : false);
 	let statusLabel = $derived(isOnline ? 'Online' : device?.last_seen ? (Date.now() - new Date(device.last_seen).getTime() < 60 * 60 * 1000 ? 'Idle' : 'Offline') : 'Unknown');
 
-	let origBytes = $derived(device?.orig_bytes ?? 0);
-	let respBytes = $derived(device?.resp_bytes ?? 0);
+	// OLD CODE START — NET-226: the originator's bytes, on connections the device started only
+	// let origBytes = $derived(device?.orig_bytes ?? 0);
+	// let respBytes = $derived(device?.resp_bytes ?? 0);
+	// OLD CODE END
+	let uploadBytes = $derived(device?.upload_bytes ?? 0);
+	let downloadBytes = $derived(device?.download_bytes ?? 0);
 	let totalBytes = $derived(device?.total_bytes ?? 0);
-	let uploadRatio = $derived(totalBytes > 0 ? Math.round((origBytes / totalBytes) * 100) : 0);
+	let uploadRatio = $derived(totalBytes > 0 ? Math.round((uploadBytes / totalBytes) * 100) : 0);
 	// OLD CODE START — 2026-11-03 UI redesign: green/amber/red text; colour is reserved for data and severity
 	// let uploadRatioColor = $derived(uploadRatio < 40 ? 'var(--green)' : uploadRatio < 70 ? 'var(--amber)' : 'var(--red)');
 	// OLD CODE END
@@ -243,7 +270,8 @@
 	// 10% slightly elevated and 30% elevated
 	// let uploadRatioLabel = $derived(uploadRatio < 40 ? 'Normal' : uploadRatio < 70 ? 'Elevated' : 'High');
 	// OLD CODE END
-	const uploadShare = $derived(totalBytes > 0 ? origBytes / totalBytes : 0);
+	// OLD CODE: const uploadShare = $derived(totalBytes > 0 ? origBytes / totalBytes : 0); (NET-226)
+	const uploadShare = $derived(totalBytes > 0 ? uploadBytes / totalBytes : 0);
 	// OLD CODE START — NET-209: risk words on the data exfiltration factor's thresholds; that factor is gone
 	// // the data exfiltration factor's thresholds on the unrounded share, so the KPI and the risk card agree
 	// let uploadRatioLabel = $derived(uploadShare < 0.1 ? 'Normal' : uploadShare < 0.3 ? 'Slightly elevated' : uploadShare < 0.5 ? 'Elevated' : 'High');
@@ -336,6 +364,8 @@
 	// OLD CODE END
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
+		// NET-225: the risk card's bridge-mode label; asks again if the startup request failed
+		void initCaptureMode();
 		const ip = deviceIp;
 		const r = range;
 		const s = rangeSpan(range);
@@ -352,15 +382,23 @@
 			riskLoaded = false;
 		}
 		const connectionsLoad = fetchConnections(1, s, ip);
-		const results = await Promise.allSettled([
-			getDeviceDetail(ip, s),
-			getDeviceCategories(ip, s),
-			getSmartAlerts({ device_ip: ip, limit: 10, ...s }),
-			getDevicePorts(ip, s),
-			getDeviceRiskScore(ip, s),
+		// OLD CODE: const results = await Promise.allSettled([ …, getSystemHealth()]); (review L7: the health beside them, outside the page's own results)
+		const [results, checked] = await Promise.all([
+			Promise.allSettled([
+				getDeviceDetail(ip, s),
+				getDeviceCategories(ip, s),
+				getSmartAlerts({ device_ip: ip, limit: 10, ...s }),
+				getDevicePorts(ip, s),
+				getDeviceRiskScore(ip, s),
+			]),
+			readHealth(),
 		]);
 		if (!guard.current(g)) return 'skipped';
+		// OLD CODE: const [deviceRes, catRes, smartRes, portRes, riskRes] = results; (NET-228: + the health)
+		// OLD CODE: const [deviceRes, catRes, smartRes, portRes, riskRes, healthRes] = results; (review L7)
 		const [deviceRes, catRes, smartRes, portRes, riskRes] = results;
+		// OLD CODE: health = healthRes.status === 'fulfilled' ? healthRes.value : null; healthFailed = healthRes.status === 'rejected'; (review L7)
+		healthCheck = checked;
 
 		// #96: a failed detail is not "Device not found"; a refresh keeps the last one
 		if (deviceRes.status === 'fulfilled') {
@@ -757,7 +795,15 @@ OLD CODE END -->
 					<span class={['chip', isOnline && 'is-ok']}>{statusLabel}</span>
 					<!-- OLD CODE: {#if device.unifi_name}<span class="chip">UniFi</span>{/if} (NET-200: only when the UniFi name is the one shown) -->
 					{#if device.unifi_name && !device.custom_name}<span class="chip">UniFi</span>{/if}
-					{#if device.os_hint}<span class="chip">{device.os_hint}</span>{/if}
+					<!-- OLD CODE: {#if device.os_hint}<span class="chip">{device.os_hint}</span>{/if} (NET-226: a guess shown as fact) -->
+					{#if device.category && device.category !== 'unknown'}
+						{@const basis = typeBasis(device.category, device.category_basis)}
+						<span class="chip">{likelyType(device.category === 'iot' ? 'IoT' : device.category, device.category)}{basis ? ` · ${basis}` : ''}</span>
+					{/if}
+					{#if device.os_hint}
+						{@const basis = osBasis(device.os_basis)}
+						<span class="chip">Likely {device.os_hint}{basis ? ` · ${basis}` : ''}</span>
+					{/if}
 					{#each (device.protocols ?? []).slice(0, 8) as proto (proto)}<span class="tag">{proto}</span>{/each}
 				</div>
 			{/if}
@@ -809,15 +855,20 @@ OLD CODE END -->
 		<!-- OLD CODE: <p class="note">{loadFailed('this device', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
 		<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('this device', true)}</span></p>
 	{/if}
+	{#if (device.ipv6_left_out ?? 0) > 0 && ipv6LeftOutText(device.ipv6_left_out_reason)}
+		<p class="notice is-warn load-note" role="note"><Icon name="warn" /><span>{ipv6LeftOutText(device.ipv6_left_out_reason)}</span></p>
+	{/if}
 
 	<div class="grid">
+		<!-- OLD CODE: sub="↓ {formatBytes(respBytes)} down · ↑ {formatBytes(origBytes)} up" (NET-226: both sides now, from the device's side) -->
 		<KpiCard class="c-3" label="Traffic" icon="bandwidth" value={trafficParts[0]} unit={trafficParts[1]}
-			sub="↓ {formatBytes(respBytes)} down · ↑ {formatBytes(origBytes)} up" note={RANGE_LABEL[range]} />
+			sub="↓ {formatBytes(downloadBytes)} down · ↑ {formatBytes(uploadBytes)} up" note={RANGE_LABEL[range]} />
 		<KpiCard class="c-3" label="Upload share" icon="up" value={uploadRatio} unit="%" sub={uploadRatioLabel} note={RANGE_LABEL[range]}>
 			{#snippet foot()}<Meter value={uploadRatio} label="Upload share {uploadRatio}%" />{/snippet}
 		</KpiCard>
+		<!-- NET-226: started and answered, IPv6 included; Recent connections lists this address's IPv4 sessions -->
 		<KpiCard class="c-3" label="Connections" icon="connections" value={formatNumber(device.connection_count)}
-			sub="{formatNumber(device.unique_destinations ?? 0)} unique destinations" note={RANGE_LABEL[range]} />
+			sub="{device.ipv6_connections ? `of which ${formatNumber(device.ipv6_connections)} over IPv6 · ` : ''}{formatNumber(device.unique_destinations ?? 0)} unique destinations" note={RANGE_LABEL[range]} />
 		<KpiCard class="c-3" label="Alerts" icon="alerts" value={formatNumber(device.alert_count)} sub="Suricata alerts on this device's traffic" note={RANGE_LABEL[range]} />
 
 		<!-- NET-205: counted by this page's IP only; its MAC can be one the address had before -->
@@ -834,17 +885,23 @@ OLD CODE END -->
 			{/snippet}
 			{#if busiest >= 0}
 				<AreaChart bytes series={chartSeries} formatX={chartTime} formatY={formatBytes} formatTip={chartTip} highlightIndex={busiest} ariaLabel={chartLabel} />
+				<!-- OLD CODE: <p class="chart-note">{INTER_VLAN_NOTE}</p> (review L10: only for a device with traffic to another subnet) -->
+				{#if device.inter_vlan_connections}<p class="chart-note">{interVlanNote(device.inter_vlan_connections)}</p>{/if}
 			{:else}
 				<CardState state="empty" icon="bandwidth" title="No traffic in this range" message="The chart fills in once NetTap records traffic from this device." />
 			{/if}
 		</Card>
 
-		<Card class="c-4" title="Risk score" sub="Out of 100 · higher is riskier · {RANGE_LABEL[range].toLowerCase()}">
+		<!-- OLD CODE: title="Risk score" in every mode (NET-225: post-NAT, one address can carry several devices) -->
+		<Card class="c-4" title={$captureMode === 'bridge' ? 'Risk score for this address' : 'Risk score'} sub="Out of 100 · higher is riskier · {RANGE_LABEL[range].toLowerCase()}">
 			{#if riskLoaded}
 				<div class="trust-top">
 					<Ring value={riskScore} ariaLabel="Risk score {riskScore} of 100, {riskLevel}" />
 					{#if riskSeverity}<SeverityPill level={riskSeverity} />{/if}
 				</div>
+				{#if $captureMode === 'bridge'}
+					<p class="trust-plain">In inline bridge mode this score uses the traffic seen for this address. After your router's IPv4 address translation one address can carry several devices' traffic, so it can't stand for a single device's risk.</p>
+				{/if}
 				<!-- OLD CODE: <p class="note">{loadFailed('the risk score', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
 				{#if riskFailed}<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('the risk score', true)}</span></p>{/if}
 				{#if riskFactors.length > 0}
@@ -888,11 +945,13 @@ OLD CODE END -->
 								{:else}
 									<span class="dim num" title={NO_EXACT_ALERT_LIST}>×{formatNumber(sa.count)}</span>
 								{/if}
+								<!-- OLD CODE START — NET-228: compute_trend is an absolute rate with no comparison window, so it can't say rising or falling; the assessment states the rate
 								{#if sa.trend === 'increasing'}
 									<Icon name="up" label="Rising" />
 								{:else if sa.trend === 'decreasing'}
 									<Icon name="down" label="Falling" />
 								{/if}
+								OLD CODE END -->
 							</div>
 							<!-- OLD CODE: <div class="sig wrap">{sa.signature}</div> (slice 2a: not a link) -->
 							<!-- OLD CODE: <a class="sig wrap" href={alertsHrefForSignature(sa.signature, smartAlertsWindow ?? undefined, smartAlertsWindow?.ip)}>{sa.signature}</a> (slice 2b-1: the shown name can differ from rule.name, and ip alone listed the device's other pairs) -->
@@ -928,16 +987,19 @@ OLD CODE END -->
 			{:else if smartAlertsFailed}
 				<CardState state="error" title="Couldn't load alerts for this device: the request failed." onaction={() => refresh.run()} />
 			{:else}
-				<CardState state="empty" icon="alerts" title="No actionable alerts for this device." />
+				<!-- OLD CODE: <CardState state="empty" icon="alerts" title="No actionable alerts for this device." /> (NET-228: read the same with no data arriving) -->
+				<CardState state="empty" icon={noGroups.trusted ? 'alerts' : 'warn'} title={noGroups.title} message="{noGroups.detail}." />
 			{/if}
 		</Card>
 
 		<div class="stack c-4">
-			<Card title="Traffic categories" sub="Bytes by category · {RANGE_LABEL[range].toLowerCase()}">
+			<!-- OLD CODE: sub="Bytes by category · …" (NET-226 follow-up: it reads the connections the device started) -->
+			<Card title="Traffic categories" sub="Bytes by category · connections it started · {RANGE_LABEL[range].toLowerCase()}">
 				{#if categoriesFailed && categories.length === 0}
 					<CardState state="error" title={loadFailed('traffic categories')} onaction={() => refresh.run()} />
 				{:else if categories.length === 0}
-					<CardState state="empty" icon="bandwidth" title="No category data available." />
+					<!-- OLD CODE: title="No category data available." -->
+					<CardState state="empty" icon="bandwidth" title="No category data for connections it started." />
 				{:else}
 					<!-- OLD CODE: <p class="note">{loadFailed('traffic categories', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
 					{#if categoriesFailed}<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('traffic categories', true)}</span></p>{/if}
@@ -952,7 +1014,8 @@ OLD CODE END -->
 					/>
 				{/if}
 			</Card>
-			<Card title="Top services" sub="Bytes by service · {RANGE_LABEL[range].toLowerCase()}">
+			<!-- OLD CODE: sub="Bytes by service · …" (NET-226 follow-up: as Traffic categories) -->
+			<Card title="Top services" sub="Bytes by service · connections it started · {RANGE_LABEL[range].toLowerCase()}">
 				{#if device.top_services?.length}
 					<BarList
 						items={device.top_services.map((svc, i) => ({
@@ -964,12 +1027,14 @@ OLD CODE END -->
 						}))}
 					/>
 				{:else}
-					<CardState state="empty" icon="connections" title="No service data available." />
+					<!-- OLD CODE: title="No service data available." -->
+					<CardState state="empty" icon="connections" title="No service data for connections it started." />
 				{/if}
 			</Card>
 		</div>
 
-		<Card class="c-4" title="Top destinations" sub="By bytes · {RANGE_LABEL[range].toLowerCase()}">
+		<!-- OLD CODE: sub="By bytes · …" (NET-226 follow-up: as Traffic categories) -->
+		<Card class="c-4" title="Top destinations" sub="By bytes · connections it started · {RANGE_LABEL[range].toLowerCase()}">
 			{#if device.top_destinations?.length}
 				<DataTable
 					ariaLabel="Top destinations"
@@ -979,7 +1044,8 @@ OLD CODE END -->
 					columns={destColumns}
 				/>
 			{:else}
-				<CardState state="empty" icon="connections" title="No destination data." />
+				<!-- OLD CODE: title="No destination data." -->
+				<CardState state="empty" icon="connections" title="No destination data for connections it started." />
 			{/if}
 		</Card>
 
@@ -987,15 +1053,18 @@ OLD CODE END -->
 			{#if dnsRows.length > 0}
 				<DataTable ariaLabel="DNS activity" rows={dnsRows} rowKey={(q) => q.domain} initialSort={{ key: 'count', dir: 'desc' }} columns={dnsColumns} />
 			{:else}
-				<CardState state="empty" icon="dns" title="No DNS data." />
+				<!-- OLD CODE: <CardState state="empty" icon="dns" title="No DNS data." /> (NET-225: DoH and DoT lookups never show) -->
+				<CardState state="empty" icon="dns" title="No plain DNS lookups seen." message={ENCRYPTED_DNS_NOTE} />
 			{/if}
 		</Card>
 
-		<Card class="c-4" title="Top ports used" sub="By connections · {RANGE_LABEL[range].toLowerCase()}">
+		<!-- OLD CODE: sub="By connections · …" (NET-226 follow-up: the ports it connected to) -->
+		<Card class="c-4" title="Top ports used" sub="By connections · connections it started · {RANGE_LABEL[range].toLowerCase()}">
 			{#if portsFailed && ports.length === 0}
 				<CardState state="error" title={loadFailed('ports')} onaction={() => refresh.run()} />
 			{:else if ports.length === 0}
-				<CardState state="empty" icon="connections" title="No port data." />
+				<!-- OLD CODE: title="No port data." -->
+				<CardState state="empty" icon="connections" title="No port data for connections it started." />
 			{:else}
 				<!-- OLD CODE: <p class="note">{loadFailed('ports', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
 				{#if portsFailed}<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('ports', true)}</span></p>{/if}
@@ -1006,7 +1075,8 @@ OLD CODE END -->
 		<!-- OLD CODE START — NET-158: the list has both directions
 		<Card class="c-12" title="Recent connections" sub="Sessions from this device · {RANGE_LABEL[range].toLowerCase()}">
 		OLD CODE END -->
-		<Card class="c-12" title="Recent connections" sub="Sessions to or from this device · {RANGE_LABEL[range].toLowerCase()}">
+		<!-- OLD CODE: sub="Sessions to or from this device · …" (NET-226: the device's IPv6 is in its KPIs, not in this list) -->
+		<Card class="c-12" title="Recent connections" sub="Sessions to or from this address · {RANGE_LABEL[range].toLowerCase()}">
 			{#snippet actions()}
 				<span class="chip">{connectionsFailed ? 'load failed' : `${formatNumber(connectionsTotal)} total`}</span>
 			{/snippet}
@@ -1054,6 +1124,7 @@ OLD CODE END -->
 	.ident-meta dd { margin: 0; }
 	/* OLD CODE: .note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); } (NET-192 PR 4: its stale notes are the amber notice) */
 	.load-note { margin-bottom: var(--sp-3); }
+	.chart-note { color: var(--text-2); font-size: var(--text-sm); margin: var(--sp-3) 0 0; }
 	.sa-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
 	.sa { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line); }
 	.sa-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; font-size: var(--text-sm); }

@@ -18,6 +18,8 @@ import unicodedata
 import aiohttp
 from aiohttp import web
 
+from api.error_replies import public_json
+
 from services.home_location import (
     MAX_LABEL,
     clear_home,
@@ -116,7 +118,7 @@ async def handle_put_home_location(request: web.Request) -> web.Response:
         save_home(home)
     except OSError as exc:
         logger.error("Couldn't save the home location: %s", exc)
-        return web.json_response({"error": "Couldn't save the location"}, status=500)
+        return public_json({"error": "Couldn't save the location"}, status=500)
     return web.json_response({"home": home})
 
 
@@ -126,7 +128,7 @@ async def handle_delete_home_location(request: web.Request) -> web.Response:
         clear_home()
     except OSError as exc:
         logger.error("Couldn't clear the home location: %s", exc)
-        return web.json_response({"error": "Couldn't clear the location"}, status=500)
+        return public_json({"error": "Couldn't clear the location"}, status=500)
     return web.json_response({"home": None})
 
 
@@ -140,7 +142,7 @@ async def handle_wan_lookup(request: web.Request) -> web.Response:
         logger.warning(
             "WAN location lookup failed: %s (%s)", reason, type(exc).__name__
         )
-        return web.json_response(
+        return public_json(
             {
                 "error": f"Couldn't look up your WAN location: {reason}. "
                 "Enter the coordinates by hand."

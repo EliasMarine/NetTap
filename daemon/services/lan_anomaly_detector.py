@@ -13,8 +13,9 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from services.excluded_ips import CONN_RECORDS, build_excluded_ips_filter
+from services.excluded_ips import CONN_ACCOUNTING, build_excluded_ips_filter
 from storage.all_buckets import all_buckets
+from storage.exact_terms import PartialResultsError
 
 logger = logging.getLogger("nettap.services.lan_anomaly_detector")
 
@@ -65,11 +66,17 @@ def _ips_with_many_macs(client: Any, bool_clause: dict, ip_field: str) -> list[d
         [{"ip": {"terms": {"field": ip_field}}}],
         _MAC_AGGS,
     )
+    # OLD CODE START — NET-237 (caps): only logged, so "none detected" could hide what lay past it
+    # if not complete:
+    #     logger.warning(
+    #         "ARP scan by %s stopped at %d IPs; result is partial",
+    #         ip_field,
+    #         len(buckets),
+    #     )
+    # OLD CODE END
     if not complete:
-        logger.warning(
-            "ARP scan by %s stopped at %d IPs; result is partial",
-            ip_field,
-            len(buckets),
+        raise PartialResultsError(
+            f"ARP scan by {ip_field} stopped at {len(buckets)} IPs"
         )
     many = [
         {**b, "key": b["key"]["ip"]}
@@ -295,7 +302,10 @@ class LANAnomalyDetector:
                 "bool": {
                     "filter": [
                         _time_range_filter(from_ts, to_ts),
-                        CONN_RECORDS,
+                        # OLD CODE START — F1: also counted conn_long.log interim records
+                        # CONN_RECORDS,
+                        # OLD CODE END
+                        CONN_ACCOUNTING,
                         {"term": {"network.transport": "udp"}},
                         {"term": {f"{side}.port": DHCP_SERVER_PORT}},
                         *answered,
@@ -316,9 +326,15 @@ class LANAnomalyDetector:
                     {"ip": {"terms": {"field": f"{side}.ip"}}},
                 ],
             )
+            # OLD CODE START — NET-237 (caps): only logged, so "none detected" could hide what lay past it
+            # if not complete:
+            #     logger.warning(
+            #         "Rogue DHCP: %s scan stopped at %d MAC/IP pairs", side, len(pairs)
+            #     )
+            # OLD CODE END
             if not complete:
-                logger.warning(
-                    "Rogue DHCP: %s scan stopped at %d MAC/IP pairs", side, len(pairs)
+                raise PartialResultsError(
+                    f"rogue DHCP {side} scan stopped at {len(pairs)} MAC/IP pairs"
                 )
             for b in pairs:
                 mac, ip = b["key"]["mac"], b["key"]["ip"]

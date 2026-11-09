@@ -75,7 +75,8 @@ export interface AutoUpdateConfig {
 /**
  * Get all component versions currently installed on the appliance.
  */
-export async function getVersions(): Promise<{ versions: Record<string, ComponentVersion>; last_scan: string }> {
+// OLD CODE: export async function getVersions(): Promise<{ versions: Record<string, ComponentVersion>; last_scan: string }> { (NET-237: the daemon sends a list)
+export async function getVersions(): Promise<{ versions: ComponentVersion[]; last_scan: string }> {
 	const res = await fetch('/api/system/versions');
 
 	// OLD CODE START — #96: a failed request read as "No version information available"
@@ -96,13 +97,15 @@ export async function getVersions(): Promise<{ versions: Record<string, Componen
 /**
  * Trigger a fresh scan of all component versions.
  */
-export async function scanVersions(): Promise<{ versions: Record<string, ComponentVersion> }> {
+// OLD CODE: export async function scanVersions(): Promise<{ versions: Record<string, ComponentVersion> }> { (NET-237: a list)
+export async function scanVersions(): Promise<{ versions: ComponentVersion[] }> {
 	const res = await fetch('/api/system/versions/scan', {
 		method: 'POST',
 	});
 
 	if (!res.ok) {
-		return { versions: {} };
+		// OLD CODE: return { versions: {} }; (NET-237)
+		return { versions: [] };
 	}
 
 	return res.json();

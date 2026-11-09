@@ -23,36 +23,60 @@ _MAC_RE = re.compile(
 )
 
 # Common OS patterns found in HTTP User-Agent strings
+# OLD CODE START — DEV-8: generic names came first, so a Tizen/webOS TV (its UA says Linux)
+# read "Linux" and an Xbox (Windows NT 10.0) "Windows 10/11"
+# _OS_PATTERNS = [
+#     (re.compile(r"Windows NT 10\.0", re.IGNORECASE), "Windows 10/11"),
+#     (re.compile(r"Windows NT 6\.3", re.IGNORECASE), "Windows 8.1"),
+#     (re.compile(r"Windows NT 6\.2", re.IGNORECASE), "Windows 8"),
+#     (re.compile(r"Windows NT 6\.1", re.IGNORECASE), "Windows 7"),
+#     (re.compile(r"Windows", re.IGNORECASE), "Windows"),
+#     (re.compile(r"iPhone|iPad|iPod", re.IGNORECASE), "iOS"),
+#     (re.compile(r"Macintosh|Mac OS X", re.IGNORECASE), "macOS"),
+#     (re.compile(r"Android", re.IGNORECASE), "Android"),
+#     (re.compile(r"Linux", re.IGNORECASE), "Linux"),
+#     (re.compile(r"CrOS", re.IGNORECASE), "ChromeOS"),
+#     (re.compile(r"PlayStation", re.IGNORECASE), "PlayStation"),
+#     (re.compile(r"Xbox", re.IGNORECASE), "Xbox"),
+#     (re.compile(r"Nintendo", re.IGNORECASE), "Nintendo"),
+#     (re.compile(r"SmartTV|Tizen|webOS", re.IGNORECASE), "Smart TV"),
+# ]
+# OLD CODE END
+# The first match wins, so specific platforms come before the generic OS names they embed
 _OS_PATTERNS = [
+    (re.compile(r"PlayStation", re.IGNORECASE), "PlayStation"),
+    (re.compile(r"Xbox", re.IGNORECASE), "Xbox"),
+    (re.compile(r"Nintendo", re.IGNORECASE), "Nintendo"),
+    (re.compile(r"SmartTV|Tizen|webOS", re.IGNORECASE), "Smart TV"),
+    (re.compile(r"CrOS", re.IGNORECASE), "ChromeOS"),
+    (re.compile(r"Android", re.IGNORECASE), "Android"),
+    (re.compile(r"iPhone|iPad|iPod", re.IGNORECASE), "iOS"),
     (re.compile(r"Windows NT 10\.0", re.IGNORECASE), "Windows 10/11"),
     (re.compile(r"Windows NT 6\.3", re.IGNORECASE), "Windows 8.1"),
     (re.compile(r"Windows NT 6\.2", re.IGNORECASE), "Windows 8"),
     (re.compile(r"Windows NT 6\.1", re.IGNORECASE), "Windows 7"),
     (re.compile(r"Windows", re.IGNORECASE), "Windows"),
-    (re.compile(r"iPhone|iPad|iPod", re.IGNORECASE), "iOS"),
     (re.compile(r"Macintosh|Mac OS X", re.IGNORECASE), "macOS"),
-    (re.compile(r"Android", re.IGNORECASE), "Android"),
     (re.compile(r"Linux", re.IGNORECASE), "Linux"),
-    (re.compile(r"CrOS", re.IGNORECASE), "ChromeOS"),
-    (re.compile(r"PlayStation", re.IGNORECASE), "PlayStation"),
-    (re.compile(r"Xbox", re.IGNORECASE), "Xbox"),
-    (re.compile(r"Nintendo", re.IGNORECASE), "Nintendo"),
-    (re.compile(r"SmartTV|Tizen|webOS", re.IGNORECASE), "Smart TV"),
 ]
 
 
-def _mac_from_hit(hit: dict) -> str | None:
-    """Read source.mac from a search hit's nested _source (Malcolm may store a list)."""
-    source = hit.get("_source", {}).get("source")
+# OLD CODE: def _mac_from_hit(hit: dict) -> str | None: (NET-226 follow-up: an answer-only device's MAC is destination.mac)
+def _mac_from_hit(hit: dict, side: str = "source") -> str | None:
+    """Read `side`.mac from a search hit's nested _source (Malcolm may store a list)."""
+    # OLD CODE: source = hit.get("_source", {}).get("source")
+    source = hit.get("_source", {}).get(side)
     mac = source.get("mac") if isinstance(source, dict) else None
     if isinstance(mac, list):
         mac = next((m for m in mac if m), None)
     return mac or None
 
 
-def _oui_from_hit(hit: dict) -> str | None:
-    """Read Malcolm's IEEE vendor name (source.oui) from a search hit, if it has one."""
-    source = hit.get("_source", {}).get("source")
+# OLD CODE: def _oui_from_hit(hit: dict) -> str | None: (as _mac_from_hit)
+def _oui_from_hit(hit: dict, side: str = "source") -> str | None:
+    """Read Malcolm's IEEE vendor name (`side`.oui) from a search hit, if it has one."""
+    # OLD CODE: source = hit.get("_source", {}).get("source")
+    source = hit.get("_source", {}).get(side)
     oui = source.get("oui") if isinstance(source, dict) else None
     if isinstance(oui, list):
         oui = next((o for o in oui if o), None)

@@ -20,9 +20,16 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.error_replies import public_json
+from api.devices import _accounted_devices, _ip_order
 from api.offload import in_thread
 from api.time_range import parse_time_range
-from services.bandwidth_tracker import BandwidthTracker
+from services.bandwidth_tracker import (
+    MAX_MONTHLY_CAP_BYTES,
+    BandwidthTracker,
+    internet_bytes,
+)
+from storage.snapshot_search import QueryFailed
 
 logger = logging.getLogger("nettap.api.bandwidth")
 
@@ -89,10 +96,19 @@ def handle_monthly(request: web.Request) -> web.Response:
         month = now.month
 
     try:
-        usage = tracker.get_monthly_usage(year, month, excluded_ips=excluded_ips_list)
-        projection = tracker.get_projected_monthly(
-            year, month, excluded_ips=excluded_ips_list
+        # OLD CODE: usage = tracker.get_monthly_usage(year, month, excluded_ips=excluded_ips_list) (NET-226)
+        usage = tracker.get_monthly_usage(
+            year,
+            month,
+            excluded_ips=excluded_ips_list,
+            lan_filter=request.app.get("lan_filter"),
         )
+        # OLD CODE: projection = tracker.get_projected_monthly(year, month, excluded_ips=excluded_ips_list) (NET-226 follow-up)
+        projection = tracker.get_projected_monthly(
+            year, month, excluded_ips=excluded_ips_list, usage=usage
+        )
+    except QueryFailed as exc:
+        return _incomplete("bandwidth/monthly", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in bandwidth/monthly: %s", exc)
         return web.json_response(
@@ -118,7 +134,15 @@ def handle_daily(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        daily = tracker.get_daily_usage(from_ts, to_ts, excluded_ips=excluded_ips_list)
+        # OLD CODE: daily = tracker.get_daily_usage(from_ts, to_ts, excluded_ips=excluded_ips_list) (NET-226)
+        daily = tracker.get_daily_usage(
+            from_ts,
+            to_ts,
+            excluded_ips=excluded_ips_list,
+            lan_filter=request.app.get("lan_filter"),
+        )
+    except QueryFailed as exc:
+        return _incomplete("bandwidth/daily", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in bandwidth/daily: %s", exc)
         return web.json_response(
@@ -134,6 +158,40 @@ def handle_daily(request: web.Request) -> web.Response:
     )
 
 
+def _incomplete(where: str, exc: QueryFailed) -> web.Response:
+    """The 502 for a search that answered only in part, never a smaller figure."""
+    logger.error("Incomplete search in %s: %s", where, exc)
+    return public_json({"error": "The bandwidth search was incomplete"}, status=502)
+
+
+def _device_usage(accounted: list[dict], limit: int) -> list[dict]:
+    """The `limit` devices with most traffic, each with its share of all devices' traffic.
+
+    A connection between two of your devices counts for both, so the shares add up to 100
+    over devices, not over the network total (NET-226).
+    """
+    everything = sum(d["total_bytes"] for d in accounted)
+    ranked = sorted(accounted, key=lambda d: (-d["total_bytes"], _ip_order(d["key"])))
+    fields = (
+        "total_bytes",
+        "upload_bytes",
+        "download_bytes",
+        "connection_count",
+        "ipv6_left_out",
+        "ipv6_left_out_reason",
+    )
+    return [
+        {
+            "ip": d["key"],
+            **{k: d[k] for k in fields},
+            "percent_of_total": round(d["total_bytes"] / everything * 100, 1)
+            if everything
+            else 0,
+        }
+        for d in ranked[:limit]
+    ]
+
+
 @in_thread
 def handle_devices(request: web.Request) -> web.Response:
     """GET /api/bandwidth/devices?from=&to=&limit=50
@@ -142,7 +200,7 @@ def handle_devices(request: web.Request) -> web.Response:
     """
     tracker: BandwidthTracker = request.app["bandwidth_tracker"]
     from_ts, to_ts = _parse_time_range(request)
-    excluded_ips_list = request.app.get("excluded_ips", [])
+    # OLD CODE: excluded_ips_list = request.app.get("excluded_ips", []) (NET-226: the device list's accounting applies them)
 
     limit_str = request.query.get("limit", "50")
     try:
@@ -150,20 +208,40 @@ def handle_devices(request: web.Request) -> web.Response:
     except (ValueError, TypeError):
         limit = 50
 
+    # OLD CODE START — NET-226: the sources with most bytes in the connections they started, so
+    # a server's answered traffic and every device's IPv6 were missing; the device list's
+    # accounting now
+    # try:
+    #     devices = tracker.get_per_device_usage(
+    #         from_ts,
+    #         to_ts,
+    #         limit=limit,
+    #         excluded_ips=excluded_ips_list,
+    #         # same LAN rule as the device list, so both pages show the same devices
+    #         lan_filter=request.app.get("lan_filter"),
+    #     )
+    # except OpenSearchException as exc:
+    #     logger.error("OpenSearch error in bandwidth/devices: %s", exc)
+    #     return web.json_response(
+    #         {"error": f"OpenSearch query failed: {exc}"}, status=502
+    #     )
+    # OLD CODE END
     try:
-        devices = tracker.get_per_device_usage(
+        accounted = _accounted_devices(
+            tracker._client,
+            request.app,
             from_ts,
             to_ts,
-            limit=limit,
-            excluded_ips=excluded_ips_list,
-            # same LAN rule as the device list, so both pages show the same devices
-            lan_filter=request.app.get("lan_filter"),
+            "bandwidth devices",
         )
+    except QueryFailed as exc:
+        return _incomplete("bandwidth/devices", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in bandwidth/devices: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
+    devices = _device_usage(accounted, limit)
 
     return web.json_response(
         {
@@ -226,19 +304,32 @@ def handle_cap(request: web.Request) -> web.Response:
     # Get current month usage for percentage
     now = datetime.now(timezone.utc)
     try:
+        # OLD CODE: usage = tracker.get_monthly_usage(now.year, now.month, excluded_ips=excluded_ips_list)
         usage = tracker.get_monthly_usage(
-            now.year, now.month, excluded_ips=excluded_ips_list
+            now.year,
+            now.month,
+            excluded_ips=excluded_ips_list,
+            lan_filter=request.app.get("lan_filter"),
         )
+    except QueryFailed as exc:
+        return _incomplete("bandwidth/cap", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in bandwidth/cap: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
 
-    cap["current_usage_bytes"] = usage["total_bytes"]
+    # OLD CODE START — NET-226 follow-up: traffic between your own devices counted against the cap
+    # cap["current_usage_bytes"] = usage["total_bytes"]
+    # if cap["monthly_cap_bytes"] > 0:
+    #     cap["usage_percent"] = round(
+    #         usage["total_bytes"] / cap["monthly_cap_bytes"] * 100, 1
+    #     )
+    # OLD CODE END
+    cap["current_usage_bytes"] = internet_bytes(usage)
     if cap["monthly_cap_bytes"] > 0:
         cap["usage_percent"] = round(
-            usage["total_bytes"] / cap["monthly_cap_bytes"] * 100, 1
+            cap["current_usage_bytes"] / cap["monthly_cap_bytes"] * 100, 1
         )
     else:
         cap["usage_percent"] = 0
@@ -282,6 +373,12 @@ async def handle_set_cap(request: web.Request) -> web.Response:
             {"error": "'monthly_cap_gb' must be a number"}, status=400
         )
 
+    # D5: the loader ignores a cap over 1 PB, so saving one would turn it off at the next start
+    if cap_bytes > MAX_MONTHLY_CAP_BYTES:
+        return web.json_response(
+            {"error": "'monthly_cap_gb' must be at most 1,000,000 GB (1 PB)"},
+            status=400,
+        )
     tracker.save_cap(cap_bytes)
 
     return web.json_response(

@@ -28,6 +28,9 @@ function monthly(): MonthlyUsage {
 		total_bytes: totalSoFar,
 		orig_bytes: orig,
 		resp_bytes: totalSoFar - orig,
+		upload_bytes: orig,
+		download_bytes: totalSoFar - orig,
+		local_bytes: 0,
 		projection: {
 			year: now.getFullYear(),
 			month: now.getMonth() + 1,
@@ -53,6 +56,9 @@ const emptyMonthly = (): MonthlyUsage => {
 		total_bytes: 0,
 		orig_bytes: 0,
 		resp_bytes: 0,
+		upload_bytes: 0,
+		download_bytes: 0,
+		local_bytes: 0,
 		projection: {
 			year: now.getFullYear(),
 			month: now.getMonth() + 1,
@@ -82,6 +88,9 @@ const daily = (): DailyUsageResponse => ({
 			total_bytes: total,
 			orig_bytes: orig,
 			resp_bytes: total - orig,
+			upload_bytes: orig,
+			download_bytes: total - orig,
+			local_bytes: 0,
 			connections: Math.round(DAILY_CONNECTIONS * factor),
 		};
 	}),
@@ -94,8 +103,9 @@ const devices = (): DeviceUsageResponse => ({
 		.map((d) => ({
 			ip: d.ip,
 			total_bytes: totalBytes(d),
-			orig_bytes: d.origBytes,
-			resp_bytes: d.respBytes,
+			// OLD CODE: orig_bytes: d.origBytes, resp_bytes: d.respBytes, (NET-226)
+			upload_bytes: d.origBytes,
+			download_bytes: d.respBytes,
 			connection_count: d.connections,
 			percent_of_total: Math.round((totalBytes(d) / DAILY_TOTAL) * 1000) / 10,
 		})),

@@ -4,7 +4,7 @@
  */
 import type { PipelineStage } from '$components/ui/Pipeline.svelte';
 import { modeLabel } from '$components/shell/status';
-import { healthStage, type SystemHealth } from '$api/system';
+import { healthStage, pipelineStage, type SystemHealth } from '$api/system';
 // OLD CODE: import { formatLossPct, packetsLost, … } (NET-167: the packets stage reads lossWords)
 import { lossWords, type CaptureHealthResponse, type CaptureStatsResponse } from '$api/capture';
 import { formatCompactNumber } from '$api/logs';
@@ -41,19 +41,21 @@ export function formatBytesShort(bytes: number): string {
 // OLD CODE END
 export const formatNumber = formatCompactNumber;
 
-/**
- * Compute the previous-period time range for trend comparison.
- * E.g., if current range is 24h ago to now, previous is 48h ago to 24h ago.
- */
-export function computePreviousPeriod(from: string, to: string): { from: string; to: string } {
-	const fromMs = new Date(from).getTime();
-	const toMs = new Date(to).getTime();
-	const duration = toMs - fromMs;
-	return {
-		from: new Date(fromMs - duration).toISOString(),
-		to: new Date(fromMs).toISOString(),
-	};
-}
+// OLD CODE START — NET-228 (audit TRF-6): the trend compares two settled windows (lib/utils/window-trend.ts)
+// /**
+//  * Compute the previous-period time range for trend comparison.
+//  * E.g., if current range is 24h ago to now, previous is 48h ago to 24h ago.
+//  */
+// export function computePreviousPeriod(from: string, to: string): { from: string; to: string } {
+// 	const fromMs = new Date(from).getTime();
+// 	const toMs = new Date(to).getTime();
+// 	const duration = toMs - fromMs;
+// 	return {
+// 		from: new Date(fromMs - duration).toISOString(),
+// 		to: new Date(fromMs).toISOString(),
+// 	};
+// }
+// OLD CODE END
 
 /** Local midnight: "new today" counts from the start of the owner's day, not the last 24 h. */
 export function localMidnight(now: Date): string {
@@ -63,7 +65,8 @@ export function localMidnight(now: Date): string {
 export interface Trend {
 	arrow: string;
 	pct: string;
-	direction: 'up' | 'down' | 'flat';
+	// OLD CODE: direction: 'up' | 'down' | 'flat'; (NET-228, audit TRF-6: + no fair comparison, or none loaded)
+	direction: 'up' | 'down' | 'flat' | 'not_enough_data' | 'failed';
 }
 
 export function trendPercent(current: number, previous: number): Trend {
@@ -79,26 +82,50 @@ export function trendPercent(current: number, previous: number): Trend {
 }
 
 export const NO_TREND = trendPercent(0, 0);
+/** NET-228: the two windows couldn't be compared fairly (lib/utils/window-trend.ts) */
+export const NOT_ENOUGH: Trend = { arrow: '', pct: '', direction: 'not_enough_data' };
+/** NET-228: the comparison's request failed */
+export const COMPARE_FAILED: Trend = { arrow: '', pct: '', direction: 'failed' };
 
 /** The KpiCard chip for a trend: "+12.5%", "−50.0%" or "new"; none when flat. */
 export function kpiDelta(
 	t: Trend,
 	upIsBad = false,
 ): { text: string; direction: 'up' | 'down'; bad: boolean } | undefined {
-	if (t.direction === 'flat') return undefined;
+	// OLD CODE: if (t.direction === 'flat') return undefined; (NET-228)
+	if (t.direction !== 'up' && t.direction !== 'down') return undefined;
 	const sign = t.pct === 'new' ? '' : t.direction === 'up' ? '+' : '−';
 	return { text: `${sign}${t.pct}`, direction: t.direction, bad: upIsBad && t.direction === 'up' };
 }
 
-/** Beside the chip: the comparison window when both periods loaded, otherwise the window itself. */
+// OLD CODE START — NET-228 (audit TRF-6): no "can't compare" state, and no word on where the compared data ends
+// /** Beside the chip: the comparison window when both periods loaded, otherwise the window itself. */
+// export function kpiWindow(
+// 	compared: boolean,
+// 	t: Trend,
+// 	window: string,
+// 	previous: string,
+// ): { comparison?: string; note?: string } {
+// 	if (!compared) return { note: window };
+// 	return t.direction === 'flat' ? { note: `No change vs ${previous}` } : { comparison: `vs ${previous}` };
+// }
+// OLD CODE END
+/**
+ * Beside the chip: the comparison window once the comparison has loaded (or failed), otherwise the
+ * window itself. `upTo`: where the compared data ends, since the newest minutes are left out.
+ */
 export function kpiWindow(
 	compared: boolean,
 	t: Trend,
 	window: string,
 	previous: string,
+	upTo?: string,
 ): { comparison?: string; note?: string } {
 	if (!compared) return { note: window };
-	return t.direction === 'flat' ? { note: `No change vs ${previous}` } : { comparison: `vs ${previous}` };
+	if (t.direction === 'failed') return { note: "Couldn't load the comparison" };
+	if (t.direction === 'not_enough_data') return { note: 'Not enough data to compare' };
+	const end = upTo ? `, up to ${upTo}` : '';
+	return t.direction === 'flat' ? { note: `No change vs ${previous}${end}` } : { comparison: `vs ${previous}${end}` };
 }
 
 // OLD CODE START — moved to $lib/utils/severity so the device page shares it
@@ -167,4 +194,11 @@ export function openSearchStage(health: SystemHealth | null, failed: boolean): P
 	return health.opensearch_reachable
 		? { ...base, status: 'ok', detail: 'Connected' }
 		: { ...base, status: 'failing', detail: 'Unreachable' };
+}
+
+/** F2: is current data arriving? Storage, SMART and OpenSearch can all be fine while it isn't. */
+export function dataStage(health: SystemHealth | null, failed: boolean): PipelineStage {
+	const base = { key: 'data', label: 'Data' };
+	if (!health) return { ...base, status: 'unknown', detail: failed ? 'Unknown: the health check failed' : CHECKING };
+	return { ...base, ...pipelineStage(health.pipeline) };
 }

@@ -3,6 +3,8 @@
  * Wraps GET /api/devices/registry, /api/devices/registry/{mac}, etc.
  */
 
+import type { Ipv6LeftOutReason } from '$lib/utils/ipv6-coverage';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -42,9 +44,12 @@ export interface RegistryListResponse {
 export interface DeviceTraffic {
 	mac: string;
 	total_bytes: number;
+	/** NET-226: what the device downloaded and uploaded, on connections it started and answered */
 	inbound_bytes: number;
 	outbound_bytes: number;
 	connection_count: number;
+	ipv6_left_out?: number;
+	ipv6_left_out_reason?: Ipv6LeftOutReason | null;
 	top_destinations: Array<{ ip: string; bytes: number; connections: number }>;
 	top_protocols: Array<{ name: string; count: number }>;
 	// The daemon doesn't send these three (yet); the page hides their sections when absent

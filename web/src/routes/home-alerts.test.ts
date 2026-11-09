@@ -40,10 +40,39 @@ describe('Home — Alert Summary', () => {
 		expect(screen.queryByText(/to review/)).not.toBeInTheDocument();
 	});
 
-	it('still says none were detected when the request succeeds empty', async () => {
-		stubDaemon({ '/api/alerts/smart': { from: '', to: '', device_ip: null, alerts: [], total: 0 } });
+	// OLD CODE START — NET-228: "No actionable alerts detected." never said whether data was arriving
+	// it('still says none were detected when the request succeeds empty', async () => {
+	// 	stubDaemon({ '/api/alerts/smart': { from: '', to: '', device_ip: null, alerts: [], total: 0 } });
+	// 	render(HomePage);
+	// 	expect(await screen.findByText('No actionable alerts detected.')).toBeInTheDocument();
+	// 	expect(screen.queryByText(/Couldn't load the alert summary/)).not.toBeInTheDocument();
+	// });
+	// OLD CODE END
+	const FRESH = {
+		status: 'healthy', healthy: true, opensearch_reachable: true,
+		pipeline: { state: 'fresh', newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: {}, checked_at: '' },
+	};
+	const EMPTY_SMART = { from: '', to: '', device_ip: null, alerts: [], total: 0 };
+
+	it('an empty summary says nothing needs review, beside the pipeline state, while data is fresh', async () => {
+		stubDaemon({
+			'/api/alerts/smart': EMPTY_SMART,
+			'/api/alerts/count': { from: '', to: '', counts: { total: 57, high: 1, medium: 6, low: 50 } },
+			'/api/system/health': FRESH,
+		});
 		render(HomePage);
-		expect(await screen.findByText('No actionable alerts detected.')).toBeInTheDocument();
+		expect((await screen.findByText('No alert groups to review in this period · Data pipeline now: Newest record 40 s ago')).closest('p')).toHaveClass('dim');
 		expect(screen.queryByText(/Couldn't load the alert summary/)).not.toBeInTheDocument();
+	});
+
+	it("an empty summary can't tell, as a warning, when the pipeline isn't fresh", async () => {
+		stubDaemon({
+			'/api/alerts/smart': EMPTY_SMART,
+			'/api/alerts/count': { from: '', to: '', counts: { total: 57, high: 1, medium: 6, low: 50 } },
+			'/api/system/health': { ...FRESH, pipeline: { ...FRESH.pipeline, state: 'stale', age_seconds: 47 * 60 } },
+		});
+		render(HomePage);
+		const line = await screen.findByText("Can't tell if anything needs review · Data pipeline now: No new records for 47 min");
+		expect(line.closest('p')).toHaveClass('notice', 'is-warn');
 	});
 });

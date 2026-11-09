@@ -158,7 +158,9 @@ describe('Address page', () => {
 		expect(quietPeer).not.toHaveTextContent('0 B');
 		// OLD CODE START: expect(screen.getByText(/On a threat list: Example blocklist/)).toBeInTheDocument(); OLD CODE END
 		// a listing-rule alert in the window named it, with no indicator cache loaded
-		expect(screen.getByText(/On a threat list: ET Compromised IPs/)).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText(/On a threat list: ET Compromised IPs/)) (NET-228: relabelled, and says when)
+		expect(screen.getByText(/On a threat list: Suricata blocklist rules/)).toBeInTheDocument();
+		expect(screen.getByText('A Suricata blocklist rule named it in this window')).toBeInTheDocument();
 		expect(screen.getByText('No name (SNI)')).toBeInTheDocument();
 		expect(screen.getByText(/Too many addresses to list them all/)).toBeInTheDocument();
 		expect(screen.getByText(/Too many ports to list them all/)).toBeInTheDocument();
@@ -218,6 +220,18 @@ describe('Address page', () => {
 		expect(screen.queryByText('Not on a threat list')).toBeNull();
 	});
 
+	// NET-228 (audit ALR-12): a cached listing says it came from an earlier scan, with no date kept
+	it.each([
+		[false, "Named on an earlier Threats scan; NetTap doesn't keep the date"],
+		[null, "Named on an earlier Threats scan; this window's alerts couldn't all be checked"],
+	])('says when a cached match was listed (in_window %s)', async (inWindow, note) => {
+		const feeds = [{ feed: 'et_compromised', label: 'Suricata blocklist rules', indicator: ADDRESS.ip, type: 'ip' }];
+		stubDaemon(baseReplies({ ...ADDRESS, threat_intel: { matched: true, feeds, indicators: 1, in_window: inWindow } }));
+		render(Page);
+		expect(await screen.findByText(note)).toBeInTheDocument();
+		expect(screen.queryByText('A Suricata blocklist rule named it in this window')).toBeNull();
+	});
+
 	it.each([
 		[503, 'Working this out took too long. Try a shorter time range.'],
 		[500, 'Something went wrong working this out; the daemon log has the details.'],
@@ -258,6 +272,24 @@ describe('Address page', () => {
 		expect(within(who).getByRole('button', { name: 'Look up its name' })).toBeEnabled();
 		expect(within(who).getByRole('button', { name: 'Look it up' })).toBeEnabled();
 		expect(kpi('Connections')).toHaveTextContent('1,980');
+	});
+
+	// NET-237 (P3): an anycast service has no one place
+	it('says an anycast address has no one location', async () => {
+		const anycast = { ip: '198.51.100.10', country: 'United States', country_code: 'US', city: null, latitude: null, longitude: null, asn: 13335, organization: 'Example DNS', is_private: false, source: 'builtin', seen_at: null, anycast: true };
+		stubDaemon({ ...baseReplies(ADDRESS), '/api/geoip/*': anycast });
+		render(Page);
+		const who = card('Who it is');
+		await vi.waitFor(() => expect(within(who).getByText(/anycast, location varies/)).toBeInTheDocument());
+		expect(within(who).getByText(/^United States/)).toBeInTheDocument();
+	});
+
+	it('shows no anycast note for a located address', async () => {
+		stubDaemon(baseReplies(ADDRESS));
+		render(Page);
+		const who = card('Who it is');
+		await vi.waitFor(() => expect(within(who).getByText(/Ashburn, United States/)).toBeInTheDocument());
+		expect(within(who).queryByText(/anycast/)).not.toBeInTheDocument();
 	});
 
 	it('looks up reverse DNS only when asked, since the lookup reaches whoever runs the address', async () => {

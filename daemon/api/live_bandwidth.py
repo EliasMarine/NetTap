@@ -15,6 +15,7 @@ import logging
 
 from aiohttp import web
 
+from api.error_replies import public_json
 from api.dhcp_gateway import CAPTURE_LOCK_KEY
 from services.device_custom import normalize_mac
 from services.excluded_ips import (
@@ -85,7 +86,8 @@ async def handle_live_bandwidth(request: web.Request) -> web.Response:
     try:
         return web.json_response(await meter.watch(key))
     except LiveBandwidthBusyError as exc:
-        return web.json_response({"error": str(exc)}, status=503)
+        # NET-229 follow-up: its text is one of the plain busy lines (services/live_bandwidth.py)
+        return public_json({"error": str(exc)}, status=503)
     except LiveBandwidthError as exc:
         logger.warning("Live bandwidth for %s %s failed: %s", key.kind, key.value, exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -118,7 +120,7 @@ async def handle_put_setting(request: web.Request) -> web.Response:
         save_enabled(enabled)
     except OSError as exc:
         logger.error("Couldn't save the live bandwidth setting: %s", exc)
-        return web.json_response(
+        return public_json(
             {"error": "Couldn't save the setting", "enabled": meter.enabled},
             status=500,
         )

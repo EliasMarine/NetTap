@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { getUser, hashPassword, verifyPassword, type User } from './auth.js';
+import { getUser, hashPassword, setupCodeMatches, verifyPassword, type User } from './auth.js';
 
 // ----- Login throttling (CR-034) -----
 // Shared by the login form action and POST /api/auth/login.
@@ -76,6 +76,8 @@ function recordFailure(key: string, now: number): void {
 	remember(userFailures, key, { failures, lockedUntil, resetAt: lockedUntil + USER_MAX_LOCK_MS }, now);
 }
 
+// OLD CODE: tooMany(ms, what = 'login attempts') (NET-229 follow-up: the setup code has its own limit
+// again, so only the login uses this reply)
 function tooMany(ms: number): LoginResult {
 	const secs = Math.ceil(ms / 1000);
 	const mins = Math.ceil(secs / 60);
@@ -123,4 +125,84 @@ export async function attemptLogin(
 
 	userFailures.delete(key);
 	return { ok: true, user };
+}
+
+export type SetupCodeResult = { ok: true } | { ok: false; status: 400 | 429; error: string };
+
+// OLD CODE START — review L4 (NET-229 follow-up): it shared the login's per-address bucket, and
+// behind Docker's IPv6 proxy every client can arrive from one address, so one LAN host could lock
+// the owner out of the setup code and the login (or the limit meant nothing)
+// /**
+//  * A13 (NET-229): check the first-run setup code. Every try takes one from the same per-IP budget as
+//  * a login, so guessing the ~59-bit code is no faster than guessing a password.
+//  */
+// export function checkSetupCode(ip: string, code: string): SetupCodeResult {
+// 	const wait = takeIpAttempt(ip, Date.now());
+// 	if (wait > 0) {
+// 		const { status, error } = tooMany(wait, 'attempts');
+// 		return { ok: false, status, error };
+// 	}
+// 	if (setupCodeMatches(code)) return { ok: true };
+// 	return {
+// 		ok: false,
+// 		status: 400,
+// 		error: "That setup code isn't right. The installer printed it at the end; see below to read it again.",
+// 	};
+// }
+// OLD CODE END
+
+// OLD CODE START — Codex review: refusing every code after 50 failures let any LAN client keep the
+// owner from setting up (send 50 wrong codes after each restart)
+// // The setup code's own limit: ~59 bits make guessing hopeless, so a cap on wrong codes overall
+// // stops a patient guesser. Restarting nettap-web lifts it (the owner can, an attacker can't).
+// const SETUP_CODE_MAX_FAILURES = 50;
+// let setupCodeFailures = 0;
+//
+// /** A13 (NET-229): check the first-run setup code, against its own limit (not the login's). */
+// export function checkSetupCode(code: string): SetupCodeResult {
+// 	if (setupCodeFailures >= SETUP_CODE_MAX_FAILURES) {
+// 		return {
+// 			ok: false,
+// 			status: 429,
+// 			error: 'Too many wrong setup codes. To try again, restart the web app on the NetTap box: sudo docker restart nettap-web',
+// 		};
+// 	}
+// 	if (setupCodeMatches(code)) return { ok: true };
+// 	setupCodeFailures++;
+// 	if (setupCodeFailures === SETUP_CODE_MAX_FAILURES) {
+// 		console.warn(`Setup code: ${SETUP_CODE_MAX_FAILURES} wrong codes; refused until nettap-web restarts.`);
+// 	}
+// 	return {
+// 		ok: false,
+// 		status: 400,
+// 		error: "That setup code isn't right. The installer printed it at the end; see below to read it again.",
+// 	};
+// }
+// OLD CODE END
+
+// The setup code's own limit, apart from the login's. Its ~59 bits are the protection: the right
+// code always works, so nobody can lock the owner out. Past 50 wrong codes overall (any address),
+// wrong ones get 429 and one log line, which tells the owner something is guessing.
+const SETUP_CODE_WARN_AFTER = 50;
+let setupCodeFailures = 0;
+
+/** A13 (NET-229): check the first-run setup code, against its own limit (not the login's). */
+export function checkSetupCode(code: string): SetupCodeResult {
+	if (setupCodeMatches(code)) return { ok: true };
+	setupCodeFailures++;
+	if (setupCodeFailures === SETUP_CODE_WARN_AFTER) {
+		console.warn(`Setup code: ${SETUP_CODE_WARN_AFTER} wrong codes so far; something may be guessing it.`);
+	}
+	if (setupCodeFailures >= SETUP_CODE_WARN_AFTER) {
+		return {
+			ok: false,
+			status: 429,
+			error: "Too many wrong setup codes have been tried. Read the code again on the NetTap box: sudo docker exec nettap-web cat /var/lib/nettap-web/setup-code",
+		};
+	}
+	return {
+		ok: false,
+		status: 400,
+		error: "That setup code isn't right. The installer printed it at the end; see below to read it again.",
+	};
 }

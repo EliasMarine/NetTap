@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 // OLD CODE: import { render, screen, fireEvent, within, cleanup } from '@testing-library/svelte'; (NET-201: cleanup only served the removed layout test)
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import Page from './+page.svelte';
+import { BRIDGE_NO_DEVICES } from '$api/capture';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
 // By type: Home's device cards, moved here (PLAN.md §3, §5.6). The first describe is
@@ -593,5 +594,45 @@ describe('Devices By type — one list per type, with the same figures the cards
 		await fireEvent.error(photo);
 		expect(row(A).querySelector('img.who-photo')).toBeNull();
 		expect(row(A).querySelector('.who svg')).toBeInTheDocument();
+	});
+});
+
+// ---- NET-225 (DEV-1): inline bridge mode sits after the router's address translation ---------
+// Every device's IPv4 traffic carries the router's address there, so the page must say why it
+// shows no devices instead of promising they will appear.
+
+describe('Devices — inline bridge mode', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.clearAllMocks();
+	});
+
+	const EMPTY_LIST = { from: LIST_FROM, to: '', limit: 500, total: 0, ...reading(), devices: [] };
+
+	it('says devices behind the router can\'t be told apart, instead of "No devices seen yet."', async () => {
+		stubDaemon({ '/api/capture/mode': BRIDGE, '/api/devices': EMPTY_LIST });
+		render(Page);
+
+		expect(await screen.findByText('No devices to show in inline bridge mode')).toBeInTheDocument();
+		expect(screen.queryByText('No devices seen yet.')).not.toBeInTheDocument();
+		// the page-wide note and the empty state both give the reason
+		expect(screen.getByRole('note')).toHaveTextContent(BRIDGE_NO_DEVICES);
+		expect(screen.getAllByText(BRIDGE_NO_DEVICES)).toHaveLength(2);
+
+		await fireEvent.click(screen.getByRole('tab', { name: 'By type' }));
+		expect(screen.getByText(/your devices share the router's IPv4 address, so they can't be listed by type/)).toBeInTheDocument();
+		expect(screen.queryByText(/lists every device NetTap sees/)).not.toBeInTheDocument();
+	});
+
+	it('keeps the usual wording in mirror mode', async () => {
+		stubDaemon({ '/api/capture/mode': MIRROR, '/api/devices': EMPTY_LIST, '/api/devices/registry': { devices: [], total: 0 } });
+		render(Page);
+		// mirror mode opens on By type; its empty registry reads as today
+		expect(await screen.findByText('No devices yet')).toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('tab', { name: 'All devices' }));
+
+		expect(await screen.findByText('No devices seen yet.')).toBeInTheDocument();
+		expect(screen.queryByRole('note')).not.toBeInTheDocument();
+		expect(screen.queryByText(BRIDGE_NO_DEVICES)).not.toBeInTheDocument();
 	});
 });

@@ -1,11 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
 	captureStage,
+	COMPARE_FAILED,
+	dataStage,
 	formatBytes,
 	formatBytesShort,
 	kpiDelta,
 	kpiWindow,
 	localMidnight,
+	NOT_ENOUGH,
 	openSearchStage,
 	packetsStage,
 	smartLevel,
@@ -51,6 +54,15 @@ describe('KPI deltas', () => {
 		expect(kpiWindow(true, trendPercent(15, 10), 'Last 24 hours', 'previous 24 h')).toEqual({ comparison: 'vs previous 24 h' });
 		expect(kpiWindow(true, trendPercent(10, 10), 'Last 24 hours', 'previous 24 h')).toEqual({ note: 'No change vs previous 24 h' });
 		expect(kpiWindow(false, trendPercent(0, 0), 'Last 24 hours', 'previous 24 h')).toEqual({ note: 'Last 24 hours' });
+	});
+
+	it('says why there is no trend, and where the compared data ends (NET-228, TRF-6)', () => {
+		expect(kpiDelta(NOT_ENOUGH)).toBeUndefined();
+		expect(kpiDelta(COMPARE_FAILED)).toBeUndefined();
+		expect(kpiWindow(true, NOT_ENOUGH, 'Last 24 hours', 'previous 24 hours', '13:00')).toEqual({ note: 'Not enough data to compare' });
+		expect(kpiWindow(true, COMPARE_FAILED, 'Last 24 hours', 'previous 24 hours', '13:00')).toEqual({ note: "Couldn't load the comparison" });
+		expect(kpiWindow(true, trendPercent(15, 10), 'Last 24 hours', 'previous 24 hours', '13:00')).toEqual({ comparison: 'vs previous 24 hours, up to 13:00' });
+		expect(kpiWindow(true, trendPercent(10, 10), 'Last 24 hours', 'previous 24 hours', '13:00')).toEqual({ note: 'No change vs previous 24 hours, up to 13:00' });
 	});
 });
 
@@ -145,6 +157,24 @@ describe('capture pipeline stages', () => {
 		expect(openSearchStage(system(), false)).toMatchObject({ status: 'ok', detail: 'Connected' });
 		expect(openSearchStage(system({ opensearch_reachable: false }), false)).toMatchObject({ status: 'failing', detail: 'Unreachable' });
 		expect(openSearchStage(null, true).status).toBe('unknown');
+	});
+
+	// F2: storage, SMART and OpenSearch fine said nothing about whether data still arrives
+	it('data reads the pipeline: stale data fails the stage while the system stage stays its own', () => {
+		const pipeline = {
+			state: 'stale', newest_record_at: '2026-11-08T20:13:00+00:00', age_seconds: 47 * 60, threshold_seconds: 900,
+			sensors: {}, checked_at: '2026-11-08T21:00:00+00:00',
+		} as const;
+		expect(dataStage(system({ status: 'problem', healthy: false, pipeline }), false)).toEqual({
+			key: 'data', label: 'Data', status: 'failing', detail: 'No new records for 47 min',
+		});
+		expect(dataStage(system({ pipeline: { ...pipeline, state: 'fresh', age_seconds: 40 } }), false)).toMatchObject({
+			status: 'ok', detail: 'Newest record 40 s ago',
+		});
+		// a daemon older than the web app sends no pipeline: Unknown, never healthy
+		expect(dataStage(system(), false)).toMatchObject({ status: 'unknown', detail: 'Unknown' });
+		expect(dataStage(null, true)).toMatchObject({ status: 'unknown', detail: 'Unknown: the health check failed' });
+		expect(dataStage(null, false)).toMatchObject({ status: 'unknown', detail: 'Checking…' });
 	});
 });
 

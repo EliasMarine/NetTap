@@ -433,6 +433,76 @@ class TestGetSuspiciousDns:
         assert len(txt) >= 1
 
 
+class TestThresholdsScaleWithTheWindow:
+    """NET-225 (DNS-2): 500 lookups (50 TXT) a day, not per window; 30 d flagged 17 a day."""
+
+    @staticmethod
+    def _reply(name: str, count: int, txt_count: int = 0) -> dict:
+        return {
+            "aggregations": {
+                "top_domains": {
+                    "buckets": [
+                        {
+                            "key": name,
+                            "doc_count": count,
+                            "unique_clients": {"value": 1},
+                        }
+                    ]
+                },
+                "txt_domains": {
+                    "buckets": [{"key": "t." + name, "doc_count": txt_count}]
+                    if txt_count
+                    else []
+                },
+            }
+        }
+
+    @staticmethod
+    def _types(reply: dict, from_ts: str, to_ts: str) -> list[str]:
+        return [r["type"] for r in _over(reply).get_suspicious_dns(from_ts, to_ts)]
+
+    _30D = ("2026-10-01T00:00:00Z", "2026-10-31T00:00:00Z")
+
+    def test_30_days_needs_the_same_daily_rate(self):
+        assert self._types(self._reply("api.example.net", 600), *self._30D) == []
+        assert self._types(self._reply("api.example.net", 16_000), *self._30D) == [
+            "high_frequency"
+        ]
+
+    def test_30_days_txt_needs_the_same_daily_rate(self):
+        assert "txt_abuse" not in self._types(
+            self._reply("x.example.net", 0, txt_count=100), *self._30D
+        )
+        assert "txt_abuse" in self._types(
+            self._reply("x.example.net", 0, txt_count=1_600), *self._30D
+        )
+
+    def test_boundary_is_over_the_scaled_count(self):
+        assert self._types(self._reply("api.example.net", 15_000), *self._30D) == []
+        assert self._types(self._reply("api.example.net", 15_001), *self._30D) == [
+            "high_frequency"
+        ]
+
+    def test_a_zoneless_start_reads_as_utc(self):
+        """The routes accept from without a zone and to with one (test_time_range)."""
+        window = ("2026-10-01T00:00:00", "2026-10-31T00:00:00Z")
+        assert self._types(self._reply("api.example.net", 600), *window) == []
+
+    def test_under_a_day_keeps_todays_thresholds(self):
+        window = ("2026-10-01T00:00:00Z", "2026-10-01T12:00:00Z")
+        assert self._types(self._reply("api.example.net", 501), *window) == [
+            "high_frequency"
+        ]
+        assert self._types(self._reply("api.example.net", 500), *window) == []
+
+    def test_the_description_says_addresses_not_devices(self):
+        result = _over(self._reply("api.example.net", 600)).get_suspicious_dns(
+            _FROM, _TO
+        )
+        assert "few source addresses" in result[0]["description"]
+        assert "can stand for several devices" in result[0]["description"]
+
+
 # ---------------------------------------------------------------------------
 # detect_dns_tunneling
 # ---------------------------------------------------------------------------
@@ -556,7 +626,8 @@ class TestDnsNoiseExclusion:
         ],
     )
     def test_every_query_excludes_pcap_monitor(self, dns, mock_client, call):
-        mock_client.search.return_value = {}
+        # OLD CODE: mock_client.search.return_value = {} (NET-237: the name scan checks its pages)
+        mock_client.search.return_value = {"aggregations": {"all": {"buckets": []}}}
         call(dns)
         assert mock_client.search.call_args_list
         for c in mock_client.search.call_args_list:
@@ -618,7 +689,9 @@ class TestStatsAccuracy:
         assert result["avg_resolution_ms"] == 1250.0
         assert result["median_resolution_ms"] == 200.0
 
-    def test_no_answered_queries_gives_zero(self, dns, mock_client):
+    # OLD CODE: test_no_answered_queries_gives_zero asserted 0 ms for both (NET-225: 0 ms read as perfect)
+    def test_no_answered_queries_gives_none(self, dns, mock_client):
+        """Nothing answered: no timing, never 0 ms (DNS-3)."""
         mock_client.search.return_value = {
             "aggregations": {
                 "avg_rtt": {"value": None},
@@ -626,8 +699,20 @@ class TestStatsAccuracy:
             }
         }
         result = dns.get_stats(_FROM, _TO)
-        assert result["avg_resolution_ms"] == 0
-        assert result["median_resolution_ms"] == 0
+        assert result["avg_resolution_ms"] is None
+        assert result["median_resolution_ms"] is None
+
+    def test_zero_seconds_stays_zero(self, dns, mock_client):
+        """A real 0 (sub-resolution answers) is a measurement, not 'nothing measured'."""
+        mock_client.search.return_value = {
+            "aggregations": {
+                "avg_rtt": {"value": 0.0},
+                "median_rtt": {"values": {"50.0": 0.0}},
+            }
+        }
+        result = dns.get_stats(_FROM, _TO)
+        assert result["avg_resolution_ms"] == 0.0
+        assert result["median_resolution_ms"] == 0.0
 
 
 def test_local_discovery_exclusion_is_scoped_to_local_destinations():

@@ -901,3 +901,44 @@ class TestUpdatesRunInTheBackground(unittest.TestCase):
         self.assertIn(
             "docker_opensearch-data-before-update", status["results"][0]["error"]
         )
+
+
+class TestFailureTextStaysInTheLog(unittest.TestCase):
+    """NET-229 follow-up: update results reach the Updates page, so exception and command text
+    (paths, container names) stays in the daemon log."""
+
+    MARKER = "/opt/private/socket"
+
+    def test_malcolm_exception(self):
+        malcolm = FakeMalcolm()
+        malcolm.apply = AsyncMock(side_effect=OSError(f"boom at {self.MARKER}"))
+        ue = UpdateExecutor(malcolm_upgrade=malcolm)
+        with self.assertLogs("nettap.services.update_executor", level="ERROR") as logs:
+            result = asyncio.run(ue._update_malcolm(0, 1))
+        self.assertNotIn(self.MARKER, result.error)
+        self.assertIn("daemon log", result.error)
+        self.assertIn(self.MARKER, "\n".join(logs.output))
+
+    def test_rule_update_exception(self):
+        ue = UpdateExecutor()
+        ue._rule_manager = MagicMock()
+        ue._rule_manager.get_live_status = AsyncMock(return_value={})
+        ue._rule_manager.update_rules = AsyncMock(side_effect=OSError(self.MARKER))
+        ue._create_backup = AsyncMock(return_value=None)
+        result = asyncio.run(ue._update_suricata_rules())
+        self.assertFalse(result.success)
+        self.assertNotIn(self.MARKER, result.error)
+
+    def test_geoip_command_output_and_exception(self):
+        ue = UpdateExecutor()
+        ue._create_backup = AsyncMock(return_value=None)
+        ue._run_command = AsyncMock(return_value=(f"error at {self.MARKER}", 1))
+        with self.assertLogs(
+            "nettap.services.update_executor", level="WARNING"
+        ) as logs:
+            result = asyncio.run(ue._update_geoip())
+        self.assertNotIn(self.MARKER, result.error)
+        self.assertIn(self.MARKER, "\n".join(logs.output))
+        ue._run_command = AsyncMock(side_effect=OSError(self.MARKER))
+        result = asyncio.run(ue._update_geoip())
+        self.assertNotIn(self.MARKER, result.error)

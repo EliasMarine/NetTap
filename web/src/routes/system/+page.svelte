@@ -3,7 +3,7 @@
 	import { getSystemHealth, getStorageStatus, getSmartHealth } from '$api/system.js';
 	import { getTSharkStatus } from '$api/tshark.js';
 	import { getCyberChefStatus } from '$api/cyberchef.js';
-	import { healthStage, type SystemHealth, type StorageStatus, type SmartHealth } from '$api/system.js';
+	import { healthStage, pipelineStage, type SystemHealth, type StorageStatus, type SmartHealth } from '$api/system.js';
 	import type { TSharkStatus } from '$api/tshark.js';
 	import type { CyberChefStatus } from '$api/cyberchef.js';
 	import BridgeStatus from '$lib/components/BridgeStatus.svelte';
@@ -17,6 +17,7 @@
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { fmt } from '$lib/utils/drilldown';
 	import { formatTime } from '$lib/utils/time';
+	import { growthSummary } from '$lib/utils/storage-estimate';
 
 	let systemHealth = $state<SystemHealth | null>(null);
 	let storageStatus = $state<StorageStatus | null>(null);
@@ -235,7 +236,13 @@
 				: smartHealth && !failed.smart
 					? { key: 'drive', label: 'Drive', status: 'unknown', detail: "Couldn't read the drive" }
 					: waiting('drive', 'Drive', failed.smart);
-		return [daemon, search, disk, drive];
+		// F2: the same words as Home's Data stage
+		const data: PipelineStage =
+			systemHealth && !failed.health
+				? { key: 'data', label: 'Data and sensors', ...pipelineStage(systemHealth.pipeline) }
+				: waiting('data', 'Data and sensors', failed.health);
+		// OLD CODE: return [daemon, search, disk, drive]; (F2: no row said whether current data arrives)
+		return [daemon, search, disk, drive, data];
 	});
 
 	/** S6: judged against the daemon's own pruning lines, from the same response. */
@@ -418,7 +425,8 @@
 			{/if}
 			<Meter value={storageStatus.disk_usage_percent} label="Disk used" />
 			<dl class="facts">
-				<dt>Total</dt>
+				<!-- OLD CODE: <dt>Total</dt> (STO-3: the daemon reports the usable size now, as df counts it) -->
+				<dt>Usable</dt>
 				<dd class="mono">{formatBytes(storageStatus.disk_total_bytes)}</dd>
 				<dt>Used</dt>
 				<dd class="mono">{formatBytes(storageStatus.disk_used_bytes)}</dd>
@@ -447,6 +455,10 @@
 						<dd>{typeof days === 'number' ? `${days} days${row.note}` : '—'}</dd>
 					{/each}
 				</dl>
+				<!-- B-m: what the disk really holds, measured, beside the configured days -->
+				{#if storageStatus.growth_estimate !== undefined}
+					<p class="dim growth">{growthSummary(storageStatus.growth_estimate, storageStatus.retention?.hot_days ?? 90)}</p>
+				{/if}
 			{/if}
 		{:else}
 			<CardState state="empty" title="Storage data unavailable" message="Disk figures appear here once the daemon reports them." />
@@ -606,6 +618,7 @@
 </div>
 
 <style>
+	.growth { margin-top: var(--sp-3); font-size: var(--text-sm); }
 	/* the four health stages fill the row on desktop; the system's tablet and phone rules still apply */
 	@container app (min-width: 1101px) {
 		:global(.health-card .pipe) { grid-template-columns: repeat(4, minmax(0, 1fr)); }

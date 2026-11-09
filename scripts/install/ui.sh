@@ -325,6 +325,15 @@ ui_summary_installed() {
     ui_card_line ""
     ui_card_kv "Dashboard" "${_UI_BOLD}$(_ui_dashboard_url)${_UI_OFF}"
     ui_card_kv "Malcolm" "https://localhost:${MALCOLM_HTTPS_PORT:-9443}  ${_UI_DIM}on this box${_UI_OFF}"
+    # A13 (NET-229): the wizard asks for this before it creates the admin account
+    if [[ "${SKIP_MALCOLM:-false}" != "true" ]]; then
+        local code
+        code=$(nettap_setup_code)
+        if [[ -n "$code" ]]; then
+            ui_card_kv "Setup code" "${_UI_BOLD}${code}${_UI_OFF}  ${_UI_DIM}the setup wizard asks for it${_UI_OFF}"
+            ui_card_kv "" "${_UI_DIM}To see it again: ${NETTAP_SETUP_CODE_CMD}${_UI_OFF}"
+        fi
+    fi
     ui_card_kv "Checks" "$(_ui_counts "$passed" "$warned" "$failed")"
     ui_card_kv "Time taken" "$(_ui_duration $(( $(date +%s) - INSTALL_START_TIME )))"
     ui_card_line ""
@@ -352,6 +361,7 @@ ui_summary_deferred() {
     _ui_cabling
     ui_card_line ""
     ui_card_line "  Then run:  ${_UI_BOLD}sudo scripts/install/activate-bridge.sh${_UI_OFF}"
+    ui_card_line "  ${_UI_DIM}It prints the setup code the setup wizard asks for.${_UI_OFF}"
     ui_card_kv "Dashboard" "$(_ui_dashboard_url)  ${_UI_DIM}once the bridge is on${_UI_OFF}"
     printf '\n'
 }

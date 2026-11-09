@@ -19,7 +19,9 @@ from typing import Any
 
 from opensearchpy import OpenSearchException
 
+from services.excluded_ips import CONN_ACCOUNTING
 from storage.all_buckets import all_buckets
+from storage.exact_terms import PartialResultsError
 from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.mac_correlator")
@@ -40,16 +42,35 @@ _MEDIUM_CONFIDENCE = 0.50
 _RANDOMIZED_AGGS = {
     "first_seen": {"min": {"field": "@timestamp"}},
     "last_seen": {"max": {"field": "@timestamp"}},
-    "total_bytes": {
-        "sum": {
-            "script": {
-                "source": (
-                    "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) "
-                    "+ (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
-                ),
-                "lang": "painless",
+    # OLD CODE START — F1: summed every record, conn_long.log interim records included
+    # "total_bytes": {
+    #     "sum": {
+    #         "script": {
+    #             "source": (
+    #                 "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) "
+    #                 "+ (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+    #             ),
+    #             "lang": "painless",
+    #         }
+    #     }
+    # },
+    # OLD CODE END
+    # Byte and packet sums count final conn records only; the fingerprint inputs stay unfiltered
+    "conn": {
+        "filter": CONN_ACCOUNTING,
+        "aggs": {
+            "total_bytes": {
+                "sum": {
+                    "script": {
+                        "source": (
+                            "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) "
+                            "+ (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+                        ),
+                        "lang": "painless",
+                    }
+                }
             }
-        }
+        },
     },
     "top_dests": {"terms": {"field": "destination.ip", "size": 5}},
 }
@@ -59,8 +80,17 @@ _SIMILARITY_AGGS = {
     "dns_domains": {"terms": {"field": "dns.question.name", "size": 20}},
     "dest_ips": {"terms": {"field": "destination.ip", "size": 20}},
     "ja3_hashes": {"terms": {"field": "tls.ja3", "size": 10}},
-    "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
-    "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
+    # OLD CODE START — F1: summed every record, conn_long.log interim records included
+    # "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+    # "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
+    # OLD CODE END
+    "conn": {
+        "filter": CONN_ACCOUNTING,
+        "aggs": {
+            "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+            "total_resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
+        },
+    },
 }
 # 250 MACs x (1 + 50 term buckets) keeps a page far below search.max_buckets
 _FINGERPRINT_PAGE = 250
@@ -94,8 +124,13 @@ def _similarity_fingerprint(bucket: dict) -> dict[str, Any]:
         buckets = (bucket.get(agg) or {}).get("buckets", [])
         return [{name: b["key"], "count": b["doc_count"]} for b in buckets]
 
-    orig = (bucket.get("total_orig_bytes") or {}).get("value") or 0
-    resp = (bucket.get("total_resp_bytes") or {}).get("value") or 0
+    # OLD CODE START — F1: the sums moved into the conn filter
+    # orig = (bucket.get("total_orig_bytes") or {}).get("value") or 0
+    # resp = (bucket.get("total_resp_bytes") or {}).get("value") or 0
+    # OLD CODE END
+    conn = bucket.get("conn") or {}
+    orig = (conn.get("total_orig_bytes") or {}).get("value") or 0
+    resp = (conn.get("total_resp_bytes") or {}).get("value") or 0
     return {
         "dns_patterns": keys("dns_domains", "domain"),
         "tls_fingerprints": keys("ja3_hashes", "ja3"),
@@ -251,10 +286,14 @@ class MACCorrelator:
         except OpenSearchException as exc:
             logger.error("OpenSearch error detecting randomized MACs: %s", exc)
             raise
+        # OLD CODE START — NET-237 (caps): only logged, so the randomized-MAC list read as complete
+        # if not complete:
+        #     logger.warning(
+        #         "MAC scan stopped at %d MACs; the list is partial", len(pages)
+        #     )
+        # OLD CODE END
         if not complete:
-            logger.warning(
-                "MAC scan stopped at %d MACs; the list is partial", len(pages)
-            )
+            raise PartialResultsError(f"MAC scan stopped at {len(pages)} MACs")
         buckets = _busiest_first(pages)
         randomized = []
 
@@ -272,7 +311,10 @@ class MACCorrelator:
                             "value_as_string"
                         ),
                         "last_seen": bucket.get("last_seen", {}).get("value_as_string"),
-                        "total_bytes": bucket.get("total_bytes", {}).get("value", 0),
+                        # OLD CODE: bucket.get("total_bytes", {}).get("value", 0) (F1)
+                        "total_bytes": bucket.get("conn", {})
+                        .get("total_bytes", {})
+                        .get("value", 0),
                         "top_destinations": top_dests,
                     }
                 )
@@ -354,13 +396,32 @@ class MACCorrelator:
                 # "total_orig_bytes": {"sum": {"field": "client.bytes", "missing": 0}},
                 # "total_resp_bytes": {"sum": {"field": "server.bytes", "missing": 0}},
                 # OLD CODE END
-                "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
-                "total_resp_bytes": {
-                    "sum": {"field": "destination.bytes", "missing": 0}
-                },
-                "total_orig_pkts": {"sum": {"field": "source.packets", "missing": 0}},
-                "total_resp_pkts": {
-                    "sum": {"field": "destination.packets", "missing": 0}
+                # OLD CODE START — F1: summed every record, conn_long.log interim records included
+                # "total_orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+                # "total_resp_bytes": {
+                #     "sum": {"field": "destination.bytes", "missing": 0}
+                # },
+                # "total_orig_pkts": {"sum": {"field": "source.packets", "missing": 0}},
+                # "total_resp_pkts": {
+                #     "sum": {"field": "destination.packets", "missing": 0}
+                # },
+                # OLD CODE END
+                "conn": {
+                    "filter": CONN_ACCOUNTING,
+                    "aggs": {
+                        "total_orig_bytes": {
+                            "sum": {"field": "source.bytes", "missing": 0}
+                        },
+                        "total_resp_bytes": {
+                            "sum": {"field": "destination.bytes", "missing": 0}
+                        },
+                        "total_orig_pkts": {
+                            "sum": {"field": "source.packets", "missing": 0}
+                        },
+                        "total_resp_pkts": {
+                            "sum": {"field": "destination.packets", "missing": 0}
+                        },
+                    },
                 },
             },
         }
@@ -391,10 +452,17 @@ class MACCorrelator:
                 )  # date_histogram before #120
             ]
 
-            orig_bytes = aggs.get("total_orig_bytes", {}).get("value", 0) or 0
-            resp_bytes = aggs.get("total_resp_bytes", {}).get("value", 0) or 0
-            orig_pkts = aggs.get("total_orig_pkts", {}).get("value", 0) or 0
-            resp_pkts = aggs.get("total_resp_pkts", {}).get("value", 0) or 0
+            # OLD CODE START — F1: the sums moved into the conn filter
+            # orig_bytes = aggs.get("total_orig_bytes", {}).get("value", 0) or 0
+            # resp_bytes = aggs.get("total_resp_bytes", {}).get("value", 0) or 0
+            # orig_pkts = aggs.get("total_orig_pkts", {}).get("value", 0) or 0
+            # resp_pkts = aggs.get("total_resp_pkts", {}).get("value", 0) or 0
+            # OLD CODE END
+            conn = aggs.get("conn", {})
+            orig_bytes = conn.get("total_orig_bytes", {}).get("value", 0) or 0
+            resp_bytes = conn.get("total_resp_bytes", {}).get("value", 0) or 0
+            orig_pkts = conn.get("total_orig_pkts", {}).get("value", 0) or 0
+            resp_pkts = conn.get("total_resp_pkts", {}).get("value", 0) or 0
             total_pkts = orig_pkts + resp_pkts
 
             fingerprint["traffic_profile"] = {
@@ -497,11 +565,15 @@ class MACCorrelator:
         except OpenSearchException as exc:
             logger.error("OpenSearch error fingerprinting MACs: %s", exc)
             raise
+        # OLD CODE START — NET-237 (caps): only logged, so merge suggestions read as complete
+        # if not complete:
+        #     logger.warning(
+        #         "MAC fingerprints stopped at %d MACs; suggestions are partial",
+        #         len(pages),
+        #     )
+        # OLD CODE END
         if not complete:
-            logger.warning(
-                "MAC fingerprints stopped at %d MACs; suggestions are partial",
-                len(pages),
-            )
+            raise PartialResultsError(f"MAC fingerprints stopped at {len(pages)} MACs")
         return {b["key"]: _similarity_fingerprint(b) for b in _busiest_first(pages)}
 
     def suggest_merges(self, from_ts: str, to_ts: str) -> list[dict[str, Any]]:

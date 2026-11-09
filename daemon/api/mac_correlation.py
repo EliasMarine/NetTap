@@ -18,6 +18,8 @@ from datetime import timedelta
 
 from aiohttp import web
 
+from storage.exact_terms import PartialResultsError
+from api.error_replies import incomplete
 from api.offload import in_thread
 from api.time_range import parse_time_range
 from services.mac_correlator import MACCorrelator
@@ -63,6 +65,8 @@ def handle_randomized_macs(request: web.Request) -> web.Response:
 
     try:
         macs = correlator.detect_randomized_macs(from_ts, to_ts)
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("MAC", exc)
     except Exception as exc:
         logger.error("Error detecting randomized MACs: %s", exc)
         return web.json_response(
@@ -88,6 +92,8 @@ def handle_fingerprint(request: web.Request) -> web.Response:
 
     try:
         fingerprint = correlator.get_behavioral_fingerprint(mac, from_ts, to_ts)
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("MAC", exc)
     except Exception as exc:
         logger.error("Error building fingerprint for %s: %s", mac, exc)
         return web.json_response(
@@ -111,6 +117,8 @@ def handle_merge_suggestions(request: web.Request) -> web.Response:
 
     try:
         suggestions = correlator.suggest_merges(from_ts, to_ts)
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("MAC", exc)
     except Exception as exc:
         logger.error("Error generating merge suggestions: %s", exc)
         return web.json_response(
@@ -151,6 +159,8 @@ async def handle_merge(request: web.Request) -> web.Response:
 
     try:
         record = correlator.merge_devices(mac_randomized, mac_real)
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("MAC", exc)
     except Exception as exc:
         logger.error("Error merging devices: %s", exc)
         return web.json_response(

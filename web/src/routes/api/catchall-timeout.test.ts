@@ -11,7 +11,7 @@ import { join } from 'path';
 const dir = mkdtempSync(join(tmpdir(), 'nettap-token-'));
 writeFileSync(join(dir, 'token'), 'test-token');
 process.env.DAEMON_TOKEN_FILE = join(dir, 'token');
-const { GET } = await import('./[...path]/+server.js');
+const { GET, POST } = await import('./[...path]/+server.js');
 
 const DELAY_MS = 12_000;
 
@@ -73,6 +73,23 @@ describe('catch-all proxy timeouts with the real daemonFetch', () => {
 	it('lets a 12 s Suricata category answer through (NET-160 slice 2b-2)', async () => {
 		slowDaemon();
 		const pending = GET(event(`/api/alerts/suricata/${encodeURIComponent('A/B & C')}?from=a&to=b`) as never);
+		await vi.advanceTimersByTimeAsync(DELAY_MS);
+		expect((await pending).status).toBe(200);
+	});
+
+	// NET-224: a channel test waits for the daemon's send, up to 40 s for a slow mail server
+	it('lets a 12 s channel test answer through, with its reason', async () => {
+		slowDaemon();
+		const url = new URL('https://nettap.local/api/notifications/channels/ch1/test');
+		const pending = POST({ url, request: new Request(url, { method: 'POST' }) } as never);
+		await vi.advanceTimersByTimeAsync(DELAY_MS);
+		expect((await pending).status).toBe(200);
+	});
+
+	it('lets a 12 s backup restore answer through (A9: restoring a capture mode restarts capture)', async () => {
+		slowDaemon();
+		const url = new URL('https://nettap.local/api/backup/import?apply_capture=1');
+		const pending = POST({ url, request: new Request(url, { method: 'POST', body: '{}' }) } as never);
 		await vi.advanceTimersByTimeAsync(DELAY_MS);
 		expect((await pending).status).toBe(200);
 	});

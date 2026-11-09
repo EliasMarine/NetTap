@@ -20,6 +20,8 @@
 	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import { ipHref } from '$lib/stores/lan';
 	import { fmt } from '$lib/utils/drilldown';
+	import { upDownLocal } from '$lib/utils/up-down';
+	import { ipv6ListNotes } from '$lib/utils/ipv6-coverage';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -157,17 +159,22 @@
 	// Daily usage chart
 	// ---------------------------------------------------------------------------
 
+	// OLD CODE START — NET-226: download/upload were the responder's/originator's bytes, local traffic included
+	// { key: 'download', label: 'Download', colour: 1, points: daily.map((d) => ({ t: d.date, v: d.resp_bytes })) },
+	// { key: 'upload', label: 'Upload', colour: 2, points: daily.map((d) => ({ t: d.date, v: d.orig_bytes })) },
+	// OLD CODE END
 	let dailySeries = $derived<AreaSeries[]>([
-		{ key: 'download', label: 'Download', colour: 1, points: daily.map((d) => ({ t: d.date, v: d.resp_bytes })) },
-		{ key: 'upload', label: 'Upload', colour: 2, points: daily.map((d) => ({ t: d.date, v: d.orig_bytes })) },
+		{ key: 'download', label: 'Download', colour: 1, points: daily.map((d) => ({ t: d.date, v: d.download_bytes })) },
+		{ key: 'upload', label: 'Upload', colour: 2, points: daily.map((d) => ({ t: d.date, v: d.upload_bytes })) },
+		{ key: 'local', label: 'Local', colour: 3, points: daily.map((d) => ({ t: d.date, v: d.local_bytes })) },
 	]);
 
 	let busiestDay = $derived(
 		daily.reduce((best, d, i) => (d.total_bytes > (daily[best]?.total_bytes ?? -1) ? i : best), -1),
 	);
 
-	const dailyTip = (i: number) =>
-		`${formatDate(daily[i].date)} · ↓ ${formatBytes(daily[i].resp_bytes)} · ↑ ${formatBytes(daily[i].orig_bytes)}`;
+	// OLD CODE: `${formatDate(daily[i].date)} · ↓ ${formatBytes(daily[i].resp_bytes)} · ↑ ${formatBytes(daily[i].orig_bytes)}` (NET-226)
+	const dailyTip = (i: number) => `${formatDate(daily[i].date)} · ${upDownLocal(daily[i], formatBytes, false)}`;
 
 	// ---------------------------------------------------------------------------
 	// Per-device table (the DataTable sorts; every column both ways)
@@ -232,13 +239,19 @@
 	const DEVICE_COLUMNS: Column<DeviceUsage>[] = [
 		{ key: 'ip', label: 'Device', cell: deviceCell },
 		{ key: 'total_bytes', label: 'Total', numeric: true, cell: totalCell },
-		{ key: 'orig_bytes', label: 'Upload', numeric: true, cell: uploadCell },
-		{ key: 'resp_bytes', label: 'Download', numeric: true, cell: downloadCell },
+		// OLD CODE START — NET-226: the originator's bytes, so a device's answers read as download
+		// { key: 'orig_bytes', label: 'Upload', numeric: true, cell: uploadCell },
+		// { key: 'resp_bytes', label: 'Download', numeric: true, cell: downloadCell },
+		// OLD CODE END
+		{ key: 'upload_bytes', label: 'Upload', numeric: true, cell: uploadCell },
+		{ key: 'download_bytes', label: 'Download', numeric: true, cell: downloadCell },
 		{ key: 'connection_count', label: 'Connections', numeric: true, cell: connectionsCell },
 		{ key: 'percent_of_total', label: '% of total', numeric: true, cell: percentCell },
 	];
 
 	let maxDeviceBytes = $derived(Math.max(0, ...devices.map((d) => d.total_bytes)));
+	// NET-226: IPv6 the daemon couldn't match to a device safely, said once per reason
+	let ipv6Notes = $derived(ipv6ListNotes(devices));
 
 	// The ten that TopConsumers showed, in the daemon's order
 	let topConsumers = $derived<DeviceListItem[]>(
@@ -373,8 +386,9 @@
 
 {#snippet deviceCell(d: DeviceUsage)}<IPAddress ip={d.ip} />{/snippet}
 {#snippet totalCell(d: DeviceUsage)}<Bytes value={d.total_bytes} max={maxDeviceBytes} display={formatBytes(d.total_bytes)} />{/snippet}
-{#snippet uploadCell(d: DeviceUsage)}{formatBytes(d.orig_bytes)}{/snippet}
-{#snippet downloadCell(d: DeviceUsage)}{formatBytes(d.resp_bytes)}{/snippet}
+<!-- OLD CODE: uploadCell/downloadCell read d.orig_bytes / d.resp_bytes (NET-226) -->
+{#snippet uploadCell(d: DeviceUsage)}{formatBytes(d.upload_bytes)}{/snippet}
+{#snippet downloadCell(d: DeviceUsage)}{formatBytes(d.download_bytes)}{/snippet}
 {#snippet connectionsCell(d: DeviceUsage)}{fmt(d.connection_count)}{/snippet}
 {#snippet percentCell(d: DeviceUsage)}{d.percent_of_total}%{/snippet}
 
@@ -393,15 +407,18 @@
 	{#if monthly}
 		{@const p = monthly.projection}
 		{@const daysLeft = p.days_in_month - Math.floor(p.days_elapsed)}
-		{@const usedPercent = progressPercent(monthly.total_bytes, p.cap_bytes)}
+		<!-- OLD CODE: {@const usedPercent = progressPercent(monthly.total_bytes, p.cap_bytes)} (NET-226 follow-up: local traffic never crosses the ISP link) -->
+		{@const usedPercent = progressPercent(p.current_bytes, p.cap_bytes)}
+		<!-- OLD CODE: sub="↓ {formatGB(monthly.resp_bytes)} down · ↑ {formatGB(monthly.orig_bytes)} up" (NET-226: local traffic was counted as both) -->
+		<!-- OLD CODE: label="This month" value={gb(monthly.total_bytes)} note="{monthName(monthly.year, monthly.month)} so far" (NET-226 follow-up: the cap counts internet traffic only) -->
 		<KpiCard
 			class="c-3"
-			label="This month"
+			label="Internet this month"
 			icon="bandwidth"
-			value={gb(monthly.total_bytes)}
+			value={gb(p.current_bytes)}
 			unit="GB"
-			note="{monthName(monthly.year, monthly.month)} so far"
-			sub="↓ {formatGB(monthly.resp_bytes)} down · ↑ {formatGB(monthly.orig_bytes)} up"
+			note="{monthName(monthly.year, monthly.month)} so far, without traffic between your devices"
+			sub={upDownLocal(monthly, formatGB)}
 		>
 			{#snippet foot()}
 				{#if p.cap_bytes > 0}
@@ -431,11 +448,13 @@
 		</Card>
 	{/if}
 
-	<Card class="c-8" hero col title="Daily usage" sub="Data per day, download and upload · this month, UTC days">
+	<!-- OLD CODE: sub="Data per day, download and upload · this month, UTC days" (NET-226: local is its own series) -->
+	<Card class="c-8" hero col title="Daily usage" sub="Data per day: download, upload and local · this month, UTC days">
 		{#snippet actions()}
 			<ul class="legend">
 				<li><span class="sw c-d1"></span>Download</li>
 				<li><span class="sw c-d2"></span>Upload</li>
+				<li><span class="sw c-d3"></span>Local</li>
 			</ul>
 		{/snippet}
 		{#if daily.length > 0}
@@ -485,6 +504,9 @@
 	>
 		{#if devices.length > 0}
 			<DataTable columns={DEVICE_COLUMNS} rows={devices} ariaLabel="Per-device breakdown" rowKey={(d) => d.ip} initialSort={{ key: 'total_bytes', dir: 'desc' }} />
+			{#each ipv6Notes as note (note)}
+				<p class="notice is-warn load-note" role="note"><Icon name="warn" /><span>{note}</span></p>
+			{/each}
 		{:else if devicesFailed}
 			<CardState state="error" title={loadFailed('the per-device breakdown')} message={RETRY_HINT} onaction={() => refresh.run()} />
 		{:else if loading}

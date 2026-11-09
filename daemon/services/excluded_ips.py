@@ -17,6 +17,7 @@ import logging
 import os
 
 from storage.all_buckets import all_buckets
+from storage.exact_terms import PartialResultsError
 
 logger = logging.getLogger("nettap.services.excluded_ips")
 
@@ -44,6 +45,13 @@ def load_excluded_ips(file_path: str | None = None) -> list[str]:
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning("Failed to load excluded IPs from %s: %s", path, exc)
     return []
+
+
+def with_appliance_ip(ips: list[str], appliance_ip: str | None) -> list[str]:
+    """The running list: the owner's entries plus NetTap's own IP (#79: never saved to the file)."""
+    if appliance_ip and appliance_ip not in ips:
+        return [*ips, appliance_ip]
+    return list(ips)
 
 
 def save_excluded_ips(ips: list[str], file_path: str | None = None) -> None:
@@ -109,7 +117,10 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
                 "bool": {
                     "filter": [
                         {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "conn"}},
+                        # OLD CODE START — F1: also counted conn_long.log interim records
+                        # {"term": {"event.dataset": "conn"}},
+                        # OLD CODE END
+                        CONN_ACCOUNTING,
                         # Exclude connections to RFC1918 destinations (inbound/LAN-to-LAN)
                         # Only keep outbound connections to public IPs
                         {
@@ -160,10 +171,14 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
             [{"ip": {"terms": {"field": "source.ip"}}}],
             page_size=_SOURCE_PAGE,
         )
+        # OLD CODE START — NET-237 (caps): only logged, so a partial scan could replace the LAN filter (detection now fails)
+        # if not complete:
+        #     logger.warning(
+        #         "LAN detection stopped at %d sources; shares are partial", len(pages)
+        #     )
+        # OLD CODE END
         if not complete:
-            logger.warning(
-                "LAN detection stopped at %d sources; shares are partial", len(pages)
-            )
+            raise PartialResultsError(f"LAN detection stopped at {len(pages)} sources")
         buckets = [{**b, "key": b["key"]["ip"]} for b in pages]
 
         if not buckets:
@@ -485,6 +500,18 @@ RFC1918_SOURCE_FILTER = build_lan_filter(_parse_manual_subnets())
 # Suricata alerts that share source.mac; counting those as connections made an ESP
 # device 1% "encrypted" (162 alerts + 2 TLS connections) on the G11, 2026-11-02.
 CONN_RECORDS: dict = {"term": {"event.dataset": "conn"}}
+
+# Final conn records only. Malcolm's zeek-long-connections writes cumulative interim records
+# to conn_long.log under the same zeek.uid as the final conn.log record, so summing both
+# inflated bytes ~9% a day on the G11 (2026-11-08). Use CONN_ACCOUNTING for anything summed,
+# counted or listed as connections; CONN_RECORDS (raw) only where an open connection is
+# evidence. Trade-off: a still-open connection's bytes appear once its final record does.
+CONN_ACCOUNTING: dict = {
+    "bool": {
+        "filter": [CONN_RECORDS],
+        "must_not": [{"term": {"log.file.path": "conn_long.log"}}],
+    }
+}
 
 
 # OLD CODE START — #79: MGMT_IP was trusted as is. .env.example ships MGMT_IP=192.168.1.100,

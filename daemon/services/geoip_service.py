@@ -12,7 +12,8 @@ import ipaddress
 import logging
 import os
 import threading
-from functools import lru_cache
+import time
+# OLD CODE: from functools import lru_cache (NET-237: lookup() no longer caches every answer)
 
 logger = logging.getLogger("nettap.geoip")
 
@@ -222,6 +223,46 @@ WELL_KNOWN_IPS: dict[str, dict] = {
     },
 }
 
+# NET-237 (P3): anycast services answer from many sites, so no one city or point is true for
+# them (GeoLite2 puts 1.1.1.1 in Australia, the table above put it in San Francisco).
+# shortcut: hand-picked from the table above; add an address when a known anycast one shows a place
+ANYCAST_IPS = frozenset(
+    {
+        "8.8.8.8",
+        "8.8.4.4",
+        "1.1.1.1",
+        "1.0.0.1",
+        "208.67.222.222",
+        "208.67.220.220",
+        "9.9.9.9",
+        "149.112.112.112",
+        "8.26.56.26",
+        "8.20.247.20",
+        "94.140.14.14",
+        "94.140.15.15",
+        "185.228.168.9",
+        "185.228.169.9",
+        "64.6.64.6",
+        "64.6.65.6",
+        "4.2.2.1",
+        "4.2.2.2",
+        "23.0.0.1",
+        "13.107.4.50",
+        "151.101.1.69",
+    }
+)
+
+# A lookup that found no geo session is asked again after this long (an error is never kept)
+MISS_TTL_SECONDS = 300.0
+
+
+def is_anycast(ip: str) -> bool:
+    return ip in ANYCAST_IPS
+
+
+class GeoLookupFailed(Exception):
+    """OpenSearch didn't answer a GeoIP lookup: an error, never an "Unknown" answer (GEO-4)."""
+
 
 class GeoIPResult:
     """Result of a GeoIP lookup."""
@@ -237,6 +278,9 @@ class GeoIPResult:
         asn: int | None = None,
         organization: str | None = None,
         is_private: bool = False,
+        source: str = "none",
+        seen_at: str | None = None,
+        anycast: bool = False,
     ):
         self.ip = ip
         self.country = country
@@ -247,6 +291,12 @@ class GeoIPResult:
         self.asn = asn
         self.organization = organization
         self.is_private = is_private
+        # GEO-3: where the answer came from — "traffic" (Malcolm's GeoLite2 enrichment stored on
+        # a session seen at `seen_at`), "maxmind" (a local file), "builtin" (the table above),
+        # "private" (not looked up) or "none"
+        self.source = source
+        self.seen_at = seen_at
+        self.anycast = anycast
 
     def to_dict(self) -> dict:
         """Serialize to a JSON-friendly dictionary."""
@@ -260,6 +310,9 @@ class GeoIPResult:
             "asn": self.asn,
             "organization": self.organization,
             "is_private": self.is_private,
+            "source": self.source,
+            "seen_at": self.seen_at,
+            "anycast": self.anycast,
         }
 
 
@@ -281,6 +334,8 @@ class GeoIPService:
         # In-memory cache for OpenSearch lookups (TTL managed by LRU eviction)
         self._os_cache: dict[str, GeoIPResult] = {}
         self._OS_CACHE_MAX = 2048
+        # NET-237 (GEO-4): addresses with no geo session yet, until a monotonic expiry
+        self._os_missing: dict[str, float] = {}
         # Lookups run in request threads: the eviction must not race a read
         self._os_lock = threading.Lock()
 
@@ -302,7 +357,12 @@ class GeoIPService:
                     "GeoLite2 database not found at %s, using fallback", db_path
                 )
         except ImportError:
-            logger.warning("maxminddb package not installed, using fallback GeoIP")
+            # OLD CODE: logger.warning("maxminddb package not installed, using fallback GeoIP")
+            # NET-237: the expected setup; Malcolm's enrichment is the source, not a fallback
+            logger.info(
+                "No local GeoLite2 reader (maxminddb not installed): GeoIP answers come from "
+                "Malcolm's enrichment stored in OpenSearch"
+            )
         except Exception as exc:
             logger.warning("Failed to load GeoLite2 database: %s", exc)
 
@@ -347,36 +407,62 @@ class GeoIPService:
         with self._os_lock:
             if ip in self._os_cache:
                 return self._os_cache[ip]
+            if self._os_missing.get(ip, 0.0) > time.monotonic():
+                return None
 
         try:
             # Search for this IP in recent sessions, try both source and destination
             body = {
                 "size": 1,
                 "sort": [{"@timestamp": {"order": "desc"}}],
+                # OLD CODE START — NET-237 (GEO-4): the IP and the geo could match on opposite
+                # sides, so the newest hit could carry the peer's geo and read as "no answer"
+                # "query": {
+                #     "bool": {
+                #         "should": [
+                #             {"term": {"source.ip": ip}},
+                #             {"term": {"destination.ip": ip}},
+                #         ],
+                #         "minimum_should_match": 1,
+                #         # Only look at docs that have geo data
+                #         "filter": {
+                #             "bool": {
+                #                 "should": [
+                #                     {"exists": {"field": "source.geo.country_name"}},
+                #                     {
+                #                         "exists": {
+                #                             "field": "destination.geo.country_name"
+                #                         }
+                #                     },
+                #                 ],
+                #                 "minimum_should_match": 1,
+                #             }
+                #         },
+                #     }
+                # },
+                # OLD CODE END
                 "query": {
                     "bool": {
                         "should": [
-                            {"term": {"source.ip": ip}},
-                            {"term": {"destination.ip": ip}},
+                            {
+                                "bool": {
+                                    "filter": [
+                                        {"term": {f"{side}.ip": ip}},
+                                        {
+                                            "exists": {
+                                                "field": f"{side}.geo.country_name"
+                                            }
+                                        },
+                                    ]
+                                }
+                            }
+                            for side in ("source", "destination")
                         ],
                         "minimum_should_match": 1,
-                        # Only look at docs that have geo data
-                        "filter": {
-                            "bool": {
-                                "should": [
-                                    {"exists": {"field": "source.geo.country_name"}},
-                                    {
-                                        "exists": {
-                                            "field": "destination.geo.country_name"
-                                        }
-                                    },
-                                ],
-                                "minimum_should_match": 1,
-                            }
-                        },
                     }
                 },
                 "_source": [
+                    "@timestamp",
                     "source.ip",
                     "destination.ip",
                     "source.geo.*",
@@ -389,7 +475,8 @@ class GeoIPService:
             resp = self._os_client.search(index="arkime_sessions3-*", body=body)
             hits = resp.get("hits", {}).get("hits", [])
             if not hits:
-                return None
+                # OLD CODE: return None (NET-237: remembered for MISS_TTL_SECONDS, not forever)
+                return self._missed(ip)
 
             src = hits[0].get("_source", {})
 
@@ -404,11 +491,11 @@ class GeoIPService:
                 geo = src.get("destination", {}).get("geo", {})
                 as_info = src.get("destination", {}).get("as", {})
             else:
-                return None
+                return self._missed(ip)
 
             country = geo.get("country_name")
             if not country:
-                return None
+                return self._missed(ip)
 
             location = geo.get("location", {})
             lat = location.get("lat") if isinstance(location, dict) else None
@@ -446,6 +533,8 @@ class GeoIPService:
                 longitude=lon,
                 asn=asn_number,
                 organization=org_name,
+                source="traffic",
+                seen_at=src.get("@timestamp"),
             )
 
             # Cache the result
@@ -459,12 +548,53 @@ class GeoIPService:
 
             return result
 
+        # OLD CODE START — NET-237 (GEO-4): a failed query read as "no answer", which lookup()
+        # then cached for good as "Unknown"
+        # except Exception as exc:
+        #     logger.debug("OpenSearch GeoIP lookup failed for %s: %s", ip, exc)
+        #     return None
+        # OLD CODE END
         except Exception as exc:
-            logger.debug("OpenSearch GeoIP lookup failed for %s: %s", ip, exc)
-            return None
+            # OLD CODE: logger.warning("OpenSearch GeoIP lookup failed for %s: %s", ip, exc) (L3: %s let
+            # a newline in either start a forged log line)
+            logger.warning("OpenSearch GeoIP lookup failed for %r: %r", ip, exc)
+            raise GeoLookupFailed(f"GeoIP lookup for {ip!r} failed") from exc
 
-    @lru_cache(maxsize=4096)
+    def _missed(self, ip: str) -> None:
+        """No geo session for `ip` yet: skip OpenSearch for it until MISS_TTL_SECONDS pass."""
+        with self._os_lock:
+            if len(self._os_missing) >= self._OS_CACHE_MAX:
+                self._os_missing.clear()
+            self._os_missing[ip] = time.monotonic() + MISS_TTL_SECONDS
+        return None
+
+    # OLD CODE START — NET-237 (GEO-4): cached every answer for the daemon's life, an "Unknown"
+    # from a failed query included
+    # @lru_cache(maxsize=4096)
+    # def lookup(self, ip: str) -> GeoIPResult:
+    # OLD CODE END
     def lookup(self, ip: str) -> GeoIPResult:
+        """GeoIP data for one address, its source said, with no city or point for anycast.
+
+        Raises GeoLookupFailed when OpenSearch doesn't answer. Answers found in OpenSearch are
+        kept in `_os_cache`, misses for MISS_TTL_SECONDS, errors not at all.
+        """
+        r = self._resolve(ip)
+        if not is_anycast(ip):
+            return r
+        return GeoIPResult(
+            ip=r.ip,
+            country=r.country,
+            country_code=r.country_code,
+            asn=r.asn,
+            organization=r.organization,
+            is_private=r.is_private,
+            source=r.source,
+            seen_at=r.seen_at,
+            anycast=True,
+        )
+
+    def _resolve(self, ip: str) -> GeoIPResult:
         """Look up GeoIP data for a single IP address.
 
         Resolution order:
@@ -481,6 +611,7 @@ class GeoIPService:
                 country="Private Network",
                 country_code="XX",
                 is_private=True,
+                source="private",
             )
 
         # Try MaxMind database
@@ -502,9 +633,11 @@ class GeoIPService:
                         longitude=location.get("longitude"),
                         asn=traits.get("autonomous_system_number"),
                         organization=traits.get("autonomous_system_organization"),
+                        source="maxmind",
                     )
             except Exception as exc:
-                logger.debug("MaxMind lookup failed for %s: %s", ip, exc)
+                # OLD CODE: logger.debug("MaxMind lookup failed for %s: %s", ip, exc) (L3)
+                logger.debug("MaxMind lookup failed for %r: %r", ip, exc)
 
         # Try OpenSearch enrichment data
         os_result = self._lookup_opensearch(ip)
@@ -521,6 +654,7 @@ class GeoIPService:
                 city=info.get("city"),
                 organization=info.get("org"),
                 asn=info.get("asn"),
+                source="builtin",
             )
 
         # Unknown public IP

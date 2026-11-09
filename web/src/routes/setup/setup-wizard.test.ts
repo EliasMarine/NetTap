@@ -43,7 +43,7 @@ function mockFetch(overrides: Responses = {}) {
 }
 
 async function chooseBridgeModeThenCreateAccount() {
-	const view = render(SetupPage, { props: { form: null } });
+	const view = render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 	const start = await screen.findByRole('button', { name: /Get started/ });
 	await waitFor(() => expect(start).not.toBeDisabled());
 	await fireEvent.click(start);
@@ -58,7 +58,7 @@ async function chooseBridgeModeThenCreateAccount() {
 
 /** Mirror mode: Welcome → Capture Mode → Interfaces → Storage → Enrichment (UniFi on) → Account */
 async function walkMirrorModeWithUnifiThenCreateAccount() {
-	const view = render(SetupPage, { props: { form: null } });
+	const view = render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 	const start = await screen.findByRole('button', { name: /Get started/ });
 	await waitFor(() => expect(start).not.toBeDisabled());
 	await fireEvent.click(start);
@@ -160,6 +160,27 @@ describe('setup wizard after account creation', () => {
 		expect(screen.queryByText('Bridge not fully healthy')).not.toBeInTheDocument();
 	});
 
+	// F6: /api/health answers 200 from the web container even with the daemon down, so the row read
+	// "Running" whenever the web app was up; whether the daemon answered is in its `daemon.status`
+	it('fails the NetTap daemon row when the daemon is unreachable', async () => {
+		mockFetch({ 'GET /api/health': { body: { status: 'healthy', daemon: { status: 'unreachable', error: 'Could not connect to daemon' } } } });
+		await chooseBridgeModeThenCreateAccount();
+
+		const row = (await screen.findByText('NetTap daemon')).closest('li') as HTMLElement;
+		await waitFor(() => expect(row).toHaveTextContent('Not responding'));
+		expect(row).toHaveClass('is-fail');
+		expect(row).not.toHaveTextContent('Running');
+	});
+
+	it('passes the NetTap daemon row when the daemon answers', async () => {
+		mockFetch({ 'GET /api/health': { body: { status: 'healthy', daemon: { status: 'ok' } } } });
+		await chooseBridgeModeThenCreateAccount();
+
+		const row = (await screen.findByText('NetTap daemon')).closest('li') as HTMLElement;
+		await waitFor(() => expect(row).toHaveTextContent('Running'));
+		expect(row).toHaveClass('is-pass');
+	});
+
 	it('never leaves a row on "Checking…" when a check gets an error status', async () => {
 		mockFetch({
 			'GET /api/settings/excluded-ips': { status: 500, body: { error: 'boom' } },
@@ -204,7 +225,7 @@ describe('setup wizard UniFi test connection', () => {
 				body: { success: false, status: { last_error: 'Invalid API key' } },
 			},
 		});
-		render(SetupPage, { props: { form: null } });
+		render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 		const start = await screen.findByRole('button', { name: /Get started/ });
 		await waitFor(() => expect(start).not.toBeDisabled());
 		await fireEvent.click(start);
@@ -238,7 +259,7 @@ const DHCP_NICS: Responses = {
 };
 
 async function startWizard() {
-	const view = render(SetupPage, { props: { form: null } });
+	const view = render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 	const start = await screen.findByRole('button', { name: /Get started/ });
 	await waitFor(() => expect(start).not.toBeDisabled());
 	await fireEvent.click(start);
@@ -261,15 +282,31 @@ async function walkToDhcpStep(routerPort = 'eth1') {
 }
 
 describe('setup wizard capture mode choice', () => {
-	it('shows DHCP Gateway first and marks it Recommended instead of Mirror', async () => {
+	// OLD CODE START — NET-225 (B-n): DHCP gateway was "Recommended", though it has never run on hardware
+	// it('shows DHCP Gateway first and marks it Recommended instead of Mirror', async () => {
+	// 	…expect(cards[0].textContent).toContain('Recommended');
+	// 	…expect(cards[1].textContent).not.toContain('Recommended');
+	// });
+	// OLD CODE END
+	it('labels mirror as the mode tested on hardware and the others as not yet tested', async () => {
 		mockFetch();
 		const view = await startWizard();
 
 		const cards = view.container.querySelectorAll('.mode-cards .mode-card');
 		expect(cards[0].textContent).toContain('DHCP gateway');
-		expect(cards[0].textContent).toContain('Recommended');
+		expect(cards[0].textContent).toContain('Not yet tested on hardware');
+		expect(cards[0].textContent).toContain('Devices with a fixed IP address bypass NetTap');
 		expect(cards[1].textContent).toContain('Mirror / SPAN');
-		expect(cards[1].textContent).not.toContain('Recommended');
+		expect(cards[1].textContent).toContain('Tested on hardware');
+		expect(cards[1].textContent).not.toContain('Not yet tested');
+		expect(view.container.textContent).not.toContain('Recommended');
+
+		// inline bridge states the address-translation limit instead of "Sees all WAN ingress and egress"
+		const bridge = screen.getByRole('button', { name: /Inline bridge/ }).textContent?.replace(/\s+/g, ' ');
+		expect(bridge).toContain('Not yet tested on hardware');
+		expect(bridge).toContain("after your router's address translation, so all your devices' IPv4 traffic shows up as the router");
+		expect(bridge).toContain("No per-device view: devices share the router's IPv4 address");
+		expect(bridge).not.toContain('Sees all WAN');
 	});
 
 	it('keeps the inline bridge inside a collapsed Advanced section until it is opened', async () => {
@@ -316,7 +353,7 @@ describe('setup wizard capture mode choice', () => {
 describe('setup wizard storage step', () => {
 	it('says alerts follow the Hot tier and PCAP records all traffic', async () => {
 		mockFetch({ 'GET /api/setup/storage': { body: { disk_used_gb: 128, disk_free_gb: 1626, disk_total_gb: 1830, disk_usage_percent: 7 } } });
-		render(SetupPage, { props: { form: null } });
+		render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 		const start = await screen.findByRole('button', { name: /Get started/ });
 		await waitFor(() => expect(start).not.toBeDisabled());
 		await fireEvent.click(start);

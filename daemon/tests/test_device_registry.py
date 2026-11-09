@@ -11,6 +11,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from services.device_registry import DeviceRegistry, DEVICES_INDEX
+from services.excluded_ips import CONN_ACCOUNTING
+from tests.test_devices_api import _answering
 
 
 # ---------------------------------------------------------------------------
@@ -360,19 +362,23 @@ class TestGetDeviceTraffic:
                 "ips": ["192.168.1.100"],
             }
         }
-        # Second call: search for traffic
-        mock_client.search.return_value = {
-            "hits": {"total": {"value": 42}},
-            "aggregations": {
-                "total_bytes": {"value": 1048576},
-                "protocols": {"buckets": [{"key": "tcp", "doc_count": 30}]},
-                "top_destinations": {
-                    "buckets": [
-                        {"key": "8.8.8.8", "doc_count": 10},
-                    ]
+        # Then the traffic search (NET-226: after the MAC's IPv6, which finds none here)
+        mock_client.search.side_effect = _answering(
+            {
+                "hits": {"total": {"value": 42}},
+                "aggregations": {
+                    "src": {"value": 1048576},
+                    "protocols": {"buckets": [{"key": "tcp", "doc_count": 30}]},
+                    "started": {
+                        "top_destinations": {
+                            "buckets": [
+                                {"key": "8.8.8.8", "doc_count": 10},
+                            ]
+                        }
+                    },
                 },
-            },
-        }
+            }
+        )
 
         result = registry.get_device_traffic(
             "AA:BB:CC:DD:EE:FF",
@@ -387,7 +393,8 @@ class TestGetDeviceTraffic:
         assert len(result["top_destinations"]) == 1
         # DNS/SSL logs and Suricata alerts share source.mac; only connections count
         filters = mock_client.search.call_args.kwargs["body"]["query"]["bool"]["filter"]
-        assert {"term": {"event.dataset": "conn"}} in filters
+        # OLD CODE: assert {"term": {"event.dataset": "conn"}} in filters (F1: final records only)
+        assert CONN_ACCOUNTING in filters
 
     def test_get_device_traffic_has_what_the_mac_page_shows(
         self, registry, mock_client
@@ -399,42 +406,70 @@ class TestGetDeviceTraffic:
         mock_client.get.return_value = {
             "_source": {"mac": "AA:BB:CC:DD:EE:FF", "ips": []}
         }
-        mock_client.search.return_value = {
-            "hits": {"total": {"value": 42}},
-            "aggregations": {
-                "total_bytes": {"value": 1500},
-                "outbound_bytes": {"value": 500},
-                "inbound_bytes": {"value": 1000},
-                "protocols": {"buckets": [{"key": "tcp", "doc_count": 30}]},
-                "top_destinations": {
-                    "buckets": [
-                        {"key": "8.8.8.8", "doc_count": 10, "bytes": {"value": 1000}},
-                    ]
+        # NET-226: both IP byte counts, and the same over the sessions the device answered
+        mock_client.search.side_effect = _answering(
+            {
+                "hits": {"total": {"value": 42}},
+                "aggregations": {
+                    "src": {"value": 500},
+                    "dst": {"value": 1000},
+                    "answered": {"src": {"value": 200}, "dst": {"value": 50}},
+                    "protocols": {"buckets": [{"key": "tcp", "doc_count": 30}]},
+                    "started": {
+                        "top_destinations": {
+                            "buckets": [
+                                {
+                                    "key": "8.8.8.8",
+                                    "doc_count": 10,
+                                    "src": {"value": 100},
+                                    "dst": {"value": 900},
+                                },
+                            ]
+                        }
+                    },
                 },
-            },
-        }
+            }
+        )
 
         result = registry.get_device_traffic(
             "AA:BB:CC:DD:EE:FF", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
         )
 
-        assert result["inbound_bytes"] == 1000
-        assert result["outbound_bytes"] == 500
+        # OLD CODE START — NET-226: in/out were the originator's bytes of the sessions it started
+        # assert result["inbound_bytes"] == 1000
+        # assert result["outbound_bytes"] == 500
+        # OLD CODE END
+        # on the sessions it answered the responder's 50 B are its upload, the 200 B its download
+        assert result["inbound_bytes"] == 1000 - 50 + 200
+        assert result["outbound_bytes"] == 500 - 200 + 50
+        assert result["total_bytes"] == 1500
         assert result["top_destinations"] == [
             {"ip": "8.8.8.8", "connections": 10, "bytes": 1000}
         ]
         assert result["top_protocols"] == [{"name": "tcp", "count": 30}]
         aggs = mock_client.search.call_args.kwargs["body"]["aggs"]
-        assert aggs["outbound_bytes"] == {
-            "sum": {"field": "source.bytes", "missing": 0}
-        }
-        assert aggs["inbound_bytes"] == {
-            "sum": {"field": "destination.bytes", "missing": 0}
-        }
+        # OLD CODE START — NET-226: renamed src/dst, with the answered side beside them
+        # assert aggs["outbound_bytes"] == {
+        #     "sum": {"field": "source.bytes", "missing": 0}
+        # }
+        # assert aggs["inbound_bytes"] == {
+        #     "sum": {"field": "destination.bytes", "missing": 0}
+        # }
+        # # ranked by the bytes the page draws, not by connection count
+        # assert aggs["top_destinations"]["terms"]["order"] == {"bytes": "desc"}
+        # # #90: ranking by a sum is only exact when each shard returns every destination
+        # assert aggs["top_destinations"]["terms"]["shard_size"] >= 10_000
+        # OLD CODE END
+        assert aggs["src"] == {"sum": {"field": "source.bytes", "missing": 0}}
+        assert aggs["dst"] == {"sum": {"field": "destination.bytes", "missing": 0}}
+        destinations = aggs["started"]["aggs"]["top_destinations"]
         # ranked by the bytes the page draws, not by connection count
-        assert aggs["top_destinations"]["terms"]["order"] == {"bytes": "desc"}
+        assert destinations["terms"]["order"] == {"order_bytes": "desc"}
+        assert destinations["aggs"]["order_bytes"] == {
+            "sum": {"field": "network.bytes"}
+        }
         # #90: ranking by a sum is only exact when each shard returns every destination
-        assert aggs["top_destinations"]["terms"]["shard_size"] >= 10_000
+        assert destinations["terms"]["shard_size"] >= 10_000
 
     def test_get_device_traffic_error_raises(self, registry, mock_client):
         """#96: a failed query raises; zeros read as a device with no traffic."""

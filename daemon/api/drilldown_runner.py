@@ -17,8 +17,10 @@ from typing import Any, Callable, TypeVar
 
 from aiohttp import web
 
+from api.error_replies import public_json
 from api.alerts import _sparkline_interval
 from services.excluded_ips import (
+    CONN_ACCOUNTING,
     RFC1918_CIDRS,
     RFC1918_SOURCE_FILTER,
     cidr,
@@ -53,7 +55,8 @@ class SlotBusy(Exception):
 
 
 def json_error(message: str, status: int) -> web.Response:
-    return web.json_response({"error": message}, status=status)
+    # OLD CODE: return web.json_response({"error": message}, status=status) (NET-229: callers pass written messages)
+    return public_json({"error": message}, status=status)
 
 
 def ip_param(raw: Any) -> str | None:
@@ -96,10 +99,16 @@ LAST_SEEN = {"last": {"max": {"field": "@timestamp"}}}
 
 
 def zeek(dataset: str) -> list[dict]:
-    """The filters for one Zeek log (conn, dns, ssl, http)."""
+    """The filters for one Zeek log (conn, dns, ssl, http); conn is final records only."""
+    # OLD CODE START — F1: conn also matched conn_long.log interim records
+    # return [
+    #     {"term": {"event.provider": "zeek"}},
+    #     {"term": {"event.dataset": dataset}},
+    # ]
+    # OLD CODE END
     return [
         {"term": {"event.provider": "zeek"}},
-        {"term": {"event.dataset": dataset}},
+        CONN_ACCOUNTING if dataset == "conn" else {"term": {"event.dataset": dataset}},
     ]
 
 
@@ -227,6 +236,7 @@ async def run_drilldown(
         return json_error(_SLOW, 503)
     except QueryFailed as exc:
         logger.error("Drill-down for %s failed: %s", subject, exc)
+        # QueryFailed carries a written label ("address peers timed out"), never OpenSearch text
         return json_error(f"Couldn't read the network data: {exc}.", 502)
     except Exception:
         logger.exception("Drill-down for %s failed unexpectedly", subject)

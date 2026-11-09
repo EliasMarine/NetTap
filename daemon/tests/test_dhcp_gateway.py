@@ -536,6 +536,35 @@ class TestEnable:
         ok, _ = _run(mgr.enable)
         assert ok is True
 
+    # Security delta D4: a failed command's stderr goes to the log, never into the reply
+    @pytest.mark.parametrize(
+        "prefix",
+        [
+            ("ip", "addr", "add"),
+            ("iptables-nft", "-w", "-t", "nat", "-I"),
+            ("ethtool",),
+        ],
+    )
+    def test_command_stderr_stays_in_the_log(self, env, caplog, prefix):
+        env.host.fail.append(prefix)
+        mgr = env.make()
+        _, body = _run(mgr.enable)
+        assert "injected failure" not in json.dumps(body)
+        assert "injected failure" in caplog.text
+
+    def test_a_failed_save_on_disable_shows_the_reason_not_the_path(self, env):
+        mgr = env.make()
+
+        async def scenario():
+            await mgr.enable()
+            boom = OSError(30, "Read-only file system", "/host/private/capture.json")
+            with patch.object(dhcp_gateway, "save_capture_config", side_effect=boom):
+                return await mgr.disable()
+
+        text = json.dumps(_run(scenario))
+        assert "Read-only file system" in text
+        assert "/host/private" not in text
+
     def test_writes_boot_files(self, env):
         mgr = env.make()
         _run(mgr.enable)
@@ -633,6 +662,19 @@ class TestEnable:
         assert env.host.rules == set()
         assert "10.77.0.1/24" not in env.host.addrs[IFACE]
         self._assert_untouched(env, mgr)
+
+    # NET-229 follow-up: NetTap's own RuntimeError messages are shown; any other error stays in the log
+    def test_an_unexpected_enable_error_keeps_its_text_in_the_log(self, env, caplog):
+        mgr = env.make()
+        boom = PermissionError(
+            13, "Permission denied", "/host/etc/private/netplan.yaml"
+        )
+        with patch.object(mgr, "_apply", AsyncMock(side_effect=boom)):
+            ok, body = _run(mgr.enable)
+        assert ok is False
+        assert "/host/etc/private" not in body["error"]
+        assert "daemon log" in body["error"]
+        assert "/host/etc/private" in caplog.text
 
     def test_rollback_keeps_preexisting_gateway_address(self, env):
         env.host.addrs[IFACE].append("10.77.0.1/24")
@@ -1029,6 +1071,24 @@ class TestTeardown:
         assert not (env.dirs["netplan"] / "90-nettap-dhcp-gateway.yaml").exists()
         assert not any(c[0] == "iptables-legacy" and "-D" in c for c in env.host.calls)
 
+    # NET-229 follow-up: teardown errors reach the Settings page; command stderr stays in the log
+    def test_failed_commands_keep_their_stderr_in_the_log(self, env, caplog):
+        mgr = env.make()
+
+        async def scenario():
+            await mgr.enable()
+            env.host.fail += [
+                ("ip", "addr", "del"),
+                ("iptables-nft", "-w", "-t", "nat", "-D"),
+            ]
+            return await mgr.teardown()
+
+        result = _run(scenario)
+        assert result["torn_down"] is False
+        assert result["errors"]
+        assert not any("injected failure" in e for e in result["errors"])
+        assert "injected failure" in caplog.text
+
     def test_teardown_without_enable_is_safe(self, env):
         mgr = env.make()
         result = _run(mgr.teardown)
@@ -1126,14 +1186,17 @@ class TestDnsmasqProcess:
         async def scenario():
             await proc.start([sys.executable, "-c", script], str(tmp_path))
 
-        with pytest.raises(RuntimeError, match="exit code 2.*failed to bind"):
+        # OLD CODE: pytest.raises(RuntimeError, match="exit code 2.*failed to bind") (D4: dnsmasq's line is logged, not shown)
+        with pytest.raises(RuntimeError, match="exit code 2") as exc:
             asyncio.run(scenario())
+        assert "failed to bind" not in str(exc.value)
         assert proc.running is False
 
     def test_missing_binary_raises(self, tmp_path):
         proc = DnsmasqProcess()
-        with pytest.raises(RuntimeError, match="Could not start dnsmasq"):
+        with pytest.raises(RuntimeError, match="Could not start dnsmasq") as exc:
             asyncio.run(proc.start([str(tmp_path / "no-such-dnsmasq")], str(tmp_path)))
+        assert str(tmp_path) not in str(exc.value)  # D4: the reason, not the path
 
     def test_kill_after_sigterm_timeout(self, tmp_path):
         proc = DnsmasqProcess()

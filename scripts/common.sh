@@ -316,3 +316,21 @@ get_nic_mac() {
     local iface="$1"
     cat "/sys/class/net/${iface}/address" 2>/dev/null || echo "unknown"
 }
+
+# ---------------------------------------------------------------------------
+# First-run setup code (A13, NET-229)
+# ---------------------------------------------------------------------------
+# shellcheck disable=SC2034  # used by install/ui.sh and install/activate-bridge.sh
+NETTAP_SETUP_CODE_CMD="sudo docker exec nettap-web cat /var/lib/nettap-web/setup-code"
+
+# Print the one-time code the setup wizard asks for. nettap-web writes it when it starts with no
+# admin account; once an admin exists there is none and this prints nothing. Waits up to 60 s for
+# the container to start. Needs root (docker).
+nettap_setup_code() {
+    local i
+    for (( i = 0; i < 30; i++ )); do
+        if docker exec nettap-web cat /var/lib/nettap-web/setup-code 2>/dev/null; then return 0; fi
+        if docker exec nettap-web test -e /var/lib/nettap-web/users.json 2>/dev/null; then return 0; fi
+        sleep 2
+    done
+}

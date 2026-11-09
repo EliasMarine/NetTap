@@ -22,6 +22,10 @@ export interface TrafficSummary {
 	total_bytes: number;
 	orig_bytes: number;
 	resp_bytes: number;
+	/** NET-226: bytes to the internet, from the internet, and between your own devices; they add up to total_bytes */
+	upload_bytes: number;
+	download_bytes: number;
+	local_bytes: number;
 	packet_count: number;
 	connection_count: number;
 	top_protocol: string;
@@ -77,6 +81,10 @@ export interface BandwidthPoint {
 	timestamp: string;
 	orig_bytes: number;
 	resp_bytes: number;
+	/** NET-226: as on TrafficSummary */
+	upload_bytes: number;
+	download_bytes: number;
+	local_bytes: number;
 	total_bytes: number;
 	connections: number;
 }

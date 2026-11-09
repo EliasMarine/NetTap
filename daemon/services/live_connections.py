@@ -23,7 +23,13 @@ from typing import Any
 from opensearchpy import OpenSearch, OpenSearchException
 
 from api.alerts import SURICATA_NOISE_EXCLUSION, rule_categories
-from services.excluded_ips import RFC1918_SOURCE_FILTER, lan_subnets_of
+from services.excluded_ips import (
+    CONN_ACCOUNTING,
+    CONN_RECORDS,
+    RFC1918_SOURCE_FILTER,
+    lan_subnets_of,
+)
+from services.geoip_service import ANYCAST_IPS, is_anycast
 from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.live_connections")
@@ -35,6 +41,13 @@ MAX_CONNECTIONS = 10_000
 
 # Rate calculation window in seconds
 RATE_WINDOW_SECONDS = 60
+
+# NET-237 (TRF-1): Zeek writes a conn record when the connection ends, stamped with its start, so
+# the live window selects records by their end; a long stream appears once it closes
+LIVE_WINDOW_FILTER: dict = {"range": {"event.end": {"gte": "now-5m", "lte": "now"}}}
+LIVE_SORT: list[dict] = [{"event.end": {"order": "desc"}}]
+# NET-237 (GEO-5): anycast addresses answer from many places, so they belong to no country
+ANYCAST_DESTINATION: dict = {"terms": {"destination.ip": sorted(ANYCAST_IPS)}}
 
 
 def _flatten(value: Any) -> str:
@@ -53,6 +66,18 @@ def _epoch_ms(value: Any) -> float | None:
         return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp() * 1000
     except ValueError:
         return None
+
+
+def _iso_utc(value: Any) -> str:
+    """An ISO-8601 UTC time from Malcolm's epoch-ms text, a number or an ISO date; "" if none."""
+    ms = _epoch_ms(value) if value not in (None, "") else None
+    if ms is None:
+        return ""
+    return (
+        datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _duration_seconds(source: dict[str, Any], event: dict[str, Any]) -> float:
@@ -264,20 +289,27 @@ class LiveConnectionTracker:
 
         filters: list[dict] = [
             {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "conn"}},
+            # OLD CODE START — F1: also counted conn_long.log interim records
+            # {"term": {"event.dataset": "conn"}},
+            # OLD CODE END
+            CONN_ACCOUNTING,
         ]
 
-        # Time filter: last 5 minutes for "active" connections
-        filters.append(
-            {
-                "range": {
-                    "@timestamp": {
-                        "gte": "now-5m",
-                        "lte": "now",
-                    }
-                }
-            }
-        )
+        # OLD CODE START — NET-237 (TRF-1): a record's @timestamp is its start, so a long
+        # connection never entered the window, even after it ended
+        # # Time filter: last 5 minutes for "active" connections
+        # filters.append(
+        #     {
+        #         "range": {
+        #             "@timestamp": {
+        #                 "gte": "now-5m",
+        #                 "lte": "now",
+        #             }
+        #         }
+        #     }
+        # )
+        # OLD CODE END
+        filters.append(LIVE_WINDOW_FILTER)
 
         if device:
             filters.append(
@@ -307,7 +339,8 @@ class LiveConnectionTracker:
         query = {
             "size": min(limit, 500),
             "query": {"bool": {"filter": filters}},
-            "sort": [{"@timestamp": {"order": "desc"}}],
+            # OLD CODE: "sort": [{"@timestamp": {"order": "desc"}}], (NET-237: newest-ended first)
+            "sort": LIVE_SORT,
         }
 
         # OLD CODE START — #96: a failure served the in-memory cache (old, or empty) as live
@@ -408,6 +441,9 @@ class LiveConnectionTracker:
         location = geo.get("location", {}) or {}
         dest_lat = location.get("lat") if isinstance(location, dict) else None
         dest_lon = location.get("lon") if isinstance(location, dict) else None
+        anycast = is_anycast(place.get("ip", ""))
+        if anycast:  # NET-237: served from many places, so no one city or point is true
+            dest_lat = dest_lon = None
 
         # Extract ASN organization name — may be nested dict or string
         org_name = dst_as.get("organization", {})
@@ -448,11 +484,15 @@ class LiveConnectionTracker:
             # --- Live Monitor Redesign: geo + ASN fields ---
             "dest_lat": dest_lat,
             "dest_lon": dest_lon,
-            "dest_city": geo.get("city_name", ""),
+            # OLD CODE: "dest_city": geo.get("city_name", ""), (NET-237: none for anycast)
+            "dest_city": "" if anycast else geo.get("city_name", ""),
             "dest_asn": dst_as.get("number"),
             "dest_org": org_name,
             "geo_ip": geo_ip,
             "has_alert": False,
+            "anycast": anycast,
+            # NET-237: the live window is by end, so the feed shows and sorts by it
+            "ended_at": _iso_utc(event.get("end") or source.get("lastPacket")),
         }
 
     # ------------------------------------------------------------------
@@ -460,9 +500,20 @@ class LiveConnectionTracker:
     # ------------------------------------------------------------------
 
     # Zeek conn event filters (same as traffic.py _ZEEK_CONN_FILTERS)
+    # OLD CODE START — F1: also counted conn_long.log interim records
+    # _ZEEK_CONN_FILTERS: list[dict] = [
+    #     {"term": {"event.provider": "zeek"}},
+    #     {"term": {"event.dataset": "conn"}},
+    # ]
+    # OLD CODE END
     _ZEEK_CONN_FILTERS: list[dict] = [
         {"term": {"event.provider": "zeek"}},
-        {"term": {"event.dataset": "conn"}},
+        CONN_ACCOUNTING,
+    ]
+    # Every conn record, interim included: an open connection's geo/ASN is still evidence
+    _ZEEK_CONN_RAW_FILTERS: list[dict] = [
+        {"term": {"event.provider": "zeek"}},
+        CONN_RECORDS,
     ]
 
     # Suricata alert filters (same as alerts.py _SURICATA_ALERT_FILTERS)
@@ -521,7 +572,8 @@ class LiveConnectionTracker:
         # --- Build filters for the Zeek connections query ---
         conn_filters: list[dict] = [
             *self._ZEEK_CONN_FILTERS,
-            {"range": {"@timestamp": {"gte": "now-5m", "lte": "now"}}},
+            # OLD CODE: {"range": {"@timestamp": {"gte": "now-5m", "lte": "now"}}}, (NET-237)
+            LIVE_WINDOW_FILTER,
         ]
 
         if device:
@@ -563,7 +615,8 @@ class LiveConnectionTracker:
             "size": min(limit, 500),
             "track_total_hits": True,
             "query": {"bool": bool_clause},
-            "sort": [{"@timestamp": {"order": "desc"}}],
+            # OLD CODE: "sort": [{"@timestamp": {"order": "desc"}}], (NET-237: newest-ended first)
+            "sort": LIVE_SORT,
             "aggs": {
                 "protocols": {
                     "terms": {"field": "network.transport", "size": 10},
@@ -623,59 +676,92 @@ class LiveConnectionTracker:
                         },
                     },
                 },
-                "geo_destinations": {
-                    "terms": {
-                        "field": "destination.geo.city_name",
-                        "size": 20,
-                    },
+                # OLD CODE: geo_destinations, geo_countries and top_country sat here, at the top level,
+                # so anycast destinations added to a country (NET-237, GEO-5)
+                "geo": {
+                    "filter": {"bool": {"must_not": [ANYCAST_DESTINATION]}},
                     "aggs": {
-                        "total_bytes": {
-                            "sum": {
-                                "script": {
-                                    "source": self._PAINLESS_BYTE_SUM,
-                                    "lang": "painless",
-                                }
-                            }
+                        "geo_destinations": {
+                            "terms": {
+                                "field": "destination.geo.city_name",
+                                "size": 20,
+                            },
+                            "aggs": {
+                                "total_bytes": {
+                                    "sum": {
+                                        "script": {
+                                            "source": self._PAINLESS_BYTE_SUM,
+                                            "lang": "painless",
+                                        }
+                                    }
+                                },
+                                "country": {
+                                    "terms": {
+                                        "field": "destination.geo.country_name",
+                                        "size": 1,
+                                    }
+                                },
+                                "country_code": {
+                                    "terms": {
+                                        "field": "destination.geo.country_iso_code",
+                                        "size": 1,
+                                    }
+                                },
+                                "location": {
+                                    "top_hits": {
+                                        "size": 1,
+                                        "_source": ["destination.geo.location"],
+                                        "sort": [{"@timestamp": {"order": "desc"}}],
+                                    }
+                                },
+                            },
                         },
-                        "country": {
+                        "geo_countries": {
+                            "terms": {
+                                "field": "destination.geo.country_iso_code",
+                                "size": 30,
+                            },
+                            "aggs": {
+                                "country_name": {
+                                    "terms": {
+                                        "field": "destination.geo.country_name",
+                                        "size": 1,
+                                    }
+                                },
+                                "top_city": {
+                                    "terms": {
+                                        "field": "destination.geo.city_name",
+                                        "size": 1,
+                                    }
+                                },
+                                "total_bytes": {
+                                    "sum": {
+                                        "script": {
+                                            "source": self._PAINLESS_BYTE_SUM,
+                                            "lang": "painless",
+                                        }
+                                    }
+                                },
+                                "location": {
+                                    "top_hits": {
+                                        "size": 1,
+                                        "_source": ["destination.geo.location"],
+                                        "sort": [{"@timestamp": {"order": "desc"}}],
+                                    }
+                                },
+                            },
+                        },
+                        "top_country": {
                             "terms": {
                                 "field": "destination.geo.country_name",
                                 "size": 1,
-                            }
-                        },
-                        "country_code": {
-                            "terms": {
-                                "field": "destination.geo.country_iso_code",
-                                "size": 1,
-                            }
-                        },
-                        "location": {
-                            "top_hits": {
-                                "size": 1,
-                                "_source": ["destination.geo.location"],
-                                "sort": [{"@timestamp": {"order": "desc"}}],
                             }
                         },
                     },
                 },
-                "geo_countries": {
-                    "terms": {
-                        "field": "destination.geo.country_iso_code",
-                        "size": 30,
-                    },
+                "anycast": {
+                    "filter": ANYCAST_DESTINATION,
                     "aggs": {
-                        "country_name": {
-                            "terms": {
-                                "field": "destination.geo.country_name",
-                                "size": 1,
-                            }
-                        },
-                        "top_city": {
-                            "terms": {
-                                "field": "destination.geo.city_name",
-                                "size": 1,
-                            }
-                        },
                         "total_bytes": {
                             "sum": {
                                 "script": {
@@ -683,14 +769,7 @@ class LiveConnectionTracker:
                                     "lang": "painless",
                                 }
                             }
-                        },
-                        "location": {
-                            "top_hits": {
-                                "size": 1,
-                                "_source": ["destination.geo.location"],
-                                "sort": [{"@timestamp": {"order": "desc"}}],
-                            }
-                        },
+                        }
                     },
                 },
                 "total_bytes_in": {"sum": {"field": "source.bytes", "missing": 0}},
@@ -705,12 +784,6 @@ class LiveConnectionTracker:
                 "active_devices": {
                     "filter": lan_filter or RFC1918_SOURCE_FILTER,
                     "aggs": {"n": {"cardinality": {"field": "source.ip"}}},
-                },
-                "top_country": {
-                    "terms": {
-                        "field": "destination.geo.country_name",
-                        "size": 1,
-                    }
                 },
             },
         }
@@ -838,8 +911,11 @@ class LiveConnectionTracker:
             aggs.get("active_devices", {}).get("n", {}).get("value", 0) or 0
         )
 
-        # Top country
-        top_country_buckets = aggs.get("top_country", {}).get("buckets", [])
+        # Top country, and the map below: anycast destinations are counted on their own
+        # OLD CODE: top_country_buckets = aggs.get("top_country", {}).get("buckets", []) (NET-237)
+        geo_aggs = aggs.get("geo", {})
+        anycast = aggs.get("anycast", {})
+        top_country_buckets = geo_aggs.get("top_country", {}).get("buckets", [])
         top_country = top_country_buckets[0]["key"] if top_country_buckets else ""
 
         # OLD CODE START — 2026-11-06 (O6): percentages, which the page showed as connection counts,
@@ -983,7 +1059,8 @@ class LiveConnectionTracker:
         # Geo arcs (for the map): one per country with the country's own totals. The busiest
         # cities only place the dot, at the country's busiest city when that city is listed.
         city_locations: dict[tuple[str, str], tuple[Any, Any]] = {}
-        for bucket in aggs.get("geo_destinations", {}).get("buckets", []):
+        # OLD CODE: for bucket in aggs.get("geo_destinations", {}).get("buckets", []): (NET-237)
+        for bucket in geo_aggs.get("geo_destinations", {}).get("buckets", []):
             cc_b = bucket.get("country_code", {}).get("buckets", [])
             if cc_b:
                 city_locations[(cc_b[0]["key"], bucket.get("key", ""))] = (
@@ -991,7 +1068,8 @@ class LiveConnectionTracker:
                 )
 
         geo_arcs = []
-        for bucket in aggs.get("geo_countries", {}).get("buckets", []):
+        # OLD CODE: for bucket in aggs.get("geo_countries", {}).get("buckets", []): (NET-237)
+        for bucket in geo_aggs.get("geo_countries", {}).get("buckets", []):
             cc = bucket.get("key", "")
             if not cc:
                 continue
@@ -1031,6 +1109,11 @@ class LiveConnectionTracker:
             "protocols": protocols,
             "top_talkers": top_talkers,
             "geo_arcs": geo_arcs,
+            # left out of geo_arcs and top_country: no single place to put them
+            "geo_anycast": {
+                "count": anycast.get("doc_count", 0),
+                "bytes": anycast.get("total_bytes", {}).get("value", 0),
+            },
         }
 
     def fetch_connection_detail(
@@ -1089,7 +1172,10 @@ class LiveConnectionTracker:
 
         # --- Query A: Latest session with full geo/ASN ---
         session_filters: list[dict] = [
-            *self._ZEEK_CONN_FILTERS,
+            # OLD CODE START — F1: _ZEEK_CONN_FILTERS is final records only now
+            # *self._ZEEK_CONN_FILTERS,
+            # OLD CODE END
+            *self._ZEEK_CONN_RAW_FILTERS,
             {"range": {"@timestamp": {"gte": "now-24h", "lte": "now"}}},
             ip_pair_filter,
         ]
@@ -1286,6 +1372,7 @@ class LiveConnectionTracker:
     ) -> dict[str, Any]:
         """Extract geo/ASN info from a session query result for target_ip."""
         hits = session_result.get("hits", {}).get("hits", [])
+        anycast = is_anycast(target_ip)
         if not hits:
             return {
                 "ip": target_ip,
@@ -1296,6 +1383,7 @@ class LiveConnectionTracker:
                 "lon": None,
                 "asn": None,
                 "organization": "",
+                "anycast": anycast,
             }
 
         src_doc = hits[0].get("_source", {})
@@ -1323,15 +1411,28 @@ class LiveConnectionTracker:
             org_name = org_name.get("name", "")
         org_name = org_name or ""
 
+        # OLD CODE START — NET-237: an anycast address got one city and point
+        # return {
+        #     "ip": target_ip,
+        #     "country": geo.get("country_name", ""),
+        #     "country_code": geo.get("country_iso_code", ""),
+        #     "city": geo.get("city_name", ""),
+        #     "lat": lat,
+        #     "lon": lon,
+        #     "asn": as_info.get("number"),
+        #     "organization": org_name,
+        # }
+        # OLD CODE END
         return {
             "ip": target_ip,
             "country": geo.get("country_name", ""),
             "country_code": geo.get("country_iso_code", ""),
-            "city": geo.get("city_name", ""),
-            "lat": lat,
-            "lon": lon,
+            "city": "" if anycast else geo.get("city_name", ""),
+            "lat": None if anycast else lat,
+            "lon": None if anycast else lon,
             "asn": as_info.get("number"),
             "organization": org_name,
+            "anycast": anycast,
         }
 
     def _parse_alert_entry(self, source: dict) -> dict[str, Any] | None:
@@ -1411,6 +1512,7 @@ class LiveConnectionTracker:
             "protocols": {"tcp": 0, "udp": 0, "icmp": 0, "other": 0, "unknown": 0},
             "top_talkers": [],
             "geo_arcs": [],
+            "geo_anycast": {"count": 0, "bytes": 0},
         }
 
     @staticmethod

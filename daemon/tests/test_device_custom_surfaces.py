@@ -9,6 +9,7 @@ from services import device_custom as dc
 from services.config_backup import _NETTAP_VERSION, _SCHEMA_VERSION, ConfigBackup
 from services.device_custom import DeviceCustomStore
 from services.iot_monitor import IoTMonitor
+from services.notification_hub import NotificationHub
 from services.traffic_classifier import get_category_devices
 from tests.test_category_devices import _asn_page, _mock_device_response
 
@@ -115,9 +116,17 @@ def _backup(tmp_path, store) -> ConfigBackup:
             "capture_config",
             "retention_config",
             "device_baseline",
+            # A9: the owner files a backup now carries
+            "home_location",
+            "alert_acks",
+            "suppressions",
         )
     }
-    return ConfigBackup(config_paths=paths, device_custom=store)
+    # OLD CODE: return ConfigBackup(config_paths=paths, device_custom=store) (NET-224: notifications restore through the hub)
+    hub = NotificationHub(
+        config_path=paths["notification_config"], env_file=str(tmp_path / ".env")
+    )
+    return ConfigBackup(config_paths=paths, device_custom=store, notification_hub=hub)
 
 
 def test_a_backup_over_1_mib_round_trips(tmp_path):

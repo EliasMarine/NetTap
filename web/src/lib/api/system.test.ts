@@ -5,6 +5,10 @@ import {
 	getSmartHealth,
 	getIndices,
 	healthStage,
+	pipelineStage,
+	nothingFound,
+	type PipelineHealth,
+	type SystemHealth,
 } from './system';
 
 // ---------------------------------------------------------------------------
@@ -184,5 +188,95 @@ describe('healthStage', () => {
 
 	it('reads Unknown when an older daemon sends no status', () => {
 		expect(healthStage(undefined)).toEqual({ status: 'unknown', detail: 'Unknown' });
+	});
+});
+
+// F2: Home's Data stage and System's "Data and sensors" row read these words
+describe('pipelineStage', () => {
+	const RUNNING = {
+		'nettap-zeek-live': 'running',
+		'nettap-suricata-live': 'running',
+		'nettap-logstash': 'running',
+		'nettap-filebeat': 'running',
+	};
+	const pipeline = (over: Partial<PipelineHealth>): PipelineHealth => ({
+		state: 'fresh', newest_record_at: '2026-11-08T21:00:00+00:00', age_seconds: 40, threshold_seconds: 900,
+		sensors: RUNNING, checked_at: '2026-11-08T21:00:40+00:00', ...over,
+	});
+
+	it('says how old the newest record is when data is fresh', () => {
+		expect(pipelineStage(pipeline({ age_seconds: 40 }))).toEqual({ status: 'ok', detail: 'Newest record 40 s ago' });
+		expect(pipelineStage(pipeline({ age_seconds: 300 }))).toEqual({ status: 'ok', detail: 'Newest record 5 min ago' });
+	});
+
+	it('says how long nothing new has arrived, past a day too', () => {
+		expect(pipelineStage(pipeline({ state: 'stale', age_seconds: 47 * 60 }))).toEqual({ status: 'failing', detail: 'No new records for 47 min' });
+		expect(pipelineStage(pipeline({ state: 'stale', age_seconds: 5 * 3600 }))).toEqual({ status: 'failing', detail: 'No new records for 5 h' });
+		expect(pipelineStage(pipeline({ state: 'stale', age_seconds: 3 * 86400 }))).toEqual({ status: 'failing', detail: 'No new records for 3 days' });
+	});
+
+	it('names the stopped sensors in plain words', () => {
+		expect(pipelineStage(pipeline({ state: 'sensor_stopped', sensors: { ...RUNNING, 'nettap-suricata-live': 'exited' } }))).toEqual({
+			status: 'failing', detail: 'Suricata stopped',
+		});
+		const three = { ...RUNNING, 'nettap-zeek-live': 'exited', 'nettap-suricata-live': 'missing', 'nettap-filebeat': 'restarting' };
+		expect(pipelineStage(pipeline({ state: 'sensor_stopped', sensors: three })).detail).toBe('Zeek, Suricata and Filebeat stopped');
+	});
+
+	it('words the empty, starting and unchecked states', () => {
+		expect(pipelineStage(pipeline({ state: 'no_data', age_seconds: null }))).toEqual({ status: 'failing', detail: 'No records in the last 7 days' });
+		expect(pipelineStage(pipeline({ state: 'starting', age_seconds: null }))).toEqual({ status: 'warn', detail: 'Starting up' });
+		expect(pipelineStage(pipeline({ state: 'unknown', age_seconds: null }))).toEqual({ status: 'warn', detail: "Couldn't check" });
+	});
+
+	it('reads Unknown when an older daemon sends no pipeline', () => {
+		expect(pipelineStage(undefined)).toEqual({ status: 'unknown', detail: 'Unknown' });
+	});
+});
+
+// NET-228 (audit B5): a zero alert count is "can't tell" unless current data is arriving
+describe('nothingFound', () => {
+	const RUNNING = {
+		'nettap-zeek-live': 'running',
+		'nettap-suricata-live': 'running',
+		'nettap-logstash': 'running',
+		'nettap-filebeat': 'running',
+	};
+	const health = (pipeline?: Partial<PipelineHealth>): SystemHealth => ({
+		uptime: 1, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true,
+		...(pipeline && {
+			pipeline: {
+				state: 'fresh', newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: RUNNING, checked_at: '', ...pipeline,
+			},
+		}),
+	});
+	const NONE = 'No counted rule matches in this period';
+
+	it('keeps the stored-data sentence only while data is fresh, and labels the state as now', () => {
+		expect(nothingFound(NONE, health({ state: 'fresh' }), false)).toEqual({
+			trusted: true, title: NONE, detail: 'Data pipeline now: Newest record 40 s ago',
+		});
+	});
+
+	it.each([
+		[{ state: 'stale' as const, age_seconds: 47 * 60 }, 'Data pipeline now: No new records for 47 min'],
+		[{ state: 'no_data' as const, age_seconds: null }, 'Data pipeline now: No records in the last 7 days'],
+		[{ state: 'sensor_stopped' as const, sensors: { ...RUNNING, 'nettap-suricata-live': 'exited' } }, 'Data pipeline now: Suricata stopped'],
+		[{ state: 'starting' as const, age_seconds: null }, 'Data pipeline now: Starting up'],
+		[{ state: 'unknown' as const, age_seconds: null }, "Data pipeline now: Couldn't check"],
+	])('reads "can\'t tell" when the pipeline is %o', (pipeline, detail) => {
+		expect(nothingFound(NONE, health(pipeline), false)).toEqual({ trusted: false, title: "Can't tell if any rule matched", detail });
+	});
+
+	it("can't tell when the health request failed, an older daemon sent no pipeline, or it hasn't loaded", () => {
+		expect(nothingFound(NONE, health({ state: 'fresh' }), true)).toMatchObject({ trusted: false, detail: "Data pipeline now: Couldn't check" });
+		expect(nothingFound(NONE, health(), false)).toMatchObject({ trusted: false, detail: "Data pipeline now: Couldn't check" });
+		expect(nothingFound(NONE, null, false)).toMatchObject({ trusted: false, detail: 'Data pipeline now: Checking…' });
+	});
+
+	it('takes its own "unsure" words', () => {
+		expect(nothingFound('No alert groups to review in this period', health({ state: 'stale' }), false, "Can't tell if anything needs review").title).toBe(
+			"Can't tell if anything needs review",
+		);
 	});
 });

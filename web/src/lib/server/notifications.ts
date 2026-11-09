@@ -1,21 +1,18 @@
 /**
- * Server-side notification dispatcher.
+ * In-app notifications: the bell's list (a local JSON file store) and the live SSE stream.
  *
- * Supports three channels:
- *   - Email (via nodemailer, dynamic import with graceful fallback)
- *   - Webhook (POST JSON to configured URL)
- *   - In-app (local JSON file store)
+ * NOTIFY_INAPP_ENABLED (default true) turns the stored list off.
  *
- * Configuration is loaded from environment variables:
- *   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM, NOTIFY_EMAIL
- *   NOTIFY_WEBHOOK_URL
- *   NOTIFY_INAPP_ENABLED (default true)
- *   NOTIFY_SEVERITY_THRESHOLD (1=critical, 2=high, 3=medium, 4=low; default 3)
+ * NET-224: email, webhook and the other external channels are the daemon's
+ * (daemon/services/notification_hub.py); it sends alerts with or without a browser open.
+ * OLD CODE: this module also sent email (nodemailer) and webhooks from SMTP_HOST, SMTP_PORT,
+ * SMTP_USER, SMTP_PASS, SMTP_FROM, NOTIFY_EMAIL, NOTIFY_WEBHOOK_URL and NOTIFY_SEVERITY_THRESHOLD.
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { EventEmitter } from 'events';
+import { DATA_DIR } from './data-dir.js';
 
 // SSE broadcast emitter — all connected SSE clients receive notifications in real-time
 const notificationEmitter = new EventEmitter();
@@ -34,25 +31,27 @@ export function onNotification(callback: (notification: Notification) => void): 
 // Types
 // ---------------------------------------------------------------------------
 
-export interface NotificationConfig {
-	email: {
-		enabled: boolean;
-		recipients: string[];
-		smtpHost: string;
-		smtpPort: number;
-		smtpUser: string;
-		smtpPass: string;
-		smtpFrom: string;
-	};
-	webhook: {
-		enabled: boolean;
-		url: string;
-	};
-	inApp: {
-		enabled: boolean;
-	};
-	severityThreshold: number; // 1=critical, 2=high, 3=medium, 4=low
-}
+// OLD CODE START — NET-224: the daemon owns email/webhook settings and sends them; this read env vars compose never set, and email needed nodemailer, which the image doesn't have
+// export interface NotificationConfig {
+// 	email: {
+// 		enabled: boolean;
+// 		recipients: string[];
+// 		smtpHost: string;
+// 		smtpPort: number;
+// 		smtpUser: string;
+// 		smtpPass: string;
+// 		smtpFrom: string;
+// 	};
+// 	webhook: {
+// 		enabled: boolean;
+// 		url: string;
+// 	};
+// 	inApp: {
+// 		enabled: boolean;
+// 	};
+// 	severityThreshold: number; // 1=critical, 2=high, 3=medium, 4=low
+// }
+// OLD CODE END
 
 export interface Notification {
 	id: string;
@@ -66,6 +65,8 @@ export interface Notification {
 		src_ip?: string;
 		dest_ip?: string;
 		signature?: string;
+		/** NET-224 P2: the Suricata category, so the bell's alert batches notify once a day */
+		category?: string;
 	};
 }
 
@@ -73,48 +74,58 @@ export interface Notification {
 // Constants
 // ---------------------------------------------------------------------------
 
-const SEVERITY_LEVELS: Record<string, number> = {
-	critical: 1,
-	high: 2,
-	medium: 3,
-	low: 4,
-};
+// OLD CODE START — NET-224: the daemon owns email/webhook settings and sends them; this read env vars compose never set, and email needed nodemailer, which the image doesn't have
+// const SEVERITY_LEVELS: Record<string, number> = {
+// 	critical: 1,
+// 	high: 2,
+// 	medium: 3,
+// 	low: 4,
+// };
+// OLD CODE END
 
-const DATA_DIR = process.env.NETTAP_DATA_DIR || '/var/lib/nettap';
+// OLD CODE START — NET-224 P2: nettap-web is read_only and nothing is mounted here, so every write failed and the bell's history lived only in memory
+// const DATA_DIR = process.env.NETTAP_DATA_DIR || '/var/lib/nettap';
+// OLD CODE END
+// OLD CODE START — review L4: its own env name for the volume auth.ts reads as DATA_DIR
+// // The web-data volume: writable, owned by the image's nettap user (auth.ts keeps users.json there)
+// const DATA_DIR = process.env.NETTAP_DATA_DIR || '/var/lib/nettap-web';
+// OLD CODE END
 const NOTIFICATIONS_FILE = join(DATA_DIR, 'notifications.json');
-const MAX_STORED_NOTIFICATIONS = 200;
+export const MAX_STORED_NOTIFICATIONS = 200;
 
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
-
-/**
- * Load notification configuration from environment variables.
- */
-export function loadConfig(): NotificationConfig {
-	const emailRecipients = process.env.NOTIFY_EMAIL;
-	const smtpHost = process.env.SMTP_HOST || '';
-
-	return {
-		email: {
-			enabled: Boolean(smtpHost && emailRecipients),
-			recipients: emailRecipients ? emailRecipients.split(',').map((s) => s.trim()) : [],
-			smtpHost,
-			smtpPort: parseInt(process.env.SMTP_PORT || '587', 10),
-			smtpUser: process.env.SMTP_USER || '',
-			smtpPass: process.env.SMTP_PASS || '',
-			smtpFrom: process.env.SMTP_FROM || 'nettap@localhost',
-		},
-		webhook: {
-			enabled: Boolean(process.env.NOTIFY_WEBHOOK_URL),
-			url: process.env.NOTIFY_WEBHOOK_URL || '',
-		},
-		inApp: {
-			enabled: process.env.NOTIFY_INAPP_ENABLED !== 'false',
-		},
-		severityThreshold: parseInt(process.env.NOTIFY_SEVERITY_THRESHOLD || '3', 10),
-	};
-}
+// OLD CODE START — NET-224: the daemon owns email/webhook settings and sends them; this read env vars compose never set, and email needed nodemailer, which the image doesn't have
+// // ---------------------------------------------------------------------------
+// // Configuration
+// // ---------------------------------------------------------------------------
+//
+// /**
+//  * Load notification configuration from environment variables.
+//  */
+// export function loadConfig(): NotificationConfig {
+// 	const emailRecipients = process.env.NOTIFY_EMAIL;
+// 	const smtpHost = process.env.SMTP_HOST || '';
+//
+// 	return {
+// 		email: {
+// 			enabled: Boolean(smtpHost && emailRecipients),
+// 			recipients: emailRecipients ? emailRecipients.split(',').map((s) => s.trim()) : [],
+// 			smtpHost,
+// 			smtpPort: parseInt(process.env.SMTP_PORT || '587', 10),
+// 			smtpUser: process.env.SMTP_USER || '',
+// 			smtpPass: process.env.SMTP_PASS || '',
+// 			smtpFrom: process.env.SMTP_FROM || 'nettap@localhost',
+// 		},
+// 		webhook: {
+// 			enabled: Boolean(process.env.NOTIFY_WEBHOOK_URL),
+// 			url: process.env.NOTIFY_WEBHOOK_URL || '',
+// 		},
+// 		inApp: {
+// 			enabled: process.env.NOTIFY_INAPP_ENABLED !== 'false',
+// 		},
+// 		severityThreshold: parseInt(process.env.NOTIFY_SEVERITY_THRESHOLD || '3', 10),
+// 	};
+// }
+// OLD CODE END
 
 // ---------------------------------------------------------------------------
 // In-app notification store (JSON file)
@@ -171,110 +182,130 @@ function persistStore(notifications: Notification[]): void {
 	writeStore(notifications);
 }
 
-// ---------------------------------------------------------------------------
-// Email dispatch (dynamic nodemailer import)
-// ---------------------------------------------------------------------------
-
-async function sendEmail(
-	config: NotificationConfig['email'],
-	notification: Notification
-): Promise<void> {
-	try {
-		// Dynamic import — nodemailer is an optional dependency.
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const nodemailer: any = await (Function('return import("nodemailer")')() as Promise<any>);
-		const transporter = nodemailer.createTransport({
-			host: config.smtpHost,
-			port: config.smtpPort,
-			secure: config.smtpPort === 465,
-			auth:
-				config.smtpUser && config.smtpPass
-					? { user: config.smtpUser, pass: config.smtpPass }
-					: undefined,
-		});
-
-		const severityEmoji: Record<string, string> = {
-			critical: '[CRITICAL]',
-			high: '[HIGH]',
-			medium: '[MEDIUM]',
-			low: '[LOW]',
-		};
-
-		const prefix = severityEmoji[notification.severity] || '';
-
-		await transporter.sendMail({
-			from: config.smtpFrom,
-			to: config.recipients.join(', '),
-			subject: `${prefix} NetTap: ${notification.title}`,
-			text: [
-				`Severity: ${notification.severity.toUpperCase()}`,
-				`Type: ${notification.type}`,
-				`Time: ${notification.timestamp}`,
-				'',
-				notification.message,
-				'',
-				notification.source?.signature
-					? `Signature: ${notification.source.signature}`
-					: '',
-				notification.source?.src_ip
-					? `Source IP: ${notification.source.src_ip}`
-					: '',
-				notification.source?.dest_ip
-					? `Dest IP: ${notification.source.dest_ip}`
-					: '',
-			]
-				.filter(Boolean)
-				.join('\n'),
-			html: [
-				// colour-gate: allow-next-line email clients can't read CSS variables, so email HTML keeps literals
-				`<h2 style="color: ${notification.severity === 'critical' ? '#f85149' : notification.severity === 'high' ? '#d29922' : '#58a6ff'}">${prefix} ${notification.title}</h2>`,
-				`<p><strong>Severity:</strong> ${notification.severity.toUpperCase()}</p>`,
-				`<p><strong>Type:</strong> ${notification.type}</p>`,
-				`<p><strong>Time:</strong> ${notification.timestamp}</p>`,
-				`<p>${notification.message}</p>`,
-				notification.source?.signature
-					? `<p><strong>Signature:</strong> ${notification.source.signature}</p>`
-					: '',
-				notification.source?.src_ip
-					? `<p><strong>Source IP:</strong> <code>${notification.source.src_ip}</code></p>`
-					: '',
-				notification.source?.dest_ip
-					? `<p><strong>Dest IP:</strong> <code>${notification.source.dest_ip}</code></p>`
-					: '',
-			]
-				.filter(Boolean)
-				.join('\n'),
-		});
-	} catch (err) {
-		console.error(
-			'[notifications] Email dispatch failed:',
-			err instanceof Error ? err.message : err
-		);
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Webhook dispatch
-// ---------------------------------------------------------------------------
-
-async function sendWebhook(url: string, notification: Notification): Promise<void> {
-	try {
-		await fetch(url, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				event: 'nettap.notification',
-				notification,
-			}),
-			signal: AbortSignal.timeout(10_000),
-		});
-	} catch (err) {
-		console.error(
-			'[notifications] Webhook dispatch failed:',
-			err instanceof Error ? err.message : err
-		);
-	}
-}
+// OLD CODE START — NET-224: the daemon owns email/webhook settings and sends them; this read env vars compose never set, and email needed nodemailer, which the image doesn't have
+// // ---------------------------------------------------------------------------
+// // Email dispatch (dynamic nodemailer import)
+// // ---------------------------------------------------------------------------
+//
+// // OLD CODE START — F3: Promise<void>; it now resolves to the failure reason, undefined when sent
+// // ): Promise<void> {
+// // OLD CODE END
+// async function sendEmail(
+// 	config: NotificationConfig['email'],
+// 	notification: Notification
+// ): Promise<string | undefined> {
+// 	try {
+// 		// Dynamic import — nodemailer is an optional dependency.
+// 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// 		const nodemailer: any = await (Function('return import("nodemailer")')() as Promise<any>);
+// 		const transporter = nodemailer.createTransport({
+// 			host: config.smtpHost,
+// 			port: config.smtpPort,
+// 			secure: config.smtpPort === 465,
+// 			auth:
+// 				config.smtpUser && config.smtpPass
+// 					? { user: config.smtpUser, pass: config.smtpPass }
+// 					: undefined,
+// 		});
+//
+// 		const severityEmoji: Record<string, string> = {
+// 			critical: '[CRITICAL]',
+// 			high: '[HIGH]',
+// 			medium: '[MEDIUM]',
+// 			low: '[LOW]',
+// 		};
+//
+// 		const prefix = severityEmoji[notification.severity] || '';
+//
+// 		await transporter.sendMail({
+// 			from: config.smtpFrom,
+// 			to: config.recipients.join(', '),
+// 			subject: `${prefix} NetTap: ${notification.title}`,
+// 			text: [
+// 				`Severity: ${notification.severity.toUpperCase()}`,
+// 				`Type: ${notification.type}`,
+// 				`Time: ${notification.timestamp}`,
+// 				'',
+// 				notification.message,
+// 				'',
+// 				notification.source?.signature
+// 					? `Signature: ${notification.source.signature}`
+// 					: '',
+// 				notification.source?.src_ip
+// 					? `Source IP: ${notification.source.src_ip}`
+// 					: '',
+// 				notification.source?.dest_ip
+// 					? `Dest IP: ${notification.source.dest_ip}`
+// 					: '',
+// 			]
+// 				.filter(Boolean)
+// 				.join('\n'),
+// 			html: [
+// 				// colour-gate: allow-next-line email clients can't read CSS variables, so email HTML keeps literals
+// 				`<h2 style="color: ${notification.severity === 'critical' ? '#f85149' : notification.severity === 'high' ? '#d29922' : '#58a6ff'}">${prefix} ${notification.title}</h2>`,
+// 				`<p><strong>Severity:</strong> ${notification.severity.toUpperCase()}</p>`,
+// 				`<p><strong>Type:</strong> ${notification.type}</p>`,
+// 				`<p><strong>Time:</strong> ${notification.timestamp}</p>`,
+// 				`<p>${notification.message}</p>`,
+// 				notification.source?.signature
+// 					? `<p><strong>Signature:</strong> ${notification.source.signature}</p>`
+// 					: '',
+// 				notification.source?.src_ip
+// 					? `<p><strong>Source IP:</strong> <code>${notification.source.src_ip}</code></p>`
+// 					: '',
+// 				notification.source?.dest_ip
+// 					? `<p><strong>Dest IP:</strong> <code>${notification.source.dest_ip}</code></p>`
+// 					: '',
+// 			]
+// 				.filter(Boolean)
+// 				.join('\n'),
+// 		});
+// 	} catch (err) {
+// 		console.error(
+// 			'[notifications] Email dispatch failed:',
+// 			err instanceof Error ? err.message : err
+// 		);
+// 		// F3 review: nodemailer isn't in the image (NET-224); say so, not Node's message with its path
+// 		if ((err as { code?: string } | null)?.code === 'ERR_MODULE_NOT_FOUND') {
+// 			return "not available in this build: the mail library isn't installed";
+// 		}
+// 		// F3: the reason, for the test; sendNotification ignores it as before
+// 		return err instanceof Error ? err.message : String(err);
+// 	}
+// }
+//
+// // ---------------------------------------------------------------------------
+// // Webhook dispatch
+// // ---------------------------------------------------------------------------
+//
+// // OLD CODE START — F3: Promise<void>; it now resolves to the failure reason, undefined when sent
+// // async function sendWebhook(url: string, notification: Notification): Promise<void> {
+// // OLD CODE END
+// async function sendWebhook(url: string, notification: Notification): Promise<string | undefined> {
+// 	try {
+// 		// OLD CODE START — F3: the answer was never read, so a 4xx/5xx counted as delivered
+// 		// await fetch(url, {
+// 		// OLD CODE END
+// 		const res = await fetch(url, {
+// 			method: 'POST',
+// 			headers: { 'Content-Type': 'application/json' },
+// 			body: JSON.stringify({
+// 				event: 'nettap.notification',
+// 				notification,
+// 			}),
+// 			signal: AbortSignal.timeout(10_000),
+// 		});
+// 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+// 	} catch (err) {
+// 		console.error(
+// 			'[notifications] Webhook dispatch failed:',
+// 			err instanceof Error ? err.message : err
+// 		);
+// 		// F3: the reason, for the test; sendNotification ignores it as before
+// 		return err instanceof Error ? err.message : String(err);
+// 	}
+// }
+// OLD CODE END
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -287,53 +318,117 @@ function generateId(): string {
 	return `ntf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// OLD CODE START — NET-224: the daemon owns email/webhook settings and sends them; this read env vars compose never set, and email needed nodemailer, which the image doesn't have (sendNotification sent them too, and sendTestNotification tested them)
+// /**
+//  * Dispatch a notification to all configured channels.
+//  * Returns the notification with its assigned ID.
+//  */
+// export async function sendNotification(
+// 	notification: Omit<Notification, 'id' | 'timestamp' | 'read'>
+// ): Promise<Notification> {
+// 	const config = loadConfig();
+// 	const severityLevel = SEVERITY_LEVELS[notification.severity] ?? 4;
+//
+// 	const full: Notification = {
+// 		...notification,
+// 		id: generateId(),
+// 		timestamp: new Date().toISOString(),
+// 		read: false,
+// 	};
+//
+// 	// Check severity threshold
+// 	if (severityLevel > config.severityThreshold) {
+// 		// Still store in-app but don't send external notifications
+// 		if (config.inApp.enabled) {
+// 			storeInApp(full);
+// 		}
+// 		// Broadcast to SSE subscribers even below threshold
+// 		notificationEmitter.emit('notification', full);
+// 		return full;
+// 	}
+//
+// 	// Dispatch to channels in parallel
+// 	// OLD CODE START — F3: the senders resolve to a failure reason now (ignored here)
+// 	// const dispatches: Promise<void>[] = [];
+// 	// OLD CODE END
+// 	const dispatches: Promise<string | undefined>[] = [];
+//
+// 	if (config.email.enabled) {
+// 		dispatches.push(sendEmail(config.email, full));
+// 	}
+//
+// 	if (config.webhook.enabled) {
+// 		dispatches.push(sendWebhook(config.webhook.url, full));
+// 	}
+//
+// 	if (config.inApp.enabled) {
+// 		storeInApp(full);
+// 	}
+//
+// 	// Broadcast to SSE subscribers
+// 	notificationEmitter.emit('notification', full);
+//
+// 	await Promise.allSettled(dispatches);
+// 	return full;
+// }
+//
+// export interface ChannelResult {
+// 	channel: 'email' | 'webhook';
+// 	ok: boolean;
+// 	error?: string;
+// }
+//
+// /**
+//  * Send a test through each enabled external channel, whatever the severity threshold, and say how
+//  * each one went. An empty list means no email or webhook is set up. Not stored in-app.
+//  */
+// export async function sendTestNotification(): Promise<ChannelResult[]> {
+// 	const config = loadConfig();
+// 	const test: Notification = {
+// 		id: generateId(),
+// 		type: 'system',
+// 		severity: 'medium',
+// 		title: 'Test notification',
+// 		message: 'This is a test notification from NetTap. If you received this, your notification settings are working correctly.',
+// 		timestamp: new Date().toISOString(),
+// 		read: false,
+// 	};
+//
+// 	const channels: ChannelResult['channel'][] = [];
+// 	const sends: Promise<string | undefined>[] = [];
+// 	if (config.email.enabled) {
+// 		channels.push('email');
+// 		sends.push(sendEmail(config.email, test));
+// 	}
+// 	if (config.webhook.enabled) {
+// 		channels.push('webhook');
+// 		sends.push(sendWebhook(config.webhook.url, test));
+// 	}
+//
+// 	// the senders catch their own errors and resolve to the reason
+// 	const errors = await Promise.all(sends);
+// 	return channels.map((channel, i) => (errors[i] === undefined ? { channel, ok: true } : { channel, ok: false, error: errors[i] }));
+// }
+// OLD CODE END
+
 /**
- * Dispatch a notification to all configured channels.
+ * Record a notification in-app and push it to the open pages (SSE). Email, webhook and the other
+ * channels are the daemon's: it sends alerts with or without a browser open (NET-224).
  * Returns the notification with its assigned ID.
  */
 export async function sendNotification(
 	notification: Omit<Notification, 'id' | 'timestamp' | 'read'>
 ): Promise<Notification> {
-	const config = loadConfig();
-	const severityLevel = SEVERITY_LEVELS[notification.severity] ?? 4;
-
 	const full: Notification = {
 		...notification,
 		id: generateId(),
 		timestamp: new Date().toISOString(),
 		read: false,
 	};
-
-	// Check severity threshold
-	if (severityLevel > config.severityThreshold) {
-		// Still store in-app but don't send external notifications
-		if (config.inApp.enabled) {
-			storeInApp(full);
-		}
-		// Broadcast to SSE subscribers even below threshold
-		notificationEmitter.emit('notification', full);
-		return full;
-	}
-
-	// Dispatch to channels in parallel
-	const dispatches: Promise<void>[] = [];
-
-	if (config.email.enabled) {
-		dispatches.push(sendEmail(config.email, full));
-	}
-
-	if (config.webhook.enabled) {
-		dispatches.push(sendWebhook(config.webhook.url, full));
-	}
-
-	if (config.inApp.enabled) {
+	if (process.env.NOTIFY_INAPP_ENABLED !== 'false') {
 		storeInApp(full);
 	}
-
-	// Broadcast to SSE subscribers
 	notificationEmitter.emit('notification', full);
-
-	await Promise.allSettled(dispatches);
 	return full;
 }
 

@@ -3,6 +3,9 @@ import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
 import { getSmartAlerts, suppressAlert } from '$api/alerts';
 import { getDeviceDetail } from '$api/devices';
+import { ENCRYPTED_DNS_NOTE } from '$lib/api/dns';
+import { captureMode } from '$lib/stores/captureMode';
+import { getSystemHealth } from '$api/system';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
@@ -11,6 +14,11 @@ const { IP } = vi.hoisted(() => ({ IP: '192.168.1.10' }));
 
 vi.mock('$app/stores', () => ({
 	page: readable({ url: new URL(`http://localhost/devices/${IP}`), params: { ip: IP } }),
+}));
+// NET-225: the page asks the shared store at load; these tests set the mode on it directly
+vi.mock('$lib/stores/captureMode', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/stores/captureMode')>()),
+	initCaptureMode: vi.fn(async () => {}),
 }));
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$api/devices', () => ({
@@ -32,6 +40,14 @@ vi.mock('$api/devices', () => ({
 	getDevicePorts: vi.fn(async () => ({ ports: [] })),
 	getDeviceRiskScore: vi.fn(async () => ({ score: 0, level: 'low', factors: [] })),
 	getDeviceConnections: vi.fn(async () => ({ connections: [], page: 1, total_pages: 0, total: 0 })),
+}));
+// NET-228: the Smart alerts empty state reads the pipeline's state; fresh unless a test says not
+vi.mock('$api/system', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$api/system')>()),
+	getSystemHealth: vi.fn(async () => ({
+		uptime: 1, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true,
+		pipeline: { state: 'fresh', newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: {}, checked_at: '' },
+	})),
 }));
 vi.mock('$api/alerts', () => ({
 	getSmartAlerts: vi.fn(),
@@ -95,6 +111,18 @@ describe('Device detail — suppress smart alert', () => {
 
 		expect(screen.queryByText(ALERT.signature)).not.toBeInTheDocument();
 		expect(screen.queryByText('Suppress failed. Try again.')).not.toBeInTheDocument();
+		// NET-228: the rule still matched; only the group to review is gone
+		expect(screen.getByText('No alert groups to review for this device in this period')).toBeInTheDocument();
+	});
+
+	// NET-228: compute_trend is a rate with no comparison window, so no rising or falling arrow
+	it('shows no rising or falling arrow', async () => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [{ ...ALERT, trend: 'increasing' }], total: 1 } as never);
+		render(Page);
+		await flush();
+		await screen.findByText(ALERT.signature);
+		expect(screen.queryByLabelText('Rising')).not.toBeInTheDocument();
+		expect(screen.queryByLabelText('Falling')).not.toBeInTheDocument();
 	});
 });
 
@@ -175,12 +203,29 @@ describe('Device detail — smart alerts request fails', () => {
 		expect(screen.getAllByText('laptop').length).toBeGreaterThan(0);
 	});
 
-	it('still says there are none when the request succeeds empty', async () => {
+	// OLD CODE: expect(screen.getByText('No actionable alerts for this device.')) (NET-228: + the pipeline's state)
+	it('still says there are none when the request succeeds empty, beside how fresh the data is', async () => {
 		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
 		render(Page);
 		await flush();
 
-		expect(screen.getByText('No actionable alerts for this device.')).toBeInTheDocument();
+		expect(screen.getByText('No alert groups to review for this device in this period')).toBeInTheDocument();
+		expect(screen.getByText('Data pipeline now: Newest record 40 s ago.')).toBeInTheDocument();
+	});
+
+	// NET-228: with Suricata stopped an empty list proves nothing
+	it("can't tell when the pipeline isn't fresh", async () => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+		vi.mocked(getSystemHealth).mockResolvedValueOnce({
+			uptime: 1, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true,
+			pipeline: { state: 'sensor_stopped', newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: { 'nettap-suricata-live': 'exited' }, checked_at: '' },
+		});
+		render(Page);
+		await flush();
+
+		expect(screen.getByText("Can't tell if this device has any alert to review")).toBeInTheDocument();
+		expect(screen.getByText('Data pipeline now: Suricata stopped.')).toBeInTheDocument();
+		expect(screen.queryByText('No alert groups to review for this device in this period')).not.toBeInTheDocument();
 	});
 });
 
@@ -209,7 +254,8 @@ describe('Device detail — connection direction, protocol filter and upload sha
 		render(Page);
 		await flush();
 
-		expect(screen.getByText(/Sessions to or from this device/)).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText(/Sessions to or from this device/)).toBeInTheDocument(); (NET-226: the list is this address's sessions; the device's IPv6 is counted by MAC)
+		expect(screen.getByText(/Sessions to or from this address/)).toBeInTheDocument();
 		const table = screen.getByRole('table', { name: 'Recent connections' });
 		const [, out, inbound] = Array.from(table.querySelectorAll('tr'));
 		// Time, Direction, Destination, Proto, Service, Duration, DL, UL
@@ -239,7 +285,8 @@ describe('Device detail — connection direction, protocol filter and upload sha
 		const devices = await import('$api/devices');
 		const { device } = await vi.mocked(devices.getDeviceDetail)(IP, {});
 		vi.mocked(devices.getDeviceDetail).mockResolvedValueOnce({
-			device: { ...device, total_bytes: 100_000, orig_bytes: 35_000, resp_bytes: 65_000 },
+			// OLD CODE: device: { ...device, total_bytes: 100_000, orig_bytes: 35_000, resp_bytes: 65_000 }, (NET-226: what the device sent, both sides)
+			device: { ...device, total_bytes: 100_000, upload_bytes: 35_000, download_bytes: 65_000 },
 		} as never);
 		render(Page);
 		await flush();
@@ -251,6 +298,82 @@ describe('Device detail — connection direction, protocol filter and upload sha
 		// OLD CODE END
 		expect(kpi).toHaveTextContent('Balanced');
 		expect(kpi).not.toHaveTextContent('Elevated');
+	});
+});
+
+// NET-226: upload is what the device sent on both sides, IPv6 is counted by MAC, guesses say so
+describe('Device detail — both sides, IPv6 and guesses (NET-226)', () => {
+	beforeEach(() => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+	});
+	afterEach(() => vi.clearAllMocks());
+
+	async function renderWith(extra: Record<string, unknown>) {
+		const devices = await import('$api/devices');
+		const { device } = await vi.mocked(devices.getDeviceDetail)(IP, {});
+		vi.mocked(devices.getDeviceDetail).mockResolvedValue({ device: { ...device, ...extra } } as never);
+		render(Page);
+		await flush();
+	}
+
+	it('takes the upload share and the traffic sub from upload_bytes, not the originator bytes', async () => {
+		// the device answered most of its sessions, so what it started (orig) is not what it sent
+		await renderWith({ total_bytes: 100_000, orig_bytes: 10_000, resp_bytes: 90_000, upload_bytes: 60_000, download_bytes: 40_000 });
+
+		const share = screen.getAllByText('Upload share').map((el) => el.closest('.kpi')).find(Boolean) as HTMLElement;
+		expect(share).toHaveTextContent('60%');
+		const traffic = screen.getAllByText('Traffic').map((el) => el.closest('.kpi')).find(Boolean) as HTMLElement;
+		expect(traffic).toHaveTextContent('↓ 40.0 KB down · ↑ 60.0 KB up');
+	});
+
+	it('says how many of its connections were over IPv6', async () => {
+		await renderWith({ connection_count: 12, ipv6_connections: 5, unique_destinations: 3 });
+		const kpi = screen.getAllByText('Connections').map((el) => el.closest('.kpi')).find(Boolean) as HTMLElement;
+		expect(kpi).toHaveTextContent('of which 5 over IPv6 · 3 unique destinations');
+	});
+
+	it.each([
+		['no_gateway', "IPv6 traffic other than link-local isn't counted for this period: no internet traffic showed which device is the router."],
+		['router', "This device forwards other devices' traffic (it's the router), so only its link-local IPv6 is counted."],
+	])('says what IPv6 it left out when the reason is %s', async (reason, text) => {
+		await renderWith({ ipv6_left_out: 7, ipv6_left_out_reason: reason });
+		expect(screen.getByRole('note')).toHaveTextContent(text);
+	});
+
+	// OLD CODE START — review L10: the note showed under every chart, and "count twice … counts once" read as a contradiction
+	// it('NET-226 follow-up: says under the chart that traffic routed between VLANs counts its bytes twice', async () => {
+	// 	await renderWith({ bandwidth_series: [{ timestamp: '2026-10-29T00:00:00Z', bytes: 100, download_bytes: 60, upload_bytes: 40 }] });
+	// 	expect(
+	// 		screen.getByText(
+	// 			'Traffic your router routes between two of your VLANs can be seen on both, so its bytes count twice here; each connection counts once.',
+	// 		),
+	// 	).toBeInTheDocument();
+	// });
+	// OLD CODE END
+	const SERIES = [{ timestamp: '2026-10-29T00:00:00Z', bytes: 100, download_bytes: 60, upload_bytes: 40 }];
+	const VLAN_NOTE = /bytes count twice/;
+
+	it('says its bytes may count twice only when it had connections with another of your subnets', async () => {
+		await renderWith({ bandwidth_series: SERIES, inter_vlan_connections: 12 });
+		expect(screen.getByText(VLAN_NOTE)).toHaveTextContent(
+			'12 of its connections were with another of your subnets. If your router carries that traffic over the link NetTap watches, NetTap sees both legs of each one, so their bytes count twice in these figures.',
+		);
+	});
+
+	it('says nothing about subnets when it had no such connections', async () => {
+		await renderWith({ bandwidth_series: SERIES, inter_vlan_connections: 0 });
+		expect(screen.queryByText(VLAN_NOTE)).not.toBeInTheDocument();
+	});
+
+	it('shows no IPv6 notice when nothing was left out', async () => {
+		await renderWith({ ipv6_left_out: 0, ipv6_left_out_reason: null });
+		expect(screen.queryByText(/link-local IPv6/)).not.toBeInTheDocument();
+	});
+
+	it('shows the type and OS as guesses, with what they came from', async () => {
+		await renderWith({ category: 'computer', category_basis: 'os', os_hint: 'Windows', os_basis: 'web traffic' });
+		expect(screen.getByText('Likely computer · from its OS')).toBeInTheDocument();
+		expect(screen.getByText('Likely Windows · from web traffic')).toBeInTheDocument();
 	});
 });
 
@@ -391,5 +514,56 @@ describe('Device detail — live bandwidth (NET-205)', () => {
 		expect(await screen.findByRole('heading', { name: 'Live bandwidth' })).toBeInTheDocument();
 		expect(getLiveBandwidth).toHaveBeenCalledWith({ ip: IP }, expect.any(AbortSignal));
 		expect(getLiveBandwidth.mock.calls.every(([key]) => !('mac' in key))).toBe(true);
+	});
+});
+
+// NET-225 (DNS-1): an empty DNS card said "No DNS data." though DoH and DoT lookups never show
+describe('Device detail — DNS activity', () => {
+	afterEach(() => vi.clearAllMocks());
+
+	it('says only plain DNS shows when the device has no lookups', async () => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+		vi.mocked(getDeviceDetail).mockImplementationOnce(
+			async () =>
+				({
+					device: {
+						ip: IP, mac: null, hostname: 'laptop', connection_count: 3, alert_count: 0,
+						first_seen: '2026-10-29T00:00:00Z', last_seen: '2026-10-29T01:00:00Z',
+						top_destinations: [], dns_queries: [], bandwidth_series: [], protocols: [],
+					},
+				}) as never,
+		);
+		render(Page);
+		expect(await screen.findByText('No plain DNS lookups seen.')).toBeInTheDocument();
+		expect(screen.getByText(ENCRYPTED_DNS_NOTE)).toBeInTheDocument();
+		expect(screen.queryByText('No DNS data.')).not.toBeInTheDocument();
+	});
+});
+
+// NET-225: post-NAT, one address can carry several devices' traffic; the card must not read as one device's
+describe('Device detail — risk score in inline bridge mode', () => {
+	afterEach(() => {
+		captureMode.set(null);
+		vi.clearAllMocks();
+	});
+
+	async function renderRisk(): Promise<void> {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+		render(Page);
+		await screen.findByRole('img', { name: /^Risk score \d+ of 100/ });
+	}
+
+	it('labels the score as this address\'s and says it can\'t stand for one device', async () => {
+		captureMode.set('bridge');
+		await renderRisk();
+		expect(screen.getByRole('heading', { name: 'Risk score for this address' })).toBeInTheDocument();
+		expect(screen.getByText(/one address can carry several devices' traffic, so it can't stand for a single device's risk/)).toBeInTheDocument();
+	});
+
+	it('keeps "Risk score" in mirror mode', async () => {
+		captureMode.set('mirror');
+		await renderRisk();
+		expect(screen.getByRole('heading', { name: 'Risk score' })).toBeInTheDocument();
+		expect(screen.queryByText(/can't stand for a single device's risk/)).not.toBeInTheDocument();
 	});
 });

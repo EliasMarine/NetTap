@@ -45,12 +45,18 @@ const deviceRow = (d: LanDevice): Device => ({
 	first_seen: iso(DAY - 10 * MIN),
 	last_seen: iso(d.lastSeenAgo),
 	total_bytes: totalBytes(d),
-	orig_bytes: d.origBytes,
-	resp_bytes: d.respBytes,
+	// OLD CODE: orig_bytes: d.origBytes, resp_bytes: d.respBytes, (NET-226: both sides, from the device's side)
+	upload_bytes: d.origBytes,
+	download_bytes: d.respBytes,
 	connection_count: d.connections,
+	ipv6_connections: 0,
+	ipv6_left_out: 0,
+	ipv6_left_out_reason: null,
 	protocols: d.protocols,
 	alert_count: d.alerts,
 	category: d.kind,
+	category_basis: d.kind === 'unknown' ? null : 'name',
+	os_basis: d.os ? 'web traffic' : null,
 });
 
 /** NET-160 slice 2b-3: the list reply is one reading: its rows, the devices before the cut, and the online count by its own clock. */
@@ -125,8 +131,8 @@ const emptyDetail = (d: LanDevice): DeviceDetailResponse => ({
 	device: {
 		...deviceRow(d),
 		total_bytes: 0,
-		orig_bytes: 0,
-		resp_bytes: 0,
+		upload_bytes: 0,
+		download_bytes: 0,
 		connection_count: 0,
 		protocols: [],
 		alert_count: 0,

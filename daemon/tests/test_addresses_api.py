@@ -281,7 +281,8 @@ class TestThreatIntel(AddressCase):
         # self.write({"et_compromised": []})
         # self.assertIsNone((await self.figures())["threat_intel"])
         # OLD CODE END
-        unlisted = {"matched": False, "feeds": [], "indicators": 0}
+        # OLD CODE: unlisted = {"matched": False, "feeds": [], "indicators": 0} (NET-228: + in_window)
+        unlisted = {"matched": False, "feeds": [], "indicators": 0, "in_window": False}
         self.assertEqual((await self.figures())["threat_intel"], unlisted)
         self.write({"et_compromised": []})
         self.assertEqual((await self.figures())["threat_intel"], unlisted)
@@ -289,7 +290,10 @@ class TestThreatIntel(AddressCase):
     async def test_loaded_indicators_without_this_address_are_no_match(self):
         self.write({"et_compromised": ["1.2.3.4", "5.6.7.8"]})
         ti = (await self.figures())["threat_intel"]
-        self.assertEqual(ti, {"matched": False, "feeds": [], "indicators": 2})
+        # OLD CODE: …{"matched": False, "feeds": [], "indicators": 2}) (NET-228: + in_window)
+        self.assertEqual(
+            ti, {"matched": False, "feeds": [], "indicators": 2, "in_window": False}
+        )
 
     async def test_a_listed_address_names_its_feed(self):
         self.write({"et_compromised": [ADDR]})
@@ -410,12 +414,14 @@ class TestListingAlerts(AddressCase):
         ti = (await self.figures())["threat_intel"]
         self.assertEqual(ti["matched"], True)
         self.assertEqual(ti["indicators"], 0)
+        self.assertIs(ti["in_window"], True)  # NET-228: when it was listed
         self.assertEqual(
             ti["feeds"],
             [
                 {
                     "feed": "et_compromised",
-                    "label": "ET Compromised IPs",
+                    # OLD CODE: "label": "ET Compromised IPs", (NET-228: NetTap fills it from rules)
+                    "label": "Suricata blocklist rules",
                     "indicator": ADDR,
                     "type": "ip",
                 }
@@ -432,6 +438,27 @@ class TestListingAlerts(AddressCase):
         )
         ti = (await self.figures())["threat_intel"]
         self.assertEqual([f["feed"] for f in ti["feeds"]], ["et_compromised"])
+
+    async def test_a_cached_match_named_only_before_this_window_says_so(self):
+        """NET-228: the cache keeps no date, so the page can say only "an earlier scan"."""
+        Path(self._tmp.name, "ti.json").write_text(
+            json.dumps(
+                {"version": 2, "ip_feeds": {"et_compromised": ["185.220.101.9"]}}
+            )
+        )
+        ti = (await self.figures("185.220.101.9"))["threat_intel"]
+        self.assertEqual((ti["matched"], ti["in_window"]), (True, False))
+
+    async def test_a_cached_match_when_the_window_couldnt_be_checked_is_unknown(self):
+        Path(self._tmp.name, "ti.json").write_text(
+            json.dumps(
+                {"version": 2, "ip_feeds": {"et_compromised": ["185.220.101.9"]}}
+            )
+        )
+        with patch("api.addresses._listed_by_alerts", return_value=None):
+            ti = (await self.figures("185.220.101.9"))["threat_intel"]
+        self.assertEqual(ti["matched"], True)
+        self.assertIsNone(ti["in_window"])
 
     async def test_alerts_too_many_to_check_and_no_match_is_not_checked(self):
         with (

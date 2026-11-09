@@ -19,6 +19,7 @@ Endpoints:
 """
 
 import asyncio
+import contextlib
 import functools
 import logging
 import os
@@ -40,6 +41,7 @@ from storage.ilm import apply_ilm_policies_from_config
 from storage.ilm_generator import generate_ilm_policies
 from storage.retention_config import RetentionConfigManager
 from api.offload import in_thread, run_blocking
+from api.error_replies import public_json, safe_error_middleware
 from api.daemon_auth import (
     load_or_create_token,
     make_auth_middleware,
@@ -63,6 +65,7 @@ from services.excluded_ips import (
     load_excluded_ips,
     detect_and_build_lan_filter,
     detect_appliance_ip,
+    with_appliance_ip,
 )
 from api.search import register_search_routes
 from api.detection_packs import register_detection_pack_routes
@@ -96,9 +99,11 @@ from api.capture_control import register_capture_control_routes
 from api.backup import register_backup_routes
 from api.threats import register_threat_routes
 from api.network import register_network_routes
+from api.drilldown_runner import lan_cidrs
 from api.addresses import register_address_routes
 from api.domains import register_domain_routes
 from api.suricata_categories import register_suricata_category_routes
+from services.pipeline_health import OVERALL as PIPELINE_OVERALL, PipelineHealth
 from services.tshark_service import TSharkService
 from services.capture_index import CaptureIndex
 from services.packet_search import PacketSearchService
@@ -127,6 +132,7 @@ from services.unifi_integration import UnifiIntegration
 from services.live_connections import LiveConnectionTracker
 from services.bandwidth_tracker import BandwidthTracker
 from services.notification_hub import NotificationHub
+from services.notification_dispatcher import AlertDispatcher
 from services.changelog import ChangelogService
 from services.cert_monitor import CertificateMonitor
 from services.suricata_rules import SuricataRuleManager
@@ -240,7 +246,10 @@ def handle_storage_status(request: web.Request) -> web.Response:
             status["ilm_status"] = {
                 **status["ilm_status"],
                 "synced": False,
-                "pending_retry": task is not None and not task.done(),
+                # OLD CODE: "pending_retry": task is not None and not task.done(), (A15: hid
+                # the storage manager's own startup retry)
+                "pending_retry": status["ilm_status"].get("pending_retry", False)
+                or (task is not None and not task.done()),
             }
         return web.json_response(status)
     except Exception as exc:
@@ -529,9 +538,11 @@ def _aggregate_health(failed: bool, unknown: bool) -> str:
 async def handle_system_health(request: web.Request) -> web.Response:
     """GET /api/system/health -- Combined system health check.
 
-    Aggregates: daemon uptime, storage status, SMART health, and
-    OpenSearch reachability into a single response.
+    Aggregates: daemon uptime, storage status, SMART health, OpenSearch
+    reachability and whether current data is arriving (F2) into a single response.
     """
+    # F2: started first, so its 5 s budget overlaps the checks below
+    pipeline = asyncio.ensure_future(request.app["pipeline_health"].get())
     start_time: float = request.app["start_time"]
     uptime = time.monotonic() - start_time
     # OLD CODE START — opensearch_url was fetched but never used (F841)
@@ -570,7 +581,8 @@ async def handle_system_health(request: web.Request) -> web.Response:
         result["storage"] = await run_blocking(storage.get_status)
     except Exception as exc:
         logger.warning("System health: storage status unavailable: %s", exc)
-        result["storage"] = {"error": str(exc)}
+        # OLD CODE: result["storage"] = {"error": str(exc)} (NET-229: an OpenSearch client error, URL included)
+        result["storage"] = {"error": "Storage status couldn't be read."}
         unknown = True
 
     # SMART health
@@ -590,7 +602,8 @@ async def handle_system_health(request: web.Request) -> web.Response:
             unknown = True
     except Exception as exc:
         logger.warning("System health: SMART status unavailable: %s", exc)
-        result["smart"] = {"error": str(exc)}
+        # OLD CODE: result["smart"] = {"error": str(exc)} (NET-229: exception text)
+        result["smart"] = {"error": "Drive health couldn't be read."}
         unknown = True
 
     # OpenSearch reachability
@@ -607,6 +620,12 @@ async def handle_system_health(request: web.Request) -> web.Response:
         logger.warning("System health: OpenSearch unreachable: %s", exc)
         result["opensearch_reachable"] = False
         failed = True
+
+    # F2: with only the checks above, stopped sensors or nothing new indexed still read healthy
+    result["pipeline"] = await pipeline
+    effect = PIPELINE_OVERALL[result["pipeline"]["state"]]
+    failed = failed or effect == "problem"
+    unknown = unknown or effect == "incomplete"
 
     result["status"] = _aggregate_health(failed, unknown)
     # True, False, or None when incomplete: the same tri-state as SMART's healthy
@@ -744,11 +763,24 @@ def _apply_latest_ilm(app: web.Application) -> dict[str, str] | None:
             return None
         config_manager: RetentionConfigManager = app["retention_config_manager"]
         policies = generate_ilm_policies(config_manager.get_config())
-        results = apply_ilm_policies_from_config(
-            app["opensearch_url"], policies, http_auth=app.get("http_auth")
-        )
-        if any(str(status).startswith("error") for status in results.values()):
-            raise IlmApplyError(results)
+        # OLD CODE START — A15: a failure left the last success on the health card
+        # results = apply_ilm_policies_from_config(
+        #     app["opensearch_url"], policies, http_auth=app.get("http_auth")
+        # )
+        # if any(str(status).startswith("error") for status in results.values()):
+        #     raise IlmApplyError(results)
+        # OLD CODE END
+        try:
+            results = apply_ilm_policies_from_config(
+                app["opensearch_url"], policies, http_auth=app.get("http_auth")
+            )
+            if any(str(status).startswith("error") for status in results.values()):
+                raise IlmApplyError(results)
+        except Exception as exc:
+            # recorded in memory first; a failed file write mustn't hide the real error
+            with contextlib.suppress(OSError):
+                config_manager.mark_ilm_failed(str(exc))
+            raise
         config_manager.mark_ilm_applied(results)
         state.applied_revision = revision
         return results
@@ -841,7 +873,7 @@ async def handle_storage_config(request: web.Request) -> web.Response:
     """
     # --- Check that config manager is available ---
     if "retention_config_manager" not in request.app:
-        return web.json_response(
+        return public_json(
             {"error": "Retention config manager not initialised"}, status=503
         )
 
@@ -851,15 +883,30 @@ async def handle_storage_config(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
 
+    # A9: the rest moved to save_retention_config, which a backup restore uses too
+    status, payload = await save_retention_config(request.app, body)
+    # NET-229 follow-up: its 5xx is the hand-written 'not initialised' line
+    return public_json(payload, status=status)
+
+
+async def save_retention_config(app: web.Application, body: dict) -> tuple[int, dict]:
+    """Save retention settings, hot-reload them and sync ILM: (HTTP status, response body).
+
+    Shared by POST /api/storage/config and the backup restore (A9).
+    """
+    if "retention_config_manager" not in app:
+        return 503, {"error": "Retention config manager not initialised"}
+
     # --- Validate and save config ---
-    config_manager: RetentionConfigManager = request.app["retention_config_manager"]
+    config_manager: RetentionConfigManager = app["retention_config_manager"]
     try:
         new_config = config_manager.save(body)
-    except ValueError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+    # TypeError/AttributeError: a restored file can hold any JSON, not just a request body
+    except (ValueError, TypeError, AttributeError) as exc:
+        return 400, {"error": str(exc)}
 
     # --- Hot-reload StorageManager config ---
-    storage: StorageManager = request.app["storage"]
+    storage: StorageManager = app["storage"]
     storage.config = new_config
 
     # OLD CODE START — applied this request's own snapshot without ordering, and
@@ -927,10 +974,10 @@ async def handle_storage_config(request: web.Request) -> web.Response:
     # OLD CODE END
 
     # --- Apply ILM for the newest config (serialized, revision-aware) ---
-    state: IlmSyncState = request.app["ilm_sync"]
+    state: IlmSyncState = app["ilm_sync"]
     state.config_revision += 1
     revision = state.config_revision
-    results, ilm_error = await _run_ilm_worker(request.app)
+    results, ilm_error = await _run_ilm_worker(app)
     config_summary = {
         "hot_days": new_config.hot_days,
         "warm_days": new_config.warm_days,
@@ -941,30 +988,26 @@ async def handle_storage_config(request: web.Request) -> web.Response:
 
     # Applied for this save if this revision, or a newer one, is in OpenSearch.
     if state.applied_revision >= revision:
-        return web.json_response(
-            {
-                "saved": True,
-                "ilm_applied": True,
-                "ilm_results": results or {},
-                "config": config_summary,
-            }
-        )
+        return 200, {
+            "saved": True,
+            "ilm_applied": True,
+            "ilm_results": results or {},
+            "config": config_summary,
+        }
 
     # OpenSearch is down or rejected a policy — config is saved, retry later
     ilm_error = ilm_error or "ILM policies not applied yet"
     logger.warning(
         "ILM application failed after config save, scheduling retry: %s", ilm_error
     )
-    _schedule_ilm_retry(request.app)
-    return web.json_response(
-        {
-            "saved": True,
-            "ilm_applied": False,
-            "ilm_retry_scheduled": True,
-            "ilm_error": ilm_error,
-            "config": config_summary,
-        }
-    )
+    _schedule_ilm_retry(app)
+    return 200, {
+        "saved": True,
+        "ilm_applied": False,
+        "ilm_retry_scheduled": True,
+        "ilm_error": ilm_error,
+        "config": config_summary,
+    }
 
 
 async def _run_ilm_worker(
@@ -1048,8 +1091,19 @@ def create_app(
     #     middlewares=[make_auth_middleware(_load_daemon_token()), logging_middleware]
     # )
     # OLD CODE END
+    # OLD CODE START — NET-229 (B-p): 5xx replies carried exception text, stderr and internal URLs
+    # app = web.Application(
+    #     middlewares=[make_auth_middleware(_load_daemon_token()), logging_middleware],
+    #     # Matches nginx and nettap-web (BODY_SIZE_LIMIT): photos ≤ 8 MiB in all, base64 in a backup
+    #     client_max_size=MAX_REQUEST_BYTES,
+    # )
+    # OLD CODE END
     app = web.Application(
-        middlewares=[make_auth_middleware(_load_daemon_token()), logging_middleware],
+        middlewares=[
+            make_auth_middleware(_load_daemon_token()),
+            logging_middleware,
+            safe_error_middleware,  # innermost: cuts a 5xx reply to safe fields (api/error_replies.py)
+        ],
         # Matches nginx and nettap-web (BODY_SIZE_LIMIT): photos ≤ 8 MiB in all, base64 in a backup
         client_max_size=MAX_REQUEST_BYTES,
     )
@@ -1060,9 +1114,14 @@ def create_app(
     app["opensearch_url"] = opensearch_url
     app["http_auth"] = http_auth
     app["start_time"] = time.monotonic()
+    # F2: its own client, 3 s and no retries, so the probe stays inside its 5 s budget
+    app["pipeline_health"] = PipelineHealth(
+        OpenSearch(**storage.client_kwargs(timeout=3, max_retries=0)), app["start_time"]
+    )
     if retention_config_manager is not None:
         app["retention_config_manager"] = retention_config_manager
-    app["ilm_sync"] = IlmSyncState()
+    # OLD CODE: app["ilm_sync"] = IlmSyncState() (A15: startup verification ran outside it)
+    app["ilm_sync"] = IlmSyncState(lock=storage.ilm_lock)
 
     # Register routes
     app.router.add_get("/api/health", handle_health)
@@ -1177,9 +1236,12 @@ def create_app(
     #     logger.info("Auto-excluded appliance management IP: %s", appliance_ip)
     # OLD CODE END
     appliance_ip = detect_appliance_ip(_management_interface())
+    # A9: kept so a backup restore can add it back when it reloads the owner's list
+    app["appliance_ip"] = appliance_ip
     if appliance_ip and appliance_ip not in app["excluded_ips"]:
         # Runtime only: detected again at every start, never written into the owner's list
-        app["excluded_ips"] = [*app["excluded_ips"], appliance_ip]
+        # OLD CODE: app["excluded_ips"] = [*app["excluded_ips"], appliance_ip] (one rule now)
+        app["excluded_ips"] = with_appliance_ip(app["excluded_ips"], appliance_ip)
         logger.info("Auto-excluded appliance management IP: %s", appliance_ip)
     elif not appliance_ip:
         logger.warning(
@@ -1324,6 +1386,16 @@ def create_app(
     )
     notification_hub = NotificationHub(config_path=notification_config)
     register_notification_hub_routes(app, notification_hub)
+    # NET-224: alerts reach the channels from here, with or without a browser open
+    alert_dispatcher = AlertDispatcher(
+        notification_hub,
+        storage._client,
+        lambda: lan_cidrs(app),
+        os.path.join(
+            os.path.dirname(notification_config), "notification-dispatch.json"
+        ),
+    )
+    app.cleanup_ctx.append(alert_dispatcher.ctx)
 
     # Changelog (network event audit log)
     # OLD CODE START — 2026-11-01: built above, before the device registry, which logs new devices to it
@@ -1385,7 +1457,10 @@ def create_app(
 
     # Config backup/restore (export/import all settings)
     # OLD CODE: config_backup = ConfigBackup() (NET-200: names and pictures are backed up)
-    config_backup = ConfigBackup(device_custom=device_custom)
+    # OLD CODE: config_backup = ConfigBackup(device_custom=device_custom) (NET-224: notifications restore through the hub)
+    config_backup = ConfigBackup(
+        device_custom=device_custom, notification_hub=notification_hub
+    )
     register_backup_routes(app, config_backup)
 
     # Threat Intelligence (unified report, beaconing, lateral movement, DNS anomalies, TI)

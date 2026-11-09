@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 from aiohttp.test_utils import AioHTTPTestCase
 from aiohttp import web
 from api.logs import register_log_routes
+from services.excluded_ips import CONN_ACCOUNTING
 
 
 class TestLogSearchAPI(AioHTTPTestCase):
@@ -249,8 +250,15 @@ class TestLogSearchAPI(AioHTTPTestCase):
             "aggregations": {
                 "unique_sources": {"value": unique_src},
                 "protocol_count": {"value": protocols},
-                "src_bytes": {"value": src_bytes},
-                "dst_bytes": {"value": dst_bytes},
+                # OLD CODE START — F1: the byte sums moved into the conn_bytes filter agg
+                # "src_bytes": {"value": src_bytes},
+                # "dst_bytes": {"value": dst_bytes},
+                # OLD CODE END
+                "conn_bytes": {
+                    "doc_count": 1,
+                    "src_bytes": {"value": src_bytes},
+                    "dst_bytes": {"value": dst_bytes},
+                },
             },
         }
 
@@ -268,6 +276,10 @@ class TestLogSearchAPI(AioHTTPTestCase):
         self.assertEqual(data["total_bytes"], 300000)
         self.assertIn("from", data)
         self.assertIn("to", data)
+        # F1: bytes from final conn records only; total_events still counts every row
+        body = self.mock_client.search.call_args[1]["body"]
+        self.assertEqual(body["aggs"]["conn_bytes"]["filter"], CONN_ACCOUNTING)
+        self.assertNotIn(CONN_ACCOUNTING, body["query"]["bool"]["filter"])
 
     async def test_stats_with_time_range(self):
         """Stats endpoint respects from/to params."""

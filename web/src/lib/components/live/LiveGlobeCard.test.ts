@@ -91,6 +91,25 @@ describe('LiveGlobeCard', () => {
 		await vi.waitFor(() => expect(engine.highlight).toHaveBeenLastCalledWith('NL'));
 	});
 
+	it('names a country\'s busiest city as that, since the count is the whole country\'s', () => {
+		render(LiveGlobeCard, props({ arcs: [ARCS[1]] }));
+		expect(destButton('United States')).toHaveTextContent('Busiest city Seattle');
+	});
+
+	it('counts anycast connections apart, off the map and the countries (GEO-5)', () => {
+		const { unmount } = render(LiveGlobeCard, props({ anycast: 12 }));
+		expect(screen.getByText(/12 connections to anycast services/)).toBeInTheDocument();
+		unmount();
+		render(LiveGlobeCard, props({ arcs: [], anycast: 3 }));
+		expect(screen.getByText('No destinations to place')).toBeInTheDocument();
+		expect(screen.queryByText('No destinations yet')).not.toBeInTheDocument();
+	});
+
+	it('says nothing about anycast when there was none', () => {
+		render(LiveGlobeCard, props());
+		expect(screen.queryByText(/anycast/)).not.toBeInTheDocument();
+	});
+
 	it('shows the backend that drew the globe once it is ready', async () => {
 		const { container } = render(LiveGlobeCard, props());
 		await mounted();

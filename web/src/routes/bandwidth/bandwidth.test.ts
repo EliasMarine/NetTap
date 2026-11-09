@@ -19,8 +19,13 @@ const MONTHLY = {
 	total_bytes: 3e9,
 	orig_bytes: 1e9,
 	resp_bytes: 2e9,
+	// NET-226: half a GB of the originators' bytes stayed on the network
+	upload_bytes: 0.5e9,
+	download_bytes: 2e9,
+	local_bytes: 0.5e9,
 	projection: {
-		year: 2026, month: 11, current_bytes: 3e9, projected_bytes: 45e9,
+		// NET-226 follow-up: the projection is internet bytes, without the local half GB
+		year: 2026, month: 11, current_bytes: 2.5e9, projected_bytes: 37.5e9,
 		days_elapsed: 2, days_in_month: 30, daily_rate_bytes: 1.5e9,
 		cap_bytes: 0, usage_percent: 0, projected_percent: 0, exceeds_cap: false,
 	},
@@ -74,8 +79,10 @@ describe('Bandwidth — failed requests', () => {
 		render(Page);
 		// OLD CODE START: expect(await screen.findByText('3.0 GB')).toBeInTheDocument(); (the KPI sets its unit apart: "3.0" + "GB") OLD CODE END
 		await screen.findByText('Projected');
-		expect(screen.getByText('This month').closest('.kpi')).toHaveTextContent('3.0GB');
-		expect(screen.getByText('This month').closest('.kpi')).toHaveTextContent('↓ 2.0 GB down · ↑ 1.0 GB up');
+		// OLD CODE: expect(screen.getByText('This month').closest('.kpi')).toHaveTextContent('3.0GB'); (NET-226 follow-up: local traffic left out)
+		expect(screen.getByText('Internet this month').closest('.kpi')).toHaveTextContent('2.5GB');
+		// OLD CODE: expect(...).toHaveTextContent('↓ 2.0 GB down · ↑ 1.0 GB up'); (NET-226: the originator's bytes, local traffic included)
+		expect(screen.getByText('Internet this month').closest('.kpi')).toHaveTextContent('↓ 2.0 GB down · ↑ 0.5 GB up · 0.5 GB local');
 		expect(screen.queryByText(/Couldn't load this month's usage/)).not.toBeInTheDocument();
 		expect(screen.getByText("Couldn't load the time-of-day heatmap: the request failed.")).toBeInTheDocument();
 	});
@@ -89,15 +96,19 @@ const GB = 1e9; // decimal, as the page prints (NET-166)
 const DAILY = {
 	from: '', to: '',
 	daily: [
-		{ date: '2026-11-01T00:00:00Z', total_bytes: 3 * GB, orig_bytes: GB, resp_bytes: 2 * GB, connections: 10 },
-		{ date: '2026-11-02T00:00:00Z', total_bytes: 5 * GB, orig_bytes: GB, resp_bytes: 4 * GB, connections: 12 },
+		{ date: '2026-11-01T00:00:00Z', total_bytes: 3 * GB, orig_bytes: GB, resp_bytes: 2 * GB, upload_bytes: GB, download_bytes: 2 * GB, local_bytes: 0, connections: 10 },
+		{ date: '2026-11-02T00:00:00Z', total_bytes: 5 * GB, orig_bytes: GB, resp_bytes: 4 * GB, upload_bytes: GB, download_bytes: 3 * GB, local_bytes: GB, connections: 12 },
 	],
 };
 const DEVICES = {
 	from: '', to: '',
 	devices: [
-		{ ip: '192.168.1.9', total_bytes: 2 * GB, orig_bytes: GB, resp_bytes: GB, connection_count: 4, percent_of_total: 25 },
-		{ ip: '192.168.1.10', total_bytes: 6 * GB, orig_bytes: GB, resp_bytes: 5 * GB, connection_count: 9, percent_of_total: 75 },
+		// OLD CODE START — NET-226: orig_bytes/resp_bytes
+		// { ip: '192.168.1.9', total_bytes: 2 * GB, orig_bytes: GB, resp_bytes: GB, connection_count: 4, percent_of_total: 25 },
+		// { ip: '192.168.1.10', total_bytes: 6 * GB, orig_bytes: GB, resp_bytes: 5 * GB, connection_count: 9, percent_of_total: 75 },
+		// OLD CODE END
+		{ ip: '192.168.1.9', total_bytes: 2 * GB, upload_bytes: 1.5 * GB, download_bytes: 0.5 * GB, connection_count: 4, percent_of_total: 25 },
+		{ ip: '192.168.1.10', total_bytes: 6 * GB, upload_bytes: GB, download_bytes: 5 * GB, connection_count: 9, percent_of_total: 75 },
 	],
 };
 const HEATMAP = {
@@ -115,7 +126,8 @@ describe('Bandwidth — cards', () => {
 		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 		stubDaemon(ALL);
 		const { container } = render(Page);
-		expect((await screen.findByText('Projected')).closest('.kpi')).toHaveTextContent('45.0GB');
+		// OLD CODE: …toHaveTextContent('45.0GB'); (NET-226 follow-up: the projection leaves out local traffic)
+		expect((await screen.findByText('Projected')).closest('.kpi')).toHaveTextContent('37.5GB');
 		expect(screen.getByText('Days remaining').closest('.kpi')).toHaveTextContent('28days');
 		expect(screen.getByRole('img', { name: /^Busiest day 2 Nov, with 5\.0 GB/ })).toBeInTheDocument();
 		// OLD CODE START — NET-160: the table's address is a link now too, so there are two
@@ -133,12 +145,35 @@ describe('Bandwidth — cards', () => {
 		expect(screen.getByRole('img', { name: 'Busiest hour Thu 21:00, with 4.0 GB' })).toBeInTheDocument();
 	});
 
+	it('NET-226: the device table reads what each device sent and received, and says what IPv6 it left out', async () => {
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		const router = { ...DEVICES.devices[1], ipv6_left_out: 12, ipv6_left_out_reason: 'router' };
+		stubDaemon({ ...ALL, '/api/bandwidth/devices': { ...DEVICES, devices: [DEVICES.devices[0], router] } });
+		render(Page);
+		const table = await screen.findByRole('table', { name: 'Per-device breakdown' });
+		const row = [...table.querySelectorAll('tbody tr')].find((r) => r.textContent?.includes('192.168.1.9'));
+		const cells = [...(row?.querySelectorAll('td') ?? [])].map((td) => td.textContent?.trim());
+		expect(cells.slice(2, 4)).toEqual(['1.5 GB', '500.0 MB']);
+		expect(
+			screen.getByText("The device at 192.168.1.10 forwards other devices' traffic (it's the router), so only its link-local IPv6 is counted."),
+		).toBeInTheDocument();
+	});
+
 	it('marks a projection over the cap', async () => {
 		const over = { ...MONTHLY, projection: { ...MONTHLY.projection, cap_bytes: 40 * GB, usage_percent: 8, exceeds_cap: true } };
 		stubDaemon({ '/api/bandwidth/monthly': over });
 		render(Page);
 		expect((await screen.findByText('Over your cap')).closest('.chip')).toHaveClass('is-warn');
 		expect(screen.getByRole('meter', { name: '8% of your monthly cap used' })).toBeInTheDocument();
+	});
+
+	it('NET-226 follow-up: the cap meter counts internet traffic, not traffic between your devices', async () => {
+		// 2.5 GB to and from the internet of 3 GB in all, against a 10 GB cap
+		const capped = { ...MONTHLY, projection: { ...MONTHLY.projection, cap_bytes: 10e9, usage_percent: 25 } };
+		stubDaemon({ '/api/bandwidth/monthly': capped });
+		render(Page);
+		const meter = await screen.findByRole('meter', { name: '25% of your monthly cap used' });
+		expect(meter).toHaveAttribute('aria-valuenow', '25');
 	});
 
 	it('loading: each card says what it is loading', async () => {

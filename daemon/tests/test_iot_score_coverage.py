@@ -69,7 +69,9 @@ class TestMixedFleet:
             5,
         )
         assert plug["score"] is None and plug["grade"] is None
-        assert plug["coverage"] == 40
+        # OLD CODE: assert plug["coverage"] == 40 (DEV-10: trackers, third parties and ports
+        # were "measured" with no DNS, no ASN and no destination port seen; only alerts are now)
+        assert plug["coverage"] == 10
         assert plug["encryption_pct"] is None
 
         assert fleet["health_score"] == 98  # not pulled toward the plug's old 80-odd

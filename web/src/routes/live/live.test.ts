@@ -98,3 +98,36 @@ describe('Live Monitor — category links', () => {
 		expect(screen.getByText('Other field').closest('a')).toBeNull();
 	});
 });
+
+// NET-237 (GEO-2, P3 anycast, TRF-1): the drawer shows what GeoIP can honestly place, and both times
+describe('Live Monitor — drawer location and times', () => {
+	const base = { source_ip: '192.168.1.20', dest_port: 443, protocol: 'tcp', timestamp: '2026-11-03T09:15:00Z', ended_at: '2026-11-03T10:04:30Z' };
+	const drawer = (connection: Record<string, unknown>, detail: unknown = null) =>
+		render(LiveConnectionDrawerContent, { connection: connection as never, detail: detail as never, detailLoading: false, detailFailed: false, activeTab: 'details' });
+
+	it('says anycast has no one location, even when the row has a stored point', () => {
+		drawer(
+			{ ...base, dest_ip: '1.1.1.1', dest_city: 'Sydney', dest_lat: -33.494, dest_lon: 143.2104 },
+			{ geo: { ip: '1.1.1.1', country: 'Australia', country_code: 'AU', city: '', lat: null, lon: null, asn: 13335, organization: 'Example DNS', anycast: true }, alerts: [], alert_count: 0, history: { total_bytes: 0, connection_count: 0, timeline: [] } },
+		);
+		expect(screen.getByText('Anycast: location varies')).toBeInTheDocument();
+		expect(screen.queryByText(/-33\.5|143\.2|Sydney/)).not.toBeInTheDocument();
+	});
+
+	it('shows a city centre to one decimal as an estimate, and a country centre as no position', () => {
+		drawer({ ...base, dest_ip: '203.0.113.9', dest_city: 'Berlin', dest_lat: 52.5200, dest_lon: 13.4050 });
+		expect(screen.getByText('52.5, 13.4 · city estimate, accuracy unknown')).toBeInTheDocument();
+	});
+
+	it('gives a country-only answer no coordinates', () => {
+		drawer({ ...base, dest_ip: '203.0.113.9', dest_city: '', dest_lat: 37.751, dest_lon: -97.822 });
+		expect(screen.getByText('Country-level estimate, no local position')).toBeInTheDocument();
+		expect(screen.queryByText(/37\.7|97\.8/)).not.toBeInTheDocument();
+	});
+
+	it('shows when the connection started and when it ended', () => {
+		drawer({ ...base, dest_ip: '203.0.113.9' });
+		expect(screen.getByText('Started')).toBeInTheDocument();
+		expect(screen.getByText('Ended')).toBeInTheDocument();
+	});
+});

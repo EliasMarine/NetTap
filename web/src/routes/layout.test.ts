@@ -5,8 +5,10 @@ import type { Writable } from 'svelte/store';
 import { page } from '$app/stores';
 import * as captureApi from '$api/capture';
 import * as systemApi from '$api/system';
-import { _configure } from '$lib/stores/alertSnapshot';
+import { get } from 'svelte/store';
+import { _configure, alertSnapshots } from '$lib/stores/alertSnapshot';
 import Layout from './+layout.svelte';
+import { captureMode as modeStore, initCaptureMode } from '$lib/stores/captureMode';
 
 vi.mock('$app/stores', async () => {
 	const { writable } = await import('svelte/store');
@@ -22,10 +24,15 @@ vi.mock('$api/system', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$api/system')>()),
 	getStorageStatus: vi.fn(),
 }));
-vi.mock('$lib/stores/captureMode', () => ({ initCaptureMode: vi.fn() }));
+// OLD CODE: vi.mock('$lib/stores/captureMode', () => ({ initCaptureMode: vi.fn() })); (NET-225: the chip reads the shared store)
+vi.mock('$lib/stores/captureMode', async () => {
+	const { writable } = await import('svelte/store');
+	return { captureMode: writable(null), initCaptureMode: vi.fn() };
+});
 
 const children = createRawSnippet(() => ({ render: () => '<p>page body</p>' }));
 const never = <T,>() => new Promise<T>(() => {});
+const counts = (total: number) => ({ from: '', to: '', counts: { total, high: total, medium: 0, low: 0 } });
 const pageStore = page as unknown as Writable<{ url: URL }>;
 
 function health(status: string, iface = 'enp1s0'): captureApi.CaptureHealthResponse {
@@ -49,7 +56,9 @@ function renderLayout(username: string | null = 'admin') {
 beforeEach(() => {
 	pageStore.set({ url: new URL('http://localhost/system') });
 	_configure({ fetcher: () => never() });
-	vi.mocked(captureApi.getCaptureMode).mockResolvedValue({ mode: 'bridge', interface: 'br0' });
+	// OLD CODE: vi.mocked(captureApi.getCaptureMode).mockResolvedValue({ mode: 'bridge', interface: 'br0' }); (NET-225: the store answers now)
+	vi.mocked(captureApi.getCaptureMode).mockReturnValue(never());
+	modeStore.set('bridge');
 	vi.mocked(captureApi.getCaptureHealth).mockReturnValue(never());
 	vi.mocked(systemApi.getStorageStatus).mockReturnValue(never());
 	stubFetch();
@@ -67,14 +76,16 @@ describe('layout capture mode chip', () => {
 		['mirror', 'Mirror mode · eth1'],
 		['bridge', 'Bridge mode · eth1'],
 	])('shows %s as "%s" while capture is healthy', async (mode, text) => {
-		vi.mocked(captureApi.getCaptureMode).mockResolvedValue({ mode, interface: 'eth1' });
+		// OLD CODE: vi.mocked(captureApi.getCaptureMode).mockResolvedValue({ mode, interface: 'eth1' }); (NET-225)
+		modeStore.set(mode as 'bridge');
 		vi.mocked(captureApi.getCaptureHealth).mockResolvedValue(health('normal', 'eth1'));
 		renderLayout();
 		expect(await screen.findByText(text)).toBeInTheDocument();
 	});
 
 	it('says the mode is unknown instead of guessing Bridge (#96)', async () => {
-		vi.mocked(captureApi.getCaptureMode).mockRejectedValue(new Error('503'));
+		// OLD CODE: vi.mocked(captureApi.getCaptureMode).mockRejectedValue(new Error('503')); (NET-225: a failed or unrecognised reply)
+		modeStore.set('unknown');
 		renderLayout();
 		expect(await screen.findByText('Mode unknown')).toBeInTheDocument();
 		expect(screen.queryByText(/Bridge/)).not.toBeInTheDocument();
@@ -82,10 +93,30 @@ describe('layout capture mode chip', () => {
 	});
 
 	it('still shows capture health when the mode request fails', async () => {
-		vi.mocked(captureApi.getCaptureMode).mockRejectedValue(new Error('503'));
+		// OLD CODE: vi.mocked(captureApi.getCaptureMode).mockRejectedValue(new Error('503')); (NET-225)
+		modeStore.set('unknown');
 		vi.mocked(captureApi.getCaptureHealth).mockResolvedValue(health('down'));
 		renderLayout();
 		expect(await screen.findByText('Capture stopped')).toBeInTheDocument();
+	});
+
+	// NET-225: a backup restore re-reads the mode through the shared store; the chip loaded its own copy once
+	it('follows the shared capture-mode store, so a re-read reaches the chip without a reload', async () => {
+		modeStore.set('mirror');
+		vi.mocked(captureApi.getCaptureHealth).mockResolvedValue(health('normal', 'eth1'));
+		renderLayout();
+		expect(await screen.findByText('Mirror mode · eth1')).toBeInTheDocument();
+		expect(initCaptureMode).toHaveBeenCalled();
+
+		modeStore.set('bridge');
+		expect(await screen.findByText('Bridge mode · eth1')).toBeInTheDocument();
+		expect(screen.queryByText(/Mirror/)).not.toBeInTheDocument();
+	});
+
+	it('says it is checking until the store has an answer', async () => {
+		modeStore.set(null);
+		renderLayout();
+		expect(await screen.findByText('Checking mode…')).toBeInTheDocument();
 	});
 
 	it('says capture status is unknown when the health request fails', async () => {
@@ -139,6 +170,8 @@ describe('layout daemon status', () => {
 		expect(screen.getByText("Can't reach NetTap")).toBeInTheDocument();
 		expect(captureApi.getCaptureHealth).toHaveBeenCalledTimes(2);
 		expect(systemApi.getStorageStatus).toHaveBeenCalledTimes(2);
+		// NET-225: a mode request that failed at startup is asked again, so the chip doesn't stay "Mode unknown"
+		expect(initCaptureMode).toHaveBeenCalledTimes(2);
 
 		const before = pingCalls(f);
 		unmount();
@@ -212,6 +245,27 @@ describe('layout sidebar', () => {
 		expect(form).toHaveAttribute('method', 'POST');
 		expect(form).toHaveAttribute('action', '/api/auth/logout');
 		expect(button).toHaveAttribute('type', 'submit');
+	});
+
+	// NET-228 (audit HON-49): a failed count showed no badge, the same as zero
+	it.each([
+		['a failed count', () => Promise.reject(new Error('503')), '?', "Couldn't load the alert count"],
+		['a count', () => Promise.resolve(counts(7)), '7', '7 alerts in the last 24 hours'],
+	])('badges %s on Alerts', async (_what, fetcher, badge, spoken) => {
+		_configure({ fetcher: fetcher as never });
+		renderLayout();
+		const alerts = within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: /^Alerts/ });
+		await vi.waitFor(() => expect(within(alerts).getByText(spoken)).toBeInTheDocument());
+		expect(within(alerts).getByText(badge)).toHaveClass('count');
+	});
+
+	it('shows no badge for zero alerts', async () => {
+		_configure({ fetcher: (() => Promise.resolve(counts(0))) as never });
+		renderLayout();
+		await vi.waitFor(() => expect(get(alertSnapshots)[24]?.status).toBe('ok'));
+		await tick();
+		const alerts = within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: /^Alerts/ });
+		expect(alerts.querySelector('.count')).toBeNull();
 	});
 
 	it('hides the user row without a username but keeps sign-out', () => {

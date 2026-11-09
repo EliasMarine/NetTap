@@ -19,7 +19,11 @@ from opensearchpy import OpenSearchException
 # OLD CODE END
 from api.offload import run_blocking
 from api.time_range import parse_time_range
-from services.excluded_ips import build_excluded_ips_filter, parse_single_ip
+from services.excluded_ips import (
+    CONN_ACCOUNTING,
+    build_excluded_ips_filter,
+    parse_single_ip,
+)
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
 from services.dns_analytics import DNS_NOISE_EXCLUSION as _EXCLUDE_DNS_NOISE
 from storage.manager import StorageManager
@@ -31,9 +35,17 @@ NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
 # Log type -> OpenSearch filter mapping
 LOG_TYPE_FILTERS = {
+    # OLD CODE START — release audit F1: raw conn rows included Zeek's interim long-connection
+    # records, so Home's Connections count (final records) linked to a longer list
+    # "zeek.conn": [
+    #     {"term": {"event.provider": "zeek"}},
+    #     {"term": {"event.dataset": "conn"}},
+    # ],
+    # OLD CODE END
+    # One row per connection, like every count that links here (NET-160 drill-downs)
     "zeek.conn": [
         {"term": {"event.provider": "zeek"}},
-        {"term": {"event.dataset": "conn"}},
+        CONN_ACCOUNTING,
     ],
     "zeek.dns": [
         {"term": {"event.provider": "zeek"}},
@@ -743,8 +755,18 @@ async def handle_log_stats(request: web.Request) -> web.Response:
         "aggs": {
             "unique_sources": {"cardinality": {"field": "source.ip"}},
             "protocol_count": {"cardinality": {"field": "event.dataset"}},
-            "src_bytes": {"sum": {"field": "source.bytes"}},
-            "dst_bytes": {"sum": {"field": "destination.bytes"}},
+            # OLD CODE START — F1: summed every record, conn_long.log interim records included
+            # "src_bytes": {"sum": {"field": "source.bytes"}},
+            # "dst_bytes": {"sum": {"field": "destination.bytes"}},
+            # OLD CODE END
+            # Bytes from final conn records only; total_events still counts every row
+            "conn_bytes": {
+                "filter": CONN_ACCOUNTING,
+                "aggs": {
+                    "src_bytes": {"sum": {"field": "source.bytes"}},
+                    "dst_bytes": {"sum": {"field": "destination.bytes"}},
+                },
+            },
         },
     }
 
@@ -762,7 +784,13 @@ async def handle_log_stats(request: web.Request) -> web.Response:
 
         aggs = result.get("aggregations", {})
         total_events = result.get("hits", {}).get("total", {}).get("value", 0)
-        total_bytes = aggs.get("src_bytes", {}).get("value", 0) + aggs.get(
+        # OLD CODE START — F1: the sums moved into the conn_bytes filter
+        # total_bytes = aggs.get("src_bytes", {}).get("value", 0) + aggs.get(
+        #     "dst_bytes", {}
+        # ).get("value", 0)
+        # OLD CODE END
+        conn_bytes = aggs.get("conn_bytes", {})
+        total_bytes = conn_bytes.get("src_bytes", {}).get("value", 0) + conn_bytes.get(
             "dst_bytes", {}
         ).get("value", 0)
 

@@ -10,7 +10,9 @@ import fnmatch
 import logging
 import os
 
+from services.excluded_ips import CONN_ACCOUNTING
 from storage.all_buckets import all_buckets
+from storage.exact_terms import PartialResultsError
 from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.traffic_classifier")
@@ -903,7 +905,10 @@ def _conn_query(from_ts: str, to_ts: str) -> dict:
         "bool": {
             "filter": [
                 {"term": {"event.provider": "zeek"}},
-                {"term": {"event.dataset": "conn"}},
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # {"term": {"event.dataset": "conn"}},
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
             ]
         }
@@ -919,10 +924,14 @@ def _asn_buckets(client, from_ts: str, to_ts: str) -> list[dict]:
         [{"asn": {"terms": {"field": "destination.as.full"}}}],
         aggs={"total_bytes": _CONN_BYTES_SUM},
     )
+    # OLD CODE START — NET-237 (caps): only logged, so the category totals were short
+    # if not complete:
+    #     logger.warning(
+    #         "traffic categories: stopped at %d ASNs; totals are short", len(buckets)
+    #     )
+    # OLD CODE END
     if not complete:
-        logger.warning(
-            "traffic categories: stopped at %d ASNs; totals are short", len(buckets)
-        )
+        raise PartialResultsError(f"traffic categories stopped at {len(buckets)} ASNs")
     return buckets
 
 
@@ -1097,11 +1106,15 @@ def get_category_devices(
         [{"ip": {"terms": {"field": "source.ip"}}}],
         aggs=per_device,
     )
+    # OLD CODE START — NET-237 (caps): only logged, so the device rows and totals were short
+    # if not complete:
+    #     logger.warning(
+    #         "get_category_devices: stopped at %d devices; totals are short",
+    #         len(buckets),
+    #     )
+    # OLD CODE END
     if not complete:
-        logger.warning(
-            "get_category_devices: stopped at %d devices; totals are short",
-            len(buckets),
-        )
+        raise PartialResultsError(f"category devices stopped at {len(buckets)} devices")
 
     every = sorted(
         (_category_device_row(b) for b in buckets),

@@ -8,6 +8,7 @@ Phase 2 rewrite: Uses opensearch-py client with tiered pruning,
 emergency pruning, and status reporting.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -15,6 +16,7 @@ import logging
 import shutil
 import subprocess
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -36,6 +38,14 @@ logger = logging.getLogger("nettap.storage")
 
 # docker stop waits up to 10 s for a clean exit before killing
 _DOCKER_TIMEOUT_S = 60
+
+# A15: a failed ILM apply is retried after 5, 10, 20, 40, then every 60 minutes
+_ILM_RETRY_BASE_S = 300
+_ILM_RETRY_MAX_S = 3600
+# B-m: the index growth estimate averages the complete days in this window
+_GROWTH_WINDOW_DAYS = 7
+# How long a PCAP growth measurement serves status polls (a daily rate barely moves in 10 min)
+_PCAP_GROWTH_TTL_S = 600
 
 # ---------------------------------------------------------------------------
 # OLD CODE START — Original StorageManager (Phase 1 scaffold)
@@ -122,6 +132,17 @@ _TIER_PREFIXES = {
 _DEFAULT_PCAP_MAX_DISK_PCT = 25.0
 
 
+def _usable_disk(path: str) -> tuple[int, int, int]:
+    """(size, used, free) as ``df`` counts them (STO-3).
+
+    ext4 keeps reserved blocks for root (81 GB of 1965 GB on the G11). OpenSearch and the
+    capture containers aren't root, so the disk is full for them when ``free`` (f_bavail)
+    runs out: the size they can use is used + free, not the raw total.
+    """
+    disk = shutil.disk_usage(path)
+    return disk.used + disk.free, disk.used, disk.free
+
+
 def _pcap_cap_fraction() -> float:
     """PCAP_MAX_DISK_PCT (0-100, 0 = no cap) as a fraction of the disk."""
     raw = os.environ.get("PCAP_MAX_DISK_PCT", "")
@@ -206,6 +227,14 @@ class StorageManager:
 
         # C3: Track whether ILM policy has been verified this session
         self._ilm_verified: bool = False
+        # A15: failed attempts and when the next one may run (time.monotonic())
+        self._ilm_failures: int = 0
+        self._ilm_retry_at: float = 0.0
+        # A15: shared with the API's IlmSyncState, so startup and saves never apply at once
+        self.ilm_lock = threading.Lock()
+        # B-m: (measured at, PCAP bytes a day or None, days spanned), shared by status polls
+        self._pcap_growth_cache: tuple[float, float | None, float] | None = None
+        self._pcap_growth_lock = threading.Lock()
         # #96: whether OpenSearch took the exact-counts setting (#90); retried each cycle
         self._exact_counts: bool = False
 
@@ -300,8 +329,13 @@ class StorageManager:
         Uses ``config.check_path`` when *path* is not explicitly given.
         """
         check = path if path is not None else self.config.check_path
-        usage = shutil.disk_usage(check)
-        return usage.used / usage.total
+        # OLD CODE START — STO-3: the raw total counts ext4's reserved blocks, so the 95%
+        # capture stop fired at about 99% of the space OpenSearch can write
+        # usage = shutil.disk_usage(check)
+        # return usage.used / usage.total
+        # OLD CODE END
+        size, used, _free = _usable_disk(check)
+        return used / size if size else 0.0
 
     # ------------------------------------------------------------------
     # Index discovery
@@ -312,8 +346,8 @@ class StorageManager:
 
         Each dict contains:
           - name: index name
-          - size: human-readable size string (e.g. "24.5mb")
-          - size_bytes: size in bytes (parsed from ``pri.store.size``)
+          - size: ``store.size`` as OpenSearch returns it (bytes, as a string)
+          - size_bytes: total store size in bytes (``store.size``), or None
           - creation_date: ISO-8601 creation date string or None
           - tier: one of "hot", "warm", "cold", "unknown"
           - parsed_date: datetime extracted from index name or None
@@ -328,10 +362,18 @@ class StorageManager:
         #     logger.error("Failed to list indices from OpenSearch: %s", exc)
         #     return []
         # OLD CODE END
+        # OLD CODE START — B-m: sizes came as "24.5mb" strings, so nothing could add them up
+        # raw = self._client.cat.indices(
+        #     format="json",
+        #     h="index,store.size,pri.store.size,creation.date.string",
+        #     s="index",
+        # )
+        # OLD CODE END
         raw = self._client.cat.indices(
             format="json",
             h="index,store.size,pri.store.size,creation.date.string",
             s="index",
+            bytes="b",
         )
 
         indices: list[dict] = []
@@ -350,6 +392,8 @@ class StorageManager:
                 {
                     "name": name,
                     "size": size_str,
+                    # None when OpenSearch didn't give a byte count (e.g. a closed index)
+                    "size_bytes": int(size_str) if str(size_str).isdigit() else None,
                     "creation_date": creation,
                     "tier": tier,
                     "parsed_date": parsed_date,
@@ -535,19 +579,22 @@ class StorageManager:
     # Emergency pruning
     # ------------------------------------------------------------------
 
-    def prune_emergency(self) -> int:
+    # OLD CODE: def prune_emergency(self) -> int: (B-l: one fixed target)
+    def prune_emergency(self, target: float | None = None) -> int:
         """Aggressively delete the oldest indices regardless of tier.
 
         Called when disk usage exceeds the emergency threshold.
         Deletes oldest-first across ALL tiers until usage drops below
-        the emergency threshold or only today's indices remain.  Indices
-        dated today (UTC) or later are never deleted: they are being written.
+        ``target`` (default: the emergency threshold) or only today's indices
+        remain.  Indices dated today (UTC) or later are never deleted: they are
+        being written.
 
         Returns the number of indices deleted.
         """
+        target = target or self.config.emergency_threshold
         logger.warning(
             "EMERGENCY PRUNE: disk usage exceeds %.1f%% threshold",
-            self.config.emergency_threshold * 100,
+            target * 100,
         )
 
         with self._cleanup_lock:
@@ -589,7 +636,8 @@ class StorageManager:
                 # deleted every index.
                 # if usage < self.config.disk_threshold:
                 # OLD CODE END
-                if usage < self.config.emergency_threshold:
+                # OLD CODE: if usage < self.config.emergency_threshold: (B-l: target)
+                if usage < target:
                     logger.info(
                         "Emergency prune brought disk to %.1f%%; deleted %d indices total",
                         usage * 100,
@@ -607,7 +655,8 @@ class StorageManager:
             # )
             # OLD CODE END
             usage = self.check_disk_usage()
-            if usage >= self.config.emergency_threshold:
+            # OLD CODE: if usage >= self.config.emergency_threshold: (B-l: target)
+            if usage >= target:
                 logger.critical(
                     "Emergency prune deleted %d indices and only today's indices "
                     "are left; disk still at %.1f%%. Deleting indices cannot "
@@ -642,7 +691,8 @@ class StorageManager:
         """
         try:
             usage_frac = self.check_disk_usage()
-            disk = shutil.disk_usage(self.config.check_path)
+            # OLD CODE: disk = shutil.disk_usage(self.config.check_path) (STO-3: raw total)
+            disk_size = _usable_disk(self.config.check_path)[0]
         except OSError:
             return {
                 "current_usage_pct": -1,
@@ -700,7 +750,8 @@ class StorageManager:
         frac_per_hour = usage_delta_frac / elapsed_hours
 
         # Convert to bytes per hour
-        fill_rate_bytes = frac_per_hour * disk.total
+        # OLD CODE: fill_rate_bytes = frac_per_hour * disk.total (STO-3: usage is of the usable size)
+        fill_rate_bytes = frac_per_hour * disk_size
 
         if frac_per_hour <= 0:
             # Usage is stable or decreasing
@@ -804,15 +855,23 @@ class StorageManager:
         The newest file is never deleted: netsniff may still be writing it.
         Returns the number of PCAP files deleted.
         """
+        # OLD CODE START — B-m: moved to _pcap_cap_bytes, which the growth estimate shares
+        # fraction = self.config.pcap_max_disk_fraction
+        # if fraction <= 0:
+        #     return 0
+        # try:
+        #     cap = int(shutil.disk_usage(self.config.pcap_dir).total * fraction)
+        # except OSError as exc:
+        #     logger.error(
+        #         "Cannot size the PCAP disk at %s: %s", self.config.pcap_dir, exc
+        #     )
+        #     return 0
+        # OLD CODE END
         fraction = self.config.pcap_max_disk_fraction
-        if fraction <= 0:
-            return 0
-        try:
-            cap = int(shutil.disk_usage(self.config.pcap_dir).total * fraction)
-        except OSError as exc:
-            logger.error(
-                "Cannot size the PCAP disk at %s: %s", self.config.pcap_dir, exc
-            )
+        cap = (
+            self._pcap_cap_bytes()
+        )  # None: no cap, or the disk can't be sized (logged)
+        if cap is None:
             return 0
 
         deleted = 0
@@ -838,11 +897,99 @@ class StorageManager:
             )
         return deleted
 
-    def _delete_oldest_pcaps(self, max_delete: int = 10) -> int:
-        """Delete the oldest PCAP files until usage is below the emergency threshold.
+    # OLD CODE: def _delete_oldest_pcaps(self, max_delete: int = 10) -> int: (B-l: one fixed target)
+    def _pcap_cap_bytes(self) -> int | None:
+        """PCAP's share of its own filesystem in bytes; None with no cap or an unreadable disk."""
+        fraction = self.config.pcap_max_disk_fraction
+        if fraction <= 0:
+            return None
+        try:
+            # The raw size, not the usable one (STO-3): changing it would delete ~20 GB of the
+            # G11's PCAP on deploy, and the cap is a share of the disk either way
+            return int(shutil.disk_usage(self.config.pcap_dir).total * fraction)
+        except OSError as exc:
+            logger.error(
+                "Cannot size the PCAP disk at %s: %s", self.config.pcap_dir, exc
+            )
+            return None
+
+    def _growth_estimate(self, indices: list[dict]) -> dict:
+        """B-m: how fast data grows, measured, for the retention estimate.
+
+        Indices: the mean of the complete UTC days (before today) in the last week.
+        PCAP: everything on disk over the time it spans, since the oldest goes first;
+        needs a day of span. Each rate is None until it can be measured.
+        """
+        today = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        start = today - timedelta(days=_GROWTH_WINDOW_DAYS)
+        per_day: dict[datetime, int] = {}
+        for idx in indices:
+            day, size = idx.get("parsed_date"), idx.get("size_bytes")
+            if day is not None and size is not None and start <= day < today:
+                per_day[day] = per_day.get(day, 0) + size
+        index_rate = sum(per_day.values()) / len(per_day) if per_day else None
+
+        # OLD CODE START — scanned the PCAP folder on every status poll
+        # pcaps = self._pcaps_oldest_first()
+        # span_days = (
+        #     (pcaps[-1][1].st_mtime - pcaps[0][1].st_mtime) / 86400 if pcaps else 0.0
+        # )
+        # pcap_rate = (
+        #     sum(st.st_size for _, st in pcaps) / span_days if span_days >= 1 else None
+        # )
+        # OLD CODE END
+        pcap_rate, span_days = self._pcap_growth()
+        days_kept = None
+        if pcap_rate:
+            if self.config.pcap_max_disk_fraction <= 0:
+                days_kept = float(self.config.cold_days)
+            else:
+                cap = self._pcap_cap_bytes()
+                if cap is not None:
+                    days_kept = min(float(self.config.cold_days), cap / pcap_rate)
+        return {
+            "index_bytes_per_day": round(index_rate)
+            if index_rate is not None
+            else None,
+            "index_days_measured": len(per_day),
+            "pcap_bytes_per_day": round(pcap_rate) if pcap_rate is not None else None,
+            "pcap_days_measured": round(span_days, 1),
+            "pcap_days_kept": round(days_kept, 1) if days_kept is not None else None,
+        }
+
+    def _pcap_growth(self) -> tuple[float | None, float]:
+        """PCAP's (bytes a day, or None under a day of span; days spanned), cached 10 minutes.
+
+        A scan stats every file: 45 ms for the G11's 3,620 files, and a box at the 10 MiB
+        minimum rotation can hold ~13 times as many. Polls arriving together wait on the lock
+        and share one scan.
+        """
+        with getattr(self, "_pcap_growth_lock", None) or contextlib.nullcontext():
+            cached = getattr(self, "_pcap_growth_cache", None)
+            if cached is not None and time.monotonic() - cached[0] < _PCAP_GROWTH_TTL_S:
+                return cached[1], cached[2]
+            pcaps = self._pcaps_oldest_first()
+            span_days = (
+                (pcaps[-1][1].st_mtime - pcaps[0][1].st_mtime) / 86400 if pcaps else 0.0
+            )
+            pcap_rate = (
+                sum(st.st_size for _, st in pcaps) / span_days
+                if span_days >= 1
+                else None
+            )
+            self._pcap_growth_cache = (time.monotonic(), pcap_rate, span_days)
+            return pcap_rate, span_days
+
+    def _delete_oldest_pcaps(
+        self, max_delete: int = 10, target: float | None = None
+    ) -> int:
+        """Delete the oldest PCAP files until usage is below ``target``.
 
         Args:
             max_delete: Maximum number of PCAP files to delete per call.
+            target: Usage fraction to get below (default: the emergency threshold).
 
         Returns:
             Number of PCAP files deleted.
@@ -877,8 +1024,15 @@ class StorageManager:
         #
         # return deleted
         # OLD CODE END
+        # OLD CODE START — B-l: a file that couldn't be deleted used up the batch, so the same
+        # undeletable files could block every later one, cycle after cycle
+        # for pcap_file, _stat in self._pcaps_oldest_first()[:max_delete]:
+        # OLD CODE END
+        # max_delete counts deletions, so fewer than that means every PCAP was tried
         deleted = 0
-        for pcap_file, _stat in self._pcaps_oldest_first()[:max_delete]:
+        for pcap_file, _stat in self._pcaps_oldest_first():
+            if deleted >= max_delete:
+                break
             try:
                 self._unlink_pcap(pcap_file)
                 deleted += 1
@@ -887,7 +1041,8 @@ class StorageManager:
                 logger.error("Failed to delete PCAP %s: %s", pcap_file, exc)
                 continue
             # CR-002: stop as soon as the emergency is over
-            if self.check_disk_usage() < self.config.emergency_threshold:
+            # OLD CODE: if self.check_disk_usage() < self.config.emergency_threshold: (B-l: target)
+            if self.check_disk_usage() < (target or self.config.emergency_threshold):
                 break
 
         return deleted
@@ -979,8 +1134,11 @@ class StorageManager:
         """Execute emergency cascade deletion based on disk usage level.
 
         At 90%: delete the oldest PCAPs until usage is below 90%, then
-                prune the oldest OpenSearch indices only if still needed.
+                prune the oldest OpenSearch indices only if still needed and
+                no PCAP is left to delete (a full PCAP batch waits a cycle).
         At 95%: additionally ``docker stop`` pcap-capture and set the flag.
+        While it is stopped, the target is 85% instead of 90% (B-l), so
+        capture always comes back once space is freed.
         Below 85%: ``docker start`` it again (if the user has capture on)
                    and clear the flag.
 
@@ -1038,13 +1196,36 @@ class StorageManager:
                 self.config.emergency_threshold * 100,
             )
 
-        if usage >= self.config.emergency_threshold:
+        # OLD CODE START — B-l: deleted only to below 90% while resume needs below 85%, so a
+        # paused capture could stay paused; and indices went after one 500-file PCAP batch even
+        # when older PCAP was still there
+        # if usage >= self.config.emergency_threshold:
+        #     # PCAP first: it is most of the disk and the cheapest data to lose
+        #     total_deleted += self._delete_oldest_pcaps(
+        #         max_delete=self._EMERGENCY_PCAP_DELETE_CAP
+        #     )
+        #     if self.check_disk_usage() >= self.config.emergency_threshold:
+        #         total_deleted += self.prune_emergency()
+        # OLD CODE END
+        # Once capture is paused, free space down to where it resumes
+        target = (
+            self.config.resume_threshold
+            if self.is_capture_stopped()
+            else self.config.emergency_threshold
+        )
+        if usage >= target:
             # PCAP first: it is most of the disk and the cheapest data to lose
-            total_deleted += self._delete_oldest_pcaps(
-                max_delete=self._EMERGENCY_PCAP_DELETE_CAP
+            pcaps_deleted = self._delete_oldest_pcaps(
+                max_delete=self._EMERGENCY_PCAP_DELETE_CAP, target=target
             )
-            if self.check_disk_usage() >= self.config.emergency_threshold:
-                total_deleted += self.prune_emergency()
+            total_deleted += pcaps_deleted
+            # A full batch may leave older PCAP: the next cycle deletes that, not indices.
+            # Fewer means every PCAP was tried (failures don't count toward the batch).
+            if (
+                pcaps_deleted < self._EMERGENCY_PCAP_DELETE_CAP
+                and self.check_disk_usage() >= target
+            ):
+                total_deleted += self.prune_emergency(target=target)
 
         # Check if we've recovered below resume threshold
         try:
@@ -1063,6 +1244,12 @@ class StorageManager:
                 # self._clear_capture_stop_flag()
                 # OLD CODE END
                 self._resume_capture()
+        elif self.is_capture_stopped():
+            logger.warning(
+                "Packet capture stays paused: disk at %.1f%%, it resumes below %.1f%%",
+                usage_after * 100,
+                self.config.resume_threshold * 100,
+            )
 
         return total_deleted
 
@@ -1127,54 +1314,122 @@ class StorageManager:
         #     ...
         # OLD CODE END
 
-        # Generate policies from current config
-        policies = generate_ilm_policies(self.config)
-
-        logger.info(
-            "Verifying ILM policies from config (hot=%dd, warm=%dd, cold=%dd)",
-            self.config.hot_days,
-            self.config.warm_days,
-            self.config.cold_days,
-        )
-
+        # OLD CODE START — A15: any result set _ilm_verified, so a startup "error: ..." was never
+        # retried and the health card kept the last success ("Policy synced"); it also ran outside
+        # the lock saves use, so it could apply an older config over a newer save
+        # # Generate policies from current config
+        # policies = generate_ilm_policies(self.config)
+        #
+        # logger.info(
+        #     "Verifying ILM policies from config (hot=%dd, warm=%dd, cold=%dd)",
+        #     self.config.hot_days,
+        #     self.config.warm_days,
+        #     self.config.cold_days,
+        # )
+        #
+        # try:
+        #     results = apply_ilm_policies_from_config(
+        #         self.opensearch_url,
+        #         policies,
+        #         http_auth=self._http_auth,
+        #     )
+        #     self._ilm_verified = True
+        #     # OLD CODE START — #96: tried once; a failure was only logged and never retried
+        #     # self._exact_aggregation_counts()
+        #     # OLD CODE END
+        #     self._keep_ism_history_single_copy()
+        #
+        #     # Log summary
+        #     for name, status in results.items():
+        #         if status == "created":
+        #             logger.warning("ILM policy '%s' was MISSING — recreated", name)
+        #         elif status.startswith("error"):
+        #             logger.error(
+        #                 "ILM policy '%s' verification failed: %s", name, status
+        #             )
+        #         else:
+        #             logger.info("ILM policy '%s': %s", name, status)
+        #
+        #     # The Settings health card reads this record; before, only a retention
+        #     # save wrote it, so a box that never saved showed "Out of sync" forever.
+        #     clean = not any(str(v).startswith("error") for v in results.values())
+        #     config_manager = getattr(self, "_retention_config_manager", None)
+        #     if clean and config_manager is not None:
+        #         try:
+        #             config_manager.mark_ilm_applied(results)
+        #         except Exception as exc:  # the policies are applied either way
+        #             logger.warning("Could not record ILM status: %s", exc)
+        #
+        #     return results
+        #
+        # except Exception as exc:
+        #     logger.error("ILM policy verification failed: %s", exc)
+        #     return {"_error": f"error: {exc}"}
+        # OLD CODE END
+        # Inside the save path's lock, reading the config there: whichever applies last applies the newest
+        lock = getattr(self, "ilm_lock", None) or contextlib.nullcontext()
         try:
-            results = apply_ilm_policies_from_config(
-                self.opensearch_url,
-                policies,
-                http_auth=self._http_auth,
-            )
-            self._ilm_verified = True
-            # OLD CODE START — #96: tried once; a failure was only logged and never retried
-            # self._exact_aggregation_counts()
-            # OLD CODE END
-            self._keep_ism_history_single_copy()
-
-            # Log summary
-            for name, status in results.items():
-                if status == "created":
-                    logger.warning("ILM policy '%s' was MISSING — recreated", name)
-                elif status.startswith("error"):
-                    logger.error(
-                        "ILM policy '%s' verification failed: %s", name, status
-                    )
-                else:
-                    logger.info("ILM policy '%s': %s", name, status)
-
-            # The Settings health card reads this record; before, only a retention
-            # save wrote it, so a box that never saved showed "Out of sync" forever.
-            clean = not any(str(v).startswith("error") for v in results.values())
-            config_manager = getattr(self, "_retention_config_manager", None)
-            if clean and config_manager is not None:
-                try:
-                    config_manager.mark_ilm_applied(results)
-                except Exception as exc:  # the policies are applied either way
-                    logger.warning("Could not record ILM status: %s", exc)
-
-            return results
-
+            with lock:
+                policies = generate_ilm_policies(self.config)
+                logger.info(
+                    "Verifying ILM policies from config (hot=%dd, warm=%dd, cold=%dd)",
+                    self.config.hot_days,
+                    self.config.warm_days,
+                    self.config.cold_days,
+                )
+                results = apply_ilm_policies_from_config(
+                    self.opensearch_url,
+                    policies,
+                    http_auth=self._http_auth,
+                )
         except Exception as exc:
             logger.error("ILM policy verification failed: %s", exc)
+            self._ilm_failed(str(exc))
             return {"_error": f"error: {exc}"}
+
+        for name, status in results.items():
+            if status == "created":
+                logger.warning("ILM policy '%s' was MISSING — recreated", name)
+            elif status.startswith("error"):
+                logger.error("ILM policy '%s' verification failed: %s", name, status)
+            else:
+                logger.info("ILM policy '%s': %s", name, status)
+
+        self._keep_ism_history_single_copy()
+        errors = [str(v) for v in results.values() if str(v).startswith("error")]
+        if errors:
+            self._ilm_failed(errors[0])
+            return results
+
+        self._ilm_verified = True
+        self._ilm_failures = 0
+        # The Settings health card reads this record; before, only a retention
+        # save wrote it, so a box that never saved showed "Out of sync" forever.
+        config_manager = getattr(self, "_retention_config_manager", None)
+        if config_manager is not None:
+            try:
+                config_manager.mark_ilm_applied(results)
+            except Exception as exc:  # the policies are applied either way
+                logger.warning("Could not record ILM status: %s", exc)
+        return results
+
+    def _ilm_failed(self, error: str) -> None:
+        """A15: schedule the next attempt with backoff and record the error for the health card."""
+        self._ilm_failures = getattr(self, "_ilm_failures", 0) + 1
+        delay = min(_ILM_RETRY_BASE_S * 2 ** (self._ilm_failures - 1), _ILM_RETRY_MAX_S)
+        self._ilm_retry_at = time.monotonic() + delay
+        logger.warning(
+            "ILM policies not applied (attempt %d): %s; trying again in %d min",
+            self._ilm_failures,
+            error,
+            delay // 60,
+        )
+        config_manager = getattr(self, "_retention_config_manager", None)
+        if config_manager is not None:
+            try:
+                config_manager.mark_ilm_failed(error)
+            except Exception as exc:
+                logger.warning("Could not record the ILM failure: %s", exc)
 
     def _exact_aggregation_counts(self) -> None:
         """Turn off concurrent segment search (#90).
@@ -1274,8 +1529,11 @@ class StorageManager:
 
         # Get disk capacity
         try:
-            disk = shutil.disk_usage(self.config.check_path)
-            capacity = disk.total
+            # OLD CODE START — STO-3: the raw total, reserved blocks included
+            # disk = shutil.disk_usage(self.config.check_path)
+            # capacity = disk.total
+            # OLD CODE END
+            capacity = _usable_disk(self.config.check_path)[0]
         except OSError:
             capacity = 0
 
@@ -1718,7 +1976,13 @@ class StorageManager:
           7. Run predictive exhaustion check (C1)
         """
         # C3: Verify ILM policies on first run
-        if not self._ilm_verified:
+        # OLD CODE START — A15: no backoff (and verification never failed, see verify_ilm_policy)
+        # if not self._ilm_verified:
+        # OLD CODE END
+        # A15: until it succeeds, retried with backoff (_ilm_failed sets the time)
+        if not self._ilm_verified and time.monotonic() >= getattr(
+            self, "_ilm_retry_at", 0.0
+        ):
             try:
                 self.verify_ilm_policy()
             except Exception:
@@ -1758,10 +2022,16 @@ class StorageManager:
             deleted = self.emergency_cascade()
             logger.info("Emergency cascade deleted %d items", deleted)
 
-        elif usage >= self.config.emergency_threshold:
-            # C2: 90%+ — emergency cascade (no capture stop)
+        # OLD CODE START — B-l: between resume (85%) and emergency (90%) a paused capture was
+        # never resumed: only the age-based prune ran, which needn't free anything
+        # elif usage >= self.config.emergency_threshold:
+        # OLD CODE END
+        elif usage >= self.config.emergency_threshold or (
+            usage >= self.config.resume_threshold and self.is_capture_stopped()
+        ):
+            # C2: 90%+ — emergency cascade (no capture stop); B-l: or capture is paused above 85%
             logger.warning(
-                "Disk usage %.1f%% >= emergency threshold %.1f%% — "
+                "Disk usage %.1f%% >= emergency threshold %.1f%% (or capture paused) — "
                 "starting emergency cascade",
                 usage * 100,
                 self.config.emergency_threshold * 100,
@@ -1826,7 +2096,9 @@ class StorageManager:
           - disk_usage_percent: usage as 0-100 number (NOT string, NOT fraction)
           - hot_days, warm_days, cold_days: retention days (top-level)
           - disk_threshold_percent, emergency_threshold_percent: 0-100 numbers
-          - estimated_daily_gb: estimated daily ingest size
+          - estimated_daily_gb: measured index + PCAP GB a day, or None (B-m)
+          - growth_estimate: the measured rates and their basis (``_growth_estimate``)
+          - capture_paused_disk_full: packet capture is stopped because the disk filled
           - source: "daemon"
           - index_counts, total_indices: index metadata, or None with
             ``indices_error`` when OpenSearch couldn't be asked
@@ -1845,18 +2117,29 @@ class StorageManager:
         #     ... (every disk figure 0)
         # OLD CODE END
         usage_frac = self.check_disk_usage()
-        disk = shutil.disk_usage(self.config.check_path)
-        disk_total_bytes = disk.total
-        disk_used_bytes = disk.used
-        disk_free_bytes = disk.free
+        # OLD CODE START — STO-3: the raw total, so used + free didn't add up to it
+        # disk = shutil.disk_usage(self.config.check_path)
+        # disk_total_bytes = disk.total
+        # disk_used_bytes = disk.used
+        # disk_free_bytes = disk.free
+        # OLD CODE END
+        # The size OpenSearch and capture can use, as df counts it: used + free = total
+        disk_total_bytes, disk_used_bytes, disk_free_bytes = _usable_disk(
+            self.config.check_path
+        )
         # OLD CODE START — NET-166: GiB labelled GB, so a 1 TB drive read 931.32 GB
         # disk_total_gb = round(disk.total / (1024**3), 2)
         # disk_used_gb = round(disk.used / (1024**3), 2)
         # disk_free_gb = round(disk.free / (1024**3), 2)
         # OLD CODE END
-        disk_total_gb = round(disk.total / 1e9, 2)
-        disk_used_gb = round(disk.used / 1e9, 2)
-        disk_free_gb = round(disk.free / 1e9, 2)
+        # OLD CODE START — STO-3: from the raw figures
+        # disk_total_gb = round(disk.total / 1e9, 2)
+        # disk_used_gb = round(disk.used / 1e9, 2)
+        # disk_free_gb = round(disk.free / 1e9, 2)
+        # OLD CODE END
+        disk_total_gb = round(disk_total_bytes / 1e9, 2)
+        disk_used_gb = round(disk_used_bytes / 1e9, 2)
+        disk_free_gb = round(disk_free_bytes / 1e9, 2)
 
         # OLD CODE START — #96: OpenSearch down read as 0 indices in every tier
         # try:
@@ -1885,6 +2168,14 @@ class StorageManager:
             tier = idx.get("tier", "unknown")
             tier_counts[tier] = tier_counts.get(tier, 0) + 1
 
+        growth = self._growth_estimate(indices)
+        rates = (growth["index_bytes_per_day"], growth["pcap_bytes_per_day"])
+        daily_gb = (
+            round(sum(r for r in rates if r is not None) / 1e9, 2)
+            if any(r is not None for r in rates)
+            else None
+        )
+
         unknown_indices = (
             {
                 "index_counts": None,
@@ -1912,7 +2203,12 @@ class StorageManager:
             "disk_threshold_percent": round(self.config.disk_threshold * 100),
             "emergency_threshold_percent": round(self.config.emergency_threshold * 100),
             # Estimates
-            "estimated_daily_gb": 1.2,
+            # OLD CODE: "estimated_daily_gb": 1.2, (B-m: a fixed guess; the G11 writes ~2 GB of
+            # indices and ~66 GB of PCAP a day)
+            "estimated_daily_gb": daily_gb,
+            "growth_estimate": growth,
+            # B-l: the storage manager stopped packet capture because the disk filled
+            "capture_paused_disk_full": self.is_capture_stopped(),
             "source": "daemon",
             # Index metadata
             "index_counts": tier_counts,
@@ -1944,19 +2240,40 @@ class StorageManager:
         Pulls from the RetentionConfigManager if available, otherwise
         returns a basic status based on ``_ilm_verified``.
         """
+        # A15: a startup apply that failed is retried with backoff (run_cycle)
+        retrying = not self._ilm_verified and getattr(self, "_ilm_failures", 0) > 0
         if self._retention_config_manager is not None:
             raw = self._retention_config_manager.get_ilm_status()
             policies = raw.get("policies", {})
             has_errors = any(str(v).startswith("error") for v in policies.values())
+            # OLD CODE START — A15: a failure after the last success still read "synced"
+            # return {
+            #     "synced": bool(raw.get("last_success")) and not has_errors,
+            #     "last_applied": raw.get("last_success"),
+            #     "pending_retry": False,  # Updated by API handler if retry active
+            #     "policies": policies,
+            # }
+            # OLD CODE END
+            synced = (
+                bool(raw.get("last_success"))
+                and not has_errors
+                and not raw.get("last_error")
+            )
             return {
-                "synced": bool(raw.get("last_success")) and not has_errors,
+                "synced": synced,
                 "last_applied": raw.get("last_success"),
-                "pending_retry": False,  # Updated by API handler if retry active
+                "last_attempt": raw.get("last_attempt"),
+                "last_error": raw.get("last_error"),
+                # The API handler adds its save retry to this. Not while in sync: a
+                # Settings save can apply the policies before the startup retry comes round.
+                "pending_retry": retrying and not synced,
                 "policies": policies,
             }
         return {
             "synced": self._ilm_verified,
             "last_applied": None,
-            "pending_retry": False,
+            "last_attempt": None,
+            "last_error": None,
+            "pending_retry": retrying,
             "policies": {},
         }

@@ -80,7 +80,9 @@ export interface FleetDevice {
 	encryption_pct: number | null;
 	/** False when only local chatter (DNS, mDNS, NTP, ...) was seen: encryption is N/A */
 	encryption_applicable?: boolean;
-	tracker_count: number;
+	// OLD CODE: tracker_count: number; (DEV-10: null when no DNS lookup from the device was seen)
+	/** null: no DNS lookup from the device was seen, so trackers weren't measured */
+	tracker_count: number | null;
 	last_seen: string | null;
 }
 
@@ -96,14 +98,22 @@ export interface PrivacyDevice {
 	privacy_grade: string | null;
 	privacy_score: number | null;
 	tracker_domains: { domain: string; query_count: number }[];
-	tracker_count: number;
+	// OLD CODE: tracker_count: number; (DEV-10)
+	/** null: no DNS lookup from the device was seen */
+	tracker_count: number | null;
 	// OLD CODE START — NET-158: an estimate shown as bytes; the daemon sends the lookup share
 	// telemetry_bytes: number;
 	// OLD CODE END
 	/** share of this device's DNS lookups that went to tracker domains, 0..1; null with none */
 	tracker_lookup_share: number | null;
-	third_party_orgs: number;
-	encryption_ratio: number;
+	// OLD CODE START — DEV-10: unmeasured inputs were sent as 0 and 1.0
+	// third_party_orgs: number;
+	// encryption_ratio: number;
+	// OLD CODE END
+	/** null: no connection carried an ASN (destination organisation) */
+	third_party_orgs: number | null;
+	/** null: no traffic where encryption applies */
+	encryption_ratio: number | null;
 	/** False when only local chatter was seen: the ratio is N/A, not 100% */
 	encryption_applicable?: boolean;
 	phone_home_per_hour: number;
@@ -170,8 +180,13 @@ export interface ProtocolFinding {
 
 // Network Isolation
 export interface NetworkIsolation {
-	segmentation_score: number;
-	segmentation_grade: string;
+	// OLD CODE START — DEV-11: no IoT devices read 100 / A
+	// segmentation_score: number;
+	// segmentation_grade: string;
+	// OLD CODE END
+	/** null with no IoT devices: nothing measured */
+	segmentation_score: number | null;
+	segmentation_grade: string | null;
 	pairs: IsolationPair[];
 	recommendation: string;
 }

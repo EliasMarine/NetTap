@@ -41,8 +41,10 @@ test.describe('first run', () => {
 	});
 
 	test('the real createAdmin action ends first run', async ({ request }) => {
+		// NET-229: the one-time setup code; the /setup visit above made it in the emptied data dir
+		const setupCode = fs.readFileSync(`${E2E_DATA_DIR}/setup-code`, 'utf-8').trim();
 		const res = await request.post('/setup?/createAdmin', {
-			form: { username: USERNAME, password: PASSWORD, confirmPassword: PASSWORD },
+			form: { setupCode, username: USERNAME, password: PASSWORD, confirmPassword: PASSWORD },
 			headers: { Origin: ORIGIN, Accept: 'application/json', 'x-sveltekit-action': 'true' },
 			maxRedirects: 0,
 		});

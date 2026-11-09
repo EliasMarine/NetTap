@@ -33,6 +33,13 @@ export interface LiveConnection {
 	has_alert: boolean;
 	/** From the daemon's LAN subnets (O2); absent from /api/live/connections and older daemons. */
 	direction?: ConnectionDirection;
+	/**
+	 * NET-237 (TRF-1): when the connection ended, ISO UTC ('' if unknown). Zeek logs a connection when
+	 * it closes, so the live window and feed go by this; `timestamp` is its start. Absent from older daemons.
+	 */
+	ended_at?: string;
+	/** NET-237: an anycast service, so the row has no city or coordinates. Absent from older daemons. */
+	anycast?: boolean;
 }
 
 /** Where a connection runs relative to the LAN: the daemon decides, never the port. */
@@ -164,6 +171,8 @@ export interface LiveDashboardResponse {
 	protocols: Record<string, number>;
 	top_talkers: TopTalker[];
 	geo_arcs: GeoArc[];
+	/** Connections to anycast addresses (public DNS and the like): in no country, so not on the map (NET-237) */
+	geo_anycast?: { count: number; bytes: number };
 	_error?: string;
 }
 
@@ -192,6 +201,8 @@ export interface ConnectionDetailResponse {
 		lon: number | null;
 		asn: number | null;
 		organization: string;
+		/** NET-237: an anycast service; city and coordinates are empty on purpose */
+		anycast?: boolean;
 	};
 	alerts: ConnectionDetailAlert[];
 	alert_count: number;

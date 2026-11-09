@@ -188,7 +188,16 @@ class DhcpGatewayManager(PreflightMixin, RuntimeMixin, HostNetOps, CaptureManage
             except Exception as exc:
                 logger.error("DHCP gateway enable failed, rolling back: %s", exc)
                 await self._rollback(undo)
-                return False, {"error": f"Could not turn on DHCP gateway mode: {exc}"}
+                # NET-229 follow-up: _apply raises RuntimeError with NetTap's own message;
+                # anything else (OSError with a path, a bug) stays in the log
+                if isinstance(exc, RuntimeError):
+                    return False, {
+                        "error": f"Could not turn on DHCP gateway mode: {exc}"
+                    }
+                return False, {
+                    "error": "Could not turn on DHCP gateway mode, so the changes were "
+                    "undone. The daemon log has the details."
+                }
         logger.info("DHCP gateway enabled on %s (%s)", pre["interface"], pre["subnet"])
         return True, await self.status()
 
@@ -207,9 +216,9 @@ class DhcpGatewayManager(PreflightMixin, RuntimeMixin, HostNetOps, CaptureManage
                 "ip", "addr", "add", own_cidr, "dev", iface
             )
             if rc != 0:
-                raise RuntimeError(
-                    f"Could not add {own_cidr} to {iface}: {err.strip()}"
-                )
+                # OLD CODE: raise RuntimeError(f"Could not add {own_cidr} to {iface}: {err.strip()}") (D4: stderr in the reply)
+                logger.warning("ip addr add %s on %s: %s", own_cidr, iface, err.strip())
+                raise RuntimeError(f"Could not add {own_cidr} to {iface}.")
             undo.append(
                 lambda: self._run_nsenter("ip", "addr", "del", own_cidr, "dev", iface)
             )
@@ -274,9 +283,10 @@ class DhcpGatewayManager(PreflightMixin, RuntimeMixin, HostNetOps, CaptureManage
                 logger.error(
                     "Could not save capture config after disabling DHCP: %s", exc
                 )
+                # OLD CODE: f"turn back on when NetTap restarts ({exc})." (D4: the path in the reply)
                 self._save_error = (
                     "DHCP is off, but the setting could not be saved, so it will "
-                    f"turn back on when NetTap restarts ({exc})."
+                    f"turn back on when NetTap restarts ({exc.strerror or 'write failed'})."
                 )
         logger.info("DHCP server disabled (routing stays active)")
         return await self.status()
@@ -366,14 +376,18 @@ class DhcpGatewayManager(PreflightMixin, RuntimeMixin, HostNetOps, CaptureManage
                         "ip", "addr", "del", own_cidr, "dev", iface
                     )
                     if rc != 0:
-                        errors.append(
-                            f"Could not remove {own_cidr} from {iface}: {err.strip()}"
+                        # OLD CODE: errors.append(f"Could not remove {own_cidr} from {iface}: {err.strip()}") (NET-229)
+                        logger.warning(
+                            "ip addr del %s on %s: %s", own_cidr, iface, err.strip()
                         )
+                        errors.append(f"Could not remove {own_cidr} from {iface}.")
             for path in boot_paths(self._dirs):
                 try:
                     remove_path(path)
                 except OSError as exc:
-                    errors.append(f"Could not delete {path}: {exc}")
+                    # OLD CODE: errors.append(f"Could not delete {path}: {exc}") (NET-229: container path, errno)
+                    logger.warning("Could not delete %s: %s", path, exc)
+                    errors.append(f"Could not delete {os.path.basename(path)}.")
             cleared = {
                 "dhcp_upstream_address": "",
                 "dhcp_upstream_gateway": "",
@@ -385,7 +399,9 @@ class DhcpGatewayManager(PreflightMixin, RuntimeMixin, HostNetOps, CaptureManage
                 current = load_capture_config(self._config_path)
                 save_capture_config(replace(current, **cleared), self._config_path)
             except OSError as exc:
-                errors.append(f"Could not save capture config: {exc}")
+                # OLD CODE: errors.append(f"Could not save capture config: {exc}") (NET-229: exception text)
+                logger.warning("Could not save capture config: %s", exc)
+                errors.append("Could not save the capture config.")
 
         if errors:
             logger.warning("DHCP gateway teardown had errors: %s", errors)

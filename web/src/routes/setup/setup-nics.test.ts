@@ -31,7 +31,7 @@ function stubNics(nics: unknown, storage: Response = new Response(JSON.stringify
 }
 
 async function openMirrorInterfacesStep() {
-	render(SetupPage, { props: { form: null } });
+	render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 	const start = await screen.findByRole('button', { name: /Get started/ });
 	await waitFor(() => expect(start).not.toBeDisabled());
 	await fireEvent.click(start);
@@ -48,7 +48,7 @@ describe('setup wizard network cards', () => {
 
 	it("says the network card check couldn't run instead of passing on sample cards", async () => {
 		stubNics(SAMPLE);
-		render(SetupPage, { props: { form: null } });
+		render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 
 		expect(await screen.findByText("Network interfaces: couldn't check")).toBeInTheDocument();
 		expect(screen.queryByText('One or more network interfaces')).not.toBeInTheDocument();
@@ -81,17 +81,19 @@ describe('setup wizard disk check', () => {
 
 	it.each([
 		['the request fails', new Response('{}', { status: 502 })],
-		['the daemon did not answer (sample data)', new Response(JSON.stringify({ disk_free_gb: 911.57, source: 'mock' }))],
+		// OLD CODE: ['the daemon did not answer (sample data)', new Response(JSON.stringify({ disk_free_gb: 911.57, source: 'mock' }))],
+		// L11: the route answers 503 now instead of sample figures (A16)
+		['the daemon did not answer', new Response(JSON.stringify({ error: "The NetTap service isn't answering" }), { status: 503 })],
 	])("says it couldn't check when %s", async (_why, storage) => {
 		stubNics(REAL, storage);
-		render(SetupPage, { props: { form: null } });
+		render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 
 		expect(await screen.findByText("Disk space: couldn't check")).toBeInTheDocument();
 	});
 
 	it('still checks the real free space', async () => {
 		stubNics(REAL);
-		render(SetupPage, { props: { form: null } });
+		render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 
 		expect(await screen.findByText('Sufficient disk space (100GB+)')).toBeInTheDocument();
 		expect(screen.queryByText("Disk space: couldn't check")).not.toBeInTheDocument();

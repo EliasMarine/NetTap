@@ -152,3 +152,53 @@ describe('Notification settings refresh contract (PLAN §5.5)', () => {
 		expect(get(pageRefresh)).toMatchObject({ available: false, updatedAt: null });
 	});
 });
+
+// NET-224: each channel shows how its last delivery went, and a failed test or save says why
+describe('Notification settings delivery results', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	function stubWithTest(channel: Record<string, unknown>, test: { status: number; body: unknown }) {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				if (url === '/api/notifications/channels/ch1/test') return { ok: test.status < 400, status: test.status, json: async () => test.body };
+				const body = url === '/api/notifications/channels' ? { channels: [channel], count: 1 } : LISTS[url];
+				return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 500, json: async () => ({}) };
+			}),
+		);
+	}
+
+	it("shows each channel's last delivery with the reason it failed", async () => {
+		stubWithTest(
+			{ ...CHANNEL, enabled: false, last_delivery: { ok: false, at: '2026-11-09T10:00:00Z', error: 'HTTP 404' } },
+			{ status: 200, body: {} },
+		);
+		render(Page);
+
+		expect(await screen.findByText(/^Failed .*: HTTP 404$/)).toBeInTheDocument();
+		expect(screen.getByText('Off')).toBeInTheDocument();
+	});
+
+	it('a failed test says why', async () => {
+		stubWithTest(CHANNEL, { status: 200, body: { success: false, channel_id: 'ch1', error: "can't connect to discord.example.net" } });
+		render(Page);
+		await screen.findByText('Home Discord');
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Test' }));
+
+		expect(await screen.findByRole('alert')).toHaveTextContent("The test didn't go through: can't connect to discord.example.net.");
+	});
+
+	it('the rule form offers only the alert event, the one NetTap sends', async () => {
+		stubFetch(LISTS);
+		render(Page);
+		await screen.findByText('Home Discord');
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+
+		const options = Array.from((screen.getByLabelText('Event type') as HTMLSelectElement).options).map((o) => o.value);
+		expect(options).toEqual(['alert']);
+	});
+});

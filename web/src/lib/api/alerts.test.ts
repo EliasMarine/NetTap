@@ -367,6 +367,13 @@ describe('alerts API client', () => {
 			expect(categories[0].sparkline).toEqual([3, 9]);
 		});
 
+		// NET-228: too few whole slots or alerts to compare halves
+		it('keeps not_enough_data', async () => {
+			mockFetchSuccess({ from: 'a', to: 'b', categories: [daemonCategory({ trend: 'not_enough_data' })] });
+			const { categories } = await getEnhancedCategories();
+			expect(categories[0].trend.direction).toBe('not_enough_data');
+		});
+
 		it('falls back to stable for an unknown trend and keeps other fields', async () => {
 			mockFetchSuccess({ from: 'a', to: 'b', categories: [daemonCategory({ trend: 'sideways', sparkline: undefined })] });
 

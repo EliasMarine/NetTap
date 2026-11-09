@@ -36,6 +36,14 @@ vi.mock('$api/devices', () => ({
 	getDeviceRiskScore: vi.fn(),
 	getDeviceConnections: vi.fn(),
 }));
+// NET-228: the Smart alerts empty state reads the pipeline's state; fresh unless a test says not
+vi.mock('$api/system', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$api/system')>()),
+	getSystemHealth: vi.fn(async () => ({
+		uptime: 1, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true,
+		pipeline: { state: 'fresh', newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: {}, checked_at: '' },
+	})),
+}));
 vi.mock('$api/alerts', () => ({
 	getSmartAlerts: vi.fn(async () => ({ alerts: [], total: 0 })),
 	suppressAlert: vi.fn(),

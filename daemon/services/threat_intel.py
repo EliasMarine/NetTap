@@ -18,11 +18,18 @@ from pathlib import Path
 
 from services.capture_config import write_file_atomic
 from storage.all_buckets import all_buckets
+from storage.exact_terms import PartialResultsError
 
 logger = logging.getLogger("nettap.services.threat_intel")
 
+# OLD CODE START — F4: /tmp is a tmpfs in the daemon container, so every restart forgot this
+# _TI_CACHE_PATH = (
+#     Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-threat-intel.json"
+# )
+# OLD CODE END
 _TI_CACHE_PATH = (
-    Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-threat-intel.json"
+    Path(os.environ.get("NETTAP_DATA_DIR", "/opt/nettap/data"))
+    / "nettap-threat-intel.json"
 )
 # Held by callers around load_cache .. save_cache (load_cache can write back), so two
 # requests, or a request and the address drill-down, never interleave their transactions
@@ -48,7 +55,9 @@ def _is_outside(ip: str) -> bool:
 TI_FEEDS = {
     "abuse_ch_feodo": {"label": "Abuse.ch Feodo (Banking Trojans/C2)", "type": "ip"},
     "abuse_ch_sslbl": {"label": "Abuse.ch SSL Blacklist", "type": "ip"},
-    "et_compromised": {"label": "ET Compromised IPs", "type": "ip"},
+    # OLD CODE: "et_compromised": {"label": "ET Compromised IPs", "type": "ip"}, (NET-228: NetTap
+    # never downloads ET's list; it fills this feed from LISTING_RULES matches)
+    "et_compromised": {"label": "Suricata blocklist rules", "type": "ip"},
     "dshield_block": {"label": "DShield Block List", "type": "ip"},
 }
 
@@ -201,33 +210,36 @@ class ThreatIntelService:
             feed_hit(feed_id, ip) for feed_id, ips in self._ip_sets.items() if ip in ips
         ]
 
-    def enrich_alerts(self, alerts: list[dict]) -> list[dict]:
-        """Add threat intel context to alert groups."""
-        from services.alert_intelligence import SEVERITY_LABELS
-
-        for alert in alerts:
-            ti_hits = []
-            ti_hits.extend(self.lookup_ip(alert.get("source_ip", "")))
-            ti_hits.extend(self.lookup_ip(alert.get("destination_ip", "")))
-
-            alert["threat_intel"] = ti_hits
-            alert["ti_matched"] = len(ti_hits) > 0
-
-            # Boost severity if destination is on a known list
-            if ti_hits and alert.get("severity", 5) > 1:
-                dst_hits = [
-                    h for h in ti_hits if h["indicator"] == alert.get("destination_ip")
-                ]
-                if dst_hits:
-                    alert["severity"] = max(1, alert["severity"] - 1)
-                    alert["severity_label"] = SEVERITY_LABELS.get(
-                        alert["severity"], "HIGH"
-                    )
-                    alert["assessment"] = alert.get("assessment", "") + (
-                        f" Destination IP matches {dst_hits[0]['label']} — confirmed malicious infrastructure."
-                    )
-
-        return alerts
+    # OLD CODE START — NET-228 (audit ALR-12): no caller outside tests, and it called a list hit
+    # "confirmed malicious infrastructure" and raised the severity for it; a listing is not proof
+    # def enrich_alerts(self, alerts: list[dict]) -> list[dict]:
+    #     """Add threat intel context to alert groups."""
+    #     from services.alert_intelligence import SEVERITY_LABELS
+    #
+    #     for alert in alerts:
+    #         ti_hits = []
+    #         ti_hits.extend(self.lookup_ip(alert.get("source_ip", "")))
+    #         ti_hits.extend(self.lookup_ip(alert.get("destination_ip", "")))
+    #
+    #         alert["threat_intel"] = ti_hits
+    #         alert["ti_matched"] = len(ti_hits) > 0
+    #
+    #         # Boost severity if destination is on a known list
+    #         if ti_hits and alert.get("severity", 5) > 1:
+    #             dst_hits = [
+    #                 h for h in ti_hits if h["indicator"] == alert.get("destination_ip")
+    #             ]
+    #             if dst_hits:
+    #                 alert["severity"] = max(1, alert["severity"] - 1)
+    #                 alert["severity_label"] = SEVERITY_LABELS.get(
+    #                     alert["severity"], "HIGH"
+    #                 )
+    #                 alert["assessment"] = alert.get("assessment", "") + (
+    #                     f" Destination IP matches {dst_hits[0]['label']} — confirmed malicious infrastructure."
+    #                 )
+    #
+    #     return alerts
+    # OLD CODE END
 
     def get_all_matches(self, within: set[str] | None = None) -> dict:
         """Return summary of all loaded feeds and their indicator counts; only the
@@ -356,10 +368,16 @@ class ThreatIntelService:
             ],
             page_size=_IP_PAGE,
         )
+        # OLD CODE START — NET-237 (ALR-11): the cap was only logged, so the matches were partial
+        # if not complete:
+        #     logger.warning(
+        #         "TI scan stopped at %d address pairs; indicators are partial",
+        #         len(buckets),
+        #     )
+        # OLD CODE END
         if not complete:
-            logger.warning(
-                "TI scan stopped at %d address pairs; indicators are partial",
-                len(buckets),
+            raise PartialResultsError(
+                f"TI scan stopped at {len(buckets)} address pairs"
             )
 
         # The listed host is the alert's one internet endpoint; with none or two (e.g. an

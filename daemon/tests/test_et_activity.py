@@ -33,11 +33,23 @@ _ENGINE = {"prefix": {"rule.name": "SURICATA "}}
 
 
 def test_every_count_drops_et_informational_and_unknown():
-    assert ET_ACTIVITY_CLAUSE == {
-        "terms": {
-            "suricata.alert.metadata.signature_severity": ["Informational", "Unknown"]
+    # OLD CODE START — NET-228: a credential sent in the clear is carved out (test_credential_exposure.py)
+    # assert ET_ACTIVITY_CLAUSE == {
+    #     "terms": {
+    #         "suricata.alert.metadata.signature_severity": ["Informational", "Unknown"]
+    #     }
+    # }
+    # OLD CODE END
+    assert ET_ACTIVITY_CLAUSE["bool"]["filter"] == [
+        {
+            "terms": {
+                "suricata.alert.metadata.signature_severity": [
+                    "Informational",
+                    "Unknown",
+                ]
+            }
         }
-    }
+    ]
     assert ET_ACTIVITY_CLAUSE in SURICATA_NOISE_EXCLUSION
     assert _ENGINE in SURICATA_NOISE_EXCLUSION
 

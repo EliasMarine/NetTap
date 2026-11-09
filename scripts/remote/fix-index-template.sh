@@ -109,7 +109,9 @@ if [ "$DELETE_TODAY" = "true" ] && [ "$FAILED" -eq 0 ]; then
 
     echo "→ Step 5: Dashboard API (traffic summary, last 24 h)..."
     TOKEN=$(sudo docker exec nettap-storage-daemon cat /run/nettap-auth/daemon-token 2>/dev/null)
-    SUMMARY=$(curl -s -m 15 -H "X-NetTap-Daemon-Token: $TOKEN" http://localhost:8880/api/traffic/summary)
+    # OLD CODE (NET-237: the token was on the command line, visible in ps):
+    # SUMMARY=$(curl -s -m 15 -H "X-NetTap-Daemon-Token: $TOKEN" http://localhost:8880/api/traffic/summary)
+    SUMMARY=$(printf 'X-NetTap-Daemon-Token: %s\n' "$TOKEN" | curl -s -m 15 -H @- http://localhost:8880/api/traffic/summary)
     CONNS=$(printf '%s' "$SUMMARY" | grep -o '"connection_count": *[0-9]*' | grep -o '[0-9]*$')
     if [ -n "$CONNS" ] && [ "$CONNS" -gt 0 ]; then
         echo "   ✓ $CONNS connections in the traffic summary"

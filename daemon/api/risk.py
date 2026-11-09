@@ -22,6 +22,7 @@ from api.time_range import parse_time_range
 # OLD CODE: from api.alerts import SURICATA_NOISE_EXCLUSION (NET-209: alerts come from findings)
 # OLD CODE: from api.devices import _incomplete, _lan_device_bool_query, _lan_device_buckets
 from api.devices import (
+    _RESPONDED,
     _incomplete,
     _iso_ms,
     _lan_device_bool_query,
@@ -36,6 +37,7 @@ from api.drilldown_runner import lan_check, lan_cidrs
 # OLD CODE: from services.iot_monitor import ICMP_TRANSPORTS (NET-209: the port factor is gone)
 from services.alert_findings import epoch_ms
 from services.alert_intelligence import _INFO_SEVERITY, get_smart_alerts
+from services.excluded_ips import CONN_ACCOUNTING
 from services.risk_scoring import RiskScorer
 from services.threat_detection import NOT_INTERNET_CIDRS
 from storage.all_buckets import all_buckets
@@ -380,7 +382,10 @@ def _history(
     conns = [
         _time_range_filter(since, to_ts),
         {"term": {"event.provider": "zeek"}},
-        {"term": {"event.dataset": "conn"}},
+        # OLD CODE START — F1: also counted conn_long.log interim records
+        # {"term": {"event.dataset": "conn"}},
+        # OLD CODE END
+        CONN_ACCOUNTING,
     ]
     not_internet = {"terms": {"source.ip": NOT_INTERNET_CIDRS}}
     opened = (
@@ -393,7 +398,14 @@ def _history(
         if ip
         else {"terms": {"destination.ip": lan_cidrs(app)}}
     )
-    answered = {"bool": {"filter": [*conns, answered_by], "must_not": [not_internet]}}
+    # OLD CODE: answered = {"bool": {"filter": [*conns, answered_by], "must_not": [not_internet]}}
+    # NET-226 follow-up: answered ones only, so an internet scan of empty addresses lists none
+    answered = {
+        "bool": {
+            "filter": [*conns, answered_by, _RESPONDED],
+            "must_not": [not_internet],
+        }
+    }
     to_internet = {
         "bool": {"must_not": [{"terms": {"destination.ip": NOT_INTERNET_CIDRS}}]}
     }
@@ -679,8 +691,14 @@ def _risk_scores(request: web.Request) -> web.Response:
         )
     except QueryFailed as exc:
         return _incomplete("risk scores", exc)
+    # OLD CODE START — NET-226 follow-up: every device opened connections, so all were in it
+    # network_avg, network_stddev = _baseline(
+    #     [b.get("doc_count", 0) for b in device_buckets]
+    # )
+    # OLD CODE END
+    # the baseline is of connections opened; a device that only answers opened none
     network_avg, network_stddev = _baseline(
-        [b.get("doc_count", 0) for b in device_buckets]
+        [b.get("doc_count", 0) for b in device_buckets if not b.get("answer_only")]
     )
 
     # OLD CODE START — NET-209: every alert whose source was the device, including blocklist hits
@@ -847,7 +865,10 @@ def handle_risk_score_single(request: web.Request) -> web.Response:
                     },
                     {"term": {"source.ip": ip}},
                     {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
+                    # OLD CODE START — F1: also counted conn_long.log interim records
+                    # {"term": {"event.dataset": "conn"}},
+                    # OLD CODE END
+                    CONN_ACCOUNTING,
                 ]
             }
         },

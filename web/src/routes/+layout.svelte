@@ -7,11 +7,12 @@
 	import { tick } from 'svelte';
 	import { page } from '$app/stores';
 	import { afterNavigate } from '$app/navigation';
-	import { getCaptureMode, getCaptureHealth } from '$api/capture';
+	// OLD CODE: import { getCaptureMode, getCaptureHealth } from '$api/capture'; (NET-225: the chip reads the shared store)
+	import { getCaptureHealth } from '$api/capture';
 	import type { CaptureHealthResponse, CaptureMode } from '$api/capture';
 	import { getStorageStatus } from '$api/system';
 	import type { StorageStatus } from '$api/system';
-	import { initCaptureMode } from '$lib/stores/captureMode';
+	import { captureMode as modeStore, initCaptureMode } from '$lib/stores/captureMode';
 	import { alertSnapshots, loadAlertSnapshot, refreshAlertSnapshots } from '$lib/stores/alertSnapshot';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Sidebar from '$lib/components/shell/Sidebar.svelte';
@@ -28,7 +29,11 @@
 	/** The design system's phone breakpoint (bp-phone): below it the sidebar is a drawer. */
 	const PHONE_MAX = 760;
 
-	let captureMode = $state<Loaded<CaptureMode>>(null);
+	// OLD CODE: let captureMode = $state<Loaded<CaptureMode>>(null); (NET-225: loaded once, so a restore's new mode never reached it)
+	// The interface comes from the health reply, which names the same capture interface
+	let captureMode = $derived<Loaded<CaptureMode>>(
+		$modeStore === 'unknown' ? 'failed' : $modeStore ? { mode: $modeStore, interface: '' } : null,
+	);
 	let captureHealth = $state<Loaded<CaptureHealthResponse>>(null);
 	let storage = $state<Loaded<StorageStatus>>(null);
 
@@ -70,14 +75,17 @@
 
 	let bare = $derived(isBare($page.url.pathname));
 
-	$effect(() => {
-		if (bare) return; // login and setup have no shell to fill
-		getCaptureMode()
-			.then((mode) => (captureMode = mode))
-			.catch(() => (captureMode = 'failed'));
-		// Also populate the global store for drawer components
-		initCaptureMode();
-	});
+	// OLD CODE START — NET-225: the chip's own request, read once; refreshCaptureMode() never reached it.
+	// pollShell asks the shared store now, so a failed startup request is asked again every 30 s.
+	// $effect(() => {
+	// 	if (bare) return; // login and setup have no shell to fill
+	// 	getCaptureMode()
+	// 		.then((mode) => (captureMode = mode))
+	// 		.catch(() => (captureMode = 'failed'));
+	// 	// Also populate the global store for drawer components
+	// 	initCaptureMode();
+	// });
+	// OLD CODE END
 
 	// OLD CODE START — 2026-11-03 full redesign: the top bar no longer says "Checking…"/"Online";
 	// only the offline state shows, as a warning chip (PLAN.md §5.5).
@@ -101,6 +109,7 @@
 	/** Shell values each fail on their own: a failed call shows "—"/unknown, never throws. */
 	function pollShell() {
 		checkDaemon();
+		void initCaptureMode(); // a no-op once the daemon has named the mode
 		getCaptureHealth()
 			.then((h) => (captureHealth = h))
 			.catch(() => (captureHealth = 'failed'));
@@ -121,12 +130,17 @@
 		return () => clearInterval(timer);
 	});
 
-	let capture = $derived(captureChip(captureMode, captureHealth));
+	// OLD CODE: let capture = $derived(captureChip(captureMode, captureHealth));
+	let capture = $derived(
+		captureChip(captureMode, captureHealth, typeof storage === 'object' && storage?.capture_paused_disk_full === true),
+	);
 	let storageInfo = $derived(storageFoot(storage));
 	let alertCount = $derived.by(() => {
 		const snap = $alertSnapshots[ALERT_BADGE_HOURS];
 		return snap?.status === 'ok' && snap.data ? snap.data.counts.total : null;
 	});
+	/** NET-228 (audit HON-49): a failed count showed no badge, the same as zero */
+	let alertCountFailed = $derived($alertSnapshots[ALERT_BADGE_HOURS]?.status === 'error');
 
 	// ----- Phone navigation drawer -----
 	let navOpen = $state(false);
@@ -196,6 +210,7 @@
 				path={$page.url.pathname}
 				{capture}
 				{alertCount}
+				{alertCountFailed}
 				storage={storageInfo}
 				username={data?.username ?? null}
 				onnavigate={() => closeNav(false)}

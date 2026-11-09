@@ -118,16 +118,64 @@ describe('daemonFetch', () => {
 		expect(body.daemonAvailable).toBe(false);
 	});
 
-	it('returns 502 Response on connection error', async () => {
-		vi.mocked(globalThis.fetch).mockRejectedValue(new Error('ECONNREFUSED'));
+	// NET-229 (B-p): the reason (host:port, errno) goes to the web log, never into the reply
+	it('returns 502 Response on connection error, with the reason only in the log', async () => {
+		const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.mocked(globalThis.fetch).mockRejectedValue(new Error('connect ECONNREFUSED 172.18.0.1:8880'));
 
 		const result = await daemonFetch('/api/test');
 		const body = await result.json();
 
 		expect(result.status).toBe(502);
-		expect(body.error).toContain('Daemon unreachable');
-		expect(body.error).toContain('ECONNREFUSED');
+		expect(body.error).toBe('Daemon unreachable');
+		expect(JSON.stringify(body)).not.toContain('ECONNREFUSED');
+		expect(log).toHaveBeenCalledWith(expect.stringContaining('ECONNREFUSED 172.18.0.1:8880'));
 		expect(body.daemonAvailable).toBe(false);
+		log.mockRestore();
+	});
+
+	// Review L5: Live and the shell poll every few seconds; a down daemon is logged once, not per call
+	it('logs a down daemon once, then once when it answers again', async () => {
+		vi.resetModules();
+		const fresh = await import('./daemon');
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+		// the token file may also be reported; count only the reachability lines
+		const downLines = () => error.mock.calls.filter(([line]) => String(line).startsWith('Daemon unreachable')).length;
+		vi.mocked(globalThis.fetch).mockRejectedValue(new Error('connect ECONNREFUSED'));
+
+		for (let i = 0; i < 3; i++) await fresh.daemonFetch('/api/live/stats');
+		expect(downLines()).toBe(1);
+
+		vi.mocked(globalThis.fetch).mockResolvedValue(new Response('{}', { status: 200 }));
+		await fresh.daemonFetch('/api/live/stats');
+		await fresh.daemonFetch('/api/live/stats');
+		expect(info).toHaveBeenCalledTimes(1);
+
+		vi.mocked(globalThis.fetch).mockRejectedValue(new Error('connect ECONNREFUSED'));
+		await fresh.daemonFetch('/api/live/stats');
+		expect(downLines()).toBe(2);
+		error.mockRestore();
+		info.mockRestore();
+	});
+
+	it("doesn't count a caller's own abort as the daemon going down", async () => {
+		vi.resetModules();
+		const fresh = await import('./daemon');
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+		const abort = Object.assign(new Error('This operation was aborted'), { name: 'AbortError' });
+
+		for (let i = 0; i < 3; i++) {
+			vi.mocked(globalThis.fetch).mockRejectedValueOnce(abort);
+			await fresh.daemonFetch('/api/packets/download');
+			vi.mocked(globalThis.fetch).mockResolvedValueOnce(new Response('{}', { status: 200 }));
+			await fresh.daemonFetch('/api/system/ping');
+		}
+		expect(error.mock.calls.filter(([line]) => String(line).startsWith('Daemon unreachable'))).toHaveLength(0);
+		expect(info).not.toHaveBeenCalled();
+		error.mockRestore();
+		info.mockRestore();
 	});
 
 	it('returns 502 on unknown error type', async () => {
@@ -137,7 +185,8 @@ describe('daemonFetch', () => {
 		const body = await result.json();
 
 		expect(result.status).toBe(502);
-		expect(body.error).toContain('Unknown error');
+		// OLD CODE: expect(body.error).toContain('Unknown error'); (NET-229: the reason is only logged now)
+		expect(body.error).toBe('Daemon unreachable');
 	});
 
 	it('returns successful daemon response as-is', async () => {

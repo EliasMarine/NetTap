@@ -22,11 +22,14 @@ import {
 	type Alert,
 	type AlertsListResponse,
 	THREAT_SCORE_HOW,
+	THREAT_SCORE_BRIDGE,
 } from '$api/alerts';
+import { getSystemHealth, type SystemHealth } from '$api/system';
 import { _configure as resetAlertSnapshots, alertSnapshots, loadAlertSnapshot } from '$lib/stores/alertSnapshot';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import { goto } from '$app/navigation';
 import Page from './+page.svelte';
+import { captureMode } from '$lib/stores/captureMode';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
 /** NET-160: the daemon's LAN policy, so LAN addresses link to their device page. */
@@ -83,6 +86,20 @@ vi.mock('$api/alerts', async (importOriginal) => ({
 	suppressAlert: vi.fn(),
 	markFalsePositive: vi.fn(),
 }));
+
+// NET-228: the page reads the pipeline's state for its zero messages
+vi.mock('$api/system', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$api/system')>()),
+	getSystemHealth: vi.fn(),
+}));
+
+/** A health reply whose pipeline is `state` (fresh by default). */
+function healthWith(state: NonNullable<SystemHealth['pipeline']>['state'] = 'fresh', over: Partial<NonNullable<SystemHealth['pipeline']>> = {}): SystemHealth {
+	return {
+		uptime: 1, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true,
+		pipeline: { state, newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: {}, checked_at: '', ...over },
+	};
+}
 
 vi.stubGlobal(
 	'ResizeObserver',
@@ -178,7 +195,8 @@ function succeedAll(rows: Alert[] = [alert('a1')]) {
 
 function failAll() {
 	const fail = () => Promise.reject(new Error('HTTP 502'));
-	for (const fn of [getAlerts, getAlertCount, getAlertTimeline, getAlertTopSignatures, getAlertTopIps, getEnhancedCategories, getSmartAlertSummary]) {
+	// OLD CODE: for (const fn of [getAlerts, getAlertCount, getAlertTimeline, getAlertTopSignatures, getAlertTopIps, getEnhancedCategories, getSmartAlertSummary]) { (NET-228: and the health)
+	for (const fn of [getAlerts, getAlertCount, getAlertTimeline, getAlertTopSignatures, getAlertTopIps, getEnhancedCategories, getSmartAlertSummary, getSystemHealth]) {
 		vi.mocked(fn).mockImplementation(fail as never);
 	}
 }
@@ -187,6 +205,7 @@ beforeEach(() => {
 	resetAlertSnapshots({});
 	vi.clearAllMocks();
 	vi.stubGlobal('fetch', vi.fn(lanReply));
+	vi.mocked(getSystemHealth).mockResolvedValue(healthWith());
 });
 
 afterEach(() => {
@@ -491,6 +510,22 @@ describe('Alerts — card states', () => {
 		expect(screen.queryByRole('img', { name: /Threat score/ })).not.toBeInTheDocument();
 	});
 
+	// NET-225 (ALR-3): post-NAT, the score counts what the router's firewall blocks
+	it('adds the bridge-mode line under the score only in bridge mode', async () => {
+		succeedAll();
+		// OLD CODE: captureMode.set('bridge'); (review M2: the loader asks again after this file's mode-less replies, so the daemon says bridge)
+		vi.stubGlobal('fetch', vi.fn((url: string) =>
+			String(url) === '/api/capture/mode' ? Promise.resolve({ ok: true, status: 200, json: async () => ({ mode: 'bridge', interface: 'br0' }) }) : lanReply(),
+		));
+		try {
+			render(Page);
+			await flush();
+			expect(screen.getByText(THREAT_SCORE_BRIDGE)).toHaveClass('score-how');
+		} finally {
+			captureMode.set(null);
+		}
+	});
+
 	it('shows the loaded data: categories link to their page, the threat score and its level', async () => {
 		succeedAll();
 		const { container } = render(Page);
@@ -637,8 +672,9 @@ describe('Alerts — drawer', () => {
 		const fetchMock = vi.fn()
 			.mockResolvedValueOnce({ ok: false, status: 502, json: async () => ({}) })
 			.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ hits: [{ _id: 'z1', _source: { '@timestamp': '2026-11-03T10:01:00Z', 'event.dataset': 'conn', 'source.ip': '192.168.1.42', 'destination.ip': '203.0.113.45' } }] }) });
-		// NET-160: the address links fetch the LAN policy themselves; only the drawer's requests are counted
-		vi.stubGlobal('fetch', vi.fn((url: string) => (String(url) === '/api/network/lan' ? lanReply() : fetchMock(url))));
+		// NET-160: the address links fetch the LAN policy themselves, and the loader the capture mode; only the drawer's requests are counted
+		// OLD CODE: … (String(url) === '/api/network/lan' ? lanReply() : fetchMock(url)) (review M2: an unknown mode is asked again each load)
+		vi.stubGlobal('fetch', vi.fn((url: string) => (['/api/network/lan', '/api/capture/mode'].includes(String(url)) ? lanReply() : fetchMock(url))));
 		const drawer = await openFromRow();
 		expect(fetchMock).not.toHaveBeenCalled();
 		await fireEvent.click(within(drawer).getByRole('button', { name: /Related events/ }));
@@ -1311,18 +1347,20 @@ const listCallsOf = () => vi.mocked(getAlerts).mock.calls.map(([opts]) => opts!)
 describe('Alerts — activity (NET-191)', () => {
 	const FROM = '2026-11-01T08:00:00.000Z';
 	const TO = '2026-11-01T20:00:00.000Z';
-	const NOTE = 'ET rates these informational. They are not counted as alerts.';
+	// OLD CODE: const NOTE = 'ET rates these informational. They are not counted as alerts.'; (NET-228: Informational or Unknown)
+	const NOTE = 'ET rates these rules Informational or Unknown. They are not counted as alerts.';
 	const at = (query: string) => (nav.url = new URL(`http://localhost/alerts${query}`));
 	const listCalls = () => vi.mocked(getAlerts).mock.calls.map(([opts]) => opts!);
 	const listSub = () => screen.getByRole('heading', { name: /^(Alerts by category|All alerts)$/ }).closest('.card')!.querySelector('.card-sub')!;
-	const notCounted = () => screen.queryByRole('button', { name: /informational events? not counted/ });
+	// OLD CODE: const notCounted = () => screen.queryByRole('button', { name: /informational events? not counted/ }); (NET-228)
+	const notCounted = () => screen.queryByRole('button', { name: /not counted: ET rates/ });
 	const params = (href: string | null) => Object.fromEntries(new URL(href!, 'http://localhost').searchParams);
 	/** The severity card's counted figures, and `activity` (a number, or a failure) for the activity count. */
-	function counts(activity: number | Error) {
+	function counts(activity: number | Error, high = 0) {
 		vi.mocked(getAlertCount).mockImplementation(async (opts = {}) => {
 			if (!opts.activity) return { ...range, counts: { total: 40, high: 3, medium: 7, low: 20 } };
 			if (activity instanceof Error) throw activity;
-			return { ...range, counts: { total: activity, high: 0, medium: 0, low: 0 } };
+			return { ...range, counts: { total: activity, high, medium: 0, low: 0 } };
 		});
 	}
 
@@ -1332,7 +1370,7 @@ describe('Alerts — activity (NET-191)', () => {
 		render(Page);
 		await flush();
 		expect(listCalls()).toEqual([expect.objectContaining({ page: 1, activity: true, from: FROM, to: TO })]);
-		expect(screen.getByRole('button', { name: 'Clear activity filter' }).closest('.chip')).toHaveTextContent('Activity: rated informational by ET');
+		expect(screen.getByRole('button', { name: 'Clear activity filter' }).closest('.chip')).toHaveTextContent('Activity: rated Informational or Unknown by ET');
 		expect(listSub()).toHaveTextContent(NOTE);
 		expect(countedCalls()).toEqual([[{ from: FROM, to: TO }]]);
 	});
@@ -1388,7 +1426,7 @@ describe('Alerts — activity (NET-191)', () => {
 		// the severity card still shows the counted figures
 		expect(screen.getByRole('img', { name: /^40 alerts/ })).toBeInTheDocument();
 
-		await fireEvent.click(screen.getByRole('button', { name: '1,234 informational events not counted · Show' }));
+		await fireEvent.click(screen.getByRole('button', { name: '1,234 rule matches not counted: ET rates their rules Informational or Unknown · Show' }));
 		await flush();
 		expect(Object.fromEntries(nav.url.searchParams)).toEqual({ activity: 'true', from: asked.from, to: asked.to, range: '24h' });
 		expect(listCalls().at(-1)).toMatchObject({ page: 1, activity: true, from: asked.from, to: asked.to, ip: undefined, severity: undefined });
@@ -1399,7 +1437,18 @@ describe('Alerts — activity (NET-191)', () => {
 		counts(1);
 		render(Page);
 		await flush();
-		expect(notCounted()).toHaveAccessibleName('1 informational event not counted · Show');
+		expect(notCounted()).toHaveAccessibleName('1 rule match not counted: ET rates its rule Informational or Unknown · Show');
+	});
+
+	// NET-228 (audit B-i): severity-1 rules left out of the count without the page saying so
+	it('says how many of the matches left out have Suricata priority high', async () => {
+		succeedAll();
+		counts(6643, 6643);
+		render(Page);
+		await flush();
+		expect(notCounted()).toHaveAccessibleName(
+			'6,643 rule matches not counted: ET rates their rules Informational or Unknown (6,643 with Suricata priority high) · Show',
+		);
 	});
 
 	it('hides the line when nothing was left out', async () => {
@@ -1459,7 +1508,7 @@ describe('Alerts — activity (NET-191)', () => {
 		counts(new Error('HTTP 502'));
 		expect(await refreshPage()).toBe('partial');
 		await flush();
-		expect(notCounted()).toHaveAccessibleName('1,234 informational events not counted · Show');
+		expect(notCounted()).toHaveAccessibleName('1,234 rule matches not counted: ET rates their rules Informational or Unknown · Show');
 	});
 
 	it('hides the line when its count fails, and the counted figures still show', async () => {
@@ -1469,5 +1518,89 @@ describe('Alerts — activity (NET-191)', () => {
 		await flush();
 		expect(notCounted()).not.toBeInTheDocument();
 		expect(screen.getByRole('img', { name: /^40 alerts/ })).toBeInTheDocument();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// NET-228 (audit B5): a zero says what it can mean, beside the pipeline's current state
+// ---------------------------------------------------------------------------
+
+describe('Alerts — zero alerts and the pipeline (NET-228)', () => {
+	const severityCard = () => screen.getByRole('heading', { name: 'Alerts by severity' }).closest('.card') as HTMLElement;
+	function zeroCounts() {
+		succeedAll([]);
+		vi.mocked(getAlertCount).mockResolvedValue({ ...range, counts: { total: 0, high: 0, medium: 0, low: 0 } });
+	}
+
+	it("a zero with Suricata stopped reads \"can't tell\", as a warning, in the counts and the list", async () => {
+		zeroCounts();
+		vi.mocked(getSystemHealth).mockResolvedValue(healthWith('sensor_stopped', { sensors: { 'nettap-suricata-live': 'exited' } }));
+		render(Page);
+		await flush();
+		const note = within(severityCard()).getByText("Can't tell if any rule matched · Data pipeline now: Suricata stopped");
+		expect(note.closest('p')).toHaveClass('notice', 'is-warn');
+		expect(screen.getByRole('heading', { name: "Can't tell if any rule matched" })).toBeInTheDocument();
+		expect(screen.queryByText('No alerts')).not.toBeInTheDocument();
+	});
+
+	it('a zero with data arriving says no counted rule matched, and how fresh the data is', async () => {
+		zeroCounts();
+		render(Page);
+		await flush();
+		expect(within(severityCard()).getByText('No counted rule matches in this period · Data pipeline now: Newest record 40 s ago').closest('p')).not.toHaveClass('is-warn');
+		expect(screen.getByRole('heading', { name: 'No counted rule matches in this period' })).toBeInTheDocument();
+	});
+
+	// OLD CODE: it('a failed health check is a partial load, and the zero reads "can\'t tell"', async () => { (review L7)
+	// OLD CODE: expect(await refreshPage()).toBe('partial'); (review L7: the health marks only the lines that read it)
+	it('a failed health check leaves the page loaded, and only the zero reads "can\'t tell"', async () => {
+		zeroCounts();
+		vi.mocked(getSystemHealth).mockRejectedValue(new Error('HTTP 502'));
+		render(Page);
+		await flush();
+		expect(await refreshPage()).toBe('ok');
+		expect(within(severityCard()).getByText("Can't tell if any rule matched · Data pipeline now: Couldn't check")).toBeInTheDocument();
+	});
+
+	it('an empty list under a filter says the filters matched nothing (HON-29)', async () => {
+		nav.url = new URL('http://localhost/alerts?severity=high');
+		succeedAll([]);
+		render(Page);
+		await flush();
+		expect(screen.getByRole('heading', { name: 'No alerts match these filters' })).toBeInTheDocument();
+		expect(screen.queryByText(/once Suricata is running/)).not.toBeInTheDocument();
+	});
+
+	it("the threat summary with no groups names the pipeline's state", async () => {
+		succeedAll();
+		vi.mocked(getSmartAlertSummary).mockResolvedValue({
+			...range, threat_score: 0, threat_level: 'none', total_groups: 0, total_events: 0, categories: {}, top_threats: [],
+		});
+		vi.mocked(getSystemHealth).mockResolvedValue(healthWith('stale', { age_seconds: 47 * 60 }));
+		render(Page);
+		await flush();
+		expect(screen.getByText("Can't tell if anything needs review · Data pipeline now: No new records for 47 min")).toBeInTheDocument();
+	});
+});
+
+// NET-228: the daemon says when a category's halves are too thin, or too uneven, to compare
+describe('Alerts — category trend', () => {
+	it('says "not enough data" instead of a direction', async () => {
+		succeedAll([]);
+		vi.mocked(getEnhancedCategories).mockResolvedValue({
+			...range,
+			categories: [
+				{
+					id: 'malware_c2', label: 'Malware & C2', icon: 'alert', color: 'red', description: '', count: 5,
+					severity_breakdown: { critical: 0, high: 5, medium: 0, low: 0, info: 0 },
+					trend: { direction: 'not_enough_data', percentage: 0 }, sparkline: [], sub_categories: [],
+				},
+			],
+		});
+		render(Page);
+		await flush();
+		const card = screen.getByRole('heading', { name: 'Alert categories' }).closest('.card') as HTMLElement;
+		expect(within(card).getByText(/· not enough data$/)).toBeInTheDocument();
+		expect(within(card).queryByText(/not_enough_data/)).not.toBeInTheDocument();
 	});
 });

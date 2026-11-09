@@ -8,6 +8,7 @@ import HomePage from './+page.svelte';
 const HEALTH = { uptime: 60, timestamp: '2026-11-02T00:00:00Z', status: 'healthy', healthy: true, opensearch_reachable: true };
 const summary = (connections: number) => ({
 	from: '', to: '', total_bytes: connections * 1000, orig_bytes: 0, resp_bytes: 0,
+	upload_bytes: 0, download_bytes: connections * 1000, local_bytes: 0,
 	packet_count: 0, connection_count: connections, top_protocol: 'tcp',
 });
 

@@ -87,7 +87,8 @@ describe('Devices — the Total devices figure a link was clicked at', () => {
 		await total('54');
 		expect(line()).toBe(`You clicked 53. This window now has 54 devices (1 more). ${CAUSES}`);
 		// a full row of the KPI grid, under Total devices, not above the table
-		const notice = document.querySelector('p.notice') as HTMLElement;
+		// OLD CODE: document.querySelector('p.notice') (NET-225: this stub is bridge mode, whose note comes first)
+		const notice = document.querySelector('p.notice[role="status"]') as HTMLElement;
 		expect(notice.closest('.grid')?.contains(screen.getByText('Total devices'))).toBe(true);
 		expect(notice).toHaveClass('c-12');
 	});

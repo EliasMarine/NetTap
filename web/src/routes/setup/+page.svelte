@@ -9,13 +9,16 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Meter from '$lib/components/ui/Meter.svelte';
 	import { DEFAULT_DHCP_SUBNET } from '$lib/utils/dhcpSubnet';
+	import { growthSummary } from '$lib/utils/storage-estimate';
+	import type { GrowthEstimate } from '$api/system';
 
 	// OLD CODE START — was: const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8880';
 	// Port 8880 is Docker-internal only. Use relative paths through SvelteKit proxy.
 	// OLD CODE END
 	const API_BASE = '';
 
-	let { form } = $props();
+	// OLD CODE: let { form } = $props(); (NET-229 follow-up: the load says whether the code was typed)
+	let { data, form } = $props();
 
 	// ----- Wizard state -----
 	let currentStep = $state(1);
@@ -167,7 +170,9 @@
 		cold_days: number;
 		disk_threshold_percent: number;
 		emergency_threshold_percent: number;
-		estimated_daily_gb: number;
+		// OLD CODE: estimated_daily_gb: number; (B-m: a fixed 1.2; null until measured now)
+		estimated_daily_gb: number | null;
+		growth_estimate?: GrowthEstimate | null;
 		source: string;
 	}
 
@@ -183,13 +188,16 @@
 	let diskThreshold = $state(80);
 	let emergencyThreshold = $state(90);
 
-	let estimatedTotalDays = $derived.by(() => {
-		if (!storageStatus) return 0;
-		const freeGb = storageStatus.disk_free_gb;
-		const usableGb = freeGb * (diskThreshold / 100);
-		const dailyGb = storageStatus.estimated_daily_gb || 1.2;
-		return Math.floor(usableGb / dailyGb);
-	});
+	// OLD CODE START — B-m: days at a fixed 1.2 GB a day (the G11 writes ~2 GB of indices and
+	// ~66 GB of PCAP), labelled as if measured
+	// let estimatedTotalDays = $derived.by(() => {
+	// 	if (!storageStatus) return 0;
+	// 	const freeGb = storageStatus.disk_free_gb;
+	// 	const usableGb = freeGb * (diskThreshold / 100);
+	// 	const dailyGb = storageStatus.estimated_daily_gb || 1.2;
+	// 	return Math.floor(usableGb / dailyGb);
+	// });
+	// OLD CODE END
 
 	// OLD CODE START — 2026-11-03 redesign: the disk bar's colour by usage, from legacy tokens; the
 	// bar is the system's Meter now and the percentage is written beside it
@@ -211,6 +219,13 @@
 
 	// ----- Admin Account -----
 	let adminLoading = $state(false);
+	// A13 (NET-229): the installer's one-time setup code, typed on the Welcome step (follow-up)
+	let adminSetupCode = $state('');
+	let codeVerified = $state(false);
+	let codeChecking = $state(false);
+	let codeError = $state('');
+	// True once this browser typed the code (the setup cookie), and always once an admin exists
+	let setupVerified = $derived(data?.setupVerified === true || codeVerified);
 	let adminUsername = $state('');
 	let adminPassword = $state('');
 	let adminConfirmPassword = $state('');
@@ -226,9 +241,17 @@
 	let passwordValid = $derived(
 		passwordHasLength && passwordHasUpper && passwordHasLower && passwordHasNumber
 	);
-	let adminFormValid = $derived(
-		adminUsername.trim().length >= 3 && passwordValid && passwordsMatch
-	);
+	// OLD CODE START — NET-229: the account step also needs the setup code
+	// let adminFormValid = $derived(
+	// 	adminUsername.trim().length >= 3 && passwordValid && passwordsMatch
+	// );
+	// OLD CODE END
+	// OLD CODE START — NET-229 follow-up: the code is typed on the Welcome step now
+	// let adminFormValid = $derived(
+	// 	adminSetupCode.trim() !== '' && adminUsername.trim().length >= 3 && passwordValid && passwordsMatch
+	// );
+	// OLD CODE END
+	let adminFormValid = $derived(adminUsername.trim().length >= 3 && passwordValid && passwordsMatch);
 
 	// ----- Self-Traffic Exclusion -----
 	let applianceIp = $state('');
@@ -404,7 +427,9 @@
 			const storageRes = await fetch('/api/setup/storage');
 			if (!storageRes.ok) throw new Error(`HTTP ${storageRes.status}`);
 			const storageData = await storageRes.json();
-			if (storageData.source === 'mock' || typeof storageData.disk_free_gb !== 'number') {
+			// OLD CODE: if (storageData.source === 'mock' || typeof storageData.disk_free_gb !== 'number') {
+			// (L11: the route answers 503 instead of mock figures now, A16)
+			if (typeof storageData.disk_free_gb !== 'number') {
 				throw new Error('no disk reading');
 			}
 			requirements.disk = {
@@ -482,7 +507,8 @@
 		storageError = '';
 		try {
 			const res = await fetch('/api/setup/storage');
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			// OLD CODE: if (!res.ok) throw new Error(`HTTP ${res.status}`); (A16: the reason is in the body)
+			if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? `HTTP ${res.status}`);
 			storageStatus = await res.json();
 			// Initialize form values from server defaults
 			if (storageStatus) {
@@ -532,8 +558,11 @@
 			const res = await fetch('/api/settings/excluded-ips');
 			if (res.ok) {
 				const data = await res.json();
-				const ips = data.excluded_ips || [];
-				if (ips.length > 0) applianceIp = ips[0];
+				// OLD CODE START — NetTap's IP is appended last, so [0] was an owner entry when there was one
+				// const ips = data.excluded_ips || [];
+				// if (ips.length > 0) applianceIp = ips[0];
+				// OLD CODE END
+				applianceIp = data.appliance_ip ?? '';
 			}
 		} catch { /* ignore */ }
 		applianceIpLoading = false;
@@ -603,9 +632,21 @@
 		}
 
 		// Check NetTap Daemon
+		// OLD CODE START — F6: /api/health answers 200 from the web container even with the daemon
+		// down, so this said "Running" whenever the web app was up
+		// try {
+		// 	const healthRes = await fetch('/api/health');
+		// 	healthChecks[0] = healthRes.ok
+		// 		? { label: 'NetTap daemon', status: 'pass', detail: 'Running' }
+		// 		: { label: 'NetTap daemon', status: 'fail', detail: 'Not responding' };
+		// } catch { healthChecks[0] = { label: 'NetTap daemon', status: 'fail', detail: 'Unreachable' }; }
+		// OLD CODE END
+		// Whether the daemon answered is in `daemon.status`, as in the requirements check
 		try {
 			const healthRes = await fetch('/api/health');
-			healthChecks[0] = healthRes.ok
+			if (!healthRes.ok) throw new Error(`HTTP ${healthRes.status}`);
+			const health = await healthRes.json();
+			healthChecks[0] = health?.daemon && health.daemon.status !== 'unreachable'
 				? { label: 'NetTap daemon', status: 'pass', detail: 'Running' }
 				: { label: 'NetTap daemon', status: 'fail', detail: 'Not responding' };
 		} catch { healthChecks[0] = { label: 'NetTap daemon', status: 'fail', detail: 'Unreachable' }; }
@@ -750,9 +791,10 @@
 		}
 	});
 
-	// Auto-run requirements check when page loads
+	// Auto-run requirements check when page loads, once the setup code is in (its calls need it)
 	$effect(() => {
-		if (!requirementsChecked && !checkingRequirements) {
+		// OLD CODE: if (!requirementsChecked && !checkingRequirements) { (NET-229 follow-up)
+		if (setupVerified && !requirementsChecked && !checkingRequirements) {
 			checkRequirements();
 		}
 	});
@@ -854,6 +896,68 @@
 					</ol>
 				</section>
 
+				{#if !setupVerified}
+				<section class="stack">
+					<h3 class="sub-title">Setup code</h3>
+					<p>Enter the setup code first. It shows that you can reach the NetTap box itself.</p>
+					{#if codeError}
+						<div class="notice is-error" role="alert">
+							<Icon name="warn" />
+							<span>{codeError}</span>
+						</div>
+					{/if}
+					<form
+						class="stack"
+						method="POST"
+						action="?/verifyCode"
+						use:enhance={() => {
+							codeError = '';
+							codeChecking = true;
+							return async ({ result }) => {
+								codeChecking = false;
+								if (result.type === 'success') {
+									codeVerified = true;
+								} else if (result.type === 'failure') {
+									codeError = String(result.data?.error ?? "That setup code isn't right.");
+								} else if (result.type === 'redirect') {
+									await goto(result.location);
+								} else {
+									codeError = `Server error (${result.status}). Check browser console for details.`;
+								}
+							};
+						}}
+					>
+						<div class="field">
+							<label for="setup-code" class="label">Setup code</label>
+							<input
+								id="setup-code"
+								name="setupCode"
+								type="text"
+								class="input mono"
+								placeholder="XXXX-XXXX-XXXX"
+								required
+								autocomplete="one-time-code"
+								autocapitalize="characters"
+								spellcheck="false"
+								bind:value={adminSetupCode}
+							/>
+							<span class="field-help">
+								The installer printed it at the end. To see it again, run this on the NetTap box:
+								<span class="mono">sudo docker exec nettap-web cat /var/lib/nettap-web/setup-code</span>
+							</span>
+						</div>
+						<div class="actions">
+							<button type="submit" class="btn primary" disabled={codeChecking || adminSetupCode.trim() === ''}>
+								{#if codeChecking}
+									{@render spinner()}Checking…
+								{:else}
+									Continue
+								{/if}
+							</button>
+						</div>
+					</form>
+				</section>
+				{:else}
 				<section class="stack">
 					<h3 class="sub-title">System requirements</h3>
 					<ul class="checklist">
@@ -890,6 +994,7 @@
 						</div>
 					{/if}
 				</section>
+				{/if}
 			</div>
 		</Card>
 
@@ -910,9 +1015,10 @@
 						onclick={() => { selectedMode = 'dhcp_gateway'; }}
 						type="button"
 					>
+						<!-- OLD CODE: <span class="chip is-ok">Recommended</span> (NET-225: this mode has never run on hardware; mirror is the tested one) -->
 						<span class="mode-top">
 							<span class="tile"><Icon name="connections" /></span>
-							<span class="chip is-ok">Recommended</span>
+							<span class="chip is-caution">Not yet tested on hardware</span>
 						</span>
 						<span class="mode-name">DHCP gateway</span>
 						<span class="mode-desc">
@@ -923,6 +1029,7 @@
 							<li>Requires 1 NIC, plugged into your router</li>
 							<li>You turn off your router's DHCP at Go Live</li>
 							<li>See traffic per device, with each device's own address</li>
+							<li>Devices with a fixed IP address bypass NetTap</li>
 						</ul>
 					</button>
 
@@ -936,7 +1043,11 @@
 						<!-- OLD CODE START — Mirror was the recommended mode until DHCP gateway (2026-10-30)
 						<div class="mode-badge recommended">Recommended</div>
 						OLD CODE END -->
-						<span class="mode-top"><span class="tile"><Icon name="live" /></span></span>
+						<!-- OLD CODE: <span class="mode-top"><span class="tile"><Icon name="live" /></span></span> (NET-225: say it is the tested mode) -->
+						<span class="mode-top">
+							<span class="tile"><Icon name="live" /></span>
+							<span class="chip is-ok">Tested on hardware</span>
+						</span>
 						<span class="mode-name">Mirror / SPAN</span>
 						<span class="mode-desc">
 							My managed switch sends a copy of network traffic to NetTap. Zero risk to your network.
@@ -964,15 +1075,25 @@
 							onclick={() => { selectedMode = 'bridge'; }}
 							type="button"
 						>
+							<!-- OLD CODE START — NET-225: left out that, after the router's address translation, devices can't be told apart
 							<span class="mode-top"><span class="tile"><Icon name="infra" /></span></span>
+							NetTap sits between your modem and router. Sees all WAN traffic. Requires two dedicated NICs.
+							<li>Sees all WAN ingress and egress</li>
+							OLD CODE END -->
+							<span class="mode-top">
+								<span class="tile"><Icon name="infra" /></span>
+								<span class="chip is-caution">Not yet tested on hardware</span>
+							</span>
 							<span class="mode-name">Inline bridge</span>
 							<span class="mode-desc">
-								NetTap sits between your modem and router. Sees all WAN traffic. Requires two dedicated NICs.
+								NetTap sits between your modem and router and sees all internet traffic, but after your router's
+								address translation, so all your devices' IPv4 traffic shows up as the router. Requires two
+								dedicated NICs.
 							</span>
 							<ul class="mode-features">
 								<li>Requires 2 NICs (WAN + LAN)</li>
 								<li>Transparent Layer 2 bridge</li>
-								<li>Sees all WAN ingress and egress</li>
+								<li>No per-device view: devices share the router's IPv4 address</li>
 							</ul>
 						</button>
 					</div>
@@ -1274,12 +1395,22 @@
 					Set how long NetTap keeps data and when it starts freeing disk space. NetTap keeps data in three tiers.
 				</p>
 
-				{#if storageError}
+				<!-- OLD CODE: {#if storageError} (A16: a failed read has its own state below) -->
+				{#if storageError && storageStatus}
 					<div class="notice is-error"><Icon name="warn" /><span>{storageError}</span></div>
 				{/if}
 
 				{#if storageLoading}
 					<CardState state="loading" title="Loading storage information" />
+				{:else if !storageStatus && storageError}
+					<!-- A16: no made-up disk figures when the daemon isn't answering -->
+					<CardState
+						state="error"
+						title="Disk figures are unavailable"
+						message={storageError}
+						actionLabel="Try again"
+						onaction={fetchStorage}
+					/>
 				{:else if storageStatus}
 					<section class="panel stack">
 						<div class="panel-head">
@@ -1290,15 +1421,19 @@
 						<div class="disk-stats num">
 							<span>{storageStatus.disk_used_gb.toFixed(1)} GB used</span>
 							<span>{storageStatus.disk_free_gb.toFixed(1)} GB free</span>
-							<span>{storageStatus.disk_total_gb.toFixed(1)} GB total</span>
+							<!-- OLD CODE: <span>{storageStatus.disk_total_gb.toFixed(1)} GB total</span> (STO-3) -->
+							<span>{storageStatus.disk_total_gb.toFixed(1)} GB usable</span>
 						</div>
 
+						<!-- OLD CODE START — B-m: a fixed 1.2 GB a day
 						{#if estimatedTotalDays > 0}
 							<p class="estimate">
 								Estimated retention capacity: <strong class="num">{estimatedTotalDays} days</strong>
 								<span class="dim">at about {storageStatus.estimated_daily_gb} GB a day</span>
 							</p>
 						{/if}
+						OLD CODE END -->
+						<p class="estimate">{growthSummary(storageStatus.growth_estimate, hotDays)}</p>
 					</section>
 
 					<div class="form-grid">
@@ -1524,6 +1659,12 @@
 							clientError = '';
 
 							// Client-side validation
+							// OLD CODE START — NET-229 follow-up: the code is typed on the Welcome step now
+							// if (adminSetupCode.trim() === '') {
+							// 	clientError = 'Enter the setup code.';
+							// 	return ({ update }) => { update({ reset: false }); };
+							// }
+							// OLD CODE END
 							if (adminUsername.trim().length < 3) {
 								clientError = 'Username must be at least 3 characters.';
 								return ({ update }) => { update({ reset: false }); };
@@ -1547,6 +1688,28 @@
 							};
 						}}
 					>
+						<!-- OLD CODE START — NET-229 follow-up: the setup code is typed on the Welcome step now
+						<div class="field">
+							<label for="setup-code" class="label">Setup code</label>
+							<input
+								id="setup-code"
+								name="setupCode"
+								type="text"
+								class="input mono"
+								placeholder="XXXX-XXXX-XXXX"
+								required
+								autocomplete="one-time-code"
+								autocapitalize="characters"
+								spellcheck="false"
+								bind:value={adminSetupCode}
+							/>
+							<span class="field-help">
+								The installer printed it at the end. To see it again, run this on the NetTap box:
+								<span class="mono">sudo docker exec nettap-web cat /var/lib/nettap-web/setup-code</span>
+							</span>
+						</div>
+						OLD CODE END -->
+
 						<div class="field">
 							<label for="username" class="label">Username</label>
 							<input
@@ -2051,9 +2214,11 @@
 		color: var(--text-2);
 	}
 
+	/* OLD CODE START — B-m: the estimate has no bold day count now
 	.estimate strong {
 		color: var(--text-1);
 	}
+	OLD CODE END */
 
 	.tier {
 		display: flex;

@@ -11,6 +11,13 @@ from aiohttp.test_utils import make_mocked_request
 from api.server import handle_system_health
 
 
+class _FreshPipeline:
+    """F2's probe answering "fresh", so these cases test only the checks they name."""
+
+    async def get(self) -> dict:
+        return {"state": "fresh"}
+
+
 def _health(smart_healthy, opensearch_up=True, storage_ok=True) -> dict:
     app = web.Application()
     app["start_time"] = 0.0
@@ -23,6 +30,7 @@ def _health(smart_healthy, opensearch_up=True, storage_ok=True) -> dict:
         app["storage"]._client.info.side_effect = ConnectionError("down")
     app["smart"] = MagicMock()
     app["smart"].get_status.return_value = {"healthy": smart_healthy}
+    app["pipeline_health"] = _FreshPipeline()
     req = make_mocked_request("GET", "/api/system/health", app=app)
     return json.loads(asyncio.run(handle_system_health(req)).body)
 

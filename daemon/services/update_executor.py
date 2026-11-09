@@ -546,13 +546,14 @@ class UpdateExecutor:
 
         try:
             r = await self._malcolm.apply(TESTED_MALCOLM_TAG, on_step=on_step)
-        except Exception as exc:
+        except Exception:
             logger.exception("Malcolm update failed unexpectedly")
             r = {
                 "success": False,
                 "old_version": "unknown",
                 "new_version": "unknown",
-                "error": f"The Malcolm update stopped unexpectedly: {exc}",
+                # OLD CODE: "error": f"The Malcolm update stopped unexpectedly: {exc}", (NET-229)
+                "error": "The Malcolm update stopped unexpectedly. The daemon log has the details.",
             }
         return UpdateResult(
             component="malcolm",
@@ -818,7 +819,12 @@ class UpdateExecutor:
             result = await self._rule_manager.update_rules()
         except Exception as exc:
             logger.error("Suricata rule update failed: %s", exc)
-            result = {"success": False, "output": str(exc), "reload_output": ""}
+            # OLD CODE: result = {"success": False, "output": str(exc), "reload_output": ""} (NET-229)
+            result = {
+                "success": False,
+                "output": "The rule update couldn't run. The daemon log has the details.",
+                "reload_output": "",
+            }
         new_version = await rules_date()
 
         error = None
@@ -880,6 +886,7 @@ class UpdateExecutor:
             )
 
             if returncode != 0:
+                logger.warning("geoipupdate failed (rc=%d): %s", returncode, output)
                 return UpdateResult(
                     component="geoip-db",
                     success=False,
@@ -887,7 +894,8 @@ class UpdateExecutor:
                     new_version=old_version,
                     started_at=started,
                     completed_at=datetime.now(timezone.utc).isoformat(),
-                    error=f"geoipupdate failed: {output}",
+                    # OLD CODE: error=f"geoipupdate failed: {output}", (NET-229: command output in the reply)
+                    error="The GeoIP update failed. The daemon log has the details.",
                     rollback_available=backup_ok,  # was True (#96)
                 )
 
@@ -904,7 +912,7 @@ class UpdateExecutor:
                 rollback_available=backup_ok,  # was True (#96)
             )
 
-        except Exception as exc:
+        except Exception:
             logger.exception("Failed to update GeoIP database")
             return UpdateResult(
                 component="geoip-db",
@@ -913,7 +921,8 @@ class UpdateExecutor:
                 new_version=old_version,
                 started_at=started,
                 completed_at=datetime.now(timezone.utc).isoformat(),
-                error=str(exc),
+                # OLD CODE: error=str(exc), (NET-229: exception text in the reply)
+                error="The GeoIP update failed. The daemon log has the details.",
                 rollback_available=False,
             )
 

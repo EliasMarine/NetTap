@@ -11,6 +11,20 @@ describe('LiveChip', () => {
 		expect(chip.querySelector('.live-dot')).toHaveAttribute('aria-hidden', 'true');
 	});
 
+	it('NET-237: reads "Not updating" as a warning while stalled, with no pulsing dot', () => {
+		const { container } = render(LiveChip, { paused: false, stalled: true });
+		const chip = container.querySelector('.chip')!;
+		expect(chip).toHaveClass('is-warn');
+		expect(chip).not.toHaveClass('live-chip');
+		expect(chip).toHaveTextContent('Not updating');
+		expect(chip.querySelector('.live-dot')).toBeNull();
+	});
+
+	it('paused wins over stalled: no request is being made', () => {
+		const { container } = render(LiveChip, { paused: true, stalled: true });
+		expect(container.querySelector('.live-chip')).toHaveTextContent('Paused');
+	});
+
 	it('reads Paused and adds is-paused', () => {
 		const { container } = render(LiveChip, { paused: true });
 		const chip = container.querySelector('.live-chip')!;

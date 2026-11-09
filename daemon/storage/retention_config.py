@@ -297,6 +297,21 @@ class RetentionConfigManager:
             self._write_json(self._config)
             logger.info("Marked ILM applied: %s", results)
 
+    def mark_ilm_failed(self, error: str) -> None:
+        """A15: record a failed ILM apply; ``last_success`` stays, ``last_error`` says why.
+
+        The next ``mark_ilm_applied`` rebuilds the record, which clears ``last_error``.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            # Set before the write, so the health card shows it even if the disk is full
+            self._ilm_status = {
+                **self._ilm_status,
+                "last_attempt": now,
+                "last_error": str(error)[:500],
+            }
+            self._write_json(self._config)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

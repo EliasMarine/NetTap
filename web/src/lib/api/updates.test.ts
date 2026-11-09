@@ -41,8 +41,9 @@ function mockFetchFailure(status = 500): void {
 // ---------------------------------------------------------------------------
 
 const sampleVersions = {
-	versions: {
-		zeek: {
+	// OLD CODE: versions keyed by component (zeek: {…}, suricata: {…}); the daemon sends a list (NET-237)
+	versions: [
+		{
 			name: 'Zeek',
 			category: 'core' as const,
 			current_version: '6.2.0',
@@ -51,7 +52,7 @@ const sampleVersions = {
 			status: 'ok' as const,
 			details: {},
 		},
-		suricata: {
+		{
 			name: 'Suricata',
 			category: 'core' as const,
 			current_version: '7.0.3',
@@ -60,7 +61,7 @@ const sampleVersions = {
 			status: 'ok' as const,
 			details: {},
 		},
-	},
+	],
 	last_scan: '2026-02-26T12:00:00Z',
 };
 
@@ -128,8 +129,8 @@ describe('updates API client', () => {
 			const result = await getVersions();
 
 			expect(fetch).toHaveBeenCalledWith('/api/system/versions');
-			expect(result.versions).toHaveProperty('zeek');
-			expect(result.versions.zeek.current_version).toBe('6.2.0');
+			expect(result.versions.map((v) => v.name)).toEqual(['Zeek', 'Suricata']);
+			expect(result.versions[0].current_version).toBe('6.2.0');
 			expect(result.last_scan).toBe('2026-02-26T12:00:00Z');
 		});
 
@@ -151,7 +152,7 @@ describe('updates API client', () => {
 			expect(fetch).toHaveBeenCalledWith('/api/system/versions/scan', {
 				method: 'POST',
 			});
-			expect(result.versions).toHaveProperty('zeek');
+			expect(result.versions.map((v) => v.name)).toEqual(['Zeek', 'Suricata']);
 		});
 
 		it('returns empty versions on HTTP error', async () => {
@@ -159,7 +160,8 @@ describe('updates API client', () => {
 
 			const result = await scanVersions();
 
-			expect(result.versions).toEqual({});
+			// OLD CODE: expect(result.versions).toEqual({}); (NET-237: an empty list, the daemon's shape)
+			expect(result.versions).toEqual([]);
 		});
 	});
 

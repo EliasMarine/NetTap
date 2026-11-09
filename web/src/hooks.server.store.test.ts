@@ -13,21 +13,31 @@ type Handle = typeof import('./hooks.server').handle;
 let dataDir: string;
 let handle: Handle;
 let sessionToken: string;
+let auth: typeof import('$lib/server/auth.js');
 
 const resolve = vi.fn(async () => new Response('ok'));
 
-function event(pathname: string, method = 'GET', cookie?: string) {
+function event(pathname: string, method = 'GET', cookie?: string, setupCookie?: string) {
 	const url = new URL(`http://localhost${pathname}`);
+	const jar: Record<string, string | undefined> = { nettap_token: cookie, nettap_setup: setupCookie };
 	return {
 		url,
 		request: new Request(url, { method }),
-		cookies: { get: (name: string) => (name === 'nettap_token' ? cookie : undefined) },
+		cookies: { get: (name: string) => jar[name] },
 		locals: {} as App.Locals,
 	} as unknown as Parameters<Handle>[0]['event'];
 }
 
-function run(pathname: string, method = 'GET', cookie?: string) {
-	return handle({ event: event(pathname, method, cookie), resolve });
+function run(pathname: string, method = 'GET', cookie?: string, setupCookie?: string) {
+	return handle({ event: event(pathname, method, cookie, setupCookie), resolve });
+}
+
+/** NET-229 follow-up: during first run the wizard's API calls need the setup cookie. */
+async function expectSetupCodeFirst(reply: Response | Promise<Response>): Promise<void> {
+	const res = await reply;
+	expect(res.status).toBe(401);
+	expect(await res.json()).toEqual({ error: 'Enter the setup code first.' });
+	expect(resolve).not.toHaveBeenCalled();
 }
 
 /** NET-197: an API call with no session gets 401 JSON, not a redirect, and the route never runs. */
@@ -60,7 +70,7 @@ beforeEach(async () => {
 	vi.stubEnv('JWT_SECRET', 'hooks-store-test-secret');
 	vi.resetModules();
 	({ handle } = await import('./hooks.server'));
-	const auth = await import('$lib/server/auth.js');
+	auth = await import('$lib/server/auth.js');
 	sessionToken = auth.generateToken({ username: 'admin', role: 'admin' });
 	resolve.mockClear();
 });
@@ -71,14 +81,61 @@ afterEach(() => {
 });
 
 describe('first-run routes with a real user store', () => {
-	it.each(FIRST_RUN_PATHS)('%s is open when the store does not exist', async (path) => {
-		await run(path, 'POST');
+	// OLD CODE START — NET-229 follow-up: the API paths need the setup cookie now; split below
+	// it.each(FIRST_RUN_PATHS)('%s is open when the store does not exist', async (path) => {
+	// 	await run(path, 'POST');
+	// 	expect(resolve).toHaveBeenCalledTimes(1);
+	// });
+	//
+	// it('an existing but empty store is still first run', async () => {
+	// 	writeStore('{"users":[]}');
+	// 	await run('/api/bridge/create', 'POST');
+	// 	expect(resolve).toHaveBeenCalledTimes(1);
+	// });
+	// OLD CODE END
+	// OLD CODE START — review: /go-live needs the setup cookie too
+	// it.each(FIRST_RUN_PAGES)('page %s is open when the store does not exist', async (path) => {
+	// 	await run(path, 'POST');
+	// 	expect(resolve).toHaveBeenCalledTimes(1);
+	// });
+	// OLD CODE END
+	it('/setup is open when the store does not exist', async () => {
+		await run('/setup', 'POST');
 		expect(resolve).toHaveBeenCalledTimes(1);
+	});
+
+	it('/go-live goes to /setup until the code is typed', async () => {
+		await expect(run('/go-live')).rejects.toMatchObject({ status: 302, location: '/setup' });
+		expect(resolve).not.toHaveBeenCalled();
+
+		await run('/go-live', 'GET', undefined, auth.setupToken() ?? '');
+		expect(resolve).toHaveBeenCalledTimes(1);
+	});
+
+	it.each(FIRST_RUN_APIS)('API %s needs the setup cookie when the store does not exist', async (path) => {
+		await expectSetupCodeFirst(run(path, 'POST'));
+		await expectSetupCodeFirst(run(path, 'POST', undefined, 'not-the-token'));
+
+		await run(path, 'POST', undefined, auth.setupToken() ?? '');
+		expect(resolve).toHaveBeenCalledTimes(1);
+	});
+
+	it('a setup cookie stops working once the code is replaced', async () => {
+		const stale = auth.setupToken() ?? '';
+		rmSync(join(dataDir, 'setup-code'));
+		await expectSetupCodeFirst(run('/api/bridge/create', 'POST', undefined, stale));
+	});
+
+	it('a setup cookie is not a session: after setup it opens nothing', async () => {
+		const token = auth.setupToken() ?? '';
+		writeStore(ADMIN_STORE);
+		await expectUnauthorised(run('/api/bridge/create', 'POST', undefined, token));
+		await expectUnauthorised(run('/api/bridge/create', 'POST', token));
 	});
 
 	it('an existing but empty store is still first run', async () => {
 		writeStore('{"users":[]}');
-		await run('/api/bridge/create', 'POST');
+		await run('/api/bridge/create', 'POST', undefined, auth.setupToken() ?? '');
 		expect(resolve).toHaveBeenCalledTimes(1);
 	});
 
@@ -176,8 +233,16 @@ describe('exact pre-Account wizard requests', () => {
 		['POST', '/api/integrations/unifi/test'],
 	];
 
-	it.each(BOOTSTRAP)('%s %s is open with no store', async (method, path) => {
-		await run(path, method);
+	// OLD CODE START — NET-229 follow-up: they need the setup cookie too
+	// it.each(BOOTSTRAP)('%s %s is open with no store', async (method, path) => {
+	// 	await run(path, method);
+	// 	expect(resolve).toHaveBeenCalledTimes(1);
+	// });
+	// OLD CODE END
+	it.each(BOOTSTRAP)('%s %s is open with no store once the setup code is typed', async (method, path) => {
+		await expectSetupCodeFirst(run(path, method));
+
+		await run(path, method, undefined, auth.setupToken() ?? '');
 		expect(resolve).toHaveBeenCalledTimes(1);
 	});
 

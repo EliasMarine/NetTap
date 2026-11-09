@@ -422,7 +422,15 @@ def threat_intel(ip: str, by_alerts: bool | None) -> dict | None:
         hits = [*hits, feed_hit(ALERT_FEED, ip)]
     if not hits and by_alerts is None:
         return None
-    return {"matched": bool(hits), "feeds": hits, "indicators": ti.indicator_count}
+    # OLD CODE: return {"matched": …, "feeds": hits, "indicators": …} (NET-228: + when it was listed)
+    # in_window: a listing rule named it in this window (True), only the cache from an earlier
+    # Threats scan holds it (False), or the window couldn't all be checked (None)
+    return {
+        "matched": bool(hits),
+        "feeds": hits,
+        "indicators": ti.indicator_count,
+        "in_window": by_alerts,
+    }
 
 
 # OLD CODE START — NET-160 review: threat intel came from the cache alone

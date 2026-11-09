@@ -24,8 +24,11 @@ check() {  # check "label" <0 pass / 1 fail> "detail"
 }
 
 daemon_get() {  # daemon_get PATH: prints "<http code> <seconds>" and saves the body in the container
-    sudo docker exec nettap-storage-daemon sh -c "curl -s -o /tmp/nettap-check.json -w '%{http_code} %{time_total}' \
-        -H \"X-NetTap-Daemon-Token: \$(cat /run/nettap-auth/daemon-token)\" 'http://localhost:8880$1'"
+    # OLD CODE (NET-237: the token was on curl's command line, visible in ps):
+    # sudo docker exec nettap-storage-daemon sh -c "curl ... -H \"X-NetTap-Daemon-Token: \$(cat /run/nettap-auth/daemon-token)\" ..."
+    # printf is the shell's builtin, so the header reaches curl on stdin and never shows in ps
+    sudo docker exec nettap-storage-daemon sh -c "printf 'X-NetTap-Daemon-Token: %s\n' \"\$(cat /run/nettap-auth/daemon-token)\" \
+        | curl -s -o /tmp/nettap-check.json -w '%{http_code} %{time_total}' -H @- 'http://localhost:8880$1'"
 }
 
 echo "=== Large PCAP files and the cold threat report ==="
