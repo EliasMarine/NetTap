@@ -184,6 +184,18 @@ class TestRealAppReplies(AioHTTPTestCase):
         self.assertNotIn("/pcap/a.pcap", text)
         self.assertTrue(any("/pcap/a.pcap" in line for line in logs.output))
 
+    async def test_geoip_lookup_failure_keeps_its_message(self):
+        """NET-237: the plain lookup-failed message was cut to GENERIC on its way out."""
+        from api.geoip import LOOKUP_FAILED
+        from services.geoip_service import GeoLookupFailed
+
+        with patch.object(
+            self.app["geoip"], "lookup", side_effect=GeoLookupFailed("timed out")
+        ):
+            resp = await self.client.get("/api/geoip/8.8.4.4", headers=self._headers())
+        self.assertEqual(resp.status, 502)
+        self.assertEqual(await resp.json(), LOOKUP_FAILED)
+
     async def test_rule_update_oserror_reaches_no_client(self):
         oserror = OSError(2, "No such file or directory", "/usr/bin/docker")
         with patch(

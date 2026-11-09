@@ -26,6 +26,7 @@ from aiohttp import web
 from api.certificates import _BIG, _SLOW, _UNAVAILABLE
 from api.certificates import _BUSY as _CERT_BUSY
 from api.drilldown_runner import _BROKEN, _BUSY, _SLOW as _DRILL_SLOW
+from api.geoip import LOOKUP_FAILED
 from api.offload import LOOKUPS_BUSY
 from services.packet_search import BUSY as PACKET_BUSY
 from services.packet_search import OOM
@@ -69,6 +70,7 @@ PLAIN_5XX = frozenset(
         _SLOW,
         _BIG,
         LOOKUPS_BUSY,
+        LOOKUP_FAILED["error"],
         PACKET_BUSY,
         OOM,
         # services/packet_search.py
