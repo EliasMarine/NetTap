@@ -21,6 +21,20 @@ def test_round_trip_creates_the_directory(tmp_path):
     assert [p.name for p in path.parent.iterdir()] == ["live_bandwidth.json"]
 
 
+def test_a_failed_write_leaves_the_old_file_and_no_temp_file(tmp_path, monkeypatch):
+    path = tmp_path / "live_bandwidth.json"
+    save_enabled(True, str(path))
+
+    def fail(*_args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("os.replace", fail)
+    with pytest.raises(OSError, match="disk full"):
+        save_enabled(False, str(path))
+    assert load_enabled(str(path)) is True
+    assert [p.name for p in tmp_path.iterdir()] == ["live_bandwidth.json"]
+
+
 @pytest.mark.parametrize("text", ["{not json", '{"enabled": "true"}', "[]", ""])
 def test_a_bad_file_reads_off_and_is_logged(tmp_path, caplog, text):
     path = tmp_path / "live_bandwidth.json"

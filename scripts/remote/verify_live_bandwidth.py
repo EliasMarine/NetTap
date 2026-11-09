@@ -500,7 +500,8 @@ def foreign_state() -> dict:
                         if parse_cookie(e.cookie) is None
                     )
             state[iface] = (kept, filters)
-        except (RuntimeError, ValueError) as exc:
+        # TcError: a dump we can't parse
+        except (RuntimeError, ValueError, TcError) as exc:
             state[iface] = ("unreadable", str(exc))
     return state
 

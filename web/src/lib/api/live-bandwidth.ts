@@ -113,6 +113,9 @@ export async function getLiveBandwidth(key: LiveBandwidthKey, signal?: AbortSign
 	if (!res.ok) throw await replyError(res);
 	const data: unknown = await res.json().catch(() => null);
 	if (!data || typeof data !== 'object' || typeof (data as { supported?: unknown }).supported !== 'boolean') throw unexpected(res.status);
+	// the card renders samples straight from a measuring reply, so a half answer must not reach it (ts review #2)
+	const d = data as Partial<LiveBandwidthSupported>;
+	if (d.supported && !(Array.isArray(d.samples) && Number.isFinite(d.interval_s) && typeof d.interface === 'string')) throw unexpected(res.status);
 	return data as LiveBandwidthResponse;
 }
 

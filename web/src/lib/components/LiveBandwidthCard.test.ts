@@ -169,6 +169,23 @@ describe('LiveBandwidthCard', () => {
 		expect(screen.queryByRole('img')).not.toBeInTheDocument();
 		await wait(10_000);
 		expect(calls).toHaveLength(1);
+		// …until the page is back in view: an interface that was down may be up again
+		window.dispatchEvent(new Event('focus'));
+		await flush();
+		expect(calls).toHaveLength(2);
+	});
+
+	it('stops asking while signed out, and asks again when the page is back in view', async () => {
+		render(LiveBandwidthCard, { props: { key: IP } });
+		await flush();
+		await answer({ error: 'Sign in first' }, 401);
+		await wait(10_000);
+		expect(calls).toHaveLength(1);
+		window.dispatchEvent(new Event('focus'));
+		await flush();
+		expect(calls).toHaveLength(2);
+		await answer(supported());
+		expect(figures()).toEqual(['12.3 Mbit/s', '789 bit/s']);
 	});
 
 	it('shows a busy reply with Try again, which asks at once', async () => {
@@ -243,6 +260,15 @@ describe('LiveBandwidthCard', () => {
 		expect(calls).toHaveLength(2);
 	});
 
+	it('does not ask while hidden when the tab hides after a reply, with the next poll already timed', async () => {
+		render(LiveBandwidthCard, { props: { key: MAC } });
+		await flush();
+		await answer(supported());
+		hidden = true;
+		await wait(10_000);
+		expect(calls).toHaveLength(1);
+	});
+
 	it('drops a late reply for the previous device', async () => {
 		const { rerender } = render(LiveBandwidthCard, { props: { key: IP } });
 		await flush();
@@ -259,6 +285,19 @@ describe('LiveBandwidthCard', () => {
 
 		await answer(supported());
 		expect(figures()).toEqual(['12.3 Mbit/s', '789 bit/s']);
+	});
+
+	it("clears the previous device's figures and chart when the device changes", async () => {
+		const { rerender, container } = render(LiveBandwidthCard, { props: { key: IP } });
+		await flush();
+		await answer(supported());
+		expect(figures()).toEqual(['12.3 Mbit/s', '789 bit/s']);
+
+		await rerender({ key: { ip: '192.168.1.6' } });
+		await flush();
+		expect(screen.getByText('Loading live bandwidth')).toBeInTheDocument();
+		expect(screen.queryByText('12.3 Mbit/s')).not.toBeInTheDocument();
+		expect(container.querySelector('svg path.line')).toBeNull();
 	});
 
 	it('does not restart polling for a new key object with the same address', async () => {

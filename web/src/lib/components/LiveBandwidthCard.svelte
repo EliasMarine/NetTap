@@ -28,7 +28,8 @@
 	/** A figure older than this is not "now" (the daemon's own limit). */
 	const FRESH_MS = 5_000;
 
-	let data = $state<LiveBandwidthSupported | null>(null);
+	// replaced whole every 2 s and never mutated, so no deep proxy (ts review #8)
+	let data = $state.raw<LiveBandwidthSupported | null>(null);
 	let unsupported = $state<string | null>(null);
 	/** The setting is off (Settings › Capture): nothing is measured */
 	let off = $state(false);
@@ -66,9 +67,11 @@
 
 	function startPolling(k: LiveBandwidthKey) {
 		let stopped = false;
-		/** 400 or unsupported: asking again gets the same answer */
+		/** 400: asking again gets the same answer */
 		let halted = false;
-		/** Off: asks again only once the page is back in view, in case it was turned on meanwhile */
+		/** Off, unsupported or signed out: asks again only once the page is back in view, in case the setting,
+		 * the capture or the session changed meanwhile (ts review #4, #5: unsupported was permanent, and a 401 polled
+		 * every 2 s forever) */
 		let offHalt = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let expiry: ReturnType<typeof setTimeout> | undefined;
@@ -120,7 +123,8 @@
 					data = null;
 					clearHeadline();
 				} else {
-					halted = true;
+					// OLD CODE: halted = true; (ts review #5: an interface going down is unsupported only for a while)
+					offHalt = true;
 					data = null;
 					clearHeadline();
 					unsupported = res.reason;
@@ -130,6 +134,7 @@
 				off = false;
 				failure = e instanceof LiveBandwidthError ? e : new LiveBandwidthError(e instanceof Error ? e.message : String(e), 0);
 				if (failure.status === 400) halted = true;
+				else if (failure.status === 401) offHalt = true;
 			} finally {
 				ctrl = null;
 			}
@@ -154,6 +159,7 @@
 				clearTimeout(timer);
 				timer = undefined;
 				failure = null;
+				offHalt = false;
 				void poll();
 			},
 			stop() {

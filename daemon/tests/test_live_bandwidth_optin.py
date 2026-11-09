@@ -296,3 +296,39 @@ class TestCleanupRetries:
         task = run(body())
         assert task.cancelled() and env.meter._cleanup_task is None
         assert env.fake.owned() == {} and env.meter.cleanup_status() == IDLE
+
+    def test_an_unexpected_error_keeps_the_clean_up_retrying(self, env):
+        # py review B: e.g. a dump shape we can't read must not end the task with _dirty set
+        calls = []
+
+        async def body():
+            await _start(env)
+            real = env.meter._clear_locked
+
+            async def once(names):
+                calls.append(names)
+                if len(calls) == 1:
+                    raise RuntimeError("odd dump")
+                await real(names)
+
+            env.meter._clear_locked = once
+            env.meter.set_enabled(False)
+            await env.meter._cleanup_task
+
+        run(body())
+        assert len(calls) == 2
+        assert env.fake.owned() == {} and env.meter.cleanup_status() == IDLE
+
+    def test_shutdown_still_cleans_up_after_a_clean_up_task_died(self, env):
+        async def body():
+            await _start(env)
+
+            async def died():
+                raise RuntimeError("died")
+
+            env.meter._cleanup_task = asyncio.create_task(died())
+            await asyncio.sleep(0)
+            await env.meter.shutdown()
+
+        run(body())
+        assert env.fake.owned() == {}

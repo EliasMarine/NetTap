@@ -157,6 +157,21 @@ class TestRunTool:
         proc.kill.assert_called_once()
         proc.wait.assert_awaited_once()
 
+    def test_cancellation_kills_and_reaps_the_child(self):
+        proc = _Proc(hang=True)
+
+        async def body():
+            task = asyncio.create_task(run_tool(["tc"], 5))
+            await asyncio.sleep(0.01)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+            asyncio.run(body())
+        proc.kill.assert_called_once()
+        proc.wait.assert_awaited_once()
+
     def test_no_time_left_never_starts_the_child(self):
         with patch("asyncio.create_subprocess_exec", AsyncMock()) as spawn:
             with pytest.raises(TcError, match="no time left"):

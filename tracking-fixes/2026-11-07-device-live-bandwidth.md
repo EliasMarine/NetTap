@@ -134,6 +134,26 @@ Results (G11, 2026-11-09): **PASS both ways.** No reference drops, no clock step
 - The download source moved from Cloudflare to OVH: Cloudflare's `__down` refuses large and repeated requests (403).
 - A first download run was void: the capture-safety load was still running, so other traffic was 190% of the flow. Its window and span checks passed anyway.
 
+## Pre-merge review fixes (PR #234, 2026-11-09)
+
+- **Daemon (Python review):**
+  - A slot parked by a failed rollback now starts the sampler. With no other watch, nothing retried it before, and its filters kept counting.
+  - An admission no longer moves to a new capture interface while watches still sit on the old one. It gets 503 until the next tick removes them there; before, their filters were stranded.
+  - The clean-up task keeps retrying after an unexpected error (it used to end with the interface left dirty), and shutdown still cleans up after such a task died.
+  - The sampler sleeps through the injectable `sleep`, so tests can step it.
+  - `verify_live_bandwidth.py` records an unreadable dump instead of crashing.
+- **Web (TypeScript review):**
+  - A lone sample between two gaps draws as a dot.
+  - A measuring reply without samples, interval or interface counts as unexpected.
+  - Two cases now ask again when the page is back in view: "unsupported" (a capture interface can come back up), and a 401, which no longer polls every 2 s.
+  - `data` is `$state.raw`.
+  - New tests cover the key-change reset and hiding the tab while a poll is timed.
+- **Each new test fails with its fix removed** (mutation-checked).
+- **Not taken:**
+  - A `main.py` wiring test: the G11 lifecycle gate covers it end to end.
+  - A bounded wait after killing tc: a tc stuck in the kernel holds `rtnl` anyway.
+  - Keeping focus on the Settings switch while it saves: the same pattern as the PCAP switch, and unverified.
+
 ## Known limits
 
 - **Eight watches cost the G11 a few missed frames a minute at ~330 Mbit/s** (see the release gate). A cheaper filter layout (fewer shared stages, 802.1Q stages only when tagged) would lower it; not done.

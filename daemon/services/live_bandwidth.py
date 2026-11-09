@@ -280,7 +280,8 @@ class LiveBandwidthMeter:
         for task in (self._task, self._cleanup_task):
             if task is not None:
                 task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
+                # a task that died with an error must not skip the final clean-up (py review B)
+                with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
         self._task = self._cleanup_task = None
         await self.reconcile(retry=False)
@@ -302,7 +303,13 @@ class LiveBandwidthMeter:
         while True:
             async with self._lock:
                 names = self._interfaces() if everything else sorted(self._dirty)
-                await self._clear_locked(names)
+                try:
+                    await self._clear_locked(names)
+                # e.g. a dump we can't read: stay dirty and keep retrying (py review B)
+                except Exception as exc:
+                    logger.exception("Live bandwidth clean-up failed")
+                    for name in names:
+                        self._dirty.setdefault(name, f"Unexpected error: {exc}")
             everything, self._cleanup_again = self._cleanup_again, False
             if everything:
                 continue
@@ -426,6 +433,10 @@ class LiveBandwidthMeter:
 
     async def _prepare(self, iface: str, deadline: float) -> None:
         """clsact present, no foreign rule, offloads read for this capture identity."""
+        if self._watches and self._identity_now() != self._identity:
+            # the capture interface changed: the next tick removes the old interface's watches
+            # there first; moving _iface now would strand their filters (py review A)
+            raise LiveBandwidthBusyError(CAPTURE_CHANGING)
         qdiscs = await run_tool(
             ["tc", "-j", "qdisc", "show", "dev", iface], self._left(deadline)
         )
@@ -485,6 +496,7 @@ class LiveBandwidthMeter:
         except TcError as exc:
             logger.warning("Couldn't roll back slot %d on %s: %s", slot, iface, exc)
             self._pending.add(slot)
+            self._ensure_sampler()  # with no other watch, nothing else would retry it (py review #1)
 
     def _left(self, deadline: float) -> float:
         return deadline - self._clock()
@@ -536,7 +548,7 @@ class LiveBandwidthMeter:
         while self._watches or self._pending:
             now = self._clock()
             next_at = self._epoch + (self._tick_index(now) + 1) * TICK_S
-            await asyncio.sleep(max(0.0, next_at - now))
+            await self._sleep(max(0.0, next_at - now))
             try:
                 await self.tick_once()
             except asyncio.CancelledError:
@@ -654,6 +666,7 @@ class LiveBandwidthMeter:
         except TcError as exc:
             logger.warning("Couldn't remove slot %d; retrying: %s", watch.slot, exc)
             self._pending.add(watch.slot)
+            self._ensure_sampler()
         self._watches.pop(watch.key, None)
         logger.info(
             "Live bandwidth watch ended: %s %s", watch.key.kind, watch.key.value

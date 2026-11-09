@@ -450,6 +450,20 @@ class TestSampling:
         assert snap["interface"] == "eth9"
         assert env.fake.verbs().count("ethtool") == 2
 
+    def test_admission_waits_until_the_old_interface_is_cleared(self, env):
+        # py review A: a new interface must not replace the old one while a watch sits there
+        async def body():
+            await _start(env)
+            env.holder.manager.iface = "eth9"
+            with pytest.raises(LiveBandwidthBusyError, match=CAPTURE_CHANGING):
+                await env.meter.watch(MAC_B)
+            await _tick(env)  # retires MAC_A on enp4s0
+            return await env.meter.watch(MAC_B)
+
+        snap = run(body())
+        assert env.fake.owned("enp4s0") == {}
+        assert snap["interface"] == "eth9"
+
     def test_headline_goes_blank_when_the_counters_are_late(self, env):
         async def body():
             await _start(env)
@@ -553,6 +567,55 @@ class TestLifecycle:
 
         run(body())
         assert env.fake.owned() == {}
+
+    def test_a_slot_parked_with_no_other_watch_is_still_retried(self, env):
+        # py review #1: nothing else would start the sampler that retries it
+        env.meter = env.make(autostart=True)
+        env.retry.gate = asyncio.Event()
+
+        async def body():
+            await env.meter.reconcile()
+            env.fake.add_lines_before_failing = 1
+            env.fake.fail("dump", nth=2)  # the rollback's read fails
+            with pytest.raises(LiveBandwidthError):
+                await env.meter.watch(MAC_A)
+            assert env.meter._pending == {0} and env.meter._watches == {}
+            assert env.fake.owned() != {}  # half an install, still counting
+            task = env.meter._task
+            assert task is not None and not task.done()
+            env.fake.add_lines_before_failing = None
+            env.clock.t += 2.0
+            env.retry.gate.set()
+            # one tick removes it; with nothing left, the sampler ends
+            await asyncio.wait_for(task, 1)
+
+        run(body())
+        assert env.fake.owned() == {} and not env.meter._pending
+
+    def test_the_sampler_survives_a_tick_that_raises(self, env):
+        env.meter = env.make(autostart=True)
+        env.retry.gate = asyncio.Event()
+
+        async def body():
+            await _start(env)
+            real, calls = env.meter.tick_once, []
+
+            async def flaky():
+                calls.append(1)
+                if len(calls) == 1:
+                    raise RuntimeError("boom")
+                await real()
+
+            env.meter.tick_once = flaky
+            for _ in range(2):
+                env.clock.t += 2.0
+                env.retry.gate.set()
+                for _ in range(20):
+                    await asyncio.sleep(0)
+            assert len(calls) == 2 and not env.meter._task.done()
+            await env.meter.shutdown()
+
+        run(body())
 
     def test_a_dead_sampler_is_restarted_by_the_next_poll(self, env):
         env.meter = env.make(autostart=True)

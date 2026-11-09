@@ -90,13 +90,15 @@
 		const area = pts.length ? `${line}L${pts.at(-1)![0].toFixed(1)},${base}L${pts[0][0].toFixed(1)},${base}Z` : '';
 		return { line, area };
 	}
+	// a lone sample between two gaps: the line's round cap on a zero-length line draws a dot; no fill
+	const dot = (pts: Point[]) => ({ line: `${monotonePath(pts)}h0`, area: '' });
 
 	const paths = $derived(
 		series.map((s, k) => {
 			const all: Point[] = s.points.map((p, i) => [X(i), Y(p.v)] as const);
 			// without gaps: one run of every finite point, exactly as before
 			const runs = gaps ? finiteRuns(all) : [all.filter(([, y]) => Number.isFinite(y))];
-			const parts = runs.map(segment);
+			const parts = runs.map((run) => (gaps && run.length === 1 ? dot(run) : segment(run)));
 			return { k, colour: s.colour, line: parts.map((p) => p.line).join(''), area: parts.map((p) => p.area).join('') };
 		}),
 	);

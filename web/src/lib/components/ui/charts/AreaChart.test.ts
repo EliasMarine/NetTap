@@ -146,6 +146,15 @@ describe('AreaChart', () => {
 			noNaN(container);
 		});
 
+		it('draws a lone point between two gaps as a dot, with no fill', () => {
+			const { container } = draw([toSeries('down', 1, [1, NaN_, 2, NaN_, 3])], { gaps: true });
+			const { line, moves, closes } = paths(container);
+			expect(moves).toBe(3);
+			expect((line.match(/h0/g) ?? []).length).toBe(3);
+			expect(closes).toBe(0);
+			noNaN(container);
+		});
+
 		it('draws the same paths either way when nothing is missing', () => {
 			const off = paths(draw([toSeries('down', 1, DOWN)]).container);
 			const on = paths(draw([toSeries('down', 1, DOWN)], { gaps: true }).container);

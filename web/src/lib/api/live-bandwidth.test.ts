@@ -83,6 +83,13 @@ describe('getLiveBandwidth', () => {
 		expect((await caught(getLiveBandwidth({ ip: '192.168.1.5' }))).message).toMatch(/unexpected reply/);
 	});
 
+	it('rejects a measuring reply without its samples, interval or interface', async () => {
+		for (const half of [{ supported: true }, { supported: true, samples: [], interval_s: 2 }, { supported: true, samples: {}, interval_s: 2, interface: 'enp4s0' }]) {
+			mockFetch(half);
+			expect((await caught(getLiveBandwidth({ ip: '192.168.1.5' }))).message).toMatch(/unexpected reply/);
+		}
+	});
+
 	it('lets an abort reject as the AbortError', async () => {
 		const ctrl = new AbortController();
 		vi.stubGlobal(
