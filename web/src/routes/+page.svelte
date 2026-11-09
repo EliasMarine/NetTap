@@ -29,7 +29,7 @@
 	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { alertSnapshots, loadAlertSnapshot, refreshAlertSnapshots, snapshotWindow } from '$lib/stores/alertSnapshot';
 	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTrafficCategories } from '$api/traffic';
-	import type { TrafficSummary, BandwidthPoint, ProtocolEntry, TrafficCategory } from '$api/traffic';
+	import type { TrafficSummary, BandwidthPoint, ProtocolEntry, ProtocolsResponse, TrafficCategory } from '$api/traffic';
 	import { getAlertCount, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
 	import { connLogsHref, DRILL_RANGES, fmt, NO_EXACT_ALERT_LIST, smartAlertHref, startRange, windowQuery, withCount, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
 	import type { AlertCountResponse, SmartAlert, SmartAlertSummary } from '$api/alerts';
@@ -95,6 +95,8 @@
 	let bandwidthData = $state<BandwidthPoint[]>([]);
 	let protocols = $state<ProtocolEntry[]>([]);
 	let services = $state<ProtocolEntry[]>([]);
+	/** The `unknown` service split into conversations, one-way connections and ICMP (NET-219). Null when the reply has none */
+	let unidentified = $state<ProtocolsResponse['unidentified'] | null>(null);
 	let categories = $state<TrafficCategory[]>([]);
 	// OLD CODE START — NET-160 slice 2b-3: the figure alone; the card's link needs the window it was counted over
 	// let deviceCount = $state<number | null>(null); // null until a count loads
@@ -178,6 +180,7 @@
 			settle(guard, g, 'protocols', getProtocolDistribution(win), (v) => {
 				protocols = v.protocols;
 				services = v.services;
+				unidentified = v.unidentified ?? null;
 			}),
 			settle(guard, g, 'categories', getTrafficCategories(win), (v) => (categories = v.categories)),
 			// OLD CODE: settle(guard, g, 'deviceCount', getDeviceCount(win), (v) => (deviceCount = v.count)), (slice 2b-3: the card links to the reply's window)
@@ -220,6 +223,7 @@
 		bandwidthData = [];
 		protocols = [];
 		services = [];
+		unidentified = null;
 		categories = [];
 		// OLD CODE: deviceCount = null; (slice 2b-3: the reply carries the figure and its window)
 		deviceCountReply = null;
@@ -523,15 +527,42 @@
 	);
 	const protocolTotal = $derived(protocols.reduce((s, p) => s + p.count, 0));
 	// #20: "unknown" is connections Zeek couldn't identify, not missing data
-	const serviceLabel = (name: string) => (!name || name === 'unknown' ? 'Unidentified' : name.toUpperCase());
+	const isUnknown = (name: string) => !name || name === 'unknown';
+	const serviceLabel = (name: string) => (isUnknown(name) ? 'Unidentified' : name.toUpperCase());
+	// OLD CODE START — NET-219: the Unidentified bar counted one-way connections and ICMP too, so it led the list
+	// const serviceItems = $derived(
+	// 	services.slice(0, TOP_SERVICES).map((s, i) => ({
+	// 		key: `${s.name}-${i}`,
+	// 		label: serviceLabel(s.name),
+	// 		value: s.count,
+	// 		display: formatNumber(s.count),
+	// 	})),
+	// );
+	// OLD CODE END
+	// The Unidentified bar holds only two-way conversations; re-sorted, since it is smaller than `unknown`
 	const serviceItems = $derived(
-		services.slice(0, TOP_SERVICES).map((s, i) => ({
-			key: `${s.name}-${i}`,
-			label: serviceLabel(s.name),
-			value: s.count,
-			display: formatNumber(s.count),
-		})),
+		services
+			.map((s) => ({ name: s.name, count: isUnknown(s.name) && unidentified ? unidentified.conversations : s.count }))
+			.filter((s) => s.count > 0)
+			.sort((a, b) => b.count - a.count)
+			.slice(0, TOP_SERVICES)
+			.map((s, i) => ({
+				key: `${s.name}-${i}`,
+				label: serviceLabel(s.name),
+				value: s.count,
+				display: formatNumber(s.count),
+			})),
 	);
+	/** What the bars leave out of `unknown` (NET-219); empty when there is nothing to say */
+	const notInBars = $derived.by(() => {
+		if (!unidentified) return '';
+		const { one_way: oneWay, icmp } = unidentified;
+		const clauses = [
+			oneWay > 0 ? `${formatNumber(oneWay)} unlabelled ${oneWay === 1 ? 'connection' : 'connections'} with no data in one direction or both` : '',
+			icmp > 0 ? `${formatNumber(icmp)} ICMP ${icmp === 1 ? 'message' : 'messages'} (pings and network notices)` : '',
+		].filter(Boolean);
+		return clauses.length > 0 ? `Not in the bars: ${clauses.join(', and ')}.` : '';
+	});
 
 	// The bars cover only connections to internet services, not all traffic
 	const categoryItems = $derived(
@@ -740,9 +771,10 @@ OLD CODE END -->
 				formatValue={formatNumber}
 				ariaLabel="Connections by transport protocol: {protocolItems.slice(0, 3).map((p) => `${p.label} ${formatNumber(p.value)}`).join(', ')}"
 			/>
-			{#if serviceItems.length > 0}
+			{#if serviceItems.length > 0 || notInBars}
 				<p class="eyebrow">Application layer</p>
-				<BarList items={serviceItems} />
+				{#if serviceItems.length > 0}<BarList items={serviceItems} />{/if}
+				{#if notInBars}<p class="card-sub not-in-bars">{notInBars}</p>{/if}
 			{/if}
 		{:else if failed.protocols}
 			<CardState state="error" title={loadFailed('network protocols')} message="Check that the daemon is running on the System page, then try again." onaction={retry} />
@@ -838,6 +870,7 @@ OLD CODE END -->
 	/* Layout glue the system lacks */
 	.stale { margin-top: var(--sp-3); }
 	.eyebrow { margin: var(--sp-4) 0 var(--sp-2); }
+	.not-in-bars { margin-top: var(--sp-3); }
 	.groups { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-3); margin-top: var(--sp-4); }
 	.groups .top-cats { align-self: stretch; margin-top: 0; }
 	/* OLD CODE: a.top-cat { … } (slice 2b-1: a row with no exact list is a div, laid out the same) */

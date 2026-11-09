@@ -414,6 +414,13 @@ services:
       ZEEK_EXTRACTOR_MODE: "none"
       ZEEK_LOCAL_NETS: "${ZEEK_LOCAL_NETS:-192.168.0.0/16,10.0.0.0/8,172.16.0.0/12}"
       ZEEK_ROTATED_PCAP: "false"
+      # NET-219: Malcolm's image turns the QUIC analyzer off (ZEEK_DISABLE_SPICY_QUIC=true, no
+      # reason given), so QUIC (about a fifth of HTTPS) had no label and no server name.
+      # Malcolm's local.zeek reads these as "true" or not.
+      ZEEK_DISABLE_SPICY_QUIC: "false"
+      # NET-219: the industrial-control analyzers gave home traffic false labels (bacnet, enip,
+      # profinet, iec104, hart_ip: 31 a day on the G11)
+      ZEEK_DISABLE_ICS_ALL: "true"
       # upload-common.env — EXTRA_TAGS is referenced by Malcolm's supervisord
       # config (%(ENV_EXTRA_TAGS)s). Without it, supervisord can't expand the
       # format string and crash-loops immediately.
