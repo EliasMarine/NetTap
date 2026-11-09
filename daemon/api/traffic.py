@@ -62,21 +62,42 @@ _CONN_STATE_CODES = {
 
 
 # NET-219: Home's "Unidentified" bar. The unlabelled connections, split by what was observed:
-# ICMP (pings and network notices), and "one way" = both payload counters present and one of
-# them 0. A connection whose counters are missing isn't shown to be one-way, so it stays.
+# ICMP (pings and network notices); conversations = payload both ways (both counters above 0);
+# "one way" = everything else. On the G11 every conn record with a payload counter missing had
+# packets from one side only (4,469 of 4,469 in an hour: S0, SHR, history D or ^d), so a missing
+# counter is one-way too.
 _ICMP_FILTER = {"terms": {"network.transport": ICMP_TRANSPORTS}}
 _PAYLOAD_FIELDS = ("zeek.conn.orig_bytes", "zeek.conn.resp_bytes")
 _UNLABELLED_AGG = {
     "filter": {"bool": {"must_not": [{"exists": {"field": "network.protocol"}}]}},
     "aggs": {
         "icmp": {"filter": _ICMP_FILTER},
+        # OLD CODE START — one way only when both counters existed and one was 0; a missing
+        # counter stayed a conversation, which made the bar about 3x too big on the G11
+        # "one_way": {
+        #     "filter": {
+        #         "bool": {
+        #             "filter": [{"exists": {"field": f}} for f in _PAYLOAD_FIELDS],
+        #             "should": [{"range": {f: {"lte": 0}}} for f in _PAYLOAD_FIELDS],
+        #             "minimum_should_match": 1,
+        #             "must_not": [_ICMP_FILTER],
+        #         }
+        #     }
+        # },
+        # OLD CODE END
         "one_way": {
             "filter": {
                 "bool": {
-                    "filter": [{"exists": {"field": f}} for f in _PAYLOAD_FIELDS],
-                    "should": [{"range": {f: {"lte": 0}}} for f in _PAYLOAD_FIELDS],
-                    "minimum_should_match": 1,
-                    "must_not": [_ICMP_FILTER],
+                    "must_not": [
+                        _ICMP_FILTER,
+                        {
+                            "bool": {
+                                "filter": [
+                                    {"range": {f: {"gt": 0}}} for f in _PAYLOAD_FIELDS
+                                ]
+                            }
+                        },
+                    ]
                 }
             }
         },

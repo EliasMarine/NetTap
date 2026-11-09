@@ -548,24 +548,28 @@ class TestProtocolsUnidentified(AioHTTPTestCase):
             {"bool": {"must_not": [{"exists": {"field": "network.protocol"}}]}},
         )
         self.assertEqual(unlabelled["aggs"]["icmp"], {"filter": icmp})
-        # one way only when BOTH counters exist and one is 0; missing counters stay unidentified
-        one_way = unlabelled["aggs"]["one_way"]["filter"]["bool"]
+        # a conversation needs payload both ways; anything else that isn't ICMP is one way,
+        # including a record with a counter missing (always one-sided on the G11)
         self.assertEqual(
-            one_way["filter"],
-            [
-                {"exists": {"field": "zeek.conn.orig_bytes"}},
-                {"exists": {"field": "zeek.conn.resp_bytes"}},
-            ],
+            unlabelled["aggs"]["one_way"],
+            {
+                "filter": {
+                    "bool": {
+                        "must_not": [
+                            icmp,
+                            {
+                                "bool": {
+                                    "filter": [
+                                        {"range": {"zeek.conn.orig_bytes": {"gt": 0}}},
+                                        {"range": {"zeek.conn.resp_bytes": {"gt": 0}}},
+                                    ]
+                                }
+                            },
+                        ]
+                    }
+                }
+            },
         )
-        self.assertEqual(
-            one_way["should"],
-            [
-                {"range": {"zeek.conn.orig_bytes": {"lte": 0}}},
-                {"range": {"zeek.conn.resp_bytes": {"lte": 0}}},
-            ],
-        )
-        self.assertEqual(one_way["minimum_should_match"], 1)
-        self.assertEqual(one_way["must_not"], [icmp])
 
 
 class TestBandwidthHandler(AioHTTPTestCase):

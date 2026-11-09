@@ -205,14 +205,10 @@ def reference(client, index: str, base: dict, icmp_transports: list) -> dict:
     """Every count the checks need, from one search (one point in time)."""
     icmp = {"terms": {"network.transport": icmp_transports}}
     both = [{"exists": {"field": f}} for f in COUNTERS]
-    one_way = {
-        "bool": {
-            "filter": both,
-            "should": [{"range": {f: {"lte": 0}}} for f in COUNTERS],
-            "minimum_should_match": 1,
-            "must_not": [icmp],
-        }
-    }
+    # conversations = payload both ways; one way = every other unlabelled non-ICMP record
+    # (OLD CODE: both counters present and one <= 0, which left missing counters in conversations)
+    two_way = {"bool": {"filter": [{"range": {f: {"gt": 0}}} for f in COUNTERS]}}
+    one_way = {"bool": {"must_not": [icmp, two_way]}}
     unlabelled = {"bool": {"must_not": [{"exists": {"field": "network.protocol"}}]}}
     ics = {
         "bool": {

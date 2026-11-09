@@ -45,6 +45,28 @@ Counting only real conversations, Unidentified is 15%; with QUIC on it should fa
   - the replaced lines are kept as OLD CODE.
 - **Follow-up: NET-220.** zeek-live's privileges (`NET_ADMIN`, `NET_RAW` via file capabilities, no memory limit) predate this change.
 
+## G11 deploy (2026-11-09, main @ `25291f47`)
+
+`deploy-protocol-identification.sh` passed every check:
+
+- **Rollback point:** `37d047f`.
+- **QUIC:** 80 QUIC conn records in the first 10 minutes, all with a server name in ssl.log. No ICS labels.
+- **API:** every figure within the direct OpenSearch bounds.
+- **Zeek:** CPU 4.6% → 7.8% of a core; no restarts, the same zeek PIDs throughout; no Logstash rejections.
+
+## Correction: what counts as a conversation (2026-11-09, `fix/unidentified-conversations`)
+
+The device run showed the Unidentified bar was still about three times too big.
+
+- **The old rule:** "one way" needed both payload counters present and one of them 0, so a record with a counter missing stayed in "conversations".
+- **What the records actually were:** on the G11, every one of 4,469 unlabelled records with a payload counter missing (one hour) had packets from one side only: `S0`, `SHR`, history `D`, `^d` or `R`, and `resp_pkts` or `orig_pkts` 0. Zeek stores real zeros (16,636 `resp_bytes: 0` in the same hour), so these are not dropped zeros.
+- **The new rule:** a conversation is payload both ways (`orig_bytes > 0` and `resp_bytes > 0`). Every other unlabelled, non-ICMP record is one way. The note's wording ("no data sent in at least one direction") already says exactly that.
+- **Effect since the deploy (04:56 UTC):**
+  - unidentified conversations: 276 of 8,883 connections (3.1%), down from about 15%;
+  - QUIC: 156;
+  - what's left: mostly 443 (115), BitTorrent ports and DNS over TLS (853).
+- **Files:** `daemon/api/traffic.py` (`_UNLABELLED_AGG`), `scripts/remote/verify_protocols.py` (its mirror) and `daemon/tests/test_traffic_api.py`.
+
 ## Tests
 
 - **Daemon:** `test_traffic_api.py` (`TestProtocolsUnidentified`), `test_zeek_analyzers.py`, `test_verify_protocols.py`.
