@@ -441,3 +441,73 @@ def test_a_capped_scan_text_in_a_public_reply_is_caught():
         "        return public_json({'error': str(exc)}, status=502)\n"
     )
     assert _public_replies_with_exception_text({"x.py": leaky}) == [("x.py", 5)]
+
+
+# Security delta D4: services whose messages reach public replies (DHCP gateway, ET Pro)
+SERVICE_DIR = API_DIR.parent / "services"
+REPLY_BUILDING_SERVICES = ("dhcp_gateway.py", "dhcp_gateway_host.py", "etpro.py")
+TOOL_OUTPUT = {"err", "out", "stderr", "output"}
+
+
+def _message_leaks(src: str) -> list[int]:
+    """Lines where an f-string outside a logger call shows tool output (err, out, stderr, output,
+    dnsmasq's last line), or, inside `except OSError as exc`, the bare exception (its text has the
+    path; .strerror doesn't)."""
+    tree = ast.parse(src)
+    in_log = {
+        id(sub)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and getattr(node.func.value, "id", None) == "logger"
+        for sub in ast.walk(node)
+    }
+
+    def messages(root: ast.AST):
+        for node in ast.walk(root):
+            if isinstance(node, ast.JoinedStr) and id(node) not in in_log:
+                for v in node.values:
+                    if isinstance(v, ast.FormattedValue):
+                        yield node.lineno, v.value
+
+    found = set()
+    for line, expr in messages(tree):
+        for sub in ast.walk(expr):
+            if (isinstance(sub, ast.Name) and sub.id in TOOL_OUTPUT) or (
+                isinstance(sub, ast.Attribute) and sub.attr == "_last_line"
+            ):
+                found.add(line)
+    for handler in ast.walk(tree):
+        if (
+            isinstance(handler, ast.ExceptHandler)
+            and handler.name
+            and "OSError" in _handler_types(handler)
+        ):
+            for stmt in handler.body:
+                for line, expr in messages(stmt):
+                    if isinstance(expr, ast.Name) and expr.id == handler.name:
+                        found.add(line)
+    return sorted(found)
+
+
+def test_service_messages_carry_no_tool_output():
+    found = {
+        name: lines
+        for name in REPLY_BUILDING_SERVICES
+        if (lines := _message_leaks((SERVICE_DIR / name).read_text()))
+    }
+    assert not found, "log the tool output; build the message from fixed text"
+
+
+def test_the_service_guard_sees_stderr_and_oserror_text():
+    sample = (
+        "def f(err, exc):\n"
+        "    logger.error(f'kept in the log: {err}')\n"
+        "    a = f'Could not add the rule: {err.strip()}'\n"
+        "    try:\n"
+        "        pass\n"
+        "    except OSError as exc:\n"
+        "        b = f'Could not start: {exc}'\n"
+        "        c = f'Could not start: {exc.strerror}'\n"
+    )
+    assert _message_leaks(sample) == [3, 7]

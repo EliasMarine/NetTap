@@ -216,9 +216,9 @@ class DhcpGatewayManager(PreflightMixin, RuntimeMixin, HostNetOps, CaptureManage
                 "ip", "addr", "add", own_cidr, "dev", iface
             )
             if rc != 0:
-                raise RuntimeError(
-                    f"Could not add {own_cidr} to {iface}: {err.strip()}"
-                )
+                # OLD CODE: raise RuntimeError(f"Could not add {own_cidr} to {iface}: {err.strip()}") (D4: stderr in the reply)
+                logger.warning("ip addr add %s on %s: %s", own_cidr, iface, err.strip())
+                raise RuntimeError(f"Could not add {own_cidr} to {iface}.")
             undo.append(
                 lambda: self._run_nsenter("ip", "addr", "del", own_cidr, "dev", iface)
             )
@@ -283,9 +283,10 @@ class DhcpGatewayManager(PreflightMixin, RuntimeMixin, HostNetOps, CaptureManage
                 logger.error(
                     "Could not save capture config after disabling DHCP: %s", exc
                 )
+                # OLD CODE: f"turn back on when NetTap restarts ({exc})." (D4: the path in the reply)
                 self._save_error = (
                     "DHCP is off, but the setting could not be saved, so it will "
-                    f"turn back on when NetTap restarts ({exc})."
+                    f"turn back on when NetTap restarts ({exc.strerror or 'write failed'})."
                 )
         logger.info("DHCP server disabled (routing stays active)")
         return await self.status()

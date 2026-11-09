@@ -190,11 +190,13 @@ class EtProManager:
             if rc != 0:
                 self._set_file(previous)
                 logger.error(
-                    "ET Pro change: Suricata didn't restart (rc=%s); previous setting kept",
+                    "ET Pro change: Suricata didn't restart (rc=%s): %s; previous setting kept",
                     rc,
+                    out[:200],
                 )
+                # OLD CODE: f"Suricata didn't restart ({out[:200] or f'exit {rc}'}). Nothing was changed." (D4: docker's output)
                 raise EtProError(
-                    f"Suricata didn't restart ({out[:200] or f'exit {rc}'}). Nothing was changed.",
+                    f"Suricata didn't restart (exit {rc}). Nothing was changed.",
                     502,
                 )
         self._activation = None

@@ -536,6 +536,35 @@ class TestEnable:
         ok, _ = _run(mgr.enable)
         assert ok is True
 
+    # Security delta D4: a failed command's stderr goes to the log, never into the reply
+    @pytest.mark.parametrize(
+        "prefix",
+        [
+            ("ip", "addr", "add"),
+            ("iptables-nft", "-w", "-t", "nat", "-I"),
+            ("ethtool",),
+        ],
+    )
+    def test_command_stderr_stays_in_the_log(self, env, caplog, prefix):
+        env.host.fail.append(prefix)
+        mgr = env.make()
+        _, body = _run(mgr.enable)
+        assert "injected failure" not in json.dumps(body)
+        assert "injected failure" in caplog.text
+
+    def test_a_failed_save_on_disable_shows_the_reason_not_the_path(self, env):
+        mgr = env.make()
+
+        async def scenario():
+            await mgr.enable()
+            boom = OSError(30, "Read-only file system", "/host/private/capture.json")
+            with patch.object(dhcp_gateway, "save_capture_config", side_effect=boom):
+                return await mgr.disable()
+
+        text = json.dumps(_run(scenario))
+        assert "Read-only file system" in text
+        assert "/host/private" not in text
+
     def test_writes_boot_files(self, env):
         mgr = env.make()
         _run(mgr.enable)
@@ -1157,14 +1186,17 @@ class TestDnsmasqProcess:
         async def scenario():
             await proc.start([sys.executable, "-c", script], str(tmp_path))
 
-        with pytest.raises(RuntimeError, match="exit code 2.*failed to bind"):
+        # OLD CODE: pytest.raises(RuntimeError, match="exit code 2.*failed to bind") (D4: dnsmasq's line is logged, not shown)
+        with pytest.raises(RuntimeError, match="exit code 2") as exc:
             asyncio.run(scenario())
+        assert "failed to bind" not in str(exc.value)
         assert proc.running is False
 
     def test_missing_binary_raises(self, tmp_path):
         proc = DnsmasqProcess()
-        with pytest.raises(RuntimeError, match="Could not start dnsmasq"):
+        with pytest.raises(RuntimeError, match="Could not start dnsmasq") as exc:
             asyncio.run(proc.start([str(tmp_path / "no-such-dnsmasq")], str(tmp_path)))
+        assert str(tmp_path) not in str(exc.value)  # D4: the reason, not the path
 
     def test_kill_after_sigterm_timeout(self, tmp_path):
         proc = DnsmasqProcess()

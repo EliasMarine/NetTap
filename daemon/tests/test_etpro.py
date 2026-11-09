@@ -159,6 +159,9 @@ class TestSave:
             with pytest.raises(EtProError, match="didn't restart") as exc:
                 _run(manager.save(CODE))
         assert CODE not in str(exc.value)
+        assert "Error: boom" not in str(
+            exc.value
+        )  # D4: docker's output is logged, not shown
         assert read_code(str(env_file)) == OTHER
 
     def test_restart_happens_holding_the_rules_lock(self, env_file):

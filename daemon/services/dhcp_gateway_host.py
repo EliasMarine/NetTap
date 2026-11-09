@@ -124,9 +124,11 @@ class HostNetOps:
             backend, "-w", "-t", table, action, chain, *args
         )
         if rc != 0:
-            raise RuntimeError(
-                f"Could not add the {table}/{chain} firewall rule: {err.strip()}"
+            # OLD CODE: f"Could not add the {table}/{chain} firewall rule: {err.strip()}" (D4: stderr in the reply)
+            logger.warning(
+                "Could not add the %s/%s rule: %s", table, chain, err.strip()
             )
+            raise RuntimeError(f"Could not add the {table}/{chain} firewall rule.")
         return True
 
     async def _delete_rule(self, backend: str, rule: tuple) -> str:
@@ -152,9 +154,9 @@ class HostNetOps:
         if rc == 0:
             return ""
         # Non-critical — some NICs don't support all offloads
-        warning = f"Could not turn off GRO/LRO on {iface}: {err.strip()}"
-        logger.warning(warning)
-        return warning
+        # OLD CODE: warning = f"Could not turn off GRO/LRO on {iface}: {err.strip()}" (D4: stderr in the reply)
+        logger.warning("Could not turn off GRO/LRO on %s: %s", iface, err.strip())
+        return f"Could not turn off GRO/LRO on {iface}."
 
 
 class DnsmasqProcess:
@@ -193,7 +195,11 @@ class DnsmasqProcess:
                 stderr=asyncio.subprocess.PIPE,
             )
         except OSError as exc:
-            raise RuntimeError(f"Could not start dnsmasq: {exc}") from exc
+            # OLD CODE: raise RuntimeError(f"Could not start dnsmasq: {exc}") from exc (D4: the path)
+            logger.error("Could not start dnsmasq: %s", exc)
+            raise RuntimeError(
+                f"Could not start dnsmasq: {exc.strerror or 'it could not be run'}."
+            ) from exc
 
         self._proc = proc
         self._last_line = ""
@@ -208,9 +214,15 @@ class DnsmasqProcess:
         with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(self._reader, timeout=1.0)
         self._proc = None
+        # OLD CODE START — D4: dnsmasq's own line (paths, addresses) reached the reply; it is logged above
+        # raise RuntimeError(
+        #     f"dnsmasq stopped right after starting (exit code {proc.returncode})"
+        #     + (f": {self._last_line}" if self._last_line else "")
+        # )
+        # OLD CODE END
         raise RuntimeError(
-            f"dnsmasq stopped right after starting (exit code {proc.returncode})"
-            + (f": {self._last_line}" if self._last_line else "")
+            f"dnsmasq stopped right after starting (exit code {proc.returncode}). "
+            "The daemon log has its last message."
         )
 
     async def stop(self) -> None:
