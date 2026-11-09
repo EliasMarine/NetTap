@@ -1188,8 +1188,15 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    networks:
-      - default
+    # A14 (NET-229): TShark parses packets an attacker can craft, so it gets no network and no root.
+    # The daemon only ever reaches it with docker exec, and its name lookups are off by default.
+    # nobody can read the captures: they are 0644 in 0755 folders (G11, 2026-11-09).
+    network_mode: none
+    user: "65534:65534"
+    # OLD CODE START — A14: on docker_default next to Dashboards, which trusts X-Forwarded-User
+    # networks:
+    #   - default
+    # OLD CODE END
     healthcheck:
       test: ["CMD", "tshark", "--version"]
       interval: 30s

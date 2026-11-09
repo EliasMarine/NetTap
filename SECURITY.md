@@ -59,7 +59,21 @@ We appreciate responsible disclosure and will credit reporters in the release no
 
 - Keep NetTap updated to the latest version
 - Use the management interface on a separate network segment
-- Change default credentials during the setup wizard
+- Keep the installer's one-time setup code to yourself until the setup wizard has created the admin account (there are no default credentials)
 - Enable the firewall (`scripts/install/setup-firewall.sh`)
 - Monitor the System page for health alerts
 - Review Suricata alerts regularly
+
+## Known, accepted risks
+
+These were reviewed in the first-release audit (NET-229, 2026-11-09) and are accepted for v1.0, with the reason:
+
+| What | Why it stays |
+|------|--------------|
+| The daemon API listens on `0.0.0.0:8880`. | The daemon uses host networking, and `nettap-web` reaches it through the Docker bridge gateway (`host.docker.internal`), whose address Docker picks for each network. Binding only to that address needs a pinned Docker subnet, which recreates every container on the network and can clash with your LAN. Every route except `GET /api/health` needs the shared daemon token, which only `nettap-web` and the daemon can read. |
+| The daemon is equivalent to root on the host. It mounts the Docker socket and the host's systemd, netplan, sysctl and `/etc/nettap` folders, and has `SYS_ADMIN`, `NET_ADMIN`, `SYS_RAWIO`, `pid: host` and `/dev`. | Its job needs them: System › Updates recreates Malcolm's containers, the bridge and DHCP gateway modes write host network config, and drive health reads SMART data. It sits behind the token above and parses no packets itself. |
+| Malcolm's capture containers (Zeek, Suricata, netsniff-ng, Arkime) run as root with `NET_ADMIN`, `NET_RAW` and, for netsniff-ng, `SYS_ADMIN`. | Live capture on the host's interfaces needs them, and Malcolm's images expect it. They use host networking and get no NetTap credentials. |
+| Images are pinned by tag (Malcolm's tested release, `nginx:1.30-alpine`, `grafana/grafana:10.4.2`), not by digest. | System › Updates moves between tested Malcolm tags, which a digest pin would block. A tag can in principle be re-pushed; pin digests in `docker/docker-compose.yml` yourself if that matters to you. |
+| The first-run wizard routes other than account creation (`/api/setup/*`, `/api/bridge/*`, the UniFi test) answer anyone on the LAN until the admin account exists. | The setup code guards the account, so nobody else can claim the box. Before setup is finished there is nothing stored to read. Finish setup soon after the install. |
+
+TShark, which decodes captured packets on request, runs as `nobody` with no network at all (`network_mode: none`), so a packet that exploits a TShark bug can't reach the other containers. CyberChef and OpenSearch Dashboards need a NetTap login.

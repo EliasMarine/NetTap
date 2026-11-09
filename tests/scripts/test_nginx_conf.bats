@@ -41,6 +41,12 @@ _location() {
     echo "$output" | grep -q 'error_page 401 = @nettap_login;'
 }
 
+@test "nginx: /cyberchef/ requires a NetTap login (NET-229)" {
+    run _location '/cyberchef/'
+    echo "$output" | grep -q 'auth_request /_nettap_auth;'
+    echo "$output" | grep -q 'error_page 401 = @nettap_login;'
+}
+
 @test "nginx: CSP lets same-origin blob Web Workers run (CyberChef)" {
     # CyberChef inlines its workers as blob: URLs; without worker-src they fall back to
     # script-src and are blocked, so CyberChef never leaves its loading screen
