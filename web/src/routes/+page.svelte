@@ -31,9 +31,12 @@
 	import { alertSnapshots, loadAlertSnapshot, refreshAlertSnapshots, snapshotWindow } from '$lib/stores/alertSnapshot';
 	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTrafficCategories } from '$api/traffic';
 	import type { TrafficSummary, BandwidthPoint, ProtocolEntry, ProtocolsResponse, TrafficCategory } from '$api/traffic';
-	import { getAlertCount, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
-	import { connLogsHref, DRILL_RANGES, fmt, NO_EXACT_ALERT_LIST, smartAlertHref, startRange, windowQuery, withCount, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
-	import type { AlertCountResponse, SmartAlert, SmartAlertSummary } from '$api/alerts';
+	// OLD CODE: import { getAlertCount, getSmartAlerts, getSmartAlertSummary } from '$api/alerts'; (NET-228: the trend reads the timeline)
+	import { getAlertTimeline, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
+	import { chartTime, connLogsHref, DRILL_RANGES, fmt, NO_EXACT_ALERT_LIST, smartAlertHref, startRange, windowQuery, withCount, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
+	// OLD CODE: import type { AlertCountResponse, SmartAlert, SmartAlertSummary } from '$api/alerts'; (NET-228)
+	import type { AlertTimelineBucket, SmartAlert, SmartAlertSummary } from '$api/alerts';
+	import { compareHalves, trendWindow, type SlotValue, type TrendWindow } from '$lib/utils/window-trend';
 	import { getDevices, getDeviceCount } from '$api/devices';
 	import type { Device, DeviceCountResponse } from '$api/devices';
 	import { getNewDeviceCount } from '$api/devices-registry';
@@ -44,7 +47,8 @@
 	import { BRIDGE_NO_DEVICES, getCaptureHealth, getCaptureStats } from '$api/capture';
 	import type { CaptureHealthResponse, CaptureStatsResponse } from '$api/capture';
 	import {
-		formatBytes, formatBytesShort, formatNumber, computePreviousPeriod, localMidnight, trendPercent, NO_TREND,
+		// OLD CODE: formatBytes, …, computePreviousPeriod, localMidnight, trendPercent, NO_TREND, (NET-228: + the settled trend window)
+		formatBytes, formatBytesShort, formatNumber, localMidnight, trendPercent, NO_TREND, NOT_ENOUGH, COMPARE_FAILED,
 		kpiDelta, kpiWindow, smartLevel, captureStage, packetsStage, systemStage, openSearchStage, dataStage,
 	} from './home';
 
@@ -93,7 +97,11 @@
 	let error = $state(false);
 
 	let trafficSummary = $state<TrafficSummary | null>(null);
-	let prevTrafficSummary = $state<TrafficSummary | null>(null);
+	// OLD CODE: let prevTrafficSummary = $state<TrafficSummary | null>(null); (NET-228, audit TRF-6: the window ending now vs the one before)
+	/** NET-228: two equal windows of settled slots (lib/utils/window-trend.ts); null until loaded or when failed */
+	let trendWin = $state<TrendWindow | null>(null);
+	let trendTraffic = $state<BandwidthPoint[] | null>(null);
+	let trendAlerts = $state<AlertTimelineBucket[] | null>(null);
 	let bandwidthData = $state<BandwidthPoint[]>([]);
 	let protocols = $state<ProtocolEntry[]>([]);
 	let services = $state<ProtocolEntry[]>([]);
@@ -107,7 +115,7 @@
 	let deviceCountReply = $state<DeviceCountResponse | null>(null);
 	const deviceCount = $derived(deviceCountReply?.count ?? null);
 	let newDeviceCount = $state<number | null>(null); // null when it failed: no chip, no number
-	let prevAlertCount = $state<AlertCountResponse | null>(null);
+	// OLD CODE: let prevAlertCount = $state<AlertCountResponse | null>(null); (NET-228)
 	let systemHealth = $state<SystemHealth | null>(null);
 	let smartAlerts = $state<SmartAlert[]>([]);
 	/** The window and range the smart alerts on screen were counted over, set when they land (NET-160 slice 2b-1) */
@@ -118,8 +126,9 @@
 	let captureStats = $state<CaptureStatsResponse | null>(null);
 
 	type Source =
-		| 'summary' | 'prevSummary' | 'bandwidth' | 'protocols' | 'categories' | 'deviceCount' | 'newDevices'
-		| 'prevAlerts' | 'health' | 'smart' | 'smartSummary' | 'devices' | 'capture' | 'captureStats';
+		// OLD CODE: | 'summary' | 'prevSummary' | … | 'prevAlerts' | 'health' … (NET-228: the trend's series)
+		| 'summary' | 'trendTraffic' | 'bandwidth' | 'protocols' | 'categories' | 'deviceCount' | 'newDevices'
+		| 'trendAlerts' | 'health' | 'smart' | 'smartSummary' | 'devices' | 'capture' | 'captureStats';
 	// #96: a failed request keeps the last good figures and says so; it never shows 0 B or "no data"
 	let failed = $state<Partial<Record<Source, boolean>>>({});
 
@@ -171,13 +180,19 @@
 		if (snapshotHoursLoaded === hours) void refreshAlertSnapshots();
 		snapshotHoursLoaded = hours;
 		const win = snapshotWindow(hours, Date.now());
-		const prev = computePreviousPeriod(win.from, win.to);
+		// OLD CODE: const prev = computePreviousPeriod(win.from, win.to); (NET-228, audit TRF-6)
+		const tw = trendWindow(hours, Date.now());
+		const trendQuery = { from: tw.from, to: tw.to, interval: tw.interval };
 		const since = localMidnight(new Date());
 		loading = true;
 
 		const results = await Promise.all([
 			settle(guard, g, 'summary', getTrafficSummary(win), (v) => (trafficSummary = v)),
-			settle(guard, g, 'prevSummary', getTrafficSummary(prev), (v) => (prevTrafficSummary = v), () => (prevTrafficSummary = null)),
+			// OLD CODE: settle(guard, g, 'prevSummary', getTrafficSummary(prev), …), (NET-228: two settled windows from one series)
+			settle(guard, g, 'trendTraffic', getBandwidthTimeSeries(trendQuery), (v) => {
+				trendTraffic = v.series;
+				trendWin = tw;
+			}, () => (trendTraffic = null)),
 			settle(guard, g, 'bandwidth', getBandwidthTimeSeries({ ...win, interval: '1h' }), (v) => (bandwidthData = v.series)),
 			settle(guard, g, 'protocols', getProtocolDistribution(win), (v) => {
 				protocols = v.protocols;
@@ -190,7 +205,8 @@
 			settle(guard, g, 'newDevices', getNewDeviceCount(since), (v) => (newDeviceCount = v.count), () => (newDeviceCount = null)),
 			// the store keeps one count per window for every screen; it never rejects
 			loadAlertSnapshot(hours).then((s) => s.status === 'ok'),
-			settle(guard, g, 'prevAlerts', getAlertCount(prev), (v) => (prevAlertCount = v), () => (prevAlertCount = null)),
+			// OLD CODE: settle(guard, g, 'prevAlerts', getAlertCount(prev), …), (NET-228)
+			settle(guard, g, 'trendAlerts', getAlertTimeline(trendQuery), (v) => (trendAlerts = v.buckets), () => (trendAlerts = null)),
 			settle(guard, g, 'health', getSystemHealth(), (v) => (systemHealth = v), () => (systemHealth = null)),
 			// OLD CODE: settle(guard, g, 'smart', getSmartAlerts({ ...win, limit: 10 }), (v) => (smartAlerts = v.alerts), () => (smartAlerts = [])), (slice 2b-1: the rows keep their window)
 			settle(guard, g, 'smart', getSmartAlerts({ ...win, limit: 10 }), (v) => {
@@ -221,7 +237,10 @@
 	function changeRange() {
 		// #96: the last range's figures must not stand in for this range if its load fails
 		trafficSummary = null;
-		prevTrafficSummary = null;
+		// OLD CODE: prevTrafficSummary = null; (NET-228)
+		trendTraffic = null;
+		trendAlerts = null;
+		trendWin = null;
 		bandwidthData = [];
 		protocols = [];
 		services = [];
@@ -229,7 +248,7 @@
 		categories = [];
 		// OLD CODE: deviceCount = null; (slice 2b-3: the reply carries the figure and its window)
 		deviceCountReply = null;
-		prevAlertCount = null;
+		// OLD CODE: prevAlertCount = null; (NET-228)
 		topDevices = [];
 		failed = {};
 		handle.run();
@@ -449,21 +468,49 @@
 	// KPIs and trend indicators (compare current vs previous period)
 	// ---------------------------------------------------------------------------
 
-	let bandwidthTrend = $derived(
-		trafficSummary && prevTrafficSummary
-			? trendPercent(trafficSummary.total_bytes, prevTrafficSummary.total_bytes)
-			: NO_TREND
-	);
+	// OLD CODE START — NET-228 (audit TRF-6): the window ending now, still filling in, against the complete one before it
+	// let bandwidthTrend = $derived(
+	// 	trafficSummary && prevTrafficSummary
+	// 		? trendPercent(trafficSummary.total_bytes, prevTrafficSummary.total_bytes)
+	// 		: NO_TREND
+	// );
+	//
+	// let connectionTrend = $derived(
+	// 	trafficSummary && prevTrafficSummary
+	// 		? trendPercent(trafficSummary.connection_count, prevTrafficSummary.connection_count)
+	// 		: NO_TREND
+	// );
+	//
+	// let alertTrend = $derived(
+	// 	alertCount && prevAlertCount ? trendPercent(alertCount.counts.total, prevAlertCount.counts.total) : NO_TREND,
+	// );
+	// OLD CODE END
+	/** The newer window against the older one, or why not: loading (NO_TREND), failed, or not enough data */
+	function halvesTrend(points: SlotValue[] | null, failedReq: boolean, zeroIsUnknown = false) {
+		if (failedReq) return COMPARE_FAILED;
+		if (!points || !trendWin) return NO_TREND;
+		const h = compareHalves(points, trendWin, zeroIsUnknown);
+		return h === 'not_enough_data' ? NOT_ENOUGH : trendPercent(h.newer, h.older);
+	}
+	const trafficSlots = (value: (p: BandwidthPoint) => number): SlotValue[] | null =>
+		trendTraffic && trendTraffic.map((p) => ({ timestamp: p.timestamp, value: value(p), connections: p.connections }));
 
-	let connectionTrend = $derived(
-		trafficSummary && prevTrafficSummary
-			? trendPercent(trafficSummary.connection_count, prevTrafficSummary.connection_count)
-			: NO_TREND
-	);
-
-	let alertTrend = $derived(
-		alertCount && prevAlertCount ? trendPercent(alertCount.counts.total, prevAlertCount.counts.total) : NO_TREND,
-	);
+	let bandwidthTrend = $derived(halvesTrend(trafficSlots((p) => p.total_bytes), !!failed.trendTraffic));
+	let connectionTrend = $derived(halvesTrend(trafficSlots((p) => p.connections), !!failed.trendTraffic));
+	// alerts read the connections' coverage by slot; an alert half of 0 can be Suricata stopped, so it isn't "new"
+	let alertTrend = $derived.by(() => {
+		const conns = new Map((trendTraffic ?? []).map((p) => [Date.parse(p.timestamp), p.connections]));
+		const slots = trendAlerts && trendAlerts.map((b) => ({
+			timestamp: b.timestamp,
+			value: b.high + b.medium + b.low + (b.info ?? 0),
+			connections: conns.get(Date.parse(b.timestamp)) ?? 0,
+		}));
+		return halvesTrend(trendTraffic && slots, !!(failed.trendAlerts || failed.trendTraffic), true);
+	});
+	/** Where the compared data ends (the newest minutes are still arriving) */
+	let trendUpTo = $derived(trendWin ? chartTime(Date.parse(trendWin.to), span.hours) : undefined);
+	let trafficCompared = $derived(!!trendTraffic || !!failed.trendTraffic);
+	let alertsCompared = $derived((!!trendAlerts && !!trendTraffic) || !!failed.trendAlerts || !!failed.trendTraffic);
 
 	/**
 	 * Bandwidth and Connections open the conn records behind the summary on screen: its window and the
@@ -731,7 +778,7 @@ OLD CODE END -->
 		value={bandwidthValue?.[0] ?? '—'}
 		unit={bandwidthValue?.[1]}
 		delta={kpiDelta(bandwidthTrend)}
-		{...kpiWindow(!!(trafficSummary && prevTrafficSummary), bandwidthTrend, span.window, span.previous)}
+		{...kpiWindow(trafficCompared, bandwidthTrend, span.window, span.previous, trendUpTo)}
 		sub={bandwidthSub}
 	/>
 	<!-- OLD CODE: href={trafficHref} (section D: the link carries the figure clicked; Bandwidth, a byte sum, does not) -->
@@ -742,7 +789,7 @@ OLD CODE END -->
 		href={withCount(trafficHref, trafficSummary?.connection_count)}
 		value={trafficSummary ? formatNumber(trafficSummary.connection_count) : '—'}
 		delta={kpiDelta(connectionTrend)}
-		{...kpiWindow(!!(trafficSummary && prevTrafficSummary), connectionTrend, span.window, span.previous)}
+		{...kpiWindow(trafficCompared, connectionTrend, span.window, span.previous, trendUpTo)}
 		sub={connectionsSub}
 	/>
 	<!-- OLD CODE: href={alertCount ? `/alerts?${windowQuery(alertCount, range)}` : `/alerts?range=${range}`} (section D: the window's link carries the figure clicked) -->
@@ -753,7 +800,7 @@ OLD CODE END -->
 		href={alertCount ? withCount(`/alerts?${windowQuery(alertCount, range)}`, alertCount.counts.total) : `/alerts?range=${range}`}
 		value={alertCount ? formatNumber(alertCount.counts.total) : '—'}
 		delta={kpiDelta(alertTrend, true)}
-		{...kpiWindow(!!(alertCount && prevAlertCount), alertTrend, span.window, span.previous)}
+		{...kpiWindow(alertsCompared, alertTrend, span.window, span.previous, trendUpTo)}
 		sub={alertsSub}
 	/>
 	<!-- OLD CODE START — NET-160 slice 2b-3: the Devices card opened /iot, which counts something else;

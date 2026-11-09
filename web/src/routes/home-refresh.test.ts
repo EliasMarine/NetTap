@@ -56,6 +56,8 @@ function body(url: URL): unknown {
 			return { from, to, count: 3 };
 		case '/api/devices/registry/new-count':
 			return { count: 0, since: url.searchParams.get('since') };
+		case '/api/alerts/timeline':
+			return { from, to, interval: url.searchParams.get('interval') ?? '1h', buckets: [] };
 		case '/api/alerts/count':
 			return { from, to, counts: { total: 4, high: 1, medium: 1, low: 1 } };
 		case '/api/system/health':
