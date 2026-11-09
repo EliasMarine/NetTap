@@ -447,8 +447,15 @@ class LiveBandwidthMeter:
             await run_tool(
                 ["tc", "qdisc", "add", "dev", iface, "clsact"], self._left(deadline)
             )
-        if foreign_filters(await self._dump(iface, self._left(deadline))):
+        entries = await self._dump(iface, self._left(deadline))
+        if foreign_filters(entries):
             raise _Unsupported(FOREIGN_RULE.format(iface=iface))
+        # NetTap filters no watch owns (a removal that failed twice): left there, they'd make
+        # this slot's install fail with "File exists" for every device (sec review LOW-1)
+        live = {(w.slot, w.gen) for w in self._watches.values()}
+        stray = [e for e in entries if parse_cookie(e.cookie) not in live]
+        if await self._delete(iface, stray, self._left(deadline)):
+            logger.warning("Removed live bandwidth filters no watch owned on %s", iface)
         identity = self._identity_now()
         if identity != self._identity:
             try:

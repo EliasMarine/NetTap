@@ -245,6 +245,17 @@ class TestAdmission:
         assert set(env.fake.owned()) == {(MAC_DOWN, 2), (MAC_UP, 2)}
         assert not env.meter._pending
 
+    def test_admission_removes_nettap_filters_no_watch_owns(self, env):
+        # sec review LOW-1: a stranded filter in a free slot made every install fail (File exists)
+        async def body():
+            await _start(env)
+            env.meter._watches.clear()  # still installed, no owner
+            return await env.meter.watch(MAC_B)
+
+        run(body())
+        assert _cookies(env.fake) == {(0, 2)}
+        assert len(env.fake.owned()) == 2
+
     def test_broken_watch_is_removed_before_a_fresh_install(self, env):
         async def body():
             await _start(env)

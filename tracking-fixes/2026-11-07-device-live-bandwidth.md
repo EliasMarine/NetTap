@@ -148,6 +148,10 @@ Results (G11, 2026-11-09): **PASS both ways.** No reference drops, no clock step
   - Two cases now ask again when the page is back in view: "unsupported" (a capture interface can come back up), and a 401, which no longer polls every 2 s.
   - `data` is `$state.raw`.
   - New tests cover the key-change reset and hiding the tab while a poll is timed.
+- **Security review:**
+  - An admission removes NetTap filters on the capture interface that no watch owns. Left there, they made every install fail with "File exists" until a restart (LOW-1, the same leak the Python review found).
+  - `live-bandwidth-cleanup.sh`'s fallback container runs as root with only `NET_ADMIN` (`--user 0 --cap-drop ALL --security-opt no-new-privileges`). As the image's `nettap` user it had no `NET_ADMIN`, so every delete would have failed (LOW-2). Checked on the G11: old uid 998 without `NET_ADMIN`, new uid 0 with `CapEff 0x1000`.
+  - Not taken: the mode allowlist (every current mode is covered) and a missing-handle guard (the kernel never gives handle 0). The GET that starts a watch can be triggered cross-site while the feature is on, bounded to one watch for 15 s; a site-wide `Sec-Fetch-Site` rule would close it.
 - **Each new test fails with its fix removed** (mutation-checked).
 - **Not taken:**
   - A `main.py` wiring test: the G11 lifecycle gate covers it end to end.

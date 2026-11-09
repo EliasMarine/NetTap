@@ -100,7 +100,10 @@ main() {
         image=$(sudo docker inspect -f '{{.Config.Image}}' "$CONTAINER" 2>/dev/null)
         image="${image:-$DEFAULT_IMAGE}"
         echo "   ✓ $CONTAINER isn't running: using a throwaway container from $image"
-        runner=(sudo docker run --rm --network host --cap-add NET_ADMIN --entrypoint python3 "$image")
+        # root in the container: the image runs as nettap, and Docker grants added capabilities
+        # only to root, so every delete failed with EPERM (sec review LOW-2)
+        # OLD CODE: runner=(sudo docker run --rm --network host --cap-add NET_ADMIN --entrypoint python3 "$image")
+        runner=(sudo docker run --rm --user 0 --network host --cap-drop ALL --cap-add NET_ADMIN --security-opt no-new-privileges --entrypoint python3 "$image")
     fi
     echo ""
 

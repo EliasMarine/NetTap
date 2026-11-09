@@ -22,7 +22,7 @@ case "$*" in
     "docker inspect -f {{.State.Running}} nettap-storage-daemon") echo "$MOCK_RUNNING" ;;
     "docker inspect -f {{.Config.Image}} nettap-storage-daemon") echo "nettap/storage-daemon:test" ;;
     "docker exec nettap-storage-daemon python3 "*) shift 4; exec python3 "$@" ;;
-    "docker run --rm --network host --cap-add NET_ADMIN --entrypoint python3 "*) shift 10; exec python3 "$@" ;;
+    "docker run --rm --user 0 --network host --cap-drop ALL --cap-add NET_ADMIN --security-opt no-new-privileges --entrypoint python3 "*) shift 16; exec python3 "$@" ;;
     *) exit 1 ;;
 esac
 STUB
@@ -106,7 +106,7 @@ tc filter del dev enp4s0 ingress pref 49156 protocol 802.1Q handle 3 flower" ]
     _stub_commands
     run bash "$SCRIPT" --check
     [[ "$output" == *"using a throwaway container from nettap/storage-daemon:test"* ]]
-    grep -q "^sudo docker run --rm --network host --cap-add NET_ADMIN --entrypoint python3 nettap/storage-daemon:test -I -c" "$CALLS"
+    grep -q "^sudo docker run --rm --user 0 --network host --cap-drop ALL --cap-add NET_ADMIN --security-opt no-new-privileges --entrypoint python3 nettap/storage-daemon:test -I -c" "$CALLS"
     [[ "$output" == *"3 NetTap filter(s) found"* ]]
 }
 
