@@ -115,3 +115,22 @@ Tests: 9 failing-first (M1 5, M2 2, L2 2). On the combined base, one daemon test
 - **The "last notification today" notice went at the end of the body,** so Pushover's 1024-character clip dropped it. It now opens the message.
 
 Tests: 2 failing-first. `test_failed_sends_leave_the_budget_for_when_the_server_is_back` replaces `test_failed_attempts_count_against_the_budget`, which is kept in OLD CODE. The budget test now checks that the body starts with the notice. Daemon suite: 4,598 passed, 4 skipped. ruff is clean.
+
+## Follow-up: security delta D2, D3
+
+**Branch:** `fix/net-224-delta`
+
+- **D2:** a crafted backup could still add an enabled Pushover channel with someone else's `user_key`. That channel kept the box's API token. A backup could also add an email channel to other recipients that sends through the box's SMTP server. Pushover's `user_key` and email `recipients` now count as part of a channel's destination. A backup that carries a `user_key` must match the box's, or the key is dropped. A restored channel whose destination is new comes back off and is named in the report. The Settings email keeps its addresses, so the Settings tab shows them before the owner turns it back on. It gets its own note in the report.
+- **D3:** once the budget was used up, nothing went out until 00:00 UTC. So about 100 minutes of alerts an attacker can trip silenced a critical alert for the rest of the day. Past the budget, a channel now gets one digest an hour (`SLOW_EVERY`):
+  - Alerts wait in the channel's queue between digests.
+  - The queue keeps the worst alerts first and holds at most `MAX_PENDING` (50).
+  - Each digest lists the alerts worst first.
+  - The wait never runs past midnight, when the budget renews.
+  - The 100th message says so. The channel's status shows the limit and how many alerts are waiting, unless a failed send's error is showing.
+  - The held count from M2 is gone, because nothing is dropped any more.
+
+Tests:
+- D2: 3 new tests, all failing on the old code. The test for a Settings email with no SMTP server now puts that channel on the box first.
+- D3: 2 new tests failing on the old code, plus one for the midnight cap. That test fails once the cap is removed.
+- The M2 test with the held count is kept in OLD CODE.
+- Daemon suite: 4,603 passed, 4 skipped. ruff is clean.
