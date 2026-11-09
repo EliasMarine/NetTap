@@ -47,7 +47,7 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
 
 ### Prerequisites
 
-- **Host OS:** Ubuntu Server 22.04 LTS (for full appliance testing)
+- **Host OS:** Ubuntu Server 22.04 or 24.04 LTS, x86-64 (for full appliance testing)
 - **Docker** and **Docker Compose** (v2+)
 - **Python 3.10+** (for the storage/health daemon)
 - **Node.js 18+** and **npm** (for the web UI)
