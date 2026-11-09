@@ -513,7 +513,10 @@ describe('Alerts — card states', () => {
 	// NET-225 (ALR-3): post-NAT, the score counts what the router's firewall blocks
 	it('adds the bridge-mode line under the score only in bridge mode', async () => {
 		succeedAll();
-		captureMode.set('bridge');
+		// OLD CODE: captureMode.set('bridge'); (review M2: the loader asks again after this file's mode-less replies, so the daemon says bridge)
+		vi.stubGlobal('fetch', vi.fn((url: string) =>
+			String(url) === '/api/capture/mode' ? Promise.resolve({ ok: true, status: 200, json: async () => ({ mode: 'bridge', interface: 'br0' }) }) : lanReply(),
+		));
 		try {
 			render(Page);
 			await flush();
@@ -669,8 +672,9 @@ describe('Alerts — drawer', () => {
 		const fetchMock = vi.fn()
 			.mockResolvedValueOnce({ ok: false, status: 502, json: async () => ({}) })
 			.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ hits: [{ _id: 'z1', _source: { '@timestamp': '2026-11-03T10:01:00Z', 'event.dataset': 'conn', 'source.ip': '192.168.1.42', 'destination.ip': '203.0.113.45' } }] }) });
-		// NET-160: the address links fetch the LAN policy themselves; only the drawer's requests are counted
-		vi.stubGlobal('fetch', vi.fn((url: string) => (String(url) === '/api/network/lan' ? lanReply() : fetchMock(url))));
+		// NET-160: the address links fetch the LAN policy themselves, and the loader the capture mode; only the drawer's requests are counted
+		// OLD CODE: … (String(url) === '/api/network/lan' ? lanReply() : fetchMock(url)) (review M2: an unknown mode is asked again each load)
+		vi.stubGlobal('fetch', vi.fn((url: string) => (['/api/network/lan', '/api/capture/mode'].includes(String(url)) ? lanReply() : fetchMock(url))));
 		const drawer = await openFromRow();
 		expect(fetchMock).not.toHaveBeenCalled();
 		await fireEvent.click(within(drawer).getByRole('button', { name: /Related events/ }));

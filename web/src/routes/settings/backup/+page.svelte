@@ -10,6 +10,7 @@
 	import Card from '$lib/components/ui/Card.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { formatTime } from '$lib/utils/time';
+	import { refreshCaptureMode } from '$lib/stores/captureMode';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -139,6 +140,8 @@
 		try {
 			// OLD CODE: importResult = await importConfig(importData);
 			importResult = await importConfig(importData, applyCapture && validation?.capture_restart === true);
+			// review M2: the pages that word things by capture mode read it again
+			if (importResult.applied?.includes('capture_mode_config')) void refreshCaptureMode();
 			if (!importResult.success) {
 				importError = importResult.errors.join(', ');
 			}

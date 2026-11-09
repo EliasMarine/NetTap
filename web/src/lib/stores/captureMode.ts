@@ -37,13 +37,20 @@ const MODES: readonly string[] = ['bridge', 'mirror', 'dhcp_gateway'];
 let answered = false;
 let pending: Promise<void> | null = null;
 
-/** Asks once the daemon has answered; a failed request is asked again on the next call. */
+// OLD CODE START — review M2: an unknown mode counted as answered, so it was never asked again
+// /** Asks once the daemon has answered; a failed request is asked again on the next call. */
+// …	.then((result) => {
+// 		answered = true;
+// 		captureMode.set(MODES.includes(result.mode) ? (result.mode as StoreCaptureMode) : null);
+// 	})
+// OLD CODE END
+/** Asks until the daemon names a known mode; a failure or an unknown mode is asked again on the next call. */
 export function initCaptureMode(): Promise<void> {
 	if (answered) return Promise.resolve();
 	pending ??= getCaptureMode()
 		.then((result) => {
-			answered = true;
-			captureMode.set(MODES.includes(result.mode) ? (result.mode as StoreCaptureMode) : null);
+			answered = MODES.includes(result.mode);
+			captureMode.set(answered ? (result.mode as StoreCaptureMode) : null);
 		})
 		.catch(() => {
 			// unknown stays unknown; the next loader asks again
@@ -52,4 +59,11 @@ export function initCaptureMode(): Promise<void> {
 			pending = null;
 		});
 	return pending;
+}
+
+/** Reads the mode again even after an answer: a backup restore can change it in the session (review M2). */
+export async function refreshCaptureMode(): Promise<void> {
+	await pending; // an older request can't land after this one
+	answered = false;
+	await initCaptureMode();
 }

@@ -91,6 +91,44 @@ describe('captureMode store', () => {
 		expect(mockGetCaptureMode).toHaveBeenCalledTimes(2);
 	});
 
+	// review M2: a reply naming no mode this build knows must not end the asking
+	it('asks again on the next call after an unknown mode', async () => {
+		mockGetCaptureMode.mockResolvedValueOnce({ mode: 'something-new' }).mockResolvedValue({ mode: 'bridge' });
+
+		const { captureMode, initCaptureMode } = await import('./captureMode');
+		await initCaptureMode();
+		expect(get(captureMode)).toBeNull();
+		await initCaptureMode();
+		expect(get(captureMode)).toBe('bridge');
+	});
+
+	// review M2: a backup restore can change the mode in the session; pages read it again
+	it('refreshCaptureMode reads the mode again after an answer', async () => {
+		mockGetCaptureMode.mockResolvedValueOnce({ mode: 'mirror' }).mockResolvedValue({ mode: 'bridge' });
+
+		const { captureMode, initCaptureMode, refreshCaptureMode } = await import('./captureMode');
+		await initCaptureMode();
+		expect(get(captureMode)).toBe('mirror');
+		await refreshCaptureMode();
+		expect(get(captureMode)).toBe('bridge');
+		await initCaptureMode();
+		expect(mockGetCaptureMode).toHaveBeenCalledTimes(2);
+	});
+
+	it('refreshCaptureMode never lets an older reply land after its own', async () => {
+		let answerOld!: (v: { mode: string }) => void;
+		mockGetCaptureMode
+			.mockReturnValueOnce(new Promise((r) => (answerOld = r)))
+			.mockResolvedValue({ mode: 'bridge' });
+
+		const { captureMode, initCaptureMode, refreshCaptureMode } = await import('./captureMode');
+		const old = initCaptureMode();
+		const fresh = refreshCaptureMode();
+		answerOld({ mode: 'mirror' });
+		await Promise.all([old, fresh]);
+		expect(get(captureMode)).toBe('bridge');
+	});
+
 	it('shares one request between concurrent callers', async () => {
 		mockGetCaptureMode.mockResolvedValue({ mode: 'mirror' });
 
