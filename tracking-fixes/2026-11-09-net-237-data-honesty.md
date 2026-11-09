@@ -131,3 +131,15 @@ The four items the first pass left out, fixed after the owner asked for everythi
   - `domains`, `addresses`, `suricata_categories` and the alerts `_every_key` lists use their own `LIST_CAP` and return `*_complete`, which the pages show as "first N".
   - `api/devices.py:_ip_buckets` raises when it is called with `what=`; its log-only branch serves callers without `what`. That code belongs to the devices area, so this round leaves it.
 - **Tests:** `daemon/tests/test_capped_scans.py`, 14 tests. Each test stops only its own scan and lets every other scan finish, so it fails only when its own guard is missing. All 14 failed on the old code. The tests also check that a capped baseline stops on a later value list, and that the rogue DHCP handler answers 5xx.
+
+### Added to the review round
+
+- **DNS name scan (Python review):**
+  - `dns_analytics._all_domains` paged without `what=`, so a page without aggregations read as the end of the names.
+  - The pages are now checked. A bad page raises `PartialResultsError`, and `/api/dns/suspicious` answers 502.
+  - The scan is already bounded by the request window, and its cap raises (see above).
+- **Zone-id log forging (security review L3):**
+  - `ipaddress.ip_address("fe80::1%<text>")` accepts a zone id, newlines included, so `/api/geoip/{ip}` and the batch route passed it to a `%s` warning log line.
+  - Both routes now reject a zone id as an invalid address (400). The service logs the address and the error with `%r`.
+- **Docstring:** `alert_intelligence.compute_trend` and the module docstring now say the trend is a per-hour rate. `category_trend` in `api/alerts.py` is the one that compares the window's halves.
+- **Tests:** `test_dns_name_scan_checks_its_pages`, `test_suspicious_dns_answers_502_on_an_unreadable_page`, `TestGeoIPZoneIds` (2 tests). All four failed on the old code.
