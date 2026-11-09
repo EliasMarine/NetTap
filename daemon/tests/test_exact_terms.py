@@ -217,3 +217,83 @@ def test_multi_terms_lists_get_a_shard_size_too():
     assert (
         with_exact_terms(aggs, 100_000)["pairs"]["multi_terms"]["shard_size"] == 100_000
     )
+
+
+# ---------------------------------------------------------------------------
+# NET-237 (TRF-3, ALR-11, DNS-4): every partial reply is an error, through the one shared client
+# ---------------------------------------------------------------------------
+
+_WHOLE = {
+    "_shards": {"total": 3, "successful": 3, "failed": 0},
+    "timed_out": False,
+    "hits": {"total": {"value": 9}, "hits": []},
+}
+_TIMED_OUT = {**_WHOLE, "timed_out": True, "hits": {"total": {"value": 4}}}
+_FAILED = {**_WHOLE, "_shards": {"total": 3, "successful": 2, "failed": 1}}
+
+
+def _client() -> ExactTermsOpenSearch:
+    return ExactTermsOpenSearch(hosts=[{"host": "localhost", "port": 9200}])
+
+
+def test_a_timed_out_search_is_an_error_not_a_smaller_count():
+    import pytest
+
+    from storage.exact_terms import PartialResultsError
+
+    with (
+        patch.object(OpenSearch, "search", return_value=_TIMED_OUT),
+        pytest.raises(PartialResultsError, match="timed out"),
+    ):
+        _client().search(index="x-*", body={"size": 0, "timeout": "1ms"})
+
+
+def test_one_failed_search_in_an_msearch_is_an_error_not_no_hits():
+    import pytest
+
+    from storage.exact_terms import PartialResultsError
+
+    failed = {"error": {"type": "search_phase_execution_exception"}, "status": 500}
+    with (
+        patch.object(
+            OpenSearch, "msearch", return_value={"responses": [_WHOLE, failed]}
+        ),
+        pytest.raises(PartialResultsError, match="search in the batch failed"),
+    ):
+        _client().msearch(body=[{"index": "x-*"}, {"size": 0}] * 2)
+
+
+def test_a_count_from_only_some_shards_is_an_error():
+    import pytest
+
+    from storage.exact_terms import PartialResultsError
+
+    partial = {"count": 3, "_shards": {"total": 3, "successful": 2, "failed": 1}}
+    whole = {"count": 5, "_shards": {"total": 3, "successful": 3, "failed": 0}}
+    with (
+        patch.object(OpenSearch, "count", return_value=partial),
+        pytest.raises(PartialResultsError),
+    ):
+        _client().count(index="x-*", body={"query": {"match_all": {}}})
+    with patch.object(OpenSearch, "count", return_value=whole):
+        assert _client().count(index="x-*", body={"query": {"match_all": {}}}) == whole
+
+
+def test_dns_analytics_paths_raise_on_a_partial_reply():
+    """DNS-4: DNSAnalytics runs on the shared client, its all_buckets scans included."""
+    import pytest
+
+    from services.dns_analytics import DNSAnalytics
+    from storage.exact_terms import PartialResultsError
+
+    window = ("2026-11-09T00:00:00Z", "2026-11-09T01:00:00Z")
+    for bad in (_TIMED_OUT, _FAILED):
+        dns = DNSAnalytics(client=_client())
+        with patch.object(OpenSearch, "search", return_value=bad):
+            for call in (
+                lambda: dns.get_top_domains(*window),  # a plain search
+                lambda: dns.get_suspicious_dns(*window),  # all_buckets without what=
+                lambda: dns.get_stats(*window),
+            ):
+                with pytest.raises(PartialResultsError):
+                    call()
