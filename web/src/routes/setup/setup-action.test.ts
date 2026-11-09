@@ -180,22 +180,52 @@ describe('setup code (A13, NET-229)', () => {
 		expect(storedUsers().map((u) => u.username)).toEqual(['alice']);
 	});
 
-	it('limits tries per address: the 6th in a minute is refused even with the right code', async () => {
+	// OLD CODE START — review L4: the setup code has its own overall limit, not the login's per-address one
+	// it('limits tries per address: the 6th in a minute is refused even with the right code', async () => {
+	// 	const code = currentCode();
+	// 	for (let i = 0; i < 5; i++) {
+	// 		expect(await createAdmin(adminEvent('mallory', 'ABCD-EFGH-JKMN').event)).toMatchObject({ status: 400 });
+	// 	}
+	//
+	// 	expect(await createAdmin(adminEvent('alice', code).event)).toMatchObject({
+	// 		status: 429,
+	// 		data: { error: expect.stringContaining('Too many attempts') },
+	// 	});
+	// 	expect(auth.hasUsers()).toBe(false);
+	// 	// another address still has its own budget
+	// 	expect(await createAdmin(adminEvent('alice', code, '192.0.2.11').event)).toEqual({
+	// 		success: true,
+	// 		username: 'alice',
+	// 	});
+	// });
+	// OLD CODE END
+	it('refuses every code after 50 wrong ones, from any address, until nettap-web restarts', async () => {
 		const code = currentCode();
-		for (let i = 0; i < 5; i++) {
-			expect(await createAdmin(adminEvent('mallory', 'ABCD-EFGH-JKMN').event)).toMatchObject({ status: 400 });
+		for (let i = 0; i < 50; i++) {
+			const ip = `192.0.2.${i % 3}`;
+			expect(await createAdmin(adminEvent('mallory', 'ABCD-EFGH-JKMN', ip).event)).toMatchObject({ status: 400 });
 		}
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-		expect(await createAdmin(adminEvent('alice', code).event)).toMatchObject({
+		expect(await createAdmin(adminEvent('alice', code, '192.0.2.99').event)).toMatchObject({
 			status: 429,
-			data: { error: expect.stringContaining('Too many attempts') },
+			data: { error: expect.stringContaining('sudo docker restart nettap-web') },
 		});
 		expect(auth.hasUsers()).toBe(false);
-		// another address still has its own budget
-		expect(await createAdmin(adminEvent('alice', code, '192.0.2.11').event)).toEqual({
-			success: true,
-			username: 'alice',
-		});
+		warn.mockRestore();
+
+		// a restart is a fresh module
+		vi.resetModules();
+		const fresh = (await import('./+page.server')) as unknown as { actions: { createAdmin: CreateAdmin } };
+		expect(await fresh.actions.createAdmin(adminEvent('alice', code).event)).toEqual({ success: true, username: 'alice' });
+	});
+
+	it("doesn't touch the login's per-address budget", async () => {
+		currentCode();
+		for (let i = 0; i < 6; i++) await createAdmin(adminEvent('mallory', 'ABCD-EFGH-JKMN').event);
+		await auth.createFirstAdmin('owner', 'Passw0rdOK');
+		const { attemptLogin } = await import('$lib/server/login.js');
+		await expect(attemptLogin('192.0.2.10', 'owner', 'Passw0rdOK')).resolves.toMatchObject({ ok: true });
 	});
 
 	it.each([
@@ -250,11 +280,13 @@ describe('setup code on the Welcome step (NET-229 follow-up)', () => {
 		expect(auth.verifyToken(token)).toBeNull();
 	});
 
-	it('shares the per-address limit with the account step', async () => {
+	it('shares the overall limit with the account step', async () => {
 		const code = currentCode();
-		for (let i = 0; i < 5; i++) {
+		for (let i = 0; i < 25; i++) {
 			expect(await verifyCode(adminEvent('x', 'ABCD-EFGH-JKMN').event)).toMatchObject({ status: 400 });
+			expect(await createAdmin(adminEvent('x', 'ABCD-EFGH-JKMN').event)).toMatchObject({ status: 400 });
 		}
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
 		expect(await verifyCode(adminEvent('x', code).event)).toMatchObject({ status: 429 });
 	});
 

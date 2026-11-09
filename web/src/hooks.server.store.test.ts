@@ -93,8 +93,22 @@ describe('first-run routes with a real user store', () => {
 	// 	expect(resolve).toHaveBeenCalledTimes(1);
 	// });
 	// OLD CODE END
-	it.each(FIRST_RUN_PAGES)('page %s is open when the store does not exist', async (path) => {
-		await run(path, 'POST');
+	// OLD CODE START — review: /go-live needs the setup cookie too
+	// it.each(FIRST_RUN_PAGES)('page %s is open when the store does not exist', async (path) => {
+	// 	await run(path, 'POST');
+	// 	expect(resolve).toHaveBeenCalledTimes(1);
+	// });
+	// OLD CODE END
+	it('/setup is open when the store does not exist', async () => {
+		await run('/setup', 'POST');
+		expect(resolve).toHaveBeenCalledTimes(1);
+	});
+
+	it('/go-live goes to /setup until the code is typed', async () => {
+		await expect(run('/go-live')).rejects.toMatchObject({ status: 302, location: '/setup' });
+		expect(resolve).not.toHaveBeenCalled();
+
+		await run('/go-live', 'GET', undefined, auth.setupToken() ?? '');
 		expect(resolve).toHaveBeenCalledTimes(1);
 	});
 

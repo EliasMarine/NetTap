@@ -47,8 +47,8 @@ const PUBLIC_PATHS = new Set(['/login', '/api/auth/login', '/api/auth/logout', '
  * The setup wizard (/setup, /api/setup/*) and Go Live (/go-live, /api/bridge/*)
  * run before any account exists. Afterwards they reconfigure the appliance, so
  * they need a session like every other route. The setup action signs the new
- * admin in, so the rest of the wizard and Go Live keep working. Before that, the
- * /api paths need the setup cookie (NET-229 follow-up); the pages stay open.
+ * admin in, so the rest of the wizard and Go Live keep working. Before that,
+ * everything but /setup needs the setup cookie (NET-229 follow-up).
  */
 const FIRST_RUN_PATHS = ['/setup', '/api/setup', '/api/bridge', '/go-live'];
 
@@ -176,10 +176,22 @@ export const handle: Handle = async ({ event, resolve }) => {
 		// 	return resolve(event);
 		// }
 		// OLD CODE END
+		// OLD CODE START — review: /go-live stayed open without the code; only /setup needs to be
+		// if (firstRun && isFirstRunPath(event.request.method, pathname)) {
+		// 	// The pages stay open so the code can be typed; their API calls need the setup cookie
+		// 	if (isUnder(pathname, '/api') && !hasSetupCookie(event)) {
+		// 		return json({ error: 'Enter the setup code first.' }, { status: 401 });
+		// 	}
+		// 	return resolve(event);
+		// }
+		// OLD CODE END
 		if (firstRun && isFirstRunPath(event.request.method, pathname)) {
-			// The pages stay open so the code can be typed; their API calls need the setup cookie
-			if (isUnder(pathname, '/api') && !hasSetupCookie(event)) {
-				return json({ error: 'Enter the setup code first.' }, { status: 401 });
+			// /setup stays open so the code can be typed there; the rest needs the setup cookie
+			if (!isUnder(pathname, '/setup') && !hasSetupCookie(event)) {
+				if (isUnder(pathname, '/api')) {
+					return json({ error: 'Enter the setup code first.' }, { status: 401 });
+				}
+				throw redirect(302, '/setup');
 			}
 			return resolve(event);
 		}

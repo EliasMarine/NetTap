@@ -47,7 +47,8 @@ export const actions: Actions = {
 			throw redirect(302, '/login');
 		}
 		const data = await event.request.formData();
-		const code = checkSetupCode(event.getClientAddress(), data.get('setupCode')?.toString() ?? '');
+		// OLD CODE: checkSetupCode(event.getClientAddress(), …) (review L4: its own limit, not per address)
+		const code = checkSetupCode(data.get('setupCode')?.toString() ?? '');
 		if (!code.ok) {
 			return fail(code.status, { error: code.error });
 		}
@@ -89,7 +90,8 @@ export const actions: Actions = {
 					username: username ?? '',
 				});
 			}
-			const code = checkSetupCode(event.getClientAddress(), typed);
+			// OLD CODE: const code = checkSetupCode(event.getClientAddress(), typed); (review L4)
+			const code = checkSetupCode(typed);
 			if (!code.ok) {
 				return fail(code.status, { error: code.error, username: username ?? '' });
 			}

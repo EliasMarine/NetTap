@@ -316,13 +316,37 @@ describe('hooks.server', () => {
 		// 	}
 		// );
 		// OLD CODE END
-		it.each(['/setup', '/go-live'])('leaves page %s open while no users exist', async (path) => {
+		// OLD CODE START — review: /go-live needs the setup code too; only /setup stays open
+		// it.each(['/setup', '/go-live'])('leaves page %s open while no users exist', async (path) => {
+		// 	mockHasUsers.mockReturnValue(false);
+		// 	const event = createMockEvent(path);
+		//
+		// 	await handle({ event, resolve: mockResolve });
+		// 	expect(mockResolve).toHaveBeenCalledWith(event);
+		// 	expect(mockSetupTokenValid).not.toHaveBeenCalled();
+		// });
+		// OLD CODE END
+		it('leaves /setup open while no users exist, so the code can be typed', async () => {
 			mockHasUsers.mockReturnValue(false);
-			const event = createMockEvent(path);
+			const event = createMockEvent('/setup');
 
 			await handle({ event, resolve: mockResolve });
 			expect(mockResolve).toHaveBeenCalledWith(event);
 			expect(mockSetupTokenValid).not.toHaveBeenCalled();
+		});
+
+		it('sends /go-live to /setup until the code is typed', async () => {
+			mockHasUsers.mockReturnValue(false);
+			mockSetupTokenValid.mockReturnValue(false);
+			await expect(handle({ event: createMockEvent('/go-live'), resolve: mockResolve })).rejects.toMatchObject({
+				location: '/setup',
+			});
+			expect(mockResolve).not.toHaveBeenCalled();
+
+			mockSetupTokenValid.mockReturnValue(true);
+			const event = createMockEvent('/go-live');
+			await handle({ event, resolve: mockResolve });
+			expect(mockResolve).toHaveBeenCalledWith(event);
 		});
 
 		it.each(['/api/setup/nics', '/api/bridge/create'])(
