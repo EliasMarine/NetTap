@@ -136,6 +136,98 @@ echo ""
 
 echo "→ Step 8: Storage"
 daemon_get /api/storage/status | py '"   info  disk %s%% used, PCAP cap applies at 25%% of the disk" % d.get("disk_usage_percent")'
+# NET-227: a disk-full pause is surfaced, ILM failures are reported, growth is measured
+st=$(daemon_get /api/storage/status | py '"%s|%s|%s" % (d.get("capture_paused_disk_full"), (d.get("ilm_status") or {}).get("last_error"), "growth_estimate" in d)')
+case "$st" in
+    False\|None\|True) pass "storage: capture not paused for disk, ILM synced, growth estimate reported" ;;
+    True\|*) fail "packet capture is paused: disk full" ;;
+    False\|*\|True) warn "ILM policy not synced: ${st#*|}" ;;
+    *) fail "storage status lacks the NET-227 fields: $st" ;;
+esac
+echo ""
+
+echo "→ Step 9: Release-audit blocker fixes (NET-224 to NET-229, NET-237)"
+# NET-224: notification settings never come back with a URL or password
+secrets=$(daemon_get /api/notifications/config | py '"missing" if not isinstance(d, dict) or "email" not in d else ",".join(k for k in ("url", "password", "smtp_password", "token") if ("\"%s\":" % k) in json.dumps(d)) or "none"')
+case "$secrets" in
+    none) pass "notification settings reply holds no URL or password" ;;
+    missing|PARSE_ERROR) fail "notification settings reply missing or unreadable (NET-224 not deployed?)" ;;
+    *) fail "notification settings reply exposes: $secrets" ;;
+esac
+# NET-225: DNS shows the median, not only the mean
+med=$(daemon_get /api/dns/stats | py '"absent" if "median_resolution_ms" not in d else ("null" if d["median_resolution_ms"] is None else "ok")')
+case "$med" in
+    ok) pass "DNS stats report the median lookup time" ;;
+    null) warn "DNS stats report no median (no answered lookups in the window)" ;;
+    *) fail "DNS stats have no median field (NET-225 not deployed?)" ;;
+esac
+# NET-228: a category trend is a comparison with enough data, or says it can't be one
+trends=$(daemon_get "/api/alerts/categories?from=now-24h&to=now" | py '",".join(sorted({str(c.get("trend")) for c in (d.get("categories") or [])} - {"increasing", "decreasing", "stable", "not_enough_data"})) or "ok"')
+if [ "$trends" = "ok" ]; then pass "alert category trends are increasing/decreasing/stable/not_enough_data only"; else fail "unexpected alert trend values: $trends"; fi
+# NET-229: an install with an admin has no setup code lying around
+if sudo docker exec nettap-web test -e /var/lib/nettap-web/setup-code 2>/dev/null; then
+    warn "a setup code exists: no admin yet, or it wasn't removed after the admin was created"
+else
+    pass "no setup code on an install that already has an admin"
+fi
+# NET-229: TShark parses hostile packets with no network and no root
+tshark_cfg=$(sudo docker inspect nettap-tshark --format '{{.HostConfig.NetworkMode}} {{.Config.User}}' 2>/dev/null || echo "missing")
+case "$tshark_cfg" in
+    "none 65534:65534") pass "TShark has no network and runs as nobody" ;;
+    missing) warn "nettap-tshark container not found" ;;
+    *) fail "TShark runs with '$tshark_cfg' (expected 'none 65534:65534'): recreate nettap-tshark" ;;
+esac
+# NET-229: CyberChef needs a login
+cc=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost/cyberchef/)
+case "$cc" in
+    302|401) pass "CyberChef needs a login ($cc)" ;;
+    *) fail "CyberChef answered $cc without a session: recreate nettap-nginx" ;;
+esac
+# NET-237: GeoIP for an anycast address names its source and gives no pin
+geo=$(daemon_get /api/geoip/1.1.1.1 | py '"ok" if d.get("anycast") and d.get("latitude") is None and d.get("source") else "bad:%s/%s/%s" % (d.get("anycast"), d.get("latitude"), bool(d.get("source")))')
+if [ "$geo" = "ok" ]; then pass "GeoIP marks anycast, gives no pin and names its source"; else fail "GeoIP anycast answer: $geo"; fi
+echo ""
+
+echo "→ Step 10: Device totals count both sides of a connection (NET-226)"
+# The busiest answering device in Step 6's hour, counted straight from OpenSearch: its listed
+# connections must be started + answered + its IPv6, and more than started alone.
+nt_lan=$(daemon_get "/api/network/lan" | py '",".join("\"%s\"" % s for s in d["subnets"])')
+nt_devices=$(daemon_get "/api/devices?from=$FROM&to=$TO&limit=500")
+nt_base='{"range":{"@timestamp":{"gte":"'"$FROM"'","lte":"'"$TO"'","format":"strict_date_optional_time"}}},{"term":{"event.provider":"zeek"}},{"term":{"event.dataset":"conn"}}'
+nt_not_long='"must_not":[{"term":{"log.file.path":"conn_long.log"}}]'
+nt_listed=$(printf '%s' "$nt_devices" | py '"\n".join(x["ip"] for x in d.get("devices", []))')
+nt_ip=$(printf '%s' '{"size":0,"query":{"bool":{"filter":['"$nt_base"',{"terms":{"destination.ip":['"$nt_lan"']}}],'"$nt_not_long"'}},"aggs":{"ip":{"terms":{"field":"destination.ip","size":50}}}}' \
+    | os_query "/arkime_sessions3-*/_search" \
+    | py '"\n".join(b["key"] for b in d["aggregations"]["ip"]["buckets"])' \
+    | grep -Fx -f <(printf '%s\n' "$nt_listed") | head -1)
+nt_count() {
+    printf '%s' '{"size":0,"track_total_hits":true,"query":{"bool":{"filter":['"$nt_base"',{"term":{"'"$1"'.ip":"'"$nt_ip"'"}}],'"$nt_not_long"'}}}' \
+        | os_query "/arkime_sessions3-*/_search" | py 'd["hits"]["total"]["value"]'
+}
+if [ -z "$nt_ip" ]; then
+    warn "no listed device answered a connection in $FROM..$TO; both-sides check skipped"
+else
+    nt_started=$(nt_count source)
+    nt_answered=$(nt_count destination)
+    # the row is picked in the shell, so eval never sees data
+    nt_row=$(printf '%s' "$nt_devices" \
+        | py '"\n".join("%s %s %s" % (x["ip"], x["connection_count"], x.get("ipv6_connections", 0)) for x in d["devices"])' \
+        | awk -v ip="$nt_ip" '$1 == ip {print $2, $3}')
+    nt_conns=${nt_row% *}
+    nt_v6=${nt_row#* }
+    if [ -n "$nt_row" ] && [ "$nt_started" -eq "$nt_started" ] 2>/dev/null && [ "$nt_answered" -eq "$nt_answered" ] 2>/dev/null; then
+        nt_want=$((nt_started + nt_answered + nt_v6))
+        if [ "$nt_conns" = "$nt_want" ] && [ "$nt_conns" -gt "$nt_started" ]; then
+            pass "device-A's connections are both sides: $nt_conns = $nt_started started + $nt_answered answered + $nt_v6 IPv6"
+        elif [ "$nt_conns" = "$nt_started" ]; then
+            fail "the device list counts only started connections ($nt_conns; answered $nt_answered): NET-226 not deployed"
+        else
+            warn "device list $nt_conns vs $nt_want (started $nt_started + answered $nt_answered + IPv6 $nt_v6); records may still be arriving, rerun"
+        fi
+    else
+        fail "couldn't read the device row or the OpenSearch counts for the both-sides check"
+    fi
+fi
 echo ""
 
 echo "=== Result: $PASS passed, $FAIL failed, $WARN warnings ==="
