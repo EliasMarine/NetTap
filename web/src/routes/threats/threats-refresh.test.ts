@@ -118,7 +118,8 @@ describe('Threats page — card states', () => {
 		vi.mocked(getThreatReport).mockResolvedValue(EMPTY);
 		vi.mocked(getThreatIntel).mockResolvedValue(NO_INTEL);
 		render(ThreatsPage);
-		await vi.waitFor(() => expect(screen.getByText('No active kill chains')).toBeInTheDocument());
+		// OLD CODE: …getByText('No active kill chains')… (NET-228, audit ALR-18)
+		await vi.waitFor(() => expect(screen.getByText('No possible kill chains')).toBeInTheDocument());
 		for (const title of [
 			// OLD CODE START: 'No threat intel indicators loaded', (I7: the card counts the window's matches) OLD CODE END
 			'No threat intel matches',

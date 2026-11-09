@@ -661,10 +661,20 @@ def kill_chains(
                 "alerts": [public(groups[gi]) for gi in chain_groups],
                 "first_seen": _iso_ms(chain[0][0]),
                 "last_seen": _iso_ms(chain[-1][0]),
+                # OLD CODE START — NET-228 (audit ALR-18): stated stages as fact, and "within 24 hours
+                # of each other" though only the gap between successive stages is bounded
+                # "assessment": (
+                #     f"{device} shows {len(stages)} attack stages in order within "
+                #     f"24 hours of each other, including its own traffic "
+                #     f"({' → '.join(labels)}): possible active intrusion."
+                # ),
+                # OLD CODE END
                 "assessment": (
-                    f"{device} shows {len(stages)} attack stages in order within "
-                    f"24 hours of each other, including its own traffic "
-                    f"({' → '.join(labels)}): possible active intrusion."
+                    f"{device}: rule matches NetTap maps to {len(stages)} attack stages "
+                    f"({' → '.join(labels)}), in order, with no more than 24 hours between "
+                    "successive stages and at least one from its own traffic. This can mean "
+                    "an intrusion in progress; each stage is NetTap's reading of a rule "
+                    "match, not a confirmed step."
                 ),
             }
         )

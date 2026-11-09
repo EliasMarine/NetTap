@@ -439,7 +439,8 @@ class TestKillChainDetection:
         )
         assert len(chains) == 1
         assert len(chains[0]["stages"]) == 4
-        assert "active intrusion" in chains[0]["assessment"]
+        # OLD CODE: assert "active intrusion" in chains[0]["assessment"] (NET-228, audit ALR-18)
+        assert "not a confirmed step" in chains[0]["assessment"]
 
     def test_no_chain_single_stage(self):
         from services.alert_intelligence import detect_kill_chains

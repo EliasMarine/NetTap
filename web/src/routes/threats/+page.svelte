@@ -219,7 +219,8 @@
 
 	let subheadline = $derived.by(() => {
 		const parts: string[] = [];
-		if (killChains.length > 0) parts.push(`${killChains.length} active kill chain${killChains.length > 1 ? 's' : ''}`);
+		// OLD CODE: …`${killChains.length} active kill chain…` (NET-228, audit ALR-18: a reading of rule matches, not an attack)
+		if (killChains.length > 0) parts.push(`${killChains.length} possible kill chain${killChains.length > 1 ? 's' : ''}`);
 		if (beacons.length > 0) parts.push(`${beacons.length} beaconing suspect${beacons.length > 1 ? 's' : ''}`);
 		const tiTotal = threatIntel?.total_indicators ?? 0;
 		// OLD CODE START: if (tiTotal > 0) parts.push(`${tiTotal} threat intel indicators`); (I7: now the window's matches) OLD CODE END
@@ -550,7 +551,8 @@
 			value={formatNumber(summary?.total_groups ?? 0)}
 			sub="{formatNumber(summary?.total_events ?? 0)} alert events need attention · {rangeText}"
 		/>
-		<KpiCard class="c-3" label="Kill chains" icon="warn" value={killChains.length} sub="Devices moving through attack stages" />
+		<!-- OLD CODE: sub="Devices moving through attack stages" (NET-228, audit ALR-18) -->
+		<KpiCard class="c-3" label="Kill chains" icon="warn" value={killChains.length} sub="Rule matches mapped to attack stages" />
 		<!-- OLD CODE START (NET-192 PR 3: "—" too while the background check is pending or has never succeeded)
 		<KpiCard
 			class="c-3"
@@ -631,9 +633,10 @@
 		</Card>
 
 		<!-- Active kill chains -->
-		<Card title="Active kill chains" sub="Devices seen at more than one attack stage · {rangeText}" class="c-12">
+		<!-- OLD CODE: <Card title="Active kill chains" sub="Devices seen at more than one attack stage · {rangeText}"> … {killChains.length} detected (NET-228, audit ALR-18: stated as fact) -->
+		<Card title="Possible kill chains" sub="Devices whose rule matches map to more than one attack stage, in order · {rangeText}" class="c-12">
 			{#snippet actions()}
-				<span class={['chip', killChains.length > 0 && 'is-warn']}>{killChains.length} detected</span>
+				<span class={['chip', killChains.length > 0 && 'is-warn']}>{killChains.length} found</span>
 			{/snippet}
 			{#if killChains.length > 0}
 				<div class="kill-chains">
@@ -646,7 +649,8 @@
 							<ol class="chips kc-stages">
 								{#each [1, 2, 3, 4] as stage (stage)}
 									<li class={['chip', kc.stages.includes(stage) && 'is-warn']}>
-										Stage {stage} · {STAGE_NAMES[stage]} · {kc.stages.includes(stage) ? 'Detected' : 'Not seen'}
+										<!-- OLD CODE: … {kc.stages.includes(stage) ? 'Detected' : 'Not seen'} (NET-228: a stage is a rule match; one outside this chain's order can exist) -->
+										Stage {stage} · {STAGE_NAMES[stage]} · {kc.stages.includes(stage) ? 'Rule matched' : 'Not in this chain'}
 									</li>
 								{/each}
 							</ol>
@@ -662,10 +666,11 @@
 					{/each}
 				</div>
 			{:else}
+				<!-- OLD CODE: title="No active kill chains" message="A kill chain appears when one device shows several attack stages, such as scanning and then contacting a control server." (NET-228, audit ALR-18) -->
 				<CardState
 					state="empty"
-					title="No active kill chains"
-					message="A kill chain appears when one device shows several attack stages, such as scanning and then contacting a control server."
+					title="No possible kill chains"
+					message="A kill chain appears when one device's rule matches map to several attack stages in order, such as a scanning rule and then a control-server rule. Each stage is NetTap's reading of a rule match."
 					icon="threats"
 				/>
 			{/if}

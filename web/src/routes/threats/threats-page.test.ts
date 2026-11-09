@@ -115,6 +115,23 @@ describe('Threats page', () => {
 		expect(goto).toHaveBeenLastCalledWith('/devices/192.168.1.66');
 	});
 
+	// NET-228 (audit ALR-18): a stage is NetTap's reading of a rule match, and a stage outside this
+	// chain's order can still have matches, so it is "not in this chain", not "not seen"
+	it('words a kill chain as a reading of rule matches', async () => {
+		const chain = { source_ip: '192.168.1.66', stages: [1, 3], stage_labels: [], alert_count: 4, assessment: 'Chain' };
+		stubDaemon({
+			'/api/threats/report': { ...REPORT, kill_chains: [chain], failed_checks: [], incomplete_checks: [] },
+			'/api/threats/intel': { from: '', to: '', new_indicators: 0, feeds: {}, total_indicators: 0 },
+		});
+		render(ThreatsPage);
+		await vi.waitFor(() => expect(screen.getByText('Possible kill chains')).toBeInTheDocument());
+		expect(screen.getByText('Stage 1 · Reconnaissance · Rule matched')).toBeInTheDocument();
+		expect(screen.getByText('Stage 2 · Exploit · Not in this chain')).toBeInTheDocument();
+		expect(screen.getByText('1 found')).toBeInTheDocument();
+		expect(screen.getByText(/1 possible kill chain\b/)).toBeInTheDocument();
+		expect(screen.queryByText(/Detected|active kill chain/)).not.toBeInTheDocument();
+	});
+
 	it('says a failed auto-investigation failed instead of hiding it', async () => {
 		stubDaemon({
 			'/api/threats/report': { ...REPORT, failed_checks: ['investigations'], incomplete_checks: [] },

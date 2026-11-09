@@ -183,7 +183,24 @@ def test_recon_exploit_c2_within_a_day_is_a_chain():
     )
     assert [c["stages"] for c in chains] == [[1, 2, 3]]
     assert chains[0]["source_ip"] == PC
-    assert "active intrusion" in chains[0]["assessment"]
+    # OLD CODE: assert "active intrusion" in chains[0]["assessment"] (NET-228, audit ALR-18)
+    said = chains[0]["assessment"]
+    assert "NetTap's reading of a rule match, not a confirmed step" in said
+    assert "no more than 24 hours between successive stages" in said
+    assert "active intrusion" not in said
+
+
+def test_a_chain_can_span_more_than_a_day_and_says_only_the_gap_is_bounded():
+    """NET-228: hours 0, 23 and 46 make a chain; "within 24 hours of each other" was wrong."""
+    chains = _chains(
+        [
+            _group("scan", "reconnaissance", [_finding(PC, True, _MON)]),
+            _group("exploit", "exploit", [_finding(PC, True, _MON + 23 * _HOUR)]),
+            _group("c2", "malware_c2", [_finding(PC, True, _MON + 46 * _HOUR)]),
+        ]
+    )
+    assert [c["stages"] for c in chains] == [[1, 2, 3]]
+    assert "within 24 hours of each other" not in chains[0]["assessment"]
 
 
 def test_monday_wednesday_friday_is_not_a_chain():
