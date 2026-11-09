@@ -40,7 +40,8 @@
 	const scale = $derived(max ?? Math.max(0, ...items.map((item) => item.value)));
 	const width = (value: number) => (scale > 0 && value > 0 ? Math.min(100, (value / scale) * 100) : 0);
 
-	// shortcut: straight segments, not the system's monotone curve; swap to ui/charts/Sparkline.svelte when it lands
+	// shortcut: straight segments, not the system's monotone curve; use monotonePath from ui/charts/geometry if the curve is wanted
+	// (ui/charts/Sparkline.svelte is the KPI-foot chart: zero-based scale, 52px, end dots, so not a fit for this mini line)
 	const SPARK_W = 72;
 	const SPARK_H = 26;
 	function sparkPoints(values: number[]): string {
