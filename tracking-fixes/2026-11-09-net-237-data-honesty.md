@@ -103,3 +103,31 @@ The four items the first pass left out, fixed after the owner asked for everythi
 - A map that needs a CSP change is a map that calls a third party. Use the bundled outlines.
 - A label has to match the figure beside it.
 - A cap that is only logged is the same bug as a partial reply that is shown as complete.
+
+## Review round (branch `fix/net-237-review`)
+
+- **M1 (unhandled `versionsP` rejection on the GeoIP page):** already fixed by `e6700a26` on the combined tip, so this branch has no change for it.
+- **The remaining caps that were only logged.**
+  - Every `all_buckets` scan below stopped at `MAX_BUCKETS` (500,000) and only logged it, so its figure or list looked complete.
+  - Each one now raises `PartialResultsError`, as the ALR-11 fix does, and its route answers with an error. The old lines are kept as OLD CODE.
+  - No `PLAIN_5XX` change was made (it is being replaced elsewhere), so these errors show the generic message.
+
+| Scan | Shown as |
+|------|----------|
+| `iot_monitor._discover_iot_devices_from_arkime` | IoT fleet, device list, protocol audit, isolation, manufacturers |
+| `iot_monitor._baseline_known_sets` | `/api/iot/baseline` known destinations, ports, protocols and countries; values past the cap would read as new |
+| `iot_monitor._counts_by_mac` | ports and DNS names per device |
+| `iot_monitor.get_network_isolation` (pairs) | segmentation score and pairs |
+| `mac_correlator.detect_randomized_macs` | randomized MAC list |
+| `mac_correlator._fingerprints` | merge suggestions |
+| `lan_anomaly_detector._ips_with_many_macs` | ARP spoofing and IP conflicts ("none detected") |
+| `lan_anomaly_detector.detect_rogue_dhcp` (both directions) | rogue DHCP ("none detected") |
+| `traffic_classifier._asn_buckets` | Home category bars and every category detail |
+| `traffic_classifier.get_category_devices` | category device rows and totals |
+| `dns_analytics._all_domains` | suspicious DNS and tunnelling ("none detected"); Codex found it |
+| `excluded_ips.detect_lan_subnets` | the detected LAN subnets (`/api/network/lan`). A capped scan used to replace the LAN filter; detection now fails instead, so startup falls back to RFC1918 and re-detection keeps the current filter |
+
+- **Not changed: internal caps, or caps that already say so.**
+  - `domains`, `addresses`, `suricata_categories` and the alerts `_every_key` lists use their own `LIST_CAP` and return `*_complete`, which the pages show as "first N".
+  - `api/devices.py:_ip_buckets` raises when it is called with `what=`; its log-only branch serves callers without `what`. That code belongs to the devices area, so this round leaves it.
+- **Tests:** `daemon/tests/test_capped_scans.py`, 14 tests. Each test stops only its own scan and lets every other scan finish, so it fails only when its own guard is missing. All 14 failed on the old code. The tests also check that a capped baseline stops on a later value list, and that the rogue DHCP handler answers 5xx.
