@@ -96,3 +96,13 @@ Lesson: `vi.mock('fs')` with `...actual` left the module's default import on the
 - **L4:** one name for nettap-web's volume. The new `lib/server/data-dir.ts` reads `DATA_DIR`, and `auth.ts` and the in-app store both import it. `NETTAP_DATA_DIR` is gone; nothing set it.
 
 Tests: 7 new tests failed first. Web suite: 352 files, 4478 tests passed. svelte-check: 0 errors.
+
+## Follow-up: security review M1, M2, L2
+
+**Branch:** `fix/net-224-security`
+
+- **M1:** Telegram now gets plain text, with no `parse_mode`. Rule names carry `_` and `*` (`ET WEB_SERVER`, `DYNAMIC_DNS`), and legacy Markdown refused the whole digest; after four tries it was dropped, real alerts included. The send test passed because its text has neither character. Each service's text is also clipped to what it accepts: Discord title 256, description 4096; Pushover title 250, message 1024; Telegram 4096.
+- **M2:** each channel gets at most 100 alert messages a UTC day (`DAILY_BUDGET`), and failed attempts count, because providers count them. The 100th message says it is the last today. Past that, new alerts are recorded as handled and counted. The channel shows "Daily limit of 100 messages reached: N alerts not sent today (UTC); they're on the Alerts page". The count survives a restart and resets the next day.
+- **L2:** `chat_id` is now part of a channel's destination, so a restored Telegram channel with another chat doesn't keep the box's bot token. A restored channel whose URL, SMTP server or chat the box doesn't already use is stored turned off, and the report names it. Any URL it carries is dropped, so turning the Settings webhook back on asks for one.
+
+Tests: 9 failing-first (M1 5, M2 2, L2 2). On the combined base, one daemon test fails, and not because of this change: `test_error_replies.py::test_every_hand_written_5xx_message_is_allowed` lists 502 messages in `bandwidth.py` and `traffic.py` that need adding to `PLAIN_5XX`. Everything else passes.
