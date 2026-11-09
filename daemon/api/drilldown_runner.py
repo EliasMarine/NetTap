@@ -236,10 +236,8 @@ async def run_drilldown(
         return json_error(_SLOW, 503)
     except QueryFailed as exc:
         logger.error("Drill-down for %s failed: %s", subject, exc)
+        # QueryFailed carries a written label ("address peers timed out"), never OpenSearch text
         return json_error(f"Couldn't read the network data: {exc}.", 502)
-        return json_error(
-            "Couldn't read the network data. The daemon log has the details.", 502
-        )
     except Exception:
         logger.exception("Drill-down for %s failed unexpectedly", subject)
         return json_error(_BROKEN, 500)
