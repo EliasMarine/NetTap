@@ -2,7 +2,8 @@
  * README and docs media: stills of the main pages and a short captioned tour video, drawn from the populated
  * fixtures, so no real network ever appears (RFC 1918 / 5737 addresses, example.com names, home = London).
  * Run with `npm run capture:media` (needs ffmpeg on PATH; opens a Chrome window, so the globe draws on
- * the real GPU). It rewrites the files it names in docs/assets/media/.
+ * the real GPU). It rewrites the files it names in .github/assets/media/ (the README's). The MP4 is
+ * gitignored there: only the untracked docs site uses it, so copy it into docs/assets/media/ by hand.
  * Not part of `npm run test:visual`: the `media` project exists only under NETTAP_CAPTURE_MEDIA.
  */
 import { expect, test, type Page } from '@playwright/test';
@@ -13,7 +14,10 @@ import { APP_URL, STORAGE_STATE } from '../../playwright.visual.config.ts';
 import { ROWS, SEARCH_QUERY } from './fixtures/packets.ts';
 import { expectReached, setMode, settle, stubUpstreams, watchApi } from './harness.ts';
 
-const OUT = path.resolve(import.meta.dirname, '../../../docs/assets/media');
+// OLD CODE START — NET-214: docs/ is untracked now; the README's media live in .github/assets/media
+// const OUT = path.resolve(import.meta.dirname, '../../../docs/assets/media');
+// OLD CODE END
+const OUT = path.resolve(import.meta.dirname, '../../../.github/assets/media');
 const VIEWPORT = { width: 1440, height: 900 };
 const GIF_FPS = 12;
 

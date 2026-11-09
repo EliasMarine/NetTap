@@ -1,5 +1,5 @@
 // @vitest-environment node
-/** The `media` project (`npm run capture:media`) opens a headed browser and rewrites docs/assets/media/:
+/** The `media` project (`npm run capture:media`) opens a headed browser and rewrites .github/assets/media/:
  * a plain `npm run test:visual`, or CI, must never include it. */
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';

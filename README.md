@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="docs/assets/nettap-logo.png" alt="NetTap" width="600">
+  <img src=".github/assets/nettap-logo.png" alt="NetTap" width="600">
 </h1>
 
 <p align="center"><strong>See what every device on your network is doing.</strong></p>
@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <a href="https://eliasmarine.github.io/NetTap/"><img src="docs/assets/media/nettap-tour.gif" alt="A short captioned tour of the NetTap dashboard: Home, the Live monitor globe, Devices, Alerts, Threats and Certificates" width="800"></a>
+  <a href="https://eliasmarine.github.io/NetTap/"><img src=".github/assets/media/nettap-tour.gif" alt="A short captioned tour of the NetTap dashboard: Home, the Live monitor globe, Devices, Alerts, Threats and Certificates" width="800"></a>
   <br>
   <sub>A short tour (demo data). Click to watch the full-quality video on the docs site.</sub>
 </p>
@@ -36,7 +36,7 @@ NetTap is an open-source, self-hosted network monitor for homes and small busine
 
 > **Pre-release.** No version has been tagged yet. It runs on test hardware, but expect rough edges.
 
-**New here?** The [setup guide](docs/getting-started/setup-guide.md) walks you through everything from choosing hardware to a dashboard full of live data.
+**New here?** The [setup guide](https://eliasmarine.github.io/NetTap/getting-started/setup-guide/) walks you through everything from choosing hardware to a dashboard full of live data.
 
 ## What you get
 
@@ -52,27 +52,27 @@ NetTap is an open-source, self-hosted network monitor for homes and small busine
 
 <table>
   <tr>
-    <td colspan="2"><a href="docs/assets/media/live-globe-expanded.png"><img src="docs/assets/media/live-globe-expanded.png" alt="Live monitor expanded to fill the window: the 3D globe, the newest connections and the top destinations"></a><br><sub>Live monitor, expanded: the globe with the newest connections and top destinations</sub></td>
+    <td colspan="2"><a href=".github/assets/media/live-globe-expanded.png"><img src=".github/assets/media/live-globe-expanded.png" alt="Live monitor expanded to fill the window: the 3D globe, the newest connections and the top destinations"></a><br><sub>Live monitor, expanded: the globe with the newest connections and top destinations</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="docs/assets/media/home.png"><img src="docs/assets/media/home.png" alt="Home page: bandwidth, connections, alerts and devices, a bandwidth chart and network protocols"></a><br><sub>Home: traffic, alerts and devices at a glance</sub></td>
-    <td width="50%"><a href="docs/assets/media/live-globe.png"><img src="docs/assets/media/live-globe.png" alt="Live monitor: a 3D globe with arcs from your network to the countries it talks to"></a><br><sub>Live monitor: where your traffic goes, on a 3D globe</sub></td>
+    <td width="50%"><a href=".github/assets/media/home.png"><img src=".github/assets/media/home.png" alt="Home page: bandwidth, connections, alerts and devices, a bandwidth chart and network protocols"></a><br><sub>Home: traffic, alerts and devices at a glance</sub></td>
+    <td width="50%"><a href=".github/assets/media/live-globe.png"><img src=".github/assets/media/live-globe.png" alt="Live monitor: a 3D globe with arcs from your network to the countries it talks to"></a><br><sub>Live monitor: where your traffic goes, on a 3D globe</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="docs/assets/media/alerts.png"><img src="docs/assets/media/alerts.png" alt="Alerts page: alerts by severity and by category, each explained in plain English"></a><br><sub>Alerts: Suricata detections explained in plain English</sub></td>
-    <td width="50%"><a href="docs/assets/media/alert-category.png"><img src="docs/assets/media/alert-category.png" alt="Malware and C2 alert category: sources, targets, severity and alert volume over time"></a><br><sub>One alert category: its sources, targets and timeline</sub></td>
+    <td width="50%"><a href=".github/assets/media/alerts.png"><img src=".github/assets/media/alerts.png" alt="Alerts page: alerts by severity and by category, each explained in plain English"></a><br><sub>Alerts: Suricata detections explained in plain English</sub></td>
+    <td width="50%"><a href=".github/assets/media/alert-category.png"><img src=".github/assets/media/alert-category.png" alt="Malware and C2 alert category: sources, targets, severity and alert volume over time"></a><br><sub>One alert category: its sources, targets and timeline</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="docs/assets/media/packets.png"><img src="docs/assets/media/packets.png" alt="Packet analysis page: a search's summary, its packet count, length and size, and the packets in time order"></a><br><sub>Packet analysis: a conversation, packet by packet</sub></td>
-    <td width="50%"><a href="docs/assets/media/packet-detail.png"><img src="docs/assets/media/packet-detail.png" alt="One packet opened beside the list: its decoded layers, with the destination address highlighted in the raw bytes"></a><br><sub>One packet: its decoded layers and raw bytes</sub></td>
+    <td width="50%"><a href=".github/assets/media/packets.png"><img src=".github/assets/media/packets.png" alt="Packet analysis page: a search's summary, its packet count, length and size, and the packets in time order"></a><br><sub>Packet analysis: a conversation, packet by packet</sub></td>
+    <td width="50%"><a href=".github/assets/media/packet-detail.png"><img src=".github/assets/media/packet-detail.png" alt="One packet opened beside the list: its decoded layers, with the destination address highlighted in the raw bytes"></a><br><sub>One packet: its decoded layers and raw bytes</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="docs/assets/media/devices.png"><img src="docs/assets/media/devices.png" alt="Devices page: every device with its type, operating system, maker and bandwidth"></a><br><sub>Devices: every device, what it is and how much it uses</sub></td>
-    <td width="50%"><a href="docs/assets/media/device-detail.png"><img src="docs/assets/media/device-detail.png" alt="Device page for a laptop: its traffic, connections, top destinations and protocols"></a><br><sub>One device: its traffic, destinations and protocols</sub></td>
+    <td width="50%"><a href=".github/assets/media/devices.png"><img src=".github/assets/media/devices.png" alt="Devices page: every device with its type, operating system, maker and bandwidth"></a><br><sub>Devices: every device, what it is and how much it uses</sub></td>
+    <td width="50%"><a href=".github/assets/media/device-detail.png"><img src=".github/assets/media/device-detail.png" alt="Device page for a laptop: its traffic, connections, top destinations and protocols"></a><br><sub>One device: its traffic, destinations and protocols</sub></td>
   </tr>
   <tr>
-    <td width="50%"><a href="docs/assets/media/threats.png"><img src="docs/assets/media/threats.png" alt="Threats page: threat score, a threat brief, kill chains and threat-intel matches"></a><br><sub>Threats: threat score, kill chains and threat-intel matches</sub></td>
-    <td width="50%"><a href="docs/assets/media/certificates.png"><img src="docs/assets/media/certificates.png" alt="Certificates page: TLS certificates that need a look, with the reason for each"></a><br><sub>Certificates: TLS certificates that need a look</sub></td>
+    <td width="50%"><a href=".github/assets/media/threats.png"><img src=".github/assets/media/threats.png" alt="Threats page: threat score, a threat brief, kill chains and threat-intel matches"></a><br><sub>Threats: threat score, kill chains and threat-intel matches</sub></td>
+    <td width="50%"><a href=".github/assets/media/certificates.png"><img src=".github/assets/media/certificates.png" alt="Certificates page: TLS certificates that need a look, with the reason for each"></a><br><sub>Certificates: TLS certificates that need a look</sub></td>
   </tr>
 </table>
 
@@ -94,7 +94,7 @@ Mirror and bridge modes also need a management interface (a spare NIC or Wi-Fi) 
 - 8 GB RAM and a 512 GB SSD at minimum; 16 GB and a 1 TB NVMe recommended, for example an Intel N100 mini PC
 - At least 2 physical Ethernet ports. The installer needs them even if you then choose a one-NIC mode.
 
-See the [hardware guide](docs/getting-started/hardware-guide.md).
+See the [hardware guide](https://eliasmarine.github.io/NetTap/getting-started/hardware-guide/).
 
 ## Install
 
@@ -127,7 +127,7 @@ cd daemon && python3 -m pytest -q
 cd web && npx vitest run && npx svelte-check
 ```
 
-See the [developer guide](docs/developer-guide/dev-setup.md) and the [full docs](docs/index.md).
+See the [developer guide](https://eliasmarine.github.io/NetTap/developer-guide/dev-setup/) and the [full docs](https://eliasmarine.github.io/NetTap/).
 
 ## Roadmap
 
