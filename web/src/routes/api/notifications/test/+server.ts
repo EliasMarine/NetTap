@@ -1,6 +1,7 @@
-import { json } from '@sveltejs/kit';
+// OLD CODE: import { json } from '@sveltejs/kit'; (review L1: relayJSON answers)
 import type { RequestHandler } from './$types.js';
 import { daemonFetch } from '$lib/server/daemon.js';
+import { relayJSON } from '$lib/server/relay.js';
 // OLD CODE: import { sendTestNotification } from '$lib/server/notifications.js'; (NET-224: the daemon sends)
 
 // OLD CODE START — F3: answered success whatever happened: no channel set up, a webhook that
@@ -69,6 +70,9 @@ const TEST_TIMEOUT_MS = 60_000;
  */
 export const POST: RequestHandler = async () => {
 	const res = await daemonFetch('/api/notifications/test', { method: 'POST' }, TEST_TIMEOUT_MS);
-	const data = await res.json().catch(() => ({ error: 'Failed to parse daemon response' }));
-	return json(data, { status: res.status });
+	// OLD CODE START — review L1: an unreadable 200 came back as 200 { error }, read as "sent"
+	// const data = await res.json().catch(() => ({ error: 'Failed to parse daemon response' }));
+	// return json(data, { status: res.status });
+	// OLD CODE END
+	return relayJSON(res);
 };

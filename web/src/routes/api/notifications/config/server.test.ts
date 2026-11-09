@@ -81,6 +81,17 @@ describe('/api/notifications/config', () => {
 		expect((await res.json()).error).toMatch(/SMTP server/);
 	});
 
+	// review L1: a 2xx the page can't read is not "saved"; the page would load {error} as the settings
+	it.each(['GET', 'PUT'] as const)('%s answers 502 when the daemon\'s 200 has no readable body', async (method) => {
+		daemonFetch.mockResolvedValue(new Response('<html>not json</html>', { status: 200 }));
+		const request = new Request('http://localhost/api/notifications/config', { method, body: method === 'PUT' ? '{}' : undefined });
+
+		const res = await route[method]({ request } as never);
+
+		expect(res.status).toBe(502);
+		expect((await res.json()).error).toMatch(/couldn't be read/);
+	});
+
 	it('no longer answers POST with a 501', () => {
 		expect((route as Record<string, unknown>).POST).toBeUndefined();
 	});

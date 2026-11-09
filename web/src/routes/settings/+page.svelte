@@ -53,6 +53,13 @@
 	let testingSending = $state(false);
 	let testMessage = $state('');
 	let testError = $state(false);
+	// review L3: the test sends through the saved settings, so it waits while the form differs
+	const notifForm = () =>
+		JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl]);
+	// the blank form until the load lands, so nothing reads as unsaved while it loads
+	let notifSavedForm = $state(notifForm());
+	// a failed load leaves nothing to compare with; the test then reports the daemon's own answer
+	const notifUnsaved = $derived(!notifLoadFailed && notifForm() !== notifSavedForm);
 
 	// --- Retention state ---
 	let retentionConfig = $state({
@@ -193,6 +200,7 @@
 		webhookHasUrl = data.webhook?.has_url ?? false;
 		webhookHint = data.webhook?.url_hint ?? '';
 		webhookUrl = '';
+		notifSavedForm = notifForm();
 	}
 
 	async function loadNotificationConfig() {
@@ -800,16 +808,32 @@
 					webhook: { enabled: webhookEnabled, url: webhookUrl.trim() },
 				}),
 			});
-			if (res.ok) {
-				applyNotificationConfig(await res.json());
+			// OLD CODE START — review L2: a body that couldn't be read, even after the daemon saved, said "Failed to connect"
+			// if (res.ok) {
+			// 	applyNotificationConfig(await res.json());
+			// 	notifMessage = 'Notification settings saved.';
+			// } else {
+			// 	const data = await res.json();
+			// 	notifMessage = data.error || 'Failed to save notification settings.';
+			// 	notifError = true;
+			// }
+			// OLD CODE END
+			const data = await res.json().catch(() => null);
+			if (!res.ok) {
+				notifMessage = data?.error || `Not saved: NetTap answered ${res.status}.`;
+				notifError = true;
+				return;
+			}
+			try {
+				applyNotificationConfig(data);
 				notifMessage = 'Notification settings saved.';
-			} else {
-				const data = await res.json();
-				notifMessage = data.error || 'Failed to save notification settings.';
+			} catch {
+				notifMessage = "Saved, but the page couldn't read the settings back. Reload the page to see them.";
 				notifError = true;
 			}
 		} catch {
-			notifMessage = 'Failed to connect to server.';
+			// OLD CODE: notifMessage = 'Failed to connect to server.'; (review L2: only fetch itself throws here now)
+			notifMessage = "Couldn't reach NetTap, so nothing was saved.";
 			notifError = true;
 		} finally {
 			notifSaving = false;
@@ -1106,13 +1130,17 @@
 				{/if}
 
 				<div class="form-actions">
-					<button class="btn" type="button" onclick={sendTestNotification} disabled={testingSending}>
+					<!-- OLD CODE: <button … disabled={testingSending}> (review L3: it tested the saved settings, whatever the form said) -->
+					<button class="btn" type="button" onclick={sendTestNotification} disabled={testingSending || notifUnsaved} aria-describedby={notifUnsaved ? 'notif-test-help' : undefined}>
 						{testingSending ? 'Sending…' : 'Send test notification'}
 					</button>
 					<button class="btn primary" type="button" onclick={saveNotifications} disabled={notifSaving || notifLoadFailed}>
 						{notifSaving ? 'Saving…' : 'Save notification settings'}
 					</button>
 				</div>
+				{#if notifUnsaved}
+					<p class="field-help" id="notif-test-help">Save first: the test uses the saved settings.</p>
+				{/if}
 				{@render feedback(testMessage, testError)}
 			</div>
 		</Card>

@@ -1,6 +1,7 @@
-import { json } from '@sveltejs/kit';
+// OLD CODE: import { json } from '@sveltejs/kit'; (review L1: relayJSON answers)
 import type { RequestHandler } from './$types.js';
 import { daemonFetch } from '$lib/server/daemon.js';
+import { relayJSON } from '$lib/server/relay.js';
 // OLD CODE START — NET-224: read the web container's env, which compose never set; the daemon keeps it now
 // import { loadConfig } from '$lib/server/notifications.js';
 //
@@ -67,18 +68,20 @@ import { daemonFetch } from '$lib/server/daemon.js';
 // 	);
 // OLD CODE END
 
-/** The daemon's answer, with its status: a refusal keeps its reason for the page. */
-async function relay(res: Response): Promise<Response> {
-	const data = await res.json().catch(() => ({ error: 'Failed to parse daemon response' }));
-	return json(data, { status: res.status });
-}
+// OLD CODE START — review L1: an unreadable 2xx came back as 200 { error }, which the page took for the saved settings
+// /** The daemon's answer, with its status: a refusal keeps its reason for the page. */
+// async function relay(res: Response): Promise<Response> {
+// 	const data = await res.json().catch(() => ({ error: 'Failed to parse daemon response' }));
+// 	return json(data, { status: res.status });
+// }
+// OLD CODE END
 
 /**
  * GET /api/notifications/config
  * The Settings tab's alert email, webhook and minimum severity, kept by the daemon (NET-224).
  * It never carries the webhook URL or a password, only whether one is saved.
  */
-export const GET: RequestHandler = async () => relay(await daemonFetch('/api/notifications/config'));
+export const GET: RequestHandler = async () => relayJSON(await daemonFetch('/api/notifications/config'));
 
 /**
  * PUT /api/notifications/config
@@ -86,7 +89,7 @@ export const GET: RequestHandler = async () => relay(await daemonFetch('/api/not
  * A blank url keeps the saved one. 400 says why it can't be saved.
  */
 export const PUT: RequestHandler = async ({ request }) =>
-	relay(
+	relayJSON(
 		await daemonFetch('/api/notifications/config', {
 			method: 'PUT',
 			headers: { 'Content-Type': 'application/json' },

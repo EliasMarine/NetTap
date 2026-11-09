@@ -359,6 +359,8 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 
 		expect(screen.getByText(/Could not load the current notification settings/)).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Save notification settings' })).toBeDisabled();
+		// review L3: nothing to save, so no "save first"; the test reports the daemon's own answer
+		expect(screen.queryByText('Save first: the test uses the saved settings.')).not.toBeInTheDocument();
 	});
 
 	// OLD CODE START — NET-224: the env-shaped config, a POST the route answered 501, and the URL read back
@@ -478,6 +480,59 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 
 		expect(screen.getByText('Email needs an SMTP server: set it in the API keys tab first.')).toBeInTheDocument();
 		expect(screen.getByLabelText('Recipient emails')).toHaveValue('a@example.com');
+	});
+
+	// review L2: say what failed; a parse failure after the daemon saved isn't "couldn't connect"
+	it('Notifications: a save that never reached NetTap says nothing was saved', async () => {
+		const ok = stubFetch({ '/api/notifications/config': () => ({ body: SAVED }) });
+		render(Page);
+		await flush();
+		vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+			if (init?.method === 'PUT') throw new TypeError('Failed to fetch');
+			return ok(url, init);
+		}));
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Save notification settings' }));
+		await flush();
+
+		expect(screen.getByRole('alert')).toHaveTextContent("Couldn't reach NetTap, so nothing was saved.");
+	});
+
+	it("Notifications: a save the page can't read back says it was saved and to reload", async () => {
+		const ok = stubFetch({ '/api/notifications/config': () => ({ body: SAVED }) });
+		render(Page);
+		await flush();
+		vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+			if (init?.method === 'PUT') return { ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token <'); } };
+			return ok(url, init);
+		}));
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Save notification settings' }));
+		await flush();
+
+		expect(screen.getByRole('alert')).toHaveTextContent("Saved, but the page couldn't read the settings back. Reload the page to see them.");
+		expect(screen.queryByText('Notification settings saved.')).not.toBeInTheDocument();
+		expect(screen.queryByText(/Failed to connect/)).not.toBeInTheDocument();
+	});
+
+	// review L3: the test uses what is saved, so it waits while the form has unsaved changes
+	it('Notifications: the test waits for unsaved changes to be saved', async () => {
+		stubFetch({
+			'/api/notifications/config': (init) => (init?.method === 'PUT' ? { body: { ...SAVED, min_severity: 3 } } : { body: SAVED }),
+		});
+		render(Page);
+		await flush();
+		const test = () => screen.getByRole('button', { name: 'Send test notification' });
+		expect(test()).toBeEnabled();
+
+		await fireEvent.change(screen.getByLabelText('Alert severity threshold'), { target: { value: 'medium' } });
+		expect(test()).toBeDisabled();
+		expect(screen.getByText('Save first: the test uses the saved settings.')).toBeInTheDocument();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Save notification settings' }));
+		await flush();
+		expect(test()).toBeEnabled();
+		expect(screen.queryByText('Save first: the test uses the saved settings.')).not.toBeInTheDocument();
 	});
 
 	it.each([

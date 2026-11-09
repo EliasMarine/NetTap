@@ -106,4 +106,12 @@ describe('POST /api/notifications/test', () => {
 	])('passes the daemon\'s %i and its reason through', async (status, body) => {
 		expect(await post(status, body)).toEqual({ status, body });
 	});
+
+	// review L1: a 200 the page can't read is not "sent"
+	it('answers 502 when the daemon\'s 200 has no readable body', async () => {
+		daemonFetch.mockResolvedValue(new Response('<html>not json</html>', { status: 200 }));
+		const res = await POST({} as never);
+		expect(res.status).toBe(502);
+		expect((await res.json()).error).toMatch(/couldn't be read/);
+	});
 });
