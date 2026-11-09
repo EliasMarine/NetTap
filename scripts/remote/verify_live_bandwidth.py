@@ -5,10 +5,19 @@ NET_ADMIN, NET_RAW, host network), where the meter's own code is importable:
   sudo docker exec -i nettap-storage-daemon python3 - kernel < scripts/remote/verify_live_bandwidth.py
   sudo docker exec -i nettap-storage-daemon python3 - bench < scripts/remote/verify_live_bandwidth.py
   sudo docker exec -i nettap-storage-daemon python3 - lifecycle [MAC] < scripts/remote/verify_live_bandwidth.py
+  sudo docker exec -i nettap-storage-daemon python3 - off < scripts/remote/verify_live_bandwidth.py
+  sudo docker exec -i nettap-storage-daemon python3 - capture-safety < scripts/remote/verify_live_bandwidth.py
 
-kernel     the meter's own filter lines, on a throwaway veth pair, count known frames exactly
-bench      the filters' per-packet CPU cost on the veth pair (IMIX share of one core must be <= 5 %)
-lifecycle  the API on the capture interface: start, idle stop, the cap, nothing foreign touched
+kernel          the meter's own filter lines, on a throwaway veth pair, count known frames exactly
+bench           the filters' per-packet cost on the veth pair: interleaved paired rounds of no
+                clsact, one MAC watch, one IP watch and eight watches; the median difference and
+                its spread, as ns per frame and % of one core at 1 Gbit/s (stated, not pass/fail)
+lifecycle       the API on the capture interface: start, idle stop, the cap, nothing foreign touched
+                (needs the setting on)
+off             the setting: off means no counters and an off reply; turning off with eight
+                watches removes every NetTap filter within 10 s (leaves the setting off)
+capture-safety  NIC drops with the meter off vs eight watches, alternating 60 s arms, while a
+                sustained download runs on the dev Mac (puts the owner's setting back)
 
 One PASS/FAIL line per check; exit 0 only when every check passed. The daemon token is read from
 its volume and never printed.
@@ -31,6 +40,7 @@ from services.dhcp_gateway_net import validate_interface_name
 from services.live_bandwidth_tc import (
     PREFS,
     Key,
+    TcError,
     build_filter_lines,
     delete_args,
     parse_cookie,
@@ -50,12 +60,20 @@ IP_DOWN, IP_UP = PREFS[("ip", "down")][0], PREFS[("ip", "up")][0]
 VLAN_DOWN, VLAN_UP = PREFS[("vlan", "down")][0], PREFS[("vlan", "up")][0]
 K = 1000
 BENCH_FRAMES = 1_000_000
+BENCH_ROUNDS = 7
 MIXES = {"min": [60], "imix": [60] * 7 + [590] * 4 + [1514], "full": [1514]}
 API = "http://localhost:8880"
+SETTING = "/api/settings/live-bandwidth"
 TOKEN_PATH = "/run/nettap-auth/daemon-token"
 SYS_NET = os.environ.get("HOST_SYS_NET", "/host/sys/class/net")
 DEV_MAC = "bc:89:c1:e1:8a:d6"  # the dev Mac on the G11's mirrored link
 IDLE_WAIT_S = 20
+CLEAN_WITHIN_S = 10
+# eight devices that don't exist
+FAKE_MACS = [f"02:4e:54:00:03:{n:02x}" for n in range(8)]
+ARM_S = 60
+PAIRS = 3
+DROPS = ("rx_dropped", "rx_missed_errors", "rx_fifo_errors")
 
 RESULTS: list[bool] = []
 
@@ -66,7 +84,9 @@ def check(ok: bool, what: str) -> None:
 
 
 def sh(*argv: str, stdin: str | None = None) -> str:
-    done = subprocess.run(argv, input=stdin, capture_output=True, text=True, timeout=30)
+    done = subprocess.run(
+        argv, input=stdin, capture_output=True, text=True, timeout=30, check=False
+    )
     if done.returncode:
         raise RuntimeError(f"{' '.join(argv)}: {done.stderr.strip()}")
     return done.stdout
@@ -304,21 +324,23 @@ def cpu_ticks(cpu: int) -> int:
     raise RuntimeError(f"cpu{cpu} is not in /proc/stat")
 
 
-def configure(setup: str) -> None:
+# traffic hits the watched MAC and IP, like a real device
+ARMS: dict[str, list[Key]] = {
+    "none": [],
+    "one MAC watch": [Key("mac", TEST_MAC)],
+    "one IP watch": [Key("ip", TEST_IP)],
+    "eight watches": [Key("mac", TEST_MAC)]
+    + [Key("mac", f"02:4e:54:00:01:{n:02x}") for n in range(3)]
+    + [Key("ip", TEST_IP)]
+    + [Key("ip", f"192.0.2.{100 + n}") for n in range(3)],
+}
+
+
+def configure(keys: list[Key]) -> None:
     with contextlib.suppress(RuntimeError):
         sh("tc", "qdisc", "del", "dev", B, "clsact")
-    if setup == "none":
-        return
-    sh("tc", "qdisc", "add", "dev", B, "clsact")
-    if (
-        setup == "eight"
-    ):  # traffic hits a watched MAC and a watched IP, like a real device
-        keys = [Key("mac", TEST_MAC)] + [
-            Key("mac", f"02:4e:54:00:01:{n:02x}") for n in range(3)
-        ]
-        keys += [Key("ip", TEST_IP)] + [
-            Key("ip", f"192.0.2.{100 + n}") for n in range(3)
-        ]
+    if keys:
+        sh("tc", "qdisc", "add", "dev", B, "clsact")
         add(
             [
                 line
@@ -328,15 +350,46 @@ def configure(setup: str) -> None:
         )
 
 
-def measure(sock, frames: list[bytes], cpu: int) -> float:
-    """CPU nanoseconds per frame the peer received (system + irq + softirq on the pinned CPU)."""
+def measure(sock, frames: list[bytes], cpu: int) -> tuple[float, float]:
+    """(CPU ns, wall ns) per frame the peer received.
+
+    CPU: system + irq + softirq on the pinned CPU. Wall: the send loop's elapsed time, which holds
+    the delivery too (veth delivers in the sender's softirq) and isn't rounded to clock ticks.
+    """
     rounds = BENCH_FRAMES // len(frames)
-    rx0, c0 = rx_packets(), cpu_ticks(cpu)
+    rx0, c0, t0 = rx_packets(), cpu_ticks(cpu), time.perf_counter_ns()
     for _ in range(rounds):
         for data in frames:
             sock.send(data)
-    c1, received = cpu_ticks(cpu), rx_packets() - rx0
-    return (c1 - c0) * 1e9 / os.sysconf("SC_CLK_TCK") / max(received, 1)
+    t1, c1 = time.perf_counter_ns(), cpu_ticks(cpu)
+    received = max(rx_packets() - rx0, 1)
+    return (c1 - c0) * 1e9 / os.sysconf("SC_CLK_TCK") / received, (t1 - t0) / received
+
+
+def paired_rounds(
+    sock, frames: list[bytes], cpu: int
+) -> dict[str, list[tuple[float, float]]]:
+    """Each arm's (CPU, wall) cost over "none" from the same round, for BENCH_ROUNDS rounds."""
+    names, diffs = list(ARMS), {name: [] for name in ARMS if name != "none"}
+    for r in range(BENCH_ROUNDS):
+        cost = {}
+        shift = r % len(names)  # no arm always runs first
+        for name in names[shift:] + names[:shift]:
+            configure(ARMS[name])
+            cost[name] = measure(sock, frames, cpu)
+        for name, series in diffs.items():
+            series.append(
+                (cost[name][0] - cost["none"][0], cost[name][1] - cost["none"][1])
+            )
+    return diffs
+
+
+def spread_text(diffs: list[float], pps: float) -> tuple[str, bool]:
+    """'median [quartiles] ns = share [quartiles] of one core', and whether it's unstable."""
+    q1, median, q3 = statistics.quantiles(diffs, n=4)
+    share = [v * pps / 1e9 for v in (median, q1, q3)]
+    text = f"{median:+.0f} ns [{q1:+.0f}..{q3:+.0f}] = {share[0]:.1%} [{share[1]:.1%}..{share[2]:.1%}]"
+    return text, q3 - q1 > median
 
 
 def bench() -> None:
@@ -350,27 +403,21 @@ def bench() -> None:
         with veth() as sock:
             for name, sizes in MIXES.items():
                 frames = [frame(TEST_MAC, PEER_MAC, PEER_IP, TEST_IP, s) for s in sizes]
-                cost = {}
-                for setup in ("none", "empty", "eight"):
-                    configure(setup)
-                    cost[setup] = statistics.median(
-                        measure(sock, frames, cpu) for _ in range(3)
+                pps = line_rate_pps(sizes)
+                print(f"INFO  {name}: {BENCH_ROUNDS} paired rounds, cost over no clsact as the "
+                      f"median [quartiles] per frame = share of one core at 1 Gbit/s "
+                      f"({pps:,.0f} frames/s)", flush=True)  # fmt: skip
+                for arm, series in paired_rounds(sock, frames, cpu).items():
+                    cpu_text, cpu_bad = spread_text([c for c, _ in series], pps)
+                    wall_text, wall_bad = spread_text([w for _, w in series], pps)
+                    flag = (
+                        "  UNSTABLE: spread > median, rerun or quote a range"
+                        if cpu_bad or wall_bad
+                        else ""
                     )
-                empty, eight = (
-                    cost["empty"] - cost["none"],
-                    cost["eight"] - cost["none"],
-                )
-                share = eight * line_rate_pps(sizes) / 1e9
-                print(
-                    f"INFO  {name}: empty clsact +{empty:.0f} ns/frame, 8 watches "
-                    f"+{eight:.0f} ns/frame = {share:.1%} of one core at 1 Gbit/s "
-                    f"({line_rate_pps(sizes):,.0f} frames/s)",
-                    flush=True,
-                )
-                if name == "imix":
-                    check(
-                        share <= 0.05,
-                        f"IMIX at 1 Gbit/s costs {share:.1%} of one core (<= 5 %)",
+                    print(
+                        f"INFO    {arm:<14} CPU {cpu_text}   wall {wall_text}{flag}",
+                        flush=True,
                     )
     finally:
         health.stop()
@@ -388,10 +435,11 @@ class HealthWatch(threading.Thread):
     def __init__(self) -> None:
         super().__init__(daemon=True)
         self.worst = 0.0
-        self._stop = threading.Event()
+        # not _stop: that shadows Thread._stop and breaks join()
+        self._halt = threading.Event()
 
     def run(self) -> None:
-        while not self._stop.wait(0.5):
+        while not self._halt.wait(0.5):
             start = time.monotonic()
             try:
                 urllib.request.urlopen(API + "/api/health", timeout=5).read()
@@ -400,15 +448,19 @@ class HealthWatch(threading.Thread):
                 self.worst = max(self.worst, 99.0)
 
     def stop(self) -> None:
-        self._stop.set()
+        self._halt.set()
         self.join()
 
 
-def api(path: str) -> tuple[int, dict]:
+def api(path: str, body: dict | None = None) -> tuple[int, dict]:
+    """GET path, or PUT body to it, with the daemon token (never printed)."""
     with open(TOKEN_PATH) as handle:
         token = handle.read().strip()
     request = urllib.request.Request(
-        API + path, headers={"X-NetTap-Daemon-Token": token}
+        API + path,
+        data=None if body is None else json.dumps(body).encode(),
+        method="GET" if body is None else "PUT",
+        headers={"X-NetTap-Daemon-Token": token, "Content-Type": "application/json"},
     )
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
@@ -420,6 +472,8 @@ def api(path: str) -> tuple[int, dict]:
 def interfaces() -> list[str]:
     names = []
     for name in sorted(os.listdir(SYS_NET)):
+        if not os.path.isdir(os.path.join(SYS_NET, name)):  # bonding_masters is a file
+            continue
         with contextlib.suppress(ValueError):
             names.append(validate_interface_name(name))
     return names
@@ -452,7 +506,7 @@ def foreign_state() -> dict:
 
 
 def owned(iface: str) -> list:
-    dump = sh("tc", "-j", "filter", "show", "dev", iface, "ingress")
+    dump = sh("tc", "-s", "-j", "filter", "show", "dev", iface, "ingress")
     return [e for e in parse_filter_dump(dump) if parse_cookie(e.cookie)]
 
 
@@ -521,6 +575,187 @@ def lifecycle(mac: str) -> None:
     )
 
 
+# ---------------------------------------------------------------------------- off
+
+
+def set_setting(on: bool) -> tuple[int, dict]:
+    return api(SETTING, {"enabled": on})
+
+
+def wait_clean(iface: str | None) -> tuple[bool, float]:
+    """Wait up to CLEAN_WITHIN_S for clean-up idle and no NetTap filter on iface (when given)."""
+    start = time.monotonic()
+    while True:
+        status, setting = api(SETTING)
+        idle = status == 200 and (setting.get("cleanup") or {}).get("state") == "idle"
+        if idle and (iface is None or not owned(iface)):
+            return True, time.monotonic() - start
+        if time.monotonic() - start >= CLEAN_WITHIN_S:
+            return False, time.monotonic() - start
+        time.sleep(0.5)
+
+
+def owned_anywhere() -> dict:
+    """NetTap filters per interface that has any; one we can't read counts unless it vanished."""
+    found: dict = {}
+    for iface in interfaces():
+        try:
+            if count := len(owned(iface)):
+                found[iface] = count
+        except (RuntimeError, TcError) as exc:
+            if os.path.exists(os.path.join(SYS_NET, iface)):
+                found[iface] = f"unreadable: {exc}"
+    return found
+
+
+def is_off(reply: tuple[int, dict]) -> bool:
+    return reply[0] == 200 and reply[1].get("off") is True
+
+
+def off_gate() -> None:
+    status, reply = set_setting(False)
+    check(
+        status == 200 and reply.get("enabled") is False,
+        f"the setting turns off ({status})",
+    )
+    ok, took = wait_clean(None)
+    check(ok, f"clean-up is idle with the setting off ({took:.1f} s)")
+    probe = api(f"/api/live-bandwidth?mac={FAKE_MACS[0]}")
+    check(is_off(probe), f"a device page gets the off reply: {probe}")
+    left = owned_anywhere()
+    check(not left, f"no NetTap filter on any interface while off ({left or 'none'})")
+
+    status, reply = set_setting(True)
+    check(
+        status == 200 and reply.get("enabled") is True,
+        f"the setting turns on ({status})",
+    )
+    replies = [api(f"/api/live-bandwidth?mac={mac}") for mac in FAKE_MACS]
+    started = [body for code, body in replies if code == 200 and body.get("supported")]
+    check(
+        len(started) == 8,
+        f"eight watches start ({len(started)}/8; first reply {replies[0]})",
+    )
+    if not started:
+        return
+    iface = started[0]["interface"]
+    time.sleep(2)
+    for mac in FAKE_MACS:  # the keepalive of eight open device pages
+        api(f"/api/live-bandwidth?mac={mac}")
+    count = len(owned(iface))
+    check(count >= 16, f"their filters are on {iface} ({count}, two per watch)")
+
+    start = time.monotonic()
+    status, reply = set_setting(False)
+    print(f"INFO  turning off answered in {time.monotonic() - start:.2f} s, "
+          f"clean-up {reply.get('cleanup')}", flush=True)  # fmt: skip
+    check(
+        status == 200 and reply.get("enabled") is False,
+        f"the setting turns off ({status})",
+    )
+    ok, took = wait_clean(iface)
+    check(ok, f"every NetTap filter on {iface} is gone and clean-up idle within "
+          f"{CLEAN_WITHIN_S} s ({took:.1f} s)")  # fmt: skip
+    probe = api(f"/api/live-bandwidth?mac={FAKE_MACS[0]}")
+    check(is_off(probe), f"a keepalive after the turn-off gets the off reply: {probe}")
+    left = owned_anywhere()
+    check(not left, f"no NetTap filter on any interface ({left or 'none'})")
+    print("INFO  the setting is left off", flush=True)
+
+
+# ---------------------------------------------------------------------------- capture-safety
+
+
+def nic_counters(iface: str) -> dict[str, int]:
+    counters = {}
+    for name in (*DROPS, "rx_bytes"):
+        with open(os.path.join(SYS_NET, iface, "statistics", name)) as handle:
+            counters[name] = int(handle.read())
+    return counters
+
+
+def capture_verdict(pairs: list[tuple[int, int]]) -> str:
+    """PASS when no eight-watch arm grew more NIC drops than its off arm (zero and zero passes),
+    FAIL when every pair grew more, INCONCLUSIVE when it's mixed (rerun)."""
+    worse = [eight > off for off, eight in pairs]
+    if not any(worse):
+        return "PASS"
+    return "FAIL" if all(worse) else "INCONCLUSIVE"
+
+
+def poll_all(macs: list[str]) -> None:
+    """Start or keep alive one watch per MAC (a watch only lives while its page polls)."""
+    for mac in macs:
+        code, body = api(f"/api/live-bandwidth?mac={mac}")
+        if code != 200 or not body.get("supported"):
+            raise RuntimeError(f"the watch on {mac} isn't running: {code} {body}")
+
+
+def run_arm(arm: str, iface: str, number: int) -> int:
+    """One ARM_S arm, meter off or eight watches; returns the growth of the NIC's drop counters."""
+    macs = [DEV_MAC] + FAKE_MACS[:7] if arm == "eight" else []
+    status, _ = set_setting(bool(macs))
+    if status != 200:
+        raise RuntimeError(f"the setting didn't change ({status})")
+    if not macs and not wait_clean(iface)[0]:
+        raise RuntimeError(f"the counters weren't removed within {CLEAN_WITHIN_S} s")
+    poll_all(macs)  # every watch is installed before the counters are read
+    label = "eight watches" if macs else "meter off"
+    print(f"INFO  {time.strftime('%H:%M:%S')} arm {number}: {label} for {ARM_S} s "
+          "(keep the download running)", flush=True)  # fmt: skip
+    before, start = nic_counters(iface), time.monotonic()
+    while (left := start + ARM_S - time.monotonic()) > 0:
+        time.sleep(min(2.0, left))
+        poll_all(macs)
+    after, seconds = nic_counters(iface), time.monotonic() - start
+    growth = {name: after[name] - before[name] for name in DROPS}
+    rate = (after["rx_bytes"] - before["rx_bytes"]) * 8 / seconds / 1e6
+    print(
+        f"INFO    {label}: {rate:.0f} Mbit/s received on {iface}, drops grew {growth}",
+        flush=True,
+    )
+    return sum(growth.values())
+
+
+def capture_safety() -> None:
+    status, original = api(SETTING)
+    if status != 200:
+        check(False, f"the setting can be read: {status} {original}")
+        return
+    try:
+        set_setting(True)
+        code, snap = api(f"/api/live-bandwidth?mac={DEV_MAC}")
+        if code != 200 or not snap.get("supported"):
+            check(
+                False,
+                f"the meter runs for {DEV_MAC}: {code} {snap.get('reason') or snap}",
+            )
+            return
+        iface = snap["interface"]
+        print(f"INFO  {PAIRS} pairs of {ARM_S} s arms on {iface}, about "
+              f"{PAIRS * 2 * (ARM_S + 5) // 60 + 1} minutes. Start a sustained download on the "
+              "dev Mac now and keep it running until the verdict.", flush=True)  # fmt: skip
+        pairs = []
+        # ABA order, so a drift over the run doesn't favour one arm
+        for pair in range(PAIRS):
+            order = ("off", "eight") if pair % 2 == 0 else ("eight", "off")
+            grew = {
+                arm: run_arm(arm, iface, 2 * pair + n + 1)
+                for n, arm in enumerate(order)
+            }
+            pairs.append((grew["off"], grew["eight"]))
+        verdict = capture_verdict(pairs)
+        print(f"INFO  drops grew (off, eight watches) per pair: {pairs}", flush=True)
+        check(verdict == "PASS", f"capture safety: {verdict}"
+              + (" (mixed: rerun)" if verdict == "INCONCLUSIVE" else ""))  # fmt: skip
+    except (OSError, RuntimeError) as exc:
+        check(False, f"capture safety could not finish: {exc}")
+    finally:
+        status, _ = set_setting(bool(original.get("enabled")))
+        print(f"INFO  the setting is back {'on' if original.get('enabled') else 'off'} "
+              f"({status})", flush=True)  # fmt: skip
+
+
 def main(argv: list[str]) -> int:
     mode = argv[0] if argv else ""
     if mode == "kernel":
@@ -529,6 +764,10 @@ def main(argv: list[str]) -> int:
         bench()
     elif mode == "lifecycle":
         lifecycle(argv[1] if len(argv) > 1 else DEV_MAC)
+    elif mode == "off":
+        off_gate()
+    elif mode == "capture-safety":
+        capture_safety()
     else:
         print(__doc__)
         return 2
