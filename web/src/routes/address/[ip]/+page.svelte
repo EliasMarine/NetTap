@@ -530,6 +530,14 @@ OLD CODE END -->
 					<span class="chip-note">This window's alerts couldn't all be checked</span>
 				{:else if data.threat_intel.matched}
 					<span class="chip is-bad"><Icon name="warn" />On a threat list: {data.threat_intel.feeds.map((f) => f.label).join(', ')}</span>
+					<!-- NET-228 (audit ALR-12): when it was listed, as far as NetTap knows -->
+					{#if data.threat_intel.in_window === true}
+						<span class="chip-note">A Suricata blocklist rule named it in this window</span>
+					{:else if data.threat_intel.in_window === false}
+						<span class="chip-note">Named on an earlier Threats scan; NetTap doesn't keep the date</span>
+					{:else if data.threat_intel.in_window === null}
+						<span class="chip-note">Named on an earlier Threats scan; this window's alerts couldn't all be checked</span>
+					{/if}
 				{:else}
 					<span class="chip is-ok"><Icon name="check" />Not on a threat list</span>
 					<span class="chip-note"

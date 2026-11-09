@@ -69,6 +69,9 @@ export interface ThreatIntel {
 	matched: boolean;
 	feeds: ThreatFeedHit[];
 	indicators: number;
+	/** NET-228: a blocklist rule named it in this window (true), only an earlier Threats scan did
+	 * (false: the cache keeps no date), or this window couldn't all be checked (null); absent from older daemons */
+	in_window?: boolean | null;
 }
 
 export interface AddressSummary {

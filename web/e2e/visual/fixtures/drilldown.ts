@@ -89,8 +89,10 @@ export const ADDRESS_QUIET: AddressSummary = {
 	// a listing-rule alert in the window named it, with no indicator cache loaded
 	threat_intel: {
 		matched: true,
-		feeds: [{ feed: 'et_compromised', label: 'ET Compromised IPs', indicator: QUIET.ip, type: 'ip' }],
+		// OLD CODE: label: 'ET Compromised IPs' (NET-228: the daemon names the feed for its rules, and says when)
+		feeds: [{ feed: 'et_compromised', label: 'Suricata blocklist rules', indicator: QUIET.ip, type: 'ip' }],
 		indicators: 0,
+		in_window: true,
 	},
 };
 

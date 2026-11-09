@@ -11,7 +11,8 @@ const INTEL = {
 	new_indicators: 6,
 	feeds: {
 		abuse_ch_feodo: { label: 'Abuse.ch Feodo (Banking Trojans/C2)', indicator_count: 118 },
-		et_compromised: { label: 'ET Compromised IPs', indicator_count: 342 },
+		// OLD CODE: et_compromised: { label: 'ET Compromised IPs', … } (NET-228: the daemon's new label)
+		et_compromised: { label: 'Suricata blocklist rules', indicator_count: 342 },
 		dshield_block: { label: 'DShield Block List', indicator_count: 20 },
 	},
 	total_indicators: 480,

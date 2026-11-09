@@ -49,54 +49,64 @@ class TestThreatIntelLookup:
         assert svc.lookup_ip("10.0.0.99") == []
 
 
-class TestEnrichAlerts:
-    """Tests for alert enrichment with TI data."""
+# OLD CODE START — NET-228: enrich_alerts is retired (no caller; it called a list hit confirmed)
+# class TestEnrichAlerts:
+#     """Tests for alert enrichment with TI data."""
+#
+#     def test_enrich_alerts_boosts_severity(self):
+#         """alert with dst in feed gets severity bumped."""
+#         svc = ThreatIntelService()
+#         svc.add_indicators("abuse_ch_feodo", ["203.0.113.50"])
+#
+#         alerts = [
+#             {
+#                 "source_ip": "192.168.1.10",
+#                 "destination_ip": "203.0.113.50",
+#                 "severity": 3,
+#                 "severity_label": "MEDIUM",
+#                 "assessment": "Network scanning activity.",
+#             }
+#         ]
+#
+#         enriched = svc.enrich_alerts(alerts)
+#         assert len(enriched) == 1
+#         alert = enriched[0]
+#         assert alert["ti_matched"] is True
+#         assert alert["severity"] == 2  # bumped from 3 to 2
+#         assert alert["severity_label"] == "HIGH"
+#         assert "confirmed malicious infrastructure" in alert["assessment"]
+#
+#     def test_enrich_alerts_no_match(self):
+#         """alert with clean IPs stays unchanged."""
+#         svc = ThreatIntelService()
+#         svc.add_indicators("abuse_ch_feodo", ["203.0.113.50"])
+#
+#         alerts = [
+#             {
+#                 "source_ip": "192.168.1.10",
+#                 "destination_ip": "8.8.8.8",
+#                 "severity": 3,
+#                 "severity_label": "MEDIUM",
+#                 "assessment": "DNS query observed.",
+#             }
+#         ]
+#
+#         enriched = svc.enrich_alerts(alerts)
+#         assert len(enriched) == 1
+#         alert = enriched[0]
+#         assert alert["ti_matched"] is False
+#         assert alert["severity"] == 3  # unchanged
+#         assert alert["severity_label"] == "MEDIUM"
+#         assert "confirmed malicious" not in alert["assessment"]
+# OLD CODE END
 
-    def test_enrich_alerts_boosts_severity(self):
-        """alert with dst in feed gets severity bumped."""
-        svc = ThreatIntelService()
-        svc.add_indicators("abuse_ch_feodo", ["203.0.113.50"])
 
-        alerts = [
-            {
-                "source_ip": "192.168.1.10",
-                "destination_ip": "203.0.113.50",
-                "severity": 3,
-                "severity_label": "MEDIUM",
-                "assessment": "Network scanning activity.",
-            }
-        ]
+def test_the_feed_nettap_fills_is_named_for_its_rules():
+    """NET-228: it holds addresses Suricata's blocklist rules named, not ET's Compromised list."""
+    from services.threat_intel import TI_FEEDS
 
-        enriched = svc.enrich_alerts(alerts)
-        assert len(enriched) == 1
-        alert = enriched[0]
-        assert alert["ti_matched"] is True
-        assert alert["severity"] == 2  # bumped from 3 to 2
-        assert alert["severity_label"] == "HIGH"
-        assert "confirmed malicious infrastructure" in alert["assessment"]
-
-    def test_enrich_alerts_no_match(self):
-        """alert with clean IPs stays unchanged."""
-        svc = ThreatIntelService()
-        svc.add_indicators("abuse_ch_feodo", ["203.0.113.50"])
-
-        alerts = [
-            {
-                "source_ip": "192.168.1.10",
-                "destination_ip": "8.8.8.8",
-                "severity": 3,
-                "severity_label": "MEDIUM",
-                "assessment": "DNS query observed.",
-            }
-        ]
-
-        enriched = svc.enrich_alerts(alerts)
-        assert len(enriched) == 1
-        alert = enriched[0]
-        assert alert["ti_matched"] is False
-        assert alert["severity"] == 3  # unchanged
-        assert alert["severity_label"] == "MEDIUM"
-        assert "confirmed malicious" not in alert["assessment"]
+    assert TI_FEEDS["et_compromised"]["label"] == "Suricata blocklist rules"
+    assert not hasattr(ThreatIntelService, "enrich_alerts")
 
 
 class TestCachePersistence:
@@ -318,16 +328,18 @@ class TestIndicatorIntegrity:
 
         assert svc.lookup_ip(_LAN) == []
         assert svc.lookup_ip("81.2.69.142") == []  # can't tell it from an own address
-        alert = {
-            "source_ip": "185.220.101.9",
-            "destination_ip": _LAN,
-            "severity": 3,
-            "severity_label": "MEDIUM",
-            "assessment": "",
-        }
-        (enriched,) = svc.enrich_alerts([alert])
-        assert enriched["ti_matched"] is False
-        assert "confirmed malicious infrastructure" not in enriched["assessment"]
+        # OLD CODE START — NET-228: enrich_alerts is retired
+        # alert = {
+        #     "source_ip": "185.220.101.9",
+        #     "destination_ip": _LAN,
+        #     "severity": 3,
+        #     "severity_label": "MEDIUM",
+        #     "assessment": "",
+        # }
+        # (enriched,) = svc.enrich_alerts([alert])
+        # assert enriched["ti_matched"] is False
+        # assert "confirmed malicious infrastructure" not in enriched["assessment"]
+        # OLD CODE END
         written = json.loads(cache.read_text())
         assert not any(
             written["ip_feeds"].values()
