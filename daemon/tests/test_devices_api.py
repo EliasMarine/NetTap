@@ -85,16 +85,74 @@ def _device_bucket(
     """Build a single device aggregation bucket."""
     if protocols is None:
         protocols = [{"key": "tcp", "doc_count": 80}, {"key": "udp", "doc_count": 20}]
+    # OLD CODE START — NET-226: the list summed total_bytes in Painless and orig/resp apart
+    # return {
+    #     "key": ip,
+    #     "doc_count": doc_count,
+    #     "total_bytes": {"value": total_bytes},
+    #     "protocols": {"buckets": protocols},
+    #     "first_seen": {"value_as_string": first_seen or "2026-02-25T00:00:00.000Z"},
+    #     "last_seen": {"value_as_string": last_seen or "2026-02-25T23:59:59.000Z"},
+    #     "orig_bytes": {"value": orig_bytes},
+    #     "resp_bytes": {"value": resp_bytes},
+    # }
+    # OLD CODE END
+    # The started side's upload/download sums; without a split all of total_bytes is upload
     return {
         "key": ip,
         "doc_count": doc_count,
-        "total_bytes": {"value": total_bytes},
         "protocols": {"buckets": protocols},
         "first_seen": {"value_as_string": first_seen or "2026-02-25T00:00:00.000Z"},
         "last_seen": {"value_as_string": last_seen or "2026-02-25T23:59:59.000Z"},
-        "orig_bytes": {"value": orig_bytes},
-        "resp_bytes": {"value": resp_bytes},
+        "upload": {"value": total_bytes if orig_bytes is None else orig_bytes},
+        "download": {"value": resp_bytes},
     }
+
+
+def _no_answers(body):
+    """Replies for the searches NET-226 added when nothing answered and nothing is IPv6."""
+    aggs = body.get("aggs", {})
+    if "answered" in aggs and "started" not in aggs:  # answered_by_ip
+        return {"aggregations": {"answered": {"buckets": []}}}
+    if "started" in aggs and "answered" in aggs and "macs" in aggs["started"]["aggs"]:
+        return {  # ipv6_by_mac
+            "aggregations": {
+                "started": {"macs": {"buckets": []}},
+                "answered": {"macs": {"buckets": []}},
+            }
+        }
+    if "ips" in aggs:  # _ipv6_mac_of
+        return {"aggregations": {"ips": {"buckets": []}}}
+    return None
+
+
+def _answering(replies):
+    """search() side effect: the NET-226 searches find nothing (_no_answers); every other
+    search takes the next of `replies` (raising it if it is an exception), or `replies` itself
+    when it is one reply for every search."""
+    queue = list(replies) if isinstance(replies, list) else None
+
+    def _search(index=None, body=None, **_kwargs):
+        answers = _no_answers(body or {})
+        if answers:
+            return answers
+        if queue is None:
+            return replies
+        reply = queue.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    return _search
+
+
+def _detail_body(search_mock):
+    """The device detail's main search (NET-226: it is no longer the first)."""
+    return next(
+        c.kwargs["body"]
+        for c in search_mock.call_args_list
+        if "bandwidth_series" in c.kwargs["body"].get("aggs", {})
+    )
 
 
 class TestDeviceListHandler(AioHTTPTestCase):
@@ -127,33 +185,35 @@ class TestDeviceListHandler(AioHTTPTestCase):
         2. NETWORK_INDEX (event.provider=suricata, event.dataset=alert) for alert counts
         3-N. fingerprint lookups (dhcp, conn, dns, http, ssl) per device
         """
-        responses = []
-        responses.append(device_response)
-        if alert_response is not None:
-            responses.append(alert_response)
-        else:
-            responses.append(_empty_alert_response())
-
-        # For each device, fingerprint service makes up to 5 queries:
-        # get_mac_for_ip: DHCP then conn
-        # get_hostname_for_ip: DNS
-        # get_os_hint: HTTP then SSL
-        # We'll provide generic empty responses for fingerprint lookups
-        empty_hits = {"hits": {"hits": []}}
-        empty_aggs = {
+        # OLD CODE START — NET-226: replies in call order; the list now also reads the answered
+        # side and IPv6, so each search is answered by its shape instead
+        # responses = [device_response, alert_response or _empty_alert_response(),
+        #              *([empty_hits, empty_aggs] * 50)]
+        # self.mock_client.search.side_effect = responses
+        # OLD CODE END
+        alerts = (
+            alert_response if alert_response is not None else _empty_alert_response()
+        )
+        empty = {
+            "hits": {"hits": []},
             "aggregations": {
                 "top_hostname": {"buckets": []},
                 "top_ua": {"buckets": []},
                 "top_ja3": {"buckets": []},
-            }
+            },
         }
 
-        # Add enough empty responses for fingerprint calls
-        for _ in range(50):
-            responses.append(empty_hits)
-            responses.append(empty_aggs)
+        def _search(index=None, body=None, **_kwargs):
+            aggs = (body or {}).get("aggs", {})
+            if "all" in aggs:
+                return device_response
+            if "by_ip" in aggs:
+                if isinstance(alerts, Exception):
+                    raise alerts
+                return alerts
+            return _no_answers(body or {}) or empty
 
-        self.mock_client.search.side_effect = responses
+        self.mock_client.search.side_effect = _search
 
     @unittest_run_loop
     async def test_device_list_success(self):
@@ -262,17 +322,30 @@ class TestDeviceListHandler(AioHTTPTestCase):
         # sub_aggs = body["aggs"]["devices"]["aggs"]
         # OLD CODE END
         sub_aggs = body["aggs"]["all"]["aggs"]
-        self.assertEqual(sub_aggs["orig_bytes"], {"sum": {"field": "source.bytes"}})
+        # OLD CODE START — NET-226: orig/resp sums; on the started side they are upload/download
+        # self.assertEqual(sub_aggs["orig_bytes"], {"sum": {"field": "source.bytes"}})
+        # self.assertEqual(
+        #     sub_aggs["resp_bytes"], {"sum": {"field": "destination.bytes"}}
+        # )
+        # OLD CODE END
         self.assertEqual(
-            sub_aggs["resp_bytes"], {"sum": {"field": "destination.bytes"}}
+            sub_aggs["upload"], {"sum": {"field": "source.bytes", "missing": 0}}
+        )
+        self.assertEqual(
+            sub_aggs["download"],
+            {"sum": {"field": "destination.bytes", "missing": 0}},
         )
 
     @unittest_run_loop
     async def test_device_list_returns_sent_and_received_bytes(self):
-        """orig/resp bytes map through exactly; missing or null sums become 0."""
+        """Upload/download map through exactly; missing or null sums become 0."""
         missing = _device_bucket("192.168.1.101")
-        del missing["orig_bytes"]
-        del missing["resp_bytes"]
+        # OLD CODE START — NET-226: orig/resp are upload/download now
+        # del missing["orig_bytes"]
+        # del missing["resp_bytes"]
+        # OLD CODE END
+        del missing["upload"]
+        del missing["download"]
         self._setup_search_responses(
             _device_list_response(
                 [
@@ -292,11 +365,20 @@ class TestDeviceListHandler(AioHTTPTestCase):
         self.assertEqual(resp.status, 200)
         devices = {d["ip"]: d for d in (await resp.json())["devices"]}
 
-        self.assertEqual(devices["192.168.1.100"]["orig_bytes"], 1200)
-        self.assertEqual(devices["192.168.1.100"]["resp_bytes"], 98000)
-        for ip in ("192.168.1.101", "192.168.1.102"):
-            self.assertEqual(devices[ip]["orig_bytes"], 0)
-            self.assertEqual(devices[ip]["resp_bytes"], 0)
+        # OLD CODE START — NET-226: orig/resp are upload/download now
+        # self.assertEqual(devices["192.168.1.100"]["orig_bytes"], 1200)
+        # self.assertEqual(devices["192.168.1.100"]["resp_bytes"], 98000)
+        # for ip in ("192.168.1.101", "192.168.1.102"):
+        #     self.assertEqual(devices[ip]["orig_bytes"], 0)
+        #     self.assertEqual(devices[ip]["resp_bytes"], 0)
+        # OLD CODE END
+        self.assertEqual(devices["192.168.1.100"]["upload_bytes"], 1200)
+        self.assertEqual(devices["192.168.1.100"]["download_bytes"], 98000)
+        self.assertEqual(devices["192.168.1.100"]["total_bytes"], 99200)
+        self.assertEqual(devices["192.168.1.101"]["upload_bytes"], 0)
+        self.assertEqual(devices["192.168.1.101"]["download_bytes"], 0)
+        # sums present but null
+        self.assertEqual(devices["192.168.1.102"]["download_bytes"], 0)
 
     # OLD CODE START — slice 2b-3: these checked the terms aggregation's `order`; every sort is
     # ranked in Python over every device now, so the tests check the listed order instead
@@ -495,7 +577,11 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
             responses.append(empty_hits)
             responses.append(empty_aggs)
 
-        self.mock_client.search.side_effect = responses
+        # OLD CODE START — NET-226: the detail now also asks who owns the device's IPv6 first
+        # self.mock_client.search.side_effect = responses
+        # OLD CODE END
+        self.mock_client.search.side_effect = _answering(responses)
+        return responses
 
     @unittest_run_loop
     async def test_device_detail_success(self):
@@ -503,36 +589,40 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
         self._setup_detail_responses(
             {
                 "hits": {"total": {"value": 500}},
+                # NET-226: both IP byte counts, and the started side's breakdowns
                 "aggregations": {
-                    "total_bytes": {"value": 1500000},
-                    "protocols": {"buckets": [{"key": "tcp", "doc_count": 400}]},
-                    "first_seen": {"value_as_string": "2026-02-25T00:00:00.000Z"},
-                    "last_seen": {"value_as_string": "2026-02-25T23:59:59.000Z"},
-                    "top_destinations": {
-                        "buckets": [
-                            {
-                                "key": "8.8.8.8",
-                                "doc_count": 50,
-                                "bytes": {"value": 200000},
-                            },
-                            {
-                                "key": "1.1.1.1",
-                                "doc_count": 30,
-                                "bytes": {"value": 100000},
-                            },
-                        ]
+                    "src": {"value": 1000000},
+                    "dst": {"value": 500000},
+                    "started": {
+                        "protocols": {"buckets": [{"key": "tcp", "doc_count": 400}]},
+                        "first_seen": {"value_as_string": "2026-02-25T00:00:00.000Z"},
+                        "last_seen": {"value_as_string": "2026-02-25T23:59:59.000Z"},
+                        "top_destinations": {
+                            "buckets": [
+                                {
+                                    "key": "8.8.8.8",
+                                    "doc_count": 50,
+                                    "src": {"value": 200000},
+                                },
+                                {
+                                    "key": "1.1.1.1",
+                                    "doc_count": 30,
+                                    "src": {"value": 100000},
+                                },
+                            ]
+                        },
                     },
                     "bandwidth_series": {
                         "buckets": [
                             {
                                 "key_as_string": "2026-02-25T00:00:00.000Z",
                                 "doc_count": 10,
-                                "bytes": {"value": 5000},
+                                "src": {"value": 5000},
                             },
                             {
                                 "key_as_string": "2026-02-25T00:05:00.000Z",
                                 "doc_count": 15,
-                                "bytes": {"value": 7000},
+                                "src": {"value": 7000},
                             },
                         ]
                     },
@@ -566,11 +656,13 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
         conn_resp = {
             "hits": {"total": {"value": 10}},
             "aggregations": {
-                "total_bytes": {"value": 5000},
-                "protocols": {"buckets": []},
-                "first_seen": {"value_as_string": "2026-02-25T12:00:00.000Z"},
-                "last_seen": {"value_as_string": "2026-02-25T12:30:00.000Z"},
-                "top_destinations": {"buckets": []},
+                "src": {"value": 5000},
+                "started": {
+                    "protocols": {"buckets": []},
+                    "first_seen": {"value_as_string": "2026-02-25T12:00:00.000Z"},
+                    "last_seen": {"value_as_string": "2026-02-25T12:30:00.000Z"},
+                    "top_destinations": {"buckets": []},
+                },
                 "bandwidth_series": {"buckets": []},
             },
         }
@@ -619,7 +711,7 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
             responses.append({"hits": {"hits": []}})
             responses.append({"aggregations": {}})
 
-        self.mock_client.search.side_effect = responses
+        self.mock_client.search.side_effect = _answering(responses)
 
         resp = await self.client.request("GET", "/api/devices/192.168.1.50")
         self.assertEqual(resp.status, 200)
@@ -662,11 +754,13 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
             {
                 "hits": {"total": {"value": 0}},
                 "aggregations": {
-                    "total_bytes": {"value": 0},
-                    "protocols": {"buckets": []},
-                    "first_seen": {"value_as_string": ""},
-                    "last_seen": {"value_as_string": ""},
-                    "top_destinations": {"buckets": []},
+                    "src": {"value": 0},
+                    "started": {
+                        "protocols": {"buckets": []},
+                        "first_seen": {"value_as_string": ""},
+                        "last_seen": {"value_as_string": ""},
+                        "top_destinations": {"buckets": []},
+                    },
                     "bandwidth_series": {"buckets": []},
                 },
             }
@@ -719,13 +813,12 @@ class TestDeviceDetailHandler(AioHTTPTestCase):
 
         conn = {
             "hits": {"total": {"value": 5}},
-            "aggregations": {"total_bytes": {"value": 100}},
+            "aggregations": {"src": {"value": 100}},
         }
         for failing in ("dns", "alerts"):
-            self._setup_detail_responses(conn)
-            responses = list(self.mock_client.search.side_effect)
+            responses = self._setup_detail_responses(conn)
             responses[1 if failing == "dns" else 2] = OpenSearchException("timeout")
-            self.mock_client.search.side_effect = responses
+            self.mock_client.search.side_effect = _answering(responses)
 
             resp = await self.client.request("GET", "/api/devices/192.168.1.1")
             self.assertEqual(resp.status, 502, failing)
@@ -1060,6 +1153,9 @@ def _route_device_searches(device_response, alerts=None):
             return {"aggregations": {"devices": {"buckets": kept[: terms["size"]]}}}
         if "all" in aggs:
             return _composite_page(buckets, aggs["all"]["composite"])
+        answers = _no_answers(body or {})  # NET-226: answered side, IPv6, IPv6 owner
+        if answers:
+            return answers
         return {
             "hits": {"hits": []},
             "aggregations": {
@@ -1673,9 +1769,14 @@ class TestDeviceTotalsPast10000(AioHTTPTestCase):
 
     @unittest_run_loop
     async def test_detail_counts_connections_and_alerts_exactly(self):
+        self.mock_client.search.side_effect = _answering(
+            self.mock_client.search.return_value
+        )
         resp = await self.client.request("GET", "/api/devices/192.168.1.1")
         self.assertEqual(resp.status, 200)
-        self.assertIs(self._bodies()[0].get("track_total_hits"), True)
+        self.assertIs(
+            _detail_body(self.mock_client.search).get("track_total_hits"), True
+        )
         alert_bodies = _alert_bodies(self.mock_client.search)
         self.assertTrue(alert_bodies)
         self.assertTrue(all(b.get("track_total_hits") is True for b in alert_bodies))
@@ -1708,19 +1809,23 @@ class TestDeviceTopServicesByBytes(AioHTTPTestCase):
     """#96: top_services took the 10 ASNs with the most connections, then sorted them by bytes."""
 
     # Eleven chatty ASNs with little data, and one video service with few, huge flows
+    # NET-226: a service's bytes are both IP byte counts (src + dst), ordered by network.bytes
     ASNS = [
         *(
             {
                 "key": f"AS{100 + i} Chatty {i}",
                 "doc_count": 500 - i,
-                "bytes": {"value": 1_000 + i},
+                "src": {"value": 1_000 + i},
+                "order_bytes": {"value": 1_000 + i},
             }
             for i in range(11)
         ),
         {
             "key": "AS2906 Netflix Inc",
             "doc_count": 4,
-            "bytes": {"value": 9_000_000_000},
+            "src": {"value": 1_000},
+            "dst": {"value": 8_999_999_000},
+            "order_bytes": {"value": 9_000_000_000},
         },
     ]
 
@@ -1736,17 +1841,26 @@ class TestDeviceTopServicesByBytes(AioHTTPTestCase):
 
     def _search(self, index=None, body=None, **_kwargs):
         """The detail search answers top_services like OpenSearch: its order, its size."""
-        terms = ((body or {}).get("aggs", {}).get("top_services") or {}).get("terms")
+        answers = _no_answers(body or {})
+        if answers:
+            return answers
+        # OLD CODE START — NET-226: top_services moved under the started side, ordered by order_bytes
+        # terms = ((body or {}).get("aggs", {}).get("top_services") or {}).get("terms")
+        # OLD CODE END
+        started = ((body or {}).get("aggs", {}).get("started") or {}).get("aggs", {})
+        terms = (started.get("top_services") or {}).get("terms")
         if not terms:
             return {"hits": {"total": {"value": 0}, "hits": []}, "aggregations": {}}
-        by_bytes = terms.get("order") == {"bytes": "desc"}
+        by_bytes = terms.get("order") == {"order_bytes": "desc"}
         ranked = sorted(
             self.ASNS,
-            key=lambda b: -(b["bytes"]["value"] if by_bytes else b["doc_count"]),
+            key=lambda b: -(b["order_bytes"]["value"] if by_bytes else b["doc_count"]),
         )
         return {
             "hits": {"total": {"value": 6000}, "hits": []},
-            "aggregations": {"top_services": {"buckets": ranked[: terms["size"]]}},
+            "aggregations": {
+                "started": {"top_services": {"buckets": ranked[: terms["size"]]}}
+            },
         }
 
     @unittest_run_loop
@@ -1785,13 +1899,16 @@ class TestDeviceBandwidthInterval(AioHTTPTestCase):
 
     async def _interval(self, from_ts):
         self.mock_client.search.reset_mock()
+        self.mock_client.search.side_effect = _answering(
+            self.mock_client.search.return_value
+        )
         resp = await self.client.request(
             "GET",
             "/api/devices/192.168.1.1",
             params={"from": from_ts, "to": "2026-11-02T00:00:00Z"},
         )
         self.assertEqual(resp.status, 200)
-        body = self.mock_client.search.call_args_list[0].kwargs["body"]
+        body = _detail_body(self.mock_client.search)
         # OLD CODE START — #120: the series was a date_histogram
         # return body["aggs"]["bandwidth_series"]["date_histogram"]["fixed_interval"]
         # OLD CODE END
@@ -1837,6 +1954,13 @@ class TestDeviceTermsAreExact(AioHTTPTestCase):
                 "top_destinations": {"buckets": dests, "sum_other_doc_count": 0},
             },
         }
+        # NET-226: the detail reads destinations under the started side
+        self.mock_client.search.return_value["aggregations"]["started"] = (
+            self.mock_client.search.return_value["aggregations"]
+        )
+        self.mock_client.search.side_effect = _answering(
+            self.mock_client.search.return_value
+        )
         super().setUp()
 
     async def get_application(self):
@@ -1869,7 +1993,7 @@ class TestDeviceTermsAreExact(AioHTTPTestCase):
         device = (await resp.json())["device"]
         self.assertEqual(device["unique_destinations"], 25)
         self.assertEqual(len(device["top_destinations"]), 20)
-        terms = self._terms(self._bodies()[0])
+        terms = self._terms(_detail_body(self.mock_client.search))
         self.assertGreaterEqual(terms["top_destinations"]["size"], 10_000)
         self.assertGreaterEqual(terms["top_services"]["shard_size"], 10_000)
         dns = [
@@ -1941,10 +2065,13 @@ class TestDeviceNamesMatchHome(AioHTTPTestCase):
 
     @unittest_run_loop
     async def test_the_list_uses_the_registry_name_for_the_mac(self):
-        self.mock_client.search.side_effect = [
-            _device_list_response([_device_bucket("192.168.1.188")]),
-            _empty_alert_response(),
-        ] + [{"hits": {"hits": []}}] * 10
+        self.mock_client.search.side_effect = _answering(
+            [
+                _device_list_response([_device_bucket("192.168.1.188")]),
+                _empty_alert_response(),
+            ]
+            + [{"hits": {"hits": []}}] * 10
+        )
         self.mock_client.msearch.return_value = self._lookups(
             "sarabouzeid-fgwk3p497k.local"
         )
@@ -1955,10 +2082,13 @@ class TestDeviceNamesMatchHome(AioHTTPTestCase):
 
     @unittest_run_loop
     async def test_a_device_the_registry_doesnt_know_keeps_its_dns_name(self):
-        self.mock_client.search.side_effect = [
-            _device_list_response([_device_bucket("192.168.1.60")]),
-            _empty_alert_response(),
-        ] + [{"hits": {"hits": []}}] * 10
+        self.mock_client.search.side_effect = _answering(
+            [
+                _device_list_response([_device_bucket("192.168.1.60")]),
+                _empty_alert_response(),
+            ]
+            + [{"hits": {"hits": []}}] * 10
+        )
         self.mock_client.msearch.return_value = self._lookups(
             "nas.local", mac="00:11:32:aa:bb:cc"
         )
@@ -1971,11 +2101,13 @@ class TestDeviceNamesMatchHome(AioHTTPTestCase):
         conn = {
             "hits": {"total": {"value": 10}},
             "aggregations": {
-                "total_bytes": {"value": 5000},
-                "protocols": {"buckets": []},
-                "first_seen": {"value_as_string": "2026-02-25T12:00:00.000Z"},
-                "last_seen": {"value_as_string": "2026-02-25T12:30:00.000Z"},
-                "top_destinations": {"buckets": []},
+                "src": {"value": 5000},
+                "started": {
+                    "protocols": {"buckets": []},
+                    "first_seen": {"value_as_string": "2026-02-25T12:00:00.000Z"},
+                    "last_seen": {"value_as_string": "2026-02-25T12:30:00.000Z"},
+                    "top_destinations": {"buckets": []},
+                },
                 "bandwidth_series": {"buckets": []},
             },
         }
@@ -1987,13 +2119,16 @@ class TestDeviceNamesMatchHome(AioHTTPTestCase):
                 "top_hostname": {"buckets": [{"key": "sarabouzeid-fgwk3p497k.local"}]}
             }
         }
-        self.mock_client.search.side_effect = [
-            conn,
-            {"aggregations": {"dns_queries": {"buckets": []}}},
-            {"hits": {"total": {"value": 0}}},
-            dhcp,
-            dns_name,
-        ] + [{"hits": {"hits": []}}, {"aggregations": {}}] * 20
+        self.mock_client.search.side_effect = _answering(
+            [
+                conn,
+                {"aggregations": {"dns_queries": {"buckets": []}}},
+                {"hits": {"total": {"value": 0}}},
+                dhcp,
+                dns_name,
+            ]
+            + [{"hits": {"hits": []}}, {"aggregations": {}}] * 20
+        )
         resp = await self.client.request("GET", "/api/devices/192.168.1.188")
         assert resp.status == 200
         assert (await resp.json())["device"]["hostname"] == "EliasMacStudio"

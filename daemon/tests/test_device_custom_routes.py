@@ -13,6 +13,7 @@ from api.devices_v2 import handle_registry_list, handle_registry_search
 from services.device_custom import DeviceCustomStore
 from services.device_registry import DeviceRegistry
 from tests.test_devices_api import (
+    _answering,
     _device_bucket,
     _device_list_response,
     _empty_alert_response,
@@ -311,10 +312,14 @@ class TestLegacyListPresentationOnly(AioHTTPTestCase):
         self.tmp.cleanup()
 
     async def _list(self) -> dict:
-        self.mock_client.search.side_effect = [
-            _device_list_response([_device_bucket("192.168.1.188")]),
-            _empty_alert_response(),
-        ] + [{"hits": {"hits": []}}] * 10
+        # NET-226: the answered-side and IPv6 searches find nothing (_answering)
+        self.mock_client.search.side_effect = _answering(
+            [
+                _device_list_response([_device_bucket("192.168.1.188")]),
+                _empty_alert_response(),
+            ]
+            + [{"hits": {"hits": []}}] * 10
+        )
         dhcp = {
             "hits": {"hits": [{"_source": {"source": {"mac": "bc:89:c1:e1:8a:d6"}}}]}
         }

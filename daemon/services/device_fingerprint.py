@@ -23,21 +23,41 @@ _MAC_RE = re.compile(
 )
 
 # Common OS patterns found in HTTP User-Agent strings
+# OLD CODE START — DEV-8: generic names came first, so a Tizen/webOS TV (its UA says Linux)
+# read "Linux" and an Xbox (Windows NT 10.0) "Windows 10/11"
+# _OS_PATTERNS = [
+#     (re.compile(r"Windows NT 10\.0", re.IGNORECASE), "Windows 10/11"),
+#     (re.compile(r"Windows NT 6\.3", re.IGNORECASE), "Windows 8.1"),
+#     (re.compile(r"Windows NT 6\.2", re.IGNORECASE), "Windows 8"),
+#     (re.compile(r"Windows NT 6\.1", re.IGNORECASE), "Windows 7"),
+#     (re.compile(r"Windows", re.IGNORECASE), "Windows"),
+#     (re.compile(r"iPhone|iPad|iPod", re.IGNORECASE), "iOS"),
+#     (re.compile(r"Macintosh|Mac OS X", re.IGNORECASE), "macOS"),
+#     (re.compile(r"Android", re.IGNORECASE), "Android"),
+#     (re.compile(r"Linux", re.IGNORECASE), "Linux"),
+#     (re.compile(r"CrOS", re.IGNORECASE), "ChromeOS"),
+#     (re.compile(r"PlayStation", re.IGNORECASE), "PlayStation"),
+#     (re.compile(r"Xbox", re.IGNORECASE), "Xbox"),
+#     (re.compile(r"Nintendo", re.IGNORECASE), "Nintendo"),
+#     (re.compile(r"SmartTV|Tizen|webOS", re.IGNORECASE), "Smart TV"),
+# ]
+# OLD CODE END
+# The first match wins, so specific platforms come before the generic OS names they embed
 _OS_PATTERNS = [
+    (re.compile(r"PlayStation", re.IGNORECASE), "PlayStation"),
+    (re.compile(r"Xbox", re.IGNORECASE), "Xbox"),
+    (re.compile(r"Nintendo", re.IGNORECASE), "Nintendo"),
+    (re.compile(r"SmartTV|Tizen|webOS", re.IGNORECASE), "Smart TV"),
+    (re.compile(r"CrOS", re.IGNORECASE), "ChromeOS"),
+    (re.compile(r"Android", re.IGNORECASE), "Android"),
+    (re.compile(r"iPhone|iPad|iPod", re.IGNORECASE), "iOS"),
     (re.compile(r"Windows NT 10\.0", re.IGNORECASE), "Windows 10/11"),
     (re.compile(r"Windows NT 6\.3", re.IGNORECASE), "Windows 8.1"),
     (re.compile(r"Windows NT 6\.2", re.IGNORECASE), "Windows 8"),
     (re.compile(r"Windows NT 6\.1", re.IGNORECASE), "Windows 7"),
     (re.compile(r"Windows", re.IGNORECASE), "Windows"),
-    (re.compile(r"iPhone|iPad|iPod", re.IGNORECASE), "iOS"),
     (re.compile(r"Macintosh|Mac OS X", re.IGNORECASE), "macOS"),
-    (re.compile(r"Android", re.IGNORECASE), "Android"),
     (re.compile(r"Linux", re.IGNORECASE), "Linux"),
-    (re.compile(r"CrOS", re.IGNORECASE), "ChromeOS"),
-    (re.compile(r"PlayStation", re.IGNORECASE), "PlayStation"),
-    (re.compile(r"Xbox", re.IGNORECASE), "Xbox"),
-    (re.compile(r"Nintendo", re.IGNORECASE), "Nintendo"),
-    (re.compile(r"SmartTV|Tizen|webOS", re.IGNORECASE), "Smart TV"),
 ]
 
 

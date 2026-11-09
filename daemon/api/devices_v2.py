@@ -48,6 +48,7 @@ from api.devices import (
 from services.device_fingerprint import _mac_from_hit, _oui_from_hit
 from services.device_registry import DeviceRegistry, record_time
 from services.unifi_integration import UnifiIntegration, normalize_controller_url
+from storage.snapshot_search import QueryFailed
 
 logger = logging.getLogger("nettap.api.devices_v2")
 
@@ -407,7 +408,15 @@ def handle_registry_traffic(request: web.Request) -> web.Response:
         device = registry.get_device(mac)
         if device is None:
             return web.json_response({"error": f"Device not found: {mac}"}, status=404)
-        traffic = registry.get_device_traffic(mac, from_ts, to_ts)
+        # OLD CODE: traffic = registry.get_device_traffic(mac, from_ts, to_ts) (NET-226: + the LAN rule)
+        traffic = registry.get_device_traffic(
+            mac, from_ts, to_ts, request.app.get("lan_filter")
+        )
+    except QueryFailed as exc:
+        logger.error("Incomplete search in device registry traffic: %s", exc)
+        return web.json_response(
+            {"error": "The device search was incomplete"}, status=502
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in device registry: %s", exc)
         return web.json_response(

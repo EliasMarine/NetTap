@@ -39,12 +39,14 @@ class TestBandwidthTrackerNoClient(unittest.TestCase):
         )
         self.assertEqual(result, [])
 
-    def test_per_device_usage_no_client(self):
-        """Should return empty list when no client is configured."""
-        result = self.tracker.get_per_device_usage(
-            "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
-        )
-        self.assertEqual(result, [])
+    # OLD CODE START — NET-226: get_per_device_usage is gone; /api/bandwidth/devices uses the device list's accounting (test_device_accounting.py)
+    # def test_per_device_usage_no_client(self):
+    #     """Should return empty list when no client is configured."""
+    #     result = self.tracker.get_per_device_usage(
+    #         "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+    #     )
+    #     self.assertEqual(result, [])
+    # OLD CODE END
 
     def test_heatmap_no_client(self):
         """Should return zero-filled 7x24 matrix when no client is configured."""
@@ -156,93 +158,95 @@ class TestBandwidthTrackerWithClient(unittest.TestCase):
         self.assertEqual(result[0]["total_bytes"], 3000)
         self.assertEqual(result[1]["total_bytes"], 4000)
 
-    def test_per_device_usage(self):
-        """Should parse per-device buckets from OpenSearch."""
-        self.mock_client.search.return_value = {
-            "aggregations": {
-                # all LAN traffic in range (here: just these two devices)
-                "orig_bytes": {"value": 15000},
-                "resp_bytes": {"value": 35000},
-                "by_device": {
-                    "buckets": [
-                        {
-                            "key": "192.168.1.100",
-                            "doc_count": 500,
-                            "orig_bytes": {"value": 10000},
-                            "resp_bytes": {"value": 20000},
-                        },
-                        {
-                            "key": "192.168.1.101",
-                            "doc_count": 300,
-                            "orig_bytes": {"value": 5000},
-                            "resp_bytes": {"value": 15000},
-                        },
-                    ]
-                },
-            }
-        }
-
-        result = self.tracker.get_per_device_usage(
-            "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
-        )
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0]["ip"], "192.168.1.100")
-        self.assertEqual(result[0]["total_bytes"], 30000)
-        self.assertEqual(result[0]["connection_count"], 500)
-        # Percent should add up to ~100
-        total_pct = sum(d["percent_of_total"] for d in result)
-        self.assertAlmostEqual(total_pct, 100.0, places=0)
-
-    def test_per_device_usage_lan_only_ordered_by_bytes(self):
-        """NetTap itself (6.9 MB, 26K conns) outranked a 22.7 GB device; internet hosts listed."""
-        self.mock_client.search.return_value = {
-            "aggregations": {
-                "orig_bytes": {"value": 600},
-                "resp_bytes": {"value": 400},
-                "by_device": {
-                    "buckets": [
-                        {
-                            "key": "192.168.1.188",
-                            "doc_count": 3,
-                            "orig_bytes": {"value": 100},
-                            "resp_bytes": {"value": 150},
-                        }
-                    ]
-                },
-            }
-        }
-        lan = {"terms": {"source.ip": ["192.168.1.0/24"]}}
-        result = self.tracker.get_per_device_usage(
-            "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z", lan_filter=lan
-        )
-        body = self.mock_client.search.call_args.kwargs["body"]
-        self.assertIn(lan, body["query"]["bool"]["filter"])
-        terms = body["aggs"]["by_device"]["terms"]
-        self.assertEqual(terms["order"], {"total_bytes": "desc"})
-        self.assertNotIn("bucket_sort", body["aggs"]["by_device"]["aggs"])
-        # share of ALL LAN traffic (1000), not of the returned rows (250)
-        self.assertEqual(result[0]["percent_of_total"], 25.0)
-
-    def test_per_device_usage_defaults_to_rfc1918_sources(self):
-        from services.excluded_ips import RFC1918_SOURCE_FILTER
-
-        self.mock_client.search.return_value = {"aggregations": {}}
-        self.tracker.get_per_device_usage(
-            "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
-        )
-        body = self.mock_client.search.call_args.kwargs["body"]
-        self.assertIn(RFC1918_SOURCE_FILTER, body["query"]["bool"]["filter"])
-
-    def test_per_device_usage_opensearch_error_raises(self):
-        """A failed query raises (#96): [] would read as no device using bandwidth."""
-        from opensearchpy import OpenSearchException
-
-        self.mock_client.search.side_effect = OpenSearchException("timeout")
-
-        with self.assertRaises(OpenSearchException):
-            self.tracker.get_per_device_usage(
-                "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
-            )
+    # OLD CODE START — NET-226: get_per_device_usage is gone; /api/bandwidth/devices uses the device list's accounting (test_device_accounting.py)
+    # def test_per_device_usage(self):
+    #     """Should parse per-device buckets from OpenSearch."""
+    #     self.mock_client.search.return_value = {
+    #         "aggregations": {
+    #             # all LAN traffic in range (here: just these two devices)
+    #             "orig_bytes": {"value": 15000},
+    #             "resp_bytes": {"value": 35000},
+    #             "by_device": {
+    #                 "buckets": [
+    #                     {
+    #                         "key": "192.168.1.100",
+    #                         "doc_count": 500,
+    #                         "orig_bytes": {"value": 10000},
+    #                         "resp_bytes": {"value": 20000},
+    #                     },
+    #                     {
+    #                         "key": "192.168.1.101",
+    #                         "doc_count": 300,
+    #                         "orig_bytes": {"value": 5000},
+    #                         "resp_bytes": {"value": 15000},
+    #                     },
+    #                 ]
+    #             },
+    #         }
+    #     }
+    #
+    #     result = self.tracker.get_per_device_usage(
+    #         "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+    #     )
+    #     self.assertEqual(len(result), 2)
+    #     self.assertEqual(result[0]["ip"], "192.168.1.100")
+    #     self.assertEqual(result[0]["total_bytes"], 30000)
+    #     self.assertEqual(result[0]["connection_count"], 500)
+    #     # Percent should add up to ~100
+    #     total_pct = sum(d["percent_of_total"] for d in result)
+    #     self.assertAlmostEqual(total_pct, 100.0, places=0)
+    #
+    # def test_per_device_usage_lan_only_ordered_by_bytes(self):
+    #     """NetTap itself (6.9 MB, 26K conns) outranked a 22.7 GB device; internet hosts listed."""
+    #     self.mock_client.search.return_value = {
+    #         "aggregations": {
+    #             "orig_bytes": {"value": 600},
+    #             "resp_bytes": {"value": 400},
+    #             "by_device": {
+    #                 "buckets": [
+    #                     {
+    #                         "key": "192.168.1.188",
+    #                         "doc_count": 3,
+    #                         "orig_bytes": {"value": 100},
+    #                         "resp_bytes": {"value": 150},
+    #                     }
+    #                 ]
+    #             },
+    #         }
+    #     }
+    #     lan = {"terms": {"source.ip": ["192.168.1.0/24"]}}
+    #     result = self.tracker.get_per_device_usage(
+    #         "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z", lan_filter=lan
+    #     )
+    #     body = self.mock_client.search.call_args.kwargs["body"]
+    #     self.assertIn(lan, body["query"]["bool"]["filter"])
+    #     terms = body["aggs"]["by_device"]["terms"]
+    #     self.assertEqual(terms["order"], {"total_bytes": "desc"})
+    #     self.assertNotIn("bucket_sort", body["aggs"]["by_device"]["aggs"])
+    #     # share of ALL LAN traffic (1000), not of the returned rows (250)
+    #     self.assertEqual(result[0]["percent_of_total"], 25.0)
+    #
+    # def test_per_device_usage_defaults_to_rfc1918_sources(self):
+    #     from services.excluded_ips import RFC1918_SOURCE_FILTER
+    #
+    #     self.mock_client.search.return_value = {"aggregations": {}}
+    #     self.tracker.get_per_device_usage(
+    #         "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+    #     )
+    #     body = self.mock_client.search.call_args.kwargs["body"]
+    #     self.assertIn(RFC1918_SOURCE_FILTER, body["query"]["bool"]["filter"])
+    #
+    # def test_per_device_usage_opensearch_error_raises(self):
+    #     """A failed query raises (#96): [] would read as no device using bandwidth."""
+    #     from opensearchpy import OpenSearchException
+    #
+    #     self.mock_client.search.side_effect = OpenSearchException("timeout")
+    #
+    #     with self.assertRaises(OpenSearchException):
+    #         self.tracker.get_per_device_usage(
+    #             "2026-03-01T00:00:00Z", "2026-03-08T00:00:00Z"
+    #         )
+    # OLD CODE END
 
     def test_projected_monthly(self):
         """Projection should extrapolate based on current usage and days elapsed."""

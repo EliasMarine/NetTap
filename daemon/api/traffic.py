@@ -25,6 +25,11 @@ from services.excluded_ips import (
     build_excluded_ips_filter,
     valid_excluded_ips,
 )
+from services.device_accounting import (
+    direction_aggs,
+    gateways_if_needed,
+    split_direction,
+)
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
 from services.iot_monitor import (
     ENCRYPTED_CONN_FILTER,
@@ -292,18 +297,33 @@ def handle_traffic_summary(request: web.Request) -> web.Response:
             "total_orig_pkts": {"sum": {"field": "source.packets", "missing": 0}},
             "total_resp_pkts": {"sum": {"field": "destination.packets", "missing": 0}},
             "top_protocol": {"terms": {"field": "network.transport", "size": 1}},
+            # NET-226 (B-d): upload/download from the LAN's side, and local traffic apart
+            **direction_aggs(request.app.get("lan_filter")),
         },
     }
 
     try:
         result = client.search(index=NETWORK_INDEX, body=query)
+        aggs = result.get("aggregations", {})
+        gateways = gateways_if_needed(
+            client,
+            [aggs],
+            query["query"]["bool"]["filter"],
+            request.app.get("lan_filter"),
+            "traffic summary",
+        )
+    except QueryFailed as exc:
+        logger.error("Incomplete search in traffic/summary: %s", exc)
+        return web.json_response(
+            {"error": "The traffic search was incomplete"}, status=502
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/summary: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
 
-    aggs = result.get("aggregations", {})
+    # OLD CODE: aggs = result.get("aggregations", {}) (NET-226: read inside the try, for the gateways)
     hits_total = result.get("hits", {}).get("total", {})
     connection_count = (
         hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
@@ -324,6 +344,7 @@ def handle_traffic_summary(request: web.Request) -> web.Response:
             "total_bytes": orig_bytes + resp_bytes,
             "orig_bytes": orig_bytes,
             "resp_bytes": resp_bytes,
+            **split_direction(orig_bytes, resp_bytes, aggs, gateways),
             "packet_count": orig_pkts + resp_pkts,
             "connection_count": connection_count,
             "top_protocol": top_protocol,
@@ -708,6 +729,8 @@ def handle_bandwidth(request: web.Request) -> web.Response:
                 "aggs": {
                     "orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
                     "resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
+                    # NET-226 (B-d): upload/download from the LAN's side, local apart
+                    **direction_aggs(request.app.get("lan_filter")),
                 },
             }
         },
@@ -715,6 +738,21 @@ def handle_bandwidth(request: web.Request) -> web.Response:
 
     try:
         result = client.search(index=NETWORK_INDEX, body=query)
+        buckets = histogram_buckets(
+            result.get("aggregations", {}).get("bandwidth_over_time")
+        )
+        gateways = gateways_if_needed(
+            client,
+            buckets,
+            query["query"]["bool"]["filter"],
+            request.app.get("lan_filter"),
+            "traffic bandwidth",
+        )
+    except QueryFailed as exc:
+        logger.error("Incomplete search in traffic/bandwidth: %s", exc)
+        return web.json_response(
+            {"error": "The traffic search was incomplete"}, status=502
+        )
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/bandwidth: %s", exc)
         return web.json_response(
@@ -726,9 +764,11 @@ def handle_bandwidth(request: web.Request) -> web.Response:
     #     result.get("aggregations", {}).get("bandwidth_over_time", {}).get("buckets", [])
     # )
     # OLD CODE END
-    buckets = histogram_buckets(
-        result.get("aggregations", {}).get("bandwidth_over_time")
-    )
+    # OLD CODE START — NET-226: read inside the try above, for the gateways
+    # buckets = histogram_buckets(
+    #     result.get("aggregations", {}).get("bandwidth_over_time")
+    # )
+    # OLD CODE END
 
     series = [
         {
@@ -737,6 +777,12 @@ def handle_bandwidth(request: web.Request) -> web.Response:
             "resp_bytes": b.get("resp_bytes", {}).get("value", 0) or 0,
             "total_bytes": (b.get("orig_bytes", {}).get("value", 0) or 0)
             + (b.get("resp_bytes", {}).get("value", 0) or 0),
+            **split_direction(
+                b.get("orig_bytes", {}).get("value", 0) or 0,
+                b.get("resp_bytes", {}).get("value", 0) or 0,
+                b,
+                gateways,
+            ),
             "connections": b.get("doc_count", 0),
         }
         for b in buckets

@@ -668,14 +668,25 @@ class TestVendorFromMalcolm:
             client.store["0E:CC:55:A1:28:66"]["manufacturer"] is None
         )  # randomized MAC
 
-    def test_category_outside_the_grid_groups_is_unknown(self):
+    # OLD CODE START — DEV-7 (NET-237): the registry dropped "media", so By type's Media group
+    # stayed empty while All devices showed the same speaker as Media
+    # def test_category_outside_the_grid_groups_is_unknown(self):
+    #     sonos = _bucket("192.168.1.30", "48:a6:b8:00:00:01", "Sonos, Inc.")
+    #     client = _fake_client([sonos])
+    #
+    #     refresh_device_registry(_app(client))
+    #
+    #     doc = client.store["48:A6:B8:00:00:01"]
+    #     assert (doc["manufacturer"], doc["category"]) == ("Sonos, Inc.", "unknown")
+    # OLD CODE END
+    def test_a_media_vendor_is_stored_as_media(self):
         sonos = _bucket("192.168.1.30", "48:a6:b8:00:00:01", "Sonos, Inc.")
         client = _fake_client([sonos])
 
         refresh_device_registry(_app(client))
 
         doc = client.store["48:A6:B8:00:00:01"]
-        assert (doc["manufacturer"], doc["category"]) == ("Sonos, Inc.", "unknown")
+        assert (doc["manufacturer"], doc["category"]) == ("Sonos, Inc.", "media")
 
 
 class TestIpOwnership:

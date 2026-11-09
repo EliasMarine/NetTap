@@ -24,6 +24,17 @@ from typing import TYPE_CHECKING, Any
 from opensearchpy import NotFoundError, OpenSearchException
 
 from services.device_fingerprint import _mac_from_hit
+from services.device_accounting import (
+    BYTE_SUMS,
+    bucket_bytes,
+    fold_ipv6,
+    forwarded_macs,
+    gateway_macs,
+    ipv6_by_mac,
+    ipv6_clause,
+    side_bytes,
+    side_sums,
+)
 from services.excluded_ips import CONN_ACCOUNTING
 from storage.snapshot_search import QueryFailed, checked
 
@@ -63,7 +74,10 @@ NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
 # Device categories
 CATEGORY_UNKNOWN = "unknown"
-VALID_CATEGORIES = {"computer", "phone", "iot", "infrastructure", "unknown"}
+# OLD CODE: VALID_CATEGORIES = {"computer", "phone", "iot", "infrastructure", "unknown"}
+# DEV-7: without "media" the Devices page's Media type could never be stored, so By type's
+# Media group stayed empty while All devices showed consoles and streamers as Media
+VALID_CATEGORIES = {"computer", "phone", "iot", "infrastructure", "media", "unknown"}
 
 # Index mapping for nettap-devices
 _DEVICES_INDEX_MAPPING = {
@@ -513,28 +527,195 @@ class DeviceRegistry:
         )
         return int(result.get("count", 0))
 
-    def get_device_traffic(self, mac: str, from_ts: str, to_ts: str) -> dict:
-        """Get traffic summary for a device by MAC address.
+    # OLD CODE START — NET-226: the sessions the device started only (source.mac or source.ip),
+    # with source/destination bytes as out/in; IPv4 matched by MAC too, so a router's page took
+    # every inbound connection it forwarded
+    # def get_device_traffic(self, mac: str, from_ts: str, to_ts: str) -> dict:
+    #     """Get traffic summary for a device by MAC address.
+    #
+    #     Queries arkime_sessions3-* for connections where source.mac matches.
+    #
+    #     Returns:
+    #         Dict with total_bytes, connection_count, protocols, top_destinations.
+    #     """
+    #     mac = self._normalize_mac(mac)
+    #
+    #     # Also look up all known IPs for this device to query by IP as well
+    #     device = self.get_device(mac)
+    #     ips = device.get("ips", []) if device else []
+    #
+    #     # Build should clauses: match by MAC or any known IP
+    #     should_clauses: list[dict] = [
+    #         {"term": {"source.mac": mac}},
+    #         {"term": {"source.mac": mac.lower()}},
+    #     ]
+    #     for ip in ips:
+    #         should_clauses.append({"term": {"source.ip": ip}})
+    #
+    #     query = {
+    #         "size": 0,
+    #         # hits.total is shown as a count; without this OpenSearch stops at 10,000
+    #         "track_total_hits": True,
+    #         "query": {
+    #             "bool": {
+    #                 "filter": [
+    #                     {
+    #                         "range": {
+    #                             "@timestamp": {
+    #                                 "gte": from_ts,
+    #                                 "lte": to_ts,
+    #                                 "format": "strict_date_optional_time",
+    #                             }
+    #                         }
+    #                     },
+    #                     # connection_count counts connections, not DNS/SSL logs or alerts
+    #                     # OLD CODE START — F1: also counted conn_long.log interim records
+    #                     # CONN_RECORDS,
+    #                     # OLD CODE END
+    #                     CONN_ACCOUNTING,
+    #                 ],
+    #                 "should": should_clauses,
+    #                 "minimum_should_match": 1,
+    #             }
+    #         },
+    #         "aggs": {
+    #             "total_bytes": {
+    #                 "sum": {
+    #                     "script": {
+    #                         "source": (
+    #                             "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+    #                             " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+    #                         ),
+    #                         "lang": "painless",
+    #                     }
+    #                 }
+    #             },
+    #             # #89: the MAC page shows in/out and per-destination bytes; without these it read 0
+    #             "outbound_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
+    #             "inbound_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
+    #             "protocols": {"terms": {"field": "network.transport", "size": 10}},
+    #             # OLD CODE START — #89: connection counts only
+    #             # "top_destinations": {"terms": {"field": "destination.ip", "size": 20}},
+    #             # OLD CODE END
+    #             # Ranked by bytes: the MAC page draws byte bars with ranks (by connection count
+    #             # its #1 read 673 KB and its #8 507 MB)
+    #             "top_destinations": {
+    #                 # #90: ordered by a sum, so each shard must return every destination to rank exactly
+    #                 "terms": {
+    #                     "field": "destination.ip",
+    #                     "size": 20,
+    #                     "order": {"bytes": "desc"},
+    #                     "shard_size": 10_000,
+    #                 },
+    #                 "aggs": {
+    #                     "bytes": {
+    #                         "sum": {
+    #                             "script": {
+    #                                 "source": (
+    #                                     "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
+    #                                     " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
+    #                                 ),
+    #                                 "lang": "painless",
+    #                             }
+    #                         }
+    #                     },
+    #                 },
+    #             },
+    #         },
+    #     }
+    #
+    #     # OLD CODE START — #96: a failure read as a device with no traffic
+    #     # try:
+    #     #     result = self._client.search(index=NETWORK_INDEX, body=query)
+    #     # except OpenSearchException as exc:
+    #     #     logger.error("Failed to get traffic for device %s: %s", mac, exc)
+    #     #     return {"mac": mac, "total_bytes": 0, "inbound_bytes": 0, "outbound_bytes": 0,
+    #     #             "connection_count": 0, "protocols": [], "top_protocols": [], "top_destinations": []}
+    #     # OLD CODE END
+    #     result = self._client.search(index=NETWORK_INDEX, body=query)
+    #
+    #     aggs = result.get("aggregations", {})
+    #     hits_total = result.get("hits", {}).get("total", {})
+    #     connection_count = (
+    #         hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
+    #     )
+    #
+    #     protocol_buckets = aggs.get("protocols", {}).get("buckets", [])
+    #     protocols = [b["key"] for b in protocol_buckets]
+    #     # OLD CODE START — #89: connections only, so the MAC page drew every bar as 0 bytes
+    #     # top_destinations = [
+    #     #     {"ip": b["key"], "connections": b["doc_count"]}
+    #     #     for b in aggs.get("top_destinations", {}).get("buckets", [])
+    #     # ]
+    #     # OLD CODE END
+    #     top_destinations = [
+    #         {
+    #             "ip": b["key"],
+    #             "connections": b["doc_count"],
+    #             "bytes": int(b.get("bytes", {}).get("value") or 0),
+    #         }
+    #         for b in aggs.get("top_destinations", {}).get("buckets", [])
+    #     ]
+    #
+    #     return {
+    #         "mac": mac,
+    #         "total_bytes": aggs.get("total_bytes", {}).get("value", 0) or 0,
+    #         "inbound_bytes": int(aggs.get("inbound_bytes", {}).get("value") or 0),
+    #         "outbound_bytes": int(aggs.get("outbound_bytes", {}).get("value") or 0),
+    #         "connection_count": connection_count,
+    #         "protocols": protocols,
+    #         # the shape the MAC page reads; `protocols` stays for other callers
+    #         "top_protocols": [
+    #             {"name": b["key"], "count": b["doc_count"]} for b in protocol_buckets
+    #         ],
+    #         "top_destinations": top_destinations,
+    #     }
+    # OLD CODE END
 
-        Queries arkime_sessions3-* for connections where source.mac matches.
+    def get_device_traffic(
+        self, mac: str, from_ts: str, to_ts: str, lan_filter: dict | None = None
+    ) -> dict:
+        """Traffic of one device by MAC, both sides of its connections (NET-226).
 
-        Returns:
-            Dict with total_bytes, connection_count, protocols, top_destinations.
+        IPv4 by the addresses the registry holds for it, the sessions it started and the ones
+        it answered; IPv6 by its MAC as the device list folds it (services.device_accounting).
+        inbound/outbound are the device's download/upload. QueryFailed if a read is partial.
         """
         mac = self._normalize_mac(mac)
-
-        # Also look up all known IPs for this device to query by IP as well
         device = self.get_device(mac)
         ips = device.get("ips", []) if device else []
-
-        # Build should clauses: match by MAC or any known IP
-        should_clauses: list[dict] = [
-            {"term": {"source.mac": mac}},
-            {"term": {"source.mac": mac.lower()}},
+        wire_mac = mac.lower()  # how Malcolm stores it
+        filters = [
+            {
+                "range": {
+                    "@timestamp": {
+                        "gte": from_ts,
+                        "lte": to_ts,
+                        "format": "strict_date_optional_time",
+                    }
+                }
+            },
+            {"term": {"event.provider": "zeek"}},
+            CONN_ACCOUNTING,
         ]
-        for ip in ips:
-            should_clauses.append({"term": {"source.ip": ip}})
+        per_mac = ipv6_by_mac(self._client, filters, [wire_mac], "MAC page (IPv6)")
+        gateways = gateway_macs(
+            self._client,
+            filters,
+            lan_filter,
+            forwarded_macs(per_mac),
+            "MAC page (gateways)",
+        )
+        v6 = fold_ipv6(per_mac, gateways).get(wire_mac, {})
+        link_local_only = v6.get("reason") is not None
 
+        def side(field: str) -> dict:
+            own = [ipv6_clause(field, wire_mac, link_local_only)]
+            if ips:
+                own = [{"terms": {f"{field}.ip": ips}}, *own]
+            return {"bool": {"should": own, "minimum_should_match": 1}}
+
+        started, answered = side("source"), side("destination")
         query = {
             "size": 0,
             # hits.total is shown as a count; without this OpenSearch stops at 10,000
@@ -542,116 +723,72 @@ class DeviceRegistry:
             "query": {
                 "bool": {
                     "filter": [
+                        *filters,
                         {
-                            "range": {
-                                "@timestamp": {
-                                    "gte": from_ts,
-                                    "lte": to_ts,
-                                    "format": "strict_date_optional_time",
-                                }
+                            "bool": {
+                                "should": [started, answered],
+                                "minimum_should_match": 1,
                             }
                         },
-                        # connection_count counts connections, not DNS/SSL logs or alerts
-                        # OLD CODE START — F1: also counted conn_long.log interim records
-                        # CONN_RECORDS,
-                        # OLD CODE END
-                        CONN_ACCOUNTING,
-                    ],
-                    "should": should_clauses,
-                    "minimum_should_match": 1,
+                    ]
                 }
             },
             "aggs": {
-                "total_bytes": {
-                    "sum": {
-                        "script": {
-                            "source": (
-                                "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
-                                " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
-                            ),
-                            "lang": "painless",
-                        }
-                    }
-                },
-                # #89: the MAC page shows in/out and per-destination bytes; without these it read 0
-                "outbound_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
-                "inbound_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
+                **side_sums(answered),
                 "protocols": {"terms": {"field": "network.transport", "size": 10}},
-                # OLD CODE START — #89: connection counts only
-                # "top_destinations": {"terms": {"field": "destination.ip", "size": 20}},
-                # OLD CODE END
-                # Ranked by bytes: the MAC page draws byte bars with ranks (by connection count
-                # its #1 read 673 KB and its #8 507 MB)
-                "top_destinations": {
-                    # #90: ordered by a sum, so each shard must return every destination to rank exactly
-                    "terms": {
-                        "field": "destination.ip",
-                        "size": 20,
-                        "order": {"bytes": "desc"},
-                        "shard_size": 10_000,
-                    },
+                # Where it connected to, ranked by bytes (#90: every shard returns every one)
+                "started": {
+                    "filter": started,
                     "aggs": {
-                        "bytes": {
-                            "sum": {
-                                "script": {
-                                    "source": (
-                                        "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0)"
-                                        " + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)"
-                                    ),
-                                    "lang": "painless",
-                                }
-                            }
-                        },
+                        "top_destinations": {
+                            "terms": {
+                                "field": "destination.ip",
+                                "size": 20,
+                                "order": {"order_bytes": "desc"},
+                                "shard_size": 10_000,
+                            },
+                            "aggs": {
+                                **BYTE_SUMS,
+                                "order_bytes": {"sum": {"field": "network.bytes"}},
+                            },
+                        }
                     },
                 },
             },
         }
-
-        # OLD CODE START — #96: a failure read as a device with no traffic
-        # try:
-        #     result = self._client.search(index=NETWORK_INDEX, body=query)
-        # except OpenSearchException as exc:
-        #     logger.error("Failed to get traffic for device %s: %s", mac, exc)
-        #     return {"mac": mac, "total_bytes": 0, "inbound_bytes": 0, "outbound_bytes": 0,
-        #             "connection_count": 0, "protocols": [], "top_protocols": [], "top_destinations": []}
-        # OLD CODE END
         result = self._client.search(index=NETWORK_INDEX, body=query)
 
         aggs = result.get("aggregations", {})
         hits_total = result.get("hits", {}).get("total", {})
-        connection_count = (
-            hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
-        )
 
+        upload, download = side_bytes(aggs)
         protocol_buckets = aggs.get("protocols", {}).get("buckets", [])
-        protocols = [b["key"] for b in protocol_buckets]
-        # OLD CODE START — #89: connections only, so the MAC page drew every bar as 0 bytes
-        # top_destinations = [
-        #     {"ip": b["key"], "connections": b["doc_count"]}
-        #     for b in aggs.get("top_destinations", {}).get("buckets", [])
-        # ]
-        # OLD CODE END
-        top_destinations = [
-            {
-                "ip": b["key"],
-                "connections": b["doc_count"],
-                "bytes": int(b.get("bytes", {}).get("value") or 0),
-            }
-            for b in aggs.get("top_destinations", {}).get("buckets", [])
-        ]
-
+        destinations = (
+            aggs.get("started", {}).get("top_destinations", {}).get("buckets", [])
+        )
         return {
             "mac": mac,
-            "total_bytes": aggs.get("total_bytes", {}).get("value", 0) or 0,
-            "inbound_bytes": int(aggs.get("inbound_bytes", {}).get("value") or 0),
-            "outbound_bytes": int(aggs.get("outbound_bytes", {}).get("value") or 0),
-            "connection_count": connection_count,
-            "protocols": protocols,
+            "total_bytes": upload + download,
+            "inbound_bytes": download,
+            "outbound_bytes": upload,
+            "connection_count": hits_total.get("value", 0)
+            if isinstance(hits_total, dict)
+            else hits_total,
+            "protocols": [b["key"] for b in protocol_buckets],
             # the shape the MAC page reads; `protocols` stays for other callers
             "top_protocols": [
                 {"name": b["key"], "count": b["doc_count"]} for b in protocol_buckets
             ],
-            "top_destinations": top_destinations,
+            "top_destinations": [
+                {
+                    "ip": b["key"],
+                    "connections": b["doc_count"],
+                    "bytes": bucket_bytes(b),
+                }
+                for b in destinations
+            ],
+            "ipv6_left_out": v6.get("left_out", 0),
+            "ipv6_left_out_reason": v6.get("reason"),
         }
 
     def search_devices(self, query_str: str) -> list[dict]:
