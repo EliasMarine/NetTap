@@ -974,6 +974,17 @@ services:
       NETTAP_BEACON_BACKGROUND: "${NETTAP_BEACON_BACKGROUND:-1}"
       # Process-wide (whois, threat-intel feeds, update check, UniFi); 2 x 2 s stays under the 6 s lookup bound (NET-192 PR 3)
       RES_OPTIONS: "timeout:2 attempts:2"
+      # Notifications (NET-224): the daemon sends them. An SMTP server saved in Settings › API keys
+      # wins over these. ALERT_EMAIL, WEBHOOK_URL and ALERT_SEVERITY_THRESHOLD seed Settings ›
+      # Notifications once, while /opt/nettap/data/notifications.json doesn't exist yet.
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: "${SMTP_PORT:-}"
+      SMTP_USERNAME: "${SMTP_USERNAME:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_SENDER_EMAIL: "${SMTP_SENDER_EMAIL:-}"
+      ALERT_EMAIL: "${ALERT_EMAIL:-}"
+      WEBHOOK_URL: "${WEBHOOK_URL:-}"
+      ALERT_SEVERITY_THRESHOLD: "${ALERT_SEVERITY_THRESHOLD:-}"
     # OLD CODE START — expose not needed with network_mode: host (port is
     # directly on the host network, no Docker port mapping required)
     # expose:
