@@ -60,6 +60,7 @@
 	import DeviceTile from '$lib/components/ui/DeviceTile.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { ENCRYPTED_DNS_NOTE } from '$lib/api/dns';
+	import { captureMode, initCaptureMode } from '$lib/stores/captureMode';
 	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import AreaChart, { type AreaSeries } from '$lib/components/ui/charts/AreaChart.svelte';
 	import Ring from '$lib/components/ui/charts/Ring.svelte';
@@ -337,6 +338,8 @@
 	// OLD CODE END
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
+		// NET-225: the risk card's bridge-mode label; asks again if the startup request failed
+		void initCaptureMode();
 		const ip = deviceIp;
 		const r = range;
 		const s = rangeSpan(range);
@@ -840,12 +843,16 @@ OLD CODE END -->
 			{/if}
 		</Card>
 
-		<Card class="c-4" title="Risk score" sub="Out of 100 · higher is riskier · {RANGE_LABEL[range].toLowerCase()}">
+		<!-- OLD CODE: title="Risk score" in every mode (NET-225: post-NAT, one address can carry several devices) -->
+		<Card class="c-4" title={$captureMode === 'bridge' ? 'Risk score for this address' : 'Risk score'} sub="Out of 100 · higher is riskier · {RANGE_LABEL[range].toLowerCase()}">
 			{#if riskLoaded}
 				<div class="trust-top">
 					<Ring value={riskScore} ariaLabel="Risk score {riskScore} of 100, {riskLevel}" />
 					{#if riskSeverity}<SeverityPill level={riskSeverity} />{/if}
 				</div>
+				{#if $captureMode === 'bridge'}
+					<p class="trust-plain">In inline bridge mode this score uses the traffic seen for this address. After your router's IPv4 address translation one address can carry several devices' traffic, so it can't stand for a single device's risk.</p>
+				{/if}
 				<!-- OLD CODE: <p class="note">{loadFailed('the risk score', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
 				{#if riskFailed}<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('the risk score', true)}</span></p>{/if}
 				{#if riskFactors.length > 0}

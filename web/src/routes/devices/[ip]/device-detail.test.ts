@@ -4,6 +4,7 @@ import { readable } from 'svelte/store';
 import { getSmartAlerts, suppressAlert } from '$api/alerts';
 import { getDeviceDetail } from '$api/devices';
 import { ENCRYPTED_DNS_NOTE } from '$lib/api/dns';
+import { captureMode } from '$lib/stores/captureMode';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
@@ -415,5 +416,33 @@ describe('Device detail — DNS activity', () => {
 		expect(await screen.findByText('No plain DNS lookups seen.')).toBeInTheDocument();
 		expect(screen.getByText(ENCRYPTED_DNS_NOTE)).toBeInTheDocument();
 		expect(screen.queryByText('No DNS data.')).not.toBeInTheDocument();
+	});
+});
+
+// NET-225: post-NAT, one address can carry several devices' traffic; the card must not read as one device's
+describe('Device detail — risk score in inline bridge mode', () => {
+	afterEach(() => {
+		captureMode.set(null);
+		vi.clearAllMocks();
+	});
+
+	async function renderRisk(): Promise<void> {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+		render(Page);
+		await screen.findByRole('img', { name: /^Risk score \d+ of 100/ });
+	}
+
+	it('labels the score as this address\'s and says it can\'t stand for one device', async () => {
+		captureMode.set('bridge');
+		await renderRisk();
+		expect(screen.getByRole('heading', { name: 'Risk score for this address' })).toBeInTheDocument();
+		expect(screen.getByText(/one address can carry several devices' traffic, so it can't stand for a single device's risk/)).toBeInTheDocument();
+	});
+
+	it('keeps "Risk score" in mirror mode', async () => {
+		captureMode.set('mirror');
+		await renderRisk();
+		expect(screen.getByRole('heading', { name: 'Risk score' })).toBeInTheDocument();
+		expect(screen.queryByText(/can't stand for a single device's risk/)).not.toBeInTheDocument();
 	});
 });
