@@ -153,3 +153,14 @@ No compose change. Rebuild and recreate `nettap-storage-daemon` and `nettap-web`
 - **L8:** `growthSummary` leaves out the hot-tier need while setup's hot-days field is empty or not a positive number. It used to read "null days … 0 B".
 - **L11:** the dead `source === 'mock'` branches for `/api/setup/storage` are removed, kept as OLD CODE. The route has answered 503 since A16, and the two tests that fed a mock reply now send the 503.
 - Each behaviour change has a test that fails on the old code. Vitest: 4469 passed. svelte-check: 0 errors. `check:colors`: clean.
+
+## Python review fixes (branch `fix/net-227-review2`)
+
+- **An invalid backup no longer restores anything.** `handle_import` decided whether to run the live restore by looking for `skipped` in the result, and a failed validation's reply carries `"skipped": []` too. So a file with a newer schema, imported with `?apply_capture=1`, saved retention, pushed ILM and restarted capture, and only then answered 400. The handler now validates first and answers 400 before anything applies. A body that isn't an object is now a 400, not a 500.
+- **A schema version that isn't a whole number** (`"2"`, `null`) is a validation error. Before, it was a 500 from a TypeError.
+- **A malformed `bandwidth_cap` can't stop the daemon starting.**
+  - Restore takes only `{"monthly_cap_bytes": whole number >= 0}` and writes it atomically.
+  - An empty section is skipped with a reason. Anything else is an error, and the file is kept.
+  - `BandwidthTracker._load_cap` falls back to the default for a non-object, Infinity or an unreadable file. Before, that error escaped from `create_app`.
+  - The tests now use the tracker's real shape. They had used `{"monthly_cap_gb": 500}`.
+- **Tests:** 16 fail on the old code. Daemon: 4557 passed. One failure is already on the combined tip: `test_error_replies`, from NET-226/NET-237 (`bandwidth.py:159`, `traffic.py:317/753`). It isn't from this branch.
