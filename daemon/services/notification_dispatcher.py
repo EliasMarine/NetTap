@@ -6,8 +6,8 @@ go to the channels the routing rules pick. Each channel gets at most one message
 of the alerts that are new for it. A channel whose send fails keeps those alerts and tries again
 after a back-off, so a short outage loses nothing; the state survives restarts.
 
-A channel gets at most DAILY_BUDGET messages a UTC day; past it, new alerts are counted, shown
-as the channel's status and left on the Alerts page.
+A channel gets at most DAILY_BUDGET messages a UTC day (failed sends don't count); past it, new
+alerts are counted, shown as the channel's status and left on the Alerts page.
 
 New for a channel means: never handled, more severe than when it was, or a newer occurrence once
 the hour's cooldown is over. Re-reading the same occurrences (the poll windows overlap, and a
@@ -37,8 +37,8 @@ KEEP_DONE = timedelta(hours=2)
 RETRY_AFTER = (timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=15))
 MAX_PENDING = 50
 DIGEST_LINES = 10
-# Sends a channel gets per UTC day, attempts included (a provider counts those): alerts an
-# attacker can trip must not use up Gmail's ~500 a day or Pushover's ~330 (review M2)
+# Messages a channel gets per UTC day, failed sends not counted (a server outage mustn't use up
+# the day): alerts an attacker can trip must not use up Gmail's ~500 a day or Pushover's ~330 (review M2)
 DAILY_BUDGET = 100
 _EMPTY: dict = {"done": {}, "pending": [], "retry_at": None}
 
@@ -355,13 +355,16 @@ class AlertDispatcher:
                 f"\n\nThis is the last notification today on this channel (limit "
                 f"{DAILY_BUDGET} a day, UTC). Later alerts are on NetTap's Alerts page."
             )
-        today = {**today, "sent": today["sent"] + 1}
+        # OLD CODE START — delta review: a failed send used the budget, so a server outage spent the day
+        # today = {**today, "sent": today["sent"] + 1}
+        # OLD CODE END
         if await self._hub.send(cid, title, body, worst):
             return {
                 "done": {**done, **_record(candidates, now, True)},
                 "pending": [],
                 "retry_at": None,
                 **today,
+                "sent": today["sent"] + 1,
             }
 
         tried = [{**i, "attempts": i["attempts"] + 1} for i in candidates]

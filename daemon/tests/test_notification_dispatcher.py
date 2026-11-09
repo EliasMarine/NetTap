@@ -315,11 +315,27 @@ def test_a_channel_gets_at_most_the_daily_budget_then_a_held_count_until_tomorro
         assert "ET TEST signature 105" not in h.sent_to(h.high)[-1][2]
 
 
-def test_failed_attempts_count_against_the_budget(h):
-    """A provider counts each attempt, so retries of one failing batch use the budget too."""
+# OLD CODE START — delta review: a failed send no longer uses the budget (an outage spent it)
+# def test_failed_attempts_count_against_the_budget(h):
+#     """A provider counts each attempt, so retries of one failing batch use the budget too."""
+#     h.fail = {h.high}
+#     with patch.object(nd, "DAILY_BUDGET", 2):
+#         h.groups = [group(1, 1, 0)]
+#         for minute in (1, 2, 7, 22):
+#             h.poll(minute)
+#     assert len(h.sent_to(h.high)) == 2
+# OLD CODE END
+def test_failed_sends_leave_the_budget_for_when_the_server_is_back(h):
+    """The mail server is down for two hours with an alert a minute: nothing was sent, so none of
+    the day's messages are used, and alerts go out again once it is back."""
     h.fail = {h.high}
-    with patch.object(nd, "DAILY_BUDGET", 2):
-        h.groups = [group(1, 1, 0)]
-        for minute in (1, 2, 7, 22):
+    with patch.object(nd, "DAILY_BUDGET", 3):
+        for minute in range(1, 121):
+            h.groups = [group(100 + minute, 1, minute - 0.5)]
             h.poll(minute)
-    assert len(h.sent_to(h.high)) == 2
+        assert len(h.sent_to(h.high)) > 3  # tried on the back-off pace, never delivered
+        h.take()
+        h.fail = set()
+        h.groups = [group(500, 1, 121)]
+        h.poll(122)
+        assert len(h.sent_to(h.high)) == 1
