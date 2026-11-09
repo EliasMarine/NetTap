@@ -43,7 +43,7 @@
 	import type { CaptureHealthResponse, CaptureStatsResponse } from '$api/capture';
 	import {
 		formatBytes, formatBytesShort, formatNumber, computePreviousPeriod, localMidnight, trendPercent, NO_TREND,
-		kpiDelta, kpiWindow, smartLevel, captureStage, packetsStage, systemStage, openSearchStage,
+		kpiDelta, kpiWindow, smartLevel, captureStage, packetsStage, systemStage, openSearchStage, dataStage,
 	} from './home';
 
 	// ---------------------------------------------------------------------------
@@ -628,6 +628,8 @@
 		packetsStage(captureStats, !!failed.captureStats),
 		systemStage(systemHealth, !!failed.health),
 		openSearchStage(systemHealth, !!failed.health),
+		// F2: the newest record's age and the sensors, so stopped ingestion can't read healthy
+		dataStage(systemHealth, !!failed.health),
 	]);
 </script>
 

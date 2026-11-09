@@ -9,7 +9,7 @@ and nvme-cli as primary NVMe tool.
 """
 
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 
 
 from smart.monitor import (
@@ -1012,6 +1012,8 @@ def test_system_health_not_healthy_when_smart_unknown():
     app["storage"] = MagicMock()
     app["storage"].get_status.return_value = {"disk_usage_percent": 10.0}
     app["smart"] = SmartMonitor(device="/dev/sda")
+    # F2's data probe answers "fresh", so only the drive decides here
+    app["pipeline_health"] = MagicMock(get=AsyncMock(return_value={"state": "fresh"}))
     req = make_mocked_request("GET", "/api/system/health", app=app)
     with (
         patch.object(SmartMonitor, "get_raw_data", return_value={}),

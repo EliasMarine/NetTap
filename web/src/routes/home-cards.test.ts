@@ -115,7 +115,8 @@ describe('Home — card states', () => {
 			]),
 		);
 		expect(screen.getAllByText('Loading…')).toHaveLength(4); // the four KPIs, valued "—"
-		expect(screen.getAllByText('Checking…')).toHaveLength(4); // the four pipeline stages
+		// OLD CODE: …toHaveLength(4); // the four pipeline stages (F2 added the Data stage)
+		expect(screen.getAllByText('Checking…')).toHaveLength(5); // the five pipeline stages
 	});
 
 	it('shows each card empty when its request succeeds with nothing', async () => {

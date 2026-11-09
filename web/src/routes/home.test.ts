@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	captureStage,
+	dataStage,
 	formatBytes,
 	formatBytesShort,
 	kpiDelta,
@@ -145,6 +146,24 @@ describe('capture pipeline stages', () => {
 		expect(openSearchStage(system(), false)).toMatchObject({ status: 'ok', detail: 'Connected' });
 		expect(openSearchStage(system({ opensearch_reachable: false }), false)).toMatchObject({ status: 'failing', detail: 'Unreachable' });
 		expect(openSearchStage(null, true).status).toBe('unknown');
+	});
+
+	// F2: storage, SMART and OpenSearch fine said nothing about whether data still arrives
+	it('data reads the pipeline: stale data fails the stage while the system stage stays its own', () => {
+		const pipeline = {
+			state: 'stale', newest_record_at: '2026-11-08T20:13:00+00:00', age_seconds: 47 * 60, threshold_seconds: 900,
+			sensors: {}, checked_at: '2026-11-08T21:00:00+00:00',
+		} as const;
+		expect(dataStage(system({ status: 'problem', healthy: false, pipeline }), false)).toEqual({
+			key: 'data', label: 'Data', status: 'failing', detail: 'No new records for 47 min',
+		});
+		expect(dataStage(system({ pipeline: { ...pipeline, state: 'fresh', age_seconds: 40 } }), false)).toMatchObject({
+			status: 'ok', detail: 'Newest record 40 s ago',
+		});
+		// a daemon older than the web app sends no pipeline: Unknown, never healthy
+		expect(dataStage(system(), false)).toMatchObject({ status: 'unknown', detail: 'Unknown' });
+		expect(dataStage(null, true)).toMatchObject({ status: 'unknown', detail: 'Unknown: the health check failed' });
+		expect(dataStage(null, false)).toMatchObject({ status: 'unknown', detail: 'Checking…' });
 	});
 });
 

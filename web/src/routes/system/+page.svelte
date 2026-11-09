@@ -3,7 +3,7 @@
 	import { getSystemHealth, getStorageStatus, getSmartHealth } from '$api/system.js';
 	import { getTSharkStatus } from '$api/tshark.js';
 	import { getCyberChefStatus } from '$api/cyberchef.js';
-	import { healthStage, type SystemHealth, type StorageStatus, type SmartHealth } from '$api/system.js';
+	import { healthStage, pipelineStage, type SystemHealth, type StorageStatus, type SmartHealth } from '$api/system.js';
 	import type { TSharkStatus } from '$api/tshark.js';
 	import type { CyberChefStatus } from '$api/cyberchef.js';
 	import BridgeStatus from '$lib/components/BridgeStatus.svelte';
@@ -235,7 +235,13 @@
 				: smartHealth && !failed.smart
 					? { key: 'drive', label: 'Drive', status: 'unknown', detail: "Couldn't read the drive" }
 					: waiting('drive', 'Drive', failed.smart);
-		return [daemon, search, disk, drive];
+		// F2: the same words as Home's Data stage
+		const data: PipelineStage =
+			systemHealth && !failed.health
+				? { key: 'data', label: 'Data and sensors', ...pipelineStage(systemHealth.pipeline) }
+				: waiting('data', 'Data and sensors', failed.health);
+		// OLD CODE: return [daemon, search, disk, drive]; (F2: no row said whether current data arrives)
+		return [daemon, search, disk, drive, data];
 	});
 
 	/** S6: judged against the daemon's own pruning lines, from the same response. */

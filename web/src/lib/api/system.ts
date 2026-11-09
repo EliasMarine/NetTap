@@ -28,6 +28,67 @@ export function healthStage(status: HealthStatus | undefined): (typeof HEALTH_ST
 	return (status && HEALTH_STAGE[status]) || { status: 'unknown', detail: 'Unknown' };
 }
 
+/** F2: is current data arriving? The daemon's state table (services/pipeline_health.py). */
+export type PipelineState = 'fresh' | 'stale' | 'no_data' | 'starting' | 'sensor_stopped' | 'unknown';
+
+export interface PipelineHealth {
+	state: PipelineState;
+	/** When the newest Zeek record was indexed (event.ingested), within the last 7 days */
+	newest_record_at: string | null;
+	age_seconds: number | null;
+	/** Older than this (900 s) is stale */
+	threshold_seconds: number;
+	/** Container name → docker state ("running", "exited", "missing" or "unknown"…) */
+	sensors: Record<string, string>;
+	checked_at: string;
+}
+
+const SENSOR_NAMES: Record<string, string> = {
+	'nettap-zeek-live': 'Zeek',
+	'nettap-suricata-live': 'Suricata',
+	'nettap-logstash': 'Logstash',
+	'nettap-filebeat': 'Filebeat',
+};
+
+/** "40 s", "47 min", "5 h", "3 days" */
+function span(seconds: number): string {
+	const s = Math.max(0, Math.round(seconds));
+	if (s < 60) return `${s} s`;
+	if (s < 3600) return `${Math.floor(s / 60)} min`;
+	if (s < 48 * 3600) return `${Math.floor(s / 3600)} h`;
+	return `${Math.floor(s / 86400)} days`;
+}
+
+/** "Zeek", "Zeek and Suricata", "Zeek, Suricata and Logstash" */
+function listWords(words: string[]): string {
+	return words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+}
+
+/** The pipeline's state as a stage: Home's "Data" and System's "Data and sensors" read these words. */
+export function pipelineStage(p: PipelineHealth | undefined): (typeof HEALTH_STAGE)[HealthStatus] {
+	switch (p?.state) {
+		case 'fresh':
+			return { status: 'ok', detail: `Newest record ${span(p.age_seconds ?? 0)} ago` };
+		case 'stale':
+			return { status: 'failing', detail: `No new records for ${span(p.age_seconds ?? p.threshold_seconds)}` };
+		case 'no_data':
+			return { status: 'failing', detail: 'No records in the last 7 days' };
+		case 'sensor_stopped': {
+			const stopped = Object.entries(p.sensors ?? {})
+				.filter(([, s]) => s !== 'running' && s !== 'unknown')
+				.map(([name]) => SENSOR_NAMES[name] ?? name);
+			return { status: 'failing', detail: `${listWords(stopped) || 'A sensor'} stopped` };
+		}
+		case 'starting':
+			return { status: 'warn', detail: 'Starting up' };
+		case 'unknown':
+			return { status: 'warn', detail: "Couldn't check" };
+		// a daemon older than the web app sends no pipeline
+		default:
+			return { status: 'unknown', detail: 'Unknown' };
+	}
+}
+
 export interface SystemHealth {
 	/** The appliance's (host's) uptime in seconds, from /proc/uptime */
 	uptime: number;
@@ -41,6 +102,8 @@ export interface SystemHealth {
 	status: HealthStatus;
 	/** status as a tri-state: null when incomplete */
 	healthy: boolean | null;
+	/** F2: data freshness and sensor state; absent from daemons older than the web app */
+	pipeline?: PipelineHealth;
 }
 
 export interface StorageStatus {

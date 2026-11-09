@@ -99,6 +99,7 @@ from api.network import register_network_routes
 from api.addresses import register_address_routes
 from api.domains import register_domain_routes
 from api.suricata_categories import register_suricata_category_routes
+from services.pipeline_health import OVERALL as PIPELINE_OVERALL, PipelineHealth
 from services.tshark_service import TSharkService
 from services.capture_index import CaptureIndex
 from services.packet_search import PacketSearchService
@@ -529,9 +530,11 @@ def _aggregate_health(failed: bool, unknown: bool) -> str:
 async def handle_system_health(request: web.Request) -> web.Response:
     """GET /api/system/health -- Combined system health check.
 
-    Aggregates: daemon uptime, storage status, SMART health, and
-    OpenSearch reachability into a single response.
+    Aggregates: daemon uptime, storage status, SMART health, OpenSearch
+    reachability and whether current data is arriving (F2) into a single response.
     """
+    # F2: started first, so its 5 s budget overlaps the checks below
+    pipeline = asyncio.ensure_future(request.app["pipeline_health"].get())
     start_time: float = request.app["start_time"]
     uptime = time.monotonic() - start_time
     # OLD CODE START — opensearch_url was fetched but never used (F841)
@@ -607,6 +610,12 @@ async def handle_system_health(request: web.Request) -> web.Response:
         logger.warning("System health: OpenSearch unreachable: %s", exc)
         result["opensearch_reachable"] = False
         failed = True
+
+    # F2: with only the checks above, stopped sensors or nothing new indexed still read healthy
+    result["pipeline"] = await pipeline
+    effect = PIPELINE_OVERALL[result["pipeline"]["state"]]
+    failed = failed or effect == "problem"
+    unknown = unknown or effect == "incomplete"
 
     result["status"] = _aggregate_health(failed, unknown)
     # True, False, or None when incomplete: the same tri-state as SMART's healthy
@@ -1060,6 +1069,10 @@ def create_app(
     app["opensearch_url"] = opensearch_url
     app["http_auth"] = http_auth
     app["start_time"] = time.monotonic()
+    # F2: its own client, 3 s and no retries, so the probe stays inside its 5 s budget
+    app["pipeline_health"] = PipelineHealth(
+        OpenSearch(**storage.client_kwargs(timeout=3, max_retries=0)), app["start_time"]
+    )
     if retention_config_manager is not None:
         app["retention_config_manager"] = retention_config_manager
     app["ilm_sync"] = IlmSyncState()

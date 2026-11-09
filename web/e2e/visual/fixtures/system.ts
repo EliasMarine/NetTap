@@ -45,6 +45,20 @@ function health(uptimeSeconds: number, populated: boolean) {
 		opensearch_reachable: true,
 		status: 'healthy',
 		healthy: true,
+		// Release audit F2: a running stack reports fresh data and running sensors
+		pipeline: {
+			state: 'fresh',
+			newest_record_at: iso(0),
+			age_seconds: 12,
+			threshold_seconds: 900,
+			sensors: {
+				'nettap-zeek-live': 'running',
+				'nettap-suricata-live': 'running',
+				'nettap-logstash': 'running',
+				'nettap-filebeat': 'running',
+			},
+			checked_at: iso(0),
+		},
 	} satisfies SystemHealth;
 }
 

@@ -4,7 +4,7 @@
  */
 import type { PipelineStage } from '$components/ui/Pipeline.svelte';
 import { modeLabel } from '$components/shell/status';
-import { healthStage, type SystemHealth } from '$api/system';
+import { healthStage, pipelineStage, type SystemHealth } from '$api/system';
 // OLD CODE: import { formatLossPct, packetsLost, … } (NET-167: the packets stage reads lossWords)
 import { lossWords, type CaptureHealthResponse, type CaptureStatsResponse } from '$api/capture';
 import { formatCompactNumber } from '$api/logs';
@@ -167,4 +167,11 @@ export function openSearchStage(health: SystemHealth | null, failed: boolean): P
 	return health.opensearch_reachable
 		? { ...base, status: 'ok', detail: 'Connected' }
 		: { ...base, status: 'failing', detail: 'Unreachable' };
+}
+
+/** F2: is current data arriving? Storage, SMART and OpenSearch can all be fine while it isn't. */
+export function dataStage(health: SystemHealth | null, failed: boolean): PipelineStage {
+	const base = { key: 'data', label: 'Data' };
+	if (!health) return { ...base, status: 'unknown', detail: failed ? 'Unknown: the health check failed' : CHECKING };
+	return { ...base, ...pipelineStage(health.pipeline) };
 }
