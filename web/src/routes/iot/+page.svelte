@@ -312,6 +312,8 @@
 	const fleetDevices = $derived(fleet?.devices ?? []);
 	// Devices with traffic whose encryption could be judged; the Unencrypted count is of these
 	const encryptionMeasured = $derived(fleetDevices.filter((d) => d.encryption_pct !== null).length);
+	// DEV-10: devices whose DNS lookups were seen, the only ones whose trackers are counted
+	const trackersMeasured = $derived(fleetDevices.filter((d) => d.tracker_count !== null).length);
 
 	// ---------------------------------------------------------------------------
 	// Derived — Findings feed
@@ -351,11 +353,13 @@
 		// Privacy findings from privacy report
 		if (privacy?.devices) {
 			for (const dev of privacy.devices) {
-				if (dev.tracker_count > 0) {
+				// OLD CODE: if (dev.tracker_count > 0) { (DEV-10: null when no DNS lookup was seen)
+				const trackers = dev.tracker_count ?? 0;
+				if (trackers > 0) {
 					items.push({
 						id: `privacy-${idx++}`,
-						severity: dev.tracker_count > 5 ? 'high' : dev.tracker_count > 2 ? 'medium' : 'low',
-						description: `${dev.name} contacted ${dev.tracker_count} tracker domain${dev.tracker_count !== 1 ? 's' : ''}`,
+						severity: trackers > 5 ? 'high' : trackers > 2 ? 'medium' : 'low',
+						description: `${dev.name} contacted ${trackers} tracker domain${trackers !== 1 ? 's' : ''}`,
 						deviceName: dev.name,
 						deviceMac: dev.mac,
 						category: 'Privacy',
@@ -365,7 +369,8 @@
 				// OLD CODE START — 2026-11-01: fired for devices with only local chatter (N/A)
 				// if (dev.encryption_ratio < 0.9) {
 				// OLD CODE END
-				if (dev.encryption_applicable !== false && dev.encryption_ratio < 0.9) {
+				// OLD CODE: if (dev.encryption_applicable !== false && dev.encryption_ratio < 0.9) { (DEV-10: the ratio can be null)
+				if (dev.encryption_applicable !== false && dev.encryption_ratio !== null && dev.encryption_ratio < 0.9) {
 					const pct = Math.round(dev.encryption_ratio * 100);
 					items.push({
 						id: `unenc-${idx++}`,
@@ -496,7 +501,8 @@
 		}));
 	});
 
-	let encryptedPct = $derived(selectedPrivacy ? Math.round(selectedPrivacy.encryption_ratio * 100) : 0);
+	// OLD CODE: let encryptedPct = $derived(selectedPrivacy ? Math.round(selectedPrivacy.encryption_ratio * 100) : 0); (DEV-10)
+	let encryptedPct = $derived(selectedPrivacy?.encryption_ratio != null ? Math.round(selectedPrivacy.encryption_ratio * 100) : 0);
 
 	const timelineBuckets = $derived(timelineData?.buckets ?? []);
 	const busiestBucket = $derived(timelineBuckets.reduce((best, b, i) => (b.connections > (timelineBuckets[best]?.connections ?? -1) ? i : best), -1));
@@ -727,8 +733,16 @@ OLD CODE END -->
 			value={fleet.anomalies_checked === 0 ? '—' : fleet.anomaly_count}
 			sub={fleet.anomalies_checked === 0 ? 'Not checked: no device has a baseline' : `${fleet.anomalies_checked} of ${fleet.device_count} devices checked`}
 			note="last hour" />
+		<!-- OLD CODE START — DEV-10: "None" when no device's DNS was seen
 		<KpiCard class="c-3" label="Privacy concerns" icon="threats" value={fleet.privacy_concerns}
 			sub={fleet.privacy_concerns === 0 ? 'None with over 5 tracker domains' : 'Devices with over 5 tracker domains'} note={rangeLabel} />
+		OLD CODE END -->
+		<KpiCard class="c-3" label="Privacy concerns" icon="threats"
+			value={trackersMeasured === 0 ? '—' : fleet.privacy_concerns}
+			sub={trackersMeasured === 0
+				? 'Not measured: no DNS lookups seen'
+				: `${fleet.privacy_concerns === 0 ? 'None' : 'Devices'} with over 5 tracker domains · ${trackersMeasured} of ${fleet.device_count} measured`}
+			note={rangeLabel} />
 		<!-- OLD CODE START — PR #174 review: "Fully encrypted" when no device was under 50%, even
 		     with nothing measured; the daemon counts devices under 50% encrypted, not any plaintext
 		<KpiCard class="c-3" label="Unencrypted" icon="certs" value={fleet.unencrypted_count} sub={fleet.unencrypted_count === 0 ? 'Fully encrypted' : 'Devices using plaintext'} note={rangeLabel} />
@@ -768,7 +782,8 @@ OLD CODE END -->
 			{:else if findings.length === 0}
 				<!-- OLD CODE START — 2026-11-03 UI redesign: "No findings -- all devices look healthy." -->
 				<!-- OLD CODE END -->
-				<CardState state="empty" icon="check" title="No findings. All devices look healthy." />
+				<!-- OLD CODE: <CardState state="empty" icon="check" title="No findings. All devices look healthy." /> (DEV-10: absence of evidence isn't health) -->
+				<CardState state="empty" icon="check" title="No findings in the traffic NetTap can see." />
 			{:else}
 				{#if checksFailed}<p class="note">Couldn't check {checksFailed}: the request failed.</p>{/if}
 				<ul class="findings">
@@ -835,13 +850,19 @@ OLD CODE END -->
 		<Card class="c-8" title="Network isolation" sub="IoT devices talking to other local devices · {rangeLabel}">
 			{#snippet actions()}
 				{#if isolation}
-					<span class="trust-cell"><span class="chip num">{isolation.segmentation_score}/100</span>{@render grade(isolation.segmentation_grade, true)}</span>
+					<!-- OLD CODE: <span class="trust-cell"><span class="chip num">{isolation.segmentation_score}/100</span>{@render grade(isolation.segmentation_grade, true)}</span> (DEV-11: no IoT devices is not measured) -->
+					{#if isolation.segmentation_score === null || isolation.segmentation_grade === null}
+						<span class="chip">Not measured</span>
+					{:else}
+						<span class="trust-cell"><span class="chip num">{isolation.segmentation_score}/100</span>{@render grade(isolation.segmentation_grade, true)}</span>
+					{/if}
 				{/if}
 			{/snippet}
 			{#if isolation === null}
 				<CardState state="error" title="Couldn't check for cross-segment IoT communication: the request failed." onaction={() => refresh.run()} />
 			{:else if isolation.pairs.length === 0}
-				<CardState state="empty" icon="check" title="No cross-segment IoT communication detected." />
+				<!-- OLD CODE: <CardState state="empty" icon="check" title="No cross-segment IoT communication detected." /> (DEV-11: a mirror of the router uplink never sees same-switch traffic) -->
+				<CardState state="empty" icon="check" title={isolation.recommendation || 'No IoT-to-LAN traffic seen in the traffic NetTap can see.'} />
 			{:else}
 				<DataTable
 					ariaLabel="Network isolation"
@@ -898,7 +919,8 @@ OLD CODE END -->
 					<KVRow label="Anomalies" value={String(selectedDevice.anomaly_count)} mono />
 					OLD CODE END -->
 					<KVRow label="Encryption" value={selectedDevice.encryption_applicable === false || selectedDevice.encryption_pct === null ? 'N/A' : `${selectedDevice.encryption_pct}%`} mono />
-					<KVRow label="Trackers" value={String(selectedDevice.tracker_count)} mono />
+					<!-- OLD CODE: <KVRow label="Trackers" value={String(selectedDevice.tracker_count)} mono /> (DEV-10) -->
+					<KVRow label="Trackers" value={selectedDevice.tracker_count === null ? 'Not measured' : String(selectedDevice.tracker_count)} mono />
 					<KVRow label="Anomalies" value={selectedDevice.anomaly_count === null ? 'Not checked' : String(selectedDevice.anomaly_count)} mono />
 				</DrawerSection>
 
@@ -945,7 +967,8 @@ OLD CODE END -->
 					<DrawerSection title="Encryption">
 						<!-- OLD CODE START — 2026-11-03 UI redesign: the donut drew 0% encrypted for a device with only local chatter -->
 						<!-- OLD CODE END -->
-						{#if selectedPrivacy.encryption_applicable === false}
+						<!-- OLD CODE: {#if selectedPrivacy.encryption_applicable === false} (DEV-10: the ratio is null then) -->
+						{#if selectedPrivacy.encryption_applicable === false || selectedPrivacy.encryption_ratio === null}
 							<p class="note">N/A: only local traffic (DNS, mDNS, NTP) was seen, so there is nothing to encrypt.</p>
 						{:else}
 							<Donut

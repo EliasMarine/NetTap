@@ -513,6 +513,7 @@ class TestFleetSummary:
                                 },
                                 "encrypted": {"doc_count": 45},
                                 "third_party_orgs": {"value": 3},
+                                "with_asn": {"doc_count": 50},
                             }
                         ]
                     }
@@ -709,6 +710,7 @@ class TestPrivacyReport:
                                 },
                                 "encrypted": {"doc_count": 90},
                                 "third_party_orgs": {"value": 3},
+                                "with_asn": {"doc_count": 50},
                             }
                         ]
                     }
@@ -1026,8 +1028,12 @@ class TestNetworkIsolation:
         result = iot.get_network_isolation(
             "2026-04-03T00:00:00Z", "2026-04-04T00:00:00Z"
         )
-        assert result["segmentation_score"] == 100
-        assert result["segmentation_grade"] == "A"
+        # OLD CODE START — DEV-11: no IoT devices read 100 / grade A
+        # assert result["segmentation_score"] == 100
+        # assert result["segmentation_grade"] == "A"
+        # OLD CODE END
+        assert result["segmentation_score"] is None
+        assert result["segmentation_grade"] is None
         assert result["pairs"] == []
 
     def test_detects_iot_to_internal_pairs(self, iot, mock_client):

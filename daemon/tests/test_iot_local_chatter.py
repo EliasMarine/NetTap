@@ -275,8 +275,11 @@ class TestEncryptionShare:
         client.search.side_effect = _fake_search(conn=[])
         privacy = iot.get_privacy_report(FROM_TS, TO_TS)["devices"][0]
         assert privacy["encryption_applicable"] is False
-        # 1.0 keeps /iot from listing "has only 0% encrypted connections"
-        assert privacy["encryption_ratio"] == 1.0
+        # OLD CODE START — DEV-10: 1.0 read as 100% encrypted from nothing measured
+        # # 1.0 keeps /iot from listing "has only 0% encrypted connections"
+        # assert privacy["encryption_ratio"] == 1.0
+        # OLD CODE END
+        assert privacy["encryption_ratio"] is None
 
         fleet = iot.get_fleet_summary(FROM_TS, TO_TS)
         assert fleet["devices"][0]["encryption_applicable"] is False
@@ -298,6 +301,7 @@ class TestEncryptionShare:
                 "dest_ports": {"buckets": [{"key": 443, "doc_count": 9}]},
                 "encrypted": {"doc_count": 9},
                 "third_party_orgs": {"value": 1},
+                "with_asn": {"doc_count": 1},
             }
         ]
         client.search.side_effect = _fake_search(conn=conn)
@@ -335,12 +339,14 @@ class TestEncryptionShare:
                 "encrypted": {"doc_count": 0},
                 "no_payload": {"doc_count": 591},
                 "third_party_orgs": {"value": 1},
+                "with_asn": {"doc_count": 1},
             }
         ]
         client.search.side_effect = _fake_search(conn=conn)
         privacy = iot.get_privacy_report(FROM_TS, TO_TS)["devices"][0]
         assert privacy["encryption_applicable"] is False
-        assert privacy["encryption_ratio"] == 1.0
+        # OLD CODE: assert privacy["encryption_ratio"] == 1.0 (DEV-10: no ratio is None)
+        assert privacy["encryption_ratio"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -401,6 +407,7 @@ class TestNoDuplicateEncryptionFinding:
                 "dest_ports": {"buckets": [{"key": 80, "doc_count": 194}]},
                 "encrypted": {"doc_count": 0},
                 "third_party_orgs": {"value": 1},
+                "with_asn": {"doc_count": 1},
             }
         ]
         client.search.side_effect = _fake_search(conn=conn)
