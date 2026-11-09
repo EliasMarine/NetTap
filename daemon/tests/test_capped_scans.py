@@ -157,3 +157,25 @@ def test_dns_name_scan(monkeypatch):
     _stop_at_cap(monkeypatch, dns_analytics, ("zeek.dns.query",))
     with pytest.raises(PartialResultsError, match="DNS name scan"):
         dns_analytics.DNSAnalytics(MagicMock())._all_domains(*WINDOW)
+
+
+def test_dns_name_scan_checks_its_pages():
+    """A page without aggregations used to read as the end of the names, so nothing was checked."""
+    client = MagicMock()
+    client.search.return_value = {}
+    with pytest.raises(PartialResultsError, match="DNS names"):
+        dns_analytics.DNSAnalytics(client)._all_domains(*WINDOW)
+
+
+def test_suspicious_dns_answers_502_on_an_unreadable_page():
+    from api.dns import handle_suspicious
+
+    client = MagicMock()
+    client.search.return_value = {}
+    app = web.Application()
+    app["dns_analytics"] = dns_analytics.DNSAnalytics(client)
+    req = make_mocked_request("GET", "/api/dns/suspicious", app=app)
+
+    resp = asyncio.run(handle_suspicious(req))
+
+    assert resp.status == 502

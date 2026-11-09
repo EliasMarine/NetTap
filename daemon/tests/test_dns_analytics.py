@@ -626,7 +626,8 @@ class TestDnsNoiseExclusion:
         ],
     )
     def test_every_query_excludes_pcap_monitor(self, dns, mock_client, call):
-        mock_client.search.return_value = {}
+        # OLD CODE: mock_client.search.return_value = {} (NET-237: the name scan checks its pages)
+        mock_client.search.return_value = {"aggregations": {"all": {"buckets": []}}}
         call(dns)
         assert mock_client.search.call_args_list
         for c in mock_client.search.call_args_list:

@@ -15,6 +15,7 @@ from typing import Any
 from services.excluded_ips import build_excluded_ips_filter
 from storage.all_buckets import all_buckets
 from storage.exact_terms import PartialResultsError
+from storage.snapshot_search import QueryFailed
 from storage.time_slots import _epoch, histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.dns_analytics")
@@ -157,13 +158,32 @@ class DNSAnalytics:
         extra_filters: list[dict] | None = None,
     ) -> list[dict[str, Any]]:
         """Every queried name (get_top_domains' shape), most-queried first, paged to the end (#96)."""
-        buckets, complete = all_buckets(
-            self._client,
-            NETWORK_INDEX,
-            {"bool": self._bool_clause(from_ts, to_ts, excluded_ips, extra_filters)},
-            [{"domain": {"terms": {"field": "zeek.dns.query"}}}],
-            aggs={"unique_clients": {"cardinality": {"field": "source.ip"}}},
-        )
+        # OLD CODE START — NET-237 review: unchecked pages, so a page without aggregations read as the end
+        # buckets, complete = all_buckets(
+        #     self._client,
+        #     NETWORK_INDEX,
+        #     {"bool": self._bool_clause(from_ts, to_ts, excluded_ips, extra_filters)},
+        #     [{"domain": {"terms": {"field": "zeek.dns.query"}}}],
+        #     aggs={"unique_clients": {"cardinality": {"field": "source.ip"}}},
+        # )
+        # OLD CODE END
+        try:
+            buckets, complete = all_buckets(
+                self._client,
+                NETWORK_INDEX,
+                {
+                    "bool": self._bool_clause(
+                        from_ts, to_ts, excluded_ips, extra_filters
+                    )
+                },
+                [{"domain": {"terms": {"field": "zeek.dns.query"}}}],
+                aggs={"unique_clients": {"cardinality": {"field": "source.ip"}}},
+                what="DNS names",
+            )
+        except (
+            QueryFailed
+        ) as exc:  # the routes answer OpenSearchException with an error
+            raise PartialResultsError(str(exc)) from exc
         # OLD CODE START — NET-237 (caps): only logged, so suspicious names past it were never checked
         # if not complete:
         #     logger.warning(
