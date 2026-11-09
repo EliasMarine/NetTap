@@ -79,13 +79,23 @@ def _clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+class Refused(str):
+    """A failed send's reason when the service answered and turned it down (an HTTP 3xx or 4xx,
+    an SMTP 5xx), so trying again soon gets the same answer. It counts against the daily budget:
+    a wrong password retried every minute gets the account locked."""
+
+
 async def _post(url: str, **kwargs: Any) -> str | None:
     """POST with a deadline and no redirects (a 3xx fails, so it never reaches another scheme or
     host). None for a 2xx, else the reason."""
     timeout = aiohttp.ClientTimeout(total=_HTTP_TIMEOUT_S)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.post(url, allow_redirects=False, **kwargs) as resp:
-            return None if 200 <= resp.status < 300 else f"HTTP {resp.status}"
+            # OLD CODE: return None if 200 <= resp.status < 300 else f"HTTP {resp.status}" (security delta: a refusal counts against the budget)
+            if 200 <= resp.status < 300:
+                return None
+            reason = f"HTTP {resp.status}"
+            return reason if resp.status >= 500 else Refused(reason)
 
 
 def _reason(exc: BaseException) -> str:
@@ -100,9 +110,14 @@ def _reason(exc: BaseException) -> str:
             if isinstance(exc.smtp_error, bytes)
             else str(exc.smtp_error)
         )
-        return f"the mail server answered {exc.smtp_code} {text}"[:300]
+        # OLD CODE: return f"the mail server answered {exc.smtp_code} {text}"[:300] (security delta: a 5xx is a refusal)
+        reason = f"the mail server answered {exc.smtp_code} {text}"[:300]
+        return (
+            Refused(reason) if exc.smtp_code >= 500 else reason
+        )  # a 4xx means try later
     if isinstance(exc, smtplib.SMTPRecipientsRefused):
-        return "the mail server refused every recipient"
+        # OLD CODE: return "the mail server refused every recipient" (security delta: a refusal)
+        return Refused("the mail server refused every recipient")
     if isinstance(exc, smtplib.SMTPServerDisconnected):
         return "the mail server closed the connection (or the 30 s limit cut it off)"
     if isinstance(exc, ssl.SSLError):
@@ -307,10 +322,17 @@ class NotificationHub:
         return self._last_delivery.get(channel_id)
 
     def record_held(self, channel_id: str, reason: str) -> None:
-        """Alerts waiting past the daily limit for the next hourly digest, as the channel's status."""
+        """Alerts waiting past the daily limit for the next hourly digest, as the channel's status.
+
+        A failed send's error stays: a wrong password needs the owner more than the wait does.
+        """
+        last = self._last_delivery.get(channel_id) or {}
+        if last.get("ok") is False and not last.get("held"):
+            return
         self._last_delivery = {
             **self._last_delivery,
-            channel_id: {"ok": False, "at": _now(), "error": reason},
+            # OLD CODE: channel_id: {"ok": False, "at": _now(), "error": reason}, (security delta: marked, so a send error isn't replaced)
+            channel_id: {"ok": False, "at": _now(), "error": reason, "held": True},
         }
 
     def smtp_configured(self) -> bool:
@@ -397,10 +419,18 @@ class NotificationHub:
         Returns:
             True if delivery succeeded.
         """
+        return await self.deliver(channel_id, title, message, severity) == "sent"
+
+    async def deliver(
+        self, channel_id: str, title: str, message: str, severity: int = 3
+    ) -> str:
+        """send(), saying how it went: "sent", "refused" (the service answered and turned it
+        down, see Refused) or "failed" (not reached, timed out, or not set up)."""
         channel = self._channels.get(channel_id)
         if not channel:
             logger.warning("Send failed: channel %s not found", channel_id)
-            return False
+            # OLD CODE: return False (security delta: deliver says how a send went)
+            return "failed"
 
         # OLD CODE START — NET-224: a bare bool, so the page could only say 'failed'; the exception text could carry a webhook URL's token into the log
         # channel_type = channel["type"]
@@ -487,7 +517,10 @@ class NotificationHub:
         }
         # Keep only the last 100 entries
         self._delivery_log = [*self._delivery_log, entry][-100:]
-        return success
+        # OLD CODE: return success (security delta: deliver says how a send went)
+        if success:
+            return "sent"
+        return "refused" if isinstance(error, Refused) else "failed"
 
     def get_delivery_log(self) -> list[dict[str, Any]]:
         """Return the recent delivery log entries."""
@@ -606,7 +639,8 @@ class NotificationHub:
         )
         # sendmail returns normally when only some recipients were refused
         if refused:
-            return "the mail server refused " + ", ".join(sorted(refused))
+            # OLD CODE: return "the mail server refused " + ", ".join(sorted(refused)) (security delta: a refusal)
+            return Refused("the mail server refused " + ", ".join(sorted(refused)))
         return None
 
     @staticmethod

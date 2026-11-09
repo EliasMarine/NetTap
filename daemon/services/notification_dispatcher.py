@@ -58,6 +58,15 @@ def _when(raw: Any) -> datetime | None:
     return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
 
 
+def _next_digest_at(now: datetime) -> datetime:
+    """Past the budget, when the next digest may go: an hour on, but never past midnight UTC,
+    when the budget renews."""
+    midnight = (now + timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return min(now + SLOW_EVERY, midnight)
+
+
 def _worst_first(item: dict) -> tuple[int, int]:
     return item["severity"], -item["count"]
 
@@ -356,8 +365,9 @@ class AlertDispatcher:
         slow = today["sent"] >= DAILY_BUDGET
         retry_at = _when(st.get("retry_at")) if st.get("retry_at") else None
         if not candidates or (retry_at and retry_at > now):
-            # the queue waits for the hourly digest (a failed send's queue shows its error instead)
-            if slow and candidates and not any(i["attempts"] for i in candidates):
+            # the queue waits for the hourly digest; the hub keeps a failed send's error over this
+            # OLD CODE: if slow and candidates and not any(i["attempts"] for i in candidates): (security delta: the hub decides, so a given-up queue can't hide a wrong password)
+            if slow and candidates:
                 n = len(candidates)
                 self._hub.record_held(
                     cid,
@@ -391,7 +401,9 @@ class AlertDispatcher:
         # OLD CODE START — delta review: a failed send used the budget, so a server outage spent the day
         # today = {**today, "sent": today["sent"] + 1}
         # OLD CODE END
-        if await self._hub.send(cid, title, body, worst):
+        # OLD CODE: if await self._hub.send(cid, title, body, worst): (security delta: a refused send counts)
+        outcome = await self._hub.deliver(cid, title, body, worst)
+        if outcome == "sent":
             sent = today["sent"] + 1
             if sent == DAILY_BUDGET:
                 logger.warning(
@@ -400,21 +412,27 @@ class AlertDispatcher:
                     cid,
                     DAILY_BUDGET,
                 )
-            # the next UTC day brings a new budget, so the hourly wait never runs past midnight
-            midnight = (now + timedelta(days=1)).replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
+            # OLD CODE START — security delta: moved to _next_digest_at, which a refused send uses too
+            # # the next UTC day brings a new budget, so the hourly wait never runs past midnight
+            # midnight = (now + timedelta(days=1)).replace(
+            #     hour=0, minute=0, second=0, microsecond=0
+            # )
+            # OLD CODE END
             return {
                 "done": {**done, **_record(candidates, now, True)},
                 "pending": [],
                 # OLD CODE: "retry_at": None, (security delta D3: past the budget, one digest an hour)
-                "retry_at": _iso(min(now + SLOW_EVERY, midnight))
+                "retry_at": _iso(_next_digest_at(now))
                 if sent >= DAILY_BUDGET
                 else None,
                 **today,
                 "sent": sent,
             }
 
+        # The service turned it down: that counts, since a wrong password tried every minute gets
+        # the account locked. A send that never reached it doesn't (an outage mustn't use the day)
+        if outcome == "refused":
+            today = {**today, "sent": today["sent"] + 1}
         tried = [{**i, "attempts": i["attempts"] + 1} for i in candidates]
         kept = [i for i in tried if i["attempts"] <= len(RETRY_AFTER)]
         gave_up = [i for i in tried if i["attempts"] > len(RETRY_AFTER)]
@@ -427,11 +445,17 @@ class AlertDispatcher:
             )
         # the item with the fewest tries sets the pace, so a new alert keeps its quick retry
         delay = RETRY_AFTER[min(i["attempts"] for i in kept) - 1] if kept else None
+        # past the budget a refusal waits for the hourly slot, like a digest
+        if outcome == "refused" and today["sent"] >= DAILY_BUDGET:
+            retry = _next_digest_at(now)
+        else:
+            retry = now + delay if delay else None
         return {
             # given-up items are recorded too, so re-reading the same alerts never restarts them
             "done": {**done, **_record(gave_up, now, False)},
             "pending": kept,
-            "retry_at": _iso(now + delay) if delay else None,
+            # OLD CODE: "retry_at": _iso(now + delay) if delay else None, (security delta: see retry)
+            "retry_at": _iso(retry) if retry else None,
             **today,
         }
 

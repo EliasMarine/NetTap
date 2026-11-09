@@ -759,3 +759,80 @@ def test_quick_settings_refuse_what_cannot_work(hub, body):
     with pytest.raises(ValueError):
         hub.set_quick_settings(body)
     assert hub.get_channels() == []
+
+
+# ---------------------------------------------------------------------------
+# Refused or not reached: a send the service turned down counts against the daily budget
+# (a wrong password retried every minute gets the account locked); one that never reached it
+# doesn't (an outage mustn't use up the day)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "status, outcome",
+    [(200, "sent"), (401, "refused"), (429, "refused"), (503, "failed")],
+)
+def test_an_http_answer_says_whether_the_service_refused_the_send(hub, status, outcome):
+    ch = hub.configure("webhook", {"url": "https://hooks.example.net/x"})
+    factory, _calls = _session(status)
+
+    with patch.object(hub_module.aiohttp, "ClientSession", side_effect=factory):
+        assert asyncio.run(hub.deliver(ch["id"], "T", "B", 2)) == outcome
+
+
+def _wrong_password(server):
+    server.login.side_effect = hub_module.smtplib.SMTPAuthenticationError(
+        535, b"5.7.8 bad credentials"
+    )
+
+
+def _busy(server):
+    server.connect.return_value = (421, b"4.3.2 try again later")
+
+
+def _down(server):
+    server.connect.side_effect = ConnectionRefusedError(61, "Connection refused")
+
+
+@pytest.mark.parametrize(
+    "fault, outcome",
+    [(_wrong_password, "refused"), (_busy, "failed"), (_down, "failed")],
+)
+def test_a_refused_login_counts_as_refused_and_a_busy_or_down_server_doesnt(
+    hub, fault, outcome
+):
+    ch = hub.configure(
+        "email",
+        {
+            "smtp_host": "smtp.example.net",
+            "smtp_user": "me@example.net",
+            "smtp_pass": "pw",
+            "recipients": ["a@example.net"],
+        },
+    )
+    smtp_cls, server = _smtp_mock()
+    fault(server)
+
+    with patch.object(hub_module.smtplib, "SMTP", smtp_cls):
+        assert asyncio.run(hub.deliver(ch["id"], "T", "B", 2)) == outcome
+    assert hub.last_delivery(ch["id"])["ok"] is False
+
+
+def test_a_waiting_digest_never_hides_the_last_send_error(hub):
+    """Past the daily limit, a wrong password's error must stay in Settings."""
+    ch = hub.configure("webhook", {"url": "https://hooks.example.net/x"})
+    factory, _calls = _session(401)
+    with patch.object(hub_module.aiohttp, "ClientSession", side_effect=factory):
+        asyncio.run(hub.send(ch["id"], "T", "B", 2))
+
+    hub.record_held(ch["id"], "Daily limit of 100 messages reached")
+    assert hub.last_delivery(ch["id"])["error"] == "HTTP 401"
+
+    factory, _calls = _session(200)
+    with patch.object(hub_module.aiohttp, "ClientSession", side_effect=factory):
+        asyncio.run(hub.send(ch["id"], "T", "B", 2))
+    hub.record_held(ch["id"], "Daily limit of 100 messages reached")
+    hub.record_held(ch["id"], "Daily limit of 100 messages reached, 2 waiting")
+    assert hub.last_delivery(ch["id"])["error"] == (
+        "Daily limit of 100 messages reached, 2 waiting"
+    )

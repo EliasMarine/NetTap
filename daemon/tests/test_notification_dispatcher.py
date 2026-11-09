@@ -60,6 +60,7 @@ class Harness:
         self.queries: list[tuple[str, str]] = []
         self.sent: list[tuple[str, str, str, int]] = []
         self.fail: set[str] = set()
+        self.refuse: set[str] = set()  # the service answers and turns the send down
         self.dispatcher = self.new_dispatcher()
 
     def new_dispatcher(self):
@@ -77,15 +78,23 @@ class Harness:
                 raise ConnectionError("OpenSearch is down")
             return list(self.groups)
 
-        async def fake_send(cid, title, body, severity):
+        # OLD CODE START — security delta: the dispatcher asks the hub how a send went, not only whether
+        # async def fake_send(cid, title, body, severity):
+        #     self.sent.append((cid, title, body, severity))
+        #     return cid not in self.fail
+        # OLD CODE END
+        async def fake_deliver(cid, title, body, severity):
             self.sent.append((cid, title, body, severity))
-            return cid not in self.fail
+            if cid in self.refuse:
+                return "refused"
+            return "failed" if cid in self.fail else "sent"
 
         with (
             patch(
                 "services.alert_intelligence.get_smart_alerts", side_effect=fake_alerts
             ),
-            patch.object(self.hub, "send", side_effect=fake_send),
+            # OLD CODE: patch.object(self.hub, "send", side_effect=fake_send),
+            patch.object(self.hub, "deliver", side_effect=fake_deliver),
         ):
             asyncio.run(self.dispatcher.poll_once(at(minutes)))
 
@@ -269,11 +278,13 @@ def test_a_slow_channel_does_not_hold_up_another(h):
         order.append(cid)
         if cid == h.all:
             gate.set()
-        return True
+        # OLD CODE: return True (security delta: the dispatcher asks the hub how a send went)
+        return "sent"
 
     with (
         patch("services.alert_intelligence.get_smart_alerts", return_value=h.groups),
-        patch.object(h.hub, "send", side_effect=send),
+        # OLD CODE: patch.object(h.hub, "send", side_effect=send),
+        patch.object(h.hub, "deliver", side_effect=send),
     ):
         asyncio.run(asyncio.wait_for(h.dispatcher.poll_once(at(1)), 5))
     assert order == [h.all, h.high]
@@ -400,3 +411,14 @@ def test_failed_sends_leave_the_budget_for_when_the_server_is_back(h):
         h.groups = [group(500, 1, 121)]
         h.poll(122)
         assert len(h.sent_to(h.high)) == 1
+
+
+def test_refused_sends_use_the_budget_so_a_wrong_password_slows_to_hourly(h):
+    """Refused 1,440 times a day, a login gets the account locked; past the budget, one an hour."""
+    h.refuse = {h.high}
+    with patch.object(nd, "DAILY_BUDGET", 3):
+        for minute in range(1, 121):  # an alert a minute for two hours
+            h.groups = [group(100 + minute, 1, minute - 0.5)]
+            h.poll(minute)
+    # three refused tries use the day's budget (minutes 1, 2, 3), then one an hour (minute 63)
+    assert len(h.sent_to(h.high)) == 4
