@@ -79,6 +79,8 @@
 	let loading = $state(false);
 	let error = $state('');
 	let paused = $state(false);
+	/** NET-237: the last poll failed, so the feed on screen is frozen (the chip must not say Live) */
+	let pollFailed = $state(false);
 	/** Rows that arrived with the latest poll; they flash in (tr.new). */
 	let newKeys = $state.raw<Set<string>>(new Set());
 	let seenKeys = new Set<string>();
@@ -437,6 +439,7 @@
 			recordTalkers(next.top_talkers);
 			dashboard = next;
 			error = next._error ?? '';
+			pollFailed = false;
 			// OLD CODE START: loading = false; return next._error ? 'partial' : 'ok'; (O7) OLD CODE END
 			const sideResult = await side;
 			if (!guard.current(g)) return 'skipped';
@@ -446,6 +449,7 @@
 			if (!guard.current(g)) return 'skipped';
 			// The last good dashboard stays on screen; the status line says it is stale
 			error = loadFailed('live data', dashboard !== null);
+			pollFailed = true;
 			loading = false;
 			return 'failed';
 		}
@@ -623,12 +627,18 @@
 <div class="page-head">
 	<div>
 		<h1 class="page-title">Live monitor</h1>
+		<!-- OLD CODE: Connections from your network to the world · {paused ? 'paused' : `refreshing every ${REFRESH_INTERVAL_MS / 1000} s`} (NET-237: said "refreshing" while every poll failed) -->
 		<p class="page-sub">
-			Connections from your network to the world · {paused ? 'paused' : `refreshing every ${REFRESH_INTERVAL_MS / 1000} s`}
+			Connections from your network to the world · {paused
+				? 'paused'
+				: pollFailed
+					? `not updating: the last refresh failed, retrying every ${REFRESH_INTERVAL_MS / 1000} s`
+					: `refreshing every ${REFRESH_INTERVAL_MS / 1000} s`}
 		</p>
 	</div>
 	<div class="head-actions">
-		<LiveChip {paused} />
+		<!-- OLD CODE: <LiveChip {paused} /> (NET-237: read Live over frozen data) -->
+		<LiveChip {paused} stalled={pollFailed} />
 		<!-- OLD CODE START — NET-192 PR 4: Home's Auto / Paused button on every page
 		<button class={['btn', paused && 'primary']} type="button" onclick={togglePause}>
 			<Icon name={paused ? 'play' : 'pause'} />{paused ? 'Resume' : 'Pause'}

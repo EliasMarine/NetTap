@@ -171,6 +171,23 @@ describe('Live refresh contract', () => {
 		expect(screen.getByText("Couldn't refresh live data; showing the last figures loaded.")).toBeInTheDocument();
 	});
 
+	it('NET-237: the chip says "Not updating" while polls fail, and "Live" again once one works', async () => {
+		await renderLive();
+		const head = () => screen.getByRole('heading', { level: 1 }).closest('.page-head') as HTMLElement;
+		expect(within(head()).getByText('Live')).toBeInTheDocument();
+
+		vi.mocked(getLiveDashboard).mockRejectedValue(new Error('HTTP 503'));
+		expect(await refreshPage()).toBe('failed');
+		expect(within(head()).getByText('Not updating').closest('.chip')).toHaveClass('is-warn');
+		expect(within(head()).queryByText('Live')).not.toBeInTheDocument();
+		expect(head()).toHaveTextContent('not updating: the last refresh failed, retrying every 3 s');
+
+		vi.mocked(getLiveDashboard).mockResolvedValue(dashboard());
+		expect(await refreshPage()).toBe('ok');
+		expect(within(head()).getByText('Live')).toBeInTheDocument();
+		expect(head()).toHaveTextContent('refreshing every 3 s');
+	});
+
 	it('a request still pending: the loader has not returned', async () => {
 		await renderLive();
 		const pending = deferred<LiveDashboardResponse>();
