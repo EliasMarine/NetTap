@@ -89,3 +89,40 @@ FEATURE_REV="2222222222222222222222222222222222222222"
     [ "$status" -eq 0 ]
     grep -qx "revision=${later_rev}" "${TEST_TMPDIR}/deploys/protocol-identification.baseline"
 }
+
+# Runs the real same_as_deployed() from the rollback script with git stubbed: HEAD is $1, and the
+# deploy's record holds $2 (no file when $2 is empty).
+run_same_as_deployed() {
+    local bin="${TEST_TMPDIR}/bin" rollback="${REPO_ROOT}/scripts/remote/rollback-protocol-identification.sh"
+    mkdir -p "$bin" "${TEST_TMPDIR}/deploys"
+    printf '#!/usr/bin/env bash\n[ "$1" = rev-parse ] && echo "$STUB_REV"\n' > "${bin}/git"
+    chmod +x "${bin}/git"
+    [ -z "$2" ] || echo "$2" > "${TEST_TMPDIR}/deploys/protocol-identification.deployed"
+    local fn
+    fn="$(sed -n '/^same_as_deployed()/,/^}/p' "$rollback")"
+    [ -n "$fn" ]
+    run env PATH="${bin}:${PATH}" STUB_REV="$1" bash -c "
+        DEPLOYED='${TEST_TMPDIR}/deploys/protocol-identification.deployed'
+        ${fn}
+        same_as_deployed
+    "
+}
+
+@test "rollback: goes ahead while the checkout is the one the deploy left" {
+    run_same_as_deployed "$FEATURE_REV" "$FEATURE_REV"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "rollback: refuses once a later deploy moved the checkout on" {
+    run_same_as_deployed "3333333333333333333333333333333333333333" "$FEATURE_REV"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"moved on"* ]]
+    [[ "$output" == *"--force"* ]]
+}
+
+@test "rollback: refuses when the deploy left no record" {
+    run_same_as_deployed "$FEATURE_REV" ""
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"deployed unknown"* ]]
+}

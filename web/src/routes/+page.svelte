@@ -527,8 +527,7 @@
 	);
 	const protocolTotal = $derived(protocols.reduce((s, p) => s + p.count, 0));
 	// #20: "unknown" is connections Zeek couldn't identify, not missing data
-	const isUnknown = (name: string) => !name || name === 'unknown';
-	const serviceLabel = (name: string) => (isUnknown(name) ? 'Unidentified' : name.toUpperCase());
+	const serviceLabel = (name: string) => (!name || name === 'unknown' ? 'Unidentified' : name.toUpperCase());
 	// OLD CODE START — NET-219: the Unidentified bar counted one-way connections and ICMP too, so it led the list
 	// const serviceItems = $derived(
 	// 	services.slice(0, TOP_SERVICES).map((s, i) => ({
@@ -542,7 +541,8 @@
 	// The Unidentified bar holds only two-way conversations; re-sorted, since it is smaller than `unknown`
 	const serviceItems = $derived(
 		services
-			.map((s) => ({ name: s.name, count: isUnknown(s.name) && unidentified ? unidentified.conversations : s.count }))
+			// only the daemon's own `unknown` bucket is split (ts review #3: an empty name is a different bucket)
+			.map((s) => ({ name: s.name, count: s.name === 'unknown' && unidentified ? unidentified.conversations : s.count }))
 			.filter((s) => s.count > 0)
 			.sort((a, b) => b.count - a.count)
 			.slice(0, TOP_SERVICES)
@@ -558,8 +558,9 @@
 		if (!unidentified) return '';
 		const { one_way: oneWay, icmp } = unidentified;
 		const clauses = [
-			oneWay > 0 ? `${formatNumber(oneWay)} unlabelled ${oneWay === 1 ? 'connection' : 'connections'} with no data in one direction or both` : '',
-			icmp > 0 ? `${formatNumber(icmp)} ICMP ${icmp === 1 ? 'message' : 'messages'} (pings and network notices)` : '',
+			// one name for one thing (the bar says Unidentified); Zeek logs ICMP per exchange, not per message (ts review #4)
+			oneWay > 0 ? `${formatNumber(oneWay)} unidentified ${oneWay === 1 ? 'connection' : 'connections'} with no data sent in at least one direction` : '',
+			icmp > 0 ? `${formatNumber(icmp)} ICMP ${icmp === 1 ? 'exchange' : 'exchanges'} (pings and network notices)` : '',
 		].filter(Boolean);
 		return clauses.length > 0 ? `Not in the bars: ${clauses.join(', and ')}.` : '';
 	});
@@ -771,6 +772,12 @@ OLD CODE END -->
 				formatValue={formatNumber}
 				ariaLabel="Connections by transport protocol: {protocolItems.slice(0, 3).map((p) => `${p.label} ${formatNumber(p.value)}`).join(', ')}"
 			/>
+			<!-- OLD CODE START — NET-219: the bars only; the note about what they leave out is new
+			{#if serviceItems.length > 0}
+				<p class="eyebrow">Application layer</p>
+				<BarList items={serviceItems} />
+			{/if}
+			OLD CODE END -->
 			{#if serviceItems.length > 0 || notInBars}
 				<p class="eyebrow">Application layer</p>
 				{#if serviceItems.length > 0}<BarList items={serviceItems} />{/if}

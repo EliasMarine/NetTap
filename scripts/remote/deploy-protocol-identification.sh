@@ -21,6 +21,8 @@ REPO_DIR="/home/nettap/NetTap"
 # OLD CODE: BRANCH="fix/unidentified-protocols" (before the merge; the owner merges, then deploys main)
 BRANCH="${BRANCH:-main}"
 BASELINE="$HOME/.nettap-deploys/protocol-identification.baseline"
+# the revision this deploy leaves; the rollback refuses once the checkout has moved on from it
+DEPLOYED="$HOME/.nettap-deploys/protocol-identification.deployed"
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
 FAILED=0
 
@@ -89,6 +91,12 @@ zeek_cpu() {  # zeek-live's average CPU in % of one core: 12 samples 5 s apart
     echo "$samples" | awk '{ s = 0; for (i = 1; i <= NF; i++) s += $i; if (NF) printf "%.1f\n", s / NF; else print "n/a" }'
 }
 
+# Malcolm restarts a crashed Zeek inside the container, so its RestartCount stays 0 (security
+# review L2, DEPLOYMENT-ISSUES Chain 23); a changed set of zeek PIDs shows the restart
+zeek_pids() {  # host PIDs of zeek-live's zeek processes, sorted, on one line
+    sudo docker top nettap-zeek-live -eo pid,comm 2>/dev/null | awk '$2 == "zeek" { print $1 }' | sort -n | tr '\n' ' '
+}
+
 rejections() {  # rejections SINCE: Logstash's "Could not index" lines (OpenSearch refused a record)
     sudo docker logs nettap-logstash --since "$1" 2>&1 | grep -c "Could not index event"
 }
@@ -115,6 +123,7 @@ if ! { git fetch origin && git checkout "$BRANCH" && git pull origin "$BRANCH"; 
     exit 1
 fi
 echo "   ✓ Code: $(git branch --show-current) @ $(git log -1 --format='%h %s')"
+git rev-parse HEAD > "$DEPLOYED" || echo "   - Couldn't write $DEPLOYED; the rollback will need --force"
 echo ""
 
 echo "→ Step 4: Build the daemon and the web UI..."
@@ -144,9 +153,12 @@ check "ICS analyzers off" "$rc" "ZEEK_DISABLE_ICS_ALL=${ICS_VAL:-unset} (want tr
 echo ""
 
 echo "→ Step 7: Wait 10 minutes for new connections to be indexed..."
+ZEEK_PIDS=""
 for left in 10 9 8 7 6 5 4 3 2 1; do
     echo "   $left min left..."
     sleep 60
+    # Zeek's cluster is up by now; the PIDs from here are compared in Step 10
+    [ "$left" -eq 9 ] && ZEEK_PIDS=$(zeek_pids)
 done
 echo ""
 
@@ -175,6 +187,9 @@ fi
 RESTARTS=$(sudo docker inspect --format '{{.RestartCount}}' nettap-zeek-live 2>/dev/null)
 if [ "${RESTARTS:-x}" = "0" ]; then rc=0; else rc=1; fi
 check "zeek-live not restarting" "$rc" "${RESTARTS:-unknown} restarts since the recreate"
+ZEEK_PIDS_AFTER=$(zeek_pids)
+if [ -n "$ZEEK_PIDS" ] && [ "$ZEEK_PIDS" = "$ZEEK_PIDS_AFTER" ]; then rc=0; else rc=1; fi
+check "no Zeek process restarted inside zeek-live" "$rc" "PIDs ${ZEEK_PIDS:-none} → ${ZEEK_PIDS_AFTER:-none} from 2 minutes after the recreate until now"
 echo ""
 
 echo "→ Step 11: Container status..."

@@ -6,16 +6,21 @@
 #
 # Run as the normal user (NOT with sudo). It needn't exist in the revision it goes back to:
 #   git -C /home/nettap/NetTap fetch origin
-#   bash <(git -C /home/nettap/NetTap show origin/main:scripts/remote/rollback-protocol-identification.sh) [<revision>]
+#   bash <(git -C /home/nettap/NetTap show origin/main:scripts/remote/rollback-protocol-identification.sh) [--force] [<revision>]
 # (before the PR merges, origin/fix/unidentified-protocols instead of origin/main).
 # With no revision it reads ~/.nettap-deploys/protocol-identification.baseline. After a rollback
 # with every check passing, that file is renamed, so a later rollout records a fresh one.
+# It refuses when the checkout has moved on since the NET-219 deploy (a rollback would also undo the
+# later changes, which it lists); --force rolls back anyway.
 set -u
 
 REPO_DIR="/home/nettap/NetTap"
 BASELINE="$HOME/.nettap-deploys/protocol-identification.baseline"
+DEPLOYED="$HOME/.nettap-deploys/protocol-identification.deployed"
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
 FAILED=0
+FORCE=0
+if [ "${1:-}" = "--force" ]; then FORCE=1; shift; fi
 
 check() {  # check "label" <0 pass / 1 fail> "detail"
     if [ "$2" -eq 0 ]; then echo "   ✓ $1: $3"; else echo "   ✗ $1: $3"; FAILED=1; fi
@@ -29,6 +34,18 @@ wait_healthy() {  # wait_healthy CONTAINER
         sleep 5
     done
     if [ "$status" = "healthy" ]; then check "$1 health" 0 "$status"; else check "$1 health" 1 "$status"; fi
+}
+
+# The deploy writes the revision it left in $DEPLOYED. Any other checkout means a later deploy
+# moved the device on, and going back would undo that too (security review L1). Tested in
+# tests/scripts/test_protocol_identification.bats.
+same_as_deployed() {  # 0 when the checkout is still the one the NET-219 deploy left
+    local head="" deployed=""
+    head=$(git rev-parse HEAD) && deployed=$(cat "$DEPLOYED" 2>/dev/null) && [ "$head" = "$deployed" ] && return 0
+    echo "   ✗ The device has moved on since the NET-219 deploy (deployed ${deployed:-unknown}, now ${head:-unknown}),"
+    echo "     so this would also undo the later changes above. Nothing was changed."
+    echo "     To roll back anyway, run it again with --force as the first argument."
+    return 1
 }
 
 echo "=== Roll back NET-219 (protocol identification) ==="
@@ -57,6 +74,9 @@ if git show "$REV:docker/docker-compose.yml" | grep -q 'ZEEK_DISABLE_SPICY_QUIC:
     exit 1
 fi
 echo "   ✓ $(git log -1 --format='%h %s' "$REV")"
+echo "   Going back to it undoes (newest first, at most 20):"
+git log --oneline "$REV..HEAD" | head -n 20 | sed 's/^/     /'
+if [ "$FORCE" -eq 0 ] && ! same_as_deployed; then exit 1; fi
 echo ""
 
 echo "→ Step 2: Check out $REV (detached)..."
@@ -121,6 +141,7 @@ if [ "$FAILED" -eq 0 ]; then
         DONE="$BASELINE.rolled-back-$(date -u +%Y%m%dT%H%M%SZ)"
         mv "$BASELINE" "$DONE" && echo "   Rollback point moved to $DONE"
     fi
+    rm -f "$DEPLOYED"
     echo "=== Rolled back to $(git log -1 --format='%h' "$REV"); later deploys go back to main as usual ==="
 else
     echo "=== FAIL: rolled back to $REV with ✗ lines above — paste this output back (the rollback point is kept) ==="
