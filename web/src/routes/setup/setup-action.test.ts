@@ -199,25 +199,19 @@ describe('setup code (A13, NET-229)', () => {
 	// 	});
 	// });
 	// OLD CODE END
-	it('refuses every code after 50 wrong ones, from any address, until nettap-web restarts', async () => {
+	// Codex review: a cap that refused the right code let any LAN client block the setup
+	it('answers 429 to wrong codes past 50, from any address, but the right code still works', async () => {
 		const code = currentCode();
-		for (let i = 0; i < 50; i++) {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		for (let i = 0; i < 49; i++) {
 			const ip = `192.0.2.${i % 3}`;
 			expect(await createAdmin(adminEvent('mallory', 'ABCD-EFGH-JKMN', ip).event)).toMatchObject({ status: 400 });
 		}
-		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-		expect(await createAdmin(adminEvent('alice', code, '192.0.2.99').event)).toMatchObject({
-			status: 429,
-			data: { error: expect.stringContaining('sudo docker restart nettap-web') },
-		});
-		expect(auth.hasUsers()).toBe(false);
+		expect(await createAdmin(adminEvent('mallory', 'ABCD-EFGH-JKMN').event)).toMatchObject({ status: 429 });
+		expect(warn).toHaveBeenCalledTimes(1);
 		warn.mockRestore();
 
-		// a restart is a fresh module
-		vi.resetModules();
-		const fresh = (await import('./+page.server')) as unknown as { actions: { createAdmin: CreateAdmin } };
-		expect(await fresh.actions.createAdmin(adminEvent('alice', code).event)).toEqual({ success: true, username: 'alice' });
+		expect(await createAdmin(adminEvent('alice', code, '192.0.2.99').event)).toEqual({ success: true, username: 'alice' });
 	});
 
 	it("doesn't touch the login's per-address budget", async () => {
@@ -282,12 +276,13 @@ describe('setup code on the Welcome step (NET-229 follow-up)', () => {
 
 	it('shares the overall limit with the account step', async () => {
 		const code = currentCode();
-		for (let i = 0; i < 25; i++) {
-			expect(await verifyCode(adminEvent('x', 'ABCD-EFGH-JKMN').event)).toMatchObject({ status: 400 });
-			expect(await createAdmin(adminEvent('x', 'ABCD-EFGH-JKMN').event)).toMatchObject({ status: 400 });
+		for (let i = 0; i < 49; i++) {
+			const action = i % 2 ? createAdmin : verifyCode;
+			expect(await action(adminEvent('x', 'ABCD-EFGH-JKMN').event)).toMatchObject({ status: 400 });
 		}
 		vi.spyOn(console, 'warn').mockImplementation(() => {});
-		expect(await verifyCode(adminEvent('x', code).event)).toMatchObject({ status: 429 });
+		expect(await verifyCode(adminEvent('x', 'ABCD-EFGH-JKMN').event)).toMatchObject({ status: 429 });
+		expect(await verifyCode(adminEvent('x', code).event)).toEqual({ verified: true });
 	});
 
 	it('creates the admin with the setup cookie alone, then clears it', async () => {

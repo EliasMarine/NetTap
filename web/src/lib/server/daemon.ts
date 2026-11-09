@@ -123,9 +123,11 @@ export async function daemonFetch(
 		// NET-203: a time limit running out is not "unreachable"; the daemon may still be working.
 		// AbortSignal.timeout rejects with a DOMException named TimeoutError.
 		const timedOut = (err as { name?: unknown } | null)?.name === 'TimeoutError';
+		// A caller's own abort (e.g. the packet download's deadline) says nothing about the daemon
+		const aborted = (err as { name?: unknown } | null)?.name === 'AbortError';
 		// NET-229 (B-p): the reason (host:port, errno) stays in this log, not in the reply
 		// OLD CODE: if (!timedOut) console.error(`Daemon unreachable for ${path}: ${message}`); (review L5: a line per poll while down)
-		if (!timedOut && !daemonDown) {
+		if (!timedOut && !aborted && !daemonDown) {
 			daemonDown = true;
 			console.error(`Daemon unreachable for ${path}: ${message} (logged once until it answers again)`);
 		}

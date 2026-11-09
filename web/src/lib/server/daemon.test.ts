@@ -159,6 +159,25 @@ describe('daemonFetch', () => {
 		info.mockRestore();
 	});
 
+	it("doesn't count a caller's own abort as the daemon going down", async () => {
+		vi.resetModules();
+		const fresh = await import('./daemon');
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+		const abort = Object.assign(new Error('This operation was aborted'), { name: 'AbortError' });
+
+		for (let i = 0; i < 3; i++) {
+			vi.mocked(globalThis.fetch).mockRejectedValueOnce(abort);
+			await fresh.daemonFetch('/api/packets/download');
+			vi.mocked(globalThis.fetch).mockResolvedValueOnce(new Response('{}', { status: 200 }));
+			await fresh.daemonFetch('/api/system/ping');
+		}
+		expect(error.mock.calls.filter(([line]) => String(line).startsWith('Daemon unreachable'))).toHaveLength(0);
+		expect(info).not.toHaveBeenCalled();
+		error.mockRestore();
+		info.mockRestore();
+	});
+
 	it('returns 502 on unknown error type', async () => {
 		vi.mocked(globalThis.fetch).mockRejectedValue('string error');
 
