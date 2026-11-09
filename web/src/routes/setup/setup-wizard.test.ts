@@ -282,15 +282,31 @@ async function walkToDhcpStep(routerPort = 'eth1') {
 }
 
 describe('setup wizard capture mode choice', () => {
-	it('shows DHCP Gateway first and marks it Recommended instead of Mirror', async () => {
+	// OLD CODE START — NET-225 (B-n): DHCP gateway was "Recommended", though it has never run on hardware
+	// it('shows DHCP Gateway first and marks it Recommended instead of Mirror', async () => {
+	// 	…expect(cards[0].textContent).toContain('Recommended');
+	// 	…expect(cards[1].textContent).not.toContain('Recommended');
+	// });
+	// OLD CODE END
+	it('labels mirror as the mode tested on hardware and the others as not yet tested', async () => {
 		mockFetch();
 		const view = await startWizard();
 
 		const cards = view.container.querySelectorAll('.mode-cards .mode-card');
 		expect(cards[0].textContent).toContain('DHCP gateway');
-		expect(cards[0].textContent).toContain('Recommended');
+		expect(cards[0].textContent).toContain('Not yet tested on hardware');
+		expect(cards[0].textContent).toContain('Devices with a fixed IP address bypass NetTap');
 		expect(cards[1].textContent).toContain('Mirror / SPAN');
-		expect(cards[1].textContent).not.toContain('Recommended');
+		expect(cards[1].textContent).toContain('Tested on hardware');
+		expect(cards[1].textContent).not.toContain('Not yet tested');
+		expect(view.container.textContent).not.toContain('Recommended');
+
+		// inline bridge states the address-translation limit instead of "Sees all WAN ingress and egress"
+		const bridge = screen.getByRole('button', { name: /Inline bridge/ }).textContent?.replace(/\s+/g, ' ');
+		expect(bridge).toContain('Not yet tested on hardware');
+		expect(bridge).toContain("after your router's address translation, so all your devices' IPv4 traffic shows up as the router");
+		expect(bridge).toContain("No per-device view: devices share the router's IPv4 address");
+		expect(bridge).not.toContain('Sees all WAN');
 	});
 
 	it('keeps the inline bridge inside a collapsed Advanced section until it is opened', async () => {

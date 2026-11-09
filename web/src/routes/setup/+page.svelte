@@ -922,9 +922,10 @@
 						onclick={() => { selectedMode = 'dhcp_gateway'; }}
 						type="button"
 					>
+						<!-- OLD CODE: <span class="chip is-ok">Recommended</span> (NET-225: this mode has never run on hardware; mirror is the tested one) -->
 						<span class="mode-top">
 							<span class="tile"><Icon name="connections" /></span>
-							<span class="chip is-ok">Recommended</span>
+							<span class="chip is-caution">Not yet tested on hardware</span>
 						</span>
 						<span class="mode-name">DHCP gateway</span>
 						<span class="mode-desc">
@@ -935,6 +936,7 @@
 							<li>Requires 1 NIC, plugged into your router</li>
 							<li>You turn off your router's DHCP at Go Live</li>
 							<li>See traffic per device, with each device's own address</li>
+							<li>Devices with a fixed IP address bypass NetTap</li>
 						</ul>
 					</button>
 
@@ -948,7 +950,11 @@
 						<!-- OLD CODE START — Mirror was the recommended mode until DHCP gateway (2026-10-30)
 						<div class="mode-badge recommended">Recommended</div>
 						OLD CODE END -->
-						<span class="mode-top"><span class="tile"><Icon name="live" /></span></span>
+						<!-- OLD CODE: <span class="mode-top"><span class="tile"><Icon name="live" /></span></span> (NET-225: say it is the tested mode) -->
+						<span class="mode-top">
+							<span class="tile"><Icon name="live" /></span>
+							<span class="chip is-ok">Tested on hardware</span>
+						</span>
 						<span class="mode-name">Mirror / SPAN</span>
 						<span class="mode-desc">
 							My managed switch sends a copy of network traffic to NetTap. Zero risk to your network.
@@ -976,15 +982,25 @@
 							onclick={() => { selectedMode = 'bridge'; }}
 							type="button"
 						>
+							<!-- OLD CODE START — NET-225: left out that, after the router's address translation, devices can't be told apart
 							<span class="mode-top"><span class="tile"><Icon name="infra" /></span></span>
+							NetTap sits between your modem and router. Sees all WAN traffic. Requires two dedicated NICs.
+							<li>Sees all WAN ingress and egress</li>
+							OLD CODE END -->
+							<span class="mode-top">
+								<span class="tile"><Icon name="infra" /></span>
+								<span class="chip is-caution">Not yet tested on hardware</span>
+							</span>
 							<span class="mode-name">Inline bridge</span>
 							<span class="mode-desc">
-								NetTap sits between your modem and router. Sees all WAN traffic. Requires two dedicated NICs.
+								NetTap sits between your modem and router and sees all internet traffic, but after your router's
+								address translation, so all your devices' IPv4 traffic shows up as the router. Requires two
+								dedicated NICs.
 							</span>
 							<ul class="mode-features">
 								<li>Requires 2 NICs (WAN + LAN)</li>
 								<li>Transparent Layer 2 bridge</li>
-								<li>Sees all WAN ingress and egress</li>
+								<li>No per-device view: devices share the router's IPv4 address</li>
 							</ul>
 						</button>
 					</div>
