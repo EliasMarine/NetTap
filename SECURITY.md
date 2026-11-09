@@ -78,6 +78,6 @@ These were reviewed in the first-release audit (NET-229, 2026-11-09) and are acc
 
 <!-- OLD (NET-229 follow-up: the wizard's API calls now need the setup code, typed on the Welcome step): | The first-run wizard routes other than account creation (`/api/setup/*`, `/api/bridge/*`, the UniFi test) answer anyone on the LAN until the admin account exists. | The setup code guards the account, so nobody else can claim the box. Before setup is finished there is nothing stored to read. Finish setup soon after the install. | -->
 
-Until the admin account exists, the first-run wizard's API calls (`/api/setup/*`, `/api/bridge/*`, the UniFi test) need the setup code too: the wizard asks for it on its first step.
+Until the admin account exists, everything the first-run wizard opens (`/api/setup/*`, `/api/bridge/*`, the UniFi calls and Go Live) needs the setup code too: the wizard asks for it on its first step. After 50 wrong codes, from any address, the code is refused until `nettap-web` restarts (`sudo docker restart nettap-web`); at about 59 bits it can't be guessed in that many tries.
 
 TShark, which decodes captured packets on request, runs as `nobody` with no network at all (`network_mode: none`), so a packet that exploits a TShark bug can't reach the other containers. CyberChef and OpenSearch Dashboards need a NetTap login.

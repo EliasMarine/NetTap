@@ -1,6 +1,6 @@
 # NET-229 follow-up: deliberate 5xx messages, first-run API calls, firewall (2026-11-09)
 
-Branch `fix/net-229-followup`, from `fix/release-audit-2026-11` at `a138895c`. Status: done, not deployed.
+Branch `fix/net-229-followup`, rebased onto `fix/release-audit-2026-11` at `1ef861c5`. Status: done, not deployed.
 
 ## 1. The 5xx middleware hid deliberate messages
 
@@ -29,6 +29,13 @@ Branch `fix/net-229-followup`, from `fix/release-audit-2026-11` at `a138895c`. S
   - **hooks.server.ts:** while no admin exists, a first-run `/api` path needs that cookie, otherwise 401 `Enter the setup code first.`. The pages stay open.
   - **Account step:** account creation takes the cookie or, for scripts and the test harnesses, the code field.
   - **Existing installs:** the load returns `setupVerified: true` once an admin exists, so they never see the prompt.
+
+### Review additions (round 2)
+
+- **Go Live:** `/go-live` needs the setup cookie too during first run (it redirects to `/setup`). Only `/setup` itself stays open, so the code can be typed. The UniFi pre-Account calls were already behind the cookie.
+- **L4, the setup code's limit:** it shared the login's per-address bucket, and behind Docker's IPv6 proxy every client can arrive from one address. So one LAN host could lock the owner out of both, or the limit meant nothing. Chosen: the code has its own limit, 50 wrong codes overall (any address), then every code is refused until `nettap-web` restarts. ~59 bits make 50 guesses hopeless; the owner can restart the container, an attacker can't. The login's per-address bucket is untouched.
+- **L5, unreachable daemon logging:** `web/src/lib/server/daemon.ts` logged a line per call while the daemon was down (Live and the shell poll every few seconds). It now logs once when it goes down and once when it answers again.
+- **Rebase:** the combined branch had added the GeoIP lookup-failed message to the allowlist; it is now marked with `public_json` instead. The DNS recon and live bandwidth busy 503s (plain constants) are marked too. A third guard fails a curated exception sent unmarked.
 
 ## 3. The firewall script cut nettap-web off from the daemon
 
