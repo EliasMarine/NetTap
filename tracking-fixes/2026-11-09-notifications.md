@@ -152,3 +152,10 @@ Tests: 9 new or changed, all failing on the old code.
 - `test_refused_sends_use_the_budget_so_a_wrong_password_slows_to_hourly`: the old dispatcher made 120 tries in two hours, the fix makes 4.
 
 Daemon suite: 4,612 passed, 4 skipped. ruff is clean.
+
+## Follow-up: a partly refused email isn't sent again
+
+- **Problem:** when the mail server refused only some recipients, the dispatcher treated the send as failed. Every retry sent the digest again to the recipients who had already got it, up to four times.
+- **Fix:** the hub marks a partial refusal with a `PartlySent` reason, and `deliver()` returns "partly". The dispatcher handles "partly" like "sent": it doesn't retry the digest, and it counts once against the budget.
+- **Settings:** the channel's last error names the refused addresses, for example "the mail server refused b@example.net". `send()` still returns False for a partial refusal, so the test button names them too.
+- **Tests:** 2, both failing on the old code (the digest went out 4 times; the fix sends it once). Daemon suite: 4,614 passed, 4 skipped. ruff is clean.

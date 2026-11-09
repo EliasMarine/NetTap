@@ -85,6 +85,11 @@ class Refused(str):
     a wrong password retried every minute gets the account locked."""
 
 
+class PartlySent(str):
+    """A send's reason when the mail went out but the server refused some recipients: a retry
+    would send the others the same message again."""
+
+
 async def _post(url: str, **kwargs: Any) -> str | None:
     """POST with a deadline and no redirects (a 3xx fails, so it never reaches another scheme or
     host). None for a 2xx, else the reason."""
@@ -424,8 +429,10 @@ class NotificationHub:
     async def deliver(
         self, channel_id: str, title: str, message: str, severity: int = 3
     ) -> str:
-        """send(), saying how it went: "sent", "refused" (the service answered and turned it
-        down, see Refused) or "failed" (not reached, timed out, or not set up)."""
+        """send(), saying how it went: "sent", "partly" (the mail went out but some recipients
+        were refused; send() calls that a failure, so the test button names them), "refused" (the
+        service answered and turned it down, see Refused) or "failed" (not reached, timed out,
+        or not set up)."""
         channel = self._channels.get(channel_id)
         if not channel:
             logger.warning("Send failed: channel %s not found", channel_id)
@@ -520,6 +527,8 @@ class NotificationHub:
         # OLD CODE: return success (security delta: deliver says how a send went)
         if success:
             return "sent"
+        if isinstance(error, PartlySent):
+            return "partly"
         return "refused" if isinstance(error, Refused) else "failed"
 
     def get_delivery_log(self) -> list[dict[str, Any]]:
@@ -640,7 +649,8 @@ class NotificationHub:
         # sendmail returns normally when only some recipients were refused
         if refused:
             # OLD CODE: return "the mail server refused " + ", ".join(sorted(refused)) (security delta: a refusal)
-            return Refused("the mail server refused " + ", ".join(sorted(refused)))
+            # OLD CODE: return Refused("the mail server refused " + ", ".join(sorted(refused))) (the others got it, so a retry resent it)
+            return PartlySent("the mail server refused " + ", ".join(sorted(refused)))
         return None
 
     @staticmethod

@@ -403,7 +403,9 @@ class AlertDispatcher:
         # OLD CODE END
         # OLD CODE: if await self._hub.send(cid, title, body, worst): (security delta: a refused send counts)
         outcome = await self._hub.deliver(cid, title, body, worst)
-        if outcome == "sent":
+        # partly: the mail went out, so a retry would resend it to the recipients who got it
+        # OLD CODE: if outcome == "sent": (rev-security: a partial refusal was retried)
+        if outcome in ("sent", "partly"):
             sent = today["sent"] + 1
             if sent == DAILY_BUDGET:
                 logger.warning(

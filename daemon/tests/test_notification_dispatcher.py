@@ -61,6 +61,7 @@ class Harness:
         self.sent: list[tuple[str, str, str, int]] = []
         self.fail: set[str] = set()
         self.refuse: set[str] = set()  # the service answers and turns the send down
+        self.partly: set[str] = set()  # the mail went out; some recipients were refused
         self.dispatcher = self.new_dispatcher()
 
     def new_dispatcher(self):
@@ -87,6 +88,8 @@ class Harness:
             self.sent.append((cid, title, body, severity))
             if cid in self.refuse:
                 return "refused"
+            if cid in self.partly:
+                return "partly"
             return "failed" if cid in self.fail else "sent"
 
         with (
@@ -422,3 +425,15 @@ def test_refused_sends_use_the_budget_so_a_wrong_password_slows_to_hourly(h):
             h.poll(minute)
     # three refused tries use the day's budget (minutes 1, 2, 3), then one an hour (minute 63)
     assert len(h.sent_to(h.high)) == 4
+
+
+def test_a_partly_refused_digest_went_out_so_it_isnt_sent_again(h):
+    """A retry would send the accepted recipients the same digest up to four more times."""
+    h.partly = {h.high}
+    with patch.object(nd, "DAILY_BUDGET", 3):
+        h.groups = [group(1, 1, 0)]
+        for minute in (1, 2, 7, 22):
+            h.poll(minute)
+    assert len(h.sent_to(h.high)) == 1
+    st = json.loads((h.tmp / "dispatch.json").read_text())["channels"][h.high]
+    assert st["sent"] == 1 and st["pending"] == []

@@ -836,3 +836,20 @@ def test_a_waiting_digest_never_hides_the_last_send_error(hub):
     assert hub.last_delivery(ch["id"])["error"] == (
         "Daily limit of 100 messages reached, 2 waiting"
     )
+
+
+def test_a_partly_refused_email_went_out_and_names_the_refused_address(hub):
+    ch = hub.configure(
+        "email",
+        {
+            "smtp_host": "smtp.example.net",
+            "recipients": ["a@example.net", "b@example.net"],
+        },
+    )
+    smtp_cls, _server = _smtp_mock(refused={"b@example.net": (550, b"no such user")})
+
+    with patch.object(hub_module.smtplib, "SMTP", smtp_cls):
+        assert asyncio.run(hub.deliver(ch["id"], "T", "B", 2)) == "partly"
+    last = hub.last_delivery(ch["id"])
+    assert last["ok"] is False
+    assert last["error"] == "the mail server refused b@example.net"
