@@ -862,7 +862,8 @@ OLD CODE END -->
 				<CardState state="error" title="Couldn't check for cross-segment IoT communication: the request failed." onaction={() => refresh.run()} />
 			{:else if isolation.pairs.length === 0}
 				<!-- OLD CODE: <CardState state="empty" icon="check" title="No cross-segment IoT communication detected." /> (DEV-11: a mirror of the router uplink never sees same-switch traffic) -->
-				<CardState state="empty" icon="check" title={isolation.recommendation || 'No IoT-to-LAN traffic seen in the traffic NetTap can see.'} />
+				<!-- OLD CODE: icon="check" in both cases (review L9: a tick beside "Not measured" read as all clear) -->
+				<CardState state="empty" icon={isolation.segmentation_score === null ? 'empty' : 'check'} title={isolation.recommendation || 'No IoT-to-LAN traffic seen in the traffic NetTap can see.'} />
 			{:else}
 				<DataTable
 					ariaLabel="Network isolation"

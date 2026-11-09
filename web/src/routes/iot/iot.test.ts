@@ -2,6 +2,14 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import * as iotApi from '$lib/api/iot';
 import IoTPage from './+page.svelte';
+import { ICONS, type IconName } from '$lib/components/ui/icons';
+
+/** The markup an icon renders, serialised the way the DOM serialises it (as CardState.test.ts). */
+function iconMarkup(name: IconName): string {
+	const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+	svg.innerHTML = ICONS[name];
+	return svg.innerHTML;
+}
 
 vi.mock('$lib/api/iot', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/api/iot')>()),
@@ -129,6 +137,9 @@ describe('IoT page — failed endpoints', () => {
 		expect(screen.getByText('Not measured')).toBeInTheDocument();
 		expect(screen.getByText('No IoT devices detected yet.')).toBeInTheDocument();
 		expect(screen.queryByText('null/100')).not.toBeInTheDocument();
+		// review L9: a tick beside "Not measured" read as all clear
+		const state = screen.getByText('No IoT devices detected yet.').closest('.state') as HTMLElement;
+		expect(state.querySelector('.state-ic svg')!.innerHTML).toBe(iconMarkup('empty'));
 	});
 
 	// DEV-10: no device's DNS seen read "0 · None with over 5 tracker domains"
