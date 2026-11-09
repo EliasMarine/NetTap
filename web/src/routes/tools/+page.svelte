@@ -41,6 +41,14 @@
 			icon: 'infra',
 		},
 		{
+			name: 'IPv6 toolkit',
+			description: 'Explain any IPv6 address: its type, short and full forms, block, and the device behind it.',
+			href: '/tools/ipv6',
+			category: 'network',
+			tags: ['IPv6', 'SLAAC', 'EUI-64', 'link-local', 'ip6.arpa'],
+			icon: 'dns',
+		},
+		{
 			name: 'Port reference',
 			description: 'Look up which service normally runs on a well-known port.',
 			href: '/tools/port-reference',

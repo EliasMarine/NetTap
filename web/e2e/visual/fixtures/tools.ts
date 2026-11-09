@@ -1,5 +1,6 @@
 import type { CyberChefStatus, getRecipes } from '../../../src/lib/api/cyberchef.ts';
 import type { TSharkStatus, getPcapFiles } from '../../../src/lib/api/tshark.ts';
+import type { MacLookupResult } from '../../../src/lib/api/tools.ts';
 import { DAY, HOUR, NOW, type FixtureRoute } from './types.ts';
 
 type RecipesResponse = Awaited<ReturnType<typeof getRecipes>>;
@@ -123,4 +124,10 @@ export const TOOLS_ROUTES: FixtureRoute[] = [
 	{ path: '/api/cyberchef/recipes', empty: RECIPES_EMPTY, populated: RECIPES_POPULATED },
 	{ path: '/api/tshark/status', empty: TSHARK_STATUS },
 	{ path: '/api/tshark/pcaps', empty: PCAPS_EMPTY, populated: PCAPS_POPULATED },
+	{
+		// the same answer for any MAC: the IPv6 toolkit's examples use 08:00:27 (NET-218)
+		path: /^\/api\/tools\/mac-lookup\/[^/]+$/,
+		empty: { mac: '08:00:27:4E:66:A1', oui_prefix: '08:00:27', vendor: '', found: false } satisfies MacLookupResult,
+		populated: { mac: '08:00:27:4E:66:A1', oui_prefix: '08:00:27', vendor: 'PCS Systemtechnik GmbH', found: true } satisfies MacLookupResult,
+	},
 ];

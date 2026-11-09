@@ -29,4 +29,11 @@ describe('Subnet calculator page', () => {
 		await fireEvent.input(field, { target: { value: '' } });
 		expect(screen.getByText('Enter an IP address')).toBeInTheDocument();
 	});
+
+	it('sends an IPv6 address to the IPv6 toolkit instead of calling it invalid (NET-218)', async () => {
+		render(Page);
+		await fireEvent.input(screen.getByLabelText('IP address'), { target: { value: '2001:db8::/64' } });
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'The IPv6 toolkit explains it.' })).toHaveAttribute('href', '/tools/ipv6?address=2001%3Adb8%3A%3A%2F64');
+	});
 });

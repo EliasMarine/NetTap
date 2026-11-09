@@ -146,6 +146,8 @@
 					<dd class={[field.mono ? 'mono' : 'num']}>{field.value}</dd>
 				{/each}
 			</dl>
+		{:else if ipInput.includes(':')}
+			<p class="notice is-warn" role="status"><Icon name="warn" /><span>That is an IPv6 address. <a href="/tools/ipv6?address={encodeURIComponent(ipInput.trim())}">The IPv6 toolkit explains it.</a></span></p>
 		{:else if ipInput.trim()}
 			<p class="notice is-error" role="alert"><Icon name="warn" />Invalid IP address. Enter a valid IPv4 address (e.g. 192.168.1.0).</p>
 		{:else}

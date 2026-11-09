@@ -13,6 +13,7 @@ export const ICONS = {
 	'chevdown': '<path d="m6 9 6 6 6-6"/>',
 	'close': '<path d="M18 6 6 18M6 6l12 12"/>',
 	'connections': '<path d="M7 7h11l-3-3M17 17H6l3 3"/>',
+	'copy': '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
 	'devices': '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
 	'dns': '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
 	'down': '<path d="M7 7l10 10M17 8v9H8"/>',
