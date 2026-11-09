@@ -14,7 +14,8 @@ export function likelyType(label: string, category: string | null | undefined): 
 /** "from its name" for a guessed type, or null when the type is unknown or the basis isn't sent. */
 export function typeBasis(category: string | null | undefined, basis: string | null | undefined): string | null {
 	if (!category || category === 'unknown' || !basis) return null;
-	return BASIS[basis as GuessBasis] ?? null;
+	// OLD CODE: return BASIS[basis as GuessBasis] ?? null; (review L6: 'constructor' read an inherited function)
+	return Object.hasOwn(BASIS, basis) ? BASIS[basis as GuessBasis] : null;
 }
 
 /** "from web traffic" for an OS guess, or null. */

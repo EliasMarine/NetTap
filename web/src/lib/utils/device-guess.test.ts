@@ -17,6 +17,12 @@ describe('device guesses (NET-226)', () => {
 		expect(typeBasis('phone', null)).toBeNull();
 	});
 
+	it('reads only its own bases, never what every object inherits (review L6)', () => {
+		expect(typeBasis('phone', 'constructor')).toBeNull();
+		expect(typeBasis('phone', 'toString')).toBeNull();
+		expect(typeBasis('phone', '__proto__')).toBeNull();
+	});
+
 	it('says what the OS came from', () => {
 		expect(osBasis('web traffic')).toBe('from web traffic');
 		expect(osBasis(null)).toBeNull();
