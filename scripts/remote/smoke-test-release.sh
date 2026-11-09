@@ -132,6 +132,9 @@ echo "→ Step 7: Web app"
 code=$(curl -sk -o /dev/null -w '%{http_code}' https://localhost/api/traffic/summary)
 if [ "$code" = "401" ]; then pass "web API rejects requests without a session"; else fail "web /api/traffic/summary without a session returned $code"; fi
 if curl -sk https://localhost/api/health | grep -q '"serial"'; then fail "public /api/health exposes hardware detail"; else pass "public /api/health exposes no hardware detail"; fi
+# a page whose headers outgrow nginx's buffer is a 502 on every full reload (NET-223)
+big=$(sudo docker logs nettap-nginx 2>&1 | grep -c 'upstream sent too big header')
+if [ "$big" = "0" ]; then pass "nginx never cut off a page's headers"; else fail "nginx cut off a page's headers $big times (502 on reload)"; fi
 echo ""
 
 echo "→ Step 8: Storage"

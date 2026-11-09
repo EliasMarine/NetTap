@@ -54,6 +54,13 @@ _location() {
     echo "$csp" | grep -q "worker-src 'self' blob:"
 }
 
+@test "nginx: response header buffer fits SvelteKit's Link header (NET-223)" {
+    # Home's Link header was 4.5 KB; at the 4 KB default every logged-in reload was a 502
+    live=$(grep -v '^[[:space:]]*#' "$NGINX_CONF")
+    echo "$live" | grep -Eq '^[[:space:]]*proxy_buffer_size 16k;'
+    echo "$live" | grep -Eq '^[[:space:]]*proxy_buffers 8 16k;'
+}
+
 @test "nginx: every upstream re-resolves a recreated container's IP (#138)" {
     # resolved once at startup, a recreated nettap-web's new IP made every page a 502
     live=$(grep -v '^[[:space:]]*#' "$NGINX_CONF")
