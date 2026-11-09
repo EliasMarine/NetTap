@@ -17,7 +17,8 @@
 	// OLD CODE END
 	const API_BASE = '';
 
-	let { form } = $props();
+	// OLD CODE: let { form } = $props(); (NET-229 follow-up: the load says whether the code was typed)
+	let { data, form } = $props();
 
 	// ----- Wizard state -----
 	let currentStep = $state(1);
@@ -218,8 +219,13 @@
 
 	// ----- Admin Account -----
 	let adminLoading = $state(false);
-	// A13 (NET-229): the installer's one-time setup code
+	// A13 (NET-229): the installer's one-time setup code, typed on the Welcome step (follow-up)
 	let adminSetupCode = $state('');
+	let codeVerified = $state(false);
+	let codeChecking = $state(false);
+	let codeError = $state('');
+	// True once this browser typed the code (the setup cookie), and always once an admin exists
+	let setupVerified = $derived(data?.setupVerified === true || codeVerified);
 	let adminUsername = $state('');
 	let adminPassword = $state('');
 	let adminConfirmPassword = $state('');
@@ -240,9 +246,12 @@
 	// 	adminUsername.trim().length >= 3 && passwordValid && passwordsMatch
 	// );
 	// OLD CODE END
-	let adminFormValid = $derived(
-		adminSetupCode.trim() !== '' && adminUsername.trim().length >= 3 && passwordValid && passwordsMatch
-	);
+	// OLD CODE START — NET-229 follow-up: the code is typed on the Welcome step now
+	// let adminFormValid = $derived(
+	// 	adminSetupCode.trim() !== '' && adminUsername.trim().length >= 3 && passwordValid && passwordsMatch
+	// );
+	// OLD CODE END
+	let adminFormValid = $derived(adminUsername.trim().length >= 3 && passwordValid && passwordsMatch);
 
 	// ----- Self-Traffic Exclusion -----
 	let applianceIp = $state('');
@@ -782,9 +791,10 @@
 		}
 	});
 
-	// Auto-run requirements check when page loads
+	// Auto-run requirements check when page loads, once the setup code is in (its calls need it)
 	$effect(() => {
-		if (!requirementsChecked && !checkingRequirements) {
+		// OLD CODE: if (!requirementsChecked && !checkingRequirements) { (NET-229 follow-up)
+		if (setupVerified && !requirementsChecked && !checkingRequirements) {
 			checkRequirements();
 		}
 	});
@@ -886,6 +896,68 @@
 					</ol>
 				</section>
 
+				{#if !setupVerified}
+				<section class="stack">
+					<h3 class="sub-title">Setup code</h3>
+					<p>Enter the setup code first. It shows that you can reach the NetTap box itself.</p>
+					{#if codeError}
+						<div class="notice is-error" role="alert">
+							<Icon name="warn" />
+							<span>{codeError}</span>
+						</div>
+					{/if}
+					<form
+						class="stack"
+						method="POST"
+						action="?/verifyCode"
+						use:enhance={() => {
+							codeError = '';
+							codeChecking = true;
+							return async ({ result }) => {
+								codeChecking = false;
+								if (result.type === 'success') {
+									codeVerified = true;
+								} else if (result.type === 'failure') {
+									codeError = String(result.data?.error ?? "That setup code isn't right.");
+								} else if (result.type === 'redirect') {
+									await goto(result.location);
+								} else {
+									codeError = `Server error (${result.status}). Check browser console for details.`;
+								}
+							};
+						}}
+					>
+						<div class="field">
+							<label for="setup-code" class="label">Setup code</label>
+							<input
+								id="setup-code"
+								name="setupCode"
+								type="text"
+								class="input mono"
+								placeholder="XXXX-XXXX-XXXX"
+								required
+								autocomplete="one-time-code"
+								autocapitalize="characters"
+								spellcheck="false"
+								bind:value={adminSetupCode}
+							/>
+							<span class="field-help">
+								The installer printed it at the end. To see it again, run this on the NetTap box:
+								<span class="mono">sudo docker exec nettap-web cat /var/lib/nettap-web/setup-code</span>
+							</span>
+						</div>
+						<div class="actions">
+							<button type="submit" class="btn primary" disabled={codeChecking || adminSetupCode.trim() === ''}>
+								{#if codeChecking}
+									{@render spinner()}Checking…
+								{:else}
+									Continue
+								{/if}
+							</button>
+						</div>
+					</form>
+				</section>
+				{:else}
 				<section class="stack">
 					<h3 class="sub-title">System requirements</h3>
 					<ul class="checklist">
@@ -922,6 +994,7 @@
 						</div>
 					{/if}
 				</section>
+				{/if}
 			</div>
 		</Card>
 
@@ -1586,10 +1659,12 @@
 							clientError = '';
 
 							// Client-side validation
-							if (adminSetupCode.trim() === '') {
-								clientError = 'Enter the setup code.';
-								return ({ update }) => { update({ reset: false }); };
-							}
+							// OLD CODE START — NET-229 follow-up: the code is typed on the Welcome step now
+							// if (adminSetupCode.trim() === '') {
+							// 	clientError = 'Enter the setup code.';
+							// 	return ({ update }) => { update({ reset: false }); };
+							// }
+							// OLD CODE END
 							if (adminUsername.trim().length < 3) {
 								clientError = 'Username must be at least 3 characters.';
 								return ({ update }) => { update({ reset: false }); };
@@ -1613,6 +1688,7 @@
 							};
 						}}
 					>
+						<!-- OLD CODE START — NET-229 follow-up: the setup code is typed on the Welcome step now
 						<div class="field">
 							<label for="setup-code" class="label">Setup code</label>
 							<input
@@ -1632,6 +1708,7 @@
 								<span class="mono">sudo docker exec nettap-web cat /var/lib/nettap-web/setup-code</span>
 							</span>
 						</div>
+						OLD CODE END -->
 
 						<div class="field">
 							<label for="username" class="label">Username</label>

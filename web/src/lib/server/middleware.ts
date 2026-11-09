@@ -1,5 +1,5 @@
 import { redirect } from '@sveltejs/kit';
-import { verifyToken } from './auth.js';
+import { setupTokenValid, verifyToken } from './auth.js';
 import type { RequestEvent } from '@sveltejs/kit';
 import type { TokenPayload } from './auth.js';
 
@@ -44,4 +44,28 @@ export function setAuthCookie(event: RequestEvent, token: string): void {
  */
 export function clearAuthCookie(event: RequestEvent): void {
 	event.cookies.delete('nettap_token', { path: '/' });
+}
+
+// ----- First-run setup cookie (NET-229 follow-up) -----
+
+const SETUP_COOKIE = 'nettap_setup';
+
+/** Set once the setup code is typed on the Welcome step; the wizard's API calls need it. */
+export function setSetupCookie(event: RequestEvent, token: string): void {
+	event.cookies.set(SETUP_COOKIE, token, {
+		path: '/',
+		httpOnly: true,
+		secure: process.env.NODE_ENV === 'production',
+		sameSite: 'lax',
+		maxAge: 60 * 60 * 24, // 24 hours
+	});
+}
+
+export function clearSetupCookie(event: RequestEvent): void {
+	event.cookies.delete(SETUP_COOKIE, { path: '/' });
+}
+
+/** This browser typed the current setup code. */
+export function hasSetupCookie(event: RequestEvent): boolean {
+	return setupTokenValid(event.cookies.get(SETUP_COOKIE));
 }

@@ -1,6 +1,7 @@
 import type { Handle, ServerInit } from '@sveltejs/kit';
 import { json, redirect } from '@sveltejs/kit';
 import { verifyToken, hasUsers, ensureSetupCode } from '$lib/server/auth.js';
+import { hasSetupCookie } from '$lib/server/middleware.js';
 
 /** A13 (NET-229): make the first-run setup code at start, so the installer can print it. The code
  * itself is never logged; reading it needs a shell on the box. */
@@ -46,7 +47,8 @@ const PUBLIC_PATHS = new Set(['/login', '/api/auth/login', '/api/auth/logout', '
  * The setup wizard (/setup, /api/setup/*) and Go Live (/go-live, /api/bridge/*)
  * run before any account exists. Afterwards they reconfigure the appliance, so
  * they need a session like every other route. The setup action signs the new
- * admin in, so the rest of the wizard and Go Live keep working.
+ * admin in, so the rest of the wizard and Go Live keep working. Before that, the
+ * /api paths need the setup cookie (NET-229 follow-up); the pages stay open.
  */
 const FIRST_RUN_PATHS = ['/setup', '/api/setup', '/api/bridge', '/go-live'];
 
@@ -55,8 +57,12 @@ const FIRST_RUN_PATHS = ['/setup', '/api/setup', '/api/bridge', '/go-live'];
  * OLD CODE START — NET-229: no longer true once the account needs the setup code
  * Opening them before the first admin exists adds nothing: whoever can reach the device then can claim it anyway.
  * OLD CODE END
+ * OLD CODE START — NET-229 follow-up: they now need the setup cookie too
  * They stay open until the first admin exists. The setup code (A13) guards the admin account, so
  * a LAN host can no longer claim the box, but it can still call these until the owner finishes setup.
+ * OLD CODE END
+ * Until the first admin exists they answer a browser that typed the setup code on the Welcome step
+ * (the setup cookie), like the wizard's /api paths above.
  */
 const FIRST_RUN_REQUESTS = new Set([
 	'GET /api/settings/excluded-ips',
@@ -165,7 +171,16 @@ export const handle: Handle = async ({ event, resolve }) => {
 	if (!isPublicPath(pathname)) {
 		// --- First run: only the wizard and Go Live are open; everything else goes to setup ---
 		const firstRun = isFirstRun();
+		// OLD CODE START — NET-229 follow-up: the wizard's API calls answered anyone on the LAN until setup ended
+		// if (firstRun && isFirstRunPath(event.request.method, pathname)) {
+		// 	return resolve(event);
+		// }
+		// OLD CODE END
 		if (firstRun && isFirstRunPath(event.request.method, pathname)) {
+			// The pages stay open so the code can be typed; their API calls need the setup cookie
+			if (isUnder(pathname, '/api') && !hasSetupCookie(event)) {
+				return json({ error: 'Enter the setup code first.' }, { status: 401 });
+			}
 			return resolve(event);
 		}
 		// OLD CODE START — NET-197 review: an /api address opened as a page (form post, new tab) got raw

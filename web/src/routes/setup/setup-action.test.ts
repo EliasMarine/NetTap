@@ -11,19 +11,31 @@ import { join } from 'path';
 
 type Auth = typeof import('$lib/server/auth.js');
 type CreateAdmin = (typeof import('./+page.server'))['actions']['createAdmin'];
+type Load = (typeof import('./+page.server'))['load'];
 
 let dataDir: string;
 let auth: Auth;
 let createAdmin: CreateAdmin;
+let verifyCode: CreateAdmin;
+let load: Load;
 
 // NET-229: the action needs the setup code; by default each event sends the one on disk
-function adminEvent(username: string, setupCode: string | null = currentCode(), ip = '192.0.2.10') {
+function adminEvent(
+	username: string,
+	setupCode: string | null = currentCode(),
+	ip = '192.0.2.10',
+	setupCookie?: string
+) {
 	const body = new FormData();
 	if (setupCode !== null) body.set('setupCode', setupCode);
 	body.set('username', username);
 	body.set('password', 'Passw0rdOK');
 	body.set('confirmPassword', 'Passw0rdOK');
-	const cookies = { set: vi.fn(), get: vi.fn(), delete: vi.fn() };
+	const cookies = {
+		set: vi.fn(),
+		get: vi.fn((name: string) => (name === 'nettap_setup' ? setupCookie : undefined)),
+		delete: vi.fn(),
+	};
 	const request = new Request('http://localhost/setup?/createAdmin', { method: 'POST', body });
 	const event = { request, cookies, getClientAddress: () => ip } as unknown as Parameters<CreateAdmin>[0];
 	return { event, cookies };
@@ -47,8 +59,12 @@ beforeEach(async () => {
 	vi.resetModules();
 	auth = await import('$lib/server/auth.js');
 	({
-		actions: { createAdmin },
-	} = (await import('./+page.server')) as unknown as { actions: { createAdmin: CreateAdmin } });
+		actions: { createAdmin, verifyCode },
+		load,
+	} = (await import('./+page.server')) as unknown as {
+		actions: { createAdmin: CreateAdmin; verifyCode: CreateAdmin };
+		load: Load;
+	});
 });
 
 afterEach(() => {
@@ -133,7 +149,8 @@ describe('setup code (A13, NET-229)', () => {
 
 		const result = await createAdmin(event);
 
-		expect(result).toMatchObject({ status: 400, data: { error: expect.stringContaining('setup code') } });
+		// OLD CODE: status 400 (NET-229 follow-up: no code and no setup cookie sends the wizard back to Welcome)
+		expect(result).toMatchObject({ status: 401, data: { error: expect.stringContaining('setup code') } });
 		expect(auth.hasUsers()).toBe(false);
 		expect(cookies.set).not.toHaveBeenCalled();
 	});
@@ -189,7 +206,8 @@ describe('setup code (A13, NET-229)', () => {
 		writeFileSync(codeFile(), contents);
 		const short = contents.replace(/[^A-Za-z0-9]/g, '');
 
-		expect(await createAdmin(adminEvent('mallory', short).event)).toMatchObject({ status: 400 });
+		// OLD CODE: toMatchObject({ status: 400 }) (NET-229 follow-up: an empty field is a 401 now)
+		expect(await createAdmin(adminEvent('mallory', short).event)).toMatchObject({ status: short ? 400 : 401 });
 		expect(auth.hasUsers()).toBe(false);
 		// the next wizard load (or start) writes a whole code in its place
 		const fresh = auth.ensureSetupCode();
@@ -210,5 +228,71 @@ describe('setup code (A13, NET-229)', () => {
 			status: 302,
 			location: '/login',
 		});
+	});
+});
+
+describe('setup code on the Welcome step (NET-229 follow-up)', () => {
+	const cookieSet = (cookies: { set: ReturnType<typeof vi.fn> }) =>
+		cookies.set.mock.calls.find(([name]) => name === 'nettap_setup');
+
+	it('a wrong code sets no setup cookie; the right one does', async () => {
+		const code = currentCode();
+		const wrong = adminEvent('x', 'ABCD-EFGH-JKMN');
+		expect(await verifyCode(wrong.event)).toMatchObject({ status: 400 });
+		expect(wrong.cookies.set).not.toHaveBeenCalled();
+
+		const right = adminEvent('x', code);
+		expect(await verifyCode(right.event)).toEqual({ verified: true });
+		const [, token, opts] = cookieSet(right.cookies) ?? [];
+		expect(token).toBe(auth.setupToken());
+		expect(opts).toMatchObject({ httpOnly: true, sameSite: 'lax', path: '/' });
+		// it is not a session
+		expect(auth.verifyToken(token)).toBeNull();
+	});
+
+	it('shares the per-address limit with the account step', async () => {
+		const code = currentCode();
+		for (let i = 0; i < 5; i++) {
+			expect(await verifyCode(adminEvent('x', 'ABCD-EFGH-JKMN').event)).toMatchObject({ status: 400 });
+		}
+		expect(await verifyCode(adminEvent('x', code).event)).toMatchObject({ status: 429 });
+	});
+
+	it('creates the admin with the setup cookie alone, then clears it', async () => {
+		currentCode();
+		const { event, cookies } = adminEvent('alice', null, '192.0.2.10', auth.setupToken() ?? '');
+
+		expect(await createAdmin(event)).toEqual({ success: true, username: 'alice' });
+		expect(cookies.delete).toHaveBeenCalledWith('nettap_setup', { path: '/' });
+		expect(auth.setupToken()).toBeNull();
+	});
+
+	it('a cookie from a replaced code is refused', async () => {
+		currentCode();
+		const stale = auth.setupToken() ?? '';
+		rmSync(codeFile());
+		currentCode(); // a new code
+
+		expect(await createAdmin(adminEvent('mallory', null, '192.0.2.10', stale).event)).toMatchObject({
+			status: 401,
+		});
+		expect(auth.hasUsers()).toBe(false);
+	});
+
+	it('once an admin exists, verifyCode goes to /login and the load needs no code', async () => {
+		await auth.createFirstAdmin('owner', 'Passw0rdOK');
+		await expect(verifyCode(adminEvent('x', 'ABCD-EFGH-JKMN').event)).rejects.toMatchObject({
+			status: 302,
+			location: '/login',
+		});
+		const { event } = adminEvent('x', null);
+		expect(await load(event as never)).toEqual({ setupVerified: true });
+	});
+
+	it('the load says whether this browser typed the code', async () => {
+		currentCode();
+		expect(await load(adminEvent('x', null).event as never)).toEqual({ setupVerified: false });
+		const withCookie = adminEvent('x', null, '192.0.2.10', auth.setupToken() ?? '');
+		expect(await load(withCookie.event as never)).toEqual({ setupVerified: true });
 	});
 });

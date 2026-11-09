@@ -2,7 +2,7 @@ import * as argon2 from 'argon2';
 import jwt from 'jsonwebtoken';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, rmSync } from 'fs';
 import { dirname } from 'path';
-import { createHash, randomBytes, randomInt, timingSafeEqual } from 'crypto';
+import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'crypto';
 import { DATA_DIR } from './data-dir.js';
 
 // ----- Constants -----
@@ -290,14 +290,40 @@ export function ensureSetupCode(): string | null {
 	return code;
 }
 
+/** Constant-time string comparison (hashed first, so different lengths compare too). */
+function sameText(a: string, b: string): boolean {
+	const digest = (s: string) => createHash('sha256').update(s).digest();
+	return timingSafeEqual(digest(a), digest(b));
+}
+
 /** Constant-time check of a typed code; false when it isn't 12 code symbols or setup is done. */
 export function setupCodeMatches(input: string): boolean {
 	const typed = normaliseSetupCode(input);
 	if (!SETUP_CODE_SHAPE.test(typed)) return false;
 	const code = ensureSetupCode();
 	if (!code) return false;
-	const digest = (s: string) => createHash('sha256').update(s).digest();
-	return timingSafeEqual(digest(typed), digest(normaliseSetupCode(code)));
+	// OLD CODE START — NET-229 follow-up: the comparison moved to sameText(), shared with the setup cookie
+	// const digest = (s: string) => createHash('sha256').update(s).digest();
+	// return timingSafeEqual(digest(typed), digest(normaliseSetupCode(code)));
+	// OLD CODE END
+	return sameText(typed, normaliseSetupCode(code));
+}
+
+/**
+ * The setup cookie's value: proof that this browser typed the current setup code on the Welcome
+ * step, so the wizard's API calls may run (NET-229 follow-up). An HMAC, not a JWT, so it never
+ * passes verifyToken as a session, and it stops matching once the code is gone or replaced.
+ * Null once an admin exists.
+ */
+export function setupToken(): string | null {
+	const code = ensureSetupCode();
+	if (!code) return null;
+	return createHmac('sha256', getJwtSecret()).update(`setup:${normaliseSetupCode(code)}`).digest('base64url');
+}
+
+export function setupTokenValid(token: string | undefined): boolean {
+	const expected = token ? setupToken() : null;
+	return expected !== null && sameText(token ?? '', expected);
 }
 
 export function clearSetupCode(): void {

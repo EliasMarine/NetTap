@@ -4,10 +4,12 @@ import { redirect } from '@sveltejs/kit';
 // Mock $lib/server/auth.js
 const mockVerifyToken = vi.fn();
 const mockHasUsers = vi.fn();
+const mockSetupTokenValid = vi.fn();
 
 vi.mock('$lib/server/auth.js', () => ({
 	verifyToken: mockVerifyToken,
 	hasUsers: mockHasUsers,
+	setupTokenValid: mockSetupTokenValid,
 }));
 
 // Mock @sveltejs/kit redirect to throw like the real one
@@ -61,12 +63,14 @@ describe('hooks.server', () => {
 		vi.resetModules();
 		mockVerifyToken.mockReset();
 		mockHasUsers.mockReset();
+		mockSetupTokenValid.mockReset();
 		mockResolve.mockClear();
 
 		// Re-mock after resetModules
 		vi.mock('$lib/server/auth.js', () => ({
 			verifyToken: mockVerifyToken,
 			hasUsers: mockHasUsers,
+			setupTokenValid: mockSetupTokenValid,
 		}));
 		vi.mock('@sveltejs/kit', async (importOriginal) => {
 			const actual = await importOriginal<typeof import('@sveltejs/kit')>();
@@ -300,12 +304,39 @@ describe('hooks.server', () => {
 			await expect(handle({ event, resolve: mockResolve })).rejects.toThrow('redirect');
 		});
 
-		it.each(['/setup', '/api/setup/nics', '/api/bridge/create', '/go-live'])(
-			'leaves %s open while no users exist',
+		// OLD CODE START — NET-229 follow-up: the API paths need the setup cookie now; split below
+		// it.each(['/setup', '/api/setup/nics', '/api/bridge/create', '/go-live'])(
+		// 	'leaves %s open while no users exist',
+		// 	async (path) => {
+		// 		mockHasUsers.mockReturnValue(false);
+		// 		const event = createMockEvent(path);
+		//
+		// 		await handle({ event, resolve: mockResolve });
+		// 		expect(mockResolve).toHaveBeenCalledWith(event);
+		// 	}
+		// );
+		// OLD CODE END
+		it.each(['/setup', '/go-live'])('leaves page %s open while no users exist', async (path) => {
+			mockHasUsers.mockReturnValue(false);
+			const event = createMockEvent(path);
+
+			await handle({ event, resolve: mockResolve });
+			expect(mockResolve).toHaveBeenCalledWith(event);
+			expect(mockSetupTokenValid).not.toHaveBeenCalled();
+		});
+
+		it.each(['/api/setup/nics', '/api/bridge/create'])(
+			'answers %s only with the setup cookie while no users exist',
 			async (path) => {
 				mockHasUsers.mockReturnValue(false);
-				const event = createMockEvent(path);
+				mockSetupTokenValid.mockReturnValue(false);
+				const res = await handle({ event: createMockEvent(path), resolve: mockResolve });
+				expect(res.status).toBe(401);
+				expect(await res.json()).toEqual({ error: 'Enter the setup code first.' });
+				expect(mockResolve).not.toHaveBeenCalled();
 
+				mockSetupTokenValid.mockReturnValue(true);
+				const event = createMockEvent(path);
 				await handle({ event, resolve: mockResolve });
 				expect(mockResolve).toHaveBeenCalledWith(event);
 			}

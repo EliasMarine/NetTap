@@ -44,7 +44,7 @@ const steps = () => screen.getByRole('navigation', { name: 'Setup progress' });
 const step = (name: RegExp) => within(steps()).getByRole('button', { name });
 
 async function toInterfaces() {
-	render(SetupPage, { props: { form: null } });
+	render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 	const start = await screen.findByRole('button', { name: /Get started/ });
 	await waitFor(() => expect(start).not.toBeDisabled());
 	await fireEvent.click(start);
@@ -60,7 +60,7 @@ afterEach(() => {
 describe('setup wizard frame', () => {
 	it('has one page heading and starts on Welcome, with later steps disabled', async () => {
 		stubFetch();
-		render(SetupPage, { props: { form: null } });
+		render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 
 		expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
 		expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Set up NetTap');

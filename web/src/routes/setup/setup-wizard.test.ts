@@ -43,7 +43,7 @@ function mockFetch(overrides: Responses = {}) {
 }
 
 async function chooseBridgeModeThenCreateAccount() {
-	const view = render(SetupPage, { props: { form: null } });
+	const view = render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 	const start = await screen.findByRole('button', { name: /Get started/ });
 	await waitFor(() => expect(start).not.toBeDisabled());
 	await fireEvent.click(start);
@@ -58,7 +58,7 @@ async function chooseBridgeModeThenCreateAccount() {
 
 /** Mirror mode: Welcome → Capture Mode → Interfaces → Storage → Enrichment (UniFi on) → Account */
 async function walkMirrorModeWithUnifiThenCreateAccount() {
-	const view = render(SetupPage, { props: { form: null } });
+	const view = render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 	const start = await screen.findByRole('button', { name: /Get started/ });
 	await waitFor(() => expect(start).not.toBeDisabled());
 	await fireEvent.click(start);
@@ -225,7 +225,7 @@ describe('setup wizard UniFi test connection', () => {
 				body: { success: false, status: { last_error: 'Invalid API key' } },
 			},
 		});
-		render(SetupPage, { props: { form: null } });
+		render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 		const start = await screen.findByRole('button', { name: /Get started/ });
 		await waitFor(() => expect(start).not.toBeDisabled());
 		await fireEvent.click(start);
@@ -259,7 +259,7 @@ const DHCP_NICS: Responses = {
 };
 
 async function startWizard() {
-	const view = render(SetupPage, { props: { form: null } });
+	const view = render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 	const start = await screen.findByRole('button', { name: /Get started/ });
 	await waitFor(() => expect(start).not.toBeDisabled());
 	await fireEvent.click(start);
@@ -353,7 +353,7 @@ describe('setup wizard capture mode choice', () => {
 describe('setup wizard storage step', () => {
 	it('says alerts follow the Hot tier and PCAP records all traffic', async () => {
 		mockFetch({ 'GET /api/setup/storage': { body: { disk_used_gb: 128, disk_free_gb: 1626, disk_total_gb: 1830, disk_usage_percent: 7 } } });
-		render(SetupPage, { props: { form: null } });
+		render(SetupPage, { props: { data: { username: null, setupVerified: true }, form: null } });
 		const start = await screen.findByRole('button', { name: /Get started/ });
 		await waitFor(() => expect(start).not.toBeDisabled());
 		await fireEvent.click(start);

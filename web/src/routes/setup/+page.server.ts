@@ -15,16 +15,46 @@ import {
 	generateToken,
 	hasUsers,
 	SetupAlreadyComplete,
+	setupToken,
 } from '$lib/server/auth.js';
 import { checkSetupCode } from '$lib/server/login.js';
-import { setAuthCookie } from '$lib/server/middleware.js';
+import { clearSetupCookie, hasSetupCookie, setAuthCookie, setSetupCookie } from '$lib/server/middleware.js';
 
-/** A13 (NET-229): an open wizard always has a setup code to check against, even if the file was removed. */
-export const load: PageServerLoad = () => {
-	ensureSetupCode();
+// OLD CODE START — NET-229 follow-up: the code is now typed on the Welcome step, before any API call
+// /** A13 (NET-229): an open wizard always has a setup code to check against, even if the file was removed. */
+// export const load: PageServerLoad = () => {
+// 	ensureSetupCode();
+// };
+// OLD CODE END
+/**
+ * A13 (NET-229): an open wizard always has a setup code to check against, even if the file was
+ * removed. `setupVerified` says whether this browser already typed it. With an admin there is no
+ * code (only a signed-in admin reaches /setup then), so existing installs never see the prompt.
+ */
+export const load: PageServerLoad = (event) => {
+	if (!ensureSetupCode()) return { setupVerified: true };
+	return { setupVerified: hasSetupCookie(event) };
 };
 
 export const actions: Actions = {
+	/**
+	 * verifyCode — the Welcome step's setup code (NET-229 follow-up). A right code sets the setup
+	 * cookie, which the wizard's API calls need while no admin exists.
+	 */
+	verifyCode: async (event) => {
+		const token = setupToken();
+		if (!token) {
+			throw redirect(302, '/login');
+		}
+		const data = await event.request.formData();
+		const code = checkSetupCode(event.getClientAddress(), data.get('setupCode')?.toString() ?? '');
+		if (!code.ok) {
+			return fail(code.status, { error: code.error });
+		}
+		setSetupCookie(event, token);
+		return { verified: true };
+	},
+
 	/**
 	 * createAdmin — Handles admin account creation (wizard step 5).
 	 * Validates inputs, creates the user via the auth module, and returns
@@ -42,10 +72,27 @@ export const actions: Actions = {
 		const confirmPassword = data.get('confirmPassword')?.toString();
 
 		// A13 (NET-229): only someone who can read the code on the box may claim it. Checked first,
-		// so nothing else about the request is looked at for a caller without it.
-		const code = checkSetupCode(event.getClientAddress(), data.get('setupCode')?.toString() ?? '');
-		if (!code.ok) {
-			return fail(code.status, { error: code.error, username: username ?? '' });
+		// so nothing else about the request is looked at for a caller without it. The wizard proves it
+		// with the setup cookie from the Welcome step; scripts and tests post the code itself.
+		// OLD CODE START — NET-229 follow-up: the wizard now sends the cookie, not the field
+		// const code = checkSetupCode(event.getClientAddress(), data.get('setupCode')?.toString() ?? '');
+		// if (!code.ok) {
+		// 	return fail(code.status, { error: code.error, username: username ?? '' });
+		// }
+		// OLD CODE END
+		if (!hasSetupCookie(event)) {
+			const typed = data.get('setupCode')?.toString() ?? '';
+			// The wizard's cookie expired (24 h) or the code was replaced: back to the Welcome step
+			if (typed === '') {
+				return fail(401, {
+					error: 'Enter the setup code again: reload this page and type it on the first step.',
+					username: username ?? '',
+				});
+			}
+			const code = checkSetupCode(event.getClientAddress(), typed);
+			if (!code.ok) {
+				return fail(code.status, { error: code.error, username: username ?? '' });
+			}
 		}
 
 		if (!username || !password || !confirmPassword) {
@@ -136,6 +183,7 @@ export const actions: Actions = {
 		} catch (err) {
 			console.error('Setup: removing the used setup code failed:', err);
 		}
+		clearSetupCookie(event);
 
 		// Sign in only the winner, so the rest of the wizard and Go Live run
 		// with a session once the setup and bridge routes stop being public.
