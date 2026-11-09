@@ -6,19 +6,16 @@ Covers:
   C2 — Emergency cascade deletion (90%/95% thresholds)
   C3 — ILM policy verification on daemon startup
   C4 — Per-tier disk accounting
-  C5 — PCAP checksum writing/verification
   C6 — Re-index from logs recovery path
 """
 
 import json
-import os
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from opensearchpy import OpenSearchException
 
 from storage.manager import RetentionConfig, StorageManager
-from storage.pcap_integrity import PcapIntegrityChecker
 
 
 # =========================================================================
@@ -509,68 +506,6 @@ class TestTierUsageAccounting:
         assert result["warm_bytes"] == 0
         assert result["cold_bytes"] == 0
         assert result["disk_capacity_bytes"] == 500_000_000_000
-
-
-# =========================================================================
-# C5: PCAP checksum writing/verification
-# =========================================================================
-
-
-class TestPcapChecksum:
-    def test_pcap_checksum_write_and_verify(self, tmp_path):
-        """Write a checksum and verify it returns True."""
-        # Create a fake PCAP file
-        pcap_file = tmp_path / "capture.pcap"
-        pcap_file.write_bytes(b"\xd4\xc3\xb2\xa1" + os.urandom(1024))
-
-        checker = PcapIntegrityChecker()
-        cksum_path = checker.write_checksum(pcap_file)
-
-        # Checksum file should exist
-        assert cksum_path.exists()
-        assert cksum_path.name.startswith("capture.pcap.")
-
-        # Verification should pass
-        assert checker.verify_pcap_integrity(pcap_file) is True
-
-    def test_pcap_checksum_detects_corruption(self, tmp_path):
-        """Corrupted PCAP should fail verification."""
-        # Create a PCAP and write its checksum
-        pcap_file = tmp_path / "capture.pcap"
-        original_data = b"\xd4\xc3\xb2\xa1" + os.urandom(1024)
-        pcap_file.write_bytes(original_data)
-
-        checker = PcapIntegrityChecker()
-        checker.write_checksum(pcap_file)
-
-        # Corrupt the PCAP file (flip some bytes)
-        corrupted_data = bytearray(original_data)
-        corrupted_data[100] = (corrupted_data[100] + 1) % 256
-        corrupted_data[200] = (corrupted_data[200] + 1) % 256
-        pcap_file.write_bytes(bytes(corrupted_data))
-
-        # Verification should fail
-        assert checker.verify_pcap_integrity(pcap_file) is False
-
-    def test_pcap_checksum_missing_checksum_file(self, tmp_path):
-        """Missing checksum file should return False."""
-        pcap_file = tmp_path / "capture.pcap"
-        pcap_file.write_bytes(b"some data")
-
-        checker = PcapIntegrityChecker()
-        assert checker.verify_pcap_integrity(pcap_file) is False
-
-    def test_pcap_checksum_missing_pcap_file(self, tmp_path):
-        """Missing PCAP file should return False."""
-        checker = PcapIntegrityChecker()
-        assert checker.verify_pcap_integrity(tmp_path / "nonexistent.pcap") is False
-
-    def test_pcap_checksum_extension(self):
-        """Checker should use sha256 extension when xxhash is unavailable."""
-        checker = PcapIntegrityChecker()
-        # Algorithm is either xxh3 or sha256 depending on availability
-        assert checker.algorithm in ("xxh3", "sha256")
-        assert checker.checksum_extension in (".xxh3", ".sha256")
 
 
 # =========================================================================

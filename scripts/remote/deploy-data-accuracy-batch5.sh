@@ -15,7 +15,10 @@
 set -u
 
 REPO_DIR="/home/nettap/NetTap"
-BRANCH="fix/dashboard-data-accuracy"
+# OLD CODE START — 2026-11-08: fix/dashboard-data-accuracy is merged; the device runs main (NET-214)
+# BRANCH="fix/dashboard-data-accuracy"
+# OLD CODE END
+BRANCH="main"
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
 OS_CURL=(sudo docker exec nettap-opensearch curl -s
     --config /var/local/curlrc/.opensearch.primary.curlrc

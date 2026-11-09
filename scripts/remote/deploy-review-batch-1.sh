@@ -5,7 +5,10 @@
 set -u
 
 REPO_DIR="/home/nettap/NetTap"
-BRANCH="fix/code-review-batch-1"
+# OLD CODE START — 2026-11-08: fix/code-review-batch-1 is merged; the device runs main (NET-214)
+# BRANCH="fix/code-review-batch-1"
+# OLD CODE END
+BRANCH="main"
 COMPOSE="docker/docker-compose.yml"
 ENV_FILE="docker/.env"
 DAEMON="nettap-storage-daemon"

@@ -10,7 +10,10 @@
 set -u
 
 REPO_DIR="/home/nettap/NetTap"
-BRANCH="fix/daemon-drop-nsenter"
+# OLD CODE START — 2026-11-08: fix/daemon-drop-nsenter is merged; the device runs main (NET-214)
+# BRANCH="fix/daemon-drop-nsenter"
+# OLD CODE END
+BRANCH="main"
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
 
 echo "=== Deploy: daemon runs host network commands without nsenter ==="

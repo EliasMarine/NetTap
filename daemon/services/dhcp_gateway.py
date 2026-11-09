@@ -6,7 +6,8 @@ DHCP gateway capture mode: NetTap serves its own subnet (default
 traffic on to the real router. Capture then sees every flow with the device's
 real IP and MAC, before the router's NAT. One NIC carries both legs.
 
-State (see docs/plans/2026-10-30-dhcp-gateway-mode-design.md §5):
+State (see docs/plans/2026-10-30-dhcp-gateway-mode-design.md §5; docs/ is untracked since NET-214,
+so on a fresh clone: git show deb9b219:docs/plans/2026-10-30-dhcp-gateway-mode-design.md):
     - Routing active  <=> mode == dhcp_gateway and an upstream gateway is recorded
     - DHCP running    <=> routing active and dhcp_enabled
     ``disable`` turns off only the DHCP server; ``teardown`` removes everything.
