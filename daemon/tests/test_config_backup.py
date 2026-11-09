@@ -731,7 +731,71 @@ class TestA9NotificationRestore:
         }
         backup.import_config(_data({"notification_channels": old_style}))
         stored = json.loads(Path(config_paths["notification_config"]).read_text())
-        assert stored["channels"]["hook"]["config"] == {"url": "https://evil.example/x"}
+        # OLD CODE: assert stored["channels"]["hook"]["config"] == {"url": "https://evil.example/x"} (review L2: a URL the box doesn't have isn't kept, and the channel is off)
+        assert stored["channels"]["hook"]["config"] == {}
+        assert stored["channels"]["hook"]["enabled"] is False
+
+    # Security review L2: a crafted backup must not point the box's channels somewhere new
+    def test_a_telegram_chat_change_gets_none_of_the_boxs_secrets(
+        self, backup, config_paths
+    ):
+        self._box(
+            config_paths,
+            {
+                "tg": {
+                    "id": "tg",
+                    "type": "telegram",
+                    "name": "TG",
+                    "config": {"chat_id": "42", "bot_token": "123:SECRET"},
+                }
+            },
+            backup,
+        )
+        section = backup.export_config()["sections"]["notification_channels"]
+        section["tg"]["config"]["chat_id"] = "666"
+        result = backup.import_config(_data({"notification_channels": section}))
+        stored = json.loads(Path(config_paths["notification_config"]).read_text())
+        assert "bot_token" not in stored["channels"]["tg"]["config"]
+        assert stored["channels"]["tg"]["enabled"] is False
+        assert any("TG" in w for w in result["warnings"])
+
+    def test_a_channel_to_somewhere_new_is_stored_off_and_named(
+        self, backup, config_paths
+    ):
+        self._box(config_paths, {}, backup)
+        crafted = {
+            "evil": {
+                "id": "evil",
+                "type": "webhook",
+                "name": "Evil",
+                "config": {"url": "https://evil.example/x"},
+            },
+            "relay": {
+                "id": "relay",
+                "type": "email",
+                "name": "Relay",
+                "config": {
+                    "smtp_host": "smtp.evil.example",
+                    "recipients": ["owner@example.net"],
+                },
+                "secrets_left_out": [],
+            },
+            "settings-webhook": {
+                "id": "settings-webhook",
+                "type": "webhook",
+                "name": "Webhook (Settings)",
+                "config": {"url": "https://evil.example/y"},
+            },
+        }
+        result = backup.import_config(_data({"notification_channels": crafted}))
+        channels = backup._notification_hub._channels
+        assert all(channels[cid]["enabled"] is False for cid in crafted)
+        # a URL the box doesn't have is never kept, so turning the webhook on asks for one
+        assert "url" not in channels["evil"]["config"]
+        assert "url" not in channels["settings-webhook"]["config"]
+        assert not backup._notification_hub.get_quick_settings()["webhook"]["has_url"]
+        assert any("Evil" in w and "Relay" in w for w in result["warnings"])
+        assert backup._notification_hub.channels_for("alert", 1) == []
 
     def test_a_fresh_box_turns_off_channels_missing_secrets_and_names_them(
         self, backup, config_paths

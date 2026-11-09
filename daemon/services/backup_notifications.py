@@ -23,9 +23,12 @@ PUBLIC_KEYS = (
 )
 _CHANNEL_KEYS = ("id", "type", "name", "created_at", "enabled")
 # A kept secret must still go to the same SMTP server, account and transport...
-_DESTINATION_KEYS = ("smtp_host", "smtp_port", "smtp_user", "use_tls")
+# OLD CODE: _DESTINATION_KEYS = ("smtp_host", "smtp_port", "smtp_user", "use_tls") (review L2: a new chat_id kept the bot token)
+_DESTINATION_KEYS = ("smtp_host", "smtp_port", "smtp_user", "use_tls", "chat_id")
 # ...and, when an older backup carries a URL, to that same URL
 _URL_KEYS = ("url", "webhook_url")
+# Where a channel sends. One the box doesn't already send to comes back off (review L2)
+_ADDRESS_KEYS = ("url", "webhook_url", "smtp_host", "chat_id")
 
 
 def redact_channels(channels: Any) -> dict:
@@ -78,21 +81,36 @@ def restore_channels(
     channels: dict = {}
     turned_off: list[str] = []
     quick_off: list[str] = []
+    redirected: list[str] = []
     no_smtp: list[str] = []
     for cid, channel in backup.items():
         config = dict(channel.get("config") or {})
         old = current.get(cid) if isinstance(current.get(cid), dict) else {}
         old_config = old.get("config") if isinstance(old.get("config"), dict) else {}
-        if channel["type"] == old.get("type") and _same_destination(config, old_config):
+        same = channel["type"] == old.get("type") and _same_destination(
+            config, old_config
+        )
+        if same:
             secrets = {k: v for k, v in old_config.items() if k not in PUBLIC_KEYS}
             config = {**secrets, **config}
+        # a crafted (or schema-1) backup sending somewhere new: off, and a URL is never kept, so
+        # turning the Settings webhook back on asks for one
+        new_address = not same and any(config.get(k) for k in _ADDRESS_KEYS)
+        if new_address:
+            config = {k: v for k, v in config.items() if k not in _URL_KEYS}
         stored = {k: v for k, v in channel.items() if k != "secrets_left_out"}
         stored["config"] = config
         label = str(channel.get("name") or cid)
-        if any(k not in config for k in channel.get("secrets_left_out", [])):
+        if cid == QUICK_WEBHOOK and new_address:
+            stored["enabled"] = False
+            quick_off.append(label)
+        elif any(k not in config for k in channel.get("secrets_left_out", [])):
             stored["enabled"] = False
             # OLD CODE: turned_off.append(label) (NET-224: the Settings webhook is fixed elsewhere)
             (quick_off if cid == QUICK_WEBHOOK else turned_off).append(label)
+        elif new_address:
+            stored["enabled"] = False
+            redirected.append(label)
         elif (
             channel["type"] == "email"
             and stored.get("enabled", True) is not False
@@ -124,6 +142,13 @@ def restore_channels(
             f"and turned off: {', '.join(turned_off)}. On the Notification channels page, "
             "add each again with its secret and add its routing rules again for the new "
             "channel, then delete the old channel and rules."
+        )
+    if redirected:
+        warnings.append(
+            "Notification channels in this backup send to a server, URL or chat this NetTap "
+            f"doesn't already use, so they were restored turned off: {', '.join(redirected)}. "
+            "If you set them up, add each again on the Notification channels page with its "
+            "routing rules, then delete these."
         )
     if no_smtp:
         warnings.append(
