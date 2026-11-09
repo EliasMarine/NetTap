@@ -100,6 +100,8 @@ export interface DeviceDetail extends Device {
 	// resp_bytes?: number;
 	// OLD CODE END
 	unique_destinations?: number;
+	/** Connections with an address in another of the LAN rule's subnets (their bytes can count twice) */
+	inter_vlan_connections?: number;
 	top_services?: Array<{ name: string; bytes: number; connections: number }>;
 }
 

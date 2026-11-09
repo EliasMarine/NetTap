@@ -303,6 +303,19 @@ class TestAnotherVlanConfigured(TestAnotherVlan):
     lan = build_lan_filter([(192, 168, 1), (192, 168, 2)])
     listed = {LAPTOP, OTHER_VLAN}
 
+    async def test_its_page_counts_the_connections_with_another_subnet(self):
+        # review L10: the page says bytes may count twice only for these (4, on both sides)
+        for ip in (LAPTOP, OTHER_VLAN):
+            status, body = await self.get(f"/api/devices/{ip}")
+            self.assertEqual(status, 200, body)
+            self.assertEqual(body["device"]["inter_vlan_connections"], 4, ip)
+
+
+class TestOneSubnet(Case):
+    async def test_no_connection_is_with_another_subnet(self):
+        _, body = await self.get(f"/api/devices/{NAS}")
+        self.assertEqual(body["device"]["inter_vlan_connections"], 0)
+
 
 def _drop_responders(body, reply):
     """The answering side's composite comes back without its aggregation."""

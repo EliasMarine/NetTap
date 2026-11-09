@@ -48,6 +48,7 @@ from services.device_accounting import (
     gateway_macs,
     ipv6_by_mac,
     ipv6_clause,
+    lan_cidrs,
     totals,
 )
 from services.traffic_classifier import classify_asn, CATEGORIES
@@ -1548,6 +1549,13 @@ def handle_device_detail(request: web.Request) -> web.Response:
     started, answered = _device_sides(ip, v6_mac, v6.get("reason") is not None)
     # The list's activity rule (_lan_device_buckets): its IPv4 records, started or answered
     responded = {"bool": {"filter": [{"term": {"destination.ip": ip}}, _RESPONDED]}}
+    # review L10: connections with another subnet of the LAN rule, whose bytes can count twice
+    # (a router on one cable passes a routed flow twice, and Zeek merges both legs)
+    other_subnets = [
+        c
+        for c in lan_cidrs(request.app.get("lan_filter"))
+        if ipaddress.ip_address(ip) not in ipaddress.ip_network(c)
+    ]
     device_query = {
         "size": 0,
         "track_total_hits": True,  # #84: hits.total stops at 10,000 without it (the router read 10,000)
@@ -1584,6 +1592,20 @@ def handle_device_detail(request: web.Request) -> web.Response:
                     "first_seen": {"min": {"field": "@timestamp"}},
                     "last_seen": {"max": {"field": "@timestamp"}},
                 },
+            },
+            # the device's own address is in neither list, so a match is the other party's
+            "other_subnets": {
+                "filter": {
+                    "bool": {
+                        "should": [
+                            {"terms": {"source.ip": other_subnets}},
+                            {"terms": {"destination.ip": other_subnets}},
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                }
+                if other_subnets
+                else {"match_none": {}}
             },
             # what an answer-only device's row reads (its side of the records it answered)
             "responded": {
@@ -1853,6 +1875,7 @@ def handle_device_detail(request: web.Request) -> web.Response:
         "upload_bytes": upload_bytes,
         "download_bytes": download_bytes,
         "unique_destinations": unique_dest_count,
+        "inter_vlan_connections": aggs.get("other_subnets", {}).get("doc_count", 0),
         "top_services": top_services_list,
         "connection_count": connection_count,
         "ipv6_connections": aggs.get("ipv6", {}).get("doc_count", 0),

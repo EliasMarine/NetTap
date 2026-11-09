@@ -335,13 +335,29 @@ describe('Device detail — both sides, IPv6 and guesses (NET-226)', () => {
 		expect(screen.getByRole('note')).toHaveTextContent(text);
 	});
 
-	it('NET-226 follow-up: says under the chart that traffic routed between VLANs counts its bytes twice', async () => {
-		await renderWith({ bandwidth_series: [{ timestamp: '2026-10-29T00:00:00Z', bytes: 100, download_bytes: 60, upload_bytes: 40 }] });
-		expect(
-			screen.getByText(
-				'Traffic your router routes between two of your VLANs can be seen on both, so its bytes count twice here; each connection counts once.',
-			),
-		).toBeInTheDocument();
+	// OLD CODE START — review L10: the note showed under every chart, and "count twice … counts once" read as a contradiction
+	// it('NET-226 follow-up: says under the chart that traffic routed between VLANs counts its bytes twice', async () => {
+	// 	await renderWith({ bandwidth_series: [{ timestamp: '2026-10-29T00:00:00Z', bytes: 100, download_bytes: 60, upload_bytes: 40 }] });
+	// 	expect(
+	// 		screen.getByText(
+	// 			'Traffic your router routes between two of your VLANs can be seen on both, so its bytes count twice here; each connection counts once.',
+	// 		),
+	// 	).toBeInTheDocument();
+	// });
+	// OLD CODE END
+	const SERIES = [{ timestamp: '2026-10-29T00:00:00Z', bytes: 100, download_bytes: 60, upload_bytes: 40 }];
+	const VLAN_NOTE = /bytes count twice/;
+
+	it('says its bytes may count twice only when it had connections with another of your subnets', async () => {
+		await renderWith({ bandwidth_series: SERIES, inter_vlan_connections: 12 });
+		expect(screen.getByText(VLAN_NOTE)).toHaveTextContent(
+			'12 of its connections were with another of your subnets. If your router carries that traffic over the link NetTap watches, NetTap sees both legs of each one, so their bytes count twice in these figures.',
+		);
+	});
+
+	it('says nothing about subnets when it had no such connections', async () => {
+		await renderWith({ bandwidth_series: SERIES, inter_vlan_connections: 0 });
+		expect(screen.queryByText(VLAN_NOTE)).not.toBeInTheDocument();
 	});
 
 	it('shows no IPv6 notice when nothing was left out', async () => {

@@ -99,9 +99,15 @@
 	);
 	let alertsExpanded = $state(false);
 	const ALERTS_COLLAPSED_COUNT = 3;
-	// NET-226 follow-up: a router on one cable passes a routed flow twice; Zeek keeps one record with both legs' bytes
-	const INTER_VLAN_NOTE =
-		'Traffic your router routes between two of your VLANs can be seen on both, so its bytes count twice here; each connection counts once.';
+	// OLD CODE START — review L10: shown under every chart, and "count twice … counts once" read as a contradiction
+	// // NET-226 follow-up: a router on one cable passes a routed flow twice; Zeek keeps one record with both legs' bytes
+	// const INTER_VLAN_NOTE =
+	// 	'Traffic your router routes between two of your VLANs can be seen on both, so its bytes count twice here; each connection counts once.';
+	// OLD CODE END
+	/** A router on one cable passes a routed flow twice, and Zeek keeps one record with both legs' bytes. */
+	function interVlanNote(n: number): string {
+		return `${formatNumber(n)} of its connections ${n === 1 ? 'was' : 'were'} with another of your subnets. If your router carries that traffic over the link NetTap watches, NetTap sees both legs of each one, so their bytes count twice in these figures.`;
+	}
 	let suppressFailedId = $state<number | null>(null);
 
 	// Remove the row only once the daemon confirms; suppressAlert throws on failure
@@ -879,8 +885,8 @@ OLD CODE END -->
 			{/snippet}
 			{#if busiest >= 0}
 				<AreaChart bytes series={chartSeries} formatX={chartTime} formatY={formatBytes} formatTip={chartTip} highlightIndex={busiest} ariaLabel={chartLabel} />
-				<!-- NET-226 follow-up: Zeek merges both legs of a routed inter-VLAN flow into one record -->
-				<p class="chart-note">{INTER_VLAN_NOTE}</p>
+				<!-- OLD CODE: <p class="chart-note">{INTER_VLAN_NOTE}</p> (review L10: only for a device with traffic to another subnet) -->
+				{#if device.inter_vlan_connections}<p class="chart-note">{interVlanNote(device.inter_vlan_connections)}</p>{/if}
 			{:else}
 				<CardState state="empty" icon="bandwidth" title="No traffic in this range" message="The chart fills in once NetTap records traffic from this device." />
 			{/if}
