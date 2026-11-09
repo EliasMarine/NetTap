@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, rmSync } from 'fs';
 import { dirname } from 'path';
 import { createHash, randomBytes, randomInt, timingSafeEqual } from 'crypto';
+import { DATA_DIR } from './data-dir.js';
 
 // ----- Constants -----
 
@@ -10,7 +11,7 @@ import { createHash, randomBytes, randomInt, timingSafeEqual } from 'crypto';
 // const JWT_SECRET = process.env.JWT_SECRET || 'nettap-dev-secret-change-in-production';
 // OLD CODE END
 const TOKEN_EXPIRY = '24h';
-const DATA_DIR = process.env.DATA_DIR || '/var/lib/nettap-web';
+// OLD CODE: const DATA_DIR = process.env.DATA_DIR || '/var/lib/nettap-web'; (review L4: shared with notifications.ts)
 const USERS_FILE = `${DATA_DIR}/users.json`;
 
 // ----- JWT Secret (auto-generated, file-persisted) -----

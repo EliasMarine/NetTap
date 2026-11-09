@@ -34,6 +34,7 @@ describe('notifications server module', () => {
 		delete process.env.NOTIFY_INAPP_ENABLED;
 		delete process.env.NOTIFY_SEVERITY_THRESHOLD;
 		delete process.env.NETTAP_DATA_DIR;
+		delete process.env.DATA_DIR;
 
 		// Re-import module to reset internal state
 		notifications = await import('./notifications');
@@ -345,5 +346,16 @@ describe('notifications server module', () => {
 		await notifications.sendNotification({ type: 'system', severity: 'low', title: 'Kept', message: 'On disk.' });
 
 		expect(writeFileSync).toHaveBeenLastCalledWith('/var/lib/nettap-web/notifications.json', expect.any(String), 'utf-8');
+	});
+
+	// review L4: auth.ts's DATA_DIR names the same volume; one name, so moving it moves both
+	it('follows DATA_DIR, the name auth.ts reads for the same volume', async () => {
+		process.env.DATA_DIR = '/srv/nettap-web';
+		vi.resetModules();
+		notifications = await import('./notifications');
+
+		await notifications.sendNotification({ type: 'system', severity: 'low', title: 'Moved', message: 'With users.json.' });
+
+		expect(writeFileSync).toHaveBeenLastCalledWith('/srv/nettap-web/notifications.json', expect.any(String), 'utf-8');
 	});
 });

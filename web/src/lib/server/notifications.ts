@@ -12,6 +12,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { EventEmitter } from 'events';
+import { DATA_DIR } from './data-dir.js';
 
 // SSE broadcast emitter — all connected SSE clients receive notifications in real-time
 const notificationEmitter = new EventEmitter();
@@ -85,8 +86,10 @@ export interface Notification {
 // OLD CODE START — NET-224 P2: nettap-web is read_only and nothing is mounted here, so every write failed and the bell's history lived only in memory
 // const DATA_DIR = process.env.NETTAP_DATA_DIR || '/var/lib/nettap';
 // OLD CODE END
-// The web-data volume: writable, owned by the image's nettap user (auth.ts keeps users.json there)
-const DATA_DIR = process.env.NETTAP_DATA_DIR || '/var/lib/nettap-web';
+// OLD CODE START — review L4: its own env name for the volume auth.ts reads as DATA_DIR
+// // The web-data volume: writable, owned by the image's nettap user (auth.ts keeps users.json there)
+// const DATA_DIR = process.env.NETTAP_DATA_DIR || '/var/lib/nettap-web';
+// OLD CODE END
 const NOTIFICATIONS_FILE = join(DATA_DIR, 'notifications.json');
 export const MAX_STORED_NOTIFICATIONS = 200;
 
