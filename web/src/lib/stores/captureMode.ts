@@ -31,7 +31,10 @@ export type StoreCaptureMode = 'bridge' | 'mirror' | 'dhcp_gateway';
 // 	}
 // }
 // OLD CODE END
-export const captureMode = writable<StoreCaptureMode | null>(null);
+// OLD CODE: export const captureMode = writable<StoreCaptureMode | null>(null); (NET-225: the shell chip says
+// "Mode unknown" once asked and "Checking mode…" before, so a settled request without a known mode is 'unknown')
+/** null until a request settles; 'unknown' when it failed or named no mode this build knows. */
+export const captureMode = writable<StoreCaptureMode | 'unknown' | null>(null);
 
 const MODES: readonly string[] = ['bridge', 'mirror', 'dhcp_gateway'];
 let answered = false;
@@ -50,10 +53,12 @@ export function initCaptureMode(): Promise<void> {
 	pending ??= getCaptureMode()
 		.then((result) => {
 			answered = MODES.includes(result.mode);
-			captureMode.set(answered ? (result.mode as StoreCaptureMode) : null);
+			// OLD CODE: captureMode.set(answered ? (result.mode as StoreCaptureMode) : null);
+			captureMode.set(answered ? (result.mode as StoreCaptureMode) : 'unknown');
 		})
 		.catch(() => {
-			// unknown stays unknown; the next loader asks again
+			// OLD CODE: (nothing: unknown stayed null)
+			captureMode.set('unknown'); // the next loader asks again
 		})
 		.finally(() => {
 			pending = null;

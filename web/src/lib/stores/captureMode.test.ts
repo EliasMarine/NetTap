@@ -26,7 +26,7 @@ describe('captureMode store', () => {
 	});
 
 	// OLD CODE: it('defaults to bridge', … toBe('bridge') (NET-225: unknown until the daemon answers)
-	it('is unknown (null) until the daemon answers', async () => {
+	it('is null (not asked yet) until a request settles', async () => {
 		const { captureMode } = await import('./captureMode');
 		expect(get(captureMode)).toBeNull();
 	});
@@ -65,7 +65,7 @@ describe('captureMode store', () => {
 		const { captureMode, initCaptureMode } = await import('./captureMode');
 		await initCaptureMode();
 
-		expect(get(captureMode)).toBeNull();
+		expect(get(captureMode)).toBe('unknown') // OLD CODE: toBeNull() (NET-225: the shell chip tells asked from not yet asked);
 	});
 
 	// OLD CODE: it('falls back to bridge on error', … toBe('bridge') (NET-225: a guess would show mirror users bridge warnings)
@@ -75,7 +75,7 @@ describe('captureMode store', () => {
 		const { captureMode, initCaptureMode } = await import('./captureMode');
 		await initCaptureMode();
 
-		expect(get(captureMode)).toBeNull();
+		expect(get(captureMode)).toBe('unknown') // OLD CODE: toBeNull() (NET-225: the shell chip tells asked from not yet asked);
 	});
 
 	// NET-225: a failed first request (daemon restarting) must not hide the mode for the whole session
@@ -84,7 +84,7 @@ describe('captureMode store', () => {
 
 		const { captureMode, initCaptureMode } = await import('./captureMode');
 		await initCaptureMode();
-		expect(get(captureMode)).toBeNull();
+		expect(get(captureMode)).toBe('unknown') // OLD CODE: toBeNull() (NET-225: the shell chip tells asked from not yet asked);
 		await initCaptureMode();
 		expect(get(captureMode)).toBe('bridge');
 		await initCaptureMode();
@@ -97,7 +97,7 @@ describe('captureMode store', () => {
 
 		const { captureMode, initCaptureMode } = await import('./captureMode');
 		await initCaptureMode();
-		expect(get(captureMode)).toBeNull();
+		expect(get(captureMode)).toBe('unknown') // OLD CODE: toBeNull() (NET-225: the shell chip tells asked from not yet asked);
 		await initCaptureMode();
 		expect(get(captureMode)).toBe('bridge');
 	});

@@ -9,6 +9,11 @@ import { captureMode } from '$lib/stores/captureMode';
 // The redesigned /iot (PLAN.md §5.6): KPIs, the trust Ring, the device table, the cards' states,
 // and the page refresh contract (§5.5).
 
+// NET-225: the page asks the shared store at load; these tests set the mode on it directly
+vi.mock('$lib/stores/captureMode', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$lib/stores/captureMode')>()),
+	initCaptureMode: vi.fn(async () => {}),
+}));
 vi.mock('$lib/api/iot', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$lib/api/iot')>()),
 	getFleetSummary: vi.fn(),
