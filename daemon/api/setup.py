@@ -408,7 +408,10 @@ async def _apply_configuration(
             except (ValueError, OSError) as exc:
                 logger.warning("Failed to write retention.json from setup: %s", exc)
                 # #96: the rest of setup still applies; the response says what didn't
-                warnings.append(f"Retention settings were not saved: {exc}")
+                # OLD CODE: warnings.append(f"Retention settings were not saved: {exc}") (NET-229: the path)
+                # A ValueError is the manager's own check; an OSError shows its reason, not the path
+                reason = (exc.strerror if isinstance(exc, OSError) else None) or exc
+                warnings.append(f"Retention settings were not saved: {reason}")
 
         if capture_config_exists():
             # The wizard has no rotation field, so keep the box's (Settings › Capture). Read

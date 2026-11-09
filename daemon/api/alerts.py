@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.error_replies import public_json
 from api.offload import in_thread
 from api.time_range import parse_time_range
 from services.alert_enrichment import AlertEnrichment
@@ -751,9 +752,7 @@ def handle_alerts_list(request: web.Request) -> web.Response:
         )
     except QueryFailed as exc:
         logger.warning("Alerts list: %s", exc)
-        return web.json_response(
-            {"error": "The alert search was incomplete"}, status=502
-        )
+        return public_json({"error": "The alert search was incomplete"}, status=502)
 
     hits = result.get("hits", {})
 
@@ -1240,9 +1239,7 @@ def handle_alerts_top_signatures(request: web.Request) -> web.Response:
         )
     except QueryFailed as exc:
         logger.warning("Alert top signatures: %s", exc)
-        return web.json_response(
-            {"error": "The alert search was incomplete"}, status=502
-        )
+        return public_json({"error": "The alert search was incomplete"}, status=502)
     signatures = [
         {
             "signature": b["key"]["key"],
@@ -1343,9 +1340,7 @@ def handle_alerts_top_ips(request: web.Request) -> web.Response:
         )
     except QueryFailed as exc:
         logger.warning("Alert top IPs: %s", exc)
-        return web.json_response(
-            {"error": "The alert search was incomplete"}, status=502
-        )
+        return public_json({"error": "The alert search was incomplete"}, status=502)
     ips = sorted(
         ({"ip": b["key"]["key"], "count": b["doc_count"]} for b in buckets),
         key=lambda r: (-r["count"], r["ip"]),

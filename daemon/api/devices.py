@@ -18,6 +18,7 @@ from typing import Any
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.error_replies import public_json
 from api.drilldown_runner import lan_check
 from api.offload import in_thread, run_blocking
 from api.time_range import _utc, iso_param, parse_time_range
@@ -281,7 +282,7 @@ def _alert_sides(reply: Any) -> list[list[dict]]:
 def _incomplete(where: str, exc: QueryFailed) -> web.Response:
     """The 502 for a search that answered only in part, never a smaller figure."""
     logger.error("Incomplete search in %s: %s", where, exc)
-    return web.json_response({"error": "The device search was incomplete"}, status=502)
+    return public_json({"error": "The device search was incomplete"}, status=502)
 
 
 # A record its responder answered: a probe of an empty address is no device (NET-226 follow-up)

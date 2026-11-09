@@ -37,6 +37,7 @@ from typing import Any
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.error_replies import public_json
 from api.offload import in_thread
 from api.time_range import parse_time_range
 from api.devices import (
@@ -418,9 +419,7 @@ def handle_registry_traffic(request: web.Request) -> web.Response:
         )
     except QueryFailed as exc:
         logger.error("Incomplete search in device registry traffic: %s", exc)
-        return web.json_response(
-            {"error": "The device search was incomplete"}, status=502
-        )
+        return public_json({"error": "The device search was incomplete"}, status=502)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in device registry: %s", exc)
         return web.json_response(

@@ -374,7 +374,8 @@ class SuricataRuleManager:
                 logger.error("Could not start the rule update: %s", exc)
                 return {
                     "success": False,
-                    "output": f"Could not start the rule update: {exc}",
+                    # OLD CODE: "output": f"Could not start the rule update: {exc}", (NET-229: the path)
+                    "output": f"Could not start the rule update: {exc.strerror or exc}",
                     "reload_output": "",
                     "status": update_record(),
                 }
@@ -404,9 +405,17 @@ class SuricataRuleManager:
             record["state"],
             f" ({record['reason']})" if record["reason"] else "",
         )
+        # NET-229 follow-up: on a failure the output may be Docker's own (no socket, no container:
+        # paths and names), not the shim's redacted log, and an exit code can't tell them apart.
+        # The record's reason says what went wrong; the raw output goes to the log.
+        if not success:
+            logger.warning("Rule update output: %s", output[-4000:])
         return {
             "success": success,
-            "output": output[-4000:],
+            # OLD CODE: "output": output[-4000:], (NET-229: Docker stderr reached the client)
+            "output": output[-4000:]
+            if success
+            else "The rule update failed. The daemon log has the details.",
             "reload_output": record["reason"] or record["state"],
             "status": record,
         }

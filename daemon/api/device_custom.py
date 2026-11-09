@@ -18,6 +18,7 @@ import re
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.error_replies import public_json
 from api.offload import run_blocking
 from services.device_custom import DeviceCustomStore, StoreUnavailable, normalize_mac
 from services.device_registry import DeviceRegistry
@@ -38,7 +39,8 @@ class _NotFound(Exception):
 
 
 def _error(message: str, status: int, headers: dict | None = None) -> web.Response:
-    return web.json_response({"error": message}, status=status, headers=headers)
+    # OLD CODE: return web.json_response({"error": message}, status=status, headers=headers) (NET-229)
+    return public_json({"error": message}, status=status, headers=headers)
 
 
 def _apply(request: web.Request, mac: str, change, need_device: bool) -> dict:
@@ -79,7 +81,8 @@ async def _run(request: web.Request, change, need_device: bool) -> web.Response:
         )
     except OpenSearchException as exc:
         logger.error("OpenSearch error customising %s: %s", mac, exc)
-        return _error(f"OpenSearch query failed: {exc}", 502)
+        # OLD CODE: return _error(f"OpenSearch query failed: {exc}", 502) (NET-229: exception text)
+        return _error("Couldn't read the device. The daemon log has the details.", 502)
     except OSError as exc:
         logger.error("Couldn't save the customisation for %s: %s", mac, exc)
         return _error("Couldn't save the change: the device's storage failed.", 500)

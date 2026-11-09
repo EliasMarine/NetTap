@@ -634,6 +634,19 @@ class TestEnable:
         assert "10.77.0.1/24" not in env.host.addrs[IFACE]
         self._assert_untouched(env, mgr)
 
+    # NET-229 follow-up: NetTap's own RuntimeError messages are shown; any other error stays in the log
+    def test_an_unexpected_enable_error_keeps_its_text_in_the_log(self, env, caplog):
+        mgr = env.make()
+        boom = PermissionError(
+            13, "Permission denied", "/host/etc/private/netplan.yaml"
+        )
+        with patch.object(mgr, "_apply", AsyncMock(side_effect=boom)):
+            ok, body = _run(mgr.enable)
+        assert ok is False
+        assert "/host/etc/private" not in body["error"]
+        assert "daemon log" in body["error"]
+        assert "/host/etc/private" in caplog.text
+
     def test_rollback_keeps_preexisting_gateway_address(self, env):
         env.host.addrs[IFACE].append("10.77.0.1/24")
         mgr = env.make(dnsmasq=FakeDnsmasq(fail=True))
@@ -1028,6 +1041,24 @@ class TestTeardown:
         assert any("DOCKER-USER" in e for e in result["errors"])
         assert not (env.dirs["netplan"] / "90-nettap-dhcp-gateway.yaml").exists()
         assert not any(c[0] == "iptables-legacy" and "-D" in c for c in env.host.calls)
+
+    # NET-229 follow-up: teardown errors reach the Settings page; command stderr stays in the log
+    def test_failed_commands_keep_their_stderr_in_the_log(self, env, caplog):
+        mgr = env.make()
+
+        async def scenario():
+            await mgr.enable()
+            env.host.fail += [
+                ("ip", "addr", "del"),
+                ("iptables-nft", "-w", "-t", "nat", "-D"),
+            ]
+            return await mgr.teardown()
+
+        result = _run(scenario)
+        assert result["torn_down"] is False
+        assert result["errors"]
+        assert not any("injected failure" in e for e in result["errors"])
+        assert "injected failure" in caplog.text
 
     def test_teardown_without_enable_is_safe(self, env):
         mgr = env.make()

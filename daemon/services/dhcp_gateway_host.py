@@ -137,11 +137,12 @@ class HostNetOps:
         rc, _, err = await self._run_nsenter(
             backend, "-w", "-t", table, "-D", chain, *args
         )
-        return (
-            ""
-            if rc == 0
-            else f"Could not delete the {table}/{chain} rule: {err.strip()}"
-        )
+        # OLD CODE: else f"Could not delete the {table}/{chain} rule: {err.strip()}" (NET-229: stderr in the reply)
+        if rc != 0:
+            logger.warning(
+                "Could not delete the %s/%s rule: %s", table, chain, err.strip()
+            )
+        return "" if rc == 0 else f"Could not delete the {table}/{chain} firewall rule."
 
     async def _disable_gro(self, iface: str) -> str:
         """GRO/LRO off for accurate capture. Returns a warning, or "" on success."""

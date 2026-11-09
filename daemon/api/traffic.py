@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.error_replies import public_json
 from api.offload import in_thread, run_blocking
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from api.drilldown_runner import either_side, ip_param
@@ -315,9 +316,7 @@ def handle_traffic_summary(request: web.Request) -> web.Response:
         )
     except QueryFailed as exc:
         logger.error("Incomplete search in traffic/summary: %s", exc)
-        return web.json_response(
-            {"error": "The traffic search was incomplete"}, status=502
-        )
+        return public_json({"error": "The traffic search was incomplete"}, status=502)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/summary: %s", exc)
         return web.json_response(
@@ -623,9 +622,7 @@ def handle_protocols(request: web.Request) -> web.Response:
         )
     except QueryFailed as exc:
         logger.warning("Protocol distribution: %s", exc)
-        return web.json_response(
-            {"error": "The protocol search was incomplete"}, status=502
-        )
+        return public_json({"error": "The protocol search was incomplete"}, status=502)
 
     aggs = result.get("aggregations", {})
 
@@ -764,9 +761,7 @@ def handle_bandwidth(request: web.Request) -> web.Response:
         )
     except QueryFailed as exc:
         logger.error("Incomplete search in traffic/bandwidth: %s", exc)
-        return web.json_response(
-            {"error": "The traffic search was incomplete"}, status=502
-        )
+        return public_json({"error": "The traffic search was incomplete"}, status=502)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/bandwidth: %s", exc)
         return web.json_response(

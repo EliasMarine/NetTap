@@ -119,6 +119,31 @@ class TestUpdateRulesThroughTheShim:
         assert result["success"] is False
         assert "no docker" in result["output"]
 
+    # NET-229 follow-up: Docker's own failure text (socket path, container name) never reaches the reply
+    def test_a_docker_failure_keeps_its_text_in_the_log(self, state, caplog):
+        out = b"Cannot connect to the Docker daemon at unix:///private/run/docker.sock"
+        with patch(
+            "asyncio.create_subprocess_exec", AsyncMock(return_value=_proc(1, out))
+        ):
+            result = asyncio.run(
+                SuricataRuleManager(container_name="live").update_rules()
+            )
+        assert result["success"] is False
+        assert "docker.sock" not in json.dumps(result)
+        assert "daemon log" in result["output"]
+        assert "/private/run/docker.sock" in caplog.text
+
+    def test_a_missing_docker_binary_shows_the_reason_not_the_path(self, state):
+        missing = FileNotFoundError(
+            2, "No such file or directory", "/opt/private/bin/docker"
+        )
+        with patch("asyncio.create_subprocess_exec", AsyncMock(side_effect=missing)):
+            result = asyncio.run(
+                SuricataRuleManager(container_name="live").update_rules()
+            )
+        assert "No such file or directory" in result["output"]
+        assert "/opt/private" not in json.dumps(result)
+
 
 # --- the status record -----------------------------------------------------------------------
 

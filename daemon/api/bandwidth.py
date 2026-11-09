@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
+from api.error_replies import public_json
 from api.devices import _accounted_devices, _ip_order
 from api.offload import in_thread
 from api.time_range import parse_time_range
@@ -156,9 +157,7 @@ def handle_daily(request: web.Request) -> web.Response:
 def _incomplete(where: str, exc: QueryFailed) -> web.Response:
     """The 502 for a search that answered only in part, never a smaller figure."""
     logger.error("Incomplete search in %s: %s", where, exc)
-    return web.json_response(
-        {"error": "The bandwidth search was incomplete"}, status=502
-    )
+    return public_json({"error": "The bandwidth search was incomplete"}, status=502)
 
 
 def _device_usage(accounted: list[dict], limit: int) -> list[dict]:

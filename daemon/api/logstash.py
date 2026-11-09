@@ -11,6 +11,8 @@ import os
 import aiohttp as aiohttp_client
 from aiohttp import web
 
+from api.error_replies import public_json
+
 logger = logging.getLogger("nettap.api.logstash")
 
 LOGSTASH_API_URL = os.environ.get("LOGSTASH_API_URL", "http://logstash:9600")
@@ -37,7 +39,7 @@ async def handle_logstash_stats(request: web.Request) -> web.Response:
     """GET /api/logstash/stats — Logstash node stats (JVM, CPU, pipelines)."""
     data = await _fetch_logstash_api("/_node/stats")
     if data is None:
-        return web.json_response(
+        return public_json(
             {"error": "Logstash monitoring API unreachable", "available": False},
             status=502,
         )
@@ -56,7 +58,7 @@ async def handle_logstash_pipelines(request: web.Request) -> web.Response:
     """GET /api/logstash/pipelines — Per-pipeline breakdown."""
     data = await _fetch_logstash_api("/_node/stats/pipelines")
     if data is None:
-        return web.json_response(
+        return public_json(
             {"error": "Logstash monitoring API unreachable", "available": False},
             status=502,
         )

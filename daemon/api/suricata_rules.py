@@ -10,6 +10,7 @@ import logging
 
 from aiohttp import web
 
+from api.error_replies import public_json
 from api.offload import run_blocking
 from services.etpro import EtProError, EtProManager
 from services.owner_rules import OwnerRules, OwnerRulesError, summary
@@ -87,7 +88,8 @@ async def handle_update_rules(request: web.Request) -> web.Response:
         # status = 200 if result["success"] else 500
         # OLD CODE END
         status = 200 if result["success"] else 202 if result.get("running") else 500
-        return web.json_response(result, status=status)
+        # NET-229 follow-up: the manager curates this result (services/suricata_rules.py update_rules)
+        return public_json(result, status=status)
     except Exception as exc:
         logger.exception("Error updating rules")
         return web.json_response(
@@ -104,7 +106,7 @@ async def handle_live_status(request: web.Request) -> web.Response:
     """
     manager: SuricataRuleManager = request.app["suricata_rule_manager"]
     status = await manager.get_live_status()
-    return web.json_response(status, status=200 if status.get("available") else 502)
+    return public_json(status, status=200 if status.get("available") else 502)
 
 
 async def handle_rule_stats(request: web.Request) -> web.Response:
@@ -195,7 +197,7 @@ async def handle_get_owner_rules(request: web.Request) -> web.Response:
         return web.json_response(await run_blocking(owner.read))
     except OSError as exc:
         logger.error("Owner rules: couldn't read (%s)", type(exc).__name__)
-        return web.json_response({"error": "Couldn't read your rules."}, status=500)
+        return public_json({"error": "Couldn't read your rules."}, status=500)
 
 
 async def handle_check_owner_rules(request: web.Request) -> web.Response:
@@ -224,14 +226,13 @@ async def handle_save_owner_rules(request: web.Request) -> web.Response:
     try:
         return web.json_response(await owner.save(content))
     except OwnerRulesError as exc:
-        return web.json_response(
-            {"error": str(exc), "errors": exc.errors}, status=exc.status
-        )
+        # OwnerRulesError carries a message written for the owner
+        return public_json({"error": str(exc), "errors": exc.errors}, status=exc.status)
     except RulesBusyError as exc:
         return web.json_response({"error": str(exc)}, status=409)
     except Exception as exc:  # the type only: the text could quote a rule
         logger.error("Owner rules: save failed (%s)", type(exc).__name__)
-        return web.json_response(
+        return public_json(
             {"error": "Couldn't save your rules. Check the daemon log."}, status=500
         )
 
@@ -278,14 +279,15 @@ async def _etpro_change(change) -> web.Response:
     try:
         return await change()
     except EtProError as exc:
-        return web.json_response({"error": str(exc)}, status=exc.status)
+        # EtProError carries a message written for the owner
+        return public_json({"error": str(exc)}, status=exc.status)
     except RulesBusyError as exc:
         return web.json_response({"error": str(exc)}, status=409)
     except (
         Exception
     ) as exc:  # e.g. /etc/nettap not writable; the type only, never the text
         logger.error("ET Pro change failed: %s", type(exc).__name__)
-        return web.json_response(
+        return public_json(
             {"error": "Couldn't change the ET Pro code. Nothing was changed."},
             status=500,
         )

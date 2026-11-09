@@ -17,6 +17,7 @@ from typing import Any, Callable, TypeVar
 
 from aiohttp import web
 
+from api.error_replies import public_json
 from api.alerts import _sparkline_interval
 from services.excluded_ips import (
     CONN_ACCOUNTING,
@@ -54,7 +55,8 @@ class SlotBusy(Exception):
 
 
 def json_error(message: str, status: int) -> web.Response:
-    return web.json_response({"error": message}, status=status)
+    # OLD CODE: return web.json_response({"error": message}, status=status) (NET-229: callers pass written messages)
+    return public_json({"error": message}, status=status)
 
 
 def ip_param(raw: Any) -> str | None:
@@ -235,6 +237,9 @@ async def run_drilldown(
     except QueryFailed as exc:
         logger.error("Drill-down for %s failed: %s", subject, exc)
         return json_error(f"Couldn't read the network data: {exc}.", 502)
+        return json_error(
+            "Couldn't read the network data. The daemon log has the details.", 502
+        )
     except Exception:
         logger.exception("Drill-down for %s failed unexpectedly", subject)
         return json_error(_BROKEN, 500)

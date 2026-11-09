@@ -10,6 +10,8 @@ import logging
 
 from aiohttp import web
 
+from api.error_replies import public_json
+
 from services import notification_config as nc
 from services.notification_hub import NotificationHub
 
@@ -18,7 +20,8 @@ logger = logging.getLogger("nettap.api.notifications_hub")
 
 def _save_failed(exc: OSError) -> web.Response:
     logger.error("Couldn't save the notification config: %s", exc)
-    return web.json_response(
+    # the OS reason ("No space left on device") is plain and helps the owner; no path is shown
+    return public_json(
         {"error": f"Couldn't save the notification settings: {exc.strerror or exc}"},
         status=500,
     )
@@ -141,7 +144,8 @@ async def handle_test_all(request: web.Request) -> web.Response:
     failures = [r for r in results if not r["ok"]]
     if failures:
         names = ", ".join(f"{r['name']} ({r['error']})" for r in failures)
-        return web.json_response(
+        # NET-224: each failed channel and its delivery reason, written for the owner
+        return public_json(
             {"error": f"The test didn't go through: {names}.", "results": results},
             status=502,
         )

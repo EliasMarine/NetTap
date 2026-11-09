@@ -41,7 +41,7 @@ from storage.ilm import apply_ilm_policies_from_config
 from storage.ilm_generator import generate_ilm_policies
 from storage.retention_config import RetentionConfigManager
 from api.offload import in_thread, run_blocking
-from api.error_replies import safe_error_middleware
+from api.error_replies import public_json, safe_error_middleware
 from api.daemon_auth import (
     load_or_create_token,
     make_auth_middleware,
@@ -581,7 +581,8 @@ async def handle_system_health(request: web.Request) -> web.Response:
         result["storage"] = await run_blocking(storage.get_status)
     except Exception as exc:
         logger.warning("System health: storage status unavailable: %s", exc)
-        result["storage"] = {"error": str(exc)}
+        # OLD CODE: result["storage"] = {"error": str(exc)} (NET-229: an OpenSearch client error, URL included)
+        result["storage"] = {"error": "Storage status couldn't be read."}
         unknown = True
 
     # SMART health
@@ -601,7 +602,8 @@ async def handle_system_health(request: web.Request) -> web.Response:
             unknown = True
     except Exception as exc:
         logger.warning("System health: SMART status unavailable: %s", exc)
-        result["smart"] = {"error": str(exc)}
+        # OLD CODE: result["smart"] = {"error": str(exc)} (NET-229: exception text)
+        result["smart"] = {"error": "Drive health couldn't be read."}
         unknown = True
 
     # OpenSearch reachability
@@ -871,7 +873,7 @@ async def handle_storage_config(request: web.Request) -> web.Response:
     """
     # --- Check that config manager is available ---
     if "retention_config_manager" not in request.app:
-        return web.json_response(
+        return public_json(
             {"error": "Retention config manager not initialised"}, status=503
         )
 
@@ -883,7 +885,8 @@ async def handle_storage_config(request: web.Request) -> web.Response:
 
     # A9: the rest moved to save_retention_config, which a backup restore uses too
     status, payload = await save_retention_config(request.app, body)
-    return web.json_response(payload, status=status)
+    # NET-229 follow-up: its 5xx is the hand-written 'not initialised' line
+    return public_json(payload, status=status)
 
 
 async def save_retention_config(app: web.Application, body: dict) -> tuple[int, dict]:

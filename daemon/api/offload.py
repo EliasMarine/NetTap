@@ -8,7 +8,8 @@ import asyncio
 import functools
 from concurrent.futures import ThreadPoolExecutor
 
-from aiohttp import web
+
+from api.error_replies import public_json
 
 # Route work gets its own threads. On asyncio's default pool (8 threads on the N100) a cold
 # Home load (~14 jobs of 6-14 s) queued ahead of the drill-downs, the certificate pass, the
@@ -49,7 +50,7 @@ def lookup_slot(handler):
     @functools.wraps(handler)
     async def run(request):
         if _LOOKUP_SLOTS.locked():  # checked first, so acquiring below never waits
-            return web.json_response({"error": LOOKUPS_BUSY}, status=503)
+            return public_json({"error": LOOKUPS_BUSY}, status=503)
         async with _LOOKUP_SLOTS:
             return await handler(request)
 

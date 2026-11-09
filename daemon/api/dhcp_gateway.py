@@ -20,6 +20,7 @@ import logging
 
 from aiohttp import web
 
+from api.error_replies import public_json
 from api.capture_control import restart_capture_containers
 from services.capture_config import load_capture_config, write_env_file_if_changed
 from services.dhcp_gateway import DhcpGatewayManager
@@ -66,7 +67,9 @@ async def _apply_capture_env() -> dict:
         _, changed = write_env_file_if_changed(load_capture_config())
     except Exception as exc:
         logger.error("Could not write capture.env after enabling DHCP: %s", exc)
-        return {"restarted": [], "errors": [f"Could not write capture.env: {exc}"]}
+        # OLD CODE: return {"restarted": [], "errors": [f"Could not write capture.env: {exc}"]} (NET-229: the path)
+        reason = exc.strerror if isinstance(exc, OSError) and exc.strerror else exc
+        return {"restarted": [], "errors": [f"Could not write capture.env: {reason}"]}
     if not changed:
         return {"restarted": [], "errors": []}
     return await restart_capture_containers()
@@ -116,7 +119,8 @@ async def handle_dhcp_enable(request: web.Request) -> web.Response:
         if not ok:
             # A refusal carries the failed checks; an apply failure doesn't
             status = 409 if "checks" in result else 500
-            return web.json_response(result, status=status)
+            # NET-229 follow-up: the manager's refusals and failures are written for the owner
+            return public_json(result, status=status)
         capture_restart = await _apply_capture_env()
     return web.json_response({**result, "capture_restart": capture_restart})
 

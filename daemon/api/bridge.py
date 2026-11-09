@@ -14,6 +14,7 @@ from services.bridge_health import BridgeHealthMonitor
 from services.bridge_manager import BridgeManager
 from services.capture_manager import CaptureMode
 from services.dhcp_gateway_net import validate_interface_name
+from api.error_replies import public_json
 from api.setup import _nic_in_use_problem
 
 logger = logging.getLogger("nettap.api.bridge")
@@ -147,7 +148,7 @@ async def handle_bridge_create(request: web.Request) -> web.Response:
     """
     manager: BridgeManager | None = request.app.get("bridge_manager")
     if manager is None:
-        return web.json_response(
+        return public_json(
             {"error": "Bridge manager not available"},
             status=503,
         )
@@ -221,7 +222,7 @@ async def handle_bridge_teardown(request: web.Request) -> web.Response:
     """
     manager: BridgeManager | None = request.app.get("bridge_manager")
     if manager is None:
-        return web.json_response(
+        return public_json(
             {"error": "Bridge manager not available"},
             status=503,
         )
@@ -245,7 +246,7 @@ async def handle_bridge_readiness(request: web.Request) -> web.Response:
     """
     manager: BridgeManager | None = request.app.get("bridge_manager")
     if manager is None:
-        return web.json_response(
+        return public_json(
             {"error": "Bridge manager not available"},
             status=503,
         )

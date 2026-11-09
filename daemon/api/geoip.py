@@ -12,6 +12,7 @@ import logging
 
 from aiohttp import web
 
+from api.error_replies import public_json
 from api.offload import in_thread
 from services.geoip_service import GeoIPService, GeoLookupFailed
 
@@ -60,7 +61,7 @@ def handle_geoip_lookup(request: web.Request) -> web.Response:
     try:
         result = geoip.lookup(raw_ip)
     except GeoLookupFailed:
-        return web.json_response(LOOKUP_FAILED, status=502)
+        return public_json(LOOKUP_FAILED, status=502)
     return web.json_response(result.to_dict())
 
 
@@ -105,7 +106,7 @@ def handle_geoip_batch(request: web.Request) -> web.Response:
     try:
         results = geoip.lookup_batch(ip_list)
     except GeoLookupFailed:
-        return web.json_response(LOOKUP_FAILED, status=502)
+        return public_json(LOOKUP_FAILED, status=502)
 
     response: dict = {"results": results}
     if invalid:

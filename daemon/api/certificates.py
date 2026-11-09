@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from aiohttp import web
 
+from api.error_replies import public_json
 from api.drilldown_runner import SlotBusy, ip_param, run_in_slot
 from api.time_range import parse_time_range
 from services.hostnames import canonical_name
@@ -72,7 +73,8 @@ def _parse_time_range(request: web.Request) -> tuple[str, str]:
 
 
 def _error(message: str) -> web.Response:
-    return web.json_response({"error": message}, status=503)
+    # OLD CODE: return web.json_response({"error": message}, status=503) (NET-229: written messages only)
+    return public_json({"error": message}, status=503)
 
 
 def _listed(rows: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
