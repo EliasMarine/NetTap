@@ -427,7 +427,8 @@
 
 		<div class="notice is-ok">
 			<Icon name="check" />
-			<span><strong>NetTap is monitoring your network.</strong> All traffic between your modem and router is analysed for threats and anomalies.</span>
+			<!-- OLD CODE: …monitoring your network.</strong> All traffic between your modem and router is analysed for threats and anomalies. (NET-225: overclaimed; encrypted content and bypassing traffic aren't analysed) -->
+			<span><strong>NetTap is monitoring your network.</strong> It analyses the traffic that crosses its capture point: connection records, DNS and TLS names, and intrusion-detection rules on anything unencrypted. It can't read encrypted content, and it doesn't see traffic that bypasses the capture point.</span>
 		</div>
 
 		<div class="grid">

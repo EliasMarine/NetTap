@@ -216,6 +216,16 @@ describe('GoLive page — bridge latency', () => {
 
 		expect(await screen.findByText('42 us')).toBeInTheDocument();
 	});
+
+	// NET-225: "All traffic … is analysed" overclaimed; encrypted content and bypassing traffic aren't
+	it('says what is analysed once live, and what is not', async () => {
+		await renderLive({ ...HEALTH, latency_us: 42 });
+
+		const live = (await screen.findByText('NetTap is monitoring your network.')).closest('.notice') as HTMLElement;
+		expect(live).toHaveTextContent('connection records, DNS and TLS names, and intrusion-detection rules on anything unencrypted');
+		expect(live).toHaveTextContent("It can't read encrypted content, and it doesn't see traffic that bypasses the capture point.");
+		expect(live).not.toHaveTextContent(/All traffic/);
+	});
 });
 
 /**
