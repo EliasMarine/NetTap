@@ -82,3 +82,17 @@ Lesson: `vi.mock('fs')` with `...actual` left the module's default import on the
 - The warning now depends on the channel. The Settings tab's webhook: turn it on in Settings › Notifications and enter its URL. Any other channel: add it again on the Notification channels page, add its routing rules again (a new channel gets a new id), then delete the old channel and rules.
 
 **Tests.** `daemon/tests/test_notification_restore.py` (16 tests). On the old code: 28 failures and 40 errors across it and the updated backup tests. With the lock taken out of `channels_for` and `configure`, both concurrency tests fail. Daemon suite: 4449 passed, 4 skipped.
+
+## Follow-up: TypeScript review L1–L4
+
+**Branch:** `fix/net-224-review`
+
+- **L1:** a 2xx from the daemon with a body the page can't read now relays as a 502. Before, the Settings save loaded the 200 `{ error }` as the settings, turned every toggle off and said "saved". The new `lib/server/relay.ts` `relayJSON` is used by the config and test routes.
+- **L2:** the Settings save now says what really failed:
+  - the request never reached NetTap: "Couldn't reach NetTap, so nothing was saved.";
+  - NetTap refused it: its reason, or the status;
+  - it saved but the answer couldn't be read: "Saved, but the page couldn't read the settings back. Reload the page to see them."
+- **L3:** "Send test notification" tests the saved settings, so it waits while the form has unsaved changes. The hint reads "Save first: the test uses the saved settings." It doesn't apply when the load failed, because there is nothing to compare with.
+- **L4:** one name for nettap-web's volume. The new `lib/server/data-dir.ts` reads `DATA_DIR`, and `auth.ts` and the in-app store both import it. `NETTAP_DATA_DIR` is gone; nothing set it.
+
+Tests: 7 new tests failed first. Web suite: 352 files, 4478 tests passed. svelte-check: 0 errors.
