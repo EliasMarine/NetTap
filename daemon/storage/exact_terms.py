@@ -79,7 +79,7 @@ def _any_truncated(reply: Any) -> bool:
 
 
 class PartialResultsError(OpenSearchException):
-    """Some shards failed or the search timed out, so the reply counts only part of the data."""
+    """Some shards failed, the search timed out or a scan hit its cap: the reply is only part of the data."""
 
 
 def _failed_shards(reply: Any) -> int:

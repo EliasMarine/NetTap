@@ -33,6 +33,7 @@ from services.excluded_ips import parse_single_ip
 # from services.excluded_ips import build_excluded_ips_filter
 # OLD CODE END
 from storage.all_buckets import all_buckets
+from storage.exact_terms import PartialResultsError
 from storage.manager import StorageManager
 from storage.snapshot_search import QueryFailed, checked, total_hits
 from storage.time_slots import histogram_buckets, time_slots
@@ -1380,8 +1381,12 @@ def _every_signature(
     buckets, complete = all_buckets(
         client, NETWORK_INDEX, query, sources, aggs, page_size=page_size
     )
+    # OLD CODE START — NET-237 (ALR-11): the cap was only logged, so categories lost signatures silently
+    # if not complete:
+    #     logger.warning("Alert signatures stopped at %d", len(buckets))
+    # OLD CODE END
     if not complete:
-        logger.warning("Alert signatures stopped at %d", len(buckets))
+        raise PartialResultsError(f"alert signatures stopped at {len(buckets)}")
     return [
         {
             **b,
@@ -1452,8 +1457,12 @@ def _alerts_by_ip(
         [{"ip": {"terms": {"field": field}}}],
         {"sev": {"terms": {"field": "suricata.alert.severity", "size": 10}}},
     )
+    # OLD CODE START — NET-237 (ALR-11): the cap was only logged, so the address lists were short
+    # if not complete:
+    #     logger.warning("Alert %s values stopped at %d", field, len(buckets))
+    # OLD CODE END
     if not complete:
-        logger.warning("Alert %s values stopped at %d", field, len(buckets))
+        raise PartialResultsError(f"alert {field} values stopped at {len(buckets)}")
     return {
         b["key"]["ip"]: (
             b.get("doc_count", 0),

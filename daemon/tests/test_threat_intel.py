@@ -443,3 +443,33 @@ class TestAvailability:
         svc.add_indicators("et_compromised", ["198.51.100.5", "198.51.100.6"])
         assert (svc.available, svc.indicator_count) == (True, 2)
         assert svc.lookup_ip("198.51.100.5")[0]["feed"] == "et_compromised"
+
+
+# ---------------------------------------------------------------------------
+# NET-237 (ALR-11): a scan that hits its cap is an error, not partial matches
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_intel_endpoint_answers_500_when_the_scan_hits_its_cap(
+    tmp_path, monkeypatch
+):
+    """The cap was only logged, so the window's matches were those read before it."""
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    from api.threats import handle_threat_intel
+
+    monkeypatch.setattr("services.threat_intel._TI_CACHE_PATH", tmp_path / "ti.json")
+    monkeypatch.setattr(
+        "services.threat_intel.all_buckets",
+        lambda *a, **k: ([{"key": {"src": "185.220.101.9", "dst": _LAN}}], False),
+    )
+    app = web.Application()
+    app["storage"] = MagicMock()
+
+    resp = await handle_threat_intel(
+        make_mocked_request("GET", "/api/threats/intel", app=app)
+    )
+
+    assert resp.status == 500

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from services.capture_config import write_file_atomic
 from storage.all_buckets import all_buckets
+from storage.exact_terms import PartialResultsError
 
 logger = logging.getLogger("nettap.services.threat_intel")
 
@@ -367,10 +368,16 @@ class ThreatIntelService:
             ],
             page_size=_IP_PAGE,
         )
+        # OLD CODE START — NET-237 (ALR-11): the cap was only logged, so the matches were partial
+        # if not complete:
+        #     logger.warning(
+        #         "TI scan stopped at %d address pairs; indicators are partial",
+        #         len(buckets),
+        #     )
+        # OLD CODE END
         if not complete:
-            logger.warning(
-                "TI scan stopped at %d address pairs; indicators are partial",
-                len(buckets),
+            raise PartialResultsError(
+                f"TI scan stopped at {len(buckets)} address pairs"
             )
 
         # The listed host is the alert's one internet endpoint; with none or two (e.g. an

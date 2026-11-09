@@ -331,3 +331,38 @@ def test_address_severity_comes_from_its_own_alerts():
     assert severity["192.168.1.30"] == "low"  # was "high", from the signature's worst
     assert severity["192.168.1.40"] == "info"
     assert body["top_signatures"][0]["severity_label"] == "low"  # its most common
+
+
+# ---------------------------------------------------------------------------
+# NET-237 (ALR-11): a scan that hits its cap is an error, not a short list
+# ---------------------------------------------------------------------------
+
+
+def _capped(*_args, **_kwargs):
+    """all_buckets that stopped at its cap (500,000 in production) after one bucket."""
+    return [{"key": {"sig": "ET SCAN Probe 000", "ip": "198.51.100.1"}}], False
+
+
+def test_categories_answer_502_when_the_signature_scan_hits_its_cap(monkeypatch):
+    """The cap was only logged, so the categories counted the signatures read before it."""
+    monkeypatch.setattr("api.alerts.all_buckets", _capped)
+    app = web.Application()
+    app["storage"] = MagicMock(_client=_fake_client(_MANY_SIGNATURES))
+    req = make_mocked_request("GET", "/api/alerts/categories", app=app)
+
+    resp = asyncio.run(handle_alerts_categories(req))
+
+    assert resp.status == 502
+
+
+def test_address_scan_that_hits_its_cap_raises(monkeypatch):
+    """The cap was only logged, so a category's source and target lists were short."""
+    import pytest
+
+    from api.alerts import _alerts_by_ip
+    from storage.exact_terms import PartialResultsError
+
+    monkeypatch.setattr("api.alerts.all_buckets", _capped)
+
+    with pytest.raises(PartialResultsError, match="stopped at 1"):
+        _alerts_by_ip(MagicMock(), {"match_all": {}}, "source.ip", ["ET SCAN Probe"])
