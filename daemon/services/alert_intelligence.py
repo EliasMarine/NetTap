@@ -728,6 +728,9 @@ def reclassify_severity(
     Suricata's priority (a classtype priority, not a measure of maliciousness). The destination
     port no longer changes it (NET-209).
     """
+    # NET-228 (audit B-i): a secret in the clear that ET rates only Informational/Unknown counts
+    if alert_findings.is_credential_exposure(signature, et_severity):
+        return alert_findings.CREDENTIAL_SEVERITY
     sig_upper = (signature or "").upper()
     if sig_upper.startswith(CONTEXT_PREFIXES):
         return 5
@@ -1485,6 +1488,10 @@ def get_smart_alerts(
                 "aggs": {
                     "first_seen": {"min": {"field": "@timestamp"}},
                     "last_seen": {"max": {"field": "@timestamp"}},
+                    # NET-228: every ET rating in the group, so its severity is the strongest
+                    # record's, not the newest's (a promoted record can share a group)
+                    "et_ratings": {"terms": {"field": _ET_RATING, "size": 10}},
+                    "et_unrated": {"missing": {"field": _ET_RATING}},
                     "sample": {
                         "top_hits": {
                             "size": 1,
@@ -1610,8 +1617,14 @@ def get_smart_alerts(
         et_meta = ((sample_src.get("suricata") or {}).get("alert") or {}).get(
             "metadata"
         ) or {}
-        new_severity = reclassify_severity(
-            signature, original_severity, et_severity=et_meta.get("signature_severity")
+        # OLD CODE START — NET-228: the newest sample's rating decided the whole group
+        # new_severity = reclassify_severity(
+        #     signature, original_severity, et_severity=et_meta.get("signature_severity")
+        # )
+        # OLD CODE END
+        new_severity = min(
+            reclassify_severity(signature, original_severity, et_severity=rating)
+            for rating in _rating_classes(bucket, et_meta.get("signature_severity"))
         )
         # Activity is informational whatever its prefix or port: never boosted, never scored
         if activity:
@@ -1716,6 +1729,22 @@ def get_smart_alerts(
         if with_times
         else [alert_findings.public(g) for g in groups[:limit]]
     )
+
+
+_ET_RATING = "suricata.alert.metadata.signature_severity"
+
+
+def _rating_classes(bucket: dict, sample_rating: Any) -> list:
+    """Each ET rating in the group as its own class, plus None for unrated records; the sample's
+    rating when the reply has no et_ratings. In a counted group a record holds either no
+    Informational/Unknown, or those without Minor+ (anything else is activity), so classifying each
+    value alone is classifying each record."""
+    if "et_ratings" not in bucket:
+        return [sample_rating]
+    classes = [[b["key"]] for b in bucket["et_ratings"].get("buckets", [])]
+    if bucket.get("et_unrated", {}).get("doc_count", 0) > 0:
+        classes.append(None)
+    return classes or [sample_rating]
 
 
 def _counted_findings(

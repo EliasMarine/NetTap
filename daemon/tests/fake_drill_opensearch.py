@@ -5,8 +5,8 @@ counts are checked against what OpenSearch would answer, not against canned repl
 
 - queries: bool (filter/must/should/must_not, minimum_should_match), term (with
   case_insensitive), terms (CIDRs match IPs), range on @timestamp, exists, prefix,
-  wildcard, match_all, match_none;
-- aggregations: filter, sum/min/max/value_count, terms (with size and
+  wildcard (with case_insensitive), match_all, match_none;
+- aggregations: filter, missing, sum/min/max/value_count, terms (with size and
   sum_other_doc_count), composite (paged with `after`, with missing_bucket, one bucket per
   value of a multi-valued field), date_range and top_hits (size, from, sort, _source);
 - hits.total exact with track_total_hits, else stopped at 10,000 as OpenSearch does;
@@ -144,9 +144,15 @@ def matches(doc: dict, query: dict) -> bool:
     if kind == "prefix":
         ((field, start),) = body.items()
         return any(str(v).startswith(start) for v in values(doc, field))
-    if kind == "wildcard":  # on a keyword field: case-sensitive, * and ?
+    if kind == "wildcard":  # on a keyword field: case-sensitive unless asked, * and ?
         ((field, pattern),) = body.items()
-        return any(fnmatch.fnmatchcase(str(v), pattern) for v in values(doc, field))
+        # OLD CODE: return any(fnmatch.fnmatchcase(str(v), pattern) …) (NET-228: + case_insensitive)
+        spec = pattern if isinstance(pattern, dict) else {"value": pattern}
+        fold = str.lower if spec.get("case_insensitive") else str
+        return any(
+            fnmatch.fnmatchcase(fold(str(v)), fold(spec["value"]))
+            for v in values(doc, field)
+        )
     raise NotImplementedError(kind)
 
 
@@ -271,6 +277,9 @@ def _one(docs: list, spec: dict) -> dict:
         return {"doc_count": len(hit), **aggregate(hit, sub)}
     if kind in ("sum", "min", "max", "value_count"):
         return _metric(docs, kind, body["field"])
+    if kind == "missing":  # NET-228: the documents without the field
+        hit = [d for d in docs if not values(d, body["field"])]
+        return {"doc_count": len(hit), **aggregate(hit, sub)}
     if kind == "composite":
         return _composite(docs, body, sub)
     if kind == "terms":  # count desc, then key; cut at size like OpenSearch

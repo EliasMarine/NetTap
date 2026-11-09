@@ -20,6 +20,12 @@ from opensearchpy import OpenSearchException
 from api.offload import in_thread
 from api.time_range import parse_time_range
 from services.alert_enrichment import AlertEnrichment
+from services.alert_findings import (
+    ACTIVITY_RATINGS,
+    CREDENTIAL_MARKERS,
+    CREDENTIAL_NOT,
+    ET_RATINGS,
+)
 from services.capture_config import write_file_atomic
 from services.excluded_ips import parse_single_ip
 
@@ -68,9 +74,45 @@ _SURICATA_ENGINE_EVENTS: list[dict] = [
 # ET rates these informational: they stay stored and are listed as activity (?activity=true) but
 # never counted (owner decision 2026-11-06: counts use ET's Minor, Major and Critical only).
 # A rule without the field (other sources, owner rules) counts.
+# OLD CODE START — NET-228 (audit B-i): a password sent in the clear was activity too
+# ET_ACTIVITY_CLAUSE: dict = {
+#     "terms": {
+#         "suricata.alert.metadata.signature_severity": ["Informational", "Unknown"]
+#     }
+# }
+# OLD CODE END
+# alert_findings.is_credential_exposure as a query: rated only Informational/Unknown, and the rule
+# names a secret in the clear. These count (the owner can act on them); the rest stay activity.
+CREDENTIAL_EXPOSURE_CLAUSE: dict = {
+    "bool": {
+        "should": [
+            {"wildcard": {"rule.name": {"value": f"*{m}*", "case_insensitive": True}}}
+            for m in CREDENTIAL_MARKERS
+        ],
+        "minimum_should_match": 1,
+        "must_not": [
+            {"terms": {"suricata.alert.metadata.signature_severity": list(ET_RATINGS)}},
+            *(
+                {
+                    "wildcard": {
+                        "rule.name": {"value": f"*{x}*", "case_insensitive": True}
+                    }
+                }
+                for x in CREDENTIAL_NOT
+            ),
+        ],
+    }
+}
 ET_ACTIVITY_CLAUSE: dict = {
-    "terms": {
-        "suricata.alert.metadata.signature_severity": ["Informational", "Unknown"]
+    "bool": {
+        "filter": [
+            {
+                "terms": {
+                    "suricata.alert.metadata.signature_severity": list(ACTIVITY_RATINGS)
+                }
+            }
+        ],
+        "must_not": [CREDENTIAL_EXPOSURE_CLAUSE],
     }
 }
 

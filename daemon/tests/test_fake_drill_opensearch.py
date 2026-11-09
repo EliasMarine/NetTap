@@ -149,3 +149,16 @@ def test_a_term_with_a_slash_is_text_unless_it_is_a_cidr():
     assert not matches(rule, {"term": {"rule.name": "ET MALWARE Win32/Bar CnC"}})
     assert matches(rule, {"term": {"source.ip": "10.0.0.0/24"}})
     assert not matches(rule, {"term": {"source.ip": "10.0.1.0/24"}})
+
+
+def test_a_wildcard_folds_case_only_when_asked():
+    doc = {"rule.name": "ET POLICY Password in Cleartext"}
+    assert matches(doc, {"wildcard": {"rule.name": "*Cleartext*"}})
+    assert not matches(doc, {"wildcard": {"rule.name": "*cleartext*"}})
+    folded = {"value": "*cleartext*", "case_insensitive": True}
+    assert matches(doc, {"wildcard": {"rule.name": folded}})
+
+
+def test_missing_buckets_the_documents_without_the_field():
+    reply = aggregate(_docs(), {"m": {"missing": {"field": "source.ip"}}})
+    assert reply["m"]["doc_count"] == 1

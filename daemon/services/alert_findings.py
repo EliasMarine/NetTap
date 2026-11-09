@@ -65,6 +65,33 @@ def is_reputation(signature: str | None) -> bool:
     return (signature or "").upper().startswith(REPUTATION_PREFIXES)
 
 
+# NET-228 (audit B-i): ET rates some rules about a secret sent or exposed in the clear Informational
+# or Unknown ("Outgoing Basic Auth Base64 HTTP Password detected unencrypted", "GPL WEB_SERVER
+# .htpasswd access"), so they were left out of every count, though the owner can act on them. A
+# record with that rating, no Minor/Major/Critical, and one of these words in its rule name counts.
+# api/alerts.py CREDENTIAL_EXPOSURE_CLAUSE is the same test as a query.
+CREDENTIAL_MARKERS = ("cleartext", "password", "passwd", "credential")
+# Checked against the 42 enabled rules these words catch (G11, 2026-11-09): these name an admin
+# event, not a secret exposed ("ET INFO external cPanel password change")
+CREDENTIAL_NOT = ("password change", "expired password")
+ACTIVITY_RATINGS = ("Informational", "Unknown")
+ET_RATINGS = ("Minor", "Major", "Critical")
+CREDENTIAL_SEVERITY = 3  # medium: counted, below an active attempt (Major)
+
+
+def is_credential_exposure(signature: str | None, et_severity: Any) -> bool:
+    """A rule ET rates only Informational/Unknown whose name names a secret in the clear.
+    Ratings compare exactly, as the query's terms clause does; a scalar or Malcolm's list."""
+    ratings = et_severity if isinstance(et_severity, list) else [et_severity]
+    name = (signature or "").lower()
+    return (
+        any(r in ACTIVITY_RATINGS for r in ratings)
+        and not any(r in ET_RATINGS for r in ratings)
+        and any(m in name for m in CREDENTIAL_MARKERS)
+        and not any(x in name for x in CREDENTIAL_NOT)
+    )
+
+
 def lan_test(cidrs: list[str] | None) -> Callable[[str | None], bool]:
     """Membership in the daemon's LAN subnets (RFC 1918 when none are given)."""
     nets = [ipaddress.ip_network(c, strict=False) for c in (cidrs or RFC1918_CIDRS)]
