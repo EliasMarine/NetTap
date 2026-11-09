@@ -275,7 +275,8 @@ describe('Device by MAC page — page refresh contract', () => {
 
 		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
 		await vi.waitFor(() => expect(traffic().map(hours)).toEqual([24, 168]));
-		expect(await screen.findByText('By bytes · last 7 days')).toBeInTheDocument();
+		// OLD CODE: findByText('By bytes · last 7 days') (NET-226 follow-up: the connections it started)
+		expect(await screen.findByText('By bytes · connections it started · last 7 days')).toBeInTheDocument();
 	});
 });
 

@@ -97,6 +97,9 @@
 	);
 	let alertsExpanded = $state(false);
 	const ALERTS_COLLAPSED_COUNT = 3;
+	// NET-226 follow-up: a router on one cable passes a routed flow twice; Zeek keeps one record with both legs' bytes
+	const INTER_VLAN_NOTE =
+		'Traffic your router routes between two of your VLANs can be seen on both, so its bytes count twice here; each connection counts once.';
 	let suppressFailedId = $state<number | null>(null);
 
 	// Remove the row only once the daemon confirms; suppressAlert throws on failure
@@ -870,6 +873,8 @@ OLD CODE END -->
 			{/snippet}
 			{#if busiest >= 0}
 				<AreaChart bytes series={chartSeries} formatX={chartTime} formatY={formatBytes} formatTip={chartTip} highlightIndex={busiest} ariaLabel={chartLabel} />
+				<!-- NET-226 follow-up: Zeek merges both legs of a routed inter-VLAN flow into one record -->
+				<p class="chart-note">{INTER_VLAN_NOTE}</p>
 			{:else}
 				<CardState state="empty" icon="bandwidth" title="No traffic in this range" message="The chart fills in once NetTap records traffic from this device." />
 			{/if}
@@ -976,11 +981,13 @@ OLD CODE END -->
 		</Card>
 
 		<div class="stack c-4">
-			<Card title="Traffic categories" sub="Bytes by category · {RANGE_LABEL[range].toLowerCase()}">
+			<!-- OLD CODE: sub="Bytes by category · …" (NET-226 follow-up: it reads the connections the device started) -->
+			<Card title="Traffic categories" sub="Bytes by category · connections it started · {RANGE_LABEL[range].toLowerCase()}">
 				{#if categoriesFailed && categories.length === 0}
 					<CardState state="error" title={loadFailed('traffic categories')} onaction={() => refresh.run()} />
 				{:else if categories.length === 0}
-					<CardState state="empty" icon="bandwidth" title="No category data available." />
+					<!-- OLD CODE: title="No category data available." -->
+					<CardState state="empty" icon="bandwidth" title="No category data for connections it started." />
 				{:else}
 					<!-- OLD CODE: <p class="note">{loadFailed('traffic categories', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
 					{#if categoriesFailed}<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('traffic categories', true)}</span></p>{/if}
@@ -995,7 +1002,8 @@ OLD CODE END -->
 					/>
 				{/if}
 			</Card>
-			<Card title="Top services" sub="Bytes by service · {RANGE_LABEL[range].toLowerCase()}">
+			<!-- OLD CODE: sub="Bytes by service · …" (NET-226 follow-up: as Traffic categories) -->
+			<Card title="Top services" sub="Bytes by service · connections it started · {RANGE_LABEL[range].toLowerCase()}">
 				{#if device.top_services?.length}
 					<BarList
 						items={device.top_services.map((svc, i) => ({
@@ -1007,12 +1015,14 @@ OLD CODE END -->
 						}))}
 					/>
 				{:else}
-					<CardState state="empty" icon="connections" title="No service data available." />
+					<!-- OLD CODE: title="No service data available." -->
+					<CardState state="empty" icon="connections" title="No service data for connections it started." />
 				{/if}
 			</Card>
 		</div>
 
-		<Card class="c-4" title="Top destinations" sub="By bytes · {RANGE_LABEL[range].toLowerCase()}">
+		<!-- OLD CODE: sub="By bytes · …" (NET-226 follow-up: as Traffic categories) -->
+		<Card class="c-4" title="Top destinations" sub="By bytes · connections it started · {RANGE_LABEL[range].toLowerCase()}">
 			{#if device.top_destinations?.length}
 				<DataTable
 					ariaLabel="Top destinations"
@@ -1022,7 +1032,8 @@ OLD CODE END -->
 					columns={destColumns}
 				/>
 			{:else}
-				<CardState state="empty" icon="connections" title="No destination data." />
+				<!-- OLD CODE: title="No destination data." -->
+				<CardState state="empty" icon="connections" title="No destination data for connections it started." />
 			{/if}
 		</Card>
 
@@ -1035,11 +1046,13 @@ OLD CODE END -->
 			{/if}
 		</Card>
 
-		<Card class="c-4" title="Top ports used" sub="By connections · {RANGE_LABEL[range].toLowerCase()}">
+		<!-- OLD CODE: sub="By connections · …" (NET-226 follow-up: the ports it connected to) -->
+		<Card class="c-4" title="Top ports used" sub="By connections · connections it started · {RANGE_LABEL[range].toLowerCase()}">
 			{#if portsFailed && ports.length === 0}
 				<CardState state="error" title={loadFailed('ports')} onaction={() => refresh.run()} />
 			{:else if ports.length === 0}
-				<CardState state="empty" icon="connections" title="No port data." />
+				<!-- OLD CODE: title="No port data." -->
+				<CardState state="empty" icon="connections" title="No port data for connections it started." />
 			{:else}
 				<!-- OLD CODE: <p class="note">{loadFailed('ports', true)}</p> (NET-192 PR 4: a stale note is the shared amber notice) -->
 				{#if portsFailed}<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('ports', true)}</span></p>{/if}
@@ -1099,6 +1112,7 @@ OLD CODE END -->
 	.ident-meta dd { margin: 0; }
 	/* OLD CODE: .note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); } (NET-192 PR 4: its stale notes are the amber notice) */
 	.load-note { margin-bottom: var(--sp-3); }
+	.chart-note { color: var(--text-2); font-size: var(--text-sm); margin: var(--sp-3) 0 0; }
 	.sa-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
 	.sa { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line); }
 	.sa-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; font-size: var(--text-sm); }

@@ -335,6 +335,15 @@ describe('Device detail — both sides, IPv6 and guesses (NET-226)', () => {
 		expect(screen.getByRole('note')).toHaveTextContent(text);
 	});
 
+	it('NET-226 follow-up: says under the chart that traffic routed between VLANs counts its bytes twice', async () => {
+		await renderWith({ bandwidth_series: [{ timestamp: '2026-10-29T00:00:00Z', bytes: 100, download_bytes: 60, upload_bytes: 40 }] });
+		expect(
+			screen.getByText(
+				'Traffic your router routes between two of your VLANs can be seen on both, so its bytes count twice here; each connection counts once.',
+			),
+		).toBeInTheDocument();
+	});
+
 	it('shows no IPv6 notice when nothing was left out', async () => {
 		await renderWith({ ipv6_left_out: 0, ipv6_left_out_reason: null });
 		expect(screen.queryByText(/link-local IPv6/)).not.toBeInTheDocument();

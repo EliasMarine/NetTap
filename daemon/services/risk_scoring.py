@@ -428,13 +428,22 @@ class RiskScorer:
         self, count: int, usual_days: list[int], window_days: float, corroborated: bool
     ) -> tuple[int, str]:
         """Connections opened vs the device's median day (scaled to the window)."""
+        # OLD CODE START — NET-226 follow-up: "connections" read as all of them, the answered too
+        # if len(usual_days) < MIN_HISTORY_DAYS:
+        #     return (
+        #         0,
+        #         f"{count:,} connections; not enough earlier days to compare with",
+        #     )
+        # ratio = count / max(1.0, median(usual_days) * window_days)
+        # facts = f"{count:,} connections, {ratio:.1f}× its usual"
+        # OLD CODE END
         if len(usual_days) < MIN_HISTORY_DAYS:
             return (
                 0,
-                f"{count:,} connections; not enough earlier days to compare with",
+                f"{count:,} connections it opened; not enough earlier days to compare with",
             )
         ratio = count / max(1.0, median(usual_days) * window_days)
-        facts = f"{count:,} connections, {ratio:.1f}× its usual"
+        facts = f"{count:,} connections it opened, {ratio:.1f}× its usual"
         points = 0
         if count >= MIN_CONNECTIONS:
             points = 25 if ratio >= BIG_SPIKE else 10 if ratio >= SPIKE else 0

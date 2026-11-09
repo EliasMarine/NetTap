@@ -2105,16 +2105,19 @@ def handle_device_categories(request: web.Request) -> web.Response:
                 # "terms": {"field": "destination.as.full", "size": 200},
                 # OLD CODE END
                 "terms": {"field": "destination.as.full", "size": _ALL_TERMS},
-                "aggs": {
-                    "total_bytes": {
-                        "sum": {
-                            "script": {
-                                "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
-                                "lang": "painless",
-                            }
-                        }
-                    },
-                },
+                # OLD CODE START — NET-226 follow-up: a Painless sum per record, as the list had
+                # "aggs": {
+                #     "total_bytes": {
+                #         "sum": {
+                #             "script": {
+                #                 "source": "(doc['source.bytes'].size() > 0 ? doc['source.bytes'].value : 0) + (doc['destination.bytes'].size() > 0 ? doc['destination.bytes'].value : 0)",
+                #                 "lang": "painless",
+                #             }
+                #         }
+                #     },
+                # },
+                # OLD CODE END
+                "aggs": _BYTE_SUMS,
             }
         },
     }
@@ -2131,7 +2134,8 @@ def handle_device_categories(request: web.Request) -> web.Response:
     ):
         asn_full = bucket["key"]
         cat_key = classify_asn(asn_full)
-        total_bytes = int(bucket.get("total_bytes", {}).get("value", 0))
+        # OLD CODE: total_bytes = int(bucket.get("total_bytes", {}).get("value", 0)) (the Painless sum)
+        total_bytes = _bucket_bytes(bucket)
 
         if cat_key not in cat_data:
             cat_data[cat_key] = {

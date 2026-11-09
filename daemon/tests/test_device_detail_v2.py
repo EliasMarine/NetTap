@@ -56,6 +56,7 @@ class TestDeviceCategoriesHandler(AioHTTPTestCase):
     @unittest_run_loop
     async def test_device_categories_returns_data(self):
         """Mock ASN buckets are classified into categories correctly."""
+        # OLD CODE: each bucket carried "total_bytes" (a Painless sum); NET-226 follow-up: both byte sums
         self.mock_client.search.return_value = {
             "aggregations": {
                 "asn_breakdown": {
@@ -63,22 +64,26 @@ class TestDeviceCategoriesHandler(AioHTTPTestCase):
                         {
                             "key": "AS2906 Netflix Inc",
                             "doc_count": 100,
-                            "total_bytes": {"value": 5000000},
+                            "src": {"value": 1000000},
+                            "dst": {"value": 4000000},
                         },
                         {
                             "key": "AS15169 Google LLC",
                             "doc_count": 200,
-                            "total_bytes": {"value": 3000000},
+                            "src": {"value": 500000},
+                            "dst": {"value": 2500000},
                         },
                         {
                             "key": "AS32934 Facebook, Inc.",
                             "doc_count": 50,
-                            "total_bytes": {"value": 1000000},
+                            "src": {"value": 1000000},
+                            "dst": {"value": 0},
                         },
                         {
                             "key": "AS99999 Unknown Corp",
                             "doc_count": 10,
-                            "total_bytes": {"value": 100000},
+                            "src": {"value": 40000},
+                            "dst": {"value": 60000},
                         },
                     ]
                 }
@@ -116,6 +121,17 @@ class TestDeviceCategoriesHandler(AioHTTPTestCase):
         other = next(c for c in categories if c["name"] == "other")
         self.assertEqual(other["total_bytes"], 100000)
 
+        # NET-226 follow-up: plain sums of both byte fields, no Painless script per record
+        body = self.mock_client.search.call_args.kwargs["body"]
+        self.assertNotIn("script", str(body))
+        self.assertEqual(
+            body["aggs"]["asn_breakdown"]["aggs"],
+            {
+                "src": {"sum": {"field": "source.bytes", "missing": 0}},
+                "dst": {"sum": {"field": "destination.bytes", "missing": 0}},
+            },
+        )
+
     @unittest_run_loop
     async def test_device_categories_empty(self):
         """Empty ASN buckets return empty categories list."""
@@ -152,12 +168,14 @@ class TestDeviceCategoriesHandler(AioHTTPTestCase):
                         {
                             "key": "AS32934 Facebook, Inc.",
                             "doc_count": 10,
-                            "total_bytes": {"value": 100},
+                            "src": {"value": 40},
+                            "dst": {"value": 60},
                         },
                         {
                             "key": "AS2906 Netflix Inc",
                             "doc_count": 50,
-                            "total_bytes": {"value": 5000},
+                            "src": {"value": 1000},
+                            "dst": {"value": 4000},
                         },
                     ]
                 }

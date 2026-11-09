@@ -363,7 +363,8 @@
 			</Card>
 		{/if}
 
-		<Card class="c-6" title="Top destinations" sub="By bytes · {range.words}">
+		<!-- OLD CODE: sub="By bytes · {range.words}" (NET-226 follow-up: it reads the connections the device started) -->
+		<Card class="c-6" title="Top destinations" sub="By bytes · connections it started · {range.words}">
 			{#if traffic?.top_destinations?.length}
 				<DataTable
 					ariaLabel="Top destinations"
@@ -375,7 +376,8 @@
 			{:else if trafficFailed && !traffic}
 				<CardState state="error" title={loadFailed('traffic')} onaction={() => refresh.run()} />
 			{:else}
-				<CardState state="empty" icon="connections" title="No destinations in the {range.words}" />
+				<!-- OLD CODE: title="No destinations in the {range.words}" -->
+				<CardState state="empty" icon="connections" title="No destinations for connections it started in the {range.words}" />
 			{/if}
 		</Card>
 
