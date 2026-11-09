@@ -15,7 +15,10 @@
 set -u
 
 REPO_DIR="/home/nettap/NetTap"
-BRANCH="fix/index-template-pattern"
+# OLD CODE START — 2026-11-08: fix/index-template-pattern is merged; the device runs main (NET-214)
+# BRANCH="fix/index-template-pattern"
+# OLD CODE END
+BRANCH="main"
 INDEX_PATTERN="arkime_sessions3-*"
 TODAY_INDEX="arkime_sessions3-$(date -u +%y%m%d)"
 DELETE_TODAY=false

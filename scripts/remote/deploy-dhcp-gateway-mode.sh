@@ -5,7 +5,10 @@
 set -u
 
 REPO_DIR="/home/nettap/NetTap"
-BRANCH="phase-4/dhcp-gateway-mode"
+# OLD CODE START — 2026-11-08: phase-4/dhcp-gateway-mode is merged; the device runs main (NET-214)
+# BRANCH="phase-4/dhcp-gateway-mode"
+# OLD CODE END
+BRANCH="main"
 COMPOSE="docker/docker-compose.yml"
 DAEMON="nettap-storage-daemon"
 # OLD CODE START — 2026-11-02: arkime-live is off by default (compose profile "arkime", #44)

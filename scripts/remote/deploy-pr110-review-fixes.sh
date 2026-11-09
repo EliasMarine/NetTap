@@ -3,7 +3,10 @@
 set -u
 
 REPO_DIR="/home/nettap/NetTap"
-BRANCH="fix/pr110-review"
+# OLD CODE START — 2026-11-08: fix/pr110-review is merged; the device runs main (NET-214)
+# BRANCH="fix/pr110-review"
+# OLD CODE END
+BRANCH="main"
 COMPOSE="docker/docker-compose.yml"
 TOKEN_PATH="/run/nettap-auth/daemon-token"
 PASS=0

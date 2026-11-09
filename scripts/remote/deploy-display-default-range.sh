@@ -14,7 +14,10 @@
 set -u
 
 REPO_DIR="/home/nettap/NetTap"
-BRANCH="feature/display-default-range"
+# OLD CODE START — 2026-11-08: feature/display-default-range is merged; the device runs main (NET-214)
+# BRANCH="feature/display-default-range"
+# OLD CODE END
+BRANCH="main"
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
 BASE="https://localhost"
 FAILED=0
