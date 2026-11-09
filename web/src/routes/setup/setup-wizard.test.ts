@@ -160,6 +160,27 @@ describe('setup wizard after account creation', () => {
 		expect(screen.queryByText('Bridge not fully healthy')).not.toBeInTheDocument();
 	});
 
+	// F6: /api/health answers 200 from the web container even with the daemon down, so the row read
+	// "Running" whenever the web app was up; whether the daemon answered is in its `daemon.status`
+	it('fails the NetTap daemon row when the daemon is unreachable', async () => {
+		mockFetch({ 'GET /api/health': { body: { status: 'healthy', daemon: { status: 'unreachable', error: 'Could not connect to daemon' } } } });
+		await chooseBridgeModeThenCreateAccount();
+
+		const row = (await screen.findByText('NetTap daemon')).closest('li') as HTMLElement;
+		await waitFor(() => expect(row).toHaveTextContent('Not responding'));
+		expect(row).toHaveClass('is-fail');
+		expect(row).not.toHaveTextContent('Running');
+	});
+
+	it('passes the NetTap daemon row when the daemon answers', async () => {
+		mockFetch({ 'GET /api/health': { body: { status: 'healthy', daemon: { status: 'ok' } } } });
+		await chooseBridgeModeThenCreateAccount();
+
+		const row = (await screen.findByText('NetTap daemon')).closest('li') as HTMLElement;
+		await waitFor(() => expect(row).toHaveTextContent('Running'));
+		expect(row).toHaveClass('is-pass');
+	});
+
 	it('never leaves a row on "Checking…" when a check gets an error status', async () => {
 		mockFetch({
 			'GET /api/settings/excluded-ips': { status: 500, body: { error: 'boom' } },

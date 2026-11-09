@@ -603,9 +603,21 @@
 		}
 
 		// Check NetTap Daemon
+		// OLD CODE START — F6: /api/health answers 200 from the web container even with the daemon
+		// down, so this said "Running" whenever the web app was up
+		// try {
+		// 	const healthRes = await fetch('/api/health');
+		// 	healthChecks[0] = healthRes.ok
+		// 		? { label: 'NetTap daemon', status: 'pass', detail: 'Running' }
+		// 		: { label: 'NetTap daemon', status: 'fail', detail: 'Not responding' };
+		// } catch { healthChecks[0] = { label: 'NetTap daemon', status: 'fail', detail: 'Unreachable' }; }
+		// OLD CODE END
+		// Whether the daemon answered is in `daemon.status`, as in the requirements check
 		try {
 			const healthRes = await fetch('/api/health');
-			healthChecks[0] = healthRes.ok
+			if (!healthRes.ok) throw new Error(`HTTP ${healthRes.status}`);
+			const health = await healthRes.json();
+			healthChecks[0] = health?.daemon && health.daemon.status !== 'unreachable'
 				? { label: 'NetTap daemon', status: 'pass', detail: 'Running' }
 				: { label: 'NetTap daemon', status: 'fail', detail: 'Not responding' };
 		} catch { healthChecks[0] = { label: 'NetTap daemon', status: 'fail', detail: 'Unreachable' }; }
