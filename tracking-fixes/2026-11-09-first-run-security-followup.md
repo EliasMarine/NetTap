@@ -39,6 +39,15 @@ Branch `fix/net-229-followup`, rebased onto `fix/release-audit-2026-11` at `1ef8
 - **Found, not fixed (NET-237 area):** `storage/all_buckets.py` `complete_terms()` drops the completeness flag, so a capped IoT anomaly scan (`iot_monitor.py` ~1451) can still answer 200 with part of the findings (Codex round 3).
 - **Rebase:** the combined branch had added the GeoIP lookup-failed message to the allowlist; it is now marked with `public_json` instead. The DNS recon and live bandwidth busy 503s (plain constants) are marked too. A third guard fails a curated exception sent unmarked.
 
+### Security delta (branch `fix/net-229-delta`)
+
+- **D1 (MEDIUM), the 50-failure lockout was a denial of service:** already fixed by the follow-up above (the right code always works). The delta branch also had a per-address window, 10 tries a minute (`03d5d57f`). It was not taken. Behind Docker's IPv6 proxy every client shares one address, so a noisy LAN host could keep that shared window full, and the owner's right code would keep getting a 429. The ~59 bits make even unlimited guessing infeasible.
+- **D4 (LOW), tool output in public 500s:**
+  - **Problem:** the DHCP gateway errors and the ET Pro restart failure put stderr, dnsmasq's last line or file paths into the reply. The DHCP errors cover `ip addr add`, the iptables rules, ethtool GRO/LRO, the dnsmasq start and early exit, and the disable save.
+  - **Fix:** each message is now fixed text plus safe fields: interface, CIDR, table/chain, exit code, and the OS reason (`strerror`). The tool output goes to the daemon log.
+  - **Guard:** `test_error_replies.py` now also reads these three service modules. It fails an f-string outside a `logger` call that uses tool output (`err`, `out`, `stderr`, `output`, `_last_line`) or a bare caught `OSError`.
+  - **Tests:** one per path in `test_dhcp_gateway.py` and `test_etpro.py`. With the old services, 7 tests failed and the guard listed every old line.
+
 ## 3. The firewall script cut nettap-web off from the daemon
 
 - **Problem:** `setup-firewall.sh --enable` sets `default deny incoming` and denies 8880. nettap-web reaches the host-network daemon through `host.docker.internal`, which arrives from the compose network, so the dashboard lost the daemon.
