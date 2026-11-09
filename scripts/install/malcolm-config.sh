@@ -343,6 +343,27 @@ _ensure_compose_secret() {
     log "Added missing ${key} to ${env_file}"
 }
 
+# The daemon's notification settings (NET-224). Compose reads only docker/.env, so a value set
+# only in the root .env reached the daemon while the installer ran (it exports that file) and was
+# gone after the next plain `docker compose up`. Single quotes: compose and bash take the value as
+# written ($ and # included); a value with a quote or line break can't be, so it is skipped.
+_NOTIFICATION_ENV_NAMES=(SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD SMTP_SENDER_EMAIL
+    ALERT_EMAIL WEBHOOK_URL ALERT_SEVERITY_THRESHOLD)
+
+_sync_notification_env() {
+    local env_file="$1" name value kept
+    for name in "${_NOTIFICATION_ENV_NAMES[@]}"; do
+        value="${!name:-}"
+        [[ -n "$value" ]] || continue
+        if [[ "$value" == *"'"* || "$value" == *$'\n'* ]]; then
+            warn "${name} has a quote or line break, so it isn't copied to ${env_file}; set it in Settings › API keys"
+            continue
+        fi
+        kept=$(grep -v "^${name}=" "$env_file" || true)
+        printf "%s\n%s='%s'\n" "$kept" "$name" "$value" > "$env_file"
+    done
+}
+
 generate_compose_env() {
     local env_file="${PROJECT_ROOT}/docker/.env"
 
@@ -357,6 +378,7 @@ generate_compose_env() {
         log "Docker .env already exists at ${env_file}, skipping generation"
         _ensure_compose_secret "$env_file" ARKIME_SECRET
         _ensure_compose_secret "$env_file" GRAFANA_ADMIN_PASSWORD
+        _sync_notification_env "$env_file"
         return 0
     fi
 
@@ -439,6 +461,7 @@ NETTAP_HOSTNAME=${NETTAP_HOSTNAME:-nettap.local}
 ENVEOF
 
     chmod 600 "$env_file"
+    _sync_notification_env "$env_file"
     log "Docker .env written to ${env_file}"
 }
 

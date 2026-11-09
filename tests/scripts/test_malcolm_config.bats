@@ -522,6 +522,65 @@ EOF
     grep -q "^GRAFANA_ADMIN_PASSWORD=def$" "${TEST_TMPDIR}/docker/.env"
 }
 
+# NET-224: compose reads only docker/.env, so the root .env's notification names must land there
+_unset_notification_env() {
+    unset SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD SMTP_SENDER_EMAIL \
+        ALERT_EMAIL WEBHOOK_URL ALERT_SEVERITY_THRESHOLD
+}
+
+@test "generate_compose_env: a new .env gets the notification names, taken as written" {
+    _source_malcolm_config
+    _unset_notification_env
+    export SMTP_HOST=smtp.example.net
+    export SMTP_PASSWORD='pa$$word #1'
+    export ALERT_EMAIL='a@example.net, b@example.net'
+
+    generate_compose_env
+    set -e
+
+    local env_file="${TEST_TMPDIR}/docker/.env"
+    grep -qx "SMTP_HOST='smtp.example.net'" "$env_file"
+    grep -qx "SMTP_PASSWORD='pa\$\$word #1'" "$env_file"
+    [ "$(grep -c '^WEBHOOK_URL=' "$env_file")" -eq 0 ]
+    [ "$(stat -c %a "$env_file" 2>/dev/null || stat -f %Lp "$env_file")" = "600" ]
+    # bash reads it back unchanged (compose's dotenv takes single quotes literally too)
+    [ "$(set -a; source "$env_file"; printf '%s' "$SMTP_PASSWORD")" = 'pa$$word #1' ]
+    [ "$(set -a; source "$env_file"; printf '%s' "$ALERT_EMAIL")" = 'a@example.net, b@example.net' ]
+}
+
+@test "generate_compose_env: an existing .env gets the values replaced once, others kept" {
+    _source_malcolm_config
+    _unset_notification_env
+    printf "PUID=1000\nARKIME_SECRET=abc\nGRAFANA_ADMIN_PASSWORD=def\nSMTP_HOST='old.example.net'\nWEBHOOK_URL='https://hooks.example.net/x'\n" > "${TEST_TMPDIR}/docker/.env"
+    export SMTP_HOST=smtp.example.net
+
+    generate_compose_env
+    generate_compose_env
+    set -e
+
+    local env_file="${TEST_TMPDIR}/docker/.env"
+    [ "$(grep -c '^SMTP_HOST=' "$env_file")" -eq 1 ]
+    grep -qx "SMTP_HOST='smtp.example.net'" "$env_file"
+    grep -qx "WEBHOOK_URL='https://hooks.example.net/x'" "$env_file"
+    grep -q "^ARKIME_SECRET=abc$" "$env_file"
+}
+
+@test "generate_compose_env: a value with a quote is skipped with a warning, the rest still copied" {
+    _source_malcolm_config
+    _unset_notification_env
+    export SMTP_PASSWORD="it's secret"
+    export SMTP_HOST=smtp.example.net
+
+    output=$(generate_compose_env 2>&1)
+    set -e
+
+    local env_file="${TEST_TMPDIR}/docker/.env"
+    [ "$(grep -c '^SMTP_PASSWORD=' "$env_file")" -eq 0 ]
+    grep -qx "SMTP_HOST='smtp.example.net'" "$env_file"
+    [[ "$output" == *"SMTP_PASSWORD has a quote or line break"* ]]
+    [[ "$output" != *"it's secret"* ]]
+}
+
 @test "generate_compose_env: includes heap sizes" {
     _source_malcolm_config
     export SUDO_UID=1000
