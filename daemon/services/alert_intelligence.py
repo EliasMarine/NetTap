@@ -953,8 +953,14 @@ def generate_assessment(
 # Suppress List Management (Enhancement #5: TTL decay)
 # ---------------------------------------------------------------------------
 
+# OLD CODE START — F4: /tmp is a tmpfs in the daemon container, so every restart forgot this
+# _SUPPRESS_PATH = (
+#     Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-suppress.json"
+# )
+# OLD CODE END
 _SUPPRESS_PATH = (
-    Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-suppress.json"
+    Path(os.environ.get("NETTAP_DATA_DIR", "/opt/nettap/data"))
+    / "nettap-suppress.json"
 )
 
 
@@ -1064,8 +1070,14 @@ def is_suppressed(signature_id: int, device_ip: str | None = None) -> bool:
 # Baseline Management (Enhancement #3)
 # ---------------------------------------------------------------------------
 
+# OLD CODE START — F4: /tmp is a tmpfs in the daemon container, so every restart forgot this
+# _BASELINE_PATH = (
+#     Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-baselines.json"
+# )
+# OLD CODE END
 _BASELINE_PATH = (
-    Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-baselines.json"
+    Path(os.environ.get("NETTAP_DATA_DIR", "/opt/nettap/data"))
+    / "nettap-baselines.json"
 )
 # Summaries run in threads (the Alerts page, the threat report): one update at a time
 _BASELINE_LOCK = threading.Lock()

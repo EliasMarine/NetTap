@@ -21,8 +21,14 @@ from storage.all_buckets import all_buckets
 
 logger = logging.getLogger("nettap.services.threat_intel")
 
+# OLD CODE START — F4: /tmp is a tmpfs in the daemon container, so every restart forgot this
+# _TI_CACHE_PATH = (
+#     Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-threat-intel.json"
+# )
+# OLD CODE END
 _TI_CACHE_PATH = (
-    Path(os.environ.get("NETTAP_DATA_DIR", "/tmp")) / "nettap-threat-intel.json"
+    Path(os.environ.get("NETTAP_DATA_DIR", "/opt/nettap/data"))
+    / "nettap-threat-intel.json"
 )
 # Held by callers around load_cache .. save_cache (load_cache can write back), so two
 # requests, or a request and the address drill-down, never interleave their transactions
