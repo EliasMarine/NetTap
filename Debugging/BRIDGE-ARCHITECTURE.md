@@ -1104,6 +1104,14 @@ Give a laptop a fixed address in the router's network, open the router's admin p
 
 The **Live bandwidth** card on both device pages shows a device's download and upload rate every 2 s, with a 5-minute chart. Code: `daemon/services/live_bandwidth.py` (the meter), `daemon/services/live_bandwidth_tc.py` (filter lines, dump parser, tool runner), `daemon/api/live_bandwidth.py` (`GET /api/live-bandwidth?mac=` or `?ip=`), `web/src/lib/components/LiveBandwidthCard.svelte`.
 
+### Opt-in (added 2026-11-08)
+
+- **Off by default.** The owner turns it on in **Settings › Capture › Live bandwidth**. Saved in `/opt/nettap/data/live_bandwidth.json` on the daemon's data volume (`daemon/services/live_bandwidth_setting.py`); a missing or unreadable file means off, so existing boxes come up off after the update.
+- **API.** `GET /api/settings/live-bandwidth` → `{enabled, supported, reason, mode, cleanup: {state, failed}}`. `PUT` with `{"enabled": true|false}` (a JSON bool, else 400) saves first, then applies; a failed save is a 500 and nothing changes. Turning on in bridge or gateway mode is allowed and saved, so it takes effect if the box moves to mirror mode.
+- **While off,** `GET /api/live-bandwidth` answers `{"supported": false, "off": true, "reason": …}` without touching tc, and the device card shows "Live bandwidth is off" with a link to the setting. It asks again only when the page comes back into view or gets focus.
+- **Turning off** flips the flag at once; the filters are removed by a background task. If removal fails on an interface that still exists, the interface stays "dirty": the task retries every 10 s (30 times), then every 60 s, and new watches get 503 "Removing earlier counters; trying again in a moment." until it is clean. `GET` shows the state (`running`, `retrying` with the reason per interface), and the Settings card follows it. An interface that has gone away counts as clean (its filters went with it).
+- **Races.** An admission that waited across an off (or off and on) re-checks after the lock, after preparing and after installing; if the switch moved it removes what it added and answers `off` (or 503 if it is on again).
+
 ### How it counts
 
 - **Kernel byte counters, not a reader.** The daemon puts tc flower filters on the capture interface's **ingress** hook (a `clsact` qdisc). The kernel counts each matching frame; the daemon reads the counters once per tick (`tc -s -j filter show`) and divides the byte change by the time between reads. Nothing is copied to user space and nothing is written to disk.

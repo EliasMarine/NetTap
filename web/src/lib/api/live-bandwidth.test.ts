@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { getLiveBandwidth, LiveBandwidthError, type LiveBandwidthResponse } from './live-bandwidth';
+import {
+	getLiveBandwidth,
+	getLiveBandwidthSetting,
+	setLiveBandwidthSetting,
+	LiveBandwidthError,
+	type LiveBandwidthResponse,
+	type LiveBandwidthSetting,
+} from './live-bandwidth';
 
 function mockFetch(body: unknown, status = 200): ReturnType<typeof vi.fn> {
 	const fn = vi.fn().mockResolvedValue(
@@ -85,5 +92,78 @@ describe('getLiveBandwidth', () => {
 		const p = getLiveBandwidth({ mac: 'aa:bb:cc:dd:ee:ff' }, ctrl.signal);
 		ctrl.abort();
 		await expect(p).rejects.toMatchObject({ name: 'AbortError' });
+	});
+});
+
+const OFF: LiveBandwidthResponse = {
+	supported: false,
+	off: true,
+	reason: 'Live bandwidth is off. Turn it on in Settings › Capture.',
+	mode: 'mirror',
+	interface: 'enp4s0',
+	key: { kind: 'mac', value: 'aa:bb:cc:dd:ee:ff' },
+};
+
+describe('getLiveBandwidth while the setting is off', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('returns the off reply as it came', async () => {
+		mockFetch(OFF);
+		expect(await getLiveBandwidth({ mac: 'aa:bb:cc:dd:ee:ff' })).toEqual(OFF);
+	});
+});
+
+const SETTING: LiveBandwidthSetting = {
+	enabled: false,
+	supported: true,
+	reason: null,
+	mode: 'mirror',
+	cleanup: { state: 'retrying', failed: { enp4s0: 'RTNETLINK answers: Device or resource busy' } },
+};
+
+describe('the live bandwidth setting', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('reads the setting', async () => {
+		const fn = mockFetch(SETTING);
+		expect(await getLiveBandwidthSetting()).toEqual(SETTING);
+		expect(fn.mock.calls[0][0]).toBe('/api/settings/live-bandwidth');
+	});
+
+	it('saves with a PUT of a JSON bool and returns what the daemon now has', async () => {
+		const fn = mockFetch({ ...SETTING, enabled: true });
+		expect((await setLiveBandwidthSetting(true)).enabled).toBe(true);
+		const [url, init] = fn.mock.calls[0] as [string, RequestInit];
+		expect(url).toBe('/api/settings/live-bandwidth');
+		expect(init.method).toBe('PUT');
+		expect(JSON.parse(String(init.body))).toEqual({ enabled: true });
+	});
+
+	it('carries the unchanged value from a failed save', async () => {
+		mockFetch({ error: "Couldn't save the setting: disk full.", enabled: true }, 500);
+		const err = await caught(setLiveBandwidthSetting(false));
+		expect(err).toBeInstanceOf(LiveBandwidthError);
+		expect(err.message).toBe("Couldn't save the setting: disk full.");
+		expect(err.status).toBe(500);
+		expect(err.enabled).toBe(true);
+	});
+
+	it('has no value when the reply gave none', async () => {
+		mockFetch({ error: 'enabled must be true or false.' }, 400);
+		const err = await caught(setLiveBandwidthSetting(true));
+		expect(err.status).toBe(400);
+		expect(err.enabled).toBeUndefined();
+	});
+
+	it.each([
+		['not JSON', '<html>login</html>'],
+		['no enabled', { ...SETTING, enabled: undefined }],
+		['a string for enabled', { ...SETTING, enabled: 'true' }],
+		['no cleanup', { ...SETTING, cleanup: undefined }],
+		['an unknown clean-up state', { ...SETTING, cleanup: { state: 'done', failed: {} } }],
+		['a failure that is not text', { ...SETTING, cleanup: { state: 'retrying', failed: { enp4s0: 1 } } }],
+	])('rejects a reply with %s', async (_, body) => {
+		mockFetch(body);
+		expect((await caught(getLiveBandwidthSetting())).message).toMatch(/unexpected reply/);
 	});
 });

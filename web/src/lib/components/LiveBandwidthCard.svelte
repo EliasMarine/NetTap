@@ -30,6 +30,8 @@
 
 	let data = $state<LiveBandwidthSupported | null>(null);
 	let unsupported = $state<string | null>(null);
+	/** The setting is off (Settings › Capture): nothing is measured */
+	let off = $state(false);
 	let failure = $state<LiveBandwidthError | null>(null);
 	/** The current rates, only while the latest reading is fresh. */
 	let headline = $state<{ down: number; up: number } | null>(null);
@@ -53,6 +55,7 @@
 		const current = untrack(() => key);
 		data = null;
 		unsupported = null;
+		off = false;
 		failure = null;
 		latestReason = null;
 		lastValidAt = null;
@@ -65,6 +68,8 @@
 		let stopped = false;
 		/** 400 or unsupported: asking again gets the same answer */
 		let halted = false;
+		/** Off: asks again only once the page is back in view, in case it was turned on meanwhile */
+		let offHalt = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let expiry: ReturnType<typeof setTimeout> | undefined;
 		let ctrl: AbortController | null = null;
@@ -97,17 +102,23 @@
 
 		async function poll() {
 			timer = undefined;
-			if (stopped || halted || ctrl || document.hidden) return;
+			if (stopped || halted || offHalt || ctrl || document.hidden) return;
 			ctrl = new AbortController();
 			const sentAt = performance.now();
 			try {
 				const res = await getLiveBandwidth(k, ctrl.signal);
 				if (stopped) return;
 				failure = null;
+				off = !res.supported && res.off === true;
 				if (res.supported) {
 					unsupported = null;
 					data = res;
 					show(res, sentAt);
+				} else if (off) {
+					offHalt = true;
+					unsupported = null;
+					data = null;
+					clearHeadline();
 				} else {
 					halted = true;
 					data = null;
@@ -116,21 +127,26 @@
 				}
 			} catch (e) {
 				if (stopped) return;
+				off = false;
 				failure = e instanceof LiveBandwidthError ? e : new LiveBandwidthError(e instanceof Error ? e.message : String(e), 0);
 				if (failure.status === 400) halted = true;
 			} finally {
 				ctrl = null;
 			}
 			// 2 s after this one settled, so polls never overlap
-			if (!stopped && !halted && !document.hidden) timer = setTimeout(poll, POLL_MS);
+			if (!stopped && !halted && !offHalt && !document.hidden) timer = setTimeout(poll, POLL_MS);
 		}
 
-		// Paused while the tab is hidden; back at once when it shows (the daemon stops a watch after 15 s unpolled)
+		// Paused while the tab is hidden; back at once when it shows (the daemon stops a watch after 15 s unpolled).
+		// Focus counts too, so an "off" card rechecks once after the setting was changed in another tab.
 		function onvisibility() {
-			if (!document.hidden && timer === undefined) void poll();
+			if (document.hidden) return;
+			offHalt = false;
+			if (timer === undefined) void poll();
 		}
 
 		document.addEventListener('visibilitychange', onvisibility);
+		window.addEventListener('focus', onvisibility);
 		void poll();
 
 		return {
@@ -146,6 +162,7 @@
 				clearHeadline();
 				ctrl?.abort();
 				document.removeEventListener('visibilitychange', onvisibility);
+				window.removeEventListener('focus', onvisibility);
 			},
 		};
 	}
@@ -220,7 +237,16 @@
 		{/if}
 	{/snippet}
 
-	{#if unsupported}
+	{#if off}
+		<CardState
+			state="empty"
+			icon="bandwidth"
+			title="Live bandwidth is off"
+			message="Turn it on in Settings › Capture to see this device's rate as it happens."
+			href="/settings?tab=capture"
+			actionLabel="Open Settings › Capture"
+		/>
+	{:else if unsupported}
 		<CardState state="empty" icon="bandwidth" title="Live bandwidth isn't available" message={unsupported} />
 	{:else if failure && !data}
 		{#if failure.status === 400}

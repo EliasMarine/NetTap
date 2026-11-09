@@ -1,13 +1,20 @@
-"""NET-205: GET /api/live-bandwidth validates exactly one device key and maps meter errors."""
+"""NET-205: the live bandwidth routes: one device key, meter errors, and the opt-in setting."""
 
-from unittest.mock import AsyncMock, MagicMock
+import asyncio
+import json
+import os
+import tempfile
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
 
+import services.live_bandwidth as lb
 from api.live_bandwidth import (
     METER_KEY,
+    handle_get_setting,
     handle_live_bandwidth,
+    handle_put_setting,
     register_live_bandwidth_routes,
 )
 from services.excluded_ips import build_lan_filter
@@ -18,8 +25,10 @@ from services.live_bandwidth import (
     LiveBandwidthMeter,
 )
 from services.live_bandwidth_tc import Key
+from tests.live_bandwidth_fake import Clock, FakeTc, Manager
 
 URL = "/api/live-bandwidth"
+SETTING = "/api/settings/live-bandwidth"
 
 
 class TestLiveBandwidthRoute(AioHTTPTestCase):
@@ -91,9 +100,111 @@ class TestNoDetectedLan(AioHTTPTestCase):
         self.assertEqual(resp.status, 400)
 
 
-def test_register_adds_the_route_the_meter_and_its_cleanup():
+class TestSetting(AioHTTPTestCase):
+    """A real meter on a fake tc; the setting file in a temporary directory."""
+
+    async def get_application(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        net_dir = os.path.join(tmp.name, "net")
+        os.makedirs(os.path.join(net_dir, "enp4s0"))
+        with open(os.path.join(net_dir, "enp4s0", "operstate"), "w") as f:
+            f.write("up\n")
+        self.file = os.path.join(tmp.name, "data", "live_bandwidth.json")
+        clock = Clock()
+        self.fake = FakeTc(clock)
+        for patcher in (
+            patch.dict(os.environ, {"LIVE_BANDWIDTH_FILE": self.file}),
+            patch.object(lb, "run_tool", self.fake.run),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        manager = Manager()
+        self.meter = LiveBandwidthMeter(
+            get_manager=lambda: manager,
+            get_capture_lock=lambda: None,
+            clock=clock,
+            net_dir=net_dir,
+            autostart=False,
+        )
+        app = web.Application()
+        app[METER_KEY] = self.meter
+        app.router.add_get(SETTING, handle_get_setting)
+        app.router.add_put(SETTING, handle_put_setting)
+        return app
+
+    async def _put(self, data):
+        resp = await self.client.put(SETTING, data=data)
+        return resp.status, await resp.json()
+
+    async def test_get_shape(self):
+        resp = await self.client.get(SETTING)
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(
+            await resp.json(),
+            {
+                "enabled": False,
+                "supported": True,
+                "reason": None,
+                "mode": "mirror",
+                "cleanup": {"state": "idle", "failed": {}},
+            },
+        )
+
+    async def test_put_refuses_anything_but_a_json_bool(self):
+        for data in ["{not json", "[]", "{}", '{"enabled": "true"}', '{"enabled": 1}']:
+            status, body = await self._put(data)
+            self.assertEqual(status, 400, data)
+            self.assertIn("error", body)
+        self.assertFalse(self.meter.enabled)
+        self.assertFalse(os.path.exists(self.file))
+
+    async def test_put_on_saves_then_applies(self):
+        status, body = await self._put('{"enabled": true}')
+        self.assertEqual((status, body["enabled"]), (200, True))
+        self.assertTrue(self.meter.enabled)
+        with open(self.file) as f:
+            self.assertEqual(json.load(f), {"enabled": True})
+
+    async def test_a_save_failure_changes_nothing(self):
+        with patch("api.live_bandwidth.save_enabled", side_effect=OSError("disk full")):
+            status, body = await self._put('{"enabled": true}')
+        self.assertEqual(status, 500)
+        self.assertEqual(body, {"error": "Couldn't save the setting", "enabled": False})
+        self.assertFalse(self.meter.enabled)
+        self.assertFalse(os.path.exists(self.file))
+
+    async def test_put_off_returns_while_the_cleanup_is_still_blocked_in_tc(self):
+        self.meter.set_enabled(True)
+        await self.meter.reconcile()
+        await self.meter.watch(Key("mac", "02:00:00:00:00:0a"))
+        self.fake.gate = asyncio.Event()  # removal waits until the test lets it go
+        status, body = await self._put('{"enabled": false}')
+        self.assertEqual((status, body["enabled"]), (200, False))
+        self.assertEqual(body["cleanup"]["state"], "running")
+        await self.fake.at_gate.wait()
+        self.fake.gate.set()
+        await self.meter._cleanup_task
+        self.assertEqual(self.fake.owned(), {})
+        resp = await self.client.get(SETTING)
+        self.assertEqual(
+            (await resp.json())["cleanup"], {"state": "idle", "failed": {}}
+        )
+
+
+def test_register_adds_the_routes_and_reads_the_saved_setting(tmp_path, monkeypatch):
+    path = tmp_path / "live_bandwidth.json"
+    path.write_text('{"enabled": true}')
+    monkeypatch.setenv("LIVE_BANDWIDTH_FILE", str(path))
     app = web.Application()
     meter = register_live_bandwidth_routes(app)
     assert isinstance(meter, LiveBandwidthMeter) and app[METER_KEY] is meter
+    assert meter.enabled is True
     assert meter.shutdown in app.on_cleanup
-    assert any(r.resource.canonical == URL for r in app.router.routes())
+    routes = {(r.method, r.resource.canonical) for r in app.router.routes()}
+    assert {("GET", URL), ("GET", SETTING), ("PUT", SETTING)} <= routes
+
+
+def test_register_starts_off_without_a_saved_setting(tmp_path, monkeypatch):
+    monkeypatch.setenv("LIVE_BANDWIDTH_FILE", str(tmp_path / "missing.json"))
+    assert register_live_bandwidth_routes(web.Application()).enabled is False

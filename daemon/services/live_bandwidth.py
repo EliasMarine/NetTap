@@ -8,6 +8,10 @@ live_bandwidth_tc.py). Every 2 s one counter dump turns into a download and uplo
 Mirror mode only: in bridge mode NetTap sits in front of the router and sees only its public
 address, and in DHCP gateway mode NetTap's own NAT readdresses replies before tc can see them.
 
+Opt-in (NET-205): the meter does nothing until the user turns it on in Settings › Capture. Turning
+it off ends every watch and removes every NetTap filter in the background; an interface whose
+filters couldn't be removed stays "dirty" and is retried, and no watch starts while any is dirty.
+
 Lifecycle: a poll is the keepalive. The first poll for a device starts a watch (admission); the
 watch is shared by every viewer and ends 15 s after the last poll. At most MAX_WATCHED watches run.
 
@@ -20,11 +24,12 @@ web proxy's 10 s limit.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from services.capture_manager import CaptureMode
 from services.dhcp_gateway_net import validate_interface_name
@@ -67,6 +72,11 @@ AT_CAPACITY = "Too many live views are open. Close one and try again."
 BUSY = "Live bandwidth is busy. Try again in a moment."
 STARTING = "Starting…"
 CAPTURE_CHANGING = "Capture settings are changing."
+CLEANING = "Removing earlier counters; trying again in a moment."
+OFF_REASON = "Live bandwidth is off. Turn it on in Settings › Capture."
+CLEANUP_RETRY_S = 10.0
+CLEANUP_RETRY_SLOW_S = 60.0
+CLEANUP_FAST_TRIES = 30
 FOREIGN_RULE = (
     "Another traffic rule on {iface} runs first, so NetTap can't count reliably."
 )
@@ -123,6 +133,11 @@ class _Watch:
     samples: dict[int, dict[str, Any]] = field(default_factory=dict)
 
 
+def owned_entries(entries: list[FilterEntry]) -> list[FilterEntry]:
+    """The filters NetTap owns: a NetTap cookie on one of its prefs."""
+    return [e for e in entries if parse_cookie(e.cookie) and e.pref in OWNED_PREFS]
+
+
 def _null(reason: str) -> dict[str, Any]:
     return {"down_bps": None, "up_bps": None, "reason": reason}
 
@@ -138,6 +153,8 @@ class LiveBandwidthMeter:
         wall: Callable[[], float] = time.time,
         net_dir: str = SYS_NET,
         autostart: bool = True,
+        enabled: bool = False,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._get_manager = get_manager
         self._get_capture_lock = get_capture_lock
@@ -158,10 +175,18 @@ class LiveBandwidthMeter:
         self._last_tick: int | None = None
         self._reconciled = False
         self._task: asyncio.Task | None = None
+        # Opt-in state. _transition counts on/off changes, so an admission that awaited across
+        # one can tell; _dirty maps interface -> why its NetTap filters couldn't be removed.
+        self._enabled = enabled
+        self._transition = 0
+        self._dirty: dict[str, str] = {}
+        self._cleanup_task: asyncio.Task | None = None
+        self._cleanup_again = False
+        self._sleep = sleep
 
     # ------------------------------------------------------------------ support and identity
 
-    def _support(self) -> tuple[CaptureMode | None, str | None, str | None]:
+    def support(self) -> tuple[CaptureMode | None, str | None, str | None]:
         """(mode, interface, reason it can't measure, or None)."""
         manager = self._get_manager()
         if manager is None:
@@ -195,57 +220,141 @@ class LiveBandwidthMeter:
     def _tick_index(self, now: float) -> int:
         return int((now - self._epoch) // TICK_S)
 
+    def _cleaning(self) -> bool:
+        """A clean-up is queued or running, or an interface still holds NetTap filters."""
+        running = self._cleanup_task is not None and not self._cleanup_task.done()
+        return running or bool(self._dirty)
+
+    def _current(self, transition: int) -> bool:
+        return self._enabled and self._transition == transition
+
     # ------------------------------------------------------------------ public API
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    def cleanup_status(self) -> dict[str, Any]:
+        """idle, running (a clean-up is under way) or retrying (an interface failed), and why."""
+        if self._dirty:
+            state = "retrying"
+        elif self._cleanup_task is not None and not self._cleanup_task.done():
+            state = "running"
+        else:
+            state = "idle"
+        return {"state": state, "failed": dict(self._dirty)}
+
+    def set_enabled(self, on: bool) -> None:
+        """Turn the meter on or off at once; turning off removes every filter in the background."""
+        if on == self._enabled:
+            return
+        self._enabled = on
+        self._transition += 1
+        if not on:
+            self._schedule_cleanup(everything=True)
 
     async def watch(self, key: Key) -> dict[str, Any]:
         """Keep a watch alive (starting it if needed) and return its snapshot."""
+        if not self._enabled:
+            return self._off(key)
         current = self._watches.get(key)
         if current is not None and current.state == "active" and not current.broken:
             current.last_seen = self._clock()
             self._ensure_sampler()
             return self._snapshot(current)
-        mode, iface, reason = self._support()
+        mode, iface, reason = self.support()
         if reason:
             return self._unsupported(key, mode, iface, reason)
         return await self._admit(key)
 
-    async def reconcile(self) -> None:
-        """Delete every NetTap filter on every interface (startup, shutdown)."""
+    async def reconcile(self, retry: bool = True) -> None:
+        """Delete every NetTap filter on every interface (startup, shutdown), on or off."""
         async with self._lock:
-            for iface in self._interfaces():
-                try:
-                    removed = await self._delete(
-                        iface, await self._dump(iface), DUMP_TIMEOUT_S * 2
-                    )
-                    if removed:
-                        logger.info(
-                            "Removed %d NetTap filter(s) from %s", removed, iface
-                        )
-                except TcError as exc:
-                    logger.warning(
-                        "Couldn't check %s for NetTap filters: %s", iface, exc
-                    )
-            self._watches.clear()
-            self._pending.clear()
-            self._identity = None
+            await self._clear_locked(self._interfaces())
             self._reconciled = True
+        if retry and self._dirty:
+            self._schedule_cleanup(everything=False)
 
     async def shutdown(self, _app: Any = None) -> None:
         """Stop sampling and remove NetTap's filters (aiohttp on_cleanup)."""
-        if self._task is not None:
-            self._task.cancel()
+        for task in (self._task, self._cleanup_task):
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        self._task = self._cleanup_task = None
+        await self.reconcile(retry=False)
+
+    # ------------------------------------------------------------------ clean-up
+
+    def _schedule_cleanup(self, everything: bool) -> None:
+        """One clean-up task at a time; a request while it runs makes it go round again."""
+        if self._cleanup_task is not None and not self._cleanup_task.done():
+            self._cleanup_again = self._cleanup_again or everything
+            return
+        self._cleanup_task = asyncio.create_task(
+            self._cleanup_loop(everything), name="live-bandwidth-cleanup"
+        )
+
+    async def _cleanup_loop(self, everything: bool) -> None:
+        """Clear every interface (or the dirty ones), then retry the dirty ones until clean."""
+        tries = 0
+        while True:
+            async with self._lock:
+                names = self._interfaces() if everything else sorted(self._dirty)
+                await self._clear_locked(names)
+            everything, self._cleanup_again = self._cleanup_again, False
+            if everything:
+                continue
+            if not self._dirty:
+                return
+            tries += 1
+            delay = (
+                CLEANUP_RETRY_S if tries <= CLEANUP_FAST_TRIES else CLEANUP_RETRY_SLOW_S
+            )
+            await self._sleep(delay)
+
+    async def _clear_locked(self, names: list[str]) -> None:
+        """Remove NetTap's filters on these interfaces and forget every watch. Caller holds the lock.
+
+        An interface is clean only after a dump shows none of NetTap's filters, or when it no
+        longer exists (kernel filters go with their device). Any other failure leaves it dirty.
+        """
+        for iface in names:
             try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
-        await self.reconcile()
+                removed = await self._delete(
+                    iface, await self._dump(iface), DUMP_TIMEOUT_S * 2
+                )
+                if removed and owned_entries(await self._dump(iface)):
+                    raise TcError("NetTap filters are still there after removal")
+                if removed:
+                    logger.info("Removed %d NetTap filter(s) from %s", removed, iface)
+                if self._dirty.pop(iface, None) is not None:
+                    logger.info("NetTap filters on %s are gone now", iface)
+            except TcError as exc:
+                if not os.path.exists(os.path.join(self._net_dir, iface)):
+                    if self._dirty.pop(iface, None) is not None:
+                        logger.info(
+                            "%s no longer exists, so its filters are gone", iface
+                        )
+                    continue
+                if iface not in self._dirty:
+                    logger.warning(
+                        "Couldn't remove NetTap filters on %s: %s", iface, exc
+                    )
+                self._dirty[iface] = str(exc)
+        self._watches.clear()
+        self._pending.clear()
+        self._identity = None
 
     # ------------------------------------------------------------------ admission
 
     async def _admit(self, key: Key) -> dict[str, Any]:
         if not self._reconciled:
             raise LiveBandwidthBusyError(STARTING)
+        if self._cleaning():
+            raise LiveBandwidthBusyError(CLEANING)
+        transition = self._transition
         if self._capture_changing():
             raise LiveBandwidthBusyError(CAPTURE_CHANGING)
         if self._lock.locked() and self._waiters >= 1:
@@ -259,11 +368,23 @@ class LiveBandwidthMeter:
         finally:
             self._waiters -= 1
         try:
-            return await self._admit_locked(key, deadline)
+            return await self._admit_locked(key, deadline, transition)
         finally:
             self._lock.release()
 
-    async def _admit_locked(self, key: Key, deadline: float) -> dict[str, Any]:
+    def _crossed(self, key: Key) -> dict[str, Any]:
+        """An admission that awaited across an on/off change: off if off now, else retry."""
+        if not self._enabled:
+            return self._off(key)
+        raise LiveBandwidthBusyError(CLEANING)
+
+    async def _admit_locked(
+        self, key: Key, deadline: float, transition: int
+    ) -> dict[str, Any]:
+        if not self._current(transition):
+            return self._crossed(key)
+        if self._cleaning():
+            raise LiveBandwidthBusyError(CLEANING)
         current = self._watches.get(key)
         if current is not None and current.state == "active" and not current.broken:
             current.last_seen = self._clock()
@@ -271,7 +392,7 @@ class LiveBandwidthMeter:
         if current is not None:  # broken: remove its filters before a fresh install
             current.state = "retiring"
             await self._remove(current)
-        mode, iface, reason = self._support()
+        mode, iface, reason = self.support()
         if reason:
             return self._unsupported(key, mode, iface, reason)
         if self._capture_changing():
@@ -283,8 +404,14 @@ class LiveBandwidthMeter:
             return self._unsupported(key, mode, iface, str(exc))
         except TcError as exc:
             raise LiveBandwidthError(f"Couldn't start measuring: {exc}") from exc
+        if not self._current(transition):
+            return self._crossed(key)
         self._gen += 1
         watch = await self._install(key, iface, slot, self._gen, deadline)
+        if not self._current(transition):  # turned off (and maybe on) while installing
+            del self._watches[key]
+            await self._rollback(iface, slot, watch.gen, deadline)
+            return self._crossed(key)
         self._ensure_sampler()
         logger.info("Live bandwidth watch started: %s %s on %s (slot %d)",
                     key.kind, key.value, iface, slot)  # fmt: skip
@@ -371,6 +498,9 @@ class LiveBandwidthMeter:
             return []
         valid = []
         for name in names:
+            # bonding_masters is a plain file there, and tc can never clean it (ponytail #1)
+            if not os.path.isdir(os.path.join(self._net_dir, name)):
+                continue
             try:
                 valid.append(validate_interface_name(name))
             except ValueError:
@@ -387,7 +517,7 @@ class LiveBandwidthMeter:
         self, iface: str, entries: list[FilterEntry], timeout: float
     ) -> int:
         """Delete the owned ones among entries by exact identity, in one tc call; how many."""
-        owned = [e for e in entries if parse_cookie(e.cookie) and e.pref in OWNED_PREFS]
+        owned = owned_entries(entries)
         if owned:
             lines = "".join(
                 " ".join(delete_args(iface, e.pref, e.handle)) + "\n" for e in owned
@@ -545,6 +675,12 @@ class LiveBandwidthMeter:
             logger.warning("Parked live bandwidth slots still not removed: %s", exc)
 
     # ------------------------------------------------------------------ responses
+
+    def _off(self, key: Key) -> dict[str, Any]:
+        manager = self._get_manager()
+        mode = manager.mode if manager is not None else None
+        iface = manager.get_capture_interface() if manager is not None else None
+        return {**self._unsupported(key, mode, iface, OFF_REASON), "off": True}
 
     def _unsupported(
         self, key: Key, mode: CaptureMode | None, iface: str | None, reason: str

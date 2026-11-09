@@ -602,7 +602,14 @@ describe('Settings — PCAP collection switch', () => {
 	const STATUS = { enabled: true, maxFileSizeMB: 100, containerRunning: true, containerStatus: 'running' };
 
 	async function openCapture(toggle: FetchRoute) {
-		const fetchMock = stubFetch({ '/api/capture/status': () => ({ body: STATUS }), '/api/capture/toggle': toggle });
+		const fetchMock = stubFetch({
+			'/api/capture/status': () => ({ body: STATUS }),
+			'/api/capture/toggle': toggle,
+			// the Live bandwidth card on the same tab (NET-205), so its own error isn't a second alert
+			'/api/settings/live-bandwidth': () => ({
+				body: { enabled: false, supported: true, reason: null, mode: 'mirror', cleanup: { state: 'idle', failed: {} } },
+			}),
+		});
 		render(Page);
 		await flush();
 		await fireEvent.click(screen.getByRole('tab', { name: 'Capture' }));

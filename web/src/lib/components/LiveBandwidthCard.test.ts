@@ -305,4 +305,91 @@ describe('LiveBandwidthCard', () => {
 		await wait(2000);
 		expect(calls).toHaveLength(3);
 	});
+
+	describe('while live bandwidth is off in Settings', () => {
+		const OFF = {
+			supported: false,
+			off: true,
+			reason: 'Live bandwidth is off. Turn it on in Settings › Capture.',
+			mode: 'mirror',
+			interface: 'enp4s0',
+			key: { kind: 'mac', value: 'aa:bb:cc:dd:ee:ff' },
+		};
+		const focus = async () => {
+			window.dispatchEvent(new Event('focus'));
+			await flush();
+		};
+
+		it('says so with a link to the switch, asks once and stops', async () => {
+			render(LiveBandwidthCard, { props: { key: MAC } });
+			await flush();
+			await answer(OFF);
+			expect(screen.getByRole('heading', { name: 'Live bandwidth is off' })).toBeInTheDocument();
+			expect(screen.getByRole('link', { name: 'Open Settings › Capture' })).toHaveAttribute('href', '/settings?tab=capture');
+			await wait(60_000);
+			expect(calls).toHaveLength(1);
+		});
+
+		it('asks once more when the window gets focus or the page shows again, and stays stopped while still off', async () => {
+			render(LiveBandwidthCard, { props: { key: MAC } });
+			await flush();
+			await answer(OFF);
+
+			await focus();
+			expect(calls).toHaveLength(2);
+			await focus(); // a second event while that one is out asks nothing more
+			expect(calls).toHaveLength(2);
+			await answer(OFF);
+			await wait(60_000);
+			expect(calls).toHaveLength(2);
+
+			document.dispatchEvent(new Event('visibilitychange'));
+			await flush();
+			expect(calls).toHaveLength(3);
+			await answer(OFF);
+			await wait(60_000);
+			expect(calls).toHaveLength(3);
+			expect(screen.getByText('Live bandwidth is off')).toBeInTheDocument();
+		});
+
+		it('polls again once it was turned on elsewhere', async () => {
+			render(LiveBandwidthCard, { props: { key: MAC } });
+			await flush();
+			await answer(OFF);
+			await focus();
+			await answer(supported());
+			expect(figures()).toEqual(['12.3 Mbit/s', '789 bit/s']);
+			expect(screen.queryByText('Live bandwidth is off')).not.toBeInTheDocument();
+			await wait(2000);
+			expect(calls).toHaveLength(3);
+		});
+
+		it('keeps polling through a busy reply after the turn-on, and shows the rates when they come', async () => {
+			render(LiveBandwidthCard, { props: { key: MAC } });
+			await flush();
+			await answer(OFF);
+			await focus();
+			await answer({ error: 'Removing earlier counters; trying again in a moment.' }, 503);
+			expect(screen.getByRole('alert')).toHaveTextContent('Removing earlier counters; trying again in a moment.');
+
+			await wait(2000); // no focus change needed
+			expect(calls).toHaveLength(3);
+			await answer(supported());
+			expect(figures()).toEqual(['12.3 Mbit/s', '789 bit/s']);
+		});
+
+		it('stops listening for focus on unmount', async () => {
+			const add = vi.spyOn(window, 'addEventListener');
+			const remove = vi.spyOn(window, 'removeEventListener');
+			const { unmount } = render(LiveBandwidthCard, { props: { key: MAC } });
+			await flush();
+			await answer(OFF);
+			const listener = add.mock.calls.find(([type]) => type === 'focus')?.[1];
+			expect(listener).toBeTypeOf('function');
+			unmount();
+			expect(remove).toHaveBeenCalledWith('focus', listener);
+			add.mockRestore();
+			remove.mockRestore();
+		});
+	});
 });

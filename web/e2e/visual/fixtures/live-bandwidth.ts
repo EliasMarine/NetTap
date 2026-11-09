@@ -1,9 +1,16 @@
 /**
  * Live bandwidth on both device pages (/api/live-bandwidth, NET-205). Empty is a watch that has
  * only just started (every slot unmeasured, so the card says Measuring…); populated is five
- * minutes of a download with one missed tick, which the chart draws as a gap.
+ * minutes of a download with one missed tick, which the chart draws as a gap. The opt-in switch
+ * (/api/settings/live-bandwidth) is off in empty mode, its default, and on in populated mode;
+ * LIVE_BANDWIDTH_OFF is the device card's reply while it is off (live-bandwidth.visual.ts).
  */
-import type { LiveBandwidthSample, LiveBandwidthSupported } from '../../../src/lib/api/live-bandwidth.ts';
+import type {
+	LiveBandwidthSample,
+	LiveBandwidthSetting,
+	LiveBandwidthSupported,
+	LiveBandwidthUnsupported,
+} from '../../../src/lib/api/live-bandwidth.ts';
 import { NOW, type FixtureRoute } from './types.ts';
 
 const SLOTS = 150;
@@ -39,7 +46,25 @@ const base = {
 	measuring_since: NOW - SLOTS * STEP_MS,
 } as const;
 
+export const LIVE_BANDWIDTH_OFF = {
+	supported: false,
+	off: true,
+	reason: 'Live bandwidth is off. Turn it on in Settings › Capture.',
+	mode: 'mirror',
+	interface: 'enp4s0',
+	key: base.key,
+} satisfies LiveBandwidthUnsupported;
+
+const SETTING_OFF = {
+	enabled: false,
+	supported: true,
+	reason: null,
+	mode: 'mirror',
+	cleanup: { state: 'idle', failed: {} },
+} satisfies LiveBandwidthSetting;
+
 export const LIVE_BANDWIDTH_ROUTES: FixtureRoute[] = [
+	{ path: '/api/settings/live-bandwidth', method: 'GET', empty: SETTING_OFF, populated: { ...SETTING_OFF, enabled: true } satisfies LiveBandwidthSetting },
 	{
 		path: '/api/live-bandwidth',
 		empty: {

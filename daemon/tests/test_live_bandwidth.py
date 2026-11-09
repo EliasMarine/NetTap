@@ -46,7 +46,18 @@ def env(tmp_path, monkeypatch):
     fake = FakeTc(clock, ifaces=("enp4s0", "eth9"))
     monkeypatch.setattr(lb, "run_tool", fake.run)
 
-    def make(autostart=False):
+    # Clean-up retries record their delay and don't wait, unless a test sets retry.gate:
+    # then each gate.set() lets exactly one retry through.
+    retry = SimpleNamespace(sleeps=[], gate=None)
+
+    async def sleep(delay):
+        retry.sleeps.append(delay)
+        if retry.gate is not None:
+            await retry.gate.wait()
+            retry.gate.clear()
+        await asyncio.sleep(0)
+
+    def make(autostart=False, enabled=True):
         return LiveBandwidthMeter(
             get_manager=lambda: holder.manager,
             get_capture_lock=lambda: holder.capture_lock,
@@ -54,10 +65,18 @@ def env(tmp_path, monkeypatch):
             wall=lambda: WALL,
             net_dir=str(net_dir),
             autostart=autostart,
+            enabled=enabled,
+            sleep=sleep,
         )
 
     return SimpleNamespace(
-        meter=make(), make=make, fake=fake, clock=clock, holder=holder, net_dir=net_dir
+        meter=make(),
+        make=make,
+        fake=fake,
+        clock=clock,
+        holder=holder,
+        net_dir=net_dir,
+        retry=retry,
     )
 
 

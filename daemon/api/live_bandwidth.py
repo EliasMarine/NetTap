@@ -3,8 +3,11 @@ NetTap live bandwidth API (NET-205).
 
 GET /api/live-bandwidth?mac=aa:bb:cc:dd:ee:ff   (the MAC device page)
 GET /api/live-bandwidth?ip=192.168.1.5          (the IP device page)
+GET /api/settings/live-bandwidth                (the opt-in switch and clean-up state)
+PUT /api/settings/live-bandwidth  {"enabled": true|false}
 
 Each poll is the keepalive for that device's watch; see services/live_bandwidth.py.
+The feature is off until turned on; the setting lives in services/live_bandwidth_setting.py.
 """
 
 import ipaddress
@@ -26,6 +29,7 @@ from services.live_bandwidth import (
     LiveBandwidthError,
     LiveBandwidthMeter,
 )
+from services.live_bandwidth_setting import load_enabled, parse_enabled, save_enabled
 from services.live_bandwidth_tc import Key
 
 logger = logging.getLogger("nettap.api.live_bandwidth")
@@ -87,13 +91,52 @@ async def handle_live_bandwidth(request: web.Request) -> web.Response:
         return web.json_response({"error": str(exc)}, status=500)
 
 
+def _setting(meter: LiveBandwidthMeter) -> dict:
+    mode, _iface, reason = meter.support()
+    return {
+        "enabled": meter.enabled,
+        "supported": reason is None,
+        "reason": reason,
+        "mode": mode.value if mode else None,
+        "cleanup": meter.cleanup_status(),
+    }
+
+
+async def handle_get_setting(request: web.Request) -> web.Response:
+    """GET /api/settings/live-bandwidth: on or off, can this capture mode measure, clean-up."""
+    return web.json_response(_setting(request.app[METER_KEY]))
+
+
+async def handle_put_setting(request: web.Request) -> web.Response:
+    """PUT /api/settings/live-bandwidth: save first, then apply; never waits on tc."""
+    meter: LiveBandwidthMeter = request.app[METER_KEY]
+    try:
+        enabled = parse_enabled(await request.json())
+    except ValueError as exc:  # bad JSON is a ValueError too
+        return web.json_response({"error": str(exc)}, status=400)
+    try:
+        save_enabled(enabled)
+    except OSError as exc:
+        logger.error("Couldn't save the live bandwidth setting: %s", exc)
+        return web.json_response(
+            {"error": "Couldn't save the setting", "enabled": meter.enabled},
+            status=500,
+        )
+    meter.set_enabled(enabled)
+    logger.info("Live bandwidth turned %s by the API", "on" if enabled else "off")
+    return web.json_response(_setting(meter))
+
+
 def register_live_bandwidth_routes(app: web.Application) -> LiveBandwidthMeter:
-    """Create the meter, remove its filters on shutdown, and add the route."""
+    """Create the meter with the saved setting, remove its filters on shutdown, add the routes."""
     meter = LiveBandwidthMeter(
         get_manager=lambda: app.get("capture_manager"),
         get_capture_lock=lambda: app.get(CAPTURE_LOCK_KEY),
+        enabled=load_enabled(),
     )
     app[METER_KEY] = meter
     app.on_cleanup.append(meter.shutdown)
     app.router.add_get("/api/live-bandwidth", handle_live_bandwidth)
+    app.router.add_get("/api/settings/live-bandwidth", handle_get_setting)
+    app.router.add_put("/api/settings/live-bandwidth", handle_put_setting)
     return meter
