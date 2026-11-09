@@ -118,3 +118,37 @@ history only.
   passed. svelte-check 0 errors. check:colors clean. Codex: 1 round, REVISE, all 5 points taken.
   The visual fixtures for the address and Threats pages carry the new label, and the address fixture
   carries `in_window`.
+
+## Follow-up (same day): Home and traffic category trends (TRF-6)
+
+- **Problem:** Home's Bandwidth, Connections and Alerts deltas, and the Traffic category page's
+  deltas, compared the window ending now with the window before it. Zeek writes a connection when it
+  ends, stamped with its start. So the newest minutes of the current window were still filling in,
+  and every delta leaned down, most on 1h and 6h. A previous window from before NetTap had data was
+  compared against a gap ("new", or a big rise). The category page also kept the last previous
+  reply when a refresh's previous request failed.
+- **Fix (web only):** `web/src/lib/utils/window-trend.ts`. `trendWindow(hours, now)` gives two
+  back-to-back windows of `hours` each. They end at the last slot boundary at or before now − 15 min,
+  in slots of at least 12 a window (1h→5m, 6h→30m, 24h→1h, 7d→12h, 30d→1d), aligned to the UTC epoch
+  as `time_slots` is. `compareHalves` keeps the slots in [from, to). It wants every slot present with
+  at least one connection, and an even count, or it says "not enough data". With `zeroIsUnknown`
+  (alerts), a half with no alerts is not enough data, because Zeek coverage doesn't prove Suricata's.
+  Home asks for `/api/traffic/bandwidth` and `/api/alerts/timeline` over that window, in place of the
+  second summary and count. The request count is unchanged. Alerts are gated by the connections in
+  the same slot. The category page asks for its own bandwidth series and gates on the category's own
+  connections. Its devices delta ("+N new") is dropped, because distinct devices don't add up across
+  slots. A failed comparison says "Couldn't load the comparison", and "not enough data" says "Not
+  enough data to compare". A real comparison says "vs previous 24 hours, up to 13:00".
+  `computePreviousPeriod` and the category page's `computePrevTimeParams` are in OLD CODE blocks.
+- **Alerts visual fixture:** each category's `trend` is what `category_trend` returns for its
+  sparkline. Malware's sparkline is now [1, 2, 3, 6, 9, 10], still 31 in all, so the snapshot keeps
+  one real "increasing". Reconnaissance, Exploit and Credential abuse are `not_enough_data`.
+- **Tests:** `window-trend.test.ts` (7), `home-trends.test.ts` rewritten (5), `home.test.ts` (+1),
+  and the category page (1 rewritten, 2 new). With the old sources restored, 9 fail. Home's refresh
+  and link tests now stub `/api/alerts/timeline`. Web 4,440 passed. svelte-check 0 errors.
+  check:colors and check:e2e clean. Codex: 1 round, REVISE, 2 of 3 points taken (the `timed_out`
+  point is left to B-f's partial-results flag).
+- **Lessons:** a minimum connection count adds nothing once every slot must hold a connection and
+  every window has 24 slots or more. An alert count of 0 can't vouch for itself.
+- **Next:** the counting-at-start data model (TRF-6's root) is out of scope. The KPI values still
+  cover the window up to now; only the deltas use settled windows.
