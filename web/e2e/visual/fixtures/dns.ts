@@ -62,7 +62,7 @@ const SUSPICIOUS = [
 		count: 520,
 		unique_clients: 2,
 		severity: 'medium',
-		description: 'High-frequency queries (520) from few clients — potential beaconing',
+		description: 'High-frequency queries (520) from few source addresses — possible beaconing. A router or resolver address can stand for several devices.',
 	},
 	{
 		type: 'long_domain',

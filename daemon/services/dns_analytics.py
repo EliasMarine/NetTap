@@ -14,7 +14,7 @@ from typing import Any
 
 from services.excluded_ips import build_excluded_ips_filter
 from storage.all_buckets import all_buckets
-from storage.time_slots import histogram_buckets, time_slots
+from storage.time_slots import _epoch, histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.dns_analytics")
 
@@ -401,9 +401,14 @@ class DNSAnalytics:
                     }
                 )
 
+        # NET-225 (DNS-2): the thresholds below are per day; fixed counts flagged 17 lookups a day
+        # as "high-frequency" over a 30-day window, so findings grew with the range, not behaviour
+        days = _window_days(from_ts, to_ts)
+
         # 2. High frequency single-domain queries (beaconing)
         for entry in top:
-            if entry["count"] > 500 and entry["unique_clients"] <= 2:
+            # OLD CODE: if entry["count"] > 500 and entry["unique_clients"] <= 2:
+            if entry["count"] > 500 * days and entry["unique_clients"] <= 2:
                 suspicious.append(
                     {
                         "type": "high_frequency",
@@ -411,7 +416,9 @@ class DNSAnalytics:
                         "count": entry["count"],
                         "unique_clients": entry["unique_clients"],
                         "severity": "medium",
-                        "description": f"High-frequency queries ({entry['count']}) from few clients — potential beaconing",
+                        # OLD CODE: f"High-frequency queries ({entry['count']}) from few clients — potential beaconing",
+                        # (NET-225: unique_clients counts source addresses; behind NAT one is many devices)
+                        "description": f"High-frequency queries ({entry['count']}) from few source addresses — possible beaconing. A router or resolver address can stand for several devices.",
                     }
                 )
 
@@ -456,7 +463,8 @@ class DNSAnalytics:
             extra_filters=[{"term": {"zeek.dns.qtype_name": "TXT"}}],
         )
         for entry in txt:
-            if entry["count"] > 50:
+            # OLD CODE: if entry["count"] > 50:
+            if entry["count"] > 50 * days:
                 suspicious.append(
                     {
                         "type": "txt_abuse",
@@ -584,6 +592,14 @@ class DNSAnalytics:
             if median_s is None
             else round(median_s * 1000, 2),
         }
+
+
+def _window_days(from_ts: str, to_ts: str) -> float:
+    """The window's length in days, never under 1, so a day or less keeps the per-day thresholds."""
+    try:
+        return max(1.0, (_epoch(to_ts) - _epoch(from_ts)) / 86400)
+    except ValueError:
+        return 1.0
 
 
 def _shannon_entropy(s: str) -> float:
