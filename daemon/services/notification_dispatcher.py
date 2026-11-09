@@ -6,8 +6,8 @@ go to the channels the routing rules pick. Each channel gets at most one message
 of the alerts that are new for it. A channel whose send fails keeps those alerts and tries again
 after a back-off, so a short outage loses nothing; the state survives restarts.
 
-A channel gets at most DAILY_BUDGET messages a UTC day (failed sends don't count); past it, new
-alerts are counted, shown as the channel's status and left on the Alerts page.
+A channel gets DAILY_BUDGET messages a UTC day (failed sends don't count); past it, one digest an
+hour until midnight UTC, worst alerts first, so a flood can't hold a critical alert back.
 
 New for a channel means: never handled, more severe than when it was, or a newer occurrence once
 the hour's cooldown is over. Re-reading the same occurrences (the poll windows overlap, and a
@@ -40,6 +40,8 @@ DIGEST_LINES = 10
 # Messages a channel gets per UTC day, failed sends not counted (a server outage mustn't use up
 # the day): alerts an attacker can trip must not use up Gmail's ~500 a day or Pushover's ~330 (review M2)
 DAILY_BUDGET = 100
+# Past the budget, one digest this often, so a flood can't hold a critical alert back (security delta D3)
+SLOW_EVERY = timedelta(hours=1)
 _EMPTY: dict = {"done": {}, "pending": [], "retry_at": None}
 
 
@@ -313,40 +315,62 @@ class AlertDispatcher:
         # OLD CODE END
         candidates = sorted(by_sig.values(), key=_worst_first)[:MAX_PENDING]
         day = now.date().isoformat()
-        today = {
-            "day": day,
-            "sent": st.get("sent", 0) if st.get("day") == day else 0,
-            "held": st.get("held", 0) if st.get("day") == day else 0,
-        }
+        # OLD CODE START — security delta D3: past the budget nothing went out until midnight, so a flood an attacker trips held a critical alert back
+        # today = {
+        #     "day": day,
+        #     "sent": st.get("sent", 0) if st.get("day") == day else 0,
+        #     "held": st.get("held", 0) if st.get("day") == day else 0,
+        # }
+        # retry_at = _when(st.get("retry_at")) if st.get("retry_at") else None
+        # if not candidates or (retry_at and retry_at > now):
+        #     return {
+        #         "done": done,
+        #         "pending": candidates,
+        #         "retry_at": st.get("retry_at") if candidates else None,
+        #         **today,
+        #     }
+        #
+        # if today["sent"] >= DAILY_BUDGET:
+        #     # handled, not sent: they're on the Alerts page, and tomorrow doesn't bring them back
+        #     held = today["held"] + len(candidates)
+        #     if not today["held"]:
+        #         logger.warning(
+        #             "Alert notifications: channel %s reached its daily limit of %d messages",
+        #             cid,
+        #             DAILY_BUDGET,
+        #         )
+        #     self._hub.record_held(
+        #         cid,
+        #         f"Daily limit of {DAILY_BUDGET} messages reached: {held} alert"
+        #         f"{'' if held == 1 else 's'} not sent today (UTC); they're on the Alerts page",
+        #     )
+        #     return {
+        #         "done": {**done, **_record(candidates, now, False)},
+        #         "pending": [],
+        #         "retry_at": None,
+        #         **today,
+        #         "held": held,
+        #     }
+        # OLD CODE END
+        today = {"day": day, "sent": st.get("sent", 0) if st.get("day") == day else 0}
+        slow = today["sent"] >= DAILY_BUDGET
         retry_at = _when(st.get("retry_at")) if st.get("retry_at") else None
         if not candidates or (retry_at and retry_at > now):
+            # the queue waits for the hourly digest (a failed send's queue shows its error instead)
+            if slow and candidates and not any(i["attempts"] for i in candidates):
+                n = len(candidates)
+                self._hub.record_held(
+                    cid,
+                    f"Daily limit of {DAILY_BUDGET} messages reached: until 00:00 UTC, one "
+                    f"digest an hour, worst alerts first. {n} alert{'' if n == 1 else 's'} "
+                    "waiting for the next one",
+                )
             return {
                 "done": done,
                 "pending": candidates,
-                "retry_at": st.get("retry_at") if candidates else None,
+                # past the budget the hourly slot holds even with nothing queued
+                "retry_at": st.get("retry_at") if candidates or slow else None,
                 **today,
-            }
-
-        if today["sent"] >= DAILY_BUDGET:
-            # handled, not sent: they're on the Alerts page, and tomorrow doesn't bring them back
-            held = today["held"] + len(candidates)
-            if not today["held"]:
-                logger.warning(
-                    "Alert notifications: channel %s reached its daily limit of %d messages",
-                    cid,
-                    DAILY_BUDGET,
-                )
-            self._hub.record_held(
-                cid,
-                f"Daily limit of {DAILY_BUDGET} messages reached: {held} alert"
-                f"{'' if held == 1 else 's'} not sent today (UTC); they're on the Alerts page",
-            )
-            return {
-                "done": {**done, **_record(candidates, now, False)},
-                "pending": [],
-                "retry_at": None,
-                **today,
-                "held": held,
             }
 
         title, body, worst = digest(candidates)
@@ -360,19 +384,35 @@ class AlertDispatcher:
         if today["sent"] == DAILY_BUDGET - 1:
             # first, so a service's length clip never drops it
             body = (
-                f"This is the last notification today on this channel (limit "
-                f"{DAILY_BUDGET} a day, UTC). Later alerts are on NetTap's Alerts page.\n\n{body}"
+                f"This channel has reached its limit of {DAILY_BUDGET} messages today (UTC). "
+                "Until 00:00 UTC it gets one digest an hour, worst alerts first.\n\n"
+                f"{body}"
             )
         # OLD CODE START — delta review: a failed send used the budget, so a server outage spent the day
         # today = {**today, "sent": today["sent"] + 1}
         # OLD CODE END
         if await self._hub.send(cid, title, body, worst):
+            sent = today["sent"] + 1
+            if sent == DAILY_BUDGET:
+                logger.warning(
+                    "Alert notifications: channel %s reached its daily limit of %d messages; "
+                    "one digest an hour until 00:00 UTC",
+                    cid,
+                    DAILY_BUDGET,
+                )
+            # the next UTC day brings a new budget, so the hourly wait never runs past midnight
+            midnight = (now + timedelta(days=1)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
             return {
                 "done": {**done, **_record(candidates, now, True)},
                 "pending": [],
-                "retry_at": None,
+                # OLD CODE: "retry_at": None, (security delta D3: past the budget, one digest an hour)
+                "retry_at": _iso(min(now + SLOW_EVERY, midnight))
+                if sent >= DAILY_BUDGET
+                else None,
                 **today,
-                "sent": today["sent"] + 1,
+                "sent": sent,
             }
 
         tried = [{**i, "attempts": i["attempts"] + 1} for i in candidates]

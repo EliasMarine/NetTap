@@ -307,7 +307,7 @@ class NotificationHub:
         return self._last_delivery.get(channel_id)
 
     def record_held(self, channel_id: str, reason: str) -> None:
-        """Alerts the dispatcher didn't send (the daily limit), shown as the channel's status."""
+        """Alerts waiting past the daily limit for the next hourly digest, as the channel's status."""
         self._last_delivery = {
             **self._last_delivery,
             channel_id: {"ok": False, "at": _now(), "error": reason},

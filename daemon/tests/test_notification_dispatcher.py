@@ -288,34 +288,92 @@ def test_a_corrupt_state_file_starts_fresh(h):
 
 
 # Security review M2: alerts an attacker can trip must not use up the owner's mail or Pushover quota
-def test_a_channel_gets_at_most_the_daily_budget_then_a_held_count_until_tomorrow(h):
+# OLD CODE START — security delta D3: past the budget nothing went out until midnight, so a
+# flood an attacker trips held a critical alert back for the rest of the day
+# def test_a_channel_gets_at_most_the_daily_budget_then_a_held_count_until_tomorrow(h):
+#     with patch.object(nd, "DAILY_BUDGET", 3):
+#         for minute in range(1, 6):  # a new critical signature every minute
+#             h.groups = [group(100 + minute, 1, minute - 0.5)]
+#             h.poll(minute)
+#         sends = h.sent_to(h.high)
+#         assert len(sends) == 3
+#         # OLD CODE START — delta review: the notice now comes first, so a length clip keeps it
+#         # assert "last notification today" in sends[-1][2]
+#         # OLD CODE END
+#         assert sends[-1][2].startswith("This is the last notification today")
+#         assert "last notification today" not in sends[0][2]
+#         status = h.hub.last_delivery(h.high)
+#         assert status["ok"] is False
+#         assert "Daily limit of 3 messages" in status["error"]
+#         assert "2 alerts" in status["error"]
+#
+#         h.dispatcher = h.new_dispatcher()  # the count survives a restart
+#         h.groups = [group(200, 1, 7)]
+#         h.poll(8)
+#         assert len(h.sent_to(h.high)) == 3
+#         assert "3 alerts" in h.hub.last_delivery(h.high)["error"]
+#
+#         h.groups = [group(300, 1, 24 * 60 + 1)]  # the next UTC day
+#         h.poll(24 * 60 + 2)
+#         assert len(h.sent_to(h.high)) == 4
+#         # the held ones were handled: tomorrow doesn't bring them back
+#         assert "ET TEST signature 105" not in h.sent_to(h.high)[-1][2]
+# OLD CODE END
+def test_past_the_daily_budget_a_channel_gets_one_digest_an_hour(h):
     with patch.object(nd, "DAILY_BUDGET", 3):
-        for minute in range(1, 6):  # a new critical signature every minute
+        for minute in range(1, 4):  # a new critical signature every minute
             h.groups = [group(100 + minute, 1, minute - 0.5)]
             h.poll(minute)
         sends = h.sent_to(h.high)
         assert len(sends) == 3
-        # OLD CODE START — delta review: the notice now comes first, so a length clip keeps it
-        # assert "last notification today" in sends[-1][2]
-        # OLD CODE END
-        assert sends[-1][2].startswith("This is the last notification today")
-        assert "last notification today" not in sends[0][2]
+        assert sends[-1][2].startswith(
+            "This channel has reached its limit of 3 messages today"
+        )
+        assert "limit of 3" not in sends[0][2]
+
+        h.groups = []
+        h.poll(4)  # a quiet minute doesn't reopen the channel
+        for minute in (5, 6):
+            h.groups = [group(100 + minute, 1, minute - 0.5)]
+            h.poll(minute)
+        assert len(h.sent_to(h.high)) == 3
         status = h.hub.last_delivery(h.high)
         assert status["ok"] is False
         assert "Daily limit of 3 messages" in status["error"]
         assert "2 alerts" in status["error"]
 
-        h.dispatcher = h.new_dispatcher()  # the count survives a restart
-        h.groups = [group(200, 1, 7)]
-        h.poll(8)
+        h.dispatcher = h.new_dispatcher()  # the wait survives a restart
+        h.groups = []
+        h.poll(62)
         assert len(h.sent_to(h.high)) == 3
-        assert "3 alerts" in h.hub.last_delivery(h.high)["error"]
+        h.poll(63)  # an hour after the last message
+        sends = h.sent_to(h.high)
+        assert len(sends) == 4
+        assert "signature 105" in sends[-1][2]
+        assert "signature 106" in sends[-1][2]
 
-        h.groups = [group(300, 1, 24 * 60 + 1)]  # the next UTC day
-        h.poll(24 * 60 + 2)
-        assert len(h.sent_to(h.high)) == 4
-        # the held ones were handled: tomorrow doesn't bring them back
-        assert "ET TEST signature 105" not in h.sent_to(h.high)[-1][2]
+
+def test_a_flood_past_the_budget_cant_hold_back_a_critical_alert(h):
+    with patch.object(nd, "DAILY_BUDGET", 1):
+        h.groups = [group(1, 4, 0.5)]
+        h.poll(1)  # the day's one message on the all-alerts channel
+        flood = [group(1000 + n, 4, 1.5) for n in range(nd.MAX_PENDING + 10)]
+        h.groups = [*flood, group(7, 1, 1.5)]
+        h.poll(2)
+        h.groups = []
+        h.poll(61)
+    title, body = h.sent_to(h.all)[-1][1:3]
+    assert title == f"{nd.MAX_PENDING} new alerts (worst: critical)"
+    assert body.splitlines()[0].startswith("- [critical] ET TEST signature 7:")
+
+
+def test_the_hourly_wait_ends_when_the_budget_renews_at_midnight(h):
+    with patch.object(nd, "DAILY_BUDGET", 1):
+        h.groups = [group(1, 1, 689.5)]
+        h.poll(690)  # 23:30 UTC: the day's one message
+        h.groups = [group(2, 1, 724.5)]
+        h.poll(725)  # 00:05 UTC: a new day's budget
+    assert len(h.sent_to(h.high)) == 2
 
 
 # OLD CODE START — delta review: a failed send no longer uses the budget (an outage spent it)
