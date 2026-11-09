@@ -461,6 +461,39 @@ class TestPruneEmergency:
         assert deleted == 3
         assert mock_opensearch_client.indices.delete.call_count == 3
 
+    def test_prune_emergency_never_deletes_todays_index(
+        self, retention_config, mock_opensearch_client
+    ):
+        """Release audit: with the disk still full, today's live index survives."""
+        now = datetime.now(timezone.utc)
+        today_name = f"arkime_sessions3-{now.strftime('%y%m%d')}"
+        old_name = f"arkime_sessions3-{(now - timedelta(days=3)).strftime('%y%m%d')}"
+        mock_opensearch_client.cat.indices.return_value = [
+            {
+                "index": name,
+                "store.size": "200mb",
+                "pri.store.size": "200mb",
+                "creation.date.string": now.isoformat(),
+            }
+            for name in (today_name, old_name)
+        ]
+
+        mgr = StorageManager.__new__(StorageManager)
+        mgr.config = retention_config
+        mgr._client = mock_opensearch_client
+        mgr.opensearch_url = "http://localhost:9200"
+        _init_manager_attrs(mgr)
+
+        with patch.object(mgr, "check_disk_usage", return_value=0.99):
+            deleted = mgr.prune_emergency()
+
+        assert deleted == 1
+        deleted_names = [
+            c.kwargs.get("index", c.args[0] if c.args else None)
+            for c in mock_opensearch_client.indices.delete.call_args_list
+        ]
+        assert deleted_names == [old_name]
+
 
 # =========================================================================
 # run_cycle
