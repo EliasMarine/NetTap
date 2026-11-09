@@ -1705,7 +1705,8 @@ OLD CODE END -->
 	.chip-x:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 	/* .link sets the text colour; a button needs the browser's own box taken off */
 	.zero-note { margin-top: var(--sp-4); }
-	.activity-link { background: none; border: 0; padding: 0; margin-top: var(--sp-4); cursor: pointer; }
+	/* OLD CODE: .activity-link { background: none; border: 0; padding: 0; margin-top: var(--sp-4); cursor: pointer; } (NET-228: the longer line ran past a phone's width, .link keeps to one line) */
+	.activity-link { background: none; border: 0; padding: 0; margin-top: var(--sp-4); cursor: pointer; white-space: normal; text-align: left; }
 	.activity-link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 	.notice { margin-bottom: var(--sp-4); }
 	.cat-cell { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); }
