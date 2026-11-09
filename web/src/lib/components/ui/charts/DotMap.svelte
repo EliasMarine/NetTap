@@ -43,12 +43,15 @@
 		selected,
 		onselect,
 		ariaLabel,
+		counts = true,
 	}: {
 		hotspots: Hotspot[];
 		home: { lat: number; lng: number } | null;
 		selected?: string;
 		onselect?: (country: string) => void;
 		ariaLabel: string;
+		/** false: the hotspots are places, not traffic, so labels and tooltips name them without a count */
+		counts?: boolean;
 	} = $props();
 
 	const GEO_URL = '/geo/countries-110m.geojson';
@@ -98,13 +101,15 @@
 			return { ...s, x, y, r: (4 + 12 * Math.sqrt(s.count / total)) * k };
 		});
 	});
-	const labelText = (s: Spot) => `${s.label ?? s.country} ${s.count.toLocaleString('en-GB')}`;
+	// OLD CODE: const labelText = (s: Spot) => `${s.label ?? s.country} ${s.count.toLocaleString('en-GB')}`; (NET-237: counts optional)
+	const labelText = (s: Spot) => (counts ? `${s.label ?? s.country} ${s.count.toLocaleString('en-GB')}` : (s.label ?? s.country));
 	// busiest first; a label that would overlap one already placed is left off (NET-192)
 	const labelled = $derived(mapLabels(spots.map((s) => ({ ...s, text: labelText(s) })), w, LABELS));
 	const homeAt = $derived(home && Number.isFinite(home.lat) && Number.isFinite(home.lng) ? project(home.lng, home.lat, w, h) : null);
 	const dotR = $derived(Math.max(1, w / 560).toFixed(2));
 
-	const name = (s: Spot) => `${s.country}, ${s.count.toLocaleString('en-GB')} ${s.count === 1 ? 'connection' : 'connections'}`;
+	// OLD CODE: const name = (s: Spot) => `${s.country}, ${s.count.toLocaleString('en-GB')} ${s.count === 1 ? 'connection' : 'connections'}`; (NET-237)
+	const name = (s: Spot) => (counts ? `${s.country}, ${s.count.toLocaleString('en-GB')} ${s.count === 1 ? 'connection' : 'connections'}` : (s.label ?? s.country));
 
 	function onkeydown(e: KeyboardEvent, key: string) {
 		if (e.key !== 'Enter' && e.key !== ' ') return;
@@ -125,8 +130,9 @@
 	<!-- OLD CODE: {#if i < LABELS} {@const left = s.x > w * 0.82} (NET-192: close countries' labels overlapped) -->
 	{#if labelled[i]}
 		{@const left = s.x > w * LABEL_FLIP}
+		<!-- OLD CODE: the text ended >{s.label ?? s.country} <tspan>{s.count…}</tspan> (NET-237: counts optional) -->
 		<text class="map-lbl" x={(left ? s.x - s.r - 6 : s.x + s.r + 6).toFixed(1)} y={(s.y + 4).toFixed(1)} text-anchor={left ? 'end' : 'start'}
-			>{s.label ?? s.country} <tspan>{s.count.toLocaleString('en-GB')}</tspan></text
+			>{s.label ?? s.country}{#if counts}{' '}<tspan>{s.count.toLocaleString('en-GB')}</tspan>{/if}</text
 		>
 	{/if}
 {/snippet}

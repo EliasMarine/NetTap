@@ -70,8 +70,16 @@ describe('GeoIP Lookup Page — states', () => {
 			'https://www.google.com/maps/search/?api=1&query=Mountain%20View%2C%20United%20States',
 		);
 		expect(screen.getAllByText(/city estimate, accuracy unknown/).length).toBeGreaterThan(0);
-		expect(screen.getByTitle('GeoIP location map').getAttribute('src')).not.toContain('marker=');
-		expect(screen.getByTitle('GeoIP location map')).toBeInTheDocument();
+		// OLD CODE START — NET-237 (GEO-1): an OpenStreetMap frame the site's CSP blocked
+		// expect(screen.getByTitle('GeoIP location map').getAttribute('src')).not.toContain('marker=');
+		// expect(screen.getByTitle('GeoIP location map')).toBeInTheDocument();
+		// OLD CODE END
+		// an offline map: nothing on the page loads from a third party, and the dot is a place, not traffic
+		const map = screen.getByRole('img', { name: /World map with a city estimate for 8\.8\.8\.8/ });
+		expect(map.textContent).toContain('Mountain View (estimate)');
+		expect(map.textContent).not.toMatch(/connection|\d/);
+		expect(document.querySelector('iframe')).toBeNull();
+		expect(document.body.innerHTML).not.toContain('openstreetmap.org');
 		// OLD CODE START — NET-160: ?filter= links the Connections page never read
 		// expect(screen.getByRole('link', { name: 'Filter connections to' })).toHaveAttribute('href', '/connections?filter=ip.dst==8.8.8.8');
 		// OLD CODE END
@@ -93,7 +101,7 @@ describe('GeoIP Lookup Page — states', () => {
 		vi.stubGlobal('fetch', vi.fn(async () => okJson(geo('Nowhere', { latitude: null, longitude: null }))));
 		render(Page);
 		await screen.findByText('Nowhere');
-		expect(screen.queryByTitle('GeoIP location map')).not.toBeInTheDocument();
+		expect(screen.queryByRole('img', { name: /World map/ })).not.toBeInTheDocument();
 	});
 });
 
@@ -110,8 +118,9 @@ describe('GeoIP Lookup Page — refresh contract', () => {
 			.mockResolvedValueOnce(okJson(geo('Newest')));
 		// NET-160: the action links fetch the LAN policy; only the lookups take the sequence
 		// OLD CODE: vi.stubGlobal('fetch', vi.fn((url: string) => (url === '/api/network/lan' ? Promise.resolve({ ok: false, status: 404, json: async () => ({}) }) : fetch(url)))); (NET-237: the installed database loads beside the lookup)
-		const aside = (url: string) => url === '/api/network/lan' || url === '/api/system/versions';
-		vi.stubGlobal('fetch', vi.fn((url: string) => (aside(url) ? Promise.resolve(url === '/api/network/lan' ? { ok: false, status: 404, json: async () => ({}) } : okJson({ versions: [] })) : fetch(url))));
+		// OLD CODE: const aside = (url: string) => url === '/api/network/lan' || url === '/api/system/versions'; (GEO-1: and the offline map's outlines)
+		const aside = (url: string) => url === '/api/network/lan' || url === '/api/system/versions' || url.startsWith('/geo/');
+		vi.stubGlobal('fetch', vi.fn((url: string) => (aside(url) ? Promise.resolve(url === '/api/system/versions' ? okJson({ versions: [] }) : { ok: false, status: 404, json: async () => ({}) }) : fetch(url))));
 		const { unmount } = render(Page);
 		await screen.findByText('First');
 		// OLD CODE: expect(get(pageRefresh).status).toBe('ok'); (NET-237: the answer shows before the database date lands)
@@ -169,7 +178,7 @@ describe('GeoIP Lookup Page — source, age and precision', () => {
 		expect(await screen.findByText("NetTap's built-in list of well-known services, not a database lookup")).toBeInTheDocument();
 		expect(screen.getByText('Country-level estimate, no local position')).toBeInTheDocument();
 		expect(screen.queryByText(/37\.7/)).not.toBeInTheDocument();
-		expect(screen.queryByTitle('GeoIP location map')).not.toBeInTheDocument();
+		expect(screen.queryByRole('img', { name: /World map/ })).not.toBeInTheDocument();
 		expect(screen.queryByText('Installed database')).not.toBeInTheDocument();
 	});
 
@@ -177,7 +186,7 @@ describe('GeoIP Lookup Page — source, age and precision', () => {
 		stub(geo('', { ip: '1.1.1.1', city: null, latitude: null, longitude: null, source: 'traffic', seen_at: null, anycast: true }));
 		render(Page);
 		expect(await screen.findByText('Anycast: location varies')).toBeInTheDocument();
-		expect(screen.queryByTitle('GeoIP location map')).not.toBeInTheDocument();
+		expect(screen.queryByRole('img', { name: /World map/ })).not.toBeInTheDocument();
 	});
 
 	it("shows the daemon's 502 as a failed lookup, not an answer", async () => {

@@ -3,7 +3,7 @@
 	 * GeoIP lookup: geolocation data for an IP address.
 	 * A form card to look up another address, a result card with .facts (country, city,
 	 * coordinates linked to Google Maps, ASN, organisation, private or public), the
-	 * OpenStreetMap embed when there are coordinates, and links to the related pages.
+	 * offline world map for a city estimate, and links to the related pages.
 	 * The lookup runs through the page refresh contract.
 	 * NET-237: the answer says its source and age; coordinates only for a city estimate, to
 	 * one decimal (GeoLite2 has no accuracy radius), none for country-only or anycast answers.
@@ -20,6 +20,7 @@
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import DotMap from '$lib/components/ui/charts/DotMap.svelte';
 	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 
 	let ip = $derived($page.params.ip);
@@ -249,9 +250,10 @@
 		<Card title="Map" sub="OpenStreetMap · centred on the coordinates" class="c-12">
 	OLD CODE END -->
 	{#if !loading && !error && result && estimate?.coordinates && result.latitude != null && result.longitude != null}
+		<!-- OLD CODE START — NET-237 (GEO-1): the site's CSP (frame-src 'self') blocks this frame, and
+		     allowing it would send every looked-up address's coordinates to openstreetmap.org
 		<Card title="Map" sub="OpenStreetMap · approximate area around a city estimate, not an exact location" class="c-12">
 			<div class="map">
-				<!-- OLD CODE: the src ended &marker={result.latitude},{result.longitude} (NET-237: no pin on an estimate) -->
 				<iframe
 					title="GeoIP location map"
 					width="100%"
@@ -261,6 +263,14 @@
 					src="https://www.openstreetmap.org/export/embed.html?bbox={result.longitude - 0.5},{result.latitude - 0.3},{result.longitude + 0.5},{result.latitude + 0.3}&layer=mapnik"
 				></iframe>
 			</div>
+		OLD CODE END -->
+		<Card title="Map" sub="Offline world map · a city estimate, not an exact location" class="c-12">
+			<DotMap
+				hotspots={[{ country: result.country, code: result.country_code, lat: result.latitude, lng: result.longitude, count: 1, label: `${result.city} (estimate)` }]}
+				home={null}
+				counts={false}
+				ariaLabel="World map with a city estimate for {result.ip}: {result.city}, {result.country}"
+			/>
 			{#snippet foot()}
 				<div class="foot-stat">
 					<!-- OLD CODE: <span class="mono">{result?.latitude?.toFixed(4)}, {result?.longitude?.toFixed(4)}</span> (NET-237) -->
@@ -274,10 +284,10 @@
 
 <style>
 	.result-actions { margin-top: var(--sp-4); }
-	/* Layout glue: the embedded map sits in an inset with the card's inner radius; the
-	   filter darkens the light OpenStreetMap tiles to sit on the dark card */
+	/* OLD CODE START — NET-237 (GEO-1): styles for the OpenStreetMap frame, which the CSP blocked
 	.map { border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; }
 	.map iframe { display: block; filter: invert(0.9) hue-rotate(180deg) saturate(0.5) brightness(1.1); }
+	OLD CODE END */
 	/* .back is styled for a link; this one is a button (it goes back in history) */
 	button.back { background: none; border: 0; padding: 0; cursor: pointer; }
 </style>
