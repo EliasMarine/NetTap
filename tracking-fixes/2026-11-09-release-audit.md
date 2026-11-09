@@ -61,7 +61,30 @@ Suites (Dev, macOS): daemon pytest 4,271 passed / 4 skipped (baseline 4,243); vi
 - **A route that returns success without doing the work is worse than a 501.** Three such routes reached a release candidate.
 - **`docker exec … sh -c "$(cat script)"` with `rm` inside trips Claude Code's removal safety check.** Test such scripts with bats on the host instead.
 
+## Wave 2 (2026-11-09): the six blockers and NET-237
+
+Seven agents fixed one area each in their own worktree: notifications, capture mode, device accounting, backup and storage, alerts, first-run security, and data honesty. Each area has its own tracking note from today (`2026-11-09-*.md`). The lead cherry-picked each batch onto this branch.
+
+The combined branch then got:
+- a security review, a TypeScript review and a Python review;
+- a delta round on the fixes those reviews produced.
+
+The results are in section 6.2 of `Debugging/RELEASE-AUDIT-2026-11.md`.
+
+Integration fixes made by the lead:
+- **The bell's alert check passed every daemon failure on as a 502.** The visual suite's error mode treats a web-server 502 as a bug (48 failures), so the daemon's own status now passes on.
+- **The Devices IPv6-note tests counted NET-225's new bridge-mode note.** They now filter it out.
+- **CI ShellCheck.** The action's download had broken on `main` too, so CI uses the runner's own shellcheck.
+- **Two agents' 5xx allowlists collided.** They are replaced by `public_json()` marking at the source, with AST guards.
+
+## Lessons (wave 2)
+
+- **An agent that starts Codex in the background and goes idle is not woken when Codex finishes.** Agents must run Codex in the foreground, and the lead must check real activity (ListAgents, the worktree's status) before saying an agent is running.
+- **Cherry-pick each agent's batch from the merge-base of its branch**, and start follow-ups on fresh branches from the current audit tip. A rebased follow-up then applies cleanly.
+- **An allowlist that several agents extend at once conflicts.** Mark the safe value at its source instead.
+
 ## Next steps
 
-- Owner: deploy with `bash scripts/remote/deploy-release-audit.sh`, then `bash scripts/remote/smoke-test-release.sh`.
-- Blockers NET-224–NET-229 stay open; the verdict is NOT READY until they close.
+- Owner (approved in principle as #1): deploy with `bash scripts/remote/deploy-release-audit.sh` (web UI and daemon), which runs the smoke test.
+- Owner approval needed: `bash scripts/remote/deploy-release-audit-isolation.sh` (TShark and nginx, about 30 s without the dashboard). Also needed: failure injection, the IDS trigger, and accepting the certificate for the rendered-UI check.
+- PR #236 stays unmerged until the owner decides.

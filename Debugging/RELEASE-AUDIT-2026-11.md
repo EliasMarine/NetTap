@@ -6,62 +6,67 @@
 > All network identifiers are redacted: addresses are written as 192.0.2.x / 2001:db8::, MACs as 00:00:5e:00:53:xx, names as device-A.
 > Security findings are summarised by class here; exploitation detail for open items is kept in the Linear issues, not in this public file.
 
-**Status: complete (2026-11-09).** Fixes F1–F8 are on branch `fix/release-audit-2026-11`: not merged. Deployed to the G11 on 2026-11-09 with the owner's approval; the smoke test passed 19/19 (section 9).
+**Status: complete (2026-11-09).** All findings are fixed on branch `fix/release-audit-2026-11` (PR #236, not merged):
+- wave 1, F1–F8;
+- wave 2, the six P1 blockers and the P2 list (section 6.2).
+
+The branch at `fa2c2984` was deployed to the G11 with the owner's approval (web UI and daemon), and the smoke test gave 26 PASS / 2 FAIL. The two FAILs wait for the TShark and nginx recreate (section 9).
 
 ---
 
 ## 1. Verdict
 
-**NOT READY.** Scope: the GMKtec G11 (Realtek NICs, Ubuntu 24.04), mirror/SPAN of the router's LAN side, revision `446845ec`.
+**NOT READY** for `main` (`446845ec`), which still has every finding.
 
-**What holds up.** Most figures are faithful to what Zeek and Suricata recorded. These reconcile exactly, or within protocol overhead, against independent sums of the source records:
-- DNS lookups.
-- Suricata alert counts and severities.
-- Certificate sessions.
-- Per-device traffic the device started.
-- Controlled downloads of known size.
+**The branch (`fa2c2984`) would be READY WITH LIMITATIONS.** Scope: the GMKtec G11 (Realtek NICs, Ubuntu 24.04), mirror/SPAN of the router's LAN side. It qualifies once four things are done; each needs the owner:
+1. The TShark and nginx recreate (`deploy-release-audit-isolation.sh`) passes. Until then TShark isn't isolated on the device and CyberChef answers without a login (C16).
+2. Failure injection on the device shows the stopped-sensor and OpenSearch-down states, and recovery (C12, C18).
+3. A benign IDS trigger shows an alert end to end (C8, H5).
+4. PR #236 is merged.
 
-**What doesn't.** On the deployed revision a user can't yet trust everything shown:
-- Byte and connection totals include interim long-connection records (up to 9% of a day's bytes).
-- Health and "no alerts" stay green with a stopped sensor or nothing indexed.
-- Three screens report successes that didn't happen.
-- Alert suppressions vanish on every restart.
+**What holds up.** These reconcile exactly, or within protocol overhead, against independent sums of the source records on the G11:
+- traffic totals (4,570,892,146 B = 4,570,892,146 B for 17:00–18:00 UTC after the wave-2 deploy);
+- per-device connections from both sides, IPv6 by MAC included (device-A: 4,578 = 3,053 started + 1,432 answered + 93 IPv6);
+- DNS lookups;
+- Suricata alert counts and severities;
+- certificate sessions;
+- controlled downloads of known size.
 
-**What the branch fixes.** F1–F8 fix those defects. Each has tests that fail on the old code and pass on the fix. On the G11 they passed the smoke test 19/19 after deploy (F1 traffic total equal to the independent sum, F2 fresh with all sensors running, F4 state migrated and kept across the recreate, F6 no hardware detail). Failure states (F2 stale/stopped) still need the approved failure injection.
+**What the branch makes honest.** Every "no alerts" message names the pipeline state, and health reports stale data and stopped sensors. Partial or capped searches are errors, not low figures. Saves, tests and restores say what really happened. Guesses (device type, OS, GeoIP city) are labelled as guesses, with their source. Each capture mode says what it can't see.
 
-**Open blockers.** Six P1 blockers remain (NET-224–NET-229):
-- notifications;
-- the post-NAT inline bridge;
-- device totals that leave out answered and IPv6 traffic;
-- backup/restore;
-- "no threats" shown without the pipeline state;
-- the first-run admin claim.
-
-**Not tested.** Inline bridge and DHCP gateway modes never ran on hardware.
+**Limitations a release would carry:**
+- Inline bridge and DHCP gateway were never run on hardware; their limits are stated in the product, not measured.
+- Global IPv6 was not observed (the test network has ULA and link-local only).
+- The threat score's suppressions and baseline aren't shown (C9, NET-239).
+- A capped detection view fails as "incomplete" rather than showing what it read (NET-238).
+- The daemon stays host-root-equivalent, as accepted in `SECURITY.md`.
+- The owner's public IP is still in git history (F7 fixed HEAD only).
 
 ### Release criteria
 
+Each result is for the branch at `fa2c2984` unless it says otherwise. `main` fails C3–C5, C8–C11 and C13–C17, as found.
+
 | # | Criterion | Result | Evidence |
 |---|---|---|---|
-| C1 | Test suites: no new failures vs baseline | **PASS** (branch) | Daemon 4,271 passed / 4 skipped / 0 failed (baseline 4,243 / 4 / 0). Vitest 4,331 passed (baseline 4,303). svelte-check 0 errors. Colour gate clean. Playwright visual 294 passed (50 skipped by design). bats (migration) 6/6 |
-| C2 | Deployed system identified and traceable to main | **PASS** | G11 at `446845ec` on `main`, clean checkout, deploy marker matches (§2.2) |
-| C3 | Connection counts and traffic totals reconcile with source | **FAIL** (main); **PASS** on the branch, device run 2026-11-09 (13:00–14:00 UTC: API 1,436,217,196 B = final records 1,436,217,196 B) | R1: interim records summed (A1). Smoke test 06–07 UTC: API 1,177,967,041 B vs final records 1,176,382,268 B. F1 + tests on the branch |
-| C4 | Upload/download direction and bandwidth correct, with units | **FAIL** | Outbound correct (R2–R4), 1,000-based units shown; inbound flows read backwards because upload = originator (B-d) |
-| C5 | Device identity and attribution correct for the mode, uncertainty shown | **FAIL** | Started-by-device traffic exact (R5); answered traffic and IPv6 left out (A11, A12 → NET-226); OS/type guesses without confidence (B-h) |
-| C6 | DNS activity reconciles | **PASS** | R6: 5,477 = 5,477 lookups, NXDOMAIN 475 = 476 − 1 from the appliance |
-| C7 | TLS/certificate data reconciles | **PASS** | R14: 1,416 = 1,416 sessions with a chain; 1,401 verified, 15 not |
-| C8 | Suricata alerts and severity faithful, worded as rule matches | **FAIL** | Counts exact (R7); severity-1 rules tagged Informational hidden from the count (B-i); explanations state compromise as fact (B-j) |
-| C9 | Risk/threat scores reproducible from inputs, presented as heuristics | **FAIL** | Deterministic, and the method is shown (R8); inputs not shown; suppressions/baseline were lost on restart (A6, fixed by F4 on the branch) |
-| C10 | GeoIP/ASN/vendor shown as enrichment, with fitting precision | **FAIL** | City centres pinned to ~11 m, no source or database age (R9, B-g) |
-| C11 | Packet search/download right and access-controlled | **FAIL** (main); leak fixed on the branch | Daemon 401 without token, web 401 without session (smoke test). Filtered download leaked its temp file (A8, fixed by F8) |
-| C12 | Capture health reflects a stopped capture and packet loss | **FAIL** (main); UNVERIFIED on the branch | NIC loss exact (R11); stopped Zeek/Suricata/Logstash/Filebeat invisible (A2). F2 adds the check; device failure injection not run |
-| C13 | Storage/retention accurate; current/protected data never deleted | **FAIL** | Usage exact (R12). PCAP cap prune keeps the newest file (isolated run). Emergency index prune keeps today's index (new unit test). The retention estimate is wrong: fixed 1.2 GB/day, "30 days" PCAP vs ~7.8 actual (B-m) |
-| C14 | Every data card distinguishes loading, empty, error, stale, disabled, healthy | **FAIL** | Loading/empty/error honest with OpenSearch down (local render). Stale data was invisible (A2). F2 adds it to Home/System, confirmed in a local render with the real daemon; the Alerts card still shows a bare 0 (NET-228) |
-| C15 | No mock, random or hardcoded-success data in production paths | **FAIL** (main); partly fixed on the branch | Notification save/test (A3/A4) and Compliance's 100-for-nothing (A7) fixed by F3/F5. Setup's storage step still shows invented figures when the daemon is down (A16) |
-| C16 | No unauthenticated data access, default credentials or committed secrets; privileged surfaces justified | **FAIL** | First-run admin claimable by any LAN host (A13 → NET-229). Public health exposed the drive serial (fixed by F6). Owner IP in git history (F7 fixes HEAD only). Daemon is host-root-equivalent (B-o) |
-| C17 | Each capture mode's limits stated in product and docs | **FAIL** | Bridge mode's NAT limit not stated (A10 → NET-225); DHCP gateway "Recommended" though untested (B-n) |
-| C18 | Failures surface in the UI and services recover | **FAIL** (main); UNVERIFIED on the branch | OpenSearch down: honest error states (local render). Dead sensors silent (A2). Device restart/recovery not exercised (needs approval) |
-| C19 | No unresolved P0/P1 findings | **FAIL** | No P0. P1 blockers B1–B6 open (NET-224–NET-229) |
+| C1 | Test suites: no new failures vs baseline | **PASS** | Daemon 4,630 passed / 4 skipped / 0 failed (baseline 4,243). Vitest 4,514 passed (baseline 4,303). svelte-check 0 errors. Colour gate, e2e types, ruff and shellcheck clean. bats 277/277. Playwright visual 295 passed (50 skipped by design). CI on PR #236: every job passes, Lint Web included; CodeQL flags two test files that write dummy secrets (alerts #19, #20; owner to triage) |
+| C2 | Deployed system identified and traceable | **PASS** | G11 at `fa2c2984` on `fix/release-audit-2026-11`, clean checkout (smoke test step 1) |
+| C3 | Connection counts and traffic totals reconcile with source | **PASS** | Two device runs equal to the independent Zeek sum: 13:00–14:00 UTC (1,436,217,196 B) and 17:00–18:00 UTC (4,570,892,146 B). `main` FAIL (R1: interim records summed) |
+| C4 | Upload/download direction and bandwidth correct, with units | **UNVERIFIED** | Upload is now what the LAN device sent on either side (B-d), with tests. On the device only totals were reconciled, not the upload/download split. 1,000-based units shown |
+| C5 | Device identity and attribution correct for the mode, uncertainty shown | **PASS** | Both sides and IPv6 by MAC reconcile on the G11 (device-A 4,578 = 3,053 + 1,432 + 93). Answer-only devices are listed. Type and OS are shown as guesses with their basis. Global IPv6 not observed |
+| C6 | DNS activity reconciles | **PASS** | R6: 5,477 = 5,477 lookups. The median lookup time is shown (smoke test). The page says encrypted DNS is invisible |
+| C7 | TLS/certificate data reconciles | **PASS** | R14: 1,416 = 1,416 sessions with a chain |
+| C8 | Suricata alerts and severity faithful, worded as rule matches | **PASS** (end-to-end trigger UNVERIFIED) | Counts exact (R7). Credential-exposure rules ET rates Informational are counted (B-i). Generated text is worded as rule matches (B-j). The benign IDS trigger needs the owner's approval |
+| C9 | Risk/threat scores reproducible from inputs, presented as heuristics | **FAIL** (P2) | Deterministic, method shown, inputs persist across restarts (F4). Suppressions and baseline aren't shown (NET-239) |
+| C10 | GeoIP/ASN/vendor shown as enrichment, with fitting precision | **PASS** | Answers give their source and age, city-level precision, and anycast with no pin (smoke test on the G11) |
+| C11 | Packet search/download right and access-controlled | **PASS** | Daemon 401 without token, web 401 without session (smoke test). The filtered download's temp file is removed (F8) |
+| C12 | Capture health reflects a stopped capture and packet loss | **UNVERIFIED** | NIC loss exact (R11). Stopped sensors shown in a local render with the real daemon (F2). Device failure injection needs the owner's approval |
+| C13 | Storage/retention accurate; current/protected data never deleted | **PASS** (disk full UNVERIFIED) | Disk use counted like `df` (29.6%). Growth is measured, ILM retries, capture resumes after a disk-full pause (tests; smoke test on the G11). Today's index and the newest PCAP are kept (tests). A real disk-full run needs an isolated stack |
+| C14 | Every data card distinguishes loading, empty, error, stale, disabled, healthy | **PASS** (live render UNVERIFIED) | Pipeline state beside every "no alerts" (NET-228), partial replies are errors, the Live chip says "Not updating". Checked in local renders and in the visual suite's empty and error modes. The rendered UI on the G11 sits behind the certificate the owner must accept |
+| C15 | No mock, random or hardcoded-success data in production paths | **PASS** | Notifications, Compliance and the Setup storage step fixed (F3, F5, A16); the storage route's dead mock branches removed |
+| C16 | No unauthenticated data access, default credentials or committed secrets; privileged surfaces justified | **FAIL on the G11** until the recreate; PASS in code | First admin and Go Live need the setup code (A13). Public health carries no hardware detail (F6). TShark isolated and CyberChef behind the login in compose, but the running containers are old (smoke test step 9: 2 FAIL). Accepted risks are listed in `SECURITY.md`. The owner IP remains in git history |
+| C17 | Each capture mode's limits stated in product and docs | **PASS** | Bridge mode says what a post-NAT capture can't show; setup labels each mode by what was tested on hardware (NET-225) |
+| C18 | Failures surface in the UI and services recover | **UNVERIFIED** | OpenSearch down and stopped sensors render honestly locally. Device restart and recovery need the owner's approval |
+| C19 | No unresolved P0/P1 findings | **PASS** on the branch; FAIL on `main` until PR #236 merges | No P0. B1–B6 fixed (section 8) |
 
 ---
 
@@ -177,18 +182,18 @@ No P0 was found.
 | A2 | Health and "no alerts" stay green when Zeek, Suricata, Logstash or Filebeat stop or nothing is indexed | `server.py:529-582` checks storage, SMART, OpenSearch ping only; stub run (healthy OpenSearch, no new documents): 200 OK with 0 alerts and 0 bytes, health not "problem". Home's traffic empty state is honest when the *whole* window is empty ("OpenSearch is connected but no network connections have been logged"), but a window that went stale part-way looks normal and nothing on System or the pipeline flags it | local + code | Home pipeline, System, Alerts, Threats, Compliance | **Fixed (F2, NET-231)** — health now reports stale data and stopped sensors; Alerts/Threats empty states still don't mention it (B5) |
 | A3 | Notification settings page says "saved successfully"; the server discards the body | `routes/api/notifications/config/+server.ts` POST | code | Settings › Notifications | **Fixed (F3, NET-232)** |
 | A4 | "Send test notification" always reports success | `lib/server/notifications.ts` swallows SMTP errors, ignores `res.ok` | code | Settings | **Fixed (F3, NET-232)** |
-| A5 | External notifications don't work in a Docker install and routing rules never fire | env names differ between loader (`NOTIFY_*`), `.env.example` and compose (which forwards none); `notification_hub.process_event` has no caller; alert notifications only fire while a browser has the app open | code | Notifications | **Blocker B1** |
+| A5 | External notifications don't work in a Docker install and routing rules never fire | env names differ between loader (`NOTIFY_*`), `.env.example` and compose (which forwards none); `notification_hub.process_event` has no caller; alert notifications only fire while a browser has the app open | code | Notifications | **Fixed (wave 2, NET-224)** |
 | A6 | Alert suppressions, false-positive marks, baselines and the threat-intel cache are kept in tmpfs and lost on every daemon restart | `NETTAP_DATA_DIR` unset on the G11; `/tmp` is tmpfs | live | Alerts, threat score | **Fixed (F4, NET-233)** |
 | A7 | Security posture scores "nothing measured" as 100, grade A, "Excellent" | `compliance/+page.svelte:141-228` | code | Compliance | **Fixed (F5, NET-234)** |
 | A8 | PCAP Search "Download filtered" leaves its temp file on a 50 MB tmpfs; downloads fail once it fills | `api/pcap.py:210-211` (`_tmp_path` never read) | code | PCAP Search | **Fixed (F8, NET-236)** |
-| A9 | Backup/restore says "Import successful" but skips retention and capture mode | `config_backup.py:39-44` reads `retention_config.json`/`capture_config.json`; the daemon uses `retention.json` and `capture-mode.conf` | code | Settings › Backup | Blocker B4 |
-| A10 | Inline bridge (post-NAT): Devices shows only the router, DNS says devices "made no DNS queries", threat score charges internet noise at full weight; empty states promise devices will appear | DEV-1, DNS-1, ALR-3 | agent; not testable here | bridge mode (advertised) | Blocker B2 |
-| A11 | Device totals count only connections the device started; servers (NAS, media server) and responders are understated, unlabelled | live: 111 connections to this Mac omitted; `devices.py:605-620` | live | Devices, Top devices | Blocker B3 (label or count both sides) |
-| A12 | Device views are IPv4-only; IPv6 traffic of dual-stack devices is missing while the MAC page includes it | `excluded_ips.py:299-315` | agent | Devices | Blocker B3 |
-| A13 | First host to reach a fresh install can create the admin account (no setup code) | `hooks.server.ts`, `setup/+page.server.ts` | agent (security) | install/first run | Blocker B6 |
-| A14 | TShark runs as root, parses attacker-crafted packets, and shares a Docker network with services that trust identity headers | NT-02 | suspected | container isolation | Blocker B6 (verify on device, then isolate TShark) |
-| A15 | ILM policy failure at startup is never retried and Settings still shows "Policy synced" | STO-2 | agent | retention | NET-237 |
-| A16 | Setup Storage step shows invented disk figures when the daemon is down | HON-8/STO-8 | agent | setup | NET-237 |
+| A9 | Backup/restore says "Import successful" but skips retention and capture mode | `config_backup.py:39-44` reads `retention_config.json`/`capture_config.json`; the daemon uses `retention.json` and `capture-mode.conf` | code | Settings › Backup | **Fixed (wave 2, NET-227)** |
+| A10 | Inline bridge (post-NAT): Devices shows only the router, DNS says devices "made no DNS queries", threat score charges internet noise at full weight; empty states promise devices will appear | DEV-1, DNS-1, ALR-3 | agent; not testable here | bridge mode (advertised) | **Fixed in copy (wave 2, NET-225)**; no bench run |
+| A11 | Device totals count only connections the device started; servers (NAS, media server) and responders are understated, unlabelled | live: 111 connections to this Mac omitted; `devices.py:605-620` | live | Devices, Top devices | **Fixed (wave 2, NET-226)**, reconciled live |
+| A12 | Device views are IPv4-only; IPv6 traffic of dual-stack devices is missing while the MAC page includes it | `excluded_ips.py:299-315` | agent | Devices | **Fixed (wave 2, NET-226)** |
+| A13 | First host to reach a fresh install can create the admin account (no setup code) | `hooks.server.ts`, `setup/+page.server.ts` | agent (security) | install/first run | **Fixed (wave 2, NET-229)** |
+| A14 | TShark runs as root, parses attacker-crafted packets, and shares a Docker network with services that trust identity headers | NT-02 | live (confirmed on the G11) | container isolation | **Fixed in compose (wave 2, NET-229)**; needs the TShark recreate |
+| A15 | ILM policy failure at startup is never retried and Settings still shows "Policy synced" | STO-2 | agent | retention | **Fixed (wave 2, NET-237)** |
+| A16 | Setup Storage step shows invented disk figures when the daemon is down | HON-8/STO-8 | agent | setup | **Fixed (wave 2, NET-237)** |
 
 ### P2 — misleading presentation, edge cases, recoverable reliability defects (selected)
 
@@ -197,19 +202,19 @@ No P0 was found.
 | B-a | Unauthenticated `/api/health` returns drive model/serial, storage and SMART | live | **Fixed (F6, NET-235)** |
 | B-b | Setup's final check says "NetTap daemon · Running" when the daemon is down (`/api/health` is always 200) | code | **Fixed (F6, NET-235)** |
 | B-c | The owner's real public IP is committed as a placeholder (Settings, comments, tests; also in history) | live | **Fixed in HEAD (F7)**; history unchanged |
-| B-d | Upload/download = connection originator, so inbound flows (port forwards, P2P, servers) read backwards (TRF-4) | live (semantics) | NET-237 |
-| B-e | Live page "Right now" can't show long-running connections (records exist only after they end) (TRF-1) | code | NET-237 |
-| B-f | Partial-shard OpenSearch replies shown as complete totals (TRF-3, ALR-11) | agent | NET-237 |
-| B-g | GeoIP: city centres shown to ~11 m with a map pin; no database age/source; daemon can't open MaxMind (`maxminddb` missing); query errors cached as "Unknown" (GEO-2/3/4) | agent + live (anycast without country) | NET-237 |
-| B-h | Device type/OS are substring guesses shown as fact (DEV-7/8/9); IoT trust and isolation grades claim health from unseen inputs (DEV-10/11) | agent | NET-237 |
-| B-i | Severity-1 Suricata rules tagged "Informational"/"Unknown" by ET are moved out of the alert count (cleartext Basic-Auth password, `.htpasswd` access) without saying so on the page | live | NET-237 |
-| B-j | Alert/explanation text states compromise as fact ("IMMEDIATE: Isolate", "Only this device triggers this alert") (HON-15, ALR-6, ALR-14) | agent | NET-237 |
-| B-k | DNS pages don't say DoH/DoT is invisible; mean RTT shown, median hidden (DNS-1/3) | agent | NET-237 |
-| B-l | Capture can stay stopped after a disk-full event (stop 95%, delete to <90%, resume <85%) (STO-1) | code | NET-237 |
-| B-m | Retention estimate uses a fixed 1.2 GB/day (actual 1.7–2.8 GB indices + ~63 GB PCAP/day on the G11) | live | NET-237 |
-| B-n | Setup wizard: "Inline bridge — sees all WAN traffic" omits that devices become indistinguishable; DHCP gateway "Recommended" though untested on hardware | code | NET-237 |
-| B-o | Daemon on 0.0.0.0:8880 (token-protected), daemon is host-root-equivalent (docker.sock, SYS_ADMIN, writable systemd dir), capture containers root with NET_ADMIN; images pinned by tag not digest; CyberChef served without login | live + agent | NET-237 |
-| B-p | Error replies include internal exception text (OpenSearch URLs, connection errors) | local | NET-237 |
+| B-d | Upload/download = connection originator, so inbound flows (port forwards, P2P, servers) read backwards (TRF-4) | live (semantics) | **Fixed (wave 2, NET-226)** |
+| B-e | Live page "Right now" can't show long-running connections (records exist only after they end) (TRF-1) | code | **Fixed (wave 2, NET-237)** |
+| B-f | Partial-shard OpenSearch replies shown as complete totals (TRF-3, ALR-11) | agent | **Fixed (wave 2, NET-237)** |
+| B-g | GeoIP: city centres shown to ~11 m with a map pin; no database age/source; daemon can't open MaxMind (`maxminddb` missing); query errors cached as "Unknown" (GEO-2/3/4) | agent + live (anycast without country) | **Fixed (wave 2, NET-237)** |
+| B-h | Device type/OS are substring guesses shown as fact (DEV-7/8/9); IoT trust and isolation grades claim health from unseen inputs (DEV-10/11) | agent | **Fixed (wave 2, NET-226, NET-237)** |
+| B-i | Severity-1 Suricata rules tagged "Informational"/"Unknown" by ET are moved out of the alert count (cleartext Basic-Auth password, `.htpasswd` access) without saying so on the page | live | **Fixed (wave 2, NET-228)** |
+| B-j | Alert/explanation text states compromise as fact ("IMMEDIATE: Isolate", "Only this device triggers this alert") (HON-15, ALR-6, ALR-14) | agent | **Fixed (wave 2, NET-228)** |
+| B-k | DNS pages don't say DoH/DoT is invisible; mean RTT shown, median hidden (DNS-1/3) | agent | **Fixed (wave 2, NET-225)** |
+| B-l | Capture can stay stopped after a disk-full event (stop 95%, delete to <90%, resume <85%) (STO-1) | code | **Fixed (wave 2, NET-237)** |
+| B-m | Retention estimate uses a fixed 1.2 GB/day (actual 1.7–2.8 GB indices + ~63 GB PCAP/day on the G11) | live | **Fixed (wave 2, NET-237)** |
+| B-n | Setup wizard: "Inline bridge — sees all WAN traffic" omits that devices become indistinguishable; DHCP gateway "Recommended" though untested on hardware | code | **Fixed (wave 2, NET-225)** |
+| B-o | Daemon on 0.0.0.0:8880 (token-protected), daemon is host-root-equivalent (docker.sock, SYS_ADMIN, writable systemd dir), capture containers root with NET_ADMIN; images pinned by tag not digest; CyberChef served without login | live + agent | **Partly fixed (NET-229)**: TShark isolated, CyberChef behind the login; the rest accepted in `SECURITY.md` |
+| B-p | Error replies include internal exception text (OpenSearch URLs, connection errors) | local | **Fixed (wave 2, NET-229, NET-237)** |
 
 ### P3 (selected)
 
@@ -233,6 +238,34 @@ Branch `fix/release-audit-2026-11`. Each fix has a Linear issue and tests that f
 | F8 | A8 | `_TempFileResponse` deletes the filtered PCAP once sent; the service deletes it on a write error or cancel | `test_pcap_download_cleanup.py` (normal, disconnect mid-send, disk full, cancel) | NET-236 |
 
 Also added: `test_prune_emergency_never_deletes_todays_index` (closes the index-retention UNVERIFIED item).
+
+### 6.2 Wave 2: the six blockers and the P2 list (2026-11-09)
+
+The same branch, in about 110 further commits. Each area was fixed in its own worktree, reviewed (Codex plan gate for the larger areas, ponytail, then a security, TypeScript and Python review of the combined branch and a delta round on its fixes), and cherry-picked in. Every new test failed on the code before its fix.
+
+| Area | Findings | What changed | Linear |
+|---|---|---|---|
+| Notifications | A5 (B1) | The daemon sends alert notifications itself: a dispatcher polls new Suricata alerts every minute, routes them by the rules, and keeps its state across restarts, so no browser needs to be open. One set of env names, forwarded by compose and copied by the installer. Settings save through the daemon, secrets are never returned, every send has a deadline and records why it failed (SMTP deadline covers greeting and QUIT; Telegram gets plain text; each service gets text within its limit). Each channel gets at most 100 alert messages a day, failed sends don't count, and the last one says so first. A restore goes through the running hub, validated; a restored channel that sends somewhere new comes back off. In-app notifications persist and repeat a batch at most once a day; a daemon error passes its status on | NET-224 |
+| Inline bridge honesty | A10 (B2), B-k, B-n | Devices, Threats, IoT, the device risk score and Go Live say what a post-NAT capture can't show (one router address, no per-device DNS, no smart-home grades). Setup labels each mode by what was tested on hardware. DNS shows the median lookup time and says encrypted DNS (DoH/DoT) is invisible; its suspicious-pattern thresholds scale with the window. The capture-mode store keeps "unknown" as unknown and retries | NET-225 |
+| Device accounting | A11, A12 (B3), B-d, B-h | Device figures count both sides of a connection; upload is what the device sent on either side. IPv6 folds into the device whose MAC it carries (a router's MAC keeps only link-local). Devices that only answer are listed. Network totals add LAN-side upload, download and local bytes, so inbound flows no longer read as upload. Type and OS read as guesses with their basis. The monthly cap leaves out local traffic. Figures that still count only started connections say so | NET-226 |
+| Backup and restore | A9 (B4) | Backup and restore use the files the daemon really reads, without secrets. A backup that fails validation restores nothing. The page says what was restored, skipped (and why) and failed, and asks before restoring a different capture mode. Excluded IPs keep NetTap's own; a setup re-run keeps the PCAP rotation size; a restored bandwidth cap is bounded | NET-227 |
+| Alerts honesty | A2 rest (B5), B-i, B-j | Every "no alerts" message shows the data pipeline's state beside it, as do the device page and the sidebar badge (which now shows a failed count instead of hiding it). Generated text, kill chains and blocklist hits are worded as rule matches with their source, never "confirmed malicious". Credential-exposure rules that ET rates Informational or Unknown are counted. Trends compare two equal, settled windows, or say they can't | NET-228 |
+| First run and containers | A13, A14 (B6), B-o, B-p | Creating the first admin, and Go Live, need a one-time setup code that the installer prints (about 59 bits, single use, constant-time compare, file mode 600). The right code always works; after 50 wrong codes, further wrong ones get a 429, so no LAN host can lock setup. TShark has no network and runs as nobody; CyberChef needs a NetTap session (both take effect only once those containers are recreated, see section 9). Deliberate 5xx replies are marked public at the source, with an AST guard in the tests, and other 5xx replies carry only safe fields. The installer's firewall lets nettap-web reach the daemon. `SECURITY.md` lists the accepted risks with reasons | NET-229 |
+| Data-layer honesty | A15, A16, B-e, B-f, B-g, B-h, B-l, B-m, P3 | ILM retries with backoff and Settings says why it is out of sync. Capture resumes after a disk-full pause, and the chip says it is paused. Disk use is counted like `df`. Retention estimates come from measured growth, or "No estimate yet". Partial, timed-out and capped replies are errors, not low figures. The live window counts connections by when they ended, and says so. GeoIP answers give their source and age, city-level precision, mark anycast, never cache an error, and show an offline map where the CSP blocks the frame. IoT grades only what was observed. The Live chip says "Not updating" while polls fail. CONTRIBUTING lists Ubuntu 22.04 or 24.04 | NET-237 |
+
+**Measured on the G11 (read-only, against the running stack).** For one hour, device-A (a server behind a port forward):
+- both-sides query: 5,075 connections and 2,193,024 B, equal to independent sums;
+- deployed API: 720 connections and 168,900 B.
+
+Query costs:
+- device list in OpenSearch: 24 h 0.40 → 0.53 s, 7 d 1.9 → 2.2 s;
+- Home's 7 and 30 day series: about 0.5 → 1.4–1.9 s;
+- the answer-only device search: 130–210 ms;
+- the PCAP growth scan: 44–48 ms for 3,620 files, now shared between polls for 10 minutes.
+
+Other effects:
+- df-style disk use reads 29.6% where NetTap showed 28.4%;
+- counting the credential-exposure rules adds 13 alerts over 30 days.
 
 **Review gates (pre-commit).**
 - `/deep-review` with four reviewers: no findings.
@@ -269,32 +302,32 @@ Tested = observed on the G11 in this audit. Code = traced in code and unit tests
 | Feature | Mirror / SPAN (tested, G11, LAN-side mirror) | Inline bridge (code only) | DHCP gateway (code only; README: "Not yet tested on real hardware") |
 |---|---|---|---|
 | Sees internet traffic of LAN devices | Yes, if the mirrored port carries it (router uplink here) | Yes, all WAN traffic | Yes, for devices that took a NetTap lease |
-| Per-device attribution | Yes (pre-NAT addresses + MACs) | **No**: post-NAT, every device is the router's IP; Devices, DNS-per-device and threat scoring degrade (DEV-1, DNS-1, ALR-3) | Yes, by NetTap-issued address |
+| Per-device attribution | Yes (pre-NAT addresses + MACs) | **No**: post-NAT, every device is the router's IP. On the branch, Devices, DNS, IoT, Threats and the risk score say so (NET-225); `main` implies per-device views (DEV-1, DNS-1, ALR-3) | Yes, by NetTap-issued address |
 | Device-to-device (LAN↔LAN) | Only flows that cross the mirrored port; switch-local traffic is invisible | No | No (bypasses NetTap) |
 | Static-IP clients | Yes if their traffic crosses the mirror | As router IP | **Bypass NetTap** |
-| IPv6 | Captured; device views are IPv4-only (DEV-2) | Post-NAT/prefix only | **Bypasses NetTap** when the router sends RAs (Go Live warns) |
+| IPv6 | Captured; on the branch device views add IPv6 by MAC (NET-226); `main` is IPv4-only (DEV-2) | Post-NAT/prefix only | **Bypasses NetTap** when the router sends RAs (Go Live warns) |
 | Asymmetric routing | Depends on mirror config (one direction missing → `missed_bytes`, half-flows) | n/a (single path) | n/a |
 | Capture loss visibility | NIC counters only (0.005% observed) | br0 counters (virtual) — physical-port drops not counted (HLT-2) | NIC counters |
 | Encrypted content | Not decrypted (metadata only; TLS 1.3 hides certificates — stated) | same | same |
 | Effect if NetTap fails | None on the network | Kernel bridge keeps forwarding (stated) | Devices lose internet when leases expire (Go Live warns) |
-| Wording in setup wizard | "See traffic per device on the LAN" — fair | "Sees all WAN ingress and egress" — omits that devices become indistinguishable (P2) | "Recommended", "Works with any router" — omits untested status and the bypass list until Go Live (P2) |
+| Wording in setup wizard | "See traffic per device on the LAN" — fair | `main` omits that devices become indistinguishable; the branch says so and that the mode is untested on hardware (NET-225) | `main` says "Recommended" though untested; the branch labels it by what was tested (NET-225) |
 
 ---
 
 ## 8. Remaining release blockers
 
-Parent issue NET-223. Each blocker is an unresolved P1.
+Parent issue NET-223. Each blocker was an unresolved P1 on `446845ec`. All six are fixed on the branch (section 6.2). What still stands between the branch and a release is in the last column and in section 9.
 
-| # | Blocker | Linear | What resolves it |
-|---|---|---|---|
-| B1 | External notifications can't be configured in a Docker install; routing rules never fire; alert notifications need an open browser | NET-224 | One config contract (loader, compose, `.env.example`, page) and server-side dispatch, or remove the feature from v1.0 and say so |
-| B2 | Inline bridge (post-NAT): device, DNS and threat views claim what NetTap can't see | NET-225 | Mode-aware copy and empty states; wizard states the NAT limit; a bench run |
-| B3 | Device totals omit responder traffic and all IPv6 | NET-226 | Count the LAN party on both sides (and LAN-side direction), add IPv6 to the LAN rule — or label every device figure "connections this device started, IPv4" |
-| B4 | Backup/restore reports success but skips retention and capture mode | NET-227 | Back up the real files; apply capture mode on restore; report what was restored |
-| B5 | Alerts/Threats/Compliance say "no threats" / "clean" without the new pipeline check beside them | NET-228 | Show pipeline state with every "no alerts"/"clean" message; reword "no alerts" as "no rule matched" |
-| B6 | First host on a fresh install can claim the admin account; TShark not network-isolated (suspected) | NET-229 | One-time setup code from the installer; `network_mode: none` for TShark after the on-device check |
+| # | Blocker | Linear | What was required | On the branch |
+|---|---|---|---|---|
+| B1 | External notifications can't be configured in a Docker install; routing rules never fire; alert notifications need an open browser | NET-224 | One config contract and server-side dispatch | **Fixed.** No channel is configured on the G11, so no real send was made; a send to a real channel is UNVERIFIED |
+| B2 | Inline bridge (post-NAT): device, DNS and threat views claim what NetTap can't see | NET-225 | Mode-aware copy and empty states; wizard states the NAT limit; a bench run | **Fixed in copy and tests.** The bench run is still UNVERIFIED |
+| B3 | Device totals omit responder traffic and all IPv6 | NET-226 | Count both sides, add IPv6 | **Fixed**, reconciled on the G11 (5,075 = 5,075). Global IPv6 is UNVERIFIED (ULA only here) |
+| B4 | Backup/restore reports success but skips retention and capture mode | NET-227 | Back up the real files; report what was restored | **Fixed.** A restore on the device was not run (it rewrites live settings) |
+| B5 | Alerts/Threats/Compliance say "no threats" / "clean" without the pipeline check beside them | NET-228 | Pipeline state with every "no alerts"; "no rule matched" wording | **Fixed** |
+| B6 | First host on a fresh install can claim the admin account; TShark not network-isolated | NET-229 | One-time setup code; `network_mode: none` for TShark | **Fixed in code.** The TShark and nginx change needs those two containers recreated (`deploy-release-audit-isolation.sh`, owner approval) |
 
-Also required by the existing gate in `RELEASE-VERIFICATION.md`, still open: hardware checks H2–H7, CI green, release notes, version bump.
+Also required by the existing gate in `RELEASE-VERIFICATION.md`, still open: hardware checks H2–H7, CI green, release notes, version bump, and merging PR #236.
 
 ---
 
@@ -312,6 +345,10 @@ Also required by the existing gate in `RELEASE-VERIFICATION.md`, still open: har
 | ~~Index retention (today's index protected)~~ | Resolved 2026-11-09: manual cleanup and PCAP pruning already had tests; `test_prune_emergency_never_deletes_todays_index` now pins the emergency prune | — |
 | 500 Mbps zero-loss, <1 ms added latency (bridge) | No bench | iperf3 through a bridge bench (H3) |
 | Fixes F1–F8 on the device | **Resolved 2026-11-09:** deployed with the owner's approval; smoke test 19 PASS / 0 FAIL / 0 WARN; F4 migration ran inside the container (baselines moved, present after the recreate) | — |
+| Wave-2 fixes on the device | **Resolved 2026-11-09:** `fa2c2984` deployed (web UI and daemon), smoke test 26 PASS / 2 FAIL / 0 WARN; the daemon log has no errors, and no notification channel is configured, so nothing was sent | — |
+| TShark isolation and CyberChef's login on the device (NET-229) | Recreating `nettap-tshark` and `nettap-nginx` takes the dashboard and PCAP filters down for about 30 s; needs the owner's approval | Owner runs `bash scripts/remote/deploy-release-audit-isolation.sh`. It runs nginx -t first, checks TShark still reads captures as nobody, then runs the smoke test (expected 28 PASS) |
+| A real notification send (NET-224) | No channel is configured on the G11; the owner's addresses and credentials aren't the audit's to enter | Owner sets up one channel in Settings › Notifications and presses Test |
+| A backup restore on the device (NET-227) | A restore rewrites live settings | Isolated stack, or the owner restores a backup taken just before |
 | State migration inside the real daemon container | Claude Code's removal safety check blocks running a script with `rm` through `docker exec sh -c`; the logic is covered by bats on macOS `sh` and shellcheck in POSIX mode | The deploy script runs it on the device; its Step 6 confirms every file arrived |
 | Certificate count (44) on the Certificates page | Sessions reconciled (R14); distinct server certificates not recounted independently | A first-fingerprint cardinality over the same window |
 
@@ -336,9 +373,14 @@ It prints one PASS / FAIL / WARN line per check and exits non-zero on any FAIL. 
 | 5 | Daemon refuses requests without the token; system health; the F2 pipeline state; capture health; packet loss (info) | health not "healthy", pipeline not "fresh", capture not "normal" |
 | 6 | Last full hour's traffic total vs an independent sum of Zeek's final conn records (excluded IPs removed), taken before and after the API call | API total outside that range (interim records counted) |
 | 7 | Web API refuses requests without a session; public `/api/health` carries no hardware detail | either fails |
-| 8 | Disk use (info) | — |
+| 8 | Disk use (info); storage status | capture paused for disk, ILM out of sync, or no growth estimate |
+| 9 | Blocker fixes: notification settings carry no secret; DNS median; alert trend values; no setup code once an admin exists; TShark has no network and runs as nobody; CyberChef needs a login; GeoIP marks anycast and names its source | any check fails |
+| 10 | Device-A's connections counted from both sides (started + answered + IPv6 by MAC) against independent sums | totals differ |
 
-On `main` (`446845ec`), 2026-11-09: 16 PASS, 2 FAIL (step 6, step 7 hardware detail), 1 WARN (step 5 pipeline). With the branch deployed, the expected result is all PASS.
+Results:
+- `main` (`446845ec`), 2026-11-09, steps 1–8: 16 PASS, 2 FAIL (step 6, and the hardware detail in step 7), 1 WARN (step 5 pipeline).
+- Branch at `e3391970` (wave 1): 19 PASS.
+- Branch at `fa2c2984` (wave 2): 26 PASS, 2 FAIL. Both FAILs are in step 9 and clear once TShark and nginx are recreated.
 
 Before tagging a release, also run:
 - the Dev suites: daemon pytest, vitest, svelte-check, `npm run check:colors`, `npm run test:visual`, bats;
