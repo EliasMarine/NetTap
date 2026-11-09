@@ -289,6 +289,9 @@ def _incomplete(where: str, exc: QueryFailed) -> web.Response:
 _RESPONDED = {"range": {"destination.packets": {"gt": 0}}}
 # Answer-only devices per search of their other aggregations
 _ANSWER_CHUNK = 1_000
+# shortcut: an answer-only device's MAC is the first non-gateway one among its 10 most common
+# answered-to MACs; more than 9 routers on one device's path is no home network
+_ANSWERED_MACS = 10
 _OTHER_SIDE = {"source": "destination", "destination": "source"}
 
 
@@ -397,18 +400,41 @@ def _without_router_macs(
     buckets: dict[str, dict],
     what: str,
 ) -> dict[str, dict]:
-    """`buckets` whose with_mac (an answering side's MAC) is a gateway's lose it.
+    """`buckets` with the gateways' MACs out of with_mac (an answering side's MACs, _ANSWERED_MACS
+    of them), so the first left is the most common one that is not a router's.
 
     A router on one cable passes a routed flow twice and Zeek keeps the first leg's MACs, client
     to router, so the side that answered carries the router's MAC, not its own (review).
     """
-    macs = sorted({m for b in buckets.values() if (m := _bucket_mac(b))})
+    # OLD CODE START — delta review: one MAC per device, cleared when it was a gateway's, so a NAS
+    # answering more routed flows than on-link ones lost its own MAC
+    # macs = sorted({m for b in buckets.values() if (m := _bucket_mac(b))})
+    # filters = _conn_filters(from_ts, to_ts)
+    # routers = gateway_macs(client, filters, app.get("lan_filter"), macs, what) or set()
+    # return {
+    #     key: {**b, "with_mac": {"buckets": []}} if _bucket_mac(b) in routers else b
+    #     for key, b in buckets.items()
+    # }
+    # OLD CODE END
+
+    def macs(b: dict) -> list[dict]:
+        return (b.get("with_mac") or {}).get("buckets") or []
+
+    seen = sorted({m["key"] for b in buckets.values() for m in macs(b)})
     filters = _conn_filters(from_ts, to_ts)
-    routers = gateway_macs(client, filters, app.get("lan_filter"), macs, what) or set()
+    routers = gateway_macs(client, filters, app.get("lan_filter"), seen, what) or set()
     return {
-        key: {**b, "with_mac": {"buckets": []}} if _bucket_mac(b) in routers else b
+        key: {
+            **b,
+            "with_mac": {"buckets": [m for m in macs(b) if m["key"] not in routers]},
+        }
         for key, b in buckets.items()
     }
+
+
+def _with_room_for_routers(agg: dict) -> dict:
+    """A with_mac terms aggregation that keeps _ANSWERED_MACS MACs, for _without_router_macs."""
+    return {**agg, "terms": {**agg["terms"], "size": _ANSWERED_MACS}}
 
 
 def _lan_device_buckets(
@@ -489,6 +515,8 @@ def _lan_device_buckets(
     others = {
         n: a for n, a in (aggs or {}).items() if n not in bounds and "sum" not in a
     }
+    if "with_mac" in others:
+        others = {**others, "with_mac": _with_room_for_routers(others["with_mac"])}
     extra = (
         _answered_aggs(
             client, answer_query, only_answered, others, what or "answer-only devices"
@@ -1640,7 +1668,8 @@ def handle_device_detail(request: web.Request) -> web.Response:
                 "aggs": _swapped(
                     {
                         "protocols": _DEVICE_AGGS["protocols"],
-                        "with_mac": _DEVICE_AGGS["with_mac"],
+                        # OLD CODE: "with_mac": _DEVICE_AGGS["with_mac"], (delta review: room for routers)
+                        "with_mac": _with_room_for_routers(_DEVICE_AGGS["with_mac"]),
                     }
                 ),
             },

@@ -306,6 +306,34 @@ class TestRoutedAnswers(Case):
         )
 
 
+class TestMostlyRoutedAnswers(TestRoutedAnswers):
+    """Delta review: the NAS answers 4 routed flows and 2 on-link ones from the laptop. The
+    router's MAC is its most common answered-to MAC, but its own MAC is the one to keep."""
+
+    docs = [*TestRoutedAnswers.docs, *_to_nas(2, 30)]
+
+    async def test_the_list_and_the_page_show_no_router_mac(self):
+        _, listed = await self.get("/api/devices")
+        nas = next(d for d in listed["devices"] if d["ip"] == NAS)
+        self.assertEqual(nas["mac"], M_NAS)
+        _, body = await self.get(f"/api/devices/{NAS}")
+        self.assertEqual(body["device"]["mac"], M_NAS)
+
+    def test_the_registry_does_not_file_it_under_the_router(self):
+        buckets = _lan_device_buckets(
+            self.os,
+            {"lan_filter": self.lan, "excluded_ips": []},
+            FROM,
+            TO,
+            aggs=_conn_device_aggs(),
+            what="registry",
+        )
+        self.assertEqual(
+            _register_conn_devices(MagicMock(), buckets),
+            {LAPTOP: M_LAPTOP, self.CLIENT: "00:00:5e:00:53:50", NAS: M_NAS},
+        )
+
+
 class TestDualStackActivity(Case):
     """A device's newest record is IPv6: its page reads the list's IPv4 activity, as the list."""
 
