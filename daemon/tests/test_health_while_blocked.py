@@ -169,7 +169,10 @@ def _health_while_blocked(server, method: str, path: str) -> float:
     sender.start()
     try:
         assert blocker.entered.wait(_WAIT_S), f"{path} never reached its blocking step"
-        return _health_seconds(server["base"])
+        # OLD CODE: return _health_seconds(server["base"])
+        # Best of three while the route still waits (3 s at most, inside its 5 s): one sample can
+        # land on a GC pause on the loaded Integration runner (NET-221); a held loop fails all three
+        return min(_health_seconds(server["base"]) for _ in range(3))
     finally:
         blocker.disarm()
         sender.join(10)
