@@ -14,6 +14,7 @@ from typing import Any
 
 from services.excluded_ips import build_excluded_ips_filter
 from storage.all_buckets import all_buckets
+from storage.exact_terms import PartialResultsError
 from storage.time_slots import _epoch, histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.dns_analytics")
@@ -163,11 +164,15 @@ class DNSAnalytics:
             [{"domain": {"terms": {"field": "zeek.dns.query"}}}],
             aggs={"unique_clients": {"cardinality": {"field": "source.ip"}}},
         )
+        # OLD CODE START — NET-237 (caps): only logged, so suspicious names past it were never checked
+        # if not complete:
+        #     logger.warning(
+        #         "DNS: the name scan hit its bucket cap at %d names; later names were not checked",
+        #         len(buckets),
+        #     )
+        # OLD CODE END
         if not complete:
-            logger.warning(
-                "DNS: the name scan hit its bucket cap at %d names; later names were not checked",
-                len(buckets),
-            )
+            raise PartialResultsError(f"DNS name scan stopped at {len(buckets)} names")
         names = [
             {
                 "domain": b["key"]["domain"],

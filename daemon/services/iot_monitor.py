@@ -24,6 +24,7 @@ from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
 from services.excluded_ips import CONN_ACCOUNTING, build_excluded_ips_filter
 from services.iot_trust_scorer import IoTTrustScorer
 from storage.all_buckets import all_buckets, complete_terms
+from storage.exact_terms import PartialResultsError
 from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.iot_monitor")
@@ -387,8 +388,12 @@ class IoTMonitor:
             # return
             # OLD CODE END
             raise
+        # OLD CODE START — NET-237 (caps): only logged, so the fleet read as every IoT device
+        # if not complete:
+        #     logger.warning("IoT discovery stopped at %d MACs", len(buckets))
+        # OLD CODE END
         if not complete:
-            logger.warning("IoT discovery stopped at %d MACs", len(buckets))
+            raise PartialResultsError(f"IoT discovery stopped at {len(buckets)} MACs")
 
         # NET-158: one set per window; a cached set ignored the range, kept scoring devices
         # with no traffic in it, and froze each device's IP and last seen
@@ -1353,9 +1358,15 @@ class IoTMonitor:
             buckets, complete = all_buckets(
                 self._client, NETWORK_INDEX, query, [{"value": source}]
             )
+            # OLD CODE START — NET-237 (caps): only logged, so values past it read as new (anomalies)
+            # if not complete:
+            #     logger.warning(
+            #         "Baseline %s for %s stopped at %d values", name, mac, len(buckets)
+            #     )
+            # OLD CODE END
             if not complete:
-                logger.warning(
-                    "Baseline %s for %s stopped at %d values", name, mac, len(buckets)
+                raise PartialResultsError(
+                    f"baseline {name} for {mac} stopped at {len(buckets)} values"
                 )
             known[name] = [
                 "Unknown" if b["key"]["value"] is None else b["key"]["value"]
@@ -2398,8 +2409,14 @@ class IoTMonitor:
                 {"value": {"terms": {"field": field}}},
             ],
         )
+        # OLD CODE START — NET-237 (caps): only logged, so devices past it read as using nothing
+        # if not complete:
+        #     logger.warning("%s per device stopped at %d pairs", field, len(buckets))
+        # OLD CODE END
         if not complete:
-            logger.warning("%s per device stopped at %d pairs", field, len(buckets))
+            raise PartialResultsError(
+                f"{field} per device stopped at {len(buckets)} pairs"
+            )
         counts: dict[str, dict[Any, int]] = {}
         for b in buckets:
             per_mac = counts.setdefault(b["key"]["mac"].upper(), {})
@@ -2726,8 +2743,14 @@ class IoTMonitor:
             # }
             # OLD CODE END
             raise
+        # OLD CODE START — NET-237 (caps): only logged, so the score counted only the pairs read
+        # if not complete:
+        #     logger.warning("Network isolation stopped at %d pairs", len(buckets))
+        # OLD CODE END
         if not complete:
-            logger.warning("Network isolation stopped at %d pairs", len(buckets))
+            raise PartialResultsError(
+                f"network isolation stopped at {len(buckets)} pairs"
+            )
 
         # A destination that is also an IoT device is not an isolation finding
         pairs = [

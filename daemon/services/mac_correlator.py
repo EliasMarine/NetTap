@@ -21,6 +21,7 @@ from opensearchpy import OpenSearchException
 
 from services.excluded_ips import CONN_ACCOUNTING
 from storage.all_buckets import all_buckets
+from storage.exact_terms import PartialResultsError
 from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.mac_correlator")
@@ -285,10 +286,14 @@ class MACCorrelator:
         except OpenSearchException as exc:
             logger.error("OpenSearch error detecting randomized MACs: %s", exc)
             raise
+        # OLD CODE START — NET-237 (caps): only logged, so the randomized-MAC list read as complete
+        # if not complete:
+        #     logger.warning(
+        #         "MAC scan stopped at %d MACs; the list is partial", len(pages)
+        #     )
+        # OLD CODE END
         if not complete:
-            logger.warning(
-                "MAC scan stopped at %d MACs; the list is partial", len(pages)
-            )
+            raise PartialResultsError(f"MAC scan stopped at {len(pages)} MACs")
         buckets = _busiest_first(pages)
         randomized = []
 
@@ -560,11 +565,15 @@ class MACCorrelator:
         except OpenSearchException as exc:
             logger.error("OpenSearch error fingerprinting MACs: %s", exc)
             raise
+        # OLD CODE START — NET-237 (caps): only logged, so merge suggestions read as complete
+        # if not complete:
+        #     logger.warning(
+        #         "MAC fingerprints stopped at %d MACs; suggestions are partial",
+        #         len(pages),
+        #     )
+        # OLD CODE END
         if not complete:
-            logger.warning(
-                "MAC fingerprints stopped at %d MACs; suggestions are partial",
-                len(pages),
-            )
+            raise PartialResultsError(f"MAC fingerprints stopped at {len(pages)} MACs")
         return {b["key"]: _similarity_fingerprint(b) for b in _busiest_first(pages)}
 
     def suggest_merges(self, from_ts: str, to_ts: str) -> list[dict[str, Any]]:

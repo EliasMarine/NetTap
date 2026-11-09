@@ -17,6 +17,7 @@ import logging
 import os
 
 from storage.all_buckets import all_buckets
+from storage.exact_terms import PartialResultsError
 
 logger = logging.getLogger("nettap.services.excluded_ips")
 
@@ -170,10 +171,14 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
             [{"ip": {"terms": {"field": "source.ip"}}}],
             page_size=_SOURCE_PAGE,
         )
+        # OLD CODE START — NET-237 (caps): only logged, so a partial scan could replace the LAN filter (detection now fails)
+        # if not complete:
+        #     logger.warning(
+        #         "LAN detection stopped at %d sources; shares are partial", len(pages)
+        #     )
+        # OLD CODE END
         if not complete:
-            logger.warning(
-                "LAN detection stopped at %d sources; shares are partial", len(pages)
-            )
+            raise PartialResultsError(f"LAN detection stopped at {len(pages)} sources")
         buckets = [{**b, "key": b["key"]["ip"]} for b in pages]
 
         if not buckets:
