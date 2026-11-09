@@ -218,6 +218,8 @@
 
 	// ----- Admin Account -----
 	let adminLoading = $state(false);
+	// A13 (NET-229): the installer's one-time setup code
+	let adminSetupCode = $state('');
 	let adminUsername = $state('');
 	let adminPassword = $state('');
 	let adminConfirmPassword = $state('');
@@ -233,8 +235,13 @@
 	let passwordValid = $derived(
 		passwordHasLength && passwordHasUpper && passwordHasLower && passwordHasNumber
 	);
+	// OLD CODE START — NET-229: the account step also needs the setup code
+	// let adminFormValid = $derived(
+	// 	adminUsername.trim().length >= 3 && passwordValid && passwordsMatch
+	// );
+	// OLD CODE END
 	let adminFormValid = $derived(
-		adminUsername.trim().length >= 3 && passwordValid && passwordsMatch
+		adminSetupCode.trim() !== '' && adminUsername.trim().length >= 3 && passwordValid && passwordsMatch
 	);
 
 	// ----- Self-Traffic Exclusion -----
@@ -1577,6 +1584,10 @@
 							clientError = '';
 
 							// Client-side validation
+							if (adminSetupCode.trim() === '') {
+								clientError = 'Enter the setup code.';
+								return ({ update }) => { update({ reset: false }); };
+							}
 							if (adminUsername.trim().length < 3) {
 								clientError = 'Username must be at least 3 characters.';
 								return ({ update }) => { update({ reset: false }); };
@@ -1600,6 +1611,26 @@
 							};
 						}}
 					>
+						<div class="field">
+							<label for="setup-code" class="label">Setup code</label>
+							<input
+								id="setup-code"
+								name="setupCode"
+								type="text"
+								class="input mono"
+								placeholder="XXXX-XXXX-XXXX"
+								required
+								autocomplete="one-time-code"
+								autocapitalize="characters"
+								spellcheck="false"
+								bind:value={adminSetupCode}
+							/>
+							<span class="field-help">
+								The installer printed it at the end. To see it again, run this on the NetTap box:
+								<span class="mono">sudo docker exec nettap-web cat /var/lib/nettap-web/setup-code</span>
+							</span>
+						</div>
+
 						<div class="field">
 							<label for="username" class="label">Username</label>
 							<input

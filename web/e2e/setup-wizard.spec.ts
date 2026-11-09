@@ -104,6 +104,7 @@ test.describe('Setup wizard', () => {
 		await expect(steps.locator('[aria-current="step"]')).toContainText('Account');
 
 		// The account form, with its submit disabled until the form is valid
+		await expect(page.getByLabel('Setup code')).toBeVisible();
 		await expect(page.getByLabel('Username')).toBeVisible();
 		await expect(page.getByLabel('Password', { exact: true })).toBeVisible();
 		await expect(page.getByLabel('Confirm password')).toBeVisible();
@@ -119,6 +120,8 @@ test.describe('Setup wizard', () => {
 		await mockWizardApis(page);
 		await walkToAccountStep(page);
 
+		// NET-229: the one-time setup code the wizard's load made in DATA_DIR
+		await page.getByLabel('Setup code').fill(fs.readFileSync(path.join(E2E_DATA_DIR, 'setup-code'), 'utf-8').trim());
 		await page.getByLabel('Username').fill(USERNAME);
 		await page.getByLabel('Password', { exact: true }).fill(PASSWORD);
 		await page.getByLabel('Confirm password').fill(PASSWORD);

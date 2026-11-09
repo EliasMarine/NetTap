@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { getUser, hashPassword, verifyPassword, type User } from './auth.js';
+import { getUser, hashPassword, setupCodeMatches, verifyPassword, type User } from './auth.js';
 
 // ----- Login throttling (CR-034) -----
 // Shared by the login form action and POST /api/auth/login.
@@ -76,7 +76,23 @@ function recordFailure(key: string, now: number): void {
 	remember(userFailures, key, { failures, lockedUntil, resetAt: lockedUntil + USER_MAX_LOCK_MS }, now);
 }
 
-function tooMany(ms: number): LoginResult {
+// OLD CODE START — NET-229: the setup code check uses the same reply, and it isn't a login
+// function tooMany(ms: number): LoginResult {
+// 	const secs = Math.ceil(ms / 1000);
+// 	const mins = Math.ceil(secs / 60);
+// 	const wait = secs <= 60 ? `${secs} second${secs === 1 ? '' : 's'}` : `${mins} minutes`;
+// 	return {
+// 		ok: false,
+// 		status: 429,
+// 		retryAfter: secs,
+// 		error: `Too many login attempts. Please wait ${wait} and try again.`,
+// 	};
+// }
+// OLD CODE END
+function tooMany(
+	ms: number,
+	what = 'login attempts'
+): { ok: false; status: 429; error: string; retryAfter: number } {
 	const secs = Math.ceil(ms / 1000);
 	const mins = Math.ceil(secs / 60);
 	const wait = secs <= 60 ? `${secs} second${secs === 1 ? '' : 's'}` : `${mins} minutes`;
@@ -84,7 +100,7 @@ function tooMany(ms: number): LoginResult {
 		ok: false,
 		status: 429,
 		retryAfter: secs,
-		error: `Too many login attempts. Please wait ${wait} and try again.`,
+		error: `Too many ${what}. Please wait ${wait} and try again.`,
 	};
 }
 
@@ -123,4 +139,24 @@ export async function attemptLogin(
 
 	userFailures.delete(key);
 	return { ok: true, user };
+}
+
+export type SetupCodeResult = { ok: true } | { ok: false; status: 400 | 429; error: string };
+
+/**
+ * A13 (NET-229): check the first-run setup code. Every try takes one from the same per-IP budget as
+ * a login, so guessing the ~59-bit code is no faster than guessing a password.
+ */
+export function checkSetupCode(ip: string, code: string): SetupCodeResult {
+	const wait = takeIpAttempt(ip, Date.now());
+	if (wait > 0) {
+		const { status, error } = tooMany(wait, 'attempts');
+		return { ok: false, status, error };
+	}
+	if (setupCodeMatches(code)) return { ok: true };
+	return {
+		ok: false,
+		status: 400,
+		error: "That setup code isn't right. The installer printed it at the end; see below to read it again.",
+	};
 }

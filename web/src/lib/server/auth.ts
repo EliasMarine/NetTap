@@ -1,8 +1,8 @@
 import * as argon2 from 'argon2';
 import jwt from 'jsonwebtoken';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, rmSync } from 'fs';
 import { dirname } from 'path';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes, randomInt, timingSafeEqual } from 'crypto';
 
 // ----- Constants -----
 
@@ -248,4 +248,57 @@ export async function updatePassword(username: string, newPassword: string): Pro
 export function hasUsers(): boolean {
 	const store = readUsers();
 	return store.users.length > 0;
+}
+
+// ----- First-run setup code (A13, NET-229) -----
+
+const SETUP_CODE_FILE = `${DATA_DIR}/setup-code`;
+// No 0/O, 1/I/L or U, so it reads and types without mix-ups; 12 of 30 symbols is ~59 bits
+const SETUP_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
+const SETUP_CODE_SHAPE = new RegExp(`^[${SETUP_CODE_ALPHABET}]{12}$`);
+
+/** Upper case, letters and digits only, so spaces, dashes and case never make a right code wrong. */
+function normaliseSetupCode(code: string): string {
+	return code.toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/**
+ * The one-time code that proves whoever creates the first admin can run commands on the box.
+ * It lives in DATA_DIR, which only nettap-web mounts. Made while no user exists (a missing, short or
+ * damaged file is replaced), removed once one does, and then this returns null. A damaged user
+ * store throws, so first run stays closed.
+ */
+export function ensureSetupCode(): string | null {
+	if (hasUsers()) {
+		clearSetupCode();
+		return null;
+	}
+	try {
+		const stored = readFileSync(SETUP_CODE_FILE, 'utf-8').trim();
+		if (SETUP_CODE_SHAPE.test(normaliseSetupCode(stored))) return stored;
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+	}
+	const symbols = Array.from({ length: 12 }, () => SETUP_CODE_ALPHABET[randomInt(SETUP_CODE_ALPHABET.length)]);
+	const code = [0, 4, 8].map((i) => symbols.slice(i, i + 4).join('')).join('-');
+	ensureDataDir();
+	// Write then rename, so a crash never leaves a short code behind
+	const tmpFile = `${SETUP_CODE_FILE}.tmp`;
+	writeFileSync(tmpFile, `${code}\n`, { mode: 0o600 });
+	renameSync(tmpFile, SETUP_CODE_FILE);
+	return code;
+}
+
+/** Constant-time check of a typed code; false when it isn't 12 code symbols or setup is done. */
+export function setupCodeMatches(input: string): boolean {
+	const typed = normaliseSetupCode(input);
+	if (!SETUP_CODE_SHAPE.test(typed)) return false;
+	const code = ensureSetupCode();
+	if (!code) return false;
+	const digest = (s: string) => createHash('sha256').update(s).digest();
+	return timingSafeEqual(digest(typed), digest(normaliseSetupCode(code)));
+}
+
+export function clearSetupCode(): void {
+	rmSync(SETUP_CODE_FILE, { force: true });
 }

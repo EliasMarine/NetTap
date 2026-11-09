@@ -3,18 +3,26 @@
 // The admin creation logic is preserved below; it now runs only when step=5 data is submitted.
 // OLD CODE END
 
-import type { Actions } from './$types.js';
+import type { Actions, PageServerLoad } from './$types.js';
 import { fail, redirect } from '@sveltejs/kit';
 // OLD CODE START — createUser had no first-admin race protection (2026-10-29)
 // import { createUser, hasUsers } from '$lib/server/auth.js';
 // OLD CODE END
 import {
+	clearSetupCode,
 	createFirstAdmin,
+	ensureSetupCode,
 	generateToken,
 	hasUsers,
 	SetupAlreadyComplete,
 } from '$lib/server/auth.js';
+import { checkSetupCode } from '$lib/server/login.js';
 import { setAuthCookie } from '$lib/server/middleware.js';
+
+/** A13 (NET-229): an open wizard always has a setup code to check against, even if the file was removed. */
+export const load: PageServerLoad = () => {
+	ensureSetupCode();
+};
 
 export const actions: Actions = {
 	/**
@@ -32,6 +40,13 @@ export const actions: Actions = {
 		const username = data.get('username')?.toString().trim();
 		const password = data.get('password')?.toString();
 		const confirmPassword = data.get('confirmPassword')?.toString();
+
+		// A13 (NET-229): only someone who can read the code on the box may claim it. Checked first,
+		// so nothing else about the request is looked at for a caller without it.
+		const code = checkSetupCode(event.getClientAddress(), data.get('setupCode')?.toString() ?? '');
+		if (!code.ok) {
+			return fail(code.status, { error: code.error, username: username ?? '' });
+		}
 
 		if (!username || !password || !confirmPassword) {
 			return fail(400, {
@@ -105,10 +120,21 @@ export const actions: Actions = {
 			if (err instanceof SetupAlreadyComplete) {
 				throw redirect(302, '/login');
 			}
-			return fail(500, {
-				error: err instanceof Error ? err.message : 'Failed to create user.',
-				username,
-			});
+			// OLD CODE START — NET-229 (B-p): the reply carried the exception text (file paths, errno)
+			// return fail(500, {
+			// 	error: err instanceof Error ? err.message : 'Failed to create user.',
+			// 	username,
+			// });
+			// OLD CODE END
+			console.error('Setup: creating the first admin failed:', err);
+			return fail(500, { error: "Couldn't create the account. The web container's log has the details.", username });
+		}
+		// Single use: the code is gone once the admin exists. A leftover file matches nothing (an admin
+		// exists) and the next start removes it, so a failed removal doesn't fail the setup.
+		try {
+			clearSetupCode();
+		} catch (err) {
+			console.error('Setup: removing the used setup code failed:', err);
 		}
 
 		// Sign in only the winner, so the rest of the wizard and Go Live run

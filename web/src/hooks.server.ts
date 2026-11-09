@@ -1,6 +1,20 @@
-import type { Handle } from '@sveltejs/kit';
+import type { Handle, ServerInit } from '@sveltejs/kit';
 import { json, redirect } from '@sveltejs/kit';
-import { verifyToken, hasUsers } from '$lib/server/auth.js';
+import { verifyToken, hasUsers, ensureSetupCode } from '$lib/server/auth.js';
+
+/** A13 (NET-229): make the first-run setup code at start, so the installer can print it. The code
+ * itself is never logged; reading it needs a shell on the box. */
+export const init: ServerInit = () => {
+	try {
+		if (ensureSetupCode()) {
+			console.info(
+				'First run: the setup wizard asks for a setup code. Read it with: sudo docker exec nettap-web cat /var/lib/nettap-web/setup-code'
+			);
+		}
+	} catch (err) {
+		console.error('First run: could not make the setup code:', err);
+	}
+};
 
 // OLD CODE START — setup, bridge and go-live stayed public forever, so anyone on
 // the LAN could reconfigure or tear down the bridge after setup (2026-10-29)
@@ -37,8 +51,12 @@ const PUBLIC_PATHS = new Set(['/login', '/api/auth/login', '/api/auth/logout', '
 const FIRST_RUN_PATHS = ['/setup', '/api/setup', '/api/bridge', '/go-live'];
 
 /** The calls the wizard makes before its Account step, matched by exact
- * method and path (not prefix). Opening them before the first admin exists
- * adds nothing: whoever can reach the device then can claim it anyway.
+ * method and path (not prefix).
+ * OLD CODE START — NET-229: no longer true once the account needs the setup code
+ * Opening them before the first admin exists adds nothing: whoever can reach the device then can claim it anyway.
+ * OLD CODE END
+ * They stay open until the first admin exists. The setup code (A13) guards the admin account, so
+ * a LAN host can no longer claim the box, but it can still call these until the owner finishes setup.
  */
 const FIRST_RUN_REQUESTS = new Set([
 	'GET /api/settings/excluded-ips',

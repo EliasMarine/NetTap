@@ -26,6 +26,8 @@ const root = process.env.NETTAP_VISUAL_TMP;
 const tokenFile = path.join(root, 'daemon-token');
 /** The signed-in session saved by auth.setup.ts; removed with the temp root. */
 export const STORAGE_STATE = path.join(root, 'storage-state.json');
+/** The `app` instance's DATA_DIR; auth.setup.ts reads its first-run setup code there (NET-229). */
+export const APP_DATA_DIR = path.join(root, 'app', 'data');
 
 function instanceEnv(name: string, origin: string): Record<string, string> {
 	const dataDir = path.join(root, name, 'data');
