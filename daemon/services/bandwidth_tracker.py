@@ -71,11 +71,26 @@ class BandwidthTracker:
         """Load monthly cap from settings file if it exists."""
         import json
 
+        # OLD CODE START — a list raised AttributeError and Infinity OverflowError, and
+        # __init__ calls this from create_app, so the daemon couldn't start
+        # try:
+        #     with open(_CAP_FILE, "r") as f:
+        #         data = json.load(f)
+        #         self._monthly_cap_bytes = int(data.get("monthly_cap_bytes", 0))
+        # except (FileNotFoundError, json.JSONDecodeError, ValueError, TypeError):
+        #     self._monthly_cap_bytes = DEFAULT_MONTHLY_CAP_BYTES
+        # OLD CODE END
         try:
             with open(_CAP_FILE, "r") as f:
                 data = json.load(f)
-                self._monthly_cap_bytes = int(data.get("monthly_cap_bytes", 0))
-        except (FileNotFoundError, json.JSONDecodeError, ValueError, TypeError):
+            if not isinstance(data, dict):
+                raise ValueError("not a JSON object")
+            self._monthly_cap_bytes = int(data.get("monthly_cap_bytes", 0))
+        except FileNotFoundError:
+            self._monthly_cap_bytes = DEFAULT_MONTHLY_CAP_BYTES
+        except (OSError, ValueError, TypeError, OverflowError, AttributeError) as exc:
+            # JSONDecodeError is a ValueError
+            logger.warning("Ignoring the bandwidth cap file %s: %s", _CAP_FILE, exc)
             self._monthly_cap_bytes = DEFAULT_MONTHLY_CAP_BYTES
 
     def save_cap(self, cap_bytes: int) -> None:

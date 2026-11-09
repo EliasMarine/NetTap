@@ -71,10 +71,10 @@ def config_paths(tmp_path):
     (tmp_path / "excluded_ips.json").write_text(json.dumps(["192.168.1.1", "10.0.0.1"]))
 
     (tmp_path / "bandwidth_cap.json").write_text(
+        # OLD CODE: {"monthly_cap_gb": 1000, "enabled": True} (a shape the tracker never wrote)
         json.dumps(
             {
-                "monthly_cap_gb": 1000,
-                "enabled": True,
+                "monthly_cap_bytes": 1_000_000_000_000,
             }
         )
     )
@@ -165,7 +165,8 @@ class TestExport:
         sections = config["sections"]
 
         assert sections["excluded_ips"] == ["192.168.1.1", "10.0.0.1"]
-        assert sections["bandwidth_cap"]["monthly_cap_gb"] == 1000
+        # OLD CODE: assert sections["bandwidth_cap"]["monthly_cap_gb"] == 1000
+        assert sections["bandwidth_cap"] == {"monthly_cap_bytes": 1_000_000_000_000}
         assert sections["device_aliases"] == {"00:11:22:33:44:55": "My Laptop"}
         assert "ch1" in sections["notification_channels"]
 
@@ -327,7 +328,8 @@ class TestImport:
             },
             "sections": {
                 "excluded_ips": ["10.10.10.10"],
-                "bandwidth_cap": {"monthly_cap_gb": 500, "enabled": False},
+                # OLD CODE: "bandwidth_cap": {"monthly_cap_gb": 500, "enabled": False},
+                "bandwidth_cap": {"monthly_cap_bytes": 500_000_000_000},
             },
         }
 
@@ -342,7 +344,50 @@ class TestImport:
         assert ips == ["10.10.10.10"]
 
         cap = json.loads(Path(config_paths["bandwidth_cap"]).read_text())
-        assert cap["monthly_cap_gb"] == 500
+        # OLD CODE: assert cap["monthly_cap_gb"] == 500
+        assert cap == {"monthly_cap_bytes": 500_000_000_000}
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            [500],
+            "500",
+            {"monthly_cap_gb": 500},  # not the tracker's key
+            {"monthly_cap_bytes": "500"},
+            {"monthly_cap_bytes": True},
+            {"monthly_cap_bytes": -1},
+            {"monthly_cap_bytes": float("inf")},  # JSON Infinity
+        ],
+    )
+    def test_a_malformed_bandwidth_cap_is_refused_and_the_file_kept(
+        self, backup, config_paths, bad
+    ):
+        """Old code wrote it, and the tracker then crashed create_app on every start."""
+        path = Path(config_paths["bandwidth_cap"])
+        before = path.read_text()
+        result = backup.import_config(
+            {
+                "metadata": {"schema_version": _SCHEMA_VERSION},
+                "sections": {"bandwidth_cap": bad},
+            }
+        )
+        assert result["success"] is False
+        assert "bandwidth_cap" not in result["applied"]
+        assert path.read_text() == before
+
+    def test_a_backup_without_a_cap_leaves_the_boxs_cap(self, backup, config_paths):
+        path = Path(config_paths["bandwidth_cap"])
+        before = path.read_text()
+        result = backup.import_config(
+            {
+                "metadata": {"schema_version": _SCHEMA_VERSION},
+                "sections": {"bandwidth_cap": {}},
+            }
+        )
+        assert result["skipped"] == [
+            {"section": "bandwidth_cap", "reason": "No bandwidth cap in this backup"}
+        ]
+        assert path.read_text() == before
 
     def test_import_no_sections(self, backup):
         """Import with no sections should succeed but apply nothing."""

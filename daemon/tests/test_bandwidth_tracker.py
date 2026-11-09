@@ -446,6 +446,24 @@ class TestBandwidthCapFile(unittest.TestCase):
         Path(cap_file).unlink(missing_ok=True)
 
 
+class TestBandwidthCapFileMalformed(unittest.TestCase):
+    """A bad cap file (e.g. from a restore) falls back to the default; the daemon still starts."""
+
+    def test_any_malformed_file_falls_back_instead_of_raising(self):
+        import tempfile
+
+        # old code: a list raised AttributeError and Infinity OverflowError in create_app
+        for text in ("[1, 2]", '{"monthly_cap_bytes": Infinity}', '"500"', "null"):
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False
+            ) as f:
+                f.write(text)
+                cap_file = f.name
+            with patch("services.bandwidth_tracker._CAP_FILE", cap_file):
+                self.assertEqual(BandwidthTracker(client=None)._monthly_cap_bytes, 0)
+            Path(cap_file).unlink(missing_ok=True)
+
+
 class TestBandwidthApiQueryFailure(AioHTTPTestCase):
     """#96: every /api/bandwidth reader answers 502 when its query fails, never zeros."""
 

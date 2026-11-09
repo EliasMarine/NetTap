@@ -508,15 +508,22 @@ class ConfigBackup:
                 errors.append("Failed to write excluded_ips")
 
         # Apply bandwidth cap
+        # OLD CODE START — wrote any JSON, and a shape the tracker can't read (a list, Infinity)
+        # stopped the daemon starting until the file was deleted by hand
+        # if "bandwidth_cap" in sections:
+        #     ok = self._write_json(
+        #         self._paths.get("bandwidth_cap", ""),
+        #         sections["bandwidth_cap"],
+        #     )
+        #     if ok:
+        #         applied.append("bandwidth_cap")
+        #     else:
+        #         errors.append("Failed to write bandwidth_cap")
+        # OLD CODE END
         if "bandwidth_cap" in sections:
-            ok = self._write_json(
-                self._paths.get("bandwidth_cap", ""),
-                sections["bandwidth_cap"],
+            self._restore_bandwidth_cap(
+                sections["bandwidth_cap"], applied, skipped, errors
             )
-            if ok:
-                applied.append("bandwidth_cap")
-            else:
-                errors.append("Failed to write bandwidth_cap")
 
         self._restore_owner_files(sections, applied, skipped, errors)
 
@@ -596,6 +603,30 @@ class ConfigBackup:
             applied.extend(present)
         except (ValueError, OSError) as exc:
             errors.append(f"Notifications not restored: {exc}")
+
+    def _restore_bandwidth_cap(
+        self, cap: Any, applied: list, skipped: list, errors: list
+    ) -> None:
+        """The cap as BandwidthTracker reads it: {"monthly_cap_bytes": whole number >= 0}."""
+        if cap == {}:  # exported from a box that never set one
+            skipped.append(
+                {
+                    "section": "bandwidth_cap",
+                    "reason": "No bandwidth cap in this backup",
+                }
+            )
+            return
+        value = cap.get("monthly_cap_bytes") if isinstance(cap, dict) else None
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            errors.append("Bandwidth cap not restored: this backup's copy isn't valid")
+            return
+        try:
+            self._write_atomic(
+                self._paths.get("bandwidth_cap", ""), {"monthly_cap_bytes": value}
+            )
+            applied.append("bandwidth_cap")
+        except OSError as exc:
+            errors.append(f"Bandwidth cap not restored: {exc}")
 
     def _restore_owner_files(
         self, sections: dict, applied: list, skipped: list, errors: list
