@@ -507,6 +507,25 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 		expect(screen.queryByText(/No IPs excluded/)).not.toBeInTheDocument();
 	});
 
+	it("Network: leaves NetTap's own IP out of the list, so a save never stores it", async () => {
+		const fetchFn = stubFetch({
+			'/api/settings/excluded-ips': (init) =>
+				init?.method === 'PUT'
+					? { body: { result: 'saved' } }
+					: { body: { excluded_ips: ['203.0.113.10', '192.0.2.1'], appliance_ip: '192.0.2.1' } },
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('tab', { name: 'Network' }));
+
+		expect(screen.queryByRole('button', { name: 'Remove 192.0.2.1' })).not.toBeInTheDocument();
+		expect(screen.getByText(/always left out and isn't listed here/)).toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('button', { name: 'Save excluded IPs' }));
+		await flush();
+		const put = fetchFn.mock.calls.find(([, init]) => init?.method === 'PUT');
+		expect(JSON.parse(String(put?.[1]?.body))).toEqual({ excluded_ips: ['203.0.113.10'] });
+	});
+
 	it('Network: shows the saved list when it loads', async () => {
 		stubFetch({ '/api/settings/excluded-ips': () => ({ body: { excluded_ips: ['203.0.113.10'] } }) });
 		render(Page);

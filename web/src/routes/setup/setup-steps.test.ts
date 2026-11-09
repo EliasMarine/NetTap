@@ -14,11 +14,13 @@ const STORAGE = {
 };
 
 /** Every GET the wizard makes answers; `storage` can be held back to see the loading state. */
-function stubFetch(storage: Promise<unknown> = Promise.resolve(STORAGE)) {
+// OLD CODE: function stubFetch(storage: Promise<unknown> = Promise.resolve(STORAGE)) {
+function stubFetch(storage: Promise<unknown> = Promise.resolve(STORAGE), excluded: unknown = { excluded_ips: [] }) {
 	const replies: Record<string, unknown> = {
 		'/api/setup/nics': { interfaces: [{ name: 'eth0', type: 'ethernet', mac: '02:00:5e:00:00:01', state: 'up' }] },
 		'/api/health': { status: 'ok', daemon: { status: 'ok' } },
-		'/api/settings/excluded-ips': { excluded_ips: [] },
+		// OLD CODE: '/api/settings/excluded-ips': { excluded_ips: [] },
+		'/api/settings/excluded-ips': excluded,
 	};
 	let storageCalls = 0;
 	vi.stubGlobal(
@@ -112,6 +114,16 @@ describe('setup wizard frame', () => {
 					'PCAP grows about 66.0 GB a day (measured over 7.4 days), so about 7.4 days of it is kept.',
 			),
 		).toBeInTheDocument();
+	});
+
+	it("shows NetTap's own IP as detected, not the owner's first excluded IP", async () => {
+		stubFetch(Promise.resolve(STORAGE), { excluded_ips: ['203.0.113.10', '192.0.2.1'], appliance_ip: '192.0.2.1' });
+		await toInterfaces();
+		await fireEvent.change(screen.getByLabelText(/Capture interface/), { target: { value: 'eth0' } });
+		await fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+
+		// old code: excluded_ips[0], the owner's 203.0.113.10
+		await waitFor(() => expect(screen.getByLabelText('Self-traffic exclusion')).toHaveValue('192.0.2.1'));
 	});
 
 	it("A16: says the disk figures are unavailable when the daemon isn't answering, with no made-up disk", async () => {

@@ -88,6 +88,8 @@
 
 	// --- Network state (excluded IPs) ---
 	let excludedIps = $state<string[]>([]);
+	/** NetTap's own IP: excluded automatically, so it's not the owner's to edit or save */
+	let applianceIp = $state<string | null>(null);
 	let newExcludedIp = $state('');
 	let networkSaving = $state(false);
 	let networkMessage = $state('');
@@ -349,7 +351,10 @@
 			const res = await fetch('/api/settings/excluded-ips');
 			if (res.ok) {
 				const data = await res.json();
-				excludedIps = data.excluded_ips ?? [];
+				// OLD CODE: excludedIps = data.excluded_ips ?? []; (a save then stored NetTap's own
+				// IP, which outlived an address change and hid whichever device got it next, #79)
+				applianceIp = data.appliance_ip ?? null;
+				excludedIps = (data.excluded_ips ?? []).filter((ip: string) => ip !== applianceIp);
 				networkLoadFailed = false;
 				return;
 			}
@@ -1530,6 +1535,9 @@
 						</div>
 					</div>
 
+					{#if applianceIp}
+						<p class="dim">NetTap's own address, <span class="mono">{applianceIp}</span>, is always left out and isn't listed here.</p>
+					{/if}
 					{#if excludedIps.length === 0}
 						<p class="dim">No IPs excluded. All IPs appear in device views.</p>
 					{:else}

@@ -540,8 +540,11 @@
 			const res = await fetch('/api/settings/excluded-ips');
 			if (res.ok) {
 				const data = await res.json();
-				const ips = data.excluded_ips || [];
-				if (ips.length > 0) applianceIp = ips[0];
+				// OLD CODE START — NetTap's IP is appended last, so [0] was an owner entry when there was one
+				// const ips = data.excluded_ips || [];
+				// if (ips.length > 0) applianceIp = ips[0];
+				// OLD CODE END
+				applianceIp = data.appliance_ip ?? '';
 			}
 		} catch { /* ignore */ }
 		applianceIpLoading = false;

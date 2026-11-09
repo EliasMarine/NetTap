@@ -64,6 +64,7 @@ from services.excluded_ips import (
     load_excluded_ips,
     detect_and_build_lan_filter,
     detect_appliance_ip,
+    with_appliance_ip,
 )
 from api.search import register_search_routes
 from api.detection_packs import register_detection_pack_routes
@@ -1224,7 +1225,8 @@ def create_app(
     app["appliance_ip"] = appliance_ip
     if appliance_ip and appliance_ip not in app["excluded_ips"]:
         # Runtime only: detected again at every start, never written into the owner's list
-        app["excluded_ips"] = [*app["excluded_ips"], appliance_ip]
+        # OLD CODE: app["excluded_ips"] = [*app["excluded_ips"], appliance_ip] (one rule now)
+        app["excluded_ips"] = with_appliance_ip(app["excluded_ips"], appliance_ip)
         logger.info("Auto-excluded appliance management IP: %s", appliance_ip)
     elif not appliance_ip:
         logger.warning(

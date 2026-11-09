@@ -46,6 +46,13 @@ def load_excluded_ips(file_path: str | None = None) -> list[str]:
     return []
 
 
+def with_appliance_ip(ips: list[str], appliance_ip: str | None) -> list[str]:
+    """The running list: the owner's entries plus NetTap's own IP (#79: never saved to the file)."""
+    if appliance_ip and appliance_ip not in ips:
+        return [*ips, appliance_ip]
+    return list(ips)
+
+
 def save_excluded_ips(ips: list[str], file_path: str | None = None) -> None:
     """Persist the excluded IP list to disk."""
     path = file_path or _get_file_path()
