@@ -1,5 +1,5 @@
 <!--
-  HexDump.svelte: a packet's captured bytes, 16 to a row, with offset, hex and ASCII
+  HexDump.svelte: a packet's captured bytes, 8 to a row, with offset, hex and ASCII
   (NET-188, Main.dc "Raw bytes"). Only the chosen field's bytes are marked, and only when the
   daemon proved them against the bytes (`mark`). Everything renders as text.
 -->
@@ -15,8 +15,14 @@
 
 	let { hex, mark, markLabel = '' }: Props = $props();
 
-	const PER_ROW = 16;
-	const FIRST_ROWS = 16;
+	// OLD CODE START: 16 to a row needs ~380 px of mono text, but the desktop drawer (c-4) is ~320 px inside,
+	// so every row was cut off and its ASCII hidden behind a sideways scroll. 8 fit on a desktop and a phone.
+	// const PER_ROW = 16;
+	// const FIRST_ROWS = 16;
+	// OLD CODE END
+	const PER_ROW = 8;
+	// still the first 256 bytes
+	const FIRST_ROWS = 32;
 
 	let showAll = $state(false);
 
@@ -67,7 +73,7 @@
 {/if}
 
 <style>
-	/* Layout glue: three mono columns that scroll sideways inside the drawer on a phone */
+	/* Layout glue: three mono columns; they fit the drawer at 8 to a row, and scroll sideways if a drawer is ever narrower */
 	.hex {
 		display: grid; grid-template-columns: auto auto auto; gap: 2px var(--sp-3); justify-content: start;
 		font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-2);
