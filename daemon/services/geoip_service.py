@@ -555,8 +555,10 @@ class GeoIPService:
         #     return None
         # OLD CODE END
         except Exception as exc:
-            logger.warning("OpenSearch GeoIP lookup failed for %s: %s", ip, exc)
-            raise GeoLookupFailed(f"GeoIP lookup for {ip} failed") from exc
+            # OLD CODE: logger.warning("OpenSearch GeoIP lookup failed for %s: %s", ip, exc) (L3: %s let
+            # a newline in either start a forged log line)
+            logger.warning("OpenSearch GeoIP lookup failed for %r: %r", ip, exc)
+            raise GeoLookupFailed(f"GeoIP lookup for {ip!r} failed") from exc
 
     def _missed(self, ip: str) -> None:
         """No geo session for `ip` yet: skip OpenSearch for it until MISS_TTL_SECONDS pass."""
@@ -634,7 +636,8 @@ class GeoIPService:
                         source="maxmind",
                     )
             except Exception as exc:
-                logger.debug("MaxMind lookup failed for %s: %s", ip, exc)
+                # OLD CODE: logger.debug("MaxMind lookup failed for %s: %s", ip, exc) (L3)
+                logger.debug("MaxMind lookup failed for %r: %r", ip, exc)
 
         # Try OpenSearch enrichment data
         os_result = self._lookup_opensearch(ip)

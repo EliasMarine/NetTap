@@ -23,6 +23,15 @@ LOOKUP_FAILED = {
 }
 
 
+def _plain_ip(raw: str) -> bool:
+    """An address without a zone id: ipaddress accepts "fe80::1%<anything>", newlines included,
+    and the zone id then reached the log (security review L3)."""
+    try:
+        return getattr(ipaddress.ip_address(raw), "scope_id", None) is None
+    except ValueError:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Route handlers
 # ---------------------------------------------------------------------------
@@ -37,10 +46,13 @@ def handle_geoip_lookup(request: web.Request) -> web.Response:
     """
     raw_ip = request.match_info["ip"]
 
-    # Validate IP format
-    try:
-        ipaddress.ip_address(raw_ip)
-    except ValueError:
+    # OLD CODE START — L3: a zone id ("fe80::1%<text>") passed, newlines included
+    # try:
+    #     ipaddress.ip_address(raw_ip)
+    # except ValueError:
+    #     return web.json_response({"error": f"Invalid IP address: {raw_ip}"}, status=400)
+    # OLD CODE END
+    if not _plain_ip(raw_ip):
         return web.json_response({"error": f"Invalid IP address: {raw_ip}"}, status=400)
 
     geoip: GeoIPService = request.app["geoip"]
@@ -73,11 +85,14 @@ def handle_geoip_batch(request: web.Request) -> web.Response:
         ip_str = ip_str.strip()
         if not ip_str:
             continue
-        try:
-            ipaddress.ip_address(ip_str)
-            ip_list.append(ip_str)
-        except ValueError:
-            invalid.append(ip_str)
+        # OLD CODE START — L3: a zone id passed
+        # try:
+        #     ipaddress.ip_address(ip_str)
+        #     ip_list.append(ip_str)
+        # except ValueError:
+        #     invalid.append(ip_str)
+        # OLD CODE END
+        (ip_list if _plain_ip(ip_str) else invalid).append(ip_str)
 
     if not ip_list:
         return web.json_response(

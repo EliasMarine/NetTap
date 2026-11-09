@@ -282,5 +282,37 @@ class TestGeoIPLookupFailure(AioHTTPTestCase):
             self.assertNotIn("opensearch:9200", body["error"])
 
 
+class TestGeoIPZoneIds(AioHTTPTestCase):
+    """Security review L3: ipaddress accepts "fe80::1%<text>", so a zone id with a newline
+    reached the warning log line and could forge one."""
+
+    async def get_application(self):
+        from unittest.mock import MagicMock
+
+        self.os_client = MagicMock()
+        self.os_client.search.side_effect = RuntimeError("refused")
+        app = web.Application()
+        register_geoip_routes(
+            app, GeoIPService(db_path="/nonexistent", opensearch_client=self.os_client)
+        )
+        return app
+
+    @unittest_run_loop
+    async def test_a_zone_id_is_an_invalid_address(self):
+        for ip in ("fe80::1%25eth0", "fe80::1%25%0AFAKE%20log%20line"):
+            resp = await self.client.request("GET", f"/api/geoip/{ip}")
+            self.assertEqual(resp.status, 400, ip)
+            resp = await self.client.request("GET", f"/api/geoip/batch?ips={ip}")
+            self.assertEqual(resp.status, 400, ip)
+        self.os_client.search.assert_not_called()
+
+    def test_the_failure_warning_is_one_line_whatever_the_address(self):
+        service = GeoIPService(db_path="/nonexistent", opensearch_client=self.os_client)
+        with self.assertLogs("nettap", level="WARNING") as logs:
+            with self.assertRaises(Exception):
+                service._lookup_opensearch("2001:db8::1\nFAKE: forged")
+        self.assertTrue(all("\n" not in line for line in logs.output), logs.output)
+
+
 if __name__ == "__main__":
     unittest.main()
