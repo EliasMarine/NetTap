@@ -61,3 +61,24 @@ The backup restore item (a restored `notifications.json` only reaches the daemon
 Tests: each new test fails on the old code (SMTP 2, web 3, bats 3). Without the `_host` line the TLS test fails in both modes. Daemon 4340 passed, 4 skipped. Web 4338 passed, svelte-check 0 errors. `test_malcolm_config.bats` 45/45.
 
 Lesson: `vi.mock('fs')` with `...actual` left the module's default import on the real fs. `notifications.test.ts` had been writing to the real disk, and silently failing, the whole time.
+
+## Follow-up: a backup restore goes through the running hub
+
+**Branch:** `fix/net-224-restore`, from `fix/release-audit-2026-11` after NET-227.
+
+**Before.** NET-227 restored notifications by writing `notifications.json` from the import's worker thread, and the route then called the hub's private `_load_config()`. That left three problems:
+- A Settings › Notifications save between the write and the reload put the old config back, while the restore was still reported as applied.
+- A channel with no `id`, an unknown `type` or an unparseable URL was stored. The dispatcher then raised every minute, and the channel list GET could fail.
+- The report told the owner to "enter them again, then turn them on", which the channels page can't do: it has no edit and no on switch.
+
+**Fix.**
+- `NotificationHub.restore_backup(sections)`: a missing section keeps what is there, and an empty one clears it.
+  - Channels go through NET-227's `restore_channels`, so the box keeps its own secrets only while the destination is unchanged.
+  - Every backup channel must pass the new `notification_config.channel_problem`: an object, an `id` equal to its key, a supported type, a config object, and a usable URL when one is present. Otherwise the whole restore is refused with a reason that names the channel, and nothing changes in memory or on disk.
+  - The save goes through `_commit` (atomic, mode 600).
+- An `RLock` covers every read-modify-write and the two readers that span channels and rules (`channels_for`, `get_quick_settings`). A routing decision therefore never mixes the old rules with the new channels. Nothing awaits under the lock.
+- `_load_config` skips a channel `channel_problem` refuses and logs its key, so a hand-edited file can't stop the dispatcher. `url_hint` and `url_problem` no longer raise on a malformed URL.
+- `ConfigBackup` takes `notification_hub` and calls `restore_backup`; `server.py` passes it. The file write and the `_load_config` reload are kept in OLD CODE.
+- The warning now depends on the channel. The Settings tab's webhook: turn it on in Settings › Notifications and enter its URL. Any other channel: add it again on the Notification channels page, add its routing rules again (a new channel gets a new id), then delete the old channel and rules.
+
+**Tests.** `daemon/tests/test_notification_restore.py` (16 tests). On the old code: 28 failures and 40 errors across it and the updated backup tests. With the lock taken out of `channels_for` and `configure`, both concurrency tests fail. Daemon suite: 4449 passed, 4 skipped.
