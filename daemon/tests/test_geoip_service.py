@@ -106,7 +106,10 @@ class TestLookupWellKnown(unittest.TestCase):
         self.assertFalse(result.is_private)
         self.assertEqual(result.country, "United States")
         self.assertEqual(result.country_code, "US")
-        self.assertEqual(result.city, "Mountain View")
+        # OLD CODE: self.assertEqual(result.city, "Mountain View") (NET-237: anycast has no city)
+        self.assertIsNone(result.city)
+        self.assertTrue(result.anycast)
+        self.assertEqual(result.source, "builtin")
         self.assertEqual(result.organization, "Google LLC")
         self.assertEqual(result.asn, 15169)
 
@@ -279,6 +282,10 @@ class TestGeoIPResult(unittest.TestCase):
             "asn",
             "organization",
             "is_private",
+            # NET-237 (GEO-3, P3 anycast)
+            "source",
+            "seen_at",
+            "anycast",
         }
         self.assertEqual(set(d.keys()), expected_keys)
         self.assertEqual(d["ip"], "8.8.8.8")
@@ -363,13 +370,20 @@ class TestServiceInit(unittest.TestCase):
 class TestLookupCaching(unittest.TestCase):
     """Tests for LRU cache behavior on lookup()."""
 
-    def test_lookup_is_cached(self):
-        """Repeated lookups of the same IP should return the same object."""
+    # OLD CODE START — NET-237 (GEO-4): lru_cache kept every answer, a failed query's included
+    # def test_lookup_is_cached(self):
+    #     """Repeated lookups of the same IP should return the same object."""
+    #     service = GeoIPService(db_path="/nonexistent/path.mmdb")
+    #     result1 = service.lookup("8.8.8.8")
+    #     result2 = service.lookup("8.8.8.8")
+    #     # lru_cache returns the same object
+    #     self.assertIs(result1, result2)
+    # OLD CODE END
+    def test_lookup_answers_the_same_twice(self):
         service = GeoIPService(db_path="/nonexistent/path.mmdb")
-        result1 = service.lookup("8.8.8.8")
-        result2 = service.lookup("8.8.8.8")
-        # lru_cache returns the same object
-        self.assertIs(result1, result2)
+        self.assertEqual(
+            service.lookup("8.8.8.8").to_dict(), service.lookup("8.8.8.8").to_dict()
+        )
 
     def test_different_ips_not_same_cache_entry(self):
         """Different IPs should produce distinct results."""
@@ -394,6 +408,125 @@ class TestWellKnownDatabase(unittest.TestCase):
     def test_well_known_count(self):
         """Should have at least 20 well-known IPs."""
         self.assertGreaterEqual(len(WELL_KNOWN_IPS), 20)
+
+
+# ---------------------------------------------------------------------------
+# NET-237: GEO-3 (source and age), GEO-4 (errors aren't cached), P3 anycast
+# ---------------------------------------------------------------------------
+
+_PUBLIC = "93.184.216.34"
+
+
+def _session(
+    ip, side="destination", country="Germany", city="Berlin", ts="2026-11-01T10:00:00Z"
+):
+    end = {
+        "ip": ip,
+        "geo": {
+            "country_name": country,
+            "country_iso_code": "DE",
+            "city_name": city,
+            "location": {"lat": 52.52, "lon": 13.405},
+        },
+        "as": {"number": 64500, "organization": {"name": "Example Org"}},
+    }
+    other = {"ip": "192.168.1.5"}
+    doc = {"@timestamp": ts, "source": other, "destination": end}
+    if side == "source":
+        doc = {"@timestamp": ts, "source": end, "destination": other}
+    return {"hits": {"hits": [{"_source": doc}]}}
+
+
+_NO_HITS = {"hits": {"hits": []}}
+
+
+class TestGeoHonesty(unittest.TestCase):
+    def _service(self, *replies):
+        client = MagicMock()
+        client.search.side_effect = list(replies)
+        return GeoIPService(db_path="/nonexistent", opensearch_client=client), client
+
+    def test_a_failed_query_is_an_error_and_is_not_cached(self):
+        from services.geoip_service import GeoLookupFailed
+
+        service, client = self._service(
+            RuntimeError("OpenSearch down"), _session(_PUBLIC)
+        )
+        with self.assertRaises(GeoLookupFailed):
+            service.lookup(_PUBLIC)
+        result = service.lookup(_PUBLIC)  # asked again, not an "Unknown" kept for good
+        self.assertEqual((result.country, result.source), ("Germany", "traffic"))
+        self.assertEqual(client.search.call_count, 2)
+
+    def test_a_traffic_answer_says_its_source_and_when_the_traffic_was_seen(self):
+        service, _ = self._service(_session(_PUBLIC))
+        d = service.lookup(_PUBLIC).to_dict()
+        self.assertEqual(
+            (d["source"], d["seen_at"], d["city"], d["anycast"]),
+            ("traffic", "2026-11-01T10:00:00Z", "Berlin", False),
+        )
+
+    def test_a_miss_is_asked_again_once_it_expires(self):
+        service, client = self._service(_NO_HITS, _session(_PUBLIC))
+        with patch("services.geoip_service.time.monotonic", return_value=1000.0):
+            self.assertEqual(service.lookup(_PUBLIC).source, "none")
+            self.assertEqual(service.lookup(_PUBLIC).source, "none")
+        self.assertEqual(
+            client.search.call_count, 1
+        )  # the Live page's 3 s poll asks once
+        with patch("services.geoip_service.time.monotonic", return_value=1301.0):
+            self.assertEqual(service.lookup(_PUBLIC).source, "traffic")
+        self.assertEqual(client.search.call_count, 2)
+
+    def test_the_address_and_its_geo_must_be_on_the_same_side(self):
+        """The newest session could match the address on one side and geo on the other."""
+        service, client = self._service(_session(_PUBLIC, side="source"))
+        self.assertEqual(service.lookup(_PUBLIC).country, "Germany")
+        query = client.search.call_args.kwargs["body"]["query"]["bool"]
+        self.assertEqual(query["minimum_should_match"], 1)
+        self.assertNotIn("filter", query)
+        self.assertEqual(
+            query["should"],
+            [
+                {
+                    "bool": {
+                        "filter": [
+                            {"term": {f"{side}.ip": _PUBLIC}},
+                            {"exists": {"field": f"{side}.geo.country_name"}},
+                        ]
+                    }
+                }
+                for side in ("source", "destination")
+            ],
+        )
+
+    def test_anycast_has_no_city_or_point_from_any_source(self):
+        service, _ = self._service(
+            _session("1.1.1.1", country="Australia", city="Sydney")
+        )
+        traffic = service.lookup("1.1.1.1")
+        self.assertEqual(
+            (
+                traffic.source,
+                traffic.anycast,
+                traffic.city,
+                traffic.latitude,
+                traffic.longitude,
+            ),
+            ("traffic", True, None, None, None),
+        )
+        self.assertEqual(traffic.country, "Australia")
+        table = GeoIPService(db_path="/nonexistent").lookup("9.9.9.9")
+        self.assertEqual(
+            (table.source, table.anycast, table.city), ("builtin", True, None)
+        )
+        unicast = GeoIPService(db_path="/nonexistent").lookup("54.239.28.85")
+        self.assertEqual((unicast.source, unicast.anycast), ("builtin", False))
+
+    def test_private_and_unknown_answers_say_so(self):
+        service = GeoIPService(db_path="/nonexistent")
+        self.assertEqual(service.lookup("10.1.2.3").source, "private")
+        self.assertEqual(service.lookup(_PUBLIC).source, "none")
 
 
 if __name__ == "__main__":

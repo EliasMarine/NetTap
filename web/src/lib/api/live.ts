@@ -38,6 +38,8 @@ export interface LiveConnection {
 	 * it closes, so the live window and feed go by this; `timestamp` is its start. Absent from older daemons.
 	 */
 	ended_at?: string;
+	/** NET-237: an anycast service, so the row has no city or coordinates. Absent from older daemons. */
+	anycast?: boolean;
 }
 
 /** Where a connection runs relative to the LAN: the daemon decides, never the port. */
@@ -197,6 +199,8 @@ export interface ConnectionDetailResponse {
 		lon: number | null;
 		asn: number | null;
 		organization: string;
+		/** NET-237: an anycast service; city and coordinates are empty on purpose */
+		anycast?: boolean;
 	};
 	alerts: ConnectionDetailAlert[];
 	alert_count: number;

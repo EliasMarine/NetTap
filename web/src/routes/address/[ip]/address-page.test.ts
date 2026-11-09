@@ -274,6 +274,24 @@ describe('Address page', () => {
 		expect(kpi('Connections')).toHaveTextContent('1,980');
 	});
 
+	// NET-237 (P3): an anycast service has no one place
+	it('says an anycast address has no one location', async () => {
+		const anycast = { ip: '198.51.100.10', country: 'United States', country_code: 'US', city: null, latitude: null, longitude: null, asn: 13335, organization: 'Example DNS', is_private: false, source: 'builtin', seen_at: null, anycast: true };
+		stubDaemon({ ...baseReplies(ADDRESS), '/api/geoip/*': anycast });
+		render(Page);
+		const who = card('Who it is');
+		await vi.waitFor(() => expect(within(who).getByText(/anycast, location varies/)).toBeInTheDocument());
+		expect(within(who).getByText(/^United States/)).toBeInTheDocument();
+	});
+
+	it('shows no anycast note for a located address', async () => {
+		stubDaemon(baseReplies(ADDRESS));
+		render(Page);
+		const who = card('Who it is');
+		await vi.waitFor(() => expect(within(who).getByText(/Ashburn, United States/)).toBeInTheDocument());
+		expect(within(who).queryByText(/anycast/)).not.toBeInTheDocument();
+	});
+
 	it('looks up reverse DNS only when asked, since the lookup reaches whoever runs the address', async () => {
 		stubDaemon(baseReplies(ADDRESS));
 		render(Page);

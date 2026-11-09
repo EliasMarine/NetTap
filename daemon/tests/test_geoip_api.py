@@ -48,7 +48,9 @@ class TestGeoIPLookupHandler(AioHTTPTestCase):
         self.assertEqual(data["ip"], "8.8.8.8")
         self.assertEqual(data["country"], "United States")
         self.assertEqual(data["country_code"], "US")
-        self.assertEqual(data["city"], "Mountain View")
+        # OLD CODE: self.assertEqual(data["city"], "Mountain View") (NET-237: anycast has no city)
+        self.assertIsNone(data["city"])
+        self.assertTrue(data["anycast"])
         self.assertEqual(data["organization"], "Google LLC")
         self.assertEqual(data["asn"], 15169)
         self.assertFalse(data["is_private"])
@@ -124,6 +126,9 @@ class TestGeoIPLookupHandler(AioHTTPTestCase):
             "asn",
             "organization",
             "is_private",
+            "source",
+            "seen_at",
+            "anycast",
         }
         self.assertEqual(set(data.keys()), expected_keys)
 
@@ -251,6 +256,30 @@ class TestRouteRegistration(AioHTTPTestCase):
     async def test_geoip_stored_on_app(self):
         """The GeoIPService should be stored on the app dict."""
         self.assertIs(self.app["geoip"], self.geoip_service)
+
+
+class TestGeoIPLookupFailure(AioHTTPTestCase):
+    """NET-237 (GEO-4): a failed lookup answers 502 with plain words, never 200 "Unknown"."""
+
+    async def get_application(self):
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        client.search.side_effect = RuntimeError("https://opensearch:9200 refused")
+        app = web.Application()
+        register_geoip_routes(
+            app, GeoIPService(db_path="/nonexistent", opensearch_client=client)
+        )
+        return app
+
+    @unittest_run_loop
+    async def test_single_and_batch_answer_502_without_internal_text(self):
+        for path in ("/api/geoip/93.184.216.34", "/api/geoip/batch?ips=93.184.216.34"):
+            resp = await self.client.request("GET", path)
+            self.assertEqual(resp.status, 502)
+            body = await resp.json()
+            self.assertIn("Couldn't look up this address", body["error"])
+            self.assertNotIn("opensearch:9200", body["error"])
 
 
 if __name__ == "__main__":

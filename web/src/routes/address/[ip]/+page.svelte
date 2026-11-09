@@ -630,7 +630,8 @@ OLD CODE END -->
 				<dd>
 					{#if geoFailed && !geo}<span class="dim">Couldn't look it up</span>
 					{:else if geo?.is_private}Private address
-					{:else if geo}{[geo.city, geo.country].filter(Boolean).join(', ') || '—'}{#if geo.country_code}<span class="mono dim"> ({geo.country_code})</span>{/if}
+					<!-- OLD CODE: {:else if geo}{[geo.city, geo.country].filter(Boolean).join(', ') || '—'}{#if geo.country_code}<span class="mono dim"> ({geo.country_code})</span>{/if} (NET-237: anycast) -->
+					{:else if geo}{[geo.city, geo.country].filter(Boolean).join(', ') || '—'}{#if geo.country_code}<span class="mono dim"> ({geo.country_code})</span>{/if}{#if geo.anycast}<span class="dim"> · anycast, location varies</span>{/if}
 					{:else}<span class="dim">Looking up…</span>{/if}
 				</dd>
 				<dt>Network</dt>

@@ -59,10 +59,18 @@ describe('GeoIP Lookup Page — states', () => {
 		expect(screen.getByText('AS15169')).toBeInTheDocument();
 		expect(screen.getByText('(US)')).toBeInTheDocument();
 		expect(document.body.textContent).not.toMatch(/\p{Regional_Indicator}/u);
-		expect(screen.getByRole('link', { name: /37\.4056, -122\.0775/ })).toHaveAttribute(
+		// OLD CODE START — NET-237 (GEO-2): a city centre to four decimals with a coordinate pin
+		// expect(screen.getByRole('link', { name: /37\.4056, -122\.0775/ })).toHaveAttribute(
+		// 	'href',
+		// 	'https://www.google.com/maps/search/?api=1&query=37.4056,-122.0775',
+		// );
+		// OLD CODE END
+		expect(screen.getByRole('link', { name: /37\.4, -122\.1/ })).toHaveAttribute(
 			'href',
-			'https://www.google.com/maps/search/?api=1&query=37.4056,-122.0775',
+			'https://www.google.com/maps/search/?api=1&query=Mountain%20View%2C%20United%20States',
 		);
+		expect(screen.getAllByText(/city estimate, accuracy unknown/).length).toBeGreaterThan(0);
+		expect(screen.getByTitle('GeoIP location map').getAttribute('src')).not.toContain('marker=');
 		expect(screen.getByTitle('GeoIP location map')).toBeInTheDocument();
 		// OLD CODE START — NET-160: ?filter= links the Connections page never read
 		// expect(screen.getByRole('link', { name: 'Filter connections to' })).toHaveAttribute('href', '/connections?filter=ip.dst==8.8.8.8');
@@ -101,10 +109,13 @@ describe('GeoIP Lookup Page — refresh contract', () => {
 			.mockReturnValueOnce(new Promise((r) => (resolveSlow = r)))
 			.mockResolvedValueOnce(okJson(geo('Newest')));
 		// NET-160: the action links fetch the LAN policy; only the lookups take the sequence
-		vi.stubGlobal('fetch', vi.fn((url: string) => (url === '/api/network/lan' ? Promise.resolve({ ok: false, status: 404, json: async () => ({}) }) : fetch(url))));
+		// OLD CODE: vi.stubGlobal('fetch', vi.fn((url: string) => (url === '/api/network/lan' ? Promise.resolve({ ok: false, status: 404, json: async () => ({}) }) : fetch(url)))); (NET-237: the installed database loads beside the lookup)
+		const aside = (url: string) => url === '/api/network/lan' || url === '/api/system/versions';
+		vi.stubGlobal('fetch', vi.fn((url: string) => (aside(url) ? Promise.resolve(url === '/api/network/lan' ? { ok: false, status: 404, json: async () => ({}) } : okJson({ versions: [] })) : fetch(url))));
 		const { unmount } = render(Page);
 		await screen.findByText('First');
-		expect(get(pageRefresh).status).toBe('ok');
+		// OLD CODE: expect(get(pageRefresh).status).toBe('ok'); (NET-237: the answer shows before the database date lands)
+		await vi.waitFor(() => expect(get(pageRefresh).status).toBe('ok'));
 
 		expect(await refreshPage()).toBe('failed');
 		expect(screen.getByText('Lookup failed')).toBeInTheDocument();
@@ -118,5 +129,73 @@ describe('GeoIP Lookup Page — refresh contract', () => {
 
 		unmount();
 		expect(get(pageRefresh).available).toBe(false);
+	});
+});
+
+// NET-237 (GEO-2, GEO-3, GEO-4, P3 anycast)
+describe('GeoIP Lookup Page — source, age and precision', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const versions = {
+		versions: [
+			{ name: 'zeek', category: 'docker', current_version: '9.0.1', install_type: 'docker', last_checked: '', status: 'ok', details: {} },
+			{ name: 'geoip-db', category: 'database', current_version: '2026-10-28', install_type: 'builtin', last_checked: '', status: 'ok', details: { source: 'Logstash geoip filter (bundled)' } },
+		],
+		last_scan: '',
+		count: 2,
+	};
+	const stub = (answer: unknown, versionsReply: unknown = okJson(versions)) =>
+		vi.stubGlobal('fetch', vi.fn(async (url: string) => (url === '/api/system/versions' ? versionsReply : okJson(answer))));
+
+	it('names a stored answer as such, with when the traffic was seen and the installed file apart', async () => {
+		stub(geo('Berlin', { source: 'traffic', seen_at: '2026-09-01T10:00:00Z', anycast: false }));
+		render(Page);
+		expect(await screen.findByText(/^Malcolm's GeoLite2 lookup, stored with traffic seen 1 Sept, \d\d:\d\d\. The database version used then isn't recorded\.$/)).toBeInTheDocument();
+		expect(await screen.findByText(/^GeoLite2 file dated 2026-10-28, installed now · Logstash geoip filter \(bundled\)$/)).toBeInTheDocument();
+		expect(get(pageRefresh).status).toBe('ok');
+	});
+
+	it('says when the installed database date could not be read, and keeps the answer', async () => {
+		stub(geo('Berlin', { source: 'traffic', seen_at: null, anycast: false }), { ok: false, status: 500, json: async () => ({}) });
+		render(Page);
+		expect(await screen.findByText("Couldn't read the installed database date")).toBeInTheDocument();
+		expect(screen.getByText('Berlin')).toBeInTheDocument();
+		expect(get(pageRefresh).status).toBe('partial');
+	});
+
+	it('names the built-in list, and gives a country-only answer no local position or map', async () => {
+		stub(geo('', { city: null, latitude: 37.751, longitude: -97.822, source: 'builtin', anycast: false }));
+		render(Page);
+		expect(await screen.findByText("NetTap's built-in list of well-known services, not a database lookup")).toBeInTheDocument();
+		expect(screen.getByText('Country-level estimate, no local position')).toBeInTheDocument();
+		expect(screen.queryByText(/37\.7/)).not.toBeInTheDocument();
+		expect(screen.queryByTitle('GeoIP location map')).not.toBeInTheDocument();
+		expect(screen.queryByText('Installed database')).not.toBeInTheDocument();
+	});
+
+	it('says anycast has no one location, with no coordinates or map', async () => {
+		stub(geo('', { ip: '1.1.1.1', city: null, latitude: null, longitude: null, source: 'traffic', seen_at: null, anycast: true }));
+		render(Page);
+		expect(await screen.findByText('Anycast: location varies')).toBeInTheDocument();
+		expect(screen.queryByTitle('GeoIP location map')).not.toBeInTheDocument();
+	});
+
+	it("shows the daemon's 502 as a failed lookup, not an answer", async () => {
+		stub(undefined);
+		vi.stubGlobal('fetch', vi.fn(async (url: string) => (url === '/api/system/versions' ? okJson(versions) : { ok: false, status: 502, json: async () => ({ error: "Couldn't look up this address" }) })));
+		render(Page);
+		expect(await screen.findByText('Lookup failed')).toBeInTheDocument();
+		expect(screen.queryByText('Source')).not.toBeInTheDocument();
+	});
+});
+
+describe('GeoIP Lookup Page — a slow version scan', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('shows the answer without waiting for the installed database date', async () => {
+		vi.stubGlobal('fetch', vi.fn((url: string) => (url === '/api/system/versions' ? new Promise(() => {}) : Promise.resolve(okJson(geo('Berlin', { source: 'traffic', seen_at: null, anycast: false }))))));
+		render(Page);
+		expect(await screen.findByText('Berlin')).toBeInTheDocument();
+		expect(screen.getByText('Not reported')).toBeInTheDocument();
 	});
 });

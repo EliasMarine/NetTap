@@ -236,3 +236,18 @@ describe('geoip API client', () => {
 		});
 	});
 });
+
+// NET-237 (GEO-2): GeoLite2 gives a city or country centre with no accuracy radius
+describe('geoEstimate', () => {
+	it('shows a city centre to one decimal, as an estimate', async () => {
+		const { geoEstimate } = await import('./geoip');
+		expect(geoEstimate(37.4056, -122.0775, 'Mountain View')).toEqual({ coordinates: '37.4, -122.1', note: 'city estimate, accuracy unknown' });
+	});
+
+	it('gives no coordinates for a country centre, anycast or nothing', async () => {
+		const { geoEstimate } = await import('./geoip');
+		expect(geoEstimate(37.751, -97.822, null)).toEqual({ coordinates: null, note: 'Country-level estimate, no local position' });
+		expect(geoEstimate(-33.494, 143.2104, 'Sydney', true)).toEqual({ coordinates: null, note: 'Anycast: location varies' });
+		expect(geoEstimate(null, null, 'Berlin')).toEqual({ coordinates: null, note: '—' });
+	});
+});

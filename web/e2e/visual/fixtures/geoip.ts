@@ -12,6 +12,10 @@ const geoip = (p: Peer): GeoIPResult => ({
 	asn: p.asn,
 	organization: p.org,
 	is_private: false,
+	// NET-237 (GEO-3): a stored answer and when its traffic was seen
+	source: 'traffic',
+	seen_at: '2026-11-09T09:30:00Z',
+	anycast: false,
 });
 
 export const GEOIP_ROUTES: FixtureRoute[] = [
@@ -34,6 +38,9 @@ export const GEOIP_ROUTES: FixtureRoute[] = [
 			asn: null,
 			organization: null,
 			is_private: false,
+			source: 'none',
+			seen_at: null,
+			anycast: false,
 		} satisfies GeoIPResult,
 		populated: geoip(PEERS[0]),
 	},

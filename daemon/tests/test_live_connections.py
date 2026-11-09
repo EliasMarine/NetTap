@@ -964,5 +964,109 @@ class TestLiveWindowByEnd(unittest.TestCase):
         self.assertEqual(fmt(hit)["ended_at"], "")
 
 
+ANYCAST_IP = "1.1.1.1"
+
+
+class TestLiveAnycast(unittest.TestCase):
+    """P3: an anycast address has no one city or point, whichever path located it."""
+
+    def test_an_enriched_anycast_row_has_no_city_or_point(self):
+        hit = _hit(
+            _end(LAN_IP), _end(ANYCAST_IP, "AU", -33.494, 143.2104, "Cloudflare")
+        )
+        row = LiveConnectionTracker()._format_connection(hit)
+        self.assertTrue(row["anycast"])
+        self.assertEqual(
+            (row["dest_city"], row["dest_lat"], row["dest_lon"]), ("", None, None)
+        )
+        self.assertEqual(row["country"], "AU")  # what GeoLite2 says, flagged as anycast
+        other = LiveConnectionTracker()._format_connection(
+            _hit(_end(LAN_IP), _end(A_IP, "US", 40.7, -74.0))
+        )
+        self.assertFalse(other["anycast"])
+        self.assertEqual((other["dest_lat"], other["dest_city"]), (40.7, "US city"))
+
+    def test_detail_from_an_enriched_anycast_session_has_no_city_or_point(self):
+        session = {
+            "hits": {
+                "hits": [
+                    {
+                        "_source": _hit(
+                            _end(LAN_IP), _end(ANYCAST_IP, "AU", -33.5, 143.2)
+                        )
+                    }
+                ]
+            }
+        }
+        geo = LiveConnectionTracker()._parse_session_geo(session, ANYCAST_IP)
+        self.assertTrue(geo["anycast"])
+        self.assertEqual((geo["city"], geo["lat"], geo["lon"]), ("", None, None))
+
+    def _geoip(self):
+        from services.geoip_service import GeoIPService
+
+        client = MagicMock()
+        client.search.return_value = {
+            "hits": {
+                "hits": [
+                    {
+                        "_source": _hit(
+                            _end(LAN_IP), _end(ANYCAST_IP, "AU", -33.5, 143.2)
+                        )
+                    }
+                ]
+            }
+        }
+        return GeoIPService(db_path="/nonexistent", opensearch_client=client)
+
+    def test_an_unlocated_anycast_row_the_fallback_locates_stays_flagged_and_unplaced(
+        self,
+    ):
+        from api.live import _enrich_connections_geoip
+
+        row = {
+            "source_ip": LAN_IP,
+            "dest_ip": ANYCAST_IP,
+            "direction": "out",
+            "dest_lat": None,
+            "dest_lon": None,
+        }
+        _enrich_connections_geoip([row], self._geoip())
+        self.assertTrue(row["anycast"])
+        self.assertEqual(row["country"], "AU")
+        self.assertEqual(
+            (row.get("dest_city", ""), row["dest_lat"], row["dest_lon"]),
+            ("", None, None),
+        )
+
+    def test_the_detail_fallback_flags_anycast(self):
+        tracker = MagicMock()
+        tracker.fetch_connection_detail.return_value = {
+            "geo": {"ip": ANYCAST_IP, "lat": None, "lon": None}
+        }
+        status, body = _detail(f"src={LAN_IP}&dst={ANYCAST_IP}", tracker, self._geoip())
+        self.assertEqual(status, 200)
+        self.assertTrue(body["geo"]["anycast"])
+        self.assertEqual((body["geo"]["city"], body["geo"]["lat"]), ("", None))
+
+    def test_the_detail_stands_when_the_fallback_lookup_fails(self):
+        from services.geoip_service import GeoIPService
+
+        client = MagicMock()
+        client.search.side_effect = RuntimeError("opensearch down")
+        tracker = MagicMock()
+        tracker.fetch_connection_detail.return_value = {
+            "geo": {"ip": A_IP, "lat": None, "lon": None},
+            "alerts": [],
+        }
+        status, body = _detail(
+            f"src={LAN_IP}&dst={A_IP}",
+            tracker,
+            GeoIPService(db_path="/x", opensearch_client=client),
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["geo"], {"ip": A_IP, "lat": None, "lon": None})
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,7 @@ from services.excluded_ips import (
     RFC1918_SOURCE_FILTER,
     lan_subnets_of,
 )
+from services.geoip_service import is_anycast
 from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.live_connections")
@@ -438,6 +439,9 @@ class LiveConnectionTracker:
         location = geo.get("location", {}) or {}
         dest_lat = location.get("lat") if isinstance(location, dict) else None
         dest_lon = location.get("lon") if isinstance(location, dict) else None
+        anycast = is_anycast(place.get("ip", ""))
+        if anycast:  # NET-237: served from many places, so no one city or point is true
+            dest_lat = dest_lon = None
 
         # Extract ASN organization name — may be nested dict or string
         org_name = dst_as.get("organization", {})
@@ -478,11 +482,13 @@ class LiveConnectionTracker:
             # --- Live Monitor Redesign: geo + ASN fields ---
             "dest_lat": dest_lat,
             "dest_lon": dest_lon,
-            "dest_city": geo.get("city_name", ""),
+            # OLD CODE: "dest_city": geo.get("city_name", ""), (NET-237: none for anycast)
+            "dest_city": "" if anycast else geo.get("city_name", ""),
             "dest_asn": dst_as.get("number"),
             "dest_org": org_name,
             "geo_ip": geo_ip,
             "has_alert": False,
+            "anycast": anycast,
             # NET-237: the live window is by end, so the feed shows and sorts by it
             "ended_at": _iso_utc(event.get("end") or source.get("lastPacket")),
         }
@@ -1334,6 +1340,7 @@ class LiveConnectionTracker:
     ) -> dict[str, Any]:
         """Extract geo/ASN info from a session query result for target_ip."""
         hits = session_result.get("hits", {}).get("hits", [])
+        anycast = is_anycast(target_ip)
         if not hits:
             return {
                 "ip": target_ip,
@@ -1344,6 +1351,7 @@ class LiveConnectionTracker:
                 "lon": None,
                 "asn": None,
                 "organization": "",
+                "anycast": anycast,
             }
 
         src_doc = hits[0].get("_source", {})
@@ -1371,15 +1379,28 @@ class LiveConnectionTracker:
             org_name = org_name.get("name", "")
         org_name = org_name or ""
 
+        # OLD CODE START — NET-237: an anycast address got one city and point
+        # return {
+        #     "ip": target_ip,
+        #     "country": geo.get("country_name", ""),
+        #     "country_code": geo.get("country_iso_code", ""),
+        #     "city": geo.get("city_name", ""),
+        #     "lat": lat,
+        #     "lon": lon,
+        #     "asn": as_info.get("number"),
+        #     "organization": org_name,
+        # }
+        # OLD CODE END
         return {
             "ip": target_ip,
             "country": geo.get("country_name", ""),
             "country_code": geo.get("country_iso_code", ""),
-            "city": geo.get("city_name", ""),
-            "lat": lat,
-            "lon": lon,
+            "city": "" if anycast else geo.get("city_name", ""),
+            "lat": None if anycast else lat,
+            "lon": None if anycast else lon,
             "asn": as_info.get("number"),
             "organization": org_name,
+            "anycast": anycast,
         }
 
     def _parse_alert_entry(self, source: dict) -> dict[str, Any] | None:

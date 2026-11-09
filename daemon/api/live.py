@@ -18,6 +18,7 @@ from aiohttp import web
 from opensearchpy import OpenSearchException
 
 from api.offload import in_thread, run_blocking
+from services.geoip_service import GeoLookupFailed
 from services.live_connections import LiveConnectionTracker
 
 logger = logging.getLogger("nettap.api.live")
@@ -296,7 +297,11 @@ def handle_live_connection_detail(request: web.Request) -> web.Response:
             # target_ip = geo.get("ip") or dst
             # OLD CODE END
             target_ip = geo.get("ip") or geo_ip
-            result = geoip.lookup(target_ip)
+            # OLD CODE: result = geoip.lookup(target_ip) (NET-237: it raises when OpenSearch fails)
+            try:
+                result = geoip.lookup(target_ip)
+            except GeoLookupFailed:
+                result = None  # the detail stands without the fallback; the service logged it
             if result and not result.is_private:
                 geo["country"] = result.country or geo.get("country", "")
                 geo["country_code"] = result.country_code or geo.get("country_code", "")
@@ -305,6 +310,9 @@ def handle_live_connection_detail(request: web.Request) -> web.Response:
                 geo["lon"] = result.longitude
                 geo["asn"] = result.asn or geo.get("asn")
                 geo["organization"] = result.organization or geo.get("organization", "")
+                # NET-237: anycast has no one place, whichever path located it
+                if result.anycast:
+                    geo.update(anycast=True, city="", lat=None, lon=None)
 
     return web.json_response(detail)
 
@@ -365,6 +373,9 @@ def _enrich_connections_geoip(connections: list[dict], geoip) -> None:
                 conn["dest_asn"] = result.asn
             if result.organization and not conn.get("dest_org"):
                 conn["dest_org"] = result.organization
+            # NET-237: anycast has no one place, whichever path located it
+            if result.anycast:
+                conn.update(anycast=True, dest_city="", dest_lat=None, dest_lon=None)
 
 
 # ---------------------------------------------------------------------------
