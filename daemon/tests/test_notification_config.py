@@ -293,9 +293,11 @@ def test_a_failure_reason_never_carries_the_url_or_its_token(hub, caplog):
 def _smtp_mock(refused=None):
     server = MagicMock()
     server.sendmail.return_value = refused or {}
-    cls = MagicMock()
-    cls.return_value.__enter__ = MagicMock(return_value=server)
-    cls.return_value.__exit__ = MagicMock(return_value=False)
+    # NET-224 P2: built with no host, then connect() greets (the deadline covers the greeting)
+    server.connect.return_value = (220, b"ready")
+    server.__enter__.return_value = server
+    server.__exit__.return_value = False
+    cls = MagicMock(return_value=server)
     return cls, server
 
 
@@ -332,7 +334,7 @@ def test_a_channel_without_its_own_server_uses_the_api_keys_one(hub, env_file):
     with patch.object(hub_module.smtplib, "SMTP", smtp_cls):
         assert asyncio.run(hub.send(ch["id"], "T", "B", 2)) is True
 
-    assert smtp_cls.call_args.args[:2] == ("smtp.example.net", 587)
+    assert server.connect.call_args.args == ("smtp.example.net", 587)
     server.login.assert_called_once_with("me@example.net", "pw")
     assert server.sendmail.call_args.args[0] == "nettap@example.net"
 
@@ -441,6 +443,155 @@ def test_the_whole_smtp_transaction_has_a_deadline():
         stop.set()
         listener.close()
     assert time.monotonic() - started < 6
+
+
+def _scripted_smtp_server(handler):
+    """A local server whose one connection `handler(conn, stop)` drives; it quits after 8 s."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    stop = threading.Event()
+
+    def serve():
+        conn, _ = listener.accept()
+        timer = threading.Timer(8, stop.set)
+        timer.start()
+        try:
+            handler(conn, stop)
+        except OSError:
+            pass
+        finally:
+            timer.cancel()
+            conn.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return listener, stop
+
+
+def _trickle(conn, stop, line):
+    while not stop.is_set():
+        conn.sendall(line)
+        time.sleep(0.2)  # each line well inside the 10 s socket timeout
+
+
+def _send_to(port, deadline_s=1):
+    with patch.object(hub_module, "_SMTP_DEADLINE_S", deadline_s):
+        return NotificationHub._smtp_send(
+            "127.0.0.1", port, False, "", "", "a@example.net", ["b@example.net"], "x"
+        )
+
+
+def test_the_deadline_covers_a_greeting_that_never_ends():
+    listener, stop = _scripted_smtp_server(
+        lambda conn, stop: _trickle(conn, stop, b"220-still greeting\r\n")
+    )
+    started = time.monotonic()
+    try:
+        with pytest.raises(Exception):
+            _send_to(listener.getsockname()[1])
+    finally:
+        stop.set()
+        listener.close()
+    assert time.monotonic() - started < 6
+
+
+def _accept_then_trickle_quit(conn, stop):
+    """Takes the message, then answers QUIT with continuation lines for ever."""
+    reader = conn.makefile("rb")
+    conn.sendall(b"220 fake ESMTP\r\n")
+    while not stop.is_set():
+        line = reader.readline()
+        if not line:
+            return
+        verb = line[:4].upper()
+        if verb == b"DATA":
+            conn.sendall(b"354 go ahead\r\n")
+            while reader.readline() not in (b".\r\n", b""):
+                pass
+            conn.sendall(b"250 queued\r\n")
+        elif verb == b"QUIT":
+            _trickle(conn, stop, b"221-bye for now\r\n")
+        else:
+            conn.sendall(b"250 ok\r\n")
+
+
+def test_the_deadline_covers_a_quit_that_never_ends_and_the_mail_still_counts():
+    listener, stop = _scripted_smtp_server(_accept_then_trickle_quit)
+    started = time.monotonic()
+    try:
+        refused = _send_to(listener.getsockname()[1])
+    finally:
+        stop.set()
+        listener.close()
+    assert refused == {}
+    assert time.monotonic() - started < 6
+
+
+def test_a_greeting_other_than_220_is_refused():
+    def busy(conn, _stop):
+        conn.sendall(b"554 no service here\r\n")
+        time.sleep(0.5)
+
+    listener, stop = _scripted_smtp_server(busy)
+    try:
+        with pytest.raises(hub_module.smtplib.SMTPConnectError):
+            _send_to(listener.getsockname()[1], deadline_s=5)
+    finally:
+        stop.set()
+        listener.close()
+
+
+@pytest.mark.parametrize("port", [465, 587])
+def test_both_tls_modes_check_the_certificate_against_the_host_name(port):
+    """Real smtplib classes; the TLS handshake is stopped where it names the server."""
+
+    def starttls_server(conn, _stop):
+        reader = conn.makefile("rb")
+        conn.sendall(b"220 fake ESMTP\r\n")
+        reader.readline()  # EHLO
+        conn.sendall(b"250-fake\r\n250 STARTTLS\r\n")
+        reader.readline()  # STARTTLS
+        conn.sendall(b"220 go ahead\r\n")
+        time.sleep(0.5)
+
+    listener, stop = _scripted_smtp_server(starttls_server)
+    address = listener.getsockname()
+    names = []
+    context = MagicMock()
+
+    def wrap_socket(sock, server_hostname=None, **_kw):
+        names.append(server_hostname)
+        raise ssl.SSLError("stopped here")
+
+    context.wrap_socket.side_effect = wrap_socket
+    real_connect = socket.create_connection
+    try:
+        with (
+            patch.object(
+                hub_module.ssl, "create_default_context", return_value=context
+            ),
+            # every connection goes to the local server, whatever port the mode needs
+            patch.object(
+                hub_module.smtplib.socket,
+                "create_connection",
+                lambda _addr, *a, **kw: real_connect(address, *a, **kw),
+            ),
+            pytest.raises(ssl.SSLError),
+        ):
+            NotificationHub._smtp_send(
+                "smtp.example.net",
+                port,
+                True,
+                "",
+                "",
+                "a@example.net",
+                ["b@example.net"],
+                "x",
+            )
+    finally:
+        stop.set()
+        listener.close()
+    assert names == ["smtp.example.net"]
 
 
 # ---------------------------------------------------------------------------

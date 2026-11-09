@@ -565,18 +565,40 @@ class NotificationHub:
         implicit_tls = port == 465
         smtp_cls = smtplib.SMTP_SSL if implicit_tls else smtplib.SMTP
         tls = {"context": ssl.create_default_context()} if implicit_tls else {}
-        with smtp_cls(host, port, timeout=_SMTP_TIMEOUT_S, **tls) as server:
-            deadline = threading.Timer(_SMTP_DEADLINE_S, _cut_off, args=(server,))
-            deadline.daemon = True
-            deadline.start()
-            try:
+        # OLD CODE START — NET-224 P2: the deadline started after the greeting and stopped before QUIT
+        # with smtp_cls(host, port, timeout=_SMTP_TIMEOUT_S, **tls) as server:
+        #     deadline = threading.Timer(_SMTP_DEADLINE_S, _cut_off, args=(server,))
+        #     deadline.daemon = True
+        #     deadline.start()
+        #     try:
+        #         if use_tls and not implicit_tls:
+        #             server.starttls(context=ssl.create_default_context())
+        #         if username and password:
+        #             server.login(username, password)
+        #         refused = server.sendmail(from_addr, recipients, text)
+        #     finally:
+        #         deadline.cancel()
+        # OLD CODE END
+        # No host here, so nothing connects before the deadline starts
+        server = smtp_cls(timeout=_SMTP_TIMEOUT_S, **tls)
+        # shortcut: smtplib's private _host (the name both TLS modes verify the certificate
+        # against) is set only by the constructor; recheck it on a Python upgrade (3.11, 3.12 read it)
+        server._host = host
+        deadline = threading.Timer(_SMTP_DEADLINE_S, _cut_off, args=(server,))
+        deadline.daemon = True
+        deadline.start()
+        try:
+            with server:  # its exit sends QUIT, so the deadline covers that too
+                code, reply = server.connect(host, port)
+                if code != 220:  # what the constructor checks when it connects
+                    raise smtplib.SMTPConnectError(code, reply)
                 if use_tls and not implicit_tls:
                     server.starttls(context=ssl.create_default_context())
                 if username and password:
                     server.login(username, password)
                 refused = server.sendmail(from_addr, recipients, text)
-            finally:
-                deadline.cancel()
+        finally:
+            deadline.cancel()
         return refused if isinstance(refused, dict) else {}
 
     async def _send_discord(
