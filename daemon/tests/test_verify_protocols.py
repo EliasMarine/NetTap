@@ -178,3 +178,18 @@ def test_parse_reference_reads_one_search_reply():
         120,
         2,
     )
+
+
+def test_reference_counts_unidentified_with_the_api_rule(monkeypatch):
+    """The device check builds the API's own unidentified split, so the two can't drift (NET-222)."""
+    from api.traffic import _UNLABELLED_AGG
+    from services.iot_monitor import ICMP_TRANSPORTS
+
+    class Client:
+        def search(self, index, body):
+            return body
+
+    monkeypatch.setattr(vp, "parse_reference", lambda body: body)
+    unknown = vp.reference(Client(), "index", {}, ICMP_TRANSPORTS)["aggs"]["unknown"]
+    assert unknown["filter"] == _UNLABELLED_AGG["filter"]
+    assert unknown["aggs"] == _UNLABELLED_AGG["aggs"]
