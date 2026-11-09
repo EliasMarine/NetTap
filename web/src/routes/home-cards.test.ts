@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import HomePage from './+page.svelte';
+import { BRIDGE_NO_DEVICES } from '$api/capture';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import { _configure } from '$lib/stores/alertSnapshot';
 
@@ -136,6 +137,21 @@ describe('Home — card states', () => {
 		expect(screen.getByText('No actionable alerts detected.')).toBeInTheDocument();
 		// a zero total still draws the gauge, with 0 in the centre
 		expect(screen.getByRole('img', { name: /^0 alerts in the last 24 hours/ })).toBeInTheDocument();
+	});
+
+	// NET-225 (DEV-1): inline bridge mode sits after the router's address translation, so no devices ever appear
+	it('says why no devices show in inline bridge mode, instead of promising they will appear', async () => {
+		stubDaemon({
+			'/api/capture/health': { mode: 'bridge', status: 'normal', capture_interface: 'br0', link_up: true, promisc_enabled: true, issues: [] },
+			'/api/devices': { from: '', to: '', limit: 5, devices: [] },
+			'/api/devices/count': { from: '', to: '', count: 0 },
+		});
+		render(HomePage);
+		expect(await screen.findByText('No devices to show in inline bridge mode')).toBeInTheDocument();
+		expect(screen.getByText(BRIDGE_NO_DEVICES)).toBeInTheDocument();
+		expect(screen.queryByText('No devices seen in this window')).not.toBeInTheDocument();
+		expect(devicesKpi()).toHaveTextContent("In bridge mode devices share the router's IPv4 address");
+		expect(devicesKpi()).not.toHaveTextContent('Devices seen on the network');
 	});
 
 	it('shows the severity summary error with a retry that reloads the page', async () => {

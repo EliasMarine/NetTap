@@ -497,8 +497,16 @@ export interface SmartAlertsResponse {
 // export const THREAT_SCORE_HOW =
 // 	'Each alert group adds 10 (critical), 5 (high), 2 (medium) or 0.5 (low), rounded down and capped at 100. A busier-than-usual window adds 15 while the score is under 75. The level never exceeds the worst alert.';
 // OLD CODE END
+// OLD CODE START — NET-225 (ALR-3): left out the alerts no device is charged with, which _finding_points scores at full weight
+// export const THREAT_SCORE_HOW =
+// 	'Each finding, one signature on one device, adds 10 (critical), 5 (high), 2 (medium) or 0.5 (low). An attempt from the internet against a device adds at most 0.5, and blocklist hits your devices did not start are not counted. Rounded down and capped at 100. A busier-than-usual window adds 15 while the score is under 75. The level never exceeds the worst alert.';
+// OLD CODE END
 export const THREAT_SCORE_HOW =
-	'Each finding, one signature on one device, adds 10 (critical), 5 (high), 2 (medium) or 0.5 (low). An attempt from the internet against a device adds at most 0.5, and blocklist hits your devices did not start are not counted. Rounded down and capped at 100. A busier-than-usual window adds 15 while the score is under 75. The level never exceeds the worst alert.';
+	"Each finding, one signature on one device, adds 10 (critical), 5 (high), 2 (medium) or 0.5 (low). An attempt from the internet against a device adds at most 0.5, and blocklist hits your devices did not start are not counted. An alert with neither address in NetTap's LAN subnets (all IPv6 traffic, for example) can't be charged to a device, so neither rule applies: it adds its full weight once per signature, source and destination. Rounded down and capped at 100. A busier-than-usual window adds 15 while the score is under 75. The level never exceeds the worst alert.";
+
+/** NET-225 (ALR-3): what the score counts when NetTap sits after the router's address translation. */
+export const THREAT_SCORE_BRIDGE =
+	"Inline bridge mode: your router's address translation hides your devices behind its IPv4 address, so alerts can't be charged to the device behind it. An alert with neither address in NetTap's LAN subnets adds its full weight, once per signature, source and destination, even for unsolicited scans from the internet that your router blocks.";
 
 export interface SmartAlertSummary {
 	from: string;

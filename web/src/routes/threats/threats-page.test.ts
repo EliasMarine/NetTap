@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import { goto } from '$app/navigation';
 import ThreatsPage from './+page.svelte';
+import { THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts';
+import { captureMode } from '$lib/stores/captureMode';
 import { LAN_POLICY } from '../../../e2e/visual/fixtures/drilldown';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
@@ -151,5 +153,33 @@ describe('Threats page — investigation byte figures', () => {
 		const value = (label: string) => screen.getByText(label).nextElementSibling?.textContent;
 		expect(value('Bytes it sent in them (24h)')).toBe('1.0 GB');
 		expect(value('Total bytes')).toBe('2.5 MB');
+	});
+});
+
+// NET-225 (ALR-3): post-NAT, alerts can't be charged to the device behind the router, so they score at full weight
+describe('Threats page — the score in inline bridge mode', () => {
+	afterEach(() => {
+		captureMode.set(null);
+		vi.unstubAllGlobals();
+	});
+
+	it('says what the score counts in bridge mode', async () => {
+		captureMode.set('bridge');
+		stubDaemon({ '/api/threats/report': REPORT });
+		render(ThreatsPage);
+		expect(await screen.findByRole('note')).toHaveTextContent(THREAT_SCORE_BRIDGE);
+		expect(THREAT_SCORE_BRIDGE).toMatch(/even for unsolicited scans from the internet that your router blocks/);
+	});
+
+	it('says nothing about bridge mode in mirror mode', async () => {
+		captureMode.set('mirror');
+		stubDaemon({ '/api/threats/report': REPORT });
+		render(ThreatsPage);
+		await screen.findByText(THREAT_SCORE_HOW);
+		expect(screen.queryByText(THREAT_SCORE_BRIDGE)).not.toBeInTheDocument();
+	});
+
+	it('states that alerts no device is charged with score at full weight, in every mode', () => {
+		expect(THREAT_SCORE_HOW).toMatch(/neither address in NetTap's LAN subnets .* adds its full weight once per signature, source and destination/);
 	});
 });

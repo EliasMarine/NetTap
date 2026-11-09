@@ -22,11 +22,13 @@ import {
 	type Alert,
 	type AlertsListResponse,
 	THREAT_SCORE_HOW,
+	THREAT_SCORE_BRIDGE,
 } from '$api/alerts';
 import { _configure as resetAlertSnapshots, alertSnapshots, loadAlertSnapshot } from '$lib/stores/alertSnapshot';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import { goto } from '$app/navigation';
 import Page from './+page.svelte';
+import { captureMode } from '$lib/stores/captureMode';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 
 /** NET-160: the daemon's LAN policy, so LAN addresses link to their device page. */
@@ -489,6 +491,19 @@ describe('Alerts — card states', () => {
 		expect(screen.getByText("Couldn't load the threat summary: the request failed.")).toBeInTheDocument();
 		expect(screen.getByText("Couldn't load alert categories: the request failed.")).toBeInTheDocument();
 		expect(screen.queryByRole('img', { name: /Threat score/ })).not.toBeInTheDocument();
+	});
+
+	// NET-225 (ALR-3): post-NAT, the score counts what the router's firewall blocks
+	it('adds the bridge-mode line under the score only in bridge mode', async () => {
+		succeedAll();
+		captureMode.set('bridge');
+		try {
+			render(Page);
+			await flush();
+			expect(screen.getByText(THREAT_SCORE_BRIDGE)).toHaveClass('score-how');
+		} finally {
+			captureMode.set(null);
+		}
 	});
 
 	it('shows the loaded data: categories link to their page, the threat score and its level', async () => {

@@ -23,7 +23,7 @@
 	import { countDifference, customRange, DRILL_RANGES, fmt, linkedCount, rangeWindow, startRange, type LinkedCount } from '$lib/utils/drilldown';
 	import { getNewDeviceCount, getRegistryDevices, isNewDevice } from '$api/devices-registry';
 	import type { RegistryDevice, RegistryListResponse } from '$api/devices-registry';
-	import { getCaptureMode } from '$api/capture';
+	import { BRIDGE_NO_DEVICES, getCaptureMode } from '$api/capture';
 	import type { CaptureMode } from '$api/capture';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
@@ -138,6 +138,8 @@
 	let registryDevices = $state<RegistryDevice[]>([]);
 	let registryFailed = $state(false);
 	const isMirrorMode = $derived(captureMode?.mode === 'mirror');
+	// NET-225: post-NAT, every device's IPv4 traffic carries the router's address
+	const isBridgeMode = $derived(captureMode?.mode === 'bridge');
 
 	// The tab the user picked; until then the URL's `view`; else By type in mirror mode, All devices otherwise
 	let pickedView = $state<'type' | 'all' | null>(null);
@@ -674,6 +676,10 @@
 	</div>
 </div>
 
+{#if isBridgeMode}
+	<p class="notice" role="note"><Icon name="infra" /><span>{BRIDGE_NO_DEVICES}</span></p>
+{/if}
+
 <!-- New device detection banner (mirror mode), fed from the registry as on Home -->
 {#if isMirrorMode && registryDevices.length > 0}
 	<NewDeviceBanner devices={registryDevices} />
@@ -750,11 +756,14 @@ OLD CODE END -->
 			</Card>
 		{:else if !isMirrorMode}
 			<Card title="Devices by type" sub="Grouped by device type">
+				<!-- OLD CODE: message="All devices lists every device NetTap sees in this capture mode." (NET-225: in bridge mode it sees none) -->
 				<CardState
 					state="empty"
 					icon="devices"
 					title="Device cards by type show in mirror mode"
-					message="All devices lists every device NetTap sees in this capture mode."
+					message={isBridgeMode
+						? "In inline bridge mode your devices share the router's IPv4 address, so they can't be listed by type."
+						: 'All devices lists every device NetTap sees in this capture mode.'}
 					actionLabel="Show all devices"
 					onaction={() => (pickedView = 'all')}
 				/>
@@ -857,12 +866,17 @@ OLD CODE END -->
 			{:else if devices.length === 0}
 				<!-- OLD CODE START — 2026-11-01: "No DHCP-leased devices found." / "...obtain an IP from the network's DHCP server." -->
 				<!-- OLD CODE END -->
-				<CardState
-					state="empty"
-					icon="devices"
-					title="No devices seen yet."
-					message="Devices appear once they make a few connections through the monitored link."
-				/>
+				<!-- OLD CODE: the empty state below in every mode; in bridge mode it promised devices that never appear (NET-225) -->
+				{#if isBridgeMode}
+					<CardState state="empty" icon="devices" title="No devices to show in inline bridge mode" message={BRIDGE_NO_DEVICES} />
+				{:else}
+					<CardState
+						state="empty"
+						icon="devices"
+						title="No devices seen yet."
+						message="Devices appear once they make a few connections through the monitored link."
+					/>
+				{/if}
 			{:else}
 				<div class="toolbar">
 					<Pills ariaLabel="Device type" options={categoryOptions} bind:value={categoryFilter} />

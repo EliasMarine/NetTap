@@ -39,7 +39,7 @@
 	import { getSystemHealth } from '$api/system';
 	import type { SystemHealth } from '$api/system';
 	// OLD CODE: import { getCaptureHealth, getCaptureStats, LOSS_SCOPE } (NET-167: the subtitle no longer quotes the scope)
-	import { getCaptureHealth, getCaptureStats } from '$api/capture';
+	import { BRIDGE_NO_DEVICES, getCaptureHealth, getCaptureStats } from '$api/capture';
 	import type { CaptureHealthResponse, CaptureStatsResponse } from '$api/capture';
 	import {
 		formatBytes, formatBytesShort, formatNumber, computePreviousPeriod, localMidnight, trendPercent, NO_TREND,
@@ -492,11 +492,16 @@
 				? `${fmt(alertCount.counts.high)} high, ${fmt(alertCount.counts.medium)} med, ${fmt(alertCount.counts.low)} low`
 				: 'Loading…',
 	);
+	// NET-225: post-NAT, every device's IPv4 traffic carries the router's address; the capture health reply names the mode
+	const bridgeMode = $derived(captureHealth?.mode === 'bridge');
+	// OLD CODE: ? 'Devices seen on the network' in every mode (NET-225)
 	const devicesSub = $derived(
 		failed.deviceCount
 			? loadFailed('the device count', deviceCount !== null)
 			: deviceCount !== null
-				? 'Devices seen on the network'
+				? bridgeMode
+					? "In bridge mode devices share the router's IPv4 address"
+					: 'Devices seen on the network'
 				: 'Loading…',
 	);
 
@@ -816,6 +821,9 @@ OLD CODE END -->
 			<CardState state="error" title={loadFailed('top devices')} message="Check that the daemon is running on the System page, then try again." onaction={retry} />
 		{:else if loading}
 			<CardState state="loading" title="Loading top devices" />
+		{:else if bridgeMode}
+			<!-- NET-225: the message below promised devices that inline bridge mode never shows -->
+			<CardState state="empty" title="No devices to show in inline bridge mode" message={BRIDGE_NO_DEVICES} />
 		{:else}
 			<CardState state="empty" title="No devices seen in this window" message="Devices appear here once NetTap sees their traffic." />
 		{/if}

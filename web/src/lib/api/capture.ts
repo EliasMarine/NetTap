@@ -14,6 +14,10 @@ export interface CaptureMode {
 	interface: string;
 }
 
+/** NET-225: why inline bridge mode can't see devices. It sits after the router's address translation (IPv4). */
+export const BRIDGE_NO_DEVICES =
+	"In inline bridge mode NetTap sits between your modem and your router, after the router's address translation, so all your devices' IPv4 traffic carries the router's address and NetTap can't tell devices apart. Device views are IPv4 only, so IPv6 addresses don't fill the gap. Mirror mode, on a switch port inside your network, shows each device.";
+
 export interface CaptureHealthResponse {
 	mode: string;
 	status: string; // "normal" | "degraded" | "down" | "not_configured"

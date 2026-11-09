@@ -44,7 +44,9 @@
 	// import AlertDrawerContent from '$components/drawer/content/AlertDrawerContent.svelte';
 	// OLD CODE END
 	// OLD CODE: import { acknowledgeAlert } from '$api/alerts'; (NET-164: the score's method)
-	import { acknowledgeAlert, THREAT_SCORE_HOW } from '$api/alerts';
+	// OLD CODE: import { acknowledgeAlert, THREAT_SCORE_HOW } from '$api/alerts'; (NET-225: and the bridge-mode line)
+	import { acknowledgeAlert, THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts';
+	import { captureMode, initCaptureMode } from '$lib/stores/captureMode';
 	// OLD CODE START — #146: the alert table sorts on the daemon now
 	// import { compareValues, severityRank } from '$lib/utils/table-sort.svelte';
 	// OLD CODE END
@@ -766,6 +768,8 @@
 	 */
 	async function loadAll(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
+		// NET-225: the score's bridge-mode line; asks again if the startup request failed, never blocks the alerts
+		void initCaptureMode();
 		// OLD CODE: const lg = listGuard.begin(); (section D: a load also starts or ends the count comparison)
 		const lg = beginList();
 		listPending = true;
@@ -1549,6 +1553,7 @@ OLD CODE END -->
 				</div>
 			</div>
 			<p class="dim score-how">{THREAT_SCORE_HOW}</p>
+			{#if $captureMode === 'bridge'}<p class="dim score-how">{THREAT_SCORE_BRIDGE}</p>{/if}
 			{#if smartCategories.length > 0}
 				<ul class="kv">
 					{#each smartCategories as c (c.key)}

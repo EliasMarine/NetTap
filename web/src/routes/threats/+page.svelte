@@ -15,7 +15,9 @@
 	import { goto } from '$app/navigation';
 	// OLD CODE: import { getThreatReport, getThreatIntel } from '$api/threats'; (NET-192 PR 3: the pill → request helper)
 	import { getBeaconing, getThreatReport, getThreatIntel, threatRequest, type ThreatRequest } from '$api/threats';
-	import { THREAT_SCORE_HOW } from '$api/alerts';
+	// OLD CODE: import { THREAT_SCORE_HOW } from '$api/alerts'; (NET-225: and the bridge-mode line)
+	import { THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts';
+	import { captureMode, initCaptureMode } from '$lib/stores/captureMode';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import type {
 		ThreatReport,
@@ -382,6 +384,8 @@
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
 		clearTimeout(pollTimer);
+		// NET-225: the score's bridge-mode line; asks again if the startup request failed, never blocks the report
+		void initCaptureMode();
 		const range = selectedRange;
 		const params = computeTimeParams(range);
 		// one window for the report and the threat intel
@@ -482,6 +486,10 @@
 		<Pills options={RANGES} bind:value={selectedRange} onchange={reload} ariaLabel="Time range" />
 	</div>
 </div>
+
+{#if $captureMode === 'bridge'}
+	<p class="notice" role="note"><Icon name="infra" /><span>{THREAT_SCORE_BRIDGE}</span></p>
+{/if}
 
 {#if !report}
 	<div class="grid">
