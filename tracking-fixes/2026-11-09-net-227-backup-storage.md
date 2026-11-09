@@ -117,8 +117,32 @@ No compose change. Rebuild and recreate `nettap-storage-daemon` and `nettap-web`
 - "Retry" needs a state the UI can show (last attempt, last error), or a failed retry looks like success.
 - Hysteresis needs the clean-up target to match the resume line, or the system can stop in the gap between them.
 
-## Out of scope, found on the way
+## Out of scope, found on the way (all fixed in the follow-up below)
 
 - **Settings › Excluded IPs (`api/settings.py:289`):** replaces the in-memory list and drops the box's own management IP until the next restart.
 - **Setup configure:** a re-run drops `[pcap] rotate_mb`.
 - **STO-3 (ext4 reserved blocks):** not addressed.
+
+## Follow-up (branch `fix/net-227-followup`)
+
+- **Excluded IPs:**
+  - One rule, `with_appliance_ip` (`services/excluded_ips.py`), is used at startup, by the Settings save and by the restore reload. The box's own IP stays excluded after a save.
+  - GET returns `appliance_ip`. The Settings form leaves it out of the list it edits and says "NetTap's own address, X, is always left out", so a save never stores it. Before, a save stored it, and after an address change it hid whichever device got the IP next (#79).
+  - The setup wizard shows `appliance_ip` instead of `excluded_ips[0]`. The box's IP is appended last, so `[0]` was the owner's first entry whenever one existed.
+- **Setup rotation size:**
+  - `_apply_configuration` keeps the box's `pcap_rotate_mb`. It reads it after its last `await`, right before the INI and capture.env are written. The rotation save in Settings has no `await` in its read-modify-write either, so the two can't interleave.
+  - The restore's own copy of this is now OLD CODE.
+  - A broken INI no longer stops setup: the read is guarded, and setup rewrites the file.
+- **STO-3:**
+  - On the G11 (1965 GB, 81 GB reserved for root), the daemon read 28.4% used where `df` reads 29.6%. When the disk is full for OpenSearch and capture, which aren't root, the daemon would read 95.9%. So the 95% capture stop fired with about 18 GB left, and used + free didn't add up to the total.
+  - Usage, the status figures, the fill-rate prediction and tier capacity now use the usable size, used + free, the same as `df`. System says "Usable" and setup says "GB usable".
+  - The PCAP cap stays a share of the raw size. Moving it would delete about 20 GB of the G11's PCAP on deploy, and that can't be undone.
+  - **Rollout:** the G11 will read about 1.2 points higher, crossing no threshold. A box just under a threshold may start the clean-up one cycle earlier, which is the intended, safer behaviour.
+- **PCAP scan per status poll:**
+  - Measured on the G11, read-only: 3,620 files (491 GB, at its 25% cap). The daemon's `rglob` + stat + sort takes 44–48 ms, and `os.scandir` 23 ms.
+  - A box at the 10 MiB minimum rotation can hold about 47k files: 255 ms per scan, measured locally.
+  - The measurement is now cached for 10 minutes behind a lock. Polls arriving together share one scan: 8 at once took 252 ms in total.
+- **Tests:**
+  - 14 new or updated. Every new one fails on the old code except the guard that the PCAP cap stays on the raw size.
+  - Daemon 4442 passed, 4 skipped. Vitest 4395 passed, svelte-check 0 errors, `check:colors` clean.
+- **Codex:** 1 round, REVISE with 4 findings, all taken (log in the scratchpad's `followup/PLAN-REVIEW-LOG.md`).
