@@ -161,19 +161,31 @@ start_services() {
     log "Starting NetTap services..."
 
     if [[ "$NETTAP_DRY_RUN" == "true" ]]; then
-        log "[DRY-RUN] docker compose -f ${COMPOSE_FILE} up -d"
+        # OLD CODE START — NET-216: the dry run now names the real start command
+        # log "[DRY-RUN] docker compose -f ${COMPOSE_FILE} up -d"
+        # OLD CODE END
+        log "[DRY-RUN] ${SCRIPT_DIR}/deploy-malcolm.sh --start-only"
         return 0
     fi
 
-    docker compose -f "$COMPOSE_FILE" up -d
+    # OLD CODE START — NET-216: a bare "up -d" skipped what a normal install runs (image build,
+    # OpenSearch security bootstrap, malcolm_template and the arkime_sessions3_template marker), so a
+    # --defer-bridge install came up with no ingestion and empty dashboards
+    # docker compose -f "$COMPOSE_FILE" up -d
+    # OLD CODE END
+    "${SCRIPT_DIR}/deploy-malcolm.sh" --start-only
 
-    log "Waiting for OpenSearch to become healthy..."
-    if retry 30 10 curl -skf "https://localhost:9200/_cluster/health" > /dev/null 2>&1; then
-        log "OpenSearch is healthy"
-    else
-        warn "OpenSearch did not become healthy within 5 minutes."
-        warn "It may still be starting. Check with: curl -sk https://localhost:9200/_cluster/health"
-    fi
+    # OLD CODE START — NET-216: deploy-malcolm.sh already waits for OpenSearch and monitors startup.
+    # This curl sent no credentials, so OpenSearch answered 401 and it always waited the full
+    # 5 minutes, then warned "did not become healthy" on a healthy box.
+    # log "Waiting for OpenSearch to become healthy..."
+    # if retry 30 10 curl -skf "https://localhost:9200/_cluster/health" > /dev/null 2>&1; then
+    #     log "OpenSearch is healthy"
+    # else
+    #     warn "OpenSearch did not become healthy within 5 minutes."
+    #     warn "It may still be starting. Check with: curl -sk https://localhost:9200/_cluster/health"
+    # fi
+    # OLD CODE END
 }
 
 # ---------------------------------------------------------------------------
