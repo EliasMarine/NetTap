@@ -466,7 +466,11 @@ class TestTierUsageAccounting:
             patch("storage.manager.shutil.disk_usage") as mock_disk,
             patch("storage.manager.Path") as mock_path_cls,
         ):
-            mock_disk.return_value = MagicMock(total=1_000_000_000_000)
+            # OLD CODE: mock_disk.return_value = MagicMock(total=1_000_000_000_000)
+            # STO-3: 50 GB of it reserved for root
+            mock_disk.return_value = MagicMock(
+                total=1_000_000_000_000, used=400_000_000_000, free=550_000_000_000
+            )
 
             # Mock PCAP directory - no PCAP files
             mock_pcap_dir = MagicMock()
@@ -485,7 +489,8 @@ class TestTierUsageAccounting:
         assert result["warm_bytes"] == 10_000_000
         assert result["cold_bytes"] == 0
         assert result["total_bytes"] == 290_000_000
-        assert result["disk_capacity_bytes"] == 1_000_000_000_000
+        # OLD CODE: assert result["disk_capacity_bytes"] == 1_000_000_000_000
+        assert result["disk_capacity_bytes"] == 950_000_000_000  # used + free
 
     def test_tier_usage_handles_opensearch_error(self):
         """Should return zeros when OpenSearch is unreachable."""
@@ -500,7 +505,10 @@ class TestTierUsageAccounting:
             patch("storage.manager.shutil.disk_usage") as mock_disk,
             patch("storage.manager.Path") as mock_path_cls,
         ):
-            mock_disk.return_value = MagicMock(total=500_000_000_000)
+            # OLD CODE: mock_disk.return_value = MagicMock(total=500_000_000_000)
+            mock_disk.return_value = MagicMock(
+                total=500_000_000_000, used=0, free=500_000_000_000
+            )
             mock_path_cls.return_value.exists.return_value = False
 
             result = mgr.get_tier_usage()
@@ -990,3 +998,76 @@ class TestGrowthEstimate:
         indices = mgr.list_indices()
         assert mgr._client.cat.indices.call_args.kwargs["bytes"] == "b"
         assert [i["size_bytes"] for i in indices] == [1852771868, None]
+
+
+class TestPcapGrowthCache:
+    """B-m follow-up: status polls share one PCAP scan for 10 minutes."""
+
+    def _manager(self, tmp_path):
+        f = tmp_path / "c0.pcap"
+        f.write_bytes(b"x" * 1000)
+        return _make_manager(config=RetentionConfig(pcap_dir=str(tmp_path)))
+
+    def test_polls_within_ten_minutes_reuse_the_scan(self, tmp_path):
+        mgr = self._manager(tmp_path)
+        with patch.object(
+            mgr, "_pcaps_oldest_first", wraps=mgr._pcaps_oldest_first
+        ) as scan:
+            with patch("storage.manager.time.monotonic", return_value=1000.0):
+                mgr._growth_estimate([])
+                mgr._growth_estimate([])
+            assert scan.call_count == 1  # old code: a scan on every poll
+            with patch("storage.manager.time.monotonic", return_value=1601.0):
+                mgr._growth_estimate([])
+            assert scan.call_count == 2  # stale after 10 minutes
+
+    def test_polls_arriving_together_share_one_scan(self, tmp_path):
+        import threading
+
+        mgr = self._manager(tmp_path)
+        mgr._pcap_growth_lock = threading.Lock()
+        with patch.object(
+            mgr, "_pcaps_oldest_first", wraps=mgr._pcaps_oldest_first
+        ) as scan:
+            threads = [
+                threading.Thread(target=mgr._growth_estimate, args=([],))
+                for _ in range(4)
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+        assert scan.call_count == 1
+
+
+class TestUsableDiskSize:
+    """STO-3: usage of the space OpenSearch and capture can write, as df counts it."""
+
+    # 1000 bytes, 50 reserved for root: 900 used, 50 left for everyone else
+    DISK = MagicMock(total=1000, used=900, free=50)
+
+    def test_usage_counts_the_reserved_blocks_out(self):
+        mgr = _make_manager()
+        with patch("storage.manager.shutil.disk_usage", return_value=self.DISK):
+            usage = mgr.check_disk_usage()
+        # old code: 0.90, under the 95% capture stop with only 50 bytes left
+        assert usage == 900 / 950
+
+    def test_status_figures_add_up(self, tmp_path):
+        mgr = _make_manager(config=RetentionConfig(pcap_dir=str(tmp_path)))
+        mgr._retention_config_manager = None
+        mgr._last_prune_at = None
+        mgr._client.cat.indices.return_value = []
+        with patch("storage.manager.shutil.disk_usage", return_value=self.DISK):
+            status = mgr.get_status()
+        assert status["disk_total_bytes"] == 950  # old code: 1000
+        assert status["disk_used_bytes"] + status["disk_free_bytes"] == 950
+        assert status["disk_usage_percent"] == 94.7
+
+    def test_the_pcap_cap_stays_a_share_of_the_raw_size(self, tmp_path):
+        """Moving it to the usable size would delete PCAP on deploy (Codex follow-up #3)."""
+        mgr = _make_manager(
+            config=RetentionConfig(pcap_dir=str(tmp_path), pcap_max_disk_fraction=0.25)
+        )
+        with patch("storage.manager.shutil.disk_usage", return_value=self.DISK):
+            assert mgr._pcap_cap_bytes() == 250

@@ -1339,7 +1339,8 @@
 						<div class="disk-stats num">
 							<span>{storageStatus.disk_used_gb.toFixed(1)} GB used</span>
 							<span>{storageStatus.disk_free_gb.toFixed(1)} GB free</span>
-							<span>{storageStatus.disk_total_gb.toFixed(1)} GB total</span>
+							<!-- OLD CODE: <span>{storageStatus.disk_total_gb.toFixed(1)} GB total</span> (STO-3) -->
+							<span>{storageStatus.disk_total_gb.toFixed(1)} GB usable</span>
 						</div>
 
 						<!-- OLD CODE START — B-m: a fixed 1.2 GB a day

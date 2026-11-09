@@ -44,6 +44,8 @@ _ILM_RETRY_BASE_S = 300
 _ILM_RETRY_MAX_S = 3600
 # B-m: the index growth estimate averages the complete days in this window
 _GROWTH_WINDOW_DAYS = 7
+# How long a PCAP growth measurement serves status polls (a daily rate barely moves in 10 min)
+_PCAP_GROWTH_TTL_S = 600
 
 # ---------------------------------------------------------------------------
 # OLD CODE START — Original StorageManager (Phase 1 scaffold)
@@ -128,6 +130,17 @@ _TIER_PREFIXES = {
 
 
 _DEFAULT_PCAP_MAX_DISK_PCT = 25.0
+
+
+def _usable_disk(path: str) -> tuple[int, int, int]:
+    """(size, used, free) as ``df`` counts them (STO-3).
+
+    ext4 keeps reserved blocks for root (81 GB of 1965 GB on the G11). OpenSearch and the
+    capture containers aren't root, so the disk is full for them when ``free`` (f_bavail)
+    runs out: the size they can use is used + free, not the raw total.
+    """
+    disk = shutil.disk_usage(path)
+    return disk.used + disk.free, disk.used, disk.free
 
 
 def _pcap_cap_fraction() -> float:
@@ -219,6 +232,9 @@ class StorageManager:
         self._ilm_retry_at: float = 0.0
         # A15: shared with the API's IlmSyncState, so startup and saves never apply at once
         self.ilm_lock = threading.Lock()
+        # B-m: (measured at, PCAP bytes a day or None, days spanned), shared by status polls
+        self._pcap_growth_cache: tuple[float, float | None, float] | None = None
+        self._pcap_growth_lock = threading.Lock()
         # #96: whether OpenSearch took the exact-counts setting (#90); retried each cycle
         self._exact_counts: bool = False
 
@@ -313,8 +329,13 @@ class StorageManager:
         Uses ``config.check_path`` when *path* is not explicitly given.
         """
         check = path if path is not None else self.config.check_path
-        usage = shutil.disk_usage(check)
-        return usage.used / usage.total
+        # OLD CODE START — STO-3: the raw total counts ext4's reserved blocks, so the 95%
+        # capture stop fired at about 99% of the space OpenSearch can write
+        # usage = shutil.disk_usage(check)
+        # return usage.used / usage.total
+        # OLD CODE END
+        size, used, _free = _usable_disk(check)
+        return used / size if size else 0.0
 
     # ------------------------------------------------------------------
     # Index discovery
@@ -670,7 +691,8 @@ class StorageManager:
         """
         try:
             usage_frac = self.check_disk_usage()
-            disk = shutil.disk_usage(self.config.check_path)
+            # OLD CODE: disk = shutil.disk_usage(self.config.check_path) (STO-3: raw total)
+            disk_size = _usable_disk(self.config.check_path)[0]
         except OSError:
             return {
                 "current_usage_pct": -1,
@@ -728,7 +750,8 @@ class StorageManager:
         frac_per_hour = usage_delta_frac / elapsed_hours
 
         # Convert to bytes per hour
-        fill_rate_bytes = frac_per_hour * disk.total
+        # OLD CODE: fill_rate_bytes = frac_per_hour * disk.total (STO-3: usage is of the usable size)
+        fill_rate_bytes = frac_per_hour * disk_size
 
         if frac_per_hour <= 0:
             # Usage is stable or decreasing
@@ -881,6 +904,8 @@ class StorageManager:
         if fraction <= 0:
             return None
         try:
+            # The raw size, not the usable one (STO-3): changing it would delete ~20 GB of the
+            # G11's PCAP on deploy, and the cap is a share of the disk either way
             return int(shutil.disk_usage(self.config.pcap_dir).total * fraction)
         except OSError as exc:
             logger.error(
@@ -906,13 +931,16 @@ class StorageManager:
                 per_day[day] = per_day.get(day, 0) + size
         index_rate = sum(per_day.values()) / len(per_day) if per_day else None
 
-        pcaps = self._pcaps_oldest_first()
-        span_days = (
-            (pcaps[-1][1].st_mtime - pcaps[0][1].st_mtime) / 86400 if pcaps else 0.0
-        )
-        pcap_rate = (
-            sum(st.st_size for _, st in pcaps) / span_days if span_days >= 1 else None
-        )
+        # OLD CODE START — scanned the PCAP folder on every status poll
+        # pcaps = self._pcaps_oldest_first()
+        # span_days = (
+        #     (pcaps[-1][1].st_mtime - pcaps[0][1].st_mtime) / 86400 if pcaps else 0.0
+        # )
+        # pcap_rate = (
+        #     sum(st.st_size for _, st in pcaps) / span_days if span_days >= 1 else None
+        # )
+        # OLD CODE END
+        pcap_rate, span_days = self._pcap_growth()
         days_kept = None
         if pcap_rate:
             if self.config.pcap_max_disk_fraction <= 0:
@@ -930,6 +958,29 @@ class StorageManager:
             "pcap_days_measured": round(span_days, 1),
             "pcap_days_kept": round(days_kept, 1) if days_kept is not None else None,
         }
+
+    def _pcap_growth(self) -> tuple[float | None, float]:
+        """PCAP's (bytes a day, or None under a day of span; days spanned), cached 10 minutes.
+
+        A scan stats every file: 45 ms for the G11's 3,620 files, and a box at the 10 MiB
+        minimum rotation can hold ~13 times as many. Polls arriving together wait on the lock
+        and share one scan.
+        """
+        with getattr(self, "_pcap_growth_lock", None) or contextlib.nullcontext():
+            cached = getattr(self, "_pcap_growth_cache", None)
+            if cached is not None and time.monotonic() - cached[0] < _PCAP_GROWTH_TTL_S:
+                return cached[1], cached[2]
+            pcaps = self._pcaps_oldest_first()
+            span_days = (
+                (pcaps[-1][1].st_mtime - pcaps[0][1].st_mtime) / 86400 if pcaps else 0.0
+            )
+            pcap_rate = (
+                sum(st.st_size for _, st in pcaps) / span_days
+                if span_days >= 1
+                else None
+            )
+            self._pcap_growth_cache = (time.monotonic(), pcap_rate, span_days)
+            return pcap_rate, span_days
 
     def _delete_oldest_pcaps(
         self, max_delete: int = 10, target: float | None = None
@@ -1478,8 +1529,11 @@ class StorageManager:
 
         # Get disk capacity
         try:
-            disk = shutil.disk_usage(self.config.check_path)
-            capacity = disk.total
+            # OLD CODE START — STO-3: the raw total, reserved blocks included
+            # disk = shutil.disk_usage(self.config.check_path)
+            # capacity = disk.total
+            # OLD CODE END
+            capacity = _usable_disk(self.config.check_path)[0]
         except OSError:
             capacity = 0
 
@@ -2063,18 +2117,29 @@ class StorageManager:
         #     ... (every disk figure 0)
         # OLD CODE END
         usage_frac = self.check_disk_usage()
-        disk = shutil.disk_usage(self.config.check_path)
-        disk_total_bytes = disk.total
-        disk_used_bytes = disk.used
-        disk_free_bytes = disk.free
+        # OLD CODE START — STO-3: the raw total, so used + free didn't add up to it
+        # disk = shutil.disk_usage(self.config.check_path)
+        # disk_total_bytes = disk.total
+        # disk_used_bytes = disk.used
+        # disk_free_bytes = disk.free
+        # OLD CODE END
+        # The size OpenSearch and capture can use, as df counts it: used + free = total
+        disk_total_bytes, disk_used_bytes, disk_free_bytes = _usable_disk(
+            self.config.check_path
+        )
         # OLD CODE START — NET-166: GiB labelled GB, so a 1 TB drive read 931.32 GB
         # disk_total_gb = round(disk.total / (1024**3), 2)
         # disk_used_gb = round(disk.used / (1024**3), 2)
         # disk_free_gb = round(disk.free / (1024**3), 2)
         # OLD CODE END
-        disk_total_gb = round(disk.total / 1e9, 2)
-        disk_used_gb = round(disk.used / 1e9, 2)
-        disk_free_gb = round(disk.free / 1e9, 2)
+        # OLD CODE START — STO-3: from the raw figures
+        # disk_total_gb = round(disk.total / 1e9, 2)
+        # disk_used_gb = round(disk.used / 1e9, 2)
+        # disk_free_gb = round(disk.free / 1e9, 2)
+        # OLD CODE END
+        disk_total_gb = round(disk_total_bytes / 1e9, 2)
+        disk_used_gb = round(disk_used_bytes / 1e9, 2)
+        disk_free_gb = round(disk_free_bytes / 1e9, 2)
 
         # OLD CODE START — #96: OpenSearch down read as 0 indices in every tier
         # try:

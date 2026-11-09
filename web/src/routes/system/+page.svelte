@@ -425,7 +425,8 @@
 			{/if}
 			<Meter value={storageStatus.disk_usage_percent} label="Disk used" />
 			<dl class="facts">
-				<dt>Total</dt>
+				<!-- OLD CODE: <dt>Total</dt> (STO-3: the daemon reports the usable size now, as df counts it) -->
+				<dt>Usable</dt>
 				<dd class="mono">{formatBytes(storageStatus.disk_total_bytes)}</dd>
 				<dt>Used</dt>
 				<dd class="mono">{formatBytes(storageStatus.disk_used_bytes)}</dd>

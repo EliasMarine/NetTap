@@ -408,7 +408,8 @@ describe('System page figures', () => {
 		});
 		render(SystemPage);
 		const fact = async (label: string) => (await screen.findByText(label, { selector: 'dt' })).nextElementSibling?.textContent;
-		expect(await fact('Total')).toBe('1.0 TB');
+		// OLD CODE: expect(await fact('Total')).toBe('1.0 TB'); (STO-3: the usable size, reserved blocks out)
+		expect(await fact('Usable')).toBe('1.0 TB');
 		expect(await fact('Used')).toBe('400.0 GB');
 		expect(await fact('Free')).toBe('600.0 GB');
 	});
