@@ -37,6 +37,9 @@ MGMT_IFACE="${MGMT_INTERFACE:-}"
 SSH_PORT="${SSH_PORT:-22}"
 HTTPS_PORT="${DASHBOARD_PORT:-443}"
 MALCOLM_PORT="${MALCOLM_HTTPS_PORT:-9443}"
+# The compose network nettap-web is on: <project>_default, and the project is the compose file's
+# folder (docker) unless .env sets COMPOSE_PROJECT_NAME
+DOCKER_NETWORK="${COMPOSE_PROJECT_NAME:-docker}_default"
 
 # ---------------------------------------------------------------------------
 # Usage
@@ -127,6 +130,16 @@ detect_mgmt_interface() {
     fi
 
     error "Cannot detect management interface. Specify with --mgmt <iface>"
+}
+
+# Prints each subnet of the compose network, one a line, or nothing when it doesn't exist yet.
+# nettap-web reaches the daemon (host network, port 8880) from it at host.docker.internal, so the
+# firewall must let exactly these in. The real subnet is read, so a custom address pool works too.
+# The source subnet, not the bridge interface: `docker compose down` + `up` recreates the network
+# under a new br-<id> name, but Docker hands the same free pool back.
+docker_daemon_subnets() {
+    command -v docker &>/dev/null || return 0
+    docker network inspect "$DOCKER_NETWORK" --format '{{range .IPAM.Config}}{{.Subnet}}{{"\n"}}{{end}}' 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------
@@ -220,6 +233,22 @@ do_enable() {
     run ufw deny in to any port 9200 proto tcp comment "Block OpenSearch (internal only)"
     log "Blocked external access to OpenSearch (port 9200)"
 
+    # -- Let nettap-web reach the daemon (NET-229 follow-up) --
+    # Before the deny below, so everyone else still can't reach 8880. Docker never gives a network a
+    # range the host already routes (the LAN), and loopback is accepted by ufw's before.rules.
+    local subnets subnet
+    subnets=$(docker_daemon_subnets)
+    if [[ -n "$subnets" ]]; then
+        while read -r subnet; do
+            [[ -n "$subnet" ]] || continue
+            run ufw allow from "$subnet" to any port 8880 proto tcp comment "nettap-web to the NetTap daemon"
+            log "Allowed the daemon (port 8880) from ${subnet} (Docker network ${DOCKER_NETWORK})"
+        done <<<"$subnets"
+    else
+        warn "Docker network ${DOCKER_NETWORK} not found, so the dashboard can't reach the daemon through the firewall."
+        warn "Start NetTap (sudo docker compose -f docker/docker-compose.yml up -d), then run this script again."
+    fi
+
     # -- Block daemon port from ALL external access --
     # The daemon should only be reachable from within the Docker network.
     run ufw deny in to any port 8880 proto tcp comment "Block NetTap daemon (internal only)"
@@ -263,7 +292,9 @@ do_enable() {
     log ""
     log "Blocked from external access:"
     log "  - OpenSearch:       port 9200/tcp"
-    log "  - Daemon API:       port 8880/tcp"
+    log "  - Daemon API:       port 8880/tcp (only nettap-web's Docker network may reach it)"
+    log ""
+    log "If NetTap's Docker network is ever removed (docker compose down), run this script again."
     log "  - Redis:            port 6379/tcp"
     log "  - Logstash:         port 5044/tcp"
     log "  - Arkime viewer:    port 8005/tcp"
