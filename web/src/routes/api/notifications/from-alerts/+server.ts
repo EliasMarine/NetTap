@@ -1,12 +1,22 @@
 import { json } from '@sveltejs/kit';
-import { sendNotification } from '$lib/server/notifications.js';
+import { getNotifications, MAX_STORED_NOTIFICATIONS, sendNotification } from '$lib/server/notifications.js';
 import { daemonFetch } from '$lib/server/daemon.js';
 import { fmt } from '$lib/utils/drilldown';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const batchKey = (category?: string, signature?: string) => JSON.stringify([category, signature]);
 
 export const GET = async () => {
     // Fetch smart alerts (critical + high only)
     const res = await daemonFetch('/api/alerts/smart?limit=50');
-    const data = await res.json().catch(() => ({ alerts: [] }));
+    // OLD CODE START — NET-224 P2: a daemon error read as "no alerts" (200, 0 created)
+    // const data = await res.json().catch(() => ({ alerts: [] }));
+    // OLD CODE END
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data) {
+        const reason = data?.error || `HTTP ${res.status}`;
+        return json({ error: `Couldn't read the alerts: ${reason}` }, { status: 502 });
+    }
     const alerts = data.alerts || [];
 
     if (alerts.length === 0) {
@@ -31,10 +41,20 @@ export const GET = async () => {
         }
     }
 
+    // The bell calls this on every page load over the daemon's default 24 h window, and the
+    // store now keeps what it holds (NET-224 P2): a category's top signature notifies once a day
+    const since = Date.now() - DAY_MS;
+    const notified = new Set(
+        getNotifications(MAX_STORED_NOTIFICATIONS)
+            .filter((n) => n.type === 'alert' && Date.parse(n.timestamp) > since)
+            .map((n) => batchKey(n.source?.category, n.source?.signature)),
+    );
+
     // Send notifications for critical/high batches only
     let created = 0;
     for (const [category, batch] of Object.entries(batches)) {
         if (batch.maxSev > 2) continue; // Skip medium/low
+        if (notified.has(batchKey(category, batch.topSig))) continue;
 
         const severity = batch.maxSev <= 1 ? 'critical' : 'high';
 
@@ -44,7 +64,8 @@ export const GET = async () => {
                 severity: severity as 'critical' | 'high',
                 title: `${batch.count} ${category} alert${batch.count > 1 ? 's' : ''}`,
                 message: `${batch.devices.size} device(s) affected \u00b7 ${fmt(batch.events)} events \u00b7 Top: ${batch.topSig}`,
-                source: { signature: batch.topSig },
+                // OLD CODE: source: { signature: batch.topSig }, (NET-224 P2: the category keys the once-a-day check)
+                source: { signature: batch.topSig, category },
             });
             created++;
         } catch {

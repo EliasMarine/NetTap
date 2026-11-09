@@ -64,6 +64,8 @@ export interface Notification {
 		src_ip?: string;
 		dest_ip?: string;
 		signature?: string;
+		/** NET-224 P2: the Suricata category, so the bell's alert batches notify once a day */
+		category?: string;
 	};
 }
 
@@ -80,9 +82,13 @@ export interface Notification {
 // };
 // OLD CODE END
 
-const DATA_DIR = process.env.NETTAP_DATA_DIR || '/var/lib/nettap';
+// OLD CODE START — NET-224 P2: nettap-web is read_only and nothing is mounted here, so every write failed and the bell's history lived only in memory
+// const DATA_DIR = process.env.NETTAP_DATA_DIR || '/var/lib/nettap';
+// OLD CODE END
+// The web-data volume: writable, owned by the image's nettap user (auth.ts keeps users.json there)
+const DATA_DIR = process.env.NETTAP_DATA_DIR || '/var/lib/nettap-web';
 const NOTIFICATIONS_FILE = join(DATA_DIR, 'notifications.json');
-const MAX_STORED_NOTIFICATIONS = 200;
+export const MAX_STORED_NOTIFICATIONS = 200;
 
 // OLD CODE START — NET-224: the daemon owns email/webhook settings and sends them; this read env vars compose never set, and email needed nodemailer, which the image doesn't have
 // // ---------------------------------------------------------------------------

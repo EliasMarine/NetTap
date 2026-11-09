@@ -1,15 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// One write mock across vi.resetModules, so a test can see where the store writes
+const writeFileSync = vi.hoisted(() => vi.fn());
+
 // Mock fs module before importing the module under test
 vi.mock('fs', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('fs')>();
-	return {
+	const mocked = {
 		...actual,
 		existsSync: vi.fn().mockReturnValue(false),
 		readFileSync: vi.fn().mockReturnValue('[]'),
-		writeFileSync: vi.fn(),
+		writeFileSync,
 		mkdirSync: vi.fn(),
 	};
+	// the module's named imports go through the default export, which was still the real fs
+	return { ...mocked, default: mocked };
 });
 
 // We need to dynamically import after mocking
@@ -28,6 +33,7 @@ describe('notifications server module', () => {
 		delete process.env.NOTIFY_WEBHOOK_URL;
 		delete process.env.NOTIFY_INAPP_ENABLED;
 		delete process.env.NOTIFY_SEVERITY_THRESHOLD;
+		delete process.env.NETTAP_DATA_DIR;
 
 		// Re-import module to reset internal state
 		notifications = await import('./notifications');
@@ -332,5 +338,12 @@ describe('notifications server module', () => {
 			expect(fetchMock).not.toHaveBeenCalled();
 			expect(notifications.getNotifications(1)[0].title).toBe(result.title);
 		});
+	});
+
+	// NET-224 P2: nettap-web is read_only; only the web-data volume (/var/lib/nettap-web) is writable
+	it('keeps the in-app store on the web-data volume', async () => {
+		await notifications.sendNotification({ type: 'system', severity: 'low', title: 'Kept', message: 'On disk.' });
+
+		expect(writeFileSync).toHaveBeenLastCalledWith('/var/lib/nettap-web/notifications.json', expect.any(String), 'utf-8');
 	});
 });
