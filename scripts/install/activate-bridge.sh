@@ -228,6 +228,15 @@ verify() {
         echo "${_CLR_YLW}  Activation complete with warnings. Review output above.${_CLR_RST}"
     fi
     echo "  Dashboard: https://${NETTAP_HOSTNAME:-nettap.local}:${DASHBOARD_PORT:-443}"
+    # A13 (NET-229): the setup wizard asks for this before it creates the admin account
+    if [[ "$SKIP_SERVICES" != "true" && "$NETTAP_DRY_RUN" != "true" ]]; then
+        local code
+        code=$(nettap_setup_code)
+        if [[ -n "$code" ]]; then
+            echo "  Setup code: ${code}  (the setup wizard asks for it)"
+            echo "  To see it again: ${NETTAP_SETUP_CODE_CMD}"
+        fi
+    fi
     echo ""
 }
 

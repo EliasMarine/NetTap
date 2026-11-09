@@ -106,6 +106,12 @@ The installer blinks each port's LED so you can tell them apart and asks which i
 
 Then open **https://nettap.local** from a device on your network. NetTap makes its own TLS certificate, so your browser warns you the first time. The setup wizard asks for the capture mode, ports, retention and an admin account.
 
+The installer also prints a one-time **setup code**. The wizard asks for it before it creates the admin account, so nobody else on your network can claim the box first. To see it again, run this on the NetTap box:
+
+```bash
+sudo docker exec nettap-web cat /var/lib/nettap-web/setup-code
+```
+
 ## Storage
 
 Zeek and Suricata records are kept for 90 days. Packet captures are kept for 30 days and use at most 25% of the disk. The daemon checks the disk every 5 minutes:

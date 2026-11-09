@@ -378,6 +378,26 @@ sysctl() { echo 262144; }'
     [[ "$output" == *"6 passed, 1 warning, 0 failed"* ]] || false
 }
 
+# A13 (NET-229): nettap-web has a setup code (first run), so the card shows it and how to read it again
+@test "step_verify: the summary card prints the setup wizard's code" {
+    printf 'WAN_INTERFACE=enp2s0\nLAN_INTERFACE=enp3s0\n' > "${TEST_TMPDIR}/.env"
+    run bash -c "source '$INSTALL'; $VERIFY_STUBS
+        docker() { case \"\$1 \${3:-} \${4:-}\" in 'exec cat /var/lib/nettap-web/setup-code') echo ABCD-EFGH-JKMN ;; info*) return 0 ;; compose*) printf 'a\nb\n' ;; *) return 1 ;; esac; }
+        PROJECT_ROOT='$TEST_TMPDIR'; step_verify"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Setup code"*"ABCD-EFGH-JKMN"* ]] || false
+    [[ "$output" == *"sudo docker exec nettap-web cat /var/lib/nettap-web/setup-code"* ]] || false
+}
+
+@test "step_verify: an install that already has an admin shows no setup code" {
+    printf 'WAN_INTERFACE=enp2s0\nLAN_INTERFACE=enp3s0\n' > "${TEST_TMPDIR}/.env"
+    run bash -c "source '$INSTALL'; $VERIFY_STUBS
+        docker() { case \"\$1 \${3:-}\" in 'exec test') return 0 ;; 'exec cat') return 1 ;; info*) return 0 ;; compose*) printf 'a\nb\n' ;; esac; }
+        PROJECT_ROOT='$TEST_TMPDIR'; step_verify"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"Setup code"* ]] || false
+}
+
 @test "step_verify: with --skip-bridge the card does not claim the bridge is on" {
     printf 'WAN_INTERFACE=enp2s0\nLAN_INTERFACE=enp3s0\n' > "${TEST_TMPDIR}/.env"
     run bash -c "source '$INSTALL'; $VERIFY_STUBS
