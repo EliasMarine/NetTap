@@ -153,7 +153,9 @@ class TestCaptureRestore(BackupImportTest):
         _app, body, cfg = apply.call_args.args
         self.assertEqual(body, OTHER_MIRROR)  # no storage, no extra keys
         self.assertEqual(cfg.interface, "eth2")
-        self.assertEqual(cfg.pcap_rotate_mb, 250)  # the box's own rotation size
+        # OLD CODE: self.assertEqual(cfg.pcap_rotate_mb, 250)  # the box's own rotation size
+        # _apply_configuration keeps the box's rotation size now (test_setup_configure)
+        self.assertEqual(cfg.pcap_rotate_mb, 0)
 
     async def test_a_bad_mode_or_name_is_refused_and_nothing_applied(self):
         apply = AsyncMock(return_value=_ok_response())

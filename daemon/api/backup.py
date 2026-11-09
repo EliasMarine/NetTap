@@ -16,17 +16,18 @@ keeps in memory, so a restore takes effect at once and says what it skipped.
 
 import json
 import logging
-from dataclasses import replace
 
 from aiohttp import web
 
 from api.dhcp_gateway import ensure_capture_lock
 from api.offload import run_blocking
 from api.setup import _apply_configuration, _build_capture_config
-from services.capture_config import capture_config_exists, load_capture_config
+
+# OLD CODE: from dataclasses import replace; from services.capture_config import
+# capture_config_exists, load_capture_config (setup keeps the rotation size now)
 from services.capture_manager import CaptureMode
 from services.config_backup import ConfigBackup, capture_section
-from services.excluded_ips import load_excluded_ips
+from services.excluded_ips import load_excluded_ips, with_appliance_ip
 
 logger = logging.getLogger("nettap.api.backup")
 
@@ -84,11 +85,14 @@ def _reload_running_state(app: web.Application, applied: list[str]) -> None:
     """A9: what the daemon holds in memory, so restored files take effect without a restart."""
     if "excluded_ips" in applied:
         ips = load_excluded_ips(app.get("excluded_ips_file"))
-        # the box's own IP is excluded at runtime only (create_app), so it isn't in the file
-        appliance = app.get("appliance_ip")
-        app["excluded_ips"] = (
-            [*ips, appliance] if appliance and appliance not in ips else ips
-        )
+        # OLD CODE START — the same rule as startup and Settings, in one place now
+        # # the box's own IP is excluded at runtime only (create_app), so it isn't in the file
+        # appliance = app.get("appliance_ip")
+        # app["excluded_ips"] = (
+        #     [*ips, appliance] if appliance and appliance not in ips else ips
+        # )
+        # OLD CODE END
+        app["excluded_ips"] = with_appliance_ip(ips, app.get("appliance_ip"))
     if "bandwidth_cap" in applied and "bandwidth_tracker" in app:
         app["bandwidth_tracker"]._load_cap()
     # OLD CODE START — NET-224: a reload with no checks; ConfigBackup now restores through the
@@ -170,9 +174,11 @@ async def _restore_capture(
     except (ValueError, TypeError) as exc:
         result["errors"].append(f"Capture mode not restored: {exc}")
         return
-    if capture_config_exists():
-        # keep the box's PCAP rotation size (setup's INI), so the INI and capture.env agree
-        cfg = replace(cfg, pcap_rotate_mb=load_capture_config().pcap_rotate_mb)
+    # OLD CODE START — _apply_configuration keeps the box's rotation size now, for setup too
+    # if capture_config_exists():
+    #     # keep the box's PCAP rotation size (setup's INI), so the INI and capture.env agree
+    #     cfg = replace(cfg, pcap_rotate_mb=load_capture_config().pcap_rotate_mb)
+    # OLD CODE END
     # only validated values reach the files setup writes (never the backup's own)
     body = capture_section(
         {

@@ -22,8 +22,10 @@ POST /api/setup/bridge/preview checks the wizard's WAN/LAN pair without
 touching the host and refuses a port this machine still uses (CR-004).
 """
 
+import configparser
 import logging
 import os
+from dataclasses import replace
 from pathlib import Path
 
 from aiohttp import web
@@ -32,6 +34,8 @@ from api.capture_control import restart_capture_containers
 from api.dhcp_gateway import ensure_capture_lock
 from services.capture_config import (
     CaptureConfig,
+    capture_config_exists,
+    load_capture_config,
     save_capture_config,
     write_env_file_if_changed,
 )
@@ -406,6 +410,19 @@ async def _apply_configuration(
                 # #96: the rest of setup still applies; the response says what didn't
                 warnings.append(f"Retention settings were not saved: {exc}")
 
+        if capture_config_exists():
+            # The wizard has no rotation field, so keep the box's (Settings › Capture). Read
+            # here, after the last await, so a rotation save can't land in between.
+            try:
+                capture_cfg = replace(
+                    capture_cfg, pcap_rotate_mb=load_capture_config().pcap_rotate_mb
+                )
+            except (
+                configparser.Error
+            ) as exc:  # setup is how a broken INI gets rewritten
+                logger.warning(
+                    "Capture config unreadable, rotation size reset: %s", exc
+                )
         ini_paths = [] if keep_gateway else [save_capture_config(capture_cfg)]
         # OLD CODE START — replaced 2026-10-30: helper moved to capture_config
         # capture_env_path, env_changed = _write_capture_env(capture_cfg)

@@ -23,7 +23,11 @@ from aiohttp.test_utils import AioHTTPTestCase
 
 from api.setup import register_setup_routes
 from services.bridge_capture_adapter import BridgeCaptureAdapter
-from services.capture_config import load_capture_config
+from services.capture_config import (
+    CaptureConfig,
+    load_capture_config,
+    save_capture_config,
+)
 from services.capture_manager import CaptureMode
 from services.capture_mode_stub import CaptureManagerStub
 from services.dhcp_gateway import DhcpGatewayManager
@@ -236,6 +240,49 @@ class TestWrites(_Base):
         resp = await self._post({**DHCP_BODY, "capture_interface": "enp2s0"})
         self.assertEqual(resp.status, 200)
         self.assertEqual(self.restart.await_count, 2)
+
+
+class TestRotationSizeKept(_Base):
+    """The wizard has no rotation field; a re-run keeps Settings' value, not the default."""
+
+    def _saved(self, rotate_mb):
+        save_capture_config(
+            CaptureConfig(
+                mode=CaptureMode.MIRROR, interface="enp2s0", pcap_rotate_mb=rotate_mb
+            )
+        )
+
+    async def test_a_re_run_keeps_the_rotation_size(self):
+        self._saved(250)
+        resp = await self._post({**MIRROR_BODY, "capture_interface": "enp3s0"})
+        self.assertEqual(resp.status, 200)
+        # old code: 0 and no PCAP_ROTATE_MEGABYTES, so capture went back to the default
+        self.assertEqual(load_capture_config().pcap_rotate_mb, 250)
+        self.assertIn("PCAP_ROTATE_MEGABYTES=250\n", self._read(self.capture_env))
+
+    async def test_a_broken_ini_is_rewritten_not_a_dead_end(self):
+        os.makedirs(os.path.dirname(self.ini), exist_ok=True)
+        with open(self.ini, "w") as f:
+            f.write("mode = mirror\n")  # no [capture] section: configparser raises
+        resp = await self._post(MIRROR_BODY)
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(load_capture_config().interface, "enp2s0")
+
+    async def test_a_rotation_save_during_setup_is_not_overwritten(self):
+        """Settings saves 750 while setup awaits its NIC check; setup must not write 250 back."""
+        self._saved(250)
+
+        async def settings_saves_meanwhile(_current, _interface):
+            self._saved(750)  # what /api/capture/settings does, without an await
+            return None
+
+        with patch(
+            f"{MODULE}._mirror_nic_in_use", side_effect=settings_saves_meanwhile
+        ):
+            resp = await self._post({**MIRROR_BODY, "capture_interface": "enp3s0"})
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(load_capture_config().pcap_rotate_mb, 750)
+        self.assertEqual(load_capture_config().interface, "enp3s0")
 
 
 # ---------------------------------------------------------------------------
