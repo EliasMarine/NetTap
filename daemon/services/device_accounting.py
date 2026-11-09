@@ -157,7 +157,14 @@ def ipv6_by_mac(
                 "filter": {"terms": {f"{side}.mac": macs}},
                 "aggs": {
                     "macs": {
-                        "terms": {"field": f"{side}.mac", "size": len(macs)},
+                        # OLD CODE: "terms": {"field": f"{side}.mac", "size": len(macs)},
+                        # review: a record with two MACs on a side made a bucket for a MAC not asked
+                        # about, which no device owns
+                        "terms": {
+                            "field": f"{side}.mac",
+                            "size": len(macs),
+                            "include": macs,
+                        },
                         "aggs": {
                             **sums,
                             "link_local": {

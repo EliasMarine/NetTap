@@ -307,6 +307,8 @@ def _one(docs: list, spec: dict) -> dict:
         for d in docs:
             for v in dict.fromkeys(values(d, body["field"])):
                 groups[v] = [*groups.get(v, []), d]
+        if isinstance(body.get("include"), list):  # the exact-values form of include
+            groups = {k: v for k, v in groups.items() if k in body["include"]}
         ranked = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
         size = body.get("size", 10)
         return {

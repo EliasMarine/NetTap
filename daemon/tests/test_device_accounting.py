@@ -327,6 +327,30 @@ class TestNetworkDirection(AccountingCase):
             )
 
 
+class TestMultiValuedMac(AccountingCase):
+    """Review: a record with two source MACs put a MAC nobody owns among the IPv6 shares
+    (KeyError, a 500 for the whole list)."""
+
+    STRAY = "00:00:5e:00:53:99"
+    docs = [
+        *DOCS,
+        conn(
+            "2001:db8::30",
+            "2001:db8:ffff::1",
+            source__bytes=5,
+            destination__bytes=5,
+            source__mac=[M_LAPTOP, STRAY],
+            destination__mac=M_ROUTER,
+        ),
+    ]
+
+    async def test_the_list_still_answers_and_folds_the_record(self):
+        status, body = await self.get("/api/devices")
+        self.assertEqual(status, 200, body)
+        rows = {d["ip"]: d for d in body["devices"]}
+        self.assertEqual(rows[LAPTOP]["ipv6_connections"], 5)
+
+
 _NOW = datetime.now(timezone.utc)
 _THIS_MONTH = _NOW.replace(day=1, hour=0, minute=30, second=0, microsecond=0)
 
