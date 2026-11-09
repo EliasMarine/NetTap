@@ -258,6 +258,9 @@ describe('Devices — All devices table', () => {
 		expect(within(table).getAllByRole('row')[1]).toHaveTextContent('192.168.1.10');
 	});
 
+	// the IPv6 notes only: in bridge mode NET-225 also shows its own note about devices behind NAT
+	const ipv6Notes = () => screen.queryAllByRole('note').filter((n) => !n.textContent?.includes('inline bridge mode'));
+
 	// NET-226: the type and OS are guesses; the figures count both directions and IPv6 by MAC
 	it('shows the type and OS as guesses with what they came from, and what the figures count', async () => {
 		const guessed = listReply([
@@ -278,7 +281,7 @@ describe('Devices — All devices table', () => {
 		expect(
 			screen.getByText('Traffic and connections count both directions and include IPv6, matched to each device by its MAC address.'),
 		).toBeInTheDocument();
-		expect(screen.queryByRole('note')).not.toBeInTheDocument();
+		expect(ipv6Notes()).toHaveLength(0);
 	});
 
 	it.each([
@@ -293,8 +296,8 @@ describe('Devices — All devices table', () => {
 		render(Page);
 		await screen.findByRole('table', { name: 'All devices' });
 		// one notice per reason, however many devices share it
-		expect(screen.getAllByRole('note')).toHaveLength(1);
-		expect(screen.getByRole('note')).toHaveTextContent(text);
+		expect(ipv6Notes()).toHaveLength(1);
+		expect(ipv6Notes()[0]).toHaveTextContent(text);
 	});
 });
 
