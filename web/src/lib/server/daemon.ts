@@ -116,10 +116,13 @@ export async function daemonFetch(
 		// NET-203: a time limit running out is not "unreachable"; the daemon may still be working.
 		// AbortSignal.timeout rejects with a DOMException named TimeoutError.
 		const timedOut = (err as { name?: unknown } | null)?.name === 'TimeoutError';
+		// NET-229 (B-p): the reason (host:port, errno) stays in this log, not in the reply
+		if (!timedOut) console.error(`Daemon unreachable for ${path}: ${message}`);
 		return new Response(
 			JSON.stringify({
 				// OLD CODE: error: `Daemon unreachable: ${message}`, (NET-203: a timeout read as the daemon being down)
-				error: timedOut ? 'NetTap took too long to answer. Try again.' : `Daemon unreachable: ${message}`,
+				// OLD CODE: error: timedOut ? 'NetTap took too long to answer. Try again.' : `Daemon unreachable: ${message}`, (NET-229: carried the exception text)
+				error: timedOut ? 'NetTap took too long to answer. Try again.' : 'Daemon unreachable',
 				daemonAvailable: false,
 			} satisfies DaemonError),
 			{

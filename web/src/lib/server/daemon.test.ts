@@ -118,16 +118,20 @@ describe('daemonFetch', () => {
 		expect(body.daemonAvailable).toBe(false);
 	});
 
-	it('returns 502 Response on connection error', async () => {
-		vi.mocked(globalThis.fetch).mockRejectedValue(new Error('ECONNREFUSED'));
+	// NET-229 (B-p): the reason (host:port, errno) goes to the web log, never into the reply
+	it('returns 502 Response on connection error, with the reason only in the log', async () => {
+		const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.mocked(globalThis.fetch).mockRejectedValue(new Error('connect ECONNREFUSED 172.18.0.1:8880'));
 
 		const result = await daemonFetch('/api/test');
 		const body = await result.json();
 
 		expect(result.status).toBe(502);
-		expect(body.error).toContain('Daemon unreachable');
-		expect(body.error).toContain('ECONNREFUSED');
+		expect(body.error).toBe('Daemon unreachable');
+		expect(JSON.stringify(body)).not.toContain('ECONNREFUSED');
+		expect(log).toHaveBeenCalledWith(expect.stringContaining('ECONNREFUSED 172.18.0.1:8880'));
 		expect(body.daemonAvailable).toBe(false);
+		log.mockRestore();
 	});
 
 	it('returns 502 on unknown error type', async () => {
@@ -137,7 +141,8 @@ describe('daemonFetch', () => {
 		const body = await result.json();
 
 		expect(result.status).toBe(502);
-		expect(body.error).toContain('Unknown error');
+		// OLD CODE: expect(body.error).toContain('Unknown error'); (NET-229: the reason is only logged now)
+		expect(body.error).toBe('Daemon unreachable');
 	});
 
 	it('returns successful daemon response as-is', async () => {

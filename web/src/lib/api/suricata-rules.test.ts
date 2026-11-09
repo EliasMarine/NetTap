@@ -175,6 +175,16 @@ describe('suricata-rules API client', () => {
 			expect(result).toMatchObject({ success: false, output: 'suricata-update exited 1', status });
 		});
 
+		// NET-229 (B-p): the daemon now strips `output` and nested fields from a 5xx, leaving a generic `error`
+		it("shows a 500's generic error when the daemon sent no output", async () => {
+			const error = 'Something went wrong; the daemon log has the details.';
+			mockFetchSuccess({ success: false, error }, 500);
+
+			const result = await updateRulesNow();
+
+			expect(result).toMatchObject({ success: false, output: error, reload_output: '' });
+		});
+
 		it('says an update still running (202) is not a success', async () => {
 			mockFetchSuccess({ success: false, output: '', reload_output: '', running: true }, 202);
 

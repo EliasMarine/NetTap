@@ -41,6 +41,7 @@ from storage.ilm import apply_ilm_policies_from_config
 from storage.ilm_generator import generate_ilm_policies
 from storage.retention_config import RetentionConfigManager
 from api.offload import in_thread, run_blocking
+from api.error_replies import safe_error_middleware
 from api.daemon_auth import (
     load_or_create_token,
     make_auth_middleware,
@@ -1087,8 +1088,19 @@ def create_app(
     #     middlewares=[make_auth_middleware(_load_daemon_token()), logging_middleware]
     # )
     # OLD CODE END
+    # OLD CODE START — NET-229 (B-p): 5xx replies carried exception text, stderr and internal URLs
+    # app = web.Application(
+    #     middlewares=[make_auth_middleware(_load_daemon_token()), logging_middleware],
+    #     # Matches nginx and nettap-web (BODY_SIZE_LIMIT): photos ≤ 8 MiB in all, base64 in a backup
+    #     client_max_size=MAX_REQUEST_BYTES,
+    # )
+    # OLD CODE END
     app = web.Application(
-        middlewares=[make_auth_middleware(_load_daemon_token()), logging_middleware],
+        middlewares=[
+            make_auth_middleware(_load_daemon_token()),
+            logging_middleware,
+            safe_error_middleware,  # innermost: cuts a 5xx reply to safe fields (api/error_replies.py)
+        ],
         # Matches nginx and nettap-web (BODY_SIZE_LIMIT): photos ≤ 8 MiB in all, base64 in a backup
         client_max_size=MAX_REQUEST_BYTES,
     )
