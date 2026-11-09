@@ -718,7 +718,23 @@ class PcapSearchService:
             # with open(tmp_path, "wb") as f:
             #     f.write(stdout_bytes)
             # OLD CODE END
-            await run_blocking(Path(tmp_path).write_bytes, stdout_bytes)
+            # OLD CODE START — F8: a cancel left the worker writing a file nobody deleted
+            # await run_blocking(Path(tmp_path).write_bytes, stdout_bytes)
+            # OLD CODE END
+            write = asyncio.ensure_future(
+                run_blocking(Path(tmp_path).write_bytes, stdout_bytes)
+            )
+            try:
+                await asyncio.shield(write)
+            except asyncio.CancelledError:
+                # A cancel can't stop the worker thread: wait for it, or it would write the
+                # file again after the unlink below. Its own error is moot now.
+                # shortcut: a second cancel during this wait unlinks early; aiohttp and
+                # asyncio.run cancel a request once, upgrade if that changes
+                await asyncio.wait([write])
+                if not write.cancelled():
+                    write.exception()  # retrieved, so asyncio doesn't log it as lost
+                raise
 
             # Clean up merged temp file inside the container
             await self._cleanup_container_tmp(container_merged_path, pcap_files)
@@ -746,6 +762,11 @@ class PcapSearchService:
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
             raise RuntimeError("docker not found in PATH") from exc
+        except BaseException:
+            # F8: any other error (a full /tmp mid-write) or a cancel: the caller never gets
+            # the path, so nobody else would delete the file
+            Path(tmp_path).unlink(missing_ok=True)
+            raise
 
     async def _cleanup_container_tmp(
         self, container_path: str, pcap_files: list[str]
