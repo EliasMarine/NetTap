@@ -384,7 +384,10 @@ def open_socket(iface: str, mac: bytes) -> socket.socket:
     buf = ctypes.create_string_buffer(program)
     fprog = struct.pack("HL", len(program) // 8, ctypes.addressof(buf))
     sock.setsockopt(socket.SOL_SOCKET, 26, fprog)  # SO_ATTACH_FILTER
-    sock._bpf = buf  # keep the program alive with the socket
+    # OLD CODE START: socket objects take no new attributes (AttributeError on the G11), and the
+    # kernel has its own copy once setsockopt returns, so nothing needs to keep buf alive
+    # sock._bpf = buf  # keep the program alive with the socket
+    # OLD CODE END
     sock.setsockopt(socket.SOL_SOCKET, 33, 256 * 1024 * 1024)  # SO_RCVBUFFORCE
     sock.setsockopt(socket.SOL_SOCKET, SO_TIMESTAMPNS, 1)
     sock.bind((iface, ETH_P_ALL))

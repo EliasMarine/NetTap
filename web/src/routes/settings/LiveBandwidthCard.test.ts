@@ -70,7 +70,7 @@ describe('LiveBandwidthCard (Settings)', () => {
 		await flush();
 		expect(toggle()).toBeChecked();
 		expect(stateLine()).toBe('On — measures while a device page is open');
-		expect(document.getElementById('live-bandwidth-help')).toHaveTextContent('Nothing runs while no device page is open.');
+		expect(document.getElementById('live-bandwidth-help')).toHaveTextContent(/about 7% of one CPU core.*nothing runs while no device page is open.*dropped up to about 90 packets a minute/);
 		expect(toggle()).toHaveAttribute('aria-describedby', 'live-bandwidth-help');
 	});
 

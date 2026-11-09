@@ -5,9 +5,12 @@
   card follows that clean-up until it is done.
 -->
 <script lang="ts">
-	// TODO(NET-205): the measured cost from the G11 bench goes here
+	// Measured on the G11 by verify_live_bandwidth.py bench (2026-11-09): median cost per frame at
+	// 1 Gbit/s, one watch 6.7-7.9% of a core with full-size frames, 29-39% with IMIX; eight about 2x.
+	// capture-safety (2 runs, 3 pairs each, ~330 Mbit/s): eight watches 38-91 rx_missed_errors/min in
+	// 4 of 6 arms, meter off 0 in all 6
 	const COST_NOTE =
-		"While a device page is open, NetTap counts that device's packets in the kernel. This uses some CPU at high traffic. Nothing runs while no device page is open.";
+		'While a device page is open, NetTap checks every packet on the capture port to count that device\'s traffic. On the G11 at 1 Gbit/s this costs about 7% of one CPU core with large packets, and up to about 40% with a typical mix of sizes; eight open pages cost about twice that. The cost falls with traffic (a tenth at 100 Mbit/s), and nothing runs while no device page is open. With eight pages open during a 330 Mbit/s download, the G11\'s network card also dropped up to about 90 packets a minute (under 0.01%) before capture saw them; with no page open it dropped none.';
 	import { onDestroy, onMount } from 'svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';

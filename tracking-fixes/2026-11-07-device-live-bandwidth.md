@@ -3,7 +3,18 @@
 **Date:** 2026-11-07
 **Branch:** `feature/device-live-bandwidth`
 **Linear:** NET-205
-**Status:** Built and tested locally. The G11 release gate and accuracy gate are next.
+**Status:** Opt-in (off by default) since 2026-11-08. G11 gates run 2026-11-09: accuracy, kernel, lifecycle and off PASS; the CPU cost is measured and stated; capture safety FAILS with eight watches (stated in Settings, accepted because the feature is opt-in).
+
+## Opt-in (2026-11-08)
+
+The CPU gate failed (27.8% of a core for 8 watches at 1 Gbit/s IMIX, bar 5%), so the owner asked for the feature as a setting. Plan: `.codex-review/2026-11-08-live-bandwidth-opt-in/` (Codex APPROVED, round 5).
+
+- **Setting:** `/opt/nettap/data/live_bandwidth.json` (`LIVE_BANDWIDTH_FILE`), written atomically by `services/live_bandwidth_setting.py`. Missing or invalid means off.
+- **API:** `GET`/`PUT /api/settings/live-bandwidth`. A PUT saves first, then applies; a failed save is a 500 and nothing changes.
+- **Off:** the meter answers `off` without touching tc. Turning off flips a flag at once and a background task removes the filters, retrying a dirty interface every 10 s (30 times), then every 60 s. New watches get 503 while clean-up is pending.
+- **Races:** an admission re-checks the switch after the lock, after preparing and after installing, and rolls back what it added.
+- **Web:** `web/src/routes/settings/LiveBandwidthCard.svelte` in Settings › Capture, with the measured cost; the device card links to it when off.
+- **Clean-up without the daemon:** `scripts/remote/live-bandwidth-cleanup.sh` (`--check` lists only).
 
 ## What the owner asked for
 
@@ -86,7 +97,21 @@ The traffic charts come from Zeek connection logs in OpenSearch. A connection's 
   - The sender is pinned to one CPU and that CPU's system + irq + softirq time is counted. veth delivers in the sender's softirq, while all-CPU accounting would be swamped by the capture stack's own load. (The plan said all CPUs.)
 - **`verify_live_bandwidth.py lifecycle`:** start, ticks advance, filters present, gone 20 s after the last poll, the 9th device gets 503, and no qdisc or filter NetTap doesn't own changes. `/api/health` must stay under 1 s.
 
-Results: _pending._
+Results (G11, 2026-11-09, branch at `37d047f7`):
+
+- **kernel:** 14/14 PASS.
+- **bench** (7 interleaved paired rounds; median extra CPU per frame over no `clsact`, as a share of one core at 1 Gbit/s, [quartiles]):
+
+  | Frames | One MAC watch | One IP watch | Eight watches |
+  |---|---|---|---|
+  | Full size | 6.7% [6.2–7.2] | 7.9% [6.9–8.5] | 13.8% [11.8–15.4] |
+  | IMIX | 28.8% [24.6–32.1] | 39.3% [27.8–53.4] | 83.8% [45.5–95.3] |
+  | Minimum size | 141% [115–232], unstable | 217% [202–326] | 357% [335–421] |
+
+  Not pass/fail any more (owner ruling); the Settings card states it. The bench's own `/api/health` check failed: 1.50 s worst while it flooded a veth pair at line rate.
+- **lifecycle:** 8/8 PASS, `/api/health` 0.42 s worst.
+- **off:** 11/11 PASS. Turning off answered in 0.01 s, and 16 filters (eight watches) were gone in 0.5 s.
+- **capture safety: FAIL (reproducible), accepted.** Run 1 was void (Cloudflare refused the load downloads). Runs 2 and 3 used two range downloads (OVH + Hetzner, ~330 Mbit/s). `rx_missed_errors` growth per pair (off, eight): run 2 `[(0,38),(0,76),(0,0)]`, run 3 `[(0,56),(0,91),(0,0)]`. The script printed INCONCLUSIVE (one 0/0 pair each), but eight watches missed frames in 4 of 6 arms and off in none. The plan says this blocks the release; it ships because the feature is off by default and the Settings card says so. See `Debugging/BRIDGE-ARCHITECTURE.md` §17.
 
 ## Accuracy gate
 
@@ -95,12 +120,23 @@ Results: _pending._
 - **What it reads:** frames to or from the dev Mac's MAC, with kernel receive timestamps (`SO_TIMESTAMPNS`) converted to the meter's monotonic clock, summed as frame length − 14 into 1 ms bins.
 - **When a run is void:** when the reference socket drops frames, or the wall clock moves more than 2 ms.
 - **Pass, per direction:** at least 95% valid ticks in the transfer's middle span, at least 15 consecutive eligible windows, and every eligible window within ±5%.
-- **Transfers:** a sustained Cloudflare download and upload from the dev Mac.
+- **Transfers:** a sustained download and upload from the dev Mac.
 
-Results: _pending._
+Results (G11, 2026-11-09): **PASS both ways.** No reference drops, no clock step, GRO off.
+
+| | Download | Upload |
+|---|---|---|
+| Transfer | 500 MB from OVH (`proof.ovh.net`, 10 MiB/s cap) | 300 MB to Cloudflare `__up` (5 MiB/s cap) |
+| Window check | 22 windows, worst 0.12%, mean 0.00% | 25 windows, worst 0.63%, mean 0.03% |
+| Average check | +0.27% vs expected (header share 3.6%, 0 dup bytes) | +0.07% (header share 3.8%, 2.6 kB dup) |
+| Span check | byte-exact (520,890,231) | byte-exact (312,024,701) |
+
+- The download source moved from Cloudflare to OVH: Cloudflare's `__down` refuses large and repeated requests (403).
+- A first download run was void: the capture-safety load was still running, so other traffic was 190% of the flow. Its window and span checks passed anyway.
 
 ## Known limits
 
+- **Eight watches cost the G11 a few missed frames a minute at ~330 Mbit/s** (see the release gate). A cheaper filter layout (fewer shared stages, 802.1Q stages only when tagged) would lower it; not done.
 - **Capture safety isn't verified by engine telemetry.** Suricata's stats are disabled and Zeek writes no stats or capture-loss log. Follow-up issue: enable Suricata `stats` and compare `capture.kernel_drops` with the meter off and on.
 - **Not verified on the target hardware.** The Intel i226-V wasn't tested (no bench). `skip_hw` keeps the path in software.
 - **Not covered:** bridge and DHCP gateway modes, and IPv6 for devices without a known MAC.
@@ -117,4 +153,6 @@ Results: _pending._
 
 - **A terminal tc action hides every later filter.** `action pass` ends classification, so with shared stages only the first matching filter would ever count. `continue` is pinned in the code and in the tests.
 - **Redundant guards make mutation testing say "missed".** Two filters doing the same job mean breaking one changes nothing. Remove the duplicate.
+- **A script that only runs on the device needs one device run before it counts.** `live_bandwidth_reference.py` set an attribute on a socket object, which Python refuses; no unit test opens an AF_PACKET socket, so it first failed on the G11. The kernel copies a BPF program at `setsockopt`, so the line wasn't needed.
+- **Finish one load test before starting the next.** A background download outlived its gate and voided the next accuracy run.
 - **Back-to-back mutations of the same size can hit a stale `.pyc`.** The file's mtime and size match, so Python reuses old bytecode. Run mutation checks with `PYTHONDONTWRITEBYTECODE=1`.
