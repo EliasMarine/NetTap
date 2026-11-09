@@ -1,0 +1,210 @@
+[
+    {
+        "protocol": "ip",
+        "pref": 49152,
+        "kind": "flower",
+        "chain": 0
+    },
+    {
+        "protocol": "ip",
+        "pref": 49152,
+        "kind": "flower",
+        "chain": 0,
+        "options": {
+            "handle": 1,
+            "keys": {
+                "eth_type": "ipv4",
+                "dst_ip": "192.168.1.188"
+            },
+            "skip_hw": true,
+            "not_in_hw": true,
+            "actions": [
+                {
+                    "order": 1,
+                    "kind": "gact",
+                    "control_action": {
+                        "type": "continue"
+                    },
+                    "prob": {
+                        "random_type": "none",
+                        "control_action": {
+                            "type": "pass"
+                        },
+                        "val": 0
+                    },
+                    "index": 1,
+                    "ref": 1,
+                    "bind": 1,
+                    "installed": 3,
+                    "last_used": 0,
+                    "first_used": 3,
+                    "stats": {
+                        "bytes": 10896379,
+                        "packets": 7699,
+                        "drops": 0,
+                        "overlimits": 0,
+                        "requeues": 0,
+                        "backlog": 0,
+                        "qlen": 0
+                    }
+                }
+            ]
+        }
+    },
+    {
+        "protocol": "ip",
+        "pref": 49153,
+        "kind": "flower",
+        "chain": 0
+    },
+    {
+        "protocol": "ip",
+        "pref": 49153,
+        "kind": "flower",
+        "chain": 0,
+        "options": {
+            "handle": 1,
+            "keys": {
+                "eth_type": "ipv4",
+                "src_ip": "192.168.1.188"
+            },
+            "skip_hw": true,
+            "not_in_hw": true,
+            "actions": [
+                {
+                    "order": 1,
+                    "kind": "gact",
+                    "control_action": {
+                        "type": "continue"
+                    },
+                    "prob": {
+                        "random_type": "none",
+                        "control_action": {
+                            "type": "pass"
+                        },
+                        "val": 0
+                    },
+                    "index": 2,
+                    "ref": 1,
+                    "bind": 1,
+                    "installed": 3,
+                    "last_used": 0,
+                    "first_used": 3,
+                    "stats": {
+                        "bytes": 206458,
+                        "packets": 2147,
+                        "drops": 0,
+                        "overlimits": 0,
+                        "requeues": 0,
+                        "backlog": 0,
+                        "qlen": 0
+                    }
+                }
+            ]
+        }
+    },
+    {
+        "protocol": "802.1Q",
+        "pref": 49154,
+        "kind": "flower",
+        "chain": 0
+    },
+    {
+        "protocol": "802.1Q",
+        "pref": 49154,
+        "kind": "flower",
+        "chain": 0,
+        "options": {
+            "handle": 1,
+            "keys": {
+                "vlan_ethtype": "ip",
+                "eth_type": "ipv4",
+                "dst_ip": "192.168.1.188"
+            },
+            "skip_hw": true,
+            "not_in_hw": true,
+            "actions": [
+                {
+                    "order": 1,
+                    "kind": "gact",
+                    "control_action": {
+                        "type": "continue"
+                    },
+                    "prob": {
+                        "random_type": "none",
+                        "control_action": {
+                            "type": "pass"
+                        },
+                        "val": 0
+                    },
+                    "index": 3,
+                    "ref": 1,
+                    "bind": 1,
+                    "installed": 3,
+                    "last_used": 3,
+                    "stats": {
+                        "bytes": 0,
+                        "packets": 0,
+                        "drops": 0,
+                        "overlimits": 0,
+                        "requeues": 0,
+                        "backlog": 0,
+                        "qlen": 0
+                    }
+                }
+            ]
+        }
+    },
+    {
+        "protocol": "802.1Q",
+        "pref": 49155,
+        "kind": "flower",
+        "chain": 0
+    },
+    {
+        "protocol": "802.1Q",
+        "pref": 49155,
+        "kind": "flower",
+        "chain": 0,
+        "options": {
+            "handle": 1,
+            "keys": {
+                "vlan_ethtype": "ip",
+                "eth_type": "ipv4",
+                "src_ip": "192.168.1.188"
+            },
+            "skip_hw": true,
+            "not_in_hw": true,
+            "actions": [
+                {
+                    "order": 1,
+                    "kind": "gact",
+                    "control_action": {
+                        "type": "continue"
+                    },
+                    "prob": {
+                        "random_type": "none",
+                        "control_action": {
+                            "type": "pass"
+                        },
+                        "val": 0
+                    },
+                    "index": 4,
+                    "ref": 1,
+                    "bind": 1,
+                    "installed": 3,
+                    "last_used": 3,
+                    "stats": {
+                        "bytes": 0,
+                        "packets": 0,
+                        "drops": 0,
+                        "overlimits": 0,
+                        "requeues": 0,
+                        "backlog": 0,
+                        "qlen": 0
+                    }
+                }
+            ]
+        }
+    }
+]

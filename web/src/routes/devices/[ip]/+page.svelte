@@ -38,6 +38,7 @@
 	import type { SmartAlert } from '$api/alerts';
 	import type { RegistryDevice } from '$api/devices-registry';
 	import DeviceCustomise from '$components/DeviceCustomise.svelte';
+	import LiveBandwidthCard from '$components/LiveBandwidthCard.svelte';
 	import type {
 		DeviceDetail,
 		DeviceConnection,
@@ -818,6 +819,9 @@ OLD CODE END -->
 		<KpiCard class="c-3" label="Connections" icon="connections" value={formatNumber(device.connection_count)}
 			sub="{formatNumber(device.unique_destinations ?? 0)} unique destinations" note={RANGE_LABEL[range]} />
 		<KpiCard class="c-3" label="Alerts" icon="alerts" value={formatNumber(device.alert_count)} sub="Suricata alerts on this device's traffic" note={RANGE_LABEL[range]} />
+
+		<!-- NET-205: counted by this page's IP only; its MAC can be one the address had before -->
+		<LiveBandwidthCard key={{ ip: device.ip }} />
 
 		<Card class="c-8" hero col title="Bandwidth over time" sub="Bytes per interval · {RANGE_LABEL[range].toLowerCase()}">
 			{#snippet actions()}

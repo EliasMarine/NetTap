@@ -742,6 +742,14 @@ async def async_main() -> None:
         "Replaced CaptureManagerStub with %s in API app",
         type(capture_manager).__name__,
     )
+    # NET-205: remove live bandwidth filters a crash left behind, now that the real capture
+    # manager (and so the real capture interface) is in place; until this runs, watches wait.
+    live_meter = api_runner.app.get("live_bandwidth")
+    if live_meter is not None:
+        try:
+            await live_meter.reconcile()
+        except Exception:
+            logger.exception("Live bandwidth reconciliation failed")
 
     # Generic capture loop in every mode: it reads the live manager each tick
     # (setup can swap it) and calls reconcile() then get_health()

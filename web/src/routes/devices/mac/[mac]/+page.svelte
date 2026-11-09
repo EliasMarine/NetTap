@@ -34,6 +34,7 @@
 	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 	// OLD CODE: import DeviceCustomise from './DeviceCustomise.svelte'; (NET-201: the IP device page uses it too)
 	import DeviceCustomise from '$components/DeviceCustomise.svelte';
+	import LiveBandwidthCard from '$components/LiveBandwidthCard.svelte';
 
 	type Destination = DeviceTraffic['top_destinations'][number];
 	type DnsQuery = NonNullable<DeviceTraffic['dns_queries']>[number];
@@ -332,6 +333,9 @@
 		/>
 		<!-- NET-158: the daemon matches the MAC or any of the device's addresses over the whole range -->
 		<p class="c-12 dim">Traffic matching its MAC or any address it has used; another device may have used one since.</p>
+
+		<!-- NET-205: counted by the MAC itself, live -->
+		<LiveBandwidthCard key={{ mac: device.mac }} />
 
 		<!-- the daemon doesn't send a bandwidth series yet; the card shows once it does -->
 		{#if traffic?.bandwidth_series}

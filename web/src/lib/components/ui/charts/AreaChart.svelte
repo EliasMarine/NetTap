@@ -15,7 +15,7 @@
 </script>
 
 <script lang="ts">
-	import { monotonePath, fitAxis, fitByteAxis, labelStep, nearestIndex, tipBox, type Point } from './geometry';
+	import { monotonePath, finiteRuns, fitAxis, fitByteAxis, labelStep, nearestIndex, tipBox, type Point } from './geometry';
 	import { observeWidth } from './resize';
 
 	let {
@@ -27,6 +27,7 @@
 		ariaLabel,
 		height = 220,
 		bytes = false,
+		gaps = false,
 	}: {
 		series: AreaSeries[];
 		formatX?: (t: number | string) => string;
@@ -39,6 +40,8 @@
 		height?: number;
 		/** Values are bytes: ticks land on round decimal units (1 GB = 10^9 bytes), like the byte formatters. */
 		bytes?: boolean;
+		/** Break the line and fill at a non-finite value, so a missing point shows as a gap (NET-205). Off: drawn across it. */
+		gaps?: boolean;
 	} = $props();
 
 	const PAD = { l: 50, r: 12, t: 18, b: 28 };
@@ -70,13 +73,33 @@
 	const X = (i: number) => PAD.l + (n > 1 ? slot * i : iw / 2);
 	const Y = (v: number) => PAD.t + ih * (1 - v / axis.top);
 
+	// OLD CODE START — NET-205: one path per series, joined across missing points; `gaps` splits it
+	// const paths = $derived(
+	// 	series.map((s, k) => {
+	// 		const pts: Point[] = s.points.map((p, i) => [X(i), Y(p.v)] as const).filter(([, y]) => Number.isFinite(y));
+	// 		const line = monotonePath(pts);
+	// 		const base = Y(0).toFixed(1);
+	// 		const area = pts.length ? `${line}L${pts.at(-1)![0].toFixed(1)},${base}L${pts[0][0].toFixed(1)},${base}Z` : '';
+	// 		return { k, colour: s.colour, line, area };
+	// 	}),
+	// );
+	// OLD CODE END
+	function segment(pts: Point[]) {
+		const line = monotonePath(pts);
+		const base = Y(0).toFixed(1);
+		const area = pts.length ? `${line}L${pts.at(-1)![0].toFixed(1)},${base}L${pts[0][0].toFixed(1)},${base}Z` : '';
+		return { line, area };
+	}
+	// a lone sample between two gaps: the line's round cap on a zero-length line draws a dot; no fill
+	const dot = (pts: Point[]) => ({ line: `${monotonePath(pts)}h0`, area: '' });
+
 	const paths = $derived(
 		series.map((s, k) => {
-			const pts: Point[] = s.points.map((p, i) => [X(i), Y(p.v)] as const).filter(([, y]) => Number.isFinite(y));
-			const line = monotonePath(pts);
-			const base = Y(0).toFixed(1);
-			const area = pts.length ? `${line}L${pts.at(-1)![0].toFixed(1)},${base}L${pts[0][0].toFixed(1)},${base}Z` : '';
-			return { k, colour: s.colour, line, area };
+			const all: Point[] = s.points.map((p, i) => [X(i), Y(p.v)] as const);
+			// without gaps: one run of every finite point, exactly as before
+			const runs = gaps ? finiteRuns(all) : [all.filter(([, y]) => Number.isFinite(y))];
+			const parts = runs.map((run) => (gaps && run.length === 1 ? dot(run) : segment(run)));
+			return { k, colour: s.colour, line: parts.map((p) => p.line).join(''), area: parts.map((p) => p.area).join('') };
 		}),
 	);
 

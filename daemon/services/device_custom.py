@@ -79,7 +79,11 @@ def normalize_mac(mac: Any) -> str:
     if not isinstance(mac, str):
         raise ValueError("Not a valid MAC address.")
     norm = DeviceRegistry._normalize_mac(mac)
-    if not _MAC_RE.match(norm):
+    # OLD CODE START — NET-205: match() lets "$" pass a trailing newline, so "…:FF\n:00"
+    # (the registry keeps six octets) came out as "…:FF\n" and split a tc batch line
+    # if not _MAC_RE.match(norm):
+    # OLD CODE END
+    if not _MAC_RE.fullmatch(norm):
         raise ValueError("Not a valid MAC address.")
     return norm
 

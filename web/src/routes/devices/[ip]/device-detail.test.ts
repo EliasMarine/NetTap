@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
 import { getSmartAlerts, suppressAlert } from '$api/alerts';
+import { getDeviceDetail } from '$api/devices';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
@@ -36,6 +37,11 @@ vi.mock('$api/alerts', () => ({
 	getSmartAlerts: vi.fn(),
 	suppressAlert: vi.fn(),
 }));
+// NET-205: the live bandwidth card polls its own endpoint; here it stays loading, and the tests read its key
+const { getLiveBandwidth } = vi.hoisted(() => ({
+	getLiveBandwidth: vi.fn((_key: { mac: string } | { ip: string }, _signal?: AbortSignal) => new Promise<never>(() => {})),
+}));
+vi.mock('$api/live-bandwidth', async (importOriginal) => ({ ...(await importOriginal<typeof import('$api/live-bandwidth')>()), getLiveBandwidth }));
 
 const ALERT = {
 	signature_id: 2010935,
@@ -363,5 +369,27 @@ describe('Device detail — smart alert ×N links', () => {
 			const item = screen.getByText(name).closest('li')!;
 			expect(within(item).getByText('×4')).toHaveAttribute('title', "This group has no signature, source or destination recorded, so it can't be listed exactly");
 		}
+	});
+});
+
+describe('Device detail — live bandwidth (NET-205)', () => {
+	afterEach(() => vi.clearAllMocks());
+
+	it('measures by the page’s IP only, never the MAC the address had', async () => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+		vi.mocked(getDeviceDetail).mockImplementationOnce(
+			async () =>
+				({
+					device: {
+						ip: IP, mac: 'aa:bb:cc:dd:ee:ff', hostname: 'laptop', connection_count: 3, alert_count: 0,
+						first_seen: '2026-10-29T00:00:00Z', last_seen: '2026-10-29T01:00:00Z',
+						top_destinations: [], dns_queries: [], bandwidth_series: [], protocols: [],
+					},
+				}) as never,
+		);
+		render(Page);
+		expect(await screen.findByRole('heading', { name: 'Live bandwidth' })).toBeInTheDocument();
+		expect(getLiveBandwidth).toHaveBeenCalledWith({ ip: IP }, expect.any(AbortSignal));
+		expect(getLiveBandwidth.mock.calls.every(([key]) => !('mac' in key))).toBe(true);
 	});
 });

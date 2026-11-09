@@ -13,6 +13,12 @@ vi.mock('$app/stores', async () => {
 	return { page: writable({ url: new URL(`http://localhost/devices/mac/${mac}`), params: { mac } }) };
 });
 
+// NET-205: the live bandwidth card polls its own endpoint; here it stays loading, out of this test's fetch
+const { getLiveBandwidth } = vi.hoisted(() => ({
+	getLiveBandwidth: vi.fn((_key: { mac: string } | { ip: string }, _signal?: AbortSignal) => new Promise<never>(() => {})),
+}));
+vi.mock('$api/live-bandwidth', async (importOriginal) => ({ ...(await importOriginal<typeof import('$api/live-bandwidth')>()), getLiveBandwidth }));
+
 const A = 'D0:21:F9:5E:35:32';
 const B = 'A4:83:E7:00:00:01';
 const dev = (mac: string, name: string) => ({

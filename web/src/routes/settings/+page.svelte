@@ -16,6 +16,7 @@
 	import Meter from '$lib/components/ui/Meter.svelte';
 	import { formatTime } from '$lib/utils/time';
 	import LocationCard from './LocationCard.svelte';
+	import LiveBandwidthCard from './LiveBandwidthCard.svelte';
 	import { DISPLAY_SETTINGS_KEY, DRILL_RANGES, savedDefaultRange, savedLiveMap, type DrillRangeValue, type LiveMap } from '$lib/utils/drilldown';
 
 	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'integrations' | 'display' | 'about';
@@ -1287,6 +1288,7 @@
 				</div>
 			{/if}
 		</Card>
+		<LiveBandwidthCard />
 	{:else if activeTab === 'api-keys'}
 		<Card title="API keys and credentials" sub="Stored on this NetTap · never shown after saving" class="c-12">
 			{#if apiKeysLoading}
