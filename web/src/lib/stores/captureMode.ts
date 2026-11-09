@@ -1,6 +1,7 @@
 /**
- * Singleton store for the current capture mode (bridge, mirror or dhcp_gateway).
- * Fetched once at app startup from /api/capture/mode.
+ * Singleton store for the current capture mode (bridge, mirror or dhcp_gateway), or null while
+ * it isn't known. Fetched at app startup from /api/capture/mode; pages that word things by mode
+ * call initCaptureMode() again from their loaders, so a failed first request is retried.
  * Used by drawer components to conditionally show/hide "Block IP" actions.
  */
 import { writable } from 'svelte/store';
@@ -11,22 +12,44 @@ import { getCaptureMode } from '$api/capture';
 // OLD CODE END
 export type StoreCaptureMode = 'bridge' | 'mirror' | 'dhcp_gateway';
 
-export const captureMode = writable<StoreCaptureMode>('bridge');
+// OLD CODE START — NET-225: 'bridge' before the reply, on a failure or for an unknown mode; pages
+// that warn about bridge mode would have warned mirror users
+// export const captureMode = writable<StoreCaptureMode>('bridge');
+//
+// let initialized = false;
+//
+// export async function initCaptureMode(): Promise<void> {
+// 	if (initialized) return;
+// 	initialized = true;
+//
+// 	try {
+// 		const result = await getCaptureMode();
+// 		const known = result.mode === 'mirror' || result.mode === 'dhcp_gateway';
+// 		captureMode.set(known ? (result.mode as StoreCaptureMode) : 'bridge');
+// 	} catch {
+// 		// Fallback to bridge — safe default
+// 	}
+// }
+// OLD CODE END
+export const captureMode = writable<StoreCaptureMode | null>(null);
 
-let initialized = false;
+const MODES: readonly string[] = ['bridge', 'mirror', 'dhcp_gateway'];
+let answered = false;
+let pending: Promise<void> | null = null;
 
-export async function initCaptureMode(): Promise<void> {
-	if (initialized) return;
-	initialized = true;
-
-	try {
-		const result = await getCaptureMode();
-		// OLD CODE START — 2026-10-30: dhcp_gateway was collapsed into 'bridge'
-		// captureMode.set(result.mode === 'mirror' ? 'mirror' : 'bridge');
-		// OLD CODE END
-		const known = result.mode === 'mirror' || result.mode === 'dhcp_gateway';
-		captureMode.set(known ? (result.mode as StoreCaptureMode) : 'bridge');
-	} catch {
-		// Fallback to bridge — safe default
-	}
+/** Asks once the daemon has answered; a failed request is asked again on the next call. */
+export function initCaptureMode(): Promise<void> {
+	if (answered) return Promise.resolve();
+	pending ??= getCaptureMode()
+		.then((result) => {
+			answered = true;
+			captureMode.set(MODES.includes(result.mode) ? (result.mode as StoreCaptureMode) : null);
+		})
+		.catch(() => {
+			// unknown stays unknown; the next loader asks again
+		})
+		.finally(() => {
+			pending = null;
+		});
+	return pending;
 }
