@@ -12,6 +12,9 @@ const DAEMON_TOKEN_FILE = process.env.DAEMON_TOKEN_FILE || '/run/nettap-auth/dae
 const DAEMON_TOKEN_HEADER = 'X-NetTap-Daemon-Token';
 
 let cachedToken: string | null = null;
+// Review L5: with the daemon down, Live and the shell poll every few seconds, so the log says it
+// once when it goes down and once when it answers again
+let daemonDown = false;
 let warnedTokenMissing = false;
 
 /** Read the token lazily; cached once found, re-read after a 401. */
@@ -103,6 +106,10 @@ export async function daemonFetch(
 		// OLD CODE END
 		const sentToken = readDaemonToken();
 		const response = await send(sentToken);
+		if (daemonDown) {
+			daemonDown = false;
+			console.info('Daemon reachable again');
+		}
 		if (response.status !== 401) return response;
 
 		// The daemon may have regenerated its token: re-read and retry once.
@@ -117,7 +124,11 @@ export async function daemonFetch(
 		// AbortSignal.timeout rejects with a DOMException named TimeoutError.
 		const timedOut = (err as { name?: unknown } | null)?.name === 'TimeoutError';
 		// NET-229 (B-p): the reason (host:port, errno) stays in this log, not in the reply
-		if (!timedOut) console.error(`Daemon unreachable for ${path}: ${message}`);
+		// OLD CODE: if (!timedOut) console.error(`Daemon unreachable for ${path}: ${message}`); (review L5: a line per poll while down)
+		if (!timedOut && !daemonDown) {
+			daemonDown = true;
+			console.error(`Daemon unreachable for ${path}: ${message} (logged once until it answers again)`);
+		}
 		return new Response(
 			JSON.stringify({
 				// OLD CODE: error: `Daemon unreachable: ${message}`, (NET-203: a timeout read as the daemon being down)

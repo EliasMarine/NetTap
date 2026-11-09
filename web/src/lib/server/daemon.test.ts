@@ -134,6 +134,31 @@ describe('daemonFetch', () => {
 		log.mockRestore();
 	});
 
+	// Review L5: Live and the shell poll every few seconds; a down daemon is logged once, not per call
+	it('logs a down daemon once, then once when it answers again', async () => {
+		vi.resetModules();
+		const fresh = await import('./daemon');
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+		// the token file may also be reported; count only the reachability lines
+		const downLines = () => error.mock.calls.filter(([line]) => String(line).startsWith('Daemon unreachable')).length;
+		vi.mocked(globalThis.fetch).mockRejectedValue(new Error('connect ECONNREFUSED'));
+
+		for (let i = 0; i < 3; i++) await fresh.daemonFetch('/api/live/stats');
+		expect(downLines()).toBe(1);
+
+		vi.mocked(globalThis.fetch).mockResolvedValue(new Response('{}', { status: 200 }));
+		await fresh.daemonFetch('/api/live/stats');
+		await fresh.daemonFetch('/api/live/stats');
+		expect(info).toHaveBeenCalledTimes(1);
+
+		vi.mocked(globalThis.fetch).mockRejectedValue(new Error('connect ECONNREFUSED'));
+		await fresh.daemonFetch('/api/live/stats');
+		expect(downLines()).toBe(2);
+		error.mockRestore();
+		info.mockRestore();
+	});
+
 	it('returns 502 on unknown error type', async () => {
 		vi.mocked(globalThis.fetch).mockRejectedValue('string error');
 
