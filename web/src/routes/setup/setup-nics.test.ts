@@ -81,7 +81,9 @@ describe('setup wizard disk check', () => {
 
 	it.each([
 		['the request fails', new Response('{}', { status: 502 })],
-		['the daemon did not answer (sample data)', new Response(JSON.stringify({ disk_free_gb: 911.57, source: 'mock' }))],
+		// OLD CODE: ['the daemon did not answer (sample data)', new Response(JSON.stringify({ disk_free_gb: 911.57, source: 'mock' }))],
+		// L11: the route answers 503 now instead of sample figures (A16)
+		['the daemon did not answer', new Response(JSON.stringify({ error: "The NetTap service isn't answering" }), { status: 503 })],
 	])("says it couldn't check when %s", async (_why, storage) => {
 		stubNics(REAL, storage);
 		render(SetupPage, { props: { form: null } });

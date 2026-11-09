@@ -26,7 +26,8 @@ export interface StorageStatus {
 	// OLD CODE: estimated_daily_gb: number; (B-m: null until measured)
 	estimated_daily_gb: number | null;
 	growth_estimate: GrowthEstimate | null;
-	source: 'daemon' | 'mock';
+	// OLD CODE: source: 'daemon' | 'mock'; (L11: no mock since A16, a dead daemon is a 503)
+	source: 'daemon';
 	last_prune_at: string | null;
 	ilm_status: IlmPolicyStatus | null;
 }

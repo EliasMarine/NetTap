@@ -418,7 +418,9 @@
 			const storageRes = await fetch('/api/setup/storage');
 			if (!storageRes.ok) throw new Error(`HTTP ${storageRes.status}`);
 			const storageData = await storageRes.json();
-			if (storageData.source === 'mock' || typeof storageData.disk_free_gb !== 'number') {
+			// OLD CODE: if (storageData.source === 'mock' || typeof storageData.disk_free_gb !== 'number') {
+			// (L11: the route answers 503 instead of mock figures now, A16)
+			if (typeof storageData.disk_free_gb !== 'number') {
 				throw new Error('no disk reading');
 			}
 			requirements.disk = {

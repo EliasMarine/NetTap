@@ -153,7 +153,9 @@ describe('Settings — retention save', () => {
 	});
 
 	it('will not save the built-in defaults when the daemon did not answer', async () => {
-		stubFetch({ '/api/setup/storage': () => ({ body: { source: 'mock', hot_days: 90 } }) });
+		// OLD CODE: stubFetch({ '/api/setup/storage': () => ({ body: { source: 'mock', hot_days: 90 } }) });
+		// L11: a dead daemon is a 503 from the route now (A16), not mock figures
+		stubFetch({ '/api/setup/storage': () => ({ status: 503, body: { error: "The NetTap service isn't answering" } }) });
 		render(Page);
 		await flush();
 		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));

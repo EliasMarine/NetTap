@@ -212,20 +212,35 @@
 	async function loadRetention() {
 		try {
 			const res = await fetch('/api/setup/storage');
+			// OLD CODE START — L11: the route answers 503 now instead of mock figures (A16), so a 200
+			// is always the daemon's
+			// if (res.ok) {
+			// 	const data = await res.json();
+			// 	// source 'mock' = the daemon didn't answer and these are built-in defaults
+			// 	if (data.source !== 'mock') {
+			// 		// GET /api/setup/storage returns a FLAT StorageStatus object
+			// 		// (hot_days, warm_days, etc. are top-level, not nested under retention)
+			// 		retentionConfig.hot_days = data.hot_days ?? 90;
+			// 		retentionConfig.warm_days = data.warm_days ?? 180;
+			// 		retentionConfig.cold_days = data.cold_days ?? 30;
+			// 		retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
+			// 		retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
+			// 		retentionLoad = 'ok';
+			// 		return;
+			// 	}
+			// }
+			// OLD CODE END
 			if (res.ok) {
 				const data = await res.json();
-				// source 'mock' = the daemon didn't answer and these are built-in defaults
-				if (data.source !== 'mock') {
-					// GET /api/setup/storage returns a FLAT StorageStatus object
-					// (hot_days, warm_days, etc. are top-level, not nested under retention)
-					retentionConfig.hot_days = data.hot_days ?? 90;
-					retentionConfig.warm_days = data.warm_days ?? 180;
-					retentionConfig.cold_days = data.cold_days ?? 30;
-					retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
-					retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
-					retentionLoad = 'ok';
-					return;
-				}
+				// GET /api/setup/storage returns a FLAT StorageStatus object
+				// (hot_days, warm_days, etc. are top-level, not nested under retention)
+				retentionConfig.hot_days = data.hot_days ?? 90;
+				retentionConfig.warm_days = data.warm_days ?? 180;
+				retentionConfig.cold_days = data.cold_days ?? 30;
+				retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
+				retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
+				retentionLoad = 'ok';
+				return;
 			}
 		} catch {
 			// Falls through to 'failed'
