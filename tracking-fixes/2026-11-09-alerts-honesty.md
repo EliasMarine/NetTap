@@ -90,7 +90,31 @@ history only.
 
 - Deploy: rebuild daemon and web only (`scripts/remote/deploy-release-audit.sh`, lead's script). No
   data or compose change. Stored credential matches count at once.
-- Out of scope, listed for the lead: `threat_intel.enrich_alerts` wording ("confirmed malicious
-  infrastructure", dead code), kill-chain wording (ALR-18), the Rising/Falling arrow from
-  `compute_trend`, the device page's "No actionable alerts for this device.", the sidebar badge
-  (HON-49), and the category label for promoted credential groups.
+- Still open: the category label for promoted credential groups, and the Home and traffic trend
+  windows (TRF-6, traffic area).
+
+## Follow-up (same day): the items first listed as out of scope
+
+- **Threat intel (ALR-12 in part):** `ThreatIntelService.enrich_alerts` had no caller outside tests
+  and called a list hit "confirmed malicious infrastructure"; retired in an OLD CODE block. The feed
+  NetTap fills from Suricata's COMPROMISED/DROP/CINS/DShield rule matches is now labelled "Suricata
+  blocklist rules", not "ET Compromised IPs". The address page says when the address was listed:
+  named by a rule in this window, named on an earlier Threats scan (the cache keeps no date), or
+  cached while this window couldn't all be checked (`threat_intel.in_window`: true, false, null).
+- **Kill chains (ALR-18):** the assessment calls stages NetTap's reading of rule matches and says
+  only the gap between successive stages is bounded by 24 hours. The Threats page says "Possible
+  kill chains", "N found", "Rule matched" and "Not in this chain".
+- **Trends:** the device page's Rising/Falling icon is gone, because `compute_trend` is a rate with no
+  comparison window. The Alerts page category trend (`api.alerts.category_trend`) drops the partial
+  first and last slots and the oldest slot of an odd count. It needs 4 whole slots, 20 alerts and
+  alerts in both halves, or it says "not enough data".
+- **Device page empty list:** "No alert groups to review for this device in this period" beside the
+  pipeline state, or "Can't tell if this device has any alert to review" while data isn't arriving.
+  It says groups, because suppressed and context groups are left out.
+- **HON-49:** a failed 24 h alert count shows a muted "?" badge with "Couldn't load the alert count"
+  for screen readers; zero still shows no badge.
+- Tests: with the old sources restored, 9 daemon tests fail plus an import error in
+  `test_category_trend.py`, and 12 web tests fail. Daemon 4,316 passed, 4 skipped. Web 4,362
+  passed. svelte-check 0 errors. check:colors clean. Codex: 1 round, REVISE, all 5 points taken.
+  The visual fixtures for the address and Threats pages carry the new label, and the address fixture
+  carries `in_window`.
