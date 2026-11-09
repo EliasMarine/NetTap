@@ -463,6 +463,22 @@ class TestBandwidthCapFileMalformed(unittest.TestCase):
                 self.assertEqual(BandwidthTracker(client=None)._monthly_cap_bytes, 0)
             Path(cap_file).unlink(missing_ok=True)
 
+    def test_a_cap_over_one_petabyte_is_ignored_and_get_cap_still_answers(self):
+        """D5: 10**400 loaded fine, then get_cap's float division raised OverflowError (a 500)."""
+        import tempfile
+
+        for cap in (10**400, 10**15 + 1):
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False
+            ) as f:
+                f.write('{"monthly_cap_bytes": %d}' % cap)
+                cap_file = f.name
+            with patch("services.bandwidth_tracker._CAP_FILE", cap_file):
+                tracker = BandwidthTracker(client=None)
+            self.assertEqual(tracker._monthly_cap_bytes, 0)
+            self.assertFalse(tracker.get_cap()["enabled"])
+            Path(cap_file).unlink(missing_ok=True)
+
 
 class TestBandwidthApiQueryFailure(AioHTTPTestCase):
     """#96: every /api/bandwidth reader answers 502 when its query fails, never zeros."""
@@ -521,6 +537,18 @@ class TestSetCapIsDecimalGb(AioHTTPTestCase):
         )
         self.assertEqual(resp.status, 400)
         self.tracker.save_cap.assert_not_called()
+
+    async def test_a_cap_over_one_petabyte_is_a_400_and_saves_nothing(self):
+        """D5: the same bound as a restore and the loader, so a saved cap survives a restart."""
+        resp = await self.client.request(
+            "PUT", "/api/settings/bandwidth-cap", json={"monthly_cap_gb": 1_000_001}
+        )
+        self.assertEqual(resp.status, 400)
+        self.tracker.save_cap.assert_not_called()
+        resp = await self.client.request(
+            "PUT", "/api/settings/bandwidth-cap", json={"monthly_cap_gb": 1_000_000}
+        )
+        self.assertEqual(resp.status, 200)  # exactly 1 PB is allowed
 
     async def test_a_negative_cap_is_saved_and_reported_as_off(self):
         resp = await self.client.request(

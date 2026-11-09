@@ -24,7 +24,11 @@ from api.error_replies import public_json
 from api.devices import _accounted_devices, _ip_order
 from api.offload import in_thread
 from api.time_range import parse_time_range
-from services.bandwidth_tracker import BandwidthTracker, internet_bytes
+from services.bandwidth_tracker import (
+    MAX_MONTHLY_CAP_BYTES,
+    BandwidthTracker,
+    internet_bytes,
+)
 from storage.snapshot_search import QueryFailed
 
 logger = logging.getLogger("nettap.api.bandwidth")
@@ -369,6 +373,12 @@ async def handle_set_cap(request: web.Request) -> web.Response:
             {"error": "'monthly_cap_gb' must be a number"}, status=400
         )
 
+    # D5: the loader ignores a cap over 1 PB, so saving one would turn it off at the next start
+    if cap_bytes > MAX_MONTHLY_CAP_BYTES:
+        return web.json_response(
+            {"error": "'monthly_cap_gb' must be at most 1,000,000 GB (1 PB)"},
+            status=400,
+        )
     tracker.save_cap(cap_bytes)
 
     return web.json_response(

@@ -33,6 +33,8 @@ NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
 # Default monthly data cap in bytes (0 = no cap)
 DEFAULT_MONTHLY_CAP_BYTES = 0
+# D5: 1 PB. Far above any home plan, and every float the pages compute from it stays finite
+MAX_MONTHLY_CAP_BYTES = 10**15
 
 # Settings file for bandwidth cap
 _CAP_FILE = os.environ.get("BANDWIDTH_CAP_FILE", "/opt/nettap/data/bandwidth_cap.json")
@@ -85,7 +87,12 @@ class BandwidthTracker:
                 data = json.load(f)
             if not isinstance(data, dict):
                 raise ValueError("not a JSON object")
-            self._monthly_cap_bytes = int(data.get("monthly_cap_bytes", 0))
+            # OLD CODE: self._monthly_cap_bytes = int(data.get("monthly_cap_bytes", 0))
+            # (D5: 10**400 loaded, then get_cap raised OverflowError on every bandwidth page)
+            cap = int(data.get("monthly_cap_bytes", 0))
+            if cap > MAX_MONTHLY_CAP_BYTES:
+                raise ValueError(f"{cap} bytes is over the 1 PB maximum")
+            self._monthly_cap_bytes = cap
         except FileNotFoundError:
             self._monthly_cap_bytes = DEFAULT_MONTHLY_CAP_BYTES
         except (OSError, ValueError, TypeError, OverflowError, AttributeError) as exc:

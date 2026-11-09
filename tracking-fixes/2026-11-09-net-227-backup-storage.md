@@ -165,3 +165,6 @@ No compose change. Rebuild and recreate `nettap-storage-daemon` and `nettap-web`
   - The tests now use the tracker's real shape. They had used `{"monthly_cap_gb": 500}`.
 - **Tests:** 16 fail on the old code. Daemon: 4557 passed. One failure is already on the combined tip: `test_error_replies`, from NET-226/NET-237 (`bandwidth.py:159`, `traffic.py:317/753`). It isn't from this branch.
 - **L5 (security review):** `GET /api/setup/storage` is open before the first admin exists, and it passed the daemon's raw ILM exception text through, OpenSearch's host and port included. It now sends "The retention policy couldn't be applied; it will be retried", collapses each failed policy to `error`, and drops unknown fields. The detail goes to the web server's log (`console.warn`). Signed-in pages still read the full status from `/api/storage/status`.
+- **D5 (security delta):** a bandwidth cap is now at most 1 PB (`MAX_MONTHLY_CAP_BYTES = 10**15`).
+  - Before, a restored `10**400` passed the whole-number check, and `get_cap` then raised OverflowError, so every bandwidth page answered 500 until the owner saved a new cap.
+  - The bound applies in three places: the restore refuses a larger cap, `_load_cap` ignores one (and logs it), and the Settings save answers 400. Without the last one, a cap saved through Settings would switch off at the next restart.

@@ -357,6 +357,8 @@ class TestImport:
             {"monthly_cap_bytes": True},
             {"monthly_cap_bytes": -1},
             {"monthly_cap_bytes": float("inf")},  # JSON Infinity
+            {"monthly_cap_bytes": 10**400},  # D5: a 500 on every bandwidth page after
+            {"monthly_cap_bytes": 10**15 + 1},  # over 1 PB
         ],
     )
     def test_a_malformed_bandwidth_cap_is_refused_and_the_file_kept(

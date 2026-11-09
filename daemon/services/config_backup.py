@@ -24,6 +24,7 @@ from services import alert_intelligence
 
 # OLD CODE: from services.backup_notifications import redact_channels, restore_channels (NET-224: the hub restores)
 from services.backup_notifications import redact_channels
+from services.bandwidth_tracker import MAX_MONTHLY_CAP_BYTES
 from services.capture_config import load_capture_config, write_file_atomic
 from services.excluded_ips import parse_single_ip
 from services.home_location import load_home, parse_home, save_home
@@ -607,7 +608,7 @@ class ConfigBackup:
     def _restore_bandwidth_cap(
         self, cap: Any, applied: list, skipped: list, errors: list
     ) -> None:
-        """The cap as BandwidthTracker reads it: {"monthly_cap_bytes": whole number >= 0}."""
+        """The cap as BandwidthTracker reads it: {"monthly_cap_bytes": 0 to 1 PB, whole}."""
         if cap == {}:  # exported from a box that never set one
             skipped.append(
                 {
@@ -617,7 +618,13 @@ class ConfigBackup:
             )
             return
         value = cap.get("monthly_cap_bytes") if isinstance(cap, dict) else None
-        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        # OLD CODE: if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        # (D5: no upper bound, so 10**400 was restored and every bandwidth page answered 500)
+        if (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or not 0 <= value <= MAX_MONTHLY_CAP_BYTES
+        ):
             errors.append("Bandwidth cap not restored: this backup's copy isn't valid")
             return
         try:
