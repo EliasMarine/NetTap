@@ -350,10 +350,18 @@ class AlertDispatcher:
             }
 
         title, body, worst = digest(candidates)
+        # OLD CODE START — delta review: at the end, Pushover's 1024-character clip dropped the notice
+        # if today["sent"] == DAILY_BUDGET - 1:
+        #     body += (
+        #         f"\n\nThis is the last notification today on this channel (limit "
+        #         f"{DAILY_BUDGET} a day, UTC). Later alerts are on NetTap's Alerts page."
+        #     )
+        # OLD CODE END
         if today["sent"] == DAILY_BUDGET - 1:
-            body += (
-                f"\n\nThis is the last notification today on this channel (limit "
-                f"{DAILY_BUDGET} a day, UTC). Later alerts are on NetTap's Alerts page."
+            # first, so a service's length clip never drops it
+            body = (
+                f"This is the last notification today on this channel (limit "
+                f"{DAILY_BUDGET} a day, UTC). Later alerts are on NetTap's Alerts page.\n\n{body}"
             )
         # OLD CODE START — delta review: a failed send used the budget, so a server outage spent the day
         # today = {**today, "sent": today["sent"] + 1}

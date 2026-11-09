@@ -295,7 +295,10 @@ def test_a_channel_gets_at_most_the_daily_budget_then_a_held_count_until_tomorro
             h.poll(minute)
         sends = h.sent_to(h.high)
         assert len(sends) == 3
-        assert "last notification today" in sends[-1][2]
+        # OLD CODE START — delta review: the notice now comes first, so a length clip keeps it
+        # assert "last notification today" in sends[-1][2]
+        # OLD CODE END
+        assert sends[-1][2].startswith("This is the last notification today")
         assert "last notification today" not in sends[0][2]
         status = h.hub.last_delivery(h.high)
         assert status["ok"] is False
