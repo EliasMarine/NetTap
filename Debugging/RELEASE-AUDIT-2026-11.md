@@ -6,23 +6,32 @@
 > All network identifiers are redacted: addresses are written as 192.0.2.x / 2001:db8::, MACs as 00:00:5e:00:53:xx, names as device-A.
 > Security findings are summarised by class here; exploitation detail for open items is kept in the Linear issues, not in this public file.
 
-**Status: complete (2026-11-09).** All findings are fixed on branch `fix/release-audit-2026-11` (PR #236, not merged):
+**Status: complete (2026-11-09).** All P0/P1 findings are fixed in PR #236 (`fix/release-audit-2026-11`, merged to `main` with the owner's approval):
 - wave 1, F1–F8;
-- wave 2, the six P1 blockers and the P2 list (section 6.2).
+- wave 2, the six P1 blockers and the P2 list (section 6.2);
+- wave 3, the device checks and the reload 502 they found (section 6.3).
 
-The branch at `fa2c2984` was deployed to the G11 with the owner's approval (web UI and daemon), and the smoke test gave 26 PASS / 2 FAIL. The two FAILs wait for the TShark and nginx recreate (section 9).
+The owner approved the four device steps, and all were run on the G11 on 2026-11-09:
+- the TShark and nginx recreate;
+- failure injection;
+- a benign IDS trigger;
+- the rendered UI.
+
+The G11 runs the PR head `a7623897` (the tree `main` received). The smoke test gives 29 PASS / 0 FAIL / 0 WARN.
 
 ---
 
 ## 1. Verdict
 
-**NOT READY** for `main` (`446845ec`), which still has every finding.
+**`main` before PR #236 (`446845ec`) was NOT READY.** It had every finding, including a 502 on every logged-in page reload (A17).
 
-**The branch (`fa2c2984`) would be READY WITH LIMITATIONS.** Scope: the GMKtec G11 (Realtek NICs, Ubuntu 24.04), mirror/SPAN of the router's LAN side. It qualifies once four things are done; each needs the owner:
-1. The TShark and nginx recreate (`deploy-release-audit-isolation.sh`) passes. Until then TShark isn't isolated on the device and CyberChef answers without a login (C16).
-2. Failure injection on the device shows the stopped-sensor and OpenSearch-down states, and recovery (C12, C18).
-3. A benign IDS trigger shows an alert end to end (C8, H5).
-4. PR #236 is merged.
+**With PR #236 merged and deployed: READY WITH LIMITATIONS.** Scope: the GMKtec G11 (Realtek NICs, Ubuntu 24.04), mirror/SPAN of the router's LAN side. The four owner steps all passed on the G11 (section 6.3):
+1. The TShark and nginx recreate: TShark has no network and runs as nobody, and CyberChef needs a login (C16).
+2. Failure injection (C12, C18):
+   - a stopped Suricata was reported in 1 s and a stopped Zeek in 22 s, and each recovered on its own;
+   - an OpenSearch restart kept its auth (Chain 21 confirmed) and ingestion resumed.
+3. A benign IDS trigger (C8): Suricata matched in under a second and the alert was indexed 11.3 s after the packet. That is just over the 10 s goal (H5, NET-243).
+4. The rendered UI: a stopped sensor shows on Home. Checking the UI found the reload 502 (A17); it is fixed and verified.
 
 **What holds up.** These reconcile exactly, or within protocol overhead, against independent sums of the source records on the G11:
 - traffic totals (4,570,892,146 B = 4,570,892,146 B for 17:00–18:00 UTC after the wave-2 deploy);
@@ -39,34 +48,36 @@ The branch at `fa2c2984` was deployed to the G11 with the owner's approval (web 
 - Global IPv6 was not observed (the test network has ULA and link-local only).
 - The threat score's suppressions and baseline aren't shown (C9, NET-239).
 - A capped detection view fails as "incomplete" rather than showing what it read (NET-238).
+- With a sensor stopped, Alerts still lists older alerts without saying the IDS isn't running; only Home's Capture pipeline card and System say so (NET-242).
+- Alert delivery measured 11.3 s from packet to index in one sample, over the 10 s goal (NET-243).
 - The daemon stays host-root-equivalent, as accepted in `SECURITY.md`.
 - The owner's public IP is still in git history (F7 fixed HEAD only).
 
 ### Release criteria
 
-Each result is for the branch at `fa2c2984` unless it says otherwise. `main` fails C3–C5, C8–C11 and C13–C17, as found.
+Each result is for PR #236 (head `a7623897`) unless it says otherwise. `main` before the merge (`446845ec`) fails C3–C5, C8–C11, C13–C17 and C19, as found.
 
 | # | Criterion | Result | Evidence |
 |---|---|---|---|
 | C1 | Test suites: no new failures vs baseline | **PASS** | Daemon 4,630 passed / 4 skipped / 0 failed (baseline 4,243). Vitest 4,514 passed (baseline 4,303). svelte-check 0 errors. Colour gate, e2e types, ruff and shellcheck clean. bats 277/277. Playwright visual 295 passed (50 skipped by design). CI on PR #236: every job passes, Lint Web included; CodeQL flags two test files that write dummy secrets (alerts #19, #20; owner to triage) |
-| C2 | Deployed system identified and traceable | **PASS** | G11 at `fa2c2984` on `fix/release-audit-2026-11`, clean checkout (smoke test step 1) |
+| C2 | Deployed system identified and traceable | **PASS** | G11 at `a7623897` on `fix/release-audit-2026-11`, clean checkout (smoke test step 1); `main` received the same tree |
 | C3 | Connection counts and traffic totals reconcile with source | **PASS** | Two device runs equal to the independent Zeek sum: 13:00–14:00 UTC (1,436,217,196 B) and 17:00–18:00 UTC (4,570,892,146 B). `main` FAIL (R1: interim records summed) |
 | C4 | Upload/download direction and bandwidth correct, with units | **UNVERIFIED** | Upload is now what the LAN device sent on either side (B-d), with tests. On the device only totals were reconciled, not the upload/download split. 1,000-based units shown |
 | C5 | Device identity and attribution correct for the mode, uncertainty shown | **PASS** | Both sides and IPv6 by MAC reconcile on the G11 (device-A 4,578 = 3,053 + 1,432 + 93). Answer-only devices are listed. Type and OS are shown as guesses with their basis. Global IPv6 not observed |
 | C6 | DNS activity reconciles | **PASS** | R6: 5,477 = 5,477 lookups. The median lookup time is shown (smoke test). The page says encrypted DNS is invisible |
 | C7 | TLS/certificate data reconciles | **PASS** | R14: 1,416 = 1,416 sessions with a chain |
-| C8 | Suricata alerts and severity faithful, worded as rule matches | **PASS** (end-to-end trigger UNVERIFIED) | Counts exact (R7). Credential-exposure rules ET rates Informational are counted (B-i). Generated text is worded as rule matches (B-j). The benign IDS trigger needs the owner's approval |
+| C8 | Suricata alerts and severity faithful, worded as rule matches | **PASS** (latency goal missed by 1.3 s, NET-243) | Counts exact (R7). Credential-exposure rules ET rates Informational are counted (B-i). Generated text is worded as rule matches (B-j). End to end on the G11 (R15): a LAN request carrying `uid=0(root)` matched ET 2100498 at 19:59:36.27, was indexed at 19:59:47.57 (11.3 s), and the daemon serves it under Activity because ET rates it Informational |
 | C9 | Risk/threat scores reproducible from inputs, presented as heuristics | **FAIL** (P2) | Deterministic, method shown, inputs persist across restarts (F4). Suppressions and baseline aren't shown (NET-239) |
 | C10 | GeoIP/ASN/vendor shown as enrichment, with fitting precision | **PASS** | Answers give their source and age, city-level precision, and anycast with no pin (smoke test on the G11) |
 | C11 | Packet search/download right and access-controlled | **PASS** | Daemon 401 without token, web 401 without session (smoke test). The filtered download's temp file is removed (F8) |
-| C12 | Capture health reflects a stopped capture and packet loss | **UNVERIFIED** | NIC loss exact (R11). Stopped sensors shown in a local render with the real daemon (F2). Device failure injection needs the owner's approval |
+| C12 | Capture health reflects a stopped capture and packet loss | **PASS** | NIC loss exact (R11). Failure injection on the G11 (`failure-injection-release.sh`): Suricata stopped → `sensor_stopped` and status "problem" in 1 s; Zeek stopped → the same in 22 s (Zeek takes ~10 s to exit); each back to "fresh" with nobody's help |
 | C13 | Storage/retention accurate; current/protected data never deleted | **PASS** (disk full UNVERIFIED) | Disk use counted like `df` (29.6%). Growth is measured, ILM retries, capture resumes after a disk-full pause (tests; smoke test on the G11). Today's index and the newest PCAP are kept (tests). A real disk-full run needs an isolated stack |
-| C14 | Every data card distinguishes loading, empty, error, stale, disabled, healthy | **PASS** (live render UNVERIFIED) | Pipeline state beside every "no alerts" (NET-228), partial replies are errors, the Live chip says "Not updating". Checked in local renders and in the visual suite's empty and error modes. The rendered UI on the G11 sits behind the certificate the owner must accept |
+| C14 | Every data card distinguishes loading, empty, error, stale, disabled, healthy | **PASS** | Pipeline state beside every "no alerts" (NET-228), partial replies are errors, the Live chip says "Not updating". Checked in local renders and in the visual suite's empty and error modes. Rendered on the G11: Home, Live and Alerts load and show live figures; with Suricata stopped, Home's Capture pipeline card reads "System: Reports a problem" and "Data: Suricata stopped" |
 | C15 | No mock, random or hardcoded-success data in production paths | **PASS** | Notifications, Compliance and the Setup storage step fixed (F3, F5, A16); the storage route's dead mock branches removed |
-| C16 | No unauthenticated data access, default credentials or committed secrets; privileged surfaces justified | **FAIL on the G11** until the recreate; PASS in code | First admin and Go Live need the setup code (A13). Public health carries no hardware detail (F6). TShark isolated and CyberChef behind the login in compose, but the running containers are old (smoke test step 9: 2 FAIL). Accepted risks are listed in `SECURITY.md`. The owner IP remains in git history |
+| C16 | No unauthenticated data access, default credentials or committed secrets; privileged surfaces justified | **PASS** | First admin and Go Live need the setup code (A13). Public health carries no hardware detail (F6). On the G11 after the recreate: TShark has no network and runs as nobody (capinfos still reads the newest capture), CyberChef answers 302 to the login (smoke test step 9). Accepted risks are listed in `SECURITY.md`. The owner IP remains in git history |
 | C17 | Each capture mode's limits stated in product and docs | **PASS** | Bridge mode says what a post-NAT capture can't show; setup labels each mode by what was tested on hardware (NET-225) |
-| C18 | Failures surface in the UI and services recover | **UNVERIFIED** | OpenSearch down and stopped sensors render honestly locally. Device restart and recovery need the owner's approval |
-| C19 | No unresolved P0/P1 findings | **PASS** on the branch; FAIL on `main` until PR #236 merges | No P0. B1–B6 fixed (section 8) |
+| C18 | Failures surface in the UI and services recover | **PASS** (Alerts gap, NET-242; reboot not run) | G11: each stopped sensor was reported and recovered (C12). An OpenSearch restart turned health to "problem" and came back healthy. Auth survived the restart (cluster green through the service curlrc, Chain 21 confirmed), and ingestion was fresh 2 s after OpenSearch was healthy. The smoke test then passed. Home shows a stopped sensor. Alerts with older alerts listed does not (P2, NET-242). The public web `/api/health` stays "healthy" while OpenSearch restarts: it is a liveness check only (P3). An appliance reboot was not run |
+| C19 | No unresolved P0/P1 findings | **PASS** in PR #236; FAIL on `main` before it | No P0. B1–B6 fixed (section 8). A17, the reload 502 found on the device, is fixed and verified (NET-241) |
 
 ---
 
@@ -165,6 +176,7 @@ Window for live checks: 2026-11-09 04:00–05:00 UTC unless stated. Expected val
 | R12 | Storage/retention | `df`: 552.8 GB of 1,965 GB; OpenSearch indices ~16 GB; PCAP 454 GB | 28.1% | 28.1% | System page "Cold tier (PCAP files) 30 days · or sooner, once PCAP passes its share of the disk" | PASS for usage; retention estimate uses a hardcoded 1.2 GB/day (actual 1.7–2.8 GB/day of indices + 63 GB/day PCAP) |
 | R13 | IPv6 | network has only ULA/link-local IPv6; no global IPv6 path | — | — | — | UNVERIFIED (no IPv6 internet on the test network) |
 | R14 | TLS / certificates (06:00–07:00 UTC) | Zeek ssl records with a certificate chain, excluded sources removed: 1,416; validation ok 1,401, "unable to get local issuer" 13, "self-signed in chain" 2 | 1,416 sessions | `/api/certificates/overview`: 1,416 sessions, 1,416 with details, 44 certificates, 53 sites, 9 findings | UNVERIFIED (live UI) | PASS for sessions; the certificate count (44) was not independently recounted |
+| R15 | Suricata alert end to end (2026-11-09, PR head) | One HTTP request from a LAN client to example.com (IANA-reserved) carrying `uid=0(root)` in a header, sent 19:59:36 UTC; Suricata's own eve.json has the alert at 19:59:36.274 | one alert for ET 2100498, Informational | OpenSearch: one document, `event.ingested` 19:59:47.572; `/api/alerts?activity=true` lists it (severity 2, Informational); the counted list leaves it out (NET-191) | Activity list | PASS; packet to index 11.3 s, over the 10 s goal (NET-243) |
 
 ---
 
@@ -194,6 +206,7 @@ No P0 was found.
 | A14 | TShark runs as root, parses attacker-crafted packets, and shares a Docker network with services that trust identity headers | NT-02 | live (confirmed on the G11) | container isolation | **Fixed in compose (wave 2, NET-229)**; needs the TShark recreate |
 | A15 | ILM policy failure at startup is never retried and Settings still shows "Policy synced" | STO-2 | agent | retention | **Fixed (wave 2, NET-237)** |
 | A16 | Setup Storage step shows invented disk figures when the daemon is down | HON-8/STO-8 | agent | setup | **Fixed (wave 2, NET-237)** |
+| A17 | A full reload of any large page while logged in is a 502 Bad Gateway. Client-side navigation still works, which hid it | SvelteKit's `Link` preload header is 4.3–4.8 KB on Home, Alerts, Live and Connections (also on `main`); nginx's default 4 KB `proxy_buffer_size` logged "upstream sent too big header" | live | Home, Alerts, Live, Connections, Logs, IoT on reload | **Fixed (wave 3, NET-241)**, verified on the G11 |
 
 ### P2 — misleading presentation, edge cases, recoverable reliability defects (selected)
 
@@ -215,10 +228,12 @@ No P0 was found.
 | B-n | Setup wizard: "Inline bridge — sees all WAN traffic" omits that devices become indistinguishable; DHCP gateway "Recommended" though untested on hardware | code | **Fixed (wave 2, NET-225)** |
 | B-o | Daemon on 0.0.0.0:8880 (token-protected), daemon is host-root-equivalent (docker.sock, SYS_ADMIN, writable systemd dir), capture containers root with NET_ADMIN; images pinned by tag not digest; CyberChef served without login | live + agent | **Partly fixed (NET-229)**: TShark isolated, CyberChef behind the login; the rest accepted in `SECURITY.md` |
 | B-p | Error replies include internal exception text (OpenSearch URLs, connection errors) | local | **Fixed (wave 2, NET-229, NET-237)** |
+| B-q | With a sensor stopped, Alerts lists the window's older alerts and never says the IDS isn't running; only Home's Capture pipeline card and System do, and the sidebar capture chip stays green | live | **Open (NET-242)** |
+| B-r | Alert delivery: 11.3 s from packet to index in one sample, over the 10 s goal (H5) | live | **Open (NET-243)** |
 
 ### P3 (selected)
 
-Docs drift (component versions, "alert-triggered PCAP"); 17 documents with 1970 timestamps in `arkime_sessions3-700101`; Live page keeps its "Live" badge while every request fails; GeoLite fallback table names fixed cities for anycast services; shellcheck's 26 pre-existing warnings.
+Docs drift (component versions, "alert-triggered PCAP"); 17 documents with 1970 timestamps in `arkime_sessions3-700101`; Live page keeps its "Live" badge while every request fails; GeoLite fallback table names fixed cities for anycast services; shellcheck's 26 pre-existing warnings; the public web `/api/health` says "healthy" while OpenSearch restarts (it is a liveness check; `/api/system/health` reports the problem).
 
 ---
 
@@ -286,12 +301,28 @@ Results:
 - Compliance shows "Not measured", not a grade.
 - The same render shows the open gap: the Alerts card still reads a bare "0" (NET-228).
 
+**On the device:** see section 6.3.
+
+<!-- OLD TEXT START — before the device runs
 **Verified on the device: none yet.** The read-only smoke test on `main` gives 16 PASS / 2 FAIL / 1 WARN. The fails are F1 and F6; the warning is F2's missing pipeline check.
 
 After deploying the branch, all three should pass:
-```bash
-bash scripts/remote/deploy-release-audit.sh
-```
+    bash scripts/remote/deploy-release-audit.sh
+OLD TEXT END -->
+
+### 6.3 Wave 3: the device checks (2026-11-09, owner-approved)
+
+The G11 runs the PR head. Each step had the owner's approval, and none touched the network path.
+
+| Step | Result |
+|---|---|
+| TShark and nginx recreate (`deploy-release-audit-isolation.sh`) | `nginx -t` and the compose file valid. capinfos opens the newest capture as uid 65534. Smoke test 28/28 |
+| Failure injection (`failure-injection-release.sh`) | <ul><li>Suricata stopped: `sensor_stopped` and "problem" in 1 s; fresh 27 s after the restart.</li><li>Zeek stopped: the same in 22 s; fresh again.</li><li>OpenSearch restart: health "problem" during it, docker health back in about 70 s, cluster green through the service curlrc (auth intact, Chain 21), pipeline fresh 2 s later.</li><li>Smoke test after it all: 28/28.</li></ul> |
+| Rendered UI | <ul><li>The first full reload while logged in was a **502** (A17). nginx: "upstream sent too big header". Fixed by `proxy_buffer_size 16k` and `proxy_buffers 8 16k` (`edfdd9a9`, NET-241); the bats test fails on the old config.</li><li>After the fix, full reloads of Home and Live render.</li><li>With Suricata stopped for 76 s: Home's Capture pipeline card read "Data: Suricata stopped". Alerts said nothing (B-q, NET-242).</li></ul> |
+| Benign IDS trigger | <ul><li>The planned `testmynids.org` request never left the LAN: its DNS filter answers `0.0.0.0` for that name, and the audit doesn't bypass the owner's filter.</li><li>The same signature went in a request header to example.com (IANA-reserved) instead (R15). The alert was indexed in 11.3 s (B-r, NET-243).</li></ul> |
+| Final smoke test (with the nginx log check) | **29 PASS / 0 FAIL / 0 WARN** |
+
+Not run: an appliance reboot, stopping Logstash or Filebeat, a disk-full run.
 
 ---
 
@@ -325,9 +356,10 @@ Parent issue NET-223. Each blocker was an unresolved P1 on `446845ec`. All six a
 | B3 | Device totals omit responder traffic and all IPv6 | NET-226 | Count both sides, add IPv6 | **Fixed**, reconciled on the G11 (5,075 = 5,075). Global IPv6 is UNVERIFIED (ULA only here) |
 | B4 | Backup/restore reports success but skips retention and capture mode | NET-227 | Back up the real files; report what was restored | **Fixed.** A restore on the device was not run (it rewrites live settings) |
 | B5 | Alerts/Threats/Compliance say "no threats" / "clean" without the pipeline check beside them | NET-228 | Pipeline state with every "no alerts"; "no rule matched" wording | **Fixed** |
-| B6 | First host on a fresh install can claim the admin account; TShark not network-isolated | NET-229 | One-time setup code; `network_mode: none` for TShark | **Fixed in code.** The TShark and nginx change needs those two containers recreated (`deploy-release-audit-isolation.sh`, owner approval) |
+| B6 | First host on a fresh install can claim the admin account; TShark not network-isolated | NET-229 | One-time setup code; `network_mode: none` for TShark | **Fixed**, verified on the G11 after the recreate (smoke test step 9) |
+| B7 | A full reload of a large page while logged in is a 502 (found on the device in wave 3) | NET-241 | Header buffer that fits SvelteKit's `Link` header | **Fixed**, verified on the G11 (reloads render; smoke test step 7) |
 
-Also required by the existing gate in `RELEASE-VERIFICATION.md`, still open: hardware checks H2–H7, CI green, release notes, version bump, and merging PR #236.
+Also required by the existing gate in `RELEASE-VERIFICATION.md`, still open: hardware checks H2–H4, H6 and H7 (H5 measured 11.3 s, NET-243), release notes, and the version bump.
 
 ---
 
@@ -335,18 +367,19 @@ Also required by the existing gate in `RELEASE-VERIFICATION.md`, still open: har
 
 | Area | Why unverified | What would resolve it |
 |---|---|---|
-| Rendered live UI on the G11 | Chrome stops at the appliance's self-signed certificate interstitial; the audit does not click past security warnings | Owner opens `https://<appliance>` in the Claude tab group, accepts the certificate and signs in; then re-run the reconciliation screenshots |
+| ~~Rendered live UI on the G11~~ | **Resolved 2026-11-09:** the owner accepted the certificate and signed in. Home, Live and Alerts render; a stopped sensor shows on Home (section 6.3). The check found A17, now fixed | — |
 | Inline bridge and DHCP gateway on hardware | No bench; G11 runs mirror mode on the live home network | Isolated two-NIC bench (modem → NetTap → router) per mode |
 | IPv6 internet traffic | Test network has only ULA/link-local IPv6 | A network with global IPv6, or an IPv6 PCAP fixture replayed into an isolated stack |
-| A benign IDS trigger end to end (alert < 10 s, H5) | Contacting a third-party test endpoint needs owner approval; no isolated Zeek/Suricata stack was run | Owner approves `curl http://testmynids.org/uid/index.html` from a LAN client, or replay a fixture PCAP into an isolated stack |
-| Failure injection on the device (stop Suricata/Zeek/Logstash, OpenSearch restart, reboot, MS-001 role mapping surviving recreate) | Disruptive on the live appliance; needs approval | Owner-approved window; run with the F2 build deployed so the new pipeline check is exercised |
+| ~~A benign IDS trigger end to end~~ | **Resolved 2026-11-09** (R15): alert end to end, 11.3 s packet to index; the 10 s goal is NET-243 | — |
+| ~~Failure injection: Suricata, Zeek, OpenSearch restart, role mapping surviving a restart~~ | **Resolved 2026-11-09** (section 6.3) | — |
+| Stopping Logstash or Filebeat, an appliance reboot, the role mapping surviving a container *recreate* | Not run in the approved window (a reboot takes the whole box down; a recreate of OpenSearch resets its filesystem) | An owner-approved reboot, then `bash scripts/remote/smoke-test-release.sh` |
 | Disk full / near full | Must not be done on the live box; no isolated stack with a small disk | Isolated VM with a small data disk |
 | Malcolm update failure and rollback | Disruptive | Isolated stack |
 | ~~Index retention (today's index protected)~~ | Resolved 2026-11-09: manual cleanup and PCAP pruning already had tests; `test_prune_emergency_never_deletes_todays_index` now pins the emergency prune | — |
 | 500 Mbps zero-loss, <1 ms added latency (bridge) | No bench | iperf3 through a bridge bench (H3) |
 | Fixes F1–F8 on the device | **Resolved 2026-11-09:** deployed with the owner's approval; smoke test 19 PASS / 0 FAIL / 0 WARN; F4 migration ran inside the container (baselines moved, present after the recreate) | — |
 | Wave-2 fixes on the device | **Resolved 2026-11-09:** `fa2c2984` deployed (web UI and daemon), smoke test 26 PASS / 2 FAIL / 0 WARN; the daemon log has no errors, and no notification channel is configured, so nothing was sent | — |
-| TShark isolation and CyberChef's login on the device (NET-229) | Recreating `nettap-tshark` and `nettap-nginx` takes the dashboard and PCAP filters down for about 30 s; needs the owner's approval | Owner runs `bash scripts/remote/deploy-release-audit-isolation.sh`. It runs nginx -t first, checks TShark still reads captures as nobody, then runs the smoke test (expected 28 PASS) |
+| ~~TShark isolation and CyberChef's login on the device (NET-229)~~ | **Resolved 2026-11-09:** recreated with the owner's approval; smoke test 28/28, then 29/29 with the nginx fix | — |
 | A real notification send (NET-224) | No channel is configured on the G11; the owner's addresses and credentials aren't the audit's to enter | Owner sets up one channel in Settings › Notifications and presses Test |
 | A backup restore on the device (NET-227) | A restore rewrites live settings | Isolated stack, or the owner restores a backup taken just before |
 | State migration inside the real daemon container | Claude Code's removal safety check blocks running a script with `rm` through `docker exec sh -c`; the logic is covered by bats on macOS `sh` and shellcheck in POSIX mode | The deploy script runs it on the device; its Step 6 confirms every file arrived |
@@ -372,7 +405,7 @@ It prints one PASS / FAIL / WARN line per check and exits non-zero on any FAIL. 
 | 4 | Newest Zeek record's `event.ingested` | older than 15 min, or none in 24 h |
 | 5 | Daemon refuses requests without the token; system health; the F2 pipeline state; capture health; packet loss (info) | health not "healthy", pipeline not "fresh", capture not "normal" |
 | 6 | Last full hour's traffic total vs an independent sum of Zeek's final conn records (excluded IPs removed), taken before and after the API call | API total outside that range (interim records counted) |
-| 7 | Web API refuses requests without a session; public `/api/health` carries no hardware detail | either fails |
+| 7 | Web API refuses requests without a session; public `/api/health` carries no hardware detail; nginx never cut off a page's headers (NET-241) | any fails |
 | 8 | Disk use (info); storage status | capture paused for disk, ILM out of sync, or no growth estimate |
 | 9 | Blocker fixes: notification settings carry no secret; DNS median; alert trend values; no setup code once an admin exists; TShark has no network and runs as nobody; CyberChef needs a login; GeoIP marks anycast and names its source | any check fails |
 | 10 | Device-A's connections counted from both sides (started + answered + IPv6 by MAC) against independent sums | totals differ |
@@ -381,7 +414,10 @@ Results:
 - `main` (`446845ec`), 2026-11-09, steps 1–8: 16 PASS, 2 FAIL (step 6, and the hardware detail in step 7), 1 WARN (step 5 pipeline).
 - Branch at `e3391970` (wave 1): 19 PASS.
 - Branch at `fa2c2984` (wave 2): 26 PASS, 2 FAIL. Both FAILs are in step 9 and clear once TShark and nginx are recreated.
+- After the recreate (`fc42d424`): 28 PASS, also after the failure injection.
+- PR head `a7623897` (wave 3, with the nginx check): **29 PASS / 0 FAIL / 0 WARN**.
 
 Before tagging a release, also run:
 - the Dev suites: daemon pytest, vitest, svelte-check, `npm run check:colors`, `npm run test:visual`, bats;
-- a benign IDS trigger from a LAN client, checking the alert appears in under 10 s (H5).
+- a full reload of Home while logged in (the smoke test's own web checks are unauthenticated);
+- a benign IDS trigger from a LAN client: a request whose header carries `uid=0(root)` to any HTTP site (ET 2100498, listed under Activity), checking the alert is indexed in under 10 s (H5). A DNS filter may block `testmynids.org`.

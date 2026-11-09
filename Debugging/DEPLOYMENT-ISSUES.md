@@ -1,6 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-11-07 (Chain 27: Malcolm's Suricata rule wiring. More free rule sources, an optional ET Pro code, and one lock, last-good recovery and a status record around every rule update; built on feature/detection-slice2, not yet on the device. Chain 26: the domain page was a 502 on the G11 because one alert host field is mapped as text; it now answers with an exact lower bound. The same run found PCAP capture stopped for 21 h. Earlier, 2026-11-01, Chain 25: dashboard figures checked against OpenSearch; host-network DNS names, a pcap-monitor DNS storm, the 1970 record and ISM yellow fixed. Chain 24: malcolm_template's index pattern was never filled in, so indices guessed field types and Zeek records were rejected; the daemon's .keyword queries from Chain 13 are dropped. Chain 23 verified on the G11)
+> **Last updated:** 2026-11-09 (Chain 29: a full reload of a logged-in page was a 502; nginx's 4 KB header buffer was smaller than SvelteKit's Link header. NET-241, PR #236.)
+<!-- previous: **Last updated:** 2026-11-07 (Chain 27: Malcolm's Suricata rule wiring. More free rule sources, an optional ET Pro code, and one lock, last-good recovery and a status record around every rule update; built on feature/detection-slice2, not yet on the device. Chain 26: the domain page was a 502 on the G11 because one alert host field is mapped as text; it now answers with an exact lower bound. The same run found PCAP capture stopped for 21 h. Earlier, 2026-11-01, Chain 25: dashboard figures checked against OpenSearch; host-network DNS names, a pcap-monitor DNS storm, the 1970 record and ISM yellow fixed. Chain 24: malcolm_template's index pattern was never filled in, so indices guessed field types and Zeek records were rejected; the daemon's .keyword queries from Chain 13 are dropped. Chain 23 verified on the G11) -->
 > **Status:** 58 issues tracked. 58 RESOLVED. Latest: Fixed category drill-down page crash (`each_key_duplicate`) — 3 daemon→frontend data contract mismatches in `handle_alert_category_detail()` and `handle_alert_category_timeline()`. Lessons 97–99 added.
 
 This document tracks every deployment bug encountered while bringing up the NetTap/Malcolm stack. It is the **single source of truth** — consult it before starting any new fix and update it after every change.
@@ -52,6 +53,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | NetTap web (nettap-web) | OK | Dashboard loads. CSRF 403 fully fixed: NET-81 (PROTOCOL_HEADER/HOST_HEADER env vars + volume chown) + NET-82 (nginx proxy_set_header inheritance — must repeat headers in every location block). System page fixed NET-83 (null-safe SMART health). SSE streaming fixed (proxy_buffering off). |
 | NetTap storage API | OK | Fixed NET-80 — `get_status()` now returns `disk_free_gb`, numeric percentages, top-level retention fields matching frontend StorageStatus interface. |
 | NetTap custom services | OK | daemon, web, nginx keep strict security |
+| nginx page reloads (nettap-nginx) | OK (G11, 2026-11-09) | Chain 29 (NET-241): `proxy_buffer_size 16k` fits SvelteKit's 4.3–4.8 KB `Link` header; before, every logged-in full reload of Home, Alerts, Live or Connections was a 502. The smoke test fails if nginx ever logs "upstream sent too big header". |
 | Mirror capture setup (daemon host commands) | OK | Chain 22: AppArmor blocked nsenter on Ubuntu, so mirror setup never ran. Host commands now run directly. Verified on the G11 2026-11-01: `verify-mirror-mode.sh` all checks pass after a reboot (~3,800 pps on enp4s0). |
 | Zeek live cluster | OK | Chain 23: on AMD CPUs with a broken RDRAND every Zeek process got the same Broker ID, the cluster never connected and Zeek wrote no logs. zeek-live is now built locally with a /dev/urandom shim. Verified on the G11 2026-11-01: unique IDs, 9 cluster connections, ~25 Zeek log types written. |
 | OpenSearch index mapping | OK (G11; PR pending) | Chain 24: malcolm_template's index pattern was a placeholder, so every daily index guessed its field types; Zeek records were rejected (event.id as long) and the daemon's queries were built on the guessed `.keyword` fields. Existing boxes: `bash scripts/remote/fix-index-template.sh --delete-today`, then `bash scripts/remote/deploy-malcolm-field-names.sh`. |
@@ -1776,6 +1778,35 @@ This chain covers 5 deployment issues discovered during N100 hardware testing on
 
 ---
 
+## Chain 29: nginx header buffer vs SvelteKit's Link header
+
+### NET-241: a full reload of a logged-in page was a 502
+
+| Field | Value |
+|---|---|
+| **Commit** | `edfdd9a9` |
+| **Branch** | `fix/release-audit-2026-11` (PR #236) |
+| **Status** | Done, verified on the G11 |
+| **Severity** | Urgent (core function) |
+| **Date** | 2026-11-09 |
+| **Environment** | G11, nginx 1.30-alpine, SvelteKit 2.70.3 |
+
+**Symptom:** pressing reload on Home, Alerts, Live or Connections while logged in showed nginx's "502 Bad Gateway". Moving between pages inside the app worked, so the dashboard looked fine after sign-in. `docker logs nettap-nginx`: `upstream sent too big header while reading response header from upstream`.
+
+**Root cause:** SvelteKit adds a `link` response header naming every JS chunk the page needs (`<…>; rel="modulepreload"; nopush`). From the production build it is 4.3 KB for Home on `main` and 4.5 KB on the audit branch; Live is 4.8 KB. nginx reads upstream headers into `proxy_buffer_size`, 4 KB by default, and answers 502 when they don't fit. `main` had it too; every new component pushes a page closer.
+
+**Fix:** `proxy_buffer_size 16k; proxy_buffers 8 16k;` in `http{}` (every proxied location inherits it). `proxy_busy_buffers_size` keeps its 32k default, which nginx accepts with 8×16k.
+
+**Verification:**
+* `nginx -t` passes, both in a throwaway container and in `deploy-release-audit-isolation.sh`.
+* Full reloads of Home and Live render on the G11.
+* Smoke test: 29/29, including the new nginx-log check.
+* The bats test fails on the old config.
+
+**Key insight:** the smoke test's dashboard check was an unauthenticated `curl /`, a 5-byte redirect, so it could never see a header-size failure. Check a logged-in full reload after any deploy that touches nginx or adds pages.
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 16+ PRs. Check their current state before making changes.
@@ -1802,7 +1833,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `daemon/services/device_fingerprint.py` | NET-95, PR #92 | Fingerprinting uses `NETWORK_INDEX` + ECS fields. **Aggregation fields use .keyword suffix (zeek.dns.query.keyword, etc.).** |
 | `daemon/services/nl_search.py` | NET-95 | NL search uses `NETWORK_INDEX` + ECS fields |
 | `daemon/api/logs.py` | NET-100, PR #92 | Log Search API — generic Zeek/Suricata browser. **Fixed _source wrapper format for frontend compatibility.** |
-| `docker/nginx.conf` | PR #92 | CSP header updated to allow fonts.googleapis.com (style-src) and fonts.gstatic.com (font-src) |
+| `docker/nginx.conf` | PR #92, NET-241 | CSP header updated to allow fonts.googleapis.com (style-src) and fonts.gstatic.com (font-src). **`proxy_buffer_size 16k` + `proxy_buffers 8 16k` at http level (Chain 29): don't remove; SvelteKit's Link header outgrows 4 KB.** |
 | `daemon/api/opensearch_cluster.py` | NET-100 | OpenSearch cluster visibility API |
 | `daemon/api/logstash.py` | NET-100 | Logstash monitoring API |
 | `web/src/lib/styles/global.css` | NET-100 | Complete CSS redesign (Datadog/Grafana aesthetic) |
@@ -2079,6 +2110,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 177. **Route every caller of an image's script through one wrapper by replacing the script, not its callers (Chain 27, NET-191)** — Malcolm's entrypoint, its crontab and NetTap's "Update now" all call `/usr/local/bin/suricata-update-rules.sh`. A shim at that path (the original kept beside it, copied once) covers all three without touching Malcolm's entrypoint or crontab. Copy the original only while it doesn't carry the shim's marker, or a restart copies the shim over it.
 178. **A device sudo rule of `docker` only means host-side locks go through a container (Chain 27)** — `sudo flock` and `sudo VAR=x docker` both need a password there. A throwaway container of the live image, on the same volume, takes `flock` and sleeps; `docker rm -f` releases it, and a sleep cap stops a dead script from holding it.
 179. **`docker exec` gets the image and compose environment, not what the entrypoint exported (Chain 27)** — anything an entrypoint wrapper computes (here the ET Pro source swap) must be written to a file that later `docker exec` calls read.
+180. **A proxy's header buffer must fit the app's largest response header (Chain 29)**: SvelteKit's `Link` preload header grows with every chunk a page imports, past nginx's 4 KB default. Check a logged-in full reload, not an unauthenticated `curl /`.
 
 ---
 
@@ -2181,4 +2213,5 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | — | 520a5b6 | Daemon API token: host networking had left :8880 open to the LAN (Chain 20) | 2026-10-29 |
 | NET-179 | #183 | PCAP capture found stopped for 21 h: fix-pcap-capture-stopped.sh (Chain 26) | 2026-11-06 |
 | NET-178 | pending | Domain page 502: an alert host field mapped as text failed the whole page (Chain 26) | 2026-11-06 |
+| NET-241 | #236 | A logged-in full reload was a 502: nginx header buffer too small for SvelteKit's Link header (Chain 29) | 2026-11-09 |
 | NET-216 | pending | `activate-bridge.sh` (the --defer-bridge path) started the stack without the OpenSearch bootstrap or index templates (Chain 28) | 2026-11-08 |

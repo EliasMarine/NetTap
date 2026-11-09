@@ -138,6 +138,8 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | 2026-11-09 | Backup and restore | "Import successful" while retention and capture mode were skipped (A9) | Backed up file names the daemon doesn't read | The real files are backed up, without secrets; validated before anything is restored; the page reports what was restored, skipped or failed | NET-227 | fix/release-audit-2026-11 |
 | 2026-11-09 | Storage and retention | ILM never retried after a startup failure (A15); capture could stay paused at 85–90% disk (B-l); a fixed 1.2 GB/day estimate (B-m) | One-shot apply; resume and cleanup thresholds didn't meet; no measurement | ILM retries with backoff; while paused, cleanup goes to 85%; growth is measured from complete days | NET-237 | fix/release-audit-2026-11 |
 | 2026-11-09 | Capped and partial searches | Timed-out, partial-shard and capped scans were shown as complete, lower figures (B-f) | Completeness flags dropped | They answer "The <x> search was incomplete"; `complete_terms` raises too. A detection view then shows nothing, not what it read (NET-238) | NET-237 | fix/release-audit-2026-11 |
+| 2026-11-09 | nginx (page reloads) | A full reload of Home, Alerts, Live or Connections while logged in was a 502 (release audit A17) | SvelteKit's Link preload header (4.3–4.8 KB) outgrew nginx's 4 KB `proxy_buffer_size` | `proxy_buffer_size 16k`, `proxy_buffers 8 16k`; the smoke test fails on the nginx error. Verified on the G11 | NET-241 | fix/release-audit-2026-11 |
+| 2026-11-09 | Failure reporting (device) | Failure injection on the G11: stopped Suricata/Zeek and an OpenSearch restart are reported and recover with nobody's help; Alerts with older alerts doesn't say the IDS is stopped | NET-228 covered empty results only | Open: NET-242 | NET-242 | — |
 
 ## Reliability Lessons Learned
 
@@ -227,6 +229,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 69. **Join alerts to Zeek records with Suricata's own timing in mind.** Suricata stamps a flow-timeout alert up to 600 s after the last packet, Zeek logs late FINs as separate flipped records, and only a pure SYN in `zeek.conn.history` proves who opened a TCP connection. Simulate any scoring change on the device's live data (read-only, new module swapped in) before deploying it.
 70. **A health check that only pings the database can't see a dead sensor.** Check data freshness (`event.ingested`, not `@timestamp`, which is a connection's start) and the sensor containers' state, and keep the probe inside a fixed budget so health itself never hangs (release audit F2).
 71. **Never keep user-set state in a container's `/tmp`.** It is a tmpfs; every recreate wipes it. Use the app-data volume, and migrate existing files before the recreate, not after.
+72. **Check a deploy with a logged-in full page load, not only `curl /`.** An unauthenticated request gets a tiny redirect and never meets the response headers a real page sends (NET-241).
 
 ## Verification Checklist
 

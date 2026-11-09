@@ -83,8 +83,44 @@ Integration fixes made by the lead:
 - **Cherry-pick each agent's batch from the merge-base of its branch**, and start follow-ups on fresh branches from the current audit tip. A rebased follow-up then applies cleanly.
 - **An allowlist that several agents extend at once conflicts.** Mark the safe value at its source instead.
 
+## Wave 3 (2026-11-09): the device checks, owner-approved
+
+**What ran on the G11:**
+- `deploy-release-audit-isolation.sh`: TShark and nginx recreated. Smoke test 28/28.
+- `failure-injection-release.sh`:
+  - a stopped Suricata, then a stopped Zeek, were each reported (1 s and 22 s) and recovered;
+  - after an OpenSearch restart, auth held (Chain 21) and ingestion resumed;
+  - smoke test 28/28.
+- The rendered UI, once the owner accepted the certificate.
+- A benign IDS trigger.
+
+**What it found:**
+- **NET-241 (P1, fixed).** Every logged-in full reload of a large page was a 502.
+  - Root cause: SvelteKit's `Link` preload header (4.3–4.8 KB, on `main` too) outgrew nginx's 4 KB `proxy_buffer_size`.
+  - Fix (`edfdd9a9`): `proxy_buffer_size 16k`, `proxy_buffers 8 16k`. A new bats test fails on the old config, and the smoke test now fails on the nginx error.
+  - Delta `/deep-review`: no findings.
+  - Deployed. Home and Live reload. Smoke test 29/29.
+- **NET-242 (P2, open).** With Suricata stopped, Home's pipeline card says so but Alerts lists older alerts without a word.
+- **NET-243 (Low, open).** One alert took 11.3 s from packet to index; the goal is under 10 s.
+- **The test domain was blocked.** The LAN's DNS filter answers `0.0.0.0` for `testmynids.org`. The same signature went to example.com in a request header. ET rates the rule Informational, so it is listed under Activity.
+
+**Files changed:**
+- `docker/nginx.conf`
+- `tests/scripts/test_nginx_conf.bats`
+- `scripts/remote/smoke-test-release.sh`
+- `scripts/remote/failure-injection-release.sh` (new)
+- `scripts/remote/deploy-release-audit*.sh` (BRANCH defaults to main)
+- the Debugging trackers
+
+## Lessons (wave 3)
+
+- **An unauthenticated `curl /` can't stand in for a page load.** It gets a 5-byte redirect, so it never meets the headers a logged-in page sends. Reload a real page after a deploy.
+- **"Fresh" one second after a sensor restart is the freshness window, not proof that new records flow.** The smoke test's newest-record check, run afterwards, is what shows ingestion.
+- **A test domain can be sinkholed by the user's own DNS filter.** Carry the signature to any HTTP site instead of working around the filter.
+
 ## Next steps
 
-- Owner (approved in principle as #1): deploy with `bash scripts/remote/deploy-release-audit.sh` (web UI and daemon), which runs the smoke test.
-- Owner approval needed: `bash scripts/remote/deploy-release-audit-isolation.sh` (TShark and nginx, about 30 s without the dashboard). Also needed: failure injection, the IDS trigger, and accepting the certificate for the rendered-UI check.
-- PR #236 stays unmerged until the owner decides.
+- [x] Owner: deploy (approval #1), recreate TShark and nginx, failure injection, IDS trigger, certificate. All done 2026-11-09.
+- [x] Merge PR #236 (owner, 2026-11-09: "commit pr and merge main please. And deploy all fixes to the G11").
+- [ ] NET-242, NET-243, NET-238, NET-239, NET-240 follow-ups.
+- [ ] An owner-approved reboot, then the smoke test. A disk-full run on an isolated VM.
