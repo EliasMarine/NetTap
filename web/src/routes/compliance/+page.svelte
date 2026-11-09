@@ -54,13 +54,20 @@
 		// OLD CODE START — 2026-11-03 redesign: title-case status word
 		// status: 'Good' | 'Needs Attention' | 'Poor' | "Couldn't compute";
 		// OLD CODE END
-		status: 'Good' | 'Needs attention' | 'Poor' | "Couldn't compute";
+		// OLD CODE START — F5: no "Not measured"; an empty input scored 100
+		// status: 'Good' | 'Needs attention' | 'Poor' | "Couldn't compute";
+		// OLD CODE END
+		status: 'Good' | 'Needs attention' | 'Poor' | "Couldn't compute" | 'Not measured';
 		statusClass: string;
 		/** The card's subtitle: what the score measures. */
 		sub: string;
 		description: string;
 		findings: string[];
 		needs: Input[];
+		/** F5: its request worked but there was nothing to score; `score` then means nothing. */
+		empty: boolean;
+		/** Its share of the overall score (WEIGHTS). */
+		weight: number;
 	}
 
 	const INPUT_NAMES: Record<Input, string> = {
@@ -213,18 +220,28 @@
 		return Math.round((devicesWithRisk / totalDevices) * 100);
 	});
 
-	let overallScore = $derived(
-		Math.round(
-			encryptionScore * WEIGHTS.encryption +
-			dnsScore * WEIGHTS.dns +
-			networkScore * WEIGHTS.network +
-			patchScore * WEIGHTS.patch +
-			alertScore * WEIGHTS.alerts +
-			monitoringScore * WEIGHTS.monitoring
-		)
-	);
+	// OLD CODE START — F5: every category counted, an empty one as 100, so a box that had seen
+	// nothing graded A
+	// let overallScore = $derived(
+	// 	Math.round(
+	// 		encryptionScore * WEIGHTS.encryption +
+	// 		dnsScore * WEIGHTS.dns +
+	// 		networkScore * WEIGHTS.network +
+	// 		patchScore * WEIGHTS.patch +
+	// 		alertScore * WEIGHTS.alerts +
+	// 		monitoringScore * WEIGHTS.monitoring
+	// 	)
+	// );
+	// OLD CODE END
+	/** Weighted mean of the measured categories, their weights renormalised; null when none is. */
+	let overallScore = $derived.by(() => {
+		const weight = measured.reduce((sum, c) => sum + c.weight, 0);
+		if (weight === 0) return null;
+		return Math.round(measured.reduce((sum, c) => sum + (c.score ?? 0) * c.weight, 0) / weight);
+	});
 
 	let overallGrade = $derived.by(() => {
+		if (overallScore === null) return null;
 		if (overallScore >= 90) return 'A';
 		if (overallScore >= 80) return 'B';
 		if (overallScore >= 70) return 'C';
@@ -355,7 +372,14 @@
 				findings.push(`${fmt(count)} ${lp.toUpperCase()} connections (consider upgrading to encrypted variant)`);
 			}
 		}
-		if (findings.length === 0) {
+		// OLD CODE START — F5: said "none detected" with no traffic at all
+		// if (findings.length === 0) {
+		// 	findings.push('No legacy unencrypted protocols detected');
+		// }
+		// OLD CODE END
+		if (services.reduce((sum, s) => sum + s.count, 0) === 0) {
+			findings.push('No traffic data available yet');
+		} else if (findings.length === 0) {
 			findings.push('No legacy unencrypted protocols detected');
 		}
 		return findings;
@@ -366,7 +390,9 @@
 		const total = alertCounts.counts.total;
 
 		if (total === 0) {
-			findings.push('No alerts detected — your network looks clean');
+			// OLD CODE: findings.push('No alerts detected — your network looks clean');
+			// (F5 review: no rule matching is not proof of a clean network, and the card reads "Not measured")
+			findings.push('No rule matched in this period, so there is nothing to score');
 		} else {
 			findings.push(`${fmt(total)} total alert(s) in the current period`);
 			if (alertCounts.counts.high > 0) {
@@ -413,14 +439,24 @@
 				status: "Couldn't compute",
 				statusClass: '',
 				findings: [`Couldn't load ${missing.map((n) => INPUT_NAMES[n]).join(' or ')}: the request failed.`],
+				// F5: the stand-in defaults look empty; a failed input is failed, not empty
+				empty: false,
 			};
 		});
+	}
+
+	/** F5: a category with nothing to score is "Not measured", not a 100. */
+	function withEmpty(cats: CategoryScore[]): CategoryScore[] {
+		return cats.map((cat) => (cat.empty ? { ...cat, status: 'Not measured', statusClass: '' } : cat));
 	}
 
 	// OLD CODE START — #96: scored every category, including ones whose input failed
 	// let categories = $derived<CategoryScore[]>([
 	// OLD CODE END
-	let categories = $derived<CategoryScore[]>(withFailures([
+	// OLD CODE START — F5: an empty category scored 100
+	// let categories = $derived<CategoryScore[]>(withFailures([
+	// OLD CODE END
+	let categories = $derived<CategoryScore[]>(withFailures(withEmpty([
 		{
 			name: 'Encryption',
 			sub: 'Percent of connections that can be encrypted · current period',
@@ -431,6 +467,8 @@
 			description: 'Share of connections that use encryption (TLS/HTTPS, QUIC, SSH, VPN). Local chatter that is never encrypted (DNS, DHCP, NTP, discovery, pings) is left out.',
 			findings: getEncryptionFindings(),
 			needs: ['protocols'],
+			empty: encryptionEligible === 0,
+			weight: WEIGHTS.encryption,
 		},
 		{
 			name: 'DNS security',
@@ -442,6 +480,8 @@
 			description: 'Share of DNS lookups sent over DNS-over-TLS instead of plain text. DNS-over-HTTPS looks like any other HTTPS, so it is not counted.',
 			findings: getDnsFindings(),
 			needs: ['protocols'],
+			empty: plainDns + dnsOverTls === 0,
+			weight: WEIGHTS.dns,
 		},
 		{
 			name: 'Network segmentation',
@@ -453,6 +493,8 @@
 			description: 'Whether all devices have been baselined and communicate with expected destinations.',
 			findings: getNetworkFindings(),
 			needs: ['devices', 'risk'],
+			empty: totalDevices === 0,
+			weight: WEIGHTS.network,
 		},
 		{
 			name: 'Patch currency',
@@ -464,6 +506,8 @@
 			description: 'Usage of modern protocol versions (TLS 1.3, HTTP/2+) vs legacy unencrypted protocols.',
 			findings: getPatchFindings(),
 			needs: ['protocols'],
+			empty: protocols.services.reduce((sum, s) => sum + s.count, 0) === 0,
+			weight: WEIGHTS.patch,
 		},
 		{
 			name: 'Alert response',
@@ -476,6 +520,8 @@
 			findings: getAlertFindings(),
 			// with no alerts the score is 100 whatever the investigations; with some it needs them
 			needs: alertCounts.counts.total > 0 ? ['alerts', 'investigations'] : ['alerts'],
+			empty: alertCounts.counts.total === 0,
+			weight: WEIGHTS.alerts,
 		},
 		{
 			name: 'Monitoring coverage',
@@ -487,11 +533,16 @@
 			description: 'Proportion of discovered devices that have been risk-scored and are actively monitored.',
 			findings: getMonitoringFindings(),
 			needs: ['devices', 'risk'],
+			empty: totalDevices === 0,
+			weight: WEIGHTS.monitoring,
 		},
-	]));
+	])));
 
 	/** Categories that couldn't be computed: the overall score needs all six. */
 	let uncomputed = $derived(categories.filter((c) => c.score === null).map((c) => c.name));
+	/** F5: categories with a real score, neither failed nor empty; every figure below uses only these. */
+	let measured = $derived(categories.filter((c) => c.score !== null && !c.empty));
+	let unmeasured = $derived(categories.filter((c) => c.empty).map((c) => c.name));
 
 	// ---------------------------------------------------------------------------
 	// Recommendations
@@ -508,7 +559,10 @@
 		// if (monitoringScore < 80) {
 		// if (recs.length === 0) {
 		// OLD CODE END
-		const low = (name: string, score: number) => !uncomputed.includes(name) && score < 80;
+		// OLD CODE START — F5: an empty category passed on its stand-in 100
+		// const low = (name: string, score: number) => !uncomputed.includes(name) && score < 80;
+		// OLD CODE END
+		const low = (name: string, score: number) => measured.some((c) => c.name === name) && score < 80;
 
 		if (low('Encryption', encryptionScore)) {
 			recs.push({
@@ -546,12 +600,21 @@
 				priority: 'medium',
 			});
 		}
+		if (unmeasured.length > 0) {
+			recs.push({
+				text: `Not measured yet: ${unmeasured.join(', ')}. There is no data to score ${unmeasured.length === 1 ? 'it' : 'them'} on so far.`,
+				priority: 'low',
+			});
+		}
 		if (uncomputed.length > 0) {
 			recs.push({
 				text: `Couldn't compute ${uncomputed.join(', ')}: a request failed. Refresh to try again.`,
 				priority: 'medium',
 			});
-		} else if (recs.length === 0) {
+		// OLD CODE START — F5: "looks excellent" even when some areas had nothing to score
+		// } else if (recs.length === 0) {
+		// OLD CODE END
+		} else if (recs.length === 0 && measured.length === categories.length) {
 			recs.push({
 				text: 'Your network security posture looks excellent. Keep monitoring for changes and new devices.',
 				priority: 'low',
@@ -678,14 +741,29 @@
 	// Page summary (only figures computed above, nothing new)
 	// ---------------------------------------------------------------------------
 
-	const computed = $derived(categories.filter((c) => c.score !== null));
-	const byStatus = (status: CategoryScore['status']) => categories.filter((c) => c.status === status);
+	// OLD CODE START — F5: "computed" included the empty categories, at their stand-in 100
+	// const computed = $derived(categories.filter((c) => c.score !== null));
+	// const byStatus = (status: CategoryScore['status']) => categories.filter((c) => c.status === status);
+	//
+	// const radarAxes = $derived(computed.map((c) => ({ key: c.name, label: c.name, value: c.score ?? 0 })));
+	// const weakest = $derived(computed.reduce<CategoryScore | null>((low, c) => (low && (low.score ?? 0) <= (c.score ?? 0) ? low : c), null));
+	// OLD CODE END
+	const byStatus = (status: CategoryScore['status']) => measured.filter((c) => c.status === status);
 
-	const radarAxes = $derived(computed.map((c) => ({ key: c.name, label: c.name, value: c.score ?? 0 })));
-	const weakest = $derived(computed.reduce<CategoryScore | null>((low, c) => (low && (low.score ?? 0) <= (c.score ?? 0) ? low : c), null));
+	const radarAxes = $derived(measured.map((c) => ({ key: c.name, label: c.name, value: c.score ?? 0 })));
+	const weakest = $derived(measured.reduce<CategoryScore | null>((low, c) => (low && (low.score ?? 0) <= (c.score ?? 0) ? low : c), null));
+	const coverage = $derived(`Scored on ${measured.length} of ${categories.length} areas`);
 
 	const summary = $derived.by(() => {
-		if (overallScore >= 90) return 'Excellent security posture. Your network follows best practices across all categories.';
+		if (overallScore === null) return '';
+		// OLD CODE START — F5: "across all categories" even when only some were measured
+		// if (overallScore >= 90) return 'Excellent security posture. Your network follows best practices across all categories.';
+		// OLD CODE END
+		if (overallScore >= 90) {
+			return measured.length === categories.length
+				? 'Excellent security posture. Your network follows best practices across all categories.'
+				: 'Excellent security posture in the areas measured so far.';
+		}
 		if (overallScore >= 80) return 'Good security posture with minor areas for improvement.';
 		if (overallScore >= 70) return 'Moderate security posture. Several areas need attention.';
 		if (overallScore >= 60) return 'Below average. Multiple security practices need improvement.';
@@ -755,12 +833,21 @@
 	<Card title="Score by category" sub="0 to 100 for each category · higher is better" hero class="c-8">
 		{#if !loaded}
 			<CardState state="loading" title="Calculating security posture…" />
+		<!-- OLD CODE START — F5: too few areas always read as a failed request
 		{:else if radarAxes.length < 3}
+		OLD CODE END -->
+		{:else if radarAxes.length < 3 && uncomputed.length > 0}
 			<CardState
 				state="error"
 				title="Couldn't compute enough categories to draw them."
 				message="{uncomputed.join(', ')} have no score because a request failed. Refresh to try again."
 				onaction={() => refresh.run()}
+			/>
+		{:else if radarAxes.length < 3}
+			<CardState
+				state="empty"
+				title="Not enough measured to draw the chart yet"
+				message="{coverage}; the chart needs 3. No data yet for {unmeasured.join(', ')}."
 			/>
 		{:else}
 			<Radar
@@ -770,10 +857,16 @@
 			{#if uncomputed.length > 0}
 				<p class="note">Not shown: {uncomputed.join(', ')}, because a request failed.</p>
 			{/if}
+			{#if unmeasured.length > 0}
+				<p class="note">Not measured yet: {unmeasured.join(', ')}. There is no data for {unmeasured.length === 1 ? 'it' : 'them'} so far.</p>
+			{/if}
 		{/if}
 	</Card>
 
+	<!-- OLD CODE START — F5: only the measured categories count now
 	<Card title="Overall security posture" sub="Weighted across the six categories" class="c-4">
+	OLD CODE END -->
+	<Card title="Overall security posture" sub="Weighted across the measured categories" class="c-4">
 		{#if !loaded}
 			<CardState state="loading" title="Calculating the overall score" />
 		{:else if uncomputed.length > 0}
@@ -783,6 +876,13 @@
 				title="Couldn't compute the overall score"
 				message="{uncomputed.join(', ')} {uncomputed.length === 1 ? 'has' : 'have'} no score because a request failed. Refresh to try again."
 				onaction={() => refresh.run()}
+			/>
+		{:else if overallScore === null}
+			<!-- F5: nothing measured is no grade, not an A -->
+			<CardState
+				state="empty"
+				title="Not enough data to score yet"
+				message="None of the six areas has data to score. The score appears once NetTap has seen traffic and devices."
 			/>
 		{:else}
 			<!-- OLD CODE START — NET-192: a centred custom layout left 177 px empty beside the radar
@@ -799,11 +899,16 @@
 				/>
 				<p class="trust-plain">{summary}</p>
 			</div>
+			<p class="note">{coverage}</p>
 			<ul class="score-rows">
 				{#each categories as cat, i (cat.name)}
 					<li>
+						<!-- OLD CODE START — F5: an empty category showed its stand-in 100
 						<span>{cat.name}</span><b>{cat.score ?? '—'}</b>
 						<span class="bar-track" aria-hidden="true"><span class="bar-fill c-d{i + 1}" style:--w="{Math.max(0, Math.min(100, cat.score ?? 0))}%"></span></span>
+						OLD CODE END -->
+						<span>{cat.name}</span><b>{cat.empty ? 'Not measured' : (cat.score ?? '—')}</b>
+						<span class="bar-track" aria-hidden="true"><span class="bar-fill c-d{i + 1}" style:--w="{cat.empty ? 0 : Math.max(0, Math.min(100, cat.score ?? 0))}%"></span></span>
 					</li>
 				{/each}
 			</ul>
@@ -822,8 +927,11 @@
 				{/snippet}
 
 				<div class="stack">
+					<!-- OLD CODE START — F5: an empty category showed its stand-in 100%
 					{#if cat.score === null}
-						<!-- #96: no score for a category whose input failed -->
+					OLD CODE END -->
+					{#if cat.score === null || cat.empty}
+						<!-- #96: no score for a category whose input failed; F5: nor for one with nothing to score -->
 						<div class="score-row">
 							<span class="score dim">—</span>
 							<span class="unavailable">{cat.findings[0]}</span>
