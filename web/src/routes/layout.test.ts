@@ -5,7 +5,8 @@ import type { Writable } from 'svelte/store';
 import { page } from '$app/stores';
 import * as captureApi from '$api/capture';
 import * as systemApi from '$api/system';
-import { _configure } from '$lib/stores/alertSnapshot';
+import { get } from 'svelte/store';
+import { _configure, alertSnapshots } from '$lib/stores/alertSnapshot';
 import Layout from './+layout.svelte';
 
 vi.mock('$app/stores', async () => {
@@ -26,6 +27,7 @@ vi.mock('$lib/stores/captureMode', () => ({ initCaptureMode: vi.fn() }));
 
 const children = createRawSnippet(() => ({ render: () => '<p>page body</p>' }));
 const never = <T,>() => new Promise<T>(() => {});
+const counts = (total: number) => ({ from: '', to: '', counts: { total, high: total, medium: 0, low: 0 } });
 const pageStore = page as unknown as Writable<{ url: URL }>;
 
 function health(status: string, iface = 'enp1s0'): captureApi.CaptureHealthResponse {
@@ -212,6 +214,27 @@ describe('layout sidebar', () => {
 		expect(form).toHaveAttribute('method', 'POST');
 		expect(form).toHaveAttribute('action', '/api/auth/logout');
 		expect(button).toHaveAttribute('type', 'submit');
+	});
+
+	// NET-228 (audit HON-49): a failed count showed no badge, the same as zero
+	it.each([
+		['a failed count', () => Promise.reject(new Error('503')), '?', "Couldn't load the alert count"],
+		['a count', () => Promise.resolve(counts(7)), '7', '7 alerts in the last 24 hours'],
+	])('badges %s on Alerts', async (_what, fetcher, badge, spoken) => {
+		_configure({ fetcher: fetcher as never });
+		renderLayout();
+		const alerts = within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: /^Alerts/ });
+		await vi.waitFor(() => expect(within(alerts).getByText(spoken)).toBeInTheDocument());
+		expect(within(alerts).getByText(badge)).toHaveClass('count');
+	});
+
+	it('shows no badge for zero alerts', async () => {
+		_configure({ fetcher: (() => Promise.resolve(counts(0))) as never });
+		renderLayout();
+		await vi.waitFor(() => expect(get(alertSnapshots)[24]?.status).toBe('ok'));
+		await tick();
+		const alerts = within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: /^Alerts/ });
+		expect(alerts.querySelector('.count')).toBeNull();
 	});
 
 	it('hides the user row without a username but keeps sign-out', () => {

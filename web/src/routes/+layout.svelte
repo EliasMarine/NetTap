@@ -130,6 +130,8 @@
 		const snap = $alertSnapshots[ALERT_BADGE_HOURS];
 		return snap?.status === 'ok' && snap.data ? snap.data.counts.total : null;
 	});
+	/** NET-228 (audit HON-49): a failed count showed no badge, the same as zero */
+	let alertCountFailed = $derived($alertSnapshots[ALERT_BADGE_HOURS]?.status === 'error');
 
 	// ----- Phone navigation drawer -----
 	let navOpen = $state(false);
@@ -199,6 +201,7 @@
 				path={$page.url.pathname}
 				{capture}
 				{alertCount}
+				{alertCountFailed}
 				storage={storageInfo}
 				username={data?.username ?? null}
 				onnavigate={() => closeNav(false)}
