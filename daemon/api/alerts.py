@@ -1483,6 +1483,35 @@ def _raw_severity_breakdown(bucket: dict) -> dict[str, int]:
     return {**counts, "info": max(0, bucket.get("doc_count", 0) - sum(counts.values()))}
 
 
+TREND_MIN_SLOTS = 4  # whole slots compared, two a half at least
+TREND_MIN_ALERTS = 20  # fewer and a ×1.5 swing is a few alerts either way
+
+
+def category_trend(sparkline: dict) -> str:
+    """Rising or falling between two equal halves of whole slots, or "not_enough_data" (NET-228).
+
+    time_slots' first and last slots only partly overlap the window, so they are left out, and so
+    is the oldest slot of an odd count. A half with no alerts may be a half with no data, which the
+    counts can't tell apart, so it is not enough data either.
+    """
+    vals = [sparkline[k] for k in sorted(sparkline)][1:-1]
+    vals = vals[len(vals) % 2 :]
+    mid = len(vals) // 2
+    first_half, second_half = sum(vals[:mid]), sum(vals[mid:])
+    if (
+        len(vals) < TREND_MIN_SLOTS
+        or first_half + second_half < TREND_MIN_ALERTS
+        or not first_half
+        or not second_half
+    ):
+        return "not_enough_data"
+    if second_half > first_half * 1.5:
+        return "increasing"
+    if first_half > second_half * 1.5:
+        return "decreasing"
+    return "stable"
+
+
 @in_thread
 def handle_alerts_categories(request: web.Request) -> web.Response:
     """GET /api/alerts/categories?from=&to=
@@ -1656,26 +1685,30 @@ def handle_alerts_categories(request: web.Request) -> web.Response:
                 subs[sub_id] = {"id": sub_id, "label": sub_label, "count": 0}
             subs[sub_id]["count"] += doc_count
 
-    # Compute trend from sparkline data
-    def _compute_trend_from_sparkline(sparkline: dict) -> str:
-        vals = list(sparkline.values())
-        if len(vals) < 4:
-            return "stable"
-        mid = len(vals) // 2
-        first_half = sum(vals[:mid])
-        second_half = sum(vals[mid:])
-        if second_half > first_half * 1.5:
-            return "increasing"
-        elif first_half > second_half * 1.5:
-            return "decreasing"
-        return "stable"
+    # OLD CODE START — NET-228: split by slot count, so the partial first and last slots and an odd
+    # count (one more slot in the second half) tilted it; now category_trend
+    # # Compute trend from sparkline data
+    # def _compute_trend_from_sparkline(sparkline: dict) -> str:
+    #     vals = list(sparkline.values())
+    #     if len(vals) < 4:
+    #         return "stable"
+    #     mid = len(vals) // 2
+    #     first_half = sum(vals[:mid])
+    #     second_half = sum(vals[mid:])
+    #     if second_half > first_half * 1.5:
+    #         return "increasing"
+    #     elif first_half > second_half * 1.5:
+    #         return "decreasing"
+    #     return "stable"
+    # OLD CODE END
 
     # Build final response
     categories = []
     for cat_id, entry in cat_data.items():
         if entry["count"] == 0:
             continue
-        trend = _compute_trend_from_sparkline(entry["sparkline"])
+        # OLD CODE: trend = _compute_trend_from_sparkline(entry["sparkline"]) (NET-228)
+        trend = category_trend(entry["sparkline"])
         categories.append(
             {
                 "id": entry["id"],

@@ -1576,3 +1576,25 @@ describe('Alerts — zero alerts and the pipeline (NET-228)', () => {
 		expect(screen.getByText("Can't tell if anything needs review · Data pipeline now: No new records for 47 min")).toBeInTheDocument();
 	});
 });
+
+// NET-228: the daemon says when a category's halves are too thin, or too uneven, to compare
+describe('Alerts — category trend', () => {
+	it('says "not enough data" instead of a direction', async () => {
+		succeedAll([]);
+		vi.mocked(getEnhancedCategories).mockResolvedValue({
+			...range,
+			categories: [
+				{
+					id: 'malware_c2', label: 'Malware & C2', icon: 'alert', color: 'red', description: '', count: 5,
+					severity_breakdown: { critical: 0, high: 5, medium: 0, low: 0, info: 0 },
+					trend: { direction: 'not_enough_data', percentage: 0 }, sparkline: [], sub_categories: [],
+				},
+			],
+		});
+		render(Page);
+		await flush();
+		const card = screen.getByRole('heading', { name: 'Alert categories' }).closest('.card') as HTMLElement;
+		expect(within(card).getByText(/· not enough data$/)).toBeInTheDocument();
+		expect(within(card).queryByText(/not_enough_data/)).not.toBeInTheDocument();
+	});
+});

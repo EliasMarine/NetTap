@@ -1622,7 +1622,8 @@ OLD CODE END -->
 					label: cat.label,
 					value: cat.count,
 					display: formatNumber(cat.count),
-					detail: cat.trend.direction === 'stable' ? undefined : cat.trend.direction,
+					// OLD CODE: detail: cat.trend.direction === 'stable' ? undefined : cat.trend.direction, (NET-228)
+					detail: cat.trend.direction === 'stable' ? undefined : cat.trend.direction === 'not_enough_data' ? 'not enough data' : cat.trend.direction,
 					href: `/alerts/${cat.id}`,
 				}))}
 			/>

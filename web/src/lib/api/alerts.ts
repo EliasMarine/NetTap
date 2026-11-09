@@ -662,7 +662,8 @@ export interface SubCategory {
 }
 
 export interface CategoryTrend {
-	direction: 'increasing' | 'decreasing' | 'stable';
+	// OLD CODE: direction: 'increasing' | 'decreasing' | 'stable'; (NET-228: the daemon can say there isn't enough data)
+	direction: 'increasing' | 'decreasing' | 'stable' | 'not_enough_data';
 	percentage: number;
 }
 
@@ -784,7 +785,8 @@ export async function getEnhancedCategories(
 	return { ...data, categories: categories.map(normaliseCategory) };
 }
 
-const TREND_DIRECTIONS: CategoryTrend['direction'][] = ['increasing', 'decreasing', 'stable'];
+// OLD CODE: const TREND_DIRECTIONS: … = ['increasing', 'decreasing', 'stable']; (NET-228)
+const TREND_DIRECTIONS: CategoryTrend['direction'][] = ['increasing', 'decreasing', 'stable', 'not_enough_data'];
 
 /**
  * Map a daemon category (`trend: "increasing"`, `sparkline: [{timestamp, count}]`)
