@@ -29,7 +29,9 @@
 	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import { fmt } from '$lib/utils/drilldown';
 	// NET-228 (audit B5): the zero-alert finding carries the pipeline's current state
-	import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system';
+	// OLD CODE: import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system'; (review L7)
+	import { nothingFound } from '$api/system';
+	import { HEALTH_CHECKING, readHealth, type HealthCheck } from '$lib/utils/read-health';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -98,8 +100,8 @@
 	// #96: requests that failed; the defaults above stand in for them only so the other scores compute
 	let failed = $state<Input[]>([]);
 	/** NET-228: the system health, for the pipeline state beside a zero; null until it loads or when it failed */
-	let health = $state<SystemHealth | null>(null);
-	let healthFailed = $state(false);
+	// OLD CODE: let health = $state<SystemHealth | null>(null); let healthFailed = $state(false); (review L7: one health helper for the loaders; its failure marks only the lines that read it)
+	let healthCheck = $state<HealthCheck>(HEALTH_CHECKING);
 
 	// ---------------------------------------------------------------------------
 	// Scoring constants
@@ -399,7 +401,7 @@
 			// (F5 review: no rule matching is not proof of a clean network, and the card reads "Not measured")
 			// OLD CODE: findings.push('No rule matched in this period, so there is nothing to score');
 			// (NET-228: informational matches are never counted, and nothing said whether data was arriving)
-			const zero = nothingFound('No counted rule matches in this period', health, healthFailed);
+			const zero = nothingFound('No counted rule matches in this period', healthCheck.health, healthCheck.failed);
 			findings.push(`${zero.title}, so there is nothing to score · ${zero.detail}`);
 		} else {
 			findings.push(`${fmt(total)} total alert(s) in the current period`);
@@ -668,17 +670,14 @@
 		loading = true;
 		// #96: each input on its own, so one failure marks only the categories built on it
 		// OLD CODE: const [protocolsRes, alertsRes, devicesRes, riskRes, statsRes] = await Promise.allSettled([ (NET-228: and the health)
-		const [protocolsRes, alertsRes, devicesRes, riskRes, statsRes, healthRes] = await Promise.allSettled([
-			getProtocolDistribution(),
-			getAlertCount(),
-			getDeviceCount(),
-			getRiskScores(),
-			getInvestigationStats(),
-			getSystemHealth(),
+		// OLD CODE: const [protocolsRes, alertsRes, devicesRes, riskRes, statsRes, healthRes] = await Promise.allSettled([ …, getSystemHealth()]); (review L7)
+		const [[protocolsRes, alertsRes, devicesRes, riskRes, statsRes], checked] = await Promise.all([
+			Promise.allSettled([getProtocolDistribution(), getAlertCount(), getDeviceCount(), getRiskScores(), getInvestigationStats()]),
+			readHealth(),
 		]);
 		if (!guard.current(g)) return 'skipped';
-		health = healthRes.status === 'fulfilled' ? healthRes.value : null;
-		healthFailed = healthRes.status === 'rejected';
+		// OLD CODE: health = healthRes.status === 'fulfilled' ? healthRes.value : null; healthFailed = healthRes.status === 'rejected'; (review L7)
+		healthCheck = checked;
 		if (protocolsRes.status === 'fulfilled') protocols = protocolsRes.value;
 		if (alertsRes.status === 'fulfilled') alertCounts = alertsRes.value;
 		if (devicesRes.status === 'fulfilled') deviceCount = devicesRes.value;
@@ -698,8 +697,8 @@
 		// if (failed.length === 0) return 'ok';
 		// return failed.length === Object.keys(settled).length ? 'failed' : 'partial';
 		// OLD CODE END
-		// OLD CODE: return outcome(Object.values(settled)); (NET-228: the health is a request too)
-		return outcome([...Object.values(settled), healthRes]);
+		// OLD CODE: return outcome([...Object.values(settled), healthRes]); (review L7: a failed health marks only the zero line)
+		return outcome(Object.values(settled));
 	}
 
 	// OLD CODE START — #96: any failure left the defaults in place, so it scored as a clean network

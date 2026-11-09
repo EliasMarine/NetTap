@@ -90,7 +90,9 @@
 	import { alertLevel, alertTitle, groupAlerts, groupCategoryLinked, linkedSuricataCategory, shortSeen } from './alert-view';
 	import { formatTime } from '$lib/utils/time';
 	// NET-228 (audit B5): every "nothing found" message carries the pipeline's current state
-	import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system';
+	// OLD CODE: import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system'; (review L7)
+	import { nothingFound } from '$api/system';
+	import { HEALTH_CHECKING, readHealth, type HealthCheck } from '$lib/utils/read-health';
 
 	// ---------------------------------------------------------------------------
 	// Constants
@@ -205,8 +207,8 @@
 	// OLD CODE: let activityCount = $state<(DrillWindow & { total: number }) | null>(null); (NET-228: and how many have Suricata priority high)
 	let activityCount = $state<(DrillWindow & { total: number; high: number }) | null>(null);
 	/** NET-228: the system health, for the pipeline state beside a zero; null until it loads or when it failed */
-	let health = $state<SystemHealth | null>(null);
-	let healthFailed = $state(false);
+	// OLD CODE: let health = $state<SystemHealth | null>(null); let healthFailed = $state(false); (review L7: one health helper for the loaders; its failure marks only the lines that read it)
+	let healthCheck = $state<HealthCheck>(HEALTH_CHECKING);
 
 	// Pagination
 	/** The current search's window: paging reuses it, so rows arriving between pages don't shift the list. */
@@ -803,7 +805,8 @@
 			snapshotHoursLoaded = hours;
 		}
 
-		const [snap, results] = await Promise.all([
+		// OLD CODE: const [snap, results] = await Promise.all([ (review L7: the health beside them, outside the page's own results)
+		const [snap, results, checked] = await Promise.all([
 			// OLD CODE: loadAlertSnapshot(hours), (slice 2a: a Custom window counts on this page)
 			customWindow ? loadCustomCounts(customWindow, hours) : loadAlertSnapshot(hours),
 			Promise.allSettled([
@@ -816,12 +819,14 @@
 				getSmartAlertSummary({ from, to }),
 				// NET-191: last, so it never takes a count reply meant for the snapshot above
 				getAlertCount({ from, to, activity: true }),
-				getSystemHealth(),
+				// OLD CODE: getSystemHealth(), (review L7)
 			] as const),
+			readHealth(),
 		]);
 		// OLD CODE: const [tl, sigs, dest, src, cats, listResult, summary] = results; (NET-191: the activity count)
 		// OLD CODE: const [tl, sigs, dest, src, cats, listResult, summary, activity] = results; (NET-228: the health)
-		const [tl, sigs, dest, src, cats, listResult, summary, activity, healthRes] = results;
+		// OLD CODE: const [tl, sigs, dest, src, cats, listResult, summary, activity, healthRes] = results; (review L7)
+		const [tl, sigs, dest, src, cats, listResult, summary, activity] = results;
 		const succeeded = [snap.status === 'ok', ...results.map((r) => r.status === 'fulfilled')];
 		if (!guard.current(g)) return 'skipped';
 
@@ -852,8 +857,8 @@
 		// A failed count keeps the last one, as the cards above keep theirs; a new window cleared it already
 		// OLD CODE: if (activity.status === 'fulfilled') activityCount = { from, to, total: activity.value.counts.total }; (NET-228)
 		if (activity.status === 'fulfilled') activityCount = { from, to, total: activity.value.counts.total, high: activity.value.counts.high };
-		health = healthRes.status === 'fulfilled' ? healthRes.value : null;
-		healthFailed = healthRes.status === 'rejected';
+		// OLD CODE: health = healthRes.status === 'fulfilled' ? healthRes.value : null; healthFailed = healthRes.status === 'rejected'; (review L7)
+		healthCheck = checked;
 		const sections = ['timeline', 'signatures', 'destIps', 'srcIps', 'categories', 'alerts', 'summary'];
 		failed = { ...Object.fromEntries(sections.map((name, i) => [name, results[i].status === 'rejected'])), alerts: failed.alerts ?? false };
 		// OLD CODE: if (listGuard.current(lg)) applyList(listResult);
@@ -1281,8 +1286,8 @@
 	);
 	const threatPill = $derived(THREAT_LEVELS.find((l) => l === threatLevel));
 	/** NET-228 (audit B5): zero counted alerts, with the pipeline's state beside it */
-	const zero = $derived(nothingFound('No counted rule matches in this period', health, healthFailed));
-	const noGroups = $derived(nothingFound('No alert groups to review in this period', health, healthFailed, "Can't tell if anything needs review"));
+	const zero = $derived(nothingFound('No counted rule matches in this period', healthCheck.health, healthCheck.failed));
+	const noGroups = $derived(nothingFound('No alert groups to review in this period', healthCheck.health, healthCheck.failed, "Can't tell if anything needs review"));
 	/** Any list filter on: an empty list then says so, not that nothing matched at all (audit HON-29) */
 	const listFiltered = $derived(activeFilter !== 'all' || !!(signatureFilter || ipFilter || srcFilter || dstFilter || suricataCategoryFilter));
 

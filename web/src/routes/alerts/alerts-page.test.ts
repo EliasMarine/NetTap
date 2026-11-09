@@ -1547,12 +1547,14 @@ describe('Alerts — zero alerts and the pipeline (NET-228)', () => {
 		expect(screen.getByRole('heading', { name: 'No counted rule matches in this period' })).toBeInTheDocument();
 	});
 
-	it('a failed health check is a partial load, and the zero reads "can\'t tell"', async () => {
+	// OLD CODE: it('a failed health check is a partial load, and the zero reads "can\'t tell"', async () => { (review L7)
+	// OLD CODE: expect(await refreshPage()).toBe('partial'); (review L7: the health marks only the lines that read it)
+	it('a failed health check leaves the page loaded, and only the zero reads "can\'t tell"', async () => {
 		zeroCounts();
 		vi.mocked(getSystemHealth).mockRejectedValue(new Error('HTTP 502'));
 		render(Page);
 		await flush();
-		expect(await refreshPage()).toBe('partial');
+		expect(await refreshPage()).toBe('ok');
 		expect(within(severityCard()).getByText("Can't tell if any rule matched · Data pipeline now: Couldn't check")).toBeInTheDocument();
 	});
 

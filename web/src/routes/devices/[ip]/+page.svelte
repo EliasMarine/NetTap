@@ -25,7 +25,9 @@
 		getDeviceRiskScore,
 	} from '$api/devices';
 	import { getSmartAlerts, suppressAlert } from '$api/alerts';
-	import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system';
+	// OLD CODE: import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system'; (review L7)
+	import { nothingFound } from '$api/system';
+	import { HEALTH_CHECKING, readHealth, type HealthCheck } from '$lib/utils/read-health';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { likelyType, osBasis, typeBasis } from '$lib/utils/device-guess';
 	import { ipv6LeftOutText } from '$lib/utils/ipv6-coverage';
@@ -89,11 +91,11 @@
 	let smartAlertsTotal = $state(0);
 	let smartAlertsFailed = $state(false);
 	/** NET-228: the system health, for the pipeline state beside an empty alert list; null until it loads or when it failed */
-	let health = $state<SystemHealth | null>(null);
-	let healthFailed = $state(false);
+	// OLD CODE: let health = $state<SystemHealth | null>(null); let healthFailed = $state(false); (review L7: one health helper for the loaders; its failure marks only the lines that read it)
+	let healthCheck = $state<HealthCheck>(HEALTH_CHECKING);
 	// groups, not rule matches: suppressed and context groups are left out of this list
 	const noGroups = $derived(
-		nothingFound('No alert groups to review for this device in this period', health, healthFailed, "Can't tell if this device has any alert to review"),
+		nothingFound('No alert groups to review for this device in this period', healthCheck.health, healthCheck.failed, "Can't tell if this device has any alert to review"),
 	);
 	let alertsExpanded = $state(false);
 	const ALERTS_COLLAPSED_COUNT = 3;
@@ -374,19 +376,23 @@
 			riskLoaded = false;
 		}
 		const connectionsLoad = fetchConnections(1, s, ip);
-		const results = await Promise.allSettled([
-			getDeviceDetail(ip, s),
-			getDeviceCategories(ip, s),
-			getSmartAlerts({ device_ip: ip, limit: 10, ...s }),
-			getDevicePorts(ip, s),
-			getDeviceRiskScore(ip, s),
-			getSystemHealth(),
+		// OLD CODE: const results = await Promise.allSettled([ …, getSystemHealth()]); (review L7: the health beside them, outside the page's own results)
+		const [results, checked] = await Promise.all([
+			Promise.allSettled([
+				getDeviceDetail(ip, s),
+				getDeviceCategories(ip, s),
+				getSmartAlerts({ device_ip: ip, limit: 10, ...s }),
+				getDevicePorts(ip, s),
+				getDeviceRiskScore(ip, s),
+			]),
+			readHealth(),
 		]);
 		if (!guard.current(g)) return 'skipped';
 		// OLD CODE: const [deviceRes, catRes, smartRes, portRes, riskRes] = results; (NET-228: + the health)
-		const [deviceRes, catRes, smartRes, portRes, riskRes, healthRes] = results;
-		health = healthRes.status === 'fulfilled' ? healthRes.value : null;
-		healthFailed = healthRes.status === 'rejected';
+		// OLD CODE: const [deviceRes, catRes, smartRes, portRes, riskRes, healthRes] = results; (review L7)
+		const [deviceRes, catRes, smartRes, portRes, riskRes] = results;
+		// OLD CODE: health = healthRes.status === 'fulfilled' ? healthRes.value : null; healthFailed = healthRes.status === 'rejected'; (review L7)
+		healthCheck = checked;
 
 		// #96: a failed detail is not "Device not found"; a refresh keeps the last one
 		if (deviceRes.status === 'fulfilled') {

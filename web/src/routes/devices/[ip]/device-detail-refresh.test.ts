@@ -95,7 +95,8 @@ describe('Device detail — page refresh contract', () => {
 		vi.mocked(devices.getDeviceRiskScore).mockRejectedValue(failed());
 		vi.mocked(devices.getDeviceConnections).mockRejectedValue(failed());
 		vi.mocked(getSmartAlerts).mockRejectedValue(failed());
-		// NET-228: the health is a page input too (once per load: the first render and the refresh)
+		// OLD CODE: // NET-228: the health is a page input too (once per load: the first render and the refresh)
+		// the health fails too; since review L7 it marks only the empty list's line, not the page
 		vi.mocked(getSystemHealth).mockRejectedValueOnce(failed()).mockRejectedValueOnce(failed());
 		render(Page);
 		await flush();

@@ -42,7 +42,9 @@
 	import { formatTime } from '$lib/utils/time';
 	import { DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown';
 	// NET-228 (audit B5): "nothing needs attention" carries the pipeline's current state
-	import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system';
+	// OLD CODE: import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system'; (review L7)
+	import { nothingFound } from '$api/system';
+	import { HEALTH_CHECKING, readHealth, type HealthCheck } from '$lib/utils/read-health';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -54,8 +56,8 @@
 	// #96: a failed check must not read as "none detected"
 	let intelFailed = $state(false);
 	/** NET-228: the system health, for the pipeline state beside a zero; null until it loads or when it failed */
-	let health = $state<SystemHealth | null>(null);
-	let healthFailed = $state(false);
+	// OLD CODE: let health = $state<SystemHealth | null>(null); let healthFailed = $state(false); (review L7: one health helper for the loaders; its failure marks only the lines that read it)
+	let healthCheck = $state<HealthCheck>(HEALTH_CHECKING);
 	const BEACONS_SHOWN = 20;
 	const CHECK_NAMES: Record<string, string> = {
 		beaconing: 'beaconing',
@@ -197,7 +199,7 @@
 
 	/** NET-228 (audit B5): no groups is "can't tell" unless current data is arriving */
 	let noGroups = $derived(
-		nothingFound('No alert groups need attention in this period', health, healthFailed, "Can't tell if any alert needs attention"),
+		nothingFound('No alert groups need attention in this period', healthCheck.health, healthCheck.failed, "Can't tell if any alert needs attention"),
 	);
 
 	// Headline
@@ -405,13 +407,14 @@
 		loading = true;
 		// OLD CODE: const [reportRes, tiRes] = await Promise.allSettled([getThreatReport(params), getThreatIntel(params)]); (NET-192 PR 3: 24h/7d/30d ask for the snapshot)
 		// OLD CODE: const [reportRes, tiRes] = await Promise.allSettled([getThreatReport(request), getThreatIntel(params)]); (NET-228: and the health)
-		const [reportRes, tiRes, healthRes] = await Promise.allSettled([getThreatReport(request), getThreatIntel(params), getSystemHealth()]);
+		// OLD CODE: const [reportRes, tiRes, healthRes] = await Promise.allSettled([getThreatReport(request), getThreatIntel(params), getSystemHealth()]); (review L7)
+		const [[reportRes, tiRes], checked] = await Promise.all([Promise.allSettled([getThreatReport(request), getThreatIntel(params)]), readHealth()]);
 		if (!guard.current(g)) return 'skipped';
 		report = reportRes.status === 'fulfilled' ? reportRes.value : null;
 		threatIntel = tiRes.status === 'fulfilled' ? tiRes.value : null;
 		intelFailed = tiRes.status === 'rejected';
-		health = healthRes.status === 'fulfilled' ? healthRes.value : null;
-		healthFailed = healthRes.status === 'rejected';
+		// OLD CODE: health = healthRes.status === 'fulfilled' ? healthRes.value : null; healthFailed = healthRes.status === 'rejected'; (review L7)
+		healthCheck = checked;
 		loading = false;
 		pollWhilePending(g, range, request);
 		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
@@ -419,7 +422,8 @@
 		// return succeeded === 2 ? 'ok' : succeeded === 1 ? 'partial' : 'failed';
 		// OLD CODE END
 		// OLD CODE: return outcome([reportRes, tiRes]); (NET-228)
-		return outcome([reportRes, tiRes, healthRes]);
+		// OLD CODE: return outcome([reportRes, tiRes, healthRes]); (review L7)
+		return outcome([reportRes, tiRes]);
 	}
 
 	const refresh = registerPageRefresh(load);
