@@ -32,6 +32,8 @@
 	import Ring from '$lib/components/ui/charts/Ring.svelte';
 	import type { SeverityLevel } from '$lib/utils/severity';
 	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
+	import { captureMode, initCaptureMode } from '$lib/stores/captureMode';
+	import Icon from '$lib/components/ui/Icon.svelte';
 
 	import {
 		getFleetSummary,
@@ -187,6 +189,8 @@
 
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
+		// NET-225: the bridge-mode note; asks again if the startup request failed, never blocks the scores
+		void initCaptureMode();
 		const params = computeTimeParams(selectedRange);
 		loading = true;
 		// The getters throw on HTTP errors, so a failed section is null (its error state)
@@ -687,6 +691,13 @@ OLD CODE END -->
 		<Pills ariaLabel="Time range" options={TIME_RANGES} bind:value={selectedRange} />
 	</div>
 </div>
+
+<!-- NET-225 (DEV-1): discovery keys on source MACs; after the router's NAT those are the router's and the modem's -->
+{#if $captureMode === 'bridge'}
+	<p class="notice" role="note">
+		<Icon name="infra" /><span>In inline bridge mode NetTap captures traffic after your router's address translation, so that traffic can't be tied to individual smart home devices, and your router or your provider's equipment may appear here as a device. A mirror port inside your network can show individual devices' traffic.</span>
+	</p>
+{/if}
 
 {#if !fleet}
 	<Card title="Smart home health" sub="Trust score out of 100 · {rangeLabel}">

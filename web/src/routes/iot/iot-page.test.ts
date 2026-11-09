@@ -4,6 +4,7 @@ import { get } from 'svelte/store';
 import * as iotApi from '$lib/api/iot';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import IoTPage from './+page.svelte';
+import { captureMode } from '$lib/stores/captureMode';
 
 // The redesigned /iot (PLAN.md §5.6): KPIs, the trust Ring, the device table, the cards' states,
 // and the page refresh contract (§5.5).
@@ -328,5 +329,30 @@ describe('IoT page — the saved default range (NET-195)', () => {
 		await flush();
 		expect(spans()).toEqual([hours]);
 		expect(screen.getByRole('button', { name: pill })).toHaveAttribute('aria-pressed', 'true');
+	});
+});
+
+// NET-225 (DEV-1): discovery keys on source MACs; after the router's NAT those are the router's and the modem's
+describe('IoT page — inline bridge mode', () => {
+	beforeEach(mockAll);
+	afterEach(() => {
+		captureMode.set(null);
+		vi.clearAllMocks();
+	});
+
+	it("says traffic after the router's address translation can't be tied to smart home devices", async () => {
+		captureMode.set('bridge');
+		render(IoTPage);
+		await flush();
+		const note = screen.getByRole('note');
+		expect(note).toHaveTextContent("can't be tied to individual smart home devices");
+		expect(note).toHaveTextContent("your router or your provider's equipment may appear here as a device");
+	});
+
+	it('shows no such note in mirror mode', async () => {
+		captureMode.set('mirror');
+		render(IoTPage);
+		await flush();
+		expect(screen.queryByRole('note')).not.toBeInTheDocument();
 	});
 });
