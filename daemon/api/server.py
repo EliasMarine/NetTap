@@ -96,6 +96,7 @@ from api.capture_control import register_capture_control_routes
 from api.backup import register_backup_routes
 from api.threats import register_threat_routes
 from api.network import register_network_routes
+from api.drilldown_runner import lan_cidrs
 from api.addresses import register_address_routes
 from api.domains import register_domain_routes
 from api.suricata_categories import register_suricata_category_routes
@@ -128,6 +129,7 @@ from services.unifi_integration import UnifiIntegration
 from services.live_connections import LiveConnectionTracker
 from services.bandwidth_tracker import BandwidthTracker
 from services.notification_hub import NotificationHub
+from services.notification_dispatcher import AlertDispatcher
 from services.changelog import ChangelogService
 from services.cert_monitor import CertificateMonitor
 from services.suricata_rules import SuricataRuleManager
@@ -1337,6 +1339,16 @@ def create_app(
     )
     notification_hub = NotificationHub(config_path=notification_config)
     register_notification_hub_routes(app, notification_hub)
+    # NET-224: alerts reach the channels from here, with or without a browser open
+    alert_dispatcher = AlertDispatcher(
+        notification_hub,
+        storage._client,
+        lambda: lan_cidrs(app),
+        os.path.join(
+            os.path.dirname(notification_config), "notification-dispatch.json"
+        ),
+    )
+    app.cleanup_ctx.append(alert_dispatcher.ctx)
 
     # Changelog (network event audit log)
     # OLD CODE START — 2026-11-01: built above, before the device registry, which logs new devices to it
