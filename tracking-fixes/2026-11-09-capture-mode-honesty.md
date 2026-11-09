@@ -88,12 +88,29 @@
 - Say "IPv4" when describing NAT. Routed IPv6 keeps its own addresses. NetTap misses it for a different reason: its device views are IPv4 only.
 - Threat-score text must follow `_finding_points` exactly, including the LAN-subnet test. With double NAT the router's private WAN address can be a LAN subnet, and then the attempt cap applies.
 
+## Follow-up (same day): IoT, device risk score, Go Live, DNS-2
+
+- **IoT page (DEV-1).**
+  - Discovery keys on `source.mac` with no LAN filter (`iot_monitor.py:315-320`). After the router's NAT, those MACs are the router's WAN port and the provider's modem.
+  - In bridge mode a note now says that this traffic can't be tied to individual smart home devices, and that the router or the provider's equipment may appear as a device.
+  - The wording is conditional, not absolute. A historical window can still hold real devices captured before a mode switch.
+- **Device risk score.**
+  - In bridge mode the card is titled "Risk score for this address". A line says that after the router's IPv4 address translation one address can carry several devices' traffic, so the score can't stand for one device's risk.
+  - It makes no whole-network claim, because IPv6 and traffic that bypasses NetTap aren't in it. The weights are unchanged.
+- **Go Live.** "All traffic between your modem and router is analysed" becomes what is actually analysed: connection records, DNS and TLS names, and intrusion-detection rules on anything unencrypted. It can't read encrypted content and doesn't see traffic that bypasses the capture point.
+- **DNS-2 was an honesty defect, so it is fixed.**
+  - The 500-lookup (TXT: 50) thresholds were fixed counts for any window. At 30 days, 17 lookups a day read as "high-frequency … potential beaconing" (medium).
+  - The thresholds are now per day, scaled by the window length in days, and never below today's values. The window is measured with `storage/time_slots._epoch`, which reads a time with no zone as UTC.
+  - The description now says "few source addresses" and that a router or resolver address can stand for several devices.
+- **DNS-4 is left to B-f.** The name scans (`get_suspicious_dns` and `detect_dns_tunneling`, via `DNSAnalytics._all_domains`) call `storage/all_buckets.py:all_buckets` without `what=`, so `checked()` never runs. The other DNS aggregations call `self._client.search` directly.
+- **Tests.**
+  - Fail before the fix: 3 web tests (IoT, risk, Go Live) and 5 daemon tests (TestThresholdsScaleWithTheWindow). The under-a-day test passes on both, by design.
+  - Suites: daemon 4,278 passed, 4 skipped; web 4,350 passed; svelte-check 0 errors; the colour gate is clean.
+- **Codex.** One round, REVISE, with 4 points: no whole-network claim, a zoneless timestamp, "clients" really counting addresses, and conditional IoT wording. All four are applied.
+
 ## Next steps
 
 - Out of scope, but reported:
-  - The IoT page grades the router as one IoT device in bridge mode (DEV-1).
-  - The device risk score in bridge mode.
-  - Go Live's "all traffic is analysed" line.
-  - DNS-2 beaconing thresholds.
-  - DNS-4 partial scans.
+  - DNS-4 partial scans (B-f).
+  - Go Live runs the bridge flow for mirror mode too. This was an earlier decision, and a test pins it.
 - A bridge-mode bench run when hardware exists.
