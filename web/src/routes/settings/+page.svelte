@@ -40,6 +40,11 @@
 	let emailEnabled = $state(false);
 	let emailAddress = $state('');
 	let webhookUrl = $state('');
+	// NET-224: the daemon keeps these; it never sends the saved URL back, only a hint of it
+	let webhookEnabled = $state(false);
+	let webhookHasUrl = $state(false);
+	let webhookHint = $state('');
+	let smtpConfigured = $state(false);
 	let notifSaving = $state(false);
 	let notifMessage = $state('');
 	let notifError = $state(false);
@@ -148,15 +153,49 @@
 	/** The build the daemon reports; null hides the row rather than claim one. */
 	let buildInfo = $state<string | null>(null);
 
+	// OLD CODE START — NET-224: the web route read env vars compose never set; the daemon keeps the settings now
+	// async function loadNotificationConfig() {
+	// 	try {
+	// 		const res = await fetch('/api/notifications/config');
+	// 		if (res.ok) {
+	// 			const data = await res.json();
+	// 			severityThreshold = data.severityThreshold ?? 'medium';
+	// 			emailEnabled = data.email?.enabled ?? false;
+	// 			emailAddress = data.email?.recipients?.[0] ?? '';
+	// 			webhookUrl = data.webhook?.url ?? '';
+	// 			notifLoadFailed = false;
+	// 			return;
+	// 		}
+	// 	} catch {
+	// 		// Falls through to failed
+	// 	}
+	// 	notifLoadFailed = true;
+	// }
+	// OLD CODE END
+	// The daemon's 1 (critical) … 4 (low) as the select's values
+	const SEVERITY_VALUES = ['critical', 'high', 'medium', 'low'];
+
+	/** The Settings tab's notification setup as the daemon returns it (GET and a saved PUT). */
+	function applyNotificationConfig(data: {
+		min_severity?: number;
+		email?: { enabled?: boolean; recipients?: string[]; smtp_configured?: boolean };
+		webhook?: { enabled?: boolean; has_url?: boolean; url_hint?: string };
+	}) {
+		severityThreshold = SEVERITY_VALUES[(data.min_severity ?? 2) - 1] ?? 'high';
+		emailEnabled = data.email?.enabled ?? false;
+		emailAddress = (data.email?.recipients ?? []).join(', ');
+		smtpConfigured = data.email?.smtp_configured ?? false;
+		webhookEnabled = data.webhook?.enabled ?? false;
+		webhookHasUrl = data.webhook?.has_url ?? false;
+		webhookHint = data.webhook?.url_hint ?? '';
+		webhookUrl = '';
+	}
+
 	async function loadNotificationConfig() {
 		try {
 			const res = await fetch('/api/notifications/config');
 			if (res.ok) {
-				const data = await res.json();
-				severityThreshold = data.severityThreshold ?? 'medium';
-				emailEnabled = data.email?.enabled ?? false;
-				emailAddress = data.email?.recipients?.[0] ?? '';
-				webhookUrl = data.webhook?.url ?? '';
+				applyNotificationConfig(await res.json());
 				notifLoadFailed = false;
 				return;
 			}
@@ -707,22 +746,41 @@
 		notifMessage = '';
 		notifError = false;
 		try {
+			// OLD CODE START — NET-224: POSTed to a route that couldn't save (F3: 501)
+			// const res = await fetch('/api/notifications/config', {
+			// 	method: 'POST',
+			// 	headers: { 'Content-Type': 'application/json' },
+			// 	body: JSON.stringify({
+			// 		severityThreshold,
+			// 		email: {
+			// 			enabled: emailEnabled,
+			// 			recipients: emailAddress ? [emailAddress] : [],
+			// 		},
+			// 		webhook: {
+			// 			url: webhookUrl || null,
+			// 		},
+			// 	}),
+			// });
+			// if (res.ok) {
+			// 	notifMessage = 'Notification settings saved successfully.';
+			// } else {
+			// OLD CODE END
 			const res = await fetch('/api/notifications/config', {
-				method: 'POST',
+				method: 'PUT',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					severityThreshold,
+					min_severity: SEVERITY_VALUES.indexOf(severityThreshold) + 1,
 					email: {
 						enabled: emailEnabled,
-						recipients: emailAddress ? [emailAddress] : [],
+						recipients: emailAddress.split(',').map((a) => a.trim()).filter(Boolean),
 					},
-					webhook: {
-						url: webhookUrl || null,
-					},
+					// a blank URL keeps the saved one
+					webhook: { enabled: webhookEnabled, url: webhookUrl.trim() },
 				}),
 			});
 			if (res.ok) {
-				notifMessage = 'Notification settings saved successfully.';
+				applyNotificationConfig(await res.json());
+				notifMessage = 'Notification settings saved.';
 			} else {
 				const data = await res.json();
 				notifMessage = data.error || 'Failed to save notification settings.';
@@ -953,7 +1011,8 @@
 
 <div class="grid" role="tabpanel" id="settings-panel-{activeTab}" aria-labelledby="settings-tab-{activeTab}" tabindex="0">
 	{#if activeTab === 'notifications'}
-		<Card title="Notification preferences" sub="Which alerts reach you · by email and webhook" class="c-12">
+		<!-- OLD CODE: sub="Which alerts reach you · by email and webhook" (NET-224: the daemon sends them now) -->
+		<Card title="Notification preferences" sub="Which alerts reach you · by email and webhook, with or without this page open" class="c-12">
 			<div class="stack">
 				{#if notifLoadFailed}
 					{@render feedback('Could not load the current notification settings, so saving is off. Reload the page to try again.', true)}
@@ -970,26 +1029,56 @@
 						</select>
 						<p class="field-help">Only notify for alerts at or above this severity level.</p>
 					</div>
+					<!-- OLD CODE START — NET-224: the URL field had no on/off, and blank meant "no webhook"; the daemon never sends the saved URL back, so blank now keeps it
 					<div class="field">
 						<label class="label" for="webhook-url">Webhook URL</label>
 						<input class="input mono" id="webhook-url" type="url" bind:value={webhookUrl} placeholder="https://hooks.example.com/nettap" />
 						<p class="field-help">POST JSON payloads will be sent to this URL for each alert.</p>
 					</div>
+					OLD CODE END -->
 				</div>
+
+				<div class="switch-row">
+					<input type="checkbox" role="switch" class="switch" id="webhook-toggle" bind:checked={webhookEnabled} aria-describedby="webhook-toggle-help" />
+					<div>
+						<label class="label" for="webhook-toggle">Send alerts to a webhook</label>
+						<p class="field-help" id="webhook-toggle-help">NetTap POSTs a JSON message for each batch of alerts, with or without this page open. Turning it off keeps the URL.</p>
+					</div>
+				</div>
+
+				{#if webhookEnabled}
+					<div class="form-grid">
+						<div class="field">
+							<label class="label" for="webhook-url">Webhook URL</label>
+							<input
+								class="input mono"
+								id="webhook-url"
+								type="url"
+								bind:value={webhookUrl}
+								placeholder={webhookHasUrl ? `Saved (${webhookHint}): leave blank to keep it` : 'https://hooks.example.com/nettap'}
+							/>
+							<p class="field-help">http:// or https:// only. An address on your network works (ntfy, Gotify).</p>
+						</div>
+					</div>
+				{/if}
 
 				<div class="switch-row">
 					<input type="checkbox" role="switch" class="switch" id="email-toggle" bind:checked={emailEnabled} aria-describedby="email-toggle-help" />
 					<div>
 						<label class="label" for="email-toggle">Enable email alerts</label>
-						<p class="field-help" id="email-toggle-help">Send alert notifications to the email address below. Requires SMTP to be configured in API keys.</p>
+						<p class="field-help" id="email-toggle-help">Send alert notifications to the addresses below, through the SMTP server in API keys.</p>
 					</div>
 				</div>
 
 				{#if emailEnabled}
+					{#if !smtpConfigured}
+						<p class="notice is-warn" role="status"><Icon name="warn" /><span>Email needs an SMTP server: set it in the API keys tab first.</span></p>
+					{/if}
 					<div class="form-grid">
 						<div class="field">
-							<label class="label" for="email-address">Recipient email</label>
-							<input class="input" id="email-address" type="email" bind:value={emailAddress} placeholder="admin@example.com" />
+							<!-- OLD CODE: <label …>Recipient email</label> with type="email" (NET-224: several recipients, comma-separated) -->
+							<label class="label" for="email-address">Recipient emails</label>
+							<input class="input" id="email-address" type="text" bind:value={emailAddress} placeholder="admin@example.com, ops@example.com" />
 						</div>
 					</div>
 				{/if}
@@ -1374,6 +1463,7 @@
 						</div>
 					</section>
 
+					<!-- OLD CODE START — NET-224: nothing read this URL; the Notifications tab sets the webhook the daemon uses
 					<section class="key-group" aria-labelledby="keys-webhook">
 						<h3 class="eyebrow" id="keys-webhook">Webhook</h3>
 						<div class="form-grid">
@@ -1390,6 +1480,7 @@
 							</div>
 						</div>
 					</section>
+					OLD CODE END -->
 
 					<div class="form-actions">
 						<button class="btn primary" type="button" onclick={saveApiKeys} disabled={apiKeysSaving}>

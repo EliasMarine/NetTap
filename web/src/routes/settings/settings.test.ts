@@ -341,28 +341,105 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 		expect(screen.getByRole('button', { name: 'Save notification settings' })).toBeDisabled();
 	});
 
-	it('Notifications: Save works once the config has loaded', async () => {
-		stubFetch({
-			'/api/notifications/config': () => ({
-				body: { severityThreshold: 'high', email: { enabled: false, recipients: [] }, webhook: { url: 'https://hooks.example.com/x' } },
-			}),
-		});
+	// OLD CODE START — NET-224: the env-shaped config, a POST the route answered 501, and the URL read back
+	// it('Notifications: Save works once the config has loaded', async () => {
+	// 	stubFetch({
+	// 		'/api/notifications/config': () => ({
+	// 			body: { severityThreshold: 'high', email: { enabled: false, recipients: [] }, webhook: { url: 'https://hooks.example.com/x' } },
+	// 		}),
+	// 	});
+	// 	render(Page);
+	// 	await flush();
+	//
+	// 	expect(screen.queryByText(/Could not load the current notification settings/)).not.toBeInTheDocument();
+	// 	expect(screen.getByDisplayValue('https://hooks.example.com/x')).toBeInTheDocument();
+	// 	expect(screen.getByRole('button', { name: 'Save notification settings' })).toBeEnabled();
+	// });
+	//
+	// // F3: the config POST answers 501 and the test 409/502; each must read as an error, not a success
+	// it('Notifications: a save the server refuses shows its reason as an error', async () => {
+	// 	const message = "Not saved: email and webhook notifications can't be set from this page in this version.";
+	// 	stubFetch({
+	// 		'/api/notifications/config': (init) =>
+	// 			init?.method === 'POST'
+	// 				? { status: 501, body: { error: message } }
+	// 				: { body: { severityThreshold: 'high', email: { enabled: false, recipients: [] }, webhook: { url: '' } } },
+	// 	});
+	// 	render(Page);
+	// 	await flush();
+	//
+	// 	await fireEvent.click(screen.getByRole('button', { name: 'Save notification settings' }));
+	// 	await flush();
+	//
+	// 	expect(screen.getByRole('alert')).toHaveTextContent(message);
+	// 	expect(screen.queryByText(/saved successfully/)).not.toBeInTheDocument();
+	// });
+	//
+	// it.each([
+	// 	[409, 'No email or webhook is set up, so there is nothing to test.'],
+	// 	[502, "The test didn't go through: webhook (HTTP 500)."],
+	// ])('Notifications: a test answered %i shows its reason as an error', async (status, message) => {
+	// 	stubFetch({
+	// 		'/api/notifications/config': () => ({ body: { severityThreshold: 'high', email: { enabled: false, recipients: [] }, webhook: { url: '' } } }),
+	// 		'/api/notifications/test': () => ({ status, body: { error: message } }),
+	// 	});
+	// 	render(Page);
+	// 	await flush();
+	//
+	// 	await fireEvent.click(screen.getByRole('button', { name: 'Send test notification' }));
+	// 	await flush();
+	//
+	// 	expect(screen.getByRole('alert')).toHaveTextContent(message);
+	// 	expect(screen.queryByText(/sent successfully/)).not.toBeInTheDocument();
+	// });
+	// OLD CODE END
+
+	// NET-224: the daemon keeps these settings; it returns a hint of the saved URL, never the URL
+	const SAVED = {
+		min_severity: 2,
+		email: { enabled: false, recipients: [], smtp_configured: true },
+		webhook: { enabled: true, has_url: true, url_hint: 'https://hooks.example.com/…' },
+	};
+
+	it('Notifications: Save works once the config has loaded, without the saved URL in the page', async () => {
+		stubFetch({ '/api/notifications/config': () => ({ body: SAVED }) });
 		render(Page);
 		await flush();
 
 		expect(screen.queryByText(/Could not load the current notification settings/)).not.toBeInTheDocument();
-		expect(screen.getByDisplayValue('https://hooks.example.com/x')).toBeInTheDocument();
+		expect(screen.getByLabelText('Alert severity threshold')).toHaveValue('high');
+		expect(screen.getByLabelText('Webhook URL')).toHaveValue('');
+		expect(screen.getByLabelText('Webhook URL')).toHaveAttribute('placeholder', 'Saved (https://hooks.example.com/…): leave blank to keep it');
 		expect(screen.getByRole('button', { name: 'Save notification settings' })).toBeEnabled();
 	});
 
-	// F3: the config POST answers 501 and the test 409/502; each must read as an error, not a success
-	it('Notifications: a save the server refuses shows its reason as an error', async () => {
-		const message = "Not saved: email and webhook notifications can't be set from this page in this version.";
-		stubFetch({
+	it('Notifications: saves with PUT, the severity as 1 to 4, the recipients as a list and a blank URL to keep it', async () => {
+		const fetchMock = stubFetch({
 			'/api/notifications/config': (init) =>
-				init?.method === 'POST'
-					? { status: 501, body: { error: message } }
-					: { body: { severityThreshold: 'high', email: { enabled: false, recipients: [] }, webhook: { url: '' } } },
+				init?.method === 'PUT' ? { body: { ...SAVED, min_severity: 3, email: { enabled: true, recipients: ['a@example.com', 'b@example.com'], smtp_configured: true } } } : { body: SAVED },
+		});
+		render(Page);
+		await flush();
+
+		await fireEvent.change(screen.getByLabelText('Alert severity threshold'), { target: { value: 'medium' } });
+		await fireEvent.click(screen.getByRole('switch', { name: 'Enable email alerts' }));
+		await fireEvent.input(screen.getByLabelText('Recipient emails'), { target: { value: 'a@example.com, b@example.com' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save notification settings' }));
+		await flush();
+
+		const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT');
+		expect(JSON.parse(String(put?.[1]?.body))).toEqual({
+			min_severity: 3,
+			email: { enabled: true, recipients: ['a@example.com', 'b@example.com'] },
+			webhook: { enabled: true, url: '' },
+		});
+		expect(screen.getByRole('status')).toHaveTextContent('Notification settings saved.');
+	});
+
+	it('Notifications: a save the daemon refuses shows its reason as an error', async () => {
+		const message = 'Webhook: the URL must start with http:// or https://';
+		stubFetch({
+			'/api/notifications/config': (init) => (init?.method === 'PUT' ? { status: 400, body: { error: message } } : { body: SAVED }),
 		});
 		render(Page);
 		await flush();
@@ -371,15 +448,24 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 		await flush();
 
 		expect(screen.getByRole('alert')).toHaveTextContent(message);
-		expect(screen.queryByText(/saved successfully/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/saved/)).not.toBeInTheDocument();
+	});
+
+	it('Notifications: email says it needs the SMTP server when API keys has none', async () => {
+		stubFetch({ '/api/notifications/config': () => ({ body: { ...SAVED, email: { enabled: true, recipients: ['a@example.com'], smtp_configured: false } } }) });
+		render(Page);
+		await flush();
+
+		expect(screen.getByText('Email needs an SMTP server: set it in the API keys tab first.')).toBeInTheDocument();
+		expect(screen.getByLabelText('Recipient emails')).toHaveValue('a@example.com');
 	});
 
 	it.each([
-		[409, 'No email or webhook is set up, so there is nothing to test.'],
-		[502, "The test didn't go through: webhook (HTTP 500)."],
+		[409, 'No notification channel is set up, so there is nothing to test.'],
+		[502, "The test didn't go through: Webhook (Settings) (HTTP 500)."],
 	])('Notifications: a test answered %i shows its reason as an error', async (status, message) => {
 		stubFetch({
-			'/api/notifications/config': () => ({ body: { severityThreshold: 'high', email: { enabled: false, recipients: [] }, webhook: { url: '' } } }),
+			'/api/notifications/config': () => ({ body: SAVED }),
 			'/api/notifications/test': () => ({ status, body: { error: message } }),
 		});
 		render(Page);

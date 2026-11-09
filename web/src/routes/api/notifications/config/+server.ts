@@ -1,31 +1,34 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types.js';
-import { loadConfig } from '$lib/server/notifications.js';
-
-/**
- * GET /api/notifications/config
- * Returns current notification configuration (loaded from env vars).
- * Passwords are redacted.
- */
-export const GET: RequestHandler = async () => {
-	const config = loadConfig();
-
-	// Redact SMTP password for security
-	return json({
-		email: {
-			enabled: config.email.enabled,
-			recipients: config.email.recipients,
-			smtpHost: config.email.smtpHost,
-			smtpPort: config.email.smtpPort,
-			smtpUser: config.email.smtpUser,
-			smtpFrom: config.email.smtpFrom,
-			// Password intentionally omitted
-		},
-		webhook: config.webhook,
-		inApp: config.inApp,
-		severityThreshold: config.severityThreshold,
-	});
-};
+import { daemonFetch } from '$lib/server/daemon.js';
+// OLD CODE START — NET-224: read the web container's env, which compose never set; the daemon keeps it now
+// import { loadConfig } from '$lib/server/notifications.js';
+//
+// /**
+//  * GET /api/notifications/config
+//  * Returns current notification configuration (loaded from env vars).
+//  * Passwords are redacted.
+//  */
+// export const GET: RequestHandler = async () => {
+// 	const config = loadConfig();
+//
+// 	// Redact SMTP password for security
+// 	return json({
+// 		email: {
+// 			enabled: config.email.enabled,
+// 			recipients: config.email.recipients,
+// 			smtpHost: config.email.smtpHost,
+// 			smtpPort: config.email.smtpPort,
+// 			smtpUser: config.email.smtpUser,
+// 			smtpFrom: config.email.smtpFrom,
+// 			// Password intentionally omitted
+// 		},
+// 		webhook: config.webhook,
+// 		inApp: config.inApp,
+// 		severityThreshold: config.severityThreshold,
+// 	});
+// };
+// OLD CODE END
 
 // OLD CODE START — F3: threw the body away and answered success, so the page said "saved
 // successfully" when nothing was saved. Email and webhook come from the environment in this version.
@@ -52,12 +55,41 @@ export const GET: RequestHandler = async () => {
 // };
 // OLD CODE END
 
+// OLD CODE START — NET-224: F3's honest 501; the daemon saves the settings for real now
+// /**
+//  * POST /api/notifications/config
+//  * Not implemented: nothing here persists the settings, so it says so rather than claim a save.
+//  */
+// export const POST: RequestHandler = async () =>
+// 	json(
+// 		{ error: "Not saved: email and webhook notifications can't be set from this page in this version." },
+// 		{ status: 501 },
+// 	);
+// OLD CODE END
+
+/** The daemon's answer, with its status: a refusal keeps its reason for the page. */
+async function relay(res: Response): Promise<Response> {
+	const data = await res.json().catch(() => ({ error: 'Failed to parse daemon response' }));
+	return json(data, { status: res.status });
+}
+
 /**
- * POST /api/notifications/config
- * Not implemented: nothing here persists the settings, so it says so rather than claim a save.
+ * GET /api/notifications/config
+ * The Settings tab's alert email, webhook and minimum severity, kept by the daemon (NET-224).
+ * It never carries the webhook URL or a password, only whether one is saved.
  */
-export const POST: RequestHandler = async () =>
-	json(
-		{ error: "Not saved: email and webhook notifications can't be set from this page in this version." },
-		{ status: 501 },
+export const GET: RequestHandler = async () => relay(await daemonFetch('/api/notifications/config'));
+
+/**
+ * PUT /api/notifications/config
+ * Body: { min_severity: 1-4, email: { enabled, recipients }, webhook: { enabled, url } }.
+ * A blank url keeps the saved one. 400 says why it can't be saved.
+ */
+export const PUT: RequestHandler = async ({ request }) =>
+	relay(
+		await daemonFetch('/api/notifications/config', {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: await request.text(),
+		}),
 	);

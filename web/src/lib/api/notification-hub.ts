@@ -7,12 +7,32 @@
 // Types
 // ---------------------------------------------------------------------------
 
+/** A channel's last send, as the daemon reports it (NET-224). */
+export interface LastDelivery {
+	ok: boolean;
+	at: string;
+	error: string | null;
+}
+
 export interface NotificationChannel {
 	id: string;
 	type: 'email' | 'discord' | 'slack' | 'telegram' | 'pushover' | 'webhook';
 	name: string;
+	/** NET-224: never a secret; secrets show as has_<key>, URLs as <key>_hint */
 	config: Record<string, unknown>;
 	created_at: string;
+	/** NET-224: off channels get nothing (a Settings tab channel turned off keeps its settings) */
+	enabled?: boolean;
+	last_delivery?: LastDelivery | null;
+}
+
+/** A save, or the daemon's reason it couldn't (NET-224: "Failed" alone said nothing). */
+export type SaveResult<T> = { ok: true; data: T } | { ok: false; error: string };
+
+/** The reason in a refused reply's body, else its status. */
+async function reasonOf(res: Response): Promise<string> {
+	const body = await res.json().catch(() => null);
+	return typeof body?.error === 'string' ? body.error : `HTTP ${res.status}`;
 }
 
 export interface ChannelsResponse {
@@ -39,6 +59,8 @@ export interface DeliveryLogEntry {
 	title: string;
 	severity: number;
 	success: boolean;
+	/** NET-224: why it failed */
+	error?: string | null;
 	timestamp: string;
 }
 
@@ -77,21 +99,40 @@ export async function getChannels(): Promise<ChannelsResponse> {
 /**
  * Create a new notification channel.
  */
+// OLD CODE START — NET-224: null on any failure, so the page couldn't say why
+// export async function createChannel(
+// 	type: string,
+// 	name: string,
+// 	config: Record<string, unknown>,
+// ): Promise<NotificationChannel | null> {
+// 	try {
+// 		const res = await fetch(`/api/notifications/channels`, {
+// 			method: 'POST',
+// 			headers: { 'Content-Type': 'application/json' },
+// 			body: JSON.stringify({ type, name, config: { ...config, name } }),
+// 		});
+// 		if (!res.ok) return null;
+// 		return res.json();
+// 	} catch {
+// 		return null;
+// 	}
+// }
+// OLD CODE END
 export async function createChannel(
 	type: string,
 	name: string,
 	config: Record<string, unknown>,
-): Promise<NotificationChannel | null> {
+): Promise<SaveResult<NotificationChannel>> {
 	try {
 		const res = await fetch(`/api/notifications/channels`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ type, name, config: { ...config, name } }),
 		});
-		if (!res.ok) return null;
-		return res.json();
+		if (!res.ok) return { ok: false, error: await reasonOf(res) };
+		return { ok: true, data: await res.json() };
 	} catch {
-		return null;
+		return { ok: false, error: "couldn't reach NetTap" };
 	}
 }
 
@@ -112,16 +153,31 @@ export async function deleteChannel(id: string): Promise<boolean> {
 /**
  * Send a test notification to a channel.
  */
-export async function testChannel(id: string): Promise<boolean> {
+// OLD CODE START — NET-224: a bare bool, so a failed test had no reason
+// export async function testChannel(id: string): Promise<boolean> {
+// 	try {
+// 		const res = await fetch(`/api/notifications/channels/${id}/test`, {
+// 			method: 'POST',
+// 		});
+// 		if (!res.ok) return false;
+// 		const data = await res.json();
+// 		return data.success === true;
+// 	} catch {
+// 		return false;
+// 	}
+// }
+// OLD CODE END
+export async function testChannel(id: string): Promise<{ success: boolean; error?: string }> {
 	try {
 		const res = await fetch(`/api/notifications/channels/${id}/test`, {
 			method: 'POST',
 		});
-		if (!res.ok) return false;
+		if (!res.ok) return { success: false, error: await reasonOf(res) };
 		const data = await res.json();
-		return data.success === true;
+		if (data.success === true) return { success: true };
+		return { success: false, error: typeof data.error === 'string' ? data.error : undefined };
 	} catch {
-		return false;
+		return { success: false, error: "couldn't reach NetTap" };
 	}
 }
 
@@ -164,21 +220,40 @@ export async function getRules(): Promise<RulesResponse> {
 /**
  * Create a routing rule.
  */
+// OLD CODE START — NET-224: null on any failure, so the page couldn't say why
+// export async function createRule(
+// 	event_type: string,
+// 	channels: string[],
+// 	min_severity: number,
+// ): Promise<RoutingRule | null> {
+// 	try {
+// 		const res = await fetch(`/api/notifications/rules`, {
+// 			method: 'POST',
+// 			headers: { 'Content-Type': 'application/json' },
+// 			body: JSON.stringify({ event_type, channels, min_severity }),
+// 		});
+// 		if (!res.ok) return null;
+// 		return res.json();
+// 	} catch {
+// 		return null;
+// 	}
+// }
+// OLD CODE END
 export async function createRule(
 	event_type: string,
 	channels: string[],
 	min_severity: number,
-): Promise<RoutingRule | null> {
+): Promise<SaveResult<RoutingRule>> {
 	try {
 		const res = await fetch(`/api/notifications/rules`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ event_type, channels, min_severity }),
 		});
-		if (!res.ok) return null;
-		return res.json();
+		if (!res.ok) return { ok: false, error: await reasonOf(res) };
+		return { ok: true, data: await res.json() };
 	} catch {
-		return null;
+		return { ok: false, error: "couldn't reach NetTap" };
 	}
 }
 

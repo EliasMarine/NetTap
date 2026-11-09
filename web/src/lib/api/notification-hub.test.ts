@@ -75,24 +75,28 @@ describe('notification-hub API client', () => {
 
 	// -- createChannel --------------------------------------------------------
 
+	// NET-224: a refusal carries the daemon's reason, so the page can say why
 	describe('createChannel', () => {
-		it('returns channel on success', async () => {
+		it('returns the channel on success', async () => {
 			mockFetchSuccess({ id: 'ch1', type: 'slack', name: 'Slack' }, 201);
 			const result = await createChannel('slack', 'Slack', { webhook_url: 'url' });
-			expect(result).not.toBeNull();
-			expect(result!.type).toBe('slack');
+			expect(result).toEqual({ ok: true, data: { id: 'ch1', type: 'slack', name: 'Slack' } });
 		});
 
-		it('returns null on error', async () => {
-			mockFetchFailure(400);
-			const result = await createChannel('invalid', 'Bad', {});
-			expect(result).toBeNull();
+		it("returns the daemon's reason when it refuses", async () => {
+			mockFetchSuccess({ error: 'the URL must start with http:// or https://' }, 400);
+			const result = await createChannel('webhook', 'Bad', { url: 'ftp://x' });
+			expect(result).toEqual({ ok: false, error: 'the URL must start with http:// or https://' });
 		});
 
-		it('returns null on network error', async () => {
+		it('returns the status when the refusal has no reason', async () => {
+			mockFetchFailure(500);
+			expect(await createChannel('webhook', 'Bad', {})).toEqual({ ok: false, error: 'HTTP 500' });
+		});
+
+		it('says NetTap could not be reached on a network error', async () => {
 			mockFetchReject();
-			const result = await createChannel('discord', 'D', {});
-			expect(result).toBeNull();
+			expect(await createChannel('discord', 'D', {})).toEqual({ ok: false, error: "couldn't reach NetTap" });
 		});
 	});
 
@@ -118,19 +122,24 @@ describe('notification-hub API client', () => {
 	// -- testChannel ----------------------------------------------------------
 
 	describe('testChannel', () => {
-		it('returns true on success', async () => {
+		it('reports success', async () => {
 			mockFetchSuccess({ success: true });
-			expect(await testChannel('ch1')).toBe(true);
+			expect(await testChannel('ch1')).toEqual({ success: true });
 		});
 
-		it('returns false on failure response', async () => {
-			mockFetchSuccess({ success: false });
-			expect(await testChannel('ch1')).toBe(false);
+		it("reports a failure with the daemon's reason", async () => {
+			mockFetchSuccess({ success: false, error: 'HTTP 404' });
+			expect(await testChannel('ch1')).toEqual({ success: false, error: 'HTTP 404' });
 		});
 
-		it('returns false on network error', async () => {
+		it('reports a refused request with its reason', async () => {
+			mockFetchSuccess({ error: 'Channel not found' }, 404);
+			expect(await testChannel('gone')).toEqual({ success: false, error: 'Channel not found' });
+		});
+
+		it('reports a network error', async () => {
 			mockFetchReject();
-			expect(await testChannel('ch1')).toBe(false);
+			expect(await testChannel('ch1')).toEqual({ success: false, error: "couldn't reach NetTap" });
 		});
 	});
 
@@ -173,17 +182,15 @@ describe('notification-hub API client', () => {
 	// -- createRule ------------------------------------------------------------
 
 	describe('createRule', () => {
-		it('returns rule on success', async () => {
-			mockFetchSuccess({ id: 'r1', event_type: 'alert', channels: ['ch1'], min_severity: 3 }, 201);
-			const result = await createRule('alert', ['ch1'], 3);
-			expect(result).not.toBeNull();
-			expect(result!.event_type).toBe('alert');
+		it('returns the rule on success', async () => {
+			const rule = { id: 'r1', event_type: 'alert', channels: ['ch1'], min_severity: 3 };
+			mockFetchSuccess(rule, 201);
+			expect(await createRule('alert', ['ch1'], 3)).toEqual({ ok: true, data: rule });
 		});
 
-		it('returns null on error', async () => {
-			mockFetchFailure(400);
-			const result = await createRule('invalid', [], 0);
-			expect(result).toBeNull();
+		it("returns the daemon's reason when it refuses", async () => {
+			mockFetchSuccess({ error: 'pick at least one channel' }, 400);
+			expect(await createRule('alert', [], 3)).toEqual({ ok: false, error: 'pick at least one channel' });
 		});
 	});
 
