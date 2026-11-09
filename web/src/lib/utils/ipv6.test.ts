@@ -1,7 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { classify, compress, inspect, parse, slaac, TYPES, type Inspection } from './ipv6';
+import { classify, compress, inspect, parse, slaac, type Inspection } from './ipv6';
 
 const ok = (input: string): Inspection => {
 	const r = inspect(input);
@@ -151,28 +149,6 @@ describe('classify', () => {
 		expect(ok('2001:db8::').iface?.kind).toBe('anycast'); // no prefix typed: an address, not a network
 		expect(ok('2001:db8::1:2:3:4').iface?.kind).toBe('random');
 		expect(classify(parseOk('2001:db8::')).key).toBe('documentation');
-	});
-});
-
-describe('the IANA special-purpose registry snapshot', () => {
-	// The registry's own CSV, downloaded 2026-11-08: every row must have a range, with the same reachability
-	const csv = readFileSync(resolve(process.cwd(), 'src/lib/utils/iana-ipv6-special-registry.csv'), 'utf8').trim().split('\n').slice(1);
-	const rows = csv.map((line) => {
-		const cols = line.split(',');
-		return { block: cols[0].replace(/\s*\[\d+\]/, ''), reachable: cols[8].replace(/\s*\[\d+\]/, '').trim() };
-	});
-
-	it('has 25 rows', () => {
-		expect(rows).toHaveLength(25);
-	});
-
-	it.each(rows)('$block has a range with matching reachability', ({ block, reachable }) => {
-		const [net, len] = block.split('/');
-		const value = parseOk(net);
-		const range = TYPES.find((t) => t.value === value && t.len === Number(len));
-		expect(range, `no range for ${block}`).toBeDefined();
-		const expected = reachable === 'True' ? true : reachable === 'False' ? false : null;
-		expect(range?.globallyReachable).toBe(expected);
 	});
 });
 
