@@ -959,8 +959,7 @@ def generate_assessment(
 # )
 # OLD CODE END
 _SUPPRESS_PATH = (
-    Path(os.environ.get("NETTAP_DATA_DIR", "/opt/nettap/data"))
-    / "nettap-suppress.json"
+    Path(os.environ.get("NETTAP_DATA_DIR", "/opt/nettap/data")) / "nettap-suppress.json"
 )
 
 

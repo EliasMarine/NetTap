@@ -209,7 +209,9 @@ def test_a_busy_route_pool_does_not_make_it_unknown(inspect_prints, monkeypatch)
 
     monkeypatch.setattr(pipeline_health, "BUDGET_S", 0.5)
     hold = threading.Event()
-    busy = [offload._POOL.submit(hold.wait, 10) for _ in range(offload._POOL._max_workers)]
+    busy = [
+        offload._POOL.submit(hold.wait, 10) for _ in range(offload._POOL._max_workers)
+    ]
     try:
         result = probe(FakeSearch([zeek(40)]))
     finally:
@@ -219,7 +221,9 @@ def test_a_busy_route_pool_does_not_make_it_unknown(inspect_prints, monkeypatch)
     assert result["state"] == "fresh"
 
 
-def test_unknown_is_checked_again_sooner_than_a_real_answer(inspect_prints, monkeypatch):
+def test_unknown_is_checked_again_sooner_than_a_real_answer(
+    inspect_prints, monkeypatch
+):
     client = FakeSearch(error=ConnectionError("refused"))
     probe = PipelineHealth(client, time.monotonic() - 3600)
     monkeypatch.setattr(pipeline_health, "UNKNOWN_CACHE_S", 0.0)

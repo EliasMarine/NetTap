@@ -113,7 +113,9 @@ class PipelineHealth:
         self._result_at = 0.0
         # Its own thread (review): on the shared route pool, time queued behind a cold page load
         # counted against the budget and read as "couldn't check".
-        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pipeline-health")
+        self._pool = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="pipeline-health"
+        )
 
     async def get(self) -> dict:
         if self._result:
