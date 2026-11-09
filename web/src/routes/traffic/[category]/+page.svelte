@@ -21,17 +21,19 @@
 	// import { CATEGORY_COLORS } from '$lib/utils/category-colors';
 	// OLD CODE END
 	import { loadFailed } from '$lib/utils/load-failed';
-	import { compareHalves, trendWindow, type HalvesResult, type TrendWindow } from '$lib/utils/window-trend';
+	import { compareHalves, trendWindow, withCoverage, type HalvesResult, type TrendWindow } from '$lib/utils/window-trend';
 	import { page } from '$app/stores';
 	import { onDestroy, untrack } from 'svelte';
 	import {
 		getCategoryDetail,
 		getCategoryBandwidth,
 		getTrafficSummary,
+		getBandwidthTimeSeries,
 	} from '$api/traffic';
 	import type {
 		CategoryDetailResponse,
 		CategoryBandwidthPoint,
+		BandwidthPoint,
 		CategoryDevice,
 		TrafficCategoryService,
 	} from '$api/traffic';
@@ -129,6 +131,8 @@
 	/** NET-228: the category's series over two equal settled windows (lib/utils/window-trend.ts) */
 	let trendSeries = $state<CategoryBandwidthPoint[] | null>(null);
 	let trendWin = $state<TrendWindow | null>(null);
+	/** review D1: all traffic over the same window says whether data arrived; a quiet category slot is 0 */
+	let trendCoverage = $state<BandwidthPoint[] | null>(null);
 	let trendFailed = $state(false);
 
 	// #96: a failed request says so instead of "No traffic data"
@@ -280,8 +284,10 @@
 	/** Two equal settled windows of the category's own series, or why there is no trend */
 	function halves(value: (p: CategoryBandwidthPoint) => number): HalvesResult | 'failed' | null {
 		if (trendFailed) return 'failed';
-		if (!trendSeries || !trendWin) return null;
-		return compareHalves(trendSeries.map((p) => ({ timestamp: p.timestamp, value: value(p), connections: p.connections })), trendWin);
+		// OLD CODE: if (!trendSeries || !trendWin) return null; (review D1: + the coverage)
+		// OLD CODE: return compareHalves(trendSeries.map((p) => ({ timestamp: p.timestamp, value: value(p), connections: p.connections })), trendWin); (review D1: one quiet category slot was "not enough data")
+		if (!trendSeries || !trendCoverage || !trendWin) return null;
+		return compareHalves(withCoverage(trendSeries, value, trendCoverage), trendWin);
 	}
 	let trendUpTo = $derived(trendWin ? chartTime(Date.parse(trendWin.to), rangeOf(selectedRange).hours) : '');
 
@@ -481,6 +487,7 @@
 			data = null;
 			// OLD CODE: prevData = null; (NET-228)
 			trendSeries = null;
+			trendCoverage = null;
 			trendWin = null;
 			trendFailed = false;
 			topServices = [];
@@ -494,9 +501,12 @@
 			getTrafficSummary(timeParams),
 			// OLD CODE: getCategoryDetail(cat, prevParams), (NET-228)
 			getCategoryBandwidth(cat, { from: tw.from, to: tw.to, interval: tw.interval }),
+			// review D1: the coverage the trend reads
+			getBandwidthTimeSeries({ from: tw.from, to: tw.to, interval: tw.interval }),
 		]);
 		if (!guard.current(g)) return 'skipped';
-		const [detailRes, bandwidthRes, summaryRes, prevRes] = results;
+		// OLD CODE: const [detailRes, bandwidthRes, summaryRes, prevRes] = results; (review D1)
+		const [detailRes, bandwidthRes, summaryRes, prevRes, coverageRes] = results;
 		detailFailed = detailRes.status === 'rejected';
 		bandwidthFailed = bandwidthRes.status === 'rejected';
 
@@ -512,9 +522,12 @@
 		// // a failed previous period hides the trend instead of comparing against zero
 		// if (prevRes.status === 'fulfilled') prevData = prevRes.value;
 		// OLD CODE END
-		trendFailed = prevRes.status === 'rejected';
+		// OLD CODE: trendFailed = prevRes.status === 'rejected'; (review D1: or its coverage)
+		// OLD CODE: trendWin = prevRes.status === 'fulfilled' ? tw : null;
+		trendFailed = prevRes.status === 'rejected' || coverageRes.status === 'rejected';
 		trendSeries = prevRes.status === 'fulfilled' ? (prevRes.value.series ?? []) : null;
-		trendWin = prevRes.status === 'fulfilled' ? tw : null;
+		trendCoverage = coverageRes.status === 'fulfilled' ? coverageRes.value.series : null;
+		trendWin = trendFailed ? null : tw;
 		// % of total network needs both figures; without them the card shows a dash
 		if (detailRes.status === 'fulfilled' && summaryRes.status === 'fulfilled') {
 			const total = summaryRes.value.total_bytes;

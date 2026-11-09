@@ -53,14 +53,23 @@ function trendSeries(u: URL, shape: (half: 'older' | 'newer', i: number) => { by
 	return out;
 }
 
-/** BUSY with a service, a network total of 8,000 B, and the category's series from `bandwidth` (null fails it). */
-function stubCategory(bandwidth: (u: URL) => unknown[] | null): void {
+/** Every slot of all traffic holds connections: data arrived throughout */
+const fullCoverage = (u: URL) => trendSeries(u, () => ({ bytes: 100, connections: 5 }));
+
+/**
+ * BUSY with a service, a network total of 8,000 B, the category's series from `bandwidth` and all
+ * traffic's from `coverage` (null fails either).
+ */
+function stubCategory(bandwidth: (u: URL) => unknown[] | null, coverage: (u: URL) => unknown[] | null = fullCoverage): void {
 	vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 	vi.stubGlobal(
 		'fetch',
 		vi.fn(async (url: string) => {
 			const u = new URL(url, 'http://x');
-			const series = u.pathname === '/api/traffic/categories/streaming/bandwidth' ? bandwidth(u) : null;
+			const series =
+				u.pathname === '/api/traffic/categories/streaming/bandwidth' ? bandwidth(u)
+				: u.pathname === '/api/traffic/bandwidth' ? coverage(u)
+				: null;
 			const body =
 				u.pathname === '/api/traffic/categories/streaming' ? { ...BUSY, services: [{ name: 'Netflix', bytes: 4000, connections: 3 }] }
 				: series ? { category: 'streaming', from: '', to: '', interval: u.searchParams.get('interval'), series }
@@ -161,18 +170,41 @@ describe('Traffic category page', () => {
 		expect(screen.getByRole('table', { name: 'Per-device breakdown' })).toHaveTextContent('192.168.1.20');
 	});
 
-	it('the trend reads two equal settled windows, and a slot with no connections is not enough data (NET-228)', async () => {
+	// OLD CODE START — review D1: a quiet hour in the category itself read as no data
+	// it('the trend reads two equal settled windows, and a slot with no connections is not enough data (NET-228)', async () => {
+	// 	const asked: URL[] = [];
+	// 	stubCategory((u) => {
+	// 		asked.push(u);
+	// 		return trendSeries(u, (half, i) => ({ bytes: 1000, connections: i === 5 ? 0 : 2 }));
+	// 	});
+	// 	render(CategoryPage);
+	// 	await vi.waitFor(() => expect(screen.getByText('Total bandwidth').closest('.kpi')).toHaveTextContent(/Not enough data to compare$/));
+	// 	expect(connectionsKpi()).toHaveTextContent(/Not enough data to compare$/);
+	// 	const trend = asked.find(isTrendWindow)!;
+	// 	expect(trend.searchParams.get('interval')).toBe('1h');
+	// 	expect(Date.parse(trend.searchParams.get('to')!) - Date.parse(trend.searchParams.get('from')!)).toBe(48 * 3_600_000);
+	// });
+	// OLD CODE END
+	it('a quiet hour in the category still compares, since all traffic shows data arrived (review D1)', async () => {
 		const asked: URL[] = [];
 		stubCategory((u) => {
 			asked.push(u);
-			return trendSeries(u, (half, i) => ({ bytes: 1000, connections: i === 5 ? 0 : 2 }));
+			return trendSeries(u, (half, i) => (i === 5 ? { bytes: 0, connections: 0 } : { bytes: half === 'older' ? 1000 : 2000, connections: 2 }));
 		});
 		render(CategoryPage);
-		await vi.waitFor(() => expect(screen.getByText('Total bandwidth').closest('.kpi')).toHaveTextContent(/Not enough data to compare$/));
-		expect(connectionsKpi()).toHaveTextContent(/Not enough data to compare$/);
+		// 23 older slots of 1,000 B against 24 newer of 2,000 B
+		await vi.waitFor(() => expect(screen.getByText('Total bandwidth').closest('.kpi')).toHaveTextContent('+108.7%'));
 		const trend = asked.find(isTrendWindow)!;
 		expect(trend.searchParams.get('interval')).toBe('1h');
 		expect(Date.parse(trend.searchParams.get('to')!) - Date.parse(trend.searchParams.get('from')!)).toBe(48 * 3_600_000);
+	});
+
+	it('a slot with no traffic at all is not enough data (NetTap off, or not yet installed)', async () => {
+		const full = (u: URL) => trendSeries(u, (half) => ({ bytes: half === 'older' ? 1000 : 2000, connections: 2 }));
+		stubCategory(full, (u) => trendSeries(u, (_, i) => ({ bytes: 100, connections: i === 5 ? 0 : 5 })));
+		render(CategoryPage);
+		await vi.waitFor(() => expect(screen.getByText('Total bandwidth').closest('.kpi')).toHaveTextContent(/Not enough data to compare$/));
+		expect(connectionsKpi()).toHaveTextContent(/Not enough data to compare$/);
 	});
 
 	it('a refresh whose trend request fails says so instead of keeping the last trend (NET-228)', async () => {

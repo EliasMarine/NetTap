@@ -2,8 +2,10 @@
  * NET-228 (audit TRF-6): a KPI's trend compares two equal back-to-back windows made of whole,
  * settled slots, or says it can't. Zeek writes a connection when it ends, stamped with its start, so
  * the newest minutes of a window ending now are still filling in, and a window reaching back before
- * NetTap had data compares against a gap. The same rule as the Alerts page's category trend
- * (daemon/api/alerts.py category_trend).
+ * NetTap had data compares against a gap. Whether data arrived in a slot is read from all of
+ * NetTap's connections in it, so a quiet slot of one series (a category, the alerts) can be 0.
+ * OLD CODE: … NetTap had data compares against a gap. The same rule as the Alerts page's category trend
+ * OLD CODE: (daemon/api/alerts.py category_trend). (review D1: that rule can't see coverage, so it differs)
  */
 
 /** Zeek's TCP inactivity timeout is 5 min; with the Logstash and Filebeat flushes, 15 min settles most connections. */
@@ -49,6 +51,16 @@ export interface SlotValue {
 }
 
 export type HalvesResult = { older: number; newer: number } | 'not_enough_data';
+
+/** A series' slots with all of NetTap's connections in each slot (`coverage`) as their coverage */
+export function withCoverage<T extends { timestamp: string }>(
+	points: T[],
+	value: (p: T) => number,
+	coverage: { timestamp: string; connections: number }[],
+): SlotValue[] {
+	const seen = new Map(coverage.map((c) => [Date.parse(c.timestamp), c.connections]));
+	return points.map((p) => ({ timestamp: p.timestamp, value: value(p), connections: seen.get(Date.parse(p.timestamp)) ?? 0 }));
+}
 
 /**
  * The two windows' totals from the series' whole slots in [from, to), or "not_enough_data": a slot

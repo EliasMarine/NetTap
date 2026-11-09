@@ -36,7 +36,7 @@
 	import { chartTime, connLogsHref, DRILL_RANGES, fmt, NO_EXACT_ALERT_LIST, smartAlertHref, startRange, windowQuery, withCount, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
 	// OLD CODE: import type { AlertCountResponse, SmartAlert, SmartAlertSummary } from '$api/alerts'; (NET-228)
 	import type { AlertTimelineBucket, SmartAlert, SmartAlertSummary } from '$api/alerts';
-	import { compareHalves, trendWindow, type SlotValue, type TrendWindow } from '$lib/utils/window-trend';
+	import { compareHalves, trendWindow, withCoverage, type SlotValue, type TrendWindow } from '$lib/utils/window-trend';
 	import { getDevices, getDeviceCount } from '$api/devices';
 	import type { Device, DeviceCountResponse } from '$api/devices';
 	import { getNewDeviceCount } from '$api/devices-registry';
@@ -498,15 +498,24 @@
 	let bandwidthTrend = $derived(halvesTrend(trafficSlots((p) => p.total_bytes), !!failed.trendTraffic));
 	let connectionTrend = $derived(halvesTrend(trafficSlots((p) => p.connections), !!failed.trendTraffic));
 	// alerts read the connections' coverage by slot; an alert half of 0 can be Suricata stopped, so it isn't "new"
-	let alertTrend = $derived.by(() => {
-		const conns = new Map((trendTraffic ?? []).map((p) => [Date.parse(p.timestamp), p.connections]));
-		const slots = trendAlerts && trendAlerts.map((b) => ({
-			timestamp: b.timestamp,
-			value: b.high + b.medium + b.low + (b.info ?? 0),
-			connections: conns.get(Date.parse(b.timestamp)) ?? 0,
-		}));
-		return halvesTrend(trendTraffic && slots, !!(failed.trendAlerts || failed.trendTraffic), true);
-	});
+	// OLD CODE START — review D1: the join moved to withCoverage, which the category page shares
+	// let alertTrend = $derived.by(() => {
+	// 	const conns = new Map((trendTraffic ?? []).map((p) => [Date.parse(p.timestamp), p.connections]));
+	// 	const slots = trendAlerts && trendAlerts.map((b) => ({
+	// 		timestamp: b.timestamp,
+	// 		value: b.high + b.medium + b.low + (b.info ?? 0),
+	// 		connections: conns.get(Date.parse(b.timestamp)) ?? 0,
+	// 	}));
+	// 	return halvesTrend(trendTraffic && slots, !!(failed.trendAlerts || failed.trendTraffic), true);
+	// });
+	// OLD CODE END
+	let alertTrend = $derived(
+		halvesTrend(
+			trendTraffic && trendAlerts && withCoverage(trendAlerts, (b) => b.high + b.medium + b.low + (b.info ?? 0), trendTraffic),
+			!!(failed.trendAlerts || failed.trendTraffic),
+			true,
+		),
+	);
 	/** Where the compared data ends (the newest minutes are still arriving) */
 	let trendUpTo = $derived(trendWin ? chartTime(Date.parse(trendWin.to), span.hours) : undefined);
 	let trafficCompared = $derived(!!trendTraffic || !!failed.trendTraffic);

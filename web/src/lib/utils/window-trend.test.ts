@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compareHalves, SETTLE_MS, trendWindow, type SlotValue } from './window-trend';
+import { compareHalves, SETTLE_MS, trendWindow, withCoverage, type SlotValue } from './window-trend';
 
 const NOW = Date.parse('2026-11-09T14:07:30Z');
 
@@ -58,5 +58,16 @@ describe('compareHalves', () => {
 		const values = [...Array(12).fill(0), ...Array(12).fill(2)];
 		expect(compareHalves(series(win, values), win)).toEqual({ older: 0, newer: 24 });
 		expect(compareHalves(series(win, values), win, true)).toBe('not_enough_data');
+	});
+});
+
+describe('withCoverage', () => {
+	it("takes each slot's coverage from all traffic by time, and a slot all traffic lacks has none", () => {
+		const points = [{ timestamp: '2026-11-09T10:00:00Z', n: 0 }, { timestamp: '2026-11-09T11:00:00Z', n: 4 }];
+		const coverage = [{ timestamp: '2026-11-09T10:00:00.000Z', connections: 7 }];
+		expect(withCoverage(points, (p) => p.n, coverage)).toEqual([
+			{ timestamp: '2026-11-09T10:00:00Z', value: 0, connections: 7 },
+			{ timestamp: '2026-11-09T11:00:00Z', value: 4, connections: 0 },
+		]);
 	});
 });
