@@ -134,3 +134,21 @@ Tests:
 - D3: 2 new tests failing on the old code, plus one for the midnight cap. That test fails once the cap is removed.
 - The M2 test with the held count is kept in OLD CODE.
 - Daemon suite: 4,603 passed, 4 skipped. ruff is clean.
+
+## Follow-up: refused sends count
+
+**Branch:** `fix/net-224-delta`
+
+- **Problem:** after the delta fix, only accepted sends counted. With a wrong SMTP password, the box tried about once a minute: some 1,440 refused logins a day. That pattern can get the box's address or the owner's account locked.
+- **Why it changed now:** D3 means using up the budget slows a channel to one try an hour instead of silencing it. So counting refusals no longer brings the silence back.
+- **Fix:** a send the service answered and turned down now counts against the budget. That means an HTTP 3xx or 4xx (429 included), an SMTP 5xx (535 wrong password, 550), or refused recipients. After 100, the channel tries once an hour.
+  - A send that never reached the service still doesn't count: no connection, a timeout, a TLS failure, an HTTP 5xx, or an SMTP 4xx "try later".
+- **How:** the hub marks a refusal with a `Refused` reason. The new `deliver()` returns "sent", "refused" or "failed", and `send()` keeps returning a bool for the test button and `dispatch()`.
+  - `record_held` no longer replaces a failed send's error. So Settings keeps showing the refusal (for example "the mail server answered 535 …") while alerts wait for the next hourly digest. This replaces the dispatcher's `attempts` check, which missed one case: once a queue had given up, the next fresh alerts hid the error.
+
+Tests: 9 new or changed, all failing on the old code.
+- HTTP 200, 401, 429 and 503; SMTP 535, 421, and a refused connection.
+- `record_held` keeps a failed send's error.
+- `test_refused_sends_use_the_budget_so_a_wrong_password_slows_to_hourly`: the old dispatcher made 120 tries in two hours, the fix makes 4.
+
+Daemon suite: 4,612 passed, 4 skipped. ruff is clean.
