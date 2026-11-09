@@ -28,6 +28,8 @@
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import { withTraffic } from '$lib/utils/registry-traffic';
+	import { likelyType, osBasis, typeBasis } from '$lib/utils/device-guess';
+	import { ipv6ListNotes } from '$lib/utils/ipv6-coverage';
 	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import NewDeviceBanner from '$components/NewDeviceBanner.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -628,10 +630,22 @@
 	{@const s = status(d)}
 	<span class={['res', s.rank === 2 && 'is-live']}>{s.label}</span>
 {/snippet}
+<!-- OLD CODE START — NET-226 (DEV-7/8): the guessed type and OS read as fact
 {#snippet typeCell(d: Device)}
 	<span class="type"><Icon name={deviceIcon(d.category)} />{CATEGORY_LABELS[d.category ?? 'unknown'] ?? d.category}</span>
 {/snippet}
 {#snippet osCell(d: Device)}{d.os_hint ?? '—'}{/snippet}
+OLD CODE END -->
+{#snippet typeCell(d: Device)}
+	{@const basis = typeBasis(d.category, d.category_basis)}
+	<span class="type"><Icon name={deviceIcon(d.category)} /><span class="two"><span>{likelyType(CATEGORY_LABELS[d.category ?? 'unknown'] ?? d.category ?? 'Unknown', d.category)}</span>{#if basis}<span class="basis">{basis}</span>{/if}</span></span>
+{/snippet}
+{#snippet osCell(d: Device)}
+	{#if d.os_hint}
+		{@const basis = osBasis(d.os_basis)}
+		<span class="two"><span>Likely {d.os_hint}</span>{#if basis}<span class="basis">{basis}</span>{/if}</span>
+	{:else}—{/if}
+{/snippet}
 {#snippet vendorCell(d: Device)}{d.manufacturer ?? '—'}{/snippet}
 {#snippet bytesCell(d: Device)}<Bytes value={d.total_bytes} max={maxBytes} display={formatBytes(d.total_bytes)} />{/snippet}
 {#snippet connCell(d: Device)}{formatNumber(d.connection_count)}{/snippet}
@@ -898,6 +912,10 @@ OLD CODE END -->
 						{columns}
 					/>
 				{/if}
+				<p class="note table-note">Traffic and connections count both directions and include IPv6, matched to each device by its MAC address.</p>
+				{#each ipv6ListNotes(devices) as note (note)}
+					<p class="notice is-warn table-note" role="note"><Icon name="warn" /><span>{note}</span></p>
+				{/each}
 			{/if}
 		</Card>
 	{/if}
@@ -936,6 +954,9 @@ OLD CODE END -->
 	.type { display: inline-flex; align-items: center; gap: var(--sp-2); }
 	.type :global(.ic) { color: var(--text-3); width: 16px; height: 16px; }
 	.note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); }
+	/* NET-226: what the table's figures count, under it */
+	.table-note { margin-top: var(--sp-3); margin-bottom: 0; }
+	.basis { color: var(--text-3); font-size: var(--text-xs); }
 	.load-note { margin-bottom: var(--sp-3); }
 	/* NET-200: the owner's photo in a List row, the size of the row's icon slot */
 	.who-photo { width: 20px; height: 20px; flex: none; border-radius: var(--r-xs); object-fit: cover; }

@@ -129,8 +129,8 @@ describe('bandwidth API client', () => {
 				from: '',
 				to: '',
 				devices: [
-					{ ip: '192.168.1.100', total_bytes: 100_000_000, orig_bytes: 40_000_000, resp_bytes: 60_000_000, connection_count: 1000, percent_of_total: 65.5 },
-					{ ip: '192.168.1.101', total_bytes: 50_000_000, orig_bytes: 20_000_000, resp_bytes: 30_000_000, connection_count: 500, percent_of_total: 34.5 },
+					{ ip: '192.168.1.100', total_bytes: 100_000_000, upload_bytes: 40_000_000, download_bytes: 60_000_000, connection_count: 1000, percent_of_total: 65.5, ipv6_left_out: 0, ipv6_left_out_reason: null },
+					{ ip: '192.168.1.101', total_bytes: 50_000_000, upload_bytes: 20_000_000, download_bytes: 30_000_000, connection_count: 500, percent_of_total: 34.5, ipv6_left_out: 0, ipv6_left_out_reason: null },
 				],
 			};
 			mockFetchSuccess(expected);

@@ -26,6 +26,7 @@
 	import SeverityGauge from '$components/ui/charts/SeverityGauge.svelte';
 	import { severityBuckets } from '$lib/utils/severity';
 	import { loadFailed } from '$lib/utils/load-failed';
+	import { upDownLocal } from '$lib/utils/up-down';
 	import { registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { alertSnapshots, loadAlertSnapshot, refreshAlertSnapshots, snapshotWindow } from '$lib/stores/alertSnapshot';
 	import { getTrafficSummary, getBandwidthTimeSeries, getProtocolDistribution, getTrafficCategories } from '$api/traffic';
@@ -470,12 +471,15 @@
 	 */
 	const trafficHref = $derived(trafficSummary ? connLogsHref(trafficSummary, range) : `/logs?range=${range}`);
 	const bandwidthValue = $derived(trafficSummary ? formatBytes(trafficSummary.total_bytes).split(' ') : null);
-	// orig_bytes is what the side that opened the connection sent (usually a LAN device): up
+	// OLD CODE START — NET-226: the originator's bytes were "up", so a port forward's answers read as download
+	// // orig_bytes is what the side that opened the connection sent (usually a LAN device): up
+	// ? `↓ ${formatBytes(trafficSummary.resp_bytes)} down · ↑ ${formatBytes(trafficSummary.orig_bytes)} up`
+	// OLD CODE END
 	const bandwidthSub = $derived(
 		failed.summary
 			? loadFailed('traffic totals', trafficSummary !== null)
 			: trafficSummary
-				? `↓ ${formatBytes(trafficSummary.resp_bytes)} down · ↑ ${formatBytes(trafficSummary.orig_bytes)} up`
+				? upDownLocal(trafficSummary, formatBytes)
 				: 'Loading…',
 	);
 	const connectionsSub = $derived(
@@ -527,13 +531,19 @@
 	const busiest = $derived(
 		bandwidthData.reduce((best, p, i) => (p.total_bytes > (bandwidthData[best]?.total_bytes ?? 0) ? i : best), -1),
 	);
+	// OLD CODE START — NET-226: down/up were the responder's/originator's bytes, local traffic included
+	// { key: 'down', label: 'Downloaded', colour: 1, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.resp_bytes })) },
+	// { key: 'up', label: 'Uploaded', colour: 2, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.orig_bytes })) },
+	// return p ? `${pointLabel(p.timestamp)} · ↓ ${formatBytes(p.resp_bytes)} · ↑ ${formatBytes(p.orig_bytes)}` : '';
+	// OLD CODE END
 	const bandwidthSeries = $derived<AreaSeries[]>([
-		{ key: 'down', label: 'Downloaded', colour: 1, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.resp_bytes })) },
-		{ key: 'up', label: 'Uploaded', colour: 2, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.orig_bytes })) },
+		{ key: 'down', label: 'Downloaded', colour: 1, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.download_bytes })) },
+		{ key: 'up', label: 'Uploaded', colour: 2, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.upload_bytes })) },
+		{ key: 'local', label: 'On your network', colour: 3, points: bandwidthData.map((p) => ({ t: p.timestamp, v: p.local_bytes })) },
 	]);
 	const bandwidthTip = (i: number) => {
 		const p = bandwidthData[i];
-		return p ? `${pointLabel(p.timestamp)} · ↓ ${formatBytes(p.resp_bytes)} · ↑ ${formatBytes(p.orig_bytes)}` : '';
+		return p ? `${pointLabel(p.timestamp)} · ${upDownLocal(p, formatBytes, false)}` : '';
 	};
 	const busiestText = $derived(
 		busiest >= 0
@@ -767,6 +777,7 @@ OLD CODE END -->
 			<ul class="legend">
 				<li><span class="sw line c-d1"></span>Downloaded</li>
 				<li><span class="sw line c-d2"></span>Uploaded</li>
+				<li><span class="sw line c-d3"></span>On your network</li>
 			</ul>
 		{/snippet}
 		{#if bandwidthData.length > 0}

@@ -35,7 +35,7 @@ function body(url: URL): unknown {
 	if (overrides[url.pathname]) return overrides[url.pathname](from, to);
 	switch (url.pathname) {
 		case '/api/traffic/summary':
-			return { from, to, total_bytes: 5_000_000, orig_bytes: 1_000_000, resp_bytes: 4_000_000, packet_count: 0, connection_count: 321, top_protocol: 'tcp', excluded_ips: ['192.168.1.199', '2001:db8::199'] };
+			return { from, to, total_bytes: 5_000_000, orig_bytes: 1_000_000, resp_bytes: 4_000_000, upload_bytes: 1_000_000, download_bytes: 4_000_000, local_bytes: 0, packet_count: 0, connection_count: 321, top_protocol: 'tcp', excluded_ips: ['192.168.1.199', '2001:db8::199'] };
 		case '/api/traffic/bandwidth':
 			return { from, to, interval: '1h', series: [] };
 		case '/api/traffic/protocols':
@@ -202,7 +202,7 @@ describe('Home — drill-down links carry the window on screen (NET-160 slice 2b
 
 	it('with nothing excluded, the traffic links carry no exclude_src', async () => {
 		overrides['/api/traffic/summary'] = (from, to) => ({
-			from, to, total_bytes: 0, orig_bytes: 0, resp_bytes: 0, packet_count: 0, connection_count: 5, top_protocol: 'tcp', excluded_ips: [],
+			from, to, total_bytes: 0, orig_bytes: 0, resp_bytes: 0, upload_bytes: 0, download_bytes: 0, local_bytes: 0, packet_count: 0, connection_count: 5, top_protocol: 'tcp', excluded_ips: [],
 		});
 		(await firstLoad()).forEach((c) => c.reply());
 		await settle();

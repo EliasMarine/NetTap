@@ -257,6 +257,45 @@ describe('Devices — All devices table', () => {
 		expect(within(table).getAllByRole('row')).toHaveLength(2);
 		expect(within(table).getAllByRole('row')[1]).toHaveTextContent('192.168.1.10');
 	});
+
+	// NET-226: the type and OS are guesses; the figures count both directions and IPv6 by MAC
+	it('shows the type and OS as guesses with what they came from, and what the figures count', async () => {
+		const guessed = listReply([
+			{ ...DEVICE, ip: '192.168.1.10', category: 'computer', category_basis: 'os', os_hint: 'Windows', os_basis: 'web traffic', total_bytes: 5000 },
+			{ ...DEVICE, ip: '192.168.1.9', hostname: 'thing', category: 'unknown', category_basis: null, total_bytes: 100 },
+		], { from: LIST_FROM });
+		stubDaemon({ '/api/capture/mode': BRIDGE, '/api/devices': guessed, '/api/devices/count': { count: 2 } });
+		render(Page);
+		const table = await screen.findByRole('table', { name: 'All devices' });
+		const [, guess, unknown] = within(table).getAllByRole('row');
+
+		expect(within(guess).getByText('Likely computer')).toBeInTheDocument();
+		expect(within(guess).getByText('from its OS')).toBeInTheDocument();
+		expect(within(guess).getByText('Likely Windows')).toBeInTheDocument();
+		expect(within(guess).getByText('from web traffic')).toBeInTheDocument();
+		expect(within(unknown).getByText('Unknown')).toBeInTheDocument();
+		expect(within(unknown).queryByText(/^from /)).not.toBeInTheDocument();
+		expect(
+			screen.getByText('Traffic and connections count both directions and include IPv6, matched to each device by its MAC address.'),
+		).toBeInTheDocument();
+		expect(screen.queryByRole('note')).not.toBeInTheDocument();
+	});
+
+	it.each([
+		['router', "The device at 192.168.1.1 forwards other devices' traffic (it's the router), so only its link-local IPv6 is counted."],
+		['no_gateway', "IPv6 traffic other than link-local isn't counted for this period: no internet traffic showed which device is the router."],
+	])('says what IPv6 the list left out when the reason is %s', async (reason, text) => {
+		const rows = listReply([
+			{ ...DEVICE, ip: '192.168.1.1', ipv6_left_out: 30, ipv6_left_out_reason: reason, total_bytes: 5000 },
+			{ ...DEVICE, ip: '192.168.1.9', ipv6_left_out: reason === 'no_gateway' ? 4 : 0, ipv6_left_out_reason: reason === 'no_gateway' ? reason : null },
+		], { from: LIST_FROM });
+		stubDaemon({ '/api/capture/mode': BRIDGE, '/api/devices': rows, '/api/devices/count': { count: 2 } });
+		render(Page);
+		await screen.findByRole('table', { name: 'All devices' });
+		// one notice per reason, however many devices share it
+		expect(screen.getAllByRole('note')).toHaveLength(1);
+		expect(screen.getByRole('note')).toHaveTextContent(text);
+	});
 });
 
 // PLAN.md §5.5: the top bar's Refresh and "Updated" go through the page's loader

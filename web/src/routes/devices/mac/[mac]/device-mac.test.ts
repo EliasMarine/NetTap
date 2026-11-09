@@ -98,8 +98,11 @@ describe('Device by MAC page', () => {
 
 		render(Page);
 
+		// OLD CODE: await screen.findByText('Traffic matching its MAC or any address it has used; another device may have used one since.') (NET-226: both directions, IPv6 by MAC)
 		expect(
-			await screen.findByText('Traffic matching its MAC or any address it has used; another device may have used one since.'),
+			await screen.findByText(
+				'Traffic to and from any address it has used, plus its IPv6 matched by its MAC; another device may have used one of those addresses since.',
+			),
 		).toBeInTheDocument();
 		expect(screen.getByText('New')).toBeInTheDocument();
 	});
@@ -120,6 +123,31 @@ describe('Device by MAC page', () => {
 
 		await screen.findByText('Ubiquiti gateway');
 		expect(screen.queryByText('New')).not.toBeInTheDocument();
+	});
+});
+
+// NET-226: the type is a guess, and a router's MAC counts only its link-local IPv6
+describe('Device by MAC page — guesses and IPv6 coverage (NET-226)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it("shows the type as a guess and says the router's IPv6 is link-local only", async () => {
+		const path = `/api/devices/registry/${encodeURIComponent(MAC)}/traffic`;
+		const reply = REPLIES[path] as { traffic: Record<string, unknown> };
+		const traffic = { ...reply, traffic: { ...reply.traffic, ipv6_left_out: 40, ipv6_left_out_reason: 'router' } };
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const p = url.split('?')[0];
+				return { ok: true, status: 200, json: async () => (p === path ? traffic : REPLIES[p]) };
+			}),
+		);
+
+		render(Page);
+
+		expect(
+			await screen.findByText("This device forwards other devices' traffic (it's the router), so only its link-local IPv6 is counted."),
+		).toBeInTheDocument();
+		expect(screen.getByText('Likely infrastructure')).toBeInTheDocument();
 	});
 });
 

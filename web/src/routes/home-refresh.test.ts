@@ -45,9 +45,9 @@ function body(url: URL): unknown {
 	const hours = from && to ? (new Date(to).getTime() - new Date(from).getTime()) / HOUR : 0;
 	switch (url.pathname) {
 		case '/api/traffic/summary':
-			return { from, to, total_bytes: hours * 1024 ** 3, orig_bytes: 0, resp_bytes: 0, packet_count: 0, connection_count: hours, top_protocol: 'tcp' };
+			return { from, to, total_bytes: hours * 1024 ** 3, orig_bytes: 0, resp_bytes: 0, upload_bytes: 0, download_bytes: hours * 1024 ** 3, local_bytes: 0, packet_count: 0, connection_count: hours, top_protocol: 'tcp' };
 		case '/api/traffic/bandwidth':
-			return { from, to, interval: '1h', series: [{ timestamp: from, orig_bytes: 10, resp_bytes: 20, total_bytes: 30, connections: 1 }] };
+			return { from, to, interval: '1h', series: [{ timestamp: from, orig_bytes: 10, resp_bytes: 20, upload_bytes: 10, download_bytes: 20, local_bytes: 0, total_bytes: 30, connections: 1 }] };
 		case '/api/traffic/protocols':
 			return { from, to, protocols: [{ name: 'tcp', count: 9 }], services: [{ name: 'dns', count: 3 }] };
 		case '/api/traffic/categories':

@@ -2,6 +2,8 @@
  * Client-side API helpers for bandwidth monitoring endpoints.
  */
 
+import type { Ipv6LeftOutReason } from '$lib/utils/ipv6-coverage';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -12,6 +14,10 @@ export interface MonthlyUsage {
 	total_bytes: number;
 	orig_bytes: number;
 	resp_bytes: number;
+	/** NET-226: bytes to the internet, from the internet, and between your own devices; they add up to total_bytes */
+	upload_bytes: number;
+	download_bytes: number;
+	local_bytes: number;
 	projection: {
 		year: number;
 		month: number;
@@ -32,6 +38,10 @@ export interface DailyUsageEntry {
 	total_bytes: number;
 	orig_bytes: number;
 	resp_bytes: number;
+	/** NET-226: as on MonthlyUsage */
+	upload_bytes: number;
+	download_bytes: number;
+	local_bytes: number;
 	connections: number;
 }
 
@@ -44,10 +54,18 @@ export interface DailyUsageResponse {
 export interface DeviceUsage {
 	ip: string;
 	total_bytes: number;
-	orig_bytes: number;
-	resp_bytes: number;
+	// OLD CODE START — NET-226: the originator's bytes, so a device's answers read as download
+	// orig_bytes: number;
+	// resp_bytes: number;
+	// OLD CODE END
+	/** NET-226: bytes the device sent and received, on connections it started and answered */
+	upload_bytes: number;
+	download_bytes: number;
 	connection_count: number;
+	/** Share of the sum of every device's total: a connection between two of your devices counts for both */
 	percent_of_total: number;
+	ipv6_left_out?: number;
+	ipv6_left_out_reason?: Ipv6LeftOutReason | null;
 }
 
 export interface DeviceUsageResponse {

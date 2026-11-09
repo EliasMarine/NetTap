@@ -211,7 +211,8 @@ describe('Device detail — connection direction, protocol filter and upload sha
 		render(Page);
 		await flush();
 
-		expect(screen.getByText(/Sessions to or from this device/)).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText(/Sessions to or from this device/)).toBeInTheDocument(); (NET-226: the list is this address's sessions; the device's IPv6 is counted by MAC)
+		expect(screen.getByText(/Sessions to or from this address/)).toBeInTheDocument();
 		const table = screen.getByRole('table', { name: 'Recent connections' });
 		const [, out, inbound] = Array.from(table.querySelectorAll('tr'));
 		// Time, Direction, Destination, Proto, Service, Duration, DL, UL
@@ -241,7 +242,8 @@ describe('Device detail — connection direction, protocol filter and upload sha
 		const devices = await import('$api/devices');
 		const { device } = await vi.mocked(devices.getDeviceDetail)(IP, {});
 		vi.mocked(devices.getDeviceDetail).mockResolvedValueOnce({
-			device: { ...device, total_bytes: 100_000, orig_bytes: 35_000, resp_bytes: 65_000 },
+			// OLD CODE: device: { ...device, total_bytes: 100_000, orig_bytes: 35_000, resp_bytes: 65_000 }, (NET-226: what the device sent, both sides)
+			device: { ...device, total_bytes: 100_000, upload_bytes: 35_000, download_bytes: 65_000 },
 		} as never);
 		render(Page);
 		await flush();
@@ -253,6 +255,57 @@ describe('Device detail — connection direction, protocol filter and upload sha
 		// OLD CODE END
 		expect(kpi).toHaveTextContent('Balanced');
 		expect(kpi).not.toHaveTextContent('Elevated');
+	});
+});
+
+// NET-226: upload is what the device sent on both sides, IPv6 is counted by MAC, guesses say so
+describe('Device detail — both sides, IPv6 and guesses (NET-226)', () => {
+	beforeEach(() => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+	});
+	afterEach(() => vi.clearAllMocks());
+
+	async function renderWith(extra: Record<string, unknown>) {
+		const devices = await import('$api/devices');
+		const { device } = await vi.mocked(devices.getDeviceDetail)(IP, {});
+		vi.mocked(devices.getDeviceDetail).mockResolvedValue({ device: { ...device, ...extra } } as never);
+		render(Page);
+		await flush();
+	}
+
+	it('takes the upload share and the traffic sub from upload_bytes, not the originator bytes', async () => {
+		// the device answered most of its sessions, so what it started (orig) is not what it sent
+		await renderWith({ total_bytes: 100_000, orig_bytes: 10_000, resp_bytes: 90_000, upload_bytes: 60_000, download_bytes: 40_000 });
+
+		const share = screen.getAllByText('Upload share').map((el) => el.closest('.kpi')).find(Boolean) as HTMLElement;
+		expect(share).toHaveTextContent('60%');
+		const traffic = screen.getAllByText('Traffic').map((el) => el.closest('.kpi')).find(Boolean) as HTMLElement;
+		expect(traffic).toHaveTextContent('↓ 40.0 KB down · ↑ 60.0 KB up');
+	});
+
+	it('says how many of its connections were over IPv6', async () => {
+		await renderWith({ connection_count: 12, ipv6_connections: 5, unique_destinations: 3 });
+		const kpi = screen.getAllByText('Connections').map((el) => el.closest('.kpi')).find(Boolean) as HTMLElement;
+		expect(kpi).toHaveTextContent('of which 5 over IPv6 · 3 unique destinations');
+	});
+
+	it.each([
+		['no_gateway', "IPv6 traffic other than link-local isn't counted for this period: no internet traffic showed which device is the router."],
+		['router', "This device forwards other devices' traffic (it's the router), so only its link-local IPv6 is counted."],
+	])('says what IPv6 it left out when the reason is %s', async (reason, text) => {
+		await renderWith({ ipv6_left_out: 7, ipv6_left_out_reason: reason });
+		expect(screen.getByRole('note')).toHaveTextContent(text);
+	});
+
+	it('shows no IPv6 notice when nothing was left out', async () => {
+		await renderWith({ ipv6_left_out: 0, ipv6_left_out_reason: null });
+		expect(screen.queryByText(/link-local IPv6/)).not.toBeInTheDocument();
+	});
+
+	it('shows the type and OS as guesses, with what they came from', async () => {
+		await renderWith({ category: 'computer', category_basis: 'os', os_hint: 'Windows', os_basis: 'web traffic' });
+		expect(screen.getByText('Likely computer · from its OS')).toBeInTheDocument();
+		expect(screen.getByText('Likely Windows · from web traffic')).toBeInTheDocument();
 	});
 });
 

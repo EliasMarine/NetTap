@@ -4,6 +4,9 @@
  * forward requests to the nettap-storage-daemon.
  */
 
+import type { Ipv6LeftOutReason } from '$lib/utils/ipv6-coverage';
+import type { GuessBasis } from '$lib/utils/device-guess';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -23,14 +26,29 @@ export interface Device {
 	first_seen: string;
 	last_seen: string;
 	total_bytes: number;
-	/** Bytes the device sent (sum of source.bytes). */
-	orig_bytes?: number;
-	/** Bytes the device received (sum of destination.bytes). */
-	resp_bytes?: number;
+	// OLD CODE START — NET-226: connections the device started only
+	// /** Bytes the device sent (sum of source.bytes). */
+	// orig_bytes?: number;
+	// /** Bytes the device received (sum of destination.bytes). */
+	// resp_bytes?: number;
+	// OLD CODE END
+	/** NET-226: bytes the device sent and received, on connections it started and answered, IPv4 and IPv6 */
+	upload_bytes?: number;
+	download_bytes?: number;
+	/** Connections it started and answered, IPv6 included */
 	connection_count: number;
+	/** Of connection_count, those over IPv6 (matched to the device by its MAC) */
+	ipv6_connections?: number;
+	/** IPv6 connections not counted, and why (ipv6-coverage.ts) */
+	ipv6_left_out?: number;
+	ipv6_left_out_reason?: Ipv6LeftOutReason | null;
 	protocols: string[];
 	alert_count: number;
 	category?: string;
+	/** What the type was guessed from (device-guess.ts); null when it is unknown */
+	category_basis?: GuessBasis | null;
+	/** What the OS was guessed from */
+	os_basis?: string | null;
 	unifi_name?: string;
 	/** NET-200: the owner's name, picked icon and photo URL; `hostname` already carries the name */
 	custom_name?: string | null;
@@ -77,8 +95,10 @@ export interface DeviceDetail extends Device {
 	top_destinations: DeviceDestination[];
 	dns_queries: DeviceDNSQuery[];
 	bandwidth_series: DeviceBandwidthPoint[];
-	orig_bytes?: number;
-	resp_bytes?: number;
+	// OLD CODE START — NET-226: upload_bytes/download_bytes on Device now
+	// orig_bytes?: number;
+	// resp_bytes?: number;
+	// OLD CODE END
 	unique_destinations?: number;
 	top_services?: Array<{ name: string; bytes: number; connections: number }>;
 }
