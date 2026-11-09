@@ -5,9 +5,9 @@ import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import UpdatesPage from './+page.svelte';
 
 const VERSIONS = {
-	versions: {
-		zeek: { name: 'Zeek', category: 'core', current_version: '6.0.4', install_type: 'docker', last_checked: '', status: 'ok', details: {} },
-	},
+	versions: [
+		{ name: 'Zeek', category: 'core', current_version: '6.0.4', install_type: 'docker', last_checked: '', status: 'ok', details: {} },
+	],
 	last_scan: '',
 };
 
@@ -88,10 +88,10 @@ describe('Software Updates page when a request fails (#96)', () => {
 
 	it('names the sources the daemon could not check and marks their rows Unknown', async () => {
 		const versions = {
-			versions: {
+			versions: [
 				...VERSIONS.versions,
-				'nettap-daemon': { name: 'nettap-daemon', category: 'core', current_version: '1.0.0', install_type: 'docker', last_checked: '', status: 'ok', details: {} },
-			},
+				{ name: 'nettap-daemon', category: 'core', current_version: '1.0.0', install_type: 'docker', last_checked: '', status: 'ok', details: {} },
+			],
 			last_scan: '',
 		};
 		stubFetch({
@@ -129,10 +129,10 @@ describe('Software Updates page when a request fails (#96)', () => {
 
 	it('names container and docker checks the daemon could not make', async () => {
 		const versions = {
-			versions: {
+			versions: [
 				...VERSIONS.versions,
-				grafana: { name: 'grafana', category: 'docker', current_version: '10.4.2', install_type: 'docker', last_checked: '', status: 'ok', details: {} },
-			},
+				{ name: 'grafana', category: 'docker', current_version: '10.4.2', install_type: 'docker', last_checked: '', status: 'ok', details: {} },
+			],
 			last_scan: '',
 		};
 		stubFetch({
@@ -148,9 +148,9 @@ describe('Software Updates page when a request fails (#96)', () => {
 
 	it('shows the daemon\'s docker error row as an error', async () => {
 		const versions = {
-			versions: {
-				docker: { name: 'docker', category: 'docker', current_version: 'unknown', install_type: 'docker', last_checked: '', status: 'error', details: {} },
-			},
+			versions: [
+				{ name: 'docker', category: 'docker', current_version: 'unknown', install_type: 'docker', last_checked: '', status: 'error', details: {} },
+			],
 			last_scan: '',
 		};
 		stubFetch({ '/api/system/versions': versions, '/api/system/updates/available': { updates: [], last_check: '' } });
@@ -293,10 +293,10 @@ describe('Software Updates page — updates NetTap cannot apply', () => {
 		},
 	];
 	const versions = {
-		versions: {
-			arkime: { name: 'arkime', category: 'docker', current_version: '26.02.0', install_type: 'docker', last_checked: '', status: 'ok', details: {} },
-			'suricata-rules': { name: 'suricata-rules', category: 'database', current_version: '2026-10-01', install_type: 'file', last_checked: '', status: 'ok', details: {} },
-		},
+		versions: [
+			{ name: 'arkime', category: 'docker', current_version: '26.02.0', install_type: 'docker', last_checked: '', status: 'ok', details: {} },
+			{ name: 'suricata-rules', category: 'database', current_version: '2026-10-01', install_type: 'file', last_checked: '', status: 'ok', details: {} },
+		],
 		last_scan: '',
 	};
 

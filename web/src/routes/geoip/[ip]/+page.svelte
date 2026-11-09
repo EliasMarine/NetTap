@@ -90,7 +90,8 @@
 		if (!guard.current(g)) return 'skipped';
 		installedDbFailed = versionsRes.status === 'rejected';
 		// The daemon sends a list; Object.values reads it and the typed record alike
-		installedDb = versionsRes.status === 'fulfilled' ? (Object.values(versionsRes.value?.versions ?? {}).find((v) => v?.name === 'geoip-db') ?? null) : null;
+		// OLD CODE: Object.values(versionsRes.value?.versions ?? {}).find(…) (NET-237: getVersions is now typed as the list it is)
+		installedDb = versionsRes.status === 'fulfilled' ? (versionsRes.value?.versions?.find((v) => v?.name === 'geoip-db') ?? null) : null;
 		return outcome([geoRes, versionsRes]);
 	}
 

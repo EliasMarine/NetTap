@@ -19,7 +19,7 @@ interface DaemonLiveness {
 	uptime: number;
 }
 
-/** The daemon sends `versions` as a list (the client types it as a record, but only Object.values and find read it). */
+/** GET /api/system/versions: `versions` is a list, as getVersions types it (NET-237), plus the daemon's count. */
 interface VersionsResponse {
 	versions: ComponentVersion[];
 	last_scan: string;

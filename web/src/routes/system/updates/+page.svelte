@@ -29,7 +29,8 @@
 	// State
 	// ---------------------------------------------------------------------------
 
-	let versions = $state<Record<string, ComponentVersion>>({});
+	// OLD CODE: let versions = $state<Record<string, ComponentVersion>>({}); (NET-237: the daemon sends a list)
+	let versions = $state<ComponentVersion[]>([]);
 	let lastScan = $state('');
 	let availableUpdates = $state<AvailableUpdate[]>([]);
 	let lastCheck = $state('');
@@ -79,7 +80,8 @@
 		// row ever matched its update: every row read "Up to Date" beside "7 updates available"
 		// const entries = Object.entries(versions).map(([key, v]) => ({ key, ...v }));
 		// OLD CODE END
-		const entries = Object.values(versions).map((v) => ({ key: v.name, ...v }));
+		// OLD CODE: const entries = Object.values(versions).map((v) => ({ key: v.name, ...v })); (NET-237)
+		const entries = versions.map((v) => ({ key: v.name, ...v }));
 
 		// OLD CODE START — sorting moved to the DataTable headers (by name until one is clicked)
 		// if (sortBy === 'status') {
@@ -868,16 +870,17 @@
 
 	<!-- Installed versions -->
 	<Card title="Installed versions" sub="Every component NetTap runs · by kind" class="c-12">
-		{#if loading && Object.keys(versions).length === 0}
+		<!-- OLD CODE: Object.keys(versions).length in these three checks (NET-237: versions is a list) -->
+		{#if loading && versions.length === 0}
 			<CardState state="loading" title="Loading version information" />
-		{:else if versionsFailed && Object.keys(versions).length === 0}
+		{:else if versionsFailed && versions.length === 0}
 			<CardState
 				state="error"
 				title="Couldn't load installed versions: the request failed."
 				message="Check that NetTap is running on the System page, then try again."
 				onaction={() => void refresh.run()}
 			/>
-		{:else if Object.keys(versions).length === 0}
+		{:else if versions.length === 0}
 			<CardState
 				state="empty"
 				icon="download"
