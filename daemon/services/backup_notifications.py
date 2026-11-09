@@ -2,12 +2,14 @@
 Notification channels in a config backup (A9, NET-224).
 
 Exported without their secrets; restored with the box's own secrets, but only where they would
-still go to the same server, account and transport, so a crafted backup can't redirect them.
+still go to the same server, account, transport and recipients, so a crafted backup can't
+redirect them. A channel to anywhere new comes back off.
 """
 
 from typing import Any
 
-from services.notification_config import QUICK_WEBHOOK
+# OLD CODE: from services.notification_config import QUICK_WEBHOOK (security delta D2: the Settings email gets its own note)
+from services.notification_config import QUICK_EMAIL, QUICK_WEBHOOK
 
 # A backup carries only these; passwords, tokens, webhook URLs, headers and any unknown key stay
 # on the box. The same keys as NET-224's public view (notification_config._PUBLIC_KEYS).
@@ -24,11 +26,22 @@ PUBLIC_KEYS = (
 _CHANNEL_KEYS = ("id", "type", "name", "created_at", "enabled")
 # A kept secret must still go to the same SMTP server, account and transport...
 # OLD CODE: _DESTINATION_KEYS = ("smtp_host", "smtp_port", "smtp_user", "use_tls") (review L2: a new chat_id kept the bot token)
-_DESTINATION_KEYS = ("smtp_host", "smtp_port", "smtp_user", "use_tls", "chat_id")
-# ...and, when an older backup carries a URL, to that same URL
-_URL_KEYS = ("url", "webhook_url")
+# OLD CODE: _DESTINATION_KEYS = ("smtp_host", "smtp_port", "smtp_user", "use_tls", "chat_id") (security delta D2: new recipients kept the SMTP password)
+_DESTINATION_KEYS = (
+    "smtp_host",
+    "smtp_port",
+    "smtp_user",
+    "use_tls",
+    "chat_id",
+    "recipients",
+)
+# ...and, when an older or crafted backup carries a URL or a Pushover user key (an address too:
+# whoever holds it gets the message), to that same one
+# OLD CODE: _URL_KEYS = ("url", "webhook_url") (security delta D2: a carried user_key kept the box's API token)
+_URL_KEYS = ("url", "webhook_url", "user_key")
 # Where a channel sends. One the box doesn't already send to comes back off (review L2)
-_ADDRESS_KEYS = ("url", "webhook_url", "smtp_host", "chat_id")
+# OLD CODE: _ADDRESS_KEYS = ("url", "webhook_url", "smtp_host", "chat_id") (security delta D2: recipients and user keys are addresses)
+_ADDRESS_KEYS = (*_URL_KEYS, "smtp_host", "chat_id", "recipients")
 
 
 def redact_channels(channels: Any) -> dict:
@@ -81,6 +94,7 @@ def restore_channels(
     channels: dict = {}
     turned_off: list[str] = []
     quick_off: list[str] = []
+    quick_email_off = False
     redirected: list[str] = []
     no_smtp: list[str] = []
     for cid, channel in backup.items():
@@ -104,6 +118,10 @@ def restore_channels(
         if cid == QUICK_WEBHOOK and new_address:
             stored["enabled"] = False
             quick_off.append(label)
+        elif cid == QUICK_EMAIL and new_address:
+            # kept, so the Settings tab shows the addresses before the owner turns it on
+            stored["enabled"] = False
+            quick_email_off = True
         elif any(k not in config for k in channel.get("secrets_left_out", [])):
             stored["enabled"] = False
             # OLD CODE: turned_off.append(label) (NET-224: the Settings webhook is fixed elsewhere)
@@ -135,6 +153,11 @@ def restore_channels(
             "The webhook restored without its URL and turned off. Turn it on in "
             "Settings › Notifications and enter its URL."
         )
+    if quick_email_off:
+        warnings.append(
+            "The alert email restored turned off, because it sends to addresses this NetTap "
+            "doesn't already use. Check them in Settings › Notifications, then turn it on."
+        )
     if turned_off:
         # a new channel gets a new id, so the restored rules don't reach it
         warnings.append(
@@ -145,7 +168,8 @@ def restore_channels(
         )
     if redirected:
         warnings.append(
-            "Notification channels in this backup send to a server, URL or chat this NetTap "
+            "Notification channels in this backup send to a server, URL, chat, email address "
+            "or Pushover user this NetTap "
             f"doesn't already use, so they were restored turned off: {', '.join(redirected)}. "
             "If you set them up, add each again on the Notification channels page with its "
             "routing rules, then delete these."

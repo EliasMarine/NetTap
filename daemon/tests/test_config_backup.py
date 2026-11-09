@@ -799,6 +799,65 @@ class TestA9NotificationRestore:
         assert any("Evil" in w and "Relay" in w for w in result["warnings"])
         assert backup._notification_hub.channels_for("alert", 1) == []
 
+    # Security delta D2: a Pushover user key and email recipients say where a channel sends
+    def test_new_email_recipients_get_none_of_the_boxs_secrets(
+        self, backup, config_paths
+    ):
+        def edit(section):
+            section["mail"]["config"]["recipients"] = ["someone@example.org"]
+
+        _result, channels = self._round_trip(backup, config_paths, edit)
+        assert "smtp_pass" not in channels["mail"]["config"]
+        assert channels["mail"]["enabled"] is False
+
+    def test_a_new_pushover_user_key_gets_none_of_the_boxs_secrets(
+        self, backup, config_paths
+    ):
+        pushover = {
+            "id": "po",
+            "type": "pushover",
+            "name": "Phone",
+            "config": {"user_key": "uOWNER", "api_token": "aBOX"},
+        }
+        self._box(config_paths, {"po": pushover}, backup)
+        section = backup.export_config()["sections"]["notification_channels"]
+        section["po"]["config"]["user_key"] = "uOTHER"
+        backup.import_config(_data({"notification_channels": section}))
+        stored = backup._notification_hub._channels["po"]
+        assert "api_token" not in stored["config"]
+        assert "user_key" not in stored["config"]
+        assert stored["enabled"] is False
+
+    def test_email_to_new_recipients_through_the_boxs_smtp_server_is_stored_off(
+        self, backup, config_paths
+    ):
+        Path(config_paths["env_file"]).write_text("SMTP_HOST=smtp.example.net\n")
+        self._box(config_paths, {}, backup)
+        to_someone = {"recipients": ["someone@example.org"]}
+        crafted = {
+            "relay": {
+                "id": "relay",
+                "type": "email",
+                "name": "Relay",
+                "config": to_someone,
+            },
+            "settings-email": {
+                "id": "settings-email",
+                "type": "email",
+                "name": "Email (Settings)",
+                "config": to_someone,
+            },
+        }
+        result = backup.import_config(_data({"notification_channels": crafted}))
+        hub = backup._notification_hub
+        assert all(hub._channels[cid].get("enabled", True) is False for cid in crafted)
+        assert not hub.get_quick_settings()["email"]["enabled"]
+        assert any("Relay" in w for w in result["warnings"])
+        assert any(
+            "alert email" in w and "Settings › Notifications" in w
+            for w in result["warnings"]
+        )
+
     def test_a_fresh_box_turns_off_channels_missing_secrets_and_names_them(
         self, backup, config_paths
     ):
@@ -827,6 +886,15 @@ class TestA9NotificationRestore:
                 "secrets_left_out": [],
             }
         }
+        # D2: the box already sends to these recipients, so the channel comes back on
+        self._box(
+            config_paths,
+            {
+                cid: {k: v for k, v in ch.items() if k != "secrets_left_out"}
+                for cid, ch in quick.items()
+            },
+            backup,
+        )
         result = backup.import_config(_data({"notification_channels": quick}))
         assert result["success"] is True
         assert any(
