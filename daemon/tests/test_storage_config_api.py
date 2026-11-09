@@ -419,6 +419,17 @@ class TestStatusShowsUnappliedSave(_IlmTestCase):
 
         self.assertFalse(ilm["synced"])
         self.assertTrue(ilm["pending_retry"])
+        # A15: the card says why
+        self.assertIn("ILM policies failed", ilm["last_error"])
+
+    async def test_a_startup_retry_still_shows_while_a_save_is_unapplied(self):
+        """A15: the save-retry flag used to overwrite the storage manager's own."""
+        storage = self.app["storage"]
+        storage._ilm_failures = 1  # a startup apply failed and is waiting to retry
+        self.app["ilm_sync"].config_revision = 1  # and a save isn't applied yet
+        ilm = await self._ilm_status()
+        self.assertFalse(ilm["synced"])
+        self.assertTrue(ilm["pending_retry"])
 
 
 class TestRetryNeverReappliesOlderSave(_IlmTestCase):

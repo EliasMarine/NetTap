@@ -19,6 +19,7 @@ Endpoints:
 """
 
 import asyncio
+import contextlib
 import functools
 import logging
 import os
@@ -243,7 +244,10 @@ def handle_storage_status(request: web.Request) -> web.Response:
             status["ilm_status"] = {
                 **status["ilm_status"],
                 "synced": False,
-                "pending_retry": task is not None and not task.done(),
+                # OLD CODE: "pending_retry": task is not None and not task.done(), (A15: hid
+                # the storage manager's own startup retry)
+                "pending_retry": status["ilm_status"].get("pending_retry", False)
+                or (task is not None and not task.done()),
             }
         return web.json_response(status)
     except Exception as exc:
@@ -755,11 +759,24 @@ def _apply_latest_ilm(app: web.Application) -> dict[str, str] | None:
             return None
         config_manager: RetentionConfigManager = app["retention_config_manager"]
         policies = generate_ilm_policies(config_manager.get_config())
-        results = apply_ilm_policies_from_config(
-            app["opensearch_url"], policies, http_auth=app.get("http_auth")
-        )
-        if any(str(status).startswith("error") for status in results.values()):
-            raise IlmApplyError(results)
+        # OLD CODE START — A15: a failure left the last success on the health card
+        # results = apply_ilm_policies_from_config(
+        #     app["opensearch_url"], policies, http_auth=app.get("http_auth")
+        # )
+        # if any(str(status).startswith("error") for status in results.values()):
+        #     raise IlmApplyError(results)
+        # OLD CODE END
+        try:
+            results = apply_ilm_policies_from_config(
+                app["opensearch_url"], policies, http_auth=app.get("http_auth")
+            )
+            if any(str(status).startswith("error") for status in results.values()):
+                raise IlmApplyError(results)
+        except Exception as exc:
+            # recorded in memory first; a failed file write mustn't hide the real error
+            with contextlib.suppress(OSError):
+                config_manager.mark_ilm_failed(str(exc))
+            raise
         config_manager.mark_ilm_applied(results)
         state.applied_revision = revision
         return results
@@ -862,15 +879,29 @@ async def handle_storage_config(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "Invalid JSON body"}, status=400)
 
+    # A9: the rest moved to save_retention_config, which a backup restore uses too
+    status, payload = await save_retention_config(request.app, body)
+    return web.json_response(payload, status=status)
+
+
+async def save_retention_config(app: web.Application, body: dict) -> tuple[int, dict]:
+    """Save retention settings, hot-reload them and sync ILM: (HTTP status, response body).
+
+    Shared by POST /api/storage/config and the backup restore (A9).
+    """
+    if "retention_config_manager" not in app:
+        return 503, {"error": "Retention config manager not initialised"}
+
     # --- Validate and save config ---
-    config_manager: RetentionConfigManager = request.app["retention_config_manager"]
+    config_manager: RetentionConfigManager = app["retention_config_manager"]
     try:
         new_config = config_manager.save(body)
-    except ValueError as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+    # TypeError/AttributeError: a restored file can hold any JSON, not just a request body
+    except (ValueError, TypeError, AttributeError) as exc:
+        return 400, {"error": str(exc)}
 
     # --- Hot-reload StorageManager config ---
-    storage: StorageManager = request.app["storage"]
+    storage: StorageManager = app["storage"]
     storage.config = new_config
 
     # OLD CODE START — applied this request's own snapshot without ordering, and
@@ -938,10 +969,10 @@ async def handle_storage_config(request: web.Request) -> web.Response:
     # OLD CODE END
 
     # --- Apply ILM for the newest config (serialized, revision-aware) ---
-    state: IlmSyncState = request.app["ilm_sync"]
+    state: IlmSyncState = app["ilm_sync"]
     state.config_revision += 1
     revision = state.config_revision
-    results, ilm_error = await _run_ilm_worker(request.app)
+    results, ilm_error = await _run_ilm_worker(app)
     config_summary = {
         "hot_days": new_config.hot_days,
         "warm_days": new_config.warm_days,
@@ -952,30 +983,26 @@ async def handle_storage_config(request: web.Request) -> web.Response:
 
     # Applied for this save if this revision, or a newer one, is in OpenSearch.
     if state.applied_revision >= revision:
-        return web.json_response(
-            {
-                "saved": True,
-                "ilm_applied": True,
-                "ilm_results": results or {},
-                "config": config_summary,
-            }
-        )
+        return 200, {
+            "saved": True,
+            "ilm_applied": True,
+            "ilm_results": results or {},
+            "config": config_summary,
+        }
 
     # OpenSearch is down or rejected a policy — config is saved, retry later
     ilm_error = ilm_error or "ILM policies not applied yet"
     logger.warning(
         "ILM application failed after config save, scheduling retry: %s", ilm_error
     )
-    _schedule_ilm_retry(request.app)
-    return web.json_response(
-        {
-            "saved": True,
-            "ilm_applied": False,
-            "ilm_retry_scheduled": True,
-            "ilm_error": ilm_error,
-            "config": config_summary,
-        }
-    )
+    _schedule_ilm_retry(app)
+    return 200, {
+        "saved": True,
+        "ilm_applied": False,
+        "ilm_retry_scheduled": True,
+        "ilm_error": ilm_error,
+        "config": config_summary,
+    }
 
 
 async def _run_ilm_worker(
@@ -1077,7 +1104,8 @@ def create_app(
     )
     if retention_config_manager is not None:
         app["retention_config_manager"] = retention_config_manager
-    app["ilm_sync"] = IlmSyncState()
+    # OLD CODE: app["ilm_sync"] = IlmSyncState() (A15: startup verification ran outside it)
+    app["ilm_sync"] = IlmSyncState(lock=storage.ilm_lock)
 
     # Register routes
     app.router.add_get("/api/health", handle_health)
@@ -1192,6 +1220,8 @@ def create_app(
     #     logger.info("Auto-excluded appliance management IP: %s", appliance_ip)
     # OLD CODE END
     appliance_ip = detect_appliance_ip(_management_interface())
+    # A9: kept so a backup restore can add it back when it reloads the owner's list
+    app["appliance_ip"] = appliance_ip
     if appliance_ip and appliance_ip not in app["excluded_ips"]:
         # Runtime only: detected again at every start, never written into the owner's list
         app["excluded_ips"] = [*app["excluded_ips"], appliance_ip]
