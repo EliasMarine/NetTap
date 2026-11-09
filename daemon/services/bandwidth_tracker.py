@@ -50,6 +50,11 @@ _TOTAL_BYTES_SUM = {
 }
 
 
+def internet_bytes(usage: dict) -> int:
+    """What crossed the ISP link: upload + download, without traffic between your own devices."""
+    return int(usage.get("upload_bytes", 0) + usage.get("download_bytes", 0))
+
+
 class BandwidthTracker:
     """Aggregates bandwidth data from OpenSearch arkime sessions."""
 
@@ -382,8 +387,13 @@ class BandwidthTracker:
     #     ]
     # OLD CODE END
 
+    # OLD CODE: def get_projected_monthly(self, year: int, month: int, excluded_ips: list[str] | None = None) -> dict[str, Any]:
     def get_projected_monthly(
-        self, year: int, month: int, excluded_ips: list[str] | None = None
+        self,
+        year: int,
+        month: int,
+        excluded_ips: list[str] | None = None,
+        usage: dict | None = None,
     ) -> dict[str, Any]:
         """Get projected monthly usage based on current rate.
 
@@ -393,13 +403,19 @@ class BandwidthTracker:
             year: The year.
             month: The month (1-12).
             excluded_ips: Optional list of IPs to exclude from results.
+            usage: get_monthly_usage() for the same month, filters and LAN rule, if already read.
 
         Returns:
             Dict with current_bytes, projected_bytes, days_elapsed, days_in_month,
-            cap info, and whether projection exceeds cap.
+            cap info, and whether projection exceeds cap. Bytes are internet bytes
+            (upload + download): local traffic never crosses the ISP link (NET-226 follow-up).
         """
-        usage = self.get_monthly_usage(year, month, excluded_ips=excluded_ips)
-        current_bytes = usage["total_bytes"]
+        # OLD CODE START — NET-226 follow-up: counted traffic between your own devices too
+        # usage = self.get_monthly_usage(year, month, excluded_ips=excluded_ips)
+        # current_bytes = usage["total_bytes"]
+        # OLD CODE END
+        usage = usage or self.get_monthly_usage(year, month, excluded_ips=excluded_ips)
+        current_bytes = internet_bytes(usage)
 
         _, days_in_month = calendar.monthrange(year, month)
         now = datetime.now(timezone.utc)

@@ -407,15 +407,17 @@
 	{#if monthly}
 		{@const p = monthly.projection}
 		{@const daysLeft = p.days_in_month - Math.floor(p.days_elapsed)}
-		{@const usedPercent = progressPercent(monthly.total_bytes, p.cap_bytes)}
+		<!-- OLD CODE: {@const usedPercent = progressPercent(monthly.total_bytes, p.cap_bytes)} (NET-226 follow-up: local traffic never crosses the ISP link) -->
+		{@const usedPercent = progressPercent(p.current_bytes, p.cap_bytes)}
 		<!-- OLD CODE: sub="↓ {formatGB(monthly.resp_bytes)} down · ↑ {formatGB(monthly.orig_bytes)} up" (NET-226: local traffic was counted as both) -->
+		<!-- OLD CODE: label="This month" value={gb(monthly.total_bytes)} note="{monthName(monthly.year, monthly.month)} so far" (NET-226 follow-up: the cap counts internet traffic only) -->
 		<KpiCard
 			class="c-3"
-			label="This month"
+			label="Internet this month"
 			icon="bandwidth"
-			value={gb(monthly.total_bytes)}
+			value={gb(p.current_bytes)}
 			unit="GB"
-			note="{monthName(monthly.year, monthly.month)} so far"
+			note="{monthName(monthly.year, monthly.month)} so far, without traffic between your devices"
 			sub={upDownLocal(monthly, formatGB)}
 		>
 			{#snippet foot()}

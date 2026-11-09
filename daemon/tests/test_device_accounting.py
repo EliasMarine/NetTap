@@ -5,6 +5,7 @@ behind a port forward read 720 connections and 168,900 B for an hour in which it
 in 5,059 connections and 2,175,804 B: only the connections it started counted.
 """
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -324,6 +325,28 @@ class TestNetworkDirection(AccountingCase):
                 ),
                 (self.UPLOAD, self.DOWNLOAD, self.LOCAL),
             )
+
+
+_NOW = datetime.now(timezone.utc)
+_THIS_MONTH = _NOW.replace(day=1, hour=0, minute=30, second=0, microsecond=0)
+
+
+class TestCapLeavesOutLocal(AccountingCase):
+    """NET-226 follow-up: traffic between your own devices never crosses the ISP link, so the
+    monthly cap and its projection count internet traffic only."""
+
+    docs = [{**d, "@timestamp": _THIS_MONTH.isoformat()} for d in DOCS]
+    INTERNET = TestNetworkDirection.UPLOAD + TestNetworkDirection.DOWNLOAD
+
+    async def test_the_cap_and_the_projection_count_internet_bytes(self):
+        month = f"year={_NOW.year}&month={_NOW.month}"
+        status, body = await self.get(f"/api/bandwidth/monthly?{month}")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["local_bytes"], TestNetworkDirection.LOCAL)
+        self.assertEqual(body["projection"]["current_bytes"], self.INTERNET)
+        status, body = await self.get("/api/bandwidth/cap")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["current_usage_bytes"], self.INTERNET)
 
 
 class TestGuessesSayWhatTheyRestOn:

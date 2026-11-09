@@ -24,7 +24,8 @@ const MONTHLY = {
 	download_bytes: 2e9,
 	local_bytes: 0.5e9,
 	projection: {
-		year: 2026, month: 11, current_bytes: 3e9, projected_bytes: 45e9,
+		// NET-226 follow-up: the projection is internet bytes, without the local half GB
+		year: 2026, month: 11, current_bytes: 2.5e9, projected_bytes: 37.5e9,
 		days_elapsed: 2, days_in_month: 30, daily_rate_bytes: 1.5e9,
 		cap_bytes: 0, usage_percent: 0, projected_percent: 0, exceeds_cap: false,
 	},
@@ -78,9 +79,10 @@ describe('Bandwidth — failed requests', () => {
 		render(Page);
 		// OLD CODE START: expect(await screen.findByText('3.0 GB')).toBeInTheDocument(); (the KPI sets its unit apart: "3.0" + "GB") OLD CODE END
 		await screen.findByText('Projected');
-		expect(screen.getByText('This month').closest('.kpi')).toHaveTextContent('3.0GB');
+		// OLD CODE: expect(screen.getByText('This month').closest('.kpi')).toHaveTextContent('3.0GB'); (NET-226 follow-up: local traffic left out)
+		expect(screen.getByText('Internet this month').closest('.kpi')).toHaveTextContent('2.5GB');
 		// OLD CODE: expect(...).toHaveTextContent('↓ 2.0 GB down · ↑ 1.0 GB up'); (NET-226: the originator's bytes, local traffic included)
-		expect(screen.getByText('This month').closest('.kpi')).toHaveTextContent('↓ 2.0 GB down · ↑ 0.5 GB up · 0.5 GB local');
+		expect(screen.getByText('Internet this month').closest('.kpi')).toHaveTextContent('↓ 2.0 GB down · ↑ 0.5 GB up · 0.5 GB local');
 		expect(screen.queryByText(/Couldn't load this month's usage/)).not.toBeInTheDocument();
 		expect(screen.getByText("Couldn't load the time-of-day heatmap: the request failed.")).toBeInTheDocument();
 	});
@@ -124,7 +126,8 @@ describe('Bandwidth — cards', () => {
 		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 		stubDaemon(ALL);
 		const { container } = render(Page);
-		expect((await screen.findByText('Projected')).closest('.kpi')).toHaveTextContent('45.0GB');
+		// OLD CODE: …toHaveTextContent('45.0GB'); (NET-226 follow-up: the projection leaves out local traffic)
+		expect((await screen.findByText('Projected')).closest('.kpi')).toHaveTextContent('37.5GB');
 		expect(screen.getByText('Days remaining').closest('.kpi')).toHaveTextContent('28days');
 		expect(screen.getByRole('img', { name: /^Busiest day 2 Nov, with 5\.0 GB/ })).toBeInTheDocument();
 		// OLD CODE START — NET-160: the table's address is a link now too, so there are two
@@ -162,6 +165,15 @@ describe('Bandwidth — cards', () => {
 		render(Page);
 		expect((await screen.findByText('Over your cap')).closest('.chip')).toHaveClass('is-warn');
 		expect(screen.getByRole('meter', { name: '8% of your monthly cap used' })).toBeInTheDocument();
+	});
+
+	it('NET-226 follow-up: the cap meter counts internet traffic, not traffic between your devices', async () => {
+		// 2.5 GB to and from the internet of 3 GB in all, against a 10 GB cap
+		const capped = { ...MONTHLY, projection: { ...MONTHLY.projection, cap_bytes: 10e9, usage_percent: 25 } };
+		stubDaemon({ '/api/bandwidth/monthly': capped });
+		render(Page);
+		const meter = await screen.findByRole('meter', { name: '25% of your monthly cap used' });
+		expect(meter).toHaveAttribute('aria-valuenow', '25');
 	});
 
 	it('loading: each card says what it is loading', async () => {

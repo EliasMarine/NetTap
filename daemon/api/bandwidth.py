@@ -23,7 +23,7 @@ from opensearchpy import OpenSearchException
 from api.devices import _accounted_devices, _ip_order
 from api.offload import in_thread
 from api.time_range import parse_time_range
-from services.bandwidth_tracker import BandwidthTracker
+from services.bandwidth_tracker import BandwidthTracker, internet_bytes
 from storage.snapshot_search import QueryFailed
 
 logger = logging.getLogger("nettap.api.bandwidth")
@@ -98,8 +98,9 @@ def handle_monthly(request: web.Request) -> web.Response:
             excluded_ips=excluded_ips_list,
             lan_filter=request.app.get("lan_filter"),
         )
+        # OLD CODE: projection = tracker.get_projected_monthly(year, month, excluded_ips=excluded_ips_list) (NET-226 follow-up)
         projection = tracker.get_projected_monthly(
-            year, month, excluded_ips=excluded_ips_list
+            year, month, excluded_ips=excluded_ips_list, usage=usage
         )
     except QueryFailed as exc:
         return _incomplete("bandwidth/monthly", exc)
@@ -300,19 +301,32 @@ def handle_cap(request: web.Request) -> web.Response:
     # Get current month usage for percentage
     now = datetime.now(timezone.utc)
     try:
+        # OLD CODE: usage = tracker.get_monthly_usage(now.year, now.month, excluded_ips=excluded_ips_list)
         usage = tracker.get_monthly_usage(
-            now.year, now.month, excluded_ips=excluded_ips_list
+            now.year,
+            now.month,
+            excluded_ips=excluded_ips_list,
+            lan_filter=request.app.get("lan_filter"),
         )
+    except QueryFailed as exc:
+        return _incomplete("bandwidth/cap", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in bandwidth/cap: %s", exc)
         return web.json_response(
             {"error": f"OpenSearch query failed: {exc}"}, status=502
         )
 
-    cap["current_usage_bytes"] = usage["total_bytes"]
+    # OLD CODE START — NET-226 follow-up: traffic between your own devices counted against the cap
+    # cap["current_usage_bytes"] = usage["total_bytes"]
+    # if cap["monthly_cap_bytes"] > 0:
+    #     cap["usage_percent"] = round(
+    #         usage["total_bytes"] / cap["monthly_cap_bytes"] * 100, 1
+    #     )
+    # OLD CODE END
+    cap["current_usage_bytes"] = internet_bytes(usage)
     if cap["monthly_cap_bytes"] > 0:
         cap["usage_percent"] = round(
-            usage["total_bytes"] / cap["monthly_cap_bytes"] * 100, 1
+            cap["current_usage_bytes"] / cap["monthly_cap_bytes"] * 100, 1
         )
     else:
         cap["usage_percent"] = 0
