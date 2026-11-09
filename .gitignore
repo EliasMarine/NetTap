@@ -57,3 +57,13 @@ web/test-results/
 # Codex plan-review transcripts and per-session handoff notes (the vault keeps the curated record)
 .codex-review/
 HANDOFF-*.md
+
+# NET-214: kept on disk, not in the repo (docs site source, PRD, /deep-review output, Claude instructions)
+/docs/
+/mkdocs.yml
+/.github/workflows/docs.yml
+/NetTap_PRD_v1.0.md
+/security-reviews/
+/CLAUDE.md
+# capture:media also writes the docs site's tour video here; only the untracked docs/ uses it
+/.github/assets/media/nettap-tour.mp4
