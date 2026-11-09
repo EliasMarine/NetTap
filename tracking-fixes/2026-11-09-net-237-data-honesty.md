@@ -78,3 +78,28 @@
 - Before fixing "N routes don't check X", look at the shared client the routes call. The guard may already be there, one layer down.
 - A cache in front of a lookup that can fail must cache answers, not outcomes.
 - Zeek's conn `@timestamp` is the start, and the record exists only after the end. Any "now" view must filter on `event.end`.
+
+## Follow-up (branch `fix/net-237-followup`)
+
+The four items the first pass left out, fixed after the owner asked for everything.
+
+| Item | Problem | Root cause | Fix | Files |
+|------|---------|-----------|-----|-------|
+| GEO-1 | The GeoIP page's map never loaded. | An OpenStreetMap iframe; nginx's CSP has `frame-src 'self'`. Allowing it would send every looked-up address's coordinates to a third party. | The offline `DotMap` (bundled country outlines) with one dot at the city estimate. A new `counts={false}` option names the place without a count. No CSP change. | `web/src/routes/geoip/[ip]/+page.svelte`, `ui/charts/DotMap.svelte` |
+| GEO-5 | Anycast destinations (8.8.8.8 is "United States" in GeoLite2) added to a country and to "Top country". A marker said "Ashburn, United States · 1,200" when 1,200 was the whole country. | The geo aggregations had no anycast filter. The tooltip and list labelled the country's total with its busiest city. | The three geo aggregations sit under a filter that drops `ANYCAST_IPS`. A separate `anycast` aggregation becomes `geo_anycast` and is shown as a counted note under the globe, with its own empty state. The label now reads "United States · busiest city Ashburn". | `daemon/services/live_connections.py`, `web/src/lib/components/live/LiveGlobeCard.svelte`, `ui/charts/Globe.svelte`, `routes/live/+page.svelte`, `lib/api/live.ts` |
+| ALR-11 | When the alert signature scan, the alert address scan or the threat-intel scan reached its 500,000-bucket cap, it only logged that. | `all_buckets` returned `complete=False` and the callers only logged it. | They raise `PartialResultsError`, which the routes already answer as 502 or 500 and the pages already show as an error. | `daemon/api/alerts.py`, `daemon/services/threat_intel.py` |
+| Types | `getVersions` was typed as a record, but the daemon sends a list. | It was typed by hand and never checked. | Typed as `ComponentVersion[]`. The Updates page uses list operations, and `scanVersions` falls back to `[]`. | `web/src/lib/api/updates.ts`, `routes/system/updates/+page.svelte`, GeoIP page |
+| GEO-4 note | The first pass's "Couldn't look up this address…" reached users as the generic message. | It was missing from `PLAIN_5XX`. | Added to `PLAIN_5XX`. | `daemon/api/error_replies.py` |
+
+**Tests.** Each one failed on the old code:
+- `test_anycast_destinations_add_to_no_country`
+- `test_categories_answer_502_when_the_signature_scan_hits_its_cap`
+- `test_address_scan_that_hits_its_cap_raises`
+- `test_intel_endpoint_answers_500_when_the_scan_hits_its_cap`
+- `test_geoip_lookup_failure_keeps_its_message`
+- Web: GeoIP offline map, LiveGlobeCard busiest city and anycast note, Globe tooltip, and `scanVersions` returning `[]`.
+
+**Lessons.**
+- A map that needs a CSP change is a map that calls a third party. Use the bundled outlines.
+- A label has to match the figure beside it.
+- A cap that is only logged is the same bug as a partial reply that is shown as complete.
