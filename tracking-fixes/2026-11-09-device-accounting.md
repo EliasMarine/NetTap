@@ -55,4 +55,57 @@ Rebuild and recreate `nettap-storage-daemon` and `nettap-web`. No migration; the
 
 ## Out of scope (left as is)
 
-Risk scoring still uses started-side bytes; device categories, ports and top destinations stay "where it connected to"; the monthly cap counts local traffic; inter-VLAN routing can show a connection twice on the uplink mirror; bridge mode (NET-225); a server that never starts 3 connections is still not a device.
+Risk scoring still uses started-side bytes; device categories, ports and top destinations stay "where it connected to"; the monthly cap counts local traffic; inter-VLAN routing can show a connection twice on the uplink mirror; bridge mode (NET-225); a server that never starts 3 connections is still not a device. **All but bridge mode are handled in the follow-up below.**
+
+---
+
+# Follow-up: answer-only devices, the cap without local traffic, started-side labels, inter-VLAN
+
+**Branch:** `fix/net-226-followup` (from `fix/release-audit-2026-11` at `f34530dc`)
+**Status:** Built and tested. Not merged, not deployed.
+
+## Problem
+
+1. A LAN server that only answers connections (a NAS, a media server) was never listed: membership needed 3 connections it started. The count, the registry and risk use the same membership.
+2. The monthly cap, its projection and the daily rate counted traffic between your own devices, which never crosses the ISP link.
+3. The risk factor "N connections" read as all connections; it counts only the ones the device opened.
+4. Categories, top services, top destinations and top ports read only the connections the device started, without saying so. The categories still summed bytes with a Painless script per record.
+5. On a router-on-a-stick capture, a flow routed between two VLANs is seen twice.
+
+## Root cause
+
+1. `_lan_device_buckets` was one composite over `source.ip`.
+2. `get_projected_monthly` and `/api/bandwidth/cap` used `total_bytes`, which includes `local_bytes`.
+3–4. Labels written before NET-226 counted both sides.
+5. Zeek's connection key has no VLAN, so it merges both legs into one record (same uid): one connection, twice the bytes and packets. On the G11 that was 0.065% of 7 days' bytes.
+
+## Fix
+
+- `_lan_device_buckets` (`daemon/api/devices.py`) runs a second composite over `destination.ip`: the LAN rule and the excluded IPs on the answering side, and only records with `destination.packets > 0`, so a scan of empty addresses makes no device and can't fill the 20,000-IP cap. A device is an IP with 3 started **or** 3 answered connections. Its time bounds (first seen, last seen, the registry's last record, the count's `active_since`) cover both. A device that started none is `answer_only`: its other aggregations (protocols, MAC) are read from its side of the records it answered, 1,000 IPs per search, and a missing IP is a 502. Sums are never read for it.
+- Only a row with 3 started connections can own a MAC's IPv6, as the device page's `_ipv6_mac_of` already decided.
+- The device page's first and last seen use the list's rule (its IPv4 records, started or answered with a response); protocols and MAC fall back to the answered records.
+- The registry reads an answer-only device's MAC and vendor from `destination.*`.
+- Risk: an answer-only device has 0 opened connections and is left out of the network baseline; the history's answered side counts answered records only. The factor reads "N connections it opened". Weights unchanged; alerts already count where the device is either party (own traffic only, NET-209).
+- Cap: `internet_bytes()` = upload + download. `/api/bandwidth/cap` and the projection use it; `/monthly` passes its usage to the projection instead of reading the month twice. The Bandwidth page's card is "Internet this month".
+- Categories: plain sums of both byte fields. The device page's categories, services, destinations and ports cards, and the MAC page's destinations, say "connections it started".
+- Inter-VLAN: not detectable from one record cheaply; the device page says it under the chart.
+
+## Limits
+
+- A VLAN whose hosts only answer is found only when `LAN_SUBNETS` lists it: autodetection finds the subnets that start internet connections.
+- A device that answers only over IPv6 is not listed.
+- Traffic between your devices over global IPv6 still counts as internet in the cap: no LAN IPv6 prefix is configured to prove it local.
+- Inter-VLAN routed flows count their bytes twice.
+
+## Tests
+
+`daemon/tests/test_answer_only_devices.py` (fake): NAS listed with both sides in the list, count, bandwidth devices, page, registry and risk; online from answers, not probes; a scan bigger than the cap; 2 started + 3 answered + IPv6; dual-stack last seen; missing and configured subnet; partial responder read and missing answerer are 502; cap and projection leave out local. `test_risk_scoring.py` (text), `test_device_detail_v2.py` (no Painless). Web: bandwidth card and meter, started-side labels and empty states, the inter-VLAN line. All failed on the old code except the missing-subnet control.
+
+## G11 (read-only)
+
+No answer-only device on the G11 today (24 h, 7 d, 30 d). The answering composite adds 46–184 ms of OpenSearch time to the count and 130–210 ms to a 1.8–2.5 s list. Running both composites at once in one `_msearch` was no faster (the N100 is CPU-bound). Home's series are unchanged.
+
+## Lessons
+
+- A responder has to have answered: without `destination.packets > 0` a LAN scan would make hundreds of devices.
+- Check every detail field against the list's rule, not only the totals: the page's last seen had included IPv6 since NET-226.
