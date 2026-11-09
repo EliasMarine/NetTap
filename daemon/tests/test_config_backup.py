@@ -12,6 +12,7 @@ import pytest
 
 from services.config_backup import ConfigBackup, _SCHEMA_VERSION, _NETTAP_VERSION
 from services.device_custom import DeviceCustomStore
+from services.notification_hub import NotificationHub
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +45,12 @@ def config_paths(tmp_path):
         json.dumps(
             {
                 "channels": {
-                    "ch1": {"type": "email", "config": {"to": "admin@test.com"}},
+                    # OLD CODE: "ch1": {"type": "email", "config": {"to": "admin@test.com"}}, (NET-224: the hub stores channels with their id)
+                    "ch1": {
+                        "id": "ch1",
+                        "type": "email",
+                        "config": {"to": "admin@test.com"},
+                    },
                 },
                 "rules": {
                     "r1": {"event_type": "alert", "channel": "ch1"},
@@ -114,7 +120,14 @@ def backup(config_paths, tmp_path):
     """Return a ConfigBackup with temp config paths and one owner-named device."""
     store = DeviceCustomStore(str(tmp_path / "appdata"))
     store.set_name("00:11:22:33:44:55", "My Laptop")
-    return ConfigBackup(config_paths=config_paths, device_custom=store)
+    # OLD CODE: return ConfigBackup(config_paths=config_paths, device_custom=store) (NET-224: plus the running hub)
+    hub = NotificationHub(
+        config_path=config_paths["notification_config"],
+        env_file=config_paths["env_file"],
+    )
+    return ConfigBackup(
+        config_paths=config_paths, device_custom=store, notification_hub=hub
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +194,10 @@ class TestExport:
                 "nettap_version": _NETTAP_VERSION,
                 "schema_version": _SCHEMA_VERSION,
             },
-            "sections": {"notification_channels": {"ch9": {"type": "x"}}},
+            # OLD CODE: "sections": {"notification_channels": {"ch9": {"type": "x"}}}, (NET-224: a channel needs its id and a real type)
+            "sections": {
+                "notification_channels": {"ch9": {"id": "ch9", "type": "slack"}}
+            },
         }
         result = backup.import_config(data)
         assert result["success"] is True
@@ -342,7 +358,8 @@ class TestImport:
             },
             "sections": {
                 "notification_channels": {
-                    "ch2": {"type": "discord", "config": {}},
+                    # OLD CODE: "ch2": {"type": "discord", "config": {}}, (NET-224: with its id)
+                    "ch2": {"id": "ch2", "type": "discord", "config": {}},
                 },
                 "notification_rules": {
                     "r2": {"event_type": "new_device", "channel": "ch2"},
@@ -598,13 +615,15 @@ class TestA9Import:
 
 
 class TestA9NotificationRestore:
-    def _box(self, config_paths, channels):
+    def _box(self, config_paths, channels, backup=None):
         Path(config_paths["notification_config"]).write_text(
             json.dumps({"channels": channels, "rules": {}})
         )
+        if backup is not None:  # NET-224: the running hub holds what the box has
+            backup._notification_hub._load_config()
 
     def _round_trip(self, backup, config_paths, edit=None):
-        self._box(config_paths, SECRET_CHANNELS)
+        self._box(config_paths, SECRET_CHANNELS, backup)
         section = backup.export_config()["sections"]["notification_channels"]
         if edit:
             edit(section)
@@ -636,16 +655,23 @@ class TestA9NotificationRestore:
         result, channels = self._round_trip(backup, config_paths, edit)
         assert "smtp_pass" not in channels["mail"]["config"]
         assert channels["mail"]["enabled"] is False
+        # OLD CODE: "Mail" in w and "Settings › Notifications" in w (NET-224: page channels have no edit; add again, rules too)
         assert any(
-            "Mail" in w and "Settings › Notifications" in w for w in result["warnings"]
+            "Mail" in w and "Notification channels page" in w and "routing rules" in w
+            for w in result["warnings"]
         )
 
     def test_an_older_backup_with_another_webhook_url_keeps_no_headers(
         self, backup, config_paths
     ):
-        self._box(config_paths, SECRET_CHANNELS)
+        self._box(config_paths, SECRET_CHANNELS, backup)
         old_style = {
-            "hook": {"type": "webhook", "config": {"url": "https://evil.example/x"}}
+            # OLD CODE: "hook": {"type": "webhook", "config": {"url": "https://evil.example/x"}} (NET-224: with its id)
+            "hook": {
+                "id": "hook",
+                "type": "webhook",
+                "config": {"url": "https://evil.example/x"},
+            }
         }
         backup.import_config(_data({"notification_channels": old_style}))
         stored = json.loads(Path(config_paths["notification_config"]).read_text())
@@ -654,9 +680,9 @@ class TestA9NotificationRestore:
     def test_a_fresh_box_turns_off_channels_missing_secrets_and_names_them(
         self, backup, config_paths
     ):
-        self._box(config_paths, SECRET_CHANNELS)
+        self._box(config_paths, SECRET_CHANNELS, backup)
         section = backup.export_config()["sections"]["notification_channels"]
-        self._box(config_paths, {})
+        self._box(config_paths, {}, backup)
         result = backup.import_config(_data({"notification_channels": section}))
         channels = json.loads(Path(config_paths["notification_config"]).read_text())[
             "channels"
@@ -672,6 +698,7 @@ class TestA9NotificationRestore:
         monkeypatch.delenv("SMTP_HOST", raising=False)
         quick = {
             "settings-email": {
+                "id": "settings-email",  # NET-224: every stored channel has its id
                 "type": "email",
                 "name": "Email (Settings)",
                 "config": {"recipients": ["owner@example.net"]},

@@ -1440,7 +1440,10 @@ def create_app(
 
     # Config backup/restore (export/import all settings)
     # OLD CODE: config_backup = ConfigBackup() (NET-200: names and pictures are backed up)
-    config_backup = ConfigBackup(device_custom=device_custom)
+    # OLD CODE: config_backup = ConfigBackup(device_custom=device_custom) (NET-224: notifications restore through the hub)
+    config_backup = ConfigBackup(
+        device_custom=device_custom, notification_hub=notification_hub
+    )
     register_backup_routes(app, config_backup)
 
     # Threat Intelligence (unified report, beaconing, lateral movement, DNS anomalies, TI)

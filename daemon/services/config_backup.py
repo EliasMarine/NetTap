@@ -21,7 +21,9 @@ from pathlib import Path
 from typing import Any
 
 from services import alert_intelligence
-from services.backup_notifications import redact_channels, restore_channels
+
+# OLD CODE: from services.backup_notifications import redact_channels, restore_channels (NET-224: the hub restores)
+from services.backup_notifications import redact_channels
 from services.capture_config import load_capture_config, write_file_atomic
 from services.excluded_ips import parse_single_ip
 from services.home_location import load_home, parse_home, save_home
@@ -152,12 +154,25 @@ class ConfigBackup:
     # def __init__(self, config_paths: dict[str, str] | None = None) -> None:
     #     self._paths = {**_DEFAULT_PATHS, **(config_paths or {})}
     # OLD CODE END
+    # OLD CODE START — NET-224: notifications are restored through the running hub
+    # def __init__(
+    #     self, config_paths: dict[str, str] | None = None, device_custom: Any = None
+    # ) -> None:
+    #     self._paths = {**_DEFAULT_PATHS, **(config_paths or {})}
+    #     # DeviceCustomStore: the owner's device names, icons and photos (NET-200)
+    #     self._device_custom = device_custom
+    # OLD CODE END
     def __init__(
-        self, config_paths: dict[str, str] | None = None, device_custom: Any = None
+        self,
+        config_paths: dict[str, str] | None = None,
+        device_custom: Any = None,
+        notification_hub: Any = None,
     ) -> None:
         self._paths = {**_DEFAULT_PATHS, **(config_paths or {})}
         # DeviceCustomStore: the owner's device names, icons and photos (NET-200)
         self._device_custom = device_custom
+        # NotificationHub: a restore goes through it, so it is live at once and validated
+        self._notification_hub = notification_hub
 
     # ------------------------------------------------------------------
     # Export
@@ -517,44 +532,65 @@ class ConfigBackup:
             "warnings": [*validation.get("warnings", []), *notes],
         }
 
+    # OLD CODE START — NET-224: wrote the file from this worker thread while the running hub kept
+    # its own copy (a Settings save in between put the old config back), stored a channel with no
+    # id or an unknown type (the dispatcher then raised every minute); api/backup.py reloaded it
+    # def _restore_notifications(
+    #     self, sections: dict, applied: list, errors: list, notes: list
+    # ) -> None:
+    #     """Channels with the box's own secrets where safe (backup_notifications), then rules."""
+    #     present = [
+    #         s for s in ("notification_channels", "notification_rules") if s in sections
+    #     ]
+    #     if not present:
+    #         return
+    #     path = self._paths.get("notification_config", "")
+    #     existing = self._read_json(path, default={}, lenient=True)
+    #     existing = existing if isinstance(existing, dict) else {}
+    #     channels, rules = existing.get("channels", {}), existing.get("rules", {})
+    #     try:
+    #         if "notification_channels" in sections:
+    #             channels, warnings = restore_channels(
+    #                 sections["notification_channels"], channels, self._smtp_host_set()
+    #             )
+    #             notes.extend(warnings)
+    #         if "notification_rules" in sections:
+    #             rules = sections["notification_rules"]
+    #             if not isinstance(rules, dict) or not all(
+    #                 isinstance(r, dict) for r in rules.values()
+    #             ):
+    #                 raise ValueError("Notification rules in this backup aren't valid")
+    #         # 600: the file holds the SMTP password and tokens (NET-224)
+    #         self._write_atomic(path, {"channels": channels, "rules": rules}, mode=0o600)
+    #         applied.extend(present)
+    #     except (ValueError, OSError) as exc:
+    #         errors.append(f"Notifications not restored: {exc}")
+    #
+    # def _smtp_host_set(self) -> bool:
+    #     """Settings › API keys has an SMTP server (the data .env, else the environment)."""
+    #     from api.settings import _load_env_file  # api imports services, not the reverse
+    #
+    #     env_file = self._paths.get("env_file", "")
+    #     saved = _load_env_file(env_file) if env_file else {}
+    #     return bool((saved.get("SMTP_HOST") or os.environ.get("SMTP_HOST", "")).strip())
+    # OLD CODE END
     def _restore_notifications(
         self, sections: dict, applied: list, errors: list, notes: list
     ) -> None:
-        """Channels with the box's own secrets where safe (backup_notifications), then rules."""
+        """Channels (the box's own secrets where safe) and rules, through the running hub."""
         present = [
             s for s in ("notification_channels", "notification_rules") if s in sections
         ]
         if not present:
             return
-        path = self._paths.get("notification_config", "")
-        existing = self._read_json(path, default={}, lenient=True)
-        existing = existing if isinstance(existing, dict) else {}
-        channels, rules = existing.get("channels", {}), existing.get("rules", {})
+        if self._notification_hub is None:
+            errors.append("Notification settings can't be restored here")
+            return
         try:
-            if "notification_channels" in sections:
-                channels, warnings = restore_channels(
-                    sections["notification_channels"], channels, self._smtp_host_set()
-                )
-                notes.extend(warnings)
-            if "notification_rules" in sections:
-                rules = sections["notification_rules"]
-                if not isinstance(rules, dict) or not all(
-                    isinstance(r, dict) for r in rules.values()
-                ):
-                    raise ValueError("Notification rules in this backup aren't valid")
-            # 600: the file holds the SMTP password and tokens (NET-224)
-            self._write_atomic(path, {"channels": channels, "rules": rules}, mode=0o600)
+            notes.extend(self._notification_hub.restore_backup(sections))
             applied.extend(present)
         except (ValueError, OSError) as exc:
             errors.append(f"Notifications not restored: {exc}")
-
-    def _smtp_host_set(self) -> bool:
-        """Settings › API keys has an SMTP server (the data .env, else the environment)."""
-        from api.settings import _load_env_file  # api imports services, not the reverse
-
-        env_file = self._paths.get("env_file", "")
-        saved = _load_env_file(env_file) if env_file else {}
-        return bool((saved.get("SMTP_HOST") or os.environ.get("SMTP_HOST", "")).strip())
 
     def _restore_owner_files(
         self, sections: dict, applied: list, skipped: list, errors: list

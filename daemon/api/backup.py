@@ -91,9 +91,12 @@ def _reload_running_state(app: web.Application, applied: list[str]) -> None:
         )
     if "bandwidth_cap" in applied and "bandwidth_tracker" in app:
         app["bandwidth_tracker"]._load_cap()
-    notifications = {"notification_channels", "notification_rules"}
-    if notifications & set(applied) and "notification_hub" in app:
-        app["notification_hub"]._load_config()
+    # OLD CODE START — NET-224: a reload with no checks; ConfigBackup now restores through the
+    # running hub (NotificationHub.restore_backup), which validates and is live at once
+    # notifications = {"notification_channels", "notification_rules"}
+    # if notifications & set(applied) and "notification_hub" in app:
+    #     app["notification_hub"]._load_config()
+    # OLD CODE END
 
 
 async def _restore_retention(

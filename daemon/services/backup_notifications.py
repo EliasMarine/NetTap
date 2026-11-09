@@ -7,6 +7,8 @@ still go to the same server, account and transport, so a crafted backup can't re
 
 from typing import Any
 
+from services.notification_config import QUICK_WEBHOOK
+
 # A backup carries only these; passwords, tokens, webhook URLs, headers and any unknown key stay
 # on the box. The same keys as NET-224's public view (notification_config._PUBLIC_KEYS).
 PUBLIC_KEYS = (
@@ -75,6 +77,7 @@ def restore_channels(
 
     channels: dict = {}
     turned_off: list[str] = []
+    quick_off: list[str] = []
     no_smtp: list[str] = []
     for cid, channel in backup.items():
         config = dict(channel.get("config") or {})
@@ -88,7 +91,8 @@ def restore_channels(
         label = str(channel.get("name") or cid)
         if any(k not in config for k in channel.get("secrets_left_out", [])):
             stored["enabled"] = False
-            turned_off.append(label)
+            # OLD CODE: turned_off.append(label) (NET-224: the Settings webhook is fixed elsewhere)
+            (quick_off if cid == QUICK_WEBHOOK else turned_off).append(label)
         elif (
             channel["type"] == "email"
             and stored.get("enabled", True) is not False
@@ -99,11 +103,27 @@ def restore_channels(
         channels[cid] = stored
 
     warnings = []
+    # OLD CODE START — NET-224: those channels have no edit or on switch; only the Settings tab's
+    # webhook can be turned on with a new URL, so this asked for something the page can't do
+    # if turned_off:
+    #     warnings.append(
+    #         "Notification channels restored without their passwords, URLs or tokens, "
+    #         f"and turned off: {', '.join(turned_off)}. Enter them again in "
+    #         "Settings › Notifications, then turn them on."
+    #     )
+    # OLD CODE END
+    if quick_off:
+        warnings.append(
+            "The webhook restored without its URL and turned off. Turn it on in "
+            "Settings › Notifications and enter its URL."
+        )
     if turned_off:
+        # a new channel gets a new id, so the restored rules don't reach it
         warnings.append(
             "Notification channels restored without their passwords, URLs or tokens, "
-            f"and turned off: {', '.join(turned_off)}. Enter them again in "
-            "Settings › Notifications, then turn them on."
+            f"and turned off: {', '.join(turned_off)}. On the Notification channels page, "
+            "add each again with its secret and add its routing rules again for the new "
+            "channel, then delete the old channel and rules."
         )
     if no_smtp:
         warnings.append(

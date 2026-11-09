@@ -86,7 +86,10 @@ def url_problem(raw: Any) -> str | None:
     """Why `raw` can't be a webhook URL, or None. LAN addresses are fine (ntfy, Gotify)."""
     if not isinstance(raw, str) or not raw.strip():
         return "a webhook URL is required"
-    parts = urlsplit(raw.strip())
+    try:
+        parts = urlsplit(raw.strip())
+    except ValueError:  # e.g. an unclosed IPv6 bracket
+        return "the URL isn't valid"
     if parts.scheme not in ("http", "https"):
         return "the URL must start with http:// or https://"
     if not parts.hostname:
@@ -146,6 +149,27 @@ def validate_channel(channel_type: Any, config: Any) -> str | None:
     return None
 
 
+def channel_problem(cid: Any, channel: Any) -> str | None:
+    """Why a stored channel would break the hub, the dispatcher or a GET, or None.
+
+    They read its id, type and config, and parse its URL. A channel whose URL was left out of a
+    backup has no URL key, so it passes (turned off until the owner adds it again).
+    """
+    if not isinstance(channel, dict):
+        return "isn't an object"
+    if not isinstance(cid, str) or channel.get("id") != cid:
+        return "has no id matching its key"
+    if channel.get("type") not in CHANNEL_TYPES:
+        return "has no supported type"
+    config = channel.get("config", {})
+    if not isinstance(config, dict):
+        return "has a config that isn't an object"
+    for key in _URL_KEYS:
+        if key in config and url_problem(config[key]):
+            return f"has an unusable {key}: {url_problem(config[key])}"
+    return None
+
+
 def rule_ok(rule: Any) -> bool:
     """A stored rule dispatch can use: anything else is skipped, never raised on."""
     if not isinstance(rule, dict):
@@ -184,7 +208,10 @@ def url_hint(raw: Any) -> str:
     """scheme://host[:port]/… with the user info, path and query left out."""
     if not isinstance(raw, str):
         return ""
-    parts = urlsplit(raw.strip())
+    try:
+        parts = urlsplit(raw.strip())
+    except ValueError:  # a GET must never fail on a stored URL
+        return ""
     # netloc keeps an IPv6 address's brackets; anything before an @ is user info
     host = parts.netloc.rpartition("@")[2]
     return f"{parts.scheme}://{host}/…" if parts.hostname else ""

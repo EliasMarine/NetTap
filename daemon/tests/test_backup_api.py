@@ -17,6 +17,7 @@ from aiohttp.test_utils import AioHTTPTestCase
 from api.backup import register_backup_routes
 from api.server import IlmSyncState
 from services.config_backup import ConfigBackup
+from services.notification_hub import NotificationHub
 from storage.manager import RetentionConfig, StorageManager
 from storage.retention_config import RetentionConfigManager
 
@@ -69,7 +70,7 @@ class BackupImportTest(AioHTTPTestCase):
         app["retention_config_manager"] = mgr
         app["excluded_ips_file"] = os.path.join(self.tmp, "excluded_ips.json")
         app["excluded_ips"] = []
-        app["notification_hub"] = MagicMock()
+        # OLD CODE: app["notification_hub"] = MagicMock() (NET-224: the restore goes through the real hub)
         paths = {
             k: os.path.join(self.tmp, f"{k}.json")
             for k in (
@@ -84,7 +85,14 @@ class BackupImportTest(AioHTTPTestCase):
         paths["excluded_ips"] = app["excluded_ips_file"]
         paths["capture_config"] = self.ini
         paths["retention_config"] = os.path.join(self.tmp, "retention.json")
-        register_backup_routes(app, ConfigBackup(config_paths=paths))
+        # OLD CODE: register_backup_routes(app, ConfigBackup(config_paths=paths)) (NET-224: with the hub)
+        hub = NotificationHub(
+            config_path=paths["notification_config"], env_file=paths["env_file"]
+        )
+        app["notification_hub"] = hub
+        register_backup_routes(
+            app, ConfigBackup(config_paths=paths, notification_hub=hub)
+        )
         return app
 
     async def _import(self, sections, query=""):
@@ -212,9 +220,44 @@ class TestRunningStateReload(BackupImportTest):
         self.assertEqual(self.app["excluded_ips"], ["192.0.2.7", "192.0.2.1"])
 
     async def test_excluded_ips_and_notifications_take_effect_at_once(self):
+        # OLD CODE START — NET-224: checked the bare reload; the restore goes through the hub now
+        # status, result = await self._import(
+        #     {"excluded_ips": ["192.0.2.7"], "notification_rules": {}}
+        # )
+        # self.assertEqual(status, 200, result)
+        # self.assertEqual(self.app["excluded_ips"], ["192.0.2.7"])
+        # self.app["notification_hub"]._load_config.assert_called_once()
+        # OLD CODE END
+        hub = self.app["notification_hub"]
+        old = hub.configure("slack", {"webhook_url": "https://hooks.example.net/a"})
+        hub.add_rule("alert", [old["id"]], 2)
+        channel = {"id": "new", "type": "slack", "name": "New", "config": {}}
         status, result = await self._import(
-            {"excluded_ips": ["192.0.2.7"], "notification_rules": {}}
+            {
+                "excluded_ips": ["192.0.2.7"],
+                "notification_channels": {"new": channel},
+                "notification_rules": {},
+            }
         )
         self.assertEqual(status, 200, result)
         self.assertEqual(self.app["excluded_ips"], ["192.0.2.7"])
-        self.app["notification_hub"]._load_config.assert_called_once()
+        # live in the running hub, no reload: the old channel and its rule are gone
+        self.assertEqual([c["id"] for c in hub.get_channels()], ["new"])
+        self.assertEqual(hub.get_rules(), [])
+
+    async def test_a_malformed_channel_is_refused_and_nothing_changes(self):
+        hub = self.app["notification_hub"]
+        kept = hub.configure("slack", {"webhook_url": "https://hooks.example.net/a"})
+        status, result = await self._import(
+            {
+                "notification_channels": {
+                    "ok": {"id": "ok", "type": "slack", "config": {}},
+                    "bad": {"type": "slack", "config": {}},
+                }
+            }
+        )
+        self.assertEqual(status, 400, result)
+        self.assertIn("'bad'", " ".join(result["errors"]))
+        self.assertEqual([c["id"] for c in hub.get_channels()], [kept["id"]])
+        resp = await self.client.get("/api/backup/export")
+        self.assertEqual(resp.status, 200)

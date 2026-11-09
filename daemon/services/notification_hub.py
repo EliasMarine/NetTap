@@ -30,6 +30,7 @@ from typing import Any
 import aiohttp
 
 from services import notification_config as nc
+from services.backup_notifications import restore_channels
 from services.capture_config import write_file_atomic
 
 logger = logging.getLogger("nettap.services.notification_hub")
@@ -106,6 +107,28 @@ def _reason(exc: BaseException) -> str:
     return type(exc).__name__
 
 
+def _usable_channels(channels: Any) -> dict[str, Any]:
+    """The stored channels the hub and the dispatcher can use; a broken one is logged by key."""
+    if not isinstance(channels, dict):
+        return {}
+    usable = {}
+    for cid, channel in channels.items():
+        problem = nc.channel_problem(cid, channel)
+        if problem:
+            logger.warning("Skipping notification channel %r: it %s", cid, problem)
+        else:
+            usable[cid] = channel
+    return usable
+
+
+def _refuse_unusable(channels: dict[str, Any]) -> None:
+    """ValueError naming the first channel the hub or the dispatcher couldn't use."""
+    for cid, channel in channels.items():
+        problem = nc.channel_problem(cid, channel)
+        if problem:
+            raise ValueError(f"the channel {cid!r} in this backup {problem}")
+
+
 def _cut_off(server: smtplib.SMTP) -> None:
     """The SMTP deadline: shutting the socket down wakes a blocked read, so the send raises."""
     with contextlib.suppress(OSError, AttributeError):
@@ -127,6 +150,10 @@ class NotificationHub:
         # channel id -> {"ok", "at", "error"} of its last send, shown in Settings
         self._last_delivery: dict[str, dict[str, Any]] = {}
         self._warned_rules: frozenset[str] = frozenset()
+        # A backup restore runs in a worker thread (api/backup.py): every read-modify-write, and
+        # every read spanning channels and rules, holds this, so none sees half a config. Nothing
+        # awaits under it.
+        self._lock = threading.RLock()
         self._load_config()
 
     # ------------------------------------------------------------------
@@ -145,7 +172,8 @@ class NotificationHub:
                 data = json.loads(self._config_path.read_text())
                 data = data if isinstance(data, dict) else {}
                 channels, rules = data.get("channels"), data.get("rules")
-                self._channels = channels if isinstance(channels, dict) else {}
+                # OLD CODE: self._channels = channels if isinstance(channels, dict) else {}
+                self._channels = _usable_channels(channels)
                 self._rules = rules if isinstance(rules, dict) else {}
                 logger.info(
                     "Loaded %d channels, %d rules from %s",
@@ -229,7 +257,8 @@ class NotificationHub:
         # self._save_config()
         # logger.info("Configured %s channel: %s", channel_type, channel_id)
         # OLD CODE END
-        self._commit({**self._channels, channel_id: channel}, self._rules)
+        with self._lock:
+            self._commit({**self._channels, channel_id: channel}, self._rules)
         logger.info("Configured %s channel: %s", channel_type, channel_id)
         return channel
 
@@ -254,10 +283,11 @@ class NotificationHub:
         #     return True
         # return False
         # OLD CODE END
-        if channel_id not in self._channels:
-            return False
-        kept = {k: v for k, v in self._channels.items() if k != channel_id}
-        self._commit(kept, self._rules)
+        with self._lock:
+            if channel_id not in self._channels:
+                return False
+            kept = {k: v for k, v in self._channels.items() if k != channel_id}
+            self._commit(kept, self._rules)
         logger.info("Deleted channel: %s", channel_id)
         return True
 
@@ -276,15 +306,45 @@ class NotificationHub:
 
     def get_quick_settings(self) -> dict[str, Any]:
         """The Settings tab's email, webhook and minimum severity (no URL or password)."""
-        return nc.quick_view(self._channels, self._rules, self.smtp_configured())
+        smtp = self.smtp_configured()
+        with self._lock:
+            return nc.quick_view(self._channels, self._rules, smtp)
 
     def set_quick_settings(self, body: Any) -> dict[str, Any]:
         """Save the Settings tab. ValueError: the reason it can't; OSError: the write failed."""
-        channels, rules = nc.apply_quick_settings(
-            self._channels, self._rules, body, self.smtp_configured(), _now()
-        )
-        self._commit(channels, rules)
-        return self.get_quick_settings()
+        smtp = self.smtp_configured()
+        with self._lock:
+            channels, rules = nc.apply_quick_settings(
+                self._channels, self._rules, body, smtp, _now()
+            )
+            self._commit(channels, rules)
+            return self.get_quick_settings()
+
+    def restore_backup(self, sections: dict[str, Any]) -> list[str]:
+        """A config backup's notification channels and/or rules, live at once (NET-227).
+
+        A missing section keeps what is there; an empty one clears it. Channels keep the box's own
+        secrets only where the destination is unchanged (backup_notifications.restore_channels).
+        Returns the restore report's warnings. ValueError: the section isn't valid, naming the
+        first bad channel; OSError: not saved. Either way nothing changes, in memory or on disk.
+        """
+        smtp = self.smtp_configured()
+        with self._lock:
+            channels, rules, warnings = self._channels, self._rules, []
+            if "notification_channels" in sections:
+                section = sections["notification_channels"]
+                # the box's own channels it may merge in were checked when they were saved
+                _refuse_unusable(section if isinstance(section, dict) else {})
+                channels, warnings = restore_channels(section, self._channels, smtp)
+            if "notification_rules" in sections:
+                rules = sections["notification_rules"]
+                # a malformed rule is skipped when sending (rule_ok), so only the shape is checked
+                if not isinstance(rules, dict) or not all(
+                    isinstance(r, dict) for r in rules.values()
+                ):
+                    raise ValueError("Notification rules in this backup aren't valid")
+            self._commit(channels, rules)
+        return warnings
 
     # ------------------------------------------------------------------
     # Channel delivery
@@ -778,7 +838,8 @@ class NotificationHub:
         # self._rules[rule_id] = rule
         # self._save_config()
         # OLD CODE END
-        self._commit(self._channels, {**self._rules, rule_id: rule})
+        with self._lock:
+            self._commit(self._channels, {**self._rules, rule_id: rule})
         logger.info(
             "Added routing rule %s: %s -> %s (min_severity=%d)",
             rule_id,
@@ -802,11 +863,12 @@ class NotificationHub:
         #     return True
         # return False
         # OLD CODE END
-        if rule_id not in self._rules:
-            return False
-        self._commit(
-            self._channels, {k: v for k, v in self._rules.items() if k != rule_id}
-        )
+        with self._lock:
+            if rule_id not in self._rules:
+                return False
+            self._commit(
+                self._channels, {k: v for k, v in self._rules.items() if k != rule_id}
+            )
         logger.info("Deleted routing rule: %s", rule_id)
         return True
 
@@ -831,13 +893,14 @@ class NotificationHub:
 
     def channels_for(self, event_type: str, severity: int) -> list[str]:
         """The enabled, existing channels the rules send this event to, each once."""
-        rules = self._matching_rules(event_type, severity)
-        ids = dict.fromkeys(cid for rule in rules for cid in rule["channels"])
-        return [
-            cid
-            for cid in ids
-            if cid in self._channels and nc.is_enabled(self._channels[cid])
-        ]
+        with self._lock:  # rules and channels from the same config
+            rules = self._matching_rules(event_type, severity)
+            ids = dict.fromkeys(cid for rule in rules for cid in rule["channels"])
+            return [
+                cid
+                for cid in ids
+                if cid in self._channels and nc.is_enabled(self._channels[cid])
+            ]
 
     async def process_event(
         self,
