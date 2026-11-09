@@ -143,25 +143,89 @@ SCRIPT
     [[ "$logged" == *"--persist"* ]]
 }
 
-# ---------------------------------------------------------------------------
-# Test 6: Calls docker compose up when services enabled
-# ---------------------------------------------------------------------------
-@test "activate-bridge: calls docker compose up when services enabled" {
-    run bash -c '
-        source "'"${REPO_ROOT}"'/scripts/common.sh"
-        source "'"${BATS_TEST_DIRNAME}"'/helpers/mocks.bash"
-        export TEST_TMPDIR="'"${TEST_TMPDIR}"'"
+# OLD CODE START — NET-216: this simulated the old bare "up -d" and never ran start_services(); Tests 6a-6c run the real function
+# # ---------------------------------------------------------------------------
+# # Test 6: Calls docker compose up when services enabled
+# # ---------------------------------------------------------------------------
+# @test "activate-bridge: calls docker compose up when services enabled" {
+#     run bash -c '
+#         source "'"${REPO_ROOT}"'/scripts/common.sh"
+#         source "'"${BATS_TEST_DIRNAME}"'/helpers/mocks.bash"
+#         export TEST_TMPDIR="'"${TEST_TMPDIR}"'"
+#
+#         SKIP_SERVICES="false"
+#         NETTAP_DRY_RUN="false"
+#         COMPOSE_FILE="'"${TEST_TMPDIR}"'/docker-compose.yml"
+#
+#         # Simulate start_services
+#         docker compose -f "$COMPOSE_FILE" up -d
+#     '
+#     [ "$status" -eq 0 ]
+#     [ -f "${TEST_TMPDIR}/docker_calls.log" ]
+#     grep -q "docker compose up -d" "${TEST_TMPDIR}/docker_calls.log"
+# }
+# OLD CODE END
 
-        SKIP_SERVICES="false"
-        NETTAP_DRY_RUN="false"
-        COMPOSE_FILE="'"${TEST_TMPDIR}"'/docker-compose.yml"
+# Runs the real start_services() from activate-bridge.sh (the script calls main
+# on load, so the function is cut out and eval'd) under set -euo pipefail, with
+# SCRIPT_DIR pointing at a stub deploy-malcolm.sh that logs its arguments and
+# exits with $STUB_EXIT.
+run_start_services() {
+    local stub_dir="${TEST_TMPDIR}/install"
+    mkdir -p "$stub_dir"
+    cat > "${stub_dir}/deploy-malcolm.sh" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >> "${TEST_TMPDIR}/deploy_malcolm_calls.log"
+exit "${STUB_EXIT:-0}"
+STUB
+    chmod +x "${stub_dir}/deploy-malcolm.sh"
+    local fn
+    fn="$(sed -n '/^start_services()/,/^}/p' "${REPO_ROOT}/scripts/install/activate-bridge.sh")"
+    [ -n "$fn" ]
+    run bash -euo pipefail -c "
+        source '${REPO_ROOT}/scripts/common.sh'
+        source '${BATS_TEST_DIRNAME}/helpers/mocks.bash'
+        export TEST_TMPDIR='${TEST_TMPDIR}' STUB_EXIT='${STUB_EXIT:-0}'
+        SCRIPT_DIR='${stub_dir}'
+        COMPOSE_FILE='${TEST_TMPDIR}/docker-compose.yml'
+        NETTAP_DRY_RUN='${NETTAP_DRY_RUN:-false}'
+        ${fn}
+        start_services
+        echo 'start_services returned'
+    "
+}
 
-        # Simulate start_services
-        docker compose -f "$COMPOSE_FILE" up -d
-    '
+# ---------------------------------------------------------------------------
+# Test 6a: start_services runs the full bootstrap through deploy-malcolm.sh
+# ---------------------------------------------------------------------------
+@test "activate-bridge: start_services delegates to deploy-malcolm.sh --start-only" {
+    run_start_services
     [ "$status" -eq 0 ]
-    [ -f "${TEST_TMPDIR}/docker_calls.log" ]
-    grep -q "docker compose up -d" "${TEST_TMPDIR}/docker_calls.log"
+    [[ "$output" == *"start_services returned"* ]]
+    [ "$(cat "${TEST_TMPDIR}/deploy_malcolm_calls.log")" = "--start-only" ]
+    # A bare "docker compose up -d" would skip the security bootstrap and the index templates
+    [ ! -f "${TEST_TMPDIR}/docker_calls.log" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 6b: a failed bootstrap stops activation
+# ---------------------------------------------------------------------------
+@test "activate-bridge: start_services fails when deploy-malcolm.sh fails" {
+    STUB_EXIT=1 run_start_services
+    [ "$status" -ne 0 ]
+    [[ "$output" != *"start_services returned"* ]]
+    [ "$(cat "${TEST_TMPDIR}/deploy_malcolm_calls.log")" = "--start-only" ]
+}
+
+# ---------------------------------------------------------------------------
+# Test 6c: --dry-run starts nothing
+# ---------------------------------------------------------------------------
+@test "activate-bridge --dry-run: start_services calls nothing" {
+    NETTAP_DRY_RUN=true run_start_services
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"[DRY-RUN]"* ]]
+    [ ! -f "${TEST_TMPDIR}/deploy_malcolm_calls.log" ]
+    [ ! -f "${TEST_TMPDIR}/docker_calls.log" ]
 }
 
 # ---------------------------------------------------------------------------

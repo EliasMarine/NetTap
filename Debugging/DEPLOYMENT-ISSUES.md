@@ -58,6 +58,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | Dashboard data accuracy | IN PROGRESS (G11) | Chain 25: dashboard figures disagreed with OpenSearch. Batches 1–2 are deployed and verified on the G11; batch 3 (device registry, bandwidth ranking, Log Explorer totals, pcap-monitor DNS storm) is deploying. Remaining: certificates (x509), IoT heuristics, Tools/PCAP/System pages. Tracking: `tracking-fixes/2026-11-01-dashboard-data-accuracy.md`. |
 | NetTap daemon API (:8880) | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 20: token required on every call except `GET /api/health`. Verify with `bash scripts/remote/deploy-pr110-review-fixes.sh`. |
 | Domain drill-down page | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 26 (NET-178): a 502 on the G11 because `tls.client.server_name` is mapped text. The page now answers; the alert tagged count says "At least N" and names the field it can't search. Verify with `bash scripts/remote/deploy-drill-down.sh`. |
+| Deferred-bridge activation (`activate-bridge.sh`) | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 28 (NET-216): it now starts services through `deploy-malcolm.sh --start-only`, so the OpenSearch bootstrap and index templates run. Only boxes installed with `--defer-bridge` are affected; the G11 was not. |
 | PCAP capture (nettap-pcap-capture) | **STOPPED ON THE G11 (2026-11-06), CAUSE UNKNOWN** | Chain 26 (NET-179): "Exited (0)" for 21 h, so something ran `docker stop`. `bash scripts/remote/fix-pcap-capture-stopped.sh` shows who could have and restarts it if Settings want it on. |
 | Suricata rule updates | **BUILT, NOT YET ON THE DEVICE** | Chain 27 (NET-191 slice 2): four free sources (ET Open, abuse.ch SSLBL, Echap stalkerware, IPFire DBL Malware/Phishing), optional ET Pro code, every update through `nettap-rules-update.sh` (lock, last-good, status record). Deploy with `bash scripts/remote/deploy-detection-slice2.sh` (the gate runs first). |
 
@@ -510,6 +511,32 @@ CHAIN 27: Malcolm's Suricata rule wiring (feature/detection-slice2, NET-191 slic
   if it fails), then bash scripts/remote/check-etpro-canary.sh and
   bash scripts/remote/check-rules-update-safety.sh. Rollback: bash scripts/remote/rollback-detection-slice2.sh.
   Tracking: tracking-fixes/2026-11-06-detection-accuracy.md (slice 2).
+
+CHAIN 28: --defer-bridge install came up without the OpenSearch bootstrap (fix/activate-bridge-bootstrap, NET-216)
+  Found 2026-11-08 while checking who writes the arkime_sessions3_template marker (repo cleanup, NET-214).
+  Not seen on a device: the G11 was installed the normal way. Found by reading the two start paths.
+  - A normal install starts services through deploy-malcolm.sh start_services: image build,
+    OpenSearch first, bootstrap_opensearch_security, then bootstrap_index_templates
+    (malcolm_template plus the arkime_sessions3_template marker, written since 3b53849).
+  - `install.sh --defer-bridge` leaves service start to scripts/install/activate-bridge.sh, whose
+    start_services() ran a bare `docker compose -f docker/docker-compose.yml up -d`. That skipped all
+    of the above. Result on such a box: services get 403 (Chain 11), Logstash waits for
+    malcolm_template, dashboards-helper loops forever waiting for the marker
+    (shared-object-creation.sh:300-303 -> opensearch_status.sh:92, no timeout), and every page is empty.
+  - The old bats test simulated the bare `up -d` instead of running start_services(), so it passed.
+  Fix: activate-bridge.sh start_services() now runs `deploy-malcolm.sh --start-only` (no pull, no
+  config; preflight, then the same start_services a normal install runs). The dry run names the
+  new command. The old OpenSearch wait after it is gone: deploy-malcolm.sh already waits, and that
+  curl sent no credentials, so it got 401, waited the full 5 minutes and warned "did not become
+  healthy" on every run. OLD CODE kept in all three places.
+  Tests: tests/scripts/test_activate_bridge.bats 6a-6c run the real function against a stub
+  deploy-malcolm.sh (delegates with --start-only; a failing deploy-malcolm.sh fails activation;
+  --dry-run calls nothing). 6a and 6b failed before the fix.
+  Verify on a box installed with --defer-bridge: sudo scripts/install/activate-bridge.sh, then
+  Step 4 of the OpenSearch bootstrap in CLAUDE.md returns cluster health, not "Unauthorized".
+  Lesson: two scripts that start the stack drifted apart. Start the stack from one place
+  (deploy-malcolm.sh); other scripts call it rather than copying `docker compose up`.
+  Tracking: tracking-fixes/2026-11-08-activate-bridge-bootstrap.md.
 ```
 
 ---
@@ -1755,6 +1782,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 
 | File | PRs | Current State |
 |---|---|---|
+| `scripts/install/activate-bridge.sh` | NET-216 | `start_services()` calls `deploy-malcolm.sh --start-only`, not a bare `docker compose up -d` (Chain 28). Start the stack through deploy-malcolm.sh; don't copy compose commands into other scripts. |
 | `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95, 717bd24, 65e31cf | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m, **MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX + MALCOLM_OTHER_INDEX_PATTERN/SUFFIX env vars**. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES + **PUSER=root (skip usermod)** + **SYS_ADMIN cap_add (covers netsniff-ng file caps — setcap -r unreliable on overlay2)**. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT, **healthcheck on :9200 (not :443), :443 port removed**. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
 | `docker/Dockerfile.zeek-live` + `docker/zeek-live/` | NET-127 | NEW (Chain 23): Malcolm Zeek image + /dev/urandom shim for std::random_device, loaded via /etc/ld.so.preload. Self-test runs in the build stage and the final image. |
 | `docker/Dockerfile.web` | NET-81 | mkdir + chown `/var/lib/nettap-web` before USER switch. Volume inherits correct ownership. npm/yarn/corepack stripped for CVE mitigation. |
@@ -2058,6 +2086,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 
 | Risk | Impact | Mitigation |
 |---|---|---|
+| deploy-malcolm.sh's bootstrap warns and carries on when it fails (Chain 28) | `bootstrap_opensearch_security` (lines 495-505) and `bootstrap_index_templates` (532-533, 590-591, 611-612) log a warning and return 0, so install.sh and activate-bridge.sh report success with auth or the templates missing | Read the start output for `securityadmin.sh failed`, `Failed to create malcolm_template` or `arkime_sessions3_template marker`; then run `bash scripts/remote/fix-opensearch.sh` or `bash scripts/remote/deploy-data-accuracy-batch17.sh`. Making these fail hard is a follow-up in NET-216. |
 | Mirror setup now really runs at every daemon start (Chain 22) | `MirrorManager.setup()` flushes the capture NIC's addresses on each start; before Chain 22 it never ran on Ubuntu | CR-076 guard in `main.py` skips setup when the NIC has the default route or an IPv4 address, and logs `Mirror setup skipped`. If capture stops after a NIC rename, check the daemon log and `/etc/nettap/capture-mode.conf`. |
 | `sysctl -w` from the daemon always fails (Chain 22) | `/proc/sys` is read-only in the container, so mirror setup can't turn IPv6 off on the capture NIC at runtime; a mirrored router advert can then give that NIC an IPv6 address | The host boot unit `nettap-mirror.service` applies it at boot. After a wizard change, run `sudo systemctl restart nettap-mirror.service` or reboot. |
 | Boxes with older, dynamically mapped indices (Chain 24) | The daemon now queries Malcolm's field names (no `.keyword`); on an index from before the template fix those fields are text, so aggregations on it fail and that day's data drops out of dashboard ranges | Run `fix-index-template.sh` (plus `--delete-today` if acceptable). Older daily indices age out with retention; delete them early if their data isn't needed. |
@@ -2152,3 +2181,4 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | — | 520a5b6 | Daemon API token: host networking had left :8880 open to the LAN (Chain 20) | 2026-10-29 |
 | NET-179 | #183 | PCAP capture found stopped for 21 h: fix-pcap-capture-stopped.sh (Chain 26) | 2026-11-06 |
 | NET-178 | pending | Domain page 502: an alert host field mapped as text failed the whole page (Chain 26) | 2026-11-06 |
+| NET-216 | pending | `activate-bridge.sh` (the --defer-bridge path) started the stack without the OpenSearch bootstrap or index templates (Chain 28) | 2026-11-08 |
