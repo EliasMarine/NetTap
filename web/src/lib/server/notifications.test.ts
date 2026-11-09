@@ -249,4 +249,59 @@ describe('notifications server module', () => {
 			expect((received[0] as { title: string }).title).toBe('Low Severity');
 		});
 	});
+
+	// F3: the test answered "sent" whatever happened; it now reports each channel's outcome
+	describe('sendTestNotification', () => {
+		afterEach(() => vi.unstubAllGlobals());
+
+		it('returns no results when no email or webhook is set up', async () => {
+			expect(await notifications.sendTestNotification()).toEqual([]);
+		});
+
+		it('reports an SMTP failure instead of throwing, beside a webhook that worked', async () => {
+			vi.spyOn(console, 'error').mockImplementation(() => {});
+			// nothing listens on port 1 (and nodemailer may not be installed): either way the send fails
+			process.env.SMTP_HOST = '127.0.0.1';
+			process.env.SMTP_PORT = '1';
+			process.env.NOTIFY_EMAIL = 'admin@example.com';
+			process.env.NOTIFY_WEBHOOK_URL = 'https://hooks.example.com/x';
+			vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 200 })));
+
+			const results = await notifications.sendTestNotification();
+
+			expect(results.map((r) => [r.channel, r.ok])).toEqual([['email', false], ['webhook', true]]);
+			expect(results[0].error).toBeTruthy();
+			// a missing nodemailer reads in plain words, without Node's message and its file path
+			expect(results[0].error).not.toMatch(/Cannot find (package|module)/);
+		});
+
+		it('does not add the test to the in-app list', async () => {
+			process.env.NOTIFY_WEBHOOK_URL = 'https://hooks.example.com/x';
+			vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 200 })));
+
+			await notifications.sendTestNotification();
+
+			expect(notifications.getNotifications(10)).toEqual([]);
+		});
+	});
+
+	describe('sendNotification when a channel fails', () => {
+		afterEach(() => vi.unstubAllGlobals());
+
+		it('still resolves and stores in-app when the webhook answers non-2xx', async () => {
+			vi.spyOn(console, 'error').mockImplementation(() => {});
+			process.env.NOTIFY_WEBHOOK_URL = 'https://hooks.example.com/x';
+			vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 500 })));
+
+			const result = await notifications.sendNotification({
+				type: 'alert',
+				severity: 'critical',
+				title: 'Webhook down',
+				message: 'The alert still lands in-app.',
+			});
+
+			expect(result.title).toBe('Webhook down');
+			expect(notifications.getNotifications(1)[0].title).toBe('Webhook down');
+		});
+	});
 });

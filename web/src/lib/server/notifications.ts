@@ -175,10 +175,13 @@ function persistStore(notifications: Notification[]): void {
 // Email dispatch (dynamic nodemailer import)
 // ---------------------------------------------------------------------------
 
+// OLD CODE START — F3: Promise<void>; it now resolves to the failure reason, undefined when sent
+// ): Promise<void> {
+// OLD CODE END
 async function sendEmail(
 	config: NotificationConfig['email'],
 	notification: Notification
-): Promise<void> {
+): Promise<string | undefined> {
 	try {
 		// Dynamic import — nodemailer is an optional dependency.
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -250,6 +253,12 @@ async function sendEmail(
 			'[notifications] Email dispatch failed:',
 			err instanceof Error ? err.message : err
 		);
+		// F3 review: nodemailer isn't in the image (NET-224); say so, not Node's message with its path
+		if ((err as { code?: string } | null)?.code === 'ERR_MODULE_NOT_FOUND') {
+			return "not available in this build: the mail library isn't installed";
+		}
+		// F3: the reason, for the test; sendNotification ignores it as before
+		return err instanceof Error ? err.message : String(err);
 	}
 }
 
@@ -257,9 +266,15 @@ async function sendEmail(
 // Webhook dispatch
 // ---------------------------------------------------------------------------
 
-async function sendWebhook(url: string, notification: Notification): Promise<void> {
+// OLD CODE START — F3: Promise<void>; it now resolves to the failure reason, undefined when sent
+// async function sendWebhook(url: string, notification: Notification): Promise<void> {
+// OLD CODE END
+async function sendWebhook(url: string, notification: Notification): Promise<string | undefined> {
 	try {
-		await fetch(url, {
+		// OLD CODE START — F3: the answer was never read, so a 4xx/5xx counted as delivered
+		// await fetch(url, {
+		// OLD CODE END
+		const res = await fetch(url, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -268,11 +283,14 @@ async function sendWebhook(url: string, notification: Notification): Promise<voi
 			}),
 			signal: AbortSignal.timeout(10_000),
 		});
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 	} catch (err) {
 		console.error(
 			'[notifications] Webhook dispatch failed:',
 			err instanceof Error ? err.message : err
 		);
+		// F3: the reason, for the test; sendNotification ignores it as before
+		return err instanceof Error ? err.message : String(err);
 	}
 }
 
@@ -316,7 +334,10 @@ export async function sendNotification(
 	}
 
 	// Dispatch to channels in parallel
-	const dispatches: Promise<void>[] = [];
+	// OLD CODE START — F3: the senders resolve to a failure reason now (ignored here)
+	// const dispatches: Promise<void>[] = [];
+	// OLD CODE END
+	const dispatches: Promise<string | undefined>[] = [];
 
 	if (config.email.enabled) {
 		dispatches.push(sendEmail(config.email, full));
@@ -335,6 +356,44 @@ export async function sendNotification(
 
 	await Promise.allSettled(dispatches);
 	return full;
+}
+
+export interface ChannelResult {
+	channel: 'email' | 'webhook';
+	ok: boolean;
+	error?: string;
+}
+
+/**
+ * Send a test through each enabled external channel, whatever the severity threshold, and say how
+ * each one went. An empty list means no email or webhook is set up. Not stored in-app.
+ */
+export async function sendTestNotification(): Promise<ChannelResult[]> {
+	const config = loadConfig();
+	const test: Notification = {
+		id: generateId(),
+		type: 'system',
+		severity: 'medium',
+		title: 'Test notification',
+		message: 'This is a test notification from NetTap. If you received this, your notification settings are working correctly.',
+		timestamp: new Date().toISOString(),
+		read: false,
+	};
+
+	const channels: ChannelResult['channel'][] = [];
+	const sends: Promise<string | undefined>[] = [];
+	if (config.email.enabled) {
+		channels.push('email');
+		sends.push(sendEmail(config.email, test));
+	}
+	if (config.webhook.enabled) {
+		channels.push('webhook');
+		sends.push(sendWebhook(config.webhook.url, test));
+	}
+
+	// the senders catch their own errors and resolve to the reason
+	const errors = await Promise.all(sends);
+	return channels.map((channel, i) => (errors[i] === undefined ? { channel, ok: true } : { channel, ok: false, error: errors[i] }));
 }
 
 /**
