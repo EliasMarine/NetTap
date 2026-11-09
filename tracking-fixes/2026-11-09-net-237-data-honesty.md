@@ -143,3 +143,10 @@ The four items the first pass left out, fixed after the owner asked for everythi
   - Both routes now reject a zone id as an invalid address (400). The service logs the address and the error with `%r`.
 - **Docstring:** `alert_intelligence.compute_trend` and the module docstring now say the trend is a per-hour rate. `category_trend` in `api/alerts.py` is the one that compares the window's halves.
 - **Tests:** `test_dns_name_scan_checks_its_pages`, `test_suspicious_dns_answers_502_on_an_unreadable_page`, `TestGeoIPZoneIds` (2 tests). All four failed on the old code.
+
+### Delta (branch `fix/net-237-delta`)
+
+- **Problem:** if the full value scan inside `storage/all_buckets.complete_terms()` hit its cap, the IoT anomaly check still answered 200 with part of the findings.
+- **Root cause:** `complete_terms()` pages every value when a terms list was cut short, but it threw away that scan's completeness flag (`_complete`).
+- **Fix:** it now raises `PartialResultsError`. Its only caller is `IoTMonitor.check_anomalies`, reached through `/api/iot/anomalies` and the fleet summary. Both routes already answer that error with "The IoT search was incomplete" (502).
+- **Tests:** `test_complete_terms_raises_when_its_paged_scan_hits_the_cap` and `test_iot_anomalies_answer_incomplete_when_a_value_list_is_capped`. Both failed on the old code: one did not raise, the other answered 200.

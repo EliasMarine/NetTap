@@ -179,3 +179,50 @@ def test_suspicious_dns_answers_502_on_an_unreadable_page():
     resp = asyncio.run(handle_suspicious(req))
 
     assert resp.status == 502
+
+
+# ---------------------------------------------------------------------------
+# complete_terms dropped the paged scan's completeness flag (NET-237 delta)
+# ---------------------------------------------------------------------------
+
+
+def test_complete_terms_raises_when_its_paged_scan_hits_the_cap(monkeypatch):
+    from storage import all_buckets as ab
+
+    monkeypatch.setattr(ab, "all_buckets", lambda *a, **k: ([], False))
+    with pytest.raises(PartialResultsError, match="destination.ip"):
+        ab.complete_terms(
+            MagicMock(),
+            "arkime_sessions3-*",
+            {"match_all": {}},
+            {"buckets": [], "sum_other_doc_count": 5},
+            {"terms": {"field": "destination.ip"}},
+        )
+
+
+def test_iot_anomalies_answer_incomplete_when_a_value_list_is_capped(monkeypatch):
+    """A capped scan of the hour's destinations answered 200 with part of the findings."""
+    from api.iot import register_iot_routes
+    from storage import all_buckets as ab
+
+    monkeypatch.setattr(ab, "all_buckets", lambda *a, **k: ([], False))
+    client = MagicMock()
+    client.search.return_value = {
+        "aggregations": {"destinations": {"buckets": [], "sum_other_doc_count": 5}}
+    }
+    app = web.Application()
+    register_iot_routes(app, MagicMock(_client=client))
+    monitor = app["iot_monitor"]
+    monitor._iot_devices = {MAC: {"mac": MAC, "ip": "192.168.1.20"}}
+    monitor._baselines = {MAC: {"mac": MAC}}
+
+    from api.iot import handle_iot_anomalies
+
+    req = make_mocked_request("GET", "/api/iot/anomalies", app=app)
+    try:
+        resp = asyncio.run(handle_iot_anomalies(req))
+    finally:
+        app["iot_executor"].shutdown(wait=False)
+
+    assert resp.status == 502
+    assert json.loads(resp.text)["error"] == "The IoT search was incomplete"

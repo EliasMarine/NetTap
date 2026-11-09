@@ -7,6 +7,7 @@ pages through every bucket in key order, so it is the tool for complete sets.
 
 from typing import Any
 
+from storage.exact_terms import PartialResultsError
 from storage.snapshot_search import QueryFailed, checked
 
 PAGE_SIZE = 1_000
@@ -86,9 +87,17 @@ def complete_terms(
     """
     if not terms_reply.get("sum_other_doc_count"):
         return terms_reply.get("buckets", [])
-    buckets, _complete = all_buckets(
+    # OLD CODE START — NET-237: the flag was dropped, so a capped scan read as every value
+    # buckets, _complete = all_buckets(
+    #     client, index, query, [{"value": source}], aggs=aggs
+    # )
+    # OLD CODE END
+    buckets, complete = all_buckets(
         client, index, query, [{"value": source}], aggs=aggs
     )
+    if not complete:
+        field = (source.get("terms") or {}).get("field")
+        raise PartialResultsError(f"{field} values stopped at {len(buckets)}")
     return [
         {**b, "key": missing if b["key"]["value"] is None else b["key"]["value"]}
         for b in buckets
