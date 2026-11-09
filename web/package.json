@@ -15,6 +15,7 @@
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test:e2e": "playwright test",
 		"test:visual": "playwright test -c playwright.visual.config.ts",
+		"capture:media": "NETTAP_CAPTURE_MEDIA=1 playwright test -c playwright.visual.config.ts --project=media",
 		"check:colors": "node scripts/check-colors.mjs",
 		"check:e2e": "svelte-kit sync && tsc -p e2e/tsconfig.json --noEmit"
 	},

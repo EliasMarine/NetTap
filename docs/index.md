@@ -4,6 +4,19 @@
 
 NetTap is a hardware-agnostic network appliance that sits transparently inline between your ISP modem and router. It captures and analyzes all network traffic, giving you enterprise-grade telemetry through a polished web dashboard --- without requiring deep networking knowledge.
 
+<video controls autoplay muted loop playsinline poster="assets/media/home.png" width="100%">
+  <source src="assets/media/nettap-tour.mp4" type="video/mp4">
+  A short tour of the NetTap dashboard: Home, the Live monitor globe, Devices, Alerts, Threats and Certificates.
+</video>
+
+![Live monitor: a 3D globe with arcs from your network to the countries it talks to](assets/media/live-globe.png)
+
+![Alerts page: alerts by severity and by category, each explained in plain English](assets/media/alerts.png)
+
+![Devices page: every device with its type, operating system, maker and bandwidth](assets/media/devices.png)
+
+*The tour and screenshots use demo data, not a real network.*
+
 ---
 
 ## What NetTap Does

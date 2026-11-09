@@ -112,5 +112,17 @@ export default defineConfig({
 			testMatch: '**/firstrun.visual.ts',
 			use: { baseURL: FIRSTRUN_URL },
 		},
+		// `npm run capture:media` only: rewrites the README and docs media in docs/assets/media/.
+		// Headed, on the real GPU: under SwiftShader the globe is too slow to record and never starts.
+		...(process.env.NETTAP_CAPTURE_MEDIA
+			? [
+					{
+						name: 'media',
+						testMatch: '**/media.capture.spec.ts',
+						dependencies: ['auth-setup'],
+						use: { storageState: STORAGE_STATE, headless: false, launchOptions: { args: ['--hide-scrollbars'] } },
+					},
+				]
+			: []),
 	],
 });

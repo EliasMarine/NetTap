@@ -17,7 +17,8 @@ describe('vite.config', () => {
 	});
 
 	it('configures vitest test settings', () => {
-		expect(content).toContain("include: ['src/**/*.{test,spec}.{js,ts}', 'e2e/visual/**/*.test.ts']");
+		// OLD CODE: expect(content).toContain("include: ['src/**/*.{test,spec}.{js,ts}', 'e2e/visual/**/*.test.ts']"); (the visual config's own test joined the list)
+		expect(content).toContain("include: ['src/**/*.{test,spec}.{js,ts}', 'e2e/visual/**/*.test.ts', 'playwright.visual.config.test.ts']");
 		expect(content).toContain("environment: 'jsdom'");
 		expect(content).toContain("setupFiles: ['src/tests/setup.ts']");
 	});
