@@ -220,6 +220,41 @@ describe('GET /api/setup/storage', () => {
 		// it was 1.2 whenever the daemon sent nothing
 		expect(body.estimated_daily_gb).toBeNull();
 	});
+
+	it('L5: never passes the raw ILM error to the wizard, which is open before the first admin exists', async () => {
+		const raw = "ConnectionError(HTTPSConnectionPool(host='opensearch', port=9200): Max retries exceeded)";
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		vi.mocked(daemonJSON).mockResolvedValue({
+			data: {
+				disk_usage_percent: 30,
+				ilm_status: {
+					synced: false,
+					last_applied: null,
+					last_attempt: '2026-11-09T08:00:00+00:00',
+					last_error: raw,
+					pending_retry: true,
+					policies: { 'nettap-hot-policy': `error: ${raw}`, 'nettap-warm-policy': 'updated' },
+					internal: 'not for the wizard',
+				},
+			},
+			error: null,
+			status: 200,
+		} as never);
+		const body = await (await GET({} as Parameters<typeof GET>[0])).json();
+
+		// old code: the exception text, host and port included
+		expect(JSON.stringify(body)).not.toContain('opensearch');
+		expect(body.ilm_status).toEqual({
+			synced: false,
+			last_applied: null,
+			last_attempt: '2026-11-09T08:00:00+00:00',
+			last_error: "The retention policy couldn't be applied; it will be retried",
+			pending_retry: true,
+			policies: { 'nettap-hot-policy': 'error', 'nettap-warm-policy': 'updated' },
+		});
+		expect(warn).toHaveBeenCalledWith(expect.stringContaining(raw));
+		warn.mockRestore();
+	});
 });
 
 describe('POST /api/setup/storage', () => {

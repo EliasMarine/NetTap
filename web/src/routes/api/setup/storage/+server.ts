@@ -40,6 +40,34 @@ export interface StorageConfigRequest {
 	emergency_threshold_percent: number;
 }
 
+/** L5: what the wizard says instead of the daemon's exception text */
+const ILM_PLAIN_ERROR = "The retention policy couldn't be applied; it will be retried";
+const isError = (status: unknown) => String(status).startsWith('error');
+
+/**
+ * L5: the ILM status without exception text. The setup wizard is open before the first admin
+ * exists, so the detail (hosts, ports, OpenSearch's reply) goes to the server log instead.
+ * Signed-in pages read the full status from /api/storage/status.
+ */
+function publicIlmStatus(raw: unknown): IlmPolicyStatus | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const ilm = raw as IlmPolicyStatus;
+	const policies = ilm.policies && typeof ilm.policies === 'object' ? ilm.policies : {};
+	const failed = Object.entries(policies).filter(([, status]) => isError(status));
+	if (ilm.last_error || failed.length) {
+		const detail = [ilm.last_error, ...failed.map(([name, status]) => `${name}: ${status}`)].filter(Boolean);
+		console.warn(`ILM policies not applied: ${detail.join('; ')}`);
+	}
+	return {
+		synced: ilm.synced,
+		last_applied: ilm.last_applied ?? null,
+		last_attempt: ilm.last_attempt ?? null,
+		last_error: ilm.last_error ? ILM_PLAIN_ERROR : null,
+		pending_retry: ilm.pending_retry,
+		policies: Object.fromEntries(Object.entries(policies).map(([name, status]) => [name, isError(status) ? 'error' : status])),
+	};
+}
+
 /**
  * Normalize daemon response to match StorageStatus interface.
  * Handles both old format (disk_usage as fraction, nested retention)
@@ -96,7 +124,8 @@ function normalizeStorageStatus(raw: Record<string, unknown>): StorageStatus {
 		growth_estimate: (raw.growth_estimate as GrowthEstimate | null) ?? null,
 		source: 'daemon',
 		last_prune_at: (raw.last_prune_at as string) ?? null,
-		ilm_status: (raw.ilm_status as IlmPolicyStatus) ?? null,
+		// OLD CODE: ilm_status: (raw.ilm_status as IlmPolicyStatus) ?? null, (L5: raw exception text)
+		ilm_status: publicIlmStatus(raw.ilm_status),
 	};
 }
 
