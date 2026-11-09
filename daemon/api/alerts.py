@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
-from api.error_replies import public_json
+from api.error_replies import incomplete, public_json
 from api.offload import in_thread
 from api.time_range import parse_time_range
 from services.alert_enrichment import AlertEnrichment
@@ -688,6 +688,8 @@ def handle_alerts_list(request: web.Request) -> web.Response:
                     or categorize_sub_category(b["key"], category_filter) == sub_filter
                 )
             ]
+        except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+            return incomplete("alert", exc)
         except OpenSearchException as exc:
             logger.error("OpenSearch error in alerts list (category): %s", exc)
             return web.json_response(
@@ -745,6 +747,8 @@ def handle_alerts_list(request: web.Request) -> web.Response:
     try:
         result = checked(client.search(index=NETWORK_INDEX, body=query), "alert list")
         total = total_hits(result, "alert list")
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("alert", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alerts list: %s", exc)
         return web.json_response(
@@ -1232,6 +1236,8 @@ def handle_alerts_top_signatures(request: web.Request) -> web.Response:
             severity,
             "alert top signatures",
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("alert", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alerts/top-signatures: %s", exc)
         return web.json_response(
@@ -1333,6 +1339,8 @@ def handle_alerts_top_ips(request: web.Request) -> web.Response:
         buckets, complete = _every_key(
             client, from_ts, to_ts, {"field": field}, None, "alert top IPs"
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("alert", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alerts/top-ips: %s", exc)
         return web.json_response(
@@ -1604,6 +1612,8 @@ def handle_alerts_categories(request: web.Request) -> web.Response:
         signatures = _every_signature(
             client, query["query"], per_signature, _SPARKLINE_SIGNATURE_PAGE
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("alert", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alerts/categories: %s", exc)
         return web.json_response(
@@ -1831,6 +1841,8 @@ def handle_alert_category_detail(request: web.Request) -> web.Response:
         # signatures = _every_signature(client, query["query"], per_signature, 500)
         # OLD CODE END
         signatures = _every_signature(client, query["query"], per_signature)
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("alert", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alert category detail: %s", exc)
         return web.json_response(
@@ -1943,6 +1955,8 @@ def handle_alert_category_detail(request: web.Request) -> web.Response:
         targets = _alerts_by_ip(
             client, query["query"], "destination.ip", list(sig_severity)
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("alert", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in alert category IPs: %s", exc)
         return web.json_response(
@@ -2105,6 +2119,8 @@ def handle_alert_category_timeline(request: web.Request) -> web.Response:
             "aggs": {"over_time": over_time},
         }
         result = client.search(index=NETWORK_INDEX, body=body)
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("alert", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in category timeline: %s", exc)
         return web.json_response(

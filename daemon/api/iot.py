@@ -12,6 +12,8 @@ from datetime import timedelta
 
 from aiohttp import web
 
+from storage.exact_terms import PartialResultsError
+from api.error_replies import incomplete
 from api.time_range import parse_time_range
 from services.iot_monitor import IoTMonitor
 from storage.manager import StorageManager
@@ -92,6 +94,8 @@ async def handle_device_baseline(request: web.Request) -> web.Response:
             baseline = await _run_iot(
                 request, iot.build_baseline, mac, excluded_ips=excluded_ips_list
             )
+        except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+            return incomplete("IoT", exc)
         except Exception as exc:
             logger.error("Failed to build baseline for %s: %s", mac, exc)
             return web.json_response(
@@ -114,6 +118,8 @@ async def handle_iot_anomalies(request: web.Request) -> web.Response:
         anomalies = await _run_iot(
             request, iot.get_anomalies, from_ts, to_ts, excluded_ips=excluded_ips_list
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("IoT", exc)
     except Exception as exc:
         logger.error("IoT anomaly detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -145,6 +151,8 @@ async def handle_fleet_summary(request: web.Request) -> web.Response:
             to_ts,
             excluded_ips=excluded_ips_list,
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("IoT", exc)
     except Exception as exc:
         logger.error("Fleet summary failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -193,6 +201,8 @@ async def handle_privacy_report(request: web.Request) -> web.Response:
             to_ts,
             excluded_ips=excluded_ips_list,
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("IoT", exc)
     except Exception as exc:
         logger.error("Privacy report failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -221,6 +231,8 @@ async def handle_communication_map(request: web.Request) -> web.Response:
             to_ts,
             excluded_ips=excluded_ips_list,
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("IoT", exc)
     except Exception as exc:
         logger.error("Communication map failed for %s: %s", mac, exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -249,6 +261,8 @@ async def handle_activity_timeline(request: web.Request) -> web.Response:
             to_ts,
             excluded_ips=excluded_ips_list,
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("IoT", exc)
     except Exception as exc:
         logger.error("Activity timeline failed for %s: %s", mac, exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -273,6 +287,8 @@ async def handle_protocol_audit(request: web.Request) -> web.Response:
             to_ts,
             excluded_ips=excluded_ips_list,
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("IoT", exc)
     except Exception as exc:
         logger.error("Protocol audit failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -299,6 +315,8 @@ async def handle_network_isolation(request: web.Request) -> web.Response:
             to_ts,
             excluded_ips=excluded_ips_list,
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("IoT", exc)
     except Exception as exc:
         logger.error("Network isolation analysis failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -325,6 +343,8 @@ async def handle_manufacturer_profiles(request: web.Request) -> web.Response:
             to_ts,
             excluded_ips=excluded_ips_list,
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("IoT", exc)
     except Exception as exc:
         logger.error("Manufacturer profiles failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)

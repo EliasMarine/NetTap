@@ -9,6 +9,8 @@ from datetime import timedelta
 
 from aiohttp import web
 
+from storage.exact_terms import PartialResultsError
+from api.error_replies import incomplete
 from api.offload import in_thread
 from api.time_range import parse_time_range
 from services.lan_anomaly_detector import LANAnomalyDetector
@@ -73,6 +75,8 @@ def handle_all_anomalies(request: web.Request) -> web.Response:
     try:
         anomalies = detector.get_all_anomalies(from_ts, to_ts)
         coverage = _arp_coverage(detector, from_ts, to_ts)
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("LAN", exc)
     except Exception as exc:
         logger.error("LAN anomaly detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -101,6 +105,8 @@ def handle_arp_spoofing(request: web.Request) -> web.Response:
     try:
         alerts = detector.detect_arp_spoofing(from_ts, to_ts)
         coverage = _arp_coverage(detector, from_ts, to_ts)
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("LAN", exc)
     except Exception as exc:
         logger.error("ARP spoofing detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -128,6 +134,8 @@ def handle_rogue_dhcp(request: web.Request) -> web.Response:
 
     try:
         alerts = detector.detect_rogue_dhcp(from_ts, to_ts)
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("LAN", exc)
     except Exception as exc:
         logger.error("Rogue DHCP detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)

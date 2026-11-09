@@ -15,7 +15,8 @@ from datetime import datetime, timedelta
 from aiohttp import web
 from opensearchpy import OpenSearchException
 
-from api.error_replies import public_json
+from storage.exact_terms import PartialResultsError
+from api.error_replies import incomplete, public_json
 from api.offload import in_thread, run_blocking
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from api.drilldown_runner import either_side, ip_param
@@ -953,6 +954,8 @@ def handle_traffic_categories(request: web.Request) -> web.Response:
 
     try:
         categories = get_category_stats(client, from_ts, to_ts)
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("traffic", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in traffic/categories: %s", exc)
         return web.json_response(
@@ -1009,6 +1012,8 @@ def handle_category_detail(request: web.Request) -> web.Response:
         services = traffic_classifier.get_category_services(
             client, category, from_ts, to_ts
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("traffic", exc)
     except Exception as exc:
         logger.error("Error in category detail for %s: %s", category, exc)
         return web.json_response(
@@ -1087,6 +1092,8 @@ def handle_category_bandwidth(request: web.Request) -> web.Response:
             },
             status=400,
         )
+    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        return incomplete("traffic", exc)
     except Exception as exc:
         logger.error("Error in category bandwidth for %s: %s", category, exc)
         return web.json_response(

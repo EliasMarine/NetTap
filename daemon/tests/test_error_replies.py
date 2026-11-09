@@ -180,6 +180,33 @@ class TestRealAppReplies(AioHTTPTestCase):
         self.assertEqual(resp.status, 502)
         self.assertEqual(await resp.json(), LOOKUP_FAILED)
 
+    async def test_a_capped_scan_says_the_search_was_incomplete(self):
+        """NET-237's capped scans and part replies raise PartialResultsError: the page says the
+        search was incomplete (not GENERIC, not the index name), and the detail is logged."""
+        from storage.exact_terms import PartialResultsError
+
+        cut = PartialResultsError(
+            "DNS name scan stopped at 5000 names on arkime_sessions3-*"
+        )
+        cases = [
+            ("dns_analytics", "get_top_domains", "/api/dns/top-domains", "DNS"),
+            ("iot_monitor", "get_anomalies", "/api/iot/anomalies", "IoT"),
+            ("lan_anomaly_detector", "get_all_anomalies", "/api/lan/anomalies", "LAN"),
+        ]
+        for key, method, path, what in cases:
+            with (
+                patch.object(self.app[key], method, side_effect=cut),
+                self.assertLogs("nettap", level="ERROR") as logs,
+            ):
+                resp = await self.client.get(path, headers=self._headers())
+            self.assertEqual(resp.status, 502, path)
+            text = await resp.text()
+            self.assertEqual(
+                json.loads(text), {"error": f"The {what} search was incomplete"}
+            )
+            self.assertNotIn("arkime_sessions3", text)
+            self.assertTrue(any("5000 names" in line for line in logs.output), path)
+
     async def test_rule_update_oserror_shows_the_reason_not_the_path(self):
         oserror = OSError(2, "No such file or directory", "/opt/private/bin/docker")
         with patch(
@@ -212,7 +239,8 @@ class TestRealAppReplies(AioHTTPTestCase):
 # --- Guards over daemon/api --------------------------------------------------------------------
 
 # Exceptions whose text NetTap writes for the owner (it may reach the reply)
-CURATED = {
+# Exceptions whose text NetTap writes for the owner: it may reach a public reply
+SAFE_TEXT = {
     "OwnerRulesError",
     "EtProError",
     "QueryFailed",
@@ -220,6 +248,9 @@ CURATED = {
     "DnsReconBusyError",
     "LiveBandwidthBusyError",
 }
+# Exceptions whose reply must be marked public (the page needs to say what happened). A capped
+# scan's text names the index, so its reply is a fixed sentence (api.error_replies.incomplete)
+MUST_MARK = SAFE_TEXT | {"PartialResultsError"}
 PUBLIC_CALLS = {"public_json", "json_error", "_error"}
 
 
@@ -318,15 +349,21 @@ def _handler_types(handler: ast.ExceptHandler) -> set[str]:
     return {getattr(k, "id", None) or getattr(k, "attr", "") for k in kinds if k}
 
 
-def _public_replies_with_exception_text() -> list[tuple[str, int]]:
+def _api_sources() -> dict[str, str]:
+    return {path.name: path.read_text() for path in sorted(API_DIR.glob("*.py"))}
+
+
+def _public_replies_with_exception_text(
+    sources: dict[str, str] | None = None,
+) -> list[tuple[str, int]]:
     """A 5xx (or computed-status) public reply inside `except X as exc` that shows exc, unless
     X is curated. A 4xx shows validation text on purpose."""
     found = []
-    for path in sorted(API_DIR.glob("*.py")):
-        for handler in ast.walk(ast.parse(path.read_text())):
+    for name, src in (sources or _api_sources()).items():
+        for handler in ast.walk(ast.parse(src)):
             if not (isinstance(handler, ast.ExceptHandler) and handler.name):
                 continue
-            if _handler_types(handler) <= CURATED:
+            if _handler_types(handler) <= SAFE_TEXT:
                 continue
             for node in ast.walk(ast.Module(body=handler.body, type_ignores=[])):
                 if (
@@ -335,7 +372,7 @@ def _public_replies_with_exception_text() -> list[tuple[str, int]]:
                     and not (isinstance(_status(node), int) and _status(node) < 500)
                     and _uses_name(node, handler.name)
                 ):
-                    found.append((path.name, node.lineno))
+                    found.append((name, node.lineno))
     return found
 
 
@@ -348,7 +385,7 @@ def _curated_5xx_sent_unmarked() -> list[tuple[str, int]]:
             if not (
                 isinstance(handler, ast.ExceptHandler)
                 and handler.name
-                and _handler_types(handler) & CURATED
+                and _handler_types(handler) & MUST_MARK
             ):
                 continue
             for node in ast.walk(ast.Module(body=handler.body, type_ignores=[])):
@@ -392,3 +429,15 @@ def test_the_guards_find_what_they_check():
     last = sample.body[1].body[-1].value
     assert _status(last) == 503
     assert isinstance(_error_value(last), ast.Constant)
+
+
+def test_a_capped_scan_text_in_a_public_reply_is_caught():
+    """PartialResultsError must be answered public, but its text (the index name) may not be shown."""
+    leaky = (
+        "def f():\n"
+        "    try:\n"
+        "        pass\n"
+        "    except PartialResultsError as exc:\n"
+        "        return public_json({'error': str(exc)}, status=502)\n"
+    )
+    assert _public_replies_with_exception_text({"x.py": leaky}) == [("x.py", 5)]

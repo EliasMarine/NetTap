@@ -44,6 +44,13 @@ def _safe_body(payload: dict) -> dict:
     return {**scalars, "error": GENERIC}
 
 
+def incomplete(what: str, exc: Exception) -> web.Response:
+    """The plain 502 for a scan that hit its cap, or a search answered from part of the data
+    (PartialResultsError, NET-237): the page says the search was incomplete, the detail is logged."""
+    logger.error("Incomplete %s search: %s", what, exc)
+    return public_json({"error": f"The {what} search was incomplete"}, status=502)
+
+
 @web.middleware
 async def safe_error_middleware(request: web.Request, handler) -> web.StreamResponse:
     try:
