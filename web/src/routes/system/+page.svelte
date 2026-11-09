@@ -366,7 +366,11 @@
 						<ul class="causes">
 							<li>The OpenSearch container is still starting, which can take up to 3 minutes.</li>
 							<li>Its credentials aren't configured: check the curlrc mount.</li>
-							<li>OpenSearch security needs its bootstrap: see CLAUDE.md.</li>
+							<!-- OLD CODE: <li>OpenSearch security needs its bootstrap: see CLAUDE.md.</li> (NET-214: CLAUDE.md is no longer in the repo) -->
+							<li>
+								OpenSearch security needs its bootstrap: on the NetTap device, run
+								<span class="mono">bash scripts/remote/fix-opensearch.sh</span>.
+							</li>
 						</ul>
 					</div>
 				</div>

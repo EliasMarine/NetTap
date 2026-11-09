@@ -27,8 +27,12 @@
 	type LeaseSortKey = 'hostname' | 'ip' | 'mac' | 'expires';
 
 	const POLL_MS = 5000;
+	// OLD CODE START — NET-214: develop is retired and CLAUDE.md left the repo; link a fixed commit instead
+	// const BOOTSTRAP_DOC_URL =
+	// 	'https://github.com/EliasMarine/NetTap/blob/develop/CLAUDE.md#opensearch-security-bootstrap-run-after-every-docker-compose-down--up';
+	// OLD CODE END
 	const BOOTSTRAP_DOC_URL =
-		'https://github.com/EliasMarine/NetTap/blob/develop/CLAUDE.md#opensearch-security-bootstrap-run-after-every-docker-compose-down--up';
+		'https://github.com/EliasMarine/NetTap/blob/deb9b219a7b27d4873e4fe6715e383b635972617/CLAUDE.md#opensearch-security-bootstrap-run-after-every-docker-compose-down--up';
 
 	const CHECK_LABELS: Record<string, string> = {
 		interface_up: 'Network port connected',
