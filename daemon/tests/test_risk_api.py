@@ -502,7 +502,7 @@ class TestRiskHistory(_RiskCase):
             [window] = [
                 c["range"]["@timestamp"]
                 for c in body["query"]["bool"]["filter"]
-                if "range" in c
+                if "@timestamp" in c.get("range", {})
             ]
             self.assertEqual(_ms(window["gte"]), start - 7 * DAY)
 

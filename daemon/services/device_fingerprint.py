@@ -61,18 +61,22 @@ _OS_PATTERNS = [
 ]
 
 
-def _mac_from_hit(hit: dict) -> str | None:
-    """Read source.mac from a search hit's nested _source (Malcolm may store a list)."""
-    source = hit.get("_source", {}).get("source")
+# OLD CODE: def _mac_from_hit(hit: dict) -> str | None: (NET-226 follow-up: an answer-only device's MAC is destination.mac)
+def _mac_from_hit(hit: dict, side: str = "source") -> str | None:
+    """Read `side`.mac from a search hit's nested _source (Malcolm may store a list)."""
+    # OLD CODE: source = hit.get("_source", {}).get("source")
+    source = hit.get("_source", {}).get(side)
     mac = source.get("mac") if isinstance(source, dict) else None
     if isinstance(mac, list):
         mac = next((m for m in mac if m), None)
     return mac or None
 
 
-def _oui_from_hit(hit: dict) -> str | None:
-    """Read Malcolm's IEEE vendor name (source.oui) from a search hit, if it has one."""
-    source = hit.get("_source", {}).get("source")
+# OLD CODE: def _oui_from_hit(hit: dict) -> str | None: (as _mac_from_hit)
+def _oui_from_hit(hit: dict, side: str = "source") -> str | None:
+    """Read Malcolm's IEEE vendor name (`side`.oui) from a search hit, if it has one."""
+    # OLD CODE: source = hit.get("_source", {}).get("source")
+    source = hit.get("_source", {}).get(side)
     oui = source.get("oui") if isinstance(source, dict) else None
     if isinstance(oui, list):
         oui = next((o for o in oui if o), None)

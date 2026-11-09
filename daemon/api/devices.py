@@ -283,6 +283,110 @@ def _incomplete(where: str, exc: QueryFailed) -> web.Response:
     return web.json_response({"error": "The device search was incomplete"}, status=502)
 
 
+# A record its responder answered: a probe of an empty address is no device (NET-226 follow-up)
+_RESPONDED = {"range": {"destination.packets": {"gt": 0}}}
+# Answer-only devices per search of their other aggregations
+_ANSWER_CHUNK = 1_000
+_OTHER_SIDE = {"source": "destination", "destination": "source"}
+
+
+def _swapped(body: Any) -> Any:
+    """`body` with every source.* and destination.* field name swapped: the answering side's view."""
+    if isinstance(body, dict):
+        return {_swapped(k): _swapped(v) for k, v in body.items()}
+    if isinstance(body, list):
+        return [_swapped(v) for v in body]
+    if not isinstance(body, str):
+        return body
+    side, dot, rest = body.partition(".")
+    return f"{_OTHER_SIDE[side]}.{rest}" if dot and side in _OTHER_SIDE else body
+
+
+def _lan_answer_bool_query(app: Mapping[str, Any], from_ts: str, to_ts: str) -> dict:
+    """_lan_device_bool_query seen from the answering side: records a LAN address answered.
+
+    The LAN rule comes from the subnets that start internet connections, so a VLAN whose hosts
+    only answer is in it only when LAN_SUBNETS lists it.
+    """
+    query = _swapped(_lan_device_bool_query(app, from_ts, to_ts))
+    return {**query, "filter": [*query["filter"], _RESPONDED]}
+
+
+def _ip_buckets(
+    client: Any, query: dict, field: str, aggs, page_size: int, what: str | None
+) -> dict[str, dict]:
+    """{ip: composite bucket} of `field` over `query`, checked and capped as the device reads are."""
+    buckets, complete = all_buckets(
+        client,
+        NETWORK_INDEX,
+        {"bool": query},
+        [{"ip": {"terms": {"field": field}}}],
+        aggs=aggs,
+        page_size=page_size,
+        **({"max_buckets": _DEVICE_CAP} if what else {}),
+        what=what,
+    )
+    # PR #191 review: a capped read is not every device, so a checked one fails instead
+    if not complete and what:
+        raise QueryFailed(f"{what}: stopped at {len(buckets)} IPs")
+    if not complete:
+        logger.warning(
+            "Device buckets stopped at %d IPs; figures cover those only", len(buckets)
+        )
+    return {b["key"]["ip"]: {**b, "key": b["key"]["ip"]} for b in buckets}
+
+
+def _time_bounds(aggs: dict | None) -> dict[str, str]:
+    """{name: "min" or "max"} for the aggregations that are a bound of @timestamp."""
+    return {
+        name: kind
+        for name, agg in (aggs or {}).items()
+        for kind in ("min", "max")
+        if (agg.get(kind) or {}).get("field") == "@timestamp"
+    }
+
+
+def _merged_bounds(bucket: dict, answered: dict | None, bounds: dict[str, str]) -> dict:
+    """`bucket` with each time bound the earlier (min) or later (max) of its own and `answered`'s."""
+    pick = {"min": min, "max": max}
+    merged = {}
+    for name, kind in bounds.items():
+        seen = [
+            b
+            for b in (bucket.get(name), (answered or {}).get(name))
+            if b and b.get("value") is not None
+        ]
+        if seen:
+            merged[name] = pick[kind](seen, key=lambda b: b["value"])
+    return {**bucket, **merged}
+
+
+def _answered_aggs(
+    client: Any, query: dict, ips: list[str], aggs: dict, what: str
+) -> dict[str, dict]:
+    """{ip: `aggs` over the records each IP answered, read from its side}; every IP must come back."""
+    out: dict[str, dict] = {}
+    for start in range(0, len(ips), _ANSWER_CHUNK):
+        chunk = ips[start : start + _ANSWER_CHUNK]
+        filters = [*query["filter"], {"terms": {"destination.ip": chunk}}]
+        body = {
+            "size": 0,
+            "query": {"bool": {**query, "filter": filters}},
+            "aggs": {
+                "ips": {
+                    "terms": {"field": "destination.ip", "size": len(chunk)},
+                    "aggs": _swapped(aggs),
+                }
+            },
+        }
+        reply = checked(client.search(index=NETWORK_INDEX, body=body), what, ("ips",))
+        got = {b["key"]: b for b in reply["aggregations"]["ips"].get("buckets") or []}
+        if set(chunk) - set(got):
+            raise QueryFailed(f"{what}: {len(set(chunk) - set(got))} IPs missing")
+        out = {**out, **got}
+    return out
+
+
 def _lan_device_buckets(
     client: Any,
     app: Mapping[str, Any],
@@ -297,29 +401,88 @@ def _lan_device_buckets(
     Same filters, _MIN_CONNECTIONS threshold and skip rules as the list. Each bucket is
     shaped like a terms bucket ("key" is the IP), with `aggs` per device. With `what`, an
     incomplete page raises QueryFailed instead of reading as fewer devices.
+
+    NET-226 follow-up: a LAN address that answered _MIN_CONNECTIONS connections is a device
+    too (a NAS, a media server). A time bound in `aggs` (a min or max of @timestamp) covers
+    the records it started and the ones it answered. A device that started none is
+    {"answer_only": True, "doc_count": 0}, with the other aggs except sums read from its side
+    of the records it answered.
     """
-    buckets, complete = all_buckets(
+    # OLD CODE START — NET-226 follow-up: only the IPs that started connections were devices
+    # buckets, complete = all_buckets(
+    #     client,
+    #     NETWORK_INDEX,
+    #     {"bool": _lan_device_bool_query(app, from_ts, to_ts)},
+    #     [{"ip": {"terms": {"field": "source.ip"}}}],
+    #     aggs=aggs,
+    #     page_size=page_size,
+    #     **({"max_buckets": _DEVICE_CAP} if what else {}),
+    #     what=what,
+    # )
+    # # PR #191 review: a capped read is not every device, so a checked one fails instead
+    # if not complete and what:
+    #     raise QueryFailed(f"{what}: stopped at {len(buckets)} IPs")
+    # if not complete:
+    #     logger.warning(
+    #         "Device buckets stopped at %d IPs; figures cover those only", len(buckets)
+    #     )
+    # return [
+    #     {**b, "key": b["key"]["ip"]}
+    #     for b in buckets
+    #     if b.get("doc_count", 0) >= _MIN_CONNECTIONS
+    #     and not _is_skipped_device_ip(b["key"]["ip"])
+    # ]
+    # OLD CODE END
+    bounds = _time_bounds(aggs)
+    started = _ip_buckets(
         client,
-        NETWORK_INDEX,
-        {"bool": _lan_device_bool_query(app, from_ts, to_ts)},
-        [{"ip": {"terms": {"field": "source.ip"}}}],
-        aggs=aggs,
-        page_size=page_size,
-        **({"max_buckets": _DEVICE_CAP} if what else {}),
-        what=what,
+        _lan_device_bool_query(app, from_ts, to_ts),
+        "source.ip",
+        aggs,
+        page_size,
+        what,
     )
-    # PR #191 review: a capped read is not every device, so a checked one fails instead
-    if not complete and what:
-        raise QueryFailed(f"{what}: stopped at {len(buckets)} IPs")
-    if not complete:
-        logger.warning(
-            "Device buckets stopped at %d IPs; figures cover those only", len(buckets)
+    answer_query = _lan_answer_bool_query(app, from_ts, to_ts)
+    answered = _ip_buckets(
+        client,
+        answer_query,
+        "destination.ip",
+        {name: aggs[name] for name in bounds} or None,
+        page_size,
+        what,
+    )
+    members = [
+        ip
+        for ip in {**started, **answered}
+        if not _is_skipped_device_ip(ip)
+        and max(
+            (started.get(ip) or {}).get("doc_count", 0),
+            (answered.get(ip) or {}).get("doc_count", 0),
         )
+        >= _MIN_CONNECTIONS
+    ]
+    only_answered = [ip for ip in members if ip not in started]
+    others = {
+        n: a for n, a in (aggs or {}).items() if n not in bounds and "sum" not in a
+    }
+    extra = (
+        _answered_aggs(
+            client, answer_query, only_answered, others, what or "answer-only devices"
+        )
+        if others and only_answered
+        else {}
+    )
     return [
-        {**b, "key": b["key"]["ip"]}
-        for b in buckets
-        if b.get("doc_count", 0) >= _MIN_CONNECTIONS
-        and not _is_skipped_device_ip(b["key"]["ip"])
+        _merged_bounds(started[ip], answered.get(ip), bounds)
+        if ip in started
+        else {
+            **answered[ip],
+            **extra.get(ip, {}),
+            "key": ip,
+            "doc_count": 0,
+            "answer_only": True,
+        }
+        for ip in members
     ]
 
 
@@ -386,10 +549,10 @@ def _accounted_devices(
 ) -> list[dict]:
     """Every listed device with its traffic from both sides and its IPv6 (NET-226).
 
-    Membership and first/last seen stay on the connections a device started, so the count,
-    the registry and risk still agree with the list. Each bucket gains connection_count,
-    upload_bytes, download_bytes, total_bytes, ipv6_connections, ipv6_left_out(_reason) and
-    mac. QueryFailed if any read is incomplete.
+    Membership and first/last seen come from _lan_device_buckets, so the count, the registry
+    and risk still agree with the list. Each bucket gains connection_count, upload_bytes,
+    download_bytes, total_bytes, ipv6_connections, ipv6_left_out(_reason) and mac.
+    QueryFailed if any read is incomplete.
     """
     buckets = _lan_device_buckets(
         client, app, from_ts, to_ts, aggs=_DEVICE_AGGS, what=what
@@ -398,8 +561,18 @@ def _accounted_devices(
     answered = answered_by_ip(
         client, filters, [b["key"] for b in buckets], f"{what} (answered)"
     )
+    # OLD CODE START — NET-226 follow-up: every row could own IPv6; the device page's
+    # _ipv6_mac_of only lets one that started _MIN_CONNECTIONS
+    # owners = _ipv6_owners(
+    #     [(b["key"], _bucket_mac(b), b.get("doc_count", 0)) for b in buckets]
+    # )
+    # OLD CODE END
     owners = _ipv6_owners(
-        [(b["key"], _bucket_mac(b), b.get("doc_count", 0)) for b in buckets]
+        [
+            (b["key"], _bucket_mac(b), b.get("doc_count", 0))
+            for b in buckets
+            if b.get("doc_count", 0) >= _MIN_CONNECTIONS
+        ]
     )
     shares = _ipv6_shares(client, app, filters, sorted(owners), what)
     by_ip = {owners[mac]: share for mac, share in shares.items()}
@@ -1071,6 +1244,8 @@ def handle_device_list(request: web.Request) -> web.Response:
         # os_hint = fingerprint.get_os_hint(client, ip, from_ts, to_ts)
         # OLD CODE END
         mac, hostname, os_hint = lookups.get(ip, (None, None, None))
+        # an answer-only device has no MAC of its own records; its answered ones carry it
+        mac = mac or b.get("mac")
         hostname = names.get(_mac_key(mac)) or hostname
         manufacturer = fingerprint.get_manufacturer(mac) if mac else None
 
@@ -1371,6 +1546,8 @@ def handle_device_detail(request: web.Request) -> web.Response:
         )
     # A reason means fold_ipv6 kept only the link-local part of this MAC's IPv6
     started, answered = _device_sides(ip, v6_mac, v6.get("reason") is not None)
+    # The list's activity rule (_lan_device_buckets): its IPv4 records, started or answered
+    responded = {"bool": {"filter": [{"term": {"destination.ip": ip}}, _RESPONDED]}}
     device_query = {
         "size": 0,
         "track_total_hits": True,  # #84: hits.total stops at 10,000 without it (the router read 10,000)
@@ -1396,13 +1573,37 @@ def handle_device_detail(request: web.Request) -> web.Response:
                 **time_slots(from_ts, to_ts, _bandwidth_interval(from_ts, to_ts)),
                 "aggs": _side_sums(answered),
             },
-            # Where the device connected to, and when it was active: the started side, as before
+            "activity": {
+                "filter": {
+                    "bool": {
+                        "should": [{"term": {"source.ip": ip}}, responded],
+                        "minimum_should_match": 1,
+                    }
+                },
+                "aggs": {
+                    "first_seen": {"min": {"field": "@timestamp"}},
+                    "last_seen": {"max": {"field": "@timestamp"}},
+                },
+            },
+            # what an answer-only device's row reads (its side of the records it answered)
+            "responded": {
+                "filter": responded,
+                "aggs": _swapped(
+                    {
+                        "protocols": _DEVICE_AGGS["protocols"],
+                        "with_mac": _DEVICE_AGGS["with_mac"],
+                    }
+                ),
+            },
+            # Where the device connected to: the started side, as before
             "started": {
                 "filter": started,
                 "aggs": {
                     "protocols": {"terms": {"field": "network.transport", "size": 10}},
-                    "first_seen": {"min": {"field": "@timestamp"}},
-                    "last_seen": {"max": {"field": "@timestamp"}},
+                    # OLD CODE START — NET-226 follow-up: the bounds are "activity" now
+                    # "first_seen": {"min": {"field": "@timestamp"}},
+                    # "last_seen": {"max": {"field": "@timestamp"}},
+                    # OLD CODE END
                     "unique_destinations": {"cardinality": {"field": "destination.ip"}},
                     # Every ASN (biggest first if a device has more), so the top 10 by bytes is
                     # exact after ASNs of one organisation are merged
@@ -1476,10 +1677,23 @@ def handle_device_detail(request: web.Request) -> web.Response:
         reverse=True,
     )[:10]
 
-    first_seen = started_aggs.get("first_seen", {}).get("value_as_string", "")
-    last_seen = started_aggs.get("last_seen", {}).get("value_as_string", "")
+    # OLD CODE START — NET-226 follow-up: the started side's bounds, its IPv6 included, where
+    # the list reads its IPv4 records started and answered; and no protocols if it started none
+    # first_seen = started_aggs.get("first_seen", {}).get("value_as_string", "")
+    # last_seen = started_aggs.get("last_seen", {}).get("value_as_string", "")
+    # protocols = [
+    #     pb["key"] for pb in started_aggs.get("protocols", {}).get("buckets", [])
+    # ]
+    # OLD CODE END
+    activity = aggs.get("activity", {})
+    first_seen = activity.get("first_seen", {}).get("value_as_string", "")
+    last_seen = activity.get("last_seen", {}).get("value_as_string", "")
     protocols = [
-        pb["key"] for pb in started_aggs.get("protocols", {}).get("buckets", [])
+        pb["key"]
+        for pb in (
+            started_aggs.get("protocols", {}).get("buckets")
+            or aggs.get("responded", {}).get("protocols", {}).get("buckets", [])
+        )
     ]
 
     # Top destinations, by bytes (NET-158)
@@ -1610,7 +1824,10 @@ def handle_device_detail(request: web.Request) -> web.Response:
     )
 
     # Passive fingerprinting enrichment
-    mac = fingerprint.get_mac_for_ip(client, ip, from_ts, to_ts)
+    # OLD CODE: mac = fingerprint.get_mac_for_ip(client, ip, from_ts, to_ts) (an answer-only device had none)
+    mac = fingerprint.get_mac_for_ip(client, ip, from_ts, to_ts) or _bucket_mac(
+        aggs.get("responded", {})
+    )
     hostname = fingerprint.get_hostname_for_ip(client, ip, from_ts, to_ts)
     hostname = (
         _registry_names(request, [mac] if mac else []).get(_mac_key(mac)) or hostname

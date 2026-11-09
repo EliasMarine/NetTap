@@ -139,15 +139,19 @@ def _register_conn_devices(
         ip = bucket["key"]
         macs = bucket.get("with_mac", {}).get("buckets", [])
         hits = macs[0].get("latest", {}).get("hits", {}).get("hits", []) if macs else []
-        mac = _mac_from_hit(hits[0]) if hits else None
+        # an answer-only device's hits are of the records it answered (_lan_device_buckets)
+        side = "destination" if bucket.get("answer_only") else "source"
+        # OLD CODE: mac = _mac_from_hit(hits[0]) if hits else None
+        mac = _mac_from_hit(hits[0], side) if hits else None
         # shortcut: an IP with no MAC in its conn records can't be keyed, so it stays out of the registry
         if _is_skipped_device_ip(ip) or not mac:
             continue
         # OLD CODE START — the vendor came only from the bundled 208-prefix table (#26)
         # registry.register_device(mac=mac, ip=ip, source="conn")
         # OLD CODE END
+        # OLD CODE: oui = _oui_from_hit(hits[0])
         oui = _oui_from_hit(
-            hits[0]
+            hits[0], side
         )  # Malcolm's IEEE vendor name, absent for randomized MACs
         metadata = (
             {"manufacturer": oui, "category": _vendor_category(oui)} if oui else None

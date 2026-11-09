@@ -109,9 +109,20 @@ def _device_bucket(
     }
 
 
+def _answered_composite(aggs: dict) -> bool:
+    """NET-226 follow-up: the answering side's device composite (on destination.ip)."""
+    sources = (aggs.get("all") or {}).get("composite", {}).get("sources") or [{}]
+    return sources[0].get("ip", {}).get("terms", {}).get("field") == "destination.ip"
+
+
+_NO_RESPONDERS = {"aggregations": {"all": {"buckets": []}}}
+
+
 def _no_answers(body):
     """Replies for the searches NET-226 added when nothing answered and nothing is IPv6."""
     aggs = body.get("aggs", {})
+    if _answered_composite(aggs):  # no device here only answers
+        return _NO_RESPONDERS
     if "answered" in aggs and "started" not in aggs:  # answered_by_ip
         return {"aggregations": {"answered": {"buckets": []}}}
     if "started" in aggs and "answered" in aggs and "macs" in aggs["started"]["aggs"]:
@@ -1151,6 +1162,8 @@ def _route_device_searches(device_response, alerts=None):
                 b for b in buckets if b["doc_count"] >= terms.get("min_doc_count", 1)
             ]
             return {"aggregations": {"devices": {"buckets": kept[: terms["size"]]}}}
+        if _answered_composite(aggs):
+            return _NO_RESPONDERS
         if "all" in aggs:
             return _composite_page(buckets, aggs["all"]["composite"])
         answers = _no_answers(body or {})  # NET-226: answered side, IPv6, IPv6 owner
@@ -1187,7 +1200,13 @@ class TestDeviceCountHandler(AioHTTPTestCase):
         return app
 
     def _bodies(self):
-        return [c.kwargs["body"] for c in self.mock_client.search.call_args_list]
+        # OLD CODE: return [c.kwargs["body"] for c in self.mock_client.search.call_args_list]
+        # NET-226 follow-up: the started side's composites (the answered side's is its own read)
+        return [
+            c.kwargs["body"]
+            for c in self.mock_client.search.call_args_list
+            if not _answered_composite(c.kwargs["body"].get("aggs", {}))
+        ]
 
     @unittest_run_loop
     async def test_count_equals_device_list_length(self):
@@ -1295,8 +1314,9 @@ class TestDeviceCountHandler(AioHTTPTestCase):
 
         self.assertEqual(resp.status, 200)
         self.assertEqual((await resp.json())["count"], 1200)
+        # OLD CODE: self.assertEqual(self.mock_client.search.call_count, 2)
         self.assertEqual(
-            self.mock_client.search.call_count, 2
+            len(self._bodies()), 2
         )  # a full page of 1,000 and the short last one
 
     @unittest_run_loop

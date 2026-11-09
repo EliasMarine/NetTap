@@ -53,6 +53,11 @@ def epoch_ms(iso: str) -> float:
     return when.timestamp() * 1000
 
 
+def _num(value) -> float:
+    """A number as itself, anything else as a time in epoch ms (range bounds take both)."""
+    return value if isinstance(value, (int, float)) else epoch_ms(value)
+
+
 def iso(ms: float) -> str:
     when = datetime.fromtimestamp(ms / 1000, timezone.utc)
     return when.isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -136,9 +141,7 @@ def matches(doc: dict, query: dict) -> bool:
         }
         return any(
             all(
-                checks[op](epoch_ms(v), epoch_ms(b))
-                for op, b in bounds.items()
-                if op in checks
+                checks[op](_num(v), _num(b)) for op, b in bounds.items() if op in checks
             )
             for v in values(doc, field)
         )
@@ -316,14 +319,20 @@ def _one(docs: list, spec: dict) -> dict:
     if kind == "date_range":
         buckets = []
         for r in body["ranges"]:
-            lo, hi = epoch_ms(r["from"]), epoch_ms(r["to"])
+            lo, hi = _num(r["from"]), _num(r["to"])
             hit = [
                 d
                 for d in docs
                 if any(lo <= epoch_ms(v) < hi for v in values(d, "@timestamp"))
             ]
             buckets.append(
-                {"from": lo, "to": hi, "doc_count": len(hit), **aggregate(hit, sub)}
+                {
+                    **({"key": r["key"]} if "key" in r else {}),
+                    "from": lo,
+                    "to": hi,
+                    "doc_count": len(hit),
+                    **aggregate(hit, sub),
+                }
             )
         return {"buckets": buckets}
     if kind == "top_hits":  # OpenSearch's default size is 3

@@ -22,6 +22,7 @@ from api.time_range import parse_time_range
 # OLD CODE: from api.alerts import SURICATA_NOISE_EXCLUSION (NET-209: alerts come from findings)
 # OLD CODE: from api.devices import _incomplete, _lan_device_bool_query, _lan_device_buckets
 from api.devices import (
+    _RESPONDED,
     _incomplete,
     _iso_ms,
     _lan_device_bool_query,
@@ -397,7 +398,14 @@ def _history(
         if ip
         else {"terms": {"destination.ip": lan_cidrs(app)}}
     )
-    answered = {"bool": {"filter": [*conns, answered_by], "must_not": [not_internet]}}
+    # OLD CODE: answered = {"bool": {"filter": [*conns, answered_by], "must_not": [not_internet]}}
+    # NET-226 follow-up: answered ones only, so an internet scan of empty addresses lists none
+    answered = {
+        "bool": {
+            "filter": [*conns, answered_by, _RESPONDED],
+            "must_not": [not_internet],
+        }
+    }
     to_internet = {
         "bool": {"must_not": [{"terms": {"destination.ip": NOT_INTERNET_CIDRS}}]}
     }
@@ -683,8 +691,14 @@ def _risk_scores(request: web.Request) -> web.Response:
         )
     except QueryFailed as exc:
         return _incomplete("risk scores", exc)
+    # OLD CODE START — NET-226 follow-up: every device opened connections, so all were in it
+    # network_avg, network_stddev = _baseline(
+    #     [b.get("doc_count", 0) for b in device_buckets]
+    # )
+    # OLD CODE END
+    # the baseline is of connections opened; a device that only answers opened none
     network_avg, network_stddev = _baseline(
-        [b.get("doc_count", 0) for b in device_buckets]
+        [b.get("doc_count", 0) for b in device_buckets if not b.get("answer_only")]
     )
 
     # OLD CODE START — NET-209: every alert whose source was the device, including blocklist hits
