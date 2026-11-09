@@ -10,14 +10,16 @@
 # change: the first step records that revision as the rollback point, then the script switches to
 # $BRANCH itself. Two commands:
 #   git -C /home/nettap/NetTap fetch origin
-#   bash <(git -C /home/nettap/NetTap show origin/fix/unidentified-protocols:scripts/remote/deploy-protocol-identification.sh)
+#   bash <(git -C /home/nettap/NetTap show origin/main:scripts/remote/deploy-protocol-identification.sh)
+# (BRANCH=<branch> in front of bash deploys a branch instead of main.)
 # Running it again after a failed check keeps the first rollback point.
 # The full output is also saved to ~/nettap-protocol-identification.log.
 set -u
 exec > >(tee "$HOME/nettap-protocol-identification.log") 2>&1
 
 REPO_DIR="/home/nettap/NetTap"
-BRANCH="fix/unidentified-protocols"
+# OLD CODE: BRANCH="fix/unidentified-protocols" (before the merge; the owner merges, then deploys main)
+BRANCH="${BRANCH:-main}"
 BASELINE="$HOME/.nettap-deploys/protocol-identification.baseline"
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
 FAILED=0
