@@ -101,6 +101,45 @@ class BackupImportTest(AioHTTPTestCase):
         return resp.status, await resp.json()
 
 
+class TestInvalidImportAppliesNothing(BackupImportTest):
+    """An import that fails validation is a 400 before anything is saved or restarted."""
+
+    async def test_a_newer_schema_restores_neither_retention_nor_capture(self):
+        apply = AsyncMock(return_value=_ok_response())
+        body = {
+            "metadata": {"schema_version": 99},
+            "sections": {
+                "storage_retention": RETENTION,
+                "capture_mode_config": OTHER_MIRROR,
+            },
+        }
+        with (
+            patch("api.backup._apply_configuration", new=apply),
+            patch("api.server.apply_ilm_policies_from_config") as ilm,
+        ):
+            resp = await self.client.post(
+                "/api/backup/import?apply_capture=1", json=body
+            )
+        self.assertEqual(resp.status, 400)
+        # old code: retention saved, ILM pushed and capture restarted, then the 400
+        apply.assert_not_called()
+        ilm.assert_not_called()
+        self.assertEqual(self.app["storage"].config.hot_days, 90)
+        with open(os.path.join(self.tmp, "retention.json")) as f:
+            self.assertEqual(
+                json.load(f)["retention"]["hot_days"], 90
+            )  # not the backup's 45
+
+    async def test_a_body_that_isnt_an_object_is_a_400(self):
+        resp = await self.client.post("/api/backup/import", json=[1, 2])
+        self.assertEqual(resp.status, 400)  # old code: 500 on data.get
+
+    async def test_a_schema_version_that_isnt_a_number_is_a_400(self):
+        body = {"metadata": {"schema_version": "2"}, "sections": {}}
+        resp = await self.client.post("/api/backup/import", json=body)
+        self.assertEqual(resp.status, 400)  # old code: 500 (TypeError)
+
+
 class TestRetentionRestore(BackupImportTest):
     async def test_restored_through_the_storage_config_path(self):
         with patch(
@@ -211,6 +250,21 @@ class TestCaptureRestore(BackupImportTest):
             )
         self.assertEqual(status, 400)
         self.assertIn("eth2 has an IP address", " ".join(result["errors"]))
+
+
+class TestBandwidthCapReload(BackupImportTest):
+    async def test_a_restored_cap_takes_effect_at_once(self):
+        from services.bandwidth_tracker import BandwidthTracker
+
+        cap_file = os.path.join(self.tmp, "bandwidth_cap.json")
+        with patch("services.bandwidth_tracker._CAP_FILE", cap_file):
+            self.app["bandwidth_tracker"] = BandwidthTracker(client=None)
+            status, result = await self._import(
+                {"bandwidth_cap": {"monthly_cap_bytes": 7_000_000_000}}
+            )
+            self.assertEqual(status, 200, result)
+            cap = self.app["bandwidth_tracker"].get_cap()
+        self.assertEqual(cap["monthly_cap_bytes"], 7_000_000_000)
 
 
 class TestRunningStateReload(BackupImportTest):

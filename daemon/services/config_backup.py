@@ -325,6 +325,11 @@ class ConfigBackup:
 
         # Check schema version
         schema_version = metadata.get("schema_version", 0)
+        # A string or null raised TypeError on the comparison below, so the reply was a 500
+        if not isinstance(schema_version, int) or isinstance(schema_version, bool):
+            result["is_valid"] = False
+            result["errors"].append("The backup's schema version isn't a whole number")
+            return result
         if schema_version > _SCHEMA_VERSION:
             result["is_valid"] = False
             result["errors"].append(

@@ -59,20 +59,35 @@ async def handle_import(request: web.Request) -> web.Response:
     backup: ConfigBackup = request.app["config_backup"]
 
     try:
+        # Validate first: nothing is saved, reloaded or restarted for a file that fails
+        validation = await run_blocking(backup.validate_import, data)
+        if not validation["is_valid"]:
+            return web.json_response(
+                {
+                    "success": False,
+                    "errors": validation["errors"],
+                    "applied": [],
+                    "skipped": [],
+                    "warnings": validation["warnings"],
+                },
+                status=400,
+            )
         # OLD CODE: result = backup.import_config(data) (NET-200: photo writes and fsyncs, off the loop)
         result = await run_blocking(backup.import_config, data)
-        if result.get("skipped") is not None:  # validated: the live sections follow
-            sections = data.get("sections", {})
-            _reload_running_state(request.app, result["applied"])
-            await _restore_retention(request.app, sections, result)
-            await _restore_capture(
-                request.app,
-                backup,
-                sections,
-                result,
-                request.query.get("apply_capture") == "1",
-            )
-            result["success"] = not result["errors"]
+        # OLD CODE: if result.get("skipped") is not None:  # validated: the live sections follow
+        # (a failed validation's reply has "skipped": [] too, so an invalid file restored retention
+        # and the capture mode before the 400)
+        sections = data.get("sections", {})
+        _reload_running_state(request.app, result["applied"])
+        await _restore_retention(request.app, sections, result)
+        await _restore_capture(
+            request.app,
+            backup,
+            sections,
+            result,
+            request.query.get("apply_capture") == "1",
+        )
+        result["success"] = not result["errors"]
     except Exception as exc:
         logger.error("Error importing config: %s", exc)
         return web.json_response({"error": f"Config import failed: {exc}"}, status=500)

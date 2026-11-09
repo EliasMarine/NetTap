@@ -245,6 +245,17 @@ class TestValidateImport:
         )
         assert result["is_valid"] is True
 
+    @pytest.mark.parametrize("version", ["2", None, 2.5, True, [2]])
+    def test_a_schema_version_that_isnt_a_whole_number_is_invalid(
+        self, backup, version
+    ):
+        """Old code: TypeError comparing it, so the reply was a 500."""
+        result = backup.validate_import(
+            {"metadata": {"schema_version": version}, "sections": {}}
+        )
+        assert result["is_valid"] is False
+        assert any("schema version" in e.lower() for e in result["errors"])
+
     def test_newer_schema_version(self, backup):
         """Schema version newer than supported should fail."""
         data = {
