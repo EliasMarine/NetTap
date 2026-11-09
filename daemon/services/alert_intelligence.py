@@ -7,7 +7,8 @@ threat intelligence. Features:
 1. Severity reclassification — overrides Suricata's broken defaults
 2. Deduplication & grouping — by (signature, src_ip, dst_ip)
 3. Smart categorization — 13 threat categories with sub-categories
-4. Trend detection — temporal bucketing (first half vs second half)
+4. Trend detection — alerts per hour between first and last seen (the window-halves
+   comparison is category_trend in api/alerts.py)
 5. Kill chain correlation — detects multi-stage attack progression
 6. Baseline-aware scoring — deviation from rolling 7-day average
 7. Device context enrichment — OS/UA fingerprinting from sessions
@@ -801,10 +802,11 @@ def categorize_sub_category(signature: str, category: str) -> str | None:
 
 
 def compute_trend(first_seen: str, last_seen: str, count: int) -> str:
-    """Compute trend by comparing alert density in first vs second half of window.
+    """A group's trend from its rate: alerts per hour between first and last seen.
 
-    Enhancement #1: Splits the time window at the midpoint and compares
-    event density. A burst at the end = increasing; burst at start = decreasing.
+    Over 20 an hour reads "increasing"; under 0.5 an hour with fewer than 10 alerts reads
+    "decreasing"; anything else, or fewer than 4 alerts, "stable". It does not compare the
+    window's halves: category_trend in api/alerts.py does that.
     """
     if count < 4:
         return "stable"
