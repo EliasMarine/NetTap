@@ -6,7 +6,7 @@
 > All network identifiers are redacted: addresses are written as 192.0.2.x / 2001:db8::, MACs as 00:00:5e:00:53:xx, names as device-A.
 > Security findings are summarised by class here; exploitation detail for open items is kept in the Linear issues, not in this public file.
 
-**Status: complete (2026-11-09).** Fixes F1–F8 are on branch `fix/release-audit-2026-11`: not merged, not deployed.
+**Status: complete (2026-11-09).** Fixes F1–F8 are on branch `fix/release-audit-2026-11`: not merged. Deployed to the G11 on 2026-11-09 with the owner's approval; the smoke test passed 19/19 (section 9).
 
 ---
 
@@ -27,7 +27,7 @@
 - Three screens report successes that didn't happen.
 - Alert suppressions vanish on every restart.
 
-**What the branch fixes.** F1–F8 fix those defects. Each has tests that fail on the old code and pass on the fix. They are not yet deployed or verified on the device.
+**What the branch fixes.** F1–F8 fix those defects. Each has tests that fail on the old code and pass on the fix. On the G11 they passed the smoke test 19/19 after deploy (F1 traffic total equal to the independent sum, F2 fresh with all sensors running, F4 state migrated and kept across the recreate, F6 no hardware detail). Failure states (F2 stale/stopped) still need the approved failure injection.
 
 **Open blockers.** Six P1 blockers remain (NET-224–NET-229):
 - notifications;
@@ -45,7 +45,7 @@
 |---|---|---|---|
 | C1 | Test suites: no new failures vs baseline | **PASS** (branch) | Daemon 4,271 passed / 4 skipped / 0 failed (baseline 4,243 / 4 / 0). Vitest 4,331 passed (baseline 4,303). svelte-check 0 errors. Colour gate clean. Playwright visual 294 passed (50 skipped by design). bats (migration) 6/6 |
 | C2 | Deployed system identified and traceable to main | **PASS** | G11 at `446845ec` on `main`, clean checkout, deploy marker matches (§2.2) |
-| C3 | Connection counts and traffic totals reconcile with source | **FAIL** (main); fixed on the branch, UNVERIFIED on the device | R1: interim records summed (A1). Smoke test 06–07 UTC: API 1,177,967,041 B vs final records 1,176,382,268 B. F1 + tests on the branch |
+| C3 | Connection counts and traffic totals reconcile with source | **FAIL** (main); **PASS** on the branch, device run 2026-11-09 (13:00–14:00 UTC: API 1,436,217,196 B = final records 1,436,217,196 B) | R1: interim records summed (A1). Smoke test 06–07 UTC: API 1,177,967,041 B vs final records 1,176,382,268 B. F1 + tests on the branch |
 | C4 | Upload/download direction and bandwidth correct, with units | **FAIL** | Outbound correct (R2–R4), 1,000-based units shown; inbound flows read backwards because upload = originator (B-d) |
 | C5 | Device identity and attribution correct for the mode, uncertainty shown | **FAIL** | Started-by-device traffic exact (R5); answered traffic and IPv6 left out (A11, A12 → NET-226); OS/type guesses without confidence (B-h) |
 | C6 | DNS activity reconciles | **PASS** | R6: 5,477 = 5,477 lookups, NXDOMAIN 475 = 476 − 1 from the appliance |
@@ -311,7 +311,7 @@ Also required by the existing gate in `RELEASE-VERIFICATION.md`, still open: har
 | Malcolm update failure and rollback | Disruptive | Isolated stack |
 | ~~Index retention (today's index protected)~~ | Resolved 2026-11-09: manual cleanup and PCAP pruning already had tests; `test_prune_emergency_never_deletes_todays_index` now pins the emergency prune | — |
 | 500 Mbps zero-loss, <1 ms added latency (bridge) | No bench | iperf3 through a bridge bench (H3) |
-| Fixes F1–F8 on the device | Not deployed (needs explicit authorisation) | Owner runs `bash scripts/remote/deploy-release-audit.sh` (it ends with the smoke test) |
+| Fixes F1–F8 on the device | **Resolved 2026-11-09:** deployed with the owner's approval; smoke test 19 PASS / 0 FAIL / 0 WARN; F4 migration ran inside the container (baselines moved, present after the recreate) | — |
 | State migration inside the real daemon container | Claude Code's removal safety check blocks running a script with `rm` through `docker exec sh -c`; the logic is covered by bats on macOS `sh` and shellcheck in POSIX mode | The deploy script runs it on the device; its Step 6 confirms every file arrived |
 | Certificate count (44) on the Certificates page | Sessions reconciled (R14); distinct server certificates not recounted independently | A first-fingerprint cardinality over the same window |
 
