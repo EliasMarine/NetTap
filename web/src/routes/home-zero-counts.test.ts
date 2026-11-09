@@ -19,6 +19,11 @@ function stubDaemon(replies: Record<string, unknown>): void {
 	);
 }
 
+/** A KPI card's sub line, found by its label. */
+function cardSub(label: string): string | undefined {
+	return screen.getByText(label, { selector: '.kpi-top > span' }).closest('.kpi')?.querySelector('.kpi-sub')?.textContent?.trim();
+}
+
 /** A KPI card's number, found by its label (the stat cards became KpiCards). */
 function cardValue(label: string): string | undefined {
 	return screen.getByText(label, { selector: '.kpi-top > span' }).closest('.kpi')?.querySelector('.kpi-num')?.textContent?.trim();
@@ -35,9 +40,29 @@ describe('Home — real zeros and failed counts', () => {
 			'/api/devices/count': { from: '', to: '', count: 0 },
 		});
 		render(HomePage);
-		await screen.findByText('0 high, 0 med, 0 low');
+		// OLD CODE: await screen.findByText('0 high, 0 med, 0 low'); (NET-228: a zero says what it can and can't mean)
+		await vi.waitFor(() => expect(cardSub('Alerts')).toBe("Can't tell if any rule matched · Data pipeline now: Couldn't check"));
 		expect(cardValue('Alerts')?.startsWith('0')).toBe(true);
 		await vi.waitFor(() => expect(cardValue('Devices')).toBe('0'));
+	});
+
+	// NET-228 (audit B5): a bare 0 with every sensor stopped read as good news
+	it('a zero reads "can\'t tell" with the sensors stopped, and the stored-data sentence only while data is fresh', async () => {
+		const sensors = { 'nettap-zeek-live': 'exited', 'nettap-suricata-live': 'exited', 'nettap-logstash': 'exited', 'nettap-filebeat': 'exited' };
+		const pipeline = { state: 'sensor_stopped', newest_record_at: null, age_seconds: 4000, threshold_seconds: 900, sensors, checked_at: '' };
+		const replies = {
+			'/api/alerts/count': { from: '', to: '', counts: { total: 0, high: 0, medium: 0, low: 0 } },
+			'/api/system/health': { status: 'problem', healthy: false, opensearch_reachable: true, pipeline },
+		};
+		stubDaemon(replies);
+		render(HomePage);
+		await vi.waitFor(() =>
+			expect(cardSub('Alerts')).toBe("Can't tell if any rule matched · Data pipeline now: Zeek, Suricata, Logstash and Filebeat stopped"),
+		);
+
+		replies['/api/system/health'] = { status: 'healthy', healthy: true, opensearch_reachable: true, pipeline: { ...pipeline, state: 'fresh', age_seconds: 40 } };
+		await refreshPage();
+		await vi.waitFor(() => expect(cardSub('Alerts')).toBe('No counted rule matches in this period · Data pipeline now: Newest record 40 s ago'));
 	});
 
 	// NET-192 PR 4: the KPI read "214.0K" over "9000 high, 47000 med, 158000 low"

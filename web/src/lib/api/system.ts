@@ -89,6 +89,23 @@ export function pipelineStage(p: PipelineHealth | undefined): (typeof HEALTH_STA
 	}
 }
 
+/**
+ * NET-228 (audit B5): a "nothing found" message with the pipeline's current state beside it.
+ * The state is now, not the period's coverage, so it is shown as such; while it isn't fresh a
+ * zero reads "can't tell" instead of `nothing`. `failed`: the health request failed.
+ */
+export function nothingFound(
+	nothing: string,
+	health: SystemHealth | null | undefined,
+	failed: boolean,
+	unsure = "Can't tell if any rule matched",
+): { trusted: boolean; title: string; detail: string } {
+	const p = health?.pipeline;
+	const trusted = !failed && p?.state === 'fresh';
+	const state = failed || (health && (!p || p.state === 'unknown')) ? "Couldn't check" : health ? pipelineStage(p).detail : 'Checking…';
+	return { trusted, title: trusted ? nothing : unsure, detail: `Data pipeline now: ${state}` };
+}
+
 export interface SystemHealth {
 	/** The appliance's (host's) uptime in seconds, from /proc/uptime */
 	uptime: number;

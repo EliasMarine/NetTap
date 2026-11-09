@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/svelte';
+import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import HomePage from './+page.svelte';
 import { BRIDGE_NO_DEVICES } from '$api/capture';
 import { refreshPage } from '$lib/stores/pageRefresh';
@@ -134,7 +134,9 @@ describe('Home — card states', () => {
 		expect(screen.getByText('No protocol data for this window')).toBeInTheDocument();
 		expect(screen.getByText('No category data yet')).toBeInTheDocument();
 		expect(screen.getByText('No devices seen in this window')).toBeInTheDocument();
-		expect(screen.getByText('No actionable alerts detected.')).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText('No actionable alerts detected.')).toBeInTheDocument(); (NET-228: the health check didn't answer, so it can't tell)
+		const summary = screen.getByRole('heading', { name: 'Alert summary' }).closest('.card') as HTMLElement;
+		expect(within(summary).getByText("Can't tell if any rule matched · Data pipeline now: Couldn't check")).toBeInTheDocument();
 		// a zero total still draws the gauge, with 0 in the centre
 		expect(screen.getByRole('img', { name: /^0 alerts in the last 24 hours/ })).toBeInTheDocument();
 	});

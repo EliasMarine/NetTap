@@ -19,6 +19,11 @@ const REPLIES: Record<string, unknown> = {
 	'/api/devices/count': { from: '', to: '', count: 2 },
 	'/api/risk/scores': { devices: [{ ip: '192.168.1.10' }, { ip: '192.168.1.11' }] },
 	'/api/investigations/stats': { total: 0, by_status: {} },
+	// NET-228: the zero-alert finding reads the pipeline's state
+	'/api/system/health': {
+		status: 'healthy', healthy: true, opensearch_reachable: true,
+		pipeline: { state: 'fresh', newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: {}, checked_at: '' },
+	},
 };
 
 type Reply = { ok: boolean; status: number; json: () => Promise<unknown> };
@@ -73,7 +78,8 @@ describe('Security posture refresh contract', () => {
 		const calls = fetchMock.mock.calls.length;
 
 		await fireEvent.click(within(radar).getByRole('button', { name: 'Try again' }));
-		await waitFor(() => expect(fetchMock.mock.calls.length).toBe(calls + 5));
+		// OLD CODE: await waitFor(() => expect(fetchMock.mock.calls.length).toBe(calls + 5)); (NET-228: and the health)
+		await waitFor(() => expect(fetchMock.mock.calls.length).toBe(calls + 6));
 	});
 
 	it('shows the loading state and no figures until the first load returns', async () => {

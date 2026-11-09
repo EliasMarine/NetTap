@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { get } from 'svelte/store';
 import { goto } from '$app/navigation';
 import { getThreatReport, getThreatIntel, type ThreatReport, type ThreatIntelInfo } from '$api/threats';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import { THREAT_SCORE_HOW } from '$api/alerts';
+import { getSystemHealth, type SystemHealth } from '$api/system';
 import ThreatsPage from './+page.svelte';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
@@ -14,6 +15,21 @@ vi.mock('$api/threats', async (importOriginal) => ({
 	getThreatReport: vi.fn(),
 	getThreatIntel: vi.fn(),
 }));
+
+// NET-228: the page reads the pipeline's state for its "nothing needs attention" line
+vi.mock('$api/system', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$api/system')>()),
+	getSystemHealth: vi.fn(),
+}));
+function healthWith(state: NonNullable<SystemHealth['pipeline']>['state'], over: Partial<NonNullable<SystemHealth['pipeline']>> = {}): SystemHealth {
+	return {
+		uptime: 1, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true,
+		pipeline: { state, newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: {}, checked_at: '', ...over },
+	};
+}
+beforeEach(() => {
+	vi.mocked(getSystemHealth).mockResolvedValue(healthWith('fresh'));
+});
 
 const EMPTY: ThreatReport = {
 	from: '',
@@ -113,8 +129,23 @@ describe('Threats page — card states', () => {
 		]) {
 			expect(screen.getByText(title)).toBeInTheDocument();
 		}
-		expect(screen.getByText('No actionable threats detected.')).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText('No actionable threats detected.')).toBeInTheDocument(); (NET-228: and the pipeline's state)
+		expect(screen.getByText('No alert groups need attention in this period. Data pipeline now: Newest record 40 s ago.')).toBeInTheDocument();
 		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+	});
+
+	// NET-228 (audit B5): with the sensors stopped, "no threats" and a 0 score read as good news
+	it("no groups with Suricata stopped reads \"can't tell\" in the brief and beside the score", async () => {
+		vi.mocked(getThreatReport).mockResolvedValue(EMPTY);
+		vi.mocked(getThreatIntel).mockResolvedValue(NO_INTEL);
+		vi.mocked(getSystemHealth).mockResolvedValue(healthWith('sensor_stopped', { sensors: { 'nettap-suricata-live': 'exited' } }));
+		render(ThreatsPage);
+		await vi.waitFor(() =>
+			expect(screen.getByText("Can't tell if any alert needs attention. Data pipeline now: Suricata stopped.")).toBeInTheDocument(),
+		);
+		const score = screen.getByText('Threat score', { selector: '.kpi-top span' }).closest('.kpi') as HTMLElement;
+		expect(within(score).getByText("Can't tell")).toHaveClass('chip', 'is-warn');
+		expect(within(score).queryByText('No threat level')).not.toBeInTheDocument();
 	});
 
 	it('gives every failed check its own error state, never a zero', async () => {
@@ -207,9 +238,11 @@ describe('Threats page — refresh contract', () => {
 		unmount();
 	});
 
-	it('reports failed when both fail', async () => {
+	// OLD CODE: it('reports failed when both fail', async () => { (NET-228: the health is a third request)
+	it('reports failed when every request fails', async () => {
 		vi.mocked(getThreatReport).mockRejectedValue(new Error('HTTP 503'));
 		vi.mocked(getThreatIntel).mockRejectedValue(new Error('HTTP 503'));
+		vi.mocked(getSystemHealth).mockRejectedValue(new Error('HTTP 503'));
 		const { unmount } = render(ThreatsPage);
 		expect(await settledResult()).toBe('failed');
 		expect(get(pageRefresh).updatedAt).toBeNull();

@@ -36,7 +36,8 @@
 	import { getDevices, getDeviceCount } from '$api/devices';
 	import type { Device, DeviceCountResponse } from '$api/devices';
 	import { getNewDeviceCount } from '$api/devices-registry';
-	import { getSystemHealth } from '$api/system';
+	// OLD CODE: import { getSystemHealth } from '$api/system'; (NET-228: the zero alert count reads the pipeline's state)
+	import { getSystemHealth, nothingFound } from '$api/system';
 	import type { SystemHealth } from '$api/system';
 	// OLD CODE: import { getCaptureHealth, getCaptureStats, LOSS_SCOPE } (NET-167: the subtitle no longer quotes the scope)
 	import { BRIDGE_NO_DEVICES, getCaptureHealth, getCaptureStats } from '$api/capture';
@@ -484,13 +485,26 @@
 				? `Top protocol: ${trafficSummary.top_protocol}`
 				: 'Loading…',
 	);
+	/** NET-228 (audit B5): a zero count is "can't tell" unless current data is arriving */
+	const zeroAlerts = $derived(nothingFound('No counted rule matches in this period', systemHealth, !!failed.health));
+	// OLD CODE START — NET-228: a zero read "0 high, 0 med, 0 low" with every sensor stopped
+	// const alertsSub = $derived(
+	// 	alertCountFailed
+	// 		? loadFailed('the alert count', alertCount !== null)
+	// 		: alertCount
+	// 			// OLD CODE: ? `${alertCount.counts.high} high, ${alertCount.counts.medium} med, ${alertCount.counts.low} low` (NET-192 PR 4: "9000 high", no separators)
+	// 			? `${fmt(alertCount.counts.high)} high, ${fmt(alertCount.counts.medium)} med, ${fmt(alertCount.counts.low)} low`
+	// 			: 'Loading…',
+	// );
+	// OLD CODE END
 	const alertsSub = $derived(
 		alertCountFailed
 			? loadFailed('the alert count', alertCount !== null)
-			: alertCount
-				// OLD CODE: ? `${alertCount.counts.high} high, ${alertCount.counts.medium} med, ${alertCount.counts.low} low` (NET-192 PR 4: "9000 high", no separators)
-				? `${fmt(alertCount.counts.high)} high, ${fmt(alertCount.counts.medium)} med, ${fmt(alertCount.counts.low)} low`
-				: 'Loading…',
+			: !alertCount
+				? 'Loading…'
+				: alertCount.counts.total === 0
+					? `${zeroAlerts.title} · ${zeroAlerts.detail}`
+					: `${fmt(alertCount.counts.high)} high, ${fmt(alertCount.counts.medium)} med, ${fmt(alertCount.counts.low)} low`,
 	);
 	// NET-225: post-NAT, every device's IPv4 traffic carries the router's address; the capture health reply names the mode
 	const bridgeMode = $derived(captureHealth?.mode === 'bridge');
@@ -620,6 +634,12 @@
 						: ''
 				}`
 			: '',
+	);
+	/** Smart groups hide context and suppressed alerts, so with alerts stored but no group it says "nothing to review" */
+	const noGroups = $derived(
+		alertCount && alertCount.counts.total > 0
+			? nothingFound('No alert groups to review in this period', systemHealth, !!failed.health, "Can't tell if anything needs review")
+			: zeroAlerts,
 	);
 	const gaugeAria = $derived(
 		alertCount
@@ -864,8 +884,15 @@ OLD CODE END -->
 			{:else if failed.smart}
 				<p class="dim">Couldn't load the alert summary: the request failed.</p>
 				<a href="/alerts" class="link">View raw alerts</a>
+			<!-- OLD CODE START — NET-228: "detected" with no sign of whether data was arriving
 			{:else if !loading}
 				<p class="dim">No actionable alerts detected.</p>
+				<a href="/alerts" class="link">View raw alerts</a>
+			OLD CODE END -->
+			{:else if !loading}
+				<p class={noGroups.trusted ? 'dim' : 'notice is-warn'} role="status">
+					{#if !noGroups.trusted}<Icon name="warn" />{/if}<span>{noGroups.title} · {noGroups.detail}</span>
+				</p>
 				<a href="/alerts" class="link">View raw alerts</a>
 			{/if}
 		</div>

@@ -44,6 +44,12 @@ function snap(state: BeaconingSnapshot['state'], extra: Partial<BeaconingSnapsho
 }
 
 /** Answers each report request with the next of `reports` (the last one repeats); returns the report URLs asked for. */
+/** NET-228: a health reply with data arriving */
+const HEALTH = {
+	uptime: 1, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true,
+	pipeline: { state: 'fresh', newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: {}, checked_at: '' },
+};
+
 function stubDaemon(...reports: ThreatReport[]): string[] {
 	const asked: string[] = [];
 	vi.stubGlobal(
@@ -55,6 +61,7 @@ function stubDaemon(...reports: ThreatReport[]): string[] {
 				return { ok: true, status: 200, json: async () => body };
 			}
 			if (url.startsWith('/api/threats/intel')) return { ok: true, status: 200, json: async () => INTEL };
+			if (url.startsWith('/api/system/health')) return { ok: true, status: 200, json: async () => HEALTH };
 			return { ok: false, status: 503, json: async () => ({}) };
 		}),
 	);
@@ -178,6 +185,8 @@ describe('Threats page — polling the background beaconing check', () => {
 					return { ok: true, status: 200, json: async () => reply };
 				}
 				if (url.startsWith('/api/threats/intel')) return { ok: true, status: 200, json: async () => INTEL };
+				// NET-228: the page reads the pipeline's state too; a 503 would make every load partial
+				if (url.startsWith('/api/system/health')) return { ok: true, status: 200, json: async () => HEALTH };
 				return { ok: false, status: 503, json: async () => ({}) };
 			}),
 		);

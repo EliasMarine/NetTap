@@ -31,6 +31,15 @@ vi.mock('$api/alerts', async (importOriginal) => {
 	};
 });
 
+// NET-228: the page reads the pipeline's state for its zero messages; data is arriving here
+vi.mock('$api/system', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$api/system')>()),
+	getSystemHealth: vi.fn(async () => ({
+		uptime: 1, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true,
+		pipeline: { state: 'fresh', newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: {}, checked_at: '' },
+	})),
+}));
+
 describe('Alerts', () => {
 	it('should export a Svelte component', async () => {
 		const module = await import('./+page.svelte');
@@ -154,7 +163,8 @@ describe('Alerts — failed requests', () => {
 		render(Page);
 		await flush();
 
-		expect(screen.getByText('No alerts')).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText('No alerts')).toBeInTheDocument(); (NET-228: a zero names what it means and the pipeline's state)
+		expect(screen.getByRole('heading', { name: 'No counted rule matches in this period' })).toBeInTheDocument();
 		expect(screen.getByText('No signatures found')).toBeInTheDocument();
 		expect(screen.queryByText(/Couldn't/)).not.toBeInTheDocument();
 	});

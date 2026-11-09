@@ -6,7 +6,9 @@ import {
 	getIndices,
 	healthStage,
 	pipelineStage,
+	nothingFound,
 	type PipelineHealth,
+	type SystemHealth,
 } from './system';
 
 // ---------------------------------------------------------------------------
@@ -229,5 +231,52 @@ describe('pipelineStage', () => {
 
 	it('reads Unknown when an older daemon sends no pipeline', () => {
 		expect(pipelineStage(undefined)).toEqual({ status: 'unknown', detail: 'Unknown' });
+	});
+});
+
+// NET-228 (audit B5): a zero alert count is "can't tell" unless current data is arriving
+describe('nothingFound', () => {
+	const RUNNING = {
+		'nettap-zeek-live': 'running',
+		'nettap-suricata-live': 'running',
+		'nettap-logstash': 'running',
+		'nettap-filebeat': 'running',
+	};
+	const health = (pipeline?: Partial<PipelineHealth>): SystemHealth => ({
+		uptime: 1, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true,
+		...(pipeline && {
+			pipeline: {
+				state: 'fresh', newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: RUNNING, checked_at: '', ...pipeline,
+			},
+		}),
+	});
+	const NONE = 'No counted rule matches in this period';
+
+	it('keeps the stored-data sentence only while data is fresh, and labels the state as now', () => {
+		expect(nothingFound(NONE, health({ state: 'fresh' }), false)).toEqual({
+			trusted: true, title: NONE, detail: 'Data pipeline now: Newest record 40 s ago',
+		});
+	});
+
+	it.each([
+		[{ state: 'stale' as const, age_seconds: 47 * 60 }, 'Data pipeline now: No new records for 47 min'],
+		[{ state: 'no_data' as const, age_seconds: null }, 'Data pipeline now: No records in the last 7 days'],
+		[{ state: 'sensor_stopped' as const, sensors: { ...RUNNING, 'nettap-suricata-live': 'exited' } }, 'Data pipeline now: Suricata stopped'],
+		[{ state: 'starting' as const, age_seconds: null }, 'Data pipeline now: Starting up'],
+		[{ state: 'unknown' as const, age_seconds: null }, "Data pipeline now: Couldn't check"],
+	])('reads "can\'t tell" when the pipeline is %o', (pipeline, detail) => {
+		expect(nothingFound(NONE, health(pipeline), false)).toEqual({ trusted: false, title: "Can't tell if any rule matched", detail });
+	});
+
+	it("can't tell when the health request failed, an older daemon sent no pipeline, or it hasn't loaded", () => {
+		expect(nothingFound(NONE, health({ state: 'fresh' }), true)).toMatchObject({ trusted: false, detail: "Data pipeline now: Couldn't check" });
+		expect(nothingFound(NONE, health(), false)).toMatchObject({ trusted: false, detail: "Data pipeline now: Couldn't check" });
+		expect(nothingFound(NONE, null, false)).toMatchObject({ trusted: false, detail: 'Data pipeline now: Checking…' });
+	});
+
+	it('takes its own "unsure" words', () => {
+		expect(nothingFound('No alert groups to review in this period', health({ state: 'stale' }), false, "Can't tell if anything needs review").title).toBe(
+			"Can't tell if anything needs review",
+		);
 	});
 });

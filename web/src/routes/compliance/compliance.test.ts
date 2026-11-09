@@ -193,6 +193,26 @@ describe('Security Posture page when an input fails', () => {
 		expect(screen.getByText('Scored on 6 of 6 areas')).toBeInTheDocument();
 	});
 
+	// NET-228 (audit B5): the zero-alert finding says what it can mean, beside the pipeline's state
+	it("no counted alerts reads \"can't tell\" with Suricata stopped, and says how fresh the data is otherwise", async () => {
+		const pipeline = { state: 'sensor_stopped', newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: { 'nettap-suricata-live': 'exited' }, checked_at: '' };
+		const health = { status: 'problem', healthy: false, opensearch_reachable: true, pipeline };
+		stubDaemon({}, { ...DAEMON_REPLIES, '/api/system/health': health });
+		const { unmount } = render(CompliancePage);
+		await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
+		expect(
+			within(categoryCard('Alert response')).getAllByText("Can't tell if any rule matched, so there is nothing to score · Data pipeline now: Suricata stopped").length,
+		).toBeGreaterThan(0);
+		unmount();
+
+		stubDaemon({}, { ...DAEMON_REPLIES, '/api/system/health': { ...health, pipeline: { ...pipeline, state: 'fresh' } } });
+		render(CompliancePage);
+		await vi.waitFor(() => expect(heading('Alert response')).toBeInTheDocument());
+		expect(
+			within(categoryCard('Alert response')).getAllByText('No counted rule matches in this period, so there is nothing to score · Data pipeline now: Newest record 40 s ago').length,
+		).toBeGreaterThan(0);
+	});
+
 	it('needs investigation stats for Alert Response only when there are alerts', async () => {
 		stubDaemon({ '/api/investigations/stats': 'http' });
 		const { unmount } = render(CompliancePage);

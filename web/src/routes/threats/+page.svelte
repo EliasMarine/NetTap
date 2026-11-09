@@ -41,6 +41,8 @@
 	import { ipHref } from '$lib/stores/lan';
 	import { formatTime } from '$lib/utils/time';
 	import { DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown';
+	// NET-228 (audit B5): "nothing needs attention" carries the pipeline's current state
+	import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -51,6 +53,9 @@
 	let threatIntel = $state<ThreatIntelInfo | null>(null);
 	// #96: a failed check must not read as "none detected"
 	let intelFailed = $state(false);
+	/** NET-228: the system health, for the pipeline state beside a zero; null until it loads or when it failed */
+	let health = $state<SystemHealth | null>(null);
+	let healthFailed = $state(false);
 	const BEACONS_SHOWN = 20;
 	const CHECK_NAMES: Record<string, string> = {
 		beaconing: 'beaconing',
@@ -190,11 +195,17 @@
 		`Alert events by category: ${categoryItems.map((c) => `${c.label} ${formatNumber(c.value)}`).join(', ')}`,
 	);
 
+	/** NET-228 (audit B5): no groups is "can't tell" unless current data is arriving */
+	let noGroups = $derived(
+		nothingFound('No alert groups need attention in this period', health, healthFailed, "Can't tell if any alert needs attention"),
+	);
+
 	// Headline
 	let headline = $derived.by(() => {
 		const groups = summary?.total_groups ?? 0;
 		const invCount = investigations.length;
-		if (groups === 0) return 'No actionable threats detected.';
+		// OLD CODE: if (groups === 0) return 'No actionable threats detected.'; (NET-228: no sign of whether data was arriving)
+		if (groups === 0) return `${noGroups.title}. ${noGroups.detail}.`;
 		// OLD CODE START — I8: total_events leaves out informational alerts, so it read as everything Suricata raised
 		// return `Suricata generated ${formatNumber(summary?.total_events ?? 0)} alert events. NetTap found ${invCount} investigation${invCount !== 1 ? 's' : ''}.`;
 		// OLD CODE END
@@ -392,18 +403,22 @@
 		const request = threatRequest(range, params);
 		loading = true;
 		// OLD CODE: const [reportRes, tiRes] = await Promise.allSettled([getThreatReport(params), getThreatIntel(params)]); (NET-192 PR 3: 24h/7d/30d ask for the snapshot)
-		const [reportRes, tiRes] = await Promise.allSettled([getThreatReport(request), getThreatIntel(params)]);
+		// OLD CODE: const [reportRes, tiRes] = await Promise.allSettled([getThreatReport(request), getThreatIntel(params)]); (NET-228: and the health)
+		const [reportRes, tiRes, healthRes] = await Promise.allSettled([getThreatReport(request), getThreatIntel(params), getSystemHealth()]);
 		if (!guard.current(g)) return 'skipped';
 		report = reportRes.status === 'fulfilled' ? reportRes.value : null;
 		threatIntel = tiRes.status === 'fulfilled' ? tiRes.value : null;
 		intelFailed = tiRes.status === 'rejected';
+		health = healthRes.status === 'fulfilled' ? healthRes.value : null;
+		healthFailed = healthRes.status === 'rejected';
 		loading = false;
 		pollWhilePending(g, range, request);
 		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
 		// const succeeded = [reportRes, tiRes].filter((r) => r.status === 'fulfilled').length;
 		// return succeeded === 2 ? 'ok' : succeeded === 1 ? 'partial' : 'failed';
 		// OLD CODE END
-		return outcome([reportRes, tiRes]);
+		// OLD CODE: return outcome([reportRes, tiRes]); (NET-228)
+		return outcome([reportRes, tiRes, healthRes]);
 	}
 
 	const refresh = registerPageRefresh(load);
@@ -520,7 +535,8 @@
 			note={baseline ? `${baseline.deviation}× ${baseline.is_anomalous ? 'above' : 'vs'} baseline` : undefined}
 		>
 			{#snippet foot()}
-				{#if threatLevelPill}<SeverityPill level={threatLevelPill} />{:else}<span class="dim">No threat level</span>{/if}
+				<!-- OLD CODE: {#if threatLevelPill}<SeverityPill level={threatLevelPill} />{:else}<span class="dim">No threat level</span>{/if} (NET-228: 0 read as good news with data not arriving) -->
+				{#if threatLevelPill}<SeverityPill level={threatLevelPill} />{:else if (summary?.total_groups ?? 0) === 0 && !noGroups.trusted}<span class="chip is-warn">Can't tell</span>{:else}<span class="dim">No threat level</span>{/if}
 				<details class="score-how">
 					<summary>How the score is worked out</summary>
 					<p>{THREAT_SCORE_HOW}</p>

@@ -28,6 +28,8 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import { fmt } from '$lib/utils/drilldown';
+	// NET-228 (audit B5): the zero-alert finding carries the pipeline's current state
+	import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system';
 
 	// ---------------------------------------------------------------------------
 	// Types
@@ -95,6 +97,9 @@
 	let investigationStats = $state<InvestigationStats>({ total: 0, by_status: {}, by_severity: {} });
 	// #96: requests that failed; the defaults above stand in for them only so the other scores compute
 	let failed = $state<Input[]>([]);
+	/** NET-228: the system health, for the pipeline state beside a zero; null until it loads or when it failed */
+	let health = $state<SystemHealth | null>(null);
+	let healthFailed = $state(false);
 
 	// ---------------------------------------------------------------------------
 	// Scoring constants
@@ -392,7 +397,10 @@
 		if (total === 0) {
 			// OLD CODE: findings.push('No alerts detected — your network looks clean');
 			// (F5 review: no rule matching is not proof of a clean network, and the card reads "Not measured")
-			findings.push('No rule matched in this period, so there is nothing to score');
+			// OLD CODE: findings.push('No rule matched in this period, so there is nothing to score');
+			// (NET-228: informational matches are never counted, and nothing said whether data was arriving)
+			const zero = nothingFound('No counted rule matches in this period', health, healthFailed);
+			findings.push(`${zero.title}, so there is nothing to score · ${zero.detail}`);
 		} else {
 			findings.push(`${fmt(total)} total alert(s) in the current period`);
 			if (alertCounts.counts.high > 0) {
@@ -659,14 +667,18 @@
 		const g = guard.begin();
 		loading = true;
 		// #96: each input on its own, so one failure marks only the categories built on it
-		const [protocolsRes, alertsRes, devicesRes, riskRes, statsRes] = await Promise.allSettled([
+		// OLD CODE: const [protocolsRes, alertsRes, devicesRes, riskRes, statsRes] = await Promise.allSettled([ (NET-228: and the health)
+		const [protocolsRes, alertsRes, devicesRes, riskRes, statsRes, healthRes] = await Promise.allSettled([
 			getProtocolDistribution(),
 			getAlertCount(),
 			getDeviceCount(),
 			getRiskScores(),
 			getInvestigationStats(),
+			getSystemHealth(),
 		]);
 		if (!guard.current(g)) return 'skipped';
+		health = healthRes.status === 'fulfilled' ? healthRes.value : null;
+		healthFailed = healthRes.status === 'rejected';
 		if (protocolsRes.status === 'fulfilled') protocols = protocolsRes.value;
 		if (alertsRes.status === 'fulfilled') alertCounts = alertsRes.value;
 		if (devicesRes.status === 'fulfilled') deviceCount = devicesRes.value;
@@ -686,7 +698,8 @@
 		// if (failed.length === 0) return 'ok';
 		// return failed.length === Object.keys(settled).length ? 'failed' : 'partial';
 		// OLD CODE END
-		return outcome(Object.values(settled));
+		// OLD CODE: return outcome(Object.values(settled)); (NET-228: the health is a request too)
+		return outcome([...Object.values(settled), healthRes]);
 	}
 
 	// OLD CODE START — #96: any failure left the defaults in place, so it scored as a clean network
