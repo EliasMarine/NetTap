@@ -76,8 +76,6 @@ NetTap is an open-source, self-hosted network monitor for homes and small busine
   </tr>
 </table>
 
-The screenshots and the tour use demo data, not a real network. To make them again after a UI change, run `cd web && npm run capture:media` (needs ffmpeg).
-
 ## How it connects
 
 You pick a mode in the setup wizard. It can't be changed after setup yet.
