@@ -441,4 +441,4 @@ echo "Open the dashboard to verify."
 
 ## Licensing
 
-NetTap is released under the NetTap Personal Use License — free for personal use, commercial use/modification/redistribution requires a separate license. Third-party components (Zeek, Suricata, Arkime, OpenSearch, Grafana) retain their original open-source licenses. See THIRD-PARTY-LICENSES.md for details.
+NetTap is released under the GNU General Public License version 3 only (SPDX: GPL-3.0-only). Commercial use is permitted. Distributed modified versions must be licensed under GPLv3, with corresponding source provided to recipients as required by the license. Preserve copyright and license notices and identify changes. Running a hosted service alone does not trigger a source-disclosure requirement under GPLv3. Third-party components (Zeek, Suricata, Arkime, OpenSearch, Grafana) retain their original open-source licenses. See THIRD-PARTY-LICENSES.md for details.

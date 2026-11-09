@@ -1631,8 +1631,7 @@
 				<dt>Uptime</dt>
 				<dd class="num">{uptime}</dd>
 				<dt>Licence</dt>
-				<!-- OLD CODE: Apache 2.0 (wrong since the licence switch; the repo's LICENSE is the NetTap Personal Use License) -->
-				<dd>NetTap Personal Use License</dd>
+				<dd>GNU GPLv3 (version 3 only)</dd>
 				<dt>Stack</dt>
 				<!-- OLD CODE: Zeek + Suricata + Arkime + OpenSearch (Arkime off by default since 2026-11-02, #44) -->
 				<dd>Zeek + Suricata + OpenSearch</dd>

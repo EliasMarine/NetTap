@@ -4,6 +4,7 @@ Thank you for your interest in contributing to NetTap! This guide will help you 
 
 ## Table of Contents
 
+- [License](#license)
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
 - [Development Environment](#development-environment)
@@ -14,6 +15,10 @@ Thank you for your interest in contributing to NetTap! This guide will help you 
 - [Testing](#testing)
 - [Issue Labels and Priorities](#issue-labels-and-priorities)
 - [Reporting Security Issues](#reporting-security-issues)
+
+## License
+
+NetTap is licensed under the [GNU General Public License version 3 only](LICENSE) (`GPL-3.0-only`). By submitting a contribution, you agree to license it under the same GPLv3 terms. Third-party components retain their own licenses; see [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
 
 ## Code of Conduct
 

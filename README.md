@@ -5,7 +5,7 @@
 <p align="center"><strong>See what every device on your network is doing.</strong></p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="License: NetTap Personal Use" src="https://img.shields.io/badge/license-Personal%20Use-blue"></a>
+  <a href="LICENSE"><img alt="License: GPLv3" src="https://img.shields.io/badge/license-GPLv3-blue"></a>
   <img alt="Status: pre-release" src="https://img.shields.io/badge/status-pre--release-orange">
   <a href="https://github.com/EliasMarine/NetTap/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/EliasMarine/NetTap/actions/workflows/ci.yml/badge.svg?branch=main"></a>
   <a href="https://eliasmarine.github.io/NetTap/"><img alt="Docs: online" src="https://img.shields.io/badge/docs-online-526CFE?logo=materialformkdocs&logoColor=white"></a>
@@ -32,7 +32,7 @@
   <sub>A short tour (demo data). Click to watch the full-quality video on the docs site.</sub>
 </p>
 
-NetTap is a self-hosted network monitor for homes and small businesses. Put it on a small x86 box on your network and it records the traffic, flags threats and shows it all in a web dashboard. It runs CISA's [Malcolm](https://github.com/cisagov/Malcolm) stack (Zeek, Suricata, OpenSearch) and adds an installer, a setup wizard, its own dashboard and automatic storage management.
+NetTap is an open-source, self-hosted network monitor for homes and small businesses. Put it on a small x86 box on your network and it records the traffic, flags threats and shows it all in a web dashboard. It runs CISA's [Malcolm](https://github.com/cisagov/Malcolm) stack (Zeek, Suricata, OpenSearch) and adds an installer, a setup wizard, its own dashboard and automatic storage management.
 
 > **Pre-release.** No version has been tagged yet. It runs on test hardware, but expect rough edges.
 
@@ -136,10 +136,34 @@ See the [developer guide](docs/developer-guide/dev-setup.md) and the [full docs]
 - [ ] DHCP gateway mode tested on hardware, and changing capture mode after setup
 - [ ] v1.0 community release
 
+## Acknowledgements
+
+NetTap builds on the work of upstream maintainers and communities. Thank you for making these tools available. NetTap adds installation, onboarding, its dashboard and storage management; the underlying traffic analysis comes from the projects below.
+
+| Project | Contribution to NetTap |
+| --- | --- |
+| [Malcolm](https://github.com/cisagov/Malcolm) — CISA, Idaho National Laboratory and contributors | The integrated network traffic analysis stack and container images |
+| [Zeek](https://zeek.org/) | Connection and protocol metadata |
+| [Suricata](https://suricata.io/) — OISF and contributors | Network intrusion detection |
+| [Emerging Threats](https://rules.emergingthreats.net/) — Proofpoint and contributors | Detection signatures, alongside the additional rule providers credited in [CREDITS.md](CREDITS.md) |
+| [OpenSearch](https://opensearch.org/) and OpenSearch Dashboards | Storage, indexing, search and exploration of network records |
+| [netsniff-ng](https://github.com/netsniff-ng/netsniff-ng) | Packet capture |
+| [Wireshark / TShark](https://www.wireshark.org/) | Packet decoding and protocol inspection |
+| [CyberChef](https://github.com/gchq/CyberChef) — GCHQ and contributors | Data decoding, transformation and analysis |
+| [Arkime](https://arkime.com/) and [Grafana](https://grafana.com/oss/grafana/) | Optional session exploration and dashboard integrations |
+
+The interface also builds on [Svelte and SvelteKit](https://svelte.dev/), [Three.js](https://threejs.org/) and the libraries, datasets and fonts listed in [CREDITS.md](CREDITS.md). See [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) for third-party license information. NetTap is an independent project; these acknowledgements do not imply upstream endorsement.
+
 ## Contributing
 
 Bug reports and feature requests are welcome in the issue tracker. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 ## License
 
-[NetTap Personal Use License](LICENSE): free for personal, non-commercial use. Commercial use, modification and redistribution need written permission. Malcolm, Zeek, Suricata, OpenSearch and the other third-party parts keep their own licences; see [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
+Copyright (c) 2026 Cybthor.
+
+NetTap is licensed under the [GNU General Public License version 3 only](LICENSE) (`GPL-3.0-only`). You may use, modify and redistribute it, including commercially. If you distribute modified versions, you must license them under GPLv3 and provide recipients with the corresponding source code as required by the license. Preserve copyright and license notices and identify your changes. The software is provided without warranty.
+
+GPLv3 does not require publication of private modifications solely because the software is run as a hosted service.
+
+Malcolm, Zeek, Suricata, OpenSearch and the other third-party parts keep their own licences; see [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
