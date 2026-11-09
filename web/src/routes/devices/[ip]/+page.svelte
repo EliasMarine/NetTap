@@ -25,6 +25,7 @@
 		getDeviceRiskScore,
 	} from '$api/devices';
 	import { getSmartAlerts, suppressAlert } from '$api/alerts';
+	import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { likelyType, osBasis, typeBasis } from '$lib/utils/device-guess';
 	import { ipv6LeftOutText } from '$lib/utils/ipv6-coverage';
@@ -87,6 +88,13 @@
 	let smartAlerts = $state<SmartAlert[]>([]);
 	let smartAlertsTotal = $state(0);
 	let smartAlertsFailed = $state(false);
+	/** NET-228: the system health, for the pipeline state beside an empty alert list; null until it loads or when it failed */
+	let health = $state<SystemHealth | null>(null);
+	let healthFailed = $state(false);
+	// groups, not rule matches: suppressed and context groups are left out of this list
+	const noGroups = $derived(
+		nothingFound('No alert groups to review for this device in this period', health, healthFailed, "Can't tell if this device has any alert to review"),
+	);
 	let alertsExpanded = $state(false);
 	const ALERTS_COLLAPSED_COUNT = 3;
 	let suppressFailedId = $state<number | null>(null);
@@ -369,9 +377,13 @@
 			getSmartAlerts({ device_ip: ip, limit: 10, ...s }),
 			getDevicePorts(ip, s),
 			getDeviceRiskScore(ip, s),
+			getSystemHealth(),
 		]);
 		if (!guard.current(g)) return 'skipped';
-		const [deviceRes, catRes, smartRes, portRes, riskRes] = results;
+		// OLD CODE: const [deviceRes, catRes, smartRes, portRes, riskRes] = results; (NET-228: + the health)
+		const [deviceRes, catRes, smartRes, portRes, riskRes, healthRes] = results;
+		health = healthRes.status === 'fulfilled' ? healthRes.value : null;
+		healthFailed = healthRes.status === 'rejected';
 
 		// #96: a failed detail is not "Device not found"; a refresh keeps the last one
 		if (deviceRes.status === 'fulfilled') {
@@ -916,11 +928,13 @@ OLD CODE END -->
 								{:else}
 									<span class="dim num" title={NO_EXACT_ALERT_LIST}>×{formatNumber(sa.count)}</span>
 								{/if}
+								<!-- OLD CODE START — NET-228: compute_trend is an absolute rate with no comparison window, so it can't say rising or falling; the assessment states the rate
 								{#if sa.trend === 'increasing'}
 									<Icon name="up" label="Rising" />
 								{:else if sa.trend === 'decreasing'}
 									<Icon name="down" label="Falling" />
 								{/if}
+								OLD CODE END -->
 							</div>
 							<!-- OLD CODE: <div class="sig wrap">{sa.signature}</div> (slice 2a: not a link) -->
 							<!-- OLD CODE: <a class="sig wrap" href={alertsHrefForSignature(sa.signature, smartAlertsWindow ?? undefined, smartAlertsWindow?.ip)}>{sa.signature}</a> (slice 2b-1: the shown name can differ from rule.name, and ip alone listed the device's other pairs) -->
@@ -956,7 +970,8 @@ OLD CODE END -->
 			{:else if smartAlertsFailed}
 				<CardState state="error" title="Couldn't load alerts for this device: the request failed." onaction={() => refresh.run()} />
 			{:else}
-				<CardState state="empty" icon="alerts" title="No actionable alerts for this device." />
+				<!-- OLD CODE: <CardState state="empty" icon="alerts" title="No actionable alerts for this device." /> (NET-228: read the same with no data arriving) -->
+				<CardState state="empty" icon={noGroups.trusted ? 'alerts' : 'warn'} title={noGroups.title} message="{noGroups.detail}." />
 			{/if}
 		</Card>
 

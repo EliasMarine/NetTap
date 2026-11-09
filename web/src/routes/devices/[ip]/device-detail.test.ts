@@ -5,6 +5,7 @@ import { getSmartAlerts, suppressAlert } from '$api/alerts';
 import { getDeviceDetail } from '$api/devices';
 import { ENCRYPTED_DNS_NOTE } from '$lib/api/dns';
 import { captureMode } from '$lib/stores/captureMode';
+import { getSystemHealth } from '$api/system';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
@@ -34,6 +35,14 @@ vi.mock('$api/devices', () => ({
 	getDevicePorts: vi.fn(async () => ({ ports: [] })),
 	getDeviceRiskScore: vi.fn(async () => ({ score: 0, level: 'low', factors: [] })),
 	getDeviceConnections: vi.fn(async () => ({ connections: [], page: 1, total_pages: 0, total: 0 })),
+}));
+// NET-228: the Smart alerts empty state reads the pipeline's state; fresh unless a test says not
+vi.mock('$api/system', async (importOriginal) => ({
+	...(await importOriginal<typeof import('$api/system')>()),
+	getSystemHealth: vi.fn(async () => ({
+		uptime: 1, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true,
+		pipeline: { state: 'fresh', newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: {}, checked_at: '' },
+	})),
 }));
 vi.mock('$api/alerts', () => ({
 	getSmartAlerts: vi.fn(),
@@ -97,6 +106,18 @@ describe('Device detail — suppress smart alert', () => {
 
 		expect(screen.queryByText(ALERT.signature)).not.toBeInTheDocument();
 		expect(screen.queryByText('Suppress failed. Try again.')).not.toBeInTheDocument();
+		// NET-228: the rule still matched; only the group to review is gone
+		expect(screen.getByText('No alert groups to review for this device in this period')).toBeInTheDocument();
+	});
+
+	// NET-228: compute_trend is a rate with no comparison window, so no rising or falling arrow
+	it('shows no rising or falling arrow', async () => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [{ ...ALERT, trend: 'increasing' }], total: 1 } as never);
+		render(Page);
+		await flush();
+		await screen.findByText(ALERT.signature);
+		expect(screen.queryByLabelText('Rising')).not.toBeInTheDocument();
+		expect(screen.queryByLabelText('Falling')).not.toBeInTheDocument();
 	});
 });
 
@@ -177,12 +198,29 @@ describe('Device detail — smart alerts request fails', () => {
 		expect(screen.getAllByText('laptop').length).toBeGreaterThan(0);
 	});
 
-	it('still says there are none when the request succeeds empty', async () => {
+	// OLD CODE: expect(screen.getByText('No actionable alerts for this device.')) (NET-228: + the pipeline's state)
+	it('still says there are none when the request succeeds empty, beside how fresh the data is', async () => {
 		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
 		render(Page);
 		await flush();
 
-		expect(screen.getByText('No actionable alerts for this device.')).toBeInTheDocument();
+		expect(screen.getByText('No alert groups to review for this device in this period')).toBeInTheDocument();
+		expect(screen.getByText('Data pipeline now: Newest record 40 s ago.')).toBeInTheDocument();
+	});
+
+	// NET-228: with Suricata stopped an empty list proves nothing
+	it("can't tell when the pipeline isn't fresh", async () => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+		vi.mocked(getSystemHealth).mockResolvedValueOnce({
+			uptime: 1, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true,
+			pipeline: { state: 'sensor_stopped', newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: { 'nettap-suricata-live': 'exited' }, checked_at: '' },
+		});
+		render(Page);
+		await flush();
+
+		expect(screen.getByText("Can't tell if this device has any alert to review")).toBeInTheDocument();
+		expect(screen.getByText('Data pipeline now: Suricata stopped.')).toBeInTheDocument();
+		expect(screen.queryByText('No alert groups to review for this device in this period')).not.toBeInTheDocument();
 	});
 });
 
