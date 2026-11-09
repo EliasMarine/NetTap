@@ -109,7 +109,10 @@ def detect_lan_subnets(client) -> list[tuple[int, int, int]]:
                 "bool": {
                     "filter": [
                         {"term": {"event.provider": "zeek"}},
-                        {"term": {"event.dataset": "conn"}},
+                        # OLD CODE START — F1: also counted conn_long.log interim records
+                        # {"term": {"event.dataset": "conn"}},
+                        # OLD CODE END
+                        CONN_ACCOUNTING,
                         # Exclude connections to RFC1918 destinations (inbound/LAN-to-LAN)
                         # Only keep outbound connections to public IPs
                         {
@@ -485,6 +488,18 @@ RFC1918_SOURCE_FILTER = build_lan_filter(_parse_manual_subnets())
 # Suricata alerts that share source.mac; counting those as connections made an ESP
 # device 1% "encrypted" (162 alerts + 2 TLS connections) on the G11, 2026-11-02.
 CONN_RECORDS: dict = {"term": {"event.dataset": "conn"}}
+
+# Final conn records only. Malcolm's zeek-long-connections writes cumulative interim records
+# to conn_long.log under the same zeek.uid as the final conn.log record, so summing both
+# inflated bytes ~9% a day on the G11 (2026-11-08). Use CONN_ACCOUNTING for anything summed,
+# counted or listed as connections; CONN_RECORDS (raw) only where an open connection is
+# evidence. Trade-off: a still-open connection's bytes appear once its final record does.
+CONN_ACCOUNTING: dict = {
+    "bool": {
+        "filter": [CONN_RECORDS],
+        "must_not": [{"term": {"log.file.path": "conn_long.log"}}],
+    }
+}
 
 
 # OLD CODE START — #79: MGMT_IP was trusted as is. .env.example ships MGMT_IP=192.168.1.100,

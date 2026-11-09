@@ -22,6 +22,7 @@ from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from api.devices import register_device_routes
 from services.device_registry import DeviceRegistry
+from services.excluded_ips import CONN_ACCOUNTING
 from storage.manager import StorageManager, RetentionConfig
 
 
@@ -1130,7 +1131,8 @@ class TestDeviceCountHandler(AioHTTPTestCase):
         list_body, count_body = self._bodies()
         self.assertEqual(count_body["query"], list_body["query"])
         bool_query = count_body["query"]["bool"]
-        self.assertIn({"term": {"event.dataset": "conn"}}, bool_query["filter"])
+        # OLD CODE: self.assertIn({"term": {"event.dataset": "conn"}}, ...) (F1: final records only)
+        self.assertIn(CONN_ACCOUNTING, bool_query["filter"])
         self.assertIn(
             {"terms": {"source.ip": ["192.168.1.0/24"]}}, bool_query["filter"]
         )

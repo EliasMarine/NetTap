@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from services.device_registry import DeviceRegistry, DEVICES_INDEX
+from services.excluded_ips import CONN_ACCOUNTING
 
 
 # ---------------------------------------------------------------------------
@@ -387,7 +388,8 @@ class TestGetDeviceTraffic:
         assert len(result["top_destinations"]) == 1
         # DNS/SSL logs and Suricata alerts share source.mac; only connections count
         filters = mock_client.search.call_args.kwargs["body"]["query"]["bool"]["filter"]
-        assert {"term": {"event.dataset": "conn"}} in filters
+        # OLD CODE: assert {"term": {"event.dataset": "conn"}} in filters (F1: final records only)
+        assert CONN_ACCOUNTING in filters
 
     def test_get_device_traffic_has_what_the_mac_page_shows(
         self, registry, mock_client

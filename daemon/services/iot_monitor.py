@@ -20,7 +20,7 @@ from typing import Any
 
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
-from services.excluded_ips import CONN_RECORDS, build_excluded_ips_filter
+from services.excluded_ips import CONN_ACCOUNTING, build_excluded_ips_filter
 from services.iot_trust_scorer import IoTTrustScorer
 from storage.all_buckets import all_buckets, complete_terms
 from storage.time_slots import histogram_buckets, time_slots
@@ -735,7 +735,10 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                CONN_RECORDS,
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # CONN_RECORDS,
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 {"terms": {"source.mac": mac_terms}},
             ],
             "must_not": [*excluded, *LOCAL_CHATTER_EXCLUSION],
@@ -1160,7 +1163,10 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_iso, to_iso),
-                CONN_RECORDS,
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # CONN_RECORDS,
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 {
                     "bool": {
                         "should": [
@@ -1321,7 +1327,10 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_iso, to_iso),
-                CONN_RECORDS,
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # CONN_RECORDS,
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 {
                     "bool": {
                         "should": [
@@ -1784,7 +1793,10 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                CONN_RECORDS,
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # CONN_RECORDS,
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 mac_filter,
             ]
         }
@@ -1971,7 +1983,10 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                CONN_RECORDS,
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # CONN_RECORDS,
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 mac_filter,
             ]
         }
@@ -2221,7 +2236,10 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                CONN_RECORDS,
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # CONN_RECORDS,
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 {"terms": {"source.mac": mac_terms}},
             ],
             "must_not": [*excluded, *LOCAL_CHATTER_EXCLUSION],
@@ -2331,7 +2349,10 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                CONN_RECORDS,
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # CONN_RECORDS,
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 {"terms": {"source.mac": mac_terms}},
                 {"term": {"destination.port": 53}},
                 {"terms": {"destination.ip": well_known_dns}},
@@ -2433,7 +2454,10 @@ class IoTMonitor:
         bool_clause: dict = {
             "filter": [
                 _time_range_filter(from_ts, to_ts),
-                CONN_RECORDS,
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # CONN_RECORDS,
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 {"terms": {"source.mac": mac_terms}},
                 # Destination is RFC1918 (internal) — use script filter
                 {

@@ -16,6 +16,7 @@ from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase, unittest_run_loop
 
 from api.traffic import register_traffic_routes
+from services.excluded_ips import CONN_ACCOUNTING
 from storage.manager import StorageManager, RetentionConfig
 
 
@@ -45,7 +46,8 @@ def _filters(body: dict) -> list:
     return body["query"]["bool"]["filter"]
 
 
-CONN_FILTER = {"term": {"event.dataset": "conn"}}
+# F1: final conn records only (conn_long.log interim records are cumulative)
+CONN_FILTER = CONN_ACCOUNTING
 
 
 class TestConnectionStatsQueries(AioHTTPTestCase):

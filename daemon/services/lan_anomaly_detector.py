@@ -13,7 +13,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any
 
-from services.excluded_ips import CONN_RECORDS, build_excluded_ips_filter
+from services.excluded_ips import CONN_ACCOUNTING, build_excluded_ips_filter
 from storage.all_buckets import all_buckets
 
 logger = logging.getLogger("nettap.services.lan_anomaly_detector")
@@ -295,7 +295,10 @@ class LANAnomalyDetector:
                 "bool": {
                     "filter": [
                         _time_range_filter(from_ts, to_ts),
-                        CONN_RECORDS,
+                        # OLD CODE START — F1: also counted conn_long.log interim records
+                        # CONN_RECORDS,
+                        # OLD CODE END
+                        CONN_ACCOUNTING,
                         {"term": {"network.transport": "udp"}},
                         {"term": {f"{side}.port": DHCP_SERVER_PORT}},
                         *answered,

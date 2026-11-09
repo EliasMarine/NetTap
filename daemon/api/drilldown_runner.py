@@ -19,6 +19,7 @@ from aiohttp import web
 
 from api.alerts import _sparkline_interval
 from services.excluded_ips import (
+    CONN_ACCOUNTING,
     RFC1918_CIDRS,
     RFC1918_SOURCE_FILTER,
     cidr,
@@ -96,10 +97,16 @@ LAST_SEEN = {"last": {"max": {"field": "@timestamp"}}}
 
 
 def zeek(dataset: str) -> list[dict]:
-    """The filters for one Zeek log (conn, dns, ssl, http)."""
+    """The filters for one Zeek log (conn, dns, ssl, http); conn is final records only."""
+    # OLD CODE START — F1: conn also matched conn_long.log interim records
+    # return [
+    #     {"term": {"event.provider": "zeek"}},
+    #     {"term": {"event.dataset": dataset}},
+    # ]
+    # OLD CODE END
     return [
         {"term": {"event.provider": "zeek"}},
-        {"term": {"event.dataset": dataset}},
+        CONN_ACCOUNTING if dataset == "conn" else {"term": {"event.dataset": dataset}},
     ]
 
 

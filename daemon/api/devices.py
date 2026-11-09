@@ -29,7 +29,11 @@ from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.device_fingerprint import DeviceFingerprint
 from services.device_registry import DeviceRegistry
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
-from services.excluded_ips import build_excluded_ips_filter, RFC1918_SOURCE_FILTER
+from services.excluded_ips import (
+    CONN_ACCOUNTING,
+    build_excluded_ips_filter,
+    RFC1918_SOURCE_FILTER,
+)
 from services.traffic_classifier import classify_asn, CATEGORIES
 from api.alerts import _normalize_alert_source
 
@@ -168,7 +172,10 @@ def _lan_device_bool_query(app: Mapping[str, Any], from_ts: str, to_ts: str) -> 
         "filter": [
             _time_range_filter(from_ts, to_ts),
             {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "conn"}},
+            # OLD CODE START — F1: also counted conn_long.log interim records
+            # {"term": {"event.dataset": "conn"}},
+            # OLD CODE END
+            CONN_ACCOUNTING,
             app.get("lan_filter", RFC1918_SOURCE_FILTER),
         ],
     }
@@ -942,7 +949,10 @@ def handle_device_detail(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     {"term": {"source.ip": ip}},
                     {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
+                    # OLD CODE START — F1: also counted conn_long.log interim records
+                    # {"term": {"event.dataset": "conn"}},
+                    # OLD CODE END
+                    CONN_ACCOUNTING,
                 ]
             }
         },
@@ -1400,7 +1410,10 @@ def handle_device_connections(request: web.Request) -> web.Response:
                         }
                     },
                     {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
+                    # OLD CODE START — F1: also counted conn_long.log interim records
+                    # {"term": {"event.dataset": "conn"}},
+                    # OLD CODE END
+                    CONN_ACCOUNTING,
                     *([{"term": {"network.transport": proto}}] if proto else []),
                 ]
             }
@@ -1476,7 +1489,10 @@ def handle_device_categories(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     {"term": {"source.ip": ip}},
                     {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
+                    # OLD CODE START — F1: also counted conn_long.log interim records
+                    # {"term": {"event.dataset": "conn"}},
+                    # OLD CODE END
+                    CONN_ACCOUNTING,
                 ]
             }
         },
@@ -1637,7 +1653,10 @@ def handle_device_ports(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     {"term": {"source.ip": ip}},
                     {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
+                    # OLD CODE START — F1: also counted conn_long.log interim records
+                    # {"term": {"event.dataset": "conn"}},
+                    # OLD CODE END
+                    CONN_ACCOUNTING,
                 ]
             }
         },

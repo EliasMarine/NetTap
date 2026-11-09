@@ -20,7 +20,11 @@ from api.alerts import SURICATA_NOISE_EXCLUSION
 from api.drilldown_runner import either_side, ip_param
 from api.time_range import parse_time_range
 from api.devices import _CONNECTION_SORT_FIELDS, _connection_sort
-from services.excluded_ips import build_excluded_ips_filter, valid_excluded_ips
+from services.excluded_ips import (
+    CONN_ACCOUNTING,
+    build_excluded_ips_filter,
+    valid_excluded_ips,
+)
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
 from services.iot_monitor import (
     ENCRYPTED_CONN_FILTER,
@@ -46,9 +50,15 @@ NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
 
 # Zeek conn event filters — Malcolm routes all data into arkime_sessions3-*;
 # these term filters select only Zeek connection logs from the unified index.
+# OLD CODE START — F1: also summed conn_long.log interim records with the final record
+# _ZEEK_CONN_FILTERS = [
+#     {"term": {"event.provider": "zeek"}},
+#     {"term": {"event.dataset": "conn"}},
+# ]
+# OLD CODE END
 _ZEEK_CONN_FILTERS = [
     {"term": {"event.provider": "zeek"}},
-    {"term": {"event.dataset": "conn"}},
+    CONN_ACCOUNTING,
 ]
 
 # The Connections page's State pills as Zeek conn_state codes, filtered in the query so the total

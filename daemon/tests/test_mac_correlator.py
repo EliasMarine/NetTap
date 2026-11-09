@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from services.excluded_ips import CONN_ACCOUNTING
 from services.mac_correlator import MACCorrelator, is_randomized_mac
 
 
@@ -76,7 +77,8 @@ class TestDetectRandomizedMacs:
                             "doc_count": 100,
                             "first_seen": {"value_as_string": "2026-03-01T00:00:00Z"},
                             "last_seen": {"value_as_string": "2026-03-08T00:00:00Z"},
-                            "total_bytes": {"value": 50000},
+                            # OLD CODE: "total_bytes": {"value": 50000}, (F1: under the conn filter)
+                            "conn": {"total_bytes": {"value": 50000}},
                             "top_dests": {
                                 "buckets": [
                                     {"key": "8.8.8.8", "doc_count": 50},
@@ -88,7 +90,8 @@ class TestDetectRandomizedMacs:
                             "doc_count": 200,
                             "first_seen": {"value_as_string": "2026-03-01T00:00:00Z"},
                             "last_seen": {"value_as_string": "2026-03-08T00:00:00Z"},
-                            "total_bytes": {"value": 100000},
+                            # OLD CODE: "total_bytes": {"value": 100000}, (F1)
+                            "conn": {"total_bytes": {"value": 100000}},
                             "top_dests": {"buckets": []},
                         },
                     ]
@@ -105,6 +108,9 @@ class TestDetectRandomizedMacs:
         assert result[0]["connection_count"] == 100
         assert result[0]["total_bytes"] == 50000
         assert result[0]["top_destinations"] == ["8.8.8.8"]
+        # F1: bytes from final conn records only (no conn_long.log interim records)
+        aggs = mock_client.search.call_args.kwargs["body"]["aggs"]["all"]["aggs"]
+        assert aggs["conn"]["filter"] == CONN_ACCOUNTING
 
     def test_empty_results(self, correlator, mock_client):
         """Should return empty list when no MACs found."""
@@ -173,10 +179,18 @@ class TestBehavioralFingerprint:
                         {"key_as_string": "2026-03-08T10:00:00Z", "doc_count": 20},
                     ]
                 },
-                "total_orig_bytes": {"value": 5000},
-                "total_resp_bytes": {"value": 10000},
-                "total_orig_pkts": {"value": 100},
-                "total_resp_pkts": {"value": 200},
+                # OLD CODE START — F1: the sums moved under the conn filter
+                # "total_orig_bytes": {"value": 5000},
+                # "total_resp_bytes": {"value": 10000},
+                # "total_orig_pkts": {"value": 100},
+                # "total_resp_pkts": {"value": 200},
+                # OLD CODE END
+                "conn": {
+                    "total_orig_bytes": {"value": 5000},
+                    "total_resp_bytes": {"value": 10000},
+                    "total_orig_pkts": {"value": 100},
+                    "total_resp_pkts": {"value": 200},
+                },
             }
         }
 
@@ -195,6 +209,8 @@ class TestBehavioralFingerprint:
         assert len(fp["destination_ips"]) == 1
         assert fp["traffic_profile"]["total_bytes"] == 15000
         assert fp["traffic_profile"]["avg_packet_size"] == 50.0  # 15000 / 300
+        aggs = mock_client.search.call_args_list[0].kwargs["body"]["aggs"]
+        assert aggs["conn"]["filter"] == CONN_ACCOUNTING
 
     def test_empty_fingerprint(self, correlator, mock_client):
         """Should return empty fingerprint when no data exists."""
@@ -406,13 +422,20 @@ class _MacIndex:
             "doc_count": m["docs"],
             "first_seen": {"value_as_string": "2026-03-01T00:00:00Z"},
             "last_seen": {"value_as_string": "2026-03-08T00:00:00Z"},
-            "total_bytes": {"value": m["bytes"]},
+            # OLD CODE START — F1: the byte sums moved under the conn filter
+            # "total_bytes": {"value": m["bytes"]},
+            # "total_orig_bytes": {"value": m["bytes"]},
+            # "total_resp_bytes": {"value": 0},
+            # OLD CODE END
+            "conn": {
+                "total_bytes": {"value": m["bytes"]},
+                "total_orig_bytes": {"value": m["bytes"]},
+                "total_resp_bytes": {"value": 0},
+            },
             "top_dests": terms(m["dest"][:5]),
             "dns_domains": terms(m["dns"]),
             "dest_ips": terms(m["dest"]),
             "ja3_hashes": terms(m["ja3"]),
-            "total_orig_bytes": {"value": m["bytes"]},
-            "total_resp_bytes": {"value": 0},
         }
 
     def search(self, index: str, body: dict) -> dict:

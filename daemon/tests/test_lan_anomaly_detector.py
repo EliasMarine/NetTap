@@ -12,6 +12,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from services.excluded_ips import CONN_ACCOUNTING
 from services.lan_anomaly_detector import LANAnomalyDetector
 
 
@@ -192,7 +193,8 @@ class TestDetectRogueDhcp:
         for body, side in ((sent, "source"), (answered, "destination")):
             q = body["query"]["bool"]
             assert {"term": {f"{side}.port": 67}} in q["filter"]
-            assert {"term": {"event.dataset": "conn"}} in q["filter"]
+            # OLD CODE: assert {"term": {"event.dataset": "conn"}} in q["filter"] (F1)
+            assert CONN_ACCOUNTING in q["filter"]
             assert {"terms": {f"{side}.ip": ["255.255.255.255", "0.0.0.0"]}} in q[
                 "must_not"
             ]

@@ -17,6 +17,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from services.excluded_ips import CONN_ACCOUNTING  # noqa: E402
 from services.iot_monitor import IoTMonitor  # noqa: E402
 
 FROM_TS = "2026-11-01T00:00:00Z"
@@ -348,7 +349,8 @@ class TestEncryptionShare:
 
 
 class TestConnectionRecordsOnly:
-    CONN_ONLY = {"term": {"event.dataset": "conn"}}
+    # OLD CODE: CONN_ONLY = {"term": {"event.dataset": "conn"}} (F1: final records only)
+    CONN_ONLY = CONN_ACCOUNTING
 
     def test_connection_queries_skip_alerts_and_other_logs(self, iot, client):
         """An ESP device read 1% encrypted: 162 alert records + 2 TLS connections."""
@@ -368,12 +370,18 @@ class TestConnectionRecordsOnly:
         """Arkime sessions (no event.dataset) duplicate Zeek conn flows."""
         client.search.side_effect = _fake_search()
         iot.get_privacy_report(FROM_TS, TO_TS)
-        assert "must_not" not in json.dumps(
-            [
-                f
-                for f in _body_with_agg(client, "encrypted")["query"]["bool"]["filter"]
-                if "bool" in f
-            ]
+        # OLD CODE START — F1: CONN_ACCOUNTING's must_not drops conn_long.log, not Arkime sessions
+        # assert "must_not" not in json.dumps(
+        #     [
+        #         f
+        #         for f in _body_with_agg(client, "encrypted")["query"]["bool"]["filter"]
+        #         if "bool" in f
+        #     ]
+        # )
+        # OLD CODE END
+        # The old clause matched Arkime sessions by a missing event.dataset
+        assert '"exists": {"field": "event.dataset"}' not in json.dumps(
+            _body_with_agg(client, "encrypted")["query"]["bool"]["filter"]
         )
 
 

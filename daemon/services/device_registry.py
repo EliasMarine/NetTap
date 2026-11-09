@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 from opensearchpy import NotFoundError, OpenSearchException
 
 from services.device_fingerprint import _mac_from_hit
-from services.excluded_ips import CONN_RECORDS
+from services.excluded_ips import CONN_ACCOUNTING
 from storage.snapshot_search import QueryFailed, checked
 
 if TYPE_CHECKING:
@@ -552,7 +552,10 @@ class DeviceRegistry:
                             }
                         },
                         # connection_count counts connections, not DNS/SSL logs or alerts
-                        CONN_RECORDS,
+                        # OLD CODE START — F1: also counted conn_long.log interim records
+                        # CONN_RECORDS,
+                        # OLD CODE END
+                        CONN_ACCOUNTING,
                     ],
                     "should": should_clauses,
                     "minimum_should_match": 1,

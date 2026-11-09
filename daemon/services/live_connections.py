@@ -23,7 +23,12 @@ from typing import Any
 from opensearchpy import OpenSearch, OpenSearchException
 
 from api.alerts import SURICATA_NOISE_EXCLUSION, rule_categories
-from services.excluded_ips import RFC1918_SOURCE_FILTER, lan_subnets_of
+from services.excluded_ips import (
+    CONN_ACCOUNTING,
+    CONN_RECORDS,
+    RFC1918_SOURCE_FILTER,
+    lan_subnets_of,
+)
 from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.live_connections")
@@ -264,7 +269,10 @@ class LiveConnectionTracker:
 
         filters: list[dict] = [
             {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "conn"}},
+            # OLD CODE START — F1: also counted conn_long.log interim records
+            # {"term": {"event.dataset": "conn"}},
+            # OLD CODE END
+            CONN_ACCOUNTING,
         ]
 
         # Time filter: last 5 minutes for "active" connections
@@ -460,9 +468,20 @@ class LiveConnectionTracker:
     # ------------------------------------------------------------------
 
     # Zeek conn event filters (same as traffic.py _ZEEK_CONN_FILTERS)
+    # OLD CODE START — F1: also counted conn_long.log interim records
+    # _ZEEK_CONN_FILTERS: list[dict] = [
+    #     {"term": {"event.provider": "zeek"}},
+    #     {"term": {"event.dataset": "conn"}},
+    # ]
+    # OLD CODE END
     _ZEEK_CONN_FILTERS: list[dict] = [
         {"term": {"event.provider": "zeek"}},
-        {"term": {"event.dataset": "conn"}},
+        CONN_ACCOUNTING,
+    ]
+    # Every conn record, interim included: an open connection's geo/ASN is still evidence
+    _ZEEK_CONN_RAW_FILTERS: list[dict] = [
+        {"term": {"event.provider": "zeek"}},
+        CONN_RECORDS,
     ]
 
     # Suricata alert filters (same as alerts.py _SURICATA_ALERT_FILTERS)
@@ -1089,7 +1108,10 @@ class LiveConnectionTracker:
 
         # --- Query A: Latest session with full geo/ASN ---
         session_filters: list[dict] = [
-            *self._ZEEK_CONN_FILTERS,
+            # OLD CODE START — F1: _ZEEK_CONN_FILTERS is final records only now
+            # *self._ZEEK_CONN_FILTERS,
+            # OLD CODE END
+            *self._ZEEK_CONN_RAW_FILTERS,
             {"range": {"@timestamp": {"gte": "now-24h", "lte": "now"}}},
             ip_pair_filter,
         ]

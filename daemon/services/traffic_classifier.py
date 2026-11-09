@@ -10,6 +10,7 @@ import fnmatch
 import logging
 import os
 
+from services.excluded_ips import CONN_ACCOUNTING
 from storage.all_buckets import all_buckets
 from storage.time_slots import histogram_buckets, time_slots
 
@@ -903,7 +904,10 @@ def _conn_query(from_ts: str, to_ts: str) -> dict:
         "bool": {
             "filter": [
                 {"term": {"event.provider": "zeek"}},
-                {"term": {"event.dataset": "conn"}},
+                # OLD CODE START — F1: also counted conn_long.log interim records
+                # {"term": {"event.dataset": "conn"}},
+                # OLD CODE END
+                CONN_ACCOUNTING,
                 {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
             ]
         }

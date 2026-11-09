@@ -12,6 +12,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from functools import partial
 
+from services.excluded_ips import CONN_ACCOUNTING
 from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.investigation")
@@ -66,7 +67,10 @@ def _get_host_profile(client, ip: str) -> dict:
                     {"range": {"@timestamp": {"gte": "now-24h"}}},
                     {"term": {"source.ip": ip}},
                     {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
+                    # OLD CODE START — F1: also counted conn_long.log interim records
+                    # {"term": {"event.dataset": "conn"}},
+                    # OLD CODE END
+                    CONN_ACCOUNTING,
                 ]
             }
         },
@@ -116,7 +120,10 @@ def _get_pair_history(client, src_ip: str, dst_ip: str) -> dict:
                     {"term": {"source.ip": src_ip}},
                     {"term": {"destination.ip": dst_ip}},
                     {"term": {"event.provider": "zeek"}},
-                    {"term": {"event.dataset": "conn"}},
+                    # OLD CODE START — F1: also counted conn_long.log interim records
+                    # {"term": {"event.dataset": "conn"}},
+                    # OLD CODE END
+                    CONN_ACCOUNTING,
                 ]
             }
         },

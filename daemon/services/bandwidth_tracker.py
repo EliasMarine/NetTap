@@ -15,7 +15,11 @@ from typing import Any
 
 from opensearchpy import OpenSearch
 
-from services.excluded_ips import RFC1918_SOURCE_FILTER, build_excluded_ips_filter
+from services.excluded_ips import (
+    CONN_ACCOUNTING,
+    RFC1918_SOURCE_FILTER,
+    build_excluded_ips_filter,
+)
 from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.bandwidth_tracker")
@@ -89,7 +93,10 @@ class BandwidthTracker:
         """Return base Zeek conn event filters."""
         return [
             {"term": {"event.provider": "zeek"}},
-            {"term": {"event.dataset": "conn"}},
+            # OLD CODE START — F1: also counted conn_long.log interim records
+            # {"term": {"event.dataset": "conn"}},
+            # OLD CODE END
+            CONN_ACCOUNTING,
         ]
 
     def _bytes_aggs(self) -> dict:
