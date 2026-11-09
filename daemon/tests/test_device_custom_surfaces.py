@@ -115,6 +115,10 @@ def _backup(tmp_path, store) -> ConfigBackup:
             "capture_config",
             "retention_config",
             "device_baseline",
+            # A9: the owner files a backup now carries
+            "home_location",
+            "alert_acks",
+            "suppressions",
         )
     }
     return ConfigBackup(config_paths=paths, device_custom=store)

@@ -28,8 +28,15 @@ def config_paths(tmp_path):
         "excluded_ips": str(tmp_path / "excluded_ips.json"),
         "env_file": str(tmp_path / ".env"),
         "bandwidth_cap": str(tmp_path / "bandwidth_cap.json"),
-        "capture_config": str(tmp_path / "capture_config.json"),
-        "retention_config": str(tmp_path / "retention_config.json"),
+        # OLD CODE START — A9: the daemon never used these two names
+        # "capture_config": str(tmp_path / "capture_config.json"),
+        # "retention_config": str(tmp_path / "retention_config.json"),
+        # OLD CODE END
+        "capture_config": str(tmp_path / "capture-mode.conf"),
+        "retention_config": str(tmp_path / "retention.json"),
+        "home_location": str(tmp_path / "home_location.json"),
+        "alert_acks": str(tmp_path / "alert_acks.json"),
+        "suppressions": str(tmp_path / "nettap-suppress.json"),
     }
 
     # Write sample config files
@@ -66,21 +73,29 @@ def config_paths(tmp_path):
         )
     )
 
-    (tmp_path / "capture_config.json").write_text(
-        json.dumps(
-            {
-                "mode": "bridge",
-                "interfaces": ["eth0", "eth1"],
-            }
-        )
+    # OLD CODE START — A9: files in shapes the daemon never wrote
+    # (tmp_path / "capture_config.json").write_text(
+    #     json.dumps({"mode": "bridge", "interfaces": ["eth0", "eth1"]})
+    # )
+    # (tmp_path / "retention_config.json").write_text(
+    #     json.dumps({"hot_days": 90, "warm_days": 180, "cold_days": 30})
+    # )
+    # OLD CODE END
+    # As save_capture_config and RetentionConfigManager write them
+    (tmp_path / "capture-mode.conf").write_text(
+        "[capture]\nmode = mirror\ninterface = eth1\nmanagement = eth0\n\n"
+        "[bridge]\nwan_interface = eth0\nlan_interface = eth1\n"
     )
-
-    (tmp_path / "retention_config.json").write_text(
+    (tmp_path / "retention.json").write_text(
         json.dumps(
             {
-                "hot_days": 90,
-                "warm_days": 180,
-                "cold_days": 30,
+                "version": 1,
+                "retention": {"hot_days": 90, "warm_days": 180, "cold_days": 30},
+                "thresholds": {
+                    "disk_threshold_percent": 80,
+                    "emergency_threshold_percent": 90,
+                },
+                "ilm_applied": {"last_success": "2026-11-09T00:00:00+00:00"},
             }
         )
     )
@@ -352,3 +367,322 @@ class TestImport:
         re_exported = backup.export_config()
         for key in exported["sections"]:
             assert re_exported["sections"][key] == exported["sections"][key]
+
+
+# ---------------------------------------------------------------------------
+# A9: the real files, no secrets, and the owner's other settings
+# ---------------------------------------------------------------------------
+
+
+def _data(sections: dict) -> dict:
+    return {
+        "metadata": {"nettap_version": _NETTAP_VERSION, "schema_version": 2},
+        "sections": sections,
+    }
+
+
+SECRET_CHANNELS = {
+    "mail": {
+        "id": "mail",
+        "type": "email",
+        "name": "Mail",
+        "config": {
+            "smtp_host": "smtp.example.net",
+            "smtp_port": 587,
+            "smtp_user": "device-A",
+            "smtp_pass": "hunter2",
+            "use_tls": True,
+            "recipients": ["owner@example.net"],
+        },
+    },
+    "hook": {
+        "id": "hook",
+        "type": "webhook",
+        "name": "Hook",
+        "config": {
+            "url": "https://hooks.example.net/T0KEN",
+            "headers": {"Authorization": "Bearer s3cret"},
+        },
+    },
+}
+
+
+class TestA9Export:
+    def test_capture_and_retention_come_from_the_files_the_daemon_uses(self, backup):
+        sections = backup.export_config()["sections"]
+        assert sections["capture_mode_config"] == {
+            "capture_mode": "mirror",
+            "capture_interface": "eth1",
+            "management_interface": "eth0",
+        }
+        # The days and thresholds, not the ILM status stored beside them
+        assert sections["storage_retention"] == {
+            "retention": {"hot_days": 90, "warm_days": 180, "cold_days": 30},
+            "thresholds": {
+                "disk_threshold_percent": 80,
+                "emergency_threshold_percent": 90,
+            },
+        }
+
+    def test_no_notification_secret_is_exported(self, backup, config_paths):
+        Path(config_paths["notification_config"]).write_text(
+            json.dumps({"channels": SECRET_CHANNELS, "rules": {}})
+        )
+        exported = backup.export_config()
+        text = json.dumps(exported)
+        # the values; only the names of what was left out go in the file
+        for secret in ("hunter2", "T0KEN", "s3cret", "Authorization"):
+            assert secret not in text
+        channels = exported["sections"]["notification_channels"]
+        assert channels["mail"]["config"]["smtp_host"] == "smtp.example.net"
+        assert channels["mail"]["secrets_left_out"] == ["smtp_pass"]
+        assert channels["hook"]["secrets_left_out"] == ["headers", "url"]
+
+    def test_the_owners_other_files_are_exported(self, backup, config_paths):
+        Path(config_paths["home_location"]).write_text(
+            json.dumps({"lat": 51.5, "lon": -0.1, "label": "Home"})
+        )
+        Path(config_paths["alert_acks"]).write_text(
+            json.dumps({"a1": {"acknowledged_at": "2026-11-05T23:32:09+00:00"}})
+        )
+        suppress = {
+            "global": [
+                {"signature_id": 2001, "expires_at": "2026-12-01T00:00:00+00:00"}
+            ],
+            "per_device": {},
+            "false_positives": [],
+        }
+        Path(config_paths["suppressions"]).write_text(json.dumps(suppress))
+
+        sections = backup.export_config()["sections"]
+        assert sections["home_location"] == {"lat": 51.5, "lon": -0.1, "label": "Home"}
+        assert sections["alert_acknowledgements"]["a1"]["acknowledged_at"]
+        assert sections["alert_suppressions"] == suppress
+
+    def test_export_is_schema_2_and_a_newer_file_is_refused(self, backup):
+        assert backup.export_config()["metadata"]["schema_version"] == 2
+        assert not backup.validate_import(
+            {"metadata": {"schema_version": 3}, "sections": {"excluded_ips": []}}
+        )["is_valid"]
+
+
+class TestA9Validate:
+    def test_capture_restart_only_when_the_mode_differs(self, backup):
+        same = {
+            "capture_mode": "mirror",
+            "capture_interface": "eth1",
+            "management_interface": "eth0",
+        }
+        assert (
+            backup.validate_import(_data({"capture_mode_config": same}))[
+                "capture_restart"
+            ]
+            is False
+        )
+        other = {**same, "capture_interface": "eth2"}
+        assert (
+            backup.validate_import(_data({"capture_mode_config": other}))[
+                "capture_restart"
+            ]
+            is True
+        )
+        bad = {"capture_mode": "mirror\nX=1", "capture_interface": "eth2"}
+        assert (
+            backup.validate_import(_data({"capture_mode_config": bad}))[
+                "capture_restart"
+            ]
+            is False
+        )
+
+
+class TestA9Import:
+    def test_capture_and_retention_are_left_to_the_api_layer(
+        self, backup, config_paths
+    ):
+        before = Path(config_paths["capture_config"]).read_text()
+        result = backup.import_config(
+            _data(
+                {
+                    "capture_mode_config": {"capture_mode": "bridge"},
+                    "storage_retention": {},
+                }
+            )
+        )
+        assert Path(config_paths["capture_config"]).read_text() == before
+        assert "capture_mode_config" not in result["applied"]
+        assert "storage_retention" not in result["applied"]
+
+    def test_invalid_excluded_ips_are_refused_and_the_file_kept(
+        self, backup, config_paths
+    ):
+        result = backup.import_config(
+            _data({"excluded_ips": ["192.0.2.1", "10.0.0.0/8"]})
+        )
+        assert result["success"] is False
+        assert "excluded_ips" not in result["applied"]
+        assert json.loads(Path(config_paths["excluded_ips"]).read_text()) == [
+            "192.168.1.1",
+            "10.0.0.1",
+        ]
+
+    def test_home_acks_and_suppressions_are_restored(self, backup, config_paths):
+        suppress = {
+            "global": [
+                {
+                    "signature_id": 7,
+                    "reason": "noisy",
+                    "expires_at": "2030-01-01T00:00:00Z",
+                }
+            ],
+            "per_device": {"192.0.2.5": [{"signature_id": 8}]},
+            "false_positives": [
+                {"signature_id": 9, "marked_at": "2026-11-01T00:00:00+00:00"}
+            ],
+        }
+        result = backup.import_config(
+            _data(
+                {
+                    "home_location": {"lat": 1.5, "lon": 2.5, "label": "Office"},
+                    "alert_acknowledgements": {"a1": {"acknowledged_by": "admin"}},
+                    "alert_suppressions": suppress,
+                }
+            )
+        )
+        assert result["success"] is True, result
+        assert {"home_location", "alert_acknowledgements", "alert_suppressions"} <= set(
+            result["applied"]
+        )
+        assert (
+            json.loads(Path(config_paths["home_location"]).read_text())["label"]
+            == "Office"
+        )
+        assert json.loads(Path(config_paths["suppressions"]).read_text()) == suppress
+        assert json.loads(Path(config_paths["alert_acks"]).read_text()) == {
+            "a1": {"acknowledged_by": "admin"}
+        }
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            {"global": [None]},
+            {"false_positives": [{}]},
+            {"per_device": {"192.0.2.5": "x"}},
+            {"global": [{"signature_id": True}]},
+            # naive: _is_entry_expired would treat it as never expiring
+            {"global": [{"signature_id": 1, "expires_at": "2020-01-01T00:00:00"}]},
+            {"global": [{"signature_id": 1, "expires_at": "soon"}]},
+        ],
+    )
+    def test_malformed_suppressions_are_refused_and_the_file_kept(
+        self, backup, config_paths, bad
+    ):
+        path = Path(config_paths["suppressions"])
+        path.write_text('{"global": [], "per_device": {}, "false_positives": []}')
+        result = backup.import_config(_data({"alert_suppressions": bad}))
+        assert result["success"] is False
+        # the owner reads this, so the section's name, not its key
+        assert result["errors"] == [
+            "Alert suppressions not restored: this backup's copy isn't valid"
+        ]
+        assert json.loads(path.read_text()) == {
+            "global": [],
+            "per_device": {},
+            "false_positives": [],
+        }
+
+    def test_no_home_location_in_the_backup_is_skipped_with_a_reason(self, backup):
+        result = backup.import_config(_data({"home_location": None}))
+        assert result["skipped"] == [
+            {"section": "home_location", "reason": "No location in this backup"}
+        ]
+
+
+class TestA9NotificationRestore:
+    def _box(self, config_paths, channels):
+        Path(config_paths["notification_config"]).write_text(
+            json.dumps({"channels": channels, "rules": {}})
+        )
+
+    def _round_trip(self, backup, config_paths, edit=None):
+        self._box(config_paths, SECRET_CHANNELS)
+        section = backup.export_config()["sections"]["notification_channels"]
+        if edit:
+            edit(section)
+        result = backup.import_config(_data({"notification_channels": section}))
+        stored = json.loads(Path(config_paths["notification_config"]).read_text())
+        return result, stored["channels"]
+
+    def test_the_boxs_own_secrets_are_kept_and_the_file_is_private(
+        self, backup, config_paths
+    ):
+        result, channels = self._round_trip(backup, config_paths)
+        assert result["success"] is True
+        assert channels["mail"]["config"]["smtp_pass"] == "hunter2"
+        assert channels["hook"]["config"]["url"] == "https://hooks.example.net/T0KEN"
+        assert channels["hook"].get("enabled", True) is True
+        assert Path(config_paths["notification_config"]).stat().st_mode & 0o777 == 0o600
+
+    @pytest.mark.parametrize(
+        "edit",
+        [
+            lambda s: s["mail"]["config"].update(smtp_host="mail.evil.example"),
+            lambda s: s["mail"]["config"].update(use_tls=False),
+            lambda s: s["mail"]["config"].update(smtp_user="someone-else"),
+        ],
+    )
+    def test_a_changed_destination_gets_none_of_the_boxs_secrets(
+        self, backup, config_paths, edit
+    ):
+        result, channels = self._round_trip(backup, config_paths, edit)
+        assert "smtp_pass" not in channels["mail"]["config"]
+        assert channels["mail"]["enabled"] is False
+        assert any(
+            "Mail" in w and "Settings › Notifications" in w for w in result["warnings"]
+        )
+
+    def test_an_older_backup_with_another_webhook_url_keeps_no_headers(
+        self, backup, config_paths
+    ):
+        self._box(config_paths, SECRET_CHANNELS)
+        old_style = {
+            "hook": {"type": "webhook", "config": {"url": "https://evil.example/x"}}
+        }
+        backup.import_config(_data({"notification_channels": old_style}))
+        stored = json.loads(Path(config_paths["notification_config"]).read_text())
+        assert stored["channels"]["hook"]["config"] == {"url": "https://evil.example/x"}
+
+    def test_a_fresh_box_turns_off_channels_missing_secrets_and_names_them(
+        self, backup, config_paths
+    ):
+        self._box(config_paths, SECRET_CHANNELS)
+        section = backup.export_config()["sections"]["notification_channels"]
+        self._box(config_paths, {})
+        result = backup.import_config(_data({"notification_channels": section}))
+        channels = json.loads(Path(config_paths["notification_config"]).read_text())[
+            "channels"
+        ]
+        assert channels["hook"]["enabled"] is False
+        assert channels["mail"]["enabled"] is False
+        assert "secrets_left_out" not in channels["hook"]
+        assert any("Hook" in w for w in result["warnings"])
+
+    def test_a_recipients_only_email_channel_without_smtp_is_named(
+        self, backup, config_paths, monkeypatch
+    ):
+        monkeypatch.delenv("SMTP_HOST", raising=False)
+        quick = {
+            "settings-email": {
+                "type": "email",
+                "name": "Email (Settings)",
+                "config": {"recipients": ["owner@example.net"]},
+                "secrets_left_out": [],
+            }
+        }
+        result = backup.import_config(_data({"notification_channels": quick}))
+        assert result["success"] is True
+        assert any(
+            "SMTP server" in w and "Email (Settings)" in w for w in result["warnings"]
+        )
+        Path(config_paths["env_file"]).write_text("SMTP_HOST=smtp.example.net\n")
+        result = backup.import_config(_data({"notification_channels": quick}))
+        assert not any("SMTP server" in w for w in result["warnings"])
