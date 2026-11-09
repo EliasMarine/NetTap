@@ -146,3 +146,10 @@ No compose change. Rebuild and recreate `nettap-storage-daemon` and `nettap-web`
   - 14 new or updated. Every new one fails on the old code except the guard that the PCAP cap stays on the raw size.
   - Daemon 4442 passed, 4 skipped. Vitest 4395 passed, svelte-check 0 errors, `check:colors` clean.
 - **Codex:** 1 round, REVISE with 4 findings, all taken (log in the scratchpad's `followup/PLAN-REVIEW-LOG.md`).
+
+## Review fixes (branch `fix/net-227-review`)
+
+- **L6:** the backup page's section labels read own keys only (`Object.hasOwn`), so a daemon section named `constructor` shows as its key, not as `function Object() …`.
+- **L8:** `growthSummary` leaves out the hot-tier need while setup's hot-days field is empty or not a positive number. It used to read "null days … 0 B".
+- **L11:** the dead `source === 'mock'` branches for `/api/setup/storage` are removed, kept as OLD CODE. The route has answered 503 since A16, and the two tests that fed a mock reply now send the 503.
+- Each behaviour change has a test that fails on the old code. Vitest: 4469 passed. svelte-check: 0 errors. `check:colors`: clean.
