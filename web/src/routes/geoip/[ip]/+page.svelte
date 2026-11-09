@@ -76,18 +76,21 @@
 		error = '';
 		// Both start now; the answer shows as soon as it lands, since a cold version scan can take seconds
 		const geoP = lookupGeoIP(targetIp);
-		const versionsP = getVersions();
+		// OLD CODE: const versionsP = getVersions(); (review M1: no handler until :85, so a failure while
+		// the answer was pending or superseded was an unhandled rejection)
+		const versionsP = Promise.allSettled([getVersions()]);
 		const [geoRes] = await Promise.allSettled([geoP]);
 		if (!guard.current(g)) return 'skipped';
 		loading = false;
 		if (geoRes.status === 'rejected') {
 			error = geoRes.reason instanceof Error ? geoRes.reason.message : 'Lookup failed';
 			result = null;
-			versionsP.catch(() => {}); // not shown without an answer
+			// OLD CODE: versionsP.catch(() => {}); // not shown without an answer (M1: settled where it starts)
 			return 'failed';
 		}
 		result = geoRes.value;
-		const [versionsRes] = await Promise.allSettled([versionsP]);
+		// OLD CODE: const [versionsRes] = await Promise.allSettled([versionsP]); (M1)
+		const [versionsRes] = await versionsP;
 		if (!guard.current(g)) return 'skipped';
 		installedDbFailed = versionsRes.status === 'rejected';
 		// The daemon sends a list; Object.values reads it and the typed record alike

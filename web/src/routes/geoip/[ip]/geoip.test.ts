@@ -141,6 +141,24 @@ describe('GeoIP Lookup Page — refresh contract', () => {
 	});
 });
 
+describe('GeoIP Lookup Page — the installed-database request', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('never leaves a failed version request unhandled while the answer is pending or superseded', async () => {
+		// review M1: the request had no handler until the answer landed and was still current
+		const unhandled = vi.fn();
+		process.on('unhandledRejection', unhandled);
+		try {
+			vi.stubGlobal('fetch', vi.fn((url: string) => (url === '/api/system/versions' ? Promise.reject(new Error('daemon down')) : new Promise(() => {}))));
+			render(Page);
+			await new Promise((r) => setTimeout(r, 20));
+			expect(unhandled).not.toHaveBeenCalled();
+		} finally {
+			process.off('unhandledRejection', unhandled);
+		}
+	});
+});
+
 // NET-237 (GEO-2, GEO-3, GEO-4, P3 anycast)
 describe('GeoIP Lookup Page — source, age and precision', () => {
 	afterEach(() => vi.unstubAllGlobals());
