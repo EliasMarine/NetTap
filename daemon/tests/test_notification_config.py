@@ -269,6 +269,48 @@ def test_http_sends_have_a_deadline_and_never_follow_a_redirect(hub):
     assert hub.get_delivery_log()[0]["error"] == "HTTP 302"
 
 
+# Security review M1: rule names carry _ and *; Telegram's legacy Markdown refused the whole digest
+def test_telegram_gets_plain_text_so_a_rule_name_with_underscores_goes_through(hub):
+    ch = hub.configure("telegram", {"bot_token": "123:abc", "chat_id": "42"})
+    factory, calls = _session(200)
+    title = "High alert: ET WEB_SERVER Possible *.php probe"
+
+    with patch.object(hub_module.aiohttp, "ClientSession", side_effect=factory):
+        assert asyncio.run(hub.send(ch["id"], title, "- [high] ET INFO DYNAMIC_DNS", 2))
+
+    payload = calls["post"][0][1]["json"]
+    assert "parse_mode" not in payload
+    assert payload["text"] == f"[HIGH] {title}\n\n- [high] ET INFO DYNAMIC_DNS"
+
+
+@pytest.mark.parametrize(
+    "kind, config, key, limit",
+    [
+        (
+            "discord",
+            {"webhook_url": "https://discord.example.net/api/webhooks/1/x"},
+            "title",
+            256,
+        ),
+        ("pushover", {"user_key": "u", "api_token": "t"}, "title", 250),
+        ("pushover", {"user_key": "u", "api_token": "t"}, "message", 1024),
+        ("telegram", {"bot_token": "1:a", "chat_id": "42"}, "text", 4096),
+    ],
+)
+def test_each_service_gets_text_within_its_limit(hub, kind, config, key, limit):
+    """A long owner rule name or a ten-line digest must not get the message refused."""
+    ch = hub.configure(kind, config)
+    factory, calls = _session(200)
+
+    with patch.object(hub_module.aiohttp, "ClientSession", side_effect=factory):
+        asyncio.run(hub.send(ch["id"], "T" * 5000, "B" * 5000, 2))
+
+    kwargs = calls["post"][0][1]
+    body = kwargs.get("json") or kwargs.get("data")
+    value = body["embeds"][0][key] if kind == "discord" else body[key]
+    assert len(value) == limit and value.endswith("…")
+
+
 def test_a_failure_reason_never_carries_the_url_or_its_token(hub, caplog):
     ch = hub.configure("telegram", {"bot_token": TOKEN, "chat_id": "42"})
 

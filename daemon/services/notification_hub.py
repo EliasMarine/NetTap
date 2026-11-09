@@ -74,6 +74,11 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _clip(text: str, limit: int) -> str:
+    """`text` within a service's length limit: over it, the whole message is refused (review M1)."""
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 async def _post(url: str, **kwargs: Any) -> str | None:
     """POST with a deadline and no redirects (a 3xx fails, so it never reaches another scheme or
     host). None for a 2xx, else the reason."""
@@ -672,8 +677,9 @@ class NotificationHub:
         payload = {
             "embeds": [
                 {
-                    "title": title,
-                    "description": message,
+                    # OLD CODE: "title": title, "description": message, (review M1: Discord refuses over 256 / 4096)
+                    "title": _clip(title, 256),
+                    "description": _clip(message, 4096),
                     "color": self._severity_color(severity),
                     "footer": {
                         "text": f"NetTap | {self._severity_label(severity).upper()}"
@@ -727,9 +733,14 @@ class NotificationHub:
             return "no bot token or chat ID"
 
         severity_tag = self._severity_label(severity).upper()
-        text = f"*[{severity_tag}] {title}*\n\n{message}"
+        # OLD CODE START — review M1: rule names carry _ and *, and legacy Markdown refused the digest
+        # text = f"*[{severity_tag}] {title}*\n\n{message}"
+        # url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        # payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+        # OLD CODE END
+        text = _clip(f"[{severity_tag}] {title}\n\n{message}", 4096)
         url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+        payload = {"chat_id": chat_id, "text": text}  # plain text: nothing to parse
 
         # OLD CODE START — NET-224: through _post (deadline, no redirects, the status as the reason)
         # async with aiohttp.ClientSession() as session:
@@ -754,8 +765,9 @@ class NotificationHub:
         payload = {
             "token": api_token,
             "user": user_key,
-            "title": title,
-            "message": message,
+            # OLD CODE: "title": title, "message": message, (review M1: Pushover's limits are 250 / 1024)
+            "title": _clip(title, 250),
+            "message": _clip(message, 1024),
             "priority": priority,
         }
         # Emergency priority requires retry/expire
