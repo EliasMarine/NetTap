@@ -16,7 +16,7 @@
 set -u
 
 REPO_DIR="/home/nettap/NetTap"
-BRANCH="fix/release-audit-2026-11"
+BRANCH="${BRANCH:-main}"  # was fix/release-audit-2026-11 until PR #236 merged
 COMPOSE=(sudo docker compose -f docker/docker-compose.yml)
 FAILED=0
 
