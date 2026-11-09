@@ -22,11 +22,15 @@ export interface ValidationResult {
 	warnings: string[];
 	errors: string[];
 	preview: Record<string, { type: string; size: number }>;
+	/** A9: the backup's capture mode differs from this box's, so restoring it restarts capture */
+	capture_restart?: boolean;
 }
 
 export interface ImportResult {
 	success: boolean;
 	applied: string[];
+	/** A9: sections left as they were, and why */
+	skipped?: { section: string; reason: string }[];
 	errors: string[];
 	warnings: string[];
 }
@@ -82,10 +86,13 @@ export async function validateConfig(data: unknown): Promise<ValidationResult> {
 }
 
 /**
- * Import and apply a config file.
+ * Import and apply a config file. The capture mode is restored only with `applyCapture`,
+ * because it restarts the capture containers (A9).
  */
-export async function importConfig(data: unknown): Promise<ImportResult> {
-	const res = await fetch('/api/backup/import', {
+// OLD CODE: export async function importConfig(data: unknown): Promise<ImportResult> {
+export async function importConfig(data: unknown, applyCapture = false): Promise<ImportResult> {
+	// OLD CODE: const res = await fetch('/api/backup/import', {
+	const res = await fetch(`/api/backup/import${applyCapture ? '?apply_capture=1' : ''}`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(data),

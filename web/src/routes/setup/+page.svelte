@@ -9,6 +9,8 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Meter from '$lib/components/ui/Meter.svelte';
 	import { DEFAULT_DHCP_SUBNET } from '$lib/utils/dhcpSubnet';
+	import { growthSummary } from '$lib/utils/storage-estimate';
+	import type { GrowthEstimate } from '$api/system';
 
 	// OLD CODE START — was: const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8880';
 	// Port 8880 is Docker-internal only. Use relative paths through SvelteKit proxy.
@@ -167,7 +169,9 @@
 		cold_days: number;
 		disk_threshold_percent: number;
 		emergency_threshold_percent: number;
-		estimated_daily_gb: number;
+		// OLD CODE: estimated_daily_gb: number; (B-m: a fixed 1.2; null until measured now)
+		estimated_daily_gb: number | null;
+		growth_estimate?: GrowthEstimate | null;
 		source: string;
 	}
 
@@ -183,13 +187,16 @@
 	let diskThreshold = $state(80);
 	let emergencyThreshold = $state(90);
 
-	let estimatedTotalDays = $derived.by(() => {
-		if (!storageStatus) return 0;
-		const freeGb = storageStatus.disk_free_gb;
-		const usableGb = freeGb * (diskThreshold / 100);
-		const dailyGb = storageStatus.estimated_daily_gb || 1.2;
-		return Math.floor(usableGb / dailyGb);
-	});
+	// OLD CODE START — B-m: days at a fixed 1.2 GB a day (the G11 writes ~2 GB of indices and
+	// ~66 GB of PCAP), labelled as if measured
+	// let estimatedTotalDays = $derived.by(() => {
+	// 	if (!storageStatus) return 0;
+	// 	const freeGb = storageStatus.disk_free_gb;
+	// 	const usableGb = freeGb * (diskThreshold / 100);
+	// 	const dailyGb = storageStatus.estimated_daily_gb || 1.2;
+	// 	return Math.floor(usableGb / dailyGb);
+	// });
+	// OLD CODE END
 
 	// OLD CODE START — 2026-11-03 redesign: the disk bar's colour by usage, from legacy tokens; the
 	// bar is the system's Meter now and the percentage is written beside it
@@ -482,7 +489,8 @@
 		storageError = '';
 		try {
 			const res = await fetch('/api/setup/storage');
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			// OLD CODE: if (!res.ok) throw new Error(`HTTP ${res.status}`); (A16: the reason is in the body)
+			if (!res.ok) throw new Error((await res.json().catch(() => null))?.error ?? `HTTP ${res.status}`);
 			storageStatus = await res.json();
 			// Initialize form values from server defaults
 			if (storageStatus) {
@@ -1302,12 +1310,22 @@
 					Set how long NetTap keeps data and when it starts freeing disk space. NetTap keeps data in three tiers.
 				</p>
 
-				{#if storageError}
+				<!-- OLD CODE: {#if storageError} (A16: a failed read has its own state below) -->
+				{#if storageError && storageStatus}
 					<div class="notice is-error"><Icon name="warn" /><span>{storageError}</span></div>
 				{/if}
 
 				{#if storageLoading}
 					<CardState state="loading" title="Loading storage information" />
+				{:else if !storageStatus && storageError}
+					<!-- A16: no made-up disk figures when the daemon isn't answering -->
+					<CardState
+						state="error"
+						title="Disk figures are unavailable"
+						message={storageError}
+						actionLabel="Try again"
+						onaction={fetchStorage}
+					/>
 				{:else if storageStatus}
 					<section class="panel stack">
 						<div class="panel-head">
@@ -1321,12 +1339,15 @@
 							<span>{storageStatus.disk_total_gb.toFixed(1)} GB total</span>
 						</div>
 
+						<!-- OLD CODE START — B-m: a fixed 1.2 GB a day
 						{#if estimatedTotalDays > 0}
 							<p class="estimate">
 								Estimated retention capacity: <strong class="num">{estimatedTotalDays} days</strong>
 								<span class="dim">at about {storageStatus.estimated_daily_gb} GB a day</span>
 							</p>
 						{/if}
+						OLD CODE END -->
+						<p class="estimate">{growthSummary(storageStatus.growth_estimate, hotDays)}</p>
 					</section>
 
 					<div class="form-grid">
@@ -2079,9 +2100,11 @@
 		color: var(--text-2);
 	}
 
+	/* OLD CODE START — B-m: the estimate has no bold day count now
 	.estimate strong {
 		color: var(--text-1);
 	}
+	OLD CODE END */
 
 	.tier {
 		display: flex;

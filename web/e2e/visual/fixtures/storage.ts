@@ -1,4 +1,4 @@
-import type { SmartHealth, StorageStatus } from '../../../src/lib/api/system.ts';
+import type { GrowthEstimate, SmartHealth, StorageStatus } from '../../../src/lib/api/system.ts';
 import { HOUR, MIN, iso, type FixtureRoute } from './types.ts';
 
 // OLD CODE START — 2026-11-06 (NET-166): the daemon's disk_*_gb were GiB; they are decimal GB now
@@ -26,8 +26,26 @@ function diskUsage(usedGb: number) {
 	};
 }
 
+/** B-m: a week of measured growth; PCAP's 25 % share of this 1 TB disk holds ~7.6 days of it. */
+const GROWTH_MEASURED: GrowthEstimate = {
+	index_bytes_per_day: 2_100_000_000,
+	index_days_measured: 7,
+	pcap_bytes_per_day: 32_900_000_000,
+	pcap_days_measured: 7.6,
+	pcap_days_kept: 7.6,
+};
+/** A fresh box: under a day of data, so nothing is measured yet. */
+const GROWTH_NONE: GrowthEstimate = {
+	index_bytes_per_day: null,
+	index_days_measured: 0,
+	pcap_bytes_per_day: null,
+	pcap_days_measured: 0.2,
+	pcap_days_kept: null,
+};
+
 /** GET /api/storage/status; the extra keys are the ones the Settings page and the web setup route read. */
-function storageStatus(usedGb: number, indexCounts: Record<string, number>) {
+// OLD CODE: function storageStatus(usedGb: number, indexCounts: Record<string, number>) {
+function storageStatus(usedGb: number, indexCounts: Record<string, number>, growth: GrowthEstimate) {
 	return {
 		...diskUsage(usedGb),
 		hot_days: 90,
@@ -35,7 +53,11 @@ function storageStatus(usedGb: number, indexCounts: Record<string, number>) {
 		cold_days: 30,
 		disk_threshold_percent: 80,
 		emergency_threshold_percent: 90,
-		estimated_daily_gb: 1.2,
+		// OLD CODE: estimated_daily_gb: 1.2, (B-m: measured now, null until there's a day of data)
+		estimated_daily_gb:
+			growth.index_bytes_per_day === null ? null : (growth.index_bytes_per_day + (growth.pcap_bytes_per_day ?? 0)) / GB,
+		growth_estimate: growth,
+		capture_paused_disk_full: false,
 		source: 'daemon',
 		index_counts: indexCounts,
 		total_indices: Object.values(indexCounts).reduce((sum, n) => sum + n, 0),
@@ -44,6 +66,8 @@ function storageStatus(usedGb: number, indexCounts: Record<string, number>) {
 		ilm_status: {
 			synced: true,
 			last_applied: iso(3 * HOUR),
+			last_attempt: iso(3 * HOUR),
+			last_error: null,
 			pending_retry: false,
 			policies: {
 				'nettap-hot-policy': 'updated',
@@ -55,8 +79,8 @@ function storageStatus(usedGb: number, indexCounts: Record<string, number>) {
 }
 
 /** Exported so /api/system/health can embed the same figures. */
-export const STORAGE_STATUS_POPULATED = storageStatus(372.6, { hot: 38, warm: 12, cold: 4, unknown: 0 });
-export const STORAGE_STATUS_EMPTY = storageStatus(18.4, { hot: 0, warm: 0, cold: 0, unknown: 0 });
+export const STORAGE_STATUS_POPULATED = storageStatus(372.6, { hot: 38, warm: 12, cold: 4, unknown: 0 }, GROWTH_MEASURED);
+export const STORAGE_STATUS_EMPTY = storageStatus(18.4, { hot: 0, warm: 0, cold: 0, unknown: 0 }, GROWTH_NONE);
 
 export const SMART_HEALTH_POPULATED = {
 	device: '/dev/nvme0n1',

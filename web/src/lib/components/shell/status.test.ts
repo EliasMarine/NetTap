@@ -19,6 +19,13 @@ describe('capture chip', () => {
 		expect(captureChip(mirror, health(status))).toEqual(expected);
 	});
 
+	it('B-l: says packet capture is paused when the disk filled, whatever the health says', () => {
+		const paused = { text: 'Packet capture paused: disk full', tone: 'high', pulse: false };
+		expect(captureChip(mirror, health('normal'), true)).toEqual(paused);
+		expect(captureChip(mirror, null, true)).toEqual(paused);
+		expect(captureChip(mirror, health('normal'), false).text).not.toMatch(/paused/);
+	});
+
 	it('says the status is unknown when the health request fails', () => {
 		expect(captureChip(mirror, 'failed')).toEqual({ text: 'Capture status unknown', tone: 'muted', pulse: false });
 	});

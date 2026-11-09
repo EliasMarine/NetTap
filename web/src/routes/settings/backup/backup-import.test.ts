@@ -63,3 +63,79 @@ describe('Backup page refresh contract', () => {
 		expect(get(pageRefresh).available).toBe(false);
 	});
 });
+
+// A9: a restore said "Import successful" although it skipped capture mode and retention
+describe('Backup restore reports what it did (A9)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	/** Validation answers `validation`; the import answers `body`; returns the fetch mock. */
+	function stub(validation: Record<string, unknown>, body: unknown) {
+		const fn = vi.fn(async (url: string) => {
+			if (url === '/api/backup/validate') {
+				return { ok: true, status: 200, json: async () => ({ is_valid: true, warnings: [], errors: [], preview: {}, ...validation }) };
+			}
+			if (url.startsWith('/api/backup/import')) return { ok: true, status: 200, json: async () => body };
+			return { ok: false, status: 500, json: async () => ({}) };
+		});
+		vi.stubGlobal('fetch', fn);
+		return fn;
+	}
+
+	async function chooseFile() {
+		const { container } = render(Page);
+		const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+		const file = new File([JSON.stringify({ metadata: { schema_version: 2 }, sections: {} })], 'nettap.json', { type: 'application/json' });
+		await fireEvent.change(input, { target: { files: [file] } });
+		return screen.findByRole('button', { name: 'Apply configuration' });
+	}
+
+	const RESULT = { success: true, applied: ['storage_retention'], skipped: [], errors: [], warnings: [] };
+
+	it('asks before restoring a different capture mode, and sends it only when ticked', async () => {
+		const fn = stub({ capture_restart: true }, RESULT);
+		const apply = await chooseFile();
+		const box = screen.getByRole('checkbox', { name: /Also restore the capture mode/ });
+		expect(box).not.toBeChecked();
+		expect(screen.getByText(/restarts the capture containers/)).toBeInTheDocument();
+
+		await fireEvent.click(box);
+		await fireEvent.click(apply);
+		await screen.findByText('Import successful');
+		expect(fn.mock.calls.map((c) => c[0])).toContain('/api/backup/import?apply_capture=1');
+	});
+
+	it('restores without the capture mode when the box is left unticked', async () => {
+		const fn = stub({ capture_restart: true }, RESULT);
+		await fireEvent.click(await chooseFile());
+		await screen.findByText('Import successful');
+		expect(fn.mock.calls.map((c) => c[0])).toContain('/api/backup/import');
+		expect(fn.mock.calls.map((c) => c[0])).not.toContain('/api/backup/import?apply_capture=1');
+	});
+
+	it('offers no capture choice when the capture mode is the same', async () => {
+		stub({ capture_restart: false }, RESULT);
+		await chooseFile();
+		expect(screen.queryByRole('checkbox', { name: /Also restore the capture mode/ })).not.toBeInTheDocument();
+	});
+
+	it('names what was restored and what was skipped, and why, instead of "Import successful"', async () => {
+		stub({}, {
+			...RESULT,
+			skipped: [{ section: 'capture_mode_config', reason: "Not applied: restoring it restarts capture, and that wasn't confirmed" }],
+		});
+		await fireEvent.click(await chooseFile());
+
+		expect(await screen.findByText('Imported, some sections skipped')).toBeInTheDocument();
+		expect(screen.getByText('Restored: Retention')).toBeInTheDocument();
+		expect(screen.getByText("Capture mode: Not applied: restoring it restarts capture, and that wasn't confirmed")).toBeInTheDocument();
+		expect(screen.queryByText('Import successful')).not.toBeInTheDocument();
+	});
+
+	it('says what a backup leaves out', () => {
+		stub({}, RESULT);
+		render(Page);
+		expect(screen.getByText(/Left out: passwords, API keys and tokens/)).toBeInTheDocument();
+	});
+});

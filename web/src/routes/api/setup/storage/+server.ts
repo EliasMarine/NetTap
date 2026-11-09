@@ -1,12 +1,16 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types.js';
 import { daemonJSON } from '$lib/server/daemon.js';
+import type { GrowthEstimate } from '$lib/api/system.js';
 
 export interface IlmPolicyStatus {
 	synced: boolean;
 	last_applied: string | null;
 	pending_retry: boolean;
 	policies: Record<string, string>;
+	/** A15: the last failed attempt and why (cleared by the next success) */
+	last_attempt?: string | null;
+	last_error?: string | null;
 }
 
 export interface StorageStatus {
@@ -19,7 +23,9 @@ export interface StorageStatus {
 	cold_days: number;
 	disk_threshold_percent: number;
 	emergency_threshold_percent: number;
-	estimated_daily_gb: number;
+	// OLD CODE: estimated_daily_gb: number; (B-m: null until measured)
+	estimated_daily_gb: number | null;
+	growth_estimate: GrowthEstimate | null;
 	source: 'daemon' | 'mock';
 	last_prune_at: string | null;
 	ilm_status: IlmPolicyStatus | null;
@@ -84,7 +90,9 @@ function normalizeStorageStatus(raw: Record<string, unknown>): StorageStatus {
 		cold_days: coldDays,
 		disk_threshold_percent: thresholdPct || 80,
 		emergency_threshold_percent: emergencyPct || 90,
-		estimated_daily_gb: (raw.estimated_daily_gb as number) ?? 1.2,
+		// OLD CODE: estimated_daily_gb: (raw.estimated_daily_gb as number) ?? 1.2, (B-m: a made-up rate)
+		estimated_daily_gb: (raw.estimated_daily_gb as number | null) ?? null,
+		growth_estimate: (raw.growth_estimate as GrowthEstimate | null) ?? null,
 		source: 'daemon',
 		last_prune_at: (raw.last_prune_at as string) ?? null,
 		ilm_status: (raw.ilm_status as IlmPolicyStatus) ?? null,
@@ -101,30 +109,37 @@ export const GET: RequestHandler = async () => {
 		return json(normalizeStorageStatus(data));
 	}
 
-	// Daemon unavailable — return mock storage status
-	const mock: StorageStatus = {
-		// OLD CODE START — 2026-11-06 (NET-166): 1024-based figures; the daemon's GB are now decimal
-		// disk_total_gb: 953.87,
-		// disk_used_gb: 42.3,
-		// disk_free_gb: 911.57,
-		// OLD CODE END
-		// a 1 TB drive in decimal GB, as the daemon reports it
-		disk_total_gb: 1000.0,
-		disk_used_gb: 44.3,
-		disk_free_gb: 955.7,
-		disk_usage_percent: 4.4,
-		hot_days: 90,
-		warm_days: 180,
-		cold_days: 30,
-		disk_threshold_percent: 80,
-		emergency_threshold_percent: 90,
-		estimated_daily_gb: 1.2,
-		source: 'mock',
-		last_prune_at: null,
-		ilm_status: null,
-	};
-
-	return json(mock);
+	// OLD CODE START — A16: the wizard showed these invented disk figures as if they were real
+	// // Daemon unavailable — return mock storage status
+	// const mock: StorageStatus = {
+	// 	// OLD CODE START — 2026-11-06 (NET-166): 1024-based figures; the daemon's GB are now decimal
+	// 	// disk_total_gb: 953.87,
+	// 	// disk_used_gb: 42.3,
+	// 	// disk_free_gb: 911.57,
+	// 	// OLD CODE END
+	// 	// a 1 TB drive in decimal GB, as the daemon reports it
+	// 	disk_total_gb: 1000.0,
+	// 	disk_used_gb: 44.3,
+	// 	disk_free_gb: 955.7,
+	// 	disk_usage_percent: 4.4,
+	// 	hot_days: 90,
+	// 	warm_days: 180,
+	// 	cold_days: 30,
+	// 	disk_threshold_percent: 80,
+	// 	emergency_threshold_percent: 90,
+	// 	estimated_daily_gb: 1.2,
+	// 	source: 'mock',
+	// 	last_prune_at: null,
+	// 	ilm_status: null,
+	// };
+	//
+	// return json(mock);
+	// OLD CODE END
+	// A16: no figures at all, so nothing can show a made-up disk
+	return json(
+		{ error: "The NetTap service isn't answering, so the disk figures are unavailable. Check that it's running, then try again." },
+		{ status: 503 },
+	);
 };
 
 /** Matches daemonFetch's default timeout. */

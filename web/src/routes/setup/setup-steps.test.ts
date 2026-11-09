@@ -29,7 +29,9 @@ function stubFetch(storage: Promise<unknown> = Promise.resolve(STORAGE)) {
 			if (url === '/api/setup/storage') {
 				storageCalls++;
 				const body = storageCalls === 1 ? STORAGE : await storage;
-				return new Response(JSON.stringify(body), { status: 200 });
+				// OLD CODE: return new Response(JSON.stringify(body), { status: 200 }); (A16: a body may carry its status)
+				const { __status = 200, ...rest } = body as { __status?: number };
+				return new Response(JSON.stringify(rest), { status: __status });
 			}
 			return new Response(JSON.stringify(replies[url] ?? { error: 'not mocked' }), { status: url in replies ? 200 : 404 });
 		}),
@@ -93,6 +95,36 @@ describe('setup wizard frame', () => {
 		const meter = await screen.findByRole('meter', { name: 'Disk used' });
 		expect(meter).toHaveAttribute('aria-valuenow', '25');
 		expect(screen.getByText('25% used')).toBeInTheDocument();
-		expect(screen.getByText('400 days')).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText('400 days')).toBeInTheDocument(); (B-m: a fixed 1.5 GB/day guess)
+		expect(screen.getByText(/^No estimate yet/)).toBeInTheDocument();
+	});
+
+	it('B-m: estimates from the measured growth and says what it is based on', async () => {
+		const growth = { index_bytes_per_day: 2e9, index_days_measured: 7, pcap_bytes_per_day: 66e9, pcap_days_measured: 7.4, pcap_days_kept: 7.4 };
+		stubFetch(Promise.resolve({ ...STORAGE, growth_estimate: growth }));
+		await toInterfaces();
+		await fireEvent.change(screen.getByLabelText(/Capture interface/), { target: { value: 'eth0' } });
+		await fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+
+		expect(
+			await screen.findByText(
+				'Estimate from the last 7 days: indices grow about 2.0 GB a day, so 90 days of them need about 180.0 GB. ' +
+					'PCAP grows about 66.0 GB a day (measured over 7.4 days), so about 7.4 days of it is kept.',
+			),
+		).toBeInTheDocument();
+	});
+
+	it("A16: says the disk figures are unavailable when the daemon isn't answering, with no made-up disk", async () => {
+		const error = "The NetTap service isn't answering, so the disk figures are unavailable. Check that it's running, then try again.";
+		stubFetch(Promise.resolve({ __status: 503, error }));
+		await toInterfaces();
+		await fireEvent.change(screen.getByLabelText(/Capture interface/), { target: { value: 'eth0' } });
+		await fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+
+		expect(await screen.findByRole('heading', { name: 'Disk figures are unavailable' })).toBeInTheDocument();
+		expect(screen.getByText(error)).toBeInTheDocument();
+		expect(screen.queryByRole('meter', { name: 'Disk used' })).not.toBeInTheDocument();
+		expect(screen.queryByText(/GB free/)).not.toBeInTheDocument();
+		expect(screen.getByRole('button', { name: /Try again/ })).toBeInTheDocument();
 	});
 });

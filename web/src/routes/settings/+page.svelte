@@ -66,7 +66,9 @@
 	let lastPruneAt = $state<string | null>(null);
 	let storageStatusFailed = $state(false);
 	let storageLoading = $state(true);
-	let ilmStatus = $state<{ synced: boolean; last_applied: string | null; pending_retry: boolean; policies: Record<string, string> } | null>(null);
+	// OLD CODE: let ilmStatus = $state<{ synced: boolean; last_applied: string | null; pending_retry: boolean; policies: Record<string, string> } | null>(null);
+	// A15: last_attempt and last_error say why ILM isn't in sync
+	let ilmStatus = $state<{ synced: boolean; last_applied: string | null; pending_retry: boolean; policies: Record<string, string>; last_attempt?: string | null; last_error?: string | null } | null>(null);
 	let retentionSaving = $state(false);
 	let retentionMessage = $state('');
 	let retentionError = $state(false);
@@ -1132,6 +1134,12 @@
 						{:else}
 							<span class="chip is-bad"><Icon name="warn" />Out of sync</span>
 						{/if}
+						{#if ilmStatus && !retentionHealth.ilmOk && ilmStatus.last_error}
+							<!-- A15: the real reason, not the last success -->
+							<p class="dim ilm-error">
+								{ilmStatus.last_attempt ? `Last try ${timeAgo(ilmStatus.last_attempt)}: ` : ''}{ilmStatus.last_error}{retentionHealth.ilmPending ? ' NetTap tries again automatically.' : ''}
+							</p>
+						{/if}
 					</dd>
 					<dt>Disk usage</dt>
 					<dd>
@@ -1803,6 +1811,7 @@
 		max-width: 360px;
 	}
 
+	.ilm-error { margin-top: var(--sp-1); font-size: var(--text-sm); overflow-wrap: anywhere; }
 	.meter-row {
 		margin-top: var(--sp-4);
 	}

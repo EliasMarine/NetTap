@@ -24,7 +24,15 @@ export function modeLabel(mode: string): string {
 	return MODE_LABELS[mode] ?? 'Bridge';
 }
 
-export function captureChip(mode: Loaded<CaptureMode>, health: Loaded<CaptureHealthResponse>): CaptureChip {
+// OLD CODE: export function captureChip(mode: Loaded<CaptureMode>, health: Loaded<CaptureHealthResponse>): CaptureChip {
+/** `diskFull`: the storage manager stopped packet capture because the disk filled (B-l). */
+export function captureChip(
+	mode: Loaded<CaptureMode>,
+	health: Loaded<CaptureHealthResponse>,
+	diskFull = false,
+): CaptureChip {
+	// Only PCAP stops (nettap-pcap-capture); Zeek and Suricata keep running, hence "packet capture"
+	if (diskFull) return { text: 'Packet capture paused: disk full', tone: 'high', pulse: false };
 	const modeText = mode === 'failed' ? 'Mode unknown' : mode ? `${modeLabel(mode.mode)} mode` : 'Checking mode…';
 	const iface = (mode && mode !== 'failed' ? mode.interface : '') || (health && health !== 'failed' ? health.capture_interface : '');
 

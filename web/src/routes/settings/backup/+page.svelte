@@ -29,6 +29,32 @@
 	let importResult = $state<ImportResult | null>(null);
 	let importError = $state('');
 	let importData = $state<unknown>(null);
+	// A9: restoring a different capture mode restarts capture, so it waits for this box
+	let applyCapture = $state(false);
+
+	/** Section names as the owner knows them */
+	const SECTION_LABELS: Record<string, string> = {
+		capture_mode_config: 'Capture mode',
+		storage_retention: 'Retention',
+		notification_channels: 'Notification channels',
+		notification_rules: 'Notification rules',
+		device_aliases: 'Device names',
+		device_pictures: 'Device pictures',
+		excluded_ips: 'Excluded IPs',
+		bandwidth_cap: 'Bandwidth cap',
+		home_location: 'Home location',
+		alert_acknowledgements: 'Alert acknowledgements',
+		alert_suppressions: 'Alert suppressions',
+	};
+	const label = (section: string) => SECTION_LABELS[section] ?? section.replace(/_/g, ' ');
+
+	/** "Import successful" only when nothing was skipped or failed */
+	let resultTitle = $derived.by(() => {
+		if (!importResult) return '';
+		const skipped = importResult.skipped?.length ?? 0;
+		if (importResult.errors.length) return importResult.applied.length ? 'Partly imported' : 'Import failed';
+		return skipped ? 'Imported, some sections skipped' : 'Import successful';
+	});
 
 	// Drag state
 	let isDragging = $state(false);
@@ -87,6 +113,7 @@
 		importFile = file;
 		importResult = null;
 		importError = '';
+		applyCapture = false;
 		validating = true;
 
 		try {
@@ -107,7 +134,8 @@
 		importError = '';
 
 		try {
-			importResult = await importConfig(importData);
+			// OLD CODE: importResult = await importConfig(importData);
+			importResult = await importConfig(importData, applyCapture && validation?.capture_restart === true);
 			if (!importResult.success) {
 				importError = importResult.errors.join(', ');
 			}
@@ -141,9 +169,22 @@
 
 <div class="grid">
 	<Card title="Export configuration" sub="One JSON file · every NetTap setting" class="c-6">
+		<!-- OLD CODE START — A9: "all NetTap settings", though it skipped capture mode and retention
 		<p class="card-text">
 			Download all NetTap settings as a JSON file. Includes capture mode, retention policies,
 			notification channels, device aliases, excluded IPs, and bandwidth cap.
+		</p>
+		OLD CODE END -->
+		<p class="card-text">
+			Download your NetTap settings as a JSON file: capture mode, retention, notification channels
+			and rules, device names and pictures, excluded IPs, bandwidth cap, home location, alert
+			acknowledgements and suppressions.
+		</p>
+		<p class="card-text">
+			Left out: passwords, API keys and tokens (the admin login, notification passwords, webhook
+			URLs and tokens, UniFi, ET Pro), investigations, your own Suricata rules, report schedules,
+			PCAP capture settings, and the captured traffic, logs and alerts themselves. After a restore,
+			enter the notification passwords, URLs and tokens again in Settings › Notifications.
 		</p>
 
 		<div class="form-actions start">
@@ -232,11 +273,22 @@
 							<h3 class="eyebrow">Sections to import</h3>
 							<dl class="facts flush">
 								{#each Object.entries(validation.preview) as [name, info]}
-									<dt>{name.replace(/_/g, ' ')}</dt>
+									<!-- OLD CODE: <dt>{name.replace(/_/g, ' ')}</dt> (A9: the owner's names) -->
+									<dt>{label(name)}</dt>
 									<dd class="num">{info.size} items</dd>
 								{/each}
 							</dl>
 						</div>
+					{/if}
+
+					{#if validation.is_valid && validation.capture_restart}
+						<label class="check-row">
+							<input type="checkbox" bind:checked={applyCapture} />
+							<span>
+								Also restore the capture mode. This restarts the capture containers, so capture
+								pauses for about a minute. Left unticked, the capture mode stays as it is.
+							</span>
+						</label>
 					{/if}
 
 					{#if validation.is_valid}
@@ -256,9 +308,23 @@
 				>
 					<Icon name={importResult.success ? 'check' : 'warn'} />
 					<div>
+						<!-- OLD CODE START — A9: "Import successful" while sections were skipped
 						<b>{importResult.success ? 'Import successful' : 'Import failed'}</b>
 						{#if importResult.applied.length > 0}
 							<p>Applied sections: {importResult.applied.join(', ')}</p>
+						{/if}
+						OLD CODE END -->
+						<b>{resultTitle}</b>
+						{#if importResult.applied.length > 0}
+							<p>Restored: {importResult.applied.map(label).join(', ')}</p>
+						{/if}
+						{#if importResult.skipped?.length}
+							<p>Skipped:</p>
+							<ul class="issues">
+								{#each importResult.skipped as item (item.section)}
+									<li>{label(item.section)}: {item.reason}</li>
+								{/each}
+							</ul>
 						{/if}
 						{#if importResult.errors.length > 0}
 							<p>Errors: {importResult.errors.join(', ')}</p>

@@ -121,7 +121,10 @@
 		return () => clearInterval(timer);
 	});
 
-	let capture = $derived(captureChip(captureMode, captureHealth));
+	// OLD CODE: let capture = $derived(captureChip(captureMode, captureHealth));
+	let capture = $derived(
+		captureChip(captureMode, captureHealth, typeof storage === 'object' && storage?.capture_paused_disk_full === true),
+	);
 	let storageInfo = $derived(storageFoot(storage));
 	let alertCount = $derived.by(() => {
 		const snap = $alertSnapshots[ALERT_BADGE_HOURS];

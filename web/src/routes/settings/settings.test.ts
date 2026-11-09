@@ -246,6 +246,24 @@ describe('Settings — retention health', () => {
 		expect(screen.queryByText('Never (daemon starting…)')).not.toBeInTheDocument();
 	});
 
+	// A15: a failed startup apply was never retried and the card kept saying "Policy synced"
+	it('shows why ILM is out of sync, and that it is retrying', async () => {
+		stubFetch({
+			'/api/storage/status': () => ({
+				body: { disk_usage_percent: 6.8, last_prune_at: new Date().toISOString(),
+					ilm_status: { synced: false, last_applied: '2026-11-08T00:00:00Z', pending_retry: true, policies: { 'nettap-hot-policy': 'updated' },
+						last_attempt: new Date().toISOString(), last_error: 'error: ConnectionError(Connection refused)' } },
+			}),
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
+
+		expect(screen.getByText('Syncing…')).toBeInTheDocument();
+		expect(screen.getByText('Last try just now: error: ConnectionError(Connection refused) NetTap tries again automatically.')).toBeInTheDocument();
+		expect(screen.queryByText(/Policy synced/)).not.toBeInTheDocument();
+	});
+
 	it('still reads Healthy when the storage status loads in sync', async () => {
 		stubFetch({
 			'/api/storage/status': () => ({

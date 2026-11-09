@@ -86,6 +86,14 @@ describe('catch-all proxy timeouts with the real daemonFetch', () => {
 		expect((await pending).status).toBe(200);
 	});
 
+	it('lets a 12 s backup restore answer through (A9: restoring a capture mode restarts capture)', async () => {
+		slowDaemon();
+		const url = new URL('https://nettap.local/api/backup/import?apply_capture=1');
+		const pending = POST({ url, request: new Request(url, { method: 'POST', body: '{}' }) } as never);
+		await vi.advanceTimersByTimeAsync(DELAY_MS);
+		expect((await pending).status).toBe(200);
+	});
+
 	it('would have cut the same answer off at the 10 s default (the check above is real)', async () => {
 		slowDaemon();
 		const pending = GET(event('/api/live/dashboard') as never);

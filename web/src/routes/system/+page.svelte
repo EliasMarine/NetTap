@@ -17,6 +17,7 @@
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { fmt } from '$lib/utils/drilldown';
 	import { formatTime } from '$lib/utils/time';
+	import { growthSummary } from '$lib/utils/storage-estimate';
 
 	let systemHealth = $state<SystemHealth | null>(null);
 	let storageStatus = $state<StorageStatus | null>(null);
@@ -453,6 +454,10 @@
 						<dd>{typeof days === 'number' ? `${days} days${row.note}` : '—'}</dd>
 					{/each}
 				</dl>
+				<!-- B-m: what the disk really holds, measured, beside the configured days -->
+				{#if storageStatus.growth_estimate !== undefined}
+					<p class="dim growth">{growthSummary(storageStatus.growth_estimate, storageStatus.retention?.hot_days ?? 90)}</p>
+				{/if}
 			{/if}
 		{:else}
 			<CardState state="empty" title="Storage data unavailable" message="Disk figures appear here once the daemon reports them." />
@@ -612,6 +617,7 @@
 </div>
 
 <style>
+	.growth { margin-top: var(--sp-3); font-size: var(--text-sm); }
 	/* the four health stages fill the row on desktop; the system's tablet and phone rules still apply */
 	@container app (min-width: 1101px) {
 		:global(.health-card .pipe) { grid-template-columns: repeat(4, minmax(0, 1fr)); }

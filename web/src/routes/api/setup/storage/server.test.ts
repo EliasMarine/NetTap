@@ -191,14 +191,34 @@ vi.mock('$lib/server/daemon.js', () => ({ daemonJSON: vi.fn() }));
 describe('GET /api/setup/storage', () => {
 	afterEach(() => vi.mocked(daemonJSON).mockReset());
 
-	it('NET-166: the sample reply is a 1 TB drive in decimal GB, and its figures add up', async () => {
+	// OLD CODE START — A16: the sample reply is gone; the wizard showed it as the real disk
+	// it('NET-166: the sample reply is a 1 TB drive in decimal GB, and its figures add up', async () => {
+	// 	vi.mocked(daemonJSON).mockResolvedValue({ error: 'Daemon unreachable: ECONNREFUSED', status: 502 });
+	// 	const body = await (await GET({} as Parameters<typeof GET>[0])).json();
+	// 	expect(body.source).toBe('mock');
+	// 	// the 1024-based sample read 953.87 GB for the same drive
+	// 	expect(body.disk_total_gb).toBe(1000);
+	// 	expect(body.disk_used_gb + body.disk_free_gb).toBeCloseTo(body.disk_total_gb, 6);
+	// 	expect(body.disk_usage_percent).toBe(Math.round((body.disk_used_gb / body.disk_total_gb) * 1000) / 10);
+	// });
+	// OLD CODE END
+	it('A16: answers 503 with no disk figures when the daemon is down, instead of a sample disk', async () => {
 		vi.mocked(daemonJSON).mockResolvedValue({ error: 'Daemon unreachable: ECONNREFUSED', status: 502 });
+		const res = await GET({} as Parameters<typeof GET>[0]);
+		expect(res.status).toBe(503);
+		const body = await res.json();
+		expect(body.error).toMatch(/disk figures are unavailable/);
+		expect(body).not.toHaveProperty('disk_total_gb');
+		expect(body).not.toHaveProperty('estimated_daily_gb');
+	});
+
+	it('B-m: passes the measured growth through and never invents a daily rate', async () => {
+		const growth = { index_bytes_per_day: 2e9, index_days_measured: 7, pcap_bytes_per_day: null, pcap_days_measured: 0.5, pcap_days_kept: null };
+		vi.mocked(daemonJSON).mockResolvedValue({ data: { disk_usage_percent: 30, growth_estimate: growth }, error: null, status: 200 } as never);
 		const body = await (await GET({} as Parameters<typeof GET>[0])).json();
-		expect(body.source).toBe('mock');
-		// the 1024-based sample read 953.87 GB for the same drive
-		expect(body.disk_total_gb).toBe(1000);
-		expect(body.disk_used_gb + body.disk_free_gb).toBeCloseTo(body.disk_total_gb, 6);
-		expect(body.disk_usage_percent).toBe(Math.round((body.disk_used_gb / body.disk_total_gb) * 1000) / 10);
+		expect(body.growth_estimate).toEqual(growth);
+		// it was 1.2 whenever the daemon sent nothing
+		expect(body.estimated_daily_gb).toBeNull();
 	});
 });
 

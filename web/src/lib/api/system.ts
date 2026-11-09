@@ -142,6 +142,22 @@ export interface StorageStatus {
 	/** S6: the daemon starts pruning old data here, and prunes hard at the emergency line (0-100) */
 	disk_threshold_percent: number;
 	emergency_threshold_percent: number;
+	/** B-m: measured growth for the retention estimate (older daemons don't send it) */
+	growth_estimate?: GrowthEstimate | null;
+	/** B-l: the storage manager stopped packet capture because the disk filled */
+	capture_paused_disk_full?: boolean;
+}
+
+/** B-m: each rate is null until there's a day of data to measure it from. */
+export interface GrowthEstimate {
+	index_bytes_per_day: number | null;
+	/** complete days the index rate averages (up to 7) */
+	index_days_measured: number;
+	pcap_bytes_per_day: number | null;
+	/** days the PCAP on disk spans */
+	pcap_days_measured: number;
+	/** days of PCAP its share of the disk (and the cold-tier days) hold at that rate */
+	pcap_days_kept: number | null;
 }
 
 export interface SmartHealth {
