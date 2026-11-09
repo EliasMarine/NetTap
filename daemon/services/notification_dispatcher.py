@@ -6,6 +6,9 @@ go to the channels the routing rules pick. Each channel gets at most one message
 of the alerts that are new for it. A channel whose send fails keeps those alerts and tries again
 after a back-off, so a short outage loses nothing; the state survives restarts.
 
+A channel gets at most DAILY_BUDGET messages a UTC day; past it, new alerts are counted, shown
+as the channel's status and left on the Alerts page.
+
 New for a channel means: never handled, more severe than when it was, or a newer occurrence once
 the hour's cooldown is over. Re-reading the same occurrences (the poll windows overlap, and a
 failed query keeps the cursor) never sends them again.
@@ -34,6 +37,9 @@ KEEP_DONE = timedelta(hours=2)
 RETRY_AFTER = (timedelta(minutes=1), timedelta(minutes=5), timedelta(minutes=15))
 MAX_PENDING = 50
 DIGEST_LINES = 10
+# Sends a channel gets per UTC day, attempts included (a provider counts those): alerts an
+# attacker can trip must not use up Gmail's ~500 a day or Pushover's ~330 (review M2)
+DAILY_BUDGET = 100
 _EMPTY: dict = {"done": {}, "pending": [], "retry_at": None}
 
 
@@ -268,21 +274,94 @@ class AlertDispatcher:
                 for i in fresh
             }
         )
+        # OLD CODE START — review M2: no daily budget, so a channel could get a digest every minute
+        # candidates = sorted(by_sig.values(), key=_worst_first)[:MAX_PENDING]
+        # retry_at = _when(st.get("retry_at")) if st.get("retry_at") else None
+        # if not candidates or (retry_at and retry_at > now):
+        #     return {
+        #         "done": done,
+        #         "pending": candidates,
+        #         "retry_at": st.get("retry_at") if candidates else None,
+        #     }
+        #
+        # title, body, worst = digest(candidates)
+        # if await self._hub.send(cid, title, body, worst):
+        #     return {
+        #         "done": {**done, **_record(candidates, now, True)},
+        #         "pending": [],
+        #         "retry_at": None,
+        #     }
+        #
+        # tried = [{**i, "attempts": i["attempts"] + 1} for i in candidates]
+        # kept = [i for i in tried if i["attempts"] <= len(RETRY_AFTER)]
+        # gave_up = [i for i in tried if i["attempts"] > len(RETRY_AFTER)]
+        # if gave_up:
+        #     logger.warning(
+        #         "Alert notifications: gave up on %d alert(s) for channel %s after %d failed sends",
+        #         len(gave_up),
+        #         cid,
+        #         len(RETRY_AFTER) + 1,
+        #     )
+        # # the item with the fewest tries sets the pace, so a new alert keeps its quick retry
+        # delay = RETRY_AFTER[min(i["attempts"] for i in kept) - 1] if kept else None
+        # return {
+        #     # given-up items are recorded too, so re-reading the same alerts never restarts them
+        #     "done": {**done, **_record(gave_up, now, False)},
+        #     "pending": kept,
+        #     "retry_at": _iso(now + delay) if delay else None,
+        # }
+        # OLD CODE END
         candidates = sorted(by_sig.values(), key=_worst_first)[:MAX_PENDING]
+        day = now.date().isoformat()
+        today = {
+            "day": day,
+            "sent": st.get("sent", 0) if st.get("day") == day else 0,
+            "held": st.get("held", 0) if st.get("day") == day else 0,
+        }
         retry_at = _when(st.get("retry_at")) if st.get("retry_at") else None
         if not candidates or (retry_at and retry_at > now):
             return {
                 "done": done,
                 "pending": candidates,
                 "retry_at": st.get("retry_at") if candidates else None,
+                **today,
+            }
+
+        if today["sent"] >= DAILY_BUDGET:
+            # handled, not sent: they're on the Alerts page, and tomorrow doesn't bring them back
+            held = today["held"] + len(candidates)
+            if not today["held"]:
+                logger.warning(
+                    "Alert notifications: channel %s reached its daily limit of %d messages",
+                    cid,
+                    DAILY_BUDGET,
+                )
+            self._hub.record_held(
+                cid,
+                f"Daily limit of {DAILY_BUDGET} messages reached: {held} alert"
+                f"{'' if held == 1 else 's'} not sent today (UTC); they're on the Alerts page",
+            )
+            return {
+                "done": {**done, **_record(candidates, now, False)},
+                "pending": [],
+                "retry_at": None,
+                **today,
+                "held": held,
             }
 
         title, body, worst = digest(candidates)
+        if today["sent"] == DAILY_BUDGET - 1:
+            body += (
+                f"\n\nThis is the last notification today on this channel (limit "
+                f"{DAILY_BUDGET} a day, UTC). Later alerts are on NetTap's Alerts page."
+            )
+        today = {**today, "sent": today["sent"] + 1}
         if await self._hub.send(cid, title, body, worst):
             return {
                 "done": {**done, **_record(candidates, now, True)},
                 "pending": [],
                 "retry_at": None,
+                **today,
             }
 
         tried = [{**i, "attempts": i["attempts"] + 1} for i in candidates]
@@ -302,6 +381,7 @@ class AlertDispatcher:
             "done": {**done, **_record(gave_up, now, False)},
             "pending": kept,
             "retry_at": _iso(now + delay) if delay else None,
+            **today,
         }
 
     # --- background task ---------------------------------------------------

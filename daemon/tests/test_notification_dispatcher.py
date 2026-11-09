@@ -285,3 +285,41 @@ def test_a_corrupt_state_file_starts_fresh(h):
     h.groups = [group(1, 2, 0)]
     h.poll(1)
     assert len(h.take()) == 2
+
+
+# Security review M2: alerts an attacker can trip must not use up the owner's mail or Pushover quota
+def test_a_channel_gets_at_most_the_daily_budget_then_a_held_count_until_tomorrow(h):
+    with patch.object(nd, "DAILY_BUDGET", 3):
+        for minute in range(1, 6):  # a new critical signature every minute
+            h.groups = [group(100 + minute, 1, minute - 0.5)]
+            h.poll(minute)
+        sends = h.sent_to(h.high)
+        assert len(sends) == 3
+        assert "last notification today" in sends[-1][2]
+        assert "last notification today" not in sends[0][2]
+        status = h.hub.last_delivery(h.high)
+        assert status["ok"] is False
+        assert "Daily limit of 3 messages" in status["error"]
+        assert "2 alerts" in status["error"]
+
+        h.dispatcher = h.new_dispatcher()  # the count survives a restart
+        h.groups = [group(200, 1, 7)]
+        h.poll(8)
+        assert len(h.sent_to(h.high)) == 3
+        assert "3 alerts" in h.hub.last_delivery(h.high)["error"]
+
+        h.groups = [group(300, 1, 24 * 60 + 1)]  # the next UTC day
+        h.poll(24 * 60 + 2)
+        assert len(h.sent_to(h.high)) == 4
+        # the held ones were handled: tomorrow doesn't bring them back
+        assert "ET TEST signature 105" not in h.sent_to(h.high)[-1][2]
+
+
+def test_failed_attempts_count_against_the_budget(h):
+    """A provider counts each attempt, so retries of one failing batch use the budget too."""
+    h.fail = {h.high}
+    with patch.object(nd, "DAILY_BUDGET", 2):
+        h.groups = [group(1, 1, 0)]
+        for minute in (1, 2, 7, 22):
+            h.poll(minute)
+    assert len(h.sent_to(h.high)) == 2

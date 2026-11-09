@@ -306,6 +306,13 @@ class NotificationHub:
     def last_delivery(self, channel_id: str) -> dict[str, Any] | None:
         return self._last_delivery.get(channel_id)
 
+    def record_held(self, channel_id: str, reason: str) -> None:
+        """Alerts the dispatcher didn't send (the daily limit), shown as the channel's status."""
+        self._last_delivery = {
+            **self._last_delivery,
+            channel_id: {"ok": False, "at": _now(), "error": reason},
+        }
+
     def smtp_configured(self) -> bool:
         return bool(nc.smtp_server(self._env_file).get("smtp_host"))
 
