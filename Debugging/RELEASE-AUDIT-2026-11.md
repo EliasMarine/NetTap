@@ -56,7 +56,7 @@
 | C11 | Packet search/download right and access-controlled | **FAIL** (main); leak fixed on the branch | Daemon 401 without token, web 401 without session (smoke test). Filtered download leaked its temp file (A8, fixed by F8) |
 | C12 | Capture health reflects a stopped capture and packet loss | **FAIL** (main); UNVERIFIED on the branch | NIC loss exact (R11); stopped Zeek/Suricata/Logstash/Filebeat invisible (A2). F2 adds the check; device failure injection not run |
 | C13 | Storage/retention accurate; current/protected data never deleted | **FAIL** | Usage exact (R12). PCAP cap prune keeps the newest file (isolated run). Emergency index prune keeps today's index (new unit test). The retention estimate is wrong: fixed 1.2 GB/day, "30 days" PCAP vs ~7.8 actual (B-m) |
-| C14 | Every data card distinguishes loading, empty, error, stale, disabled, healthy | **FAIL** | Loading/empty/error honest with OpenSearch down (local render). Stale data was invisible (A2); F2 adds it to Home/System only; Alerts/Threats still don't show it (NET-228) |
+| C14 | Every data card distinguishes loading, empty, error, stale, disabled, healthy | **FAIL** | Loading/empty/error honest with OpenSearch down (local render). Stale data was invisible (A2). F2 adds it to Home/System, confirmed in a local render with the real daemon; the Alerts card still shows a bare 0 (NET-228) |
 | C15 | No mock, random or hardcoded-success data in production paths | **FAIL** (main); partly fixed on the branch | Notification save/test (A3/A4) and Compliance's 100-for-nothing (A7) fixed by F3/F5. Setup's storage step still shows invented figures when the daemon is down (A16) |
 | C16 | No unauthenticated data access, default credentials or committed secrets; privileged surfaces justified | **FAIL** | First-run admin claimable by any LAN host (A13 → NET-229). Public health exposed the drive serial (fixed by F6). Owner IP in git history (F7 fixes HEAD only). Daemon is host-root-equivalent (B-o) |
 | C17 | Each capture mode's limits stated in product and docs | **FAIL** | Bridge mode's NAT limit not stated (A10 → NET-225); DHCP gateway "Recommended" though untested (B-n) |
@@ -240,6 +240,18 @@ Also added: `test_prune_emergency_never_deletes_todays_index` (closes the index-
 - Two-angle review, security: no HIGH or MEDIUM. Two LOWs fixed: the token now goes to curl on stdin, and the migration refuses links and foreign-owned files.
 - Two-angle review, TypeScript: no HIGH. Fixed the zero-alerts wording, the raw nodemailer error and a malformed-sensors guard.
 - Two-angle review, Python: no HIGH. One MEDIUM fixed: the pipeline probe now has its own thread, because queue time on the shared route pool read as "couldn't check", and an "unknown" result is cached for 5 s, not 30 s. It confirmed F1 covers every accounting query.
+
+**Verified locally (2026-11-09).** Setup:
+- the real daemon at the branch head;
+- the production web build;
+- an OpenSearch stub with no sensors behind it.
+
+Results:
+- `/api/system/health` answers `problem`, pipeline `sensor_stopped`, all four sensors `missing`.
+- Home's pipeline shows "Data: Zeek, Suricata, Logstash and Filebeat stopped" and "System: Reports a problem".
+- System's "Data and sensors" row says the same.
+- Compliance shows "Not measured", not a grade.
+- The same render shows the open gap: the Alerts card still reads a bare "0" (NET-228).
 
 **Verified on the device: none yet.** The read-only smoke test on `main` gives 16 PASS / 2 FAIL / 1 WARN. The fails are F1 and F6; the warning is F2's missing pipeline check.
 
