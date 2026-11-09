@@ -106,3 +106,12 @@ Tests: 7 new tests failed first. Web suite: 352 files, 4478 tests passed. svelte
 - **L2:** `chat_id` is now part of a channel's destination, so a restored Telegram channel with another chat doesn't keep the box's bot token. A restored channel whose URL, SMTP server or chat the box doesn't already use is stored turned off, and the report names it. Any URL it carries is dropped, so turning the Settings webhook back on asks for one.
 
 Tests: 9 failing-first (M1 5, M2 2, L2 2). On the combined base, one daemon test fails, and not because of this change: `test_error_replies.py::test_every_hand_written_5xx_message_is_allowed` lists 502 messages in `bandwidth.py` and `traffic.py` that need adding to `PLAIN_5XX`. Everything else passes.
+
+## Follow-up: Python delta review
+
+**Branch:** `fix/net-224-delta`
+
+- **Failed sends used the daily budget.** With the mail server down for two hours and an alert a minute, the 100 attempts went on connection failures. Nothing more went out until UTC midnight, even after the server recovered. This replaces the "attempts count" rule from M2 above. Now only a send the service accepted counts. Retries keep the `RETRY_AFTER` back-off, so failed attempts are still limited to one a poll. Requests the service refused (a wrong password, HTTP 4xx) don't count either. Telling those apart from connection failures would mean the hub reporting which happened. It would also bring back the same problem when a mail server refuses mail for a while.
+- **The "last notification today" notice went at the end of the body,** so Pushover's 1024-character clip dropped it. It now opens the message.
+
+Tests: 2 failing-first. `test_failed_sends_leave_the_budget_for_when_the_server_is_back` replaces `test_failed_attempts_count_against_the_budget`, which is kept in OLD CODE. The budget test now checks that the body starts with the notice. Daemon suite: 4,598 passed, 4 skipped. ruff is clean.
