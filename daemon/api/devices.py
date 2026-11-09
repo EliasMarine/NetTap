@@ -388,6 +388,28 @@ def _answered_aggs(
     return out
 
 
+def _without_router_macs(
+    client: Any,
+    app: Mapping[str, Any],
+    from_ts: str,
+    to_ts: str,
+    buckets: dict[str, dict],
+    what: str,
+) -> dict[str, dict]:
+    """`buckets` whose with_mac (an answering side's MAC) is a gateway's lose it.
+
+    A router on one cable passes a routed flow twice and Zeek keeps the first leg's MACs, client
+    to router, so the side that answered carries the router's MAC, not its own (review).
+    """
+    macs = sorted({m for b in buckets.values() if (m := _bucket_mac(b))})
+    filters = _conn_filters(from_ts, to_ts)
+    routers = gateway_macs(client, filters, app.get("lan_filter"), macs, what) or set()
+    return {
+        key: {**b, "with_mac": {"buckets": []}} if _bucket_mac(b) in routers else b
+        for key, b in buckets.items()
+    }
+
+
 def _lan_device_buckets(
     client: Any,
     app: Mapping[str, Any],
@@ -473,6 +495,10 @@ def _lan_device_buckets(
         if others and only_answered
         else {}
     )
+    if "with_mac" in others:
+        extra = _without_router_macs(
+            client, app, from_ts, to_ts, extra, what or "answer-only devices"
+        )
     return [
         _merged_bounds(started[ip], answered.get(ip), bounds)
         if ip in started
@@ -1847,9 +1873,30 @@ def handle_device_detail(request: web.Request) -> web.Response:
 
     # Passive fingerprinting enrichment
     # OLD CODE: mac = fingerprint.get_mac_for_ip(client, ip, from_ts, to_ts) (an answer-only device had none)
-    mac = fingerprint.get_mac_for_ip(client, ip, from_ts, to_ts) or _bucket_mac(
-        aggs.get("responded", {})
-    )
+    # OLD CODE START — review: a routed answer's MAC can be the router's (_without_router_macs)
+    # mac = fingerprint.get_mac_for_ip(client, ip, from_ts, to_ts) or _bucket_mac(
+    #     aggs.get("responded", {})
+    # )
+    # OLD CODE END
+    mac = fingerprint.get_mac_for_ip(client, ip, from_ts, to_ts)
+    try:
+        mac = mac or _bucket_mac(
+            _without_router_macs(
+                client,
+                request.app,
+                from_ts,
+                to_ts,
+                {ip: aggs.get("responded", {})},
+                "device detail (MAC)",
+            )[ip]
+        )
+    except QueryFailed as exc:
+        return _incomplete("device detail", exc)
+    except OpenSearchException as exc:
+        logger.error("OpenSearch error in device detail: %s", exc)
+        return web.json_response(
+            {"error": f"OpenSearch query failed: {exc}"}, status=502
+        )
     hostname = fingerprint.get_hostname_for_ip(client, ip, from_ts, to_ts)
     hostname = (
         _registry_names(request, [mac] if mac else []).get(_mac_key(mac)) or hostname
