@@ -46,7 +46,10 @@
 		alert_acknowledgements: 'Alert acknowledgements',
 		alert_suppressions: 'Alert suppressions',
 	};
-	const label = (section: string) => SECTION_LABELS[section] ?? section.replace(/_/g, ' ');
+	// OLD CODE: const label = (section: string) => SECTION_LABELS[section] ?? section.replace(/_/g, ' ');
+	// L6: own keys only, so a daemon key such as 'constructor' never reads Object.prototype
+	const label = (section: string) =>
+		Object.hasOwn(SECTION_LABELS, section) ? SECTION_LABELS[section] : section.replace(/_/g, ' ');
 
 	/** "Import successful" only when nothing was skipped or failed */
 	let resultTitle = $derived.by(() => {

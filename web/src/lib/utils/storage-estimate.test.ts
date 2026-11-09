@@ -25,6 +25,14 @@ describe('growthSummary (B-m)', () => {
 		}
 	});
 
+	it('leaves out the hot-tier need while the hot days field is empty or not a positive number (L8)', () => {
+		const indexOnly = { ...MEASURED, pcap_bytes_per_day: null };
+		for (const hotDays of [null, undefined, Number.NaN, 0, -5]) {
+			// old code: "so null days of them need about 0 B."
+			expect(growthSummary(indexOnly, hotDays)).toBe('Estimate from the last 7 days: indices grow about 2.1 GB a day.');
+		}
+	});
+
 	it('gives the one rate it has, and leaves out days kept it could not work out', () => {
 		const pcapOnly = { ...MEASURED, index_bytes_per_day: null, index_days_measured: 0, pcap_days_kept: null };
 		expect(growthSummary(pcapOnly, 90)).toBe('PCAP grows about 66.3 GB a day (measured over 7.4 days).');

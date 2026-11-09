@@ -133,6 +133,14 @@ describe('Backup restore reports what it did (A9)', () => {
 		expect(screen.queryByText('Import successful')).not.toBeInTheDocument();
 	});
 
+	it("names a section the daemon sends that isn't in the label list by its key, never a built-in (L6)", async () => {
+		stub({}, { ...RESULT, applied: ['constructor', 'storage_retention'] });
+		await fireEvent.click(await chooseFile());
+
+		// old code: SECTION_LABELS['constructor'] is Object, so "Restored: function Object() …"
+		expect(await screen.findByText('Restored: constructor, Retention')).toBeInTheDocument();
+	});
+
 	it('says what a backup leaves out', () => {
 		stub({}, RESULT);
 		render(Page);
