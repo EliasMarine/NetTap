@@ -63,6 +63,7 @@ export const APP_ROUTES: readonly RouteCase[] = [
 	{ path: '/tools/port-reference', marker: 'Port reference' },
 	{ path: '/tools/ssl-cert', marker: 'SSL certificate viewer' },
 	{ path: '/tools/subnet-calc', marker: 'Subnet calculator' },
+	{ path: '/tools/ipv6', marker: 'IPv6 toolkit' },
 	// OLD CODE: { path: '/tools/tshark', marker: 'TShark packet analysis' }, (NET-188: it redirects to /packets)
 	{ path: '/traffic/streaming', marker: /streaming/i },
 ];
