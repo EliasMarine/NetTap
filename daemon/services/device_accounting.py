@@ -291,7 +291,43 @@ def ipv6_clause(side: str, mac: str, link_local_only: bool) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def direction_aggs(lan_filter: dict | None) -> dict:
+# Global IPv6 with both MACs: where a gateway's MAC on the originator's side means inbound
+_V6_GLOBAL = {
+    "bool": {
+        "filter": [
+            {"terms": {"source.ip": GLOBAL_V6}},
+            {"terms": {"destination.ip": GLOBAL_V6}},
+            {"exists": {"field": "source.mac"}},
+            {"exists": {"field": "destination.mac"}},
+        ]
+    }
+}
+
+
+def pair_gateways(
+    client, filters: list[dict], lan_filter: dict | None, what: str
+) -> set[str]:
+    """The gateways among the MACs of the window's global IPv6, for direction_aggs(gateways=).
+
+    One search over the whole window, so a series learns them without terms in every slot.
+    """
+    body = {
+        "size": 0,
+        "query": {"bool": {"filter": [*filters, _V6_GLOBAL]}},
+        "aggs": {
+            side: {"terms": {"field": f"{side}.mac", "size": _MAC_LIMIT}}
+            for side in ("source", "destination")
+        },
+    }
+    aggs = checked(
+        client.search(index=NETWORK_INDEX, body=body), what, ("source", "destination")
+    )["aggregations"]
+    macs = {b["key"] for side in aggs.values() for b in side.get("buckets") or []}
+    return gateway_macs(client, filters, lan_filter, sorted(macs), what) or set()
+
+
+# OLD CODE: def direction_aggs(lan_filter: dict | None) -> dict: (review: + gateways, for a series)
+def direction_aggs(lan_filter: dict | None, gateways: set[str] | None = None) -> dict:
     """Sub-aggregations that split a bucket's bytes for split_direction().
 
     local: LAN to LAN, or to a multicast, broadcast or IPv6 local address. inbound: an IPv4
@@ -299,6 +335,10 @@ def direction_aggs(lan_filter: dict | None) -> dict:
     global IPv6 with both MACs, by MAC pair, so a gateway-to-device pair swaps too. The rest
     keeps the originator's direction: outbound traffic, and a capture where no side is on
     the LAN (inline bridge), which reads as before.
+
+    With `gateways` (pair_gateways), v6_inbound sums that gateway-to-device traffic in one
+    filter instead: v6_pairs' buckets multiply by every slot of a series, past
+    search.max_buckets (30 days of 5-minute slots with 3 IPv6 MACs is over 65,535).
     """
     lan = lan_cidrs(lan_filter)
     local = {
@@ -323,19 +363,34 @@ def direction_aggs(lan_filter: dict | None) -> dict:
             "must_not": [{"terms": {"source.ip": lan}}],
         }
     }
-    v6_global = {
-        "bool": {
-            "filter": [
-                {"terms": {"source.ip": GLOBAL_V6}},
-                {"terms": {"destination.ip": GLOBAL_V6}},
-                {"exists": {"field": "source.mac"}},
-                {"exists": {"field": "destination.mac"}},
-            ]
-        }
-    }
-    return {
+    # OLD CODE START — review: moved to _V6_GLOBAL, which pair_gateways shares
+    # v6_global = {
+    #     "bool": {
+    #         "filter": [
+    #             {"terms": {"source.ip": GLOBAL_V6}},
+    #             {"terms": {"destination.ip": GLOBAL_V6}},
+    #             {"exists": {"field": "source.mac"}},
+    #             {"exists": {"field": "destination.mac"}},
+    #         ]
+    #     }
+    # }
+    # OLD CODE END
+    v6_global = _V6_GLOBAL
+    sides = {
         "inbound": {"filter": inbound, "aggs": BYTE_SUMS},
         "local": {"filter": local, "aggs": BYTE_SUMS},
+    }
+    if gateways is not None:
+        routers = sorted(gateways)
+        from_router = {
+            "bool": {
+                "filter": [v6_global, {"terms": {"source.mac": routers}}],
+                "must_not": [{"terms": {"destination.mac": routers}}],
+            }
+        }
+        return {**sides, "v6_inbound": {"filter": from_router, "aggs": BYTE_SUMS}}
+    return {
+        **sides,
         "v6_pairs": {
             "filter": v6_global,
             "aggs": {
@@ -381,7 +436,10 @@ def split_direction(
     to orig + resp. With `gateways`, global IPv6 from a gateway's MAC to another MAC is inbound.
     """
     inb, loc = bucket.get("inbound") or {}, bucket.get("local") or {}
-    in_o, in_r = _value(inb.get("src")), _value(inb.get("dst"))
+    # OLD CODE: in_o, in_r = _value(inb.get("src")), _value(inb.get("dst"))
+    v6_in = bucket.get("v6_inbound") or {}  # direction_aggs(gateways=)
+    in_o = _value(inb.get("src")) + _value(v6_in.get("src"))
+    in_r = _value(inb.get("dst")) + _value(v6_in.get("dst"))
     for src in ((bucket.get("v6_pairs") or {}).get("src") or {}).get("buckets") or []:
         if src["key"] not in (gateways or ()):
             continue

@@ -572,6 +572,18 @@ class TestProtocolsUnidentified(AioHTTPTestCase):
         )
 
 
+def _no_v6_pairs(reply: dict):
+    """search() side effect: pair_gateways' window search finds no global IPv6, the rest get `reply`."""
+
+    def _search(index=None, body=None, **_kwargs):
+        if set((body or {}).get("aggs", {})) == {"source", "destination"}:
+            empty = {"buckets": []}
+            return {"aggregations": {"source": empty, "destination": empty}}
+        return reply
+
+    return _search
+
+
 class TestBandwidthHandler(AioHTTPTestCase):
     """Tests for GET /api/traffic/bandwidth."""
 
@@ -588,28 +600,31 @@ class TestBandwidthHandler(AioHTTPTestCase):
     @unittest_run_loop
     async def test_bandwidth_success(self):
         """Returns time-series bandwidth data."""
-        self.mock_client.search.return_value = {
-            "aggregations": {
-                "bandwidth_over_time": {
-                    "buckets": [
-                        {
-                            "key": 1740441600000,
-                            "key_as_string": "2026-02-25T00:00:00.000Z",
-                            "doc_count": 100,
-                            "orig_bytes": {"value": 50000},
-                            "resp_bytes": {"value": 80000},
-                        },
-                        {
-                            "key": 1740441900000,
-                            "key_as_string": "2026-02-25T00:05:00.000Z",
-                            "doc_count": 150,
-                            "orig_bytes": {"value": 60000},
-                            "resp_bytes": {"value": 90000},
-                        },
-                    ]
+        # OLD CODE: self.mock_client.search.return_value = {...} (review: the gateways' search comes first)
+        self.mock_client.search.side_effect = _no_v6_pairs(
+            {
+                "aggregations": {
+                    "bandwidth_over_time": {
+                        "buckets": [
+                            {
+                                "key": 1740441600000,
+                                "key_as_string": "2026-02-25T00:00:00.000Z",
+                                "doc_count": 100,
+                                "orig_bytes": {"value": 50000},
+                                "resp_bytes": {"value": 80000},
+                            },
+                            {
+                                "key": 1740441900000,
+                                "key_as_string": "2026-02-25T00:05:00.000Z",
+                                "doc_count": 150,
+                                "orig_bytes": {"value": 60000},
+                                "resp_bytes": {"value": 90000},
+                            },
+                        ]
+                    }
                 }
             }
-        }
+        )
 
         resp = await self.client.request("GET", "/api/traffic/bandwidth?interval=5m")
         self.assertEqual(resp.status, 200)
@@ -622,9 +637,10 @@ class TestBandwidthHandler(AioHTTPTestCase):
     @unittest_run_loop
     async def test_bandwidth_invalid_interval(self):
         """Invalid interval falls back to 5m."""
-        self.mock_client.search.return_value = {
-            "aggregations": {"bandwidth_over_time": {"buckets": []}}
-        }
+        # OLD CODE: self.mock_client.search.return_value = {...} (review: the gateways' search comes first)
+        self.mock_client.search.side_effect = _no_v6_pairs(
+            {"aggregations": {"bandwidth_over_time": {"buckets": []}}}
+        )
 
         resp = await self.client.request("GET", "/api/traffic/bandwidth?interval=99x")
         self.assertEqual(resp.status, 200)
@@ -920,10 +936,10 @@ class TestBandwidthFiltersMatch(AioHTTPTestCase):
 
     def setUp(self):
         self.storage, self.mock_client = _make_mock_storage()
-        self.mock_client.search.return_value = {
-            "hits": {"total": {"value": 0}, "hits": []},
-            "aggregations": {},
-        }
+        # OLD CODE: self.mock_client.search.return_value = {...} (review: the series' gateways' search)
+        self.mock_client.search.side_effect = _no_v6_pairs(
+            {"hits": {"total": {"value": 0}, "hits": []}, "aggregations": {}}
+        )
         super().setUp()
 
     async def get_application(self):
@@ -976,7 +992,8 @@ class TestBandwidthFiltersMatch(AioHTTPTestCase):
     async def test_protocol_counts_leave_out_what_the_connection_count_leaves_out(self):
         # Home's protocol total (516K) sat beside "Connections (24h)" (477K) on the G11
         summary = await self._api_body("/api/traffic/summary")
-        self.mock_client.search.return_value = _protocols_reply()
+        # OLD CODE: self.mock_client.search.return_value = _protocols_reply() (setUp's side_effect wins now)
+        self.mock_client.search.side_effect = _no_v6_pairs(_protocols_reply())
         protocols = await self._api_body("/api/traffic/protocols")
 
         self.assertEqual(

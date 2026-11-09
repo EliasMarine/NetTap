@@ -327,6 +327,43 @@ class TestNetworkDirection(AccountingCase):
             )
 
 
+def _bucket_aggs(aggs: dict) -> list[str]:
+    """Every multi-bucket aggregation kind under `aggs` (filters hold one bucket)."""
+    kinds = []
+    for spec in aggs.values():
+        kind = next(k for k in spec if k != "aggs")
+        if kind not in ("filter", "sum", "min", "max", "value_count", "cardinality"):
+            kinds.append(kind)
+        kinds += _bucket_aggs(spec.get("aggs", {}))
+    return kinds
+
+
+class TestSeriesBuckets(AccountingCase):
+    """Review: v6_pairs' terms by MAC pair in every slot of a series multiply into
+    search.max_buckets (30 days of 5-minute slots with 3 IPv6 MACs passes 65,535)."""
+
+    async def test_a_slot_holds_no_bucket_per_mac(self):
+        status, body = await self.get("/api/traffic/bandwidth?interval=1h")
+        self.assertEqual(status, 200, body)
+        series = next(
+            b for b in self.os.bodies if "bandwidth_over_time" in b.get("aggs", {})
+        )
+        slot_aggs = series["aggs"]["bandwidth_over_time"]["aggs"]
+        self.assertEqual(_bucket_aggs(slot_aggs), [])
+        # and the figures are still TestNetworkDirection's
+        self.assertEqual(
+            tuple(
+                sum(p[k] for p in body["series"])
+                for k in ("upload_bytes", "download_bytes", "local_bytes")
+            ),
+            (
+                TestNetworkDirection.UPLOAD,
+                TestNetworkDirection.DOWNLOAD,
+                TestNetworkDirection.LOCAL,
+            ),
+        )
+
+
 class TestMultiValuedMac(AccountingCase):
     """Review: a record with two source MACs put a MAC nobody owns among the IPv6 shares
     (KeyError, a 500 for the whole list)."""

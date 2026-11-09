@@ -28,6 +28,7 @@ from services.excluded_ips import (
 from services.device_accounting import (
     direction_aggs,
     gateways_if_needed,
+    pair_gateways,
     split_direction,
 )
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
@@ -730,23 +731,36 @@ def handle_bandwidth(request: web.Request) -> web.Response:
                     "orig_bytes": {"sum": {"field": "source.bytes", "missing": 0}},
                     "resp_bytes": {"sum": {"field": "destination.bytes", "missing": 0}},
                     # NET-226 (B-d): upload/download from the LAN's side, local apart
-                    **direction_aggs(request.app.get("lan_filter")),
+                    # OLD CODE: **direction_aggs(request.app.get("lan_filter")), (review: added below, once the gateways are known)
                 },
             }
         },
     }
 
+    lan_filter = request.app.get("lan_filter")
     try:
-        result = client.search(index=NETWORK_INDEX, body=query)
+        # OLD CODE START — review: v6_pairs' terms by MAC pair in every slot could pass
+        # search.max_buckets; the gateways come first now, and a slot sums one filter
+        # result = client.search(index=NETWORK_INDEX, body=query)
+        # buckets = histogram_buckets(
+        #     result.get("aggregations", {}).get("bandwidth_over_time")
+        # )
+        # gateways = gateways_if_needed(
+        #     client,
+        #     buckets,
+        #     query["query"]["bool"]["filter"],
+        #     request.app.get("lan_filter"),
+        #     "traffic bandwidth",
+        # )
+        # OLD CODE END
+        filters = query["query"]["bool"]["filter"]
+        gateways = pair_gateways(client, filters, lan_filter, "traffic bandwidth")
+        slot = query["aggs"]["bandwidth_over_time"]
+        slot_aggs = {**slot["aggs"], **direction_aggs(lan_filter, gateways)}
+        body = {**query, "aggs": {"bandwidth_over_time": {**slot, "aggs": slot_aggs}}}
+        result = client.search(index=NETWORK_INDEX, body=body)
         buckets = histogram_buckets(
             result.get("aggregations", {}).get("bandwidth_over_time")
-        )
-        gateways = gateways_if_needed(
-            client,
-            buckets,
-            query["query"]["bool"]["filter"],
-            request.app.get("lan_filter"),
-            "traffic bandwidth",
         )
     except QueryFailed as exc:
         logger.error("Incomplete search in traffic/bandwidth: %s", exc)
