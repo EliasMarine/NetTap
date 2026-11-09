@@ -240,7 +240,7 @@ async def handle_put_excluded_ips(request: web.Request) -> web.Response:
     """PUT /api/settings/excluded-ips
 
     Replace the excluded IP list. Accepts JSON body:
-    { "excluded_ips": ["99.10.70.92", "192.168.1.1"] }
+    { "excluded_ips": ["203.0.113.10", "192.168.1.1"] }
     """
     try:
         body = await request.json()

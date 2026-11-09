@@ -1422,7 +1422,7 @@
 								id="excluded-ip-new"
 								type="text"
 								bind:value={newExcludedIp}
-								placeholder="e.g. 99.10.70.92"
+								placeholder="e.g. 203.0.113.10"
 								onkeydown={(e) => {
 									if (e.key === 'Enter') addExcludedIp();
 								}}

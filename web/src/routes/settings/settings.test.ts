@@ -404,13 +404,15 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 	});
 
 	it('Network: shows the saved list when it loads', async () => {
-		stubFetch({ '/api/settings/excluded-ips': () => ({ body: { excluded_ips: ['99.10.70.92'] } }) });
+		stubFetch({ '/api/settings/excluded-ips': () => ({ body: { excluded_ips: ['203.0.113.10'] } }) });
 		render(Page);
 		await flush();
 		await fireEvent.click(screen.getByRole('tab', { name: 'Network' }));
 
-		expect(screen.getByText('99.10.70.92')).toBeInTheDocument();
+		expect(screen.getByText('203.0.113.10')).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Save excluded IPs' })).toBeEnabled();
+		// F7: the placeholder is a documentation address (RFC 5737), not a real network's WAN IP
+		expect(screen.getByLabelText('IP address to exclude')).toHaveAttribute('placeholder', 'e.g. 203.0.113.10');
 	});
 });
 
