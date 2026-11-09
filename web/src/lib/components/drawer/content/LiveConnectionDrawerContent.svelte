@@ -176,7 +176,9 @@
 		<KVRow label="Bytes" value={formatBytes(connection.bytes)} mono />
 		<KVRow label="Duration" value={formatDuration(connection.duration)} mono />
 		<KVRow label="Device" value={connection.device_name || '--'} />
-		<KVRow label="Timestamp" value={formatTimestamp(connection.timestamp)} mono />
+		<!-- OLD CODE: <KVRow label="Timestamp" value={formatTimestamp(connection.timestamp)} mono /> (NET-237: the feed goes by the end) -->
+		<KVRow label="Started" value={formatTimestamp(connection.timestamp)} mono />
+		<KVRow label="Ended" value={connection.ended_at ? formatTimestamp(connection.ended_at) : '--'} mono />
 	</DrawerSection>
 
 	<DrawerSection title="GeoIP information">

@@ -16,7 +16,9 @@ const ARCS: GeoArc[] = [
 
 function conn(i: number, arc: GeoArc, dest: string, hasAlert: boolean): LiveConnection {
 	return {
-		timestamp: iso(i * 4_000),
+		timestamp: iso(i * 4_000 + 1_500 + i * 1_000),
+		// NET-237: the feed shows and sorts by the end; the start is duration earlier
+		ended_at: iso(i * 4_000),
 		source_ip: `192.168.1.${20 + (i % 4)}`,
 		source_port: 50_000 + i,
 		dest_ip: dest,

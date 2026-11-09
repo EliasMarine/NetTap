@@ -125,7 +125,8 @@
 	let hotspots = $derived<Hotspot[]>(arcs.map((a) => ({ country: a.country || a.country_code, code: a.country_code, lat: a.lat, lng: a.lon, count: a.count })));
 	let feed = $derived(rows.filter((r) => r.direction !== 'local').slice(0, FEED));
 
-	let sub = $derived(home ? 'Packets between your network and each destination · last 5 minutes' : 'Connections by destination · last 5 minutes');
+	// OLD CODE: let sub = $derived(home ? 'Packets between your network and each destination · last 5 minutes' : 'Connections by destination · last 5 minutes'); (NET-237)
+	let sub = $derived(home ? 'Packets between your network and each destination · connections that ended in the last 5 minutes' : 'Connections by destination · ended in the last 5 minutes');
 	let ariaLabel = $derived(
 		dests.length
 			? `Connections from your network to ${dests.length} countries, most to ${dests[0].name}. Choose a country in the list to filter the feed.`
@@ -220,16 +221,19 @@
 		<div class="globe-body">
 			{#if expanded}
 				<section class="globe-feed" aria-label="Newest connections">
-					<span class="eyebrow">Newest connections</span>
+					<!-- OLD CODE: <span class="eyebrow">Newest connections</span> (NET-237: listed by when they ended) -->
+					<span class="eyebrow">Newest connections · by end time</span>
 					<ul class="feed-rows">
 						{#each feed as r (r.key)}
 							<li class="feed-row">
-								<span class="mono">{formatTime(r.timestamp, 'clock')}</span>
+								<!-- OLD CODE: <span class="mono">{formatTime(r.timestamp, 'clock')}</span> (NET-237: the start of a connection that just ended) -->
+								<span class="mono" title="Ended">{r.ended_at ? formatTime(r.ended_at, 'clock') : '—'}</span>
 								<span class="feed-what"><b>{r.device_name || (r.direction === 'in' ? r.dest_ip : r.source_ip)}</b><span>{where(r)}</span></span>
 								<span class="feed-v">{formatBytes(r.bytes)}{#if r.has_alert}<span class="feed-alert">Alert</span>{/if}</span>
 							</li>
 						{:else}
-							<li class="dim">No connections to or from the internet right now.</li>
+							<!-- OLD CODE: <li class="dim">No connections to or from the internet right now.</li> (NET-237) -->
+							<li class="dim">No connections to or from the internet ended in the last 5 minutes.</li>
 						{/each}
 					</ul>
 				</section>

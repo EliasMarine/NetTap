@@ -920,5 +920,49 @@ class TestDetailGeoEnd(unittest.TestCase):
         self.assertEqual(body["geo"]["organization"], "Org " + B_IP)
 
 
+# --------------------------------------------------------------------------- NET-237
+
+
+class TestLiveWindowByEnd(unittest.TestCase):
+    """TRF-1: a conn record's @timestamp is its start, so the window and feed go by its end."""
+
+    WINDOW = {"range": {"event.end": {"gte": "now-5m", "lte": "now"}}}
+
+    def test_dashboard_selects_and_sorts_by_end_and_alerts_keep_their_time(self):
+        _, bodies = TestLiveDashboardQueries()._run_dashboard()
+        conn, alerts = bodies
+        self.assertIn(self.WINDOW, conn["query"]["bool"]["filter"])
+        self.assertNotIn(
+            {"range": {"@timestamp": {"gte": "now-5m", "lte": "now"}}},
+            conn["query"]["bool"]["filter"],
+        )
+        self.assertEqual(conn["sort"], [{"event.end": {"order": "desc"}}])
+        self.assertIn(
+            {"range": {"@timestamp": {"gte": "now-5m", "lte": "now"}}},
+            alerts["query"]["bool"]["filter"],
+        )
+
+    def test_connections_endpoint_selects_and_sorts_by_end(self):
+        client = MagicMock()
+        client.search.return_value = {"hits": {"hits": []}}
+        LiveConnectionTracker(client=client).fetch_from_opensearch()
+        body = client.search.call_args.kwargs["body"]
+        self.assertIn(self.WINDOW, body["query"]["bool"]["filter"])
+        self.assertEqual(body["sort"], [{"event.end": {"order": "desc"}}])
+
+    def test_rows_carry_their_end_time(self):
+        fmt = LiveConnectionTracker()._format_connection
+        hit = _hit(_end(LAN_IP), _end(A_IP))
+        self.assertEqual(
+            fmt({**hit, "event": {"end": "1794234940052"}})["ended_at"],
+            "2026-11-09T14:35:40.052000Z",
+        )
+        self.assertEqual(
+            fmt({**hit, "lastPacket": 1794234940052})["ended_at"],
+            "2026-11-09T14:35:40.052000Z",
+        )
+        self.assertEqual(fmt(hit)["ended_at"], "")
+
+
 if __name__ == "__main__":
     unittest.main()

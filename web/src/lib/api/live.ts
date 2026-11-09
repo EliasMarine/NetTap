@@ -33,6 +33,11 @@ export interface LiveConnection {
 	has_alert: boolean;
 	/** From the daemon's LAN subnets (O2); absent from /api/live/connections and older daemons. */
 	direction?: ConnectionDirection;
+	/**
+	 * NET-237 (TRF-1): when the connection ended, ISO UTC ('' if unknown). Zeek logs a connection when
+	 * it closes, so the live window and feed go by this; `timestamp` is its start. Absent from older daemons.
+	 */
+	ended_at?: string;
 }
 
 /** Where a connection runs relative to the LAN: the daemon decides, never the port. */

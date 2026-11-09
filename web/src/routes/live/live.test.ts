@@ -98,3 +98,13 @@ describe('Live Monitor — category links', () => {
 		expect(screen.getByText('Other field').closest('a')).toBeNull();
 	});
 });
+
+// NET-237 (TRF-1): the feed goes by when a connection ended; the drawer shows both times
+describe('Live Monitor — drawer times', () => {
+	it('shows when the connection started and when it ended', () => {
+		const connection = { source_ip: '192.168.1.20', dest_ip: '203.0.113.9', dest_port: 443, protocol: 'tcp', timestamp: '2026-11-03T09:15:00Z', ended_at: '2026-11-03T10:04:30Z' };
+		render(LiveConnectionDrawerContent, { connection: connection as never, detail: null, detailLoading: false, detailFailed: false, activeTab: 'details' });
+		expect(screen.getByText('Started')).toBeInTheDocument();
+		expect(screen.getByText('Ended')).toBeInTheDocument();
+	});
+});

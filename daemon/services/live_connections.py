@@ -41,6 +41,11 @@ MAX_CONNECTIONS = 10_000
 # Rate calculation window in seconds
 RATE_WINDOW_SECONDS = 60
 
+# NET-237 (TRF-1): Zeek writes a conn record when the connection ends, stamped with its start, so
+# the live window selects records by their end; a long stream appears once it closes
+LIVE_WINDOW_FILTER: dict = {"range": {"event.end": {"gte": "now-5m", "lte": "now"}}}
+LIVE_SORT: list[dict] = [{"event.end": {"order": "desc"}}]
+
 
 def _flatten(value: Any) -> str:
     """Flatten OpenSearch multi-valued fields (arrays) to a single string."""
@@ -58,6 +63,18 @@ def _epoch_ms(value: Any) -> float | None:
         return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp() * 1000
     except ValueError:
         return None
+
+
+def _iso_utc(value: Any) -> str:
+    """An ISO-8601 UTC time from Malcolm's epoch-ms text, a number or an ISO date; "" if none."""
+    ms = _epoch_ms(value) if value not in (None, "") else None
+    if ms is None:
+        return ""
+    return (
+        datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _duration_seconds(source: dict[str, Any], event: dict[str, Any]) -> float:
@@ -275,17 +292,21 @@ class LiveConnectionTracker:
             CONN_ACCOUNTING,
         ]
 
-        # Time filter: last 5 minutes for "active" connections
-        filters.append(
-            {
-                "range": {
-                    "@timestamp": {
-                        "gte": "now-5m",
-                        "lte": "now",
-                    }
-                }
-            }
-        )
+        # OLD CODE START — NET-237 (TRF-1): a record's @timestamp is its start, so a long
+        # connection never entered the window, even after it ended
+        # # Time filter: last 5 minutes for "active" connections
+        # filters.append(
+        #     {
+        #         "range": {
+        #             "@timestamp": {
+        #                 "gte": "now-5m",
+        #                 "lte": "now",
+        #             }
+        #         }
+        #     }
+        # )
+        # OLD CODE END
+        filters.append(LIVE_WINDOW_FILTER)
 
         if device:
             filters.append(
@@ -315,7 +336,8 @@ class LiveConnectionTracker:
         query = {
             "size": min(limit, 500),
             "query": {"bool": {"filter": filters}},
-            "sort": [{"@timestamp": {"order": "desc"}}],
+            # OLD CODE: "sort": [{"@timestamp": {"order": "desc"}}], (NET-237: newest-ended first)
+            "sort": LIVE_SORT,
         }
 
         # OLD CODE START — #96: a failure served the in-memory cache (old, or empty) as live
@@ -461,6 +483,8 @@ class LiveConnectionTracker:
             "dest_org": org_name,
             "geo_ip": geo_ip,
             "has_alert": False,
+            # NET-237: the live window is by end, so the feed shows and sorts by it
+            "ended_at": _iso_utc(event.get("end") or source.get("lastPacket")),
         }
 
     # ------------------------------------------------------------------
@@ -540,7 +564,8 @@ class LiveConnectionTracker:
         # --- Build filters for the Zeek connections query ---
         conn_filters: list[dict] = [
             *self._ZEEK_CONN_FILTERS,
-            {"range": {"@timestamp": {"gte": "now-5m", "lte": "now"}}},
+            # OLD CODE: {"range": {"@timestamp": {"gte": "now-5m", "lte": "now"}}}, (NET-237)
+            LIVE_WINDOW_FILTER,
         ]
 
         if device:
@@ -582,7 +607,8 @@ class LiveConnectionTracker:
             "size": min(limit, 500),
             "track_total_hits": True,
             "query": {"bool": bool_clause},
-            "sort": [{"@timestamp": {"order": "desc"}}],
+            # OLD CODE: "sort": [{"@timestamp": {"order": "desc"}}], (NET-237: newest-ended first)
+            "sort": LIVE_SORT,
             "aggs": {
                 "protocols": {
                     "terms": {"field": "network.transport", "size": 10},

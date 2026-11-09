@@ -539,7 +539,8 @@
 
 	// The columns, labels and sort values of LiveConnectionTable
 	const COLUMNS: Column<FeedRow>[] = [
-		{ key: 'timestamp', label: 'Time', cell: timeCell },
+		// OLD CODE: { key: 'timestamp', label: 'Time', cell: timeCell }, (NET-237: a long connection that just ended sorted by its start)
+		{ key: 'ended_at', label: 'Ended', cell: timeCell },
 		{ key: 'source_ip', label: 'Source', cell: sourceCell },
 		// OLD CODE START: { key: 'direction', label: 'Dir', sortValue: getDirection, cell: directionCell }, (O2) OLD CODE END
 		{ key: 'direction', label: 'Dir', sortValue: directionLabel, cell: directionCell },
@@ -588,7 +589,8 @@
 	<title>Live Monitor | NetTap</title>
 </svelte:head>
 
-{#snippet timeCell(c: FeedRow)}<span class={['mono', newKeys.has(c.key) && 'row-new']}>{clockTime(c.timestamp)}</span>{/snippet}
+<!-- OLD CODE: {#snippet timeCell(c: FeedRow)}<span class={['mono', newKeys.has(c.key) && 'row-new']}>{clockTime(c.timestamp)}</span>{/snippet} (NET-237: the window goes by the end) -->
+{#snippet timeCell(c: FeedRow)}<span class={['mono', newKeys.has(c.key) && 'row-new']}>{c.ended_at ? clockTime(c.ended_at) : '—'}</span>{/snippet}
 
 {#snippet sourceCell(c: FeedRow)}
 	<span class="who">
@@ -659,7 +661,8 @@
 <!-- OLD CODE: <div class="grid"> (the side cards stack beside the feed) -->
 <div class="grid live-grid">
 	<!-- OLD CODE START: sub="Connections, throughput and devices · last 5 minutes" (O8) OLD CODE END -->
-	<Card class="c-12" title="Right now" sub="Connections, throughput and LAN addresses · last 5 minutes">
+	<!-- OLD CODE START: sub="Connections, throughput and LAN addresses · last 5 minutes" (NET-237, TRF-1: records exist only once a connection ends) OLD CODE END -->
+	<Card class="c-12" title="Right now" sub="Bandwidth is live · the rest counts connections that ended in the last 5 minutes">
 		{#if dashboard}
 			<StatStrip stats={liveStats} />
 		{:else if error}
@@ -667,6 +670,9 @@
 		{:else}
 			<CardState state="loading" title="Loading live data" />
 		{/if}
+		{#snippet foot()}
+			<span class="dim">Zeek logs a connection when it closes, so a stream that is still open shows up here once it ends.</span>
+		{/snippet}
 	</Card>
 
 	<!-- OLD CODE START — the c-8 DotMap card, replaced by the full-width globe (its flat map is DotMap)
@@ -704,7 +710,8 @@
 	/>
 
 	<!-- OLD CODE START: sub="Bytes and connections per device · last 5 minutes" (O11: LAN sources only; O7: filtered from the daemon) OLD CODE END -->
-	<Card class="c-4 live-side" title="Top talkers" sub="Bytes and connections per LAN address · last 5 minutes{hasActiveFilter ? ', filtered' : ''}">
+	<!-- OLD CODE START: sub="Bytes and connections per LAN address · last 5 minutes…" (NET-237) OLD CODE END -->
+	<Card class="c-4 live-side" title="Top talkers" sub="Bytes and connections per LAN address · ended in the last 5 minutes{hasActiveFilter ? ', filtered' : ''}">
 		{#if talkerItems.length > 0}
 			<DeviceList items={talkerItems} mode="select" selectedKey={deviceFilter ?? undefined} onselect={(item) => setDeviceFilter(item.key)} />
 		{:else if hasActiveFilter && filteredFailed}
@@ -720,7 +727,8 @@
 		{/if}
 	</Card>
 
-	<Card class="c-4 live-side" col title="Protocols" sub="Share of connections · last 5 minutes{hasActiveFilter ? ', filtered' : ''}">
+	<!-- OLD CODE START: sub="Share of connections · last 5 minutes…" (NET-237) OLD CODE END -->
+	<Card class="c-4 live-side" col title="Protocols" sub="Share of connections · ended in the last 5 minutes{hasActiveFilter ? ', filtered' : ''}">
 		{#if protocolItems.some((p) => p.value > 0)}
 			<Donut
 				items={protocolItems}
@@ -772,13 +780,14 @@
 				rows={filteredConnections}
 				ariaLabel="Live connections"
 				rowKey={(c) => c.key}
-				initialSort={{ key: 'timestamp', dir: 'desc' }}
+				initialSort={{ key: 'ended_at', dir: 'desc' }}
 				onrowactivate={openDrawer}
 				{rowLabel}
 				selectedKey={drawerConn?.key}
 			>
 				{#snippet empty()}
-					<CardState state="empty" title={hasActiveFilter ? 'No connections match these filters' : 'No connections right now'} message={hasActiveFilter ? 'Remove a filter to see more of the feed.' : 'New connections appear here within a few seconds.'} />
+					<!-- OLD CODE START: title 'No connections right now', message 'New connections appear here within a few seconds.' (NET-237: they appear once they close) OLD CODE END -->
+					<CardState state="empty" title={hasActiveFilter ? 'No connections match these filters' : 'No connections in the last 5 minutes'} message={hasActiveFilter ? 'Remove a filter to see more of the feed.' : 'Connections appear here a few seconds after they close.'} />
 				{/snippet}
 			</DataTable>
 		{:else if error}
