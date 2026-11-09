@@ -48,3 +48,16 @@ The daemon owns the config and the sending; the web relays.
 
 - Deploy to the G11: rebuild and recreate `nettap-storage-daemon` and `nettap-web`. The owner then turns email on in Settings › Notifications (the SMTP server is already in API keys).
 - Refresh the visual baselines for `/settings` and `/settings/notifications`.
+
+## Follow-up: the P2 leftovers (logged on NET-237)
+
+The backup restore item (a restored `notifications.json` only reaches the daemon after a restart, and is written 644) went to the backup-storage agent, who is rewriting `config_backup.py`. Codex's notes for it: an empty section must clear what is there, and a malformed channel must be refused as a whole, because the dispatcher's `ch["id"]` and the hub's `channel["type"]` would raise on one.
+
+- **SMTP deadline (`daemon/services/notification_hub.py`).** It started after the greeting and stopped before QUIT, so a server trickling either one could hold the worker thread. The connection now opens inside the 30 s window, and the QUIT exchange runs inside it too. smtplib only sets `_host` (the name both TLS modes check the certificate against) when the constructor connects, so it is set by hand. A greeting other than 220 is refused, as the constructor does. Tests run the real smtplib classes against a local server.
+- **In-app store (`web/src/lib/server/notifications.ts`).** It wrote to `/var/lib/nettap` on a read-only container, so the bell's history lived only in memory. It now writes to `/var/lib/nettap-web`, the `web-data` volume the image's `nettap` user owns.
+- **The bell's alert pass (`web/src/routes/api/notifications/from-alerts/+server.ts`).** A daemon failure read as "0 created". It now answers 502 with the reason. Because the store now survives restarts, a category's top signature notifies once a day instead of on every page load (the bell calls this on each load, over the last 24 h).
+- **Installer (`scripts/install/malcolm-config.sh`).** Compose reads only `docker/.env`, and nothing copied the notification names there. They reached the daemon only while the installer ran, and a later `docker compose up` dropped them. `generate_compose_env` now copies the non-empty ones into `docker/.env`, for new and existing files, single-quoted so `$` and `#` stay as written. A value with a quote or line break is skipped with a warning that names the key, never the value.
+
+Tests: each new test fails on the old code (SMTP 2, web 3, bats 3). Without the `_host` line the TLS test fails in both modes. Daemon 4340 passed, 4 skipped. Web 4338 passed, svelte-check 0 errors. `test_malcolm_config.bats` 45/45.
+
+Lesson: `vi.mock('fs')` with `...actual` left the module's default import on the real fs. `notifications.test.ts` had been writing to the real disk, and silently failing, the whole time.
