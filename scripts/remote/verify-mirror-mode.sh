@@ -60,8 +60,10 @@ echo ""
 echo "→ Step 3: Capture mode..."
 TOKEN=$(sudo docker exec "$DAEMON" cat /run/nettap-auth/daemon-token 2>/dev/null || echo "")
 [ -n "$TOKEN" ] || warn "Could not read the daemon API token — API check below will fail"
-MODE_JSON=$(sudo docker exec "$DAEMON" curl -s --max-time 20 \
-    -H "X-NetTap-Daemon-Token: $TOKEN" http://localhost:8880/api/capture/mode 2>/dev/null || echo "")
+# OLD CODE (NET-237: the token was on the command line, visible in ps):
+# MODE_JSON=$(sudo docker exec "$DAEMON" curl -s --max-time 20 -H "X-NetTap-Daemon-Token: $TOKEN" ... || echo "")
+MODE_JSON=$(printf 'X-NetTap-Daemon-Token: %s\n' "$TOKEN" | sudo docker exec -i "$DAEMON" curl -s --max-time 20 \
+    -H @- http://localhost:8880/api/capture/mode 2>/dev/null || echo "")
 echo "   /api/capture/mode: ${MODE_JSON:-<no response>}"
 case "$MODE_JSON" in
     *'"mode": "mirror"'* | *'"mode":"mirror"'*) ok "Daemon is in mirror mode" ;;

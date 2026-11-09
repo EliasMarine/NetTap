@@ -225,8 +225,10 @@ echo "→ Step 15: Wizard bridge check is read-only (CR-004)..."
 MGMT_NIC=$(ip -4 route show default 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") print $(i + 1)}' | head -1)
 BR_BEFORE=$(ip -br link show type bridge 2>/dev/null | awk '{print $1}' | sort | tr '\n' ' ')
 if [ -n "$MGMT_NIC" ]; then
-    RESP=$(sudo docker exec "$DAEMON" curl -s --max-time 20 -o - -w ' HTTP %{http_code}' \
-        -H "X-NetTap-Daemon-Token: $TOKEN" -H 'Content-Type: application/json' \
+    # OLD CODE (NET-237: the token was on the command line, visible in ps):
+    # RESP=$(sudo docker exec "$DAEMON" curl ... -H "X-NetTap-Daemon-Token: $TOKEN" -H 'Content-Type: application/json' ...
+    RESP=$(printf 'X-NetTap-Daemon-Token: %s\n' "$TOKEN" | sudo docker exec -i "$DAEMON" curl -s --max-time 20 -o - -w ' HTTP %{http_code}' \
+        -H @- -H 'Content-Type: application/json' \
         -d "{\"wan_interface\":\"$MGMT_NIC\",\"lan_interface\":\"nettapnone0\"}" \
         http://localhost:8880/api/setup/bridge/preview 2>/dev/null || echo "")
     echo "   preview with the management NIC ($MGMT_NIC): ${RESP:-<no response>}"

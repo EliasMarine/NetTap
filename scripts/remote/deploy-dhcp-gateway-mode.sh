@@ -69,8 +69,10 @@ echo ""
 
 # GET a daemon endpoint from inside the daemon container.
 api() {
-    sudo docker exec "$DAEMON" curl -s --max-time 20 \
-        -H "X-NetTap-Daemon-Token: $TOKEN" "http://localhost:8880$1" || echo ""
+    # OLD CODE (NET-237: the token was on the command line, visible in ps):
+    # sudo docker exec "$DAEMON" curl -s --max-time 20 -H "X-NetTap-Daemon-Token: $TOKEN" "http://localhost:8880$1" || echo ""
+    printf 'X-NetTap-Daemon-Token: %s\n' "$TOKEN" | sudo docker exec -i "$DAEMON" curl -s --max-time 20 \
+        -H @- "http://localhost:8880$1" || echo ""
 }
 
 # Run a python3 snippet inside the daemon container on JSON from stdin.
