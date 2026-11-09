@@ -10,11 +10,40 @@ from services.investigation import _generate_recommendation, generate_threat_rep
 class TestGenerateRecommendation:
     """Tests for _generate_recommendation."""
 
-    def test_generate_recommendation_critical(self):
-        """severity 1 includes 'Isolate'."""
-        alert = {"severity": 1, "category": "exploit"}
+    # OLD CODE START — NET-228 (audit B-j): "IMMEDIATE: Isolate the source host" is gone
+    # def test_generate_recommendation_critical(self):
+    #     """severity 1 includes 'Isolate'."""
+    #     alert = {"severity": 1, "category": "exploit"}
+    #     result = _generate_recommendation(alert)
+    #     assert "Isolate" in result
+    # OLD CODE END
+
+    def test_critical_says_check_first_and_a_match_is_not_proof(self):
+        result = _generate_recommendation({"severity": 1, "category": "exploit"})
+        assert result.startswith("Check this first: a critical-severity rule matched.")
+        assert "not proof of compromise" in result
+        assert "isolat" not in result.lower()
+        assert "IMMEDIATE" not in result
+
+    def test_names_the_lan_devices_without_saying_who_opened_it(self):
+        """A LAN server answering an internet scanner is not "the source host" to isolate."""
+        alert = {
+            "severity": 2,
+            "category": "exploit",
+            "source_ip": "198.51.100.7",
+            "findings": [
+                {"device": "192.0.2.24", "own": False},
+                {"device": "192.0.2.10", "own": True},
+            ],
+        }
         result = _generate_recommendation(alert)
-        assert "Isolate" in result
+        assert "These matches involve 192.0.2.10, 192.0.2.24: start there." in result
+        assert "198.51.100.7" not in result
+        assert "source" not in result.lower()
+
+    def test_no_findings_names_no_device(self):
+        result = _generate_recommendation({"severity": 2, "category": "exploit"})
+        assert result == "Check this soon: a high-severity rule matched."
 
     def test_generate_recommendation_malware(self):
         """malware category mentions 'malware'."""

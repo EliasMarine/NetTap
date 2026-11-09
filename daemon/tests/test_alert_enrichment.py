@@ -26,83 +26,86 @@ from services.alert_enrichment import (
 
 
 class TestGenerateDescription(unittest.TestCase):
-    """Tests for generate_description()."""
+    """Tests for generate_description(): what matched, never a finding (NET-228, audit B-j).
+
+    The old "… detected:" prefixes are kept in alert_enrichment's OLD CODE block.
+    """
 
     def test_et_malware_prefix(self):
         """ET MALWARE prefix generates malware description."""
         result = generate_description("ET MALWARE Win32/Emotet Activity")
-        self.assertTrue(result.startswith("Potential malware activity detected:"))
+        self.assertTrue(result.startswith("Malware rule matched:"))
         self.assertIn("Win32/Emotet Activity", result)
 
     def test_et_scan_prefix(self):
         """ET SCAN prefix generates scanning description."""
         result = generate_description("ET SCAN Nmap SYN Scan")
-        self.assertTrue(result.startswith("Network scanning activity detected:"))
+        self.assertTrue(result.startswith("Scanning rule matched:"))
         self.assertIn("Nmap SYN Scan", result)
 
     def test_et_trojan_prefix(self):
         """ET TROJAN prefix generates trojan description."""
         result = generate_description("ET TROJAN Zeus GameOver Activity")
-        self.assertTrue(result.startswith("Trojan horse communication detected:"))
+        self.assertTrue(result.startswith("Trojan rule matched:"))
         self.assertIn("Zeus GameOver Activity", result)
 
     def test_et_exploit_prefix(self):
         """ET EXPLOIT prefix generates exploit description."""
         result = generate_description("ET EXPLOIT Apache Log4j RCE Attempt")
-        self.assertTrue(result.startswith("Exploit attempt detected:"))
+        self.assertTrue(result.startswith("Exploit rule matched:"))
         self.assertIn("Apache Log4j RCE Attempt", result)
 
     def test_et_policy_prefix(self):
         """ET POLICY prefix generates policy description."""
         result = generate_description("ET POLICY curl User-Agent Outbound")
-        self.assertTrue(result.startswith("Network policy violation:"))
+        self.assertTrue(result.startswith("Policy rule matched:"))
         self.assertIn("curl User-Agent Outbound", result)
 
     def test_et_info_prefix(self):
         """ET INFO prefix generates informational description."""
         result = generate_description("ET INFO Observed DNS Query to .onion TLD")
-        self.assertTrue(result.startswith("Informational network event:"))
+        self.assertTrue(result.startswith("Informational rule matched:"))
         self.assertIn("Observed DNS Query to .onion TLD", result)
 
     def test_et_dns_prefix(self):
         """ET DNS prefix generates DNS description."""
         result = generate_description("ET DNS Query for Suspicious Domain")
-        self.assertTrue(result.startswith("Suspicious DNS activity:"))
+        self.assertTrue(result.startswith("DNS rule matched:"))
         self.assertIn("Query for Suspicious Domain", result)
 
     def test_et_web_server_prefix(self):
         """ET WEB_SERVER prefix generates web server attack description."""
         result = generate_description("ET WEB_SERVER SQL Injection Attack")
-        self.assertTrue(result.startswith("Web server attack detected:"))
+        self.assertTrue(result.startswith("Web server attack rule matched:"))
         self.assertIn("SQL Injection Attack", result)
 
     def test_et_web_client_prefix(self):
         """ET WEB_CLIENT prefix generates web client description."""
         result = generate_description("ET WEB_CLIENT Suspicious PDF Download")
-        self.assertTrue(result.startswith("Web client vulnerability activity:"))
+        self.assertTrue(result.startswith("Web client rule matched:"))
         self.assertIn("Suspicious PDF Download", result)
 
     def test_gpl_prefix(self):
         """GPL prefix generates known threat description."""
         result = generate_description("GPL ATTACK_RESPONSE id check returned root")
-        self.assertTrue(result.startswith("Known threat signature matched:"))
+        self.assertTrue(result.startswith("Legacy GPL rule matched:"))
         self.assertIn("ATTACK_RESPONSE id check returned root", result)
 
     def test_unknown_signature(self):
         """Unknown signature prefix generates generic description."""
         result = generate_description("CUSTOM RULE Something Unusual")
-        self.assertTrue(result.startswith("Network security event detected:"))
+        self.assertTrue(result.startswith("Rule matched:"))
         self.assertIn("CUSTOM RULE Something Unusual", result)
 
     def test_empty_signature(self):
         """Empty signature returns generic message."""
         result = generate_description("")
-        self.assertEqual(result, "Network security event detected.")
+        self.assertEqual(result, "A rule matched.")
 
     def test_case_insensitive_prefix_matching(self):
         """Prefix matching is case-insensitive."""
         result = generate_description("et malware Some Lowercase Signature")
-        self.assertTrue(result.startswith("Potential malware activity detected:"))
+        self.assertTrue(result.startswith("Malware rule matched:"))
 
 
 class TestGetRecommendation(unittest.TestCase):
@@ -112,7 +115,9 @@ class TestGetRecommendation(unittest.TestCase):
         """Malware category returns appropriate recommendation."""
         result = get_recommendation("malware")
         self.assertIn("malware", result.lower())
-        self.assertIn("isolat", result.lower())
+        # OLD CODE: self.assertIn("isolat", result.lower()) (NET-228: check first, not isolate)
+        self.assertIn("not proof", result.lower())
+        self.assertNotIn("isolat", result.lower())
 
     def test_scan_recommendation(self):
         """Scan category returns appropriate recommendation."""
@@ -151,12 +156,16 @@ class TestGetRiskContext(unittest.TestCase):
     def test_high_severity_malware(self):
         """High severity malware returns critical context."""
         result = get_risk_context(1, "malware")
-        self.assertIn("critical", result.lower())
+        # OLD CODE: self.assertIn("critical", …) (NET-228: says what a match can't show)
+        self.assertIn("high priority", result.lower())
+        self.assertIn("does not show an infection", result.lower())
 
     def test_medium_severity_malware(self):
         """Medium severity malware returns moderate context."""
         result = get_risk_context(2, "malware")
-        self.assertIn("moderate", result.lower())
+        # OLD CODE: self.assertIn("moderate", …) (NET-228)
+        self.assertIn("medium priority", result.lower())
+        self.assertIn("false match", result.lower())
 
     def test_low_severity_malware(self):
         """Low severity malware returns low-severity context."""
@@ -166,12 +175,14 @@ class TestGetRiskContext(unittest.TestCase):
     def test_high_severity_scan(self):
         """High severity scan returns aggressive context."""
         result = get_risk_context(1, "scan")
-        self.assertIn("aggressive", result.lower())
+        # OLD CODE: self.assertIn("aggressive", …) (NET-228)
+        self.assertIn("background noise", result.lower())
 
     def test_unknown_category_high_severity(self):
         """Unknown category with high severity returns default high context."""
         result = get_risk_context(1, "nonexistent")
-        self.assertIn("high-severity", result.lower())
+        # OLD CODE: self.assertIn("high-severity", …) (NET-228)
+        self.assertIn("not proof of harm", result.lower())
 
     def test_unknown_category_low_severity(self):
         """Unknown category with low severity returns default low context."""
@@ -186,7 +197,8 @@ class TestGetRiskContext(unittest.TestCase):
     def test_exploit_high_severity(self):
         """High severity exploit returns critical context."""
         result = get_risk_context(1, "exploit")
-        self.assertIn("critical", result.lower())
+        # OLD CODE: self.assertIn("critical", …) (NET-228)
+        self.assertIn("check the target is patched", result.lower())
 
 
 class TestAlertEnrichment(unittest.TestCase):
@@ -253,9 +265,7 @@ class TestAlertEnrichment(unittest.TestCase):
             result = enricher.enrich_alert(alert)
 
             self.assertTrue(
-                result["plain_description"].startswith(
-                    "Potential malware activity detected:"
-                )
+                result["plain_description"].startswith("Malware rule matched:")
             )
             self.assertIn("Unknown Variant Activity", result["plain_description"])
             self.assertIsInstance(result["risk_context"], str)
@@ -279,11 +289,7 @@ class TestAlertEnrichment(unittest.TestCase):
 
             result = enricher.enrich_alert(alert)
 
-            self.assertTrue(
-                result["plain_description"].startswith(
-                    "Network security event detected:"
-                )
-            )
+            self.assertTrue(result["plain_description"].startswith("Rule matched:"))
             self.assertIsInstance(result["risk_context"], str)
             self.assertIsInstance(result["recommendation"], str)
         finally:
@@ -376,11 +382,7 @@ class TestAlertEnrichment(unittest.TestCase):
             },
         }
         result = enricher.enrich_alert(alert)
-        self.assertTrue(
-            result["plain_description"].startswith(
-                "Trojan horse communication detected:"
-            )
-        )
+        self.assertTrue(result["plain_description"].startswith("Trojan rule matched:"))
 
     def test_corrupt_json_file_graceful_fallback(self):
         """AlertEnrichment handles corrupt JSON file gracefully."""
@@ -401,7 +403,7 @@ class TestAlertEnrichment(unittest.TestCase):
             }
             result = enricher.enrich_alert(alert)
             self.assertTrue(
-                result["plain_description"].startswith("Exploit attempt detected:")
+                result["plain_description"].startswith("Exploit rule matched:")
             )
         finally:
             os.unlink(tmp.name)
@@ -455,3 +457,45 @@ class TestGetCategoryFromSignature(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRuleMatchWording(unittest.TestCase):
+    """NET-228 (audit B-j, HON-15, ALR-6): an IDS match is evidence to check, not proof."""
+
+    BANNED = (
+        "IMMEDIATE",
+        "Isolate the",
+        "isolate the",
+        "is infected",
+        "has been compromised",
+        "confirmed malicious",
+    )
+
+    def test_the_curated_descriptions_never_order_isolation_or_assert_infection(self):
+        data_file = Path(__file__).parent.parent / "data" / "suricata_descriptions.json"
+        text = data_file.read_text()
+        found = [phrase for phrase in self.BANNED if phrase in text]
+        self.assertEqual(found, [])
+
+    def test_a_curated_malware_sid_says_check_first(self):
+        """SID 2024792 told the owner to isolate the device before anything else."""
+        enricher = AlertEnrichment()
+        result = enricher.enrich_alert(
+            {
+                "alert": {
+                    "signature_id": 2024792,
+                    "signature": "ET MALWARE x",
+                    "severity": 1,
+                }
+            }
+        )
+        self.assertIn("Check the device", result["recommendation"])
+        self.assertNotIn("Isolate", result["recommendation"])
+
+    def test_generated_text_never_states_a_finding(self):
+        for prefix in ("ET MALWARE", "ET TROJAN", "ET EXPLOIT", "ET SCAN", "X"):
+            result = generate_description(f"{prefix} Something")
+            self.assertNotIn("detected", result.lower())
+            self.assertIn("matched", result.lower())
+        for category in ("malware", "trojan", "exploit", "drop", "unknown"):
+            self.assertNotIn("immediately", get_recommendation(category).lower())

@@ -179,32 +179,80 @@ def _get_pair_history(client, src_ip: str, dst_ip: str) -> dict:
     }
 
 
+# OLD CODE START — NET-228 (audit B-j, HON-15, ALR-6): "IMMEDIATE: Isolate the source host" for every
+# severity-1 group, though for an inbound attempt the source is the internet attacker, and a match
+# is not proof of compromise
+# def _generate_recommendation(alert: dict) -> str:
+#     """Generate specific action recommendation."""
+#     parts = []
+#     sev = alert.get("severity", 4)
+#     cat = alert.get("category", "")
+#
+#     if sev <= 1:
+#         parts.append("IMMEDIATE: Isolate the source host from the network.")
+#     elif sev <= 2:
+#         parts.append("HIGH PRIORITY: Investigate this alert within the next hour.")
+#
+#     if cat == "malware_c2":
+#         parts.append(
+#             "Check for malware on the source device. Scan with endpoint security tools."
+#         )
+#     elif cat == "exfiltration":
+#         parts.append("Check for data exfiltration — review large outbound transfers.")
+#     elif cat == "reconnaissance":
+#         parts.append(
+#             "Determine if this is authorized scanning (pentest, vulnerability scan)."
+#         )
+#
+#     ti = alert.get("threat_intel", [])
+#     if ti:
+#         parts.append(
+#             f"Destination matches {ti[0].get('label', 'threat intel')} — block at firewall."
+#         )
+#
+#     if not parts:
+#         parts.append("Review the connection history and related alerts for patterns.")
+#
+#     return " ".join(parts)
+# OLD CODE END
 def _generate_recommendation(alert: dict) -> str:
-    """Generate specific action recommendation."""
+    """What to check for a smart-alert group: what a match can mean, then where to start.
+
+    Names the group's LAN devices without saying who opened the connection: `own` is not proof of
+    that (a LAN device's reply to an internet-opened connection counts as its own traffic).
+    """
     parts = []
     sev = alert.get("severity", 4)
     cat = alert.get("category", "")
 
     if sev <= 1:
-        parts.append("IMMEDIATE: Isolate the source host from the network.")
+        parts.append(
+            "Check this first: a critical-severity rule matched. A match is evidence to "
+            "check, not proof of compromise."
+        )
     elif sev <= 2:
-        parts.append("HIGH PRIORITY: Investigate this alert within the next hour.")
+        parts.append("Check this soon: a high-severity rule matched.")
+
+    devices = sorted(
+        {f["device"] for f in alert.get("findings") or [] if f.get("device")}
+    )
+    if devices:
+        parts.append(f"These matches involve {', '.join(devices)}: start there.")
 
     if cat == "malware_c2":
-        parts.append(
-            "Check for malware on the source device. Scan with endpoint security tools."
-        )
+        parts.append("Check the device with up-to-date security software for malware.")
     elif cat == "exfiltration":
-        parts.append("Check for data exfiltration — review large outbound transfers.")
+        parts.append("Review large outbound transfers in the connection history.")
     elif cat == "reconnaissance":
         parts.append(
-            "Determine if this is authorized scanning (pentest, vulnerability scan)."
+            "Check whether this is scanning you authorised (a vulnerability scan or a pentest)."
         )
 
     ti = alert.get("threat_intel", [])
     if ti:
         parts.append(
-            f"Destination matches {ti[0].get('label', 'threat intel')} — block at firewall."
+            f"The destination is on {ti[0].get('label', 'a threat list')}: consider "
+            "blocking it at your firewall."
         )
 
     if not parts:
