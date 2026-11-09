@@ -102,8 +102,9 @@ case "$pipeline" in
 esac
 cap=$(daemon_get /api/capture/health | py 'd.get("status","?")')
 if [ "$cap" = "normal" ]; then pass "capture health: normal"; else fail "capture health: $cap"; fi
-loss=$(daemon_get /api/capture/stats | py 'round((d.get("loss_window") or {}).get("window",{}).get("drop_rate_pct",-1),4)')
-echo "   info  packet loss in the current window: ${loss}%"
+# "window" is null for the first minutes after a daemon restart (loss_window.py)
+loss=$(daemon_get /api/capture/stats | py '"%.4f%%" % ((d.get("loss_window") or {}).get("window") or {})["drop_rate_pct"] if ((d.get("loss_window") or {}).get("window") or {}).get("drop_rate_pct") is not None else "not measured yet (window still filling)"')
+echo "   info  packet loss in the current window: ${loss}"
 echo ""
 
 echo "→ Step 6: Traffic totals reconcile with Zeek (last full hour)"
