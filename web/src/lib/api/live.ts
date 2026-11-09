@@ -171,6 +171,8 @@ export interface LiveDashboardResponse {
 	protocols: Record<string, number>;
 	top_talkers: TopTalker[];
 	geo_arcs: GeoArc[];
+	/** Connections to anycast addresses (public DNS and the like): in no country, so not on the map (NET-237) */
+	geo_anycast?: { count: number; bytes: number };
 	_error?: string;
 }
 

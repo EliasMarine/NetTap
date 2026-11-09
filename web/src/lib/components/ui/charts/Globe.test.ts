@@ -134,7 +134,11 @@ describe('Globe', () => {
 		await tick();
 		opts.onHover({ kind: 'city', key: 'NL/Amsterdam', code: 'NL', city: 'Amsterdam', country: 'Netherlands', count: 4, bytes: 9000 });
 		await tick();
-		expect(container.querySelector('.globe-tip')).toHaveTextContent('Amsterdam, Netherlands4 connections · 9.0 KB');
+		// OLD CODE: toHaveTextContent('Amsterdam, Netherlands4 connections · 9.0 KB') (NET-237, GEO-5: the count is the country's)
+		expect(container.querySelector('.globe-tip')).toHaveTextContent('Netherlands · busiest city Amsterdam4 connections · 9.0 KB');
+		opts.onHover({ kind: 'city', key: 'JP/', code: 'JP', city: '', country: 'Japan', count: 2, bytes: 200 });
+		await tick();
+		expect(container.querySelector('.globe-tip')).toHaveTextContent(/^Japan2 connections/);
 		opts.onHover({ kind: 'list', key: 'list/NL', code: 'NL', city: '', country: '', count: 0, bytes: 0 });
 		await tick();
 		expect(container.querySelector('.globe-tip')).toHaveAttribute('hidden');

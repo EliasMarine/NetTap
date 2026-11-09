@@ -149,7 +149,9 @@
 	let tip = $derived(
 		hover && hover.kind !== 'list'
 			? {
-					title: hover.kind === 'city' && hover.city && hover.city !== hover.country ? `${hover.city}, ${hover.country}` : hover.country,
+					// OLD CODE: title: hover.kind === 'city' && hover.city && hover.city !== hover.country ? `${hover.city}, ${hover.country}` : hover.country,
+					// NET-237 (GEO-5): the count is the whole country's, so the city only qualifies it
+					title: hover.kind === 'city' && hover.city && hover.city !== hover.country ? `${hover.country} · busiest city ${hover.city}` : hover.country,
 					line: `${hover.count.toLocaleString('en-GB')} connection${hover.count === 1 ? '' : 's'} · ${formatBytes(hover.bytes)}`,
 				}
 			: null,

@@ -29,7 +29,7 @@ from services.excluded_ips import (
     RFC1918_SOURCE_FILTER,
     lan_subnets_of,
 )
-from services.geoip_service import is_anycast
+from services.geoip_service import ANYCAST_IPS, is_anycast
 from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.live_connections")
@@ -46,6 +46,8 @@ RATE_WINDOW_SECONDS = 60
 # the live window selects records by their end; a long stream appears once it closes
 LIVE_WINDOW_FILTER: dict = {"range": {"event.end": {"gte": "now-5m", "lte": "now"}}}
 LIVE_SORT: list[dict] = [{"event.end": {"order": "desc"}}]
+# NET-237 (GEO-5): anycast addresses answer from many places, so they belong to no country
+ANYCAST_DESTINATION: dict = {"terms": {"destination.ip": sorted(ANYCAST_IPS)}}
 
 
 def _flatten(value: Any) -> str:
@@ -674,59 +676,92 @@ class LiveConnectionTracker:
                         },
                     },
                 },
-                "geo_destinations": {
-                    "terms": {
-                        "field": "destination.geo.city_name",
-                        "size": 20,
-                    },
+                # OLD CODE: geo_destinations, geo_countries and top_country sat here, at the top level,
+                # so anycast destinations added to a country (NET-237, GEO-5)
+                "geo": {
+                    "filter": {"bool": {"must_not": [ANYCAST_DESTINATION]}},
                     "aggs": {
-                        "total_bytes": {
-                            "sum": {
-                                "script": {
-                                    "source": self._PAINLESS_BYTE_SUM,
-                                    "lang": "painless",
-                                }
-                            }
+                        "geo_destinations": {
+                            "terms": {
+                                "field": "destination.geo.city_name",
+                                "size": 20,
+                            },
+                            "aggs": {
+                                "total_bytes": {
+                                    "sum": {
+                                        "script": {
+                                            "source": self._PAINLESS_BYTE_SUM,
+                                            "lang": "painless",
+                                        }
+                                    }
+                                },
+                                "country": {
+                                    "terms": {
+                                        "field": "destination.geo.country_name",
+                                        "size": 1,
+                                    }
+                                },
+                                "country_code": {
+                                    "terms": {
+                                        "field": "destination.geo.country_iso_code",
+                                        "size": 1,
+                                    }
+                                },
+                                "location": {
+                                    "top_hits": {
+                                        "size": 1,
+                                        "_source": ["destination.geo.location"],
+                                        "sort": [{"@timestamp": {"order": "desc"}}],
+                                    }
+                                },
+                            },
                         },
-                        "country": {
+                        "geo_countries": {
+                            "terms": {
+                                "field": "destination.geo.country_iso_code",
+                                "size": 30,
+                            },
+                            "aggs": {
+                                "country_name": {
+                                    "terms": {
+                                        "field": "destination.geo.country_name",
+                                        "size": 1,
+                                    }
+                                },
+                                "top_city": {
+                                    "terms": {
+                                        "field": "destination.geo.city_name",
+                                        "size": 1,
+                                    }
+                                },
+                                "total_bytes": {
+                                    "sum": {
+                                        "script": {
+                                            "source": self._PAINLESS_BYTE_SUM,
+                                            "lang": "painless",
+                                        }
+                                    }
+                                },
+                                "location": {
+                                    "top_hits": {
+                                        "size": 1,
+                                        "_source": ["destination.geo.location"],
+                                        "sort": [{"@timestamp": {"order": "desc"}}],
+                                    }
+                                },
+                            },
+                        },
+                        "top_country": {
                             "terms": {
                                 "field": "destination.geo.country_name",
                                 "size": 1,
-                            }
-                        },
-                        "country_code": {
-                            "terms": {
-                                "field": "destination.geo.country_iso_code",
-                                "size": 1,
-                            }
-                        },
-                        "location": {
-                            "top_hits": {
-                                "size": 1,
-                                "_source": ["destination.geo.location"],
-                                "sort": [{"@timestamp": {"order": "desc"}}],
                             }
                         },
                     },
                 },
-                "geo_countries": {
-                    "terms": {
-                        "field": "destination.geo.country_iso_code",
-                        "size": 30,
-                    },
+                "anycast": {
+                    "filter": ANYCAST_DESTINATION,
                     "aggs": {
-                        "country_name": {
-                            "terms": {
-                                "field": "destination.geo.country_name",
-                                "size": 1,
-                            }
-                        },
-                        "top_city": {
-                            "terms": {
-                                "field": "destination.geo.city_name",
-                                "size": 1,
-                            }
-                        },
                         "total_bytes": {
                             "sum": {
                                 "script": {
@@ -734,14 +769,7 @@ class LiveConnectionTracker:
                                     "lang": "painless",
                                 }
                             }
-                        },
-                        "location": {
-                            "top_hits": {
-                                "size": 1,
-                                "_source": ["destination.geo.location"],
-                                "sort": [{"@timestamp": {"order": "desc"}}],
-                            }
-                        },
+                        }
                     },
                 },
                 "total_bytes_in": {"sum": {"field": "source.bytes", "missing": 0}},
@@ -756,12 +784,6 @@ class LiveConnectionTracker:
                 "active_devices": {
                     "filter": lan_filter or RFC1918_SOURCE_FILTER,
                     "aggs": {"n": {"cardinality": {"field": "source.ip"}}},
-                },
-                "top_country": {
-                    "terms": {
-                        "field": "destination.geo.country_name",
-                        "size": 1,
-                    }
                 },
             },
         }
@@ -889,8 +911,11 @@ class LiveConnectionTracker:
             aggs.get("active_devices", {}).get("n", {}).get("value", 0) or 0
         )
 
-        # Top country
-        top_country_buckets = aggs.get("top_country", {}).get("buckets", [])
+        # Top country, and the map below: anycast destinations are counted on their own
+        # OLD CODE: top_country_buckets = aggs.get("top_country", {}).get("buckets", []) (NET-237)
+        geo_aggs = aggs.get("geo", {})
+        anycast = aggs.get("anycast", {})
+        top_country_buckets = geo_aggs.get("top_country", {}).get("buckets", [])
         top_country = top_country_buckets[0]["key"] if top_country_buckets else ""
 
         # OLD CODE START — 2026-11-06 (O6): percentages, which the page showed as connection counts,
@@ -1034,7 +1059,8 @@ class LiveConnectionTracker:
         # Geo arcs (for the map): one per country with the country's own totals. The busiest
         # cities only place the dot, at the country's busiest city when that city is listed.
         city_locations: dict[tuple[str, str], tuple[Any, Any]] = {}
-        for bucket in aggs.get("geo_destinations", {}).get("buckets", []):
+        # OLD CODE: for bucket in aggs.get("geo_destinations", {}).get("buckets", []): (NET-237)
+        for bucket in geo_aggs.get("geo_destinations", {}).get("buckets", []):
             cc_b = bucket.get("country_code", {}).get("buckets", [])
             if cc_b:
                 city_locations[(cc_b[0]["key"], bucket.get("key", ""))] = (
@@ -1042,7 +1068,8 @@ class LiveConnectionTracker:
                 )
 
         geo_arcs = []
-        for bucket in aggs.get("geo_countries", {}).get("buckets", []):
+        # OLD CODE: for bucket in aggs.get("geo_countries", {}).get("buckets", []): (NET-237)
+        for bucket in geo_aggs.get("geo_countries", {}).get("buckets", []):
             cc = bucket.get("key", "")
             if not cc:
                 continue
@@ -1082,6 +1109,11 @@ class LiveConnectionTracker:
             "protocols": protocols,
             "top_talkers": top_talkers,
             "geo_arcs": geo_arcs,
+            # left out of geo_arcs and top_country: no single place to put them
+            "geo_anycast": {
+                "count": anycast.get("doc_count", 0),
+                "bytes": anycast.get("total_bytes", {}).get("value", 0),
+            },
         }
 
     def fetch_connection_detail(
@@ -1480,6 +1512,7 @@ class LiveConnectionTracker:
             "protocols": {"tcp": 0, "udp": 0, "icmp": 0, "other": 0, "unknown": 0},
             "top_talkers": [],
             "geo_arcs": [],
+            "geo_anycast": {"count": 0, "bytes": 0},
         }
 
     @staticmethod

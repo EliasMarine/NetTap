@@ -696,6 +696,7 @@
 	OLD CODE END -->
 	<LiveGlobeCard
 		arcs={dashboard?.geo_arcs ?? []}
+		anycast={dashboard?.geo_anycast?.count ?? 0}
 		fresh={freshRows}
 		rows={feedRows}
 		stats={liveStats}

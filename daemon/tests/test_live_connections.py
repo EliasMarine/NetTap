@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import MagicMock
 
 from services.excluded_ips import build_lan_filter, lan_subnets_of
+from services.geoip_service import ANYCAST_IPS
 from services.live_connections import (
     RATE_WINDOW_SECONDS,
     LiveConnectionTracker,
@@ -484,10 +485,13 @@ class TestLiveDashboardFigures(unittest.TestCase):
                 "location": _located(35.68, 139.69),
             },
         ]
+        # OLD CODE: geo_destinations and geo_countries at the top level (NET-237: under "geo")
         result, _, _ = _dashboard_with(
             {
-                "geo_destinations": {"buckets": cities},
-                "geo_countries": {"buckets": countries},
+                "geo": {
+                    "geo_destinations": {"buckets": cities},
+                    "geo_countries": {"buckets": countries},
+                }
             }
         )
         arcs = {a["country_code"]: a for a in result["geo_arcs"]}
@@ -498,6 +502,28 @@ class TestLiveDashboardFigures(unittest.TestCase):
         self.assertEqual((arcs["NL"]["lat"], arcs["NL"]["lon"]), (52.37, 4.9))
         self.assertEqual(arcs["NL"]["bytes"], 1200)
         self.assertEqual((arcs["JP"]["lat"], arcs["JP"]["lon"]), (35.68, 139.69))
+
+    def test_anycast_destinations_add_to_no_country(self):
+        """GEO-5: 8.8.8.8 is "United States" in GeoLite2, so DNS made the US the top country."""
+        result, body, _ = _dashboard_with(
+            {
+                "geo": {
+                    "top_country": {"buckets": [{"key": "Germany"}]},
+                    "geo_countries": {"buckets": []},
+                },
+                "anycast": {"doc_count": 40, "total_bytes": {"value": 9000}},
+            }
+        )
+        anycast = {"terms": {"destination.ip": sorted(ANYCAST_IPS)}}
+        geo = body["aggs"]["geo"]
+        self.assertEqual(geo["filter"], {"bool": {"must_not": [anycast]}})
+        self.assertEqual(
+            set(geo["aggs"]), {"geo_destinations", "geo_countries", "top_country"}
+        )
+        self.assertFalse({"geo_countries", "top_country"} & set(body["aggs"]))
+        self.assertEqual(body["aggs"]["anycast"]["filter"], anycast)
+        self.assertEqual(result["stats"]["top_country"], "Germany")
+        self.assertEqual(result["geo_anycast"], {"count": 40, "bytes": 9000})
 
     def test_protocol_counts_partition_the_window(self):
         """O6: counts, not percentages; other and unknown complete the split."""

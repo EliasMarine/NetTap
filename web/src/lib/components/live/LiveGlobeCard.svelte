@@ -69,6 +69,7 @@
 
 	let {
 		arcs,
+		anycast = 0,
 		fresh,
 		rows,
 		stats,
@@ -82,6 +83,8 @@
 		onretry,
 	}: {
 		arcs: GeoArc[];
+		/** Connections to anycast addresses: in no country, so left off the map and the list. */
+		anycast?: number;
 		/** Rows new since the last poll: each launches packets. */
 		fresh: LiveConnection[];
 		/** The newest rows, for the expanded view's feed. */
@@ -310,12 +313,15 @@
 									onblur={() => (hoverCode = null)}
 								>
 									<span class="tag">{d.code}</span>
-									<span class="dest-name"><b>{d.name}</b>{#if d.cities.length}<span>{d.cities.join(', ')}</span>{/if}</span>
+									<!-- OLD CODE: <span>{d.cities.join(', ')}</span> (NET-237, GEO-5: the count is the country's, not the city's) -->
+									<span class="dest-name"><b>{d.name}</b>{#if d.cities.length}<span>Busiest city {d.cities[0]}</span>{/if}</span>
 									<span class="dest-v">{d.count.toLocaleString('en-GB')}<span class="mini" aria-hidden="true"><span style:--w="{Math.round((d.count / maxCount) * 100)}%"></span></span></span>
 								</button>
 							</li>
 						{/each}
 					</ul>
+				{:else if anycast}
+					<CardState state="empty" title="No destinations to place" message="Every connection went to an anycast service, which has no single location." />
 				{:else}
 					<CardState state="empty" title="No destinations yet" message="Places appear here once your devices connect to the internet." />
 				{/if}
@@ -325,6 +331,11 @@
 				</div>
 			</aside>
 		</div>
+		{#if anycast}
+			<p class="globe-anycast">
+				{anycast.toLocaleString('en-GB')} {anycast === 1 ? 'connection' : 'connections'} to anycast services, such as public DNS, aren't on the map or in the countries: they have no single location.
+			</p>
+		{/if}
 	{/if}
 </article>
 
@@ -353,6 +364,7 @@
 		font-size: var(--text-xs); color: var(--text-3); text-align: right;
 	}
 	.globe-hint kbd { font: 500 var(--text-micro)/1 var(--font-mono); padding: 2px var(--sp-1); border-radius: var(--r-xs); background: var(--surface-3); color: var(--text-2); }
+	.globe-anycast { margin: var(--sp-3) 0 0; font-size: var(--text-xs); color: var(--text-3); }
 	.globe-notice {
 		position: absolute; left: 50%; top: var(--sp-4); z-index: 2; transform: translateX(-50%);
 		width: max-content; max-width: calc(100% - var(--sp-8)); margin: 0;

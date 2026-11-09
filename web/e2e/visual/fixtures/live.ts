@@ -66,6 +66,7 @@ export const LIVE_ROUTES: FixtureRoute[] = [
 			protocols: {},
 			top_talkers: [],
 			geo_arcs: [],
+			geo_anycast: { count: 0, bytes: 0 },
 		} satisfies LiveDashboardResponse,
 		populated: {
 			connections: CONNECTIONS,
@@ -78,6 +79,7 @@ export const LIVE_ROUTES: FixtureRoute[] = [
 				{ ip: '192.168.1.22', bytes: 9_500_000, connections: 30 },
 			],
 			geo_arcs: ARCS,
+			geo_anycast: { count: 12, bytes: 48_000 },
 		} satisfies LiveDashboardResponse,
 	},
 ];
