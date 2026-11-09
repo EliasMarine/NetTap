@@ -1,6 +1,6 @@
 # NetTap design system: how the web app uses it
 
-> **Canonical reference for every page.** The design itself (voice, colour, type, layout, every component's look) is the owner's system in `nettap-design-system/`: start with its `README.md`, then `components/<Name>/README.md` and `preview.html` for each component you use. This file says how `web/` implements it, and which rules the build enforces. The full plan behind the 2026-11 redesign is `PLAN.md` at the repo root.
+> **Canonical reference for every page.** The design itself (voice, colour, type, layout, every component's look) is the owner's system in `nettap-design-system/`: start with its `README.md`, then `components/<Name>/README.md` and `preview.html` for each component you use. This file says how `web/` implements it, and which rules the build enforces. The full plan behind the 2026-11 redesign is in git history: `git show f71625ab:PLAN.md`.
 
 ## Three pillars
 
