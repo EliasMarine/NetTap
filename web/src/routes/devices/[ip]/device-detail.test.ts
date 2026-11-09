@@ -3,6 +3,7 @@ import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { readable } from 'svelte/store';
 import { getSmartAlerts, suppressAlert } from '$api/alerts';
 import { getDeviceDetail } from '$api/devices';
+import { ENCRYPTED_DNS_NOTE } from '$lib/api/dns';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
@@ -391,5 +392,28 @@ describe('Device detail — live bandwidth (NET-205)', () => {
 		expect(await screen.findByRole('heading', { name: 'Live bandwidth' })).toBeInTheDocument();
 		expect(getLiveBandwidth).toHaveBeenCalledWith({ ip: IP }, expect.any(AbortSignal));
 		expect(getLiveBandwidth.mock.calls.every(([key]) => !('mac' in key))).toBe(true);
+	});
+});
+
+// NET-225 (DNS-1): an empty DNS card said "No DNS data." though DoH and DoT lookups never show
+describe('Device detail — DNS activity', () => {
+	afterEach(() => vi.clearAllMocks());
+
+	it('says only plain DNS shows when the device has no lookups', async () => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+		vi.mocked(getDeviceDetail).mockImplementationOnce(
+			async () =>
+				({
+					device: {
+						ip: IP, mac: null, hostname: 'laptop', connection_count: 3, alert_count: 0,
+						first_seen: '2026-10-29T00:00:00Z', last_seen: '2026-10-29T01:00:00Z',
+						top_destinations: [], dns_queries: [], bandwidth_series: [], protocols: [],
+					},
+				}) as never,
+		);
+		render(Page);
+		expect(await screen.findByText('No plain DNS lookups seen.')).toBeInTheDocument();
+		expect(screen.getByText(ENCRYPTED_DNS_NOTE)).toBeInTheDocument();
+		expect(screen.queryByText('No DNS data.')).not.toBeInTheDocument();
 	});
 });

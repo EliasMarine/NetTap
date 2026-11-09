@@ -221,7 +221,13 @@
 		{#if !data}
 			{@render summaryState('lookups over time')}
 		{:else if data.dns.lookups === 0}
-			<CardState state="empty" icon="dns" title="No lookups in the {words}" message="None of your devices asked for this name in this window. Try a longer range." />
+			<!-- OLD CODE: message="None of your devices asked for this name in this window. Try a longer range." (NET-225: DoH and DoT lookups never show) -->
+			<CardState
+				state="empty"
+				icon="dns"
+				title="No lookups in the {words}"
+				message="NetTap saw no plain DNS lookups for this name in this window. Lookups over DoH or DoT are encrypted and never show here. Try a longer range."
+			/>
 		{:else}
 			<AreaChart
 				series={[{ key: 'lookups', label: 'Lookups', colour: 1, points: timeline.map((p) => ({ t: p.t, v: p.n })) }]}

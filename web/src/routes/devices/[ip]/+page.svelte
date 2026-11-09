@@ -59,6 +59,7 @@
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import DeviceTile from '$lib/components/ui/DeviceTile.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { ENCRYPTED_DNS_NOTE } from '$lib/api/dns';
 	import AutoRefreshButton from '$lib/components/ui/AutoRefreshButton.svelte';
 	import AreaChart, { type AreaSeries } from '$lib/components/ui/charts/AreaChart.svelte';
 	import Ring from '$lib/components/ui/charts/Ring.svelte';
@@ -987,7 +988,8 @@ OLD CODE END -->
 			{#if dnsRows.length > 0}
 				<DataTable ariaLabel="DNS activity" rows={dnsRows} rowKey={(q) => q.domain} initialSort={{ key: 'count', dir: 'desc' }} columns={dnsColumns} />
 			{:else}
-				<CardState state="empty" icon="dns" title="No DNS data." />
+				<!-- OLD CODE: <CardState state="empty" icon="dns" title="No DNS data." /> (NET-225: DoH and DoT lookups never show) -->
+				<CardState state="empty" icon="dns" title="No plain DNS lookups seen." message={ENCRYPTED_DNS_NOTE} />
 			{/if}
 		</Card>
 

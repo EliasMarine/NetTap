@@ -8,8 +8,10 @@
 		getDnsTimeline,
 		getSuspiciousDns,
 		getDeviceDns,
+		ENCRYPTED_DNS_NOTE,
 	} from '$lib/api/dns';
 	import { page } from '$app/stores';
+	import { captureMode, initCaptureMode } from '$lib/stores/captureMode';
 	import { partOfWhole } from '$lib/utils/part-of-whole';
 	import { loadFailed } from '$lib/utils/load-failed';
 	// OLD CODE START — replaced by the design system's BarList
@@ -326,11 +328,17 @@
 	// 	loading = false;
 	// }
 	// OLD CODE END
+	/** NET-225 (DNS-1): post-NAT, the router's address is every IPv4 lookup's source */
+	const BRIDGE_DNS =
+		"In inline bridge mode, lookups over IPv4 carry your router's address, so they can't be tied to a device, and lookups your router answers from its own cache never reach NetTap.";
+
 	const refresh = registerPageRefresh(fetchAll);
 	onDestroy(refresh.unregister);
 
 	async function fetchAll(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
+		// NET-225: the bridge-mode notice; asks again if the startup request failed, never blocks the figures
+		void initCaptureMode();
 		const range = selectedTimeRange;
 		const { from, to } = getTimeRange(range);
 		const interval = INTERVALS[range]?.interval ?? '15m';
@@ -656,6 +664,8 @@
 	</div>
 </div>
 
+<p class="notice" role="note"><Icon name="dns" /><span>{ENCRYPTED_DNS_NOTE}{$captureMode === 'bridge' ? ` ${BRIDGE_DNS}` : ''}</span></p>
+
 <div class="grid">
 	{#if statsFailed}
 		<p class="notice is-warn c-12" role="status"><Icon name="warn" />{loadFailed('DNS totals', stats !== null)}</p>
@@ -676,6 +686,7 @@
 		note="Lookups for names that don't exist"
 		href="#nxdomain-section"
 	/>
+	<!-- OLD CODE START — NET-225 (DNS-3): the mean, which a few 20 s retries skew (G11: mean 19.6 ms, median 6.3 ms)
 	<KpiCard
 		class="c-3"
 		label="Average resolution"
@@ -683,6 +694,22 @@
 		value={stats ? stats.avg_resolution_ms.toFixed(1) : '—'}
 		unit={stats ? 'ms' : undefined}
 		note={rangeWords}
+	/>
+	OLD CODE END -->
+	<KpiCard
+		class="c-3"
+		label="Median resolution"
+		icon="changelog"
+		value={stats?.median_resolution_ms != null ? stats.median_resolution_ms.toFixed(1) : '—'}
+		unit={stats?.median_resolution_ms != null ? 'ms' : undefined}
+		note={rangeWords}
+		sub={!stats
+			? undefined
+			: stats.median_resolution_ms == null
+				? 'No answered lookups to time'
+				: stats.avg_resolution_ms != null
+					? `Mean ${stats.avg_resolution_ms.toFixed(1)} ms`
+					: undefined}
 	/>
 
 	<Card
@@ -751,7 +778,13 @@
 		{:else if deviceDnsFailed}
 			<CardState state="error" title={loadFailed(`DNS records for ${selectedDeviceIp}`)} message={RETRY_HINT} onaction={lookupDevice} />
 		{:else if deviceDns.length === 0}
-			<CardState state="empty" icon="dns" title="No DNS records for {selectedDeviceIp}" message="This device made no DNS queries in this time range." />
+			<!-- OLD CODE: message="This device made no DNS queries in this time range." (NET-225: DoH, DoT and, in bridge mode, NAT hide lookups) -->
+			<CardState
+				state="empty"
+				icon="dns"
+				title="No DNS records for {selectedDeviceIp}"
+				message="NetTap saw no plain DNS lookups from this address in this time range. Lookups over DoH or DoT are encrypted and never show here.{$captureMode === 'bridge' ? ` ${BRIDGE_DNS}` : ''}"
+			/>
 		{:else}
 			<DataTable
 				columns={deviceColumns}
@@ -781,8 +814,9 @@
 
 	<Card title="NXDOMAIN errors" sub="Lookups for names that don't exist · {rangeWords}" class="c-6">
 		<span id="nxdomain-section" class="anchor"></span>
+		<!-- OLD CODE: emptyMessage: "That's a good sign." (NET-225: encrypted lookups aren't checked at all) -->
 		{@render section(
-			{ what: 'NXDOMAIN errors', failed: nxFailed, has: nxdomains.length > 0, emptyTitle: 'No NXDOMAIN errors detected.', emptyMessage: "That's a good sign." },
+			{ what: 'NXDOMAIN errors', failed: nxFailed, has: nxdomains.length > 0, emptyTitle: 'No NXDOMAIN errors detected.', emptyMessage: 'Only plain DNS lookups are checked.' },
 			nxBody,
 		)}
 	</Card>

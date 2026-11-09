@@ -618,7 +618,9 @@ class TestStatsAccuracy:
         assert result["avg_resolution_ms"] == 1250.0
         assert result["median_resolution_ms"] == 200.0
 
-    def test_no_answered_queries_gives_zero(self, dns, mock_client):
+    # OLD CODE: test_no_answered_queries_gives_zero asserted 0 ms for both (NET-225: 0 ms read as perfect)
+    def test_no_answered_queries_gives_none(self, dns, mock_client):
+        """Nothing answered: no timing, never 0 ms (DNS-3)."""
         mock_client.search.return_value = {
             "aggregations": {
                 "avg_rtt": {"value": None},
@@ -626,8 +628,20 @@ class TestStatsAccuracy:
             }
         }
         result = dns.get_stats(_FROM, _TO)
-        assert result["avg_resolution_ms"] == 0
-        assert result["median_resolution_ms"] == 0
+        assert result["avg_resolution_ms"] is None
+        assert result["median_resolution_ms"] is None
+
+    def test_zero_seconds_stays_zero(self, dns, mock_client):
+        """A real 0 (sub-resolution answers) is a measurement, not 'nothing measured'."""
+        mock_client.search.return_value = {
+            "aggregations": {
+                "avg_rtt": {"value": 0.0},
+                "median_rtt": {"values": {"50.0": 0.0}},
+            }
+        }
+        result = dns.get_stats(_FROM, _TO)
+        assert result["avg_resolution_ms"] == 0.0
+        assert result["median_resolution_ms"] == 0.0
 
 
 def test_local_discovery_exclusion_is_scoped_to_local_destinations():

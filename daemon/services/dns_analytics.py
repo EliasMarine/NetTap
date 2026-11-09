@@ -562,18 +562,27 @@ class DNSAnalytics:
             hits_total.get("value", 0) if isinstance(hits_total, dict) else hits_total
         )
 
+        # OLD CODE START — NET-225 (DNS-3): nothing answered (null aggregation) read 0 ms, which looks perfect
+        # "avg_resolution_ms": round(
+        #     (aggs.get("avg_rtt", {}).get("value", 0) or 0) * 1000, 2
+        # ),
+        # "median_resolution_ms": round(
+        #     (aggs.get("median_rtt", {}).get("values", {}).get("50.0") or 0) * 1000,
+        #     2,
+        # ),
+        # OLD CODE END
+        avg_s = aggs.get("avg_rtt", {}).get("value")
+        median_s = aggs.get("median_rtt", {}).get("values", {}).get("50.0")
         return {
             "total_queries": total_queries,
             "unique_domains": aggs.get("unique_domains", {}).get("value", 0),
             "nxdomain_count": aggs.get("nxdomain_count", {}).get("doc_count", 0),
-            "avg_resolution_ms": round(
-                (aggs.get("avg_rtt", {}).get("value", 0) or 0) * 1000, 2
-            ),
-            # zeek.dns.rtt is in seconds; a few 20 s retries skew the average, so show the median too
-            "median_resolution_ms": round(
-                (aggs.get("median_rtt", {}).get("values", {}).get("50.0") or 0) * 1000,
-                2,
-            ),
+            # zeek.dns.rtt is in seconds; None when no lookup was answered, so nothing was timed
+            "avg_resolution_ms": None if avg_s is None else round(avg_s * 1000, 2),
+            # a few 20 s retries skew the average, so show the median too
+            "median_resolution_ms": None
+            if median_s is None
+            else round(median_s * 1000, 2),
         }
 
 
