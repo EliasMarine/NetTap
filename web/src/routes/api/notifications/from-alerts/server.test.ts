@@ -47,6 +47,25 @@ describe('GET /api/notifications/from-alerts', () => {
 		expect(sendNotification).not.toHaveBeenCalled();
 	});
 
+	// Visual error mode: the web server's own 502 is a bug; the daemon's status passes through, as the proxy does
+	it("passes the daemon's own error status on, with its reason", async () => {
+		answer(503, { error: 'OpenSearch unavailable' });
+
+		const res = await GET();
+
+		expect(res.status).toBe(503);
+		expect((await res.json()).error).toBe("Couldn't read the alerts: OpenSearch unavailable");
+	});
+
+	it('answers 502 when the daemon says OK but the body is unreadable', async () => {
+		daemonFetch.mockResolvedValue(new Response('not json', { status: 200 }));
+
+		const res = await GET();
+
+		expect(res.status).toBe(502);
+		expect((await res.json()).error).toBe("Couldn't read the alerts: HTTP 200");
+	});
+
 	it('creates a critical or high batch once a day, not on every page load', async () => {
 		answer(200, ALERTS);
 		expect(await (await GET()).json()).toMatchObject({ notifications_created: 1 });

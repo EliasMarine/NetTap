@@ -15,7 +15,11 @@ export const GET = async () => {
     const data = await res.json().catch(() => null);
     if (!res.ok || !data) {
         const reason = data?.error || `HTTP ${res.status}`;
-        return json({ error: `Couldn't read the alerts: ${reason}` }, { status: 502 });
+        // OLD CODE START — every failure answered 502, so the daemon's own 503 read as a web-server fault
+        // return json({ error: `Couldn't read the alerts: ${reason}` }, { status: 502 });
+        // OLD CODE END
+        // the daemon's error status passes on, as the catch-all proxy does; 502 only for an unreadable OK
+        return json({ error: `Couldn't read the alerts: ${reason}` }, { status: res.ok ? 502 : res.status });
     }
     const alerts = data.alerts || [];
 
