@@ -80,9 +80,9 @@ NetTap is an open-source, self-hosted network monitor for homes and small busine
 
 You pick a mode in the setup wizard. It can't be changed after setup yet.
 
-- **DHCP gateway** (recommended, 1 NIC). NetTap hands out addresses and routes traffic on to your router, so it sees each device's own IP. You turn off the router's DHCP. Devices with a static IP, IPv6 and device-to-device traffic bypass it, router port forwards stop working, and devices lose internet if NetTap goes down. Not yet tested on real hardware.
-- **Mirror / SPAN** (1 capture NIC). A managed switch copies traffic to NetTap. NetTap is outside the traffic path, so it can't break your network.
-- **Inline bridge** (advanced, 2 NICs). NetTap sits between the modem and the router. It sees all internet traffic, but after the router's NAT, so every device shows up as the router's IP. The kernel bridge keeps forwarding if NetTap's services stop.
+- **Mirror / SPAN** (recommended, 1 capture NIC). A managed switch copies traffic to NetTap. NetTap is outside the traffic path, so it can't break your network. Tested on real hardware.
+- **DHCP gateway** (being tested, 1 NIC). NetTap hands out addresses and routes traffic on to your router, so it sees each device's own IP. You turn off the router's DHCP. Devices with a static IP, IPv6 and device-to-device traffic bypass it, router port forwards stop working, and devices lose internet if NetTap goes down. Not yet verified on real hardware.
+- **Inline bridge** (advanced, 2 NICs). NetTap sits between the modem and the router. It sees all internet traffic, but after the router's NAT, so every device shows up as the router's IP. The kernel bridge keeps forwarding if NetTap's services stop. Not yet verified on real hardware.
 
 Mirror and bridge modes also need a management interface (a spare NIC or Wi-Fi) for the dashboard.
 
