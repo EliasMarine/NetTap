@@ -170,6 +170,8 @@ _lock_curlrc() {
     # OLD CODE END
     puid=$(grep -oE '^PUID=[0-9]+' "${PROJECT_ROOT}/docker/.env" 2>/dev/null | cut -d= -f2) || true
     pgid=$(grep -oE '^PGID=[0-9]+' "${PROJECT_ROOT}/docker/.env" 2>/dev/null | cut -d= -f2) || true
+    # PUID=0 is a stale .env that generate_compose_env is about to rewrite with SUDO_UID: use that too
+    if [[ "$puid" == 0 ]]; then puid="" pgid=""; fi
     # No .env yet: the same owner generate_compose_env is about to write (never root)
     puid="${puid:-${SUDO_UID:-1000}}" pgid="${pgid:-${SUDO_GID:-1000}}"
     if (( puid == 0 )); then puid=1000 pgid=1000; fi
