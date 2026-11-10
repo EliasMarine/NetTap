@@ -1,0 +1,2437 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Open-source network visibility appliance for home and small business. Enterprise-grade telemetry without the complexity.">
+      
+      
+        <meta name="author" content="Elias Marine">
+      
+      
+        <link rel="canonical" href="https://eliasmarine.github.io/NetTap/plans/2026-10-30-dhcp-gateway-mode-design/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>DHCP Gateway Capture Mode — Design - NetTap Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="cyan">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#dhcp-gateway-capture-mode-design" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="NetTap Documentation" class="md-header__button md-logo" aria-label="NetTap Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            NetTap Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              DHCP Gateway Capture Mode — Design
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="cyan"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="cyan"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/EliasMarine/NetTap" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    EliasMarine/NetTap
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started/setup-guide/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../user-guide/dashboard-overview/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  User Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../admin-guide/configuration/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Admin Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../developer-guide/architecture/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Developer Guide
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/env-reference/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="NetTap Documentation" class="md-nav__button md-logo" aria-label="NetTap Documentation" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    NetTap Documentation
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/EliasMarine/NetTap" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+  </div>
+  <div class="md-source__repository">
+    EliasMarine/NetTap
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/setup-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Setup guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/requirements/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Requirements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/hardware-guide/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hardware Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    User Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    User Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/dashboard-overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dashboard Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/alerts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Alerts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/traffic-analysis/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Traffic Analysis
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/storage-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Storage Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/notifications/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notifications
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../user-guide/siem-forwarding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SIEM Forwarding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Admin Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Admin Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-guide/configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-guide/updating/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Updating NetTap
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-guide/backup-restore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Backup &amp; Restore
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-guide/tls-certificates/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TLS Certificates
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-guide/performance-tuning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance Tuning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../admin-guide/troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer Guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer Guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/dev-setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development Environment Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/release-process/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Process
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../developer-guide/api-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/env-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment Variable Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/cli-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/config-files/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration Files Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/hardware-compat/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hardware Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-why" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Why
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-owner-decisions-locked" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Owner decisions (locked)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-topology-one-armed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Topology (one-armed)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-mechanisms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Mechanisms
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Mechanisms">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-dhcp-server-dnsmasq-run-by-the-daemon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 DHCP server: dnsmasq, run by the daemon
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-routing-and-nat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Routing and NAT
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-capture-device-leg-only-exactly-once" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 Capture: device leg only, exactly once
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-nettaps-own-address-the-router-dhcp-is-about-to-go-away" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4 NetTap's own address (the router DHCP is about to go away)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#45-boot-persistence-no-dependency-on-the-daemon-starting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.5 Boot persistence (no dependency on the daemon starting)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#451-review-findings-this-work-must-not-carry-forward" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.5.1 Review findings this work must not carry forward
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#46-safety" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.6 Safety
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#47-latency-and-throughput" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.7 Latency and throughput
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-state-and-config" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. State and config
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-interface-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Interface contract
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Interface contract">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-daemon-modules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 Daemon modules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-http-api-daemon-session-required-preflight-and-status-go-through-the-web-catch-all-proxy-enable-disable-and-apisetupconfigure-have-dedicated-sveltekit-routes-with-a-60-s-timeout-because-enable-probes-for-3-s-waits-for-dnsmasq-and-may-restart-the-capture-containers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 HTTP API (daemon; session required. preflight and status go through the web catch-all proxy; enable, disable and /api/setup/configure have dedicated SvelteKit routes with a 60 s timeout, because enable probes for 3 s, waits for dnsmasq and may restart the capture containers)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#63-web" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 Web
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-recovery-shown-on-the-go-live-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Recovery (shown on the go-live page)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Tests
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-out-of-scope-follow-ups" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Out of scope / follow-ups
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="dhcp-gateway-capture-mode-design">DHCP Gateway Capture Mode — Design<a class="headerlink" href="#dhcp-gateway-capture-mode-design" title="Permanent link">&para;</a></h1>
+<p><strong>Date:</strong> 2026-10-30
+<strong>Status:</strong> Approved for implementation (owner decisions locked 2026-10-30)
+<strong>Branch:</strong> <code>phase-4/dhcp-gateway-mode</code> (stacked on <code>fix/pr110-review</code>, PR #144)
+<strong>Related:</strong> <code>Debugging/BRIDGE-ARCHITECTURE.md</code>, memory <code>dhcp-gateway-mode</code></p>
+<hr />
+<h2 id="1-why">1. Why<a class="headerlink" href="#1-why" title="Permanent link">&para;</a></h2>
+<p>The inline bridge sits between the ISP modem and the router, so it only sees
+traffic <strong>after</strong> the router's NAT. Every device shows up as the router's
+public IP, so NetTap can't answer "what is each of my devices doing?".</p>
+<p>DHCP gateway mode puts NetTap in front of the router's NAT. NetTap hands out
+addresses, names itself as the gateway, and routes traffic on to the real
+router. Every flow then carries the device's real IP and MAC. It works on any
+router and needs no managed switch. Firewalla's DHCP mode works the same way.</p>
+<h2 id="2-owner-decisions-locked">2. Owner decisions (locked)<a class="headerlink" href="#2-owner-decisions-locked" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Decision</th>
+<th>Choice</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Onboarding modes</td>
+<td><strong>DHCP gateway</strong> (recommended) and <strong>Mirror port</strong> are primary. The inline bridge stays under "Advanced". No bridge code is removed.</td>
+</tr>
+<tr>
+<td>One-way traffic fix</td>
+<td>NetTap serves its <strong>own subnet</strong> (default <code>10.77.0.0/24</code>) and <strong>masquerades</strong> to the router (double NAT). The only router change: turn off the router's DHCP.</td>
+</tr>
+<tr>
+<td>Review findings</td>
+<td>Listed only. Code that this work rewrites must not carry a finding forward.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="3-topology-one-armed">3. Topology (one-armed)<a class="headerlink" href="#3-topology-one-armed" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>                  ISP modem
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                      │
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>              ┌───────┴────────┐
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>              │  Home router   │  192.168.1.1/24  (DHCP OFF)
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>              └───────┬────────┘
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>                      │ LAN port / switch / router Wi-Fi
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>     ┌────────────────┼──────────────────────────┐
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>     │                │                          │
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>  NetTap LAN NIC   phone, TV, laptop ...      static-IP devices
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>  192.168.1.50/24  10.77.0.x/24                (bypass NetTap)
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>  10.77.0.1/24     gw = 10.77.0.1
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>                   dns = 192.168.1.1
+</span></code></pre></div>
+<ul>
+<li>One NIC (the one plugged into the router) carries both legs:
+  device ↔ NetTap (<code>10.77.0.x</code>, pre-NAT) and NetTap ↔ router (<code>192.168.1.50</code>,
+  post-NAT). A 2.5GbE port gives each direction plenty of headroom for a WAN of
+  1 Gbps or less.</li>
+<li>Devices on Wi-Fi from the router's own access point are covered too, because
+  DHCP and the gateway are L3, not tied to a cable.</li>
+<li>NetTap keeps its existing address on the router subnet (<code>192.168.1.50</code>
+  above), so the dashboard URL does not change. That address becomes
+  <strong>static</strong>, because nothing will renew it once the router's DHCP is off.</li>
+</ul>
+<h2 id="4-mechanisms">4. Mechanisms<a class="headerlink" href="#4-mechanisms" title="Permanent link">&para;</a></h2>
+<h3 id="41-dhcp-server-dnsmasq-run-by-the-daemon">4.1 DHCP server: dnsmasq, run by the daemon<a class="headerlink" href="#41-dhcp-server-dnsmasq-run-by-the-daemon" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>dnsmasq-base</code> is added to the daemon image. The daemon already runs with
+  <code>network_mode: host</code>, NET_ADMIN and NET_RAW. Add <strong>NET_BIND_SERVICE</strong> (UDP
+  67), <strong>SETUID</strong> and <strong>SETGID</strong> (dnsmasq drops to <code>nobody:nogroup</code>) and
+  <strong>KILL</strong> (the root daemon can only signal the <code>nobody</code>-owned dnsmasq with it)
+  to its <code>cap_add</code>.</li>
+<li>DHCP only: <code>--port=0</code> disables DNS. NetTap is <strong>not</strong> a DNS server.
+  Option 6 (DNS) hands out the <strong>router's IP</strong>. DNS queries still pass through
+  NetTap as the gateway, so Zeek's <code>dns.log</code> attributes them to the real
+  device. This also means a daemon restart never breaks name resolution.</li>
+<li>Arguments (no config file):
+  <code>--keep-in-foreground --port=0 --conf-file=/dev/null --pid-file
+  --user=nobody --group=nogroup --interface=&lt;lan&gt; --except-interface=lo --bind-interfaces
+  --dhcp-authoritative --dhcp-range=&lt;pool_start&gt;,&lt;pool_end&gt;,&lt;netmask&gt;,1h
+  --dhcp-option=option:router,&lt;gateway_ip&gt;
+  --dhcp-option=option:dns-server,&lt;upstream_gateway&gt;
+  --dhcp-leasefile=/var/lib/nettap/dhcp/dnsmasq.leases --log-facility=-</code>.
+  dnsmasq must not run as root: it opens its sockets and the lease file as
+  root, then drops to <code>nobody:nogroup</code> (uid/gid 65534 in the
+  <code>python:3.12-slim-bookworm</code> image), keeping only NET_ADMIN and NET_RAW.
+  The lease file stays <strong>root-owned</strong>: root in the container has no
+  DAC_OVERRIDE, so a <code>nobody</code>-owned file would stop dnsmasq opening it. The
+  already-open file is still written after the drop. <code>--pid-file</code> with no
+  value writes no pid file (the daemon supervises the child; as <code>nobody</code>,
+  dnsmasq can't chown one in <code>/var/run</code>). Verified in the image with
+  <code>cap_drop: ALL</code> and exactly the capabilities above: a client got a lease
+  and it was written to the file.</li>
+<li>Pool: host offsets 10 … last-host (<code>10.77.0.10–10.77.0.254</code> for a /24).
+  <code>.1</code> is the gateway, <code>.2–.9</code> are left for the user's static assignments.</li>
+<li><strong>Lease time: 1 hour.</strong> Rollback (router DHCP back on, NetTap DHCP off)
+  completes within one lease at worst. Renewals every 30 min per device are
+  negligible traffic. A daemon outage shorter than a lease is invisible to
+  clients.</li>
+<li>The lease file lives on the <code>storage-data</code> volume (<code>/var/lib/nettap</code>), so it
+  survives restarts.</li>
+<li>The daemon supervises the child: <code>reconcile()</code> restarts it if it exited.</li>
+</ul>
+<h3 id="42-routing-and-nat">4.2 Routing and NAT<a class="headerlink" href="#42-routing-and-nat" title="Permanent link">&para;</a></h3>
+<p>Runtime (daemon, host network namespace, existing <code>nsenter -t 1 -n</code> pattern):</p>
+<ol>
+<li><code>ip addr add &lt;gateway_ip&gt;/&lt;prefix&gt; dev &lt;lan&gt;</code>, if missing.</li>
+<li>Re-assert the upstream address and default route if missing (see §4.4).</li>
+<li>Firewall rules, all tagged <code>-m comment --comment nettap-dhcp-gateway</code> and
+   added only after a <code>-C</code> check (idempotent):</li>
+<li><code>filter DOCKER-USER  -i &lt;lan&gt; -o &lt;lan&gt; -s &lt;subnet&gt; -j ACCEPT</code></li>
+<li><code>filter DOCKER-USER  -i &lt;lan&gt; -o &lt;lan&gt; -d &lt;subnet&gt; -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT</code></li>
+</ol>
+<p>Both are pinned to <code>-i &lt;lan&gt; -o &lt;lan&gt;</code> (the one-armed path). Without <code>-o</code>,
+   the accept would end FORWARD before Docker's own chains run, and every LAN
+   device could reach unpublished container ports (Redis, OpenSearch) on the
+   Docker bridges. Published ports (nginx 80/443) still work through Docker's
+   DNAT rules. All rules are inserted with <code>-I</code>.
+   - <code>nat    POSTROUTING  -o &lt;lan&gt; -s &lt;subnet&gt; ! -d &lt;subnet&gt; -j MASQUERADE</code>
+   - <code>filter OUTPUT       -o &lt;lan&gt; -p icmp --icmp-type redirect -j DROP</code>
+4. <code>ethtool -K &lt;lan&gt; gro off lro off</code> (accurate capture; failure is only a warning).</p>
+<p><strong>Why DOCKER-USER:</strong> Docker sets the <code>FORWARD</code> policy to <code>DROP</code>. An accept
+rule in our own nft table doesn't help, because every base chain on the hook
+must accept. <code>DOCKER-USER</code> is the chain Docker documents for user rules. It is
+jumped to first and Docker never flushes it.</p>
+<p><strong>Why drop ICMP redirects:</strong> in-interface == out-interface on a one-armed
+router, so Linux would send redirects telling devices to go straight to the
+router. <code>/proc/sys</code> is read-only inside the container, so the runtime fix is
+the OUTPUT drop rule. <code>send_redirects=0</code> is persisted for boot (§4.5).</p>
+<p><strong>Firewall backend detection:</strong> <code>iptables</code> is added to the daemon image
+(Debian ships both <code>iptables-nft</code> and <code>iptables-legacy</code>). Use whichever
+backend has a <code>DOCKER-USER</code> chain (<code>&lt;cmd&gt; -w -S DOCKER-USER</code> exits 0), trying
+nft first. If neither has one, the backend is <code>null</code>, which is a <strong>blocking</strong>
+preflight failure. That is conservative: we never guess which table Docker's
+DROP policy lives in.</p>
+<p><strong>IP forwarding:</strong> Docker already sets <code>net.ipv4.ip_forward=1</code>. Preflight
+reads <code>/proc/sys/net/ipv4/ip_forward</code>. <code>0</code> is a blocking failure, because the
+container can't write <code>/proc/sys</code>.</p>
+<h3 id="43-capture-device-leg-only-exactly-once">4.3 Capture: device leg only, exactly once<a class="headerlink" href="#43-capture-device-leg-only-exactly-once" title="Permanent link">&para;</a></h3>
+<p>Each routed flow crosses the LAN NIC twice: the device leg and the post-NAT
+router leg. Capture is limited to the device leg with a BPF filter:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>PCAP_FILTER = "net &lt;subnet&gt; or udp port 67 or udp port 68"
+</span></code></pre></div>
+<p>DHCP broadcasts (src <code>0.0.0.0</code>) are kept for Zeek's <code>dhcp.log</code>
+(hostname ↔ MAC ↔ IP).</p>
+<p>Confirmed against the Malcolm v26.02.0 source:</p>
+<table>
+<thead>
+<tr>
+<th>Tool</th>
+<th>Reads the filter from</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Arkime</td>
+<td><code>PCAP_FILTER</code> → <code>bpf=</code> in config.ini (<code>arkime/scripts/docker_entrypoint.sh:132</code>)</td>
+<td>works</td>
+</tr>
+<tr>
+<td>Suricata</td>
+<td><code>CAPTURE_FILTER</code>/<code>PCAP_FILTER</code> → af-packet <code>bpf-filter</code> (<code>suricata_config_populate.py:883-892</code>)</td>
+<td>works</td>
+</tr>
+<tr>
+<td>netsniff-ng (pcap-capture)</td>
+<td><code>PCAP_FILTER</code></td>
+<td>works</td>
+</tr>
+<tr>
+<td>Zeek</td>
+<td><code>zeekdeploy.sh</code> exports <code>CAPTURE_FILTER</code> from <code>PCAP_FILTER</code>; <strong>Malcolm's <code>local.zeek</code></strong> turns it into <code>restrict_filters</code> (<code>getenv("CAPTURE_FILTER")</code>, the fix for Malcolm issue #474, now closed)</td>
+<td>works. The review (CR-091) found that NetTap's <code>config/zeek/nettap.zeek</code> mount targets <code>/opt/zeek/...</code> while the image installs Zeek to <code>/usr/local/zeek</code>, so Malcolm's own <code>local.zeek</code>, with its filter hook, is what runs. <strong>Do not touch <code>nettap.zeek</code> in this work.</strong> CR-091 tracks the dead mount.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Getting the interface and filter to the capture containers.</strong> Today
+<code>PCAP_IFACE</code> comes only from compose interpolation (<code>docker/.env</code>), which the
+daemon can't write. That is why the wizard's mirror choice never takes effect
+(the "capture settings have no effect" follow-up from PR #144). Fix:</p>
+<ul>
+<li>Bind-mount the host directory <strong><code>/etc/nettap</code></strong>: read-write into the daemon
+  at <code>/etc/nettap</code>, read-only into <code>zeek-live</code>, <code>suricata-live</code>, <code>arkime-live</code>
+  and <code>pcap-capture</code>. That is the default path <code>capture_config.py</code> already
+  uses for <code>capture-mode.conf</code> and <code>capture.env</code>.</li>
+<li><code>config/capture/nettap-capture-env.sh</code> (mounted read-only into each capture
+  container) parses <code>/etc/nettap/capture.env</code> <strong>without sourcing it</strong>. It
+  exports only <code>PCAP_IFACE</code>, <code>PCAP_FILTER</code> and <code>CAPTURE_FILTER</code> (same value as
+  <code>PCAP_FILTER</code>), and only when the file exists. Each capture entrypoint
+  wrapper runs <code>. /usr/local/bin/nettap-capture-env.sh</code> before <code>exec tini</code>.
+  When the file is missing, the compose env stays in effect, so existing
+  installs are unchanged.</li>
+<li>The daemon writes <code>capture.env</code> atomically (temp file + rename) and restarts
+  the four capture containers through the existing <code>capture_control._docker_cmd</code>
+  helper (docker CLI over the socket the daemon already mounts). A restart
+  re-runs the entrypoint, which re-reads the file. Containers are never created
+  or removed.</li>
+<li>Values are validated before they are written: interface
+  <code>^[A-Za-z0-9._-]{1,15}$</code>; the subnet is parsed with <code>ipaddress</code>; the filter
+  is built only from the validated subnet.</li>
+</ul>
+<h3 id="44-nettaps-own-address-the-router-dhcp-is-about-to-go-away">4.4 NetTap's own address (the router DHCP is about to go away)<a class="headerlink" href="#44-nettaps-own-address-the-router-dhcp-is-about-to-go-away" title="Permanent link">&para;</a></h3>
+<p>Once the router's DHCP is off, systemd-networkd can't renew NetTap's lease.
+When the lease expires it removes the address and the DHCP default route, and
+NetTap stops routing. The daemon can't run <code>netplan apply</code> (no host mount
+namespace, no D-Bus), so:</p>
+<ol>
+<li><strong>On enable</strong>, record the current upstream address (<code>192.168.1.50/24</code>) and
+   gateway (<code>192.168.1.1</code>) in <code>capture-mode.conf</code>.</li>
+<li><strong>Persist for boot:</strong> <code>/etc/netplan/90-nettap-dhcp-gateway.yaml</code> (mode
+   0600) sets the LAN NIC to <code>dhcp4: false</code>, with addresses
+   <code>[upstream, gateway_ip/prefix]</code>, a default route via the upstream gateway,
+   and the upstream gateway as nameserver.</li>
+<li><strong>Self-heal at runtime:</strong> <code>reconcile()</code> runs every capture-health interval
+   (30 s). It re-adds the upstream address and the default route if networkd
+   removed them, re-adds the gateway address and firewall rules, and restarts
+   dnsmasq if it died. If networkd drops the address when the old lease
+   expires, routing blips for at most one interval.</li>
+<li><strong>Recommended:</strong> reboot NetTap once after activation. Netplan then applies,
+   networkd stops running DHCP on the LAN NIC, and the blip can't happen. The
+   go-live page says so. NetTap's own outbound DNS (feeds, GeoIP updates) may
+   fail between lease expiry and that reboot. Clients are unaffected, because
+   they use the router for DNS directly.
+   <strong>Caveat (review CR-025):</strong> installs that use <code>nettap.service</code> run
+   <code>docker compose down</code> on stop, so a reboot recreates OpenSearch and its
+   security mapping reverts. Until CR-025 is fixed, run the OpenSearch security
+   bootstrap from CLAUDE.md after any reboot. The go-live copy links to it.</li>
+</ol>
+<h3 id="45-boot-persistence-no-dependency-on-the-daemon-starting">4.5 Boot persistence (no dependency on the daemon starting)<a class="headerlink" href="#45-boot-persistence-no-dependency-on-the-daemon-starting" title="Permanent link">&para;</a></h3>
+<p>The daemon only starts after OpenSearch is healthy, which can take minutes on
+an N100. Routing must come back before that:</p>
+<table>
+<thead>
+<tr>
+<th>File (host path)</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/etc/netplan/90-nettap-dhcp-gateway.yaml</code></td>
+<td>static upstream address, gateway address, default route</td>
+</tr>
+<tr>
+<td><code>/etc/sysctl.d/99-nettap-dhcp-gateway.conf</code></td>
+<td><code>ip_forward=1</code>, <code>send_redirects=0</code> (all, default, <code>&lt;lan&gt;</code>)</td>
+</tr>
+<tr>
+<td><code>/etc/nettap/dhcp-gateway-firewall.sh</code> (0755)</td>
+<td>idempotent host-<code>iptables</code> rules (same rule list as runtime). Waits up to 60 s for <code>DOCKER-USER</code></td>
+</tr>
+<tr>
+<td><code>/etc/systemd/system/nettap-dhcp-gateway.service</code></td>
+<td>oneshot, <code>After=docker.service</code>, runs the script. Enabled via a symlink in <code>multi-user.target.wants</code> whose target is the <strong>host</strong> path <code>/etc/systemd/system/nettap-dhcp-gateway.service</code></td>
+</tr>
+</tbody>
+</table>
+<p>The host's own <code>iptables</code> uses the same backend as the host's Docker, so the
+boot script needs no backend detection. dnsmasq starts with the daemon, a few
+minutes after boot. Clients renewing mid-lease don't notice. New devices wait
+until the daemon is up.</p>
+<blockquote>
+<p>Existing bug noted for the review table as LD-001 (not fixed here):
+<code>BridgeManager</code> and <code>MirrorManager</code> create their <code>multi-user.target.wants</code>
+symlinks with the <strong>container</strong> path (<code>/host/etc/systemd/system/...</code>) as the
+target. On the host those symlinks dangle, so their units are never enabled.
+The DHCP unit uses the host path.</p>
+</blockquote>
+<h3 id="451-review-findings-this-work-must-not-carry-forward">4.5.1 Review findings this work must not carry forward<a class="headerlink" href="#451-review-findings-this-work-must-not-carry-forward" title="Permanent link">&para;</a></h3>
+<p>These sit in code this feature rewrites, so the rewrite fixes them. Commits
+cite the IDs.</p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>What the rewrite does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CR-007</td>
+<td>The wizard's mode and NIC choice reach <code>load_capture_config</code> (INI at <code>/etc/nettap/capture-mode.conf</code>) and the capture containers (<code>capture.env</code> + restart)</td>
+</tr>
+<tr>
+<td>CR-165, CR-166</td>
+<td><code>/api/setup/configure</code> validates interface names (<code>^[A-Za-z0-9._-]{1,15}$</code>) and the DHCP subnet before writing anything</td>
+</tr>
+<tr>
+<td>CR-167</td>
+<td><code>main.py</code> starts the storage and SMART loops before capture setup, and wraps capture config load and manager setup in try/except with a logged fallback, so a bad <code>capture-mode.conf</code> can't crash-loop the daemon</td>
+</tr>
+<tr>
+<td>CR-212, CR-247</td>
+<td><code>CaptureHealthPanel</code> and the Infrastructure page label <code>dhcp_gateway</code> correctly instead of showing bridge/br0</td>
+</tr>
+</tbody>
+</table>
+<p>Related findings <strong>not</strong> fixed here, but relevant to operators of this mode:
+CR-075 (the rogue-DHCP detector flags clients; nothing consumes it yet),
+CR-025 (reboot recreates OpenSearch), CR-091 (dead <code>nettap.zeek</code> mount),
+CR-114 (the capture-mode store loads once per session).</p>
+<h3 id="46-safety">4.6 Safety<a class="headerlink" href="#46-safety" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Risk</th>
+<th>Mitigation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Two DHCP servers on one LAN</td>
+<td>Preflight sends a real DHCPDISCOVER (AF_PACKET, broadcast flag, 3 s listen) and lists every server that answers. Enable is <strong>refused (409)</strong> while any server other than NetTap answers, and the probe runs again inside <code>enable</code>. dnsmasq is <strong>never started without a probe</strong>, at daemon start and in <code>reconcile()</code> alike. If another server answers, the DHCP setting is saved as off and the issue is shown. If the probe errors, NetTap holds DHCP off for that tick only and probes again on the next one, because the router's DHCP is off by design. Leaving an active gateway in the wizard is refused (409) until another DHCP server answers.</td>
+</tr>
+<tr>
+<td>Subnet collides with an existing network</td>
+<td>Checked against every IPv4 network on every host interface (router subnet, docker0, br-*). Blocking.</td>
+</tr>
+<tr>
+<td>NetTap down ⇒ no internet</td>
+<td>Stated plainly before enabling (explicit confirmation). Kernel forwarding and NAT survive daemon crashes. The boot unit restores routing without the daemon. The recovery steps are shown on the go-live page and in this doc (§7).</td>
+</tr>
+<tr>
+<td>IPv6 bypass</td>
+<td>If the router advertises IPv6 (RA), devices get global IPv6 and the router as their v6 gateway, so that traffic bypasses NetTap. Detected from a <code>proto ra</code> default route or a dynamic global address on the LAN NIC. <strong>Warning, not blocking</strong>, with advice to turn off IPv6 on the router for full visibility.</td>
+</tr>
+<tr>
+<td>Static-IP devices / mesh routers that can't disable DHCP</td>
+<td>Wizard and go-live copy. If the router can't turn DHCP off, the re-probe keeps failing and the UI recommends Mirror or the Advanced bridge.</td>
+</tr>
+<tr>
+<td>Double NAT</td>
+<td>Documented: router port forwards and UPnP don't reach devices, and consoles may report strict NAT. A NetTap-side port-forward UI is a follow-up.</td>
+</tr>
+<tr>
+<td>Device-to-device LAN traffic</td>
+<td>Devices on <code>10.77.0.0/24</code> share L2 and talk directly, so that traffic stays invisible (needs Mirror).</td>
+</tr>
+</tbody>
+</table>
+<h3 id="47-latency-and-throughput">4.7 Latency and throughput<a class="headerlink" href="#47-latency-and-throughput" title="Permanent link">&para;</a></h3>
+<p>The extra L3 hop costs tens of µs (typical, unmeasured), the same order as the
+bridge and well under the 1 ms budget. The real risk is jitter while
+Zeek/Suricata/Arkime saturate the N100. The remote script measures host→router
+and host→1.1.1.1 RTT with capture running, and prints the <code>iperf3</code> command to
+run from a client for throughput. This can't be verified from the dev machine.</p>
+<h2 id="5-state-and-config">5. State and config<a class="headerlink" href="#5-state-and-config" title="Permanent link">&para;</a></h2>
+<p><code>/etc/nettap/capture-mode.conf</code> (INI, read by <code>load_capture_config</code>, written
+by <code>save_capture_config</code>):</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">[capture]</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="na">mode</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">dhcp_gateway</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="na">interface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">enp1s0</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="na">management</span><span class="w"> </span><span class="o">=</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="k">[bridge]</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="na">wan_interface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">eth0</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="na">lan_interface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">eth1</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="k">[dhcp_gateway]</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="na">subnet</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">10.77.0.0/24</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="na">upstream_address</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">192.168.1.50/24</span><span class="w">     </span><span class="c1">; set by enable, empty until then</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="na">upstream_gateway</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">192.168.1.1</span><span class="w">         </span><span class="c1">; set by enable, empty until then</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="na">dhcp_enabled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">false</span><span class="w">                   </span><span class="c1">; DHCP server on/off</span>
+</span></code></pre></div>
+<ul>
+<li><strong>Routing active</strong> ⇔ <code>mode == dhcp_gateway</code> and <code>upstream_gateway</code> set.</li>
+<li><strong>DHCP server running</strong> ⇔ routing active and <code>dhcp_enabled</code>.</li>
+<li><code>disable</code> turns off only the DHCP server. Routing stays, so devices holding
+  <code>10.77.0.x</code> leases keep working until they move back to the router (within
+  one lease, or on reconnect).</li>
+<li>Switching to another mode in the wizard calls <code>teardown()</code>: stop dnsmasq,
+  delete the rules, remove the gateway address, delete the four boot files.
+  The UI warns to turn the router's DHCP back on <strong>before</strong> rebooting NetTap.</li>
+</ul>
+<p><code>/etc/nettap/capture.env</code> (consumed by capture containers):</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>CAPTURE_MODE=dhcp_gateway
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>PCAP_IFACE=enp1s0
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>PCAP_FILTER=net 10.77.0.0/24 or udp port 67 or udp port 68
+</span></code></pre></div>
+<p>(mirror: <code>PCAP_IFACE=&lt;mirror nic&gt;</code>, <code>PCAP_FILTER=</code>; bridge: <code>PCAP_IFACE=br0</code>,
+<code>PCAP_FILTER=</code>.)</p>
+<h2 id="6-interface-contract">6. Interface contract<a class="headerlink" href="#6-interface-contract" title="Permanent link">&para;</a></h2>
+<h3 id="61-daemon-modules">6.1 Daemon modules<a class="headerlink" href="#61-daemon-modules" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>daemon/services/capture_manager.py</code></td>
+<td><code>CaptureMode.DHCP_GATEWAY = "dhcp_gateway"</code>; non-abstract <code>async def reconcile(self) -&gt; None</code> (default no-op)</td>
+</tr>
+<tr>
+<td><code>daemon/services/capture_config.py</code></td>
+<td><code>CaptureConfig</code> gains <code>dhcp_subnet="10.77.0.0/24"</code>, <code>dhcp_upstream_address=""</code>, <code>dhcp_upstream_gateway=""</code>, <code>dhcp_enabled=False</code>; <code>[dhcp_gateway]</code> read/write; <code>write_env_file</code> emits <code>PCAP_FILTER</code>; atomic writes</td>
+</tr>
+<tr>
+<td><code>daemon/services/dhcp_probe.py</code></td>
+<td><code>build_discover(xid: int, mac: bytes) -&gt; bytes</code>; <code>parse_offer(frame: bytes, xid: int) -&gt; dict \| None</code> (<code>{"server_ip", "offered_ip"}</code>); <code>async probe_dhcp_servers(iface: str, mac: str, timeout: float = 3.0) -&gt; list[dict]</code></td>
+</tr>
+<tr>
+<td><code>daemon/services/dhcp_gateway_net.py</code></td>
+<td>Pure helpers: <code>validate_subnet</code>, <code>gateway_ip</code>, <code>pool_range</code>, <code>capture_filter</code>, <code>firewall_rules(subnet, iface)</code>, <code>render_netplan(...)</code>, <code>render_sysctl(iface)</code>, <code>render_firewall_script(...)</code>, <code>render_systemd_unit()</code>, <code>parse_leases(text)</code></td>
+</tr>
+<tr>
+<td><code>daemon/services/dhcp_gateway.py</code></td>
+<td><code>DhcpGatewayManager(CaptureManager)</code>: <code>setup</code>, <code>teardown</code>, <code>get_health</code>, <code>get_capture_interface</code>, <code>get_stats</code>, <code>mode</code>, <code>reconcile</code>, plus <code>preflight()</code>, <code>enable()</code>, <code>disable()</code>, <code>status()</code></td>
+</tr>
+<tr>
+<td><code>daemon/api/dhcp_gateway.py</code></td>
+<td>Routes below; <code>register_dhcp_gateway_routes(app)</code> called from <code>server.py</code></td>
+</tr>
+<tr>
+<td><code>daemon/api/setup.py</code></td>
+<td>Accepts <code>capture_mode: "dhcp_gateway"</code>; writes INI + <code>capture.env</code> to the paths the readers use; restarts capture containers when <code>capture.env</code> changes; swaps <code>app["capture_manager"]</code> (tearing down an active DHCP gateway first)</td>
+</tr>
+<tr>
+<td><code>daemon/main.py</code></td>
+<td>DHCP branch at startup (calls <code>setup()</code> if routing active). The generic capture loop reads <code>app["capture_manager"]</code> each tick and calls <code>reconcile()</code> then <code>get_health()</code>, and runs in every mode. Storage and SMART tasks start before capture setup, and capture setup is guarded (CR-167)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="62-http-api-daemon-session-required-preflight-and-status-go-through-the-web-catch-all-proxy-enable-disable-and-apisetupconfigure-have-dedicated-sveltekit-routes-with-a-60-s-timeout-because-enable-probes-for-3-s-waits-for-dnsmasq-and-may-restart-the-capture-containers">6.2 HTTP API (daemon; session required. <code>preflight</code> and <code>status</code> go through the web catch-all proxy; <code>enable</code>, <code>disable</code> and <code>/api/setup/configure</code> have dedicated SvelteKit routes with a 60 s timeout, because enable probes for 3 s, waits for dnsmasq and may restart the capture containers)<a class="headerlink" href="#62-http-api-daemon-session-required-preflight-and-status-go-through-the-web-catch-all-proxy-enable-disable-and-apisetupconfigure-have-dedicated-sveltekit-routes-with-a-60-s-timeout-because-enable-probes-for-3-s-waits-for-dnsmasq-and-may-restart-the-capture-containers" title="Permanent link">&para;</a></h3>
+<p>All four return <code>409 {"error": ...}</code> when the configured mode isn't
+<code>dhcp_gateway</code>.</p>
+<p><strong><code>GET /api/capture/dhcp/preflight</code></strong> → 200</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">"interface"</span><span class="p">:</span><span class="w"> </span><span class="s2">"enp1s0"</span><span class="p">,</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">"subnet"</span><span class="p">:</span><span class="w"> </span><span class="s2">"10.77.0.0/24"</span><span class="p">,</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">  </span><span class="nt">"gateway_ip"</span><span class="p">:</span><span class="w"> </span><span class="s2">"10.77.0.1"</span><span class="p">,</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">  </span><span class="nt">"upstream"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"address"</span><span class="p">:</span><span class="w"> </span><span class="s2">"192.168.1.50/24"</span><span class="p">,</span><span class="w"> </span><span class="nt">"gateway"</span><span class="p">:</span><span class="w"> </span><span class="s2">"192.168.1.1"</span><span class="p">},</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span><span class="nt">"subnet_conflicts"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">  </span><span class="nt">"other_dhcp_servers"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"server_ip"</span><span class="p">:</span><span class="w"> </span><span class="s2">"192.168.1.1"</span><span class="p">,</span><span class="w"> </span><span class="nt">"offered_ip"</span><span class="p">:</span><span class="w"> </span><span class="s2">"192.168.1.77"</span><span class="p">}],</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">  </span><span class="nt">"ipv6_router_advertisements"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">  </span><span class="nt">"ip_forward"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">  </span><span class="nt">"firewall_backend"</span><span class="p">:</span><span class="w"> </span><span class="s2">"iptables-nft"</span><span class="p">,</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="w">  </span><span class="nt">"checks"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"no_other_dhcp"</span><span class="p">,</span><span class="w"> </span><span class="nt">"passed"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="nt">"blocking"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="w">              </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Your router's DHCP server is still on (192.168.1.1)."</span><span class="p">}],</span>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="w">  </span><span class="nt">"ready"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span>
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="p">}</span>
+</span></code></pre></div>
+<p><code>upstream</code> is <code>null</code> when the NIC has no router-subnet address or default
+route. Check names: <code>interface_up</code>, <code>upstream_detected</code>, <code>no_other_dhcp</code>,
+<code>no_subnet_conflict</code>, <code>ip_forward</code>, <code>firewall_backend</code> (all blocking) and
+<code>ipv6_bypass</code> (non-blocking). <code>ready</code> = every blocking check passed.</p>
+<p><strong><code>POST /api/capture/dhcp/enable</code></strong>, body <code>{"confirm": true}</code> → 200 status
+body (below). <code>400</code> without <code>confirm: true</code>. <code>409 {"error", "checks"}</code> when a
+fresh preflight fails a blocking check. <code>500 {"error"}</code> when applying fails
+(partial state is rolled back).</p>
+<p><strong><code>POST /api/capture/dhcp/disable</code></strong> → 200 status body.</p>
+<p><strong><code>GET /api/capture/dhcp/status</code></strong> → 200</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">"interface"</span><span class="p">:</span><span class="w"> </span><span class="s2">"enp1s0"</span><span class="p">,</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">"subnet"</span><span class="p">:</span><span class="w"> </span><span class="s2">"10.77.0.0/24"</span><span class="p">,</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">"gateway_ip"</span><span class="p">:</span><span class="w"> </span><span class="s2">"10.77.0.1"</span><span class="p">,</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="nt">"upstream"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"address"</span><span class="p">:</span><span class="w"> </span><span class="s2">"192.168.1.50/24"</span><span class="p">,</span><span class="w"> </span><span class="nt">"gateway"</span><span class="p">:</span><span class="w"> </span><span class="s2">"192.168.1.1"</span><span class="p">},</span>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">  </span><span class="nt">"routing_active"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">  </span><span class="nt">"dhcp_enabled"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">  </span><span class="nt">"dhcp_server_running"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">  </span><span class="nt">"leases"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"mac"</span><span class="p">:</span><span class="w"> </span><span class="s2">"aa:bb:cc:dd:ee:ff"</span><span class="p">,</span><span class="w"> </span><span class="nt">"ip"</span><span class="p">:</span><span class="w"> </span><span class="s2">"10.77.0.23"</span><span class="p">,</span><span class="w"> </span><span class="nt">"hostname"</span><span class="p">:</span><span class="w"> </span><span class="s2">"pixel-8"</span><span class="p">,</span><span class="w"> </span><span class="nt">"expires"</span><span class="p">:</span><span class="w"> </span><span class="mi">1793389200</span><span class="p">}],</span>
+</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">  </span><span class="nt">"issues"</span><span class="p">:</span><span class="w"> </span><span class="p">[]</span>
+</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="p">}</span>
+</span></code></pre></div>
+<p><strong><code>POST /api/setup/configure</code></strong> (existing) adds:
+<code>{"capture_mode": "dhcp_gateway", "capture_interface": "enp1s0", "dhcp_subnet": "10.77.0.0/24"}</code>.
+<code>dhcp_subnet</code> is optional (defaults to <code>10.77.0.0/24</code>) and validated as
+private, prefix 16–28. The response adds <code>"capture_restart": {"restarted": [...], "errors": [...]}</code>.</p>
+<p><code>GET /api/capture/health</code> in DHCP mode: <code>mode: "dhcp_gateway"</code>, <code>status</code> is
+<code>not_configured</code> (not enabled yet), <code>normal</code>, <code>degraded</code> or <code>down</code>, plus extra
+keys <code>subnet</code>, <code>routing_active</code>, <code>dhcp_server_running</code>, <code>lease_count</code>.</p>
+<h3 id="63-web">6.3 Web<a class="headerlink" href="#63-web" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Contents</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>web/src/lib/api/dhcpGateway.ts</code></td>
+<td>Types mirroring §6.2; <code>getDhcpPreflight</code>, <code>enableDhcpGateway</code>, <code>disableDhcpGateway</code>, <code>getDhcpStatus</code> (throw <code>Error(message)</code> on non-OK, with the daemon's <code>error</code> text)</td>
+</tr>
+<tr>
+<td><code>web/src/lib/utils/dhcpSubnet.ts</code></td>
+<td><code>validateDhcpSubnet(cidr, nicAddresses) -&gt; { valid: boolean; error: string }</code> (format, private range, prefix 16–28, not containing any NIC address)</td>
+</tr>
+<tr>
+<td><code>web/src/lib/components/setup/DhcpGatewayStep.svelte</code></td>
+<td>Wizard step: subnet input (bindable), validation, what happens / limitations in plain English</td>
+</tr>
+<tr>
+<td><code>web/src/routes/setup/+page.svelte</code></td>
+<td>Mode cards: DHCP gateway (Recommended), Mirror/SPAN. Inline bridge inside an "Advanced" <code>Collapsible</code>. DHCP steps: Welcome → Capture Mode → Interfaces (one NIC, "plugged into your router") → DHCP Gateway → Storage → Enrichment → Account → Verification</td>
+</tr>
+<tr>
+<td><code>web/src/lib/components/golive/DhcpGoLive.svelte</code></td>
+<td>Preflight checks → guided "turn off your router's DHCP" + re-check → confirmation checkbox → Enable → live status (sortable lease table, issues) → Disable + recovery steps</td>
+</tr>
+<tr>
+<td><code>web/src/routes/go-live/+page.svelte</code></td>
+<td>Reads <code>/api/capture/mode</code>. <code>dhcp_gateway</code> renders <code>DhcpGoLive</code>, anything else the existing bridge flow (bridge polling starts only in bridge mode)</td>
+</tr>
+<tr>
+<td><code>web/src/lib/stores/captureMode.ts</code></td>
+<td>Store type adds <code>'dhcp_gateway'</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="7-recovery-shown-on-the-go-live-page">7. Recovery (shown on the go-live page)<a class="headerlink" href="#7-recovery-shown-on-the-go-live-page" title="Permanent link">&para;</a></h2>
+<p>If NetTap is off or broken and devices have no internet:</p>
+<ol>
+<li><strong>Turn the router's DHCP server back on.</strong> With NetTap down and the
+   router's DHCP off, nothing hands out addresses, so the user first gives a
+   laptop a fixed address on the router's network (plugged into the router or
+   on its Wi-Fi). When <code>status.upstream</code> is known the page fills in real
+   values: a free host in the router's network (host .20, skipping NetTap and
+   the router), the netmask from the upstream prefix, and the router address,
+   e.g. "IP 192.168.1.20, mask 255.255.255.0, then open http://192.168.1.1"
+   (<code>staticAddressHint</code> in <code>web/src/lib/utils/dhcpSubnet.ts</code>). Without
+   upstream it says to pick a free address in the router's range and find the
+   router's address on its sticker. Routers managed with a phone app (most
+   mesh systems) are switched back in the app instead, on mobile data if the
+   Wi-Fi has no internet.</li>
+<li>Reconnect devices (Wi-Fi off/on, or unplug and replug) and they get router
+   addresses straight away; otherwise they move over when their NetTap address
+   runs out (lease time 1 h). Set the laptop back to automatic addressing.</li>
+<li>Once NetTap is healthy again, switch the DHCP gateway back on from Go Live.</li>
+</ol>
+<p>Timing copy for the switch <em>to</em> NetTap: devices move over when their current
+address from the router runs out (often up to a day), or straight away if they
+reconnect (Wi-Fi off/on or replug). Never promise a fixed number of minutes.</p>
+<p>Mode changes: the setup wizard can't save after first run, so no copy sends
+users to Setup to switch modes or pick a new subnet. Where a router can't turn
+its DHCP off, the page says switching modes after setup isn't available in the
+app yet.</p>
+<h2 id="8-tests">8. Tests<a class="headerlink" href="#8-tests" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>pytest:</strong> probe packet build/parse (fixtures), subnet/pool/filter helpers,
+  firewall rule list, renderers (netplan/sysctl/script/unit content, host-path
+  symlink), lease parsing, backend detection, enable refusal paths (other DHCP,
+  conflict, no upstream, no backend, no confirm), rollback on apply failure,
+  reconcile re-adds missing pieces, disable keeps routing, teardown removes
+  everything, configure writes INI + <code>capture.env</code> at the reader paths,
+  container restart only on change, 409 on mode mismatch.</li>
+<li><strong>vitest:</strong> API client (URLs, methods, errors), subnet validator, wizard
+  (DHCP and Mirror primary, bridge under Advanced, DHCP step flow, payload),
+  <code>DhcpGoLive</code> (loading/error/blocked/ready/enabled states, enable needs the
+  confirmation, sortable lease table, disable), go-live mode switch, store.</li>
+</ul>
+<h2 id="9-out-of-scope-follow-ups">9. Out of scope / follow-ups<a class="headerlink" href="#9-out-of-scope-follow-ups" title="Permanent link">&para;</a></h2>
+<ul>
+<li>NetTap-side port forwarding (double-NAT workaround).</li>
+<li>In-app host reboot or <code>netplan apply</code> (would need a new host privilege path).</li>
+<li>IPv6 routing through NetTap (RA suppression or NAT66).</li>
+<li>DHCP reservations UI; importing the router's existing reservations.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2024-2026 NetTap Contributors
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/EliasMarine/NetTap" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.expand", "navigation.top", "navigation.indexes", "search.suggest", "search.highlight", "content.code.copy", "content.code.annotate", "toc.follow"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+    
+  </body>
+</html>
