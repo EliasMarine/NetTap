@@ -162,9 +162,18 @@ print('{SSHA}' + base64.b64encode(h + salt).decode())
 # (the old mode) only if the owner can't be changed, so OpenSearch never loses its login.
 _lock_curlrc() {
     local file="$1" puid pgid
-    puid=$(grep -oE '^PUID=[0-9]+' "${PROJECT_ROOT}/docker/.env" 2>/dev/null | cut -d= -f2)
-    pgid=$(grep -oE '^PGID=[0-9]+' "${PROJECT_ROOT}/docker/.env" 2>/dev/null | cut -d= -f2)
-    if chown "${puid:-${SUDO_UID:-1000}}:${pgid:-${SUDO_GID:-1000}}" "$file" 2>/dev/null; then
+    # OLD CODE START — NET-246: on a fresh install docker/.env doesn't exist yet (generate_compose_env
+    # runs after this), so grep exited 2 and set -euo pipefail stopped every fresh install at step 5
+    # puid=$(grep -oE '^PUID=[0-9]+' "${PROJECT_ROOT}/docker/.env" 2>/dev/null | cut -d= -f2)
+    # pgid=$(grep -oE '^PGID=[0-9]+' "${PROJECT_ROOT}/docker/.env" 2>/dev/null | cut -d= -f2)
+    # if chown "${puid:-${SUDO_UID:-1000}}:${pgid:-${SUDO_GID:-1000}}" "$file" 2>/dev/null; then
+    # OLD CODE END
+    puid=$(grep -oE '^PUID=[0-9]+' "${PROJECT_ROOT}/docker/.env" 2>/dev/null | cut -d= -f2) || true
+    pgid=$(grep -oE '^PGID=[0-9]+' "${PROJECT_ROOT}/docker/.env" 2>/dev/null | cut -d= -f2) || true
+    # No .env yet: the same owner generate_compose_env is about to write (never root)
+    puid="${puid:-${SUDO_UID:-1000}}" pgid="${pgid:-${SUDO_GID:-1000}}"
+    if (( puid == 0 )); then puid=1000 pgid=1000; fi
+    if chown "${puid}:${pgid}" "$file" 2>/dev/null; then
         chmod 600 "$file"
     else
         chmod 644 "$file"
