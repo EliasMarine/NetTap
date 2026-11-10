@@ -283,6 +283,54 @@ _mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null; }
     [ "$(cat "${TEST_TMPDIR}/chown.args")" = "1234:5678 ${file}" ]
 }
 
+# Run generate_curlrc the way install.sh does: the real scripts, set -euo pipefail, chown recorded
+_strict_generate_curlrc() {
+    bats_run bash -c "
+        source '${REPO_ROOT}/scripts/common.sh'
+        source '${REPO_ROOT}/scripts/install/malcolm-config.sh'
+        set -euo pipefail
+        PROJECT_ROOT='${TEST_TMPDIR}'
+        chown() { echo \"\$*\" > '${TEST_TMPDIR}/chown.args'; }
+        generate_curlrc"
+}
+
+@test "generate_curlrc: works on a fresh install, before docker/.env exists, under the installer's strict mode" {
+    # NET-246: every fresh install stopped at step 5 here. _source_malcolm_config drops pipefail,
+    # which hid the bug, so this runs the function with the installer's own set -euo pipefail.
+    _source_malcolm_config
+    rm -f "${TEST_TMPDIR}/docker/.env"
+    export SUDO_UID=1234 SUDO_GID=5678  # not the 1000 default, so the fallback really reads them
+
+    _strict_generate_curlrc
+
+    [ "$status" -eq 0 ]
+    local file="${TEST_TMPDIR}/docker/curlrc/.opensearch.primary.curlrc"
+    [ "$(_mode "$file")" = "600" ]
+    [ "$(cat "${TEST_TMPDIR}/chown.args")" = "1234:5678 ${file}" ]  # same fallback as generate_compose_env
+}
+
+@test "generate_curlrc: a stale PUID=0 in docker/.env gives the file to the sudo user, as the rewritten .env will" {
+    _source_malcolm_config
+    printf 'PUID=0\nPGID=0\n' > "${TEST_TMPDIR}/docker/.env"
+    export SUDO_UID=1234 SUDO_GID=5678
+
+    _strict_generate_curlrc
+
+    [ "$status" -eq 0 ]
+    [ "$(cut -d' ' -f1 "${TEST_TMPDIR}/chown.args")" = "1234:5678" ]
+}
+
+@test "generate_curlrc: a root install with no docker/.env gives the file to 1000, like the compose PUID" {
+    _source_malcolm_config
+    rm -f "${TEST_TMPDIR}/docker/.env"
+    export SUDO_UID=0 SUDO_GID=0
+
+    _strict_generate_curlrc
+
+    [ "$status" -eq 0 ]
+    [ "$(cut -d' ' -f1 "${TEST_TMPDIR}/chown.args")" = "1000:1000" ]
+}
+
 @test "generate_curlrc: locks a world-readable file from an earlier install" {
     _source_malcolm_config
     chown() { return 0; }

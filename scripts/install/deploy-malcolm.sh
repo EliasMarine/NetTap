@@ -267,7 +267,8 @@ monitor_startup() {
         done
         warn ""
         warn "Common causes:"
-        warn "  - curlrc permissions (should be 644, not 600)"
+        # OLD CODE: warn "  - curlrc permissions (should be 644, not 600)" (600 owned by PUID since #77)
+        warn "  - curlrc not readable by the container user (should be 600, owned by PUID from docker/.env)"
         warn "  - PUID=0 in .env (should be 1000)"
         warn "  - Insufficient memory (need 4g+ free for JVM heap)"
         warn "  - Port 9200 already in use"
