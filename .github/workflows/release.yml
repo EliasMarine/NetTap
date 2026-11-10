@@ -108,6 +108,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          # A tag with a suffix (v0.4.0-alpha.1, -beta.1, -rc.1) is a pre-release, not "Latest release"
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: release-artifacts/checksums.txt
           fail_on_unmatched_files: false
         env:
