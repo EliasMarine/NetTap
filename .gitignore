@@ -67,3 +67,6 @@ HANDOFF-*.md
 /CLAUDE.md
 # capture:media also writes the docs site's tour video here; only the untracked docs/ uses it
 /.github/assets/media/nettap-tour.mp4
+
+# scripts/fresh-install-cloud.sh: per-run keys, manifests and evidence
+/.fresh-install/
