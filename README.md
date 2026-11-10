@@ -34,7 +34,7 @@
 
 NetTap is an open-source, self-hosted network monitor for homes and small businesses. Put it on a small x86 box on your network and it records the traffic, flags threats and shows it all in a web dashboard. It runs CISA's [Malcolm](https://github.com/cisagov/Malcolm) stack (Zeek, Suricata, OpenSearch) and adds an installer, a setup wizard, its own dashboard and automatic storage management.
 
-> **Pre-release.** No version has been tagged yet. It runs on test hardware, but expect rough edges.
+> **Pre-release.** The current version is [`v0.4.0-alpha.1`](https://github.com/EliasMarine/NetTap/releases/tag/v0.4.0-alpha.1), the first alpha for early testers. Use mirror / SPAN mode, the one tested on real hardware, and expect rough edges.
 
 **New here?** The [setup guide](https://eliasmarine.github.io/NetTap/getting-started/setup-guide/) walks you through everything from choosing hardware to a dashboard full of live data.
 
@@ -99,10 +99,13 @@ See the [hardware guide](https://eliasmarine.github.io/NetTap/getting-started/ha
 ```bash
 git clone https://github.com/EliasMarine/NetTap.git
 cd NetTap
-sudo scripts/install/install.sh
+git checkout v0.4.0-alpha.1
+sudo scripts/install/install.sh --skip-bridge
 ```
 
-The installer blinks each port's LED so you can tell them apart and asks which is which. It then installs Docker, sets up the bridge (`--skip-bridge` skips it), starts the pinned Malcolm images and NetTap's services, and prints a wiring diagram. `--help` lists every option.
+This is the command for mirror / SPAN and DHCP gateway modes. For inline bridge mode, leave out `--skip-bridge`. Don't add `--non-interactive` on a box with two ports: it stops with "Could not assign WAN and LAN NICs" (known bug).
+
+The installer blinks each port's LED so you can tell them apart and asks which is which. It then installs Docker, sets up the bridge (unless you passed `--skip-bridge`), starts the pinned Malcolm images and NetTap's services, and prints a wiring diagram. `--help` lists every option.
 
 Then open **https://nettap.local** from a device on your network. NetTap makes its own TLS certificate, so your browser warns you the first time. The setup wizard asks for the capture mode, ports, retention and an admin account.
 
