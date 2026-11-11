@@ -36,7 +36,7 @@ def fetch(path):
     except urllib.error.HTTPError as e:
         return {'_status': e.code}
     except (urllib.error.URLError, ValueError):
-        return {'_status': 0}
+        return {'_status': 'unreachable'}  # truthy, so no check passes on it
 d = fetch(sys.argv[1])
 del fetch
 print(eval(sys.argv[2]))" "$1" "$2" 2>&1 | tail -n 1
