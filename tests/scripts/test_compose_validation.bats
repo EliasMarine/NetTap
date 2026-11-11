@@ -468,6 +468,13 @@ assert '../config/filebeat/flush-timeout.sh:/nettap/flush-timeout.sh:ro' in svc.
     [ -f "${REPO_ROOT}/config/filebeat/flush-timeout.sh" ]
 }
 
+@test "compose: the restated filebeat entrypoint was checked against the tested Malcolm tag (NET-243)" {
+    # 26.10.0 and its rollback 26.02.0 both have this ENTRYPOINT and CMD (G11, 2026-11-11). On a
+    # bump: docker image inspect the new filebeat-oss image, update entrypoint/command, then this tag
+    run grep -Eq '^TESTED_MALCOLM_TAG = "26\.10\.0"$' "${REPO_ROOT}/daemon/services/malcolm_upgrade.py"
+    [ "$status" -eq 0 ]
+}
+
 @test "compose: arkime does NOT mount host certs (self-generates internally)" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"

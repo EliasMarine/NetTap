@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { DISPLAY_SETTINGS_KEY, savedDefaultRange, savedLiveMap, startRange, alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery } from './drilldown';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+import { DISPLAY_SETTINGS_KEY, savedDefaultRange, savedLiveMap, startRange, alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, SCAN_CAP, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery } from './drilldown';
 
 const MB = 1000 ** 2; // decimal, as formatBytes prints (NET-166)
 
@@ -308,5 +310,14 @@ describe('the Live map choice', () => {
 	it("a saved flat map doesn't count as a default range", () => {
 		save({ liveMap: 'flat' });
 		expect(savedDefaultRange()).toBeNull();
+	});
+});
+
+// NET-238 review: the capped-scan notices quote the daemon's cap, so a change there must reach them
+describe('SCAN_CAP', () => {
+	it("matches the daemon's MAX_BUCKETS", () => {
+		const source = readFileSync(resolve(__dirname, '../../../../daemon/storage/all_buckets.py'), 'utf-8');
+		const daemonCap = Number(source.match(/^MAX_BUCKETS = ([\d_]+)$/m)?.[1].replaceAll('_', ''));
+		expect(SCAN_CAP).toBe(daemonCap);
 	});
 });
