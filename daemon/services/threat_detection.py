@@ -15,6 +15,7 @@ from collections import Counter, defaultdict
 from datetime import datetime
 
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
+
 # OLD CODE: from services.excluded_ips import CONN_ACCOUNTING (NET-240: lateral movement reads interim records too)
 from services.excluded_ips import CONN_ACCOUNTING, CONN_RECORDS
 from storage.all_buckets import all_buckets

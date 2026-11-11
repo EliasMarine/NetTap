@@ -85,7 +85,9 @@ def test_a_connection_that_ended_before_the_window_is_not_listed():
 
 
 def test_last_seen_is_the_newest_activity_of_either_field():
-    with_last = _ssh("C1", t="2026-11-05T09:00:00.000Z", last="2026-11-05T09:40:00.000Z")
+    with_last = _ssh(
+        "C1", t="2026-11-05T09:00:00.000Z", last="2026-11-05T09:40:00.000Z"
+    )
     newer_without = _ssh("C2", t="2026-11-05T11:00:00.000Z")
     (move,), _ = _moves([with_last, newer_without])
     assert move["last_seen"] == "2026-11-05T11:00:00.000Z"
