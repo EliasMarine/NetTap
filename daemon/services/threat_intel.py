@@ -18,7 +18,7 @@ from pathlib import Path
 
 from services.capture_config import write_file_atomic
 from storage.all_buckets import all_buckets
-from storage.exact_terms import PartialResultsError
+# OLD CODE: from storage.exact_terms import PartialResultsError (NET-238: the capped scan no longer raises)
 
 logger = logging.getLogger("nettap.services.threat_intel")
 
@@ -261,12 +261,16 @@ class ThreatIntelService:
         building a local blocklist from Suricata's own detections.
         ``excluded_ips`` is ignored (kept for callers): excluded IPs stay visible here.
         """
-        return self.merge_seen(self.scan_suricata(client, from_ts, to_ts, excluded_ips))
+        # OLD CODE: return self.merge_seen(self.scan_suricata(client, from_ts, to_ts, excluded_ips))
+        # (NET-238: the scan now also says whether it was capped; what it read is merged either way)
+        seen, _complete = self.scan_suricata(client, from_ts, to_ts, excluded_ips)
+        return self.merge_seen(seen)
 
     def scan_suricata(
         self, client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
-    ) -> set[str]:
-        """The listed hosts in the window's listing-rule alerts (the OpenSearch scan).
+    ) -> tuple[set[str], bool]:
+        """(the listed hosts in the window's listing-rule alerts (the OpenSearch scan); False if
+        the scan stopped at its cap, so more pairs exist than were read).
 
         Touches no cache, so it runs without CACHE_LOCK (PR 2 review: the scan pages for
         up to 30 s, and the address drill-down waited on the lock all that time).
@@ -375,9 +379,17 @@ class ThreatIntelService:
         #         len(buckets),
         #     )
         # OLD CODE END
+        # OLD CODE START — NET-238: a capped scan blanked the matches, so enough alerts could
+        # hide them; each listed host read is a real match, so the pairs read are kept
+        # if not complete:
+        #     raise PartialResultsError(
+        #         f"TI scan stopped at {len(buckets)} address pairs"
+        #     )
+        # OLD CODE END
         if not complete:
-            raise PartialResultsError(
-                f"TI scan stopped at {len(buckets)} address pairs"
+            logger.warning(
+                "Threat intel matches: the alert scan stopped at %d address pairs; later pairs were not checked",
+                len(buckets),
             )
 
         # The listed host is the alert's one internet endpoint; with none or two (e.g. an
@@ -403,7 +415,7 @@ class ThreatIntelService:
                 ambiguous,
             )
         self.seen_in_window = seen
-        return seen
+        return seen, complete
 
     def merge_seen(self, seen: set[str]) -> int:
         """Add the scan's new indicators to the loaded cache and save it; how many were new.

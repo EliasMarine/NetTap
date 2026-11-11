@@ -40,7 +40,8 @@
 	import IPAddress from '$components/IPAddress.svelte';
 	import { ipHref } from '$lib/stores/lan';
 	import { formatTime } from '$lib/utils/time';
-	import { DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown';
+	// OLD CODE: import { DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown'; (NET-238: fmt, SCAN_CAP)
+	import { DRILL_RANGES, fmt, rangeWindow, SCAN_CAP, startRange } from '$lib/utils/drilldown';
 	// NET-228 (audit B5): "nothing needs attention" carries the pipeline's current state
 	// OLD CODE: import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system'; (review L7)
 	// OLD CODE: import { nothingFound } from '$api/system'; (NET-242: and the page-level pipeline line)
@@ -229,7 +230,8 @@
 		if (beacons.length > 0) parts.push(`${beacons.length} beaconing suspect${beacons.length > 1 ? 's' : ''}`);
 		const tiTotal = threatIntel?.total_indicators ?? 0;
 		// OLD CODE START: if (tiTotal > 0) parts.push(`${tiTotal} threat intel indicators`); (I7: now the window's matches) OLD CODE END
-		if (tiTotal > 0) parts.push(`${tiTotal} threat intel matches`);
+		// OLD CODE: if (tiTotal > 0) parts.push(`${tiTotal} threat intel matches`); (NET-238: a capped scan's count is a floor)
+		if (tiTotal > 0) parts.push(`${threatIntel?.complete === false ? 'at least ' : ''}${tiTotal} threat intel matches`);
 		if (beaconPending) parts.push('Beaconing check running');
 		if (beaconPartial && beacons.length === 0) parts.push('Partial beaconing scan');
 		// OLD CODE: const failed = [...failedChecks].map((c) => CHECK_NAMES[c] ?? c); (NET-192 PR 3: or the background check failed)
@@ -594,10 +596,20 @@
 		<!-- OLD CODE START: <Card title="Threat intel matches" sub="Indicators loaded per feed · {rangeText}" class="c-4"> (I7: every cached indicator, under the window's label) OLD CODE END -->
 		<Card title="Threat intel matches" sub="Listed internet addresses seen in alerts · {rangeText}" class="c-4">
 			{#snippet actions()}
+				<!-- OLD CODE: >{intelFailed ? 'load failed' : plural(threatIntel?.total_indicators ?? 0, 'indicator')}</span (NET-238: a capped scan's count is a floor) -->
 				<span class={['chip', (threatIntel?.total_indicators ?? 0) > 0 && 'is-warn']}
-					>{intelFailed ? 'load failed' : plural(threatIntel?.total_indicators ?? 0, 'indicator')}</span
+					>{intelFailed
+						? 'load failed'
+						: `${threatIntel?.complete === false ? 'at least ' : ''}${plural(threatIntel?.total_indicators ?? 0, 'indicator')}`}</span
 				>
 			{/snippet}
+			{#if threatIntel?.complete === false}
+				<p class="notice is-warn" role="status">
+					<Icon name="warn" /><span
+						>Stopped after checking the first {fmt(SCAN_CAP)} alert address pairs, in address order, not the busiest; more exist, so this list may be missing some.</span
+					>
+				</p>
+			{/if}
 			<!-- OLD CODE START — I7: cached indicators "loaded", and a bare request-failed state
 			{#if threatIntel && Object.keys(threatIntel.feeds).length > 0}
 				<BarList

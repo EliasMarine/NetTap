@@ -184,6 +184,8 @@ export interface ThreatIntelInfo {
 	/** Indicators seen in alerts inside the window, per feed (I7: not every cached one). */
 	feeds: Record<string, { label: string; indicator_count: number }>;
 	total_indicators: number;
+	/** False when the alert scan stopped at its cap (NET-238): total_indicators is then a lower bound. */
+	complete: boolean;
 }
 
 // Helper
@@ -285,5 +287,7 @@ export async function getThreatIntel(
 	// if (!res.ok) return { from: '', to: '', new_indicators: 0, feeds: {}, total_indicators: 0 };
 	// OLD CODE END
 	if (!res.ok) throw new Error(`Threat intel failed: HTTP ${res.status}`);
-	return res.json();
+	// OLD CODE: return res.json(); (NET-238: a reply without complete, from an older daemon, reads as complete)
+	const body = await res.json();
+	return { ...body, complete: body.complete !== false };
 }

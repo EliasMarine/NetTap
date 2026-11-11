@@ -41,7 +41,8 @@
 	import SearchField from '$lib/components/ui/SearchField.svelte';
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import { domainHref } from '$lib/stores/lan';
-	import { chartTime, DRILL_RANGES, fmt, rangeWindow, startRange } from '$lib/utils/drilldown';
+	// OLD CODE: import { chartTime, DRILL_RANGES, fmt, rangeWindow, startRange } from '$lib/utils/drilldown'; (NET-238: SCAN_CAP)
+	import { chartTime, DRILL_RANGES, fmt, rangeWindow, SCAN_CAP, startRange } from '$lib/utils/drilldown';
 	import { formatCompactNumber as formatNumber } from '$lib/api/logs';
 
 	// ---------------------------------------------------------------------------
@@ -118,6 +119,8 @@
 	let suspicious = $state<SuspiciousEntry[]>([]);
 	// #96: a failed check must not read as "none detected"; a long list shows its first rows
 	let suspiciousFailed = $state(false);
+	// NET-238: false when the name scan stopped at its cap, so the list may be missing some
+	let suspiciousComplete = $state(true);
 	let showAllSuspicious = $state(false);
 	const SUSPICIOUS_SHOWN = 50;
 
@@ -359,7 +362,11 @@
 		if (results[2].status === 'fulfilled') nxdomains = results[2].value.nxdomains;
 		if (results[3].status === 'fulfilled') queryTypes = results[3].value.types;
 		if (results[4].status === 'fulfilled') timeline = results[4].value.series;
-		if (results[5].status === 'fulfilled') suspicious = results[5].value.suspicious;
+		// OLD CODE: if (results[5].status === 'fulfilled') suspicious = results[5].value.suspicious; (NET-238: and complete)
+		if (results[5].status === 'fulfilled') {
+			suspicious = results[5].value.suspicious;
+			suspiciousComplete = results[5].value.complete;
+		}
 		suspiciousFailed = results[5].status === 'rejected';
 		statsFailed = results[0].status === 'rejected';
 		domainsFailed = results[1].status === 'rejected';
@@ -478,6 +485,7 @@
 		queryTypes = [];
 		timeline = [];
 		suspicious = [];
+		suspiciousComplete = true;
 		// I13: the device table kept the last range's domains under this range's label
 		deviceDns = [];
 		if (selectedDeviceIp) lookupDevice();
@@ -825,6 +833,13 @@
 		<!-- OLD CODE START — #96: a failed check showed "No suspicious DNS patterns detected"
 		{#if suspicious.length === 0 && !loading}
 		OLD CODE END -->
+		{#if !suspiciousComplete && !suspiciousFailed}
+			<p class="notice is-warn capped" role="status">
+				<Icon name="warn" /><span
+					>Stopped after checking the first {fmt(SCAN_CAP)} query names, in name order, not the busiest; more exist, so this list may be missing some.</span
+				>
+			</p>
+		{/if}
 		{#if suspiciousFailed && !loading}
 			<CardState state="error" title="Couldn't check for suspicious DNS patterns: the request failed." message={RETRY_HINT} onaction={() => refresh.run()} />
 		{:else if suspicious.length === 0 && loading}
@@ -863,7 +878,8 @@
 	/* Layout glue the system lacks */
 	/* An in-card anchor for the KPI links; the margin keeps the card head in view */
 	.anchor { display: block; scroll-margin-top: calc(var(--sp-8) * 3); }
-	.stale { margin-bottom: var(--sp-3); }
+	/* OLD CODE: .stale { margin-bottom: var(--sp-3); } (NET-238: the capped-scan notice too) */
+	.stale, .capped { margin-bottom: var(--sp-3); }
 	.selected { align-items: center; margin-bottom: var(--sp-3); }
 	.device-ip { flex: 0 1 20rem; }
 	.findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }

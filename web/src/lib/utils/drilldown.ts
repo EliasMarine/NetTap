@@ -83,6 +83,8 @@ export function rangeWindow(hours: number, now: Date = new Date()): { from: stri
 }
 
 export const fmt = (n: number): string => n.toLocaleString('en-GB');
+/** Where one daemon scan stops (mirrors daemon/storage/all_buckets.py MAX_BUCKETS); a capped detection says so (NET-238). */
+export const SCAN_CAP = 500_000;
 
 // OLD CODE: const COMPACT = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }); (moved to formatCompactNumber in api/logs.ts, NET-192 PR 4)
 /** A count in a small space (a gauge centre, a nav badge): exact below 100,000, "214K" above. */

@@ -67,7 +67,13 @@ def test_threat_intel_transactions_never_interleave(tmp_path, monkeypatch):
         return 0
 
     monkeypatch.setattr(threat_intel.ThreatIntelService, "load_cache", load)
-    monkeypatch.setattr(threat_intel.ThreatIntelService, "scan_suricata", MagicMock())
+    # OLD CODE: monkeypatch.setattr(threat_intel.ThreatIntelService, "scan_suricata", MagicMock())
+    # (NET-238: the scan returns (seen, complete))
+    monkeypatch.setattr(
+        threat_intel.ThreatIntelService,
+        "scan_suricata",
+        MagicMock(return_value=(set(), True)),
+    )
     monkeypatch.setattr(threat_intel.ThreatIntelService, "merge_seen", merge)
 
     threads = [
@@ -100,7 +106,8 @@ def test_the_drill_down_never_waits_for_a_threat_intel_scan(tmp_path, monkeypatc
     def scan(self, *_args, **_kwargs):
         scanning.set()
         release.wait(5)
-        return set()
+        # OLD CODE: return set() (NET-238: the scan returns (seen, complete))
+        return set(), True
 
     monkeypatch.setattr(threat_intel.ThreatIntelService, "scan_suricata", scan)
     refresh = threading.Thread(
