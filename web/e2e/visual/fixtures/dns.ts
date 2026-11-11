@@ -120,8 +120,10 @@ export const DNS_ROUTES: FixtureRoute[] = [
 	},
 	{
 		path: '/api/dns/suspicious',
-		empty: { ...WINDOW, suspicious: [] } satisfies SuspiciousResponse,
-		populated: { ...WINDOW, suspicious: SUSPICIOUS } satisfies SuspiciousResponse,
+		// OLD CODE: empty: { ...WINDOW, suspicious: [] } satisfies SuspiciousResponse,
+		// OLD CODE: populated: { ...WINDOW, suspicious: SUSPICIOUS } satisfies SuspiciousResponse, (NET-238: complete)
+		empty: { ...WINDOW, suspicious: [], complete: true } satisfies SuspiciousResponse,
+		populated: { ...WINDOW, suspicious: SUSPICIOUS, complete: true } satisfies SuspiciousResponse,
 	},
 	{
 		// fires when a device is picked in the DNS page's device section

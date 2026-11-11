@@ -27,6 +27,21 @@ describe('threatRequest', () => {
 	});
 });
 
+// NET-238: false when the alert scan stopped at its cap; an older daemon sends no flag
+describe('getThreatIntel', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it.each([
+		[{ complete: true }, true],
+		[{ complete: false }, false],
+		[{}, true],
+	])('reads complete from %o as %s', async (flag, expected) => {
+		const body = { from: '', to: '', new_indicators: 0, feeds: {}, total_indicators: 0, ...flag };
+		vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => body })));
+		expect((await getThreatIntel()).complete).toBe(expected);
+	});
+});
+
 describe('the report and beaconing requests', () => {
 	afterEach(() => vi.unstubAllGlobals());
 

@@ -161,6 +161,16 @@ describe('DNS API client', () => {
 			mockFetchFailure(500);
 			await expect(getSuspiciousDns()).rejects.toThrow('HTTP 500');
 		});
+
+		// NET-238: false when the name scan stopped at its cap; an older daemon sends no flag
+		it.each([
+			[{ complete: true }, true],
+			[{ complete: false }, false],
+			[{}, true],
+		])('reads complete from %o as %s', async (flag, expected) => {
+			mockFetchSuccess({ from: '', to: '', suspicious: [], ...flag });
+			expect((await getSuspiciousDns()).complete).toBe(expected);
+		});
 	});
 
 	describe('getDnsStats', () => {

@@ -767,7 +767,24 @@ class TestBaselineIsFactual:
             "avg_threat_score": 0.0,
             "history_points": 1,
             "is_anomalous": False,
+            "ready": False,  # NET-239
+            "earlier_hours": 0,
         }
+
+    @pytest.mark.parametrize("record", [True, False])
+    @pytest.mark.parametrize("earlier, ready", [(0, False), (5, False), (6, True)])
+    def test_ready_once_six_earlier_hours_are_recorded(
+        self, ai, earlier, ready, record
+    ):
+        """NET-239: the page says it is still learning until the deviation is compared."""
+        for hour in range(earlier):
+            ai.update_baseline({"total_events": 24}, 24.0, now=self._now(hour))
+        result = ai.update_baseline(
+            {"total_events": 24}, 24.0, record=record, now=self._now(9)
+        )
+        assert (result["ready"], result["earlier_hours"]) == (ready, earlier)
+        # history_points counts this hour too, when it is recorded
+        assert result["history_points"] == earlier + record
 
     def test_live_means_the_window_ends_now(self, ai):
         from datetime import datetime, timedelta, timezone

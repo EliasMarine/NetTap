@@ -45,7 +45,8 @@
 	// OLD CODE END
 	// OLD CODE: import { acknowledgeAlert } from '$api/alerts'; (NET-164: the score's method)
 	// OLD CODE: import { acknowledgeAlert, THREAT_SCORE_HOW } from '$api/alerts'; (NET-225: and the bridge-mode line)
-	import { acknowledgeAlert, THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts';
+	// OLD CODE: import { acknowledgeAlert, THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts'; (NET-239: and the score's inputs)
+	import { acknowledgeAlert, scoreInputs, THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts';
 	import { captureMode, initCaptureMode } from '$lib/stores/captureMode';
 	// OLD CODE START — #146: the alert table sorts on the daemon now
 	// import { compareValues, severityRank } from '$lib/utils/table-sort.svelte';
@@ -91,7 +92,8 @@
 	import { formatTime } from '$lib/utils/time';
 	// NET-228 (audit B5): every "nothing found" message carries the pipeline's current state
 	// OLD CODE: import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system'; (review L7)
-	import { nothingFound } from '$api/system';
+	// OLD CODE: import { nothingFound } from '$api/system'; (NET-242: and the page-level pipeline line)
+	import { nothingFound, pipelineProblem } from '$api/system';
 	import { HEALTH_CHECKING, readHealth, type HealthCheck } from '$lib/utils/read-health';
 
 	// ---------------------------------------------------------------------------
@@ -1285,6 +1287,8 @@
 			.sort((a, b) => b.events - a.events || a.label.localeCompare(b.label)),
 	);
 	const threatPill = $derived(THREAT_LEVELS.find((l) => l === threatLevel));
+	/** NET-242: the pipeline's problem, shown even while older alerts are listed */
+	const pipelineNote = $derived(pipelineProblem(healthCheck));
 	/** NET-228 (audit B5): zero counted alerts, with the pipeline's state beside it */
 	const zero = $derived(nothingFound('No counted rule matches in this period', healthCheck.health, healthCheck.failed));
 	const noGroups = $derived(nothingFound('No alert groups to review in this period', healthCheck.health, healthCheck.failed, "Can't tell if anything needs review"));
@@ -1388,6 +1392,10 @@ OLD CODE END -->
 		<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={toggleAutoRefresh} />
 	</div>
 </header>
+
+{#if pipelineNote}
+	<p class="notice is-warn" role="status"><Icon name="warn" /><span>Data pipeline now: {pipelineNote}. What this page shows may be out of date. See <a href="/system">System</a> for details.</span></p>
+{/if}
 
 <div class="grid">
 	<Card class="c-12" title="Alerts by severity" sub="Alerts · {range.words}, by severity">
@@ -1594,6 +1602,8 @@ OLD CODE END -->
 				</div>
 			</div>
 			<p class="dim score-how">{THREAT_SCORE_HOW}</p>
+			<!-- NET-239: the suppressions and baseline that changed this window's score -->
+			{#each scoreInputs(smartSummary) as line (line)}<p class="dim score-how">{line}</p>{/each}
 			{#if $captureMode === 'bridge'}<p class="dim score-how">{THREAT_SCORE_BRIDGE}</p>{/if}
 			{#if smartCategories.length > 0}
 				<ul class="kv">

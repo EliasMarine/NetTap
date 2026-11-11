@@ -1313,6 +1313,9 @@ def update_baseline(
         "avg_threat_score": round(avg_score, 1),
         "history_points": len(same_window),
         "is_anomalous": deviation > 2.0,
+        # NET-239: whether the deviation is compared yet, so the page can say it is still learning
+        "ready": len(earlier) >= _MIN_BASELINE_HOURS,
+        "earlier_hours": len(earlier),
     }
 
 
@@ -1466,6 +1469,34 @@ def get_smart_alerts(
     alerts concerns and whether it was that device's own traffic (NET-209). `with_times` keeps the
     findings' occurrence lists, which the kill chains need and the API never sends.
     """
+    return _smart_alerts(
+        client,
+        from_ts,
+        to_ts,
+        device_ip,
+        include_info,
+        limit,
+        excluded_ips,
+        lan_cidrs,
+        with_times,
+    )[0]
+
+
+def _smart_alerts(
+    client,
+    from_ts: str,
+    to_ts: str,
+    device_ip: str | None = None,
+    include_info: bool = False,
+    limit: int | None = 50,
+    excluded_ips: list[dict] | None = None,
+    lan_cidrs: list[str] | None = None,
+    with_times: bool = False,
+) -> tuple[list[dict], list[dict]]:
+    """get_smart_alerts' groups, plus the part of each group that suppressions and
+    false-positive marks left out (NET-239): `signature`, `severity`, `findings` (the suppressed
+    ones), `unattributed`, `reputation`, `source_ip`, `destination_ip`, for _finding_weights.
+    """
 
     filters = [
         {
@@ -1617,6 +1648,7 @@ def get_smart_alerts(
     from api.alerts import _normalize_alert_source
 
     groups = []
+    suppressed = []
     # OLD CODE START — buckets now come from every composite page
     # buckets = result.get("aggregations", {}).get("grouped", {}).get("buckets", [])
     # OLD CODE END
@@ -1666,15 +1698,28 @@ def get_smart_alerts(
             )
             or []
         )
-        if sig_id and is_suppressed(sig_id, device_ip):
-            continue
-        if sig_id and not found and is_suppressed(sig_id, src_ip):
-            continue  # no LAN device: as before, by the packet's source
-        findings = [
-            f for f in found if not (sig_id and is_suppressed(sig_id, f["device"]))
+        # OLD CODE START — NET-239: suppressed alerts were dropped before their severity was
+        # known, so the score couldn't say what they changed; they are set aside below instead
+        # if sig_id and is_suppressed(sig_id, device_ip):
+        #     continue
+        # if sig_id and not found and is_suppressed(sig_id, src_ip):
+        #     continue  # no LAN device: as before, by the packet's source
+        # findings = [
+        #     f for f in found if not (sig_id and is_suppressed(sig_id, f["device"]))
+        # ]
+        # if found and not findings:
+        #     continue  # suppressed on every device it concerns
+        # OLD CODE END
+        # the whole group; with no LAN device, as before, by the packet's source
+        whole = bool(sig_id) and (
+            is_suppressed(sig_id, device_ip)
+            or (not found and is_suppressed(sig_id, src_ip))
+        )
+        hides = [
+            whole or bool(sig_id and is_suppressed(sig_id, f["device"])) for f in found
         ]
-        if found and not findings:
-            continue  # suppressed on every device it concerns
+        # suppressed on every device it concerns: the group goes, unattributed alerts too
+        dropped = whole or (bool(found) and all(hides))
 
         # OLD CODE: # Get destination port for severity boosting (NET-209: shown only)
         dst_port = None
@@ -1705,15 +1750,28 @@ def get_smart_alerts(
 
         # NET-209: each finding's own severity; a reputation hit counts only as the device's own traffic
         reputation = alert_findings.is_reputation(signature)
-        findings = [
+        # OLD CODE START — NET-239: the suppressed findings need their severity too
+        # findings = [
+        #     {
+        #         **f,
+        #         "severity": _INFO_SEVERITY
+        #         if activity
+        #         else alert_findings.finding_severity(new_severity, f, reputation),
+        #     }
+        #     for f in findings
+        # ]
+        # OLD CODE END
+        rated = [
             {
                 **f,
                 "severity": _INFO_SEVERITY
                 if activity
                 else alert_findings.finding_severity(new_severity, f, reputation),
             }
-            for f in findings
+            for f in found
         ]
+        findings = [f for f, hide in zip(rated, hides) if not hide]
+        hidden = [f for f, hide in zip(rated, hides) if hide]
         if reputation and not activity:
             # OLD CODE START — deep-review: an unknown opener (an open connection) hid the group
             # new_severity = min(
@@ -1729,6 +1787,23 @@ def get_smart_alerts(
             )
         # alerts no device was charged with (no LAN party, or unattributed); suppressed ones are not
         unattributed = max(0, count - sum(f["count"] for f in found))
+        if hidden or dropped:
+            suppressed.append(
+                {
+                    "signature": signature,
+                    # a reputation group's level is its findings' (above); otherwise the group's
+                    "severity": min(f["severity"] for f in hidden)
+                    if reputation and not activity and hidden
+                    else new_severity,
+                    "findings": hidden,
+                    "unattributed": unattributed if dropped else 0,
+                    "reputation": reputation,
+                    "source_ip": src_ip,
+                    "destination_ip": dst_ip,
+                }
+            )
+        if dropped:
+            continue
         counted_events = (
             0
             if new_severity >= _INFO_SEVERITY
@@ -1824,7 +1899,7 @@ def get_smart_alerts(
         groups[:limit]
         if with_times
         else [alert_findings.public(g) for g in groups[:limit]]
-    )
+    ), suppressed
 
 
 _ET_RATING = "suricata.alert.metadata.signature_severity"
@@ -1907,7 +1982,20 @@ def get_smart_alert_summary(
     #     excluded_ips=excluded_ips,
     # )
     # OLD CODE END
-    every_group = get_smart_alerts(
+    # OLD CODE START — NET-239: the score also says what suppressions left out
+    # every_group = get_smart_alerts(
+    #     client,
+    #     from_ts,
+    #     to_ts,
+    #     device_ip,
+    #     include_info=True,
+    #     limit=None,
+    #     excluded_ips=excluded_ips,
+    #     lan_cidrs=lan_cidrs,
+    #     with_times=True,
+    # )
+    # OLD CODE END
+    every_group, suppressed = _smart_alerts(
         client,
         from_ts,
         to_ts,
@@ -1919,6 +2007,12 @@ def get_smart_alert_summary(
         with_times=True,
     )
     alerts = [a for a in every_group if a["severity"] < _INFO_SEVERITY]
+    # NET-239: score keys with weight that only suppressed alerts supplied
+    kept_keys, suppressed_keys = (
+        {key for key, weight in _finding_weights(gs).items() if weight > 0}
+        for gs in (alerts, suppressed)
+    )
+    suppressed_findings = len(suppressed_keys - kept_keys)
     # OLD CODE START — NET-209: demoted alerts inside a counted group (blocklist hits the device
     # did not start) were counted as needing attention
     # informational_events = sum(
@@ -1940,6 +2034,8 @@ def get_smart_alert_summary(
             "top_threats": [],
             "kill_chains": [],
             "baseline": None,
+            "suppressed_findings": suppressed_findings,
+            "busier_window_points": 0,
         }
 
     # OLD CODE: total_events = sum(a["count"] for a in alerts) (NET-209: only alerts that score)
@@ -2008,7 +2104,9 @@ def get_smart_alert_summary(
         baseline = None
 
     # Boost threat score if baseline deviation is anomalous
+    busier_window_points = 0  # NET-239: the page says whether the +15 applied
     if baseline and baseline.get("is_anomalous") and threat_score < 75:
+        busier_window_points = 15
         threat_score = min(100, threat_score + 15)
         # OLD CODE START — NET-209 review: only high and critical were re-derived, so 0 + 15 read "none"
         # if threat_score >= 75:
@@ -2033,6 +2131,8 @@ def get_smart_alert_summary(
         "top_threats": [alert_findings.public(a) for a in alerts[:5]],
         "kill_chains": kill_chains,
         "baseline": baseline,
+        "suppressed_findings": suppressed_findings,
+        "busier_window_points": busier_window_points,
     }
 
 
@@ -2049,6 +2149,11 @@ def _score_level(score: int) -> str:
 
 
 def _finding_points(groups: list[dict]) -> float:
+    """The score's points: the sum of _finding_weights (NET-239 split them out)."""
+    return sum(_finding_weights(groups).values())
+
+
+def _finding_weights(groups: list[dict]) -> dict[tuple, float]:
     """Each (signature, device) once at its highest weight; an attempt weighs at most low.
 
     Alerts no device was charged with keep the old (signature, source, destination) key;
@@ -2068,4 +2173,5 @@ def _finding_points(groups: list[dict]) -> float:
         if g.get("unattributed") and not (g.get("reputation") and g.get("findings")):
             key = (g["signature"], g["source_ip"], g["destination_ip"])
             best[key] = max(best.get(key, 0), SEVERITY_WEIGHTS[g["severity"]])
-    return sum(best.values())
+    # OLD CODE: return sum(best.values()) (NET-239: _finding_points sums them)
+    return best

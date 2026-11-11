@@ -16,7 +16,8 @@
 	// OLD CODE: import { getThreatReport, getThreatIntel } from '$api/threats'; (NET-192 PR 3: the pill → request helper)
 	import { getBeaconing, getThreatReport, getThreatIntel, threatRequest, type ThreatRequest } from '$api/threats';
 	// OLD CODE: import { THREAT_SCORE_HOW } from '$api/alerts'; (NET-225: and the bridge-mode line)
-	import { THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts';
+	// OLD CODE: import { THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts'; (NET-239: and the score's inputs)
+	import { scoreInputs, THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts';
 	import { captureMode, initCaptureMode } from '$lib/stores/captureMode';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import type {
@@ -40,10 +41,12 @@
 	import IPAddress from '$components/IPAddress.svelte';
 	import { ipHref } from '$lib/stores/lan';
 	import { formatTime } from '$lib/utils/time';
-	import { DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown';
+	// OLD CODE: import { DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown'; (NET-238: fmt, SCAN_CAP)
+	import { DRILL_RANGES, fmt, rangeWindow, SCAN_CAP, startRange } from '$lib/utils/drilldown';
 	// NET-228 (audit B5): "nothing needs attention" carries the pipeline's current state
 	// OLD CODE: import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system'; (review L7)
-	import { nothingFound } from '$api/system';
+	// OLD CODE: import { nothingFound } from '$api/system'; (NET-242: and the page-level pipeline line)
+	import { nothingFound, pipelineProblem } from '$api/system';
 	import { HEALTH_CHECKING, readHealth, type HealthCheck } from '$lib/utils/read-health';
 
 	// ---------------------------------------------------------------------------
@@ -58,6 +61,8 @@
 	/** NET-228: the system health, for the pipeline state beside a zero; null until it loads or when it failed */
 	// OLD CODE: let health = $state<SystemHealth | null>(null); let healthFailed = $state(false); (review L7: one health helper for the loaders; its failure marks only the lines that read it)
 	let healthCheck = $state<HealthCheck>(HEALTH_CHECKING);
+	/** NET-242: the pipeline's problem, shown even while older findings are listed */
+	const pipelineNote = $derived(pipelineProblem(healthCheck));
 	const BEACONS_SHOWN = 20;
 	const CHECK_NAMES: Record<string, string> = {
 		beaconing: 'beaconing',
@@ -226,7 +231,8 @@
 		if (beacons.length > 0) parts.push(`${beacons.length} beaconing suspect${beacons.length > 1 ? 's' : ''}`);
 		const tiTotal = threatIntel?.total_indicators ?? 0;
 		// OLD CODE START: if (tiTotal > 0) parts.push(`${tiTotal} threat intel indicators`); (I7: now the window's matches) OLD CODE END
-		if (tiTotal > 0) parts.push(`${tiTotal} threat intel matches`);
+		// OLD CODE: if (tiTotal > 0) parts.push(`${tiTotal} threat intel matches`); (NET-238: a capped scan's count is a floor)
+		if (tiTotal > 0) parts.push(`${threatIntel?.complete === false ? 'at least ' : ''}${tiTotal} threat intel matches`);
 		if (beaconPending) parts.push('Beaconing check running');
 		if (beaconPartial && beacons.length === 0) parts.push('Partial beaconing scan');
 		// OLD CODE: const failed = [...failedChecks].map((c) => CHECK_NAMES[c] ?? c); (NET-192 PR 3: or the background check failed)
@@ -302,7 +308,8 @@
 		{ key: 'destination_ip', label: 'To', class: 'mono', cell: lateralTo },
 		{ key: 'service', label: 'Service' },
 		{ key: 'port', label: 'Port', numeric: true, class: 'mono' },
-		{ key: 'connection_count', label: 'Connections', numeric: true, cell: lateralCount },
+		// OLD CODE: { key: 'connection_count', label: 'Connections', numeric: true, cell: lateralCount }, (NET-240: a distinct count OpenSearch estimates)
+		{ key: 'connection_count', label: 'Connections (approx.)', numeric: true, cell: lateralCount },
 		{ key: 'fan_out', label: 'Fan-out', numeric: true },
 	];
 
@@ -511,6 +518,10 @@
 	<p class="notice" role="note"><Icon name="infra" /><span>{THREAT_SCORE_BRIDGE}</span></p>
 {/if}
 
+{#if pipelineNote}
+	<p class="notice is-warn" role="status"><Icon name="warn" /><span>Data pipeline now: {pipelineNote}. What this page shows may be out of date. See <a href="/system">System</a> for details.</span></p>
+{/if}
+
 {#if !report}
 	<div class="grid">
 		<Card title="Threat report" sub="Kill chains, beaconing, DNS and lateral movement · {rangeText}" class="c-12">
@@ -537,7 +548,7 @@
 			value={threatScore}
 			unit="/100"
 			sub="Higher is riskier · {rangeText}"
-			note={baseline ? `${baseline.deviation}× ${baseline.is_anomalous ? 'above' : 'vs'} baseline` : undefined}
+			note={/* OLD CODE: baseline ? … (NET-239 review: "1× vs baseline" while it is still learning) */ baseline && baseline.ready !== false ? `${baseline.deviation}× ${baseline.is_anomalous ? 'above' : 'vs'} baseline` : undefined}
 		>
 			{#snippet foot()}
 				<!-- OLD CODE: {#if threatLevelPill}<SeverityPill level={threatLevelPill} />{:else}<span class="dim">No threat level</span>{/if} (NET-228: 0 read as good news with data not arriving) -->
@@ -545,6 +556,8 @@
 				<details class="score-how">
 					<summary>How the score is worked out</summary>
 					<p>{THREAT_SCORE_HOW}</p>
+					<!-- NET-239: the suppressions and baseline that changed this window's score -->
+					{#each scoreInputs(summary ?? {}) as line (line)}<p>{line}</p>{/each}
 				</details>
 			{/snippet}
 		</KpiCard>
@@ -586,10 +599,20 @@
 		<!-- OLD CODE START: <Card title="Threat intel matches" sub="Indicators loaded per feed · {rangeText}" class="c-4"> (I7: every cached indicator, under the window's label) OLD CODE END -->
 		<Card title="Threat intel matches" sub="Listed internet addresses seen in alerts · {rangeText}" class="c-4">
 			{#snippet actions()}
+				<!-- OLD CODE: >{intelFailed ? 'load failed' : plural(threatIntel?.total_indicators ?? 0, 'indicator')}</span (NET-238: a capped scan's count is a floor) -->
 				<span class={['chip', (threatIntel?.total_indicators ?? 0) > 0 && 'is-warn']}
-					>{intelFailed ? 'load failed' : plural(threatIntel?.total_indicators ?? 0, 'indicator')}</span
+					>{intelFailed
+						? 'load failed'
+						: `${threatIntel?.complete === false && threatIntel.total_indicators > 0 ? 'at least ' : ''}${plural(threatIntel?.total_indicators ?? 0, 'indicator')}`}</span
 				>
 			{/snippet}
+			{#if threatIntel?.complete === false}
+				<p class="notice is-warn" role="status">
+					<Icon name="warn" /><span
+						>Stopped after checking the first {fmt(SCAN_CAP)} alert address pairs, in address order, not the busiest; more exist, so this list may be missing some.</span
+					>
+				</p>
+			{/if}
 			<!-- OLD CODE START — I7: cached indicators "loaded", and a bare request-failed state
 			{#if threatIntel && Object.keys(threatIntel.feeds).length > 0}
 				<BarList
@@ -627,9 +650,10 @@
 			{:else if intelFailed}
 				<CardState state="error" title="Threat intel unavailable" message="Couldn't load threat intel: the request failed." onaction={reload} />
 			{:else}
+				<!-- OLD CODE: title="No threat intel matches" (NET-238 review: a capped scan that matched nothing can't say there are none) -->
 				<CardState
 					state="empty"
-					title="No threat intel matches"
+					title={threatIntel?.complete === false ? 'No matches in the pairs checked' : 'No threat intel matches'}
 					message="Matches are internet addresses on Suricata's blocklist rules seen in this window."
 					icon="threats"
 				/>

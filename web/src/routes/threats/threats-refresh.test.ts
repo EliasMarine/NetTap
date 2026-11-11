@@ -44,7 +44,8 @@ const EMPTY: ThreatReport = {
 	failed_checks: [],
 	incomplete_checks: [],
 };
-const NO_INTEL: ThreatIntelInfo = { from: '', to: '', new_indicators: 0, feeds: {}, total_indicators: 0 };
+// OLD CODE: const NO_INTEL: ThreatIntelInfo = { from: '', to: '', new_indicators: 0, feeds: {}, total_indicators: 0 }; (NET-238: complete)
+const NO_INTEL: ThreatIntelInfo = { from: '', to: '', new_indicators: 0, feeds: {}, total_indicators: 0, complete: true };
 
 const chain = (ip: string) => ({ source_ip: ip, stages: [1, 3], stage_labels: [], alert_count: 4, assessment: `Chain from ${ip}` });
 
@@ -188,7 +189,8 @@ describe('Threats page — card states', () => {
 		expect(dns).toHaveTextContent('xj3kq9.biz');
 		expect(dns).toHaveTextContent('300 / 400');
 		expect(screen.getByRole('table', { name: 'Lateral movement' })).toHaveTextContent('SMB');
-		for (const name of ['From', 'To', 'Service', 'Port', 'Connections', 'Fan-out']) {
+		// OLD CODE: for (const name of ['From', 'To', 'Service', 'Port', 'Connections', 'Fan-out']) { (NET-240: the count is approximate)
+		for (const name of ['From', 'To', 'Service', 'Port', 'Connections (approx.)', 'Fan-out']) {
 			expect(within(screen.getByRole('table', { name: 'Lateral movement' })).getByRole('button', { name })).toBeInTheDocument();
 		}
 
@@ -337,6 +339,38 @@ describe('Threats page — what the figures count', () => {
 		vi.mocked(getThreatIntel).mockRejectedValue(new Error('HTTP 500'));
 		render(ThreatsPage);
 		await vi.waitFor(() => expect(screen.getByText('Threat intel unavailable')).toBeInTheDocument());
+	});
+
+	// NET-238: a capped alert scan used to blank the card; it now lists what it read and says it stopped
+	it('lists what a capped alert scan read, counts it as at least N, and says where it stopped', async () => {
+		vi.mocked(getThreatReport).mockResolvedValue(FULL);
+		vi.mocked(getThreatIntel).mockResolvedValue({ ...INTEL, complete: false });
+		const { unmount } = render(ThreatsPage);
+		await vi.waitFor(() => expect(screen.getByText('Abuse.ch Feodo')).toBeInTheDocument());
+		expect(screen.getByText('at least 118 indicators')).toBeInTheDocument();
+		expect(screen.getByText(/at least 118 threat intel matches/)).toBeInTheDocument();
+		const notice = screen.getByText(
+			'Stopped after checking the first 500,000 alert address pairs, in address order, not the busiest; more exist, so this list may be missing some.',
+		);
+		expect(notice.closest('p.notice.is-warn[role="status"]')).not.toBeNull();
+		unmount();
+
+		vi.mocked(getThreatIntel).mockResolvedValue(INTEL);
+		render(ThreatsPage);
+		await vi.waitFor(() => expect(screen.getByText('118 indicators')).toBeInTheDocument());
+		expect(screen.queryByText(/at least/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/Stopped after checking/)).not.toBeInTheDocument();
+	});
+
+	// NET-238 review: a capped scan that matched nothing can't say there are none, or "at least 0"
+	it('says no matches in the pairs checked when a capped scan matched nothing', async () => {
+		vi.mocked(getThreatReport).mockResolvedValue(FULL);
+		vi.mocked(getThreatIntel).mockResolvedValue({ ...NO_INTEL, complete: false });
+		render(ThreatsPage);
+		await vi.waitFor(() => expect(screen.getByText('No matches in the pairs checked')).toBeInTheDocument());
+		expect(screen.queryByText('No threat intel matches')).not.toBeInTheDocument();
+		expect(screen.getByText('0 indicators')).toBeInTheDocument();
+		expect(screen.queryByText(/at least/)).not.toBeInTheDocument();
 	});
 });
 

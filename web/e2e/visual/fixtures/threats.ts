@@ -5,7 +5,8 @@ import { HOUR, iso, MIN, type FixtureRoute } from './types.ts';
 const FROM = iso(24 * HOUR);
 const TO = iso(0);
 
-const INTEL_EMPTY = { from: FROM, to: TO, new_indicators: 0, feeds: {}, total_indicators: 0 } satisfies ThreatIntelInfo;
+// OLD CODE: const INTEL_EMPTY = { from: FROM, to: TO, new_indicators: 0, feeds: {}, total_indicators: 0 } satisfies ThreatIntelInfo; (NET-238: complete)
+const INTEL_EMPTY = { from: FROM, to: TO, new_indicators: 0, feeds: {}, total_indicators: 0, complete: true } satisfies ThreatIntelInfo;
 const INTEL = {
 	...INTEL_EMPTY,
 	new_indicators: 6,

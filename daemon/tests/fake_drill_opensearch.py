@@ -203,8 +203,10 @@ def _composite(docs: list, body: dict, sub: dict) -> dict:
 
 def _metric(docs: list, kind: str, field: str) -> dict:
     found = [v for d in docs for v in values(d, field)]
-    if field == "@timestamp":
-        found = [epoch_ms(v) for v in found]
+    # OLD CODE: if field == "@timestamp": (NET-240: lastPacket is a date on the G11 too)
+    dated = field in ("@timestamp", "lastPacket")
+    if dated:
+        found = [_num(v) for v in found]
     if kind == "sum":
         return {"value": float(sum(found))}
     if kind == "value_count":
@@ -212,7 +214,8 @@ def _metric(docs: list, kind: str, field: str) -> dict:
     if kind == "cardinality":  # exact, where OpenSearch estimates
         return {"value": len(set(found))}
     value = (min if kind == "min" else max)(found) if found else None
-    if field == "@timestamp" and value is not None:
+    # OLD CODE: if field == "@timestamp" and value is not None: (NET-240)
+    if dated and value is not None:
         return {"value": value, "value_as_string": iso(value)}
     return {"value": value}
 

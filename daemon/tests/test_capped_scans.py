@@ -1,5 +1,8 @@
 """NET-237 (caps): a scan that stops at its bucket cap is an error, not a complete-looking answer.
 
+NET-238: except a detection whose every finding is one bucket on its own (DNS suspicious names):
+it checks what it read and says it stopped.
+
 Each test stops one scan, picked by the fields it groups on, and lets every other scan finish, so a
 test fails only when its own guard is gone.
 """
@@ -153,10 +156,85 @@ def test_lan_redetection_keeps_the_current_filter(monkeypatch):
     assert excluded_ips.changed_lan_filter(MagicMock(), current) is None
 
 
-def test_dns_name_scan(monkeypatch):
-    _stop_at_cap(monkeypatch, dns_analytics, ("zeek.dns.query",))
-    with pytest.raises(PartialResultsError, match="DNS name scan"):
-        dns_analytics.DNSAnalytics(MagicMock())._all_domains(*WINDOW)
+# OLD CODE START — NET-238: a capped name scan was an error, so enough DNS blanked the
+# detections; it now returns the names it read with complete=False
+# def test_dns_name_scan(monkeypatch):
+#     _stop_at_cap(monkeypatch, dns_analytics, ("zeek.dns.query",))
+#     with pytest.raises(PartialResultsError, match="DNS name scan"):
+#         dns_analytics.DNSAnalytics(MagicMock())._all_domains(*WINDOW)
+# OLD CODE END
+
+LONG_NAME = "a" * 60 + ".evil.com"
+DAY = ("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
+
+
+def _name(domain: str, count: int = 1) -> dict:
+    return {
+        "key": {"domain": domain},
+        "doc_count": count,
+        "unique_clients": {"value": 1},
+    }
+
+
+def _dns_scans(monkeypatch, capped: str | None) -> None:
+    """The all-names scan reads LONG_NAME, the TXT scan a busy TXT name; `capped` stops one."""
+
+    def fake(client, index, query, sources, *args, **kwargs):
+        scan = "txt" if "TXT" in json.dumps(query) else "names"
+        read = [_name("t.evil.com", 100)] if scan == "txt" else [_name(LONG_NAME)]
+        return read, scan != capped
+
+    monkeypatch.setattr(dns_analytics, "all_buckets", fake)
+
+
+def test_dns_name_scan_returns_the_names_it_read(monkeypatch, caplog):
+    _dns_scans(monkeypatch, capped="names")
+
+    names, complete = dns_analytics.DNSAnalytics(MagicMock())._all_domains(*DAY)
+
+    assert ([n["domain"] for n in names], complete) == ([LONG_NAME], False)
+    assert "stopped at 1 names" in caplog.text
+
+
+@pytest.mark.parametrize("capped", [None, "names", "txt"])
+def test_suspicious_dns_checks_what_either_scan_read(monkeypatch, capped):
+    _dns_scans(monkeypatch, capped)
+
+    found, complete = dns_analytics.DNSAnalytics(MagicMock()).get_suspicious_dns(*DAY)
+
+    assert [(f["type"], f["domain"]) for f in found] == [
+        ("long_domain", LONG_NAME),
+        ("txt_abuse", "t.evil.com"),
+    ]
+    assert complete is (capped is None)
+
+
+@pytest.mark.parametrize("capped", [None, "names"])
+def test_dns_tunneling_says_whether_its_scan_was_capped(monkeypatch, capped):
+    _dns_scans(monkeypatch, capped)
+
+    _found, complete = dns_analytics.DNSAnalytics(MagicMock()).detect_dns_tunneling(
+        *DAY
+    )
+
+    assert complete is (capped is None)
+
+
+@pytest.mark.parametrize("capped", [None, "txt"])
+def test_suspicious_dns_route_answers_what_it_read(monkeypatch, capped):
+    from api.dns import handle_suspicious
+
+    _dns_scans(monkeypatch, capped)
+    app = web.Application()
+    app["dns_analytics"] = dns_analytics.DNSAnalytics(MagicMock())
+    req = make_mocked_request("GET", "/api/dns/suspicious", app=app)
+
+    resp = asyncio.run(handle_suspicious(req))
+
+    body = json.loads(resp.text)
+    assert resp.status == 200
+    assert body["complete"] is (capped is None)
+    assert LONG_NAME in [f["domain"] for f in body["suspicious"]]
 
 
 def test_dns_name_scan_checks_its_pages():

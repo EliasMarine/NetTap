@@ -14,6 +14,10 @@ export interface ThreatReportSummary {
 	top_threats: SmartAlertItem[];
 	kill_chains: KillChain[];
 	baseline: BaselineInfo | null;
+	/** NET-239: scoring findings left out by suppressions or false-positive marks. Absent from an older daemon. */
+	suppressed_findings?: number;
+	/** NET-239: 15 when the busier-than-usual +15 applied, else 0. Absent from an older daemon. */
+	busier_window_points?: number;
 }
 
 export interface SmartAlertItem {
@@ -47,6 +51,10 @@ export interface BaselineInfo {
 	avg_threat_score: number;
 	history_points: number;
 	is_anomalous: boolean;
+	/** NET-239: enough earlier hours (6) to compare with. Absent from an older daemon. */
+	ready?: boolean;
+	/** NET-239: earlier hours of this window length recorded (history_points counts this hour too). */
+	earlier_hours?: number;
 }
 
 export interface BeaconSuspect {
@@ -68,7 +76,10 @@ export interface LateralMovement {
 	destination_ip: string;
 	port: number;
 	service: string;
+	/** NET-240: OpenSearch's approximate distinct count of connections, interim records included */
 	connection_count: number;
+	/** NET-240: records without a Zeek uid, counted one each (0 on Zeek data; absent from older daemons) */
+	records_without_uid?: number;
 	first_seen: string | null;
 	last_seen: string | null;
 	assessment: string;
@@ -181,6 +192,8 @@ export interface ThreatIntelInfo {
 	/** Indicators seen in alerts inside the window, per feed (I7: not every cached one). */
 	feeds: Record<string, { label: string; indicator_count: number }>;
 	total_indicators: number;
+	/** False when the alert scan stopped at its cap (NET-238): total_indicators is then a lower bound. */
+	complete: boolean;
 }
 
 // Helper
@@ -282,5 +295,7 @@ export async function getThreatIntel(
 	// if (!res.ok) return { from: '', to: '', new_indicators: 0, feeds: {}, total_indicators: 0 };
 	// OLD CODE END
 	if (!res.ok) throw new Error(`Threat intel failed: HTTP ${res.status}`);
-	return res.json();
+	// OLD CODE: return res.json(); (NET-238: a reply without complete, from an older daemon, reads as complete)
+	const body = await res.json();
+	return { ...body, complete: body.complete !== false };
 }

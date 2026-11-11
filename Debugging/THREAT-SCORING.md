@@ -215,6 +215,15 @@ raw alerts.
 - **"Events that need attention" and the busier-than-usual check count only alerts that score.** Each alert
   counts once. The stored history is versioned (`counted-v2`), so it is never compared with the old
   whole-group counts.
+- **The reply names the score's two hidden inputs (NET-239).** `suppressed_findings` is how many
+  score keys with weight only suppressed or false-positive-marked alerts supplied (one signature on one
+  device through 100 peers is 1; an informational finding is 0). `busier_window_points` is 15 when the
+  boost applied, else 0. The baseline adds `ready` (6 or more earlier hours of the same window length)
+  and `earlier_hours` (`history_points` counts the current hour too). Under "How the score is worked
+  out" on Threats, and under the method on the Alerts threat summary card, the page says how many
+  findings suppressions left out, and whether the window was busier than usual and got +15, wasn't,
+  or was but the score was already 75 or more, or that the baseline is still learning ("2 of 6
+  earlier hours"). A reply without these fields (an older daemon) gets no sentence, not a guess.
 
 ### Kill chains
 
@@ -228,6 +237,21 @@ raw alerts.
 - A chain needs two or more stages, and at least one must come from the device's own traffic.
 - The page shows only the findings in that sequence.
 - An attacker on the internet is never a chain.
+
+### Lateral movement and still-open connections (NET-240, 2026-11-11)
+
+- Lateral movement lists internal-to-internal connections on admin ports (SMB, RDP, SSH and so on).
+- It reads Zeek's final conn records and its interim long-connection records (`conn_long.log`, same `zeek.uid`).
+  So a session that is still open is listed as of its latest interim record.
+  Zeek writes the first interim record after a while (about 30 minutes on the G11), so a new session isn't listed at once.
+- A connection counts when it was active in the window: it started before the window ended, and it was last seen (`lastPacket`) or started after the window began.
+  A session begun yesterday and still open appears in today's window.
+- "Connections (approx.)" is OpenSearch's approximate distinct count of `zeek.uid`, so a connection's interim and final records count once.
+  Any record without a uid counts as one connection, and the assessment says how many there were (none on Zeek data).
+- "Last seen" is the newest `lastPacket` or start time in the pair.
+- Beaconing still reads final records only.
+  One open connection is one connection, and its interim records would look periodic and invent beacons.
+- Byte and connection totals elsewhere keep final records only (`CONN_ACCOUNTING`, F1).
 
 ### Device risk score
 

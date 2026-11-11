@@ -170,14 +170,22 @@ def handle_suspicious(request: web.Request) -> web.Response:
     excluded_ips_list = request.app.get("excluded_ips", [])
 
     try:
-        result = dns.get_suspicious_dns(from_ts, to_ts, excluded_ips=excluded_ips_list)
-    except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+        # OLD CODE: result = dns.get_suspicious_dns(from_ts, to_ts, excluded_ips=excluded_ips_list)
+        result, complete = dns.get_suspicious_dns(
+            from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
+    # OLD CODE: except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
+    # (NET-238: a capped scan answers what it read with complete=False)
+    except PartialResultsError as exc:  # a part reply or an unreadable page (NET-237)
         return incomplete("DNS", exc)
     except OpenSearchException as exc:
         logger.error("OpenSearch error in dns/suspicious: %s", exc)
         return web.json_response({"error": str(exc)}, status=502)
 
-    return web.json_response({"from": from_ts, "to": to_ts, "suspicious": result})
+    # OLD CODE: return web.json_response({"from": from_ts, "to": to_ts, "suspicious": result})
+    return web.json_response(
+        {"from": from_ts, "to": to_ts, "suspicious": result, "complete": complete}
+    )
 
 
 @in_thread

@@ -106,6 +106,18 @@ export function nothingFound(
 	return { trusted, title: trusted ? nothing : unsure, detail: `Data pipeline now: ${state}` };
 }
 
+/**
+ * NET-242: what a page that still lists older data says about the pipeline now (Alerts,
+ * Threats), or null while it runs or is still loading. A failed check, by the request or by the
+ * daemon (state "unknown"), says "Couldn't check" rather than dropping a warning already shown.
+ */
+// (the HealthCheck shape of read-health.ts, typed structurally like HEALTH_STAGE above)
+export function pipelineProblem({ health, failed }: { health: SystemHealth | null; failed: boolean }): string | null {
+	if (failed || health?.pipeline?.state === 'unknown') return "Couldn't check";
+	const stage = pipelineStage(health?.pipeline);
+	return stage.status === 'failing' ? stage.detail : null;
+}
+
 export interface SystemHealth {
 	/** The appliance's (host's) uptime in seconds, from /proc/uptime */
 	uptime: number;

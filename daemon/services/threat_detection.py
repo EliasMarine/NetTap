@@ -15,7 +15,9 @@ from collections import Counter, defaultdict
 from datetime import datetime
 
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
-from services.excluded_ips import CONN_ACCOUNTING
+
+# OLD CODE: from services.excluded_ips import CONN_ACCOUNTING (NET-240: lateral movement reads interim records too)
+from services.excluded_ips import CONN_ACCOUNTING, CONN_RECORDS
 from storage.all_buckets import all_buckets
 
 # OLD CODE START — excluded IPs stay visible in threat detections
@@ -579,6 +581,13 @@ def detect_lateral_movement(
     Returns (movements, complete): complete is False if the bucket cap stopped the scan. A
     failed query raises, so callers can't mistake it for "no lateral movement" (#96).
 
+    NET-240: a connection counts when it was active in the window, read from its final and its
+    interim (conn_long.log) records, so a session still open shows as of its latest interim
+    record (Zeek's long-connection schedule, about 30 min on the G11 for the first one).
+    `connection_count` is OpenSearch's approximate distinct count of `zeek.uid`, plus one per
+    record without a uid (`records_without_uid`, 0 on Zeek data). Beaconing keeps final records
+    only: one open connection is one connection, and its interim records would look periodic.
+
     ``excluded_ips`` is ignored (kept for callers): excluded IPs stay visible here.
     """
     port_filters = [{"term": {"destination.port": p}} for p in LATERAL_MOVEMENT_PORTS]
@@ -588,12 +597,27 @@ def detect_lateral_movement(
 
     bool_clause: dict = {
         "filter": [
-            {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+            # OLD CODE START — NET-240: @timestamp is the connection's start, so a session begun
+            # before the window was unseen however recent its interim records
+            # {"range": {"@timestamp": {"gte": from_ts, "lte": to_ts}}},
+            # OLD CODE END
+            # active in the window: started by its end, and seen (lastPacket) or started after its start
+            {"range": {"@timestamp": {"lte": to_ts}}},
+            {
+                "bool": {
+                    "should": [
+                        {"range": {"lastPacket": {"gte": from_ts}}},
+                        {"range": {"@timestamp": {"gte": from_ts}}},
+                    ],
+                    "minimum_should_match": 1,
+                }
+            },
             {"term": {"event.provider": "zeek"}},
             # OLD CODE START — F1: also counted conn_long.log interim records
             # {"term": {"event.dataset": "conn"}},
             # OLD CODE END
-            CONN_ACCOUNTING,
+            # OLD CODE: CONN_ACCOUNTING, (NET-240: interim records too; connections are counted by uid below)
+            CONN_RECORDS,
             {"bool": {"should": port_filters, "minimum_should_match": 1}},
             # only internal-to-internal pairs can be lateral movement; inbound scans aren't paged
             {"terms": {"source.ip": INTERNAL_CIDRS}},
@@ -652,6 +676,10 @@ def detect_lateral_movement(
         aggs={
             "first_seen": {"min": {"field": "@timestamp"}},
             "last_seen": {"max": {"field": "@timestamp"}},
+            # NET-240: interim and final records of one connection share its uid
+            "last_packet": {"max": {"field": "lastPacket"}},
+            "uids": {"cardinality": {"field": "zeek.uid", "precision_threshold": 1000}},
+            "with_uid": {"value_count": {"field": "zeek.uid"}},
         },
     )
     if not complete:
@@ -671,7 +699,27 @@ def detect_lateral_movement(
             continue
 
         service = LATERAL_MOVEMENT_PORTS.get(port, f"port {port}")
-        count = bucket["doc_count"]
+        # OLD CODE START — NET-240: one record per finished connection; interim records now count
+        # count = bucket["doc_count"]
+        # OLD CODE END
+        without_uid = bucket["doc_count"] - bucket.get("with_uid", {}).get("value", 0)
+        count = bucket.get("uids", {}).get("value", 0) + without_uid
+        # OLD CODE START — NET-240: the start of the newest connection, not when it was last seen
+        # "last_seen": bucket.get("last_seen", {}).get("value_as_string"),
+        # OLD CODE END
+        last_seen = max(
+            (bucket.get(k) or {} for k in ("last_seen", "last_packet")),
+            key=lambda m: m.get("value") or 0,
+        ).get("value_as_string")
+        # OLD CODE START — NET-240: an approximate distinct count, so not "N times"
+        # f"Internal host {src} connected to {dst} via {service} "
+        # f"({count} times). Verify this is authorized administrative access."
+        # OLD CODE END
+        no_uid_note = (
+            f" {without_uid} records had no connection ID and are counted one each."
+            if without_uid
+            else ""
+        )
 
         suspicious.append(
             {
@@ -680,11 +728,13 @@ def detect_lateral_movement(
                 "port": port,
                 "service": service,
                 "connection_count": count,
+                "records_without_uid": without_uid,
                 "first_seen": bucket.get("first_seen", {}).get("value_as_string"),
-                "last_seen": bucket.get("last_seen", {}).get("value_as_string"),
+                "last_seen": last_seen,
                 "assessment": (
                     f"Internal host {src} connected to {dst} via {service} "
-                    f"({count} times). Verify this is authorized administrative access."
+                    f"(about {count} connections). Verify this is authorized administrative "
+                    f"access.{no_uid_note}"
                 ),
             }
         )

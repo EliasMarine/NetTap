@@ -319,16 +319,22 @@ def _bucket(sig, src, dst, count, severity_meta, attack_target="Server", sid=1):
     }
 
 
-def _client(groups, instants, spans):
-    """Answers the grouped alerts, the activity alerts (none), alert instants and conn spans."""
+def _client(groups, instants, spans, activity_groups=()):
+    """Answers the grouped alerts, the activity alerts (none unless given), alert instants and
+    conn spans."""
     from api.alerts import ET_ACTIVITY_CLAUSE
 
     def search(index, body):
         aggs = body["aggs"]
         if "grouped" in aggs:
             activity = ET_ACTIVITY_CLAUSE in body["query"]["bool"]["filter"]
+            # OLD CODE: return {"aggregations": {"grouped": {"buckets": [] if activity else groups}}}
             return {
-                "aggregations": {"grouped": {"buckets": [] if activity else groups}}
+                "aggregations": {
+                    "grouped": {
+                        "buckets": list(activity_groups) if activity else groups
+                    }
+                }
             }
         names = [next(iter(s)) for s in aggs["all"]["composite"]["sources"]]
         return {
@@ -780,6 +786,131 @@ def test_a_blocklist_hit_with_no_lan_party_stays_listed(quiet):
         lan_cidrs=["192.168.1.0/24"],
     )
     assert (group["severity"], group["counted_events"], group["findings"]) == (3, 5, [])
+
+
+# ---------------------------------------------------------------------------
+# NET-239: the summary says how many scoring findings suppressions left out
+# ---------------------------------------------------------------------------
+
+_CNC = "ET MALWARE Win32 Agent CnC Checkin"
+_OUTSIDE_LAN = "172.20.0.9"  # outside the LAN rule below, so nobody can be charged
+
+
+def _suppressing(*rules):
+    """is_suppressed for these rules: (sid, None) everywhere (a false-positive mark), (sid, ip)
+    on one address."""
+    return patch.object(
+        alert_intelligence,
+        "is_suppressed",
+        side_effect=lambda sig_id, ip=None: (
+            (sig_id, None) in rules or (sig_id, ip) in rules
+        ),
+    )
+
+
+def _summary_with(client, *rules, **kwargs):
+    with (
+        _suppressing(*rules),
+        patch.object(alert_intelligence, "update_baseline", return_value=None),
+    ):
+        return get_smart_alert_summary(client, _FROM, _TO, **kwargs)
+
+
+def _cnc_client(peers, sids=None):
+    sids = sids or [7] * peers
+    groups = [
+        _bucket(_CNC, PC, f"203.0.113.{n}", 1, "Critical", sid=sids[n])
+        for n in range(peers)
+    ]
+    instants = [
+        _instant(_CNC, PC, f"203.0.113.{n}", None, _T + n) for n in range(peers)
+    ]
+    return _client(groups, instants, [])
+
+
+def test_one_signature_on_one_device_through_many_peers_is_one_suppressed_finding():
+    summary = _summary_with(_cnc_client(40), (7, PC))
+    # every alert is suppressed, so this is the early "no alerts" reply, which says so too
+    assert summary["threat_score"] == 0 and summary["total_groups"] == 0
+    assert summary["suppressed_findings"] == 1
+    assert summary["busier_window_points"] == 0
+
+
+def test_a_finding_kept_elsewhere_under_the_same_key_is_not_counted():
+    """Two rules with one message: suppressing one leaves (signature, device) scored."""
+    summary = _summary_with(_cnc_client(2, sids=[7, 8]), (7, PC))
+    assert summary["threat_score"] == 10
+    assert summary["suppressed_findings"] == 0
+
+
+def test_a_suppressed_informational_finding_is_not_counted():
+    """The blocklist hit 91.92.40.12 started weighs nothing, suppressed or not."""
+    summary = _summary_with(_scanner_client(), (2400011, SERVER))
+    assert summary["suppressed_findings"] == 0
+
+
+def test_a_suppressed_unattributed_informational_group_is_not_counted():
+    """Codex R3 #2: the unattributed branch keeps a key even at weight 0."""
+    activity = [_bucket(_EXPLOIT, SCANNER, SERVER, 3, "Informational", sid=9)]
+    client = _client([], [], [], activity_groups=activity)
+    with _suppressing((9, None)):
+        _groups, suppressed = alert_intelligence._smart_alerts(
+            client, _FROM, _TO, include_info=True, limit=None
+        )
+    assert alert_intelligence._finding_weights(suppressed) == {
+        (_EXPLOIT, SCANNER, SERVER): 0
+    }
+    assert _summary_with(client, (9, None))["suppressed_findings"] == 0
+
+
+def test_a_suppressed_unattributed_group_with_weight_is_counted():
+    groups = [_bucket(_EXPLOIT, SCANNER, _OUTSIDE_LAN, 9, "Critical", sid=2034647)]
+    summary = _summary_with(
+        _client(groups, [], []), (2034647, SCANNER), lan_cidrs=["192.168.1.0/24"]
+    )
+    assert summary["suppressed_findings"] == 1
+
+
+def test_a_listed_group_counts_the_device_suppressed_inside_it():
+    """Python review of #247: a group charged to two devices, one suppressed, stays listed.
+
+    A client-side rule between two LAN hosts goes to whoever opened each connection.
+    """
+    groups = [
+        _bucket(_CNC, PROXY, PC, 2, "Critical", attack_target="Client_Endpoint", sid=7)
+    ]
+    instants = [
+        _instant(_CNC, PROXY, PC, "1:p", _T, 1),
+        _instant(_CNC, PROXY, PC, "1:q", _T + 1, 1),
+    ]
+    spans = [
+        {
+            "key": {"cid": cid, "orig": orig, "start": _T - 500, "end": _T + 500},
+            "doc_count": 1,
+        }
+        for cid, orig in (("1:p", PC), ("1:q", PROXY))
+    ]
+    client = _client(groups, instants, spans)
+    (group,) = get_smart_alerts(client, _FROM, _TO, limit=None)
+    assert {f["device"] for f in group["findings"]} == {PC, PROXY}
+
+    summary = _summary_with(client, (7, PROXY))
+    assert summary["total_groups"] == 1
+    assert summary["threat_score"] == 10  # PC's finding still scores
+    assert summary["suppressed_findings"] == 1
+    assert _summary_with(client)["suppressed_findings"] == 0
+
+
+def test_a_suppressed_blocklist_hit_with_no_lan_party_is_counted():
+    """Codex R2 #1: with no LAN party a reputation alert scores, so suppressing it counts."""
+    groups = [_bucket(_DROP, SCANNER, _OUTSIDE_LAN, 5, "Major", sid=2400011)]
+    lan = {"lan_cidrs": ["192.168.1.0/24"]}
+
+    suppressed = _summary_with(_client(groups, [], []), (2400011, SCANNER), **lan)
+    assert (suppressed["threat_score"], suppressed["suppressed_findings"]) == (0, 1)
+
+    shown = _summary_with(_client(groups, [], []), **lan)  # nothing suppressed
+    assert (shown["threat_score"], shown["suppressed_findings"]) == (2, 0)
 
 
 # ---------------------------------------------------------------------------

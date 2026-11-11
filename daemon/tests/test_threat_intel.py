@@ -446,25 +446,71 @@ class TestAvailability:
 
 
 # ---------------------------------------------------------------------------
-# NET-237 (ALR-11): a scan that hits its cap is an error, not partial matches
+# NET-238: a capped scan checks the alert pairs it read and says it stopped
 # ---------------------------------------------------------------------------
+
+# OLD CODE START — NET-238: a capped scan was an error (NET-237), so enough alerts blanked
+# the matches; it now answers what it read with complete=False
+# @pytest.mark.asyncio
+# async def test_intel_endpoint_answers_500_when_the_scan_hits_its_cap(
+#     tmp_path, monkeypatch
+# ):
+#     """The cap was only logged, so the window's matches were those read before it."""
+#     from aiohttp import web
+#     from aiohttp.test_utils import make_mocked_request
+#
+#     from api.threats import handle_threat_intel
+#
+#     monkeypatch.setattr("services.threat_intel._TI_CACHE_PATH", tmp_path / "ti.json")
+#     monkeypatch.setattr(
+#         "services.threat_intel.all_buckets",
+#         lambda *a, **k: ([{"key": {"src": "185.220.101.9", "dst": _LAN}}], False),
+#     )
+#     app = web.Application()
+#     app["storage"] = MagicMock()
+#
+#     resp = await handle_threat_intel(
+#         make_mocked_request("GET", "/api/threats/intel", app=app)
+#     )
+#
+#     assert resp.status == 500
+# OLD CODE END
+
+
+def _scan_reads_one_pair(monkeypatch, complete: bool) -> None:
+    monkeypatch.setattr(
+        "services.threat_intel.all_buckets",
+        lambda *a, **k: ([{"key": {"src": "185.220.101.9", "dst": _LAN}}], complete),
+    )
+
+
+@pytest.mark.parametrize("complete", [True, False])
+def test_the_pairs_read_are_matched_and_merged(tmp_path, monkeypatch, caplog, complete):
+    monkeypatch.setattr("services.threat_intel._TI_CACHE_PATH", tmp_path / "ti.json")
+    _scan_reads_one_pair(monkeypatch, complete)
+    svc = ThreatIntelService()
+
+    assert svc.scan_suricata(MagicMock(), "now-1d", "now") == (
+        {"185.220.101.9"},
+        complete,
+    )
+    assert svc.populate_from_suricata(MagicMock(), "now-1d", "now") == 1
+    assert svc.lookup_ip("185.220.101.9")
+    assert ("stopped at 1 address pairs" in caplog.text) is not complete
 
 
 @pytest.mark.asyncio
-async def test_intel_endpoint_answers_500_when_the_scan_hits_its_cap(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("complete", [True, False])
+async def test_intel_endpoint_says_whether_the_scan_was_capped(
+    tmp_path, monkeypatch, complete
 ):
-    """The cap was only logged, so the window's matches were those read before it."""
     from aiohttp import web
     from aiohttp.test_utils import make_mocked_request
 
     from api.threats import handle_threat_intel
 
     monkeypatch.setattr("services.threat_intel._TI_CACHE_PATH", tmp_path / "ti.json")
-    monkeypatch.setattr(
-        "services.threat_intel.all_buckets",
-        lambda *a, **k: ([{"key": {"src": "185.220.101.9", "dst": _LAN}}], False),
-    )
+    _scan_reads_one_pair(monkeypatch, complete)
     app = web.Application()
     app["storage"] = MagicMock()
 
@@ -472,4 +518,6 @@ async def test_intel_endpoint_answers_500_when_the_scan_hits_its_cap(
         make_mocked_request("GET", "/api/threats/intel", app=app)
     )
 
-    assert resp.status == 500
+    body = json.loads(resp.text)
+    assert resp.status == 200
+    assert (body["complete"], body["total_indicators"]) == (complete, 1)

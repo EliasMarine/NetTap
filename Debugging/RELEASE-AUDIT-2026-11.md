@@ -30,7 +30,7 @@ The G11 runs the PR head `a7623897` (the tree `main` received). The smoke test g
 2. Failure injection (C12, C18):
    - a stopped Suricata was reported in 1 s and a stopped Zeek in 22 s, and each recovered on its own;
    - an OpenSearch restart kept its auth (Chain 21 confirmed) and ingestion resumed.
-3. A benign IDS trigger (C8): Suricata matched in under a second and the alert was indexed 11.3 s after the packet. That is just over the 10 s goal (H5, NET-243).
+3. A benign IDS trigger (C8): Suricata matched in under a second and the alert was indexed 11.3 s after the packet. That is just over the 10 s goal (H5, NET-243). Fixed 2026-11-11 (PR #247): median 2.0 s, max 6.5 s.
 4. The rendered UI: a stopped sensor shows on Home. Checking the UI found the reload 502 (A17); it is fixed and verified.
 
 **What holds up.** These reconcile exactly, or within protocol overhead, against independent sums of the source records on the G11:
@@ -46,10 +46,10 @@ The G11 runs the PR head `a7623897` (the tree `main` received). The smoke test g
 **Limitations a release would carry:**
 - Inline bridge and DHCP gateway were never run on hardware; their limits are stated in the product, not measured.
 - Global IPv6 was not observed (the test network has ULA and link-local only).
-- The threat score's suppressions and baseline aren't shown (C9, NET-239).
-- A capped detection view fails as "incomplete" rather than showing what it read (NET-238).
-- With a sensor stopped, Alerts still lists older alerts without saying the IDS isn't running; only Home's Capture pipeline card and System say so (NET-242).
-- Alert delivery measured 11.3 s from packet to index in one sample, over the 10 s goal (NET-243).
+- ~~The threat score's suppressions and baseline aren't shown (C9, NET-239).~~ Fixed 2026-11-11 (PR #247): the score's method now says how many findings suppressions left out and whether the +15 applied.
+- ~~A capped detection view fails as "incomplete" rather than showing what it read (NET-238).~~ Fixed 2026-11-11 (PR #247): DNS and threat-intel detections show what they read and say where the scan stopped; totals stay fail-closed.
+- ~~With a sensor stopped, Alerts still lists older alerts without saying the IDS isn't running; only Home's Capture pipeline card and System say so (NET-242).~~ Fixed 2026-11-11 (PR #247): Alerts and Threats say so at the top of the page.
+- ~~Alert delivery measured 11.3 s from packet to index in one sample, over the 10 s goal (NET-243).~~ Fixed 2026-11-11 (PR #247): Filebeat flushes after 2 s, not 10 s; on the G11, 1,019 alerts had a median of 2.0 s and a max of 6.5 s from packet to index.
 - The daemon stays host-root-equivalent, as accepted in `SECURITY.md`.
 - The owner's public IP is still in git history (F7 fixed HEAD only).
 
@@ -66,8 +66,8 @@ Each result is for PR #236 (head `a7623897`) unless it says otherwise. `main` be
 | C5 | Device identity and attribution correct for the mode, uncertainty shown | **PASS** | Both sides and IPv6 by MAC reconcile on the G11 (device-A 4,578 = 3,053 + 1,432 + 93). Answer-only devices are listed. Type and OS are shown as guesses with their basis. Global IPv6 not observed |
 | C6 | DNS activity reconciles | **PASS** | R6: 5,477 = 5,477 lookups. The median lookup time is shown (smoke test). The page says encrypted DNS is invisible |
 | C7 | TLS/certificate data reconciles | **PASS** | R14: 1,416 = 1,416 sessions with a chain |
-| C8 | Suricata alerts and severity faithful, worded as rule matches | **PASS** (latency goal missed by 1.3 s, NET-243) | Counts exact (R7). Credential-exposure rules ET rates Informational are counted (B-i). Generated text is worded as rule matches (B-j). End to end on the G11 (R15): a LAN request carrying `uid=0(root)` matched ET 2100498 at 19:59:36.27, was indexed at 19:59:47.57 (11.3 s), and the daemon serves it under Activity because ET rates it Informational |
-| C9 | Risk/threat scores reproducible from inputs, presented as heuristics | **FAIL** (P2) | Deterministic, method shown, inputs persist across restarts (F4). Suppressions and baseline aren't shown (NET-239) |
+| C8 | Suricata alerts and severity faithful, worded as rule matches | **PASS** (~~latency goal missed by 1.3 s, NET-243~~ met 2026-11-11, PR #247: p90 4.3 s, max 6.5 s) | Counts exact (R7). Credential-exposure rules ET rates Informational are counted (B-i). Generated text is worded as rule matches (B-j). End to end on the G11 (R15): a LAN request carrying `uid=0(root)` matched ET 2100498 at 19:59:36.27, was indexed at 19:59:47.57 (11.3 s), and the daemon serves it under Activity because ET rates it Informational |
+| C9 | Risk/threat scores reproducible from inputs, presented as heuristics | **PASS** (was FAIL P2; fixed 2026-11-11, PR #247) | Deterministic, method shown, inputs persist across restarts (F4). ~~Suppressions and baseline aren't shown (NET-239)~~: the method now gives the suppressed-findings count and whether the busier-window +15 applied, and says when the baseline is still learning |
 | C10 | GeoIP/ASN/vendor shown as enrichment, with fitting precision | **PASS** | Answers give their source and age, city-level precision, and anycast with no pin (smoke test on the G11) |
 | C11 | Packet search/download right and access-controlled | **PASS** | Daemon 401 without token, web 401 without session (smoke test). The filtered download's temp file is removed (F8) |
 | C12 | Capture health reflects a stopped capture and packet loss | **PASS** | NIC loss exact (R11). Failure injection on the G11 (`failure-injection-release.sh`): Suricata stopped → `sensor_stopped` and status "problem" in 1 s; Zeek stopped → the same in 22 s (Zeek takes ~10 s to exit); each back to "fresh" with nobody's help |
@@ -76,7 +76,7 @@ Each result is for PR #236 (head `a7623897`) unless it says otherwise. `main` be
 | C15 | No mock, random or hardcoded-success data in production paths | **PASS** | Notifications, Compliance and the Setup storage step fixed (F3, F5, A16); the storage route's dead mock branches removed |
 | C16 | No unauthenticated data access, default credentials or committed secrets; privileged surfaces justified | **PASS** | First admin and Go Live need the setup code (A13). Public health carries no hardware detail (F6). On the G11 after the recreate: TShark has no network and runs as nobody (capinfos still reads the newest capture), CyberChef answers 302 to the login (smoke test step 9). Accepted risks are listed in `SECURITY.md`. The owner IP remains in git history |
 | C17 | Each capture mode's limits stated in product and docs | **PASS** | Bridge mode says what a post-NAT capture can't show; setup labels each mode by what was tested on hardware (NET-225) |
-| C18 | Failures surface in the UI and services recover | **PASS** (Alerts gap, NET-242; reboot not run) | G11: each stopped sensor was reported and recovered (C12). An OpenSearch restart turned health to "problem" and came back healthy. Auth survived the restart (cluster green through the service curlrc, Chain 21 confirmed), and ingestion was fresh 2 s after OpenSearch was healthy. The smoke test then passed. Home shows a stopped sensor. Alerts with older alerts listed does not (P2, NET-242). The public web `/api/health` stays "healthy" while OpenSearch restarts: it is a liveness check only (P3). An appliance reboot was not run |
+| C18 | Failures surface in the UI and services recover | **PASS** (~~Alerts gap, NET-242~~ fixed 2026-11-11, PR #247; reboot not run) | G11: each stopped sensor was reported and recovered (C12). An OpenSearch restart turned health to "problem" and came back healthy. Auth survived the restart (cluster green through the service curlrc, Chain 21 confirmed), and ingestion was fresh 2 s after OpenSearch was healthy. The smoke test then passed. Home shows a stopped sensor. Alerts with older alerts listed does not (P2, NET-242). The public web `/api/health` stays "healthy" while OpenSearch restarts: it is a liveness check only (P3). An appliance reboot was not run |
 | C19 | No unresolved P0/P1 findings | **PASS** in PR #236; FAIL on `main` before it | No P0. B1–B6 fixed (section 8). A17, the reload 502 found on the device, is fixed and verified (NET-241) |
 
 ---
@@ -228,8 +228,8 @@ No P0 was found.
 | B-n | Setup wizard: "Inline bridge — sees all WAN traffic" omits that devices become indistinguishable; DHCP gateway "Recommended" though untested on hardware | code | **Fixed (wave 2, NET-225)** |
 | B-o | Daemon on 0.0.0.0:8880 (token-protected), daemon is host-root-equivalent (docker.sock, SYS_ADMIN, writable systemd dir), capture containers root with NET_ADMIN; images pinned by tag not digest; CyberChef served without login | live + agent | **Partly fixed (NET-229)**: TShark isolated, CyberChef behind the login; the rest accepted in `SECURITY.md` |
 | B-p | Error replies include internal exception text (OpenSearch URLs, connection errors) | local | **Fixed (wave 2, NET-229, NET-237)** |
-| B-q | With a sensor stopped, Alerts lists the window's older alerts and never says the IDS isn't running; only Home's Capture pipeline card and System do, and the sidebar capture chip stays green | live | **Open (NET-242)** |
-| B-r | Alert delivery: 11.3 s from packet to index in one sample, over the 10 s goal (H5) | live | **Open (NET-243)** |
+| B-q | With a sensor stopped, Alerts lists the window's older alerts and never says the IDS isn't running; only Home's Capture pipeline card and System do, and the sidebar capture chip stays green | live | **Fixed (NET-242, PR #247)**: Alerts and Threats show "Data pipeline now: Suricata stopped" at the top; G11 health read `sensor_stopped` within 20 s of a stop (2026-11-11). The sidebar chip is unchanged |
+| B-r | Alert delivery: 11.3 s from packet to index in one sample, over the 10 s goal (H5) | live | **Fixed (NET-243, PR #247)**: cause was Filebeat's 10 s memory-queue flush timeout; set to 2 s. G11 after: median 2.0 s, p90 4.3 s, max 6.5 s, none over 10 s (before: 22.5% over) |
 
 ### P3 (selected)
 
@@ -359,7 +359,7 @@ Parent issue NET-223. Each blocker was an unresolved P1 on `446845ec`. All six a
 | B6 | First host on a fresh install can claim the admin account; TShark not network-isolated | NET-229 | One-time setup code; `network_mode: none` for TShark | **Fixed**, verified on the G11 after the recreate (smoke test step 9) |
 | B7 | A full reload of a large page while logged in is a 502 (found on the device in wave 3) | NET-241 | Header buffer that fits SvelteKit's `Link` header | **Fixed**, verified on the G11 (reloads render; smoke test step 7) |
 
-Also required by the existing gate in `RELEASE-VERIFICATION.md`, still open: hardware checks H2–H4, H6 and H7 (H5 measured 11.3 s, NET-243), release notes, and the version bump.
+Also required by the existing gate in `RELEASE-VERIFICATION.md`, still open: hardware checks H2–H4, H6 and H7 (H5 now passes on the G11: p90 4.3 s after NET-243), release notes, and the version bump.
 
 ---
 

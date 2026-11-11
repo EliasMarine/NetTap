@@ -284,7 +284,10 @@ def handle_threat_intel(request: web.Request) -> web.Response:
     # OLD CODE END
     # Bootstrap from Suricata data: the scan reads OpenSearch only, so no lock
     try:
-        seen = ti.scan_suricata(client, from_ts, to_ts, excluded_ips=excluded_ips_list)
+        # OLD CODE: seen = ti.scan_suricata(client, from_ts, to_ts, excluded_ips=excluded_ips_list)
+        seen, complete = ti.scan_suricata(
+            client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        )
     except Exception as exc:
         # The load still writes back its purge, so the old entries stay gone (I7)
         with CACHE_LOCK:
@@ -307,6 +310,8 @@ def handle_threat_intel(request: web.Request) -> web.Response:
             "new_indicators": new_count,
             "feeds": feeds,
             "total_indicators": sum(f["indicator_count"] for f in feeds.values()),
+            # NET-238: False when the scan stopped at its cap; total_indicators is then a lower bound
+            "complete": complete,
         }
     )
 

@@ -450,6 +450,31 @@ print('filebeat: no cert mount (correct — BEATS_SSL=false)')
     [ "$status" -eq 0 ]
 }
 
+@test "compose: filebeat runs flush-timeout.sh before the image's own entrypoint and CMD (NET-243)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+    run _compose_query "
+svc = data['services']['filebeat']
+image_entrypoint = ['/usr/bin/tini', '--', '/usr/local/bin/docker-uid-gid-setup.sh', '/usr/local/bin/service_check_passthrough.sh', '-s', 'filebeat']
+entry = svc.get('entrypoint')
+assert entry[:4] == ['/usr/bin/tini', '--', '/bin/bash', '/nettap/flush-timeout.sh'], entry
+assert entry[:2] + entry[4:] == image_entrypoint, entry
+# compose clears the image's CMD once entrypoint is set
+assert svc.get('command') == ['/usr/local/bin/supervisord', '-c', '/etc/supervisord.conf', '-u', 'root', '-n'], svc.get('command')
+assert '../config/filebeat/flush-timeout.sh:/nettap/flush-timeout.sh:ro' in svc.get('volumes', []), svc.get('volumes')
+"
+    [ "$status" -eq 0 ]
+    [ -f "${REPO_ROOT}/config/filebeat/flush-timeout.sh" ]
+}
+
+@test "compose: the restated filebeat entrypoint was checked against the tested Malcolm tag (NET-243)" {
+    # 26.10.0 and its rollback 26.02.0 both have this ENTRYPOINT and CMD (G11, 2026-11-11). On a
+    # bump: docker image inspect the new filebeat-oss image, update entrypoint/command, then this tag
+    run grep -Eq '^TESTED_MALCOLM_TAG = "26\.10\.0"$' "${REPO_ROOT}/daemon/services/malcolm_upgrade.py"
+    [ "$status" -eq 0 ]
+}
+
 @test "compose: arkime does NOT mount host certs (self-generates internally)" {
     if ! _has_pyyaml; then
         skip "PyYAML not available"

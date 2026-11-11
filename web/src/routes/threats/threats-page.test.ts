@@ -200,3 +200,57 @@ describe('Threats page — the score in inline bridge mode', () => {
 		expect(THREAT_SCORE_HOW).toMatch(/neither address in NetTap's LAN subnets .* adds its full weight once per signature, source and destination/);
 	});
 });
+
+// NET-242: the page still lists older findings with a sensor stopped, so it says so at the top
+describe('Threats page — the data pipeline now', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+	const health = (state: string, sensors: Record<string, string> = {}) => ({
+		uptime: 1, timestamp: '', storage: {}, smart: {}, opensearch_reachable: true, status: 'problem', healthy: false,
+		pipeline: { state, newest_record_at: null, age_seconds: null, threshold_seconds: 900, sensors, checked_at: '' },
+	});
+	const line = /^Data pipeline now:/;
+
+	it('says Suricata stopped above the findings it still lists', async () => {
+		stubDaemon({ '/api/threats/report': REPORT, '/api/system/health': health('sensor_stopped', { 'nettap-suricata-live': 'exited' }) });
+		render(ThreatsPage);
+		const note = await screen.findByText(line);
+		expect(note).toHaveTextContent('Data pipeline now: Suricata stopped. What this page shows may be out of date. See System for details.');
+		expect(note.closest('p')).toHaveClass('notice', 'is-warn');
+		expect(screen.getByRole('link', { name: 'System' })).toHaveAttribute('href', '/system');
+		expect(screen.getByText(THREAT_SCORE_HOW)).toBeInTheDocument();
+	});
+
+	it('says nothing while data is arriving', async () => {
+		stubDaemon({ '/api/threats/report': REPORT, '/api/system/health': health('fresh') });
+		render(ThreatsPage);
+		await screen.findByText(THREAT_SCORE_HOW);
+		expect(screen.queryByText(line)).not.toBeInTheDocument();
+	});
+
+	it("says it couldn't check when the daemon couldn't", async () => {
+		stubDaemon({ '/api/threats/report': REPORT, '/api/system/health': health('unknown') });
+		render(ThreatsPage);
+		expect(await screen.findByText(line)).toHaveTextContent("Data pipeline now: Couldn't check.");
+	});
+});
+
+// NET-239: the suppressions and baseline that changed the score were hidden inputs
+describe('Threats page — what changed the score', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('says under the method what suppressions and the baseline changed', async () => {
+		const baseline = { deviation: 1, avg_events: 0, avg_threat_score: 0, history_points: 3, is_anomalous: false, ready: false, earlier_hours: 2 };
+		const summary = { ...REPORT.summary, suppressed_findings: 1, busier_window_points: 0, baseline };
+		stubDaemon({ '/api/threats/report': { ...REPORT, summary } });
+		render(ThreatsPage);
+		const how = (await screen.findByText(THREAT_SCORE_HOW)).closest('details');
+		expect(how).toHaveTextContent('1 finding in this window was left out by your suppressions or false-positive marks.');
+		expect(how).toHaveTextContent("Still learning what's usual: 2 of 6 earlier hours recorded, so no +15 yet.");
+		// NET-239 review: the KPI's "1× vs baseline" said a comparison was made while still learning
+		expect(screen.queryByText(/× (vs|above) baseline/)).not.toBeInTheDocument();
+	});
+});

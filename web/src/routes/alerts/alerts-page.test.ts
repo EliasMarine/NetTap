@@ -526,6 +526,20 @@ describe('Alerts — card states', () => {
 		}
 	});
 
+	// NET-239: what suppressions and the baseline changed is said under the score's method
+	it('says under the score what suppressions and the baseline changed', async () => {
+		succeedAll();
+		vi.mocked(getSmartAlertSummary).mockResolvedValue({
+			...range, threat_score: 57, threat_level: 'high', total_groups: 6, total_events: 40, categories: {}, top_threats: [],
+			suppressed_findings: 2, busier_window_points: 15,
+			baseline: { deviation: 2.4, avg_events: 12, avg_threat_score: 30, history_points: 9, is_anomalous: true, ready: true, earlier_hours: 8 },
+		});
+		render(Page);
+		await flush();
+		expect(screen.getByText('2 findings in this window were left out by your suppressions or false-positive marks.')).toHaveClass('score-how');
+		expect(screen.getByText('Busier than usual (2.4× the usual 12 events), so +15.')).toHaveClass('score-how');
+	});
+
 	it('shows the loaded data: categories link to their page, the threat score and its level', async () => {
 		succeedAll();
 		const { container } = render(Page);
@@ -1580,6 +1594,46 @@ describe('Alerts — zero alerts and the pipeline (NET-228)', () => {
 		render(Page);
 		await flush();
 		expect(screen.getByText("Can't tell if anything needs review · Data pipeline now: No new records for 47 min")).toBeInTheDocument();
+	});
+});
+
+// NET-242: with older alerts still listed, a stopped sensor is said at the top of the page
+describe('Alerts — the data pipeline now (NET-242)', () => {
+	const line = /^Data pipeline now:/;
+	const stopped = () => healthWith('sensor_stopped', { sensors: { 'nettap-suricata-live': 'exited' } });
+
+	it('says Suricata stopped while it still lists older alerts', async () => {
+		succeedAll();
+		vi.mocked(getSystemHealth).mockResolvedValue(stopped());
+		render(Page);
+		await flush();
+		const note = screen.getByText(line);
+		expect(note).toHaveTextContent('Data pipeline now: Suricata stopped. What this page shows may be out of date. See System for details.');
+		expect(note.closest('p')).toHaveClass('notice', 'is-warn');
+		expect(screen.getByRole('link', { name: 'System' })).toHaveAttribute('href', '/system');
+	});
+
+	it('says nothing while data is arriving', async () => {
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(screen.queryByText(line)).not.toBeInTheDocument();
+	});
+
+	it("keeps a warning when the next check fails, by the request or by the daemon", async () => {
+		succeedAll();
+		vi.mocked(getSystemHealth).mockResolvedValue(stopped());
+		render(Page);
+		await flush();
+		expect(screen.getByText(line)).toHaveTextContent('Suricata stopped');
+		vi.mocked(getSystemHealth).mockRejectedValue(new Error('HTTP 502'));
+		await refreshPage();
+		await flush();
+		expect(screen.getByText(line)).toHaveTextContent("Data pipeline now: Couldn't check.");
+		vi.mocked(getSystemHealth).mockResolvedValue(healthWith('unknown', { age_seconds: null }));
+		await refreshPage();
+		await flush();
+		expect(screen.getByText(line)).toHaveTextContent("Data pipeline now: Couldn't check.");
 	});
 });
 
