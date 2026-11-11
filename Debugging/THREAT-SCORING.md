@@ -215,6 +215,15 @@ raw alerts.
 - **"Events that need attention" and the busier-than-usual check count only alerts that score.** Each alert
   counts once. The stored history is versioned (`counted-v2`), so it is never compared with the old
   whole-group counts.
+- **The reply names the score's two hidden inputs (NET-239).** `suppressed_findings` is how many
+  score keys with weight only suppressed or false-positive-marked alerts supplied (one signature on one
+  device through 100 peers is 1; an informational finding is 0). `busier_window_points` is 15 when the
+  boost applied, else 0. The baseline adds `ready` (6 or more earlier hours of the same window length)
+  and `earlier_hours` (`history_points` counts the current hour too). Under "How the score is worked
+  out" on Threats, and under the method on the Alerts threat summary card, the page says how many
+  findings suppressions left out, and whether the window was busier than usual and got +15, wasn't,
+  or was but the score was already 75 or more, or that the baseline is still learning ("2 of 6
+  earlier hours"). A reply without these fields (an older daemon) gets no sentence, not a guess.
 
 ### Kill chains
 

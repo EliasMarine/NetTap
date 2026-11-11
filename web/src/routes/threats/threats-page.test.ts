@@ -235,3 +235,20 @@ describe('Threats page — the data pipeline now', () => {
 		expect(await screen.findByText(line)).toHaveTextContent("Data pipeline now: Couldn't check.");
 	});
 });
+
+// NET-239: the suppressions and baseline that changed the score were hidden inputs
+describe('Threats page — what changed the score', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it('says under the method what suppressions and the baseline changed', async () => {
+		const baseline = { deviation: 1, avg_events: 0, avg_threat_score: 0, history_points: 3, is_anomalous: false, ready: false, earlier_hours: 2 };
+		const summary = { ...REPORT.summary, suppressed_findings: 1, busier_window_points: 0, baseline };
+		stubDaemon({ '/api/threats/report': { ...REPORT, summary } });
+		render(ThreatsPage);
+		const how = (await screen.findByText(THREAT_SCORE_HOW)).closest('details');
+		expect(how).toHaveTextContent('1 finding in this window was left out by your suppressions or false-positive marks.');
+		expect(how).toHaveTextContent("Still learning what's usual: 2 of 6 earlier hours recorded, so no +15 yet.");
+	});
+});

@@ -16,7 +16,8 @@
 	// OLD CODE: import { getThreatReport, getThreatIntel } from '$api/threats'; (NET-192 PR 3: the pill → request helper)
 	import { getBeaconing, getThreatReport, getThreatIntel, threatRequest, type ThreatRequest } from '$api/threats';
 	// OLD CODE: import { THREAT_SCORE_HOW } from '$api/alerts'; (NET-225: and the bridge-mode line)
-	import { THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts';
+	// OLD CODE: import { THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts'; (NET-239: and the score's inputs)
+	import { scoreInputs, THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts';
 	import { captureMode, initCaptureMode } from '$lib/stores/captureMode';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import type {
@@ -555,6 +556,8 @@
 				<details class="score-how">
 					<summary>How the score is worked out</summary>
 					<p>{THREAT_SCORE_HOW}</p>
+					<!-- NET-239: the suppressions and baseline that changed this window's score -->
+					{#each scoreInputs(summary ?? {}) as line (line)}<p>{line}</p>{/each}
 				</details>
 			{/snippet}
 		</KpiCard>

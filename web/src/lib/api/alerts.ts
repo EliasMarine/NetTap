@@ -4,6 +4,7 @@
  * forward requests to the nettap-storage-daemon.
  */
 import { formatCompactNumber } from './logs';
+import type { BaselineInfo } from './threats';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -519,6 +520,50 @@ export interface SmartAlertSummary {
 	informational_events?: number;
 	categories: Record<string, { label: string; groups: number; events: number }>;
 	top_threats: SmartAlert[];
+	/** NET-239: null for one device's view or a failed baseline update */
+	baseline?: BaselineInfo | null;
+	/** NET-239: scoring findings left out by suppressions or false-positive marks. Absent from an older daemon. */
+	suppressed_findings?: number;
+	/** NET-239: 15 when the busier-than-usual +15 applied, else 0. Absent from an older daemon. */
+	busier_window_points?: number;
+}
+
+/** Earlier hours the daemon needs before it compares a window with them (_MIN_BASELINE_HOURS). */
+const BASELINE_MIN_HOURS = 6;
+
+/**
+ * NET-239: the score's two hidden inputs, in words for under THREAT_SCORE_HOW: findings that
+ * suppressions left out, and whether the busier-than-usual +15 applied. A reply without the
+ * fields (an older daemon) says nothing rather than a guess.
+ */
+export function scoreInputs(
+	summary: Pick<SmartAlertSummary, 'baseline' | 'suppressed_findings' | 'busier_window_points'>
+): string[] {
+	return [
+		suppressedSentence(summary.suppressed_findings),
+		baselineSentence(summary.baseline, summary.busier_window_points)
+	].filter((s): s is string => s !== null);
+}
+
+function suppressedSentence(n: number | undefined): string | null {
+	if (typeof n !== 'number' || n <= 0) return null;
+	return n === 1
+		? '1 finding in this window was left out by your suppressions or false-positive marks.'
+		: `${formatNumber(n)} findings in this window were left out by your suppressions or false-positive marks.`;
+}
+
+function baselineSentence(b: BaselineInfo | null | undefined, points: number | undefined): string | null {
+	if (!b || typeof b.ready !== 'boolean' || typeof b.earlier_hours !== 'number' || typeof points !== 'number') {
+		return null;
+	}
+	if (!b.ready) {
+		return `Still learning what's usual: ${b.earlier_hours} of ${BASELINE_MIN_HOURS} earlier hours recorded, so no +15 yet.`;
+	}
+	const usual = `the usual ${formatNumber(b.avg_events)} events`;
+	if (!b.is_anomalous) return `Not busier than usual (${b.deviation}× ${usual}), so no +15.`;
+	return points === 15
+		? `Busier than usual (${b.deviation}× ${usual}), so +15.`
+		: `Busier than usual (${b.deviation}×), but the score was already 75 or more, so no +15.`;
 }
 
 /**

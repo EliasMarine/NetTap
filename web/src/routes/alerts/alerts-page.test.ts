@@ -526,6 +526,20 @@ describe('Alerts — card states', () => {
 		}
 	});
 
+	// NET-239: what suppressions and the baseline changed is said under the score's method
+	it('says under the score what suppressions and the baseline changed', async () => {
+		succeedAll();
+		vi.mocked(getSmartAlertSummary).mockResolvedValue({
+			...range, threat_score: 57, threat_level: 'high', total_groups: 6, total_events: 40, categories: {}, top_threats: [],
+			suppressed_findings: 2, busier_window_points: 15,
+			baseline: { deviation: 2.4, avg_events: 12, avg_threat_score: 30, history_points: 9, is_anomalous: true, ready: true, earlier_hours: 8 },
+		});
+		render(Page);
+		await flush();
+		expect(screen.getByText('2 findings in this window were left out by your suppressions or false-positive marks.')).toHaveClass('score-how');
+		expect(screen.getByText('Busier than usual (2.4× the usual 12 events), so +15.')).toHaveClass('score-how');
+	});
+
 	it('shows the loaded data: categories link to their page, the threat score and its level', async () => {
 		succeedAll();
 		const { container } = render(Page);
