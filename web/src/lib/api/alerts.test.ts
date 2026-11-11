@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import {
 	getAlerts,
 	getAlertCount,
@@ -464,6 +466,14 @@ describe('scoreInputs', () => {
 		expect(scoreInputs({ baseline: b, busier_window_points: 0 })).toEqual([
 			"Still learning what's usual: 2 of 6 earlier hours recorded, so no +15 yet.",
 		]);
+	});
+
+	// NET-239 review: the web repeats the daemon's warm-up, so a change there must reach the sentence
+	it("names the daemon's own warm-up hours (_MIN_BASELINE_HOURS)", () => {
+		const source = readFileSync(resolve(__dirname, '../../../../daemon/services/alert_intelligence.py'), 'utf-8');
+		const hours = source.match(/^_MIN_BASELINE_HOURS = \(?\s*(\d+)/m)?.[1];
+		const b = baseline({ ready: false, earlier_hours: 0, is_anomalous: false });
+		expect(scoreInputs({ baseline: b, busier_window_points: 0 })[0]).toContain(`0 of ${hours} earlier hours`);
 	});
 
 	it('says when a busier window added 15', () => {
