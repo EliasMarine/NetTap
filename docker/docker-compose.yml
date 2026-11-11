@@ -325,6 +325,12 @@ services:
       VALKEY_HOST: "redis"
       VALKEY_PORT: "6379"
       VALKEY_PASSWORD: "${REDIS_PASSWORD:-NetTap_Redis_Secret}"
+    # NET-243: alerts waited up to Filebeat's 10 s queue flush timeout before Logstash saw them.
+    # flush-timeout.sh sets it to 2 s in the image's own config, then runs the image's own
+    # ENTRYPOINT and CMD (filebeat-oss 26.10.0). Setting entrypoint clears the image's CMD, so
+    # both are restated here: check them with `docker image inspect` when MALCOLM_IMAGE_TAG changes.
+    entrypoint: ["/usr/bin/tini", "--", "/bin/bash", "/nettap/flush-timeout.sh", "/usr/local/bin/docker-uid-gid-setup.sh", "/usr/local/bin/service_check_passthrough.sh", "-s", "filebeat"]
+    command: ["/usr/local/bin/supervisord", "-c", "/etc/supervisord.conf", "-u", "root", "-n"]
     # NOTE: No cert mount needed — BEATS_SSL is false. If enabled in the future,
     # mount filebeat-specific certs at /certs/ (ca.crt, client.crt, client.key).
     volumes:
@@ -334,6 +340,7 @@ services:
       - suricata-live-logs:/suricata:ro
       - filebeat-registry:/usr/share/filebeat/data
       - ./curlrc:/var/local/curlrc:ro
+      - ../config/filebeat/flush-timeout.sh:/nettap/flush-timeout.sh:ro
     networks:
       - default
     depends_on:
