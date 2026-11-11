@@ -3,11 +3,15 @@
 #
 #   bash scripts/remote/measure-alert-latency.sh [SINCE]
 #
-# Read-only apart from 12 benign HTTP requests to example.com from this box (a header carrying
-# "uid=0(root)" matches ET 2100498, which ET rates Informational). Run it before and after a
-# Filebeat change and compare. SINCE (ISO time, default 1 hour ago) bounds step 2's sample.
+# Read-only apart from 12 UDP datagrams carrying "uid=0(root)" (matches ET 2100498, which ET
+# rates Informational) to 192.0.2.1, a documentation address nothing answers. Not HTTP: the
+# router's own IPS blocks a web host after its first matches, and a blocked handshake never
+# carries the payload; the mirror sees a datagram before the router can drop it.
+# Run it before and after a Filebeat change and compare. SINCE (ISO time, default 1 hour ago)
+# bounds step 2's sample.
 #  1. Trigger to first search hit, one trigger at a time, each on its own source port, so the
-#     alert matched is that trigger's own flow. Pass: all 12 searchable in under 10 s.
+#     alert matched is that trigger's own packet. Pass: all 12 searchable in under 10 s
+#     (the time includes about 0.3 s of docker exec start-up, so it slightly overstates).
 #  2. event.ingested - @timestamp over every alert since SINCE (a diagnostic distribution).
 #  3. Ten minutes of the data disk's written sectors and OpenSearch's write thread-pool count.
 set -u
@@ -20,6 +24,16 @@ GOAL_S=10
 SAMPLE_S=600
 DISK="${DISK:-nvme0n1}"
 SIGNATURE=2100498
+TARGET=192.0.2.1  # TEST-NET-1 (RFC 5737)
+
+send_trigger() {
+	# one datagram from local port $1, sent by the daemon container (host networking; the host has no python)
+	sudo docker exec nettap-storage-daemon python3 -c '
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind(("", int(sys.argv[1])))
+s.sendto(b"nettap latency test uid=0(root)", (sys.argv[2], 9))' "$1" "$TARGET"
+}
 
 os() {
 	# a search against OpenSearch from inside its container (the host has no client certs)
@@ -48,9 +62,8 @@ for i in $(seq 0 $((TRIGGERS - 1))); do
 	port=$((FIRST_PORT + i))
 	sent_iso=$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)
 	sent=$(date +%s.%N)
-	if ! curl -s -o /dev/null --max-time 10 --local-port "$port" \
-		-H 'X-NetTap-Test: uid=0(root)' http://example.com/; then
-		echo "   ✗ trigger $((i + 1)) (port $port): the request failed, skipped"
+	if ! send_trigger "$port"; then
+		echo "   ✗ trigger $((i + 1)) (port $port): couldn't send it, skipped"
 		continue
 	fi
 	found=""
