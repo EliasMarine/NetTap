@@ -305,7 +305,8 @@
 		{ key: 'destination_ip', label: 'To', class: 'mono', cell: lateralTo },
 		{ key: 'service', label: 'Service' },
 		{ key: 'port', label: 'Port', numeric: true, class: 'mono' },
-		{ key: 'connection_count', label: 'Connections', numeric: true, cell: lateralCount },
+		// OLD CODE: { key: 'connection_count', label: 'Connections', numeric: true, cell: lateralCount }, (NET-240: a distinct count OpenSearch estimates)
+		{ key: 'connection_count', label: 'Connections (approx.)', numeric: true, cell: lateralCount },
 		{ key: 'fan_out', label: 'Fan-out', numeric: true },
 	];
 

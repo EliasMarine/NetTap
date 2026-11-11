@@ -229,6 +229,21 @@ raw alerts.
 - The page shows only the findings in that sequence.
 - An attacker on the internet is never a chain.
 
+### Lateral movement and still-open connections (NET-240, 2026-11-11)
+
+- Lateral movement lists internal-to-internal connections on admin ports (SMB, RDP, SSH and so on).
+- It reads Zeek's final conn records and its interim long-connection records (`conn_long.log`, same `zeek.uid`).
+  So a session that is still open is listed as of its latest interim record.
+  Zeek writes the first interim record after a while (about 30 minutes on the G11), so a new session isn't listed at once.
+- A connection counts when it was active in the window: it started before the window ended, and it was last seen (`lastPacket`) or started after the window began.
+  A session begun yesterday and still open appears in today's window.
+- "Connections (approx.)" is OpenSearch's approximate distinct count of `zeek.uid`, so a connection's interim and final records count once.
+  Any record without a uid counts as one connection, and the assessment says how many there were (none on Zeek data).
+- "Last seen" is the newest `lastPacket` or start time in the pair.
+- Beaconing still reads final records only.
+  One open connection is one connection, and its interim records would look periodic and invent beacons.
+- Byte and connection totals elsewhere keep final records only (`CONN_ACCOUNTING`, F1).
+
 ### Device risk score
 
 The score is out of 100. Its bands: 0–24 low, 25–49 medium, 50–74 high, 75+ critical.

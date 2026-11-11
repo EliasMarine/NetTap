@@ -188,7 +188,8 @@ describe('Threats page — card states', () => {
 		expect(dns).toHaveTextContent('xj3kq9.biz');
 		expect(dns).toHaveTextContent('300 / 400');
 		expect(screen.getByRole('table', { name: 'Lateral movement' })).toHaveTextContent('SMB');
-		for (const name of ['From', 'To', 'Service', 'Port', 'Connections', 'Fan-out']) {
+		// OLD CODE: for (const name of ['From', 'To', 'Service', 'Port', 'Connections', 'Fan-out']) { (NET-240: the count is approximate)
+		for (const name of ['From', 'To', 'Service', 'Port', 'Connections (approx.)', 'Fan-out']) {
 			expect(within(screen.getByRole('table', { name: 'Lateral movement' })).getByRole('button', { name })).toBeInTheDocument();
 		}
 

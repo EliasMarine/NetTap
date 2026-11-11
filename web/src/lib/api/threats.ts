@@ -68,7 +68,10 @@ export interface LateralMovement {
 	destination_ip: string;
 	port: number;
 	service: string;
+	/** NET-240: OpenSearch's approximate distinct count of connections, interim records included */
 	connection_count: number;
+	/** NET-240: records without a Zeek uid, counted one each (0 on Zeek data; absent from older daemons) */
+	records_without_uid?: number;
 	first_seen: string | null;
 	last_seen: string | null;
 	assessment: string;
