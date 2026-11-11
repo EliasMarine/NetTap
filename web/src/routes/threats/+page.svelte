@@ -548,7 +548,7 @@
 			value={threatScore}
 			unit="/100"
 			sub="Higher is riskier · {rangeText}"
-			note={baseline ? `${baseline.deviation}× ${baseline.is_anomalous ? 'above' : 'vs'} baseline` : undefined}
+			note={/* OLD CODE: baseline ? … (NET-239 review: "1× vs baseline" while it is still learning) */ baseline && baseline.ready !== false ? `${baseline.deviation}× ${baseline.is_anomalous ? 'above' : 'vs'} baseline` : undefined}
 		>
 			{#snippet foot()}
 				<!-- OLD CODE: {#if threatLevelPill}<SeverityPill level={threatLevelPill} />{:else}<span class="dim">No threat level</span>{/if} (NET-228: 0 read as good news with data not arriving) -->
@@ -603,7 +603,7 @@
 				<span class={['chip', (threatIntel?.total_indicators ?? 0) > 0 && 'is-warn']}
 					>{intelFailed
 						? 'load failed'
-						: `${threatIntel?.complete === false ? 'at least ' : ''}${plural(threatIntel?.total_indicators ?? 0, 'indicator')}`}</span
+						: `${threatIntel?.complete === false && threatIntel.total_indicators > 0 ? 'at least ' : ''}${plural(threatIntel?.total_indicators ?? 0, 'indicator')}`}</span
 				>
 			{/snippet}
 			{#if threatIntel?.complete === false}
@@ -650,9 +650,10 @@
 			{:else if intelFailed}
 				<CardState state="error" title="Threat intel unavailable" message="Couldn't load threat intel: the request failed." onaction={reload} />
 			{:else}
+				<!-- OLD CODE: title="No threat intel matches" (NET-238 review: a capped scan that matched nothing can't say there are none) -->
 				<CardState
 					state="empty"
-					title="No threat intel matches"
+					title={threatIntel?.complete === false ? 'No matches in the pairs checked' : 'No threat intel matches'}
 					message="Matches are internet addresses on Suricata's blocklist rules seen in this window."
 					icon="threats"
 				/>

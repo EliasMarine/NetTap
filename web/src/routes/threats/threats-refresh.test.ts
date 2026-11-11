@@ -361,6 +361,17 @@ describe('Threats page — what the figures count', () => {
 		expect(screen.queryByText(/at least/)).not.toBeInTheDocument();
 		expect(screen.queryByText(/Stopped after checking/)).not.toBeInTheDocument();
 	});
+
+	// NET-238 review: a capped scan that matched nothing can't say there are none, or "at least 0"
+	it('says no matches in the pairs checked when a capped scan matched nothing', async () => {
+		vi.mocked(getThreatReport).mockResolvedValue(FULL);
+		vi.mocked(getThreatIntel).mockResolvedValue({ ...NO_INTEL, complete: false });
+		render(ThreatsPage);
+		await vi.waitFor(() => expect(screen.getByText('No matches in the pairs checked')).toBeInTheDocument());
+		expect(screen.queryByText('No threat intel matches')).not.toBeInTheDocument();
+		expect(screen.getByText('0 indicators')).toBeInTheDocument();
+		expect(screen.queryByText(/at least/)).not.toBeInTheDocument();
+	});
 });
 
 describe('Threats page — investigation profiles (I14)', () => {

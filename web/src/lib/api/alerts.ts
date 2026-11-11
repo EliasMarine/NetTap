@@ -560,7 +560,8 @@ function baselineSentence(b: BaselineInfo | null | undefined, points: number | u
 		return `Still learning what's usual: ${b.earlier_hours} of ${BASELINE_MIN_HOURS} earlier hours recorded, so no +15 yet.`;
 	}
 	const usual = `the usual ${formatNumber(b.avg_events)} events`;
-	if (!b.is_anomalous) return `Not busier than usual (${b.deviation}× ${usual}), so no +15.`;
+	// the daemon's is_anomalous is deviation > 2, so 1.9× is busier, just not enough
+	if (!b.is_anomalous) return `Not busy enough for the +15 (${b.deviation}× ${usual}; it takes more than 2×).`;
 	return points === 15
 		? `Busier than usual (${b.deviation}× ${usual}), so +15.`
 		: `Busier than usual (${b.deviation}×), but the score was already 75 or more, so no +15.`;

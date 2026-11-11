@@ -250,5 +250,7 @@ describe('Threats page — what changed the score', () => {
 		const how = (await screen.findByText(THREAT_SCORE_HOW)).closest('details');
 		expect(how).toHaveTextContent('1 finding in this window was left out by your suppressions or false-positive marks.');
 		expect(how).toHaveTextContent("Still learning what's usual: 2 of 6 earlier hours recorded, so no +15 yet.");
+		// NET-239 review: the KPI's "1× vs baseline" said a comparison was made while still learning
+		expect(screen.queryByText(/× (vs|above) baseline/)).not.toBeInTheDocument();
 	});
 });

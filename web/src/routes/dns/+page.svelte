@@ -844,6 +844,9 @@
 			<CardState state="error" title="Couldn't check for suspicious DNS patterns: the request failed." message={RETRY_HINT} onaction={() => refresh.run()} />
 		{:else if suspicious.length === 0 && loading}
 			<CardState state="loading" title="Loading suspicious DNS patterns" />
+		{:else if suspicious.length === 0 && !suspiciousComplete}
+			<!-- NET-238 review: a capped scan that read nothing suspicious can't say there is none -->
+			<CardState state="empty" title="Nothing suspicious in the names checked." message="NetTap checks for beaconing, very long names and heavy TXT use." />
 		{:else if suspicious.length === 0}
 			<CardState state="empty" icon="check" title="No suspicious DNS patterns detected." message="NetTap checks for beaconing, very long names and heavy TXT use." />
 		{:else}

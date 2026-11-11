@@ -491,7 +491,7 @@ describe('scoreInputs', () => {
 	it('says when the window was not busier than usual', () => {
 		const b = baseline({ is_anomalous: false, deviation: 1.1 });
 		expect(scoreInputs({ baseline: b, busier_window_points: 0 })).toEqual([
-			'Not busier than usual (1.1× the usual 1.2K events), so no +15.',
+			'Not busy enough for the +15 (1.1× the usual 1.2K events; it takes more than 2×).',
 		]);
 	});
 

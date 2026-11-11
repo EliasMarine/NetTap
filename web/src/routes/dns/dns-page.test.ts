@@ -101,6 +101,15 @@ describe('DNS page suspicious patterns', () => {
 		expect(notice.closest('p.notice.is-warn[role="status"]')).not.toBeNull();
 	});
 
+	// NET-238 review: an empty capped scan must not read as "none detected"
+	it('says nothing was found in the names checked, not none, when a capped scan found nothing', async () => {
+		stubDaemon([], { complete: false });
+		render(DnsPage);
+		await vi.waitFor(() => expect(screen.getByText('Nothing suspicious in the names checked.')).toBeInTheDocument());
+		expect(screen.queryByText('No suspicious DNS patterns detected.')).not.toBeInTheDocument();
+		expect(screen.getByText(/Stopped after checking the first 500,000 query names/)).toBeInTheDocument();
+	});
+
 	it('says nothing about a cap when the scan finished', async () => {
 		stubDaemon([entry(1)], { complete: true });
 		render(DnsPage);
