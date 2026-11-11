@@ -156,8 +156,9 @@ class DNSAnalytics:
         to_ts: str,
         excluded_ips: list[str] | None = None,
         extra_filters: list[dict] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Every queried name (get_top_domains' shape), most-queried first, paged to the end (#96)."""
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """(every queried name (get_top_domains' shape), most-queried first, paged to the end (#96);
+        False if the scan stopped at its cap)."""
         # OLD CODE START — NET-237 review: unchecked pages, so a page without aggregations read as the end
         # buckets, complete = all_buckets(
         #     self._client,
@@ -191,8 +192,16 @@ class DNSAnalytics:
         #         len(buckets),
         #     )
         # OLD CODE END
+        # OLD CODE START — NET-238: a capped scan blanked the detections, so enough watched
+        # traffic could hide them; each finding is one name's own bucket, so the names read are checked
+        # if not complete:
+        #     raise PartialResultsError(f"DNS name scan stopped at {len(buckets)} names")
+        # OLD CODE END
         if not complete:
-            raise PartialResultsError(f"DNS name scan stopped at {len(buckets)} names")
+            logger.warning(
+                "DNS detections: the name scan stopped at %d names; later names were not checked",
+                len(buckets),
+            )
         names = [
             {
                 "domain": b["key"]["domain"],
@@ -202,7 +211,7 @@ class DNSAnalytics:
             for b in buckets
         ]
         # the order the top list gave (count, then name), so detections list the same way
-        return sorted(names, key=lambda n: -n["count"])
+        return sorted(names, key=lambda n: -n["count"]), complete
 
     def get_device_dns(
         self,
@@ -393,8 +402,8 @@ class DNSAnalytics:
         from_ts: str,
         to_ts: str,
         excluded_ips: list[str] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Detect suspicious DNS patterns: long names, high frequency, TXT abuse."""
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """(suspicious DNS patterns: long names, high frequency, TXT abuse; False if a scan was capped)."""
         suspicious: list[dict[str, Any]] = []
 
         # 1. Long domain names (potential DGA/tunneling)
@@ -402,7 +411,7 @@ class DNSAnalytics:
         # name is queried about once, and a beaconing name can rank below 200 on a busy network
         # top = self.get_top_domains(from_ts, to_ts, limit=200, excluded_ips=excluded_ips)
         # OLD CODE END
-        top = self._all_domains(from_ts, to_ts, excluded_ips)
+        top, complete = self._all_domains(from_ts, to_ts, excluded_ips)
         # OLD CODE START — every name was scored, so reverse lookups and Plex's per-server
         # hostnames (long and hex by design) were flagged as exfiltration or beaconing (#35)
         # (the loops below iterated `top`)
@@ -481,7 +490,7 @@ class DNSAnalytics:
         # for b in txt_buckets:
         #     if b["doc_count"] > 50:
         # OLD CODE END
-        txt = self._all_domains(
+        txt, txt_complete = self._all_domains(
             from_ts,
             to_ts,
             excluded_ips,
@@ -500,15 +509,15 @@ class DNSAnalytics:
                     }
                 )
 
-        return suspicious
+        return suspicious, complete and txt_complete
 
     def detect_dns_tunneling(
         self,
         from_ts: str,
         to_ts: str,
         excluded_ips: list[str] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Detect potential DNS tunneling via entropy analysis on query names.
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """(potential DNS tunneling via entropy analysis on query names; False if the scan was capped).
 
         High-entropy subdomain labels often indicate encoded data (base32/64)
         being exfiltrated through DNS queries.
@@ -519,7 +528,7 @@ class DNSAnalytics:
         # about once, the tail that list cut
         # top = self.get_top_domains(from_ts, to_ts, limit=200, excluded_ips=excluded_ips)
         # OLD CODE END
-        top = self._all_domains(from_ts, to_ts, excluded_ips)
+        top, complete = self._all_domains(from_ts, to_ts, excluded_ips)
 
         for entry in top:
             domain = entry["domain"]
@@ -550,7 +559,7 @@ class DNSAnalytics:
                     }
                 )
 
-        return detections
+        return detections, complete
 
     def get_stats(
         self,

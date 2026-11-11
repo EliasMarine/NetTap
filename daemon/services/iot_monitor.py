@@ -2747,6 +2747,7 @@ class IoTMonitor:
         # if not complete:
         #     logger.warning("Network isolation stopped at %d pairs", len(buckets))
         # OLD CODE END
+        # stays fail-closed (NET-238): the score, grade and recommendations grade the whole network
         if not complete:
             raise PartialResultsError(
                 f"network isolation stopped at {len(buckets)} pairs"

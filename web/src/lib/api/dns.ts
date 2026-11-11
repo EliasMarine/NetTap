@@ -166,9 +166,11 @@ export async function getDnsTimeline(
 	return res.json();
 }
 
+// OLD CODE: ): Promise<{ from: string; to: string; suspicious: SuspiciousEntry[] }> { (NET-238: and complete)
+/** `complete` is false when the daemon's name scan stopped at its cap (NET-238). */
 export async function getSuspiciousDns(
 	opts: { from?: string; to?: string } = {}
-): Promise<{ from: string; to: string; suspicious: SuspiciousEntry[] }> {
+): Promise<{ from: string; to: string; suspicious: SuspiciousEntry[]; complete: boolean }> {
 	const query = buildQuery({ from: opts.from, to: opts.to });
 	const res = await fetch(`/api/dns/suspicious${query}`);
 
@@ -181,7 +183,9 @@ export async function getSuspiciousDns(
 		throw new Error(`Suspicious DNS check failed: HTTP ${res.status}`);
 	}
 
-	return res.json();
+	// OLD CODE: return res.json(); (NET-238: a reply without complete, from an older daemon, reads as complete)
+	const body = await res.json();
+	return { ...body, complete: body.complete !== false };
 }
 
 export async function getDnsStats(

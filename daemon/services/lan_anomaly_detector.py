@@ -74,6 +74,7 @@ def _ips_with_many_macs(client: Any, bool_clause: dict, ip_field: str) -> list[d
     #         len(buckets),
     #     )
     # OLD CODE END
+    # stays fail-closed (NET-238): no page shows it yet (NET-215), and get_all_anomalies fails on rogue DHCP
     if not complete:
         raise PartialResultsError(
             f"ARP scan by {ip_field} stopped at {len(buckets)} IPs"
@@ -332,6 +333,7 @@ class LANAnomalyDetector:
             #         "Rogue DHCP: %s scan stopped at %d MAC/IP pairs", side, len(pairs)
             #     )
             # OLD CODE END
+            # stays fail-closed (NET-238): counts sum across buckets, so a capped read can pick the wrong legitimate server
             if not complete:
                 raise PartialResultsError(
                     f"rogue DHCP {side} scan stopped at {len(pairs)} MAC/IP pairs"

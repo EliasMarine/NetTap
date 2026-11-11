@@ -308,7 +308,7 @@ class TestDetectionsSeeEveryName:
         long_name = "a" * 60 + ".evil.com"
         dns = DNSAnalytics(FakeOpenSearch(self._BUSY + [_dns_doc(long_name)]))
 
-        result = dns.get_suspicious_dns(_FROM, _TO)
+        result, _complete = dns.get_suspicious_dns(_FROM, _TO)
 
         assert [(r["type"], r["domain"]) for r in result] == [
             ("long_domain", long_name)
@@ -321,7 +321,9 @@ class TestDetectionsSeeEveryName:
             for _ in range(60)
         ]
 
-        result = DNSAnalytics(FakeOpenSearch(docs)).get_suspicious_dns(_FROM, _TO)
+        result, _complete = DNSAnalytics(FakeOpenSearch(docs)).get_suspicious_dns(
+            _FROM, _TO
+        )
 
         assert len([r for r in result if r["type"] == "txt_abuse"]) == 25
 
@@ -329,7 +331,9 @@ class TestDetectionsSeeEveryName:
         encoded = "a1b2c3d4e5f6g7h8i9j0.tunnel.evil.com"
         dns = DNSAnalytics(FakeOpenSearch(self._BUSY + [_dns_doc(encoded)]))
 
-        assert [d["domain"] for d in dns.detect_dns_tunneling(_FROM, _TO)] == [encoded]
+        assert [d["domain"] for d in dns.detect_dns_tunneling(_FROM, _TO)[0]] == [
+            encoded
+        ]
 
 
 class TestGetSuspiciousDns:
@@ -350,7 +354,7 @@ class TestGetSuspiciousDns:
             }
         }
 
-        result = _over(reply).get_suspicious_dns(
+        result, _complete = _over(reply).get_suspicious_dns(
             "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
         )
 
@@ -374,7 +378,7 @@ class TestGetSuspiciousDns:
             }
         }
 
-        result = _over(reply).get_suspicious_dns(
+        result, _complete = _over(reply).get_suspicious_dns(
             "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
         )
 
@@ -407,7 +411,7 @@ class TestGetSuspiciousDns:
             }
         }
 
-        result = _over(reply).get_suspicious_dns(
+        result, _complete = _over(reply).get_suspicious_dns(
             "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
         )
 
@@ -425,7 +429,7 @@ class TestGetSuspiciousDns:
             }
         }
 
-        result = _over(reply).get_suspicious_dns(
+        result, _complete = _over(reply).get_suspicious_dns(
             "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
         )
 
@@ -459,7 +463,7 @@ class TestThresholdsScaleWithTheWindow:
 
     @staticmethod
     def _types(reply: dict, from_ts: str, to_ts: str) -> list[str]:
-        return [r["type"] for r in _over(reply).get_suspicious_dns(from_ts, to_ts)]
+        return [r["type"] for r in _over(reply).get_suspicious_dns(from_ts, to_ts)[0]]
 
     _30D = ("2026-10-01T00:00:00Z", "2026-10-31T00:00:00Z")
 
@@ -496,9 +500,9 @@ class TestThresholdsScaleWithTheWindow:
         assert self._types(self._reply("api.example.net", 500), *window) == []
 
     def test_the_description_says_addresses_not_devices(self):
-        result = _over(self._reply("api.example.net", 600)).get_suspicious_dns(
-            _FROM, _TO
-        )
+        result, _complete = _over(
+            self._reply("api.example.net", 600)
+        ).get_suspicious_dns(_FROM, _TO)
         assert "few source addresses" in result[0]["description"]
         assert "can stand for several devices" in result[0]["description"]
 
@@ -526,7 +530,7 @@ class TestDetectDnsTunneling:
             }
         }
 
-        result = _over(reply).detect_dns_tunneling(
+        result, _complete = _over(reply).detect_dns_tunneling(
             "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
         )
 
@@ -548,7 +552,7 @@ class TestDetectDnsTunneling:
             }
         }
 
-        result = _over(reply).detect_dns_tunneling(
+        result, _complete = _over(reply).detect_dns_tunneling(
             "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
         )
 
