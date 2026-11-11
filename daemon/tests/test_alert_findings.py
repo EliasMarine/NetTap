@@ -871,6 +871,36 @@ def test_a_suppressed_unattributed_group_with_weight_is_counted():
     assert summary["suppressed_findings"] == 1
 
 
+def test_a_listed_group_counts_the_device_suppressed_inside_it():
+    """Python review of #247: a group charged to two devices, one suppressed, stays listed.
+
+    A client-side rule between two LAN hosts goes to whoever opened each connection.
+    """
+    groups = [
+        _bucket(_CNC, PROXY, PC, 2, "Critical", attack_target="Client_Endpoint", sid=7)
+    ]
+    instants = [
+        _instant(_CNC, PROXY, PC, "1:p", _T, 1),
+        _instant(_CNC, PROXY, PC, "1:q", _T + 1, 1),
+    ]
+    spans = [
+        {
+            "key": {"cid": cid, "orig": orig, "start": _T - 500, "end": _T + 500},
+            "doc_count": 1,
+        }
+        for cid, orig in (("1:p", PC), ("1:q", PROXY))
+    ]
+    client = _client(groups, instants, spans)
+    (group,) = get_smart_alerts(client, _FROM, _TO, limit=None)
+    assert {f["device"] for f in group["findings"]} == {PC, PROXY}
+
+    summary = _summary_with(client, (7, PROXY))
+    assert summary["total_groups"] == 1
+    assert summary["threat_score"] == 10  # PC's finding still scores
+    assert summary["suppressed_findings"] == 1
+    assert _summary_with(client)["suppressed_findings"] == 0
+
+
 def test_a_suppressed_blocklist_hit_with_no_lan_party_is_counted():
     """Codex R2 #1: with no LAN party a reputation alert scores, so suppressing it counts."""
     groups = [_bucket(_DROP, SCANNER, _OUTSIDE_LAN, 5, "Major", sid=2400011)]
