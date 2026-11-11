@@ -14,6 +14,10 @@ export interface ThreatReportSummary {
 	top_threats: SmartAlertItem[];
 	kill_chains: KillChain[];
 	baseline: BaselineInfo | null;
+	/** NET-239: scoring findings left out by suppressions or false-positive marks. Absent from an older daemon. */
+	suppressed_findings?: number;
+	/** NET-239: 15 when the busier-than-usual +15 applied, else 0. Absent from an older daemon. */
+	busier_window_points?: number;
 }
 
 export interface SmartAlertItem {
@@ -47,6 +51,10 @@ export interface BaselineInfo {
 	avg_threat_score: number;
 	history_points: number;
 	is_anomalous: boolean;
+	/** NET-239: enough earlier hours (6) to compare with. Absent from an older daemon. */
+	ready?: boolean;
+	/** NET-239: earlier hours of this window length recorded (history_points counts this hour too). */
+	earlier_hours?: number;
 }
 
 export interface BeaconSuspect {

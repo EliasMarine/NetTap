@@ -12,7 +12,9 @@ import {
 	formatNumber,
 	severityLabel,
 	severityBadgeClass,
+	scoreInputs,
 } from './alerts';
+import type { BaselineInfo } from './threats';
 
 // ---------------------------------------------------------------------------
 // Mock helpers
@@ -425,5 +427,86 @@ describe('alerts API client', () => {
 		it('returns severity-info for undefined', () => {
 			expect(severityBadgeClass(undefined)).toBe('badge severity-info');
 		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// NET-239: the score's hidden inputs, in words
+// ---------------------------------------------------------------------------
+
+describe('scoreInputs', () => {
+	const SUPPRESSED = 'findings in this window were left out by your suppressions or false-positive marks.';
+	const baseline = (over: Partial<BaselineInfo> = {}): BaselineInfo => ({
+		deviation: 2.4,
+		avg_events: 1234,
+		avg_threat_score: 10,
+		history_points: 7,
+		is_anomalous: true,
+		ready: true,
+		earlier_hours: 6,
+		...over,
+	});
+
+	it('counts the findings suppressions left out', () => {
+		expect(scoreInputs({ suppressed_findings: 3 })).toEqual([`3 ${SUPPRESSED}`]);
+		expect(scoreInputs({ suppressed_findings: 1 })).toEqual([
+			'1 finding in this window was left out by your suppressions or false-positive marks.',
+		]);
+	});
+
+	it('says nothing about suppressions when none changed the score', () => {
+		expect(scoreInputs({ suppressed_findings: 0 })).toEqual([]);
+		expect(scoreInputs({})).toEqual([]);
+	});
+
+	it('says the baseline is still learning until six earlier hours are recorded', () => {
+		const b = baseline({ ready: false, earlier_hours: 2, is_anomalous: false, deviation: 1 });
+		expect(scoreInputs({ baseline: b, busier_window_points: 0 })).toEqual([
+			"Still learning what's usual: 2 of 6 earlier hours recorded, so no +15 yet.",
+		]);
+	});
+
+	it('says when a busier window added 15', () => {
+		expect(scoreInputs({ baseline: baseline(), busier_window_points: 15 })).toEqual([
+			'Busier than usual (2.4× the usual 1.2K events), so +15.',
+		]);
+	});
+
+	it('says a busier window added nothing once the score was 75 or more', () => {
+		expect(scoreInputs({ baseline: baseline(), busier_window_points: 0 })).toEqual([
+			'Busier than usual (2.4×), but the score was already 75 or more, so no +15.',
+		]);
+	});
+
+	it('says when the window was not busier than usual', () => {
+		const b = baseline({ is_anomalous: false, deviation: 1.1 });
+		expect(scoreInputs({ baseline: b, busier_window_points: 0 })).toEqual([
+			'Not busier than usual (1.1× the usual 1.2K events), so no +15.',
+		]);
+	});
+
+	it('says nothing about the baseline for a device view or a failed update', () => {
+		expect(scoreInputs({ baseline: null, busier_window_points: 0, suppressed_findings: 0 })).toEqual([]);
+	});
+
+	it('says nothing about the baseline when the reply lacks any of its new fields', () => {
+		expect(scoreInputs({ baseline: baseline({ ready: undefined }), busier_window_points: 15 })).toEqual([]);
+		expect(scoreInputs({ baseline: baseline({ earlier_hours: undefined }), busier_window_points: 15 })).toEqual([]);
+		expect(scoreInputs({ baseline: baseline() })).toEqual([]);
+	});
+
+	it("guesses nothing from an older daemon's reply whose score already includes the +15", () => {
+		const older = {
+			threat_score: 89,
+			baseline: { deviation: 3, avg_events: 10, avg_threat_score: 5, history_points: 9, is_anomalous: true },
+		};
+		expect(scoreInputs(older)).toEqual([]);
+	});
+
+	it('gives the suppressed sentence first, then the baseline one', () => {
+		expect(scoreInputs({ suppressed_findings: 2, baseline: baseline(), busier_window_points: 15 })).toEqual([
+			`2 ${SUPPRESSED}`,
+			'Busier than usual (2.4× the usual 1.2K events), so +15.',
+		]);
 	});
 });

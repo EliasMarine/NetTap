@@ -242,6 +242,12 @@ def test_summary_level_capped_for_medium_only_alerts():
 
 def _score(severities, anomalous=False):
     """The summary's score and level for one alert group per severity given."""
+    summary = _summary(severities, anomalous)
+    return summary["threat_score"], summary["threat_level"]
+
+
+def _summary(severities, anomalous=False):
+    """The summary for one alert group per severity given (NET-239: split out of _score)."""
     # OLD CODE START — NET-209: groups carry their findings and counted alerts now
     # groups = [
     #     {"severity": s, "count": 1, "category": "policy", "signature": f"sig {i}"}
@@ -265,14 +271,19 @@ def _score(severities, anomalous=False):
     ]
     baseline = {"is_anomalous": anomalous} if anomalous else None
     with (
+        # OLD CODE START — NET-239: the summary reads _smart_alerts (groups, suppressed parts)
+        # patch.object(
+        #     alert_intelligence, "get_smart_alerts", MagicMock(return_value=groups)
+        # ),
+        # OLD CODE END
         patch.object(
-            alert_intelligence, "get_smart_alerts", MagicMock(return_value=groups)
+            alert_intelligence, "_smart_alerts", MagicMock(return_value=(groups, []))
         ),
         patch.object(alert_intelligence, "update_baseline", return_value=baseline),
         patch.object(alert_intelligence, "detect_kill_chains", return_value=[]),
     ):
-        summary = get_smart_alert_summary(object(), _FROM, _TO)
-    return summary["threat_score"], summary["threat_level"]
+        # OLD CODE: summary = get_smart_alert_summary(object(), _FROM, _TO) … return score, level
+        return get_smart_alert_summary(object(), _FROM, _TO)
 
 
 def test_threat_score_weights_round_down():
@@ -290,6 +301,21 @@ def test_busier_than_usual_adds_15_only_under_75():
     assert _score([1] * 7 + [3, 3], anomalous=True)[0] == 89
     assert _score([1] * 7 + [2], anomalous=True)[0] == 75
     assert _score([1] * 7 + [3, 3])[0] == 74
+
+
+@pytest.mark.parametrize(
+    "severities, anomalous, points",
+    [
+        ([1] * 7 + [3, 3], True, 15),  # 74: the +15 applies
+        ([1] * 7 + [2], True, 0),  # 75 already: no +15
+        ([1] * 7 + [3, 3], False, 0),  # not busier than usual
+    ],
+)
+def test_the_summary_says_whether_the_busier_window_added_15(
+    severities, anomalous, points
+):
+    """NET-239: the page explains the +15, so the reply says when it was added."""
+    assert _summary(severities, anomalous)["busier_window_points"] == points
 
 
 def test_level_never_exceeds_the_worst_alert():

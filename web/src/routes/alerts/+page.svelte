@@ -45,7 +45,8 @@
 	// OLD CODE END
 	// OLD CODE: import { acknowledgeAlert } from '$api/alerts'; (NET-164: the score's method)
 	// OLD CODE: import { acknowledgeAlert, THREAT_SCORE_HOW } from '$api/alerts'; (NET-225: and the bridge-mode line)
-	import { acknowledgeAlert, THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts';
+	// OLD CODE: import { acknowledgeAlert, THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts'; (NET-239: and the score's inputs)
+	import { acknowledgeAlert, scoreInputs, THREAT_SCORE_BRIDGE, THREAT_SCORE_HOW } from '$api/alerts';
 	import { captureMode, initCaptureMode } from '$lib/stores/captureMode';
 	// OLD CODE START — #146: the alert table sorts on the daemon now
 	// import { compareValues, severityRank } from '$lib/utils/table-sort.svelte';
@@ -1594,6 +1595,8 @@ OLD CODE END -->
 				</div>
 			</div>
 			<p class="dim score-how">{THREAT_SCORE_HOW}</p>
+			<!-- NET-239: the suppressions and baseline that changed this window's score -->
+			{#each scoreInputs(smartSummary) as line (line)}<p class="dim score-how">{line}</p>{/each}
 			{#if $captureMode === 'bridge'}<p class="dim score-how">{THREAT_SCORE_BRIDGE}</p>{/if}
 			{#if smartCategories.length > 0}
 				<ul class="kv">
