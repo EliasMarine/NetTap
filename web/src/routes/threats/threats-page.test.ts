@@ -200,3 +200,38 @@ describe('Threats page — the score in inline bridge mode', () => {
 		expect(THREAT_SCORE_HOW).toMatch(/neither address in NetTap's LAN subnets .* adds its full weight once per signature, source and destination/);
 	});
 });
+
+// NET-242: the page still lists older findings with a sensor stopped, so it says so at the top
+describe('Threats page — the data pipeline now', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+	const health = (state: string, sensors: Record<string, string> = {}) => ({
+		uptime: 1, timestamp: '', storage: {}, smart: {}, opensearch_reachable: true, status: 'problem', healthy: false,
+		pipeline: { state, newest_record_at: null, age_seconds: null, threshold_seconds: 900, sensors, checked_at: '' },
+	});
+	const line = /^Data pipeline now:/;
+
+	it('says Suricata stopped above the findings it still lists', async () => {
+		stubDaemon({ '/api/threats/report': REPORT, '/api/system/health': health('sensor_stopped', { 'nettap-suricata-live': 'exited' }) });
+		render(ThreatsPage);
+		const note = await screen.findByText(line);
+		expect(note).toHaveTextContent('Data pipeline now: Suricata stopped. What this page shows may be out of date. See System for details.');
+		expect(note.closest('p')).toHaveClass('notice', 'is-warn');
+		expect(screen.getByRole('link', { name: 'System' })).toHaveAttribute('href', '/system');
+		expect(screen.getByText(THREAT_SCORE_HOW)).toBeInTheDocument();
+	});
+
+	it('says nothing while data is arriving', async () => {
+		stubDaemon({ '/api/threats/report': REPORT, '/api/system/health': health('fresh') });
+		render(ThreatsPage);
+		await screen.findByText(THREAT_SCORE_HOW);
+		expect(screen.queryByText(line)).not.toBeInTheDocument();
+	});
+
+	it("says it couldn't check when the daemon couldn't", async () => {
+		stubDaemon({ '/api/threats/report': REPORT, '/api/system/health': health('unknown') });
+		render(ThreatsPage);
+		expect(await screen.findByText(line)).toHaveTextContent("Data pipeline now: Couldn't check.");
+	});
+});

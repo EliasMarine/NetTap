@@ -43,7 +43,8 @@
 	import { DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown';
 	// NET-228 (audit B5): "nothing needs attention" carries the pipeline's current state
 	// OLD CODE: import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system'; (review L7)
-	import { nothingFound } from '$api/system';
+	// OLD CODE: import { nothingFound } from '$api/system'; (NET-242: and the page-level pipeline line)
+	import { nothingFound, pipelineProblem } from '$api/system';
 	import { HEALTH_CHECKING, readHealth, type HealthCheck } from '$lib/utils/read-health';
 
 	// ---------------------------------------------------------------------------
@@ -58,6 +59,8 @@
 	/** NET-228: the system health, for the pipeline state beside a zero; null until it loads or when it failed */
 	// OLD CODE: let health = $state<SystemHealth | null>(null); let healthFailed = $state(false); (review L7: one health helper for the loaders; its failure marks only the lines that read it)
 	let healthCheck = $state<HealthCheck>(HEALTH_CHECKING);
+	/** NET-242: the pipeline's problem, shown even while older findings are listed */
+	const pipelineNote = $derived(pipelineProblem(healthCheck));
 	const BEACONS_SHOWN = 20;
 	const CHECK_NAMES: Record<string, string> = {
 		beaconing: 'beaconing',
@@ -509,6 +512,10 @@
 
 {#if $captureMode === 'bridge'}
 	<p class="notice" role="note"><Icon name="infra" /><span>{THREAT_SCORE_BRIDGE}</span></p>
+{/if}
+
+{#if pipelineNote}
+	<p class="notice is-warn" role="status"><Icon name="warn" /><span>Data pipeline now: {pipelineNote}. What this page shows may be out of date. See <a href="/system">System</a> for details.</span></p>
 {/if}
 
 {#if !report}

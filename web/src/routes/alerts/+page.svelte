@@ -91,7 +91,8 @@
 	import { formatTime } from '$lib/utils/time';
 	// NET-228 (audit B5): every "nothing found" message carries the pipeline's current state
 	// OLD CODE: import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system'; (review L7)
-	import { nothingFound } from '$api/system';
+	// OLD CODE: import { nothingFound } from '$api/system'; (NET-242: and the page-level pipeline line)
+	import { nothingFound, pipelineProblem } from '$api/system';
 	import { HEALTH_CHECKING, readHealth, type HealthCheck } from '$lib/utils/read-health';
 
 	// ---------------------------------------------------------------------------
@@ -1285,6 +1286,8 @@
 			.sort((a, b) => b.events - a.events || a.label.localeCompare(b.label)),
 	);
 	const threatPill = $derived(THREAT_LEVELS.find((l) => l === threatLevel));
+	/** NET-242: the pipeline's problem, shown even while older alerts are listed */
+	const pipelineNote = $derived(pipelineProblem(healthCheck));
 	/** NET-228 (audit B5): zero counted alerts, with the pipeline's state beside it */
 	const zero = $derived(nothingFound('No counted rule matches in this period', healthCheck.health, healthCheck.failed));
 	const noGroups = $derived(nothingFound('No alert groups to review in this period', healthCheck.health, healthCheck.failed, "Can't tell if anything needs review"));
@@ -1388,6 +1391,10 @@ OLD CODE END -->
 		<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={toggleAutoRefresh} />
 	</div>
 </header>
+
+{#if pipelineNote}
+	<p class="notice is-warn" role="status"><Icon name="warn" /><span>Data pipeline now: {pipelineNote}. What this page shows may be out of date. See <a href="/system">System</a> for details.</span></p>
+{/if}
 
 <div class="grid">
 	<Card class="c-12" title="Alerts by severity" sub="Alerts · {range.words}, by severity">

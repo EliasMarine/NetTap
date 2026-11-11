@@ -7,6 +7,7 @@ import {
 	healthStage,
 	pipelineStage,
 	nothingFound,
+	pipelineProblem,
 	type PipelineHealth,
 	type SystemHealth,
 } from './system';
@@ -231,6 +232,37 @@ describe('pipelineStage', () => {
 
 	it('reads Unknown when an older daemon sends no pipeline', () => {
 		expect(pipelineStage(undefined)).toEqual({ status: 'unknown', detail: 'Unknown' });
+	});
+});
+
+// NET-242: the page-level line on Alerts and Threats, shown whether or not data is listed
+describe('pipelineProblem', () => {
+	const health = (pipeline?: Partial<PipelineHealth>): SystemHealth => ({
+		uptime: 1, timestamp: '', storage: {}, smart: {}, opensearch_reachable: true, status: 'healthy', healthy: true,
+		...(pipeline && {
+			pipeline: {
+				state: 'fresh', newest_record_at: '', age_seconds: 40, threshold_seconds: 900,
+				sensors: { 'nettap-suricata-live': 'running' }, checked_at: '', ...pipeline,
+			},
+		}),
+	});
+
+	it('names the problem when a sensor stopped, data is stale or none has arrived', () => {
+		expect(pipelineProblem({ health: health({ state: 'sensor_stopped', sensors: { 'nettap-suricata-live': 'exited' } }), failed: false })).toBe('Suricata stopped');
+		expect(pipelineProblem({ health: health({ state: 'stale', age_seconds: 20 * 60 }), failed: false })).toBe('No new records for 20 min');
+		expect(pipelineProblem({ health: health({ state: 'no_data', age_seconds: null }), failed: false })).toBe('No records in the last 7 days');
+	});
+
+	it("says it couldn't check when the request failed or the daemon couldn't", () => {
+		expect(pipelineProblem({ health: null, failed: true })).toBe("Couldn't check");
+		expect(pipelineProblem({ health: health({ state: 'unknown', age_seconds: null }), failed: false })).toBe("Couldn't check");
+	});
+
+	it('says nothing while data is fresh, starting, still loading, or from an older daemon', () => {
+		expect(pipelineProblem({ health: health({ state: 'fresh' }), failed: false })).toBeNull();
+		expect(pipelineProblem({ health: health({ state: 'starting', age_seconds: null }), failed: false })).toBeNull();
+		expect(pipelineProblem({ health: null, failed: false })).toBeNull();
+		expect(pipelineProblem({ health: health(), failed: false })).toBeNull();
 	});
 });
 

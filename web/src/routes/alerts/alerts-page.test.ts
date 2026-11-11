@@ -1583,6 +1583,46 @@ describe('Alerts — zero alerts and the pipeline (NET-228)', () => {
 	});
 });
 
+// NET-242: with older alerts still listed, a stopped sensor is said at the top of the page
+describe('Alerts — the data pipeline now (NET-242)', () => {
+	const line = /^Data pipeline now:/;
+	const stopped = () => healthWith('sensor_stopped', { sensors: { 'nettap-suricata-live': 'exited' } });
+
+	it('says Suricata stopped while it still lists older alerts', async () => {
+		succeedAll();
+		vi.mocked(getSystemHealth).mockResolvedValue(stopped());
+		render(Page);
+		await flush();
+		const note = screen.getByText(line);
+		expect(note).toHaveTextContent('Data pipeline now: Suricata stopped. What this page shows may be out of date. See System for details.');
+		expect(note.closest('p')).toHaveClass('notice', 'is-warn');
+		expect(screen.getByRole('link', { name: 'System' })).toHaveAttribute('href', '/system');
+	});
+
+	it('says nothing while data is arriving', async () => {
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(screen.queryByText(line)).not.toBeInTheDocument();
+	});
+
+	it("keeps a warning when the next check fails, by the request or by the daemon", async () => {
+		succeedAll();
+		vi.mocked(getSystemHealth).mockResolvedValue(stopped());
+		render(Page);
+		await flush();
+		expect(screen.getByText(line)).toHaveTextContent('Suricata stopped');
+		vi.mocked(getSystemHealth).mockRejectedValue(new Error('HTTP 502'));
+		await refreshPage();
+		await flush();
+		expect(screen.getByText(line)).toHaveTextContent("Data pipeline now: Couldn't check.");
+		vi.mocked(getSystemHealth).mockResolvedValue(healthWith('unknown', { age_seconds: null }));
+		await refreshPage();
+		await flush();
+		expect(screen.getByText(line)).toHaveTextContent("Data pipeline now: Couldn't check.");
+	});
+});
+
 // NET-228: the daemon says when a category's halves are too thin, or too uneven, to compare
 describe('Alerts — category trend', () => {
 	it('says "not enough data" instead of a direction', async () => {
