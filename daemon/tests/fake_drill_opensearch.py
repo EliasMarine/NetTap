@@ -7,7 +7,8 @@ counts are checked against what OpenSearch would answer, not against canned repl
   case_insensitive), terms (CIDRs match IPs), range on @timestamp, exists, prefix,
   wildcard (with case_insensitive), match_all, match_none;
 - aggregations: filter, missing, sum/min/max/value_count/cardinality (exact), terms (with
-  size, missing, sum_other_doc_count, sub-aggregations and an order by one of them),
+  size, missing, include/exclude as a list or a regex, sum_other_doc_count,
+  sub-aggregations and an order by one of them),
   composite (paged with `after`, with missing_bucket, one bucket per value of a
   multi-valued field), date_range and top_hits
   (size, from, sort, _source);
@@ -36,6 +37,7 @@ import copy
 import fnmatch
 import ipaddress
 import itertools
+import re
 from datetime import datetime, timezone
 
 from aiohttp import web
@@ -318,6 +320,17 @@ def _one(docs: list, spec: dict) -> dict:
                 groups[v] = [*groups.get(v, []), d]
         if isinstance(body.get("include"), list):  # the exact-values form of include
             groups = {k: v for k, v in groups.items() if k in body["include"]}
+        # NET-264: the regex form (anchored, as Lucene's is) of include and exclude
+        if isinstance(body.get("include"), str):
+            groups = {
+                k: v for k, v in groups.items() if re.fullmatch(body["include"], k)
+            }
+        if isinstance(body.get("exclude"), str):
+            groups = {
+                k: v
+                for k, v in groups.items()
+                if not re.fullmatch(body["exclude"], k)
+            }
         ranked = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
         # NET-249: {"order": {<a metric sub-aggregation>: "desc"}}, largest first, then key
         ((by, way),) = body.get("order", {"_count": "desc"}).items()

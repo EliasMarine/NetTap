@@ -56,6 +56,8 @@ const SLOW_PREFIX_TIMEOUT_MS: [string, number][] = [
 	['/api/moment/', 30_000],
 	// NET-263: the DHCP timeline's two reads run in the same drill-down slots and budget
 	['/api/dhcp/', 30_000],
+	// NET-264: the local service browser runs in the same drill-down slots and budget
+	['/api/local-services', 30_000],
 	// NET-224: a channel test waits for the daemon's send (SMTP: 10 s to connect, 30 s for the rest)
 	['/api/notifications/channels/', 60_000],
 ];

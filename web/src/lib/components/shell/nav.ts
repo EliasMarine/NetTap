@@ -11,9 +11,16 @@
 //  * them. Investigations and Security posture joined in NET-160.
 //  */
 // OLD CODE END
+// OLD CODE START — NET-264: Local services joined the Devices group
+// /**
+//  * Sidebar navigation (PLAN.md §5.5): 20 pages, grouped as the design system's Sidebar shows
+//  * them. Investigations and Security posture joined in NET-160, Packet analysis in NET-188.
+//  */
+// OLD CODE END
 /**
- * Sidebar navigation (PLAN.md §5.5): 20 pages, grouped as the design system's Sidebar shows
- * them. Investigations and Security posture joined in NET-160, Packet analysis in NET-188.
+ * Sidebar navigation (PLAN.md §5.5): 21 pages, grouped as the design system's Sidebar shows
+ * them. Investigations and Security posture joined in NET-160, Packet analysis in NET-188,
+ * Local services in NET-264.
  */
 import type { IconName } from '$lib/components/ui/icons';
 
@@ -56,6 +63,7 @@ export const NAV_GROUPS: NavGroup[] = [
 		items: [
 			{ href: '/devices', label: 'Devices', icon: 'devices' },
 			{ href: '/iot', label: 'IoT & LAN', icon: 'iot' },
+			{ href: '/local-services', label: 'Local services', icon: 'speaker' },
 			{ href: '/changelog', label: 'Changelog', icon: 'changelog' },
 		],
 	},
