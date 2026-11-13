@@ -118,6 +118,8 @@ export interface DomainSummary {
 	name: string;
 	from: string;
 	to: string;
+	/** The timeline's bucket, as the daemon used it (NET-249); absent from an older daemon */
+	interval?: string;
 	dns: {
 		lookups: number;
 		askers: DomainAsker[];
@@ -221,9 +223,11 @@ export async function getAddressSummary(ip: string, from: string, to: string, in
 	return body as unknown as AddressSummary;
 }
 
-/** Everything the domain page shows for `name` in the window. */
-export async function getDomainSummary(name: string, from: string, to: string): Promise<DomainSummary> {
-	const body = await getJson(`/api/domains/${encodeURIComponent(name)}?${windowQuery(from, to)}`, 'Domain summary');
+/** Everything the domain page shows for `name` in the window; `interval` is the timeline's bucket (NET-249). */
+// OLD CODE: export async function getDomainSummary(name: string, from: string, to: string): Promise<DomainSummary> { (NET-249: the bucket)
+export async function getDomainSummary(name: string, from: string, to: string, interval?: string): Promise<DomainSummary> {
+	// OLD CODE: const body = await getJson(`/api/domains/${encodeURIComponent(name)}?${windowQuery(from, to)}`, 'Domain summary'); (NET-249)
+	const body = await getJson(`/api/domains/${encodeURIComponent(name)}?${windowQuery(from, to)}${interval ? `&interval=${encodeURIComponent(interval)}` : ''}`, 'Domain summary');
 	// OLD CODE START — the counts under tls, http and alerts, and the complete flags, were cast unchecked
 	// const ok =
 	// 	isObject(body) &&
