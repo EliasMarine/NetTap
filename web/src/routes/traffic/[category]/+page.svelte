@@ -18,7 +18,7 @@
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	// OLD CODE: import { chartTime, DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown'; (NET-249: a pick narrows the page)
 	import { bucketFor, chartTime, customRange, DRILL_RANGES, linkedCount, pickedTotal, pickWindow, rangeWindow, startRange, type TimeChart } from '$lib/utils/drilldown';
-	import { NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
+	import { bucketWords, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
 	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { goto } from '$app/navigation';
 	// OLD CODE START — the category colour tinted the chart and bars; system charts use data-1/2
@@ -142,6 +142,8 @@
 	let bandwidthSeries = $state<CategoryBandwidthPoint[]>([]);
 	/** The bandwidth reply, whole, when its bucket can be picked on (NET-249); a failed refresh keeps the last one */
 	let bandwidthChart = $state<TimeChart | null>(null);
+	/** The bucket the bandwidth reply on screen says it used; its subtitle names it */
+	let bandwidthInterval = $state<string | undefined>(undefined);
 	let networkPercent = $state<number | null>(null);
 
 	// Trend data
@@ -517,6 +519,7 @@
 			topServices = [];
 			bandwidthSeries = [];
 			bandwidthChart = null;
+			bandwidthInterval = undefined;
 			networkPercent = null;
 		}
 
@@ -550,6 +553,7 @@
 			const reply = bandwidthRes.value;
 			bandwidthSeries = reply.series ?? [];
 			bandwidthChart = toTimeChart(reply, bandwidthSeries.map((p) => p.timestamp), bandwidthSeries.map((p) => p.total_bytes));
+			bandwidthInterval = reply.interval;
 		}
 		// OLD CODE START — NET-228: a failed refresh kept the last reply as the comparison
 		// // a failed previous period hides the trend instead of comparing against zero
@@ -755,7 +759,8 @@
 		/>
 
 		<!-- OLD CODE: note="Of all traffic in the last {rangeText}" and sub="Download and upload per {INTERVAL_MAP[selectedRange] ?? '15m'} · last {rangeText}" (NET-249) -->
-		<Card class="c-8" hero col title="Bandwidth over time" sub="Download and upload per {drill.bucketWords} · {windowText}">
+		<!-- OLD CODE: sub="Download and upload per {drill.bucketWords} · {windowText}" (NET-249 review: the echoed bucket's words once the reply is in) -->
+		<Card class="c-8" hero col title="Bandwidth over time" sub="Download and upload per {bucketWords(bandwidthInterval, drill.bucketWords)} · {windowText}">
 			{#snippet actions()}
 				<ul class="legend">
 					<li><span class="sw c-d1"></span>Download</li>

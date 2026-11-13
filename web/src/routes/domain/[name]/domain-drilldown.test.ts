@@ -24,7 +24,7 @@ const { default: Page } = await import('./+page.svelte');
 const F = '2026-11-13T10:00:00.000Z';
 const T = '2026-11-13T10:04:59.999Z';
 let urls: URL[] = [];
-let summary: (u: URL) => DomainSummary | null;
+let summary: (u: URL) => DomainSummary | null | Promise<DomainSummary>;
 
 /** The domain reply over the request's own window, one minute slot per count */
 const withSlots = (counts: number[], interval = '1m') => (u: URL): DomainSummary => ({
@@ -42,7 +42,7 @@ function stubDaemon() {
 		vi.fn(async (raw: string) => {
 			const u = new URL(raw, 'http://localhost');
 			urls.push(u);
-			const body = u.pathname.startsWith('/api/domains/') ? summary(u) : u.pathname === '/api/devices/registry' ? { devices: [], total: 0 } : null;
+			const body = u.pathname.startsWith('/api/domains/') ? await summary(u) : u.pathname === '/api/devices/registry' ? { devices: [], total: 0 } : null;
 			return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 502, json: async () => ({ error: 'busy' }) };
 		}),
 	);
@@ -66,6 +66,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('Domain page — the chart drills into a window (NET-249)', () => {
 	it("asks for each range's bucket from the owner's table", async () => {
+		summary = (u) => withSlots([4, 6, 1], u.searchParams.get('interval')!)(u); // the daemon echoes the bucket asked for
 		render(Page);
 		await loaded();
 		expect(domainCalls().at(-1)!.searchParams.get('interval')).toBe('5m');
@@ -89,6 +90,14 @@ describe('Domain page — the chart drills into a window (NET-249)', () => {
 		await fireEvent.keyDown(chart(), { key: 'Home', shiftKey: true });
 		await fireEvent.keyDown(chart(), { key: 'Enter' });
 		expect(Object.fromEntries(target(1).searchParams)).toEqual({ from: '2026-11-13T10:00:30.000Z', to: '2026-11-13T10:02:10.000Z', range: '24h', count: '11' });
+	});
+
+	it('names the bucket the reply says it used', async () => {
+		summary = withSlots([4, 6], '1h');
+		render(Page);
+		await loaded();
+		expect(domainCalls().at(-1)!.searchParams.get('interval')).toBe('5m');
+		expect(screen.getByText('DNS lookups per hour · last 24 hours')).toBeInTheDocument();
 	});
 
 	it('a reply with no known bucket (an older daemon) stays a picture', async () => {
@@ -156,5 +165,22 @@ describe('Domain page — the shared receiver (NET-249)', () => {
 		await refreshPage();
 		await vi.waitFor(() => expect(screen.queryByText(/You clicked/)).not.toBeInTheDocument());
 		expect(chart()).toBeInTheDocument();
+	});
+
+	it("never compares with a superseded window's reply", async () => {
+		const W2 = { from: '2026-11-13T11:00:00.000Z', to: '2026-11-13T11:04:59.999Z' };
+		let releaseFirst: (body: DomainSummary) => void = () => {};
+		summary = (u) => (u.searchParams.get('from') === F ? new Promise((resolve) => (releaseFirst = resolve)) : withSlots([5, 5, 1])(u));
+		nav.set(`?from=${F}&to=${T}&count=11`);
+		render(Page);
+		await vi.waitFor(() => expect(domainCalls()).toHaveLength(1));
+		nav.set(`?from=${W2.from}&to=${W2.to}&count=11`);
+		await vi.waitFor(() => expect(domainCalls()).toHaveLength(2));
+		await loaded();
+		// the first window's reply lands last, with another total; the page compares with the second's only
+		releaseFirst(withSlots([99])(domainCalls()[0]));
+		await new Promise((r) => setTimeout(r, 0));
+		expect(screen.queryByText(/You clicked/)).not.toBeInTheDocument();
+		expect(chart()).toHaveAccessibleName(/with 5 lookups/);
 	});
 });

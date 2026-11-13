@@ -45,7 +45,7 @@ function stubDaemon() {
 			urls.push(u);
 			const body =
 				u.pathname === '/api/alerts/categories/scan' ? DETAIL
-				: u.pathname === '/api/alerts/categories/scan/timeline' ? timeline(u)
+				: u.pathname === '/api/alerts/categories/scan/timeline' ? await timeline(u)
 				: u.pathname === '/api/alerts' ? LIST
 				: null;
 			return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 503, json: async () => ({}) };
@@ -70,6 +70,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('Alert category — the timeline drills into a window (NET-249)', () => {
 	it("asks for each range's bucket from the owner's table", async () => {
+		timeline = (u) => slots([1, 3], u.searchParams.get('interval')!)(u); // the daemon echoes the bucket asked for
 		render(Page);
 		await loaded();
 		expect(asked('/api/alerts/categories/scan/timeline').at(-1)!.searchParams.get('interval')).toBe('5m');
@@ -79,6 +80,14 @@ describe('Alert category — the timeline drills into a window (NET-249)', () =>
 			await vi.waitFor(() => expect(asked('/api/alerts/categories/scan/timeline').at(-1)!.searchParams.get('interval'), range).toBe(bucket));
 			expect(await screen.findByText(new RegExp(`^Alerts per ${words} · `))).toBeInTheDocument();
 		}
+	});
+
+	it('names the bucket the reply says it used', async () => {
+		timeline = slots([1, 3], '1h');
+		render(Page);
+		await loaded();
+		expect(asked('/api/alerts/categories/scan/timeline').at(-1)!.searchParams.get('interval')).toBe('5m');
+		expect(screen.getByText(/^Alerts per hour · last 24 hours/)).toBeInTheDocument();
 	});
 
 	it('a pick reopens this page over the picked slots, with their count', async () => {
@@ -147,5 +156,22 @@ describe('Alert category — the shared receiver (NET-249)', () => {
 		render(Page);
 		await screen.findByText(/Couldn't load the alert volume over time/);
 		expect(screen.queryByText(/You clicked/)).not.toBeInTheDocument();
+	});
+
+	it("never compares with a superseded window's reply", async () => {
+		const W2 = { from: '2026-11-13T11:00:00.000Z', to: '2026-11-13T11:04:59.999Z' };
+		let releaseFirst: (body: unknown) => void = () => {};
+		timeline = (u) => (u.searchParams.get('from') === F ? new Promise((resolve) => (releaseFirst = resolve)) : slots([1, 3])(u));
+		nav.set(`?from=${F}&to=${T}&count=4`);
+		render(Page);
+		await vi.waitFor(() => expect(asked('/api/alerts/categories/scan/timeline')).toHaveLength(1));
+		nav.set(`?from=${W2.from}&to=${W2.to}&count=4`);
+		await vi.waitFor(() => expect(asked('/api/alerts/categories/scan/timeline')).toHaveLength(2));
+		await loaded();
+		// the first window's reply lands last, with another total; the page compares with the second's only
+		releaseFirst(slots([99])(asked('/api/alerts/categories/scan/timeline')[0]));
+		await new Promise((r) => setTimeout(r, 0));
+		expect(screen.queryByText(/You clicked/)).not.toBeInTheDocument();
+		expect(chart()).toHaveAccessibleName(/with 3 alerts/);
 	});
 });

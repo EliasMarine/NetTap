@@ -41,7 +41,7 @@
 		bucketFor, chartTime as timeLabel, customRange, DRILL_RANGES, linkedCount, logsHrefForQuery, NO_EXACT_ALERT_LIST, pickedTotal, pickWindow, rangeWindow, smartAlertHref,
 		startRange, withCount, type DrillRangeValue, type DrillWindow, type TimeChart,
 	} from '$lib/utils/drilldown';
-	import { DEVICE_IPV6_NOTE, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
+	import { bucketWords, DEVICE_IPV6_NOTE, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
 	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { formatTime } from '$lib/utils/time';
 	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
@@ -314,6 +314,8 @@
 	const bandwidth = $derived(device?.bandwidth_series ?? []);
 	/** The bandwidth reply, whole, when its bucket can be picked on (NET-249); a failed refresh keeps the last one */
 	let bandwidthChart = $state<TimeChart | null>(null);
+	/** The bucket of the bandwidth series on screen, as the reply names it; the subtitle says it */
+	let bandwidthInterval = $state<string | undefined>(undefined);
 	const bytesLine = $derived(pickedLine(picked, deviceFailed ? null : bandwidthChart, 'bytes'));
 	/** A pick on the chart (NET-249): this page over the picked slots, with the bytes they drew */
 	function pick(i: number, j: number) {
@@ -414,6 +416,7 @@
 		if (view !== loadedView) {
 			device = null;
 			bandwidthChart = null;
+			bandwidthInterval = undefined;
 			categories = [];
 			ports = [];
 			riskLoaded = false;
@@ -446,6 +449,7 @@
 			device = edit && edit.rev > rev ? withOwner(d, edit.saved) : d;
 			const { from, to, bandwidth_interval: interval } = deviceRes.value;
 			bandwidthChart = from && to ? toTimeChart({ from, to, interval }, d.bandwidth_series.map((p) => p.timestamp), d.bandwidth_series.map((p) => p.bytes)) : null;
+			bandwidthInterval = interval;
 			loadedView = view;
 		}
 		deviceFailed = deviceRes.status === 'rejected';
@@ -924,7 +928,8 @@ OLD CODE END -->
 		<LiveBandwidthCard key={{ ip: device.ip }} />
 
 		<!-- OLD CODE: sub="Bytes per interval · …" (NET-249: the owner's bucket table) -->
-		<Card class="c-8" hero col title="Bandwidth over time" sub="Bytes per {drill.bucketWords} · {RANGE_LABEL[range].toLowerCase()}">
+		<!-- OLD CODE: sub="Bytes per {drill.bucketWords} · …" (NET-249 review: the echoed bucket's words once the reply is in) -->
+		<Card class="c-8" hero col title="Bandwidth over time" sub="Bytes per {bucketWords(bandwidthInterval, drill.bucketWords)} · {RANGE_LABEL[range].toLowerCase()}">
 			{#snippet actions()}
 				{#if hasDualSeries && busiest >= 0}
 					<ul class="legend">

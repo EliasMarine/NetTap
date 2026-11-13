@@ -47,7 +47,7 @@
 	import {
 		bucketFor, chartTime, customRange, DRILL_RANGES, fmt, linkedCount, pickedTotal, pickWindow, rangeWindow, SCAN_CAP, startRange, type TimeChart,
 	} from '$lib/utils/drilldown';
-	import { NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
+	import { bucketWords, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
 	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { formatCompactNumber as formatNumber } from '$lib/api/logs';
 
@@ -137,6 +137,8 @@
 	let timeline = $state<TimelineEntry[]>([]);
 	/** The timeline reply, whole, when its bucket can be picked on (NET-249); a failed refresh keeps the last one */
 	let timelineChart = $state<TimeChart | null>(null);
+	/** The bucket the timeline reply on screen says it used; its subtitle names it */
+	let timelineInterval = $state<string | undefined>(undefined);
 	let suspicious = $state<SuspiciousEntry[]>([]);
 	// #96: a failed check must not read as "none detected"; a long list shows its first rows
 	let suspiciousFailed = $state(false);
@@ -391,6 +393,7 @@
 			const reply = results[4].value;
 			timeline = reply.series;
 			timelineChart = toTimeChart(reply, reply.series.map((t) => t.timestamp), reply.series.map((t) => t.count));
+			timelineInterval = reply.interval;
 		}
 		// OLD CODE: if (results[5].status === 'fulfilled') suspicious = results[5].value.suspicious; (NET-238: and complete)
 		if (results[5].status === 'fulfilled') {
@@ -541,6 +544,7 @@
 		queryTypes = [];
 		timeline = [];
 		timelineChart = null;
+		timelineInterval = undefined;
 		suspicious = [];
 		suspiciousComplete = true;
 		// I13: the device table kept the last range's domains under this range's label
@@ -795,9 +799,10 @@
 	/>
 
 	<!-- OLD CODE: sub="Queries per {INTERVALS[selectedTimeRange]?.words ?? '15 minutes'} · {rangeWords}" (NET-249: the owner's bucket table) -->
+	<!-- OLD CODE: sub="Queries per {drill.bucketWords} · {rangeWords}" (NET-249 review: the echoed bucket's words once the reply is in) -->
 	<Card
 		title="Queries over time"
-		sub="Queries per {drill.bucketWords} · {rangeWords}"
+		sub="Queries per {bucketWords(timelineInterval, drill.bucketWords)} · {rangeWords}"
 		hero
 		col
 		class="c-8"

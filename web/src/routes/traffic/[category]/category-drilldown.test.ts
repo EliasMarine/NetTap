@@ -41,7 +41,7 @@ function stubDaemon() {
 			urls.push(u);
 			const body =
 				u.pathname === '/api/traffic/categories/streaming' ? DETAIL
-				: u.pathname === '/api/traffic/categories/streaming/bandwidth' ? chartReply(u)
+				: u.pathname === '/api/traffic/categories/streaming/bandwidth' ? await chartReply(u)
 				: u.pathname === '/api/traffic/summary' ? { total_bytes: 8000 }
 				: u.pathname === '/api/traffic/bandwidth' ? { from: '', to: '', interval: '1h', series: [] }
 				: null;
@@ -73,6 +73,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('Traffic category — the chart drills into a window (NET-249)', () => {
 	it("asks for each range's bucket from the owner's table", async () => {
+		chartReply = (u) => slots([1000, 3000], u.searchParams.get('interval')!)(u); // the daemon echoes the bucket asked for
 		render(CategoryPage);
 		await loaded();
 		expect(chartCall().searchParams.get('interval')).toBe('5m');
@@ -82,6 +83,14 @@ describe('Traffic category — the chart drills into a window (NET-249)', () => 
 			await vi.waitFor(() => expect(chartCall().searchParams.get('interval'), range).toBe(bucket));
 			expect(await screen.findByText(new RegExp(`^Download and upload per ${words} · `))).toBeInTheDocument();
 		}
+	});
+
+	it('names the bucket the reply says it used', async () => {
+		chartReply = slots([1000, 3000], '1h');
+		render(CategoryPage);
+		await loaded();
+		expect(chartCall().searchParams.get('interval')).toBe('5m');
+		expect(screen.getByText(/^Download and upload per hour · last 24 hours/)).toBeInTheDocument();
 	});
 
 	it('a pick opens this page over the picked slots, with the bytes they drew', async () => {
@@ -158,5 +167,22 @@ describe('Traffic category — the shared receiver (NET-249)', () => {
 		render(CategoryPage);
 		await screen.findByText("Couldn't load bandwidth over time: the request failed.");
 		expect(screen.queryByText(/You clicked/)).not.toBeInTheDocument();
+	});
+
+	it("never compares with a superseded window's reply", async () => {
+		const W2 = { from: '2026-11-13T11:00:00.000Z', to: '2026-11-13T11:04:59.999Z' };
+		let releaseFirst: (body: unknown) => void = () => {};
+		chartReply = (u) => (u.searchParams.get('from') === F ? new Promise((resolve) => (releaseFirst = resolve)) : slots([1000, 3000])(u));
+		nav.set(`?from=${F}&to=${T}&bytes=4000`);
+		render(CategoryPage);
+		await vi.waitFor(() => expect(asked('/api/traffic/categories/streaming/bandwidth')).toHaveLength(1));
+		nav.set(`?from=${W2.from}&to=${W2.to}&bytes=4000`);
+		await vi.waitFor(() => expect(asked('/api/traffic/categories/streaming/bandwidth')).toHaveLength(2));
+		await loaded();
+		// the first window's reply lands last, with another total; the page compares with the second's only
+		releaseFirst(slots([99_000])(asked('/api/traffic/categories/streaming/bandwidth')[0]));
+		await new Promise((r) => setTimeout(r, 0));
+		expect(screen.queryByText(/You clicked/)).not.toBeInTheDocument();
+		expect(chart()).toHaveAccessibleName(/with 3\.0 KB/);
 	});
 });

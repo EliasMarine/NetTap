@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { goto } from '$app/navigation';
-import { narrowTo, pickedLine, withoutWindow } from './narrow-page';
+import { bucketWords, narrowTo, pickedLine, withoutWindow } from './narrow-page';
 import { toTimeChart as timeChart } from './chart-pick';
 import type { TimeChart } from './drilldown';
 
@@ -73,5 +73,15 @@ describe('pickedLine, the shared receiver (NET-249)', () => {
 	it('has nothing to compare without a figure or a chart reply for the window (loading, failed or superseded)', () => {
 		expect(pickedLine(null, chart([1]), ALERTS)).toBeNull();
 		expect(pickedLine(5, null, ALERTS)).toBeNull();
+	});
+});
+
+describe('bucketWords (NET-249)', () => {
+	it("names the bucket the reply echoes, else the one asked for, and an echo off the table as written", () => {
+		expect(bucketWords('1m', '5 minutes')).toBe('minute');
+		expect(bucketWords('3h', 'hour')).toBe('3 hours');
+		expect(bucketWords(undefined, '5 minutes')).toBe('5 minutes');
+		expect(bucketWords(null, 'hour')).toBe('hour');
+		expect(bucketWords('10m', 'minute')).toBe('10m');
 	});
 });

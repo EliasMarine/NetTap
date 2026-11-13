@@ -46,7 +46,7 @@ const T = '2026-11-13T10:04:59.999Z';
 
 /** The device over the request's own window, one minute slot per byte figure */
 function detail(bytes: number[], opts: { from?: string; to?: string; interval?: string } = {}) {
-	return async (_ip: string, q: { from?: string; to?: string } = {}) => ({
+	return async (_ip: string, q: { from?: string; to?: string; interval?: string } = {}) => ({
 		device: {
 			ip: IP, hostname: 'laptop', connection_count: 3, alert_count: 0, first_seen: F, last_seen: F,
 			top_destinations: [], dns_queries: [], protocols: [],
@@ -74,6 +74,8 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('Device detail — the bandwidth chart drills into a window (NET-249)', () => {
 	it("asks for each range's bucket from the owner's table", async () => {
+		// the daemon echoes the bucket asked for
+		vi.mocked(getDeviceDetail).mockImplementation(((ip: string, q: { interval?: string } = {}) => detail([1000, 3000], { interval: q.interval })(ip, q)) as never);
 		render(Page);
 		await loaded();
 		expect(detailCalls().at(-1)!.interval).toBe('5m');
@@ -97,6 +99,14 @@ describe('Device detail — the bandwidth chart drills into a window (NET-249)',
 		await fireEvent.keyDown(chart(), { key: 'End', shiftKey: true });
 		await fireEvent.keyDown(chart(), { key: 'Enter' });
 		expect(Object.fromEntries(target(1).searchParams)).toEqual({ from: '2026-11-13T10:00:15.000Z', to: '2026-11-13T10:01:30.000Z', range: '24h', bytes: '4000' });
+	});
+
+	it('names the bucket the reply says it used', async () => {
+		vi.mocked(getDeviceDetail).mockImplementation(detail([1000, 3000], { interval: '1h' }) as never);
+		render(Page);
+		await loaded();
+		expect(detailCalls().at(-1)!.interval).toBe('5m');
+		expect(screen.getByText(/^Bytes per hour · last 24 hours/)).toBeInTheDocument();
 	});
 
 	it('a reply that names no bucket (an older daemon) stays a picture', async () => {
@@ -170,5 +180,24 @@ describe('Device detail — the shared receiver (NET-249)', () => {
 		render(Page);
 		await screen.findByText(/Couldn't load device/);
 		expect(screen.queryByText(/You clicked/)).not.toBeInTheDocument();
+	});
+
+	it("never compares with a superseded window's reply", async () => {
+		const W2 = { from: '2026-11-13T11:00:00.000Z', to: '2026-11-13T11:04:59.999Z' };
+		let releaseFirst: (body: unknown) => void = () => {};
+		const second = detail([1000, 3000]);
+		vi.mocked(getDeviceDetail).mockImplementation(((ip: string, q: { from?: string } = {}) =>
+			q.from === F ? new Promise((resolve) => (releaseFirst = resolve)) : second(ip, q)) as never);
+		nav.set(`?from=${F}&to=${T}&bytes=4000`);
+		render(Page);
+		await vi.waitFor(() => expect(detailCalls()).toHaveLength(1));
+		nav.set(`?from=${W2.from}&to=${W2.to}&bytes=4000`);
+		await vi.waitFor(() => expect(detailCalls()).toHaveLength(2));
+		await loaded();
+		// the first window's reply lands last, with another total; the page compares with the second's only
+		releaseFirst(await detail([99_000])(IP, { from: F, to: T }));
+		await new Promise((r) => setTimeout(r, 0));
+		expect(screen.queryByText(/You clicked/)).not.toBeInTheDocument();
+		expect(chart()).toHaveAccessibleName(/with 3\.0 KB transferred/);
 	});
 });

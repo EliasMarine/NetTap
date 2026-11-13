@@ -29,6 +29,15 @@ export const DEVICE_IPV6_NOTE =
 // OLD CODE END
 
 /**
+ * A chart subtitle's bucket in words: the one the reply echoes once it is in (the step a pick
+ * uses), else the one asked for. An echo off the owner's table (an older daemon) shows as written.
+ */
+export function bucketWords(echoed: string | null | undefined, requested: string): string {
+	if (!echoed) return requested;
+	return DRILL_RANGES.find((r) => r.bucket === echoed)?.bucketWords ?? echoed;
+}
+
+/**
  * Reopen this page over a pick's window: its own URL with `from`/`to`, the figure picked (any
  * earlier figure dropped) and `range`, the words a link falls back to: the URL's own when it has
  * one, else the page's. The history entry is replaced only when the window is already on screen.

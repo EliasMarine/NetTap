@@ -19,7 +19,7 @@
 		bucketFor, DRILL_RANGES, canonicalName, certificatesHref, chartTime as timeLabel, customRange, fmt, linkedCount, logsHrefForQuery, pickedTotal, pickWindow, rangeWindow,
 		startRange, windowQuery, type DrillRange, type DrillRangeValue, type DrillWindow,
 	} from '$lib/utils/drilldown';
-	import { NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
+	import { bucketWords, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
 	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import IPAddress from '$components/IPAddress.svelte';
@@ -279,7 +279,8 @@
 
 <div class="grid">
 	<!-- OLD CODE: sub="DNS lookups per {shown.interval} · {words}" (NET-249: the owner's bucket table) -->
-	<Card class="c-8" hero col title="Lookups over time" sub="DNS lookups per {shown.drill.bucketWords} · {words}">
+	<!-- OLD CODE: sub="DNS lookups per {shown.drill.bucketWords} · {words}" (NET-249 review: the echoed bucket's words once the reply is in) -->
+	<Card class="c-8" hero col title="Lookups over time" sub="DNS lookups per {bucketWords(data?.interval, shown.drill.bucketWords)} · {words}">
 		{#if !data}
 			{@render summaryState('lookups over time')}
 		{:else if data.dns.lookups === 0}
