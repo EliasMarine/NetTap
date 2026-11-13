@@ -10,6 +10,7 @@ hostname, manufacturer, OS hint).
 import ipaddress
 import logging
 import os
+import threading
 import time
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
@@ -82,6 +83,12 @@ _ONLINE_MS = 5 * 60 * 1000
 # shortcut: the checked device reads (the list and the count) stop at 20,000 IPs and answer 502,
 # far above a household; a site with more needs a paged list instead of every device per request
 _DEVICE_CAP = 20_000
+# NET-182: one Changelog event a day while device reads keep hitting the cap, not one per read.
+# shortcut: kept in memory, so a daemon restart can log it again the same day
+_CAP_EVENT_EVERY_S = 24 * 3600
+_CAP_EVENT_RETRY_S = 5 * 60  # after a failed write, or while one is in flight
+_cap_event_next_at = 0.0  # time.monotonic() when the next event may be written
+_cap_event_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -317,8 +324,49 @@ def _lan_answer_bool_query(app: Mapping[str, Any], from_ts: str, to_ts: str) -> 
     return {**query, "filter": [*query["filter"], _RESPONDED]}
 
 
+def _report_device_cap(changelog: Any, what: str) -> None:
+    """Write the "more than _DEVICE_CAP LAN sources" Changelog event, at most once a day (NET-182).
+
+    The pages that fail only say "incomplete"; this says why. A failed write (log_event returns
+    an empty _id) is tried again after _CAP_EVENT_RETRY_S, so it never uses up the day.
+    """
+    global _cap_event_next_at
+    if changelog is None:
+        return
+    with _cap_event_lock:
+        now = time.monotonic()
+        if now < _cap_event_next_at:
+            return
+        _cap_event_next_at = now + _CAP_EVENT_RETRY_S  # parallel reads write it once
+    doc = changelog.log_event(
+        "device_cap_reached",
+        f"More than {_DEVICE_CAP:,} LAN addresses in one window",
+        (
+            f"More than {_DEVICE_CAP:,} LAN addresses sent traffic in the window, more than "
+            "NetTap lists, so the device list, the device count and the risk scores can't load "
+            "for it. A device sending from made-up addresses, or LAN subnets set wider than your "
+            "network, causes this. Choose a shorter range."
+        ),
+        {"limit": _DEVICE_CAP, "search": what},
+    )
+    if (doc or {}).get("_id"):
+        with _cap_event_lock:
+            _cap_event_next_at = now + _CAP_EVENT_EVERY_S
+
+
+# OLD CODE START — NET-182: no app, so a capped read couldn't say why on the Changelog
+# def _ip_buckets(
+#     client: Any, query: dict, field: str, aggs, page_size: int, what: str | None
+# ) -> dict[str, dict]:
+# OLD CODE END
 def _ip_buckets(
-    client: Any, query: dict, field: str, aggs, page_size: int, what: str | None
+    client: Any,
+    app: Mapping[str, Any],
+    query: dict,
+    field: str,
+    aggs,
+    page_size: int,
+    what: str | None,
 ) -> dict[str, dict]:
     """{ip: composite bucket} of `field` over `query`, checked and capped as the device reads are."""
     buckets, complete = all_buckets(
@@ -333,6 +381,7 @@ def _ip_buckets(
     )
     # PR #191 review: a capped read is not every device, so a checked one fails instead
     if not complete and what:
+        _report_device_cap(app.get("changelog_service"), what)
         raise QueryFailed(f"{what}: stopped at {len(buckets)} IPs")
     if not complete:
         logger.warning(
@@ -486,6 +535,7 @@ def _lan_device_buckets(
     bounds = _time_bounds(aggs)
     started = _ip_buckets(
         client,
+        app,
         _lan_device_bool_query(app, from_ts, to_ts),
         "source.ip",
         aggs,
@@ -495,6 +545,7 @@ def _lan_device_buckets(
     answer_query = _lan_answer_bool_query(app, from_ts, to_ts)
     answered = _ip_buckets(
         client,
+        app,
         answer_query,
         "destination.ip",
         {name: aggs[name] for name in bounds} or None,

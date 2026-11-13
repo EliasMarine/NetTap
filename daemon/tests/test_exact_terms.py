@@ -297,3 +297,47 @@ def test_dns_analytics_paths_raise_on_a_partial_reply():
             ):
                 with pytest.raises(PartialResultsError):
                     call()
+
+
+def test_a_budgeted_search_waits_no_longer_than_what_is_left():
+    """NET-187 review: the transport's own retries can't run past the scan's deadline."""
+    from storage.snapshot_search import Budget
+
+    now = [0.0]
+    budget = Budget(12, clock=lambda: now[0])
+    body = {"size": 0, "aggs": {"t": {"terms": {"field": "f"}}}}
+    with patch.object(OpenSearch, "search", return_value=_reply(0)) as search:
+        _client().search(index="x-*", body=body, budget=budget)
+        now[0] = 11.5
+        _client().search(index="x-*", body=body, budget=budget)
+        _client().search(index="x-*", body=body, budget=Budget(600))
+    waits = [c.kwargs["request_timeout"] for c in search.call_args_list]
+    assert waits == [
+        12,
+        1.0,
+        30.0,
+    ]  # what is left, at least a second, at most the client's 30
+
+
+def test_a_longer_list_re_ask_after_the_budget_is_spent_is_too_slow():
+    import pytest
+
+    from storage.snapshot_search import Budget, TooSlow
+
+    now = [0.0]
+    budget = Budget(10, clock=lambda: now[0])
+
+    def first_then_late(**_kw):
+        now[0] = 10.0
+        return _reply(-1)  # cut short: the client would ask again with longer lists
+
+    with (
+        patch.object(OpenSearch, "search", side_effect=first_then_late) as search,
+        pytest.raises(TooSlow),
+    ):
+        _client().search(
+            index="x-*",
+            body={"size": 0, "aggs": {"t": {"terms": {"field": "f"}}}},
+            budget=budget,
+        )
+    assert search.call_count == 1

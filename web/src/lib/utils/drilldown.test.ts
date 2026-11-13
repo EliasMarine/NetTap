@@ -84,6 +84,12 @@ describe('exact-window links', () => {
 		expect(Object.fromEntries(params(alertsHrefForSignature(sig, { ...win, range: '7d' })))).toEqual({ signature: sig, ...win, range: '7d' });
 	});
 
+	// NET-185: a Top signatures bar for alerts with no rule name
+	it('links a null signature to the alerts with no rule name', () => {
+		expect(Object.fromEntries(params(alertsHrefForSignature(null, { ...win, range: '24h' })))).toEqual({ no_rule_name: 'true', ...win, range: '24h' });
+		expect(Object.fromEntries(params(alertsHrefForSignature('Unknown')))).toEqual({ signature: 'Unknown' });
+	});
+
 	it("narrows a signature link to one device when the count is that device's", () => {
 		// OLD CODE: alertsHrefForSignature('ET SCAN x', { ...win, range: '24h' }, '2001:db8::1') (slice 2b-1: the narrowing is an object)
 		expect(Object.fromEntries(params(alertsHrefForSignature('ET SCAN x', { ...win, range: '24h' }, { ip: '2001:db8::1' })))).toEqual({ signature: 'ET SCAN x', ip: '2001:db8::1', ...win, range: '24h' });

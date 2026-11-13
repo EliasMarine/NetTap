@@ -48,10 +48,20 @@ describe('Changelog page (#96)', () => {
 		stubFetch(() => ({ ok: true, status: 200, body: { events: [], count: 0 } }));
 		render(Page);
 
+		// OLD CODE: 'Events appear here when a new device joins the network or a manual storage cleanup runs.' (NET-182)
 		expect(
-			await screen.findByText('Events appear here when a new device joins the network or a manual storage cleanup runs.'),
+			await screen.findByText('Events appear here when a new device joins the network, a manual storage cleanup runs, or more LAN addresses send traffic than NetTap lists.'),
 		).toBeInTheDocument();
 		expect(screen.queryByText(/alerts fire|settings change/)).not.toBeInTheDocument();
+	});
+
+	// NET-182: the device cap's event names itself, not its raw type
+	it('labels the device limit event', async () => {
+		const cap = { ...EVENT, event_type: 'device_cap_reached', title: 'More than 20,000 LAN addresses in one window' };
+		stubFetch(() => ({ ok: true, status: 200, body: { events: [cap], count: 1 } }));
+		render(Page);
+		expect(await screen.findByText('More than 20,000 LAN addresses in one window')).toBeInTheDocument();
+		expect(screen.getByText('Device limit reached')).toBeInTheDocument();
 	});
 
 	it('says a failed filter change could not load, without showing the old filter\'s events', async () => {

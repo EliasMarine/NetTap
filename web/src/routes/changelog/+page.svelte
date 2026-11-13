@@ -44,6 +44,7 @@
 		capture_started: 'play',
 		capture_stopped: 'pause',
 		storage_pruned: 'system',
+		device_cap_reached: 'devices',
 	};
 
 	// OLD CODE START — sentence case (design system voice)
@@ -67,6 +68,7 @@
 		capture_started: 'Capture started',
 		capture_stopped: 'Capture stopped',
 		storage_pruned: 'Storage pruned',
+		device_cap_reached: 'Device limit reached',
 	};
 
 	// OLD CODE START — the page refresh contract (PLAN §5.5) runs the first load
@@ -264,8 +266,9 @@
 				state="empty"
 				icon="changelog"
 				title="No events found for the selected filters."
-				message="Events appear here when a new device joins the network or a manual storage cleanup runs."
+				message="Events appear here when a new device joins the network, a manual storage cleanup runs, or more LAN addresses send traffic than NetTap lists."
 			/>
+			<!-- OLD CODE: message="Events appear here when a new device joins the network or a manual storage cleanup runs." (NET-182: the device limit is recorded too) -->
 			<!-- OLD CODE START — NET-158: promised event types nothing records (devices leaving, alerts, settings) -->
 			<!-- message="Events appear here as devices join or leave, alerts fire and settings change." -->
 			<!-- OLD CODE END -->

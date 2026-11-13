@@ -143,6 +143,8 @@ export interface ThreatReport {
 	failed_checks?: string[];
 	/** #96: detectors a bucket cap stopped part way (their lists are partial) */
 	incomplete_checks?: string[];
+	/** NET-187: failed checks that ran out of time (each is in failed_checks too) */
+	timed_out_checks?: string[];
 	/** NET-192 PR 3: present when beaconing came from the background scan (?snapshot=) */
 	beaconing_snapshot?: BeaconingSnapshot;
 }

@@ -28,11 +28,21 @@ CHANGELOG_INDEX_PREFIX = "nettap-changelog"
 #     "storage_pruned",
 # }
 # OLD CODE END
-# The event types NetTap records: device_registry._log_new_device and the manual storage cleanup
-# in api/server.py. Add a type here only when something writes it.
+# OLD CODE START — NET-182: the device cap writes its own event now
+# # The event types NetTap records: device_registry._log_new_device and the manual storage cleanup
+# # in api/server.py. Add a type here only when something writes it.
+# CHANGELOG_EVENT_TYPES = {
+#     "device_joined",
+#     "storage_pruned",
+# }
+# OLD CODE END
+# The event types NetTap records: device_registry._log_new_device, the manual storage cleanup
+# in api/server.py and the device cap (api/devices._report_device_cap). Add a type here only when
+# something writes it.
 CHANGELOG_EVENT_TYPES = {
     "device_joined",
     "storage_pruned",
+    "device_cap_reached",
 }
 
 

@@ -145,6 +145,33 @@ describe('Threats page — background beaconing', () => {
 		expect(brief()).toContain('Partial beaconing scan');
 	});
 
+	// NET-187: the live check stops at its time budget; the rest of the report still shows
+	it('a live check that ran out of time says so and suggests a shorter range', async () => {
+		const asked = stubDaemon(
+			{ ...BASE, beaconing_snapshot: snap('ready') },
+			{ ...BASE, failed_checks: ['beaconing'], timed_out_checks: ['beaconing'] },
+		);
+		render(ThreatsPage);
+		await vi.waitFor(() => expect(asked).toHaveLength(1));
+		await fireEvent.click(screen.getByRole('button', { name: '1h' }));
+		await vi.waitFor(() => expect(kpi()).toBe('—'));
+		expect(kpiSub()).toBe('Not checked in time: try a shorter range');
+		expect(screen.getByText("Couldn't finish the beaconing check in time.")).toBeInTheDocument();
+		expect(screen.getByText('Try a shorter range.')).toBeInTheDocument();
+		expect(screen.queryByText('No beaconing patterns detected.')).not.toBeInTheDocument();
+		expect(brief()).toContain("Couldn't check beaconing");
+	});
+
+	it('a live check that failed for another reason still says the query failed', async () => {
+		const asked = stubDaemon({ ...BASE, beaconing_snapshot: snap('ready') }, { ...BASE, failed_checks: ['beaconing'] });
+		render(ThreatsPage);
+		await vi.waitFor(() => expect(asked).toHaveLength(1));
+		await fireEvent.click(screen.getByRole('button', { name: '1h' }));
+		await vi.waitFor(() => expect(kpiSub()).toBe('Not checked: the query failed'));
+		expect(screen.getByText("Couldn't check for beaconing: the query failed.")).toBeInTheDocument();
+		expect(screen.queryByText('Try a shorter range.')).not.toBeInTheDocument();
+	});
+
 });
 
 // While the check is pending the page polls /api/threats/beaconing (not the whole report) every
