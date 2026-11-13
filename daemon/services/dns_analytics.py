@@ -370,6 +370,8 @@ class DNSAnalytics:
         # if interval not in valid_intervals:
         #     interval = "5m"
         # OLD CODE END
+        # Unreachable from /api/dns/timeline, which refuses any other interval first
+        # (slot_interval, NET-249); kept only for direct callers of this method.
         if interval not in TIMELINE_INTERVALS:
             interval = "5m"
 

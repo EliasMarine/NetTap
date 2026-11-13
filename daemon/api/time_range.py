@@ -43,14 +43,18 @@ def slot_interval(
     slots, the same whether the interval was sent or defaulted."""
     interval = request.query.get("interval") or default
     if interval not in allowed:
-        logger.info("%s: interval %.20r refused", request.path, interval)
+        # OLD CODE: logger.info("%s: interval %.20r refused", request.path, interval) (review: a
+        # decoded %0A in the path wrote a line of its own; %r keeps the record on one line)
+        logger.info("%r: interval %.20r refused", request.path, interval)
         raise _bad_request(
             "Unknown interval; use one of "
             + ", ".join(sorted(allowed, key=interval_seconds))
         )
     if slot_count(from_ts, to_ts, interval) > budget:
+        # OLD CODE: "%s: %s from %s to %s is over %d slots" (review: %r, as above; fromisoformat
+        # takes any one character between date and time, so from/to can carry a newline too)
         logger.info(
-            "%s: %s from %s to %s is over %d slots",
+            "%r: %s from %r to %r is over %d slots",
             request.path,
             interval,
             from_ts,

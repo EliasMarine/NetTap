@@ -19,7 +19,7 @@ from aiohttp.test_utils import AioHTTPTestCase
 from api.addresses import register_address_routes
 from api.alerts import _sparkline_interval, register_alert_routes
 from api.bandwidth import register_bandwidth_routes
-from api.devices import register_device_routes
+from api.devices import _bandwidth_interval, register_device_routes
 from api.dns import register_dns_routes
 from api.domains import register_domain_routes
 from api.iot import register_iot_routes
@@ -312,6 +312,36 @@ class TestChartSlotRoutes(ChartCase):
             ]
             self.assertEqual(sums[0], sums[1], path)
             self.assertGreater(sums[0], 0, path)
+
+
+class TestOwnBucketRoutes(ChartCase):
+    """The device and IoT routes, whose omitted interval is their own default (plan §2)."""
+
+    async def test_an_omitted_interval_answers_as_its_default_written_out(self):
+        for span in RANGES.values():
+            frm = _iso(END - span)
+            for path, key, default, series in (
+                (f"/api/devices/{LAPTOP}", "bandwidth_interval",
+                 _bandwidth_interval(frm, TO), lambda b: b["device"]["bandwidth_series"]),
+                (f"/api/iot/devices/{quote(M_LAPTOP)}/activity-timeline", "interval",
+                 "1h", lambda b: b["buckets"]),
+            ):  # fmt: skip
+                omitted = await self.get(path, _window(span))
+                explicit = await self.get(path, _window(span, interval=default))
+                self.assertEqual(omitted[key], default, (path, span))
+                self.assertEqual(series(omitted), series(explicit), (path, span))
+
+
+class TestRefusalLog(ChartCase):
+    async def test_a_newline_in_the_path_stays_inside_one_log_record(self):
+        with self.assertLogs("nettap.api.time_range", "INFO") as logs:
+            resp = await self.client.get(
+                "/api/iot/devices/x%0A[NetTap]%20ERROR%20forged/activity-timeline?interval=zz",
+                headers=AUTH,
+            )
+        self.assertEqual(resp.status, 400)
+        self.assertTrue(logs.records)
+        self.assertTrue(all("\n" not in r.getMessage() for r in logs.records))
 
 
 class TestDeviceAndDns(ChartCase):
