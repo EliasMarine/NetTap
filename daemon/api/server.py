@@ -104,6 +104,7 @@ from api.drilldown_runner import lan_cidrs
 from api.addresses import register_address_routes
 from api.domains import register_domain_routes
 from api.moment import register_moment_routes
+from api.dhcp_timeline import register_dhcp_timeline_routes
 from api.suricata_categories import register_suricata_category_routes
 from services.pipeline_health import OVERALL as PIPELINE_OVERALL, PipelineHealth
 from services.tshark_service import TSharkService
@@ -1495,6 +1496,8 @@ def create_app(
             **storage.client_kwargs(max_retries=0, retry_on_timeout=False)
         ),
     )
+    # NET-263: one device's DHCP transactions, in the same permits and on the same client
+    register_dhcp_timeline_routes(app, app["moment_client"])
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 
