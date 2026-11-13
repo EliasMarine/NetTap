@@ -517,3 +517,27 @@ print('OK: all actions have retry config')
     echo "$fn" | grep -q 'if ! docker compose .* exec -T dashboards-helper \\'
     echo "$fn" | grep -q 'curl -sfk -u "$os_creds" "https://opensearch:9200/_template/arkime_sessions3_template"'
 }
+
+# ==========================================================================
+# NET-177: preflight's free space is decimal GB, like System and Setup
+# ==========================================================================
+
+DEPLOY="${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+
+_preflight_with_avail_kb() {
+    run bash -c "source '$DEPLOY'
+        docker() { return 0; }
+        df() { printf 'Filesystem 1K-blocks Used Available Use%% Mounted on\n/dev/x 1 1 %s 1%% /\n' $1; }
+        preflight 2>&1"
+}
+
+@test "preflight (NET-177): warns below 15 GB free, in decimal GB" {
+    _preflight_with_avail_kb 15136719  # 15.5 GB: the old ceil'd df -BG said 15G, no warning
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"free disk space"* ]] || false
+    _preflight_with_avail_kb 14648438  # 15.00 GB
+    [[ "$output" != *"free disk space"* ]] || false
+    _preflight_with_avail_kb 14648437  # 14.99 GB
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Only 14 GB free disk space"* ]] || false
+}

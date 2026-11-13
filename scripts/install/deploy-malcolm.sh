@@ -82,11 +82,18 @@ preflight() {
         error "Docker compose file not found at ${COMPOSE_FILE}"
     fi
 
-    # Check disk space (need ~15GB for images)
+    # Check disk space (need ~16 GB for images)
     local free_gb
-    free_gb=$(df -BG "${PROJECT_ROOT}" | awk 'NR==2 {print int($4)}')
+    # OLD CODE START — NET-177: -BG is GiB (rounded up) printed as "GB"
+    # free_gb=$(df -BG "${PROJECT_ROOT}" | awk 'NR==2 {print int($4)}')
+    # if (( free_gb < 15 )); then
+    #     warn "Only ${free_gb}GB free disk space. Malcolm images require ~10-15GB."
+    # fi
+    # OLD CODE END
+    # Decimal GB (10^9 bytes), as System and Setup show. 15 GB is nearest the old boundary (14 GiB).
+    free_gb=$(df -k "${PROJECT_ROOT}" | awk 'NR==2 {print int($4 * 1024 / 1e9)}')
     if (( free_gb < 15 )); then
-        warn "Only ${free_gb}GB free disk space. Malcolm images require ~10-15GB."
+        warn "Only ${free_gb} GB free disk space. Malcolm images require ~11-16 GB."
     fi
 
     log "Pre-flight checks passed"
