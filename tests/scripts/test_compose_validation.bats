@@ -964,18 +964,35 @@ print('pcap writer: OK')
     [ "$(sed -n 1p "$include")" = "%YAML 1.1" ]
     [ "$(sed -n 2p "$include")" = "---" ]
     grep -q '^threshold-file: /etc/nettap/suricata-threshold.config$' "$include"
-    # OLD CODE START — NET-206: the include now also turns the engine counters on
-    # # nothing else active: no capture interface, outputs or defrag overrides
-    # [ "$(grep -cv -e '^#' -e '^$' -e '^%YAML' -e '^---$' "$include")" -eq 1 ]
+    # nothing else active: no capture interface, outputs or defrag overrides (NET-206's counters
+    # come from compose env, tested below)
+    [ "$(grep -cv -e '^#' -e '^$' -e '^%YAML' -e '^---$' "$include")" -eq 1 ]
+    # OLD CODE START — NET-206 review: the stats block moved to compose env
+    # # NET-206: the whole stats block, restated (a later block replaces Malcolm's), counters on for
+    # # dump-counters; nothing else active: no capture interface, outputs (no eve stats) or defrag
+    # [ "$(grep -cv -e '^#' -e '^$' -e '^%YAML' -e '^---$' "$include")" -eq 5 ]
+    # grep -qx 'stats:' "$include"
+    # grep -qx '  enabled: yes' "$include"
+    # grep -qx '  interval: 10' "$include"
+    # grep -qx '  decoder-events: no' "$include"
+    # ! grep -q '^outputs:' "$include"
     # OLD CODE END
-    # NET-206: the whole stats block, restated (a later block replaces Malcolm's), counters on for
-    # dump-counters; nothing else active: no capture interface, outputs (no eve stats) or defrag
-    [ "$(grep -cv -e '^#' -e '^$' -e '^%YAML' -e '^---$' "$include")" -eq 5 ]
-    grep -qx 'stats:' "$include"
-    grep -qx '  enabled: yes' "$include"
-    grep -qx '  interval: 10' "$include"
-    grep -qx '  decoder-events: no' "$include"
-    ! grep -q '^outputs:' "$include"
+}
+
+@test "compose: suricata-live turns its engine counters on, with no stats output (NET-206)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+env = data['services']['suricata-live']['environment']
+assert env['SURICATA_STATS_ENABLED'] == 'true', env.get('SURICATA_STATS_ENABLED')
+assert env['SURICATA_STATS_INTERVAL'] == '10', env.get('SURICATA_STATS_INTERVAL')
+# eve stats would add a record per interval to eve.json and the index
+assert env.get('SURICATA_STATS_EVE_ENABLED', 'false') == 'false', env.get('SURICATA_STATS_EVE_ENABLED')
+print('suricata-live stats: OK')
+"
+    [ "$status" -eq 0 ]
 }
 
 @test "compose: arkime-live is off by default (arkime profile, owner decision 2026-11-02)" {

@@ -535,6 +535,11 @@ services:
       # set. Owner rules use SIDs 1000000-1999999; none of these sources does (checked by the deploy gate).
       SURICATA_UPDATE_ENABLE_SOURCES: "et/open,abuse.ch/sslbl-blacklist,echap/stalkerware,ipfire/dbl"
       SURICATA_ROTATED_PCAP: "false"
+      # NET-206: engine counters for `suricatasc -c dump-counters` (capture.kernel_packets /
+      # kernel_drops). Malcolm's suricata_config_populate.py reads these; eve stats
+      # (SURICATA_STATS_EVE_ENABLED) and stats.log stay off, so nothing is written or indexed.
+      SURICATA_STATS_ENABLED: "true"
+      SURICATA_STATS_INTERVAL: "10"
       # upload-common.env — EXTRA_TAGS required by Malcolm supervisord config
       EXTRA_TAGS: ""
     volumes:
