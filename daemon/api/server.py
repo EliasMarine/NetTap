@@ -1447,8 +1447,15 @@ def create_app(
     # OLD CODE START — NET-188: its own semaphore let 4 readers run on the 1-CPU container
     # pcap_search_service = PcapSearchService(pcap_dir=pcap_search_dir)
     # OLD CODE END
+    # OLD CODE START — NET-189: the filtered download picks its files from the capture index
+    # pcap_search_service = PcapSearchService(
+    #     pcap_dir=pcap_search_dir, semaphore=tshark_service.semaphore
+    # )
+    # OLD CODE END
     pcap_search_service = PcapSearchService(
-        pcap_dir=pcap_search_dir, semaphore=tshark_service.semaphore
+        pcap_dir=pcap_search_dir,
+        semaphore=tshark_service.semaphore,
+        index=capture_index,
     )
     register_pcap_routes(app, pcap_search_service)
 

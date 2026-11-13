@@ -73,12 +73,16 @@ def _client(blocker: Blocker) -> MagicMock:
     return client
 
 
+async def _no_indexer(_index) -> None:
+    return None
+
+
 @pytest.fixture(scope="module")
 def server(tmp_path_factory):
     """The real app on 127.0.0.1, served from a loop in its own thread."""
     from api import alerts as alerts_api
     from api.server import create_app
-    from services import alert_intelligence, threat_intel
+    from services import alert_intelligence, capture_index, threat_intel
     from services.pcap_search import PcapSearchService
     from services.tshark_service import TSharkService
     from storage.manager import RetentionConfig, StorageManager
@@ -94,6 +98,10 @@ def server(tmp_path_factory):
         # the file walks block like a slow disk
         mp.setattr(PcapSearchService, "get_available_pcaps", blocker.returning(list))
         mp.setattr(TSharkService, "list_pcap_files", blocker.returning(list))
+        # NET-189: the filtered download walks the captures in the index's select
+        mp.setattr(capture_index, "scan_captures", blocker.returning(list))
+        # the background indexer is not a route, and it would take the blocked walk
+        mp.setattr(capture_index.CaptureIndex, "run_forever", _no_indexer)
         for name, value in {
             "DAEMON_TOKEN_FILE": str(tmp / "auth" / "daemon-token"),
             "EXCLUDED_IPS_FILE": str(tmp / "excluded_ips.json"),

@@ -29,6 +29,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from api.offload import run_blocking
 from services.container_exec import ExecResult, reader_slot, run_in_tshark
 
 logger = logging.getLogger("nettap.capture_index")
@@ -374,7 +375,11 @@ class CaptureIndex:
 
         Files without a current entry are indexed first, at most INLINE_INDEX_LIMIT.
         """
-        files = scan_captures(self.root)
+        # OLD CODE START — NET-189: the walk over every capture file ran on the request
+        # loop (PCAP Search's download now selects here too, and its walk was off-loop)
+        # files = scan_captures(self.root)
+        # OLD CODE END
+        files = await run_blocking(scan_captures, self.root)
         pending = [f for f in files if self.fresh_entry(f) is None]
         if len(pending) > INLINE_INDEX_LIMIT:
             raise StillIndexing(len(pending))

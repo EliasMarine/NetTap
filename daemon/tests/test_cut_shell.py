@@ -95,3 +95,42 @@ def test_files_without_cut_go_straight_to_mergecap(tmp_path):
     assert count == 2 * PACKETS
     assert statuses == {"mergecap": 0, "editcap": 0}
     assert judged(statuses, stderr, cuts=0)
+
+
+@pytest.mark.skipif(not shutil.which("tshark"), reason="needs tshark")
+def test_the_filtered_download_job_reads_every_file_in_the_window(tmp_path):
+    # NET-189: PCAP Search's download over two files, one cut short, with a filter
+    p = subprocess.run(
+        [
+            "sh",
+            "-c",
+            ps.FILTER_DOWNLOAD_JOB,
+            "_",
+            "1700000000.25",
+            "1700000001",
+            "tcp",
+            f"cut:{cut_short_copy(tmp_path)}",
+            str(SYNTHETIC),
+        ],
+        env={**os.environ, "NT": "#nt-test"},
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    stderr = p.stderr.decode()
+    statuses = {
+        k: int(v) for k, v in re.findall(r"^#nt-test status (\S+) (\d+)$", stderr, re.M)
+    }
+    assert statuses["tshark"] == 0
+    assert judged(statuses, stderr, cuts=1)
+    out = tmp_path / "out.pcapng"
+    out.write_bytes(p.stdout)
+    times = subprocess.run(
+        ["tshark", "-r", str(out), "-T", "fields", "-e", "frame.time_epoch"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    # in [.25, 1.0) both files hold packets 3 (tcp), 4 (dns over udp) and 5 (tls over
+    # tcp); packet 6 (1.000001) is after the window
+    assert [t[:15] for t in times] == ["1700000000.2500"] * 2 + ["1700000000.7500"] * 2

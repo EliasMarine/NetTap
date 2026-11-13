@@ -7,11 +7,17 @@ search, and download.
 
 import asyncio
 import os
+import time
+from datetime import datetime, timezone
 
 import pytest
 
 import services.pcap_search as pcap_search_mod
+from services import packet_search as ps
+from services.capture_index import StillIndexing
+from services.container_exec import ReaderBusy
 from services.pcap_search import PcapSearchService
+from tests.fake_pcap_download import FakeIndex, FakeTshark, capture, failed
 
 
 # ---------------------------------------------------------------------------
@@ -193,19 +199,22 @@ class TestPreview:
 # ---------------------------------------------------------------------------
 
 
-class TestDownload:
-    @pytest.mark.asyncio
-    async def test_invalid_filter_raises(self, service):
-        """Should raise ValueError for an invalid display filter."""
-        with pytest.raises(ValueError, match="Invalid display filter"):
-            await service.download_filtered("")
-
-    @pytest.mark.asyncio
-    async def test_no_pcaps_returns_none(self, tmp_path):
-        """Should return None when no PCAP files exist."""
-        svc = PcapSearchService(pcap_dir=str(tmp_path / "empty"))
-        result = await svc.download_filtered("tcp port 80")
-        assert result is None
+# OLD CODE START — NET-189: the download streams from the capture index; see
+# TestStreamedDownload below
+# class TestDownload:
+#     @pytest.mark.asyncio
+#     async def test_invalid_filter_raises(self, service):
+#         """Should raise ValueError for an invalid display filter."""
+#         with pytest.raises(ValueError, match="Invalid display filter"):
+#             await service.download_filtered("")
+#
+#     @pytest.mark.asyncio
+#     async def test_no_pcaps_returns_none(self, tmp_path):
+#         """Should return None when no PCAP files exist."""
+#         svc = PcapSearchService(pcap_dir=str(tmp_path / "empty"))
+#         result = await svc.download_filtered("tcp port 80")
+#         assert result is None
+# OLD CODE END
 
 
 # ---------------------------------------------------------------------------
@@ -264,14 +273,17 @@ class TestFilterArgvBoundary:
         assert argv[-2] == _DISPLAY_FILTER
         assert _DISPLAY_FILTER not in argv[argv.index("-c") + 1]
 
-    @pytest.mark.asyncio
-    async def test_download_passes_filter_as_single_arg(self, service, recorded_argv):
-        path = await service.download_filtered(_DISPLAY_FILTER)
-        try:
-            _assert_filter_is_one_arg(recorded_argv)
-        finally:
-            if path:
-                os.unlink(path)
+    # OLD CODE START — NET-189: the download's filter is a job argument now
+    # (TestStreamedDownload.test_the_job_gets_the_window_filter_and_files_as_arguments)
+    # @pytest.mark.asyncio
+    # async def test_download_passes_filter_as_single_arg(self, service, recorded_argv):
+    #     path = await service.download_filtered(_DISPLAY_FILTER)
+    #     try:
+    #         _assert_filter_is_one_arg(recorded_argv)
+    #     finally:
+    #         if path:
+    #             os.unlink(path)
+    # OLD CODE END
 
 
 def _assert_every_exec_is_bounded(calls):
@@ -295,16 +307,19 @@ class TestNoOrphanedTshark:
         await service.preview(str(pcap_dir / "capture_001.pcap"))
         _assert_every_exec_is_bounded(recorded_argv)
 
-    @pytest.mark.asyncio
-    async def test_merge_and_filter_download_are_bounded(self, service, recorded_argv):
-        path = await service.download_filtered(_DISPLAY_FILTER)
-        try:
-            # two files in the fixture: mergecap, then the filter pass
-            assert any("mergecap" in argv for argv in recorded_argv)
-            _assert_every_exec_is_bounded([a for a in recorded_argv if "rm" not in a])
-        finally:
-            if path:
-                os.unlink(path)
+    # OLD CODE START — NET-189: the download runs under run_in_tshark's supervisor and
+    # watchdog (test_container_exec.py), with one deadline for the request
+    # @pytest.mark.asyncio
+    # async def test_merge_and_filter_download_are_bounded(self, service, recorded_argv):
+    #     path = await service.download_filtered(_DISPLAY_FILTER)
+    #     try:
+    #         # two files in the fixture: mergecap, then the filter pass
+    #         assert any("mergecap" in argv for argv in recorded_argv)
+    #         _assert_every_exec_is_bounded([a for a in recorded_argv if "rm" not in a])
+    #     finally:
+    #         if path:
+    #             os.unlink(path)
+    # OLD CODE END
 
 
 class _Proc:
@@ -564,11 +579,13 @@ class TestFailuresAreErrors:
         assert done["error"]
         assert done["count"] == 0
 
-    @pytest.mark.asyncio
-    async def test_failed_download_raises_not_no_match(self, service, fake_tshark):
-        fake_tshark.result = (b"", 1)
-        with pytest.raises(RuntimeError):
-            await service.download_filtered("dns")
+    # OLD CODE START — NET-189: see TestStreamedDownload.test_a_failed_read_is_an_error
+    # @pytest.mark.asyncio
+    # async def test_failed_download_raises_not_no_match(self, service, fake_tshark):
+    #     fake_tshark.result = (b"", 1)
+    #     with pytest.raises(RuntimeError):
+    #         await service.download_filtered("dns")
+    # OLD CODE END
 
 
 # stderr of TShark 4.0.17 (the debian:bookworm container) refusing a filter, exit code 2
@@ -674,3 +691,278 @@ class TestContains:
     async def test_preview_rejects_dot_dot(self, service, pcap_dir):
         with pytest.raises(ValueError, match="within the configured"):
             await service.preview(str(pcap_dir / ".." / ".." / "etc" / "passwd"))
+
+
+# ---------------------------------------------------------------------------
+# NET-189: listing by span, and the streamed "Download filtered"
+# ---------------------------------------------------------------------------
+
+T = 1_794_502_800  # 2026-11-12T17:00:00Z
+
+
+def _iso(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, timezone.utc).isoformat()
+
+
+def _named(tmp_path, name: str, mtime: float):
+    path = tmp_path / name
+    path.write_bytes(b"\xd4\xc3\xb2\xa1" + b"\x00" * 20)
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+class TestListingBySpan:
+    """The file list and the background search keep a file that can hold the range's packets."""
+
+    def _names(self, tmp_path, start, end):
+        svc = PcapSearchService(pcap_dir=str(tmp_path))
+        return {f["name"] for f in svc.get_available_pcaps(_iso(start), _iso(end))}
+
+    def test_a_file_that_started_in_the_range_is_listed_though_written_after_it(
+        self, tmp_path
+    ):
+        _named(tmp_path, f"mnetsniff-enp4s0_{T - 40}.pcap", T + 5)  # before B
+        _named(tmp_path, f"mnetsniff-enp4s0_{T + 5}.pcap", T + 50)  # B: starts inside
+        # the bug: mtime alone left B out of a 20 s window straddling its start
+        assert self._names(tmp_path, T - 5, T + 15) == {
+            f"mnetsniff-enp4s0_{T - 40}.pcap",
+            f"mnetsniff-enp4s0_{T + 5}.pcap",
+        }
+
+    def test_packets_up_to_the_writer_lag_before_the_name_count(self, tmp_path):
+        _named(tmp_path, f"mnetsniff-enp4s0_{T + 25}.pcap", T + 60)
+        assert self._names(tmp_path, T - 10, T - 2)  # 27 s before the name: listed
+
+    def test_a_file_named_well_after_the_range_is_not_listed(self, tmp_path):
+        _named(tmp_path, f"mnetsniff-enp4s0_{T + 45}.pcap", T + 80)
+        assert self._names(tmp_path, T - 10, T + 10) == set()
+
+    def test_a_name_without_a_start_time_is_listed_when_written_after_from(
+        self, tmp_path
+    ):
+        _named(tmp_path, "renamed.pcap", T + 500)
+        _named(tmp_path, "older.pcap", T - 500)
+        assert self._names(tmp_path, T, T + 10) == {"renamed.pcap"}
+
+    def test_a_time_without_an_offset_is_utc(self, tmp_path):
+        _named(tmp_path, "renamed.pcap", T + 5)
+        svc = PcapSearchService(pcap_dir=str(tmp_path))
+        naive = datetime.fromtimestamp(T, timezone.utc).replace(tzinfo=None).isoformat()
+        assert len(svc.get_available_pcaps(naive, None)) == 1  # was TypeError
+        assert pcap_search_mod._parse_iso(naive) == datetime.fromtimestamp(
+            T, timezone.utc
+        )
+
+
+@pytest.fixture
+def tshark(monkeypatch):
+    fake = FakeTshark()
+    monkeypatch.setattr(pcap_search_mod, "run_in_tshark", fake)
+    return fake
+
+
+def _svc(tmp_path, index, slots=2):
+    return PcapSearchService(
+        pcap_dir=str(tmp_path), semaphore=asyncio.Semaphore(slots), index=index
+    )
+
+
+async def _download(svc, filt="tcp", start=T, end=T + 20):
+    chunks: list[bytes] = []
+
+    async def write(chunk: bytes) -> None:
+        chunks.append(chunk)
+
+    found = await svc.download_filtered(filt, _iso(start), _iso(end), write)
+    return found, chunks
+
+
+A = capture(f"mnetsniff-enp4s0_{T - 40}.pcap", f"{T - 40}.5", f"{T + 4}.9")
+B = capture(f"mnetsniff-enp4s0_{T + 5}.pcap", f"{T + 5}.0", f"{T + 49}.1")
+
+
+class TestStreamedDownload:
+    @pytest.mark.asyncio
+    async def test_every_file_holding_the_window_is_read_and_streamed(
+        self, tmp_path, tshark
+    ):
+        found, chunks = await _download(_svc(tmp_path, FakeIndex([A, B])))
+        assert found is True
+        assert chunks == tshark.chunks  # in order, nothing held back
+        (job,) = tshark.jobs(ps.FILTER_DOWNLOAD_JOB)
+        assert job["args"][3:] == [A[0].container_path, B[0].container_path]
+
+    @pytest.mark.asyncio
+    async def test_files_come_from_packet_times_not_names_or_mtimes(
+        self, tmp_path, tshark
+    ):
+        # its name and mtime say "inside the window", its packets don't
+        liar = capture(
+            f"x_{T + 5}.pcap", "1600000000", "1600000100", mtime_ns=T * 10**9
+        )
+        # its name and mtime say "long before", its packets are inside
+        renamed = capture("renamed_1600000000.pcap", f"{T + 1}", f"{T + 2}")
+        await _download(_svc(tmp_path, FakeIndex([liar, renamed])))
+        (job,) = tshark.jobs(ps.FILTER_DOWNLOAD_JOB)
+        assert job["args"][3:] == [renamed[0].container_path]
+
+    @pytest.mark.asyncio
+    async def test_the_job_gets_the_window_filter_and_files_as_arguments(
+        self, tmp_path, tshark
+    ):
+        crashed = capture("crashed.pcap", f"{T + 1}", f"{T + 2}", cut_short=True)
+        recent = capture("recent.pcap", f"{T + 3}", f"{T + 4}", mtime_ns=time.time_ns())
+        filt = "ip.src == 10.0.0.1 || (tcp.port == 443 && !dns)"
+        svc = _svc(tmp_path, FakeIndex([A, crashed, recent]))
+        chunks: list[bytes] = []
+
+        async def write(chunk: bytes) -> None:
+            chunks.append(chunk)
+
+        start, end = "2026-11-12T17:00:00.123Z", "2026-11-12T17:00:20.000Z"
+        assert await svc.download_filtered(filt, start, end, write)
+        (check,) = tshark.jobs(ps.CHECK_JOB)
+        (job,) = tshark.jobs(ps.FILTER_DOWNLOAD_JOB)
+        assert check["args"] == [filt]
+        assert job["args"] == [
+            f"{T}.123",
+            f"{T + 20}",
+            filt,
+            A[0].container_path,
+            "cut:/pcap/crashed.pcap",  # may end in a partly written packet
+            "cut:/pcap/recent.pcap",  # still being written
+        ]
+        assert filt not in job["job"]  # the script text is constant
+        assert " -M" not in ps.FILTER_DOWNLOAD_JOB  # no session reset: exact matches
+        assert job["max"] == 2 * 3 * 1_000_000 + 1024 * 1024
+        assert 0 < job["deadline_s"] <= 240
+
+    @pytest.mark.asyncio
+    async def test_no_file_holding_the_window_is_false_and_reads_nothing(
+        self, tmp_path, tshark
+    ):
+        found, chunks = await _download(
+            _svc(tmp_path, FakeIndex([A])), start=T + 100, end=T + 120
+        )
+        assert (found, chunks, tshark.calls) == (False, [], [])
+
+    @pytest.mark.asyncio
+    async def test_without_from_the_window_starts_in_2000(self, tmp_path, tshark):
+        index = FakeIndex([A])
+        await _svc(tmp_path, index).download_filtered("tcp", None, _iso(T), _noop)
+        assert index.asked[0][0] == 946684800
+
+    @pytest.mark.asyncio
+    async def test_still_indexing_reads_nothing(self, tmp_path, tshark):
+        with pytest.raises(StillIndexing):
+            await _download(_svc(tmp_path, FakeIndex([A], pending=12)))
+        assert tshark.calls == []
+
+    @pytest.mark.asyncio
+    async def test_a_failed_file_refuses_the_download_whatever_its_mtime(
+        self, tmp_path, tshark
+    ):
+        # capinfos couldn't read it, so nobody knows its packet times; an old mtime
+        # proves nothing (round 2 ignored such a file)
+        for broken in (failed("broken.pcap"), failed("new.pcap", time.time_ns())):
+            svc = _svc(tmp_path, FakeIndex([A, B], [broken]))
+            with pytest.raises(ValueError, match=f"couldn't read {broken[0].id}, so"):
+                await _download(svc)
+        assert tshark.calls == []
+
+    @pytest.mark.asyncio
+    async def test_many_failed_files_are_named_up_to_five(self, tmp_path, tshark):
+        broken = [failed(f"b{i}.pcap") for i in range(7)]
+        with pytest.raises(ValueError, match=r"b4\.pcap and 2 more, so"):
+            await _download(_svc(tmp_path, FakeIndex([A], broken)))
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "files",
+        [
+            # over the packet budget (TShark's memory follows the packet count)
+            [capture("big.pcap", f"{T}", f"{T + 9}", packets=400_001)],
+            # 65 tiny files under the packet budget: 65 editcaps and FIFOs
+            [
+                capture(f"f{i:02}.pcap", f"{T}", f"{T + 9}", packets=10)
+                for i in range(65)
+            ],
+            # over 3 GB under the packet budget
+            [
+                capture(
+                    f"j{i}.pcap", f"{T}", f"{T + 9}", packets=100, size=1_100_000_000
+                )
+                for i in range(3)
+            ],
+        ],
+    )
+    async def test_over_budget_is_refused_before_any_read(
+        self, tmp_path, tshark, files
+    ):
+        with pytest.raises(ValueError, match="One download reads at most 400,000"):
+            await _download(_svc(tmp_path, FakeIndex(files)))
+        assert tshark.calls == []
+
+    @pytest.mark.asyncio
+    async def test_a_refused_filter_is_tsharks_message_before_the_read(
+        self, tmp_path, tshark
+    ):
+        tshark.check = (2, 'tshark: "foo" is neither a field nor a protocol name.')
+        with pytest.raises(ValueError, match="neither a field"):
+            await _download(_svc(tmp_path, FakeIndex([A])), filt="foo")
+        assert tshark.jobs(ps.FILTER_DOWNLOAD_JOB) == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("statuses", "deadline", "stderr", "message"),
+        [
+            ({"tshark": 137}, False, "", "out of memory"),
+            ({"tshark": 143}, True, "", "longer than the time allowed"),
+            ({"mergecap": 2}, False, "", "Reading the capture files failed"),
+            ({}, False, 'editcap: The file "x" appears to be damaged.', "failed"),
+        ],
+    )
+    async def test_a_failed_read_is_an_error(
+        self, tmp_path, tshark, statuses, deadline, stderr, message
+    ):
+        tshark.statuses = {**tshark.statuses, **statuses}
+        tshark.deadline, tshark.stderr = deadline, stderr
+        with pytest.raises(RuntimeError, match=message):
+            await _download(_svc(tmp_path, FakeIndex([A, B])))
+
+    @pytest.mark.asyncio
+    async def test_a_second_download_is_busy_and_takes_no_slot(self, tmp_path, tshark):
+        tshark.hold = asyncio.Event()
+        svc = _svc(tmp_path, FakeIndex([A]))
+        first = asyncio.create_task(_download(svc))
+        await tshark.started.wait()
+        slots = svc._semaphore._value
+        try:
+            with pytest.raises(ReaderBusy, match="Another download is running"):
+                await _download(svc)
+            assert svc._semaphore._value == slots
+        finally:
+            tshark.hold.set()
+        assert (await first)[0] is True
+
+    @pytest.mark.asyncio
+    async def test_busy_reader_slots_are_waited_for_briefly(
+        self, tmp_path, tshark, monkeypatch
+    ):
+        monkeypatch.setattr(pcap_search_mod, "_DOWNLOAD_SLOT_WAIT_SECONDS", 0.05)
+        with pytest.raises(ReaderBusy):
+            await _download(_svc(tmp_path, FakeIndex([A]), slots=0))
+        assert tshark.calls == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("filt", "start", "end"), [("", T, T + 1), ("tcp", T, T)])
+    async def test_a_bad_filter_or_window_is_refused(
+        self, tmp_path, tshark, filt, start, end
+    ):
+        with pytest.raises(ValueError):
+            await _download(_svc(tmp_path, FakeIndex([A])), filt, start, end)
+        assert tshark.calls == []
+
+
+async def _noop(_chunk: bytes) -> None:
+    return None

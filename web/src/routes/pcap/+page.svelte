@@ -80,6 +80,9 @@
 
 	// Filter
 	let bpfFilter = $state('');
+	// NET-189: the download's own window (datetime-local text); both empty = the page's range
+	let downloadFrom = $state('');
+	let downloadTo = $state('');
 	let loading = $state(false);
 	let error = $state('');
 
@@ -508,10 +511,34 @@
 		bpfFilter = PROTO_FILTER_MAP[proto] ?? proto.toLowerCase();
 	}
 
+	// OLD CODE START — NET-189: the download could only take the page's range (1 hour at least),
+	// far more than one download can read at busy times
+	// function downloadFiltered() {
+	// 	if (!bpfFilter.trim()) return;
+	// 	const { from, to } = getTimeRange();
+	// 	window.open(getDownloadUrl(bpfFilter, { from, to }), '_blank');
+	// }
+	// OLD CODE END
+
+	/** The download's window: its own start and end when both are set, else the page's range; a string says what's wrong. */
+	function downloadWindow(): { from: string; to: string } | string {
+		if (!downloadFrom && !downloadTo) return getTimeRange();
+		const from = new Date(downloadFrom).getTime();
+		const to = new Date(downloadTo).getTime();
+		if (!Number.isFinite(from) || !Number.isFinite(to)) return 'Set both a start and an end for the download, or clear both.';
+		if (to <= from) return 'The download’s end has to be after its start.';
+		return { from: new Date(from).toISOString(), to: new Date(to).toISOString() };
+	}
+
 	function downloadFiltered() {
 		if (!bpfFilter.trim()) return;
-		const { from, to } = getTimeRange();
-		window.open(getDownloadUrl(bpfFilter, { from, to }), '_blank');
+		const span = downloadWindow();
+		if (typeof span === 'string') {
+			error = span;
+			return;
+		}
+		error = '';
+		window.open(getDownloadUrl(bpfFilter, span), '_blank');
 	}
 
 	function downloadFile(file: string) {
@@ -762,6 +789,16 @@
 			</button>
 		</div>
 		<div class="toolbar">
+			<label class="word" for="pcap-download-from">Download from</label>
+			<input id="pcap-download-from" class="input when" type="datetime-local" step="1" bind:value={downloadFrom} />
+			<label class="word" for="pcap-download-to">to</label>
+			<input id="pcap-download-to" class="input when" type="datetime-local" step="1" bind:value={downloadTo} />
+		</div>
+		<p class="field-help download-help">
+			Download filtered saves the {range.words} unless you set a start and an end here. One download reads a limited
+			number of packets, so keep the window short; a window that holds too many opens a message saying how many.
+		</p>
+		<div class="toolbar">
 			<Pills
 				options={QUICK_FILTERS.map((qf) => ({ value: qf.filter as string, label: qf.label as string }))}
 				value={bpfFilter}
@@ -917,6 +954,10 @@
 	.filter-field { display: flex; flex: 1 1 28rem; min-width: 0; }
 	.filter-field :global(.search) { max-width: none; }
 	.search-progress { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); }
+	/* NET-189: the download window's labels and inputs, as on Packet analysis */
+	.word { font-size: var(--text-sm); color: var(--text-3); }
+	.when { width: auto; }
+	.download-help { margin-top: calc(var(--sp-2) * -1); margin-bottom: var(--sp-4); }
 	.note { margin-bottom: var(--sp-3); }
 	.row-actions { display: flex; gap: var(--sp-2); justify-content: flex-end; }
 	/* A long preview scrolls inside the card */
