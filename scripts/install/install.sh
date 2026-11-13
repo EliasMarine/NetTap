@@ -505,6 +505,17 @@ step_firewall() {
     fi
 }
 
+# Cluster status (green, yellow, red) through the service curlrc, the way deploy-malcolm.sh's
+# _opensearch_auth_ok signs in; fails when OpenSearch doesn't answer (NET-211 #5).
+opensearch_health() {
+    local reply
+    reply=$(docker compose -f "${PROJECT_ROOT}/docker/docker-compose.yml" exec -T opensearch \
+        curl --config /var/local/curlrc/.opensearch.primary.curlrc \
+        --insecure --silent --fail "https://localhost:9200/_cluster/health" 2>/dev/null) || return 1
+    python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" <<< "$reply" 2>/dev/null \
+        || echo "unknown"
+}
+
 # ===========================================================================
 # STEP 8: Post-install verification
 # ===========================================================================
@@ -644,9 +655,13 @@ step_verify() {
         fi
 
         # OpenSearch check
-        if curl -skf "https://localhost:9200/_cluster/health" > /dev/null 2>&1; then
-            local health
-            health=$(curl -sk "https://localhost:9200/_cluster/health" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null) || health="unknown"
+        # OLD CODE START — NET-211 #5: no credentials, so OpenSearch answered 401 and this always said "not responding"
+        # if curl -skf "https://localhost:9200/_cluster/health" > /dev/null 2>&1; then
+        #     local health
+        #     health=$(curl -sk "https://localhost:9200/_cluster/health" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null) || health="unknown"
+        # OLD CODE END
+        local health
+        if health=$(opensearch_health); then
             if [[ "$health" == "green" || "$health" == "yellow" ]]; then
                 status_line OK "OpenSearch cluster health: ${health}"
                 (( ++checks_passed ))

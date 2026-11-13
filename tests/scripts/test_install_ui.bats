@@ -356,7 +356,8 @@ print("rc=%d" % p.returncode)
 # OpenSearch not answering yet, services enabled, kernel tuned.
 VERIFY_STUBS='
 ip() { return 0; }
-docker() { case "$1" in info) return 0 ;; compose) printf "a\nb\n" ;; esac; }
+# OLD CODE: docker() { case "$1" in info) return 0 ;; compose) printf "a\nb\n" ;; esac; } (NET-211 #5: the check now asks through compose exec)
+docker() { case "$1 ${4:-}" in info*) return 0 ;; "compose exec") return 1 ;; compose*) printf "a\nb\n" ;; esac; }
 curl() { return 1; }
 systemctl() { return 0; }
 sysctl() { echo 262144; }'
