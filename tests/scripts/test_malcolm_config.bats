@@ -531,6 +531,26 @@ assert hashlib.sha1(sys.stdin.buffer.read() + raw[20:]).digest() == raw[:20]
 ' "${line#'admin:{SSHA}'}"
 }
 
+_net251_assert_created_600() {  # chmod is a no-op in the caller, so only the mode at creation counts
+    rm -rf "${TEST_TMPDIR}/docker/auth"
+    generate_auth "${TEST_TMPDIR}/docker/auth" > /dev/null 2>&1 < /dev/null
+    [ "$(_mode "${TEST_TMPDIR}/docker/auth/.admin-password")" = "600" ]
+    [ "$(_mode "${TEST_TMPDIR}/docker/auth/htpasswd")" = "600" ]
+}
+
+@test "generate_auth (NET-251): .admin-password and htpasswd are created 600, never 644 until the chmod" {
+    _source_malcolm_config
+    unset NETTAP_ADMIN_PASSWORD  # a generated password, so .admin-password is written too
+    chmod() { :; }
+    umask 022  # the usual umask, under which both files were created 644
+    if type -P htpasswd > /dev/null; then _net251_assert_created_600; fi
+    command() {  # and the python3 fallback, which every box without htpasswd takes
+        if [[ "$*" == "-v htpasswd" ]]; then return 1; fi
+        builtin command "$@"
+    }
+    _net251_assert_created_600
+}
+
 # ==========================================================================
 # generate_compose_env
 # ==========================================================================
