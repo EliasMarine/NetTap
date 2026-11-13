@@ -223,7 +223,8 @@ step_dependencies() {
     # Skip if already available (docker-ce bundles it).
     if docker compose version &>/dev/null; then
         debug "Docker Compose already available, skipping plugin install"
-    elif apt-get install -y -qq docker-compose-plugin 2>/dev/null; then
+    # OLD CODE: elif apt-get install -y -qq docker-compose-plugin 2>/dev/null; then (NET-211 #8: ran in --dry-run)
+    elif run apt-get install -y -qq docker-compose-plugin 2>/dev/null; then
         true  # installed from Docker official repo
     else
         log "docker-compose-plugin not found, trying docker-compose-v2..."
@@ -234,21 +235,67 @@ step_dependencies() {
     run systemctl enable --now docker
     log "Docker enabled and running"
 
-    # Verify docker compose is available
-    if ! docker compose version &>/dev/null; then
+    # Verify docker compose is available (a dry run installed nothing, so there's nothing to check)
+    # OLD CODE: if ! docker compose version &>/dev/null; then (NET-211 #8: stopped every dry run on a fresh box)
+    if [[ "$NETTAP_DRY_RUN" != "true" ]] && ! docker compose version &>/dev/null; then
         error "Docker Compose plugin not available. Install docker-compose-plugin or docker-compose-v2."
     fi
     debug "Docker Compose $(docker compose version --short 2>/dev/null) available"
 
-    # Configure Docker daemon (log rotation, overlay2, DNS)
-    # Ubuntu 24.04 uses systemd-resolved with a stub at 127.0.0.53.
-    # Docker build containers can't reach the stub (different network
-    # namespace), causing DNS timeouts during image builds. We always
-    # ensure daemon.json has explicit DNS servers.
-    local docker_needs_restart="false"
-    if [[ ! -f /etc/docker/daemon.json ]]; then
+    # OLD CODE START — NET-211 #8: moved into configure_docker_daemon (it wrote daemon.json in --dry-run)
+    # # Configure Docker daemon (log rotation, overlay2, DNS)
+    # # Ubuntu 24.04 uses systemd-resolved with a stub at 127.0.0.53.
+    # # Docker build containers can't reach the stub (different network
+    # # namespace), causing DNS timeouts during image builds. We always
+    # # ensure daemon.json has explicit DNS servers.
+    # local docker_needs_restart="false"
+    # if [[ ! -f /etc/docker/daemon.json ]]; then
+    #     log "Configuring Docker daemon..."
+    #     cat > /etc/docker/daemon.json <<'DAEMONJSON'
+    # {
+    # "log-driver": "json-file",
+    # "log-opts": {
+    #     "max-size": "10m",
+    #     "max-file": "3"
+    # },
+    # "storage-driver": "overlay2",
+    # "dns": ["9.9.9.9", "149.112.112.112"]
+    # }
+    # DAEMONJSON
+    #     docker_needs_restart="true"
+    #     log "Docker daemon configured with log rotation and DNS"
+    # elif ! grep -q '"dns"' /etc/docker/daemon.json 2>/dev/null; then
+    #     log "Adding DNS servers to existing Docker daemon config..."
+    #     # Use jq to add dns key without clobbering existing config
+    #     local tmp_json
+    #     tmp_json=$(jq '. + {"dns": ["9.9.9.9", "149.112.112.112"]}' /etc/docker/daemon.json)
+    #     echo "$tmp_json" > /etc/docker/daemon.json
+    #     docker_needs_restart="true"
+    #     log "DNS servers added to daemon.json"
+    # else
+    #     debug "Docker daemon.json already has DNS configured"
+    # fi
+    # if [[ "$docker_needs_restart" == "true" ]]; then
+    #     run systemctl restart docker
+    # fi
+    #
+    # OLD CODE END
+    if configure_docker_daemon; then
+        run systemctl restart docker
+    fi
+
+    log "System dependencies installed"
+}
+
+# Docker daemon settings: log rotation, overlay2 and DNS servers. Ubuntu 24.04 uses
+# systemd-resolved with a stub at 127.0.0.53, which Docker build containers can't reach (different
+# network namespace), so image builds time out on DNS; daemon.json always gets explicit servers.
+# Returns 0 when Docker needs a restart. $1 is the file (tests pass a temp one).
+configure_docker_daemon() {
+    local file="${1:-/etc/docker/daemon.json}" json
+    if [[ ! -f "$file" ]]; then
         log "Configuring Docker daemon..."
-        cat > /etc/docker/daemon.json <<'DAEMONJSON'
+        write_file "$file" <<'DAEMONJSON'
 {
     "log-driver": "json-file",
     "log-opts": {
@@ -259,24 +306,19 @@ step_dependencies() {
     "dns": ["9.9.9.9", "149.112.112.112"]
 }
 DAEMONJSON
-        docker_needs_restart="true"
         log "Docker daemon configured with log rotation and DNS"
-    elif ! grep -q '"dns"' /etc/docker/daemon.json 2>/dev/null; then
-        log "Adding DNS servers to existing Docker daemon config..."
-        # Use jq to add dns key without clobbering existing config
-        local tmp_json
-        tmp_json=$(jq '. + {"dns": ["9.9.9.9", "149.112.112.112"]}' /etc/docker/daemon.json)
-        echo "$tmp_json" > /etc/docker/daemon.json
-        docker_needs_restart="true"
-        log "DNS servers added to daemon.json"
-    else
+        return 0
+    fi
+    if grep -q '"dns"' "$file" 2>/dev/null; then
         debug "Docker daemon.json already has DNS configured"
+        return 1
     fi
-    if [[ "$docker_needs_restart" == "true" ]]; then
-        run systemctl restart docker
-    fi
-
-    log "System dependencies installed"
+    log "Adding DNS servers to existing Docker daemon config..."
+    # jq adds the dns key without clobbering the rest; never write over the file if it can't parse it
+    json=$(jq '. + {"dns": ["9.9.9.9", "149.112.112.112"]}' "$file") \
+        || error "Couldn't read ${file} as JSON. Fix it, then run the installer again."
+    write_file "$file" <<< "$json"
+    log "DNS servers added to daemon.json"
 }
 
 # ===========================================================================
@@ -288,7 +330,8 @@ step_kernel_tuning() {
     # Increase max map count for OpenSearch
     local sysctl_file="/etc/sysctl.d/99-nettap.conf"
     if [[ ! -f "$sysctl_file" ]]; then
-        cat > "$sysctl_file" <<'SYSCTLEOF'
+        # OLD CODE: cat > "$sysctl_file" <<'SYSCTLEOF' (NET-211 #8: wrote in --dry-run)
+        write_file "$sysctl_file" <<'SYSCTLEOF'
 # NetTap kernel tuning
 
 # Required by OpenSearch
@@ -383,7 +426,9 @@ step_malcolm() {
         deploy_args+=(--dry-run)
     fi
 
-    "${SCRIPT_DIR}/deploy-malcolm.sh" "${deploy_args[@]}"
+    # OLD CODE: "${SCRIPT_DIR}/deploy-malcolm.sh" "${deploy_args[@]}" (NET-211 #8)
+    # Through run: its own --dry-run still writes repo config and polls OpenSearch for minutes
+    run "${SCRIPT_DIR}/deploy-malcolm.sh" "${deploy_args[@]}"
 }
 
 # ===========================================================================
@@ -395,7 +440,8 @@ step_systemd() {
     local service_file="/etc/systemd/system/nettap.service"
     local compose_file="${PROJECT_ROOT}/docker/docker-compose.yml"
 
-    cat > "$service_file" <<SERVICEEOF
+    # OLD CODE: cat > "$service_file" <<SERVICEEOF (NET-211 #8: wrote in --dry-run)
+    write_file "$service_file" <<SERVICEEOF
 [Unit]
 Description=NetTap Network Visibility Appliance
 Documentation=https://github.com/EliasMarine/NetTap

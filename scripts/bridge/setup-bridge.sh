@@ -190,7 +190,8 @@ preflight_checks() {
     done
 
     # Verify kernel bridge module
-    if ! modprobe bridge 2>/dev/null; then
+    # OLD CODE: if ! modprobe bridge 2>/dev/null; then (NET-211 #8: loaded a module in --dry-run)
+    if ! run modprobe bridge 2>/dev/null; then
         error "Kernel bridge module is not available. Ensure your kernel supports bridging."
     fi
     debug "Bridge kernel module loaded"
@@ -400,7 +401,8 @@ if [[ "$MODE_PERSIST" == "true" ]]; then
 
     # ---- Netplan config ----
     local_netplan="/etc/netplan/10-nettap-bridge.yaml"
-    cat > "$local_netplan" <<NETPLAN_EOF
+    # OLD CODE: cat > "$local_netplan" <<NETPLAN_EOF (NET-211 #8: wrote in --dry-run)
+    write_file "$local_netplan" <<NETPLAN_EOF
 # NetTap bridge configuration — managed by setup-bridge.sh
 # Do not edit manually; re-run setup-bridge.sh --persist to regenerate.
 network:
@@ -426,11 +428,12 @@ network:
         stp: false
         forward-delay: 0
 NETPLAN_EOF
-    chmod 600 "$local_netplan"
+    run chmod 600 "$local_netplan"
     log "Netplan config written to ${local_netplan}"
 
     # ---- Sysctl persistence ----
-    cat > /etc/sysctl.d/99-nettap-bridge.conf <<SYSCTL_EOF
+    # OLD CODE: cat > /etc/sysctl.d/99-nettap-bridge.conf <<SYSCTL_EOF (NET-211 #8)
+    write_file /etc/sysctl.d/99-nettap-bridge.conf <<SYSCTL_EOF
 # NetTap bridge performance settings
 net.bridge.bridge-nf-call-iptables = 0
 net.bridge.bridge-nf-call-ip6tables = 0
@@ -444,7 +447,8 @@ SYSCTL_EOF
     # where bridges without carrier end up admin DOWN despite
     # ActivationPolicy=always-up. This oneshot service is the proven
     # workaround: force the bridge UP after networkd settles on boot.
-    cat > /etc/systemd/system/nettap-bridge.service <<SYSD_EOF
+    # OLD CODE: cat > /etc/systemd/system/nettap-bridge.service <<SYSD_EOF (NET-211 #8)
+    write_file /etc/systemd/system/nettap-bridge.service <<SYSD_EOF
 [Unit]
 Description=NetTap bridge UP and promiscuous mode
 After=systemd-networkd.service network-online.target
@@ -466,8 +470,9 @@ SYSD_EOF
 
     # Clean up legacy service name if it exists
     if systemctl is-enabled nettap-bridge-promisc.service >/dev/null 2>&1; then
-        systemctl disable nettap-bridge-promisc.service 2>/dev/null || true
-        rm -f /etc/systemd/system/nettap-bridge-promisc.service
+        # OLD CODE: plain systemctl disable / rm -f (NET-211 #8: ran in --dry-run)
+        run systemctl disable nettap-bridge-promisc.service 2>/dev/null || true
+        run rm -f /etc/systemd/system/nettap-bridge-promisc.service
         debug "Migrated legacy nettap-bridge-promisc.service → nettap-bridge.service"
     fi
 
@@ -486,7 +491,8 @@ SYSD_EOF
         if [[ -n "$mgmt_ip" ]] && [[ ! "$MGMT_INTERFACE" =~ ^wl ]]; then
             mgmt_netmask="${MGMT_NETMASK:-255.255.255.0}"
             # Re-write netplan to include mgmt under ethernets (not bridges)
-            cat > "$local_netplan" <<NETPLAN_MGMT_EOF
+            # OLD CODE: cat > "$local_netplan" <<NETPLAN_MGMT_EOF (NET-211 #8)
+            write_file "$local_netplan" <<NETPLAN_MGMT_EOF
 # NetTap bridge configuration — managed by setup-bridge.sh
 # Do not edit manually; re-run setup-bridge.sh --persist to regenerate.
 network:
@@ -516,7 +522,7 @@ network:
         stp: false
         forward-delay: 0
 NETPLAN_MGMT_EOF
-            chmod 600 "$local_netplan"
+            run chmod 600 "$local_netplan"
             log "Management interface ${MGMT_INTERFACE} (static IP) added to netplan"
         else
             debug "Management interface ${MGMT_INTERFACE} left under NetworkManager (Wi-Fi or DHCP)"
@@ -526,7 +532,8 @@ NETPLAN_MGMT_EOF
     # ---- Tell NetworkManager to leave bridge interfaces alone ----
     if systemctl is-active --quiet NetworkManager 2>/dev/null; then
         nm_conf="/etc/NetworkManager/conf.d/99-nettap-unmanaged.conf"
-        cat > "$nm_conf" <<NM_EOF
+        # OLD CODE: cat > "$nm_conf" <<NM_EOF (NET-211 #8)
+        write_file "$nm_conf" <<NM_EOF
 # NetTap: prevent NetworkManager from managing bridge interfaces
 [keyfile]
 unmanaged-devices=interface-name:${BRIDGE_NAME};interface-name:${WAN_INTERFACE};interface-name:${LAN_INTERFACE}
@@ -543,7 +550,7 @@ NM_EOF
     # but netplan generates /run/systemd/network/10-netplan-br0.network
     # which wins alphabetically. The standalone file was never read.
     if [[ -f /etc/systemd/network/10-nettap-bridge.network ]]; then
-        rm -f /etc/systemd/network/10-nettap-bridge.network
+        run rm -f /etc/systemd/network/10-nettap-bridge.network
         debug "Removed legacy standalone networkd override (was shadowed by netplan)"
     fi
 

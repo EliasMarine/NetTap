@@ -146,3 +146,88 @@ STUB
     [ "$(grep -c '9443' "${FW_DIR}/calls")" -eq 0 ]
     rm -rf "$FW_DIR"
 }
+
+# ---------------------------------------------------------------------------
+# NET-211 #8: --dry-run must write nothing
+# ---------------------------------------------------------------------------
+_strict() {
+    run bash -c "set -euo pipefail; source '$INSTALL_SH'; NETTAP_UI=plain; $1"
+}
+
+@test "NET-211 #8: write_file writes stdin, and under --dry-run only names the file" {
+    local dir; dir="$(mktemp -d)"
+    _strict "write_file '$dir/a' <<< 'hello'"
+    [ "$status" -eq 0 ]
+    [ "$(cat "$dir/a")" = "hello" ]
+    _strict "NETTAP_DRY_RUN=true; write_file '$dir/b' <<< 'hello'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"[DRY-RUN] write $dir/b"* ]]
+    [ ! -e "$dir/b" ]
+    rm -rf "$dir"
+}
+
+@test "NET-211 #8: the dry run writes no sysctl file and no nettap.service" {
+    _strict "NETTAP_DRY_RUN=true; sysctl() { :; }; systemctl() { :; }; step_kernel_tuning; step_systemd"
+    [ "$status" -eq 0 ]
+    if [[ ! -e /etc/sysctl.d/99-nettap.conf ]]; then
+        [[ "$output" == *"[DRY-RUN] write /etc/sysctl.d/99-nettap.conf"* ]]
+    fi
+    [[ "$output" == *"[DRY-RUN] write /etc/systemd/system/nettap.service"* ]]
+}
+
+@test "NET-211 #8: the dry run installs nothing and doesn't stop at the missing Compose plugin" {
+    _strict "NETTAP_DRY_RUN=true
+        apt-get() { echo REAL-APT-GET; }
+        dpkg() { return 1; }
+        docker() { return 1; }
+        systemctl() { echo REAL-SYSTEMCTL; }
+        configure_docker_daemon() { return 1; }
+        step_dependencies"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"[DRY-RUN] apt-get install -y -qq docker-compose-plugin"* ]]
+    [[ "$output" != *"REAL-"* ]]
+    [[ "$output" != *"Docker Compose plugin not available"* ]]
+}
+
+@test "NET-211 #8: the dry run doesn't run deploy-malcolm.sh, it names it" {
+    local dir; dir="$(mktemp -d)"
+    printf '#!/usr/bin/env bash\necho ran >> "%s/calls"\n' "$dir" > "$dir/deploy-malcolm.sh"
+    chmod +x "$dir/deploy-malcolm.sh"
+    _strict "NETTAP_DRY_RUN=true; SCRIPT_DIR='$dir'; step_malcolm"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"[DRY-RUN] $dir/deploy-malcolm.sh --dry-run"* ]]
+    [ ! -e "$dir/calls" ]
+    rm -rf "$dir"
+}
+
+@test "NET-211 #8: configure_docker_daemon creates or extends daemon.json, and writes nothing in a dry run" {
+    local dir; dir="$(mktemp -d)"
+    # dry run, no file: names it, writes nothing, still asks for a restart
+    _strict "NETTAP_DRY_RUN=true; configure_docker_daemon '$dir/daemon.json'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"[DRY-RUN] write $dir/daemon.json"* ]]
+    [ ! -e "$dir/daemon.json" ]
+    # real run, no file: NetTap's settings
+    _strict "configure_docker_daemon '$dir/daemon.json'"
+    [ "$status" -eq 0 ]
+    [ "$(jq -c .dns "$dir/daemon.json")" = '["9.9.9.9","149.112.112.112"]' ]
+    [ "$(jq -r '."storage-driver"' "$dir/daemon.json")" = "overlay2" ]
+    # an owner's file without dns: dns added, the rest kept; a dry run leaves it as it was
+    printf '{"data-root": "/srv/docker"}\n' > "$dir/daemon.json"
+    _strict "NETTAP_DRY_RUN=true; configure_docker_daemon '$dir/daemon.json'"
+    [ "$(cat "$dir/daemon.json")" = '{"data-root": "/srv/docker"}' ]
+    _strict "configure_docker_daemon '$dir/daemon.json'"
+    [ "$status" -eq 0 ]
+    [ "$(jq -r '."data-root"' "$dir/daemon.json")" = "/srv/docker" ]
+    [ "$(jq -c .dns "$dir/daemon.json")" = '["9.9.9.9","149.112.112.112"]' ]
+    # dns already set: untouched, no restart (status 1)
+    _strict "configure_docker_daemon '$dir/daemon.json'"
+    [ "$status" -eq 1 ]
+    # not JSON: stops with a message, the file is kept
+    printf 'not json\n' > "$dir/daemon.json"
+    _strict "configure_docker_daemon '$dir/daemon.json'"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Couldn't read $dir/daemon.json as JSON"* ]]
+    [ "$(cat "$dir/daemon.json")" = "not json" ]
+    rm -rf "$dir"
+}
