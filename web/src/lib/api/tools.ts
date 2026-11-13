@@ -126,6 +126,32 @@ export interface SslCertResult {
 	error?: string;
 }
 
+export type ThroughputDirection = 'upload' | 'download';
+
+/** NET-266: the way out to the peer (`ip route get` + sysfs). Speed and MTU are null when unknown. */
+export interface ThroughputPath {
+	interface: string;
+	source_ip: string | null;
+	wifi: boolean;
+	speed_mbps: number | null;
+	mtu: number | null;
+}
+
+/** NET-266: one iperf3 run in one direction. bits_per_second is null when it failed (see error). */
+export interface ThroughputResult {
+	peer: string;
+	resolved_ip: string | null;
+	port: number;
+	direction: ThroughputDirection;
+	duration: number;
+	bits_per_second: number | null;
+	/** Upload only (TCP retransmits on NetTap's side); null for download */
+	retransmits: number | null;
+	path: ThroughputPath | null;
+	capture: { mode: string | null; interface: string | null; has_ip: boolean | null };
+	error: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Fetch helpers
 // ---------------------------------------------------------------------------
@@ -315,5 +341,28 @@ export async function sslCertInspect(
 		};
 	}
 
+	return res.json();
+}
+
+/**
+ * NET-266: one LAN throughput test in one direction (iperf3 on NetTap against `iperf3 -s` on the peer).
+ * Throws with the daemon's sentence when the request is refused: bad input, a peer outside the
+ * local ranges, or a test already running.
+ */
+export async function throughput(
+	host: string,
+	port: number,
+	duration: number,
+	direction: ThroughputDirection
+): Promise<ThroughputResult> {
+	const res = await fetch('/api/tools/throughput', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ host, port, duration, direction }),
+	});
+	if (!res.ok) {
+		const data = await res.json().catch(() => ({}));
+		throw new Error(data.error || `Throughput test failed (HTTP ${res.status})`);
+	}
 	return res.json();
 }

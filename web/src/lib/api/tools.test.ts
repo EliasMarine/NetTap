@@ -6,12 +6,14 @@ import {
 	ping,
 	traceroute,
 	sslCertInspect,
+	throughput,
 	type DnsReconResult,
 	type DnsCompareResult,
 	type MacLookupResult,
 	type PingResult,
 	type TracerouteResult,
 	type SslCertResult,
+	type ThroughputResult,
 } from './tools';
 
 // ---------------------------------------------------------------------------
@@ -406,6 +408,43 @@ describe('tools API client', () => {
 			mockFetchNetworkError();
 
 			await expect(sslCertInspect('example.com')).rejects.toThrow('Failed to fetch');
+		});
+	});
+
+	// -- throughput (NET-266) ---------------------------------------------------
+
+	describe('throughput', () => {
+		const RESULT: ThroughputResult = {
+			peer: 'nas.lan',
+			resolved_ip: '192.168.1.20',
+			port: 5201,
+			direction: 'upload',
+			duration: 10,
+			bits_per_second: 941_000_000,
+			retransmits: 3,
+			path: { interface: 'eno1', source_ip: '192.168.1.199', wifi: false, speed_mbps: 1000, mtu: 1500 },
+			capture: { mode: 'mirror', interface: 'enp4s0', has_ip: false },
+			error: null,
+		};
+
+		it('posts host, port, duration and direction and returns the result', async () => {
+			mockFetchSuccess(RESULT);
+			expect(await throughput('nas.lan', 5201, 10, 'download')).toEqual(RESULT);
+			expect(fetch).toHaveBeenCalledWith('/api/tools/throughput', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ host: 'nas.lan', port: 5201, duration: 10, direction: 'download' }),
+			});
+		});
+
+		it("throws the daemon's sentence when refused", async () => {
+			mockFetchFailure(409, { error: 'A throughput test is already running.' });
+			await expect(throughput('nas.lan', 5201, 10, 'upload')).rejects.toThrow('A throughput test is already running.');
+		});
+
+		it('throws with the status when the reply has no body', async () => {
+			mockFetchFailure(502);
+			await expect(throughput('nas.lan', 5201, 10, 'upload')).rejects.toThrow('Throughput test failed (HTTP 502)');
 		});
 	});
 });
