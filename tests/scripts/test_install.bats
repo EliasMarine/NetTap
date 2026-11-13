@@ -231,3 +231,13 @@ _strict() {
     [ "$(cat "$dir/daemon.json")" = "not json" ]
     rm -rf "$dir"
 }
+
+# NET-211 #10: the header listed --persist-bridge, which parse_args rejects
+@test "NET-211 #10: every option in the header comment is one parse_args accepts" {
+    local opt opts
+    opts="$(sed -n '/^# Options:/,/^# =====/p' "$INSTALL_SH" | grep -oE '^#   (-[a-z], )?--[a-z-]+' | grep -oE -- '--[a-z-]+')"
+    [ -n "$opts" ]
+    for opt in $opts; do
+        grep -qE "^ +(-[a-z]\|)?${opt}\)" "$INSTALL_SH" || { echo "header option not parsed: $opt"; false; }
+    done
+}

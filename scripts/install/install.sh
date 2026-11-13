@@ -12,7 +12,8 @@
 #   --skip-bridge        Skip bridge configuration (if already done)
 #   --skip-pull          Skip Docker image pull (use cached images)
 #   --skip-malcolm       Skip Malcolm deployment (bridge + deps only)
-#   --persist-bridge     Write netplan/systemd for bridge persistence
+# OLD CODE: #   --persist-bridge     Write netplan/systemd for bridge persistence (NET-211 #10: no such option, persistence is the default)
+#   --no-persist-bridge  Don't write persistent bridge config
 #   --defer-bridge       Defer bridge activation until after cable rewiring
 #   --immediate-bridge   (No-op, kept for backwards compatibility)
 #   --non-interactive    Skip interactive prompts (auto-assign NICs)
