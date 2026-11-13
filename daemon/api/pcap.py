@@ -21,11 +21,13 @@ from aiohttp import web
 # OLD CODE START — NET-189: the download streams; no temp file to delete
 # from aiohttp.abc import AbstractStreamWriter
 # OLD CODE END
+from api.error_replies import public_json
 from api.offload import in_thread
 from api.packets import _abort
 from api.time_range import iso_param
 from services.capture_index import StillIndexing
 from services.container_exec import ReaderBusy
+from services.packet_manifest import PacketError
 from services.pcap_search import PcapSearchService
 
 logger = logging.getLogger("nettap.api.pcap")
@@ -316,6 +318,18 @@ async def handle_pcap_download(request: web.Request) -> web.StreamResponse:
         logger.info("filtered download cancelled by the client")
         _abort(request)
         return resp
+    # Written messages (ReaderBusy, StillIndexing, PacketError) go out with public_json: a plain
+    # 5xx reply is cut to "Something went wrong" by api/error_replies.py (NET-189 deploy).
+    except (ReaderBusy, StillIndexing) as exc:  # both raised before the first byte
+        return public_json({"error": str(exc)}, status=503)
+    except PacketError as exc:
+        if resp.prepared:
+            logger.warning("filtered download stopped part-way: %s", exc)
+            _abort(request)
+            return resp
+        return public_json(
+            {"error": f"PCAP download failed: {exc.message}"}, status=exc.status
+        )
     except Exception as exc:
         if resp.prepared:
             logger.warning("filtered download stopped part-way: %s", exc)
@@ -323,8 +337,10 @@ async def handle_pcap_download(request: web.Request) -> web.StreamResponse:
             return resp
         if isinstance(exc, ValueError):
             return web.json_response({"error": str(exc)}, status=400)
-        if isinstance(exc, (ReaderBusy, StillIndexing)):
-            return web.json_response({"error": str(exc)}, status=503)
+        # OLD CODE START — NET-189 deploy: cut to "Something went wrong" by the 5xx filter
+        # if isinstance(exc, (ReaderBusy, StillIndexing)):
+        #     return web.json_response({"error": str(exc)}, status=503)
+        # OLD CODE END
         logger.error("Error downloading filtered PCAP: %s", exc)
         return web.json_response({"error": f"PCAP download failed: {exc}"}, status=500)
 
