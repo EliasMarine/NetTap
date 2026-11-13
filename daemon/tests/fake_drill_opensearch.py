@@ -7,8 +7,9 @@ counts are checked against what OpenSearch would answer, not against canned repl
   case_insensitive), terms (CIDRs match IPs), range on @timestamp, exists, prefix,
   wildcard (with case_insensitive), match_all, match_none;
 - aggregations: filter, missing, sum/min/max/value_count/cardinality (exact), terms (with
-  size, sum_other_doc_count and sub-aggregations), composite (paged with `after`, with
-  missing_bucket, one bucket per value of a multi-valued field), date_range and top_hits
+  size, missing, sum_other_doc_count, sub-aggregations and an order by one of them),
+  composite (paged with `after`, with missing_bucket, one bucket per value of a
+  multi-valued field), date_range and top_hits
   (size, from, sort, _source);
 - hits.total exact with track_total_hits, else stopped at 10,000 as OpenSearch does
   (terminate_after is ignored: the total stays exact, so "any match" reads the same);
@@ -308,11 +309,23 @@ def _one(docs: list, spec: dict) -> dict:
         # OLD CODE END
         groups: dict = {}
         for d in docs:
-            for v in dict.fromkeys(values(d, body["field"])):
+            # NET-249: `missing` groups the documents without the field under that key
+            found = values(d, body["field"]) or (
+                [body["missing"]] if "missing" in body else []
+            )
+            for v in dict.fromkeys(found):
                 groups[v] = [*groups.get(v, []), d]
         if isinstance(body.get("include"), list):  # the exact-values form of include
             groups = {k: v for k, v in groups.items() if k in body["include"]}
         ranked = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+        # NET-249: {"order": {<a metric sub-aggregation>: "desc"}}, largest first, then key
+        ((by, way),) = body.get("order", {"_count": "desc"}).items()
+        if by in sub:
+            ranked = sorted(
+                sorted(ranked, key=lambda kv: kv[0]),
+                key=lambda kv: _one(kv[1], sub[by])["value"] or 0,
+                reverse=way == "desc",
+            )
         size = body.get("size", 10)
         return {
             "buckets": [

@@ -540,6 +540,8 @@ def handle_protocols(request: web.Request) -> web.Response:
     """
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
+    # Reported with the counts, so a protocol bar's link leaves out what it left out (NET-249)
+    excluded = valid_excluded_ips(request.app.get("excluded_ips", []))
 
     query = {
         "size": 0,
@@ -560,9 +562,12 @@ def handle_protocols(request: web.Request) -> web.Response:
                     _time_range_filter(from_ts, to_ts),
                     *_ZEEK_CONN_FILTERS,
                 ],
-                "must_not": build_excluded_ips_filter(
-                    request.app.get("excluded_ips", [])
-                ),
+                # OLD CODE START — NET-249: the list is worked out above so the reply can report it
+                # "must_not": build_excluded_ips_filter(
+                #     request.app.get("excluded_ips", [])
+                # ),
+                # OLD CODE END
+                "must_not": build_excluded_ips_filter(excluded),
             }
         },
         "aggs": {
@@ -653,6 +658,7 @@ def handle_protocols(request: web.Request) -> web.Response:
                 "plain": aggs.get("dns_plain", {}).get("doc_count", 0),
                 "over_tls": aggs.get("dns_over_tls", {}).get("doc_count", 0),
             },
+            "excluded_ips": excluded,
         }
     )
 
