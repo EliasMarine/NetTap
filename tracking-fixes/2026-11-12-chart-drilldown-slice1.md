@@ -3,7 +3,7 @@
 **Linear:** NET-249 (slice 1 of 4)
 **Branch:** `feature/chart-drilldown-net249` (web) with `feature/chart-drilldown-net249-daemon` merged in, both from `main` 233d0624
 **Plan:** `.codex-review/2026-11-12-211442-chart-drilldown-slice1/PLAN.md` (Codex: round 1 REVISE, 9 findings; round 2 REVISE, 4; round 3 APPROVED with one Low fixed in the plan)
-**Status:** built and tested locally; G11 check pending.
+**Status:** MERGED 2026-11-13 (PR #258, squash `ce8bd1b7`) and deployed on the G11; 47 of 48 checks passed on the first run (the one miss is explained below).
 
 ## Why
 
@@ -61,9 +61,20 @@ A dry run of the slot, summary and protocol checks against the current main pass
 - daemon pytest: 4792 passed, 5 skipped (baseline 4770). ruff check and format clean on the new files.
 - Vitest: 357 files, 4709 passed (baseline 4644). svelte-check: 0 errors, the 2 warnings `main` has. `check:colors`: clean. test:visual: every `/moment` case passes; the only failures are the two `/go-live` firstrun cases, which fail the same way on 233d0624.
 
-## G11 results
+## G11 results (2026-11-13, main `ce8bd1b7`)
 
-PENDING
+`deploy-chart-drilldown-slice1.sh` after the deploy:
+- **Slots:** 1h@1m 61 in 0.15 s, 6h@5m 73 in 0.20 s, 24h@5m 289 in 0.66 s, 7d@1h 169 in 1.57 s, 30d@3h 241 in 1.67 s.
+- **Slot = summary:** all 10 exact on total bytes and connections, including the clipped first (04:40:37–04:44:59.999) and last (04:40:00–04:40:37) 24h slots and the one-instant 1h trailing slot. No down/up split difference showed in these slots.
+- **Moment devices = `/api/devices?sort=bytes`:** same top 10 and bytes for 5 min (34 devices) and 1 hour (48); no destination or app above its device's total; `limit=26` is a 400.
+- **Protocol bars = Log Explorer:** all 16 exact, with `excluded_ips` `['192.168.1.199']` (unknown 33,901, dns 5,622, ssl 4,709, quic 1,055, …).
+- **Pages:** `/` and `/moment` 200 on a logged-in full reload through nginx; no session goes to sign-in; nginx cut off no headers.
+- **Timing (the one ✗):** every read under 3 s for 5 min and 1 hour, but `/api/moment/devices` over 24 hours took 3.73 s.
+
+**Why the 24-hour read was slow, measured afterwards:**
+- The first read of each window size right after the recreate took 3.7–3.8 s (24 h and 7 d alike). Every later window over the same days was fast: on fresh windows (none read before), 24 h took 1.2 s at limit 10 and 1.5 s at limit 25; 6 h 0.4 s; `/api/devices` 0.8–1.0 s for 24 h.
+- So the cost is OpenSearch reading those days from disk the first time, not the endpoint. A click on Home opens a 5-minute or 1-minute window; 24 hours is only the "whole chart" widen link, and the devices card has its own loading state.
+- The script's step 9 now reports the first read per window size and holds a second, fresh window to 3 s, so it doesn't false-fail on every deploy (PR follow-up to #258). Dry run: 0.15 s, 0.23 s and 1.00 s.
 
 ## Lessons
 
