@@ -1,6 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-11-09 (Chain 29: a full reload of a logged-in page was a 502; nginx's 4 KB header buffer was smaller than SvelteKit's Link header. NET-241, PR #236.)
+> **Last updated:** 2026-11-12 (Chain 32: a box with no index answered "incomplete" instead of zeros; the daemon now fills in the empty aggregations. NET-182, not yet on the device.)
+<!-- previous: 2026-11-09 (Chain 29: a full reload of a logged-in page was a 502; nginx's 4 KB header buffer was smaller than SvelteKit's Link header. NET-241, PR #236.) -->
 <!-- previous: **Last updated:** 2026-11-07 (Chain 27: Malcolm's Suricata rule wiring. More free rule sources, an optional ET Pro code, and one lock, last-good recovery and a status record around every rule update; built on feature/detection-slice2, not yet on the device. Chain 26: the domain page was a 502 on the G11 because one alert host field is mapped as text; it now answers with an exact lower bound. The same run found PCAP capture stopped for 21 h. Earlier, 2026-11-01, Chain 25: dashboard figures checked against OpenSearch; host-network DNS names, a pcap-monitor DNS storm, the 1970 record and ISM yellow fixed. Chain 24: malcolm_template's index pattern was never filled in, so indices guessed field types and Zeek records were rejected; the daemon's .keyword queries from Chain 13 are dropped. Chain 23 verified on the G11) -->
 > **Status:** 58 issues tracked. 58 RESOLVED. Latest: Fixed category drill-down page crash (`each_key_duplicate`) — 3 daemon→frontend data contract mismatches in `handle_alert_category_detail()` and `handle_alert_category_timeline()`. Lessons 97–99 added.
 
@@ -1829,6 +1830,35 @@ This chain covers 5 deployment issues discovered during N100 hardware testing on
 
 ---
 
+## Chain 32: a box with no index read as an incomplete reply
+
+### NET-182: a fresh box showed "incomplete" instead of zeros
+
+| Field | Value |
+|---|---|
+| **Commit** | see `fix/drilldown-exact-lists-and-empty-box` |
+| **Branch** | `fix/drilldown-exact-lists-and-empty-box` |
+| **Status** | Fixed in code; deploy pending |
+| **Severity** | High (first-run experience) |
+| **Date** | 2026-11-12 |
+| **Environment** | Any fresh install before its first record is indexed; reproduced on the G11 with a missing index pattern |
+
+**Symptom:** on a new box, Devices, the device count, risk scores and protocols answered "The … search was incomplete" until the first Zeek record was indexed.
+
+**Root cause:** with no index matching `arkime_sessions3-*`, OpenSearch answers a search with `_shards.total` 0, hits.total 0 and no `aggregations` key at all. The checked reads from NET-237 (`all_buckets`, `complete_terms`) treat a missing aggregation as a partial reply and fail closed.
+
+**Fix:** `ExactTermsOpenSearch.search` passes its reply through `with_empty_aggregations` (`daemon/storage/exact_terms.py`). When `_shards.total` is 0 and there are no aggregations, it adds the aggregations the body would get from an empty index: the shapes were captured from the G11's OpenSearch. Kinds without a known empty form (`date_range`, `date_histogram`, a composite page with `after`, `filters` with an other bucket) leave the reply unchanged, so those reads still fail closed. `msearch`, `count` and the drill-down pages' plain PIT clients are unchanged.
+
+Same branch: a device read stopped at 20,000 LAN sources now writes a `device_cap_reached` Changelog event (at most once a day; a failed write retries after 5 minutes), so the "incomplete" pages have a visible reason.
+
+**Verification:**
+* `test_zero_shard_replies.py` compares the synthesized shapes with the G11's real empty aggregations and runs /api/devices, /count, /api/risk/scores and /api/traffic/protocols against a zero-shard reply.
+* `deploy-drilldown-exact-empty-box.sh` Step 7 searches `nettap-no-such-index-*` through the daemon's own client.
+
+**Key insight:** "no index" and "a shard failed" both lack data, but only one of them is incomplete. Read `_shards.total` before deciding.
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 16+ PRs. Check their current state before making changes.
@@ -2175,6 +2205,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | An alert host field mapped as text (Chain 26) | On the G11 `tls.client.server_name` is text, so "Alerts tagged with this name" is a lower bound ("At least N") on every domain page | The page names the field it can't search. A Malcolm template change would only reach new daily indices; if one ever adds a `.keyword` subfield (ignore_above >= 254), the daemon uses it with no code change. Step 4 of `deploy-drill-down.sh` shows which path each field uses. |
 | Malcolm's startup rule update runs under a 300 s timeout (Chain 27) | With four sources the startup update downloads and tests more; if it hits the limit, the wrapper restores the last good rules and Suricata starts on them (status "interrupted"); the nightly update, which has no limit, brings the new rules | `gate-detection-slice2.sh` prints the staged update's time (64 s locally on 1 CPU) and warns above 240 s. If it warns on the device, set `SURICATA_UPDATE_STARTUP_TIMEOUT` for suricata-live. |
 | The shim depends on Malcolm's script path and options (Chain 27) | A Malcolm upgrade that renames `/usr/local/bin/suricata-update-rules.sh` leaves updates without the lock and status record (the wrapper logs an ERROR and leaves Malcolm's behaviour alone) | After a Malcolm tag bump, check `docker logs nettap-suricata-live` for `nettap-rules: ERROR` and that the shim is in place (deploy-detection-slice2.sh Step 9 checks it). |
+| Empty aggregations for a box with no index are synthesized (Chain 32) | `with_empty_aggregations` copies the empty shapes OpenSearch 2.x gave on the G11; a new aggregation kind, or an OpenSearch upgrade that changes a shape, could make a fresh box read wrong | Unknown kinds leave the reply unchanged (the read fails closed). `test_zero_shard_replies.py` pins the G11 shapes; after an OpenSearch bump, re-run Step 7 of `deploy-drilldown-exact-empty-box.sh`. |
 | An expired ET Pro code fails every nightly update (`--fail`) | All sources stop updating, not only ET Pro | Settings › Suricata rules turns amber after 48 h without success; renew or remove the code. |
 
 ---
@@ -2236,5 +2267,6 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-179 | #183 | PCAP capture found stopped for 21 h: fix-pcap-capture-stopped.sh (Chain 26) | 2026-11-06 |
 | NET-178 | pending | Domain page 502: an alert host field mapped as text failed the whole page (Chain 26) | 2026-11-06 |
 | NET-241 | #236 | A logged-in full reload was a 502: nginx header buffer too small for SvelteKit's Link header (Chain 29) | 2026-11-09 |
+| NET-182 | pending | A box with no index answered "incomplete" instead of zeros; the 20,000-device cap now leaves a Changelog event (Chain 32) | 2026-11-12 |
 | NET-216 | pending | `activate-bridge.sh` (the --defer-bridge path) started the stack without the OpenSearch bootstrap or index templates (Chain 28) | 2026-11-08 |
 | NET-198 | pending | A lapsed session sends the user to sign in instead of "Can't reach NetTap"; `/login` follows a same-origin `?next=` (Chain 30) | 2026-11-12 |
