@@ -164,7 +164,27 @@ Results (G11, 2026-11-09): **PASS both ways.** No reference drops, no clock step
 <!-- OLD CODE START — NET-206: the counters are on now
 - **Capture safety isn't verified by engine telemetry.** Suricata's stats are disabled and Zeek writes no stats or capture-loss log. Follow-up issue: enable Suricata `stats` and compare `capture.kernel_drops` with the meter off and on.
 OLD CODE END -->
+<!-- OLD CODE START — NET-206: the device run is done
 - **Engine drops, meter off vs eight watches (NET-206): pending device run.** Suricata's stats are on (`SURICATA_STATS_ENABLED` / `SURICATA_STATS_INTERVAL` on suricata-live in `docker/docker-compose.yml`: enabled, interval 10 s; Malcolm writes no stats logger, so nothing is written or indexed). `capture-safety` reads `capture.kernel_packets` / `capture.kernel_drops` from `suricatasc -c dump-counters` per arm (an arm across a Suricata restart is void), and adds a second verdict on the per-pair drop ratios. Run `bash scripts/remote/measure-capture-loss.sh` with a sustained download on the dev Mac and record the per-arm lines and both verdicts here.
+OLD CODE END -->
+- **Engine drops, meter off vs eight watches (NET-206): measured on the G11, 2026-11-13.** `measure-capture-loss.sh` on main at 6124586c. Three ABA pairs of 60 s arms on `enp4s0`, with 466–497 Mbit/s received (three range downloads on the dev Mac: Hetzner Ashburn, OVH, Hetzner Nuremberg).
+
+| Arm | Setting | Mbit/s | NIC `rx_missed_errors` | Suricata packets | Suricata drops |
+|---|---|---|---|---|---|
+| 1 | off | 466 | 47 | 3,602,582 | 0 |
+| 2 | eight watches | 480 | 0 | 3,659,164 | 0 |
+| 3 | eight watches | 489 | 223 | 3,774,804 | 0 |
+| 4 | off | 497 | 157 | 3,918,551 | 0 |
+| 5 | off | 492 | 201 | 3,820,598 | 0 |
+| 6 | eight watches | 497 | 230 | 3,803,366 | 0 |
+
+- **NIC verdict: INCONCLUSIVE (mixed).** Per pair (off, eight): `[(47, 0), (157, 223), (201, 230)]`. Totals: off 405, eight 453, so about 12% more with the watches, and one pair goes the other way.
+- **Suricata verdict: PASS.** Off: 11,341,731 packets, 0 dropped. Eight watches: 11,237,334 packets, 0 dropped.
+- **What it means.**
+  - At about 480 Mbit/s the G11's Realtek NIC misses frames with the meter off too. The earlier ~330 Mbit/s runs had 0 with it off. Its ring buffer can't be raised (the daemon logs "Could not set ring buffer to 4096 on enp4s0: Operation not supported").
+  - The watches add little or nothing on top of that.
+  - Missed frames never reach the kernel, so Suricata's 0 drops say its AF_PACKET ring kept up, not that nothing was lost. The loss is the NIC's, with or without the meter.
+- **Live bandwidth stays off by default**, as before. The Settings card's warning still holds.
 - **Not verified on the target hardware.** The Intel i226-V wasn't tested (no bench). `skip_hw` keeps the path in software.
 - **Not covered:** bridge and DHCP gateway modes, and IPv6 for devices without a known MAC.
 

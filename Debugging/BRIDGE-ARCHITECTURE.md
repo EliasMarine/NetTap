@@ -1118,7 +1118,27 @@ The **Live bandwidth** card on both device pages shows a device's download and u
 - **Races.** An admission that waited across an off (or off and on) re-checks after the lock, after preparing and after installing; if the switch moved it removes what it added and answers `off` (or 503 if it is on again).
 - **Cost (G11, `verify_live_bandwidth.py bench`, 2026-11-09).** Every packet on the capture port passes the six shared stages while any watch is on, so the cost follows the port's traffic, not the watched device's. Median extra CPU per frame, as a share of one core at 1 Gbit/s: one watch 6.7–7.9 % with full-size frames, 29–39 % with IMIX, about 140–220 % with minimum-size frames (more than the port can carry); eight watches about twice that. The Settings card states it. The bench's own `/api/health` check reached 1.50 s worst while it flooded a veth pair at line rate; in the lifecycle gate (real use) it stayed at 0.42 s.
 - **Capture loss (G11, `verify_live_bandwidth.py capture-safety`, 2026-11-09): FAIL, accepted because the setting is opt-in.** Two valid runs under a ~330 Mbit/s two-stream download, three pairs of 60 s arms each. With eight watches the r8169 NIC's `rx_missed_errors` grew 38, 76, 56 and 91 in four of six arms (0 in the other two); with the meter off it grew 0 in all six. Under 0.01 % of frames, missed in the NIC before AF_PACKET, so Zeek, Suricata and Arkime never see them. Likely cause: the extra per-packet softirq work on the RTL8125B's single RX queue with its 256-entry ring (the maximum). The script's verdict was INCONCLUSIVE (each run had one 0/0 pair), but the pattern is reproducible. The Settings card states it. Untested on the Intel i226-V (multiple queues).
+<!-- OLD CODE START — NET-206: the device run is done
 - **Engine drops, meter off vs eight watches (NET-206): pending device run.** Suricata's counters are on (`SURICATA_STATS_ENABLED` / `SURICATA_STATS_INTERVAL` on suricata-live in `docker/docker-compose.yml`, interval 10 s, read with `dump-counters`; no file is written). `bash scripts/remote/measure-capture-loss.sh` runs `capture-safety`, which now also prints Suricata's packets, drops and drop % per arm and a second verdict on the per-pair drop ratios. Numbers go here after the run.
+OLD CODE END -->
+- **Engine drops, meter off vs eight watches (NET-206): measured on the G11, 2026-11-13.** `measure-capture-loss.sh` on main at 6124586c. Three ABA pairs of 60 s arms on `enp4s0`, with 466–497 Mbit/s received (three range downloads on the dev Mac: Hetzner Ashburn, OVH, Hetzner Nuremberg).
+
+| Arm | Setting | Mbit/s | NIC `rx_missed_errors` | Suricata packets | Suricata drops |
+|---|---|---|---|---|---|
+| 1 | off | 466 | 47 | 3,602,582 | 0 |
+| 2 | eight watches | 480 | 0 | 3,659,164 | 0 |
+| 3 | eight watches | 489 | 223 | 3,774,804 | 0 |
+| 4 | off | 497 | 157 | 3,918,551 | 0 |
+| 5 | off | 492 | 201 | 3,820,598 | 0 |
+| 6 | eight watches | 497 | 230 | 3,803,366 | 0 |
+
+- **NIC verdict: INCONCLUSIVE (mixed).** Per pair (off, eight): `[(47, 0), (157, 223), (201, 230)]`. Totals: off 405, eight 453, so about 12% more with the watches, and one pair goes the other way.
+- **Suricata verdict: PASS.** Off: 11,341,731 packets, 0 dropped. Eight watches: 11,237,334 packets, 0 dropped.
+- **What it means.**
+  - At about 480 Mbit/s the G11's Realtek NIC misses frames with the meter off too. The earlier ~330 Mbit/s runs had 0 with it off. Its ring buffer can't be raised (the daemon logs "Could not set ring buffer to 4096 on enp4s0: Operation not supported").
+  - The watches add little or nothing on top of that.
+  - Missed frames never reach the kernel, so Suricata's 0 drops say its AF_PACKET ring kept up, not that nothing was lost. The loss is the NIC's, with or without the meter.
+- **Live bandwidth stays off by default**, as before. The Settings card's warning still holds.
 - **Accuracy (G11, `live_bandwidth_reference.py`, 2026-11-09): PASS both ways.** Download 500 MB (OVH, 10 MiB/s): 22 windows, worst 0.12 %; the meter's total 0.27 % off curl's bytes plus the measured 3.6 % header share; byte-exact against the reference's own span total. Upload 300 MB (Cloudflare, 5 MiB/s): 25 windows, worst 0.63 %; the total 0.07 % off; byte-exact span.
 - **Rollback.** (1) Turn it off in Settings › Capture (or `PUT /api/settings/live-bandwidth {"enabled": false}`); the daemon removes its filters. (2) `bash scripts/remote/live-bandwidth-cleanup.sh --check` must report none. (3) Revert the change and deploy. (4) If filters are left after the revert (e.g. a crash before the clean-up), remove them with the script from history: `git show <sha>:scripts/remote/live-bandwidth-cleanup.sh | bash -s` (it needs no daemon code). An empty `clsact` qdisc may stay; it costs nothing measurable.
 
