@@ -55,7 +55,7 @@
 	import {
 		alertsHrefForSignature, bucketFor, customRange, DRILL_RANGES, fmt, linkedCount, pickedTotal, pickWindow, rangeWindow, startRange, withCount, type DrillWindow,
 	} from '$lib/utils/drilldown';
-	import { NARROW_HINT, narrowTo, pickedLine } from '$lib/utils/narrow-page';
+	import { bucketWords, NARROW_HINT, narrowTo, pickedLine } from '$lib/utils/narrow-page';
 	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -898,7 +898,8 @@ OLD CODE END -->
 		</Card>
 
 		<!-- OLD CODE: sub="Alerts per {interval} · {range.words}" (NET-249: the bucket in words) -->
-		<Card class="c-8" hero col title="Alert volume over time" sub="Alerts per {drill.bucketWords} · {range.words}">
+		<!-- OLD CODE: sub="Alerts per {drill.bucketWords} · {range.words}" (NET-249 review: the echoed bucket's words once the reply is in) -->
+		<Card class="c-8" hero col title="Alert volume over time" sub="Alerts per {bucketWords(timelineData?.interval, drill.bucketWords)} · {range.words}">
 			{#if timelineFailed}
 				<CardState state="error" title="Couldn't load the alert volume over time: the request failed." onaction={() => refresh.run()} />
 			{:else if series.length === 0}

@@ -81,6 +81,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe('DNS page — the timeline drills into a window (NET-249)', () => {
 	it("asks for each range's bucket from the owner's table", async () => {
+		timeline = (u) => slots([4, 6, 1], u.searchParams.get('interval')!)(u); // the daemon echoes the bucket asked for
 		render(DnsPage);
 		await settle();
 		expect(lastTimeline().searchParams.get('interval')).toBe('5m'); // 24h
@@ -108,6 +109,16 @@ describe('DNS page — the timeline drills into a window (NET-249)', () => {
 		await fireEvent.keyDown(chart(), { key: 'End', shiftKey: true });
 		await fireEvent.keyDown(chart(), { key: 'Enter' });
 		expect(Object.fromEntries(target(1).searchParams)).toEqual({ from: '2026-11-13T10:00:30.000Z', to: '2026-11-13T10:02:10.000Z', range: '24h', count: '11' });
+	});
+
+	it('names the bucket the reply says it used, and the one asked for until it answers', async () => {
+		let release: (body: unknown) => void = () => {};
+		timeline = () => new Promise((resolve) => (release = resolve));
+		render(DnsPage);
+		await vi.waitFor(() => expect(asked('/api/dns/timeline')).toHaveLength(1));
+		expect(screen.getByText(/^Queries per 5 minutes · last 24 hours/)).toBeInTheDocument();
+		release(slots([4, 6], '1m')(lastTimeline()));
+		expect(await screen.findByText(/^Queries per minute · last 24 hours/)).toBeInTheDocument();
 	});
 
 	it('a reply whose bucket is not on the table stays a picture', async () => {
