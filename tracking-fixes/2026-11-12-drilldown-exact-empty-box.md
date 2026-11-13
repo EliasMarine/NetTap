@@ -20,6 +20,7 @@ A figure on a page has to equal the list its link opens, and a box with no data 
   - The category bar on Alerts carries the window its counts used.
   - `_every_signature` keeps no-name alerts as `null`. `GET /api/alerts` takes `no_rule_name=true|false` (anything else is a 400) and the proxy forwards it unchanged. The row reads "No rule name" and links with `no_rule_name=true`; Alerts shows it as a chip.
   - Alert rows, their row labels and the drawer say "No rule name" too, where they said "Unknown" (a rule can really be named that).
+  - PR #252 review: the category table links a row on its `rule.name` (the shown signature can be Suricata's own, which listed nothing); paging, sorting and the sub-category filter list over the figures' window; `no_rule_name=false` lists only alerts with a rule name; an empty name's bar reads "No rule name".
 
 **NET-184: a top source or destination bar opens exactly its figure.**
 - **Cause:** the bar counted `source.ip` (or `destination.ip`) over the card's window, but its link searched `ip` (either side) over a fresh window, with the page's other filters still on.
@@ -27,12 +28,14 @@ A figure on a page has to equal the list its link opens, and a box with no data 
   - The bar opens a `source.ip:"…"` or `destination.ip:"…"` search over the card's own window, with the query, DNS, excluded sources and log type cleared. The chip reads Source or Destination.
   - Sorting keeps the search's window.
   - The daemon answers 502 when a shard cut either bar list short, instead of returning an estimate.
+  - PR #252 review: a sort and "load more" run the searched text, not text typed in the box but not submitted.
 
 **NET-182: a box with no index answers zeros, and the device cap says why.**
 - **Cause:** with no `arkime_sessions3-*` index yet, OpenSearch answers `_shards.total` 0 with no `aggregations`. Checked reads take that as incomplete, so Devices, the device count, risk scores and protocols said "incomplete" on a fresh box.
 - **Fix:**
   - `ExactTermsOpenSearch.search` gives that reply the empty aggregations its body would get from an empty index (`with_empty_aggregations` in `storage/exact_terms.py`). The empty forms were captured from the G11's OpenSearch. Any kind without a known empty form (`date_range`, `date_histogram`, a composite's later page, `filters` with an other bucket) leaves the reply unchanged, so it still fails closed.
   - A device read stopped at 20,000 LAN sources writes a `device_cap_reached` Changelog event, at most once a day. A failed write is retried after 5 minutes. The Changelog labels it "Device limit reached".
+  - PR #252 review: Devices says "No devices seen yet." only while data is arriving. Otherwise the empty list and the Total devices KPI say "Can't tell if any device sent traffic" with the pipeline's state (`nothingFound`, as Home and Alerts do).
 
 ## Device script
 
@@ -60,4 +63,4 @@ A dry run against the current (unfixed) daemon passed every check that doesn't n
 ## Next steps
 
 - Deploy with the script above and close the issues.
-- Follow-ups: the category page's table links a row by its shown signature, not its `rule.name` as Alerts does; Alerts' own Top signatures and the Suricata page could link their no-name rows with `no_rule_name=true`; the category page has no "You clicked N" line; drill-down pages that page with a PIT (address, domain, Suricata, certificates) are untested on a box with no index.
+- Follow-ups: Alerts' own Top signatures and the Suricata page could link their no-name rows with `no_rule_name=true`; the category page has no "You clicked N" line; drill-down pages that page with a PIT (address, domain, Suricata, certificates) are untested on a box with no index.
