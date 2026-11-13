@@ -22,6 +22,7 @@
 	// OLD CODE: import { DRILL_RANGES, byteFigure, …, withCount, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown'; (NET-249: the chart picks)
 	import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, pickedTotal, pickWindow, rangeWindow, startRange, windowQuery, withCount, type DrillRange, type DrillRangeValue, type DrillWindow, type TimeChart } from '$lib/utils/drilldown';
 	import { toTimeChart } from '$lib/utils/chart-pick';
+	import { bucketWords } from '$lib/utils/narrow-page';
 	import { goto } from '$app/navigation';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { asString, getField } from '$lib/utils/tshark-filter';
@@ -311,7 +312,8 @@
 	/** The chart as a pickable reply (NET-249): null when the bucket it echoes isn't one a pick can open */
 	const chart = $derived(data ? toTimeChart(data, timeline.map((p) => p.t), timeline.map((p) => p.n)) : null);
 	/** The slot in words, as the reply says it counted it; an older daemon's own bucket otherwise */
-	const slot = $derived(DRILL_RANGES.find((r) => r.bucket === data?.interval)?.bucketWords ?? shown.interval);
+	// OLD CODE: const slot = $derived(DRILL_RANGES.find((r) => r.bucket === data?.interval)?.bucketWords ?? shown.interval); (NET-249: narrow-page's bucketWords, the one helper)
+	const slot = $derived(bucketWords(data?.interval, shown.interval));
 
 	/** A pick opens Log Explorer's conn records with this address at either end over the picked slots, carrying their figure (NET-249). */
 	function pickSlots(c: TimeChart, i: number, j: number) {

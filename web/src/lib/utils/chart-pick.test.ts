@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { pickWindow } from './drilldown';
-import { chartBucketWords, toTimeChart } from './chart-pick';
+// OLD CODE: import { chartBucketWords, toTimeChart } from './chart-pick'; (chartBucketWords retired)
+import { toTimeChart } from './chart-pick';
 
 describe('toTimeChart (NET-249 slice 2)', () => {
 	const win = { from: '2026-11-13T10:02:00.000Z', to: '2026-11-13T10:12:00.000Z' };
@@ -24,14 +25,16 @@ describe('toTimeChart (NET-249 slice 2)', () => {
 	});
 });
 
-describe('chartBucketWords (NET-249 slice 2)', () => {
-	const win = { from: '2026-11-13T10:00:00.000Z', to: '2026-11-13T11:00:00.000Z' };
-	it('names the bucket the reply used, not the one asked for', () => {
-		expect(chartBucketWords(toTimeChart({ ...win, interval: '1h' }, [], []), '3 hours')).toBe('hour');
-		expect(chartBucketWords(toTimeChart({ ...win, interval: '1m' }, [], []), '5 minutes')).toBe('minute');
-	});
-	it('keeps the asked words with no pickable reply, or a bucket outside the table', () => {
-		expect(chartBucketWords(null, '3 hours')).toBe('3 hours');
-		expect(chartBucketWords(toTimeChart({ ...win, interval: '1d' }, [], []), '3 hours')).toBe('3 hours');
-	});
-});
+// OLD CODE START — NET-249: chartBucketWords retired for narrow-page's bucketWords (tested in narrow-page.test.ts)
+// describe('chartBucketWords (NET-249 slice 2)', () => {
+// 	const win = { from: '2026-11-13T10:00:00.000Z', to: '2026-11-13T11:00:00.000Z' };
+// 	it('names the bucket the reply used, not the one asked for', () => {
+// 		expect(chartBucketWords(toTimeChart({ ...win, interval: '1h' }, [], []), '3 hours')).toBe('hour');
+// 		expect(chartBucketWords(toTimeChart({ ...win, interval: '1m' }, [], []), '5 minutes')).toBe('minute');
+// 	});
+// 	it('keeps the asked words with no pickable reply, or a bucket outside the table', () => {
+// 		expect(chartBucketWords(null, '3 hours')).toBe('3 hours');
+// 		expect(chartBucketWords(toTimeChart({ ...win, interval: '1d' }, [], []), '3 hours')).toBe('3 hours');
+// 	});
+// });
+// OLD CODE END

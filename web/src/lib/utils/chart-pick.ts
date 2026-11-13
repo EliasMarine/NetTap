@@ -9,7 +9,8 @@
  * A chart reply held for picking (NET-249 slice 2), beside drilldown.ts's TimeChart, stepMs,
  * pickWindow and pickedTotal: shared by both halves of the slice, so its pages read a reply one way.
  */
-import { DRILL_RANGES, stepMs, type DrillWindow, type TimeChart } from './drilldown';
+// OLD CODE: import { DRILL_RANGES, stepMs, type DrillWindow, type TimeChart } from './drilldown'; (chartBucketWords retired)
+import { stepMs, type DrillWindow, type TimeChart } from './drilldown';
 
 /**
  * A reply's slots as a `TimeChart`, or null when a pick couldn't open its exact window: the bucket
@@ -27,9 +28,11 @@ export function toTimeChart(
 	return { from, to, times, values, step };
 }
 
-/**
- * "5 minutes": the slot a chart's reply used, in words, so the subtitle names the bucket the chart
- * shows. `asked` (the requested bucket's words) until a pickable reply is in.
- */
-export const chartBucketWords = (chart: TimeChart | null, asked: string): string =>
-	(chart && DRILL_RANGES.find((r) => r.bucketMs === chart.step)?.bucketWords) || asked;
+// OLD CODE START — NET-249: narrow-page.ts's bucketWords does this from the echoed interval; one helper, not two
+// /**
+//  * "5 minutes": the slot a chart's reply used, in words, so the subtitle names the bucket the chart
+//  * shows. `asked` (the requested bucket's words) until a pickable reply is in.
+//  */
+// export const chartBucketWords = (chart: TimeChart | null, asked: string): string =>
+// 	(chart && DRILL_RANGES.find((r) => r.bucketMs === chart.step)?.bucketWords) || asked;
+// OLD CODE END

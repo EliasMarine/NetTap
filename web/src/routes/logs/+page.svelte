@@ -25,7 +25,9 @@
 		type TimeChart,
 	} from '$lib/utils/drilldown';
 	// OLD CODE: import { toTimeChart } from '$lib/utils/chart-pick'; (NET-249 review: and the reply's bucket in words)
-	import { chartBucketWords, toTimeChart } from '$lib/utils/chart-pick';
+	// OLD CODE: import { chartBucketWords, toTimeChart } from '$lib/utils/chart-pick'; (NET-249: one helper for both halves, narrow-page's bucketWords)
+	import { toTimeChart } from '$lib/utils/chart-pick';
+	import { bucketWords } from '$lib/utils/narrow-page';
 	// OLD CODE START — replaced by the design system's BarList
 	// import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	// OLD CODE END
@@ -226,6 +228,8 @@
 	let timeline = $state<LogTimelineBucket[]>([]);
 	/** The timeline reply on screen as a pickable chart (NET-249); null when its echoed bucket or window can't be picked */
 	let timelineChart = $state<TimeChart | null>(null);
+	/** The bucket the timeline reply on screen says it used; its subtitle names it */
+	let timelineInterval = $state<string | null | undefined>(undefined);
 	let topTalkers = $state<LogTalkerEntry[]>([]);
 	let protocols = $state<LogProtocolEntry[]>([]);
 	// A busy box logs 20+ protocols; all of them made the card three times the timeline's height
@@ -537,6 +541,7 @@
 		if (results[1].status === 'fulfilled') {
 			timeline = results[1].value.buckets;
 			timelineChart = toTimeChart(results[1].value, timeline.map((b) => b.timestamp), timeline.map((b) => b.total));
+			timelineInterval = results[1].value.interval;
 		}
 		// OLD CODE: if (results[2].status === 'fulfilled') topTalkers = results[2].value.talkers; (NET-184: a bar keeps its window)
 		if (results[2].status === 'fulfilled') {
@@ -805,6 +810,7 @@
 		statsLoaded = false;
 		timeline = [];
 		timelineChart = null;
+		timelineInterval = undefined;
 		topTalkers = [];
 		protocols = [];
 		topDestinations = [];
@@ -1392,7 +1398,8 @@ OLD CODE END -->
 	<!-- OLD CODE: sub="Log events per {INTERVAL_WORDS[INTERVAL_MAP[selectedTimeRange]] ?? 'hour'} · {rangeWords}" (slice 2a: Custom) -->
 	<!-- OLD CODE: sub="Log events per {INTERVAL_WORDS[INTERVAL_MAP[intervalRange]] ?? 'hour'} · {rangeWords}" (NET-249: the table's bucket) -->
 	<!-- OLD CODE: sub="Log events per {bucket.bucketWords} · {rangeWords}" (NET-249 review: the bucket the reply used) -->
-	<Card title="Activity timeline" sub="Log events per {chartBucketWords(timelineChart, bucket.bucketWords)} · {rangeWords}" hero col class="c-8">
+	<!-- OLD CODE: sub="Log events per {chartBucketWords(timelineChart, bucket.bucketWords)} · {rangeWords}" (NET-249: narrow-page's bucketWords, the one helper) -->
+	<Card title="Activity timeline" sub="Log events per {bucketWords(timelineInterval, bucket.bucketWords)} · {rangeWords}" hero col class="c-8">
 		{@render section('the activity timeline', timelineFailed, timeline.length > 0, 'No timeline data available', 'Events appear here once Zeek is processing traffic.', timelineBody)}
 	</Card>
 

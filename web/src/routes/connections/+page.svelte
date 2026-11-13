@@ -25,7 +25,9 @@
 	// OLD CODE: import { DRILL_RANGES, startRange, type DrillRangeValue } from '$lib/utils/drilldown'; (NET-249: the timeline picks)
 	import { chartTime, connLogsHref, DRILL_RANGES, fmt, pickedTotal, pickWindow, startRange, withCount, type DrillRangeValue, type TimeChart } from '$lib/utils/drilldown';
 	// OLD CODE: import { toTimeChart } from '$lib/utils/chart-pick'; (NET-249 review: and the reply's bucket in words)
-	import { chartBucketWords, toTimeChart } from '$lib/utils/chart-pick';
+	// OLD CODE: import { chartBucketWords, toTimeChart } from '$lib/utils/chart-pick'; (NET-249: one helper for both halves, narrow-page's bucketWords)
+	import { toTimeChart } from '$lib/utils/chart-pick';
+	import { bucketWords } from '$lib/utils/narrow-page';
 	import AreaChart, { type AreaSeries } from '$lib/components/ui/charts/AreaChart.svelte';
 	import { formatBytes as sharedFormatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import IPAddress from '$components/IPAddress.svelte';
@@ -160,6 +162,8 @@
 	let timeline = $state<ConnectionTimelineBucket[]>([]);
 	/** The timeline reply on screen as a pickable chart (NET-249); null when its echoed bucket or window can't be picked */
 	let timelineChart = $state<TimeChart | null>(null);
+	/** The bucket the timeline reply on screen says it used; its subtitle names it */
+	let timelineInterval = $state<string | null | undefined>(undefined);
 
 	// #96: a failed request keeps the last good figures and says so, never zeros or "none"
 	let statsFailed = $state(false);
@@ -703,6 +707,7 @@
 			if (timelineRes.status === 'fulfilled') {
 				timeline = timelineRes.value.buckets;
 				timelineChart = toTimeChart(timelineRes.value, timeline.map((b) => b.timestamp), timeline.map((b) => b.total));
+				timelineInterval = timelineRes.value.interval;
 			}
 			statsFailed = statsRes.status === 'rejected';
 			sankeyFailed = sankeyRes.status === 'rejected';
@@ -760,6 +765,7 @@
 		sankey = null;
 		timeline = [];
 		timelineChart = null;
+		timelineInterval = undefined;
 		// A new time range is a new result set: start from page 1. The new load's guard
 		// generation drops whatever the older range's requests return.
 		currentPage = 1;
@@ -1028,7 +1034,8 @@
 			<SessionTimeline buckets={timeline} />
 	OLD CODE END -->
 	<!-- OLD CODE: sub="Sessions per {bucket.bucketWords}, by protocol · {range}" (NET-249 review: the bucket the reply used) -->
-	<Card class="c-8" col title="Session volume" sub="Sessions per {chartBucketWords(timelineChart, bucket.bucketWords)}, by protocol · {range}">
+	<!-- OLD CODE: sub="Sessions per {chartBucketWords(timelineChart, bucket.bucketWords)}, by protocol · {range}" (NET-249: narrow-page's bucketWords, the one helper) -->
+	<Card class="c-8" col title="Session volume" sub="Sessions per {bucketWords(timelineInterval, bucket.bucketWords)}, by protocol · {range}">
 		{#snippet actions()}
 			<ul class="legend">
 				<li><span class="sw line c-d1"></span>TCP</li>

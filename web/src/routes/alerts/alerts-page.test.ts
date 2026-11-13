@@ -1742,10 +1742,21 @@ describe('Alerts — the timeline drills into its alerts (NET-249)', () => {
 	])('?range=%s asks for %s buckets', async (value, bucket, words) => {
 		at(`?range=${value}`);
 		succeedAll();
+		// a daemon that uses the bucket asked for
+		vi.mocked(getAlertTimeline).mockImplementation(async (opts = {}) => ({ ...range, interval: opts.interval ?? '', buckets: [] }));
 		render(Page);
 		await flush();
 		expect(lastTimeline().interval).toBe(bucket);
 		expect(screen.getByText(new RegExp(`^Alerts per ${words} · `))).toBeInTheDocument();
+	});
+
+	it('names the bucket the reply used, not the one asked for', async () => {
+		at('?range=24h');
+		succeedAll(); // its timeline says it used 1h
+		render(Page);
+		await flush();
+		expect(lastTimeline().interval).toBe('5m');
+		expect(screen.getByText(/^Alerts per hour · /)).toBeInTheDocument();
 	});
 
 	it('a Custom window takes the bucket of the smallest range that covers it', async () => {

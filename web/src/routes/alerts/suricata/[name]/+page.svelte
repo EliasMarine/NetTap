@@ -30,6 +30,7 @@
 		type TimeChart,
 	} from '$lib/utils/drilldown';
 	import { toTimeChart } from '$lib/utils/chart-pick';
+	import { bucketWords } from '$lib/utils/narrow-page';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import IPAddress from '$components/IPAddress.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -126,7 +127,8 @@
 	/** The timeline as a pickable chart (NET-249): null when the reply's bucket isn't one a pick can open */
 	const chart = $derived(data ? toTimeChart(data, timeline.map((p) => p.t), timeline.map((p) => p.n)) : null);
 	/** The slot in words, as the reply says it counted it; an older daemon's own bucket otherwise */
-	const slot = $derived(DRILL_RANGES.find((r) => r.bucket === data?.interval)?.bucketWords ?? slotWords(shown.hours));
+	// OLD CODE: const slot = $derived(DRILL_RANGES.find((r) => r.bucket === data?.interval)?.bucketWords ?? slotWords(shown.hours)); (NET-249: narrow-page's bucketWords, the one helper)
+	const slot = $derived(bucketWords(data?.interval, slotWords(shown.hours)));
 
 	/** A pick opens the Alerts list for this category over the picked slots, carrying their figure (NET-249). */
 	function pickSlots(c: TimeChart, i: number, j: number) {

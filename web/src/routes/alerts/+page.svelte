@@ -77,7 +77,9 @@
 		type TimeChart,
 	} from '$lib/utils/drilldown';
 	// OLD CODE: import { toTimeChart } from '$lib/utils/chart-pick'; (NET-249 review: and the reply's bucket in words)
-	import { chartBucketWords, toTimeChart } from '$lib/utils/chart-pick';
+	// OLD CODE: import { chartBucketWords, toTimeChart } from '$lib/utils/chart-pick'; (NET-249: one helper for both halves, narrow-page's bucketWords)
+	import { toTimeChart } from '$lib/utils/chart-pick';
+	import { bucketWords } from '$lib/utils/narrow-page';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -185,6 +187,8 @@
 	let timeline = $state<AlertTimelineBucket[]>([]);
 	/** The timeline reply on screen as a pickable chart (NET-249); null when its echoed bucket or window can't be picked */
 	let timelineChart = $state<TimeChart | null>(null);
+	/** The bucket the timeline reply on screen says it used; its subtitle names it */
+	let timelineInterval = $state<string | null | undefined>(undefined);
 	let topSignatures = $state<AlertSignature[]>([]);
 	let topDestIps = $state<AlertIpEntry[]>([]);
 	let topSrcIps = $state<AlertIpEntry[]>([]);
@@ -869,6 +873,7 @@
 		if (tl.status === 'fulfilled') {
 			timeline = tl.value.buckets;
 			timelineChart = toTimeChart(tl.value, timeline.map((b) => b.timestamp), timeline.map(bucketTotal));
+			timelineInterval = tl.value.interval;
 		}
 		// OLD CODE: if (sigs.status === 'fulfilled') topSignatures = sigs.value.signatures; (slice 2b-2: the rows keep their window)
 		if (sigs.status === 'fulfilled') {
@@ -1637,7 +1642,8 @@ OLD CODE END -->
 	<!-- OLD CODE: sub="Alerts per {INTERVAL_MAP[selectedTimeRange] ?? '1h'} · …" (slice 2a: Custom has no entry) -->
 	<!-- OLD CODE: sub="Alerts per {range.interval} · {range.words}" (NET-249: the table's bucket, in words) -->
 	<!-- OLD CODE: sub="Alerts per {range.bucketWords} · {range.words}" (NET-249 review: the bucket the reply used) -->
-	<Card class="c-8" hero col title="Alert timeline" sub="Alerts per {chartBucketWords(timelineChart, range.bucketWords)} · {range.words}">
+	<!-- OLD CODE: sub="Alerts per {chartBucketWords(timelineChart, range.bucketWords)} · {range.words}" (NET-249: narrow-page's bucketWords, the one helper) -->
+	<Card class="c-8" hero col title="Alert timeline" sub="Alerts per {bucketWords(timelineInterval, range.bucketWords)} · {range.words}">
 		{#if !loaded}
 			<CardState state="loading" title="Loading the alert timeline" />
 		{:else if failed.timeline}
