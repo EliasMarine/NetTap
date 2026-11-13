@@ -48,6 +48,8 @@ export interface DailyUsageEntry {
 export interface DailyUsageResponse {
 	from: string;
 	to: string;
+	/** The slot length, `1d` (NET-249); absent from an older daemon */
+	interval?: string;
 	daily: DailyUsageEntry[];
 }
 

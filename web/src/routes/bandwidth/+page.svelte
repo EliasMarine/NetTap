@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { getMonthlyUsage, getDailyUsage, getDeviceUsage, getHeatmap, utcMonthWindow } from '$lib/api/bandwidth';
 	import type { MonthlyUsage, DailyUsageEntry, DeviceUsage, HeatmapResponse } from '$lib/api/bandwidth';
 	// OLD CODE START — replaced by the system's DeviceList (Top consumers) and DataTable, which sorts
@@ -19,7 +20,8 @@
 	import AreaChart, { type AreaSeries } from '$lib/components/ui/charts/AreaChart.svelte';
 	import { registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import { ipHref } from '$lib/stores/lan';
-	import { fmt } from '$lib/utils/drilldown';
+	// OLD CODE: import { fmt } from '$lib/utils/drilldown'; (NET-249: a day opens its moment)
+	import { fmt, momentHref, stepMs, type BandwidthChart } from '$lib/utils/drilldown';
 	import { upDownLocal } from '$lib/utils/up-down';
 	import { ipv6ListNotes } from '$lib/utils/ipv6-coverage';
 
@@ -29,6 +31,8 @@
 
 	let monthly = $state<MonthlyUsage | null>(null);
 	let daily = $state<DailyUsageEntry[]>([]);
+	/** The daily reply as a bandwidth chart, whole, when it echoes its window and its 1-day bucket (NET-249) */
+	let dailyChart = $state<BandwidthChart | null>(null);
 	let devices = $state<DeviceUsage[]>([]);
 	let heatmap = $state<HeatmapResponse | null>(null);
 	let loading = $state(false);
@@ -359,7 +363,15 @@
 
 		// A failed refresh keeps the last good section and says so
 		if (monthlyRes.status === 'fulfilled') monthly = monthlyRes.value;
-		if (dailyRes.status === 'fulfilled') daily = dailyRes.value.daily;
+		// OLD CODE: if (dailyRes.status === 'fulfilled') daily = dailyRes.value.daily; (NET-249: the reply whole)
+		if (dailyRes.status === 'fulfilled') {
+			const reply = dailyRes.value;
+			const step = stepMs(reply.interval);
+			daily = reply.daily;
+			// a UTC day is [date, date + 1 d); the last one is clipped to the reply's `to` (now)
+			const windowed = Number.isFinite(Date.parse(reply.from)) && Number.isFinite(Date.parse(reply.to));
+			dailyChart = step && windowed ? { from: reply.from, to: reply.to, step, series: reply.daily.map((d) => ({ ...d, timestamp: d.date })) } : null;
+		}
 		if (deviceRes.status === 'fulfilled') devices = deviceRes.value.devices;
 		if (heatmapRes.status === 'fulfilled') heatmap = heatmapRes.value;
 		monthlyFailed = monthlyRes.status === 'rejected';
@@ -466,7 +478,9 @@
 				formatTip={dailyTip}
 				highlightIndex={busiestDay}
 				ariaLabel={busiestDay >= 0 ? `Busiest day ${formatDate(daily[busiestDay].date)}, with ${formatBytes(daily[busiestDay].total_bytes)}` : 'Daily usage'}
+				onpick={dailyChart ? (i, j) => dailyChart && goto(momentHref(dailyChart, i, j)) : undefined}
 			/>
+			{#if dailyChart}<p class="card-sub load-note">Click a point or drag across the chart to see that moment.</p>{/if}
 			{#if dailyFailed}
 				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('daily usage', true)}</span></p>
 			{/if}
