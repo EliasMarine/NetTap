@@ -7,12 +7,14 @@ NET-189 device check for PCAP Search's "Download filtered". Runs inside the daem
 It sends the request the page's download window sends (from/to as the browser's toISOString())
 for a 4 s window around the first packet of a recent capture file, so the window spans two
 files, and reads the streamed capture with capinfos in nettap-tshark. Then it checks a second
-download is turned away while one runs, and the page's default request (last hour, dns).
+download is turned away while one runs (the first asks for about 100,000 frames, so it is
+still running), and the page's default request (last hour, dns).
 
 One PASS/FAIL line per check; exit 0 only when every check passed. The daemon token is read from
 its volume and never printed.
 """
 
+import http.client
 import json
 import subprocess
 import sys
@@ -32,6 +34,10 @@ CHUNK = 64 * 1024
 BUSY_TRIES = 10
 BUSY_WAIT_S = 3
 LEFT_TRIES = 15
+BUSY_PACKETS = 100_000  # far more than the socket buffers hold; a quarter of the budget
+BUSY_MAX_S = Decimal(900)
+# a download the daemon aborts part-way ends the body early (IncompleteRead) or resets it
+BROKE_OFF = (OSError, http.client.HTTPException)
 
 RESULTS: list[bool] = []
 
@@ -110,6 +116,18 @@ def pick_window(
     return None
 
 
+def busy_window(over: list[dict], b_first: Decimal) -> tuple[Decimal, Decimal]:
+    """A window ending at file B's first packet (settled files only) that holds about
+    BUSY_PACKETS at the rate of the files around B, so the first download cannot finish
+    inside the socket buffers before the second one asks."""
+    span = sum(Decimal(r["last"]) - Decimal(r["first"]) for r in over)
+    packets = sum(r["packets"] for r in over)
+    seconds = BUSY_PACKETS * span / packets if span > 0 and packets else BUSY_MAX_S
+    seconds = min(max(seconds, 2 * HALF_WINDOW), BUSY_MAX_S)
+    end = Decimal(int(b_first * 1000)) / 1000  # the page's millisecond bounds
+    return Decimal(int((end - seconds) * 1000)) / 1000, end
+
+
 def parse_capinfos(text: str) -> tuple[int, Decimal, Decimal] | None:
     """(packets, first, last) from `capinfos -a -e -c -E -S -M -T -` (the index's flags)."""
     lines = text.splitlines()
@@ -183,8 +201,11 @@ def straddling_download(start: Decimal, end: Decimal, b_first: Decimal, over) ->
         return
     try:
         got = read_capture(resp)
-    except (OSError, urllib.error.URLError) as exc:  # the daemon aborted part-way
-        check(False, f"download of the window broke off: {exc}")
+    # OLD CODE START: missed http.client.IncompleteRead, which is not an OSError
+    # except (OSError, urllib.error.URLError) as exc:  # the daemon aborted part-way
+    # OLD CODE END
+    except BROKE_OFF as exc:
+        check(False, f"download of the window broke off: {exc!r}")
         return
     seconds = time.monotonic() - started
     if got is None:
@@ -202,9 +223,10 @@ def straddling_download(start: Decimal, end: Decimal, b_first: Decimal, over) ->
 def second_download_is_busy(start: Decimal, end: Decimal) -> None:
     """A download whose reader doesn't read holds the lock; a second one gets 503. All frames
     of the window, so the body is larger than the socket buffers."""
+    print(f"INFO  busy check window {iso(start)} .. {iso(end)}", flush=True)
     first = request(download_path("frame", start, end))
     if first.status != 200:
-        check(False, f"the first download started: {first.status}")
+        check(False, f"the first download started: {first.status} {first.read(300)!r}")
         return
     try:
         first.read(CHUNK)  # then stop reading: back-pressure keeps its job running
@@ -212,6 +234,8 @@ def second_download_is_busy(start: Decimal, end: Decimal) -> None:
         body = second.read(300)
         check(second.status == 503 and b"Another download is running" in body,
               f"a second download while one runs: {second.status} {body!r}")  # fmt: skip
+    except BROKE_OFF as exc:
+        check(False, f"the busy check's downloads broke off: {exc!r}")
     finally:
         first.close()  # the daemon's write fails and its job is killed
 
@@ -231,7 +255,11 @@ def page_default() -> None:
             False, f"the page's default download: {resp.status} {resp.read()[:300]!r}"
         )
         return
-    got = read_capture(resp)
+    try:
+        got = read_capture(resp)
+    except BROKE_OFF as exc:
+        check(False, f"the page's default download broke off: {exc!r}")
+        return
     inside = got is not None and (
         got[0] == 0 or (end - 3600 <= got[1] and got[2] < end)
     )
@@ -251,7 +279,11 @@ def main() -> int:
         )
     else:
         straddling_download(*window)
-        second_download_is_busy(*window[:2])
+        # OLD CODE START: a 4 s window's body could fit the socket buffers, so the first
+        # download finished before the second asked and the check failed falsely
+        # second_download_is_busy(*window[:2])
+        # OLD CODE END
+        second_download_is_busy(*busy_window(window[3], window[2]))
     page_default()
     nothing_left(start_used)
     print(f"\n{sum(RESULTS)}/{len(RESULTS)} checks passed", flush=True)

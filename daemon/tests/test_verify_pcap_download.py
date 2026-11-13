@@ -101,3 +101,38 @@ def test_a_leftover_in_the_readers_tmp_fails_the_check(monkeypatch):
     check.nothing_left("0")
     assert check.RESULTS == [True, False]
     check.RESULTS.clear()
+
+
+def test_the_busy_check_asks_for_about_a_quarter_of_the_budget():
+    # PR #255 review: a 4 s window could fit the socket buffers, so the first download
+    # finished before the second one asked and the check failed falsely
+    over = [_row("b", "960", "1000", 40_000), _row("a", "920", "960", 40_000)]
+    # 1,000 packets a second: 100 s of them, ending where file B starts
+    assert check.busy_window(over, Decimal("960.2509")) == (
+        Decimal("860.25"),
+        Decimal("960.25"),
+    )
+    quiet = [_row("b", "960", "1000", 10), _row("a", "920", "960", 10)]
+    assert check.busy_window(quiet, Decimal(960))[0] == Decimal(60)  # at most 900 s
+    flood = [_row("b", "960", "961", 5_000_000)]
+    assert check.busy_window(flood, Decimal(960))[0] == Decimal(956)  # at least 4 s
+    still = [_row("b", "960", "960", 1)]  # one packet: no rate to go by
+    assert check.busy_window(still, Decimal(960))[0] == Decimal(60)
+
+
+def test_a_download_cut_short_is_a_failed_check_not_a_crash(monkeypatch):
+    # PR #255 review: the daemon aborting part-way raises IncompleteRead, not OSError
+    import http.client
+
+    def cut(resp):
+        raise http.client.IncompleteRead(b"partial")
+
+    resp = type("R", (), {"status": 200})()
+    monkeypatch.setattr(check, "read_capture", cut)
+    monkeypatch.setattr(check, "request_when_free", lambda path: resp)
+    monkeypatch.setattr(check, "get_json", lambda path: (200, {"files": []}))
+    check.RESULTS.clear()
+    check.page_default()
+    check.straddling_download(Decimal(1), Decimal(5), Decimal(3), [])
+    assert check.RESULTS == [False, True, False]
+    check.RESULTS.clear()
