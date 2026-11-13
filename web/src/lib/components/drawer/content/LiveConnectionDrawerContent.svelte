@@ -16,8 +16,12 @@
 	import { suricataLevel } from '$lib/utils/severity';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	// OLD CODE: import { alertsHrefForSignature } from '$lib/utils/drilldown'; (slice 2b-2)
-	import { alertsHrefForSignature, suricataCategoryHref } from '$lib/utils/drilldown';
+	// OLD CODE: import { alertsHrefForSignature, suricataCategoryHref } from '$lib/utils/drilldown'; (NET-249: the history chart picks)
+	import { alertsHrefForSignature, chartTime, pickWindow, suricataCategoryHref, windowQuery, type TimeChart } from '$lib/utils/drilldown';
 	import { formatTime } from '$lib/utils/time';
+	import { goto } from '$app/navigation';
+	import { toTimeChart } from '$lib/utils/chart-pick';
+	import AreaChart from '$lib/components/ui/charts/AreaChart.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Props
@@ -155,14 +159,43 @@
 	// Sparkline helpers
 	// ---------------------------------------------------------------------------
 
-	let timelineMax = $derived.by(() => {
-		if (!detail?.history?.timeline?.length) return 1;
-		return Math.max(...detail.history.timeline.map(t => t.bytes), 1);
-	});
+	// OLD CODE START — NET-249: the hand-drawn bars' scale; AreaChart fits its own axis
+	// let timelineMax = $derived.by(() => {
+	// 	if (!detail?.history?.timeline?.length) return 1;
+	// 	return Math.max(...detail.history.timeline.map(t => t.bytes), 1);
+	// });
+	// OLD CODE END
 
 	// ---------------------------------------------------------------------------
 	// GeoIP: prefer detail.geo when loaded, fall back to connection fields
 	// ---------------------------------------------------------------------------
+
+	const history = $derived(detail?.history ?? null);
+	/**
+	 * The history as a pickable chart (NET-249). Only when the reply says which port it filtered on
+	 * (null is none): without it the list it opens could hold the pair's other connections.
+	 */
+	const historyChart = $derived(
+		history?.timeline?.length && history.port !== undefined
+			? toTimeChart(history, history.timeline.map((b) => b.timestamp), history.timeline.map((b) => b.bytes))
+			: null,
+	);
+	const historyPeak = $derived((history?.timeline ?? []).reduce((best, b, i, all) => (b.bytes > (all[best]?.bytes ?? -1) ? i : best), -1));
+	const historyTime = (t: number | string) => chartTime(t, 24);
+	/** A quoted query value (IPv6 colons aren't query syntax) */
+	const quoted = (v: string) => `"${v.replace(/["\\]/g, '\\$&')}"`;
+
+	/**
+	 * A pick opens Log Explorer's conn records between the two addresses, either way round, on the
+	 * port the history filtered on, over the picked slots. No count: the chart draws bytes.
+	 */
+	function pickHistory(chart: TimeChart, i: number, j: number) {
+		const [a, b] = [quoted(connection.source_ip), quoted(connection.dest_ip)];
+		const pair = `((source.ip:${a} AND destination.ip:${b}) OR (source.ip:${b} AND destination.ip:${a}))`;
+		const port = history?.port;
+		const query = typeof port === 'number' ? `${pair} AND destination.port:${port}` : pair;
+		void goto(`/logs?${new URLSearchParams({ type: 'zeek.conn', query }).toString()}&${windowQuery(pickWindow(chart, i, j), '24h')}`);
+	}
 
 	let geoCountry = $derived(detail?.geo?.country || connection.country_name || connection.country || '--');
 	let geoCountryCode = $derived(detail?.geo?.country_code || connection.country || '');
@@ -271,6 +304,20 @@
 				<KVRow label="Connections (24h)" value={String(detail.history.connection_count)} mono />
 			</div>
 
+			<!-- NET-249: an AreaChart, which picks by click, drag and keyboard -->
+			<AreaChart
+				series={[{ key: 'bytes', label: 'Bytes', colour: 1, points: detail.history.timeline.map((b) => ({ t: b.timestamp, v: b.bytes })) }]}
+				bytes
+				formatX={historyTime}
+				formatY={formatBytes}
+				formatTip={(i) => `${historyTime(detail.history.timeline[i].timestamp)} · ${formatBytes(detail.history.timeline[i].bytes)} · ${detail.history.timeline[i].connections} ${detail.history.timeline[i].connections === 1 ? 'connection' : 'connections'}`}
+				highlightIndex={historyPeak >= 0 ? historyPeak : undefined}
+				ariaLabel={historyPeak >= 0 ? `Busiest at ${historyTime(detail.history.timeline[historyPeak].timestamp)}, with ${formatBytes(detail.history.timeline[historyPeak].bytes)}` : 'Bytes over the last 24 hours'}
+				height={160}
+				onpick={historyChart ? (i, j) => pickHistory(historyChart!, i, j) : undefined}
+			/>
+			{#if historyChart}<p class="pick-hint">Click a point or drag across the chart to see that moment.</p>{/if}
+			<!-- OLD CODE START — NET-249: hand-drawn div bars with hover only
 			<div class="sparkline-wrap">
 				<div class="sparkline" role="img" aria-label="Bytes per interval over the last 24 hours">
 					{#each detail.history.timeline as bucket}
@@ -287,6 +334,7 @@
 					<span class="sparkline-label">Now</span>
 				</div>
 			</div>
+			OLD CODE END -->
 		{/if}
 	</DrawerSection>
 {/if}
@@ -377,12 +425,18 @@
 		color: var(--text-3);
 	}
 
+	.pick-hint {
+		margin-top: var(--sp-2);
+		font-size: var(--text-xs);
+		color: var(--text-3);
+	}
+
 	/* History summary spacing */
 	.history-summary {
 		margin-bottom: var(--sp-4);
 	}
 
-	/* Sparkline bar chart */
+	/* OLD CODE START — NET-249: the hand-drawn history bars' styles; the history is an AreaChart now
 	.sparkline-wrap {
 		padding: var(--sp-1) 0;
 	}
@@ -419,4 +473,5 @@
 		font-size: var(--text-xs);
 		color: var(--text-3);
 	}
+	OLD CODE END */
 </style>

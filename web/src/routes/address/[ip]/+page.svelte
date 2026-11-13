@@ -19,7 +19,10 @@
 	import { namesByIp } from '$lib/utils/device-names';
 	// OLD CODE: import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown'; (slice 2a)
 	// OLD CODE: import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown'; (section D)
-	import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, startRange, windowQuery, withCount, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
+	// OLD CODE: import { DRILL_RANGES, byteFigure, …, withCount, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown'; (NET-249: the chart picks)
+	import { DRILL_RANGES, byteFigure, certificatesHref, chartTime as timeLabel, fmt, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, pickedTotal, pickWindow, rangeWindow, startRange, windowQuery, withCount, type DrillRange, type DrillRangeValue, type DrillWindow, type TimeChart } from '$lib/utils/drilldown';
+	import { toTimeChart } from '$lib/utils/chart-pick';
+	import { goto } from '$app/navigation';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { asString, getField } from '$lib/utils/tshark-filter';
 	import type { SortDir } from '$lib/utils/table-sort.svelte';
@@ -209,7 +212,8 @@
 		landed(getRegistryDevices({ limit: 200 }), (res) => (names = namesByIp(res.devices))).catch(() => {});
 		const results = await Promise.allSettled([
 			landed(
-				getAddressSummary(target, s.from, s.to),
+				// OLD CODE: getAddressSummary(target, s.from, s.to), (NET-249: the owner's bucket for the range)
+				getAddressSummary(target, s.from, s.to, r.bucket),
 				(d) => {
 					// OLD CODE: loaded = { data: d, range: r }; (slice 2a)
 					loaded = { data: d, range: r, window: s };
@@ -304,6 +308,15 @@
 	);
 	const peerName = (p: AddressPeer): string | undefined => names.get(p.ip);
 	const timeline = $derived(data?.timeline ?? []);
+	/** The chart as a pickable reply (NET-249): null when the bucket it echoes isn't one a pick can open */
+	const chart = $derived(data ? toTimeChart(data, timeline.map((p) => p.t), timeline.map((p) => p.n)) : null);
+	/** The slot in words, as the reply says it counted it; an older daemon's own bucket otherwise */
+	const slot = $derived(DRILL_RANGES.find((r) => r.bucket === data?.interval)?.bucketWords ?? shown.interval);
+
+	/** A pick opens Log Explorer's conn records with this address at either end over the picked slots, carrying their figure (NET-249). */
+	function pickSlots(c: TimeChart, i: number, j: number) {
+		void goto(withCount(logsHrefForIp(ip, shown.value, pickWindow(c, i, j), 'zeek.conn'), pickedTotal(c, i, j)));
+	}
 	const busiest = $derived(timeline.reduce((best, p, i) => (p.n > (timeline[best]?.n ?? -1) ? i : best), -1));
 	// OLD CODE START — moved to utils/drilldown.ts: a week of 6-hour buckets needs the hour as well as the day
 	// const chartTime = (t: number | string): string => {
@@ -596,7 +609,8 @@ OLD CODE END -->
 </div>
 
 <div class="grid">
-	<Card class="c-8" hero col title="Connections over time" sub="Connections per {shown.interval} · {words}">
+	<!-- OLD CODE: sub="Connections per {shown.interval} · {words}" (NET-249: the bucket the reply says it used) -->
+	<Card class="c-8" hero col title="Connections over time" sub="Connections per {slot} · {words}">
 		{#if !data}
 			{@render summaryState('connections over time')}
 		{:else if data.connections === 0}
@@ -609,7 +623,9 @@ OLD CODE END -->
 				formatTip={(i) => `${chartTime(timeline[i].t)} · ${fmt(timeline[i].n)} connections`}
 				highlightIndex={busiest}
 				ariaLabel={chartLabel}
+				onpick={chart ? (i, j) => pickSlots(chart!, i, j) : undefined}
 			/>
+			{#if chart}<p class="card-sub pick-hint">Click a point or drag across the chart to see that moment.</p>{/if}
 		{/if}
 	</Card>
 
@@ -758,6 +774,7 @@ OLD CODE END -->
 <style>
 	/* Layout glue the system lacks */
 	.chips { margin-top: var(--sp-2); }
+	.pick-hint { margin-top: var(--sp-2); }
 	/* OLD CODE START: .two { display: inline-flex; flex-direction: column; line-height: 1.3; } — system.css defines .two OLD CODE END */
 	.chip-note { align-self: center; color: var(--text-3); font-size: var(--text-sm); }
 	.who-links { margin-top: var(--sp-3); }

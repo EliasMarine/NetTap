@@ -58,19 +58,25 @@
 	// OLD CODE: import { alertsHrefForSignature, customRange, partialListNote, suricataCategoryHref, type CustomWindow, type DrillWindow } from '$lib/utils/drilldown'; (section D)
 	import {
 		alertsHrefForSignature,
+		bucketFor,
 		countDifference,
 		customRange,
 		DRILL_RANGES,
 		fmt,
 		linkedCount,
 		partialListNote,
+		pickedTotal,
+		pickWindow,
 		startRange,
 		suricataCategoryHref,
 		windowQuery,
+		withCount,
 		type CustomWindow,
 		type DrillWindow,
 		type LinkedCount,
+		type TimeChart,
 	} from '$lib/utils/drilldown';
+	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -115,18 +121,21 @@
 	// 	{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days' },
 	// ];
 	// OLD CODE END
-	// rangeFor sets each range's interval from INTERVAL_MAP below (DRILL_RANGES' interval is Home's wording)
+	// OLD CODE: // rangeFor sets each range's interval from INTERVAL_MAP below (DRILL_RANGES' interval is Home's wording)
+	// rangeFor sets each range's interval to its table bucket (DRILL_RANGES' interval is Home's wording)
 	const TIME_RANGES = DRILL_RANGES.map((r) => ({ ...r, ms: r.hours * 3_600_000 }));
 
-	const INTERVAL_MAP: Record<string, string> = {
-		// OLD CODE: '15m': '1m', (NET-192 PR 4)
-		'1h': '5m',
-		// OLD CODE: '4h': '15m', (NET-192 PR 4)
-		'6h': '15m',
-		'24h': '1h',
-		'7d': '6h',
-		'30d': '1d',
-	};
+	// OLD CODE START — NET-249 slice 2: the timeline's buckets come from the owner's table (DRILL_RANGES' bucket)
+	// const INTERVAL_MAP: Record<string, string> = {
+	// 	// OLD CODE: '15m': '1m', (NET-192 PR 4)
+	// 	'1h': '5m',
+	// 	// OLD CODE: '4h': '15m', (NET-192 PR 4)
+	// 	'6h': '15m',
+	// 	'24h': '1h',
+	// 	'7d': '6h',
+	// 	'30d': '1d',
+	// };
+	// OLD CODE END
 
 	type SeverityFilter = 'all' | 'high' | 'medium' | 'low' | 'info';
 
@@ -173,6 +182,8 @@
 	// let alertCounts = $state({ total: 0, high: 0, medium: 0, low: 0 });
 	// OLD CODE END
 	let timeline = $state<AlertTimelineBucket[]>([]);
+	/** The timeline reply on screen as a pickable chart (NET-249); null when its echoed bucket or window can't be picked */
+	let timelineChart = $state<TimeChart | null>(null);
 	let topSignatures = $state<AlertSignature[]>([]);
 	let topDestIps = $state<AlertIpEntry[]>([]);
 	let topSrcIps = $state<AlertIpEntry[]>([]);
@@ -415,21 +426,35 @@
 	// Helpers
 	// ---------------------------------------------------------------------------
 
+	// OLD CODE START — NET-249 slice 2: the timeline's bucket is the owner's table (DRILL_RANGES' bucket), and bucketFor's for Custom
+	// /**
+	//  * Our range for `value`. Custom takes its window's span and words, and the timeline bucket of the
+	//  * smallest standard range that covers it.
+	//  */
+	// function rangeFor(value: string, win: CustomWindow | null) {
+	// 	if (value === 'custom' && win) {
+	// 		const ms = win.hours * 3_600_000;
+	// 		const fit = TIME_RANGES.find((r) => r.ms >= ms) ?? TIME_RANGES[TIME_RANGES.length - 1];
+	// 		return { label: win.label, value: win.value, ms, words: win.words, interval: INTERVAL_MAP[fit.value] };
+	// 	}
+	// 	const r = TIME_RANGES.find((t) => t.value === value) ?? TIME_RANGES.find((r) => r.value === '24h')!;
+	// 	return { ...r, interval: INTERVAL_MAP[r.value] };
+	// }
+	// OLD CODE END
 	/**
 	 * Our range for `value`. Custom takes its window's span and words, and the timeline bucket of the
-	 * smallest standard range that covers it.
+	 * smallest standard range that covers it (bucketFor).
 	 */
 	function rangeFor(value: string, win: CustomWindow | null) {
 		if (value === 'custom' && win) {
-			const ms = win.hours * 3_600_000;
-			const fit = TIME_RANGES.find((r) => r.ms >= ms) ?? TIME_RANGES[TIME_RANGES.length - 1];
-			return { label: win.label, value: win.value, ms, words: win.words, interval: INTERVAL_MAP[fit.value] };
+			const fit = bucketFor(Date.parse(win.from), Date.parse(win.to));
+			return { label: win.label, value: win.value, ms: win.hours * 3_600_000, words: win.words, interval: fit.bucket, bucketWords: fit.bucketWords };
 		}
 		// OLD CODE: ?? TIME_RANGES[3]; (slice 2b-1: 6h moved 24h to index 4)
 		// OLD CODE: ?? TIME_RANGES[4]; (NET-192 PR 4: 15m and 4h dropped, 24h is index 2)
 		// OLD CODE: ?? TIME_RANGES[2] (NET-192 PR 4: the default by value, not by position)
 		const r = TIME_RANGES.find((t) => t.value === value) ?? TIME_RANGES.find((r) => r.value === '24h')!;
-		return { ...r, interval: INTERVAL_MAP[r.value] };
+		return { ...r, interval: r.bucket };
 	}
 
 	function getTimeRange(): { from: string; to: string } {
@@ -839,7 +864,11 @@
 		if (!guard.current(g)) return 'skipped';
 
 		if (customWindow) customCounts = snap;
-		if (tl.status === 'fulfilled') timeline = tl.value.buckets;
+		// OLD CODE: if (tl.status === 'fulfilled') timeline = tl.value.buckets; (NET-249: a pick needs the reply's window and bucket too)
+		if (tl.status === 'fulfilled') {
+			timeline = tl.value.buckets;
+			timelineChart = toTimeChart(tl.value, timeline.map((b) => b.timestamp), timeline.map(bucketTotal));
+		}
 		// OLD CODE: if (sigs.status === 'fulfilled') topSignatures = sigs.value.signatures; (slice 2b-2: the rows keep their window)
 		if (sigs.status === 'fulfilled') {
 			topSignatures = sigs.value.signatures;
@@ -1025,6 +1054,20 @@
 		if (!data) return;
 		const q = new URLSearchParams({ severity: level, from: data.from, to: data.to, range: baseRange });
 		void goto(`/alerts?${q.toString()}`, { keepFocus: true, noScroll: true });
+		scrollToList();
+	}
+
+	/** A timeline slot's figure: every severity, Info included, as the list with no severity filter counts them. */
+	function bucketTotal(b: AlertTimelineBucket): number {
+		return b.high + b.medium + b.low + (b.info ?? 0);
+	}
+
+	/**
+	 * A pick on the timeline (NET-249) opens exactly the alerts it counted: the list over the picked
+	 * slots' window with every list filter cleared (the timeline request carries none), and their figure.
+	 */
+	function pickTimeline(chart: TimeChart, i: number, j: number) {
+		void goto(withCount(`/alerts?${windowQuery(pickWindow(chart, i, j), baseRange)}`, pickedTotal(chart, i, j)), { keepFocus: true, noScroll: true });
 		scrollToList();
 	}
 
@@ -1282,7 +1325,8 @@
 	// OLD CODE START — I1: info alerts were left out, so the slots summed to less than the tiles
 	// const timelineTotals = $derived(timeline.map((b) => b.high + b.medium + b.low));
 	// OLD CODE END
-	const timelineTotals = $derived(timeline.map((b) => b.high + b.medium + b.low + (b.info ?? 0)));
+	// OLD CODE: const timelineTotals = $derived(timeline.map((b) => b.high + b.medium + b.low + (b.info ?? 0))); (NET-249: one sum, the pick's too)
+	const timelineTotals = $derived(timeline.map(bucketTotal));
 	const busiest = $derived(timelineTotals.reduce((best, v, i) => (v > timelineTotals[best] ? i : best), 0));
 	const timelineLabel = $derived(
 		timelineTotals.length && timelineTotals[busiest] > 0
@@ -1590,7 +1634,8 @@ OLD CODE END -->
 
 <div class="grid">
 	<!-- OLD CODE: sub="Alerts per {INTERVAL_MAP[selectedTimeRange] ?? '1h'} · …" (slice 2a: Custom has no entry) -->
-	<Card class="c-8" hero col title="Alert timeline" sub="Alerts per {range.interval} · {range.words}">
+	<!-- OLD CODE: sub="Alerts per {range.interval} · {range.words}" (NET-249: the table's bucket, in words) -->
+	<Card class="c-8" hero col title="Alert timeline" sub="Alerts per {range.bucketWords} · {range.words}">
 		{#if !loaded}
 			<CardState state="loading" title="Loading the alert timeline" />
 		{:else if failed.timeline}
@@ -1605,7 +1650,9 @@ OLD CODE END -->
 				formatTip={(i) => `${formatShortTimestamp(timeline[i].timestamp)} · ${fmt(timelineTotals[i])} alerts · High ${fmt(timeline[i].high)} · Medium ${fmt(timeline[i].medium)} · Low ${fmt(timeline[i].low)} · Info ${fmt(timeline[i].info ?? 0)}`}
 				highlightIndex={busiest}
 				ariaLabel={timelineLabel}
+				onpick={timelineChart ? (i, j) => pickTimeline(timelineChart!, i, j) : undefined}
 			/>
+			{#if timelineChart}<p class="card-sub pick-hint">Click a point or drag across the chart to see that moment.</p>{/if}
 		{/if}
 	</Card>
 
@@ -1726,6 +1773,7 @@ OLD CODE END -->
 <style>
 	/* Layout glue the system lacks */
 	.alert-layout { align-items: start; }
+	.pick-hint { margin-top: var(--sp-2); }
 	.sev-tile {
 		all: unset; display: flex; cursor: pointer; color: var(--text-1); border-radius: var(--r-md);
 	}

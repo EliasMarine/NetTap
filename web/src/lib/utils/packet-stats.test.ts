@@ -80,7 +80,27 @@ describe('packetStats edge cases', () => {
 		});
 		const one = packetStats([ROWS[0]], null);
 		expect(one.lastedSeconds).toBeNull();
-		expect(one.timeline).toEqual([{ t: '1700000000.000001', packets: 1, bytes: 54 }]);
+		// OLD CODE: expect(one.timeline).toEqual([{ t: '1700000000.000001', packets: 1, bytes: 54 }]); (NET-249: and its rows)
+		expect(one.timeline).toEqual([{ t: '1700000000.000001', packets: 1, bytes: 54, rows: [0] }]);
+	});
+
+	// NET-249: a pick on the chart shows exactly a bucket's packets, so each bucket names its rows
+	it("names each bucket's rows, sub-millisecond apart, with the last packet in the last bucket", () => {
+		// 600 ns from first to last: buckets of 10 ns; the last packet sits exactly on the 60th bucket's end
+		const rows = [
+			row(1, '1794026197.000000000', {}),
+			row(2, '1794026197.000000009', {}),
+			row(3, '1794026197.000000010', {}),
+			row(4, '1794026197.000000599', {}),
+			row(5, '1794026197.000000600', {}),
+		];
+		const { timeline } = packetStats(rows, null);
+		expect(timeline).toHaveLength(60);
+		expect(timeline[0].rows).toEqual([0, 1]);
+		expect(timeline[1].rows).toEqual([2]);
+		expect(timeline[59].rows).toEqual([3, 4]);
+		expect(timeline.reduce((n, b) => n + b.rows.length, 0)).toBe(rows.length);
+		for (const b of timeline) expect(b.rows.length).toBe(b.packets);
 	});
 
 	it('keeps "lasted" exact past what a float holds, and never negative', () => {

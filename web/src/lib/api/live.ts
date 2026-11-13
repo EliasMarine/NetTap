@@ -189,6 +189,14 @@ export interface ConnectionDetailHistory {
 	total_bytes: number;
 	connection_count: number;
 	timeline: { timestamp: string; bytes: number; connections: number }[];
+	/**
+	 * NET-249: the one window the history was counted over, its bucket, and the destination port it
+	 * filtered on (null: none). Absent from an older daemon.
+	 */
+	from?: string;
+	to?: string;
+	interval?: string;
+	port?: number | null;
 }
 
 export interface ConnectionDetailResponse {

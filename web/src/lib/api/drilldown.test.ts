@@ -125,6 +125,20 @@ describe('drill-down clients', () => {
 		}
 	});
 
+	// NET-249 slice 2: the chart's bucket, only when the page asks for one
+	it('sends the timeline bucket the page asks for, and no interval otherwise', async () => {
+		const fetchMock = vi.fn(async (url: string) => reply(200, url.startsWith('/api/addresses/') ? ADDRESS : SURICATA_CATEGORY));
+		vi.stubGlobal('fetch', fetchMock);
+		await getAddressSummary('192.168.1.10', 'a', 'b', '5m');
+		await getSuricataCategory('Misc activity', 'a', 'b', '3h');
+		await getAddressSummary('192.168.1.10', 'a', 'b');
+		expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+			'/api/addresses/192.168.1.10?from=a&to=b&interval=5m',
+			'/api/alerts/suricata/Misc%20activity?from=a&to=b&interval=3h',
+			'/api/addresses/192.168.1.10?from=a&to=b',
+		]);
+	});
+
 	it("throws the daemon's reason for a bad Suricata category name", async () => {
 		vi.stubGlobal('fetch', vi.fn(async () => reply(400, { error: "That isn't a Suricata category name." })));
 		await expect(getSuricataCategory(' ', 'a', 'b')).rejects.toThrow("That isn't a Suricata category name.");

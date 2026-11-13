@@ -36,7 +36,8 @@
 	import KpiCard from '$lib/components/ui/KpiCard.svelte';
 	import Pills from '$lib/components/ui/Pills.svelte';
 	import SearchField from '$lib/components/ui/SearchField.svelte';
-	import { chartTime, DRILL_RANGES, fmt, type DrillRangeValue } from '$lib/utils/drilldown';
+	// OLD CODE: import { chartTime, DRILL_RANGES, fmt, type DrillRangeValue } from '$lib/utils/drilldown'; (NET-249: the table's buckets and window words)
+	import { chartTime, DRILL_RANGES, fmt, windowWords } from '$lib/utils/drilldown';
 	import { formatTime } from '$lib/utils/time';
 
 	// ---------------------------------------------------------------------------
@@ -54,15 +55,18 @@
 	// 	{ label: '30d', value: '30d', ms: 30 * 24 * 60 * 60 * 1000, words: 'last 30 days', bucket: 'day' },
 	// ];
 	// OLD CODE END
-	// The timeline's bar per range: its words for the subtitle and its width, kept together so they can't drift
-	const BUCKET: Record<DrillRangeValue, { words: string; minutes: number }> = {
-		'1h': { words: '5 minutes', minutes: 5 },
-		'6h': { words: '30 minutes', minutes: 30 },
-		'24h': { words: 'hour', minutes: 60 },
-		'7d': { words: '6 hours', minutes: 360 },
-		'30d': { words: 'day', minutes: 1440 },
-	};
-	const TIME_RANGES = DRILL_RANGES.map((r) => ({ ...r, ms: r.hours * 3_600_000, bucket: BUCKET[r.value].words, bucketMs: BUCKET[r.value].minutes * 60_000 }));
+	// OLD CODE START — NET-249 slice 2: the timeline's buckets come from the owner's table (DRILL_RANGES' bucketMs and bucketWords)
+	// // The timeline's bar per range: its words for the subtitle and its width, kept together so they can't drift
+	// const BUCKET: Record<DrillRangeValue, { words: string; minutes: number }> = {
+	// 	'1h': { words: '5 minutes', minutes: 5 },
+	// 	'6h': { words: '30 minutes', minutes: 30 },
+	// 	'24h': { words: 'hour', minutes: 60 },
+	// 	'7d': { words: '6 hours', minutes: 360 },
+	// 	'30d': { words: 'day', minutes: 1440 },
+	// };
+	// const TIME_RANGES = DRILL_RANGES.map((r) => ({ ...r, ms: r.hours * 3_600_000, bucket: BUCKET[r.value].words, bucketMs: BUCKET[r.value].minutes * 60_000 }));
+	// OLD CODE END
+	const TIME_RANGES = DRILL_RANGES.map((r) => ({ ...r, ms: r.hours * 3_600_000 }));
 
 	const SEARCH_POLL_MS = 3000;
 
@@ -88,6 +92,10 @@
 
 	// Files
 	let files = $state<PcapFile[]>([]);
+	/** The window the files on screen were listed for, and the timeline's bucket for it (NET-249: set when they land) */
+	let filesWindow = $state<{ from: string; to: string; step: number } | null>(null);
+	/** The timeline slots picked (NET-249): the files written in [from, to), ms. The list shows only those; null shows every file */
+	let fileWindow = $state<{ from: number; to: number } | null>(null);
 	let filesLoading = $state(true);
 	let filesFailed = $state(false); // #96: a failed listing is not "No PCAP files"
 
@@ -173,6 +181,8 @@
 		bytes: number;
 	}
 
+	/* OLD CODE START — NET-249: the buckets started at Date.now() when derived, so they shifted on every re-derive and
+	   no slot had an exact window; they are epoch-aligned slots over the files' own window now
 	function buildCaptureTimeline(fileList: PcapFile[], range: string): TimelineBucket[] {
 		if (!fileList.length) return [];
 		const now = Date.now();
@@ -197,8 +207,48 @@
 		}
 		return buckets;
 	}
+	OLD CODE END */
+	/** A time's slot: epoch-aligned, `step` ms wide. The chart and the file filter both use it, so a slot's figure is its files. */
+	const slotOf = (ms: number, step: number) => Math.floor(ms / step);
 
-	let captureTimeline = $derived(buildCaptureTimeline(files, selectedTimeRange));
+	/** Files written per slot, every slot from the window's start to its end, by each file's `modified` time. */
+	function buildCaptureTimeline(fileList: PcapFile[], win: { from: string; to: string; step: number } | null): TimelineBucket[] {
+		if (!fileList.length || !win) return [];
+		const first = slotOf(Date.parse(win.from), win.step);
+		const count = slotOf(Date.parse(win.to), win.step) - first + 1;
+		const buckets: TimelineBucket[] = Array.from({ length: count }, (_, i) => ({ label: new Date((first + i) * win.step).toISOString(), count: 0, bytes: 0 }));
+		for (const file of fileList) {
+			const idx = slotOf(Date.parse(file.modified), win.step) - first;
+			if (idx >= 0 && idx < count) {
+				buckets[idx].count++;
+				buckets[idx].bytes += file.size_bytes;
+			}
+		}
+		return buckets;
+	}
+
+	// OLD CODE: let captureTimeline = $derived(buildCaptureTimeline(files, selectedTimeRange)); (NET-249)
+	let captureTimeline = $derived(buildCaptureTimeline(files, filesWindow));
+	/** The list under the chart: every file, or only those written in the picked slots (the chart's own rule) */
+	const shownFiles = $derived.by(() => {
+		const w = fileWindow;
+		if (!w) return files;
+		return files.filter((f) => {
+			const ms = Date.parse(f.modified);
+			return ms >= w.from && ms < w.to;
+		});
+	});
+
+	/** A pick on the timeline (NET-249) narrows the file list to the files written in those slots, and brings it into view. */
+	function pickFiles(i: number, j: number) {
+		const step = filesWindow?.step;
+		const a = captureTimeline[Math.min(i, j)];
+		const b = captureTimeline[Math.max(i, j)];
+		if (!step || !a || !b) return;
+		fileWindow = { from: Date.parse(a.label), to: Date.parse(b.label) + step };
+		document.getElementById('files-section')?.scrollIntoView?.({ behavior: 'smooth' });
+	}
+	const fileWord = (n: number) => `${fmt(n)} ${n === 1 ? 'file' : 'files'}`;
 	// OLD CODE START — the hand-drawn timeline's scale; AreaChart fits its own axis
 	// let maxTimelineCount = $derived(Math.max(1, ...captureTimeline.map((b) => b.count)));
 	// OLD CODE END
@@ -368,11 +418,14 @@
 	async function loadPage(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
 		const { from, to } = getTimeRange();
+		const step = range.bucketMs;
 		filesLoading = true;
 		filesFailed = false;
 		const [filesRes, captureRes] = await Promise.allSettled([getPcapFiles({ from, to }), fetchCaptureStatus()]);
 		if (!guard.current(g)) return 'skipped';
 		files = filesRes.status === 'fulfilled' ? filesRes.value.files : [];
+		// NET-249: the timeline's slots follow the window these files were listed for, with the table's bucket
+		filesWindow = filesRes.status === 'fulfilled' ? { from, to, step } : null;
 		filesFailed = filesRes.status === 'rejected';
 		filesLoading = false;
 		// A failed read leaves the state unknown: the label says so and the toggle stays disabled
@@ -551,6 +604,7 @@
 
 	function handleTimeRangeChange(value: string) {
 		selectedTimeRange = value;
+		fileWindow = null; // the picked slots were the last range's
 		// OLD CODE START — PLAN §5.5: the guard drops the older range's load, so always reload
 		// if (initialized) loadFiles();
 		// OLD CODE END
@@ -724,7 +778,8 @@
 		note="Among the packets in the preview below"
 	/>
 
-	<Card title="Capture timeline" sub="Files written per {range.bucket} · {range.words}" hero col class="c-8">
+	<!-- OLD CODE: sub="Files written per {range.bucket} · {range.words}" (NET-249: the table's bucket) -->
+	<Card title="Capture timeline" sub="Files written per {range.bucketWords} · {range.words}" hero col class="c-8">
 		{#if filesFailed && !filesLoading}
 			<CardState state="error" title="Couldn't load the PCAP file list: the request failed." message="Check that NetTap is running on the System page, then try again." onaction={() => refresh.run()} />
 		{:else if captureTimeline.length === 0 && filesLoading}
@@ -741,7 +796,9 @@
 				ariaLabel={busiestBucket >= 0
 					? `Most files at ${formatTimestamp(captureTimeline[busiestBucket].label)}, with ${captureTimeline[busiestBucket].count} written`
 					: 'No files written in this range'}
+				onpick={pickFiles}
 			/>
+			<p class="card-sub pick-hint">Click a point or drag across the chart to list the files written then.</p>
 		{/if}
 	</Card>
 
@@ -907,6 +964,7 @@
 	</Card>
 
 	<Card title="Available files" sub="{filesUnknown ? 'Capture files' : `${files.length} files`} · {range.words}" class="c-8">
+		<!-- NET-249: a timeline pick narrows this list; the notice says to what, and Show all clears it -->
 		<span id="files-section" class="anchor"></span>
 		{#if filesFailed && !filesLoading}
 			<CardState state="error" title="Couldn't load the PCAP file list: the request failed." message="Check that NetTap is running on the System page, then try again." onaction={() => refresh.run()} />
@@ -915,9 +973,19 @@
 		{:else if files.length === 0}
 			<CardState state="empty" icon="pcap" title="No PCAP files found in the selected time range." message="Files appear here while capture is on." />
 		{:else}
+			{#if fileWindow}
+				<p class="notice" role="status">
+					<span>Showing the {fileWord(shownFiles.length)} written {windowWords(new Date(fileWindow.from).toISOString(), new Date(fileWindow.to - 1).toISOString())}, of the {fileWord(files.length)} listed.</span>
+					<button class="btn" type="button" onclick={() => (fileWindow = null)}>Show all</button>
+				</p>
+			{/if}
+			{#if shownFiles.length === 0}
+				<CardState state="empty" icon="pcap" title="No file was written then." message="Pick another part of the timeline, or show all the files." />
+			{:else}
+			<!-- OLD CODE: rows={files} (NET-249: a timeline pick narrows the list) -->
 			<DataTable
 				columns={fileColumns}
-				rows={files}
+				rows={shownFiles}
 				ariaLabel="PCAP files"
 				rowKey={(f) => f.file}
 				initialSort={{ key: 'modified', dir: 'desc' }}
@@ -925,6 +993,7 @@
 				rowLabel={(f) => `Preview ${f.name}`}
 				selectedKey={previewFile || undefined}
 			/>
+			{/if}
 		{/if}
 	</Card>
 
@@ -959,6 +1028,8 @@
 	.when { width: auto; }
 	.download-help { margin-top: calc(var(--sp-2) * -1); margin-bottom: var(--sp-4); }
 	.note { margin-bottom: var(--sp-3); }
+	.pick-hint { margin-top: var(--sp-2); }
+	.notice .btn { margin-left: auto; }
 	.row-actions { display: flex; gap: var(--sp-2); justify-content: flex-end; }
 	/* A long preview scrolls inside the card */
 	.packets { max-height: 32rem; overflow-y: auto; }

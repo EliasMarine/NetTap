@@ -245,3 +245,70 @@ describe('Suricata category page', () => {
 		expect(kpi('Alerts')).toHaveTextContent('1,240');
 	});
 });
+
+// NET-249 slice 2: the timeline takes the owner's buckets, and a pick opens the Alerts list for this category
+describe('Suricata category page — the timeline drills into its alerts (NET-249)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.mocked(goto).mockClear();
+		goTo(NAME);
+	});
+
+	/** Two hourly slots; the reply's window starts 2 minutes into the first, so that slot is clipped. */
+	const PICKABLE: SuricataCategoryFigures = {
+		...SURICATA_CATEGORY,
+		from: '2026-11-03T09:02:00.000Z',
+		to: '2026-11-03T10:30:00.000Z',
+		interval: '1h',
+		timeline: [
+			{ t: '2026-11-03T09:00:00.000Z', n: 5 },
+			{ t: '2026-11-03T10:00:00.000Z', n: 7 },
+		],
+	};
+
+	it.each([
+		['1h', '1m'],
+		['6h', '5m'],
+		['24h', '5m'],
+		['7d', '1h'],
+		['30d', '3h'],
+	])('?range=%s asks for %s slots', async (range, bucket) => {
+		goTo(NAME, `?range=${range}`);
+		stubDaemon(SURICATA_CATEGORY);
+		render(Page);
+		await loaded();
+		expect(figuresCall().searchParams.get('interval')).toBe(bucket);
+	});
+
+	it('a Custom window asks for the bucket of the smallest range that covers it', async () => {
+		goTo(NAME, `?from=${FROM}&to=${TO}`);
+		stubDaemon(SURICATA_CATEGORY);
+		render(Page);
+		await loaded();
+		expect(figuresCall().searchParams.get('interval')).toBe('5m');
+	});
+
+	it("a pick opens the list for this category over the picked slots, with their figure", async () => {
+		stubDaemon(PICKABLE);
+		render(Page);
+		await loaded();
+		expect(screen.getByText(/^Alerts per hour · /)).toBeInTheDocument();
+		expect(screen.getByText('Click a point or drag across the chart to see that moment.')).toBeInTheDocument();
+		const chart = screen.getByRole('group', { name: /^Busiest at / });
+		await fireEvent.keyDown(chart, { key: 'Home' });
+		await fireEvent.keyDown(chart, { key: 'Enter' });
+		expect(query(vi.mocked(goto).mock.calls[0][0] as string)).toEqual({ suricata_category: NAME, from: PICKABLE.from, to: '2026-11-03T09:59:59.999Z', range: '24h', count: '5' });
+		expect(String(vi.mocked(goto).mock.calls[0][0])).toMatch(/^\/alerts\?/);
+		await fireEvent.keyDown(chart, { key: 'End', shiftKey: true });
+		await fireEvent.keyDown(chart, { key: 'Enter' });
+		expect(query(vi.mocked(goto).mock.calls[1][0] as string)).toEqual({ suricata_category: NAME, from: PICKABLE.from, to: PICKABLE.to, range: '24h', count: '12' });
+	});
+
+	it("an older daemon's reply, with no bucket, stays a picture", async () => {
+		stubDaemon(SURICATA_CATEGORY);
+		render(Page);
+		await loaded();
+		expect(screen.getByRole('img', { name: /^Busiest at / })).toBeInTheDocument();
+		expect(screen.queryByText(/Click a point or drag/)).not.toBeInTheDocument();
+	});
+});
