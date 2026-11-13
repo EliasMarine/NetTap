@@ -175,7 +175,8 @@ cap_drop = svc.get('cap_drop', [])
 cap_add = svc.get('cap_add', [])
 assert 'ALL' not in cap_drop, '${svc} must NOT have cap_drop: ALL (Malcolm entrypoint needs su)'
 assert len(cap_add) > 0, '${svc} should have explicit cap_add'
-assert 'NET_ADMIN' in cap_add, '${svc} needs NET_ADMIN'
+# NET-220: zeek-live captures with NET_RAW alone (checked in its own test)
+assert '${svc}' == 'zeek-live' or 'NET_ADMIN' in cap_add, '${svc} needs NET_ADMIN'
 assert 'NET_RAW' in cap_add, '${svc} needs NET_RAW'
 print('${svc}: OK (cap_add ' + str(cap_add) + ')')
 "
@@ -674,6 +675,27 @@ print('zeek-live build: OK')
         "${REPO_ROOT}/docker/Dockerfile.zeek-live"
 }
 
+@test "compose: zeek-live holds only NET_RAW and a memory limit (NET-220)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+svc = data['services']['zeek-live']
+assert svc['cap_add'] == ['NET_RAW'], svc['cap_add']
+assert svc['mem_limit'] == '3g', svc.get('mem_limit')
+# no-new-privileges would block the file-capability gain Zeek captures with
+assert 'no-new-privileges:true' not in svc.get('security_opt', []), svc.get('security_opt')
+print('zeek-live caps: OK')
+"
+    [ "$status" -eq 0 ]
+    # The image drops CAP_NET_ADMIN from the binaries and from Malcolm's entrypoint setcap
+    local dockerfile="${REPO_ROOT}/docker/Dockerfile.zeek-live"
+    grep -q "^RUN sed -i 's/CAP_NET_RAW+eip CAP_NET_ADMIN+eip/CAP_NET_RAW+eip/' /usr/local/bin/docker_entrypoint.sh" "$dockerfile"
+    grep -q '^RUN setcap cap_net_raw=eip /usr/local/zeek/bin/zeek' "$dockerfile"
+    grep -q '"/usr/local/zeek/bin/zeek cap_net_raw=eip"' "$dockerfile"
+}
+
 @test "compose: non-capture services do NOT use host network" {
     # nettap-storage-daemon uses host networking on purpose: it runs the bridge,
     # mirror and NIC commands in the host namespace (nsenter dropped 2026-11-01).
@@ -942,8 +964,35 @@ print('pcap writer: OK')
     [ "$(sed -n 1p "$include")" = "%YAML 1.1" ]
     [ "$(sed -n 2p "$include")" = "---" ]
     grep -q '^threshold-file: /etc/nettap/suricata-threshold.config$' "$include"
-    # nothing else active: no capture interface, outputs or defrag overrides
+    # nothing else active: no capture interface, outputs or defrag overrides (NET-206's counters
+    # come from compose env, tested below)
     [ "$(grep -cv -e '^#' -e '^$' -e '^%YAML' -e '^---$' "$include")" -eq 1 ]
+    # OLD CODE START — NET-206 review: the stats block moved to compose env
+    # # NET-206: the whole stats block, restated (a later block replaces Malcolm's), counters on for
+    # # dump-counters; nothing else active: no capture interface, outputs (no eve stats) or defrag
+    # [ "$(grep -cv -e '^#' -e '^$' -e '^%YAML' -e '^---$' "$include")" -eq 5 ]
+    # grep -qx 'stats:' "$include"
+    # grep -qx '  enabled: yes' "$include"
+    # grep -qx '  interval: 10' "$include"
+    # grep -qx '  decoder-events: no' "$include"
+    # ! grep -q '^outputs:' "$include"
+    # OLD CODE END
+}
+
+@test "compose: suricata-live turns its engine counters on, with no stats output (NET-206)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+env = data['services']['suricata-live']['environment']
+assert env['SURICATA_STATS_ENABLED'] == 'true', env.get('SURICATA_STATS_ENABLED')
+assert env['SURICATA_STATS_INTERVAL'] == '10', env.get('SURICATA_STATS_INTERVAL')
+# eve stats would add a record per interval to eve.json and the index
+assert env.get('SURICATA_STATS_EVE_ENABLED', 'false') == 'false', env.get('SURICATA_STATS_EVE_ENABLED')
+print('suricata-live stats: OK')
+"
+    [ "$status" -eq 0 ]
 }
 
 @test "compose: arkime-live is off by default (arkime profile, owner decision 2026-11-02)" {

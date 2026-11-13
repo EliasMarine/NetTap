@@ -2,7 +2,7 @@
 NetTap PcapSearchService — Search and filter captured PCAP files.
 
 Provides PCAP file listing, BPF filter search, packet preview (via tshark),
-and filtered PCAP download (via mergecap + tshark).
+and filtered PCAP download (streamed from packet analysis's window cut, NET-189).
 
 All TShark/mergecap operations run inside the nettap-tshark container via
 ``docker exec``, matching the pattern used in TSharkService. TShark is NOT
@@ -16,13 +16,34 @@ import logging
 import os
 import re
 import shlex
-import tempfile
+
+# OLD CODE START — NET-189: the download streams; no daemon-side temp file
+# import tempfile
+# OLD CODE END
 import time
-from datetime import datetime, timezone
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 from api.offload import run_blocking
+from services.capture_index import (
+    RECENT_SECONDS,
+    TIME_FLOOR,
+    CaptureIndex,
+    Selection,
+)
+from services.container_exec import ReaderBusy, reader_slot, run_in_tshark
+from services.packet_manifest import MAX_BYTES, MAX_FILES
+from services.packet_search import (
+    CHECK_JOB,
+    CHECK_SECONDS,
+    FILTER_DOWNLOAD_JOB,
+    _cuts,
+    cut_ok,
+    job_path,
+)
 from services.tshark_service import (
     bounded_exec,
     filter_check_cmd,
@@ -56,6 +77,22 @@ _MAX_CONCURRENT_TSHARK = 2
 _SEARCH_FILE_TIMEOUT = 300
 _TIMEOUT_EXIT_CODES = {124, 137}  # coreutils timeout: TERM, then KILL
 
+# "Download filtered" (NET-189). One deadline for the whole request, below the web
+# proxy's 300 s (undici's header and body timeouts).
+_DOWNLOAD_SECONDS = 240
+_DOWNLOAD_SLOT_WAIT_SECONDS = 5
+_DOWNLOAD_MIN_JOB_SECONDS = 5
+# Exact output needs one uninterrupted dissection, and TShark's memory follows the
+# packet count (G11, TShark 4.0.17: 343k packets 491 MiB, 536k 728 MiB): 400k is about
+# 560 MiB, which leaves room for one per-file search read in the container's 1 GiB.
+_DOWNLOAD_MAX_PACKETS = 400_000
+_DOWNLOAD_NAMED_FAILED = 5
+# netsniff-ng names each file after the epoch it started (mnetsniff-enp4s0_<epoch>.pcap)
+_NAME_EPOCH = re.compile(r"_(\d{10})\.")
+# Packets written up to this long before a file's name time still land in it (the
+# writer ran 0.13-6.6 s behind on the G11). Listing only: the download uses the index.
+_WRITER_LAG_SECONDS = 30
+
 # -c counts packets read, not matches, so a filtered preview pipes through head instead.
 # User values reach tshark only as positional args ($1 file, $2 filter, $3 limit).
 # -l flushes each line so tshark stops right after head quits, not a 4 KB buffer later (#78)
@@ -86,12 +123,23 @@ _FILTERED_PREVIEW_SCRIPT = (
 class PcapSearchService:
     """Search and filter captured PCAP files."""
 
+    # OLD CODE START — NET-189: the download selects its files from the capture index
+    # def __init__(
+    #     self, pcap_dir: str | None = None, semaphore: asyncio.Semaphore | None = None
+    # ) -> None:
+    # OLD CODE END
     def __init__(
-        self, pcap_dir: str | None = None, semaphore: asyncio.Semaphore | None = None
+        self,
+        pcap_dir: str | None = None,
+        semaphore: asyncio.Semaphore | None = None,
+        index: CaptureIndex | None = None,
     ) -> None:
         self._pcap_dir = Path(pcap_dir or _DEFAULT_PCAP_DIR)
         # NET-188: the server passes TShark's semaphore so every reader shares 2 slots
         self._semaphore = semaphore or asyncio.Semaphore(_MAX_CONCURRENT_TSHARK)
+        # NET-189: the files holding each window's packets; one download at a time
+        self._index = index
+        self._download_lock = asyncio.Lock()
         self._search_seq = 0
         self._search_job: dict[str, Any] | None = None
         self._search_task: asyncio.Task | None = None
@@ -131,7 +179,9 @@ class PcapSearchService:
         """List stored PCAP files with metadata.
 
         Returns list of dicts with: file, size_bytes, modified, name.
-        Optionally filtered by time range based on file modification time.
+        Optionally filtered by time range: a file is listed when the span it can hold
+        packets from (its name's start time, less the writer lag, to its modification
+        time) overlaps the range (NET-189).
         """
         if not self._pcap_dir.exists():
             logger.warning("PCAP directory does not exist: %s", self._pcap_dir)
@@ -153,7 +203,12 @@ class PcapSearchService:
             # Time range filter
             if from_dt and modified < from_dt:
                 continue
-            if to_dt and modified > to_dt:
+            # OLD CODE START — NET-189: a file that started inside the range but was last
+            # written after it was left out (a 20 s window got one of its two files)
+            # if to_dt and modified > to_dt:
+            #     continue
+            # OLD CODE END
+            if to_dt and _span_start(path.name, stat.st_mtime) > to_dt.timestamp():
                 continue
 
             results.append(
@@ -595,199 +650,281 @@ class PcapSearchService:
     # Download (merge + filter)
     # ------------------------------------------------------------------
 
+    # OLD CODE START — NET-189: mergecap into the container's 100 MB /tmp failed for any
+    # window of more than one ~107 MB file (and left the file there), and the result was
+    # held in memory and written to the daemon's 50 MB /tmp. Replaced by a streamed job.
+    # async def download_filtered(
+    #     self,
+    #     bpf_filter: str,
+    #     from_ts: str | None = None,
+    #     to_ts: str | None = None,
+    # ) -> str | None:
+    #     """Merge and filter PCAPs into a single temporary download file.
+    #
+    #     Runs mergecap and tshark inside the nettap-tshark container via
+    #     docker exec.  Intermediate files live in the container's /tmp
+    #     (tmpfs, 100M).  The final filtered output is written to stdout
+    #     (``-w -``) and captured on the daemon side.
+    #
+    #     Uses asyncio.create_subprocess_exec (argument-list form, no shell).
+    #     Returns the path to the temporary filtered PCAP file on the daemon,
+    #     or None when there are no PCAP files; raises RuntimeError when the
+    #     merge or filter fails (#96).  Caller is responsible for cleanup.
+    #     """
+    #     valid, err = self.validate_bpf_filter(bpf_filter)
+    #     if not valid:
+    #         raise ValueError(f"Invalid display filter: {err}")
+    #
+    #     # OLD CODE START — PR 2 (reliability): the file walk ran on the request loop
+    #     # pcaps = self.get_available_pcaps(from_ts, to_ts)
+    #     # OLD CODE END
+    #     pcaps = await run_blocking(self.get_available_pcaps, from_ts, to_ts)
+    #     if not pcaps:
+    #         return None
+    #
+    #     pcap_files = [p["file"] for p in pcaps]
+    #     container_pcap_files = [self._to_container_path(f) for f in pcap_files]
+    #
+    #     # Create daemon-side temp file for final output
+    #     tmp = tempfile.NamedTemporaryFile(
+    #         suffix=".pcap", prefix="nettap_filtered_", delete=False
+    #     )
+    #     tmp_path = tmp.name
+    #     tmp.close()
+    #
+    #     # If merging multiple files, use a temp path inside the container
+    #     container_merged_path = "/tmp/nettap_merged.pcap"
+    #
+    #     try:
+    #         async with self._semaphore:
+    #             if len(container_pcap_files) == 1:
+    #                 # Single file — filter directly from the PCAP volume
+    #                 source_path = container_pcap_files[0]
+    #             else:
+    #                 # Merge multiple PCAPs inside the container
+    #                 merge_cmd = [
+    #                     "docker",
+    #                     "exec",
+    #                     _TSHARK_CONTAINER,
+    #                     "mergecap",
+    #                     "-w",
+    #                     container_merged_path,
+    #                 ] + container_pcap_files
+    #
+    #                 logger.debug(
+    #                     "Running: %s", " ".join(shlex.quote(c) for c in merge_cmd)
+    #                 )
+    #                 proc = await asyncio.create_subprocess_exec(
+    #                     *bounded_exec(merge_cmd, 150),
+    #                     stdout=asyncio.subprocess.PIPE,
+    #                     stderr=asyncio.subprocess.PIPE,
+    #                 )
+    #                 _, stderr_bytes = await asyncio.wait_for(
+    #                     proc.communicate(), timeout=150
+    #                 )
+    #
+    #                 if proc.returncode != 0:
+    #                     err = stderr_bytes.decode(errors="replace").strip()
+    #                     logger.error("mergecap failed: %s", err)
+    #                     os.unlink(tmp_path)
+    #                     # OLD CODE START — #96: the API answered "No matching PCAP data"
+    #                     # return None
+    #                     # OLD CODE END
+    #                     raise RuntimeError(f"mergecap failed: {err}")
+    #
+    #                 source_path = container_merged_path
+    #
+    #             # Filter inside the container, write to stdout (``-w -``)
+    #             # and capture the binary output on the daemon side.
+    #             filter_cmd = [
+    #                 "docker",
+    #                 "exec",
+    #                 _TSHARK_CONTAINER,
+    #                 "tshark",
+    #                 "-r",
+    #                 source_path,
+    #                 "-Y",
+    #                 bpf_filter,
+    #                 "-w",
+    #                 "-",
+    #             ]
+    #             logger.debug(
+    #                 "Running: %s", " ".join(shlex.quote(c) for c in filter_cmd)
+    #             )
+    #             proc = await asyncio.create_subprocess_exec(
+    #                 *bounded_exec(filter_cmd, 150),
+    #                 stdout=asyncio.subprocess.PIPE,
+    #                 stderr=asyncio.subprocess.PIPE,
+    #             )
+    #             stdout_bytes, stderr_bytes = await asyncio.wait_for(
+    #                 proc.communicate(), timeout=150
+    #             )
+    #
+    #             if proc.returncode != 0:
+    #                 err = stderr_bytes.decode(errors="replace").strip()
+    #                 logger.error("tshark filter failed: %s", err)
+    #                 os.unlink(tmp_path)
+    #                 await self._cleanup_container_tmp(container_merged_path, pcap_files)
+    #                 # OLD CODE START — #96: the API answered "No matching PCAP data"
+    #                 # return None
+    #                 # OLD CODE END
+    #                 raise RuntimeError(f"tshark filter failed: {err}")
+    #
+    #         # Write captured binary PCAP data to daemon-side temp file
+    #         # (outside semaphore -- no docker exec needed)
+    #         # OLD CODE START — PR 2 (reliability): up to ~100 MB written on the request loop
+    #         # with open(tmp_path, "wb") as f:
+    #         #     f.write(stdout_bytes)
+    #         # OLD CODE END
+    #         # OLD CODE START — F8: a cancel left the worker writing a file nobody deleted
+    #         # await run_blocking(Path(tmp_path).write_bytes, stdout_bytes)
+    #         # OLD CODE END
+    #         write = asyncio.ensure_future(
+    #             run_blocking(Path(tmp_path).write_bytes, stdout_bytes)
+    #         )
+    #         try:
+    #             await asyncio.shield(write)
+    #         except asyncio.CancelledError:
+    #             # A cancel can't stop the worker thread: wait for it, or it would write the
+    #             # file again after the unlink below. Its own error is moot now.
+    #             # shortcut: a second cancel during this wait unlinks early; aiohttp and
+    #             # asyncio.run cancel a request once, upgrade if that changes
+    #             await asyncio.wait([write])
+    #             if not write.cancelled():
+    #                 write.exception()  # retrieved, so asyncio doesn't log it as lost
+    #             raise
+    #
+    #         # Clean up merged temp file inside the container
+    #         await self._cleanup_container_tmp(container_merged_path, pcap_files)
+    #
+    #         return tmp_path
+    #
+    #     # OLD CODE START — #96: a timeout or missing docker came back as None, which
+    #     # the API answers with 404 "No matching PCAP data found"
+    #     # except asyncio.TimeoutError:
+    #     #     ... cleanup ...
+    #     #     return None
+    #     # except FileNotFoundError as exc:
+    #     #     logger.error("docker not found: %s", exc)
+    #     #     ... cleanup ...
+    #     #     return None
+    #     # OLD CODE END
+    #     except asyncio.TimeoutError as exc:
+    #         logger.error("PCAP download operation timed out")
+    #         if os.path.exists(tmp_path):
+    #             os.unlink(tmp_path)
+    #         await self._cleanup_container_tmp(container_merged_path, pcap_files)
+    #         raise RuntimeError("PCAP download timed out") from exc
+    #     except FileNotFoundError as exc:
+    #         logger.error("docker not found: %s", exc)
+    #         if os.path.exists(tmp_path):
+    #             os.unlink(tmp_path)
+    #         raise RuntimeError("docker not found in PATH") from exc
+    #     except BaseException:
+    #         # F8: any other error (a full /tmp mid-write) or a cancel: the caller never gets
+    #         # the path, so nobody else would delete the file
+    #         Path(tmp_path).unlink(missing_ok=True)
+    #         raise
+    #
+    # async def _cleanup_container_tmp(
+    #     self, container_path: str, pcap_files: list[str]
+    # ) -> None:
+    #     """Remove a temp file inside the tshark container (best-effort)."""
+    #     if len(pcap_files) <= 1:
+    #         return  # No merged file was created
+    #     try:
+    #         proc = await asyncio.create_subprocess_exec(
+    #             "docker",
+    #             "exec",
+    #             _TSHARK_CONTAINER,
+    #             "rm",
+    #             "-f",
+    #             container_path,
+    #             stdout=asyncio.subprocess.DEVNULL,
+    #             stderr=asyncio.subprocess.DEVNULL,
+    #         )
+    #         await asyncio.wait_for(proc.communicate(), timeout=5)
+    #     except Exception:
+    #         logger.debug("Failed to clean up container temp file %s", container_path)
+    # OLD CODE END
+
     async def download_filtered(
         self,
         bpf_filter: str,
-        from_ts: str | None = None,
-        to_ts: str | None = None,
-    ) -> str | None:
-        """Merge and filter PCAPs into a single temporary download file.
+        from_ts: str | None,
+        to_ts: str | None,
+        write: Callable[[bytes], Awaitable[None]],
+    ) -> bool:
+        """Stream the window's packets that match the filter, as one capture, to `write`.
 
-        Runs mergecap and tshark inside the nettap-tshark container via
-        docker exec.  Intermediate files live in the container's /tmp
-        (tmpfs, 100M).  The final filtered output is written to stdout
-        (``-w -``) and captured on the daemon side.
-
-        Uses asyncio.create_subprocess_exec (argument-list form, no shell).
-        Returns the path to the temporary filtered PCAP file on the daemon,
-        or None when there are no PCAP files; raises RuntimeError when the
-        merge or filter fails (#96).  Caller is responsible for cleanup.
+        The files come from the capture index (real first and last packet times), and
+        packet analysis's window cut reads them, so the output holds exactly the
+        window's matching packets. False when no capture file holds the window.
+        Raises ValueError (can't be served as asked), ReaderBusy or StillIndexing (try
+        again) or RuntimeError (the read failed). After the first chunk any error means
+        the output is incomplete: the caller must abort the response, never end it.
         """
+        started = time.monotonic()
         valid, err = self.validate_bpf_filter(bpf_filter)
         if not valid:
             raise ValueError(f"Invalid display filter: {err}")
-
-        # OLD CODE START — PR 2 (reliability): the file walk ran on the request loop
-        # pcaps = self.get_available_pcaps(from_ts, to_ts)
-        # OLD CODE END
-        pcaps = await run_blocking(self.get_available_pcaps, from_ts, to_ts)
-        if not pcaps:
-            return None
-
-        pcap_files = [p["file"] for p in pcaps]
-        container_pcap_files = [self._to_container_path(f) for f in pcap_files]
-
-        # Create daemon-side temp file for final output
-        tmp = tempfile.NamedTemporaryFile(
-            suffix=".pcap", prefix="nettap_filtered_", delete=False
+        if self._index is None:
+            raise RuntimeError("PCAP download is not configured")
+        start, end = _window(from_ts, to_ts)
+        if self._download_lock.locked():
+            # two near-budget downloads would need about 1.1 GiB of the reader's 1 GiB
+            raise ReaderBusy("Another download is running; try again when it finishes.")
+        async with (
+            self._download_lock,
+            reader_slot(self._semaphore, _DOWNLOAD_SLOT_WAIT_SECONDS),
+        ):
+            sel = await self._index.select(start, end)
+            _admit_download(sel, start, end)
+            if not sel.files:
+                return False
+            await _check_download_filter(bpf_filter)
+            left = _DOWNLOAD_SECONDS - (time.monotonic() - started)
+            if left < _DOWNLOAD_MIN_JOB_SECONDS:
+                raise ReaderBusy("The packet reader is busy; try again in a moment.")
+            recent_ns = time.time_ns() - RECENT_SECONDS * 1_000_000_000
+            paths = [
+                job_path(f.container_path, e.cut_short or f.mtime_ns >= recent_ns)
+                for f, e in sel.files
+            ]
+            size = sum(f.size for f, _ in sel.files)
+            result = await run_in_tshark(
+                FILTER_DOWNLOAD_JOB,
+                [str(start), str(end), bpf_filter.strip(), *paths],
+                deadline_s=left,
+                # pcapng output of tiny frames is about 1.2x their pcap input
+                max_stdout=2 * size + 1024 * 1024,
+                sink=write,
+            )
+        if result.status("tshark") == 0 and cut_ok(result, _cuts(paths)):
+            logger.info(
+                "filtered download window=%s..%s files=%d bytes=%d seconds=%.2f",
+                start,
+                end,
+                len(sel.files),
+                size,
+                result.seconds,
+            )
+            return True
+        if result.killed_for_memory():
+            raise RuntimeError(
+                "The packet reader ran out of memory on this window. "
+                "Try a shorter window or a narrower filter."
+            )
+        if result.deadline:
+            raise RuntimeError(
+                "The download took longer than the time allowed. Try a shorter window."
+            )
+        logger.error(
+            "filtered download failed: statuses=%s stderr=%s",
+            result.statuses,
+            result.stderr[-2000:],
         )
-        tmp_path = tmp.name
-        tmp.close()
-
-        # If merging multiple files, use a temp path inside the container
-        container_merged_path = "/tmp/nettap_merged.pcap"
-
-        try:
-            async with self._semaphore:
-                if len(container_pcap_files) == 1:
-                    # Single file — filter directly from the PCAP volume
-                    source_path = container_pcap_files[0]
-                else:
-                    # Merge multiple PCAPs inside the container
-                    merge_cmd = [
-                        "docker",
-                        "exec",
-                        _TSHARK_CONTAINER,
-                        "mergecap",
-                        "-w",
-                        container_merged_path,
-                    ] + container_pcap_files
-
-                    logger.debug(
-                        "Running: %s", " ".join(shlex.quote(c) for c in merge_cmd)
-                    )
-                    proc = await asyncio.create_subprocess_exec(
-                        *bounded_exec(merge_cmd, 150),
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    _, stderr_bytes = await asyncio.wait_for(
-                        proc.communicate(), timeout=150
-                    )
-
-                    if proc.returncode != 0:
-                        err = stderr_bytes.decode(errors="replace").strip()
-                        logger.error("mergecap failed: %s", err)
-                        os.unlink(tmp_path)
-                        # OLD CODE START — #96: the API answered "No matching PCAP data"
-                        # return None
-                        # OLD CODE END
-                        raise RuntimeError(f"mergecap failed: {err}")
-
-                    source_path = container_merged_path
-
-                # Filter inside the container, write to stdout (``-w -``)
-                # and capture the binary output on the daemon side.
-                filter_cmd = [
-                    "docker",
-                    "exec",
-                    _TSHARK_CONTAINER,
-                    "tshark",
-                    "-r",
-                    source_path,
-                    "-Y",
-                    bpf_filter,
-                    "-w",
-                    "-",
-                ]
-                logger.debug(
-                    "Running: %s", " ".join(shlex.quote(c) for c in filter_cmd)
-                )
-                proc = await asyncio.create_subprocess_exec(
-                    *bounded_exec(filter_cmd, 150),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(), timeout=150
-                )
-
-                if proc.returncode != 0:
-                    err = stderr_bytes.decode(errors="replace").strip()
-                    logger.error("tshark filter failed: %s", err)
-                    os.unlink(tmp_path)
-                    await self._cleanup_container_tmp(container_merged_path, pcap_files)
-                    # OLD CODE START — #96: the API answered "No matching PCAP data"
-                    # return None
-                    # OLD CODE END
-                    raise RuntimeError(f"tshark filter failed: {err}")
-
-            # Write captured binary PCAP data to daemon-side temp file
-            # (outside semaphore -- no docker exec needed)
-            # OLD CODE START — PR 2 (reliability): up to ~100 MB written on the request loop
-            # with open(tmp_path, "wb") as f:
-            #     f.write(stdout_bytes)
-            # OLD CODE END
-            # OLD CODE START — F8: a cancel left the worker writing a file nobody deleted
-            # await run_blocking(Path(tmp_path).write_bytes, stdout_bytes)
-            # OLD CODE END
-            write = asyncio.ensure_future(
-                run_blocking(Path(tmp_path).write_bytes, stdout_bytes)
-            )
-            try:
-                await asyncio.shield(write)
-            except asyncio.CancelledError:
-                # A cancel can't stop the worker thread: wait for it, or it would write the
-                # file again after the unlink below. Its own error is moot now.
-                # shortcut: a second cancel during this wait unlinks early; aiohttp and
-                # asyncio.run cancel a request once, upgrade if that changes
-                await asyncio.wait([write])
-                if not write.cancelled():
-                    write.exception()  # retrieved, so asyncio doesn't log it as lost
-                raise
-
-            # Clean up merged temp file inside the container
-            await self._cleanup_container_tmp(container_merged_path, pcap_files)
-
-            return tmp_path
-
-        # OLD CODE START — #96: a timeout or missing docker came back as None, which
-        # the API answers with 404 "No matching PCAP data found"
-        # except asyncio.TimeoutError:
-        #     ... cleanup ...
-        #     return None
-        # except FileNotFoundError as exc:
-        #     logger.error("docker not found: %s", exc)
-        #     ... cleanup ...
-        #     return None
-        # OLD CODE END
-        except asyncio.TimeoutError as exc:
-            logger.error("PCAP download operation timed out")
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-            await self._cleanup_container_tmp(container_merged_path, pcap_files)
-            raise RuntimeError("PCAP download timed out") from exc
-        except FileNotFoundError as exc:
-            logger.error("docker not found: %s", exc)
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-            raise RuntimeError("docker not found in PATH") from exc
-        except BaseException:
-            # F8: any other error (a full /tmp mid-write) or a cancel: the caller never gets
-            # the path, so nobody else would delete the file
-            Path(tmp_path).unlink(missing_ok=True)
-            raise
-
-    async def _cleanup_container_tmp(
-        self, container_path: str, pcap_files: list[str]
-    ) -> None:
-        """Remove a temp file inside the tshark container (best-effort)."""
-        if len(pcap_files) <= 1:
-            return  # No merged file was created
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "docker",
-                "exec",
-                _TSHARK_CONTAINER,
-                "rm",
-                "-f",
-                container_path,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await asyncio.wait_for(proc.communicate(), timeout=5)
-        except Exception:
-            logger.debug("Failed to clean up container temp file %s", container_path)
+        raise RuntimeError("Reading the capture files failed.")
 
 
 # ---------------------------------------------------------------------------
@@ -795,9 +932,108 @@ class PcapSearchService:
 # ---------------------------------------------------------------------------
 
 
+# OLD CODE START — NET-189: a time without an offset came back naive, and comparing it
+# with a file's (aware) time raised TypeError
+# def _parse_iso(ts: str) -> datetime | None:
+#     """Parse an ISO timestamp string, returning None on failure."""
+#     try:
+#         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+#     except (ValueError, TypeError):
+#         return None
+# OLD CODE END
 def _parse_iso(ts: str) -> datetime | None:
-    """Parse an ISO timestamp string, returning None on failure."""
+    """Parse an ISO timestamp string (UTC when it has no offset), None on failure."""
     try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _span_start(name: str, mtime: float) -> float:
+    """The earliest time a capture file can hold packets from, for listing: its name's
+    start epoch less the writer lag (at most its mtime); any time without one."""
+    m = _NAME_EPOCH.search(name)
+    return min(int(m.group(1)) - _WRITER_LAG_SECONDS, mtime) if m else float("-inf")
+
+
+def _epoch(ts: str) -> Decimal:
+    dt = _parse_iso(ts)
+    if dt is None:
+        raise ValueError(f"Unreadable time: {ts}")
+    unix = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    return Decimal((dt - unix) // timedelta(microseconds=1)) / 1_000_000
+
+
+def _window(from_ts: str | None, to_ts: str | None) -> tuple[Decimal, Decimal]:
+    """The download's window as epoch seconds: from 2000 and up to now when not given."""
+    start = _epoch(from_ts) if from_ts else Decimal(TIME_FLOOR)
+    end = _epoch(to_ts) if to_ts else Decimal(time.time_ns() // 1000) / 1_000_000
+    if end <= start:
+        raise ValueError("The download window must end after it starts.")
+    return start, end
+
+
+def _window_packets(sel: Selection, start: Decimal, end: Decimal) -> int:
+    """About how many packets TShark dissects: the window cut passes only the window's
+    packets, so each file counts with the share of its first-to-last span the window covers.
+
+    shortcut: assumes an even packet rate inside a file; a burst can put more in the window,
+    and then the container's memory limit stops the job with an "out of memory" error."""
+    total = Decimal(0)
+    for _, e in sel.files:  # indexed entries carry first, last and packets
+        first, last = Decimal(e.first or 0), Decimal(e.last or 0)
+        span = last - first
+        covered = min(end, last) - max(start, first)
+        share = min(Decimal(1), max(Decimal(0), covered / span)) if span > 0 else 1
+        total += (e.packets or 0) * share
+    return int(total)
+
+
+# OLD CODE START — NET-189 review: whole files counted, so any window crossing a file change
+# was refused (two ~300k-packet files are over the budget), though TShark reads only the window
+# def _admit_download(sel: Selection) -> None:
+# OLD CODE END
+def _admit_download(sel: Selection, start: Decimal, end: Decimal) -> None:
+    """ValueError unless the whole window can be read: every file's packet times are
+    known, and the files fit the reader's budget."""
+    if sel.failed:
+        names = [f.id for f, _ in sel.failed]
+        more = len(names) - _DOWNLOAD_NAMED_FAILED
+        raise ValueError(
+            f"NetTap couldn't read {', '.join(names[:_DOWNLOAD_NAMED_FAILED])}"
+            + (f" and {more} more" if more > 0 else "")
+            + ", so it can't tell whether they hold packets from this window and the "
+            "download would be incomplete. Download those files on their own from the "
+            "file list."
+        )
+    size = sum(f.size for f, _ in sel.files)
+    # OLD CODE START — NET-189 review: see _window_packets
+    # packets = sum(e.packets or 0 for _, e in sel.files)  # indexed entries carry it
+    # OLD CODE END
+    packets = _window_packets(sel, start, end)
+    if (
+        len(sel.files) > MAX_FILES
+        or size > MAX_BYTES
+        or packets > _DOWNLOAD_MAX_PACKETS
+    ):
+        raise ValueError(
+            f"This window holds about {packets:,} packets in {len(sel.files)} capture files "
+            f"({size / 1e9:.1f} GB). One download reads at most "
+            f"{_DOWNLOAD_MAX_PACKETS:,} packets, {MAX_FILES} files or "
+            f"{MAX_BYTES / 1e9:.0f} GB. Set a shorter download window, use Packet "
+            "analysis, or download single files."
+        )
+
+
+async def _check_download_filter(display_filter: str) -> None:
+    """ValueError with TShark's own message when it refuses the filter. The caller
+    holds a reader slot."""
+    result = await run_in_tshark(
+        CHECK_JOB,
+        [display_filter.strip()],
+        deadline_s=CHECK_SECONDS,
+        max_stdout=64 * 1024,
+    )
+    rc = result.status("tshark")
+    raise_filter_check_failure(-1 if rc is None else rc, result.stderr, ValueError)

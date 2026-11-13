@@ -132,6 +132,14 @@ DOWNLOAD_JOB = (
     + 'cut "" "$@" | { tshark -r - -c "$last" -Y "frame.number in {$set}" -F nsecpcap -w -;'
     ' echo "$NT status tshark $?" >&2; }\n'
 )
+# PCAP Search's "Download filtered" (NET-189): the window's packets that match the
+# filter, as one capture on stdout. One uninterrupted dissection (no -M session reset,
+# which drops stateful matches), so the output is the same as filtering one merged file.
+FILTER_DOWNLOAD_JOB = (
+    _CUT
+    + 'from="$1"; to="$2"; filter="$3"; shift 3\n'
+    + 'cut "" "$@" | { tshark -r - -Y "$filter" -w -; echo "$NT status tshark $?" >&2; }\n'
+)
 FIELDS_JOB = (
     '{ tshark -G fields; echo "$NT status tshark $?" >&2; } | '
     '{ awk -F \'\\t\' -v p="$1" -v ROWS="$2" \'($1 == "F" || $1 == "P") && index($3, p) == 1 '

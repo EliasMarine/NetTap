@@ -213,3 +213,22 @@ def test_supervisor_reaps_a_leftover_child_after_early_exit():
     child = int(p.stderr.split("#nt-child ")[1].split()[0])
     time.sleep(0.2)
     assert not _alive(child)
+
+
+@needs_setsid
+def test_supervisor_removes_the_fifos_of_a_killed_job():
+    # NET-189: a download stopped mid-stream or at its deadline is killed as a group; the
+    # FIFOs its window cut made (/tmp/nt-<pgid>-…, packet_search._CUT) must not stay behind
+    job = (
+        'mkfifo "/tmp/nt-$$-0-0" && echo "#nt-fifo /tmp/nt-$$-0-0" >&2; '
+        'trap "" TERM; sleep 30'
+    )
+    p = subprocess.run(
+        ["sh", "-c", SUPERVISOR, "_", "t", "1", job],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert "#nt-t deadline" in p.stderr
+    fifo = p.stderr.split("#nt-fifo ")[1].split()[0]
+    assert not os.path.exists(fifo)

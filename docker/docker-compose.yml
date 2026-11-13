@@ -357,6 +357,9 @@ services:
   # NOTE: Malcolm capture images must NOT have no-new-privileges or cap_drop: ALL.
   # Their entrypoint uses `su` (setuid binary) for privilege drop, which silently
   # fails with no-new-privileges. cap_add provides the capture capabilities needed.
+  # zeek-live (NET-220): supervisord starts Zeek as uid 1000, which gets its capture
+  # capability only from zeek's file capability; no-new-privileges blocks that gain
+  # ("socket: Operation not permitted", tested on the G11), so it stays off there too.
 
   zeek-live:
     # OLD CODE START — replaced 2026-11-01: the stock image takes Broker
@@ -403,10 +406,18 @@ services:
         /usr/local/bin/docker_entrypoint.sh
         /usr/local/bin/service_check_passthrough.sh -s zeek
         /usr/local/bin/supervisord -c /etc/supervisord.conf -n
+    # OLD CODE START — NET-220: NET_ADMIN and SYS_NICE were never used (nothing in the
+    # image reads PCAP_IFACE_TWEAK or pins CPUs); Zeek captures with NET_RAW alone
+    # cap_add:
+    #   - NET_ADMIN
+    #   - NET_RAW
+    #   - SYS_NICE
+    # OLD CODE END
     cap_add:
-      - NET_ADMIN
       - NET_RAW
-      - SYS_NICE
+    # NET-220: peak 1.66 GiB on the G11 (2026-11-12); a leak or burst can no longer
+    # take the whole box. Docker allows as much swap again, so OOM needs over 6 GiB.
+    mem_limit: 3g
     environment:
       <<: *process-env
       ZEEK_LIVE_CAPTURE: "true"
@@ -524,6 +535,11 @@ services:
       # set. Owner rules use SIDs 1000000-1999999; none of these sources does (checked by the deploy gate).
       SURICATA_UPDATE_ENABLE_SOURCES: "et/open,abuse.ch/sslbl-blacklist,echap/stalkerware,ipfire/dbl"
       SURICATA_ROTATED_PCAP: "false"
+      # NET-206: engine counters for `suricatasc -c dump-counters` (capture.kernel_packets /
+      # kernel_drops). Malcolm's suricata_config_populate.py reads these; eve stats
+      # (SURICATA_STATS_EVE_ENABLED) and stats.log stay off, so nothing is written or indexed.
+      SURICATA_STATS_ENABLED: "true"
+      SURICATA_STATS_INTERVAL: "10"
       # upload-common.env — EXTRA_TAGS required by Malcolm supervisord config
       EXTRA_TAGS: ""
     volumes:

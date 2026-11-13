@@ -144,4 +144,25 @@ describe('API Catch-All Proxy Route ([...path]/+server.ts)', () => {
 		expect(await res.text()).toBe('pcapbytes');
 		expect(res.headers.get('content-disposition')).toContain('a.pcap');
 	});
+
+	// NET-189: the daemon aborts a filtered download that fails part-way; the browser must see a
+	// failed download, never a short file that ends cleanly
+	it('fails a filtered download when the daemon stream errors after two chunks', async () => {
+		const chunks = [new Uint8Array([0x0a, 0x0d]), new Uint8Array([0x0d, 0x0a])];
+		daemonFetch.mockResolvedValue(
+			new Response(
+				new ReadableStream({
+					pull(controller) {
+						const next = chunks.shift();
+						if (next) controller.enqueue(next);
+						else controller.error(new TypeError('terminated'));
+					},
+				}),
+				{ headers: { 'Content-Type': 'application/vnd.tcpdump.pcap', 'Content-Disposition': 'attachment; filename=nettap_filtered.pcap' } },
+			),
+		);
+		const res = await GET(event('/api/pcap/download?filter=tcp&from=a&to=b') as never);
+		expect(res.status).toBe(200); // the headers had already gone out
+		await expect(res.arrayBuffer()).rejects.toThrow('terminated');
+	});
 });

@@ -8,6 +8,19 @@
 # script; the file always exists, empty when there are none (NET-191).
 threshold-file: /etc/nettap/suricata-threshold.config
 
+# OLD CODE START — NET-206 review: Malcolm 26.10.0 sets stats from SURICATA_STATS_ENABLED /
+# SURICATA_STATS_INTERVAL (compose env), so this block, which had to restate Malcolm's whole one, is not needed
+# # Engine counters for `suricatasc -c dump-counters` (capture.kernel_packets / kernel_drops), so packet
+# # loss can be measured (NET-206). Malcolm generates "enabled: no"; an included block replaces the
+# # whole earlier one, so its other keys are restated (exception-policy was unset). With no stats
+# # logger enabled (eve stats and stats.log stay off) nothing is written to disk or indexed; the
+# # interval only sets how often the unix socket's totals are refreshed.
+# stats:
+#   enabled: yes
+#   interval: 10
+#   decoder-events: no
+# OLD CODE END
+
 # OLD CODE START — 2026-11-06 (NET-191, CR-198): this was mounted at /etc/suricata/nettap.yaml, which
 # Malcolm never includes, so none of it ever applied. It duplicated Malcolm's own defaults, pinned
 # af-packet to br0 (wrong in mirror and DHCP gateway modes), would have replaced Malcolm's eve outputs,

@@ -29,6 +29,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from api.offload import run_blocking
 from services.container_exec import ExecResult, reader_slot, run_in_tshark
 
 logger = logging.getLogger("nettap.capture_index")
@@ -52,6 +53,9 @@ BATCH_DEADLINE_SECONDS = 30
 # would make every search answer "still indexing".
 CAPINFOS_SECONDS = 25
 INLINE_INDEX_LIMIT = 8
+# A failed entry is tried again after this long: capinfos may only have run out of time on a
+# busy box, and a file that stays failed refuses every PCAP Search download over its window
+FAILED_RETRY_SECONDS = 600
 CUT_SHORT = "appears to have been cut short in the middle of a packet"
 TIME_FLOOR = 946684800  # 2000-01-01T00:00:00Z
 # editcap 4.0.17 exits 0 on EVERY read error, not only a partly written last packet,
@@ -232,6 +236,8 @@ class CaptureIndex:
         self.index_path = index_path
         self._slot = slot
         self._entries: dict[str, IndexEntry] = self._load()
+        # when each failure was recorded (monotonic); one loaded from disk is tried again now
+        self._failed_at: dict[str, float] = {}
         self._lock = asyncio.Lock()  # one capinfos batch at a time
         self._dirty = False
         self._saved_at = float("-inf")
@@ -261,6 +267,7 @@ class CaptureIndex:
         """Write the index, dropping files no longer `present`. A failed write
         leaves it dirty, so the shutdown flush tries again."""
         self._entries = {k: v for k, v in self._entries.items() if k in present}
+        self._failed_at = {k: v for k, v in self._failed_at.items() if k in present}
         payload = {
             "version": INDEX_VERSION,
             "entries": {
@@ -298,7 +305,15 @@ class CaptureIndex:
 
     def fresh_entry(self, f: CaptureFile) -> IndexEntry | None:
         e = self._entries.get(f.id)
-        return e if e is not None and e.fresh_for(f) else None
+        # OLD CODE START — NET-189 review: a failure was kept while the file stayed the same
+        # return e if e is not None and e.fresh_for(f) else None
+        # OLD CODE END
+        if e is None or not e.fresh_for(f):
+            return None
+        failed_at = self._failed_at.get(f.id, float("-inf"))
+        if e.state == "failed" and time.monotonic() - failed_at > FAILED_RETRY_SECONDS:
+            return None  # stale: indexed again, like a changed file
+        return e
 
     async def index_files(self, files: list[CaptureFile]) -> None:
         """Run capinfos over `files`. The caller holds a reader slot."""
@@ -323,6 +338,8 @@ class CaptureIndex:
                     if entry.first is not None and Decimal(entry.first) < TIME_FLOOR:
                         entry = await self._without_junk(f, entry)
                     self._entries[f.id] = entry
+                    if entry.state == "failed":
+                        self._failed_at[f.id] = time.monotonic()
                     self._dirty = True
                 # A file the batch never reached stays pending and is tried again.
             if result.deadline or len(parsed) < len(files):
@@ -374,7 +391,11 @@ class CaptureIndex:
 
         Files without a current entry are indexed first, at most INLINE_INDEX_LIMIT.
         """
-        files = scan_captures(self.root)
+        # OLD CODE START — NET-189: the walk over every capture file ran on the request
+        # loop (PCAP Search's download now selects here too, and its walk was off-loop)
+        # files = scan_captures(self.root)
+        # OLD CODE END
+        files = await run_blocking(scan_captures, self.root)
         pending = [f for f in files if self.fresh_entry(f) is None]
         if len(pending) > INLINE_INDEX_LIMIT:
             raise StillIndexing(len(pending))

@@ -161,7 +161,10 @@ Results (G11, 2026-11-09): **PASS both ways.** No reference drops, no clock step
 ## Known limits
 
 - **Eight watches cost the G11 a few missed frames a minute at ~330 Mbit/s** (see the release gate). A cheaper filter layout (fewer shared stages, 802.1Q stages only when tagged) would lower it; not done.
+<!-- OLD CODE START — NET-206: the counters are on now
 - **Capture safety isn't verified by engine telemetry.** Suricata's stats are disabled and Zeek writes no stats or capture-loss log. Follow-up issue: enable Suricata `stats` and compare `capture.kernel_drops` with the meter off and on.
+OLD CODE END -->
+- **Engine drops, meter off vs eight watches (NET-206): pending device run.** Suricata's stats are on (`SURICATA_STATS_ENABLED` / `SURICATA_STATS_INTERVAL` on suricata-live in `docker/docker-compose.yml`: enabled, interval 10 s; Malcolm writes no stats logger, so nothing is written or indexed). `capture-safety` reads `capture.kernel_packets` / `capture.kernel_drops` from `suricatasc -c dump-counters` per arm (an arm across a Suricata restart is void), and adds a second verdict on the per-pair drop ratios. Run `bash scripts/remote/measure-capture-loss.sh` with a sustained download on the dev Mac and record the per-arm lines and both verdicts here.
 - **Not verified on the target hardware.** The Intel i226-V wasn't tested (no bench). `skip_hw` keeps the path in software.
 - **Not covered:** bridge and DHCP gateway modes, and IPv6 for devices without a known MAC.
 

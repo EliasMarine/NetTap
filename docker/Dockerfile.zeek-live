@@ -44,3 +44,18 @@ RUN /tmp/random_device_urandom_test \
 # (tracking-fixes/2026-11-01-dashboard-data-accuracy.md #11). zeekdeploy.sh only
 # edits other keys in place, so this line survives startup.
 RUN printf '\nTraceSummary =\n' >> /usr/local/zeek/etc/zeekctl.cfg
+
+# NET-220: Zeek captures with CAP_NET_RAW alone (proven on the G11: an af_packet
+# socket, TPACKET_V3 ring, promisc membership and fanout all work with only
+# NET_RAW), so the binaries stop carrying CAP_NET_ADMIN. Malcolm's entrypoint
+# re-applies its setcap at every start, so its two lines are edited too; the
+# build fails if Malcolm changes them. A file capability outside the bounding
+# set makes exec fail, so compose's cap_add (NET_RAW only) needs this image.
+RUN sed -i 's/CAP_NET_RAW+eip CAP_NET_ADMIN+eip/CAP_NET_RAW+eip/' /usr/local/bin/docker_entrypoint.sh \
+    && ! grep -q CAP_NET_ADMIN /usr/local/bin/docker_entrypoint.sh \
+    && [ "$(grep -c "^setcap 'CAP_NET_RAW+eip' " /usr/local/bin/docker_entrypoint.sh)" = 2 ] \
+    || { echo "Malcolm's docker_entrypoint.sh setcap lines changed; update NET-220 in Dockerfile.zeek-live" >&2; exit 1; }
+RUN setcap cap_net_raw=eip /usr/local/zeek/bin/zeek \
+    && setcap cap_net_raw=eip /usr/local/zeek/bin/capstats \
+    && [ "$(getcap /usr/local/zeek/bin/zeek)" = "/usr/local/zeek/bin/zeek cap_net_raw=eip" ] \
+    || { echo "zeek should carry cap_net_raw only, got: $(getcap /usr/local/zeek/bin/zeek)" >&2; exit 1; }

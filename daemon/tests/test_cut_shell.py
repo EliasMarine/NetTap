@@ -95,3 +95,75 @@ def test_files_without_cut_go_straight_to_mergecap(tmp_path):
     assert count == 2 * PACKETS
     assert statuses == {"mergecap": 0, "editcap": 0}
     assert judged(statuses, stderr, cuts=0)
+
+
+needs_tshark = pytest.mark.skipif(not shutil.which("tshark"), reason="needs tshark")
+
+
+def run_download(filt: str, *paths: str) -> tuple[bytes, dict[str, int], str]:
+    """(stdout, stage statuses, stderr) of PCAP Search's download job (NET-189) over
+    [1700000000.25, 1700000001); asserts it left no FIFO in /tmp, whatever happened."""
+    before = set(glob.glob("/tmp/nt-*"))
+    p = subprocess.run(
+        [
+            "sh",
+            "-c",
+            ps.FILTER_DOWNLOAD_JOB,
+            "_",
+            "1700000000.25",
+            "1700000001",
+            filt,
+            *paths,
+        ],
+        env={**os.environ, "NT": "#nt-test"},
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    assert set(glob.glob("/tmp/nt-*")) == before  # the old merge left a 100 MB file
+    stderr = p.stderr.decode()
+    statuses = {
+        k: int(v) for k, v in re.findall(r"^#nt-test status (\S+) (\d+)$", stderr, re.M)
+    }
+    return p.stdout, statuses, stderr
+
+
+@needs_tshark
+def test_the_filtered_download_job_reads_every_file_in_the_window(tmp_path):
+    # NET-189: PCAP Search's download over two files, one cut short, with a filter
+    out, statuses, stderr = run_download(
+        "tcp", f"cut:{cut_short_copy(tmp_path)}", str(SYNTHETIC)
+    )
+    assert statuses["tshark"] == 0
+    assert judged(statuses, stderr, cuts=1)
+    capture = tmp_path / "out.pcapng"
+    capture.write_bytes(out)
+    times = subprocess.run(
+        ["tshark", "-r", str(capture), "-T", "fields", "-e", "frame.time_epoch"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    # in [.25, 1.0) both files hold packets 3 (tcp), 4 (dns over udp) and 5 (tls over
+    # tcp); packet 6 (1.000001) is after the window
+    assert [t[:15] for t in times] == ["1700000000.2500"] * 2 + ["1700000000.7500"] * 2
+
+
+@needs_tshark
+def test_a_failed_filter_stage_leaves_nothing_behind(tmp_path):
+    # the editcap feeding the cut file's FIFO is blocked when tshark quits at once
+    _, statuses, _ = run_download(
+        "nosuchfield", f"cut:{cut_short_copy(tmp_path)}", str(SYNTHETIC)
+    )
+    assert statuses["tshark"] != 0
+
+
+@needs_tshark
+def test_a_failed_merge_leaves_nothing_behind(tmp_path):
+    garbage = tmp_path / "garbage.pcap"
+    garbage.write_bytes(b"not a capture file at all")
+    _, statuses, stderr = run_download(
+        "tcp", f"cut:{cut_short_copy(tmp_path)}", str(garbage)
+    )
+    assert statuses["mergecap"] != 0
+    assert not judged(statuses, stderr, cuts=1)  # the daemon calls it a failure
