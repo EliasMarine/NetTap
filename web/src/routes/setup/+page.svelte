@@ -491,10 +491,12 @@
 			}
 			bridgeConfig = await res.json();
 			bridgeVerified = bridgeConfig?.ready ?? false;
-			if (bridgeVerified && typeof window !== 'undefined') {
-				localStorage.setItem('nettap_wan_iface', selectedWan);
-				localStorage.setItem('nettap_lan_iface', selectedLan);
-			}
+			// OLD CODE START — NET-211 #3: Go Live reads the ports the daemon saved (/api/capture/mode) now
+			// if (bridgeVerified && typeof window !== 'undefined') {
+			// 	localStorage.setItem('nettap_wan_iface', selectedWan);
+			// 	localStorage.setItem('nettap_lan_iface', selectedLan);
+			// }
+			// OLD CODE END
 		} catch (err) {
 			bridgeError = err instanceof Error ? err.message : 'Failed to verify bridge configuration';
 		}
@@ -1529,19 +1531,26 @@
 						<label for="appliance-ip" class="label">Self-traffic exclusion</label>
 						<p class="field-help">
 							Your appliance's IP is excluded from every dashboard, so NetTap's own traffic doesn't add noise.
+							Add other addresses in Settings › Network after setup.
 						</p>
 						<div class="inline-field">
+							<!-- OLD CODE START — NET-211 #4: editable, but nothing ever saved what was typed
+							<input id="appliance-ip" type="text" class="input mono" bind:value={applianceIp} placeholder="Detected on startup…" />
+							OLD CODE END -->
+							<!-- NetTap detects its own address itself; this shows it -->
 							<input
 								id="appliance-ip"
 								type="text"
 								class="input mono"
-								bind:value={applianceIp}
+								value={applianceIp}
+								readonly
 								placeholder="Detected on startup…"
 							/>
 							{#if applianceIp}
 								<span class="chip is-ok"><Icon name="check" />Detected</span>
 							{:else}
-								<span class="chip">Set with the MGMT_IP variable</span>
+								<!-- OLD CODE: <span class="chip">Set with the MGMT_IP variable</span> (NET-211 #4: only docker/.env reached the daemon) -->
+								<span class="chip">Not detected yet</span>
 							{/if}
 						</div>
 					</section>

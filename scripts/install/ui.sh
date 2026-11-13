@@ -324,7 +324,8 @@ ui_summary_installed() {
     fi
     ui_card_line ""
     ui_card_kv "Dashboard" "${_UI_BOLD}$(_ui_dashboard_url)${_UI_OFF}"
-    ui_card_kv "Malcolm" "https://localhost:${MALCOLM_HTTPS_PORT:-9443}  ${_UI_DIM}on this box${_UI_OFF}"
+    # OLD CODE: ui_card_kv "Malcolm" "https://localhost:${MALCOLM_HTTPS_PORT:-9443}  …on this box" (NET-211 #6: nothing listens there)
+    ui_card_kv "Malcolm" "$(_ui_dashboard_url)/dashboards/  ${_UI_DIM}after you sign in${_UI_OFF}"
     # A13 (NET-229): the wizard asks for this before it creates the admin account
     if [[ "${SKIP_MALCOLM:-false}" != "true" ]]; then
         local code
@@ -337,9 +338,18 @@ ui_summary_installed() {
     ui_card_kv "Checks" "$(_ui_counts "$passed" "$warned" "$failed")"
     ui_card_kv "Time taken" "$(_ui_duration $(( $(date +%s) - INSTALL_START_TIME )))"
     ui_card_line ""
-    ui_card_line "${_UI_BOLD}Last step: move the cables${_UI_OFF}"
-    _ui_cabling
-    if [[ "${SKIP_BRIDGE:-false}" != "true" ]]; then
+    # OLD CODE START — NET-211/NET-246: --skip-bridge got the bridge cabling (eth0/eth1 when no ports were set)
+    # ui_card_line "${_UI_BOLD}Last step: move the cables${_UI_OFF}"
+    # _ui_cabling
+    # if [[ "${SKIP_BRIDGE:-false}" != "true" ]]; then
+    #     ui_card_line "  ${_UI_DIM}The bridge is on, so traffic flows as soon as both cables are in.${_UI_OFF}"
+    # fi
+    # OLD CODE END
+    if [[ "${SKIP_BRIDGE:-false}" == "true" ]]; then
+        ui_card_line "${_UI_BOLD}Last step:${_UI_OFF} open the dashboard; the setup wizard picks the ports."
+    else
+        ui_card_line "${_UI_BOLD}Last step: move the cables${_UI_OFF}"
+        _ui_cabling
         ui_card_line "  ${_UI_DIM}The bridge is on, so traffic flows as soon as both cables are in.${_UI_OFF}"
     fi
     ui_card_line ""

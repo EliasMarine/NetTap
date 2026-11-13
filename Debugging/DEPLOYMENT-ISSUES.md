@@ -1,6 +1,8 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-11-12 (Chain 31: deploy-malcolm.sh's OpenSearch bootstrap now stops the run when auth or the two index templates aren't in place, keeps the password out of every process's arguments, and leaves Malcolm's tuned malcolm_template alone; installer sizes are decimal GB. NET-217, NET-177. Chain 30, NET-198's session expiry, came in with PR #248.)
+> **Last updated:** 2026-11-12 (Chain 33: installer and Go Live bugs from the setup guide, NET-244 + NET-211: two-port --skip-bridge --non-interactive, a dry run that wrote, capture started on a missing br0, Go Live guessing ports, and a new uninstall.sh.)
+<!-- previous: **Last updated:** 2026-11-12 (Chain 32: a box with no index answered "incomplete" instead of zeros; the daemon now fills in the empty aggregations. NET-182, not yet on the device.) -->
+<!-- previous: **Last updated:** 2026-11-12 (Chain 31: deploy-malcolm.sh's OpenSearch bootstrap now stops the run when auth or the two index templates aren't in place, keeps the password out of every process's arguments, and leaves Malcolm's tuned malcolm_template alone; installer sizes are decimal GB. NET-217, NET-177. Chain 30, NET-198's session expiry, came in with PR #248.) -->
 <!-- previous: **Last updated:** 2026-11-09 (Chain 29: a full reload of a logged-in page was a 502; nginx's 4 KB header buffer was smaller than SvelteKit's Link header. NET-241, PR #236.) -->
 <!-- previous: **Last updated:** 2026-11-07 (Chain 27: Malcolm's Suricata rule wiring. More free rule sources, an optional ET Pro code, and one lock, last-good recovery and a status record around every rule update; built on feature/detection-slice2, not yet on the device. Chain 26: the domain page was a 502 on the G11 because one alert host field is mapped as text; it now answers with an exact lower bound. The same run found PCAP capture stopped for 21 h. Earlier, 2026-11-01, Chain 25: dashboard figures checked against OpenSearch; host-network DNS names, a pcap-monitor DNS storm, the 1970 record and ISM yellow fixed. Chain 24: malcolm_template's index pattern was never filled in, so indices guessed field types and Zeek records were rejected; the daemon's .keyword queries from Chain 13 are dropped. Chain 23 verified on the G11) -->
 > **Status:** 58 issues tracked. 58 RESOLVED. Latest: Fixed category drill-down page crash (`each_key_duplicate`) — 3 daemon→frontend data contract mismatches in `handle_alert_category_detail()` and `handle_alert_category_timeline()`. Lessons 97–99 added.
@@ -64,6 +66,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | Deferred-bridge activation (`activate-bridge.sh`) | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 28 (NET-216): it now starts services through `deploy-malcolm.sh --start-only`, so the OpenSearch bootstrap and index templates run. Only boxes installed with `--defer-bridge` are affected; the G11 was not. |
 | OpenSearch bootstrap in `deploy-malcolm.sh` | **FIXED, DEVICE CHECK PENDING** | Chain 31 (NET-217): auth or a missing template now stops install.sh / activate-bridge.sh with an `error` line after bounded, time-limited retries (it used to warn and report success); no password in any argv; a malcolm_template already targeting `arkime_sessions3-*` is kept. Verify with `bash scripts/remote/deploy-malcolm-bootstrap.sh` (read-only by construction). |
 | PCAP capture (nettap-pcap-capture) | **STOPPED ON THE G11 (2026-11-06), CAUSE UNKNOWN** | Chain 26 (NET-179): "Exited (0)" for 21 h, so something ran `docker stop`. `bash scripts/remote/fix-pcap-capture-stopped.sh` shows who could have and restarts it if Settings want it on. |
+| Installer, Go Live, capture start, uninstall | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 33 (NET-244, NET-211): bats and unit tests only; the G11 is a mirror box, so the bridge and two-port paths need a fresh install. Deploy with `bash scripts/remote/deploy-installer-go-live.sh`. |
 | Suricata rule updates | **BUILT, NOT YET ON THE DEVICE** | Chain 27 (NET-191 slice 2): four free sources (ET Open, abuse.ch SSLBL, Echap stalkerware, IPFire DBL Malware/Phishing), optional ET Pro code, every update through `nettap-rules-update.sh` (lock, last-good, status record). Deploy with `bash scripts/remote/deploy-detection-slice2.sh` (the gate runs first). |
 
 ---
@@ -585,6 +588,54 @@ CHAIN 31: deploy-malcolm.sh's bootstrap warned and carried on, with the password
   look like "absent" to code that writes on absence; prefer OpenSearch's create-only flags to
   GET-then-PUT; `docker compose exec` reads stdin.
   Tracking: tracking-fixes/2026-11-12-malcolm-bootstrap-decimal-sizes.md.
+CHAIN 33: installer and Go Live bugs found writing the setup guide (fix/installer-two-port-and-setup-guide-bugs, NET-244 + NET-211)
+  Found 2026-11-10/11 while writing the setup guide (NET-211, 11 items) and on a two-port box (NET-244).
+  Read from the code, not seen on the G11 except where noted. Numbers are NET-211's.
+  - NET-244: `install.sh --skip-bridge --non-interactive` still ran preflight's NIC role assignment,
+    which can't choose WAN and LAN on a two-port box with internet on one port, and aborted.
+    Fix: step_nic_preflight skips the roles when both flags are set (the wizard picks the ports).
+    A non-interactive bridge install still stops there, on purpose: guessing would bridge the
+    internet port before Malcolm's images are pulled.
+  - #1 `.env.example` carried MGMT_IP=192.168.1.100 and MGMT_INTERFACE=eth2; a hand-copied .env
+    gave the box a wrong fixed address. Now commented out (OLD CODE).
+  - #2 Go Live in mirror mode offered "Create bridge". It now says mirror mode needs no Go Live step.
+  - #3 Go Live guessed eth0/eth1 or read the wizard's ports from localStorage (another browser had
+    none). `GET /api/capture/mode` now returns `wan_interface`/`lan_interface` when the saved mode is
+    bridge (`saved_bridge_ports()`, never load_capture_config's eth0/eth1 defaults); without them
+    Go Live sends the owner back to the wizard.
+  - #4 The wizard's self-traffic field accepted a typed address it never saved; now read-only.
+  - #5 The installer's OpenSearch check was an unauthenticated curl, always "not responding yet".
+    It now asks through `docker compose exec opensearch` with Malcolm's curlrc (as deploy-malcolm.sh).
+  - #6 The install summary and firewall pointed at Malcolm on :9443, where nothing listens. The
+    summary now says https://<host>/dashboards/ after sign-in; 9443 is no longer opened.
+    deploy-malcolm.sh:234 printed it too; fixed on fix/malcolm-bootstrap-and-decimal-sizes (587e3c8d).
+  - #7 `ufw status | grep -q active` also matched "inactive", so the installer enabled UFW on boxes
+    where the owner had it off. Now `^Status: active`.
+  - #8 `--dry-run` wrote /etc/sysctl.d/99-nettap.conf, nettap.service and daemon.json, installed the
+    Compose plugin and ran deploy-malcolm.sh; setup-bridge.sh --persist --dry-run wrote its netplan,
+    sysctl, unit and NetworkManager files and loaded the bridge module. New `write_file` in
+    common.sh; every write, install, modprobe and the Malcolm deploy go through run/write_file.
+  - #9 docker/.env defaults PCAP_IFACE=br0. Before the wizard (with --skip-bridge) and in bridge mode
+    until Go Live builds br0, Zeek and Suricata start on a missing interface; supervisord gives up
+    (startretries=3, FATAL) while the container keeps running, and nothing restarts them after Go
+    Live. The capture env loader now waits until every PCAP_IFACE interface exists in
+    /sys/class/net (the containers use host networking), with a TERM trap so docker stop is
+    immediate (the wrapper shell is PID 1).
+  - #10 install.sh's header named --persist-bridge, which parse_args rejects.
+  - #11 No uninstall. New scripts/install/uninstall.sh: explicit unit and file list, refuses a
+    bridge netplan holding a fixed management address and DHCP gateway mode unless the daemon finds
+    another DHCP server, units before compose down (stopping nettap-bypass.service starts capture),
+    daemon.json restored only from the installer's new .nettap-installed/.nettap-backup records.
+    No netplan apply or ip link del: a reboot finishes it.
+  Tests: test_install.bats (NET-244, #5-#8, #10, daemon.json records), test_preflight.bats (#1,
+  two-port bridge abort pinned), test_setup_bridge_dry_run.bats (#8), test_capture_env_loader.bats
+  (#9; every test now passes a fake sysfs), test_uninstall.bats (#11), test_install_ui.bats and
+  test_setup_firewall.bats (#6), daemon/tests/test_capture_mode_ports.py (#3), GoLive.test.ts and
+  setup-steps.test.ts (#2-#4). Each new test fails on the code before its fix.
+  Verify on the G11: bash scripts/remote/deploy-installer-go-live.sh.
+  Lesson: bats runs under /bin/bash 3.2 on a Mac, where a failing `[[ ]]` that isn't a test's last
+  command doesn't fail the test. End mid-test `[[ ]]` checks with `|| false`.
+  Tracking: tracking-fixes/2026-11-12-installer-go-live-uninstall.md.
 ```
 
 ---
@@ -1875,6 +1926,35 @@ This chain covers 5 deployment issues discovered during N100 hardware testing on
 
 ---
 
+## Chain 32: a box with no index read as an incomplete reply
+
+### NET-182: a fresh box showed "incomplete" instead of zeros
+
+| Field | Value |
+|---|---|
+| **Commit** | see `fix/drilldown-exact-lists-and-empty-box` |
+| **Branch** | `fix/drilldown-exact-lists-and-empty-box` |
+| **Status** | Fixed in code; deploy pending |
+| **Severity** | High (first-run experience) |
+| **Date** | 2026-11-12 |
+| **Environment** | Any fresh install before its first record is indexed; reproduced on the G11 with a missing index pattern |
+
+**Symptom:** on a new box, Devices, the device count, risk scores and protocols answered "The … search was incomplete" until the first Zeek record was indexed.
+
+**Root cause:** with no index matching `arkime_sessions3-*`, OpenSearch answers a search with `_shards.total` 0, hits.total 0 and no `aggregations` key at all. The checked reads from NET-237 (`all_buckets`, `complete_terms`) treat a missing aggregation as a partial reply and fail closed.
+
+**Fix:** `ExactTermsOpenSearch.search` passes its reply through `with_empty_aggregations` (`daemon/storage/exact_terms.py`). When `_shards.total` is 0 and there are no aggregations, it adds the aggregations the body would get from an empty index: the shapes were captured from the G11's OpenSearch. Kinds without a known empty form (`date_range`, `date_histogram`, a composite page with `after`, `filters` with an other bucket) leave the reply unchanged, so those reads still fail closed. `msearch`, `count` and the drill-down pages' plain PIT clients are unchanged.
+
+Same branch: a device read stopped at 20,000 LAN sources now writes a `device_cap_reached` Changelog event (at most once a day; a failed write retries after 5 minutes), so the "incomplete" pages have a visible reason.
+
+**Verification:**
+* `test_zero_shard_replies.py` compares the synthesized shapes with the G11's real empty aggregations and runs /api/devices, /count, /api/risk/scores and /api/traffic/protocols against a zero-shard reply.
+* `deploy-drilldown-exact-empty-box.sh` Step 7 searches `nettap-no-such-index-*` through the daemon's own client.
+
+**Key insight:** "no index" and "a shard failed" both lack data, but only one of them is incomplete. Read `_shards.total` before deciding.
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 16+ PRs. Check their current state before making changes.
@@ -1882,6 +1962,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | File | PRs | Current State |
 |---|---|---|
 | `scripts/install/deploy-malcolm.sh` | NET-217, NET-177 | Bootstrap stops the run on failure (Chain 31): `error` after bounded, time-limited retries. All dashboards-helper OpenSearch calls go through `_helper_curl` (`curl --config` the mounted curlrc; never `-u`). A malcolm_template already targeting the index pattern is kept; the Arkime marker is `?create=true`. Preflight free space is decimal GB. Don't add an OpenSearch call that takes credentials on the command line. |
+| `config/capture/nettap-capture-env.sh` | NET-211 | Parses capture.env, then waits until every PCAP_IFACE interface exists in `${NETTAP_SYS_CLASS_NET:-/sys/class/net}` (Chain 33). Tests must pass a fake sysfs or they can block on Linux. |
+| `scripts/install/uninstall.sh` | NET-211 | NEW (Chain 33): explicit file list; refusals before any change; daemon.json only from the installer's records. Add any new file NetTap writes outside the repo to its lists. |
 | `scripts/install/activate-bridge.sh` | NET-216 | `start_services()` calls `deploy-malcolm.sh --start-only`, not a bare `docker compose up -d` (Chain 28). Start the stack through deploy-malcolm.sh; don't copy compose commands into other scripts. |
 | `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95, 717bd24, 65e31cf | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m, **MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX + MALCOLM_OTHER_INDEX_PATTERN/SUFFIX env vars**. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES + **PUSER=root (skip usermod)** + **SYS_ADMIN cap_add (covers netsniff-ng file caps — setcap -r unreliable on overlay2)**. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT, **healthcheck on :9200 (not :443), :443 port removed**. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
 | `docker/Dockerfile.zeek-live` + `docker/zeek-live/` | NET-127 | NEW (Chain 23): Malcolm Zeek image + /dev/urandom shim for std::random_device, loaded via /etc/ld.so.preload. Self-test runs in the build stage and the final image. |
@@ -1958,6 +2040,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `scripts/remote/gate-detection-slice2.sh`, `deploy-detection-slice2.sh`, `rollback-detection-slice2.sh`, `check-etpro-canary.sh`, `check-rules-update-safety.sh` | NET-191 | NEW: deploy gate (staged update + checks + replays), deploy, rollback, ET Pro credential checks, update safety checks. |
 | `daemon/services/rules_lock.py`, `daemon/services/etpro.py` | NET-191 | NEW: the daemon side of the rules lock; ET Pro save/clear (preflight, 600 file, restart under the lock, activation watch). |
 | `config/capture/nettap-capture-env.sh` | NET-191 | Reads `/etc/nettap/suricata.env` and swaps `et/open` for `et/pro|secret-code=…`; an invalid code is ignored and never printed. |
+| `daemon/services/iot_trust_scorer.py` | NET-158, NET-171 | Nine checks worth 85 points (privacy 20, security 35, behaviour 30). Telemetry and firmware are out of the model: nothing measures them. A None input leaves the denominator; a score needs 50 points (today all five measurable checks, 55). Behaviour stays None until baselines exist (NET-170). |
 | `docker/Dockerfile.zeek-live` | NET-220 | Also edits Malcolm's entrypoint setcap lines to `CAP_NET_RAW+eip` and sets `cap_net_raw=eip` on zeek and capstats; the build fails if the setcap lines change or getcap differs. Its compose `cap_add` is `[NET_RAW]` and `mem_limit: 3g`: image and compose roll back together (a file capability outside the bounding set makes exec fail). |
 | `config/suricata/nettap.yaml` | NET-206 | Its first `stats:` block is kept as OLD CODE (PR #255 review): restating the block meant restating every key Malcolm sets. The counters come from `SURICATA_STATS_ENABLED` / `SURICATA_STATS_INTERVAL` on suricata-live in `docker/docker-compose.yml` instead. No eve stats, no stats.log. |
 | `daemon/services/pcap_search.py`, `daemon/api/pcap.py` | NET-189 | "Download filtered" streams `FILTER_DOWNLOAD_JOB` (packet analysis's window cut + `tshark -Y -w -`) with files from `CaptureIndex.select`; no temp files. Refuses failed index entries and windows over 400k packets / 64 files / 3 GB; one download at a time; 240 s deadline; aborts the response after a failure past the first byte. |
@@ -2184,10 +2267,11 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 178. **A device sudo rule of `docker` only means host-side locks go through a container (Chain 27)** — `sudo flock` and `sudo VAR=x docker` both need a password there. A throwaway container of the live image, on the same volume, takes `flock` and sleeps; `docker rm -f` releases it, and a sleep cap stops a dead script from holding it.
 179. **`docker exec` gets the image and compose environment, not what the entrypoint exported (Chain 27)** — anything an entrypoint wrapper computes (here the ET Pro source swap) must be written to a file that later `docker exec` calls read.
 180. **A proxy's header buffer must fit the app's largest response header (Chain 29)**: SvelteKit's `Link` preload header grows with every chunk a page imports, past nginx's 4 KB default. Check a logged-in full reload, not an unauthenticated `curl /`.
-181. **A capture binary's file capability is where its privilege comes from, so cap_add alone doesn't drop it (NET-220)** — Zeek runs as uid 1000 and gets CAP_NET_ADMIN|NET_RAW only from `setcap` on the binary, which Malcolm's entrypoint re-applies at every start. Dropping NET_ADMIN needs the image (binary + entrypoint line) and compose's `cap_add` changed together; the kernel refuses to exec a binary whose file capability isn't inside the bounding set.
-182. **`no-new-privileges` blocks file-capability gains too, not only setuid (NET-220)** — tested on the G11: a uid-1000 shell exec'ing capstats captured without it and failed `socket: Operation not permitted` with it. Lesson 1 holds for zeek-live for this reason as well as `su`.
-183. **An included Suricata block replaces the earlier one, it doesn't merge (NET-206)** — `suricata --dump-config` showed `stats` "redefined": the include's `stats:` dropped Malcolm's interval and decoder-events. Where Malcolm has a setting for it, use that instead: its `suricata_config_populate.py` takes any `SURICATA_*` env var over its defaults (`SURICATA_STATS_ENABLED`, `SURICATA_STATS_INTERVAL`), so nothing has to be restated.
-184. **A download that picks files by mtime misses the file that started inside the window (NET-189)** — select files by their packet times (the capture index), and stream instead of merging into a size-limited tmpfs.
+181. **A check nothing can measure belongs out of the score, not in it as "unavailable" forever (NET-171)**: NET-158 made the IoT scorer skip None inputs, but telemetry and firmware stayed in the model. The drawer then said "5 of 11 checks (55 of 100 points)", as if six checks were waiting for data, and the scorer still paid 10 points to any caller that passed `telemetry_bytes=0`. Before you keep a check, name the data source that will feed it. If there is none, take the check out and keep its code as OLD CODE.
+182. **A capture binary's file capability is where its privilege comes from, so cap_add alone doesn't drop it (NET-220)** — Zeek runs as uid 1000 and gets CAP_NET_ADMIN|NET_RAW only from `setcap` on the binary, which Malcolm's entrypoint re-applies at every start. Dropping NET_ADMIN needs the image (binary + entrypoint line) and compose's `cap_add` changed together; the kernel refuses to exec a binary whose file capability isn't inside the bounding set.
+183. **`no-new-privileges` blocks file-capability gains too, not only setuid (NET-220)** — tested on the G11: a uid-1000 shell exec'ing capstats captured without it and failed `socket: Operation not permitted` with it. Lesson 1 holds for zeek-live for this reason as well as `su`.
+184. **An included Suricata block replaces the earlier one, it doesn't merge (NET-206)** — `suricata --dump-config` showed `stats` "redefined": the include's `stats:` dropped Malcolm's interval and decoder-events. Where Malcolm has a setting for it, use that instead: its `suricata_config_populate.py` takes any `SURICATA_*` env var over its defaults (`SURICATA_STATS_ENABLED`, `SURICATA_STATS_INTERVAL`), so nothing has to be restated.
+185. **A download that picks files by mtime misses the file that started inside the window (NET-189)** — select files by their packet times (the capture index), and stream instead of merging into a size-limited tmpfs.
 
 ---
 
@@ -2231,6 +2315,11 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | An alert host field mapped as text (Chain 26) | On the G11 `tls.client.server_name` is text, so "Alerts tagged with this name" is a lower bound ("At least N") on every domain page | The page names the field it can't search. A Malcolm template change would only reach new daily indices; if one ever adds a `.keyword` subfield (ignore_above >= 254), the daemon uses it with no code change. Step 4 of `deploy-drill-down.sh` shows which path each field uses. |
 | Malcolm's startup rule update runs under a 300 s timeout (Chain 27) | With four sources the startup update downloads and tests more; if it hits the limit, the wrapper restores the last good rules and Suricata starts on them (status "interrupted"); the nightly update, which has no limit, brings the new rules | `gate-detection-slice2.sh` prints the staged update's time (64 s locally on 1 CPU) and warns above 240 s. If it warns on the device, set `SURICATA_UPDATE_STARTUP_TIMEOUT` for suricata-live. |
 | The shim depends on Malcolm's script path and options (Chain 27) | A Malcolm upgrade that renames `/usr/local/bin/suricata-update-rules.sh` leaves updates without the lock and status record (the wrapper logs an ERROR and leaves Malcolm's behaviour alone) | After a Malcolm tag bump, check `docker logs nettap-suricata-live` for `nettap-rules: ERROR` and that the shim is in place (deploy-detection-slice2.sh Step 9 checks it). |
+| Empty aggregations for a box with no index are synthesized (Chain 32) | `with_empty_aggregations` copies the empty shapes OpenSearch 2.x gave on the G11; a new aggregation kind, or an OpenSearch upgrade that changes a shape, could make a fresh box read wrong | Unknown kinds leave the reply unchanged (the read fails closed). `test_zero_shard_replies.py` pins the G11 shapes; after an OpenSearch bump, re-run Step 7 of `deploy-drilldown-exact-empty-box.sh`. |
+| Existing `.env` files keep the old example's `MGMT_IP=192.168.1.100` and `MGMT_INTERFACE=eth2` (Chain 33) | Only new installs lose them; a box set up from a hand-copied `.env.example` still writes that fixed address into the bridge netplan on the next `setup-bridge.sh --persist`, and uninstall.sh then refuses until it's moved | Check `grep -E '^MGMT_(IP|INTERFACE)=' .env` on a box before re-running the bridge setup; delete the lines unless the address is wanted. |
+| `deploy-malcolm.sh --dry-run` and `malcolm-config.sh --dry-run` run on their own still write repo config (Chain 33) | Only install.sh's dry run is clean; it no longer runs deploy-malcolm.sh at all | Run the install dry run through install.sh. Fixing the standalone dry runs is a follow-up. |
+| The rotation-size save can write a bridge-mode capture-mode.conf with the env defaults before the wizard (Chain 33) | Go Live would then offer those port names | `/api/bridge/create` still refuses a port that carries the default route or an address, and a missing one; the wizard overwrites them with the owner's choice. |
+| Capture containers wait quietly for a missing interface (Chain 33) | A typo'd or renamed capture port shows as running containers with no data, not FATAL programs | `docker logs nettap-zeek-live` shows `nettap-capture-env: waiting for capture interface X`. |
 | An expired ET Pro code fails every nightly update (`--fail`) | All sources stop updating, not only ET Pro | Settings › Suricata rules turns amber after 48 h without success; renew or remove the code. |
 
 ---
@@ -2292,6 +2381,9 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-179 | #183 | PCAP capture found stopped for 21 h: fix-pcap-capture-stopped.sh (Chain 26) | 2026-11-06 |
 | NET-178 | pending | Domain page 502: an alert host field mapped as text failed the whole page (Chain 26) | 2026-11-06 |
 | NET-241 | #236 | A logged-in full reload was a 502: nginx header buffer too small for SvelteKit's Link header (Chain 29) | 2026-11-09 |
+| NET-182 | pending | A box with no index answered "incomplete" instead of zeros; the 20,000-device cap now leaves a Changelog event (Chain 32) | 2026-11-12 |
 | NET-216 | pending | `activate-bridge.sh` (the --defer-bridge path) started the stack without the OpenSearch bootstrap or index templates (Chain 28) | 2026-11-08 |
 | NET-198 | pending | A lapsed session sends the user to sign in instead of "Can't reach NetTap"; `/login` follows a same-origin `?next=` (Chain 30) | 2026-11-12 |
 | NET-217, NET-177 | pending | deploy-malcolm.sh's bootstrap warned and carried on, with the password on the command line; installer sizes in GiB (Chain 31) | 2026-11-12 |
+| NET-171 | pending | IoT trust score: telemetry and firmware out of the model (nine checks, 85 points); an unmeasured pillar says "Not measured" | 2026-11-12 |
+| NET-174 | pending | Unused `POST /api/iot/devices/{mac}/classify` and `classifyDevice()` removed | 2026-11-12 |

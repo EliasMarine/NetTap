@@ -12,7 +12,8 @@
 #   --skip-bridge        Skip bridge configuration (if already done)
 #   --skip-pull          Skip Docker image pull (use cached images)
 #   --skip-malcolm       Skip Malcolm deployment (bridge + deps only)
-#   --persist-bridge     Write netplan/systemd for bridge persistence
+# OLD CODE: #   --persist-bridge     Write netplan/systemd for bridge persistence (NET-211 #10: no such option, persistence is the default)
+#   --no-persist-bridge  Don't write persistent bridge config
 #   --defer-bridge       Defer bridge activation until after cable rewiring
 #   --immediate-bridge   (No-op, kept for backwards compatibility)
 #   --non-interactive    Skip interactive prompts (auto-assign NICs)
@@ -97,6 +98,16 @@ parse_args() {
 # NIC PREFLIGHT: Discover and assign NICs before main install
 # ===========================================================================
 step_nic_preflight() {
+    # NET-244: with --skip-bridge nothing uses WAN/LAN (the setup wizard picks the ports), and
+    # auto-assignment can't place two ports when one carries the internet, so it stopped the install.
+    # Bridge installs still auto-assign: there the abort keeps the internet port out of the bridge.
+    if [[ "$SKIP_BRIDGE" == "true" && "$NON_INTERACTIVE" == "true" ]]; then
+        log "NIC roles skipped (--skip-bridge): the setup wizard picks the ports"
+        # preflight.sh, skipped here, is what otherwise locks .env to its owner
+        if [[ -f "${PROJECT_ROOT}/.env" ]]; then run chmod 600 "${PROJECT_ROOT}/.env"; fi
+        return 0
+    fi
+
     # Check if .env already has NIC assignments
     local env_file="${PROJECT_ROOT}/.env"
     local needs_nics="false"
@@ -215,7 +226,8 @@ step_dependencies() {
     # Skip if already available (docker-ce bundles it).
     if docker compose version &>/dev/null; then
         debug "Docker Compose already available, skipping plugin install"
-    elif apt-get install -y -qq docker-compose-plugin 2>/dev/null; then
+    # OLD CODE: elif apt-get install -y -qq docker-compose-plugin 2>/dev/null; then (NET-211 #8: ran in --dry-run)
+    elif run apt-get install -y -qq docker-compose-plugin 2>/dev/null; then
         true  # installed from Docker official repo
     else
         log "docker-compose-plugin not found, trying docker-compose-v2..."
@@ -226,21 +238,69 @@ step_dependencies() {
     run systemctl enable --now docker
     log "Docker enabled and running"
 
-    # Verify docker compose is available
-    if ! docker compose version &>/dev/null; then
+    # Verify docker compose is available (a dry run installed nothing, so there's nothing to check)
+    # OLD CODE: if ! docker compose version &>/dev/null; then (NET-211 #8: stopped every dry run on a fresh box)
+    if [[ "$NETTAP_DRY_RUN" != "true" ]] && ! docker compose version &>/dev/null; then
         error "Docker Compose plugin not available. Install docker-compose-plugin or docker-compose-v2."
     fi
     debug "Docker Compose $(docker compose version --short 2>/dev/null) available"
 
-    # Configure Docker daemon (log rotation, overlay2, DNS)
-    # Ubuntu 24.04 uses systemd-resolved with a stub at 127.0.0.53.
-    # Docker build containers can't reach the stub (different network
-    # namespace), causing DNS timeouts during image builds. We always
-    # ensure daemon.json has explicit DNS servers.
-    local docker_needs_restart="false"
-    if [[ ! -f /etc/docker/daemon.json ]]; then
+    # OLD CODE START — NET-211 #8: moved into configure_docker_daemon (it wrote daemon.json in --dry-run)
+    # # Configure Docker daemon (log rotation, overlay2, DNS)
+    # # Ubuntu 24.04 uses systemd-resolved with a stub at 127.0.0.53.
+    # # Docker build containers can't reach the stub (different network
+    # # namespace), causing DNS timeouts during image builds. We always
+    # # ensure daemon.json has explicit DNS servers.
+    # local docker_needs_restart="false"
+    # if [[ ! -f /etc/docker/daemon.json ]]; then
+    #     log "Configuring Docker daemon..."
+    #     cat > /etc/docker/daemon.json <<'DAEMONJSON'
+    # {
+    # "log-driver": "json-file",
+    # "log-opts": {
+    #     "max-size": "10m",
+    #     "max-file": "3"
+    # },
+    # "storage-driver": "overlay2",
+    # "dns": ["9.9.9.9", "149.112.112.112"]
+    # }
+    # DAEMONJSON
+    #     docker_needs_restart="true"
+    #     log "Docker daemon configured with log rotation and DNS"
+    # elif ! grep -q '"dns"' /etc/docker/daemon.json 2>/dev/null; then
+    #     log "Adding DNS servers to existing Docker daemon config..."
+    #     # Use jq to add dns key without clobbering existing config
+    #     local tmp_json
+    #     tmp_json=$(jq '. + {"dns": ["9.9.9.9", "149.112.112.112"]}' /etc/docker/daemon.json)
+    #     echo "$tmp_json" > /etc/docker/daemon.json
+    #     docker_needs_restart="true"
+    #     log "DNS servers added to daemon.json"
+    # else
+    #     debug "Docker daemon.json already has DNS configured"
+    # fi
+    # if [[ "$docker_needs_restart" == "true" ]]; then
+    #     run systemctl restart docker
+    # fi
+    #
+    # OLD CODE END
+    if configure_docker_daemon; then
+        run systemctl restart docker
+    fi
+
+    log "System dependencies installed"
+}
+
+# Docker daemon settings: log rotation, overlay2 and DNS servers. Ubuntu 24.04 uses
+# systemd-resolved with a stub at 127.0.0.53, which Docker build containers can't reach (different
+# network namespace), so image builds time out on DNS; daemon.json always gets explicit servers.
+# Returns 0 when Docker needs a restart. $1 is the file (tests pass a temp one).
+configure_docker_daemon() {
+    local file="${1:-/etc/docker/daemon.json}" json
+    if [[ ! -f "$file" ]]; then
         log "Configuring Docker daemon..."
-        cat > /etc/docker/daemon.json <<'DAEMONJSON'
+        _forget_docker_daemon_records "$file"
+        # Called in an if, so set -e is off here: every write checks for itself
+        write_file "$file" <<'DAEMONJSON' || error "Couldn't write ${file}."
 {
     "log-driver": "json-file",
     "log-opts": {
@@ -251,24 +311,35 @@ step_dependencies() {
     "dns": ["9.9.9.9", "149.112.112.112"]
 }
 DAEMONJSON
-        docker_needs_restart="true"
+        run cp "$file" "${file}.nettap-installed"
         log "Docker daemon configured with log rotation and DNS"
-    elif ! grep -q '"dns"' /etc/docker/daemon.json 2>/dev/null; then
-        log "Adding DNS servers to existing Docker daemon config..."
-        # Use jq to add dns key without clobbering existing config
-        local tmp_json
-        tmp_json=$(jq '. + {"dns": ["9.9.9.9", "149.112.112.112"]}' /etc/docker/daemon.json)
-        echo "$tmp_json" > /etc/docker/daemon.json
-        docker_needs_restart="true"
-        log "DNS servers added to daemon.json"
-    else
+        return 0
+    fi
+    if grep -q '"dns"' "$file" 2>/dev/null; then
         debug "Docker daemon.json already has DNS configured"
+        return 1
     fi
-    if [[ "$docker_needs_restart" == "true" ]]; then
-        run systemctl restart docker
+    log "Adding DNS servers to existing Docker daemon config..."
+    if ! command -v jq > /dev/null; then
+        # A dry run installed no packages, so jq may not be there yet
+        if [[ "$NETTAP_DRY_RUN" == "true" ]]; then log "[DRY-RUN] add \"dns\" to ${file} with jq"; return 0; fi
+        error "jq is missing, so ${file} can't be updated. Install jq, then run the installer again."
     fi
+    # jq adds the dns key without clobbering the rest; never write over the file if it can't parse it
+    json=$(jq '. + {"dns": ["9.9.9.9", "149.112.112.112"]}' "$file") \
+        || error "Couldn't read ${file} as JSON. Fix it, then run the installer again."
+    _forget_docker_daemon_records "$file"
+    # Without the backup, uninstall would take the owner's file for NetTap's and delete it
+    run cp "$file" "${file}.nettap-backup" || error "Couldn't back up ${file}; it was not changed."
+    write_file "$file" <<< "$json" || error "Couldn't write ${file}; the original is ${file}.nettap-backup."
+    run cp "$file" "${file}.nettap-installed"
+    log "DNS servers added to daemon.json"
+}
 
-    log "System dependencies installed"
+# Records an earlier install left describe a file that may have changed since; uninstall.sh trusts only
+# fresh ones. (.nettap-installed = what NetTap wrote, .nettap-backup = the owner's file before it.)
+_forget_docker_daemon_records() {
+    run rm -f "${1}.nettap-installed" "${1}.nettap-backup"
 }
 
 # ===========================================================================
@@ -280,7 +351,8 @@ step_kernel_tuning() {
     # Increase max map count for OpenSearch
     local sysctl_file="/etc/sysctl.d/99-nettap.conf"
     if [[ ! -f "$sysctl_file" ]]; then
-        cat > "$sysctl_file" <<'SYSCTLEOF'
+        # OLD CODE: cat > "$sysctl_file" <<'SYSCTLEOF' (NET-211 #8: wrote in --dry-run)
+        write_file "$sysctl_file" <<'SYSCTLEOF'
 # NetTap kernel tuning
 
 # Required by OpenSearch
@@ -295,7 +367,8 @@ net.core.netdev_max_backlog = 5000
 # Increase conntrack table for busy networks
 net.netfilter.nf_conntrack_max = 1048576
 SYSCTLEOF
-        run sysctl --system > /dev/null 2>&1
+        # OLD CODE: run sysctl --system > /dev/null 2>&1 (NET-211 #8: the redirect hid run's own dry-run line)
+        if [[ "$NETTAP_DRY_RUN" == "true" ]]; then log "[DRY-RUN] sysctl --system"; else sysctl --system > /dev/null 2>&1; fi
         log "Kernel parameters applied"
     else
         debug "Kernel tuning already configured"
@@ -375,7 +448,9 @@ step_malcolm() {
         deploy_args+=(--dry-run)
     fi
 
-    "${SCRIPT_DIR}/deploy-malcolm.sh" "${deploy_args[@]}"
+    # OLD CODE: "${SCRIPT_DIR}/deploy-malcolm.sh" "${deploy_args[@]}" (NET-211 #8)
+    # Through run: its own --dry-run still writes repo config and polls OpenSearch for minutes
+    run "${SCRIPT_DIR}/deploy-malcolm.sh" "${deploy_args[@]}"
 }
 
 # ===========================================================================
@@ -387,7 +462,8 @@ step_systemd() {
     local service_file="/etc/systemd/system/nettap.service"
     local compose_file="${PROJECT_ROOT}/docker/docker-compose.yml"
 
-    cat > "$service_file" <<SERVICEEOF
+    # OLD CODE: cat > "$service_file" <<SERVICEEOF (NET-211 #8: wrote in --dry-run)
+    write_file "$service_file" <<SERVICEEOF
 [Unit]
 Description=NetTap Network Visibility Appliance
 Documentation=https://github.com/EliasMarine/NetTap
@@ -473,17 +549,22 @@ step_mdns() {
 step_firewall() {
     ui_step "Configuring firewall rules"
 
-    if command -v ufw &>/dev/null && ufw status | grep -q "active"; then
+    # OLD CODE START — NET-211 #7: "active" also matched "Status: inactive"
+    # if command -v ufw &>/dev/null && ufw status | grep -q "active"; then
+    # OLD CODE END
+    if command -v ufw &>/dev/null && ufw status | grep -q '^Status: active'; then
         log "UFW is active, adding NetTap rules..."
 
         # Allow dashboard access (HTTPS)
         run ufw allow "${DASHBOARD_PORT:-443}/tcp" comment "NetTap dashboard"
 
-        # Allow Malcolm dashboards (if different port)
-        local malcolm_port="${MALCOLM_HTTPS_PORT:-9443}"
-        if [[ "$malcolm_port" != "${DASHBOARD_PORT:-443}" ]]; then
-            run ufw allow "${malcolm_port}/tcp" comment "Malcolm dashboards"
-        fi
+        # OLD CODE START — NET-211 #6: nothing publishes 9443; Dashboards is /dashboards/ on the 443 above
+        # # Allow Malcolm dashboards (if different port)
+        # local malcolm_port="${MALCOLM_HTTPS_PORT:-9443}"
+        # if [[ "$malcolm_port" != "${DASHBOARD_PORT:-443}" ]]; then
+        #     run ufw allow "${malcolm_port}/tcp" comment "Malcolm dashboards"
+        # fi
+        # OLD CODE END
 
         # Allow mDNS
         run ufw allow 5353/udp comment "mDNS (avahi)"
@@ -495,6 +576,17 @@ step_firewall() {
         # OLD CODE END
         log "UFW not active, nothing to change"
     fi
+}
+
+# Cluster status (green, yellow, red) through the service curlrc, the way deploy-malcolm.sh's
+# _opensearch_auth_ok signs in; fails when OpenSearch doesn't answer (NET-211 #5).
+opensearch_health() {
+    local reply
+    reply=$(docker compose -f "${PROJECT_ROOT}/docker/docker-compose.yml" exec -T opensearch \
+        curl --config /var/local/curlrc/.opensearch.primary.curlrc \
+        --insecure --silent --fail "https://localhost:9200/_cluster/health" 2>/dev/null) || return 1
+    python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" <<< "$reply" 2>/dev/null \
+        || echo "unknown"
 }
 
 # ===========================================================================
@@ -636,9 +728,13 @@ step_verify() {
         fi
 
         # OpenSearch check
-        if curl -skf "https://localhost:9200/_cluster/health" > /dev/null 2>&1; then
-            local health
-            health=$(curl -sk "https://localhost:9200/_cluster/health" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null) || health="unknown"
+        # OLD CODE START — NET-211 #5: no credentials, so OpenSearch answered 401 and this always said "not responding"
+        # if curl -skf "https://localhost:9200/_cluster/health" > /dev/null 2>&1; then
+        #     local health
+        #     health=$(curl -sk "https://localhost:9200/_cluster/health" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null) || health="unknown"
+        # OLD CODE END
+        local health
+        if health=$(opensearch_health); then
             if [[ "$health" == "green" || "$health" == "yellow" ]]; then
                 status_line OK "OpenSearch cluster health: ${health}"
                 (( ++checks_passed ))

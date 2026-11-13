@@ -240,10 +240,13 @@ export interface AlertNarrow {
 
 /**
  * The alerts list for one signature (an exact match on rule.name), over the count's window when given.
+ * A null signature is the alerts with no rule name (`no_rule_name=true`, NET-185).
  * `narrow` adds the address filters; empty ones are left out of the URL.
  */
-export function alertsHrefForSignature(signature: string, win?: DrillWindow & { range?: string }, narrow: AlertNarrow = {}): string {
-	const q = new URLSearchParams({ signature });
+// OLD CODE: export function alertsHrefForSignature(signature: string, win?: DrillWindow & { range?: string }, narrow: AlertNarrow = {}): string { (NET-185: null, no rule name)
+export function alertsHrefForSignature(signature: string | null, win?: DrillWindow & { range?: string }, narrow: AlertNarrow = {}): string {
+	// OLD CODE: const q = new URLSearchParams({ signature }); (NET-185)
+	const q = new URLSearchParams(signature === null ? { no_rule_name: 'true' } : { signature });
 	for (const key of ['ip', 'src', 'dst'] as const) {
 		if (narrow[key]) q.set(key, narrow[key]);
 	}

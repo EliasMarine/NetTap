@@ -160,28 +160,31 @@ async def handle_fleet_summary(request: web.Request) -> web.Response:
     return web.json_response(result)
 
 
-async def handle_classify_device(request: web.Request) -> web.Response:
-    """POST /api/iot/devices/{mac}/classify"""
-    mac = request.match_info["mac"]
-    iot: IoTMonitor = request.app["iot_monitor"]
-
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-
-    # OLD CODE START — sync IoTMonitor call blocked the event loop
-    # is_iot = iot.classify_as_iot(mac, body)
-    # OLD CODE END
-    is_iot = await _run_iot(request, iot.classify_as_iot, mac, body)
-
-    return web.json_response(
-        {
-            "mac": mac,
-            "is_iot": is_iot,
-            "message": f"Device {mac} {'classified as IoT' if is_iot else 'not classified as IoT'}",
-        }
-    )
+# OLD CODE START — NET-174: no page or script called this route, and the device it added was
+# dropped on the next range request (discovery rebuilds the IoT set).
+# async def handle_classify_device(request: web.Request) -> web.Response:
+#     """POST /api/iot/devices/{mac}/classify"""
+#     mac = request.match_info["mac"]
+#     iot: IoTMonitor = request.app["iot_monitor"]
+#
+#     try:
+#         body = await request.json()
+#     except Exception:
+#         body = {}
+#
+#     # OLD CODE START — sync IoTMonitor call blocked the event loop
+#     # is_iot = iot.classify_as_iot(mac, body)
+#     # OLD CODE END
+#     is_iot = await _run_iot(request, iot.classify_as_iot, mac, body)
+#
+#     return web.json_response(
+#         {
+#             "mac": mac,
+#             "is_iot": is_iot,
+#             "message": f"Device {mac} {'classified as IoT' if is_iot else 'not classified as IoT'}",
+#         }
+#     )
+# OLD CODE END
 
 
 async def handle_privacy_report(request: web.Request) -> web.Response:
@@ -383,5 +386,8 @@ def register_iot_routes(app: web.Application, storage: StorageManager) -> None:
     app.router.add_get("/api/iot/protocol-audit", handle_protocol_audit)
     app.router.add_get("/api/iot/network-isolation", handle_network_isolation)
     app.router.add_get("/api/iot/manufacturer-profiles", handle_manufacturer_profiles)
-    app.router.add_post("/api/iot/devices/{mac}/classify", handle_classify_device)
-    logger.info("IoT monitoring API routes registered (11 endpoints)")
+    # OLD CODE START — NET-174: unused, and its result didn't survive a range change
+    # app.router.add_post("/api/iot/devices/{mac}/classify", handle_classify_device)
+    # logger.info("IoT monitoring API routes registered (11 endpoints)")
+    # OLD CODE END
+    logger.info("IoT monitoring API routes registered (10 endpoints)")

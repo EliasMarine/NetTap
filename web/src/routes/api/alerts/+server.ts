@@ -40,6 +40,10 @@ export const GET: RequestHandler = async ({ url }) => {
 	}
 	// NET-191: the activity alerts (ET rates them informational or unknown) instead of the counted ones
 	if (url.searchParams.get('activity') === 'true') params.set('activity', 'true');
+	// NET-185: the alerts with no rule name. Forwarded as given, empty included, so the daemon's
+	// true/false check decides: a dropped filter would list every alert instead of a 400
+	const noRuleName = url.searchParams.get('no_rule_name');
+	if (noRuleName !== null) params.set('no_rule_name', noRuleName);
 
 	const query = params.toString() ? `?${params.toString()}` : '';
 	const res = await daemonFetch(`/api/alerts${query}`);

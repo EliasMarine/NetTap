@@ -1045,8 +1045,8 @@ class IoTMonitor:
 
         Each input is measured or unavailable (None) here, at its source (NET-158). A
         constant placeholder is never a measurement:
-          - telemetry bytes: nothing measures them;
-          - firmware: no signal ("unknown");
+          - telemetry bytes and firmware: nothing measures them, so since NET-171 they are
+            not checks at all and are left out of the dict;
           - encryption: no eligible traffic, so there is no ratio;
           - all four behaviour checks: with no baseline there is nothing to compare, and
             with one they don't yet measure what their names say. baseline_adherence
@@ -1054,8 +1054,8 @@ class IoTMonitor:
             before the baseline was built (not destinations, not this window) and falls
             back to 1.0 / 0.5 constants; new_destinations counts new ports;
             volume_spike sets the window's total against a daily average; unusual_timing
-            reads the hour of the request, not of the traffic. Correcting them is a
-            follow-up.
+            reads the hour of the request, not of the traffic. Correcting them needs
+            baselines that exist (NET-170); until then they stay unavailable.
         """
         total_conns = conn_stats.get("total_connections", 0)
         encrypted_conns = conn_stats.get("encrypted_connections", 0)
@@ -1155,7 +1155,7 @@ class IoTMonitor:
         # OLD CODE END
         return {
             "tracker_domain_count": tracker_domain_count,
-            "telemetry_bytes": None,
+            # OLD CODE: "telemetry_bytes": None, (NET-171: no longer a check)
             "third_party_orgs": third_party_orgs,
             "encryption_ratio": None
             if encryption_ratio is None
@@ -1164,47 +1164,50 @@ class IoTMonitor:
             "encryption_applicable": total_conns > 0,
             "protocol_violations": protocol_violations,
             "alert_count": alert_count,
-            "firmware_age_signal": None,
+            # OLD CODE: "firmware_age_signal": None, (NET-171: no longer a check)
             "baseline_adherence": None,
             "new_destinations": None,
             "volume_spike": None,
             "unusual_timing": None,
         }
 
-    def classify_as_iot(self, device_mac: str, device_info: dict[str, Any]) -> bool:
-        """Classify a device as IoT based on manufacturer OUI matching.
-
-        Args:
-            device_mac: Device MAC address.
-            device_info: Dict with 'manufacturer', 'hostname', etc.
-
-        Returns:
-            True if classified as IoT.
-        """
-        mac = device_mac.strip().upper()
-        manufacturer = (device_info.get("manufacturer") or "").lower()
-        hostname = (device_info.get("hostname") or "").lower()
-
-        # OLD CODE START — DEV-9: substrings, so "ring" matched "Murata Manufacturing"
-        # is_iot = any(
-        #     vendor in manufacturer or vendor in hostname for vendor in IOT_MANUFACTURERS
-        # )
-        # OLD CODE END
-        is_iot = bool(
-            _IOT_KEYWORD_RE.search(manufacturer) or _IOT_KEYWORD_RE.search(hostname)
-        )
-
-        if is_iot:
-            self._iot_devices[mac] = {
-                "mac": mac,
-                "manufacturer": device_info.get("manufacturer", "Unknown"),
-                "hostname": device_info.get("hostname"),
-                "ip": device_info.get("ip"),
-                "classified_at": datetime.now(timezone.utc).isoformat(),
-                "is_iot": True,
-            }
-
-        return is_iot
+    # OLD CODE START — NET-174: only POST /api/iot/devices/{mac}/classify called it, and no page
+    # did. Its entry was lost on the next range request (discovery rebuilds _iot_devices).
+    # def classify_as_iot(self, device_mac: str, device_info: dict[str, Any]) -> bool:
+    #     """Classify a device as IoT based on manufacturer OUI matching.
+    #
+    #     Args:
+    #         device_mac: Device MAC address.
+    #         device_info: Dict with 'manufacturer', 'hostname', etc.
+    #
+    #     Returns:
+    #         True if classified as IoT.
+    #     """
+    #     mac = device_mac.strip().upper()
+    #     manufacturer = (device_info.get("manufacturer") or "").lower()
+    #     hostname = (device_info.get("hostname") or "").lower()
+    #
+    #     # OLD CODE START — DEV-9: substrings, so "ring" matched "Murata Manufacturing"
+    #     # is_iot = any(
+    #     #     vendor in manufacturer or vendor in hostname for vendor in IOT_MANUFACTURERS
+    #     # )
+    #     # OLD CODE END
+    #     is_iot = bool(
+    #         _IOT_KEYWORD_RE.search(manufacturer) or _IOT_KEYWORD_RE.search(hostname)
+    #     )
+    #
+    #     if is_iot:
+    #         self._iot_devices[mac] = {
+    #             "mac": mac,
+    #             "manufacturer": device_info.get("manufacturer", "Unknown"),
+    #             "hostname": device_info.get("hostname"),
+    #             "ip": device_info.get("ip"),
+    #             "classified_at": datetime.now(timezone.utc).isoformat(),
+    #             "is_iot": True,
+    #         }
+    #
+    #     return is_iot
+    # OLD CODE END
 
     def build_baseline(
         self,

@@ -26,7 +26,8 @@ vi.mock('$lib/api/iot', async (importOriginal) => ({
 
 describe('IoT page — failed endpoints', () => {
 	const FLEET = {
-		health_score: 82, health_grade: 'B', privacy_score: 80, security_score: 85, behavior_score: 81,
+		// OLD CODE: health_score: 82, health_grade: 'B', privacy_score: 80, security_score: 85, behavior_score: 81, (NET-171: behaviour isn't measured)
+		health_score: 82, health_grade: 'B', privacy_score: 80, security_score: 85, behavior_score: null,
 		device_count: 0, scored_device_count: 0, anomaly_count: 0, anomalies_checked: 0, privacy_concerns: 0, unencrypted_count: 0, subtitle: '', devices: [],
 	};
 
@@ -134,7 +135,8 @@ describe('IoT page — failed endpoints', () => {
 		render(IoTPage);
 		await flush();
 
-		expect(screen.getByText('Not measured')).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText('Not measured')).toBeInTheDocument(); (NET-171: the Behaviour row says it too)
+		expect(screen.getByText('Not measured', { selector: '.chip' })).toBeInTheDocument();
 		expect(screen.getByText('No IoT devices detected yet.')).toBeInTheDocument();
 		expect(screen.queryByText('null/100')).not.toBeInTheDocument();
 		// review L9: a tick beside "Not measured" read as all clear
@@ -150,7 +152,8 @@ describe('IoT page — failed endpoints', () => {
 			device_count: 1,
 			devices: [{
 				mac: 'AA:BB:CC:DD:EE:03', name: 'Plug', manufacturer: 'Acme', ip: '192.168.1.62',
-				score: null, grade: null, coverage: 10, checks_available: 1, checks_total: 11,
+				// OLD CODE: score: null, grade: null, coverage: 10, checks_available: 1, checks_total: 11, (NET-171: nine checks)
+				score: null, grade: null, coverage: 10, checks_available: 1, checks_total: 9,
 				privacy_score: null, security_score: 100, behavior_score: null,
 				anomaly_count: null, encryption_pct: null, tracker_count: null, last_seen: null,
 			}],
@@ -171,7 +174,8 @@ describe('IoT page — failed endpoints', () => {
 			device_count: 1,
 			devices: [{
 				mac: 'AA:BB:CC:DD:EE:02', name: 'Doorbell', manufacturer: 'Ring', ip: '192.168.1.61',
-				score: 80, grade: 'B', privacy_score: 80, security_score: 80, behavior_score: 80,
+				// OLD CODE: score: 80, grade: 'B', privacy_score: 80, security_score: 80, behavior_score: 80, (NET-171)
+				score: 80, grade: 'B', coverage: 55, checks_available: 5, checks_total: 9, privacy_score: 80, security_score: 80, behavior_score: null,
 				anomaly_count: 0, encryption_pct: 90, tracker_count: 0, last_seen: null,
 			}],
 		} as never);
@@ -198,11 +202,13 @@ describe('IoT page — encryption not applicable', () => {
 	it('shows N/A and no encryption finding when encryption_applicable is false', async () => {
 		const device = {
 			mac: 'AA:BB:CC:DD:EE:01', name: 'Smart Plug', manufacturer: 'TP-Link', ip: '192.168.1.60',
-			score: 90, grade: 'A', coverage: 55, checks_available: 5, checks_total: 11, privacy_score: 90, security_score: 90, behavior_score: 90,
+			// OLD CODE: score: 90, grade: 'A', coverage: 55, checks_available: 5, checks_total: 11, privacy_score: 90, security_score: 90, behavior_score: 90, (NET-171)
+			score: 90, grade: 'A', coverage: 55, checks_available: 5, checks_total: 9, privacy_score: 90, security_score: 90, behavior_score: null,
 			anomaly_count: 0, encryption_pct: 0, encryption_applicable: false, tracker_count: 0, last_seen: null,
 		};
 		vi.mocked(iotApi.getFleetSummary).mockResolvedValue({
-			health_score: 90, health_grade: 'A', privacy_score: 90, security_score: 90, behavior_score: 90,
+			// OLD CODE: health_score: 90, health_grade: 'A', privacy_score: 90, security_score: 90, behavior_score: 90, (NET-171)
+			health_score: 90, health_grade: 'A', privacy_score: 90, security_score: 90, behavior_score: null,
 			device_count: 1, scored_device_count: 1, anomaly_count: 0, anomalies_checked: 1, privacy_concerns: 0, unencrypted_count: 0, subtitle: '',
 			devices: [device],
 		});

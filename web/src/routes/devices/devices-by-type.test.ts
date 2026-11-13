@@ -601,6 +601,12 @@ describe('Devices By type — one list per type, with the same figures the cards
 // Every device's IPv4 traffic carries the router's address there, so the page must say why it
 // shows no devices instead of promising they will appear.
 
+/** NET-182: a health reply with data arriving, so an empty list reads as no devices */
+const FRESH_HEALTH = {
+	uptime: 1, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true,
+	pipeline: { state: 'fresh', newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: {}, checked_at: '' },
+};
+
 describe('Devices — inline bridge mode', () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
@@ -625,7 +631,8 @@ describe('Devices — inline bridge mode', () => {
 	});
 
 	it('keeps the usual wording in mirror mode', async () => {
-		stubDaemon({ '/api/capture/mode': MIRROR, '/api/devices': EMPTY_LIST, '/api/devices/registry': { devices: [], total: 0 } });
+		// OLD CODE: stubDaemon({ '/api/capture/mode': MIRROR, '/api/devices': EMPTY_LIST, '/api/devices/registry': { devices: [], total: 0 } }); (NET-182: "none" needs data arriving)
+		stubDaemon({ '/api/capture/mode': MIRROR, '/api/devices': EMPTY_LIST, '/api/devices/registry': { devices: [], total: 0 }, '/api/system/health': FRESH_HEALTH });
 		render(Page);
 		// mirror mode opens on By type; its empty registry reads as today
 		expect(await screen.findByText('No devices yet')).toBeInTheDocument();

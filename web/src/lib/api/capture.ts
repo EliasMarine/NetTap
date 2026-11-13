@@ -12,6 +12,9 @@ import { fmt } from '$lib/utils/drilldown';
 export interface CaptureMode {
 	mode: string; // "bridge" | "mirror" | "dhcp_gateway"
 	interface: string;
+	/** Bridge mode only, and only once the setup wizard saved them (NET-211 #3). */
+	wan_interface?: string;
+	lan_interface?: string;
 }
 
 /** NET-225: why inline bridge mode can't see devices. It sits after the router's address translation (IPv4). */

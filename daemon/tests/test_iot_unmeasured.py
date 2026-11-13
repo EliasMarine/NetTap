@@ -62,7 +62,8 @@ class TestWholeWordVendors:
     def test_a_murata_phone_is_neither_iot_nor_a_doorbell(self):
         iot = IoTMonitor(client=MagicMock())
         murata = {"manufacturer": "Murata Manufacturing Co., Ltd.", "hostname": ""}
-        assert iot.classify_as_iot("AA:BB:CC:00:00:01", murata) is False
+        # OLD CODE: assert iot.classify_as_iot("AA:BB:CC:00:00:01", murata) is False (NET-174:
+        # the method is gone; the _is_iot_oui asserts above cover the whole-word rule)
         assert iot._categorize_device(murata) == "default"
         assert (
             iot._categorize_device({"manufacturer": "", "hostname": "ring-doorbell"})

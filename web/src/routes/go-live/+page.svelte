@@ -19,15 +19,27 @@
 	// null until /api/capture/mode answers. Bridge polling waits for it, so a
 	// DHCP gateway install never hits the bridge endpoints from this page.
 	let captureModeName = $state<string | null>(null);
+	let captureInterface = $state('');
 	let modeError = $state('');
-	let bridgeFlow = $derived(captureModeName !== null && captureModeName !== 'dhcp_gateway');
+	// OLD CODE START — NET-211 #2: mirror mode got the bridge flow ("Create bridge")
+	// let bridgeFlow = $derived(captureModeName !== null && captureModeName !== 'dhcp_gateway');
+	// OLD CODE END
+	let bridgeFlow = $derived(
+		captureModeName !== null && captureModeName !== 'dhcp_gateway' && captureModeName !== 'mirror'
+	);
 
 	async function loadCaptureMode() {
 		modeError = '';
 		try {
 			// Throws on failure: getCaptureMode() guesses 'bridge', which would start
 			// the bridge flow on a DHCP gateway install
-			captureModeName = (await fetchCaptureMode()).mode;
+			// OLD CODE: captureModeName = (await fetchCaptureMode()).mode; (NET-211 #2, #3)
+			const reply = await fetchCaptureMode();
+			captureModeName = reply.mode;
+			captureInterface = reply.interface;
+			// The ports the setup wizard saved on the box; none means not chosen yet, never a guess
+			wanIface = reply.wan_interface ?? '';
+			lanIface = reply.lan_interface ?? '';
 		} catch (e) {
 			modeError = `Could not read the capture mode: ${e instanceof Error ? e.message : 'unknown error'}`;
 		}
@@ -41,9 +53,10 @@
 	// Phase 1 = readiness checks, Phase 2 = wiring guide, Phase 3 = live monitoring
 	let phase = $state<1 | 2 | 3>(1);
 
-	// ----- NIC names from localStorage -----
+	// ----- Bridge ports: from /api/capture/mode (NET-211 #3) -----
 	let wanIface = $state('');
 	let lanIface = $state('');
+	let portsSaved = $derived(wanIface !== '' && lanIface !== '');
 
 	// ----- Readiness state -----
 	let readiness = $state<BridgeReadiness | null>(null);
@@ -67,13 +80,15 @@
 	let readinessInterval: ReturnType<typeof setInterval> | undefined;
 	let healthInterval: ReturnType<typeof setInterval> | undefined;
 
-	// ----- Load NIC names from localStorage on mount -----
-	$effect(() => {
-		if (typeof window !== 'undefined') {
-			wanIface = localStorage.getItem('nettap_wan_iface') || 'eth0';
-			lanIface = localStorage.getItem('nettap_lan_iface') || 'eth1';
-		}
-	});
+	// OLD CODE START — NET-211 #3: one browser's localStorage, set only by a successful Verify,
+	// so Skip or another browser built the bridge on eth0/eth1
+	// $effect(() => {
+	// 	if (typeof window !== 'undefined') {
+	// 		wanIface = localStorage.getItem('nettap_wan_iface') || 'eth0';
+	// 		lanIface = localStorage.getItem('nettap_lan_iface') || 'eth1';
+	// 	}
+	// });
+	// OLD CODE END
 
 	// ----- Determine phase from readiness data -----
 	let bridgeExists = $derived(
@@ -286,6 +301,19 @@
 	</div>
 {:else if captureModeName === 'dhcp_gateway'}
 	<DhcpGoLive />
+{:else if captureModeName === 'mirror'}
+	<div class="grid">
+		<Card title="Mirror mode" sub="Go Live follows the mode chosen during setup" class="c-12">
+			<CardState
+				state="empty"
+				icon="check"
+				title="Mirror mode needs no Go Live step"
+				message={`NetTap listens on ${captureInterface || 'the capture port'}, the port your switch mirrors to. There's no bridge to create: check that port's cable is in, then open the dashboard.`}
+				actionLabel="Go to dashboard"
+				href="/"
+			/>
+		</Card>
+	</div>
 {:else}
 	<!-- Step indicator: the system's pill track. The phase follows the readiness checks, so it is not a control. -->
 	<ol class="pills phases" aria-label="Go Live progress">
@@ -337,7 +365,11 @@
 					<!-- OLD CODE START — #96: a failed readiness check read as "not created yet"
 					{#if !bridgeExists}
 					OLD CODE END -->
-					{#if readiness && !bridgeExists}
+					{#if readiness && !bridgeExists && !portsSaved}
+						<div class="notice is-warn" role="status">
+							<Icon name="warn" /><span>The bridge ports aren't saved yet. Choose them in the setup wizard first.</span>
+						</div>
+					{:else if readiness && !bridgeExists}
 						<div class="action-section">
 							<p class="muted">The bridge has not been created yet. Create it to proceed.</p>
 							{#if createError}
@@ -369,49 +401,56 @@
 				<div class="stack">
 					<p class="muted">Follow the steps below to connect NetTap inline between your modem and router.</p>
 
-					<!-- Modem → WAN port → NetTap bridge → LAN port → router -->
-					<div class="diagram">
-						<div class="node">
-							<span class="tile"><Icon name="dns" /></span>
-							<span class="node-label">ISP modem</span>
+					<!-- NET-211 #3: br0 can exist before the wizard saved the ports; the tags would be empty -->
+					{#if !portsSaved}
+						<div class="notice is-warn" role="status">
+							<Icon name="warn" /><span>The bridge ports aren't saved yet. Choose them in the setup wizard first.</span>
 						</div>
-						<span class="cable" aria-hidden="true"></span>
-						<div class="node">
-							<span class="tag">{wanIface}</span>
-							<span class="node-label">WAN</span>
-							<span class="res" class:is-live={wanCarrier} class:is-medium={!wanCarrier}>{wanCarrier ? 'Connected' : 'No carrier'}</span>
+					{:else}
+						<!-- Modem → WAN port → NetTap bridge → LAN port → router -->
+						<div class="diagram">
+							<div class="node">
+								<span class="tile"><Icon name="dns" /></span>
+								<span class="node-label">ISP modem</span>
+							</div>
+							<span class="cable" aria-hidden="true"></span>
+							<div class="node">
+								<span class="tag">{wanIface}</span>
+								<span class="node-label">WAN</span>
+								<span class="res" class:is-live={wanCarrier} class:is-medium={!wanCarrier}>{wanCarrier ? 'Connected' : 'No carrier'}</span>
+							</div>
+							<span class="cable" aria-hidden="true"></span>
+							<div class="node">
+								<span class="tile accent"><Icon name="connections" /></span>
+								<span class="node-label">NetTap <span class="mono">br0</span></span>
+							</div>
+							<span class="cable" aria-hidden="true"></span>
+							<div class="node">
+								<span class="tag">{lanIface}</span>
+								<span class="node-label">LAN</span>
+								<span class="res" class:is-live={lanCarrier} class:is-medium={!lanCarrier}>{lanCarrier ? 'Connected' : 'No carrier'}</span>
+							</div>
+							<span class="cable" aria-hidden="true"></span>
+							<div class="node">
+								<span class="tile"><Icon name="infra" /></span>
+								<span class="node-label">Router</span>
+							</div>
 						</div>
-						<span class="cable" aria-hidden="true"></span>
-						<div class="node">
-							<span class="tile accent"><Icon name="connections" /></span>
-							<span class="node-label">NetTap <span class="mono">br0</span></span>
-						</div>
-						<span class="cable" aria-hidden="true"></span>
-						<div class="node">
-							<span class="tag">{lanIface}</span>
-							<span class="node-label">LAN</span>
-							<span class="res" class:is-live={lanCarrier} class:is-medium={!lanCarrier}>{lanCarrier ? 'Connected' : 'No carrier'}</span>
-						</div>
-						<span class="cable" aria-hidden="true"></span>
-						<div class="node">
-							<span class="tile"><Icon name="infra" /></span>
-							<span class="node-label">Router</span>
-						</div>
-					</div>
 
-					<div>
-						<h3 class="sub-title">Steps</h3>
-						<ol class="steps">
-							<li><strong>Disconnect</strong> the Ethernet cable running from your ISP modem to your router.</li>
-							<li>
-								<strong>Connect</strong> the modem's Ethernet cable to the <span class="tag">{wanIface}</span> port on NetTap (WAN).
-							</li>
-							<li>
-								<strong>Connect</strong> a new Ethernet cable from the <span class="tag">{lanIface}</span> port on NetTap (LAN) to your router's WAN port.
-							</li>
-							<li><strong>Wait</strong> for both ports above to read Connected. This page moves on by itself.</li>
-						</ol>
-					</div>
+						<div>
+							<h3 class="sub-title">Steps</h3>
+							<ol class="steps">
+								<li><strong>Disconnect</strong> the Ethernet cable running from your ISP modem to your router.</li>
+								<li>
+									<strong>Connect</strong> the modem's Ethernet cable to the <span class="tag">{wanIface}</span> port on NetTap (WAN).
+								</li>
+								<li>
+									<strong>Connect</strong> a new Ethernet cable from the <span class="tag">{lanIface}</span> port on NetTap (LAN) to your router's WAN port.
+								</li>
+								<li><strong>Wait</strong> for both ports above to read Connected. This page moves on by itself.</li>
+							</ol>
+						</div>
+					{/if}
 				</div>
 			</Card>
 		</div>

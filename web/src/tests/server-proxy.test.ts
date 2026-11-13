@@ -72,26 +72,51 @@ describe('catch-all API proxy', () => {
 	});
 
 	it('forwards POST requests with JSON body', async () => {
-		const mockResponse = new Response(JSON.stringify({ mac: 'aa:bb:cc:dd:ee:ff', is_iot: true }), {
+		// OLD CODE START — NET-174: the example route (POST /api/iot/devices/{mac}/classify) is gone
+		// const mockResponse = new Response(JSON.stringify({ mac: 'aa:bb:cc:dd:ee:ff', is_iot: true }), {
+		// 	status: 200,
+		// 	headers: { 'Content-Type': 'application/json' },
+		// });
+		// mockDaemonFetch.mockResolvedValue(mockResponse);
+		//
+		// const url = new URL('http://localhost/api/iot/devices/aa%3Abb%3Acc%3Add%3Aee%3Aff/classify');
+		// const request = new Request(url, {
+		// 	method: 'POST',
+		// 	headers: { 'Content-Type': 'application/json' },
+		// 	body: JSON.stringify({ manufacturer: 'Ring' }),
+		// });
+		//
+		// await proxyToDaemon({ url, request }, 'POST');
+		//
+		// expect(mockDaemonFetch).toHaveBeenCalledWith(
+		// 	'/api/iot/devices/aa%3Abb%3Acc%3Add%3Aee%3Aff/classify',
+		// 	expect.objectContaining({
+		// 		method: 'POST',
+		// 		body: '{"manufacturer":"Ring"}',
+		// 	})
+		// );
+		// OLD CODE END
+		// No route of its own under routes/api/notifications/, so [...path] serves it
+		const mockResponse = new Response(JSON.stringify({ success: true, channel_id: 'ch 1', error: null }), {
 			status: 200,
 			headers: { 'Content-Type': 'application/json' },
 		});
 		mockDaemonFetch.mockResolvedValue(mockResponse);
 
-		const url = new URL('http://localhost/api/iot/devices/aa%3Abb%3Acc%3Add%3Aee%3Aff/classify');
+		const url = new URL('http://localhost/api/notifications/channels/ch%201/test');
 		const request = new Request(url, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ manufacturer: 'Ring' }),
+			body: JSON.stringify({}),
 		});
 
 		await proxyToDaemon({ url, request }, 'POST');
 
 		expect(mockDaemonFetch).toHaveBeenCalledWith(
-			'/api/iot/devices/aa%3Abb%3Acc%3Add%3Aee%3Aff/classify',
+			'/api/notifications/channels/ch%201/test',
 			expect.objectContaining({
 				method: 'POST',
-				body: '{"manufacturer":"Ring"}',
+				body: '{}',
 			})
 		);
 	});

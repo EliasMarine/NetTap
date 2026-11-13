@@ -20,6 +20,8 @@ from typing import AsyncIterator
 
 from aiohttp import web
 
+from services.capture_config import saved_bridge_ports
+from services.capture_manager import CaptureMode
 from services.loss_window import (
     SAMPLE_INTERVAL_S,
     SYS_NET,
@@ -41,12 +43,19 @@ def _get_capture_manager(request: web.Request):
 async def handle_capture_mode(request: web.Request) -> web.Response:
     """GET /api/capture/mode — Return the current capture mode."""
     cm = _get_capture_manager(request)
-    return web.json_response(
-        {
-            "mode": cm.mode.value,
-            "interface": cm.get_capture_interface(),
-        }
-    )
+    # OLD CODE START — NET-211 #3: no bridge ports, so Go Live read them from one browser's localStorage
+    # return web.json_response(
+    #     {
+    #         "mode": cm.mode.value,
+    #         "interface": cm.get_capture_interface(),
+    #     }
+    # )
+    # OLD CODE END
+    body = {"mode": cm.mode.value, "interface": cm.get_capture_interface()}
+    ports = saved_bridge_ports() if cm.mode == CaptureMode.BRIDGE else None
+    if ports:
+        body["wan_interface"], body["lan_interface"] = ports
+    return web.json_response(body)
 
 
 async def handle_capture_health(request: web.Request) -> web.Response:

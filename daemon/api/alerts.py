@@ -575,6 +575,26 @@ def handle_alerts_list(request: web.Request) -> web.Response:
     # OLD CODE END
     if sig_filter:
         filter_clauses.append({"term": {"rule.name": sig_filter}})
+    # ?no_rule_name=true: the alerts without a rule.name, a Top signatures bar's null row (NET-185)
+    no_rule_name = {"true": True, "false": False}.get(
+        request.query.get("no_rule_name", "false")
+    )
+    if no_rule_name is None:
+        return web.json_response(
+            {"error": "no_rule_name must be true or false"}, status=400
+        )
+    # OLD CODE START — NET-185: false did nothing, the same as leaving the parameter out
+    # if no_rule_name:
+    #     filter_clauses.append(_signature_filter([None]))
+    # OLD CODE END
+    if (
+        "no_rule_name" in request.query
+    ):  # true: no rule.name; false: only alerts with one
+        filter_clauses.append(
+            _signature_filter([None])
+            if no_rule_name
+            else {"exists": {"field": "rule.name"}}
+        )
 
     # Optional IP filter (matches source OR destination)
     # OLD CODE: ip_filter = request.query.get("ip", "") (slice 2b-1: validated above)
@@ -1366,8 +1386,10 @@ def handle_alerts_top_ips(request: web.Request) -> web.Response:
     )
 
 
-# Docs without a rule.name group under this name, as the old `missing: "Unknown"` did
-_UNKNOWN_SIGNATURE = "Unknown"
+# OLD CODE START — NET-185: merged a rule named "Unknown" with alerts that have no rule.name
+# # Docs without a rule.name group under this name, as the old `missing: "Unknown"` did
+# _UNKNOWN_SIGNATURE = "Unknown"
+# OLD CODE END
 # Signatures per page when each carries a sparkline: 100 x (~186 daily buckets over 180 days
 # of alerts + 5 severities) stays under search.max_buckets (65,535)
 _SPARKLINE_SIGNATURE_PAGE = 100
@@ -1376,7 +1398,7 @@ _SPARKLINE_SIGNATURE_PAGE = 100
 def _every_signature(
     client, query: dict, aggs: dict | None = None, page_size: int = 1_000
 ) -> list[dict]:
-    """Every rule.name bucket matching `query`, "key" = the name (#96).
+    """Every rule.name bucket matching `query`, "key" = the name, None for alerts without one (#96).
 
     A category is a pattern match on the name, so its totals need every signature, not a top list.
     """
@@ -1390,19 +1412,32 @@ def _every_signature(
     # OLD CODE END
     if not complete:
         raise PartialResultsError(f"alert signatures stopped at {len(buckets)}")
-    return [
-        {
-            **b,
-            "key": _UNKNOWN_SIGNATURE if b["key"]["sig"] is None else b["key"]["sig"],
-        }
-        for b in buckets
-    ]
+    # OLD CODE START — NET-185: the missing bucket was renamed "Unknown", merging it with that rule
+    # return [
+    #     {
+    #         **b,
+    #         "key": _UNKNOWN_SIGNATURE if b["key"]["sig"] is None else b["key"]["sig"],
+    #     }
+    #     for b in buckets
+    # ]
+    # OLD CODE END
+    return [{**b, "key": b["key"]["sig"]} for b in buckets]
 
 
+# OLD CODE START — NET-185: "Unknown" also matched alerts without a rule.name
+# def _signature_filter(names) -> dict:
+#     """Alerts whose rule.name is in `names` ("Unknown" also matches alerts without one)."""
+#     should: list[dict] = [{"terms": {"rule.name": sorted(names)}}]
+#     if _UNKNOWN_SIGNATURE in names:
+#         should.append({"bool": {"must_not": {"exists": {"field": "rule.name"}}}})
+#     return {"bool": {"should": should, "minimum_should_match": 1}}
+# OLD CODE END
 def _signature_filter(names) -> dict:
-    """Alerts whose rule.name is in `names` ("Unknown" also matches alerts without one)."""
-    should: list[dict] = [{"terms": {"rule.name": sorted(names)}}]
-    if _UNKNOWN_SIGNATURE in names:
+    """Alerts whose rule.name is in `names`, each exactly; None matches alerts without one."""
+    should: list[dict] = [
+        {"terms": {"rule.name": sorted(n for n in names if n is not None)}}
+    ]
+    if None in names:
         should.append({"bool": {"must_not": {"exists": {"field": "rule.name"}}}})
     return {"bool": {"should": should, "minimum_should_match": 1}}
 

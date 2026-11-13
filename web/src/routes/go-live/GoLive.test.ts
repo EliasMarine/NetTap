@@ -119,14 +119,95 @@ describe('GoLive page — capture mode switch', () => {
 		expect(dhcpApi.getDhcpStatus).not.toHaveBeenCalled();
 	});
 
-	it('keeps the bridge flow for mirror mode', async () => {
-		mockMode('mirror');
+	// OLD CODE START — NET-211 #2: pinned the bug (mirror mode was offered "Create bridge")
+	// it('keeps the bridge flow for mirror mode', async () => {
+	// 	mockMode('mirror');
+	//
+	// 	render(GoLivePage);
+	// 	await vi.waitFor(() => expect(bridgeApi.getBridgeReadiness).toHaveBeenCalled());
+	//
+	// 	expect(screen.getByText('Readiness')).toBeInTheDocument();
+	// 	expect(dhcpApi.getDhcpStatus).not.toHaveBeenCalled();
+	// });
+	// OLD CODE END
+	it('mirror mode says there is no bridge to create, names the port, and never polls the bridge', async () => {
+		vi.useFakeTimers();
+		stubModeFetch(() => jsonResponse(200, { mode: 'mirror', interface: 'enp4s0' }));
 
 		render(GoLivePage);
-		await vi.waitFor(() => expect(bridgeApi.getBridgeReadiness).toHaveBeenCalled());
+		await vi.advanceTimersByTimeAsync(10_000);
 
-		expect(screen.getByText('Readiness')).toBeInTheDocument();
+		expect(screen.getByText('Mirror mode needs no Go Live step')).toBeInTheDocument();
+		expect(screen.getByText(/NetTap listens on enp4s0, the port your switch mirrors to/)).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'Go to dashboard' })).toHaveAttribute('href', '/');
+		expect(screen.queryByText('Readiness')).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /Create bridge/i })).not.toBeInTheDocument();
+		expect(bridgeApi.getBridgeReadiness).not.toHaveBeenCalled();
+		expect(bridgeApi.createBridge).not.toHaveBeenCalled();
 		expect(dhcpApi.getDhcpStatus).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// NET-211 #3: the bridge ports come from the box (/api/capture/mode), not one browser's localStorage
+// ---------------------------------------------------------------------------
+
+describe('GoLive page — bridge ports saved by the setup wizard', () => {
+	const MISSING = { ready: false, checks: [{ name: 'bridge_exists', passed: false, detail: '' }], message: '' };
+
+	afterEach(() => {
+		vi.clearAllMocks();
+		vi.unstubAllGlobals();
+		localStorage.clear();
+	});
+
+	it('creates the bridge on the saved ports, whatever this browser stored', async () => {
+		localStorage.setItem('nettap_wan_iface', 'eth0');
+		localStorage.setItem('nettap_lan_iface', 'eth1');
+		stubModeFetch(() =>
+			jsonResponse(200, { mode: 'bridge', interface: 'br0', wan_interface: 'enp2s0', lan_interface: 'enp3s0' }),
+		);
+		vi.mocked(bridgeApi.getBridgeReadiness).mockResolvedValue(MISSING);
+		vi.mocked(bridgeApi.createBridge).mockResolvedValue({
+			created: true, bridge_name: 'br0', wan: 'enp2s0', lan: 'enp3s0', state: 'up', errors: [], warnings: [], persistence_files: [],
+		});
+
+		render(GoLivePage);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Create bridge' }));
+
+		expect(bridgeApi.createBridge).toHaveBeenCalledWith('enp2s0', 'enp3s0');
+	});
+
+	it('without saved ports it says to choose them in setup and offers no Create bridge', async () => {
+		localStorage.setItem('nettap_wan_iface', 'eth0');
+		localStorage.setItem('nettap_lan_iface', 'eth1');
+		stubModeFetch(() => jsonResponse(200, { mode: 'bridge', interface: 'br0' }));
+		vi.mocked(bridgeApi.getBridgeReadiness).mockResolvedValue(MISSING);
+
+		render(GoLivePage);
+
+		expect(await screen.findByText(/The bridge ports aren't saved yet/)).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Create bridge' })).not.toBeInTheDocument();
+		expect(bridgeApi.createBridge).not.toHaveBeenCalled();
+	});
+
+	it('with br0 already up but no saved ports, the wiring step says so instead of empty port tags', async () => {
+		stubModeFetch(() => jsonResponse(200, { mode: 'bridge', interface: 'br0' }));
+		vi.mocked(bridgeApi.getBridgeReadiness).mockResolvedValue({
+			ready: false,
+			checks: [
+				{ name: 'bridge_exists', passed: true, detail: '' },
+				{ name: 'wan_carrier', passed: false, detail: '' },
+				{ name: 'lan_carrier', passed: false, detail: '' },
+			],
+			message: '',
+		});
+
+		render(GoLivePage);
+
+		expect(await screen.findByText('Cable your network')).toBeInTheDocument();
+		expect(screen.getByText(/The bridge ports aren't saved yet/)).toBeInTheDocument();
+		expect(screen.queryByText(/port on NetTap \(WAN\)/)).not.toBeInTheDocument();
 	});
 });
 
@@ -148,7 +229,9 @@ describe('GoLive page — failed readiness check', () => {
 			'fetch',
 			vi.fn((input: RequestInfo | URL) => {
 				const url = String(input);
-				if (url === '/api/capture/mode') return jsonResponse(200, { mode: 'bridge', interface: '' });
+				// OLD CODE: … jsonResponse(200, { mode: 'bridge', interface: '' }) (NET-211 #3: Create bridge needs saved ports)
+				if (url === '/api/capture/mode')
+					return jsonResponse(200, { mode: 'bridge', interface: '', wan_interface: 'enp2s0', lan_interface: 'enp3s0' });
 				if (url === '/api/bridge/readiness') return reply();
 				return Promise.reject(new Error(`unexpected fetch ${url}`));
 			}),
