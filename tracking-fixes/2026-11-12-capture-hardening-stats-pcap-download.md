@@ -88,7 +88,24 @@ Tests: `tests/scripts/test_compose_validation.bats`, `daemon/tests/{test_pcap_se
 - After the PR #255 review fixes (main merged in): daemon pytest 4740 passed, 2 skipped, 0 failed (with a local `setsid` shim); ruff check and format clean; bats compose 54 ok; Vitest `src/routes/pcap/` + the catchall proxy: 57 passed; shellcheck clean on `measure-capture-loss.sh` and `deploy-capture-hardening.sh`.
 - Real-tool test (local Wireshark 4.6.9): the download job over two files, one cut short, gives exactly the in-window tcp packets of both.
 
+## G11 deploy (2026-11-13, PR #255 → 6124586c)
+
+`deploy-capture-hardening.sh`:
+- **NET-220:** `getcap` shows `cap_net_raw=eip` on zeek and capstats; `cap_add` is `["CAP_NET_RAW"]`; the memory limit is 3 GiB; no "Operation not permitted" in the log. Checked by hand: all five zeek processes run as uid 1000 with CapEff `0000000000002000` (CAP_NET_RAW only). No restarts. memory.peak was 1.70 GB.
+- **NET-206:** `dump-counters` answers and `kernel_packets` grows (155,841 → 307,992 in 15 s); `stats.enabled` yes, `stats.interval` 10; no `stats.log`.
+- **NET-189:** 7 of 8 checks passed. The download held packets from both files around file B's start, all inside the window, and `/tmp` stayed empty.
+- **Three ✗, two of them from the script:**
+  - The zeek-process check ran too early. The old zeek's last flush passed the conn.log check at once, so the script read the process list before Malcolm started the new workers (20–40 s in). Step 8 then compared against an empty list.
+  - The busy check failed for real: the second download got 503 "Something went wrong" instead of "Another download is running". The daemon's 5xx filter (`api/error_replies.py`) cut the reply, because the handler sent it with `web.json_response`. The same cut hit "still indexing" and the three written failures ("ran out of memory", "took longer than the time allowed", "Reading the capture files failed").
+
+### Follow-up fix (`fix/pcap-busy-reply`)
+- `api/pcap.py`: `ReaderBusy` and `StillIndexing` go out with `public_json` (503). The three written failures are `PacketError(500, …)` (`services/pcap_search.py`), sent with `public_json`, or the stream is aborted if bytes already went out. Any other exception is still cut.
+- `tests/test_error_replies.py`: `SAFE_TEXT` adds `ReaderBusy` and `StillIndexing`.
+- `tests/test_pcap_download_cleanup.py`: the test app uses the production middleware. Three tests failed on the old handler.
+- `deploy-capture-hardening.sh` step 5: waits until two reads of the zeek PID list 10 s apart match and aren't empty, then wants conn.log written after that.
+
 ## Lessons
+- A test app without the production middleware passes replies that production rewrites. Build handler tests on the same middleware stack as `api/server.py`.
 - A capture binary's file capability is where its privilege comes from. Drop it in the image and in `cap_add` together.
 - `no-new-privileges` blocks file-capability gains, not only setuid.
 - An included Suricata block replaces the earlier one. Use Malcolm's `SURICATA_*` env vars where it has one.

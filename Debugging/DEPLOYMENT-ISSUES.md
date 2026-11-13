@@ -2272,6 +2272,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 183. **`no-new-privileges` blocks file-capability gains too, not only setuid (NET-220)** — tested on the G11: a uid-1000 shell exec'ing capstats captured without it and failed `socket: Operation not permitted` with it. Lesson 1 holds for zeek-live for this reason as well as `su`.
 184. **An included Suricata block replaces the earlier one, it doesn't merge (NET-206)** — `suricata --dump-config` showed `stats` "redefined": the include's `stats:` dropped Malcolm's interval and decoder-events. Where Malcolm has a setting for it, use that instead: its `suricata_config_populate.py` takes any `SURICATA_*` env var over its defaults (`SURICATA_STATS_ENABLED`, `SURICATA_STATS_INTERVAL`), so nothing has to be restated.
 185. **A download that picks files by mtime misses the file that started inside the window (NET-189)** — select files by their packet times (the capture index), and stream instead of merging into a size-limited tmpfs.
+186. **A handler test needs the production middleware stack (NET-189 deploy)** — PCAP Search's "Another download is running" 503 passed its test but reached the G11's browser as "Something went wrong": `safe_error_middleware` rewrites every unmarked 5xx, and the test app had no middleware. Send written 5xx messages with `public_json`, and build handler tests with `web.Application(middlewares=[safe_error_middleware])`.
 
 ---
 

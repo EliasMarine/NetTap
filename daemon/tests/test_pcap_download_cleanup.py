@@ -18,6 +18,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 import api.pcap as pcap_api
 import services.pcap_search as pcap_search_mod
+from api.error_replies import safe_error_middleware
 from api.pcap import register_pcap_routes
 from services.pcap_search import PcapSearchService
 from tests.fake_pcap_download import FakeIndex, FakeTshark, capture
@@ -56,7 +57,8 @@ class _DaemonServer(TestServer):
 
 
 async def _client(tmp_path, index, slots=2) -> TestClient:
-    app = web.Application()
+    # OLD CODE: app = web.Application() (without the middleware a cut 503 message still passed)
+    app = web.Application(middlewares=[safe_error_middleware])  # as in api/server.py
     svc = PcapSearchService(
         pcap_dir=str(tmp_path), semaphore=asyncio.Semaphore(slots), index=index
     )
@@ -155,6 +157,7 @@ async def test_busy_reader_slots_are_503(tmp_path, tshark, monkeypatch):
     try:
         resp = await client.get(URL)
         assert resp.status == 503
+        assert "packet reader is busy" in (await resp.json())["error"]
     finally:
         await client.close()
 

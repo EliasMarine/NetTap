@@ -18,6 +18,7 @@ from decimal import Decimal
 
 from services.capture_index import Selection, StillIndexing
 from services.container_exec import ReaderBusy
+from services.packet_manifest import PacketError
 from services.pcap_search import PcapSearchService
 from tests.fake_pcap_download import FakeIndex, FakeTshark, capture, failed
 
@@ -954,7 +955,7 @@ class TestStreamedDownload:
     ):
         tshark.statuses = {**tshark.statuses, **statuses}
         tshark.deadline, tshark.stderr = deadline, stderr
-        with pytest.raises(RuntimeError, match=message):
+        with pytest.raises(PacketError, match=message):
             await _download(_svc(tmp_path, FakeIndex([A, B])))
 
     @pytest.mark.asyncio

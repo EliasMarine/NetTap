@@ -35,7 +35,7 @@ from services.capture_index import (
     Selection,
 )
 from services.container_exec import ReaderBusy, reader_slot, run_in_tshark
-from services.packet_manifest import MAX_BYTES, MAX_FILES
+from services.packet_manifest import MAX_BYTES, MAX_FILES, PacketError
 from services.packet_search import (
     CHECK_JOB,
     CHECK_SECONDS,
@@ -861,7 +861,8 @@ class PcapSearchService:
         packet analysis's window cut reads them, so the output holds exactly the
         window's matching packets. False when no capture file holds the window.
         Raises ValueError (can't be served as asked), ReaderBusy or StillIndexing (try
-        again) or RuntimeError (the read failed). After the first chunk any error means
+        again), PacketError (the read failed, with a message for the user) or another
+        exception (anything else). After the first chunk any error means
         the output is incomplete: the caller must abort the response, never end it.
         """
         started = time.monotonic()
@@ -910,21 +911,31 @@ class PcapSearchService:
                 result.seconds,
             )
             return True
+        # OLD CODE START — NET-189: RuntimeError, so the daemon's 5xx filter replaced these
+        # written messages with "Something went wrong"
+        # if result.killed_for_memory():
+        #     raise RuntimeError("The packet reader ran out of memory on this window. …")
+        # if result.deadline:
+        #     raise RuntimeError("The download took longer than the time allowed. …")
+        # raise RuntimeError("Reading the capture files failed.")
+        # OLD CODE END
         if result.killed_for_memory():
-            raise RuntimeError(
+            raise PacketError(
+                500,
                 "The packet reader ran out of memory on this window. "
-                "Try a shorter window or a narrower filter."
+                "Try a shorter window or a narrower filter.",
             )
         if result.deadline:
-            raise RuntimeError(
-                "The download took longer than the time allowed. Try a shorter window."
+            raise PacketError(
+                500,
+                "The download took longer than the time allowed. Try a shorter window.",
             )
         logger.error(
             "filtered download failed: statuses=%s stderr=%s",
             result.statuses,
             result.stderr[-2000:],
         )
-        raise RuntimeError("Reading the capture files failed.")
+        raise PacketError(500, "Reading the capture files failed.")
 
 
 # ---------------------------------------------------------------------------

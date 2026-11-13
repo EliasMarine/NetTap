@@ -247,6 +247,8 @@ SAFE_TEXT = {
     "PacketError",
     "DnsReconBusyError",
     "LiveBandwidthBusyError",
+    "ReaderBusy",  # services/container_exec.py, services/pcap_search.py: fixed sentences
+    "StillIndexing",  # services/capture_index.py: a sentence and a count
 }
 # Exceptions whose reply must be marked public (the page needs to say what happened). A capped
 # scan's text names the index, so its reply is a fixed sentence (api.error_replies.incomplete)
