@@ -780,6 +780,15 @@ describe('Log Explorer — the timeline drills into its events (NET-249)', () =>
 		expect(screen.getByText(new RegExp(`^Log events per ${words} · `))).toBeInTheDocument();
 	});
 
+	it('names the bucket the reply used once it is in, not the one asked for', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/timeline': TIMELINE, '/api/logs/search': { hits: [], total: 0 } });
+		goTo('/logs?range=7d');
+		render(Page);
+		await screen.findByRole('group', { name: /^Busiest at / });
+		expect(requestsTo('/api/logs/timeline')[0].searchParams.get('interval')).toBe('1h');
+		expect(screen.getByText(/^Log events per 5 minutes · last 7 days$/)).toBeInTheDocument();
+	});
+
 	it('a pick from a filtered search opens the picked window with the type, query and excluded sources cleared', async () => {
 		stubDaemon({ ...AGGREGATIONS, '/api/logs/timeline': TIMELINE, '/api/logs/search': { hits: [], total: 0 } });
 		goTo('/logs?type=zeek.dns&query=example.org&exclude_src=192.168.1.199&range=24h');
@@ -801,6 +810,35 @@ describe('Log Explorer — the timeline drills into its events (NET-249)', () =>
 		const asked = searches()[1].searchParams;
 		expect([asked.get('from'), asked.get('to')]).toEqual(['2026-11-03T09:02:00.000Z', '2026-11-03T09:04:59.999Z']);
 		for (const key of ['log_type', 'query', 'exclude_src']) expect(asked.get(key), key).toBeNull();
+	});
+
+	it('a pick of the window already open still clears what was filtered since, as its URL runs no hand-off', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/timeline': TIMELINE, '/api/logs/search': { hits: [], total: 0 } });
+		// what a pick of the first slot opens on this window: the same window, its range and its figure
+		const href = '/logs?from=2026-11-03T09%3A02%3A00.000Z&to=2026-11-03T09%3A04%3A59.999Z&range=1h&count=10';
+		goTo(href);
+		render(Page);
+		await vi.waitFor(() => expect(searches()).toHaveLength(1));
+		const pick = async () => {
+			const chart = await screen.findByRole('group', { name: /^Busiest at / });
+			await fireEvent.keyDown(chart, { key: 'Home' });
+			await fireEvent.keyDown(chart, { key: 'Enter' });
+			return String(vi.mocked(goto).mock.calls.at(-1)![0]);
+		};
+		// filtered on the page itself: a type and a text search
+		await fireEvent.click(within(screen.getByRole('group', { name: 'Log type' })).getByRole('button', { name: 'DNS' }));
+		const box = screen.getByLabelText('Search logs');
+		await fireEvent.input(box, { target: { value: 'example.org' } });
+		await fireEvent.keyDown(box, { key: 'Enter' });
+		await vi.waitFor(() => expect(searches().at(-1)!.searchParams.get('query')).toBe('example.org'));
+		const before = searches().length;
+		expect(await pick()).toBe(href);
+		await vi.waitFor(() => expect(searches()).toHaveLength(before + 1));
+		const asked = searches().at(-1)!.searchParams;
+		expect([asked.get('from'), asked.get('to')]).toEqual(['2026-11-03T09:02:00.000Z', '2026-11-03T09:04:59.999Z']);
+		for (const key of ['log_type', 'query']) expect(asked.get(key), key).toBeNull();
+		expect(screen.getByLabelText('Search logs')).toHaveValue('');
+		expect(within(screen.getByRole('group', { name: 'Log type' })).getByRole('button', { name: 'All logs' })).toHaveAttribute('aria-pressed', 'true');
 	});
 
 	it('a keyboard range adds the picked slots', async () => {

@@ -9,7 +9,8 @@
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import { packetStats, serverNames, type Noticed } from '$lib/utils/packet-stats';
-	import { packetsUrl, type PacketUrlState } from '$lib/utils/packet-query';
+	// OLD CODE: import { packetsUrl, type PacketUrlState } from '$lib/utils/packet-query'; (NET-249 review: the picked packets' earliest and latest times)
+	import { epochNs, packetsUrl, type PacketUrlState } from '$lib/utils/packet-query';
 	import DownloadForm from './DownloadForm.svelte';
 	import PacketDrawer from './PacketDrawer.svelte';
 	import PacketTable from './PacketTable.svelte';
@@ -68,9 +69,19 @@
 	/** "sent from 14:05:01.123 to 14:05:02.456": the picked buckets' packets by their own times */
 	const slotWords = $derived.by(() => {
 		if (!slotRows) return '';
-		if (slotRows.length === 0) return 'sent in the part of the chart you picked';
-		const [a, b] = [rows[slotRows[0]].t, rows[slotRows[slotRows.length - 1]].t];
-		return a === b ? `sent at ${clockTime(a)}` : `sent from ${clockTime(a)} to ${clockTime(b)}`;
+		// OLD CODE START — NET-249 review: assumed the rows were in time order; a capture's rows need not be
+		// if (slotRows.length === 0) return 'sent in the part of the chart you picked';
+		// const [a, b] = [rows[slotRows[0]].t, rows[slotRows[slotRows.length - 1]].t];
+		// return a === b ? `sent at ${clockTime(a)}` : `sent from ${clockTime(a)} to ${clockTime(b)}`;
+		// OLD CODE END
+		const times = slotRows.flatMap((i) => {
+			const ns = epochNs(rows[i].t);
+			return ns === null ? [] : [{ t: rows[i].t, ns }];
+		});
+		if (times.length === 0) return 'sent in the part of the chart you picked';
+		const first = times.reduce((a, x) => (x.ns < a.ns ? x : a));
+		const last = times.reduce((a, x) => (x.ns > a.ns ? x : a));
+		return first.ns === last.ns ? `sent at ${clockTime(first.t)}` : `sent from ${clockTime(first.t)} to ${clockTime(last.t)}`;
 	});
 	/** What the rows on screen are narrowed to: a note, the picked times, or both */
 	const filterWords = $derived([active ? `TShark marked “${active.message}”` : '', slotWords].filter(Boolean).join(' and '));

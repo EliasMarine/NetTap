@@ -24,7 +24,8 @@
 	import { loadFailed } from '$lib/utils/load-failed';
 	// OLD CODE: import { DRILL_RANGES, startRange, type DrillRangeValue } from '$lib/utils/drilldown'; (NET-249: the timeline picks)
 	import { chartTime, connLogsHref, DRILL_RANGES, fmt, pickedTotal, pickWindow, startRange, withCount, type DrillRangeValue, type TimeChart } from '$lib/utils/drilldown';
-	import { toTimeChart } from '$lib/utils/chart-pick';
+	// OLD CODE: import { toTimeChart } from '$lib/utils/chart-pick'; (NET-249 review: and the reply's bucket in words)
+	import { chartBucketWords, toTimeChart } from '$lib/utils/chart-pick';
 	import AreaChart, { type AreaSeries } from '$lib/components/ui/charts/AreaChart.svelte';
 	import { formatBytes as sharedFormatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import IPAddress from '$components/IPAddress.svelte';
@@ -1026,7 +1027,8 @@
 		{#if timeline.length > 0}
 			<SessionTimeline buckets={timeline} />
 	OLD CODE END -->
-	<Card class="c-8" col title="Session volume" sub="Sessions per {bucket.bucketWords}, by protocol · {range}">
+	<!-- OLD CODE: sub="Sessions per {bucket.bucketWords}, by protocol · {range}" (NET-249 review: the bucket the reply used) -->
+	<Card class="c-8" col title="Session volume" sub="Sessions per {chartBucketWords(timelineChart, bucket.bucketWords)}, by protocol · {range}">
 		{#snippet actions()}
 			<ul class="legend">
 				<li><span class="sw line c-d1"></span>TCP</li>

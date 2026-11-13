@@ -76,7 +76,8 @@
 		type LinkedCount,
 		type TimeChart,
 	} from '$lib/utils/drilldown';
-	import { toTimeChart } from '$lib/utils/chart-pick';
+	// OLD CODE: import { toTimeChart } from '$lib/utils/chart-pick'; (NET-249 review: and the reply's bucket in words)
+	import { chartBucketWords, toTimeChart } from '$lib/utils/chart-pick';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -1635,7 +1636,8 @@ OLD CODE END -->
 <div class="grid">
 	<!-- OLD CODE: sub="Alerts per {INTERVAL_MAP[selectedTimeRange] ?? '1h'} · …" (slice 2a: Custom has no entry) -->
 	<!-- OLD CODE: sub="Alerts per {range.interval} · {range.words}" (NET-249: the table's bucket, in words) -->
-	<Card class="c-8" hero col title="Alert timeline" sub="Alerts per {range.bucketWords} · {range.words}">
+	<!-- OLD CODE: sub="Alerts per {range.bucketWords} · {range.words}" (NET-249 review: the bucket the reply used) -->
+	<Card class="c-8" hero col title="Alert timeline" sub="Alerts per {chartBucketWords(timelineChart, range.bucketWords)} · {range.words}">
 		{#if !loaded}
 			<CardState state="loading" title="Loading the alert timeline" />
 		{:else if failed.timeline}

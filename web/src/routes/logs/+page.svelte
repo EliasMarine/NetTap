@@ -24,7 +24,8 @@
 		type LinkedCount,
 		type TimeChart,
 	} from '$lib/utils/drilldown';
-	import { toTimeChart } from '$lib/utils/chart-pick';
+	// OLD CODE: import { toTimeChart } from '$lib/utils/chart-pick'; (NET-249 review: and the reply's bucket in words)
+	import { chartBucketWords, toTimeChart } from '$lib/utils/chart-pick';
 	// OLD CODE START — replaced by the design system's BarList
 	// import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	// OLD CODE END
@@ -769,8 +770,30 @@
 	 * slots' window and their figure only, so the log type, query, address and excluded sources it
 	 * ignores are cleared (the URL hand-off replaces every filter).
 	 */
+	// OLD CODE START — NET-249 review: a pick whose URL is the one on screen ran no hand-off, so a type, text or address set since stayed
+	// function pickTimeline(chart: TimeChart, i: number, j: number) {
+	// 	void goto(withCount(`/logs?${windowQuery(pickWindow(chart, i, j), intervalRange)}`, pickedTotal(chart, i, j)));
+	// }
+	// OLD CODE END
 	function pickTimeline(chart: TimeChart, i: number, j: number) {
-		void goto(withCount(`/logs?${windowQuery(pickWindow(chart, i, j), intervalRange)}`, pickedTotal(chart, i, j)));
+		const href = withCount(`/logs?${windowQuery(pickWindow(chart, i, j), intervalRange)}`, pickedTotal(chart, i, j));
+		const target = new URL(href, $page.url).searchParams;
+		const count = linkedCount(target.get('count'));
+		const unchanged = handOffSearch(target) === appliedSearch && count === appliedCount;
+		// What the hand-off clears, cleared here too: an unchanged URL runs none
+		const typeBefore = logType;
+		logType = 'all';
+		query = '';
+		activeIpFilter = '';
+		ipSide = null;
+		excludeSrc = [];
+		activeDnsFilter = '';
+		if (typeBefore !== 'all') fetchFieldDefs();
+		if (unchanged) {
+			linked = count === null ? null : { expected: count, gen: null, observed: null };
+			void fetchLogs();
+		}
+		void goto(href);
 	}
 
 	// OLD CODE: function handleTimeRangeChange(value: TimeRange) { (slice 2a: Custom)
@@ -1122,6 +1145,9 @@
 	// 	});
 	// });
 	// OLD CODE END
+	const HAND_OFF_KEYS = ['filter', 'ip', 'query', 'range', 'from', 'to', 'type', 'exclude_src'] as const;
+	/** A URL's hand-off key: its filters and window, without the count */
+	const handOffSearch = (params: URLSearchParams) => JSON.stringify(HAND_OFF_KEYS.map((k) => params.get(k)));
 	/** The ?filter= / ?ip= / ?query= / ?range= / ?from= / ?to= / ?type= / ?exclude_src= last applied; null before the first load. */
 	let appliedSearch: string | null = null;
 	/** The ?count= last applied, kept out of the search key: it changes no window and no filter (NET-160 section D). */
@@ -1135,9 +1161,13 @@
 		// const [urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo] = keys.map((k) => params.get(k));
 		// const search = JSON.stringify([urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo]);
 		// OLD CODE END
-		const keys = ['filter', 'ip', 'query', 'range', 'from', 'to', 'type', 'exclude_src'] as const;
-		const [urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo, urlType, urlExclude] = keys.map((k) => params.get(k));
-		const search = JSON.stringify([urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo, urlType, urlExclude]);
+		// OLD CODE START — NET-249 review: the keys moved to HAND_OFF_KEYS, so a chart pick can tell an unchanged URL
+		// const keys = ['filter', 'ip', 'query', 'range', 'from', 'to', 'type', 'exclude_src'] as const;
+		// const [urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo, urlType, urlExclude] = keys.map((k) => params.get(k));
+		// const search = JSON.stringify([urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo, urlType, urlExclude]);
+		// OLD CODE END
+		const [urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo, urlType, urlExclude] = HAND_OFF_KEYS.map((k) => params.get(k));
+		const search = handOffSearch(params);
 		const count = linkedCount(params.get('count'));
 		untrack(() => {
 			// The hash changes too (the KPI links); only a new search runs one
@@ -1361,7 +1391,8 @@ OLD CODE END -->
 
 	<!-- OLD CODE: sub="Log events per {INTERVAL_WORDS[INTERVAL_MAP[selectedTimeRange]] ?? 'hour'} · {rangeWords}" (slice 2a: Custom) -->
 	<!-- OLD CODE: sub="Log events per {INTERVAL_WORDS[INTERVAL_MAP[intervalRange]] ?? 'hour'} · {rangeWords}" (NET-249: the table's bucket) -->
-	<Card title="Activity timeline" sub="Log events per {bucket.bucketWords} · {rangeWords}" hero col class="c-8">
+	<!-- OLD CODE: sub="Log events per {bucket.bucketWords} · {rangeWords}" (NET-249 review: the bucket the reply used) -->
+	<Card title="Activity timeline" sub="Log events per {chartBucketWords(timelineChart, bucket.bucketWords)} · {rangeWords}" hero col class="c-8">
 		{@render section('the activity timeline', timelineFailed, timeline.length > 0, 'No timeline data available', 'Events appear here once Zeek is processing traffic.', timelineBody)}
 	</Card>
 

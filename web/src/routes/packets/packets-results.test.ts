@@ -10,6 +10,7 @@ import { packetStats } from '$lib/utils/packet-stats';
 import { LAN_POLICY } from '../../../e2e/visual/fixtures/drilldown';
 import { CAPTURES, CDN_NAME, PACKET_DETAIL, ROWS, SEARCH_FROM, SEARCH_QUERY, SEARCH_RESULT, SEARCH_TO, TV } from '../../../e2e/visual/fixtures/packets';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
+import { clockTime } from './packets-view';
 
 // NET-188: a search's answer. Every figure is counted over the rows returned and says so; a
 // partial, failed or changed read is never shown as complete.
@@ -367,6 +368,21 @@ describe('Packet analysis: picking on the chart', () => {
 		expect(tableRows()).toBe(timeline[lacks].packets);
 		await fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
 		expect(tableRows()).toBe(ROWS.length);
+	});
+
+	it('says the picked packets\' earliest and latest times when the rows are out of time order', async () => {
+		// TShark lists frames in file order, which a reordered capture need not keep: bucket 0 holds rows 0 and 1
+		const rows = [
+			{ ...ROWS[0], n: 1, t: '1794026197.020' },
+			{ ...ROWS[1], n: 2, t: '1794026197.001' },
+			{ ...ROWS[2], n: 3, t: '1794026199.000' },
+		];
+		vi.mocked(api.searchPackets).mockResolvedValue(result({ rows }));
+		const c = await chart();
+		await fireEvent.keyDown(c, { key: 'Home' });
+		await fireEvent.keyDown(c, { key: 'Enter' });
+		expect(tableRows()).toBe(2);
+		expect(screen.getByText(`Showing the 2 packets sent from ${clockTime('1794026197.001')} to ${clockTime('1794026197.020')}`, { exact: false })).toBeInTheDocument();
 	});
 
 	it('a refresh that brings new rows drops the pick, as the buckets are worked out again', async () => {

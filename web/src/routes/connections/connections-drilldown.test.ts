@@ -64,12 +64,23 @@ describe('Connections — the session timeline drills into its records (NET-249)
 		['7d', '1h', 'hour'],
 		['30d', '3h', '3 hours'],
 	])('%s asks for %s buckets', async (range, bucket, words) => {
+		// a daemon that uses the bucket asked for
+		vi.mocked(getConnectionTimeline).mockImplementation(async (opts) => ({ ...TIMELINE, interval: opts?.interval ?? '' }));
 		render(Page);
 		await flush();
 		await fireEvent.click(screen.getByRole('button', { name: range }));
 		await flush();
 		expect(vi.mocked(getConnectionTimeline).mock.lastCall![0]!.interval).toBe(bucket);
 		expect(screen.getByText(new RegExp(`^Sessions per ${words}, by protocol · `))).toBeInTheDocument();
+	});
+
+	it('names the bucket the reply used, not the one asked for', async () => {
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
+		await flush();
+		expect(vi.mocked(getConnectionTimeline).mock.lastCall![0]!.interval).toBe('1h');
+		expect(screen.getByText(/^Sessions per minute, by protocol · /)).toBeInTheDocument();
 	});
 
 	it('draws TCP, UDP and the rest as lines, with the busiest slot in its label', async () => {
