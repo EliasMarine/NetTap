@@ -27,7 +27,7 @@
 	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import {
 		alertsHrefForSignature, bucketFor, chartTime, connLogsHref, customRange, DRILL_RANGES, fmt, formatWhen, linkedCount,
-		momentHref, RECORDS_CHANGE, serviceLogsHref, windowQuery, windowWords, withCount, type BandwidthChart, type DrillWindow,
+		momentHref, RECORDS_CHANGE, serviceLabel, serviceLogsHref, windowQuery, windowWords, withCount, type BandwidthChart, type DrillWindow,
 	} from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { upDownLocal } from '$lib/utils/up-down';
@@ -183,7 +183,6 @@
 	};
 	const pick = (i: number, j: number) => chart && goto(momentHref(chart, i, j, range, chartWin ?? chart));
 
-	const serviceLabel = (name: string) => (!name || name === 'unknown' ? 'Unidentified' : name.toUpperCase());
 	const serviceItems = $derived(
 		(protocols?.services ?? [])
 			.filter((s) => s.count > 0)

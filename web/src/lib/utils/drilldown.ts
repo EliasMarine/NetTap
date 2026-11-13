@@ -396,6 +396,9 @@ export function connLogsHref(summary: DrillWindow & { excluded_ips?: string[] },
 	return `/logs?${q.toString()}&${windowQuery(summary, range)}`;
 }
 
+/** A service (Zeek's network.protocol) as the pages name it: no label is "Unidentified" (NET-219). */
+export const serviceLabel = (name: string): string => (!name || name === 'unknown' ? 'Unidentified' : name.toUpperCase());
+
 /**
  * Log Explorer's conn records behind one bar of /api/traffic/protocols' `services` (NET-249), with
  * the endpoint's whole predicate: ssl leaves out QUIC (`ssl_only`), `unknown` is the records with no

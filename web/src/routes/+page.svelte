@@ -35,7 +35,7 @@
 	// OLD CODE: import { getAlertCount, getSmartAlerts, getSmartAlertSummary } from '$api/alerts'; (NET-228: the trend reads the timeline)
 	import { getAlertTimeline, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
 	// OLD CODE: import { chartTime, connLogsHref, DRILL_RANGES, fmt, NO_EXACT_ALERT_LIST, smartAlertHref, startRange, windowQuery, withCount, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown'; (NET-249: the chart drills into a moment)
-	import { chartTime, connLogsHref, DRILL_RANGES, fmt, momentHref, NO_EXACT_ALERT_LIST, smartAlertHref, startRange, windowQuery, withCount, type BandwidthChart, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
+	import { chartTime, connLogsHref, DRILL_RANGES, fmt, momentHref, NO_EXACT_ALERT_LIST, serviceLabel, smartAlertHref, startRange, windowQuery, withCount, type BandwidthChart, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
 	// OLD CODE: import type { AlertCountResponse, SmartAlert, SmartAlertSummary } from '$api/alerts'; (NET-228)
 	import type { AlertTimelineBucket, SmartAlert, SmartAlertSummary } from '$api/alerts';
 	import { compareHalves, trendWindow, withCoverage, type SlotValue, type TrendWindow } from '$lib/utils/window-trend';
@@ -625,7 +625,7 @@
 	);
 	const protocolTotal = $derived(protocols.reduce((s, p) => s + p.count, 0));
 	// #20: "unknown" is connections Zeek couldn't identify, not missing data
-	const serviceLabel = (name: string) => (!name || name === 'unknown' ? 'Unidentified' : name.toUpperCase());
+	// OLD CODE: const serviceLabel = (name: string) => (!name || name === 'unknown' ? 'Unidentified' : name.toUpperCase()); (NET-249: shared with the moment page, in utils/drilldown.ts)
 	// OLD CODE START — NET-219: the Unidentified bar counted one-way connections and ICMP too, so it led the list
 	// const serviceItems = $derived(
 	// 	services.slice(0, TOP_SERVICES).map((s, i) => ({

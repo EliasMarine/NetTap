@@ -16,7 +16,11 @@ const device = (d: (typeof LAN_DEVICES)[number], k: number): MomentDevice => ({
 	ipv6_left_out_reason: k === 1 ? 'no_gateway' : null,
 	destinations: PEERS.slice(k, k + 3).map((p) => ({ ip: p.ip, bytes: Math.round(p.bytes / 4), connections: Math.round(p.connections / 4) })),
 	domains: PEERS.slice(k, k + 3).map((p, i) => ({ domain: p.host, count: 120 - i * 30 })),
-	apps: d.protocols.slice(0, 3).map((protocol, i) => ({ protocol, bytes: Math.round(d.respBytes / (i + 2)), connections: Math.round(d.connections / (i + 2)) })),
+	apps: [
+		...d.protocols.slice(0, 3).map((protocol, i) => ({ protocol, bytes: Math.round(d.respBytes / (i + 2)), connections: Math.round(d.connections / (i + 2)) })),
+		// flows with no network.protocol come back as "unknown", as on the G11 (daemon half, NET-249)
+		...(k === 0 ? [{ protocol: 'unknown', bytes: Math.round(d.respBytes / 8), connections: 40 }] : []),
+	],
 });
 
 const RANKED = [...LAN_DEVICES].sort((a, b) => b.origBytes + b.respBytes - (a.origBytes + a.respBytes));

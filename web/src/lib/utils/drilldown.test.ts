@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { DISPLAY_SETTINGS_KEY, savedDefaultRange, savedLiveMap, startRange, alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, SCAN_CAP, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery, DRILL_RANGES, bucketFor, bucketWindow, momentHref, serviceLogsHref, windowWords, RECORDS_CHANGE } from './drilldown';
+import { DISPLAY_SETTINGS_KEY, savedDefaultRange, savedLiveMap, startRange, alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, SCAN_CAP, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery, DRILL_RANGES, bucketFor, bucketWindow, momentHref, serviceLabel, serviceLogsHref, windowWords, RECORDS_CHANGE } from './drilldown';
 import { snapshotWindow } from '$lib/stores/alertSnapshot';
 
 const MB = 1000 ** 2; // decimal, as formatBytes prints (NET-166)
@@ -459,6 +459,10 @@ describe('chart buckets and the windows they open (NET-249)', () => {
 		expect(p(serviceLogsHref('unknown', win, [])).query).toBe('NOT _exists_:network.protocol');
 		expect(p(serviceLogsHref('ssl', win, []))).not.toHaveProperty('exclude_src');
 		expect(p(serviceLogsHref('a"b', win, [])).query).toBe('network.protocol:"a\\"b"');
+	});
+
+	it('names a service as the pages do, with no label read as Unidentified', () => {
+		expect(['ssl', 'unknown', ''].map(serviceLabel)).toEqual(['SSL', 'Unidentified', 'Unidentified']);
 	});
 
 	it('countDifference still ends with the shared reason', () => {

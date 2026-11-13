@@ -195,7 +195,11 @@ describe('Moment page', () => {
 		});
 		expect(link(top.destinations[0].ip, row)).toHaveAttribute('href', `/address/${top.destinations[0].ip}`);
 		expect(link(top.domains[0].domain, row)).toHaveAttribute('href', `/domain/${top.domains[0].domain}`);
-		expect(within(row).getByText(top.apps[0].protocol)).toBeInTheDocument();
+		// apps read as the services list names them; flows with no service label are Unidentified, not "unknown"
+		expect(within(row).getByText(top.apps[0].protocol.toUpperCase())).toBeInTheDocument();
+		expect(top.apps.some((a) => a.protocol === 'unknown')).toBe(true);
+		expect(within(row).getByText('Unidentified')).toBeInTheDocument();
+		expect(within(row).queryByText('unknown')).not.toBeInTheDocument();
 		// IPv6 left out says how much and why; a device that started nothing says so
 		expect(devices).toHaveTextContent('14 IPv6 connections left out of these totals.');
 		expect(devices).toHaveTextContent('no internet traffic showed which device is the router');

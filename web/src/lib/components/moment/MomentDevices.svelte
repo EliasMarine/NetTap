@@ -13,7 +13,7 @@
 	import type { MomentDevice, MomentDevicesResponse } from '$api/moment';
 	import { formatBytes } from '$api/logs';
 	import { domainHref, ipHref } from '$lib/stores/lan';
-	import { fmt, logsHrefForIp, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
+	import { fmt, logsHrefForIp, serviceLabel, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
 	import { ipv6LeftOutText } from '$lib/utils/ipv6-coverage';
 	import { loadFailed } from '$lib/utils/load-failed';
 
@@ -58,7 +58,7 @@
 		{#if d.name}<span class="mono dim">{d.ip}</span>{/if}
 		{#if d.destinations.length || d.apps.length}
 			<p class="chips"><span class="dim">Talked to</span>{#each d.destinations as x (x.ip)}<a class="chip mono" href={$ipHref(x.ip)}>{x.ip}</a>{/each}</p>
-			{#if d.apps.length}<p class="chips"><span class="dim">Apps</span>{#each d.apps as x (x.protocol)}<span class="chip">{x.protocol}</span>{/each}</p>{/if}
+			{#if d.apps.length}<p class="chips"><span class="dim">Apps</span>{#each d.apps as x (x.protocol)}<span class="chip">{serviceLabel(x.protocol)}</span>{/each}</p>{/if}
 		{:else}
 			<p class="dim">Started no connections in this window.</p>
 		{/if}
