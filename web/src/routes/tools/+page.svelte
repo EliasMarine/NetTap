@@ -26,10 +26,12 @@
 	const tools: ToolDef[] = [
 		{
 			name: 'Ping and traceroute',
-			description: 'Check a host answers, measure round-trip time and trace the route to it.',
+			// OLD CODE: description: 'Check a host answers, measure round-trip time and trace the route to it.', (NET-267)
+			description: 'Check a host answers, measure round-trip time, trace the route to it and find the largest packet that gets through.',
 			href: '/tools/ping',
 			category: 'network',
-			tags: ['ICMP', 'diagnostics'],
+			// OLD CODE: tags: ['ICMP', 'diagnostics'], (NET-267)
+			tags: ['ICMP', 'MTU', 'diagnostics'],
 			icon: 'live',
 		},
 		{

@@ -19,7 +19,7 @@ from aiohttp.test_utils import AioHTTPTestCase
 
 from api.tools import register_tools_routes
 from services import path_mtu_service
-from services.host_resolve import HostLookupError
+from services.host_resolve import HostLookupError, HostNameError
 from services.network_diag_service import NetworkDiagValidationError
 from services.path_mtu_service import (
     BUSY,
@@ -338,6 +338,38 @@ class TestSearch(Harness):
         )
         self.assertEqual(result["status"], "unreliable")
         self.assertFalse(result["upper_known"])
+        self.assertEqual((result["largest_confirmed"], result["payload"]), (None, None))
+
+    def test_an_ipv6_link_mtu_below_the_links_own_is_the_ceiling(self):
+        # route_to gave 1492 (PPPoE's advertised IPv6 MTU): a healthy path stops there
+        self.route.return_value = {**PATH, "mtu": 1492}
+        result, net = self.check(path_rule(1492, local(1492)))
+        self.assertEqual(net.pings, [84, 576, 1492, 1492])
+        self.assertEqual(result["status"], "interface")
+        self.assertTrue(result["upper_known"])
+
+    def test_a_missing_ping_is_a_plain_error(self):
+        missing = FileNotFoundError(2, "No such file or directory", "ping")
+        with patch("asyncio.create_subprocess_exec", side_effect=missing):
+            result = asyncio.run(self.svc.check("10.8.0.1"))
+        self.assertEqual(
+            result["error"],
+            "NetTap could not run the check (No such file or directory).",
+        )
+        self.assertIsNone(result["status"])
+
+    def test_the_deadline_running_out_while_resolving(self):
+        getent = FakeProc(release=asyncio.Event())  # never answers
+        with (
+            patch.object(path_mtu_service, "DEADLINE", 0.05),
+            patch("asyncio.create_subprocess_exec", return_value=getent),
+        ):
+            result = asyncio.run(self.svc.check("slow.lan"))
+        self.assertEqual(result["status"], "stopped")
+        self.assertEqual((result["resolved_ip"], result["probes"]), (None, []))
+        self.assertIsNone(result["largest_confirmed"])
+        getent.kill.assert_called_once()
+        getent.wait.assert_awaited_once()
 
     def test_pings_own_error_is_the_error(self):
         result, _ = self.check(lambda size, nth: ("", UNREACHABLE_ERR, 2))
@@ -401,6 +433,9 @@ class TestAdmission(Harness):
             asyncio.run(self.svc.check(None))
         with self.assertRaises(NetworkDiagValidationError):
             asyncio.run(self.svc.check("-f"))
+        # getent would read it as octal and test 192.168.1.8
+        with self.assertRaisesRegex(HostNameError, "not a valid IP address"):
+            asyncio.run(self.svc.check("192.168.001.010"))
 
     def test_two_checks_at_a_time_then_busy(self):
         async def go():
@@ -442,6 +477,7 @@ class TestMtuRoute(AioHTTPTestCase):
         for exc, status in (
             (PathMtuValidationError("Enter a host name or IP address."), 400),
             (NetworkDiagValidationError("Target is required"), 400),
+            (HostNameError("192.168.001.010 is not a valid IP address."), 400),
             (PathMtuBusyError(BUSY), 503),
         ):
             self.svc.check.side_effect = exc

@@ -77,6 +77,35 @@ The lead approved this with no raw-socket prober and no tracepath.
   - A third "MTU" tab on `/tools/ping`, with a "Check MTU" button, the result line, and a probe
     `DataTable` (probe, size, result). Ping and Traceroute are unchanged.
 
+## Review fixes (two-angle review of PR #267, 2026-11-13)
+
+- **`host_resolve.py` (shared, byte-identical with #266):**
+  - `check_name` refuses input made only of digits and dots that is not an IP address, with a 400.
+    getent reads `192.168.001.010` as octal (192.168.1.8) and `1234` as 0.0.4.210.
+  - `route_to` now takes the smallest of three MTUs: the link MTU, IPv6's own MTU for the link
+    (`/proc/sys/net/ipv6/conf/<dev>/mtu`, which a router advertisement can lower, e.g. 1492 behind
+    PPPoE) and a route's own `mtu`. A cached router report also shows as a route `mtu`, but it
+    carries `expires`. It is not a ceiling: capping there would turn a stale cache into a false
+    `interface` result. The `local_limit` status reports it instead.
+  - Checked on the G11 (read-only): `/proc/sys/net/ipv6/conf/{eno1,enp4s0}/mtu` is 1500, `lo`
+    65536; iproute2 6.1.0 prints metrics as `"metrics":[{"mtu":N}]`.
+- `unreliable` now clears `largest_confirmed` (and `payload`), as its sentence says no size is
+  confirmed.
+- A missing `ping`: the reply says "NetTap could not run the check (No such file or directory)."
+  with no errno text. The full exception is logged with `%r`.
+- Page:
+  - A "Largest confirmed size" KPI leads the result, beside the result line.
+  - A name target shows the address it tested ("Tested 1.0.0.1 · eno1 · …").
+  - The probe count counts sizes, not rows (a confirmed size is probed twice), with "1 size
+    tried" in the singular. With no probes (a check stopped during resolution) the Probes card
+    is hidden.
+  - `floor_unanswered` with no `first_unanswered` reads "not larger ones", never "null-byte".
+- Tools index: the Ping card has an "MTU" tag and mentions the largest packet, so a search for
+  "mtu" finds it.
+- **Known limit (left as is):** on a jumbo-frame interface (MTU 9000) where the path drops large
+  pings silently, the 16-size cap can run out before the search settles. The check then ends
+  `stopped` with what it confirmed, which is honest.
+
 ## Files
 
 - `daemon/services/host_resolve.py`, `daemon/services/path_mtu_service.py`, `daemon/api/tools.py`
@@ -107,13 +136,16 @@ The lead approved this with no raw-socket prober and no tracepath.
 ## Test results
 
 - Daemon:
-  - New tests: 23 for the service and route, plus 12 for the resolver. Two cover runs where every
+  - New tests: 23 for the service and route, plus 12 for the resolver (26 and 16 after the review
+    fixes: unreliable, a missing ping, the deadline during resolution, the octal guard, an IPv6
+    link MTU of 1492). Two cover runs where every
     failure above the confirmed size is local: one with a cached limit, one with ping's own send
     error and no limit.
   - `ruff format --check` and `ruff check` (0.17.3) pass on the whole `daemon/`.
-  - Full suite: 0 failures. The first full run caught a public 503 built from `str(e)`, which the
+  - Full suite after the review fixes: 4858 passed, 0 failures. The first full run caught a public 503 built from `str(e)`, which the
     error-replies guard forbids; it now sends the fixed sentence.
-- Web: full vitest 4873 tests passed; svelte-check 0 errors (2 old warnings); `check:colors`
+- Web: full vitest 371 files / 4876 tests passed after the review fixes (visual `/tools/ping` and
+  `/tools`: 10 passed, 2 skipped); svelte-check 0 errors (2 old warnings); `check:colors`
   clean.
 
 ## Lessons

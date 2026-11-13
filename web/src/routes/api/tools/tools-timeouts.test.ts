@@ -51,7 +51,8 @@ describe('Tools proxies refuse a body that is not JSON', () => {
 });
 
 describe('Tools time limits (the real values)', () => {
-	it('sit 5 s above each daemon limit, all under nginx 60 s', async () => {
+	// OLD CODE: it('sit 5 s above each daemon limit, all under nginx 60 s', async () => { (review: mtu sits 10 s above)
+	it('sit 5 s above each daemon limit (10 s for mtu), all under nginx 60 s', async () => {
 		const real = await vi.importActual<typeof import('$lib/server/daemon')>('$lib/server/daemon');
 		// the daemon's own limits: dns_recon QUERY_TIMEOUT 10 (recon and compare), PING_TIMEOUT 15, TRACEROUTE_TIMEOUT 30, CERT_TIMEOUT 10 x 2,
 		// throughput MAX_DURATION 30 + DEADLINE_SLACK 20, path_mtu DEADLINE 25 (the plan sets 35 s: 10 s above it)

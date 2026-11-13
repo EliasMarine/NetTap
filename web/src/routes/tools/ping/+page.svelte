@@ -20,7 +20,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import KpiCard from '$lib/components/ui/KpiCard.svelte';
 	import Pills from '$lib/components/ui/Pills.svelte';
-	import { mtuSummary, probeLabel } from './mtu-summary';
+	import { mtuPathLine, mtuSummary, probeLabel } from './mtu-summary';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -184,6 +184,9 @@
 	// The same size can be probed twice (the final re-check), so each row carries its position
 	type ProbeRow = MtuProbe & { i: number };
 	let probeRows = $derived<ProbeRow[]>((mtuResult?.probes ?? []).map((p, i) => ({ ...p, i: i + 1 })));
+	// a confirmed size is probed twice, so count sizes, not rows
+	let sizesTried = $derived(new Set(probeRows.map((p) => p.size)).size);
+	let mtuLine = $derived(mtuResult ? mtuSummary(mtuResult) : null);
 	const probeColumns: Column<ProbeRow>[] = [
 		{ key: 'i', label: 'Probe', numeric: true },
 		{ key: 'size', label: 'Size', numeric: true, cell: probeSize },
@@ -326,6 +329,7 @@
 				<CardState state="error" title="MTU check failed" message={mtuError} />
 			</Card>
 		{:else if mtuResult}
+			<!-- OLD CODE START — review of #267: the line alone, in a c-12 card, with the probes card always shown
 			<Card
 				title="Path MTU to {mtuResult.target}"
 				sub="{mtuResult.interface ?? 'interface unknown'} · interface MTU {mtuResult.interface_mtu ?? 'unknown'} · don't-fragment pings, IP packet sizes in bytes"
@@ -336,6 +340,22 @@
 			<Card title="Probes" sub="{mtuResult.probes.length} sizes tried · a size with no reply is pinged twice" class="c-12">
 				<DataTable columns={probeColumns} rows={probeRows} ariaLabel="MTU probes" rowKey={(p) => p.i} />
 			</Card>
+			OLD CODE END -->
+			<KpiCard
+				label="Largest confirmed size"
+				icon="infra"
+				value={mtuResult.largest_confirmed ?? '—'}
+				unit={mtuResult.largest_confirmed ? 'bytes' : undefined}
+				class="c-4"
+			/>
+			<Card title="Path MTU to {mtuResult.target}" sub={mtuPathLine(mtuResult)} class="c-8">
+				{#if mtuLine}<p class="mtu-line">{mtuLine}</p>{/if}
+			</Card>
+			{#if sizesTried}
+				<Card title="Probes" sub="{sizesTried} {sizesTried === 1 ? 'size' : 'sizes'} tried · a size with no reply is pinged twice" class="c-12">
+					<DataTable columns={probeColumns} rows={probeRows} ariaLabel="MTU probes" rowKey={(p) => p.i} />
+				</Card>
+			{/if}
 		{:else}
 			<Card title="Path MTU" sub="Largest packet that reaches the target, in bytes" class="c-12">
 				<CardState state="empty" icon="infra" title="No MTU check yet" message="Enter a target and choose Check MTU to find the largest packet that gets through." />

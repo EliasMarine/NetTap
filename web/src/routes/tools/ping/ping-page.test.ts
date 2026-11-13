@@ -205,6 +205,31 @@ describe('Ping and traceroute page', () => {
 		expect(document.getElementById('ping-panel-ping')).not.toBeVisible();
 	});
 
+	it('NET-267: leads with the largest confirmed size and shows the address a name resolved to', async () => {
+		stubFetch({ ...MTU, target: 'vpn.lan' });
+		render(Page);
+		await enterTarget('vpn.lan');
+		await fireEvent.click(screen.getByRole('button', { name: 'Check MTU' }));
+
+		const kpi = (await screen.findByText('Largest confirmed size')).closest('article')!;
+		expect(kpi).toHaveTextContent('1420bytes');
+		expect(screen.getByText(/^Tested 10\.8\.0\.1 · eno1 · interface MTU 1500/)).toBeInTheDocument();
+		// 1420 was probed twice: four sizes, five rows
+		expect(screen.getByText(/^4 sizes tried/)).toBeInTheDocument();
+	});
+
+	it('NET-267: a check that stopped before any probe shows no probes card and no size', async () => {
+		stubFetch({ ...MTU, target: 'slow.lan', resolved_ip: null, largest_confirmed: null, payload: null, status: 'stopped', probes: [] });
+		render(Page);
+		await enterTarget('slow.lan');
+		await fireEvent.click(screen.getByRole('button', { name: 'Check MTU' }));
+
+		expect(await screen.findByText('The check stopped before it finished, so no size was confirmed.')).toBeInTheDocument();
+		expect(screen.getByText('Largest confirmed size').closest('article')).toHaveTextContent('—');
+		expect(screen.queryByRole('table', { name: 'MTU probes' })).not.toBeInTheDocument();
+		expect(screen.queryByText(/sizes? tried/)).not.toBeInTheDocument();
+	});
+
 	it('NET-267: shows the loading state while the MTU check runs', async () => {
 		vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
 		render(Page);

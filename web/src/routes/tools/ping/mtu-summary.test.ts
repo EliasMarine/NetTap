@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { PathMtuResult } from '$api/tools';
-import { mtuSummary, probeLabel } from './mtu-summary';
+import { mtuPathLine, mtuSummary, probeLabel } from './mtu-summary';
 
 const BASE: PathMtuResult = {
 	target: '10.8.0.1',
@@ -59,6 +59,9 @@ describe('path MTU wording (NET-267)', () => {
 		expect(mtuSummary(r({ status: 'floor_unanswered', largest_confirmed: 84, first_unanswered: 576 }))).toBe(
 			'10.8.0.1 answers small pings but not 576-byte ones. That points to a possible MTU problem.'
 		);
+		expect(mtuSummary(r({ status: 'floor_unanswered', largest_confirmed: 84, first_unanswered: null }))).toBe(
+			'10.8.0.1 answers small pings but not larger ones. That points to a possible MTU problem.'
+		);
 		expect(mtuSummary(r({ status: 'no_ping_reply', largest_confirmed: null }))).toBe('10.8.0.1 did not answer ping, so the MTU cannot be tested from NetTap.');
 		expect(mtuSummary(r({ status: 'unreliable' }))).toBe('Replies from 10.8.0.1 were inconsistent, so no size can be confirmed.');
 		expect(mtuSummary(r({ status: 'stopped', largest_confirmed: 1300 }))).toBe(
@@ -66,6 +69,12 @@ describe('path MTU wording (NET-267)', () => {
 		);
 		expect(mtuSummary(r({ status: 'stopped', largest_confirmed: null }))).toBe('The check stopped before it finished, so no size was confirmed.');
 		expect(mtuSummary(r({ status: null, error: 'NetTap has no route to fd00::1.' }))).toBeNull();
+	});
+
+	it('shows the address a name resolved to, and unknowns as words', () => {
+		expect(mtuPathLine(BASE)).toBe("eno1 · interface MTU 1500 · don't-fragment pings, IP packet sizes in bytes");
+		expect(mtuPathLine(r({ target: 'one.one.one.one', resolved_ip: '1.0.0.1' }))).toMatch(/^Tested 1\.0\.0\.1 · eno1 · /);
+		expect(mtuPathLine(r({ resolved_ip: null, interface: null, interface_mtu: null }))).toMatch(/^interface unknown · interface MTU unknown · /);
 	});
 
 	it('names each probe result in words', () => {

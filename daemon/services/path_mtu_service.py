@@ -26,7 +26,13 @@ import re
 import time
 from typing import Any
 
-from services.host_resolve import HostLookupError, resolve, route_to, run
+from services.host_resolve import (
+    HostLookupError,
+    check_name,
+    resolve,
+    route_to,
+    run,
+)
 from services.network_diag_service import NetworkDiagService
 
 logger = logging.getLogger("nettap.path_mtu")
@@ -199,7 +205,7 @@ class PathMtuService:
         PathMtuBusyError when two checks are running."""
         if not isinstance(target, str):
             raise PathMtuValidationError("Enter a host name or IP address.")
-        target = self._diag.validate_target(target)
+        target = check_name(self._diag.validate_target(target))
         if self._slots.locked():  # checked first, so acquiring below never waits
             raise PathMtuBusyError(BUSY)
         async with self._slots:
@@ -261,7 +267,10 @@ class PathMtuService:
         except (TimeoutError, _Stopped):
             status = "stopped"
         except OSError as exc:  # a missing binary
-            return {**base, "error": f"NetTap could not run the check: {exc}"}
+            # OLD CODE: return {**base, "error": f"NetTap could not run the check: {exc}"}
+            logger.warning("mtu %r: could not start: %r", target, exc)
+            reason = exc.strerror or "it failed to start"
+            return {**base, "error": f"NetTap could not run the check ({reason})."}
         if check is None:  # the deadline ran out while resolving
             return {**base, "status": "stopped"}
         return self._result(base, check, status)
@@ -269,7 +278,11 @@ class PathMtuService:
     @staticmethod
     def _result(base: dict[str, Any], check: _Check, status: str) -> dict[str, Any]:
         confirmed = (
-            None if status in ("no_ping_reply", "ping_error") else check.confirmed
+            # OLD CODE: None if status in ("no_ping_reply", "ping_error") else check.confirmed
+            # an unreliable run confirmed nothing either (review of #267)
+            None
+            if status in ("no_ping_reply", "ping_error", "unreliable")
+            else check.confirmed
         )
         return {
             **base,

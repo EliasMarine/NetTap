@@ -29,7 +29,8 @@ export function mtuSummary(r: PathMtuResult): string | null {
 				? `Largest confirmed: ${largest} bytes. NetTap would not send larger packets: it still holds a ${r.local_mtu}-byte limit for this path, from an earlier router report or a route setting (a cached report clears within 10 minutes), so the upper limit is unknown.`
 				: `Largest confirmed: ${largest} bytes. NetTap would not send larger packets (ping reported an error), so the upper limit is unknown.`;
 		case 'floor_unanswered':
-			return `${t} answers small pings but not ${r.first_unanswered}-byte ones. That points to a possible MTU problem.`;
+			// OLD CODE: return `${t} answers small pings but not ${r.first_unanswered}-byte ones. …`; (review: null read as "null-byte")
+			return `${t} answers small pings but not ${r.first_unanswered ? `${r.first_unanswered}-byte` : 'larger'} ones. That points to a possible MTU problem.`;
 		case 'no_ping_reply':
 			return `${t} did not answer ping, so the MTU cannot be tested from NetTap.`;
 		case 'unreliable':
@@ -41,6 +42,12 @@ export function mtuSummary(r: PathMtuResult): string | null {
 		default:
 			return null;
 	}
+}
+
+/** The result card's sub line; a name target also shows the address it resolved to. */
+export function mtuPathLine(r: PathMtuResult): string {
+	const tested = r.resolved_ip && r.resolved_ip !== r.target ? `Tested ${r.resolved_ip} · ` : '';
+	return `${tested}${r.interface ?? 'interface unknown'} · interface MTU ${r.interface_mtu ?? 'unknown'} · don't-fragment pings, IP packet sizes in bytes`;
 }
 
 /** One probe's result: "Reply", "No reply (2 tries)", "Router: too big, MTU 1420", … */

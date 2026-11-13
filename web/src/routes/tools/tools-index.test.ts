@@ -46,6 +46,9 @@ describe('Tools index', () => {
 		await fireEvent.input(field, { target: { value: 'lease' } });
 		expect(toolLinks()).toEqual(['/tools/dhcp-timeline']);
 
+		await fireEvent.input(field, { target: { value: 'mtu' } });
+		expect(toolLinks()).toEqual(['/tools/ping']);
+
 		await fireEvent.input(field, { target: { value: 'oui' } });
 		expect(toolLinks()).toEqual(['/tools/mac-lookup']);
 		expect(screen.queryByRole('heading', { name: /^Network ·/ })).not.toBeInTheDocument();
