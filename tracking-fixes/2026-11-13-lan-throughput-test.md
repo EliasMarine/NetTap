@@ -41,7 +41,7 @@ iperf3 is the standard tool for this. The peer runs `iperf3 -s`, and NetTap runs
     "Connection refused" and "server is busy" are turned into plain sentences.
   - `capture` comes from `app["capture_manager"]` (the same source as `/api/capture/mode`).
     `has_ip` comes from `psutil.net_if_addrs()`, where IPv6 link-local doesn't count.
-  - One INFO line per test, or WARNING when it failed.
+  - One INFO line per test, or WARNING when it failed. The host is logged with `%r`.
 - **`daemon/api/tools.py`:** the route, a 400 for bad input or a body that isn't a JSON object, and a
   409 when a test is already running.
 - **Web:**
@@ -79,6 +79,7 @@ iperf3 is the standard tool for this. The peer runs `iperf3 -s`, and NetTap runs
 ## Test results
 
 - Daemon: new tests 28 passed. Full suite: 0 failures (baseline 4816 passed).
+  `ruff format --check` and `ruff check` (0.17.3) pass on the whole `daemon/`.
 - Web: full vitest 372 files / 4871 tests passed; svelte-check 0 errors (2 old warnings);
   `check:colors` clean.
 

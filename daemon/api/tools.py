@@ -333,7 +333,8 @@ async def handle_throughput(request: web.Request) -> web.Response:
     if not isinstance(body, dict):
         return web.json_response({"error": "Invalid JSON body"}, status=400)
 
-    cm = request.app.get("capture_manager")  # the capture mode and port, as /api/capture/mode
+    # the capture mode and port, as /api/capture/mode reads them
+    cm = request.app.get("capture_manager")
     try:
         result = await request.app["throughput"].run_test(
             host=body.get("host"),

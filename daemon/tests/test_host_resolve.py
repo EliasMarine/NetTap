@@ -72,14 +72,18 @@ class TestResolve(unittest.TestCase):
         with patcher:
             addrs = asyncio.run(resolve("one.one.one.one"))
         self.assertEqual(
-            addrs, ["1.0.0.1", "1.1.1.1", "2606:4700:4700::1001", "2606:4700:4700::1111"]
+            addrs,
+            ["1.0.0.1", "1.1.1.1", "2606:4700:4700::1001", "2606:4700:4700::1111"],
         )
         self.assertEqual(calls, [("getent", "ahosts", "--", "one.one.one.one")])
 
     def test_an_unknown_name_is_a_plain_sentence(self):
         # getent exits 2 and prints nothing for a name that does not exist
         _, patcher = exec_returning(FakeProc("", code=2))
-        with patcher, self.assertRaisesRegex(HostLookupError, "^nope.lan could not be found.$"):
+        with (
+            patcher,
+            self.assertRaisesRegex(HostLookupError, "^nope.lan could not be found.$"),
+        ):
             asyncio.run(resolve("nope.lan"))
 
     def test_garbage_lines_are_not_addresses(self):
@@ -171,7 +175,12 @@ class TestRouteTo(unittest.TestCase):
 
     def test_no_route_is_a_plain_sentence(self):
         _, patcher = exec_returning(FakeProc("", ROUTE_UNREACHABLE, code=2))
-        with patcher, self.assertRaisesRegex(HostLookupError, "^NetTap has no route to fd00::1.$"):
+        with (
+            patcher,
+            self.assertRaisesRegex(
+                HostLookupError, "^NetTap has no route to fd00::1.$"
+            ),
+        ):
             asyncio.run(route_to("fd00::1"))
 
     def test_a_dev_that_is_not_an_interface_name_is_refused(self):

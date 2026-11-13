@@ -100,7 +100,10 @@ class TestValidation(Harness):
         ]
         for kw, message in cases:
             args = {"host": "192.168.1.20", "direction": "upload", **kw}
-            with self.subTest(kw=kw), self.assertRaisesRegex(ThroughputValidationError, message):
+            with (
+                self.subTest(kw=kw),
+                self.assertRaisesRegex(ThroughputValidationError, message),
+            ):
                 asyncio.run(self.svc.run_test(**args))
         with self.assertRaises(NetworkDiagValidationError):
             self.run_one(host="-f")
@@ -121,10 +124,19 @@ class TestValidation(Harness):
             "fe80::1": LINK_LOCAL,
         }
         for ip, message in refused.items():
-            with self.subTest(ip=ip), self.assertRaises(ThroughputValidationError) as ctx:
+            with (
+                self.subTest(ip=ip),
+                self.assertRaises(ThroughputValidationError) as ctx,
+            ):
                 self.run_one(host=ip)
             self.assertEqual(str(ctx.exception), message)
-        for ip in ("10.1.2.3", "172.16.0.9", "192.168.1.20", "100.64.0.7", "fd12:3456::1"):
+        for ip in (
+            "10.1.2.3",
+            "172.16.0.9",
+            "192.168.1.20",
+            "100.64.0.7",
+            "fd12:3456::1",
+        ):
             self.procs.append(FakeProc(fixture("upload")))
             with self.subTest(ip=ip):
                 self.assertIsNone(self.run_one(host=ip)["error"])
@@ -139,7 +151,9 @@ class TestValidation(Harness):
 
     def test_a_name_with_no_local_address_is_refused(self):
         self.procs.append(FakeProc("9.9.9.9         STREAM dns.quad9.net\n"))
-        with self.assertRaisesRegex(ThroughputValidationError, "only runs against local"):
+        with self.assertRaisesRegex(
+            ThroughputValidationError, "only runs against local"
+        ):
             self.run_one(host="dns.quad9.net")
 
     def test_an_unknown_name_is_an_error_in_the_result(self):
@@ -155,16 +169,34 @@ class TestRun(Harness):
         result = self.run_one(port=5299, duration=1)
         self.assertEqual(
             self.calls[0],
-            ("iperf3", "-c", "192.168.1.20", "-p", "5299", "-t", "1",
-             "--connect-timeout", "3000", "-J"),
+            (
+                "iperf3",
+                "-c",
+                "192.168.1.20",
+                "-p",
+                "5299",
+                "-t",
+                "1",
+                "--connect-timeout",
+                "3000",
+                "-J",
+            ),
         )
         self.assertEqual(result["bits_per_second"], 76279042022.8845)
         self.assertEqual(result["retransmits"], 0)
         self.assertEqual(result["path"], PATH)
         self.assertEqual(
-            {k: result[k] for k in ("peer", "resolved_ip", "port", "direction", "duration")},
-            {"peer": "192.168.1.20", "resolved_ip": "192.168.1.20", "port": 5299,
-             "direction": "upload", "duration": 1},
+            {
+                k: result[k]
+                for k in ("peer", "resolved_ip", "port", "direction", "duration")
+            },
+            {
+                "peer": "192.168.1.20",
+                "resolved_ip": "192.168.1.20",
+                "port": 5299,
+                "direction": "upload",
+                "duration": 1,
+            },
         )
 
     def test_download_reverses_and_reads_the_receiver_sum(self):
@@ -183,10 +215,14 @@ class TestRun(Harness):
             "No iperf3 server on 192.168.1.20:5298. Start one there with iperf3 -s.",
         )
         self.procs.append(FakeProc(fixture("refused"), code=1))
-        self.assertIn("No iperf3 server on [fd00::5]:5201.", self.run_one(host="fd00::5")["error"])
+        self.assertIn(
+            "No iperf3 server on [fd00::5]:5201.", self.run_one(host="fd00::5")["error"]
+        )
         self.procs.append(FakeProc(fixture("busy"), code=1))
         result = self.run_one()
-        self.assertEqual(result["error"], "The iperf3 server is busy with another test.")
+        self.assertEqual(
+            result["error"], "The iperf3 server is busy with another test."
+        )
         self.assertIsNone(result["bits_per_second"])
 
     def test_output_with_no_result_reports_stderr_or_the_exit_code(self):
@@ -198,14 +234,19 @@ class TestRun(Harness):
     def test_the_deadline_stops_and_reaps_iperf3(self):
         child = FakeProc(release=asyncio.Event())  # never finishes
         self.procs.append(child)
-        with patch.object(throughput_service, "DEADLINE_SLACK", -0.95):  # 1 s test: 0.05 s
+        with patch.object(
+            throughput_service, "DEADLINE_SLACK", -0.95
+        ):  # 1 s test: 0.05 s
             result = self.run_one(duration=1)
         self.assertEqual(result["error"], TOO_LONG)
         child.kill.assert_called_once()
         child.wait.assert_awaited_once()
 
     def test_a_missing_binary_is_an_error_not_a_crash(self):
-        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError(2, "No such file", "iperf3")):
+        with patch(
+            "asyncio.create_subprocess_exec",
+            side_effect=FileNotFoundError(2, "No such file", "iperf3"),
+        ):
             result = self.run_one()
         self.assertIn("NetTap could not start the test", result["error"])
 
@@ -213,7 +254,9 @@ class TestRun(Harness):
         async def go():
             release = asyncio.Event()
             self.procs.append(FakeProc(fixture("upload"), release=release))
-            first = asyncio.create_task(self.svc.run_test(host="192.168.1.20", direction="upload"))
+            first = asyncio.create_task(
+                self.svc.run_test(host="192.168.1.20", direction="upload")
+            )
             await asyncio.sleep(0.01)
             with self.assertRaisesRegex(ThroughputBusyError, BUSY):
                 await self.svc.run_test(host="192.168.1.21", direction="download")
@@ -224,16 +267,24 @@ class TestRun(Harness):
         self.assertEqual(len(self.calls), 1)
 
     def test_capture_port_address(self):
-        addr = lambda family, address: SimpleNamespace(family=family, address=address)
+        def addr(family, address):
+            return SimpleNamespace(family=family, address=address)
+
         addrs = {
             "enp4s0": [addr(socket.AF_INET6, "fe80::8e32:23ff:fe82:856%enp4s0")],
             "br0": [addr(socket.AF_INET, "192.168.1.2")],
         }
-        with patch.object(throughput_service.psutil, "net_if_addrs", return_value=addrs):
+        with patch.object(
+            throughput_service.psutil, "net_if_addrs", return_value=addrs
+        ):
             for iface, has_ip in (("enp4s0", False), ("br0", True), ("gone0", False)):
                 self.procs.append(FakeProc(fixture("upload")))
-                capture = self.run_one(capture_mode="mirror", capture_interface=iface)["capture"]
-                self.assertEqual(capture, {"mode": "mirror", "interface": iface, "has_ip": has_ip})
+                capture = self.run_one(capture_mode="mirror", capture_interface=iface)[
+                    "capture"
+                ]
+                self.assertEqual(
+                    capture, {"mode": "mirror", "interface": iface, "has_ip": has_ip}
+                )
 
 
 class TestThroughputRoute(AioHTTPTestCase):
@@ -241,7 +292,9 @@ class TestThroughputRoute(AioHTTPTestCase):
         app = web.Application()
         register_tools_routes(app, MagicMock(), MagicMock(), MagicMock(), MagicMock())
         self.svc = MagicMock()
-        self.svc.run_test = AsyncMock(return_value={"error": None, "bits_per_second": 1.0})
+        self.svc.run_test = AsyncMock(
+            return_value={"error": None, "bits_per_second": 1.0}
+        )
         app["throughput"] = self.svc
         app["capture_manager"] = SimpleNamespace(
             mode=CaptureMode.MIRROR, get_capture_interface=lambda: "enp4s0"
@@ -249,7 +302,12 @@ class TestThroughputRoute(AioHTTPTestCase):
         return app
 
     async def test_passes_the_body_and_the_capture_mode(self):
-        body = {"host": "192.168.1.20", "port": 5299, "duration": 5, "direction": "download"}
+        body = {
+            "host": "192.168.1.20",
+            "port": 5299,
+            "duration": 5,
+            "direction": "download",
+        }
         resp = await self.client.post("/api/tools/throughput", json=body)
         self.assertEqual(resp.status, 200)
         self.svc.run_test.assert_awaited_once_with(
@@ -258,7 +316,12 @@ class TestThroughputRoute(AioHTTPTestCase):
 
     async def test_bad_input_is_400_busy_is_409(self):
         for exc, status in (
-            (ThroughputValidationError("Port must be a whole number from 1 to 65535."), 400),
+            (
+                ThroughputValidationError(
+                    "Port must be a whole number from 1 to 65535."
+                ),
+                400,
+            ),
             (NetworkDiagValidationError("Target is required"), 400),
             (ThroughputBusyError(BUSY), 409),
         ):

@@ -30,8 +30,10 @@ logger = logging.getLogger("nettap.throughput")
 DEFAULT_PORT = 5201
 DEFAULT_DURATION = 10
 MAX_DURATION = 30
-DEADLINE_SLACK = 20  # seconds on top of the test: resolution, route lookup, connect, clean-up
-CONNECT_TIMEOUT_MS = 3000  # a wrong address fails in 3 s, not at the end of the deadline
+# seconds on top of the test: resolution, route lookup, connect, clean-up
+DEADLINE_SLACK = 20
+# a wrong address fails in 3 s, not at the end of the deadline
+CONNECT_TIMEOUT_MS = 3000
 DIRECTIONS = ("upload", "download")
 BUSY = "A throughput test is already running."
 NOT_LOCAL = (
@@ -45,7 +47,13 @@ LINK_LOCAL = (
 TOO_LONG = "The test took too long and was stopped."
 LOCAL_NETWORKS = tuple(
     ipaddress.ip_network(n)
-    for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7")
+    for n in (
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "100.64.0.0/10",
+        "fc00::/7",
+    )
 )
 
 
@@ -60,7 +68,11 @@ class ThroughputBusyError(Exception):
 def _whole(value: Any, name: str, low: int, high: int, default: int) -> int:
     if value is None:
         return default
-    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not low <= value <= high
+    ):
         raise ThroughputValidationError(
             f"{name} must be a whole number from {low} to {high}."
         )
@@ -85,7 +97,11 @@ def _has_ip(iface: str) -> bool:
 
 
 def _number(value: Any) -> float | None:
-    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    return (
+        value
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+        else None
+    )
 
 
 def _parse(stdout: str, download: bool) -> tuple[float | None, int | None, str | None]:
@@ -171,7 +187,7 @@ class ThroughputService:
                 result = {**base, "error": f"NetTap could not start the test: {exc}"}
             log = logger.warning if result["error"] else logger.info
             log(
-                "throughput %s %s port %d %d s -> %s in %.1f s",
+                "throughput %s %r port %d %d s -> %s in %.1f s",
                 direction,
                 host,
                 port,
