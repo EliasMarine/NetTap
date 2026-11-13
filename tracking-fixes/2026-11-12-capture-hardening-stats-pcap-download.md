@@ -28,17 +28,21 @@
 
 ### Root cause
 - Malcolm generates `stats: enabled: no`, so `suricatasc -c dump-counters` answered "stats are disabled in the config".
-- An included `stats:` block replaces the earlier one (`suricata --dump-config`: "redefined"), so the whole block has to be restated.
+- An included `stats:` block replaces the earlier one (`suricata --dump-config`: "redefined"), so a block in `nettap.yaml` has to restate every key.
+- Malcolm 26.10.0's `suricata_config_populate.py` takes any `SURICATA_*` env var over its defaults (`STATS_ENABLED`, `STATS_INTERVAL` and `STATS_EVE_ENABLED` default to false) and then sets `stats.enabled` / `interval` / `decoder-events` itself.
 
 ### Fix
-- `config/suricata/nettap.yaml` restates the block: `enabled: yes`, `interval: 10`, `decoder-events: no`. No eve stats and no stats.log, so nothing is written to disk or indexed. With no logger, Suricata 8 keeps the counters for the unix socket.
+- `docker/docker-compose.yml` suricata-live sets `SURICATA_STATS_ENABLED: "true"` and `SURICATA_STATS_INTERVAL: "10"`. Malcolm's config writer keeps its other stats settings: no eve stats and no stats.log, so nothing is written to disk or indexed. With no logger, Suricata 8 keeps the counters for the unix socket.
+- PR #255 review: the first version restated the block in `config/suricata/nettap.yaml` (`enabled: yes`, `interval: 10`, `decoder-events: no`), which would drift from Malcolm's. It is kept there as OLD CODE. The deploy script's `--dump-config` check (`stats.enabled = yes`, `stats.interval = 10`) still holds.
 - `scripts/remote/verify_live_bandwidth.py capture-safety`:
   - checks that the counters answer before the first arm;
   - waits one sync (11 s) in each arm before reading;
   - reads `capture.kernel_packets` / `kernel_drops` per arm;
   - voids an arm across a Suricata restart (uptime down or a counter going down) and aborts on an arm with no packets;
-  - prints totals and a second verdict on the per-pair drop ratios.
-- New `scripts/remote/measure-capture-loss.sh` runs it and tees the output to `~/nettap-capture-loss.log`.
+  - prints totals and a second verdict on the per-pair drop ratios;
+  - (PR #255 review) voids an arm whose Suricata uptime moved less than the arm's length minus one sync (the counters weren't refreshed);
+  - (PR #255 review) passes when eight watches add at most `NOISE_DROPS` (10) drops, and compares Suricata's off-arm drops scaled to the eight-watch arm's packets.
+- New `scripts/remote/measure-capture-loss.sh` pulls `BRANCH` (default main), checks the daemon is healthy and Suricata's `dump-counters` has `kernel_packets`, runs it and tees the output to `~/nettap-capture-loss.log`.
 
 ## NET-189: PCAP Search "Download filtered"
 
@@ -65,9 +69,15 @@
 - The file list and background search select by span (name epoch − 30 s to mtime). Naive times are UTC.
 - PCAP Search has a download-only window ("Download from" / "to"). Empty uses the page range; one end or end ≤ start shows the error notice.
 
+### PR #255 review fixes
+- A download the browser abandons now stops. The daemon's AppRunner doesn't cancel a handler when its client leaves, so a stalled download held the lock and a reader slot until its 240 s deadline. The handler checks the connection every second and cancels the job when it's gone. Test: a client that leaves mid-stream frees the lock (fails on the old handler).
+- Admission counts each file's share of the window (`packets × covered / span`), not whole files, so a short window at a file boundary at busy times isn't refused. `shortcut:` a burst inside the window can exceed the estimate; the reader's memory limit is the backstop.
+- A failed index entry (capinfos timing out on a busy box) is tried again after 10 minutes, and at once when loaded from disk. Before, one timeout refused every download over that file until retention deleted it.
+- `verify_pcap_download.py`: a download the daemon aborts part-way (`IncompleteRead`) is a FAIL line, not a crash before the `/tmp` check. The busy check asks for about 100,000 frames ending at file B's start, so the first download can't finish inside the socket buffers before the second one asks.
+
 ## Files
-`docker/Dockerfile.zeek-live`, `docker/docker-compose.yml`, `config/suricata/nettap.yaml`, `daemon/services/{pcap_search,packet_search,capture_index}.py`, `daemon/api/{pcap,server}.py`, `web/src/routes/pcap/+page.svelte`, `scripts/remote/{verify_live_bandwidth.py,verify_pcap_download.py,measure-capture-loss.sh,deploy-capture-hardening.sh}`.
-Tests: `tests/scripts/test_compose_validation.bats`, `daemon/tests/{test_pcap_search,test_pcap_download_cleanup,test_cut_shell,test_verify_live_bandwidth,test_verify_pcap_download,test_health_while_blocked}.py`, `daemon/tests/fake_pcap_download.py`, `web/src/routes/pcap/pcap-page.test.ts`, `web/src/routes/api/catchall-proxy.test.ts`.
+`docker/Dockerfile.zeek-live`, `docker/docker-compose.yml`, `config/suricata/nettap.yaml` (OLD CODE only), `daemon/services/{pcap_search,packet_search,capture_index}.py`, `daemon/api/{pcap,server}.py`, `web/src/routes/pcap/+page.svelte`, `scripts/remote/{verify_live_bandwidth.py,verify_pcap_download.py,measure-capture-loss.sh,deploy-capture-hardening.sh}`.
+Tests: `tests/scripts/test_compose_validation.bats`, `daemon/tests/{test_pcap_search,test_pcap_download_cleanup,test_capture_index,test_packet_search,test_cut_shell,test_verify_live_bandwidth,test_verify_pcap_download,test_health_while_blocked}.py`, `daemon/tests/fake_pcap_download.py`, `web/src/routes/pcap/pcap-page.test.ts`, `web/src/routes/api/catchall-proxy.test.ts`.
 
 ## Test results
 - Daemon pytest: 4706 passed, 5 skipped (the supervisor test without `setsid`), 2 failed. The 2 failures are the date-dependent `test_cert_monitor` failures, fixed on main in #249. Before the change: 4661 passed, 2 failed.
@@ -75,14 +85,16 @@ Tests: `tests/scripts/test_compose_validation.bats`, `daemon/tests/{test_pcap_se
 - bats compose: 53 ok (was 52).
 - Vitest: 4554 passed. svelte-check: 0 errors. Colour gate: clean. `npm run test:visual`: 295 passed, 50 skipped (/pcap in every theme and width).
 - shellcheck: clean on the new scripts.
+- After the PR #255 review fixes (main merged in): daemon pytest 4740 passed, 2 skipped, 0 failed (with a local `setsid` shim); ruff check and format clean; bats compose 54 ok; Vitest `src/routes/pcap/` + the catchall proxy: 57 passed; shellcheck clean on `measure-capture-loss.sh` and `deploy-capture-hardening.sh`.
 - Real-tool test (local Wireshark 4.6.9): the download job over two files, one cut short, gives exactly the in-window tcp packets of both.
 
 ## Lessons
 - A capture binary's file capability is where its privilege comes from. Drop it in the image and in `cap_add` together.
 - `no-new-privileges` blocks file-capability gains, not only setuid.
-- An included Suricata block replaces the earlier one.
+- An included Suricata block replaces the earlier one. Use Malcolm's `SURICATA_*` env vars where it has one.
+- aiohttp's AppRunner doesn't cancel a handler when its client leaves (`handler_cancellation` is off). A long streaming handler has to watch the connection itself.
 - Pick files by packet times, not mtimes, and stream rather than merge into a size-limited tmpfs.
 
 ## Next steps
 - The lead deploys with `deploy-capture-hardening.sh`, does the manual browser check it prints, then runs `measure-capture-loss.sh` with a sustained download. Record the numbers in BRIDGE-ARCHITECTURE.md §17 and in `2026-11-07-device-live-bandwidth.md`.
-- Admission counts whole files' packets: a safe upper bound, but it can refuse a short window at a file boundary at busy times. Counting the window's packets exactly (one cut pass first) is a possible follow-up.
+- Admission estimates the window's packets from each file's share (PR #255 review). Counting them exactly (one cut pass first) is a possible follow-up if bursts get refused or pass the estimate.
