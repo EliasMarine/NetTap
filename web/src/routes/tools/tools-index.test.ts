@@ -4,6 +4,7 @@ import Page from './+page.svelte';
 
 const HREFS = [
 	'/tools/ping',
+	'/tools/throughput',
 	'/tools/subnet-calc',
 	'/tools/ipv6',
 	'/tools/port-reference',
@@ -26,7 +27,8 @@ describe('Tools index', () => {
 		render(Page);
 		expect(screen.getByRole('heading', { level: 1, name: 'Network tools' })).toBeInTheDocument();
 		expect(toolLinks()).toEqual(HREFS);
-		expect(screen.getByRole('heading', { name: 'Network · 5 tools' })).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByRole('heading', { name: 'Network · 5 tools' })).toBeInTheDocument(); (NET-266)
+		expect(screen.getByRole('heading', { name: 'Network · 6 tools' })).toBeInTheDocument();
 		expect(screen.getByRole('heading', { name: 'Analysis · 3 tools' })).toBeInTheDocument();
 		expect(screen.getByRole('heading', { name: 'Lookup · 5 tools' })).toBeInTheDocument();
 	});
@@ -47,6 +49,9 @@ describe('Tools index', () => {
 		await fireEvent.input(field, { target: { value: 'oui' } });
 		expect(toolLinks()).toEqual(['/tools/mac-lookup']);
 		expect(screen.queryByRole('heading', { name: /^Network ·/ })).not.toBeInTheDocument();
+
+		await fireEvent.input(field, { target: { value: 'iperf' } });
+		expect(toolLinks()).toEqual(['/tools/throughput']);
 
 		await fireEvent.input(field, { target: { value: 'zzz' } });
 		expect(toolLinks()).toEqual([]);

@@ -64,6 +64,7 @@ export const APP_ROUTES: readonly RouteCase[] = [
 	{ path: '/tools/ping', marker: 'Ping and traceroute' },
 	{ path: '/tools/port-reference', marker: 'Port reference' },
 	{ path: '/tools/ssl-cert', marker: 'SSL certificate viewer' },
+	{ path: '/tools/throughput', marker: 'LAN throughput test' },
 	{ path: '/tools/subnet-calc', marker: 'Subnet calculator' },
 	{ path: '/tools/ipv6', marker: 'IPv6 toolkit' },
 	// NET-263: with a device, so the populated pass draws the table

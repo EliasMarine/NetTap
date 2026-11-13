@@ -7,6 +7,7 @@ Registers network tool endpoints with the aiohttp application:
 - MAC Address OUI Lookup
 - Ping / Traceroute
 - SSL Certificate Inspection
+- LAN throughput test (iperf3, NET-266)
 """
 
 import logging
@@ -23,7 +24,13 @@ from services.dns_recon_service import (
 )
 from services.mac_lookup_service import MacLookupService, MacLookupValidationError
 from services.network_diag_service import NetworkDiagService, NetworkDiagValidationError
+from services.host_resolve import HostNameError
 from services.ssl_cert_service import SslCertService, SslCertValidationError
+from services.throughput_service import (
+    ThroughputBusyError,
+    ThroughputService,
+    ThroughputValidationError,
+)
 
 logger = logging.getLogger("nettap.api.tools")
 
@@ -314,6 +321,43 @@ async def handle_ssl_cert(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# LAN throughput test (NET-266)
+# ---------------------------------------------------------------------------
+
+
+async def handle_throughput(request: web.Request) -> web.Response:
+    """POST /api/tools/throughput -- one iperf3 run, one direction, to a LAN peer."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+
+    # the capture mode and port, as /api/capture/mode reads them
+    cm = request.app.get("capture_manager")
+    try:
+        result = await request.app["throughput"].run_test(
+            host=body.get("host"),
+            port=body.get("port"),
+            duration=body.get("duration"),
+            direction=body.get("direction"),
+            capture_mode=cm.mode.value if cm else None,
+            capture_interface=cm.get_capture_interface() if cm else None,
+        )
+    except (
+        ThroughputValidationError,
+        NetworkDiagValidationError,
+        HostNameError,
+    ) as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except ThroughputBusyError as e:
+        # OLD CODE: return public_json({"error": str(e)}, status=409) (a 4xx passes untouched)
+        return web.json_response({"error": str(e)}, status=409)
+    return web.json_response(result)
+
+
+# ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
 
@@ -330,6 +374,7 @@ def register_tools_routes(
     app["mac_lookup"] = mac_lookup
     app["network_diag"] = network_diag
     app["ssl_cert"] = ssl_cert
+    app["throughput"] = ThroughputService()
 
     app.router.add_post("/api/tools/dns-recon", handle_dns_recon)
     app.router.add_post("/api/tools/dns-compare", handle_dns_compare)
@@ -337,6 +382,8 @@ def register_tools_routes(
     app.router.add_post("/api/tools/ping", handle_ping)
     app.router.add_post("/api/tools/traceroute", handle_traceroute)
     app.router.add_post("/api/tools/ssl-cert", handle_ssl_cert)
+    app.router.add_post("/api/tools/throughput", handle_throughput)
 
     # OLD CODE: logger.info("Tools API routes registered (5 endpoints)") (NET-262 adds dns-compare)
-    logger.info("Tools API routes registered (6 endpoints)")
+    # OLD CODE: logger.info("Tools API routes registered (6 endpoints)") (NET-266 adds throughput)
+    logger.info("Tools API routes registered (7 endpoints)")

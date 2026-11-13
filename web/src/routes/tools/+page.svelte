@@ -33,6 +33,14 @@
 			icon: 'live',
 		},
 		{
+			name: 'LAN throughput test',
+			description: 'Measure how fast NetTap sends to and receives from another device on your network, with iperf3.',
+			href: '/tools/throughput',
+			category: 'network',
+			tags: ['iperf3', 'speed', 'bandwidth'],
+			icon: 'bandwidth',
+		},
+		{
 			name: 'Subnet calculator',
 			description: 'Work out the range, netmask, broadcast address and host count of any CIDR block.',
 			href: '/tools/subnet-calc',
