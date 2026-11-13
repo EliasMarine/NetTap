@@ -102,7 +102,8 @@ export async function expectReached(
 	marker: string | RegExp,
 	opts: { scope?: string; text?: boolean } = {}
 ): Promise<void> {
-	expect(new URL(page.url()).pathname, `expected ${path}, was redirected`).toBe(path);
+	// OLD CODE: …pathname…).toBe(path); (NET-249: a route case can carry a query, as /moment's window)
+	expect(new URL(page.url()).pathname, `expected ${path}, was redirected`).toBe(new URL(path, page.url()).pathname);
 	const scope = page.locator(opts.scope ?? 'main');
 	const target = opts.text ? scope.getByText(marker) : scope.getByRole('heading', { name: marker });
 	await expect(target.first()).toBeVisible();

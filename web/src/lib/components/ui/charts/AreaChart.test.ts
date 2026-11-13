@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { render } from '@testing-library/svelte';
+import { describe, it, expect, vi } from 'vitest';
+import { render, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import AreaChart, { type AreaSeries } from './AreaChart.svelte';
 
@@ -167,6 +167,171 @@ describe('AreaChart', () => {
 			expect(container.querySelector('svg')).not.toBeNull();
 			expect(paths(container).line).toBe('');
 			noNaN(container);
+		});
+	});
+
+	// NET-249: with onpick, a click, a drag or the keyboard picks points; without it nothing changes
+	describe('picking', () => {
+		// 640 px wide, plot from 50 to 628 px: 24 points 578 / 23 px apart
+		const SLOT = 578 / 23;
+		const at = (i: number) => 50 + i * SLOT;
+		const rect = { left: 0, width: 640, top: 0, height: 220, right: 640, bottom: 220, x: 0, y: 0, toJSON() {} };
+
+		function setup(extra: Record<string, unknown> = {}) {
+			const onpick = vi.fn();
+			const view = draw([toSeries('down', 1, DOWN)], { onpick, ...extra });
+			const svg = view.container.querySelector('svg')!;
+			svg.getBoundingClientRect = () => rect;
+			const group = view.getByRole('group');
+			const pointer = (type: string, clientX: number) => svg.dispatchEvent(new MouseEvent(type, { clientX, bubbles: true, button: 0 }));
+			const key = (k: string, shiftKey = false) => fireEvent.keyDown(group, { key: k, shiftKey });
+			const live = () => view.container.querySelector('[aria-live="polite"]')!.textContent;
+			return { ...view, onpick, svg, group, pointer, key, live };
+		}
+
+		it('without onpick it is a picture: role img, not focusable, no group', () => {
+			const { container, getByRole, queryByRole } = draw([toSeries('down', 1, DOWN)]);
+			expect(getByRole('img').hasAttribute('tabindex')).toBe(false);
+			expect(queryByRole('group')).toBeNull();
+			expect(container.querySelector('[tabindex]')).toBeNull();
+			expect(container.querySelector('[aria-live]')).toBeNull();
+		});
+
+		it('with onpick it is one focusable group that says how to use it', () => {
+			const { group, queryByRole } = setup();
+			expect(group.getAttribute('tabindex')).toBe('0');
+			expect(group.getAttribute('aria-label')).toBe(
+				'Bandwidth per hour. Busiest hour 21:00, with 4.7 GB downloaded. Use the left and right arrow keys to choose a point, Shift with an arrow key to choose a range, and Enter to open it.',
+			);
+			// the group carries the headline, so the drawing is hidden from screen readers
+			expect(queryByRole('img')).toBeNull();
+		});
+
+		it('a click picks that one point', async () => {
+			const { pointer, onpick } = setup();
+			pointer('pointerdown', at(5));
+			pointer('pointerup', at(5));
+			expect(onpick).toHaveBeenCalledExactlyOnceWith(5, 5);
+		});
+
+		it('a drag picks the range, in either direction, and draws it as a band', async () => {
+			const { pointer, onpick, container } = setup();
+			pointer('pointerdown', at(3));
+			pointer('pointermove', at(8));
+			await tick();
+			expect(container.querySelector('rect.band.pick')).not.toBeNull();
+			pointer('pointerup', at(8));
+			pointer('pointerdown', at(8));
+			pointer('pointerup', at(3));
+			expect(onpick.mock.calls).toEqual([
+				[3, 8],
+				[3, 8],
+			]);
+			await tick();
+			expect(container.querySelector('rect.band.pick')).toBeNull();
+		});
+
+		it('a movement under 4 px is a click, even across the line between two points', () => {
+			const { pointer, onpick } = setup();
+			const edge = 50 + 5.5 * SLOT - 1; // still point 5; 3 px on is point 6
+			pointer('pointerdown', edge);
+			pointer('pointerup', edge + 3);
+			expect(onpick).toHaveBeenCalledExactlyOnceWith(5, 5);
+		});
+
+		it('Escape during a drag cancels it', async () => {
+			const { pointer, key, onpick } = setup();
+			pointer('pointerdown', at(3));
+			pointer('pointermove', at(8));
+			await key('Escape');
+			pointer('pointerup', at(8));
+			expect(onpick).not.toHaveBeenCalled();
+		});
+
+		it('a cancelled pointer (the page scrolled instead) picks nothing', () => {
+			const { pointer, onpick } = setup();
+			pointer('pointerdown', at(3));
+			pointer('pointermove', at(8));
+			pointer('pointercancel', at(8));
+			pointer('pointerup', at(8));
+			expect(onpick).not.toHaveBeenCalled();
+		});
+
+		it('ignores a right button', () => {
+			const { svg, onpick } = setup();
+			svg.dispatchEvent(new MouseEvent('pointerdown', { clientX: at(3), bubbles: true, button: 2 }));
+			svg.dispatchEvent(new MouseEvent('pointerup', { clientX: at(3), bubbles: true, button: 2 }));
+			expect(onpick).not.toHaveBeenCalled();
+		});
+
+		it('arrows move the point (with its tooltip and a spoken line), Home and End jump, Enter opens it', async () => {
+			const { key, onpick, live, container } = setup();
+			await key('ArrowRight');
+			expect(live()).toBe('00:00 · 0.5 GB');
+			expect(container.querySelector('.tip-tx')?.textContent).toBe('00:00 · 0.5 GB');
+			expect(container.querySelector('.guide')).not.toBeNull();
+			await key('ArrowRight');
+			await key('Enter');
+			expect(onpick).toHaveBeenLastCalledWith(1, 1);
+			await key('ArrowLeft');
+			await key('ArrowLeft'); // stops at the first point
+			await key(' ');
+			expect(onpick).toHaveBeenLastCalledWith(0, 0);
+			await key('End');
+			expect(live()).toBe('23:00 · 1.7 GB');
+			await key('ArrowRight'); // stops at the last point
+			await key('Enter');
+			expect(onpick).toHaveBeenLastCalledWith(23, 23);
+			await key('Home');
+			await key('Enter');
+			expect(onpick).toHaveBeenLastCalledWith(0, 0);
+		});
+
+		it('the first arrow starts next to the headline point', async () => {
+			const { key, onpick } = setup({ highlightIndex: 21 });
+			await key('ArrowRight');
+			await key('Enter');
+			expect(onpick).toHaveBeenCalledExactlyOnceWith(22, 22);
+		});
+
+		it('Shift with the arrows picks a range from where it started; Escape clears it', async () => {
+			const { key, onpick, live, container } = setup();
+			await key('End');
+			await key('ArrowLeft', true);
+			await key('ArrowLeft', true);
+			expect(live()).toBe('from 21:00 · 4.7 GB to 23:00 · 1.7 GB');
+			expect(container.querySelector('rect.band.pick')).not.toBeNull();
+			await key('Enter');
+			expect(onpick).toHaveBeenLastCalledWith(21, 23);
+			// a plain arrow drops the range
+			await key('ArrowLeft');
+			await key('Enter');
+			expect(onpick).toHaveBeenLastCalledWith(20, 20);
+			await key('ArrowLeft', true);
+			await key('Escape');
+			expect(live()).toBe('');
+			expect(container.querySelector('rect.band.pick')).toBeNull();
+			onpick.mockClear();
+			await key('Enter'); // nothing chosen and no headline: nothing to open
+			expect(onpick).not.toHaveBeenCalled();
+		});
+
+		it('new data between pointer-down and pointer-up cancels the drag', async () => {
+			const { pointer, onpick, rerender } = setup();
+			pointer('pointerdown', at(3));
+			pointer('pointermove', at(8));
+			await rerender({ series: [toSeries('down', 1, UP)] });
+			pointer('pointerup', at(8));
+			expect(onpick).not.toHaveBeenCalled();
+		});
+
+		it('a new, shorter series between a keyboard range and Enter clears the range and keeps the point inside it', async () => {
+			const { key, onpick, rerender } = setup();
+			await key('End');
+			await key('ArrowLeft', true);
+			await rerender({ series: [toSeries('down', 1, DOWN.slice(0, 10))] });
+			await key('Enter');
+			expect(onpick).toHaveBeenCalledExactlyOnceWith(9, 9);
 		});
 	});
 

@@ -11,6 +11,7 @@
 	 * The top bar's Refresh and the 30 s Auto toggle both run it.
 	 */
 	import { onDestroy, untrack } from 'svelte';
+	import { goto } from '$app/navigation';
 	import Card from '$components/ui/Card.svelte';
 	import CardState from '$components/ui/CardState.svelte';
 	import KpiCard from '$components/ui/KpiCard.svelte';
@@ -33,7 +34,8 @@
 	import type { TrafficSummary, BandwidthPoint, ProtocolEntry, ProtocolsResponse, TrafficCategory } from '$api/traffic';
 	// OLD CODE: import { getAlertCount, getSmartAlerts, getSmartAlertSummary } from '$api/alerts'; (NET-228: the trend reads the timeline)
 	import { getAlertTimeline, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
-	import { chartTime, connLogsHref, DRILL_RANGES, fmt, NO_EXACT_ALERT_LIST, smartAlertHref, startRange, windowQuery, withCount, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
+	// OLD CODE: import { chartTime, connLogsHref, DRILL_RANGES, fmt, NO_EXACT_ALERT_LIST, smartAlertHref, startRange, windowQuery, withCount, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown'; (NET-249: the chart drills into a moment)
+	import { chartTime, connLogsHref, DRILL_RANGES, fmt, momentHref, NO_EXACT_ALERT_LIST, smartAlertHref, startRange, windowQuery, withCount, type BandwidthChart, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
 	// OLD CODE: import type { AlertCountResponse, SmartAlert, SmartAlertSummary } from '$api/alerts'; (NET-228)
 	import type { AlertTimelineBucket, SmartAlert, SmartAlertSummary } from '$api/alerts';
 	import { compareHalves, trendWindow, withCoverage, type SlotValue, type TrendWindow } from '$lib/utils/window-trend';
@@ -102,7 +104,11 @@
 	let trendWin = $state<TrendWindow | null>(null);
 	let trendTraffic = $state<BandwidthPoint[] | null>(null);
 	let trendAlerts = $state<AlertTimelineBucket[] | null>(null);
-	let bandwidthData = $state<BandwidthPoint[]>([]);
+	// OLD CODE: let bandwidthData = $state<BandwidthPoint[]>([]); (NET-249: a pick needs the reply's window and bucket with its points)
+	const NO_CHART = { series: [], from: '', to: '', step: 0 };
+	/** The bandwidth reply on screen, whole: a pick's indices and the window they open come from one answer */
+	let bandwidth = $state<Omit<BandwidthChart, 'series'> & { series: BandwidthPoint[] }>(NO_CHART);
+	const bandwidthData = $derived(bandwidth.series);
 	let protocols = $state<ProtocolEntry[]>([]);
 	let services = $state<ProtocolEntry[]>([]);
 	/** The `unknown` service split into conversations, one-way connections and ICMP (NET-219). Null when the reply has none */
@@ -182,6 +188,8 @@
 		const win = snapshotWindow(hours, Date.now());
 		// OLD CODE: const prev = computePreviousPeriod(win.from, win.to); (NET-228, audit TRF-6)
 		const tw = trendWindow(hours, Date.now());
+		// NET-249: the chart's bucket scales with the range (1h → 1 min … 30d → 3 h)
+		const { bucket, bucketMs } = span;
 		const trendQuery = { from: tw.from, to: tw.to, interval: tw.interval };
 		const since = localMidnight(new Date());
 		loading = true;
@@ -193,7 +201,10 @@
 				trendTraffic = v.series;
 				trendWin = tw;
 			}, () => (trendTraffic = null)),
-			settle(guard, g, 'bandwidth', getBandwidthTimeSeries({ ...win, interval: '1h' }), (v) => (bandwidthData = v.series)),
+			// OLD CODE: settle(guard, g, 'bandwidth', getBandwidthTimeSeries({ ...win, interval: '1h' }), (v) => (bandwidthData = v.series)), (NET-249)
+			settle(guard, g, 'bandwidth', getBandwidthTimeSeries({ ...win, interval: bucket }), (v) => {
+				bandwidth = { series: v.series, from: v.from, to: v.to, step: bucketMs };
+			}),
 			settle(guard, g, 'protocols', getProtocolDistribution(win), (v) => {
 				protocols = v.protocols;
 				services = v.services;
@@ -241,7 +252,8 @@
 		trendTraffic = null;
 		trendAlerts = null;
 		trendWin = null;
-		bandwidthData = [];
+		// OLD CODE: bandwidthData = []; (NET-249)
+		bandwidth = NO_CHART;
 		protocols = [];
 		services = [];
 		unidentified = null;
@@ -458,7 +470,8 @@
 			: d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 	}
 
-	/** One hourly bucket: "21:00", or "3 Nov 21:00" across days. */
+	// OLD CODE: /** One hourly bucket: "21:00", or "3 Nov 21:00" across days. */ (NET-249: buckets scale with the range)
+	/** One bucket's start: "21:05", or "3 Nov 21:00" across days. */
 	function pointLabel(t: number | string): string {
 		const time = new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 		return span.hours <= 24 ? time : `${axisLabel(t)} ${time}`;
@@ -583,7 +596,7 @@
 	// Cards
 	// ---------------------------------------------------------------------------
 
-	/** The busiest hourly bucket, or -1 when the window carried no traffic. */
+	/** The busiest bucket, or -1 when the window carried no traffic. */
 	const busiest = $derived(
 		bandwidthData.reduce((best, p, i) => (p.total_bytes > (bandwidthData[best]?.total_bytes ?? 0) ? i : best), -1),
 	);
@@ -828,7 +841,8 @@ OLD CODE END -->
 		foot={newDeviceCount && newDeviceCount > 0 ? newToday : undefined}
 	/>
 
-	<Card title="Bandwidth over time" sub="Bytes per hour · {windowText}{busiest >= 0 ? ` · ${busiestText}` : ''}" hero col class="c-8">
+	<!-- OLD CODE: sub="Bytes per hour · …" (NET-249: the bucket scales with the range) -->
+	<Card title="Bandwidth over time" sub="Bytes per {span.bucketWords} · {windowText}{busiest >= 0 ? ` · ${busiestText}` : ''}" hero col class="c-8">
 		{#snippet actions()}
 			<ul class="legend">
 				<li><span class="sw line c-d1"></span>Downloaded</li>
@@ -846,7 +860,9 @@ OLD CODE END -->
 				highlightIndex={busiest >= 0 ? busiest : undefined}
 				ariaLabel="Bandwidth over the {windowText}: {busiestText}"
 				height={300}
+				onpick={(i, j) => goto(momentHref(bandwidth, i, j, range))}
 			/>
+			<p class="card-sub pick-hint">Click a point or drag across the chart to see that moment.</p>
 			{#if failed.bandwidth}{@render staleNote('bandwidth over time')}{/if}
 		{:else if failed.bandwidth}
 			<CardState state="error" title={loadFailed('bandwidth over time')} message="Check that the daemon is running on the System page, then try again." onaction={retry} />
@@ -980,6 +996,7 @@ OLD CODE END -->
 <style>
 	/* Layout glue the system lacks */
 	.stale { margin-top: var(--sp-3); }
+	.pick-hint { margin-top: var(--sp-2); }
 	.eyebrow { margin: var(--sp-4) 0 var(--sp-2); }
 	.not-in-bars { margin-top: var(--sp-3); }
 	.groups { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-3); margin-top: var(--sp-4); }

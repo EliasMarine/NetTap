@@ -17,6 +17,7 @@ import { LIVE_ROUTES } from './live.ts';
 import { LIVE_BANDWIDTH_ROUTES } from './live-bandwidth.ts';
 import { LOGS_ROUTES } from './logs.ts';
 import { LOOKUP_ROUTES } from './lookup.ts';
+import { MOMENT_ROUTES } from './moment.ts';
 import { NOTIFICATION_ROUTES } from './notifications.ts';
 import { PACKETS_ROUTES } from './packets.ts';
 import { PCAP_ROUTES } from './pcap.ts';
@@ -50,6 +51,7 @@ export const ROUTES: readonly FixtureRoute[] = [
 	...LIVE_BANDWIDTH_ROUTES,
 	...LOGS_ROUTES,
 	...LOOKUP_ROUTES,
+	...MOMENT_ROUTES,
 	...NOTIFICATION_ROUTES,
 	...PACKETS_ROUTES,
 	...PCAP_ROUTES,

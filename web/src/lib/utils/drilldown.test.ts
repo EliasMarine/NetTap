@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { DISPLAY_SETTINGS_KEY, savedDefaultRange, savedLiveMap, startRange, alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, SCAN_CAP, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery } from './drilldown';
+import { DISPLAY_SETTINGS_KEY, savedDefaultRange, savedLiveMap, startRange, alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, SCAN_CAP, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery, DRILL_RANGES, bucketFor, bucketWindow, momentHref, serviceLogsHref, windowWords, RECORDS_CHANGE } from './drilldown';
+import { snapshotWindow } from '$lib/stores/alertSnapshot';
 
 const MB = 1000 ** 2; // decimal, as formatBytes prints (NET-166)
 
@@ -325,5 +326,142 @@ describe('SCAN_CAP', () => {
 		const source = readFileSync(resolve(__dirname, '../../../../daemon/storage/all_buckets.py'), 'utf-8');
 		const daemonCap = Number(source.match(/^MAX_BUCKETS = ([\d_]+)$/m)?.[1].replaceAll('_', ''));
 		expect(SCAN_CAP).toBe(daemonCap);
+	});
+});
+
+// NET-249: a chart's points open their exact window
+describe('chart buckets and the windows they open (NET-249)', () => {
+	const MIN = 60_000;
+	const HOUR = 60 * MIN;
+	/** Slot starts as the daemon's time_slots makes them: epoch-aligned, from the slot holding `from` to the one holding `to`. */
+	function slots(from: string, to: string, step: number) {
+		const first = Math.floor(Date.parse(from) / step) * step;
+		const count = Math.floor((Date.parse(to) - first) / step) + 1;
+		return Array.from({ length: count }, (_, k) => ({
+			timestamp: new Date(first + k * step).toISOString(),
+			download_bytes: 100 * (k + 1),
+			upload_bytes: 10 * (k + 1),
+			local_bytes: k,
+		}));
+	}
+
+	it("gives each range the owner's bucket", () => {
+		expect(DRILL_RANGES.map((r) => [r.value, r.bucket, r.bucketMs, r.bucketWords])).toEqual([
+			['1h', '1m', MIN, 'minute'],
+			['6h', '5m', 5 * MIN, '5 minutes'],
+			['24h', '5m', 5 * MIN, '5 minutes'],
+			['7d', '1h', HOUR, 'hour'],
+			['30d', '3h', 3 * HOUR, '3 hours'],
+		]);
+		// 60, 72, 288, 168 and 240 points over each range
+		expect(DRILL_RANGES.map((r) => (r.hours * HOUR) / r.bucketMs)).toEqual([60, 72, 288, 168, 240]);
+	});
+
+	it("picks a custom window's bucket from the smallest range that covers it", () => {
+		const t = Date.parse('2026-11-12T14:00:00Z');
+		expect(bucketFor(t, t).bucket).toBe('1m');
+		expect(bucketFor(t, t + HOUR).bucket).toBe('1m');
+		expect(bucketFor(t, t + HOUR + 1).bucket).toBe('5m');
+		expect(bucketFor(t, t + 24 * HOUR).bucket).toBe('5m');
+		expect(bucketFor(t, t + 3 * 24 * HOUR).bucket).toBe('1h');
+		expect(bucketFor(t, t + 30 * 24 * HOUR).bucket).toBe('3h');
+		expect(bucketFor(t, t + 90 * 24 * HOUR).bucket).toBe('3h');
+	});
+
+	it('ends a bucket 1 ms before the next one, so the inclusive window is exactly the slot', () => {
+		const reply = { from: '2026-11-11T14:02:00.000Z', to: '2026-11-12T14:02:00.000Z' };
+		const points = slots(reply.from, reply.to, 5 * MIN);
+		const k = points.findIndex((p) => p.timestamp === '2026-11-12T09:05:00.000Z');
+		expect(bucketWindow(points, k, k, 5 * MIN, reply)).toEqual({ from: '2026-11-12T09:05:00.000Z', to: '2026-11-12T09:09:59.999Z' });
+		// a range, either way round
+		expect(bucketWindow(points, k + 2, k, 5 * MIN, reply)).toEqual({ from: '2026-11-12T09:05:00.000Z', to: '2026-11-12T09:19:59.999Z' });
+	});
+
+	it("clips the first and last slots to the reply's own window", () => {
+		const reply = { from: '2026-11-11T14:02:00.000Z', to: '2026-11-12T14:02:00.000Z' };
+		const points = slots(reply.from, reply.to, 5 * MIN);
+		expect(points[0].timestamp).toBe('2026-11-11T14:00:00.000Z');
+		expect(bucketWindow(points, 0, 0, 5 * MIN, reply)).toEqual({ from: reply.from, to: '2026-11-11T14:04:59.999Z' });
+		const last = points.length - 1;
+		expect(points[last].timestamp).toBe('2026-11-12T14:00:00.000Z');
+		expect(bucketWindow(points, last, last, 5 * MIN, reply)).toEqual({ from: '2026-11-12T14:00:00.000Z', to: reply.to });
+		expect(bucketWindow(points, 0, last, 5 * MIN, reply)).toEqual(reply);
+	});
+
+	it("opens Home's real 1h trailing slot as a one-millisecond window, which every page accepts", () => {
+		// Home floors its window to the minute, so the last 1-minute slot starts exactly at `to`
+		const reply = snapshotWindow(1, Date.parse('2026-11-12T14:05:42.123Z'));
+		const points = slots(reply.from, reply.to, MIN);
+		expect(points).toHaveLength(61);
+		const win = bucketWindow(points, 60, 60, MIN, reply);
+		expect(win).toEqual({ from: '2026-11-12T14:05:00.000Z', to: '2026-11-12T14:05:00.000Z' });
+		expect(customRange(win.from, win.to)).toMatchObject({ value: 'custom', hours: 0, from: win.from, to: win.to });
+	});
+
+	it('customRange takes from == to, and still refuses from > to and unreadable times', () => {
+		const t = '2026-11-12T14:05:00.000Z';
+		expect(customRange(t, t)).toMatchObject({ from: t, to: t, hours: 0 });
+		expect(customRange('2026-11-12T14:05:00.001Z', t)).toBeNull();
+		expect(customRange('soon', t)).toBeNull();
+		expect(customRange(t, 'later')).toBeNull();
+		expect(customRange(null, t)).toBeNull();
+	});
+
+	it('words a window with its inclusive end rounded up to the bucket end', () => {
+		const at = (iso: string) => {
+			const d = new Date(iso);
+			return [d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }), d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })];
+		};
+		const [start, day] = at('2026-11-12T14:05:00.000Z');
+		const [end] = at('2026-11-12T14:10:00.000Z');
+		expect(windowWords('2026-11-12T14:05:00.000Z', '2026-11-12T14:09:59.999Z')).toBe(`${start} to ${end}, ${day}`);
+		expect(customRange('2026-11-12T14:05:00.000Z', '2026-11-12T14:09:59.999Z')!.words).toMatch(new RegExp(`to ${day}, ${end}$`));
+		// a one-millisecond window is a moment, to the second
+		const exact = new Date('2026-11-12T14:05:00.000Z').toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+		expect(windowWords('2026-11-12T14:05:00.000Z', '2026-11-12T14:05:00.000Z')).toBe(`at ${exact}, ${day}`);
+		// an end off the minute shows seconds; ends on different days each name their day
+		expect(windowWords('2026-11-12T14:05:30.000Z', '2026-11-12T14:09:59.999Z')).toMatch(/^\d\d:\d\d:30 to \d\d:\d\d:00, /);
+		expect(windowWords('2026-11-01T14:05:00.000Z', '2026-11-12T14:09:59.999Z')).toMatch(/^\d{1,2} Nov, \d\d:\d\d to \d{1,2} Nov, \d\d:\d\d$/);
+	});
+
+	it('builds the moment link from the picked points: window, clicked figures and the chart window', () => {
+		const chart = { from: '2026-11-11T14:02:00.000Z', to: '2026-11-12T14:02:00.000Z', step: 5 * MIN, series: slots('2026-11-11T14:02:00.000Z', '2026-11-12T14:02:00.000Z', 5 * MIN) };
+		const href = new URL(momentHref(chart, 3, 1, '24h'), 'http://x');
+		expect(href.pathname).toBe('/moment');
+		expect(Object.fromEntries(href.searchParams)).toEqual({
+			from: '2026-11-11T14:05:00.000Z',
+			to: '2026-11-11T14:19:59.999Z',
+			range: '24h',
+			// points 1..3 carry 200+300+400 down, 20+30+40 up and 1+2+3 local
+			down: '900',
+			up: '90',
+			local: '6',
+			chart_from: chart.from,
+			chart_to: chart.to,
+		});
+		// the moment page's own chart passes the first chart's window on
+		const outer = { from: 'a', to: 'b' };
+		expect(new URL(momentHref(chart, 0, 0, undefined, outer), 'http://x').searchParams.get('chart_from')).toBe('a');
+		expect(new URL(momentHref(chart, 0, 0), 'http://x').searchParams.has('range')).toBe(false);
+	});
+
+	it("links a protocol bar to the conn records behind it, with the endpoint's whole predicate", () => {
+		const win = { from: '2026-11-12T14:05:00.000Z', to: '2026-11-12T14:09:59.999Z' };
+		const p = (href: string) => Object.fromEntries(new URL(href, 'http://x').searchParams);
+		expect(p(serviceLogsHref('dns', win, ['192.168.1.199', '2001:db8::199'], '24h'))).toEqual({
+			type: 'zeek.conn',
+			query: 'network.protocol:"dns"',
+			exclude_src: '192.168.1.199,2001:db8::199',
+			...win,
+			range: '24h',
+		});
+		expect(p(serviceLogsHref('ssl', win, [])).query).toBe('network.protocol:"ssl" AND NOT network.protocol:"quic"');
+		expect(p(serviceLogsHref('unknown', win, [])).query).toBe('NOT _exists_:network.protocol');
+		expect(p(serviceLogsHref('ssl', win, []))).not.toHaveProperty('exclude_src');
+		expect(p(serviceLogsHref('a"b', win, [])).query).toBe('network.protocol:"a\\"b"');
+	});
+
+	it('countDifference still ends with the shared reason', () => {
+		expect(countDifference(1, 2, { lead: 'Now', one: 'record', many: 'records' })).toMatch(new RegExp(`${RECORDS_CHANGE.replace(/[().]/g, '\\$&')}$`));
 	});
 });

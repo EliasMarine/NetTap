@@ -482,6 +482,16 @@ describe('Log Explorer — exact windows', () => {
 		expect(requestsTo('/api/logs/search')[2].searchParams.get('from')).toBe(first.searchParams.get('from'));
 	});
 
+	// NET-249: a chart's trailing slot is a one-millisecond window; it must not fall back to 24 hours
+	it('opens a link with from == to on exactly that moment, as Custom', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [], total: 0 } }, true);
+		goTo(`/logs?type=zeek.conn&from=${TO}&to=${TO}&range=1h`);
+		render(Page);
+		await vi.waitFor(() => expect(requestsTo('/api/logs/search')).toHaveLength(1));
+		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		for (const u of [...requestsTo('/api/logs/search'), ...DASHBOARD_PATHS.flatMap(requestsTo)]) expect(bounds(u)).toEqual([TO, TO]);
+	});
+
 	it('gives the figures and the table one window per load', async () => {
 		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [], total: 0 } }, true);
 		render(Page);
