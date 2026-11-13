@@ -55,7 +55,8 @@
 	import {
 		alertsHrefForSignature, bucketFor, customRange, DRILL_RANGES, fmt, linkedCount, pickedTotal, pickWindow, rangeWindow, startRange, withCount, type DrillWindow,
 	} from '$lib/utils/drilldown';
-	import { NARROW_HINT, narrowTo, pickedLine, timeChart } from '$lib/utils/narrow-page';
+	import { NARROW_HINT, narrowTo, pickedLine } from '$lib/utils/narrow-page';
+	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -310,7 +311,7 @@
 	/** The timeline reply on screen, whole, when its bucket can be picked on; a failed request leaves none (NET-249) */
 	const chart = $derived(
 		timelineData
-			? timeChart(
+			? toTimeChart(
 					timelineData,
 					timelineData.series.map((p) => p.timestamp),
 					timelineData.series.map((p) => p.total),

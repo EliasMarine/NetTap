@@ -7,7 +7,7 @@
  */
 import { goto } from '$app/navigation';
 import { formatBytes } from '$lib/api/logs';
-import { countDifference, DRILL_RANGES, RECORDS_CHANGE, stepMs, type CountWords, type DrillWindow, type TimeChart } from './drilldown';
+import { countDifference, DRILL_RANGES, RECORDS_CHANGE, type CountWords, type DrillWindow, type TimeChart } from './drilldown';
 
 /** The figure a pick carries: `count` for records, `bytes` for bandwidth. */
 export type PickedKey = 'count' | 'bytes';
@@ -19,12 +19,14 @@ export const NARROW_HINT = 'Click a point or drag across the chart to see this p
 export const DEVICE_IPV6_NOTE =
 	'Which IPv6 addresses belong to this device is worked out again for each window, from its activity, its MAC address and the gateway check, so a shorter window can count different traffic.';
 
-/** A chart reply as a TimeChart, or null when it echoes no window or no bucket a pick can use: the chart stays a picture. */
-export function timeChart(reply: DrillWindow & { interval?: string | null }, times: string[], values: number[]): TimeChart | null {
-	const step = stepMs(reply.interval);
-	const windowed = Number.isFinite(Date.parse(reply.from)) && Number.isFinite(Date.parse(reply.to));
-	return step === null || !windowed ? null : { from: reply.from, to: reply.to, times, values, step };
-}
+// OLD CODE START — merge of slice 2: the same helper as chart-pick.ts toTimeChart, which both halves now use
+// /** A chart reply as a TimeChart, or null when it echoes no window or no bucket a pick can use: the chart stays a picture. */
+// export function timeChart(reply: DrillWindow & { interval?: string | null }, times: string[], values: number[]): TimeChart | null {
+// 	const step = stepMs(reply.interval);
+// 	const windowed = Number.isFinite(Date.parse(reply.from)) && Number.isFinite(Date.parse(reply.to));
+// 	return step === null || !windowed ? null : { from: reply.from, to: reply.to, times, values, step };
+// }
+// OLD CODE END
 
 /**
  * Reopen this page over a pick's window: its own URL with `from`/`to`, the figure picked (any

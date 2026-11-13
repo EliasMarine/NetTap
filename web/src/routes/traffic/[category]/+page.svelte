@@ -18,7 +18,8 @@
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	// OLD CODE: import { chartTime, DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown'; (NET-249: a pick narrows the page)
 	import { bucketFor, chartTime, customRange, DRILL_RANGES, linkedCount, pickedTotal, pickWindow, rangeWindow, startRange, type TimeChart } from '$lib/utils/drilldown';
-	import { NARROW_HINT, narrowTo, pickedLine, timeChart, withoutWindow } from '$lib/utils/narrow-page';
+	import { NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
+	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { goto } from '$app/navigation';
 	// OLD CODE START — the category colour tinted the chart and bars; system charts use data-1/2
 	// import { CATEGORY_COLORS } from '$lib/utils/category-colors';
@@ -548,7 +549,7 @@
 		if (bandwidthRes.status === 'fulfilled') {
 			const reply = bandwidthRes.value;
 			bandwidthSeries = reply.series ?? [];
-			bandwidthChart = timeChart(reply, bandwidthSeries.map((p) => p.timestamp), bandwidthSeries.map((p) => p.total_bytes));
+			bandwidthChart = toTimeChart(reply, bandwidthSeries.map((p) => p.timestamp), bandwidthSeries.map((p) => p.total_bytes));
 		}
 		// OLD CODE START — NET-228: a failed refresh kept the last reply as the comparison
 		// // a failed previous period hides the trend instead of comparing against zero

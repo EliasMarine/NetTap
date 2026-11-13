@@ -41,7 +41,8 @@
 		bucketFor, chartTime as timeLabel, customRange, DRILL_RANGES, linkedCount, logsHrefForQuery, NO_EXACT_ALERT_LIST, pickedTotal, pickWindow, rangeWindow, smartAlertHref,
 		startRange, withCount, type DrillRangeValue, type DrillWindow, type TimeChart,
 	} from '$lib/utils/drilldown';
-	import { DEVICE_IPV6_NOTE, NARROW_HINT, narrowTo, pickedLine, timeChart, withoutWindow } from '$lib/utils/narrow-page';
+	import { DEVICE_IPV6_NOTE, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
+	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { formatTime } from '$lib/utils/time';
 	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { DeviceConnectionSort } from '$api/devices';
@@ -444,7 +445,7 @@
 			const edit = d.mac ? edits.get(d.mac.toLowerCase()) : undefined;
 			device = edit && edit.rev > rev ? withOwner(d, edit.saved) : d;
 			const { from, to, bandwidth_interval: interval } = deviceRes.value;
-			bandwidthChart = from && to ? timeChart({ from, to, interval }, d.bandwidth_series.map((p) => p.timestamp), d.bandwidth_series.map((p) => p.bytes)) : null;
+			bandwidthChart = from && to ? toTimeChart({ from, to, interval }, d.bandwidth_series.map((p) => p.timestamp), d.bandwidth_series.map((p) => p.bytes)) : null;
 			loadedView = view;
 		}
 		deviceFailed = deviceRes.status === 'rejected';

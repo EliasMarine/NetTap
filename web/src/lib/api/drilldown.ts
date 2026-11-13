@@ -227,7 +227,8 @@ export async function getAddressSummary(ip: string, from: string, to: string, in
 // OLD CODE: export async function getDomainSummary(name: string, from: string, to: string): Promise<DomainSummary> { (NET-249: the bucket)
 export async function getDomainSummary(name: string, from: string, to: string, interval?: string): Promise<DomainSummary> {
 	// OLD CODE: const body = await getJson(`/api/domains/${encodeURIComponent(name)}?${windowQuery(from, to)}`, 'Domain summary'); (NET-249)
-	const body = await getJson(`/api/domains/${encodeURIComponent(name)}?${windowQuery(from, to)}${interval ? `&interval=${encodeURIComponent(interval)}` : ''}`, 'Domain summary');
+	// OLD CODE: …${interval ? `&interval=${encodeURIComponent(interval)}` : ''}… (slice 2 merge: the file's own intervalQuery)
+	const body = await getJson(`/api/domains/${encodeURIComponent(name)}?${windowQuery(from, to)}${intervalQuery(interval)}`, 'Domain summary');
 	// OLD CODE START — the counts under tls, http and alerts, and the complete flags, were cast unchecked
 	// const ok =
 	// 	isObject(body) &&

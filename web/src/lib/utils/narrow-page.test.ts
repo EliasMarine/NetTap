@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { goto } from '$app/navigation';
-import { narrowTo, pickedLine, timeChart, withoutWindow } from './narrow-page';
+import { narrowTo, pickedLine, withoutWindow } from './narrow-page';
+import { toTimeChart as timeChart } from './chart-pick';
 import type { TimeChart } from './drilldown';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn(async () => {}) }));

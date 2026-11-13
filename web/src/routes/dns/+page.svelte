@@ -47,7 +47,8 @@
 	import {
 		bucketFor, chartTime, customRange, DRILL_RANGES, fmt, linkedCount, pickedTotal, pickWindow, rangeWindow, SCAN_CAP, startRange, type TimeChart,
 	} from '$lib/utils/drilldown';
-	import { NARROW_HINT, narrowTo, pickedLine, timeChart, withoutWindow } from '$lib/utils/narrow-page';
+	import { NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
+	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { formatCompactNumber as formatNumber } from '$lib/api/logs';
 
 	// ---------------------------------------------------------------------------
@@ -389,7 +390,7 @@
 		if (results[4].status === 'fulfilled') {
 			const reply = results[4].value;
 			timeline = reply.series;
-			timelineChart = timeChart(reply, reply.series.map((t) => t.timestamp), reply.series.map((t) => t.count));
+			timelineChart = toTimeChart(reply, reply.series.map((t) => t.timestamp), reply.series.map((t) => t.count));
 		}
 		// OLD CODE: if (results[5].status === 'fulfilled') suspicious = results[5].value.suspicious; (NET-238: and complete)
 		if (results[5].status === 'fulfilled') {

@@ -19,7 +19,8 @@
 		bucketFor, DRILL_RANGES, canonicalName, certificatesHref, chartTime as timeLabel, customRange, fmt, linkedCount, logsHrefForQuery, pickedTotal, pickWindow, rangeWindow,
 		startRange, windowQuery, type DrillRange, type DrillRangeValue, type DrillWindow,
 	} from '$lib/utils/drilldown';
-	import { NARROW_HINT, narrowTo, pickedLine, timeChart, withoutWindow } from '$lib/utils/narrow-page';
+	import { NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
+	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import IPAddress from '$components/IPAddress.svelte';
 	import BarList from '$lib/components/ui/BarList.svelte';
@@ -159,7 +160,7 @@
 	// OLD CODE END
 	const chartTime = (t: number | string): string => timeLabel(t, shown.hours);
 	/** The chart's reply, whole, when its bucket can be picked on (NET-249); the receiver ignores it after a failed refresh */
-	const chart = $derived(data ? timeChart(data, data.dns.timeline.map((p) => p.t), data.dns.timeline.map((p) => p.n)) : null);
+	const chart = $derived(data ? toTimeChart(data, data.dns.timeline.map((p) => p.t), data.dns.timeline.map((p) => p.n)) : null);
 	const countLine = $derived(pickedLine(picked, failure ? null : chart, { lead: 'This window now shows', one: 'lookup', many: 'lookups' }));
 	/** A pick on the chart (NET-249): this page over the picked slots, with the lookups they counted */
 	function pick(i: number, j: number) {
