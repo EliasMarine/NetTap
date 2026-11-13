@@ -170,10 +170,20 @@ describe('safeNextPath', () => {
 	it.each([
 		['/devices?range=7d', '/devices?range=7d'],
 		['/', '/'],
-		['/a/../b', '/b'],
-		['/%2F/evil.com', '/%2F/evil.com'], // an encoded slash stays one path segment
+		['/?range=7d', '/?range=7d'],
+		['/devices/../alerts', '/alerts'],
 		['/devices#top', '/devices'], // a fragment never reaches the server
-	])('keeps the same-origin path %s as %s', (raw, expected) => {
+		// detail pages and nested routes are the app's own too
+		['/devices/10.0.0.5', '/devices/10.0.0.5'],
+		['/devices/mac/aa:bb:cc:dd:ee:ff', '/devices/mac/aa:bb:cc:dd:ee:ff'],
+		['/address/10.0.0.5?range=24h', '/address/10.0.0.5?range=24h'],
+		['/domain/example.com', '/domain/example.com'],
+		['/alerts/suricata/ET%20SCAN', '/alerts/suricata/ET%20SCAN'],
+		['/lookup/whois/1.2.3.4', '/lookup/whois/1.2.3.4'],
+		['/tools/cyberchef', '/tools/cyberchef'],
+		['/settings/backup', '/settings/backup'],
+		['/system/updates', '/system/updates'],
+	])('keeps the app page %s as %s', (raw, expected) => {
 		expect(safeNextPath(raw)).toBe(expected);
 	});
 
@@ -199,15 +209,36 @@ describe('safeNextPath', () => {
 		expect(safeNextPath(raw)).toBe('/');
 	});
 
+	// nginx serves these on the same origin, and /api is the daemon proxy: none is a page of this app
+	it.each([
+		'/grafana/',
+		'/grafana/d/abc?orgId=1',
+		'/dashboards/',
+		'/dashboards/app/home',
+		'/cyberchef/',
+		'/api/system/ping',
+		'/api/auth/logout',
+		'/not-a-page',
+		'/%2Fgrafana/', // an encoded slash stays one segment, but a proxy may decode it
+		'/devices/..%2fgrafana/',
+		'/devices/..%2Fdashboards/',
+		'/devices/a%5Cb',
+		'/devices/../grafana/', // the parser resolves the dots: this is /grafana/
+		'/devices/%2e%2e/dashboards/',
+	])('falls back to / for the other app or the API at %s', (raw) => {
+		expect(safeNextPath(raw)).toBe('/');
+	});
+
 	it('never puts a line break or tab in the result, so it is safe in a Location header', () => {
-		const out = safeNextPath('/a\r\nSet-Cookie: x=1');
-		expect(out).toMatch(/^\/[^\r\n\t]*$/);
+		const out = safeNextPath('/devices/a\r\nSet-Cookie: x=1');
+		expect(out).toMatch(/^\/devices\/[^\r\n\t]*$/);
 		expect(out).not.toContain('\n');
 	});
 
-	// every string built from these pieces: whatever comes out is a path on this same origin
-	it('only ever returns a same-origin path', () => {
-		const pieces = ['/', '..', '.', '%2e', '%2E', '%2f', '\\', '\t', '\n', 'a', '?', '//'];
+	// every string built from these pieces after an app page: whatever comes out is a path on this
+	// same origin, and never one of the other apps or the API
+	it('only ever returns a same-origin path to this app', () => {
+		const pieces = ['/', '..', '.', '%2e', '%2E', '%2f', '%5c', '\\', '\t', '\n', 'grafana', 'api', '?', '//'];
 		const inputs: string[] = [''];
 		let layer: string[] = [''];
 		for (let depth = 0; depth < 4; depth++) {
@@ -215,9 +246,11 @@ describe('safeNextPath', () => {
 			inputs.push(...layer);
 		}
 		for (const tail of inputs) {
-			const out = safeNextPath('/' + tail);
+			const out = safeNextPath('/devices' + tail);
 			expect(out.startsWith('/') && !out.startsWith('//') && !out.startsWith('/\\')).toBe(true);
 			expect(new URL(out, BASE).origin).toBe(BASE);
+			expect(out).not.toMatch(/^\/(grafana|dashboards|cyberchef|api)(\/|\?|$)/);
+			expect(new URL(out, BASE).pathname).not.toMatch(/%2f|%5c/i); // the query may hold them
 		}
 	});
 });

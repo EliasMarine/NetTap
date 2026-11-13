@@ -1823,7 +1823,7 @@ This chain covers 5 deployment issues discovered during N100 hardware testing on
 
 **Root cause:** the shell's ping check read the body only for an OK reply, so a 401 counted as offline. The two 401s differ by body: the web app's own sign-in check is `{"error":"Sign in first"}`, the daemon's refusal is `{"error": "Unauthorized"}`. `/login` ignored `?next=`, and `notification-stream.ts` wrongly said the stream auto-reconnects (it does not after an HTTP error).
 
-**Fix:** a 401 with "Sign in first" goes to `/login?next=<path>`; polls pause while that navigation runs and resume if it fails; a reply from before the shell stopped is ignored. `/login` follows `next` only when `safeNextPath` finds a same-origin path (it re-checks the normalised value: `/a/..//evil.com` becomes `//evil.com`). The bell opens a new stream when the shell mounts again after sign-in.
+**Fix:** a 401 with "Sign in first" goes to `/login?next=<path>`; polls pause while that navigation runs and resume if it fails; a reply from before the shell stopped is ignored. `/login` follows `next` only when `safeNextPath` finds a path to one of the web app's own pages: same-origin, re-checked after normalisation (`/a/..//evil.com` becomes `//evil.com`), and a first segment taken from `src/routes` at build time, so `/grafana/`, `/dashboards/`, `/cyberchef/` and `/api/` (other apps and the API behind the same nginx) go to `/`. The bell opens a new stream when the shell mounts again after sign-in.
 
 **Key insight:** the root layout never unmounts on client-side navigation, so a "paused" flag has to be released by the navigation promise, not by a remount.
 

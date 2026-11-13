@@ -200,6 +200,8 @@ describe('Login form action — throttling (real +page.server.ts)', () => {
 		['//evil.com', '/'],
 		['/a/..//evil.com', '/'],
 		['/%2e//evil.com', '/'],
+		['/grafana/', '/'], // another app behind the same nginx
+		['/api/system/ping', '/'],
 	])('after signing in with next=%s it redirects to %s', async (next, location) => {
 		expect(await submit('admin', 'right', '192.168.1.10', next)).toMatchObject({ status: 302, location });
 	});
