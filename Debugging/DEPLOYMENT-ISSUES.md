@@ -1807,6 +1807,28 @@ This chain covers 5 deployment issues discovered during N100 hardware testing on
 
 ---
 
+## Chain 30: the session ran out on an open tab
+
+### NET-198: "Can't reach NetTap" instead of the sign-in page
+
+| Field | Value |
+|---|---|
+| **Branch** | `fix/session-expiry-sign-in` |
+| **Status** | Code and tests done; device deploy pending (`scripts/remote/deploy-session-expiry.sh`) |
+| **Severity** | Low |
+| **Date** | 2026-11-12 |
+| **Environment** | any browser tab left open past the 24 h session |
+
+**Symptom:** after 24 hours the open tab's polls all got 401. The top bar said "Can't reach NetTap" and nothing sent the user to sign in. The notification stream closed and stayed closed.
+
+**Root cause:** the shell's ping check read the body only for an OK reply, so a 401 counted as offline. The two 401s differ by body: the web app's own sign-in check is `{"error":"Sign in first"}`, the daemon's refusal is `{"error": "Unauthorized"}`. `/login` ignored `?next=`, and `notification-stream.ts` wrongly said the stream auto-reconnects (it does not after an HTTP error).
+
+**Fix:** a 401 with "Sign in first" goes to `/login?next=<path>`; polls pause while that navigation runs and resume if it fails; a reply from before the shell stopped is ignored. `/login` follows `next` only when `safeNextPath` finds a path to one of the web app's own pages: same-origin, re-checked after normalisation (`/a/..//evil.com` becomes `//evil.com`), and a first segment taken from `src/routes` at build time, so `/grafana/`, `/dashboards/`, `/cyberchef/` and `/api/` (other apps and the API behind the same nginx) go to `/`. The bell opens a new stream when the shell mounts again after sign-in.
+
+**Key insight:** the root layout never unmounts on client-side navigation, so a "paused" flag has to be released by the navigation promise, not by a remount.
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 16+ PRs. Check their current state before making changes.
@@ -2215,3 +2237,4 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-178 | pending | Domain page 502: an alert host field mapped as text failed the whole page (Chain 26) | 2026-11-06 |
 | NET-241 | #236 | A logged-in full reload was a 502: nginx header buffer too small for SvelteKit's Link header (Chain 29) | 2026-11-09 |
 | NET-216 | pending | `activate-bridge.sh` (the --defer-bridge path) started the stack without the OpenSearch bootstrap or index templates (Chain 28) | 2026-11-08 |
+| NET-198 | pending | A lapsed session sends the user to sign in instead of "Can't reach NetTap"; `/login` follows a same-origin `?next=` (Chain 30) | 2026-11-12 |

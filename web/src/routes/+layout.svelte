@@ -6,13 +6,14 @@
 	import '$lib/styles/global.css';
 	import { tick } from 'svelte';
 	import { page } from '$app/stores';
-	import { afterNavigate } from '$app/navigation';
+	import { afterNavigate, goto } from '$app/navigation';
 	// OLD CODE: import { getCaptureMode, getCaptureHealth } from '$api/capture'; (NET-225: the chip reads the shared store)
 	import { getCaptureHealth } from '$api/capture';
 	import type { CaptureHealthResponse, CaptureMode } from '$api/capture';
 	import { getStorageStatus } from '$api/system';
 	import type { StorageStatus } from '$api/system';
 	import { captureMode as modeStore, initCaptureMode } from '$lib/stores/captureMode';
+	import { SIGN_IN_FIRST } from '$lib/auth-errors';
 	import { alertSnapshots, loadAlertSnapshot, refreshAlertSnapshots } from '$lib/stores/alertSnapshot';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Sidebar from '$lib/components/shell/Sidebar.svelte';
@@ -95,14 +96,53 @@
 	// Offline only once the daemon has failed its liveness check, never while the first one runs.
 	let daemonOffline = $state(false);
 
+	// OLD CODE START — NET-198: a 401 (the session ran out) counted as offline, and nothing sent the user to sign in
+	// async function checkDaemon() {
+	// 	try {
+	// 		const res = await fetch('/api/system/ping');
+	// 		// a lapsed session answers 401 (NET-197), which is not the daemon answering
+	// 		const body = res.ok ? await res.json() : null;
+	// 		daemonOffline = body?.status !== 'ok';
+	// 	} catch {
+	// 		daemonOffline = true;
+	// 	}
+	// }
+	// OLD CODE END
+
+	/** True while a navigation to the sign-in page runs: no new poll starts meanwhile. */
+	let redirecting = false;
+	/** Bumped when the poller stops, so a ping that began in an earlier run can't act on its reply. */
+	let shellRun = 0;
+
+	/** NET-198: the session ran out, so open the sign-in page, which brings the user back to this page. */
+	async function sendToSignIn() {
+		if (redirecting) return;
+		redirecting = true;
+		try {
+			await goto(`/login?next=${encodeURIComponent($page.url.pathname + $page.url.search)}`);
+		} catch (err) {
+			console.error('Could not open the sign-in page:', err);
+		} finally {
+			redirecting = false; // a navigation that fell through leaves the shell polling, which asks again
+		}
+	}
+
 	async function checkDaemon() {
+		const run = shellRun;
 		try {
 			const res = await fetch('/api/system/ping');
-			// a lapsed session answers 401 (NET-197), which is not the daemon answering
-			const body = res.ok ? await res.json() : null;
+			// the reply is whatever JSON came back: the fields are only compared, never trusted
+			const body: { error?: unknown; status?: unknown } | null = res.ok || res.status === 401 ? await res.json() : null;
+			if (run !== shellRun || redirecting) return;
+			// Only the web app's own sign-in refusal (hooks.server.ts) means the session ran out; the
+			// daemon's 401 is {"error":"Unauthorized"} and stays "offline", as does a login page's 200
+			if (res.status === 401 && body?.error === SIGN_IN_FIRST) {
+				void sendToSignIn();
+				return;
+			}
 			daemonOffline = body?.status !== 'ok';
 		} catch {
-			daemonOffline = true;
+			if (run === shellRun && !redirecting) daemonOffline = true;
 		}
 	}
 
@@ -123,11 +163,14 @@
 		pollShell();
 		loadAlertSnapshot(ALERT_BADGE_HOURS);
 		const timer = setInterval(() => {
-			if (document.hidden) return; // paused while the tab is in the background
+			if (document.hidden || redirecting) return; // paused while the tab is in the background
 			pollShell();
 			refreshAlertSnapshots();
 		}, SHELL_POLL_MS);
-		return () => clearInterval(timer);
+		return () => {
+			shellRun++;
+			clearInterval(timer);
+		};
 	});
 
 	// OLD CODE: let capture = $derived(captureChip(captureMode, captureHealth));
