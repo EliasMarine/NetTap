@@ -276,7 +276,8 @@ describe('DNS page — DNS by device', () => {
 describe('DNS page — the range set', () => {
 	afterEach(() => vi.unstubAllGlobals());
 
-	it('offers 1h 6h 24h 7d 30d, and asks for the timeline in 6-hour buckets at 30d', async () => {
+	// OLD CODE: it('offers 1h 6h 24h 7d 30d, and asks for the timeline in 6-hour buckets at 30d', async () => { (NET-249: the owner's table, 3 h at 30d)
+	it('offers 1h 6h 24h 7d 30d, and asks for the timeline in 3-hour buckets at 30d', async () => {
 		stubDaemon(null);
 		render(DnsPage);
 		const group = screen.getByRole('group', { name: 'Time range' });
@@ -285,9 +286,11 @@ describe('DNS page — the range set', () => {
 		await vi.waitFor(() => {
 			const timeline = vi.mocked(fetch).mock.calls.map((c) => String(c[0])).filter((u) => u.startsWith('/api/dns/timeline')).at(-1)!;
 			const q = new URL(timeline, 'http://x').searchParams;
-			expect(q.get('interval')).toBe('6h');
+			// OLD CODE: expect(q.get('interval')).toBe('6h'); (NET-249)
+			expect(q.get('interval')).toBe('3h');
 			expect((Date.parse(q.get('to')!) - Date.parse(q.get('from')!)) / 86_400_000).toBeCloseTo(30);
 		});
-		expect(screen.getByText(/Queries per 6 hours · last 30 days/)).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText(/Queries per 6 hours · last 30 days/)).toBeInTheDocument(); (NET-249)
+		expect(screen.getByText(/Queries per 3 hours · last 30 days/)).toBeInTheDocument();
 	});
 });

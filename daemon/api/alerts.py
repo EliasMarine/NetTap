@@ -19,7 +19,7 @@ from opensearchpy import OpenSearchException
 
 from api.error_replies import incomplete, public_json
 from api.offload import in_thread
-from api.time_range import parse_time_range
+from api.time_range import parse_time_range, slot_interval
 from services.alert_enrichment import AlertEnrichment
 from services.alert_findings import (
     ACTIVITY_RATINGS,
@@ -1006,7 +1006,8 @@ async def handle_alert_acknowledge(request: web.Request) -> web.Response:
 # ---------------------------------------------------------------------------
 
 # Allowed intervals for the timeline endpoint (prevents injection).
-_ALLOWED_INTERVALS = {"1m", "5m", "10m", "15m", "30m", "1h", "6h", "12h", "1d"}
+# OLD CODE: _ALLOWED_INTERVALS = {"1m", "5m", "10m", "15m", "30m", "1h", "6h", "12h", "1d"} (NET-249: the bucket table's 3h)
+_ALLOWED_INTERVALS = {"1m", "5m", "10m", "15m", "30m", "1h", "3h", "6h", "12h", "1d"}
 
 # Severity number → label mapping (shared by timeline and top-signatures).
 _SEVERITY_MAP = {1: "high", 2: "medium", 3: "low"}
@@ -1020,9 +1021,12 @@ def handle_alerts_timeline(request: web.Request) -> web.Response:
     Uses a date_histogram aggregation with a severity sub-aggregation.
     """
     from_ts, to_ts = _parse_time_range(request)
-    interval = request.query.get("interval", "1h")
-    if interval not in _ALLOWED_INTERVALS:
-        interval = "1h"
+    # OLD CODE START — NET-249: an unknown interval became 1h silently, so a pick's window was wrong
+    # interval = request.query.get("interval", "1h")
+    # if interval not in _ALLOWED_INTERVALS:
+    #     interval = "1h"
+    # OLD CODE END
+    interval = slot_interval(request, from_ts, to_ts, _ALLOWED_INTERVALS, "1h")
     client = _get_client(request)
     # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
     # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
@@ -2073,9 +2077,14 @@ def handle_alert_category_timeline(request: web.Request) -> web.Response:
     """
     category = request.match_info.get("category", "")
     from_ts, to_ts = _parse_time_range(request)
-    interval = request.query.get("interval", "")
-    if interval not in _ALLOWED_INTERVALS:
-        interval = _sparkline_interval(from_ts, to_ts)
+    # OLD CODE START — NET-249: an unknown interval became the sparkline's silently
+    # interval = request.query.get("interval", "")
+    # if interval not in _ALLOWED_INTERVALS:
+    #     interval = _sparkline_interval(from_ts, to_ts)
+    # OLD CODE END
+    interval = slot_interval(
+        request, from_ts, to_ts, _ALLOWED_INTERVALS, _sparkline_interval(from_ts, to_ts)
+    )
     client = _get_client(request)
     # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
     # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))

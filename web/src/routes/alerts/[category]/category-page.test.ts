@@ -294,8 +294,12 @@ describe('Alert category page — the window in its URL', () => {
 			const [u] = asked(path);
 			expect([u.searchParams.get('from'), u.searchParams.get('to')], path).toEqual([from, to]);
 		}
-		// 12 hours: the 24h range's hourly slots
-		expect(asked('/api/alerts/categories/scan/timeline')[0].searchParams.get('interval')).toBe('1h');
+		// OLD CODE START — NET-249: the owner's table
+		// // 12 hours: the 24h range's hourly slots
+		// expect(asked('/api/alerts/categories/scan/timeline')[0].searchParams.get('interval')).toBe('1h');
+		// OLD CODE END
+		// 12 hours: the 24h range's 5-minute slots (bucketFor)
+		expect(asked('/api/alerts/categories/scan/timeline')[0].searchParams.get('interval')).toBe('5m');
 		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
 		const bar = new URL((await screen.findByRole('link', { name: /ET SCAN Nmap/ })).getAttribute('href')!, 'http://localhost');
 		expect([bar.searchParams.get('from'), bar.searchParams.get('to'), bar.searchParams.get('range')]).toEqual([from, to, '7d']);

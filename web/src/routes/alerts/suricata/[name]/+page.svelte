@@ -11,7 +11,26 @@
 	import { getSuricataCategory, type SuricataAddressRow, type SuricataCategoryFigures, type SuricataRuleRow, type SuricataTopList } from '$lib/api/drilldown';
 	import { outcome, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	// OLD CODE: import { chartTime, customRange, fmt, formatWhen, rangeWindow, suricataAlertsHref, suricataCategoryHref, type SuricataNarrow } from '$lib/utils/drilldown'; (section D)
-	import { chartTime, customRange, fmt, formatWhen, rangeWindow, startRange, suricataAlertsHref, suricataCategoryHref, withCount, type SuricataNarrow } from '$lib/utils/drilldown';
+	// OLD CODE: import { chartTime, customRange, fmt, formatWhen, rangeWindow, startRange, suricataAlertsHref, suricataCategoryHref, withCount, type SuricataNarrow } from '$lib/utils/drilldown'; (NET-249: picks)
+	import {
+		bucketFor,
+		chartTime,
+		customRange,
+		DRILL_RANGES,
+		fmt,
+		formatWhen,
+		pickedTotal,
+		pickWindow,
+		rangeWindow,
+		startRange,
+		suricataAlertsHref,
+		suricataCategoryHref,
+		withCount,
+		type SuricataNarrow,
+		type TimeChart,
+	} from '$lib/utils/drilldown';
+	import { toTimeChart } from '$lib/utils/chart-pick';
+	import { bucketWords } from '$lib/utils/narrow-page';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import IPAddress from '$components/IPAddress.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -75,7 +94,8 @@
 			// PR #190 review: else Back to the last good view skipped this reset and kept the failed view's error
 			loadedView = '';
 		}
-		const results = await Promise.allSettled([getSuricataCategory(target, win.from, win.to)]);
+		// OLD CODE: const results = await Promise.allSettled([getSuricataCategory(target, win.from, win.to)]); (NET-249: the owner's bucket for the window)
+		const results = await Promise.allSettled([getSuricataCategory(target, win.from, win.to, bucketFor(Date.parse(win.from), Date.parse(win.to)).bucket)]);
 		if (!guard.current(g)) return 'skipped';
 		const [res] = results;
 		if (res.status === 'fulfilled') {
@@ -104,6 +124,17 @@
 	// --- Figures ---
 
 	const timeline = $derived(data?.timeline ?? []);
+	/** The timeline as a pickable chart (NET-249): null when the reply's bucket isn't one a pick can open */
+	const chart = $derived(data ? toTimeChart(data, timeline.map((p) => p.t), timeline.map((p) => p.n)) : null);
+	/** The slot in words, as the reply says it counted it; an older daemon's own bucket otherwise */
+	// OLD CODE: const slot = $derived(DRILL_RANGES.find((r) => r.bucket === data?.interval)?.bucketWords ?? slotWords(shown.hours)); (NET-249: narrow-page's bucketWords, the one helper)
+	const slot = $derived(bucketWords(data?.interval, slotWords(shown.hours)));
+
+	/** A pick opens the Alerts list for this category over the picked slots, carrying their figure (NET-249). */
+	function pickSlots(c: TimeChart, i: number, j: number) {
+		if (!loaded) return;
+		void goto(withCount(suricataAlertsHref(loaded.data.name, { ...pickWindow(c, i, j), range: loaded.base }), pickedTotal(c, i, j)));
+	}
 	const busiest = $derived(timeline.reduce((best, p, i) => (p.n > (timeline[best]?.n ?? -1) ? i : best), -1));
 	const timeOf = (t: number | string): string => chartTime(t, shown.hours);
 	const chartLabel = $derived(busiest >= 0 ? `Busiest at ${timeOf(timeline[busiest].t)}, with ${fmt(timeline[busiest].n)} alerts` : 'No alerts in this window');
@@ -221,7 +252,8 @@
 </div>
 
 <div class="grid">
-	<Card class="c-8" hero col title="Alerts over time" sub="Alerts per {slotWords(shown.hours)} · {words}">
+	<!-- OLD CODE: sub="Alerts per {slotWords(shown.hours)} · {words}" (NET-249: the bucket the reply says it used) -->
+	<Card class="c-8" hero col title="Alerts over time" sub="Alerts per {slot} · {words}">
 		{#if !data}
 			{@render summaryState('alerts over time')}
 		{:else if data.total === 0}
@@ -234,7 +266,9 @@
 				formatTip={(i) => `${timeOf(timeline[i].t)} · ${fmt(timeline[i].n)} ${alertWord(timeline[i].n)}`}
 				highlightIndex={busiest}
 				ariaLabel={chartLabel}
+				onpick={chart ? (i, j) => pickSlots(chart!, i, j) : undefined}
 			/>
+			{#if chart}<p class="card-sub pick-hint">Click a point or drag across the chart to see that moment.</p>{/if}
 		{/if}
 	</Card>
 
@@ -289,4 +323,5 @@
 	.sev-tile:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 	.small { margin: 0 0 var(--sp-3); font-size: var(--text-sm); }
 	.notice { margin-bottom: var(--sp-3); }
+	.pick-hint { margin-top: var(--sp-2); }
 </style>

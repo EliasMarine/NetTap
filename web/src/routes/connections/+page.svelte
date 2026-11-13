@@ -22,7 +22,13 @@
 	// OLD CODE END
 	import { getLiveDashboard } from '$api/live';
 	import { loadFailed } from '$lib/utils/load-failed';
-	import { DRILL_RANGES, startRange, type DrillRangeValue } from '$lib/utils/drilldown';
+	// OLD CODE: import { DRILL_RANGES, startRange, type DrillRangeValue } from '$lib/utils/drilldown'; (NET-249: the timeline picks)
+	import { chartTime, connLogsHref, DRILL_RANGES, fmt, pickedTotal, pickWindow, startRange, withCount, type DrillRangeValue, type TimeChart } from '$lib/utils/drilldown';
+	// OLD CODE: import { toTimeChart } from '$lib/utils/chart-pick'; (NET-249 review: and the reply's bucket in words)
+	// OLD CODE: import { chartBucketWords, toTimeChart } from '$lib/utils/chart-pick'; (NET-249: one helper for both halves, narrow-page's bucketWords)
+	import { toTimeChart } from '$lib/utils/chart-pick';
+	import { bucketWords } from '$lib/utils/narrow-page';
+	import AreaChart, { type AreaSeries } from '$lib/components/ui/charts/AreaChart.svelte';
 	import { formatBytes as sharedFormatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import IPAddress from '$components/IPAddress.svelte';
 	// OLD CODE START — replaced by the system's BarList (ui/BarList)
@@ -48,7 +54,7 @@
 	import NetworkFlow from '$components/NetworkFlow.svelte';
 	import { getRegistryDevices } from '$api/devices-registry';
 	import { namesByIp } from '$lib/utils/device-names';
-	import SessionTimeline from '$components/SessionTimeline.svelte';
+	// OLD CODE: import SessionTimeline from '$components/SessionTimeline.svelte'; (NET-249: AreaChart, which picks)
 	import DetailDrawer from '$components/DetailDrawer.svelte';
 	import ConnectionDrawerContent from '$components/drawer/content/ConnectionDrawerContent.svelte';
 	import { buildTSharkFilter, getField, asString } from '$lib/utils/tshark-filter';
@@ -95,9 +101,11 @@
 	// OLD CODE: '15m': '1m', '1h': '5m', '4h': '15m', '24h': '1h', '7d': '6h', (NET-192 PR 4)
 	// OLD CODE: '1h': '5m', '6h': '15m', '24h': '1h', '7d': '6h', (NET-192 PR 3: 30d is back)
 	// 30d: 30 day buckets, near 7d's 28
-	const INTERVAL_MAP: Record<string, string> = {
-		'1h': '5m', '6h': '15m', '24h': '1h', '7d': '6h', '30d': '1d',
-	};
+	// OLD CODE START — NET-249 slice 2: the timeline's bucket comes from the owner's table (DRILL_RANGES' bucket)
+	// const INTERVAL_MAP: Record<string, string> = {
+	// 	'1h': '5m', '6h': '15m', '24h': '1h', '7d': '6h', '30d': '1d',
+	// };
+	// OLD CODE END
 
 	const STATE_FILTERS: { value: StateFilter; label: string }[] = [
 		{ value: 'all', label: 'All' },
@@ -152,6 +160,10 @@
 
 	// Timeline
 	let timeline = $state<ConnectionTimelineBucket[]>([]);
+	/** The timeline reply on screen as a pickable chart (NET-249); null when its echoed bucket or window can't be picked */
+	let timelineChart = $state<TimeChart | null>(null);
+	/** The bucket the timeline reply on screen says it used; its subtitle names it */
+	let timelineInterval = $state<string | null | undefined>(undefined);
 
 	// #96: a failed request keeps the last good figures and says so, never zeros or "none"
 	let statsFailed = $state(false);
@@ -338,6 +350,33 @@
 	);
 
 	let range = $derived(selectedTimeRange.text);
+	/** The range's bucket from the owner's table (NET-249): 1h by the minute … 30d by 3 hours */
+	const bucket = $derived(DRILL_RANGES.find((r) => r.value === selectedTimeRange.value) ?? DRILL_RANGES.find((r) => r.value === '24h')!);
+
+	// NET-249: the session timeline is an AreaChart (it picks), one line per main transport and the rest as Other
+	const otherSessions = (b: ConnectionTimelineBucket) => b.total - (b.protocols.tcp ?? 0) - (b.protocols.udp ?? 0);
+	const timelineSeries = $derived<AreaSeries[]>([
+		{ key: 'tcp', label: 'TCP', colour: 1, points: timeline.map((b) => ({ t: b.timestamp, v: b.protocols.tcp ?? 0 })) },
+		{ key: 'udp', label: 'UDP', colour: 2, points: timeline.map((b) => ({ t: b.timestamp, v: b.protocols.udp ?? 0 })) },
+		{ key: 'other', label: 'Other', colour: 3, points: timeline.map((b) => ({ t: b.timestamp, v: otherSessions(b) })) },
+	]);
+	const timelinePeak = $derived(timeline.reduce((best, b, i) => (b.total > (timeline[best]?.total ?? -1) ? i : best), -1));
+	const timelineTime = (t: number | string) => chartTime(t, selectedTimeRange.ms / 3_600_000);
+	/** "14:05 · 120 sessions · TCP 100 · UDP 15 · ICMP 5": every transport in the slot, biggest first */
+	function timelineTip(i: number): string {
+		const b = timeline[i];
+		if (!b) return '';
+		const parts = Object.entries(b.protocols)
+			.filter(([, n]) => n > 0)
+			.sort((x, y) => y[1] - x[1])
+			.map(([name, n]) => `${name.toUpperCase()} ${fmt(n)}`);
+		return [`${timelineTime(b.timestamp)} · ${fmt(b.total)} ${b.total === 1 ? 'session' : 'sessions'}`, ...parts].join(' · ');
+	}
+
+	/** A pick opens Log Explorer's conn records over the picked slots (NET-249), carrying their sessions: the timeline leaves nothing out. */
+	function pickTimeline(chart: TimeChart, i: number, j: number) {
+		void goto(withCount(connLogsHref(pickWindow(chart, i, j), selectedTimeRange.value), pickedTotal(chart, i, j)));
+	}
 
 	let summaryStats = $derived<Stat[]>([
 		{ key: 'sessions', label: 'Sessions', value: stats ? formatNumber(stats.total_sessions) : '—' },
@@ -643,7 +682,8 @@
 	async function loadAll(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
 		const span = getTimeRange();
-		const interval = INTERVAL_MAP[selectedTimeRange.value] || '15m';
+		// OLD CODE: const interval = INTERVAL_MAP[selectedTimeRange.value] || '15m'; (NET-249: the owner's table)
+		const interval = bucket.bucket;
 		loading = true;
 		const table = loadTable(currentPage, span);
 		const namesLoad = getRegistryDevices({ limit: 200 }).then(
@@ -663,7 +703,12 @@
 			if (names) deviceNames = names;
 			if (statsRes.status === 'fulfilled') stats = statsRes.value;
 			if (sankeyRes.status === 'fulfilled') sankey = sankeyRes.value;
-			if (timelineRes.status === 'fulfilled') timeline = timelineRes.value.buckets;
+			// OLD CODE: if (timelineRes.status === 'fulfilled') timeline = timelineRes.value.buckets; (NET-249: a pick needs the reply's window and bucket too)
+			if (timelineRes.status === 'fulfilled') {
+				timeline = timelineRes.value.buckets;
+				timelineChart = toTimeChart(timelineRes.value, timeline.map((b) => b.timestamp), timeline.map((b) => b.total));
+				timelineInterval = timelineRes.value.interval;
+			}
 			statsFailed = statsRes.status === 'rejected';
 			sankeyFailed = sankeyRes.status === 'rejected';
 			timelineFailed = timelineRes.status === 'rejected';
@@ -719,6 +764,8 @@
 		stats = null;
 		sankey = null;
 		timeline = [];
+		timelineChart = null;
+		timelineInterval = undefined;
 		// A new time range is a new result set: start from page 1. The new load's guard
 		// generation drops whatever the older range's requests return.
 		currentPage = 1;
@@ -981,9 +1028,32 @@
 		{/if}
 	</article>
 	OLD CODE END -->
+	<!-- OLD CODE START — NET-249: hand-drawn stacked bars with hover only; AreaChart picks by click, drag and keyboard
 	<Card class="c-8" title="Session volume" sub="Sessions over time, by protocol · {range}">
 		{#if timeline.length > 0}
 			<SessionTimeline buckets={timeline} />
+	OLD CODE END -->
+	<!-- OLD CODE: sub="Sessions per {bucket.bucketWords}, by protocol · {range}" (NET-249 review: the bucket the reply used) -->
+	<!-- OLD CODE: sub="Sessions per {chartBucketWords(timelineChart, bucket.bucketWords)}, by protocol · {range}" (NET-249: narrow-page's bucketWords, the one helper) -->
+	<Card class="c-8" col title="Session volume" sub="Sessions per {bucketWords(timelineInterval, bucket.bucketWords)}, by protocol · {range}">
+		{#snippet actions()}
+			<ul class="legend">
+				<li><span class="sw line c-d1"></span>TCP</li>
+				<li><span class="sw line c-d2"></span>UDP</li>
+				<li><span class="sw line c-d3"></span>Other</li>
+			</ul>
+		{/snippet}
+		{#if timeline.length > 0}
+			<AreaChart
+				series={timelineSeries}
+				formatX={timelineTime}
+				formatY={(v) => fmt(v)}
+				formatTip={timelineTip}
+				highlightIndex={timelinePeak >= 0 ? timelinePeak : undefined}
+				ariaLabel={timelinePeak >= 0 ? `Session volume, busiest at ${timelineTime(timeline[timelinePeak].timestamp)} with ${fmt(timeline[timelinePeak].total)} sessions` : 'Session volume'}
+				onpick={timelineChart ? (i, j) => pickTimeline(timelineChart!, i, j) : undefined}
+			/>
+			{#if timelineChart}<p class="card-sub pick-hint">Click a point or drag across the chart to see that moment.</p>{/if}
 			{#if timelineFailed}
 				<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('the session timeline', true)}</span></p>
 			{/if}
@@ -1180,6 +1250,7 @@
 	/* Layout glue the system lacks */
 	/* OLD CODE: .load-note { margin-top: var(--sp-3); font-size: var(--text-xs); color: var(--sev-medium); } (NET-192 PR 4: a stale note is the shared .notice.is-warn) */
 	.load-note { margin-top: var(--sp-3); }
+	.pick-hint { margin-top: var(--sp-2); }
 	.dest { display: inline-flex; flex-direction: column; line-height: 1.3; }
 	.org { color: var(--text-3); font-size: var(--text-xs); }
 	.result { display: inline-flex; align-items: center; gap: var(--sp-2); }

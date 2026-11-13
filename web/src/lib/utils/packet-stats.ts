@@ -34,8 +34,13 @@ export interface PacketStats {
 	direction: { out: number; in: number; other: number; outBytes: number } | null;
 	/** By source address (ip.src / ipv6.src / eth.src fallback), most bytes first */
 	senders: Sender[];
-	/** TIMELINE_BUCKETS equal buckets across [first, last], for the chart; one when they share a time */
-	timeline: { t: string; packets: number; bytes: number }[];
+	// OLD CODE: timeline: { t: string; packets: number; bytes: number }[]; (NET-249: and which rows each holds)
+	/**
+	 * TIMELINE_BUCKETS equal buckets across [first, last], for the chart; one when they share a time.
+	 * `rows`: the indices (into the rows given) of the packets a bucket holds, so a pick on the chart
+	 * shows exactly them (NET-249).
+	 */
+	timeline: { t: string; packets: number; bytes: number; rows: number[] }[];
 }
 
 const TIMELINE_BUCKETS = 60;
@@ -121,11 +126,13 @@ function timeline(rows: readonly PacketRow[], times: bigint[], first: bigint, la
 	const n = span === 0n ? 1 : TIMELINE_BUCKETS;
 	// Rounded up, so n buckets always reach the last packet
 	const width = span === 0n ? 1n : (span + BigInt(n) - 1n) / BigInt(n);
-	const buckets = Array.from({ length: n }, (_, i) => ({ t: nsEpoch(first + BigInt(i) * width), packets: 0, bytes: 0 }));
+	// OLD CODE: const buckets = Array.from({ length: n }, (_, i) => ({ t: …, packets: 0, bytes: 0 })); (NET-249: and their rows)
+	const buckets = Array.from({ length: n }, (_, i) => ({ t: nsEpoch(first + BigInt(i) * width), packets: 0, bytes: 0, rows: [] as number[] }));
 	rows.forEach((row, i) => {
 		const b = buckets[Math.min(n - 1, Number((times[i] - first) / width))];
 		b.packets += 1;
 		b.bytes += row.len;
+		b.rows.push(i);
 	});
 	return buckets;
 }

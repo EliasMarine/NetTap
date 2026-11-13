@@ -456,9 +456,10 @@ describe('Log Explorer — exact windows', () => {
 		render(Page);
 		const more = await screen.findByRole('button', { name: 'Load more' });
 		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
-		// 90 minutes: the smallest standard range that covers it is 4h, bucketed by 15 minutes
-		expect(screen.getByText(/^Log events per 15 minutes · window /)).toBeInTheDocument();
-		expect(requestsTo('/api/logs/timeline')[0].searchParams.get('interval')).toBe('15m');
+		// OLD CODE: … is 4h, bucketed by 15 minutes; /^Log events per 15 minutes · window / and '15m' (NET-249: the owner's table)
+		// 90 minutes: the smallest standard range that covers it is 6h, bucketed by 5 minutes
+		expect(screen.getByText(/^Log events per 5 minutes · window /)).toBeInTheDocument();
+		expect(requestsTo('/api/logs/timeline')[0].searchParams.get('interval')).toBe('5m');
 
 		vi.setSystemTime(Date.now() + 10 * 60_000);
 		await fireEvent.click(more);
@@ -636,14 +637,15 @@ describe("Log Explorer — Home's Connections link and 6h (NET-160 slice 2b-1)",
 		expect(last().get('log_type')).toBeNull();
 	});
 
-	it('?range=6h opens the last 6 hours, with a 15-minute timeline', async () => {
+	// OLD CODE: it('?range=6h opens the last 6 hours, with a 15-minute timeline', … 'per 15 minutes' and '15m' (NET-249: the owner's table)
+	it('?range=6h opens the last 6 hours, with a 5-minute timeline', async () => {
 		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [], total: 0 } });
 		goTo('/logs?range=6h');
 		render(Page);
 		await vi.waitFor(() => expect(searches()).toHaveLength(1));
 		expect(screen.getByRole('button', { name: '6h' })).toHaveAttribute('aria-pressed', 'true');
-		expect(screen.getByText(/^Log events per 15 minutes · last 6 hours/)).toBeInTheDocument();
-		expect(requestsTo('/api/logs/timeline')[0].searchParams.get('interval')).toBe('15m');
+		expect(screen.getByText(/^Log events per 5 minutes · last 6 hours/)).toBeInTheDocument();
+		expect(requestsTo('/api/logs/timeline')[0].searchParams.get('interval')).toBe('5m');
 		const [from, to] = bounds(searches()[0]);
 		expect((Date.parse(to!) - Date.parse(from!)) / 3_600_000).toBe(6);
 	});
@@ -742,5 +744,120 @@ describe('Log Explorer — top address bars open their figure', () => {
 		goTo('/logs?ip=10.0.0.5');
 		await vi.waitFor(() => expect(last().get('query')).toBe('(source.ip:"10.0.0.5" OR destination.ip:"10.0.0.5")'));
 		expect(screen.getByRole('button', { name: 'Remove filter IP: 10.0.0.5' })).toBeInTheDocument();
+	});
+});
+
+// NET-249 slice 2: the timeline takes the owner's buckets, and a pick hands off the picked window alone
+describe('Log Explorer — the timeline drills into its events (NET-249)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.mocked(goto).mockClear();
+	});
+	const searches = () => requestsTo('/api/logs/search');
+	/** Two 5-minute slots; the reply's window starts 2 minutes into the first, so that slot is clipped. */
+	const TIMELINE = (url: string) => ({
+		from: '2026-11-03T09:02:00.000Z',
+		to: new URL(url, 'http://x').searchParams.get('to'),
+		interval: '5m',
+		buckets: [
+			{ timestamp: '2026-11-03T09:00:00.000Z', total: 10, conn: 10 },
+			{ timestamp: '2026-11-03T09:05:00.000Z', total: 4, dns: 4 },
+		],
+	});
+
+	it.each([
+		['1h', '1m', 'minute'],
+		['6h', '5m', '5 minutes'],
+		['24h', '5m', '5 minutes'],
+		['7d', '1h', 'hour'],
+		['30d', '3h', '3 hours'],
+	])('?range=%s asks for %s buckets', async (range, bucket, words) => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [], total: 0 } });
+		goTo(`/logs?range=${range}`);
+		render(Page);
+		await vi.waitFor(() => expect(requestsTo('/api/logs/timeline')).toHaveLength(1));
+		expect(requestsTo('/api/logs/timeline')[0].searchParams.get('interval')).toBe(bucket);
+		expect(screen.getByText(new RegExp(`^Log events per ${words} · `))).toBeInTheDocument();
+	});
+
+	it('names the bucket the reply used once it is in, not the one asked for', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/timeline': TIMELINE, '/api/logs/search': { hits: [], total: 0 } });
+		goTo('/logs?range=7d');
+		render(Page);
+		await screen.findByRole('group', { name: /^Busiest at / });
+		expect(requestsTo('/api/logs/timeline')[0].searchParams.get('interval')).toBe('1h');
+		expect(screen.getByText(/^Log events per 5 minutes · last 7 days$/)).toBeInTheDocument();
+	});
+
+	it('a pick from a filtered search opens the picked window with the type, query and excluded sources cleared', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/timeline': TIMELINE, '/api/logs/search': { hits: [], total: 0 } });
+		goTo('/logs?type=zeek.dns&query=example.org&exclude_src=192.168.1.199&range=24h');
+		render(Page);
+		await vi.waitFor(() => expect(searches()).toHaveLength(1));
+		expect(searches()[0].searchParams.get('log_type')).toBe('zeek.dns');
+		// the timeline counts every type and ignores the query and the excluded sources
+		expect([...requestsTo('/api/logs/timeline')[0].searchParams.keys()].sort()).toEqual(['from', 'interval', 'to']);
+		const chart = await screen.findByRole('group', { name: /^Busiest at / });
+		expect(screen.getByText('Click a point or drag across the chart to see that moment.')).toBeInTheDocument();
+		await fireEvent.keyDown(chart, { key: 'Home' });
+		await fireEvent.keyDown(chart, { key: 'Enter' });
+		const href = String(vi.mocked(goto).mock.calls.at(-1)![0]);
+		expect(href.startsWith('/logs?')).toBe(true);
+		expect(Object.fromEntries(new URL(href, 'http://x').searchParams)).toEqual({ from: '2026-11-03T09:02:00.000Z', to: '2026-11-03T09:04:59.999Z', range: '24h', count: '10' });
+		// SvelteKit lands on it: the table's search is the window alone
+		goTo(href);
+		await vi.waitFor(() => expect(searches()).toHaveLength(2));
+		const asked = searches()[1].searchParams;
+		expect([asked.get('from'), asked.get('to')]).toEqual(['2026-11-03T09:02:00.000Z', '2026-11-03T09:04:59.999Z']);
+		for (const key of ['log_type', 'query', 'exclude_src']) expect(asked.get(key), key).toBeNull();
+	});
+
+	it('a pick of the window already open still clears what was filtered since, as its URL runs no hand-off', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/timeline': TIMELINE, '/api/logs/search': { hits: [], total: 0 } });
+		// what a pick of the first slot opens on this window: the same window, its range and its figure
+		const href = '/logs?from=2026-11-03T09%3A02%3A00.000Z&to=2026-11-03T09%3A04%3A59.999Z&range=1h&count=10';
+		goTo(href);
+		render(Page);
+		await vi.waitFor(() => expect(searches()).toHaveLength(1));
+		const pick = async () => {
+			const chart = await screen.findByRole('group', { name: /^Busiest at / });
+			await fireEvent.keyDown(chart, { key: 'Home' });
+			await fireEvent.keyDown(chart, { key: 'Enter' });
+			return String(vi.mocked(goto).mock.calls.at(-1)![0]);
+		};
+		// filtered on the page itself: a type and a text search
+		await fireEvent.click(within(screen.getByRole('group', { name: 'Log type' })).getByRole('button', { name: 'DNS' }));
+		const box = screen.getByLabelText('Search logs');
+		await fireEvent.input(box, { target: { value: 'example.org' } });
+		await fireEvent.keyDown(box, { key: 'Enter' });
+		await vi.waitFor(() => expect(searches().at(-1)!.searchParams.get('query')).toBe('example.org'));
+		const before = searches().length;
+		expect(await pick()).toBe(href);
+		await vi.waitFor(() => expect(searches()).toHaveLength(before + 1));
+		const asked = searches().at(-1)!.searchParams;
+		expect([asked.get('from'), asked.get('to')]).toEqual(['2026-11-03T09:02:00.000Z', '2026-11-03T09:04:59.999Z']);
+		for (const key of ['log_type', 'query']) expect(asked.get(key), key).toBeNull();
+		expect(screen.getByLabelText('Search logs')).toHaveValue('');
+		expect(within(screen.getByRole('group', { name: 'Log type' })).getByRole('button', { name: 'All logs' })).toHaveAttribute('aria-pressed', 'true');
+	});
+
+	it('a keyboard range adds the picked slots', async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/timeline': TIMELINE, '/api/logs/search': { hits: [], total: 0 } });
+		goTo('/logs?range=24h');
+		render(Page);
+		const chart = await screen.findByRole('group', { name: /^Busiest at / });
+		await fireEvent.keyDown(chart, { key: 'Home' });
+		await fireEvent.keyDown(chart, { key: 'End', shiftKey: true });
+		await fireEvent.keyDown(chart, { key: 'Enter' });
+		expect(Object.fromEntries(new URL(String(vi.mocked(goto).mock.calls.at(-1)![0]), 'http://x').searchParams)).toEqual({
+			from: '2026-11-03T09:02:00.000Z', to: '2026-11-03T09:09:59.999Z', range: '24h', count: '14',
+		});
+	});
+
+	it("an older daemon's reply, with no window or bucket, stays a picture", async () => {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [], total: 0 } });
+		render(Page);
+		expect(await screen.findByRole('img', { name: /^Busiest at / })).toBeInTheDocument();
+		expect(screen.queryByText(/Click a point or drag/)).not.toBeInTheDocument();
 	});
 });

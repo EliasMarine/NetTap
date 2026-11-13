@@ -144,6 +144,10 @@ export interface Destination {
 export interface ActivityTimeline {
 	mac: string;
 	interval: string;
+	/** NET-249: the window the slots were counted over, and the sources it left out (the exact list applied); absent from an older daemon */
+	from?: string;
+	to?: string;
+	excluded_ips?: string[];
 	buckets: TimelineBucket[];
 	baseline_hours: number[];
 	baseline_avg_hourly_bytes: number;
@@ -362,11 +366,12 @@ export async function getCommunicationMap(
 	return res.json();
 }
 
+// OLD CODE: opts: { from?: string; to?: string } = {} … buildQuery({ from: opts.from, to: opts.to }); (NET-249: and the slots' bucket)
 export async function getActivityTimeline(
 	mac: string,
-	opts: { from?: string; to?: string } = {}
+	opts: { from?: string; to?: string; interval?: string } = {}
 ): Promise<ActivityTimeline> {
-	const query = buildQuery({ from: opts.from, to: opts.to });
+	const query = buildQuery({ from: opts.from, to: opts.to, interval: opts.interval });
 	const res = await fetch(`/api/iot/devices/${encodeURIComponent(mac)}/activity-timeline${query}`);
 
 	// OLD CODE START — returned placeholder data, so a daemon 500 rendered as real results (e.g. grade F)

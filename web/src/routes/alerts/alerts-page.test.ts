@@ -269,7 +269,8 @@ describe('Alerts — refresh contract', () => {
 		vi.mocked(getAlertTimeline).mockImplementation(async (opts = {}) => ({
 			...range,
 			interval: opts.interval ?? '',
-			buckets: [{ timestamp: '2026-11-03T10:00:00Z', high: opts.interval === '5m' ? 1 : 9, medium: 0, low: 0 }],
+			// OLD CODE: high: opts.interval === '5m' ? 1 : 9 (NET-249: 1h asks for 1-minute buckets now)
+			buckets: [{ timestamp: '2026-11-03T10:00:00Z', high: opts.interval === '1m' ? 1 : 9, medium: 0, low: 0 }],
 		}));
 		render(Page);
 		await flush();
@@ -335,9 +336,10 @@ describe('Alerts — window from a link (NET-160)', () => {
 		return (Date.parse(opts.to!) - Date.parse(opts.from!)) / 3_600_000;
 	};
 
+	// OLD CODE: ['7d', 168, '6h'], ['30d', 720, '1d'], (NET-249: the owner's bucket table)
 	it.each([
-		['7d', 168, '6h'],
-		['30d', 720, '1d'],
+		['7d', 168, '1h'],
+		['30d', 720, '3h'],
 	])('opens on ?range=%s, so a count from the address page matches the list', async (value, hours, interval) => {
 		nav.url = new URL(`http://localhost/alerts?ip=198.51.100.10&range=${value}`);
 		succeedAll();
@@ -1200,7 +1202,8 @@ describe('Alerts — source, destination, rule-name links and 6h (NET-160 slice 
 		expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
 	});
 
-	it('?range=6h opens the last 6 hours, with a 15-minute timeline', async () => {
+	// OLD CODE: it('?range=6h opens the last 6 hours, with a 15-minute timeline', … (NET-249: 5-minute buckets)
+	it('?range=6h opens the last 6 hours, with a 5-minute timeline', async () => {
 		at('?range=6h');
 		succeedAll();
 		render(Page);
@@ -1209,7 +1212,8 @@ describe('Alerts — source, destination, rule-name links and 6h (NET-160 slice 
 		expect(screen.getByText(/What Suricata flagged on your network · last 6 hours/)).toBeInTheDocument();
 		const call = listCalls()[0];
 		expect((Date.parse(call.to!) - Date.parse(call.from!)) / 3_600_000).toBe(6);
-		expect(getAlertTimeline).toHaveBeenCalledWith(expect.objectContaining({ interval: '15m' }));
+		// OLD CODE: expect(getAlertTimeline).toHaveBeenCalledWith(expect.objectContaining({ interval: '15m' })); (NET-249)
+		expect(getAlertTimeline).toHaveBeenCalledWith(expect.objectContaining({ interval: '5m' }));
 	});
 });
 
@@ -1706,5 +1710,105 @@ describe('Alerts — category trend', () => {
 		const card = screen.getByRole('heading', { name: 'Alert categories' }).closest('.card') as HTMLElement;
 		expect(within(card).getByText(/· not enough data$/)).toBeInTheDocument();
 		expect(within(card).queryByText(/not_enough_data/)).not.toBeInTheDocument();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// NET-249 slice 2: the timeline takes the owner's buckets, and a pick lists exactly the alerts it counted
+// ---------------------------------------------------------------------------
+
+describe('Alerts — the timeline drills into its alerts (NET-249)', () => {
+	const at = (query: string) => (nav.url = new URL(`http://localhost/alerts${query}`));
+	const lastTimeline = () => vi.mocked(getAlertTimeline).mock.calls.at(-1)![0]!;
+	const opened = (n = -1) => Object.fromEntries(new URL(String(vi.mocked(goto).mock.calls.at(n)![0]), 'http://x').searchParams);
+	/** Two 5-minute slots; the reply's window starts 2 minutes into the first, so that slot is clipped. */
+	const twoSlots = () =>
+		vi.mocked(getAlertTimeline).mockImplementation(async (opts = {}) => ({
+			from: '2026-11-03T09:02:00.000Z',
+			to: opts.to!,
+			interval: '5m',
+			buckets: [
+				{ timestamp: '2026-11-03T09:00:00.000Z', high: 1, medium: 2, low: 3, info: 4 },
+				{ timestamp: '2026-11-03T09:05:00.000Z', high: 0, medium: 1, low: 0 },
+			],
+		}));
+
+	it.each([
+		['1h', '1m', 'minute'],
+		['6h', '5m', '5 minutes'],
+		['24h', '5m', '5 minutes'],
+		['7d', '1h', 'hour'],
+		['30d', '3h', '3 hours'],
+	])('?range=%s asks for %s buckets', async (value, bucket, words) => {
+		at(`?range=${value}`);
+		succeedAll();
+		// a daemon that uses the bucket asked for
+		vi.mocked(getAlertTimeline).mockImplementation(async (opts = {}) => ({ ...range, interval: opts.interval ?? '', buckets: [] }));
+		render(Page);
+		await flush();
+		expect(lastTimeline().interval).toBe(bucket);
+		expect(screen.getByText(new RegExp(`^Alerts per ${words} · `))).toBeInTheDocument();
+	});
+
+	it('names the bucket the reply used, not the one asked for', async () => {
+		at('?range=24h');
+		succeedAll(); // its timeline says it used 1h
+		render(Page);
+		await flush();
+		expect(lastTimeline().interval).toBe('5m');
+		expect(screen.getByText(/^Alerts per hour · /)).toBeInTheDocument();
+	});
+
+	it('a Custom window takes the bucket of the smallest range that covers it', async () => {
+		at('?from=2026-11-01T08:00:00.000Z&to=2026-11-01T20:00:00.000Z');
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(lastTimeline()).toMatchObject({ from: '2026-11-01T08:00:00.000Z', to: '2026-11-01T20:00:00.000Z', interval: '5m' });
+	});
+
+	it("a pick opens the list over the picked slots, every filter the timeline ignores cleared, with the figure", async () => {
+		at('?severity=high&signature=ET%20SCAN%20Nmap&ip=192.168.1.42&src=192.168.1.42&dst=203.0.113.45&suricata_category=Attempted%20Recon&activity=true&no_rule_name=true&range=24h');
+		succeedAll();
+		twoSlots();
+		render(Page);
+		await flush();
+		// the timeline's own request carries none of the list's filters
+		expect(Object.keys(lastTimeline()).sort()).toEqual(['from', 'interval', 'to']);
+		expect(screen.getByText('Click a point or drag across the chart to see that moment.')).toBeInTheDocument();
+		vi.mocked(getAlerts).mockClear();
+		const chart = screen.getByRole('group', { name: /^Busiest/ });
+		await fireEvent.keyDown(chart, { key: 'Home' });
+		await fireEvent.keyDown(chart, { key: 'Enter' });
+		await flush();
+		expect(opened()).toEqual({ from: '2026-11-03T09:02:00.000Z', to: '2026-11-03T09:04:59.999Z', range: '24h', count: '10' });
+		const asked = vi.mocked(getAlerts).mock.calls.at(-1)![0]!;
+		expect(asked).toMatchObject({ from: '2026-11-03T09:02:00.000Z', to: '2026-11-03T09:04:59.999Z', page: 1 });
+		for (const key of ['severity', 'signature', 'ip', 'src', 'dst', 'suricata_category', 'activity', 'no_rule_name'] as const) expect(asked[key], key).toBeUndefined();
+	});
+
+	it('a keyboard range opens both slots, adding their figures', async () => {
+		succeedAll();
+		twoSlots();
+		render(Page);
+		await flush();
+		const chart = screen.getByRole('group', { name: /^Busiest/ });
+		await fireEvent.keyDown(chart, { key: 'Home' });
+		await fireEvent.keyDown(chart, { key: 'End', shiftKey: true });
+		await fireEvent.keyDown(chart, { key: 'Enter' });
+		expect(opened()).toEqual({ from: '2026-11-03T09:02:00.000Z', to: '2026-11-03T09:09:59.999Z', range: '24h', count: '11' });
+	});
+
+	it('a reply whose bucket the page doesn\'t know stays a picture', async () => {
+		succeedAll();
+		vi.mocked(getAlertTimeline).mockResolvedValue({
+			from: '2026-11-03T09:00:00.000Z', to: '2026-11-03T10:00:00.000Z', interval: '15m',
+			buckets: [{ timestamp: '2026-11-03T09:00:00.000Z', high: 1, medium: 0, low: 0 }],
+		});
+		render(Page);
+		await flush();
+		expect(screen.getByRole('img', { name: /^Busiest/ })).toBeInTheDocument();
+		expect(screen.queryByRole('group', { name: /^Busiest/ })).not.toBeInTheDocument();
+		expect(screen.queryByText(/Click a point or drag/)).not.toBeInTheDocument();
 	});
 });

@@ -36,7 +36,13 @@
 	import { connectionDurationMs } from '$lib/utils/connection-duration';
 	import { smartLevel, type SeverityLevel } from '$lib/utils/severity';
 	// OLD CODE: import { alertsHrefForSignature, logsHrefForQuery, type DrillWindow } from '$lib/utils/drilldown'; (slice 2b-1: smart alerts link by their key)
-	import { chartTime as timeLabel, DRILL_RANGES, logsHrefForQuery, NO_EXACT_ALERT_LIST, rangeWindow, smartAlertHref, startRange, withCount, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
+	// OLD CODE: import { chartTime as timeLabel, DRILL_RANGES, logsHrefForQuery, NO_EXACT_ALERT_LIST, rangeWindow, smartAlertHref, startRange, withCount, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown'; (NET-249: a pick narrows the page)
+	import {
+		bucketFor, chartTime as timeLabel, customRange, DRILL_RANGES, linkedCount, logsHrefForQuery, NO_EXACT_ALERT_LIST, pickedTotal, pickWindow, rangeWindow, smartAlertHref,
+		startRange, withCount, type DrillRangeValue, type DrillWindow, type TimeChart,
+	} from '$lib/utils/drilldown';
+	import { bucketWords, DEVICE_IPV6_NOTE, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
+	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { formatTime } from '$lib/utils/time';
 	import { registerPageRefresh, outcome, createLoadGuard, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import type { DeviceConnectionSort } from '$api/devices';
@@ -230,10 +236,30 @@
 	type RangeKey = DrillRangeValue;
 	const RANGE_OPTIONS = DRILL_RANGES.map((r) => ({ value: r.value, label: r.label }));
 	const rangeOf = (key: RangeKey) => DRILL_RANGES.find((r) => r.value === key)!;
-	/** The window as a KPI note says it ("Last 7 days"); card subtitles use the list's lower-case words. */
-	const RANGE_LABEL = Object.fromEntries(DRILL_RANGES.map((r) => [r.value, r.words.charAt(0).toUpperCase() + r.words.slice(1)])) as Record<RangeKey, string>;
 	// OLD CODE: let range = $state<RangeKey>('24h'); (NET-195: Settings › Display's default, read where the range starts)
 	let range = $state<RangeKey>(startRange('24h'));
+	const params = $derived($page.url.searchParams);
+	/** A pick's exact window (?from=&to=, NET-249), shown as Custom: every card follows it */
+	const custom = $derived(customRange(params.get('from'), params.get('to')));
+	/** The bytes the pick carried, compared with the narrowed chart's own total */
+	const picked = $derived(custom ? linkedCount(params.get('bytes')) : null);
+	/** The range whose bucket the bandwidth chart asks for (the owner's table); `bucketFor`'s for Custom */
+	const drill = $derived(custom ? bucketFor(Date.parse(custom.from), Date.parse(custom.to)) : rangeOf(range));
+	const hours = $derived(custom ? custom.hours : rangeOf(range).hours);
+	const viewKey = $derived(custom ? `${custom.from}|${custom.to}` : range);
+	// OLD CODE START — NET-249: a Custom window names itself
+	// /** The window as a KPI note says it ("Last 7 days"); card subtitles use the list's lower-case words. */
+	// const RANGE_LABEL = Object.fromEntries(DRILL_RANGES.map((r) => [r.value, r.words.charAt(0).toUpperCase() + r.words.slice(1)])) as Record<RangeKey, string>;
+	// OLD CODE END
+	const capital = (words: string) => words.charAt(0).toUpperCase() + words.slice(1);
+	/** The window as a KPI note says it ("Last 7 days"); card subtitles use the list's lower-case words. A Custom window's words stand under every key. */
+	const RANGE_LABEL = $derived(Object.fromEntries(DRILL_RANGES.map((r) => [r.value, capital(custom ? custom.words : r.words)])) as Record<RangeKey, string>);
+	/** A range pill: a window ending now, so a pick's Custom window goes (NET-249) */
+	function pickRange(value: string) {
+		if (value === 'custom') return;
+		range = value as RangeKey;
+		if (custom) void goto(withoutWindow($page.url), { keepFocus: true, noScroll: true });
+	}
 	// The window of the last fetch; connection pages reuse it so paging doesn't slide in time
 	let span = $state<{ from: string; to: string }>({ from: '', to: '' });
 
@@ -286,6 +312,15 @@
 	// );
 	// OLD CODE END
 	const bandwidth = $derived(device?.bandwidth_series ?? []);
+	/** The bandwidth reply, whole, when its bucket can be picked on (NET-249); a failed refresh keeps the last one */
+	let bandwidthChart = $state<TimeChart | null>(null);
+	/** The bucket of the bandwidth series on screen, as the reply names it; the subtitle says it */
+	let bandwidthInterval = $state<string | undefined>(undefined);
+	const bytesLine = $derived(pickedLine(picked, deviceFailed ? null : bandwidthChart, 'bytes'));
+	/** A pick on the chart (NET-249): this page over the picked slots, with the bytes they drew */
+	function pick(i: number, j: number) {
+		if (bandwidthChart) void narrowTo($page.url, custom, pickWindow(bandwidthChart, i, j), range, 'bytes', pickedTotal(bandwidthChart, i, j));
+	}
 
 	// Dual-series chart data (DL/UL split)
 	let hasDualSeries = $derived(
@@ -368,8 +403,11 @@
 		void initCaptureMode();
 		const ip = deviceIp;
 		const r = range;
-		const s = rangeSpan(range);
-		const view = `${ip}|${range}`;
+		// OLD CODE: const s = rangeSpan(range); (NET-249: a pick's window is fixed)
+		const s = custom ? { from: custom.from, to: custom.to } : rangeSpan(range);
+		// OLD CODE: const view = `${ip}|${range}`; (NET-249)
+		const view = `${ip}|${viewKey}`;
+		const bucket = drill.bucket;
 		if (!ip) return 'skipped';
 		const rev = editRev;
 		loading = true;
@@ -377,6 +415,8 @@
 		// A refresh of the same view keeps its last good figures; another view must not show them
 		if (view !== loadedView) {
 			device = null;
+			bandwidthChart = null;
+			bandwidthInterval = undefined;
 			categories = [];
 			ports = [];
 			riskLoaded = false;
@@ -385,7 +425,8 @@
 		// OLD CODE: const results = await Promise.allSettled([ …, getSystemHealth()]); (review L7: the health beside them, outside the page's own results)
 		const [results, checked] = await Promise.all([
 			Promise.allSettled([
-				getDeviceDetail(ip, s),
+				// OLD CODE: getDeviceDetail(ip, s), (NET-249: the owner's bucket table)
+				getDeviceDetail(ip, { ...s, interval: bucket }),
 				getDeviceCategories(ip, s),
 				getSmartAlerts({ device_ip: ip, limit: 10, ...s }),
 				getDevicePorts(ip, s),
@@ -406,6 +447,9 @@
 			const d = deviceRes.value.device;
 			const edit = d.mac ? edits.get(d.mac.toLowerCase()) : undefined;
 			device = edit && edit.rev > rev ? withOwner(d, edit.saved) : d;
+			const { from, to, bandwidth_interval: interval } = deviceRes.value;
+			bandwidthChart = from && to ? toTimeChart({ from, to, interval }, d.bandwidth_series.map((p) => p.timestamp), d.bandwidth_series.map((p) => p.bytes)) : null;
+			bandwidthInterval = interval;
 			loadedView = view;
 		}
 		deviceFailed = deviceRes.status === 'rejected';
@@ -500,7 +544,8 @@
 
 	$effect(() => {
 		void deviceIp; // reload for another device
-		void range; // refetch when the range changes
+		// OLD CODE: void range; // refetch when the range changes (NET-249: or a pick's Custom window)
+		void viewKey; // refetch when the range or Custom window changes
 		// the loader writes and reads state; untracked so those writes can't rerun this effect
 		untrack(() => refresh.run());
 	});
@@ -568,7 +613,8 @@
 	// }
 	// OLD CODE END
 	// OLD CODE: const chartTime = (t: number | string) => timeLabel(t, RANGE_HOURS[range]); (NET-196)
-	const chartTime = (t: number | string) => timeLabel(t, rangeOf(range).hours);
+	// OLD CODE: const chartTime = (t: number | string) => timeLabel(t, rangeOf(range).hours); (NET-249: Custom)
+	const chartTime = (t: number | string) => timeLabel(t, hours);
 
 	function chartTip(i: number): string {
 		const p = bandwidth[i];
@@ -756,7 +802,8 @@ OLD CODE END -->
 {#snippet timeCell(r: ConnRow)}
 	<!-- OLD CODE: <span class="mono">{range === '24h' ? new Date(…).toLocaleTimeString([], { hour, minute, second }) : new Date(…).toLocaleString([], { month, day, hour, minute })}</span> (NET-192 PR 4: the browser's locale printed "10:37:23 PM") -->
 	<!-- OLD CODE: RANGE_HOURS[range] <= 24 (NET-196: the list's hours) -->
-	<span class="mono">{formatTime(asString(getField(r.conn, '@timestamp')), rangeOf(range).hours <= 24 ? 'clock' : 'short')}</span>
+	<!-- OLD CODE: …rangeOf(range).hours <= 24 ? 'clock' : 'short'… (NET-249: Custom) -->
+	<span class="mono">{formatTime(asString(getField(r.conn, '@timestamp')), hours <= 24 ? 'clock' : 'short')}</span>
 {/snippet}
 <!-- OLD CODE START: {#snippet connDestCell(r: ConnRow)}<span class="mono">{asString(getField(r.conn, 'destination.ip'))}:{asString(getField(r.conn, 'destination.port'))}</span>{/snippet} (slice 2a: the address wasn't a link) OLD CODE END -->
 {#snippet connDestCell(r: ConnRow)}
@@ -814,7 +861,13 @@ OLD CODE END -->
 			<button class="pill">7d</button>
 			<button class="pill">30d</button>
 			OLD CODE END -->
-			<Pills ariaLabel="Time range" options={RANGE_OPTIONS} bind:value={range} />
+			<!-- OLD CODE: <Pills ariaLabel="Time range" options={RANGE_OPTIONS} bind:value={range} /> (NET-249: a pick's window is Custom) -->
+			<Pills
+				ariaLabel="Time range"
+				options={[...RANGE_OPTIONS, ...(custom ? [{ value: custom.value, label: custom.label }] : [])]}
+				value={custom ? 'custom' : range}
+				onchange={pickRange}
+			/>
 			<!-- OLD CODE START — NET-192 PR 4: Home's Auto / Paused button on every page
 			<button class="btn" type="button" aria-pressed={autoRefresh} onclick={() => (autoRefresh = !autoRefresh)}>
 				<Icon name="refresh" />Auto
@@ -874,7 +927,9 @@ OLD CODE END -->
 		<!-- NET-205: counted by this page's IP only; its MAC can be one the address had before -->
 		<LiveBandwidthCard key={{ ip: device.ip }} />
 
-		<Card class="c-8" hero col title="Bandwidth over time" sub="Bytes per interval · {RANGE_LABEL[range].toLowerCase()}">
+		<!-- OLD CODE: sub="Bytes per interval · …" (NET-249: the owner's bucket table) -->
+		<!-- OLD CODE: sub="Bytes per {drill.bucketWords} · …" (NET-249 review: the echoed bucket's words once the reply is in) -->
+		<Card class="c-8" hero col title="Bandwidth over time" sub="Bytes per {bucketWords(bandwidthInterval, drill.bucketWords)} · {RANGE_LABEL[range].toLowerCase()}">
 			{#snippet actions()}
 				{#if hasDualSeries && busiest >= 0}
 					<ul class="legend">
@@ -884,12 +939,24 @@ OLD CODE END -->
 				{/if}
 			{/snippet}
 			{#if busiest >= 0}
-				<AreaChart bytes series={chartSeries} formatX={chartTime} formatY={formatBytes} formatTip={chartTip} highlightIndex={busiest} ariaLabel={chartLabel} />
+				<!-- OLD CODE: <AreaChart bytes series={chartSeries} formatX={chartTime} formatY={formatBytes} formatTip={chartTip} highlightIndex={busiest} ariaLabel={chartLabel} /> (NET-249: a pick narrows the page) -->
+				<AreaChart
+					bytes
+					series={chartSeries}
+					formatX={chartTime}
+					formatY={formatBytes}
+					formatTip={chartTip}
+					highlightIndex={busiest}
+					ariaLabel={chartLabel}
+					onpick={bandwidthChart ? pick : undefined}
+				/>
+				{#if bandwidthChart}<p class="card-sub pick-note">{NARROW_HINT}</p>{/if}
 				<!-- OLD CODE: <p class="chart-note">{INTER_VLAN_NOTE}</p> (review L10: only for a device with traffic to another subnet) -->
 				{#if device.inter_vlan_connections}<p class="chart-note">{interVlanNote(device.inter_vlan_connections)}</p>{/if}
 			{:else}
 				<CardState state="empty" icon="bandwidth" title="No traffic in this range" message="The chart fills in once NetTap records traffic from this device." />
 			{/if}
+			{#if bytesLine}<p class="notice pick-note" role="status">{bytesLine} {DEVICE_IPV6_NOTE}</p>{/if}
 		</Card>
 
 		<!-- OLD CODE: title="Risk score" in every mode (NET-225: post-NAT, one address can carry several devices) -->
@@ -1124,6 +1191,7 @@ OLD CODE END -->
 	.ident-meta dd { margin: 0; }
 	/* OLD CODE: .note { color: var(--text-2); font-size: var(--text-sm); margin-bottom: var(--sp-3); } (NET-192 PR 4: its stale notes are the amber notice) */
 	.load-note { margin-bottom: var(--sp-3); }
+	.pick-note { margin-top: var(--sp-2); }
 	.chart-note { color: var(--text-2); font-size: var(--text-sm); margin: var(--sp-3) 0 0; }
 	.sa-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
 	.sa { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line); }

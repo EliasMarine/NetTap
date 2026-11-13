@@ -340,26 +340,51 @@ class TestLogSearchAPI(AioHTTPTestCase):
         self.assertEqual(bucket["dns"], 20)
         self.assertEqual(bucket["http"], 0)  # missing type defaults to 0
 
+    # OLD CODE START — NET-249: an invalid interval fell back to 1h; it is a 400 now
+    # async def test_timeline_validates_interval(self):
+    #     """Invalid interval falls back to 1h."""
+    #     self.mock_client.search.return_value = {
+    #         "hits": {"total": {"value": 0}, "hits": []},
+    #         "aggregations": {"timeline": {"buckets": []}},
+    #     }
+    #     resp = await self.client.request("GET", "/api/logs/timeline?interval=99x")
+    #     self.assertEqual(resp.status, 200)
+    #     data = await resp.json()
+    #     self.assertEqual(data["interval"], "1h")
+    #     # Verify the actual query used 1h
+    #     call_body = self.mock_client.search.call_args[1]["body"]
+    #     # OLD CODE START — #120: the timeline was a date_histogram
+    #     # self.assertEqual(
+    #     #     call_body["aggs"]["timeline"]["date_histogram"]["fixed_interval"], "1h"
+    #     # )
+    #     # OLD CODE END
+    #     # one exact range per hour: OpenSearch 3.5's date_histogram misplaced records (#120)
+    #     from datetime import datetime
+    #
+    #     first = call_body["aggs"]["timeline"]["date_range"]["ranges"][0]
+    #     span = datetime.fromisoformat(
+    #         first["to"].replace("Z", "+00:00")
+    #     ) - datetime.fromisoformat(first["from"].replace("Z", "+00:00"))
+    #     self.assertEqual(span.total_seconds(), 3600)
+    # OLD CODE END
     async def test_timeline_validates_interval(self):
-        """Invalid interval falls back to 1h."""
+        """NET-249: an invalid interval is a 400 before any search, not a silent 1h."""
+        resp = await self.client.request("GET", "/api/logs/timeline?interval=99x")
+        self.assertEqual(resp.status, 400)
+        self.assertIn("Unknown interval", (await resp.json())["error"])
+        self.mock_client.search.assert_not_called()
+
+    async def test_timeline_omitted_interval_is_hourly(self):
         self.mock_client.search.return_value = {
             "hits": {"total": {"value": 0}, "hits": []},
             "aggregations": {"timeline": {"buckets": []}},
         }
-        resp = await self.client.request("GET", "/api/logs/timeline?interval=99x")
+        resp = await self.client.request("GET", "/api/logs/timeline")
         self.assertEqual(resp.status, 200)
-        data = await resp.json()
-        self.assertEqual(data["interval"], "1h")
-        # Verify the actual query used 1h
-        call_body = self.mock_client.search.call_args[1]["body"]
-        # OLD CODE START — #120: the timeline was a date_histogram
-        # self.assertEqual(
-        #     call_body["aggs"]["timeline"]["date_histogram"]["fixed_interval"], "1h"
-        # )
-        # OLD CODE END
-        # one exact range per hour: OpenSearch 3.5's date_histogram misplaced records (#120)
+        self.assertEqual((await resp.json())["interval"], "1h")
         from datetime import datetime
 
+        call_body = self.mock_client.search.call_args[1]["body"]
         first = call_body["aggs"]["timeline"]["date_range"]["ranges"][0]
         span = datetime.fromisoformat(
             first["to"].replace("Z", "+00:00")

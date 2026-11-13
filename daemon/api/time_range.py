@@ -7,11 +7,62 @@ Infrastructure page sent from=now-5m, got 24 h of connections back, divided by
 """
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 
 from aiohttp import web
 
+from storage.time_slots import interval_seconds, slot_count
+
+logger = logging.getLogger("nettap.api.time_range")
+
 _EXAMPLE = "2026-11-02T21:00:00Z"
+# NET-249: the owner's bucket table (the web's DRILL_RANGES), which every pickable chart offers
+BUCKET_TABLE = frozenset({"1m", "5m", "1h", "3h"})
+# Its finest chart is 289 slots; 1,000 at 3 h is 125 days
+SLOT_BUDGET = 1_000
+TOO_MANY_SLOTS = "Too many points for this window; pick a longer bucket"
+
+
+def _bad_request(message: str) -> web.HTTPBadRequest:
+    return web.HTTPBadRequest(
+        text=json.dumps({"error": message}), content_type="application/json"
+    )
+
+
+def slot_interval(
+    request: web.Request,
+    from_ts: str,
+    to_ts: str,
+    allowed: frozenset[str] | set[str],
+    default: str,
+    budget: int = SLOT_BUDGET,
+) -> str:
+    """The chart's bucket: `?interval=`, or `default` when absent, checked with the window
+    before any search (NET-249). 400 if it isn't in `allowed` or makes more than `budget`
+    slots, the same whether the interval was sent or defaulted."""
+    interval = request.query.get("interval") or default
+    if interval not in allowed:
+        # OLD CODE: logger.info("%s: interval %.20r refused", request.path, interval) (review: a
+        # decoded %0A in the path wrote a line of its own; %r keeps the record on one line)
+        logger.info("%r: interval %.20r refused", request.path, interval)
+        raise _bad_request(
+            "Unknown interval; use one of "
+            + ", ".join(sorted(allowed, key=interval_seconds))
+        )
+    if slot_count(from_ts, to_ts, interval) > budget:
+        # OLD CODE: "%s: %s from %s to %s is over %d slots" (review: %r, as above; fromisoformat
+        # takes any one character between date and time, so from/to can carry a newline too)
+        logger.info(
+            "%r: %s from %r to %r is over %d slots",
+            request.path,
+            interval,
+            from_ts,
+            to_ts,
+            budget,
+        )
+        raise _bad_request(TOO_MANY_SLOTS)
+    return interval
 
 
 def iso_param(request: web.Request, name: str) -> str | None:

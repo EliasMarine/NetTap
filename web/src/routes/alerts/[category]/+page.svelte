@@ -51,7 +51,12 @@
 	import { severityBuckets, type SeverityLevel } from '$lib/utils/severity';
 	// OLD CODE: import { alertsHrefForSignature, type DrillWindow } from '$lib/utils/drilldown'; (section D)
 	// OLD CODE: import { alertsHrefForSignature, DRILL_RANGES, fmt, rangeWindow, startRange, withCount, type DrillWindow } from '$lib/utils/drilldown'; (NET-185: the URL's window)
-	import { alertsHrefForSignature, customRange, DRILL_RANGES, fmt, rangeWindow, startRange, withCount, type DrillWindow } from '$lib/utils/drilldown';
+	// OLD CODE: import { alertsHrefForSignature, customRange, DRILL_RANGES, fmt, rangeWindow, startRange, withCount, type DrillWindow } from '$lib/utils/drilldown'; (NET-249: picks)
+	import {
+		alertsHrefForSignature, bucketFor, customRange, DRILL_RANGES, fmt, linkedCount, pickedTotal, pickWindow, rangeWindow, startRange, withCount, type DrillWindow,
+	} from '$lib/utils/drilldown';
+	import { bucketWords, NARROW_HINT, narrowTo, pickedLine } from '$lib/utils/narrow-page';
+	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -85,15 +90,17 @@
 	// OLD CODE END
 	const TIME_RANGES = DRILL_RANGES;
 
-	const INTERVAL_MAP: Record<string, string> = {
-		// OLD CODE: '15m': '1m', (NET-192 PR 4)
-		'1h': '5m',
-		// OLD CODE: '4h': '15m', (NET-192 PR 4)
-		'6h': '15m',
-		'24h': '1h',
-		'7d': '6h',
-		'30d': '12h',
-	};
+	// OLD CODE START — NET-249: the timeline asks for the owner's bucket table (drill below)
+	// const INTERVAL_MAP: Record<string, string> = {
+	// 	// OLD CODE: '15m': '1m', (NET-192 PR 4)
+	// 	'1h': '5m',
+	// 	// OLD CODE: '4h': '15m', (NET-192 PR 4)
+	// 	'6h': '15m',
+	// 	'24h': '1h',
+	// 	'7d': '6h',
+	// 	'30d': '12h',
+	// };
+	// OLD CODE END
 
 	// OLD CODE START — 2026-11-03: bars use the system's data-1 (PLAN.md §4.1, bar lists keep one colour)
 	// /** Rotating sub-category bar colors. */
@@ -121,10 +128,17 @@
 	const custom = $derived(customRange(params.get('from'), params.get('to')));
 	/** The URL's standard range (without one, the saved default, else 24h): a Custom window's links carry it for their words. */
 	const baseRange = $derived(TIME_RANGES.find((r) => r.value === params.get('range')) ?? TIME_RANGES.find((r) => r.value === startRange('24h'))!);
-	/** The timeline's bucket: for Custom, the one of the smallest standard range that covers it. */
-	const interval = $derived(
-		INTERVAL_MAP[(custom ? (TIME_RANGES.find((r) => r.hours >= custom.hours) ?? TIME_RANGES[TIME_RANGES.length - 1]) : baseRange).value] ?? '1h',
-	);
+	// OLD CODE START — NET-249: the owner's bucket table (DRILL_RANGES' bucket), not this page's own map
+	// /** The timeline's bucket: for Custom, the one of the smallest standard range that covers it. */
+	// const interval = $derived(
+	// 	INTERVAL_MAP[(custom ? (TIME_RANGES.find((r) => r.hours >= custom.hours) ?? TIME_RANGES[TIME_RANGES.length - 1]) : baseRange).value] ?? '1h',
+	// );
+	// OLD CODE END
+	/** The range whose bucket the timeline asks for: for Custom, `bucketFor`'s (NET-249). */
+	const drill = $derived(custom ? bucketFor(Date.parse(custom.from), Date.parse(custom.to)) : baseRange);
+	const interval = $derived(drill.bucket);
+	/** The alerts a pick on the timeline carried (NET-249), compared with the narrowed chart's own total. */
+	const picked = $derived(custom ? linkedCount(params.get('count')) : null);
 	const view = $derived(`${category}|${baseRange.value}|${custom?.from ?? ''}|${custom?.to ?? ''}`);
 
 	// Data
@@ -294,6 +308,17 @@
 	);
 	const series = $derived(timelineData?.series ?? []);
 	const busiest = $derived(series.reduce((best, p, i) => (p.total > series[best].total ? i : best), 0));
+	/** The timeline reply on screen, whole, when its bucket can be picked on; a failed request leaves none (NET-249) */
+	const chart = $derived(
+		timelineData
+			? toTimeChart(
+					timelineData,
+					timelineData.series.map((p) => p.timestamp),
+					timelineData.series.map((p) => p.total),
+				)
+			: null,
+	);
+	const countLine = $derived(pickedLine(picked, chart, { lead: 'This window now shows', one: 'alert', many: 'alerts' }));
 	const fromRow = $derived(totalAlerts > 0 ? (currentPage - 1) * pageSize + 1 : 0);
 	const toRow = $derived(Math.min(totalAlerts, fromRow + alerts.length - 1));
 
@@ -490,6 +515,18 @@
 	/** A range pill: a rolling window ending now, so the link's exact window (Custom) goes (NET-185). */
 	function pickRange(value: string) {
 		if (value !== 'custom') void goto(`${$page.url.pathname}?range=${value}`, { replaceState: true, keepFocus: true, noScroll: true });
+	}
+
+	/**
+	 * A pick on the timeline (NET-249): this page over the picked slots, with their alerts. The chart
+	 * counts every sub-category, so the sub-category filter goes; the same window reloads only the list.
+	 */
+	function pick(i: number, j: number) {
+		if (!chart) return;
+		const win = pickWindow(chart, i, j);
+		subCatFilter = null;
+		if (custom && custom.from === win.from && custom.to === win.to) void fetchAlerts(1);
+		void narrowTo($page.url, custom, win, baseRange.value, 'count', pickedTotal(chart, i, j));
 	}
 
 	// Auto-refresh
@@ -834,6 +871,8 @@ OLD CODE END -->
 {:else if categoryData.stats.total === 0}
 	<Card title={displayName} sub={range.words}>
 		<CardState state="empty" icon="alerts" title="No alerts in {displayName}" message="Try expanding the time range or check that IDS rules are active." />
+		<!-- NET-249: a pick whose alerts have since gone still says what it carried -->
+		{#if countLine}<p class="notice pick-hint" role="status">{countLine}</p>{/if}
 	</Card>
 {:else}
 	{@const data = categoryData}
@@ -858,7 +897,9 @@ OLD CODE END -->
 			</div>
 		</Card>
 
-		<Card class="c-8" hero col title="Alert volume over time" sub="Alerts per {interval} · {range.words}">
+		<!-- OLD CODE: sub="Alerts per {interval} · {range.words}" (NET-249: the bucket in words) -->
+		<!-- OLD CODE: sub="Alerts per {drill.bucketWords} · {range.words}" (NET-249 review: the echoed bucket's words once the reply is in) -->
+		<Card class="c-8" hero col title="Alert volume over time" sub="Alerts per {bucketWords(timelineData?.interval, drill.bucketWords)} · {range.words}">
 			{#if timelineFailed}
 				<CardState state="error" title="Couldn't load the alert volume over time: the request failed." onaction={() => refresh.run()} />
 			{:else if series.length === 0}
@@ -871,7 +912,10 @@ OLD CODE END -->
 					formatTip={(i) => `${formatShortTimestamp(series[i].timestamp)} · ${fmt(series[i].total)} alerts`}
 					highlightIndex={busiest}
 					ariaLabel={series[busiest].total > 0 ? `Busiest ${formatShortTimestamp(series[busiest].timestamp)}, with ${fmt(series[busiest].total)} alerts` : `No ${displayName} alerts in the ${range.words}`}
+					onpick={chart ? pick : undefined}
 				/>
+				{#if chart}<p class="card-sub pick-hint">{NARROW_HINT}</p>{/if}
+				{#if countLine}<p class="notice pick-hint" role="status">{countLine}</p>{/if}
 			{/if}
 		</Card>
 
@@ -1002,6 +1046,7 @@ OLD CODE END -->
 	.chip-x:hover { color: var(--text-1); }
 	.chip-x:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 	.notice { margin-bottom: var(--sp-4); }
+	.pick-hint { margin-top: var(--sp-2); }
 	.port-cell { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); }
 	.row-actions { display: inline-flex; gap: var(--sp-1); }
 	.row-actions .btn { min-height: 28px; padding: 0 var(--sp-3); font-size: var(--text-xs); }

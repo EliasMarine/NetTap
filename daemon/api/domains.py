@@ -24,6 +24,7 @@ from api.alerts import (
 from api.drilldown_runner import (
     LAST_SEEN,
     LIST_CAP,
+    chart_interval,
     chart_slots,
     install,
     ip_param,
@@ -454,21 +455,27 @@ def domain_figures(
 
 
 async def handle_domain(request: web.Request) -> web.Response:
-    """GET /api/domains/{name}?from=&to= — the domain page's figures."""
+    """GET /api/domains/{name}?from=&to=&interval= — the domain page's figures."""
     name = canonical_name(request.match_info["name"])
     if name is None:
         return json_error("That is not a host name.", 400)
     from_ts, to_ts = parse_time_range(request, _DEFAULT_RANGE)
-    slots = chart_slots(from_ts, to_ts)
+    # OLD CODE: slots = chart_slots(from_ts, to_ts) (NET-249: the chart's bucket can be asked for)
+    interval = chart_interval(request, from_ts, to_ts)
+    slots = chart_slots(from_ts, to_ts, interval)
     if slots is None:
         return json_error("This time range is too long; choose a shorter one.", 400)
     client, is_lan = request.app["drill_client"], lan_check(request.app)
     excluded = list(request.app.get("excluded_ips", []))
     return await run_drilldown(
         request,
-        lambda budget: domain_figures(
-            client, name, from_ts, to_ts, excluded, slots, is_lan, budget
-        ),
+        # OLD CODE: lambda budget: domain_figures(...) (NET-249: + the bucket the slots used)
+        lambda budget: {
+            **domain_figures(
+                client, name, from_ts, to_ts, excluded, slots, is_lan, budget
+            ),
+            "interval": interval,
+        },
         f"domain {name}",
     )
 

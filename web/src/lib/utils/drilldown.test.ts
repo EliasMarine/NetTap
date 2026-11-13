@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { DISPLAY_SETTINGS_KEY, savedDefaultRange, savedLiveMap, startRange, alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, SCAN_CAP, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery, DRILL_RANGES, bucketFor, bucketWindow, momentHref, serviceLabel, serviceLogsHref, windowWords, RECORDS_CHANGE } from './drilldown';
+import { DISPLAY_SETTINGS_KEY, savedDefaultRange, savedLiveMap, startRange, alertsHrefForSignature, byteFigure, fitCount, countDifference, linkedCount, withCount, canonicalName, certificatesHref, chartTime, connLogsHref, customRange, isHostName, logsHrefForIp, logsHrefForQuery, measuredNote, rangeWindow, SCAN_CAP, smartAlertHref, partialListNote, suricataAlertsHref, suricataCategoryHref, windowQuery, DRILL_RANGES, bucketFor, bucketWindow, momentHref, serviceLabel, serviceLogsHref, windowWords, RECORDS_CHANGE, pickWindow, pickedTotal, stepMs, type TimeChart } from './drilldown';
 import { snapshotWindow } from '$lib/stores/alertSnapshot';
 
 const MB = 1000 ** 2; // decimal, as formatBytes prints (NET-166)
@@ -467,5 +467,33 @@ describe('chart buckets and the windows they open (NET-249)', () => {
 
 	it('countDifference still ends with the shared reason', () => {
 		expect(countDifference(1, 2, { lead: 'Now', one: 'record', many: 'records' })?.endsWith(RECORDS_CHANGE)).toBe(true);
+	});
+});
+
+describe('pickWindow, pickedTotal and stepMs (NET-249 slice 2)', () => {
+	// 5-minute slots; the reply's window starts inside the first slot and ends inside the last
+	const chart: TimeChart = {
+		from: '2026-11-13T10:02:30.000Z',
+		to: '2026-11-13T10:12:00.000Z',
+		times: ['2026-11-13T10:00:00.000Z', '2026-11-13T10:05:00.000Z', '2026-11-13T10:10:00.000Z'],
+		values: [3, 5, 7],
+		step: 5 * 60_000,
+	};
+
+	it('gives one slot as [start, end − 1 ms], clipped to the reply at both edges', () => {
+		expect(pickWindow(chart, 1, 1)).toEqual({ from: '2026-11-13T10:05:00.000Z', to: '2026-11-13T10:09:59.999Z' });
+		expect(pickWindow(chart, 0, 0)).toEqual({ from: '2026-11-13T10:02:30.000Z', to: '2026-11-13T10:04:59.999Z' });
+		expect(pickWindow(chart, 2, 2)).toEqual({ from: '2026-11-13T10:10:00.000Z', to: '2026-11-13T10:12:00.000Z' });
+	});
+
+	it('takes a drag in either direction', () => {
+		expect(pickWindow(chart, 2, 0)).toEqual({ from: '2026-11-13T10:02:30.000Z', to: '2026-11-13T10:12:00.000Z' });
+		expect(pickedTotal(chart, 2, 1)).toBe(12);
+		expect(pickedTotal(chart, 0, 2)).toBe(15);
+	});
+
+	it('knows the table buckets and daily, and nothing else', () => {
+		expect([stepMs('1m'), stepMs('5m'), stepMs('1h'), stepMs('3h'), stepMs('1d')]).toEqual([60_000, 300_000, 3_600_000, 10_800_000, 86_400_000]);
+		expect([stepMs('10m'), stepMs('6h'), stepMs(''), stepMs(null), stepMs(undefined), stepMs('toString')]).toEqual([null, null, null, null, null, null]);
 	});
 });

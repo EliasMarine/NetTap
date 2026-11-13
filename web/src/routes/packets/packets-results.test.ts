@@ -6,9 +6,11 @@ import * as api from '$lib/api/packets';
 import type { PacketSearchResult } from '$lib/api/packets';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import { packetsUrl, readUrlState } from '$lib/utils/packet-query';
+import { packetStats } from '$lib/utils/packet-stats';
 import { LAN_POLICY } from '../../../e2e/visual/fixtures/drilldown';
 import { CAPTURES, CDN_NAME, PACKET_DETAIL, ROWS, SEARCH_FROM, SEARCH_QUERY, SEARCH_RESULT, SEARCH_TO, TV } from '../../../e2e/visual/fixtures/packets';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
+import { clockTime } from './packets-view';
 
 // NET-188: a search's answer. Every figure is counted over the rows returned and says so; a
 // partial, failed or changed read is never shown as complete.
@@ -294,5 +296,103 @@ describe('Packet analysis: a search', () => {
 		render(Page);
 		expect(screen.getByText(/all traffic between these two addresses \(no exact connection\)/)).toBeInTheDocument();
 		expect(screen.getByText(/the first minute \(the connection's length isn't recorded\)/)).toBeInTheDocument();
+	});
+});
+
+// NET-249 slice 2: a pick on "The conversation over time" shows exactly the packets in the picked
+// buckets (the chart's own assignment), apart from the noticed filter, and both can apply at once
+describe('Packet analysis: picking on the chart', () => {
+	beforeEach(() => {
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		vi.mocked(api.getCaptures).mockResolvedValue(CAPTURES);
+		vi.mocked(api.searchPackets).mockResolvedValue(SEARCH_RESULT);
+		stubOthers();
+		open();
+	});
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.clearAllMocks();
+		pageStore.value.set({ url: new URL('http://localhost/packets') });
+	});
+
+	const timeline = packetStats(ROWS, TV).timeline;
+	const tableRows = () => within(screen.getByRole('table', { name: 'Packets' })).getAllByRole('row').length - 1;
+	async function chart() {
+		render(Page);
+		await screen.findByRole('table', { name: 'Packets' });
+		return screen.getByRole('group', { name: /^Busiest at / });
+	}
+
+	it('a click on a bucket shows only its packets, and Show all brings every row back', async () => {
+		const c = await chart();
+		expect(screen.getByText('Click a point or drag across the chart to show only those packets.')).toBeInTheDocument();
+		await fireEvent.keyDown(c, { key: 'Home' });
+		await fireEvent.keyDown(c, { key: 'Enter' });
+		expect(tableRows()).toBe(timeline[0].packets);
+		expect(screen.getByText(new RegExp(`^Showing the ${timeline[0].packets} packets? sent (at|from) `))).toBeInTheDocument();
+		expect(api.searchPackets).toHaveBeenCalledTimes(1);
+		await fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
+		expect(tableRows()).toBe(ROWS.length);
+	});
+
+	it('the last bucket holds the last packet, and a range holds every bucket in it', async () => {
+		const c = await chart();
+		await fireEvent.keyDown(c, { key: 'End' });
+		await fireEvent.keyDown(c, { key: 'Enter' });
+		expect(tableRows()).toBe(timeline.at(-1)!.packets);
+		expect(timeline.at(-1)!.rows).toContain(ROWS.length - 1);
+		await fireEvent.keyDown(c, { key: 'Home', shiftKey: true });
+		await fireEvent.keyDown(c, { key: 'Enter' });
+		expect(tableRows()).toBe(ROWS.length);
+	});
+
+	it('combines with the noticed filter, and each clears on its own', async () => {
+		const c = await chart();
+		await fireEvent.click(screen.getAllByRole('button', { name: 'Show it' })[0]);
+		const noted = tableRows();
+		expect(noted).toBe(1);
+		// the bucket that holds the noted packet, then one that doesn't
+		const notedRow = ROWS.findIndex((r) => within(screen.getByRole('table', { name: 'Packets' })).queryByRole('button', { name: `Open packet ${r.n}` }));
+		const holds = timeline.findIndex((b) => b.rows.includes(notedRow));
+		const lacks = timeline.findIndex((b) => b.packets > 0 && !b.rows.includes(notedRow));
+		await fireEvent.keyDown(c, { key: 'Home' });
+		for (let i = 0; i < holds; i++) await fireEvent.keyDown(c, { key: 'ArrowRight' });
+		await fireEvent.keyDown(c, { key: 'Enter' });
+		expect(tableRows()).toBe(1);
+		expect(screen.getByText(/^Showing the 1 packet TShark marked “.*” and sent (at|from) /)).toBeInTheDocument();
+		await fireEvent.keyDown(c, { key: 'Home' });
+		for (let i = 0; i < lacks; i++) await fireEvent.keyDown(c, { key: 'ArrowRight' });
+		await fireEvent.keyDown(c, { key: 'Enter' });
+		expect(screen.queryByRole('table', { name: 'Packets' }) && tableRows()).toBe(0);
+		await fireEvent.click(screen.getByRole('button', { name: 'Clear the note filter' }));
+		expect(tableRows()).toBe(timeline[lacks].packets);
+		await fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
+		expect(tableRows()).toBe(ROWS.length);
+	});
+
+	it('says the picked packets\' earliest and latest times when the rows are out of time order', async () => {
+		// TShark lists frames in file order, which a reordered capture need not keep: bucket 0 holds rows 0 and 1
+		const rows = [
+			{ ...ROWS[0], n: 1, t: '1794026197.020' },
+			{ ...ROWS[1], n: 2, t: '1794026197.001' },
+			{ ...ROWS[2], n: 3, t: '1794026199.000' },
+		];
+		vi.mocked(api.searchPackets).mockResolvedValue(result({ rows }));
+		const c = await chart();
+		await fireEvent.keyDown(c, { key: 'Home' });
+		await fireEvent.keyDown(c, { key: 'Enter' });
+		expect(tableRows()).toBe(2);
+		expect(screen.getByText(`Showing the 2 packets sent from ${clockTime('1794026197.001')} to ${clockTime('1794026197.020')}`, { exact: false })).toBeInTheDocument();
+	});
+
+	it('a refresh that brings new rows drops the pick, as the buckets are worked out again', async () => {
+		const c = await chart();
+		await fireEvent.keyDown(c, { key: 'Home' });
+		await fireEvent.keyDown(c, { key: 'Enter' });
+		expect(tableRows()).toBe(timeline[0].packets);
+		vi.mocked(api.searchPackets).mockResolvedValue(structuredClone(SEARCH_RESULT));
+		await refreshPage();
+		await vi.waitFor(() => expect(tableRows()).toBe(ROWS.length));
+		expect(screen.queryByText(/^Showing the /)).not.toBeInTheDocument();
 	});
 });

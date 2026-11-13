@@ -320,6 +320,33 @@ export function momentHref(chart: BandwidthChart, i: number, j: number, range?: 
 	return `/moment?${q.toString()}`;
 }
 
+/**
+ * Any time chart's reply, held whole so a pick's indices and timestamps come from one answer
+ * (NET-249 slice 2): slot start times, the value drawn per slot, the reply's own window, and the
+ * slot length of the bucket the reply says it used.
+ */
+export interface TimeChart extends DrillWindow {
+	times: readonly string[];
+	values: readonly number[];
+	step: number;
+}
+
+// A Map, so a reply's `interval` can never match an inherited key such as `toString`
+const STEP_MS: ReadonlyMap<string, number> = new Map([['1m', MINUTE_MS], ['5m', 5 * MINUTE_MS], ['1h', HOUR_MS], ['3h', 3 * HOUR_MS], ['1d', 24 * HOUR_MS]]);
+
+/** The slot length of a bucket a reply echoes, or null: a chart whose bucket isn't one of these stays a picture. */
+export const stepMs = (interval: string | null | undefined): number | null => (interval ? (STEP_MS.get(interval) ?? null) : null);
+
+/** The exact window of chart slots `i..j` (either order): `bucketWindow` over the chart's own times. */
+export function pickWindow(chart: TimeChart, i: number, j: number): DrillWindow {
+	return bucketWindow(chart.times.map((timestamp) => ({ timestamp })), i, j, chart.step, chart);
+}
+
+/** The figure drawn across slots `i..j` (either order). */
+export function pickedTotal(chart: TimeChart, i: number, j: number): number {
+	return chart.values.slice(Math.min(i, j), Math.max(i, j) + 1).reduce((total, v) => total + v, 0);
+}
+
 /** `from=…&to=…`, then `&range=…` when given (the window's words fall back to that range). */
 export function windowQuery(win: DrillWindow, range?: string): string {
 	const q = new URLSearchParams({ from: win.from, to: win.to });

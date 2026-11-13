@@ -78,6 +78,8 @@ export interface AddressSummary {
 	ip: string;
 	from: string;
 	to: string;
+	/** NET-249: the bucket `timeline` was counted in, as the daemon used it; absent from an older daemon. */
+	interval?: string;
 	/** The daemon's own answer: on your network. */
 	lan: boolean;
 	connections: number;
@@ -116,6 +118,8 @@ export interface DomainSummary {
 	name: string;
 	from: string;
 	to: string;
+	/** The timeline's bucket, as the daemon used it (NET-249); absent from an older daemon */
+	interval?: string;
 	dns: {
 		lookups: number;
 		askers: DomainAsker[];
@@ -187,9 +191,14 @@ const isPort = (v: unknown) =>
 	isNumber(v.connections);
 const isThreatIntel = (v: unknown) => v === null || (isObject(v) && isBoolean(v.matched) && Array.isArray(v.feeds) && isNumber(v.indicators));
 
-/** Everything the address page shows for `ip` in the window. */
-export async function getAddressSummary(ip: string, from: string, to: string): Promise<AddressSummary> {
-	const body = await getJson(`/api/addresses/${encodeURIComponent(ip)}?${windowQuery(from, to)}`, 'Address summary');
+/** A bucket for a chart's slots (NET-249), when the caller asks for one: `&interval=…`, else nothing. */
+const intervalQuery = (interval?: string) => (interval ? `&${new URLSearchParams({ interval }).toString()}` : '');
+
+// OLD CODE: export async function getAddressSummary(ip: string, from: string, to: string): Promise<AddressSummary> { (NET-249: and the timeline's bucket)
+/** Everything the address page shows for `ip` in the window; `interval` is the timeline's bucket (the daemon's default without it). */
+export async function getAddressSummary(ip: string, from: string, to: string, interval?: string): Promise<AddressSummary> {
+	// OLD CODE: const body = await getJson(`/api/addresses/${encodeURIComponent(ip)}?${windowQuery(from, to)}`, 'Address summary'); (NET-249)
+	const body = await getJson(`/api/addresses/${encodeURIComponent(ip)}?${windowQuery(from, to)}${intervalQuery(interval)}`, 'Address summary');
 	// Every part the page reads, so a malformed reply is an error, never a blank that reads as "none"
 	// OLD CODE START — flags, alerts and threat intel unchecked, so a reply missing them read as complete
 	// const ok =
@@ -214,9 +223,12 @@ export async function getAddressSummary(ip: string, from: string, to: string): P
 	return body as unknown as AddressSummary;
 }
 
-/** Everything the domain page shows for `name` in the window. */
-export async function getDomainSummary(name: string, from: string, to: string): Promise<DomainSummary> {
-	const body = await getJson(`/api/domains/${encodeURIComponent(name)}?${windowQuery(from, to)}`, 'Domain summary');
+/** Everything the domain page shows for `name` in the window; `interval` is the timeline's bucket (NET-249). */
+// OLD CODE: export async function getDomainSummary(name: string, from: string, to: string): Promise<DomainSummary> { (NET-249: the bucket)
+export async function getDomainSummary(name: string, from: string, to: string, interval?: string): Promise<DomainSummary> {
+	// OLD CODE: const body = await getJson(`/api/domains/${encodeURIComponent(name)}?${windowQuery(from, to)}`, 'Domain summary'); (NET-249)
+	// OLD CODE: …${interval ? `&interval=${encodeURIComponent(interval)}` : ''}… (slice 2 merge: the file's own intervalQuery)
+	const body = await getJson(`/api/domains/${encodeURIComponent(name)}?${windowQuery(from, to)}${intervalQuery(interval)}`, 'Domain summary');
 	// OLD CODE START — the counts under tls, http and alerts, and the complete flags, were cast unchecked
 	// const ok =
 	// 	isObject(body) &&
@@ -283,6 +295,8 @@ export interface SuricataCategoryFigures {
 	name: string;
 	from: string;
 	to: string;
+	/** NET-249: the bucket `timeline` was counted in, as the daemon used it; absent from an older daemon. */
+	interval?: string;
 	total: number;
 	/** high, medium and low are Suricata severity 1, 2 and 3; info is everything else. They add up to total. */
 	severity: { high: number; medium: number; low: number; info: number };
@@ -303,9 +317,11 @@ const isTopList = (v: unknown) =>
 	isNumber(v.examined) &&
 	isBoolean(v.complete);
 
-/** Everything the Suricata category page shows for `name` in the window. */
-export async function getSuricataCategory(name: string, from: string, to: string): Promise<SuricataCategoryFigures> {
-	const body = await getJson(`/api/alerts/suricata/${encodeURIComponent(name)}?${windowQuery(from, to)}`, 'Suricata category');
+// OLD CODE: export async function getSuricataCategory(name: string, from: string, to: string): Promise<SuricataCategoryFigures> { (NET-249: and the timeline's bucket)
+/** Everything the Suricata category page shows for `name` in the window; `interval` is the timeline's bucket (the daemon's default without it). */
+export async function getSuricataCategory(name: string, from: string, to: string, interval?: string): Promise<SuricataCategoryFigures> {
+	// OLD CODE: const body = await getJson(`/api/alerts/suricata/${encodeURIComponent(name)}?${windowQuery(from, to)}`, 'Suricata category'); (NET-249)
+	const body = await getJson(`/api/alerts/suricata/${encodeURIComponent(name)}?${windowQuery(from, to)}${intervalQuery(interval)}`, 'Suricata category');
 	const { severity, sources, targets } = isObject(body) ? body : ({} as Record<string, unknown>);
 	const ok =
 		isObject(body) &&

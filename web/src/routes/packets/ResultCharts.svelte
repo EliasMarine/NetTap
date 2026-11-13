@@ -20,9 +20,12 @@
 		sites: ReadonlyMap<string, string>;
 		active: Noticed | null;
 		onfilter: (n: Noticed | null) => void;
+		/** Timeline buckets `from..to` (inclusive) were picked on the chart (NET-249); the rows they hold are `stats.timeline[i].rows` */
+		onpickbuckets?: (from: number, to: number) => void;
 	}
 
-	let { stats, devices, sites, active, onfilter }: Props = $props();
+	// OLD CODE: let { stats, devices, sites, active, onfilter }: Props = $props(); (NET-249)
+	let { stats, devices, sites, active, onfilter, onpickbuckets }: Props = $props();
 
 	const TOP_SENDERS = 8;
 	const ROUTINE = new Set(['chat', 'comment']);
@@ -83,7 +86,9 @@
 			formatTip={(i) => `${clockTime(timeline[i].t)} · ${plural(timeline[i].packets, 'packet')} · ${formatBytes(timeline[i].bytes)}`}
 			highlightIndex={busiest}
 			ariaLabel={`Busiest at ${clockTime(timeline[busiest].t)}, with ${plural(timeline[busiest].packets, 'packet')} in ${step}`}
+			onpick={onpickbuckets}
 		/>
+		{#if onpickbuckets}<p class="card-sub pick-hint">Click a point or drag across the chart to show only those packets.</p>{/if}
 	{/if}
 </Card>
 
@@ -114,4 +119,5 @@
 	details { margin-top: var(--sp-3); }
 	summary { cursor: pointer; font-size: var(--text-sm); color: var(--text-2); }
 	.btn[aria-pressed='true'] { border-color: var(--accent); }
+	.pick-hint { margin-top: var(--sp-2); }
 </style>

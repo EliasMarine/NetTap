@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { writable } from 'svelte/store';
 import { refreshPage } from '$lib/stores/pageRefresh';
+import { goto } from '$app/navigation';
 import type { AddressSummary } from '$lib/api/drilldown';
 import { ADDRESS, ADDRESS_EMPTY, ADDRESS_QUIET, LAN_POLICY } from '../../../../e2e/visual/fixtures/drilldown';
 import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
@@ -545,5 +546,70 @@ describe('Address page — port links', () => {
 		const port = await vi.waitFor(() => within(card('Ports on this address')).getByText('8883'));
 		expect(port.closest('a')).toBeNull();
 		expect(within(card('Ports on this address')).queryAllByRole('link')).toHaveLength(0);
+	});
+});
+
+// NET-249 slice 2: the chart takes the owner's buckets, and a pick opens this address's conn records
+describe('Address page — the chart drills into its connections (NET-249)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.mocked(goto).mockClear();
+		goTo('198.51.100.10');
+	});
+
+	/** Two 5-minute slots; the reply's window starts 2 minutes into the first, so that slot is clipped. */
+	const PICKABLE: AddressSummary = {
+		...ADDRESS,
+		from: '2026-11-03T09:02:00.000Z',
+		to: '2026-11-03T09:08:00.000Z',
+		interval: '5m',
+		timeline: [
+			{ t: '2026-11-03T09:00:00.000Z', n: 4 },
+			{ t: '2026-11-03T09:05:00.000Z', n: 6 },
+		],
+	};
+	const sentInterval = () => calls.filter((u) => u.pathname === '/api/addresses/198.51.100.10').at(-1)!.searchParams.get('interval');
+
+	it.each([
+		['1h', '1m'],
+		['6h', '5m'],
+		['24h', '5m'],
+		['7d', '1h'],
+		['30d', '3h'],
+	])('%s asks for %s slots', async (range, bucket) => {
+		stubDaemon(baseReplies(ADDRESS));
+		render(Page);
+		await vi.waitFor(() => expect(kpi('Connections')).toHaveTextContent('1,980'));
+		await fireEvent.click(screen.getByRole('button', { name: range }));
+		await vi.waitFor(() => expect(sentInterval()).toBe(bucket));
+	});
+
+	it("a pick opens the conn records with this address at either end over the picked slots, with their figure", async () => {
+		stubDaemon(baseReplies(PICKABLE));
+		render(Page);
+		await vi.waitFor(() => expect(kpi('Connections')).toHaveTextContent('1,980'));
+		expect(screen.getByText(/^Connections per 5 minutes · /)).toBeInTheDocument();
+		expect(screen.getByText('Click a point or drag across the chart to see that moment.')).toBeInTheDocument();
+		const chart = screen.getByRole('group', { name: /^Busiest at / });
+		await fireEvent.keyDown(chart, { key: 'Home' });
+		await fireEvent.keyDown(chart, { key: 'Enter' });
+		const href = String(vi.mocked(goto).mock.calls[0][0]);
+		expect(href.split('?')[0]).toBe('/logs');
+		expect(Object.fromEntries(new URL(href, 'http://x').searchParams)).toEqual({
+			query: '(source.ip:"198.51.100.10" OR destination.ip:"198.51.100.10")', range: '24h', type: 'zeek.conn',
+			from: PICKABLE.from, to: '2026-11-03T09:04:59.999Z', count: '4',
+		});
+		await fireEvent.keyDown(chart, { key: 'End', shiftKey: true });
+		await fireEvent.keyDown(chart, { key: 'Enter' });
+		expect(Object.fromEntries(new URL(String(vi.mocked(goto).mock.calls[1][0]), 'http://x').searchParams)).toMatchObject({ from: PICKABLE.from, to: PICKABLE.to, count: '10' });
+	});
+
+	it("an older daemon's reply, with no bucket, stays a picture with its own bucket's words", async () => {
+		stubDaemon(baseReplies(ADDRESS));
+		render(Page);
+		await vi.waitFor(() => expect(kpi('Connections')).toHaveTextContent('1,980'));
+		expect(screen.getByText(/^Connections per hour · /)).toBeInTheDocument();
+		expect(screen.getByRole('img', { name: /^Busiest at / })).toBeInTheDocument();
+		expect(screen.queryByText(/Click a point or drag/)).not.toBeInTheDocument();
 	});
 });

@@ -107,6 +107,10 @@ export interface DeviceDetail extends Device {
 
 export interface DeviceDetailResponse {
 	device: DeviceDetail;
+	/** NET-249: the window the figures were counted over, and the bucket of `bandwidth_series`; absent from an older daemon */
+	from?: string;
+	to?: string;
+	bandwidth_interval?: string;
 }
 
 export interface DeviceConnection {
@@ -279,11 +283,12 @@ export async function getDevices(
 /**
  * Get detailed information for a single device by IP address.
  */
+// OLD CODE: opts: TimeRangeParams = {} and buildQuery({ from: opts.from, to: opts.to }) (NET-249: the bandwidth chart's bucket)
 export async function getDeviceDetail(
 	ip: string,
-	opts: TimeRangeParams = {}
+	opts: TimeRangeParams & { interval?: string } = {}
 ): Promise<DeviceDetailResponse> {
-	const query = buildQuery({ from: opts.from, to: opts.to });
+	const query = buildQuery({ from: opts.from, to: opts.to, interval: opts.interval });
 	const res = await fetch(`/api/devices/${encodeURIComponent(ip)}${query}`);
 
 	// OLD CODE START — #96: a failed request read as a device with no traffic

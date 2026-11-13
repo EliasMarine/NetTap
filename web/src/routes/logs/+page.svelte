@@ -13,12 +13,21 @@
 		DRILL_RANGES,
 		isHostName,
 		linkedCount,
+		pickedTotal,
+		pickWindow,
 		startRange,
+		windowQuery,
+		withCount,
 		type CustomWindow,
 		type DrillRangeValue,
 		type DrillWindow,
 		type LinkedCount,
+		type TimeChart,
 	} from '$lib/utils/drilldown';
+	// OLD CODE: import { toTimeChart } from '$lib/utils/chart-pick'; (NET-249 review: and the reply's bucket in words)
+	// OLD CODE: import { chartBucketWords, toTimeChart } from '$lib/utils/chart-pick'; (NET-249: one helper for both halves, narrow-page's bucketWords)
+	import { toTimeChart } from '$lib/utils/chart-pick';
+	import { bucketWords } from '$lib/utils/narrow-page';
 	// OLD CODE START — replaced by the design system's BarList
 	// import HorizontalBarList from '$components/HorizontalBarList.svelte';
 	// OLD CODE END
@@ -144,25 +153,27 @@
 	// OLD CODE END
 	const TIME_RANGES = DRILL_RANGES.map((r) => ({ ...r, ms: r.hours * 3_600_000 }));
 
-	const INTERVAL_MAP: Record<string, string> = {
-		// OLD CODE: '15m': '1m', (NET-192 PR 4)
-		'1h': '5m',
-		// OLD CODE: '4h': '15m', (NET-192 PR 4)
-		'6h': '15m',
-		'24h': '1h',
-		'7d': '6h',
-		'30d': '1d',
-	};
-
-	/** How the timeline card names each INTERVAL_MAP bucket. */
-	const INTERVAL_WORDS: Record<string, string> = {
-		'1m': 'minute',
-		'5m': '5 minutes',
-		'15m': '15 minutes',
-		'1h': 'hour',
-		'6h': '6 hours',
-		'1d': 'day',
-	};
+	// OLD CODE START — NET-249 slice 2: the timeline's bucket and its words come from the owner's table (DRILL_RANGES)
+	// const INTERVAL_MAP: Record<string, string> = {
+	// 	// OLD CODE: '15m': '1m', (NET-192 PR 4)
+	// 	'1h': '5m',
+	// 	// OLD CODE: '4h': '15m', (NET-192 PR 4)
+	// 	'6h': '15m',
+	// 	'24h': '1h',
+	// 	'7d': '6h',
+	// 	'30d': '1d',
+	// };
+	//
+	// /** How the timeline card names each INTERVAL_MAP bucket. */
+	// const INTERVAL_WORDS: Record<string, string> = {
+	// 	'1m': 'minute',
+	// 	'5m': '5 minutes',
+	// 	'15m': '15 minutes',
+	// 	'1h': 'hour',
+	// 	'6h': '6 hours',
+	// 	'1d': 'day',
+	// };
+	// OLD CODE END
 
 	// OLD CODE START — I6: the DHCP and TLS field names Malcolm doesn't write
 	// const IP_FIELDS = new Set(['source.ip', 'destination.ip', 'zeek.dhcp.client_addr']);
@@ -215,6 +226,10 @@
 	let protocolCount = $state(0);
 	let totalBytesVal = $state(0);
 	let timeline = $state<LogTimelineBucket[]>([]);
+	/** The timeline reply on screen as a pickable chart (NET-249); null when its echoed bucket or window can't be picked */
+	let timelineChart = $state<TimeChart | null>(null);
+	/** The bucket the timeline reply on screen says it used; its subtitle names it */
+	let timelineInterval = $state<string | null | undefined>(undefined);
 	let topTalkers = $state<LogTalkerEntry[]>([]);
 	let protocols = $state<LogProtocolEntry[]>([]);
 	// A busy box logs 20+ protocols; all of them made the card three times the timeline's height
@@ -333,6 +348,8 @@
 	const intervalRange = $derived(
 		selectedTimeRange === 'custom' ? (TIME_RANGES.find((r) => custom && r.ms >= custom.hours * 3_600_000) ?? TIME_RANGES[TIME_RANGES.length - 1]).value : selectedTimeRange,
 	);
+	/** The table's bucket for that range (NET-249): 1h by the minute … 30d by 3 hours. */
+	const bucket = $derived(TIME_RANGES.find((r) => r.value === intervalRange) ?? TIME_RANGES.find((r) => r.value === '24h')!);
 	const rangeOptions = $derived([...TIME_RANGES, ...(custom ? [{ value: 'custom' as const, label: custom.label }] : [])]);
 
 	// ---------------------------------------------------------------------------
@@ -499,7 +516,8 @@
 	/** The six aggregations over `win` (the table's window too); null when a newer load took over. */
 	async function fetchDashboard(guard: LoadGuard, g: number, { from, to }: DrillWindow): Promise<boolean[] | null> {
 		loading = true;
-		const interval = INTERVAL_MAP[intervalRange] || '1h';
+		// OLD CODE: const interval = INTERVAL_MAP[intervalRange] || '1h'; (NET-249: the owner's table)
+		const interval = bucket.bucket;
 
 		const results = await Promise.allSettled([
 			getLogStats({ from, to }),
@@ -519,7 +537,12 @@
 			totalBytesVal = s.total_bytes;
 			statsLoaded = true;
 		}
-		if (results[1].status === 'fulfilled') timeline = results[1].value.buckets;
+		// OLD CODE: if (results[1].status === 'fulfilled') timeline = results[1].value.buckets; (NET-249: a pick needs the reply's window and bucket too)
+		if (results[1].status === 'fulfilled') {
+			timeline = results[1].value.buckets;
+			timelineChart = toTimeChart(results[1].value, timeline.map((b) => b.timestamp), timeline.map((b) => b.total));
+			timelineInterval = results[1].value.interval;
+		}
 		// OLD CODE: if (results[2].status === 'fulfilled') topTalkers = results[2].value.talkers; (NET-184: a bar keeps its window)
 		if (results[2].status === 'fulfilled') {
 			topTalkers = results[2].value.talkers;
@@ -747,6 +770,37 @@
 	// Event handlers
 	// ---------------------------------------------------------------------------
 
+	/**
+	 * A pick on the timeline (NET-249) opens exactly the events it counted: a hand-off with the picked
+	 * slots' window and their figure only, so the log type, query, address and excluded sources it
+	 * ignores are cleared (the URL hand-off replaces every filter).
+	 */
+	// OLD CODE START — NET-249 review: a pick whose URL is the one on screen ran no hand-off, so a type, text or address set since stayed
+	// function pickTimeline(chart: TimeChart, i: number, j: number) {
+	// 	void goto(withCount(`/logs?${windowQuery(pickWindow(chart, i, j), intervalRange)}`, pickedTotal(chart, i, j)));
+	// }
+	// OLD CODE END
+	function pickTimeline(chart: TimeChart, i: number, j: number) {
+		const href = withCount(`/logs?${windowQuery(pickWindow(chart, i, j), intervalRange)}`, pickedTotal(chart, i, j));
+		const target = new URL(href, $page.url).searchParams;
+		const count = linkedCount(target.get('count'));
+		const unchanged = handOffSearch(target) === appliedSearch && count === appliedCount;
+		// What the hand-off clears, cleared here too: an unchanged URL runs none
+		const typeBefore = logType;
+		logType = 'all';
+		query = '';
+		activeIpFilter = '';
+		ipSide = null;
+		excludeSrc = [];
+		activeDnsFilter = '';
+		if (typeBefore !== 'all') fetchFieldDefs();
+		if (unchanged) {
+			linked = count === null ? null : { expected: count, gen: null, observed: null };
+			void fetchLogs();
+		}
+		void goto(href);
+	}
+
 	// OLD CODE: function handleTimeRangeChange(value: TimeRange) { (slice 2a: Custom)
 	function handleTimeRangeChange(value: TimeRange | 'custom') {
 		selectedTimeRange = value;
@@ -755,6 +809,8 @@
 		// #96: the last range's figures must not stand in for this range if its load fails
 		statsLoaded = false;
 		timeline = [];
+		timelineChart = null;
+		timelineInterval = undefined;
 		topTalkers = [];
 		protocols = [];
 		topDestinations = [];
@@ -1095,6 +1151,9 @@
 	// 	});
 	// });
 	// OLD CODE END
+	const HAND_OFF_KEYS = ['filter', 'ip', 'query', 'range', 'from', 'to', 'type', 'exclude_src'] as const;
+	/** A URL's hand-off key: its filters and window, without the count */
+	const handOffSearch = (params: URLSearchParams) => JSON.stringify(HAND_OFF_KEYS.map((k) => params.get(k)));
 	/** The ?filter= / ?ip= / ?query= / ?range= / ?from= / ?to= / ?type= / ?exclude_src= last applied; null before the first load. */
 	let appliedSearch: string | null = null;
 	/** The ?count= last applied, kept out of the search key: it changes no window and no filter (NET-160 section D). */
@@ -1108,9 +1167,13 @@
 		// const [urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo] = keys.map((k) => params.get(k));
 		// const search = JSON.stringify([urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo]);
 		// OLD CODE END
-		const keys = ['filter', 'ip', 'query', 'range', 'from', 'to', 'type', 'exclude_src'] as const;
-		const [urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo, urlType, urlExclude] = keys.map((k) => params.get(k));
-		const search = JSON.stringify([urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo, urlType, urlExclude]);
+		// OLD CODE START — NET-249 review: the keys moved to HAND_OFF_KEYS, so a chart pick can tell an unchanged URL
+		// const keys = ['filter', 'ip', 'query', 'range', 'from', 'to', 'type', 'exclude_src'] as const;
+		// const [urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo, urlType, urlExclude] = keys.map((k) => params.get(k));
+		// const search = JSON.stringify([urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo, urlType, urlExclude]);
+		// OLD CODE END
+		const [urlFilter, urlIp, urlQuery, urlRange, urlFrom, urlTo, urlType, urlExclude] = HAND_OFF_KEYS.map((k) => params.get(k));
+		const search = handOffSearch(params);
 		const count = linkedCount(params.get('count'));
 		untrack(() => {
 			// The hash changes too (the KPI links); only a new search runs one
@@ -1186,6 +1249,7 @@ OLD CODE END -->
 {#snippet sslNameCell(r: LogRow)}{@render domainValue(getNestedValue(r.hit._source, 'zeek.ssl.server_name'))}{/snippet}
 
 {#snippet timelineBody()}
+	<!-- NET-249: a pick is a hand-off with only the window, so the type, query and excluded sources go, as the timeline counts every type and ignores them -->
 	<AreaChart
 		series={[{ key: 'events', label: 'Events', colour: 1, points: timeline.map((b, i) => ({ t: b.timestamp, v: bucketTotals[i] })) }]}
 		formatX={(t) => formatShortTimestamp(String(t))}
@@ -1195,7 +1259,9 @@ OLD CODE END -->
 		ariaLabel={busiest >= 0
 			? `Busiest at ${formatShortTimestamp(timeline[busiest].timestamp)}, with ${fmt(bucketTotals[busiest])} events`
 			: 'Log events over time'}
+		onpick={timelineChart ? (i, j) => pickTimeline(timelineChart!, i, j) : undefined}
 	/>
+	{#if timelineChart}<p class="card-sub pick-hint">Click a point or drag across the chart to see that moment.</p>{/if}
 {/snippet}
 {#snippet protocolsBody()}
 	<BarList
@@ -1330,7 +1396,10 @@ OLD CODE END -->
 	<KpiCard class="c-3" label="Data volume" icon="bandwidth" value={statsLoaded ? formatBytes(totalBytesVal) : '—'} note="Total bytes transferred" href="#log-table" />
 
 	<!-- OLD CODE: sub="Log events per {INTERVAL_WORDS[INTERVAL_MAP[selectedTimeRange]] ?? 'hour'} · {rangeWords}" (slice 2a: Custom) -->
-	<Card title="Activity timeline" sub="Log events per {INTERVAL_WORDS[INTERVAL_MAP[intervalRange]] ?? 'hour'} · {rangeWords}" hero col class="c-8">
+	<!-- OLD CODE: sub="Log events per {INTERVAL_WORDS[INTERVAL_MAP[intervalRange]] ?? 'hour'} · {rangeWords}" (NET-249: the table's bucket) -->
+	<!-- OLD CODE: sub="Log events per {bucket.bucketWords} · {rangeWords}" (NET-249 review: the bucket the reply used) -->
+	<!-- OLD CODE: sub="Log events per {chartBucketWords(timelineChart, bucket.bucketWords)} · {rangeWords}" (NET-249: narrow-page's bucketWords, the one helper) -->
+	<Card title="Activity timeline" sub="Log events per {bucketWords(timelineInterval, bucket.bucketWords)} · {rangeWords}" hero col class="c-8">
 		{@render section('the activity timeline', timelineFailed, timeline.length > 0, 'No timeline data available', 'Events appear here once Zeek is processing traffic.', timelineBody)}
 	</Card>
 
@@ -1494,6 +1563,7 @@ OLD CODE END -->
 
 <style>
 	/* Layout glue the system lacks */
+	.pick-hint { margin-top: var(--sp-2); }
 	/* In-card anchors for the KPI links and the drill scrolls; the margin keeps the card head in view */
 	.anchor { display: block; scroll-margin-top: calc(var(--sp-8) * 3); }
 	/* OLD CODE: .stale { margin-bottom: var(--sp-3); } (NET-160 section D: the count line too) */

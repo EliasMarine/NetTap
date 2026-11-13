@@ -14,7 +14,10 @@
 
 	import { onDestroy, untrack } from 'svelte';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
-	import { chartTime, DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown';
+	// OLD CODE: import { chartTime, DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown'; (NET-249: the activity timeline picks)
+	import { chartTime, DRILL_RANGES, pickedTotal, pickWindow, rangeWindow, startRange, windowQuery, withCount, type TimeChart } from '$lib/utils/drilldown';
+	import { toTimeChart } from '$lib/utils/chart-pick';
+	import { goto } from '$app/navigation';
 	import DetailDrawer from '$lib/components/DetailDrawer.svelte';
 	import DrawerSection from '$lib/components/drawer/DrawerSection.svelte';
 	import KVRow from '$lib/components/drawer/KVRow.svelte';
@@ -250,7 +253,8 @@
 		// OLD CODE END
 		const [commMap, timeline] = await Promise.allSettled([
 			getCommunicationMap(device.mac, params),
-			getActivityTimeline(device.mac, params),
+			// OLD CODE: getActivityTimeline(device.mac, params), (NET-249: the owner's bucket for the range)
+			getActivityTimeline(device.mac, { ...params, interval: span.bucket }),
 		]);
 		if (!drawerGuard.current(g)) return;
 		commMapData = commMap.status === 'fulfilled' ? commMap.value : null;
@@ -505,6 +509,28 @@
 	let encryptedPct = $derived(selectedPrivacy?.encryption_ratio != null ? Math.round(selectedPrivacy.encryption_ratio * 100) : 0);
 
 	const timelineBuckets = $derived(timelineData?.buckets ?? []);
+	/**
+	 * The activity reply as a pickable chart (NET-249). Only when it says which sources it left out:
+	 * without them the list it opens could hold connections the chart didn't count.
+	 */
+	const timelineChart = $derived(
+		timelineData && Array.isArray(timelineData.excluded_ips)
+			? toTimeChart(timelineData, timelineBuckets.map((b) => b.time), timelineBuckets.map((b) => b.connections))
+			: null,
+	);
+
+	/**
+	 * A pick opens Log Explorer's conn records this device started over the picked slots, as the
+	 * chart counts them: its MAC in either case, the reply's excluded sources left out, and their figure.
+	 */
+	function pickActivity(chart: TimeChart, i: number, j: number) {
+		const reply = timelineData;
+		if (!reply) return;
+		const mac = reply.mac.trim().replace(/["\\]/g, '\\$&');
+		const q = new URLSearchParams({ type: 'zeek.conn', query: `source.mac:"${mac.toUpperCase()}" OR source.mac:"${mac.toLowerCase()}"` });
+		if (reply.excluded_ips?.length) q.set('exclude_src', reply.excluded_ips.join(','));
+		void goto(withCount(`/logs?${q.toString()}&${windowQuery(pickWindow(chart, i, j), span.value)}`, pickedTotal(chart, i, j)));
+	}
 	const busiestBucket = $derived(timelineBuckets.reduce((best, b, i) => (b.connections > (timelineBuckets[best]?.connections ?? -1) ? i : best), -1));
 
 	// OLD CODE START — 2026-11-03 UI redesign: the hand-built isolation and protocol tables' sorts;
@@ -1057,7 +1083,9 @@ OLD CODE END -->
 							highlightIndex={busiestBucket}
 							ariaLabel="Busiest at {timelineTime(timelineBuckets[busiestBucket].time)}, with {formatNumber(timelineBuckets[busiestBucket].connections)} connections"
 							height={200}
+							onpick={timelineChart ? (i, j) => pickActivity(timelineChart!, i, j) : undefined}
 						/>
+						{#if timelineChart}<p class="card-sub pick-hint">Click a point or drag across the chart to see that moment.</p>{/if}
 					{:else if timelineFailed}
 						<p class="note">Couldn't load this device's activity: the request failed.</p>
 					{:else}
@@ -1071,6 +1099,7 @@ OLD CODE END -->
 
 <style>
 	/* Layout glue the system lacks */
+	.pick-hint { margin-top: var(--sp-2); }
 	.grade { color: var(--g); background: color-mix(in srgb, var(--g) 14%, transparent); }
 	.grade.sm { width: 26px; height: 26px; border-radius: var(--r-sm); font-size: var(--text-sm); }
 	.trust-side { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-2); min-width: 0; }

@@ -7,13 +7,20 @@
 	 */
 	import { onDestroy, untrack } from 'svelte';
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import { getDomainSummary, type DomainAnswer, type DomainAsker, type DomainSummary } from '$lib/api/drilldown';
 	import { getRegistryDevices } from '$lib/api/devices-registry';
 	import { outcome, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { domainHref, ipHref } from '$lib/stores/lan';
 	import { namesByIp } from '$lib/utils/device-names';
 	// OLD CODE: import { DRILL_RANGES, canonicalName, certificatesHref, chartTime as timeLabel, fmt, rangeWindow, type DrillRange, type DrillRangeValue } from '$lib/utils/drilldown'; (slice 2a)
-	import { DRILL_RANGES, canonicalName, certificatesHref, chartTime as timeLabel, fmt, logsHrefForQuery, rangeWindow, startRange, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
+	// OLD CODE: import { DRILL_RANGES, canonicalName, certificatesHref, chartTime as timeLabel, fmt, logsHrefForQuery, rangeWindow, startRange, type DrillRange, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown'; (NET-249: a pick narrows the page)
+	import {
+		bucketFor, DRILL_RANGES, canonicalName, certificatesHref, chartTime as timeLabel, customRange, fmt, linkedCount, logsHrefForQuery, pickedTotal, pickWindow, rangeWindow,
+		startRange, windowQuery, type DrillRange, type DrillRangeValue, type DrillWindow,
+	} from '$lib/utils/drilldown';
+	import { bucketWords, NARROW_HINT, narrowTo, pickedLine, withoutWindow } from '$lib/utils/narrow-page';
+	import { toTimeChart } from '$lib/utils/chart-pick';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import IPAddress from '$components/IPAddress.svelte';
 	import BarList from '$lib/components/ui/BarList.svelte';
@@ -45,37 +52,72 @@
 	// OLD CODE: ?? DRILL_RANGES[0]); (NET-192 PR 4: 1h and 6h added, 24h is index 2)
 	// OLD CODE: ?? DRILL_RANGES[2] (NET-192 PR 4: the default by value, not by position)
 	const range = $derived(DRILL_RANGES.find((r) => r.value === rangeValue) ?? DRILL_RANGES.find((r) => r.value === '24h')!);
+	const params = $derived($page.url.searchParams);
+	/** A pick's exact window (?from=&to=, NET-249), shown as Custom: every figure follows it */
+	const custom = $derived(customRange(params.get('from'), params.get('to')));
+	/** The lookups the pick carried, compared with the narrowed chart's own total */
+	const picked = $derived(custom ? linkedCount(params.get('count')) : null);
+	/** The window the page loads: its words and length, the range whose bucket the chart asks for, and the range its links carry */
+	interface View {
+		custom: boolean;
+		words: string;
+		hours: number;
+		drill: DrillRange;
+		range: DrillRangeValue;
+	}
+	const view = $derived<View>(
+		custom
+			? { custom: true, words: custom.words, hours: custom.hours, drill: bucketFor(Date.parse(custom.from), Date.parse(custom.to)), range: rangeValue }
+			: { custom: false, words: range.words, hours: range.hours, drill: range, range: rangeValue },
+	);
+	const viewKey = $derived(`${name}|${custom ? `${custom.from}|${custom.to}` : range.value}`);
 	let span = $state<{ from: string; to: string }>({ from: '', to: '' });
 	// OLD CODE: let loaded = $state<{ data: DomainSummary; range: DrillRange } | null>(null); (slice 2a: the figures keep their window)
 	/** The figures on screen, with the range and exact window they were counted over (their links carry it). */
-	let loaded = $state<{ data: DomainSummary; range: DrillRange; window: DrillWindow } | null>(null);
+	// OLD CODE: let loaded = $state<{ data: DomainSummary; range: DrillRange; window: DrillWindow } | null>(null); (NET-249: a Custom window)
+	let loaded = $state<{ data: DomainSummary; view: View; window: DrillWindow } | null>(null);
 	let failure = $state<string | null>(null);
 	let names = $state<ReadonlyMap<string, string>>(new Map());
 	/** name|range of the figures on screen (not reactive: only the loader reads it) */
 	let loadedView = '';
 
 	const data = $derived(loaded?.data ?? null);
-	const shown = $derived(loaded?.range ?? range);
+	// OLD CODE: const shown = $derived(loaded?.range ?? range); (NET-249)
+	const shown = $derived(loaded?.view ?? view);
 	const words = $derived(shown.words);
 
 	const refresh = registerPageRefresh(load);
 	onDestroy(refresh.unregister);
 
 	$effect(() => {
-		void name; // another domain
-		void rangeValue; // another window
+		// OLD CODE START — NET-249: the view key holds both, and a pick's Custom window
+		// void name; // another domain
+		// void rangeValue; // another window
+		// OLD CODE END
+		void viewKey; // another domain or window
 		untrack(() => refresh.run());
 	});
+
+	/** A range pill: a window ending now, so a pick's Custom window goes (NET-249) */
+	function pickRange(value: string) {
+		if (value === 'custom') return;
+		rangeValue = value as DrillRangeValue;
+		if (custom) void goto(withoutWindow($page.url), { keepFocus: true, noScroll: true });
+	}
 
 	async function load(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
 		const target = name;
 		const r = range;
+		const v = view;
+		const c = custom;
 		if (!target) return 'skipped';
-		const s = rangeWindow(r.hours);
-		const view = `${target}|${r.value}`;
+		// OLD CODE: const s = rangeWindow(r.hours); (NET-249: a pick's window is fixed)
+		const s = c ? { from: c.from, to: c.to } : rangeWindow(r.hours);
+		// OLD CODE: const view = `${target}|${r.value}`; (NET-249)
+		const key = viewKey;
 		// A refresh of the same view keeps its last good figures; another view must not show them
-		if (view !== loadedView) {
+		if (key !== loadedView) {
 			loaded = null;
 			failure = null;
 		}
@@ -84,7 +126,8 @@
 			(res) => namesByIp(res.devices),
 			() => null,
 		);
-		const results = await Promise.allSettled([getDomainSummary(target, s.from, s.to)]);
+		// OLD CODE: const results = await Promise.allSettled([getDomainSummary(target, s.from, s.to)]); (NET-249: the owner's bucket table)
+		const results = await Promise.allSettled([getDomainSummary(target, s.from, s.to, v.drill.bucket)]);
 		// Names are cosmetic: a failed registry load keeps the last names and isn't a failure
 		const loadedNames = await namesLoad;
 		if (!guard.current(g)) return 'skipped';
@@ -92,8 +135,10 @@
 		if (loadedNames) names = loadedNames;
 		if (summaryRes.status === 'fulfilled') {
 			// OLD CODE: loaded = { data: summaryRes.value, range: r }; (slice 2a)
-			loaded = { data: summaryRes.value, range: r, window: s };
-			loadedView = view;
+			// OLD CODE: loaded = { data: summaryRes.value, range: r, window: s }; (NET-249)
+			loaded = { data: summaryRes.value, view: v, window: s };
+			// OLD CODE: loadedView = view; (NET-249)
+			loadedView = key;
 			failure = null;
 		} else {
 			failure = summaryRes.reason instanceof Error ? summaryRes.reason.message : '';
@@ -114,6 +159,13 @@
 	// };
 	// OLD CODE END
 	const chartTime = (t: number | string): string => timeLabel(t, shown.hours);
+	/** The chart's reply, whole, when its bucket can be picked on (NET-249); the receiver ignores it after a failed refresh */
+	const chart = $derived(data ? toTimeChart(data, data.dns.timeline.map((p) => p.t), data.dns.timeline.map((p) => p.n)) : null);
+	const countLine = $derived(pickedLine(picked, failure ? null : chart, { lead: 'This window now shows', one: 'lookup', many: 'lookups' }));
+	/** A pick on the chart (NET-249): this page over the picked slots, with the lookups they counted */
+	function pick(i: number, j: number) {
+		if (chart) void narrowTo($page.url, custom, pickWindow(chart, i, j), rangeValue, 'count', pickedTotal(chart, i, j));
+	}
 	const chartLabel = $derived(
 		busiest >= 0 ? `Busiest at ${chartTime(timeline[busiest].t)}, with ${fmt(timeline[busiest].n)} lookups` : 'No lookups in this window',
 	);
@@ -142,7 +194,10 @@
 	// OLD CODE START: const httpLogs = $derived(`/logs?query=${encodeURIComponent(`zeek.http.host:"${name}"`)}`); — Log Explorer opened on its own 24 hours OLD CODE END
 	// OLD CODE: const httpLogs = $derived(`/logs?query=${encodeURIComponent(`zeek.http.host:"${name}"`)}&range=${shown.value}`); (slice 2a: a range re-anchored at click time)
 	// shown only once the figures have landed, so `loaded` is set wherever it's used
-	const httpLogs = $derived(loaded ? logsHrefForQuery([`zeek.http.host:"${name}"`], loaded.window, shown.value) : '');
+	// OLD CODE: const httpLogs = $derived(loaded ? logsHrefForQuery([`zeek.http.host:"${name}"`], loaded.window, shown.value) : ''); (NET-249: shown.range)
+	const httpLogs = $derived(loaded ? logsHrefForQuery([`zeek.http.host:"${name}"`], loaded.window, shown.range) : '');
+	/** NET-249: on a Custom window the alerts list opens over that window */
+	const alertsHref = $derived(loaded?.view.custom ? `/alerts?${windowQuery(loaded.window, shown.range)}` : `/alerts?range=${shown.range}`);
 </script>
 
 {#snippet who(ip: string)}
@@ -188,7 +243,13 @@
 		<p class="page-sub">Who looked this name up, what it resolved to, and its TLS sessions. Matches the name exactly, ignoring case · {words}</p>
 	</div>
 	<div class="head-actions">
-		<Pills options={DRILL_RANGES.map((r) => ({ value: r.value, label: r.label }))} bind:value={rangeValue} ariaLabel="Time range" />
+		<!-- OLD CODE: <Pills options={DRILL_RANGES.map((r) => ({ value: r.value, label: r.label }))} bind:value={rangeValue} ariaLabel="Time range" /> (NET-249: a pick's window is Custom) -->
+		<Pills
+			options={[...DRILL_RANGES, ...(custom ? [custom] : [])].map((r) => ({ value: r.value, label: r.label }))}
+			value={custom ? 'custom' : rangeValue}
+			onchange={pickRange}
+			ariaLabel="Time range"
+		/>
 	</div>
 </header>
 
@@ -217,7 +278,9 @@
 </div>
 
 <div class="grid">
-	<Card class="c-8" hero col title="Lookups over time" sub="DNS lookups per {shown.interval} · {words}">
+	<!-- OLD CODE: sub="DNS lookups per {shown.interval} · {words}" (NET-249: the owner's bucket table) -->
+	<!-- OLD CODE: sub="DNS lookups per {shown.drill.bucketWords} · {words}" (NET-249 review: the echoed bucket's words once the reply is in) -->
+	<Card class="c-8" hero col title="Lookups over time" sub="DNS lookups per {bucketWords(data?.interval, shown.drill.bucketWords)} · {words}">
 		{#if !data}
 			{@render summaryState('lookups over time')}
 		{:else if data.dns.lookups === 0}
@@ -236,8 +299,11 @@
 				formatTip={(i) => `${chartTime(timeline[i].t)} · ${fmt(timeline[i].n)} lookups`}
 				highlightIndex={busiest}
 				ariaLabel={chartLabel}
+				onpick={chart ? pick : undefined}
 			/>
+			{#if chart}<p class="card-sub pick-hint">{NARROW_HINT}</p>{/if}
 		{/if}
+		{#if data && countLine}<p class="notice pick-hint" role="status">{countLine}</p>{/if}
 	</Card>
 
 	<Card class="c-4" title="Alerts tagged with this name" sub="Suricata alerts whose host fields name it · {words}">
@@ -254,7 +320,8 @@
 				this isn't every alert tied to the domain.
 			</p>
 			<!-- OLD CODE START: <a class="link" href="/alerts">Open alerts…</a> — opened on the alerts page's own 24 hours OLD CODE END -->
-			<a class="link" href="/alerts?range={shown.value}">Open alerts<Icon name="back" class="chev" /></a>
+			<!-- OLD CODE: <a class="link" href="/alerts?range={shown.value}">… (NET-249: a Custom window) -->
+			<a class="link" href={alertsHref}>Open alerts<Icon name="back" class="chev" /></a>
 		{/if}
 	</Card>
 </div>
@@ -354,6 +421,7 @@
 <style>
 	/* Layout glue the system lacks */
 	/* OLD CODE START: .two { display: inline-flex; flex-direction: column; line-height: 1.3; } — system.css defines .two OLD CODE END */
+	.pick-hint { margin-top: var(--sp-2); }
 	.big { margin: 0; font-size: var(--text-xl); font-weight: 700; color: var(--text-1); font-variant-numeric: tabular-nums; }
 	.coverage { margin: var(--sp-2) 0 0; color: var(--text-1); font-size: var(--text-sm); }
 	.small { margin: var(--sp-2) 0 var(--sp-3); font-size: var(--text-sm); }

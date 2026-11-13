@@ -1128,7 +1128,7 @@ class LiveConnectionTracker:
         Runs three OpenSearch queries:
         A. Latest session with full geo/ASN fields (size 1)
         B. Related Suricata alerts (last 24h, size 20, exclude decoder noise)
-        C. Connection history (last 24h) with date_histogram (1h) + bytes sum
+        C. Connection history (last 24h) in 5 min slots + bytes sum, with its window
 
         Args:
             src_ip: Source IP address.
@@ -1227,15 +1227,22 @@ class LiveConnectionTracker:
         }
 
         # --- Query C: Connection history (last 24h) with date_histogram ---
+        # NET-249: one absolute window (whole seconds) for the filter, the slots and the reply,
+        # so a pick on the chart opens exactly the slots drawn
+        # OLD CODE: now = datetime.now(timezone.utc)  # the query's now-24h..now, as hourly slots
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        history_from = (now - timedelta(hours=24)).isoformat().replace("+00:00", "Z")
+        history_to = now.isoformat().replace("+00:00", "Z")
+        history_interval = "5m"  # 289 slots over the 24 h
         history_filters: list[dict] = [
             *self._ZEEK_CONN_FILTERS,
-            {"range": {"@timestamp": {"gte": "now-24h", "lte": "now"}}},
+            # OLD CODE: {"range": {"@timestamp": {"gte": "now-24h", "lte": "now"}}}, (NET-249)
+            {"range": {"@timestamp": {"gte": history_from, "lte": history_to}}},
             ip_pair_filter,
         ]
         if port_filter:
             history_filters.append(port_filter)
 
-        now = datetime.now(timezone.utc)  # the query's now-24h..now, as hourly slots
         history_query = {
             "size": 0,
             "track_total_hits": True,
@@ -1258,7 +1265,8 @@ class LiveConnectionTracker:
                     #     "extended_bounds": {"min": "now-24h", "max": "now"},
                     # },
                     # OLD CODE END
-                    **time_slots(now - timedelta(hours=24), now, "1h"),
+                    # OLD CODE: **time_slots(now - timedelta(hours=24), now, "1h"), (NET-249)
+                    **time_slots(history_from, history_to, history_interval),
                     "aggs": {
                         "bytes": {
                             "sum": {
@@ -1340,6 +1348,11 @@ class LiveConnectionTracker:
             "alerts": alerts,
             "alert_count": len(alerts),
             "history": {
+                "from": history_from,
+                "to": history_to,
+                "interval": history_interval,
+                # the destination port the history applied, if any
+                "port": dst_port if port_filter else None,
                 "total_bytes": total_bytes,
                 "connection_count": connection_count,
                 "timeline": timeline,

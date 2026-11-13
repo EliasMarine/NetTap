@@ -20,7 +20,7 @@ from api.error_replies import incomplete, public_json
 from api.offload import in_thread, run_blocking
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from api.drilldown_runner import either_side, ip_param
-from api.time_range import parse_time_range
+from api.time_range import parse_time_range, slot_interval
 from api.devices import _CONNECTION_SORT_FIELDS, _connection_sort
 from services.excluded_ips import (
     CONN_ACCOUNTING,
@@ -1078,12 +1078,16 @@ def handle_category_bandwidth(request: web.Request) -> web.Response:
         return web.json_response({"error": f"Unknown category: {category}"}, status=404)
 
     from_ts, to_ts = _parse_time_range(request)
-    interval = request.query.get("interval", "15m")
-
-    # Validate interval
+    # OLD CODE START — NET-249: an unknown interval became 15m silently
+    # interval = request.query.get("interval", "15m")
+    #
+    # # Validate interval
+    # valid_intervals = {"1m", "5m", "10m", "15m", "30m", "1h", "3h", "6h", "12h", "1d"}
+    # if interval not in valid_intervals:
+    #     interval = "15m"
+    # OLD CODE END
     valid_intervals = {"1m", "5m", "10m", "15m", "30m", "1h", "3h", "6h", "12h", "1d"}
-    if interval not in valid_intervals:
-        interval = "15m"
+    interval = slot_interval(request, from_ts, to_ts, valid_intervals, "15m")
 
     client = _get_client(request)
 
@@ -1692,14 +1696,21 @@ def handle_connection_timeline(request: web.Request) -> web.Response:
     Returns buckets with per-protocol session counts.
     """
     from_ts, to_ts = _parse_time_range(request)
-    interval = request.query.get("interval", "")
-    if not interval:
-        interval = _sparkline_interval(from_ts, to_ts)
-    client = _get_client(request)
-
+    # OLD CODE START — NET-249: an unknown interval became 15m silently
+    # interval = request.query.get("interval", "")
+    # if not interval:
+    #     interval = _sparkline_interval(from_ts, to_ts)
+    # client = _get_client(request)
+    #
+    # valid_intervals = {"1m", "5m", "10m", "15m", "30m", "1h", "3h", "6h", "12h", "1d"}
+    # if interval not in valid_intervals:
+    #     interval = "15m"
+    # OLD CODE END
     valid_intervals = {"1m", "5m", "10m", "15m", "30m", "1h", "3h", "6h", "12h", "1d"}
-    if interval not in valid_intervals:
-        interval = "15m"
+    interval = slot_interval(
+        request, from_ts, to_ts, valid_intervals, _sparkline_interval(from_ts, to_ts)
+    )
+    client = _get_client(request)
 
     try:  # #120: exact date_range slots; OpenSearch 3.5's skip-list date_histogram misplaces records
         slots = time_slots(from_ts, to_ts, interval)

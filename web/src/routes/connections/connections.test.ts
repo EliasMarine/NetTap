@@ -395,7 +395,8 @@ describe('Connections — the range set', () => {
 	// 	const pills = within(screen.getByRole('group', { name: 'Time range' })).getAllByRole('button');
 	// 	expect(pills.map((b) => b.textContent?.trim())).toEqual(['1h', '6h', '24h', '7d']);
 	// OLD CODE END
-	it("offers Home's 1h 6h 24h 7d 30d, and asks for the timeline in 6-hour buckets at 7d", async () => {
+	// OLD CODE: it("… and asks for the timeline in 6-hour buckets at 7d", … expect(asked.interval).toBe('6h') (NET-249: the owner's table)
+	it("offers Home's 1h 6h 24h 7d 30d, and asks for the timeline in hourly buckets at 7d", async () => {
 		render(Page);
 		await flush();
 		const pills = within(screen.getByRole('group', { name: 'Time range' })).getAllByRole('button');
@@ -403,18 +404,19 @@ describe('Connections — the range set', () => {
 		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
 		await flush();
 		const asked = vi.mocked(getConnectionTimeline).mock.lastCall![0]!;
-		expect(asked.interval).toBe('6h');
+		expect(asked.interval).toBe('1h');
 		expect(hours(asked)).toBeCloseTo(168);
 	});
 
-	it('asks for 30 days of stats and the timeline in day buckets at 30d', async () => {
+	// OLD CODE: it('asks for 30 days of stats and the timeline in day buckets at 30d', … toBe('1d') (NET-249: the owner's table)
+	it('asks for 30 days of stats and the timeline in 3-hour buckets at 30d', async () => {
 		render(Page);
 		await flush();
 		await fireEvent.click(screen.getByRole('button', { name: '30d' }));
 		await flush();
 		expect(hours(vi.mocked(getConnectionStats).mock.lastCall![0]!)).toBeCloseTo(720);
 		const asked = vi.mocked(getConnectionTimeline).mock.lastCall![0]!;
-		expect(asked.interval).toBe('1d');
+		expect(asked.interval).toBe('3h');
 		expect(hours(asked)).toBeCloseTo(720);
 		expect(screen.getByRole('button', { name: '30d' })).toHaveAttribute('aria-pressed', 'true');
 	});
@@ -444,7 +446,8 @@ describe('Connections — the range set', () => {
 			await flush();
 			expect(vi.mocked(getConnections).mock.calls.map(([opts]) => hours(opts!))).toEqual([168]);
 			expect(hours(vi.mocked(getConnectionStats).mock.calls[0][0]!)).toBe(168);
-			expect(vi.mocked(getConnectionTimeline).mock.calls[0][0]!.interval).toBe('6h');
+			// OLD CODE: .toBe('6h'); (NET-249: the owner's table)
+			expect(vi.mocked(getConnectionTimeline).mock.calls[0][0]!.interval).toBe('1h');
 			expect(screen.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
 		});
 	});
