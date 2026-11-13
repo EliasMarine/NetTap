@@ -466,6 +466,6 @@ describe('chart buckets and the windows they open (NET-249)', () => {
 	});
 
 	it('countDifference still ends with the shared reason', () => {
-		expect(countDifference(1, 2, { lead: 'Now', one: 'record', many: 'records' })).toMatch(new RegExp(`${RECORDS_CHANGE.replace(/[().]/g, '\\$&')}$`));
+		expect(countDifference(1, 2, { lead: 'Now', one: 'record', many: 'records' }).endsWith(RECORDS_CHANGE)).toBe(true);
 	});
 });
