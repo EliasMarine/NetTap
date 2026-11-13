@@ -45,7 +45,10 @@ G11_AGGS = {
         "multi_terms": {"terms": [{"field": "source.ip"}, {"field": "destination.ip"}]}
     },
     "c": {
-        "composite": {"size": 10, "sources": [{"ip": {"terms": {"field": "source.ip"}}}]}
+        "composite": {
+            "size": 10,
+            "sources": [{"ip": {"terms": {"field": "source.ip"}}}],
+        }
     },
     "f": {
         "filter": {"term": {"network.transport": "tcp"}},
@@ -108,14 +111,19 @@ def test_the_empty_answer_is_what_opensearch_answers_over_no_records():
 
 def test_a_kind_without_a_known_empty_answer_gives_none():
     slots = {"date_range": {"field": "@timestamp", "ranges": [{"from": 0, "to": 1}]}}
-    later_page = {"composite": {**G11_AGGS["c"]["composite"], "after": {"ip": "10.0.0.1"}}}
+    later_page = {
+        "composite": {**G11_AGGS["c"]["composite"], "after": {"ip": "10.0.0.1"}}
+    }
     other = {"filters": {"filters": {"a": {"match_all": {}}}, "other_bucket": True}}
     for agg in (
         slots,
         {"date_histogram": {"field": "@timestamp", "fixed_interval": "1h"}},
         later_page,
         other,
-        {"filter": {"match_all": {}}, "aggs": {"slots": slots}},  # inside a single bucket
+        {
+            "filter": {"match_all": {}},
+            "aggs": {"slots": slots},
+        },  # inside a single bucket
     ):
         assert empty_aggregations({"x": agg}) is None, agg
 
@@ -170,7 +178,9 @@ class NoIndex:
 
 class TestTheClient(NoIndex, unittest.TestCase):
     def test_a_search_of_no_index_answers_the_empty_aggregations(self):
-        reply = _no_index_client().search(index="arkime_sessions3-*", body={"aggs": G11_AGGS})
+        reply = _no_index_client().search(
+            index="arkime_sessions3-*", body={"aggs": G11_AGGS}
+        )
         assert reply["aggregations"] == G11_EMPTY
 
     def test_the_device_read_finds_no_device_instead_of_failing(self):

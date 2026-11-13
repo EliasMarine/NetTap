@@ -34,7 +34,9 @@ def clock():
 def _read(changelog, what="device list"):
     app = {"lan_filter": LAN, "excluded_ips": [], "changelog_service": changelog}
     with pytest.raises(QueryFailed, match="stopped at"):
-        _lan_device_buckets(DrillOpenSearch(DOCS), app, FROM, TO, page_size=1, what=what)
+        _lan_device_buckets(
+            DrillOpenSearch(DOCS), app, FROM, TO, page_size=1, what=what
+        )
 
 
 def _written(changelog) -> list[tuple]:
@@ -66,7 +68,9 @@ def test_reads_within_a_day_write_nothing_more_and_the_next_day_writes_again(clo
 
 def test_a_failed_write_is_tried_again_after_five_minutes_not_a_day(clock):
     changelog = MagicMock()
-    changelog.log_event.return_value = {"_id": ""}  # ChangelogService when indexing fails
+    changelog.log_event.return_value = {
+        "_id": ""
+    }  # ChangelogService when indexing fails
     _read(changelog)
     clock["t"] += 4 * 60
     _read(changelog)

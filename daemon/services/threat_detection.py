@@ -12,13 +12,18 @@ import math
 import os
 import statistics
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
 
 # OLD CODE: from services.excluded_ips import CONN_ACCOUNTING (NET-240: lateral movement reads interim records too)
 from services.excluded_ips import CONN_ACCOUNTING, CONN_RECORDS
+from opensearchpy import ConnectionTimeout
+
 from storage.all_buckets import all_buckets
+from storage.exact_terms import SearchTimedOut
+from storage.snapshot_search import Budget, TooSlow
 
 # OLD CODE START — excluded IPs stay visible in threat detections
 # from services.excluded_ips import build_excluded_ips_filter
@@ -27,6 +32,14 @@ from storage.all_buckets import all_buckets
 logger = logging.getLogger("nettap.services.threat_detection")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
+
+# NET-187: live beaconing scans (the report's and the beaconing route's) run on these threads, never
+# on the route pool (a 30-day scan per thread would leave Home none) or a report loop's default
+# executor (asyncio.run joins it on exit, so a scan left behind at its deadline would hold the report)
+BEACON_THREADS = 2
+BEACON_POOL = ThreadPoolExecutor(
+    max_workers=BEACON_THREADS, thread_name_prefix="beacon"
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -223,23 +236,89 @@ def _pair_filter(key: dict) -> list[dict]:
     ]
 
 
+# OLD CODE START — NET-187: one three-term clause per pair (each `term` on an ip or port field
+# rebuilds the busy source's whole record set, 500 times a batch) and a date_histogram, which cost
+# as much as the rest of the aggregation; 24 h took 15 s and 7 d 63 s on the G11
+# def _batch_slots(
+#     client, filters: list[dict], batch: list[dict]
+# ) -> dict[str, list[dict]]:
+#     """Non-empty 10 s slots of every pair in `batch`, in one request.
+#
+#     The query keeps only the batch's pairs and a multi_terms splits them in one pass: on the
+#     G11 the same slots in 6.4 s instead of 45 s for a `filters` aggregation of 500 pairs.
+#     """
+#     # a date_histogram under multi_terms (and the composite one in _paged_slots) is exact on
+#     # OpenSearch 3.5: the skip-list collector that misplaces records (#120) is top-level only;
+#     # 0 of 10,966 slots differed from date_range slots on the G11
+#     histogram = {
+#         "field": "@timestamp",
+#         "fixed_interval": f"{BEACON_SLOT_SECONDS}s",
+#         "min_doc_count": 1,
+#     }
+#     pair_clauses = [{"bool": {"filter": _pair_filter(p["key"])}} for p in batch]
+#     body = {
+#         "size": 0,
+#         "query": {
+#             "bool": {
+#                 "filter": [
+#                     *filters,
+#                     {"bool": {"should": pair_clauses, "minimum_should_match": 1}},
+#                 ]
+#             }
+#         },
+#         "aggs": {
+#             "pairs": {
+#                 "multi_terms": {"terms": _PAIR_FIELDS, "size": len(batch)},
+#                 "aggs": {"timestamps": {"date_histogram": histogram}},
+#             }
+#         },
+#     }
+#     reply = client.search(index=NETWORK_INDEX, body=body)
+#     buckets = ((reply.get("aggregations") or {}).get("pairs") or {}).get(
+#         "buckets"
+#     ) or []
+#     return {
+#         _pair_name(
+#             {"src": b["key"][0], "dst": b["key"][1], "port": int(b["key"][2])}
+#         ): b.get("timestamps", {}).get("buckets", [])
+#         for b in buckets
+#     }
+# OLD CODE END
 def _batch_slots(
-    client, filters: list[dict], batch: list[dict]
+    client, filters: list[dict], batch: list[dict], budget: Budget
 ) -> dict[str, list[dict]]:
     """Non-empty 10 s slots of every pair in `batch`, in one request.
 
     The query keeps only the batch's pairs and a multi_terms splits them in one pass: on the
     G11 the same slots in 6.4 s instead of 45 s for a `filters` aggregation of 500 pairs.
+    NET-187: one clause per (source, port) with its destinations in one `terms` reads the same
+    records (a pair is one source, port and destination), and a numeric histogram gives the
+    date_histogram's 10 s slots: 24 h in 6 s instead of 15 s, 7 d in 25 s instead of 63 s, every
+    pair's slots identical on the G11.
     """
-    # a date_histogram under multi_terms (and the composite one in _paged_slots) is exact on
-    # OpenSearch 3.5: the skip-list collector that misplaces records (#120) is top-level only;
-    # 0 of 10,966 slots differed from date_range slots on the G11
+    budget.check("the beaconing scan")
+    # shortcut: a numeric histogram assumes @timestamp is a `date` (epoch ms), as Malcolm's
+    # malcolm_template maps it on arkime_sessions3-*; a `date_nanos` mapping needs date_histogram
     histogram = {
         "field": "@timestamp",
-        "fixed_interval": f"{BEACON_SLOT_SECONDS}s",
+        "interval": BEACON_SLOT_SECONDS * 1000,
         "min_doc_count": 1,
     }
-    pair_clauses = [{"bool": {"filter": _pair_filter(p["key"])}} for p in batch]
+    destinations: dict[tuple, list[str]] = defaultdict(list)
+    for p in batch:
+        destinations[(p["key"]["src"], p["key"]["port"])].append(p["key"]["dst"])
+    pair_clauses = [
+        {
+            "bool": {
+                "filter": [
+                    {"term": {"source.ip": src}},
+                    {"term": {"destination.port": port}},
+                    {"terms": {"destination.ip": dsts}},
+                ]
+            }
+        }
+        for (src, port), dsts in destinations.items()
+    ]
     body = {
         "size": 0,
         "query": {
@@ -253,18 +332,19 @@ def _batch_slots(
         "aggs": {
             "pairs": {
                 "multi_terms": {"terms": _PAIR_FIELDS, "size": len(batch)},
-                "aggs": {"timestamps": {"date_histogram": histogram}},
+                "aggs": {"timestamps": {"histogram": histogram}},
             }
         },
     }
-    reply = client.search(index=NETWORK_INDEX, body=body)
+    reply = client.search(index=NETWORK_INDEX, body=body, budget=budget)
     buckets = ((reply.get("aggregations") or {}).get("pairs") or {}).get(
         "buckets"
     ) or []
+    # a histogram's keys come back as doubles; epoch ms is exact in one, and the gaps are ints
     return {
         _pair_name(
             {"src": b["key"][0], "dst": b["key"][1], "port": int(b["key"][2])}
-        ): b.get("timestamps", {}).get("buckets", [])
+        ): [{"key": int(t["key"])} for t in b.get("timestamps", {}).get("buckets", [])]
         for b in buckets
     }
 
@@ -313,8 +393,12 @@ def _batch_slots_filters_agg(
 # OLD CODE END
 
 
-def _paged_slots(client, filters: list[dict], key: dict) -> tuple[list[dict], bool]:
+def _paged_slots(
+    client, filters: list[dict], key: dict, budget: Budget
+) -> tuple[list[dict], bool]:
     """Non-empty 10 s slots of one pair too busy to share a request, paged (False if capped)."""
+    # a date_histogram inside a composite is exact on OpenSearch 3.5: the skip-list collector
+    # that misplaces records (#120) is top-level only; its keys are _batch_slots' keys
     slots, complete = all_buckets(
         client,
         NETWORK_INDEX,
@@ -329,6 +413,7 @@ def _paged_slots(client, filters: list[dict], key: dict) -> tuple[list[dict], bo
                 }
             }
         ],
+        budget=budget,
     )
     return [{"key": s["key"]["t"]} for s in slots], complete
 
@@ -378,12 +463,15 @@ def _assess_beacon(key: dict, conn_count: int, ts_buckets: list[dict]) -> dict |
     }
 
 
-def _candidate_pairs(client, filters: list[dict]) -> tuple[list[dict], bool]:
+def _candidate_pairs(
+    client, filters: list[dict], budget: Budget
+) -> tuple[list[dict], bool]:
     """Every pair with enough connections to be a beacon (False if a bucket cap stopped it).
 
     One multi_terms list with min_doc_count (1.4 s on the G11 instead of 5.6 s paging all
     33,645 pairs); a network with more candidates than one list holds is paged instead.
     """
+    budget.check("the beaconing scan")
     body = {
         "size": 0,
         "query": {"bool": {"filter": filters}},
@@ -397,7 +485,7 @@ def _candidate_pairs(client, filters: list[dict]) -> tuple[list[dict], bool]:
             }
         },
     }
-    reply = client.search(index=NETWORK_INDEX, body=body)
+    reply = client.search(index=NETWORK_INDEX, body=body, budget=budget)
     listed = (reply.get("aggregations") or {}).get("pairs") or {}
     if not listed.get("sum_other_doc_count"):
         return [
@@ -412,7 +500,11 @@ def _candidate_pairs(client, filters: list[dict]) -> tuple[list[dict], bool]:
             for b in listed.get("buckets", [])
         ], True
     pairs, complete = all_buckets(
-        client, NETWORK_INDEX, {"bool": {"filter": filters}}, _PAIR_SOURCES
+        client,
+        NETWORK_INDEX,
+        {"bool": {"filter": filters}},
+        _PAIR_SOURCES,
+        budget=budget,
     )
     return [p for p in pairs if p["doc_count"] >= BEACONING_MIN_CONNECTIONS], complete
 
@@ -444,23 +536,27 @@ def _mark_many_hosts(beacons: list[dict]) -> list[dict]:
 
 
 def _scan_beacons(
-    client, filters: list[dict], slots: int | None
+    client, filters: list[dict], slots: int | None, budget: Budget
 ) -> tuple[list[dict], bool]:
-    """(beacons among every pair, False if a bucket cap left some pairs unchecked)."""
+    """(beacons among every pair, False if a bucket cap left some pairs unchecked).
+
+    TooSlow once `budget` runs out: every request checks it first (NET-187).
+    """
     # OLD CODE START — #96: every pair was paged (34 searches on the G11) to keep ~7% of them
     # pairs, complete = all_buckets(client, NETWORK_INDEX, {"bool": {"filter": filters}}, _PAIR_SOURCES)
     # # timing is only read for pairs with enough connections to be a beacon
     # candidates = [p for p in pairs if p["doc_count"] >= BEACONING_MIN_CONNECTIONS]
     # OLD CODE END
-    candidates, complete = _candidate_pairs(client, filters)
+    candidates, complete = _candidate_pairs(client, filters, budget)
     batches, too_big = _histogram_batches(candidates, slots)
     timings = {
         name: ts
         for batch in batches
-        for name, ts in _batch_slots(client, filters, batch).items()
+        for name, ts in _batch_slots(client, filters, batch, budget).items()
     }
     paged = {
-        _pair_name(p["key"]): _paged_slots(client, filters, p["key"]) for p in too_big
+        _pair_name(p["key"]): _paged_slots(client, filters, p["key"], budget)
+        for p in too_big
     }
     timings = {**timings, **{name: ts for name, (ts, _) in paged.items()}}
     complete = complete and all(done for _, done in paged.values())
@@ -472,12 +568,19 @@ def _scan_beacons(
 
 
 def detect_beaconing(
-    client, from_ts: str, to_ts: str, excluded_ips: list[str] | None = None
+    client,
+    from_ts: str,
+    to_ts: str,
+    excluded_ips: list[str] | None = None,
+    budget: Budget | None = None,
 ) -> tuple[list[dict], bool]:
     """Detect periodic callback patterns indicative of C2 beaconing.
 
     Returns (beacons, complete): complete is False if the bucket cap stopped the scan. A failed
     query raises, so callers can't mistake it for "no beacons" (#96).
+
+    NET-187: raises TooSlow once ``budget`` runs out, or when a search took too long for the
+    client or for OpenSearch; never a partial list. None (the background scan) has no limit.
 
     ``excluded_ips`` is ignored (kept for callers): excluded IPs stay visible here.
     """
@@ -556,9 +659,20 @@ def detect_beaconing(
             ]
         }
     }
-    beacons, complete = _scan_beacons(
-        client, [*bool_clause["filter"], scope], _max_slots(from_ts, to_ts)
-    )
+    # OLD CODE START — NET-187: no time budget
+    # beacons, complete = _scan_beacons(
+    #     client, [*bool_clause["filter"], scope], _max_slots(from_ts, to_ts)
+    # )
+    # OLD CODE END
+    try:
+        beacons, complete = _scan_beacons(
+            client,
+            [*bool_clause["filter"], scope],
+            _max_slots(from_ts, to_ts),
+            budget or Budget(math.inf),
+        )
+    except (ConnectionTimeout, SearchTimedOut) as exc:
+        raise TooSlow("the beaconing scan took too long") from exc
     if not complete:
         logger.warning(
             "Beaconing: the scan hit its bucket cap; pairs past it were not checked"

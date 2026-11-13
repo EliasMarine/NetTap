@@ -373,7 +373,9 @@ _ui_failure_hint() {
         "Configuring network bridge")
             echo "Check both cables, and the port names in .env (WAN_INTERFACE, LAN_INTERFACE)." ;;
         "Deploying Malcolm stack")
-            echo "Check this box can reach the image registry:  curl -sI https://ghcr.io" ;;
+            # OLD CODE: echo "Check this box can reach the image registry:  curl -sI https://ghcr.io" ;;
+            # (NET-217: this step now also stops on an OpenSearch bootstrap failure)
+            echo "Read the error above. For a failed image pull:  curl -sI https://ghcr.io" ;;
         *)
             echo "Read the last message above; it says what went wrong." ;;
     esac

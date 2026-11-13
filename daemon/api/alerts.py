@@ -587,7 +587,9 @@ def handle_alerts_list(request: web.Request) -> web.Response:
     # if no_rule_name:
     #     filter_clauses.append(_signature_filter([None]))
     # OLD CODE END
-    if "no_rule_name" in request.query:  # true: no rule.name; false: only alerts with one
+    if (
+        "no_rule_name" in request.query
+    ):  # true: no rule.name; false: only alerts with one
         filter_clauses.append(
             _signature_filter([None])
             if no_rule_name

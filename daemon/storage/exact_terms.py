@@ -14,12 +14,16 @@ from typing import Any
 
 from opensearchpy import OpenSearch, OpenSearchException
 
+from storage.snapshot_search import Budget
+
 logger = logging.getLogger("nettap.opensearch")
 
 # Holds every term of a day on a home network; a search with longer lists is re-run x10
 EXACT_SHARD_SIZE = 10_000
 # Past this the counts stay OpenSearch's estimate and a warning is logged (memory bound)
 MAX_SHARD_SIZE = 100_000
+# NET-187 review: a budgeted search waits at most this, the daemon client's own timeout (StorageManager)
+SEARCH_TIMEOUT_SECONDS = 30.0
 
 
 def with_exact_terms(aggs: dict, shard_size: int = EXACT_SHARD_SIZE) -> dict:
@@ -83,6 +87,14 @@ class PartialResultsError(OpenSearchException):
     """Some shards failed, the search timed out or a scan hit its cap: the reply is only part of the data."""
 
 
+class SearchTimedOut(PartialResultsError):
+    """OpenSearch stopped the search at its time limit (a body `timeout` or `search.default_search_timeout`)."""
+
+
+# NET-187: the reason _partial gives for a timed-out search, so _raise_if_partial can say which it was
+_TIMED_OUT = "the search timed out"
+
+
 def _failed_shards(reply: Any) -> int:
     """Shards that failed in a search or msearch reply (OpenSearch still answers from the rest)."""
     if not isinstance(reply, dict):
@@ -103,21 +115,30 @@ def _partial(reply: Any) -> str | None:
         return "a search in the batch failed"
     # a timed-out search answers from the shards that finished in time
     if reply.get("timed_out"):
-        return "the search timed out"
+        return _TIMED_OUT
     if failed := _failed_shards(reply):
         return f"{failed} shard(s) failed"
     return None
 
 
 def _raise_if_partial(reply: Any, kwargs: dict) -> None:
+    # OLD CODE START — NET-187: a time-out raised the same error as failed shards
+    # if why := _partial(reply):
+    #     raise PartialResultsError(
+    #         f"{why} on {kwargs.get('index', '?')}; the reply is partial"
+    #     )
+    # OLD CODE END
     if why := _partial(reply):
-        raise PartialResultsError(
-            f"{why} on {kwargs.get('index', '?')}; the reply is partial"
-        )
+        error = SearchTimedOut if why == _TIMED_OUT else PartialResultsError
+        raise error(f"{why} on {kwargs.get('index', '?')}; the reply is partial")
 
 
 # What OpenSearch answers for each aggregation over no records (captured on the G11, NET-182)
-_EMPTY_TERMS = {"buckets": [], "doc_count_error_upper_bound": 0, "sum_other_doc_count": 0}
+_EMPTY_TERMS = {
+    "buckets": [],
+    "doc_count_error_upper_bound": 0,
+    "sum_other_doc_count": 0,
+}
 _EMPTY_VALUE = {
     "sum": {"value": 0.0},
     "value_count": {"value": 0},
@@ -140,16 +161,24 @@ def empty_aggregations(aggs: dict) -> dict | None:
     has no known empty form (a date_range's slots, a composite's later page, …)."""
     out: dict = {}
     for name, agg in aggs.items():
-        kinds = [k for k in agg if k not in (*_SUB_AGGS, "meta")] if isinstance(agg, dict) else []
+        kinds = (
+            [k for k in agg if k not in (*_SUB_AGGS, "meta")]
+            if isinstance(agg, dict)
+            else []
+        )
         if len(kinds) != 1:
             return None
         kind, params = kinds[0], agg[kinds[0]]
         subs = next((agg[k] for k in _SUB_AGGS if isinstance(agg.get(k), dict)), {})
         if kind in _EMPTY_VALUE:
-            out[name] = copy.deepcopy(_EMPTY_VALUE[kind])  # a caller may change its reply
+            out[name] = copy.deepcopy(
+                _EMPTY_VALUE[kind]
+            )  # a caller may change its reply
             continue
         # a single bucket carries its sub-aggregations; a bucket list has no bucket to carry them
-        inner = empty_aggregations(subs) if kind in ("filter", "missing", "filters") else {}
+        inner = (
+            empty_aggregations(subs) if kind in ("filter", "missing", "filters") else {}
+        )
         if inner is None:
             return None
         if kind in ("filter", "missing"):
@@ -157,7 +186,9 @@ def empty_aggregations(aggs: dict) -> dict | None:
         elif kind == "composite" and "after" not in params:
             # a later page with no index must not end a scan as complete
             out[name] = {"buckets": []}
-        elif kind == "filters" and not {"other_bucket", "other_bucket_key"} & set(params):
+        elif kind == "filters" and not {"other_bucket", "other_bucket_key"} & set(
+            params
+        ):
             named = params.get("filters")
             if isinstance(named, dict):
                 out[name] = {"buckets": {k: {"doc_count": 0, **inner} for k in named}}
@@ -181,7 +212,11 @@ def with_empty_aggregations(reply: Any, body: Any) -> Any:
     if not isinstance(reply, dict) or not isinstance(body, dict):
         return reply
     shards = reply.get("_shards")
-    if not isinstance(shards, dict) or shards.get("total") != 0 or "aggregations" in reply:
+    if (
+        not isinstance(shards, dict)
+        or shards.get("total") != 0
+        or "aggregations" in reply
+    ):
         return reply
     aggs = next((body[k] for k in _SUB_AGGS if isinstance(body.get(k), dict)), None)
     empty = empty_aggregations(aggs) if aggs else None
@@ -191,9 +226,21 @@ def with_empty_aggregations(reply: Any, body: Any) -> Any:
 class ExactTermsOpenSearch(OpenSearch):
     """The daemon's OpenSearch client: search and msearch bodies get exact terms counts."""
 
-    def _exact(self, send, body: Any, **kwargs: Any) -> Any:
+    def _exact(
+        self, send, body: Any, budget: Budget | None = None, **kwargs: Any
+    ) -> Any:
         shard_size = EXACT_SHARD_SIZE
         while True:
+            # NET-187 review: with a budget, every send (a longer-list re-ask too) needs time left
+            # and waits no longer than what is left (the transport retries inside one send)
+            if budget is not None:
+                budget.check("a search")
+                kwargs = {
+                    **kwargs,
+                    "request_timeout": min(
+                        SEARCH_TIMEOUT_SECONDS, max(1.0, budget.remaining())
+                    ),
+                }
             reply = send(body=body, shard_size=shard_size, **kwargs)
             # By default OpenSearch answers from the shards that worked; a figure from part of the
             # data must be an error, not a smaller number
@@ -216,7 +263,11 @@ class ExactTermsOpenSearch(OpenSearch):
                 return reply
             shard_size = min(shard_size * 10, MAX_SHARD_SIZE)
 
-    def search(self, *, body: Any = None, **kwargs: Any) -> Any:
+    def search(
+        self, *, body: Any = None, budget: Budget | None = None, **kwargs: Any
+    ) -> Any:
+        """A search with exact terms counts; with `budget`, inside it (TooSlow once spent)."""
+
         def send(body: Any, shard_size: int, **kw: Any) -> Any:
             return super(ExactTermsOpenSearch, self).search(
                 body=exact_body(body, shard_size), **kw
@@ -225,7 +276,9 @@ class ExactTermsOpenSearch(OpenSearch):
         # OLD CODE START — NET-182: a reply from no index (no aggregations) read as incomplete
         # return self._exact(send, body, **kwargs)
         # OLD CODE END
-        return with_empty_aggregations(self._exact(send, body, **kwargs), body)
+        return with_empty_aggregations(
+            self._exact(send, body, budget=budget, **kwargs), body
+        )
 
     def msearch(self, *, body: Any = None, **kwargs: Any) -> Any:
         def send(body: Any, shard_size: int, **kw: Any) -> Any:

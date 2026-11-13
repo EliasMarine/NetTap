@@ -13,7 +13,10 @@ source "${SCRIPT_DIR}/../common.sh"
 # ---------------------------------------------------------------------------
 MIN_RAM_MB=7500          # ~8 GB (accounts for OS reporting slightly less)
 RECOMMENDED_RAM_MB=15000 # ~16 GB
-MIN_DISK_GB=400          # ~512 GB drive (formatted capacity)
+# OLD CODE START — NET-177: GiB, while every size NetTap shows is decimal GB
+# MIN_DISK_GB=400          # ~512 GB drive (formatted capacity)
+# OLD CODE END
+MIN_DISK_GB=430          # ~512 GB drive (formatted capacity); decimal GB, the old 400 GiB
 MIN_NIC_COUNT=2
 MIN_CPU_CORES=2
 RECOMMENDED_CPU_CORES=4
@@ -74,7 +77,10 @@ check_disk() {
     # Check the root filesystem — that's where Docker stores data by default
     local disk_kb disk_gb
     disk_kb=$(df -k / | awk 'NR==2 {print $2}') || disk_kb=0
-    disk_gb=$(( disk_kb / 1024 / 1024 ))
+    # OLD CODE START — NET-177: GiB labelled GB, so a 1 TB drive read 931 GB
+    # disk_gb=$(( disk_kb / 1024 / 1024 ))
+    # OLD CODE END
+    disk_gb=$(( disk_kb * 1024 / 1000000000 ))  # decimal GB, as System and Setup show
 
     if (( disk_gb < MIN_DISK_GB )); then
         status_line WARN "Disk: ${disk_gb} GB total (512 GB+ recommended)"
@@ -87,7 +93,9 @@ check_disk() {
         disk_type="NVMe"
     fi
 
-    status_line OK "Disk: ${disk_gb} GB (${disk_type})"
+    # OLD CODE: status_line OK "Disk: ${disk_gb} GB (${disk_type})" (NET-177: "total", as the warning says;
+    # System shows the smaller usable size, without root-reserved blocks)
+    status_line OK "Disk: ${disk_gb} GB total (${disk_type})"
     return 0
 }
 

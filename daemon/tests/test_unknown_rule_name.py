@@ -30,10 +30,16 @@ DOCS = [
 def test_the_filter_matches_each_case_exactly():
     missing = {"bool": {"must_not": {"exists": {"field": "rule.name"}}}}
     assert _signature_filter(["Unknown"]) == {
-        "bool": {"should": [{"terms": {"rule.name": ["Unknown"]}}], "minimum_should_match": 1}
+        "bool": {
+            "should": [{"terms": {"rule.name": ["Unknown"]}}],
+            "minimum_should_match": 1,
+        }
     }
     assert _signature_filter([None]) == {
-        "bool": {"should": [{"terms": {"rule.name": []}}, missing], "minimum_should_match": 1}
+        "bool": {
+            "should": [{"terms": {"rule.name": []}}, missing],
+            "minimum_should_match": 1,
+        }
     }
     assert _signature_filter(["b", None, "a"])["bool"]["should"][0] == {
         "terms": {"rule.name": ["a", "b"]}
@@ -45,7 +51,9 @@ class TestUnknownAndNoRuleName(AioHTTPTestCase):
         return make_app(DrillOpenSearch(DOCS), _register)
 
     async def get(self, path, **params):
-        resp = await self.client.get(path, params={"from": FROM, "to": TO, **params}, headers=AUTH)
+        resp = await self.client.get(
+            path, params={"from": FROM, "to": TO, **params}, headers=AUTH
+        )
         return resp.status, await resp.json()
 
     async def test_the_category_shows_two_rows_and_each_lists_its_figure(self):
@@ -56,14 +64,20 @@ class TestUnknownAndNoRuleName(AioHTTPTestCase):
         self.assertEqual(detail["stats"]["total"], 5)
         # the links the bars carry, over the response's own window
         status, named = await self.get(
-            "/api/alerts", signature="Unknown", **{"from": detail["from"], "to": detail["to"]}
+            "/api/alerts",
+            signature="Unknown",
+            **{"from": detail["from"], "to": detail["to"]},
         )
         self.assertEqual((status, named["total"]), (200, 2))
         status, unnamed = await self.get(
-            "/api/alerts", no_rule_name="true", **{"from": detail["from"], "to": detail["to"]}
+            "/api/alerts",
+            no_rule_name="true",
+            **{"from": detail["from"], "to": detail["to"]},
         )
         self.assertEqual((status, unnamed["total"]), (200, 3))
-        self.assertEqual(sorted(a["_id"] for a in unnamed["alerts"]), ["n1", "n2", "n3"])
+        self.assertEqual(
+            sorted(a["_id"] for a in unnamed["alerts"]), ["n1", "n2", "n3"]
+        )
 
     async def test_the_category_list_still_holds_both(self):
         status, body = await self.get("/api/alerts", category="informational")
