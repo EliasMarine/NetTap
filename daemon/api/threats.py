@@ -15,16 +15,24 @@ from datetime import timedelta
 
 from aiohttp import web
 
+from api.drilldown_runner import _SLOW, json_error
 from api.offload import in_thread, run_blocking
 from api.time_range import parse_time_range
 from services.beacon_snapshots import WINDOWS as SNAPSHOT_WINDOWS
 from services.beacon_snapshots import BeaconSnapshots
 from storage.manager import StorageManager
+from storage.snapshot_search import Budget, TooSlow
 
 logger = logging.getLogger("nettap.api.threats")
 
 _DEFAULT_RANGE_HOURS = 24
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
+# NET-187: a live beaconing scan stops here (7 d on the G11 takes ~25 s, ~45 s with a full week);
+# the report then goes out with beaconing "not checked in time", the beaconing route answers 503
+BEACON_BUDGET_SECONDS = 60.0
+# The whole report's backstop (a job queued in the route pool, or a check without a budget that
+# hangs): the budget plus one in-flight search (the client's 30 s), under the 120 s web proxy
+REPORT_WAIT_SECONDS = BEACON_BUDGET_SECONDS + 30
 
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
@@ -93,6 +101,7 @@ async def handle_threat_report(request: web.Request) -> web.Response:
     # OLD CODE START — NET-192 PR 3: ?snapshot= reads beaconing from the background scan
     # from_ts, to_ts = _parse_time_range(request)
     # OLD CODE END
+    budget = Budget(BEACON_BUDGET_SECONDS)  # from arrival: queueing counts (NET-187)
     window, (from_ts, to_ts) = _snapshot_window(request)
     store: BeaconSnapshots | None = request.app.get("beacon_snapshots")
     snapshot = store is not None and window is not None
@@ -130,17 +139,46 @@ async def handle_threat_report(request: web.Request) -> web.Response:
         #     ),
         # )
         # OLD CODE END
-        report = await run_blocking(
-            asyncio.run,
-            generate_threat_report(
-                client,
-                from_ts,
-                to_ts,
-                excluded_ips=excluded_ips_list,
-                beaconing=beacons,
-                lan_cidrs=lan_cidrs(request.app),
+        # OLD CODE START — NET-187: no time budget; the report waited for beaconing however long
+        # report = await run_blocking(
+        #     asyncio.run,
+        #     generate_threat_report(
+        #         client,
+        #         from_ts,
+        #         to_ts,
+        #         excluded_ips=excluded_ips_list,
+        #         beaconing=beacons,
+        #         lan_cidrs=lan_cidrs(request.app),
+        #     ),
+        # )
+        # OLD CODE END
+        lan = lan_cidrs(request.app)
+        # no shield: a job still queued at the backstop never starts. The coroutine is made in
+        # the worker, so one that never starts leaves nothing un-awaited
+        report = await asyncio.wait_for(
+            run_blocking(
+                lambda: asyncio.run(
+                    generate_threat_report(
+                        client,
+                        from_ts,
+                        to_ts,
+                        excluded_ips=excluded_ips_list,
+                        beaconing=beacons,
+                        lan_cidrs=lan,
+                        budget=budget,
+                    )
+                )
             ),
+            REPORT_WAIT_SECONDS,
         )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Threat report %s .. %s was not ready within %.0f s",
+            from_ts,
+            to_ts,
+            REPORT_WAIT_SECONDS,
+        )
+        return json_error(_SLOW, 503)
     except Exception as exc:
         logger.error("Threat report generation failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)
@@ -171,6 +209,7 @@ async def handle_beaconing(request: web.Request) -> web.Response:
                 "beaconing_snapshot": snap,
             }
         )
+    budget = Budget(BEACON_BUDGET_SECONDS)  # from arrival: queueing counts (NET-187)
     client = _get_client(request)
     excluded_ips_list = request.app.get("excluded_ips", [])
 
@@ -188,11 +227,31 @@ async def handle_beaconing(request: web.Request) -> web.Response:
         #     detect_beaconing, client, from_ts, to_ts, excluded_ips=excluded_ips_list
         # )
         # OLD CODE END
-        beacons, complete = await run_blocking(
-            functools.partial(
-                detect_beaconing, client, from_ts, to_ts, excluded_ips=excluded_ips_list
-            )
+        # OLD CODE START — NET-187: no time budget
+        # beacons, complete = await run_blocking(
+        #     functools.partial(
+        #         detect_beaconing, client, from_ts, to_ts, excluded_ips=excluded_ips_list
+        #     )
+        # )
+        # OLD CODE END
+        # no shield: at the deadline a scan still queued never starts, a running one stops at its
+        # next budget check and its late result is dropped
+        beacons, complete = await asyncio.wait_for(
+            run_blocking(
+                functools.partial(
+                    detect_beaconing,
+                    client,
+                    from_ts,
+                    to_ts,
+                    excluded_ips=excluded_ips_list,
+                    budget=budget,
+                )
+            ),
+            max(0.0, budget.remaining()),
         )
+    except (TooSlow, asyncio.TimeoutError):
+        logger.warning("Beaconing %s .. %s ran out of time", from_ts, to_ts)
+        return json_error(_SLOW, 503)
     except Exception as exc:
         logger.error("Beaconing detection failed: %s", exc)
         return web.json_response({"error": str(exc)}, status=500)

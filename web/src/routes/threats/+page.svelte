@@ -116,6 +116,8 @@
 	let investigations = $derived(report?.investigations ?? []);
 	let failedChecks = $derived(new Set(report?.failed_checks ?? []));
 	let incompleteChecks = $derived(new Set(report?.incomplete_checks ?? []));
+	// NET-187: failed checks that ran out of time (also in failed_checks)
+	let timedOutChecks = $derived(new Set(report?.timed_out_checks ?? []));
 	let baseline = $derived(summary?.baseline);
 
 	// NET-192 PR 3: 24h, 7d and 30d read the background beaconing scan; its state decides what
@@ -127,7 +129,11 @@
 	let beaconPartial = $derived(incompleteChecks.has('beaconing'));
 	let beaconCheckedAt = $derived(beaconSnap?.last_success_at ? formatTime(beaconSnap.last_success_at, 'short') : null);
 	// live: the report's query failed; snapshot: no background check has succeeded yet
-	let beaconFailReason = $derived(failedChecks.has('beaconing') ? 'the query failed' : 'the latest check failed');
+	// OLD CODE: let beaconFailReason = $derived(failedChecks.has('beaconing') ? 'the query failed' : 'the latest check failed'); (NET-187: or the live check ran out of time)
+	let beaconTimedOut = $derived(timedOutChecks.has('beaconing'));
+	let beaconFailReason = $derived(
+		beaconTimedOut ? 'this window is too large to check in time' : failedChecks.has('beaconing') ? 'the query failed' : 'the latest check failed',
+	);
 	// the page stopped asking after 10 min with the check still running: no more "a few minutes"
 	let pollGaveUp = $state(false);
 	let beaconPendingText = $derived(
@@ -135,6 +141,8 @@
 	);
 	let beaconKpiSub = $derived.by(() => {
 		if (beaconPending) return pollGaveUp ? 'Still running. Refresh to check again.' : 'Check running, ready in a few minutes';
+		// OLD CODE: if (beaconFailed) return `Not checked: ${beaconFailReason}`; (NET-187: a time-out suggests a shorter range)
+		if (beaconTimedOut) return 'Not checked in time: try a shorter range';
 		if (beaconFailed) return `Not checked: ${beaconFailReason}`;
 		// an older scan's count: say when, so it isn't read as live
 		if (beaconSnap?.state === 'stale') return `Last checked ${beaconCheckedAt}`;
@@ -748,7 +756,13 @@
 				>
 			{/snippet}
 			{#if beaconFailed}
-				<CardState state="error" title="Couldn't check for beaconing: {beaconFailReason}." onaction={reload} />
+				<!-- OLD CODE: <CardState state="error" title="Couldn't check for beaconing: {beaconFailReason}." onaction={reload} /> (NET-187: a time-out suggests a shorter range) -->
+				<CardState
+					state="error"
+					title="Couldn't check for beaconing: {beaconFailReason}."
+					message={beaconTimedOut ? 'Try a shorter range.' : undefined}
+					onaction={reload}
+				/>
 			{:else if beaconPending}
 				<p class="note" aria-hidden="true">{beaconPendingText}</p>
 				<CardState state="loading" title={beaconPendingText} />

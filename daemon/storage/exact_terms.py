@@ -82,6 +82,14 @@ class PartialResultsError(OpenSearchException):
     """Some shards failed, the search timed out or a scan hit its cap: the reply is only part of the data."""
 
 
+class SearchTimedOut(PartialResultsError):
+    """OpenSearch stopped the search at its time limit (a body `timeout` or `search.default_search_timeout`)."""
+
+
+# NET-187: the reason _partial gives for a timed-out search, so _raise_if_partial can say which it was
+_TIMED_OUT = "the search timed out"
+
+
 def _failed_shards(reply: Any) -> int:
     """Shards that failed in a search or msearch reply (OpenSearch still answers from the rest)."""
     if not isinstance(reply, dict):
@@ -102,17 +110,22 @@ def _partial(reply: Any) -> str | None:
         return "a search in the batch failed"
     # a timed-out search answers from the shards that finished in time
     if reply.get("timed_out"):
-        return "the search timed out"
+        return _TIMED_OUT
     if failed := _failed_shards(reply):
         return f"{failed} shard(s) failed"
     return None
 
 
 def _raise_if_partial(reply: Any, kwargs: dict) -> None:
+    # OLD CODE START — NET-187: a time-out raised the same error as failed shards
+    # if why := _partial(reply):
+    #     raise PartialResultsError(
+    #         f"{why} on {kwargs.get('index', '?')}; the reply is partial"
+    #     )
+    # OLD CODE END
     if why := _partial(reply):
-        raise PartialResultsError(
-            f"{why} on {kwargs.get('index', '?')}; the reply is partial"
-        )
+        error = SearchTimedOut if why == _TIMED_OUT else PartialResultsError
+        raise error(f"{why} on {kwargs.get('index', '?')}; the reply is partial")
 
 
 class ExactTermsOpenSearch(OpenSearch):
