@@ -16,6 +16,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+import api.pcap as pcap_api
 import services.pcap_search as pcap_search_mod
 from api.pcap import register_pcap_routes
 from services.pcap_search import PcapSearchService
@@ -45,13 +46,22 @@ def tshark(monkeypatch):
     return fake
 
 
+class _DaemonServer(TestServer):
+    """The daemon's own runner: web.AppRunner(app) with aiohttp's defaults, which don't cancel
+    a handler when its client goes away (TestServer does, which hid NET-189's abandoned job)."""
+
+    async def _make_runner(self, **kwargs):
+        kwargs.pop("handler_cancellation", None)
+        return web.AppRunner(self.app, **kwargs)
+
+
 async def _client(tmp_path, index, slots=2) -> TestClient:
     app = web.Application()
     svc = PcapSearchService(
         pcap_dir=str(tmp_path), semaphore=asyncio.Semaphore(slots), index=index
     )
     register_pcap_routes(app, svc)
-    client = TestClient(TestServer(app))
+    client = TestClient(_DaemonServer(app))
     await client.start_server()
     return client
 
@@ -150,8 +160,10 @@ async def test_busy_reader_slots_are_503(tmp_path, tshark, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_the_client_going_away_stops_the_job(tmp_path, tshark):
-    tshark.hold = asyncio.Event()  # the job keeps running after its first chunks
+async def test_the_client_going_away_stops_the_job(tmp_path, tshark, monkeypatch):
+    monkeypatch.setattr(pcap_api, "_CLIENT_CHECK_SECONDS", 0.05)
+    # the job writes its first chunks, then nothing (a narrow filter over a long window)
+    tshark.hold = asyncio.Event()
     client = await _client(tmp_path, FakeIndex([A]))
     try:
         resp = await client.get(URL)

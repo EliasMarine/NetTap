@@ -10,8 +10,11 @@ Endpoints:
     GET /api/pcap/download   Download filtered PCAP
 """
 
+import asyncio
 import logging
 import os
+from collections.abc import Awaitable
+from typing import TypeVar
 
 from aiohttp import web
 
@@ -249,6 +252,32 @@ async def handle_pcap_download_file(request: web.Request) -> web.Response:
 # OLD CODE END
 
 
+_CLIENT_CHECK_SECONDS = 1.0
+_T = TypeVar("_T")
+
+
+async def _unless_client_leaves(request: web.Request, work: Awaitable[_T]) -> _T:
+    """Await `work`, cancelling it once the client has gone (ConnectionResetError).
+
+    The daemon's AppRunner doesn't cancel a handler when its client disconnects, and a narrow
+    filter can write nothing for minutes, so no failed write would notice: the download would
+    hold the download lock and a reader slot until its deadline (NET-189 review).
+    """
+    task = asyncio.ensure_future(work)
+    try:
+        while True:
+            done, _ = await asyncio.wait({task}, timeout=_CLIENT_CHECK_SECONDS)
+            if done:
+                return task.result()
+            if request.transport is None or request.transport.is_closing():
+                task.cancel()
+                await asyncio.wait({task})  # run_in_tshark kills the job's group
+                raise ConnectionResetError("the client went away")
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
+
+
 async def handle_pcap_download(request: web.Request) -> web.StreamResponse:
     """GET /api/pcap/download?filter=&from=&to= — Stream the window's matching packets.
 
@@ -277,7 +306,12 @@ async def handle_pcap_download(request: web.Request) -> web.StreamResponse:
         await resp.write(chunk)
 
     try:
-        found = await pcap_service.download_filtered(bpf_filter, from_ts, to_ts, write)
+        # OLD CODE START — NET-189 review: an abandoned download ran on until its deadline
+        # found = await pcap_service.download_filtered(bpf_filter, from_ts, to_ts, write)
+        # OLD CODE END
+        found = await _unless_client_leaves(
+            request, pcap_service.download_filtered(bpf_filter, from_ts, to_ts, write)
+        )
     except ConnectionError:
         logger.info("filtered download cancelled by the client")
         _abort(request)
