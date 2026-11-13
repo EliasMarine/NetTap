@@ -156,7 +156,7 @@ class TestValidation(Harness):
     def test_a_name_with_no_local_address_is_refused(self):
         self.procs.append(FakeProc("9.9.9.9         STREAM dns.quad9.net\n"))
         with self.assertRaisesRegex(
-            ThroughputValidationError, "only runs against local"
+            ThroughputValidationError, "only runs against a device on your own network"
         ):
             self.run_one(host="dns.quad9.net")
 

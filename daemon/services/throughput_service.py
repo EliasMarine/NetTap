@@ -43,13 +43,23 @@ DEADLINE_SLACK = 20
 CONNECT_TIMEOUT_MS = 3000
 DIRECTIONS = ("upload", "download")
 BUSY = "A throughput test is already running."
+# OLD CODE START — review of #266: range names (CGNAT, ULA, link-local) the page never uses
+# NOT_LOCAL = (
+#     "The LAN throughput test only runs against local addresses: "
+#     "private, CGNAT/VPN or ULA ranges."
+# )
+# LINK_LOCAL = (
+#     "The LAN throughput test can't use link-local addresses. "
+#     "Use the peer's IPv4 or ULA address."
+# )
+# OLD CODE END
 NOT_LOCAL = (
-    "The LAN throughput test only runs against local addresses: "
-    "private, CGNAT/VPN or ULA ranges."
+    "The LAN throughput test only runs against a device on your own network "
+    "or VPN (a private address)."
 )
 LINK_LOCAL = (
-    "The LAN throughput test can't use link-local addresses. "
-    "Use the peer's IPv4 or ULA address."
+    "The LAN throughput test can't use a self-assigned address "
+    "(169.254.x.x or fe80::…). Use the device's usual private address."
 )
 TOO_LONG = "The test took too long and was stopped."
 NO_IPERF3 = "iperf3 is not installed in NetTap's daemon image."
