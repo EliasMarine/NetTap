@@ -76,9 +76,15 @@ const isChange = (x: Record<string, unknown>) => [x.a_bytes, x.b_bytes, x.delta]
 
 function wellFormed(body: unknown): body is DeviceCompareResponse {
 	if (!isObject(body) || !isString(body.ip) || !isPeriod(body.a) || !isPeriod(body.b) || !isBoolean(body.exact) || !isBoolean(body.complete)) return false;
+	const [a, b] = [body.a as unknown as ComparePeriod, body.b as unknown as ComparePeriod];
+	// the flags must agree with the periods', so a contradictory reply never shows lists it shouldn't
+	if (body.exact !== (a.buckets_exact && b.buckets_exact)) return false;
+	if (body.complete !== (body.exact && a.list_complete && b.list_complete)) return false;
 	// what the daemon withholds is null, never a shorter list
 	const lists = body.complete ? isList(body.new, isDestination) && isList(body.gone, isDestination) : body.new === null && body.gone === null;
-	const changed = body.exact ? isList(body.changed, isChange) && isBoolean((body.changed as Record<string, unknown>).partial) : body.changed === null;
+	const changed = body.exact
+		? isList(body.changed, isChange) && (body.changed as Record<string, unknown>).partial === !body.complete
+		: body.changed === null;
 	return lists && changed;
 }
 

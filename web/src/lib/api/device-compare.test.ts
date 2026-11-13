@@ -85,6 +85,13 @@ describe('getDeviceCompare', () => {
 		['an estimated reply with changes', { ...ESTIMATED, changed: COMPLETE.changed }],
 		['a change without its delta', { ...COMPLETE, changed: { ...COMPLETE.changed!, items: [{ ip: '203.0.113.6', org: null, a_bytes: 1, b_bytes: 2 }] } }],
 		['a destination without its organisation', { ...COMPLETE, new: { total: 1, items: [{ ip: '192.0.2.81', bytes: 900 }] } }],
+		// contradictory flags
+		['exact though a period is estimated', { ...COMPLETE, a: { ...COMPLETE.a, buckets_exact: false } }],
+		['not exact though both periods are', { ...ESTIMATED, a: { ...ESTIMATED.a, buckets_exact: true } }],
+		['complete though a list is incomplete', { ...COMPLETE, b: { ...COMPLETE.b, list_complete: false } }],
+		['incomplete though both lists are complete', { ...INCOMPLETE, a: { ...INCOMPLETE.a, list_complete: true } }],
+		['complete with partial changes', { ...COMPLETE, changed: { ...COMPLETE.changed!, partial: true } }],
+		['incomplete with whole changes', { ...INCOMPLETE, changed: { ...INCOMPLETE.changed!, partial: false } }],
 	])('throws on a malformed reply (%s) instead of showing a blank', async (_, body) => {
 		vi.stubGlobal('fetch', vi.fn(async () => reply(200, body)));
 		await expect(getDeviceCompare(QUERY)).rejects.toThrow('malformed');

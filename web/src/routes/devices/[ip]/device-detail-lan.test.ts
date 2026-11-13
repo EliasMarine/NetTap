@@ -110,9 +110,14 @@ describe('Device detail — compare periods', () => {
 		await open('192.168.1.10');
 		const toggle = screen.getByRole('button', { name: 'Compare periods' });
 		expect(screen.queryByRole('heading', { name: 'Compare periods' })).toBeNull();
+		const scrolled = vi.fn();
+		Element.prototype.scrollIntoView = scrolled; // jsdom has none
 		await fireEvent.click(toggle);
 		expect(toggle).toHaveAttribute('aria-expanded', 'true');
 		expect(screen.getByRole('heading', { name: 'Compare periods' })).toBeTruthy();
+		// in view, with its first control focused
+		await vi.waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Length')));
+		expect(scrolled).toHaveBeenCalledWith({ block: 'start' });
 		await fireEvent.click(toggle);
 		expect(screen.queryByRole('heading', { name: 'Compare periods' })).toBeNull();
 	});

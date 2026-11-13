@@ -6,10 +6,14 @@ half-open window [from, to), so a record on the boundary counts in one period on
 body sums its bytes on its own, so the totals never depend on a list being complete.
 
 The destination lists are terms in doc-count order (the error bound is only meaningful
-there) on the exact-terms client, ranked by bytes here. Two signals per period decide what
-the reply can say: list_complete (no destination left out of the list) and buckets_exact
-(no shard cut its list short, so the counts are not estimates). New and gone need both in
-both periods; changes need exact buckets; without them only the totals are sent.
+there), each shard asked for _TERMS_SIZE terms, ranked by bytes here. It runs on the plain
+drill-down client, not the exact-terms one: re-asking a shard for 100,000 terms could not
+complete a list cut at 10,000 anyway, so a cut shard just means not exact.
+
+Two signals per period decide what the reply can say: list_complete (no destination left
+out of the list) and buckets_exact (no shard cut its list short, so the counts are not
+estimates). New and gone need both in both periods; changes need exact buckets; without
+them only the totals are sent.
 
 shortcut: it compares the connections the device started from this IP, so after an IP
 change the earlier traffic is under the old address; upgrade when compare keys on MAC.
@@ -23,11 +27,11 @@ from typing import Any
 from aiohttp import web
 from opensearchpy import ConnectionTimeout, OpenSearchException
 
-from api.drilldown_runner import ip_param, json_error, run_drilldown
+from api.drilldown_runner import install, ip_param, json_error, run_drilldown
 from api.time_range import _bad_request, _utc, iso_param
 from api.traffic import _CONN_BYTES_SUM, _ZEEK_CONN_FILTERS, NETWORK_INDEX
 from services.excluded_ips import build_excluded_ips_filter, valid_excluded_ips
-from storage.exact_terms import PartialResultsError, truncated
+from storage.exact_terms import truncated
 from storage.snapshot_search import Budget, QueryFailed, TooSlow, checked
 
 logger = logging.getLogger("nettap.api.device_compare")
@@ -40,6 +44,7 @@ _FUTURE_SLACK = timedelta(seconds=60)  # the browser's clock may run a little ah
 _PARAMS = ("a_from", "a_to", "b_from", "b_to")
 
 Window = tuple[str, str]
+ByIp = dict[str, tuple[int, str | None]]  # destination: (bytes, organisation)
 
 
 def _iso(when: datetime) -> str:
@@ -55,12 +60,21 @@ def parse_windows(request: web.Request) -> tuple[Window, Window]:
     raw = [iso_param(request, name) for name in _PARAMS]  # 400 when one is unreadable
     if not all(raw):
         raise _bad_request("a_from, a_to, b_from and b_to are all required.")
-    a_from, a_to, b_from, b_to = (_utc(r) for r in raw)
+    try:
+        return _checked_windows(*(_utc(r) for r in raw))
+    # e.g. year 1 at +01:00 is before the first UTC time Python has
+    except OverflowError:
+        raise _bad_request("A time is out of range.") from None
+
+
+def _checked_windows(
+    a_from: datetime, a_to: datetime, b_from: datetime, b_to: datetime
+) -> tuple[Window, Window]:
     if a_from >= a_to or b_from >= b_to:
         raise _bad_request("Each period must end after it starts.")
     if abs((a_to - a_from) - (b_to - b_from)) > _SAME_LENGTH:
         raise _bad_request("Both periods must be the same length.")
-    if a_to - a_from > _MAX_SPAN:
+    if max(a_to - a_from, b_to - b_from) > _MAX_SPAN:
         raise _bad_request("A period can be at most 7 days long.")
     if a_from < b_to and b_from < a_to:
         raise _bad_request("The two periods must not overlap.")
@@ -69,11 +83,12 @@ def parse_windows(request: web.Request) -> tuple[Window, Window]:
     return (_iso(a_from), _iso(a_to)), (_iso(b_from), _iso(b_to))
 
 
-def _period_body(ip: str, window: Window, excluded: list[str]) -> dict:
+def _period_body(ip: str, window: Window, excluded: list[str], timeout: str) -> dict:
     """The connections `ip` started in [from, to), every destination with its bytes."""
     from_ts, to_ts = window
     return {
         "size": 0,
+        "timeout": timeout,
         "query": {
             "bool": {
                 "filter": [
@@ -96,7 +111,11 @@ def _period_body(ip: str, window: Window, excluded: list[str]) -> dict:
         "aggs": {
             "total": _CONN_BYTES_SUM,
             "destinations": {
-                "terms": {"field": "destination.ip", "size": _TERMS_SIZE},
+                "terms": {
+                    "field": "destination.ip",
+                    "size": _TERMS_SIZE,
+                    "shard_size": _TERMS_SIZE,
+                },
                 "aggs": {
                     "bytes": _CONN_BYTES_SUM,
                     "org": {"terms": {"field": "destination.as.full", "size": 1}},
@@ -106,7 +125,7 @@ def _period_body(ip: str, window: Window, excluded: list[str]) -> dict:
     }
 
 
-def _by_ip(agg: dict) -> dict[str, tuple[int, str | None]]:
+def _by_ip(agg: dict) -> ByIp:
     """{destination: (bytes, organisation)} from a destinations aggregation."""
     return {
         b["key"]: (
@@ -121,9 +140,7 @@ def _capped(rows: list[dict]) -> dict:
     return {"total": len(rows), "items": rows[:_LIST_CAP]}
 
 
-def _only_in(
-    here: dict[str, tuple[int, str | None]], there: dict[str, tuple[int, str | None]]
-) -> list[dict]:
+def _only_in(here: ByIp, there: ByIp) -> list[dict]:
     """The destinations in `here` and not in `there`, largest first."""
     rows = [
         {"ip": ip, "org": org, "bytes": n}
@@ -133,9 +150,7 @@ def _only_in(
     return sorted(rows, key=lambda r: (-r["bytes"], r["ip"]))
 
 
-def _changes(
-    a: dict[str, tuple[int, str | None]], b: dict[str, tuple[int, str | None]]
-) -> list[dict]:
+def _changes(a: ByIp, b: ByIp) -> list[dict]:
     """The destinations in both whose bytes changed, by the size of the change."""
     rows = [
         {
@@ -192,11 +207,17 @@ def device_compare(
     """The reply; QueryFailed (a 502) for a failed or partial read, TooSlow once out of budget."""
     began = time.monotonic()
     excluded = valid_excluded_ips(request.app.get("excluded_ips", []))
-    body = []
-    for window in (a, b):
-        body += [{"index": NETWORK_INDEX}, _period_body(ip, window, excluded)]
+    budget.check("the device compare")
+    seconds = max(1.0, budget.remaining())
+    timeout = f"{int(seconds * 1000)}ms"
+    body = [
+        {"index": NETWORK_INDEX},
+        _period_body(ip, a, excluded, timeout),
+        {"index": NETWORK_INDEX},
+        _period_body(ip, b, excluded, timeout),
+    ]
     try:
-        replies = client.msearch(body=body, budget=budget).get("responses")
+        replies = client.msearch(body=body, request_timeout=seconds).get("responses")
         if not isinstance(replies, list) or len(replies) != 2:
             raise QueryFailed("the device compare reply was malformed")
         a_reply, b_reply = (
@@ -207,7 +228,7 @@ def device_compare(
     except ConnectionTimeout as exc:  # the read waited all the budget had left
         logger.warning("Device compare for %s ran out of time: %s", ip, exc)
         raise TooSlow("the device compare took too long") from exc
-    except (QueryFailed, PartialResultsError) as exc:
+    except QueryFailed as exc:
         logger.warning("Device compare for %s was incomplete: %s", ip, exc)
         raise QueryFailed("the device compare was incomplete") from exc
     except OpenSearchException as exc:
@@ -233,7 +254,7 @@ async def handle_device_compare(request: web.Request) -> web.Response:
     if ip is None:
         return json_error("ip must be an IP address.", 400)
     a, b = parse_windows(request)
-    client = request.app["moment_client"]  # exact terms, no retries (api/moment.py)
+    client = request.app["drill_client"]  # plain, no retries (drilldown_runner.install)
     return await run_drilldown(
         request,
         lambda budget: device_compare(request, client, ip, a, b, budget),
@@ -241,7 +262,8 @@ async def handle_device_compare(request: web.Request) -> web.Response:
     )
 
 
-def register_device_compare_routes(app: web.Application) -> None:
-    """After register_moment_routes: it uses that client and the drill-down permits."""
+def register_device_compare_routes(app: web.Application, client: Any) -> None:
+    """`client`: the drill-down pages' plain client without retries."""
+    install(app, client)
     app.router.add_get("/api/moment/device-compare", handle_device_compare)
     logger.info("Device compare API routes registered (1 endpoint)")

@@ -4,17 +4,15 @@ The evaluator fake runs the real queries over fixed documents, as the moment tes
 the half-open windows, the totals and the lists are checked against the records behind them.
 """
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from aiohttp.test_utils import AioHTTPTestCase
-from opensearchpy import ConnectionTimeout
+from opensearchpy import ConnectionTimeout, TransportError
 
-from api import device_compare
+from api import device_compare, drilldown_runner
 from api.device_compare import compare, register_device_compare_routes
-from api.moment import register_moment_routes
 from api.traffic import _ZEEK_CONN_FILTERS
-from storage.exact_terms import SearchTimedOut
-from storage.snapshot_search import Budget
 from tests.fake_drill_opensearch import AUTH, DrillOpenSearch, conn, make_app
 
 DEVICE, OTHER = "192.168.1.30", "192.168.1.31"
@@ -58,8 +56,7 @@ DOCS = [
 
 
 def _register(app, client):
-    register_moment_routes(app, client)
-    register_device_compare_routes(app)
+    register_device_compare_routes(app, client)
 
 
 class Case(AioHTTPTestCase):
@@ -151,14 +148,23 @@ class TestCompare(Case):
             self.assertEqual(query["must_not"], [{"terms": {"source.ip": EXCLUDED}}])
             terms = body["aggs"]["destinations"]["terms"]
             # doc-count order, so the error bound means something; bytes are ranked in Python
-            self.assertEqual(terms, {"field": "destination.ip", "size": 10_000})
+            # each shard is asked for the whole list once; a cut shard is "not exact"
+            self.assertEqual(
+                terms,
+                {"field": "destination.ip", "size": 10_000, "shard_size": 10_000},
+            )
             self.assertIn("total", body["aggs"])
 
-    async def test_both_reads_carry_one_request_budget(self):
-        await self.get()
-        self.assertEqual(len(self.os.budgets), 2)
-        self.assertTrue(all(isinstance(b, Budget) for b in self.os.budgets))
-        self.assertEqual(len({id(b) for b in self.os.budgets}), 1)
+    async def test_one_msearch_bounded_by_what_is_left_of_the_budget(self):
+        with patch.object(self.os, "msearch", wraps=self.os.msearch) as spy:
+            await self.get()
+        spy.assert_called_once()
+        wait = spy.call_args.kwargs["request_timeout"]
+        self.assertLessEqual(wait, drilldown_runner.BUDGET_SECONDS)
+        # OpenSearch stops each search at the same point, so neither outlives the request
+        self.assertEqual(
+            [b["timeout"] for b in self.os.bodies], [f"{int(wait * 1000)}ms"] * 2
+        )
 
     async def test_the_periods_may_come_in_either_order(self):
         status, body = await self.get(
@@ -258,9 +264,11 @@ def _estimated(bound):
 class TestBucketsEstimated(Case):
     tamper = staticmethod(_estimated(3))
 
-    async def test_only_the_totals_are_sent(self):
-        status, body = await self.get()
+    async def test_only_the_totals_are_sent_after_one_msearch(self):
+        with patch.object(self.os, "msearch", wraps=self.os.msearch) as spy:
+            status, body = await self.get()
         self.assertEqual(status, 200, body)
+        spy.assert_called_once()  # no re-ask with longer shard lists
         self.assertEqual((body["exact"], body["complete"]), (False, False))
         self.assertEqual(
             (body["new"], body["gone"], body["changed"]), (None, None, None)
@@ -280,6 +288,39 @@ class TestBucketsUnknownError(Case):
     async def test_is_not_exact_either(self):
         _, body = await self.get()
         self.assertEqual((body["exact"], body["changed"]), (False, None))
+
+
+class TestOnlyTheFirstPeriodEstimated(Case):
+    @staticmethod
+    def tamper(body, reply):
+        first = (
+            body["query"]["bool"]["filter"][0]["range"]["@timestamp"]["gte"] == A_FROM
+        )
+        return _estimated(2)(body, reply) if first else reply
+
+    async def test_no_lists_for_either_period(self):
+        _, body = await self.get()
+        self.assertEqual(
+            (body["a"]["buckets_exact"], body["b"]["buckets_exact"]), (False, True)
+        )
+        self.assertEqual((body["exact"], body["complete"]), (False, False))
+        self.assertEqual(
+            (body["new"], body["gone"], body["changed"]), (None, None, None)
+        )
+        # the exact period still says how many destinations it saw
+        self.assertEqual(
+            (body["a"]["destinations"], body["b"]["destinations"]), (None, 5)
+        )
+
+
+class TestExcludedSource(Case):
+    docs = [_conn(KEPT, "2026-11-05T07:00:00.000Z", 500, src=EXCLUDED[0])]
+
+    async def test_an_excluded_device_counts_nothing(self):
+        status, body = await self.get(f"ip={EXCLUDED[0]}&{WINDOWS}")
+        self.assertEqual(status, 200, body)
+        self.assertEqual((body["a"]["total_bytes"], body["b"]["total_bytes"]), (0, 0))
+        self.assertEqual(body["new"], {"total": 0, "items": []})
 
 
 class TestOneSubListEstimated(Case):
@@ -314,6 +355,10 @@ class TestValidation(Case):
             f"ip={DEVICE}&a_from={A_FROM}&a_to={A_TO}&b_from=2026-11-05T05:59:59Z&b_to=2026-11-05T11:59:59Z": "must not overlap",
             f"ip={DEVICE}&a_from={A_FROM}&a_to={A_TO}&b_from={A_FROM}&b_to={A_TO}": "must not overlap",
             f"ip={DEVICE}&a_from=2099-01-01T00:00:00Z&a_to=2099-01-01T01:00:00Z&b_from=2099-01-01T01:00:00Z&b_to=2099-01-01T02:00:00Z": "in the future",
+            # the second period one second longer, past 7 days
+            f"ip={DEVICE}&a_from=2026-10-22T00:00:00Z&a_to=2026-10-29T00:00:00Z&b_from=2026-10-29T00:00:00Z&b_to=2026-11-05T00:00:01Z": "at most 7 days",
+            # year 1 at +01:00 is before the first UTC time
+            f"ip={DEVICE}&a_from=0001-01-01T00:00:00%2B01:00&a_to=0001-01-01T00:30:00%2B01:00&b_from={B_FROM}&b_to=2026-11-05T06:30:00Z": "out of range",
         }
         for query, words in cases.items():
             status, body = await self.get(query)
@@ -330,6 +375,22 @@ class TestValidation(Case):
         for query in ok:
             status, body = await self.get(query)
             self.assertEqual(status, 200, (query, body))
+
+    async def test_a_minute_of_clock_skew_is_taken_but_not_more(self):
+        now = datetime.now(timezone.utc)
+
+        def ending(seconds):
+            b_to = now + timedelta(seconds=seconds)
+            ts = [b_to - timedelta(hours=n) for n in (2, 1, 1, 0)]
+            return f"ip={DEVICE}&" + "&".join(
+                f"{k}={t.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+                for k, t in zip(("a_from", "a_to", "b_from", "b_to"), ts)
+            )
+
+        self.assertEqual((await self.get(ending(30)))[0], 200)
+        status, body = await self.get(ending(90))
+        self.assertEqual(status, 400)
+        self.assertIn("in the future", body["error"])
 
 
 INCOMPLETE = "Couldn't read the network data: the device compare was incomplete."
@@ -350,11 +411,28 @@ class TestShardFailed(Case):
 class TestTimedOut(Case):
     @staticmethod
     def tamper(body, reply):
-        raise SearchTimedOut("the search timed out")
+        return {
+            **reply,
+            "timed_out": True,
+        }  # OpenSearch stopped it at the body's timeout
 
-    async def test_is_the_written_502(self):
+    async def test_is_a_503_too_slow_never_part_of_the_lists(self):
         status, body = await self.get()
-        self.assertEqual((status, body["error"]), (502, INCOMPLETE))
+        self.assertEqual(status, 503, body)
+        self.assertIn("took too long", body["error"])
+
+
+class TestOpenSearchFailed(Case):
+    @staticmethod
+    def tamper(body, reply):
+        raise TransportError(500, "search_phase_execution_exception", "boom")
+
+    async def test_is_the_written_502_without_its_text(self):
+        status, body = await self.get()
+        self.assertEqual(
+            (status, body["error"]),
+            (502, "Couldn't read the network data: the device compare failed."),
+        )
 
 
 class TestOutOfTime(Case):

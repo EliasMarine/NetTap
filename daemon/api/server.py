@@ -1499,8 +1499,8 @@ def create_app(
     )
     # NET-263: one device's DHCP transactions, in the same permits and on the same client
     register_dhcp_timeline_routes(app, app["moment_client"])
-    # NET-265: a device's two periods compared, on the moment client and permits
-    register_device_compare_routes(app)
+    # NET-265: a device's two periods compared, on the drill-down client and permits
+    register_device_compare_routes(app, drill_client)
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 

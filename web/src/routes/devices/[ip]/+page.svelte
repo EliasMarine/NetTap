@@ -13,7 +13,7 @@
 
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { onDestroy, untrack } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import IPAddress from '$components/IPAddress.svelte';
 	import { domainHref, lanPolicy, lanStatus } from '$lib/stores/lan';
 	import ConnectionDrawer from '$components/ConnectionDrawer.svelte';
@@ -225,6 +225,15 @@
 	let autoRefresh = $state(false);
 	/** NET-265: the Compare periods card is open */
 	let comparing = $state(false);
+	/** Opening brings the card into view with its first control focused; it sits below the KPIs. */
+	async function toggleCompare() {
+		comparing = !comparing;
+		if (!comparing) return;
+		await tick();
+		const first = document.getElementById('cmp-length');
+		first?.closest('.card')?.scrollIntoView({ block: 'start' });
+		first?.focus({ preventScroll: true });
+	}
 
 	// #87: the range pills had no handlers, so every request used the daemon's 24 h default
 	// OLD CODE: const RANGE_HOURS = { '24h': 24, '7d': 168, '30d': 720 } as const; (NET-192 PR 4: Home's five ranges)
@@ -877,7 +886,7 @@ OLD CODE END -->
 			</button>
 			OLD CODE END -->
 			<AutoRefreshButton on={autoRefresh} seconds={AUTO_REFRESH_MS / 1000} ontoggle={() => (autoRefresh = !autoRefresh)} />
-			{#if device?.ip}<button class="btn" type="button" aria-expanded={comparing} onclick={() => (comparing = !comparing)}>Compare periods</button>{/if}
+			{#if device?.ip}<button class="btn" type="button" aria-expanded={comparing} onclick={toggleCompare}>Compare periods</button>{/if}
 		</div>
 	</div>
 	{#if device && device.ip}
