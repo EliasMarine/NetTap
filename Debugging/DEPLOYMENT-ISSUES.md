@@ -1,6 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-11-09 (Chain 29: a full reload of a logged-in page was a 502; nginx's 4 KB header buffer was smaller than SvelteKit's Link header. NET-241, PR #236.)
+> **Last updated:** 2026-11-12 (Chain 31: deploy-malcolm.sh's OpenSearch bootstrap now stops the run when auth or the two index templates aren't in place, keeps the password out of every process's arguments, and leaves Malcolm's tuned malcolm_template alone; installer sizes are decimal GB. NET-217, NET-177. Chain 30, NET-198's session expiry, came in with PR #248.)
+<!-- previous: **Last updated:** 2026-11-09 (Chain 29: a full reload of a logged-in page was a 502; nginx's 4 KB header buffer was smaller than SvelteKit's Link header. NET-241, PR #236.) -->
 <!-- previous: **Last updated:** 2026-11-07 (Chain 27: Malcolm's Suricata rule wiring. More free rule sources, an optional ET Pro code, and one lock, last-good recovery and a status record around every rule update; built on feature/detection-slice2, not yet on the device. Chain 26: the domain page was a 502 on the G11 because one alert host field is mapped as text; it now answers with an exact lower bound. The same run found PCAP capture stopped for 21 h. Earlier, 2026-11-01, Chain 25: dashboard figures checked against OpenSearch; host-network DNS names, a pcap-monitor DNS storm, the 1970 record and ISM yellow fixed. Chain 24: malcolm_template's index pattern was never filled in, so indices guessed field types and Zeek records were rejected; the daemon's .keyword queries from Chain 13 are dropped. Chain 23 verified on the G11) -->
 > **Status:** 58 issues tracked. 58 RESOLVED. Latest: Fixed category drill-down page crash (`each_key_duplicate`) — 3 daemon→frontend data contract mismatches in `handle_alert_category_detail()` and `handle_alert_category_timeline()`. Lessons 97–99 added.
 
@@ -61,6 +62,7 @@ This document tracks every deployment bug encountered while bringing up the NetT
 | NetTap daemon API (:8880) | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 20: token required on every call except `GET /api/health`. Verify with `bash scripts/remote/deploy-pr110-review-fixes.sh`. |
 | Domain drill-down page | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 26 (NET-178): a 502 on the G11 because `tls.client.server_name` is mapped text. The page now answers; the alert tagged count says "At least N" and names the field it can't search. Verify with `bash scripts/remote/deploy-drill-down.sh`. |
 | Deferred-bridge activation (`activate-bridge.sh`) | **FIXED, NOT YET VERIFIED ON DEVICE** | Chain 28 (NET-216): it now starts services through `deploy-malcolm.sh --start-only`, so the OpenSearch bootstrap and index templates run. Only boxes installed with `--defer-bridge` are affected; the G11 was not. |
+| OpenSearch bootstrap in `deploy-malcolm.sh` | **FIXED, DEVICE CHECK PENDING** | Chain 31 (NET-217): auth or a missing template now stops install.sh / activate-bridge.sh with an `error` line after bounded, time-limited retries (it used to warn and report success); no password in any argv; a malcolm_template already targeting `arkime_sessions3-*` is kept. Verify with `bash scripts/remote/deploy-malcolm-bootstrap.sh` (read-only by construction). |
 | PCAP capture (nettap-pcap-capture) | **STOPPED ON THE G11 (2026-11-06), CAUSE UNKNOWN** | Chain 26 (NET-179): "Exited (0)" for 21 h, so something ran `docker stop`. `bash scripts/remote/fix-pcap-capture-stopped.sh` shows who could have and restarts it if Settings want it on. |
 | Suricata rule updates | **BUILT, NOT YET ON THE DEVICE** | Chain 27 (NET-191 slice 2): four free sources (ET Open, abuse.ch SSLBL, Echap stalkerware, IPFire DBL Malware/Phishing), optional ET Pro code, every update through `nettap-rules-update.sh` (lock, last-good, status record). Deploy with `bash scripts/remote/deploy-detection-slice2.sh` (the gate runs first). |
 
@@ -539,6 +541,50 @@ CHAIN 28: --defer-bridge install came up without the OpenSearch bootstrap (fix/a
   Lesson: two scripts that start the stack drifted apart. Start the stack from one place
   (deploy-malcolm.sh); other scripts call it rather than copying `docker compose up`.
   Tracking: tracking-fixes/2026-11-08-activate-bridge-bootstrap.md.
+
+CHAIN 31: deploy-malcolm.sh's bootstrap warned and carried on, with the password on the command line (fix/malcolm-bootstrap-and-decimal-sizes, NET-217 + NET-177)
+  Found in the NET-216 review (Known Risks row "deploy-malcolm.sh's bootstrap warns and carries on").
+  - bootstrap_opensearch_security only warned when auth still failed after securityadmin.sh, and
+    bootstrap_index_templates returned 0 on every failure (no curlrc, failed component PUTs, a
+    malcolm_template PUT that wasn't 200, a failed marker PUT). install.sh and activate-bridge.sh
+    then reported success with Logstash waiting for malcolm_template for ever and empty pages.
+  - It read docker/curlrc on the host and ran `docker compose exec … curl -u "malcolm_internal:<pw>"`,
+    so any local account could read the password from ps (host docker CLI and container curl).
+  - Every re-run (activate-bridge, a reinstall) replaced Malcolm's tuned malcolm_template
+    (_meta.hash, replicas 0, refresh 1s) with the raw file; Malcolm's loader (cron */2,
+    shared-object-creation.sh, hash check) re-imports it, but an index created in between keeps
+    replicas 1, which a single node can't place.
+  Fix (scripts/install/deploy-malcolm.sh):
+  - _helper_curl: every dashboards-helper call is `curl --config /var/local/curlrc/.opensearch.primary.curlrc`
+    with --connect-timeout 10 --max-time 60. The auth probe and the HTTP wait get --max-time 10;
+    securityadmin.sh runs under `timeout -k 10 180` inside the container.
+  - Security: securityadmin failure (2 tries), or auth still failing 30 s after it, calls error.
+    The auth waits (60 s before, 30 s after) and the HTTP wait (120 s) count wall-clock time
+    ($SECONDS), not sleeps, so slow probes can't stretch them.
+  - Templates: one pass (_push_index_templates) is retried 3 times, 10 s apart, then error. A pass
+    reads malcolm_template (jq-parsed in dashboards-helper; a failed or unreadable read writes
+    nothing), keeps it when one index_patterns entry equals arkime_sessions3-* exactly and it
+    carries Malcolm's _meta.hash, otherwise pushes components +
+    malcolm_template (any non-200 or an empty file list fails the pass; the warning carries
+    OpenSearch's reason, first 200 characters), writes the Arkime marker
+    with ?create=true (never replaces Arkime's real template), then checks both templates exist.
+  - The in-app Malcolm update (malcolm_upgrade.py) doesn't run deploy-malcolm.sh: unaffected.
+  - NET-177: validate-hardware.sh and the preflight free-space check print decimal GB; thresholds
+    430 GB (old 400 GiB) and 15 GB (old ceil'd 14 GiB).
+  Tests: tests/scripts/test_deploy_malcolm.bats (19 new, a fake docker in helpers/bootstrap_stubs.bash),
+  tests/scripts/test_validate_hardware.bats.
+  Verify: bash scripts/remote/deploy-malcolm-bootstrap.sh. Nothing is rebuilt or recreated;
+  guarded_docker is an allowlist: preflight's `docker info` / `compose version`, curl reads,
+  jq, cat and find inside opensearch / dashboards-helper, and the create-only marker PUT. It
+  skips `compose up -d dashboards-helper` and refuses everything else. It
+  checks the real bootstrap exits 0, no ps sample holds the password, a forced failure exits nonzero,
+  and the templates and container start times are unchanged.
+  Lessons: a retry count bounds nothing unless each try is time-limited, and a wait bounds nothing
+  unless it counts wall-clock time; in bats, a bare `! cmd` never fails a test (add `|| false`);
+  a guard that must stop writes is an allowlist, not a denylist; a failed read must never
+  look like "absent" to code that writes on absence; prefer OpenSearch's create-only flags to
+  GET-then-PUT; `docker compose exec` reads stdin.
+  Tracking: tracking-fixes/2026-11-12-malcolm-bootstrap-decimal-sizes.md.
 ```
 
 ---
@@ -1835,6 +1881,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 
 | File | PRs | Current State |
 |---|---|---|
+| `scripts/install/deploy-malcolm.sh` | NET-217, NET-177 | Bootstrap stops the run on failure (Chain 31): `error` after bounded, time-limited retries. All dashboards-helper OpenSearch calls go through `_helper_curl` (`curl --config` the mounted curlrc; never `-u`). A malcolm_template already targeting the index pattern is kept; the Arkime marker is `?create=true`. Preflight free space is decimal GB. Don't add an OpenSearch call that takes credentials on the command line. |
 | `scripts/install/activate-bridge.sh` | NET-216 | `start_services()` calls `deploy-malcolm.sh --start-only`, not a bare `docker compose up -d` (Chain 28). Start the stack through deploy-malcolm.sh; don't copy compose commands into other scripts. |
 | `docker/docker-compose.yml` | #54-#73, NET-79, NET-81, NET-95, 717bd24, 65e31cf | Logstash: PUSER_PRIV_DROP=false, supervisord.conf mount, LS_JAVA_OPTS includes -Xss8m, **MALCOLM_NETWORK_INDEX_PATTERN/SUFFIX + MALCOLM_OTHER_INDEX_PATTERN/SUFFIX env vars**. Redis: list-form command (sh -c). API: explicit gunicorn command. Filebeat: upload-common + Redis env vars. Daemon: full /sys mount + healthcheck + no-new-privileges:false + **OPENSEARCH_NETWORK_INDEX env var**. Capture services: EXTRA_TAGS + MANAGE_PCAP_FILES + **PUSER=root (skip usermod)** + **SYS_ADMIN cap_add (covers netsniff-ng file caps — setcap -r unreliable on overlay2)**. nginx-proxy: ARKIME_SSL, ROLE_BASED_ACCESS, DASHBOARDS_URL, ARKIME_VIEWER_PORT, **healthcheck on :9200 (not :443), :443 port removed**. CyberChef healthcheck: `/`. Dashboards healthcheck: `/dashboards/api/status`. **Web: PROTOCOL_HEADER + HOST_HEADER for CSRF behind nginx.** |
 | `docker/Dockerfile.zeek-live` + `docker/zeek-live/` | NET-127 | NEW (Chain 23): Malcolm Zeek image + /dev/urandom shim for std::random_device, loaded via /etc/ld.so.preload. Self-test runs in the build stage and the final image. |
@@ -2140,7 +2187,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| deploy-malcolm.sh's bootstrap warns and carries on when it fails (Chain 28) | `bootstrap_opensearch_security` (lines 495-505) and `bootstrap_index_templates` (532-533, 590-591, 611-612) log a warning and return 0, so install.sh and activate-bridge.sh report success with auth or the templates missing | Read the start output for `securityadmin.sh failed`, `Failed to create malcolm_template` or `arkime_sessions3_template marker`; then run `bash scripts/remote/fix-opensearch.sh` or `bash scripts/remote/deploy-data-accuracy-batch17.sh`. Making these fail hard is a follow-up in NET-216. |
+| **FIXED by Chain 31 (NET-217), device check pending:** deploy-malcolm.sh's bootstrap warns and carries on when it fails (Chain 28) | `bootstrap_opensearch_security` (lines 495-505) and `bootstrap_index_templates` (532-533, 590-591, 611-612) log a warning and return 0, so install.sh and activate-bridge.sh report success with auth or the templates missing | Read the start output for `securityadmin.sh failed`, `Failed to create malcolm_template` or `arkime_sessions3_template marker`; then run `bash scripts/remote/fix-opensearch.sh` or `bash scripts/remote/deploy-data-accuracy-batch17.sh`. Making these fail hard is a follow-up in NET-216. |
+| A fresh install's first malcolm_template is untuned (Chain 31) | deploy-malcolm.sh pushes the raw template (no replicas/refresh/shards); a daily index created before Malcolm's loader stamps it gets replicas 1 (yellow on one node) for its life | Re-runs keep the tuned template now. On a fresh box, if the cluster is yellow, set `number_of_replicas: 0` on that index. A proper fix (copy Malcolm's settings or have the daemon set replicas 0) is a follow-up. |
 | Mirror setup now really runs at every daemon start (Chain 22) | `MirrorManager.setup()` flushes the capture NIC's addresses on each start; before Chain 22 it never ran on Ubuntu | CR-076 guard in `main.py` skips setup when the NIC has the default route or an IPv4 address, and logs `Mirror setup skipped`. If capture stops after a NIC rename, check the daemon log and `/etc/nettap/capture-mode.conf`. |
 | `sysctl -w` from the daemon always fails (Chain 22) | `/proc/sys` is read-only in the container, so mirror setup can't turn IPv6 off on the capture NIC at runtime; a mirrored router advert can then give that NIC an IPv6 address | The host boot unit `nettap-mirror.service` applies it at boot. After a wizard change, run `sudo systemctl restart nettap-mirror.service` or reboot. |
 | Boxes with older, dynamically mapped indices (Chain 24) | The daemon now queries Malcolm's field names (no `.keyword`); on an index from before the template fix those fields are text, so aggregations on it fail and that day's data drops out of dashboard ranges | Run `fix-index-template.sh` (plus `--delete-today` if acceptable). Older daily indices age out with retention; delete them early if their data isn't needed. |
@@ -2238,3 +2286,4 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-241 | #236 | A logged-in full reload was a 502: nginx header buffer too small for SvelteKit's Link header (Chain 29) | 2026-11-09 |
 | NET-216 | pending | `activate-bridge.sh` (the --defer-bridge path) started the stack without the OpenSearch bootstrap or index templates (Chain 28) | 2026-11-08 |
 | NET-198 | pending | A lapsed session sends the user to sign in instead of "Can't reach NetTap"; `/login` follows a same-origin `?next=` (Chain 30) | 2026-11-12 |
+| NET-217, NET-177 | pending | deploy-malcolm.sh's bootstrap warned and carried on, with the password on the command line; installer sizes in GiB (Chain 31) | 2026-11-12 |
