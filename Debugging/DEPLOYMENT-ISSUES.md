@@ -1,6 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-11-12 (Chain 33: installer and Go Live bugs from the setup guide, NET-244 + NET-211: two-port --skip-bridge --non-interactive, a dry run that wrote, capture started on a missing br0, Go Live guessing ports, and a new uninstall.sh.)
+> **Last updated:** 2026-11-13 (Chain 34: malcolm-config.sh's generate_auth put the admin password on htpasswd's and python3's command lines and in run's verbose log, and a quote in it broke the python fallback; it now goes on stdin. NET-251, install-time only.)
+<!-- previous: **Last updated:** 2026-11-12 (Chain 33: installer and Go Live bugs from the setup guide, NET-244 + NET-211: two-port --skip-bridge --non-interactive, a dry run that wrote, capture started on a missing br0, Go Live guessing ports, and a new uninstall.sh.) -->
 <!-- previous: **Last updated:** 2026-11-12 (Chain 32: a box with no index answered "incomplete" instead of zeros; the daemon now fills in the empty aggregations. NET-182, not yet on the device.) -->
 <!-- previous: **Last updated:** 2026-11-12 (Chain 31: deploy-malcolm.sh's OpenSearch bootstrap now stops the run when auth or the two index templates aren't in place, keeps the password out of every process's arguments, and leaves Malcolm's tuned malcolm_template alone; installer sizes are decimal GB. NET-217, NET-177. Chain 30, NET-198's session expiry, came in with PR #248.) -->
 <!-- previous: **Last updated:** 2026-11-09 (Chain 29: a full reload of a logged-in page was a 502; nginx's 4 KB header buffer was smaller than SvelteKit's Link header. NET-241, PR #236.) -->
@@ -636,6 +637,32 @@ CHAIN 33: installer and Go Live bugs found writing the setup guide (fix/installe
   Lesson: bats runs under /bin/bash 3.2 on a Mac, where a failing `[[ ]]` that isn't a test's last
   command doesn't fail the test. End mid-test `[[ ]]` checks with `|| false`.
   Tracking: tracking-fixes/2026-11-12-installer-go-live-uninstall.md.
+CHAIN 34: malcolm-config.sh put the admin password on the command line (fix/htpasswd-password-argv, NET-251)
+  Found by the NET-217 agent (PR #251), 2026-11-12. Install time only; the same class as Chain 31.
+  - generate_auth ran `run htpasswd -bcB <file> <user> "$password"`: the password was in htpasswd's
+    argv (ps shows it to every local account; no hidepid on Ubuntu) and in run's own log line
+    (`[DRY-RUN] $*`, verbose `exec: $*`; install.sh -v passes -v down).
+  - The python3 fallback pasted it into the -c code as b'${password}': in python3's argv, and a '
+    (or any non-ASCII character) was a SyntaxError that stopped the install; a \ changed the hash.
+    Nothing installs apache2-utils, so the fallback is the usual path: the G11 has no htpasswd and
+    its docker/auth/htpasswd is the python {SSHA} form.
+  Fix (generate_auth only):
+  - `run htpasswd -icB <file> <user> < <(printf '%s\r\n' "$password")`. printf is a builtin, so
+    no argv holds it. htpasswd -i reads all of stdin and strips one final LF and the CR before it,
+    so the explicit \r\n keeps a password's own trailing CR or LF (a here-string lost a trailing
+    CR, EOF-terminated input a trailing LF). Process substitution, not a pipe: under pipefail,
+    `printf | run …` can die of SIGPIPE when run's dry-run branch doesn't read.
+  - python3: fixed single-quoted code; `printf '%s' "$password" | python3 -c '… sys.stdin.buffer.read() …'`.
+  - An existing docker/auth/htpasswd is never regenerated, so installed boxes are unchanged.
+  Tests: tests/scripts/test_malcolm_config.bats, 3 new (stubbed htpasswd argv/stdin/log; the real
+  htpasswd with trailing CR, LF and CRLF, checked with -vb; the python3 fallback's argv, log and
+  {SSHA} hash). 51/51. Tests 1 and 3 fail on the old code; test 2 fails without the \r\n.
+  Verify: a fresh install only. From `sudo -i`: `read -rs NETTAP_ADMIN_PASSWORD; export NETTAP_ADMIN_PASSWORD`,
+  then `scripts/install/malcolm-config.sh -v` with docker/auth absent while another shell samples
+  `ps -eo args`. No deploy script: the G11 already has its file.
+  Lessons: htpasswd -i strips a final (CR)LF even at EOF; verify with -vb, because -vi strips the
+  same way and hides it. `sudo VAR=secret cmd` puts the secret on sudo's argv.
+  Tracking: tracking-fixes/2026-11-13-htpasswd-password-argv.md.
 ```
 
 ---
@@ -1962,6 +1989,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | File | PRs | Current State |
 |---|---|---|
 | `scripts/install/deploy-malcolm.sh` | NET-217, NET-177 | Bootstrap stops the run on failure (Chain 31): `error` after bounded, time-limited retries. All dashboards-helper OpenSearch calls go through `_helper_curl` (`curl --config` the mounted curlrc; never `-u`). A malcolm_template already targeting the index pattern is kept; the Arkime marker is `?create=true`. Preflight free space is decimal GB. Don't add an OpenSearch call that takes credentials on the command line. |
+| `scripts/install/malcolm-config.sh` | NET-246, NET-224, NET-251 | `generate_auth` feeds the admin password on stdin (`htpasswd -i` with `\r\n` framing; python3 reads `sys.stdin`), never in argv or `run`'s log (Chain 34). Never pass a secret as an argument to `run` or interpolate one into `python3 -c` code. |
 | `config/capture/nettap-capture-env.sh` | NET-211 | Parses capture.env, then waits until every PCAP_IFACE interface exists in `${NETTAP_SYS_CLASS_NET:-/sys/class/net}` (Chain 33). Tests must pass a fake sysfs or they can block on Linux. |
 | `scripts/install/uninstall.sh` | NET-211 | NEW (Chain 33): explicit file list; refusals before any change; daemon.json only from the installer's records. Add any new file NetTap writes outside the repo to its lists. |
 | `scripts/install/activate-bridge.sh` | NET-216 | `start_services()` calls `deploy-malcolm.sh --start-only`, not a bare `docker compose up -d` (Chain 28). Start the stack through deploy-malcolm.sh; don't copy compose commands into other scripts. |
@@ -2386,5 +2414,6 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-216 | pending | `activate-bridge.sh` (the --defer-bridge path) started the stack without the OpenSearch bootstrap or index templates (Chain 28) | 2026-11-08 |
 | NET-198 | pending | A lapsed session sends the user to sign in instead of "Can't reach NetTap"; `/login` follows a same-origin `?next=` (Chain 30) | 2026-11-12 |
 | NET-217, NET-177 | pending | deploy-malcolm.sh's bootstrap warned and carried on, with the password on the command line; installer sizes in GiB (Chain 31) | 2026-11-12 |
+| NET-251 | pending | malcolm-config.sh put the admin password in htpasswd's and python3's arguments and run's log; a quote broke the python fallback (Chain 34) | 2026-11-13 |
 | NET-171 | pending | IoT trust score: telemetry and firmware out of the model (nine checks, 85 points); an unmeasured pillar says "Not measured" | 2026-11-12 |
 | NET-174 | pending | Unused `POST /api/iot/devices/{mac}/classify` and `classifyDevice()` removed | 2026-11-12 |
