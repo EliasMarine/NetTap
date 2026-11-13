@@ -218,9 +218,10 @@ class TestChangelogServiceGetEventTypes(unittest.TestCase):
     #     self.assertEqual(types, ["device_joined", "storage_pruned"])
     # OLD CODE END
     def test_get_event_types_are_the_recorded_types_without_a_query(self):
-        """NET-173: only device joins and storage cleanups are ever written."""
+        """NET-173: only the written types; NET-182 adds the device cap's event."""
         types = self.service.get_event_types()
-        self.assertEqual(types, ["device_joined", "storage_pruned"])
+        # OLD CODE: self.assertEqual(types, ["device_joined", "storage_pruned"]) (NET-182)
+        self.assertEqual(types, ["device_cap_reached", "device_joined", "storage_pruned"])
         self.mock_client.search.assert_not_called()
 
 
