@@ -76,7 +76,10 @@ ARM_S = 60
 PAIRS = 3
 SURICATA = "nettap-suricata-live"
 SURICATA_SOCKET = "/var/run/suricata/suricata-command.socket"
-STATS_SYNC_S = 10  # stats.interval in config/suricata/nettap.yaml (NET-206)
+STATS_SYNC_S = 10  # SURICATA_STATS_INTERVAL in docker/docker-compose.yml (NET-206)
+# An eight-watch arm counts as worse only by more than this many drops: one stray drop on
+# either arm would otherwise decide the pair
+NOISE_DROPS = 10
 DROPS = ("rx_dropped", "rx_missed_errors", "rx_fifo_errors")
 
 RESULTS: list[bool] = []
@@ -679,10 +682,13 @@ def nic_counters(iface: str) -> dict[str, int]:
     return counters
 
 
-def capture_verdict(pairs: list[tuple[int, int]]) -> str:
-    """PASS when no eight-watch arm grew more NIC drops than its off arm (zero and zero passes),
-    FAIL when every pair grew more, INCONCLUSIVE when it's mixed (rerun)."""
-    worse = [eight > off for off, eight in pairs]
+def capture_verdict(pairs: list[tuple[float, float]]) -> str:
+    """PASS when no eight-watch arm dropped more than NOISE_DROPS over its off arm, FAIL when
+    every pair did, INCONCLUSIVE when it's mixed (rerun). Pairs are (off, eight) drops."""
+    # OLD CODE START — NET-206 review: no noise margin, so one drop decided a pair
+    # worse = [eight > off for off, eight in pairs]
+    # OLD CODE END
+    worse = [eight - off > NOISE_DROPS for off, eight in pairs]
     if not any(worse):
         return "PASS"
     return "FAIL" if all(worse) else "INCONCLUSIVE"
@@ -719,12 +725,21 @@ def suricata_capture() -> tuple[int, int, int]:
 
 
 def arm_delta(
-    before: tuple[int, int, int], after: tuple[int, int, int], number: int
+    before: tuple[int, int, int],
+    after: tuple[int, int, int],
+    number: int,
+    seconds: float,
 ) -> tuple[int, int]:
-    """Suricata's (packets, drops) over one arm. A restart (uptime went down) or a counter that
-    went down voids the arm; no packets means no load, so no result."""
+    """Suricata's (packets, drops) over one arm of `seconds`. A restart voids the arm: its uptime
+    grew by less than the arm (less one sync), or a counter went down. No packets means no
+    load, so no result."""
     packets, drops = after[1] - before[1], after[2] - before[2]
-    if after[0] < before[0] or packets < 0 or drops < 0:
+    # OLD CODE START — NET-206 review: missed a restart when Suricata's uptime was shorter
+    # than the arm at its start
+    # if after[0] < before[0] or packets < 0 or drops < 0:
+    # OLD CODE END
+    restarted = after[0] - before[0] < seconds - STATS_SYNC_S
+    if restarted or packets < 0 or drops < 0:
         raise RuntimeError(f"Suricata restarted during arm {number}: rerun")
     if packets == 0:
         raise RuntimeError(
@@ -770,7 +785,7 @@ def run_arm(arm: str, iface: str, number: int) -> tuple[int, int, int]:
         time.sleep(min(2.0, left))
         poll_all(macs)
     after, seconds = nic_counters(iface), time.monotonic() - start
-    packets, drops = arm_delta(suricata_before, suricata_capture(), number)
+    packets, drops = arm_delta(suricata_before, suricata_capture(), number, seconds)
     growth = {name: after[name] - before[name] for name in DROPS}
     rate = (after["rx_bytes"] - before["rx_bytes"]) * 8 / seconds / 1e6
     print(
@@ -801,7 +816,7 @@ def capture_safety() -> None:
               f"{PAIRS * 2 * (ARM_S + STATS_SYNC_S + 6) // 60 + 1} minutes. Start a sustained "
               "download on the dev Mac now and keep it running until the verdict.",
               flush=True)  # fmt: skip
-        pairs, ratios = [], []
+        pairs, suricata_pairs = [], []
         totals = {"off": [0, 0], "eight": [0, 0]}
         # ABA order, so a drift over the run doesn't favour one arm
         for pair in range(PAIRS):
@@ -811,8 +826,10 @@ def capture_safety() -> None:
                 for n, arm in enumerate(order)
             }
             pairs.append((grew["off"][0], grew["eight"][0]))
-            # arms differ in length by up to one sync, so compare drop ratios, not counts
-            ratios.append(tuple(grew[a][2] / grew[a][1] for a in ("off", "eight")))
+            # arms differ in length by up to one sync: the off arm's drops are scaled to the
+            # eight-watch arm's packets
+            (_, off_p, off_d), (_, eight_p, eight_d) = grew["off"], grew["eight"]
+            suricata_pairs.append((off_d * eight_p / off_p, eight_d))
             for arm in order:
                 totals[arm][0] += grew[arm][1]
                 totals[arm][1] += grew[arm][2]
@@ -823,7 +840,9 @@ def capture_safety() -> None:
         for arm, (packets, drops) in totals.items():
             print(f"INFO  Suricata, {arm}: {packets} packets, {drops} dropped "
                   f"({100 * drops / packets:.3f}%)", flush=True)  # fmt: skip
-        suricata_verdict = capture_verdict(ratios)
+        print(f"INFO  Suricata drops per pair (off scaled, eight watches): "
+              f"{[(round(o, 1), e) for o, e in suricata_pairs]}", flush=True)  # fmt: skip
+        suricata_verdict = capture_verdict(suricata_pairs)
         check(suricata_verdict == "PASS", f"Suricata capture loss: {suricata_verdict}"
               + (" (mixed: rerun)" if suricata_verdict == "INCONCLUSIVE" else ""))  # fmt: skip
     except (OSError, RuntimeError) as exc:
