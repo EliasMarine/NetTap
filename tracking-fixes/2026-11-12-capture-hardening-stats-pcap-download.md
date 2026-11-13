@@ -104,6 +104,16 @@ Tests: `tests/scripts/test_compose_validation.bats`, `daemon/tests/{test_pcap_se
 - `tests/test_pcap_download_cleanup.py`: the test app uses the production middleware. Three tests failed on the old handler.
 - `deploy-capture-hardening.sh` step 5: waits until two reads of the zeek PID list 10 s apart match and aren't empty, then wants conn.log written after that.
 
+### Redeploy after PR #256 (45fbcbb3)
+
+`deploy-capture-hardening.sh`: every check passed.
+- Step 5 listed five zeek PIDs, each with CapEff `0000000000002000`. They were the same processes 3 minutes later, with no restarts. memory.peak was 1.57 GB.
+- Suricata's `kernel_packets` went from 222,631 to 470,999 in 15 s. `stats.enabled` was yes, `stats.interval` 10, and no `stats.log` was written.
+- Download, 8 of 8: the second download got 503 "Another download is running; try again when it finishes." The download held packets from both files, all inside the window, and `/tmp` stayed empty.
+- The 4 s window took 94 s: 128,001 packets, 102 MB out, from 215 MB of capture. The first deploy's window took 5.3 s for 13 MB. The load average was 5 while Zeek and Suricata started. This is under the 240 s deadline, but a longer window on a busy box can hit it. The deadline error now reaches the page ("took longer than the time allowed").
+
+The capture-loss measurement (NET-206) is in `2026-11-07-device-live-bandwidth.md` under Known limits.
+
 ## Lessons
 - A test app without the production middleware passes replies that production rewrites. Build handler tests on the same middleware stack as `api/server.py`.
 - A capture binary's file capability is where its privilege comes from. Drop it in the image and in `cap_add` together.
