@@ -103,7 +103,7 @@ git checkout v0.4.0-alpha.1
 sudo scripts/install/install.sh --skip-bridge
 ```
 
-This is the command for mirror / SPAN and DHCP gateway modes. For inline bridge mode, leave out `--skip-bridge`. Don't add `--non-interactive` on a box with two ports: it stops with "Could not assign WAN and LAN NICs" (known bug).
+This is the command for mirror / SPAN and DHCP gateway modes. For inline bridge mode, leave out `--skip-bridge`. With `--skip-bridge`, `--non-interactive` skips the port questions too, because the setup wizard picks the ports.
 
 The installer blinks each port's LED so you can tell them apart and asks which is which. It then installs Docker, sets up the bridge (unless you passed `--skip-bridge`), starts the pinned Malcolm images and NetTap's services, and prints a wiring diagram. `--help` lists every option.
 

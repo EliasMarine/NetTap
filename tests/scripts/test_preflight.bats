@@ -203,6 +203,33 @@ WRAPPER
 }
 
 # ---------------------------------------------------------------------------
+# NET-244: two ports, internet on one. Auto-assignment still stops rather than put the
+# internet port in a bridge; install.sh doesn't call it under --skip-bridge --non-interactive.
+# ---------------------------------------------------------------------------
+@test "preflight --non-interactive: two ports with internet on one still stops (bridge installs)" {
+    local mock_scripts="${TEST_TMPDIR}/mock_scripts"
+    mkdir -p "${mock_scripts}"
+    cat > "${mock_scripts}/common.sh" <<WRAPPER
+source '${REPO_ROOT}/scripts/common.sh'
+source '${BATS_TEST_DIRNAME}/helpers/mocks.bash'
+WRAPPER
+    sed "s|source \"\${SCRIPT_DIR}/../common.sh\"|source '${mock_scripts}/common.sh'|" \
+        "${REPO_ROOT}/scripts/install/preflight.sh" > "${mock_scripts}/preflight.sh"
+
+    local output rc=0
+    output=$(bash -c "
+        export MOCK_NICS='enp1s0
+enp2s0'
+        export MOCK_DEFAULT_ROUTE_NIC='enp2s0'
+        export PROJECT_ROOT='${TEST_TMPDIR}' TEST_TMPDIR='${TEST_TMPDIR}'
+        bash '${mock_scripts}/preflight.sh' --env-file '${TEST_TMPDIR}/.env' --non-interactive --reconfigure-nics --dry-run
+    " 2>&1) || rc=$?
+
+    [ "$rc" -ne 0 ]
+    [[ "$output" == *"Could not assign WAN and LAN NICs"* ]]
+}
+
+# ---------------------------------------------------------------------------
 # Test 9: LED blink calls ethtool -p with correct args
 # ---------------------------------------------------------------------------
 @test "blink_nic: calls ethtool -p with correct interface and duration" {

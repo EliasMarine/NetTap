@@ -97,6 +97,14 @@ parse_args() {
 # NIC PREFLIGHT: Discover and assign NICs before main install
 # ===========================================================================
 step_nic_preflight() {
+    # NET-244: with --skip-bridge nothing uses WAN/LAN (the setup wizard picks the ports), and
+    # auto-assignment can't place two ports when one carries the internet, so it stopped the install.
+    # Bridge installs still auto-assign: there the abort keeps the internet port out of the bridge.
+    if [[ "$SKIP_BRIDGE" == "true" && "$NON_INTERACTIVE" == "true" ]]; then
+        log "NIC roles skipped (--skip-bridge): the setup wizard picks the ports"
+        return 0
+    fi
+
     # Check if .env already has NIC assignments
     local env_file="${PROJECT_ROOT}/.env"
     local needs_nics="false"
