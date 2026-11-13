@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from functools import partial
 
 from services.excluded_ips import CONN_ACCOUNTING
+from storage.snapshot_search import Budget, TooSlow
 from storage.time_slots import histogram_buckets, time_slots
 
 logger = logging.getLogger("nettap.services.investigation")
@@ -268,11 +269,16 @@ async def generate_threat_report(
     excluded_ips: list[str] | None = None,
     beaconing: list[dict] | None = None,
     lan_cidrs: list[str] | None = None,
+    budget: Budget | None = None,
 ) -> dict:
     """Unified threat report — the single API call that powers the /threats page.
 
     ``beaconing``: rows from the background snapshot (NET-192 PR 3); the beaconing check then
     doesn't run here. None runs it live, as before.
+
+    ``budget`` (NET-187): the live beaconing check is waited for until it runs out; then the
+    report goes out with every other section and beaconing in ``failed_checks`` and
+    ``timed_out_checks``. None waits as long as the check takes.
     """
     from services.alert_intelligence import (
         get_smart_alerts,
@@ -282,6 +288,7 @@ async def generate_threat_report(
         # OLD CODE END
     )
     from services.threat_detection import (
+        BEACON_POOL,
         detect_beaconing,
         detect_lateral_movement,
         analyze_dns_anomalies,
@@ -314,14 +321,27 @@ async def generate_threat_report(
     #     )
     # }
     # OLD CODE END
+    # OLD CODE START — NET-187: beaconing had no time budget and ran on the default executor
+    # running = {
+    #     name: loop.run_in_executor(
+    #         None, partial(detect, client, from_ts, to_ts, excluded_ips=excluded_ips)
+    #     )
+    #     for name, detect in (
+    #         ("beaconing", detect_beaconing),
+    #         ("dns_anomalies", analyze_dns_anomalies),
+    #         ("lateral_movement", detect_lateral_movement),
+    #     )
+    #     if not (name == "beaconing" and beaconing is not None)
+    # }
+    # OLD CODE END
     running = {
         name: loop.run_in_executor(
-            None, partial(detect, client, from_ts, to_ts, excluded_ips=excluded_ips)
+            executor, partial(detect, client, from_ts, to_ts, excluded_ips=excluded_ips)
         )
-        for name, detect in (
-            ("beaconing", detect_beaconing),
-            ("dns_anomalies", analyze_dns_anomalies),
-            ("lateral_movement", detect_lateral_movement),
+        for name, detect, executor in (
+            ("beaconing", partial(detect_beaconing, budget=budget), BEACON_POOL),
+            ("dns_anomalies", analyze_dns_anomalies, None),
+            ("lateral_movement", detect_lateral_movement, None),
         )
         if not (name == "beaconing" and beaconing is not None)
     }
@@ -335,6 +355,10 @@ async def generate_threat_report(
             client, from_ts, to_ts, include_info=False, limit=200, lan_cidrs=lan_cidrs
         )
     except BaseException:
+        # OLD CODE: await asyncio.gather(*running.values(), return_exceptions=True) (NET-187 review: it waited up to the budget for beaconing)
+        # a queued scan never starts; a running one runs on to its budget, but nobody waits for it
+        if "beaconing" in running:
+            running["beaconing"].cancel()
         await asyncio.gather(*running.values(), return_exceptions=True)
         raise
 
@@ -365,6 +389,8 @@ async def generate_threat_report(
         # checks that could not run, and checks a bucket cap stopped part way
         "failed_checks": [],
         "incomplete_checks": [],
+        # NET-187: failed checks that ran out of time (also in failed_checks)
+        "timed_out_checks": [],
         "investigations": [],
     }
     # OLD CODE START — #139: each check ran after the previous one, on the request loop
@@ -409,8 +435,28 @@ async def generate_threat_report(
                 report["failed_checks"] = [*report["failed_checks"], "investigations"]
 
     for name, check in running.items():
+        # OLD CODE START — NET-187: the report waited for beaconing however long it took
+        # try:
+        #     found = await check
+        # except Exception:
+        #     logger.error("Threat report: the %s check failed", name, exc_info=True)
+        #     report["failed_checks"] = [*report["failed_checks"], name]
+        #     continue
+        # OLD CODE END
+        until = (
+            max(0.0, budget.remaining())
+            if name == "beaconing" and budget is not None
+            else None
+        )
         try:
-            found = await check
+            # no shield: at the deadline a scan still queued never starts, a running one stops
+            # at its next budget check and its late result is dropped
+            found = await asyncio.wait_for(check, until)
+        except (TooSlow, asyncio.TimeoutError):
+            logger.warning("Threat report: the %s check ran out of time", name)
+            report["failed_checks"] = [*report["failed_checks"], name]
+            report["timed_out_checks"] = [*report["timed_out_checks"], name]
+            continue
         except Exception:
             logger.error("Threat report: the %s check failed", name, exc_info=True)
             report["failed_checks"] = [*report["failed_checks"], name]

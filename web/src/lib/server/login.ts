@@ -206,3 +206,52 @@ export function checkSetupCode(code: string): SetupCodeResult {
 		error: "That setup code isn't right. The installer printed it at the end; see below to read it again.",
 	};
 }
+
+// ----- Where to go after signing in (NET-198) -----
+
+const NEXT_BASE = 'http://local.invalid';
+
+/** One leading slash, so not `//host` or `/\host`, which a browser reads as another site. */
+const isLocalPath = (path: string) => path.startsWith('/') && !path.startsWith('//') && !path.startsWith('/\\');
+
+/**
+ * The first path segment of every page the web app has, read from src/routes when it is built, so a
+ * new page works with no list to keep. nginx serves other apps on this origin (/grafana/,
+ * /dashboards/, /cyberchef/) and the API is under /api/: none of them is a page here.
+ * shortcut: a route group "(x)" or a dynamic first segment "[x]" is kept as written, so its pages
+ * fall back to "/" after sign-in; handle it if the app grows one.
+ */
+const APP_SEGMENTS = new Set(
+	Object.keys(import.meta.glob('/src/routes/**/+page.svelte'))
+		.map((file) => file.split('/')[3]) // /src/routes/<first segment>/…
+		.filter((first) => first !== '+page.svelte') // the home page is "/", handled below
+);
+
+/** An encoded slash or backslash: a proxy in front can decode it, so `/devices/..%2fgrafana/` could leave the app. */
+const ENCODED_SEPARATOR = /%(2f|5c)/i;
+
+function isAppPage(pathname: string): boolean {
+	return !ENCODED_SEPARATOR.test(pathname) && (pathname === '/' || APP_SEGMENTS.has(pathname.split('/')[1]));
+}
+
+/**
+ * The page to open after a sign-in: the `next` query value when it is a path to one of this web app's
+ * own pages, else `/`. The result is the URL parser's own form, so tabs and line breaks are gone and
+ * the value is safe in a Location header. That form is checked again: `/a/..//evil.com` and
+ * `/%2e//evil.com` parse as same-origin but normalise to `//evil.com`, which would leave the site.
+ */
+export function safeNextPath(raw: string | null | undefined): string {
+	if (!raw || !isLocalPath(raw)) return '/';
+	try {
+		const url = new URL(raw, NEXT_BASE);
+		const out = url.pathname + url.search;
+		const ok =
+			url.origin === NEXT_BASE &&
+			isLocalPath(out) &&
+			new URL(out, NEXT_BASE).origin === NEXT_BASE &&
+			isAppPage(url.pathname);
+		return ok ? out : '/';
+	} catch {
+		return '/';
+	}
+}

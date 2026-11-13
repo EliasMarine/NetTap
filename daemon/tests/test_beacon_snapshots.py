@@ -10,10 +10,11 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from api.threats import register_threat_routes
+from api.threats import BEACON_BUDGET_SECONDS, register_threat_routes
 from services import beacon_snapshots
 from services.beacon_snapshots import CAP_HIT, QUERY_FAILED, BeaconSnapshots
 from storage.manager import RetentionConfig, StorageManager
+from storage.snapshot_search import Budget
 
 T0 = datetime(2026, 11, 7, 12, 0, tzinfo=timezone.utc)
 ROW = {
@@ -358,7 +359,13 @@ def test_the_report_takes_beaconing_from_the_snapshot(monkeypatch):
     seen = {}
 
     async def report(
-        client, from_ts, to_ts, excluded_ips=None, beaconing=None, lan_cidrs=None
+        client,
+        from_ts,
+        to_ts,
+        excluded_ips=None,
+        beaconing=None,
+        lan_cidrs=None,
+        budget=None,
     ):
         seen.update(beaconing=beaconing, span=_span(from_ts, to_ts))
         return {"beaconing": beaconing}
@@ -380,7 +387,13 @@ def test_a_scan_that_publishes_during_the_report_does_not_relabel_its_rows(monke
     store._scan = lambda f, t: ([ROW], True)
 
     async def report(
-        client, from_ts, to_ts, excluded_ips=None, beaconing=None, lan_cidrs=None
+        client,
+        from_ts,
+        to_ts,
+        excluded_ips=None,
+        beaconing=None,
+        lan_cidrs=None,
+        budget=None,
     ):
         await store.refresh("7d")  # the background scan finishes while the report runs
         return {"beaconing": beaconing}
@@ -401,13 +414,19 @@ def test_an_explicit_window_is_always_live(monkeypatch, route):
     seen = {}
 
     async def report(
-        client, from_ts, to_ts, excluded_ips=None, beaconing=None, lan_cidrs=None
+        client,
+        from_ts,
+        to_ts,
+        excluded_ips=None,
+        beaconing=None,
+        lan_cidrs=None,
+        budget=None,
     ):
-        seen.update(beaconing=beaconing, live=True)
+        seen.update(beaconing=beaconing, live=True, budget=budget)
         return {"beaconing": []}
 
-    def detect(client, from_ts, to_ts, excluded_ips=None):
-        seen.update(live=True)
+    def detect(client, from_ts, to_ts, excluded_ips=None, budget=None):
+        seen.update(live=True, budget=budget)
         return [], True
 
     window = "from=2026-11-01T00:00:00Z&to=2026-11-02T00:00:00Z"
@@ -418,6 +437,9 @@ def test_an_explicit_window_is_always_live(monkeypatch, route):
         status, body = _get(app, f"{route}?snapshot=7d&{window}")
     assert status == 200
     assert seen["live"] and seen.get("beaconing") is None
+    # NET-187: a live check runs inside the route's time budget
+    assert isinstance(seen["budget"], Budget)
+    assert seen["budget"].remaining() <= BEACON_BUDGET_SECONDS
     assert "beaconing_snapshot" not in body
     assert body["from"] == "2026-11-01T00:00:00Z"
 
@@ -428,7 +450,13 @@ def test_with_the_background_off_a_snapshot_request_runs_live(monkeypatch):
     seen = {}
 
     async def report(
-        client, from_ts, to_ts, excluded_ips=None, beaconing=None, lan_cidrs=None
+        client,
+        from_ts,
+        to_ts,
+        excluded_ips=None,
+        beaconing=None,
+        lan_cidrs=None,
+        budget=None,
     ):
         seen.update(beaconing=beaconing, span=_span(from_ts, to_ts))
         return {"beaconing": []}

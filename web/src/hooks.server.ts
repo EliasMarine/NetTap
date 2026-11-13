@@ -2,6 +2,7 @@ import type { Handle, ServerInit } from '@sveltejs/kit';
 import { json, redirect } from '@sveltejs/kit';
 import { verifyToken, hasUsers, ensureSetupCode } from '$lib/server/auth.js';
 import { hasSetupCookie } from '$lib/server/middleware.js';
+import { SIGN_IN_FIRST } from '$lib/auth-errors.js';
 
 /** A13 (NET-229): make the first-run setup code at start, so the installer can print it. The code
  * itself is never logged; reading it needs a shell on the box. */
@@ -107,9 +108,11 @@ function isFirstRun(): boolean {
 	}
 }
 
-/** The reply to an API or remote-function call with no session: JSON the caller can check. */
+/** The reply to an API or remote-function call with no session: JSON the caller can check.
+ * The shell's ping check (routes/+layout.svelte) matches this error text to send the user to sign in. */
 function unauthorised(): Response {
-	return json({ error: 'Sign in first' }, { status: 401 });
+	// OLD CODE: return json({ error: 'Sign in first' }, { status: 401 }); (NET-198: one constant for the hook and the shell)
+	return json({ error: SIGN_IN_FIRST }, { status: 401 });
 }
 
 export const handle: Handle = async ({ event, resolve }) => {

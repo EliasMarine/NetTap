@@ -72,15 +72,29 @@ def test_stats_count_every_certificate_used_in_the_window():
     )
 
 
+# The sessions are stamped 2026-11-05 (tests/fake_cert_opensearch.py), so the lists read that window:
+# without one they read the last 7 days, which stopped holding them on 2026-11-12.
+WINDOW = ("2026-11-01T00:00:00Z", "2026-11-05T12:00:00Z")
+
+
 def test_list_projections_agree_with_the_stats():
     monitor = _monitor(SESSIONS, CERTS)
-    assert len(monitor.get_certificates()) == 7
+    # OLD CODE START — the default window (last 7 days) aged out of the fixed session dates
+    # assert len(monitor.get_certificates()) == 7
+    # expiring = {
+    #     c["fingerprint"]: c["status"] for c in monitor.get_expiring_certs(days=30)
+    # }
+    # assert expiring == {"SOON": "expiring", "GONE": "expired"}
+    # assert [c["fingerprint"] for c in monitor.detect_self_signed()] == ["SELF"]
+    # (change,) = monitor.detect_issuer_changes()
+    # OLD CODE END
+    assert len(monitor.get_certificates(*WINDOW)) == 7
     expiring = {
-        c["fingerprint"]: c["status"] for c in monitor.get_expiring_certs(days=30)
+        c["fingerprint"]: c["status"] for c in monitor.get_expiring_certs(30, *WINDOW)
     }
     assert expiring == {"SOON": "expiring", "GONE": "expired"}
-    assert [c["fingerprint"] for c in monitor.detect_self_signed()] == ["SELF"]
-    (change,) = monitor.detect_issuer_changes()
+    assert [c["fingerprint"] for c in monitor.detect_self_signed(*WINDOW)] == ["SELF"]
+    (change,) = monitor.detect_issuer_changes(*WINDOW)
     assert change["domain"] == "cdn.com" and change["issuers"] == [
         "DigiCert",
         "Let's Encrypt",
@@ -90,9 +104,17 @@ def test_list_projections_agree_with_the_stats():
 
 def test_expiring_days_are_clamped_and_certificates_without_dates_are_never_listed():
     monitor = _monitor(SESSIONS, CERTS)
-    assert {c["fingerprint"] for c in monitor.get_expiring_certs(days=-5)} == {"GONE"}
+    # OLD CODE START — the default window (last 7 days) aged out of the fixed session dates
+    # assert {c["fingerprint"] for c in monitor.get_expiring_certs(days=-5)} == {"GONE"}
+    # assert "NODETAIL" not in {
+    #     c["fingerprint"] for c in monitor.get_expiring_certs(days=99_999)
+    # }
+    # OLD CODE END
+    assert {c["fingerprint"] for c in monitor.get_expiring_certs(-5, *WINDOW)} == {
+        "GONE"
+    }
     assert "NODETAIL" not in {
-        c["fingerprint"] for c in monitor.get_expiring_certs(days=99_999)
+        c["fingerprint"] for c in monitor.get_expiring_certs(99_999, *WINDOW)
     }
 
 
