@@ -175,7 +175,8 @@ cap_drop = svc.get('cap_drop', [])
 cap_add = svc.get('cap_add', [])
 assert 'ALL' not in cap_drop, '${svc} must NOT have cap_drop: ALL (Malcolm entrypoint needs su)'
 assert len(cap_add) > 0, '${svc} should have explicit cap_add'
-assert 'NET_ADMIN' in cap_add, '${svc} needs NET_ADMIN'
+# NET-220: zeek-live captures with NET_RAW alone (checked in its own test)
+assert '${svc}' == 'zeek-live' or 'NET_ADMIN' in cap_add, '${svc} needs NET_ADMIN'
 assert 'NET_RAW' in cap_add, '${svc} needs NET_RAW'
 print('${svc}: OK (cap_add ' + str(cap_add) + ')')
 "
@@ -672,6 +673,27 @@ print('zeek-live build: OK')
     [ "$status" -eq 0 ]
     grep -q '^RUN echo /usr/local/lib/nettap/libnettap_urandom.so >> /etc/ld.so.preload' \
         "${REPO_ROOT}/docker/Dockerfile.zeek-live"
+}
+
+@test "compose: zeek-live holds only NET_RAW and a memory limit (NET-220)" {
+    if ! _has_pyyaml; then
+        skip "PyYAML not available"
+    fi
+
+    run _compose_query "
+svc = data['services']['zeek-live']
+assert svc['cap_add'] == ['NET_RAW'], svc['cap_add']
+assert svc['mem_limit'] == '3g', svc.get('mem_limit')
+# no-new-privileges would block the file-capability gain Zeek captures with
+assert 'no-new-privileges:true' not in svc.get('security_opt', []), svc.get('security_opt')
+print('zeek-live caps: OK')
+"
+    [ "$status" -eq 0 ]
+    # The image drops CAP_NET_ADMIN from the binaries and from Malcolm's entrypoint setcap
+    local dockerfile="${REPO_ROOT}/docker/Dockerfile.zeek-live"
+    grep -q "^RUN sed -i 's/CAP_NET_RAW+eip CAP_NET_ADMIN+eip/CAP_NET_RAW+eip/' /usr/local/bin/docker_entrypoint.sh" "$dockerfile"
+    grep -q '^RUN setcap cap_net_raw=eip /usr/local/zeek/bin/zeek' "$dockerfile"
+    grep -q '"/usr/local/zeek/bin/zeek cap_net_raw=eip"' "$dockerfile"
 }
 
 @test "compose: non-capture services do NOT use host network" {
