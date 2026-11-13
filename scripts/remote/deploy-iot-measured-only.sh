@@ -96,7 +96,11 @@ FLEET=/api/iot/fleet-summary
 echo "   $(api "$FLEET" "d.get('_status') or '%s IoT devices, %s scored, fleet score %s' % (d.get('device_count'), d.get('scored_device_count'), d.get('health_score'))")"
 # telemetry and firmware left the model: nine checks (none on the device means nothing to check)
 R=$(api "$FLEET" "d.get('_status') or sorted({x.get('checks_total') for x in d['devices']}) or 'no IoT devices'")
-expect "every device is scored over 9 checks" "$R" "[9]"
+if [ "$R" = "no IoT devices" ]; then
+    check "every device is scored over 9 checks" 0 "no IoT devices, check skipped"
+else
+    expect "every device is scored over 9 checks" "$R" "[9]"
+fi
 # behaviour needs a baseline (NET-170): no device and not the fleet may show a behaviour score
 R=$(api "$FLEET" "d.get('_status') or ([x['name'] for x in d['devices'] if x.get('behavior_score') is not None] or ('fleet' if d.get('behavior_score') is not None else 'ok'))")
 expect "behaviour is not measured, so it has no score" "$R" ok
