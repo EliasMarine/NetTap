@@ -7,6 +7,7 @@ const HREFS = [
 	'/tools/subnet-calc',
 	'/tools/ipv6',
 	'/tools/port-reference',
+	'/tools/dhcp-timeline',
 	// OLD CODE: '/tools/tshark', (NET-188: the tool is Packet analysis now)
 	'/packets',
 	'/tools/cyberchef',
@@ -25,7 +26,7 @@ describe('Tools index', () => {
 		render(Page);
 		expect(screen.getByRole('heading', { level: 1, name: 'Network tools' })).toBeInTheDocument();
 		expect(toolLinks()).toEqual(HREFS);
-		expect(screen.getByRole('heading', { name: 'Network · 4 tools' })).toBeInTheDocument();
+		expect(screen.getByRole('heading', { name: 'Network · 5 tools' })).toBeInTheDocument();
 		expect(screen.getByRole('heading', { name: 'Analysis · 3 tools' })).toBeInTheDocument();
 		expect(screen.getByRole('heading', { name: 'Lookup · 5 tools' })).toBeInTheDocument();
 	});
@@ -39,6 +40,9 @@ describe('Tools index', () => {
 
 		await fireEvent.input(field, { target: { value: 'slaac' } });
 		expect(toolLinks()).toEqual(['/tools/ipv6']);
+
+		await fireEvent.input(field, { target: { value: 'lease' } });
+		expect(toolLinks()).toEqual(['/tools/dhcp-timeline']);
 
 		await fireEvent.input(field, { target: { value: 'oui' } });
 		expect(toolLinks()).toEqual(['/tools/mac-lookup']);

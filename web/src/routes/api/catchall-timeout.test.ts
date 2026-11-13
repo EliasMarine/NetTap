@@ -20,14 +20,14 @@ function event(path: string) {
 	return { url, request: new Request(url) };
 }
 
-/** The daemon answers after DELAY_MS unless the request's signal aborts first. */
-function slowDaemon() {
+/** The daemon answers after `delay` (DELAY_MS) unless the request's signal aborts first. */
+function slowDaemon(delay = DELAY_MS) {
 	vi.stubGlobal(
 		'fetch',
 		vi.fn(
 			(_url: string, init: RequestInit) =>
 				new Promise((resolve, reject) => {
-					const timer = setTimeout(() => resolve(new Response(JSON.stringify({ ip: 'ok' }), { status: 200 })), DELAY_MS);
+					const timer = setTimeout(() => resolve(new Response(JSON.stringify({ ip: 'ok' }), { status: 200 })), delay);
 					init.signal?.addEventListener('abort', () => {
 						clearTimeout(timer);
 						reject(new Error('The operation was aborted due to timeout'));
@@ -81,6 +81,13 @@ describe('catch-all proxy timeouts with the real daemonFetch', () => {
 		slowDaemon();
 		const pending = GET(event('/api/moment/devices?from=a&to=b&limit=10') as never);
 		await vi.advanceTimersByTimeAsync(DELAY_MS);
+		expect((await pending).status).toBe(200);
+	});
+
+	it('lets a 15 s DHCP timeline answer through (NET-263)', async () => {
+		slowDaemon(15_000);
+		const pending = GET(event('/api/dhcp/timeline?mac=aa:bb:cc:dd:ee:ff&from=a&to=b') as never);
+		await vi.advanceTimersByTimeAsync(15_000);
 		expect((await pending).status).toBe(200);
 	});
 

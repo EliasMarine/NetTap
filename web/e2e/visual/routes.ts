@@ -66,6 +66,8 @@ export const APP_ROUTES: readonly RouteCase[] = [
 	{ path: '/tools/ssl-cert', marker: 'SSL certificate viewer' },
 	{ path: '/tools/subnet-calc', marker: 'Subnet calculator' },
 	{ path: '/tools/ipv6', marker: 'IPv6 toolkit' },
+	// NET-263: with a device, so the populated pass draws the table
+	{ path: '/tools/dhcp-timeline?mac=02:00:5e:00:53:38', marker: 'DHCP lease timeline' },
 	// OLD CODE: { path: '/tools/tshark', marker: 'TShark packet analysis' }, (NET-188: it redirects to /packets)
 	{ path: '/traffic/streaming', marker: /streaming/i },
 ];

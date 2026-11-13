@@ -56,6 +56,14 @@
 			tags: ['TCP', 'UDP', 'reference'],
 			icon: 'connections',
 		},
+		{
+			name: 'DHCP lease timeline',
+			description: 'See every address request a device made, what it was given and which servers answered.',
+			href: '/tools/dhcp-timeline',
+			category: 'network',
+			tags: ['DHCP', 'lease', 'NAK', 'IP address'],
+			icon: 'changelog',
+		},
 		// OLD CODE START — NET-188: /tools/tshark redirects to Packet analysis
 		// {
 		// 	name: 'TShark packet analysis',

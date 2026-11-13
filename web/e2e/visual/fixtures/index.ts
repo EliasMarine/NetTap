@@ -7,6 +7,7 @@ import { CAPTURE_ROUTES } from './capture.ts';
 import { CERTIFICATE_ROUTES } from './certificates.ts';
 import { CHANGELOG_ROUTES } from './changelog.ts';
 import { DEVICES_ROUTES } from './devices.ts';
+import { DHCP_ROUTES } from './dhcp.ts';
 import { DRILLDOWN_ROUTES } from './drilldown.ts';
 import { DNS_ROUTES } from './dns.ts';
 import { GEOIP_ROUTES } from './geoip.ts';
@@ -41,6 +42,7 @@ export const ROUTES: readonly FixtureRoute[] = [
 	...CERTIFICATE_ROUTES,
 	...CHANGELOG_ROUTES,
 	...DEVICES_ROUTES,
+	...DHCP_ROUTES,
 	...DRILLDOWN_ROUTES,
 	...DNS_ROUTES,
 	...GEOIP_ROUTES,

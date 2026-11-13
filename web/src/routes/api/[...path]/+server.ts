@@ -54,6 +54,8 @@ const SLOW_PREFIX_TIMEOUT_MS: [string, number][] = [
 	['/api/alerts/suricata/', 30_000],
 	// NET-249: the moment page's device breakdown runs in the same drill-down slots, inside the same 25 s budget
 	['/api/moment/', 30_000],
+	// NET-263: the DHCP timeline's two reads run in the same drill-down slots and budget
+	['/api/dhcp/', 30_000],
 	// NET-224: a channel test waits for the daemon's send (SMTP: 10 s to connect, 30 s for the rest)
 	['/api/notifications/channels/', 60_000],
 ];
