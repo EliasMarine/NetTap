@@ -338,9 +338,18 @@ ui_summary_installed() {
     ui_card_kv "Checks" "$(_ui_counts "$passed" "$warned" "$failed")"
     ui_card_kv "Time taken" "$(_ui_duration $(( $(date +%s) - INSTALL_START_TIME )))"
     ui_card_line ""
-    ui_card_line "${_UI_BOLD}Last step: move the cables${_UI_OFF}"
-    _ui_cabling
-    if [[ "${SKIP_BRIDGE:-false}" != "true" ]]; then
+    # OLD CODE START — NET-211/NET-246: --skip-bridge got the bridge cabling (eth0/eth1 when no ports were set)
+    # ui_card_line "${_UI_BOLD}Last step: move the cables${_UI_OFF}"
+    # _ui_cabling
+    # if [[ "${SKIP_BRIDGE:-false}" != "true" ]]; then
+    #     ui_card_line "  ${_UI_DIM}The bridge is on, so traffic flows as soon as both cables are in.${_UI_OFF}"
+    # fi
+    # OLD CODE END
+    if [[ "${SKIP_BRIDGE:-false}" == "true" ]]; then
+        ui_card_line "${_UI_BOLD}Last step:${_UI_OFF} open the dashboard; the setup wizard picks the ports."
+    else
+        ui_card_line "${_UI_BOLD}Last step: move the cables${_UI_OFF}"
+        _ui_cabling
         ui_card_line "  ${_UI_DIM}The bridge is on, so traffic flows as soon as both cables are in.${_UI_OFF}"
     fi
     ui_card_line ""

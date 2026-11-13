@@ -103,6 +103,8 @@ step_nic_preflight() {
     # Bridge installs still auto-assign: there the abort keeps the internet port out of the bridge.
     if [[ "$SKIP_BRIDGE" == "true" && "$NON_INTERACTIVE" == "true" ]]; then
         log "NIC roles skipped (--skip-bridge): the setup wizard picks the ports"
+        # preflight.sh, skipped here, is what otherwise locks .env to its owner
+        if [[ -f "${PROJECT_ROOT}/.env" ]]; then run chmod 600 "${PROJECT_ROOT}/.env"; fi
         return 0
     fi
 
@@ -318,6 +320,11 @@ DAEMONJSON
         return 1
     fi
     log "Adding DNS servers to existing Docker daemon config..."
+    if ! command -v jq > /dev/null; then
+        # A dry run installed no packages, so jq may not be there yet
+        if [[ "$NETTAP_DRY_RUN" == "true" ]]; then log "[DRY-RUN] add \"dns\" to ${file} with jq"; return 0; fi
+        error "jq is missing, so ${file} can't be updated. Install jq, then run the installer again."
+    fi
     # jq adds the dns key without clobbering the rest; never write over the file if it can't parse it
     json=$(jq '. + {"dns": ["9.9.9.9", "149.112.112.112"]}' "$file") \
         || error "Couldn't read ${file} as JSON. Fix it, then run the installer again."
@@ -360,7 +367,8 @@ net.core.netdev_max_backlog = 5000
 # Increase conntrack table for busy networks
 net.netfilter.nf_conntrack_max = 1048576
 SYSCTLEOF
-        run sysctl --system > /dev/null 2>&1
+        # OLD CODE: run sysctl --system > /dev/null 2>&1 (NET-211 #8: the redirect hid run's own dry-run line)
+        if [[ "$NETTAP_DRY_RUN" == "true" ]]; then log "[DRY-RUN] sysctl --system"; else sysctl --system > /dev/null 2>&1; fi
         log "Kernel parameters applied"
     else
         debug "Kernel tuning already configured"

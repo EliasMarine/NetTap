@@ -48,6 +48,16 @@ _nic_preflight() {
     rm -rf "$STUB_DIR"
 }
 
+@test "NET-244: skipping preflight still locks .env to its owner" {
+    _stub_preflight
+    printf 'NETTAP_HOSTNAME=nettap.local\n' > "${STUB_DIR}/.env"
+    chmod 644 "${STUB_DIR}/.env"
+    _nic_preflight "SKIP_BRIDGE=true NON_INTERACTIVE=true"
+    [ "$status" -eq 0 ]
+    [ "$(ls -l "${STUB_DIR}/.env" | cut -c1-10)" = "-rw-------" ]
+    rm -rf "$STUB_DIR"
+}
+
 @test "NET-244: a non-interactive bridge install still auto-assigns (its abort keeps the internet port out)" {
     _stub_preflight
     _nic_preflight "SKIP_BRIDGE=false NON_INTERACTIVE=true"
@@ -167,11 +177,13 @@ _strict() {
 }
 
 @test "NET-211 #8: the dry run writes no sysctl file and no nettap.service" {
-    _strict "NETTAP_DRY_RUN=true; sysctl() { :; }; systemctl() { :; }; step_kernel_tuning; step_systemd"
+    _strict "NETTAP_DRY_RUN=true; sysctl() { echo REAL-SYSCTL; }; systemctl() { :; }; step_kernel_tuning; step_systemd"
     [ "$status" -eq 0 ]
     if [[ ! -e /etc/sysctl.d/99-nettap.conf ]]; then
         [[ "$output" == *"[DRY-RUN] write /etc/sysctl.d/99-nettap.conf"* ]] || false
+        [[ "$output" == *"[DRY-RUN] sysctl --system"* ]] || false
     fi
+    [[ "$output" != *"REAL-SYSCTL"* ]] || false
     [[ "$output" == *"[DRY-RUN] write /etc/systemd/system/nettap.service"* ]] || false
 }
 
@@ -270,6 +282,22 @@ _strict() {
     [[ "$output" != *"RESTART"* ]] || false
     [ "$(cat "$dir/daemon.json")" = '{"data-root": "/srv/docker"}' ]
     chmod 755 "$dir"
+    rm -rf "$dir"
+}
+
+@test "NET-211 #8: without jq a dry run says what it would add, a real run says jq is missing" {
+    local dir bin t; dir="$(mktemp -d)"; bin="$dir/bin"
+    mkdir "$bin"
+    for t in grep cat date; do ln -s "$(command -v "$t")" "$bin/$t"; done
+    printf '{"data-root": "/srv/docker"}\n' > "$dir/daemon.json"
+    run bash -c "source '$INSTALL_SH'; NETTAP_UI=plain; PATH='$bin'; NETTAP_DRY_RUN=true; configure_docker_daemon '$dir/daemon.json'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"[DRY-RUN] add \"dns\" to $dir/daemon.json with jq"* ]] || false
+    [[ "$output" != *"as JSON"* ]] || false
+    run bash -c "source '$INSTALL_SH'; NETTAP_UI=plain; PATH='$bin'; configure_docker_daemon '$dir/daemon.json'"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"jq is missing, so $dir/daemon.json can't be updated"* ]] || false
+    [ "$(cat "$dir/daemon.json")" = '{"data-root": "/srv/docker"}' ]
     rm -rf "$dir"
 }
 

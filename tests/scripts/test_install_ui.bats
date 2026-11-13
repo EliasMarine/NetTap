@@ -416,6 +416,11 @@ sysctl() { echo 262144; }'
     [ "$status" -eq 0 ]
     [[ "$output" == *"NetTap is installed"* ]] || false
     [[ "$output" != *"The bridge is on"* ]] || false
+    # NET-211/NET-246: no bridge, so no cabling to invent; the wizard picks the ports
+    [[ "$output" == *"Last step: open the dashboard; the setup wizard picks the ports."* ]] || false
+    [[ "$output" != *"move the cables"* ]] || false
+    [[ "$output" != *"ISP modem"* ]] || false
+    [[ "$output" != *"Keep Wi-Fi connected"* ]] || false
 }
 
 @test "step_verify: deferred bridge ends with activate-bridge.sh" {
