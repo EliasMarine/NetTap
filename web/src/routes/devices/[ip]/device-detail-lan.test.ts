@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import type { Writable } from 'svelte/store';
 import { goto } from '$app/navigation';
@@ -93,5 +93,27 @@ describe('Device detail — an address off the LAN', () => {
 		await open('91.92.40.12');
 		await tick();
 		expect(goto).not.toHaveBeenCalled();
+	});
+});
+
+// NET-265: in this file for its device page set-up; the card has its own tests
+describe('Device detail — compare periods', () => {
+	beforeEach(() => {
+		vi.mocked(devices.getDeviceCategories).mockResolvedValue({ categories: [] } as never);
+		vi.mocked(devices.getDevicePorts).mockResolvedValue({ ports: [] } as never);
+		vi.mocked(devices.getDeviceRiskScore).mockResolvedValue({ score: 0, level: 'low', factors: [] } as never);
+		vi.mocked(devices.getDeviceConnections).mockResolvedValue({ connections: [], page: 1, total_pages: 0, total: 0 } as never);
+	});
+	afterEach(() => vi.clearAllMocks());
+
+	it('Compare periods opens the compare card and closes it again', async () => {
+		await open('192.168.1.10');
+		const toggle = screen.getByRole('button', { name: 'Compare periods' });
+		expect(screen.queryByRole('heading', { name: 'Compare periods' })).toBeNull();
+		await fireEvent.click(toggle);
+		expect(toggle).toHaveAttribute('aria-expanded', 'true');
+		expect(screen.getByRole('heading', { name: 'Compare periods' })).toBeTruthy();
+		await fireEvent.click(toggle);
+		expect(screen.queryByRole('heading', { name: 'Compare periods' })).toBeNull();
 	});
 });
