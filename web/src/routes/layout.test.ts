@@ -3,6 +3,7 @@ import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { createRawSnippet, tick } from 'svelte';
 import type { Writable } from 'svelte/store';
 import { page } from '$app/stores';
+import { goto } from '$app/navigation';
 import * as captureApi from '$api/capture';
 import * as systemApi from '$api/system';
 import { get } from 'svelte/store';
@@ -48,6 +49,8 @@ function stubFetch(ping: () => Response | Promise<Response> = () => new Response
 	vi.stubGlobal('EventSource', class { addEventListener() {} close() {} });
 	return fetchMock;
 }
+
+const pingCalls = (f: ReturnType<typeof vi.fn>) => f.mock.calls.filter(([u]) => u === '/api/system/ping').length;
 
 function renderLayout(username: string | null = 'admin') {
 	return render(Layout, { props: { children, data: { username } } });
@@ -128,7 +131,6 @@ describe('layout capture mode chip', () => {
 
 // The top bar used to say "Online" even with the daemon down.
 describe('layout daemon status', () => {
-	const pingCalls = (f: ReturnType<typeof vi.fn>) => f.mock.calls.filter(([u]) => u === '/api/system/ping').length;
 
 	it('shows no warning while the daemon answers', async () => {
 		const f = stubFetch();
@@ -188,6 +190,155 @@ describe('layout daemon status', () => {
 		await vi.advanceTimersByTimeAsync(90_000);
 		expect(pingCalls(f)).toBe(1);
 		hidden.mockRestore();
+	});
+});
+
+// NET-198: a lapsed session sends the user to sign in instead of saying "Can't reach NetTap"
+describe('layout session expiry', () => {
+	const signInFirst = () => new Response(JSON.stringify({ error: 'Sign in first' }), { status: 401 });
+
+	beforeEach(() => {
+		vi.mocked(goto).mockReset();
+	});
+
+	it('opens the sign-in page, coming back to this page, when the session ran out', async () => {
+		pageStore.set({ url: new URL('http://localhost/devices?range=7d') });
+		stubFetch(signInFirst);
+		renderLayout();
+		await vi.waitFor(() => expect(goto).toHaveBeenCalledWith('/login?next=%2Fdevices%3Frange%3D7d'));
+		await tick();
+		expect(screen.queryByText("Can't reach NetTap")).not.toBeInTheDocument();
+	});
+
+	it("does not take the daemon's own 401 for a lapsed session", async () => {
+		stubFetch(() => new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 }));
+		renderLayout();
+		expect(await screen.findByText("Can't reach NetTap")).toBeInTheDocument();
+		expect(goto).not.toHaveBeenCalled();
+	});
+
+	it('stays offline for a 401 that is not JSON', async () => {
+		stubFetch(() => new Response('Unauthorized', { status: 401 }));
+		renderLayout();
+		expect(await screen.findByText("Can't reach NetTap")).toBeInTheDocument();
+		expect(goto).not.toHaveBeenCalled();
+	});
+
+	it('still says it cannot reach NetTap when the network fails', async () => {
+		stubFetch(() => Promise.reject(new TypeError('Failed to fetch')));
+		renderLayout();
+		expect(await screen.findByText("Can't reach NetTap")).toBeInTheDocument();
+		expect(goto).not.toHaveBeenCalled();
+	});
+
+	it('starts no new poll while the sign-in page is opening', async () => {
+		vi.useFakeTimers();
+		vi.mocked(goto).mockReturnValueOnce(never());
+		const f = stubFetch(signInFirst);
+		renderLayout();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(goto).toHaveBeenCalledTimes(1);
+
+		await vi.advanceTimersByTimeAsync(120_000);
+
+		expect(goto).toHaveBeenCalledTimes(1);
+		expect(pingCalls(f)).toBe(1);
+		expect(captureApi.getCaptureHealth).toHaveBeenCalledTimes(1);
+		expect(systemApi.getStorageStatus).toHaveBeenCalledTimes(1);
+		expect(initCaptureMode).toHaveBeenCalledTimes(1);
+	});
+
+	it('polls again when the navigation to sign in ends with the shell still open', async () => {
+		vi.useFakeTimers();
+		const f = stubFetch(signInFirst);
+		renderLayout();
+		await vi.advanceTimersByTimeAsync(0);
+		expect(goto).toHaveBeenCalledTimes(1);
+
+		await vi.advanceTimersByTimeAsync(30_000);
+
+		expect(pingCalls(f)).toBe(2);
+		expect(goto).toHaveBeenCalledTimes(2);
+	});
+
+	it('polls again when the navigation to sign in fails', async () => {
+		vi.useFakeTimers();
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+		try {
+			vi.mocked(goto).mockRejectedValueOnce(new Error('navigation failed'));
+			const f = stubFetch(signInFirst);
+			renderLayout();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(logged).toHaveBeenCalledWith('Could not open the sign-in page:', expect.any(Error));
+
+			await vi.advanceTimersByTimeAsync(30_000);
+
+			expect(pingCalls(f)).toBe(2);
+		} finally {
+			logged.mockRestore();
+		}
+	});
+
+	it('ignores a ping that was already on its way when the user signed in again', async () => {
+		let answerOld!: (r: Response) => void;
+		const old = new Promise<Response>((resolve) => (answerOld = resolve));
+		let calls = 0;
+		stubFetch(() => (++calls === 1 ? old : new Response(JSON.stringify({ status: 'ok' }))));
+		renderLayout();
+		await vi.waitFor(() => expect(calls).toBe(1));
+
+		pageStore.set({ url: new URL('http://localhost/login?next=%2Fsystem') }); // the sign-in page has no shell
+		await tick();
+		pageStore.set({ url: new URL('http://localhost/system') }); // signed in: the shell polls again
+		await vi.waitFor(() => expect(calls).toBe(2));
+		answerOld(signInFirst());
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		expect(goto).not.toHaveBeenCalled();
+	});
+
+	it('does not show offline for an older ping that fails after the redirect has started', async () => {
+		vi.useFakeTimers();
+		let failOld!: (r: Response) => void;
+		const old = new Promise<Response>((resolve) => (failOld = resolve));
+		let calls = 0;
+		stubFetch(() => (++calls === 1 ? old : signInFirst()));
+		vi.mocked(goto).mockReturnValueOnce(never());
+		renderLayout();
+		await vi.advanceTimersByTimeAsync(30_000);
+		expect(goto).toHaveBeenCalledTimes(1);
+
+		failOld(new Response('{}', { status: 502 }));
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(screen.queryByText("Can't reach NetTap")).not.toBeInTheDocument();
+	});
+
+	// The stream closes for good on a 401; it must come back with the shell after sign-in
+	it('opens a new notification stream when the shell mounts again after sign-in', async () => {
+		stubFetch();
+		let opened = 0;
+		let closed = 0;
+		vi.stubGlobal(
+			'EventSource',
+			class {
+				constructor() {
+					opened++;
+				}
+				addEventListener() {}
+				close() {
+					closed++;
+				}
+			},
+		);
+		renderLayout();
+		await vi.waitFor(() => expect(opened).toBe(1));
+
+		pageStore.set({ url: new URL('http://localhost/login?next=%2Fsystem') });
+		await vi.waitFor(() => expect(closed).toBe(1));
+		pageStore.set({ url: new URL('http://localhost/system') });
+
+		await vi.waitFor(() => expect(opened).toBe(2));
 	});
 });
 

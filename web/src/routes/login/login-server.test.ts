@@ -173,13 +173,16 @@ describe('Login form action — throttling (real +page.server.ts)', () => {
 		real.setAuthCookie.mockReset();
 	});
 
-	async function submit(username: string, password: string, ip = '192.168.1.10') {
+	// OLD CODE: async function submit(username: string, password: string, ip = '192.168.1.10') { (NET-198: the event needs a url for ?next=)
+	async function submit(username: string, password: string, ip = '192.168.1.10', next?: string) {
 		const form = new FormData();
 		form.set('username', username);
 		form.set('password', password);
-		const request = new Request('http://localhost/login', { method: 'POST', body: form });
+		const url = new URL('http://localhost/login');
+		if (next !== undefined) url.searchParams.set('next', next);
+		const request = new Request(url, { method: 'POST', body: form });
 		try {
-			return await actions.default({ request, getClientAddress: () => ip } as never);
+			return await actions.default({ request, url, getClientAddress: () => ip } as never);
 		} catch (thrown) {
 			return thrown; // redirect() throws
 		}
@@ -188,6 +191,17 @@ describe('Login form action — throttling (real +page.server.ts)', () => {
 	it('redirects home on the right password', async () => {
 		expect(await submit('admin', 'right')).toMatchObject({ status: 302, location: '/' });
 		expect(real.setAuthCookie).toHaveBeenCalledWith(expect.anything(), 'jwt');
+	});
+
+	// NET-198: the sign-in page sends the user back to the page a lapsed session was on
+	it.each([
+		['/devices?range=7d', '/devices?range=7d'],
+		['https://evil.com', '/'],
+		['//evil.com', '/'],
+		['/a/..//evil.com', '/'],
+		['/%2e//evil.com', '/'],
+	])('after signing in with next=%s it redirects to %s', async (next, location) => {
+		expect(await submit('admin', 'right', '192.168.1.10', next)).toMatchObject({ status: 302, location });
 	});
 
 	it('shows a friendly 429 error on the form after 5 attempts a minute from one client', async () => {

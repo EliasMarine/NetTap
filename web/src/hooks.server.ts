@@ -107,7 +107,8 @@ function isFirstRun(): boolean {
 	}
 }
 
-/** The reply to an API or remote-function call with no session: JSON the caller can check. */
+/** The reply to an API or remote-function call with no session: JSON the caller can check.
+ * The shell's ping check (routes/+layout.svelte) matches this error text to send the user to sign in. */
 function unauthorised(): Response {
 	return json({ error: 'Sign in first' }, { status: 401 });
 }

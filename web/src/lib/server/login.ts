@@ -206,3 +206,27 @@ export function checkSetupCode(code: string): SetupCodeResult {
 		error: "That setup code isn't right. The installer printed it at the end; see below to read it again.",
 	};
 }
+
+// ----- Where to go after signing in (NET-198) -----
+
+const NEXT_BASE = 'http://local.invalid';
+
+/** One leading slash, so not `//host` or `/\host`, which a browser reads as another site. */
+const isLocalPath = (path: string) => path.startsWith('/') && !path.startsWith('//') && !path.startsWith('/\\');
+
+/**
+ * The page to open after a sign-in: the `next` query value when it is a same-origin path, else `/`.
+ * The result is the URL parser's own form, so tabs and line breaks are gone and the value is safe in
+ * a Location header. That form is checked again: `/a/..//evil.com` and `/%2e//evil.com` parse as
+ * same-origin but normalise to `//evil.com`, which would leave the site.
+ */
+export function safeNextPath(raw: string | null | undefined): string {
+	if (!raw || !isLocalPath(raw)) return '/';
+	try {
+		const url = new URL(raw, NEXT_BASE);
+		const out = url.pathname + url.search;
+		return url.origin === NEXT_BASE && isLocalPath(out) && new URL(out, NEXT_BASE).origin === NEXT_BASE ? out : '/';
+	} catch {
+		return '/';
+	}
+}

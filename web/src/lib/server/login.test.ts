@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('./auth.js', () => mocks);
 
+import { safeNextPath } from './login.js';
+
 const ADMIN = { username: 'admin', passwordHash: '$argon2id$real', role: 'admin' };
 const MINUTE = 60_000;
 
@@ -158,5 +160,64 @@ describe('attemptLogin — per-username backoff', () => {
 
 		await failFromManyIps('admin', 4);
 		expect(await attemptLogin('10.9.9.9', 'admin', 'right')).toMatchObject({ ok: true });
+	});
+});
+
+// NET-198: the sign-in page sends the user back to the page a lapsed session was on
+describe('safeNextPath', () => {
+	const BASE = 'http://local.invalid';
+
+	it.each([
+		['/devices?range=7d', '/devices?range=7d'],
+		['/', '/'],
+		['/a/../b', '/b'],
+		['/%2F/evil.com', '/%2F/evil.com'], // an encoded slash stays one path segment
+		['/devices#top', '/devices'], // a fragment never reaches the server
+	])('keeps the same-origin path %s as %s', (raw, expected) => {
+		expect(safeNextPath(raw)).toBe(expected);
+	});
+
+	it.each([
+		null,
+		undefined,
+		'',
+		'devices',
+		'evil.com',
+		'https://evil.com',
+		'http://evil.com/x',
+		'javascript:alert(1)',
+		'//evil.com',
+		'///evil.com',
+		'/\\evil.com',
+		'/\t/evil.com', // a browser drops the tab and reads //evil.com
+		'/\n/evil.com',
+		'/a/..//evil.com', // normalises to //evil.com
+		'/%2e//evil.com',
+		'/%2E%2E//evil.com',
+		'/./..//evil.com',
+	])('falls back to / for %j', (raw) => {
+		expect(safeNextPath(raw)).toBe('/');
+	});
+
+	it('never puts a line break or tab in the result, so it is safe in a Location header', () => {
+		const out = safeNextPath('/a\r\nSet-Cookie: x=1');
+		expect(out).toMatch(/^\/[^\r\n\t]*$/);
+		expect(out).not.toContain('\n');
+	});
+
+	// every string built from these pieces: whatever comes out is a path on this same origin
+	it('only ever returns a same-origin path', () => {
+		const pieces = ['/', '..', '.', '%2e', '%2E', '%2f', '\\', '\t', '\n', 'a', '?', '//'];
+		const inputs: string[] = [''];
+		let layer: string[] = [''];
+		for (let depth = 0; depth < 4; depth++) {
+			layer = layer.flatMap((prefix) => pieces.map((piece) => prefix + piece));
+			inputs.push(...layer);
+		}
+		for (const tail of inputs) {
+			const out = safeNextPath('/' + tail);
+			expect(out.startsWith('/') && !out.startsWith('//') && !out.startsWith('/\\')).toBe(true);
+			expect(new URL(out, BASE).origin).toBe(BASE);
+		}
 	});
 });
