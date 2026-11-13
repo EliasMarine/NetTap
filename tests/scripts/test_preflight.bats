@@ -226,7 +226,7 @@ enp2s0'
     " 2>&1) || rc=$?
 
     [ "$rc" -ne 0 ]
-    [[ "$output" == *"Could not assign WAN and LAN NICs"* ]]
+    [[ "$output" == *"Could not assign WAN and LAN NICs"* ]] || false
 }
 
 # ---------------------------------------------------------------------------

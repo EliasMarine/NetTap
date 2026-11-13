@@ -28,22 +28,22 @@ WRAPPER
 @test "setup-bridge --persist --dry-run names every boot file and writes none" {
     _dry_run_bridge
     [ "$status" -eq 0 ]
-    [[ "$output" == *"[DRY-RUN] write /etc/netplan/10-nettap-bridge.yaml"* ]]
-    [[ "$output" == *"[DRY-RUN] write /etc/sysctl.d/99-nettap-bridge.conf"* ]]
-    [[ "$output" == *"[DRY-RUN] write /etc/systemd/system/nettap-bridge.service"* ]]
-    [[ "$output" == *"[DRY-RUN] chmod 600 /etc/netplan/10-nettap-bridge.yaml"* ]]
+    [[ "$output" == *"[DRY-RUN] write /etc/netplan/10-nettap-bridge.yaml"* ]] || false
+    [[ "$output" == *"[DRY-RUN] write /etc/sysctl.d/99-nettap-bridge.conf"* ]] || false
+    [[ "$output" == *"[DRY-RUN] write /etc/systemd/system/nettap-bridge.service"* ]] || false
+    [[ "$output" == *"[DRY-RUN] chmod 600 /etc/netplan/10-nettap-bridge.yaml"* ]] || false
 }
 
 @test "setup-bridge --dry-run loads no kernel module" {
     _dry_run_bridge
     [ "$status" -eq 0 ]
-    [[ "$output" == *"[DRY-RUN] modprobe bridge"* ]]
+    [[ "$output" == *"[DRY-RUN] modprobe bridge"* ]] || false
     [ ! -e "${TEST_TMPDIR}/modprobe.log" ]
 }
 
 @test "setup-bridge --dry-run with a fixed management address writes no netplan either" {
     _dry_run_bridge MGMT_INTERFACE=enp1s0 MGMT_IP=192.0.2.10
     [ "$status" -eq 0 ]
-    [[ "$output" == *"[DRY-RUN] write /etc/netplan/10-nettap-bridge.yaml"* ]]
-    [[ "$(grep -c 'write /etc/netplan/10-nettap-bridge.yaml' <<< "$output")" -eq 2 ]]
+    [[ "$output" == *"[DRY-RUN] write /etc/netplan/10-nettap-bridge.yaml"* ]] || false
+    [[ "$(grep -c 'write /etc/netplan/10-nettap-bridge.yaml' <<< "$output")" -eq 2 ]] || false
 }

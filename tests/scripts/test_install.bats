@@ -42,8 +42,8 @@ _nic_preflight() {
     _stub_preflight
     _nic_preflight "SKIP_BRIDGE=true NON_INTERACTIVE=true"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"NEXT STEP"* ]]
-    [[ "$output" == *"NIC roles skipped (--skip-bridge)"* ]]
+    [[ "$output" == *"NEXT STEP"* ]] || false
+    [[ "$output" == *"NIC roles skipped (--skip-bridge)"* ]] || false
     [ ! -e "${STUB_DIR}/calls" ]
     rm -rf "$STUB_DIR"
 }
@@ -52,7 +52,7 @@ _nic_preflight() {
     _stub_preflight
     _nic_preflight "SKIP_BRIDGE=false NON_INTERACTIVE=true"
     [ "$status" -ne 0 ]
-    [[ "$output" != *"NEXT STEP"* ]]
+    [[ "$output" != *"NEXT STEP"* ]] || false
     grep -q -- "--non-interactive" "${STUB_DIR}/calls"
     rm -rf "$STUB_DIR"
 }
@@ -94,19 +94,19 @@ _verify_with_opensearch() {
 @test "NET-211 #5: the installer's OpenSearch check signs in and reports the cluster status" {
     _verify_with_opensearch "echo '{\"status\":\"green\"}'"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"[ OK ] OpenSearch cluster health: green"* ]]
-    [[ "$output" != *"not responding"* ]]
+    [[ "$output" == *"[ OK ] OpenSearch cluster health: green"* ]] || false
+    [[ "$output" != *"not responding"* ]] || false
 }
 
 @test "NET-211 #5: a red cluster is a warning that names the status" {
     _verify_with_opensearch "echo '{\"status\":\"red\"}'"
-    [[ "$output" == *"[WARN] OpenSearch cluster health: red"* ]]
+    [[ "$output" == *"[WARN] OpenSearch cluster health: red"* ]] || false
 }
 
 @test "NET-211 #5: no answer from OpenSearch still says it isn't responding yet" {
     _verify_with_opensearch "return 1"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"[WARN] OpenSearch not responding yet"* ]]
+    [[ "$output" == *"[WARN] OpenSearch not responding yet"* ]] || false
 }
 
 # ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@ STUB
 @test "NET-211 #7: UFW inactive is left alone" {
     _firewall_with_ufw "Status: inactive"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"UFW not active, nothing to change"* ]]
+    [[ "$output" == *"UFW not active, nothing to change"* ]] || false
     [ ! -e "${FW_DIR}/calls" ]
     rm -rf "$FW_DIR"
 }
@@ -161,7 +161,7 @@ _strict() {
     [ "$(cat "$dir/a")" = "hello" ]
     _strict "NETTAP_DRY_RUN=true; write_file '$dir/b' <<< 'hello'"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"[DRY-RUN] write $dir/b"* ]]
+    [[ "$output" == *"[DRY-RUN] write $dir/b"* ]] || false
     [ ! -e "$dir/b" ]
     rm -rf "$dir"
 }
@@ -170,9 +170,9 @@ _strict() {
     _strict "NETTAP_DRY_RUN=true; sysctl() { :; }; systemctl() { :; }; step_kernel_tuning; step_systemd"
     [ "$status" -eq 0 ]
     if [[ ! -e /etc/sysctl.d/99-nettap.conf ]]; then
-        [[ "$output" == *"[DRY-RUN] write /etc/sysctl.d/99-nettap.conf"* ]]
+        [[ "$output" == *"[DRY-RUN] write /etc/sysctl.d/99-nettap.conf"* ]] || false
     fi
-    [[ "$output" == *"[DRY-RUN] write /etc/systemd/system/nettap.service"* ]]
+    [[ "$output" == *"[DRY-RUN] write /etc/systemd/system/nettap.service"* ]] || false
 }
 
 @test "NET-211 #8: the dry run installs nothing and doesn't stop at the missing Compose plugin" {
@@ -184,9 +184,9 @@ _strict() {
         configure_docker_daemon() { return 1; }
         step_dependencies"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"[DRY-RUN] apt-get install -y -qq docker-compose-plugin"* ]]
-    [[ "$output" != *"REAL-"* ]]
-    [[ "$output" != *"Docker Compose plugin not available"* ]]
+    [[ "$output" == *"[DRY-RUN] apt-get install -y -qq docker-compose-plugin"* ]] || false
+    [[ "$output" != *"REAL-"* ]] || false
+    [[ "$output" != *"Docker Compose plugin not available"* ]] || false
 }
 
 @test "NET-211 #8: the dry run doesn't run deploy-malcolm.sh, it names it" {
@@ -195,7 +195,7 @@ _strict() {
     chmod +x "$dir/deploy-malcolm.sh"
     _strict "NETTAP_DRY_RUN=true; SCRIPT_DIR='$dir'; step_malcolm"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"[DRY-RUN] $dir/deploy-malcolm.sh --dry-run"* ]]
+    [[ "$output" == *"[DRY-RUN] $dir/deploy-malcolm.sh --dry-run"* ]] || false
     [ ! -e "$dir/calls" ]
     rm -rf "$dir"
 }
@@ -205,7 +205,7 @@ _strict() {
     # dry run, no file: names it, writes nothing, still asks for a restart
     _strict "NETTAP_DRY_RUN=true; configure_docker_daemon '$dir/daemon.json'"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"[DRY-RUN] write $dir/daemon.json"* ]]
+    [[ "$output" == *"[DRY-RUN] write $dir/daemon.json"* ]] || false
     [ ! -e "$dir/daemon.json" ]
     # real run, no file: NetTap's settings
     _strict "configure_docker_daemon '$dir/daemon.json'"
@@ -227,7 +227,7 @@ _strict() {
     printf 'not json\n' > "$dir/daemon.json"
     _strict "configure_docker_daemon '$dir/daemon.json'"
     [ "$status" -ne 0 ]
-    [[ "$output" == *"Couldn't read $dir/daemon.json as JSON"* ]]
+    [[ "$output" == *"Couldn't read $dir/daemon.json as JSON"* ]] || false
     [ "$(cat "$dir/daemon.json")" = "not json" ]
     rm -rf "$dir"
 }
