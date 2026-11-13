@@ -481,7 +481,10 @@ step_mdns() {
 step_firewall() {
     ui_step "Configuring firewall rules"
 
-    if command -v ufw &>/dev/null && ufw status | grep -q "active"; then
+    # OLD CODE START — NET-211 #7: "active" also matched "Status: inactive"
+    # if command -v ufw &>/dev/null && ufw status | grep -q "active"; then
+    # OLD CODE END
+    if command -v ufw &>/dev/null && ufw status | grep -q '^Status: active'; then
         log "UFW is active, adding NetTap rules..."
 
         # Allow dashboard access (HTTPS)

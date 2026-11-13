@@ -108,3 +108,35 @@ _verify_with_opensearch() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"[WARN] OpenSearch not responding yet"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# NET-211 #6, #7: step_firewall with a ufw stub that logs every call. $1 = its status line.
+# ---------------------------------------------------------------------------
+_firewall_with_ufw() {
+    FW_DIR="$(mktemp -d)"
+    mkdir -p "${FW_DIR}/bin"
+    cat > "${FW_DIR}/bin/ufw" <<STUB
+#!/usr/bin/env bash
+if [[ "\$1" == "status" ]]; then echo "$1"; exit 0; fi
+echo "ufw \$*" >> "${FW_DIR}/calls"
+STUB
+    chmod +x "${FW_DIR}/bin/ufw"
+    run env PATH="${FW_DIR}/bin:$PATH" bash -c "set -euo pipefail; source '$INSTALL_SH'
+        NETTAP_UI=plain; step_firewall"
+}
+
+@test "NET-211 #7: UFW inactive is left alone" {
+    _firewall_with_ufw "Status: inactive"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"UFW not active, nothing to change"* ]]
+    [ ! -e "${FW_DIR}/calls" ]
+    rm -rf "$FW_DIR"
+}
+
+@test "NET-211 #7: UFW active gets the dashboard and mDNS rules" {
+    _firewall_with_ufw "Status: active"
+    [ "$status" -eq 0 ]
+    grep -q "ufw allow 443/tcp" "${FW_DIR}/calls"
+    grep -q "ufw allow 5353/udp" "${FW_DIR}/calls"
+    rm -rf "$FW_DIR"
+}
