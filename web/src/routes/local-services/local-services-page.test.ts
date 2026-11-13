@@ -105,7 +105,9 @@ describe('Local services page', () => {
 	it('says when the list was cut short', async () => {
 		stubDaemon({ ...LOCAL_SERVICES, truncated: true });
 		render(LocalServicesPage);
-		await vi.waitFor(() => expect(screen.getByText(/may not hold every announcement/)).toBeInTheDocument());
+		const note = await vi.waitFor(() => screen.getByText(/may not hold every announcement/));
+		// it names the limits, so the owner knows which one a shorter range avoids
+		expect(note).toHaveTextContent('5,000 rows, 20,000 connections matched one by one, or 1,000 names from one sender');
 	});
 
 	it('asks for the range picked, and offers no range past 7 days', async () => {

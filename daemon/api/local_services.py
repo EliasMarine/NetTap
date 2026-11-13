@@ -162,7 +162,9 @@ def _instances(bucket: dict) -> tuple[dict[tuple[str, str], str], bool]:
             continue
         key, seen = (found[2], found[1]), iso_ms(b["last"]["value"])
         out[key] = max(out.get(key, seen), seen)
-    complete = not (bucket["q"]["sum_other_doc_count"] or bucket["a"]["sum_other_doc_count"])
+    complete = not (
+        bucket["q"]["sum_other_doc_count"] or bucket["a"]["sum_other_doc_count"]
+    )
     return out, complete
 
 
@@ -274,7 +276,9 @@ def _mdns_rows(
             for mac, vlan in joined.get(uid, []):
                 row = _row("mdns", svc, _sender(ip, mac, vlan, True), last)
                 keyed.append((("mdns", *svc, mac, vlan), row))
-            if uid not in joined:  # identity not known yet: never merged with another uid
+            if (
+                uid not in joined
+            ):  # identity not known yet: never merged with another uid
                 row = _row("mdns", svc, _sender(ip, None, None, False), last)
                 keyed.append((("mdns", *svc, "uid", uid), row))
     return _newest(keyed), complete, len(by_uid)
@@ -367,7 +371,12 @@ def local_services(
         truncated,
         time.monotonic() - began,
     )
-    return {"from": from_ts, "to": to_ts, "truncated": truncated, "rows": rows[:LIST_CAP]}
+    return {
+        "from": from_ts,
+        "to": to_ts,
+        "truncated": truncated,
+        "rows": rows[:LIST_CAP],
+    }
 
 
 async def handle_local_services(request: web.Request) -> web.Response:

@@ -327,9 +327,7 @@ def _one(docs: list, spec: dict) -> dict:
             }
         if isinstance(body.get("exclude"), str):
             groups = {
-                k: v
-                for k, v in groups.items()
-                if not re.fullmatch(body["exclude"], k)
+                k: v for k, v in groups.items() if not re.fullmatch(body["exclude"], k)
             }
         ranked = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0]))
         # NET-249: {"order": {<a metric sub-aggregation>: "desc"}}, largest first, then key

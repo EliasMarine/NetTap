@@ -15,7 +15,14 @@
   empty, error, stale and truncated states.
 - The catch-all web proxy gives `/api/local-services` 30 s, like the other drill-down routes.
 
-## Why the read differs from PLAN.md
+## Why the read differs from PLAN.md (deviation, approved by the lead)
+
+PLAN.md §3 asked for composites over (name, zeek.uid, source.ip) capped at 5,000 (name, uid)
+pairs, with a budget overrun reported as `truncated: true`. Shipped instead: the bounded join
+below, a 20,000-uid cap on the uid-by-uid read plus the 5,000-row cap (both give
+`truncated: true`, and the page note names them), and a budget overrun gives the drill-down
+runner's 503 "took too long". The earlier reads mean nothing without the later ones, so no
+partial answer is sent.
 
 The plan's composites over (name, zeek.uid, source.ip) were measured on the G11 (read-only,
 2026-11-13):
@@ -25,7 +32,10 @@ The plan's composites over (name, zeek.uid, source.ip) were measured on the G11 
 | plan: query composite | 54 pages, 53,559 buckets, 4.8 s | 247 pages, 67 s |
 | plan: answers composite | 130 pages, 129,156 buckets, 21.4 s | not run (about 5× the query composite) |
 | one (uid, ip) composite + name sub-terms | 28 pages, 6.4 s | 125 pages, 39 s |
-| **shipped: per-uid join only where it changes the answer** | **9 searches, 0.9–1.0 s** | **19 searches, 2.4 s** |
+| **bounded design, probe of its reads** | **1.5 s** (46 of 47 IPs single-identity, 1,166 uids joined one by one) | **3.8 s** (6,065 uids) |
+| **shipped module's own reads, run against the G11** | **9 searches, 0.9–1.0 s** | **19 searches, 2.4 s** |
+
+(OpenSearch `took` time; the drill-down budget is 20 s.)
 
 The cause is about 27,000 mDNS uids a day. Zeek ends an idle UDP flow after a minute, so every
 announcer gets a new uid every few minutes. The plan's 5,000-pair cap would be hit in about two
@@ -54,7 +64,8 @@ unresolved uid is never merged, and rows come from multicast-destination records
 
 ## Tests
 
-- Daemon: 18 new tests; full suite 4,834 passed, 0 failed (baseline 4,816).
+- Daemon: 18 new tests; full suite 4,834 passed, 0 failed (baseline 4,816). ruff 0.17.3 check
+  and format clean.
 - Web: the new tests plus the nav, layout and proxy tests; full Vitest green, svelte-check 0
   errors, check:colors clean.
 - Mutation checks: merging unresolved uids, dropping the multicast-group filter, dropping the

@@ -105,17 +105,42 @@ DOCS = [
     flow(QUERIER, "Cuni", at("10:50:00"), "00:00:5e:00:53:30", dst=HUE),
     announce(QUERIER, "Cuni", at("10:50:01"), "spoofed._airplay._tcp.local", dst=HUE),
     # Browse domains and service lists are no services
-    dns("lb._dns-sd._udp.local", src=HUE, dst=GROUP4, t=at("10:00:31"),
-        destination__port=5353, zeek__uid="Chue1", zeek__dns__answers=["local"]),
+    dns(
+        "lb._dns-sd._udp.local",
+        src=HUE,
+        dst=GROUP4,
+        t=at("10:00:31"),
+        destination__port=5353,
+        zeek__uid="Chue1",
+        zeek__dns__answers=["local"],
+    ),
     # Outside the window
     announce(HUE, "Cold", "2026-11-04T10:00:00.000Z", "old._airplay._tcp.local"),
     # SSDP: a NOTIFY from port 1900, and an M-SEARCH from an ephemeral port
-    conn(TV, SSDP_GROUP, at("10:55:00"), source__port=1900, destination__port=1900,
-         source__mac=M_TV),
-    conn(TV, SSDP_GROUP, at("11:55:00"), source__port=1900, destination__port=1900,
-         source__mac=M_TV),
-    conn(QUERIER, SSDP_GROUP, at("11:56:00"), source__port=50123, destination__port=1900,
-         source__mac="00:00:5e:00:53:30"),
+    conn(
+        TV,
+        SSDP_GROUP,
+        at("10:55:00"),
+        source__port=1900,
+        destination__port=1900,
+        source__mac=M_TV,
+    ),
+    conn(
+        TV,
+        SSDP_GROUP,
+        at("11:55:00"),
+        source__port=1900,
+        destination__port=1900,
+        source__mac=M_TV,
+    ),
+    conn(
+        QUERIER,
+        SSDP_GROUP,
+        at("11:56:00"),
+        source__port=50123,
+        destination__port=1900,
+        source__mac="00:00:5e:00:53:30",
+    ),
 ]
 
 
@@ -128,7 +153,11 @@ class Owners:
 
 
 class Registry:
-    NAMES = {M_HUE.upper(): "Hue bridge", M_ROUTER.upper(): "Router", M_TV.upper(): "tv"}
+    NAMES = {
+        M_HUE.upper(): "Hue bridge",
+        M_ROUTER.upper(): "Router",
+        M_TV.upper(): "tv",
+    }
 
     def get_devices(self, macs: list[str]) -> dict:
         return {m.upper(): m.upper() for m in macs if m.upper() in self.NAMES}
@@ -198,8 +227,10 @@ class TestAnnouncements(Case):
             ],
         )
         homekit = _find(rows, "philips hue homekit", mac=M_HUE)
-        self.assertEqual([(r["sender"]["ip"], r["last_seen"]) for r in homekit],
-                         [(HUE, at("11:00:30"))])
+        self.assertEqual(
+            [(r["sender"]["ip"], r["last_seen"]) for r in homekit],
+            [(HUE, at("11:00:30"))],
+        )
 
     async def test_a_reflected_announcement_is_the_reflectors_row(self):
         rows = await self.rows()
@@ -207,8 +238,13 @@ class TestAnnouncements(Case):
         self.assertEqual(len(by_router), 1)
         self.assertEqual(
             by_router[0]["sender"],
-            {"ip": ROUTER, "mac": M_ROUTER, "name": "Router", "vlan": "2",
-             "vlan_state": "tagged"},
+            {
+                "ip": ROUTER,
+                "mac": M_ROUTER,
+                "name": "Router",
+                "vlan": "2",
+                "vlan_state": "tagged",
+            },
         )
 
     async def test_one_address_on_two_vlans_stays_two_senders(self):
@@ -220,8 +256,11 @@ class TestAnnouncements(Case):
         # both joined (untagged, VLAN 2), and the flow with no conn record on its own
         self.assertEqual(
             seen,
-            [("tagged", "2", M_ROUTER), ("unknown", None, None),
-             ("untagged", None, M_ROUTER)],
+            [
+                ("tagged", "2", M_ROUTER),
+                ("unknown", None, None),
+                ("untagged", None, M_ROUTER),
+            ],
         )
 
     async def test_flows_with_no_conn_record_keep_their_ip_and_are_never_merged(self):
@@ -233,8 +272,13 @@ class TestAnnouncements(Case):
         for r in printers:
             self.assertEqual(
                 r["sender"],
-                {"ip": LINK, "mac": None, "name": None, "vlan": None,
-                 "vlan_state": "unknown"},
+                {
+                    "ip": LINK,
+                    "mac": None,
+                    "name": None,
+                    "vlan": None,
+                    "vlan_state": "unknown",
+                },
             )
 
     async def test_a_unicast_exchange_never_names_the_querier(self):
@@ -244,11 +288,17 @@ class TestAnnouncements(Case):
 
     async def test_only_service_instances_in_the_window_are_rows(self):
         rows = await self.rows()
-        mdns = {(r["service_type"], r["instance"]) for r in rows if r["protocol"] == "mdns"}
+        mdns = {
+            (r["service_type"], r["instance"]) for r in rows if r["protocol"] == "mdns"
+        }
         self.assertEqual(
             mdns,
-            {("_hue._tcp", "hue bridge - 0a0b0c"), ("_hap._tcp", "philips hue homekit"),
-             ("_airplay._tcp", "living room"), ("_ipp._tcp", "printer")},
+            {
+                ("_hue._tcp", "hue bridge - 0a0b0c"),
+                ("_hap._tcp", "philips hue homekit"),
+                ("_airplay._tcp", "living room"),
+                ("_ipp._tcp", "printer"),
+            },
         )
 
     async def test_ssdp_rows_are_notify_senders_named_by_mac(self):
@@ -261,8 +311,13 @@ class TestAnnouncements(Case):
                     "protocol": "ssdp",
                     "service_type": None,
                     "instance": None,
-                    "sender": {"ip": TV, "mac": M_TV, "name": "Lounge TV", "vlan": None,
-                               "vlan_state": "untagged"},
+                    "sender": {
+                        "ip": TV,
+                        "mac": M_TV,
+                        "name": "Lounge TV",
+                        "vlan": None,
+                        "vlan_state": "untagged",
+                    },
                     "last_seen": at("11:55:00"),
                 }
             ],
@@ -293,7 +348,8 @@ class TestAnnouncements(Case):
         self.assertEqual(status, 200)
         self.assertTrue(body["truncated"])
         (per_flow,) = [
-            b for b in self.os.bodies
+            b
+            for b in self.os.bodies
             if [*b["aggs"]["all"]["composite"]["sources"][0]] == ["uid"]
             and "q" in b["aggs"]["all"].get("aggs", {})
         ]
@@ -393,7 +449,9 @@ def test_a_g11_names_reply_reads_as_service_instances():
     (bucket,) = json.loads(path.read_text())["aggregations"]["all"]["buckets"]
     names, complete = local_services._instances(bucket)
     assert complete
-    assert names[("_raop._tcp", "020000000004@living room")] == "2026-11-13T19:07:07.840Z"
+    assert (
+        names[("_raop._tcp", "020000000004@living room")] == "2026-11-13T19:07:07.840Z"
+    )
     assert names[("_sleep-proxy._udp", "70-35-60-63.1 living room")]
     assert names[("_hue._tcp", "hue bridge - 0a0b0c")] == "2026-11-13T19:24:54.052Z"
     # every name the reply listed is one instance, under both fields at most once

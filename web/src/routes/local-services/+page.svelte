@@ -122,7 +122,10 @@
 		{/if}
 		{#if loaded.data.truncated}
 			<p class="notice is-warn" role="status">
-				<Icon name="warn" /><span>NetTap stopped at its limit, so this list may not hold every announcement. Try a shorter time range.</span>
+				<Icon name="warn" /><span
+					>NetTap stopped at one of its limits (5,000 rows, 20,000 connections matched one by one, or 1,000 names from one sender), so this list may not hold
+					every announcement. Try a shorter time range.</span
+				>
 			</p>
 		{/if}
 		{#if loaded.data.rows.length === 0}
