@@ -21,7 +21,7 @@ Separately, the installer printed GiB labelled "GB". A 1 TB drive read "931 GB".
   - dashboards-helper calls: `--connect-timeout 10 --max-time 60`.
   - The auth probe and the HTTP wait: `--max-time 10`.
   - securityadmin.sh runs under `timeout -k 10 180` inside the opensearch container. Killing the docker CLI would leave it running.
-- **The security bootstrap stops the run.** A failed securityadmin.sh, or a login that still fails after it (6 tries, 5 s apart), calls `error`. The message says what failed, what to check, and "run the same command again". Before, the second case only warned.
+- **The security bootstrap stops the run.** A failed securityadmin.sh (2 tries), or a login that still fails 30 s after it, calls `error`. The message says what failed, what to check, and "run the same command again". Before, the second case only warned.
 - **The template bootstrap stops the run.** One pass is `_push_index_templates`, run up to 3 times, 10 s apart. Then `error`. A pass:
   - Reads malcolm_template.
     - If it already targets `arkime_sessions3-*`, it is left as Malcolm's loader tuned it: `_meta.hash`, replicas 0, refresh 1s. Re-pushing the raw file used to undo that until the loader's next run, about 2 minutes. Any daily index created in between kept a replica a single node can't place.
@@ -52,7 +52,7 @@ Separately, the installer printed GiB labelled "GB". A 1 TB drive read "931 GB".
 - `scripts/install/validate-hardware.sh`
 - `scripts/install/ui.sh`
 - `scripts/remote/deploy-malcolm-bootstrap.sh` (NEW): the device check.
-- `tests/scripts/test_deploy_malcolm.bats`: 17 new tests. The old #73 grep test is kept as OLD CODE.
+- `tests/scripts/test_deploy_malcolm.bats`: 19 new tests. The old #73 grep test is kept as OLD CODE.
 - `tests/scripts/helpers/bootstrap_stubs.bash` (NEW): a fake docker that plays dashboards-helper and opensearch.
 - `tests/scripts/test_validate_hardware.bats` (NEW)
 - `Debugging/DEPLOYMENT-ISSUES.md`: Chain 31.
@@ -64,8 +64,8 @@ Separately, the installer printed GiB labelled "GB". A 1 TB drive read "931 GB".
   - test_install_ui 33/33;
   - test_activate_bridge 9/9;
   - test_install 1/1.
-- **bats, after:**
-  - test_deploy_malcolm 53/53;
+- **bats, after (with the PR #251 review fixes):**
+  - test_deploy_malcolm 55/55;
   - test_validate_hardware 2/2;
   - test_install_ui 33/33;
   - test_activate_bridge 9/9;
@@ -89,16 +89,29 @@ The new read functions were run there read-only:
 - both acceptance GETs pass;
 - an unauthenticated read gets 401.
 
-**Still to run, by the lead:** `bash scripts/remote/deploy-malcolm-bootstrap.sh`. It rebuilds and recreates nothing. Its `guarded_docker` refuses `compose up`, securityadmin.sh and every PUT except the create-only marker. It proves:
+**Still to run, by the lead:** `bash scripts/remote/deploy-malcolm-bootstrap.sh`. It rebuilds and recreates nothing. Its `guarded_docker` is an allowlist: preflight's `docker info` and `compose version`; curl reads, jq, cat and find inside opensearch and dashboards-helper; and the create-only marker PUT. It skips `compose up -d dashboards-helper` and refuses everything else. It proves:
 - (a) the real bootstrap exits 0, auth works, both templates are present and unchanged, and malcolm_template is kept;
 - (b) while it runs, no `ps -ww -eo args` sample contains the password, and some samples show its `curl --config` calls;
 - (c) a forced failure (no credentials) exits nonzero with "Index template bootstrap failed after 3 attempts", and nothing changed;
 - validate-hardware prints decimal GB;
 - opensearch and dashboards-helper were not restarted.
 
+## PR #251 review fixes
+
+The lead's review found five things. All are fixed, each with a test that fails on the code before it:
+- **Bare `! grep` assertions never failed.** Bats runs tests under `set -e`, which ignores a negated command. The four such lines now end in `|| false`. Reintroducing `-u "admin:secret"` in `_helper_curl` now fails two tests.
+- **The keep check could be fooled.** `jq .[]` printed each pattern on its own line, so a pattern like `"zz\narkime_sessions3-*"` matched `grep -x`. jq now checks that one entry equals the pattern exactly. The template must also carry `_meta.hash`, which only Malcolm's loader stamps, so the raw file we pushed is pushed again until Malcolm takes over. Checked read-only on the G11: the live template gives `keep`.
+- **The device check's guard was a denylist.** `-XPUT` and `compose restart` got through. `guarded_docker` is now an allowlist (see above).
+- **The waits counted sleeps, not time.** With each probe's own 10 s limit, "120s" could run for about 6 minutes. The HTTP wait and both auth waits now use `$SECONDS`. securityadmin.sh gets 2 tries, not 3. The messages state the real limits.
+- **A failed PUT dropped OpenSearch's reason.** `_helper_put` now keeps the response body and adds its first 200 characters, on one line, to the warning.
+
+`--dry-run` still runs these helpers, so it writes. That is out of scope here; it is NET-211 #8, owned by the installer agent.
+
 ## Lessons
 
-- A retry count only bounds time when each try has a time limit (`--max-time`, `timeout -k`).
+- A retry count only bounds time when each try has a time limit (`--max-time`, `timeout -k`). A wait only bounds time when it counts wall-clock time (`$SECONDS`), not sleeps.
+- In bats, a bare `! cmd` never fails a test. Write `! cmd || false`.
+- A guard that must stop writes is an allowlist. A denylist misses the writes nobody thought of.
 - "Read failed" must never look like "absent" to code that writes on absence. Parse the answer and fail closed.
 - Prefer OpenSearch's create-only flags to a GET-then-PUT.
 - `docker compose exec` reads stdin. A script piped into `bash -s` loses the rest of itself to the first exec. Give such calls `< /dev/null`, or don't feed scripts on stdin.

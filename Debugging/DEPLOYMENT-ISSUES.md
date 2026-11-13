@@ -558,22 +558,30 @@ CHAIN 31: deploy-malcolm.sh's bootstrap warned and carried on, with the password
   - _helper_curl: every dashboards-helper call is `curl --config /var/local/curlrc/.opensearch.primary.curlrc`
     with --connect-timeout 10 --max-time 60. The auth probe and the HTTP wait get --max-time 10;
     securityadmin.sh runs under `timeout -k 10 180` inside the container.
-  - Security: securityadmin failure, or auth still failing after it (retry 6 x 5 s), calls error.
+  - Security: securityadmin failure (2 tries), or auth still failing 30 s after it, calls error.
+    The auth waits (60 s before, 30 s after) and the HTTP wait (120 s) count wall-clock time
+    ($SECONDS), not sleeps, so slow probes can't stretch them.
   - Templates: one pass (_push_index_templates) is retried 3 times, 10 s apart, then error. A pass
     reads malcolm_template (jq-parsed in dashboards-helper; a failed or unreadable read writes
-    nothing), keeps it when it already targets arkime_sessions3-*, otherwise pushes components +
-    malcolm_template (any non-200 or an empty file list fails the pass), writes the Arkime marker
+    nothing), keeps it when one index_patterns entry equals arkime_sessions3-* exactly and it
+    carries Malcolm's _meta.hash, otherwise pushes components +
+    malcolm_template (any non-200 or an empty file list fails the pass; the warning carries
+    OpenSearch's reason, first 200 characters), writes the Arkime marker
     with ?create=true (never replaces Arkime's real template), then checks both templates exist.
   - The in-app Malcolm update (malcolm_upgrade.py) doesn't run deploy-malcolm.sh: unaffected.
   - NET-177: validate-hardware.sh and the preflight free-space check print decimal GB; thresholds
     430 GB (old 400 GiB) and 15 GB (old ceil'd 14 GiB).
-  Tests: tests/scripts/test_deploy_malcolm.bats (17 new, a fake docker in helpers/bootstrap_stubs.bash),
+  Tests: tests/scripts/test_deploy_malcolm.bats (19 new, a fake docker in helpers/bootstrap_stubs.bash),
   tests/scripts/test_validate_hardware.bats.
   Verify: bash scripts/remote/deploy-malcolm-bootstrap.sh. Nothing is rebuilt or recreated;
-  guarded_docker refuses compose up, securityadmin.sh and every PUT but the create-only marker. It
+  guarded_docker is an allowlist: preflight's `docker info` / `compose version`, curl reads,
+  jq, cat and find inside opensearch / dashboards-helper, and the create-only marker PUT. It
+  skips `compose up -d dashboards-helper` and refuses everything else. It
   checks the real bootstrap exits 0, no ps sample holds the password, a forced failure exits nonzero,
   and the templates and container start times are unchanged.
-  Lessons: a retry count bounds nothing unless each try is time-limited; a failed read must never
+  Lessons: a retry count bounds nothing unless each try is time-limited, and a wait bounds nothing
+  unless it counts wall-clock time; in bats, a bare `! cmd` never fails a test (add `|| false`);
+  a guard that must stop writes is an allowlist, not a denylist; a failed read must never
   look like "absent" to code that writes on absence; prefer OpenSearch's create-only flags to
   GET-then-PUT; `docker compose exec` reads stdin.
   Tracking: tracking-fixes/2026-11-12-malcolm-bootstrap-decimal-sizes.md.
