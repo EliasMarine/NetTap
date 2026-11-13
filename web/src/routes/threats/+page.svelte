@@ -129,11 +129,8 @@
 	let beaconPartial = $derived(incompleteChecks.has('beaconing'));
 	let beaconCheckedAt = $derived(beaconSnap?.last_success_at ? formatTime(beaconSnap.last_success_at, 'short') : null);
 	// live: the report's query failed; snapshot: no background check has succeeded yet
-	// OLD CODE: let beaconFailReason = $derived(failedChecks.has('beaconing') ? 'the query failed' : 'the latest check failed'); (NET-187: or the live check ran out of time)
+	let beaconFailReason = $derived(failedChecks.has('beaconing') ? 'the query failed' : 'the latest check failed');
 	let beaconTimedOut = $derived(timedOutChecks.has('beaconing'));
-	let beaconFailReason = $derived(
-		beaconTimedOut ? 'this window is too large to check in time' : failedChecks.has('beaconing') ? 'the query failed' : 'the latest check failed',
-	);
 	// the page stopped asking after 10 min with the check still running: no more "a few minutes"
 	let pollGaveUp = $state(false);
 	let beaconPendingText = $derived(
@@ -759,7 +756,7 @@
 				<!-- OLD CODE: <CardState state="error" title="Couldn't check for beaconing: {beaconFailReason}." onaction={reload} /> (NET-187: a time-out suggests a shorter range) -->
 				<CardState
 					state="error"
-					title="Couldn't check for beaconing: {beaconFailReason}."
+					title={beaconTimedOut ? "Couldn't finish the beaconing check in time." : `Couldn't check for beaconing: ${beaconFailReason}.`}
 					message={beaconTimedOut ? 'Try a shorter range.' : undefined}
 					onaction={reload}
 				/>

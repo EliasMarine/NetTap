@@ -11,6 +11,7 @@ import functools
 import json
 import logging
 import os
+import threading
 from datetime import timedelta
 
 from aiohttp import web
@@ -20,6 +21,7 @@ from api.offload import in_thread, run_blocking
 from api.time_range import parse_time_range
 from services.beacon_snapshots import WINDOWS as SNAPSHOT_WINDOWS
 from services.beacon_snapshots import BeaconSnapshots
+from services.threat_detection import BEACON_POOL, BEACON_THREADS
 from storage.manager import StorageManager
 from storage.snapshot_search import Budget, TooSlow
 
@@ -33,6 +35,9 @@ BEACON_BUDGET_SECONDS = 60.0
 # The whole report's backstop (a job queued in the route pool, or a check without a budget that
 # hangs): the budget plus one in-flight search (the client's 30 s), under the 120 s web proxy
 REPORT_WAIT_SECONDS = BEACON_BUDGET_SECONDS + 30
+# NET-187 review: one live scan per beacon thread; past that a request is turned away at once
+_LIVE_SCANS = threading.BoundedSemaphore(BEACON_THREADS)
+_SCANS_BUSY = "Two other beaconing checks are running right now; try again in a minute."
 
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
@@ -234,20 +239,44 @@ async def handle_beaconing(request: web.Request) -> web.Response:
         #     )
         # )
         # OLD CODE END
+        # OLD CODE START — NET-187 review: on the shared route pool, eight 30-day scans left Home
+        # no thread
+        # beacons, complete = await asyncio.wait_for(
+        #     run_blocking(
+        #         functools.partial(
+        #             detect_beaconing,
+        #             client,
+        #             from_ts,
+        #             to_ts,
+        #             excluded_ips=excluded_ips_list,
+        #             budget=budget,
+        #         )
+        #     ),
+        #     max(0.0, budget.remaining()),
+        # )
+        # OLD CODE END
+        if not _LIVE_SCANS.acquire(blocking=False):
+            logger.warning(
+                "Beaconing %s .. %s: the beacon threads are busy", from_ts, to_ts
+            )
+            return json_error(_SCANS_BUSY, 503)
+        scan = BEACON_POOL.submit(
+            functools.partial(
+                detect_beaconing,
+                client,
+                from_ts,
+                to_ts,
+                excluded_ips=excluded_ips_list,
+                budget=budget,
+            )
+        )
+        # the slot is free again when the scan ends or is cancelled before it starts, not when
+        # the request gives up, so a scan left behind still counts
+        scan.add_done_callback(lambda _done: _LIVE_SCANS.release())
         # no shield: at the deadline a scan still queued never starts, a running one stops at its
         # next budget check and its late result is dropped
         beacons, complete = await asyncio.wait_for(
-            run_blocking(
-                functools.partial(
-                    detect_beaconing,
-                    client,
-                    from_ts,
-                    to_ts,
-                    excluded_ips=excluded_ips_list,
-                    budget=budget,
-                )
-            ),
-            max(0.0, budget.remaining()),
+            asyncio.wrap_future(scan), max(0.0, budget.remaining())
         )
     except (TooSlow, asyncio.TimeoutError):
         logger.warning("Beaconing %s .. %s ran out of time", from_ts, to_ts)

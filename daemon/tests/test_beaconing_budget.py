@@ -9,13 +9,14 @@ import asyncio
 import math
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from unittest.mock import MagicMock, patch
 
 import pytest
+from aiohttp.test_utils import TestClient, TestServer
 from opensearchpy import ConnectionTimeout, OpenSearch
 
+import api.threats as threats
 import services.threat_detection as td
 from api.drilldown_runner import _SLOW
 from storage.all_buckets import all_buckets
@@ -53,24 +54,27 @@ def _budget_on(client: _TenSecondSearches, seconds: float) -> Budget:
 def test_one_clause_per_source_and_port_reads_only_the_batch_pairs():
     """A source-and-port clause with its destinations matches exactly the batch's pairs; a query
     on sources x destinations x ports would also match (A, Y, 80) and push a pair out of the list."""
-    a, x, y = "192.168.1.50", "203.0.113.9", "198.51.100.7"
+    a, x, y, z = "192.168.1.50", "203.0.113.9", "198.51.100.7", "198.51.100.8"
     docs = (
         [_conn(a, x, 80, _T0 + k * 60_000) for k in range(12)]
+        + [_conn(a, z, 80, _T0 + k * 62_000) for k in range(12)]
         + [_conn(a, y, 443, _T0 + k * 60_000) for k in range(12)]
         + [_conn(a, y, 80, _T0 + k * 61_000) for k in range(5)]  # not in the batch
     )
     client = FakeOpenSearch(docs)
     batch = [
         {"key": {"src": a, "dst": x, "port": 80}, "doc_count": 12},
+        {"key": {"src": a, "dst": z, "port": 80}, "doc_count": 12},
         {"key": {"src": a, "dst": y, "port": 443}, "doc_count": 12},
     ]
 
     slots = td._batch_slots(client, [], batch, Budget(60))
 
-    assert sorted(slots) == [f"{a} {y} 443", f"{a} {x} 80"]
+    assert sorted(slots) == sorted([f"{a} {x} 80", f"{a} {z} 80", f"{a} {y} 443"])
     assert slots[f"{a} {x} 80"] == [{"key": _T0 + k * 60_000} for k in range(12)]
     clauses = client.bodies[-1]["query"]["bool"]["filter"][-1]["bool"]["should"]
-    assert len(clauses) == 2  # (a, 80) and (a, 443), not one per pair
+    # (a, 80) with x and z, and (a, 443): one clause per source and port, not one per pair
+    assert len(clauses) == 2
 
 
 def test_slot_keys_come_back_as_whole_milliseconds():
@@ -179,6 +183,10 @@ def test_all_buckets_checks_its_budget_before_every_page():
             budget=Budget(25, clock=lambda: now[0]),
         )
     assert client.search.call_count == 3
+    # the daemon's client caps each page's wait at what is left
+    assert all(
+        isinstance(c.kwargs["budget"], Budget) for c in client.search.call_args_list
+    )
 
 
 # --- a search that took too long reads as "took too long" -------------------------------------
@@ -267,6 +275,41 @@ def test_another_failure_is_not_called_a_time_out():
     assert report["timed_out_checks"] == []
 
 
+def test_a_failed_alert_summary_does_not_wait_for_beaconing():
+    """Review fix: the report waited up to the budget for a scan nobody would read."""
+    from services.investigation import generate_threat_report
+
+    release, calls = threading.Event(), []
+    started = time.monotonic()
+    try:
+        with (
+            patch(
+                "services.alert_intelligence.get_smart_alert_summary",
+                MagicMock(side_effect=ConnectionError("down")),
+            ),
+            patch(
+                "services.threat_detection.detect_lateral_movement",
+                MagicMock(return_value=([], True)),
+            ),
+            patch(
+                "services.threat_detection.analyze_dns_anomalies",
+                MagicMock(return_value={"complete": True}),
+            ),
+            patch(
+                "services.threat_detection.detect_beaconing",
+                _blocked_scan(release, calls),
+            ),
+            pytest.raises(ConnectionError),
+        ):
+            asyncio.run(
+                generate_threat_report(MagicMock(), "a", "b", budget=Budget(60))
+            )
+    finally:
+        release.set()
+        _wait_for_free_beacon_threads()
+    assert time.monotonic() - started < 3
+
+
 # --- the routes -----------------------------------------------------------------------------
 
 
@@ -277,6 +320,23 @@ def _blocked_scan(release: threading.Event, calls: list):
         return [], True
 
     return scan
+
+
+def _wait_for_free_beacon_threads():
+    """A released scan ends a moment later; wait until every beacon thread and slot is free."""
+    for _ in range(500):
+        got = [
+            threats._LIVE_SCANS.acquire(blocking=False)
+            for _ in range(td.BEACON_THREADS)
+        ]
+        for held in got:
+            if held:
+                threats._LIVE_SCANS.release()
+        idle = [td.BEACON_POOL.submit(time.sleep, 0) for _ in range(td.BEACON_THREADS)]
+        if all(got) and all(f.result(5) is None for f in idle):
+            return
+        time.sleep(0.01)
+    raise AssertionError("the beacon threads stayed busy")
 
 
 def test_the_beaconing_route_answers_503_with_the_reason(monkeypatch):
@@ -301,35 +361,70 @@ def test_the_beaconing_route_answers_at_its_deadline_while_the_scan_hangs(monkey
             status, body = _get(app, f"/api/threats/beaconing?{_LIVE}")
     finally:
         release.set()
+        _wait_for_free_beacon_threads()
     assert (status, body) == (503, {"error": _SLOW})
     assert time.monotonic() - started < 2
     assert len(calls) == 1
 
 
 def test_a_scan_still_queued_at_the_deadline_never_starts(monkeypatch):
+    """The report's scans hold both beacon threads; the route's scan waits, and is dropped."""
     monkeypatch.setattr("api.threats.BEACON_BUDGET_SECONDS", 0.2)
-    pool = ThreadPoolExecutor(max_workers=1)
     busy = threading.Event()
-    pool.submit(busy.wait, 10)  # the route pool's only worker is taken
-
-    async def one_worker(fn, *args):
-        return await asyncio.get_running_loop().run_in_executor(pool, fn, *args)
-
-    monkeypatch.setattr("api.threats.run_blocking", one_worker)
-    app = _app(MagicMock(), "0", monkeypatch)
+    for _ in range(td.BEACON_THREADS):
+        td.BEACON_POOL.submit(busy.wait, 10)
     calls: list = []
     try:
         with patch(
             "services.threat_detection.detect_beaconing",
             lambda *a, **kw: calls.append(1),
         ):
-            status, body = _get(app, f"/api/threats/beaconing?{_LIVE}")
-            busy.set()
-            pool.shutdown(wait=True)
+            status, body = _get(
+                _app(MagicMock(), "0", monkeypatch), f"/api/threats/beaconing?{_LIVE}"
+            )
     finally:
         busy.set()
+        _wait_for_free_beacon_threads()  # also proves the dropped scan gave its slot back
     assert (status, body) == (503, {"error": _SLOW})
     assert calls == []
+
+
+def test_a_request_beyond_the_beacon_threads_is_turned_away_at_once(monkeypatch):
+    """Review fix: on the shared route pool, eight 30-day scans left Home no thread."""
+    release, calls = threading.Event(), []
+    blocked = _blocked_scan(release, calls)
+
+    async def run():
+        client = TestClient(TestServer(_app(MagicMock(), "0", monkeypatch)))
+        await client.start_server()
+        try:
+            running = [
+                asyncio.ensure_future(client.get(f"/api/threats/beaconing?{_LIVE}"))
+                for _ in range(td.BEACON_THREADS)
+            ]
+            for _ in range(500):  # both scans have started
+                if len(calls) == td.BEACON_THREADS:
+                    break
+                await asyncio.sleep(0.01)
+            started = time.monotonic()
+            extra = await client.get(f"/api/threats/beaconing?{_LIVE}")
+            turned_away = (extra.status, await extra.json(), time.monotonic() - started)
+            release.set()
+            finished = [(await r).status for r in running]
+            return turned_away, finished
+        finally:
+            await client.close()
+
+    try:
+        with patch("services.threat_detection.detect_beaconing", blocked):
+            (status, body, took), finished = asyncio.run(run())
+    finally:
+        release.set()
+        _wait_for_free_beacon_threads()
+    assert (status, body) == (503, {"error": threats._SCANS_BUSY})
+    assert took < 1
+    assert len(calls) == td.BEACON_THREADS  # the extra request started no scan
+    assert finished == [200] * td.BEACON_THREADS
 
 
 def test_the_report_route_sends_the_other_sections_when_beaconing_runs_out(monkeypatch):
@@ -365,6 +460,7 @@ def test_the_report_route_sends_the_other_sections_when_beaconing_runs_out(monke
             status, body = _get(app, f"/api/threats/report?{_LIVE}")
     finally:
         release.set()
+        _wait_for_free_beacon_threads()
     assert status == 200
     assert time.monotonic() - started < 3
     assert body["failed_checks"] == body["timed_out_checks"] == ["beaconing"]

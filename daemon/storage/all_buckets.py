@@ -32,6 +32,8 @@ def all_buckets(
     bucket's "key" is a dict keyed by those names. With `what`, every page is checked: a timed
     out, partly failed or aggregation-less reply raises QueryFailed instead of reading as fewer.
     With `budget`, every page first checks it: TooSlow once it has run out, never a shorter list.
+    It is passed to the client too (the daemon's ExactTermsOpenSearch), which caps each page's
+    wait at what is left.
     """
     buckets: list[dict] = []
     after = None
@@ -44,8 +46,11 @@ def all_buckets(
         agg: dict = {"composite": composite}
         if aggs:
             agg["aggs"] = aggs
+        # NET-187 review: the client gives a budgeted page the time that is left
         reply = client.search(
-            index=index, body={"size": 0, "query": query, "aggs": {"all": agg}}
+            index=index,
+            body={"size": 0, "query": query, "aggs": {"all": agg}},
+            **({"budget": budget} if budget is not None else {}),
         )
         if what is not None:
             reply = checked(reply, what, ("all",))

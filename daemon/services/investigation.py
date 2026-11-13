@@ -9,7 +9,6 @@ DNS context, and actionable recommendations.
 import asyncio
 import logging
 import os
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from functools import partial
 
@@ -20,10 +19,6 @@ from storage.time_slots import histogram_buckets, time_slots
 logger = logging.getLogger("nettap.services.investigation")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
-
-# NET-187: the report's beaconing scans run here, not on the report loop's default executor:
-# asyncio.run joins that one on exit, so a scan left behind at its deadline would hold the report
-_BEACON_POOL = ThreadPoolExecutor(max_workers=2, thread_name_prefix="beacon")
 
 
 async def auto_investigate(client, alert: dict) -> dict:
@@ -293,6 +288,7 @@ async def generate_threat_report(
         # OLD CODE END
     )
     from services.threat_detection import (
+        BEACON_POOL,
         detect_beaconing,
         detect_lateral_movement,
         analyze_dns_anomalies,
@@ -343,7 +339,7 @@ async def generate_threat_report(
             executor, partial(detect, client, from_ts, to_ts, excluded_ips=excluded_ips)
         )
         for name, detect, executor in (
-            ("beaconing", partial(detect_beaconing, budget=budget), _BEACON_POOL),
+            ("beaconing", partial(detect_beaconing, budget=budget), BEACON_POOL),
             ("dns_anomalies", analyze_dns_anomalies, None),
             ("lateral_movement", detect_lateral_movement, None),
         )
@@ -359,6 +355,10 @@ async def generate_threat_report(
             client, from_ts, to_ts, include_info=False, limit=200, lan_cidrs=lan_cidrs
         )
     except BaseException:
+        # OLD CODE: await asyncio.gather(*running.values(), return_exceptions=True) (NET-187 review: it waited up to the budget for beaconing)
+        # a queued scan never starts; a running one runs on to its budget, but nobody waits for it
+        if "beaconing" in running:
+            running["beaconing"].cancel()
         await asyncio.gather(*running.values(), return_exceptions=True)
         raise
 

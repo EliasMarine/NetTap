@@ -132,6 +132,8 @@ if [ "${SECS%.*}" -lt "$LIMIT_S" ]; then
     case "$STATUS $REST" in
         "200 beacons="*) OK=0 ;;
         "503 "*"took too long"*) OK=0 ;;
+        # only if someone else is running two live checks at this moment: also an honest answer
+        "503 "*"beaconing checks are running"*) OK=0 ;;
     esac
 fi
 check "30 d beaconing: HTTP $STATUS in ${SECS} s" $OK "$REST"

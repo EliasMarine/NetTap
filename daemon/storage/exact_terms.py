@@ -13,12 +13,16 @@ from typing import Any
 
 from opensearchpy import OpenSearch, OpenSearchException
 
+from storage.snapshot_search import Budget
+
 logger = logging.getLogger("nettap.opensearch")
 
 # Holds every term of a day on a home network; a search with longer lists is re-run x10
 EXACT_SHARD_SIZE = 10_000
 # Past this the counts stay OpenSearch's estimate and a warning is logged (memory bound)
 MAX_SHARD_SIZE = 100_000
+# NET-187 review: a budgeted search waits at most this, the daemon client's own timeout (StorageManager)
+SEARCH_TIMEOUT_SECONDS = 30.0
 
 
 def with_exact_terms(aggs: dict, shard_size: int = EXACT_SHARD_SIZE) -> dict:
@@ -131,9 +135,21 @@ def _raise_if_partial(reply: Any, kwargs: dict) -> None:
 class ExactTermsOpenSearch(OpenSearch):
     """The daemon's OpenSearch client: search and msearch bodies get exact terms counts."""
 
-    def _exact(self, send, body: Any, **kwargs: Any) -> Any:
+    def _exact(
+        self, send, body: Any, budget: Budget | None = None, **kwargs: Any
+    ) -> Any:
         shard_size = EXACT_SHARD_SIZE
         while True:
+            # NET-187 review: with a budget, every send (a longer-list re-ask too) needs time left
+            # and waits no longer than what is left (the transport retries inside one send)
+            if budget is not None:
+                budget.check("a search")
+                kwargs = {
+                    **kwargs,
+                    "request_timeout": min(
+                        SEARCH_TIMEOUT_SECONDS, max(1.0, budget.remaining())
+                    ),
+                }
             reply = send(body=body, shard_size=shard_size, **kwargs)
             # By default OpenSearch answers from the shards that worked; a figure from part of the
             # data must be an error, not a smaller number
@@ -156,13 +172,17 @@ class ExactTermsOpenSearch(OpenSearch):
                 return reply
             shard_size = min(shard_size * 10, MAX_SHARD_SIZE)
 
-    def search(self, *, body: Any = None, **kwargs: Any) -> Any:
+    def search(
+        self, *, body: Any = None, budget: Budget | None = None, **kwargs: Any
+    ) -> Any:
+        """A search with exact terms counts; with `budget`, inside it (TooSlow once spent)."""
+
         def send(body: Any, shard_size: int, **kw: Any) -> Any:
             return super(ExactTermsOpenSearch, self).search(
                 body=exact_body(body, shard_size), **kw
             )
 
-        return self._exact(send, body, **kwargs)
+        return self._exact(send, body, budget=budget, **kwargs)
 
     def msearch(self, *, body: Any = None, **kwargs: Any) -> Any:
         def send(body: Any, shard_size: int, **kw: Any) -> Any:

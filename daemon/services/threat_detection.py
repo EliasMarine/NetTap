@@ -12,6 +12,7 @@ import math
 import os
 import statistics
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
@@ -31,6 +32,14 @@ from storage.snapshot_search import Budget, TooSlow
 logger = logging.getLogger("nettap.services.threat_detection")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
+
+# NET-187: live beaconing scans (the report's and the beaconing route's) run on these threads, never
+# on the route pool (a 30-day scan per thread would leave Home none) or a report loop's default
+# executor (asyncio.run joins it on exit, so a scan left behind at its deadline would hold the report)
+BEACON_THREADS = 2
+BEACON_POOL = ThreadPoolExecutor(
+    max_workers=BEACON_THREADS, thread_name_prefix="beacon"
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -327,7 +336,7 @@ def _batch_slots(
             }
         },
     }
-    reply = client.search(index=NETWORK_INDEX, body=body)
+    reply = client.search(index=NETWORK_INDEX, body=body, budget=budget)
     buckets = ((reply.get("aggregations") or {}).get("pairs") or {}).get(
         "buckets"
     ) or []
@@ -476,7 +485,7 @@ def _candidate_pairs(
             }
         },
     }
-    reply = client.search(index=NETWORK_INDEX, body=body)
+    reply = client.search(index=NETWORK_INDEX, body=body, budget=budget)
     listed = (reply.get("aggregations") or {}).get("pairs") or {}
     if not listed.get("sum_other_doc_count"):
         return [
