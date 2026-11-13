@@ -17,7 +17,13 @@
 #
 # No file means no change. Always ends with status 0 (chained with &&).
 #
-# Override the paths with NETTAP_CAPTURE_ENV and NETTAP_SURICATA_ENV (used by tests).
+# Then it waits until every PCAP_IFACE interface exists (NET-211 #9): before
+# the setup wizard the compose default br0 doesn't exist yet, and in bridge
+# mode br0 appears only at Go Live. Capture programs started on a missing
+# interface give up (supervisord FATAL) and nothing restarts them.
+#
+# Override the paths with NETTAP_CAPTURE_ENV, NETTAP_SURICATA_ENV and
+# NETTAP_SYS_CLASS_NET (used by tests).
 # POSIX sh compatible.
 
 _nettap_env_file="${NETTAP_CAPTURE_ENV:-/etc/nettap/capture.env}"
@@ -74,6 +80,27 @@ if [ -f "$_nettap_env_file" ] && [ -r "$_nettap_env_file" ]; then
     done < "$_nettap_env_file"
 fi
 
+# NET-211 #9: wait for the capture interfaces (comma-separated, as Malcolm allows). The trap makes
+# docker stop/restart end the wait at once: the wrapper shell is PID 1, which ignores an untrapped TERM.
+_nettap_sys="${NETTAP_SYS_CLASS_NET:-/sys/class/net}"
+if [ -d "$_nettap_sys" ] && [ -n "${PCAP_IFACE:-}" ]; then
+    trap 'exit 143' TERM INT
+    _nettap_ifs="$IFS"
+    IFS=,
+    for _nettap_val in $PCAP_IFACE; do
+        IFS="$_nettap_ifs"
+        if [ ! -e "$_nettap_sys/$_nettap_val" ]; then
+            echo "nettap-capture-env: waiting for capture interface $_nettap_val (set by the setup wizard, or Go Live for a bridge)" >&2
+            while [ ! -e "$_nettap_sys/$_nettap_val" ]; do
+                sleep 5 &
+                wait $!
+            done
+        fi
+    done
+    IFS="$_nettap_ifs"
+    trap - TERM INT
+fi
+
 # ET Pro (NET-191): the daemon writes SURICATA_ETPRO_CODE to /etc/nettap/suricata.env (root, 600) from
 # Settings → Suricata rules. A valid code turns et/open into et/pro in SURICATA_UPDATE_ENABLE_SOURCES (set
 # only in suricata-live). Same whitelist parsing as above; the code is never echoed.
@@ -109,5 +136,5 @@ if [ -n "${SURICATA_UPDATE_ENABLE_SOURCES:-}" ] && [ -f "$_nettap_suricata_env" 
     esac
 fi
 
-unset _nettap_env_file _nettap_line _nettap_val _nettap_suricata_env _nettap_code _nettap_sources _nettap_ifs
+unset _nettap_env_file _nettap_line _nettap_val _nettap_suricata_env _nettap_code _nettap_sources _nettap_ifs _nettap_sys
 true
