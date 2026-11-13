@@ -483,6 +483,26 @@ class TestLogSearchAPI(AioHTTPTestCase):
         self.assertEqual(data["destinations"][0]["ip"], "8.8.8.8")
         self.assertEqual(data["destinations"][0]["count"], 300)
 
+    async def test_top_address_bars_refuse_an_estimate(self):
+        """NET-184: a figure a shard cut short is no bar; a top-N list's remainder is fine."""
+        for path, agg in (
+            ("/api/logs/top-talkers", "top_sources"),
+            ("/api/logs/top-destinations", "top_destinations"),
+        ):
+            bucket = {"key": "192.168.1.100", "doc_count": 200}
+            for error, status in ((0, 200), (12, 502)):
+                self.mock_client.search.return_value = {
+                    "aggregations": {
+                        agg: {
+                            "buckets": [bucket],
+                            "doc_count_error_upper_bound": error,
+                            "sum_other_doc_count": 900,
+                        }
+                    }
+                }
+                resp = await self.client.request("GET", path)
+                self.assertEqual(resp.status, status, (path, error))
+
     # ── Top DNS endpoint tests ────────────────────────────────────────
 
     async def test_top_dns_returns_queries(self):

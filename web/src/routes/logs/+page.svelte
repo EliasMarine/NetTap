@@ -266,6 +266,13 @@
 
 	// Active filters from chart clicks
 	let activeIpFilter = $state('');
+	/** The side the IP filter matches: a top source or destination bar's one side, null for either (NET-184) */
+	let ipSide = $state<'source.ip' | 'destination.ip' | null>(null);
+	/** The windows the Top sources and Top destinations figures on screen came from (NET-184) */
+	let talkersWindow = $state<DrillWindow | null>(null);
+	let destinationsWindow = $state<DrillWindow | null>(null);
+	/** The window of the latest table search (set when it starts): a sort keeps it (NET-184) */
+	let searchWindow: DrillWindow | undefined;
 	let activeDnsFilter = $state('');
 	/** Sources a link's count left out (?exclude_src=, Home's Connections, NET-160 slice 2b-1) */
 	let excludeSrc = $state<string[]>([]);
@@ -511,9 +518,17 @@
 			statsLoaded = true;
 		}
 		if (results[1].status === 'fulfilled') timeline = results[1].value.buckets;
-		if (results[2].status === 'fulfilled') topTalkers = results[2].value.talkers;
+		// OLD CODE: if (results[2].status === 'fulfilled') topTalkers = results[2].value.talkers; (NET-184: a bar keeps its window)
+		if (results[2].status === 'fulfilled') {
+			topTalkers = results[2].value.talkers;
+			talkersWindow = { from, to };
+		}
 		if (results[3].status === 'fulfilled') protocols = results[3].value.protocols;
-		if (results[4].status === 'fulfilled') topDestinations = results[4].value.destinations;
+		// OLD CODE: if (results[4].status === 'fulfilled') topDestinations = results[4].value.destinations; (NET-184)
+		if (results[4].status === 'fulfilled') {
+			topDestinations = results[4].value.destinations;
+			destinationsWindow = { from, to };
+		}
 		if (results[5].status === 'fulfilled') topDns = results[5].value.queries;
 		statsFailed = results[0].status === 'rejected';
 		timelineFailed = results[1].status === 'rejected';
@@ -600,6 +615,7 @@
 		linked = linked?.gen === null ? { ...linked, gen: g } : null;
 		// "load more" never moves the window, so no row is listed twice or skipped
 		const w = append && tableWindow ? tableWindow : (win ?? getTimeRange());
+		if (!append) searchWindow = w;
 		if (append) {
 			loadingMore = true;
 		} else {
@@ -616,7 +632,8 @@
 			// Combine search query with active filters
 			let fullQuery = query.trim();
 			if (activeIpFilter) {
-				const ipQ = `(source.ip:"${activeIpFilter}" OR destination.ip:"${activeIpFilter}")`;
+				// OLD CODE: const ipQ = `(source.ip:"${activeIpFilter}" OR destination.ip:"${activeIpFilter}")`; (NET-184: a bar's one side)
+				const ipQ = ipSide ? `${ipSide}:"${activeIpFilter}"` : `(source.ip:"${activeIpFilter}" OR destination.ip:"${activeIpFilter}")`;
 				fullQuery = fullQuery ? `${fullQuery} AND ${ipQ}` : ipQ;
 			}
 			if (activeDnsFilter) {
@@ -775,10 +792,19 @@
 	// }
 	// OLD CODE END
 	/** The table is sorted by the daemon: DataTable reports the new sort and the search runs again. */
+	// OLD CODE START — NET-184: a sort searched a new window, so a bar's list drifted from its figure
+	// function setSort(field: string, dir: SortDir) {
+	// 	sortField = field;
+	// 	sortDir = dir;
+	// 	fetchLogs();
+	// }
+	// OLD CODE END
 	function setSort(field: string, dir: SortDir) {
 		sortField = field;
 		sortDir = dir;
-		fetchLogs();
+		// the same records in another order: same window, and the clicked figure still applies
+		if (linked) linked = { ...linked, gen: null, observed: null };
+		fetchLogs(false, searchWindow);
 	}
 
 	// Click-to-drill handlers
@@ -844,13 +870,39 @@
 		}
 	}
 
-	function drillByIp(ip: string) {
-		if (activeIpFilter === ip) {
+	// OLD CODE START — NET-184: either side, on top of the other filters, over a new window: the list
+	// wasn't the bar's figure
+	// function drillByIp(ip: string) {
+	// 	if (activeIpFilter === ip) {
+	// 		activeIpFilter = '';
+	// 	} else {
+	// 		activeIpFilter = ip;
+	// 	}
+	// 	fetchLogs();
+	// 	if (initialized) document.getElementById('log-table')?.scrollIntoView({ behavior: 'smooth' });
+	// }
+	// OLD CODE END
+	/**
+	 * A top source or destination bar opens exactly its figure: that address on that side alone, over
+	 * the window the bar counted, every other filter cleared, and the line says if the total differs.
+	 * Selecting the bar again clears only the address.
+	 */
+	function drillByEnd(side: 'source.ip' | 'destination.ip', ip: string, count: number, win: DrillWindow | null) {
+		if (activeIpFilter === ip && ipSide === side) {
 			activeIpFilter = '';
-		} else {
-			activeIpFilter = ip;
+			fetchLogs();
+			return;
 		}
-		fetchLogs();
+		activeIpFilter = ip;
+		ipSide = side;
+		query = '';
+		activeDnsFilter = '';
+		excludeSrc = [];
+		const typeBefore = logType;
+		logType = 'all';
+		if (typeBefore !== 'all') fetchFieldDefs();
+		linked = { expected: count, gen: null, observed: null };
+		fetchLogs(false, win ?? undefined);
 		if (initialized) document.getElementById('log-table')?.scrollIntoView({ behavior: 'smooth' });
 	}
 
@@ -869,6 +921,7 @@
 
 	function clearAllFilters() {
 		activeIpFilter = '';
+		ipSide = null;
 		activeDnsFilter = '';
 		excludeSrc = [];
 		logType = 'all';
@@ -1074,6 +1127,7 @@
 						: selectedTimeRange;
 			// A hand-off replaces the last one's IP filter and text; the first load starts from neither
 			activeIpFilter = urlFilter || urlIp || '';
+			ipSide = null; // a hand-off's address is either side (NET-184)
 			query = urlFilter || urlIp ? '' : (urlQuery ?? '');
 			// It replaces the log type too (one of ours, else all types) and the excluded sources (the daemon checks each)
 			const typeBefore = logType;
@@ -1176,8 +1230,9 @@ OLD CODE END -->
 			label: talker.ip,
 			value: talker.count,
 			display: formatCompactNumber(talker.count),
-			detail: activeIpFilter === talker.ip ? 'filtering the table' : undefined,
-			onclick: () => drillByIp(talker.ip),
+			// OLD CODE: detail: activeIpFilter === talker.ip ? 'filtering the table' : undefined, onclick: () => drillByIp(talker.ip), (NET-184)
+			detail: activeIpFilter === talker.ip && ipSide === 'source.ip' ? 'filtering the table' : undefined,
+			onclick: () => drillByEnd('source.ip', talker.ip, talker.count, talkersWindow),
 		}))}
 	/>
 {/snippet}
@@ -1188,8 +1243,9 @@ OLD CODE END -->
 			label: dest.ip,
 			value: dest.count,
 			display: formatCompactNumber(dest.count),
-			detail: activeIpFilter === dest.ip ? 'filtering the table' : undefined,
-			onclick: () => drillByIp(dest.ip),
+			// OLD CODE: detail: activeIpFilter === dest.ip ? 'filtering the table' : undefined, onclick: () => drillByIp(dest.ip), (NET-184)
+			detail: activeIpFilter === dest.ip && ipSide === 'destination.ip' ? 'filtering the table' : undefined,
+			onclick: () => drillByEnd('destination.ip', dest.ip, dest.count, destinationsWindow),
 			colour: 2,
 		}))}
 	/>
@@ -1323,9 +1379,11 @@ OLD CODE END -->
 						Type: {LOG_TYPE_LABELS[logType]}<Icon name="close" />
 					</button>
 				{/if}
+				<!-- OLD CODE: aria-label="Remove filter IP: {activeIpFilter}" … IP: <span class="mono">{activeIpFilter}</span> (NET-184: a bar's filter names its side) -->
 				{#if activeIpFilter}
-					<button class="chip" type="button" aria-label="Remove filter IP: {activeIpFilter}" onclick={() => { activeIpFilter = ''; fetchLogs(); }}>
-						IP: <span class="mono">{activeIpFilter}</span><Icon name="close" />
+					{@const ipWord = ipSide === 'source.ip' ? 'Source' : ipSide === 'destination.ip' ? 'Destination' : 'IP'}
+					<button class="chip" type="button" aria-label="Remove filter {ipWord}: {activeIpFilter}" onclick={() => { activeIpFilter = ''; fetchLogs(); }}>
+						{ipWord}: <span class="mono">{activeIpFilter}</span><Icon name="close" />
 					</button>
 				{/if}
 				{#if activeDnsFilter}
