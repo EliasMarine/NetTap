@@ -102,6 +102,7 @@ from api.network import register_network_routes
 from api.drilldown_runner import lan_cidrs
 from api.addresses import register_address_routes
 from api.domains import register_domain_routes
+from api.moment import register_moment_routes
 from api.suricata_categories import register_suricata_category_routes
 from services.pipeline_health import OVERALL as PIPELINE_OVERALL, PipelineHealth
 from services.tshark_service import TSharkService
@@ -1483,6 +1484,8 @@ def create_app(
     register_address_routes(app, drill_client)
     register_domain_routes(app, drill_client)
     register_suricata_category_routes(app, drill_client)
+    # NET-249: the moment page's top devices, in the same permits on the daemon's own client
+    register_moment_routes(app)
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 

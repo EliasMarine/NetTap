@@ -397,6 +397,35 @@ def _get(server, path: str) -> tuple[int, dict, float]:
     return status, json.loads(body), time.monotonic() - start
 
 
+def test_a_blocked_moment_read_leaves_the_route_pool_free(server):
+    """NET-249: the moment devices read waits in a drill-down slot off the route pool, so the
+    route pool's pages and health answer meanwhile."""
+    entered, release = threading.Event(), threading.Event()
+    threads: list[str] = []
+
+    def slow_ranking(*_args, **_kwargs):
+        threads.append(threading.current_thread().name)
+        entered.set()
+        release.wait(_WAIT_S)
+        return []
+
+    answers: list[int] = []
+    with patch("api.moment._accounted_devices", slow_ranking):
+        sender = threading.Thread(
+            target=lambda: answers.append(_get(server, "/api/moment/devices")[0])
+        )
+        sender.start()
+        try:
+            assert entered.wait(_WAIT_S), "the moment read never started"
+            assert not threads[0].startswith("route"), threads
+            assert _health_seconds(server["base"]) < HEALTH_BUDGET_S
+            assert _get(server, "/api/dns/stats")[0] == 200
+        finally:
+            release.set()
+            sender.join(_WAIT_S)
+    assert answers == [200]
+
+
 def test_a_fifth_public_lookup_is_turned_away_at_once(server):
     """PR #200 review: the public lookups (no login) ran uncapped on the shared pool."""
     from api import offload

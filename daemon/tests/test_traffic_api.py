@@ -1001,6 +1001,19 @@ class TestBandwidthFiltersMatch(AioHTTPTestCase):
             summary["query"]["bool"]["must_not"],
         )
 
+    @unittest_run_loop
+    async def test_protocols_report_the_exclusions_they_applied(self):
+        # NET-249: a protocol bar's link leaves out what the bar left out, as the summary's do
+        summary = await (
+            await self.client.request("GET", "/api/traffic/summary")
+        ).json()
+        self.mock_client.search.side_effect = _no_v6_pairs(_protocols_reply())
+        resp = await self.client.request("GET", "/api/traffic/protocols")
+        self.assertEqual(resp.status, 200)
+        protocols = await resp.json()
+        self.assertEqual(protocols["excluded_ips"], self.EXCLUDED)
+        self.assertEqual(protocols["excluded_ips"], summary["excluded_ips"])
+
 
 if __name__ == "__main__":
     unittest.main()
