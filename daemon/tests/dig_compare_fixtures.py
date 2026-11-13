@@ -85,8 +85,8 @@ QUAD9_TXT = (
     ";; OPT PSEUDOSECTION:\n"
     "; EDNS: version: 0, flags:; udp: 1232\n"
     ";; ANSWER SECTION:\n"
-    "example.com.\t\t300\tIN\tTXT\t\"v=spf1 -all\"\n"
-    "example.com.\t\t300\tIN\tTXT\t\"_k2n1y4vw3qtb4skdx9e7dxt97qrmmq9\"\n"
+    'example.com.\t\t300\tIN\tTXT\t"v=spf1 -all"\n'
+    'example.com.\t\t300\tIN\tTXT\t"_k2n1y4vw3qtb4skdx9e7dxt97qrmmq9"\n'
     "\n"
     ";; Query time: 10 msec\n"
     ";; SERVER: 9.9.9.9#53(9.9.9.9) (UDP)\n"
@@ -210,3 +210,18 @@ QUAD9_PUBLIC = (
     "\n"
 )
 
+
+# @1.1.1.1 github.com AAAA (+time=4): NOERROR with no answers (NODATA)
+CLOUDFLARE_NODATA = (
+    ";; Got answer:\n"
+    ";; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 2377\n"
+    ";; flags: qr rd ra; QUERY: 1, ANSWER: 0, AUTHORITY: 1, ADDITIONAL: 1\n"
+    "\n"
+    ";; OPT PSEUDOSECTION:\n"
+    "; EDNS: version: 0, flags:; udp: 1232\n"
+    ";; Query time: 7 msec\n"
+    ";; SERVER: 1.1.1.1#53(1.1.1.1) (UDP)\n"
+    ";; WHEN: Fri Nov 13 22:25:19 UTC 2026\n"
+    ";; MSG SIZE  rcvd: 104\n"
+    "\n"
+)

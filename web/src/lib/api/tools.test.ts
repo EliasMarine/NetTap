@@ -131,6 +131,7 @@ describe('tools API client', () => {
 						ttl: 0,
 						latency_ms: 0,
 						error: null,
+						truncated: false,
 					},
 				],
 			};
@@ -154,6 +155,11 @@ describe('tools API client', () => {
 		it('throws with the status when the body is not JSON', async () => {
 			mockFetchFailure(502);
 			await expect(dnsCompare('example.com', 'A', ['9.9.9.9'])).rejects.toThrow('Resolver compare failed (HTTP 502)');
+		});
+
+		it('throws on a 200 reply without a results list', async () => {
+			mockFetchSuccess({ name: 'example.com', record_type: 'A' });
+			await expect(dnsCompare('example.com', 'A', ['9.9.9.9'])).rejects.toThrow('NetTap sent a reply the page cannot read.');
 		});
 	});
 

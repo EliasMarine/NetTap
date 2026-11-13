@@ -24,12 +24,15 @@ export interface DnsReconResult {
 	errors: string[];
 }
 
+/** NET-262: what an A or AAAA answer points at; unspecified is 0.0.0.0 or :: (often a blocked name) */
+export type DnsScope = 'private' | 'public' | 'loopback' | 'unspecified';
+
 /** NET-262: one answer from a resolver compare */
 export interface DnsCompareAnswer extends DnsReconRecord {
 	/** Owner, class, type and data without the TTL: equal keys are the same record */
 	key: string;
 	/** A and AAAA answers only */
-	scope?: 'private' | 'public';
+	scope?: DnsScope;
 }
 
 export interface DnsCompareReply {
@@ -41,6 +44,8 @@ export interface DnsCompareReply {
 	ttl: number | null;
 	latency_ms: number | null;
 	error: string | null;
+	/** More than 100 answers came back; `answers` holds 100 of them, in key order */
+	truncated: boolean;
 }
 
 export interface DnsCompareResult {
@@ -172,7 +177,9 @@ export async function dnsCompare(name: string, recordType: string, resolvers: st
 		throw new Error(data.error || `Resolver compare failed (HTTP ${res.status})`);
 	}
 
-	return res.json();
+	const data = await res.json();
+	if (!Array.isArray(data?.results)) throw new Error('NetTap sent a reply the page cannot read.');
+	return data as DnsCompareResult;
 }
 
 /**

@@ -4,14 +4,25 @@
 	 * once, then says in plain English whether they agree, with each reply in a DataTable.
 	 * Labels never leave the browser; the last resolver list is kept in localStorage.
 	 */
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { dnsCompare } from '$api/tools';
 	import type { DnsCompareReply, DnsCompareResult } from '$api/tools';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import { compareVerdict, labeller, MAX_RESOLVERS, saveResolvers, savedResolvers, type ResolverRow } from './dns-compare';
+	import {
+		compareVerdict,
+		emptyRows,
+		labeller,
+		MAX_ANSWERS,
+		MAX_RESOLVERS,
+		saveResolvers,
+		savedResolvers,
+		SCOPE_LABELS,
+		type ResolverRow,
+		type VerdictTone,
+	} from './dns-compare';
 
 	interface Props {
 		recordTypes: { type: string; label: string }[];
@@ -21,14 +32,12 @@
 
 	let name = $state('');
 	let recordType = $state('A');
-	let rows = $state<ResolverRow[]>([
-		{ ip: '', label: '' },
-		{ ip: '', label: '' },
-	]);
+	let rows = $state<ResolverRow[]>(emptyRows());
 	let asked = $state<ResolverRow[]>([]);
 	let result = $state<DnsCompareResult | null>(null);
 	let loading = $state(false);
 	let error = $state('');
+	let addButton = $state<HTMLButtonElement>();
 
 	// After mount, so the server's empty rows and the browser's first render match
 	onMount(() => {
@@ -42,6 +51,21 @@
 	function setRow(index: number, field: keyof ResolverRow, value: string) {
 		rows = rows.map((r, i) => (i === index ? { ...r, [field]: value } : r));
 	}
+
+	// Focus follows the change, so a keyboard user is not dropped at the top of the page
+	async function addRow() {
+		rows = [...rows, { ip: '', label: '' }];
+		await tick();
+		document.getElementById(`compare-resolver-${rows.length - 1}`)?.focus();
+	}
+
+	async function removeRow(index: number) {
+		rows = rows.filter((_, i) => i !== index);
+		await tick();
+		addButton?.focus();
+	}
+
+	const NOTICE_CLASS: Record<VerdictTone, string> = { ok: 'is-ok', warn: 'is-warn', neutral: '' };
 
 	async function compare() {
 		const trimmed = name.trim();
@@ -91,9 +115,10 @@
 				<li>
 					{#if a.type !== result?.record_type}<span class="dim mono">{a.type}</span>{/if}
 					<span class="mono value">{a.value}</span>
-					{#if a.scope}<span class="dim">{a.scope}</span>{/if}
+					{#if a.scope}<span class="dim">{SCOPE_LABELS[a.scope]}</span>{/if}
 				</li>
 			{/each}
+			{#if r.truncated}<li class="dim">First {MAX_ANSWERS} answers</li>{/if}
 		</ul>
 	{/if}
 {/snippet}
@@ -105,7 +130,17 @@
 		<div class="form-grid">
 			<div class="field">
 				<label class="label" for="compare-name">Name</label>
-				<input id="compare-name" class="input mono" type="text" placeholder="example.com" bind:value={name} onkeydown={handleKeydown} />
+				<input
+					id="compare-name"
+					class="input mono"
+					type="text"
+					placeholder="example.com"
+					autocapitalize="off"
+					autocomplete="off"
+					spellcheck={false}
+					bind:value={name}
+					onkeydown={handleKeydown}
+				/>
 			</div>
 			<div class="field">
 				<label class="label" for="compare-type">Record type</label>
@@ -122,8 +157,12 @@
 				{#each rows as row, i (i)}
 					<div class="row">
 						<input
+							id="compare-resolver-{i}"
 							class="input mono"
 							type="text"
+							autocapitalize="off"
+							autocomplete="off"
+							spellcheck={false}
 							aria-label="Resolver {i + 1} address"
 							placeholder={i === 0 ? '192.168.1.1' : '9.9.9.9'}
 							value={row.ip}
@@ -144,7 +183,7 @@
 							type="button"
 							aria-label="Remove resolver {i + 1}"
 							disabled={rows.length === 1}
-							onclick={() => (rows = rows.filter((_, j) => j !== i))}><Icon name="close" /></button
+							onclick={() => removeRow(i)}><Icon name="close" /></button
 						>
 					</div>
 				{/each}
@@ -152,7 +191,7 @@
 			<span class="field-help">An IPv4 or IPv6 address each. Labels stay in this browser; NetTap is sent only the addresses.</span>
 		</div>
 		<div class="form-actions">
-			<button class="btn" type="button" disabled={rows.length >= MAX_RESOLVERS} onclick={() => (rows = [...rows, { ip: '', label: '' }])}>
+			<button class="btn" type="button" bind:this={addButton} disabled={rows.length >= MAX_RESOLVERS} onclick={addRow}>
 				Add resolver
 			</button>
 			<button class="btn primary" type="button" onclick={compare} disabled={loading || !name.trim() || filled.length === 0}>
@@ -170,8 +209,8 @@
 			<CardState state="error" title="The compare failed" message={error} />
 		</Card>
 	{:else if result && verdict}
-		<div class={['notice', 'c-12', verdict.agree ? 'is-ok' : 'is-warn']} role="status">
-			<Icon name={verdict.agree ? 'check' : 'warn'} />
+		<div class={['notice', 'c-12', NOTICE_CLASS[verdict.tone]]} role="status">
+			<Icon name={verdict.tone === 'ok' ? 'check' : verdict.tone === 'warn' ? 'warn' : 'dns'} />
 			<div class="verdict">
 				{#each verdict.lines as line, i (i)}<p>{line}</p>{/each}
 			</div>

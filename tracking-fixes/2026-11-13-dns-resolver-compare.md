@@ -2,7 +2,7 @@
 
 **Linear:** NET-262 (child of NET-261)
 **Branch:** `feature/dns-resolver-compare`
-**Status:** built and tested locally. Not deployed yet; the lead deploys.
+**Status:** PR #264, review fixes applied (see "Review follow-ups"). Not deployed yet; the lead deploys.
 **Plan:** `PLAN.md` section 1 (Codex review, 4 rounds, APPROVED).
 
 ## Why
@@ -26,7 +26,10 @@ or a filtering resolver that answers differently, you had to run `dig @server` b
     gives status null and "No reply from NetTap".
   - Each answer has a canonical `key`: owner, class, type and data, without the TTL. Names are lower
     case without the trailing dot, addresses go through `ipaddress`, and TXT stays byte for byte.
-    A and AAAA answers also say `scope: private | public` (`is_global`).
+    A and AAAA answers also say `scope`: `unspecified` (0.0.0.0, ::), `loopback`, else `private`
+    or `public` (`is_global`).
+  - At most 100 answers per reply. A longer reply is sorted by key, cut to 100 and says
+    `truncated: true`, so two resolvers with the same records keep the same 100.
   - One INFO line per compare (inputs, statuses, duration) and one WARNING per failed dig.
 - **Web:**
   - `/api/tools/dns-compare` proxy with `TOOL_TIMEOUT_MS['dns-compare'] = 15_000`.
@@ -64,16 +67,38 @@ or a filtering resolver that answers differently, you had to run `dig @server` b
   so `QUAD9_SLOW` is the real CNAME capture with only its query time raised to 3.4 s.
 - `unifi` from the router returns the same A record twice. Keys handle that.
 
+## Review follow-ups (PR #264, two-angle review)
+
+- CI: `ruff format` and `ruff check` (0.17.3, as CI) on the daemon files.
+- False split DNS: Pi-hole answers a blocked name with 0.0.0.0, and that read as "private" next
+  to a public answer. 0.0.0.0 and :: are now `unspecified` (shown as "no address (often a blocked
+  name)") and 127.0.0.0/8 and ::1 are `loopback`. Neither counts as private. The verdict adds
+  "<label> returns 0.0.0.0, which usually means it blocks this name."
+- 100-answer cap with `truncated` (above). The table shows "First 100 answers", the verdict lists at
+  most three values per resolver ("… and 2 more") and says when a reply was cut.
+- Tone: replies that agree on SERVFAIL, REFUSED or another failure (or a single such reply) get the
+  neutral notice, not the green one.
+- Only a missing or empty record type means A; 0, [] and {} are a 400.
+- Web: a type guard for the saved list, addresses trimmed when saved, a guard for a 200 reply with
+  no `results`, focus moves to the new row's address after Add and to Add after Remove, and the
+  name and address inputs turn off autocapitalise, autocomplete and spellcheck.
+- The lookup panel's markup is indented inside its tabpanel (whitespace only).
+- New tests: each no-reply sign on its own, dig missing ("dig could not run"), NODATA (a real
+  capture, `CLOUDFLARE_NODATA`), the cap, every scope, the middleware's generic 500, the record-type
+  default, `?domain=` from the Compare tab, a second Enter, sorting with blanks last, focus, the
+  input attributes, and every Tools proxy's invalid-JSON 400.
+
 ## Tests
 
-- `daemon/tests/test_dns_compare.py` (24): resolver validation, argv, every real fixture, no reply,
+- `daemon/tests/test_dns_compare.py` (31): resolver validation, argv, every real fixture, no reply,
   other dig failures, canonical keys (TTL, case, IPv6 forms, TXT case, owners), concurrency,
   time-out kill and reap, cancellation, the shared slot and busy, and the route (200, 400, 503).
-- `web/src/routes/tools/dns-recon/dns-compare.test.ts` (12): verdicts and storage.
-- `web/src/routes/tools/dns-recon/compare-resolvers-page.test.ts` (6): tabs, loading, results,
-  error, adding and removing rows, and the saved list.
-- `web/src/lib/api/tools.test.ts` (+3) and `web/src/routes/api/tools/tools-timeouts.test.ts` (+2).
-- Full daemon pytest 4840 passed, 0 failed. Full vitest passed. svelte-check 0 errors. Colour gate clean.
+- `web/src/routes/tools/dns-recon/dns-compare.test.ts` (16): verdicts, tones, notes and storage.
+- `web/src/routes/tools/dns-recon/compare-resolvers-page.test.ts` (10): tabs, loading, results,
+  error, rows and focus, the saved list, sorting, a second Enter, `?domain=` and input attributes.
+- `web/src/lib/api/tools.test.ts` (+4) and `web/src/routes/api/tools/tools-timeouts.test.ts` (+7).
+- Full daemon pytest 4847 passed, 0 failed. Full vitest 4892 passed. svelte-check 0 errors. Colour gate
+  clean. ruff 0.17.3 format and check clean. test:visual for /tools/dns-recon passed.
 
 ## Lessons
 

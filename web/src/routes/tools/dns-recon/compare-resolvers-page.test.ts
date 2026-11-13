@@ -4,8 +4,15 @@ import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
 
 /** NET-262: the DNS page's "Compare resolvers" tab. */
+const nav = vi.hoisted(() => ({ url: new URL('http://localhost/tools/dns-recon'), subs: new Set<(v: { url: URL }) => void>() }));
 vi.mock('$app/stores', () => ({
-	page: { subscribe: (fn: (v: { url: URL }) => void) => (fn({ url: new URL('http://localhost/tools/dns-recon') }), () => {}) },
+	page: {
+		subscribe: (fn: (v: { url: URL }) => void) => {
+			nav.subs.add(fn);
+			fn({ url: nav.url });
+			return () => nav.subs.delete(fn);
+		},
+	},
 }));
 
 // The daemon's reply to the real dig output in daemon/tests/dig_compare_fixtures.py (setup.ui.com A on the G11)
@@ -20,6 +27,7 @@ const REPLY = {
 			ttl: 0,
 			latency_ms: 0,
 			error: null,
+			truncated: false,
 		},
 		{
 			resolver: '1.1.1.1',
@@ -31,8 +39,9 @@ const REPLY = {
 			ttl: 32,
 			latency_ms: 8,
 			error: null,
+			truncated: true,
 		},
-		{ resolver: '192.0.2.53', status: null, answers: [], ttl: null, latency_ms: null, error: 'No reply from NetTap' },
+		{ resolver: '192.0.2.53', status: null, answers: [], ttl: null, latency_ms: null, error: 'No reply from NetTap', truncated: false },
 	],
 };
 
@@ -60,6 +69,7 @@ describe('DNS page: Compare resolvers tab', () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
 		localStorage.clear();
+		nav.url = new URL('http://localhost/tools/dns-recon');
 	});
 
 	it('keeps the lookup as the first tab and shows the compare form on its own tab', async () => {
@@ -108,14 +118,65 @@ describe('DNS page: Compare resolvers tab', () => {
 		expect(within(table).getByText('Router')).toBeInTheDocument();
 		expect(within(table).getByText('No reply')).toBeInTheDocument();
 		expect(within(table).getByText('No reply from NetTap')).toBeInTheDocument();
+		expect(within(table).getByText('First 100 answers')).toBeInTheDocument();
+		expect(within(table).getAllByText('public')).toHaveLength(2);
 		expectNoNestedInteractive(document.body);
 
 		// the list is kept in this browser for the next visit, labels included
 		expect(JSON.parse(localStorage.getItem('nettap-dns-compare-resolvers') ?? '[]')).toEqual([
 			{ ip: '192.168.1.1', label: 'Router' },
-			{ ip: ' 1.1.1.1 ', label: '' },
+			{ ip: '1.1.1.1', label: '' },
 			{ ip: '192.0.2.53', label: 'VPN' },
 		]);
+	});
+
+	it('sorts on a header click, with no reply last both ways', async () => {
+		stubFetch(REPLY);
+		await openCompare();
+		await fill('setup.ui.com', [
+			['192.168.1.1', 'Router'],
+			['1.1.1.1', ''],
+			['192.0.2.53', 'VPN'],
+		]);
+		await fireEvent.click(screen.getByRole('button', { name: 'Compare' }));
+		const table = await screen.findByRole('table', { name: 'Resolver replies' });
+		const order = () => within(table).getAllByRole('row').slice(1).map((row) => row.querySelector('td .mono')?.textContent);
+		const latency = within(table).getByRole('button', { name: /Latency/ });
+		await fireEvent.click(latency);
+		expect(order()).toEqual(['1.1.1.1', '192.168.1.1', '192.0.2.53']);
+		await fireEvent.click(latency);
+		expect(order()).toEqual(['192.168.1.1', '1.1.1.1', '192.0.2.53']);
+	});
+
+	it('ignores a second Enter while a compare is running', async () => {
+		const fetch = vi.fn(() => new Promise(() => {}));
+		vi.stubGlobal('fetch', fetch);
+		await openCompare();
+		await fill('setup.ui.com', [['192.168.1.1', '']]);
+		const box = screen.getByLabelText('Name');
+		await fireEvent.keyDown(box, { key: 'Enter' });
+		await fireEvent.keyDown(box, { key: 'Enter' });
+		await fireEvent.keyDown(screen.getByLabelText('Resolver 1 address'), { key: 'Enter' });
+		expect(fetch).toHaveBeenCalledTimes(1);
+	});
+
+	it('goes back to the Lookup tab when a ?domain= link arrives', async () => {
+		render(Page);
+		await fireEvent.click(screen.getByRole('tab', { name: 'Compare resolvers' }));
+		expect(screen.getByRole('tab', { name: 'Compare resolvers' })).toHaveAttribute('aria-selected', 'true');
+		nav.url = new URL('http://localhost/tools/dns-recon?domain=example.com');
+		nav.subs.forEach((fn) => fn({ url: nav.url }));
+		await vi.waitFor(() => expect(screen.getByRole('tab', { name: 'Lookup' })).toHaveAttribute('aria-selected', 'true'));
+		expect(screen.getByLabelText('Domain')).toHaveValue('example.com');
+	});
+
+	it('keeps typed addresses free of autocorrect', async () => {
+		await openCompare();
+		for (const box of [screen.getByLabelText('Name'), screen.getByLabelText('Resolver 1 address')]) {
+			expect(box).toHaveAttribute('autocapitalize', 'off');
+			expect(box).toHaveAttribute('autocomplete', 'off');
+			expect(box).toHaveAttribute('spellcheck', 'false');
+		}
 	});
 
 	it('shows the error state with the daemon reason when the compare fails', async () => {
@@ -130,10 +191,13 @@ describe('DNS page: Compare resolvers tab', () => {
 	it('adds rows up to six and removes them, keeping at least one', async () => {
 		await openCompare();
 		const add = screen.getByRole('button', { name: 'Add resolver' });
-		for (let i = 0; i < 4; i++) await fireEvent.click(add);
+		await fireEvent.click(add);
+		await vi.waitFor(() => expect(screen.getByLabelText('Resolver 3 address')).toHaveFocus());
+		for (let i = 0; i < 3; i++) await fireEvent.click(add);
 		expect(screen.getByLabelText('Resolver 6 address')).toBeInTheDocument();
 		expect(add).toBeDisabled();
 		for (let i = 6; i > 1; i--) await fireEvent.click(screen.getByRole('button', { name: `Remove resolver ${i}` }));
+		await vi.waitFor(() => expect(add).toHaveFocus());
 		expect(screen.queryByLabelText('Resolver 2 address')).not.toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Remove resolver 1' })).toBeDisabled();
 	});

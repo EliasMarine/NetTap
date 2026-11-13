@@ -35,6 +35,17 @@ describe('Tools proxies wait past the daemon', () => {
 	});
 });
 
+describe('Tools proxies refuse a body that is not JSON', () => {
+	it.each(Object.entries(routes))('%s answers 400 without calling the daemon', async (tool, route) => {
+		daemonFetch.mockReset();
+		const request = new Request(`https://nettap.local/api/tools/${tool}`, { method: 'POST', body: '{not json' });
+		const res = await route.POST({ request } as never);
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({ error: 'Invalid JSON request body.' });
+		expect(daemonFetch).not.toHaveBeenCalled();
+	});
+});
+
 describe('Tools time limits (the real values)', () => {
 	it('sit 5 s above each daemon limit, all under nginx 60 s', async () => {
 		const real = await vi.importActual<typeof import('$lib/server/daemon')>('$lib/server/daemon');

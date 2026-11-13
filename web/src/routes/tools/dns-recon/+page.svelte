@@ -157,63 +157,63 @@
 <Pills options={tabs} bind:value={activeTab} mode="tabs" idPrefix="dns" ariaLabel="DNS tools" />
 
 <div role="tabpanel" id="dns-panel-lookup" aria-labelledby="dns-tab-lookup" hidden={activeTab !== 'lookup'}>
-<div class="grid">
-	<Card title="Look up a domain" sub="One domain · the record types you choose" class="c-12">
-		<div class="form-grid">
-			<div class="field">
-				<label class="label" for="recon-domain">Domain</label>
-				<input id="recon-domain" class="input mono" type="text" placeholder="example.com" bind:value={domain} onkeydown={handleKeydown} />
-			</div>
-			<div class="field">
-				<span class="label" id="recon-types">Record types</span>
-				<div class="pills types" role="group" aria-labelledby="recon-types">
-					{#each recordTypeDefs as def (def.type)}
-						<button class="pill mono" type="button" aria-pressed={selectedTypes.has(def.type)} title={def.label} onclick={() => toggleType(def.type)}>
-							{def.type}
-						</button>
-					{/each}
+	<div class="grid">
+		<Card title="Look up a domain" sub="One domain · the record types you choose" class="c-12">
+			<div class="form-grid">
+				<div class="field">
+					<label class="label" for="recon-domain">Domain</label>
+					<input id="recon-domain" class="input mono" type="text" placeholder="example.com" bind:value={domain} onkeydown={handleKeydown} />
+				</div>
+				<div class="field">
+					<span class="label" id="recon-types">Record types</span>
+					<div class="pills types" role="group" aria-labelledby="recon-types">
+						{#each recordTypeDefs as def (def.type)}
+							<button class="pill mono" type="button" aria-pressed={selectedTypes.has(def.type)} title={def.label} onclick={() => toggleType(def.type)}>
+								{def.type}
+							</button>
+						{/each}
+					</div>
 				</div>
 			</div>
-		</div>
-		<div class="form-actions">
-			<button class="btn primary" type="button" onclick={handleLookup} disabled={loading || !domain.trim()}>
-				<Icon name="search" />{loading ? 'Looking up…' : 'Lookup'}
-			</button>
-		</div>
-	</Card>
-
-	{#if loading}
-		<Card title="Records" sub="Querying each record type" class="c-12">
-			<CardState state="loading" title="Looking up DNS records" />
+			<div class="form-actions">
+				<button class="btn primary" type="button" onclick={handleLookup} disabled={loading || !domain.trim()}>
+					<Icon name="search" />{loading ? 'Looking up…' : 'Lookup'}
+				</button>
+			</div>
 		</Card>
-	{/if}
 
-	{#if error && !loading}
-		<p class="notice is-error c-12" role="alert"><Icon name="warn" />{error}</p>
-	{/if}
-
-	{#if result && !loading}
-		<div class="chips c-12">
-			<span class="chip">{result.total_records} records found</span>
-			<span class="chip">{result.record_types_queried.length} queries</span>
-		</div>
-		{#each orderedResultTypes as type (type)}
-			{@const records = result.records[type] || []}
-			{@const def = getTypeDef(type)}
-			<Card title="{type} · {def.label}" sub="{records.length} record{records.length !== 1 ? 's' : ''} · TTL in seconds" class="c-12">
-				{#if records.length > 0}
-					<DataTable columns={recordColumns} rows={recordRows(records)} ariaLabel="{type} records" rowKey={(r) => r.i} />
-				{:else}
-					<p class="dim none">No {type} records found</p>
-				{/if}
+		{#if loading}
+			<Card title="Records" sub="Querying each record type" class="c-12">
+				<CardState state="loading" title="Looking up DNS records" />
 			</Card>
-		{/each}
-	{:else if !loading && !error}
-		<Card title="Records" sub="Grouped by record type" class="c-12">
-			<CardState state="empty" icon="dns" title="Enter a domain" message="Type a domain, choose the record types, then choose Lookup." />
-		</Card>
-	{/if}
-</div>
+		{/if}
+
+		{#if error && !loading}
+			<p class="notice is-error c-12" role="alert"><Icon name="warn" />{error}</p>
+		{/if}
+
+		{#if result && !loading}
+			<div class="chips c-12">
+				<span class="chip">{result.total_records} records found</span>
+				<span class="chip">{result.record_types_queried.length} queries</span>
+			</div>
+			{#each orderedResultTypes as type (type)}
+				{@const records = result.records[type] || []}
+				{@const def = getTypeDef(type)}
+				<Card title="{type} · {def.label}" sub="{records.length} record{records.length !== 1 ? 's' : ''} · TTL in seconds" class="c-12">
+					{#if records.length > 0}
+						<DataTable columns={recordColumns} rows={recordRows(records)} ariaLabel="{type} records" rowKey={(r) => r.i} />
+					{:else}
+						<p class="dim none">No {type} records found</p>
+					{/if}
+				</Card>
+			{/each}
+		{:else if !loading && !error}
+			<Card title="Records" sub="Grouped by record type" class="c-12">
+				<CardState state="empty" icon="dns" title="Enter a domain" message="Type a domain, choose the record types, then choose Lookup." />
+			</Card>
+		{/if}
+	</div>
 </div>
 
 <div role="tabpanel" id="dns-panel-compare" aria-labelledby="dns-tab-compare" hidden={activeTab !== 'compare'}>

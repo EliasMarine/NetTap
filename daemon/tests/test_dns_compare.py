@@ -6,15 +6,18 @@ dig is mocked; its output is real (tests/dig_compare_fixtures.py, captured on th
 
 import asyncio
 import unittest
+from ipaddress import ip_address
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from aiohttp import web
-from aiohttp.test_utils import AioHTTPTestCase
+from aiohttp.test_utils import AioHTTPTestCase, TestClient, TestServer
 
+from api.error_replies import GENERIC, safe_error_middleware
 from api.tools import register_tools_routes
 from services.dns_recon_service import (
     COMPARE_DIG_TIME,
     LOOKUPS_BUSY,
+    MAX_COMPARE_ANSWERS,
     MAX_CONCURRENT_LOOKUPS,
     NO_REPLY,
     QUERY_TIMEOUT,
@@ -22,6 +25,7 @@ from services.dns_recon_service import (
     DnsReconService,
     DnsReconValidationError,
     _answer_key,
+    _scope,
 )
 from tests import dig_compare_fixtures as dig
 from tests.test_dns_recon_service import FakeDig
@@ -92,6 +96,9 @@ class TestCompareValidation(unittest.TestCase):
             (["example.com"], "A", ["9.9.9.9"]),
             ("example.com", "ANY", ["9.9.9.9"]),
             ("example.com", 1, ["9.9.9.9"]),
+            ("example.com", 0, ["9.9.9.9"]),
+            ("example.com", [], ["9.9.9.9"]),
+            ("example.com", {}, ["9.9.9.9"]),
             ("example.com", "A", ["not-an-ip"]),
         ]
 
@@ -113,10 +120,14 @@ class TestCompareValidation(unittest.TestCase):
             outputs = {"192.168.1.1": (dig.ROUTER_PRIVATE, 0)}
             with patch(EXEC, side_effect=fake_exec_from(outputs, started)):
                 first = await self.svc.compare("Setup.UI.com", None, ["192.168.1.1"])
+                blank = await self.svc.compare("setup.ui.com", "", ["192.168.1.1"])
                 second = await self.svc.compare("setup.ui.com", "aaaa", ["192.168.1.1"])
-            self.assertEqual((first["name"], first["record_type"]), ("setup.ui.com", "A"))
+            self.assertEqual(
+                (first["name"], first["record_type"]), ("setup.ui.com", "A")
+            )
+            self.assertEqual(blank["record_type"], "A")
             self.assertEqual(second["record_type"], "AAAA")
-            self.assertEqual(started[1][-4:], ("-t", "AAAA", "-q", "setup.ui.com"))
+            self.assertEqual(started[-1][-4:], ("-t", "AAAA", "-q", "setup.ui.com"))
 
         asyncio.run(run_test())
 
@@ -177,7 +188,12 @@ class TestCompareDig(unittest.TestCase):
                 ["192.168.1.1", "1.1.1.1", "9.9.9.9"],
             )
             self.assertEqual(
-                (router["status"], router["ttl"], router["latency_ms"], router["error"]),
+                (
+                    router["status"],
+                    router["ttl"],
+                    router["latency_ms"],
+                    router["error"],
+                ),
                 ("NOERROR", 0, 0, None),
             )
             self.assertEqual(
@@ -237,7 +253,12 @@ class TestCompareDig(unittest.TestCase):
             for reply in result["results"]:
                 with self.subTest(resolver=reply["resolver"]):
                     self.assertEqual(
-                        (reply["status"], reply["answers"], reply["ttl"], reply["error"]),
+                        (
+                            reply["status"],
+                            reply["answers"],
+                            reply["ttl"],
+                            reply["error"],
+                        ),
                         (None, [], None, NO_REPLY),
                     )
 
@@ -252,13 +273,83 @@ class TestCompareDig(unittest.TestCase):
 
         asyncio.run(run_test())
 
+    def test_each_no_reply_sign_on_its_own_is_no_reply(self):
+        async def run_test():
+            outputs = {
+                "192.0.2.1": ("", 9),  # the exit code alone
+                "192.0.2.2": (";; no servers could be reached\n", 1),  # the text alone
+            }
+            with patch(EXEC, side_effect=fake_exec_from(outputs)):
+                result = await self.svc.compare("example.com", "A", list(outputs))
+            self.assertEqual([r["error"] for r in result["results"]], [NO_REPLY] * 2)
+            self.assertEqual([r["status"] for r in result["results"]], [None, None])
+
+        asyncio.run(run_test())
+
+    def test_dig_missing_is_dig_could_not_run(self):
+        async def run_test():
+            with patch(EXEC, side_effect=FileNotFoundError("dig")):
+                result = await self.svc.compare("example.com", "A", ["9.9.9.9"])
+            reply = result["results"][0]
+            self.assertEqual(
+                (reply["status"], reply["error"]), (None, "dig could not run")
+            )
+
+        asyncio.run(run_test())
+
+    def test_noerror_with_no_answers_is_a_reply_with_nothing_in_it(self):
+        async def run_test():
+            outputs = {"1.1.1.1": (dig.CLOUDFLARE_NODATA, 0)}
+            with patch(EXEC, side_effect=fake_exec_from(outputs)):
+                result = await self.svc.compare("github.com", "AAAA", ["1.1.1.1"])
+            reply = result["results"][0]
+            self.assertEqual(
+                (reply["status"], reply["answers"], reply["ttl"], reply["latency_ms"]),
+                ("NOERROR", [], None, 7),
+            )
+            self.assertEqual((reply["error"], reply["truncated"]), (None, False))
+
+        asyncio.run(run_test())
+
+    def test_a_long_answer_keeps_100_records_in_key_order_and_says_so(self):
+        head, _, tail = dig.ROUTER_PRIVATE.partition(
+            "setup.ui.com.\t\t0\tIN\tA\t192.168.1.1\n"
+        )
+        lines = "".join(
+            f"setup.ui.com.\t\t{300 - i}\tIN\tA\t10.0.{i // 250}.{i % 250}\n"
+            for i in reversed(range(150))
+        )
+
+        async def run_test():
+            outputs = {"9.9.9.9": (head + lines + tail, 0)}
+            with patch(EXEC, side_effect=fake_exec_from(outputs)):
+                result = await self.svc.compare("setup.ui.com", "A", ["9.9.9.9"])
+            reply = result["results"][0]
+            self.assertTrue(reply["truncated"])
+            self.assertEqual(len(reply["answers"]), MAX_COMPARE_ANSWERS)
+            keys = [a["key"] for a in reply["answers"]]
+            self.assertEqual(keys, sorted(keys))
+
+        asyncio.run(run_test())
+
+    def test_a_short_answer_is_not_truncated(self):
+        async def run_test():
+            outputs = {"1.1.1.1": (dig.CLOUDFLARE_PUBLIC, 0)}
+            with patch(EXEC, side_effect=fake_exec_from(outputs)):
+                result = await self.svc.compare("setup.ui.com", "A", ["1.1.1.1"])
+            self.assertIs(result["results"][0]["truncated"], False)
+            self.assertEqual(len(result["results"][0]["answers"]), 4)
+
+        asyncio.run(run_test())
+
     def test_another_dig_failure_keeps_digs_own_reason(self):
         async def run_test():
             outputs = {"9.9.9.9": ("dig: couldn't get address for 'x': failure\n", 10)}
             with patch(EXEC, side_effect=fake_exec_from(outputs)):
                 result = await self.svc.compare("example.com", "A", ["9.9.9.9"])
             self.assertEqual(
-                result["results"][0]["error"], "dig: couldn't get address for 'x': failure"
+                result["results"][0]["error"],
+                "dig: couldn't get address for 'x': failure",
             )
             self.assertIsNone(result["results"][0]["status"])
 
@@ -289,17 +380,45 @@ class TestCompareDig(unittest.TestCase):
             )
             self.assertEqual(cname["ttl"], 46)  # the lowest of the chain
             self.assertEqual(cname["latency_ms"], 1149)
-            self.assertEqual([a["scope"] for a in aaaa["answers"]], ["public", "public"])
+            self.assertEqual(
+                [a["scope"] for a in aaaa["answers"]], ["public", "public"]
+            )
             self.assertEqual(len(dup["answers"]), 2)
             self.assertEqual(dup["answers"][0]["key"], dup["answers"][1]["key"])
 
         asyncio.run(run_test())
 
 
+class TestScope(unittest.TestCase):
+    """0.0.0.0 (a blocked name on Pi-hole) and loopback are never private, so never split DNS."""
+
+    def test_each_kind_of_address(self):
+        cases = {
+            "0.0.0.0": "unspecified",
+            "::": "unspecified",
+            "127.0.0.1": "loopback",
+            "127.53.0.1": "loopback",
+            "::1": "loopback",
+            "192.168.1.1": "private",
+            "10.0.0.1": "private",
+            "fd00::1": "private",
+            "100.64.0.1": "private",
+            "3.169.231.76": "public",
+            "2606:4700:10::ac42:93f3": "public",
+        }
+        for value, scope in cases.items():
+            rtype = "AAAA" if ip_address(value).version == 6 else "A"
+            with self.subTest(value=value):
+                self.assertEqual(_scope(record("a.", rtype, value)), {"scope": scope})
+        self.assertEqual(_scope(record("a.", "TXT", '"0.0.0.0"')), {})
+
+
 class TestAnswerKey(unittest.TestCase):
     """Equal keys mean the same record: TTL left out, names and addresses normalised."""
 
-    def test_the_same_records_from_two_resolvers_in_another_order_have_the_same_keys(self):
+    def test_the_same_records_from_two_resolvers_in_another_order_have_the_same_keys(
+        self,
+    ):
         svc = DnsReconService()
         router = {_answer_key(r) for r in svc._parse_dig_output(dig.ROUTER_PUBLIC)}
         quad9 = {_answer_key(r) for r in svc._parse_dig_output(dig.QUAD9_PUBLIC)}
@@ -367,7 +486,9 @@ class TestCompareConcurrency(unittest.TestCase):
 
             with patch(EXEC, side_effect=fake_exec):
                 result = await asyncio.wait_for(
-                    self.svc.compare("setup.ui.com", "A", ["10.0.0.1", "10.0.0.2", "10.0.0.3"]),
+                    self.svc.compare(
+                        "setup.ui.com", "A", ["10.0.0.1", "10.0.0.2", "10.0.0.3"]
+                    ),
                     timeout=2,
                 )
             self.assertEqual(
@@ -471,16 +592,25 @@ class TestDnsCompareRoute(AioHTTPTestCase):
         return app
 
     async def test_answers_each_resolvers_reply(self):
-        outputs = {"192.168.1.1": (dig.ROUTER_PRIVATE, 0), "9.9.9.9": (dig.QUAD9_NXDOMAIN, 0)}
+        outputs = {
+            "192.168.1.1": (dig.ROUTER_PRIVATE, 0),
+            "9.9.9.9": (dig.QUAD9_NXDOMAIN, 0),
+        }
         with patch(EXEC, side_effect=fake_exec_from(outputs)):
             resp = await self.client.post(
                 "/api/tools/dns-compare",
-                json={"name": "setup.ui.com", "record_type": "A", "resolvers": list(outputs)},
+                json={
+                    "name": "setup.ui.com",
+                    "record_type": "A",
+                    "resolvers": list(outputs),
+                },
             )
         self.assertEqual(resp.status, 200)
         body = await resp.json()
         self.assertEqual((body["name"], body["record_type"]), ("setup.ui.com", "A"))
-        self.assertEqual([r["status"] for r in body["results"]], ["NOERROR", "NXDOMAIN"])
+        self.assertEqual(
+            [r["status"] for r in body["results"]], ["NOERROR", "NXDOMAIN"]
+        )
 
     async def test_bad_input_is_400_with_a_plain_sentence(self):
         for payload in (
@@ -496,10 +626,26 @@ class TestDnsCompareRoute(AioHTTPTestCase):
         resp = await self.client.post("/api/tools/dns-compare", data="{not json")
         self.assertEqual(resp.status, 400)
 
+    async def test_any_other_failure_is_the_middlewares_generic_500(self):
+        app = web.Application(middlewares=[safe_error_middleware])
+        register_tools_routes(app, MagicMock(), MagicMock(), MagicMock(), MagicMock())
+        app["dns_recon"].compare = AsyncMock(
+            side_effect=RuntimeError("/usr/bin/dig: secret")
+        )
+
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post(
+                "/api/tools/dns-compare",
+                json={"name": "example.com", "resolvers": ["9.9.9.9"]},
+            )
+            self.assertEqual(resp.status, 500)
+            self.assertEqual(await resp.json(), {"error": GENERIC})
+
     async def test_busy_is_503_with_the_reason(self):
         self.svc.compare = AsyncMock(side_effect=DnsReconBusyError(LOOKUPS_BUSY))
         resp = await self.client.post(
-            "/api/tools/dns-compare", json={"name": "example.com", "resolvers": ["9.9.9.9"]}
+            "/api/tools/dns-compare",
+            json={"name": "example.com", "resolvers": ["9.9.9.9"]},
         )
         self.assertEqual(resp.status, 503)
         self.assertEqual(await resp.json(), {"error": LOOKUPS_BUSY})
