@@ -21,7 +21,11 @@ from typing import Any
 
 from api.alerts import SURICATA_NOISE_EXCLUSION
 from services.dns_analytics import LOCAL_NAME_SERVICE_PORTS
-from services.excluded_ips import CONN_ACCOUNTING, build_excluded_ips_filter
+from services.excluded_ips import (
+    CONN_ACCOUNTING,
+    build_excluded_ips_filter,
+    valid_excluded_ips,
+)
 from services.iot_trust_scorer import IoTTrustScorer
 from storage.all_buckets import all_buckets, complete_terms
 from storage.exact_terms import PartialResultsError
@@ -2060,14 +2064,17 @@ class IoTMonitor:
         from_ts: str,
         to_ts: str,
         excluded_ips: list[str] | None = None,
+        interval: str = "1h",
     ) -> dict[str, Any]:
-        """Get hourly activity timeline for a single device.
+        """Get the activity timeline for a single device, in `interval` slots.
 
-        Returns dict with 'mac', 'interval', 'buckets', 'baseline_hours',
-        and 'baseline_avg_hourly_bytes'.
+        Returns dict with 'mac', 'from', 'to', 'interval', 'excluded_ips' (the ones
+        applied), 'buckets', 'baseline_hours' and 'baseline_avg_hourly_bytes'.
         """
         mac = mac.strip().upper()
-        excluded = build_excluded_ips_filter(excluded_ips or [])
+        # OLD CODE: excluded = build_excluded_ips_filter(excluded_ips or []) (NET-249: the reply names what it applied)
+        applied = valid_excluded_ips(excluded_ips or [])
+        excluded = build_excluded_ips_filter(applied)
         baseline = self._baselines.get(mac)
 
         mac_filter = {
@@ -2101,7 +2108,8 @@ class IoTMonitor:
                     # OLD CODE START — #120: OpenSearch 3.5's skip-list date_histogram misplaces records
                     # "date_histogram": {"field": "@timestamp", "fixed_interval": "1h"},
                     # OLD CODE END
-                    **time_slots(from_ts, to_ts, "1h"),
+                    # OLD CODE: **time_slots(from_ts, to_ts, "1h"), (NET-249: the chart's bucket)
+                    **time_slots(from_ts, to_ts, interval),
                     "aggs": {
                         "bytes": {"sum": {"field": "source.bytes", "missing": 0}},
                         "destinations": {"cardinality": {"field": "destination.ip"}},
@@ -2152,7 +2160,11 @@ class IoTMonitor:
 
         return {
             "mac": mac,
-            "interval": "1h",
+            # OLD CODE: "interval": "1h", (NET-249: the chart's bucket and window, for a pick)
+            "from": from_ts,
+            "to": to_ts,
+            "interval": interval,
+            "excluded_ips": applied,
             "buckets": buckets,
             "baseline_hours": baseline_hours,
             "baseline_avg_hourly_bytes": baseline_avg_hourly_bytes,

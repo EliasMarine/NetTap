@@ -23,6 +23,7 @@ from api.alerts import (
 from api.drilldown_runner import (
     LAST_SEEN,
     LIST_CAP,
+    chart_interval,
     chart_slots,
     install,
     iso_ms,
@@ -177,21 +178,25 @@ def suricata_category_figures(
 
 
 async def handle_suricata_category(request: web.Request) -> web.Response:
-    """GET /api/alerts/suricata/{name}?from=&to= — the Suricata category page's figures."""
+    """GET /api/alerts/suricata/{name}?from=&to=&interval= — the Suricata category page's figures."""
     name = valid_suricata_category(request.match_info["name"])
     if name is None:
         logger.debug("Suricata category page: invalid name")
         return json_error("That isn't a Suricata category name.", 400)
     from_ts, to_ts = parse_time_range(request, _DEFAULT_RANGE)
-    slots = chart_slots(from_ts, to_ts)
+    # OLD CODE: slots = chart_slots(from_ts, to_ts) (NET-249: the chart's bucket can be asked for)
+    interval = chart_interval(request, from_ts, to_ts)
+    slots = chart_slots(from_ts, to_ts, interval)
     if slots is None:
         return json_error("This time range is too long; choose a shorter one.", 400)
     client = request.app["drill_client"]
     return await run_drilldown(
         request,
-        lambda budget: suricata_category_figures(
-            client, name, from_ts, to_ts, slots, budget
-        ),
+        # OLD CODE: lambda budget: suricata_category_figures(...) (NET-249: + the bucket the slots used)
+        lambda budget: {
+            **suricata_category_figures(client, name, from_ts, to_ts, slots, budget),
+            "interval": interval,
+        },
         "a Suricata category",
     )
 

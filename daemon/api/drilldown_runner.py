@@ -18,6 +18,7 @@ from typing import Any, Callable, TypeVar
 from aiohttp import web
 
 from api.error_replies import public_json
+from api.time_range import BUCKET_TABLE, slot_interval
 from api.alerts import _sparkline_interval
 from services.excluded_ips import (
     CONN_ACCOUNTING,
@@ -125,11 +126,31 @@ def either_side(ip: str) -> dict:
     }
 
 
-def chart_slots(from_ts: str, to_ts: str) -> dict | None:
-    """The timeline's exact slots for the window (as the alert charts pick them), or None
-    when the window holds too many."""
+# NET-249: the bucket table, plus the buckets _sparkline_interval picks when none is asked for
+CHART_INTERVALS = BUCKET_TABLE | {"10m", "6h", "1d"}
+
+
+def chart_interval(request: web.Request, from_ts: str, to_ts: str) -> str:
+    """The chart's `?interval=` (the alert charts' pick when absent); 400 past the slot budget."""
+    return slot_interval(
+        request, from_ts, to_ts, CHART_INTERVALS, _sparkline_interval(from_ts, to_ts)
+    )
+
+
+# OLD CODE START — NET-249: the chart's bucket can be asked for
+# def chart_slots(from_ts: str, to_ts: str) -> dict | None:
+#     """The timeline's exact slots for the window (as the alert charts pick them), or None
+#     when the window holds too many."""
+#     try:
+#         return time_slots(from_ts, to_ts, _sparkline_interval(from_ts, to_ts))
+#     except ValueError:
+#         return None
+# OLD CODE END
+def chart_slots(from_ts: str, to_ts: str, interval: str) -> dict | None:
+    """The timeline's exact slots for the window at `interval` (chart_interval's pick), or
+    None when the window holds too many."""
     try:
-        return time_slots(from_ts, to_ts, _sparkline_interval(from_ts, to_ts))
+        return time_slots(from_ts, to_ts, interval)
     except ValueError:
         return None
 

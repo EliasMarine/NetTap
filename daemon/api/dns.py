@@ -13,13 +13,15 @@ from opensearchpy import OpenSearchException
 from storage.exact_terms import PartialResultsError
 from api.error_replies import incomplete
 from api.offload import in_thread
-from api.time_range import parse_time_range
-from services.dns_analytics import DNSAnalytics
+from api.time_range import parse_time_range, slot_interval
+from services.dns_analytics import TIMELINE_INTERVALS, DNSAnalytics
 from storage.manager import StorageManager
 
 logger = logging.getLogger("nettap.api.dns")
 
 _DEFAULT_RANGE_HOURS = 24
+# NET-249: the default request (1m over 24 h) is 1,441 slots
+_TIMELINE_SLOT_BUDGET = 1_500
 
 
 def _parse_time_range(request: web.Request) -> tuple[str, str]:
@@ -136,7 +138,10 @@ def handle_query_types(request: web.Request) -> web.Response:
 def handle_timeline(request: web.Request) -> web.Response:
     """GET /api/dns/timeline?from=&to=&interval=1m"""
     from_ts, to_ts = _parse_time_range(request)
-    interval = request.query.get("interval", "1m")
+    # OLD CODE: interval = request.query.get("interval", "1m") (NET-249: an unknown one became 5m, echoed as sent)
+    interval = slot_interval(
+        request, from_ts, to_ts, TIMELINE_INTERVALS, "1m", _TIMELINE_SLOT_BUDGET
+    )
     dns: DNSAnalytics = request.app["dns_analytics"]
     excluded_ips_list = request.app.get("excluded_ips", [])
 

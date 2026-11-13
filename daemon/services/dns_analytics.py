@@ -21,6 +21,8 @@ from storage.time_slots import _epoch, histogram_buckets, time_slots
 logger = logging.getLogger("nettap.services.dns_analytics")
 
 NETWORK_INDEX = os.environ.get("OPENSEARCH_NETWORK_INDEX", "arkime_sessions3-*")
+# The DNS timeline's buckets; api/dns.py checks them before the search (NET-249)
+TIMELINE_INTERVALS = {"1m", "5m", "10m", "15m", "30m", "1h", "3h", "6h", "12h", "1d"}
 
 # Zeek DNS event filters for the Malcolm unified index
 _ZEEK_DNS_FILTERS = [
@@ -352,19 +354,23 @@ class DNSAnalytics:
         excluded_ips: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Return DNS query volume over time."""
-        valid_intervals = {
-            "1m",
-            "5m",
-            "10m",
-            "15m",
-            "30m",
-            "1h",
-            "3h",
-            "6h",
-            "12h",
-            "1d",
-        }
-        if interval not in valid_intervals:
+        # OLD CODE START — NET-249: the set moved to TIMELINE_INTERVALS, which the route checks
+        # valid_intervals = {
+        #     "1m",
+        #     "5m",
+        #     "10m",
+        #     "15m",
+        #     "30m",
+        #     "1h",
+        #     "3h",
+        #     "6h",
+        #     "12h",
+        #     "1d",
+        # }
+        # if interval not in valid_intervals:
+        #     interval = "5m"
+        # OLD CODE END
+        if interval not in TIMELINE_INTERVALS:
             interval = "5m"
 
         query = {

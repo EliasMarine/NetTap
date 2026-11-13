@@ -22,7 +22,13 @@ from opensearchpy import OpenSearchException
 from api.error_replies import public_json
 from api.drilldown_runner import lan_check
 from api.offload import in_thread, run_blocking
-from api.time_range import _utc, iso_param, parse_time_range
+from api.time_range import (
+    BUCKET_TABLE,
+    _utc,
+    iso_param,
+    parse_time_range,
+    slot_interval,
+)
 from storage.all_buckets import PAGE_SIZE, all_buckets
 from storage.manager import StorageManager
 from storage.snapshot_search import QueryFailed, checked
@@ -1438,6 +1444,11 @@ def handle_device_detail(request: web.Request) -> web.Response:
     if not lan_check(request.app)(ip):
         return web.json_response({"error": f"{ip} is not on your network"}, status=404)
     from_ts, to_ts = _parse_time_range(request)
+    # NET-249: checked before any search (a too-fine bucket made time_slots raise, a 500);
+    # the bucket table holds every _bandwidth_interval pick
+    interval = slot_interval(
+        request, from_ts, to_ts, BUCKET_TABLE, _bandwidth_interval(from_ts, to_ts)
+    )
     client = _get_client(request)
     fingerprint = _get_fingerprint(request)
 
@@ -1684,7 +1695,8 @@ def handle_device_detail(request: web.Request) -> web.Response:
                 "filter": {"bool": {"must_not": [{"terms": {"source.ip": IPV4_ALL}}]}}
             },
             "bandwidth_series": {
-                **time_slots(from_ts, to_ts, _bandwidth_interval(from_ts, to_ts)),
+                # OLD CODE: **time_slots(from_ts, to_ts, _bandwidth_interval(from_ts, to_ts)), (NET-249)
+                **time_slots(from_ts, to_ts, interval),
                 "aggs": _side_sums(answered),
             },
             "activity": {
@@ -2028,7 +2040,15 @@ def handle_device_detail(request: web.Request) -> web.Response:
             device["unifi_name"] = alias
 
     # OLD CODE: return web.json_response({"device": device}) (NET-200: the owner's fields)
-    return web.json_response({"device": _with_owner(request, device)})
+    # OLD CODE: return web.json_response({"device": _with_owner(request, device)}) (NET-249: + the chart's window)
+    return web.json_response(
+        {
+            "device": _with_owner(request, device),
+            "from": from_ts,
+            "to": to_ts,
+            "bandwidth_interval": interval,
+        }
+    )
 
 
 # Recent Connections columns the device page can sort on, and the field behind each (#140).
