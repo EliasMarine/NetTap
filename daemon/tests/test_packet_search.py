@@ -331,6 +331,9 @@ async def test_failed_files_make_any_search_incomplete(env):
     index._entries["broken.pcap"] = IndexEntry(
         st.st_size, st.st_mtime_ns, "failed", error="bad"
     )
+    index._failed_at["broken.pcap"] = (
+        time.monotonic()
+    )  # failed just now, not yet retried
     out = await svc.search(BODY)
     assert out["termination"] == "eof" and out["complete"] is False
     assert [s["id"] for s in out["skipped_files"]] == ["broken.pcap"]

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import time
 from decimal import Decimal
 
 import pytest
@@ -163,6 +164,44 @@ async def test_failed_files_are_reported_on_every_window(tmp_path, capinfos):
     # a window nowhere near them still names them: their packet times are unknown
     sel = await idx.select(Decimal("5000"), Decimal("5010"))
     assert sel.files == [] and len(sel.failed) == 4
+
+
+@pytest.mark.asyncio
+async def test_a_failed_file_is_tried_again_after_a_while(tmp_path, capinfos):
+    # NET-189 review: capinfos timing out once on a busy box must not refuse every
+    # download over that file until retention deletes it
+    answers, calls = capinfos
+    make(tmp_path, "busy.pcap")
+    answers["busy.pcap"] = (124, "")  # GNU timeout stopped capinfos
+    idx = index_for(tmp_path)
+    sel = await idx.select(Decimal("100"), Decimal("110"))
+    assert [f.id for f, _ in sel.failed] == ["busy.pcap"]
+    # recorded nearly FAILED_RETRY_SECONDS ago: the failure stands, nothing is read
+    idx._failed_at["busy.pcap"] = time.monotonic() - ci.FAILED_RETRY_SECONDS + 30
+    assert len((await idx.select(Decimal("100"), Decimal("110"))).failed) == 1
+    assert len(calls) == 1
+    answers["busy.pcap"] = (0, table("/pcap/busy.pcap", "100", "200"))
+    # past the retry time: read again, and now it holds the window
+    idx._failed_at["busy.pcap"] = time.monotonic() - ci.FAILED_RETRY_SECONDS - 1
+    sel = await idx.select(Decimal("100"), Decimal("110"))
+    assert ([f.id for f, _ in sel.files], sel.failed, len(calls)) == (
+        ["busy.pcap"],
+        [],
+        2,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_failure_loaded_from_disk_is_tried_again(tmp_path, capinfos):
+    answers, calls = capinfos
+    make(tmp_path, "busy.pcap")
+    answers["busy.pcap"] = (124, "")
+    first = index_for(tmp_path)
+    await first.select(Decimal("100"), Decimal("110"))
+    first._save({"busy.pcap"})
+    answers["busy.pcap"] = (0, table("/pcap/busy.pcap", "100", "200"))
+    sel = await index_for(tmp_path).select(Decimal("100"), Decimal("110"))  # a restart
+    assert [f.id for f, _ in sel.files] == ["busy.pcap"] and len(calls) == 2
 
 
 @pytest.mark.asyncio
