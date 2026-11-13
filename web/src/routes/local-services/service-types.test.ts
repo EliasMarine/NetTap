@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { SSDP_NAME, rowMatches, serviceName, ssdpPacketsHref, vlanWords } from './service-types';
+import { SSDP_NAME, isLinkLocal6, rowMatches, serviceName, ssdpPacketsHref, vlanWords } from './service-types';
+import { MAX_WINDOW_SECONDS } from '$lib/utils/packet-query';
 import { LOCAL_SERVICES } from '../../../e2e/visual/fixtures/local-services';
 
 describe('serviceName', () => {
@@ -48,21 +49,58 @@ describe('rowMatches', () => {
 		expect(rowMatches(tv, 'hue')).toBe(false);
 		expect(rowMatches(tv, '  ')).toBe(true);
 	});
+
+	it('finds an SSDP row by its protocol and name', () => {
+		const ssdp = LOCAL_SERVICES.rows.find((r) => r.protocol === 'ssdp')!;
+		expect(rowMatches(ssdp, 'ssdp')).toBe(true);
+		expect(rowMatches(ssdp, 'upnp')).toBe(true);
+		expect(rowMatches(tv, 'ssdp')).toBe(false);
+	});
+
+	it('reads regex characters as themselves', () => {
+		const printer = { ...tv, service_type: '_ipp._tcp' };
+		expect(rowMatches(printer, '(airprint')).toBe(true);
+		expect(rowMatches(tv, '(')).toBe(false);
+		expect(rowMatches(tv, '.*')).toBe(false);
+	});
 });
 
 describe('ssdpPacketsHref', () => {
-	const now = Date.UTC(2026, 10, 13, 12, 0, 0);
-	it('asks Packet analysis for the sender\'s SSDP over the last 30 minutes', () => {
-		const url = new URL(ssdpPacketsHref('192.168.1.44', now), 'http://x');
-		expect(Object.fromEntries(url.searchParams)).toEqual({
+	const seen = '2026-11-13T12:00:00.250Z';
+	const at = Date.parse(seen) / 1000;
+	const params = (href: string | null) => new URL(href!, 'http://x').searchParams;
+
+	it("asks Packet analysis for the sender's SSDP from a minute before its last announcement to five after", () => {
+		expect(Object.fromEntries(params(ssdpPacketsHref('192.168.1.44', seen)))).toEqual({
 			filter: 'ssdp && ip.src == 192.168.1.44',
-			from: String(now / 1000 - 1800),
-			to: String(now / 1000),
+			from: String(at - 60),
+			to: String(at + 300),
 			limit: '100',
 		});
+		const p = params(ssdpPacketsHref('192.168.1.44', seen));
+		expect(Number(p.get('to')) - Number(p.get('from'))).toBeLessThanOrEqual(MAX_WINDOW_SECONDS);
 	});
 
 	it('uses the IPv6 field for an IPv6 sender', () => {
-		expect(new URL(ssdpPacketsHref('fe80::1', now), 'http://x').searchParams.get('filter')).toBe('ssdp && ipv6.src == fe80::1');
+		expect(params(ssdpPacketsHref('fe80::1', seen)).get('filter')).toBe('ssdp && ipv6.src == fe80::1');
+	});
+
+	it('builds no link for anything but an address, or an unreadable time', () => {
+		expect(ssdpPacketsHref('192.168.1.44 || frame', seen)).toBeNull();
+		expect(ssdpPacketsHref('host', seen)).toBeNull();
+		expect(ssdpPacketsHref('192.168.1.44', 'yesterday')).toBeNull();
+	});
+});
+
+describe('isLinkLocal6', () => {
+	it.each([
+		['fe80::1', true],
+		['FE80::200:5eff:fe10:12', true],
+		['febf::1', true],
+		['fec0::1', false],
+		['2001:db8::1', false],
+		['192.168.1.1', false],
+	])('reads %s as %s', (ip, local) => {
+		expect(isLinkLocal6(ip)).toBe(local);
 	});
 });

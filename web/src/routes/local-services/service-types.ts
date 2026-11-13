@@ -4,7 +4,9 @@
  * reads as itself.
  */
 import type { LocalServiceRow, ServiceSender } from '$lib/api/local-services';
-import { MAX_WINDOW_SECONDS, packetsUrl, windowFor } from '$lib/utils/packet-query';
+// OLD CODE: import { MAX_WINDOW_SECONDS, packetsUrl, windowFor } from '$lib/utils/packet-query'; (review: around last_seen)
+import { isIpAddress } from '$lib/stores/lan';
+import { nsEpoch, packetsUrl } from '$lib/utils/packet-query';
 
 const NAMES: Record<string, string> = {
 	// Apple
@@ -69,8 +71,26 @@ export function rowMatches(row: LocalServiceRow, query: string): boolean {
 	);
 }
 
-/** Packet analysis for an SSDP sender's own announcements over the last 30 minutes. */
-export function ssdpPacketsHref(ip: string, nowMs: number): string {
+// OLD CODE START — NET-264 review: the 30 minutes before the page loaded, not the row's own time
+// /** Packet analysis for an SSDP sender's own announcements over the last 30 minutes. */
+// export function ssdpPacketsHref(ip: string, nowMs: number): string {
+// 	const filter = `ssdp && ${ip.includes(':') ? 'ipv6' : 'ip'}.src == ${ip}`;
+// 	return packetsUrl({ filter, ...windowFor({ kind: 'last', seconds: MAX_WINDOW_SECONDS }, nowMs), limit: 100, device: null, conn: null });
+// }
+// OLD CODE END
+/** Seconds of capture around an SSDP row's last announcement: a minute before, five after (within MAX_WINDOW_SECONDS). */
+const SSDP_BEFORE_S = 60;
+const SSDP_AFTER_S = 300;
+
+/** Packet analysis for an SSDP sender's announcements around its last one; null when either can't be read. */
+export function ssdpPacketsHref(ip: string, lastSeen: string): string | null {
+	const at = Date.parse(lastSeen);
+	// the IP goes into a filter: only an address's characters may reach it
+	if (!isIpAddress(ip) || Number.isNaN(at)) return null;
+	const epoch = (ms: number) => nsEpoch(BigInt(ms) * 1_000_000n);
 	const filter = `ssdp && ${ip.includes(':') ? 'ipv6' : 'ip'}.src == ${ip}`;
-	return packetsUrl({ filter, ...windowFor({ kind: 'last', seconds: MAX_WINDOW_SECONDS }, nowMs), limit: 100, device: null, conn: null });
+	return packetsUrl({ filter, from: epoch(at - SSDP_BEFORE_S * 1000), to: epoch(at + SSDP_AFTER_S * 1000), limit: 100, device: null, conn: null });
 }
+
+/** fe80::/10: a link-local address repeats on every VLAN, so it never stands for one device. */
+export const isLinkLocal6 = (ip: string): boolean => /^fe[89ab][0-9a-f]:/i.test(ip);

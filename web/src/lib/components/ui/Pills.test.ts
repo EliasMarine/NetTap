@@ -19,6 +19,13 @@ describe('Pills toggle mode', () => {
 		expect(screen.getByRole('button', { name: '1h' })).toHaveClass('pill');
 	});
 
+	it('turns every pill off when disabled, and on again after', async () => {
+		const { rerender } = render(Pills, { options: RANGES, value: '24h', ariaLabel: 'Time range', disabled: true });
+		for (const r of RANGES) expect(screen.getByRole('button', { name: r.label })).toBeDisabled();
+		await rerender({ disabled: false });
+		for (const r of RANGES) expect(screen.getByRole('button', { name: r.label })).toBeEnabled();
+	});
+
 	it('selects a pill on click and reports it once', async () => {
 		const onchange = vi.fn();
 		render(Pills, { options: RANGES, value: '24h', ariaLabel: 'Time range', onchange });

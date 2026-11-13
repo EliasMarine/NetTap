@@ -15,6 +15,7 @@ from aiohttp.test_utils import AioHTTPTestCase
 
 from api import local_services
 from api.local_services import register_local_service_routes
+from storage.exact_terms import SearchTimedOut
 from tests.fake_drill_opensearch import (
     AUTH,
     WINDOW,
@@ -106,6 +107,17 @@ DOCS = [
     # A unicast exchange: the querier originated it and got the bridge's answer back
     flow(QUERIER, "Cuni", at("10:50:00"), "00:00:5e:00:53:30", dst=HUE),
     announce(QUERIER, "Cuni", at("10:50:01"), "spoofed._airplay._tcp.local", dst=HUE),
+    # A question the bridge asked, which Zeek pairs with its own reply (every mDNS ID is 0)
+    dns(
+        AIRPLAY,
+        src=HUE,
+        dst=GROUP4,
+        t=at("10:05:00"),
+        destination__port=5353,
+        source__port=5353,
+        zeek__uid="Chue1",
+        zeek__dns__answers=[HUB],
+    ),
     # Browse domains and service lists are no services
     dns(
         "lb._dns-sd._udp.local",
@@ -305,6 +317,14 @@ class TestAnnouncements(Case):
             {r["id"] for r in again["rows"]}, {r["id"] for r in body["rows"]}
         )
 
+    async def test_a_question_the_sender_asked_is_not_its_announcement(self):
+        """A multicast reply has no question section (RFC 6762 §6): zeek.dns.query is what the
+        sender asked, so another device's instance there gives the sender no row."""
+        rows = await self.rows()
+        self.assertEqual(_find(rows, "living room", ip=HUE), [])
+        self.assertEqual(_find(rows, "living room", mac=M_HUE), [])
+        self.assertEqual(len(_find(rows, "hue bridge - 0a0b0c", mac=M_HUE)), 1)
+
     async def test_a_unicast_exchange_never_names_the_querier(self):
         rows = await self.rows()
         self.assertEqual([r for r in rows if r["sender"]["ip"] == QUERIER], [])
@@ -358,12 +378,28 @@ class TestAnnouncements(Case):
             (body["from"], body["to"]), ("2026-11-05T00:00:00Z", "2026-11-05T12:00:00Z")
         )
 
+    # OLD CODE START — NET-264 review: a cap of 2 also cut the reads, so they said truncated too
+    # async def test_a_long_list_is_cut_and_says_so(self):
+    #     with patch.object(local_services, "LIST_CAP", 2):
+    #         status, body = await self.get()
+    #     self.assertEqual(status, 200)
+    #     self.assertTrue(body["truncated"])
+    #     self.assertEqual(len(body["rows"]), 2)
+    # OLD CODE END
     async def test_a_long_list_is_cut_and_says_so(self):
-        with patch.object(local_services, "LIST_CAP", 2):
+        whole = await self.rows()
+        reads = Reads()
+        with patch.object(local_services, "LIST_CAP", 6), reads.patch():
             status, body = await self.get()
         self.assertEqual(status, 200)
+        # every read is whole: only the row cut says truncated
+        self.assertTrue(reads.log)
+        self.assertTrue(all(done for _, done in reads.log), reads.log)
+        self.assertGreater(len(whole), 6)
         self.assertTrue(body["truncated"])
-        self.assertEqual(len(body["rows"]), 2)
+        self.assertEqual(
+            [r["last_seen"] for r in body["rows"]], [r["last_seen"] for r in whole[:6]]
+        )
 
     async def test_a_capped_sender_list_joins_every_uid(self):
         """Past the cap an address's second (MAC, VLAN) may be unread, so no address is
@@ -376,12 +412,35 @@ class TestAnnouncements(Case):
             b
             for b in self.os.bodies
             if [*b["aggs"]["all"]["composite"]["sources"][0]] == ["uid"]
-            and "q" in b["aggs"]["all"].get("aggs", {})
+            and "a" in b["aggs"]["all"].get("aggs", {})
         ]
         self.assertEqual(
             per_flow["query"]["bool"]["should"][0],
             {"bool": {"must_not": [{"terms": {"source.ip": []}}]}},
         )
+
+
+REAL_ALL_BUCKETS = local_services.all_buckets
+
+
+class Reads:
+    """all_buckets, logging each read's (what, complete?); `short` = (what, nth) cuts the nth
+    read of `what` short before its first page, as a cap would."""
+
+    def __init__(self, short: tuple[str, int] | None = None) -> None:
+        self.short, self.log = short, []
+
+    def __call__(self, *args, **kw):
+        nth = sum(w == kw["what"] for w, _ in self.log)
+        if (kw["what"], nth) == self.short:
+            buckets, done = [], False
+        else:
+            buckets, done = REAL_ALL_BUCKETS(*args, **kw)
+        self.log.append((kw["what"], done))
+        return buckets, done
+
+    def patch(self):
+        return patch.object(local_services, "all_buckets", self)
 
 
 NOW = datetime.now(timezone.utc)
@@ -409,9 +468,9 @@ class TestPageSizes(Case):
         for body in self.os.bodies:
             self.assertLessEqual(_page_buckets(body), local_services.PAGE_BUCKETS, body)
         lists = {
-            body["aggs"]["all"]["aggs"]["q"]["terms"]["size"]
+            body["aggs"]["all"]["aggs"]["a"]["terms"]["size"]
             for body in self.os.bodies
-            if "q" in body["aggs"]["all"].get("aggs", {})
+            if "a" in body["aggs"]["all"].get("aggs", {})
         }
         self.assertEqual(
             lists, {local_services.NAMES_PER_SENDER, local_services.NAMES_PER_FLOW}
@@ -420,7 +479,7 @@ class TestPageSizes(Case):
     async def test_one_bucket_pages_give_the_same_rows(self):
         whole = await self.rows()
         with patch.object(
-            local_services, "PAGE_BUCKETS", 2 * local_services.NAMES_PER_FLOW + 1
+            local_services, "PAGE_BUCKETS", local_services.NAMES_PER_FLOW + 1
         ):
             paged = await self.rows()
         self.assertEqual(paged, whole)
@@ -429,12 +488,12 @@ class TestPageSizes(Case):
         def per_flow_pages() -> int:
             return sum(
                 [*b["aggs"]["all"]["composite"]["sources"][0]] == ["uid"]
-                and "q" in b["aggs"]["all"].get("aggs", {})
+                and "a" in b["aggs"]["all"].get("aggs", {})
                 for b in self.os.bodies
             )
 
         one_flow_a_page = patch.object(
-            local_services, "PAGE_BUCKETS", 2 * local_services.NAMES_PER_FLOW + 1
+            local_services, "PAGE_BUCKETS", local_services.NAMES_PER_FLOW + 1
         )
         with one_flow_a_page:
             _, whole = await self.get()
@@ -473,13 +532,85 @@ class TestOpenFlows(Case):
         )
         self.assertTrue(all(r["sender"]["ip"] == HUE for r in rows))
 
+    READS = [
+        ("the open mDNS flows", 0),
+        ("the mDNS connections", 0),  # the open flows' conn records
+        ("the mDNS senders", 0),
+        ("the mDNS names per sender", 0),
+        ("the mDNS names per flow", 0),
+        ("the mDNS connections", 1),  # the per-flow uids' conn records
+        ("the SSDP senders", 0),
+    ]
+
+    async def test_any_read_cut_short_says_truncated(self):
+        whole = Reads()
+        with whole.patch():
+            await self.rows()
+        for what, nth in self.READS:  # each read below happens here
+            self.assertGreater(sum(w == what for w, _ in whole.log), nth, what)
+        for short in self.READS:
+            with self.subTest(short), Reads(short).patch():
+                status, body = await self.get()
+                self.assertEqual(status, 200)
+                self.assertTrue(body["truncated"])
+
+    async def test_a_cut_open_flows_list_joins_every_uid(self):
+        """Past its cap the open flows read may miss a flow: then no address is taken as one
+        sender, or that flow's names would go to the known one."""
+        with Reads(("the open mDNS flows", 0)).patch():
+            _, body = await self.get()
+        self.assertTrue(body["truncated"])
+        self.assertEqual(
+            sorted(r["sender"]["vlan_state"] for r in body["rows"]),
+            ["unknown", "untagged"],
+        )
+
+
+class TestFlowStartedBeforeWindow(Case):
+    """A conn record is stamped when its flow starts: one 10 minutes before `from`, on a second
+    VLAN, still shows the address is two senders."""
+
+    docs = [
+        flow(TV, "Cv2", at("01:00:00"), M_TV, "2"),
+        announce(TV, "Cv2", at("01:00:30"), PRINTER),
+        flow(TV, "Cv40", "2026-11-04T23:50:00.000Z", M_TV, "40"),
+        announce(TV, "Cv40", at("00:05:00"), PRINTER),
+    ]
+
+    async def test_its_vlan_is_its_own_row(self):
+        rows = await self.rows()
+        self.assertEqual(
+            sorted(
+                (r["sender"]["vlan"], r["last_seen"]) for r in _find(rows, "printer")
+            ),
+            [("2", at("01:00:30")), ("40", at("00:05:00"))],
+        )
+
+
+class TestSendersWithoutMac(Case):
+    """Two senders whose conn records carry no MAC are told apart by their IP."""
+
+    docs = [
+        flow(HUE, "Cm1", at("10:00:00"), None),
+        announce(HUE, "Cm1", at("10:00:30"), PRINTER),
+        flow(TV, "Cm2", at("10:01:00"), None),
+        announce(TV, "Cm2", at("10:01:30"), PRINTER),
+    ]
+
+    async def test_each_is_its_own_row(self):
+        rows = await self.rows()
+        self.assertEqual(
+            sorted((r["sender"]["ip"], r["sender"]["vlan_state"]) for r in rows),
+            [(HUE, "untagged"), (TV, "untagged")],
+        )
+
 
 class TestTruncatedNames(Case):
     @staticmethod
     def tamper(body, reply):
         for b in reply.get("aggregations", {}).get("all", {}).get("buckets", []):
-            if "q" in b:
-                b["q"]["sum_other_doc_count"] = 1
+            if "a" in b:
+                b["a"]["sum_other_doc_count"] = 1
         return reply
 
     async def test_a_sender_with_more_names_than_the_list_says_truncated(self):
@@ -515,15 +646,27 @@ class TestPartialReply(Case):
         self.assertEqual((status, body), (502, {"error": INCOMPLETE}))
 
 
+# OLD CODE START — NET-264 review: a timed_out reply never reaches here (the client raises)
+# class TestTimedOut(Case):
+#     @staticmethod
+#     def tamper(body, reply):
+#         return {**reply, "timed_out": True}
+#
+#     async def test_a_timed_out_read_says_try_a_shorter_range(self):
+#         status, body = await self.get()
+#         self.assertEqual(status, 503)
+#         self.assertIn("took too long", body["error"])
+# OLD CODE END
 class TestTimedOut(Case):
+    # what the daemon's client raises for a timed-out search (storage/exact_terms.py), as in
+    # test_moment_api.py
     @staticmethod
     def tamper(body, reply):
-        return {**reply, "timed_out": True}
+        raise SearchTimedOut("the search timed out")
 
-    async def test_a_timed_out_read_says_try_a_shorter_range(self):
+    async def test_is_the_written_502_incomplete(self):
         status, body = await self.get()
-        self.assertEqual(status, 503)
-        self.assertIn("took too long", body["error"])
+        self.assertEqual((status, body), (502, {"error": INCOMPLETE}))
 
 
 def test_a_g11_names_reply_reads_as_service_instances():
@@ -537,25 +680,24 @@ def test_a_g11_names_reply_reads_as_service_instances():
     )
     assert names[("_sleep-proxy._udp", "70-35-60-63.1 living room")]
     assert names[("_hue._tcp", "hue bridge - 0a0b0c")] == "2026-11-13T19:24:54.052Z"
-    # every name the reply listed is one instance, under both fields at most once
-    listed = {b["key"] for side in ("q", "a") for b in bucket[side]["buckets"]}
-    assert len(names) == len(listed)
+    # the router asked for this one: it is in its query list only, so it is no row of its own
+    assert ("_srpl-tls._tcp", "living room") not in names
+    # every name the answers listed is one instance
+    assert len(names) == len({b["key"] for b in bucket["a"]["buckets"]})
 
 
 def test_record_strings_are_not_instances():
+    """Zeek's rdata strings can end like an instance: the names read's exclude drops them, and
+    Python drops the rest that aren't services."""
+    for rdata in (f"NSEC {HUB} {HOMEKIT}", "TXT 9 md=BSB002 x._hap._tcp.local"):
+        assert re.fullmatch(local_services._RDATA_RX, rdata)
+    assert not re.fullmatch(local_services._RDATA_RX, HUB)
     bucket = {
-        "q": {"sum_other_doc_count": 0, "buckets": []},
         "a": {
             "sum_other_doc_count": 0,
             "buckets": [
                 {"key": k, "last": {"value": 1794597894052.0}}
-                for k in (
-                    f"NSEC {HUB} {HOMEKIT}",
-                    "TXT 9 md=BSB002 x._hap._tcp.local",
-                    "_services._dns-sd._udp.local",
-                    "lb._dns-sd._udp.local",
-                    HUB,
-                )
+                for k in ("_services._dns-sd._udp.local", "lb._dns-sd._udp.local", HUB)
             ],
         },
     }

@@ -11,7 +11,8 @@
 - New page `/local-services` ("Local services", in the sidebar's Devices group). It has range pills
   (1h, 6h, 24h, 7d), one search box over every column, and a sortable table: service (plain name +
   raw type), instance, announced by (name, IP, MAC), protocol, VLAN seen on, last announcement.
-  SSDP rows link to Packet analysis (`ssdp && ip.src == …`, last 30 minutes). The page has
+  SSDP rows link to Packet analysis (`ssdp && ip.src == …`, from a minute before the row's last
+  announcement to five minutes after; it was the last 30 minutes before review batch 2). The page has
   empty, error, stale and truncated states.
 - The catch-all web proxy gives `/api/local-services` 30 s, like the other drill-down routes.
 
@@ -89,6 +90,34 @@ unresolved uid is never merged, and rows come from multicast-destination records
   rows; a 1-pair budget stops after the first per-flow page and says truncated; two look-alike
   flows get distinct ids and both render. Each fails without its fix.
 
+## Review fixes (PR #268, batch 2)
+
+- **A question read as an announcement (MEDIUM).** Every mDNS message has ID 0, so Zeek pairs a
+  question the sender asked with its own unrelated reply. A multicast reply has no question
+  section (RFC 6762 §6). Checked on the G11 first, read-only, over 24 h: none of the 115,842
+  mDNS records with answers has `zeek.dns.rtt` (Zeek matched no real pair), and 8 of 40 senders
+  have names in `zeek.dns.query` that aren't in their answers. The router's are other devices'
+  instances (one is `living room._srpl-tls._tcp.local`, answered by the TV). Three hosts have
+  their own `_device-info` name only as a question. Names now come from `zeek.dns.answers` only.
+- One instance pattern for the Lucene include and the Python match. The Python rdata check is
+  gone: the names read's exclude drops those strings, and the fake honours it.
+- Read order: open flows, then their conn records, then who each address was. A conn record
+  the second read saw is in the third.
+- A sender with no MAC keeps its IP in the merge key, so two of them don't merge.
+- Tests: the timed-out test raises `SearchTimedOut` as the real client does (a 502 "incomplete",
+  like moment's). New tests for each read cut short, a cut open-flows list, a flow that started
+  10 minutes before `from` on a second VLAN, the row cap alone, and MAC-less senders. Each fails
+  when its line is reverted.
+- Web: a new load with nothing on screen clears the last error, so "Try again" and a range change
+  show loading. The page opens on Settings › Display's default range if it offers it. The range
+  pills are off while a load runs (Pills gained `disabled`). Global IPv6 senders link like IPv4
+  ones; fe80::/10 stays text, because a link-local address repeats on every VLAN. "Not yet
+  known" and the SSDP link carry screen-reader text (in a positioned parent, or `.sr-only`
+  widened the page at 390 px). A cut list's count reads "At least N". The proxy's allowance
+  is now on the exact path `/api/local-services`.
+- G11 after both batches (read-only, the module's own reads): 9 searches at 24 h (0.85 s of
+  OpenSearch time, 146 mDNS rows), 19 at 7 d (2.5 s, 152 rows). Before: 9 (0.9–1.0 s), 19 (2.4 s).
+
 ## Lessons
 
 - Zeek's `zeek.dns.answers` holds rdata strings like `NSEC <name> <next>`, which match a naive
@@ -96,6 +125,10 @@ unresolved uid is never merged, and rows come from multicast-destination records
   only its own record-type prefixes).
 - Measure a composite over uid before planning on it: mDNS makes a new uid per sender every
   few minutes.
+- `zeek.dns.query` on an mDNS record is a question, not part of the announcement: ID 0 makes Zeek
+  pair unrelated messages. Only the answers say what a sender announced.
+- `.sr-only` is absolutely positioned. Inside a scrolling table, give its parent
+  `position: relative`, or it widens the page.
 
 ## Next steps
 

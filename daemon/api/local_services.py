@@ -5,13 +5,16 @@ the sender (IP, MAC, VLAN). It never says the sender owns the service: a reflect
 re-sends other devices' announcements, and gets its own row per VLAN.
 
 mDNS: Zeek dns records with answers sent to the mDNS groups. In a multicast-destination
-connection only the originator sends, so source.ip is the sender. Unicast exchanges are left
+connection only the originator sends, so source.ip is the sender. Names come from the answers
+only: a multicast reply has no question section (RFC 6762 §6), and every mDNS message has ID 0,
+so Zeek pairs a question the sender asked with its own unrelated reply. Unicast exchanges are left
 out: their originator can be the querier. dns records carry no MAC or VLAN; the conn record with
 the same zeek.uid has both. Joining every uid does not fit the budget (the G11 had ~27,000 mDNS
 uids a day: 26 s of searches at 24 h, 39 s at 7 d even in one composite), so uids are joined one
 by one only where that changes the answer:
-1. who each address was: every (IP, MAC, VLAN) of the mDNS conn records
-2. flows still open: uids announced lately that have no conn record yet
+1. flows still open: uids announced lately that have no conn record yet
+2. who each address was: every (IP, MAC, VLAN) of the mDNS conn records, read after 1 so any
+   conn record 1 found is here too
 3. an address seen as one (MAC, VLAN) only: its closed flows' names, aggregated per IP, are that
    sender's (every one of its conn records names it)
 4. the rest (an address seen with several MACs or VLANs, or with no conn record, and the open
@@ -60,7 +63,7 @@ OPEN_FLOWS = timedelta(minutes=15)
 FLOW_START_PAD = timedelta(days=1)
 # shortcut: the uid-by-uid read stops here (7 d on the G11: 6,065) and says truncated
 UID_CAP = 20_000
-# A reply holds at most search.max_buckets (65,535): a page of buckets with two name lists each is
+# A reply holds at most search.max_buckets (65,535): a page of buckets with a names list each is
 # sized under this, as snapshot_search.py sizes its pages
 PAGE_BUCKETS = 60_000
 # Names one bucket may list (a full list says truncated). On the G11 at 7 d: 54 per sender (the
@@ -70,12 +73,17 @@ NAMES_PER_FLOW = 50
 # (name, bucket) pairs the two names reads may hold in all (the G11 at 7 d: ~18,500), so spoofed
 # announcements can't fill the daemon's memory; past it the reads stop and say truncated
 NAMES_READ = 100_000
-# A DNS-SD instance. Zeek lowercases names, so capitals start only its own rdata strings
-# ("NSEC a._x._tcp.local …", "TXT …")
-_INSTANCE_RX = r"[^_].*\._[a-z0-9-]+\._(tcp|udp)\.local"
+# A DNS-SD instance, read alike by Lucene (the include) and Python (no (?:…), which Lucene lacks).
+# Zeek lowercases names, so capitals start only its own rdata strings ("NSEC a._x._tcp.local …",
+# "TXT …"), which the exclude drops
+# OLD CODE START — NET-264 review: two patterns for one name, and the exclude checked twice
+# _INSTANCE_RX = r"[^_].*\._[a-z0-9-]+\._(tcp|udp)\.local"
+# _INSTANCE = re.compile(r"([^_].*)\.(_[a-z0-9-]+\._(?:tcp|udp))\.local")
+# _RDATA = re.compile(_RDATA_RX)
+# OLD CODE END
+_INSTANCE_RX = r"([^_].*)\.(_[a-z0-9-]+\._(tcp|udp))\.local"
 _RDATA_RX = r"[A-Z][A-Z0-9]* .*"
-_INSTANCE = re.compile(r"([^_].*)\.(_[a-z0-9-]+\._(?:tcp|udp))\.local")
-_RDATA = re.compile(_RDATA_RX)
+_INSTANCE = re.compile(_INSTANCE_RX)
 _NOT_SERVICES = {"_dns-sd._udp"}  # browse domains (lb._dns-sd._udp.local), not services
 
 _CONN = [{"term": {"event.provider": "zeek"}}, CONN_RECORDS]
@@ -116,8 +124,10 @@ def _names(field: str, size: int) -> dict:
 
 
 def _name_aggs(size: int) -> dict:
-    """The names a bucket's records announced, from both fields, up to `size` each."""
-    return {"q": _names("zeek.dns.query", size), "a": _names("zeek.dns.answers", size)}
+    """The names a bucket's records answered with, up to `size`."""
+    # OLD CODE: return {"q": _names("zeek.dns.query", size), "a": _names("zeek.dns.answers", size)}
+    # (NET-264 review: zeek.dns.query is a question the sender asked, not its announcement)
+    return {"a": _names("zeek.dns.answers", size)}
 
 
 def _names_budget() -> Callable[[list[dict]], bool]:
@@ -126,7 +136,7 @@ def _names_budget() -> Callable[[list[dict]], bool]:
 
     def over(page: list[dict]) -> bool:
         nonlocal held
-        held += sum(len(b["q"]["buckets"]) + len(b["a"]["buckets"]) for b in page)
+        held += sum(len(b["a"]["buckets"]) for b in page)
         return held > NAMES_READ
 
     return over
@@ -160,10 +170,10 @@ def _read(
     names: int = 0,
     stop: Callable[[list[dict]], bool] | None = None,
 ) -> tuple[list[dict], bool]:
-    """Every bucket, up to `cap`; with `names`, each lists up to that many names per field, and a
-    page holds at most PAGE_BUCKETS buckets in all."""
+    """Every bucket, up to `cap`; with `names`, each lists up to that many names, and a page holds
+    at most PAGE_BUCKETS buckets in all."""
     cap = cap or LIST_CAP
-    per_bucket = 1 + 2 * names
+    per_bucket = 1 + names
     return all_buckets(
         client,
         NETWORK_INDEX,
@@ -203,16 +213,13 @@ def _joined(
 def _instances(bucket: dict) -> tuple[dict[tuple[str, str], str], bool]:
     """({(service type, instance): last seen} of a bucket's names, complete?)."""
     out: dict[tuple[str, str], str] = {}
-    for b in [*bucket["q"]["buckets"], *bucket["a"]["buckets"]]:
+    for b in bucket["a"]["buckets"]:  # the include and exclude already chose them
         found = _INSTANCE.fullmatch(b["key"])
-        if not found or _RDATA.fullmatch(b["key"]) or found[2] in _NOT_SERVICES:
+        if not found or found[2] in _NOT_SERVICES:
             continue
         key, seen = (found[2], found[1]), iso_ms(b["last"]["value"])
         out[key] = max(out.get(key, seen), seen)
-    complete = not (
-        bucket["q"]["sum_other_doc_count"] or bucket["a"]["sum_other_doc_count"]
-    )
-    return out, complete
+    return out, not bucket["a"]["sum_other_doc_count"]
 
 
 def _sender(ip: str, mac: str | None, vlan: str | None, joined: bool) -> dict:
@@ -236,6 +243,11 @@ def _row_id(key: tuple) -> str:
     return hashlib.blake2b(json.dumps(key).encode(), digest_size=8).hexdigest()
 
 
+def _key(svc: tuple, ip: str, mac: str | None, vlan: str | None) -> tuple:
+    """A joined row's merge key: its sender's (MAC, VLAN), and its IP when it has no MAC."""
+    return ("mdns", *svc, mac, vlan) if mac else ("mdns", *svc, None, vlan, ip)
+
+
 def _newest(keyed: list[tuple[tuple, dict]]) -> list[dict]:
     """One row per key: the one last seen, with that announcement's IP."""
     best: dict[tuple, dict] = {}
@@ -252,6 +264,25 @@ def _mdns_rows(
     """(rows, complete?, uids joined one by one)."""
     window = _time_range_filter(from_ts, to_ts)
     padded = _time_range_filter((_utc(from_ts) - FLOW_START_PAD).isoformat(), to_ts)
+    # OLD CODE START — NET-264 review: `who` came first, so a flow closing between the reads was
+    # in `closed` but its conn record not in `who`
+    # who, done = _read(
+    #     client, budget, _mdns(_CONN, padded), [_IP, *_WHO], "the mDNS senders"
+    # )
+    # seen_as: dict[str, set] = {}
+    # for b in who:
+    #     seen_as.setdefault(b["key"]["ip"], set()).add(
+    #         (b["key"]["mac"], b["key"]["vlan"])
+    #     )
+    # OLD CODE END
+    # recent, closed, then who: a conn record that `closed` saw is in `who` too
+    lately = _time_range_filter((now - OPEN_FLOWS).isoformat(), now.isoformat())
+    recent, recent_done = _read(
+        client, budget, _announcements(lately), [_UID], "the open mDNS flows"
+    )
+    recent_uids = [b["key"]["uid"] for b in recent]
+    closed, closed_done = _joined(client, budget, recent_uids)
+    open_uids = [u for u in recent_uids if u not in closed]
     who, done = _read(
         client, budget, _mdns(_CONN, padded), [_IP, *_WHO], "the mDNS senders"
     )
@@ -260,14 +291,6 @@ def _mdns_rows(
         seen_as.setdefault(b["key"]["ip"], set()).add(
             (b["key"]["mac"], b["key"]["vlan"])
         )
-
-    lately = _time_range_filter((now - OPEN_FLOWS).isoformat(), now.isoformat())
-    recent, recent_done = _read(
-        client, budget, _announcements(lately), [_UID], "the open mDNS flows"
-    )
-    recent_uids = [b["key"]["uid"] for b in recent]
-    closed, closed_done = _joined(client, budget, recent_uids)
-    open_uids = [u for u in recent_uids if u not in closed]
     held_names = _names_budget()  # shared: both names reads count against one budget
     # a capped read could hide an address's second sender or an open flow: then every uid is joined
     one = (
@@ -323,7 +346,8 @@ def _mdns_rows(
         complete = complete and names_done
         for svc, last in names.items():
             row = _row("mdns", svc, _sender(ip, mac, vlan, True), last)
-            keyed.append((("mdns", *svc, mac, vlan), row))
+            # OLD CODE: keyed.append((("mdns", *svc, mac, vlan), row)) (NET-264 review: _key)
+            keyed.append((_key(svc, ip, mac, vlan), row))
     for b in by_uid:
         uid, ip = b["key"]["uid"], b["key"]["ip"]
         names, names_done = _instances(b)
@@ -331,10 +355,10 @@ def _mdns_rows(
         for svc, last in names.items():
             for mac, vlan in joined.get(uid, []):
                 row = _row("mdns", svc, _sender(ip, mac, vlan, True), last)
-                keyed.append((("mdns", *svc, mac, vlan), row))
-            if (
-                uid not in joined
-            ):  # identity not known yet: never merged with another uid
+                # OLD CODE: keyed.append((("mdns", *svc, mac, vlan), row)) (review: _key)
+                keyed.append((_key(svc, ip, mac, vlan), row))
+            # identity not known yet: never merged with another uid
+            if uid not in joined:
                 row = _row("mdns", svc, _sender(ip, None, None, False), last)
                 keyed.append((("mdns", *svc, "uid", uid), row))
     return _newest(keyed), complete, len(by_uid)
