@@ -38,6 +38,8 @@ export const APP_ROUTES: readonly RouteCase[] = [
 	{ path: '/investigations', marker: 'Investigations' },
 	{ path: '/iot', marker: 'IoT trust score' },
 	{ path: '/live', marker: /Live/ },
+	// NET-264: mDNS and SSDP announcements per sender
+	{ path: '/local-services', marker: 'Local services' },
 	{ path: '/logs', marker: 'Log explorer' },
 	// NET-249: a moment a chart opened (the fixture daemon answers any window); the head shows in every mode
 	{ path: '/moment?from=2026-11-12T14:05:00.000Z&to=2026-11-12T14:09:59.999Z&range=24h&chart_from=2026-11-11T14:05:00.000Z&chart_to=2026-11-12T14:05:00.000Z', marker: 'What your network was doing' },

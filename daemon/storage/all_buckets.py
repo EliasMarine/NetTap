@@ -5,7 +5,7 @@ A terms aggregation returns its top `size` buckets; code that sums, counts or sc
 pages through every bucket in key order, so it is the tool for complete sets.
 """
 
-from typing import Any
+from typing import Any, Callable
 
 from storage.exact_terms import PartialResultsError
 from storage.snapshot_search import Budget, QueryFailed, checked
@@ -25,6 +25,7 @@ def all_buckets(
     max_buckets: int = MAX_BUCKETS,
     what: str | None = None,
     budget: Budget | None = None,
+    stop: Callable[[list[dict]], bool] | None = None,
 ) -> tuple[list[dict], bool]:
     """(every composite bucket for `sources`, with `aggs` per bucket; False if max_buckets stopped it).
 
@@ -33,7 +34,8 @@ def all_buckets(
     out, partly failed or aggregation-less reply raises QueryFailed instead of reading as fewer.
     With `budget`, every page first checks it: TooSlow once it has run out, never a shorter list.
     It is passed to the client too (the daemon's ExactTermsOpenSearch), which caps each page's
-    wait at what is left.
+    wait at what is left. `stop(page)` runs after every full page: True ends the scan there,
+    incomplete (NET-264: a caller's own budget on what the buckets hold).
     """
     buckets: list[dict] = []
     after = None
@@ -74,7 +76,8 @@ def all_buckets(
         # a composite fills every page it can, so a short page is the last one
         if len(got) < page_size or after is None:
             return buckets, True
-        if len(buckets) >= max_buckets:
+        # OLD CODE: if len(buckets) >= max_buckets: (NET-264: and the caller's own stop)
+        if len(buckets) >= max_buckets or (stop is not None and stop(got)):
             return buckets, False
 
 

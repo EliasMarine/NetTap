@@ -60,6 +60,29 @@ def test_reports_incomplete_at_the_cap():
     assert complete is False
 
 
+def test_the_callers_stop_ends_the_scan_as_incomplete():
+    """NET-264: `stop` sees every full page and can end the scan before the cap."""
+    client = MagicMock()
+    client.search.side_effect = [
+        _page(["a", "b"], {"ip": "b"}),
+        _page(["c", "d"], {"ip": "d"}),
+        _page(["e"], {"ip": "e"}),
+    ]
+    seen = []
+
+    def stop(page):
+        seen.append([b["key"]["ip"] for b in page])
+        return len(seen) == 2
+
+    buckets, complete = all_buckets(
+        client, "x-*", {}, [{"ip": {"terms": {"field": "f"}}}], page_size=2, stop=stop
+    )
+    assert [b["key"]["ip"] for b in buckets] == ["a", "b", "c", "d"]
+    assert complete is False
+    assert seen == [["a", "b"], ["c", "d"]]
+    assert client.search.call_count == 2
+
+
 def test_a_full_last_page_ends_on_the_empty_page():
     client = MagicMock()
     client.search.side_effect = [_page(["a", "b"], {"ip": "b"}), _page([], {"ip": "b"})]

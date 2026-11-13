@@ -91,6 +91,20 @@ describe('catch-all proxy timeouts with the real daemonFetch', () => {
 		expect((await pending).status).toBe(200);
 	});
 
+	it('lets a 15 s local services answer through (NET-264)', async () => {
+		slowDaemon(15_000);
+		const pending = GET(event('/api/local-services?from=a&to=b') as never);
+		await vi.advanceTimersByTimeAsync(15_000);
+		expect((await pending).status).toBe(200);
+	});
+
+	it('gives the local services allowance to that one path, not to paths that start like it', async () => {
+		slowDaemon();
+		const pending = GET(event('/api/local-services-x') as never);
+		await vi.advanceTimersByTimeAsync(DELAY_MS);
+		expect((await pending).status).toBe(502);
+	});
+
 	// NET-224: a channel test waits for the daemon's send, up to 40 s for a slow mail server
 	it('lets a 12 s channel test answer through, with its reason', async () => {
 		slowDaemon();

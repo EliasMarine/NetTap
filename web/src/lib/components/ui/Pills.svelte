@@ -25,10 +25,12 @@
 		ariaLabel: string;
 		mode?: 'toggle' | 'tabs' | 'nav';
 		idPrefix?: string;
+		/** Toggle and tabs: every pill off, e.g. while the page loads what the last one picked. */
+		disabled?: boolean;
 	}
 
 	const uid = $props.id();
-	let { options, value = $bindable(), onchange, ariaLabel, mode = 'toggle', idPrefix = uid }: Props = $props();
+	let { options, value = $bindable(), onchange, ariaLabel, mode = 'toggle', idPrefix = uid, disabled = false }: Props = $props();
 
 	let tablist = $state<HTMLElement>();
 	// Roving tabindex: the selected tab, or the first when none is selected
@@ -66,6 +68,7 @@
 				aria-selected={option.value === value}
 				aria-controls="{idPrefix}-panel-{option.value}"
 				tabindex={i === focusIndex ? 0 : -1}
+				{disabled}
 				onclick={() => select(option.value)}
 				onkeydown={(e) => onTabKey(e, i)}>{option.label}</button
 			>
@@ -80,7 +83,7 @@
 {:else}
 	<div class="pills" role="group" aria-label={ariaLabel}>
 		{#each options as option (option.value)}
-			<button class="pill" type="button" aria-pressed={option.value === value} onclick={() => select(option.value)}
+			<button class="pill" type="button" aria-pressed={option.value === value} {disabled} onclick={() => select(option.value)}
 				>{option.label}</button
 			>
 		{/each}

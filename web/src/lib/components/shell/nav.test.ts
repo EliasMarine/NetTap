@@ -20,19 +20,36 @@ describe('navigation', () => {
 	// 	expect(item('/compliance')).toMatchObject({ group: 'System', label: 'Security posture' });
 	// });
 	// OLD CODE END
-	it('lists 20 pages, Packet analysis under Investigate, grouped as the design system shows', () => {
+	// OLD CODE START — NET-264: Local services joined Devices, so 21 pages
+	// it('lists 20 pages, Packet analysis under Investigate, grouped as the design system shows', () => {
+	// 	expect(NAV_GROUPS.map((g) => g.label)).toEqual(['Overview', 'Investigate', 'Devices', 'System']);
+	// 	const hrefs = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.href));
+	// 	expect(hrefs.sort()).toEqual(
+	// 		[
+	// 			'/', '/alerts', '/bandwidth', '/certificates', '/changelog', '/compliance', '/connections', '/devices', '/dns',
+	// 			'/infrastructure', '/investigations', '/iot', '/live', '/logs', '/packets', '/pcap', '/settings', '/system', '/threats', '/tools',
+	// 		].sort(),
+	// 	);
+	// 	const item = (href: string) => NAV_GROUPS.flatMap((g) => g.items.map((i) => ({ group: g.label, ...i }))).find((i) => i.href === href);
+	// 	expect(item('/investigations')).toMatchObject({ group: 'Investigate', label: 'Investigations' });
+	// 	expect(item('/compliance')).toMatchObject({ group: 'System', label: 'Security posture' });
+	// 	expect(item('/packets')).toMatchObject({ group: 'Investigate', label: 'Packet analysis' });
+	// });
+	// OLD CODE END
+	it('lists 21 pages, Local services under Devices, grouped as the design system shows', () => {
 		expect(NAV_GROUPS.map((g) => g.label)).toEqual(['Overview', 'Investigate', 'Devices', 'System']);
 		const hrefs = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.href));
 		expect(hrefs.sort()).toEqual(
 			[
 				'/', '/alerts', '/bandwidth', '/certificates', '/changelog', '/compliance', '/connections', '/devices', '/dns',
-				'/infrastructure', '/investigations', '/iot', '/live', '/logs', '/packets', '/pcap', '/settings', '/system', '/threats', '/tools',
+				'/infrastructure', '/investigations', '/iot', '/live', '/local-services', '/logs', '/packets', '/pcap', '/settings', '/system', '/threats', '/tools',
 			].sort(),
 		);
 		const item = (href: string) => NAV_GROUPS.flatMap((g) => g.items.map((i) => ({ group: g.label, ...i }))).find((i) => i.href === href);
 		expect(item('/investigations')).toMatchObject({ group: 'Investigate', label: 'Investigations' });
 		expect(item('/compliance')).toMatchObject({ group: 'System', label: 'Security posture' });
 		expect(item('/packets')).toMatchObject({ group: 'Investigate', label: 'Packet analysis' });
+		expect(item('/local-services')).toMatchObject({ group: 'Devices', label: 'Local services' });
 	});
 
 	it.each([
@@ -54,6 +71,7 @@ describe('navigation', () => {
 		expect(pageTitle('/domain/example.com')).toBe('Domain');
 		expect(pageTitle('/addresses')).toBe('NetTap');
 		expect(pageTitle('/packets')).toBe('Packet analysis');
+		expect(pageTitle('/local-services')).toBe('Local services');
 	});
 
 	it('shows no shell on sign-in and setup only (Go Live keeps it, as before)', () => {

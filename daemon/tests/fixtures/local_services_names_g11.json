@@ -1,0 +1,238 @@
+{
+ "_comment": "One composite bucket of the per-sender names read (local_services._NAME_AGGS), captured on the G11 2026-11-13 for the router's reflected announcements; personal names replaced.",
+ "took": 86,
+ "timed_out": false,
+ "_shards": {
+  "total": 7,
+  "successful": 7,
+  "skipped": 0,
+  "failed": 0
+ },
+ "hits": {
+  "total": {
+   "value": 1184,
+   "relation": "eq"
+  },
+  "max_score": null,
+  "hits": []
+ },
+ "aggregations": {
+  "all": {
+   "after_key": {
+    "ip": "10.10.0.1"
+   },
+   "buckets": [
+    {
+     "key": {
+      "ip": "10.10.0.1"
+     },
+     "doc_count": 1047,
+     "a": {
+      "doc_count_error_upper_bound": 0,
+      "sum_other_doc_count": 0,
+      "buckets": [
+       {
+        "key": "studio mac._companion-link._tcp.local",
+        "doc_count": 140,
+        "last": {
+         "value": 1794597937665.0,
+         "value_as_string": "2026-11-13T19:25:37.665Z"
+        }
+       },
+       {
+        "key": "ipad (2)._companion-link._tcp.local",
+        "doc_count": 132,
+        "last": {
+         "value": 1794597938922.0,
+         "value_as_string": "2026-11-13T19:25:38.922Z"
+        }
+       },
+       {
+        "key": "philips hue homekit._hap._tcp.local",
+        "doc_count": 83,
+        "last": {
+         "value": 1794597894052.0,
+         "value_as_string": "2026-11-13T19:24:54.052Z"
+        }
+       },
+       {
+        "key": "hue bridge - 0a0b0c._hue._tcp.local",
+        "doc_count": 80,
+        "last": {
+         "value": 1794597894052.0,
+         "value_as_string": "2026-11-13T19:24:54.052Z"
+        }
+       },
+       {
+        "key": "laptop-a1b2c3._companion-link._tcp.local",
+        "doc_count": 69,
+        "last": {
+         "value": 1794597938869.0,
+         "value_as_string": "2026-11-13T19:25:38.869Z"
+        }
+       },
+       {
+        "key": "living room._companion-link._tcp.local",
+        "doc_count": 58,
+        "last": {
+         "value": 1794597938882.0,
+         "value_as_string": "2026-11-13T19:25:38.882Z"
+        }
+       },
+       {
+        "key": "020000000001@guest’s macbook air (2)._raop._tcp.local",
+        "doc_count": 46,
+        "last": {
+         "value": 1794597301650.0,
+         "value_as_string": "2026-11-13T19:15:01.650Z"
+        }
+       },
+       {
+        "key": "guest’s macbook air (2)._airplay._tcp.local",
+        "doc_count": 46,
+        "last": {
+         "value": 1794597301650.0,
+         "value_as_string": "2026-11-13T19:15:01.650Z"
+        }
+       },
+       {
+        "key": "020000000002@laptop-a1b2c3._raop._tcp.local",
+        "doc_count": 9,
+        "last": {
+         "value": 1794597487804.0,
+         "value_as_string": "2026-11-13T19:18:07.804Z"
+        }
+       },
+       {
+        "key": "laptop-a1b2c3._airplay._tcp.local",
+        "doc_count": 9,
+        "last": {
+         "value": 1794597487804.0,
+         "value_as_string": "2026-11-13T19:18:07.804Z"
+        }
+       },
+       {
+        "key": "020000000003@studio mac._raop._tcp.local",
+        "doc_count": 5,
+        "last": {
+         "value": 1794597847778.0,
+         "value_as_string": "2026-11-13T19:24:07.778Z"
+        }
+       },
+       {
+        "key": "studio mac._airplay._tcp.local",
+        "doc_count": 5,
+        "last": {
+         "value": 1794597847778.0,
+         "value_as_string": "2026-11-13T19:24:07.778Z"
+        }
+       },
+       {
+        "key": "living room._airplay._tcp.local",
+        "doc_count": 4,
+        "last": {
+         "value": 1794597787469.0,
+         "value_as_string": "2026-11-13T19:23:07.469Z"
+        }
+       },
+       {
+        "key": "70-35-60-63.1 living room._sleep-proxy._udp.local",
+        "doc_count": 3,
+        "last": {
+         "value": 1794597008248.0,
+         "value_as_string": "2026-11-13T19:10:08.248Z"
+        }
+       },
+       {
+        "key": "020000000004@living room._raop._tcp.local",
+        "doc_count": 3,
+        "last": {
+         "value": 1794596827840.0,
+         "value_as_string": "2026-11-13T19:07:07.840Z"
+        }
+       }
+      ]
+     },
+     "q": {
+      "doc_count_error_upper_bound": 0,
+      "sum_other_doc_count": 0,
+      "buckets": [
+       {
+        "key": "studio mac._companion-link._tcp.local",
+        "doc_count": 87,
+        "last": {
+         "value": 1794597843660.0,
+         "value_as_string": "2026-11-13T19:24:03.660Z"
+        }
+       },
+       {
+        "key": "hue bridge - 0a0b0c._hue._tcp.local",
+        "doc_count": 80,
+        "last": {
+         "value": 1794597894052.0,
+         "value_as_string": "2026-11-13T19:24:54.052Z"
+        }
+       },
+       {
+        "key": "ipad (2)._companion-link._tcp.local",
+        "doc_count": 66,
+        "last": {
+         "value": 1794597829841.0,
+         "value_as_string": "2026-11-13T19:23:49.841Z"
+        }
+       },
+       {
+        "key": "guest’s macbook air (2)._airplay._tcp.local",
+        "doc_count": 35,
+        "last": {
+         "value": 1794597299100.0,
+         "value_as_string": "2026-11-13T19:14:59.100Z"
+        }
+       },
+       {
+        "key": "laptop-a1b2c3._companion-link._tcp.local",
+        "doc_count": 17,
+        "last": {
+         "value": 1794597891941.0,
+         "value_as_string": "2026-11-13T19:24:51.941Z"
+        }
+       },
+       {
+        "key": "living room._airplay._tcp.local",
+        "doc_count": 16,
+        "last": {
+         "value": 1794597904786.0,
+         "value_as_string": "2026-11-13T19:25:04.786Z"
+        }
+       },
+       {
+        "key": "living room._companion-link._tcp.local",
+        "doc_count": 12,
+        "last": {
+         "value": 1794597124061.0,
+         "value_as_string": "2026-11-13T19:12:04.061Z"
+        }
+       },
+       {
+        "key": "020000000002@laptop-a1b2c3._raop._tcp.local",
+        "doc_count": 4,
+        "last": {
+         "value": 1794595176586.0,
+         "value_as_string": "2026-11-13T18:39:36.586Z"
+        }
+       },
+       {
+        "key": "living room._srpl-tls._tcp.local",
+        "doc_count": 1,
+        "last": {
+         "value": 1794596097296.0,
+         "value_as_string": "2026-11-13T18:54:57.296Z"
+        }
+       }
+      ]
+     }
+    }
+   ]
+  }
+ }
+}

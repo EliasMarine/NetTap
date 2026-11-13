@@ -106,6 +106,7 @@ from api.domains import register_domain_routes
 from api.moment import register_moment_routes
 from api.dhcp_timeline import register_dhcp_timeline_routes
 from api.device_compare import register_device_compare_routes
+from api.local_services import register_local_service_routes
 from api.suricata_categories import register_suricata_category_routes
 from services.pipeline_health import OVERALL as PIPELINE_OVERALL, PipelineHealth
 from services.tshark_service import TSharkService
@@ -1501,6 +1502,8 @@ def create_app(
     register_dhcp_timeline_routes(app, app["moment_client"])
     # NET-265: a device's two periods compared, on the drill-down client and permits
     register_device_compare_routes(app, drill_client)
+    # NET-264: the local service browser, in the same permits and on the same client
+    register_local_service_routes(app, app["moment_client"])
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 

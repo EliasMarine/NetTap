@@ -17,6 +17,7 @@ import { IOT_ROUTES } from './iot.ts';
 import { LIVE_ROUTES } from './live.ts';
 import { LIVE_BANDWIDTH_ROUTES } from './live-bandwidth.ts';
 import { LOGS_ROUTES } from './logs.ts';
+import { LOCAL_SERVICES_ROUTES } from './local-services.ts';
 import { LOOKUP_ROUTES } from './lookup.ts';
 import { MOMENT_ROUTES } from './moment.ts';
 import { NOTIFICATION_ROUTES } from './notifications.ts';
@@ -52,6 +53,7 @@ export const ROUTES: readonly FixtureRoute[] = [
 	...LIVE_ROUTES,
 	...LIVE_BANDWIDTH_ROUTES,
 	...LOGS_ROUTES,
+	...LOCAL_SERVICES_ROUTES,
 	...LOOKUP_ROUTES,
 	...MOMENT_ROUTES,
 	...NOTIFICATION_ROUTES,
