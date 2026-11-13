@@ -1889,6 +1889,10 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `scripts/remote/gate-detection-slice2.sh`, `deploy-detection-slice2.sh`, `rollback-detection-slice2.sh`, `check-etpro-canary.sh`, `check-rules-update-safety.sh` | NET-191 | NEW: deploy gate (staged update + checks + replays), deploy, rollback, ET Pro credential checks, update safety checks. |
 | `daemon/services/rules_lock.py`, `daemon/services/etpro.py` | NET-191 | NEW: the daemon side of the rules lock; ET Pro save/clear (preflight, 600 file, restart under the lock, activation watch). |
 | `config/capture/nettap-capture-env.sh` | NET-191 | Reads `/etc/nettap/suricata.env` and swaps `et/open` for `et/pro|secret-code=…`; an invalid code is ignored and never printed. |
+| `docker/Dockerfile.zeek-live` | NET-220 | Also edits Malcolm's entrypoint setcap lines to `CAP_NET_RAW+eip` and sets `cap_net_raw=eip` on zeek and capstats; the build fails if the setcap lines change or getcap differs. Its compose `cap_add` is `[NET_RAW]` and `mem_limit: 3g`: image and compose roll back together (a file capability outside the bounding set makes exec fail). |
+| `config/suricata/nettap.yaml` | NET-206 | Restates the whole `stats:` block (an included block replaces Malcolm's): `enabled: yes`, `interval: 10`, `decoder-events: no`. No eve stats, no stats.log. |
+| `daemon/services/pcap_search.py`, `daemon/api/pcap.py` | NET-189 | "Download filtered" streams `FILTER_DOWNLOAD_JOB` (packet analysis's window cut + `tshark -Y -w -`) with files from `CaptureIndex.select`; no temp files. Refuses failed index entries and windows over 400k packets / 64 files / 3 GB; one download at a time; 240 s deadline; aborts the response after a failure past the first byte. |
+| `scripts/remote/deploy-capture-hardening.sh`, `verify_pcap_download.py`, `measure-capture-loss.sh` | NET-220, NET-206, NET-189 | NEW: deploy + checks for the three; the capture-loss comparison (meter off vs eight watches) with Suricata's counters. |
 
 ---
 
@@ -2111,6 +2115,10 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 178. **A device sudo rule of `docker` only means host-side locks go through a container (Chain 27)** — `sudo flock` and `sudo VAR=x docker` both need a password there. A throwaway container of the live image, on the same volume, takes `flock` and sleeps; `docker rm -f` releases it, and a sleep cap stops a dead script from holding it.
 179. **`docker exec` gets the image and compose environment, not what the entrypoint exported (Chain 27)** — anything an entrypoint wrapper computes (here the ET Pro source swap) must be written to a file that later `docker exec` calls read.
 180. **A proxy's header buffer must fit the app's largest response header (Chain 29)**: SvelteKit's `Link` preload header grows with every chunk a page imports, past nginx's 4 KB default. Check a logged-in full reload, not an unauthenticated `curl /`.
+181. **A capture binary's file capability is where its privilege comes from, so cap_add alone doesn't drop it (NET-220)** — Zeek runs as uid 1000 and gets CAP_NET_ADMIN|NET_RAW only from `setcap` on the binary, which Malcolm's entrypoint re-applies at every start. Dropping NET_ADMIN needs the image (binary + entrypoint line) and compose's `cap_add` changed together; the kernel refuses to exec a binary whose file capability isn't inside the bounding set.
+182. **`no-new-privileges` blocks file-capability gains too, not only setuid (NET-220)** — tested on the G11: a uid-1000 shell exec'ing capstats captured without it and failed `socket: Operation not permitted` with it. Lesson 1 holds for zeek-live for this reason as well as `su`.
+183. **An included Suricata block replaces the earlier one, it doesn't merge (NET-206)** — `suricata --dump-config` showed `stats` "redefined": the include's `stats:` dropped Malcolm's interval and decoder-events. Restate the whole block.
+184. **A download that picks files by mtime misses the file that started inside the window (NET-189)** — select files by their packet times (the capture index), and stream instead of merging into a size-limited tmpfs.
 
 ---
 
