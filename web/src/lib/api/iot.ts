@@ -281,22 +281,24 @@ export async function getIoTAnomalies(
 	return res.json();
 }
 
-export async function classifyDevice(
-	mac: string,
-	info: { manufacturer?: string; hostname?: string }
-): Promise<{ mac: string; is_iot: boolean; message: string }> {
-	const res = await fetch(`/api/iot/devices/${encodeURIComponent(mac)}/classify`, {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(info),
-	});
-
-	if (!res.ok) {
-		throw new Error(`Failed to classify device: ${res.status}`);
-	}
-
-	return res.json();
-}
+// OLD CODE START — NET-174: no page called it, and the daemon route is gone
+// export async function classifyDevice(
+// 	mac: string,
+// 	info: { manufacturer?: string; hostname?: string }
+// ): Promise<{ mac: string; is_iot: boolean; message: string }> {
+// 	const res = await fetch(`/api/iot/devices/${encodeURIComponent(mac)}/classify`, {
+// 		method: 'POST',
+// 		headers: { 'Content-Type': 'application/json' },
+// 		body: JSON.stringify(info),
+// 	});
+//
+// 	if (!res.ok) {
+// 		throw new Error(`Failed to classify device: ${res.status}`);
+// 	}
+//
+// 	return res.json();
+// }
+// OLD CODE END
 
 export async function getFleetSummary(
 	opts: { from?: string; to?: string } = {}

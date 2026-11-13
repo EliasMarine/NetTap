@@ -72,26 +72,50 @@ describe('catch-all API proxy', () => {
 	});
 
 	it('forwards POST requests with JSON body', async () => {
-		const mockResponse = new Response(JSON.stringify({ mac: 'aa:bb:cc:dd:ee:ff', is_iot: true }), {
+		// OLD CODE START — NET-174: the example route (POST /api/iot/devices/{mac}/classify) is gone
+		// const mockResponse = new Response(JSON.stringify({ mac: 'aa:bb:cc:dd:ee:ff', is_iot: true }), {
+		// 	status: 200,
+		// 	headers: { 'Content-Type': 'application/json' },
+		// });
+		// mockDaemonFetch.mockResolvedValue(mockResponse);
+		//
+		// const url = new URL('http://localhost/api/iot/devices/aa%3Abb%3Acc%3Add%3Aee%3Aff/classify');
+		// const request = new Request(url, {
+		// 	method: 'POST',
+		// 	headers: { 'Content-Type': 'application/json' },
+		// 	body: JSON.stringify({ manufacturer: 'Ring' }),
+		// });
+		//
+		// await proxyToDaemon({ url, request }, 'POST');
+		//
+		// expect(mockDaemonFetch).toHaveBeenCalledWith(
+		// 	'/api/iot/devices/aa%3Abb%3Acc%3Add%3Aee%3Aff/classify',
+		// 	expect.objectContaining({
+		// 		method: 'POST',
+		// 		body: '{"manufacturer":"Ring"}',
+		// 	})
+		// );
+		// OLD CODE END
+		const mockResponse = new Response(JSON.stringify({ id: 'inv-1' }), {
 			status: 200,
 			headers: { 'Content-Type': 'application/json' },
 		});
 		mockDaemonFetch.mockResolvedValue(mockResponse);
 
-		const url = new URL('http://localhost/api/iot/devices/aa%3Abb%3Acc%3Add%3Aee%3Aff/classify');
+		const url = new URL('http://localhost/api/investigations/inv%201/notes');
 		const request = new Request(url, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ manufacturer: 'Ring' }),
+			body: JSON.stringify({ content: 'Checked the camera' }),
 		});
 
 		await proxyToDaemon({ url, request }, 'POST');
 
 		expect(mockDaemonFetch).toHaveBeenCalledWith(
-			'/api/iot/devices/aa%3Abb%3Acc%3Add%3Aee%3Aff/classify',
+			'/api/investigations/inv%201/notes',
 			expect.objectContaining({
 				method: 'POST',
-				body: '{"manufacturer":"Ring"}',
+				body: '{"content":"Checked the camera"}',
 			})
 		);
 	});

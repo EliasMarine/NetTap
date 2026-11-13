@@ -17,7 +17,7 @@ from api.iot import register_iot_routes
 from storage.manager import RetentionConfig, StorageManager
 
 MAC = "aa:bb:cc:dd:ee:ff"
-# One request per handler (11). The baseline handler calls the monitor twice.
+# One request per handler (10). The baseline handler calls the monitor twice.
 ENDPOINTS = [
     ("GET", "/api/iot/devices"),
     ("GET", f"/api/iot/devices/{MAC}/baseline"),
@@ -29,7 +29,7 @@ ENDPOINTS = [
     ("GET", "/api/iot/protocol-audit"),
     ("GET", "/api/iot/network-isolation"),
     ("GET", "/api/iot/manufacturer-profiles"),
-    ("POST", f"/api/iot/devices/{MAC}/classify"),
+    # OLD CODE: ("POST", f"/api/iot/devices/{MAC}/classify"), (NET-174: route removed)
 ]
 
 
@@ -40,7 +40,7 @@ class _RecordingMonitor:
         "get_iot_devices": [],
         "get_anomalies": [],
         "get_device_baseline": None,
-        "classify_as_iot": True,
+        # OLD CODE: "classify_as_iot": True, (NET-174)
     }
 
     def __init__(self):
@@ -82,6 +82,18 @@ class TestIoTHandlersUseSerialExecutor(AioHTTPTestCase):
         self.assertEqual(len(names), len(ENDPOINTS) + 1)  # + build_baseline
         for name, thread in self.monitor.calls:
             self.assertTrue(thread.startswith("nettap-iot"), f"{name} ran on {thread}")
+
+    @unittest_run_loop
+    async def test_the_classify_route_is_gone(self):
+        """NET-174: nothing called it, and the device it added was lost on the next range."""
+        for method in ("POST", "GET"):
+            resp = await self.client.request(
+                method,
+                f"/api/iot/devices/{MAC}/classify",
+                json={"manufacturer": "Ring"},
+            )
+            self.assertEqual(resp.status, 404, method)
+        self.assertEqual(self.monitor.calls, [])
 
     @unittest_run_loop
     async def test_discovery_and_report_never_overlap(self):

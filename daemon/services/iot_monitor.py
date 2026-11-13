@@ -1171,40 +1171,43 @@ class IoTMonitor:
             "unusual_timing": None,
         }
 
-    def classify_as_iot(self, device_mac: str, device_info: dict[str, Any]) -> bool:
-        """Classify a device as IoT based on manufacturer OUI matching.
-
-        Args:
-            device_mac: Device MAC address.
-            device_info: Dict with 'manufacturer', 'hostname', etc.
-
-        Returns:
-            True if classified as IoT.
-        """
-        mac = device_mac.strip().upper()
-        manufacturer = (device_info.get("manufacturer") or "").lower()
-        hostname = (device_info.get("hostname") or "").lower()
-
-        # OLD CODE START — DEV-9: substrings, so "ring" matched "Murata Manufacturing"
-        # is_iot = any(
-        #     vendor in manufacturer or vendor in hostname for vendor in IOT_MANUFACTURERS
-        # )
-        # OLD CODE END
-        is_iot = bool(
-            _IOT_KEYWORD_RE.search(manufacturer) or _IOT_KEYWORD_RE.search(hostname)
-        )
-
-        if is_iot:
-            self._iot_devices[mac] = {
-                "mac": mac,
-                "manufacturer": device_info.get("manufacturer", "Unknown"),
-                "hostname": device_info.get("hostname"),
-                "ip": device_info.get("ip"),
-                "classified_at": datetime.now(timezone.utc).isoformat(),
-                "is_iot": True,
-            }
-
-        return is_iot
+    # OLD CODE START — NET-174: only POST /api/iot/devices/{mac}/classify called it, and no page
+    # did. Its entry was lost on the next range request (discovery rebuilds _iot_devices).
+    # def classify_as_iot(self, device_mac: str, device_info: dict[str, Any]) -> bool:
+    #     """Classify a device as IoT based on manufacturer OUI matching.
+    #
+    #     Args:
+    #         device_mac: Device MAC address.
+    #         device_info: Dict with 'manufacturer', 'hostname', etc.
+    #
+    #     Returns:
+    #         True if classified as IoT.
+    #     """
+    #     mac = device_mac.strip().upper()
+    #     manufacturer = (device_info.get("manufacturer") or "").lower()
+    #     hostname = (device_info.get("hostname") or "").lower()
+    #
+    #     # OLD CODE START — DEV-9: substrings, so "ring" matched "Murata Manufacturing"
+    #     # is_iot = any(
+    #     #     vendor in manufacturer or vendor in hostname for vendor in IOT_MANUFACTURERS
+    #     # )
+    #     # OLD CODE END
+    #     is_iot = bool(
+    #         _IOT_KEYWORD_RE.search(manufacturer) or _IOT_KEYWORD_RE.search(hostname)
+    #     )
+    #
+    #     if is_iot:
+    #         self._iot_devices[mac] = {
+    #             "mac": mac,
+    #             "manufacturer": device_info.get("manufacturer", "Unknown"),
+    #             "hostname": device_info.get("hostname"),
+    #             "ip": device_info.get("ip"),
+    #             "classified_at": datetime.now(timezone.utc).isoformat(),
+    #             "is_iot": True,
+    #         }
+    #
+    #     return is_iot
+    # OLD CODE END
 
     def build_baseline(
         self,
