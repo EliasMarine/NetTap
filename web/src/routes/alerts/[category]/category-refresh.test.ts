@@ -5,7 +5,8 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
-import { readable, get } from 'svelte/store';
+// OLD CODE: import { readable, get } from 'svelte/store'; (NET-185: the page store is writable)
+import { get } from 'svelte/store';
 import {
 	getAlertCategoryDetail,
 	getAlertCategoryTimeline,
@@ -23,10 +24,20 @@ import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
 /** NET-160: the daemon's LAN policy, so LAN addresses link to their device page. */
 const LAN_POLICY = { version: 'v1', subnets: ['192.168.1.0/24'], source: 'env', ipv6: 'not-lan' };
 
-vi.mock('$app/stores', () => ({
-	page: readable({ url: new URL('http://localhost/alerts/scan'), params: { category: 'scan' } }),
-}));
-vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+// OLD CODE START — NET-185: the range pills write the URL now, so goto moves the page store
+// vi.mock('$app/stores', () => ({
+// 	page: readable({ url: new URL('http://localhost/alerts/scan'), params: { category: 'scan' } }),
+// }));
+// vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+// OLD CODE END
+const nav = vi.hoisted(() => ({ set: (_href: string) => {} }));
+vi.mock('$app/stores', async () => {
+	const { writable } = await import('svelte/store');
+	const page = writable({ url: new URL('http://localhost/alerts/scan'), params: { category: 'scan' } });
+	nav.set = (href) => page.set({ url: new URL(href, 'http://localhost'), params: { category: 'scan' } });
+	return { page };
+});
+vi.mock('$app/navigation', () => ({ goto: vi.fn(async (href: string) => nav.set(href)) }));
 vi.mock('$api/alerts', async (importOriginal) => ({
 	...(await importOriginal<typeof import('$api/alerts')>()),
 	getAlertCategoryDetail: vi.fn(),
@@ -89,6 +100,7 @@ function succeedAll() {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	nav.set('/alerts/scan');
 	vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => LAN_POLICY })));
 });
 afterEach(() => vi.mocked(getAlerts).mockReset());

@@ -38,6 +38,23 @@ describe('GET /api/alerts proxy', () => {
 		expect(sent(2).has('suricata_category')).toBe(false);
 	});
 
+	// NET-185: forwarded as given, so the daemon's true/false check decides; never dropped into an unfiltered list
+	it('forwards no_rule_name raw, empty included, passes the 400 through, and leaves out an absent one', async () => {
+		daemonFetch.mockReset();
+		const call = (query: string) => GET({ url: new URL(`http://x/api/alerts${query}`) } as unknown as Parameters<typeof GET>[0]);
+		const sent = (i: number) => new URL(daemonFetch.mock.calls[i][0], 'http://daemon').searchParams;
+		daemonFetch.mockResolvedValue(new Response(JSON.stringify({ alerts: [] }), { status: 200 }));
+		await call('?no_rule_name=true');
+		expect(sent(0).get('no_rule_name')).toBe('true');
+		daemonFetch.mockResolvedValue(new Response(JSON.stringify({ error: 'no_rule_name must be true or false' }), { status: 400 }));
+		for (const [i, value] of ['maybe', ''].entries()) {
+			const res = await call(`?no_rule_name=${value}`);
+			expect([sent(i + 1).get('no_rule_name'), res.status]).toEqual([value, 400]);
+		}
+		await call('?signature=x');
+		expect(sent(3).has('no_rule_name')).toBe(false);
+	});
+
 	// NET-191: only the literal `true` asks for the activity alerts
 	it('forwards activity=true, and drops any other activity value', async () => {
 		daemonFetch.mockReset();

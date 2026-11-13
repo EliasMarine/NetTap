@@ -66,6 +66,7 @@
 		partialListNote,
 		startRange,
 		suricataCategoryHref,
+		windowQuery,
 		type CustomWindow,
 		type DrillWindow,
 		type LinkedCount,
@@ -205,6 +206,8 @@
 	let suricataCategoryFilter = $state('');
 	/** The list shows the activity alerts (ET rates them informational or unknown, never counted) instead (NET-191) */
 	let activityFilter = $state(false);
+	/** Only the alerts with no rule name: a category's "No rule name" bar (NET-185) */
+	let noRuleNameFilter = $state(false);
 	/** The activity alerts over the window loadAll asked about; null while unknown or when the request failed */
 	// OLD CODE: let activityCount = $state<(DrillWindow & { total: number }) | null>(null); (NET-228: and how many have Suricata priority high)
 	let activityCount = $state<(DrillWindow & { total: number; high: number }) | null>(null);
@@ -219,6 +222,8 @@
 	let shownWindow = $state<DrillWindow & { range: string }>({ from: '', to: '', range: '24h' });
 	/** The window the Top signatures counts on screen came from; a row opens the list over it (slice 2b-2). */
 	let signaturesWindow = $state<DrillWindow & { range: string }>({ from: '', to: '', range: '24h' });
+	/** The window the Alert categories counts on screen came from; a bar opens its category over it (NET-185). */
+	let categoriesWindow = $state<DrillWindow & { range: string }>({ from: '', to: '', range: '24h' });
 	let currentPage = $state(1);
 	let totalPages = $state(0);
 	let totalAlerts = $state(0);
@@ -724,6 +729,7 @@
 			signature: signatureFilter || undefined,
 			suricata_category: suricataCategoryFilter || undefined,
 			activity: activityFilter || undefined,
+			no_rule_name: noRuleNameFilter || undefined,
 			sort: SERVER_SORT[sortKey],
 			order: sortDir,
 		};
@@ -850,7 +856,11 @@
 			topSrcIps = src.value.ips;
 			topPartial = { ...topPartial, srcIps: partialNote(src.value, 'addresses') };
 		}
-		if (cats.status === 'fulfilled') enhancedCategories = cats.value.categories;
+		// OLD CODE: if (cats.status === 'fulfilled') enhancedCategories = cats.value.categories; (NET-185: the bars keep their window)
+		if (cats.status === 'fulfilled') {
+			enhancedCategories = cats.value.categories;
+			categoriesWindow = shown;
+		}
 		if (summary.status === 'fulfilled') {
 			smartSummary = summary.value;
 			threatScore = summary.value.threat_score;
@@ -929,7 +939,8 @@
 	// OLD CODE: const LIST_PARAMS = ['severity', 'signature', 'ip', 'range', 'from', 'to'] as const; (slice 2b-1: src and dst)
 	// OLD CODE: const LIST_PARAMS = ['severity', 'signature', 'ip', 'src', 'dst', 'range', 'from', 'to'] as const; (slice 2b-2: suricata_category)
 	// OLD CODE: const LIST_PARAMS = ['severity', 'signature', 'ip', 'src', 'dst', 'suricata_category', 'range', 'from', 'to'] as const; (NET-191: activity)
-	const LIST_PARAMS = ['severity', 'signature', 'ip', 'src', 'dst', 'suricata_category', 'activity', 'range', 'from', 'to'] as const;
+	// OLD CODE: const LIST_PARAMS = ['severity', 'signature', 'ip', 'src', 'dst', 'suricata_category', 'activity', 'range', 'from', 'to'] as const; (NET-185: no_rule_name)
+	const LIST_PARAMS = ['severity', 'signature', 'ip', 'src', 'dst', 'suricata_category', 'activity', 'no_rule_name', 'range', 'from', 'to'] as const;
 	/** Where the window's parameters start in LIST_PARAMS: range, from, to. */
 	const WINDOW_AT = LIST_PARAMS.indexOf('range');
 
@@ -1202,7 +1213,8 @@
 			// OLD CODE: const [severity, signature, ip, rangeParam, from, to] = next; (slice 2b-1: src and dst)
 			// OLD CODE: const [severity, signature, ip, src, dst, rangeParam, from, to] = next; (slice 2b-2: suricata_category)
 			// OLD CODE: const [severity, signature, ip, src, dst, suricataCategory, rangeParam, from, to] = next; (NET-191: activity)
-			const [severity, signature, ip, src, dst, suricataCategory, activity, rangeParam, from, to] = next;
+			// OLD CODE: const [severity, signature, ip, src, dst, suricataCategory, activity, rangeParam, from, to] = next; (NET-185)
+			const [severity, signature, ip, src, dst, suricataCategory, activity, noRuleName, rangeParam, from, to] = next;
 			activeFilter = SEVERITY_FILTERS.find((f) => f.value === severity)?.value ?? 'all';
 			signatureFilter = signature;
 			ipFilter = ip;
@@ -1210,6 +1222,7 @@
 			dstFilter = dst;
 			suricataCategoryFilter = suricataCategory;
 			activityFilter = activity === 'true';
+			noRuleNameFilter = noRuleName === 'true';
 			custom = customRange(from, to);
 			// OLD CODE: baseRange = TIME_RANGES.some((r) => r.value === rangeParam) ? rangeParam : '24h'; (NET-195: a link's range, else Settings › Display's default)
 			baseRange = TIME_RANGES.some((r) => r.value === rangeParam) ? rangeParam : startRange('24h');
@@ -1293,7 +1306,8 @@
 	const zero = $derived(nothingFound('No counted rule matches in this period', healthCheck.health, healthCheck.failed));
 	const noGroups = $derived(nothingFound('No alert groups to review in this period', healthCheck.health, healthCheck.failed, "Can't tell if anything needs review"));
 	/** Any list filter on: an empty list then says so, not that nothing matched at all (audit HON-29) */
-	const listFiltered = $derived(activeFilter !== 'all' || !!(signatureFilter || ipFilter || srcFilter || dstFilter || suricataCategoryFilter));
+	// OLD CODE: const listFiltered = $derived(activeFilter !== 'all' || !!(signatureFilter || ipFilter || srcFilter || dstFilter || suricataCategoryFilter)); (NET-185)
+	const listFiltered = $derived(activeFilter !== 'all' || noRuleNameFilter || !!(signatureFilter || ipFilter || srcFilter || dstFilter || suricataCategoryFilter));
 
 	// OLD CODE START — NET-160: the device page for every address, unencoded
 	// const ipBars = (entries: AlertIpEntry[]) =>
@@ -1457,6 +1471,12 @@ OLD CODE END -->
 					<span class="chip">
 						Signature: <span class="mono">{signatureFilter.length > 40 ? signatureFilter.slice(0, 40) + '…' : signatureFilter}</span>
 						<button class="chip-x" type="button" onclick={clearSignatureFilter} aria-label="Clear signature filter"><Icon name="close" /></button>
+					</span>
+				{/if}
+				{#if noRuleNameFilter}
+					<span class="chip">
+						No rule name
+						<button class="chip-x" type="button" onclick={() => setListParams({ no_rule_name: null })} aria-label="Clear the no rule name filter"><Icon name="close" /></button>
 					</span>
 				{/if}
 				{#if ipFilter}
@@ -1639,7 +1659,8 @@ OLD CODE END -->
 					display: formatNumber(cat.count),
 					// OLD CODE: detail: cat.trend.direction === 'stable' ? undefined : cat.trend.direction, (NET-228)
 					detail: cat.trend.direction === 'stable' ? undefined : cat.trend.direction === 'not_enough_data' ? 'not enough data' : cat.trend.direction,
-					href: `/alerts/${cat.id}`,
+					// OLD CODE: href: `/alerts/${cat.id}`, (NET-185: the category opened over its own default window)
+					href: `/alerts/${cat.id}?${windowQuery(categoriesWindow, categoriesWindow.range)}`,
 				}))}
 			/>
 		{/if}
