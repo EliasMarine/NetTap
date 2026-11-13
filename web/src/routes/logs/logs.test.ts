@@ -701,7 +701,11 @@ describe('Log Explorer — top address bars open their figure', () => {
 
 	it('a sort or "load more" runs the searched text, not text typed but not submitted', async () => {
 		await openWithFilters(150);
-		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [hit('a', '10.0.0.5')], total: 150, search_after: [1] } });
+		// OLD CODE START — every reply carried the same hit 'a', so "load more" appended a duplicate row key
+		// stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [hit('a', '10.0.0.5')], total: 150, search_after: [1] } });
+		// OLD CODE END
+		let n = 0;
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': () => ({ hits: [hit(`h${n++}`, '10.0.0.5')], total: 150, search_after: [n] }) });
 		await fireEvent.click(bar('10.0.0.5'));
 		await screen.findByText(/^You clicked 10\./);
 		await fireEvent.input(screen.getByLabelText('Search logs'), { target: { value: 'not yet submitted' } });
