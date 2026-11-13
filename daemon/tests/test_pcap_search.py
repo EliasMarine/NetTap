@@ -14,7 +14,9 @@ import pytest
 
 import services.pcap_search as pcap_search_mod
 from services import packet_search as ps
-from services.capture_index import StillIndexing
+from decimal import Decimal
+
+from services.capture_index import Selection, StillIndexing
 from services.container_exec import ReaderBusy
 from services.pcap_search import PcapSearchService
 from tests.fake_pcap_download import FakeIndex, FakeTshark, capture, failed
@@ -902,6 +904,31 @@ class TestStreamedDownload:
         with pytest.raises(ValueError, match="One download reads at most 400,000"):
             await _download(_svc(tmp_path, FakeIndex(files)))
         assert tshark.calls == []
+
+    @pytest.mark.asyncio
+    async def test_only_the_windows_share_of_each_file_counts(self, tmp_path, tshark):
+        # 256 MB files of ~300k packets each: whole, two are over the budget, but a 20 s
+        # window across the change reads about 10% of each (NET-189 review)
+        a = capture("a.pcap", f"{T - 100}", f"{T + 10}", packets=300_000)
+        b = capture("b.pcap", f"{T + 10}", f"{T + 110}", packets=300_000)
+        found, _ = await _download(
+            _svc(tmp_path, FakeIndex([a, b])), start=T, end=T + 20
+        )
+        assert found is True
+        assert (
+            pcap_search_mod._window_packets(
+                Selection([a, b], []), Decimal(T), Decimal(T + 20)
+            )
+            == 27_272 + 30_000
+        )  # 10/110 of a, 10/100 of b
+        # a file whose packets share one timestamp counts whole
+        one = capture("one.pcap", f"{T + 5}", f"{T + 5}", packets=7)
+        assert (
+            pcap_search_mod._window_packets(
+                Selection([one], []), Decimal(T), Decimal(T + 20)
+            )
+            == 7
+        )
 
     @pytest.mark.asyncio
     async def test_a_refused_filter_is_tsharks_message_before_the_read(

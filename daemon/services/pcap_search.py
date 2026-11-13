@@ -879,7 +879,7 @@ class PcapSearchService:
             reader_slot(self._semaphore, _DOWNLOAD_SLOT_WAIT_SECONDS),
         ):
             sel = await self._index.select(start, end)
-            _admit_download(sel)
+            _admit_download(sel, start, end)
             if not sel.files:
                 return False
             await _check_download_filter(bpf_filter)
@@ -974,7 +974,27 @@ def _window(from_ts: str | None, to_ts: str | None) -> tuple[Decimal, Decimal]:
     return start, end
 
 
-def _admit_download(sel: Selection) -> None:
+def _window_packets(sel: Selection, start: Decimal, end: Decimal) -> int:
+    """About how many packets TShark dissects: the window cut passes only the window's
+    packets, so each file counts with the share of its first-to-last span the window covers.
+
+    shortcut: assumes an even packet rate inside a file; a burst can put more in the window,
+    and then the container's memory limit stops the job with an "out of memory" error."""
+    total = Decimal(0)
+    for _, e in sel.files:  # indexed entries carry first, last and packets
+        first, last = Decimal(e.first or 0), Decimal(e.last or 0)
+        span = last - first
+        covered = min(end, last) - max(start, first)
+        share = min(Decimal(1), max(Decimal(0), covered / span)) if span > 0 else 1
+        total += (e.packets or 0) * share
+    return int(total)
+
+
+# OLD CODE START — NET-189 review: whole files counted, so any window crossing a file change
+# was refused (two ~300k-packet files are over the budget), though TShark reads only the window
+# def _admit_download(sel: Selection) -> None:
+# OLD CODE END
+def _admit_download(sel: Selection, start: Decimal, end: Decimal) -> None:
     """ValueError unless the whole window can be read: every file's packet times are
     known, and the files fit the reader's budget."""
     if sel.failed:
@@ -988,14 +1008,17 @@ def _admit_download(sel: Selection) -> None:
             "file list."
         )
     size = sum(f.size for f, _ in sel.files)
-    packets = sum(e.packets or 0 for _, e in sel.files)  # indexed entries carry it
+    # OLD CODE START — NET-189 review: see _window_packets
+    # packets = sum(e.packets or 0 for _, e in sel.files)  # indexed entries carry it
+    # OLD CODE END
+    packets = _window_packets(sel, start, end)
     if (
         len(sel.files) > MAX_FILES
         or size > MAX_BYTES
         or packets > _DOWNLOAD_MAX_PACKETS
     ):
         raise ValueError(
-            f"This window holds {packets:,} packets in {len(sel.files)} capture files "
+            f"This window holds about {packets:,} packets in {len(sel.files)} capture files "
             f"({size / 1e9:.1f} GB). One download reads at most "
             f"{_DOWNLOAD_MAX_PACKETS:,} packets, {MAX_FILES} files or "
             f"{MAX_BYTES / 1e9:.0f} GB. Set a shorter download window, use Packet "
