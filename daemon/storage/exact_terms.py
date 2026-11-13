@@ -13,12 +13,16 @@ from typing import Any
 
 from opensearchpy import OpenSearch, OpenSearchException
 
+from storage.snapshot_search import Budget
+
 logger = logging.getLogger("nettap.opensearch")
 
 # Holds every term of a day on a home network; a search with longer lists is re-run x10
 EXACT_SHARD_SIZE = 10_000
 # Past this the counts stay OpenSearch's estimate and a warning is logged (memory bound)
 MAX_SHARD_SIZE = 100_000
+# NET-187 review: a budgeted search waits at most this, the daemon client's own timeout (StorageManager)
+SEARCH_TIMEOUT_SECONDS = 30.0
 
 
 def with_exact_terms(aggs: dict, shard_size: int = EXACT_SHARD_SIZE) -> dict:
@@ -82,6 +86,14 @@ class PartialResultsError(OpenSearchException):
     """Some shards failed, the search timed out or a scan hit its cap: the reply is only part of the data."""
 
 
+class SearchTimedOut(PartialResultsError):
+    """OpenSearch stopped the search at its time limit (a body `timeout` or `search.default_search_timeout`)."""
+
+
+# NET-187: the reason _partial gives for a timed-out search, so _raise_if_partial can say which it was
+_TIMED_OUT = "the search timed out"
+
+
 def _failed_shards(reply: Any) -> int:
     """Shards that failed in a search or msearch reply (OpenSearch still answers from the rest)."""
     if not isinstance(reply, dict):
@@ -102,25 +114,42 @@ def _partial(reply: Any) -> str | None:
         return "a search in the batch failed"
     # a timed-out search answers from the shards that finished in time
     if reply.get("timed_out"):
-        return "the search timed out"
+        return _TIMED_OUT
     if failed := _failed_shards(reply):
         return f"{failed} shard(s) failed"
     return None
 
 
 def _raise_if_partial(reply: Any, kwargs: dict) -> None:
+    # OLD CODE START — NET-187: a time-out raised the same error as failed shards
+    # if why := _partial(reply):
+    #     raise PartialResultsError(
+    #         f"{why} on {kwargs.get('index', '?')}; the reply is partial"
+    #     )
+    # OLD CODE END
     if why := _partial(reply):
-        raise PartialResultsError(
-            f"{why} on {kwargs.get('index', '?')}; the reply is partial"
-        )
+        error = SearchTimedOut if why == _TIMED_OUT else PartialResultsError
+        raise error(f"{why} on {kwargs.get('index', '?')}; the reply is partial")
 
 
 class ExactTermsOpenSearch(OpenSearch):
     """The daemon's OpenSearch client: search and msearch bodies get exact terms counts."""
 
-    def _exact(self, send, body: Any, **kwargs: Any) -> Any:
+    def _exact(
+        self, send, body: Any, budget: Budget | None = None, **kwargs: Any
+    ) -> Any:
         shard_size = EXACT_SHARD_SIZE
         while True:
+            # NET-187 review: with a budget, every send (a longer-list re-ask too) needs time left
+            # and waits no longer than what is left (the transport retries inside one send)
+            if budget is not None:
+                budget.check("a search")
+                kwargs = {
+                    **kwargs,
+                    "request_timeout": min(
+                        SEARCH_TIMEOUT_SECONDS, max(1.0, budget.remaining())
+                    ),
+                }
             reply = send(body=body, shard_size=shard_size, **kwargs)
             # By default OpenSearch answers from the shards that worked; a figure from part of the
             # data must be an error, not a smaller number
@@ -143,13 +172,17 @@ class ExactTermsOpenSearch(OpenSearch):
                 return reply
             shard_size = min(shard_size * 10, MAX_SHARD_SIZE)
 
-    def search(self, *, body: Any = None, **kwargs: Any) -> Any:
+    def search(
+        self, *, body: Any = None, budget: Budget | None = None, **kwargs: Any
+    ) -> Any:
+        """A search with exact terms counts; with `budget`, inside it (TooSlow once spent)."""
+
         def send(body: Any, shard_size: int, **kw: Any) -> Any:
             return super(ExactTermsOpenSearch, self).search(
                 body=exact_body(body, shard_size), **kw
             )
 
-        return self._exact(send, body, **kwargs)
+        return self._exact(send, body, budget=budget, **kwargs)
 
     def msearch(self, *, body: Any = None, **kwargs: Any) -> Any:
         def send(body: Any, shard_size: int, **kw: Any) -> Any:
