@@ -96,26 +96,27 @@ describe('catch-all API proxy', () => {
 		// 	})
 		// );
 		// OLD CODE END
-		const mockResponse = new Response(JSON.stringify({ id: 'inv-1' }), {
+		// No route of its own under routes/api/notifications/, so [...path] serves it
+		const mockResponse = new Response(JSON.stringify({ success: true, channel_id: 'ch 1', error: null }), {
 			status: 200,
 			headers: { 'Content-Type': 'application/json' },
 		});
 		mockDaemonFetch.mockResolvedValue(mockResponse);
 
-		const url = new URL('http://localhost/api/investigations/inv%201/notes');
+		const url = new URL('http://localhost/api/notifications/channels/ch%201/test');
 		const request = new Request(url, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ content: 'Checked the camera' }),
+			body: JSON.stringify({}),
 		});
 
 		await proxyToDaemon({ url, request }, 'POST');
 
 		expect(mockDaemonFetch).toHaveBeenCalledWith(
-			'/api/investigations/inv%201/notes',
+			'/api/notifications/channels/ch%201/test',
 			expect.objectContaining({
 				method: 'POST',
-				body: '{"content":"Checked the camera"}',
+				body: '{}',
 			})
 		);
 	});

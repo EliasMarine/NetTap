@@ -1,7 +1,7 @@
 # IoT checks score only measured data; the unused classify route is gone, 2026-11-12
 
 **Linear:** NET-171 (Bug), NET-174 (Improvement)
-**Branch / PR:** `fix/iot-measured-only-checks`, PR pending
+**Branch / PR:** `fix/iot-measured-only-checks`, PR #253
 **Status:** built and tested; not yet deployed. Deploy with `bash scripts/remote/deploy-iot-measured-only.sh`.
 **Plan:** `.codex-review/2026-11-12-173457-iot-measured-only/PLAN.md` (gitignored). Codex approved it in round 2.
 
@@ -41,8 +41,8 @@ Separately, `POST /api/iot/devices/{mac}/classify` had no caller. The device it 
 ## Files
 
 - `daemon/services/iot_trust_scorer.py`, `daemon/services/iot_monitor.py`, `daemon/api/iot.py`
-- `web/src/routes/iot/+page.svelte`, `web/src/lib/api/iot.ts`, `web/e2e/visual/fixtures/iot.ts` (checks_total 9)
-- Tests: `daemon/tests/test_iot_trust_scorer.py`, `test_iot_api.py`, `test_iot_monitor.py`, `test_iot_unmeasured.py`; `web/src/routes/iot/iot-page.test.ts`, `web/src/lib/api/iot.test.ts`, `web/src/tests/server-proxy.test.ts`
+- `web/src/routes/iot/+page.svelte`, `web/src/lib/api/iot.ts`, `web/e2e/visual/fixtures/iot.ts` (nine checks, behaviour null, trust score weighted like the daemon's)
+- Tests: `daemon/tests/test_iot_trust_scorer.py`, `test_iot_api.py`, `test_iot_monitor.py`, `test_iot_unmeasured.py`; `web/src/routes/iot/iot-page.test.ts`, `web/src/routes/iot/iot.test.ts`, `web/src/lib/api/iot.test.ts`, `web/src/tests/server-proxy.test.ts`
 - `scripts/remote/deploy-iot-measured-only.sh` (new)
 - `Debugging/DEPLOYMENT-ISSUES.md` (Key Files row, lesson 181, quick-reference rows)
 
@@ -88,10 +88,11 @@ The expressions were dry-run against today's G11 reply: the 9-checks check fails
 ## Lessons
 
 - A check that no data source can feed belongs out of the score. Leaving it in as "unavailable" forever still distorts the totals the page shows, and still pays any caller that passes a value. (DEPLOYMENT-ISSUES lesson 181.)
-- When you remove a route, also look at tests that use its path as an example. `server-proxy.test.ts` used the classify path to test POST forwarding; it now uses `/api/investigations/{id}/notes`.
+- When you remove a route, also look at tests that use its path as an example. `server-proxy.test.ts` used the classify path to test POST forwarding. It now uses `/api/notifications/channels/{id}/test`, which no route of its own serves, so it really goes through the catch-all (a first choice, `/api/investigations/{id}/notes`, has its own `+server.ts`).
+- Test data and the visual fixture must match what the daemon can return. The fixture showed behaviour scores (for example 96) after the daemon stopped measuring behaviour, so the README media would have shown a bar no real device can have. PR #253's review caught it.
 
 ## Next steps
 
 - NET-170 (auto-baselines). Then rewrite the four behaviour checks against real baselines, and decide whether `MIN_COVERAGE` should change once behaviour adds 30 points.
-- The visual fixture (`web/e2e/visual/fixtures/iot.ts`) still gives behaviour scores (for example 96), which the daemon never returns today. It feeds the README media, so changing it waits for the owner's media review.
+- The visual fixture now matches a nine-check reply (behaviour null, trust score weighted 20/35 like the daemon). The README media were not regenerated; that needs the owner's media review.
 - `get_activity_timeline` returns `baseline_avg_hourly_bytes: 0` without a baseline. No page reads it; NET-170 should make it None.

@@ -29,12 +29,14 @@ const device = (mac: string, name: string, score: number, extra: Record<string, 
 	mac, name, manufacturer: 'Acme', ip: '192.168.1.60', score, grade: score >= 75 ? 'B' : 'D',
 	// OLD CODE: coverage: 55, checks_available: 5, checks_total: 11, (NET-171: nine checks)
 	coverage: 55, checks_available: 5, checks_total: 9,
-	privacy_score: score, security_score: score, behavior_score: score,
+	// OLD CODE: privacy_score: score, security_score: score, behavior_score: score, (NET-171: behaviour isn't measured)
+	privacy_score: score, security_score: score, behavior_score: null,
 	anomaly_count: 0, encryption_pct: 90, tracker_count: 0, last_seen: null, ...extra,
 });
 
 const fleet = (devices: ReturnType<typeof device>[], extra: Record<string, unknown> = {}) => ({
-	health_score: 82, health_grade: 'B', privacy_score: 70, security_score: 85, behavior_score: 90,
+	// OLD CODE: health_score: 82, health_grade: 'B', privacy_score: 70, security_score: 85, behavior_score: 90, (NET-171)
+	health_score: 82, health_grade: 'B', privacy_score: 70, security_score: 85, behavior_score: null,
 	device_count: devices.length, scored_device_count: devices.length, anomaly_count: 2, anomalies_checked: devices.length,
 	privacy_concerns: 1, unencrypted_count: 0,
 	subtitle: 'Most devices behave well.', devices, ...extra,
@@ -79,7 +81,8 @@ describe('IoT page — layout', () => {
 		expect(screen.getByRole('img', { name: 'Smart home health 82 of 100, grade B' })).toBeInTheDocument();
 		expect(screen.getByText('Most devices behave well.')).toBeInTheDocument();
 		const rows = document.querySelectorAll('.score-rows li');
-		expect(Array.from(rows, (li) => li.textContent?.trim())).toEqual(['Privacy70', 'Security85', 'Behaviour90']);
+		// OLD CODE: expect(Array.from(rows, (li) => li.textContent?.trim())).toEqual(['Privacy70', 'Security85', 'Behaviour90']); (NET-171)
+		expect(Array.from(rows, (li) => li.textContent?.trim())).toEqual(['Privacy70', 'Security85', 'BehaviourNot measured']);
 	});
 
 	it('lists devices worst first in a table where every column sorts, and a row opens the drawer', async () => {
@@ -174,8 +177,6 @@ describe('IoT page — only measured figures', () => {
 
 	// NET-171: an unmeasured pillar read "—" over an empty bar, which reads as a score of 0
 	it('says "Not measured" with no bar for a pillar nothing measured, and keeps the bar for measured ones', async () => {
-		const devices = [device('m1', 'Doorbell', 80, { behavior_score: null }), device('m2', 'Camera', 40, { behavior_score: null })];
-		vi.mocked(iotApi.getFleetSummary).mockResolvedValue(fleet(devices, { behavior_score: null }) as never);
 		render(IoTPage);
 		await flush();
 
