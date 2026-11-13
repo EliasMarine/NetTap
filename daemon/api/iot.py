@@ -14,7 +14,7 @@ from aiohttp import web
 
 from storage.exact_terms import PartialResultsError
 from api.error_replies import incomplete
-from api.time_range import parse_time_range
+from api.time_range import BUCKET_TABLE, parse_time_range, slot_interval
 from services.iot_monitor import IoTMonitor
 from storage.manager import StorageManager
 
@@ -244,9 +244,11 @@ async def handle_communication_map(request: web.Request) -> web.Response:
 
 
 async def handle_activity_timeline(request: web.Request) -> web.Response:
-    """GET /api/iot/devices/{mac}/activity-timeline?from=&to="""
+    """GET /api/iot/devices/{mac}/activity-timeline?from=&to=&interval="""
     mac = request.match_info["mac"]
     from_ts, to_ts = _parse_time_range(request)
+    # NET-249: the bucket table, whose 1h was the only bucket before
+    interval = slot_interval(request, from_ts, to_ts, BUCKET_TABLE, "1h")
     iot: IoTMonitor = request.app["iot_monitor"]
     excluded_ips_list = request.app.get("excluded_ips", [])
 
@@ -263,6 +265,7 @@ async def handle_activity_timeline(request: web.Request) -> web.Response:
             from_ts,
             to_ts,
             excluded_ips=excluded_ips_list,
+            interval=interval,
         )
     except PartialResultsError as exc:  # a capped scan or a part reply (NET-237)
         return incomplete("IoT", exc)

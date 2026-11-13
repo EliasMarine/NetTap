@@ -25,6 +25,7 @@ from api.alerts import (
 from api.drilldown_runner import (
     LAST_SEEN,
     LIST_CAP,
+    chart_interval,
     chart_slots,
     either_side,
     install,
@@ -524,20 +525,24 @@ def address_figures(
 
 
 async def handle_address(request: web.Request) -> web.Response:
-    """GET /api/addresses/{ip}?from=&to= — the address page's figures."""
+    """GET /api/addresses/{ip}?from=&to=&interval= — the address page's figures."""
     ip = ip_param(request.match_info["ip"])
     if ip is None:
         return json_error("That is not an IP address.", 400)
     from_ts, to_ts = parse_time_range(request, _DEFAULT_RANGE)
-    slots = chart_slots(from_ts, to_ts)
+    # OLD CODE: slots = chart_slots(from_ts, to_ts) (NET-249: the chart's bucket can be asked for)
+    interval = chart_interval(request, from_ts, to_ts)
+    slots = chart_slots(from_ts, to_ts, interval)
     if slots is None:
         return json_error("This time range is too long; choose a shorter one.", 400)
     client, is_lan = request.app["drill_client"], lan_check(request.app)
     return await run_drilldown(
         request,
-        lambda budget: address_figures(
-            client, ip, from_ts, to_ts, slots, is_lan, budget
-        ),
+        # OLD CODE: lambda budget: address_figures(...) (NET-249: + the bucket the slots used)
+        lambda budget: {
+            **address_figures(client, ip, from_ts, to_ts, slots, is_lan, budget),
+            "interval": interval,
+        },
         f"address {ip}",
     )
 

@@ -153,6 +153,7 @@ def handle_daily(request: web.Request) -> web.Response:
         {
             "from": from_ts,
             "to": to_ts,
+            "interval": "1d",  # UTC days, as get_daily_usage slots them (NET-249)
             "daily": daily,
         }
     )

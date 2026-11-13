@@ -41,6 +41,17 @@ def _iso(epoch_s: float) -> str:
     return datetime.fromtimestamp(epoch_s, tz=timezone.utc).strftime(_ISO_MS)
 
 
+def slot_count(start: str | datetime, end: str | datetime, interval: str) -> int:
+    """How many slots `time_slots` makes for the window (below 1 when end is before start).
+
+    Raises:
+        ValueError: for an unknown interval.
+    """
+    step = interval_seconds(interval)
+    first = _epoch(start) // step * step
+    return int((_epoch(end) - first) // step) + 1
+
+
 def time_slots(
     start: str | datetime, end: str | datetime, interval: str, aggs: dict | None = None
 ) -> dict:
@@ -53,7 +64,8 @@ def time_slots(
     """
     step = interval_seconds(interval)
     first = _epoch(start) // step * step
-    count = int((_epoch(end) - first) // step) + 1
+    # OLD CODE: count = int((_epoch(end) - first) // step) + 1 (NET-249: slot_count, which the slot budget shares)
+    count = slot_count(start, end, interval)
     if count < 1 or count > MAX_SLOTS:
         raise ValueError(f"{count} slots of {interval} between {start} and {end}")
     ranges = [

@@ -18,7 +18,7 @@ from opensearchpy import OpenSearchException
 # from services.excluded_ips import build_excluded_ips_filter
 # OLD CODE END
 from api.offload import run_blocking
-from api.time_range import parse_time_range
+from api.time_range import parse_time_range, slot_interval
 from services.excluded_ips import (
     CONN_ACCOUNTING,
     build_excluded_ips_filter,
@@ -519,7 +519,8 @@ _DEFAULT_RANGE_HOURS = 24
 _MAX_SIZE = 500
 _DEFAULT_SIZE = 50
 
-_ALLOWED_INTERVALS = {"1m", "5m", "10m", "15m", "30m", "1h", "6h", "12h", "1d"}
+# OLD CODE: _ALLOWED_INTERVALS = {"1m", "5m", "10m", "15m", "30m", "1h", "6h", "12h", "1d"} (NET-249: the bucket table's 3h)
+_ALLOWED_INTERVALS = {"1m", "5m", "10m", "15m", "30m", "1h", "3h", "6h", "12h", "1d"}
 
 _LOG_TYPE_LABELS = {
     "conn": "Connections",
@@ -815,9 +816,12 @@ async def handle_log_timeline(request: web.Request) -> web.Response:
     storage: StorageManager = request.app["storage"]
     from_ts, to_ts = _parse_time_range(request)
 
-    interval = request.query.get("interval", "1h")
-    if interval not in _ALLOWED_INTERVALS:
-        interval = "1h"
+    # OLD CODE START — NET-249: an unknown interval became 1h silently, so a pick's window was wrong
+    # interval = request.query.get("interval", "1h")
+    # if interval not in _ALLOWED_INTERVALS:
+    #     interval = "1h"
+    # OLD CODE END
+    interval = slot_interval(request, from_ts, to_ts, _ALLOWED_INTERVALS, "1h")
 
     # OLD CODE START — excluded IPs stay visible in logs (Settings copy promises it)
     # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))

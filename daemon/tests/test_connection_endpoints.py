@@ -559,18 +559,29 @@ class TestConnectionTimeline(AioHTTPTestCase):
         # Should have a valid interval
         self.assertIn(data["interval"], {"1m", "5m", "15m", "1h", "6h"})
 
+    # OLD CODE START — NET-249: an invalid interval fell back to 15m; it is a 400 now
+    # @unittest_run_loop
+    # async def test_timeline_invalid_interval(self):
+    #     """Should fallback to 15m for invalid intervals."""
+    #     self.mock_client.search.return_value = {
+    #         "aggregations": {"over_time": {"buckets": []}},
+    #     }
+    #
+    #     resp = await self.client.request(
+    #         "GET", "/api/traffic/connections/timeline?interval=42x"
+    #     )
+    #     data = await resp.json()
+    #     self.assertEqual(data["interval"], "15m")
+    # OLD CODE END
     @unittest_run_loop
     async def test_timeline_invalid_interval(self):
-        """Should fallback to 15m for invalid intervals."""
-        self.mock_client.search.return_value = {
-            "aggregations": {"over_time": {"buckets": []}},
-        }
-
+        """NET-249: an invalid interval is a 400 before any search."""
         resp = await self.client.request(
             "GET", "/api/traffic/connections/timeline?interval=42x"
         )
-        data = await resp.json()
-        self.assertEqual(data["interval"], "15m")
+        self.assertEqual(resp.status, 400)
+        self.assertIn("Unknown interval", (await resp.json())["error"])
+        self.mock_client.search.assert_not_called()
 
 
 class TestConnectionRelated(AioHTTPTestCase):

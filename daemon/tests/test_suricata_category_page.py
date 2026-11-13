@@ -328,7 +328,10 @@ class TestValidation(CategoryCase):
         self.assertIn("to must be an ISO 8601 time", body["error"])
         long = "from=1900-01-01T00:00:00Z&to=2026-11-05T00:00:00Z"
         body = await self.page(MISC, long, status=400)
-        self.assertIn("too long", body["error"])
+        # OLD CODE: self.assertIn("too long", body["error"]) (NET-249: the slot budget answers first)
+        self.assertEqual(
+            body["error"], "Too many points for this window; pick a longer bucket"
+        )
         self.assertEqual(self.os.bodies, [])
 
     async def test_the_list_refuses_a_bad_suricata_category(self):
