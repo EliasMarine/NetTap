@@ -23,6 +23,7 @@ The generated password is letters and digits, so only a password set in `NETTAP_
   - Why a process substitution and not a pipe: under the script's pipefail, `printf | run …` can fail with SIGPIPE when `run` returns without reading stdin (its dry-run branch).
 - **python3 fallback:** the code is a fixed single-quoted string. The password arrives as `printf '%s' "$password" | python3 -c '… sys.stdin.buffer.read() …'`, exact bytes. The `{SSHA}` format is unchanged.
 - An existing `docker/auth/htpasswd` is never regenerated (the function returns early), so nothing changes on boxes already installed.
+- **File modes (review follow-up).** `.admin-password` (the plaintext password) and `htpasswd` were created 644 under the default umask and only chmod'ed to 600 afterwards, so for that moment any local account could read them. Each write now runs in `( umask 077; … )`: the `.admin-password` write (`printf '%s\n'`), the `run htpasswd -icB …` call and the python fallback's `echo … > htpasswd`. The chmods stay.
 
 ## Files
 
@@ -32,11 +33,12 @@ The generated password is letters and digits, so only a password set in `NETTAP_
 
 ## Test results
 
-- `bats tests/scripts/test_malcolm_config.bats`: 48/48 before, 51/51 after.
+- `bats tests/scripts/test_malcolm_config.bats`: 48/48 before, 51/51 after the argv fix, 52/52 after the file-mode fix.
 - New tests, all with a password holding `'`, `\`, `"`, `$` and spaces, and verbose on:
   1. A stub htpasswd records its arguments and stdin. The password is in neither the arguments nor the output, and stdin is exactly the password plus `\r\n`.
   2. The real htpasswd (skipped if it isn't installed) for that password and for ones ending in CR, LF and CRLF. Each is checked with `htpasswd -vb`, which takes the exact bytes from its arguments.
   3. The python3 fallback, with htpasswd hidden. The password is in neither python3's arguments nor the output, and the `{SSHA}` line verifies against the password's bytes.
+  4. With `chmod` stubbed to a no-op and umask 022, both files are 600 right after `generate_auth`, on the htpasswd path (when installed) and the python3 path. It fails before the umask fix, and with only the python branch reverted.
 - On the old code, tests 1 and 3 fail. Test 2 passes on the old code (`-b` is exact) and fails with `printf '%s'` (no terminator) on `pw\n`, so it pins the framing.
 - `shellcheck -S warning scripts/install/malcolm-config.sh`: clean, before and after.
 - `daemon/tests/test_malcolm_upgrade.py` (it reads malcolm-config.sh): 30 passed.
@@ -61,7 +63,7 @@ No deploy script: a deploy changes nothing, because the file exists. How a real 
 
 ## Next steps (found, not changed)
 
-- **Brief file-mode windows.** `.admin-password`, the OpenSearch curlrc and `docker/.env` are written under the default umask and chmod'ed after. With the repo in a 750 home (as on the G11), other accounts can't reach them. A repo elsewhere could expose them for a moment.
+- **Brief file-mode windows.** Fixed for `.admin-password` and `htpasswd` (above). The OpenSearch curlrc and `docker/.env` are still written under the default umask and chmod'ed after. With the repo in a 750 home (as on the G11), other accounts can't reach them. A repo elsewhere could expose them for a moment.
 - **The file may be dead.** `docker/auth/htpasswd` is unused: no compose service mounts `docker/auth`. The fallback hash is salted SHA-1. Whether to drop `generate_auth` is the owner's call.
 - **Standalone dry run.** `malcolm-config.sh --dry-run` still writes files and stops at `chmod` (Known Risk, Chain 33).
 - **Nothing else found.** No other `scripts/install/` script passes the admin or OpenSearch password on a command line.

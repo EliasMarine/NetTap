@@ -654,9 +654,12 @@ CHAIN 34: malcolm-config.sh put the admin password on the command line (fix/htpa
     `printf | run …` can die of SIGPIPE when run's dry-run branch doesn't read.
   - python3: fixed single-quoted code; `printf '%s' "$password" | python3 -c '… sys.stdin.buffer.read() …'`.
   - An existing docker/auth/htpasswd is never regenerated, so installed boxes are unchanged.
-  Tests: tests/scripts/test_malcolm_config.bats, 3 new (stubbed htpasswd argv/stdin/log; the real
+  - Review follow-up: .admin-password and htpasswd were created 644 (default umask) until their
+    chmod 600; each write now runs in `( umask 077; … )` (chmods kept).
+  Tests: tests/scripts/test_malcolm_config.bats, 4 new (stubbed htpasswd argv/stdin/log; the real
   htpasswd with trailing CR, LF and CRLF, checked with -vb; the python3 fallback's argv, log and
-  {SSHA} hash). 51/51. Tests 1 and 3 fail on the old code; test 2 fails without the \r\n.
+  {SSHA} hash; both files 600 at creation with chmod stubbed out). 52/52. Tests 1, 3 and 4 fail on
+  the old code; test 2 fails without the \r\n.
   Verify: a fresh install only. From `sudo -i`: `read -rs NETTAP_ADMIN_PASSWORD; export NETTAP_ADMIN_PASSWORD`,
   then `scripts/install/malcolm-config.sh -v` with docker/auth absent while another shell samples
   `ps -eo args`. No deploy script: the G11 already has its file.
