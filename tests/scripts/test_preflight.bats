@@ -285,3 +285,32 @@ enp2s0'
     grep -q "^SMTP_PASS=secret$" "$ENV_FILE"
     [ "$(stat -f '%Lp' "$ENV_FILE" 2>/dev/null || stat -c '%a' "$ENV_FILE")" = "600" ]
 }
+
+# ---------------------------------------------------------------------------
+# NET-211 #1: .env.example's placeholder ports and management address became the box's settings
+# ---------------------------------------------------------------------------
+@test ".env.example sets no port name or management address" {
+    run grep -nE '^[[:space:]]*(export[[:space:]]+)?(MGMT_INTERFACE|MGMT_IP|MGMT_NETMASK|WAN_INTERFACE|LAN_INTERFACE)=' \
+        "${REPO_ROOT}/.env.example"
+    [ "$status" -eq 1 ]
+}
+
+@test "write_env_assignments: a two-port box's .env gets its ports and no management placeholder" {
+    source "${REPO_ROOT}/scripts/common.sh"
+    set +uo pipefail
+    sed -n '/^_set_env_value() {/,/^}/p; /^write_env_assignments() {/,/^}/p' \
+        "${REPO_ROOT}/scripts/install/preflight.sh" > "${TEST_TMPDIR}/preflight-fns.sh"
+    source "${TEST_TMPDIR}/preflight-fns.sh"
+    PROJECT_ROOT="${TEST_TMPDIR}"
+    ENV_FILE="${TEST_TMPDIR}/.env"
+    cp "${REPO_ROOT}/.env.example" "${TEST_TMPDIR}/.env.example"
+
+    write_env_assignments enp2s0 enp1s0 ""
+
+    grep -q "^WAN_INTERFACE=enp2s0$" "$ENV_FILE"
+    grep -q "^LAN_INTERFACE=enp1s0$" "$ENV_FILE"
+    # (common.sh's run shadows bats' run here, so count instead)
+    [ "$(grep -cE '^(MGMT_INTERFACE|MGMT_IP|MGMT_NETMASK)=' "$ENV_FILE")" -eq 0 ]
+    # the rest of the example still comes across
+    grep -q "^NETTAP_HOSTNAME=nettap.local$" "$ENV_FILE"
+}
