@@ -7,7 +7,7 @@
 # ${TEST_TMPDIR}/curl.log (one line each) and bodies sent on stdin go to
 # ${TEST_TMPDIR}/body.<last path segment>. The scenario comes from F_* variables:
 #   F_MT_GET           keep-check read of malcolm_template: 404 (default), 200, 401, 500, transport
-#   F_MT_BODY          its body when 200 (default: a template targeting arkime_sessions3-*)
+#   F_MT_BODY          its body when 200 (default: Malcolm's template targeting arkime_sessions3-*)
 #   F_MT_PUT           codes for successive malcolm_template PUTs, the last repeats (default 200)
 #   F_COMP_FAIL        component template name whose PUT answers 500
 #   F_NO_FILES         set: dashboards-helper lists no component template files
@@ -15,18 +15,22 @@
 #   F_MARKER_PRESENT   0: the acceptance GET of arkime_sessions3_template fails (default 1)
 #   F_AUTH_OK_AFTER    number of failed auth probes before they pass, or "never" (default 0)
 #   F_SECADMIN_RC      exit code of securityadmin.sh (default 0)
+#   F_PROBE_SECS       seconds each auth probe takes (default 0)
+# sleep and slow probes move $SECONDS forward instead of waiting. Answers of HTTP 400 and
+# above carry a two-line error body whose reason is "fake failure".
 
 F_MT_GET="${F_MT_GET:-404}"
 if [[ -z "${F_MT_BODY:-}" ]]; then
-    F_MT_BODY='{"index_templates":[{"index_template":{"index_patterns":["arkime_sessions3-*"]}}]}'
+    F_MT_BODY='{"index_templates":[{"index_template":{"index_patterns":["arkime_sessions3-*"],"_meta":{"hash":"x"}}}]}'
 fi
 F_MT_PUT="${F_MT_PUT:-200}"
 F_MARKER_PUT="${F_MARKER_PUT:-200}"
 F_MARKER_PRESENT="${F_MARKER_PRESENT:-1}"
 F_AUTH_OK_AFTER="${F_AUTH_OK_AFTER:-0}"
 F_SECADMIN_RC="${F_SECADMIN_RC:-0}"
+F_PROBE_SECS="${F_PROBE_SECS:-0}"
 
-sleep() { :; }
+sleep() { SECONDS=$((SECONDS + ${1%.*})); }
 
 _f_count() {  # _f_count NAME: bump and print a call counter
     local f="${TEST_TMPDIR}/count.$1" n=0
@@ -77,6 +81,7 @@ _fake_curl() {
         "GET _template/arkime_sessions3_template") [[ "$F_MARKER_PRESENT" == 1 ]] || code=404 ;;
     esac
 
+    if (( code >= 400 )); then body=$'{"error":\n{"reason":"fake failure"},"status":'"${code}}"; fi
     if [[ "$fail" == true && "$code" -ge 400 ]]; then return 22; fi
     if [[ "$out" != /dev/null ]]; then printf '%s' "$body"; fi
     if [[ -n "$fmt" ]]; then printf '%b' "${fmt//%\{http_code\}/$code}"; fi
@@ -90,6 +95,7 @@ _fake_opensearch() {  # args after "exec -T opensearch"
             return "$F_SECADMIN_RC" ;;
         curl*_cluster/health*)
             echo "auth $*" >> "${TEST_TMPDIR}/auth.log"
+            SECONDS=$((SECONDS + F_PROBE_SECS))
             local n
             n=$(_f_count auth)
             [[ "$F_AUTH_OK_AFTER" != never ]] && (( n > F_AUTH_OK_AFTER )) ;;

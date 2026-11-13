@@ -4,8 +4,8 @@
 #
 # Only install-time scripts changed, so nothing is rebuilt, recreated or restarted. The script
 # runs deploy-malcolm.sh's real bootstrap functions against the running stack through
-# guarded_docker, which refuses `compose up`, securityadmin.sh and every PUT except the
-# create-only Arkime marker: whatever state the stack is in, this check writes nothing.
+# guarded_docker, which lets through only the bootstrap's reads and the create-only Arkime
+# marker: whatever state the stack is in, this check writes nothing.
 # Run as the normal user (NOT with sudo):
 #   bash /home/nettap/NetTap/scripts/remote/deploy-malcolm-bootstrap.sh
 # To test a branch first: git checkout <branch> && git pull, then BRANCH=<branch> bash …
@@ -49,13 +49,55 @@ stack_state() {  # "id name started-at" of the two containers the bootstrap coul
 
 # The bootstrap's docker in this check: never recreates a container, pushes security config or
 # overwrites a template, even if the stack changed after the baseline (NET-217 device check).
+# OLD CODE START — NET-217 review: a denylist misses writes it didn't list (-XPUT, compose restart)
+# guarded_docker() {
+#     if [[ "${1:-}" == compose && " $* " == *" up "* ]]; then
+#         echo "   (refused: docker compose … up; this check recreates nothing)"
+#         return 0
+#     fi
+#     if [[ "$*" == *securityadmin* || ( "$*" == *"-X PUT"* && "$*" != *"create=true"* ) ]]; then
+#         echo "   (refused a write: this check changes nothing)"
+#         return 1
+#     fi
+#     sudo docker "$@"
+# }
+# OLD CODE END
+# True for the calls guarded_docker lets through: preflight's docker checks, the bootstrap's
+# reads inside opensearch and dashboards-helper, and the create-only Arkime marker, which
+# OpenSearch refuses when a template already exists.
+_docker_allowed() {
+    local a writes="" url=""
+    case "$*" in "info" | "compose version") return 0 ;; esac
+    [[ "${1:-} ${2:-} ${4:-} ${5:-}" == "compose -f exec -T" ]] || return 1
+    case "${6:-} ${7:-}" in
+        "dashboards-helper jq" | "dashboards-helper cat") return 0 ;;
+        "dashboards-helper find")
+            for a in "${@:8}"; do
+                case "$a" in -delete | -exec* | -ok* | -fprint* | -fls) return 1 ;; esac
+            done
+            return 0 ;;
+        "opensearch curl" | "dashboards-helper curl") ;;
+        *) return 1 ;;
+    esac
+    for a in "${@:8}"; do
+        case "$a" in
+            https://*) url="$a" ;;
+            -X* | --request* | -d* | --data* | -T* | --upload-file* | -F* | --form* | --json* | -[!-]*[XdTF]*)
+                writes+="$a " ;;
+        esac
+    done
+    [[ -z "$writes" ]] && return 0
+    [[ "$writes" == "-X -d " && " ${*:8} " == *" -X PUT "* && " ${*:8} " == *" -d @- "* \
+        && "$url" == "https://opensearch:9200/_template/arkime_sessions3_template?create=true" ]]
+}
+
 guarded_docker() {
-    if [[ "${1:-}" == compose && " $* " == *" up "* ]]; then
-        echo "   (refused: docker compose … up; this check recreates nothing)"
+    if [[ $# -eq 6 && "$1 $2 $4 $5 $6" == "compose -f up -d dashboards-helper" ]]; then
+        echo "   (skipped docker compose up: this check recreates nothing)"
         return 0
     fi
-    if [[ "$*" == *securityadmin* || ( "$*" == *"-X PUT"* && "$*" != *"create=true"* ) ]]; then
-        echo "   (refused a write: this check changes nothing)"
+    if ! _docker_allowed "$@"; then
+        echo "   (refused docker ${*:1:7} …: this check changes nothing)"
         return 1
     fi
     sudo docker "$@"

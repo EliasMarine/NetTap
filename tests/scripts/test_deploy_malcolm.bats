@@ -418,7 +418,9 @@ print('OK: all actions have retry config')
     local script="${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
     # The raw file's pattern is a placeholder that matches no index
     grep -q 's/MALCOLM_NETWORK_INDEX_PATTERN_REPLACER/${index_pattern}/g' "$script"
-    ! grep -E '^[^#]*-d @/opt/templates/malcolm_template.json' "$script"
+    # OLD CODE: ! grep -E '^[^#]*-d @/opt/templates/malcolm_template.json' "$script"
+    # (NET-217 review: a bare "! cmd" never fails a bats test; set -e ignores negated commands)
+    ! grep -E '^[^#]*-d @/opt/templates/malcolm_template.json' "$script" || false
 
     # The same sed turns Malcolm's placeholder into a pattern that matches today's index
     local index_pattern="arkime_sessions3-*"
@@ -453,7 +455,10 @@ print('OK: all actions have retry config')
     local fn
     fn=$(sed -n '/^bootstrap_opensearch_security()/,/^}/p' "${REPO_ROOT}/scripts/install/deploy-malcolm.sh")
     local wait_line push_line
-    wait_line=$(echo "$fn" | grep -n "_opensearch_auth_ok" | head -1 | cut -d: -f1)
+    # OLD CODE START — NET-217 review: the wait is _wait_for_auth now; this grep also matched comments
+    # wait_line=$(echo "$fn" | grep -n "_opensearch_auth_ok" | head -1 | cut -d: -f1)
+    # OLD CODE END
+    wait_line=$(echo "$fn" | grep -n "_wait_for_auth 60" | grep -v '^[0-9]*:[[:space:]]*#' | head -1 | cut -d: -f1)
     push_line=$(echo "$fn" | grep -n "securityadmin.sh" | grep -v '^[0-9]*:[[:space:]]*#' | head -1 | cut -d: -f1)
     [ -n "$wait_line" ]
     [ -n "$push_line" ]
@@ -544,7 +549,7 @@ _passes() { _log_count '_index_template/malcolm_template?filter_path'; }
     calls=$(grep -c . "${TEST_TMPDIR}/curl.log")
     [ "$(_log_count '--config /var/local/curlrc/.opensearch.primary.curlrc')" -eq "$calls" ]
     [ "$(_log_count '--max-time')" -eq "$calls" ]
-    ! grep -qE -- '(^| )-u ' "${TEST_TMPDIR}/curl.log"
+    ! grep -qE -- '(^| )-u ' "${TEST_TMPDIR}/curl.log" || false
     grep -q -- '-X PUT https://opensearch:9200/_component_template/ecs_base' "${TEST_TMPDIR}/curl.log"
     grep -q -- '-X PUT https://opensearch:9200/_component_template/ecs_event' "${TEST_TMPDIR}/curl.log"
     grep -q -- '-X PUT https://opensearch:9200/_component_template/custom_zeek' "${TEST_TMPDIR}/curl.log"
@@ -575,7 +580,9 @@ _passes() { _log_count '_index_template/malcolm_template?filter_path'; }
     export F_COMP_FAIL=ecs_event
     _templates
     [ "$status" -eq 1 ]
-    [[ "$output" == *"PUT _component_template/ecs_event answered HTTP 500"* ]] || false
+    # OLD CODE: [[ "$output" == *"PUT _component_template/ecs_event answered HTTP 500"* ]] || false
+    # OpenSearch's reason comes along, on one line (NET-217 review)
+    [[ "$output" == *'PUT _component_template/ecs_event answered HTTP 500: {"error": {"reason":"fake failure"}'* ]] || false
     [ "$(_log_count '-X PUT https://opensearch:9200/_index_template/malcolm_template')" -eq 0 ]
 }
 
@@ -620,6 +627,20 @@ _passes() { _log_count '_index_template/malcolm_template?filter_path'; }
     [ "$(_log_count '-X PUT https://opensearch:9200/_index_template/malcolm_template')" -eq 1 ]
 }
 
+@test "templates (NET-217): only Malcolm's template with exactly our pattern is kept" {
+    local body
+    for body in \
+        '{"index_templates":[{"index_template":{"index_patterns":["zz\narkime_sessions3-*"],"_meta":{"hash":"x"}}}]}' \
+        '{"index_templates":[{"index_template":{"index_patterns":["arkime_sessions3-*"]}}]}'; do
+        rm -f "${TEST_TMPDIR}/curl.log" "${TEST_TMPDIR}"/count.*
+        export F_MT_GET=200 F_MT_BODY="$body"
+        _templates
+        [ "$status" -eq 0 ] || { echo "body ${body}: status ${status}"; return 1; }
+        [ "$(_log_count '-X PUT https://opensearch:9200/_index_template/malcolm_template')" -eq 1 ] \
+            || { echo "body ${body}: not pushed"; return 1; }
+    done
+}
+
 @test "templates (NET-217): a failed or unreadable read of malcolm_template writes nothing" {
     local case
     for case in '500|' '401|' 'transport|' \
@@ -648,7 +669,8 @@ _passes() { _log_count '_index_template/malcolm_template?filter_path'; }
     _security
     [ "$status" -eq 1 ]
     [ -f "${TEST_TMPDIR}/securityadmin.log" ]
-    [[ "$output" == *"malcolm_internal still has no access after securityadmin.sh"* ]] || false
+    # OLD CODE: [[ "$output" == *"malcolm_internal still has no access after securityadmin.sh"* ]] || false
+    [[ "$output" == *"malcolm_internal still has no access 30s after securityadmin.sh"* ]] || false
     [[ "$output" == *"run the same command again"* ]] || false
 }
 
@@ -657,6 +679,7 @@ _passes() { _log_count '_index_template/malcolm_template?filter_path'; }
     _security
     [ "$status" -eq 1 ]
     [[ "$output" == *"securityadmin.sh could not push the security config"* ]] || false
+    [ "$(grep -c . "${TEST_TMPDIR}/securityadmin.log")" -eq 2 ]
     grep -q 'timeout -k 10 180 /usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh' \
         "${TEST_TMPDIR}/securityadmin.log"
 }
@@ -669,12 +692,22 @@ _passes() { _log_count '_index_template/malcolm_template?filter_path'; }
     [[ "$output" == *"Authentication verified"* ]] || false
 }
 
+@test "security (NET-217): the auth waits count wall-clock time, so slow probes can't stretch them" {
+    export F_AUTH_OK_AFTER=never F_PROBE_SECS=10  # each probe uses its full --max-time
+    _security
+    [ "$status" -eq 1 ]
+    # 60 s before securityadmin.sh and 30 s after, at 15 s a probe: 4 + 2 (counting sleeps made it 12 + 6)
+    [ "$(grep -c . "${TEST_TMPDIR}/auth.log")" -eq 6 ]
+}
+
 @test "deploy (NET-217): no password on a command line, and the HTTP wait is time-boxed" {
     local code
     code=$(grep -v '^[[:space:]]*#' "$DEPLOY")
-    ! grep -q -- '-u "\$' <<< "$code"
-    ! grep -q 'docker/curlrc' <<< "$code"
+    ! grep -qE -- '(^|[[:space:]])(-u|--user)([[:space:]=]|$)' <<< "$code" || false
+    ! grep -q 'docker/curlrc' <<< "$code" || false
     sed -n '/^_wait_for_opensearch_http()/,/^}/p' "$DEPLOY" | grep -v '^[[:space:]]*#' | grep -q -- '--max-time'
+    # wall-clock, not a count of sleeps (its probe runs in a subshell, so the stubs can't time it)
+    sed -n '/^_wait_for_opensearch_http()/,/^}/p' "$DEPLOY" | grep -q '^[[:space:]]*while (( SECONDS - start < max_wait ))'
 }
 
 # ==========================================================================
@@ -706,28 +739,77 @@ _preflight_with_avail_kb() {
 # ==========================================================================
 
 _guarded() {  # _guarded ARGS...: run guarded_docker ARGS with a sudo that logs instead of running
-    run bash -c "$(sed -n '/^guarded_docker()/,/^}/p' "${REPO_ROOT}/scripts/remote/deploy-malcolm-bootstrap.sh")
+    run bash -c "$(sed -n '/^_docker_allowed()/,/^}/p;/^guarded_docker()/,/^}/p' "${REPO_ROOT}/scripts/remote/deploy-malcolm-bootstrap.sh")
         sudo() { echo \"\$*\" >> '${TEST_TMPDIR}/sudo.log'; }
         guarded_docker \"\$@\"" _ "$@"
 }
 
-@test "deploy-malcolm-bootstrap.sh (NET-217): guarded_docker refuses every write but the create-only marker" {
+# OLD CODE START — NET-217 review: guarded_docker is an allowlist now, so `docker ps` is refused too
+# @test "deploy-malcolm-bootstrap.sh (NET-217): guarded_docker refuses every write but the create-only marker" {
+#     _guarded compose -f x.yml up -d dashboards-helper
+#     [ "$status" -eq 0 ]
+#     _guarded compose -f x.yml exec -T opensearch bash -c 'JAVA_HOME=x timeout -k 10 180 /x/securityadmin.sh -cd /y'
+#     [ "$status" -ne 0 ]
+#     _guarded compose -f x.yml exec -T dashboards-helper curl --silent -X PUT https://opensearch:9200/_component_template/ecs_x -d @f
+#     [ "$status" -ne 0 ]
+#     _guarded compose -f x.yml exec -T dashboards-helper curl --silent -X PUT https://opensearch:9200/_index_template/malcolm_template -d @-
+#     [ "$status" -ne 0 ]
+#     [ ! -f "${TEST_TMPDIR}/sudo.log" ]
+#
+#     _guarded compose -f x.yml exec -T dashboards-helper curl --silent -X PUT "https://opensearch:9200/_template/arkime_sessions3_template?create=true" -d @-
+#     [ "$status" -eq 0 ]
+#     _guarded compose -f x.yml exec -T dashboards-helper curl --silent --fail -o /dev/null https://opensearch:9200/_index_template/malcolm_template
+#     [ "$status" -eq 0 ]
+#     _guarded ps -q
+#     [ "$status" -eq 0 ]
+#     [ "$(grep -c . "${TEST_TMPDIR}/sudo.log")" -eq 3 ]
+#     grep -q '^docker compose -f x.yml exec -T dashboards-helper curl --silent -X PUT https://opensearch:9200/_template/arkime_sessions3_template?create=true -d @-$' "${TEST_TMPDIR}/sudo.log"
+# }
+# OLD CODE END
+@test "deploy-malcolm-bootstrap.sh (NET-217): guarded_docker lets through only reads and the create-only marker" {
+    local marker="https://opensearch:9200/_template/arkime_sessions3_template?create=true"
     _guarded compose -f x.yml up -d dashboards-helper
     [ "$status" -eq 0 ]
-    _guarded compose -f x.yml exec -T opensearch bash -c 'JAVA_HOME=x timeout -k 10 180 /x/securityadmin.sh -cd /y'
-    [ "$status" -ne 0 ]
-    _guarded compose -f x.yml exec -T dashboards-helper curl --silent -X PUT https://opensearch:9200/_component_template/ecs_x -d @f
-    [ "$status" -ne 0 ]
-    _guarded compose -f x.yml exec -T dashboards-helper curl --silent -X PUT https://opensearch:9200/_index_template/malcolm_template -d @-
-    [ "$status" -ne 0 ]
+    [[ "$output" == *"skipped docker compose up"* ]] || false
+
+    local refused=(
+        "compose -f x.yml restart opensearch"
+        "compose -f x.yml up -d opensearch"
+        "exec nettap-opensearch cat /etc/hostname"
+        "ps -q"
+        "compose -f x.yml exec -T opensearch bash -c securityadmin.sh"
+        "compose -f x.yml exec -T dashboards-helper curl --silent -XPUT https://opensearch:9200/_index_template/malcolm_template"
+        "compose -f x.yml exec -T dashboards-helper curl -sX PUT https://opensearch:9200/_index_template/malcolm_template"
+        "compose -f x.yml exec -T dashboards-helper curl --request DELETE https://opensearch:9200/x"
+        "compose -f x.yml exec -T dashboards-helper curl --data-binary @f https://opensearch:9200/x"
+        "compose -f x.yml exec -T dashboards-helper curl -X PUT https://opensearch:9200/_component_template/ecs_x -d @f"
+        "compose -f x.yml exec -T dashboards-helper curl -X PUT https://opensearch:9200/_index_template/malcolm_template -d @-"
+        "compose -f x.yml exec -T dashboards-helper curl -X DELETE ${marker}"
+        "compose -f x.yml exec -T dashboards-helper curl -X PUT ${marker} -d @- -T f"
+        "compose -f x.yml exec -T dashboards-helper find /opt -name *.json -delete"
+    )
+    local args
+    for args in "${refused[@]}"; do
+        read -r -a argv <<< "$args"
+        _guarded "${argv[@]}"
+        [ "$status" -eq 1 ] || { echo "not refused: ${args}"; return 1; }
+    done
     [ ! -f "${TEST_TMPDIR}/sudo.log" ]
 
-    _guarded compose -f x.yml exec -T dashboards-helper curl --silent -X PUT "https://opensearch:9200/_template/arkime_sessions3_template?create=true" -d @-
-    [ "$status" -eq 0 ]
-    _guarded compose -f x.yml exec -T dashboards-helper curl --silent --fail -o /dev/null https://opensearch:9200/_index_template/malcolm_template
-    [ "$status" -eq 0 ]
-    _guarded ps -q
-    [ "$status" -eq 0 ]
-    [ "$(grep -c . "${TEST_TMPDIR}/sudo.log")" -eq 3 ]
-    grep -q '^docker compose -f x.yml exec -T dashboards-helper curl --silent -X PUT https://opensearch:9200/_template/arkime_sessions3_template?create=true -d @-$' "${TEST_TMPDIR}/sudo.log"
+    local allowed=(
+        "info"
+        "compose version"
+        "compose -f x.yml exec -T dashboards-helper curl --silent -X PUT ${marker} -H Content-Type: -d @- -o /dev/null"
+        "compose -f x.yml exec -T dashboards-helper curl --silent --fail -o /dev/null https://opensearch:9200/_index_template/malcolm_template"
+        "compose -f x.yml exec -T opensearch curl -sk --max-time 10 https://localhost:9200/_cluster/health"
+        "compose -f x.yml exec -T dashboards-helper jq -r ."
+        "compose -f x.yml exec -T dashboards-helper cat /opt/templates/malcolm_template.json"
+        "compose -f x.yml exec -T dashboards-helper find /opt -name *.json"
+    )
+    for args in "${allowed[@]}"; do
+        read -r -a argv <<< "$args"
+        _guarded "${argv[@]}"
+        [ "$status" -eq 0 ] || { echo "refused: ${args}"; return 1; }
+    done
+    [ "$(grep -c . "${TEST_TMPDIR}/sudo.log")" -eq "${#allowed[@]}" ]
 }
