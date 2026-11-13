@@ -63,6 +63,8 @@ rtt min/avg/max/mdev = 0.040/0.040/0.040/0.000 ms
 """
 LOCAL_V6_ERR = "ping: local error: message too long, mtu: 65536\n"
 UNREACHABLE_ERR = "ping: connect: Network is unreachable\n"
+# format, not captured: ping_common.c error(0, errno, "sendmsg") under an OUTPUT firewall rule
+SENDMSG_EPERM_ERR = "ping: sendmsg: Operation not permitted\n"
 # format, not captured: "From %s icmp_seq=%u " + "Frag needed and DF set (mtu = %u)\n"
 FRAG_V4 = """\
 PING 10.8.0.1 (10.8.0.1) 1472(1500) bytes of data.
@@ -75,7 +77,13 @@ From 192.168.1.1 icmp_seq=1 Frag needed and DF set (mtu = 1420)
 # format, not captured: "From %s icmp_seq=%u " + "Packet too big: mtu=%u" + "\n"
 TOO_BIG_V6 = "PING fd00::1(fd00::1) 1452 data bytes\nFrom fd00::fe icmp_seq=1 Packet too big: mtu=1400\n"
 
-PATH = {"interface": "eno1", "source_ip": "192.168.1.199", "wifi": False, "speed_mbps": 1000, "mtu": 1500}
+PATH = {
+    "interface": "eno1",
+    "source_ip": "192.168.1.199",
+    "wifi": False,
+    "speed_mbps": 1000,
+    "mtu": 1500,
+}
 
 
 def reply(*_):
@@ -162,6 +170,7 @@ class TestParseProbe(unittest.TestCase):
             ((FRAG_V4, ""), {"result": "icmp_too_big", "mtu": 1420}),
             ((TOO_BIG_V6, ""), {"result": "icmp_too_big", "mtu": 1400}),
             (("", UNREACHABLE_ERR), {"result": "local_error", "mtu": None}),
+            (("", SENDMSG_EPERM_ERR), {"result": "local_error", "mtu": None}),
         ]
         for (out, err), expected in cases:
             with self.subTest(out=out[:30], err=err):
@@ -171,14 +180,27 @@ class TestParseProbe(unittest.TestCase):
 class TestSearch(Harness):
     def test_full_size_packets_are_limited_by_the_interface(self):
         result, net = self.check(path_rule(1500, silent))
-        self.assertEqual(net.argv, ("ping", "-4", "-M", "do", "-c", "1", "-W", "1", "-s", "1472", "10.8.0.1"))
-        self.assertEqual(net.pings, [84, 576, 1500, 1500])  # small, floor, ceiling, re-probe
+        self.assertEqual(
+            net.argv,
+            ("ping", "-4", "-M", "do", "-c", "1", "-W", "1", "-s", "1472", "10.8.0.1"),
+        )
+        self.assertEqual(
+            net.pings, [84, 576, 1500, 1500]
+        )  # small, floor, ceiling, re-probe
         self.assertEqual(result["status"], "interface")
         self.assertEqual((result["largest_confirmed"], result["payload"]), (1500, 1472))
         self.assertTrue(result["upper_known"])
         self.assertEqual(
-            {k: result[k] for k in ("resolved_ip", "family", "interface", "interface_mtu")},
-            {"resolved_ip": "10.8.0.1", "family": 4, "interface": "eno1", "interface_mtu": 1500},
+            {
+                k: result[k]
+                for k in ("resolved_ip", "family", "interface", "interface_mtu")
+            },
+            {
+                "resolved_ip": "10.8.0.1",
+                "family": 4,
+                "interface": "eno1",
+                "interface_mtu": 1500,
+            },
         )
 
     def test_a_router_report_is_probed_exactly_and_bounds_the_path(self):
@@ -194,9 +216,13 @@ class TestSearch(Harness):
         result, net = self.check(path_rule(1420, above))
         self.assertEqual(net.pings[:4], [84, 576, 1500, 1420])
         self.assertEqual(result["status"], "icmp_bound")
-        self.assertEqual((result["largest_confirmed"], result["icmp_reported_mtu"]), (1420, 1420))
+        self.assertEqual(
+            (result["largest_confirmed"], result["icmp_reported_mtu"]), (1420, 1420)
+        )
         self.assertTrue(result["upper_known"])
-        self.assertEqual(result["probes"][2], {"size": 1500, "result": "icmp_too_big", "mtu": 1420})
+        self.assertEqual(
+            result["probes"][2], {"size": 1500, "result": "icmp_too_big", "mtu": 1420}
+        )
 
     def test_a_report_equal_to_a_size_that_replied_ends_the_search(self):
         # 1384 has replied when a router reports exactly 1384 for 1442: nothing is left to probe
@@ -209,13 +235,17 @@ class TestSearch(Harness):
         self.assertEqual(net.pings[-2:], [1442, 1384])  # the report, then the re-probe
         self.assertNotIn(1413, net.pings)  # the next bisection step was not needed
         self.assertEqual(result["status"], "icmp_bound")
-        self.assertEqual((result["largest_confirmed"], result["icmp_reported_mtu"]), (1384, 1384))
+        self.assertEqual(
+            (result["largest_confirmed"], result["icmp_reported_mtu"]), (1384, 1384)
+        )
         self.assertTrue(result["upper_known"])
 
     def test_silence_above_never_makes_the_limit_known(self):
         result, net = self.check(path_rule(1400, silent))
         self.assertEqual(result["status"], "unanswered_above")
-        self.assertEqual((result["largest_confirmed"], result["first_unanswered"]), (1400, 1401))
+        self.assertEqual(
+            (result["largest_confirmed"], result["first_unanswered"]), (1400, 1401)
+        )
         self.assertFalse(result["upper_known"])
         self.assertLessEqual(len(result["probes"]), path_mtu_service.MAX_PROBES)
         # every silent size was pinged twice before it counted
@@ -224,7 +254,9 @@ class TestSearch(Harness):
 
     def test_a_lost_ping_is_tried_again(self):
         # the first ping of each size is lost; the second answers
-        result, _ = self.check(lambda size, nth: silent(size) if nth == 0 else reply(size))
+        result, _ = self.check(
+            lambda size, nth: silent(size) if nth == 0 else reply(size)
+        )
         self.assertEqual(result["status"], "interface")
 
     def test_a_report_the_probes_contradict_is_not_trusted(self):
@@ -236,7 +268,9 @@ class TestSearch(Harness):
 
         result, _ = self.check(rule)
         self.assertEqual(result["status"], "unanswered_above")
-        self.assertEqual((result["largest_confirmed"], result["icmp_reported_mtu"]), (1400, 1420))
+        self.assertEqual(
+            (result["largest_confirmed"], result["icmp_reported_mtu"]), (1400, 1420)
+        )
         self.assertFalse(result["upper_known"])
 
     def test_a_report_below_a_size_that_replied_is_contradicted(self):
@@ -247,16 +281,40 @@ class TestSearch(Harness):
             return frag(1300)(size) if size == 1442 else silent(size)
 
         result, _ = self.check(rule)
-        self.assertIn({"size": 1442, "result": "icmp_too_big", "mtu": 1300}, result["probes"])
+        self.assertIn(
+            {"size": 1442, "result": "icmp_too_big", "mtu": 1300}, result["probes"]
+        )
         self.assertEqual(result["status"], "unanswered_above")
-        self.assertEqual((result["largest_confirmed"], result["icmp_reported_mtu"]), (1400, 1300))
+        self.assertEqual(
+            (result["largest_confirmed"], result["icmp_reported_mtu"]), (1400, 1300)
+        )
         self.assertFalse(result["upper_known"])
 
     def test_a_cached_limit_is_nettaps_own_not_a_router_report(self):
+        # every failure above the confirmed size is local: NetTap's kernel refused to send
         result, net = self.check(path_rule(1400, local(1400)))
         self.assertEqual(net.pings, [84, 576, 1500, 1400, 1400])
+        above = [p for p in result["probes"] if p["size"] > 1400]
+        self.assertTrue(above)
+        self.assertTrue(all(p["result"] == "local_error" for p in above))
+        self.assertEqual(above[0]["mtu"], 1400)
         self.assertEqual(result["status"], "local_limit")
-        self.assertEqual((result["largest_confirmed"], result["local_mtu"]), (1400, 1400))
+        self.assertEqual(
+            (result["largest_confirmed"], result["local_mtu"]), (1400, 1400)
+        )
+        self.assertIsNone(result["icmp_reported_mtu"])
+        self.assertFalse(result["upper_known"])
+
+    def test_local_failures_that_name_no_limit_are_still_local(self):
+        # a local firewall refuses every send above 1400 (format: ping_common.c
+        # error(0, errno, "sendmsg")): the search bisects down, nothing left NetTap
+        result, _ = self.check(path_rule(1400, lambda *_: ("", SENDMSG_EPERM_ERR, 1)))
+        above = [p for p in result["probes"] if p["size"] > 1400]
+        self.assertTrue(all(p["result"] == "local_error" for p in above))
+        self.assertEqual(result["status"], "local_limit")
+        self.assertEqual(
+            (result["largest_confirmed"], result["local_mtu"]), (1400, None)
+        )
         self.assertIsNone(result["icmp_reported_mtu"])
         self.assertFalse(result["upper_known"])
 
@@ -269,11 +327,15 @@ class TestSearch(Harness):
     def test_small_pings_answer_but_the_floor_does_not(self):
         result, _ = self.check(path_rule(300, silent))
         self.assertEqual(result["status"], "floor_unanswered")
-        self.assertEqual((result["largest_confirmed"], result["first_unanswered"]), (84, 576))
+        self.assertEqual(
+            (result["largest_confirmed"], result["first_unanswered"]), (84, 576)
+        )
 
     def test_inconsistent_replies_confirm_nothing(self):
         # 1500 answers once, then never again
-        result, _ = self.check(lambda size, nth: reply(size) if size < 1500 or nth == 0 else silent(size))
+        result, _ = self.check(
+            lambda size, nth: reply(size) if size < 1500 or nth == 0 else silent(size)
+        )
         self.assertEqual(result["status"], "unreliable")
         self.assertFalse(result["upper_known"])
 
@@ -286,13 +348,22 @@ class TestSearch(Harness):
         self.route.return_value = {**PATH, "mtu": 1500}
 
         def rule(size, nth):
-            return (REPLY_V6, "", 0) if size <= 1400 else (TOO_BIG_V6, "", 1) if nth == 0 else ("", LOCAL_V6_ERR.replace("65536", "1400"), 1)
+            return (
+                (REPLY_V6, "", 0)
+                if size <= 1400
+                else (TOO_BIG_V6, "", 1)
+                if nth == 0
+                else ("", LOCAL_V6_ERR.replace("65536", "1400"), 1)
+            )
 
         result, net = self.check(rule, target="fd00::1", overhead=48)
         self.assertEqual(net.argv[:2], ("ping", "-6"))
         self.assertEqual(net.pings[:4], [104, 1280, 1500, 1400])
         self.assertEqual(result["status"], "icmp_bound")
-        self.assertEqual((result["largest_confirmed"], result["payload"], result["family"]), (1400, 1352, 6))
+        self.assertEqual(
+            (result["largest_confirmed"], result["payload"], result["family"]),
+            (1400, 1352, 6),
+        )
 
     def test_the_probe_cap_returns_what_is_confirmed(self):
         with patch.object(path_mtu_service, "MAX_PROBES", 3):
@@ -306,7 +377,10 @@ class TestSearch(Harness):
         procs = [FakeProc(REPLY_V4), hung]
         with (
             patch.object(path_mtu_service, "DEADLINE", 0.05),
-            patch("asyncio.create_subprocess_exec", side_effect=lambda *a, **k: procs.pop(0)),
+            patch(
+                "asyncio.create_subprocess_exec",
+                side_effect=lambda *a, **k: procs.pop(0),
+            ),
         ):
             result = asyncio.run(self.svc.check("10.8.0.1"))
         self.assertEqual(result["status"], "stopped")
@@ -335,14 +409,19 @@ class TestAdmission(Harness):
                 "asyncio.create_subprocess_exec",
                 side_effect=lambda *a, **k: FakeProc(REPLY_V4, release=release),
             ):
-                running = [asyncio.create_task(self.svc.check(t)) for t in ("10.8.0.1", "10.8.0.2")]
+                running = [
+                    asyncio.create_task(self.svc.check(t))
+                    for t in ("10.8.0.1", "10.8.0.2")
+                ]
                 await asyncio.sleep(0.01)
                 with self.assertRaisesRegex(PathMtuBusyError, BUSY):
                     await self.svc.check("10.8.0.3")
                 release.set()
                 return await asyncio.gather(*running)
 
-        self.assertEqual([r["status"] for r in asyncio.run(go())], ["interface", "interface"])
+        self.assertEqual(
+            [r["status"] for r in asyncio.run(go())], ["interface", "interface"]
+        )
 
 
 class TestMtuRoute(AioHTTPTestCase):

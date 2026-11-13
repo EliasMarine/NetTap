@@ -37,13 +37,16 @@ DEADLINE = 25  # seconds: resolution, route lookup and every probe
 MAX_PROBES = 16
 MAX_IP_SIZE = 65535  # the largest IP packet ping can build
 OVERHEAD = {4: 28, 6: 48}  # IP + ICMP headers
-FLOOR = {4: 576, 6: 1280}  # every IPv4 host must take 576 bytes; IPv6 links carry 1280
+# every IPv4 host must take 576 bytes; every IPv6 link carries 1280
+FLOOR = {4: 576, 6: 1280}
 SMALL = {4: 84, 6: 104}  # ping's default 56-byte payload
 TRIES = 2  # a size counts as unanswered after this many pings without a reply
 
 _REPLY = re.compile(r"^\d+ bytes from ", re.M)
 # exact iputils 20221126 wording: ping.c pr_icmph, ping6_common.c print_icmp
-_TOO_BIG = re.compile(r"Frag needed and DF set \(mtu = (\d+)\)|Packet too big: mtu=(\d+)")
+_TOO_BIG = re.compile(
+    r"Frag needed and DF set \(mtu = (\d+)\)|Packet too big: mtu=(\d+)"
+)
 _LOCAL_MTU = re.compile(r"local error: message too long, mtu[=:] ?(\d+)")
 _PING_ERROR = re.compile(r"^ping: (.+)$", re.M)
 
@@ -67,7 +70,10 @@ def parse_probe(stdout: str, stderr: str) -> dict[str, Any]:
     text = stdout + "\n" + stderr
     too_big = _TOO_BIG.search(text)
     if too_big:
-        return {"result": "icmp_too_big", "mtu": int(too_big.group(1) or too_big.group(2))}
+        return {
+            "result": "icmp_too_big",
+            "mtu": int(too_big.group(1) or too_big.group(2)),
+        }
     local = _LOCAL_MTU.search(text)
     if local:
         return {"result": "local_error", "mtu": int(local.group(1))}
@@ -92,16 +98,28 @@ class _Check:
     async def _ping(self, size: int) -> dict[str, Any]:
         payload = size - OVERHEAD[self.family]
         _, out, err = await run(
-            "ping", f"-{self.family}", "-M", "do", "-c", "1", "-W", "1", "-s", str(payload), self.ip
+            "ping",
+            f"-{self.family}",
+            "-M",
+            "do",
+            "-c",
+            "1",
+            "-W",
+            "1",
+            "-s",
+            str(payload),
+            self.ip,
         )
         probe = parse_probe(out, err)
         if probe["result"] == "local_error" and probe["mtu"] is None:
-            self.ping_error = _PING_ERROR.search(err).group(1)  # parse_probe matched it
+            # parse_probe matched it
+            self.ping_error = _PING_ERROR.search(err).group(1)
         return probe
 
     async def tried(self, size: int) -> dict[str, Any]:
         """A size's outcome, one probe: a no_reply is pinged again before it counts."""
-        # counted per size, not per ping: a silent size costs two 1 s pings, and DEADLINE still bounds them
+        # counted per size, not per ping: a silent size costs two 1 s pings,
+        # and DEADLINE still bounds them
         if len(self.probes) >= MAX_PROBES:
             raise _Stopped
         for _ in range(TRIES):
@@ -137,7 +155,9 @@ class _Check:
             return "floor_unanswered"
         low, high, next_size = floor, self.ceiling + 1, self.ceiling
         while high - low > 1:
-            size = next_size if next_size and low < next_size < high else (low + high) // 2
+            size = (
+                next_size if next_size and low < next_size < high else (low + high) // 2
+            )
             probe = await self.tried(size)
             next_size = None
             if probe["result"] == "reply":
@@ -146,8 +166,8 @@ class _Check:
             high = size
             limit = self._limit(probe, size)
             if limit is not None and limit >= low:
-                # with DF set the kernel now holds this limit, so every size above it fails locally;
-                # a limit equal to a size that replied ends the search there
+                # with DF set the kernel now holds this limit, so every size above
+                # it fails locally; a limit equal to a size that replied ends the search
                 next_size, high = limit, min(high, limit + 1)
         if (await self.tried(self.confirmed))["result"] != "reply":
             return "unreliable"
@@ -155,7 +175,11 @@ class _Check:
             return "interface"
         if self.icmp_mtu == self.confirmed and not self.icmp_contradicted:
             return "icmp_bound"
-        if self.local_mtu == self.confirmed:
+        # OLD CODE: if self.local_mtu == self.confirmed: return "local_limit" (lead
+        # review: it covers every run whose failures above the confirmed size were local)
+        above = [p for p in self.probes if p["size"] > self.confirmed]
+        # NetTap refused to send them all: the path above was never tested
+        if above and all(p["result"] == "local_error" for p in above):
             return "local_limit"
         return "unanswered_above"
 
@@ -164,7 +188,7 @@ class PathMtuService:
     """Runs path MTU checks, two at a time."""
 
     def __init__(self) -> None:
-        # Rejects instead of queueing: a wait here would count against the web's limit
+        # Rejects instead of queueing: a wait would count against the web's limit
         self._slots = asyncio.Semaphore(MAX_CONCURRENT)
         self._diag = NetworkDiagService()
 
@@ -181,9 +205,13 @@ class PathMtuService:
         async with self._slots:
             started = time.monotonic()
             result = await self._check(target)
-            log = logger.warning if result["error"] or result["status"] == "stopped" else logger.info
+            log = (
+                logger.warning
+                if result["error"] or result["status"] == "stopped"
+                else logger.info
+            )
             log(
-                "mtu %s -> %s, largest %s, upper known %s, %d probes in %.1f s",
+                "mtu %r -> %s, largest %s, upper known %s, %d probes in %.1f s",
                 target,
                 result["error"] or result["status"],
                 result["largest_confirmed"],
@@ -216,10 +244,16 @@ class PathMtuService:
                 ip = (await resolve(target))[0]
                 path = await route_to(ip)
                 family = ipaddress.ip_address(ip).version
-                # shortcut: 1500 when sysfs can't give the MTU; read the route's own mtu if that happens
+                # shortcut: 1500 when sysfs can't give the MTU; read the route's
+                # own mtu if that ever happens
                 ceiling = min(path["mtu"] or 1500, MAX_IP_SIZE)
-                base = {**base, "resolved_ip": ip, "family": family,
-                        "interface": path["interface"], "interface_mtu": path["mtu"]}
+                base = {
+                    **base,
+                    "resolved_ip": ip,
+                    "family": family,
+                    "interface": path["interface"],
+                    "interface_mtu": path["mtu"],
+                }
                 check = _Check(ip, family, ceiling)
                 status = await check.search()
         except HostLookupError as exc:
@@ -234,7 +268,9 @@ class PathMtuService:
 
     @staticmethod
     def _result(base: dict[str, Any], check: _Check, status: str) -> dict[str, Any]:
-        confirmed = None if status in ("no_ping_reply", "ping_error") else check.confirmed
+        confirmed = (
+            None if status in ("no_ping_reply", "ping_error") else check.confirmed
+        )
         return {
             **base,
             "largest_confirmed": confirmed,
@@ -243,7 +279,8 @@ class PathMtuService:
             "icmp_reported_mtu": check.icmp_mtu,
             "local_mtu": check.local_mtu,
             "first_unanswered": check.first_unanswered,
-            "probes": check.probes,  # [{size, result, mtu}]: mtu is the limit a failed probe named
+            # [{size, result, mtu}]: mtu is the limit a failed probe named
+            "probes": check.probes,
             "status": status,
             "error": check.ping_error if status == "ping_error" else None,
         }

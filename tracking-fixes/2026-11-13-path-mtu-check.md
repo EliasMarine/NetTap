@@ -5,7 +5,8 @@
 **Status:** built and tested locally. The probe algorithm was run read-only inside the G11 daemon
 container against real targets (see below). The branch itself is not deployed. No image change.
 **Plan:** `PLAN.md` section 6 plus "Shared decisions" (Codex review, 4 rounds, APPROVED). There is one
-deviation, `-M do` instead of `-M probe`; see below.
+deviation, `-M do` instead of `-M probe`; see below. The lead approved it on 2026-11-13, after
+confirming on the G11 that this ping rejects `-M probe`.
 
 ## Why
 
@@ -24,13 +25,19 @@ the path, either an earlier router report (cached up to 10 minutes) or a route M
 - That probe is `local_error` with its N. N is shown as NetTap's own limit, never as a router
   report, and it never makes the upper limit known.
 - For the binary search it counts as a failed size, and the next probe is exactly N.
-- If N replies and no router report in this run explains it, the status is `local_limit`: "NetTap
+- When every probe above the confirmed size failed locally, the status is `local_limit`: "NetTap
   would not send larger packets: it still holds an N-byte limit for this path …, so the upper limit
-  is unknown."
+  is unknown." When the local errors name no limit (for example `sendmsg: Operation not
+  permitted` from a local firewall), the line is "NetTap would not send larger packets (ping
+  reported an error), so the upper limit is unknown."
 - In one run, a router report of N makes the kernel refuse sizes above N. The search goes straight
   to N, and if N replies the status is `icmp_bound` (consistent with the report).
 
-Reported to the lead before building, with this recommendation. No answer came before the build.
+- What is lost: for up to 10 minutes (the kernel's PMTU cache, `net.ipv4.route.mtu_expires` 600 s),
+  a stale cached limit from an earlier route caps what can be tested. The result says so; it
+  never claims the limit is the path's.
+
+The lead approved this with no raw-socket prober and no tracepath.
 
 ## What changed
 
@@ -55,11 +62,12 @@ Reported to the lead before building, with this recommendation. No answer came b
       reported N equal to a size that replied ends the search.
     - Re-probe the largest confirmed size.
     - A cap or deadline returns `stopped` with what is confirmed.
-  - Statuses: `interface`, `icmp_bound`, `unanswered_above`, `local_limit`, `floor_unanswered`,
+  - Statuses: `interface`, `icmp_bound`, `unanswered_above`, `local_limit` (every failure above the
+    confirmed size was local), `floor_unanswered`,
     `no_ping_reply`, `unreliable`, `stopped`, `ping_error`. Upper limit known only for `interface`
     and `icmp_bound`. A report contradicted by the probes (a reply above it, or its own size
     unanswered) is kept as `icmp_reported_mtu` but not trusted.
-  - One INFO line per check, or WARNING on an error or a stop.
+  - One INFO line per check, or WARNING on an error or a stop. The target is logged with `%r`.
 - **`daemon/api/tools.py`:** the route. 400 for bad input or a body that isn't a JSON object, 503
   with the fixed busy sentence (`tests/test_error_replies.py` forbids exception text in a public 5xx).
 - **Web:**
@@ -99,7 +107,10 @@ Reported to the lead before building, with this recommendation. No answer came b
 ## Test results
 
 - Daemon:
-  - New tests: 22 for the service and route, plus 12 for the resolver.
+  - New tests: 23 for the service and route, plus 12 for the resolver. Two cover runs where every
+    failure above the confirmed size is local: one with a cached limit, one with ping's own send
+    error and no limit.
+  - `ruff format --check` and `ruff check` (0.17.3) pass on the whole `daemon/`.
   - Full suite: 0 failures. The first full run caught a public 503 built from `str(e)`, which the
     error-replies guard forbids; it now sends the fixed sentence.
 - Web: full vitest 4873 tests passed; svelte-check 0 errors (2 old warnings); `check:colors`

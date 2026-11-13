@@ -24,7 +24,10 @@ export function mtuSummary(r: PathMtuResult): string | null {
 			return `Largest confirmed: ${largest} bytes. ${above}, so the upper limit is unknown. ${SILENT_ABOVE}${report}`;
 		}
 		case 'local_limit':
-			return `Largest confirmed: ${largest} bytes. NetTap would not send larger packets: it still holds a ${r.local_mtu}-byte limit for this path, from an earlier router report or a route setting (a cached report clears within 10 minutes), so the upper limit is unknown.`;
+			// every probe above the confirmed size failed inside NetTap, so the path above it was never tested
+			return r.local_mtu
+				? `Largest confirmed: ${largest} bytes. NetTap would not send larger packets: it still holds a ${r.local_mtu}-byte limit for this path, from an earlier router report or a route setting (a cached report clears within 10 minutes), so the upper limit is unknown.`
+				: `Largest confirmed: ${largest} bytes. NetTap would not send larger packets (ping reported an error), so the upper limit is unknown.`;
 		case 'floor_unanswered':
 			return `${t} answers small pings but not ${r.first_unanswered}-byte ones. That points to a possible MTU problem.`;
 		case 'no_ping_reply':

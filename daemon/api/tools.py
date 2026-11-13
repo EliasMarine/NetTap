@@ -382,7 +382,8 @@ async def handle_path_mtu(request: web.Request) -> web.Response:
         result = await request.app["path_mtu"].check(body.get("target"))
     except (PathMtuValidationError, NetworkDiagValidationError) as e:
         return web.json_response({"error": str(e)}, status=400)
-    except PathMtuBusyError:  # the fixed sentence, so no exception text reaches a public reply
+    except PathMtuBusyError:
+        # the fixed sentence, so no exception text reaches a public reply
         return public_json({"error": MTU_BUSY}, status=503)
     return web.json_response(result)
 

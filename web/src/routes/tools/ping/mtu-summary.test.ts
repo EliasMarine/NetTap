@@ -50,6 +50,9 @@ describe('path MTU wording (NET-267)', () => {
 		expect(line).toMatch(/^Largest confirmed: 1400 bytes\. NetTap would not send larger packets: it still holds a 1400-byte limit/);
 		expect(line).toMatch(/so the upper limit is unknown\.$/);
 		expect(line).not.toMatch(/A router reported/);
+		expect(mtuSummary(r({ status: 'local_limit', largest_confirmed: 1400, local_mtu: null, upper_known: false }))).toBe(
+			'Largest confirmed: 1400 bytes. NetTap would not send larger packets (ping reported an error), so the upper limit is unknown.'
+		);
 	});
 
 	it('covers the statuses with no confirmed limit', () => {
