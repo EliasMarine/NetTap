@@ -756,7 +756,8 @@
 {#snippet signatureCell(a: Alert)}<span class="mono" title={a.alert?.signature || 'Unknown'}>{a.alert?.signature || 'Unknown'}</span>{/snippet}
 OLD CODE END -->
 {#snippet signatureCell(a: Alert)}
-	{#if a.alert?.signature}<a class="mono" href={sigHref(a.alert.signature)} title={a.alert.signature}>{a.alert.signature}</a>{:else}<span class="mono">Unknown</span>{/if}
+	<!-- OLD CODE: …{:else}<span class="mono">Unknown</span>{/if} (NET-185: the bars call these alerts "No rule name"; "Unknown" can be a real rule's name) -->
+	{#if a.alert?.signature}<a class="mono" href={sigHref(a.alert.signature)} title={a.alert.signature}>{a.alert.signature}</a>{:else}<span class="dim">No rule name</span>{/if}
 {/snippet}
 {#snippet srcCell(a: Alert)}{#if a.src_ip}<IPAddress ip={a.src_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet destCell(a: Alert)}{#if a.dest_ip}<IPAddress ip={a.dest_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
@@ -957,6 +958,7 @@ OLD CODE END -->
 			{:else if alerts.length === 0}
 				<CardState state="empty" icon="alerts" title="No alerts found in this time range." />
 			{:else}
+				<!-- OLD CODE: rowLabel={(a) => `Open alert ${a.alert?.signature || 'Unknown'}…`} (NET-185: the bars call these alerts "No rule name"; "Unknown" can be a real rule's name) -->
 				<DataTable
 					columns={alertColumns}
 					rows={sortedAlerts}
@@ -965,7 +967,7 @@ OLD CODE END -->
 					initialSort={{ key: sortKey, dir: sortDir }}
 					onsortchange={changeSort}
 					onrowactivate={openDrawer}
-					rowLabel={(a) => `Open alert ${a.alert?.signature || 'Unknown'}${a.src_ip ? ` from ${a.src_ip}` : ''}`}
+					rowLabel={(a) => `Open alert ${a.alert?.signature || 'with no rule name'}${a.src_ip ? ` from ${a.src_ip}` : ''}`}
 					selectedKey={selectedRowKey}
 					pager={totalPages > 1 ? { page: currentPage, pageCount: totalPages, total: totalAlerts, from: fromRow, to: toRow, onpage: (p) => fetchAlerts(p) } : undefined}
 				/>

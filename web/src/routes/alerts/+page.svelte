@@ -1355,7 +1355,8 @@ OLD CODE END -->
 <!-- Every alert with this rule, over the list's own window; no link without a rule.name, which the filter matches -->
 <!-- OLD CODE: {#if a.rule?.name}<a class="mono" href={alertsHrefForSignature(a.rule.name, shownWindow)} … (NET-191: a row of the activity list opened the counted list, which leaves it out) -->
 {#snippet signatureCell(a: Alert)}
-	{#if a.rule?.name}<a class="mono" href={alertsHrefForSignature(a.rule.name, shownWindow, { activity: activityFilter })} title={a.alert?.signature || a.rule.name}>{a.alert?.signature || a.rule.name}</a>{:else}<span class="mono" title={a.alert?.signature || 'Unknown'}>{a.alert?.signature || 'Unknown'}</span>{/if}
+	<!-- OLD CODE: …{:else}<span class="mono" title={a.alert?.signature || 'Unknown'}>{a.alert?.signature || 'Unknown'}</span>{/if} (NET-185: the bars call these alerts "No rule name"; "Unknown" can be a real rule's name) -->
+	{#if a.rule?.name}<a class="mono" href={alertsHrefForSignature(a.rule.name, shownWindow, { activity: activityFilter })} title={a.alert?.signature || a.rule.name}>{a.alert?.signature || a.rule.name}</a>{:else if a.alert?.signature}<span class="mono" title={a.alert.signature}>{a.alert.signature}</span>{:else}<span class="dim">No rule name</span>{/if}
 {/snippet}
 {#snippet srcCell(a: Alert)}{#if a.src_ip}<IPAddress ip={a.src_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet destCell(a: Alert)}{#if a.dest_ip}<IPAddress ip={a.dest_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
@@ -1541,10 +1542,11 @@ OLD CODE END -->
 					<!-- OLD CODE: href={groupCategoryLinked(sortedAlerts, group.title) ? … : undefined} (NET-191: not from the activity list; the category page counts only counted alerts) -->
 					<AlertGroup title={group.title} count={group.count} href={!activityFilter && groupCategoryLinked(sortedAlerts, group.title) ? suricataCategoryHref(group.title, shownWindow) : undefined}>
 						{#each group.lines as line (line.key)}
+							<!-- OLD CODE: signature={line.alert.alert?.signature || 'Unknown'} (NET-185: the bars call these alerts "No rule name"; "Unknown" can be a real rule's name) -->
 							<AlertRow
 								severity={line.level}
 								title={alertTitle(line.alert)}
-								signature={line.alert.alert?.signature || 'Unknown'}
+								signature={line.alert.alert?.signature || 'No rule name'}
 								device={line.alert.src_ip ? { name: line.alert.src_ip } : undefined}
 								count={line.count}
 								lastSeen={shortSeen(line.lastSeen)}
@@ -1555,6 +1557,7 @@ OLD CODE END -->
 					</AlertGroup>
 				{/each}
 			{:else}
+				<!-- OLD CODE: rowLabel={(a) => `Open alert ${a.alert?.signature || 'Unknown'}…`} (NET-185: the bars call these alerts "No rule name"; "Unknown" can be a real rule's name) -->
 				<DataTable
 					{columns}
 					rows={sortedAlerts}
@@ -1563,7 +1566,7 @@ OLD CODE END -->
 					initialSort={{ key: sortKey, dir: sortDir }}
 					onsortchange={changeSort}
 					onrowactivate={openDrawer}
-					rowLabel={(a) => `Open alert ${a.alert?.signature || 'Unknown'}${a.src_ip ? ` from ${a.src_ip}` : ''}`}
+					rowLabel={(a) => `Open alert ${a.alert?.signature || 'with no rule name'}${a.src_ip ? ` from ${a.src_ip}` : ''}`}
 					selectedKey={selectedRowKey}
 					pager={totalPages > 1 ? { page: currentPage, pageCount: totalPages, total: totalAlerts, from: fromRow, to: toRow, onpage: goToPage, disabled: listPending } : undefined}
 				/>

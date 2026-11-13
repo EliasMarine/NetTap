@@ -19,6 +19,7 @@ A figure on a page has to equal the list its link opens, and a box with no data 
   - `/alerts/[category]` reads `range`, `from` and `to` from the URL. A link with `from`/`to` opens as "Custom"; a range pill writes `?range=` and clears it.
   - The category bar on Alerts carries the window its counts used.
   - `_every_signature` keeps no-name alerts as `null`. `GET /api/alerts` takes `no_rule_name=true|false` (anything else is a 400) and the proxy forwards it unchanged. The row reads "No rule name" and links with `no_rule_name=true`; Alerts shows it as a chip.
+  - Alert rows, their row labels and the drawer say "No rule name" too, where they said "Unknown" (a rule can really be named that).
 
 **NET-184: a top source or destination bar opens exactly its figure.**
 - **Cause:** the bar counted `source.ip` (or `destination.ip`) over the card's window, but its link searched `ip` (either side) over a fresh window, with the page's other filters still on.
@@ -59,4 +60,4 @@ A dry run against the current (unfixed) daemon passed every check that doesn't n
 ## Next steps
 
 - Deploy with the script above and close the issues.
-- Follow-ups: Alerts' own Top signatures and the Suricata page could link their no-name rows with `no_rule_name=true`; the category page has no "You clicked N" line; drill-down pages that page with a PIT (address, domain, Suricata, certificates) are untested on a box with no index.
+- Follow-ups: the category page's table links a row by its shown signature, not its `rule.name` as Alerts does; Alerts' own Top signatures and the Suricata page could link their no-name rows with `no_rule_name=true`; the category page has no "You clicked N" line; drill-down pages that page with a PIT (address, domain, Suricata, certificates) are untested on a box with no index.

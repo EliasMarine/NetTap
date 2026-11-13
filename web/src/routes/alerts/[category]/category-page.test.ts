@@ -132,6 +132,21 @@ describe('Alert category page — signature links', () => {
 		vi.unstubAllGlobals();
 	});
 
+	// NET-185: the same words as the "No rule name" bar; "Unknown" can be a real rule's name
+	it('a table row with no rule name reads "No rule name", with no link', async () => {
+		const alerts = {
+			from: '', to: '', page: 1, size: 25, total: 1, total_pages: 1,
+			alerts: [{ _id: 'a', _index: 'x', timestamp: '2026-10-29T10:00:00Z', alert: { signature: '', signature_id: 1, severity: 2, category: 'misc' }, src_ip: '10.0.0.9', dest_ip: '8.8.8.8', acknowledged: false }],
+		};
+		stubDaemon({ '/api/alerts/categories/scan': DETAIL, '/api/alerts': alerts });
+		render(Page);
+		const table = await vi.waitFor(() => screen.getByRole('table', { name: /alerts, newest first/ }));
+		expect(within(table).getByText('No rule name')).toBeInTheDocument();
+		expect(within(table).queryByRole('link', { name: 'No rule name' })).not.toBeInTheDocument();
+		expect(within(table).getByRole('button', { name: 'Open alert with no rule name from 10.0.0.9' })).toBeInTheDocument();
+		expect(within(table).queryByText('Unknown')).not.toBeInTheDocument();
+	});
+
 	it("the top-signature bars and the table's signatures carry the shown window and range", async () => {
 		const detail = { ...DETAIL, top_signatures: [{ signature: 'ET SCAN Nmap', count: 3, last_seen: '2026-11-06T10:00:00Z' }] };
 		const alerts = {

@@ -1170,6 +1170,23 @@ describe('Alerts — source, destination, rule-name links and 6h (NET-160 slice 
 		expect(within(drawer).queryByRole('link', { name: 'No rule here' })).not.toBeInTheDocument();
 	});
 
+	// NET-185: the same words as the "No rule name" bar; "Unknown" can be a real rule's name
+	it('an alert with no rule name reads "No rule name" in the groups, the table, its row label and the drawer', async () => {
+		succeedAll([alert('a1', { signature: '', rule: undefined, category: 'Bare category' })]);
+		render(Page);
+		await flush();
+		expect(screen.getByText('No rule name')).toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('button', { name: /Bare category/ }));
+		const drawer = screen.getByRole('complementary', { name: 'Alert details' });
+		expect(within(drawer).getByText('No rule name')).toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
+		const table = screen.getByRole('table', { name: /Alerts, newest first/ });
+		expect(within(table).getByText('No rule name')).toBeInTheDocument();
+		expect(within(table).queryByRole('link', { name: 'No rule name' })).not.toBeInTheDocument();
+		expect(within(table).getByRole('button', { name: 'Open alert with no rule name from 192.168.1.42' })).toBeInTheDocument();
+		expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
+	});
+
 	it('?range=6h opens the last 6 hours, with a 15-minute timeline', async () => {
 		at('?range=6h');
 		succeedAll();
