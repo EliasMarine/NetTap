@@ -562,7 +562,7 @@ CHAIN 33: installer and Go Live bugs found writing the setup guide (fix/installe
     It now asks through `docker compose exec opensearch` with Malcolm's curlrc (as deploy-malcolm.sh).
   - #6 The install summary and firewall pointed at Malcolm on :9443, where nothing listens. The
     summary now says https://<host>/dashboards/ after sign-in; 9443 is no longer opened.
-    deploy-malcolm.sh:234 still prints 9443 (malcolm-bootstrap's file, reported).
+    deploy-malcolm.sh:234 printed it too; fixed on fix/malcolm-bootstrap-and-decimal-sizes (587e3c8d).
   - #7 `ufw status | grep -q active` also matched "inactive", so the installer enabled UFW on boxes
     where the owner had it off. Now `^Status: active`.
   - #8 `--dry-run` wrote /etc/sysctl.d/99-nettap.conf, nettap.service and daemon.json, installed the

@@ -56,4 +56,5 @@ NET-244: `install.sh --skip-bridge --non-interactive` aborted on a two-port box.
 
 - Deploy on the G11: `bash scripts/remote/deploy-installer-go-live.sh`.
 - Fresh-install checks the G11 can't show: two-port `--skip-bridge --non-interactive`, `install.sh --dry-run` on a clean box, a bridge-mode wizard then Go Live (capture starts when br0 appears), uninstall on a bridge box.
-- Out of scope: existing `.env` files keep the old `MGMT_*` values; `deploy-malcolm.sh:234` still prints 9443 (reported to malcolm-bootstrap); standalone `deploy-malcolm.sh`/`malcolm-config.sh --dry-run` still write repo config.
+- `deploy-malcolm.sh:234` printed the same 9443 address: fixed by malcolm-bootstrap on `fix/malcolm-bootstrap-and-decimal-sizes` (587e3c8d).
+- Out of scope: existing `.env` files keep the old `MGMT_*` values; standalone `deploy-malcolm.sh`/`malcolm-config.sh --dry-run` still write repo config.
