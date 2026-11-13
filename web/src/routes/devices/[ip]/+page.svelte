@@ -887,6 +887,8 @@ OLD CODE END -->
 		<dl class="ident-meta">
 			<div><dt class="meta-k">IP address</dt><dd class="meta-v mono">{device.ip}</dd></div>
 			<div><dt class="meta-k">MAC</dt><dd class="meta-v mono">{device.mac ?? '—'}</dd></div>
+			<!-- NET-263: its DHCP transactions, kept by MAC, so only a device with one has the link -->
+			{#if device.mac}<div><dt class="meta-k">Leases</dt><dd class="meta-v"><a href="/tools/dhcp-timeline?mac={encodeURIComponent(device.mac.toLowerCase())}">DHCP history</a></dd></div>{/if}
 			<div><dt class="meta-k">Vendor</dt><dd class="meta-v">{device.manufacturer ?? '—'}</dd></div>
 			<!-- OLD CODE: <dd class="meta-v mono">{device.hostname ?? '—'}</dd> (NET-200: hostname carries the owner's name; the real one stays visible) -->
 			<!-- OLD CODE: <dd class="meta-v mono">{device.discovered_name ?? device.hostname ?? '—'}</dd> (NET-201: an owner's name with no discovered name showed as the hostname) -->

@@ -426,6 +426,16 @@ def test_a_blocked_moment_read_leaves_the_route_pool_free(server):
     assert answers == [200]
 
 
+def test_the_real_app_serves_the_dhcp_timeline(server):
+    """NET-263: create_app registers the route (its reads run in drill-down slots, as moment's)."""
+    from api.dhcp_timeline import BAD_MAC
+
+    assert _get(server, "/api/dhcp/timeline?mac=nonsense")[:2] == (
+        400,
+        {"error": BAD_MAC},
+    )
+
+
 def test_a_fifth_public_lookup_is_turned_away_at_once(server):
     """PR #200 review: the public lookups (no login) ran uncapped on the shared pool."""
     from api import offload

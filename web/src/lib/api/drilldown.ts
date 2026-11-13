@@ -158,7 +158,16 @@ export interface DomainSummary {
 	};
 }
 
-/** The reply's JSON; a failure throws the daemon's own reason, or "<what> failed: HTTP n". */
+/** A failed request, with its HTTP status (a 400 is the caller's input, not the network data). */
+export class HttpError extends Error {
+	readonly status: number;
+	constructor(message: string, status: number) {
+		super(message);
+		this.status = status;
+	}
+}
+
+/** The reply's JSON; a failure throws (HttpError) the daemon's own reason, or "<what> failed: HTTP n". */
 export async function getJson(url: string, what: string): Promise<unknown> {
 	const res = await fetch(url);
 	if (!res.ok) {
@@ -166,7 +175,8 @@ export async function getJson(url: string, what: string): Promise<unknown> {
 			.json()
 			.then((body: unknown) => (body && typeof body === 'object' && 'error' in body ? String(body.error) : ''))
 			.catch(() => '');
-		throw new Error(reason || `${what} failed: HTTP ${res.status}`);
+		// OLD CODE: throw new Error(reason || `${what} failed: HTTP ${res.status}`); (NET-263 review: the status, so a 400 can say what to fix)
+		throw new HttpError(reason || `${what} failed: HTTP ${res.status}`, res.status);
 	}
 	return res.json();
 }
@@ -180,7 +190,7 @@ export const isNumber = (v: unknown): v is number => typeof v === 'number' && Nu
 const isBoolean = (v: unknown): v is boolean => typeof v === 'boolean';
 const isByteTotal = (v: unknown) => isObject(v) && ['total', 'measured', 'connections'].every((k) => isNumber(v[k])) && isBoolean(v.partial);
 /** null (no indicators loaded) or a checked result; a missing field is malformed, not "not checked" */
-const isNullable = (v: unknown, test: (x: unknown) => boolean) => v === null || test(v);
+export const isNullable = (v: unknown, test: (x: unknown) => boolean) => v === null || test(v);
 export const isString = (v: unknown): v is string => typeof v === 'string';
 const isPort = (v: unknown) =>
 	isObject(v) &&

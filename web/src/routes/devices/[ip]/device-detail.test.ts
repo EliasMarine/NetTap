@@ -495,6 +495,32 @@ describe('Device detail — smart alert ×N links', () => {
 	});
 });
 
+describe('Device detail — DHCP history (NET-263)', () => {
+	beforeEach(() => {
+		vi.mocked(getSmartAlerts).mockResolvedValue({ alerts: [], total: 0 } as never);
+	});
+	afterEach(() => vi.clearAllMocks());
+
+	it('links the DHCP timeline by MAC, and only when the device has one', async () => {
+		const withMac = (mac?: string) =>
+			({
+				device: {
+					ip: IP, mac, hostname: 'laptop', connection_count: 3, alert_count: 0,
+					first_seen: '2026-10-29T00:00:00Z', last_seen: '2026-10-29T01:00:00Z',
+					top_destinations: [], dns_queries: [], bandwidth_series: [], protocols: [],
+				},
+			}) as never;
+		vi.mocked(getDeviceDetail).mockImplementationOnce(async () => withMac('AA:BB:CC:DD:EE:FF'));
+		const first = render(Page);
+		expect(await screen.findByRole('link', { name: 'DHCP history' })).toHaveAttribute('href', '/tools/dhcp-timeline?mac=aa%3Abb%3Acc%3Add%3Aee%3Aff');
+		first.unmount();
+
+		render(Page);
+		await screen.findByText('192.168.1.10', { selector: 'dd' });
+		expect(screen.queryByRole('link', { name: 'DHCP history' })).not.toBeInTheDocument();
+	});
+});
+
 describe('Device detail — live bandwidth (NET-205)', () => {
 	afterEach(() => vi.clearAllMocks());
 

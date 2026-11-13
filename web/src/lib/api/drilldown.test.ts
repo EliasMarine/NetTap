@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { getAddressSummary, getDomainSummary, getSuricataCategory } from './drilldown';
+import { getAddressSummary, getDomainSummary, getSuricataCategory, HttpError } from './drilldown';
 import { ADDRESS, ADDRESS_EMPTY, ADDRESS_QUIET, DOMAIN, DOMAIN_EMPTY, DOMAIN_QUIET } from '../../../e2e/visual/fixtures/drilldown';
 import { SURICATA_CATEGORY, SURICATA_CATEGORY_EMPTY } from '../../../e2e/visual/fixtures/suricata-category';
 
@@ -35,6 +35,13 @@ describe('drill-down clients', () => {
 	])('throws the daemon reason on HTTP %s', async (status, body, message) => {
 		vi.stubGlobal('fetch', vi.fn(async () => reply(status, body)));
 		await expect(getAddressSummary('x', 'a', 'b')).rejects.toThrow(message);
+	});
+
+	it('carries the HTTP status with the reason (NET-263)', async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => reply(400, { error: 'Invalid IP address: nope' })));
+		const error = await getAddressSummary('x', 'a', 'b').catch((e: unknown) => e);
+		expect(error).toBeInstanceOf(HttpError);
+		expect(error).toMatchObject({ status: 400, message: 'Invalid IP address: nope' });
 	});
 
 	it('throws on a malformed reply instead of showing an empty one', async () => {
