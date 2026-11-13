@@ -184,6 +184,16 @@ describe('Certificates page — drill-down filter', () => {
 		await vi.waitFor(() => expect(kpi('Certificates seen')).toHaveTextContent(/window 20 Oct, \d\d:\d\d to 21 Oct, \d\d:\d\d/));
 	});
 
+	// NET-249: a chart's trailing slot is a one-millisecond window; it must not fall back to 7 days
+	it('loads exactly a link window with from == to, as Custom', async () => {
+		openUrl('?site=www.example.com&from=2026-10-20T08:00:00.000Z&to=2026-10-20T08:00:00.000Z');
+		stubDaemon({ '/api/certificates/overview': only([WWW]), '/api/devices/registry': REGISTRY, '/api/network/lan': LAN_POLICY });
+		render(CertificatesPage);
+		await vi.waitFor(() => expect(overviewCalls().length).toBe(1));
+		expect(Object.fromEntries(overviewCalls()[0].searchParams)).toMatchObject({ from: '2026-10-20T08:00:00.000Z', to: '2026-10-20T08:00:00.000Z' });
+		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+	});
+
 	it('opens the one matching site, linking its name to the domain page', async () => {
 		openUrl('?site=www.example.com&from=2026-11-05T00:00:00Z&to=2026-11-06T00:00:00Z');
 		stubDaemon({ '/api/certificates/overview': only([WWW]), '/api/devices/registry': REGISTRY, '/api/network/lan': LAN_POLICY });

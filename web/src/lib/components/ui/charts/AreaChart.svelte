@@ -61,7 +61,8 @@
 	/** NET-249 picking: the keyboard's point and range anchor, and a pointer drag in progress. */
 	let focusIndex = $state<number | null>(null);
 	let anchor = $state<number | null>(null);
-	let drag = $state<{ start: number; end: number; x0: number } | null>(null);
+	/** `id`: the pointer that started it; a second finger or pen never moves or ends it */
+	let drag = $state<{ start: number; end: number; x0: number; id: number } | null>(null);
 	/** A drag shorter than this (px) is a click, so a shaky tap still picks one point. */
 	const CLICK_SLOP = 4;
 	const KEY_HELP = 'Use the left and right arrow keys to choose a point, Shift with an arrow key to choose a range, and Enter to open it.';
@@ -160,25 +161,32 @@
 
 	function onpointermove(e: PointerEvent) {
 		const i = indexAt(e);
-		if (i === null) return;
+		if (!e.isPrimary || i === null) return;
 		hoverIndex = i;
-		if (drag) drag = { ...drag, end: i };
+		if (drag?.id === e.pointerId) drag = { ...drag, end: i };
 	}
 
 	function onpointerdown(e: PointerEvent) {
 		const i = indexAt(e);
-		if (!onpick || e.button !== 0 || i === null) return;
+		if (!onpick || !e.isPrimary || e.button !== 0 || i === null) return;
 		(e.currentTarget as SVGSVGElement).setPointerCapture?.(e.pointerId);
-		drag = { start: i, end: i, x0: e.clientX };
+		drag = { start: i, end: i, x0: e.clientX, id: e.pointerId };
 	}
 
 	function onpointerup(e: PointerEvent) {
-		if (!drag || !onpick) return;
+		if (!drag || !onpick || drag.id !== e.pointerId) return;
 		const { start, x0 } = drag;
 		const end = indexAt(e) ?? drag.end;
 		drag = null;
 		if (Math.abs(e.clientX - x0) < CLICK_SLOP || start === end) onpick(start, start);
 		else onpick(Math.min(start, end), Math.max(start, end));
+	}
+
+	/** Escape, or focus leaving the chart: no point, range or drag left behind (the tooltip goes back to the headline) */
+	function clearPick() {
+		drag = null;
+		anchor = null;
+		focusIndex = null;
 	}
 
 	const MOVES: Record<string, (i: number) => number> = {
@@ -192,18 +200,14 @@
 		if (!onpick || n === 0) return;
 		if (e.key === 'Enter' || e.key === ' ') {
 			e.preventDefault();
+			if (e.repeat) return; // a held key opens one moment, not one per repeat
 			const point = focusIndex ?? highlight;
 			if (point === null) return;
 			if (picking) onpick(picking.lo, picking.hi);
 			else onpick(point, point);
 			return;
 		}
-		if (e.key === 'Escape') {
-			drag = null;
-			anchor = null;
-			focusIndex = null;
-			return;
-		}
+		if (e.key === 'Escape') return clearPick();
 		const move = MOVES[e.key];
 		if (!move) return;
 		e.preventDefault();
@@ -244,6 +248,7 @@
 		tabindex={onpick ? 0 : undefined}
 		aria-label={onpick ? `${ariaLabel.replace(/\.?$/, '.')} ${KEY_HELP}` : undefined}
 		onkeydown={onpick ? onkeydown : undefined}
+		onblur={onpick ? clearPick : undefined}
 		{@attach observeWidth((width, ht) => {
 			measured = width;
 			measuredH = ht;
@@ -259,7 +264,9 @@
 			{onpointermove}
 			{onpointerdown}
 			{onpointerup}
-			onpointercancel={() => (drag = null)}
+			onpointercancel={(e) => {
+				if (drag?.id === e.pointerId) drag = null;
+			}}
 			onpointerleave={() => (hoverIndex = null)}
 		>
 			<defs>
@@ -324,7 +331,7 @@
 		left: 0;
 	}
 	/* NET-249: a picked chart; a vertical swipe still scrolls the page, a sideways drag picks a range */
-	.chart.pickable svg { cursor: pointer; touch-action: pan-y; }
+	.chart.pickable svg { cursor: pointer; touch-action: pan-y; user-select: none; }
 	.chart.pickable:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--r-md); }
 	/* NET-226: a third series; system.css colours the gradient and dot of 1 and 2 only */
 	.chart :global(.g-3 stop) { stop-color: var(--data-3); }

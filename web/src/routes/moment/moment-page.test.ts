@@ -176,6 +176,36 @@ describe('Moment page', () => {
 		expectNoNestedInteractive(container);
 	});
 
+	it("shows Unidentified as Home does: two-way conversations only, the rest named under the bars, and no count it can't hold", async () => {
+		at();
+		stubDaemon({
+			...FULL,
+			'/api/traffic/protocols': (u: URL) => ({
+				...echo(u), protocols: [], excluded_ips: EXCLUDED,
+				// an empty name is its own bucket, beside the daemon's `unknown`
+				services: [{ name: 'dns', count: 5 }, { name: 'ssl', count: 10 }, { name: 'unknown', count: 1800 }, { name: '', count: 3 }],
+				unidentified: { conversations: 7, one_way: 1700, icmp: 93 },
+			}),
+		});
+		const { container } = render(Page);
+		await loaded();
+		const protocols = card('Protocols');
+		await vi.waitFor(() => expect(within(protocols).getAllByRole('link')).toHaveLength(4));
+		const bars = within(protocols).getAllByRole('link');
+		expect(bars.map((a) => a.textContent)).toEqual(['SSL', 'Unidentified', 'DNS', 'Unidentified']);
+		expect(protocols).toHaveTextContent('SSL 10 Unidentified 7 DNS 5 Unidentified 3');
+		expect(protocols).not.toHaveTextContent('1,800');
+		const conn = { type: 'zeek.conn', exclude_src: '192.168.1.199', from: FROM, to: TO, range: '1h' };
+		// Log Explorer can't tell two-way from one-way: the link opens all unlabelled records, with no count to compare
+		expect(params(bars[1])).toEqual({ ...conn, query: 'NOT _exists_:network.protocol' });
+		expect(params(bars[3])).toEqual({ ...conn, query: 'network.protocol:""', count: '3' });
+		expect(params(bars[0])).toMatchObject({ count: '10' });
+		expect(within(protocols).getByText(/^Not in the bars:/).textContent).toBe(
+			'Not in the bars: 1,700 unidentified connections with no data sent in at least one direction, and 93 ICMP exchanges (pings and network notices).',
+		);
+		expectNoNestedInteractive(container);
+	});
+
 	it("lists the top devices with what each talked to; their bytes are plain and their records link has no count", async () => {
 		at();
 		stubDaemon(FULL);
@@ -203,7 +233,8 @@ describe('Moment page', () => {
 		// IPv6 left out says how much and why; a device that started nothing says so
 		expect(devices).toHaveTextContent('14 IPv6 connections left out of these totals.');
 		expect(devices).toHaveTextContent('no internet traffic showed which device is the router');
-		expect(within(devices).getByText('Started no connections in this window.')).toBeInTheDocument();
+		// it may have answered connections, or made only IPv6 ones: its totals count those, its lists can't
+		expect(within(devices).getByText('Started no connections from its IPv4 address in this window.')).toBeInTheDocument();
 	});
 
 	it('gives every card its own error, with the daemon reason where it has one', async () => {
@@ -317,6 +348,57 @@ describe('Moment page', () => {
 		await vi.waitFor(() => expect(calls.some((u) => u.pathname === '/api/traffic/summary' && u.searchParams.get('from') === CHART_FROM)).toBe(true));
 		await loaded();
 		expect(screen.queryByText(/You clicked/)).not.toBeInTheDocument();
+	});
+
+	it('a new window clears the old figures, and a late reply for the old window is dropped', async () => {
+		/** Every request waits until the test answers it, from `replies` */
+		const waiting: { url: URL; answer: (replies: Record<string, Reply>) => void }[] = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(
+				(input: string) =>
+					new Promise((resolve) => {
+						const url = new URL(input, 'http://localhost');
+						waiting.push({
+							url,
+							answer: (replies) => {
+								const reply = replies[url.pathname];
+								const body = typeof reply === 'function' ? (reply as (u: URL) => unknown)(url) : reply;
+								resolve({ ok: true, status: 200, json: async () => body });
+							},
+						});
+					}),
+			),
+		);
+		const B_FROM = '2026-11-12T15:00:00.000Z';
+		const B_TO = '2026-11-12T15:04:59.999Z';
+		const forWindow = (from: string) => waiting.filter((w) => w.url.searchParams.get('from') === from);
+		const LATER = { ...FULL, '/api/traffic/summary': (u: URL) => ({ ...SUMMARY(u), connection_count: 555 }) };
+
+		at();
+		render(Page);
+		await vi.waitFor(() => expect(forWindow(FROM)).toHaveLength(9));
+		forWindow(FROM).forEach((w) => w.answer(FULL));
+		await loaded();
+
+		// a refresh of A is still out when the link moves to B
+		const refreshA = refreshPage();
+		await vi.waitFor(() => expect(forWindow(FROM)).toHaveLength(18));
+		const lateA = forWindow(FROM).slice(9);
+		at(B_FROM, B_TO);
+		await vi.waitFor(() => expect(forWindow(B_FROM)).toHaveLength(9));
+		// A's figures are gone the moment the window changes: nothing of A reads as B's
+		expect(kpi('Connections')).toHaveTextContent('—');
+		expect(screen.getAllByRole('status').filter((st) => st.getAttribute('aria-busy') === 'true')).toHaveLength(6);
+
+		forWindow(B_FROM).forEach((w) => w.answer(LATER));
+		await vi.waitFor(() => expect(kpi('Connections')).toHaveTextContent('555'));
+		lateA.forEach((w) => w.answer(FULL));
+		await refreshA;
+		await new Promise((r) => setTimeout(r, 0));
+		expect(kpi('Connections')).toHaveTextContent('555');
+		expect(kpi('Connections')).not.toHaveTextContent('321');
+		expect(params(kpi('Connections'))).toMatchObject({ from: B_FROM, to: B_TO, count: '555' });
 	});
 
 	it('offers no Whole chart without the chart window', async () => {

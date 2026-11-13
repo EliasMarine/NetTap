@@ -60,7 +60,9 @@
 			<p class="chips"><span class="dim">Talked to</span>{#each d.destinations as x (x.ip)}<a class="chip mono" href={$ipHref(x.ip)}>{x.ip}</a>{/each}</p>
 			{#if d.apps.length}<p class="chips"><span class="dim">Apps</span>{#each d.apps as x (x.protocol)}<span class="chip">{serviceLabel(x.protocol)}</span>{/each}</p>{/if}
 		{:else}
-			<p class="dim">Started no connections in this window.</p>
+			<!-- OLD CODE: <p class="dim">Started no connections in this window.</p> (ts review: untrue for a device whose connections were all IPv6) -->
+			<!-- the lists cover what its IPv4 address started; one line holds for an answer-only device and an IPv6-only one -->
+			<p class="dim">Started no connections from its IPv4 address in this window.</p>
 		{/if}
 		{#if d.domains.length}
 			<p class="chips"><span class="dim">Looked up</span>{#each d.domains as x (x.domain)}<a class="chip" href={domainHref(x.domain)}>{x.domain}</a>{/each}</p>

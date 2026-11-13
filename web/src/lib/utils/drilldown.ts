@@ -5,7 +5,7 @@
 import type { ByteTotal } from '$lib/api/drilldown';
 import type { SmartAlertKey } from '$lib/api/alerts';
 import { formatBytes, formatCompactNumber } from '$lib/api/logs';
-import type { BandwidthPoint } from '$lib/api/traffic';
+import type { BandwidthPoint, ProtocolEntry, ProtocolsResponse } from '$lib/api/traffic';
 import { formatTime } from './time';
 
 // OLD CODE: export type DrillRangeValue = '24h' | '7d' | '30d'; (NET-192 PR 4: Home's five ranges)
@@ -398,6 +398,34 @@ export function connLogsHref(summary: DrillWindow & { excluded_ips?: string[] },
 
 /** A service (Zeek's network.protocol) as the pages name it: no label is "Unidentified" (NET-219). */
 export const serviceLabel = (name: string): string => (!name || name === 'unknown' ? 'Unidentified' : name.toUpperCase());
+
+/** The daemon's `unknown` service split three ways (NET-219); they add up to it. */
+export type Unidentified = NonNullable<ProtocolsResponse['unidentified']>;
+
+/**
+ * The service bars, biggest first (NET-219, moved here from Home for the moment page, NET-249): the
+ * Unidentified bar holds only `unknown`'s two-way conversations, so it no longer leads the list with
+ * one-way connections and ICMP. Only the daemon's own `unknown` bucket is split; an empty name is another bucket.
+ */
+export function serviceBars(services: readonly ProtocolEntry[], unidentified: Unidentified | null | undefined, top: number): ProtocolEntry[] {
+	return services
+		.map((s) => ({ name: s.name, count: s.name === 'unknown' && unidentified ? unidentified.conversations : s.count }))
+		.filter((s) => s.count > 0)
+		.sort((a, b) => b.count - a.count)
+		.slice(0, top);
+}
+
+/** What the service bars leave out of `unknown` (NET-219), counts written by `format`; '' when there is nothing to say. */
+export function notInBars(unidentified: Unidentified | null | undefined, format: (n: number) => string): string {
+	if (!unidentified) return '';
+	const { one_way: oneWay, icmp } = unidentified;
+	const clauses = [
+		// one name for one thing (the bar says Unidentified); Zeek logs ICMP per exchange, not per message (ts review #4)
+		oneWay > 0 ? `${format(oneWay)} unidentified ${oneWay === 1 ? 'connection' : 'connections'} with no data sent in at least one direction` : '',
+		icmp > 0 ? `${format(icmp)} ICMP ${icmp === 1 ? 'exchange' : 'exchanges'} (pings and network notices)` : '',
+	].filter(Boolean);
+	return clauses.length > 0 ? `Not in the bars: ${clauses.join(', and ')}.` : '';
+}
 
 /**
  * Log Explorer's conn records behind one bar of /api/traffic/protocols' `services` (NET-249), with

@@ -27,7 +27,7 @@
 	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import {
 		alertsHrefForSignature, bucketFor, chartTime, connLogsHref, customRange, DRILL_RANGES, fmt, formatWhen, linkedCount,
-		momentHref, RECORDS_CHANGE, serviceLabel, serviceLogsHref, windowQuery, windowWords, withCount, type BandwidthChart, type DrillWindow,
+		momentHref, notInBars, RECORDS_CHANGE, serviceBars, serviceLabel, serviceLogsHref, windowQuery, windowWords, withCount, type BandwidthChart, type DrillWindow,
 	} from '$lib/utils/drilldown';
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { upDownLocal } from '$lib/utils/up-down';
@@ -183,20 +183,39 @@
 	};
 	const pick = (i: number, j: number) => chart && goto(momentHref(chart, i, j, range, chartWin ?? chart));
 
+	// OLD CODE START — the raw `unknown` count led the bars with one-way connections and ICMP (NET-219, ts review)
+	// const serviceItems = $derived(
+	// 	(protocols?.services ?? [])
+	// 		.filter((s) => s.count > 0)
+	// 		.sort((a, b) => b.count - a.count)
+	// 		.slice(0, TOP_SERVICES)
+	// 		.map((s) => ({
+	// 			key: s.name || 'unknown',
+	// 			label: serviceLabel(s.name),
+	// 			value: s.count,
+	// 			display: fmt(s.count),
+	// 			// every bar opens the records it counted, with its count to compare
+	// 			href: withCount(serviceLogsHref(s.name || 'unknown', exact, protocols?.excluded_ips ?? [], range), s.count),
+	// 		})),
+	// );
+	// OLD CODE END
+	/** The two-way share of `unknown` the Unidentified bar shows, when the reply split it */
+	const split = $derived(protocols?.unidentified ?? null);
 	const serviceItems = $derived(
-		(protocols?.services ?? [])
-			.filter((s) => s.count > 0)
-			.sort((a, b) => b.count - a.count)
-			.slice(0, TOP_SERVICES)
-			.map((s) => ({
-				key: s.name || 'unknown',
+		serviceBars(protocols?.services ?? [], split, TOP_SERVICES).map((s, i) => {
+			const href = serviceLogsHref(s.name, exact, protocols?.excluded_ips ?? [], range);
+			return {
+				key: `${s.name}-${i}`,
 				label: serviceLabel(s.name),
 				value: s.count,
 				display: fmt(s.count),
-				// every bar opens the records it counted, with its count to compare
-				href: withCount(serviceLogsHref(s.name || 'unknown', exact, protocols?.excluded_ips ?? [], range), s.count),
-			})),
+				// each bar opens the records it counted, with its count to compare; Log Explorer can't
+				// tell two-way from one-way, so the split Unidentified bar opens all of `unknown`, uncounted
+				href: s.name === 'unknown' && split ? href : withCount(href, s.count),
+			};
+		}),
 	);
+	const leftOutOfBars = $derived(notInBars(split, fmt));
 	const categoryItems = $derived(
 		(categories ?? []).map((c) => ({ key: c.name, label: c.label, value: c.total_bytes, display: formatBytes(c.total_bytes), href: `/traffic/${encodeURIComponent(c.name)}` })),
 	);
@@ -309,9 +328,10 @@
 		</Card>
 
 		<Card title="Protocols" sub="Connections by service · {words}" class="c-4">
-			{#if serviceItems.length}
+			{#if serviceItems.length || leftOutOfBars}
 				{#if failed.protocols !== undefined}{@render staleNote('protocols')}{/if}
-				<BarList items={serviceItems} />
+				{#if serviceItems.length}<BarList items={serviceItems} />{/if}
+				{#if leftOutOfBars}<p class="card-sub not-in-bars">{leftOutOfBars}</p>{/if}
 			{:else if failed.protocols !== undefined}
 				<CardState state="error" title={loadFailed('protocols')} message={CHECK_DAEMON} onaction={retry} />
 			{:else if !protocols}
@@ -412,6 +432,7 @@
 	/* Layout glue the system lacks */
 	.stale { margin-top: var(--sp-3); }
 	.hint { margin-top: var(--sp-2); }
+	.not-in-bars { margin-top: var(--sp-3); }
 	.rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
 	.row { display: flex; align-items: center; gap: var(--sp-3); padding: var(--sp-2); border-radius: var(--r-md); color: var(--text-1); text-decoration: none; min-width: 0; }
 	a.row:hover { background: var(--row-hover); }

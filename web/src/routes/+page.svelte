@@ -35,7 +35,7 @@
 	// OLD CODE: import { getAlertCount, getSmartAlerts, getSmartAlertSummary } from '$api/alerts'; (NET-228: the trend reads the timeline)
 	import { getAlertTimeline, getSmartAlerts, getSmartAlertSummary } from '$api/alerts';
 	// OLD CODE: import { chartTime, connLogsHref, DRILL_RANGES, fmt, NO_EXACT_ALERT_LIST, smartAlertHref, startRange, windowQuery, withCount, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown'; (NET-249: the chart drills into a moment)
-	import { chartTime, connLogsHref, DRILL_RANGES, fmt, momentHref, NO_EXACT_ALERT_LIST, serviceLabel, smartAlertHref, startRange, windowQuery, withCount, type BandwidthChart, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
+	import { chartTime, connLogsHref, DRILL_RANGES, fmt, momentHref, NO_EXACT_ALERT_LIST, notInBars as notInBarsText, serviceBars, serviceLabel, smartAlertHref, startRange, windowQuery, withCount, type BandwidthChart, type DrillRangeValue, type DrillWindow } from '$lib/utils/drilldown';
 	// OLD CODE: import type { AlertCountResponse, SmartAlert, SmartAlertSummary } from '$api/alerts'; (NET-228)
 	import type { AlertTimelineBucket, SmartAlert, SmartAlertSummary } from '$api/alerts';
 	import { compareHalves, trendWindow, withCoverage, type SlotValue, type TrendWindow } from '$lib/utils/window-trend';
@@ -636,32 +636,44 @@
 	// 	})),
 	// );
 	// OLD CODE END
-	// The Unidentified bar holds only two-way conversations; re-sorted, since it is smaller than `unknown`
+	// OLD CODE START — NET-249: the same rule now serves the moment page, so it lives in utils/drilldown.ts
+	// // The Unidentified bar holds only two-way conversations; re-sorted, since it is smaller than `unknown`
+	// const serviceItems = $derived(
+	// 	services
+	// 		// only the daemon's own `unknown` bucket is split (ts review #3: an empty name is a different bucket)
+	// 		.map((s) => ({ name: s.name, count: s.name === 'unknown' && unidentified ? unidentified.conversations : s.count }))
+	// 		.filter((s) => s.count > 0)
+	// 		.sort((a, b) => b.count - a.count)
+	// 		.slice(0, TOP_SERVICES)
+	// 		.map((s, i) => ({
+	// 			key: `${s.name}-${i}`,
+	// 			label: serviceLabel(s.name),
+	// 			value: s.count,
+	// 			display: formatNumber(s.count),
+	// 		})),
+	// );
+	// /** What the bars leave out of `unknown` (NET-219); empty when there is nothing to say */
+	// const notInBars = $derived.by(() => {
+	// 	if (!unidentified) return '';
+	// 	const { one_way: oneWay, icmp } = unidentified;
+	// 	const clauses = [
+	// 		// one name for one thing (the bar says Unidentified); Zeek logs ICMP per exchange, not per message (ts review #4)
+	// 		oneWay > 0 ? `${formatNumber(oneWay)} unidentified ${oneWay === 1 ? 'connection' : 'connections'} with no data sent in at least one direction` : '',
+	// 		icmp > 0 ? `${formatNumber(icmp)} ICMP ${icmp === 1 ? 'exchange' : 'exchanges'} (pings and network notices)` : '',
+	// 	].filter(Boolean);
+	// 	return clauses.length > 0 ? `Not in the bars: ${clauses.join(', and ')}.` : '';
+	// });
+	// OLD CODE END
+	// The Unidentified bar holds only two-way conversations (NET-219)
 	const serviceItems = $derived(
-		services
-			// only the daemon's own `unknown` bucket is split (ts review #3: an empty name is a different bucket)
-			.map((s) => ({ name: s.name, count: s.name === 'unknown' && unidentified ? unidentified.conversations : s.count }))
-			.filter((s) => s.count > 0)
-			.sort((a, b) => b.count - a.count)
-			.slice(0, TOP_SERVICES)
-			.map((s, i) => ({
-				key: `${s.name}-${i}`,
-				label: serviceLabel(s.name),
-				value: s.count,
-				display: formatNumber(s.count),
-			})),
+		serviceBars(services, unidentified, TOP_SERVICES).map((s, i) => ({
+			key: `${s.name}-${i}`,
+			label: serviceLabel(s.name),
+			value: s.count,
+			display: formatNumber(s.count),
+		})),
 	);
-	/** What the bars leave out of `unknown` (NET-219); empty when there is nothing to say */
-	const notInBars = $derived.by(() => {
-		if (!unidentified) return '';
-		const { one_way: oneWay, icmp } = unidentified;
-		const clauses = [
-			// one name for one thing (the bar says Unidentified); Zeek logs ICMP per exchange, not per message (ts review #4)
-			oneWay > 0 ? `${formatNumber(oneWay)} unidentified ${oneWay === 1 ? 'connection' : 'connections'} with no data sent in at least one direction` : '',
-			icmp > 0 ? `${formatNumber(icmp)} ICMP ${icmp === 1 ? 'exchange' : 'exchanges'} (pings and network notices)` : '',
-		].filter(Boolean);
-		return clauses.length > 0 ? `Not in the bars: ${clauses.join(', and ')}.` : '';
-	});
+	const notInBars = $derived(notInBarsText(unidentified, formatNumber));
 
 	// The bars cover only connections to internet services, not all traffic
 	const categoryItems = $derived(

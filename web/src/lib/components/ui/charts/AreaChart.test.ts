@@ -28,9 +28,17 @@ function draw(series: AreaSeries[], extra: Record<string, unknown> = {}) {
 
 const noNaN = (container: HTMLElement) => expect(container.innerHTML).not.toMatch(/NaN|Infinity/);
 
+/** A pointer event as a browser sends it; jsdom has no PointerEvent, so isPrimary and pointerId are added. */
+function pointerEvent(type: string, clientX: number, { isPrimary = true, pointerId = 1, button = 0 } = {}) {
+	const e = new MouseEvent(type, { clientX, bubbles: true, button });
+	Object.defineProperties(e, { isPrimary: { value: isPrimary }, pointerId: { value: pointerId } });
+	return e;
+}
+
 function hover(svg: SVGSVGElement, clientX: number) {
 	svg.getBoundingClientRect = () => ({ left: 0, width: 640, top: 0, height: 220, right: 640, bottom: 220, x: 0, y: 0, toJSON() {} });
-	svg.dispatchEvent(new MouseEvent('pointermove', { clientX, bubbles: true }));
+	// OLD CODE: svg.dispatchEvent(new MouseEvent('pointermove', { clientX, bubbles: true })); (NET-249: the chart reads isPrimary)
+	svg.dispatchEvent(pointerEvent('pointermove', clientX));
 }
 
 describe('AreaChart', () => {
@@ -183,8 +191,8 @@ describe('AreaChart', () => {
 			const svg = view.container.querySelector('svg')!;
 			svg.getBoundingClientRect = () => rect;
 			const group = view.getByRole('group');
-			const pointer = (type: string, clientX: number) => svg.dispatchEvent(new MouseEvent(type, { clientX, bubbles: true, button: 0 }));
-			const key = (k: string, shiftKey = false) => fireEvent.keyDown(group, { key: k, shiftKey });
+			const pointer = (type: string, clientX: number, extra = {}) => svg.dispatchEvent(pointerEvent(type, clientX, extra));
+			const key = (k: string, shiftKey = false, repeat = false) => fireEvent.keyDown(group, { key: k, shiftKey, repeat });
 			const live = () => view.container.querySelector('[aria-live="polite"]')!.textContent;
 			return { ...view, onpick, svg, group, pointer, key, live };
 		}
@@ -258,10 +266,49 @@ describe('AreaChart', () => {
 		});
 
 		it('ignores a right button', () => {
-			const { svg, onpick } = setup();
-			svg.dispatchEvent(new MouseEvent('pointerdown', { clientX: at(3), bubbles: true, button: 2 }));
-			svg.dispatchEvent(new MouseEvent('pointerup', { clientX: at(3), bubbles: true, button: 2 }));
+			const { pointer, onpick } = setup();
+			pointer('pointerdown', at(3), { button: 2 });
+			pointer('pointerup', at(3), { button: 2 });
 			expect(onpick).not.toHaveBeenCalled();
+		});
+
+		it('a second finger neither starts, moves nor ends the drag the first one started', () => {
+			const { pointer, onpick } = setup();
+			pointer('pointerdown', at(9), { isPrimary: false, pointerId: 2 });
+			pointer('pointerup', at(9), { isPrimary: false, pointerId: 2 });
+			expect(onpick).not.toHaveBeenCalled();
+			pointer('pointerdown', at(3));
+			pointer('pointermove', at(12), { isPrimary: false, pointerId: 2 });
+			pointer('pointercancel', at(12), { isPrimary: false, pointerId: 2 });
+			pointer('pointerup', at(12), { isPrimary: false, pointerId: 2 });
+			expect(onpick).not.toHaveBeenCalled();
+			pointer('pointermove', at(5));
+			pointer('pointerup', at(5));
+			expect(onpick).toHaveBeenCalledExactlyOnceWith(3, 5);
+		});
+
+		it('a held Enter opens one moment, not one per repeat', async () => {
+			const { key, onpick } = setup();
+			await key('ArrowRight');
+			await key('Enter');
+			await key('Enter', false, true);
+			await key(' ', false, true);
+			expect(onpick).toHaveBeenCalledOnce();
+		});
+
+		it('focus leaving the chart clears its point, range and spoken line', async () => {
+			const { key, group, live, container, onpick } = setup({ highlightIndex: 21 });
+			await key('Home');
+			await key('ArrowRight', true);
+			expect(container.querySelector('.tip-tx')?.textContent).toBe('01:00 · 0.35 GB');
+			await fireEvent.blur(group);
+			expect(live()).toBe('');
+			expect(container.querySelector('rect.band.pick')).toBeNull();
+			expect(container.querySelector('.guide')).toBeNull();
+			// the headline is back, and Enter on return opens it, not the old range
+			expect(container.querySelector('.tip-tx')?.textContent).toBe('21:00 · 4.7 GB');
+			await key('Enter');
+			expect(onpick).toHaveBeenCalledExactlyOnceWith(21, 21);
 		});
 
 		it('arrows move the point (with its tooltip and a spoken line), Home and End jump, Enter opens it', async () => {
