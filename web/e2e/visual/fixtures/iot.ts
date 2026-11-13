@@ -81,7 +81,8 @@ const fleetDevice = (p: IotProfile): FleetDevice => ({
 	// NET-158: five measured checks (trackers, third parties, encryption, ports, alerts)
 	coverage: 55,
 	checks_available: 5,
-	checks_total: 11,
+	// OLD CODE: checks_total: 11, (NET-171: telemetry and firmware left the model)
+	checks_total: 9,
 	privacy_score: p.privacy,
 	security_score: p.security,
 	behavior_score: p.behavior,

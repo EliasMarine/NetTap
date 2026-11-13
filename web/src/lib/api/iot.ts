@@ -67,7 +67,8 @@ export interface FleetDevice {
 	ip: string | null;
 	score: number | null;
 	grade: string | null;
-	/** weight of the measured checks, out of 100 */
+	// OLD CODE: /** weight of the measured checks, out of 100 */ (NET-171: telemetry and firmware left the model)
+	/** weight of the measured checks, out of 85 (the nine checks); a score needs 50 */
 	coverage: number;
 	checks_available: number;
 	checks_total: number;
