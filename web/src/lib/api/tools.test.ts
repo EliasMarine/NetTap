@@ -7,6 +7,7 @@ import {
 	traceroute,
 	sslCertInspect,
 	throughput,
+	pathMtu,
 	type DnsReconResult,
 	type DnsCompareResult,
 	type MacLookupResult,
@@ -14,6 +15,7 @@ import {
 	type TracerouteResult,
 	type SslCertResult,
 	type ThroughputResult,
+	type PathMtuResult,
 } from './tools';
 
 // ---------------------------------------------------------------------------
@@ -445,6 +447,47 @@ describe('tools API client', () => {
 		it('throws with the status when the reply has no body', async () => {
 			mockFetchFailure(502);
 			await expect(throughput('nas.lan', 5201, 10, 'upload')).rejects.toThrow('Throughput test failed (HTTP 502)');
+		});
+	});
+
+	// -- pathMtu (NET-267) ------------------------------------------------------
+
+	describe('pathMtu', () => {
+		const RESULT: PathMtuResult = {
+			target: '10.8.0.1',
+			resolved_ip: '10.8.0.1',
+			family: 4,
+			interface: 'eno1',
+			interface_mtu: 1500,
+			largest_confirmed: 1420,
+			payload: 1392,
+			upper_known: true,
+			icmp_reported_mtu: 1420,
+			local_mtu: null,
+			first_unanswered: null,
+			probes: [{ size: 1500, result: 'icmp_too_big', mtu: 1420 }],
+			status: 'icmp_bound',
+			error: null,
+		};
+
+		it('posts the target and returns the result', async () => {
+			mockFetchSuccess(RESULT);
+			expect(await pathMtu('10.8.0.1')).toEqual(RESULT);
+			expect(fetch).toHaveBeenCalledWith('/api/tools/mtu', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ target: '10.8.0.1' }),
+			});
+		});
+
+		it("throws the daemon's sentence when refused", async () => {
+			mockFetchFailure(503, { error: 'Two MTU checks are already running. Try again in a moment.' });
+			await expect(pathMtu('10.8.0.1')).rejects.toThrow('Two MTU checks are already running.');
+		});
+
+		it('throws with the status when the reply has no body', async () => {
+			mockFetchFailure(502);
+			await expect(pathMtu('10.8.0.1')).rejects.toThrow('MTU check failed (HTTP 502)');
 		});
 	});
 });
