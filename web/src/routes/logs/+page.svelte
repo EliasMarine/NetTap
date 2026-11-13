@@ -273,6 +273,8 @@
 	let destinationsWindow = $state<DrillWindow | null>(null);
 	/** The window of the latest table search (set when it starts): a sort keeps it (NET-184) */
 	let searchWindow: DrillWindow | undefined;
+	/** The search-box text the latest table search ran: a sort and "load more" keep it, not unsubmitted text (NET-184) */
+	let searchText = '';
 	let activeDnsFilter = $state('');
 	/** Sources a link's count left out (?exclude_src=, Home's Connections, NET-160 slice 2b-1) */
 	let excludeSrc = $state<string[]>([]);
@@ -609,13 +611,16 @@
 	// OLD CODE END
 	// OLD CODE: async function fetchLogs(append = false): Promise<LoadResult> { (slice 2a: a window per search)
 	/** A new search over `win` (a new window when not given), or with `append`, the next page in the rows' window. */
-	async function fetchLogs(append = false, win?: DrillWindow): Promise<LoadResult> {
+	// OLD CODE: async function fetchLogs(append = false, win?: DrillWindow): Promise<LoadResult> { (NET-184: and the text to search)
+	async function fetchLogs(append = false, win?: DrillWindow, text?: string): Promise<LoadResult> {
 		const g = tableGuard.begin();
 		// The hand-off's own search takes the comparison it set up (gen null); any other search ends it (section D)
 		linked = linked?.gen === null ? { ...linked, gen: g } : null;
 		// "load more" never moves the window, so no row is listed twice or skipped
 		const w = append && tableWindow ? tableWindow : (win ?? getTimeRange());
 		if (!append) searchWindow = w;
+		const box = append ? searchText : (text ?? query);
+		if (!append) searchText = box;
 		if (append) {
 			loadingMore = true;
 		} else {
@@ -630,7 +635,8 @@
 			if (logType !== 'all') params.set('log_type', logType);
 
 			// Combine search query with active filters
-			let fullQuery = query.trim();
+			// OLD CODE: let fullQuery = query.trim(); (NET-184: the rows' own text on a sort or "load more")
+			let fullQuery = box.trim();
 			if (activeIpFilter) {
 				// OLD CODE: const ipQ = `(source.ip:"${activeIpFilter}" OR destination.ip:"${activeIpFilter}")`; (NET-184: a bar's one side)
 				const ipQ = ipSide ? `${ipSide}:"${activeIpFilter}"` : `(source.ip:"${activeIpFilter}" OR destination.ip:"${activeIpFilter}")`;
@@ -804,7 +810,8 @@
 		sortDir = dir;
 		// the same records in another order: same window, and the clicked figure still applies
 		if (linked) linked = { ...linked, gen: null, observed: null };
-		fetchLogs(false, searchWindow);
+		// OLD CODE: fetchLogs(false, searchWindow); (NET-184: it ran unsubmitted text from the search box)
+		fetchLogs(false, searchWindow, searchText);
 	}
 
 	// Click-to-drill handlers

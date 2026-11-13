@@ -699,6 +699,24 @@ describe('Log Explorer — top address bars open their figure', () => {
 		expect(await screen.findByText(/^You clicked 10\./)).toBeInTheDocument();
 	});
 
+	it('a sort or "load more" runs the searched text, not text typed but not submitted', async () => {
+		await openWithFilters(150);
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [hit('a', '10.0.0.5')], total: 150, search_after: [1] } });
+		await fireEvent.click(bar('10.0.0.5'));
+		await screen.findByText(/^You clicked 10\./);
+		await fireEvent.input(screen.getByLabelText('Search logs'), { target: { value: 'not yet submitted' } });
+		const before = searches().length;
+		const header = [...document.querySelectorAll('th button')].find((b) => b.textContent === 'source.ip')!;
+		await fireEvent.click(header);
+		await vi.waitFor(() => expect(searches()).toHaveLength(before + 1));
+		expect(last().get('query')).toBe('source.ip:"10.0.0.5"');
+		expect(screen.getByLabelText('Search logs')).toHaveValue('not yet submitted');
+		expect(await screen.findByText(/^You clicked 10\./)).toBeInTheDocument();
+		await fireEvent.click(await screen.findByRole('button', { name: /Load more/ }));
+		await vi.waitFor(() => expect(searches()).toHaveLength(before + 2));
+		expect(last().get('query')).toBe('source.ip:"10.0.0.5"');
+	});
+
 	it('selecting the bar again clears the address, and a later hand-off matches either side', async () => {
 		await openWithFilters(10);
 		await fireEvent.click(bar('10.0.0.5'));
