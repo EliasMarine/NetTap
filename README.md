@@ -115,6 +115,8 @@ The installer also prints a one-time **setup code**. The wizard asks for it on i
 sudo docker exec nettap-web cat /var/lib/nettap-web/setup-code
 ```
 
+To remove NetTap, run `sudo scripts/install/uninstall.sh`, then reboot. `--dry-run` shows what it would remove, and `--purge-data` also erases the captured data.
+
 ## Storage
 
 Zeek and Suricata records are kept for 90 days. Packet captures are kept for 30 days and use at most 25% of the disk. The daemon checks the disk every 5 minutes:

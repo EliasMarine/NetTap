@@ -296,7 +296,9 @@ configure_docker_daemon() {
     local file="${1:-/etc/docker/daemon.json}" json
     if [[ ! -f "$file" ]]; then
         log "Configuring Docker daemon..."
-        write_file "$file" <<'DAEMONJSON'
+        _forget_docker_daemon_records "$file"
+        # Called in an if, so set -e is off here: every write checks for itself
+        write_file "$file" <<'DAEMONJSON' || error "Couldn't write ${file}."
 {
     "log-driver": "json-file",
     "log-opts": {
@@ -307,6 +309,7 @@ configure_docker_daemon() {
     "dns": ["9.9.9.9", "149.112.112.112"]
 }
 DAEMONJSON
+        run cp "$file" "${file}.nettap-installed"
         log "Docker daemon configured with log rotation and DNS"
         return 0
     fi
@@ -318,8 +321,18 @@ DAEMONJSON
     # jq adds the dns key without clobbering the rest; never write over the file if it can't parse it
     json=$(jq '. + {"dns": ["9.9.9.9", "149.112.112.112"]}' "$file") \
         || error "Couldn't read ${file} as JSON. Fix it, then run the installer again."
-    write_file "$file" <<< "$json"
+    _forget_docker_daemon_records "$file"
+    # Without the backup, uninstall would take the owner's file for NetTap's and delete it
+    run cp "$file" "${file}.nettap-backup" || error "Couldn't back up ${file}; it was not changed."
+    write_file "$file" <<< "$json" || error "Couldn't write ${file}; the original is ${file}.nettap-backup."
+    run cp "$file" "${file}.nettap-installed"
     log "DNS servers added to daemon.json"
+}
+
+# Records an earlier install left describe a file that may have changed since; uninstall.sh trusts only
+# fresh ones. (.nettap-installed = what NetTap wrote, .nettap-backup = the owner's file before it.)
+_forget_docker_daemon_records() {
+    run rm -f "${1}.nettap-installed" "${1}.nettap-backup"
 }
 
 # ===========================================================================

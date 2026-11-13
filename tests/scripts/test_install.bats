@@ -232,6 +232,47 @@ _strict() {
     rm -rf "$dir"
 }
 
+# NET-211 #11: uninstall.sh puts daemon.json back only from these records
+@test "NET-211 #11: configure_docker_daemon records what it wrote and what it replaced, afresh each time" {
+    local dir; dir="$(mktemp -d)"
+    # created: a copy of what it wrote, no backup
+    _strict "configure_docker_daemon '$dir/daemon.json'"
+    cmp -s "$dir/daemon.json" "$dir/daemon.json.nettap-installed"
+    [ ! -e "$dir/daemon.json.nettap-backup" ]
+    # the owner's file without dns, with records from an earlier install lying around: those go,
+    # the owner's file is the backup, the result the record
+    printf '{"data-root": "/srv/docker"}\n' > "$dir/daemon.json"
+    printf 'stale\n' > "$dir/daemon.json.nettap-backup"
+    _strict "configure_docker_daemon '$dir/daemon.json'"
+    [ "$(cat "$dir/daemon.json.nettap-backup")" = '{"data-root": "/srv/docker"}' ]
+    cmp -s "$dir/daemon.json" "$dir/daemon.json.nettap-installed"
+    # dns already set: nothing changes, records included
+    printf 'kept\n' > "$dir/daemon.json.nettap-installed"
+    _strict "configure_docker_daemon '$dir/daemon.json'"
+    [ "$status" -eq 1 ]
+    [ "$(cat "$dir/daemon.json.nettap-installed")" = "kept" ]
+    # a dry run records nothing
+    rm -f "$dir"/daemon.json*
+    _strict "NETTAP_DRY_RUN=true; configure_docker_daemon '$dir/daemon.json'"
+    [ "$(find "$dir" -type f | wc -l | tr -d ' ')" -eq 0 ]
+    rm -rf "$dir"
+}
+
+@test "NET-211 #11: configure_docker_daemon stops before changing daemon.json when it can't back it up" {
+    local dir; dir="$(mktemp -d)"
+    printf '{"data-root": "/srv/docker"}\n' > "$dir/daemon.json"
+    # a folder where files can't be created but daemon.json can still be overwritten (like chattr +i)
+    chmod 555 "$dir"
+    if touch "$dir/probe" 2>/dev/null; then chmod 755 "$dir"; rm -rf "$dir"; skip "running as root"; fi
+    run bash -c "source '$INSTALL_SH'; NETTAP_UI=plain; if configure_docker_daemon '$dir/daemon.json'; then echo RESTART; fi"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Couldn't back up $dir/daemon.json; it was not changed."* ]] || false
+    [[ "$output" != *"RESTART"* ]] || false
+    [ "$(cat "$dir/daemon.json")" = '{"data-root": "/srv/docker"}' ]
+    chmod 755 "$dir"
+    rm -rf "$dir"
+}
+
 # NET-211 #10: the header listed --persist-bridge, which parse_args rejects
 @test "NET-211 #10: every option in the header comment is one parse_args accepts" {
     local opt opts
