@@ -253,6 +253,19 @@ raw alerts.
   One open connection is one connection, and its interim records would look periodic and invent beacons.
 - Byte and connection totals elsewhere keep final records only (`CONN_ACCOUNTING`, F1).
 
+### Beaconing time budget (NET-187, 2026-11-12)
+
+- A live beaconing check stops after 60 s (`BEACON_BUDGET_SECONDS`). It never returns a shorter list.
+  The 24h, 7d and 30d pills read the background scan, which has no limit. So this applies to 1h, 6h, an explicit
+  `from`/`to`, and `NETTAP_BEACON_BACKGROUND=0`.
+- When it runs out, the threat report still goes out with every other section. Beaconing is listed in
+  `failed_checks` and in `timed_out_checks`. The page shows "—", says the check couldn't finish in time, and
+  suggests a shorter range. `/api/threats/beaconing` answers 503 with the same reason.
+- **The threat score is unchanged by this.** The score counts alert findings only, and beaconing never adds
+  points, so a time-out drops nothing from the score.
+- The slots and findings are the same as before the faster query (NET-187): on the G11, every pair's slot list
+  matched over 24 h and 7 d.
+
 ### Device risk score
 
 The score is out of 100. Its bands: 0–24 low, 25–49 medium, 50–74 high, 75+ critical.
