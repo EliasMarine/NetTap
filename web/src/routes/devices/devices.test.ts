@@ -52,13 +52,41 @@ describe('Devices — failed request', () => {
 		expect(screen.queryByText(/0 devices seen/)).not.toBeInTheDocument();
 	});
 
+	// OLD CODE START — NET-182: "none" now needs data arriving, so the health reply is part of it
+	// it('still says "No devices seen yet." when the network really has none', async () => {
+	// 	// OLD CODE: body { from: '', to: '', limit: 200, devices: [] } (slice 2b-3: the page refuses a reply without its reading)
+	// 	stubDevices({ ok: true, status: 200, body: listReply([]) });
+	// 	render(Page);
+	// 	expect(await screen.findByText('No devices seen yet.')).toBeInTheDocument();
+	// });
+	// OLD CODE END
 	it('still says "No devices seen yet." when the network really has none', async () => {
-		// OLD CODE: body { from: '', to: '', limit: 200, devices: [] } (slice 2b-3: the page refuses a reply without its reading)
-		stubDevices({ ok: true, status: 200, body: listReply([]) });
+		stubDaemon({ '/api/devices': listReply([]), '/api/system/health': health('fresh') });
 		render(Page);
 		expect(await screen.findByText('No devices seen yet.')).toBeInTheDocument();
+		expect(screen.getByText('Total devices').closest('.kpi')).toHaveTextContent('Seen on the network');
+	});
+
+	// NET-182: a box whose index matches nothing reads 0 devices; that is no data, not no devices
+	it('says it can\'t tell, and why, when no data is arriving', async () => {
+		stubDaemon({ '/api/devices': listReply([]), '/api/system/health': health('no_data') });
+		render(Page);
+		expect(await screen.findByText("Can't tell if any device sent traffic")).toBeInTheDocument();
+		expect(screen.getByText('Data pipeline now: No records in the last 7 days.')).toBeInTheDocument();
+		expect(screen.queryByText('No devices seen yet.')).not.toBeInTheDocument();
+		expect(screen.getByText('Total devices').closest('.kpi')).toHaveTextContent(
+			"Can't tell if any device sent traffic · Data pipeline now: No records in the last 7 days",
+		);
 	});
 });
+
+/** A system health reply whose pipeline is in `state` (NET-228). */
+function health(state: string) {
+	return {
+		uptime: 1, timestamp: '', storage: null, smart: null, opensearch_reachable: true, status: 'healthy', healthy: true,
+		pipeline: { state, newest_record_at: '', age_seconds: 40, threshold_seconds: 900, sensors: {}, checked_at: '' },
+	};
+}
 
 const DEVICE = {
 	ip: '192.168.1.10', mac: null, hostname: 'laptop', manufacturer: null, os_hint: null,

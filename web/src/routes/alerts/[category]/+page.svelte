@@ -13,6 +13,7 @@
 	 */
 
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	// OLD CODE START: import { ipHref, isLan } from '$lib/stores/lan'; — only the removed "Open device" link used them OLD CODE END
 	import { onDestroy, untrack } from 'svelte';
 	import {
@@ -49,7 +50,8 @@
 	// OLD CODE END
 	import { severityBuckets, type SeverityLevel } from '$lib/utils/severity';
 	// OLD CODE: import { alertsHrefForSignature, type DrillWindow } from '$lib/utils/drilldown'; (section D)
-	import { alertsHrefForSignature, DRILL_RANGES, fmt, rangeWindow, startRange, withCount, type DrillWindow } from '$lib/utils/drilldown';
+	// OLD CODE: import { alertsHrefForSignature, DRILL_RANGES, fmt, rangeWindow, startRange, withCount, type DrillWindow } from '$lib/utils/drilldown'; (NET-185: the URL's window)
+	import { alertsHrefForSignature, customRange, DRILL_RANGES, fmt, rangeWindow, startRange, withCount, type DrillWindow } from '$lib/utils/drilldown';
 	import { createLoadGuard, registerPageRefresh, type LoadGuard, type LoadResult, outcome } from '$lib/stores/pageRefresh';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -113,7 +115,17 @@
 
 	let category = $derived(($page.params as Record<string, string>).category ?? '');
 	// OLD CODE: let selectedRange = $state('24h'); (NET-195: Settings › Display's default, read where the range starts)
-	let selectedRange = $state<string>(startRange('24h'));
+	// OLD CODE: let selectedRange = $state<string>(startRange('24h')); (NET-185: the window comes from the URL, as on the Suricata category page)
+	const params = $derived($page.url.searchParams);
+	/** The exact window a link brought (?from=&to=), shown as "Custom". */
+	const custom = $derived(customRange(params.get('from'), params.get('to')));
+	/** The URL's standard range (without one, the saved default, else 24h): a Custom window's links carry it for their words. */
+	const baseRange = $derived(TIME_RANGES.find((r) => r.value === params.get('range')) ?? TIME_RANGES.find((r) => r.value === startRange('24h'))!);
+	/** The timeline's bucket: for Custom, the one of the smallest standard range that covers it. */
+	const interval = $derived(
+		INTERVAL_MAP[(custom ? (TIME_RANGES.find((r) => r.hours >= custom.hours) ?? TIME_RANGES[TIME_RANGES.length - 1]) : baseRange).value] ?? '1h',
+	);
+	const view = $derived(`${category}|${baseRange.value}|${custom?.from ?? ''}|${custom?.to ?? ''}`);
 
 	// Data
 	let categoryData = $state<CategoryDetailResponse | null>(null);
@@ -273,7 +285,8 @@
 
 	// OLD CODE: ?? TIME_RANGES[3]); (NET-192 PR 4: 15m and 4h dropped, 6h added: 24h is index 2)
 	// OLD CODE: ?? TIME_RANGES[2] (NET-192 PR 4: the default by value, not by position)
-	const range = $derived(TIME_RANGES.find((r) => r.value === selectedRange) ?? TIME_RANGES.find((r) => r.value === '24h')!);
+	// OLD CODE: const range = $derived(TIME_RANGES.find((r) => r.value === selectedRange) ?? TIME_RANGES.find((r) => r.value === '24h')!); (NET-185)
+	const range = $derived(custom ?? baseRange);
 	const buckets = $derived(
 		categoryData
 			? severityBuckets({ total: categoryData.stats.total, ...categoryData.severity_breakdown })
@@ -292,14 +305,16 @@
 		const now = Date.now();
 		// OLD CODE: || TIME_RANGES[3]; (NET-192 PR 4: 24h is index 2)
 		// OLD CODE: || TIME_RANGES[2] (NET-192 PR 4: the default by value, not by position)
-		const range = TIME_RANGES.find((r) => r.value === selectedRange) || TIME_RANGES.find((r) => r.value === '24h')!;
+		// OLD CODE: const range = TIME_RANGES.find((r) => r.value === selectedRange) || TIME_RANGES.find((r) => r.value === '24h')!; (NET-185)
+		if (custom) return { from: custom.from, to: custom.to };
 		// OLD CODE START — NET-196: the shared list's hours and rangeWindow, not milliseconds
 		// return {
 		// 	from: new Date(now - range.ms).toISOString(),
 		// 	to: new Date(now).toISOString(),
 		// };
 		// OLD CODE END
-		return rangeWindow(range.hours, new Date(now));
+		// OLD CODE: return rangeWindow(range.hours, new Date(now)); (NET-185: the derived range)
+		return rangeWindow(baseRange.hours, new Date(now));
 	}
 
 	// ---------------------------------------------------------------------------
@@ -387,18 +402,21 @@
 	/** The category and range on screen; a load for another one starts from page 1 and shows loading. */
 	let shownKey = '';
 	/** The window of the figures on screen (set when a load is applied, not while one is in flight). */
-	let shownWindow = $state<DrillWindow>({ from: '', to: '' });
+	// OLD CODE: let shownWindow = $state<DrillWindow>({ from: '', to: '' }); (NET-185: with the range words its links carry)
+	let shownWindow = $state<DrillWindow & { range: string }>({ from: '', to: '', range: '24h' });
 
 	async function loadAll(guard: LoadGuard): Promise<LoadResult> {
 		const g = guard.begin();
 		const lg = listGuard.begin();
 		const cat = category;
 		if (!cat) return 'skipped';
-		const key = `${cat}|${selectedRange}`;
+		// OLD CODE: const key = `${cat}|${selectedRange}`; (NET-185)
+		const key = view;
 		const fresh = key !== shownKey;
 		if (fresh) loading = true;
 		const { from, to } = getTimeRange();
-		const interval = INTERVAL_MAP[selectedRange] ?? '1h';
+		// OLD CODE: const interval = INTERVAL_MAP[selectedRange] ?? '1h'; (NET-185: derived above)
+		const base = baseRange.value;
 		const pg = fresh ? 1 : currentPage;
 		const listQuery = { from, to, page: pg, size: pageSize, category: cat, sub: subCatFilter ?? undefined, sort: SERVER_SORT[sortKey], order: sortDir };
 
@@ -414,7 +432,8 @@
 		timelineFailed = timeline.status === 'rejected';
 		if (listGuard.current(lg)) applyList(alertsResult, 0);
 		shownKey = key;
-		shownWindow = { from, to };
+		// OLD CODE: shownWindow = { from, to }; (NET-185)
+		shownWindow = { from, to, range: base };
 		loading = false;
 
 		// OLD CODE START — counted by hand; outcome() in pageRefresh is the shared rule
@@ -428,7 +447,9 @@
 
 	async function fetchAlerts(pg: number = 1) {
 		const lg = listGuard.begin();
-		const { from, to } = getTimeRange();
+		// OLD CODE: const { from, to } = getTimeRange(); (NET-185: a page, sort or sub-category moved the list to a new window, away from the figures above it)
+		// the figures' own window until the next refresh; a view still loading has none yet
+		const { from, to } = shownKey === view ? shownWindow : getTimeRange();
 		const params = { from, to, page: pg, size: pageSize, category, sub: subCatFilter ?? undefined, sort: SERVER_SORT[sortKey], order: sortDir };
 		const result = await getAlerts(params).then(
 			(value): PromiseSettledResult<AlertsListResponse> => ({ status: 'fulfilled', value }),
@@ -452,17 +473,24 @@
 	let loadedCategory = '';
 	$effect(() => {
 		const cat = category;
-		const range = selectedRange;
+		// OLD CODE: const range = selectedRange; (NET-185: another window in the URL)
+		const v = view;
 		untrack(() => {
 			if (cat !== loadedCategory) subCatFilter = null;
 			loadedCategory = cat;
 			// OLD CODE START — loads go through the page refresh contract now
 			// fetchData(cat, range);
 			// OLD CODE END
-			void range;
+			// OLD CODE: void range; (NET-185)
+			void v;
 			refresh.run();
 		});
 	});
+
+	/** A range pill: a rolling window ending now, so the link's exact window (Custom) goes (NET-185). */
+	function pickRange(value: string) {
+		if (value !== 'custom') void goto(`${$page.url.pathname}?range=${value}`, { replaceState: true, keepFocus: true, noScroll: true });
+	}
 
 	// Auto-refresh
 	$effect(() => {
@@ -685,14 +713,19 @@
 	];
 
 	/** Every alert with this signature over the window of the figures on screen (NET-160 slice 2a). */
-	const sigHref = (sig: string) => alertsHrefForSignature(sig, { ...shownWindow, range: selectedRange });
+	// OLD CODE: const sigHref = (sig: string) => alertsHrefForSignature(sig, { ...shownWindow, range: selectedRange }); (NET-185: null is no rule name)
+	const sigHref = (sig: string | null) => alertsHrefForSignature(sig, shownWindow);
 	/**
 	 * A Top signatures bar's link, carrying its figure (NET-160 section D). None for "Unknown", the
 	 * daemon's bucket for alerts with no rule name (the list matches the literal name only), or for
 	 * an empty name (the list drops an empty filter and lists every alert), since neither lists its count.
 	 */
-	const sigBarHref = (sig: { signature: string; count: number }) =>
-		sig.signature && sig.signature !== 'Unknown' ? withCount(sigHref(sig.signature), sig.count) : undefined;
+	// OLD CODE START — NET-185: the daemon keeps "Unknown" (a rule's name) and no rule name (null) apart now
+	// const sigBarHref = (sig: { signature: string; count: number }) =>
+	// 	sig.signature && sig.signature !== 'Unknown' ? withCount(sigHref(sig.signature), sig.count) : undefined;
+	// OLD CODE END
+	const sigBarHref = (sig: { signature: string | null; count: number }) =>
+		sig.signature !== '' ? withCount(sigHref(sig.signature), sig.count) : undefined;
 
 	/** The daemon lists at most this many addresses and signatures. */
 	const LIST_CAP = 20;
@@ -725,7 +758,10 @@
 {#snippet signatureCell(a: Alert)}<span class="mono" title={a.alert?.signature || 'Unknown'}>{a.alert?.signature || 'Unknown'}</span>{/snippet}
 OLD CODE END -->
 {#snippet signatureCell(a: Alert)}
-	{#if a.alert?.signature}<a class="mono" href={sigHref(a.alert.signature)} title={a.alert.signature}>{a.alert.signature}</a>{:else}<span class="mono">Unknown</span>{/if}
+	<!-- OLD CODE: …{:else}<span class="mono">Unknown</span>{/if} (NET-185: the bars call these alerts "No rule name"; "Unknown" can be a real rule's name) -->
+	<!-- OLD CODE: {#if a.alert?.signature}<a class="mono" href={sigHref(a.alert.signature)} … (NET-185: linked by the shown signature, which can be Suricata's own, not the rule.name the list matches, so it opened an empty list) -->
+	<!-- Every alert with this rule over the figures' window; no link without a rule.name, which the list matches (as on Alerts) -->
+	{#if a.rule?.name}<a class="mono" href={sigHref(a.rule.name)} title={a.alert?.signature || a.rule.name}>{a.alert?.signature || a.rule.name}</a>{:else if a.alert?.signature}<span class="mono" title={a.alert.signature}>{a.alert.signature}</span>{:else}<span class="dim">No rule name</span>{/if}
 {/snippet}
 {#snippet srcCell(a: Alert)}{#if a.src_ip}<IPAddress ip={a.src_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet destCell(a: Alert)}{#if a.dest_ip}<IPAddress ip={a.dest_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
@@ -777,9 +813,11 @@ OLD CODE END -->
 		{#if categoryData?.stats}
 			<span class="chip num">{formatNumber(categoryData.stats.total)} alerts</span>
 		{/if}
+		<!-- OLD CODE: <Pills options={TIME_RANGES.map((r) => ({ value: r.value, label: r.label }))} bind:value={selectedRange} ariaLabel="Time range" /> (NET-185: the URL holds the window) -->
 		<Pills
-			options={TIME_RANGES.map((r) => ({ value: r.value, label: r.label }))}
-			bind:value={selectedRange}
+			options={[...TIME_RANGES, ...(custom ? [custom] : [])].map((r) => ({ value: r.value, label: r.label }))}
+			value={range.value}
+			onchange={pickRange}
 			ariaLabel="Time range"
 		/>
 	</div>
@@ -820,7 +858,7 @@ OLD CODE END -->
 			</div>
 		</Card>
 
-		<Card class="c-8" hero col title="Alert volume over time" sub="Alerts per {INTERVAL_MAP[selectedRange] ?? '1h'} · {range.words}">
+		<Card class="c-8" hero col title="Alert volume over time" sub="Alerts per {interval} · {range.words}">
 			{#if timelineFailed}
 				<CardState state="error" title="Couldn't load the alert volume over time: the request failed." onaction={() => refresh.run()} />
 			{:else if series.length === 0}
@@ -884,10 +922,12 @@ OLD CODE END -->
 			{#if data.top_signatures.length === 0}
 				<CardState state="empty" title="No signatures found" message="Rules appear here once this category has alerts." />
 			{:else}
+				<!-- OLD CODE: key: sig.signature, label: sig.signature, (NET-185: a null rule name is its own row) -->
 				<BarList
 					items={data.top_signatures.map((sig) => ({
-						key: sig.signature,
-						label: sig.signature,
+						key: sig.signature ?? '\u0000no rule name',
+						// OLD CODE: label: sig.signature ?? 'No rule name', (NET-185: an empty name showed a blank label)
+						label: sig.signature || 'No rule name',
 						value: sig.count,
 						display: formatNumber(sig.count),
 						detail: formatRelativeTime(sig.last_seen),
@@ -923,6 +963,7 @@ OLD CODE END -->
 			{:else if alerts.length === 0}
 				<CardState state="empty" icon="alerts" title="No alerts found in this time range." />
 			{:else}
+				<!-- OLD CODE: rowLabel={(a) => `Open alert ${a.alert?.signature || 'Unknown'}…`} (NET-185: the bars call these alerts "No rule name"; "Unknown" can be a real rule's name) -->
 				<DataTable
 					columns={alertColumns}
 					rows={sortedAlerts}
@@ -931,7 +972,7 @@ OLD CODE END -->
 					initialSort={{ key: sortKey, dir: sortDir }}
 					onsortchange={changeSort}
 					onrowactivate={openDrawer}
-					rowLabel={(a) => `Open alert ${a.alert?.signature || 'Unknown'}${a.src_ip ? ` from ${a.src_ip}` : ''}`}
+					rowLabel={(a) => `Open alert ${a.alert?.signature || 'with no rule name'}${a.src_ip ? ` from ${a.src_ip}` : ''}`}
 					selectedKey={selectedRowKey}
 					pager={totalPages > 1 ? { page: currentPage, pageCount: totalPages, total: totalAlerts, from: fromRow, to: toRow, onpage: (p) => fetchAlerts(p) } : undefined}
 				/>

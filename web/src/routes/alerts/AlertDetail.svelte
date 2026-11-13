@@ -85,7 +85,8 @@
 		<!-- OLD CODE: <p class="sig wrap">{alert.alert?.signature || 'Unknown signature'}</p> (slice 2a: not a link) -->
 		<!-- OLD CODE: <p class="sig wrap">{#if alert.alert?.signature}<a href={alertsHrefForSignature(alert.alert.signature)}>{alert.alert.signature}</a>{:else}Unknown signature{/if}</p> (slice 2b-1: the list's filter matches rule.name, not the shown signature) -->
 		<!-- OLD CODE: <a href={alertsHrefForSignature(alert.rule.name)}> (NET-191: from the activity list it opened the counted list) -->
-		<p class="sig wrap">{#if alert.rule?.name}<a href={alertsHrefForSignature(alert.rule.name, undefined, { activity })}>{alert.alert?.signature || alert.rule.name}</a>{:else}{alert.alert?.signature || 'Unknown signature'}{/if}</p>
+		<p class="sig wrap">{#if alert.rule?.name}<a href={alertsHrefForSignature(alert.rule.name, undefined, { activity })}>{alert.alert?.signature || alert.rule.name}</a>{:else}{alert.alert?.signature || 'No rule name'}{/if}</p>
+		<!-- OLD CODE: …{:else}{alert.alert?.signature || 'Unknown signature'}{/if}</p> (NET-185: the bars call these alerts "No rule name"; "Unknown" can be a real rule's name) -->
 	</div>
 	{#if explanation}<p class="drawer-plain">{explanation}</p>{/if}
 	<div class="todo"><b>What to do</b>{alertAdvice(alert)}</div>

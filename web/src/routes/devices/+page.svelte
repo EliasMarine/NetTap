@@ -26,6 +26,8 @@
 	import { BRIDGE_NO_DEVICES, getCaptureMode } from '$api/capture';
 	import type { CaptureMode } from '$api/capture';
 	import { loadFailed } from '$lib/utils/load-failed';
+	import { nothingFound } from '$api/system';
+	import { HEALTH_CHECKING, readHealth, type HealthCheck } from '$lib/utils/read-health';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
 	import { withTraffic } from '$lib/utils/registry-traffic';
 	import { likelyType, osBasis, typeBasis } from '$lib/utils/device-guess';
@@ -85,6 +87,9 @@
 	const deviceCount = $derived(loaded?.total ?? null);
 	// #96: a failed load keeps the last list and says so; it never reads as "No devices seen yet"
 	let devicesFailed = $state(false);
+	/** NET-182: no devices is only "none" while data is arriving (a box with no index reads 0 too) */
+	let healthCheck = $state<HealthCheck>(HEALTH_CHECKING);
+	const noDevices = $derived(nothingFound('No devices seen yet.', healthCheck.health, healthCheck.failed, "Can't tell if any device sent traffic"));
 	// exact counts, not filters of the busiest-N list: '—' until loaded, a note if they fail
 	let newCount = $state<number | null>(null);
 	let newFailed = $state(false);
@@ -329,14 +334,17 @@
 			// else Back to the last good window after a failed one skips this reset (PR #190 review)
 			loadedWindow = '';
 		}
-		const [[listRes, newRes], { mode: modeRes, registry: registryRes }] = await Promise.all([
+		// OLD CODE: const [[listRes, newRes], { mode: modeRes, registry: registryRes }] = await Promise.all([ … loadRegistry(), ]); (NET-182: and the pipeline's health)
+		const [[listRes, newRes], { mode: modeRes, registry: registryRes }, checked] = await Promise.all([
 			Promise.allSettled([
 				getDevices({ ...win, sort: 'bytes', order: 'desc', limit: LIST_LIMIT }).then(checkedReading),
 				getNewDeviceCount(new Date(Date.now() - DAY).toISOString()),
 			]),
 			loadRegistry(),
+			readHealth(),
 		]);
 		if (!guard.current(g)) return 'skipped';
+		healthCheck = checked;
 
 		if (newRes.status === 'fulfilled') newCount = newRes.value.count;
 		newFailed = newRes.status === 'rejected';
@@ -708,12 +716,13 @@ OLD CODE END -->
 …Top consumer: note="Last 24 hours"
 OLD CODE END -->
 <div class="grid">
+	<!-- OLD CODE: sub={devicesFailed ? loadFailed('the device count', loaded !== null) : 'Seen on the network'} (NET-182: a 0 says when data isn't arriving) -->
 	<KpiCard
 		class="c-3"
 		label="Total devices"
 		icon="devices"
 		value={deviceCount ?? '—'}
-		sub={devicesFailed ? loadFailed('the device count', loaded !== null) : 'Seen on the network'}
+		sub={devicesFailed ? loadFailed('the device count', loaded !== null) : deviceCount === 0 && !noDevices.trusted ? `${noDevices.title} · ${noDevices.detail}` : 'Seen on the network'}
 		note={windowNote}
 	/>
 	<KpiCard
@@ -884,11 +893,12 @@ OLD CODE END -->
 				{#if isBridgeMode}
 					<CardState state="empty" icon="devices" title="No devices to show in inline bridge mode" message={BRIDGE_NO_DEVICES} />
 				{:else}
+					<!-- OLD CODE: <CardState state="empty" icon="devices" title="No devices seen yet." message="Devices appear once they make a few connections through the monitored link." /> (NET-182: only while data is arriving) -->
 					<CardState
 						state="empty"
-						icon="devices"
-						title="No devices seen yet."
-						message="Devices appear once they make a few connections through the monitored link."
+						icon={noDevices.trusted ? 'devices' : 'warn'}
+						title={noDevices.title}
+						message={noDevices.trusted ? 'Devices appear once they make a few connections through the monitored link.' : `${noDevices.detail}.`}
 					/>
 				{/if}
 			{:else}
