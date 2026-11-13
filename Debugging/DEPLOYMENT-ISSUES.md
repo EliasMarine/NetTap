@@ -1911,6 +1911,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `scripts/remote/gate-detection-slice2.sh`, `deploy-detection-slice2.sh`, `rollback-detection-slice2.sh`, `check-etpro-canary.sh`, `check-rules-update-safety.sh` | NET-191 | NEW: deploy gate (staged update + checks + replays), deploy, rollback, ET Pro credential checks, update safety checks. |
 | `daemon/services/rules_lock.py`, `daemon/services/etpro.py` | NET-191 | NEW: the daemon side of the rules lock; ET Pro save/clear (preflight, 600 file, restart under the lock, activation watch). |
 | `config/capture/nettap-capture-env.sh` | NET-191 | Reads `/etc/nettap/suricata.env` and swaps `et/open` for `et/pro|secret-code=…`; an invalid code is ignored and never printed. |
+| `daemon/services/iot_trust_scorer.py` | NET-158, NET-171 | Nine checks worth 85 points (privacy 20, security 35, behaviour 30). Telemetry and firmware are out of the model: nothing measures them. A None input leaves the denominator; a score needs 50 points (today all five measurable checks, 55). Behaviour stays None until baselines exist (NET-170). |
 
 ---
 
@@ -2133,6 +2134,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 178. **A device sudo rule of `docker` only means host-side locks go through a container (Chain 27)** — `sudo flock` and `sudo VAR=x docker` both need a password there. A throwaway container of the live image, on the same volume, takes `flock` and sleeps; `docker rm -f` releases it, and a sleep cap stops a dead script from holding it.
 179. **`docker exec` gets the image and compose environment, not what the entrypoint exported (Chain 27)** — anything an entrypoint wrapper computes (here the ET Pro source swap) must be written to a file that later `docker exec` calls read.
 180. **A proxy's header buffer must fit the app's largest response header (Chain 29)**: SvelteKit's `Link` preload header grows with every chunk a page imports, past nginx's 4 KB default. Check a logged-in full reload, not an unauthenticated `curl /`.
+181. **A check nothing can measure belongs out of the score, not in it as "unavailable" forever (NET-171)**: NET-158 made the IoT scorer skip None inputs, but telemetry and firmware stayed in the model. The drawer then said "5 of 11 checks (55 of 100 points)", as if six checks were waiting for data, and the scorer still paid 10 points to any caller that passed `telemetry_bytes=0`. Before you keep a check, name the data source that will feed it. If there is none, take the check out and keep its code as OLD CODE.
 
 ---
 
@@ -2238,3 +2240,5 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-241 | #236 | A logged-in full reload was a 502: nginx header buffer too small for SvelteKit's Link header (Chain 29) | 2026-11-09 |
 | NET-216 | pending | `activate-bridge.sh` (the --defer-bridge path) started the stack without the OpenSearch bootstrap or index templates (Chain 28) | 2026-11-08 |
 | NET-198 | pending | A lapsed session sends the user to sign in instead of "Can't reach NetTap"; `/login` follows a same-origin `?next=` (Chain 30) | 2026-11-12 |
+| NET-171 | pending | IoT trust score: telemetry and firmware out of the model (nine checks, 85 points); an unmeasured pillar says "Not measured" | 2026-11-12 |
+| NET-174 | pending | Unused `POST /api/iot/devices/{mac}/classify` and `classifyDevice()` removed | 2026-11-12 |
