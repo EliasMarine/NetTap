@@ -147,11 +147,45 @@ describe('Alert category page — signature links', () => {
 		expect(within(table).queryByText('Unknown')).not.toBeInTheDocument();
 	});
 
+	// NET-185: the list's signature filter matches rule.name; the shown signature can be Suricata's own
+	it('a table row links on its rule.name, and a row without one is plain text', async () => {
+		const row = (id: string, signature: string, rule?: { name: string }) => ({
+			_id: id, _index: 'x', timestamp: '2026-10-29T10:00:00Z', alert: { signature, signature_id: 1, severity: 2, category: 'misc' }, ...(rule ? { rule } : {}), src_ip: '10.0.0.9', dest_ip: '8.8.8.8', acknowledged: false,
+		});
+		const alerts = { from: '', to: '', page: 1, size: 25, total: 2, total_pages: 1, alerts: [row('a', 'A shown name', { name: 'ET SCAN Raw rule' }), row('b', 'Suricata only')] };
+		stubDaemon({ '/api/alerts/categories/scan': DETAIL, '/api/alerts': alerts });
+		const { container } = render(Page);
+		const table = await vi.waitFor(() => screen.getByRole('table', { name: /alerts, newest first/ }));
+		const href = within(table).getByRole('link', { name: 'A shown name' }).getAttribute('href')!;
+		expect(new URL(href, 'http://localhost').searchParams.get('signature')).toBe('ET SCAN Raw rule');
+		expect(within(table).getByText('Suricata only')).toBeInTheDocument();
+		expect(within(table).queryByRole('link', { name: 'Suricata only' })).not.toBeInTheDocument();
+		expectNoNestedInteractive(container);
+	});
+
+	// NET-185: a page, sort or sub-category change keeps the list on the figures' window until the next refresh
+	it('sorting minutes later lists over the window of the figures on screen', async () => {
+		stubDaemon({ '/api/alerts/categories/scan': DETAIL, '/api/alerts': { from: '', to: '', page: 1, size: 25, total: 0, total_pages: 0, alerts: [{ _id: 'a', _index: 'x', timestamp: '2026-10-29T10:00:00Z', alert: { signature: 'Sig a', signature_id: 1, severity: 2, category: 'misc' }, rule: { name: 'Sig a' }, src_ip: '10.0.0.9', dest_ip: '8.8.8.8', acknowledged: false }] } });
+		const { container } = render(Page);
+		await vi.waitFor(() => expect(screen.getByText('Sig a')).toBeInTheDocument());
+		const urls = () => vi.mocked(fetch).mock.calls.map(([u]) => String(u));
+		const shown = new URLSearchParams(urls().find((u) => u.startsWith('/api/alerts/categories/scan?'))!.split('?')[1]);
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(Date.now() + 5 * 60_000);
+		const severity = [...container.querySelectorAll('th')].find((th) => th.textContent?.trim().startsWith('Severity'))!;
+		severity.querySelector('button')!.click();
+		await vi.waitFor(() => expect(urls().filter((u) => u.startsWith('/api/alerts?')).at(-1)).toContain('sort=severity'));
+		const last = new URLSearchParams(urls().filter((u) => u.startsWith('/api/alerts?')).at(-1)!.split('?')[1]);
+		expect([last.get('from'), last.get('to')]).toEqual([shown.get('from'), shown.get('to')]);
+		vi.useRealTimers();
+	});
+
 	it("the top-signature bars and the table's signatures carry the shown window and range", async () => {
 		const detail = { ...DETAIL, top_signatures: [{ signature: 'ET SCAN Nmap', count: 3, last_seen: '2026-11-06T10:00:00Z' }] };
+		// OLD CODE: alerts: [{ …, alert: { signature: 'Sig a', … }, … }] (NET-185: a row links on its rule.name, which Malcolm's alerts carry)
 		const alerts = {
 			from: '', to: '', page: 1, size: 25, total: 1, total_pages: 1,
-			alerts: [{ _id: 'a', _index: 'x', timestamp: '2026-10-29T10:00:00Z', alert: { signature: 'Sig a', signature_id: 1, severity: 2, category: 'misc' }, src_ip: '10.0.0.9', dest_ip: '8.8.8.8', acknowledged: false }],
+			alerts: [{ _id: 'a', _index: 'x', timestamp: '2026-10-29T10:00:00Z', alert: { signature: 'Sig a', signature_id: 1, severity: 2, category: 'misc' }, rule: { name: 'Sig a' }, src_ip: '10.0.0.9', dest_ip: '8.8.8.8', acknowledged: false }],
 		};
 		stubDaemon({ '/api/alerts/categories/scan': detail, '/api/alerts': alerts });
 		const { container } = render(Page);
@@ -232,6 +266,8 @@ describe('Alert category page — signature links', () => {
 		expect(params('No rule name')).toEqual({ no_rule_name: 'true', ...win, count: '4' });
 		expect(within(card).getAllByRole('link')).toHaveLength(3);
 		expect(rows[3].querySelector('a, button, [href]')).toBeNull();
+		// an empty name reads "No rule name" too, never a blank label
+		expect(rows[3]).toHaveTextContent('No rule name');
 		expectNoNestedInteractive(container);
 	});
 });

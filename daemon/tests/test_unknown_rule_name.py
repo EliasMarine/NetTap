@@ -73,5 +73,15 @@ class TestUnknownAndNoRuleName(AioHTTPTestCase):
         for value in ("maybe", ""):
             status, body = await self.get("/api/alerts", no_rule_name=value)
             self.assertEqual(status, 400, (value, body))
-        status, body = await self.get("/api/alerts", no_rule_name="false")
-        self.assertEqual((status, body["total"]), (200, 5))
+        # OLD CODE START — NET-185: false was the same as leaving the parameter out
+        # status, body = await self.get("/api/alerts", no_rule_name="false")
+        # self.assertEqual((status, body["total"]), (200, 5))
+        # OLD CODE END
+
+    async def test_false_lists_only_the_alerts_with_a_rule_name(self):
+        status, named = await self.get("/api/alerts", no_rule_name="false")
+        self.assertEqual((status, named["total"]), (200, 2))
+        self.assertEqual(sorted(a["_id"] for a in named["alerts"]), ["u1", "u2"])
+        _, unnamed = await self.get("/api/alerts", no_rule_name="true")
+        _, every = await self.get("/api/alerts")
+        self.assertEqual(named["total"] + unnamed["total"], every["total"])

@@ -583,8 +583,16 @@ def handle_alerts_list(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "no_rule_name must be true or false"}, status=400
         )
-    if no_rule_name:
-        filter_clauses.append(_signature_filter([None]))
+    # OLD CODE START — NET-185: false did nothing, the same as leaving the parameter out
+    # if no_rule_name:
+    #     filter_clauses.append(_signature_filter([None]))
+    # OLD CODE END
+    if "no_rule_name" in request.query:  # true: no rule.name; false: only alerts with one
+        filter_clauses.append(
+            _signature_filter([None])
+            if no_rule_name
+            else {"exists": {"field": "rule.name"}}
+        )
 
     # Optional IP filter (matches source OR destination)
     # OLD CODE: ip_filter = request.query.get("ip", "") (slice 2b-1: validated above)

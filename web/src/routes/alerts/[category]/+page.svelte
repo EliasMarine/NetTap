@@ -447,7 +447,9 @@
 
 	async function fetchAlerts(pg: number = 1) {
 		const lg = listGuard.begin();
-		const { from, to } = getTimeRange();
+		// OLD CODE: const { from, to } = getTimeRange(); (NET-185: a page, sort or sub-category moved the list to a new window, away from the figures above it)
+		// the figures' own window until the next refresh; a view still loading has none yet
+		const { from, to } = shownKey === view ? shownWindow : getTimeRange();
 		const params = { from, to, page: pg, size: pageSize, category, sub: subCatFilter ?? undefined, sort: SERVER_SORT[sortKey], order: sortDir };
 		const result = await getAlerts(params).then(
 			(value): PromiseSettledResult<AlertsListResponse> => ({ status: 'fulfilled', value }),
@@ -757,7 +759,9 @@
 OLD CODE END -->
 {#snippet signatureCell(a: Alert)}
 	<!-- OLD CODE: …{:else}<span class="mono">Unknown</span>{/if} (NET-185: the bars call these alerts "No rule name"; "Unknown" can be a real rule's name) -->
-	{#if a.alert?.signature}<a class="mono" href={sigHref(a.alert.signature)} title={a.alert.signature}>{a.alert.signature}</a>{:else}<span class="dim">No rule name</span>{/if}
+	<!-- OLD CODE: {#if a.alert?.signature}<a class="mono" href={sigHref(a.alert.signature)} … (NET-185: linked by the shown signature, which can be Suricata's own, not the rule.name the list matches, so it opened an empty list) -->
+	<!-- Every alert with this rule over the figures' window; no link without a rule.name, which the list matches (as on Alerts) -->
+	{#if a.rule?.name}<a class="mono" href={sigHref(a.rule.name)} title={a.alert?.signature || a.rule.name}>{a.alert?.signature || a.rule.name}</a>{:else if a.alert?.signature}<span class="mono" title={a.alert.signature}>{a.alert.signature}</span>{:else}<span class="dim">No rule name</span>{/if}
 {/snippet}
 {#snippet srcCell(a: Alert)}{#if a.src_ip}<IPAddress ip={a.src_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet destCell(a: Alert)}{#if a.dest_ip}<IPAddress ip={a.dest_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
@@ -922,7 +926,8 @@ OLD CODE END -->
 				<BarList
 					items={data.top_signatures.map((sig) => ({
 						key: sig.signature ?? '\u0000no rule name',
-						label: sig.signature ?? 'No rule name',
+						// OLD CODE: label: sig.signature ?? 'No rule name', (NET-185: an empty name showed a blank label)
+						label: sig.signature || 'No rule name',
 						value: sig.count,
 						display: formatNumber(sig.count),
 						detail: formatRelativeTime(sig.last_seen),
