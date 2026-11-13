@@ -259,8 +259,8 @@ raw alerts.
   The 24h, 7d and 30d pills read the background scan, which has no limit. So this applies to 1h, 6h, an explicit
   `from`/`to`, and `NETTAP_BEACON_BACKGROUND=0`.
 - When it runs out, the threat report still goes out with every other section. Beaconing is listed in
-  `failed_checks` and in `timed_out_checks`. The page shows "—" and says the window is too large to check in
-  time, and suggests a shorter range. `/api/threats/beaconing` answers 503 with the same reason.
+  `failed_checks` and in `timed_out_checks`. The page shows "—", says the check couldn't finish in time, and
+  suggests a shorter range. `/api/threats/beaconing` answers 503 with the same reason.
 - **The threat score is unchanged by this.** The score counts alert findings only, and beaconing never adds
   points, so a time-out drops nothing from the score.
 - The slots and findings are the same as before the faster query (NET-187): on the G11, every pair's slot list

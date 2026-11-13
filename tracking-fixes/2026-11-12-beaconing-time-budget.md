@@ -38,14 +38,27 @@ stopped it, so a 30 d window on a full month of data would end in the web proxy'
   - The background snapshot scan passes no budget: nobody waits for it, and its 30 d scan must finish.
 - **Nobody waits past the deadline:**
   - **Beaconing route (live):** waits until the budget runs out, then answers 503 "Working this out took too long.
-    Try a shorter time range." A scan still queued in the route pool never starts.
+    Try a shorter time range." A scan still queued at the deadline never starts.
   - **Threat report:** beaconing runs on its own 2-thread pool and is waited for until the budget runs out. The
     report then goes out with every other section, and beaconing in both `failed_checks` and the new
     `timed_out_checks`.
   - **Backstop:** the whole report gets 90 s (`REPORT_WAIT_SECONDS`), then a 503.
 - **/threats page:** when beaconing ran out of time, the KPI says "Not checked in time: try a shorter range". The
-  card says "Couldn't check for beaconing: this window is too large to check in time." and "Try a shorter range."
+  card says "Couldn't finish the beaconing check in time." and "Try a shorter range."
 - **The threat score is unaffected:** beaconing adds no points (`Debugging/THREAT-SCORING.md`).
+
+- **Review fixes (PR #250):**
+  - **One pool, two scans at most.** The route's live scans now share the report's 2-thread `BEACON_POOL`
+    (moved to `services/threat_detection.py`). A third live request while two run gets 503 "Two other beaconing
+    checks are running right now; try again in a minute." at once. Before, eight 30 d tabs could fill the
+    route pool and leave Home without a thread.
+  - **Every search waits no longer than the budget allows.** A budgeted `ExactTermsOpenSearch.search` checks the
+    budget before each send, the longer-list re-ask too, and sets `request_timeout` to what is left: at least
+    1 s, at most the client's 30 s. The transport's retries run inside one send, so they stay inside it.
+  - **A failed alert summary no longer waits for beaconing.** The report cancels the beaconing wait before it
+    gathers the other checks.
+  - **Wording.** The card title for a time-out is "Couldn't finish the beaconing check in time.", because a short
+    window on a busy network can run out too. Other failures keep "the query failed".
 
 ## Same results, shown on real data
 
@@ -73,6 +86,9 @@ Each one-slot difference is a record indexed between the two runs. In the 7 d ca
   - the report marks a time-out and keeps every other section, and another failure is not called a time-out;
   - the routes: 503 with the reason, at the deadline while the scan hangs, a queued scan never starts, a report
     with HTTP 200 and the other sections, and the report backstop.
+  - review fixes, 3 more tests: a third live request is turned away at once, a failed alert summary does not wait
+    for beaconing, and the batch query groups two destinations that share a source and port. Two more in
+    `test_exact_terms.py`: the per-send `request_timeout`, and a re-ask after the budget is spent is `TooSlow`.
   - `FakeOpenSearch` gained a numeric `histogram`. The route fakes in `test_beacon_snapshots.py` take `budget`.
 - **Web:** 2 new tests in `threats-beaconing.test.ts`: the time-out wording, and that a plain failure still says
   "the query failed".
