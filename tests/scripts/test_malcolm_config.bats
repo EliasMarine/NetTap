@@ -463,6 +463,94 @@ _strict_generate_curlrc() {
     [ "$first_hash" = "$second_hash" ]
 }
 
+# NET-251: the admin password reaches htpasswd / python3 on stdin, never in a process's arguments
+# (ps shows those to every local account) or in run's log line. A quote, a backslash, a double
+# quote, a $ and spaces: a ' broke the old python3 -c code.
+_NET251_PW=$'it\'s a \\ "$HOME" pw'
+
+# generate_auth with that password and verbose on (run then logs "exec: $*"), output in out.log.
+# In the test shell, not $(…), so set -e still stops the test when it fails. </dev/null: bats leaves
+# stdin open, so a stub reading stdin would wait on the terminal if the password stopped coming on it.
+_net251_generate_auth() {
+    export NETTAP_ADMIN_PASSWORD="$1" NETTAP_VERBOSE=true
+    rm -rf "${TEST_TMPDIR}/docker/auth"
+    generate_auth "${TEST_TMPDIR}/docker/auth" > "${TEST_TMPDIR}/out.log" 2>&1 < /dev/null
+}
+
+_net251_not_leaked() {  # in no recorded command's arguments and not in the output
+    [ -s "${TEST_TMPDIR}/argv.log" ]  # the stub ran, so a clean grep means something
+    ! grep -qF -- "$_NET251_PW" "${TEST_TMPDIR}/argv.log" "${TEST_TMPDIR}/out.log" || false
+}
+
+@test "generate_auth (NET-251): htpasswd gets the password on stdin, never in its arguments or the log" {
+    _source_malcolm_config
+    htpasswd() {  # records its arguments and stdin; $2 is the file after -icB
+        echo "htpasswd $*" >> "${TEST_TMPDIR}/argv.log"
+        cat > "${TEST_TMPDIR}/stdin.log"
+        echo "admin:stub" > "$2"
+    }
+
+    _net251_generate_auth "$_NET251_PW"
+
+    _net251_not_leaked
+    grep -q 'exec: htpasswd -icB' "${TEST_TMPDIR}/out.log"  # run's verbose line was there to check
+    cmp "${TEST_TMPDIR}/stdin.log" <(printf '%s\r\n' "$_NET251_PW")
+}
+
+@test "generate_auth (NET-251): the real htpasswd keeps every byte, a trailing CR or LF included" {
+    command -v htpasswd > /dev/null || skip "htpasswd is not installed"
+    _source_malcolm_config
+    local pw
+    for pw in "$_NET251_PW" $'pw\r' $'pw\n' $'pw\r\n'; do
+        _net251_generate_auth "$pw"
+        # -vb takes the exact bytes from its arguments (fine in a test), whatever stdin strips
+        htpasswd -vb "${TEST_TMPDIR}/docker/auth/htpasswd" admin "$pw" \
+            || { echo "rejected: $(printf %q "$pw")"; return 1; }
+    done
+}
+
+@test "generate_auth (NET-251): the python3 fallback reads the password on stdin, and a quote can't break it" {
+    _source_malcolm_config
+    command() {  # no htpasswd, like a stock Ubuntu box (the G11 has none)
+        if [[ "$*" == "-v htpasswd" ]]; then return 1; fi
+        builtin command "$@"
+    }
+    python3() { echo "python3 $*" >> "${TEST_TMPDIR}/argv.log"; builtin command python3 "$@"; }
+
+    _net251_generate_auth "$_NET251_PW"
+
+    _net251_not_leaked
+    local line
+    line=$(cat "${TEST_TMPDIR}/docker/auth/htpasswd")
+    [[ "$line" == 'admin:{SSHA}'* ]] || false
+    # {SSHA} is base64(sha1(password + salt) + salt): check it against the password's bytes
+    printf '%s' "$_NET251_PW" | builtin command python3 -c '
+import base64, hashlib, sys
+raw = base64.b64decode(sys.argv[1])
+assert hashlib.sha1(sys.stdin.buffer.read() + raw[20:]).digest() == raw[:20]
+' "${line#'admin:{SSHA}'}"
+}
+
+_net251_assert_created_600() {  # chmod is a no-op in the caller, so only the mode at creation counts
+    rm -rf "${TEST_TMPDIR}/docker/auth"
+    generate_auth "${TEST_TMPDIR}/docker/auth" > /dev/null 2>&1 < /dev/null
+    [ "$(_mode "${TEST_TMPDIR}/docker/auth/.admin-password")" = "600" ]
+    [ "$(_mode "${TEST_TMPDIR}/docker/auth/htpasswd")" = "600" ]
+}
+
+@test "generate_auth (NET-251): .admin-password and htpasswd are created 600, never 644 until the chmod" {
+    _source_malcolm_config
+    unset NETTAP_ADMIN_PASSWORD  # a generated password, so .admin-password is written too
+    chmod() { :; }
+    umask 022  # the usual umask, under which both files were created 644
+    if type -P htpasswd > /dev/null; then _net251_assert_created_600; fi
+    command() {  # and the python3 fallback, which every box without htpasswd takes
+        if [[ "$*" == "-v htpasswd" ]]; then return 1; fi
+        builtin command "$@"
+    }
+    _net251_assert_created_600
+}
+
 # ==========================================================================
 # generate_compose_env
 # ==========================================================================

@@ -123,7 +123,10 @@ generate_auth() {
     if [[ -z "$password" ]]; then
         password=$(openssl rand -base64 16 | tr -d '=/+' | head -c 16)
         log "Generated random admin password (saved to ${auth_dir}/.admin-password)"
-        echo "$password" > "${auth_dir}/.admin-password"
+        # OLD CODE START — NET-251: created 644 under the default umask, so any account could read it until the chmod
+        # echo "$password" > "${auth_dir}/.admin-password"
+        # OLD CODE END
+        ( umask 077; printf '%s\n' "$password" > "${auth_dir}/.admin-password" )
         chmod 600 "${auth_dir}/.admin-password"
     fi
 
@@ -131,18 +134,38 @@ generate_auth() {
 
     # Use openssl to generate bcrypt-compatible password hash
     # htpasswd format: username:{SSHA}hash or username:$2y$...
+    # NET-251: the password goes on stdin from the printf builtin, so ps and run's log never show it
     if command -v htpasswd &>/dev/null; then
-        run htpasswd -bcB "${auth_dir}/htpasswd" "$username" "$password"
+        # OLD CODE START — NET-251: -b put the password in htpasswd's arguments and in run's log line
+        # run htpasswd -bcB "${auth_dir}/htpasswd" "$username" "$password"
+        # OLD CODE END
+        # htpasswd -i strips one final LF and the CR before it, so \r\n keeps a password's own trailing CR/LF
+        # OLD CODE START — NET-251: created 644 under the default umask until the chmod below
+        # run htpasswd -icB "${auth_dir}/htpasswd" "$username" < <(printf '%s\r\n' "$password")
+        # OLD CODE END
+        ( umask 077; run htpasswd -icB "${auth_dir}/htpasswd" "$username" < <(printf '%s\r\n' "$password") )
     else
         # Fallback: use Python to generate Apache-compatible hash
         local hash
-        hash=$(python3 -c "
-import hashlib, base64, os
+        # OLD CODE START — NET-251: the password was inside the -c code, so it was in python3's
+        # arguments, and a ' or \ in it broke or changed the code
+        # hash=$(python3 -c "
+# import hashlib, base64, os
+# salt = os.urandom(16)
+# h = hashlib.sha1(b'${password}' + salt).digest()
+# print('{SSHA}' + base64.b64encode(h + salt).decode())
+# ")
+        # OLD CODE END
+        hash=$(printf '%s' "$password" | python3 -c '
+import hashlib, base64, os, sys
 salt = os.urandom(16)
-h = hashlib.sha1(b'${password}' + salt).digest()
-print('{SSHA}' + base64.b64encode(h + salt).decode())
-")
-        echo "${username}:${hash}" > "${auth_dir}/htpasswd"
+h = hashlib.sha1(sys.stdin.buffer.read() + salt).digest()
+print("{SSHA}" + base64.b64encode(h + salt).decode())
+')
+        # OLD CODE START — NET-251: created 644 under the default umask until the chmod below
+        # echo "${username}:${hash}" > "${auth_dir}/htpasswd"
+        # OLD CODE END
+        ( umask 077; echo "${username}:${hash}" > "${auth_dir}/htpasswd" )
     fi
 
     # OLD CODE START — 644 for Malcolm's nginx-proxy, which NetTap no longer runs; no container mounts it

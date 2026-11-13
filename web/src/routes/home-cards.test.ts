@@ -141,6 +141,22 @@ describe('Home — card states', () => {
 		expect(screen.getByRole('img', { name: /^0 alerts in the last 24 hours/ })).toBeInTheDocument();
 	});
 
+	// NET-258: the card is as tall as the categories and alerts beside it, so it lists twelve
+	it('asks for the top twelve devices by bytes and lists all twelve', async () => {
+		const devices = Array.from({ length: 15 }, (_, i) => ({ ip: `192.168.1.${i + 10}`, hostname: `host-${i}`, total_bytes: 1_000_000 * (15 - i) }));
+		const fetchMock = stubDaemon({
+			'/api/devices': (url: URL) => ({ from: '', to: '', limit: Number(url.searchParams.get('limit')), devices: devices.slice(0, Number(url.searchParams.get('limit'))) }),
+		});
+		render(HomePage);
+		const card = (await screen.findByText('host-0')).closest('.card') as HTMLElement;
+		const asked = fetchMock.mock.calls.map(([u]) => new URL(u as string, 'http://x')).find((u) => u.pathname === '/api/devices')!;
+		expect(asked.searchParams.get('limit')).toBe('12');
+		expect(asked.searchParams.get('sort')).toBe('bytes');
+		const rows = within(card).getAllByRole('link').filter((a) => a.getAttribute('href')?.startsWith('/devices/192.168.1.'));
+		expect(rows).toHaveLength(12);
+		expect(within(card).queryByText('host-12')).not.toBeInTheDocument();
+	});
+
 	// NET-225 (DEV-1): inline bridge mode sits after the router's address translation, so no devices ever appear
 	it('says why no devices show in inline bridge mode, instead of promising they will appear', async () => {
 		stubDaemon({

@@ -59,7 +59,8 @@
 	// ---------------------------------------------------------------------------
 
 	const AUTO_REFRESH_MS = 30_000;
-	const TOP_DEVICES = 5;
+	// OLD CODE: const TOP_DEVICES = 5; (NET-258: five rows left most of the card empty beside the categories and alerts)
+	const TOP_DEVICES = 12;
 	const TOP_ALERT_GROUPS = 5;
 	const TOP_SERVICES = 8;
 
