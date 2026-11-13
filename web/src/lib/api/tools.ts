@@ -152,6 +152,45 @@ export interface ThroughputResult {
 	error: string | null;
 }
 
+/** NET-267: one probed size. `mtu` is the limit a failed probe named (a router's, or NetTap's own). */
+export interface MtuProbe {
+	size: number;
+	result: 'reply' | 'icmp_too_big' | 'local_error' | 'no_reply';
+	mtu: number | null;
+}
+
+export type MtuStatus =
+	| 'interface'
+	| 'icmp_bound'
+	| 'unanswered_above'
+	| 'local_limit'
+	| 'floor_unanswered'
+	| 'no_ping_reply'
+	| 'unreliable'
+	| 'stopped'
+	| 'ping_error';
+
+/** NET-267: a path MTU check. Sizes are IP packet sizes in bytes; `payload` is ping's -s value. */
+export interface PathMtuResult {
+	target: string;
+	resolved_ip: string | null;
+	family: 4 | 6 | null;
+	interface: string | null;
+	interface_mtu: number | null;
+	largest_confirmed: number | null;
+	payload: number | null;
+	/** True only when the interface MTU itself got a reply, or a router's report was confirmed */
+	upper_known: boolean;
+	icmp_reported_mtu: number | null;
+	/** A limit NetTap itself held for the path (a cached router report or a route MTU) */
+	local_mtu: number | null;
+	first_unanswered: number | null;
+	probes: MtuProbe[];
+	/** null when the check could not start (see error) */
+	status: MtuStatus | null;
+	error: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // Fetch helpers
 // ---------------------------------------------------------------------------
@@ -363,6 +402,23 @@ export async function throughput(
 	if (!res.ok) {
 		const data = await res.json().catch(() => ({}));
 		throw new Error(data.error || `Throughput test failed (HTTP ${res.status})`);
+	}
+	return res.json();
+}
+
+/**
+ * NET-267: the largest packet that reaches `target` from NetTap. Throws with the daemon's sentence
+ * when the request is refused (bad input, or two checks already running).
+ */
+export async function pathMtu(target: string): Promise<PathMtuResult> {
+	const res = await fetch('/api/tools/mtu', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ target }),
+	});
+	if (!res.ok) {
+		const data = await res.json().catch(() => ({}));
+		throw new Error(data.error || `MTU check failed (HTTP ${res.status})`);
 	}
 	return res.json();
 }

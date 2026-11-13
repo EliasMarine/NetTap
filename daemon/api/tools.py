@@ -8,6 +8,7 @@ Registers network tool endpoints with the aiohttp application:
 - Ping / Traceroute
 - SSL Certificate Inspection
 - LAN throughput test (iperf3, NET-266)
+- Path MTU check (NET-267)
 """
 
 import logging
@@ -25,6 +26,12 @@ from services.dns_recon_service import (
 from services.mac_lookup_service import MacLookupService, MacLookupValidationError
 from services.network_diag_service import NetworkDiagService, NetworkDiagValidationError
 from services.host_resolve import HostNameError
+from services.path_mtu_service import (
+    BUSY as MTU_BUSY,
+    PathMtuBusyError,
+    PathMtuService,
+    PathMtuValidationError,
+)
 from services.ssl_cert_service import SslCertService, SslCertValidationError
 from services.throughput_service import (
     ThroughputBusyError,
@@ -358,6 +365,30 @@ async def handle_throughput(request: web.Request) -> web.Response:
 
 
 # ---------------------------------------------------------------------------
+# Path MTU check (NET-267)
+# ---------------------------------------------------------------------------
+
+
+async def handle_path_mtu(request: web.Request) -> web.Response:
+    """POST /api/tools/mtu -- the largest packet that reaches a target from NetTap."""
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+
+    try:
+        result = await request.app["path_mtu"].check(body.get("target"))
+    except (PathMtuValidationError, NetworkDiagValidationError, HostNameError) as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except PathMtuBusyError:
+        # the fixed sentence, so no exception text reaches a public reply
+        return public_json({"error": MTU_BUSY}, status=503)
+    return web.json_response(result)
+
+
+# ---------------------------------------------------------------------------
 # Route registration
 # ---------------------------------------------------------------------------
 
@@ -375,6 +406,7 @@ def register_tools_routes(
     app["network_diag"] = network_diag
     app["ssl_cert"] = ssl_cert
     app["throughput"] = ThroughputService()
+    app["path_mtu"] = PathMtuService()
 
     app.router.add_post("/api/tools/dns-recon", handle_dns_recon)
     app.router.add_post("/api/tools/dns-compare", handle_dns_compare)
@@ -383,7 +415,9 @@ def register_tools_routes(
     app.router.add_post("/api/tools/traceroute", handle_traceroute)
     app.router.add_post("/api/tools/ssl-cert", handle_ssl_cert)
     app.router.add_post("/api/tools/throughput", handle_throughput)
+    app.router.add_post("/api/tools/mtu", handle_path_mtu)
 
     # OLD CODE: logger.info("Tools API routes registered (5 endpoints)") (NET-262 adds dns-compare)
     # OLD CODE: logger.info("Tools API routes registered (6 endpoints)") (NET-266 adds throughput)
-    logger.info("Tools API routes registered (7 endpoints)")
+    # OLD CODE: logger.info("Tools API routes registered (7 endpoints)") (NET-267 adds mtu)
+    logger.info("Tools API routes registered (8 endpoints)")

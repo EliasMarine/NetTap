@@ -64,6 +64,7 @@ export const TOOL_TIMEOUT_MS = {
 	traceroute: 35_000, // daemon/services/network_diag_service.py TRACEROUTE_TIMEOUT (30 s)
 	'ssl-cert': 25_000, // daemon/services/ssl_cert_service.py CERT_TIMEOUT (10 s), twice: s_client, then x509
 	throughput: 55_000, // daemon/services/throughput_service.py: MAX_DURATION (30 s) + DEADLINE_SLACK (20 s), NET-266
+	mtu: 35_000, // daemon/services/path_mtu_service.py DEADLINE (25 s), NET-267
 } as const;
 
 /**

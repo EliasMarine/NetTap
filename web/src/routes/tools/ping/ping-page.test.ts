@@ -40,6 +40,30 @@ const TRACE = {
 	],
 };
 
+// NET-267: a VPN path where a router reported 1420
+const MTU = {
+	target: '10.8.0.1',
+	resolved_ip: '10.8.0.1',
+	family: 4,
+	interface: 'eno1',
+	interface_mtu: 1500,
+	largest_confirmed: 1420,
+	payload: 1392,
+	upper_known: true,
+	icmp_reported_mtu: 1420,
+	local_mtu: null,
+	first_unanswered: null,
+	probes: [
+		{ size: 84, result: 'reply', mtu: null },
+		{ size: 576, result: 'reply', mtu: null },
+		{ size: 1500, result: 'icmp_too_big', mtu: 1420 },
+		{ size: 1420, result: 'reply', mtu: null },
+		{ size: 1420, result: 'reply', mtu: null },
+	],
+	status: 'icmp_bound',
+	error: null,
+};
+
 function stubFetch(body: unknown, ok = true) {
 	const fetch = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok, status: ok ? 200 : 500, json: async () => body }));
 	vi.stubGlobal('fetch', fetch);
@@ -161,5 +185,78 @@ describe('Ping and traceroute page', () => {
 		expect(screen.getByLabelText('Target')).toHaveValue('8.8.8.8');
 		expect(screen.getByRole('tab', { name: 'Traceroute' })).toHaveAttribute('aria-selected', 'true');
 		expect(screen.getByText('No traceroute results')).toBeInTheDocument();
+	});
+
+	it('NET-267: checks the path MTU in its own tab, with the result line first and the probes below', async () => {
+		const fetch = stubFetch(MTU);
+		render(Page);
+		await enterTarget('10.8.0.1');
+		await fireEvent.click(screen.getByRole('button', { name: 'Check MTU' }));
+
+		expect(await screen.findByText('The path to 10.8.0.1 carries packets up to 1420 bytes. A router reported an MTU of 1420.')).toBeInTheDocument();
+		expect(fetch.mock.calls[0][0]).toBe('/api/tools/mtu');
+		expect(JSON.parse(String(fetch.mock.calls[0][1]?.body))).toEqual({ target: '10.8.0.1' });
+		expect(screen.getByRole('tab', { name: 'MTU' })).toHaveAttribute('aria-selected', 'true');
+		const table = screen.getByRole('table', { name: 'MTU probes' });
+		const rows = within(table).getAllByRole('row');
+		expect(rows).toHaveLength(6);
+		expect(within(rows[3]).getByText('Router: too big, MTU 1420')).toBeInTheDocument();
+		expect(within(table).getAllByRole('columnheader').every((th) => th.hasAttribute('aria-sort'))).toBe(true);
+		expect(document.getElementById('ping-panel-ping')).not.toBeVisible();
+	});
+
+	it('NET-267: leads with the largest confirmed size and shows the address a name resolved to', async () => {
+		stubFetch({ ...MTU, target: 'vpn.lan' });
+		render(Page);
+		await enterTarget('vpn.lan');
+		await fireEvent.click(screen.getByRole('button', { name: 'Check MTU' }));
+
+		const kpi = (await screen.findByText('Largest confirmed size')).closest('article')!;
+		expect(kpi).toHaveTextContent('1420bytes');
+		expect(screen.getByText(/^Tested 10\.8\.0\.1 · eno1 · interface MTU 1500/)).toBeInTheDocument();
+		// 1420 was probed twice: four sizes, five rows
+		expect(screen.getByText(/^4 sizes tried/)).toBeInTheDocument();
+	});
+
+	it('NET-267: a check that stopped before any probe shows no probes card and no size', async () => {
+		stubFetch({ ...MTU, target: 'slow.lan', resolved_ip: null, largest_confirmed: null, payload: null, status: 'stopped', probes: [] });
+		render(Page);
+		await enterTarget('slow.lan');
+		await fireEvent.click(screen.getByRole('button', { name: 'Check MTU' }));
+
+		expect(await screen.findByText('The check stopped before it finished, so no size was confirmed.')).toBeInTheDocument();
+		expect(screen.getByText('Largest confirmed size').closest('article')).toHaveTextContent('—');
+		expect(screen.queryByRole('table', { name: 'MTU probes' })).not.toBeInTheDocument();
+		expect(screen.queryByText(/sizes? tried/)).not.toBeInTheDocument();
+	});
+
+	it('NET-267: shows the loading state while the MTU check runs', async () => {
+		vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+		render(Page);
+		await enterTarget('10.8.0.1');
+		await fireEvent.click(screen.getByRole('button', { name: 'Check MTU' }));
+		expect(screen.getByRole('status')).toHaveTextContent('Checking the path MTU to 10.8.0.1');
+		expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
+	});
+
+	it("NET-267: shows the daemon's sentence when the MTU check is refused or can't start", async () => {
+		stubFetch({ error: 'Two MTU checks are already running. Try again in a moment.' }, false);
+		render(Page);
+		await enterTarget('10.8.0.1');
+		await fireEvent.click(screen.getByRole('button', { name: 'Check MTU' }));
+		expect(await screen.findByText('MTU check failed')).toBeInTheDocument();
+		expect(screen.getByText('Two MTU checks are already running. Try again in a moment.')).toBeInTheDocument();
+
+		stubFetch({ ...MTU, status: null, probes: [], largest_confirmed: null, error: 'NetTap has no route to fd00::1.' });
+		await fireEvent.click(screen.getByRole('button', { name: 'Check MTU' }));
+		expect(await screen.findByText('NetTap has no route to fd00::1.')).toBeInTheDocument();
+		expect(screen.queryByRole('table', { name: 'MTU probes' })).not.toBeInTheDocument();
+	});
+
+	it('NET-267: reads ?tab=mtu on load and starts empty', () => {
+		search.value = '?target=10.8.0.1&tab=mtu';
+		render(Page);
+		expect(screen.getByRole('tab', { name: 'MTU' })).toHaveAttribute('aria-selected', 'true');
+		expect(screen.getByText('No MTU check yet')).toBeInTheDocument();
 	});
 });

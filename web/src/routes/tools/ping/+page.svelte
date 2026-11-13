@@ -5,12 +5,14 @@
 	 * A form card (target, count, Ping and Traceroute), then tabs:
 	 *   - Ping: four KPI cards, round-trip times as a BarList, and the replies in a DataTable
 	 *   - Traceroute: the route as a strip of hops, and the hops in a DataTable
-	 * Reads URL query params: ?target=X&tab=traceroute
+	 *   - MTU (NET-267): the path MTU check's result line, and its probes in a DataTable
+	 * Reads URL query params: ?target=X&tab=traceroute (or tab=mtu)
 	 */
 
 	import { page } from '$app/stores';
-	import { ping, traceroute } from '$api/tools';
-	import type { PingReply, PingResult, TracerouteHop, TracerouteResult } from '$api/tools';
+	// OLD CODE: import { ping, traceroute } from '$api/tools'; (NET-267)
+	import { pathMtu, ping, traceroute } from '$api/tools';
+	import type { MtuProbe, PathMtuResult, PingReply, PingResult, TracerouteHop, TracerouteResult } from '$api/tools';
 	import BarList from '$lib/components/ui/BarList.svelte';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
@@ -18,6 +20,7 @@
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import KpiCard from '$lib/components/ui/KpiCard.svelte';
 	import Pills from '$lib/components/ui/Pills.svelte';
+	import { mtuPathLine, mtuSummary, probeLabel } from './mtu-summary';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -25,7 +28,8 @@
 
 	let target = $state('');
 	let count = $state(4);
-	let activeTab = $state<'ping' | 'traceroute'>('ping');
+	// OLD CODE: let activeTab = $state<'ping' | 'traceroute'>('ping'); (NET-267)
+	let activeTab = $state<'ping' | 'traceroute' | 'mtu'>('ping');
 
 	let pingResult = $state<PingResult | null>(null);
 	let traceResult = $state<TracerouteResult | null>(null);
@@ -33,6 +37,9 @@
 	let traceLoading = $state(false);
 	let pingError = $state('');
 	let traceError = $state('');
+	let mtuResult = $state<PathMtuResult | null>(null);
+	let mtuLoading = $state(false);
+	let mtuError = $state('');
 
 	// ---------------------------------------------------------------------------
 	// Read URL query params on load
@@ -44,6 +51,7 @@
 		const tab = params.get('tab');
 		if (t) target = t;
 		if (tab === 'traceroute') activeTab = 'traceroute';
+		if (tab === 'mtu') activeTab = 'mtu';
 	});
 
 	// ---------------------------------------------------------------------------
@@ -84,6 +92,23 @@
 		}
 	}
 
+	async function runMtu() {
+		const trimmed = target.trim();
+		if (!trimmed) return;
+		mtuLoading = true;
+		mtuError = '';
+		mtuResult = null;
+		activeTab = 'mtu';
+		try {
+			mtuResult = await pathMtu(trimmed);
+			if (mtuResult.error) mtuError = mtuResult.error;
+		} catch (e) {
+			mtuError = e instanceof Error ? e.message : 'MTU check failed';
+		} finally {
+			mtuLoading = false;
+		}
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter') runPing();
 	}
@@ -121,6 +146,7 @@
 	const tabs = [
 		{ value: 'ping' as const, label: 'Ping results' },
 		{ value: 'traceroute' as const, label: 'Traceroute' },
+		{ value: 'mtu' as const, label: 'MTU' },
 	];
 
 	const TIMEOUT = '* * *';
@@ -154,6 +180,18 @@
 		{ key: 'rtt1', label: 'RTT 2', numeric: true, sortValue: (h) => rtt(h, 1), cell: hopRtt1 },
 		{ key: 'rtt2', label: 'RTT 3', numeric: true, sortValue: (h) => rtt(h, 2), cell: hopRtt2 },
 	];
+
+	// The same size can be probed twice (the final re-check), so each row carries its position
+	type ProbeRow = MtuProbe & { i: number };
+	let probeRows = $derived<ProbeRow[]>((mtuResult?.probes ?? []).map((p, i) => ({ ...p, i: i + 1 })));
+	// a confirmed size is probed twice, so count sizes, not rows
+	let sizesTried = $derived(new Set(probeRows.map((p) => p.size)).size);
+	let mtuLine = $derived(mtuResult ? mtuSummary(mtuResult) : null);
+	const probeColumns: Column<ProbeRow>[] = [
+		{ key: 'i', label: 'Probe', numeric: true },
+		{ key: 'size', label: 'Size', numeric: true, cell: probeSize },
+		{ key: 'result', label: 'Result', sortValue: (p) => probeLabel(p), cell: probeResult },
+	];
 </script>
 
 {#snippet replyFrom(r: ReplyRow)}<span class="mono">{r.from}</span>{/snippet}
@@ -163,6 +201,8 @@
 {#snippet hopRtt0(h: TracerouteHop)}{@render hopRtt(h, 0)}{/snippet}
 {#snippet hopRtt1(h: TracerouteHop)}{@render hopRtt(h, 1)}{/snippet}
 {#snippet hopRtt2(h: TracerouteHop)}{@render hopRtt(h, 2)}{/snippet}
+{#snippet probeSize(p: ProbeRow)}{p.size} bytes{/snippet}
+{#snippet probeResult(p: ProbeRow)}{probeLabel(p)}{/snippet}
 {#snippet hopRtt(h: TracerouteHop, i: number)}{@const v = rtt(h, i)}{#if v != null}{v.toFixed(3)} ms{:else}<span class="dim">*</span>{/if}{/snippet}
 
 <svelte:head>
@@ -190,6 +230,9 @@
 			</div>
 		</div>
 		<div class="form-actions">
+			<button class="btn" type="button" onclick={runMtu} disabled={mtuLoading || !target.trim()}>
+				<Icon name="infra" />{mtuLoading ? 'Checking…' : 'Check MTU'}
+			</button>
 			<button class="btn" type="button" onclick={runTraceroute} disabled={traceLoading || !target.trim()}>
 				<Icon name="connections" />{traceLoading ? 'Tracing…' : 'Traceroute'}
 			</button>
@@ -275,7 +318,54 @@
 	</div>
 </div>
 
+<div role="tabpanel" id="ping-panel-mtu" aria-labelledby="ping-tab-mtu" hidden={activeTab !== 'mtu'}>
+	<div class="grid">
+		{#if mtuLoading}
+			<Card title="Path MTU" sub="Largest packet that reaches the target, in bytes" class="c-12">
+				<CardState state="loading" title="Checking the path MTU to {target.trim()}" />
+			</Card>
+		{:else if mtuError}
+			<Card title="Path MTU" sub="Largest packet that reaches the target, in bytes" class="c-12">
+				<CardState state="error" title="MTU check failed" message={mtuError} />
+			</Card>
+		{:else if mtuResult}
+			<!-- OLD CODE START — review of #267: the line alone, in a c-12 card, with the probes card always shown
+			<Card
+				title="Path MTU to {mtuResult.target}"
+				sub="{mtuResult.interface ?? 'interface unknown'} · interface MTU {mtuResult.interface_mtu ?? 'unknown'} · don't-fragment pings, IP packet sizes in bytes"
+				class="c-12"
+			>
+				<p class="mtu-line">{mtuSummary(mtuResult)}</p>
+			</Card>
+			<Card title="Probes" sub="{mtuResult.probes.length} sizes tried · a size with no reply is pinged twice" class="c-12">
+				<DataTable columns={probeColumns} rows={probeRows} ariaLabel="MTU probes" rowKey={(p) => p.i} />
+			</Card>
+			OLD CODE END -->
+			<KpiCard
+				label="Largest confirmed size"
+				icon="infra"
+				value={mtuResult.largest_confirmed ?? '—'}
+				unit={mtuResult.largest_confirmed ? 'bytes' : undefined}
+				class="c-4"
+			/>
+			<Card title="Path MTU to {mtuResult.target}" sub={mtuPathLine(mtuResult)} class="c-8">
+				{#if mtuLine}<p class="mtu-line">{mtuLine}</p>{/if}
+			</Card>
+			{#if sizesTried}
+				<Card title="Probes" sub="{sizesTried} {sizesTried === 1 ? 'size' : 'sizes'} tried · a size with no reply is pinged twice" class="c-12">
+					<DataTable columns={probeColumns} rows={probeRows} ariaLabel="MTU probes" rowKey={(p) => p.i} />
+				</Card>
+			{/if}
+		{:else}
+			<Card title="Path MTU" sub="Largest packet that reaches the target, in bytes" class="c-12">
+				<CardState state="empty" icon="infra" title="No MTU check yet" message="Enter a target and choose Check MTU to find the largest packet that gets through." />
+			</Card>
+		{/if}
+	</div>
+</div>
+
 <style>
+	.mtu-line { margin: 0; color: var(--text-1); font-size: var(--text-md); }
 	/* Layout glue: the route as a row of hops joined by a line, scrolling sideways when long */
 	.route { list-style: none; margin: 0; padding: 0 0 var(--sp-2); display: flex; overflow-x: auto; font-size: var(--text-xs); }
 	.hop { position: relative; flex: 0 0 auto; min-width: 96px; max-width: 160px; display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); padding: 0 var(--sp-2); text-align: center; }
