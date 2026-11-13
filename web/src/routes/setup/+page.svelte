@@ -491,10 +491,12 @@
 			}
 			bridgeConfig = await res.json();
 			bridgeVerified = bridgeConfig?.ready ?? false;
-			if (bridgeVerified && typeof window !== 'undefined') {
-				localStorage.setItem('nettap_wan_iface', selectedWan);
-				localStorage.setItem('nettap_lan_iface', selectedLan);
-			}
+			// OLD CODE START — NET-211 #3: Go Live reads the ports the daemon saved (/api/capture/mode) now
+			// if (bridgeVerified && typeof window !== 'undefined') {
+			// 	localStorage.setItem('nettap_wan_iface', selectedWan);
+			// 	localStorage.setItem('nettap_lan_iface', selectedLan);
+			// }
+			// OLD CODE END
 		} catch (err) {
 			bridgeError = err instanceof Error ? err.message : 'Failed to verify bridge configuration';
 		}

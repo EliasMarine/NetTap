@@ -19,15 +19,27 @@
 	// null until /api/capture/mode answers. Bridge polling waits for it, so a
 	// DHCP gateway install never hits the bridge endpoints from this page.
 	let captureModeName = $state<string | null>(null);
+	let captureInterface = $state('');
 	let modeError = $state('');
-	let bridgeFlow = $derived(captureModeName !== null && captureModeName !== 'dhcp_gateway');
+	// OLD CODE START — NET-211 #2: mirror mode got the bridge flow ("Create bridge")
+	// let bridgeFlow = $derived(captureModeName !== null && captureModeName !== 'dhcp_gateway');
+	// OLD CODE END
+	let bridgeFlow = $derived(
+		captureModeName !== null && captureModeName !== 'dhcp_gateway' && captureModeName !== 'mirror'
+	);
 
 	async function loadCaptureMode() {
 		modeError = '';
 		try {
 			// Throws on failure: getCaptureMode() guesses 'bridge', which would start
 			// the bridge flow on a DHCP gateway install
-			captureModeName = (await fetchCaptureMode()).mode;
+			// OLD CODE: captureModeName = (await fetchCaptureMode()).mode; (NET-211 #2, #3)
+			const reply = await fetchCaptureMode();
+			captureModeName = reply.mode;
+			captureInterface = reply.interface;
+			// The ports the setup wizard saved on the box; none means not chosen yet, never a guess
+			wanIface = reply.wan_interface ?? '';
+			lanIface = reply.lan_interface ?? '';
 		} catch (e) {
 			modeError = `Could not read the capture mode: ${e instanceof Error ? e.message : 'unknown error'}`;
 		}
@@ -41,9 +53,10 @@
 	// Phase 1 = readiness checks, Phase 2 = wiring guide, Phase 3 = live monitoring
 	let phase = $state<1 | 2 | 3>(1);
 
-	// ----- NIC names from localStorage -----
+	// ----- Bridge ports: from /api/capture/mode (NET-211 #3) -----
 	let wanIface = $state('');
 	let lanIface = $state('');
+	let portsSaved = $derived(wanIface !== '' && lanIface !== '');
 
 	// ----- Readiness state -----
 	let readiness = $state<BridgeReadiness | null>(null);
@@ -67,13 +80,15 @@
 	let readinessInterval: ReturnType<typeof setInterval> | undefined;
 	let healthInterval: ReturnType<typeof setInterval> | undefined;
 
-	// ----- Load NIC names from localStorage on mount -----
-	$effect(() => {
-		if (typeof window !== 'undefined') {
-			wanIface = localStorage.getItem('nettap_wan_iface') || 'eth0';
-			lanIface = localStorage.getItem('nettap_lan_iface') || 'eth1';
-		}
-	});
+	// OLD CODE START — NET-211 #3: one browser's localStorage, set only by a successful Verify,
+	// so Skip or another browser built the bridge on eth0/eth1
+	// $effect(() => {
+	// 	if (typeof window !== 'undefined') {
+	// 		wanIface = localStorage.getItem('nettap_wan_iface') || 'eth0';
+	// 		lanIface = localStorage.getItem('nettap_lan_iface') || 'eth1';
+	// 	}
+	// });
+	// OLD CODE END
 
 	// ----- Determine phase from readiness data -----
 	let bridgeExists = $derived(
@@ -286,6 +301,19 @@
 	</div>
 {:else if captureModeName === 'dhcp_gateway'}
 	<DhcpGoLive />
+{:else if captureModeName === 'mirror'}
+	<div class="grid">
+		<Card title="Mirror mode" sub="Go Live follows the mode chosen during setup" class="c-12">
+			<CardState
+				state="empty"
+				icon="check"
+				title="Mirror mode needs no Go Live step"
+				message={`NetTap listens on ${captureInterface || 'the capture port'}, the port your switch mirrors to. There's no bridge to create: check that port's cable is in, then open the dashboard.`}
+				actionLabel="Go to dashboard"
+				href="/"
+			/>
+		</Card>
+	</div>
 {:else}
 	<!-- Step indicator: the system's pill track. The phase follows the readiness checks, so it is not a control. -->
 	<ol class="pills phases" aria-label="Go Live progress">
@@ -337,7 +365,11 @@
 					<!-- OLD CODE START — #96: a failed readiness check read as "not created yet"
 					{#if !bridgeExists}
 					OLD CODE END -->
-					{#if readiness && !bridgeExists}
+					{#if readiness && !bridgeExists && !portsSaved}
+						<div class="notice is-warn" role="status">
+							<Icon name="warn" /><span>The bridge ports aren't saved yet. Choose them in the setup wizard first.</span>
+						</div>
+					{:else if readiness && !bridgeExists}
 						<div class="action-section">
 							<p class="muted">The bridge has not been created yet. Create it to proceed.</p>
 							{#if createError}
