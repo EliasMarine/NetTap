@@ -31,6 +31,7 @@ MAX_PACKETS = 400_000  # the download's budget (services/pcap_search.py)
 CHUNK = 64 * 1024
 BUSY_TRIES = 10
 BUSY_WAIT_S = 3
+LEFT_TRIES = 15
 
 RESULTS: list[bool] = []
 
@@ -140,15 +141,30 @@ def read_capture(resp) -> tuple[int, Decimal, Decimal] | None:
     return parse_capinfos(out)
 
 
-def tmp_used() -> str:
-    out = subprocess.run(
-        ["docker", "exec", TSHARK, "df", "-P", "/tmp"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    ).stdout.splitlines()
-    return out[-1].split()[2] if len(out) > 1 else "unknown"
+def tshark_tmp() -> tuple[str, list[str]]:
+    """nettap-tshark's /tmp: KiB used, and what a download could leave there (its window
+    cut's FIFOs, the old merge's file)."""
+
+    def run(*argv: str) -> str:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+        return done.stdout
+
+    df = run("docker", "exec", TSHARK, "df", "-P", "/tmp").splitlines()
+    names = run("docker", "exec", TSHARK, "ls", "-A", "/tmp").split()
+    left = [n for n in names if n.startswith("nt-") or n == "nettap_merged.pcap"]
+    return (df[-1].split()[2] if len(df) > 1 else "unknown"), left
+
+
+def nothing_left(start_used: str) -> None:
+    """Every download above, finished, refused or stopped mid-stream, left /tmp as it was."""
+    for _ in range(LEFT_TRIES):  # a stopped job's group is killed a moment later
+        used, left = tshark_tmp()
+        if used == start_used and not left:
+            break
+        time.sleep(1)
+    check(used == start_used and not left,
+          f"nettap-tshark /tmp as it started: {used} KiB used (was {start_used}), "
+          f"left over: {left or 'nothing'}")  # fmt: skip
 
 
 def straddling_download(start: Decimal, end: Decimal, b_first: Decimal, over) -> None:
@@ -160,7 +176,6 @@ def straddling_download(start: Decimal, end: Decimal, b_first: Decimal, over) ->
     shown = {f.get("name") for f in listed.get("files", [])}
     check(status == 200 and set(names) <= shown,
           f"the file list for the window shows every file holding it ({status})")  # fmt: skip
-    before = tmp_used()
     started = time.monotonic()
     resp = request_when_free(download_path("tcp", start, end))
     if resp.status != 200:
@@ -182,10 +197,6 @@ def straddling_download(start: Decimal, end: Decimal, b_first: Decimal, over) ->
     check(packets > 0, "the download holds packets")
     check(start <= first and last < end, "every packet is inside the window")
     check(first < b_first <= last, "it holds packets from both sides of file B's start")
-    after = tmp_used()
-    check(
-        after == before, f"nettap-tshark /tmp unchanged ({before} -> {after} KiB used)"
-    )
 
 
 def second_download_is_busy(start: Decimal, end: Decimal) -> None:
@@ -229,6 +240,8 @@ def page_default() -> None:
 
 
 def main() -> int:
+    start_used, left = tshark_tmp()
+    check(not left, f"nettap-tshark /tmp holds nothing from earlier downloads: {left}")
     status, body = get_json("/api/packets/captures")
     window = pick_window(body.get("files", [])) if status == 200 else None
     if window is None:
@@ -240,6 +253,7 @@ def main() -> int:
         straddling_download(*window)
         second_download_is_busy(*window[:2])
     page_default()
+    nothing_left(start_used)
     print(f"\n{sum(RESULTS)}/{len(RESULTS)} checks passed", flush=True)
     return 0 if RESULTS and all(RESULTS) else 1
 

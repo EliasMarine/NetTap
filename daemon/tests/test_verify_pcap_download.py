@@ -84,3 +84,20 @@ def test_a_busy_reader_is_waited_out(monkeypatch):
     monkeypatch.setattr(check, "request", lambda path: next(replies))
     monkeypatch.setattr(check, "BUSY_WAIT_S", 0)
     assert check.request_when_free("/api/pcap/download").status == 200
+
+
+def test_a_leftover_in_the_readers_tmp_fails_the_check(monkeypatch):
+    # what the old merge left (nettap_merged.pcap), or a stopped job's FIFO
+    monkeypatch.setattr(
+        check, "time", type("T", (), {"sleep": staticmethod(lambda s: None)})
+    )
+    check.RESULTS.clear()
+    states = iter(
+        [("40", ["nt-77-0-0"]), ("0", [])]
+    )  # the killed job's group goes a moment later
+    monkeypatch.setattr(check, "tshark_tmp", lambda: next(states))
+    check.nothing_left("0")
+    monkeypatch.setattr(check, "tshark_tmp", lambda: ("0", ["nettap_merged.pcap"]))
+    check.nothing_left("0")
+    assert check.RESULTS == [True, False]
+    check.RESULTS.clear()

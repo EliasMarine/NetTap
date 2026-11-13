@@ -3,10 +3,13 @@ failure never reaches the browser as a complete-looking file.
 
 Every test goes through aiohttp's full request lifecycle with the real PcapSearchService; only the
 capture index and the job in the tshark container are faked (tests/fake_pcap_download.py). There
-is no temp file any more, so F8's leak can't happen (its tests are kept below as OLD CODE).
+is no temp file any more, so F8's leak can't happen (its tests are kept below as OLD CODE); every
+test still checks the daemon's temp directory is left empty. The container side (the window cut's
+FIFOs) is checked in test_cut_shell.py and test_container_exec.py.
 """
 
 import asyncio
+import tempfile
 
 import aiohttp
 import pytest
@@ -22,6 +25,17 @@ T = 1_794_502_800  # 2026-11-12T17:00:00Z
 URL = "/api/pcap/download?filter=tcp&from=2026-11-12T17:00:00.000Z&to=2026-11-12T17:00:20.000Z"
 A = capture(f"mnetsniff-enp4s0_{T - 40}.pcap", f"{T - 40}", f"{T + 4}")
 B = capture(f"mnetsniff-enp4s0_{T + 5}.pcap", f"{T + 5}", f"{T + 49}")
+
+
+@pytest.fixture(autouse=True)
+def daemon_tmp(tmp_path, monkeypatch):
+    """Where a daemon-side temp file would land: empty after every test, whatever happened
+    (F8: leaked downloads filled the daemon's 50 MB /tmp)."""
+    out = tmp_path / "tmp"
+    out.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(out))
+    yield out
+    assert sorted(p.name for p in out.iterdir()) == []
 
 
 @pytest.fixture

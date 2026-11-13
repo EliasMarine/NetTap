@@ -12,7 +12,8 @@
 #              config has stats on every 10 s with no stats.log written;
 #   - NET-189: a filtered download over a window spanning two capture files streams both files'
 #              packets, sent the way the page's download window sends it (verify_pcap_download.py);
-#              a second download while one runs is turned away; the page's default request.
+#              a second download while one runs is turned away; the page's default request;
+#              afterwards nettap-tshark's /tmp holds nothing (no FIFO, no merged file).
 # Run as the normal user (NOT with sudo):
 #   bash /home/nettap/NetTap/scripts/remote/deploy-capture-hardening.sh
 # To test a branch first: BRANCH=<branch> bash …

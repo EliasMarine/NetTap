@@ -56,6 +56,11 @@
   - has a 240 s deadline;
   - checks the filter first (TShark's message comes back as a 400).
 - The handler sends JSON errors before the first byte and aborts the connection after it, so the browser shows a failed download, never a short file that looks complete.
+- Nothing is left behind, whatever happens. The daemon writes no file. In nettap-tshark the job writes only its window cut's FIFOs (`/tmp/nt-<pgid>-…`), which the cut removes when it ends and the supervisor removes after killing a stopped job. Tests:
+  - real tools: a successful job, a failed filter stage and a failed merge each leave no FIFO;
+  - the supervisor removes a killed job's FIFOs (needs `setsid`: runs in CI; passed locally with a shim);
+  - every API test checks the daemon's temp directory stays empty.
+  The device check fails if nettap-tshark's `/tmp` holds an `nt-*` FIFO or `nettap_merged.pcap`, or its usage differs from the start, after all its downloads (including the one it stops mid-stream).
 - `CaptureIndex.select` walks the files on the route pool. It ran on the request loop, and the download had been off-loop.
 - The file list and background search select by span (name epoch − 30 s to mtime). Naive times are UTC.
 - PCAP Search has a download-only window ("Download from" / "to"). Empty uses the page range; one end or end ≤ start shows the error notice.
@@ -65,7 +70,7 @@
 Tests: `tests/scripts/test_compose_validation.bats`, `daemon/tests/{test_pcap_search,test_pcap_download_cleanup,test_cut_shell,test_verify_live_bandwidth,test_verify_pcap_download,test_health_while_blocked}.py`, `daemon/tests/fake_pcap_download.py`, `web/src/routes/pcap/pcap-page.test.ts`, `web/src/routes/api/catchall-proxy.test.ts`.
 
 ## Test results
-- Daemon pytest: 4703 passed, 4 skipped, 2 failed. The 2 failures are the date-dependent `test_cert_monitor` baseline failures. Before the change: 4661 passed, 2 failed.
+- Daemon pytest: 4706 passed, 5 skipped (the supervisor test without `setsid`), 2 failed. The 2 failures are the date-dependent `test_cert_monitor` failures, fixed on main in #249. Before the change: 4661 passed, 2 failed.
 - ruff check and format: clean.
 - bats compose: 53 ok (was 52).
 - Vitest: 4554 passed. svelte-check: 0 errors. Colour gate: clean. `npm run test:visual`: 295 passed, 50 skipped (/pcap in every theme and width).
