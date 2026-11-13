@@ -964,8 +964,18 @@ print('pcap writer: OK')
     [ "$(sed -n 1p "$include")" = "%YAML 1.1" ]
     [ "$(sed -n 2p "$include")" = "---" ]
     grep -q '^threshold-file: /etc/nettap/suricata-threshold.config$' "$include"
-    # nothing else active: no capture interface, outputs or defrag overrides
-    [ "$(grep -cv -e '^#' -e '^$' -e '^%YAML' -e '^---$' "$include")" -eq 1 ]
+    # OLD CODE START — NET-206: the include now also turns the engine counters on
+    # # nothing else active: no capture interface, outputs or defrag overrides
+    # [ "$(grep -cv -e '^#' -e '^$' -e '^%YAML' -e '^---$' "$include")" -eq 1 ]
+    # OLD CODE END
+    # NET-206: the whole stats block, restated (a later block replaces Malcolm's), counters on for
+    # dump-counters; nothing else active: no capture interface, outputs (no eve stats) or defrag
+    [ "$(grep -cv -e '^#' -e '^$' -e '^%YAML' -e '^---$' "$include")" -eq 5 ]
+    grep -qx 'stats:' "$include"
+    grep -qx '  enabled: yes' "$include"
+    grep -qx '  interval: 10' "$include"
+    grep -qx '  decoder-events: no' "$include"
+    ! grep -q '^outputs:' "$include"
 }
 
 @test "compose: arkime-live is off by default (arkime profile, owner decision 2026-11-02)" {
