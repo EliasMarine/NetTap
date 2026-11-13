@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from aiohttp.test_utils import AioHTTPTestCase
 from opensearchpy import ConnectionError as OpenSearchConnectionError
+from opensearchpy import ConnectionTimeout
 
 from api import devices, drilldown_runner, moment
 from api.devices import register_device_routes
@@ -32,13 +33,24 @@ from tests.fake_drill_opensearch import (
 LAN = build_lan_filter([(192, 168, 1)])
 EXCLUDED = ["192.168.1.2"]
 LAPTOP, NAS = "192.168.1.30", "192.168.1.40"
+# three small devices, each named by one of the device list's later name sources
+PHONE, TV, CAM = "192.168.1.60", "192.168.1.70", "192.168.1.80"
+ALL = [LAPTOP, NAS, PHONE, TV, CAM]  # largest first; the three small ones tie, by IP
 M_LAPTOP, M_NAS, M_ROUTER = (
     "00:00:5e:00:53:30",
     "00:00:5e:00:53:40",
     "00:00:5e:00:53:01",
 )
+# the phone's connections carry its Wi-Fi MAC; DHCP gave its own: the list shows that one
+M_PHONE, M_PHONE_WIFI, M_TV, M_CAM = (
+    "00:00:5E:00:53:60",
+    "00:00:5E:00:53:61",
+    "00:00:5E:00:53:70",
+    "00:00:5E:00:53:80",
+)
 NET_A, NET_B, NET_C = "203.0.113.5", "198.51.100.7", "192.0.2.80"
 # The reply's fields per device, as the web half builds against them (no local_bytes)
+INCOMPLETE = "Couldn't read the network data: the device search was incomplete."
 FIELDS = {
     "ip",
     "name",
@@ -55,11 +67,22 @@ FIELDS = {
 }
 
 
-def _started(dst, n, minute, sent, got, protocol, mac=M_ROUTER, **fields):
-    """n connections the laptop opened to `dst`, each answered."""
+def _started(
+    dst,
+    n,
+    minute,
+    sent,
+    got,
+    protocol,
+    mac=M_ROUTER,
+    src=LAPTOP,
+    own=M_LAPTOP,
+    **fields,
+):
+    """n connections `src` (the laptop) opened to `dst`, each answered."""
     return [
         conn(
-            LAPTOP,
+            src,
             dst,
             f"2026-11-05T10:{minute + i:02d}:00.000Z",
             source__bytes=sent,
@@ -67,7 +90,7 @@ def _started(dst, n, minute, sent, got, protocol, mac=M_ROUTER, **fields):
             network__bytes=sent + got,
             destination__packets=1,
             network__protocol=protocol,
-            source__mac=M_LAPTOP,
+            source__mac=own,
             destination__mac=mac,
             **fields,
         )
@@ -89,6 +112,24 @@ DOCS = [
     dns("other.org", src=LAPTOP),
     dns("pcap-monitor", src=LAPTOP),  # Malcolm's own health check
     dns("printer.local", src=LAPTOP, dst="224.0.0.251", destination__port=5353),
+    *_started(NET_A, 3, 20, 10, 10, "ssl", src=PHONE, own=M_PHONE_WIFI),
+    *_started(NET_A, 3, 20, 10, 10, "ssl", src=TV, own=M_TV),
+    *_started(NET_A, 3, 20, 10, 10, "ssl", src=CAM, own=M_CAM),
+    # what the fingerprint reads: the phone's DHCP MAC, and the TV's name in a DNS answer
+    {
+        "@timestamp": "2026-11-05T10:30:00.000Z",
+        "source.ip": PHONE,
+        "dhcp.id": "1",
+        "source.mac": M_PHONE,
+    },
+    {
+        "@timestamp": "2026-11-05T10:30:00.000Z",
+        "source.ip": TV,
+        "destination.ip": "192.168.1.1",
+        "network.protocol": "dns",
+        "dns.ip": TV,
+        "dns.host": "living-room-tv",
+    },
 ]
 
 
@@ -105,10 +146,24 @@ class Owners:
         return {**row, "custom_name": "Study laptop", "hostname": "Study laptop"}
 
 
+class Registry:
+    """device_registry: the phone's DHCP MAC has a name; the camera's is a service name."""
+
+    NAMES = {M_PHONE: "Kitchen phone", M_CAM: "Cam._hap._tcp.local"}
+
+    def get_devices(self, macs: list[str]) -> dict:
+        # keyed by the normalized MAC, as DeviceRegistry.get_devices answers
+        return {m.upper(): m.upper() for m in macs if m.upper() in self.NAMES}
+
+    def get_name(self, device: str, own: bool = True) -> str:
+        return self.NAMES[device]
+
+
 def _register(app, client):
     storage = SimpleNamespace(_client=client)
     app["storage"] = storage
     app["device_custom"] = Owners()
+    app["device_registry"] = Registry()
     # a UniFi alias on the NAS: the list's second name source, so both pages read it alike
     app["unifi_integration"] = SimpleNamespace(
         is_configured=True,
@@ -117,7 +172,7 @@ def _register(app, client):
     )
     register_device_routes(app, storage)
     register_dns_routes(app, storage)
-    register_moment_routes(app)
+    register_moment_routes(app, client)
 
 
 class Case(AioHTTPTestCase):
@@ -147,7 +202,7 @@ class TestMomentDevices(Case):
         status, body = await self.get("/api/moment/devices")
         self.assertEqual(status, 200, body)
         _, listed = await self.get("/api/devices?sort=bytes&limit=10")
-        self.assertEqual([d["ip"] for d in body["devices"]], [LAPTOP, NAS])
+        self.assertEqual([d["ip"] for d in body["devices"]], ALL)
         self.assertEqual(body["total_devices"], listed["total"])
         for got, row in zip(body["devices"], listed["devices"], strict=True):
             self.assertEqual(set(got), FIELDS)
@@ -158,9 +213,14 @@ class TestMomentDevices(Case):
                 got["name"],
                 row.get("custom_name") or row.get("unifi_name") or row["hostname"],
             )
+        # owner, UniFi, registry, hostname, and a registry service name left out
         self.assertEqual(
-            [d["name"] for d in body["devices"]], ["Study laptop", "Media NAS"]
+            [d["name"] for d in body["devices"]],
+            ["Study laptop", "Media NAS", "Kitchen phone", "living-room-tv", None],
         )
+        self.assertEqual(
+            body["devices"][2]["mac"], M_PHONE
+        )  # DHCP's, not the Wi-Fi one
         self.assertEqual((body["from"], body["to"]), (listed["from"], listed["to"]))
 
     async def test_what_a_device_started_ranks_by_bytes(self):
@@ -212,7 +272,7 @@ class TestMomentDevices(Case):
         self.assertEqual(query["filter"][1:], _ZEEK_CONN_FILTERS)
         self.assertEqual(query["must_not"], [{"terms": {"source.ip": EXCLUDED}}])
         terms = started["aggs"]["ips"]["terms"]
-        self.assertEqual((terms["include"], terms["size"]), ([LAPTOP, NAS], 2))
+        self.assertEqual((terms["include"], terms["size"]), (ALL, 5))
 
         query = looked_up["query"]["bool"]
         self.assertEqual(query["filter"][1:], _ZEEK_DNS_FILTERS)
@@ -221,13 +281,25 @@ class TestMomentDevices(Case):
             query["must_not"],
             [*DNS_LOOKUP_EXCLUSION, {"terms": {"source.ip": EXCLUDED}}],
         )
-        self.assertEqual(looked_up["aggs"]["ips"]["terms"]["include"], [LAPTOP, NAS])
+        self.assertEqual(looked_up["aggs"]["ips"]["terms"]["include"], ALL)
+
+    async def test_every_read_carries_the_requests_budget(self):
+        await self.get("/api/moment/devices")
+        self.assertTrue(self.os.budgets)
+        self.assertTrue(all(isinstance(b, Budget) for b in self.os.budgets))
+        self.assertEqual(len({id(b) for b in self.os.budgets}), 1)  # one per request
+        breakdown = [
+            budget
+            for body, budget in zip(self.os.bodies, self.os.budgets, strict=True)
+            if _is_breakdown(body)
+        ]
+        self.assertEqual(len(breakdown), 2)
 
     async def test_limit_cuts_the_list_but_not_the_total(self):
         status, body = await self.get("/api/moment/devices?limit=1")
         self.assertEqual(status, 200, body)
         self.assertEqual(
-            ([d["ip"] for d in body["devices"]], body["total_devices"]), ([LAPTOP], 2)
+            ([d["ip"] for d in body["devices"]], body["total_devices"]), ([LAPTOP], 5)
         )
         self.assertEqual(
             self.breakdown()[0]["aggs"]["ips"]["terms"]["include"], [LAPTOP]
@@ -307,8 +379,8 @@ class TestFailures(Case):
             patch.object(devices, "all_buckets", one_per_page),
         ):
             status, body = await self.get("/api/moment/devices")
-        self.assertEqual(status, 502, body)
-        self.assertIn("stopped at", body["error"])
+        # /api/devices' words for the same cap; the log has "stopped at 1 IPs"
+        self.assertEqual((status, body["error"]), (502, INCOMPLETE))
         [(event_type, *_, metadata)] = [
             c.args for c in self.changelog.log_event.call_args_list
         ]
@@ -320,10 +392,7 @@ class TestFailures(Case):
         failure = PartialResultsError("1 shard(s) failed on arkime_sessions3-*")
         with patch.object(moment, "_accounted_devices", side_effect=failure):
             status, body = await self.get("/api/moment/devices")
-        self.assertEqual(
-            (status, body["error"]),
-            (502, "Couldn't read the network data: the device search was incomplete."),
-        )
+        self.assertEqual((status, body["error"]), (502, INCOMPLETE))
 
     async def test_an_unreachable_opensearch_is_a_502_without_its_text(self):
         failure = OpenSearchConnectionError(
@@ -347,8 +416,7 @@ class TestFailures(Case):
 
         with patch.object(self.os, "msearch", one_short):
             status, body = await self.get("/api/moment/devices")
-        self.assertEqual(status, 502, body)
-        self.assertIn("malformed", body["error"])
+        self.assertEqual((status, body["error"]), (502, INCOMPLETE))
 
     async def test_a_spent_budget_after_the_ranking_is_a_503_with_no_breakdown(self):
         now = {"t": 0.0}
@@ -417,6 +485,19 @@ class TestBreakdownShardFailed(Case):
     tamper = staticmethod(_breakdown_fails(_shards={"total": 2, "failed": 1}))
 
     async def test_is_a_502_never_shorter_lists(self):
+        with self.assertLogs("nettap.api.moment", "WARNING") as logs:
+            status, body = await self.get("/api/moment/devices")
+        self.assertEqual((status, body["error"]), (502, INCOMPLETE))
+        self.assertIn("shard(s) failed", logs.output[0])  # the reason, in the log only
+
+
+class TestBreakdownOutOfTime(Case):
+    # the no-retry client gave the read what was left of the budget, and it ran out
+    tamper = staticmethod(
+        _breakdown_fails(ConnectionTimeout("TIMEOUT", "read timed out", None))
+    )
+
+    async def test_is_a_503_too_slow_not_a_failure(self):
         status, body = await self.get("/api/moment/devices")
-        self.assertEqual(status, 502, body)
-        self.assertIn("shard(s) failed", body["error"])
+        self.assertEqual(status, 503, body)
+        self.assertIn("took too long", body["error"])

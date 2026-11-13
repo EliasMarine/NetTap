@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 from aiohttp import web
 
 from api.daemon_auth import TOKEN_HEADER, make_auth_middleware
+from api.error_replies import safe_error_middleware
 
 FROM, TO = "2026-11-05T00:00:00Z", "2026-11-05T12:00:00Z"
 WINDOW = f"from={FROM}&to={TO}"
@@ -415,6 +416,7 @@ class DrillOpenSearch:
         self.closed: list[str] = []
         self.pit_params: dict = {}
         self.bodies: list[dict] = []
+        self.budgets: list = []  # each search's `budget` (NET-249), beside its body
         # OLD CODE START — NET-178: a type per field, one index
         # self.mapping_types: dict[str, str] = {}
         # OLD CODE END
@@ -478,7 +480,7 @@ class DrillOpenSearch:
     #         },
     #     }
     # OLD CODE END
-    def search(self, body, index=None, request_timeout=None):
+    def search(self, body, index=None, request_timeout=None, budget=None):
         if "pit" in body:
             assert body["pit"]["id"] in self.pits, (
                 "every search runs on the open snapshot"
@@ -488,6 +490,7 @@ class DrillOpenSearch:
             assert index, "a search without a snapshot names its index"
             pool = self.docs
         self.bodies.append(body)
+        self.budgets.append(budget)
         # OLD CODE START — NET-178: documents as given, whatever the mapping
         # docs = [d for d in self.pits[body["pit"]["id"]] if matches(d, body["query"])]
         # OLD CODE END
@@ -516,17 +519,30 @@ class DrillOpenSearch:
 
     def msearch(self, body, index=None, **params):
         """_msearch as a list of header/body pairs, each answered like search()."""
+        # OLD CODE START — NET-249: the request's budget is recorded with each search too
+        # return {
+        #     "responses": [
+        #         self.search(b, index=h.get("index", index))
+        #         for h, b in zip(body[::2], body[1::2])
+        #     ]
+        # }
+        # OLD CODE END
         return {
             "responses": [
-                self.search(b, index=h.get("index", index))
+                self.search(b, index=h.get("index", index), budget=params.get("budget"))
                 for h, b in zip(body[::2], body[1::2])
             ]
         }
 
 
 def make_app(client, *registers, lan_filter=None, excluded_ips=None) -> web.Application:
-    """An app with the real token check and the given `register_*_routes(app, client)`."""
-    app = web.Application(middlewares=[make_auth_middleware(TOKEN)])
+    """An app with the real token check, the real 5xx filter and the given
+    `register_*_routes(app, client)`."""
+    # OLD CODE: app = web.Application(middlewares=[make_auth_middleware(TOKEN)]) (NET-249 review:
+    # error replies are checked as create_app sends them, through safe_error_middleware)
+    app = web.Application(
+        middlewares=[make_auth_middleware(TOKEN), safe_error_middleware]
+    )
     if lan_filter is not None:
         app["lan_filter"] = lan_filter
     app["excluded_ips"] = excluded_ips or []

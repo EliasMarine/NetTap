@@ -9,9 +9,11 @@ empty lists.
 
 Two reads and no snapshot: in a live window the breakdown can hold a few records newer than
 the ranking, so the totals always come from the ranking and the lists are rankings, not parts
-of a total. The work runs in a drill-down slot (api/drilldown_runner.py), off the route pool;
-the budget is checked between the reads and can't stop one that is running. The breakdown
-covers a device's IPv4 address; IPv6 credited to it by MAC is in its totals only.
+of a total. The work runs in a drill-down slot (api/drilldown_runner.py), off the route pool,
+on its own client without retries. Every read carries the request's budget, so it waits at
+most what is left (exact_terms._exact) and the slot is held about the budget plus a second at
+worst, not the minutes a retrying client could take. The breakdown covers a device's IPv4
+address; IPv6 credited to it by MAC is in its totals only.
 """
 
 import asyncio
@@ -20,12 +22,11 @@ import time
 from typing import Any
 
 from aiohttp import web
-from opensearchpy import OpenSearchException
+from opensearchpy import ConnectionTimeout, OpenSearchException
 
 from api.devices import (
     _SORT_VALUE,
     _accounted_devices,
-    _get_client,
     _mac_key,
     _parse_time_range,
     _ranked,
@@ -42,7 +43,7 @@ from api.traffic import (
 from services.device_fingerprint import _NOT_HOSTNAMES
 from services.excluded_ips import build_excluded_ips_filter, valid_excluded_ips
 from storage.exact_terms import PartialResultsError
-from storage.snapshot_search import Budget, QueryFailed, checked
+from storage.snapshot_search import Budget, QueryFailed, TooSlow, checked
 
 logger = logging.getLogger("nettap.api.moment")
 
@@ -71,10 +72,28 @@ def _limit(raw: str | None) -> int | None:
     return limit if 1 <= limit <= _LIMIT_MAX else None
 
 
+class _InBudget:
+    """The route's client with the request's budget on every search and msearch, so each read
+    the device accounting makes (which takes no budget itself) is bounded by it too."""
+
+    def __init__(self, client: Any, budget: Budget) -> None:
+        self._client, self._budget = client, budget
+
+    def search(self, **kwargs: Any) -> Any:
+        return self._client.search(**{"budget": self._budget, **kwargs})
+
+    def msearch(self, **kwargs: Any) -> Any:
+        return self._client.msearch(**{"budget": self._budget, **kwargs})
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
+
+
 def _names(
     request: web.Request, client: Any, top: list[dict], from_ts: str, to_ts: str
-) -> dict[str, str | None]:
-    """{ip: the name its /api/devices row shows}: the owner's, then UniFi's, then the hostname.
+) -> dict[str, tuple[str | None, str | None]]:
+    """{ip: (mac, name)} as its /api/devices row shows them: the MAC the fingerprint found
+    first, and the owner's name, then UniFi's, then the hostname.
 
     handle_device_list's lookups in its order, so a device reads the same on both pages.
     """
@@ -83,7 +102,7 @@ def _names(
     )
     registry = _registry_names(request, [mac for mac, _, _ in lookups.values() if mac])
     unifi = request.app.get("unifi_integration")
-    names: dict[str, str | None] = {}
+    names: dict[str, tuple[str | None, str | None]] = {}
     for b in top:
         ip = b["key"]
         mac, hostname, _ = lookups.get(ip, (None, None, None))
@@ -99,7 +118,7 @@ def _names(
         own = _with_owner(request, {"mac": mac, "hostname": hostname}).get(
             "custom_name"
         )
-        names[ip] = own or alias or hostname
+        names[ip] = (mac, own or alias or hostname)
     return names
 
 
@@ -176,12 +195,17 @@ def _listed(bucket: dict | None, name: str) -> list[dict]:
 
 
 def _device(
-    row: dict, name: str | None, started: dict | None, looked_up: dict | None
+    row: dict,
+    mac: str | None,
+    name: str | None,
+    started: dict | None,
+    looked_up: dict | None,
 ) -> dict:
     return {
         "ip": row["key"],
         "name": name,
-        "mac": row["mac"],
+        # OLD CODE: "mac": row["mac"], (NET-249 review: /api/devices shows the fingerprint's first)
+        "mac": mac,
         **{k: row[k] for k in _TOTALS},
         "destinations": [
             {
@@ -216,6 +240,7 @@ def moment_devices(
 ) -> dict:
     """The reply; QueryFailed (a 502) for a failed or partial read, TooSlow once out of budget."""
     began = time.monotonic()
+    client = _InBudget(client, budget)
     try:
         rows = _accounted_devices(client, request.app, from_ts, to_ts, "moment devices")
         top = _ranked(rows, _SORT_VALUE["bytes"], True)[:limit]
@@ -225,11 +250,26 @@ def moment_devices(
         started, looked_up = _breakdown(
             request, client, from_ts, to_ts, [b["key"] for b in top]
         )
-    # the daemon's client raises PartialResultsError for a part reply or a time-out
+    # OLD CODE START — NET-249 review: a capped read said "stopped at N IPs", and a read that
+    # timed out on the client was a 502, not "took too long"
+    # except OpenSearchException as exc:
+    #     logger.warning("Moment devices search failed: %s", exc)
+    #     why = "was incomplete" if isinstance(exc, PartialResultsError) else "failed"
+    #     raise QueryFailed(f"the device search {why}") from exc
+    # OLD CODE END
+    except TooSlow:
+        raise
+    except ConnectionTimeout as exc:  # a read waited all the budget had left
+        logger.warning("Moment devices search ran out of time: %s", exc)
+        raise TooSlow("the device search took too long") from exc
+    # a capped device read (it says why on the Changelog), a part reply (the client raises
+    # PartialResultsError for one, or a time-out) or a malformed one: /api/devices' words
+    except (QueryFailed, PartialResultsError) as exc:
+        logger.warning("Moment devices search was incomplete: %s", exc)
+        raise QueryFailed("the device search was incomplete") from exc
     except OpenSearchException as exc:
         logger.warning("Moment devices search failed: %s", exc)
-        why = "was incomplete" if isinstance(exc, PartialResultsError) else "failed"
-        raise QueryFailed(f"the device search {why}") from exc
+        raise QueryFailed("the device search failed") from exc
     logger.info(
         "Moment devices %s to %s: %d of %d in %.2f s",
         from_ts,
@@ -243,9 +283,7 @@ def moment_devices(
         "to": to_ts,
         "total_devices": len(rows),
         "devices": [
-            _device(
-                b, names.get(b["key"]), started.get(b["key"]), looked_up.get(b["key"])
-            )
+            _device(b, *names[b["key"]], started.get(b["key"]), looked_up.get(b["key"]))
             for b in top
         ],
     }
@@ -257,7 +295,9 @@ async def handle_moment_devices(request: web.Request) -> web.Response:
     limit = _limit(request.query.get("limit"))
     if limit is None:
         return json_error(f"limit must be a whole number from 1 to {_LIMIT_MAX}.", 400)
-    client = _get_client(request)
+    # OLD CODE: client = _get_client(request) (NET-249 review: that client retries, so one read
+    # could hold a drill slot for minutes)
+    client = request.app["moment_client"]
     return await run_drilldown(
         request,
         lambda budget: moment_devices(request, client, from_ts, to_ts, limit, budget),
@@ -265,8 +305,10 @@ async def handle_moment_devices(request: web.Request) -> web.Response:
     )
 
 
-def register_moment_routes(app: web.Application) -> None:
-    """Needs the device and DNS routes too: it reads their device_fingerprint and dns_analytics."""
+def register_moment_routes(app: web.Application, client: Any) -> None:
+    """`client`: the daemon's exact-terms client without retries. Needs the device and DNS
+    routes too: it reads their device_fingerprint and dns_analytics."""
+    app["moment_client"] = client
     # the drill-down pages' shared permits (drilldown_runner.install), whichever registers first
     app.setdefault("drill_slots", asyncio.Semaphore(DRILL_SLOTS))
     app.router.add_get("/api/moment/devices", handle_moment_devices)
