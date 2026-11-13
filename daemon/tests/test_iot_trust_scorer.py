@@ -162,8 +162,12 @@ class TestAvailabilityAwareScore:
         assert result["score"] == 86
         assert result["grade"] == "B"
         assert result["coverage"] == 55
-        assert (result["checks_available"], result["checks_total"]) == (5, 11)
-        assert result["security_breakdown"]["firmware_signal"] is None
+        # OLD CODE START — NET-171: telemetry and firmware left the model (11 checks → 9)
+        # assert (result["checks_available"], result["checks_total"]) == (5, 11)
+        # assert result["security_breakdown"]["firmware_signal"] is None
+        # OLD CODE END
+        assert (result["checks_available"], result["checks_total"]) == (5, 9)
+        assert "firmware_signal" not in result["security_breakdown"]
         assert result["behavior_score"] is None  # no available check in the pillar
 
     def test_no_baseline_telemetry_firmware_or_encryption_means_no_score(self, scorer):
@@ -182,4 +186,45 @@ class TestAvailabilityAwareScore:
             {**MEASURED, **UNAVAILABLE, "tracker_domain_count": 40}
         )
         assert result["privacy_breakdown"]["tracker_domains"] == 0
-        assert result["privacy_breakdown"]["telemetry_volume"] is None
+        # OLD CODE: assert result["privacy_breakdown"]["telemetry_volume"] is None (NET-171)
+        assert result["privacy_breakdown"]["third_party_orgs"] == 10
+
+
+# ---------------------------------------------------------------------------
+# Only measurable checks are in the model (NET-171)
+# ---------------------------------------------------------------------------
+
+BEHAVIOUR_MEASURED = {
+    "baseline_adherence": 1.0,
+    "new_destinations": 0,
+    "volume_spike": False,
+    "unusual_timing": False,
+}
+
+
+class TestOnlyMeasurableChecks:
+    def test_telemetry_and_firmware_values_never_score(self, scorer):
+        """Nothing measures them, so a value passed for either earns nothing."""
+        base = {**MEASURED, "encryption_ratio": None}  # 40 points: below the line
+        flattered = {**base, "telemetry_bytes": 0, "firmware_age_signal": "current"}
+        assert scorer.score_device(flattered) == scorer.score_device(base)
+        # the old model made this 55 points and a score of 100
+        assert scorer.score_device(flattered)["coverage"] == 40
+        assert scorer.score_device(flattered)["score"] is None
+
+    def test_nine_checks_worth_85_points(self, scorer):
+        result = scorer.score_device(
+            {**MEASURED, "encryption_ratio": 1.0, **BEHAVIOUR_MEASURED}
+        )
+        assert (result["checks_available"], result["checks_total"]) == (9, 9)
+        assert result["coverage"] == 85
+        assert result["score"] == 100
+        assert set(result["privacy_breakdown"]) == {
+            "tracker_domains",
+            "third_party_orgs",
+        }
+        assert set(result["security_breakdown"]) == {
+            "encryption_ratio",
+            "protocol_violations",
+            "alert_count",
+        }

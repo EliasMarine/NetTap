@@ -3,7 +3,7 @@ import {
 	getIoTDevices,
 	getDeviceBaseline,
 	getIoTAnomalies,
-	classifyDevice,
+	// OLD CODE: classifyDevice, (NET-174: removed with its unused daemon route)
 	getFleetSummary,
 	getPrivacyReport,
 	getCommunicationMap,
@@ -111,23 +111,25 @@ describe('IoT API client', () => {
 		});
 	});
 
-	describe('classifyDevice', () => {
-		it('sends POST and returns classification', async () => {
-			mockFetchSuccess({ mac: 'AA:BB:CC', is_iot: true, message: 'classified' });
-
-			const result = await classifyDevice('AA:BB:CC', { manufacturer: 'Ring' });
-			expect(result.is_iot).toBe(true);
-			expect(fetch).toHaveBeenCalledWith(
-				expect.stringContaining('/api/iot/devices/'),
-				expect.objectContaining({ method: 'POST' }),
-			);
-		});
-
-		it('throws on failure', async () => {
-			mockFetchFailure(400);
-			await expect(classifyDevice('AA:BB:CC', {})).rejects.toThrow();
-		});
-	});
+	// OLD CODE START — NET-174: classifyDevice() is gone
+	// describe('classifyDevice', () => {
+	// 	it('sends POST and returns classification', async () => {
+	// 		mockFetchSuccess({ mac: 'AA:BB:CC', is_iot: true, message: 'classified' });
+	//
+	// 		const result = await classifyDevice('AA:BB:CC', { manufacturer: 'Ring' });
+	// 		expect(result.is_iot).toBe(true);
+	// 		expect(fetch).toHaveBeenCalledWith(
+	// 			expect.stringContaining('/api/iot/devices/'),
+	// 			expect.objectContaining({ method: 'POST' }),
+	// 		);
+	// 	});
+	//
+	// 	it('throws on failure', async () => {
+	// 		mockFetchFailure(400);
+	// 		await expect(classifyDevice('AA:BB:CC', {})).rejects.toThrow();
+	// 	});
+	// });
+	// OLD CODE END
 
 	describe('getFleetSummary', () => {
 		it('returns fleet summary on success', async () => {

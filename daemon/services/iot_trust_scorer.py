@@ -2,15 +2,19 @@
 NetTap IoT Trust Scorer Service
 
 Computes per-device trust scores (0-100, A-F grade) across three pillars:
-  - Privacy  (30 pts): tracker domains, telemetry volume, third-party data sharing
-  - Security (40 pts): encryption ratio, protocol compliance, alerts, firmware signals
+  - Privacy  (20 pts): tracker domains, third-party data sharing
+  - Security (35 pts): encryption ratio, protocol compliance, alerts
   - Behavior (30 pts): baseline adherence, new destinations, volume spikes, timing
+OLD CODE: Privacy (30) also had telemetry volume and Security (40) a firmware signal. Nothing
+can measure either (passive capture sees no firmware version, and no flow is attributed to a
+tracker), so NET-171 took them out of the model rather than leave them as checks that never
+report.
 
 Every check is either measured or unavailable (its input is None: not measured, or only
 a placeholder). The score is earned over available weight, so an unmeasured check never
 reads as a pass or a fail (NET-158):
   score    = 100 x (points earned on available checks) / (weight of available checks)
-  coverage = weight of available checks, out of 100
+  coverage = weight of available checks, out of 85 (the nine checks' total)
 Below MIN_COVERAGE there is no score or grade; a pillar with no available check is None.
 
 Also provides:
@@ -28,22 +32,26 @@ from typing import Any, List
 logger = logging.getLogger("nettap.services.iot_trust_scorer")
 
 # ---------------------------------------------------------------------------
-# Pillar weights (raw points) — must sum to 100
+# Pillar weights (raw points) — sum to 85 since NET-171
 # ---------------------------------------------------------------------------
-PRIVACY_MAX = 30
-SECURITY_MAX = 40
+# OLD CODE START — NET-171: telemetry (10) and firmware (5) left the model; nothing measures them
+# PRIVACY_MAX = 30
+# SECURITY_MAX = 40
+# OLD CODE END
+PRIVACY_MAX = 20
+SECURITY_MAX = 35
 BEHAVIOR_MAX = 30
 
 # Privacy sub-component maximums (must sum to PRIVACY_MAX)
 _PRIVACY_TRACKER_MAX = 10
-_PRIVACY_TELEMETRY_MAX = 10
+# OLD CODE: _PRIVACY_TELEMETRY_MAX = 10 (NET-171: nothing measures telemetry)
 _PRIVACY_THIRD_PARTY_MAX = 10
 
 # Security sub-component maximums (must sum to SECURITY_MAX)
 _SECURITY_ENCRYPTION_MAX = 15
 _SECURITY_VIOLATIONS_MAX = 10
 _SECURITY_ALERTS_MAX = 10
-_SECURITY_FIRMWARE_MAX = 5
+# OLD CODE: _SECURITY_FIRMWARE_MAX = 5 (NET-171: nothing measures firmware)
 
 # Behavior sub-component maximums (must sum to BEHAVIOR_MAX)
 _BEHAVIOR_BASELINE_MAX = 15
@@ -51,18 +59,18 @@ _BEHAVIOR_DESTINATIONS_MAX = 5
 _BEHAVIOR_SPIKE_MAX = 5
 _BEHAVIOR_TIMING_MAX = 5
 
-# Each pillar's checks and their weights (the 11 checks; they sum to 100)
+# Each pillar's checks and their weights (the 9 checks; they sum to 85)
+# OLD CODE: the 11 checks summing to 100 also had "telemetry_volume" (privacy, 10) and
+# "firmware_signal" (security, 5) (NET-171: nothing measures them)
 CHECK_WEIGHTS: dict[str, dict[str, int]] = {
     "privacy": {
         "tracker_domains": _PRIVACY_TRACKER_MAX,
-        "telemetry_volume": _PRIVACY_TELEMETRY_MAX,
         "third_party_orgs": _PRIVACY_THIRD_PARTY_MAX,
     },
     "security": {
         "encryption_ratio": _SECURITY_ENCRYPTION_MAX,
         "protocol_violations": _SECURITY_VIOLATIONS_MAX,
         "alert_count": _SECURITY_ALERTS_MAX,
-        "firmware_signal": _SECURITY_FIRMWARE_MAX,
     },
     "behavior": {
         "baseline_adherence": _BEHAVIOR_BASELINE_MAX,
@@ -72,7 +80,8 @@ CHECK_WEIGHTS: dict[str, dict[str, int]] = {
     },
 }
 CHECK_COUNT = sum(len(checks) for checks in CHECK_WEIGHTS.values())
-# Below this many points of measured checks a device gets no score or grade
+# Below this many points of measured checks a device gets no score or grade. Unchanged by
+# NET-171: today's five measurable checks make 55 points, so a device still needs all five.
 MIN_COVERAGE = 50
 
 # Firmware signal values
@@ -84,11 +93,13 @@ MIN_COVERAGE = 50
 #     "stale": 0,
 # }
 # OLD CODE END
-_FIRMWARE_SCORES = {
-    "current": 5,
-    "recent": 3,
-    "stale": 0,
-}
+# OLD CODE START — NET-171: firmware left the model; nothing measures it
+# _FIRMWARE_SCORES = {
+#     "current": 5,
+#     "recent": 3,
+#     "stale": 0,
+# }
+# OLD CODE END
 
 
 def _pct(points: float, weight: int) -> int:
@@ -96,8 +107,10 @@ def _pct(points: float, weight: int) -> int:
     return int(round(max(0, min(100, points / weight * 100))))
 
 
-# Telemetry volume ceiling (bytes) — above this, score is 0
-_TELEMETRY_CEILING_BYTES = 100_000_000  # 100 MB
+# OLD CODE START — NET-171: telemetry left the model; nothing measures it
+# # Telemetry volume ceiling (bytes) — above this, score is 0
+# _TELEMETRY_CEILING_BYTES = 100_000_000  # 100 MB
+# OLD CODE END
 
 
 class IoTTrustScorer:
@@ -115,24 +128,24 @@ class IoTTrustScorer:
         stats : dict
             Must contain the following keys:
               tracker_domain_count  (int)   — distinct tracker domains contacted
-              telemetry_bytes       (int)   — bytes of telemetry traffic
               third_party_orgs      (int)   — distinct third-party organisations
               encryption_ratio      (float) — 0.0..1.0 fraction of TLS traffic
               protocol_violations   (int)   — protocol-compliance violations
               alert_count           (int)   — IDS / Suricata alerts
-              firmware_age_signal   (str)   — one of current|recent|unknown|stale
               baseline_adherence    (float) — 0.0..1.0 how closely device follows baseline
               new_destinations      (int)   — new IPs/domains not in baseline
               volume_spike          (bool)  — traffic volume spike detected
               unusual_timing        (bool)  — off-hours activity detected
+            OLD CODE: telemetry_bytes and firmware_age_signal (NET-171: no longer checks;
+            ignored if passed)
 
         Any key that is None or missing is unavailable: its check earns nothing and its
-        weight leaves the denominator. A firmware signal of "unknown" is unavailable too.
+        weight leaves the denominator.
 
         Returns
         -------
         dict with keys: score and grade (None below MIN_COVERAGE), coverage (weight of
-        the available checks, out of 100), checks_available, checks_total,
+        the available checks, out of 85), checks_available, checks_total,
         privacy_score, security_score, behavior_score (0-100; None for a pillar with no
         available check), and per-check points breakdowns (None if unavailable).
         """
@@ -261,11 +274,11 @@ class IoTTrustScorer:
     # -----------------------------------------------------------------
 
     def _score_privacy(self, stats: dict) -> dict[str, float | None]:
-        """Score the Privacy pillar (30 pts max).
+        """Score the Privacy pillar (20 pts max).
 
         - Tracker domains:  10 pts — deduct 0.5 per tracker (0 = 10, 20+ = 0)
-        - Telemetry volume: 10 pts — linear scale down over 100 MB
         - Third-party orgs: 10 pts — deduct 1.0 per org above 1 (1 = 10, 11+ = 0)
+        OLD CODE: Telemetry volume, 10 pts, linear scale down over 100 MB (NET-171)
 
         A check whose input is None (or missing) is None: unavailable (NET-158).
         """
@@ -275,7 +288,7 @@ class IoTTrustScorer:
         # third_party_orgs = stats.get("third_party_orgs", 0)
         # OLD CODE END
         tracker_count = stats.get("tracker_domain_count")
-        telemetry_bytes = stats.get("telemetry_bytes")
+        # OLD CODE: telemetry_bytes = stats.get("telemetry_bytes") (NET-171)
         third_party_orgs = stats.get("third_party_orgs")
 
         # Tracker domains: 10 - 0.5 * count, clamped to [0, 10]
@@ -285,15 +298,17 @@ class IoTTrustScorer:
             else max(0, _PRIVACY_TRACKER_MAX - 0.5 * tracker_count)
         )
 
-        # Telemetry volume: linear from 10 (0 bytes) to 0 (100 MB+)
-        if telemetry_bytes is None:
-            telemetry_score = None
-        elif telemetry_bytes >= _TELEMETRY_CEILING_BYTES:
-            telemetry_score = 0
-        else:
-            telemetry_score = _PRIVACY_TELEMETRY_MAX * (
-                1.0 - telemetry_bytes / _TELEMETRY_CEILING_BYTES
-            )
+        # OLD CODE START — NET-171: nothing measures telemetry, so it is not a check
+        # # Telemetry volume: linear from 10 (0 bytes) to 0 (100 MB+)
+        # if telemetry_bytes is None:
+        #     telemetry_score = None
+        # elif telemetry_bytes >= _TELEMETRY_CEILING_BYTES:
+        #     telemetry_score = 0
+        # else:
+        #     telemetry_score = _PRIVACY_TELEMETRY_MAX * (
+        #         1.0 - telemetry_bytes / _TELEMETRY_CEILING_BYTES
+        #     )
+        # OLD CODE END
 
         # Third-party orgs: 10 - 1.0 * (orgs - 1), clamped to [0, 10]
         third_party_score = (
@@ -304,7 +319,7 @@ class IoTTrustScorer:
 
         breakdown = {
             "tracker_domains": tracker_score,
-            "telemetry_volume": telemetry_score,
+            # OLD CODE: "telemetry_volume": telemetry_score, (NET-171)
             "third_party_orgs": third_party_score,
         }
         # OLD CODE START — NET-158: rounded, and totalled over every check
@@ -318,12 +333,12 @@ class IoTTrustScorer:
         return breakdown
 
     def _score_security(self, stats: dict) -> dict[str, float | None]:
-        """Score the Security pillar (40 pts max).
+        """Score the Security pillar (35 pts max).
 
         - Encryption ratio:    15 pts * ratio
         - Protocol violations: 10 pts — deduct 3 per violation
         - Alert count:         10 pts — deduct 2 per alert
-        - Firmware signal:      5 pts (current=5, recent=3, stale=0; unknown is unavailable)
+        OLD CODE: Firmware signal, 5 pts (current=5, recent=3, stale=0) (NET-171)
 
         A check whose input is None (or missing) is None: unavailable (NET-158).
         """
@@ -336,7 +351,7 @@ class IoTTrustScorer:
         encryption_ratio = stats.get("encryption_ratio")
         protocol_violations = stats.get("protocol_violations")
         alert_count = stats.get("alert_count")
-        firmware_signal = stats.get("firmware_age_signal")
+        # OLD CODE: firmware_signal = stats.get("firmware_age_signal") (NET-171)
 
         # Encryption: 15 * ratio
         encryption_score = (
@@ -359,14 +374,16 @@ class IoTTrustScorer:
             else max(0, _SECURITY_ALERTS_MAX - 2 * alert_count)
         )
 
-        # Firmware: lookup; "unknown" (or anything unlisted) is not a measurement
-        firmware_score = _FIRMWARE_SCORES.get(firmware_signal)
+        # OLD CODE START — NET-171: nothing measures firmware, so it is not a check
+        # # Firmware: lookup; "unknown" (or anything unlisted) is not a measurement
+        # firmware_score = _FIRMWARE_SCORES.get(firmware_signal)
+        # OLD CODE END
 
         breakdown = {
             "encryption_ratio": encryption_score,
             "protocol_violations": violation_score,
             "alert_count": alert_score,
-            "firmware_signal": firmware_score,
+            # OLD CODE: "firmware_signal": firmware_score, (NET-171)
         }
         # OLD CODE START — NET-158: rounded, and totalled over every check
         # firmware_score = _FIRMWARE_SCORES.get(firmware_signal, 2)

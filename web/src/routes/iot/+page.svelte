@@ -606,12 +606,23 @@
 		if (dev) selectDevice(dev);
 	}
 
-	// a pillar with no measured check is null and shows "—"
-	const scoreRows = (s: { privacy_score: number | null; security_score: number | null; behavior_score: number | null }) => [
-		{ label: 'Privacy', value: s.privacy_score, colour: 1 },
-		{ label: 'Security', value: s.security_score, colour: 2 },
-		{ label: 'Behaviour', value: s.behavior_score, colour: 3 },
-	];
+	// OLD CODE START — NET-171: a null pillar showed "—" beside an empty bar, which reads as 0
+	// // a pillar with no measured check is null and shows "—"
+	// const scoreRows = (s: { privacy_score: number | null; security_score: number | null; behavior_score: number | null }) => [
+	// 	{ label: 'Privacy', value: s.privacy_score, colour: 1 },
+	// 	{ label: 'Security', value: s.security_score, colour: 2 },
+	// 	{ label: 'Behaviour', value: s.behavior_score, colour: 3 },
+	// ];
+	// OLD CODE END
+	type Pillars = Pick<FleetDevice, 'privacy_score' | 'security_score' | 'behavior_score'>;
+	const PILLARS = [['Privacy', 'privacy_score', 1], ['Security', 'security_score', 2], ['Behaviour', 'behavior_score', 3]] as const;
+	// A null device pillar had no measured check. The fleet averages scored devices only, so its
+	// null pillar was "not enough measured" when an unscored device has a value for it.
+	const scoreRows = (s: Pillars, devices: Pillars[] = []) =>
+		PILLARS.map(([label, key, colour]) => ({
+			label, value: s[key], colour,
+			empty: devices.some((d) => d[key] !== null) ? 'Not enough measured' : 'Not measured',
+		}));
 
 	// Every column sorts (design system); the cell snippets are at the top of the markup
 	const deviceColumns: Column<FleetDevice>[] = [
@@ -673,12 +684,28 @@ OLD CODE END -->
 {#snippet findingSevCell(f: ProtocolFinding)}{@render severity(f.severity)}{/snippet}
 {#snippet findingPortCell(f: ProtocolFinding)}<span class="mono">{f.port ?? '—'}</span>{/snippet}
 {#snippet findingDescCell(f: ProtocolFinding)}<span class="trunc" title={f.description}>{f.description}</span>{/snippet}
+<!-- OLD CODE START — NET-171: a null pillar read "—" over an empty bar (a zero)
 {#snippet scores(rows: { label: string; value: number | null; colour: number }[])}
 	<ul class="score-rows">
 		{#each rows as row (row.label)}
 			<li>
 				<span>{row.label}</span><b>{row.value ?? '—'}</b>
 				<span class="bar-track" aria-hidden="true"><span class="bar-fill c-d{row.colour}" style:--w="{Math.max(0, Math.min(100, row.value ?? 0))}%"></span></span>
+			</li>
+		{/each}
+	</ul>
+{/snippet}
+OLD CODE END -->
+{#snippet scores(rows: ReturnType<typeof scoreRows>)}
+	<ul class="score-rows">
+		{#each rows as row (row.label)}
+			<li>
+				{#if row.value === null}
+					<span>{row.label}</span><span class="dim">{row.empty}</span>
+				{:else}
+					<span>{row.label}</span><b>{row.value}</b>
+					<span class="bar-track" aria-hidden="true"><span class="bar-fill c-d{row.colour}" style:--w="{Math.max(0, Math.min(100, row.value))}%"></span></span>
+				{/if}
 			</li>
 		{/each}
 	</ul>
@@ -770,7 +797,8 @@ OLD CODE END -->
 					<p class="trust-plain">{heroSubtitle}</p>
 				</div>
 			</div>
-			{@render scores(scoreRows(fleet))}
+			<!-- OLD CODE: {@render scores(scoreRows(fleet))} (NET-171: a null fleet pillar says why) -->
+			{@render scores(scoreRows(fleet, fleet.devices))}
 		</Card>
 
 		<Card class="c-8" hero title="Findings" sub="From the privacy and protocol checks · {rangeLabel}">
@@ -910,7 +938,8 @@ OLD CODE END -->
 					<KVRow label="Trust grade" value={`${selectedDevice.grade} (${selectedDevice.score}/100)`} />
 					OLD CODE END -->
 					<KVRow label="Trust grade" value={selectedDevice.score === null ? 'Not enough measured' : `${selectedDevice.grade} (${selectedDevice.score}/100)`} />
-					<KVRow label="Measured" value={`from ${selectedDevice.checks_available} of ${selectedDevice.checks_total} checks (${selectedDevice.coverage} of 100 points)`} />
+					<!-- OLD CODE: <KVRow label="Measured" value={`from ${selectedDevice.checks_available} of ${selectedDevice.checks_total} checks (${selectedDevice.coverage} of 100 points)`} /> (NET-171: the checks are worth 85 points now) -->
+					<KVRow label="Measured" value={`from ${selectedDevice.checks_available} of ${selectedDevice.checks_total} checks`} />
 					<KVRow label="Last seen" value={selectedDevice.last_seen ? timeAgo(selectedDevice.last_seen) : '—'} />
 				</DrawerSection>
 

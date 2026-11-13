@@ -20,7 +20,7 @@ interface IotProfile {
 	device: LanDevice;
 	privacy: number;
 	security: number;
-	behavior: number;
+	// OLD CODE: behavior: number; (NET-171: the daemon measures no behaviour check until baselines exist)
 	anomalies: number;
 	/** share of external connections that were encrypted, 0..1 */
 	encryption: number;
@@ -35,7 +35,7 @@ const PROFILES: readonly IotProfile[] = [
 		device: lanDevice('192.168.1.50'),
 		privacy: 52,
 		security: 55,
-		behavior: 70,
+		// OLD CODE: behavior: 70, (NET-171)
 		anomalies: 2,
 		encryption: 0.62,
 		trackerDomains: ['telemetry.example.org', 'metrics.example.net', 'beacon.example.org', 'pixel.example.net'],
@@ -47,7 +47,7 @@ const PROFILES: readonly IotProfile[] = [
 		device: lanDevice('192.168.1.22'),
 		privacy: 61,
 		security: 78,
-		behavior: 84,
+		// OLD CODE: behavior: 84, (NET-171)
 		anomalies: 0,
 		encryption: 0.91,
 		trackerDomains: ['ads.example.net', 'tracker.example.org', 'metrics.example.net', 'beacon.example.org', 'analytics.example.com', 'pixel.example.net', 'insights.example.org'],
@@ -59,7 +59,7 @@ const PROFILES: readonly IotProfile[] = [
 		device: lanDevice('192.168.1.31'),
 		privacy: 92,
 		security: 90,
-		behavior: 96,
+		// OLD CODE: behavior: 96, (NET-171)
 		anomalies: 0,
 		encryption: 1,
 		trackerDomains: [],
@@ -69,7 +69,9 @@ const PROFILES: readonly IotProfile[] = [
 	},
 ];
 
-const trustScore = (p: IotProfile): number => avg([p.privacy, p.security, p.behavior]);
+// OLD CODE: const trustScore = (p: IotProfile): number => avg([p.privacy, p.security, p.behavior]); (NET-171)
+// The daemon's rule over the five measured checks: privacy (20 points) and security (35) by weight
+const trustScore = (p: IotProfile): number => Math.round((p.privacy * 20 + p.security * 35) / 55);
 
 const fleetDevice = (p: IotProfile): FleetDevice => ({
 	mac: p.device.mac,
@@ -81,10 +83,12 @@ const fleetDevice = (p: IotProfile): FleetDevice => ({
 	// NET-158: five measured checks (trackers, third parties, encryption, ports, alerts)
 	coverage: 55,
 	checks_available: 5,
-	checks_total: 11,
+	// OLD CODE: checks_total: 11, (NET-171: telemetry and firmware left the model)
+	checks_total: 9,
 	privacy_score: p.privacy,
 	security_score: p.security,
-	behavior_score: p.behavior,
+	// OLD CODE: behavior_score: p.behavior, (NET-171: not measured, so null)
+	behavior_score: null,
 	anomaly_count: p.anomalies,
 	encryption_pct: Math.round(p.encryption * 100),
 	tracker_count: p.trackerDomains.length,
@@ -100,7 +104,8 @@ const fleet = (): FleetSummary => ({
 	health_grade: grade(fleetScore),
 	privacy_score: avg(PROFILES.map((p) => p.privacy)),
 	security_score: avg(PROFILES.map((p) => p.security)),
-	behavior_score: avg(PROFILES.map((p) => p.behavior)),
+	// OLD CODE: behavior_score: avg(PROFILES.map((p) => p.behavior)), (NET-171)
+	behavior_score: null,
 	device_count: PROFILES.length,
 	scored_device_count: PROFILES.length,
 	anomaly_count: anomalyCount,

@@ -81,40 +81,42 @@ def _per_mac_page(mac: str, counts: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-class TestClassifyAsIot:
-    def test_known_iot_manufacturer(self, iot):
-        result = iot.classify_as_iot(
-            "AA:BB:CC:DD:EE:FF",
-            {"manufacturer": "Ring", "hostname": "ring-doorbell"},
-        )
-        assert result is True
-
-    def test_known_iot_by_hostname(self, iot):
-        result = iot.classify_as_iot(
-            "AA:BB:CC:DD:EE:FF",
-            {"manufacturer": "Unknown", "hostname": "roku-livingroom"},
-        )
-        assert result is True
-
-    def test_non_iot_device(self, iot):
-        result = iot.classify_as_iot(
-            "AA:BB:CC:DD:EE:FF",
-            {"manufacturer": "Dell", "hostname": "desktop-pc"},
-        )
-        assert result is False
-
-    def test_adds_to_iot_registry(self, iot):
-        iot.classify_as_iot(
-            "aa:bb:cc:dd:ee:ff",
-            {"manufacturer": "Nest", "ip": "192.168.1.50"},
-        )
-        devices = iot.get_iot_devices()
-        assert len(devices) == 1
-        assert devices[0]["mac"] == "AA:BB:CC:DD:EE:FF"
-
-    def test_case_insensitive(self, iot):
-        assert iot.classify_as_iot("A:B:C", {"manufacturer": "WYZE"}) is True
-        assert iot.classify_as_iot("D:E:F", {"manufacturer": "tp-link"}) is True
+# OLD CODE START — NET-174: classify_as_iot is gone with its unused route
+# class TestClassifyAsIot:
+#     def test_known_iot_manufacturer(self, iot):
+#         result = iot.classify_as_iot(
+#             "AA:BB:CC:DD:EE:FF",
+#             {"manufacturer": "Ring", "hostname": "ring-doorbell"},
+#         )
+#         assert result is True
+#
+#     def test_known_iot_by_hostname(self, iot):
+#         result = iot.classify_as_iot(
+#             "AA:BB:CC:DD:EE:FF",
+#             {"manufacturer": "Unknown", "hostname": "roku-livingroom"},
+#         )
+#         assert result is True
+#
+#     def test_non_iot_device(self, iot):
+#         result = iot.classify_as_iot(
+#             "AA:BB:CC:DD:EE:FF",
+#             {"manufacturer": "Dell", "hostname": "desktop-pc"},
+#         )
+#         assert result is False
+#
+#     def test_adds_to_iot_registry(self, iot):
+#         iot.classify_as_iot(
+#             "aa:bb:cc:dd:ee:ff",
+#             {"manufacturer": "Nest", "ip": "192.168.1.50"},
+#         )
+#         devices = iot.get_iot_devices()
+#         assert len(devices) == 1
+#         assert devices[0]["mac"] == "AA:BB:CC:DD:EE:FF"
+#
+#     def test_case_insensitive(self, iot):
+#         assert iot.classify_as_iot("A:B:C", {"manufacturer": "WYZE"}) is True
+#         assert iot.classify_as_iot("D:E:F", {"manufacturer": "tp-link"}) is True
+# OLD CODE END
 
 
 # ---------------------------------------------------------------------------
@@ -370,8 +372,15 @@ class TestIoTDeviceRegistry:
 
     def test_get_anomalies_checks_all_devices(self, iot, mock_client):
         # Register two IoT devices
-        iot.classify_as_iot("AA:AA:AA:AA:AA:AA", {"manufacturer": "Ring"})
-        iot.classify_as_iot("BB:BB:BB:BB:BB:BB", {"manufacturer": "Nest"})
+        # OLD CODE START — NET-174: classify_as_iot is gone
+        # iot.classify_as_iot("AA:AA:AA:AA:AA:AA", {"manufacturer": "Ring"})
+        # iot.classify_as_iot("BB:BB:BB:BB:BB:BB", {"manufacturer": "Nest"})
+        # OLD CODE END
+        for mac, maker in (
+            ("AA:AA:AA:AA:AA:AA", "Ring"),
+            ("BB:BB:BB:BB:BB:BB", "Nest"),
+        ):
+            iot._iot_devices[mac] = {"mac": mac, "manufacturer": maker}
 
         # Both have no baselines, so check_anomalies returns []
         anomalies = iot.get_anomalies("2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z")
