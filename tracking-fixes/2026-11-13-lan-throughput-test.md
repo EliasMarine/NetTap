@@ -37,7 +37,8 @@ iperf3 is the standard tool for this. The peer runs `iperf3 -s`, and NetTap runs
   - One deadline, duration + 20 s, covers resolution, route lookup, iperf3 and clean-up.
   - The command is `iperf3 -c <ip> -p <port> -t <s> --connect-timeout 3000 -J [-R]`. With
     `--connect-timeout`, a wrong address fails after 3 s rather than when the deadline runs out.
-  - Upload reads `end.sum_sent` (bit/s and retransmits); download reads `end.sum_received`.
+  - The rate comes from `end.sum_received` in both directions; upload retransmits come from
+    `end.sum_sent` (see "Review fixes").
     "Connection refused" and "server is busy" are turned into plain sentences.
   - `capture` comes from `app["capture_manager"]` (the same source as `/api/capture/mode`).
     `has_ip` comes from `psutil.net_if_addrs()`, where IPv6 link-local doesn't count.
@@ -52,6 +53,48 @@ iperf3 is the standard tool for this. The peer runs `iperf3 -s`, and NetTap runs
     in mirror mode), upload and download cards, and an "Earlier runs" `DataTable` that lives only
     in page state.
   - A Tools index card.
+
+## Review fixes (two-angle review of PR #266, 2026-11-13)
+
+- **iperf3 is sandboxed (security, MEDIUM).** iperf3 3.12 (bookworm) has CVE-2026-71218 and
+  CVE-2026-71217 open ("vulnerable, postponed" on the Debian tracker, fixed in trixie). Both can
+  be triggered by the peer, and the client parses the peer's data. The child now runs as:
+  - `setpriv --reuid=64000 --regid=64000 --clear-groups --no-new-privs --inh-caps=-all`, then
+  - `sh -c 'ulimit -v 262144 && exec "$@"' sh iperf3 …`.
+
+  Why this form:
+  - uid 64000 is unused in the container and on the host. 65534 is shared with dnsmasq under
+    `pid: host`.
+  - `prlimit` isn't in the image, so sh's `ulimit -v` sets the 256 MB cap.
+  - On the G11 (read-only), the same prefix running `id` showed uid 64000, all capabilities 0,
+    NoNewPrivs 1 and `ulimit -v` 262144.
+  - The container's `/tmp` (where iperf3 puts its buffer file) is a 1777 tmpfs, so that uid can
+    write to it.
+  - If iperf3 is missing, `exec` exits 127; that now reads "iperf3 is not installed in NetTap's
+    daemon image."
+- **Deviation from PLAN.md:** the rate is `end.sum_received` in both directions (the plan said
+  `sum_sent` for upload). `sum_sent` counts what NetTap wrote into its socket, so a short test to a
+  Wi-Fi peer reads high. Upload retransmits still come from `sum_sent`.
+- **`host_resolve.py` (shared, byte-identical with #267):**
+  - `check_name` refuses input made only of digits and dots that is not an IP address, with a 400.
+    getent reads `192.168.001.010` as octal (192.168.1.8) and `1234` as 0.0.4.210.
+  - `route_to` now takes the smallest of three MTUs: the link MTU, IPv6's own MTU for the link
+    (`/proc/sys/net/ipv6/conf/<dev>/mtu`) and a route's own `mtu`. A cached router report, which
+    carries `expires`, is not a ceiling.
+- A missing binary: the reply says "NetTap could not start the test (No such file or directory)."
+  The full exception is logged with `%r`.
+- The 409 is a plain `web.json_response` (`public_json` only matters for 5xx).
+- Page:
+  - The inputs are disabled while a test runs, and both directions use the values the run
+    started with.
+  - An emptied port or duration sends the defaults (5201, 10).
+  - Leaving the page mid-upload skips the download and the history row (`onDestroy`).
+  - "wired" only with a known link speed, so a tunnel says neither wired nor Wi-Fi.
+  - A missing retransmit count shows no suffix; the history column is "Upload retransmits".
+  - The help line is tied to the inputs with `aria-describedby`; the card sub reads "A device on
+    your own network or VPN (a private address) running iperf3 -s".
+- `/tools/throughput` is in `e2e/visual/routes.ts`; `npm run test:visual -g "/tools/throughput"`
+  gives 6 passed, 1 skipped.
 
 ## Files
 
@@ -78,9 +121,10 @@ iperf3 is the standard tool for this. The peer runs `iperf3 -s`, and NetTap runs
 
 ## Test results
 
-- Daemon: new tests 28 passed. Full suite: 0 failures (baseline 4816 passed).
+- Daemon: new tests 28 passed (now 34 for the service and route, 16 for the resolver after the
+  review fixes). Full suite after the review fixes: 4851 passed, 0 failures.
   `ruff format --check` and `ruff check` (0.17.3) pass on the whole `daemon/`.
-- Web: full vitest 372 files / 4871 tests passed; svelte-check 0 errors (2 old warnings);
+- Web: full vitest 372 files / 4878 tests passed after the review fixes; svelte-check 0 errors (2 old warnings);
   `check:colors` clean.
 
 ## Lessons

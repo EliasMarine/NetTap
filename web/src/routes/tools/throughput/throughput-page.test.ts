@@ -14,7 +14,19 @@ const RESULT = {
 const UPLOAD = { ...RESULT, direction: 'upload', bits_per_second: 941_000_000, retransmits: 12 };
 const DOWNLOAD = { ...RESULT, direction: 'download', bits_per_second: 937_000_000, retransmits: null };
 
-type Reply = { body: unknown; status?: number } | Promise<never>;
+// OLD CODE: type Reply = { body: unknown; status?: number } | Promise<never>; (review: deferred replies)
+type Reply = { body: unknown; status?: number } | Promise<unknown>;
+
+/** A reply the test answers later: `release(UPLOAD)`. */
+function deferred() {
+	let release!: (body: unknown) => void;
+	const reply = new Promise((resolve) => {
+		release = (body) => resolve({ ok: true, status: 200, json: async () => body });
+	});
+	return { reply, release };
+}
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 function stubFetch(...replies: Reply[]) {
 	const fetch = vi.fn(async (_url: string, _init?: RequestInit) => {
@@ -98,5 +110,77 @@ describe('LAN throughput test page (NET-266)', () => {
 		expect(await screen.findByText('Upload test failed')).toBeInTheDocument();
 		expect(screen.getByText(/only runs against local addresses/)).toBeInTheDocument();
 		expect(screen.queryByText(/This test runs over/)).not.toBeInTheDocument();
+	});
+
+	it('shows a download failure after a successful upload, and keeps the upload in the history', async () => {
+		stubFetch({ body: UPLOAD }, { body: { ...DOWNLOAD, bits_per_second: null, error: 'The iperf3 server is busy with another test.' } });
+		render(Page);
+		await run();
+
+		expect(await screen.findByText('Download test failed')).toBeInTheDocument();
+		expect(screen.getByText('The iperf3 server is busy with another test.')).toBeInTheDocument();
+		const rows = within(screen.getByRole('table', { name: 'Earlier throughput runs' })).getAllByRole('row');
+		expect(within(rows[1]).getByText('941 Mbit/s')).toBeInTheDocument();
+		expect(screen.getAllByText('941 Mbit/s')).toHaveLength(2); // the upload card and the row
+	});
+
+	it('disables the inputs while a run is going, and Enter then does nothing', async () => {
+		const { reply, release } = deferred();
+		const fetch = stubFetch(reply, { body: DOWNLOAD });
+		render(Page);
+		await run();
+
+		for (const label of ['Peer', 'Port', 'Duration (seconds)']) expect(screen.getByLabelText(label)).toBeDisabled();
+		await fireEvent.keyDown(screen.getByLabelText('Peer'), { key: 'Enter' });
+		expect(fetch).toHaveBeenCalledTimes(1);
+
+		release(UPLOAD);
+		expect(await screen.findAllByText('937 Mbit/s')).toHaveLength(2);
+		expect(fetch).toHaveBeenCalledTimes(2);
+		for (const label of ['Peer', 'Port', 'Duration (seconds)']) expect(screen.getByLabelText(label)).toBeEnabled();
+	});
+
+	it('sends the default port and duration when those fields are emptied', async () => {
+		const fetch = stubFetch({ body: UPLOAD }, { body: DOWNLOAD });
+		render(Page);
+		await fireEvent.input(screen.getByLabelText('Port'), { target: { value: '' } });
+		await fireEvent.input(screen.getByLabelText('Duration (seconds)'), { target: { value: '' } });
+		await run();
+
+		await screen.findAllByText('937 Mbit/s');
+		for (const call of fetch.mock.calls) {
+			expect(JSON.parse(String(call[1]?.body))).toMatchObject({ port: 5201, duration: 10 });
+		}
+	});
+
+	it('says nothing about retransmits when iperf3 gave no count', async () => {
+		stubFetch({ body: { ...UPLOAD, retransmits: null } }, { body: DOWNLOAD });
+		render(Page);
+		await run();
+
+		await screen.findAllByText('937 Mbit/s');
+		expect(screen.getByText('NetTap to the peer')).toBeInTheDocument();
+		expect(screen.queryByText(/NetTap to the peer ·/)).toBeNull();
+		expect(screen.getByRole('columnheader', { name: /Upload retransmits/ })).toBeInTheDocument();
+	});
+
+	it('leaving during the upload skips the download and the history', async () => {
+		const { reply, release } = deferred();
+		const fetch = stubFetch(reply, { body: DOWNLOAD });
+		const { unmount } = render(Page);
+		await run();
+		unmount();
+
+		release(UPLOAD);
+		await settle();
+		await settle();
+		expect(fetch).toHaveBeenCalledTimes(1);
+	});
+
+	it('ties the help line to the inputs', () => {
+		render(Page);
+		for (const label of ['Peer', 'Port', 'Duration (seconds)']) {
+			expect(screen.getByLabelText(label)).toHaveAccessibleDescription(/can appear in NetTap's own traffic figures/);
+		}
 	});
 });

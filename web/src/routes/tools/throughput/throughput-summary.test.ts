@@ -23,7 +23,12 @@ describe('throughput wording (NET-266)', () => {
 	});
 
 	it('leaves out what is unknown, and says nothing without a path', () => {
-		expect(pathLine({ ...G11, path: { ...G11.path!, source_ip: null, speed_mbps: null } })).toBe('This test runs over eno1 (wired).');
+		// OLD CODE: expect(…source_ip: null, speed_mbps: null…).toBe('This test runs over eno1 (wired).'); (review of #266)
+		expect(pathLine({ ...G11, path: { ...G11.path!, source_ip: null } })).toBe('This test runs over eno1 (wired, 1 Gbit/s).');
+		// a tunnel has no link speed: neither wired nor Wi-Fi
+		const tunnel = { ...G11, path: { ...G11.path!, interface: 'tailscale0', source_ip: '100.64.0.2', speed_mbps: null } };
+		expect(pathLine(tunnel)).toBe('This test runs over tailscale0 (100.64.0.2).');
+		expect(pathLine({ ...G11, path: { ...G11.path!, wifi: true, speed_mbps: null } })).toBe('This test runs over eno1 (192.168.1.199, Wi-Fi).');
 		expect(pathLine({ ...G11, path: null })).toBeNull();
 	});
 

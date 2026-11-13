@@ -8,6 +8,7 @@ second runs.
 Security:
     - The host is validated (NetworkDiagService.validate_target) and resolved in a killable
       child; only private, CGNAT/VPN and ULA addresses are tested, and iperf3 gets the IP literal
+    - iperf3 runs as an unused uid with no capabilities and a 256 MB memory cap (SANDBOX)
     - One test at a time: a second is refused, never queued
     - One deadline (duration + 20 s) covers resolution, route lookup, iperf3 and clean-up
 """
@@ -22,7 +23,13 @@ from typing import Any
 
 import psutil
 
-from services.host_resolve import HostLookupError, resolve, route_to, run
+from services.host_resolve import (
+    HostLookupError,
+    check_name,
+    resolve,
+    route_to,
+    run,
+)
 from services.network_diag_service import NetworkDiagService
 
 logger = logging.getLogger("nettap.throughput")
@@ -45,6 +52,23 @@ LINK_LOCAL = (
     "Use the peer's IPv4 or ULA address."
 )
 TOO_LONG = "The test took too long and was stopped."
+NO_IPERF3 = "iperf3 is not installed in NetTap's daemon image."
+# iperf3 3.12 (bookworm) parses the peer's data with CVE-2026-71218 and CVE-2026-71217 open, so
+# it runs as uid 64000 (unused here and on the host; 65534 is dnsmasq's under pid: host), with no
+# capabilities, no new privileges and a 256 MB address-space cap. setpriv is in the image; prlimit
+# isn't, so sh's ulimit sets the cap before exec.
+SANDBOX = (
+    "setpriv",
+    "--reuid=64000",
+    "--regid=64000",
+    "--clear-groups",
+    "--no-new-privs",
+    "--inh-caps=-all",
+    "sh",
+    "-c",
+    'ulimit -v 262144 && exec "$@"',
+    "sh",
+)
 LOCAL_NETWORKS = tuple(
     ipaddress.ip_network(n)
     for n in (
@@ -105,7 +129,11 @@ def _number(value: Any) -> float | None:
 
 
 def _parse(stdout: str, download: bool) -> tuple[float | None, int | None, str | None]:
-    """bits per second, retransmits (upload only) and iperf3's own error, from its -J output."""
+    """bits per second, retransmits (upload only) and iperf3's own error, from its -J output.
+
+    The rate is what the receiver got (sum_received) both ways: sum_sent counts what NetTap
+    wrote into its socket, which reads high for a short test to a Wi-Fi peer.
+    """
     try:
         data = json.loads(stdout)
     except ValueError:
@@ -115,10 +143,18 @@ def _parse(stdout: str, download: bool) -> tuple[float | None, int | None, str |
     if data.get("error"):
         return None, None, str(data["error"])
     end = data.get("end") if isinstance(data.get("end"), dict) else {}
-    side = end.get("sum_received" if download else "sum_sent")
-    side = side if isinstance(side, dict) else {}
-    retransmits = None if download else _number(side.get("retransmits"))
-    return _number(side.get("bits_per_second")), retransmits, None
+    # OLD CODE START — review of #266: the upload rate came from sum_sent (PLAN.md section 5)
+    # side = end.get("sum_received" if download else "sum_sent")
+    # side = side if isinstance(side, dict) else {}
+    # retransmits = None if download else _number(side.get("retransmits"))
+    # return _number(side.get("bits_per_second")), retransmits, None
+    # OLD CODE END
+    received, sent = (
+        side if isinstance(side, dict) else {}
+        for side in (end.get("sum_received"), end.get("sum_sent"))
+    )
+    retransmits = None if download else _number(sent.get("retransmits"))
+    return _number(received.get("bits_per_second")), retransmits, None
 
 
 def _plain(error: str, host: str, port: int) -> str:
@@ -152,7 +188,7 @@ class ThroughputService:
         for the host) on bad input and ThroughputBusyError when a test is running."""
         if not isinstance(host, str):
             raise ThroughputValidationError("Enter the peer's host name or IP address.")
-        host = self._diag.validate_target(host)
+        host = check_name(self._diag.validate_target(host))
         port = _whole(port, "Port", 1, 65535, DEFAULT_PORT)
         duration = _whole(duration, "Duration", 1, MAX_DURATION, DEFAULT_DURATION)
         if direction not in DIRECTIONS:
@@ -184,7 +220,13 @@ class ThroughputService:
             except TimeoutError:
                 result = {**base, "error": TOO_LONG}
             except OSError as exc:  # a missing binary
-                result = {**base, "error": f"NetTap could not start the test: {exc}"}
+                # OLD CODE: result = {**base, "error": f"NetTap could not start the test: {exc}"}
+                logger.warning("throughput %r: could not start: %r", host, exc)
+                reason = exc.strerror or "it failed to start"
+                result = {
+                    **base,
+                    "error": f"NetTap could not start the test ({reason}).",
+                }
             log = logger.warning if result["error"] else logger.info
             log(
                 "throughput %s %r port %d %d s -> %s in %.1f s",
@@ -211,11 +253,23 @@ class ThroughputService:
         except HostLookupError as exc:
             return {**base, "resolved_ip": ip, "error": str(exc)}
 
-        argv = ["iperf3", "-c", ip, "-p", str(port), "-t", str(base["duration"])]
+        # OLD CODE: argv = ["iperf3", "-c", ip, ...] (review of #266: now inside SANDBOX)
+        argv = [
+            *SANDBOX,
+            "iperf3",
+            "-c",
+            ip,
+            "-p",
+            str(port),
+            "-t",
+            str(base["duration"]),
+        ]
         argv += ["--connect-timeout", str(CONNECT_TIMEOUT_MS), "-J"]
         code, out, err = await run(*argv, *(["-R"] if download else []))
         bps, retransmits, error = _parse(out, download)
-        if error is None and bps is None:  # no result in the output
+        if code == 127:  # sh: exec: iperf3: not found
+            error = NO_IPERF3
+        elif error is None and bps is None:  # no result in the output
             error = err.strip() or f"iperf3 exited with code {code}"
         return {
             **base,

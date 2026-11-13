@@ -21,11 +21,14 @@ from aiohttp.test_utils import AioHTTPTestCase
 from api.tools import register_tools_routes
 from services import throughput_service
 from services.capture_manager import CaptureMode
+from services.host_resolve import HostNameError
 from services.network_diag_service import NetworkDiagValidationError
 from services.throughput_service import (
     BUSY,
     LINK_LOCAL,
+    NO_IPERF3,
     NOT_LOCAL,
+    SANDBOX,
     TOO_LONG,
     ThroughputBusyError,
     ThroughputService,
@@ -140,14 +143,15 @@ class TestValidation(Harness):
             self.procs.append(FakeProc(fixture("upload")))
             with self.subTest(ip=ip):
                 self.assertIsNone(self.run_one(host=ip)["error"])
-        self.assertEqual([c[0] for c in self.calls], ["iperf3"] * 5)
+        self.assertEqual([c[0] for c in self.calls], ["setpriv"] * 5)
 
     def test_a_name_uses_its_first_local_address(self):
         getent = "fe80::5         STREAM nas.lan\n192.168.1.20    STREAM \n"
         self.procs += [FakeProc(getent), FakeProc(fixture("upload"))]
         result = self.run_one(host="nas.lan")
         self.assertEqual(result["resolved_ip"], "192.168.1.20")
-        self.assertEqual(self.calls[1][:3], ("iperf3", "-c", "192.168.1.20"))
+        iperf3 = self.calls[1][len(SANDBOX) :]
+        self.assertEqual(iperf3[:3], ("iperf3", "-c", "192.168.1.20"))
 
     def test_a_name_with_no_local_address_is_refused(self):
         self.procs.append(FakeProc("9.9.9.9         STREAM dns.quad9.net\n"))
@@ -155,6 +159,12 @@ class TestValidation(Harness):
             ThroughputValidationError, "only runs against local"
         ):
             self.run_one(host="dns.quad9.net")
+
+    def test_digits_and_dots_that_are_not_an_address_are_refused(self):
+        # getent would test 192.168.1.8 (octal); nothing runs
+        with self.assertRaisesRegex(HostNameError, "not a valid IP address"):
+            self.run_one(host="192.168.001.010")
+        self.assertEqual(self.calls, [])
 
     def test_an_unknown_name_is_an_error_in_the_result(self):
         self.procs.append(FakeProc("", code=2))
@@ -164,12 +174,35 @@ class TestValidation(Harness):
 
 
 class TestRun(Harness):
-    def test_upload_reads_the_sender_sum(self):
+    def test_iperf3_runs_unprivileged_with_a_memory_cap(self):
+        # CVE-2026-71218 / CVE-2026-71217: iperf3 3.12 parses the peer's data
+        self.assertEqual(
+            SANDBOX,
+            (
+                "setpriv",
+                "--reuid=64000",
+                "--regid=64000",
+                "--clear-groups",
+                "--no-new-privs",
+                "--inh-caps=-all",
+                "sh",
+                "-c",
+                'ulimit -v 262144 && exec "$@"',
+                "sh",
+            ),
+        )
+        for direction in ("upload", "download"):
+            self.procs.append(FakeProc(fixture(direction)))
+            self.run_one(direction=direction)
+            self.assertEqual(self.calls[-1][: len(SANDBOX) + 1], (*SANDBOX, "iperf3"))
+
+    def test_upload_reads_the_receiver_sum_and_the_senders_retransmits(self):
         self.procs.append(FakeProc(fixture("upload")))
         result = self.run_one(port=5299, duration=1)
         self.assertEqual(
             self.calls[0],
             (
+                *SANDBOX,
                 "iperf3",
                 "-c",
                 "192.168.1.20",
@@ -182,7 +215,8 @@ class TestRun(Harness):
                 "-J",
             ),
         )
-        self.assertEqual(result["bits_per_second"], 76279042022.8845)
+        # end.sum_received; sum_sent (what NetTap wrote) was 76279042022.8845
+        self.assertEqual(result["bits_per_second"], 76272260749.264572)
         self.assertEqual(result["retransmits"], 0)
         self.assertEqual(result["path"], PATH)
         self.assertEqual(
@@ -245,10 +279,19 @@ class TestRun(Harness):
     def test_a_missing_binary_is_an_error_not_a_crash(self):
         with patch(
             "asyncio.create_subprocess_exec",
-            side_effect=FileNotFoundError(2, "No such file", "iperf3"),
+            side_effect=FileNotFoundError(2, "No such file or directory", "setpriv"),
         ):
             result = self.run_one()
-        self.assertIn("NetTap could not start the test", result["error"])
+        self.assertEqual(
+            result["error"],
+            "NetTap could not start the test (No such file or directory).",
+        )
+        self.assertNotIn("Errno", result["error"])
+
+    def test_iperf3_missing_from_the_image(self):
+        # sh's exec exits 127 when iperf3 is not installed
+        self.procs.append(FakeProc("", "sh: 1: exec: iperf3: not found\n", code=127))
+        self.assertEqual(self.run_one()["error"], NO_IPERF3)
 
     def test_one_test_at_a_time(self):
         async def go():
@@ -323,6 +366,7 @@ class TestThroughputRoute(AioHTTPTestCase):
                 400,
             ),
             (NetworkDiagValidationError("Target is required"), 400),
+            (HostNameError("192.168.001.010 is not a valid IP address."), 400),
             (ThroughputBusyError(BUSY), 409),
         ):
             self.svc.run_test.side_effect = exc

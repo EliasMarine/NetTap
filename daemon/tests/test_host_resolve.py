@@ -10,7 +10,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from services import host_resolve
-from services.host_resolve import HostLookupError, resolve, route_to, run
+from services.host_resolve import (
+    HostLookupError,
+    HostNameError,
+    check_name,
+    resolve,
+    route_to,
+    run,
+)
 
 # ssh nettap 'sudo -n docker exec nettap-storage-daemon getent ahosts one.one.one.one' (2026-11-13)
 GETENT_ONE = """\
@@ -30,6 +37,14 @@ GETENT_ONE = """\
 # ... ip -j route get 9.9.9.9 / 192.168.1.199 (the G11's own address goes out over lo)
 ROUTE_9999 = '[{"dst":"9.9.9.9","gateway":"192.168.1.1","dev":"eno1","prefsrc":"192.168.1.199","flags":[],"uid":0,"cache":[]}]\n'
 ROUTE_UNREACHABLE = "RTNETLINK answers: Network is unreachable\n"
+# ... ip -j route get <the G11's own ULA>, with its dev (lo) swapped for eno1
+ROUTE_V6 = '[{"type":"local","dst":"fd99:9c49:c85e:47f5:8e32:23ff:fe82:855","from":"::","dev":"eno1","table":"local","protocol":"kernel","prefsrc":"fd99:9c49:c85e:47f5:8e32:23ff:fe82:855","metric":0,"flags":[],"pref":"medium"}]\n'
+# format, not captured (iproute2 6.1 print_rta_metrics / print_rta_cacheinfo): a route with its
+# own mtu, and a cached router report, which also carries "expires"
+ROUTE_MTU = ROUTE_9999.replace('"uid":0', '"uid":0,"metrics":[{"mtu":1420}]')
+ROUTE_CACHED = ROUTE_9999.replace(
+    '"uid":0', '"uid":0,"expires":590,"metrics":[{"mtu":1400}]'
+)
 
 
 class FakeProc:
@@ -104,6 +119,25 @@ class TestResolve(unittest.TestCase):
         child.wait.assert_awaited_once()
 
 
+class TestCheckName(unittest.TestCase):
+    def test_digits_and_dots_must_be_an_ip_address(self):
+        # getent would read these the inet_aton way: 192.168.1.8, 0.0.4.210, 1.2.0.3
+        for name in ("192.168.001.010", "1234", "1.2.3", "..."):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(
+                    HostNameError, "is not a valid IP address."
+                ):
+                    check_name(name)
+        for name in ("192.168.1.10", "nas.lan", "1password.com", "host-1.lan"):
+            self.assertEqual(check_name(name), name)
+
+    def test_resolve_refuses_them_without_running_getent(self):
+        calls, patcher = exec_returning()
+        with patcher, self.assertRaises(HostNameError):
+            asyncio.run(resolve("192.168.001.010"))
+        self.assertEqual(calls, [])
+
+
 class TestRun(unittest.TestCase):
     def test_a_cancelled_run_kills_and_reaps_its_child(self):
         child = FakeProc(release=asyncio.Event())
@@ -133,9 +167,11 @@ class TestRouteTo(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        patcher = patch.object(host_resolve, "SYS_NET", self.tmp.name)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.ipv6 = os.path.join(self.tmp.name, "ipv6conf")
+        for name, value in (("SYS_NET", self.tmp.name), ("PROC_IPV6_CONF", self.ipv6)):
+            patcher = patch.object(host_resolve, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def _iface(self, name, **files):
         path = os.path.join(self.tmp.name, name)
@@ -189,6 +225,27 @@ class TestRouteTo(unittest.TestCase):
             _, patcher = exec_returning(FakeProc(out))
             with self.subTest(dev=dev), patcher, self.assertRaises(HostLookupError):
                 asyncio.run(route_to("9.9.9.9"))
+
+    def test_ipv6_uses_the_links_own_ipv6_mtu(self):
+        # a router advertisement can lower IPv6's MTU below the link's, e.g. 1492 behind PPPoE
+        self._iface("eno1", speed="1000", mtu="1500")
+        os.makedirs(os.path.join(self.ipv6, "eno1"))
+        with open(os.path.join(self.ipv6, "eno1", "mtu"), "w") as f:
+            f.write("1492\n")
+        for ip, out, mtu in (
+            ("fd99:9c49:c85e:47f5:8e32:23ff:fe82:855", ROUTE_V6, 1492),
+            ("9.9.9.9", ROUTE_9999, 1500),  # IPv4 ignores it
+        ):
+            _, patcher = exec_returning(FakeProc(out))
+            with self.subTest(ip=ip), patcher:
+                self.assertEqual(asyncio.run(route_to(ip))["mtu"], mtu)
+
+    def test_a_routes_own_mtu_caps_it_but_a_cached_report_does_not(self):
+        self._iface("eno1", speed="1000", mtu="1500")
+        for out, mtu in ((ROUTE_MTU, 1420), (ROUTE_CACHED, 1500)):
+            _, patcher = exec_returning(FakeProc(out))
+            with self.subTest(out=out), patcher:
+                self.assertEqual(asyncio.run(route_to("9.9.9.9"))["mtu"], mtu)
 
     def test_unreadable_sysfs_is_unknown_not_zero(self):
         _, patcher = exec_returning(FakeProc(ROUTE_9999))

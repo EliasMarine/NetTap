@@ -6,6 +6,7 @@
 	 * while the second runs). The interface the test used sits above the results; earlier runs
 	 * this session go in a table below (page state only).
 	 */
+	import { onDestroy } from 'svelte';
 	import { throughput } from '$api/tools';
 	import type { ThroughputDirection, ThroughputResult } from '$api/tools';
 	import Card from '$lib/components/ui/Card.svelte';
@@ -27,11 +28,21 @@
 		via: string | null;
 	}
 
+	// the daemon's defaults too; an emptied number field binds null, so a run sends these instead
+	const DEFAULT_PORT = 5201;
+	const DEFAULT_DURATION = 10;
 	let host = $state('');
-	const DEFAULT_DURATION = 10; // the daemon's default too: an emptied field sends null
-	let port = $state(5201);
-	let duration = $state(DEFAULT_DURATION);
+	// OLD CODE: let port = $state(5201); (review of #266: named, for the emptied-field default)
+	let port = $state<number | null>(DEFAULT_PORT);
+	let duration = $state<number | null>(DEFAULT_DURATION);
 	let running = $state(false);
+	/** The duration of the run in progress, for its loading line. */
+	let runDuration = $state(DEFAULT_DURATION);
+	// leaving mid-run skips the rest of it: no download, no history row
+	let gone = false;
+	onDestroy(() => {
+		gone = true;
+	});
 	let upload = $state<Side>({ state: 'idle' });
 	let download = $state<Side>({ state: 'idle' });
 	let history = $state<RunRow[]>([]);
@@ -40,9 +51,9 @@
 	let shown = $derived(upload.result ?? download.result);
 	let started = $derived(upload.state !== 'idle');
 
-	async function side(peer: string, direction: ThroughputDirection): Promise<Side> {
+	async function side(peer: string, p: number, d: number, direction: ThroughputDirection): Promise<Side> {
 		try {
-			const result = await throughput(peer, port, duration, direction);
+			const result = await throughput(peer, p, d, direction);
 			return result.error ? { state: 'error', result, error: result.error } : { state: 'done', result };
 		} catch (e) {
 			return { state: 'error', error: e instanceof Error ? e.message : 'Throughput test failed' };
@@ -52,14 +63,20 @@
 	async function runTest() {
 		const peer = host.trim();
 		if (!peer || running) return;
+		// both directions use the values the run started with (the inputs are disabled meanwhile)
+		const p = port ?? DEFAULT_PORT;
+		const d = duration ?? DEFAULT_DURATION;
 		running = true;
+		runDuration = d;
 		upload = { state: 'loading' };
 		download = { state: 'idle' };
-		upload = await side(peer, 'upload');
+		upload = await side(peer, p, d, 'upload');
+		if (gone) return;
 		// the same peer and port: once the upload fails, the download would fail the same way
 		if (upload.state === 'done') {
 			download = { state: 'loading' };
-			download = await side(peer, 'download');
+			download = await side(peer, p, d, 'download');
+			if (gone) return;
 		} else {
 			download = { state: 'skipped' };
 		}
@@ -92,7 +109,7 @@
 		{ key: 'peer', label: 'Peer', cell: rowPeer },
 		{ key: 'upload', label: 'Upload', numeric: true, cell: rowUpload },
 		{ key: 'download', label: 'Download', numeric: true, cell: rowDownload },
-		{ key: 'retransmits', label: 'Retransmits', numeric: true, cell: rowRetransmits },
+		{ key: 'retransmits', label: 'Upload retransmits', numeric: true, cell: rowRetransmits },
 		{ key: 'via', label: 'Interface', cell: rowVia },
 	];
 </script>
@@ -117,22 +134,22 @@
 </div>
 
 <div class="grid">
-	<Card title="Peer" sub="A device on your network running iperf3 -s · private, CGNAT/VPN or ULA addresses" class="c-12">
+	<Card title="Peer" sub="A device on your own network or VPN (a private address) running iperf3 -s" class="c-12">
 		<div class="form-grid">
 			<div class="field">
 				<label class="label" for="tp-host">Peer</label>
-				<input id="tp-host" type="text" class="input mono" placeholder="IP or host name" bind:value={host} onkeydown={handleKeydown} />
+				<input id="tp-host" type="text" class="input mono" placeholder="IP or host name" bind:value={host} onkeydown={handleKeydown} disabled={running} aria-describedby="tp-help" />
 			</div>
 			<div class="field">
 				<label class="label" for="tp-port">Port</label>
-				<input id="tp-port" type="number" class="input" bind:value={port} min="1" max="65535" />
+				<input id="tp-port" type="number" class="input" bind:value={port} min="1" max="65535" disabled={running} aria-describedby="tp-help" />
 			</div>
 			<div class="field">
 				<label class="label" for="tp-duration">Duration (seconds)</label>
-				<input id="tp-duration" type="number" class="input" bind:value={duration} min="1" max="30" />
+				<input id="tp-duration" type="number" class="input" bind:value={duration} min="1" max="30" disabled={running} aria-describedby="tp-help" />
 			</div>
 		</div>
-		<p class="field-help">Test traffic can appear in NetTap's own traffic figures if it crosses the mirrored link.</p>
+		<p class="field-help" id="tp-help">Test traffic can appear in NetTap's own traffic figures if it crosses the mirrored link.</p>
 		<div class="form-actions">
 			<button class="btn primary" type="button" onclick={runTest} disabled={running || !host.trim()}>
 				<Icon name="bandwidth" />{running ? 'Testing…' : 'Run test'}
@@ -161,13 +178,13 @@
 					label={d.label}
 					icon={d.icon}
 					value={rate(s.result.bits_per_second)}
-					sub={d.key === 'upload' ? `${d.sub} · ${retransmitsText(s.result.retransmits)}` : d.sub}
+					sub={d.key === 'upload' && s.result.retransmits != null ? `${d.sub} · ${retransmitsText(s.result.retransmits)}` : d.sub}
 					class="c-6"
 				/>
 			{:else}
 				<Card title={d.label} sub={d.sub} class="c-6">
 					{#if s.state === 'loading'}
-						<CardState state="loading" title="Testing {d.label.toLowerCase()} for {duration || DEFAULT_DURATION} seconds" />
+						<CardState state="loading" title="Testing {d.label.toLowerCase()} for {runDuration} seconds" />
 					{:else if s.state === 'error'}
 						<CardState state="error" title="{d.label} test failed" message={s.error} />
 					{:else if s.state === 'skipped'}

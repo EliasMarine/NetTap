@@ -2,11 +2,16 @@
 import type { ThroughputResult } from '$api/tools';
 import { formatBitRate } from '$lib/utils/bitrate';
 
-/** "This test runs over eno1 (192.168.1.199, wired, 1 Gbit/s)." Unknown parts are left out. */
+/**
+ * "This test runs over eno1 (192.168.1.199, wired, 1 Gbit/s)." Unknown parts are left out: "wired"
+ * needs a link speed, because a tunnel (wg0, tailscale0) is neither Wi-Fi nor a cable.
+ */
 export function pathLine(r: ThroughputResult): string | null {
 	if (!r.path) return null;
 	const { source_ip, wifi, speed_mbps } = r.path;
-	const parts = [source_ip, wifi ? 'Wi-Fi' : 'wired', speed_mbps ? formatBitRate(speed_mbps * 1e6) : null];
+	// OLD CODE: const parts = [source_ip, wifi ? 'Wi-Fi' : 'wired', speed_mbps ? … : null]; (review of #266)
+	const kind = wifi ? 'Wi-Fi' : speed_mbps ? 'wired' : null;
+	const parts = [source_ip, kind, speed_mbps ? formatBitRate(speed_mbps * 1e6) : null];
 	return `This test runs over ${r.path.interface} (${parts.filter(Boolean).join(', ')}).`;
 }
 

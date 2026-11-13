@@ -24,6 +24,7 @@ from services.dns_recon_service import (
 )
 from services.mac_lookup_service import MacLookupService, MacLookupValidationError
 from services.network_diag_service import NetworkDiagService, NetworkDiagValidationError
+from services.host_resolve import HostNameError
 from services.ssl_cert_service import SslCertService, SslCertValidationError
 from services.throughput_service import (
     ThroughputBusyError,
@@ -344,10 +345,15 @@ async def handle_throughput(request: web.Request) -> web.Response:
             capture_mode=cm.mode.value if cm else None,
             capture_interface=cm.get_capture_interface() if cm else None,
         )
-    except (ThroughputValidationError, NetworkDiagValidationError) as e:
+    except (
+        ThroughputValidationError,
+        NetworkDiagValidationError,
+        HostNameError,
+    ) as e:
         return web.json_response({"error": str(e)}, status=400)
     except ThroughputBusyError as e:
-        return public_json({"error": str(e)}, status=409)
+        # OLD CODE: return public_json({"error": str(e)}, status=409) (a 4xx passes untouched)
+        return web.json_response({"error": str(e)}, status=409)
     return web.json_response(result)
 
 
