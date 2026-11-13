@@ -10,12 +10,15 @@ Security:
     - Commands run via asyncio.create_subprocess_exec (NEVER shell=True)
     - 10 second timeout per query; the queries of one lookup run at the same time (NET-203)
     - Record types deduplicated, so a lookup starts at most one dig per allowed type
+    - Resolver compare (NET-262): resolvers are IP literals only, passed as dig's @server
 """
 
 import asyncio
 import contextlib
+import ipaddress
 import logging
 import re
+import time
 from typing import Any
 
 logger = logging.getLogger("nettap.dns_recon")
@@ -29,6 +32,65 @@ QUERY_TIMEOUT = 10  # seconds
 # NET-203: each lookup starts up to 9 dig processes at once, so cap the lookups too
 MAX_CONCURRENT_LOOKUPS = 4
 LOOKUPS_BUSY = "DNS reconnaissance is busy. Try again in a moment."
+
+# NET-262: resolver compare
+MAX_COMPARE_RESOLVERS = 6
+# Seconds dig waits for its one try: Quad9 from the G11 can take 2-4 s; stays under QUERY_TIMEOUT
+COMPARE_DIG_TIME = 4
+NO_REPLY = "No reply from NetTap"
+# Answers kept per reply; a longer answer is cut and says so (truncated)
+MAX_COMPARE_ANSWERS = 100
+# dig names an unknown rcode RESERVED<n>
+_STATUS = re.compile(r"->>HEADER<<-.*\bstatus: ([A-Z0-9]+),")
+_QUERY_TIME = re.compile(r"^;; Query time: (\d+) msec", re.MULTILINE)
+# The RDATA fields that are domain names; names compare case-insensitively (RFC 4343)
+_NAME_FIELDS = {
+    "CNAME": (0,),
+    "NS": (0,),
+    "PTR": (0,),
+    "DNAME": (0,),
+    "MX": (1,),
+    "SRV": (3,),
+    "SOA": (0, 1),
+}
+
+
+def _dns_name(name: str) -> str:
+    return name.lower().rstrip(".")
+
+
+def _answer_key(record: dict[str, Any]) -> str:
+    """Owner, class, type and RDATA without the TTL: two answers are the same record when their keys
+    are equal (NET-262). Names and addresses are normalised; TXT and other RDATA stay byte for byte."""
+    rtype = str(record["type"]).upper()
+    rdata = str(record["value"])
+    if rtype in ("A", "AAAA"):
+        with contextlib.suppress(ValueError):
+            rdata = str(ipaddress.ip_address(rdata))
+    elif rtype in _NAME_FIELDS:
+        rdata = " ".join(
+            _dns_name(field) if i in _NAME_FIELDS[rtype] else field
+            for i, field in enumerate(rdata.split())
+        )
+    owner = _dns_name(str(record["name"]))
+    return " ".join((owner, str(record["class"]).upper(), rtype, rdata))
+
+
+def _scope(record: dict[str, Any]) -> dict[str, str]:
+    """{"scope": ...} for an A or AAAA answer, else nothing. 0.0.0.0 and :: (a blocked name on
+    Pi-hole and AdGuard) and loopback get their own scope, so they never read as a private answer."""
+    if record["type"] not in ("A", "AAAA"):
+        return {}
+    try:
+        address = ipaddress.ip_address(record["value"])
+    except ValueError:
+        return {}
+    # OLD CODE: return {"scope": "public" if address.is_global else "private"} (0.0.0.0 read as private)
+    if address.is_unspecified:
+        return {"scope": "unspecified"}
+    if address.is_loopback:
+        return {"scope": "loopback"}
+    return {"scope": "public" if address.is_global else "private"}
 
 
 def _dig_failure(stdout: str, stderr: bytes, code: int) -> str:
@@ -258,3 +320,141 @@ class DnsReconService:
             "record_types_queried": record_types,
             "errors": errors,
         }
+
+    # -- Resolver compare (NET-262) -------------------------------------------------------------
+
+    def validate_resolvers(self, resolvers: Any) -> list[str]:
+        """1 to MAX_COMPARE_RESOLVERS IP literals (v4 or v6, no scope id), normalised, each once."""
+        if not isinstance(resolvers, list) or not resolvers:
+            raise DnsReconValidationError("Add at least one resolver IP address.")
+        if len(resolvers) > MAX_COMPARE_RESOLVERS:
+            raise DnsReconValidationError(
+                f"Compare at most {MAX_COMPARE_RESOLVERS} resolvers at a time."
+            )
+        validated: list[str] = []
+        for raw in resolvers:
+            text = raw.strip() if isinstance(raw, str) else ""
+            try:
+                if "%" in text:  # a scoped link-local address names an interface
+                    raise ValueError(text)
+                address = str(ipaddress.ip_address(text))
+            except ValueError:
+                raise DnsReconValidationError(
+                    f"Resolver {raw!r} is not an IP address."
+                ) from None
+            if address not in validated:
+                validated.append(address)
+        return validated
+
+    async def _ask(self, resolver: str, name: str, rtype: str) -> dict[str, Any]:
+        """One resolver's reply (NET-262). A child still running when this ends is killed and reaped."""
+        reply: dict[str, Any] = {
+            "resolver": resolver,
+            "status": None,
+            "answers": [],
+            "ttl": None,
+            "latency_ms": None,
+            "error": None,
+            "truncated": False,
+        }
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "dig",
+                f"@{resolver}",
+                "+noall",
+                "+answer",
+                "+comments",
+                "+stats",
+                # OLD CODE: "+time=2", (a Quad9 reply in 2-4 s read as "did not reply")
+                f"+time={COMPARE_DIG_TIME}",
+                "+tries=1",
+                "-t",
+                rtype,
+                # -q: a name that is also a type or class word ("ns", "mx") stays the name
+                "-q",
+                name,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(), timeout=QUERY_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            logger.warning("dig @%s timed out for %s %s", resolver, name, rtype)
+            return {**reply, "error": NO_REPLY}
+        except Exception:
+            logger.exception("dig @%s could not run for %s %s", resolver, name, rtype)
+            return {**reply, "error": "dig could not run"}
+        finally:
+            if proc is not None and proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+                await proc.wait()
+
+        stdout = stdout_bytes.decode("utf-8", errors="replace")
+        status = _STATUS.search(stdout)
+        if status is None:
+            reason = _dig_failure(stdout, stderr_bytes, proc.returncode)
+            logger.warning(
+                "dig @%s failed for %s %s: %s", resolver, name, rtype, reason
+            )
+            # dig exits 9 when no reply came back
+            no_reply = (
+                proc.returncode == 9
+                or "timed out" in stdout
+                or "no servers could be reached" in stdout
+            )
+            return {**reply, "error": NO_REPLY if no_reply else reason}
+        answers = [
+            {**record, "key": _answer_key(record), **_scope(record)}
+            for record in self._parse_dig_output(stdout)
+        ]
+        truncated = len(answers) > MAX_COMPARE_ANSWERS
+        if truncated:
+            # sorted first, so two resolvers with the same records keep the same 100
+            answers = sorted(answers, key=lambda a: a["key"])[:MAX_COMPARE_ANSWERS]
+        ttls = [a["ttl"] for a in answers if isinstance(a["ttl"], int)]
+        latency = _QUERY_TIME.search(stdout)
+        return {
+            **reply,
+            "status": status.group(1),
+            "answers": answers,
+            "ttl": min(ttls, default=None),
+            "latency_ms": int(latency.group(1)) if latency else None,
+            "truncated": truncated,
+        }
+
+    async def compare(
+        self, name: Any, record_type: Any, resolvers: Any
+    ) -> dict[str, Any]:
+        """Ask each resolver the same question at the same time (NET-262).
+
+        Returns {name, record_type,
+        results: [{resolver, status, answers, ttl, latency_ms, error, truncated}]}.
+        """
+        name = self.validate_domain(name if isinstance(name, str) else "")
+        # OLD CODE: if not record_type: (0, [] and {} also meant A)
+        if record_type is None or record_type == "":
+            record_type = "A"
+        if not isinstance(record_type, str):
+            raise DnsReconValidationError("Record type must be text, such as A or MX.")
+        rtype = self.validate_record_types([record_type])[0]
+        resolvers = self.validate_resolvers(resolvers)
+
+        if self._slots.locked():  # checked first, so acquiring below never waits
+            raise DnsReconBusyError(LOOKUPS_BUSY)
+        started = time.monotonic()
+        async with self._slots:
+            results = await asyncio.gather(
+                *(self._ask(resolver, name, rtype) for resolver in resolvers)
+            )
+        logger.info(
+            "DNS compare %s %s via %s: %s in %.1f s",
+            name,
+            rtype,
+            ", ".join(resolvers),
+            ", ".join(str(r["status"] or r["error"]) for r in results),
+            time.monotonic() - started,
+        )
+        return {"name": name, "record_type": rtype, "results": results}

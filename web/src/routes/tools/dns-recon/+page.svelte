@@ -1,5 +1,9 @@
 <script lang="ts">
-	/** DNS reconnaissance: a form card (domain and record types), then one card per record type with a DataTable. */
+	/**
+	 * DNS reconnaissance, in two tabs:
+	 *   - Lookup: a form card (domain and record types), then one card per record type with a DataTable
+	 *   - Compare resolvers (NET-262): one question to several resolvers (CompareResolvers.svelte)
+	 */
 	import { page } from '$app/stores';
 	import { dnsRecon } from '$api/tools';
 	import type { DnsReconResult, DnsReconRecord } from '$api/tools';
@@ -7,6 +11,8 @@
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import Pills from '$lib/components/ui/Pills.svelte';
+	import CompareResolvers from './CompareResolvers.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Record type definitions with display metadata
@@ -41,6 +47,11 @@
 	let result = $state<DnsReconResult | null>(null);
 	let loading = $state(false);
 	let error = $state('');
+	let activeTab = $state<'lookup' | 'compare'>('lookup');
+	const tabs = [
+		{ value: 'lookup' as const, label: 'Lookup' },
+		{ value: 'compare' as const, label: 'Compare resolvers' },
+	];
 
 	// NET-160: the domain page's "Look it up now" fills the domain in; the lookup waits for the user
 	// OLD CODE START — reran on every $page emission, so it could overwrite what the user had typed
@@ -55,7 +66,11 @@
 		if (url === appliedUrl) return; // the same navigation emitted again
 		appliedUrl = url;
 		const d = url.searchParams.get('domain');
-		if (d) domain = d;
+		// OLD CODE: if (d) domain = d; (NET-262: the lookup now sits in a tab)
+		if (d) {
+			domain = d;
+			activeTab = 'lookup';
+		}
 	});
 
 	// ---------------------------------------------------------------------------
@@ -134,66 +149,75 @@
 	<div>
 		<a class="back" href="/tools"><Icon name="back" />Tools</a>
 		<h1 class="page-title">DNS reconnaissance</h1>
-		<p class="page-sub">List every DNS record a domain publishes, queried with dig.</p>
+		<!-- OLD CODE: <p class="page-sub">List every DNS record a domain publishes, queried with dig.</p> (NET-262) -->
+		<p class="page-sub">List every DNS record a domain publishes, or compare what several resolvers answer, queried with dig.</p>
 	</div>
 </div>
 
-<div class="grid">
-	<Card title="Look up a domain" sub="One domain · the record types you choose" class="c-12">
-		<div class="form-grid">
-			<div class="field">
-				<label class="label" for="recon-domain">Domain</label>
-				<input id="recon-domain" class="input mono" type="text" placeholder="example.com" bind:value={domain} onkeydown={handleKeydown} />
-			</div>
-			<div class="field">
-				<span class="label" id="recon-types">Record types</span>
-				<div class="pills types" role="group" aria-labelledby="recon-types">
-					{#each recordTypeDefs as def (def.type)}
-						<button class="pill mono" type="button" aria-pressed={selectedTypes.has(def.type)} title={def.label} onclick={() => toggleType(def.type)}>
-							{def.type}
-						</button>
-					{/each}
+<Pills options={tabs} bind:value={activeTab} mode="tabs" idPrefix="dns" ariaLabel="DNS tools" />
+
+<div role="tabpanel" id="dns-panel-lookup" aria-labelledby="dns-tab-lookup" hidden={activeTab !== 'lookup'}>
+	<div class="grid">
+		<Card title="Look up a domain" sub="One domain · the record types you choose" class="c-12">
+			<div class="form-grid">
+				<div class="field">
+					<label class="label" for="recon-domain">Domain</label>
+					<input id="recon-domain" class="input mono" type="text" placeholder="example.com" bind:value={domain} onkeydown={handleKeydown} />
+				</div>
+				<div class="field">
+					<span class="label" id="recon-types">Record types</span>
+					<div class="pills types" role="group" aria-labelledby="recon-types">
+						{#each recordTypeDefs as def (def.type)}
+							<button class="pill mono" type="button" aria-pressed={selectedTypes.has(def.type)} title={def.label} onclick={() => toggleType(def.type)}>
+								{def.type}
+							</button>
+						{/each}
+					</div>
 				</div>
 			</div>
-		</div>
-		<div class="form-actions">
-			<button class="btn primary" type="button" onclick={handleLookup} disabled={loading || !domain.trim()}>
-				<Icon name="search" />{loading ? 'Looking up…' : 'Lookup'}
-			</button>
-		</div>
-	</Card>
-
-	{#if loading}
-		<Card title="Records" sub="Querying each record type" class="c-12">
-			<CardState state="loading" title="Looking up DNS records" />
+			<div class="form-actions">
+				<button class="btn primary" type="button" onclick={handleLookup} disabled={loading || !domain.trim()}>
+					<Icon name="search" />{loading ? 'Looking up…' : 'Lookup'}
+				</button>
+			</div>
 		</Card>
-	{/if}
 
-	{#if error && !loading}
-		<p class="notice is-error c-12" role="alert"><Icon name="warn" />{error}</p>
-	{/if}
-
-	{#if result && !loading}
-		<div class="chips c-12">
-			<span class="chip">{result.total_records} records found</span>
-			<span class="chip">{result.record_types_queried.length} queries</span>
-		</div>
-		{#each orderedResultTypes as type (type)}
-			{@const records = result.records[type] || []}
-			{@const def = getTypeDef(type)}
-			<Card title="{type} · {def.label}" sub="{records.length} record{records.length !== 1 ? 's' : ''} · TTL in seconds" class="c-12">
-				{#if records.length > 0}
-					<DataTable columns={recordColumns} rows={recordRows(records)} ariaLabel="{type} records" rowKey={(r) => r.i} />
-				{:else}
-					<p class="dim none">No {type} records found</p>
-				{/if}
+		{#if loading}
+			<Card title="Records" sub="Querying each record type" class="c-12">
+				<CardState state="loading" title="Looking up DNS records" />
 			</Card>
-		{/each}
-	{:else if !loading && !error}
-		<Card title="Records" sub="Grouped by record type" class="c-12">
-			<CardState state="empty" icon="dns" title="Enter a domain" message="Type a domain, choose the record types, then choose Lookup." />
-		</Card>
-	{/if}
+		{/if}
+
+		{#if error && !loading}
+			<p class="notice is-error c-12" role="alert"><Icon name="warn" />{error}</p>
+		{/if}
+
+		{#if result && !loading}
+			<div class="chips c-12">
+				<span class="chip">{result.total_records} records found</span>
+				<span class="chip">{result.record_types_queried.length} queries</span>
+			</div>
+			{#each orderedResultTypes as type (type)}
+				{@const records = result.records[type] || []}
+				{@const def = getTypeDef(type)}
+				<Card title="{type} · {def.label}" sub="{records.length} record{records.length !== 1 ? 's' : ''} · TTL in seconds" class="c-12">
+					{#if records.length > 0}
+						<DataTable columns={recordColumns} rows={recordRows(records)} ariaLabel="{type} records" rowKey={(r) => r.i} />
+					{:else}
+						<p class="dim none">No {type} records found</p>
+					{/if}
+				</Card>
+			{/each}
+		{:else if !loading && !error}
+			<Card title="Records" sub="Grouped by record type" class="c-12">
+				<CardState state="empty" icon="dns" title="Enter a domain" message="Type a domain, choose the record types, then choose Lookup." />
+			</Card>
+		{/if}
+	</div>
+</div>
+
+<div role="tabpanel" id="dns-panel-compare" aria-labelledby="dns-tab-compare" hidden={activeTab !== 'compare'}>
+	<CompareResolvers recordTypes={recordTypeDefs} />
 </div>
 
 <style>
