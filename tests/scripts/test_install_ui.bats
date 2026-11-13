@@ -379,6 +379,16 @@ sysctl() { echo 262144; }'
     [[ "$output" == *"6 passed, 1 warning, 0 failed"* ]] || false
 }
 
+# NET-211 #6: nothing publishes 9443; Dashboards is /dashboards/ through NetTap's nginx after sign-in
+@test "step_verify: the summary card's Malcolm address is the dashboards path, not 9443" {
+    printf 'WAN_INTERFACE=enp2s0\nLAN_INTERFACE=enp3s0\n' > "${TEST_TMPDIR}/.env"
+    run bash -c "source '$INSTALL'; $VERIFY_STUBS
+        PROJECT_ROOT='$TEST_TMPDIR'; step_verify"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"https://nettap.local/dashboards/"*"after you sign in"* ]] || false
+    [[ "$output" != *"9443"* ]] || false
+}
+
 # A13 (NET-229): nettap-web has a setup code (first run), so the card shows it and how to read it again
 @test "step_verify: the summary card prints the setup wizard's code" {
     printf 'WAN_INTERFACE=enp2s0\nLAN_INTERFACE=enp3s0\n' > "${TEST_TMPDIR}/.env"

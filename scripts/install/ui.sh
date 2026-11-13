@@ -324,7 +324,8 @@ ui_summary_installed() {
     fi
     ui_card_line ""
     ui_card_kv "Dashboard" "${_UI_BOLD}$(_ui_dashboard_url)${_UI_OFF}"
-    ui_card_kv "Malcolm" "https://localhost:${MALCOLM_HTTPS_PORT:-9443}  ${_UI_DIM}on this box${_UI_OFF}"
+    # OLD CODE: ui_card_kv "Malcolm" "https://localhost:${MALCOLM_HTTPS_PORT:-9443}  …on this box" (NET-211 #6: nothing listens there)
+    ui_card_kv "Malcolm" "$(_ui_dashboard_url)/dashboards/  ${_UI_DIM}after you sign in${_UI_OFF}"
     # A13 (NET-229): the wizard asks for this before it creates the admin account
     if [[ "${SKIP_MALCOLM:-false}" != "true" ]]; then
         local code

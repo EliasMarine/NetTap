@@ -76,3 +76,12 @@ _line_of() {
     grep -q "docker_default not found" "$TEST_TMPDIR/out"
     grep -q "run this script again" "$TEST_TMPDIR/out"
 }
+
+@test "NET-211 #6: nothing opens 9443, which nothing listens on" {
+    _load_firewall
+    printf '%s\n' 172.18.0.0/16 > "$MOCK_NET"
+    do_enable > "$TEST_TMPDIR/out" 2>&1
+
+    [ "$(_ufw_calls | grep -c 'port 9443')" -eq 0 ]
+    _ufw_calls | grep -qF 'ufw allow in on eth9 to any port 443 proto tcp'
+}

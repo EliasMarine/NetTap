@@ -140,3 +140,9 @@ STUB
     grep -q "ufw allow 5353/udp" "${FW_DIR}/calls"
     rm -rf "$FW_DIR"
 }
+
+@test "NET-211 #6: the firewall step doesn't open 9443, which nothing publishes" {
+    _firewall_with_ufw "Status: active"
+    [ "$(grep -c '9443' "${FW_DIR}/calls")" -eq 0 ]
+    rm -rf "$FW_DIR"
+}

@@ -490,11 +490,13 @@ step_firewall() {
         # Allow dashboard access (HTTPS)
         run ufw allow "${DASHBOARD_PORT:-443}/tcp" comment "NetTap dashboard"
 
-        # Allow Malcolm dashboards (if different port)
-        local malcolm_port="${MALCOLM_HTTPS_PORT:-9443}"
-        if [[ "$malcolm_port" != "${DASHBOARD_PORT:-443}" ]]; then
-            run ufw allow "${malcolm_port}/tcp" comment "Malcolm dashboards"
-        fi
+        # OLD CODE START — NET-211 #6: nothing publishes 9443; Dashboards is /dashboards/ on the 443 above
+        # # Allow Malcolm dashboards (if different port)
+        # local malcolm_port="${MALCOLM_HTTPS_PORT:-9443}"
+        # if [[ "$malcolm_port" != "${DASHBOARD_PORT:-443}" ]]; then
+        #     run ufw allow "${malcolm_port}/tcp" comment "Malcolm dashboards"
+        # fi
+        # OLD CODE END
 
         # Allow mDNS
         run ufw allow 5353/udp comment "mDNS (avahi)"
