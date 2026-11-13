@@ -70,7 +70,7 @@ echo ""
 
 echo "→ Step 3: Recreate zeek-live, suricata-live, the daemon and the web UI..."
 SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-RECREATED=$(date +%s)
+# OLD CODE: RECREATED=$(date +%s) (Step 5 now waits from when Zeek settles)
 "${COMPOSE[@]}" up -d --no-deps --force-recreate nettap-storage-daemon nettap-web zeek-live suricata-live
 echo ""
 
@@ -96,16 +96,39 @@ expect "getcap zeek" "$(sudo docker exec nettap-zeek-live getcap /usr/local/zeek
 expect "getcap capstats" "$(sudo docker exec nettap-zeek-live getcap /usr/local/zeek/bin/capstats)" "/usr/local/zeek/bin/capstats cap_net_raw=eip"
 expect "cap_add" "$(sudo docker inspect --format='{{json .HostConfig.CapAdd}}' nettap-zeek-live)" '["CAP_NET_RAW"]'
 expect "memory limit" "$(sudo docker inspect --format='{{.HostConfig.Memory}}' nettap-zeek-live)" 3221225472
-echo "   waiting up to 3 minutes for Zeek to write conn.log..."
+# OLD CODE START — the old zeek's last flush passed the conn.log check at once, so PIDS was read
+# before the new workers started (Malcolm starts them 20-40 s in) and Step 8 compared with nothing
+# echo "   waiting up to 3 minutes for Zeek to write conn.log..."
+# GREW=1
+# for i in $(seq 1 36); do
+#     MTIME=$(sudo docker exec nettap-zeek-live stat -c %Y "$CONN_LOG" 2>/dev/null || echo 0)
+#     if [ "$MTIME" -gt "$RECREATED" ]; then GREW=0; break; fi
+#     sleep 5
+# done
+# check "conn.log written since the recreate" "$GREW" "mtime $MTIME, recreated $RECREATED"
+# PIDS=$(zeek_pids)
+# STABLE_FROM=$(date +%s)
+# OLD CODE END
+echo "   waiting up to 3 minutes for Zeek's processes to start and settle..."
+PIDS=""
+SAME=0
+for i in $(seq 1 18); do
+    NOW_PIDS=$(zeek_pids)
+    if [ -n "$NOW_PIDS" ] && [ "$NOW_PIDS" = "$PIDS" ]; then SAME=$((SAME + 1)); else SAME=0; fi
+    PIDS=$NOW_PIDS
+    # three matching reads (20 s): Malcolm starts the workers 7-8 s apart
+    if [ "$SAME" -ge 2 ]; then break; fi
+    sleep 10
+done
+STABLE_FROM=$(date +%s)
+echo "   waiting up to 2 minutes for those processes to write conn.log..."
 GREW=1
-for i in $(seq 1 36); do
+for i in $(seq 1 24); do
     MTIME=$(sudo docker exec nettap-zeek-live stat -c %Y "$CONN_LOG" 2>/dev/null || echo 0)
-    if [ "$MTIME" -gt "$RECREATED" ]; then GREW=0; break; fi
+    if [ "$MTIME" -gt "$STABLE_FROM" ]; then GREW=0; break; fi
     sleep 5
 done
-check "conn.log written since the recreate" "$GREW" "mtime $MTIME, recreated $RECREATED"
-PIDS=$(zeek_pids)
-STABLE_FROM=$(date +%s)
+check "conn.log written since Zeek settled" "$GREW" "mtime $MTIME, settled $STABLE_FROM"
 if [ -z "$PIDS" ]; then check "zeek processes" 1 "none running"; fi
 for pid in $PIDS; do
     expect "zeek $pid CapEff" "$(awk '/^CapEff/ { print $2 }' "/proc/$pid/status" 2>/dev/null)" 0000000000002000
