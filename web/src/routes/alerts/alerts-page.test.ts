@@ -544,7 +544,12 @@ describe('Alerts — card states', () => {
 		succeedAll();
 		const { container } = render(Page);
 		await flush();
-		expect(screen.getByRole('link', { name: 'Malware & C2' })).toHaveAttribute('href', '/alerts/malware_c2');
+		// OLD CODE: expect(screen.getByRole('link', { name: 'Malware & C2' })).toHaveAttribute('href', '/alerts/malware_c2'); (NET-185: the bar carries its counts' window)
+		const category = new URL(screen.getByRole('link', { name: 'Malware & C2' }).getAttribute('href')!, 'http://localhost');
+		const counted = vi.mocked(getEnhancedCategories).mock.calls[0][0]!;
+		expect([category.pathname, category.searchParams.get('from'), category.searchParams.get('to'), category.searchParams.get('range')]).toEqual([
+			'/alerts/malware_c2', counted.from, counted.to, '24h',
+		]);
 		expect(screen.getByRole('img', { name: 'Threat score 42 of 100, level medium' })).toBeInTheDocument();
 		// NET-164: the ring states its scale, and the card says how the score is worked out
 		expect(screen.getByText('of 100')).toBeInTheDocument();
@@ -1165,6 +1170,23 @@ describe('Alerts — source, destination, rule-name links and 6h (NET-160 slice 
 		expect(within(drawer).queryByRole('link', { name: 'No rule here' })).not.toBeInTheDocument();
 	});
 
+	// NET-185: the same words as the "No rule name" bar; "Unknown" can be a real rule's name
+	it('an alert with no rule name reads "No rule name" in the groups, the table, its row label and the drawer', async () => {
+		succeedAll([alert('a1', { signature: '', rule: undefined, category: 'Bare category' })]);
+		render(Page);
+		await flush();
+		expect(screen.getByText('No rule name')).toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('button', { name: /Bare category/ }));
+		const drawer = screen.getByRole('complementary', { name: 'Alert details' });
+		expect(within(drawer).getByText('No rule name')).toBeInTheDocument();
+		await fireEvent.click(screen.getByRole('button', { name: 'All alerts' }));
+		const table = screen.getByRole('table', { name: /Alerts, newest first/ });
+		expect(within(table).getByText('No rule name')).toBeInTheDocument();
+		expect(within(table).queryByRole('link', { name: 'No rule name' })).not.toBeInTheDocument();
+		expect(within(table).getByRole('button', { name: 'Open alert with no rule name from 192.168.1.42' })).toBeInTheDocument();
+		expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
+	});
+
 	it('?range=6h opens the last 6 hours, with a 15-minute timeline', async () => {
 		at('?range=6h');
 		succeedAll();
@@ -1214,6 +1236,21 @@ describe('Alerts — Suricata category (NET-160 slice 2b-2)', () => {
 		// a filter, not a window: one list request, no reload
 		expect(getAlertTimeline).not.toHaveBeenCalled();
 		expect(screen.queryByRole('button', { name: 'Clear Suricata category filter' })).not.toBeInTheDocument();
+	});
+
+	// NET-185: a category's "No rule name" bar opens the alerts with no rule name
+	it('passes no_rule_name to the list, shown as a chip that clears only it', async () => {
+		at(`?no_rule_name=true&severity=high&from=${FROM}&to=${TO}&range=7d`);
+		succeedAll();
+		render(Page);
+		await flush();
+		expect(listCalls()).toEqual([expect.objectContaining({ page: 1, no_rule_name: true, severity: 1, from: FROM, to: TO })]);
+		expect(screen.getByRole('button', { name: 'Clear the no rule name filter' }).closest('.chip')).toHaveTextContent('No rule name');
+		await fireEvent.click(screen.getByRole('button', { name: 'Clear the no rule name filter' }));
+		await flush();
+		const q = nav.url.searchParams;
+		expect([q.get('no_rule_name'), q.get('severity'), q.get('from'), q.get('to'), q.get('range')]).toEqual([null, 'high', FROM, TO, '7d']);
+		expect(listCalls().at(-1)).toMatchObject({ no_rule_name: undefined, severity: 1, from: FROM, to: TO });
 	});
 
 	it("a Top signatures row opens exactly its count: that signature over the card's window, every other filter cleared", async () => {

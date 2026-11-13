@@ -204,6 +204,8 @@ export async function getAlerts(
 		order?: 'asc' | 'desc';
 		/** list the activity alerts (ET rates them informational or unknown, never counted) instead (NET-191) */
 		activity?: boolean;
+		/** only the alerts with no rule name, a Top signatures bar's null row (NET-185) */
+		no_rule_name?: boolean;
 	} = {}
 ): Promise<AlertsListResponse> {
 	const query = buildQuery({
@@ -222,6 +224,7 @@ export async function getAlerts(
 		sort: opts.sort,
 		order: opts.order,
 		activity: opts.activity ? 'true' : undefined,
+		no_rule_name: opts.no_rule_name ? 'true' : undefined,
 	});
 	const res = await fetch(`/api/alerts${query}`);
 
@@ -752,7 +755,8 @@ export interface CategoryDetailDevice {
 }
 
 export interface CategoryDetailSignature {
-	signature: string;
+	// OLD CODE: signature: string; (NET-185: alerts with no rule name are their own null row)
+	signature: string | null;
 	count: number;
 	last_seen: string;
 }

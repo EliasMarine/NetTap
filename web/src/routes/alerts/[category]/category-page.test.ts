@@ -1,13 +1,23 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, within } from '@testing-library/svelte';
-import { readable } from 'svelte/store';
+// OLD CODE: import { readable } from 'svelte/store'; (NET-185: the page store is writable)
+import { goto } from '$app/navigation';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
 import { expectNoNestedInteractive } from '../../../tests/nested-interactive';
 
-vi.mock('$app/stores', () => ({
-	page: readable({ url: new URL('http://localhost/alerts/scan'), params: { category: 'scan' } }),
-}));
+// OLD CODE START — NET-185: the page reads its window from the URL, so tests move it
+// vi.mock('$app/stores', () => ({
+// 	page: readable({ url: new URL('http://localhost/alerts/scan'), params: { category: 'scan' } }),
+// }));
+// OLD CODE END
+const nav = vi.hoisted(() => ({ set: (_query: string) => {} }));
+vi.mock('$app/stores', async () => {
+	const { writable } = await import('svelte/store');
+	const page = writable({ url: new URL('http://localhost/alerts/scan'), params: { category: 'scan' } });
+	nav.set = (query) => page.set({ url: new URL(`http://localhost/alerts/scan${query}`), params: { category: 'scan' } });
+	return { page };
+});
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 // #96: a failed request read as "No alerts in <category>" (the client returned zero stats, and
@@ -122,11 +132,60 @@ describe('Alert category page — signature links', () => {
 		vi.unstubAllGlobals();
 	});
 
-	it("the top-signature bars and the table's signatures carry the shown window and range", async () => {
-		const detail = { ...DETAIL, top_signatures: [{ signature: 'ET SCAN Nmap', count: 3, last_seen: '2026-11-06T10:00:00Z' }] };
+	// NET-185: the same words as the "No rule name" bar; "Unknown" can be a real rule's name
+	it('a table row with no rule name reads "No rule name", with no link', async () => {
 		const alerts = {
 			from: '', to: '', page: 1, size: 25, total: 1, total_pages: 1,
-			alerts: [{ _id: 'a', _index: 'x', timestamp: '2026-10-29T10:00:00Z', alert: { signature: 'Sig a', signature_id: 1, severity: 2, category: 'misc' }, src_ip: '10.0.0.9', dest_ip: '8.8.8.8', acknowledged: false }],
+			alerts: [{ _id: 'a', _index: 'x', timestamp: '2026-10-29T10:00:00Z', alert: { signature: '', signature_id: 1, severity: 2, category: 'misc' }, src_ip: '10.0.0.9', dest_ip: '8.8.8.8', acknowledged: false }],
+		};
+		stubDaemon({ '/api/alerts/categories/scan': DETAIL, '/api/alerts': alerts });
+		render(Page);
+		const table = await vi.waitFor(() => screen.getByRole('table', { name: /alerts, newest first/ }));
+		expect(within(table).getByText('No rule name')).toBeInTheDocument();
+		expect(within(table).queryByRole('link', { name: 'No rule name' })).not.toBeInTheDocument();
+		expect(within(table).getByRole('button', { name: 'Open alert with no rule name from 10.0.0.9' })).toBeInTheDocument();
+		expect(within(table).queryByText('Unknown')).not.toBeInTheDocument();
+	});
+
+	// NET-185: the list's signature filter matches rule.name; the shown signature can be Suricata's own
+	it('a table row links on its rule.name, and a row without one is plain text', async () => {
+		const row = (id: string, signature: string, rule?: { name: string }) => ({
+			_id: id, _index: 'x', timestamp: '2026-10-29T10:00:00Z', alert: { signature, signature_id: 1, severity: 2, category: 'misc' }, ...(rule ? { rule } : {}), src_ip: '10.0.0.9', dest_ip: '8.8.8.8', acknowledged: false,
+		});
+		const alerts = { from: '', to: '', page: 1, size: 25, total: 2, total_pages: 1, alerts: [row('a', 'A shown name', { name: 'ET SCAN Raw rule' }), row('b', 'Suricata only')] };
+		stubDaemon({ '/api/alerts/categories/scan': DETAIL, '/api/alerts': alerts });
+		const { container } = render(Page);
+		const table = await vi.waitFor(() => screen.getByRole('table', { name: /alerts, newest first/ }));
+		const href = within(table).getByRole('link', { name: 'A shown name' }).getAttribute('href')!;
+		expect(new URL(href, 'http://localhost').searchParams.get('signature')).toBe('ET SCAN Raw rule');
+		expect(within(table).getByText('Suricata only')).toBeInTheDocument();
+		expect(within(table).queryByRole('link', { name: 'Suricata only' })).not.toBeInTheDocument();
+		expectNoNestedInteractive(container);
+	});
+
+	// NET-185: a page, sort or sub-category change keeps the list on the figures' window until the next refresh
+	it('sorting minutes later lists over the window of the figures on screen', async () => {
+		stubDaemon({ '/api/alerts/categories/scan': DETAIL, '/api/alerts': { from: '', to: '', page: 1, size: 25, total: 0, total_pages: 0, alerts: [{ _id: 'a', _index: 'x', timestamp: '2026-10-29T10:00:00Z', alert: { signature: 'Sig a', signature_id: 1, severity: 2, category: 'misc' }, rule: { name: 'Sig a' }, src_ip: '10.0.0.9', dest_ip: '8.8.8.8', acknowledged: false }] } });
+		const { container } = render(Page);
+		await vi.waitFor(() => expect(screen.getByText('Sig a')).toBeInTheDocument());
+		const urls = () => vi.mocked(fetch).mock.calls.map(([u]) => String(u));
+		const shown = new URLSearchParams(urls().find((u) => u.startsWith('/api/alerts/categories/scan?'))!.split('?')[1]);
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(Date.now() + 5 * 60_000);
+		const severity = [...container.querySelectorAll('th')].find((th) => th.textContent?.trim().startsWith('Severity'))!;
+		severity.querySelector('button')!.click();
+		await vi.waitFor(() => expect(urls().filter((u) => u.startsWith('/api/alerts?')).at(-1)).toContain('sort=severity'));
+		const last = new URLSearchParams(urls().filter((u) => u.startsWith('/api/alerts?')).at(-1)!.split('?')[1]);
+		expect([last.get('from'), last.get('to')]).toEqual([shown.get('from'), shown.get('to')]);
+		vi.useRealTimers();
+	});
+
+	it("the top-signature bars and the table's signatures carry the shown window and range", async () => {
+		const detail = { ...DETAIL, top_signatures: [{ signature: 'ET SCAN Nmap', count: 3, last_seen: '2026-11-06T10:00:00Z' }] };
+		// OLD CODE: alerts: [{ …, alert: { signature: 'Sig a', … }, … }] (NET-185: a row links on its rule.name, which Malcolm's alerts carry)
+		const alerts = {
+			from: '', to: '', page: 1, size: 25, total: 1, total_pages: 1,
+			alerts: [{ _id: 'a', _index: 'x', timestamp: '2026-10-29T10:00:00Z', alert: { signature: 'Sig a', signature_id: 1, severity: 2, category: 'misc' }, rule: { name: 'Sig a' }, src_ip: '10.0.0.9', dest_ip: '8.8.8.8', acknowledged: false }],
 		};
 		stubDaemon({ '/api/alerts/categories/scan': detail, '/api/alerts': alerts });
 		const { container } = render(Page);
@@ -156,14 +215,42 @@ describe('Alert category page — signature links', () => {
 		vi.useRealTimers();
 	});
 
-	// NET-160 section D: "Unknown" is the daemon's bucket for alerts with no rule name, and the list
-	// matches the literal name only; an empty name makes the list drop the filter. Neither can list its figure.
-	it('the "Unknown" and empty-name bars are plain rows, with no link and no count', async () => {
+	// OLD CODE START — NET-185: the daemon kept "Unknown" and no rule name in one bucket, so neither linked
+	// // NET-160 section D: "Unknown" is the daemon's bucket for alerts with no rule name, and the list
+	// // matches the literal name only; an empty name makes the list drop the filter. Neither can list its figure.
+	// it('the "Unknown" and empty-name bars are plain rows, with no link and no count', async () => {
+	// 	const detail = {
+	// 		...DETAIL,
+	// 		top_signatures: [
+	// 			{ signature: 'ET SCAN Nmap', count: 3, last_seen: '2026-11-06T10:00:00Z' },
+	// 			{ signature: 'Unknown', count: 5, last_seen: '2026-11-06T10:00:00Z' },
+	// 			{ signature: '', count: 2, last_seen: '2026-11-06T10:00:00Z' },
+	// 		],
+	// 	};
+	// 	stubDaemon({ '/api/alerts/categories/scan': detail });
+	// 	const { container } = render(Page);
+	// 	const card = await vi.waitFor(() => screen.getByRole('heading', { name: 'Top signatures' }).closest('.card') as HTMLElement);
+	// 	const rows = [...card.querySelectorAll('.bar-row')];
+	// 	expect(rows).toHaveLength(3);
+	// 	const links = within(card).getAllByRole('link');
+	// 	expect(links.map((a) => a.textContent)).toEqual(['ET SCAN Nmap']);
+	// 	for (const row of rows.slice(1)) {
+	// 		expect(row.querySelector('a, button, [href]')).toBeNull();
+	// 	}
+	// 	expect(rows[1]).toHaveTextContent('Unknown');
+	// 	expect(rows[1]).toHaveTextContent('5');
+	// 	expectNoNestedInteractive(container);
+	// });
+	// OLD CODE END
+	// NET-185: "Unknown" is a rule's name and null is no rule name, each its own exact list; an
+	// empty name still makes the list drop the filter, so that bar stays plain
+	it('the "Unknown" and "No rule name" bars each open their own list with their figure; an empty name stays plain', async () => {
 		const detail = {
 			...DETAIL,
 			top_signatures: [
 				{ signature: 'ET SCAN Nmap', count: 3, last_seen: '2026-11-06T10:00:00Z' },
 				{ signature: 'Unknown', count: 5, last_seen: '2026-11-06T10:00:00Z' },
+				{ signature: null, count: 4, last_seen: '2026-11-06T10:00:00Z' },
 				{ signature: '', count: 2, last_seen: '2026-11-06T10:00:00Z' },
 			],
 		};
@@ -171,14 +258,59 @@ describe('Alert category page — signature links', () => {
 		const { container } = render(Page);
 		const card = await vi.waitFor(() => screen.getByRole('heading', { name: 'Top signatures' }).closest('.card') as HTMLElement);
 		const rows = [...card.querySelectorAll('.bar-row')];
-		expect(rows).toHaveLength(3);
-		const links = within(card).getAllByRole('link');
-		expect(links.map((a) => a.textContent)).toEqual(['ET SCAN Nmap']);
-		for (const row of rows.slice(1)) {
-			expect(row.querySelector('a, button, [href]')).toBeNull();
-		}
-		expect(rows[1]).toHaveTextContent('Unknown');
-		expect(rows[1]).toHaveTextContent('5');
+		expect(rows).toHaveLength(4);
+		const params = (name: string) => Object.fromEntries(new URL(within(card).getByRole('link', { name: new RegExp(name) }).getAttribute('href')!, 'http://localhost').searchParams);
+		const shown = new URLSearchParams(vi.mocked(fetch).mock.calls.map(([u]) => String(u)).find((u) => u.startsWith('/api/alerts/categories/scan?'))!.split('?')[1]);
+		const win = { from: shown.get('from'), to: shown.get('to'), range: '24h' };
+		expect(params('Unknown')).toEqual({ signature: 'Unknown', ...win, count: '5' });
+		expect(params('No rule name')).toEqual({ no_rule_name: 'true', ...win, count: '4' });
+		expect(within(card).getAllByRole('link')).toHaveLength(3);
+		expect(rows[3].querySelector('a, button, [href]')).toBeNull();
+		// an empty name reads "No rule name" too, never a blank label
+		expect(rows[3]).toHaveTextContent('No rule name');
 		expectNoNestedInteractive(container);
+	});
+});
+
+// NET-185: a link from another page's window opens the category over that window, so its figures
+// are the ones that were clicked
+describe('Alert category page — the window in its URL', () => {
+	const asked = (path: string) =>
+		vi.mocked(fetch).mock.calls.map(([u]) => new URL(String(u), 'http://localhost')).filter((u) => u.pathname === path);
+	afterEach(() => {
+		nav.set('');
+		vi.mocked(goto).mockClear();
+		vi.unstubAllGlobals();
+	});
+
+	it("loads every figure over a link's exact window, shown as Custom", async () => {
+		const from = '2026-11-01T08:00:00.000Z';
+		const to = '2026-11-01T20:00:00.000Z';
+		nav.set(`?from=${from}&to=${to}&range=7d`);
+		stubDaemon({ '/api/alerts/categories/scan': { ...DETAIL, top_signatures: [{ signature: 'ET SCAN Nmap', count: 3, last_seen: '' }] } });
+		render(Page);
+		await vi.waitFor(() => expect(asked('/api/alerts')).toHaveLength(1));
+		for (const path of ['/api/alerts/categories/scan', '/api/alerts/categories/scan/timeline', '/api/alerts']) {
+			const [u] = asked(path);
+			expect([u.searchParams.get('from'), u.searchParams.get('to')], path).toEqual([from, to]);
+		}
+		// 12 hours: the 24h range's hourly slots
+		expect(asked('/api/alerts/categories/scan/timeline')[0].searchParams.get('interval')).toBe('1h');
+		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+		const bar = new URL((await screen.findByRole('link', { name: /ET SCAN Nmap/ })).getAttribute('href')!, 'http://localhost');
+		expect([bar.searchParams.get('from'), bar.searchParams.get('to'), bar.searchParams.get('range')]).toEqual([from, to, '7d']);
+	});
+
+	it('loads ?range=7d over the last 7 days, and a pill writes its range to the URL', async () => {
+		nav.set('?range=7d');
+		stubDaemon({ '/api/alerts/categories/scan': DETAIL });
+		render(Page);
+		await vi.waitFor(() => expect(asked('/api/alerts/categories/scan')).toHaveLength(1));
+		const [u] = asked('/api/alerts/categories/scan');
+		expect((Date.parse(u.searchParams.get('to')!) - Date.parse(u.searchParams.get('from')!)) / 3_600_000).toBe(168);
+		expect(screen.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
+		expect(screen.queryByRole('button', { name: 'Custom' })).not.toBeInTheDocument();
+		screen.getByRole('button', { name: '1h' }).click();
+		expect(goto).toHaveBeenCalledWith('/alerts/scan?range=1h', { replaceState: true, keepFocus: true, noScroll: true });
 	});
 });

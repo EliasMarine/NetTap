@@ -638,3 +638,99 @@ describe("Log Explorer — Home's Connections link and 6h (NET-160 slice 2b-1)",
 		expect((Date.parse(to!) - Date.parse(from!)) / 3_600_000).toBe(6);
 	});
 });
+
+// NET-184: a top source or destination bar opens exactly its figure: that address on that side
+// alone, over the bar's own window, every other filter cleared
+describe('Log Explorer — top address bars open their figure', () => {
+	const searches = () => requestsTo('/api/logs/search');
+	const last = () => searches().at(-1)!.searchParams;
+	const bar = (name: string) => screen.getAllByRole('button', { name }).find((b) => b.classList.contains('bar-label'))!;
+
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date('2026-11-06T12:00:00Z'));
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	async function openWithFilters(total: number) {
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [hit('a', '10.0.0.5')], total } });
+		goTo('/logs?query=dns&type=zeek.dns&exclude_src=10.0.0.9');
+		render(Page);
+		await vi.waitFor(() => expect(screen.getByText('Total events').closest('.kpi')).toHaveTextContent('10'));
+		await new Promise((r) => setTimeout(r, 0));
+	}
+
+	it("searches the source alone over the talkers' window, with no other filter, and says nothing when the totals agree", async () => {
+		await openWithFilters(10);
+		const counted = bounds(requestsTo('/api/logs/top-talkers')[0]);
+		vi.setSystemTime(Date.now() + 10 * 60_000); // a bar clicked later still lists its own window
+		await fireEvent.click(bar('10.0.0.5'));
+		await vi.waitFor(() => expect(last().get('query')).toBe('source.ip:"10.0.0.5"'));
+		expect([last().get('log_type'), last().get('exclude_src')]).toEqual([null, null]);
+		expect(bounds(searches().at(-1)!)).toEqual(counted);
+		expect(screen.getByRole('button', { name: 'Remove filter Source: 10.0.0.5' })).toHaveTextContent('Source: 10.0.0.5');
+		expect(screen.getByLabelText('Search logs')).toHaveValue('');
+		expect(screen.queryByText(/You clicked/)).not.toBeInTheDocument();
+	});
+
+	it('says when the list holds a different number than the destination bar showed', async () => {
+		await openWithFilters(12);
+		await fireEvent.click(bar('10.0.0.1'));
+		await vi.waitFor(() => expect(last().get('query')).toBe('destination.ip:"10.0.0.1"'));
+		expect(await screen.findByText(/^You clicked 10\. This search now matches 12 records \(2 more\)/)).toBeInTheDocument();
+		expect(screen.getByRole('button', { name: 'Remove filter Destination: 10.0.0.1' })).toBeInTheDocument();
+	});
+
+	it('a sort later keeps the bar\'s window and its comparison', async () => {
+		await openWithFilters(12);
+		const counted = bounds(requestsTo('/api/logs/top-talkers')[0]);
+		await fireEvent.click(bar('10.0.0.5'));
+		await screen.findByText(/^You clicked 10\./);
+		vi.setSystemTime(Date.now() + 10 * 60_000);
+		const before = searches().length;
+		const header = [...document.querySelectorAll('th button')].find((b) => b.textContent === 'source.ip')!;
+		await fireEvent.click(header);
+		await vi.waitFor(() => expect(searches()).toHaveLength(before + 1));
+		expect([last().get('query'), last().get('sort')]).toEqual(['source.ip:"10.0.0.5"', 'source.ip:desc']);
+		expect(bounds(searches().at(-1)!)).toEqual(counted);
+		expect(await screen.findByText(/^You clicked 10\./)).toBeInTheDocument();
+	});
+
+	it('a sort or "load more" runs the searched text, not text typed but not submitted', async () => {
+		await openWithFilters(150);
+		// OLD CODE START — every reply carried the same hit 'a', so "load more" appended a duplicate row key
+		// stubDaemon({ ...AGGREGATIONS, '/api/logs/search': { hits: [hit('a', '10.0.0.5')], total: 150, search_after: [1] } });
+		// OLD CODE END
+		let n = 0;
+		stubDaemon({ ...AGGREGATIONS, '/api/logs/search': () => ({ hits: [hit(`h${n++}`, '10.0.0.5')], total: 150, search_after: [n] }) });
+		await fireEvent.click(bar('10.0.0.5'));
+		await screen.findByText(/^You clicked 10\./);
+		await fireEvent.input(screen.getByLabelText('Search logs'), { target: { value: 'not yet submitted' } });
+		const before = searches().length;
+		const header = [...document.querySelectorAll('th button')].find((b) => b.textContent === 'source.ip')!;
+		await fireEvent.click(header);
+		await vi.waitFor(() => expect(searches()).toHaveLength(before + 1));
+		expect(last().get('query')).toBe('source.ip:"10.0.0.5"');
+		expect(screen.getByLabelText('Search logs')).toHaveValue('not yet submitted');
+		expect(await screen.findByText(/^You clicked 10\./)).toBeInTheDocument();
+		await fireEvent.click(await screen.findByRole('button', { name: /Load more/ }));
+		await vi.waitFor(() => expect(searches()).toHaveLength(before + 2));
+		expect(last().get('query')).toBe('source.ip:"10.0.0.5"');
+	});
+
+	it('selecting the bar again clears the address, and a later hand-off matches either side', async () => {
+		await openWithFilters(10);
+		await fireEvent.click(bar('10.0.0.5'));
+		await vi.waitFor(() => expect(last().get('query')).toBe('source.ip:"10.0.0.5"'));
+		await fireEvent.click(bar('10.0.0.5'));
+		await vi.waitFor(() => expect(last().get('query')).toBeNull());
+		await fireEvent.click(bar('10.0.0.5'));
+		await vi.waitFor(() => expect(last().get('query')).toBe('source.ip:"10.0.0.5"'));
+		goTo('/logs?ip=10.0.0.5');
+		await vi.waitFor(() => expect(last().get('query')).toBe('(source.ip:"10.0.0.5" OR destination.ip:"10.0.0.5")'));
+		expect(screen.getByRole('button', { name: 'Remove filter IP: 10.0.0.5' })).toBeInTheDocument();
+	});
+});

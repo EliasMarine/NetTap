@@ -26,6 +26,7 @@ from services.excluded_ips import (
 )
 from services.dns_analytics import DNS_LOOKUP_EXCLUSION
 from services.dns_analytics import DNS_NOISE_EXCLUSION as _EXCLUDE_DNS_NOISE
+from storage.exact_terms import PartialResultsError, truncated
 from storage.manager import StorageManager
 from storage.time_slots import histogram_buckets, time_slots
 
@@ -946,6 +947,9 @@ async def handle_log_top_talkers(request: web.Request) -> web.Response:
             lambda: storage._client.search(index=NETWORK_INDEX, body=body)
         )
 
+        # NET-184: a bar's figure must equal the list it opens, so an estimate is no figure
+        if truncated(result.get("aggregations")):
+            raise PartialResultsError("top sources: a shard cut its list short")
         raw = result.get("aggregations", {}).get("top_sources", {}).get("buckets", [])
         talkers = [{"ip": b["key"], "count": b["doc_count"]} for b in raw]
 
@@ -1065,6 +1069,9 @@ async def handle_log_top_destinations(request: web.Request) -> web.Response:
             lambda: storage._client.search(index=NETWORK_INDEX, body=body)
         )
 
+        # NET-184: as top-talkers, an estimate is no figure
+        if truncated(result.get("aggregations")):
+            raise PartialResultsError("top destinations: a shard cut its list short")
         raw = (
             result.get("aggregations", {})
             .get("top_destinations", {})
