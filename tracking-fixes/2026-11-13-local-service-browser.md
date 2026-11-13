@@ -72,6 +72,23 @@ unresolved uid is never merged, and rows come from multicast-destination records
   open-flow exclusion, treating ambiguous IPs as single, and dropping the rdata exclusion each
   fail a test.
 
+## Security review fixes (PR #268, batch 1)
+
+- **Spoofed announcements could break the page or fill memory (MEDIUM).** Any LAN device can
+  send mDNS answers with many names. A page of 1,000 buckets with two 1,000-name lists could ask
+  for 2M buckets (past `search.max_buckets`, 65,535, so a 502), and the per-flow read had no total.
+  Now each read sizes its page so page size × (1 + both list sizes) stays under 60,000
+  (`PAGE_BUCKETS`). The per-flow lists hold 50 names (`NAMES_PER_FLOW`; the G11 needs 15), and
+  both names reads stop past 100,000 (name, bucket) pairs in all (`NAMES_READ`; the G11 holds
+  about 18,500 at 7 d), saying truncated. `all_buckets` gained an optional `stop` for this. The
+  reply sorts, cuts to 5,000 rows, then names only those.
+- **Duplicate row keys crashed the table (LOW).** Two unresolved flows from one IP with the same
+  instance and last-seen read the same on every field, and Svelte threw `each_key_duplicate`.
+  Each row now carries a stable `id` (a hash of the daemon's merge key), and the page keys on it.
+- Tests: no request asks for more buckets than a reply may hold; one-flow pages give the same
+  rows; a 1-pair budget stops after the first per-flow page and says truncated; two look-alike
+  flows get distinct ids and both render. Each fails without its fix.
+
 ## Lessons
 
 - Zeek's `zeek.dns.answers` holds rdata strings like `NSEC <name> <next>`, which match a naive

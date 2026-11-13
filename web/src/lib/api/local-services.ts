@@ -19,6 +19,8 @@ export interface ServiceSender {
 }
 
 export interface LocalServiceRow {
+	/** Stable per row from the daemon's merge key: two rows may read the same on screen */
+	id: string;
 	protocol: 'mdns' | 'ssdp';
 	/** Raw DNS-SD type, e.g. "_airplay._tcp"; null for SSDP */
 	service_type: string | null;
@@ -45,6 +47,7 @@ const isSender = (s: unknown) =>
 	(s.vlan_state === 'tagged' || s.vlan_state === 'untagged' || s.vlan_state === 'unknown');
 const isRow = (r: unknown) =>
 	isObject(r) &&
+	isString(r.id) &&
 	(r.protocol === 'mdns' || r.protocol === 'ssdp') &&
 	isNullableString(r.service_type) &&
 	isNullableString(r.instance) &&

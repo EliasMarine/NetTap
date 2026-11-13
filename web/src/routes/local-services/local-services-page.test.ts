@@ -102,12 +102,21 @@ describe('Local services page', () => {
 		expect(screen.getByText('No announcements match your search.')).toBeInTheDocument();
 	});
 
+	it('shows two rows that read the same, told apart by their ids', async () => {
+		// two flows from one address, not yet matched to a conn record, can match on every field
+		const twin = LOCAL_SERVICES.rows[0];
+		stubDaemon({ ...LOCAL_SERVICES, rows: [twin, { ...twin, id: 'twin' }] });
+		render(LocalServicesPage);
+		await vi.waitFor(() => expect(bodyRows()).toHaveLength(2));
+		expect(bodyRows()[0].textContent).toBe(bodyRows()[1].textContent);
+	});
+
 	it('says when the list was cut short', async () => {
 		stubDaemon({ ...LOCAL_SERVICES, truncated: true });
 		render(LocalServicesPage);
 		const note = await vi.waitFor(() => screen.getByText(/may not hold every announcement/));
 		// it names the limits, so the owner knows which one a shorter range avoids
-		expect(note).toHaveTextContent('5,000 rows, 20,000 connections matched one by one, or 1,000 names from one sender');
+		expect(note).toHaveTextContent('5,000 rows, 20,000 connections matched one by one, 1,000 names from one sender, 50 from one connection, or 100,000 names in all');
 	});
 
 	it('asks for the range picked, and offers no range past 7 days', async () => {

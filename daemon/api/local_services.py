@@ -20,11 +20,13 @@ SSDP: conn records from port 1900 to port 1900 (NOTIFY, not M-SEARCH), by (IP, M
 """
 
 import asyncio
+import hashlib
+import json
 import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 from aiohttp import web
 from opensearchpy import ConnectionTimeout, OpenSearchException
@@ -58,7 +60,16 @@ OPEN_FLOWS = timedelta(minutes=15)
 FLOW_START_PAD = timedelta(days=1)
 # shortcut: the uid-by-uid read stops here (7 d on the G11: 6,065) and says truncated
 UID_CAP = 20_000
+# A reply holds at most search.max_buckets (65,535): a page of buckets with two name lists each is
+# sized under this, as snapshot_search.py sizes its pages
+PAGE_BUCKETS = 60_000
+# Names one bucket may list (a full list says truncated). On the G11 at 7 d: 54 per sender (the
+# router repeats everyone's), 15 per flow
 NAMES_PER_SENDER = 1_000
+NAMES_PER_FLOW = 50
+# (name, bucket) pairs the two names reads may hold in all (the G11 at 7 d: ~18,500), so spoofed
+# announcements can't fill the daemon's memory; past it the reads stop and say truncated
+NAMES_READ = 100_000
 # A DNS-SD instance. Zeek lowercases names, so capitals start only its own rdata strings
 # ("NSEC a._x._tcp.local …", "TXT …")
 _INSTANCE_RX = r"[^_].*\._[a-z0-9-]+\._(tcp|udp)\.local"
@@ -76,19 +87,49 @@ _WHO = [
 ]
 
 
-def _names(field: str) -> dict:
+# OLD CODE START — NET-264 review: one list size (1,000) for every read, so a page of 1,000
+# flows could ask for 2M buckets, past search.max_buckets
+# def _names(field: str) -> dict:
+#     return {
+#         "terms": {
+#             "field": field,
+#             "include": _INSTANCE_RX,
+#             "exclude": _RDATA_RX,
+#             "size": NAMES_PER_SENDER,
+#         },
+#         "aggs": {"last": {"max": {"field": "@timestamp"}}},
+#     }
+#
+#
+# _NAME_AGGS = {"q": _names("zeek.dns.query"), "a": _names("zeek.dns.answers")}
+# OLD CODE END
+def _names(field: str, size: int) -> dict:
     return {
         "terms": {
             "field": field,
             "include": _INSTANCE_RX,
             "exclude": _RDATA_RX,
-            "size": NAMES_PER_SENDER,
+            "size": size,
         },
         "aggs": {"last": {"max": {"field": "@timestamp"}}},
     }
 
 
-_NAME_AGGS = {"q": _names("zeek.dns.query"), "a": _names("zeek.dns.answers")}
+def _name_aggs(size: int) -> dict:
+    """The names a bucket's records announced, from both fields, up to `size` each."""
+    return {"q": _names("zeek.dns.query", size), "a": _names("zeek.dns.answers", size)}
+
+
+def _names_budget() -> Callable[[list[dict]], bool]:
+    """A `stop` for the names reads: True once they hold more than NAMES_READ pairs."""
+    held = 0
+
+    def over(page: list[dict]) -> bool:
+        nonlocal held
+        held += sum(len(b["q"]["buckets"]) + len(b["a"]["buckets"]) for b in page)
+        return held > NAMES_READ
+
+    return over
 
 
 def _mdns(filters: list[dict], *more: dict) -> dict:
@@ -116,18 +157,24 @@ def _read(
     what: str,
     aggs: dict | None = None,
     cap: int | None = None,
+    names: int = 0,
+    stop: Callable[[list[dict]], bool] | None = None,
 ) -> tuple[list[dict], bool]:
+    """Every bucket, up to `cap`; with `names`, each lists up to that many names per field, and a
+    page holds at most PAGE_BUCKETS buckets in all."""
     cap = cap or LIST_CAP
+    per_bucket = 1 + 2 * names
     return all_buckets(
         client,
         NETWORK_INDEX,
         query,
         sources,
-        aggs=aggs,
-        page_size=min(PAGE_SIZE, cap),
+        aggs=_name_aggs(names) if names else aggs,
+        page_size=max(1, min(PAGE_SIZE, cap, PAGE_BUCKETS // per_bucket)),
         max_buckets=cap,
         what=what,
         budget=budget,
+        stop=stop,
     )
 
 
@@ -184,13 +231,19 @@ def _row(protocol: str, service: tuple | None, sender: dict, last_seen: str) -> 
     }
 
 
+def _row_id(key: tuple) -> str:
+    """A stable id for a row's merge key: two unresolved flows can read the same on screen."""
+    return hashlib.blake2b(json.dumps(key).encode(), digest_size=8).hexdigest()
+
+
 def _newest(keyed: list[tuple[tuple, dict]]) -> list[dict]:
     """One row per key: the one last seen, with that announcement's IP."""
     best: dict[tuple, dict] = {}
     for key, row in keyed:
         if key not in best or row["last_seen"] > best[key]["last_seen"]:
             best[key] = row
-    return list(best.values())
+    # OLD CODE: return list(best.values()) (NET-264 review: rows carry their key's id)
+    return [{"id": _row_id(key), **row} for key, row in best.items()]
 
 
 def _mdns_rows(
@@ -215,6 +268,7 @@ def _mdns_rows(
     recent_uids = [b["key"]["uid"] for b in recent]
     closed, closed_done = _joined(client, budget, recent_uids)
     open_uids = [u for u in recent_uids if u not in closed]
+    held_names = _names_budget()  # shared: both names reads count against one budget
     # a capped read could hide an address's second sender or an open flow: then every uid is joined
     one = (
         {ip: next(iter(pairs)) for ip, pairs in seen_as.items() if len(pairs) == 1}
@@ -233,7 +287,8 @@ def _mdns_rows(
         },
         [_IP],
         "the mDNS names per sender",
-        aggs=_NAME_AGGS,
+        names=NAMES_PER_SENDER,
+        stop=held_names,
     )
     rest = {
         "bool": {
@@ -251,8 +306,9 @@ def _mdns_rows(
         rest,
         [_UID, _IP],
         "the mDNS names per flow",
-        aggs=_NAME_AGGS,
         cap=UID_CAP,
+        names=NAMES_PER_FLOW,
+        stop=held_names,
     )
     joined, joined_done = _joined(client, budget, [b["key"]["uid"] for b in by_uid])
 
@@ -305,13 +361,14 @@ def _ssdp_rows(
         aggs={"last": {"max": {"field": "@timestamp"}}},
     )
     rows = [
-        _row(
-            "ssdp",
-            None,
-            _sender(b["key"]["ip"], b["key"]["mac"], b["key"]["vlan"], True),
-            iso_ms(b["last"]["value"]),
-        )
+        {
+            "id": _row_id(("ssdp", ip, mac, vlan)),
+            **_row(
+                "ssdp", None, _sender(ip, mac, vlan, True), iso_ms(b["last"]["value"])
+            ),
+        }
         for b in found
+        for ip, mac, vlan in [(b["key"]["ip"], b["key"]["mac"], b["key"]["vlan"])]
     ]
     return rows, done
 
@@ -358,9 +415,12 @@ def local_services(
         logger.warning("Local services search failed: %s", exc)
         raise QueryFailed("the local service search failed") from exc
     budget.check("the sender names")
-    rows = sorted(
-        _named(request, [*mdns, *ssdp]), key=lambda r: r["last_seen"], reverse=True
-    )
+    # OLD CODE START — NET-264 review: every row was named before the cut
+    # rows = sorted(
+    #     _named(request, [*mdns, *ssdp]), key=lambda r: r["last_seen"], reverse=True
+    # )
+    # OLD CODE END
+    rows = sorted([*mdns, *ssdp], key=lambda r: r["last_seen"], reverse=True)
     truncated = not (mdns_done and ssdp_done) or len(rows) > LIST_CAP
     logger.info(
         "Local services %s to %s: %d rows (%d flows joined one by one), truncated=%s, in %.2f s",
@@ -375,7 +435,8 @@ def local_services(
         "from": from_ts,
         "to": to_ts,
         "truncated": truncated,
-        "rows": rows[:LIST_CAP],
+        # OLD CODE: "rows": rows[:LIST_CAP], (NET-264 review: named after the cut)
+        "rows": _named(request, rows[:LIST_CAP]),
     }
 
 

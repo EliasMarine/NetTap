@@ -68,7 +68,9 @@
 		{ key: 'vlan', label: 'VLAN seen on', sortValue: (r) => vlanWords(r.sender), cell: vlanCell },
 		{ key: 'last_seen', label: 'Last announcement', sortValue: (r) => r.last_seen, cell: seenCell },
 	];
-	const rowKey = (r: LocalServiceRow) => `${r.protocol}|${r.service_type}|${r.instance}|${r.sender.ip}|${r.sender.mac}|${r.sender.vlan}|${r.sender.vlan_state}|${r.last_seen}`;
+	// OLD CODE: a key from the row's fields (two unresolved flows from one IP can match on every field)
+	// const rowKey = (r: LocalServiceRow) => `${r.protocol}|${r.service_type}|${r.instance}|${r.sender.ip}|${r.sender.mac}|${r.sender.vlan}|${r.sender.vlan_state}|${r.last_seen}`;
+	const rowKey = (r: LocalServiceRow) => r.id;
 </script>
 
 {#snippet serviceCell(r: LocalServiceRow)}
@@ -123,7 +125,7 @@
 		{#if loaded.data.truncated}
 			<p class="notice is-warn" role="status">
 				<Icon name="warn" /><span
-					>NetTap stopped at one of its limits (5,000 rows, 20,000 connections matched one by one, or 1,000 names from one sender), so this list may not hold
+					>NetTap stopped at one of its limits (5,000 rows, 20,000 connections matched one by one, 1,000 names from one sender, 50 from one connection, or 100,000 names in all), so this list may not hold
 					every announcement. Try a shorter time range.</span
 				>
 			</p>

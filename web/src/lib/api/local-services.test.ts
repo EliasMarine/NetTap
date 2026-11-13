@@ -34,6 +34,7 @@ describe('getLocalServices', () => {
 	const first = LOCAL_SERVICES.rows[0];
 	it.each([
 		['no rows', { ...LOCAL_SERVICES, rows: undefined }],
+		['a row without an id', { ...LOCAL_SERVICES, rows: [{ ...first, id: undefined }] }],
 		['no truncated flag', { ...LOCAL_SERVICES, truncated: undefined }],
 		['an unknown protocol', { ...LOCAL_SERVICES, rows: [{ ...first, protocol: 'llmnr' }] }],
 		['a row without a sender', { ...LOCAL_SERVICES, rows: [{ ...first, sender: undefined }] }],

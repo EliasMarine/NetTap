@@ -6,6 +6,7 @@ checked against the records behind them, not against canned replies.
 """
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -33,6 +34,7 @@ HUB = "hue bridge - 0a0b0c._hue._tcp.local"
 HOMEKIT = "philips hue homekit._hap._tcp.local"
 AIRPLAY = "living room._airplay._tcp.local"
 PRINTER = "printer._ipp._tcp.local"
+SCANNER = "scanner._uscan._tcp.local"
 INCOMPLETE = "Couldn't read the network data: the local service search was incomplete."
 
 
@@ -114,6 +116,9 @@ DOCS = [
         zeek__uid="Chue1",
         zeek__dns__answers=["local"],
     ),
+    # Two flows of it that read the same on screen: same IP, instance and time
+    announce(LINK, "Cdup1", at("10:42:00"), SCANNER, dst=GROUP6),
+    announce(LINK, "Cdup2", at("10:42:00"), SCANNER, dst=GROUP6),
     # Outside the window
     announce(HUE, "Cold", "2026-11-04T10:00:00.000Z", "old._airplay._tcp.local"),
     # SSDP: a NOTIFY from port 1900, and an M-SEARCH from an ephemeral port
@@ -188,10 +193,14 @@ class Case(AioHTTPTestCase):
         return resp.status, await resp.json()
 
     async def rows(self) -> list[dict]:
+        """The reply's rows without their ids, once every id is checked to be its own."""
         status, body = await self.get()
         self.assertEqual(status, 200, body)
         self.assertFalse(body["truncated"])
-        return body["rows"]
+        ids = [r["id"] for r in body["rows"]]
+        self.assertEqual(len(set(ids)), len(ids))
+        self.assertTrue(all(re.fullmatch(r"[0-9a-f]{16}", i) for i in ids))
+        return [{k: v for k, v in r.items() if k != "id"} for r in body["rows"]]
 
 
 def _find(rows, instance, **sender):
@@ -281,6 +290,21 @@ class TestAnnouncements(Case):
                 },
             )
 
+    async def test_two_flows_that_read_the_same_keep_their_own_ids(self):
+        """Unresolved flows are kept apart by uid, which the reply leaves out: the id tells
+        the page's table their rows apart."""
+        _, body = await self.get()
+        twins = [r for r in body["rows"] if r["instance"] == "scanner"]
+        self.assertEqual(len(twins), 2)
+        self.assertNotEqual(twins[0]["id"], twins[1]["id"])
+        strip = [{k: v for k, v in r.items() if k != "id"} for r in twins]
+        self.assertEqual(strip[0], strip[1])
+        # the same request gives the same ids
+        _, again = await self.get()
+        self.assertEqual(
+            {r["id"] for r in again["rows"]}, {r["id"] for r in body["rows"]}
+        )
+
     async def test_a_unicast_exchange_never_names_the_querier(self):
         rows = await self.rows()
         self.assertEqual([r for r in rows if r["sender"]["ip"] == QUERIER], [])
@@ -298,6 +322,7 @@ class TestAnnouncements(Case):
                 ("_hap._tcp", "philips hue homekit"),
                 ("_airplay._tcp", "living room"),
                 ("_ipp._tcp", "printer"),
+                ("_uscan._tcp", "scanner"),
             },
         )
 
@@ -365,6 +390,64 @@ NOW = datetime.now(timezone.utc)
 def ago(minutes: float) -> str:
     when = NOW - timedelta(minutes=minutes)
     return when.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _page_buckets(body: dict) -> int:
+    """The most buckets one page of a composite body can answer: its size times one per
+    bucket and one per name each terms list may hold."""
+    agg = body["aggs"]["all"]
+    lists = sum(
+        a["terms"]["size"] for a in agg.get("aggs", {}).values() if "terms" in a
+    )
+    return agg["composite"]["size"] * (1 + lists)
+
+
+class TestPageSizes(Case):
+    async def test_no_page_asks_for_more_buckets_than_a_reply_may_hold(self):
+        await self.rows()
+        self.assertTrue(self.os.bodies)
+        for body in self.os.bodies:
+            self.assertLessEqual(_page_buckets(body), local_services.PAGE_BUCKETS, body)
+        lists = {
+            body["aggs"]["all"]["aggs"]["q"]["terms"]["size"]
+            for body in self.os.bodies
+            if "q" in body["aggs"]["all"].get("aggs", {})
+        }
+        self.assertEqual(
+            lists, {local_services.NAMES_PER_SENDER, local_services.NAMES_PER_FLOW}
+        )
+
+    async def test_one_bucket_pages_give_the_same_rows(self):
+        whole = await self.rows()
+        with patch.object(
+            local_services, "PAGE_BUCKETS", 2 * local_services.NAMES_PER_FLOW + 1
+        ):
+            paged = await self.rows()
+        self.assertEqual(paged, whole)
+
+    async def test_the_names_reads_stop_at_their_budget(self):
+        def per_flow_pages() -> int:
+            return sum(
+                [*b["aggs"]["all"]["composite"]["sources"][0]] == ["uid"]
+                and "q" in b["aggs"]["all"].get("aggs", {})
+                for b in self.os.bodies
+            )
+
+        one_flow_a_page = patch.object(
+            local_services, "PAGE_BUCKETS", 2 * local_services.NAMES_PER_FLOW + 1
+        )
+        with one_flow_a_page:
+            _, whole = await self.get()
+        self.assertFalse(whole["truncated"])
+        unbounded = per_flow_pages()
+        self.assertGreater(unbounded, 1)
+
+        with one_flow_a_page, patch.object(local_services, "NAMES_READ", 1):
+            status, body = await self.get()
+        self.assertEqual(status, 200)
+        self.assertTrue(body["truncated"])
+        # the first page passes the budget, so no second one is asked for
+        self.assertEqual(per_flow_pages() - unbounded, 1)
 
 
 class TestOpenFlows(Case):
