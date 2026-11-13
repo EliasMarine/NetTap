@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from aiohttp import web
 from opensearchpy import OpenSearch
 
+from storage.exact_terms import ExactTermsOpenSearch
 from storage.manager import StorageManager
 from smart.monitor import SmartMonitor
 
@@ -1484,8 +1485,16 @@ def create_app(
     register_address_routes(app, drill_client)
     register_domain_routes(app, drill_client)
     register_suricata_category_routes(app, drill_client)
-    # NET-249: the moment page's top devices, in the same permits on the daemon's own client
-    register_moment_routes(app)
+    # NET-249: the moment page's top devices, in the same permits. The daemon's exact-terms
+    # client (the device list's queries, PartialResultsError on a part reply), without retries
+    # as drill_client is, so a request can't outlive its budget
+    # OLD CODE: register_moment_routes(app) (NET-249 review: it used storage._client, which retries)
+    register_moment_routes(
+        app,
+        ExactTermsOpenSearch(
+            **storage.client_kwargs(max_retries=0, retry_on_timeout=False)
+        ),
+    )
 
     logger.info("API application created with %d routes", len(app.router.routes()))
 
