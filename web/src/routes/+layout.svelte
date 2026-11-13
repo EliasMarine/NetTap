@@ -13,6 +13,7 @@
 	import { getStorageStatus } from '$api/system';
 	import type { StorageStatus } from '$api/system';
 	import { captureMode as modeStore, initCaptureMode } from '$lib/stores/captureMode';
+	import { SIGN_IN_FIRST } from '$lib/auth-errors';
 	import { alertSnapshots, loadAlertSnapshot, refreshAlertSnapshots } from '$lib/stores/alertSnapshot';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Sidebar from '$lib/components/shell/Sidebar.svelte';
@@ -130,11 +131,12 @@
 		const run = shellRun;
 		try {
 			const res = await fetch('/api/system/ping');
-			const body = res.ok || res.status === 401 ? await res.json() : null;
+			// the reply is whatever JSON came back: the fields are only compared, never trusted
+			const body: { error?: unknown; status?: unknown } | null = res.ok || res.status === 401 ? await res.json() : null;
 			if (run !== shellRun || redirecting) return;
-			// Only the web app's own "Sign in first" (hooks.server.ts) means the session ran out; the
+			// Only the web app's own sign-in refusal (hooks.server.ts) means the session ran out; the
 			// daemon's 401 is {"error":"Unauthorized"} and stays "offline", as does a login page's 200
-			if (res.status === 401 && body?.error === 'Sign in first') {
+			if (res.status === 401 && body?.error === SIGN_IN_FIRST) {
 				void sendToSignIn();
 				return;
 			}

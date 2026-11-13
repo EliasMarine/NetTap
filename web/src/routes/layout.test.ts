@@ -4,6 +4,7 @@ import { createRawSnippet, tick } from 'svelte';
 import type { Writable } from 'svelte/store';
 import { page } from '$app/stores';
 import { goto } from '$app/navigation';
+import { SIGN_IN_FIRST } from '$lib/auth-errors';
 import * as captureApi from '$api/capture';
 import * as systemApi from '$api/system';
 import { get } from 'svelte/store';
@@ -195,7 +196,7 @@ describe('layout daemon status', () => {
 
 // NET-198: a lapsed session sends the user to sign in instead of saying "Can't reach NetTap"
 describe('layout session expiry', () => {
-	const signInFirst = () => new Response(JSON.stringify({ error: 'Sign in first' }), { status: 401 });
+	const signInFirst = () => new Response(JSON.stringify({ error: SIGN_IN_FIRST }), { status: 401 });
 
 	beforeEach(() => {
 		vi.mocked(goto).mockReset();
@@ -280,19 +281,22 @@ describe('layout session expiry', () => {
 	});
 
 	it('ignores a ping that was already on its way when the user signed in again', async () => {
+		vi.useFakeTimers();
 		let answerOld!: (r: Response) => void;
 		const old = new Promise<Response>((resolve) => (answerOld = resolve));
 		let calls = 0;
 		stubFetch(() => (++calls === 1 ? old : new Response(JSON.stringify({ status: 'ok' }))));
 		renderLayout();
-		await vi.waitFor(() => expect(calls).toBe(1));
+		await vi.advanceTimersByTimeAsync(0);
+		expect(calls).toBe(1);
 
 		pageStore.set({ url: new URL('http://localhost/login?next=%2Fsystem') }); // the sign-in page has no shell
-		await tick();
+		await vi.advanceTimersByTimeAsync(0);
 		pageStore.set({ url: new URL('http://localhost/system') }); // signed in: the shell polls again
-		await vi.waitFor(() => expect(calls).toBe(2));
+		await vi.advanceTimersByTimeAsync(0);
+		expect(calls).toBe(2);
 		answerOld(signInFirst());
-		await new Promise((resolve) => setTimeout(resolve, 0));
+		await vi.advanceTimersByTimeAsync(0);
 
 		expect(goto).not.toHaveBeenCalled();
 	});
@@ -309,6 +313,43 @@ describe('layout session expiry', () => {
 		expect(goto).toHaveBeenCalledTimes(1);
 
 		failOld(new Response('{}', { status: 502 }));
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(screen.queryByText("Can't reach NetTap")).not.toBeInTheDocument();
+	});
+
+	it("does not show offline for an older ping's network failure after the redirect has started", async () => {
+		vi.useFakeTimers();
+		let failOld!: (e: unknown) => void;
+		const old = new Promise<Response>((_, reject) => (failOld = reject));
+		let calls = 0;
+		stubFetch(() => (++calls === 1 ? old : signInFirst()));
+		vi.mocked(goto).mockReturnValueOnce(never());
+		renderLayout();
+		await vi.advanceTimersByTimeAsync(30_000);
+		expect(goto).toHaveBeenCalledTimes(1);
+
+		failOld(new TypeError('Failed to fetch'));
+		await vi.advanceTimersByTimeAsync(0);
+
+		expect(screen.queryByText("Can't reach NetTap")).not.toBeInTheDocument();
+	});
+
+	it('does not show offline for an older ping that fails after the shell has restarted', async () => {
+		vi.useFakeTimers();
+		let failOld!: (e: unknown) => void;
+		const old = new Promise<Response>((_, reject) => (failOld = reject));
+		let calls = 0;
+		stubFetch(() => (++calls === 1 ? old : new Response(JSON.stringify({ status: 'ok' }))));
+		renderLayout();
+		await vi.advanceTimersByTimeAsync(0);
+		pageStore.set({ url: new URL('http://localhost/login?next=%2Fsystem') });
+		await vi.advanceTimersByTimeAsync(0);
+		pageStore.set({ url: new URL('http://localhost/system') });
+		await vi.advanceTimersByTimeAsync(0);
+		expect(calls).toBe(2);
+
+		failOld(new TypeError('Failed to fetch'));
 		await vi.advanceTimersByTimeAsync(0);
 
 		expect(screen.queryByText("Can't reach NetTap")).not.toBeInTheDocument();
