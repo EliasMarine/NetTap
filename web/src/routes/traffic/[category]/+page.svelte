@@ -16,7 +16,10 @@
 
 	import { partOfWhole } from '$lib/utils/part-of-whole';
 	import { formatBytes, formatCompactNumber as formatNumber } from '$lib/api/logs';
-	import { chartTime, DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown';
+	// OLD CODE: import { chartTime, DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown'; (NET-249: a pick narrows the page)
+	import { bucketFor, chartTime, customRange, DRILL_RANGES, linkedCount, pickedTotal, pickWindow, rangeWindow, startRange, type TimeChart } from '$lib/utils/drilldown';
+	import { NARROW_HINT, narrowTo, pickedLine, timeChart, withoutWindow } from '$lib/utils/narrow-page';
+	import { goto } from '$app/navigation';
 	// OLD CODE START — the category colour tinted the chart and bars; system charts use data-1/2
 	// import { CATEGORY_COLORS } from '$lib/utils/category-colors';
 	// OLD CODE END
@@ -95,14 +98,16 @@
 	/** The list's entry for a range; anything not in it is 24 hours. */
 	const rangeOf = (value: string) => DRILL_RANGES.find((r) => r.value === value) ?? DRILL_RANGES.find((r) => r.value === '24h')!;
 
-	/** Map time range to chart interval */
-	const INTERVAL_MAP: Record<string, string> = {
-		'1h': '1m',
-		'6h': '5m',
-		'24h': '15m',
-		'7d': '1h',
-		'30d': '6h',
-	};
+	// OLD CODE START — NET-249: the chart asks for the owner's bucket table (drill below)
+	// /** Map time range to chart interval */
+	// const INTERVAL_MAP: Record<string, string> = {
+	// 	'1h': '1m',
+	// 	'6h': '5m',
+	// 	'24h': '15m',
+	// 	'7d': '1h',
+	// 	'30d': '6h',
+	// };
+	// OLD CODE END
 
 	const AUTO_REFRESH_MS = 30_000;
 	const RETRY_HINT = 'Check that NetTap is running on the System page, then try again.';
@@ -118,12 +123,24 @@
 	// OLD CODE: let rangeText = $derived(TIME_RANGES.find((r) => r.value === selectedRange)?.text ?? selectedRange); (NET-196)
 	/** The window after "last" or "previous": "hour", "6 hours", "7 days". */
 	let rangeText = $derived(rangeOf(selectedRange).words.replace(/^last /, ''));
+	const params = $derived($page.url.searchParams);
+	/** A pick's exact window (?from=&to=, NET-249), shown as Custom: every card follows it, and nothing is compared */
+	const custom = $derived(customRange(params.get('from'), params.get('to')));
+	/** The bytes the pick carried, compared with the narrowed chart's own total */
+	const picked = $derived(custom ? linkedCount(params.get('bytes')) : null);
+	/** The window in words: "last 6 hours", or the Custom window's */
+	const windowText = $derived(custom ? custom.words : `last ${rangeText}`);
+	/** The range whose bucket the chart asks for (the owner's table); `bucketFor`'s for Custom */
+	const drill = $derived(custom ? bucketFor(Date.parse(custom.from), Date.parse(custom.to)) : rangeOf(selectedRange));
+	const viewKey = $derived(custom ? `${custom.from}|${custom.to}` : selectedRange);
 
 	// Data
 	let data = $state<CategoryDetailResponse | null>(null);
 	let loading = $state(true);
 	let topServices = $state<TrafficCategoryService[]>([]);
 	let bandwidthSeries = $state<CategoryBandwidthPoint[]>([]);
+	/** The bandwidth reply, whole, when its bucket can be picked on (NET-249); a failed refresh keeps the last one */
+	let bandwidthChart = $state<TimeChart | null>(null);
 	let networkPercent = $state<number | null>(null);
 
 	// Trend data
@@ -295,7 +312,8 @@
 	function kpiTrend(h: HalvesResult | 'failed' | null) {
 		if (h === 'failed') return { delta: undefined, comparison: undefined, note: "Couldn't load the comparison" };
 		if (h === 'not_enough_data') return { delta: undefined, comparison: undefined, note: 'Not enough data to compare' };
-		if (!h || !h.older) return { delta: undefined, comparison: undefined, note: `Last ${rangeText}` };
+		// OLD CODE: if (!h || !h.older) return { delta: undefined, comparison: undefined, note: `Last ${rangeText}` }; (NET-249: or the Custom window)
+		if (!h || !h.older) return { delta: undefined, comparison: undefined, note: windowText.charAt(0).toUpperCase() + windowText.slice(1) };
 		const diff = h.newer - h.older;
 		const vs = `vs previous ${rangeText}, up to ${trendUpTo}`;
 		if (diff === 0) return { delta: undefined, comparison: `No change ${vs}`, note: undefined };
@@ -475,14 +493,19 @@
 		// The view this load is for, copied before the first await
 		const cat = category;
 		const range = selectedRange;
+		const c = custom;
 		loading = true;
-		const timeParams = computeTimeParams(range);
+		// OLD CODE: const timeParams = computeTimeParams(range); (NET-249: a pick's window is fixed)
+		const timeParams = c ? { from: c.from, to: c.to } : computeTimeParams(range);
 		// OLD CODE: const prevParams = computePrevTimeParams(range); (NET-228)
-		const tw = trendWindow(rangeOf(range).hours, Date.now());
-		const interval = INTERVAL_MAP[range] ?? '15m';
+		// OLD CODE: const tw = trendWindow(rangeOf(range).hours, Date.now()); (NET-249: a Custom window is no period to compare)
+		const tw = c ? null : trendWindow(rangeOf(range).hours, Date.now());
+		// OLD CODE: const interval = INTERVAL_MAP[range] ?? '15m'; (NET-249)
+		const interval = drill.bucket;
 
 		// A refresh of the same view keeps its last good figures; another view must not show them
-		const view = `${cat}|${range}`;
+		// OLD CODE: const view = `${cat}|${range}`; (NET-249)
+		const view = `${cat}|${viewKey}`;
 		if (view !== loadedView) {
 			data = null;
 			// OLD CODE: prevData = null; (NET-228)
@@ -492,17 +515,21 @@
 			trendFailed = false;
 			topServices = [];
 			bandwidthSeries = [];
+			bandwidthChart = null;
 			networkPercent = null;
 		}
 
+		const noTrend = Promise.resolve(null);
 		const results = await Promise.allSettled([
 			getCategoryDetail(cat, timeParams),
 			getCategoryBandwidth(cat, { ...timeParams, interval }),
 			getTrafficSummary(timeParams),
 			// OLD CODE: getCategoryDetail(cat, prevParams), (NET-228)
-			getCategoryBandwidth(cat, { from: tw.from, to: tw.to, interval: tw.interval }),
+			// OLD CODE: getCategoryBandwidth(cat, { from: tw.from, to: tw.to, interval: tw.interval }), (NET-249: none for Custom)
+			tw ? getCategoryBandwidth(cat, { from: tw.from, to: tw.to, interval: tw.interval }) : noTrend,
 			// review D1: the coverage the trend reads
-			getBandwidthTimeSeries({ from: tw.from, to: tw.to, interval: tw.interval }),
+			// OLD CODE: getBandwidthTimeSeries({ from: tw.from, to: tw.to, interval: tw.interval }), (NET-249: none for Custom)
+			tw ? getBandwidthTimeSeries({ from: tw.from, to: tw.to, interval: tw.interval }) : noTrend,
 		]);
 		if (!guard.current(g)) return 'skipped';
 		// OLD CODE: const [detailRes, bandwidthRes, summaryRes, prevRes] = results; (review D1)
@@ -517,7 +544,12 @@
 		} else {
 			console.error('[traffic/category] detail failed:', detailRes.reason);
 		}
-		if (bandwidthRes.status === 'fulfilled') bandwidthSeries = bandwidthRes.value.series ?? [];
+		// OLD CODE: if (bandwidthRes.status === 'fulfilled') bandwidthSeries = bandwidthRes.value.series ?? []; (NET-249: the reply whole)
+		if (bandwidthRes.status === 'fulfilled') {
+			const reply = bandwidthRes.value;
+			bandwidthSeries = reply.series ?? [];
+			bandwidthChart = timeChart(reply, bandwidthSeries.map((p) => p.timestamp), bandwidthSeries.map((p) => p.total_bytes));
+		}
 		// OLD CODE START — NET-228: a failed refresh kept the last reply as the comparison
 		// // a failed previous period hides the trend instead of comparing against zero
 		// if (prevRes.status === 'fulfilled') prevData = prevRes.value;
@@ -525,8 +557,13 @@
 		// OLD CODE: trendFailed = prevRes.status === 'rejected'; (review D1: or its coverage)
 		// OLD CODE: trendWin = prevRes.status === 'fulfilled' ? tw : null;
 		trendFailed = prevRes.status === 'rejected' || coverageRes.status === 'rejected';
-		trendSeries = prevRes.status === 'fulfilled' ? (prevRes.value.series ?? []) : null;
-		trendCoverage = coverageRes.status === 'fulfilled' ? coverageRes.value.series : null;
+		// OLD CODE START — NET-249: a Custom window sends no comparison, so there is none to read
+		// trendSeries = prevRes.status === 'fulfilled' ? (prevRes.value.series ?? []) : null;
+		// trendCoverage = coverageRes.status === 'fulfilled' ? coverageRes.value.series : null;
+		// trendWin = trendFailed ? null : tw;
+		// OLD CODE END
+		trendSeries = prevRes.status === 'fulfilled' && prevRes.value ? (prevRes.value.series ?? []) : null;
+		trendCoverage = coverageRes.status === 'fulfilled' && coverageRes.value ? coverageRes.value.series : null;
 		trendWin = trendFailed ? null : tw;
 		// % of total network needs both figures; without them the card shows a dash
 		if (detailRes.status === 'fulfilled' && summaryRes.status === 'fulfilled') {
@@ -547,9 +584,23 @@
 	// A new category or range is a new load (the loader reads both itself)
 	$effect(() => {
 		category;
-		selectedRange;
+		// OLD CODE: selectedRange; (NET-249: or a pick's Custom window)
+		viewKey;
 		untrack(() => void refresh.run());
 	});
+
+	/** A range pill: a window ending now, so a pick's Custom window goes (NET-249) */
+	function pickRange(value: string) {
+		if (value === 'custom') return;
+		selectedRange = value;
+		if (custom) void goto(withoutWindow($page.url), { keepFocus: true, noScroll: true });
+	}
+
+	/** A pick on the chart (NET-249): this page over the picked slots, with the bytes they drew */
+	function pick(i: number, j: number) {
+		if (bandwidthChart) void narrowTo($page.url, custom, pickWindow(bandwidthChart, i, j), selectedRange, 'bytes', pickedTotal(bandwidthChart, i, j));
+	}
+	const bytesLine = $derived(pickedLine(picked, bandwidthFailed ? null : bandwidthChart, 'bytes'));
 
 	// Auto-refresh; a tick waits while a load is running, since starting another would make the
 	// guard drop the slow one and a slow daemon would never update
@@ -612,7 +663,8 @@
 	// const RANGE_HOURS: Record<string, number> = { '1h': 1, '6h': 6, '24h': 24, '7d': 168, '30d': 720 };
 	// const formatPointTime = (t: number | string) => chartTime(t, RANGE_HOURS[selectedRange] ?? 24);
 	// OLD CODE END
-	const formatPointTime = (t: number | string) => chartTime(t, rangeOf(selectedRange).hours);
+	// OLD CODE: const formatPointTime = (t: number | string) => chartTime(t, rangeOf(selectedRange).hours); (NET-249: Custom)
+	const formatPointTime = (t: number | string) => chartTime(t, custom ? custom.hours : rangeOf(selectedRange).hours);
 
 	const chartTip = (i: number) =>
 		`${formatPointTime(bandwidthSeries[i].timestamp)} · ↓ ${formatBytes(bandwidthSeries[i].download_bytes)} · ↑ ${formatBytes(bandwidthSeries[i].upload_bytes)}`;
@@ -655,7 +707,13 @@
 		<p class="page-sub">Which devices use {displayName.toLowerCase()} traffic, how much, and on which services</p>
 	</div>
 	<div class="head-actions">
-		<Pills options={TIME_RANGES} value={selectedRange} onchange={(v) => (selectedRange = v)} ariaLabel="Time range" />
+		<!-- OLD CODE: <Pills options={TIME_RANGES} value={selectedRange} onchange={(v) => (selectedRange = v)} ariaLabel="Time range" /> (NET-249: a pick's window is Custom) -->
+		<Pills
+			options={[...TIME_RANGES, ...(custom ? [{ value: custom.value, label: custom.label }] : [])]}
+			value={custom ? 'custom' : selectedRange}
+			onchange={pickRange}
+			ariaLabel="Time range"
+		/>
 		<!-- OLD CODE START — NET-192 PR 4: Home's Auto / Paused button on every page
 		<button class="btn" type="button" title="Refresh every 30 seconds" onclick={() => (autoRefresh = !autoRefresh)}>
 			{autoRefresh ? 'Auto on' : 'Auto'}
@@ -671,13 +729,15 @@
 
 <div class="grid">
 	{#if !data || (data.device_count === 0 && data.total_bytes === 0)}
-		<Card class="c-12" title="{displayName} traffic" sub="Per-device bandwidth · last {rangeText}">
+		<!-- OLD CODE: sub="Per-device bandwidth · last {rangeText}" (NET-249: or the Custom window) -->
+		<Card class="c-12" title="{displayName} traffic" sub="Per-device bandwidth · {windowText}">
 			{#if loading && !data}
 				<CardState state="loading" title="Loading category data" />
 			{:else if detailFailed && !data}
 				<CardState state="error" title={loadFailed(`${displayName} traffic`)} message={RETRY_HINT} onaction={() => refresh.run()} />
 			{:else}
 				<CardState state="empty" title="No traffic data for {displayName}" message="Try a longer time range, or check that devices are sending traffic in this category." />
+				{#if bytesLine}<p class="notice pick-note" role="status">{bytesLine}</p>{/if}
 			{/if}
 		</Card>
 	{:else}
@@ -690,10 +750,11 @@
 			icon="live"
 			value={networkPercent !== null ? networkPercent.toFixed(1) : '—'}
 			unit={networkPercent !== null ? '%' : undefined}
-			note="Of all traffic in the last {rangeText}"
+			note="Of all traffic in the {windowText}"
 		/>
 
-		<Card class="c-8" hero col title="Bandwidth over time" sub="Download and upload per {INTERVAL_MAP[selectedRange] ?? '15m'} · last {rangeText}">
+		<!-- OLD CODE: note="Of all traffic in the last {rangeText}" and sub="Download and upload per {INTERVAL_MAP[selectedRange] ?? '15m'} · last {rangeText}" (NET-249) -->
+		<Card class="c-8" hero col title="Bandwidth over time" sub="Download and upload per {drill.bucketWords} · {windowText}">
 			{#snippet actions()}
 				<ul class="legend">
 					<li><span class="sw c-d1"></span>Download</li>
@@ -711,7 +772,10 @@
 					ariaLabel={busiestPoint >= 0
 						? `Busiest at ${formatPointTime(bandwidthSeries[busiestPoint].timestamp)}, with ${formatBytes(bandwidthSeries[busiestPoint].total_bytes)}`
 						: 'Bandwidth over time'}
+					onpick={bandwidthChart ? pick : undefined}
 				/>
+				{#if bandwidthChart}<p class="card-sub pick-note">{NARROW_HINT}</p>{/if}
+				{#if bytesLine}<p class="notice pick-note" role="status">{bytesLine}</p>{/if}
 				{#if bandwidthFailed}
 					<p class="notice is-warn load-note" role="status"><Icon name="warn" /><span>{loadFailed('bandwidth over time', true)}</span></p>
 				{/if}
@@ -722,7 +786,8 @@
 			{/if}
 		</Card>
 
-		<Card class="c-4" title="Top services" sub="{topServices.length} {topServices.length === 1 ? 'service' : 'services'} · data in the last {rangeText}">
+		<!-- OLD CODE: sub="… · data in the last {rangeText}" (NET-249: or the Custom window) -->
+		<Card class="c-4" title="Top services" sub="{topServices.length} {topServices.length === 1 ? 'service' : 'services'} · data in the {windowText}">
 			{#if serviceItems.length > 0}
 				<BarList items={serviceItems} />
 			{:else}
@@ -730,10 +795,11 @@
 			{/if}
 		</Card>
 
+		<!-- OLD CODE: sub="… · last {rangeText}" (NET-249: or the Custom window) -->
 		<Card
 			class="c-12"
 			title="Per-device breakdown"
-			sub="{filteredDevices.length}{filteredDevices.length !== data.devices.length ? ` / ${data.devices.length}` : ''} devices{data.device_count > data.devices.length ? ` · top ${partOfWhole(data.devices.length, data.device_count)}` : ''} · last {rangeText}"
+			sub="{filteredDevices.length}{filteredDevices.length !== data.devices.length ? ` / ${data.devices.length}` : ''} devices{data.device_count > data.devices.length ? ` · top ${partOfWhole(data.devices.length, data.device_count)}` : ''} · {windowText}"
 		>
 			<div class="toolbar">
 				<SearchField id="category-device-filter" label="Filter devices" placeholder="Filter by IP or hostname…" size="toolbar" bind:value={searchQuery} />
@@ -751,6 +817,7 @@
 	/* Layout glue the system lacks */
 	/* OLD CODE: .load-note { margin-top: var(--sp-3); font-size: var(--text-xs); color: var(--sev-medium); } (NET-192 PR 4: a stale note is the shared .notice.is-warn) */
 	.load-note { margin-top: var(--sp-3); }
+	.pick-note { margin-top: var(--sp-2); }
 	.device { display: inline-flex; flex-direction: column; line-height: 1.3; text-decoration: none; color: inherit; }
 	.hostname { color: var(--text-3); font-size: var(--text-xs); }
 </style>

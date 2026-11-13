@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { onDestroy, onMount, type Snippet } from 'svelte';
+	import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
+	import { goto } from '$app/navigation';
 	import {
 		getDnsStats,
 		getTopDomains,
@@ -42,7 +43,11 @@
 	import SeverityPill from '$lib/components/ui/SeverityPill.svelte';
 	import { domainHref } from '$lib/stores/lan';
 	// OLD CODE: import { chartTime, DRILL_RANGES, fmt, rangeWindow, startRange } from '$lib/utils/drilldown'; (NET-238: SCAN_CAP)
-	import { chartTime, DRILL_RANGES, fmt, rangeWindow, SCAN_CAP, startRange } from '$lib/utils/drilldown';
+	// OLD CODE: import { chartTime, DRILL_RANGES, fmt, rangeWindow, SCAN_CAP, startRange } from '$lib/utils/drilldown'; (NET-249: a pick narrows the page)
+	import {
+		bucketFor, chartTime, customRange, DRILL_RANGES, fmt, linkedCount, pickedTotal, pickWindow, rangeWindow, SCAN_CAP, startRange, type TimeChart,
+	} from '$lib/utils/drilldown';
+	import { NARROW_HINT, narrowTo, pickedLine, timeChart, withoutWindow } from '$lib/utils/narrow-page';
 	import { formatCompactNumber as formatNumber } from '$lib/api/logs';
 
 	// ---------------------------------------------------------------------------
@@ -75,17 +80,19 @@
 	const LEVELS = new Set<string>(['critical', 'high', 'medium', 'low', 'info']);
 	const isLevel = (s: string): s is SeverityLevel => LEVELS.has(s);
 
-	/** The timeline's bucket per range, and how the chart names it. */
-	const INTERVALS: Record<string, { interval: string; words: string }> = {
-		// OLD CODE: '15m': { interval: '1m', words: 'minute' }, (NET-192 PR 4)
-		'1h': { interval: '5m', words: '5 minutes' },
-		// OLD CODE: '4h': { interval: '10m', words: '10 minutes' }, (NET-192 PR 4)
-		'6h': { interval: '10m', words: '10 minutes' },
-		'24h': { interval: '15m', words: '15 minutes' },
-		'7d': { interval: '1h', words: 'hour' },
-		// 120 buckets, near 7 d's 168; not yet timed on the G11 (NET-192 PR 4)
-		'30d': { interval: '6h', words: '6 hours' },
-	};
+	// OLD CODE START — NET-249: the timeline asks for the owner's bucket table (drill below)
+	// /** The timeline's bucket per range, and how the chart names it. */
+	// const INTERVALS: Record<string, { interval: string; words: string }> = {
+	// 	// OLD CODE: '15m': { interval: '1m', words: 'minute' }, (NET-192 PR 4)
+	// 	'1h': { interval: '5m', words: '5 minutes' },
+	// 	// OLD CODE: '4h': { interval: '10m', words: '10 minutes' }, (NET-192 PR 4)
+	// 	'6h': { interval: '10m', words: '10 minutes' },
+	// 	'24h': { interval: '15m', words: '15 minutes' },
+	// 	'7d': { interval: '1h', words: 'hour' },
+	// 	// 120 buckets, near 7 d's 168; not yet timed on the G11 (NET-192 PR 4)
+	// 	'30d': { interval: '6h', words: '6 hours' },
+	// };
+	// OLD CODE END
 
 	const RETRY_HINT = 'Check that NetTap is running on the System page, then try again.';
 
@@ -95,6 +102,17 @@
 
 	// OLD CODE: let selectedTimeRange = $state('24h'); (NET-195: Settings › Display's default, read where the range starts)
 	let selectedTimeRange = $state<string>(startRange('24h'));
+	const params = $derived($page.url.searchParams);
+	/** A pick's exact window (?from=&to=, NET-249), shown as Custom: every card follows it */
+	const custom = $derived(customRange(params.get('from'), params.get('to')));
+	/** The queries the pick carried, compared with the narrowed chart's own total */
+	const picked = $derived(custom ? linkedCount(params.get('count')) : null);
+	/** The range whose bucket the timeline asks for (the owner's table); `bucketFor`'s for Custom */
+	const drill = $derived(
+		custom ? bucketFor(Date.parse(custom.from), Date.parse(custom.to)) : (TIME_RANGES.find((r) => r.value === selectedTimeRange) ?? TIME_RANGES.find((r) => r.value === '24h')!),
+	);
+	/** The window on screen: a range ending now, or the Custom window */
+	const view = $derived(custom ? `${custom.from}|${custom.to}` : selectedTimeRange);
 	let loading = $state(true);
 	// OLD CODE START — PLAN §5.5: a range change during the first load now starts a new, guarded load
 	// let initialized = $state(false);
@@ -116,6 +134,8 @@
 	let nxdomains = $state<NxdomainEntry[]>([]);
 	let queryTypes = $state<QueryTypeEntry[]>([]);
 	let timeline = $state<TimelineEntry[]>([]);
+	/** The timeline reply, whole, when its bucket can be picked on (NET-249); a failed refresh keeps the last one */
+	let timelineChart = $state<TimeChart | null>(null);
 	let suspicious = $state<SuspiciousEntry[]>([]);
 	// #96: a failed check must not read as "none detected"; a long list shows its first rows
 	let suspiciousFailed = $state(false);
@@ -243,7 +263,8 @@
 
 	let totalQueryTypeCount = $derived(queryTypes.reduce((sum, qt) => sum + qt.count, 0));
 
-	const rangeWords = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange)?.words ?? 'last 24 hours');
+	// OLD CODE: const rangeWords = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange)?.words ?? 'last 24 hours'); (NET-249: Custom)
+	const rangeWords = $derived(custom ? custom.words : (TIME_RANGES.find((r) => r.value === selectedTimeRange)?.words ?? 'last 24 hours'));
 	const busiest = $derived(timeline.reduce((best, t, i) => (t.count > (timeline[best]?.count ?? -1) ? i : best), -1));
 
 	// ---------------------------------------------------------------------------
@@ -260,6 +281,7 @@
 		// 	to: now.toISOString(),
 		// };
 		// OLD CODE END
+		if (custom) return { from: custom.from, to: custom.to }; // NET-249: a pick's window is fixed
 		return rangeWindow(TIME_RANGES.find((r) => r.value === rangeValue)?.hours ?? 24);
 	}
 
@@ -282,7 +304,8 @@
 	// }
 	// OLD CODE END
 	// OLD CODE: const rangeHours = $derived((TIME_RANGES.find((r) => r.value === selectedTimeRange)?.ms ?? 86_400_000) / 3_600_000); (NET-196: the list has hours)
-	const rangeHours = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange)?.hours ?? 24);
+	// OLD CODE: const rangeHours = $derived(TIME_RANGES.find((r) => r.value === selectedTimeRange)?.hours ?? 24); (NET-249: Custom)
+	const rangeHours = $derived(custom ? custom.hours : (TIME_RANGES.find((r) => r.value === selectedTimeRange)?.hours ?? 24));
 	const formatTimestamp = (ts: string) => chartTime(ts, rangeHours);
 
 	// OLD CODE START — DataTable draws the sort chevrons
@@ -344,7 +367,8 @@
 		void initCaptureMode();
 		const range = selectedTimeRange;
 		const { from, to } = getTimeRange(range);
-		const interval = INTERVALS[range]?.interval ?? '15m';
+		// OLD CODE: const interval = INTERVALS[range]?.interval ?? '15m'; (NET-249)
+		const interval = drill.bucket;
 		loading = true;
 
 		const results = await Promise.allSettled([
@@ -361,7 +385,12 @@
 		if (results[1].status === 'fulfilled') topDomains = results[1].value.domains;
 		if (results[2].status === 'fulfilled') nxdomains = results[2].value.nxdomains;
 		if (results[3].status === 'fulfilled') queryTypes = results[3].value.types;
-		if (results[4].status === 'fulfilled') timeline = results[4].value.series;
+		// OLD CODE: if (results[4].status === 'fulfilled') timeline = results[4].value.series; (NET-249: the reply whole)
+		if (results[4].status === 'fulfilled') {
+			const reply = results[4].value;
+			timeline = reply.series;
+			timelineChart = timeChart(reply, reply.series.map((t) => t.timestamp), reply.series.map((t) => t.count));
+		}
 		// OLD CODE: if (results[5].status === 'fulfilled') suspicious = results[5].value.suspicious; (NET-238: and complete)
 		if (results[5].status === 'fulfilled') {
 			suspicious = results[5].value.suspicious;
@@ -476,24 +505,64 @@
 		deviceSortDir = dir;
 	}
 
+	// OLD CODE START — NET-249: a pick's Custom window is another view too, so the view effect below clears and reloads
+	// function handleTimeRangeChange(value: string) {
+	// 	selectedTimeRange = value;
+	// 	// #96: the last range's figures must not stand in for this range if its load fails
+	// 	stats = null;
+	// 	topDomains = [];
+	// 	nxdomains = [];
+	// 	queryTypes = [];
+	// 	timeline = [];
+	// 	suspicious = [];
+	// 	suspiciousComplete = true;
+	// 	// I13: the device table kept the last range's domains under this range's label
+	// 	deviceDns = [];
+	// 	if (selectedDeviceIp) lookupDevice();
+	// 	// OLD CODE START — PLAN §5.5: the guard drops the older range's load, so always reload
+	// 	// if (initialized) fetchAll();
+	// 	// OLD CODE END
+	// 	refresh.run();
+	// }
+	// OLD CODE END
+	/** A range pill: a window ending now, so a pick's Custom window goes (NET-249) */
 	function handleTimeRangeChange(value: string) {
+		if (value === 'custom') return;
 		selectedTimeRange = value;
-		// #96: the last range's figures must not stand in for this range if its load fails
+		if (custom) void goto(withoutWindow($page.url), { keepFocus: true, noScroll: true });
+	}
+
+	/** #96: another window's figures must not stand in for this one's if its load fails */
+	function clearFigures() {
 		stats = null;
 		topDomains = [];
 		nxdomains = [];
 		queryTypes = [];
 		timeline = [];
+		timelineChart = null;
 		suspicious = [];
 		suspiciousComplete = true;
 		// I13: the device table kept the last range's domains under this range's label
 		deviceDns = [];
 		if (selectedDeviceIp) lookupDevice();
-		// OLD CODE START — PLAN §5.5: the guard drops the older range's load, so always reload
-		// if (initialized) fetchAll();
-		// OLD CODE END
-		refresh.run();
 	}
+
+	/** The view on screen, so a new one clears the last one's figures; the first run is the page's first load */
+	let shownView: string | null = null;
+	$effect(() => {
+		const v = view;
+		untrack(() => {
+			if (shownView !== null && v !== shownView) clearFigures();
+			shownView = v;
+			refresh.run();
+		});
+	});
+
+	/** A pick on the timeline (NET-249): this page over the picked slots, with the queries they counted */
+	function pick(i: number, j: number) {
+		if (timelineChart) void narrowTo($page.url, custom, pickWindow(timelineChart, i, j), selectedTimeRange, 'count', pickedTotal(timelineChart, i, j));
+	}
+	const countLine = $derived(pickedLine(picked, timelineFailed ? null : timelineChart, { lead: 'This window now shows', one: 'query', many: 'queries' }));
 
 	function copyDomain(domain: string) {
 		navigator.clipboard.writeText(domain);
@@ -553,7 +622,7 @@
 		// 	initialized = true;
 		// });
 		// OLD CODE END
-		refresh.run();
+		// OLD CODE: refresh.run(); (NET-249: the view effect runs the first load)
 	});
 </script>
 
@@ -582,7 +651,10 @@
 		ariaLabel={busiest >= 0
 			? `Busiest at ${formatTimestamp(timeline[busiest].timestamp)}, with ${fmt(timeline[busiest].count)} queries`
 			: 'DNS queries over time'}
+		onpick={timelineChart ? pick : undefined}
 	/>
+	{#if timelineChart}<p class="card-sub pick-hint">{NARROW_HINT}</p>{/if}
+	{#if countLine}<p class="notice pick-hint" role="status">{countLine}</p>{/if}
 {/snippet}
 {#snippet topBody()}
 	<BarList
@@ -663,9 +735,10 @@
 		<p class="page-sub">Domain queries, NXDOMAIN errors, and suspicious patterns</p>
 	</div>
 	<div class="head-actions">
+		<!-- OLD CODE: options={TIME_RANGES} value={selectedTimeRange} (NET-249: a pick's window is Custom) -->
 		<Pills
-			options={TIME_RANGES}
-			value={selectedTimeRange}
+			options={[...TIME_RANGES, ...(custom ? [custom] : [])].map((r) => ({ value: r.value, label: r.label }))}
+			value={custom ? 'custom' : selectedTimeRange}
 			onchange={handleTimeRangeChange}
 			ariaLabel="Time range"
 		/>
@@ -720,9 +793,10 @@
 					: undefined}
 	/>
 
+	<!-- OLD CODE: sub="Queries per {INTERVALS[selectedTimeRange]?.words ?? '15 minutes'} · {rangeWords}" (NET-249: the owner's bucket table) -->
 	<Card
 		title="Queries over time"
-		sub="Queries per {INTERVALS[selectedTimeRange]?.words ?? '15 minutes'} · {rangeWords}"
+		sub="Queries per {drill.bucketWords} · {rangeWords}"
 		hero
 		col
 		class="c-8"
@@ -884,6 +958,7 @@
 	/* OLD CODE: .stale { margin-bottom: var(--sp-3); } (NET-238: the capped-scan notice too) */
 	.stale, .capped { margin-bottom: var(--sp-3); }
 	.selected { align-items: center; margin-bottom: var(--sp-3); }
+	.pick-hint { margin-top: var(--sp-2); }
 	.device-ip { flex: 0 1 20rem; }
 	.findings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 	.finding { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); padding: var(--sp-3) 0; min-width: 0; }
