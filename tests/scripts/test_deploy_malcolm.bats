@@ -505,24 +505,181 @@ print('OK: all actions have retry config')
     [ "$template_line" -lt "$full_up_line" ]
 }
 
-@test "deploy: bootstrap writes the Arkime template marker only when it is missing (#73)" {
-    local script="${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
-    local fn
-    fn=$(sed -n '/^bootstrap_index_templates()/,/^}/p' "$script")
-    # dashboards-helper waits for this legacy template before creating the index pattern
-    echo "$fn" | grep -q 'X PUT "https://opensearch:9200/_template/arkime_sessions3_template"'
-    # it must match no index, so it can never shape arkime_sessions3-* mappings
-    echo "$fn" | grep -q '"index_patterns":\["nettap-arkime-template-marker"\]'
-    # and it is guarded by a GET, so Arkime's real template is never overwritten
-    echo "$fn" | grep -q 'if ! docker compose .* exec -T dashboards-helper \\'
-    echo "$fn" | grep -q 'curl -sfk -u "$os_creds" "https://opensearch:9200/_template/arkime_sessions3_template"'
+# OLD CODE START — NET-217: grepped the old GET-then-PUT with -u "$os_creds"; the marker is now a
+# create-only PUT through the curlrc, and the tests below run it instead of grepping it
+# @test "deploy: bootstrap writes the Arkime template marker only when it is missing (#73)" {
+#     local script="${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+#     local fn
+#     fn=$(sed -n '/^bootstrap_index_templates()/,/^}/p' "$script")
+#     # dashboards-helper waits for this legacy template before creating the index pattern
+#     echo "$fn" | grep -q 'X PUT "https://opensearch:9200/_template/arkime_sessions3_template"'
+#     # it must match no index, so it can never shape arkime_sessions3-* mappings
+#     echo "$fn" | grep -q '"index_patterns":\["nettap-arkime-template-marker"\]'
+#     # and it is guarded by a GET, so Arkime's real template is never overwritten
+#     echo "$fn" | grep -q 'if ! docker compose .* exec -T dashboards-helper \\'
+#     echo "$fn" | grep -q 'curl -sfk -u "$os_creds" "https://opensearch:9200/_template/arkime_sessions3_template"'
+# }
+# OLD CODE END
+
+# ==========================================================================
+# NET-217: the bootstrap stops the run when it fails, and keeps the
+# OpenSearch password out of every process's arguments
+# ==========================================================================
+# These source deploy-malcolm.sh (its standalone guard keeps deploy_malcolm
+# from running) with helpers/bootstrap_stubs.bash playing docker.
+
+DEPLOY="${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
+STUBS="${REPO_ROOT}/tests/scripts/helpers/bootstrap_stubs.bash"
+
+_templates() { run bash -c "source '$DEPLOY'; source '$STUBS'; bootstrap_index_templates"; }
+_security() { run bash -c "source '$DEPLOY'; source '$STUBS'; bootstrap_opensearch_security"; }
+_log_count() { grep -c -- "$1" "${TEST_TMPDIR}/curl.log" 2>/dev/null || true; }
+_puts() { _log_count '-X PUT'; }
+_passes() { _log_count '_index_template/malcolm_template?filter_path'; }
+
+@test "templates (NET-217): a fresh box gets every template; each call logs in through the mounted curlrc" {
+    _templates
+    [ "$status" -eq 0 ]
+    local calls
+    calls=$(grep -c . "${TEST_TMPDIR}/curl.log")
+    [ "$(_log_count '--config /var/local/curlrc/.opensearch.primary.curlrc')" -eq "$calls" ]
+    [ "$(_log_count '--max-time')" -eq "$calls" ]
+    ! grep -qE -- '(^| )-u ' "${TEST_TMPDIR}/curl.log"
+    grep -q -- '-X PUT https://opensearch:9200/_component_template/ecs_base' "${TEST_TMPDIR}/curl.log"
+    grep -q -- '-X PUT https://opensearch:9200/_component_template/ecs_event' "${TEST_TMPDIR}/curl.log"
+    grep -q -- '-X PUT https://opensearch:9200/_component_template/custom_zeek' "${TEST_TMPDIR}/curl.log"
+    # Chain 24: the placeholder is filled in before the template leaves the host
+    grep -qF '"index_patterns":["arkime_sessions3-*"]' "${TEST_TMPDIR}/body.malcolm_template"
+    grep -qF '"index_patterns":["nettap-arkime-template-marker"]' "${TEST_TMPDIR}/body.arkime_sessions3_template"
+    [[ "$output" == *"marker created"* ]] || false
+}
+
+@test "templates (NET-217): a malcolm_template PUT that keeps failing stops the run after 3 passes" {
+    export F_MT_PUT=500
+    _templates
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Index template bootstrap failed after 3 attempts"* ]] || false
+    [[ "$output" == *"malcolm_template or arkime_sessions3_template"* ]] || false
+    [[ "$output" == *"run the same command again"* ]] || false
+    [ "$(_passes)" -eq 3 ]
+}
+
+@test "templates (NET-217): one failed malcolm_template PUT is retried" {
+    export F_MT_PUT="500 200"
+    _templates
+    [ "$status" -eq 0 ]
+    [ "$(_passes)" -eq 2 ]
+}
+
+@test "templates (NET-217): a failed component template PUT fails the pass before malcolm_template" {
+    export F_COMP_FAIL=ecs_event
+    _templates
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"PUT _component_template/ecs_event answered HTTP 500"* ]] || false
+    [ "$(_log_count '-X PUT https://opensearch:9200/_index_template/malcolm_template')" -eq 0 ]
+}
+
+@test "templates (NET-217): no component template files listed fails the pass" {
+    export F_NO_FILES=1
+    _templates
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"No component templates found"* ]] || false
+}
+
+@test "templates (NET-217): the Arkime marker is create-only, so an existing template is never replaced (#73)" {
+    export F_MARKER_PUT=400  # what OpenSearch answers ?create=true when the template exists
+    _templates
+    [ "$status" -eq 0 ]
+    [ "$(_log_count '-X PUT https://opensearch:9200/_template/arkime_sessions3_template?create=true')" -ge 1 ]
+    [ "$(_log_count '-X PUT https://opensearch:9200/_template/arkime_sessions3_template')" -eq \
+      "$(_log_count '-X PUT https://opensearch:9200/_template/arkime_sessions3_template?create=true')" ]
+    [[ "$output" != *"marker created"* ]] || false
+}
+
+@test "templates (NET-217): the run stops when the marker template is still missing at the end" {
+    export F_MARKER_PRESENT=0
+    _templates
+    [ "$status" -eq 1 ]
+    [ "$(_passes)" -eq 3 ]
+}
+
+@test "templates (NET-217): a live box's malcolm_template is kept as Malcolm set it" {
+    export F_MT_GET=200
+    _templates
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"left as Malcolm set it"* ]] || false
+    [ "$(_log_count '_component_template/')" -eq 0 ]
+    [ "$(_log_count '-X PUT https://opensearch:9200/_index_template/malcolm_template')" -eq 0 ]
+}
+
+@test "templates (NET-217): a malcolm_template with the placeholder pattern is pushed again (Chain 24)" {
+    export F_MT_GET=200
+    export F_MT_BODY='{"index_templates":[{"index_template":{"index_patterns":["MALCOLM_NETWORK_INDEX_PATTERN_REPLACER"]}}]}'
+    _templates
+    [ "$status" -eq 0 ]
+    [ "$(_log_count '-X PUT https://opensearch:9200/_index_template/malcolm_template')" -eq 1 ]
+}
+
+@test "templates (NET-217): a failed or unreadable read of malcolm_template writes nothing" {
+    local case
+    for case in '500|' '401|' 'transport|' \
+        '200|{"index_patterns":' \
+        '200|{"index_templates":[{"index_template":{"index_patterns":"arkime_sessions3-*"}}]}' \
+        '200|{"index_templates":[{"index_template":{"index_patterns":[]}}]}' \
+        '200|{"index_templates":[]}'; do
+        rm -f "${TEST_TMPDIR}/curl.log" "${TEST_TMPDIR}"/count.*
+        export F_MT_GET="${case%%|*}" F_MT_BODY="${case#*|}"
+        _templates
+        [ "$status" -eq 1 ] || { echo "case ${case}: status ${status}"; return 1; }
+        [ "$(_puts)" -eq 0 ] || { echo "case ${case}: $(_puts) PUTs"; return 1; }
+        [ "$(_passes)" -eq 3 ] || { echo "case ${case}: $(_passes) passes"; return 1; }
+    done
+}
+
+@test "security (NET-217): working auth needs no securityadmin.sh, and the probe is time-boxed" {
+    _security
+    [ "$status" -eq 0 ]
+    [ ! -f "${TEST_TMPDIR}/securityadmin.log" ]
+    grep -q -- '--max-time' "${TEST_TMPDIR}/auth.log"
+}
+
+@test "security (NET-217): auth still failing after securityadmin.sh stops the run" {
+    export F_AUTH_OK_AFTER=never
+    _security
+    [ "$status" -eq 1 ]
+    [ -f "${TEST_TMPDIR}/securityadmin.log" ]
+    [[ "$output" == *"malcolm_internal still has no access after securityadmin.sh"* ]] || false
+    [[ "$output" == *"run the same command again"* ]] || false
+}
+
+@test "security (NET-217): a failing securityadmin.sh stops the run, and it runs under a time limit" {
+    export F_AUTH_OK_AFTER=never F_SECADMIN_RC=1
+    _security
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"securityadmin.sh could not push the security config"* ]] || false
+    grep -q 'timeout -k 10 180 /usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh' \
+        "${TEST_TMPDIR}/securityadmin.log"
+}
+
+@test "security (NET-217): auth that works after securityadmin.sh lets the run go on" {
+    export F_AUTH_OK_AFTER=12  # the 60 s wait probes 12 times
+    _security
+    [ "$status" -eq 0 ]
+    [ -f "${TEST_TMPDIR}/securityadmin.log" ]
+    [[ "$output" == *"Authentication verified"* ]] || false
+}
+
+@test "deploy (NET-217): no password on a command line, and the HTTP wait is time-boxed" {
+    local code
+    code=$(grep -v '^[[:space:]]*#' "$DEPLOY")
+    ! grep -q -- '-u "\$' <<< "$code"
+    ! grep -q 'docker/curlrc' <<< "$code"
+    sed -n '/^_wait_for_opensearch_http()/,/^}/p' "$DEPLOY" | grep -v '^[[:space:]]*#' | grep -q -- '--max-time'
 }
 
 # ==========================================================================
 # NET-177: preflight's free space is decimal GB, like System and Setup
 # ==========================================================================
-
-DEPLOY="${REPO_ROOT}/scripts/install/deploy-malcolm.sh"
 
 _preflight_with_avail_kb() {
     run bash -c "source '$DEPLOY'
@@ -540,4 +697,37 @@ _preflight_with_avail_kb() {
     _preflight_with_avail_kb 14648437  # 14.99 GB
     [ "$status" -eq 0 ]
     [[ "$output" == *"Only 14 GB free disk space"* ]] || false
+}
+
+# ==========================================================================
+# NET-217 device check: scripts/remote/deploy-malcolm-bootstrap.sh runs the
+# real bootstrap on a live box through guarded_docker, which must let no
+# write through except the create-only Arkime marker
+# ==========================================================================
+
+_guarded() {  # _guarded ARGS...: run guarded_docker ARGS with a sudo that logs instead of running
+    run bash -c "$(sed -n '/^guarded_docker()/,/^}/p' "${REPO_ROOT}/scripts/remote/deploy-malcolm-bootstrap.sh")
+        sudo() { echo \"\$*\" >> '${TEST_TMPDIR}/sudo.log'; }
+        guarded_docker \"\$@\"" _ "$@"
+}
+
+@test "deploy-malcolm-bootstrap.sh (NET-217): guarded_docker refuses every write but the create-only marker" {
+    _guarded compose -f x.yml up -d dashboards-helper
+    [ "$status" -eq 0 ]
+    _guarded compose -f x.yml exec -T opensearch bash -c 'JAVA_HOME=x timeout -k 10 180 /x/securityadmin.sh -cd /y'
+    [ "$status" -ne 0 ]
+    _guarded compose -f x.yml exec -T dashboards-helper curl --silent -X PUT https://opensearch:9200/_component_template/ecs_x -d @f
+    [ "$status" -ne 0 ]
+    _guarded compose -f x.yml exec -T dashboards-helper curl --silent -X PUT https://opensearch:9200/_index_template/malcolm_template -d @-
+    [ "$status" -ne 0 ]
+    [ ! -f "${TEST_TMPDIR}/sudo.log" ]
+
+    _guarded compose -f x.yml exec -T dashboards-helper curl --silent -X PUT "https://opensearch:9200/_template/arkime_sessions3_template?create=true" -d @-
+    [ "$status" -eq 0 ]
+    _guarded compose -f x.yml exec -T dashboards-helper curl --silent --fail -o /dev/null https://opensearch:9200/_index_template/malcolm_template
+    [ "$status" -eq 0 ]
+    _guarded ps -q
+    [ "$status" -eq 0 ]
+    [ "$(grep -c . "${TEST_TMPDIR}/sudo.log")" -eq 3 ]
+    grep -q '^docker compose -f x.yml exec -T dashboards-helper curl --silent -X PUT https://opensearch:9200/_template/arkime_sessions3_template?create=true -d @-$' "${TEST_TMPDIR}/sudo.log"
 }
