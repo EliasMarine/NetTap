@@ -53,9 +53,7 @@ DOCS = [
     _conn(NEW1, B_TO, 5000),
     # not this device, an excluded source, and an interim conn_long record
     _conn(OLD, "2026-11-05T07:00:00.000Z", 999, src=OTHER),
-    _conn(
-        NEW1, "2026-11-05T07:00:00.000Z", 999, log__file__path="conn_long.log"
-    ),
+    _conn(NEW1, "2026-11-05T07:00:00.000Z", 999, log__file__path="conn_long.log"),
 ]
 
 
@@ -73,7 +71,9 @@ class Case(AioHTTPTestCase):
         return make_app(self.os, _register, excluded_ips=EXCLUDED)
 
     async def get(self, query: str = f"ip={DEVICE}&{WINDOWS}") -> tuple[int, dict]:
-        resp = await self.client.get(f"/api/moment/device-compare?{query}", headers=AUTH)
+        resp = await self.client.get(
+            f"/api/moment/device-compare?{query}", headers=AUTH
+        )
         return resp.status, await resp.json()
 
 
@@ -81,7 +81,9 @@ class TestCompare(Case):
     async def test_new_gone_and_changed_from_the_records(self):
         status, body = await self.get()
         self.assertEqual(status, 200, body)
-        self.assertEqual((body["ip"], body["exact"], body["complete"]), (DEVICE, True, True))
+        self.assertEqual(
+            (body["ip"], body["exact"], body["complete"]), (DEVICE, True, True)
+        )
         self.assertEqual(
             body["new"],
             {
@@ -93,7 +95,8 @@ class TestCompare(Case):
             },
         )
         self.assertEqual(
-            body["gone"], {"total": 1, "items": [{"ip": OLD, "org": None, "bytes": 400}]}
+            body["gone"],
+            {"total": 1, "items": [{"ip": OLD, "org": None, "bytes": 400}]},
         )
         # SAME didn't change; GROWN moved more than KEPT
         self.assertEqual(
@@ -102,8 +105,20 @@ class TestCompare(Case):
                 "total": 2,
                 "partial": False,
                 "items": [
-                    {"ip": GROWN, "org": None, "a_bytes": 50, "b_bytes": 1050, "delta": 1000},
-                    {"ip": KEPT, "org": ORG, "a_bytes": 100, "b_bytes": 300, "delta": 200},
+                    {
+                        "ip": GROWN,
+                        "org": None,
+                        "a_bytes": 50,
+                        "b_bytes": 1050,
+                        "delta": 1000,
+                    },
+                    {
+                        "ip": KEPT,
+                        "org": ORG,
+                        "a_bytes": 100,
+                        "b_bytes": 300,
+                        "delta": 200,
+                    },
                 ],
             },
         )
@@ -111,7 +126,9 @@ class TestCompare(Case):
     async def test_a_record_on_the_boundary_counts_in_one_period_only(self):
         _, body = await self.get()
         a, b = body["a"], body["b"]
-        self.assertEqual((a["from"], a["to"], b["from"], b["to"]), (A_FROM, A_TO, B_FROM, B_TO))
+        self.assertEqual(
+            (a["from"], a["to"], b["from"], b["to"]), (A_FROM, A_TO, B_FROM, B_TO)
+        )
         # A: its first-millisecond record, not the one at A_TO; B: A_TO's, not B_TO's
         self.assertEqual((a["total_bytes"], a["destinations"]), (620, 4))
         self.assertEqual((b["total_bytes"], b["destinations"]), (2340, 5))
@@ -127,7 +144,10 @@ class TestCompare(Case):
                 query["filter"][0]["range"]["@timestamp"],
                 {"gte": lo, "lt": hi, "format": "strict_date_optional_time"},
             )
-            self.assertEqual(query["filter"][1:], [*_ZEEK_CONN_FILTERS, {"term": {"source.ip": DEVICE}}])
+            self.assertEqual(
+                query["filter"][1:],
+                [*_ZEEK_CONN_FILTERS, {"term": {"source.ip": DEVICE}}],
+            )
             self.assertEqual(query["must_not"], [{"terms": {"source.ip": EXCLUDED}}])
             terms = body["aggs"]["destinations"]["terms"]
             # doc-count order, so the error bound means something; bytes are ranked in Python
@@ -148,7 +168,9 @@ class TestCompare(Case):
         self.assertEqual([r["ip"] for r in body["new"]["items"]], [OLD])
 
     async def test_without_the_token_it_is_refused(self):
-        resp = await self.client.get(f"/api/moment/device-compare?ip={DEVICE}&{WINDOWS}")
+        resp = await self.client.get(
+            f"/api/moment/device-compare?ip={DEVICE}&{WINDOWS}"
+        )
         self.assertEqual(resp.status, 401)
 
 
@@ -161,7 +183,9 @@ class TestLongLists(Case):
         _, body = await self.get()
         self.assertEqual(body["new"]["total"], 60)
         self.assertEqual(len(body["new"]["items"]), 50)
-        self.assertEqual(body["new"]["items"][0], {"ip": "203.0.113.59", "org": None, "bytes": 1059})
+        self.assertEqual(
+            body["new"]["items"][0], {"ip": "203.0.113.59", "org": None, "bytes": 1059}
+        )
         self.assertEqual(body["gone"], {"total": 0, "items": []})
 
 
@@ -186,8 +210,20 @@ class TestListIncomplete(Case):
                 "total": 2,
                 "partial": True,
                 "items": [
-                    {"ip": GROWN, "org": None, "a_bytes": 51, "b_bytes": 1051, "delta": 1000},
-                    {"ip": KEPT, "org": ORG, "a_bytes": 101, "b_bytes": 301, "delta": 200},
+                    {
+                        "ip": GROWN,
+                        "org": None,
+                        "a_bytes": 51,
+                        "b_bytes": 1051,
+                        "delta": 1000,
+                    },
+                    {
+                        "ip": KEPT,
+                        "org": ORG,
+                        "a_bytes": 101,
+                        "b_bytes": 301,
+                        "delta": 200,
+                    },
                 ],
             },
         )
@@ -195,7 +231,9 @@ class TestListIncomplete(Case):
             self.assertEqual((p["list_complete"], p["buckets_exact"]), (False, True))
             self.assertEqual(p["destinations"], 2)  # a lower bound
         # the totals don't depend on the lists
-        self.assertEqual((body["a"]["total_bytes"], body["b"]["total_bytes"]), (622, 2342))
+        self.assertEqual(
+            (body["a"]["total_bytes"], body["b"]["total_bytes"]), (622, 2342)
+        )
 
 
 def _estimated(bound):
@@ -207,7 +245,10 @@ def _estimated(bound):
             **reply,
             "aggregations": {
                 **aggs,
-                "destinations": {**aggs["destinations"], "doc_count_error_upper_bound": bound},
+                "destinations": {
+                    **aggs["destinations"],
+                    "doc_count_error_upper_bound": bound,
+                },
             },
         }
 
@@ -221,9 +262,15 @@ class TestBucketsEstimated(Case):
         status, body = await self.get()
         self.assertEqual(status, 200, body)
         self.assertEqual((body["exact"], body["complete"]), (False, False))
-        self.assertEqual((body["new"], body["gone"], body["changed"]), (None, None, None))
-        self.assertEqual((body["a"]["total_bytes"], body["b"]["total_bytes"]), (620, 2340))
-        self.assertEqual((body["a"]["destinations"], body["b"]["destinations"]), (None, None))
+        self.assertEqual(
+            (body["new"], body["gone"], body["changed"]), (None, None, None)
+        )
+        self.assertEqual(
+            (body["a"]["total_bytes"], body["b"]["total_bytes"]), (620, 2340)
+        )
+        self.assertEqual(
+            (body["a"]["destinations"], body["b"]["destinations"]), (None, None)
+        )
         self.assertFalse(body["a"]["buckets_exact"])
 
 
@@ -242,7 +289,10 @@ class TestOneSubListEstimated(Case):
         bucket = {**dest["buckets"][0]}
         bucket["org"] = {**bucket["org"], "doc_count_error_upper_bound": 1}
         dest = {**dest, "buckets": [bucket, *dest["buckets"][1:]]}
-        return {**reply, "aggregations": {**reply["aggregations"], "destinations": dest}}
+        return {
+            **reply,
+            "aggregations": {**reply["aggregations"], "destinations": dest},
+        }
 
     async def test_a_cut_organisation_list_makes_the_period_not_exact(self):
         _, body = await self.get()
@@ -322,7 +372,9 @@ class TestShortReply(Case):
     async def test_a_reply_short_of_a_period_is_a_502(self):
         real = self.os.msearch
         with patch.object(
-            self.os, "msearch", lambda body, **kw: {"responses": real(body, **kw)["responses"][:1]}
+            self.os,
+            "msearch",
+            lambda body, **kw: {"responses": real(body, **kw)["responses"][:1]},
         ):
             status, body = await self.get()
         self.assertEqual((status, body["error"]), (502, INCOMPLETE))
@@ -333,7 +385,11 @@ G11_PERIOD = {
     "took": 426,
     "timed_out": False,
     "_shards": {"total": 7, "successful": 7, "skipped": 0, "failed": 0},
-    "hits": {"total": {"value": 10000, "relation": "gte"}, "max_score": None, "hits": []},
+    "hits": {
+        "total": {"value": 10000, "relation": "gte"},
+        "max_score": None,
+        "hits": [],
+    },
     "aggregations": {
         "total": {"value": 1717490.0},
         "destinations": {
@@ -343,7 +399,11 @@ G11_PERIOD = {
                 {
                     "key": "146.70.174.142",
                     "doc_count": 1586,
-                    "org": {"doc_count_error_upper_bound": 0, "sum_other_doc_count": 0, "buckets": []},
+                    "org": {
+                        "doc_count_error_upper_bound": 0,
+                        "sum_other_doc_count": 0,
+                        "buckets": [],
+                    },
                     "bytes": {"value": 1031410.0},
                 },
                 {
@@ -352,7 +412,9 @@ G11_PERIOD = {
                     "org": {
                         "doc_count_error_upper_bound": 0,
                         "sum_other_doc_count": 0,
-                        "buckets": [{"key": "AS47635 InfoSet-Com Ltd.", "doc_count": 1493}],
+                        "buckets": [
+                            {"key": "AS47635 InfoSet-Com Ltd.", "doc_count": 1493}
+                        ],
                     },
                     "bytes": {"value": 684777.0},
                 },
@@ -368,7 +430,11 @@ def test_the_g11_reply_shape_reads_as_two_new_destinations():
         **G11_PERIOD,
         "aggregations": {
             "total": {"value": 0.0},
-            "destinations": {"doc_count_error_upper_bound": 0, "sum_other_doc_count": 0, "buckets": []},
+            "destinations": {
+                "doc_count_error_upper_bound": 0,
+                "sum_other_doc_count": 0,
+                "buckets": [],
+            },
         },
     }
     a, b = (A_FROM, A_TO), (B_FROM, B_TO)

@@ -43,8 +43,10 @@ Window = tuple[str, str]
 
 
 def _iso(when: datetime) -> str:
-    return when.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace(
-        "+00:00", "Z"
+    return (
+        when.astimezone(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
     )
 
 
@@ -198,8 +200,7 @@ def device_compare(
         if not isinstance(replies, list) or len(replies) != 2:
             raise QueryFailed("the device compare reply was malformed")
         a_reply, b_reply = (
-            checked(r, "the device compare", ("total", "destinations"))
-            for r in replies
+            checked(r, "the device compare", ("total", "destinations")) for r in replies
         )
     except TooSlow:
         raise
@@ -214,7 +215,7 @@ def device_compare(
         raise QueryFailed("the device compare failed") from exc
     reply = {"ip": ip, **compare(a, b, a_reply, b_reply)}
     logger.info(
-        "Device compare %s, %s to %s vs %s to %s: %s destinations, exact=%s complete=%s in %.2f s",
+        "Device compare %s, %r to %r vs %r to %r: %s destinations, exact=%s complete=%s in %.2f s",
         ip,
         *a,
         *b,
