@@ -24,6 +24,31 @@ export interface DnsReconResult {
 	errors: string[];
 }
 
+/** NET-262: one answer from a resolver compare */
+export interface DnsCompareAnswer extends DnsReconRecord {
+	/** Owner, class, type and data without the TTL: equal keys are the same record */
+	key: string;
+	/** A and AAAA answers only */
+	scope?: 'private' | 'public';
+}
+
+export interface DnsCompareReply {
+	resolver: string;
+	/** dig's status (NOERROR, NXDOMAIN, SERVFAIL, …); null when no reply came back */
+	status: string | null;
+	answers: DnsCompareAnswer[];
+	/** The lowest answer TTL in seconds; null with no answers */
+	ttl: number | null;
+	latency_ms: number | null;
+	error: string | null;
+}
+
+export interface DnsCompareResult {
+	name: string;
+	record_type: string;
+	results: DnsCompareReply[];
+}
+
 export interface MacLookupResult {
 	mac: string;
 	oui_prefix: string;
@@ -127,6 +152,24 @@ export async function dnsRecon(
 			record_types_queried: recordTypes || [],
 			errors: [data.error || `DNS recon failed (HTTP ${res.status})`],
 		};
+	}
+
+	return res.json();
+}
+
+/**
+ * Ask several resolvers the same question (NET-262). Throws with the daemon's reason on failure.
+ */
+export async function dnsCompare(name: string, recordType: string, resolvers: string[]): Promise<DnsCompareResult> {
+	const res = await fetch('/api/tools/dns-compare', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ name, record_type: recordType, resolvers }),
+	});
+
+	if (!res.ok) {
+		const data = await res.json().catch(() => ({}));
+		throw new Error(data.error || `Resolver compare failed (HTTP ${res.status})`);
 	}
 
 	return res.json();

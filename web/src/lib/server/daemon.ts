@@ -59,6 +59,7 @@ export const RULE_UPDATE_TIMEOUT_MS = 290_000;
  */
 export const TOOL_TIMEOUT_MS = {
 	'dns-recon': 15_000, // daemon/services/dns_recon_service.py QUERY_TIMEOUT (10 s; its queries run at once)
+	'dns-compare': 15_000, // the same QUERY_TIMEOUT: one dig per resolver, all at once (NET-262)
 	ping: 20_000, // daemon/services/network_diag_service.py PING_TIMEOUT (15 s)
 	traceroute: 35_000, // daemon/services/network_diag_service.py TRACEROUTE_TIMEOUT (30 s)
 	'ssl-cert': 25_000, // daemon/services/ssl_cert_service.py CERT_TIMEOUT (10 s), twice: s_client, then x509

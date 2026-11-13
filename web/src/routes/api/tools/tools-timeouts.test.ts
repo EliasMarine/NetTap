@@ -6,11 +6,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * route now waits 5 s past the daemon's own limit for that tool.
  */
 const daemonFetch = vi.fn();
-const TOOL_TIMEOUT_MS = { 'dns-recon': 15_000, ping: 20_000, traceroute: 35_000, 'ssl-cert': 25_000 };
+const TOOL_TIMEOUT_MS = { 'dns-recon': 15_000, 'dns-compare': 15_000, ping: 20_000, traceroute: 35_000, 'ssl-cert': 25_000 };
 vi.mock('$lib/server/daemon.js', () => ({ daemonFetch: (...a: unknown[]) => daemonFetch(...a), TOOL_TIMEOUT_MS }));
 
 const routes = {
 	'dns-recon': await import('./dns-recon/+server.js'),
+	'dns-compare': await import('./dns-compare/+server.js'),
 	ping: await import('./ping/+server.js'),
 	traceroute: await import('./traceroute/+server.js'),
 	'ssl-cert': await import('./ssl-cert/+server.js'),
@@ -37,8 +38,8 @@ describe('Tools proxies wait past the daemon', () => {
 describe('Tools time limits (the real values)', () => {
 	it('sit 5 s above each daemon limit, all under nginx 60 s', async () => {
 		const real = await vi.importActual<typeof import('$lib/server/daemon')>('$lib/server/daemon');
-		// the daemon's own limits: dns_recon QUERY_TIMEOUT 10, PING_TIMEOUT 15, TRACEROUTE_TIMEOUT 30, CERT_TIMEOUT 10 x 2
-		expect(real.TOOL_TIMEOUT_MS).toEqual({ 'dns-recon': 15_000, ping: 20_000, traceroute: 35_000, 'ssl-cert': 25_000 });
+		// the daemon's own limits: dns_recon QUERY_TIMEOUT 10 (recon and compare), PING_TIMEOUT 15, TRACEROUTE_TIMEOUT 30, CERT_TIMEOUT 10 x 2
+		expect(real.TOOL_TIMEOUT_MS).toEqual({ 'dns-recon': 15_000, 'dns-compare': 15_000, ping: 20_000, traceroute: 35_000, 'ssl-cert': 25_000 });
 		for (const ms of Object.values(real.TOOL_TIMEOUT_MS)) expect(ms).toBeLessThan(60_000);
 	});
 });

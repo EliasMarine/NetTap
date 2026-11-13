@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
 	dnsRecon,
+	dnsCompare,
 	macLookup,
 	ping,
 	traceroute,
 	sslCertInspect,
 	type DnsReconResult,
+	type DnsCompareResult,
 	type MacLookupResult,
 	type PingResult,
 	type TracerouteResult,
@@ -111,6 +113,47 @@ describe('tools API client', () => {
 			mockFetchNetworkError();
 
 			await expect(dnsRecon('example.com')).rejects.toThrow('Failed to fetch');
+		});
+	});
+
+	// -- dnsCompare (NET-262) --------------------------------------------------
+
+	describe('dnsCompare', () => {
+		it('posts the name, type and resolvers, and returns the reply', async () => {
+			const expected: DnsCompareResult = {
+				name: 'setup.ui.com',
+				record_type: 'A',
+				results: [
+					{
+						resolver: '192.168.1.1',
+						status: 'NOERROR',
+						answers: [{ name: 'setup.ui.com.', ttl: 0, class: 'IN', type: 'A', value: '192.168.1.1', key: 'setup.ui.com IN A 192.168.1.1', scope: 'private' }],
+						ttl: 0,
+						latency_ms: 0,
+						error: null,
+					},
+				],
+			};
+			mockFetchSuccess(expected);
+
+			const result = await dnsCompare('setup.ui.com', 'A', ['192.168.1.1']);
+
+			expect(fetch).toHaveBeenCalledWith('/api/tools/dns-compare', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ name: 'setup.ui.com', record_type: 'A', resolvers: ['192.168.1.1'] }),
+			});
+			expect(result).toEqual(expected);
+		});
+
+		it("throws with the daemon's reason", async () => {
+			mockFetchFailure(400, { error: "Resolver 'dns.google' is not an IP address." });
+			await expect(dnsCompare('example.com', 'A', ['dns.google'])).rejects.toThrow("Resolver 'dns.google' is not an IP address.");
+		});
+
+		it('throws with the status when the body is not JSON', async () => {
+			mockFetchFailure(502);
+			await expect(dnsCompare('example.com', 'A', ['9.9.9.9'])).rejects.toThrow('Resolver compare failed (HTTP 502)');
 		});
 	});
 

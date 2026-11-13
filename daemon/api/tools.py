@@ -3,6 +3,7 @@ NetTap Tools API Routes
 
 Registers network tool endpoints with the aiohttp application:
 - DNS Recon (dig-based structured lookups)
+- DNS resolver compare (one question to several resolvers, NET-262)
 - MAC Address OUI Lookup
 - Ping / Traceroute
 - SSL Certificate Inspection
@@ -55,6 +56,33 @@ async def handle_dns_recon(request: web.Request) -> web.Response:
     except Exception as exc:
         logger.exception("DNS recon failed")
         return web.json_response({"error": f"DNS recon failed: {exc}"}, status=500)
+
+
+async def handle_dns_compare(request: web.Request) -> web.Response:
+    """POST /api/tools/dns-compare -- Ask several resolvers the same question (NET-262).
+
+    Any other failure is the error middleware's logged, generic 500.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "Invalid JSON body"}, status=400)
+
+    dns_recon: DnsReconService = request.app["dns_recon"]
+
+    try:
+        result = await dns_recon.compare(
+            name=body.get("name"),
+            record_type=body.get("record_type"),
+            resolvers=body.get("resolvers"),
+        )
+    except DnsReconValidationError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except DnsReconBusyError as e:  # shares the lookups' slots
+        return public_json({"error": str(e)}, status=503)
+    return web.json_response(result)
 
 
 # ---------------------------------------------------------------------------
@@ -304,9 +332,11 @@ def register_tools_routes(
     app["ssl_cert"] = ssl_cert
 
     app.router.add_post("/api/tools/dns-recon", handle_dns_recon)
+    app.router.add_post("/api/tools/dns-compare", handle_dns_compare)
     app.router.add_get("/api/tools/mac-lookup/{mac}", handle_mac_lookup)
     app.router.add_post("/api/tools/ping", handle_ping)
     app.router.add_post("/api/tools/traceroute", handle_traceroute)
     app.router.add_post("/api/tools/ssl-cert", handle_ssl_cert)
 
-    logger.info("Tools API routes registered (5 endpoints)")
+    # OLD CODE: logger.info("Tools API routes registered (5 endpoints)") (NET-262 adds dns-compare)
+    logger.info("Tools API routes registered (6 endpoints)")

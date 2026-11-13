@@ -1,5 +1,9 @@
 <script lang="ts">
-	/** DNS reconnaissance: a form card (domain and record types), then one card per record type with a DataTable. */
+	/**
+	 * DNS reconnaissance, in two tabs:
+	 *   - Lookup: a form card (domain and record types), then one card per record type with a DataTable
+	 *   - Compare resolvers (NET-262): one question to several resolvers (CompareResolvers.svelte)
+	 */
 	import { page } from '$app/stores';
 	import { dnsRecon } from '$api/tools';
 	import type { DnsReconResult, DnsReconRecord } from '$api/tools';
@@ -7,6 +11,8 @@
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import Pills from '$lib/components/ui/Pills.svelte';
+	import CompareResolvers from './CompareResolvers.svelte';
 
 	// ---------------------------------------------------------------------------
 	// Record type definitions with display metadata
@@ -41,6 +47,11 @@
 	let result = $state<DnsReconResult | null>(null);
 	let loading = $state(false);
 	let error = $state('');
+	let activeTab = $state<'lookup' | 'compare'>('lookup');
+	const tabs = [
+		{ value: 'lookup' as const, label: 'Lookup' },
+		{ value: 'compare' as const, label: 'Compare resolvers' },
+	];
 
 	// NET-160: the domain page's "Look it up now" fills the domain in; the lookup waits for the user
 	// OLD CODE START — reran on every $page emission, so it could overwrite what the user had typed
@@ -55,7 +66,11 @@
 		if (url === appliedUrl) return; // the same navigation emitted again
 		appliedUrl = url;
 		const d = url.searchParams.get('domain');
-		if (d) domain = d;
+		// OLD CODE: if (d) domain = d; (NET-262: the lookup now sits in a tab)
+		if (d) {
+			domain = d;
+			activeTab = 'lookup';
+		}
 	});
 
 	// ---------------------------------------------------------------------------
@@ -134,10 +149,14 @@
 	<div>
 		<a class="back" href="/tools"><Icon name="back" />Tools</a>
 		<h1 class="page-title">DNS reconnaissance</h1>
-		<p class="page-sub">List every DNS record a domain publishes, queried with dig.</p>
+		<!-- OLD CODE: <p class="page-sub">List every DNS record a domain publishes, queried with dig.</p> (NET-262) -->
+		<p class="page-sub">List every DNS record a domain publishes, or compare what several resolvers answer, queried with dig.</p>
 	</div>
 </div>
 
+<Pills options={tabs} bind:value={activeTab} mode="tabs" idPrefix="dns" ariaLabel="DNS tools" />
+
+<div role="tabpanel" id="dns-panel-lookup" aria-labelledby="dns-tab-lookup" hidden={activeTab !== 'lookup'}>
 <div class="grid">
 	<Card title="Look up a domain" sub="One domain · the record types you choose" class="c-12">
 		<div class="form-grid">
@@ -194,6 +213,11 @@
 			<CardState state="empty" icon="dns" title="Enter a domain" message="Type a domain, choose the record types, then choose Lookup." />
 		</Card>
 	{/if}
+</div>
+</div>
+
+<div role="tabpanel" id="dns-panel-compare" aria-labelledby="dns-tab-compare" hidden={activeTab !== 'compare'}>
+	<CompareResolvers recordTypes={recordTypeDefs} />
 </div>
 
 <style>

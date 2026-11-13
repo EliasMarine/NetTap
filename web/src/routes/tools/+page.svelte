@@ -92,10 +92,12 @@
 		},
 		{
 			name: 'DNS reconnaissance',
-			description: 'List every DNS record a domain publishes: A, AAAA, MX, NS, TXT, SOA and CNAME.',
+			// OLD CODE: description: 'List every DNS record a domain publishes: A, AAAA, MX, NS, TXT, SOA and CNAME.', (NET-262)
+			description: 'List every DNS record a domain publishes, or compare what several resolvers answer for one name.',
 			href: '/tools/dns-recon',
 			category: 'lookup',
-			tags: ['dig', 'records', 'enumeration'],
+			// OLD CODE: tags: ['dig', 'records', 'enumeration'], (NET-262)
+			tags: ['dig', 'records', 'enumeration', 'resolver', 'split DNS'],
 			icon: 'dns',
 		},
 		{
