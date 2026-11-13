@@ -126,6 +126,29 @@ describe('setup wizard frame', () => {
 		await waitFor(() => expect(screen.getByLabelText('Self-traffic exclusion')).toHaveValue('192.0.2.1'));
 	});
 
+	// NET-211 #4: the field looked editable, but nothing saved what was typed
+	it('shows the detected address read-only and points to Settings for other exclusions', async () => {
+		stubFetch(Promise.resolve(STORAGE), { excluded_ips: [], appliance_ip: '192.0.2.1' });
+		await toInterfaces();
+		await fireEvent.change(screen.getByLabelText(/Capture interface/), { target: { value: 'eth0' } });
+		await fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+
+		const field = await screen.findByLabelText('Self-traffic exclusion');
+		await waitFor(() => expect(field).toHaveValue('192.0.2.1'));
+		expect(field).toHaveAttribute('readonly');
+		expect(screen.getByText(/Add other addresses in Settings › Network after setup/)).toBeInTheDocument();
+	});
+
+	it('says the address is not detected yet, with no MGMT_IP advice', async () => {
+		stubFetch(Promise.resolve(STORAGE), { excluded_ips: [] });
+		await toInterfaces();
+		await fireEvent.change(screen.getByLabelText(/Capture interface/), { target: { value: 'eth0' } });
+		await fireEvent.click(screen.getByRole('button', { name: /Next/ }));
+
+		expect(await screen.findByText('Not detected yet')).toBeInTheDocument();
+		expect(screen.queryByText(/MGMT_IP/)).not.toBeInTheDocument();
+	});
+
 	it("A16: says the disk figures are unavailable when the daemon isn't answering, with no made-up disk", async () => {
 		const error = "The NetTap service isn't answering, so the disk figures are unavailable. Check that it's running, then try again.";
 		stubFetch(Promise.resolve({ __status: 503, error }));

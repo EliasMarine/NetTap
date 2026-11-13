@@ -115,6 +115,17 @@ run() {
     "$@"
 }
 
+# Write stdin to a file; --dry-run logs the path and writes nothing (NET-211 #8).
+# Not `run tee "$f" >/dev/null`: that also sends the dry-run line to /dev/null.
+# Usage: write_file /etc/foo.conf <<'EOF' … EOF   (or <<< "$text"; never a pipe)
+write_file() {
+    if [[ "$NETTAP_DRY_RUN" == "true" ]]; then
+        log "[DRY-RUN] write $1"
+        return 0
+    fi
+    cat > "$1"
+}
+
 # ---------------------------------------------------------------------------
 # Cleanup / signal handling
 # ---------------------------------------------------------------------------

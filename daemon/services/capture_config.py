@@ -113,6 +113,29 @@ def load_capture_config(path: str | None = None) -> CaptureConfig:
     return _load_from_env()
 
 
+def saved_bridge_ports(path: str | None = None) -> tuple[str, str] | None:
+    """The bridge ports the wizard saved, or None (NET-211 #3: Go Live used to guess eth0/eth1).
+
+    Only a parsable file whose mode is bridge, with both [bridge] names present and valid.
+    Never load_capture_config: it falls back to eth0/eth1, and save_capture_config writes
+    those defaults into [bridge] in every mode.
+    """
+    parser = configparser.ConfigParser(inline_comment_prefixes=(";",))
+    try:
+        if not parser.read(_get_config_path(path)):
+            return None
+        if parser.get("capture", "mode", fallback="").strip().lower() != "bridge":
+            return None
+        wan, lan = (
+            validate_interface_name(parser.get("bridge", key, fallback="").strip())
+            for key in ("wan_interface", "lan_interface")
+        )
+    except (configparser.Error, ValueError) as exc:
+        logger.warning("No usable bridge ports in the capture config: %s", exc)
+        return None
+    return wan, lan
+
+
 def _load_from_file(config_path: str) -> CaptureConfig:
     """Parse capture config from an INI file."""
     # ";" inline comments as in the design doc example; no value contains ";"

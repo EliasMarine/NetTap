@@ -356,7 +356,8 @@ print("rc=%d" % p.returncode)
 # OpenSearch not answering yet, services enabled, kernel tuned.
 VERIFY_STUBS='
 ip() { return 0; }
-docker() { case "$1" in info) return 0 ;; compose) printf "a\nb\n" ;; esac; }
+# OLD CODE: docker() { case "$1" in info) return 0 ;; compose) printf "a\nb\n" ;; esac; } (NET-211 #5: the check now asks through compose exec)
+docker() { case "$1 ${4:-}" in info*) return 0 ;; "compose exec") return 1 ;; compose*) printf "a\nb\n" ;; esac; }
 curl() { return 1; }
 systemctl() { return 0; }
 sysctl() { echo 262144; }'
@@ -376,6 +377,16 @@ sysctl() { echo 262144; }'
     [[ "$output" == *"enp3s0 (LAN) ──▸ your router's WAN port"* ]] || false
     [[ "$output" == *"Keep enp1s0 (MGMT) connected"* ]] || false
     [[ "$output" == *"6 passed, 1 warning, 0 failed"* ]] || false
+}
+
+# NET-211 #6: nothing publishes 9443; Dashboards is /dashboards/ through NetTap's nginx after sign-in
+@test "step_verify: the summary card's Malcolm address is the dashboards path, not 9443" {
+    printf 'WAN_INTERFACE=enp2s0\nLAN_INTERFACE=enp3s0\n' > "${TEST_TMPDIR}/.env"
+    run bash -c "source '$INSTALL'; $VERIFY_STUBS
+        PROJECT_ROOT='$TEST_TMPDIR'; step_verify"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"https://nettap.local/dashboards/"*"after you sign in"* ]] || false
+    [[ "$output" != *"9443"* ]] || false
 }
 
 # A13 (NET-229): nettap-web has a setup code (first run), so the card shows it and how to read it again
@@ -405,6 +416,11 @@ sysctl() { echo 262144; }'
     [ "$status" -eq 0 ]
     [[ "$output" == *"NetTap is installed"* ]] || false
     [[ "$output" != *"The bridge is on"* ]] || false
+    # NET-211/NET-246: no bridge, so no cabling to invent; the wizard picks the ports
+    [[ "$output" == *"Last step: open the dashboard; the setup wizard picks the ports."* ]] || false
+    [[ "$output" != *"move the cables"* ]] || false
+    [[ "$output" != *"ISP modem"* ]] || false
+    [[ "$output" != *"Keep Wi-Fi connected"* ]] || false
 }
 
 @test "step_verify: deferred bridge ends with activate-bridge.sh" {

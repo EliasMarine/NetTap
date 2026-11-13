@@ -203,6 +203,33 @@ WRAPPER
 }
 
 # ---------------------------------------------------------------------------
+# NET-244: two ports, internet on one. Auto-assignment still stops rather than put the
+# internet port in a bridge; install.sh doesn't call it under --skip-bridge --non-interactive.
+# ---------------------------------------------------------------------------
+@test "preflight --non-interactive: two ports with internet on one still stops (bridge installs)" {
+    local mock_scripts="${TEST_TMPDIR}/mock_scripts"
+    mkdir -p "${mock_scripts}"
+    cat > "${mock_scripts}/common.sh" <<WRAPPER
+source '${REPO_ROOT}/scripts/common.sh'
+source '${BATS_TEST_DIRNAME}/helpers/mocks.bash'
+WRAPPER
+    sed "s|source \"\${SCRIPT_DIR}/../common.sh\"|source '${mock_scripts}/common.sh'|" \
+        "${REPO_ROOT}/scripts/install/preflight.sh" > "${mock_scripts}/preflight.sh"
+
+    local output rc=0
+    output=$(bash -c "
+        export MOCK_NICS='enp1s0
+enp2s0'
+        export MOCK_DEFAULT_ROUTE_NIC='enp2s0'
+        export PROJECT_ROOT='${TEST_TMPDIR}' TEST_TMPDIR='${TEST_TMPDIR}'
+        bash '${mock_scripts}/preflight.sh' --env-file '${TEST_TMPDIR}/.env' --non-interactive --reconfigure-nics --dry-run
+    " 2>&1) || rc=$?
+
+    [ "$rc" -ne 0 ]
+    [[ "$output" == *"Could not assign WAN and LAN NICs"* ]] || false
+}
+
+# ---------------------------------------------------------------------------
 # Test 9: LED blink calls ethtool -p with correct args
 # ---------------------------------------------------------------------------
 @test "blink_nic: calls ethtool -p with correct interface and duration" {
@@ -257,4 +284,33 @@ WRAPPER
     grep -q "^WAN_INTERFACE=enp2s0$" "$ENV_FILE"
     grep -q "^SMTP_PASS=secret$" "$ENV_FILE"
     [ "$(stat -f '%Lp' "$ENV_FILE" 2>/dev/null || stat -c '%a' "$ENV_FILE")" = "600" ]
+}
+
+# ---------------------------------------------------------------------------
+# NET-211 #1: .env.example's placeholder ports and management address became the box's settings
+# ---------------------------------------------------------------------------
+@test ".env.example sets no port name or management address" {
+    run grep -nE '^[[:space:]]*(export[[:space:]]+)?(MGMT_INTERFACE|MGMT_IP|MGMT_NETMASK|WAN_INTERFACE|LAN_INTERFACE)=' \
+        "${REPO_ROOT}/.env.example"
+    [ "$status" -eq 1 ]
+}
+
+@test "write_env_assignments: a two-port box's .env gets its ports and no management placeholder" {
+    source "${REPO_ROOT}/scripts/common.sh"
+    set +uo pipefail
+    sed -n '/^_set_env_value() {/,/^}/p; /^write_env_assignments() {/,/^}/p' \
+        "${REPO_ROOT}/scripts/install/preflight.sh" > "${TEST_TMPDIR}/preflight-fns.sh"
+    source "${TEST_TMPDIR}/preflight-fns.sh"
+    PROJECT_ROOT="${TEST_TMPDIR}"
+    ENV_FILE="${TEST_TMPDIR}/.env"
+    cp "${REPO_ROOT}/.env.example" "${TEST_TMPDIR}/.env.example"
+
+    write_env_assignments enp2s0 enp1s0 ""
+
+    grep -q "^WAN_INTERFACE=enp2s0$" "$ENV_FILE"
+    grep -q "^LAN_INTERFACE=enp1s0$" "$ENV_FILE"
+    # (common.sh's run shadows bats' run here, so count instead)
+    [ "$(grep -cE '^(MGMT_INTERFACE|MGMT_IP|MGMT_NETMASK)=' "$ENV_FILE")" -eq 0 ]
+    # the rest of the example still comes across
+    grep -q "^NETTAP_HOSTNAME=nettap.local$" "$ENV_FILE"
 }

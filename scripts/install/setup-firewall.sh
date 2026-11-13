@@ -36,7 +36,7 @@ MODE=""
 MGMT_IFACE="${MGMT_INTERFACE:-}"
 SSH_PORT="${SSH_PORT:-22}"
 HTTPS_PORT="${DASHBOARD_PORT:-443}"
-MALCOLM_PORT="${MALCOLM_HTTPS_PORT:-9443}"
+# OLD CODE: MALCOLM_PORT="${MALCOLM_HTTPS_PORT:-9443}" (NET-211 #6: nothing publishes 9443; Dashboards is /dashboards/ on HTTPS)
 # The compose network nettap-web is on: <project>_default, and the project is the compose file's
 # folder (docker) unless .env sets COMPOSE_PROJECT_NAME
 DOCKER_NETWORK="${COMPOSE_PROJECT_NAME:-docker}_default"
@@ -192,7 +192,7 @@ do_enable() {
     log "  Management interface:  ${MGMT_IFACE}"
     log "  SSH port:              ${SSH_PORT}"
     log "  HTTPS port:            ${HTTPS_PORT}"
-    log "  Malcolm port:          ${MALCOLM_PORT}"
+    # OLD CODE: log "  Malcolm port:          ${MALCOLM_PORT}" (NET-211 #6)
     log ""
 
     # -- Reset to clean state (non-interactive) --
@@ -213,11 +213,13 @@ do_enable() {
     run ufw allow in on "$MGMT_IFACE" to any port "$HTTPS_PORT" proto tcp comment "NetTap dashboard HTTPS (mgmt only)"
     log "Allowed HTTPS (port ${HTTPS_PORT}) on ${MGMT_IFACE}"
 
-    # -- Allow Malcolm dashboards on management interface (if different port) --
-    if [[ "$MALCOLM_PORT" != "$HTTPS_PORT" ]]; then
-        run ufw allow in on "$MGMT_IFACE" to any port "$MALCOLM_PORT" proto tcp comment "Malcolm dashboards HTTPS (mgmt only)"
-        log "Allowed Malcolm dashboards (port ${MALCOLM_PORT}) on ${MGMT_IFACE}"
-    fi
+    # OLD CODE START — NET-211 #6: nothing publishes 9443; Dashboards is /dashboards/ on the HTTPS port above
+    # # -- Allow Malcolm dashboards on management interface (if different port) --
+    # if [[ "$MALCOLM_PORT" != "$HTTPS_PORT" ]]; then
+    #     run ufw allow in on "$MGMT_IFACE" to any port "$MALCOLM_PORT" proto tcp comment "Malcolm dashboards HTTPS (mgmt only)"
+    #     log "Allowed Malcolm dashboards (port ${MALCOLM_PORT}) on ${MGMT_IFACE}"
+    # fi
+    # OLD CODE END
 
     # -- Allow HTTP for HTTPS redirect on management interface --
     run ufw allow in on "$MGMT_IFACE" to any port 80 proto tcp comment "NetTap HTTP->HTTPS redirect (mgmt only)"
@@ -284,9 +286,11 @@ do_enable() {
     log "Allowed inbound (${MGMT_IFACE} only):"
     log "  - SSH:              port ${SSH_PORT}/tcp"
     log "  - HTTPS dashboard:  port ${HTTPS_PORT}/tcp"
-    if [[ "$MALCOLM_PORT" != "$HTTPS_PORT" ]]; then
-        log "  - Malcolm:          port ${MALCOLM_PORT}/tcp"
-    fi
+    # OLD CODE START — NET-211 #6
+    # if [[ "$MALCOLM_PORT" != "$HTTPS_PORT" ]]; then
+    #     log "  - Malcolm:          port ${MALCOLM_PORT}/tcp"
+    # fi
+    # OLD CODE END
     log "  - HTTP redirect:    port 80/tcp"
     log "  - mDNS:             port 5353/udp"
     log ""
