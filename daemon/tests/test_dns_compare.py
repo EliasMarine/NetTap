@@ -13,9 +13,11 @@ from aiohttp.test_utils import AioHTTPTestCase
 
 from api.tools import register_tools_routes
 from services.dns_recon_service import (
+    COMPARE_DIG_TIME,
     LOOKUPS_BUSY,
     MAX_CONCURRENT_LOOKUPS,
     NO_REPLY,
+    QUERY_TIMEOUT,
     DnsReconBusyError,
     DnsReconService,
     DnsReconValidationError,
@@ -145,7 +147,7 @@ class TestCompareDig(unittest.TestCase):
                     "+answer",
                     "+comments",
                     "+stats",
-                    "+time=2",
+                    "+time=4",
                     "+tries=1",
                     "-t",
                     "AAAA",
@@ -201,6 +203,27 @@ class TestCompareDig(unittest.TestCase):
             )
 
         asyncio.run(run_test())
+
+    def test_a_reply_slower_than_2_s_keeps_its_latency(self):
+        async def run_test():
+            outputs = {"9.9.9.9": (dig.QUAD9_SLOW, 0)}
+            with patch(EXEC, side_effect=fake_exec_from(outputs)):
+                result = await self.svc.compare("www.github.com", "A", ["9.9.9.9"])
+            reply = result["results"][0]
+            self.assertEqual(
+                (reply["status"], reply["latency_ms"], reply["error"]),
+                ("NOERROR", 3412, None),
+            )
+            self.assertEqual(len(reply["answers"]), 2)
+
+        asyncio.run(run_test())
+
+    def test_dig_gives_up_before_the_hard_limit_and_the_web_proxy(self):
+        # one try of COMPARE_DIG_TIME, inside QUERY_TIMEOUT, inside the web's 15 s
+        # (TOOL_TIMEOUT_MS['dns-compare'], web/src/routes/api/tools/tools-timeouts.test.ts)
+        self.assertEqual(COMPARE_DIG_TIME, 4)
+        self.assertLess(COMPARE_DIG_TIME, QUERY_TIMEOUT)
+        self.assertLess(QUERY_TIMEOUT, 15)
 
     def test_no_reply_is_no_status_and_the_plain_reason(self):
         async def run_test():

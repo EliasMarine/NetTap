@@ -114,6 +114,26 @@ QUAD9_CNAME = (
     "\n"
 )
 
+# QUAD9_CNAME with only its Query time raised to 3.4 s: Quad9 from the G11 sometimes took 2-4 s
+# (at +time=2 those read as no reply), but none was slow when this was captured
+QUAD9_SLOW = (
+    ";; Got answer:\n"
+    ";; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 46031\n"
+    ";; flags: qr rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 1\n"
+    "\n"
+    ";; OPT PSEUDOSECTION:\n"
+    "; EDNS: version: 0, flags:; udp: 1232\n"
+    ";; ANSWER SECTION:\n"
+    "www.github.com.\t\t1944\tIN\tCNAME\tgithub.com.\n"
+    "github.com.\t\t46\tIN\tA\t20.172.24.160\n"
+    "\n"
+    ";; Query time: 3412 msec\n"
+    ";; SERVER: 9.9.9.9#53(9.9.9.9) (UDP)\n"
+    ";; WHEN: Fri Nov 13 21:07:22 UTC 2026\n"
+    ";; MSG SIZE  rcvd: 73\n"
+    "\n"
+)
+
 # @192.168.1.1 unifi A: the same record twice
 ROUTER_DUPLICATE = (
     ";; Got answer:\n"

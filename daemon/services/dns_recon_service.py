@@ -35,6 +35,8 @@ LOOKUPS_BUSY = "DNS reconnaissance is busy. Try again in a moment."
 
 # NET-262: resolver compare
 MAX_COMPARE_RESOLVERS = 6
+# Seconds dig waits for its one try: Quad9 from the G11 can take 2-4 s; stays under QUERY_TIMEOUT
+COMPARE_DIG_TIME = 4
 NO_REPLY = "No reply from NetTap"
 # dig names an unknown rcode RESERVED<n>
 _STATUS = re.compile(r"->>HEADER<<-.*\bstatus: ([A-Z0-9]+),")
@@ -355,7 +357,8 @@ class DnsReconService:
                 "+answer",
                 "+comments",
                 "+stats",
-                "+time=2",
+                # OLD CODE: "+time=2", (a Quad9 reply in 2-4 s read as "did not reply")
+                f"+time={COMPARE_DIG_TIME}",
                 "+tries=1",
                 "-t",
                 rtype,
