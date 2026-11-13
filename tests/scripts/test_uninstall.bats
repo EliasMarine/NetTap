@@ -25,7 +25,8 @@ _harness() {
     printf "source '%s/scripts/common.sh'\nrequire_root() { :; }\n" "$REPO_ROOT" > "$MOCK/scripts/common.sh"
     cp "$REPO_ROOT/scripts/install/uninstall.sh" "$MOCK/scripts/install/"
     touch "$MOCK/docker/docker-compose.yml"
-    _stub systemctl ''
+    # DIE_AT: the systemctl call that kills uninstall.sh, as a power cut or Ctrl-C would
+    _stub systemctl 'if [ -n "${DIE_AT:-}" ] && [ "$*" = "$DIE_AT" ]; then kill -KILL "$PPID"; fi'
     _stub docker "case \"\$1\" in exec) echo '${TOKEN}' ;; compose) exit \"\${DOCKER_COMPOSE_RC:-0}\" ;; esac"
     _stub curl 'cat > "$TEST_TMPDIR/curl-stdin"
 [ "${CURL_RC:-0}" -eq 0 ] || exit "$CURL_RC"
@@ -115,7 +116,7 @@ setup() {
     [ -e "$R/etc/nettap/capture.env" ]
     _calls | grep -qx "systemctl disable --now nettap.service"
     _calls | grep -qx "systemctl disable --now nettap-mirror.service"
-    _calls | grep -qx "docker compose -f $MOCK/docker/docker-compose.yml down"
+    _calls | grep -qx "docker compose -f $MOCK/docker/docker-compose.yml --profile arkime --profile grafana down --remove-orphans"
     _calls | grep -qx "systemctl daemon-reload"
     # units first: stopping nettap-bypass.service would start the containers again
     [ "$(_calls | grep -n 'disable --now nettap-mirror' | cut -d: -f1)" -lt "$(_calls | grep -n 'compose' | cut -d: -f1)" ]
@@ -230,6 +231,10 @@ EOF
     [ "$(cat "$R/etc/docker/daemon.json")" = '{"data-root": "/srv/docker"}' ]
     [ ! -e "$R/etc/docker/daemon.json.nettap-installed" ]
     [ ! -e "$R/etc/docker/daemon.json.nettap-backup" ]
+    # a second run doesn't call the owner's own file an older NetTap's
+    _uninstall --yes < /dev/null
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"daemon.json"* ]] || false
 }
 
 @test "uninstall restores the owner's latest daemon.json after a reinstall, not the first one" {
@@ -261,11 +266,29 @@ EOF
     [ "$(cat "$R/etc/docker/daemon.json")" = '{"dns": ["192.0.2.53"]}' ]
     [ -e "$R/etc/docker/daemon.json.nettap-installed" ]
     [[ "$output" == *"it changed after NetTap wrote it"* ]] || false
+    # no record, NetTap's DNS servers in it: an older NetTap may have written it
     rm "$R/etc/docker/daemon.json.nettap-installed"
+    printf '{"dns": ["9.9.9.9", "149.112.112.112"]}\n' > "$R/etc/docker/daemon.json"
     _uninstall --yes < /dev/null
     [ "$status" -eq 0 ]
-    [ "$(cat "$R/etc/docker/daemon.json")" = '{"dns": ["192.0.2.53"]}' ]
+    [ "$(cat "$R/etc/docker/daemon.json")" = '{"dns": ["9.9.9.9", "149.112.112.112"]}' ]
     [[ "$output" == *"no record of what NetTap wrote"* ]] || false
+}
+
+@test "uninstall in DHCP gateway mode can run again after being cut short" {
+    _unit nettap-dhcp-gateway.service
+    _unit nettap.service
+    echo "network: {}" > "$R/etc/netplan/90-nettap-dhcp-gateway.yaml"
+    # the router answers; the run dies while stopping nettap.service, which stops the daemon
+    CURL_REPLY='{"other_dhcp_servers": ["192.0.2.1"]}' DIE_AT="disable --now nettap.service" _uninstall --yes < /dev/null
+    [ "$status" -ne 0 ]
+    [ ! -e "$R/etc/netplan/90-nettap-dhcp-gateway.yaml" ]
+    [ ! -e "$R/etc/systemd/system/nettap-dhcp-gateway.service" ]
+    # the daemon can't be asked now, and nothing needs it: the next run finishes
+    CURL_RC=7 _uninstall --yes < /dev/null
+    [ "$status" -eq 0 ]
+    [ ! -e "$R/etc/systemd/system/nettap.service" ]
+    [[ "$output" != *"DHCP server"* ]] || false
 }
 
 @test "uninstall --purge-data asks for 'delete' every time, even with --yes" {
@@ -282,7 +305,7 @@ EOF
     _uninstall --purge-data <<< $'y\ndelete'
     [ "$status" -eq 0 ]
     [ ! -e "$R/etc/nettap" ]
-    _calls | grep -qx "docker compose -f $MOCK/docker/docker-compose.yml down -v"
+    _calls | grep -qx "docker compose -f $MOCK/docker/docker-compose.yml --profile arkime --profile grafana down --remove-orphans -v"
     [[ "$output" != *"run again with --purge-data"* ]] || false
 }
 

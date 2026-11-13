@@ -39,8 +39,9 @@ DHCP_PREFLIGHT_URL="http://127.0.0.1:8880/api/capture/dhcp/preflight"
 
 # Everything NetTap's installer, bridge scripts and daemon write. An explicit list: the one glob is
 # NetTap's own mirror prefix.
-UNITS=(nettap.service nettap-bridge.service nettap-bridge-promisc.service
-    nettap-mirror.service nettap-dhcp-gateway.service nettap-bypass.service)
+# nettap-dhcp-gateway.service first, while the daemon still runs: see remove_units.
+UNITS=(nettap-dhcp-gateway.service nettap.service nettap-bridge.service nettap-bridge-promisc.service
+    nettap-mirror.service nettap-bypass.service)
 FILES=(
     /etc/netplan/10-nettap-bridge.yaml
     "/etc/netplan/10-nettap-mirror-*.yaml"
@@ -115,13 +116,18 @@ find_present() {
     fi
 }
 
-# none | legacy (no record of NetTap's write) | restore | remove | changed (edited since)
+# none | legacy (no record, NetTap's DNS servers in it) | restore | remove | changed (edited since)
 daemon_json_action() {
     local installed="${DAEMON_JSON}.nettap-installed"
     if [[ ! -e "$DAEMON_JSON" ]]; then
         echo none
     elif [[ ! -e "$installed" ]]; then
-        echo legacy
+        # NetTap's servers in it: an older NetTap may have written it. Otherwise it's the owner's (or put back)
+        if grep -q '9\.9\.9\.9' "$DAEMON_JSON" && grep -q '149\.112\.112\.112' "$DAEMON_JSON"; then
+            echo legacy
+        else
+            echo none
+        fi
     elif ! cmp -s "$DAEMON_JSON" "$installed"; then
         echo changed
     elif [[ -e "${DAEMON_JSON}.nettap-backup" ]]; then
@@ -213,9 +219,15 @@ confirm() {
 
 # Units go first: stopping nettap-bypass.service runs bypass-mode.sh --disable, which starts the
 # capture containers again, so compose down has to come after it.
+# DHCP gateway mode goes first and its netplan just before its unit, while the daemon still runs: a run
+# cut short there can be run again, as the unit (if left) still passes the DHCP check against the live
+# daemon. The other order left the netplan behind a stopped daemon, and every run after refused.
 remove_units() {
     local unit link
     for unit in ${PRESENT_UNITS[@]+"${PRESENT_UNITS[@]}"}; do
+        if [[ "$unit" == nettap-dhcp-gateway.service && -e "$DHCP_NETPLAN" ]]; then
+            run rm -f "$DHCP_NETPLAN" || { warn "Couldn't remove $(show_path "$DHCP_NETPLAN")."; fail; }
+        fi
         if [[ -e "${SYSTEMD_DIR}/${unit}" ]]; then
             run systemctl disable --now "$unit" || { warn "Couldn't stop and disable ${unit}."; fail; }
             run rm -f "${SYSTEMD_DIR}/${unit}" || fail
@@ -228,7 +240,8 @@ remove_units() {
 }
 
 stop_containers() {
-    local args=(down)
+    # The opt-in profiles too (docker-compose.yml: arkime, grafana), or their containers and volumes stay
+    local args=(--profile arkime --profile grafana down --remove-orphans)
     [[ "$PURGE" == "true" ]] && args+=(-v)
     if [[ ! -f "$COMPOSE_FILE" ]]; then
         warn "No $(show_path "$COMPOSE_FILE"): NetTap's containers weren't stopped."
