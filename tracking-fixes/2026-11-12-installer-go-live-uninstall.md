@@ -52,6 +52,14 @@ NET-244: `install.sh --skip-bridge --non-interactive` aborted on a two-port box.
 - A single-file bind mount keeps the old inode after `git pull`; `docker restart` doesn't pick up the new file, recreate the container.
 - Stopping `nettap-bypass.service` runs `bypass-mode.sh --disable`, which starts capture; anything that stops NetTap must stop units before `compose down`.
 
+## Review fixes (PR #254)
+
+- The summary card under `--skip-bridge` no longer shows bridge cabling (eth0/eth1 when no ports were set) or "Keep Wi-Fi connected"; it says "open the dashboard; the setup wizard picks the ports". This covers the first NET-246 item (the cabling card).
+- uninstall.sh: DHCP gateway mode goes first, its netplan just before its unit, while the daemon still runs, so a run cut short can be run again (before, the netplan outlived the daemon and every re-run refused). `compose down` adds `--profile arkime --profile grafana --remove-orphans`. A `daemon.json` with no record is called an older NetTap's only when it holds NetTap's DNS servers.
+- install.sh: the NET-244 path locks `.env` to 600 (preflight.sh, which it skips, did that). The dry run shows `sysctl --system` (the redirect hid it) and, without jq, says what it would add instead of "can't read as JSON".
+- The capture env loader repeats its waiting line every 5 minutes.
+- Go Live's wiring step shows the "ports aren't saved" notice instead of empty port tags when br0 exists without saved ports.
+
 ## Next steps
 
 - Deploy on the G11: `bash scripts/remote/deploy-installer-go-live.sh`.

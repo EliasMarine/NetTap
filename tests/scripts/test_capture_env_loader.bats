@@ -220,8 +220,8 @@ _sleep_stub() {
 #!/usr/bin/env bash
 echo "sleep $*" >> "${TEST_TMPDIR}/sleep.log"
 n=$(wc -l < "${TEST_TMPDIR}/sleep.log")
-if [ "$n" -ge 2 ] && [ -n "$APPEAR" ]; then mkdir -p "$APPEAR"; fi
-if [ "$n" -ge 10 ]; then kill -TERM "$PPID"; fi
+if [ "$n" -ge "${APPEAR_AT:-2}" ] && [ -n "$APPEAR" ]; then mkdir -p "$APPEAR"; fi
+if [ "$n" -ge "${KILL_AT:-10}" ]; then kill -TERM "$PPID"; fi
 STUB
     chmod +x "${bin}/sleep"
 }
@@ -230,6 +230,7 @@ _wait_loader() {  # $1 = compose PCAP_IFACE, $2 = interface dir the stub creates
     _sleep_stub
     mkdir -p "${TEST_TMPDIR}/wsys"
     run env -i PATH="${TEST_TMPDIR}/bin:$PATH" TEST_TMPDIR="$TEST_TMPDIR" APPEAR="$2" \
+        APPEAR_AT="${APPEAR_AT:-2}" KILL_AT="${KILL_AT:-10}" \
         NETTAP_CAPTURE_ENV="${TEST_TMPDIR}/capture.env" NETTAP_SYS_CLASS_NET="${TEST_TMPDIR}/wsys" \
         PCAP_IFACE="$1" bash -c ". '${LOADER}' && echo \"IFACE=\${PCAP_IFACE}\" && trap"
 }
@@ -254,6 +255,14 @@ _sleeps() { if [ -f "${TEST_TMPDIR}/sleep.log" ]; then wc -l < "${TEST_TMPDIR}/s
     [ "$(grep -c 'sleep 5' "${TEST_TMPDIR}/sleep.log")" -eq 2 ]
     # the TERM trap is gone once capture starts (`trap` prints nothing)
     [[ "$output" != *"exit 143"* ]] || false
+}
+
+@test "capture-env: a port that doesn't appear is named again every 5 minutes" {
+    APPEAR_AT=62 KILL_AT=70 _wait_loader eth9 "${TEST_TMPDIR}/wsys/eth9"
+    [ "$status" -eq 0 ]
+    [ "$(_sleeps)" -eq 62 ]
+    # before the 1st sleep and the 61st (60 x 5 s = 5 minutes)
+    [ "$(grep -c 'waiting for capture interface eth9' <<< "$output")" -eq 2 ]
 }
 
 @test "capture-env: waits for the wizard's interface from capture.env, not the compose br0" {
@@ -285,18 +294,18 @@ _sleeps() { if [ -f "${TEST_TMPDIR}/sleep.log" ]; then wc -l < "${TEST_TMPDIR}/s
 }
 
 @test "capture-env: docker stop ends the wait at once (TERM, exit 143)" {
-    local sys="${TEST_TMPDIR}/empty-sys" out="${TEST_TMPDIR}/out" pid i rc=0
+    local sys="${TEST_TMPDIR}/empty-sys" out="${TEST_TMPDIR}/out" pid _ rc=0
     mkdir -p "$sys"
     env -i PATH="$PATH" NETTAP_CAPTURE_ENV="${TEST_TMPDIR}/none.env" NETTAP_SYS_CLASS_NET="$sys" PCAP_IFACE=br0 \
         sh -c ". '${LOADER}'; echo after" > "$out" 2>&1 3>&- &
     pid=$!
-    for i in $(seq 1 50); do
+    for _ in $(seq 1 50); do
         grep -q 'waiting for capture interface br0' "$out" && break
         sleep 0.1
     done
     grep -q 'waiting for capture interface br0' "$out"
     kill -TERM "$pid"
-    for i in $(seq 1 20); do
+    for _ in $(seq 1 20); do
         kill -0 "$pid" 2>/dev/null || break
         sleep 0.1
     done

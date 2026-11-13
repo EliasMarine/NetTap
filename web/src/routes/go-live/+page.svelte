@@ -401,49 +401,56 @@
 				<div class="stack">
 					<p class="muted">Follow the steps below to connect NetTap inline between your modem and router.</p>
 
-					<!-- Modem → WAN port → NetTap bridge → LAN port → router -->
-					<div class="diagram">
-						<div class="node">
-							<span class="tile"><Icon name="dns" /></span>
-							<span class="node-label">ISP modem</span>
+					<!-- NET-211 #3: br0 can exist before the wizard saved the ports; the tags would be empty -->
+					{#if !portsSaved}
+						<div class="notice is-warn" role="status">
+							<Icon name="warn" /><span>The bridge ports aren't saved yet. Choose them in the setup wizard first.</span>
 						</div>
-						<span class="cable" aria-hidden="true"></span>
-						<div class="node">
-							<span class="tag">{wanIface}</span>
-							<span class="node-label">WAN</span>
-							<span class="res" class:is-live={wanCarrier} class:is-medium={!wanCarrier}>{wanCarrier ? 'Connected' : 'No carrier'}</span>
+					{:else}
+						<!-- Modem → WAN port → NetTap bridge → LAN port → router -->
+						<div class="diagram">
+							<div class="node">
+								<span class="tile"><Icon name="dns" /></span>
+								<span class="node-label">ISP modem</span>
+							</div>
+							<span class="cable" aria-hidden="true"></span>
+							<div class="node">
+								<span class="tag">{wanIface}</span>
+								<span class="node-label">WAN</span>
+								<span class="res" class:is-live={wanCarrier} class:is-medium={!wanCarrier}>{wanCarrier ? 'Connected' : 'No carrier'}</span>
+							</div>
+							<span class="cable" aria-hidden="true"></span>
+							<div class="node">
+								<span class="tile accent"><Icon name="connections" /></span>
+								<span class="node-label">NetTap <span class="mono">br0</span></span>
+							</div>
+							<span class="cable" aria-hidden="true"></span>
+							<div class="node">
+								<span class="tag">{lanIface}</span>
+								<span class="node-label">LAN</span>
+								<span class="res" class:is-live={lanCarrier} class:is-medium={!lanCarrier}>{lanCarrier ? 'Connected' : 'No carrier'}</span>
+							</div>
+							<span class="cable" aria-hidden="true"></span>
+							<div class="node">
+								<span class="tile"><Icon name="infra" /></span>
+								<span class="node-label">Router</span>
+							</div>
 						</div>
-						<span class="cable" aria-hidden="true"></span>
-						<div class="node">
-							<span class="tile accent"><Icon name="connections" /></span>
-							<span class="node-label">NetTap <span class="mono">br0</span></span>
-						</div>
-						<span class="cable" aria-hidden="true"></span>
-						<div class="node">
-							<span class="tag">{lanIface}</span>
-							<span class="node-label">LAN</span>
-							<span class="res" class:is-live={lanCarrier} class:is-medium={!lanCarrier}>{lanCarrier ? 'Connected' : 'No carrier'}</span>
-						</div>
-						<span class="cable" aria-hidden="true"></span>
-						<div class="node">
-							<span class="tile"><Icon name="infra" /></span>
-							<span class="node-label">Router</span>
-						</div>
-					</div>
 
-					<div>
-						<h3 class="sub-title">Steps</h3>
-						<ol class="steps">
-							<li><strong>Disconnect</strong> the Ethernet cable running from your ISP modem to your router.</li>
-							<li>
-								<strong>Connect</strong> the modem's Ethernet cable to the <span class="tag">{wanIface}</span> port on NetTap (WAN).
-							</li>
-							<li>
-								<strong>Connect</strong> a new Ethernet cable from the <span class="tag">{lanIface}</span> port on NetTap (LAN) to your router's WAN port.
-							</li>
-							<li><strong>Wait</strong> for both ports above to read Connected. This page moves on by itself.</li>
-						</ol>
-					</div>
+						<div>
+							<h3 class="sub-title">Steps</h3>
+							<ol class="steps">
+								<li><strong>Disconnect</strong> the Ethernet cable running from your ISP modem to your router.</li>
+								<li>
+									<strong>Connect</strong> the modem's Ethernet cable to the <span class="tag">{wanIface}</span> port on NetTap (WAN).
+								</li>
+								<li>
+									<strong>Connect</strong> a new Ethernet cable from the <span class="tag">{lanIface}</span> port on NetTap (LAN) to your router's WAN port.
+								</li>
+								<li><strong>Wait</strong> for both ports above to read Connected. This page moves on by itself.</li>
+							</ol>
+						</div>
+					{/if}
 				</div>
 			</Card>
 		</div>

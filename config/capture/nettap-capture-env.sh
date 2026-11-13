@@ -89,13 +89,16 @@ if [ -d "$_nettap_sys" ] && [ -n "${PCAP_IFACE:-}" ]; then
     IFS=,
     for _nettap_val in $PCAP_IFACE; do
         IFS="$_nettap_ifs"
-        if [ ! -e "$_nettap_sys/$_nettap_val" ]; then
-            echo "nettap-capture-env: waiting for capture interface $_nettap_val (set by the setup wizard, or Go Live for a bridge)" >&2
-            while [ ! -e "$_nettap_sys/$_nettap_val" ]; do
-                sleep 5 &
-                wait $!
-            done
-        fi
+        _nettap_n=0
+        while [ ! -e "$_nettap_sys/$_nettap_val" ]; do
+            # Again every 5 minutes (60 x 5 s), so a mistyped or missing port doesn't wait silently
+            if [ $((_nettap_n % 60)) -eq 0 ]; then
+                echo "nettap-capture-env: waiting for capture interface $_nettap_val (set by the setup wizard, or Go Live for a bridge)" >&2
+            fi
+            _nettap_n=$((_nettap_n + 1))
+            sleep 5 &
+            wait $!
+        done
     done
     IFS="$_nettap_ifs"
     trap - TERM INT
@@ -136,5 +139,5 @@ if [ -n "${SURICATA_UPDATE_ENABLE_SOURCES:-}" ] && [ -f "$_nettap_suricata_env" 
     esac
 fi
 
-unset _nettap_env_file _nettap_line _nettap_val _nettap_suricata_env _nettap_code _nettap_sources _nettap_ifs _nettap_sys
+unset _nettap_env_file _nettap_line _nettap_val _nettap_suricata_env _nettap_code _nettap_sources _nettap_ifs _nettap_sys _nettap_n
 true

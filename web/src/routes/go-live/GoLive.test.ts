@@ -190,6 +190,25 @@ describe('GoLive page — bridge ports saved by the setup wizard', () => {
 		expect(screen.queryByRole('button', { name: 'Create bridge' })).not.toBeInTheDocument();
 		expect(bridgeApi.createBridge).not.toHaveBeenCalled();
 	});
+
+	it('with br0 already up but no saved ports, the wiring step says so instead of empty port tags', async () => {
+		stubModeFetch(() => jsonResponse(200, { mode: 'bridge', interface: 'br0' }));
+		vi.mocked(bridgeApi.getBridgeReadiness).mockResolvedValue({
+			ready: false,
+			checks: [
+				{ name: 'bridge_exists', passed: true, detail: '' },
+				{ name: 'wan_carrier', passed: false, detail: '' },
+				{ name: 'lan_carrier', passed: false, detail: '' },
+			],
+			message: '',
+		});
+
+		render(GoLivePage);
+
+		expect(await screen.findByText('Cable your network')).toBeInTheDocument();
+		expect(screen.getByText(/The bridge ports aren't saved yet/)).toBeInTheDocument();
+		expect(screen.queryByText(/port on NetTap \(WAN\)/)).not.toBeInTheDocument();
+	});
 });
 
 // ---------------------------------------------------------------------------
