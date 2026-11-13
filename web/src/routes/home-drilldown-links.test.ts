@@ -2,8 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import HomePage from './+page.svelte';
 import { refreshPage } from '$lib/stores/pageRefresh';
+import { goto } from '$app/navigation';
 import { _configure } from '$lib/stores/alertSnapshot';
 import type { SmartAlert, SmartAlertKey } from '$api/alerts';
+
+vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
 // NET-160 slice 2b-1: Home's figures open the list that holds them, over the window of the
 // response on screen: a smart alert's ×N, and the Alerts, Connections and Bandwidth cards.
@@ -274,5 +277,76 @@ describe('Home — drill-down links carry the window on screen (NET-160 slice 2b
 		expect(kpi('Bandwidth')).toHaveAttribute('href', '/logs?range=24h');
 		expect(kpi('Bandwidth')).not.toHaveAttribute('title');
 		expect(kpi('Alerts')).toHaveAttribute('href', '/alerts?range=24h');
+	});
+});
+
+// NET-249: the bandwidth chart's buckets scale with the range, and a pick opens that moment
+describe('Home — the bandwidth chart drills into a moment (NET-249)', () => {
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ['Date'] });
+		vi.setSystemTime(new Date('2026-11-06T12:00:30Z'));
+		vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+		_configure({ now: () => Date.now() });
+		overrides = {};
+		vi.mocked(goto).mockClear();
+		stubDaemon();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+		_configure({ now: Date.now });
+	});
+
+	/** The chart's bandwidth request in a batch: the one over the summary's window (the other is the trend's). */
+	const chartCall = (batch: Call[]) => {
+		const win = sent(batch, '/api/traffic/summary');
+		return batch.find((c) => c.path === '/api/traffic/bandwidth' && c.url.searchParams.get('from') === win.get('from'))!;
+	};
+
+	it("asks for each range's bucket: 1h by the minute up to 30d by 3 hours", async () => {
+		const first = await firstLoad();
+		expect(chartCall(first).url.searchParams.get('interval')).toBe('5m'); // 24h
+		first.forEach((c) => c.reply());
+		await settle();
+		expect(screen.getByText(/^Bytes per 5 minutes · last 24 hours/)).toBeInTheDocument();
+		for (const [range, bucket, words] of [['1h', '1m', 'minute'], ['6h', '5m', '5 minutes'], ['7d', '1h', 'hour'], ['30d', '3h', '3 hours']]) {
+			const before = calls.length;
+			await fireEvent.click(screen.getByRole('button', { name: range }));
+			await vi.waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(before + REQUESTS));
+			const batch = calls.slice(before);
+			expect(chartCall(batch).url.searchParams.get('interval'), range).toBe(bucket);
+			batch.forEach((c) => c.reply());
+			await settle();
+			expect(screen.getByText(new RegExp(`^Bytes per ${words} · `))).toBeInTheDocument();
+		}
+	});
+
+	it("a pick opens the moment over the reply's own window, with the figures clicked", async () => {
+		// the daemon's reply window starts 2 minutes after its first slot, so that slot is clipped
+		overrides['/api/traffic/bandwidth'] = (from, to) => ({
+			from: '2026-11-05T12:02:00.000Z', to, interval: '5m',
+			series: [
+				{ timestamp: '2026-11-05T12:00:00.000Z', orig_bytes: 0, resp_bytes: 0, upload_bytes: 10, download_bytes: 100, local_bytes: 1, total_bytes: 111, connections: 1 },
+				{ timestamp: '2026-11-05T12:05:00.000Z', orig_bytes: 0, resp_bytes: 0, upload_bytes: 20, download_bytes: 200, local_bytes: 2, total_bytes: 222, connections: 2 },
+			],
+		});
+		const first = await firstLoad();
+		first.forEach((c) => c.reply());
+		await settle();
+		const to = chartCall(first).url.searchParams.get('to')!;
+		expect(screen.getByText('Click a point or drag across the chart to see that moment.')).toBeInTheDocument();
+		const chart = screen.getByRole('group', { name: /^Bandwidth over the last 24 hours/ });
+		await fireEvent.keyDown(chart, { key: 'Home' });
+		await fireEvent.keyDown(chart, { key: 'Enter' });
+		const href = (n: number) => Object.fromEntries(new URL(String(vi.mocked(goto).mock.calls[n][0]), 'http://x').searchParams);
+		expect(href(0)).toEqual({
+			from: '2026-11-05T12:02:00.000Z', to: '2026-11-05T12:04:59.999Z', range: '24h',
+			down: '100', up: '10', local: '1', chart_from: '2026-11-05T12:02:00.000Z', chart_to: to,
+		});
+		await fireEvent.keyDown(chart, { key: 'End', shiftKey: true });
+		await fireEvent.keyDown(chart, { key: 'Enter' });
+		expect(href(1)).toMatchObject({ from: '2026-11-05T12:02:00.000Z', to: '2026-11-05T12:09:59.999Z', down: '300', up: '30', local: '3' });
+		expect(String(vi.mocked(goto).mock.calls[1][0])).toMatch(/^\/moment\?/);
 	});
 });

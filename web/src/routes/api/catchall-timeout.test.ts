@@ -77,6 +77,13 @@ describe('catch-all proxy timeouts with the real daemonFetch', () => {
 		expect((await pending).status).toBe(200);
 	});
 
+	it('lets a 12 s moment device breakdown through (NET-249)', async () => {
+		slowDaemon();
+		const pending = GET(event('/api/moment/devices?from=a&to=b&limit=10') as never);
+		await vi.advanceTimersByTimeAsync(DELAY_MS);
+		expect((await pending).status).toBe(200);
+	});
+
 	// NET-224: a channel test waits for the daemon's send, up to 40 s for a slow mail server
 	it('lets a 12 s channel test answer through, with its reason', async () => {
 		slowDaemon();

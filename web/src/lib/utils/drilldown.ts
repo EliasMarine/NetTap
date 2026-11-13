@@ -5,6 +5,7 @@
 import type { ByteTotal } from '$lib/api/drilldown';
 import type { SmartAlertKey } from '$lib/api/alerts';
 import { formatBytes, formatCompactNumber } from '$lib/api/logs';
+import type { BandwidthPoint, ProtocolEntry, ProtocolsResponse } from '$lib/api/traffic';
 import { formatTime } from './time';
 
 // OLD CODE: export type DrillRangeValue = '24h' | '7d' | '30d'; (NET-192 PR 4: Home's five ranges)
@@ -17,16 +18,47 @@ export interface DrillRange {
 	words: string;
 	/** The timeline's bucket, as the daemon picks it for this window (up to 6 h: 10 min; 24 h: 1 h; 7 d: 6 h; longer: 1 day). */
 	interval: string;
+	/** NET-249: the bandwidth chart's bucket for this range (the owner's table), its length and its words. */
+	bucket: DrillBucket;
+	bucketMs: number;
+	bucketWords: string;
 }
 
-/** One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. */
+/** A bandwidth bucket the daemon's /api/traffic/bandwidth accepts (NET-249). */
+export type DrillBucket = '1m' | '5m' | '1h' | '3h';
+
+const MINUTE_MS = 60_000;
+const HOUR_MS = 3_600_000;
+
+// OLD CODE START — NET-249: each range gains its bandwidth bucket
+// /** One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. */
+// export const DRILL_RANGES: readonly DrillRange[] = [
+// 	{ value: '1h', label: '1h', hours: 1, words: 'last hour', interval: '10 minutes' },
+// 	{ value: '6h', label: '6h', hours: 6, words: 'last 6 hours', interval: '10 minutes' },
+// 	{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours', interval: 'hour' },
+// 	{ value: '7d', label: '7d', hours: 168, words: 'last 7 days', interval: '6 hours' },
+// 	{ value: '30d', label: '30d', hours: 720, words: 'last 30 days', interval: 'day' },
+// ];
+// OLD CODE END
+/**
+ * One range set across the app (NET-192 PR 4): 1h 6h 24h 7d 30d, as on Home. Buckets scale with
+ * the range (owner, NET-249): 60, 72, 288, 168 and 240 points.
+ */
 export const DRILL_RANGES: readonly DrillRange[] = [
-	{ value: '1h', label: '1h', hours: 1, words: 'last hour', interval: '10 minutes' },
-	{ value: '6h', label: '6h', hours: 6, words: 'last 6 hours', interval: '10 minutes' },
-	{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours', interval: 'hour' },
-	{ value: '7d', label: '7d', hours: 168, words: 'last 7 days', interval: '6 hours' },
-	{ value: '30d', label: '30d', hours: 720, words: 'last 30 days', interval: 'day' },
+	{ value: '1h', label: '1h', hours: 1, words: 'last hour', interval: '10 minutes', bucket: '1m', bucketMs: MINUTE_MS, bucketWords: 'minute' },
+	{ value: '6h', label: '6h', hours: 6, words: 'last 6 hours', interval: '10 minutes', bucket: '5m', bucketMs: 5 * MINUTE_MS, bucketWords: '5 minutes' },
+	{ value: '24h', label: '24h', hours: 24, words: 'last 24 hours', interval: 'hour', bucket: '5m', bucketMs: 5 * MINUTE_MS, bucketWords: '5 minutes' },
+	{ value: '7d', label: '7d', hours: 168, words: 'last 7 days', interval: '6 hours', bucket: '1h', bucketMs: HOUR_MS, bucketWords: 'hour' },
+	{ value: '30d', label: '30d', hours: 720, words: 'last 30 days', interval: 'day', bucket: '3h', bucketMs: 3 * HOUR_MS, bucketWords: '3 hours' },
 ];
+
+/**
+ * The range whose bucket a custom window uses: the smallest standard range that covers it (the
+ * longest for anything longer), the rule Alerts' rangeFor uses for its timeline.
+ */
+export function bucketFor(fromMs: number, toMs: number): DrillRange {
+	return DRILL_RANGES.find((r) => r.hours * HOUR_MS >= toMs - fromMs) ?? DRILL_RANGES[DRILL_RANGES.length - 1];
+}
 
 /** Settings › Display's key in this browser's localStorage (NET-195). */
 export const DISPLAY_SETTINGS_KEY = 'nettap-display-settings';
@@ -190,23 +222,102 @@ export interface CustomWindow extends DrillWindow {
 	words: string;
 }
 
+// OLD CODE START — NET-249: a chart's trailing slot is a one-millisecond window (from == to), which
+// this refused, so its link fell back to the page's own range; and an inclusive end (…:59.999) read a minute early
+// /**
+//  * The window from a drill-down link: the page the link came from passes the window its figure
+//  * came from, so the list matches it. Null unless both ends are dates and `from` is before `to`.
+//  */
+// export function customRange(from: string | null, to: string | null): CustomWindow | null {
+// 	if (!from || !to) return null;
+// 	const start = new Date(from);
+// 	const end = new Date(to);
+// 	if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start >= end) return null;
+// 	return {
+// 		value: 'custom',
+// 		label: 'Custom',
+// 		hours: (end.getTime() - start.getTime()) / 3_600_000,
+// 		words: `window ${formatWhen(start.toISOString())} to ${formatWhen(end.toISOString())}`,
+// 		from: start.toISOString(),
+// 		to: end.toISOString(),
+// 	};
+// }
+// OLD CODE END
 /**
  * The window from a drill-down link: the page the link came from passes the window its figure
- * came from, so the list matches it. Null unless both ends are dates and `from` is before `to`.
+ * came from, so the list matches it. Null unless both ends are dates and `from` is not after `to`
+ * (the daemon's rule): `from == to` is a chart's one-millisecond trailing slot (NET-249).
  */
 export function customRange(from: string | null, to: string | null): CustomWindow | null {
 	if (!from || !to) return null;
 	const start = new Date(from);
 	const end = new Date(to);
-	if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start >= end) return null;
+	if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start > end) return null;
 	return {
 		value: 'custom',
 		label: 'Custom',
 		hours: (end.getTime() - start.getTime()) / 3_600_000,
-		words: `window ${formatWhen(start.toISOString())} to ${formatWhen(end.toISOString())}`,
+		words: `window ${formatWhen(start.toISOString())} to ${formatWhen(new Date(shownEnd(end.getTime())).toISOString())}`,
 		from: start.toISOString(),
 		to: end.toISOString(),
 	};
+}
+
+/** An inclusive end (a bucket's end − 1 ms, …:59.999) as the bucket end people read: 14:10, not 14:09. */
+const shownEnd = (ms: number): number => (ms % 1000 === 999 ? ms + 1 : ms);
+
+/**
+ * A window in words for a page head (NET-249): "14:05 to 14:10, 13 Nov", with the day on each end
+ * when they differ, seconds when an end isn't on the minute, and "at 14:05:00, 13 Nov" for a
+ * one-millisecond window.
+ */
+export function windowWords(from: string, to: string): string {
+	const a = Date.parse(from);
+	const b = shownEnd(Date.parse(to));
+	const day = (ms: number) => new Date(ms).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+	const time = (ms: number, seconds: boolean) =>
+		new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}) });
+	if (Date.parse(to) <= a) return `at ${time(a, true)}, ${day(a)}`;
+	const seconds = a % MINUTE_MS !== 0 || b % MINUTE_MS !== 0;
+	if (day(a) === day(b)) return `${time(a, seconds)} to ${time(b, seconds)}, ${day(a)}`;
+	return `${day(a)}, ${time(a, seconds)} to ${day(b)}, ${time(b, seconds)}`;
+}
+
+/**
+ * The exact window of chart points `i..j` (inclusive, either order), as a link carries it (NET-249).
+ * A slot is [start, start + step); the daemon's windows are `gte from, lte to`, so the end is the
+ * slot end − 1 ms. Edge slots are clipped to the reply's own window, whose slots the daemon counted
+ * only inside it. A trailing slot that starts at `reply.to` gives `from == to`, which is valid.
+ */
+export function bucketWindow(points: readonly { timestamp: string }[], i: number, j: number, stepMs: number, reply: DrillWindow): DrillWindow {
+	const from = Math.max(Date.parse(points[Math.min(i, j)].timestamp), Date.parse(reply.from));
+	const to = Math.min(Date.parse(points[Math.max(i, j)].timestamp) + stepMs, Date.parse(reply.to) + 1) - 1;
+	return { from: new Date(from).toISOString(), to: new Date(to).toISOString() };
+}
+
+/** A bandwidth chart's reply, held whole so a pick's indices and its timestamps come from one answer (NET-249). */
+export interface BandwidthChart extends DrillWindow {
+	series: readonly Pick<BandwidthPoint, 'timestamp' | 'download_bytes' | 'upload_bytes' | 'local_bytes'>[];
+	/** The bucket the request asked for, in ms. */
+	step: number;
+}
+
+/**
+ * The moment page for chart points `i..j`: their exact window, the figures clicked (summed per
+ * direction, so the page can say when its own totals differ) and the chart's window for "Whole chart".
+ */
+export function momentHref(chart: BandwidthChart, i: number, j: number, range?: string, chartWin: DrillWindow = chart): string {
+	const win = bucketWindow(chart.series, i, j, chart.step, chart);
+	const picked = chart.series.slice(Math.min(i, j), Math.max(i, j) + 1);
+	const sum = (key: 'download_bytes' | 'upload_bytes' | 'local_bytes') => String(picked.reduce((total, p) => total + p[key], 0));
+	const q = new URLSearchParams({ from: win.from, to: win.to });
+	if (range) q.set('range', range);
+	q.set('down', sum('download_bytes'));
+	q.set('up', sum('upload_bytes'));
+	q.set('local', sum('local_bytes'));
+	q.set('chart_from', chartWin.from);
+	q.set('chart_to', chartWin.to);
+	return `/moment?${q.toString()}`;
 }
 
 /** `from=…&to=…`, then `&range=…` when given (the window's words fall back to that range). */
@@ -285,6 +396,54 @@ export function connLogsHref(summary: DrillWindow & { excluded_ips?: string[] },
 	return `/logs?${q.toString()}&${windowQuery(summary, range)}`;
 }
 
+/** A service (Zeek's network.protocol) as the pages name it: no label is "Unidentified" (NET-219). */
+export const serviceLabel = (name: string): string => (!name || name === 'unknown' ? 'Unidentified' : name.toUpperCase());
+
+/** The daemon's `unknown` service split three ways (NET-219); they add up to it. */
+export type Unidentified = NonNullable<ProtocolsResponse['unidentified']>;
+
+/**
+ * The service bars, biggest first (NET-219, moved here from Home for the moment page, NET-249): the
+ * Unidentified bar holds only `unknown`'s two-way conversations, so it no longer leads the list with
+ * one-way connections and ICMP. Only the daemon's own `unknown` bucket is split; an empty name is another bucket.
+ */
+export function serviceBars(services: readonly ProtocolEntry[], unidentified: Unidentified | null | undefined, top: number): ProtocolEntry[] {
+	return services
+		.map((s) => ({ name: s.name, count: s.name === 'unknown' && unidentified ? unidentified.conversations : s.count }))
+		.filter((s) => s.count > 0)
+		.sort((a, b) => b.count - a.count)
+		.slice(0, top);
+}
+
+/** What the service bars leave out of `unknown` (NET-219), counts written by `format`; '' when there is nothing to say. */
+export function notInBars(unidentified: Unidentified | null | undefined, format: (n: number) => string): string {
+	if (!unidentified) return '';
+	const { one_way: oneWay, icmp } = unidentified;
+	const clauses = [
+		// one name for one thing (the bar says Unidentified); Zeek logs ICMP per exchange, not per message (ts review #4)
+		oneWay > 0 ? `${format(oneWay)} unidentified ${oneWay === 1 ? 'connection' : 'connections'} with no data sent in at least one direction` : '',
+		icmp > 0 ? `${format(icmp)} ICMP ${icmp === 1 ? 'exchange' : 'exchanges'} (pings and network notices)` : '',
+	].filter(Boolean);
+	return clauses.length > 0 ? `Not in the bars: ${clauses.join(', and ')}.` : '';
+}
+
+/**
+ * Log Explorer's conn records behind one bar of /api/traffic/protocols' `services` (NET-249), with
+ * the endpoint's whole predicate: ssl leaves out QUIC (`ssl_only`), `unknown` is the records with no
+ * service label, and the sources the reply left out are left out here too.
+ */
+export function serviceLogsHref(name: string, win: DrillWindow, excluded: readonly string[], range?: string): string {
+	const query =
+		name === 'ssl'
+			? 'network.protocol:"ssl" AND NOT network.protocol:"quic"'
+			: name === 'unknown'
+				? 'NOT _exists_:network.protocol'
+				: `network.protocol:"${name.replace(/["\\]/g, '\\$&')}"`;
+	const q = new URLSearchParams({ type: 'zeek.conn', query });
+	if (excluded.length) q.set('exclude_src', excluded.join(','));
+	return `/logs?${q.toString()}&${windowQuery(win, range)}`;
+}
+
 /**
  * Log Explorer for every clause at once (joined with AND), over the count's exact window. Each
  * clause is written by the caller to match the count's own filters; quote IP values (IPv6 colons).
@@ -360,14 +519,16 @@ export interface CountWords {
  * The line a list shows when its total differs from the figure the user clicked, or null when they
  * agree. It states the net difference and the two ways it happens, not which records changed.
  */
+/** Why a list's total can differ from the figure clicked (NET-160 section D). */
+export const RECORDS_CHANGE =
+	'Records can be logged after a figure is counted (a connection is logged when it ends), and old records are deleted to free disk space.';
+
 export function countDifference(expected: number, observed: number, words: CountWords): string | null {
 	if (expected === observed) return null;
 	const gap = Math.abs(observed - expected);
 	const direction = observed > expected ? 'more' : 'fewer';
-	return (
-		`You clicked ${fmt(expected)}. ${words.lead} ${fmt(observed)} ${observed === 1 ? words.one : words.many} (${fmt(gap)} ${direction}). ` +
-		'Records can be logged after a figure is counted (a connection is logged when it ends), and old records are deleted to free disk space.'
-	);
+	// OLD CODE: … + 'Records can be logged after … to free disk space.' (NET-249: the moment page says it once under its byte lines)
+	return `You clicked ${fmt(expected)}. ${words.lead} ${fmt(observed)} ${observed === 1 ? words.one : words.many} (${fmt(gap)} ${direction}). ${RECORDS_CHANGE}`;
 }
 
 /**

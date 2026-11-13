@@ -842,6 +842,19 @@ describe('Alerts — URL hand-off and exact windows (NET-160 slice 2a)', () => {
 		expect(screen.getByRole('img', { name: /^12 alerts in the window / })).toBeInTheDocument();
 	});
 
+	// NET-249: a chart's trailing slot is a one-millisecond window; it must not fall back to 24 hours
+	it('a link with from == to lists and counts on exactly that moment, as Custom', async () => {
+		at(`?from=${TO}&to=${TO}&range=1h`);
+		succeedAll();
+		echoCounts();
+		render(Page);
+		await flush();
+		expect(listCalls()).toEqual([expect.objectContaining({ page: 1, from: TO, to: TO })]);
+		expect(countedCalls()).toEqual([[{ from: TO, to: TO }]]);
+		expect(vi.mocked(getAlertTimeline).mock.calls[0][0]).toMatchObject({ from: TO, to: TO });
+		expect(screen.getByRole('button', { name: 'Custom' })).toHaveAttribute('aria-pressed', 'true');
+	});
+
 	it('High to Low on the same bounds sends exactly one page-1 list request', async () => {
 		at(`?severity=high&from=${FROM}&to=${TO}`);
 		succeedAll();

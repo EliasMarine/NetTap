@@ -202,7 +202,7 @@ describe('customRange', () => {
 		['2026-11-01T00:00:00Z', null],
 		['yesterday', '2026-11-02T00:00:00Z'],
 		['2026-11-02T00:00:00Z', '2026-11-01T00:00:00Z'],
-		['2026-11-02T00:00:00Z', '2026-11-02T00:00:00Z'],
+		// OLD CODE: ['2026-11-02T00:00:00Z', '2026-11-02T00:00:00Z'], (NET-249: from == to is a valid one-millisecond window)
 	])('ignores a missing, unreadable or backwards window (%s to %s)', (from, to) => {
 		expect(customRange(from, to)).toBeNull();
 	});

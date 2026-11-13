@@ -452,6 +452,16 @@ describe('Devices — the URL window and one reading', () => {
 		expect(screen.getByText(`Busiest first · traffic in the ${words}`)).toBeInTheDocument();
 	});
 
+	// NET-249: a chart's trailing slot is a one-millisecond window; it must not fall back to 24 hours
+	it('passes a link with from == to exactly, as Custom', async () => {
+		goTo(`?view=all&from=${TO}&to=${TO}&range=1h`);
+		stub((url) => reading(url, [DEVICE]));
+		render(Page);
+		await vi.waitFor(() => expect(kpiValue('Total devices')).toBe('1'));
+		expect([listCalls[0].searchParams.get('from'), listCalls[0].searchParams.get('to')]).toEqual([TO, TO]);
+		expect(pressed('Custom')).toBe('true');
+	});
+
 	it('reads an unknown range as 24 hours, with no Custom pill', async () => {
 		goTo('?range=2h');
 		stub((url) => reading(url, [DEVICE]));

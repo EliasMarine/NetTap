@@ -342,6 +342,7 @@ export const TRAFFIC_ROUTES: FixtureRoute[] = [
 			encryption: { eligible: 0, encrypted: 0 },
 			dns: { plain: 0, over_tls: 0 },
 			unidentified: { conversations: 0, one_way: 0, icmp: 0 },
+			excluded_ips: [],
 		} satisfies ProtocolsResponse,
 		populated: {
 			...WINDOW,
@@ -351,6 +352,7 @@ export const TRAFFIC_ROUTES: FixtureRoute[] = [
 			dns: { plain: 5400, over_tls: 60 },
 			// adds up to the unknown service (1,804); icmp matches the ICMP transport count
 			unidentified: { conversations: 644, one_way: 1040, icmp: 120 },
+			excluded_ips: [],
 		} satisfies ProtocolsResponse,
 	},
 	{

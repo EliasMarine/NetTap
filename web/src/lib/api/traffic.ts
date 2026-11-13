@@ -75,6 +75,8 @@ export interface ProtocolsResponse {
 	dns?: { plain: number; over_tls: number };
 	/** The `unknown` service split three ways; they add up to it (NET-219) */
 	unidentified?: { conversations: number; one_way: number; icmp: number };
+	/** The excluded sources (Settings) these counts left out, as /summary reports them (NET-249) */
+	excluded_ips?: string[];
 }
 
 export interface BandwidthPoint {

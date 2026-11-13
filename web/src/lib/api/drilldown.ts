@@ -168,16 +168,16 @@ export async function getJson(url: string, what: string): Promise<unknown> {
 }
 
 const windowQuery = (from: string, to: string) => new URLSearchParams({ from, to }).toString();
-const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object';
+export const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object';
 // OLD CODE START — `partial` unchecked, so a reply without it showed an exact figure
 // const isByteTotal = (v: unknown) => isObject(v) && ['total', 'measured', 'connections'].every((k) => typeof v[k] === 'number');
 // OLD CODE END
-const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+export const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const isBoolean = (v: unknown): v is boolean => typeof v === 'boolean';
 const isByteTotal = (v: unknown) => isObject(v) && ['total', 'measured', 'connections'].every((k) => isNumber(v[k])) && isBoolean(v.partial);
 /** null (no indicators loaded) or a checked result; a missing field is malformed, not "not checked" */
 const isNullable = (v: unknown, test: (x: unknown) => boolean) => v === null || test(v);
-const isString = (v: unknown): v is string => typeof v === 'string';
+export const isString = (v: unknown): v is string => typeof v === 'string';
 const isPort = (v: unknown) =>
 	isObject(v) &&
 	isNullable(v.port, isNumber) &&
