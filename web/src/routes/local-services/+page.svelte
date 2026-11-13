@@ -127,7 +127,8 @@
 		<h1 class="page-title">Local services</h1>
 		<p class="page-sub">What your devices announce on the network over mDNS and SSDP: speakers, printers, casting, smart-home hubs and file shares.</p>
 	</div>
-	<Pills options={RANGES.map((r) => ({ value: r.value, label: r.label }))} value={range} onchange={pickRange} ariaLabel="Time range" disabled={loading} />
+	<!-- off only for a load the owner started (a range change clears `loaded`), not for a background refresh -->
+	<Pills options={RANGES.map((r) => ({ value: r.value, label: r.label }))} value={range} onchange={pickRange} ariaLabel="Time range" disabled={loading && !loaded} />
 </div>
 
 <!-- OLD CODE: sub={loaded ? `${fmt(loaded.data.rows.length)} seen · ${loaded.words}` : 'One row per sender'} (review: a cut list is no exact total) -->

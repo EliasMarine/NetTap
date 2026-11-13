@@ -171,8 +171,20 @@ describe('Local services page', () => {
 		expect(screen.getByRole('button', { name: '24h' })).toBeDisabled();
 	});
 
+	it('keeps the range pills on during a background refresh', async () => {
+		let hang = false;
+		const f = stubDaemon(() => (hang ? new Promise(() => {}) : LOCAL_SERVICES));
+		render(LocalServicesPage);
+		await vi.waitFor(() => expect(bodyRows()).toHaveLength(LOCAL_SERVICES.rows.length));
+		hang = true;
+		void refreshPage();
+		await vi.waitFor(() => expect(serviceCalls(f)).toHaveLength(2));
+		expect(screen.getByRole('button', { name: '7d' })).toBeEnabled();
+		expect(screen.getByRole('button', { name: '24h' })).toBeEnabled();
+	});
+
 	it('never lets a slow older load overwrite a newer one', async () => {
-		// the pills are off while a load runs, so the newer load here is the top bar's refresh
+		// the pills are off until the first load lands, so the newer load here is the top bar's refresh
 		const older = { ...LOCAL_SERVICES, rows: [LOCAL_SERVICES.rows[3]] };
 		let release: (body: unknown) => void = () => {};
 		let calls = 0;

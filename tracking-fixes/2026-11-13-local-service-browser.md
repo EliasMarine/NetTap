@@ -110,7 +110,8 @@ unresolved uid is never merged, and rows come from multicast-destination records
   when its line is reverted.
 - Web: a new load with nothing on screen clears the last error, so "Try again" and a range change
   show loading. The page opens on Settings › Display's default range if it offers it. The range
-  pills are off while a load runs (Pills gained `disabled`). Global IPv6 senders link like IPv4
+  pills are off while a load the owner started runs (Pills gained `disabled`), not during a
+  background refresh, so they don't flicker each interval. Global IPv6 senders link like IPv4
   ones; fe80::/10 stays text, because a link-local address repeats on every VLAN. "Not yet
   known" and the SSDP link carry screen-reader text (in a positioned parent, or `.sr-only`
   widened the page at 390 px). A cut list's count reads "At least N". The proxy's allowance
