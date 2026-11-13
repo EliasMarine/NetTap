@@ -82,11 +82,18 @@ preflight() {
         error "Docker compose file not found at ${COMPOSE_FILE}"
     fi
 
-    # Check disk space (need ~15GB for images)
+    # Check disk space (need ~16 GB for images)
     local free_gb
-    free_gb=$(df -BG "${PROJECT_ROOT}" | awk 'NR==2 {print int($4)}')
+    # OLD CODE START — NET-177: -BG is GiB (rounded up) printed as "GB"
+    # free_gb=$(df -BG "${PROJECT_ROOT}" | awk 'NR==2 {print int($4)}')
+    # if (( free_gb < 15 )); then
+    #     warn "Only ${free_gb}GB free disk space. Malcolm images require ~10-15GB."
+    # fi
+    # OLD CODE END
+    # Decimal GB (10^9 bytes), as System and Setup show. 15 GB is nearest the old boundary (14 GiB).
+    free_gb=$(df -k "${PROJECT_ROOT}" | awk 'NR==2 {print int($4 * 1024 / 1e9)}')
     if (( free_gb < 15 )); then
-        warn "Only ${free_gb}GB free disk space. Malcolm images require ~10-15GB."
+        warn "Only ${free_gb} GB free disk space. Malcolm images require ~11-16 GB."
     fi
 
     log "Pre-flight checks passed"
@@ -231,7 +238,9 @@ start_services() {
     docker compose -f "$COMPOSE_FILE" ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || \
         docker compose -f "$COMPOSE_FILE" ps
     log ""
-    log "Malcolm Dashboards: https://localhost:${MALCOLM_HTTPS_PORT:-9443}"
+    # OLD CODE: log "Malcolm Dashboards: https://localhost:${MALCOLM_HTTPS_PORT:-9443}"
+    # (NET-211 #6: nothing publishes 9443; Dashboards is behind NetTap's nginx and its login)
+    log "Malcolm Dashboards: https://${NETTAP_HOSTNAME:-nettap.local}:${DASHBOARD_PORT:-443}/dashboards/ (after signing in to NetTap)"
     log "NetTap Dashboard:   https://${NETTAP_HOSTNAME:-nettap.local}:${DASHBOARD_PORT:-443}"
     log "=========================================="
 }
@@ -342,23 +351,38 @@ monitor_startup() {
 _wait_for_opensearch_http() {
     local max_wait=120
     local interval=5
-    local elapsed=0
+    # OLD CODE START — NET-217 review: elapsed counted only the sleeps, so with each probe's own
+    # 10 s limit "120s" could really be about 6 minutes. $SECONDS is wall-clock time.
+    # local elapsed=0
+    #
+    # log "  Waiting for OpenSearch HTTP API..."
+    # while (( elapsed < max_wait )); do
+    # OLD CODE END
+    local start=$SECONDS
 
-    log "  Waiting for OpenSearch HTTP API..."
-    while (( elapsed < max_wait )); do
+    log "  Waiting up to ${max_wait}s for OpenSearch HTTP API..."
+    while (( SECONDS - start < max_wait )); do
         # Any HTTP response means the REST API is ready (even 401 "Unauthorized")
         local http_code
+        # OLD CODE START — NET-217: no time limit, so a stalled OpenSearch hung the loop
+        # http_code=$(docker compose -f "$COMPOSE_FILE" exec -T opensearch \
+        #     curl -sk -o /dev/null -w '%{http_code}' https://localhost:9200/ 2>/dev/null) || true
+        # OLD CODE END
         http_code=$(docker compose -f "$COMPOSE_FILE" exec -T opensearch \
-            curl -sk -o /dev/null -w '%{http_code}' https://localhost:9200/ 2>/dev/null) || true
+            curl -sk --max-time 10 -o /dev/null -w '%{http_code}' https://localhost:9200/ 2>/dev/null) || true
 
         if [[ "$http_code" =~ ^[0-9]+$ ]] && (( http_code > 0 )); then
-            log "  OpenSearch HTTP API responding (HTTP ${http_code}, ${elapsed}s)"
+            # OLD CODE: log "  OpenSearch HTTP API responding (HTTP ${http_code}, ${elapsed}s)"
+            log "  OpenSearch HTTP API responding (HTTP ${http_code}, $((SECONDS - start))s)"
             return 0
         fi
 
         sleep "$interval"
-        (( elapsed += interval ))
-        log "  Waiting for OpenSearch HTTP... (${elapsed}s)"
+        # OLD CODE START — NET-217 review: see above
+        # (( elapsed += interval ))
+        # log "  Waiting for OpenSearch HTTP... (${elapsed}s)"
+        # OLD CODE END
+        log "  Waiting for OpenSearch HTTP... ($((SECONDS - start))s)"
     done
 
     warn "  OpenSearch HTTP API did not respond within ${max_wait}s"
@@ -451,10 +475,26 @@ _show_service_status() {
 # This must run AFTER OpenSearch is healthy but BEFORE any API calls that need auth.
 # ---------------------------------------------------------------------------
 _opensearch_auth_ok() {
+    # OLD CODE START — NET-217: no time limit, so the retries bounded nothing
+    # docker compose -f "$COMPOSE_FILE" exec -T opensearch \
+    #     curl --config /var/local/curlrc/.opensearch.primary.curlrc \
+    #     --insecure --silent --fail \
+    #     "https://localhost:9200/_cluster/health" >/dev/null 2>&1
+    # OLD CODE END
     docker compose -f "$COMPOSE_FILE" exec -T opensearch \
         curl --config /var/local/curlrc/.opensearch.primary.curlrc \
-        --insecure --silent --fail \
+        --insecure --silent --fail --max-time 10 \
         "https://localhost:9200/_cluster/health" >/dev/null 2>&1
+}
+
+# True once malcolm_internal can log in; false after $1 seconds of wall-clock time (NET-217)
+_wait_for_auth() {
+    local deadline=$((SECONDS + $1))
+    while (( SECONDS < deadline )); do
+        if _opensearch_auth_ok; then return 0; fi
+        sleep 5
+    done
+    return 1
 }
 
 bootstrap_opensearch_security() {
@@ -474,36 +514,60 @@ bootstrap_opensearch_security() {
     # OLD CODE END
 
     # Step 1: Give Malcolm's own security push up to 60s to land.
-    log "  Waiting for OpenSearch to apply its security config..."
-    local waited=0
-    while (( waited < 60 )); do
-        if _opensearch_auth_ok; then
-            log "  Authentication verified — malcolm_internal has cluster access"
-            return 0
-        fi
-        sleep 5
-        waited=$((waited + 5))
-    done
+    # OLD CODE START — NET-217 review: waited counted only the sleeps, not the probes
+    # log "  Waiting for OpenSearch to apply its security config..."
+    # local waited=0
+    # while (( waited < 60 )); do
+    #     if _opensearch_auth_ok; then
+    #         log "  Authentication verified — malcolm_internal has cluster access"
+    #         return 0
+    #     fi
+    #     sleep 5
+    #     waited=$((waited + 5))
+    # done
+    # OLD CODE END
+    log "  Waiting up to 60s for OpenSearch to apply its security config..."
+    if _wait_for_auth 60; then
+        log "  Authentication verified — malcolm_internal has cluster access"
+        return 0
+    fi
 
     # Step 2: Fallback — push the env-generated security config files ourselves.
     # securityadmin.sh uses the admin cert (generated by Malcolm's self_signed_key_gen.sh)
     # to authenticate via the REST API on port 9200.
     log "  Running securityadmin.sh to push security config..."
-    if retry 3 5 docker compose -f "$COMPOSE_FILE" exec -T opensearch \
-        bash -c 'JAVA_HOME=/usr/share/opensearch/jdk /usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh -cd /usr/share/opensearch/config/opensearch-security/ -cacert /usr/share/opensearch/config/certs/ca.crt -cert /usr/share/opensearch/config/certs/admin.crt -key /usr/share/opensearch/config/certs/admin.key -icl -nhnv' 2>/dev/null; then
+    # OLD CODE START — NET-217: no time limit (a hung securityadmin.sh hung the install)
+    # if retry 3 5 docker compose -f "$COMPOSE_FILE" exec -T opensearch \
+    #     bash -c 'JAVA_HOME=/usr/share/opensearch/jdk /usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh -cd /usr/share/opensearch/config/opensearch-security/ -cacert /usr/share/opensearch/config/certs/ca.crt -cert /usr/share/opensearch/config/certs/admin.crt -key /usr/share/opensearch/config/certs/admin.key -icl -nhnv' 2>/dev/null; then
+    # OLD CODE END
+    # timeout runs inside the container: killing the docker CLI would leave securityadmin running.
+    # Two tries of at most 190 s each.
+    if retry 2 5 docker compose -f "$COMPOSE_FILE" exec -T opensearch \
+        bash -c 'JAVA_HOME=/usr/share/opensearch/jdk timeout -k 10 180 /usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh -cd /usr/share/opensearch/config/opensearch-security/ -cacert /usr/share/opensearch/config/certs/ca.crt -cert /usr/share/opensearch/config/certs/admin.crt -key /usr/share/opensearch/config/certs/admin.key -icl -nhnv' 2>/dev/null; then
         log "  OpenSearch security configuration applied successfully"
     else
         warn "  securityadmin.sh failed — malcolm_internal may not have permissions"
         warn "  Manual fix: docker exec nettap-opensearch bash -c 'JAVA_HOME=/usr/share/opensearch/jdk /usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh -cd /usr/share/opensearch/config/opensearch-security/ -cacert /usr/share/opensearch/config/certs/ca.crt -cert /usr/share/opensearch/config/certs/admin.crt -key /usr/share/opensearch/config/certs/admin.key -icl -nhnv'"
-        return 1
+        # OLD CODE START — NET-217: set -e stopped the run here, but nothing said it had failed
+        # return 1
+        # OLD CODE END
+        error "OpenSearch security bootstrap failed: securityadmin.sh could not push the security config (2 tries, up to 190s each). Check: sudo docker logs --tail 50 nettap-opensearch, then run the same command again."
     fi
 
     # Step 3: Verify auth actually works
     log "  Verifying malcolm_internal authentication..."
-    if _opensearch_auth_ok; then
+    # OLD CODE START — NET-217: a failed check only warned, so the install went on with no login
+    # if _opensearch_auth_ok; then
+    #     log "  Authentication verified — malcolm_internal has cluster access"
+    # else
+    #     warn "  Authentication verification failed — check ROLE_ADMIN is set on the opensearch service"
+    # fi
+    # OLD CODE END
+    # The pushed config can take a few seconds to load
+    if _wait_for_auth 30; then
         log "  Authentication verified — malcolm_internal has cluster access"
     else
-        warn "  Authentication verification failed — check ROLE_ADMIN is set on the opensearch service"
+        error "OpenSearch security bootstrap failed: malcolm_internal still has no access 30s after securityadmin.sh. Check ROLE_ADMIN is set on the opensearch service (sudo docker exec nettap-opensearch printenv ROLE_ADMIN), then run the same command again."
     fi
 }
 
@@ -518,8 +582,122 @@ bootstrap_opensearch_security() {
 #
 # Fix: push the component templates and malcolm_template directly from the
 # dashboards-helper container (which has the template files baked in).
-# This is idempotent — existing templates are overwritten with the same data.
+# OLD CODE: "This is idempotent — existing templates are overwritten with the same data."
+# A malcolm_template that already targets the right indices is left alone (NET-217):
+# Malcolm's loader has tuned it (replicas, refresh, _meta.hash), and a re-push undid
+# that until its next run, leaving any index created meanwhile with a replica it can't
+# place. A failed pass is retried twice, then the run stops.
 # ---------------------------------------------------------------------------
+
+# OpenSearch from dashboards-helper, logged in by the curlrc it mounts, so the password never
+# appears in a process's arguments (NET-217). Extra curl arguments follow.
+_helper_curl() {
+    docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+        curl --config /var/local/curlrc/.opensearch.primary.curlrc --insecure --silent \
+        --connect-timeout 10 --max-time 60 "$@"
+}
+
+# PUT a JSON body (a file in dashboards-helper, or - for stdin) to an OpenSearch path; true on HTTP 200
+_helper_put() {
+    local out code body
+    out=$(_helper_curl -X PUT "https://opensearch:9200/$1" -H "Content-Type: application/json" \
+        -d "@$2" -w '\n%{http_code}' 2>/dev/null) || true
+    code="${out##*$'\n'}"
+    if [[ "$code" == "200" ]]; then return 0; fi
+    # OpenSearch's reason, from its response body (never holds the login), on one line
+    body="${out%$'\n'*}"
+    [[ "$out" == *$'\n'* ]] || body=""
+    body="${body//$'\n'/ }"
+    warn "  PUT ${1} answered HTTP ${code:-none}${body:+: ${body:0:200}}"
+    return 1
+}
+
+# Push each component template in a dashboards-helper directory as <prefix>_<file name>
+_push_component_templates() {
+    local f count=0
+    for f in $(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper find "$1" -name "*.json" 2>/dev/null); do
+        _helper_put "_component_template/${2}_$(basename "$f" .json)" "$f" || return 1
+        count=$((count + 1))
+    done
+    if (( count == 0 )); then
+        warn "  No component templates found in ${1}"
+        return 1
+    fi
+    log "  Pushed ${count} ${2} component templates"
+}
+
+# 0: malcolm_template is Malcolm's own (it carries the _meta.hash its loader stamps) and targets
+# index pattern $1. 2: it is absent, ours, or targets something else, so push it. 1: it could not
+# be read, so write nothing.
+_malcolm_template_state() {
+    local out code verdict
+    if ! out=$(_helper_curl -w '\n%{http_code}' \
+        "https://opensearch:9200/_index_template/malcolm_template?filter_path=index_templates.index_template.index_patterns,index_templates.index_template._meta.hash" 2>/dev/null); then
+        warn "  Reading malcolm_template got no answer"
+        return 1
+    fi
+    code="${out##*$'\n'}"
+    case "$code" in
+        404) return 2 ;;
+        200) ;;
+        *) warn "  Reading malcolm_template answered HTTP ${code:-none}"; return 1 ;;
+    esac
+    # Parsed, not grepped: a cut-off answer must not read as "wrong pattern" and trigger a push,
+    # and the pattern must equal one entry exactly (a newline inside an entry can't fake it)
+    verdict=$(printf '%s' "${out%$'\n'*}" | docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+        jq -r --arg p "$1" '.index_templates[0].index_template as $t
+            | if ($t.index_patterns | type) == "array" and ($t.index_patterns | length) > 0
+              then (if any($t.index_patterns[]; . == $p) and ($t._meta.hash | type) == "string"
+                    then "keep" else "push" end)
+              else error("no index_patterns") end' 2>/dev/null) || true
+    case "$verdict" in
+        keep) return 0 ;;
+        push) return 2 ;;
+        *) warn "  malcolm_template's answer wasn't readable"; return 1 ;;
+    esac
+}
+
+# One pass: the component templates and malcolm_template (unless it is already right), the
+# Arkime marker, then a check that both templates the pipeline waits on exist. Stops at the
+# first problem.
+_push_index_templates() {
+    # Fill in the placeholder the way Malcolm's own loader does (shared-object-creation.sh)
+    local index_pattern="${MALCOLM_NETWORK_INDEX_PATTERN:-arkime_sessions3-*}" state=0 code
+    _malcolm_template_state "$index_pattern" || state=$?
+    case "$state" in
+        0)
+            log "  malcolm_template already targets ${index_pattern}; left as Malcolm set it" ;;
+        2)
+            _push_component_templates /opt/ecs-templates-os/composable/component ecs || return 1
+            _push_component_templates /opt/templates/composable/component custom || return 1
+            docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper cat /opt/templates/malcolm_template.json \
+                | sed "s/MALCOLM_NETWORK_INDEX_PATTERN_REPLACER/${index_pattern}/g" \
+                | _helper_put "_index_template/malcolm_template" - || return 1
+            log "  malcolm_template index template created successfully" ;;
+        *)
+            return 1 ;;
+    esac
+
+    # dashboards-helper's object loader waits for Arkime's legacy template before it
+    # creates the index pattern and imports Malcolm's dashboards. Arkime is off by
+    # default (#44), so nothing created it and OpenSearch Dashboards stayed empty (#73).
+    # This marker matches no index (malcolm_template governs arkime_sessions3-*). It is
+    # create-only: OpenSearch refuses it (HTTP 400) when Arkime's real template exists.
+    code=$(printf '%s' '{"index_patterns":["nettap-arkime-template-marker"],"mappings":{"properties":{}}}' \
+        | _helper_curl -X PUT "https://opensearch:9200/_template/arkime_sessions3_template?create=true" \
+            -H "Content-Type: application/json" -d @- -o /dev/null -w '%{http_code}' 2>/dev/null) || true
+    if [[ "$code" == "200" ]]; then
+        log "  arkime_sessions3_template marker created (Arkime is off)"
+    fi
+
+    # Logstash waits for malcolm_template, dashboards-helper for arkime_sessions3_template
+    if ! _helper_curl --fail -o /dev/null "https://opensearch:9200/_index_template/malcolm_template" 2>/dev/null \
+        || ! _helper_curl --fail -o /dev/null "https://opensearch:9200/_template/arkime_sessions3_template" 2>/dev/null; then
+        warn "  malcolm_template or arkime_sessions3_template is still missing"
+        return 1
+    fi
+}
+
 bootstrap_index_templates() {
     log "Bootstrapping OpenSearch index templates..."
 
@@ -527,92 +705,101 @@ bootstrap_index_templates() {
     run docker compose -f "$COMPOSE_FILE" up -d dashboards-helper
     sleep 5  # wait for container to be ready
 
-    local os_creds
-    os_creds=$(cat "${PROJECT_ROOT}/docker/curlrc/.opensearch.primary.curlrc" | grep -oP 'user:\s*"\K[^"]+' || echo "")
-    if [[ -z "$os_creds" ]]; then
-        warn "  Could not read OpenSearch credentials, skipping template bootstrap"
-        return 0
-    fi
-
-    # Push ECS component templates
-    local ecs_count=0
-    for f in $(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper find /opt/ecs-templates-os/composable/component -name "*.json" 2>/dev/null); do
-        local name
-        name="ecs_$(basename "$f" .json)"
-        local code
-        code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
-            curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_component_template/$name" \
-            -H "Content-Type: application/json" -d @"$f" -o /dev/null -w '%{http_code}' 2>/dev/null) || true
-        if [[ "$code" == "200" ]]; then
-            ecs_count=$((ecs_count + 1))
-        fi
-    done
-    log "  Pushed ${ecs_count} ECS component templates"
-
-    # Push custom component templates
-    local custom_count=0
-    for f in $(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper find /opt/templates/composable/component -name "*.json" 2>/dev/null); do
-        local name
-        name="custom_$(basename "$f" .json)"
-        local code
-        code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
-            curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_component_template/$name" \
-            -H "Content-Type: application/json" -d @"$f" -o /dev/null -w '%{http_code}' 2>/dev/null) || true
-        if [[ "$code" == "200" ]]; then
-            custom_count=$((custom_count + 1))
-        fi
-    done
-    log "  Pushed ${custom_count} custom component templates"
-
-    # Push malcolm_template index template
-    local template_code
-    # OLD CODE START — replaced 2026-11-01: the raw file's index pattern is the
-    # placeholder MALCOLM_NETWORK_INDEX_PATTERN_REPLACER, which matches no index,
-    # so every daily arkime_sessions3-* index got guessed field types and
-    # OpenSearch rejected Zeek records (event.id as long, IPs as text). Chain 24.
+    # OLD CODE START — NET-217: read the password on the host and passed it to curl -u (visible
+    # in ps), and every failure only warned, so the install reported success with no templates
+    # local os_creds
+    # os_creds=$(cat "${PROJECT_ROOT}/docker/curlrc/.opensearch.primary.curlrc" | grep -oP 'user:\s*"\K[^"]+' || echo "")
+    # if [[ -z "$os_creds" ]]; then
+    #     warn "  Could not read OpenSearch credentials, skipping template bootstrap"
+    #     return 0
+    # fi
+    #
+    # # Push ECS component templates
+    # local ecs_count=0
+    # for f in $(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper find /opt/ecs-templates-os/composable/component -name "*.json" 2>/dev/null); do
+    #     local name
+    #     name="ecs_$(basename "$f" .json)"
+    #     local code
+    #     code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+    #         curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_component_template/$name" \
+    #         -H "Content-Type: application/json" -d @"$f" -o /dev/null -w '%{http_code}' 2>/dev/null) || true
+    #     if [[ "$code" == "200" ]]; then
+    #         ecs_count=$((ecs_count + 1))
+    #     fi
+    # done
+    # log "  Pushed ${ecs_count} ECS component templates"
+    #
+    # # Push custom component templates
+    # local custom_count=0
+    # for f in $(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper find /opt/templates/composable/component -name "*.json" 2>/dev/null); do
+    #     local name
+    #     name="custom_$(basename "$f" .json)"
+    #     local code
+    #     code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+    #         curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_component_template/$name" \
+    #         -H "Content-Type: application/json" -d @"$f" -o /dev/null -w '%{http_code}' 2>/dev/null) || true
+    #     if [[ "$code" == "200" ]]; then
+    #         custom_count=$((custom_count + 1))
+    #     fi
+    # done
+    # log "  Pushed ${custom_count} custom component templates"
+    #
+    # # Push malcolm_template index template
+    # local template_code
+    # # OLD CODE START — replaced 2026-11-01: the raw file's index pattern is the
+    # # placeholder MALCOLM_NETWORK_INDEX_PATTERN_REPLACER, which matches no index,
+    # # so every daily arkime_sessions3-* index got guessed field types and
+    # # OpenSearch rejected Zeek records (event.id as long, IPs as text). Chain 24.
+    # # template_code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+    # #     curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_index_template/malcolm_template" \
+    # #     -H "Content-Type: application/json" -d @/opt/templates/malcolm_template.json \
+    # #     -o /dev/null -w '%{http_code}' 2>/dev/null) || true
+    # # OLD CODE END
+    # # Fill in the placeholder the way Malcolm's own loader does (shared-object-creation.sh)
+    # local index_pattern="${MALCOLM_NETWORK_INDEX_PATTERN:-arkime_sessions3-*}"
     # template_code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+    #     cat /opt/templates/malcolm_template.json \
+    #     | sed "s/MALCOLM_NETWORK_INDEX_PATTERN_REPLACER/${index_pattern}/g" \
+    #     | docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
     #     curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_index_template/malcolm_template" \
-    #     -H "Content-Type: application/json" -d @/opt/templates/malcolm_template.json \
+    #     -H "Content-Type: application/json" -d @- \
     #     -o /dev/null -w '%{http_code}' 2>/dev/null) || true
+    #
+    # if [[ "$template_code" == "200" ]]; then
+    #     log "  malcolm_template index template created successfully"
+    # else
+    #     warn "  Failed to create malcolm_template (HTTP ${template_code})"
+    #     warn "  Logstash may wait for dashboards-helper's idxinit to create it"
+    # fi
+    #
+    # # dashboards-helper's object loader waits for Arkime's legacy template before it
+    # # creates the index pattern and imports Malcolm's dashboards. Arkime is off by
+    # # default (#44), so nothing created it and OpenSearch Dashboards stayed empty (#73).
+    # # This marker matches no index (malcolm_template governs arkime_sessions3-*), and is
+    # # only written when Arkime's real template is absent.
+    # if ! docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+    #     curl -sfk -u "$os_creds" "https://opensearch:9200/_template/arkime_sessions3_template" \
+    #     -o /dev/null 2>/dev/null; then
+    #     local marker_code
+    #     marker_code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+    #         curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_template/arkime_sessions3_template" \
+    #         -H "Content-Type: application/json" \
+    #         -d '{"index_patterns":["nettap-arkime-template-marker"],"mappings":{"properties":{}}}' \
+    #         -o /dev/null -w '%{http_code}' 2>/dev/null) || true
+    #     if [[ "$marker_code" == "200" ]]; then
+    #         log "  arkime_sessions3_template marker created (Arkime is off)"
+    #     else
+    #         warn "  Failed to create the arkime_sessions3_template marker (HTTP ${marker_code})"
+    #         warn "  OpenSearch Dashboards will have no index pattern until it exists"
+    #     fi
+    # fi
     # OLD CODE END
-    # Fill in the placeholder the way Malcolm's own loader does (shared-object-creation.sh)
-    local index_pattern="${MALCOLM_NETWORK_INDEX_PATTERN:-arkime_sessions3-*}"
-    template_code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
-        cat /opt/templates/malcolm_template.json \
-        | sed "s/MALCOLM_NETWORK_INDEX_PATTERN_REPLACER/${index_pattern}/g" \
-        | docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
-        curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_index_template/malcolm_template" \
-        -H "Content-Type: application/json" -d @- \
-        -o /dev/null -w '%{http_code}' 2>/dev/null) || true
 
-    if [[ "$template_code" == "200" ]]; then
-        log "  malcolm_template index template created successfully"
-    else
-        warn "  Failed to create malcolm_template (HTTP ${template_code})"
-        warn "  Logstash may wait for dashboards-helper's idxinit to create it"
+    # Nothing downstream starts without these templates, so the run stops if they don't land
+    if ! retry 3 10 _push_index_templates; then
+        error "Index template bootstrap failed after 3 attempts: malcolm_template or arkime_sessions3_template is not in place, so Logstash and OpenSearch Dashboards would never start. Check: sudo docker logs --tail 50 nettap-dashboards-helper, then run the same command again."
     fi
-
-    # dashboards-helper's object loader waits for Arkime's legacy template before it
-    # creates the index pattern and imports Malcolm's dashboards. Arkime is off by
-    # default (#44), so nothing created it and OpenSearch Dashboards stayed empty (#73).
-    # This marker matches no index (malcolm_template governs arkime_sessions3-*), and is
-    # only written when Arkime's real template is absent.
-    if ! docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
-        curl -sfk -u "$os_creds" "https://opensearch:9200/_template/arkime_sessions3_template" \
-        -o /dev/null 2>/dev/null; then
-        local marker_code
-        marker_code=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
-            curl -sk -u "$os_creds" -X PUT "https://opensearch:9200/_template/arkime_sessions3_template" \
-            -H "Content-Type: application/json" \
-            -d '{"index_patterns":["nettap-arkime-template-marker"],"mappings":{"properties":{}}}' \
-            -o /dev/null -w '%{http_code}' 2>/dev/null) || true
-        if [[ "$marker_code" == "200" ]]; then
-            log "  arkime_sessions3_template marker created (Arkime is off)"
-        else
-            warn "  Failed to create the arkime_sessions3_template marker (HTTP ${marker_code})"
-            warn "  OpenSearch Dashboards will have no index pattern until it exists"
-        fi
-    fi
+    log "  Index templates verified: malcolm_template and arkime_sessions3_template exist"
 }
 
 # ---------------------------------------------------------------------------

@@ -17,6 +17,13 @@ describe('Login page', () => {
 		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 	});
 
+	// NET-198: with no action attribute the form posts to the page's own address, so ?next= reaches the action
+	it('has no action attribute, so a ?next= address survives the sign-in post', () => {
+		const { container } = render(LoginPage, { props: { form: null } });
+
+		expect(container.querySelector('form')).not.toHaveAttribute('action');
+	});
+
 	it('shows a failed sign-in as an error notice and keeps the username', () => {
 		render(LoginPage, { props: { form: { error: 'Invalid username or password.', username: 'admin' } } });
 

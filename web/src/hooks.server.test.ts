@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { redirect } from '@sveltejs/kit';
+import { SIGN_IN_FIRST } from '$lib/auth-errors';
 
 // Mock $lib/server/auth.js
 const mockVerifyToken = vi.fn();
@@ -55,7 +56,7 @@ describe('hooks.server', () => {
 		const res = await reply;
 		expect(res.status).toBe(401);
 		expect(res.headers.get('content-type')).toBe('application/json');
-		expect(await res.json()).toEqual({ error: 'Sign in first' });
+		expect(await res.json()).toEqual({ error: SIGN_IN_FIRST });
 		expect(mockResolve).not.toHaveBeenCalled();
 	}
 

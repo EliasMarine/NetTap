@@ -114,6 +114,19 @@ class FakeOpenSearch:
                     self._bucket({"key": k}, groups[k], subs) for k in sorted(groups)
                 ]
             }
+        if "histogram" in spec:  # numeric; OpenSearch answers its keys as doubles
+            h = spec["histogram"]
+            step = h["interval"]
+            groups = _group(
+                docs,
+                lambda d: d[h["field"]] // step * step if h["field"] in d else None,
+            )
+            return {
+                "buckets": [
+                    self._bucket({"key": float(k)}, groups[k], subs)
+                    for k in sorted(groups)
+                ]
+            }
         if "multi_terms" in spec:
             t = spec["multi_terms"]
             fields = [f["field"] for f in t["terms"]]

@@ -4,7 +4,7 @@ import { fail, redirect } from '@sveltejs/kit';
 // import { getUser, verifyPassword, generateToken } from '$lib/server/auth.js';
 // OLD CODE END
 import { generateToken } from '$lib/server/auth.js';
-import { attemptLogin } from '$lib/server/login.js';
+import { attemptLogin, safeNextPath } from '$lib/server/login.js';
 import { setAuthCookie } from '$lib/server/middleware.js';
 
 export const actions: Actions = {
@@ -47,6 +47,7 @@ export const actions: Actions = {
 		const token = generateToken({ username: user.username, role: user.role });
 		setAuthCookie(event, token);
 
-		throw redirect(302, '/');
+		// OLD CODE: throw redirect(302, '/'); (NET-198: back to the page the lapsed session was on)
+		throw redirect(302, safeNextPath(event.url.searchParams.get('next')));
 	},
 };
