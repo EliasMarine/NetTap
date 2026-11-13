@@ -238,7 +238,9 @@ start_services() {
     docker compose -f "$COMPOSE_FILE" ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || \
         docker compose -f "$COMPOSE_FILE" ps
     log ""
-    log "Malcolm Dashboards: https://localhost:${MALCOLM_HTTPS_PORT:-9443}"
+    # OLD CODE: log "Malcolm Dashboards: https://localhost:${MALCOLM_HTTPS_PORT:-9443}"
+    # (NET-211 #6: nothing publishes 9443; Dashboards is behind NetTap's nginx and its login)
+    log "Malcolm Dashboards: https://${NETTAP_HOSTNAME:-nettap.local}:${DASHBOARD_PORT:-443}/dashboards/ (after signing in to NetTap)"
     log "NetTap Dashboard:   https://${NETTAP_HOSTNAME:-nettap.local}:${DASHBOARD_PORT:-443}"
     log "=========================================="
 }
