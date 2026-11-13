@@ -18,9 +18,10 @@ export const OUTCOME: Record<DhcpOutcome, OutcomeLook> = {
 	mixed: { label: 'ACK and NAK', tone: 'caution' },
 	ack: { label: 'ACK', tone: 'ok' },
 	nak: { label: 'NAK', tone: 'bad' },
-	offer_no_reply: { label: 'No ACK or NAK', tone: 'caution' },
-	discover_no_offer: { label: 'No OFFER', tone: 'caution' },
-	request_no_reply: { label: 'No reply', tone: 'caution' },
+	// OLD CODE: 'No ACK or NAK', 'No OFFER', 'No reply' (PR #263 review: what was seen, not what happened)
+	offer_no_reply: { label: 'No ACK or NAK seen', tone: 'caution' },
+	discover_no_offer: { label: 'No OFFER seen', tone: 'caution' },
+	request_no_reply: { label: 'No reply seen', tone: 'caution' },
 	release: { label: 'RELEASE', tone: null },
 	decline: { label: 'DECLINE', tone: null },
 	inform: { label: 'INFORM', tone: null },
@@ -87,17 +88,25 @@ export function summary(t: DhcpTransaction): string {
 }
 
 /**
- * Packet analysis for this device's DHCP packets around the transaction, when its connections
- * can't name a sender: two or more server endpoints, or a connection not yet recorded.
+ * Packet analysis for this device's DHCP packets around the transaction. Every row has it: with
+ * one server named it still shows who really sent a reply (a spoofed NAK, say).
  */
 export function packetsHref(t: DhcpTransaction, mac: string): string | null {
 	const start = Date.parse(t.ts);
-	if ((t.server_endpoints.length < 2 && t.endpoints_complete) || !Number.isFinite(start)) return null;
+	// OLD CODE: if ((t.server_endpoints.length < 2 && t.endpoints_complete) || !Number.isFinite(start)) return null; (PR #263 review: every row)
+	if (!Number.isFinite(start)) return null;
 	const from = start - PACKET_MARGIN_MS;
 	// Zeek can record a small negative duration; the packets page takes at most 30 minutes
 	const to = Math.min(start + Math.max(0, t.duration ?? 0) * 1000 + PACKET_MARGIN_MS, from + MAX_WINDOW_SECONDS * 1000);
 	const epoch = (ms: number) => nsEpoch(BigInt(Math.round(ms)) * 1_000_000n);
 	return packetsUrl({ filter: `dhcp && dhcp.hw.mac_addr == ${mac}`, from: epoch(from), to: epoch(to), limit: 100, device: null, conn: null });
+}
+
+/** A lease length as written in the Assigned column: "24 h", "30 min", else seconds. */
+export function leaseWords(seconds: number): string {
+	if (seconds >= 3600 && seconds % 3600 === 0) return `${seconds / 3600} h`;
+	if (seconds >= 60 && seconds % 60 === 0) return `${seconds / 60} min`;
+	return `${seconds} s`;
 }
 
 /** What the picker's text names: a registry device's MAC by its name or IP, else the text as typed. */

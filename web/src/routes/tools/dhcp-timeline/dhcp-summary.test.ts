@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { DhcpTransaction } from '$lib/api/dhcp-timeline';
 import type { RegistryDevice } from '$lib/api/devices-registry';
 import { readUrlState } from '$lib/utils/packet-query';
-import { deviceName, messagesText, OUTCOME, packetsHref, pickedMac, soleServer, summary } from './dhcp-summary';
+import { deviceName, leaseWords, messagesText, OUTCOME, packetsHref, pickedMac, soleServer, summary } from './dhcp-summary';
 
 const A = '192.168.1.1';
 const B = '192.168.1.5';
@@ -17,7 +17,6 @@ const tx = (fields: Partial<DhcpTransaction>): DhcpTransaction => ({
 	client_ip: null,
 	lease_time: null,
 	host_name: null,
-	client_software: null,
 	zeek_server: null,
 	server_endpoints: [A],
 	endpoints_complete: true,
@@ -116,14 +115,23 @@ describe('OUTCOME', () => {
 		expect(OUTCOME.ack).toEqual({ label: 'ACK', tone: 'ok' });
 		expect(OUTCOME.nak.tone).toBe('bad');
 		expect(OUTCOME.release.tone).toBeNull();
+		expect([OUTCOME.offer_no_reply.label, OUTCOME.discover_no_offer.label, OUTCOME.request_no_reply.label]).toEqual(['No ACK or NAK seen', 'No OFFER seen', 'No reply seen']);
+	});
+});
+
+describe('leaseWords', () => {
+	it('writes whole hours and minutes short, anything else in seconds', () => {
+		expect([leaseWords(86400), leaseWords(3600), leaseWords(1800), leaseWords(90), leaseWords(45)]).toEqual(['24 h', '1 h', '30 min', '90 s', '45 s']);
 	});
 });
 
 describe('packetsHref', () => {
-	it('links the packets only when the connections can not name a sender', () => {
-		expect(packetsHref(tx({}), MAC)).toBeNull();
+	// OLD CODE: it('links the packets only when the connections can not name a sender', … (PR #263 review: every row, to check a named sender)
+	it('links the packets on every row, a named sender too, but not without a time', () => {
+		expect(packetsHref(tx({}), MAC)).not.toBeNull();
 		expect(packetsHref(tx({ server_endpoints: [A, B] }), MAC)).not.toBeNull();
 		expect(packetsHref(tx({ endpoints_complete: false }), MAC)).not.toBeNull();
+		expect(packetsHref(tx({ ts: 'not a time' }), MAC)).toBeNull();
 	});
 
 	it("filters the device's DHCP packets 5 s either side, in a window the packets page reads", () => {

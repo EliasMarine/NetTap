@@ -58,7 +58,8 @@
 		},
 		{
 			name: 'DHCP lease timeline',
-			description: 'See every address request a device made, what it was given and which servers answered.',
+			// OLD CODE: description: '… which servers answered.', (PR #263 review: what the capture shows, not who answered)
+			description: 'See every address request a device made, what it was given and which server addresses appeared.',
 			href: '/tools/dhcp-timeline',
 			category: 'network',
 			tags: ['DHCP', 'lease', 'NAK', 'IP address'],

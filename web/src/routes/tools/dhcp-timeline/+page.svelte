@@ -9,6 +9,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { getDhcpTimeline, type DhcpTimeline, type DhcpTransaction } from '$lib/api/dhcp-timeline';
+	import { HttpError } from '$lib/api/drilldown';
 	import { getRegistryDevices, type RegistryDevice } from '$lib/api/devices-registry';
 	import { outcome, registerPageRefresh, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
 	import { customRange, DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown';
@@ -20,7 +21,9 @@
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
 	import Pills from '$lib/components/ui/Pills.svelte';
-	import { deviceName, messagesText, OUTCOME, packetsHref, pickedMac, summary } from './dhcp-summary';
+	import { deviceName, leaseWords, messagesText, OUTCOME, packetsHref, pickedMac, summary } from './dhcp-summary';
+
+	const CHECK_DAEMON = 'Check that NetTap is running on the System page, then try again.';
 
 	const params = $derived($page.url.searchParams);
 	const mac = $derived(params.get('mac')?.trim() ?? '');
@@ -32,6 +35,8 @@
 	/** The reply on screen, with the window words it answers. */
 	let loaded = $state<{ data: DhcpTimeline; words: string } | null>(null);
 	let failure = $state<string | null>(null);
+	/** The daemon said the MAC is wrong (a 400): no retry, the message says what to fix */
+	let badInput = $state(false);
 	/** The view of the reply on screen (not reactive: only the loader reads it) */
 	let loadedView = '';
 	let devices = $state<RegistryDevice[]>([]);
@@ -44,12 +49,21 @@
 
 	const refresh = registerPageRefresh(load);
 	onDestroy(refresh.unregister);
+	// OLD CODE START — PR #263 review: a range pill also threw away what was typed
+	// $effect(() => {
+	// 	void view; // another device or window
+	// 	untrack(() => {
+	// 		typed = mac;
+	// 		void refresh.run();
+	// 	});
+	// });
+	// OLD CODE END
+	$effect(() => {
+		typed = mac; // only when the URL's device changes
+	});
 	$effect(() => {
 		void view; // another device or window
-		untrack(() => {
-			typed = mac;
-			void refresh.run();
-		});
+		untrack(() => void refresh.run());
 	});
 	onMount(() => {
 		// suggestions and names only: without them a typed MAC still works
@@ -65,6 +79,7 @@
 		if (v !== loadedView) {
 			loaded = null;
 			failure = null;
+			badInput = false;
 			loadedView = '';
 		}
 		if (!m) return 'skipped';
@@ -76,8 +91,11 @@
 			loaded = { data: res.value, words: r.words };
 			loadedView = v;
 			failure = null;
+			badInput = false;
 		} else {
-			failure = res.reason instanceof Error ? res.reason.message : '';
+			// OLD CODE: failure = res.reason instanceof Error ? res.reason.message : ''; (PR #263 review: '' read as still loading)
+			failure = res.reason instanceof Error && res.reason.message ? res.reason.message : CHECK_DAEMON;
+			badInput = res.reason instanceof HttpError && res.reason.status === 400;
 		}
 		return outcome(results);
 	}
@@ -97,7 +115,9 @@
 	function show(e: SubmitEvent) {
 		e.preventDefault();
 		const picked = pickedMac(typed, devices);
-		if (picked) void goto(urlFor({ mac: picked }), { keepFocus: true, noScroll: true });
+		// the same device again: the URL can't change, so load it again here
+		if (picked === mac) void refresh.run();
+		else if (picked) void goto(urlFor({ mac: picked }), { keepFocus: true, noScroll: true });
 	}
 
 	type Row = DhcpTransaction & { key: number };
@@ -109,7 +129,8 @@
 		{ key: 'messages', label: 'Messages seen', title: 'Zeek records which message types it saw, not their order', sortValue: messagesText, cell: messagesCell },
 		{ key: 'requested_ip', label: 'Requested', sortValue: (t) => t.requested_ip ?? '', cell: requestedCell },
 		{ key: 'assigned_ip', label: 'Assigned', sortValue: (t) => t.assigned_ip ?? '', cell: assignedCell },
-		{ key: 'server_endpoints', label: 'Servers', sortValue: (t) => t.server_endpoints.join(' '), cell: serversCell },
+		// OLD CODE: label: 'Servers', (PR #263 review: the addresses that appeared, not who served)
+		{ key: 'server_endpoints', label: 'Server endpoints', sortValue: (t) => t.server_endpoints.join(' '), cell: serversCell },
 	];
 	const emptyTitle = $derived(`No DHCP messages from this device in the ${words}`);
 </script>
@@ -122,11 +143,14 @@
 {#snippet summaryCell(t: Row)}
 	{@const href = data ? packetsHref(t, data.mac) : null}
 	<p class="line">{summary(t)}</p>
-	{#if href}<a class="small" {href}>See the captured packets</a><span class="dim small"> Shows which server sent what, if the capture still holds the packets.</span>{/if}
+	{#if href}<a class="small" {href} aria-label="See the captured packets from {formatTime(t.ts)}">See the captured packets</a><span class="dim small"> Shows which server sent what, if the capture still holds the packets.</span>{/if}
 {/snippet}
 {#snippet messagesCell(t: Row)}<span class="mono">{messagesText(t)}</span>{/snippet}
 {#snippet requestedCell(t: Row)}{#if t.requested_ip}<IPAddress ip={t.requested_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
-{#snippet assignedCell(t: Row)}{#if t.assigned_ip}<IPAddress ip={t.assigned_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
+{#snippet assignedCell(t: Row)}
+	{#if t.assigned_ip}<IPAddress ip={t.assigned_ip} />{:else}<span class="dim">—</span>{/if}
+	{#if t.lease_time !== null}<div class="dim small">for {leaseWords(t.lease_time)}</div>{/if}
+{/snippet}
 {#snippet serversCell(t: Row)}
 	{#each t.server_endpoints as ip (ip)}<div><IPAddress {ip} /></div>{:else}<span class="dim">—</span>{/each}
 	{#if t.zeek_server && (t.server_endpoints.length !== 1 || t.server_endpoints[0] !== t.zeek_server)}<div class="dim small">Zeek recorded {t.zeek_server}</div>{/if}
@@ -140,7 +164,8 @@
 	<div>
 		<a class="back" href="/tools"><Icon name="back" />Tools</a>
 		<h1 class="page-title">DHCP lease timeline</h1>
-		<p class="page-sub">Every DHCP transaction NetTap saw for one device: what it asked for, what it was given, and which servers took part · {words}</p>
+		<!-- OLD CODE: …, and which servers took part · {words} (PR #263 review: what appeared, not who took part) -->
+		<p class="page-sub">Every DHCP transaction NetTap saw for one device: what it asked for, what it was given, and which server addresses appeared · {words}</p>
 	</div>
 	<div class="head-actions">
 		<Pills options={[...DRILL_RANGES, ...(custom ? [custom] : [])].map((r) => ({ value: r.value, label: r.label }))} value={range.value} onchange={pickRange} ariaLabel="Time range" />
@@ -166,13 +191,16 @@
 		</form>
 	</Card>
 
-	<Card class="c-12" title={name ?? 'DHCP transactions'} sub="{data ? `${data.mac} · ` : ''}Newest first · {words} · message order not recorded">
+	<!-- OLD CODE: sub="… Newest first · …" (PR #263 review: the table re-sorts) -->
+	<Card class="c-12" title={name ?? 'DHCP transactions'} sub="{data ? `${data.mac} · ` : ''}{words} · message order not recorded">
 		{#if !mac}
 			<CardState state="empty" icon="devices" title="Pick a device" message="Choose a device or type its MAC address to see its DHCP history." />
 		{:else if !data && !failure}
 			<CardState state="loading" title="Loading the DHCP history" />
+		{:else if !data && badInput}
+			<CardState state="error" title={failure ?? ''} message="Check the device or MAC address above, then choose Show history." />
 		{:else if !data}
-			<CardState state="error" title={loadFailed('the DHCP history')} message={failure || 'Check that NetTap is running on the System page, then try again.'} onaction={() => refresh.run()} />
+			<CardState state="error" title={loadFailed('the DHCP history')} message={failure ?? CHECK_DAEMON} onaction={() => refresh.run()} />
 		{:else}
 			{#if failure}<p class="notice is-warn" role="status"><Icon name="warn" /><span>{loadFailed('the DHCP history', true)} {failure}</span></p>{/if}
 			{#if rows.length === 0}

@@ -1,6 +1,6 @@
 # DHCP lease timeline (NET-263)
 
-**Branch:** `feature/dhcp-lease-timeline` · **Status:** implemented, tests pass, not yet deployed · **Plan:** PLAN.md section 2 (NET-261)
+**Branch:** `feature/dhcp-lease-timeline` · **Status:** PR #263 open, review fixes in, not yet deployed · **Plan:** PLAN.md section 2 (NET-261)
 
 ## What changed
 
@@ -11,12 +11,36 @@
   - Per transaction: `messages` as counts (a multiset, keys sorted, no order), the addresses, `client_ip` (the address the client sent from), `zeek_server`, the endpoints and the outcome from the plan's table.
 - Web:
   - `/tools/dhcp-timeline` (`?mac=`, the standard range pills, Custom from a link). It has a device picker (a datalist of registry devices, which takes a name, IP or MAC) and a sortable table. Each row has a plain-English line (`dhcp-summary.ts`) saying what was observed, never an order of events.
-  - A server is named as the sender only when there is exactly one endpoint and every connection has a record. Otherwise the endpoints are listed, and a "See the captured packets" link opens Packet analysis with `dhcp && dhcp.hw.mac_addr == <mac>`, ±5 s.
+  - A server is named as the sender only when there is exactly one endpoint and every connection has a record. Otherwise the endpoints are listed. Every row (since the review) links "See the captured packets" to Packet analysis with `dhcp && dhcp.hw.mac_addr == <mac>`, ±5 s.
   - API client `lib/api/dhcp-timeline.ts`.
   - Tools index card.
   - A "DHCP history" link on the device page (only when the device has a MAC).
   - The catch-all proxy gives `/api/dhcp/` 30 s.
   - Visual fixture and route.
+
+## PR #263 review fixes (one commit)
+
+- **CI:** ruff 0.17.3 format and check on the three daemon files.
+- **Log:** `from` and `to` are logged with `%r`. Python 3.11+ `fromisoformat` takes any character as the date-time separator, newline included.
+- **Reading:**
+  - The conn read asks for at most 10,000 hits. A uid left out past that counts as not recorded, so its transaction is incomplete. Tests cover more than 10 connections and the cap.
+  - Every reply field is its type or None, so one odd record (a string lease time, an invalid address, a non-string uid) can't fail the page.
+  - Server endpoints are sorted as addresses (192.168.1.5 before 192.168.1.10).
+- **MAC input:** octets of one digit, as macOS `arp` prints them (`0:1b:63:84:45:e6`), are taken and zero-padded.
+- **Wording (observed facts):**
+  - The Tools card and page say "which server addresses appeared".
+  - The column is "Server endpoints".
+  - The chips are "No ACK or NAK seen", "No OFFER seen" and "No reply seen".
+  - "Newest first" is gone, because the table re-sorts.
+- **The packets link is on every row now**, a named sender too: it shows who really sent a reply, a spoofed NAK for example. Each link's accessible name carries the row's time.
+- **The Assigned column shows the lease length** ("for 24 h"). `client_software` is left out of the web type, because nothing shows it; the daemon still returns it.
+- **Errors:**
+  - `getJson` throws `HttpError` with the status.
+  - A 400 shows the daemon's own words ("Enter a six-byte MAC address…") with no retry.
+  - A failure with no reason shows a fixed sentence instead of loading for ever.
+  - `isNullable` is exported from `lib/api/drilldown.ts` and reused.
+- **Picker:** the typed text resets only when the URL's MAC changes. Showing the same device again loads it again.
+- **New page tests:** a superseded answer is dropped, a failed refresh keeps the rows with the warning, Try again asks again, a 400 has no retry, and a failure with no reason still says what to check.
 
 ## Why
 

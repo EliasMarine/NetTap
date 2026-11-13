@@ -11,6 +11,7 @@ from aiohttp.test_utils import AioHTTPTestCase
 from opensearchpy import ConnectionError as OpenSearchConnectionError
 from opensearchpy import ConnectionTimeout
 
+from api import dhcp_timeline
 from api.dhcp_timeline import (
     BAD_MAC,
     canonical_mac,
@@ -107,7 +108,9 @@ DOCS = [
     ),
     conn("ClupXu27QLeXuEw8Ja", "192.168.40.140", 68, VLAN40, 67),
     # a ja4d record shares the uid; it isn't a connection
-    conn("ClupXu27QLeXuEw8Ja", "192.168.40.140", 68, "192.0.2.66", 67, "ja4d", "ja4d.log"),
+    conn(
+        "ClupXu27QLeXuEw8Ja", "192.168.40.140", 68, "192.0.2.66", 67, "ja4d", "ja4d.log"
+    ),
     # A renewal NAKed: the server answers from port 67 to the broadcast address, no server_addr
     dhcp(
         "2026-11-05T08:37:43.156Z",
@@ -123,7 +126,14 @@ DOCS = [
     conn("C2bnisGUlez2bctsb", "192.168.1.139", 68, ROUTER, 67),
     conn("CzrQcE44MCh5ZseACa", ROUTER, 67, "255.255.255.255", 68),
     # an interim record for the NAK's connection, from another server: final records only
-    conn("CzrQcE44MCh5ZseACa", "192.0.2.77", 67, "255.255.255.255", 68, path="conn_long.log"),
+    conn(
+        "CzrQcE44MCh5ZseACa",
+        "192.0.2.77",
+        67,
+        "255.255.255.255",
+        68,
+        path="conn_long.log",
+    ),
     # outside the window
     dhcp("2026-11-04T23:59:59.000Z", U6, ["Cold"], ["REQUEST", "ACK"]),
 ]
@@ -181,19 +191,30 @@ class TestTimeline(Case):
             ("nak", {"NAK": 1, "REQUEST": 1}, [ROUTER]),
         )
         # no server_addr in the record; the client's address is what it renewed
-        self.assertEqual((nak["zeek_server"], nak["client_ip"]), (None, "192.168.1.139"))
+        self.assertEqual(
+            (nak["zeek_server"], nak["client_ip"]), (None, "192.168.1.139")
+        )
         self.assertEqual(nak["server_message"], "lease not found")
         self.assertTrue(nak["endpoints_complete"])
 
     async def test_any_mac_notation_reads_the_stored_form(self):
-        for typed in ("78:45:58:ED:B2:E9", "78-45-58-ed-b2-e9", "7845.58ed.b2e9", f" {U6} "):
+        for typed in (
+            "78:45:58:ED:B2:E9",
+            "78-45-58-ed-b2-e9",
+            "7845.58ed.b2e9",
+            f" {U6} ",
+        ):
             status, body = await self.get(f"mac={typed}")
-            self.assertEqual((status, body["mac"], len(body["transactions"])), (200, U6, 3))
+            self.assertEqual(
+                (status, body["mac"], len(body["transactions"])), (200, U6, 3)
+            )
 
     async def test_conn_records_are_read_by_uid_without_a_window(self):
         await self.get(f"mac={U6}")
         records, conns = self.os.bodies
-        self.assertIn({"term": {"zeek.dhcp.mac": U6}}, records["query"]["bool"]["filter"])
+        self.assertIn(
+            {"term": {"zeek.dhcp.mac": U6}}, records["query"]["bool"]["filter"]
+        )
         self.assertEqual(records["size"], 200)
         self.assertEqual(
             conns["query"]["bool"]["filter"],
@@ -221,11 +242,20 @@ class TestTimeline(Case):
 
     async def test_no_records_is_an_empty_list_and_no_conn_read(self):
         status, body = await self.get("mac=02:00:00:00:00:01")
-        self.assertEqual((status, body["transactions"], body["truncated"]), (200, [], False))
+        self.assertEqual(
+            (status, body["transactions"], body["truncated"]), (200, [], False)
+        )
         self.assertEqual(len(self.os.bodies), 1)
 
     async def test_a_mac_that_is_not_six_bytes_is_a_400(self):
-        for bad in ("", "f4:e2:c6:ff:98:21:62:72", "78:45:58:ed:b2", "78:45-58:ed:b2:e9", "zz:45:58:ed:b2:e9", "-x"):
+        for bad in (
+            "",
+            "f4:e2:c6:ff:98:21:62:72",
+            "78:45:58:ed:b2",
+            "78:45-58:ed:b2:e9",
+            "zz:45:58:ed:b2:e9",
+            "-x",
+        ):
             status, body = await self.get(f"mac={bad}")
             self.assertEqual((status, body["error"]), (400, BAD_MAC), bad)
         resp = await self.client.get(PATH, headers=AUTH)
@@ -234,7 +264,8 @@ class TestTimeline(Case):
 
     async def test_a_backwards_window_is_a_400(self):
         resp = await self.client.get(
-            f"{PATH}?mac={U6}&from=2026-11-05T12:00:00Z&to=2026-11-05T00:00:00Z", headers=AUTH
+            f"{PATH}?mac={U6}&from=2026-11-05T12:00:00Z&to=2026-11-05T00:00:00Z",
+            headers=AUTH,
         )
         self.assertEqual(resp.status, 400)
 
@@ -246,8 +277,20 @@ class TestTimeline(Case):
 class TestSharedAndMissingConnections(Case):
     # Two transactions share the broadcast connection; an OFFER from one server, a NAK from another
     docs = [
-        dhcp("2026-11-05T10:00:00.000Z", MAC, ["Cshared", "Ca"], ["REQUEST", "ACK"], server=ROUTER),
-        dhcp("2026-11-05T09:00:00.000Z", MAC, ["Cshared", "Cb"], ["REQUEST", "ACK"], server=VLAN40),
+        dhcp(
+            "2026-11-05T10:00:00.000Z",
+            MAC,
+            ["Cshared", "Ca"],
+            ["REQUEST", "ACK"],
+            server=ROUTER,
+        ),
+        dhcp(
+            "2026-11-05T09:00:00.000Z",
+            MAC,
+            ["Cshared", "Cb"],
+            ["REQUEST", "ACK"],
+            server=VLAN40,
+        ),
         conn("Cshared", "0.0.0.0", 68, "255.255.255.255", 67),
         conn("Ca", ROUTER, 67, "255.255.255.255", 68),
         conn("Cb", VLAN40, 67, "255.255.255.255", 68),
@@ -264,11 +307,15 @@ class TestSharedAndMissingConnections(Case):
         dhcp("2026-11-05T07:00:00.000Z", MAC, ["Crelay"], ["INFORM", "ACK"]),
         conn("Crelay", "10.0.0.2", 67, "10.0.0.9", 67),
         # one connection has no conn record yet (Zeek writes a UDP one once it goes idle)
-        dhcp("2026-11-05T06:00:00.000Z", MAC, ["Cseen", "Cpending"], ["REQUEST", "ACK"]),
+        dhcp(
+            "2026-11-05T06:00:00.000Z", MAC, ["Cseen", "Cpending"], ["REQUEST", "ACK"]
+        ),
         conn("Cseen", ROUTER, 67, "255.255.255.255", 68),
     ]
 
-    async def test_a_shared_connection_gives_each_transaction_only_its_own_servers(self):
+    async def test_a_shared_connection_gives_each_transaction_only_its_own_servers(
+        self,
+    ):
         _, body = await self.get(f"mac={MAC}")
         first, second, *_ = body["transactions"]
         self.assertEqual(first["server_endpoints"], [ROUTER])
@@ -286,13 +333,17 @@ class TestSharedAndMissingConnections(Case):
     async def test_a_relay_counts_both_sides(self):
         _, body = await self.get(f"mac={MAC}")
         relay = body["transactions"][3]
-        self.assertEqual((relay["outcome"], relay["server_endpoints"]), ("ack", ["10.0.0.2", "10.0.0.9"]))
+        self.assertEqual(
+            (relay["outcome"], relay["server_endpoints"]),
+            ("ack", ["10.0.0.2", "10.0.0.9"]),
+        )
 
     async def test_a_connection_without_a_record_makes_the_endpoints_incomplete(self):
         _, body = await self.get(f"mac={MAC}")
         pending = body["transactions"][4]
         self.assertEqual(
-            (pending["server_endpoints"], pending["endpoints_complete"]), ([ROUTER], False)
+            (pending["server_endpoints"], pending["endpoints_complete"]),
+            ([ROUTER], False),
         )
 
 
@@ -311,6 +362,100 @@ class TestTruncated(Case):
         self.assertEqual(body["transactions"][0]["ts"], "2026-11-05T03:50:00.000Z")
         self.assertEqual(body["transactions"][-1]["ts"], "2026-11-05T00:04:00.000Z")
         self.assertFalse(any(t["endpoints_complete"] for t in body["transactions"]))
+
+
+class TestManyConnections(Case):
+    # more than OpenSearch's default 10 hits, each transaction with its own reply from port 67
+    docs = [
+        doc
+        for n in range(12)
+        for doc in (
+            dhcp(
+                f"2026-11-05T10:{n:02d}:00.000Z", MAC, [f"Cmany{n}"], ["REQUEST", "ACK"]
+            ),
+            conn(f"Cmany{n}", ROUTER, 67, "255.255.255.255", 68),
+        )
+    ]
+
+    async def test_every_connection_is_read(self):
+        _, body = await self.get(f"mac={MAC}")
+        self.assertEqual(len(body["transactions"]), 12)
+        for t in body["transactions"]:
+            self.assertEqual(
+                (t["server_endpoints"], t["endpoints_complete"]), ([ROUTER], True)
+            )
+
+    async def test_past_the_result_window_a_left_out_connection_is_incomplete(self):
+        with patch.object(dhcp_timeline, "_RESULT_WINDOW", 3):
+            _, body = await self.get(f"mac={MAC}")
+        self.assertEqual(self.os.bodies[1]["size"], 3)
+        complete = [t["endpoints_complete"] for t in body["transactions"]]
+        self.assertEqual((complete.count(True), complete.count(False)), (3, 9))
+        for t in body["transactions"]:
+            self.assertEqual(
+                t["server_endpoints"], [ROUTER] if t["endpoints_complete"] else []
+            )
+
+
+class TestOddRecords(Case):
+    docs = [
+        dhcp(
+            "2026-11-05T10:00:00.000Z",
+            MAC,
+            ["Codd", 7],
+            ["REQUEST", "ACK", 5],
+            src="not-an-ip",
+            server="192.168.1.10",
+            lease_time="86400",
+            duration=True,
+            host_name=7,
+            assigned_ip="999.1.1.1",
+            server_message=["x"],
+        ),
+        conn("Codd", "192.168.1.10", 67, "255.255.255.255", 68),
+        dhcp("2026-11-05T09:00:00.000Z", MAC, ["Cten", "Cfive"], ["REQUEST", "ACK"]),
+        conn("Cten", "192.168.1.10", 67, "255.255.255.255", 68),
+        conn("Cfive", "192.168.1.5", 67, "255.255.255.255", 68),
+    ]
+
+    async def test_a_field_of_the_wrong_type_is_none_not_a_failure(self):
+        status, body = await self.get(f"mac={MAC}")
+        self.assertEqual(status, 200, body)
+        odd = body["transactions"][0]
+        for field in (
+            "duration",
+            "lease_time",
+            "host_name",
+            "assigned_ip",
+            "client_ip",
+            "server_message",
+        ):
+            self.assertIsNone(odd[field], field)
+        self.assertEqual(odd["messages"], {"ACK": 1, "REQUEST": 1})
+        self.assertEqual(odd["server_endpoints"], ["192.168.1.10"])
+        self.assertEqual(
+            self.os.bodies[1]["query"]["bool"]["filter"][-1]["terms"]["zeek.uid"],
+            ["Cfive", "Codd", "Cten"],
+        )
+
+    async def test_server_endpoints_sort_as_addresses(self):
+        _, body = await self.get(f"mac={MAC}")
+        self.assertEqual(
+            body["transactions"][1]["server_endpoints"], ["192.168.1.5", "192.168.1.10"]
+        )
+
+    async def test_a_newline_in_the_window_is_quoted_in_the_log(self):
+        with self.assertLogs("nettap.api.dhcp_timeline", "INFO") as logs:
+            resp = await self.client.get(
+                f"{PATH}?mac={MAC}&from=2026-11-05%0A00:00:00&to=2026-11-05T12:00:00Z",
+                headers=AUTH,
+            )
+        self.assertEqual(resp.status, 200)
+        [line] = [
+            r.getMessage() for r in logs.records if "transactions in" in r.getMessage()
+        ]
+        self.assertNotIn("\n", line)
+        self.assertIn("'2026-11-05\\n00:00:00'", line)
 
 
 class TestFailures(Case):
@@ -359,7 +504,12 @@ class TestFailures(Case):
             got = await self.get(f"mac={U6}")
         self.assertEqual(
             got,
-            (502, {"error": "Couldn't read the network data: the DHCP connections search was incomplete."}),
+            (
+                502,
+                {
+                    "error": "Couldn't read the network data: the DHCP connections search was incomplete."
+                },
+            ),
         )
 
 
@@ -396,6 +546,12 @@ def test_outcome_table(messages, expected):
         ("78-45-58-ed-b2-e9", U6),
         ("7845.58ed.b2e9", U6),
         ("784558EDB2E9", U6),
+        # macOS arp prints octets with one digit
+        ("0:1b:63:84:45:e6", "00:1b:63:84:45:e6"),
+        ("0-1B-63-84-45-E6", "00:1b:63:84:45:e6"),
+        ("0:1b-63:84:45:e6", None),
+        ("000:1b:63:84:45:e6", None),
+        (":1b:63:84:45:e6", None),
         ("78:45:58:ed:b2:e9\n:00", None),
         (None, None),
         (7, None),

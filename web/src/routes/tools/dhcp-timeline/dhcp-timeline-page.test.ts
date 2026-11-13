@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { writable } from 'svelte/store';
 import { goto } from '$app/navigation';
+import { refreshPage } from '$lib/stores/pageRefresh';
 import type { DhcpTimeline } from '$lib/api/dhcp-timeline';
 import { LAN_POLICY } from '../../../../e2e/visual/fixtures/drilldown';
 import { DHCP_MAC, DHCP_TIMELINE, DHCP_TIMELINE_EMPTY } from '../../../../e2e/visual/fixtures/dhcp';
@@ -25,8 +26,15 @@ const REGISTRY = {
 };
 
 let calls: URL[] = [];
+type Reply = { ok: boolean; status: number; json: () => Promise<unknown> };
+const ok = (body: unknown): Reply => ({ ok: true, status: 200, json: async () => body });
+const failing = (status: number, error: string): Reply => ({ ok: false, status, json: async () => ({ error }) });
+
 /** The daemon: the LAN policy, the registry, and the timeline (or an error with its reason). */
-function stubDaemon(timeline: DhcpTimeline | Promise<never> | undefined, opts: { registry?: boolean; error?: string } = {}) {
+function stubDaemon(
+	timeline: DhcpTimeline | Promise<never> | ((url: URL) => Promise<Reply>) | undefined,
+	opts: { registry?: boolean; error?: string; status?: number } = {},
+) {
 	calls = [];
 	vi.stubGlobal(
 		'fetch',
@@ -36,14 +44,18 @@ function stubDaemon(timeline: DhcpTimeline | Promise<never> | undefined, opts: {
 			if (url.pathname === '/api/network/lan') return { ok: true, status: 200, json: async () => LAN_POLICY };
 			if (url.pathname === '/api/devices/registry') return opts.registry === false ? { ok: false, status: 500, json: async () => ({}) } : { ok: true, status: 200, json: async () => REGISTRY };
 			if (timeline instanceof Promise) return timeline;
-			if (url.pathname === '/api/dhcp/timeline' && timeline) return { ok: true, status: 200, json: async () => timeline };
-			return { ok: false, status: 400, json: async () => ({ error: opts.error ?? 'Enter a six-byte MAC address, such as aa:bb:cc:dd:ee:ff.' }) };
+			if (typeof timeline === 'function') return timeline(url);
+			if (url.pathname === '/api/dhcp/timeline' && timeline) return ok(timeline);
+			return failing(opts.status ?? 400, opts.error ?? 'Enter a six-byte MAC address, such as aa:bb:cc:dd:ee:ff.');
 		}),
 	);
 }
 
 const goTo = (query = '') => pageStore.value.set({ url: new URL(`http://localhost/tools/dhcp-timeline${query}`), params: {} });
 const timelineCall = () => calls.find((u) => u.pathname === '/api/dhcp/timeline');
+const timelineCalls = () => calls.filter((u) => u.pathname === '/api/dhcp/timeline');
+const OTHER_MAC = '02:00:5e:00:53:39';
+const PRINTER = { ...DHCP_TIMELINE, mac: OTHER_MAC, transactions: [{ ...DHCP_TIMELINE.transactions[0], host_name: 'Printer', assigned_ip: '192.168.1.77' }] };
 const table = () => screen.getByRole('table', { name: /DHCP transactions for/ });
 
 describe('DHCP lease timeline page', () => {
@@ -87,15 +99,19 @@ describe('DHCP lease timeline page', () => {
 		expectNoNestedInteractive(container);
 	});
 
-	it('links the packets where two servers took part, and names neither as the sender', async () => {
+	// OLD CODE: it('links the packets where two servers took part, …' expected 2 links (PR #263 review: every row has one)
+	it('names no sender where two servers took part, and links every row to its packets by time', async () => {
 		goTo(`?mac=${DHCP_MAC}`);
 		stubDaemon(DHCP_TIMELINE);
 		render(Page);
 		expect(await screen.findByText('NAK observed. Server endpoints in this transaction: 192.168.1.1 and 192.168.1.5.')).toBeInTheDocument();
-		const links = screen.getAllByRole('link', { name: 'See the captured packets' });
-		expect(links).toHaveLength(2); // two endpoints, and a connection not recorded yet
+		const links = screen.getAllByRole('link', { name: /^See the captured packets from \d/ });
+		expect(links).toHaveLength(DHCP_TIMELINE.transactions.length);
+		expect(new Set(links.map((a) => a.getAttribute('aria-label'))).size).toBe(links.length);
 		const q = new URL(links[0].getAttribute('href')!, 'http://x').searchParams;
 		expect(q.get('filter')).toBe(`dhcp && dhcp.hw.mac_addr == ${DHCP_MAC}`);
+		expect(screen.getByRole('columnheader', { name: /Server endpoints/ })).toBeInTheDocument();
+		expect(screen.getAllByText('for 24 h')).toHaveLength(2);
 	});
 
 	it('says why a device can have no DHCP messages', async () => {
@@ -114,13 +130,81 @@ describe('DHCP lease timeline page', () => {
 		expect(await screen.findByText(/Showing the newest 200 transactions\./)).toBeInTheDocument();
 	});
 
-	it("shows the daemon's reason and a retry on an error", async () => {
+	// OLD CODE: it("shows the daemon's reason and a retry on an error", … with ?mac=nonsense (PR #263 review: a 400 says what to fix)
+	it("a MAC the daemon turns down shows its own words, with no retry", async () => {
 		goTo('?mac=nonsense');
 		stubDaemon(undefined);
 		render(Page);
+		expect(await screen.findByRole('heading', { name: 'Enter a six-byte MAC address, such as aa:bb:cc:dd:ee:ff.' })).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+	});
+
+	it("shows the daemon's reason on a failure, and Try again asks again", async () => {
+		goTo(`?mac=${DHCP_MAC}`);
+		stubDaemon(undefined, { status: 503, error: 'Working this out took too long. Try a shorter time range.' });
+		render(Page);
 		expect(await screen.findByRole('heading', { name: "Couldn't load the DHCP history: the request failed." })).toBeInTheDocument();
-		expect(screen.getByText('Enter a six-byte MAC address, such as aa:bb:cc:dd:ee:ff.')).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+		expect(screen.getByText('Working this out took too long. Try a shorter time range.')).toBeInTheDocument();
+		expect(timelineCalls()).toHaveLength(1);
+		await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+		await vi.waitFor(() => expect(timelineCalls()).toHaveLength(2));
+	});
+
+	it('a failure with no reason says what to check, never loading for ever', async () => {
+		goTo(`?mac=${DHCP_MAC}`);
+		stubDaemon(async () => ({ ok: false, status: 500, json: async () => ({ error: '' }) }) as Reply);
+		render(Page);
+		// the client's own words when the daemon gives none
+		expect(await screen.findByText('DHCP timeline failed: HTTP 500')).toBeInTheDocument();
+		stubDaemon(async () => Promise.reject(new Error('')));
+		await refreshPage();
+		expect(await screen.findByText('Check that NetTap is running on the System page, then try again.')).toBeInTheDocument();
+		expect(screen.queryAllByRole('status').some((s) => s.getAttribute('aria-busy') === 'true')).toBe(false);
+	});
+
+	it('a failed refresh keeps the rows on screen and says so', async () => {
+		goTo(`?mac=${DHCP_MAC}`);
+		stubDaemon(DHCP_TIMELINE);
+		render(Page);
+		await screen.findByRole('heading', { name: 'Office AP' });
+		stubDaemon(undefined, { status: 503, error: 'Two other look-ups are being worked out right now; try again in a minute.' });
+		await refreshPage();
+		expect(await screen.findByText(/Couldn't refresh the DHCP history; showing the last figures loaded\. Two other look-ups/)).toBeInTheDocument();
+		expect(within(table()).getAllByRole('row')).toHaveLength(DHCP_TIMELINE.transactions.length + 1);
+	});
+
+	it("drops an older device's answer that lands after another was asked for", async () => {
+		const pending = new Map<string, (r: Reply) => void>();
+		stubDaemon((url) => new Promise<Reply>((resolve) => pending.set(url.searchParams.get('mac')!, resolve)));
+		goTo(`?mac=${DHCP_MAC}`);
+		render(Page);
+		await vi.waitFor(() => expect(pending.has(DHCP_MAC)).toBe(true));
+		goTo(`?mac=${OTHER_MAC}`);
+		await vi.waitFor(() => expect(pending.has(OTHER_MAC)).toBe(true));
+		pending.get(DHCP_MAC)!(ok(DHCP_TIMELINE));
+		await new Promise((r) => setTimeout(r, 0));
+		expect(screen.queryByRole('heading', { name: 'Office AP' })).not.toBeInTheDocument();
+		pending.get(OTHER_MAC)!(ok(PRINTER));
+		expect(await screen.findByRole('heading', { name: 'Printer' })).toBeInTheDocument();
+		expect(within(table()).getAllByRole('row')).toHaveLength(2);
+		expect(screen.queryByRole('heading', { name: 'Office AP' })).not.toBeInTheDocument();
+	});
+
+	it('choosing the device on screen again loads it again, and a range pill keeps what was typed', async () => {
+		goTo(`?mac=${DHCP_MAC}`);
+		stubDaemon(DHCP_TIMELINE);
+		render(Page);
+		await screen.findByRole('heading', { name: 'Office AP' });
+		const field = screen.getByLabelText('Device') as HTMLInputElement;
+		expect(field.value).toBe(DHCP_MAC);
+		await fireEvent.click(screen.getByRole('button', { name: 'Show history' }));
+		await vi.waitFor(() => expect(timelineCalls()).toHaveLength(2));
+		expect(goto).not.toHaveBeenCalled();
+
+		await fireEvent.input(field, { target: { value: '02:00:5e:00' } });
+		goTo(`?mac=${DHCP_MAC}&range=7d`);
+		await vi.waitFor(() => expect(timelineCalls()).toHaveLength(3));
+		expect(field.value).toBe('02:00:5e:00');
 	});
 
 	it("picks a device by name from the suggestions' list, keeping the range", async () => {

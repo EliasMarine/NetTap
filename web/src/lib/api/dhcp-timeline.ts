@@ -3,7 +3,7 @@
  * from Zeek's dhcp.log. Zeek records the message types of a transaction with no order and no
  * server per message; the server endpoints come from the transaction's connections.
  */
-import { getJson, isNumber, isObject, isString } from './drilldown';
+import { getJson, isNullable, isNumber, isObject, isString } from './drilldown';
 
 export const DHCP_OUTCOMES = [
 	'mixed',
@@ -31,7 +31,6 @@ export interface DhcpTransaction {
 	client_ip: string | null;
 	lease_time: number | null;
 	host_name: string | null;
-	client_software: string | null;
 	/** What Zeek recorded as the server; not used to name a sender */
 	zeek_server: string | null;
 	/** The port 67 sides of the transaction's connections, sorted */
@@ -52,22 +51,20 @@ export interface DhcpTimeline {
 	transactions: DhcpTransaction[];
 }
 
-const isNullable = (v: unknown, test: (x: unknown) => boolean) => v === null || test(v);
-
 const isTransaction = (t: unknown) =>
 	isObject(t) &&
 	isString(t.ts) &&
 	isNullable(t.duration, isNumber) &&
 	isObject(t.messages) &&
 	Object.values(t.messages).every(isNumber) &&
-	[t.requested_ip, t.assigned_ip, t.client_ip, t.host_name, t.client_software, t.zeek_server, t.server_message].every((v) => isNullable(v, isString)) &&
+	[t.requested_ip, t.assigned_ip, t.client_ip, t.host_name, t.zeek_server, t.server_message].every((v) => isNullable(v, isString)) &&
 	isNullable(t.lease_time, isNumber) &&
 	Array.isArray(t.server_endpoints) &&
 	t.server_endpoints.every(isString) &&
 	typeof t.endpoints_complete === 'boolean' &&
 	(DHCP_OUTCOMES as readonly unknown[]).includes(t.outcome);
 
-/** Throws the daemon's own reason (a bad MAC, busy, too slow) and on a malformed reply. */
+/** Throws the daemon's own reason (HttpError: a bad MAC is a 400, busy or too slow a 503) and on a malformed reply. */
 export async function getDhcpTimeline(opts: { mac: string; from: string; to: string }): Promise<DhcpTimeline> {
 	const q = new URLSearchParams(opts);
 	const body = await getJson(`/api/dhcp/timeline?${q.toString()}`, 'DHCP timeline');

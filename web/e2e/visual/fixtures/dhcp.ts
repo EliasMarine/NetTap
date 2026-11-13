@@ -13,7 +13,6 @@ const tx = (msAgo: number, fields: Partial<DhcpTransaction>): DhcpTransaction =>
 	client_ip: null,
 	lease_time: null,
 	host_name: 'U6-LR',
-	client_software: 'ubnt',
 	zeek_server: null,
 	server_endpoints: ['192.168.1.1'],
 	endpoints_complete: true,

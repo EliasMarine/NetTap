@@ -27,9 +27,9 @@ describe('getDhcpTimeline', () => {
 		[400, { error: 'Enter a six-byte MAC address, such as aa:bb:cc:dd:ee:ff.' }, 'Enter a six-byte MAC address, such as aa:bb:cc:dd:ee:ff.'],
 		[503, { error: 'Working this out took too long. Try a shorter time range.' }, 'Working this out took too long. Try a shorter time range.'],
 		[500, {}, 'DHCP timeline failed: HTTP 500'],
-	])("throws the daemon's reason on HTTP %s", async (status, body, message) => {
+	])("throws the daemon's reason on HTTP %s, with the status", async (status, body, message) => {
 		vi.stubGlobal('fetch', vi.fn(async () => reply(status, body)));
-		await expect(getDhcpTimeline(opts)).rejects.toThrow(message);
+		await expect(getDhcpTimeline(opts)).rejects.toMatchObject({ message, status });
 	});
 
 	const first = DHCP_TIMELINE.transactions[0];
@@ -48,7 +48,7 @@ describe('getDhcpTimeline', () => {
 	});
 
 	it('takes a transaction with every optional field missing', async () => {
-		const bare = { ...first, duration: null, requested_ip: null, assigned_ip: null, client_ip: null, lease_time: null, host_name: null, client_software: null, zeek_server: null, server_message: null };
+		const bare = { ...first, duration: null, requested_ip: null, assigned_ip: null, client_ip: null, lease_time: null, host_name: null, zeek_server: null, server_message: null };
 		const body = { ...DHCP_TIMELINE, transactions: [bare] };
 		vi.stubGlobal('fetch', vi.fn(async () => reply(200, body)));
 		await expect(getDhcpTimeline(opts)).resolves.toEqual(body);
