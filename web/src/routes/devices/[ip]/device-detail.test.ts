@@ -365,6 +365,13 @@ describe('Device detail — both sides, IPv6 and guesses (NET-226)', () => {
 		expect(screen.queryByText(VLAN_NOTE)).not.toBeInTheDocument();
 	});
 
+	// NET-260 review: the daemon zero-fills every slot, and an all-zero series picked slot 0 as busiest
+	it('shows the empty state for an all-zero series, not a flat chart', async () => {
+		await renderWith({ bandwidth_series: SERIES.map((p) => ({ ...p, bytes: 0, download_bytes: 0, upload_bytes: 0 })) });
+		expect(screen.getByText('No traffic in this range')).toBeInTheDocument();
+		expect(screen.queryByLabelText(/^Busiest at /)).not.toBeInTheDocument();
+	});
+
 	it('shows no IPv6 notice when nothing was left out', async () => {
 		await renderWith({ ipv6_left_out: 0, ipv6_left_out_reason: null });
 		expect(screen.queryByText(/link-local IPv6/)).not.toBeInTheDocument();

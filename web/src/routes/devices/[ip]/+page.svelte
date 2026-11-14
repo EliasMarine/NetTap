@@ -348,7 +348,9 @@
 			: [{ key: 'total', label: 'Traffic', colour: 1, points: bandwidth.map((p) => ({ t: p.timestamp, v: p.bytes })) }],
 	);
 	// the busiest bucket, marked on the chart and named in its label
-	const busiest = $derived(bandwidth.reduce((best, p, i) => (p.bytes > (bandwidth[best]?.bytes ?? -1) ? i : best), -1));
+	// OLD CODE: const busiest = $derived(bandwidth.reduce((best, p, i) => (p.bytes > (bandwidth[best]?.bytes ?? -1) ? i : best), -1)); (NET-260 review: an all-zero series picked slot 0)
+	// -1 (the empty state) unless some slot has bytes; the daemon zero-fills every slot
+	const busiest = $derived(bandwidth.reduce((best, p, i) => (p.bytes > (bandwidth[best]?.bytes ?? 0) ? i : best), -1));
 
 	// OLD CODE START — 2026-11-03 UI redesign: first_seen is the first record in the chosen range, so every
 	// device read NEW in the 24 h view; the badge is gone and the fact says "in range"

@@ -368,7 +368,9 @@
 		{#if comparing && compareIp}{#key device.mac}<DeviceCompareCard ip={compareIp} ips={device.ips} />{/key}{/if}
 
 		<!-- OLD CODE: "the daemon doesn't send a bandwidth series yet; the card shows once it does" (NET-260: it does now) -->
-		{#if traffic?.bandwidth_series}
+		<!-- OLD CODE: {#if traffic?.bandwidth_series} (PR #278 review: the card went while traffic loaded or failed) -->
+		<!-- shown while traffic loads or fails; not for an older daemon's reply without a series -->
+		{#if !traffic || traffic.bandwidth_series}
 			<Card class="c-12" hero title="Bandwidth over time" sub="Bytes per interval · {range.words}">
 				{#if busiest >= 0}
 					<AreaChart
@@ -380,6 +382,10 @@
 						highlightIndex={busiest}
 						ariaLabel="Busiest at {chartTime(series[busiest].timestamp)}, with {formatBytes(series[busiest].bytes)}"
 					/>
+				{:else if trafficFailed && !traffic}
+					<CardState state="error" title={loadFailed('traffic')} onaction={() => refresh.run()} />
+				{:else if !traffic}
+					<CardState state="loading" title="Loading bandwidth over time" />
 				{:else}
 					<CardState state="empty" icon="bandwidth" title="No traffic in the {range.words}" />
 				{/if}
