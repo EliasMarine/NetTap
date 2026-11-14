@@ -222,7 +222,14 @@ class DnsReconService:
                 # servers) inside QUERY_TIMEOUT instead of after its default 5 s x 3 tries
                 "+time=2",
                 "+tries=2",
+                # OLD CODE START — NET-268: bare `dig ns A` read the name "ns" as a type
+                # domain,
+                # rtype,
+                # OLD CODE END
+                # -q/-t: a name that is also a type or class word ("ns", "mx") stays the name
+                "-q",
                 domain,
+                "-t",
                 rtype,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

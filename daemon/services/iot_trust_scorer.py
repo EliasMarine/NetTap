@@ -104,7 +104,11 @@ MIN_COVERAGE = 50
 
 def _pct(points: float, weight: int) -> int:
     """Points earned out of `weight`, as a whole 0-100 score."""
-    return int(round(max(0, min(100, points / weight * 100))))
+    # OLD CODE START — NET-256: round() rounds half to even, so 74.5 became 74 (grade C)
+    # return int(round(max(0, min(100, points / weight * 100))))
+    # OLD CODE END
+    # + 0.5 then int: halves round up; clamped to 0-100, so int() never sees a negative
+    return int(max(0, min(100, points / weight * 100)) + 0.5)
 
 
 # OLD CODE START — NET-171: telemetry left the model; nothing measures it
@@ -267,7 +271,8 @@ class IoTTrustScorer:
         if min(scored) <= 0:
             return 0
         harmonic = len(scored) / sum(1.0 / s for s in scored)
-        return int(round(max(0, min(100, harmonic))))
+        # OLD CODE: return int(round(max(0, min(100, harmonic)))) (NET-256 review: half to even, as _pct did)
+        return int(max(0, min(100, harmonic)) + 0.5)
 
     # -----------------------------------------------------------------
     # Private scoring helpers

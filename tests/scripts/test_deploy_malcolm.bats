@@ -559,6 +559,22 @@ _passes() { _log_count '_index_template/malcolm_template?filter_path'; }
     [[ "$output" == *"marker created"* ]] || false
 }
 
+@test "templates (NET-252): the pushed malcolm_template asks for no replicas, as one node can place none" {
+    _templates
+    [ "$status" -eq 0 ]
+    grep -qF '"template":{"settings":{"index":{"number_of_replicas":0}}}' "${TEST_TMPDIR}/body.malcolm_template"
+    grep -qF '"index_patterns":["arkime_sessions3-*"]' "${TEST_TMPDIR}/body.malcolm_template"
+}
+
+@test "templates (NET-252): a failed jq step sends no malcolm_template body" {
+    export F_JQ_FAIL=1
+    _templates
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Could not prepare malcolm_template"* ]] || false
+    [ "$(_log_count '-X PUT https://opensearch:9200/_index_template/malcolm_template')" -eq 0 ]
+    [ ! -f "${TEST_TMPDIR}/body.malcolm_template" ]
+}
+
 @test "templates (NET-217): a malcolm_template PUT that keeps failing stops the run after 3 passes" {
     export F_MT_PUT=500
     _templates

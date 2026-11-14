@@ -662,7 +662,7 @@ _malcolm_template_state() {
 # first problem.
 _push_index_templates() {
     # Fill in the placeholder the way Malcolm's own loader does (shared-object-creation.sh)
-    local index_pattern="${MALCOLM_NETWORK_INDEX_PATTERN:-arkime_sessions3-*}" state=0 code
+    local index_pattern="${MALCOLM_NETWORK_INDEX_PATTERN:-arkime_sessions3-*}" state=0 code body
     _malcolm_template_state "$index_pattern" || state=$?
     case "$state" in
         0)
@@ -670,9 +670,20 @@ _push_index_templates() {
         2)
             _push_component_templates /opt/ecs-templates-os/composable/component ecs || return 1
             _push_component_templates /opt/templates/composable/component custom || return 1
-            docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper cat /opt/templates/malcolm_template.json \
+            # OLD CODE START — NET-252: the raw template has no replica count, so a daily index
+            # created before Malcolm's loader stamps it asked for 1 replica (yellow on one node)
+            # docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper cat /opt/templates/malcolm_template.json \
+            #     | sed "s/MALCOLM_NETWORK_INDEX_PATTERN_REPLACER/${index_pattern}/g" \
+            #     | _helper_put "_index_template/malcolm_template" - || return 1
+            # OLD CODE END
+            # NetTap is always one OpenSearch node: stamp replicas 0 as Malcolm's loader does for
+            # one node. Built first (pipefail) so a failed step sends no body.
+            body=$(docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper cat /opt/templates/malcolm_template.json \
                 | sed "s/MALCOLM_NETWORK_INDEX_PATTERN_REPLACER/${index_pattern}/g" \
-                | _helper_put "_index_template/malcolm_template" - || return 1
+                | docker compose -f "$COMPOSE_FILE" exec -T dashboards-helper \
+                    jq -c 'if has("template") then .template.settings.index.number_of_replicas = 0 else . end') \
+                || { warn "  Could not prepare malcolm_template"; return 1; }
+            printf '%s' "$body" | _helper_put "_index_template/malcolm_template" - || return 1
             log "  malcolm_template index template created successfully" ;;
         *)
             return 1 ;;
