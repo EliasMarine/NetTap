@@ -264,7 +264,8 @@ describe('Changelog v2 (NET-272)', () => {
 		expect(await refreshPage()).toBe('partial');
 	});
 
-	it('says when the newest 1,000 events are all it has', async () => {
+	// 1,000 table rows take ~1 s here and over 5 s on a CI runner, so the capped tests get more time
+	it('says when the newest 1,000 events are all it has', { timeout: 30_000 }, async () => {
 		const many = Array.from({ length: 1000 }, (_, i) => ({ ...EVENT, _id: `e${i}`, '@timestamp': ago(i * MIN), title: `Event ${i}` }));
 		stubFetch(() => ok({ events: many, count: 1000 }));
 		render(Page);
@@ -442,17 +443,26 @@ describe('Changelog v2 (NET-272)', () => {
 		await vi.waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Events', level: 2 })));
 	});
 
-	it('refuses a pick on the uncounted part of a capped range', async () => {
+	it('refuses a pick on the uncounted part of a capped range, and forgets the refusal on a new range', { timeout: 30_000 }, async () => {
 		nav.set('?range=1h');
 		const many = Array.from({ length: 1000 }, (_, i) => ({ ...EVENT, _id: `e${i}`, '@timestamp': ago(i * 1000), title: `Event ${i}` }));
-		stubFetch(() => ok({ events: many, count: 1000 }));
+		let events = many;
+		stubFetch(() => ok({ events, count: events.length }));
 		render(Page);
 		await screen.findByText('Event 0');
 		const chart = screen.getByRole('group', { name: /Most events at/ });
 		await fireEvent.keyDown(chart, { key: 'Home' });
 		await fireEvent.keyDown(chart, { key: 'Enter' });
-		expect(screen.getByText("That part of the range isn't counted: pick a shorter range to see it.")).toBeInTheDocument();
+		const refusal = "That part of the range isn't counted: pick a shorter range to see it.";
+		expect(screen.getByText(refusal)).toBeInTheDocument();
 		expect(vi.mocked(goto).mock.calls.some(([url]) => String(url).includes('pickFrom'))).toBe(false);
+		// review M1: the note belonged to the old range's chart
+		events = many.slice(0, 3);
+		await fireEvent.click(screen.getByRole('button', { name: '24h' }));
+		// wait for the new range's rows (the loading state hides the old ones, and the note, meanwhile)
+		await vi.waitFor(() => expect(screen.getByText('Event 2')).toBeInTheDocument());
+		expect(screen.queryByText('Event 3')).not.toBeInTheDocument();
+		expect(screen.queryByText(refusal)).not.toBeInTheDocument();
 	});
 
 	it('exports the joined columns, spreadsheet-safe', async () => {

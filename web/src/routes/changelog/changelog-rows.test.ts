@@ -111,6 +111,8 @@ describe('joinChangelog: times', () => {
 		expect(one(event(), list([])).spanMs).toBeNull();
 		expect(spanText(null)).toBe('—');
 		expect(spanText(3 * HOUR + 12 * 60_000)).toBe('3h 12m');
+		// review L1: records a moment apart, not "0µs"
+		expect(spanText(0)).toBe('< 1s');
 	});
 });
 

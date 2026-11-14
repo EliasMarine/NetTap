@@ -55,14 +55,14 @@
 		}
 		let current = true;
 		destinations = { state: 'loading', items: [] };
-		getDeviceDetail(ip, { from, to }).then(
-			(res) => {
-				if (current) destinations = { state: 'ok', items: res.device.top_destinations ?? [] };
-			},
-			() => {
+		// review L4: .catch also covers a reply the success handler can't read, so it never stays "loading"
+		getDeviceDetail(ip, { from, to })
+			.then((res) => {
+				if (current) destinations = { state: 'ok', items: res.device?.top_destinations ?? [] };
+			})
+			.catch(() => {
 				if (current) destinations = { state: 'error', items: [] };
-			},
-		);
+			});
 		return () => {
 			current = false;
 		};

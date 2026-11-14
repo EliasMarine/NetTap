@@ -133,24 +133,25 @@ function edge(times: readonly string[], latest: boolean): string | null {
 	return ms.length ? new Date(latest ? Math.max(...ms) : Math.min(...ms)).toISOString() : null;
 }
 
-const NO_FIGURES = {
+// A new object (and arrays) per row: rows never share mutable state
+const noFigures = () => ({
 	lastSeen: null, spanMs: null, sent: null, received: null, total: null, connections: null, alerts: null,
 	trafficIps: [] as string[], ipv6Notes: [] as string[],
-};
+});
 
-function joinEvent(event: ChangelogEvent, devices: readonly Device[] | null, index: number): ChangelogRow {
+function joinEvent(event: ChangelogEvent, devices: readonly Device[] | null, byMac: ReadonlyMap<string, Device[]>, index: number): ChangelogRow {
 	const rawMac = text(event.metadata?.mac);
 	const mac = rawMac ? normaliseMac(rawMac) : null;
 	const eventIp = text(event.metadata?.ip);
 	const joinedAt = event.event_type === 'device_joined' ? event['@timestamp'] : null;
 	const base = { id: event._id || `event-${index}`, event, t: Date.parse(event['@timestamp']), mac, eventIp };
 	if (!mac && !eventIp) {
-		return { ...base, ...NO_FIGURES, kind: 'system', name: null, vendor: null, firstSeen: null, missing: 'system' };
+		return { ...base, ...noFigures(), kind: 'system', name: null, vendor: null, firstSeen: null, missing: 'system' };
 	}
-	const matched = devices === null ? [] : mac ? devices.filter((d) => d.mac && normaliseMac(d.mac) === mac) : devices.filter((d) => d.ip === eventIp);
+	const matched = devices === null ? [] : mac ? (byMac.get(mac) ?? []) : devices.filter((d) => d.ip === eventIp);
 	if (matched.length === 0) {
 		const missing: Missing = devices === null ? 'devices-failed' : 'no-figures';
-		return { ...base, ...NO_FIGURES, kind: 'device', name: mac ?? eventIp, vendor: null, firstSeen: joinedAt, missing };
+		return { ...base, ...noFigures(), kind: 'device', name: mac ?? eventIp, vendor: null, firstSeen: joinedAt, missing };
 	}
 	const busiest = [...matched].sort((a, b) => b.total_bytes - a.total_bytes);
 	const firstSeen = joinedAt ?? edge(matched.map((d) => d.first_seen), false);
@@ -178,7 +179,14 @@ function joinEvent(event: ChangelogEvent, devices: readonly Device[] | null, ind
 /** One row per event (the daemon's order), joined to the device list; null `list` = the list failed. */
 export function joinChangelog(events: readonly ChangelogEvent[], list: DeviceListResponse | null): { rows: ChangelogRow[]; coverage: Coverage } {
 	const devices = list?.devices ?? null;
-	const rows = events.map((e, i) => joinEvent(e, devices, i));
+	// The list rows per normalised MAC, built once (not once per event)
+	const byMac = new Map<string, Device[]>();
+	for (const d of devices ?? []) {
+		if (!d.mac) continue;
+		const key = normaliseMac(d.mac);
+		byMac.set(key, [...(byMac.get(key) ?? []), d]);
+	}
+	const rows = events.map((e, i) => joinEvent(e, devices, byMac, i));
 	return {
 		rows,
 		coverage: {
@@ -280,6 +288,8 @@ export function inPick(rows: readonly ChangelogRow[], pick: DrillWindow | null):
 /** "6d 0h" from a day up, formatDuration's "3h 12m" / "12m 5s" / "4.0s" below. */
 export function spanText(ms: number | null): string {
 	if (ms === null) return '—';
+	// formatDuration(0) reads "0µs"; records a moment apart read better as under a second
+	if (ms < 1000) return '< 1s';
 	const days = Math.floor(ms / 86_400_000);
 	return days >= 1 ? `${days}d ${Math.floor((ms % 86_400_000) / 3_600_000)}h` : formatDuration(ms / 1000);
 }

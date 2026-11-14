@@ -204,6 +204,10 @@
 		const joined = joinChangelog(eventsRes.value.events, devicesRes.status === 'fulfilled' ? devicesRes.value : null);
 		const known = knownFrom(joined.rows, win, s.bucketMs, joined.coverage.eventsTruncated);
 		view = { win, span: s, ...joined, known };
+		// review M1: a refusal belonged to the old range's chart
+		pickRefused = false;
+		// review L3: a row that left the loaded set closes its panel, so it can't reopen by itself later
+		if (selectedId && !joined.rows.some((r) => r.id === selectedId)) selectedId = null;
 		// relative ranges move on reload: a pick no longer inside the window (or its known part) goes
 		const kept = keepPick(pick, win, known);
 		if (pick && !kept) {
@@ -302,7 +306,7 @@
 		const url = URL.createObjectURL(new Blob([body], { type }));
 		const a = document.createElement('a');
 		a.href = url;
-		a.download = `nettap-changelog-${new Date().toISOString().slice(0, 10)}${truncated ? '-newest-1000' : ''}.${ext}`;
+		a.download = `nettap-changelog-${new Date().toISOString().slice(0, 10)}${truncated ? `-newest-${EVENT_LIMIT}` : ''}.${ext}`;
 		a.click();
 		URL.revokeObjectURL(url);
 	}
@@ -310,7 +314,7 @@
 	const exportAsCsv = () => download('csv', 'text/csv', toCsv(shown));
 
 	const countOf = (n: number, one: string, many: string) => `${fmt(n)} ${n === 1 ? one : many}`;
-	const eventsNote = $derived(truncated ? 'In the newest 1,000' : rangeText);
+	const eventsNote = $derived(truncated ? `In the newest ${fmt(EVENT_LIMIT)}` : rangeText);
 	const matchedNote = $derived(view && !devicesFailed ? `${fmt(kpis.matched)} of ${fmt(kpis.newDevices)} matched` : devicesFailed ? 'Device list failed' : undefined);
 	const chartTip = (i: number) => {
 		const b = buckets[i];
@@ -324,7 +328,7 @@
 	);
 	const eventsSub = $derived(
 		view
-			? `${countOf(shown.length, 'event', 'events')} · ${pick ? windowWords(pick.from, pick.to) : span.words}${truncated ? ' · the newest 1,000' : ''}`
+			? `${countOf(shown.length, 'event', 'events')} · ${pick ? windowWords(pick.from, pick.to) : span.words}${truncated ? ` · the newest ${fmt(EVENT_LIMIT)}` : ''}`
 			: `Newest first · ${span.words}`,
 	);
 
@@ -368,8 +372,8 @@
 	<div class="head-actions">
 		<Pills options={RANGE_OPTIONS} bind:value={range} onchange={handleFilter} ariaLabel="Time range" />
 		<!-- OLD CODE: disabled={events.length === 0} on both (NET-272: the rows on screen) -->
-		<button class="btn" type="button" onclick={exportAsJson} disabled={shown.length === 0}><Icon name="download" />Export JSON</button>
-		<button class="btn" type="button" onclick={exportAsCsv} disabled={shown.length === 0}><Icon name="download" />Export CSV</button>
+		<button class="btn" type="button" onclick={exportAsJson} disabled={loading || shown.length === 0}><Icon name="download" />Export JSON</button>
+		<button class="btn" type="button" onclick={exportAsCsv} disabled={loading || shown.length === 0}><Icon name="download" />Export CSV</button>
 	</div>
 </div>
 
@@ -379,11 +383,11 @@
 	{/if}
 	{#if truncated}
 		<p class="notice is-warn c-12" role="status">
-			<Icon name="warn" /><span>Showing the newest 1,000 events: the oldest part of this range isn't counted. Pick a shorter range.</span>
+			<Icon name="warn" /><span>Showing the newest {fmt(EVENT_LIMIT)} events: the oldest part of this range isn't counted. Pick a shorter range.</span>
 		</p>
 	{/if}
 	{#if view?.coverage.devicesTruncated}
-		<p class="notice c-12" role="status"><Icon name="empty" /><span>Only the 500 busiest addresses have figures.</span></p>
+		<p class="notice c-12" role="status"><Icon name="empty" /><span>Only the {fmt(DEVICE_LIMIT)} busiest addresses have figures.</span></p>
 	{/if}
 	{#each view?.coverage.ipv6Notes ?? [] as note (note)}
 		<p class="notice c-12" role="status"><Icon name="warn" /><span>{note}</span></p>
