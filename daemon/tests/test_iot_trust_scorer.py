@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from services.iot_trust_scorer import IoTTrustScorer
+from services.iot_trust_scorer import IoTTrustScorer, _pct
 
 
 @pytest.fixture
@@ -104,6 +104,21 @@ class TestGradeMapping:
 
     def test_grade_F(self, scorer):
         assert scorer.score_to_grade(30) == "F"
+
+
+class TestPctRoundsHalvesUp:
+    """NET-256: round() rounded half to even, so 74.5 became 74 and a grade C."""
+
+    def test_74_5_is_75_and_a_B(self, scorer):
+        assert _pct(149, 200) == 75
+        assert scorer.score_to_grade(_pct(149, 200)) == "B"
+
+    def test_62_5_is_63(self):
+        assert _pct(50, 80) == 63
+
+    def test_clamped_ends_stay_whole(self):
+        ends = (_pct(0, 85), _pct(85, 85), _pct(-5, 85), _pct(200, 85))
+        assert ends == (0, 100, 0, 100)
 
 
 # ---------------------------------------------------------------------------
