@@ -11,6 +11,7 @@
 #   F_MT_PUT           codes for successive malcolm_template PUTs, the last repeats (default 200)
 #   F_COMP_FAIL        component template name whose PUT answers 500
 #   F_NO_FILES         set: dashboards-helper lists no component template files
+#   F_JQ_FAIL          set: dashboards-helper's jq exits 5 (NET-252)
 #   F_MARKER_PUT       code for the create-only marker PUT (default 200)
 #   F_MARKER_PRESENT   0: the acceptance GET of arkime_sessions3_template fails (default 1)
 #   F_AUTH_OK_AFTER    number of failed auth probes before they pass, or "never" (default 0)
@@ -115,14 +116,16 @@ docker() {
     esac
     case "$1" in
         curl) shift; _fake_curl "$@" ;;
-        jq) shift; command jq "$@" ;;
+        jq) shift; [[ -n "${F_JQ_FAIL:-}" ]] && return 5; command jq "$@" ;;
         find)
             [[ -n "${F_NO_FILES:-}" ]] && return 0
             case "$2" in
                 /opt/ecs-templates-os/*) printf '%s\n' "$2/base.json" "$2/event.json" ;;
                 *) printf '%s\n' "$2/zeek.json" ;;
             esac ;;
-        cat) echo '{"index_patterns":["MALCOLM_NETWORK_INDEX_PATTERN_REPLACER"],"composed_of":["ecs_base"]}' ;;
+        # OLD CODE: cat) echo '{"index_patterns":["MALCOLM_NETWORK_INDEX_PATTERN_REPLACER"],"composed_of":["ecs_base"]}' ;;
+        # (NET-252: Malcolm's file carries a "template" block, where the replica count goes)
+        cat) echo '{"index_patterns":["MALCOLM_NETWORK_INDEX_PATTERN_REPLACER"],"composed_of":["ecs_base"],"template":{"settings":{}}}' ;;
         *) echo "unexpected dashboards-helper exec: $*" >&2; return 99 ;;
     esac
 }
