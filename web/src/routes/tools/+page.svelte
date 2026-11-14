@@ -182,7 +182,8 @@
 		<p class="page-sub">Diagnostics, analysis and lookups that run on your NetTap, with no cloud service.</p>
 	</div>
 	<div class="head-actions">
-		<SearchField id="tools-search" label="Search tools" placeholder="Search tools: ping, certificate, decode…" size="toolbar" bind:value={search} />
+		<!-- OLD CODE: placeholder="Search tools: ping, certificate, decode…" (NET-282: cut to "Search tools: ping, cer" in the page head at 1440 px) -->
+		<SearchField id="tools-search" label="Search tools" placeholder="Search tools…" size="toolbar" bind:value={search} />
 	</div>
 </div>
 
