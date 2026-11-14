@@ -48,18 +48,20 @@ any route runs.
   - a page and `/api/auth/me` from another site pass.
 - `web/src/routes/api/encoded-params.test.ts`: the three routes keep a `../` inside their own segment.
   This failed before the fix.
-- Full Vitest: 5247 passed, 1 failed. The failure is NET-274, fixed on main in #277; this branch gets
-  it on rebase. svelte-check: 0 errors. Build: OK. Colour gate: clean.
+- Full Vitest: 5248 passed after the rebase on main (the NET-274 failure is fixed by #277). svelte-check: 0 errors. Build: OK. Colour gate: clean.
 - No `+server.test.ts` beside a route: SvelteKit refuses any `+`-prefixed file under `routes/` that it
   doesn't know.
 
 ## Reviews
 
 - /ponytail-review: ship.
-- /deep-review: no findings on the first design; re-run on this one.
+- /deep-review: no findings on the first design, and no findings on the re-run of this one.
 - Two-angle review:
-  - TypeScript reviewer: approve, plus one test-path fix (moot after the move).
-  - Security-engineer: found the bypass that led to this design.
+  - Security-engineer: the first review found the bypass that led to this design. The re-review found
+    no Critical, High or Medium. Its one Low, a cross-site link to `/packets?<search>` making the
+    owner's own page run a search on open, is filed as NET-276.
+  - TypeScript reviewer: approve, no Critical, High or Medium. It mutation-tested each condition in the
+    guard. Its four Low test nits are fixed in the second commit.
 
 ## Lessons
 
