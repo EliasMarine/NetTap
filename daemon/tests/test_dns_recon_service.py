@@ -319,7 +319,27 @@ class TestConcurrentLookup(unittest.TestCase):
 
             self.assertIn("+time=2", calls[0])
             self.assertIn("+tries=2", calls[0])
-            self.assertEqual(calls[0][-2:], ("example.com", "A"))
+            # OLD CODE START — NET-268: the name and type were bare arguments
+            # self.assertEqual(calls[0][-2:], ("example.com", "A"))
+            # OLD CODE END
+            self.assertEqual(calls[0][-4:], ("-q", "example.com", "-t", "A"))
+
+        asyncio.run(run_test())
+
+    def test_a_name_that_is_a_type_word_stays_the_name(self):
+        """NET-268: bare `dig ns A` asked for `. NS`; -q/-t keep "ns" the name."""
+
+        async def run_test():
+            calls = []
+
+            def fake_exec(*args, **kwargs):
+                calls.append(args)
+                return FakeDig(args[-1])
+
+            with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
+                await self.svc.lookup("ns", ["A"])
+
+            self.assertEqual(calls[0][-4:], ("-q", "ns", "-t", "A"))
 
         asyncio.run(run_test())
 
