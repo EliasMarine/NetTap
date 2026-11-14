@@ -208,7 +208,8 @@ expect "arkime_sessions3_template still unchanged" "$(marker_patterns)" "$MARKER
 echo ""
 
 echo "→ Step 5: Decimal GB (NET-177)..."
-# check_disk alone: run standalone, validate-hardware.sh stops at the first warning (RAM on the G11)
+# OLD CODE: # check_disk alone: run standalone, validate-hardware.sh stops at the first warning (RAM on the G11)
+# check_disk alone keeps this step to the one line it checks (NET-253 made a standalone run report every check)
 HW=$(bash -c 'source scripts/install/validate-hardware.sh; check_disk || true' 2>&1 | grep -o 'Disk: [0-9]* GB total' || true)
 TOTAL_GB=$(df -B1 / | awk 'NR==2 {print int($2 / 1e9)}')
 expect "validate-hardware total, in GB of 10^9 bytes" "$HW" "Disk: ${TOTAL_GB} GB total"
