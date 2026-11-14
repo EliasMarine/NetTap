@@ -36,10 +36,21 @@ test.describe('without a session (NET-197)', () => {
 		expect(new URL(page.url()).pathname).toBe('/login');
 	});
 
-	// A form post, a new tab or a typed address sends Sec-Fetch-Dest: document, so it gets the sign-in page
-	test('an /api address opened as a page goes to /login, not raw JSON', async ({ page }) => {
-		await page.goto(API);
-		expect(new URL(page.url()).pathname).toBe('/login');
+	// OLD CODE START — NET-257: a typed address sends Sec-Fetch-Site: none, refused before the sign-in redirect
+	// // A form post, a new tab or a typed address sends Sec-Fetch-Dest: document, so it gets the sign-in page
+	// test('an /api address opened as a page goes to /login, not raw JSON', async ({ page }) => {
+	// 	await page.goto(API);
+	// 	expect(new URL(page.url()).pathname).toBe('/login');
+	// });
+	// OLD CODE END
+	// NET-257 refuses any /api request another site or the address bar starts, before the sign-in check.
+	// A same-origin page load still gets the NET-197 redirect: hooks.server.test.ts, "a same-origin page
+	// load of an /api address still goes to /login".
+	test('a typed /api address gets 403 "Open this from NetTap itself.", not data or the sign-in page', async ({ page }) => {
+		const res = await page.goto(API);
+		expect(res?.status()).toBe(403);
+		expect(await res?.json()).toEqual({ error: 'Open this from NetTap itself.' });
+		expect(new URL(page.url()).pathname).toBe(API);
 	});
 });
 

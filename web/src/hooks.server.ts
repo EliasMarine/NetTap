@@ -45,13 +45,18 @@ export const init: ServerInit = () => {
 const PUBLIC_PATHS = new Set(['/login', '/api/auth/login', '/api/auth/logout', '/api/auth/me']);
 
 /** Paths that are public only until the first admin exists.
- * The setup wizard (/setup, /api/setup/*) and Go Live (/go-live, /api/bridge/*)
- * run before any account exists. Afterwards they reconfigure the appliance, so
- * they need a session like every other route. The setup action signs the new
- * admin in, so the rest of the wizard and Go Live keep working. Before that,
- * everything but /setup needs the setup cookie (NET-229 follow-up).
+ * The setup wizard (/setup, /api/setup/*) runs before any account exists. Afterwards
+ * these paths reconfigure the appliance, so they need a session like every other route.
+ * The setup action signs the new admin in, so the rest of the wizard and Go Live keep
+ * working. Before that, everything but /setup needs the setup cookie (NET-229 follow-up).
+ * NET-277: /go-live is not here. Its capture-mode call needs a session, so until the first
+ * admin exists it goes to /setup like every other page. /api/bridge/* was Go Live's and has no
+ * caller before the first admin now; it still needs the setup cookie then.
  */
-const FIRST_RUN_PATHS = ['/setup', '/api/setup', '/api/bridge', '/go-live'];
+// OLD CODE START — NET-277: Go Live opened on the setup cookie, then its capture-mode call got 401
+// const FIRST_RUN_PATHS = ['/setup', '/api/setup', '/api/bridge', '/go-live'];
+// OLD CODE END
+const FIRST_RUN_PATHS = ['/setup', '/api/setup', '/api/bridge'];
 
 /** The calls the wizard makes before its Account step, matched by exact
  * method and path (not prefix).
@@ -181,7 +186,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 			return json({ error: 'Open this from NetTap itself.' }, { status: 403 });
 		}
 
-		// --- First run: only the wizard and Go Live are open; everything else goes to setup ---
+		// OLD CODE: // --- First run: only the wizard and Go Live are open; everything else goes to setup --- (NET-277)
+		// --- First run: only the wizard is open; everything else goes to setup ---
 		const firstRun = isFirstRun();
 		// OLD CODE START — NET-229 follow-up: the wizard's API calls answered anyone on the LAN until setup ended
 		// if (firstRun && isFirstRunPath(event.request.method, pathname)) {
@@ -198,7 +204,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 		// }
 		// OLD CODE END
 		if (firstRun && isFirstRunPath(event.request.method, pathname)) {
-			// /setup stays open so the code can be typed there; the rest needs the setup cookie
+			// /setup stays open so the code can be typed there; the rest needs the setup cookie.
+			// Only /setup is a first-run page now; the redirect keeps any page added later fail-closed.
 			if (!isUnder(pathname, '/setup') && !hasSetupCookie(event)) {
 				if (isUnder(pathname, '/api')) {
 					return json({ error: 'Enter the setup code first.' }, { status: 401 });

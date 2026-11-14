@@ -61,6 +61,7 @@ const ADMIN_STORE = JSON.stringify({
 // OLD CODE START — NET-197: pages and API calls answer differently now, so the list is split
 // const FIRST_RUN_PATHS = ['/setup', '/api/setup/configure', '/api/bridge/create', '/go-live'];
 // OLD CODE END
+// NET-277: /go-live no longer opens during first run; it stays for the after-setup and damaged-store checks
 const FIRST_RUN_PAGES = ['/setup', '/go-live'];
 const FIRST_RUN_APIS = ['/api/setup/configure', '/api/bridge/create'];
 const FIRST_RUN_PATHS = [...FIRST_RUN_PAGES, ...FIRST_RUN_APIS];
@@ -105,12 +106,27 @@ describe('first-run routes with a real user store', () => {
 		expect(resolve).toHaveBeenCalledTimes(1);
 	});
 
-	it('/go-live goes to /setup until the code is typed', async () => {
+	// OLD CODE START — NET-277: with the code typed Go Live opened, but its capture-mode call got 401
+	// it('/go-live goes to /setup until the code is typed', async () => {
+	// 	await expect(run('/go-live')).rejects.toMatchObject({ status: 302, location: '/setup' });
+	// 	expect(resolve).not.toHaveBeenCalled();
+	//
+	// 	await run('/go-live', 'GET', undefined, auth.setupToken() ?? '');
+	// 	expect(resolve).toHaveBeenCalledTimes(1);
+	// });
+	// OLD CODE END
+	it('/go-live goes to /setup until the first admin exists, even with the code typed', async () => {
 		await expect(run('/go-live')).rejects.toMatchObject({ status: 302, location: '/setup' });
+		await expect(run('/go-live', 'GET', undefined, auth.setupToken() ?? '')).rejects.toMatchObject({
+			status: 302,
+			location: '/setup',
+		});
+		writeStore('{"users":[]}');
+		await expect(run('/go-live', 'GET', undefined, auth.setupToken() ?? '')).rejects.toMatchObject({
+			status: 302,
+			location: '/setup',
+		});
 		expect(resolve).not.toHaveBeenCalled();
-
-		await run('/go-live', 'GET', undefined, auth.setupToken() ?? '');
-		expect(resolve).toHaveBeenCalledTimes(1);
 	});
 
 	it.each(FIRST_RUN_APIS)('API %s needs the setup cookie when the store does not exist', async (path) => {

@@ -337,7 +337,7 @@ describe('hooks.server', () => {
 			expect(mockSetupTokenValid).not.toHaveBeenCalled();
 		});
 
-		it('sends /go-live to /setup until the code is typed', async () => {
+		it('sends /go-live to /setup without the setup cookie', async () => {
 			mockHasUsers.mockReturnValue(false);
 			mockSetupTokenValid.mockReturnValue(false);
 			await expect(handle({ event: createMockEvent('/go-live'), resolve: mockResolve })).rejects.toMatchObject({
@@ -345,10 +345,27 @@ describe('hooks.server', () => {
 			});
 			expect(mockResolve).not.toHaveBeenCalled();
 
-			mockSetupTokenValid.mockReturnValue(true);
-			const event = createMockEvent('/go-live');
-			await handle({ event, resolve: mockResolve });
-			expect(mockResolve).toHaveBeenCalledWith(event);
+			// OLD CODE START — NET-277: with the code typed Go Live opened, but its capture-mode call got 401
+			// mockSetupTokenValid.mockReturnValue(true);
+			// const event = createMockEvent('/go-live');
+			// await handle({ event, resolve: mockResolve });
+			// expect(mockResolve).toHaveBeenCalledWith(event);
+			// OLD CODE END
+		});
+
+		// NET-277: Go Live needs the admin the wizard creates, so it goes to /setup until one exists
+		it.each([
+			['the setup cookie', true, null],
+			['a leftover valid session', false, { username: 'admin', role: 'admin' }],
+		])('sends /go-live to /setup while no users exist, even with %s', async (_label, setupCookie, user) => {
+			mockHasUsers.mockReturnValue(false);
+			mockSetupTokenValid.mockReturnValue(setupCookie);
+			mockVerifyToken.mockReturnValue(user);
+			await expect(handle({ event: createMockEvent('/go-live', 'valid-token'), resolve: mockResolve })).rejects.toMatchObject({
+				status: 302,
+				location: '/setup',
+			});
+			expect(mockResolve).not.toHaveBeenCalled();
 		});
 
 		it.each(['/api/setup/nics', '/api/bridge/create'])(
@@ -509,6 +526,21 @@ describe('hooks.server', () => {
 			const event = createMockEvent('/api/packets/download', 'expired-token', undefined, 'POST', { 'sec-fetch-dest': 'document' });
 
 			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ status: 302, location });
+			expect(mockResolve).not.toHaveBeenCalled();
+		});
+
+		// NET-257 refuses only requests another site or the address bar starts; the test above has no
+		// Sec-Fetch-Site and no matched route, so it never reaches that check. This is a real form post's shape.
+		it('a same-origin page load of an /api address still goes to /login', async () => {
+			mockHasUsers.mockReturnValue(true);
+			mockVerifyToken.mockReturnValue(null);
+			const headers = { 'sec-fetch-dest': 'document', 'sec-fetch-site': 'same-origin' };
+			const event = {
+				...createMockEvent('/api/packets/download', 'expired-token', undefined, 'POST', headers),
+				route: { id: '/api/packets/download' },
+			};
+
+			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ status: 302, location: '/login' });
 			expect(mockResolve).not.toHaveBeenCalled();
 		});
 
