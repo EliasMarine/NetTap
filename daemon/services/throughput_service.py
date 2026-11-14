@@ -168,10 +168,17 @@ def _parse(stdout: str, download: bool) -> tuple[float | None, int | None, str |
 
 
 def _plain(error: str, host: str, port: int) -> str:
-    """iperf3's two common failures as plain sentences; anything else as iperf3 said it."""
+    """iperf3's common failures as plain sentences; anything else as iperf3 said it."""
+    where = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
     if "Connection refused" in error:
-        where = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+        # OLD CODE: where = … (moved up: the timed-out sentence names the peer too)
         return f"No iperf3 server on {where}. Start one there with iperf3 -s."
+    # NET-271: a firewall that drops the port gives no refusal, only silence
+    if "Connection timed out" in error:
+        return (
+            f"Nothing answered on {where} within {CONNECT_TIMEOUT_MS // 1000} seconds. "
+            f"Start iperf3 -s there, and let TCP port {port} through its firewall."
+        )
     if "server is busy" in error:
         return "The iperf3 server is busy with another test."
     return error

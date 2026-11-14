@@ -19,7 +19,8 @@ export function pathLine(r: ThroughputResult): string | null {
 export function mirrorNote(r: ThroughputResult): string | null {
 	const { mode, interface: port, has_ip } = r.capture;
 	if (mode !== 'mirror' || has_ip !== false || !port) return null;
-	return `The capture port ${port} has no IP address, so this measures the management path, not the mirror port.`;
+	// OLD CODE: return `The capture port ${port} has no IP address, so this measures the management path, not the mirror port.`; (NET-271: read as a fault to fix)
+	return `Normal in mirror mode: the capture port ${port} only listens, so it has no IP address and can't carry a test. This measures ${r.path?.interface ?? 'the management connection'}, not the mirror port.`;
 }
 
 /** "941 Mbit/s", or "—" for a run that failed. */

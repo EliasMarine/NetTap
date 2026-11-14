@@ -6,6 +6,7 @@ The iperf3 output is real `iperf3 -c 127.0.0.1 -p 5299 -t 1 -J [-R]` output from
 """
 
 import asyncio
+import json
 import os
 import socket
 import sys
@@ -256,6 +257,15 @@ class TestRun(Harness):
         result = self.run_one()
         self.assertEqual(
             result["error"], "The iperf3 server is busy with another test."
+        )
+        # NET-271: iperf3 3.12 on the G11, against a host whose firewall drops port 5201
+        timed_out = {"start": {}, "intervals": [], "end": {}}
+        timed_out["error"] = "unable to connect to server: Connection timed out"
+        self.procs.append(FakeProc(json.dumps(timed_out), code=1))
+        self.assertEqual(
+            self.run_one(host="192.168.1.24")["error"],
+            "Nothing answered on 192.168.1.24:5201 within 3 seconds. "
+            "Start iperf3 -s there, and let TCP port 5201 through its firewall.",
         )
         self.assertIsNone(result["bits_per_second"])
 
