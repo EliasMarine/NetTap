@@ -43,6 +43,7 @@ function createMockEvent(pathname: string, token?: string, user?: any, method = 
 			getAll: vi.fn().mockReturnValue([]),
 		},
 		locals: { user } as any,
+		route: { id: null as string | null },
 	};
 }
 
@@ -556,6 +557,64 @@ describe('hooks.server', () => {
 			const event = createMockEvent('/login', 'valid-token');
 
 			await expect(handle({ event, resolve: mockResolve })).rejects.toThrow('redirect');
+		});
+	});
+
+	// NET-257: SameSite=lax lets another site's link carry the owner's cookie to any /api route
+	describe('/api requests another site starts (Sec-Fetch-Site)', () => {
+		/** A signed-in request, with the route SvelteKit would have matched for it. */
+		function signedIn(pathname: string, routeId: string | null, site?: string, method = 'GET') {
+			mockHasUsers.mockReturnValue(true);
+			mockVerifyToken.mockReturnValue({ username: 'admin', role: 'admin' });
+			const headers: Record<string, string> = site ? { 'sec-fetch-site': site } : {};
+			return { ...createMockEvent(pathname, 'valid-token', undefined, method, headers), route: { id: routeId } };
+		}
+
+		const REFUSED = [
+			['/api/pcap/download?filter=tcp', '/api/[...path]'],
+			['/api/threats/beaconing', '/api/threats/beaconing'],
+			// a decoded ../ in an explicit route's param once steered it to the download
+			['/api/logs/fields/..%2F..%2Fpcap%2Fdownload', '/api/logs/fields/[log_type]'],
+			// SvelteKit decodes the path for routing, so an encoded prefix still reaches /api routes
+			['/%61pi/pcap/download?filter=tcp', '/api/[...path]'],
+			['/%61pi/threats/beaconing', '/api/threats/beaconing'],
+		] as const;
+
+		it.each(REFUSED.flatMap(([path, id]) => ['cross-site', 'same-site', 'none'].map((site) => [path, id, site])))(
+			'refuses %s (route %s) from a %s request without running it',
+			async (path, id, site) => {
+				const res = await handle({ event: signedIn(path, id, site), resolve: mockResolve });
+				expect(res.status).toBe(403);
+				expect(res.headers.get('content-type')).toBe('application/json');
+				expect(await res.json()).toEqual({ error: 'Open this from NetTap itself.' });
+				expect(mockResolve).not.toHaveBeenCalled();
+			},
+		);
+
+		it('refuses a POST another site starts', async () => {
+			const event = signedIn('/api/settings/bandwidth-cap', '/api/[...path]', 'cross-site', 'POST');
+			const res = await handle({ event, resolve: mockResolve });
+			expect(res.status).toBe(403);
+			expect(mockResolve).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			['a same-origin', 'same-origin'],
+			['a no-header', undefined],
+		])('lets %s request through', async (_label, site) => {
+			const event = signedIn('/api/pcap/download?filter=tcp', '/api/[...path]', site);
+			await handle({ event, resolve: mockResolve });
+			expect(mockResolve).toHaveBeenCalledWith(event);
+		});
+
+		// a page may be linked from anywhere; nginx's auth_request forwards the browser's headers to /api/auth/me
+		it.each([
+			['/alerts', '/alerts'],
+			['/api/auth/me', '/api/auth/me'],
+		])('leaves %s to its own rules', async (path, id) => {
+			const event = signedIn(path, id, 'cross-site');
+			await handle({ event, resolve: mockResolve });
+			expect(mockResolve).toHaveBeenCalledWith(event);
 		});
 	});
 });

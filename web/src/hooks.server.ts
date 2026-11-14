@@ -172,6 +172,15 @@ export const handle: Handle = async ({ event, resolve }) => {
 	}
 
 	if (!isPublicPath(pathname)) {
+		// NET-257: SameSite=lax lets another site's link (or one opened from a mail or chat app, sent as
+		// "none") reach the daemon with the owner's cookie, e.g. to hold the PCAP download slot. Every /api
+		// route, by the route SvelteKit matched, so an encoded path (/%61pi/…) can't slip past. NetTap's own
+		// pages only send same-origin; no header is a script, which no web page can drive.
+		const site = event.request.headers.get('sec-fetch-site');
+		if (site && site !== 'same-origin' && event.route.id?.startsWith('/api/')) {
+			return json({ error: 'Open this from NetTap itself.' }, { status: 403 });
+		}
+
 		// --- First run: only the wizard and Go Live are open; everything else goes to setup ---
 		const firstRun = isFirstRun();
 		// OLD CODE START — NET-229 follow-up: the wizard's API calls answered anyone on the LAN until setup ended

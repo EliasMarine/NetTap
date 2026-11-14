@@ -7,7 +7,8 @@ import { daemonFetch } from '$lib/server/daemon.js';
  * Proxies to the daemon's POST /api/suricata/rules/sources/{id}/disable endpoint.
  */
 export const POST: RequestHandler = async ({ params }) => {
-	const res = await daemonFetch(`/api/suricata/rules/sources/${params.id}/disable`, {
+	// OLD CODE: const res = await daemonFetch(`/api/suricata/rules/sources/${params.id}/disable`, { (NET-257 review: encode the param)
+	const res = await daemonFetch(`/api/suricata/rules/sources/${encodeURIComponent(params.id)}/disable`, {
 		method: 'POST',
 	});
 	const data = await res.json().catch(() => ({ error: 'Failed to parse daemon response' }));
