@@ -2,7 +2,7 @@
 
 **Linear:** NET-276
 **Branch:** `fix/packets-url-search-on-open`
-**Status:** fixed; PR open (reviews: TypeScript reviewer approve, /ponytail-review Ship).
+**Status:** done. PR #285 merged (`7b29679d`), deployed to the G11 at `d39ecfcb` (step 8: the waiting message is in the built app). Reviews: TypeScript reviewer approve, /ponytail-review Ship.
 **Plan:** `PLAN.md` (Codex review, 2 rounds, APPROVED). Log: `PLAN-REVIEW-LOG.md`.
 
 ## Problem

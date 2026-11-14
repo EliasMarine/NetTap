@@ -2,7 +2,7 @@
 
 **Linear:** NET-275
 **Branch:** `fix/time-range-extreme-years`
-**Status:** fixed, not yet deployed. A daemon rebuild ships it.
+**Status:** done. PR #283 merged (`ac99aaac`); verified on the G11 at `d39ecfcb` (`deploy-triage-fixes-2-2026-11-14.sh` steps 5-6, every check passed).
 
 ## Problem
 

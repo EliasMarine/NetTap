@@ -151,6 +151,9 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 | 2026-11-14 | Tools (DNS Lookup) | A lookup of a name like `ns` returned the root servers | dig read the bare word as a record type | `-q <name> -t <type>`. Verified on the G11: step 5 | NET-268 | #275 |
 | 2026-11-14 | IoT trust score | 74.5 read 74 (grade C); the fleet's 4.5 read 4 | `round()` rounds half to even | Halves round up in `_pct` and `compute_fleet_score` | NET-256 | #275 |
 | 2026-11-14 | Fresh install (OpenSearch) | The first daily index could get a replica a single node can't place (yellow) | Our template push had no replica count; Malcolm stamps it later | The push stamps replicas 0 as Malcolm does; a failed build of the body sends nothing. Fresh install only | NET-252 | #275 |
+| 2026-11-14 | Daemon time windows | A from/to in year 1 or 9999 answered a generic 500; a 1970-to-now window on two chart routes built millions of slots | Valid ISO passed `iso_param` and overflowed in `time_slots` or the UTC shift; `/api/alerts/categories` and `/api/bandwidth/daily` skipped `slot_interval` | `parse_time_range` checks years 1970-9998 (400 naming the parameter); both routes go through `slot_interval`. Verified on the G11 (`deploy-triage-fixes-2-2026-11-14.sh` steps 5-6) | NET-275 | #283 |
+| 2026-11-14 | First run (Go Live) | Before the first admin, Go Live rendered with the setup code but its capture-mode call got 401 | `/go-live` was a first-run page; the APIs it calls are not | `/go-live` left `FIRST_RUN_PATHS`, so it goes to `/setup` until the admin exists. Covered by CI's first-run visual job | NET-277 | #284 |
+| 2026-11-14 | Packets page | Another site's link could make the owner's page start a packet search and hold one of two reader slots | The page searched from its URL however it was reached | `afterNavigate`: a full load waits for "Run the search"; in-app navigation runs at once. Verified in the G11 build (step 8). Six similar pages: NET-281 | NET-276 | #285 |
 
 ## Reliability Lessons Learned
 
@@ -242,6 +245,7 @@ This document tracks production reliability of each NetTap subsystem. Read this 
 71. **Never keep user-set state in a container's `/tmp`.** It is a tmpfs; every recreate wipes it. Use the app-data volume, and migrate existing files before the recreate, not after.
 72. **Check a deploy with a logged-in full page load, not only `curl /`.** An unauthenticated request gets a tiny redirect and never meets the response headers a real page sends (NET-241).
 73. **A busy-slot resource is a denial-of-service target for any page another site can open.** The PCAP download slot (NET-257) and the shared packet readers (NET-276) are each held by one request. Refuse cross-site `/api` requests, and cancel the daemon work when the client goes away.
+74. **A page that starts slow server work from its URL must tell a full load from an in-app navigation.** A same-origin check on `/api` can't see who opened the page. SvelteKit's `afterNavigate` reports `type: 'enter'` for a full load; wait for a click there (NET-276).
 
 ## Verification Checklist
 
