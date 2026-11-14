@@ -529,6 +529,21 @@ describe('hooks.server', () => {
 			expect(mockResolve).not.toHaveBeenCalled();
 		});
 
+		// NET-257 refuses only requests another site or the address bar starts; the test above has no
+		// Sec-Fetch-Site and no matched route, so it never reaches that check. This is a real form post's shape.
+		it('a same-origin page load of an /api address still goes to /login', async () => {
+			mockHasUsers.mockReturnValue(true);
+			mockVerifyToken.mockReturnValue(null);
+			const headers = { 'sec-fetch-dest': 'document', 'sec-fetch-site': 'same-origin' };
+			const event = {
+				...createMockEvent('/api/packets/download', 'expired-token', undefined, 'POST', headers),
+				route: { id: '/api/packets/download' },
+			};
+
+			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ status: 302, location: '/login' });
+			expect(mockResolve).not.toHaveBeenCalled();
+		});
+
 		it.each([true, false])('a script call (Sec-Fetch-Dest: empty) gets 401 (users exist: %s)', async (users) => {
 			mockHasUsers.mockReturnValue(users);
 			mockVerifyToken.mockReturnValue(null);
