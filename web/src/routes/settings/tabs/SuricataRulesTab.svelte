@@ -314,10 +314,12 @@
 	// const busy = $derived(updating || savingEtPro || removingEtPro || applying);
 	// OLD CODE END
 	const busy = $derived(updating || savingEtPro || removingEtPro || applying || savingOwner);
-	// NET-273: Suricata restarting (applying) is not a request in flight, so it doesn't hold a tab switch
+	// NET-273: Suricata restarting (applying) is not a request in flight, so it doesn't hold a tab switch.
+	// A rule update can run for minutes and its result shows on the next visit, so it doesn't either (review M2).
 	$effect(() => {
 		dirty = etproCode.trim() !== '' || ownerDirty;
-		sending = updating || savingEtPro || removingEtPro || savingOwner;
+		// OLD CODE: sending = updating || savingEtPro || removingEtPro || savingOwner;
+		sending = savingEtPro || removingEtPro || savingOwner;
 	});
 	// Suricata can't read the owner rules folder yet (null, or an older daemon that doesn't say), so a save would load nothing.
 	// Unknown while the live status hasn't loaded. The same == null check as "Not connected" below.

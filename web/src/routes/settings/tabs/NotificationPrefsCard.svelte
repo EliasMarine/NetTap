@@ -15,8 +15,8 @@
 	interface Props {
 		/** The tab's lock is held: a save, a channel or rule change, or the reload after it. */
 		locked: boolean;
-		/** Runs `task` under the tab's lock; does nothing while the lock is held. */
-		run: (task: () => Promise<void>) => Promise<void>;
+		/** Runs `task` under the tab's lock; does nothing while the lock is held. `write: false` for a read. */
+		run: (task: () => Promise<void>, write?: boolean) => Promise<void>;
 		/** After a save that worked: the tab reloads its lists (a settings channel may have come or gone). */
 		onsaved: () => Promise<unknown>;
 		/** The form differs from the settings last loaded or saved. */
@@ -123,11 +123,12 @@
 	}
 
 	/** Replaces the form with the daemon's settings: the conflict notice's and the failed load's button. */
+	// OLD CODE: run(async () => {…}); (review L5: a read, which doesn't hold a tab switch)
 	const reloadPreferences = () =>
 		run(async () => {
 			await loadNotificationConfig();
 			if (!notifLoadFailed) conflict = false;
-		});
+		}, false);
 
 	async function saveNotifications() {
 		notifSaving = true;
@@ -205,6 +206,13 @@
 			if (!notifError) await onsaved();
 		});
 
+	// A test send writes a delivery, so Recent deliveries beside it reloads after it (review L4)
+	const sendTest = () =>
+		run(async () => {
+			await sendTestNotification();
+			await onsaved();
+		});
+
 	async function sendTestNotification() {
 		testingSending = true;
 		testMessage = '';
@@ -235,7 +243,8 @@
 
 	// The form loads once here, and again when the tab opens again or a channel changes
 	onMount(() => {
-		loadNotificationConfig();
+		// OLD CODE: loadNotificationConfig(); (review L5: a channel change could reload under it)
+		void run(loadNotificationConfig, false);
 	});
 </script>
 
@@ -326,7 +335,8 @@
 		<div class="form-actions">
 			{#if notifUnsaved}<span class="unsaved">Unsaved changes</span>{/if}
 			<!-- OLD CODE: <button … disabled={testingSending}> (review L3: it tested the saved settings, whatever the form said) -->
-			<button class="btn" type="button" onclick={() => run(sendTestNotification)} disabled={testingSending || notifUnsaved} aria-describedby={notifUnsaved ? 'notif-test-help' : undefined}>
+			<!-- OLD CODE: onclick={() => run(sendTestNotification)} (review L4: Recent deliveries reloads after a test send) -->
+			<button class="btn" type="button" onclick={sendTest} disabled={testingSending || notifUnsaved} aria-describedby={notifUnsaved ? 'notif-test-help' : undefined}>
 				{testingSending ? 'Sending…' : 'Send test notification'}
 			</button>
 			<!-- OLD CODE: disabled={notifSaving || notifLoadFailed} (NET-273: also off after a channel change, until the form is reloaded) -->

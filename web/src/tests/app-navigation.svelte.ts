@@ -7,7 +7,8 @@
  *
  * `page.url` is reactive. `goto` and `followLink` push a history entry and `traverse` moves through
  * them, as Back and Forward do; each runs the registered `beforeNavigate` callbacks first and stays
- * put when one cancels, as SvelteKit does (it undoes a cancelled Back or Forward itself).
+ * put when one cancels, as SvelteKit does (it undoes a cancelled Back or Forward itself). The
+ * `afterNavigate` callbacks run after a navigation that went ahead.
  */
 import { onDestroy } from 'svelte';
 import { vi } from 'vitest';
@@ -16,6 +17,7 @@ import type { BeforeNavigate, NavigationType } from '@sveltejs/kit';
 type Callback = (navigation: BeforeNavigate) => void;
 
 const callbacks = new Set<Callback>();
+const afterCallbacks = new Set<() => void>();
 const history = { entries: [] as URL[], index: 0 };
 
 export const page = $state({ url: new URL('http://localhost/settings') });
@@ -46,8 +48,10 @@ function attempt(type: NavigationType, url: URL, delta?: number): boolean {
 		},
 	} as unknown as BeforeNavigate;
 	for (const callback of [...callbacks]) callback(navigation);
-	if (!cancelled) page.url = url;
-	return !cancelled;
+	if (cancelled) return false;
+	page.url = url;
+	for (const callback of [...afterCallbacks]) callback();
+	return true;
 }
 
 function push(type: NavigationType, href: string | URL): void {
@@ -92,4 +96,8 @@ export const beforeNavigate = vi.fn((callback: Callback) => {
 	onDestroy(() => callbacks.delete(callback));
 });
 
-export const afterNavigate = vi.fn();
+// OLD CODE: export const afterNavigate = vi.fn(); (review L2: the page clears its Discard pass here)
+export const afterNavigate = vi.fn((callback: () => void) => {
+	afterCallbacks.add(callback);
+	onDestroy(() => afterCallbacks.delete(callback));
+});

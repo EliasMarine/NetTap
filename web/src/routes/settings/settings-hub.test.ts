@@ -58,7 +58,15 @@ async function openTab(name: string) {
 }
 
 const hotDays = () => screen.getByLabelText('Hot tier (Zeek metadata and Suricata alerts)') as HTMLInputElement;
-const BUSY_BAR = 'Saving your changes… wait for this to finish before leaving the tab.';
+const timeRange = () => screen.getByLabelText('Default time range');
+
+/** An in-app link to `href`, for `followLink`. */
+function linkTo(href: string) {
+	const link = document.createElement('a');
+	link.setAttribute('href', href);
+	return link;
+}
+const BUSY_BAR = 'Sending your change… wait for it to finish before leaving the tab.';
 
 beforeEach(() => resetNavigation());
 afterEach(() => {
@@ -174,6 +182,62 @@ describe('Settings hub — unsaved edits', () => {
 		expect(screen.getByLabelText('Default time range')).toHaveValue('');
 		await openTab('About');
 		expect(panel()).toHaveAttribute('id', 'settings-panel-about');
+	});
+
+	it('Discard on a link to the open tab puts its saved values back, and the next edit is held again', async () => {
+		await openDirtyDisplay();
+
+		followLink(linkTo('/settings?tab=display'));
+		await flush();
+		expect(screen.getByText('You have unsaved changes in Display.')).toBeInTheDocument();
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Discard and continue' }));
+		await flush();
+		expect(goto).toHaveBeenLastCalledWith(expect.any(URL), { keepFocus: true, noScroll: true });
+		expect(timeRange()).toHaveValue('');
+		expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+
+		await fireEvent.change(timeRange(), { target: { value: '7d' } });
+		await fireEvent.click(tab('About'));
+		expect(screen.getByText('You have unsaved changes in Display.')).toBeInTheDocument();
+		expect(panel()).toHaveAttribute('id', 'settings-panel-display');
+	});
+
+	it('moves focus to the bar, and Keep editing puts it back where it was', async () => {
+		await openDirtyDisplay();
+		timeRange().focus();
+
+		followLink(linkTo('/settings?tab=about'));
+		await flush();
+		expect(screen.getByRole('button', { name: 'Keep editing' })).toHaveFocus();
+		await fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+		expect(timeRange()).toHaveFocus();
+
+		// From a tab click, focus goes back to the tab that is still open
+		tab('About').focus();
+		await fireEvent.click(tab('About'));
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+		expect(tab('Display')).toHaveFocus();
+	});
+
+	it("lets only Discard's own navigation through: after a Back that goes nowhere, the next switch is held", async () => {
+		stubFetch();
+		render(Page);
+		await openTab('Display');
+		await fireEvent.change(timeRange(), { target: { value: '7d' } });
+		vi.spyOn(window.history, 'go').mockImplementation(() => {});
+
+		traverse(-1);
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Discard and continue' }));
+		await flush();
+		expect(panel()).toHaveAttribute('id', 'settings-panel-display');
+
+		await fireEvent.change(timeRange(), { target: { value: '1h' } });
+		await fireEvent.click(tab('About'));
+		expect(screen.getByText('You have unsaved changes in Display.')).toBeInTheDocument();
+		expect(panel()).toHaveAttribute('id', 'settings-panel-display');
 	});
 
 	it('Back, then Discard, carries on backward, and Back again keeps going', async () => {
@@ -305,7 +369,9 @@ describe('Settings hub — a change being sent holds navigation', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Save retention settings' }));
 
 		await fireEvent.click(tab('About'));
+		await flush();
 		expect(screen.getByText(BUSY_BAR)).toBeInTheDocument();
+		expect(screen.getByText(BUSY_BAR).closest('.leave-bar')).toHaveFocus();
 		expect(screen.queryByRole('button', { name: 'Discard and continue' })).not.toBeInTheDocument();
 		expect(unload()).toBe(true);
 
@@ -314,9 +380,79 @@ describe('Settings hub — a change being sent holds navigation', () => {
 		expect(screen.getByText('Retention settings saved and applied to OpenSearch.')).toBeInTheDocument();
 		expect(screen.queryByText(BUSY_BAR)).not.toBeInTheDocument();
 		expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument();
+		// The bar had focus when it went: it goes back to the open tab
+		expect(tab('Storage & retention')).toHaveFocus();
 
 		await openTab('About');
 		expect(panel()).toHaveAttribute('id', 'settings-panel-about');
+	});
+});
+
+describe('Settings hub — what does not hold navigation', () => {
+	it('an edit typed while a save is sent stays unsaved', async () => {
+		resetNavigation('http://localhost/settings?tab=retention');
+		const save = gate();
+		stubFetch({
+			'/api/setup/storage': async (init) => {
+				if (init?.method !== 'POST') return { body: STORAGE };
+				await save.wait();
+				return { body: { ilm_applied: true } };
+			},
+		});
+		render(Page);
+		await flush();
+		await fireEvent.input(hotDays(), { target: { value: '120' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save retention settings' }));
+		await fireEvent.input(hotDays(), { target: { value: '150' } });
+
+		save.open();
+		await flush();
+		expect(screen.getByText('Retention settings saved and applied to OpenSearch.')).toBeInTheDocument();
+		expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+		await fireEvent.click(tab('About'));
+		expect(screen.getByText('You have unsaved changes in Storage & retention.')).toBeInTheDocument();
+	});
+
+	it('a rule update in flight does not hold a tab switch', async () => {
+		resetNavigation('http://localhost/settings?tab=suricata-rules');
+		const update = gate();
+		stubFetch({
+			'/api/suricata/rules/live': () => ({
+				body: { available: true, enabled_rules: 1, disabled_rules: 0, last_updated: null, sources: [], schedule: '0 0 * * *', error: null },
+			}),
+			'/api/suricata/rules/custom': () => ({ body: { content: '', rule_count: 0, max_rules: 2000, max_bytes: 262144 } }),
+			'/api/suricata/rules/commercial': () => ({ body: { configured: false, active: false, last_update_ok: null, applying: false, activation: null } }),
+			'/api/suricata/rules/update': async () => {
+				await update.wait();
+				return { body: { success: true, output: '', reload_output: '' } };
+			},
+		});
+		render(Page);
+		await flush();
+		await fireEvent.click(screen.getAllByRole('button', { name: 'Update rules now' })[0]);
+		expect(screen.getAllByText('Updating…').length).toBeGreaterThan(0);
+
+		await openTab('About');
+		expect(panel()).toHaveAttribute('id', 'settings-panel-about');
+		expect(screen.queryByText(BUSY_BAR)).not.toBeInTheDocument();
+		update.open();
+	});
+
+	it('the notification preferences loading does not hold a tab switch', async () => {
+		const config = gate();
+		stubFetch({
+			'/api/notifications/config': async () => {
+				await config.wait();
+				return { body: { min_severity: 2, email: { enabled: false, recipients: [], smtp_configured: true }, webhook: { enabled: false } } };
+			},
+		});
+		render(Page);
+		await flush();
+
+		await openTab('About');
+		expect(panel()).toHaveAttribute('id', 'settings-panel-about');
+		expect(screen.queryByText(BUSY_BAR)).not.toBeInTheDocument();
+		config.open();
 	});
 });
 

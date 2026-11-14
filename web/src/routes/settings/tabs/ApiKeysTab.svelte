@@ -79,8 +79,12 @@
 			if (res.ok) {
 				apiKeysMessage = `Saved ${data.saved_count ?? Object.keys(payload).length} key(s) successfully.`;
 				apiKeysStatus = data.keys ?? apiKeysStatus;
-				// Clear input fields after successful save
-				apiKeyValues = {};
+				// OLD CODE START — review L1: also wiped a value typed while the save ran
+				// // Clear input fields after successful save
+				// apiKeyValues = {};
+				// OLD CODE END
+				// Clear the fields that were saved; one changed during the save keeps its value
+				apiKeyValues = Object.fromEntries(Object.entries(apiKeyValues).filter(([key, value]) => value.trim() !== (payload[key] ?? '')));
 			} else {
 				apiKeysMessage = data.error || 'Failed to save API keys.';
 				apiKeysError = true;

@@ -8,7 +8,8 @@
     change holds it until the change lands.
 -->
 <script lang="ts">
-	import { beforeNavigate, goto } from '$app/navigation';
+	import { tick } from 'svelte';
+	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import type { NavigationType } from '@sveltejs/kit';
 	import Icon from '$lib/components/ui/Icon.svelte';
@@ -45,7 +46,9 @@
 	// ];
 	// OLD CODE END
 	const activeTab = $derived(tabFrom(page.url));
-	const active = $derived(SETTINGS_TABS.find((t) => t.id === activeTab) ?? SETTINGS_TABS[0]);
+	// OLD CODE: …find((t) => t.id === activeTab) ?? SETTINGS_TABS[0]); (review L7: unreachable fallback)
+	// tabFrom only returns ids from SETTINGS_TABS, so the find always matches
+	const active = $derived(SETTINGS_TABS.find((t) => t.id === activeTab)!);
 
 	// OLD CODE START — NET-273: the page read Retention health and About for the top bar's Refresh and
 	// loaded every tab's form on mount; each tab now loads its own form and registers its own loader
@@ -107,39 +110,87 @@
 		willUnload: boolean;
 	}
 	let pending = $state<Pending | null>(null);
-	// Lets the one navigation Discard starts through the guard
-	let bypass = false;
+	// OLD CODE START — review L2: a flag outlived its navigation when that navigation never reached the
+	// guard (another one was loading, or a Back that went nowhere), and let the next one through
+	// // Lets the one navigation Discard starts through the guard
+	// let bypass = false;
+	// OLD CODE END
+	// The address Discard is carrying on to: only that navigation passes the guard, once
+	let bypass: string | null = null;
+	// Bumped by Discard so the open tab remounts on its saved values (review M1)
+	let epoch = $state(0);
+	let bar = $state<HTMLElement>();
+	// Where focus was when the bar opened, for Keep editing (review L3)
+	let returnFocus: HTMLElement | null = null;
 
 	function select(id: TabId) {
 		void goto(`?tab=${id}`, { keepFocus: true, noScroll: true });
 	}
 
 	beforeNavigate((nav) => {
-		if (bypass) {
-			bypass = false;
+		// OLD CODE START — review L2: any navigation used the flag
+		// if (bypass) {
+		// 	bypass = false;
+		// 	return;
+		// }
+		// OLD CODE END
+		if (bypass !== null && nav.to?.url.href === bypass) {
+			bypass = null;
 			return;
 		}
 		if (!dirty && !busy) return;
 		nav.cancel();
 		// 'leave' (reload, closing the tab, typing an address): cancel() shows the browser's own prompt
 		if (nav.type === 'leave' || !nav.to) return;
+		const focused = document.activeElement;
+		// a tab button already has focus moved onto the tab it asked for; Keep editing goes back to the open one
+		returnFocus = focused instanceof HTMLElement && focused !== document.body && focused.getAttribute('role') !== 'tab' ? focused : null;
 		pending = { url: nav.to.url, type: nav.type, delta: nav.delta, willUnload: nav.willUnload };
+		// The bar may be above the fold of a long tab: bring focus (and so the eye) to it
+		void tick().then(() => (bar?.querySelector<HTMLElement>('button') ?? bar)?.focus());
 	});
+
+	afterNavigate(() => {
+		bypass = null;
+	});
+
+	function restoreFocus() {
+		const target = returnFocus?.isConnected ? returnFocus : document.getElementById(`settings-tab-${activeTab}`);
+		returnFocus = null;
+		target?.focus();
+	}
 
 	// The bar goes once nothing holds the navigation any more (a save finished, or the edits were undone)
 	$effect(() => {
-		if (!dirty && !busy) pending = null;
+		// OLD CODE: if (!dirty && !busy) pending = null; (focus inside the bar was lost with it)
+		if (dirty || busy || !pending) return;
+		// The bar may already be gone (the page drops focus to the body) or about to go
+		const focused = document.activeElement;
+		const lost = !focused || focused === document.body || (bar?.contains(focused) ?? false);
+		pending = null;
+		if (lost) restoreFocus();
 	});
+
+	function keepEditing() {
+		pending = null;
+		restoreFocus();
+	}
 
 	function discard() {
 		const next = pending;
 		pending = null;
 		if (!next) return;
+		returnFocus = null;
 		dirty = false;
-		bypass = true;
+		bypass = next.url.href;
+		const sameTab = next.url.pathname === page.url.pathname;
+		// The open tab still shows the edits: remount it on its saved values, in case the navigation keeps
+		// it open (a link to the same tab, or a Back that goes nowhere) and so the next edit counts again
+		epoch += 1;
 		if (next.type === 'popstate' && next.delta) history.go(next.delta);
 		else if (next.willUnload) location.assign(next.url.href);
-		else void goto(next.url);
+		// OLD CODE: else void goto(next.url); (review L3: a tab switch keeps focus and scroll, as a tab click does)
+		else void goto(next.url, sameTab ? { keepFocus: true, noScroll: true } : undefined);
 	}
 </script>
 
@@ -176,14 +227,16 @@ OLD CODE END -->
 
 	<div class="settings-body">
 		{#if pending && (busy || dirty)}
-			<div class="notice is-warn leave-bar" role="alert">
+			<div class="notice is-warn leave-bar" role="alert" tabindex="-1" bind:this={bar}>
 				<Icon name="warn" />
 				{#if busy}
-					<span>Saving your changes… wait for this to finish before leaving the tab.</span>
+					<!-- OLD CODE: <span>Saving your changes… wait for this to finish before leaving the tab.</span> (review M2: a test send holds it too) -->
+					<span>Sending your change… wait for it to finish before leaving the tab.</span>
 				{:else}
 					<span>You have unsaved changes in {active.label}.</span>
 					<span class="leave-actions">
-						<button class="btn" type="button" onclick={() => (pending = null)}>Keep editing</button>
+						<!-- OLD CODE: onclick={() => (pending = null)} (review L3: focus goes back where it was) -->
+						<button class="btn" type="button" onclick={keepEditing}>Keep editing</button>
 						<button class="btn" type="button" onclick={discard}>Discard and continue</button>
 					</span>
 				{/if}
@@ -202,6 +255,8 @@ OLD CODE END -->
 			>
 				{#if tab.id === activeTab}
 					<p class="panel-intro"><span class="eyebrow">{tab.group}</span><span>{tab.intro}</span></p>
+					<!-- review M1: Discard on the open tab remounts it, so its form reloads the saved values -->
+					{#key epoch}
 					{#if tab.id === 'notifications'}
 						<NotificationsTab bind:dirty bind:busy />
 					{:else if tab.id === 'suricata-rules'}
@@ -223,6 +278,7 @@ OLD CODE END -->
 					{:else}
 						<AboutTab />
 					{/if}
+					{/key}
 				{/if}
 			</div>
 		{/each}
@@ -275,9 +331,21 @@ OLD CODE END -->
 		color: var(--text-2);
 	}
 
+	/* Sticky and solid (the notice's tint over the page colour), so a held click always shows its bar (review M3) */
 	.leave-bar {
+		position: sticky;
+		top: var(--sp-2);
+		z-index: 1;
 		align-items: center;
 		flex-wrap: wrap;
+		background:
+			linear-gradient(color-mix(in srgb, var(--tone) 12%, transparent), color-mix(in srgb, var(--tone) 12%, transparent)),
+			var(--bg);
+	}
+
+	.leave-bar:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: 2px;
 	}
 
 	.leave-actions {

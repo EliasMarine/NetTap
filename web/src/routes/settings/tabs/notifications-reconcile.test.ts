@@ -48,6 +48,7 @@ function stubDaemon() {
 		if (url === '/api/notifications/channels') return reply({ body: { channels: state.channels, count: state.channels.length } });
 		if (url === '/api/notifications/rules') return reply({ body: { rules: [], count: 0 } });
 		if (url === '/api/notifications/log') return reply({ body: { log: [], count: 0 } });
+		if (url === '/api/notifications/test' && method === 'POST') return reply({ body: { success: true } });
 		return reply({ status: 500, body: {} });
 	});
 	vi.stubGlobal('fetch', fn);
@@ -88,6 +89,31 @@ async function openTab() {
 
 describe('Notifications tab — preferences and channels stay in step (NET-273)', () => {
 	afterEach(() => vi.unstubAllGlobals());
+
+	it('a test send reloads Recent deliveries', async () => {
+		const daemon = await openTab();
+		const reads = daemon.calls('/api/notifications/log');
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Send test notification' }));
+		await flush();
+		expect(screen.getByText('Test notification sent successfully.')).toBeInTheDocument();
+		expect(daemon.calls('/api/notifications/log')).toBe(reads + 1);
+	});
+
+	it('the first preferences load holds the lock, so no channel change runs under it', async () => {
+		const daemon = stubDaemon();
+		const first = gate();
+		daemon.state.configGate = first.opened;
+		render(Tab);
+		await flush();
+		expect(deleteChannelButton('Home Discord')).toBeDisabled();
+
+		daemon.state.configGate = null;
+		first.open();
+		await flush();
+		expect(deleteChannelButton('Home Discord')).toBeEnabled();
+		expect(emailSwitch()).toBeChecked();
+	});
 
 	it('a preferences save reloads the channel list beside it', async () => {
 		const { calls } = await openTab();

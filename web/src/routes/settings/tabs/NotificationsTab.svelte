@@ -46,16 +46,31 @@
 	// NET-273: one write at a time across the tab: a preference save or test, a channel or rule change
 	// or test, and the reload after it. While it runs every write control is off.
 	let locked = $state(false);
+	// The lock is held by a write, which a tab switch waits for; a read (the preferences loading) isn't (review L5)
+	let holding = $state(false);
 	let prefs: ReturnType<typeof NotificationPrefsCard> | undefined;
 	let prefsDirty = $state(false);
 
-	async function serial(task: () => Promise<void>): Promise<void> {
+	// OLD CODE START — review L5: reads take the lock too, and only writes hold a tab switch
+	// async function serial(task: () => Promise<void>): Promise<void> {
+	// 	if (locked) return;
+	// 	locked = true;
+	// 	try {
+	// 		await task();
+	// 	} finally {
+	// 		locked = false;
+	// 	}
+	// }
+	// OLD CODE END
+	async function serial(task: () => Promise<void>, write = true): Promise<void> {
 		if (locked) return;
 		locked = true;
+		holding = write;
 		try {
 			await task();
 		} finally {
 			locked = false;
+			holding = false;
 		}
 	}
 
@@ -97,7 +112,8 @@
 	$effect(() => {
 		const addingInput = showAddForm && (newChannelName.trim() !== '' || Object.values(newChannelConfig).some((v) => v?.trim()));
 		dirty = prefsDirty || addingInput || (showRuleForm && newRuleChannels.length > 0);
-		busy = locked;
+		// OLD CODE: busy = locked;
+		busy = holding;
 	});
 
 	// Channel type configs

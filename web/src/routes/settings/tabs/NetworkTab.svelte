@@ -66,6 +66,8 @@
 		networkSaving = true;
 		networkMessage = '';
 		networkError = false;
+		// The list as sent: an edit made while the save runs stays unsaved (review L1)
+		const sent = JSON.stringify(excludedIps);
 		try {
 			const res = await fetch('/api/settings/excluded-ips', {
 				method: 'PUT',
@@ -73,7 +75,8 @@
 				body: JSON.stringify({ excluded_ips: excludedIps }),
 			});
 			if (res.ok) {
-				excludedSaved = JSON.stringify(excludedIps);
+				// OLD CODE: excludedSaved = JSON.stringify(excludedIps); (counted edits made during the save as saved)
+				excludedSaved = sent;
 				networkMessage = 'Excluded IPs saved. Changes take effect immediately.';
 			} else {
 				const data = await res.json();

@@ -150,6 +150,9 @@
 				payload.site_id = siteId;
 			}
 
+			// The form as sent: an edit typed while the save runs stays unsaved (review L1)
+			const sent = unifiForm();
+			const sentKey = unifiApiKey;
 			const res = await fetch('/api/integrations/unifi/configure', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
@@ -159,8 +162,12 @@
 			if (res.ok) {
 				unifiMessage = 'UniFi configuration saved successfully.';
 				unifiConfigured = true;
-				unifiApiKey = ''; // Clear after save
-				unifiSavedForm = unifiForm();
+				// OLD CODE START — review L1: cleared a key typed during the save, and counted every edit as saved
+				// unifiApiKey = ''; // Clear after save
+				// unifiSavedForm = unifiForm();
+				// OLD CODE END
+				if (unifiApiKey === sentKey) unifiApiKey = ''; // Clear after save
+				unifiSavedForm = sent;
 				// Now test the connection
 				await testUnifiConnection();
 			} else {

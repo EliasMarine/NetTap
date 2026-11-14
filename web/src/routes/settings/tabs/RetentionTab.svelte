@@ -184,6 +184,8 @@
 		retentionSaving = true;
 		retentionMessage = '';
 		retentionError = false;
+		// The form as sent: an edit typed while the save runs stays unsaved (review L1)
+		const sent = retentionForm();
 		try {
 			const res = await fetch('/api/setup/storage', {
 				method: 'POST',
@@ -198,7 +200,8 @@
 			});
 			if (res.ok) {
 				const result = await res.json();
-				retentionSavedForm = retentionForm();
+				// OLD CODE: retentionSavedForm = retentionForm(); (counted edits typed during the save as saved)
+				retentionSavedForm = sent;
 				if (result.ilm_applied) {
 					retentionMessage = 'Retention settings saved and applied to OpenSearch.';
 				} else {
