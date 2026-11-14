@@ -326,7 +326,8 @@ class TestValidation(CategoryCase):
     async def test_a_bad_window_is_a_400_with_its_own_message(self):
         body = await self.page(MISC, "to=yesterday", status=400)
         self.assertIn("to must be an ISO 8601 time", body["error"])
-        long = "from=1900-01-01T00:00:00Z&to=2026-11-05T00:00:00Z"
+        # OLD CODE: long = "from=1900-01-01T00:00:00Z&to=2026-11-05T00:00:00Z" (NET-275: a year before 1970 is its own 400)
+        long = "from=1970-01-01T00:00:00Z&to=2026-11-05T00:00:00Z"
         body = await self.page(MISC, long, status=400)
         # OLD CODE: self.assertIn("too long", body["error"]) (NET-249: the slot budget answers first)
         self.assertEqual(

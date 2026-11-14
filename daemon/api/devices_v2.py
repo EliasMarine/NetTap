@@ -39,7 +39,12 @@ from opensearchpy import OpenSearchException
 
 from api.error_replies import public_json
 from api.offload import in_thread
-from api.time_range import BUCKET_TABLE, parse_time_range, slot_interval
+from api.time_range import (
+    BUCKET_TABLE,
+    _utc_in_years,
+    parse_time_range,
+    slot_interval,
+)
 from api.devices import (
     _bandwidth_interval,
     _device_category,
@@ -460,9 +465,12 @@ def handle_registry_new_count(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "since must be an ISO timestamp"}, status=400
         )
-    if since.tzinfo is None:
-        since = since.replace(tzinfo=timezone.utc)
-    since_iso = since.astimezone(timezone.utc).isoformat()
+    # OLD CODE START — NET-275: year 1 at +14:00 overflowed here (a 500); year 9999 was counted
+    # if since.tzinfo is None:
+    #     since = since.replace(tzinfo=timezone.utc)
+    # since_iso = since.astimezone(timezone.utc).isoformat()
+    # OLD CODE END
+    since_iso = _utc_in_years(since.isoformat(), "since").isoformat()
     try:
         count = registry.count_first_seen_since(since_iso)
     except OpenSearchException as exc:
