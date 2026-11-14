@@ -147,6 +147,10 @@ class TestFleetScore:
     def test_unscored_devices_are_left_out(self, scorer):
         assert scorer.compute_fleet_score([None, 80, 40]) == 53
 
+    def test_a_half_rounds_up(self, scorer):
+        """NET-256 review: the harmonic mean of 3 and 9 is exactly 4.5; round() gave 4."""
+        assert scorer.compute_fleet_score([3, 9]) == 5
+
 
 # ---------------------------------------------------------------------------
 # Availability-aware score (NET-158)

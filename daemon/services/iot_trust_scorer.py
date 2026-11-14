@@ -271,7 +271,8 @@ class IoTTrustScorer:
         if min(scored) <= 0:
             return 0
         harmonic = len(scored) / sum(1.0 / s for s in scored)
-        return int(round(max(0, min(100, harmonic))))
+        # OLD CODE: return int(round(max(0, min(100, harmonic)))) (NET-256 review: half to even, as _pct did)
+        return int(max(0, min(100, harmonic)) + 0.5)
 
     # -----------------------------------------------------------------
     # Private scoring helpers

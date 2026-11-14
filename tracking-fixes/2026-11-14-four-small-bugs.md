@@ -21,6 +21,8 @@ can't show them without a reinstall.
   became 74 (grade C), 62.5 became 62.
 - **Fix:** `int(x + 0.5)`, which is correct because x is clamped to 0–100. Both callers (the
   per-pillar score and the overall score) go through `_pct`.
+- **Review follow-up:** `compute_fleet_score` rounded the fleet's harmonic mean the same way (3 and 9
+  give exactly 4.5, which read 4). It now rounds halves up too, with a test.
 - **Files:** `daemon/services/iot_trust_scorer.py`, `daemon/tests/test_iot_trust_scorer.py`.
 
 ## NET-253: validate-hardware.sh run on its own stopped at the first warning
