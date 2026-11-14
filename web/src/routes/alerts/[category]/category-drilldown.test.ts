@@ -106,6 +106,8 @@ describe('Alert category — the timeline drills into a window (NET-249)', () =>
 	});
 
 	it('a pick clears the sub-category filter, which the chart never applied', async () => {
+		// NET-274: the reply's window holds the fixed slots; the rolling 24 h aged them out after 14 Nov 10:01 UTC
+		timeline = (u) => ({ ...slots([1, 3])(u), from: F, to: T });
 		render(Page);
 		await loaded();
 		await fireEvent.click(screen.getByText('Port Scan').closest('button')!);
