@@ -109,6 +109,14 @@ const DNS_QUERIES = [
 	{ domain: 'social.example.net', count: 190 },
 ];
 
+/** The device's day in hourly slots; both device pages draw it (NET-260: the MAC page too). */
+const bandwidthSeries = (d: LanDevice) =>
+	hourly((i, share) => {
+		const bytes = Math.round(totalBytes(d) * share);
+		const upload = Math.round((bytes * d.origBytes) / totalBytes(d));
+		return { timestamp: hourBucket(i), bytes, download_bytes: bytes - upload, upload_bytes: upload };
+	});
+
 const detail = (d: LanDevice): DeviceDetailResponse => {
 	const destinations = topDestinations(d.ip);
 	return {
@@ -116,11 +124,7 @@ const detail = (d: LanDevice): DeviceDetailResponse => {
 			...deviceRow(d),
 			top_destinations: destinations,
 			dns_queries: DNS_QUERIES,
-			bandwidth_series: hourly((i, share) => {
-				const bytes = Math.round(totalBytes(d) * share);
-				const upload = Math.round((bytes * d.origBytes) / totalBytes(d));
-				return { timestamp: hourBucket(i), bytes, download_bytes: bytes - upload, upload_bytes: upload };
-			}),
+			bandwidth_series: bandwidthSeries(d),
 			unique_destinations: 38,
 			top_services: destinations.map((x) => ({ name: peer(x.ip).org, bytes: x.bytes, connections: x.connections })),
 		},
@@ -211,6 +215,7 @@ const registryTraffic = (d: LanDevice): RegistryTrafficEnvelope => ({
 			{ name: 'http', count: 350 },
 			{ name: 'ssh', count: 140 },
 		],
+		bandwidth_series: bandwidthSeries(d),
 	},
 });
 
@@ -224,6 +229,7 @@ const emptyRegistryTraffic = (d: LanDevice): RegistryTrafficEnvelope => ({
 		connection_count: 0,
 		top_destinations: [],
 		top_protocols: [],
+		bandwidth_series: [],
 	},
 });
 

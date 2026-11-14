@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { readable, get } from 'svelte/store';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import Page from './+page.svelte';
@@ -164,6 +164,71 @@ describe('Device by MAC page — live bandwidth (NET-205)', () => {
 		expect(await screen.findByRole('heading', { name: 'Live bandwidth' })).toBeInTheDocument();
 		expect(getLiveBandwidth).toHaveBeenCalledWith({ mac: MAC }, expect.any(AbortSignal));
 		expect(getLiveBandwidth.mock.calls.every(([key]) => !('ip' in key))).toBe(true);
+	});
+});
+
+// NET-260: the daemon sent no bandwidth series for a MAC, so the card never showed
+describe('Device by MAC page — bandwidth over time (NET-260)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	function stubSeries(bytes: number[]): void {
+		const path = `/api/devices/registry/${encodeURIComponent(MAC)}/traffic`;
+		const reply = REPLIES[path] as { traffic: Record<string, unknown> };
+		const bandwidth_series = bytes.map((b, i) => ({
+			timestamp: `2026-11-02T0${i}:00:00.000Z`,
+			bytes: b,
+			download_bytes: b,
+			upload_bytes: 0,
+		}));
+		const traffic = { ...reply, bandwidth_interval: '1h', traffic: { ...reply.traffic, bandwidth_series } };
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const p = url.split('?')[0];
+				return { ok: true, status: 200, json: async () => (p === path ? traffic : REPLIES[p]) };
+			}),
+		);
+	}
+
+	it('draws the series with its busiest slot named', async () => {
+		stubSeries([0, 4_000, 1_000]);
+		render(Page);
+		expect(await screen.findByRole('heading', { name: 'Bandwidth over time' })).toBeInTheDocument();
+		expect(screen.getByRole('img', { name: /^Busiest at .*, with 4\.0 KB$/ })).toBeInTheDocument();
+	});
+
+	it('shows the empty state for an all-zero series, not a flat chart', async () => {
+		stubSeries([0, 0, 0]);
+		render(Page);
+		expect(await screen.findByRole('heading', { name: 'Bandwidth over time' })).toBeInTheDocument();
+		expect(screen.queryByRole('img', { name: /^Busiest at / })).not.toBeInTheDocument();
+		expect(screen.getByText(/^No traffic in the /)).toBeInTheDocument();
+	});
+
+	// PR #278 review: the card vanished while another range's traffic loaded, and when it failed
+	const card = async () => (await screen.findByRole('heading', { name: 'Bandwidth over time' })).closest('.card') as HTMLElement;
+
+	it('keeps the card, loading, while another range loads', async () => {
+		stubSeries([0, 4_000, 1_000]);
+		render(Page);
+		await screen.findByRole('img', { name: /^Busiest at / });
+		// the next range's traffic never answers
+		const served = vi.mocked(fetch).getMockImplementation()!;
+		vi.mocked(fetch).mockImplementation((url) => (String(url).includes('/traffic') ? new Promise<never>(() => {}) : served(url)));
+		await fireEvent.click(screen.getByRole('button', { name: '7d' }));
+		expect(await within(await card()).findByRole('status')).toHaveTextContent('Loading bandwidth over time');
+	});
+
+	it('shows the error state in the card when the traffic request fails', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const body = url.includes('/traffic') ? undefined : REPLIES[url.split('?')[0]];
+				return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 503, json: async () => ({}) };
+			}),
+		);
+		render(Page);
+		expect(await within(await card()).findByText("Couldn't load traffic: the request failed.")).toBeInTheDocument();
 	});
 });
 

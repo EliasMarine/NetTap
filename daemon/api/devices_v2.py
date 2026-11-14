@@ -39,8 +39,9 @@ from opensearchpy import OpenSearchException
 
 from api.error_replies import public_json
 from api.offload import in_thread
-from api.time_range import parse_time_range
+from api.time_range import BUCKET_TABLE, parse_time_range, slot_interval
 from api.devices import (
+    _bandwidth_interval,
     _device_category,
     _is_skipped_device_ip,
     _lan_device_buckets,
@@ -404,18 +405,23 @@ def handle_registry_detail(request: web.Request) -> web.Response:
 
 @in_thread
 def handle_registry_traffic(request: web.Request) -> web.Response:
-    """GET /api/devices/registry/{mac}/traffic?from=&to="""
+    """GET /api/devices/registry/{mac}/traffic?from=&to=&interval="""
     registry = _get_registry(request)
     mac = request.match_info["mac"]
     from_ts, to_ts = _parse_time_range(request)
+    # NET-260: the bandwidth chart's bucket, checked before any search as on the IP page
+    interval = slot_interval(
+        request, from_ts, to_ts, BUCKET_TABLE, _bandwidth_interval(from_ts, to_ts)
+    )
 
     try:
         device = registry.get_device(mac)
         if device is None:
             return web.json_response({"error": f"Device not found: {mac}"}, status=404)
         # OLD CODE: traffic = registry.get_device_traffic(mac, from_ts, to_ts) (NET-226: + the LAN rule)
+        # OLD CODE: traffic = registry.get_device_traffic(mac, from_ts, to_ts, request.app.get("lan_filter")) (NET-260: + interval)
         traffic = registry.get_device_traffic(
-            mac, from_ts, to_ts, request.app.get("lan_filter")
+            mac, from_ts, to_ts, interval, request.app.get("lan_filter")
         )
     except QueryFailed as exc:
         logger.error("Incomplete search in device registry traffic: %s", exc)
@@ -429,6 +435,7 @@ def handle_registry_traffic(request: web.Request) -> web.Response:
         {
             "from": from_ts,
             "to": to_ts,
+            "bandwidth_interval": interval,
             "traffic": traffic,
         }
     )

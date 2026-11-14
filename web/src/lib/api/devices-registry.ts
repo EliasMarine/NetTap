@@ -52,10 +52,13 @@ export interface DeviceTraffic {
 	ipv6_left_out_reason?: Ipv6LeftOutReason | null;
 	top_destinations: Array<{ ip: string; bytes: number; connections: number }>;
 	top_protocols: Array<{ name: string; count: number }>;
-	// The daemon doesn't send these three (yet); the page hides their sections when absent
+	// OLD CODE: // The daemon doesn't send these three (yet); the page hides their sections when absent (NET-260: bandwidth comes now)
+	// The daemon doesn't send these two (yet); the page hides their sections when absent
 	dns_queries?: Array<{ domain: string; count: number }>;
 	alerts?: Array<{ signature: string; severity: number; timestamp: string }>;
-	bandwidth_series?: Array<{ timestamp: string; bytes: number }>;
+	// OLD CODE: bandwidth_series?: Array<{ timestamp: string; bytes: number }>; (NET-260: + the device's side, as the IP page's)
+	// NET-260: one point per slot of the window, zero-filled; download/upload from the device's side
+	bandwidth_series?: Array<{ timestamp: string; bytes: number; download_bytes?: number; upload_bytes?: number }>;
 }
 
 // ---------------------------------------------------------------------------

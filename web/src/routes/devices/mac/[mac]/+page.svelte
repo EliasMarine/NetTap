@@ -240,7 +240,9 @@
 	const alertLevel = suricataLevel;
 
 	const series = $derived(traffic?.bandwidth_series ?? []);
-	const busiest = $derived(series.reduce((best, p, i) => (p.bytes > (series[best]?.bytes ?? -1) ? i : best), -1));
+	// OLD CODE: const busiest = $derived(series.reduce((best, p, i) => (p.bytes > (series[best]?.bytes ?? -1) ? i : best), -1)); (NET-260: an all-zero series picked slot 0)
+	// -1 (the empty state) unless some slot has bytes; the daemon zero-fills every slot
+	const busiest = $derived(series.reduce((best, p, i) => (p.bytes > (series[best]?.bytes ?? 0) ? i : best), -1));
 	// OLD CODE: const chartTime = (t: number | string) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); (NET-192 PR 4: the browser's locale printed "07:00 PM")
 	const chartTime = (t: number | string) => timeLabel(t, range.hours);
 	const alertRows = $derived((traffic?.alerts ?? []).slice(0, 20).map((a, i): TrafficAlert => ({ ...a, key: `${a.timestamp}-${i}` })));
@@ -365,8 +367,10 @@
 
 		{#if comparing && compareIp}{#key device.mac}<DeviceCompareCard ip={compareIp} ips={device.ips} />{/key}{/if}
 
-		<!-- the daemon doesn't send a bandwidth series yet; the card shows once it does -->
-		{#if traffic?.bandwidth_series}
+		<!-- OLD CODE: "the daemon doesn't send a bandwidth series yet; the card shows once it does" (NET-260: it does now) -->
+		<!-- OLD CODE: {#if traffic?.bandwidth_series} (PR #278 review: the card went while traffic loaded or failed) -->
+		<!-- shown while traffic loads or fails; not for an older daemon's reply without a series -->
+		{#if !traffic || traffic.bandwidth_series}
 			<Card class="c-12" hero title="Bandwidth over time" sub="Bytes per interval · {range.words}">
 				{#if busiest >= 0}
 					<AreaChart
@@ -378,6 +382,10 @@
 						highlightIndex={busiest}
 						ariaLabel="Busiest at {chartTime(series[busiest].timestamp)}, with {formatBytes(series[busiest].bytes)}"
 					/>
+				{:else if trafficFailed && !traffic}
+					<CardState state="error" title={loadFailed('traffic')} onaction={() => refresh.run()} />
+				{:else if !traffic}
+					<CardState state="loading" title="Loading bandwidth over time" />
 				{:else}
 					<CardState state="empty" icon="bandwidth" title="No traffic in the {range.words}" />
 				{/if}
