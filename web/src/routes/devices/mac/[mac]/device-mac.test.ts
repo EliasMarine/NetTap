@@ -351,3 +351,63 @@ describe('Device by MAC page — owner name and picture', () => {
 		expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Ubiquiti gateway');
 	});
 });
+
+// NET-269: Devices › By type opens this page, so Compare periods and the DHCP history link are here too
+describe('Device by MAC page — Compare periods and DHCP history', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const V6 = '2001:db8:4f2a:1c00:9d3e:21ff:fe5e:3532';
+	function stubDevice(ips: string[]): void {
+		const reg = REPLIES[`/api/devices/registry/${encodeURIComponent(MAC)}`] as { device: Record<string, unknown> };
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const path = url.split('?')[0];
+				const body = path === `/api/devices/registry/${encodeURIComponent(MAC)}` ? { device: { ...reg.device, ips } } : REPLIES[path];
+				return body ? { ok: true, status: 200, json: async () => body } : { ok: false, status: 404, json: async () => ({}) };
+			}),
+		);
+	}
+
+	it('opens the card for its only address, focused on Length, and closes it again', async () => {
+		stubDevice(['192.168.1.1']);
+		const { container } = render(Page);
+		const toggle = await screen.findByRole('button', { name: 'Compare periods' });
+		expect(toggle).toHaveAttribute('aria-expanded', 'false');
+		expect(screen.queryByRole('heading', { name: 'Compare periods' })).toBeNull();
+		const scrolled = vi.fn();
+		Element.prototype.scrollIntoView = scrolled; // jsdom has none
+		await fireEvent.click(toggle);
+		expect(toggle).toHaveAttribute('aria-expanded', 'true');
+		expect(screen.getByRole('heading', { name: 'Compare periods' })).toBeTruthy();
+		await vi.waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText('Length')));
+		expect(scrolled).toHaveBeenCalledWith({ block: 'start' });
+		expect(screen.queryByLabelText('Address')).toBeNull();
+		// it says which address it compares, even with one
+		const scope = screen.getByText((_, el) => el?.tagName === 'P' && !!el.textContent?.includes(' in both periods.'));
+		expect(scope).toHaveTextContent("Compares 192.168.1.1 in both periods. The device's other addresses aren't counted");
+		expectNoNestedInteractive(container);
+		await fireEvent.click(toggle);
+		expect(toggle).toHaveAttribute('aria-expanded', 'false');
+		expect(screen.queryByRole('heading', { name: 'Compare periods' })).toBeNull();
+	});
+
+	it('with several addresses it starts on the IPv4, even when the IPv6 sorts first, and focuses Address', async () => {
+		stubDevice([V6, '192.168.1.1']);
+		render(Page);
+		Element.prototype.scrollIntoView = vi.fn();
+		await fireEvent.click(await screen.findByRole('button', { name: 'Compare periods' }));
+		const address = screen.getByLabelText<HTMLSelectElement>('Address');
+		expect(address.value).toBe('192.168.1.1');
+		expect([...address.options].map((o) => o.value)).toEqual([V6, '192.168.1.1']);
+		await vi.waitFor(() => expect(document.activeElement).toBe(address));
+	});
+
+	it('has no Compare periods without an address, and always links its DHCP history by lowercase MAC', async () => {
+		stubDevice([]);
+		render(Page);
+		const link = await screen.findByRole('link', { name: 'DHCP history' });
+		expect(link).toHaveAttribute('href', `/tools/dhcp-timeline?mac=${encodeURIComponent(MAC.toLowerCase())}`);
+		expect(screen.queryByRole('button', { name: 'Compare periods' })).toBeNull();
+	});
+});
