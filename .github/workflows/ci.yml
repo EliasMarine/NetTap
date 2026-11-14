@@ -163,7 +163,8 @@ jobs:
   # the fixture daemon. NET-259 (Go Live bounced to /login) was caught only by hand.
   test-visual-firstrun:
     name: Visual tests (first run)
-    runs-on: ubuntu-latest
+    # Playwright 1.58 has no Chromium for ubuntu-latest (26.04); move with a Playwright upgrade
+    runs-on: ubuntu-24.04
     needs: lint-web
     steps:
       - name: Checkout repository

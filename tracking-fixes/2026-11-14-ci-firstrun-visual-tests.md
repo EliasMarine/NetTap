@@ -44,3 +44,9 @@ existing job names are unchanged. `docker-build` does not wait for the new job.
 
 A harness that runs only by hand catches a regression only when someone remembers to run it. Put
 the cheap slice of it in CI.
+
+## First CI run
+
+- The job failed in 11 s at "Install Chromium": `ubuntu-latest` is now Ubuntu 26.04, and Playwright 1.58.2
+  says "Playwright does not support chromium on ubuntu26.04-x64".
+- The job now runs on `ubuntu-24.04`. Move it back to `ubuntu-latest` with a Playwright upgrade.
