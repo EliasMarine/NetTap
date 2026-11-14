@@ -2,7 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/svelte';
 import { refreshPage } from '$lib/stores/pageRefresh';
 import { formatTime } from '$lib/utils/time';
-import Page from './+page.svelte';
+// OLD CODE: import Page from './+page.svelte'; (NET-273: the page is a Settings tab now)
+import Page from './SuricataRulesTab.svelte';
 
 /** NET-191 slice 3: the engine facts, and how the page feeds OwnerRulesCard (its own states are in OwnerRulesCard.test.ts). */
 

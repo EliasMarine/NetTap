@@ -1,1807 +1,297 @@
+<!--
+  Settings (NET-273): one page, a grouped section menu and one panel per section. The Suricata rules,
+  notification channels and backup pages are tabs here now; their old addresses redirect.
+  - The open tab comes from the URL (`?tab=`), so a link, Back and Forward all switch it.
+  - Only the open tab's component is mounted: it loads fresh each time, and registers the top bar's
+    Refresh itself when it has read-only figures.
+  - A tab with unsaved edits holds navigation behind a Keep editing / Discard bar; a tab sending a
+    change holds it until the change lands.
+-->
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
-	import { registerPageRefresh, outcome, type LoadGuard, type LoadResult } from '$lib/stores/pageRefresh';
-	import { fetchCaptureStatus, toggleCapture, updateCaptureSettings } from '$lib/api/capture';
-	import { previewCleanup, executeCleanup, type CleanupPreview } from '$lib/api/storage';
-	import { getUnifiStatus } from '$lib/api/unifi';
-	import { loadFailed } from '$lib/utils/load-failed';
-	import { formatDuration } from '$lib/utils/tshark-helpers';
-	import { formatBytes } from '$lib/api/logs';
-	import ThemePicker from '$lib/components/ThemePicker.svelte';
-	import Card from '$lib/components/ui/Card.svelte';
-	import CardState from '$lib/components/ui/CardState.svelte';
+	import { tick } from 'svelte';
+	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
+	import { page } from '$app/state';
+	import type { NavigationType } from '@sveltejs/kit';
 	import Icon from '$lib/components/ui/Icon.svelte';
-	import Pills, { type PillOption } from '$lib/components/ui/Pills.svelte';
-	import StatStrip from '$lib/components/ui/StatStrip.svelte';
-	import Meter from '$lib/components/ui/Meter.svelte';
-	import { formatTime } from '$lib/utils/time';
-	import LocationCard from './LocationCard.svelte';
-	import LiveBandwidthCard from './LiveBandwidthCard.svelte';
-	import { DISPLAY_SETTINGS_KEY, DRILL_RANGES, savedDefaultRange, savedLiveMap, type DrillRangeValue, type LiveMap } from '$lib/utils/drilldown';
+	import SettingsNav from './SettingsNav.svelte';
+	import { SETTINGS_TABS, tabFrom, type TabId } from './settings-helpers';
+	import './settings.css';
+	import NotificationsTab from './tabs/NotificationsTab.svelte';
+	import SuricataRulesTab from './tabs/SuricataRulesTab.svelte';
+	import RetentionTab from './tabs/RetentionTab.svelte';
+	import CaptureTab from './tabs/CaptureTab.svelte';
+	import BackupTab from './tabs/BackupTab.svelte';
+	import NetworkTab from './tabs/NetworkTab.svelte';
+	import IntegrationsTab from './tabs/IntegrationsTab.svelte';
+	import ApiKeysTab from './tabs/ApiKeysTab.svelte';
+	import DisplayTab from './tabs/DisplayTab.svelte';
+	import AboutTab from './tabs/AboutTab.svelte';
 
-	type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'integrations' | 'display' | 'about';
-
-	let activeTab = $state<TabId>('notifications');
-
-	// Values are id-safe: Pills builds settings-tab-{value} / settings-panel-{value} from them
-	const TABS: PillOption<TabId>[] = [
-		{ value: 'notifications', label: 'Notifications' },
-		{ value: 'retention', label: 'Retention' },
-		{ value: 'capture', label: 'Capture' },
-		{ value: 'api-keys', label: 'API keys' },
-		{ value: 'network', label: 'Network' },
-		{ value: 'integrations', label: 'Integrations' },
-		{ value: 'display', label: 'Display' },
-		{ value: 'about', label: 'About' },
-	];
-
-	// --- Notifications state ---
-	let severityThreshold = $state<string>('medium');
-	let emailEnabled = $state(false);
-	let emailAddress = $state('');
-	let webhookUrl = $state('');
-	// NET-224: the daemon keeps these; it never sends the saved URL back, only a hint of it
-	let webhookEnabled = $state(false);
-	let webhookHasUrl = $state(false);
-	let webhookHint = $state('');
-	let smtpConfigured = $state(false);
-	let notifSaving = $state(false);
-	let notifMessage = $state('');
-	let notifError = $state(false);
-	// a failed load leaves blank fields; saving them would wipe the real config
-	let notifLoadFailed = $state(false);
-	let testingSending = $state(false);
-	let testMessage = $state('');
-	let testError = $state(false);
-	// review L3: the test sends through the saved settings, so it waits while the form differs
-	const notifForm = () =>
-		JSON.stringify([severityThreshold, emailEnabled, emailAddress, webhookEnabled, webhookUrl]);
-	// the blank form until the load lands, so nothing reads as unsaved while it loads
-	let notifSavedForm = $state(notifForm());
-	// a failed load leaves nothing to compare with; the test then reports the daemon's own answer
-	const notifUnsaved = $derived(!notifLoadFailed && notifForm() !== notifSavedForm);
-
-	// --- Retention state ---
-	let retentionConfig = $state({
-		hot_days: 90,
-		warm_days: 180,
-		cold_days: 30,
-		disk_threshold: 80,
-		emergency_threshold: 90,
-	});
-	let diskUsage = $state<number | null>(null);
-	let lastPruneAt = $state<string | null>(null);
-	let storageStatusFailed = $state(false);
-	let storageLoading = $state(true);
-	// OLD CODE: let ilmStatus = $state<{ synced: boolean; last_applied: string | null; pending_retry: boolean; policies: Record<string, string> } | null>(null);
-	// A15: last_attempt and last_error say why ILM isn't in sync
-	let ilmStatus = $state<{ synced: boolean; last_applied: string | null; pending_retry: boolean; policies: Record<string, string>; last_attempt?: string | null; last_error?: string | null } | null>(null);
-	let retentionSaving = $state(false);
-	let retentionMessage = $state('');
-	let retentionError = $state(false);
-	// Save stays off until the real values load, so defaults can't overwrite them
-	let retentionLoad = $state<'loading' | 'ok' | 'failed'>('loading');
-
-	// --- Manual Cleanup state ---
-	let cleanupDays = $state(60);
-	let cleanupPreview = $state<CleanupPreview | null>(null);
-	// Days the shown preview was computed for — the delete must use these, not the live input
-	let cleanupPreviewDays = $state<number | null>(null);
-	let cleanupPreviewing = $state(false);
-	let cleanupExecuting = $state(false);
-	let showCleanupConfirm = $state(false);
-	let cleanupMessage = $state('');
-	let cleanupError = $state(false);
-
-	// --- Network state (excluded IPs) ---
-	let excludedIps = $state<string[]>([]);
-	/** NetTap's own IP: excluded automatically, so it's not the owner's to edit or save */
-	let applianceIp = $state<string | null>(null);
-	let newExcludedIp = $state('');
-	let networkSaving = $state(false);
-	let networkMessage = $state('');
-	let networkError = $state(false);
-	let networkLoading = $state(true);
-	let networkLoadFailed = $state(false);
-
-	// --- API Keys state ---
-	let apiKeysStatus = $state<Record<string, boolean>>({});
-	let apiKeysLoading = $state(true);
-	let apiKeysSaving = $state(false);
-	let apiKeysMessage = $state('');
-	let apiKeysError = $state(false);
-	// Track modified fields only — don't send unchanged values
-	let apiKeyValues = $state<Record<string, string>>({});
-
-	// --- Capture state ---
-	let captureEnabled = $state(true);
-	let captureMaxFileSize = $state(100);
-	let captureRotateMinutes = $state<number | null>(null);
-	let captureContainerRunning = $state(false);
-	let captureContainerStatus = $state('unknown');
-	let captureLoading = $state(true);
-	let captureLoadFailed = $state(false);
-	let captureToggling = $state(false);
-	let captureSaving = $state(false);
-	let captureMessage = $state('');
-	let captureError = $state(false);
-
-	// --- Display state ---
-	// OLD CODE START — NET-195: no page read these; each page owns its Auto toggle, and times are browser-local
-	// let autoRefresh = $state('30');
-	// let timezone = $state('local');
-	// let defaultTimeRange = $state('1h');
+	// OLD CODE START — NET-273: the tab was page state set once on mount, so a ?tab= link inside the
+	// page, Back and Forward left the panel where it was; the URL is the source now
+	// type TabId = 'notifications' | 'retention' | 'capture' | 'api-keys' | 'network' | 'integrations' | 'display' | 'about';
+	//
+	// let activeTab = $state<TabId>('notifications');
+	//
+	// // Values are id-safe: Pills builds settings-tab-{value} / settings-panel-{value} from them
+	// const TABS: PillOption<TabId>[] = [
+	// 	{ value: 'notifications', label: 'Notifications' },
+	// 	{ value: 'retention', label: 'Retention' },
+	// 	{ value: 'capture', label: 'Capture' },
+	// 	{ value: 'api-keys', label: 'API keys' },
+	// 	{ value: 'network', label: 'Network' },
+	// 	{ value: 'integrations', label: 'Integrations' },
+	// 	{ value: 'display', label: 'Display' },
+	// 	{ value: 'about', label: 'About' },
+	// ];
 	// OLD CODE END
-	/** The range pages open on (NET-195); '' is each page's own. */
-	let defaultRange = $state<DrillRangeValue | ''>('');
-	let liveMap = $state<LiveMap>('globe');
-	let displaySaving = $state(false);
-	let displayMessage = $state('');
-	let displayError = $state(false);
+	const activeTab = $derived(tabFrom(page.url));
+	// OLD CODE: …find((t) => t.id === activeTab) ?? SETTINGS_TABS[0]); (review L7: unreachable fallback)
+	// tabFrom only returns ids from SETTINGS_TABS, so the find always matches
+	const active = $derived(SETTINGS_TABS.find((t) => t.id === activeTab)!);
 
-	// --- UniFi Integration state ---
-	let unifiControllerUrl = $state('');
-	let unifiApiKey = $state('');
-	let unifiSiteId = $state('');
-	let unifiSites = $state<{ id: string; name?: string; desc?: string }[]>([]);
-	let unifiConfigured = $state(false);
-	let unifiConnected = $state(false);
-	let unifiCacheCounts = $state<{ clients: number; devices: number } | null>(null);
-	let unifiLastPoll = $state<string | null>(null);
-	let unifiLoading = $state(true);
-	// #96: a failed status read used to show the form as "not configured"
-	let unifiStatusFailed = $state(false);
-	let unifiSaving = $state(false);
-	let unifiTesting = $state(false);
-	let unifiMessage = $state('');
-	let unifiError = $state(false);
-	let unifiSitesLoading = $state(false);
-
-	// --- About state ---
-	let version = $state('…');
-	let uptime = $state('…');
-	// OLD CODE: let buildInfo = $state('…'); (S11: the daemon sends no build, so it fell back to "Development build")
-	/** The build the daemon reports; null hides the row rather than claim one. */
-	let buildInfo = $state<string | null>(null);
-
-	// OLD CODE START — NET-224: the web route read env vars compose never set; the daemon keeps the settings now
-	// async function loadNotificationConfig() {
-	// 	try {
-	// 		const res = await fetch('/api/notifications/config');
-	// 		if (res.ok) {
-	// 			const data = await res.json();
-	// 			severityThreshold = data.severityThreshold ?? 'medium';
-	// 			emailEnabled = data.email?.enabled ?? false;
-	// 			emailAddress = data.email?.recipients?.[0] ?? '';
-	// 			webhookUrl = data.webhook?.url ?? '';
-	// 			notifLoadFailed = false;
-	// 			return;
-	// 		}
-	// 	} catch {
-	// 		// Falls through to failed
-	// 	}
-	// 	notifLoadFailed = true;
+	// OLD CODE START — NET-273: the page read Retention health and About for the top bar's Refresh and
+	// loaded every tab's form on mount; each tab now loads its own form and registers its own loader
+	// // OLD CODE START — NET-192 PR 4: the top bar's Refresh did nothing here; the reads go through the page loader
+	// // onMount(() => {
+	// // 	loadNotificationConfig();
+	// // 	loadRetention();
+	// // 	loadDiskUsage();
+	// // 	loadExcludedIps();
+	// // 	loadApiKeys();
+	// // 	loadAbout();
+	// // 	loadDisplaySettings();
+	// // 	loadCaptureSettings();
+	// // 	loadUnifiStatus();
+	// // });
+	// // OLD CODE END
+	// /**
+	//  * The top bar's Refresh: the read-only status sections only (Retention health, About), never a
+	//  * form, so an unsaved edit survives it. Capture and UniFi status share their loaders with their
+	//  * forms, so they stay read once, with the forms.
+	//  */
+	// async function load(guard: LoadGuard): Promise<LoadResult> {
+	// 	const g = guard.begin();
+	// 	// shortcut: each read writes its own section unguarded; neither takes a range or filter, so an
+	// 	// older reply answers the same question. Copy the query into locals if a section gains one.
+	// 	const [, aboutOk] = await Promise.all([loadDiskUsage(), loadAbout()]);
+	// 	if (!guard.current(g)) return 'skipped';
+	// 	return outcome([storageStatusFailed, !aboutOk].map((bad): PromiseSettledResult<null> => (bad ? { status: 'rejected', reason: null } : { status: 'fulfilled', value: null })));
 	// }
-	// OLD CODE END
-	// The daemon's 1 (critical) … 4 (low) as the select's values
-	const SEVERITY_VALUES = ['critical', 'high', 'medium', 'low'];
-
-	/** The Settings tab's notification setup as the daemon returns it (GET and a saved PUT). */
-	function applyNotificationConfig(data: {
-		min_severity?: number;
-		email?: { enabled?: boolean; recipients?: string[]; smtp_configured?: boolean };
-		webhook?: { enabled?: boolean; has_url?: boolean; url_hint?: string };
-	}) {
-		severityThreshold = SEVERITY_VALUES[(data.min_severity ?? 2) - 1] ?? 'high';
-		emailEnabled = data.email?.enabled ?? false;
-		emailAddress = (data.email?.recipients ?? []).join(', ');
-		smtpConfigured = data.email?.smtp_configured ?? false;
-		webhookEnabled = data.webhook?.enabled ?? false;
-		webhookHasUrl = data.webhook?.has_url ?? false;
-		webhookHint = data.webhook?.url_hint ?? '';
-		webhookUrl = '';
-		notifSavedForm = notifForm();
-	}
-
-	async function loadNotificationConfig() {
-		try {
-			const res = await fetch('/api/notifications/config');
-			if (res.ok) {
-				applyNotificationConfig(await res.json());
-				notifLoadFailed = false;
-				return;
-			}
-		} catch {
-			// Falls through to failed
-		}
-		notifLoadFailed = true;
-	}
-
-	async function loadRetention() {
-		try {
-			const res = await fetch('/api/setup/storage');
-			// OLD CODE START — L11: the route answers 503 now instead of mock figures (A16), so a 200
-			// is always the daemon's
-			// if (res.ok) {
-			// 	const data = await res.json();
-			// 	// source 'mock' = the daemon didn't answer and these are built-in defaults
-			// 	if (data.source !== 'mock') {
-			// 		// GET /api/setup/storage returns a FLAT StorageStatus object
-			// 		// (hot_days, warm_days, etc. are top-level, not nested under retention)
-			// 		retentionConfig.hot_days = data.hot_days ?? 90;
-			// 		retentionConfig.warm_days = data.warm_days ?? 180;
-			// 		retentionConfig.cold_days = data.cold_days ?? 30;
-			// 		retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
-			// 		retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
-			// 		retentionLoad = 'ok';
-			// 		return;
-			// 	}
-			// }
-			// OLD CODE END
-			if (res.ok) {
-				const data = await res.json();
-				// GET /api/setup/storage returns a FLAT StorageStatus object
-				// (hot_days, warm_days, etc. are top-level, not nested under retention)
-				retentionConfig.hot_days = data.hot_days ?? 90;
-				retentionConfig.warm_days = data.warm_days ?? 180;
-				retentionConfig.cold_days = data.cold_days ?? 30;
-				retentionConfig.disk_threshold = data.disk_threshold_percent ?? 80;
-				retentionConfig.emergency_threshold = data.emergency_threshold_percent ?? 90;
-				retentionLoad = 'ok';
-				return;
-			}
-		} catch {
-			// Falls through to 'failed'
-		}
-		retentionLoad = 'failed';
-	}
-
-	async function loadDiskUsage() {
-		try {
-			const res = await fetch('/api/storage/status');
-			if (res.ok) {
-				const data = await res.json();
-				diskUsage = data.disk_usage_percent ?? data.usage_percent ?? null;
-				lastPruneAt = data.last_prune_at ?? null;
-				ilmStatus = data.ilm_status ?? null;
-				storageStatusFailed = false;
-				storageLoading = false;
-				return;
-			}
-		} catch {
-			// OLD CODE START — a failure left "Loading...", "Never (daemon starting...)" and a Problem badge
-			// // Will stay null
-			// OLD CODE END
-		}
-		storageStatusFailed = true;
-		storageLoading = false;
-	}
-
-	// --- Retention health helpers ---
-	function timeAgo(isoString: string): string {
-		const diff = Date.now() - new Date(isoString).getTime();
-		const mins = Math.floor(diff / 60000);
-		if (mins < 1) return 'just now';
-		if (mins < 60) return `${mins}m ago`;
-		const hours = Math.floor(mins / 60);
-		if (hours < 24) return `${hours}h ago`;
-		return `${Math.floor(hours / 24)}d ago`;
-	}
-
-	let retentionHealth = $derived.by(() => {
-		const ilmOk = ilmStatus?.synced ?? false;
-		const ilmPending = ilmStatus?.pending_retry ?? false;
-		const pruneOk = lastPruneAt ? (Date.now() - new Date(lastPruneAt).getTime()) < 600000 : false;
-		const pruneStale = lastPruneAt ? (Date.now() - new Date(lastPruneAt).getTime()) > 1800000 : true;
-		const diskPct = diskUsage ?? 0;
-		const diskHigh = diskPct >= (retentionConfig.disk_threshold ?? 80);
-		const diskCritical = diskPct >= (retentionConfig.emergency_threshold ?? 90);
-
-		// OLD CODE START — a failed status read scored as a Problem
-		// let status: 'healthy' | 'attention' | 'problem' = 'healthy';
-		// OLD CODE END
-		let status: 'healthy' | 'attention' | 'problem' | 'unknown' = 'healthy';
-		if (storageStatusFailed) status = 'unknown';
-		else if ((!ilmOk && !ilmPending) || diskCritical) status = 'problem';
-		else if (ilmPending || diskHigh || !pruneOk) status = 'attention';
-
-		return { status, ilmOk, ilmPending, pruneOk, pruneStale, diskPct, diskHigh, diskCritical };
-	});
-
-	/** True when both reads answered (the page loader's outcome). */
-	async function loadAbout(): Promise<boolean> {
-		try {
-			const [healthRes, versionsRes] = await Promise.all([
-				fetch('/api/system/health'),
-				fetch('/api/system/versions'),
-			]);
-			// OLD CODE START — 2026-11-02: showed raw seconds ("21970.08") and a
-			// hardcoded '0.3.0' (the API returns { versions: [...] }, no top-level version)
-			// if (healthRes.ok) {
-			// 	const data = await healthRes.json();
-			// 	uptime = data.uptime ?? 'Unknown';
-			// }
-			// if (versionsRes.ok) {
-			// 	const data = await versionsRes.json();
-			// 	version = data.nettap ?? data.version ?? '0.3.0';
-			// 	buildInfo = data.build ?? data.commit ?? 'Development build';
-			// }
-			// OLD CODE END
-			if (healthRes.ok) {
-				const data = await healthRes.json();
-				uptime = typeof data.uptime === 'number' ? formatDuration(data.uptime) : 'Unknown';
-			}
-			if (versionsRes.ok) {
-				const data = await versionsRes.json();
-				const daemon = (data.versions ?? []).find(
-					(v: { name?: string }) => v.name === 'nettap-daemon'
-				);
-				version = daemon?.current_version ?? 'Unknown';
-				// OLD CODE: buildInfo = data.build ?? data.commit ?? 'Development build';
-				buildInfo = data.build ?? data.commit ?? null;
-			}
-			return healthRes.ok && versionsRes.ok;
-		} catch {
-			// Will use defaults
-			return false;
-		}
-	}
-
-	// OLD CODE START — NET-195: auto-refresh and timezone are gone, and the range is read as the pages read it
-	// async function loadDisplaySettings() {
-	// 	try {
-	// 		const stored = localStorage.getItem('nettap-display-settings');
-	// 		if (stored) {
-	// 			const parsed = JSON.parse(stored);
-	// 			autoRefresh = parsed.autoRefresh ?? '30';
-	// 			timezone = parsed.timezone ?? 'local';
-	// 			// OLD CODE: defaultTimeRange = parsed.defaultTimeRange ?? '1h'; (NET-192 PR 4: a saved 15m or 4h is no longer offered)
-	// 			defaultTimeRange = ['1h', '6h', '24h', '7d', '30d'].includes(parsed.defaultTimeRange) ? parsed.defaultTimeRange : '1h';
-	// 		}
-	// 	} catch {
-	// 		// Will use defaults
-	// 	}
-	// }
-	// OLD CODE END
-	function loadDisplaySettings() {
-		defaultRange = savedDefaultRange() ?? '';
-		liveMap = savedLiveMap();
-	}
-
-	async function loadExcludedIps() {
-		networkLoading = true;
-		try {
-			const res = await fetch('/api/settings/excluded-ips');
-			if (res.ok) {
-				const data = await res.json();
-				// OLD CODE: excludedIps = data.excluded_ips ?? []; (a save then stored NetTap's own
-				// IP, which outlived an address change and hid whichever device got it next, #79)
-				applianceIp = data.appliance_ip ?? null;
-				excludedIps = (data.excluded_ips ?? []).filter((ip: string) => ip !== applianceIp);
-				networkLoadFailed = false;
-				return;
-			}
-			networkLoadFailed = true;
-		} catch {
-			networkLoadFailed = true;
-		} finally {
-			networkLoading = false;
-		}
-	}
-
-	async function loadApiKeys() {
-		apiKeysLoading = true;
-		try {
-			const res = await fetch('/api/settings/api-keys');
-			if (res.ok) {
-				const data = await res.json();
-				apiKeysStatus = data.keys ?? {};
-			}
-		} catch {
-			// Will use empty default
-		} finally {
-			apiKeysLoading = false;
-		}
-	}
-
-	async function saveApiKeys() {
-		apiKeysSaving = true;
-		apiKeysMessage = '';
-		apiKeysError = false;
-
-		// Only send fields that have been modified (non-empty)
-		const payload: Record<string, string> = {};
-		for (const [key, value] of Object.entries(apiKeyValues)) {
-			if (value.trim()) {
-				payload[key] = value.trim();
-			}
-		}
-
-		if (Object.keys(payload).length === 0) {
-			apiKeysMessage = 'No changes to save. Enter a value in at least one field.';
-			apiKeysError = true;
-			apiKeysSaving = false;
-			return;
-		}
-
-		try {
-			const res = await fetch('/api/settings/api-keys', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(payload),
-			});
-			const data = await res.json();
-			if (res.ok) {
-				apiKeysMessage = `Saved ${data.saved_count ?? Object.keys(payload).length} key(s) successfully.`;
-				apiKeysStatus = data.keys ?? apiKeysStatus;
-				// Clear input fields after successful save
-				apiKeyValues = {};
-			} else {
-				apiKeysMessage = data.error || 'Failed to save API keys.';
-				apiKeysError = true;
-			}
-		} catch {
-			apiKeysMessage = 'Failed to connect to server.';
-			apiKeysError = true;
-		} finally {
-			apiKeysSaving = false;
-		}
-	}
-
-	async function saveExcludedIps() {
-		networkSaving = true;
-		networkMessage = '';
-		networkError = false;
-		try {
-			const res = await fetch('/api/settings/excluded-ips', {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ excluded_ips: excludedIps }),
-			});
-			if (res.ok) {
-				networkMessage = 'Excluded IPs saved. Changes take effect immediately.';
-			} else {
-				const data = await res.json();
-				networkMessage = data.error || 'Failed to save excluded IPs.';
-				networkError = true;
-			}
-		} catch {
-			networkMessage = 'Failed to connect to server.';
-			networkError = true;
-		} finally {
-			networkSaving = false;
-		}
-	}
-
-	function addExcludedIp() {
-		const ip = newExcludedIp.trim();
-		if (!ip) return;
-		// Basic IP format validation
-		if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) {
-			networkMessage = 'Please enter a valid IPv4 address.';
-			networkError = true;
-			return;
-		}
-		if (excludedIps.includes(ip)) {
-			networkMessage = `${ip} is already in the exclusion list.`;
-			networkError = true;
-			return;
-		}
-		excludedIps = [...excludedIps, ip];
-		newExcludedIp = '';
-		networkMessage = '';
-	}
-
-	function removeExcludedIp(ip: string) {
-		excludedIps = excludedIps.filter((i) => i !== ip);
-	}
-
-	// --- Capture functions ---
-	async function loadCaptureSettings() {
-		captureLoading = true;
-		try {
-			const status = await fetchCaptureStatus();
-			captureLoadFailed = false;
-			captureEnabled = status.enabled;
-			captureMaxFileSize = status.maxFileSizeMB;
-			captureRotateMinutes = status.rotateMinutes ?? null;
-			captureContainerRunning = status.containerRunning;
-			captureContainerStatus = status.containerStatus;
-		} catch {
-			captureLoadFailed = true;
-		} finally {
-			captureLoading = false;
-		}
-	}
-
-	async function handleCaptureToggle() {
-		captureToggling = true;
-		captureMessage = '';
-		captureError = false;
-		try {
-			const result = await toggleCapture(!captureEnabled);
-			captureEnabled = result.enabled;
-			captureContainerRunning = result.containerRunning;
-			captureContainerStatus = result.containerStatus;
-			captureMessage = captureEnabled ? 'PCAP capture enabled' : 'PCAP capture disabled';
-		} catch (err) {
-			captureError = true;
-			captureMessage = err instanceof Error ? err.message : 'Toggle failed';
-		} finally {
-			captureToggling = false;
-		}
-	}
-
-	async function saveCaptureSettings() {
-		captureSaving = true;
-		captureMessage = '';
-		captureError = false;
-		try {
-			const result = await updateCaptureSettings({ maxFileSizeMB: captureMaxFileSize });
-			captureMaxFileSize = result.maxFileSizeMB;
-			// OLD CODE START — 2026-11-06 (NET-166): netsniff-ng counts this setting in MiB, not MB
-			// captureMessage = result.restarted
-			// 	? `File size updated to ${result.maxFileSizeMB} MB. Container restarted.`
-			// 	: `File size updated to ${result.maxFileSizeMB} MB.`;
-			// OLD CODE END
-			captureMessage = result.restarted
-				? `File size updated to ${result.maxFileSizeMB} MiB. Container restarted.`
-				: `File size updated to ${result.maxFileSizeMB} MiB.`;
-		} catch (err) {
-			captureError = true;
-			captureMessage = err instanceof Error ? err.message : 'Save failed';
-		} finally {
-			captureSaving = false;
-		}
-	}
-
-	// --- UniFi functions ---
-	// OLD CODE START — read `last_poll`, which the daemon never sends (it sends
-	// `last_poll_time` in epoch seconds), so "Last Poll" never showed
-	// async function loadUnifiStatus() {
-	// 	unifiLoading = true;
-	// 	try {
-	// 		const res = await fetch('/api/integrations/unifi/status');
-	// 		if (res.ok) {
-	// 			const data = await res.json();
-	// 			unifiConfigured = data.configured ?? false;
-	// 			unifiControllerUrl = data.controller_url ?? '';
-	// 			unifiConnected = data.connected ?? false;
-	// 			unifiCacheCounts = data.cache_counts ?? null;
-	// 			unifiLastPoll = data.last_poll ?? null;
-	// 			if (data.site_id) unifiSiteId = data.site_id;
-	// 		}
-	// 	} catch {
-	// 		// Will use defaults
-	// 	} finally {
-	// 		unifiLoading = false;
-	// 	}
-	// }
-	// OLD CODE END
-	function unifiPollIso(epochSeconds: unknown): string | null {
-		return typeof epochSeconds === 'number' && epochSeconds > 0
-			? new Date(epochSeconds * 1000).toISOString()
-			: null;
-	}
-
-	async function loadUnifiStatus() {
-		unifiLoading = true;
-		try {
-			const status = await getUnifiStatus();
-			unifiConfigured = status.configured;
-			unifiControllerUrl = status.controller_url ?? '';
-			unifiConnected = status.connected;
-			unifiCacheCounts = status.configured
-				? { clients: status.cache_counts.clients ?? 0, devices: status.cache_counts.devices ?? 0 }
-				: null;
-			unifiLastPoll = unifiPollIso(status.last_poll_time);
-			if (status.site_id) unifiSiteId = status.site_id;
-			unifiStatusFailed = false;
-		} catch {
-			unifiStatusFailed = true;
-		} finally {
-			unifiLoading = false;
-		}
-	}
-
-	async function loadUnifiSites() {
-		unifiSitesLoading = true;
-		try {
-			const res = await fetch('/api/integrations/unifi/sites');
-			if (res.ok) {
-				const data = await res.json();
-				unifiSites = data.sites ?? [];
-			}
-		} catch {
-			// Sites will remain empty
-		} finally {
-			unifiSitesLoading = false;
-		}
-	}
-
-	async function saveUnifiConfig() {
-		unifiSaving = true;
-		unifiMessage = '';
-		unifiError = false;
-
-		if (!unifiControllerUrl.trim()) {
-			unifiMessage = 'Controller URL is required.';
-			unifiError = true;
-			unifiSaving = false;
-			return;
-		}
-		if (!unifiApiKey.trim() && !unifiConfigured) {
-			unifiMessage = 'API Key is required.';
-			unifiError = true;
-			unifiSaving = false;
-			return;
-		}
-
-		try {
-			const payload: Record<string, string> = {
-				controller_url: unifiControllerUrl.trim(),
-			};
-			// Only send api_key if user entered one (leave blank to keep existing)
-			if (unifiApiKey.trim()) {
-				payload.api_key = unifiApiKey.trim();
-			}
-			// OLD CODE START — a whitespace-only site id was posted as-is
-			// if (unifiSiteId) {
-			// 	payload.site_id = unifiSiteId;
-			// }
-			// OLD CODE END
-			// Omit site_id when blank so the daemon keeps the saved site
-			const siteId = unifiSiteId.trim();
-			if (siteId) {
-				payload.site_id = siteId;
-			}
-
-			const res = await fetch('/api/integrations/unifi/configure', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(payload),
-			});
-			const data = await res.json();
-			if (res.ok) {
-				unifiMessage = 'UniFi configuration saved successfully.';
-				unifiConfigured = true;
-				unifiApiKey = ''; // Clear after save
-				// Now test the connection
-				await testUnifiConnection();
-			} else {
-				unifiMessage = data.error || 'Failed to save UniFi configuration.';
-				unifiError = true;
-			}
-		} catch {
-			unifiMessage = 'Failed to connect to server.';
-			unifiError = true;
-		} finally {
-			unifiSaving = false;
-		}
-	}
-
-	async function testUnifiConnection() {
-		unifiTesting = true;
-		unifiMessage = '';
-		unifiError = false;
-
-		try {
-			const res = await fetch('/api/integrations/unifi/test', { method: 'POST' });
-			const data = await res.json();
-			if (res.ok && data.success) {
-				unifiConnected = true;
-				unifiMessage = 'Connection successful.';
-				if (data.status?.cache_counts) {
-					unifiCacheCounts = data.status.cache_counts;
-				}
-				// OLD CODE START — `last_poll` is not a daemon field
-				// if (data.status?.last_poll) {
-				// 	unifiLastPoll = data.status.last_poll;
-				// }
-				// OLD CODE END
-				unifiLastPoll = unifiPollIso(data.status?.last_poll_time) ?? unifiLastPoll;
-				// Fetch available sites
-				await loadUnifiSites();
-			} else {
-				unifiConnected = false;
-				unifiMessage = data.error || data.message || 'Connection test failed.';
-				unifiError = true;
-			}
-		} catch {
-			unifiConnected = false;
-			unifiMessage = 'Failed to connect to server.';
-			unifiError = true;
-		} finally {
-			unifiTesting = false;
-		}
-	}
-
-	function formatUnifiPollTime(isoString: string): string {
-		const diff = Date.now() - new Date(isoString).getTime();
-		const secs = Math.floor(diff / 1000);
-		if (secs < 60) return `${secs}s ago`;
-		const mins = Math.floor(secs / 60);
-		if (mins < 60) return `${mins}m ago`;
-		const hours = Math.floor(mins / 60);
-		if (hours < 24) return `${hours}h ago`;
-		return `${Math.floor(hours / 24)}d ago`;
-	}
-
-	// OLD CODE START — NET-192 PR 4: the top bar's Refresh did nothing here; the reads go through the page loader
+	//
+	// const refresh = registerPageRefresh(load);
+	// onDestroy(refresh.unregister);
+	// // The forms load once here, and again after a save, as before
 	// onMount(() => {
 	// 	loadNotificationConfig();
 	// 	loadRetention();
-	// 	loadDiskUsage();
 	// 	loadExcludedIps();
 	// 	loadApiKeys();
-	// 	loadAbout();
 	// 	loadDisplaySettings();
 	// 	loadCaptureSettings();
 	// 	loadUnifiStatus();
+	// 	// A link can open a tab: /settings?tab=network (the Live globe's "location isn't set" note)
+	// 	const tab = new URLSearchParams(location.search).get('tab');
+	// 	if (TABS.some((t) => t.value === tab)) activeTab = tab as TabId;
+	// 	void refresh.run();
 	// });
 	// OLD CODE END
-	/**
-	 * The top bar's Refresh: the read-only status sections only (Retention health, About), never a
-	 * form, so an unsaved edit survives it. Capture and UniFi status share their loaders with their
-	 * forms, so they stay read once, with the forms.
-	 */
-	async function load(guard: LoadGuard): Promise<LoadResult> {
-		const g = guard.begin();
-		// shortcut: each read writes its own section unguarded; neither takes a range or filter, so an
-		// older reply answers the same question. Copy the query into locals if a section gains one.
-		const [, aboutOk] = await Promise.all([loadDiskUsage(), loadAbout()]);
-		if (!guard.current(g)) return 'skipped';
-		return outcome([storageStatusFailed, !aboutOk].map((bad): PromiseSettledResult<null> => (bad ? { status: 'rejected', reason: null } : { status: 'fulfilled', value: null })));
+
+	// The open tab reports these (bound below); a tab that never sets them leaves them false
+	let dirty = $state(false);
+	let busy = $state(false);
+
+	/** A navigation the guard stopped, kept so Discard can carry it on. */
+	interface Pending {
+		url: URL;
+		type: NavigationType;
+		/** Back or Forward: how far, since SvelteKit has already undone the step. */
+		delta?: number;
+		willUnload: boolean;
+	}
+	let pending = $state<Pending | null>(null);
+	// OLD CODE START — review L2: a flag outlived its navigation when that navigation never reached the
+	// guard (another one was loading, or a Back that went nowhere), and let the next one through
+	// // Lets the one navigation Discard starts through the guard
+	// let bypass = false;
+	// OLD CODE END
+	// The address Discard is carrying on to: only that navigation passes the guard, once
+	let bypass: string | null = null;
+	// Bumped by Discard so the open tab remounts on its saved values (review M1)
+	let epoch = $state(0);
+	let bar = $state<HTMLElement>();
+	// Where focus was when the bar opened, for Keep editing (review L3)
+	let returnFocus: HTMLElement | null = null;
+
+	function select(id: TabId) {
+		void goto(`?tab=${id}`, { keepFocus: true, noScroll: true });
 	}
 
-	const refresh = registerPageRefresh(load);
-	onDestroy(refresh.unregister);
-	// The forms load once here, and again after a save, as before
-	onMount(() => {
-		loadNotificationConfig();
-		loadRetention();
-		loadExcludedIps();
-		loadApiKeys();
-		loadDisplaySettings();
-		loadCaptureSettings();
-		loadUnifiStatus();
-		// A link can open a tab: /settings?tab=network (the Live globe's "location isn't set" note)
-		const tab = new URLSearchParams(location.search).get('tab');
-		if (TABS.some((t) => t.value === tab)) activeTab = tab as TabId;
-		void refresh.run();
+	beforeNavigate((nav) => {
+		// OLD CODE START — review L2: any navigation used the flag
+		// if (bypass) {
+		// 	bypass = false;
+		// 	return;
+		// }
+		// OLD CODE END
+		if (bypass !== null && nav.to?.url.href === bypass) {
+			bypass = null;
+			return;
+		}
+		if (!dirty && !busy) return;
+		nav.cancel();
+		// 'leave' (reload, closing the tab, typing an address): cancel() shows the browser's own prompt
+		if (nav.type === 'leave' || !nav.to) return;
+		const focused = document.activeElement;
+		// a tab button already has focus moved onto the tab it asked for; Keep editing goes back to the open one
+		// a second hold while the bar is open keeps the first place: the bar's own buttons go with it
+		if (!bar?.contains(focused))
+			returnFocus = focused instanceof HTMLElement && focused !== document.body && focused.getAttribute('role') !== 'tab' ? focused : null;
+		pending = { url: nav.to.url, type: nav.type, delta: nav.delta, willUnload: nav.willUnload };
+		// The bar may be above the fold of a long tab: bring focus (and so the eye) to it
+		void tick().then(() => (bar?.querySelector<HTMLElement>('button') ?? bar)?.focus());
 	});
 
-	async function saveNotifications() {
-		notifSaving = true;
-		notifMessage = '';
-		notifError = false;
-		try {
-			// OLD CODE START — NET-224: POSTed to a route that couldn't save (F3: 501)
-			// const res = await fetch('/api/notifications/config', {
-			// 	method: 'POST',
-			// 	headers: { 'Content-Type': 'application/json' },
-			// 	body: JSON.stringify({
-			// 		severityThreshold,
-			// 		email: {
-			// 			enabled: emailEnabled,
-			// 			recipients: emailAddress ? [emailAddress] : [],
-			// 		},
-			// 		webhook: {
-			// 			url: webhookUrl || null,
-			// 		},
-			// 	}),
-			// });
-			// if (res.ok) {
-			// 	notifMessage = 'Notification settings saved successfully.';
-			// } else {
-			// OLD CODE END
-			const res = await fetch('/api/notifications/config', {
-				method: 'PUT',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					min_severity: SEVERITY_VALUES.indexOf(severityThreshold) + 1,
-					email: {
-						enabled: emailEnabled,
-						recipients: emailAddress.split(',').map((a) => a.trim()).filter(Boolean),
-					},
-					// a blank URL keeps the saved one
-					webhook: { enabled: webhookEnabled, url: webhookUrl.trim() },
-				}),
-			});
-			// OLD CODE START — review L2: a body that couldn't be read, even after the daemon saved, said "Failed to connect"
-			// if (res.ok) {
-			// 	applyNotificationConfig(await res.json());
-			// 	notifMessage = 'Notification settings saved.';
-			// } else {
-			// 	const data = await res.json();
-			// 	notifMessage = data.error || 'Failed to save notification settings.';
-			// 	notifError = true;
-			// }
-			// OLD CODE END
-			const data = await res.json().catch(() => null);
-			if (!res.ok) {
-				notifMessage = data?.error || `Not saved: NetTap answered ${res.status}.`;
-				notifError = true;
-				return;
-			}
-			try {
-				applyNotificationConfig(data);
-				notifMessage = 'Notification settings saved.';
-			} catch {
-				notifMessage = "Saved, but the page couldn't read the settings back. Reload the page to see them.";
-				notifError = true;
-			}
-		} catch {
-			// OLD CODE: notifMessage = 'Failed to connect to server.'; (review L2: only fetch itself throws here now)
-			notifMessage = "Couldn't reach NetTap, so nothing was saved.";
-			notifError = true;
-		} finally {
-			notifSaving = false;
-		}
+	afterNavigate(() => {
+		bypass = null;
+	});
+
+	function restoreFocus() {
+		const target = returnFocus?.isConnected ? returnFocus : document.getElementById(`settings-tab-${activeTab}`);
+		returnFocus = null;
+		target?.focus();
 	}
 
-	async function sendTestNotification() {
-		testingSending = true;
-		testMessage = '';
-		testError = false;
-		try {
-			const res = await fetch('/api/notifications/test', { method: 'POST' });
-			const data = await res.json();
-			if (res.ok) {
-				testMessage = 'Test notification sent successfully.';
-			} else {
-				testMessage = data.error || 'Failed to send test notification.';
-				testError = true;
-			}
-		} catch {
-			testMessage = 'Failed to connect to server.';
-			testError = true;
-		} finally {
-			testingSending = false;
-		}
+	// The bar goes once nothing holds the navigation any more (a save finished, or the edits were undone)
+	$effect(() => {
+		// OLD CODE: if (!dirty && !busy) pending = null; (focus inside the bar was lost with it)
+		if (dirty || busy || !pending) return;
+		// The bar may already be gone (the page drops focus to the body) or about to go
+		const focused = document.activeElement;
+		const lost = !focused || focused === document.body || (bar?.contains(focused) ?? false);
+		pending = null;
+		if (lost) restoreFocus();
+	});
+
+	function keepEditing() {
+		pending = null;
+		restoreFocus();
 	}
 
-	async function saveRetention() {
-		retentionSaving = true;
-		retentionMessage = '';
-		retentionError = false;
-		try {
-			const res = await fetch('/api/setup/storage', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					hot_days: retentionConfig.hot_days,
-					warm_days: retentionConfig.warm_days,
-					cold_days: retentionConfig.cold_days,
-					disk_threshold_percent: retentionConfig.disk_threshold,
-					emergency_threshold_percent: retentionConfig.emergency_threshold,
-				}),
-			});
-			if (res.ok) {
-				const result = await res.json();
-				if (result.ilm_applied) {
-					retentionMessage = 'Retention settings saved and applied to OpenSearch.';
-				} else {
-					retentionMessage = 'Retention settings saved. OpenSearch policies will sync shortly.';
-				}
-			} else {
-				// OLD CODE START — didn't separate "not saved" from "may have been saved"
-				// const data = await res.json();
-				// retentionMessage = data.error || 'Failed to save configuration.';
-				// OLD CODE END
-				const data = await res.json().catch(() => ({}));
-				retentionMessage = data.outcome_unknown
-					? `Outcome unknown — check again. ${data.error ?? ''} Reload this page to see whether the settings were saved.`
-					: `Not saved: ${data.error || `HTTP ${res.status}`}`;
-				retentionError = true;
-			}
-		} catch {
-			// OLD CODE START
-			// retentionMessage = 'Failed to connect to server.';
-			// OLD CODE END
-			retentionMessage = 'Not saved: could not reach the NetTap server.';
-			retentionError = true;
-		} finally {
-			retentionSaving = false;
-		}
+	function discard() {
+		const next = pending;
+		pending = null;
+		if (!next) return;
+		returnFocus = null;
+		dirty = false;
+		bypass = next.url.href;
+		const sameTab = next.url.pathname === page.url.pathname;
+		// The bar, and the button that had focus, goes: focus the tab being opened, not the page body
+		if (sameTab) document.getElementById(`settings-tab-${tabFrom(next.url)}`)?.focus();
+		// The open tab still shows the edits: remount it on its saved values, in case the navigation keeps
+		// it open (a link to the same tab, or a Back that goes nowhere) and so the next edit counts again
+		epoch += 1;
+		if (next.type === 'popstate' && next.delta) history.go(next.delta);
+		else if (next.willUnload) location.assign(next.url.href);
+		// OLD CODE: else void goto(next.url); (review L3: a tab switch keeps focus and scroll, as a tab click does)
+		else void goto(next.url, sameTab ? { keepFocus: true, noScroll: true } : undefined);
 	}
-
-	// OLD CODE START — 2026-11-06 (NET-166): a copy of formatBytes in $lib/api/logs, 1024-based under decimal labels; the shared one is decimal
-	// function formatCleanupBytes(bytes: number): string {
-	// 	if (bytes === 0) return '0 B';
-	// 	const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-	// 	const i = Math.floor(Math.log(bytes) / Math.log(1024));
-	// 	return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
-	// }
-	// OLD CODE END
-
-	async function handleCleanupPreview() {
-		if (cleanupDays < 1) return;
-		cleanupPreviewing = true;
-		cleanupMessage = '';
-		cleanupError = false;
-		cleanupPreview = null;
-		cleanupPreviewDays = null;
-		showCleanupConfirm = false;
-
-		const days = cleanupDays;
-		try {
-			// OLD CODE START — preview and execute both read the live input, so editing
-			// the days after previewing deleted a different range than the one shown
-			// cleanupPreview = await previewCleanup(cleanupDays);
-			// OLD CODE END
-			cleanupPreview = await previewCleanup(days);
-			cleanupPreviewDays = days;
-		} catch (err: unknown) {
-			cleanupMessage = err instanceof Error ? err.message : 'Failed to preview cleanup';
-			cleanupError = true;
-		} finally {
-			cleanupPreviewing = false;
-		}
-	}
-
-	async function handleCleanupExecute() {
-		if (cleanupPreviewDays === null) return;
-		cleanupExecuting = true;
-		cleanupMessage = '';
-		cleanupError = false;
-
-		try {
-			// OLD CODE START — used the live input instead of the previewed days
-			// const result = await executeCleanup(cleanupDays);
-			// OLD CODE END
-			const result = await executeCleanup(cleanupPreviewDays);
-			const freedStr = formatBytes(result.freed_bytes_estimate);
-			cleanupMessage = `Cleanup complete: deleted ${result.deleted_indices} indices and ${result.deleted_pcap_files} PCAP files, freed ${freedStr}.`;
-			if (result.errors.length > 0) {
-				cleanupMessage += ` (${result.errors.length} errors)`;
-			}
-			cleanupError = false;
-			cleanupPreview = null;
-			cleanupPreviewDays = null;
-			showCleanupConfirm = false;
-
-			// Refresh disk usage
-			try {
-				const res = await fetch('/api/storage/status');
-				if (res.ok) {
-					const data = await res.json();
-					diskUsage = data.disk_usage_percent ?? diskUsage;
-				}
-			} catch {
-				// Non-critical, disk usage will update on next load
-			}
-		} catch (err: unknown) {
-			cleanupMessage = err instanceof Error ? err.message : 'Cleanup failed';
-			cleanupError = true;
-		} finally {
-			cleanupExecuting = false;
-		}
-	}
-
-	function cancelCleanup() {
-		showCleanupConfirm = false;
-		cleanupPreview = null;
-		cleanupPreviewDays = null;
-		cleanupMessage = '';
-	}
-
-	function saveDisplay() {
-		displaySaving = true;
-		displayMessage = '';
-		displayError = false;
-		try {
-			// OLD CODE START — NET-195: the new field only; "Each page's own" saves nothing
-			// localStorage.setItem(
-			// 	'nettap-display-settings',
-			// 	JSON.stringify({ autoRefresh, timezone, defaultTimeRange })
-			// );
-			// OLD CODE END
-			// OLD CODE START — the Live map choice is saved beside the range now
-			// if (defaultRange) localStorage.setItem(DISPLAY_SETTINGS_KEY, JSON.stringify({ defaultRange }));
-			// else localStorage.removeItem(DISPLAY_SETTINGS_KEY);
-			// OLD CODE END
-			// Only what differs from the default is saved; nothing at all removes the key
-			const saved = { ...(defaultRange && { defaultRange }), ...(liveMap === 'flat' && { liveMap }) };
-			if (Object.keys(saved).length) localStorage.setItem(DISPLAY_SETTINGS_KEY, JSON.stringify(saved));
-			else localStorage.removeItem(DISPLAY_SETTINGS_KEY);
-			displayMessage = 'Display settings saved.';
-		} catch {
-			displayMessage = 'Failed to save display settings.';
-			displayError = true;
-		} finally {
-			displaySaving = false;
-		}
-	}
-
-	const severityOptions: { value: string; label: string }[] = [
-		{ value: 'critical', label: 'Critical only' },
-		{ value: 'high', label: 'High and above' },
-		{ value: 'medium', label: 'Medium and above' },
-		{ value: 'low', label: 'All severities' },
-	];
 </script>
 
 <svelte:head>
 	<title>Settings | NetTap</title>
 </svelte:head>
 
-{#snippet feedback(message: string, isError: boolean)}
-	{#if message}
-		<div class={['notice', isError ? 'is-error' : 'is-ok']} role={isError ? 'alert' : 'status'}>
-			<Icon name={isError ? 'warn' : 'check'} />{message}
-		</div>
-	{/if}
-{/snippet}
-
-{#snippet configured(set: boolean | undefined)}
-	{#if set}<span class="chip is-ok"><Icon name="check" />Configured</span>{/if}
-{/snippet}
-
 <div class="page-head">
 	<div>
 		<h1 class="page-title">Settings</h1>
-		<p class="page-sub">Alerts, storage, capture, credentials and display for this NetTap.</p>
+		<!-- OLD CODE: <p class="page-sub">Alerts, storage, capture, credentials and display for this NetTap.</p> (NET-273: one page for every setting) -->
+		<p class="page-sub">Everything you can set on this NetTap, grouped by what it controls.</p>
 	</div>
-	<!-- NET-199: these pages had a back link to Settings but nothing led to them -->
+	<!-- OLD CODE START — NET-273: the three pages are tabs of this page now
+	NET-199: these pages had a back link to Settings but nothing led to them
 	<nav class="head-actions" aria-label="More settings">
 		<a class="btn" href="/settings/suricata-rules"><Icon name="threats" />Suricata rules</a>
 		<a class="btn" href="/settings/notifications"><Icon name="alerts" />Notification channels</a>
 		<a class="btn" href="/settings/backup"><Icon name="download" />Backup and restore</a>
 	</nav>
+	OLD CODE END -->
 </div>
 
+<!-- OLD CODE START — NET-273: eight tabs in one row; the grouped menu holds ten
 <div class="tabs-scroll">
 	<Pills options={TABS} bind:value={activeTab} ariaLabel="Settings sections" mode="tabs" idPrefix="settings" />
 </div>
 
 <div class="grid" role="tabpanel" id="settings-panel-{activeTab}" aria-labelledby="settings-tab-{activeTab}" tabindex="0">
-	{#if activeTab === 'notifications'}
-		<!-- OLD CODE: sub="Which alerts reach you · by email and webhook" (NET-224: the daemon sends them now) -->
-		<Card title="Notification preferences" sub="Which alerts reach you · by email and webhook, with or without this page open" class="c-12">
-			<div class="stack">
-				{#if notifLoadFailed}
-					{@render feedback('Could not load the current notification settings, so saving is off. Reload the page to try again.', true)}
-				{/if}
-				{@render feedback(notifMessage, notifError)}
+OLD CODE END -->
 
-				<div class="form-grid">
-					<div class="field">
-						<label class="label" for="severity-threshold">Alert severity threshold</label>
-						<select class="select" id="severity-threshold" bind:value={severityThreshold}>
-							{#each severityOptions as opt (opt.value)}
-								<option value={opt.value}>{opt.label}</option>
-							{/each}
-						</select>
-						<p class="field-help">Only notify for alerts at or above this severity level.</p>
-					</div>
-					<!-- OLD CODE START — NET-224: the URL field had no on/off, and blank meant "no webhook"; the daemon never sends the saved URL back, so blank now keeps it
-					<div class="field">
-						<label class="label" for="webhook-url">Webhook URL</label>
-						<input class="input mono" id="webhook-url" type="url" bind:value={webhookUrl} placeholder="https://hooks.example.com/nettap" />
-						<p class="field-help">POST JSON payloads will be sent to this URL for each alert.</p>
-					</div>
-					OLD CODE END -->
-				</div>
+<div class="settings-layout">
+	<SettingsNav active={activeTab} onselect={select} />
 
-				<div class="switch-row">
-					<input type="checkbox" role="switch" class="switch" id="webhook-toggle" bind:checked={webhookEnabled} aria-describedby="webhook-toggle-help" />
-					<div>
-						<label class="label" for="webhook-toggle">Send alerts to a webhook</label>
-						<p class="field-help" id="webhook-toggle-help">NetTap POSTs a JSON message for each batch of alerts, with or without this page open. Turning it off keeps the URL.</p>
-					</div>
-				</div>
-
-				{#if webhookEnabled}
-					<div class="form-grid">
-						<div class="field">
-							<label class="label" for="webhook-url">Webhook URL</label>
-							<input
-								class="input mono"
-								id="webhook-url"
-								type="url"
-								bind:value={webhookUrl}
-								placeholder={webhookHasUrl ? `Saved (${webhookHint}): leave blank to keep it` : 'https://hooks.example.com/nettap'}
-							/>
-							<p class="field-help">http:// or https:// only. An address on your network works (ntfy, Gotify).</p>
-						</div>
-					</div>
-				{/if}
-
-				<div class="switch-row">
-					<input type="checkbox" role="switch" class="switch" id="email-toggle" bind:checked={emailEnabled} aria-describedby="email-toggle-help" />
-					<div>
-						<label class="label" for="email-toggle">Enable email alerts</label>
-						<p class="field-help" id="email-toggle-help">Send alert notifications to the addresses below, through the SMTP server in API keys.</p>
-					</div>
-				</div>
-
-				{#if emailEnabled}
-					{#if !smtpConfigured}
-						<p class="notice is-warn" role="status"><Icon name="warn" /><span>Email needs an SMTP server: set it in the API keys tab first.</span></p>
-					{/if}
-					<div class="form-grid">
-						<div class="field">
-							<!-- OLD CODE: <label …>Recipient email</label> with type="email" (NET-224: several recipients, comma-separated) -->
-							<label class="label" for="email-address">Recipient emails</label>
-							<input class="input" id="email-address" type="text" bind:value={emailAddress} placeholder="admin@example.com, ops@example.com" />
-						</div>
-					</div>
-				{/if}
-
-				<div class="form-actions">
-					<!-- OLD CODE: <button … disabled={testingSending}> (review L3: it tested the saved settings, whatever the form said) -->
-					<button class="btn" type="button" onclick={sendTestNotification} disabled={testingSending || notifUnsaved} aria-describedby={notifUnsaved ? 'notif-test-help' : undefined}>
-						{testingSending ? 'Sending…' : 'Send test notification'}
-					</button>
-					<button class="btn primary" type="button" onclick={saveNotifications} disabled={notifSaving || notifLoadFailed}>
-						{notifSaving ? 'Saving…' : 'Save notification settings'}
-					</button>
-				</div>
-				{#if notifUnsaved}
-					<p class="field-help" id="notif-test-help">Save first: the test uses the saved settings.</p>
-				{/if}
-				{@render feedback(testMessage, testError)}
-			</div>
-		</Card>
-	{:else if activeTab === 'retention'}
-		<!-- OLD CODE: sub="Storage status · read when this page opened" (NET-192 PR 4: the top bar's Refresh reads it again) -->
-		<Card title="Retention health" sub="Storage status · read when the page opened or was refreshed" class="c-4">
-			{#snippet actions()}
-				{#if !storageLoading}
-					<!-- OLD CODE START — no unknown state
-					{retentionHealth.status === 'healthy' ? 'Healthy' : retentionHealth.status === 'attention' ? 'Attention' : 'Problem'}
-					OLD CODE END -->
-					<span class={['chip', { healthy: 'is-ok', attention: 'is-warn', problem: 'is-bad', unknown: '' }[retentionHealth.status]]}>
-						{{ healthy: 'Healthy', attention: 'Attention', problem: 'Problem', unknown: 'Unknown' }[retentionHealth.status]}
+	<div class="settings-body">
+		{#if pending && (busy || dirty)}
+			<div class="notice is-warn leave-bar" role="alert" tabindex="-1" bind:this={bar}>
+				<Icon name="warn" />
+				{#if busy}
+					<!-- OLD CODE: <span>Saving your changes… wait for this to finish before leaving the tab.</span> (review M2: a test send holds it too) -->
+					<span>Sending your change… wait for it to finish before leaving the tab.</span>
+				{:else}
+					<span>You have unsaved changes in {active.label}.</span>
+					<span class="leave-actions">
+						<!-- OLD CODE: onclick={() => (pending = null)} (review L3: focus goes back where it was) -->
+						<button class="btn" type="button" onclick={keepEditing}>Keep editing</button>
+						<button class="btn" type="button" onclick={discard}>Discard and continue</button>
 					</span>
 				{/if}
-			{/snippet}
-			{#if storageLoading}
-				<CardState state="loading" title="Loading the storage status" />
-			{:else if storageStatusFailed && ilmStatus === null && lastPruneAt === null}
-				<CardState state="error" title={loadFailed('the storage status')} message="Check that NetTap is running on the System page, then reload." />
-			{:else}
-				{#if storageStatusFailed}
-					<!-- OLD CODE: {@render feedback(loadFailed('the storage status', true), true)} (a red role="alert" box; stale figures are an amber status, NET-192 PR 4) -->
-					<p class="notice is-warn" role="status"><Icon name="warn" /><span>{loadFailed('the storage status', true)}</span></p>
-				{/if}
-				<dl class="facts flush">
-					<dt>ILM policies</dt>
-					<dd>
-						{#if ilmStatus === null}
-							<span class="dim">Not reported</span>
-						{:else if retentionHealth.ilmPending}
-							<span class="chip">Syncing…</span>
-						{:else if retentionHealth.ilmOk}
-							<!-- OLD CODE START — 2026-11-02: read "All 1 synced" with one policy
-							<span style="color: var(--green);">&#x2713; All {Object.keys(ilmStatus.policies).length || 3} synced</span>
-							OLD CODE END -->
-							{@const policyCount = Object.keys(ilmStatus.policies).length}
-							<span class="chip is-ok"><Icon name="check" />{policyCount === 1 ? 'Policy synced' : `${policyCount || 'All'} policies synced`}</span>
-						{:else}
-							<span class="chip is-bad"><Icon name="warn" />Out of sync</span>
-						{/if}
-						{#if ilmStatus && !retentionHealth.ilmOk && ilmStatus.last_error}
-							<!-- A15: the real reason, not the last success -->
-							<p class="dim ilm-error">
-								{ilmStatus.last_attempt ? `Last try ${timeAgo(ilmStatus.last_attempt)}: ` : ''}{ilmStatus.last_error}{retentionHealth.ilmPending ? ' NetTap tries again automatically.' : ''}
-							</p>
-						{/if}
-					</dd>
-					<dt>Disk usage</dt>
-					<dd>
-						{#if diskUsage !== null}
-							<span class="num">{diskUsage}%</span> <span class="dim">· warning at {retentionConfig.disk_threshold}%</span>
-						{:else}
-							<span class="dim">Unavailable</span>
-						{/if}
-					</dd>
-					<dt>Last prune</dt>
-					<dd>
-						{#if lastPruneAt}
-							<span class="num">{timeAgo(lastPruneAt)}</span>
-						{:else}
-							<span class="dim">Never (daemon starting…)</span>
-						{/if}
-					</dd>
-				</dl>
-				{#if diskUsage !== null}
-					<div class="meter-row"><Meter value={diskUsage} label="Disk used" /></div>
-				{/if}
-			{/if}
-		</Card>
-
-		<Card title="Data retention policy" sub="Days kept per tier · disk thresholds in %" class="c-8">
-			<div class="stack">
-				{#if retentionLoad === 'failed'}
-					{@render feedback('Could not load the current retention settings, so saving is off. Reload the page to try again.', true)}
-				{/if}
-				{@render feedback(retentionMessage, retentionError)}
-
-				<div class="form-grid">
-					<div class="field">
-						<!-- OLD CODE START — 2026-11-02: Malcolm writes Zeek and Suricata to one daily
-						     arkime_sessions3 index, so this setting governs alerts too
-						<label class="label" for="hot-days">Hot Tier (Zeek metadata)</label>
-						OLD CODE END -->
-						<label class="label" for="hot-days">Hot tier (Zeek metadata and Suricata alerts)</label>
-						<div class="unit-field">
-							<input class="input" id="hot-days" type="number" bind:value={retentionConfig.hot_days} min={7} max={365} />
-							<span class="dim">days</span>
-						</div>
-						<p class="field-help">Zeek logs and Suricata alerts share one daily index, so both are deleted after this many days.</p>
-					</div>
-					<div class="field">
-						<!-- OLD CODE START — 2026-11-02: no Malcolm index is warm; alerts follow the Hot tier
-						<label class="label" for="warm-days">Warm Tier (Suricata alerts)</label>
-						OLD CODE END -->
-						<label class="label" for="warm-days">Warm tier (separate Suricata indices)</label>
-						<div class="unit-field">
-							<input class="input" id="warm-days" type="number" bind:value={retentionConfig.warm_days} min={7} max={730} />
-							<span class="dim">days</span>
-						</div>
-						<p class="field-help">Applies only to separate <span class="mono">suricata-*</span> indices, which this install doesn't create. Alerts follow the Hot tier.</p>
-					</div>
-					<div class="field">
-						<label class="label" for="cold-days">Cold tier (PCAP files)</label>
-						<div class="unit-field">
-							<input class="input" id="cold-days" type="number" bind:value={retentionConfig.cold_days} min={1} max={365} />
-							<span class="dim">days</span>
-						</div>
-						<p class="field-help">Raw packet captures of all traffic. The oldest files also go once PCAP passes its share of the disk.</p>
-					</div>
-				</div>
-
-				<div class="form-grid">
-					<div class="field">
-						<label class="label" for="disk-threshold">Disk warning threshold</label>
-						<div class="unit-field">
-							<input class="input" id="disk-threshold" type="number" bind:value={retentionConfig.disk_threshold} min={50} max={95} />
-							<span class="dim">%</span>
-						</div>
-						<p class="field-help">Start pruning old data when disk usage exceeds this.</p>
-					</div>
-					<div class="field">
-						<label class="label" for="emergency-threshold">Emergency threshold</label>
-						<div class="unit-field">
-							<input class="input" id="emergency-threshold" type="number" bind:value={retentionConfig.emergency_threshold} min={60} max={99} />
-							<span class="dim">%</span>
-						</div>
-						<p class="field-help">Aggressive pruning regardless of tier when disk exceeds this.</p>
-					</div>
-				</div>
-
-				<div class="form-actions">
-					<button class="btn primary" type="button" onclick={saveRetention} disabled={retentionSaving || retentionLoad !== 'ok'}>
-						{retentionSaving ? 'Saving…' : 'Save retention settings'}
-					</button>
-				</div>
 			</div>
-		</Card>
+		{/if}
 
-		<Card title="Manual data cleanup" sub="Deletes OpenSearch indices and PCAP files · cannot be undone" class="c-12">
-			<div class="stack">
-				<p class="field-help">Permanently delete OpenSearch indices and PCAP files older than a specified number of days to free up disk space.</p>
-				{@render feedback(cleanupMessage, cleanupError)}
-
-				<div class="inline-row">
-					<span>Delete data older than</span>
-					<div class="unit-field">
-						<!-- OLD CODE START — editing the days left the old preview (and its Delete button) on screen
-						<input class="input" type="number" bind:value={cleanupDays} min={1} max={3650} disabled={cleanupExecuting} />
-						OLD CODE END -->
-						<input
-							class="input"
-							type="number"
-							aria-label="Delete data older than (days)"
-							bind:value={cleanupDays}
-							oninput={cancelCleanup}
-							min={1}
-							max={3650}
-							disabled={cleanupExecuting || cleanupPreviewing}
-						/>
-						<span class="dim">days</span>
-					</div>
-					<button class="btn" type="button" onclick={handleCleanupPreview} disabled={cleanupPreviewing || cleanupExecuting || cleanupDays < 1}>
-						{cleanupPreviewing ? 'Scanning…' : 'Preview cleanup'}
-					</button>
-				</div>
-
-				{#if cleanupPreview}
-					<section class="preview" aria-labelledby="cleanup-preview-title">
-						<div class="preview-head">
-							<h3 class="eyebrow" id="cleanup-preview-title">Cleanup preview</h3>
-							<span class="dim">Data before {formatTime(cleanupPreview.cutoff_date, 'date')}</span>
-						</div>
-						<StatStrip
-							stats={[
-								{ key: 'indices', label: 'Indices', value: String(cleanupPreview.total_indices) },
-								{ key: 'pcap', label: 'PCAP files', value: String(cleanupPreview.total_pcap_files) },
-								{ key: 'freed', label: 'Space freed', value: formatBytes(cleanupPreview.estimated_freed_bytes) },
-							]}
-						/>
-
-						{#if cleanupPreview.total_indices === 0 && cleanupPreview.total_pcap_files === 0}
-							<p class="dim">No data found older than {cleanupPreviewDays} days.</p>
-						{:else if !showCleanupConfirm}
-							{@render feedback('This action is irreversible. Deleted data cannot be recovered.', true)}
-							<div class="form-actions">
-								<button class="btn" type="button" onclick={cancelCleanup}>Cancel</button>
-								<button class="btn danger" type="button" onclick={() => (showCleanupConfirm = true)}>Delete data</button>
-							</div>
-						{:else}
-							{@render feedback(
-								`Are you sure? This will permanently delete ${cleanupPreview.total_indices} indices and ${cleanupPreview.total_pcap_files} PCAP files (${formatBytes(cleanupPreview.estimated_freed_bytes)}).`,
-								true,
-							)}
-							<div class="form-actions">
-								<button class="btn" type="button" onclick={cancelCleanup} disabled={cleanupExecuting}>Cancel</button>
-								<button class="btn danger" type="button" onclick={handleCleanupExecute} disabled={cleanupExecuting}>
-									{cleanupExecuting ? 'Deleting…' : 'Confirm delete'}
-								</button>
-							</div>
-						{/if}
-					</section>
-				{/if}
-			</div>
-		</Card>
-	{:else if activeTab === 'capture'}
-		<!-- OLD CODE: sub="Packet capture container · file size in MB" (NET-166: netsniff-ng counts MiB) -->
-		<Card title="PCAP capture" sub="Packet capture container · file size in MiB" class="c-12">
-			{#if captureLoading}
-				<CardState state="loading" title="Loading capture settings" />
-			{:else if captureLoadFailed}
-				<CardState state="error" title="Could not load the current capture settings, so changes are off." message="Reload the page to try again." />
-			{:else}
-				<div class="stack">
-					{@render feedback(captureMessage, captureError)}
-					<dl class="facts flush">
-						<dt>Container status</dt>
-						<dd>
-							{#if captureContainerRunning}
-								<span class="chip is-ok"><Icon name="check" />Running</span>
-							{:else}
-								<span class="chip">{captureContainerStatus}</span>
-							{/if}
-						</dd>
-					</dl>
-
-					<div class="switch-row">
-						<!-- the API decides the state: the click is cancelled and the switch follows the answer -->
-						<input
-							type="checkbox"
-							role="switch"
-							class="switch"
-							id="capture-toggle"
-							checked={captureEnabled}
-							disabled={captureToggling}
-							aria-describedby="capture-toggle-help"
-							onclick={(e) => {
-								e.preventDefault();
-								handleCaptureToggle();
-							}}
-						/>
-						<div>
-							<label class="label" for="capture-toggle">PCAP collection</label>
-							<!-- OLD CODE START — claimed "capturing packets" even with the container stopped
-							<span class="capture-toggle-label">{captureEnabled ? 'Enabled — capturing packets' : 'Disabled — no new captures'}</span>
-							OLD CODE END -->
-							<p class="state-line">
-								{#if !captureEnabled}
-									Disabled — no new captures
-								{:else if captureContainerRunning}
-									Enabled — capturing packets
-								{:else if captureContainerStatus === 'unknown'}
-									Enabled — capture status unknown
-								{:else}
-									Enabled — capture container not running
-								{/if}
-							</p>
-							<p class="field-help" id="capture-toggle-help">When disabled, the capture container is stopped. Existing PCAP files remain accessible.</p>
-						</div>
-					</div>
-
-					<div class="form-grid">
-						<div class="field">
-							<label class="label" for="max-file-size">Max file size</label>
-							<div class="unit-field">
-								<input class="input" id="max-file-size" type="number" bind:value={captureMaxFileSize} min={10} max={10000} />
-								<!-- OLD CODE: <span class="dim">MB</span> (NET-166: netsniff-ng's PCAP_ROTATE_MB counts mebibytes) -->
-								<span class="dim">MiB</span>
-							</div>
-							<!-- OLD CODE START — 2026-11-02: the 100 MB default was never what netsniff used
-							<p class="field-help">Individual PCAP files rotate at this size. Default: 100 MB. Range: 10–10,000 MB.</p>
-							OLD CODE END -->
-							<!-- OLD CODE START — 2026-11-06 (NET-166): said MB, but netsniff-ng counts MiB
-							<p class="field-help">
-								A new file starts at this size{captureRotateMinutes ? ` or every ${captureRotateMinutes} minutes, whichever comes first` : ''}. Range: 10–10,000 MB.
-							</p>
-							OLD CODE END -->
-							<p class="field-help">
-								A new file starts at this size{captureRotateMinutes ? ` or every ${captureRotateMinutes} minutes, whichever comes first` : ''}. Range: 10–10,000 MiB.
-								1 MiB is 1,048,576 bytes, so a 256 MiB file shows as 268.4 MB on the PCAP page.
-							</p>
-						</div>
-					</div>
-
-					<div class="form-actions">
-						<button class="btn primary" type="button" onclick={saveCaptureSettings} disabled={captureSaving}>
-							{captureSaving ? 'Saving…' : 'Save capture settings'}
-						</button>
-					</div>
-				</div>
-			{/if}
-		</Card>
-		<LiveBandwidthCard />
-	{:else if activeTab === 'api-keys'}
-		<Card title="API keys and credentials" sub="Stored on this NetTap · never shown after saving" class="c-12">
-			{#if apiKeysLoading}
-				<CardState state="loading" title="Loading API key status" />
-			{:else}
-				<div class="stack">
-					<p class="field-help">
-						Configure external service credentials. Keys are stored securely on disk and never displayed after saving.
-						Fields marked "Configured" already have a value saved: leave the input blank to keep the existing value.
-					</p>
-					{@render feedback(apiKeysMessage, apiKeysError)}
-
-					<section class="key-group" aria-labelledby="keys-geoip">
-						<h3 class="eyebrow" id="keys-geoip">GeoIP lookups</h3>
-						<div class="form-grid">
-							<div class="field">
-								<div class="label-row"><label class="label" for="maxmind-key">MaxMind licence key</label>{@render configured(apiKeysStatus['MAXMIND_LICENSE_KEY'])}</div>
-								<input
-									class="input mono"
-									id="maxmind-key"
-									type="password"
-									bind:value={apiKeyValues['MAXMIND_LICENSE_KEY']}
-									placeholder={apiKeysStatus['MAXMIND_LICENSE_KEY'] ? 'Leave blank to keep current value' : 'Enter MaxMind licence key'}
-								/>
-								<p class="field-help">Required for GeoIP map visualisations. Get a free key at <a class="link" href="https://www.maxmind.com/en/geolite2/signup" target="_blank" rel="noopener">maxmind.com</a>.</p>
-							</div>
-						</div>
-					</section>
-
-					<section class="key-group" aria-labelledby="keys-ids">
-						<h3 class="eyebrow" id="keys-ids">IDS rules</h3>
-						<!-- OLD CODE START — NET-191 slice 2: this key was saved to the daemon's env file and never reached Suricata.
-						     The ET Pro code has one place now, Settings › Suricata rules.
-						<div class="form-grid">
-							<div class="field">
-								<div class="label-row"><label class="label" for="et-pro-key">Emerging Threats Pro key</label>{@render configured(apiKeysStatus['SURICATA_ET_PRO_KEY'])}</div>
-								<input
-									class="input mono"
-									id="et-pro-key"
-									type="password"
-									bind:value={apiKeyValues['SURICATA_ET_PRO_KEY']}
-									placeholder={apiKeysStatus['SURICATA_ET_PRO_KEY'] ? 'Leave blank to keep current value' : 'Enter ET Pro key (optional)'}
-								/>
-								<p class="field-help">Optional. Enables Proofpoint's commercial Suricata ruleset. Free ET Open rules are used by default.</p>
-							</div>
-						</div>
-						OLD CODE END -->
-						<p class="field-help">
-							The optional Emerging Threats Pro code is set in <a class="link" href="/settings/suricata-rules">Settings › Suricata rules</a>,
-							which checks it with Proofpoint before Suricata uses it.
-						</p>
-					</section>
-
-					<section class="key-group" aria-labelledby="keys-smtp">
-						<h3 class="eyebrow" id="keys-smtp">SMTP (email alerts)</h3>
-						<p class="field-help">Required for email notifications. Configure your SMTP server details below, then enable email alerts in the Notifications tab.</p>
-						<div class="form-grid">
-							<div class="field">
-								<div class="label-row"><label class="label" for="smtp-host">SMTP host</label>{@render configured(apiKeysStatus['SMTP_HOST'])}</div>
-								<input class="input mono" id="smtp-host" type="text" bind:value={apiKeyValues['SMTP_HOST']} placeholder={apiKeysStatus['SMTP_HOST'] ? 'Leave blank to keep current' : 'smtp.gmail.com'} />
-								<p class="field-help">SMTP server hostname.</p>
-							</div>
-							<div class="field">
-								<div class="label-row"><label class="label" for="smtp-port">SMTP port</label>{@render configured(apiKeysStatus['SMTP_PORT'])}</div>
-								<input class="input mono" id="smtp-port" type="text" bind:value={apiKeyValues['SMTP_PORT']} placeholder={apiKeysStatus['SMTP_PORT'] ? 'Leave blank to keep current' : '587'} />
-								<p class="field-help">587 for STARTTLS, 465 for SSL/TLS.</p>
-							</div>
-							<div class="field">
-								<div class="label-row"><label class="label" for="smtp-username">SMTP username</label>{@render configured(apiKeysStatus['SMTP_USERNAME'])}</div>
-								<input class="input" id="smtp-username" type="text" bind:value={apiKeyValues['SMTP_USERNAME']} placeholder={apiKeysStatus['SMTP_USERNAME'] ? 'Leave blank to keep current' : 'user@example.com'} />
-								<p class="field-help">Your SMTP login username or email.</p>
-							</div>
-							<div class="field">
-								<div class="label-row"><label class="label" for="smtp-password">SMTP password</label>{@render configured(apiKeysStatus['SMTP_PASSWORD'])}</div>
-								<input class="input" id="smtp-password" type="password" bind:value={apiKeyValues['SMTP_PASSWORD']} placeholder={apiKeysStatus['SMTP_PASSWORD'] ? 'Leave blank to keep current' : 'App password or SMTP password'} />
-								<p class="field-help">For Gmail, use an App Password (not your account password).</p>
-							</div>
-							<div class="field">
-								<div class="label-row"><label class="label" for="smtp-sender">Sender email</label>{@render configured(apiKeysStatus['SMTP_SENDER_EMAIL'])}</div>
-								<input class="input" id="smtp-sender" type="email" bind:value={apiKeyValues['SMTP_SENDER_EMAIL']} placeholder={apiKeysStatus['SMTP_SENDER_EMAIL'] ? 'Leave blank to keep current' : 'nettap@example.com'} />
-								<p class="field-help">The "From" address on alert emails.</p>
-							</div>
-						</div>
-					</section>
-
-					<!-- OLD CODE START — NET-224: nothing read this URL; the Notifications tab sets the webhook the daemon uses
-					<section class="key-group" aria-labelledby="keys-webhook">
-						<h3 class="eyebrow" id="keys-webhook">Webhook</h3>
-						<div class="form-grid">
-							<div class="field">
-								<div class="label-row"><label class="label" for="webhook-url-keys">Webhook URL</label>{@render configured(apiKeysStatus['WEBHOOK_URL'])}</div>
-								<input
-									class="input mono"
-									id="webhook-url-keys"
-									type="url"
-									bind:value={apiKeyValues['WEBHOOK_URL']}
-									placeholder={apiKeysStatus['WEBHOOK_URL'] ? 'Leave blank to keep current' : 'https://hooks.slack.com/services/…'}
-								/>
-								<p class="field-help">Also configurable in the Notifications tab. JSON alert payloads are POSTed here.</p>
-							</div>
-						</div>
-					</section>
-					OLD CODE END -->
-
-					<div class="form-actions">
-						<button class="btn primary" type="button" onclick={saveApiKeys} disabled={apiKeysSaving}>
-							{apiKeysSaving ? 'Saving…' : 'Save API keys'}
-						</button>
-					</div>
-				</div>
-			{/if}
-		</Card>
-	{:else if activeTab === 'network'}
-		<LocationCard />
-		<Card title="Excluded IPs" sub="Hidden from device views · still in logs, alerts and connections" class="c-12">
-			{#if networkLoading}
-				<CardState state="loading" title="Loading the excluded IP list" />
-			{:else if networkLoadFailed}
-				<CardState state="error" title="Could not load the excluded IP list, so changes are off." message="Reload the page to try again." />
-			{:else}
-				<div class="stack">
-					<p class="field-help">
-						IPs in this list are hidden from device-centric views (Devices, Top Talkers, Risk Scores) but remain visible in Log Explorer, Alerts, and raw connection data.
-						Useful for filtering out your ISP gateway's public IP or infrastructure addresses that appear on every connection.
-					</p>
-					{@render feedback(networkMessage, networkError)}
-
-					<div class="field">
-						<label class="label" for="excluded-ip-new">IP address to exclude</label>
-						<div class="inline-row">
-							<input
-								class="input mono"
-								id="excluded-ip-new"
-								type="text"
-								bind:value={newExcludedIp}
-								placeholder="e.g. 203.0.113.10"
-								onkeydown={(e) => {
-									if (e.key === 'Enter') addExcludedIp();
-								}}
-							/>
-							<button class="btn" type="button" onclick={addExcludedIp}>Add</button>
-						</div>
-					</div>
-
-					{#if applianceIp}
-						<p class="dim">NetTap's own address, <span class="mono">{applianceIp}</span>, is always left out and isn't listed here.</p>
-					{/if}
-					{#if excludedIps.length === 0}
-						<p class="dim">No IPs excluded. All IPs appear in device views.</p>
+		<!-- Ten stable panels, so every tab's aria-controls resolves; only the open one has its component -->
+		{#each SETTINGS_TABS as tab (tab.id)}
+			<div
+				class="settings-panel"
+				role="tabpanel"
+				id="settings-panel-{tab.id}"
+				aria-labelledby="settings-tab-{tab.id}"
+				tabindex="0"
+				hidden={tab.id !== activeTab}
+			>
+				{#if tab.id === activeTab}
+					<p class="panel-intro"><span class="eyebrow">{tab.group}</span><span>{tab.intro}</span></p>
+					<!-- review M1: Discard on the open tab remounts it, so its form reloads the saved values -->
+					{#key epoch}
+					{#if tab.id === 'notifications'}
+						<NotificationsTab bind:dirty bind:busy />
+					{:else if tab.id === 'suricata-rules'}
+						<SuricataRulesTab bind:dirty bind:busy />
+					{:else if tab.id === 'retention'}
+						<RetentionTab bind:dirty bind:busy />
+					{:else if tab.id === 'capture'}
+						<CaptureTab bind:dirty bind:busy />
+					{:else if tab.id === 'backup'}
+						<BackupTab bind:busy />
+					{:else if tab.id === 'network'}
+						<NetworkTab bind:dirty bind:busy />
+					{:else if tab.id === 'integrations'}
+						<IntegrationsTab bind:dirty bind:busy />
+					{:else if tab.id === 'api-keys'}
+						<ApiKeysTab bind:dirty bind:busy />
+					{:else if tab.id === 'display'}
+						<DisplayTab bind:dirty />
 					{:else}
-						<ul class="ip-list" aria-label="Excluded IPs">
-							{#each excludedIps as ip (ip)}
-								<li>
-									<span class="mono">{ip}</span>
-									<button class="icon-btn ghost" type="button" aria-label="Remove {ip}" onclick={() => removeExcludedIp(ip)}><Icon name="close" /></button>
-								</li>
-							{/each}
-						</ul>
+						<AboutTab />
 					{/if}
-
-					<div class="form-actions">
-						<button class="btn primary" type="button" onclick={saveExcludedIps} disabled={networkSaving}>
-							{networkSaving ? 'Saving…' : 'Save excluded IPs'}
-						</button>
-					</div>
-				</div>
-			{/if}
-		</Card>
-	{:else if activeTab === 'integrations'}
-		<Card title="UniFi controller" sub="Device names, models and networks from UniFi · API key sign-in" class="c-12">
-			{#snippet actions()}
-				{#if unifiConfigured}
-					<span class={['chip', unifiConnected ? 'is-ok' : 'is-bad']}>
-						<Icon name={unifiConnected ? 'check' : 'warn'} />{unifiConnected ? 'Connected' : 'Disconnected'}
-					</span>
+					{/key}
 				{/if}
-			{/snippet}
-			{#if unifiLoading}
-				<CardState state="loading" title="Loading UniFi status" />
-			{:else}
-				<div class="stack">
-					<p class="field-help">
-						Connect to your UniFi controller to enrich device data with friendly names, models, and network assignments. Uses API key authentication (UniFi OS 10.2.93+).
-					</p>
-					{@render feedback(unifiMessage, unifiError)}
-					{#if unifiStatusFailed}
-						<div class="notice is-warn" role="status"><Icon name="warn" />{loadFailed('the UniFi status')} The controller may already be set up.</div>
-					{/if}
-
-					{#if unifiConfigured && (unifiCacheCounts || unifiLastPoll)}
-						<StatStrip
-							stats={[
-								...(unifiCacheCounts
-									? [
-											{ key: 'clients', label: 'Cached clients', value: String(unifiCacheCounts.clients) },
-											{ key: 'devices', label: 'Cached devices', value: String(unifiCacheCounts.devices) },
-										]
-									: []),
-								...(unifiLastPoll ? [{ key: 'poll', label: 'Last poll', value: formatUnifiPollTime(unifiLastPoll) }] : []),
-							]}
-						/>
-					{/if}
-
-					<div class="form-grid">
-						<div class="field">
-							<label class="label" for="unifi-url">Controller URL</label>
-							<input class="input mono" id="unifi-url" type="url" bind:value={unifiControllerUrl} placeholder="https://192.168.1.1" />
-							<p class="field-help">Full URL to your UniFi controller (e.g. https://192.168.1.1 or https://unifi.local:8443).</p>
-						</div>
-
-						<div class="field">
-							<div class="label-row"><label class="label" for="unifi-api-key">API key</label>{@render configured(unifiConfigured)}</div>
-							<input
-								class="input mono"
-								id="unifi-api-key"
-								type="password"
-								bind:value={unifiApiKey}
-								placeholder={unifiConfigured ? 'Leave blank to keep current key' : 'Paste your UniFi API key'}
-								autocomplete="off"
-								spellcheck="false"
-							/>
-							<p class="field-help">
-								Generate an API key in UniFi OS: Settings · System · Advanced · API Key.
-								{#if unifiConfigured}
-									Leave blank to keep the currently saved key.
-								{/if}
-							</p>
-						</div>
-
-						<div class="field">
-							<label class="label" for="unifi-site">Site</label>
-							{#if unifiSites.length > 0}
-								<select class="select" id="unifi-site" bind:value={unifiSiteId}>
-									<option value="">Select a site…</option>
-									{#each unifiSites as site (site.id)}
-										<option value={site.id}>{site.desc || site.name || site.id}</option>
-									{/each}
-								</select>
-								<p class="field-help">Select which UniFi site to poll for device data.</p>
-							{:else if unifiSitesLoading}
-								<p class="field-help">Loading sites…</p>
-							{:else}
-								<input class="input mono" id="unifi-site" type="text" bind:value={unifiSiteId} placeholder="default" />
-								<p class="field-help">Enter a site ID manually, or save and test the connection to auto-discover sites. Most setups use "default".</p>
-							{/if}
-						</div>
-					</div>
-
-					<div class="form-actions">
-						{#if unifiConfigured}
-							<button class="btn" type="button" onclick={testUnifiConnection} disabled={unifiTesting || unifiSaving}>
-								{unifiTesting ? 'Testing…' : 'Test connection'}
-							</button>
-						{/if}
-						<button class="btn primary" type="button" onclick={saveUnifiConfig} disabled={unifiSaving || unifiTesting}>
-							{unifiSaving ? 'Saving…' : 'Save configuration'}
-						</button>
-					</div>
-				</div>
-			{/if}
-		</Card>
-	{:else if activeTab === 'display'}
-		<!-- OLD CODE: sub="Theme, refresh and time settings · saved in this browser" (NET-195: the refresh and timezone controls are gone) -->
-		<!-- OLD CODE: sub="Theme and the default time range · saved in this browser" (the Live map choice joined them) -->
-		<Card title="Display preferences" sub="Theme, the default time range and the Live map · saved in this browser" class="c-12">
-			<div class="stack">
-				<ThemePicker />
-				{@render feedback(displayMessage, displayError)}
-
-				<div class="form-grid">
-					<!-- OLD CODE START — NET-195: no page read these; each page owns its Auto toggle, and times are browser-local
-					<div class="field">
-						<label class="label" for="auto-refresh">Auto-refresh interval</label>
-						<select class="select" id="auto-refresh" bind:value={autoRefresh}>
-							<option value="0">Off</option>
-							<option value="10">10 seconds</option>
-							<option value="30">30 seconds</option>
-							<option value="60">1 minute</option>
-							<option value="300">5 minutes</option>
-						</select>
-						<p class="field-help">How often dashboards auto-refresh data.</p>
-					</div>
-					<div class="field">
-						<label class="label" for="timezone">Timezone</label>
-						<select class="select" id="timezone" bind:value={timezone}>
-							<option value="utc">UTC</option>
-							<option value="local">Local (browser)</option>
-						</select>
-						<p class="field-help">Timezone used for displaying timestamps.</p>
-					</div>
-					OLD CODE END -->
-					<div class="field">
-						<label class="label" for="default-range">Default time range</label>
-						<!-- OLD CODE: bind:value={defaultTimeRange} (NET-195: saved as defaultRange, '' for each page's own) -->
-						<select class="select" id="default-range" bind:value={defaultRange}>
-							<!-- OLD CODE START — NET-192 PR 4: one range set across the app (1h 6h 24h 7d 30d)
-							<option value="15m">Last 15 minutes</option>
-							<option value="1h">Last 1 hour</option>
-							<option value="4h">Last 4 hours</option>
-							<option value="24h">Last 24 hours</option>
-							<option value="7d">Last 7 days</option>
-							OLD CODE END -->
-							<!-- OLD CODE START — NET-195: from DRILL_RANGES, after "Each page's own"
-							<option value="1h">Last hour</option>
-							<option value="6h">Last 6 hours</option>
-							<option value="24h">Last 24 hours</option>
-							<option value="7d">Last 7 days</option>
-							<option value="30d">Last 30 days</option>
-							OLD CODE END -->
-							<option value="">Each page's own (most open on 24 hours)</option>
-							{#each DRILL_RANGES as r (r.value)}
-								<option value={r.value}>{r.words.charAt(0).toUpperCase() + r.words.slice(1)}</option>
-							{/each}
-						</select>
-						<!-- OLD CODE: <p class="field-help">Default time window for traffic and alert views.</p> (NET-195) -->
-						<p class="field-help">
-							The window traffic, alert and device pages open on. A link from a figure still opens on that figure's window.
-							PCAP and Certificates keep their own (1 hour, 7 days).
-						</p>
-					</div>
-					<div class="field">
-						<label class="label" for="live-map">Live map</label>
-						<select class="select" id="live-map" bind:value={liveMap}>
-							<option value="globe">3D globe</option>
-							<option value="flat">Flat map (lighter on this computer)</option>
-						</select>
-						<p class="field-help">
-							The globe draws with WebGPU, or WebGL 2 where WebGPU is missing, and shows the flat map by itself when this browser can do
-							neither. Pick the flat map to save this computer's graphics and battery.
-						</p>
-					</div>
-				</div>
-
-				<div class="form-actions">
-					<button class="btn primary" type="button" onclick={saveDisplay} disabled={displaySaving}>
-						{displaySaving ? 'Saving…' : 'Save display settings'}
-					</button>
-				</div>
 			</div>
-		</Card>
-	{:else if activeTab === 'about'}
-		<!-- OLD CODE: sub="This appliance · read when this page opened" (NET-192 PR 4: the top bar's Refresh reads it again) -->
-		<Card title="About NetTap" sub="This appliance · read when the page opened or was refreshed" class="c-6">
-			<dl class="facts flush">
-				<dt>Version</dt>
-				<dd class="mono">{version}</dd>
-				<dt>Uptime</dt>
-				<dd class="num">{uptime}</dd>
-				<dt>Licence</dt>
-				<dd>GNU GPLv3 (version 3 only)</dd>
-				<dt>Stack</dt>
-				<!-- OLD CODE: Zeek + Suricata + Arkime + OpenSearch (Arkime off by default since 2026-11-02, #44) -->
-				<dd>Zeek + Suricata + OpenSearch</dd>
-				{#if buildInfo}
-					<dt>Build</dt>
-					<dd class="mono">{buildInfo}</dd>
-				{/if}
-			</dl>
-			<div class="form-actions">
-				<a href="https://github.com/EliasMarine/NetTap" target="_blank" rel="noopener" class="btn">GitHub repository</a>
-				<a href="https://github.com/EliasMarine/NetTap/wiki" target="_blank" rel="noopener" class="btn">Documentation</a>
-			</div>
-		</Card>
-	{/if}
+		{/each}
+	</div>
 </div>
 
 <style>
-	/* Eight tabs overflow a phone: the tab row scrolls on its own, never the page */
+	/* OLD CODE START — NET-273: the Pills row and the single panel are gone; the shared form rules
+	   moved to settings.css and each tab's own rules moved with it
 	.tabs-scroll {
 		overflow-x: auto;
 		padding: var(--sp-1);
@@ -1813,109 +303,66 @@
 		outline-offset: 2px;
 		border-radius: var(--r-lg);
 	}
+	OLD CODE END */
 
-	.facts.flush {
-		border-top: 0;
-		padding-top: 0;
+	/* The menu as a rail beside the panel; on a phone it sits above as one scrolling row */
+	.settings-layout {
+		display: grid;
+		grid-template-columns: minmax(12rem, auto) minmax(0, 1fr);
+		gap: var(--sp-6);
+		align-items: start;
 	}
 
-	.switch-row {
+	.settings-body {
 		display: flex;
-		align-items: flex-start;
-		gap: var(--sp-3);
+		flex-direction: column;
+		gap: var(--sp-4);
+		min-width: 0;
 	}
 
-	.switch-row .label {
-		margin-bottom: 0;
+	.settings-panel:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: 2px;
+		border-radius: var(--r-lg);
 	}
 
-	.state-line {
+	.panel-intro {
+		display: flex;
+		flex-direction: column;
+		gap: var(--sp-1);
+		margin-bottom: var(--sp-4);
 		font-size: var(--text-sm);
 		color: var(--text-2);
 	}
 
-	.label-row {
-		display: flex;
+	/* Sticky and solid (the notice's tint over the page colour), so a held click always shows its bar (review M3) */
+	.leave-bar {
+		position: sticky;
+		top: var(--sp-2);
+		z-index: 1;
 		align-items: center;
-		justify-content: space-between;
-		gap: var(--sp-2);
-	}
-
-	.label-row .label {
-		margin-bottom: 0;
-	}
-
-	.unit-field,
-	.inline-row {
-		display: flex;
-		align-items: center;
-		gap: var(--sp-2);
 		flex-wrap: wrap;
+		background:
+			linear-gradient(color-mix(in srgb, var(--tone) 12%, transparent), color-mix(in srgb, var(--tone) 12%, transparent)),
+			var(--bg);
 	}
 
-	.unit-field .input {
-		width: 120px;
+	.leave-bar:focus-visible {
+		outline: 2px solid var(--focus);
+		outline-offset: 2px;
 	}
 
-	.inline-row .input {
-		flex: 1 1 220px;
-		max-width: 360px;
-	}
-
-	.ilm-error { margin-top: var(--sp-1); font-size: var(--text-sm); overflow-wrap: anywhere; }
-	.meter-row {
-		margin-top: var(--sp-4);
-	}
-
-	.preview {
-		display: flex;
-		flex-direction: column;
-		gap: var(--sp-4);
-		padding: var(--sp-4);
-		border-radius: var(--r-md);
-		background: var(--surface-2);
-		border: 1px solid var(--line);
-	}
-
-	.preview-head {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-		gap: var(--sp-3);
-		flex-wrap: wrap;
-		font-size: var(--text-xs);
-	}
-
-	.key-group {
-		display: flex;
-		flex-direction: column;
-		gap: var(--sp-3);
-		padding-top: var(--sp-4);
-		border-top: 1px solid var(--line);
-	}
-
-	.ip-list {
-		list-style: none;
-		margin: 0;
-		padding: 0;
+	.leave-actions {
 		display: flex;
 		flex-wrap: wrap;
 		gap: var(--sp-2);
+		margin-left: auto;
 	}
 
-	.ip-list li {
-		display: inline-flex;
-		align-items: center;
-		gap: var(--sp-1);
-		padding-left: var(--sp-3);
-		border-radius: var(--r-pill);
-		background: var(--surface-2);
-		border: 1px solid var(--line);
-		font-size: var(--text-sm);
-	}
-
-	/* The system has no destructive button: the word carries it, the colour backs it up */
-	.btn.danger {
-		color: var(--sev-critical);
+	@container app (max-width: 760px) {
+		.settings-layout {
+			grid-template-columns: minmax(0, 1fr);
+			gap: var(--sp-4);
+		}
 	}
 </style>

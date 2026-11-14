@@ -34,16 +34,23 @@
 		reload: () => Promise<unknown>;
 		/** True while a save runs. */
 		saving?: boolean;
+		/** NET-273: the editor's text differs from the file last loaded, so Settings can guard a tab switch. */
+		dirty?: boolean;
 	}
 
-	let { loaded, owner, failed, unmounted, busy, reload, saving = $bindable(false) }: Props = $props();
+	let { loaded, owner, failed, unmounted, busy, reload, saving = $bindable(false), dirty = $bindable(false) }: Props = $props();
 
 	type Result = { tone: 'is-ok' | 'is-warn' | 'is-error'; text: string; errors: OwnerRuleError[] };
 
 	// The editor's text. A new file from a refresh replaces it only while it is unedited.
 	let draft = $state('');
 	// The file text `draft` was last taken from; null before the first file lands
-	let base: string | null = null;
+	// OLD CODE: let base: string | null = null; (NET-273: state, so `dirty` follows it)
+	let base = $state<string | null>(null);
+	const unsaved = $derived(base !== null && draft !== base);
+	$effect(() => {
+		dirty = unsaved;
+	});
 	$effect.pre(() => {
 		const content = owner?.content;
 		if (content === undefined) return;
@@ -232,6 +239,7 @@
 				{/if}
 			{/if}
 			<div class="form-actions">
+				{#if unsaved}<span class="unsaved">Unsaved changes</span>{/if}
 				<button class="btn" type="button" onclick={handleCheck} disabled={busy || checking || saving}>
 					{checking ? 'Checking…' : 'Check rules'}
 				</button>

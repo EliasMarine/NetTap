@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/svelte';
 import { formatTime } from '$lib/utils/time';
-import Page from './+page.svelte';
+// OLD CODE: import Page from './+page.svelte'; (NET-273: the page is a Settings tab now)
+import Page from './SuricataRulesTab.svelte';
 
 /** NET-191 slice 2: the last rule update, suricata-update's sources and the ET Pro code. */
 
