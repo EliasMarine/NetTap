@@ -5,8 +5,10 @@
 	 * with one (`readUrlState`) it shows the daemon's answer. Every figure comes from the rows or
 	 * the daemon's reply and says what it covers.
 	 */
-	import { onDestroy, tick, untrack } from 'svelte';
-	import { goto } from '$app/navigation';
+	// OLD CODE: import { onDestroy, tick, untrack } from 'svelte'; (NET-276: afterNavigate replaced the URL effect)
+	import { onDestroy, tick } from 'svelte';
+	// OLD CODE: import { goto } from '$app/navigation'; (NET-276)
+	import { afterNavigate, goto } from '$app/navigation';
 	import { page as pageStore } from '$app/stores';
 	import { getCaptures, searchPackets, type CaptureFile, type CapturesResponse, type PacketSearchResult } from '$lib/api/packets';
 	import { fetchCaptureStatus, type CaptureStatus } from '$lib/api/capture';
@@ -50,6 +52,12 @@
 	let started = $state<number | null>(null);
 	let elapsed = $state<number | null>(null);
 	let ticker: ReturnType<typeof setInterval> | undefined;
+	/**
+	 * NET-276: the URL's search waits for Run. A search holds one of the daemon's two packet-reader slots for
+	 * up to ~45 s, and a link from another site makes this page ask for it from the same origin, so only a
+	 * navigation inside NetTap runs it straight away. True until one says so: nothing searches by default.
+	 */
+	let held = $state(true);
 
 	// ---- The question (first visit) ----
 	let question = $state<PacketQuestion>({
@@ -74,13 +82,24 @@
 	});
 
 	let appliedUrl: string | null = null;
-	$effect(() => {
+	// OLD CODE START — NET-276: loaded on any URL change, so a full load from another site's link searched at once
+	// $effect(() => {
+	// 	const key = $pageStore.url.search;
+	// 	untrack(() => {
+	// 		if (key === appliedUrl) return;
+	// 		appliedUrl = key;
+	// 		void refresh.run();
+	// 	});
+	// });
+	// OLD CODE END
+	// Runs on mount and after every navigation to a URL; 'enter' is a full load (a bookmark, a pasted link,
+	// another site, a new tab), every other type is a navigation inside NetTap (a link, goto, Back or Forward)
+	afterNavigate(({ type }) => {
 		const key = $pageStore.url.search;
-		untrack(() => {
-			if (key === appliedUrl) return;
-			appliedUrl = key;
-			void refresh.run();
-		});
+		if (key === appliedUrl) return;
+		appliedUrl = key;
+		held = type === 'enter';
+		void refresh.run();
 	});
 
 	function startTicker() {
@@ -123,7 +142,10 @@
 			}),
 		];
 
-		if (wanted && key) {
+		if (wanted && key && held) {
+			// NET-276: opened from outside NetTap; the search waits for Run, the captures and names still load
+			stopTicker();
+		} else if (wanted && key) {
 			// The same search again keeps its packets on screen until the new answer lands
 			if (result?.key !== key) result = null;
 			problem = null;
@@ -184,8 +206,9 @@
 		void goto(href);
 	}
 
-	/** The same search again from scratch: its captures changed, or the reader was busy. */
+	/** The same search again from scratch: its captures changed, the reader was busy, or it waited for Run. */
 	function rerun() {
+		held = false;
 		result = null;
 		void refresh.run();
 	}
@@ -250,6 +273,7 @@
 			result={result?.key === urlKey ? result.data : null}
 			problem={problem?.key === urlKey ? problem.problem : null}
 			{elapsed}
+			{held}
 			{captures}
 			{devices}
 			onsearch={search}

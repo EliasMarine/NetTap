@@ -18,7 +18,13 @@ vi.mock('$app/stores', async () => {
 	return { page: pageStore.value };
 });
 const goto = vi.hoisted(() => vi.fn());
-vi.mock('$app/navigation', () => ({ goto }));
+// OLD CODE: vi.mock('$app/navigation', () => ({ goto })); (NET-276: the page loads from afterNavigate)
+// SvelteKit runs afterNavigate once the page mounts; a test render is a full load. This stand-in never
+// fires again, so a URL change after mount loads nothing here: use packets-results.test.ts's router for that
+vi.mock('$app/navigation', async () => {
+	const { onMount } = await import('svelte');
+	return { goto, afterNavigate: (callback: (nav: { type: 'enter' }) => void) => onMount(() => callback({ type: 'enter' })) };
+});
 vi.mock('$lib/api/packets', async (importActual) => ({
 	...(await importActual<typeof import('$lib/api/packets')>()),
 	getCaptures: vi.fn(),

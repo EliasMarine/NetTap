@@ -26,13 +26,16 @@
 		problem: SearchProblem | null;
 		/** Seconds since the running search started; null when none is running. */
 		elapsed: number | null;
+		/** NET-276: opened from outside NetTap, so the search waits for Run (`onrerun`). */
+		held: boolean;
 		captures: CapturesResponse | null;
 		devices: ReadonlyMap<string, string>;
 		onsearch: (query: PacketUrlState) => void;
 		onrerun: () => void;
 	}
 
-	let { query, result, problem, elapsed, captures, devices, onsearch, onrerun }: Props = $props();
+	// OLD CODE: let { query, result, problem, elapsed, captures, devices, onsearch, onrerun }: Props = $props(); (NET-276: + held)
+	let { query, result, problem, elapsed, held, captures, devices, onsearch, onrerun }: Props = $props();
 
 	// Kept by identity, not by object: a refresh brings new rows, and the same packet is found
 	// again by its frame number and checksum, or the drawer closes because it's gone
@@ -132,6 +135,17 @@
 				message={`${problem.message}${problemHint}`}
 				actionLabel={problem.kind === 'changed' ? 'Run the search again' : 'Try again'}
 				onaction={problem.kind === 'refused' ? undefined : onrerun}
+			/>
+		</Card>
+	{:else if held}
+		<Card class="c-12" title="Packets" sub="Not searched yet">
+			<CardState
+				state="empty"
+				icon="search"
+				title="This search hasn't run yet"
+				message="A search opened from a link, a bookmark or a reload waits for you to run it."
+				actionLabel="Run the search"
+				onaction={onrerun}
 			/>
 		</Card>
 	{:else if !result}

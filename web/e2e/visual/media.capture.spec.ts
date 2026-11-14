@@ -78,6 +78,8 @@ async function expandGlobe(page: Page): Promise<void> {
 
 /** A packet search's answer, as packets.visual.ts opens it: every fixture row and the conversation chart. */
 async function packetsFound(page: Page): Promise<void> {
+	// NET-276: a search opened by its URL waits for Run
+	await page.getByRole('button', { name: 'Run the search' }).click();
 	await expect(page.getByRole('table', { name: 'Packets' }).getByRole('row')).toHaveCount(ROWS.length + 1);
 	await expect(page.getByRole('heading', { name: 'The conversation over time' })).toBeVisible();
 }
