@@ -26,3 +26,19 @@ _check_disk_with_total_kb() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"Disk: 429 GB total (512 GB+ recommended)"* ]] || false
 }
+
+@test "run standalone (NET-253): a first-check warning still runs every check and prints the result" {
+    stubs="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$stubs"
+    # uname reports x86-64 and nproc 2 cores, so check_cpu warns (4+ recommended)
+    printf '#!/bin/sh\ncase "$1" in -m) echo x86_64 ;; *) echo 6.8.0-test ;; esac\n' > "$stubs/uname"
+    printf '#!/bin/sh\necho 2\n' > "$stubs/nproc"
+    chmod +x "$stubs/uname" "$stubs/nproc"
+    PATH="$stubs:$PATH" run bash "$HARDWARE" --color never
+    [ "$status" -ge 1 ]
+    [[ "$output" == *"CPU cores: 2 (4+ recommended)"* ]] || false
+    [[ "$output" == *"RAM:"* ]] || false
+    [[ "$output" == *"Disk:"* ]] || false
+    [[ "$output" == *"Kernel: 6.8.0-test"* ]] || false
+    [[ "$output" == *"RESULT:"* ]] || false
+}

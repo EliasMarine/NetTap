@@ -222,12 +222,22 @@ validate_hardware() {
 
     # Run each check and capture its exit code without triggering set -e
     local rc
-    check_cpu;            rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
-    check_ram;            rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
-    check_disk;           rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
-    check_nics;           rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
-    check_kernel;         rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
-    check_virtualization; rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    # OLD CODE START — NET-253: run standalone, set -e exited on the first check returning 1 or 2
+    # check_cpu;            rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    # check_ram;            rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    # check_disk;           rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    # check_nics;           rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    # check_kernel;         rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    # check_virtualization; rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    # OLD CODE END
+    # `|| rc=$?` keeps set -e off the check; the (( )) tests are never a list's last command
+    # to fail, and ++ makes the increments nonzero, so nothing below can trip set -e either.
+    rc=0; check_cpu            || rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    rc=0; check_ram            || rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    rc=0; check_disk           || rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    rc=0; check_nics           || rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    rc=0; check_kernel         || rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
+    rc=0; check_virtualization || rc=$?; (( rc == 2 )) && (( ++errors ));  (( rc == 1 )) && (( ++warnings ))
 
     if [[ "$NETTAP_UI" != "fancy" ]]; then
         echo ""
