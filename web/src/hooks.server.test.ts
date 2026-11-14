@@ -43,6 +43,7 @@ function createMockEvent(pathname: string, token?: string, user?: any, method = 
 			getAll: vi.fn().mockReturnValue([]),
 		},
 		locals: { user } as any,
+		route: { id: null as string | null },
 	};
 }
 
@@ -584,6 +585,7 @@ describe('hooks.server', () => {
 			async (path, id, site) => {
 				const res = await handle({ event: signedIn(path, id, site), resolve: mockResolve });
 				expect(res.status).toBe(403);
+				expect(res.headers.get('content-type')).toBe('application/json');
 				expect(await res.json()).toEqual({ error: 'Open this from NetTap itself.' });
 				expect(mockResolve).not.toHaveBeenCalled();
 			},
@@ -596,20 +598,23 @@ describe('hooks.server', () => {
 			expect(mockResolve).not.toHaveBeenCalled();
 		});
 
-		it.each([['same-origin'], [undefined]])('lets a %s request through', async (site) => {
+		it.each([
+			['a same-origin', 'same-origin'],
+			['a no-header', undefined],
+		])('lets %s request through', async (_label, site) => {
 			const event = signedIn('/api/pcap/download?filter=tcp', '/api/[...path]', site);
 			await handle({ event, resolve: mockResolve });
 			expect(mockResolve).toHaveBeenCalledWith(event);
 		});
 
-		it('leaves pages and public auth routes to their own rules', async () => {
-			// a page may be linked from anywhere; nginx's auth_request forwards the browser's headers to /api/auth/me
-			for (const [path, id] of [['/alerts', '/alerts'], ['/api/auth/me', '/api/auth/me']] as const) {
-				mockResolve.mockClear();
-				const event = signedIn(path, id, 'cross-site');
-				await handle({ event, resolve: mockResolve });
-				expect(mockResolve).toHaveBeenCalledWith(event);
-			}
+		// a page may be linked from anywhere; nginx's auth_request forwards the browser's headers to /api/auth/me
+		it.each([
+			['/alerts', '/alerts'],
+			['/api/auth/me', '/api/auth/me'],
+		])('leaves %s to its own rules', async (path, id) => {
+			const event = signedIn(path, id, 'cross-site');
+			await handle({ event, resolve: mockResolve });
+			expect(mockResolve).toHaveBeenCalledWith(event);
 		});
 	});
 });
