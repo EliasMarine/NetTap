@@ -136,8 +136,16 @@
 			if (run !== shellRun || redirecting) return;
 			// Only the web app's own sign-in refusal (hooks.server.ts) means the session ran out; the
 			// daemon's 401 is {"error":"Unauthorized"} and stays "offline", as does a login page's 200
+			// OLD CODE START — NET-259: before the first admin exists Go Live has no session either, so
+			// this sent it to a sign-in page with no account to sign in to
+			// if (res.status === 401 && body?.error === SIGN_IN_FIRST) {
+			// 	void sendToSignIn();
+			// 	return;
+			// }
+			// OLD CODE END
+			// No username: the shell opened without a session (Go Live before the first admin), so none ran out
 			if (res.status === 401 && body?.error === SIGN_IN_FIRST) {
-				void sendToSignIn();
+				if (data.username) void sendToSignIn();
 				return;
 			}
 			daemonOffline = body?.status !== 'ok';
