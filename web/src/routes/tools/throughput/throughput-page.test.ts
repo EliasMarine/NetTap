@@ -77,7 +77,8 @@ describe('LAN throughput test page (NET-266)', () => {
 			{ host: '192.168.1.20', port: 5299, duration: 5, direction: 'download' },
 		]);
 		expect(screen.getByText('This test runs over eno1 (192.168.1.199, wired, 1 Gbit/s).')).toBeInTheDocument();
-		expect(screen.getByText(/The capture port enp4s0 has no IP address/)).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText(/The capture port enp4s0 has no IP address/)).toBeInTheDocument();
+		expect(screen.getByText(/^Normal in mirror mode: the capture port enp4s0 only listens/)).toBeInTheDocument();
 		expect(screen.getByText('NetTap to the peer · 12 retransmits')).toBeInTheDocument();
 
 		const table = screen.getByRole('table', { name: 'Earlier throughput runs' });

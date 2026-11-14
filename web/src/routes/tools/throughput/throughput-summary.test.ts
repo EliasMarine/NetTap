@@ -33,7 +33,9 @@ describe('throughput wording (NET-266)', () => {
 	});
 
 	it('explains the mirror port only in mirror mode, when the port has no address', () => {
-		expect(mirrorNote(G11)).toBe('The capture port enp4s0 has no IP address, so this measures the management path, not the mirror port.');
+		// OLD CODE: expect(mirrorNote(G11)).toBe('The capture port enp4s0 has no IP address, so this measures the management path, not the mirror port.');
+		expect(mirrorNote(G11)).toBe("Normal in mirror mode: the capture port enp4s0 only listens, so it has no IP address and can't carry a test. This measures eno1, not the mirror port.");
+		expect(mirrorNote({ ...G11, path: null })).toMatch(/This measures the management connection, not the mirror port\.$/);
 		expect(mirrorNote({ ...G11, capture: { mode: 'bridge', interface: 'br0', has_ip: true } })).toBeNull();
 		expect(mirrorNote({ ...G11, capture: { mode: 'mirror', interface: 'enp4s0', has_ip: true } })).toBeNull();
 		expect(mirrorNote({ ...G11, capture: { mode: 'mirror', interface: 'enp4s0', has_ip: null } })).toBeNull();
