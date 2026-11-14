@@ -212,6 +212,14 @@ class TestEveryRouteChecksBeforeSearching(ChartCase):
                 self.assertEqual(body, {"error": TOO_MANY_SLOTS}, (path, query))
         self.assertEqual(self.os.bodies, [])
 
+    async def test_routes_with_their_own_bucket_check_the_budget_too(self):
+        """NET-275: from=1970 passes the year rule; then 20,772 1 d slots were over MAX_SLOTS,
+        time_slots raised and these routes, which take no ?interval=, answered a 500."""
+        for path in ("/api/alerts/categories", "/api/bandwidth/daily"):
+            body = await self.get(path, "from=1970-01-01T00:00:00Z", 400)
+            self.assertEqual(body, {"error": TOO_MANY_SLOTS}, path)
+        self.assertEqual(self.os.bodies, [])
+
 
 class TestRepliesNameTheirWindow(ChartCase):
     async def test_every_chart_reply_echoes_the_window_and_bucket_it_counted(self):

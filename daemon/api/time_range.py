@@ -22,6 +22,8 @@ BUCKET_TABLE = frozenset({"1m", "5m", "1h", "3h"})
 # Its finest chart is 289 slots; 1,000 at 3 h is 125 days
 SLOT_BUDGET = 1_000
 TOO_MANY_SLOTS = "Too many points for this window; pick a longer bucket"
+# NET-275: a 1 d slot (the longest bucket) of 9998-12-31 still ends inside datetime's year 9999
+_YEARS = range(1970, 9999)
 
 
 def _bad_request(message: str) -> web.HTTPBadRequest:
@@ -92,7 +94,8 @@ def parse_time_range(request: web.Request, default_span: timedelta) -> tuple[str
     # OLD CODE END
     from_ts = iso_param(request, "from") or (now - default_span).isoformat()
     to_ts = iso_param(request, "to") or now.isoformat()
-    if _utc(from_ts) > _utc(to_ts):
+    # OLD CODE: if _utc(from_ts) > _utc(to_ts): (NET-275: each bound's UTC year is checked first)
+    if _utc_in_years(from_ts, "from") > _utc_in_years(to_ts, "to"):
         raise web.HTTPBadRequest(
             text=json.dumps({"error": "from must not be later than to"}),
             content_type="application/json",
@@ -104,3 +107,15 @@ def _utc(ts: str) -> datetime:
     """A validated ISO time as an aware datetime; no zone means UTC, as OpenSearch reads it."""
     when = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def _utc_in_years(ts: str, name: str) -> datetime:
+    """`_utc(ts)` in UTC; 400 unless its year is in _YEARS (NET-275: 9999-12-31 or 0001-01-01
+    at +14:00 passed, then time_slots raised on year 10000 or 0 after the searches, a 500)."""
+    try:
+        when = _utc(ts).astimezone(timezone.utc)
+        if when.year in _YEARS:
+            return when
+    except OverflowError:  # before year 1 or after 9999 once in UTC
+        pass
+    raise _bad_request(f"{name} must be a time between {_YEARS[0]} and {_YEARS[-1]}")

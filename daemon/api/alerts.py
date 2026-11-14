@@ -1574,7 +1574,10 @@ def handle_alerts_categories(request: web.Request) -> web.Response:
     """
     from_ts, to_ts = _parse_time_range(request)
     client = _get_client(request)
-    interval = _sparkline_interval(from_ts, to_ts)
+    # OLD CODE: interval = _sparkline_interval(from_ts, to_ts) (NET-275: 1 d slots over ~27
+    # years were over MAX_SLOTS and time_slots raised, a 500; checked against the budget first)
+    sparkline = _sparkline_interval(from_ts, to_ts)
+    interval = slot_interval(request, from_ts, to_ts, {sparkline}, sparkline)
     # OLD CODE START — excluded IPs stay visible in alerts (Settings copy promises it)
     # excluded = build_excluded_ips_filter(request.app.get("excluded_ips", []))
     # OLD CODE END
@@ -1639,9 +1642,10 @@ def handle_alerts_categories(request: web.Request) -> web.Response:
         #     }
         # },
         # OLD CODE END
+        # OLD CODE: ),  # the sparkline interval fits any range (NET-275: not past ~27 years of 1 d)
         "over_time": time_slots(
             from_ts, to_ts, interval
-        ),  # the sparkline interval fits any range
+        ),  # within SLOT_BUDGET: slot_interval checked it above
     }
 
     try:
