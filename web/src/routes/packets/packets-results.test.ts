@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import type { writable } from 'svelte/store';
+import type { NavigationType } from '@sveltejs/kit';
 import Page from './+page.svelte';
 import * as api from '$lib/api/packets';
 import type { PacketSearchResult } from '$lib/api/packets';
@@ -8,7 +10,7 @@ import { refreshPage } from '$lib/stores/pageRefresh';
 import { packetsUrl, readUrlState } from '$lib/utils/packet-query';
 import { packetStats } from '$lib/utils/packet-stats';
 import { LAN_POLICY } from '../../../e2e/visual/fixtures/drilldown';
-import { CAPTURES, CDN_NAME, PACKET_DETAIL, ROWS, SEARCH_FROM, SEARCH_QUERY, SEARCH_RESULT, SEARCH_TO, TV } from '../../../e2e/visual/fixtures/packets';
+import { CAPTURES, CDN_NAME, FIELDS, PACKET_DETAIL, ROWS, SEARCH_FROM, SEARCH_QUERY, SEARCH_RESULT, SEARCH_TO, TV } from '../../../e2e/visual/fixtures/packets';
 import { expectNoNestedInteractive } from '../../tests/nested-interactive';
 import { clockTime } from './packets-view';
 
@@ -21,7 +23,22 @@ vi.mock('$app/stores', async () => {
 	pageStore.value = w({ url: new URL('http://localhost/packets') });
 	return { page: pageStore.value };
 });
-vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
+// OLD CODE: vi.mock('$app/navigation', () => ({ goto: vi.fn() })); (NET-276: the page loads from afterNavigate)
+// A stand-in for SvelteKit's router: afterNavigate callbacks register on mount and run once for the arrival
+// (`router.arrival`), then after each navigate(), which moves the page first, as the router does
+const router = vi.hoisted(() => ({ arrival: 'link' as NavigationType, callbacks: new Set<(nav: { type: NavigationType }) => void>() }));
+vi.mock('$app/navigation', async () => {
+	const { onMount } = await import('svelte');
+	return {
+		goto: vi.fn((href: string) => navigate('goto', href)),
+		afterNavigate: (callback: (nav: { type: NavigationType }) => void) =>
+			onMount(() => {
+				router.callbacks.add(callback);
+				callback({ type: router.arrival });
+				return () => router.callbacks.delete(callback);
+			}),
+	};
+});
 vi.mock('$lib/api/packets', async (importActual) => ({
 	...(await importActual<typeof import('$lib/api/packets')>()),
 	getCaptures: vi.fn(),
@@ -48,6 +65,12 @@ function stubOthers(): void {
 }
 
 const open = (query = SEARCH_QUERY) => pageStore.value.set({ url: new URL(`http://localhost/packets?${query}`) });
+/** An in-app navigation: the page moves, then the afterNavigate callbacks run. */
+async function navigate(type: NavigationType, href: string): Promise<void> {
+	pageStore.value.set({ url: new URL(href, 'http://localhost') });
+	await tick();
+	for (const callback of [...router.callbacks]) callback({ type });
+}
 const kpi = (label: string) => screen.getAllByText(label).map((e) => e.closest('.kpi')).find(Boolean) as HTMLElement;
 const result = (over: Partial<PacketSearchResult>): PacketSearchResult => ({ ...SEARCH_RESULT, ...over });
 
@@ -394,5 +417,90 @@ describe('Packet analysis: picking on the chart', () => {
 		await refreshPage();
 		await vi.waitFor(() => expect(tableRows()).toBe(ROWS.length));
 		expect(screen.queryByText(/^Showing the /)).not.toBeInTheDocument();
+	});
+});
+
+// NET-276: a search held in the URL holds one of the daemon's two packet-reader slots for up to ~45 s,
+// and a link from another site makes the owner's own page ask for it. Opened from outside NetTap (a full
+// load) the page fills in the search and waits for Run; a search started inside NetTap runs straight away.
+describe('Packet analysis: where the search came from', () => {
+	const wanted = { filter: SEARCH_RESULT.filter, from: SEARCH_RESULT.window.requested.from, to: SEARCH_RESULT.window.requested.to, limit: 250 };
+	const runButton = () => screen.queryByRole('button', { name: 'Run the search' });
+
+	beforeEach(() => {
+		vi.mocked(api.getCaptures).mockResolvedValue(CAPTURES);
+		vi.mocked(api.searchPackets).mockResolvedValue(SEARCH_RESULT);
+		vi.mocked(api.checkFilter).mockResolvedValue({ ok: true, filter: 'dns' });
+		vi.mocked(api.suggestFields).mockResolvedValue({ ...FIELDS, prefix: 'dns', fields: [] });
+		stubOthers();
+		open();
+	});
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.clearAllMocks();
+		router.arrival = 'link';
+		pageStore.value.set({ url: new URL('http://localhost/packets') });
+	});
+
+	it('opened from outside NetTap, shows the search and waits for Run, even on Refresh', async () => {
+		router.arrival = 'enter';
+		const { container } = render(Page);
+		await vi.waitFor(() => expect(api.getCaptures).toHaveBeenCalled());
+		expect(screen.getByText("This search hasn't run yet")).toBeInTheDocument();
+		expect(runButton()).toBeInTheDocument();
+		// The search exactly as the link holds it, ready to edit
+		expect(container.querySelector('code.filter')).toHaveTextContent(SEARCH_RESULT.filter);
+		expect(screen.getByRole('button', { name: 'Edit filter' })).toBeInTheDocument();
+		expect(screen.queryByText(/Searching…/)).not.toBeInTheDocument();
+		await refreshPage();
+		expect(api.searchPackets).not.toHaveBeenCalled();
+		expectNoNestedInteractive(container);
+	});
+
+	it('runs the waiting search when Run is clicked', async () => {
+		router.arrival = 'enter';
+		render(Page);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Run the search' }));
+		expect(api.searchPackets).toHaveBeenCalledTimes(1);
+		expect(api.searchPackets).toHaveBeenCalledWith(wanted);
+		await vi.waitFor(() => expect(kpi('Packets')).toHaveTextContent('9'));
+		expect(runButton()).not.toBeInTheDocument();
+	});
+
+	it('started inside NetTap, runs straight away', async () => {
+		render(Page);
+		expect(api.searchPackets).toHaveBeenCalledTimes(1);
+		expect(api.searchPackets).toHaveBeenCalledWith(wanted);
+		expect(runButton()).not.toBeInTheDocument();
+		await screen.findByRole('table', { name: 'Packets' });
+	});
+
+	it('after waiting, an edited search runs once, with the new filter', async () => {
+		router.arrival = 'enter';
+		render(Page);
+		await fireEvent.click(await screen.findByRole('button', { name: 'Edit filter' }));
+		await fireEvent.input(screen.getByRole('combobox', { name: 'Display filter' }), { target: { value: 'dns' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Find packets' }));
+		await vi.waitFor(() => expect(api.searchPackets).toHaveBeenCalledTimes(1));
+		expect(api.searchPackets).toHaveBeenCalledWith({ ...wanted, filter: 'dns' });
+		await screen.findByRole('table', { name: 'Packets' });
+		expect(runButton()).not.toBeInTheDocument();
+	});
+
+	it('while open, a link to another search runs it and Back runs the first again; a hash or the same search runs nothing', async () => {
+		render(Page);
+		await screen.findByRole('table', { name: 'Packets' });
+		await navigate('link', packetsUrl({ ...readUrlState(new URLSearchParams(SEARCH_QUERY))!, filter: 'dns' }));
+		await vi.waitFor(() => expect(api.searchPackets).toHaveBeenCalledTimes(2));
+		expect(api.searchPackets).toHaveBeenLastCalledWith({ ...wanted, filter: 'dns' });
+
+		await navigate('popstate', `/packets?${SEARCH_QUERY}`);
+		await vi.waitFor(() => expect(api.searchPackets).toHaveBeenCalledTimes(3));
+		expect(api.searchPackets).toHaveBeenLastCalledWith(wanted);
+
+		await navigate('link', `/packets?${SEARCH_QUERY}#top`);
+		await navigate('goto', `/packets?${SEARCH_QUERY}`);
+		await tick();
+		expect(api.searchPackets).toHaveBeenCalledTimes(3);
 	});
 });
