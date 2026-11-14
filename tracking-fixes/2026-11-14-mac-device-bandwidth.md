@@ -44,6 +44,21 @@ series. The IP device page's route (`/api/devices/{ip}`) has one, so only the MA
 
 - /ponytail-review: ship.
 - /deep-review: no findings (`security-reviews/fix-mac-device-bandwidth/`).
+- Two-angle review:
+  - Security-engineer: no Medium or above. Its Low (extreme from/to years give a 500 on the device
+    traffic routes, in `parse_time_range`) is filed as NET-275.
+  - Code reviewer, one Medium: the card hid itself while traffic loaded or failed, which breaks design
+    rule 6. It now shows CardState loading and error like its sibling cards (second commit). The
+    reviewer also found the same all-zero "Busiest" bug on the IP device page (`devices/[ip]`), which
+    is fixed there too.
+- Review-fix tests (each failed first): the MAC card shows "Loading bandwidth over time" while another
+  range loads, and the error inside the card on a 503; the IP page shows "No traffic in this range" for
+  an all-zero series. Device tests 167 of 167, svelte-check 0 errors, visual `devices` 18 of 18.
+
+## Deploy
+
+`scripts/remote/deploy-triage-fixes-2026-11-14.sh` rebuilds the daemon and web, then checks that a
+device's series sums to its `total_bytes` (with the NET-268 and NET-257 checks from the same day).
 
 ## Lessons
 
