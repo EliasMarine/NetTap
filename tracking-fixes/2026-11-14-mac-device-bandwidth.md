@@ -2,7 +2,7 @@
 
 **Linear:** NET-260
 **Branch:** `fix/mac-device-bandwidth`
-**Status:** built and tested locally. Deploys with the daemon and web images.
+**Status:** merged in #278. Deployed and verified on the G11 2026-11-14 at `35f684d4` (`scripts/remote/deploy-triage-fixes-2026-11-14.sh`, every check passed): a real device's series was 289 slots of 5m, 52,692,701 bytes, equal to its `total_bytes`.
 **Plan:** `PLAN.md` (Codex review, 2 rounds, APPROVED).
 
 ## Problem

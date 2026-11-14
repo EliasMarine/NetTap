@@ -2019,7 +2019,7 @@ Same branch: a device read stopped at 20,000 LAN sources now writes a `device_ca
 * **NET-268 (PR #275):** DNS Lookup passed the name to dig bare, so `dig ns A` asked for `. NS`. Now it uses `-q <name> -t <type>`.
 * **NET-256 (PR #275):** IoT trust-score halves rounded to even (74.5 → 74, grade C). They now round up.
 
-**Verification:** `scripts/remote/deploy-triage-fixes-2026-11-14.sh` rebuilds the daemon and web. It then checks NET-268 (a lookup of `ns` has no `root-servers` answer), NET-257 (a cross-site `/api` request gets 403, a same-origin one reaches sign-in with 401) and NET-260 (a device's series sums to its `total_bytes`).
+**Verification (passed on the G11, 2026-11-14, `35f684d4`):** `scripts/remote/deploy-triage-fixes-2026-11-14.sh` rebuilds the daemon and web. It then checks NET-268 (a lookup of `ns` has no `root-servers` answer: 0 records), NET-257 (a cross-site `/api` request gets 403, a same-origin one reaches sign-in with 401) and NET-260 (a device's series sums to its `total_bytes`: 289 slots, 52,692,701 bytes both).
 
 ---
 

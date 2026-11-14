@@ -2,7 +2,7 @@
 
 **Linear:** NET-268, NET-256, NET-253, NET-252
 **Branch:** `fix/small-bugs-2026-11-14`, one commit per bug
-**Status:** built and tested locally. The two daemon fixes deploy with the daemon image. The two
+**Status:** merged in #275. Deployed and verified on the G11 2026-11-14 at `35f684d4` (`scripts/remote/deploy-triage-fixes-2026-11-14.sh`, every check passed): a lookup of `ns` (type A) answered with no records, not the root servers. NET-256 is unit-tested only. The two
 installer fixes only run on a fresh install or when the hardware check is run by hand, so the G11
 can't show them without a reinstall.
 **Plan gate:** not needed. Each fix is a one-line change.

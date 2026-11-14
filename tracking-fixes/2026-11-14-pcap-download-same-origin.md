@@ -2,7 +2,7 @@
 
 **Linear:** NET-257
 **Branch:** `fix/pcap-download-same-origin`
-**Status:** built and tested locally. Deploys with the web image.
+**Status:** merged in #276. Deployed and verified on the G11 2026-11-14 at `35f684d4` (`scripts/remote/deploy-triage-fixes-2026-11-14.sh`, every check passed): cross-site `/api/threats/beaconing` and `/api/pcap/download` got 403, same-origin got 401 (sign-in), `/api/health` 200.
 **Plan:** `PLAN.md` (Codex review, 5 rounds, APPROVED: 2 on the first design, 3 after the pre-merge
 security review found a bypass).
 
