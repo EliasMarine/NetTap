@@ -1,6 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-11-13 (Chain 34: malcolm-config.sh's generate_auth put the admin password on htpasswd's and python3's command lines and in run's verbose log, and a quote in it broke the python fallback; it now goes on stdin. NET-251, install-time only.)
+> **Last updated:** 2026-11-14 (Chain 35: the 2026-11-14 bug triage. A fresh install's first daily index could get a replica a single node can't place (NET-252); validate-hardware.sh run on its own stopped at the first warning (NET-253). Same day, outside the install path: another site could start /api work with the owner's cookie (NET-257), the MAC device page had no bandwidth series (NET-260), DNS Lookup read "ns" as a type (NET-268).)
+<!-- previous: **Last updated:** 2026-11-13 (Chain 34: malcolm-config.sh's generate_auth put the admin password on htpasswd's and python3's command lines and in run's verbose log, and a quote in it broke the python fallback; it now goes on stdin. NET-251, install-time only.) -->
 <!-- previous: **Last updated:** 2026-11-12 (Chain 33: installer and Go Live bugs from the setup guide, NET-244 + NET-211: two-port --skip-bridge --non-interactive, a dry run that wrote, capture started on a missing br0, Go Live guessing ports, and a new uninstall.sh.) -->
 <!-- previous: **Last updated:** 2026-11-12 (Chain 32: a box with no index answered "incomplete" instead of zeros; the daemon now fills in the empty aggregations. NET-182, not yet on the device.) -->
 <!-- previous: **Last updated:** 2026-11-12 (Chain 31: deploy-malcolm.sh's OpenSearch bootstrap now stops the run when auth or the two index templates aren't in place, keeps the password out of every process's arguments, and leaves Malcolm's tuned malcolm_template alone; installer sizes are decimal GB. NET-217, NET-177. Chain 30, NET-198's session expiry, came in with PR #248.) -->
@@ -1985,6 +1986,43 @@ Same branch: a device read stopped at 20,000 LAN sources now writes a `device_ca
 
 ---
 
+## Chain 35: the 2026-11-14 bug triage (installer, web auth, devices, DNS tool)
+
+### NET-252: a fresh install's first daily index could get a replica (yellow)
+
+| Field | Value |
+|---|---|
+| **PR** | #275 (`471cf3a9`) |
+| **Status** | Fixed in code; only a fresh install runs this path |
+| **Severity** | Medium |
+| **Date** | 2026-11-14 |
+| **Environment** | Any single-node fresh install |
+
+**Symptom:** the cluster could report yellow on a fresh box. The first daily index had `number_of_replicas: 1`, and one node can't place a replica.
+
+**Root cause:** `deploy-malcolm.sh` pushed Malcolm's raw `malcolm_template`, which has no replica count. Malcolm's own loader stamps `.template.settings.index.number_of_replicas` (0 on one node) later, in `shared-object-creation.sh`. An index created in that gap got OpenSearch's default of 1.
+
+**Fix:** `_push_index_templates` stamps replicas 0 with the same jq expression Malcolm uses. The body is built first, so a failed `cat`, `sed` or `jq` (pipefail) sends nothing and warns. Checked on the G11 that the real template has `.template.settings.index`.
+
+**Key insight:** when we push a template another tool tunes later, apply the single-node settings ourselves. Chain 31 fixed the rerun case only.
+
+### NET-253: validate-hardware.sh run on its own stopped at the first warning
+
+**Root cause:** under `set -euo pipefail`, `check_x; rc=$?` exits before `rc` is read when a check returns 1 or 2. The installer calls the script under `||`, which turns `set -e` off, so installs were never affected.
+
+**Fix:** `rc=0; check_x || rc=$?`, with a bats case that runs the script directly. PR #275.
+
+### Outside the install path, same triage
+
+* **NET-257 (PR #276):** the session cookie is `SameSite=lax`, so another site's link could start `/api/pcap/download` and hold the daemon's download slot. `hooks.server.ts` now refuses an `/api` request whose `Sec-Fetch-Site` is present and not `same-origin`. It is keyed on the route SvelteKit matched (`event.route.id`), because SvelteKit decodes the path for routing (`/%61pi/…`). Three routes that put a decoded param into the daemon path now encode it. Follow-up NET-276: the Packets page runs a URL search on open.
+* **NET-260 (PR #278):** the MAC device page's bandwidth card never drew, because the daemon sent no `bandwidth_series`. The registry traffic route now returns one, with the same buckets as the IP page.
+* **NET-268 (PR #275):** DNS Lookup passed the name to dig bare, so `dig ns A` asked for `. NS`. Now it uses `-q <name> -t <type>`.
+* **NET-256 (PR #275):** IoT trust-score halves rounded to even (74.5 → 74, grade C). They now round up.
+
+**Verification:** `scripts/remote/deploy-triage-fixes-2026-11-14.sh` rebuilds the daemon and web. It then checks NET-268 (a lookup of `ns` has no `root-servers` answer), NET-257 (a cross-site `/api` request gets 403, a same-origin one reaches sign-in with 401) and NET-260 (a device's series sums to its `total_bytes`).
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 16+ PRs. Check their current state before making changes.
@@ -2076,6 +2114,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `config/suricata/nettap.yaml` | NET-206 | Its first `stats:` block is kept as OLD CODE (PR #255 review): restating the block meant restating every key Malcolm sets. The counters come from `SURICATA_STATS_ENABLED` / `SURICATA_STATS_INTERVAL` on suricata-live in `docker/docker-compose.yml` instead. No eve stats, no stats.log. |
 | `daemon/services/pcap_search.py`, `daemon/api/pcap.py` | NET-189 | "Download filtered" streams `FILTER_DOWNLOAD_JOB` (packet analysis's window cut + `tshark -Y -w -`) with files from `CaptureIndex.select`; no temp files. Refuses failed index entries and windows over 400k packets / 64 files / 3 GB; one download at a time; 240 s deadline; aborts the response after a failure past the first byte. |
 | `scripts/remote/deploy-capture-hardening.sh`, `verify_pcap_download.py`, `measure-capture-loss.sh` | NET-220, NET-206, NET-189 | NEW: deploy + checks for the three; the capture-loss comparison (meter off vs eight watches) with Suricata's counters. |
+| `web/src/hooks.server.ts` | NET-193, NET-197, NET-229, NET-257 | The one place every request passes. NET-257: an `/api` request, signed in or not, whose `Sec-Fetch-Site` is present and not `same-origin` gets 403 before any route runs, keyed on `event.route.id` (SvelteKit routes on the decoded path). It sits inside the non-public block, so `/api/auth/me` (nginx `auth_request`), login, logout and `/api/health` are untouched. Any route that puts a param into a daemon path must `encodeURIComponent` it. |
 
 ---
 
@@ -2304,6 +2343,9 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 184. **An included Suricata block replaces the earlier one, it doesn't merge (NET-206)** — `suricata --dump-config` showed `stats` "redefined": the include's `stats:` dropped Malcolm's interval and decoder-events. Where Malcolm has a setting for it, use that instead: its `suricata_config_populate.py` takes any `SURICATA_*` env var over its defaults (`SURICATA_STATS_ENABLED`, `SURICATA_STATS_INTERVAL`), so nothing has to be restated.
 185. **A download that picks files by mtime misses the file that started inside the window (NET-189)** — select files by their packet times (the capture index), and stream instead of merging into a size-limited tmpfs.
 186. **A handler test needs the production middleware stack (NET-189 deploy)** — PCAP Search's "Another download is running" 503 passed its test but reached the G11's browser as "Something went wrong": `safe_error_middleware` rewrites every unmarked 5xx, and the test app had no middleware. Send written 5xx messages with `public_json`, and build handler tests with `web.Application(middlewares=[safe_error_middleware])`.
+187. **A Fetch Metadata check belongs in the hook, keyed on the matched route, not on a literal path (NET-257)** — a check in one proxy route missed every explicit route, and one of those put its decoded param into the daemon path (`..%2F..%2Fpcap%2Fdownload`). A test on `pathname.startsWith('/api/')` misses `/%61pi/…`, which SvelteKit decodes for routing. Refuse `none` too: browsers send it for links opened from mail and chat apps.
+188. **Pass a user-supplied name to dig with `-q` and the type with `-t` (NET-268)** — a bare word that is also a type or class (`ns`, `mx`, `a`, `any`) is read as one.
+189. **In a script run with `set -e`, capture a status with `cmd || rc=$?`, not `cmd; rc=$?` (NET-253)** — the second form exits before `rc` is read.
 
 ---
 
@@ -2420,3 +2462,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-251 | pending | malcolm-config.sh put the admin password in htpasswd's and python3's arguments and run's log; a quote broke the python fallback (Chain 34) | 2026-11-13 |
 | NET-171 | pending | IoT trust score: telemetry and firmware out of the model (nine checks, 85 points); an unmeasured pillar says "Not measured" | 2026-11-12 |
 | NET-174 | pending | Unused `POST /api/iot/devices/{mac}/classify` and `classifyDevice()` removed | 2026-11-12 |
+| NET-252, NET-253 | #275 | Fresh-install template gets replicas 0; validate-hardware.sh runs every check when run on its own (Chain 35) | 2026-11-14 |
+| NET-268, NET-256 | #275 | DNS Lookup passes `-q`/`-t` to dig; trust-score halves round up | 2026-11-14 |
+| NET-257 | #276 | Another site can't start `/api` work with the owner's cookie (Sec-Fetch-Site, by matched route); three route params encoded | 2026-11-14 |
+| NET-260 | #278 | The MAC device page gets a bandwidth series; the card shows loading and error; the IP page's all-zero series shows empty | 2026-11-14 |
