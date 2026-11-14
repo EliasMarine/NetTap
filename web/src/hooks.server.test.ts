@@ -368,22 +368,51 @@ describe('hooks.server', () => {
 			expect(mockResolve).not.toHaveBeenCalled();
 		});
 
-		it.each(['/api/setup/nics', '/api/bridge/create'])(
-			'answers %s only with the setup cookie while no users exist',
-			async (path) => {
-				mockHasUsers.mockReturnValue(false);
-				mockSetupTokenValid.mockReturnValue(false);
-				const res = await handle({ event: createMockEvent(path), resolve: mockResolve });
-				expect(res.status).toBe(401);
-				expect(await res.json()).toEqual({ error: 'Enter the setup code first.' });
-				expect(mockResolve).not.toHaveBeenCalled();
+		// OLD CODE START — NET-280: /api/bridge/* is no longer a first-run path; its own test follows
+		// it.each(['/api/setup/nics', '/api/bridge/create'])(
+		// 	'answers %s only with the setup cookie while no users exist',
+		// 	async (path) => {
+		// 		mockHasUsers.mockReturnValue(false);
+		// 		mockSetupTokenValid.mockReturnValue(false);
+		// 		const res = await handle({ event: createMockEvent(path), resolve: mockResolve });
+		// 		expect(res.status).toBe(401);
+		// 		expect(await res.json()).toEqual({ error: 'Enter the setup code first.' });
+		// 		expect(mockResolve).not.toHaveBeenCalled();
+		//
+		// 		mockSetupTokenValid.mockReturnValue(true);
+		// 		const event = createMockEvent(path);
+		// 		await handle({ event, resolve: mockResolve });
+		// 		expect(mockResolve).toHaveBeenCalledWith(event);
+		// 	}
+		// );
+		// OLD CODE END
+		it.each(['/api/setup/nics'])('answers %s only with the setup cookie while no users exist', async (path) => {
+			mockHasUsers.mockReturnValue(false);
+			mockSetupTokenValid.mockReturnValue(false);
+			const res = await handle({ event: createMockEvent(path), resolve: mockResolve });
+			expect(res.status).toBe(401);
+			expect(await res.json()).toEqual({ error: 'Enter the setup code first.' });
+			expect(mockResolve).not.toHaveBeenCalled();
 
-				mockSetupTokenValid.mockReturnValue(true);
-				const event = createMockEvent(path);
-				await handle({ event, resolve: mockResolve });
-				expect(mockResolve).toHaveBeenCalledWith(event);
-			}
-		);
+			mockSetupTokenValid.mockReturnValue(true);
+			const event = createMockEvent(path);
+			await handle({ event, resolve: mockResolve });
+			expect(mockResolve).toHaveBeenCalledWith(event);
+		});
+
+		// NET-280: the setup cookie opens the wizard's API, not the bridge: create, teardown and bypass need a session
+		it.each([
+			['POST', '/api/bridge/create'],
+			['POST', '/api/bridge/teardown'],
+			['POST', '/api/bridge/bypass/enable'],
+			['POST', '/api/bridge/bypass/disable'],
+			['GET', '/api/bridge/health'],
+		])('answers %s %s with 401 while no users exist, even with the setup cookie', async (method, path) => {
+			mockHasUsers.mockReturnValue(false);
+			mockSetupTokenValid.mockReturnValue(true);
+			const event = createMockEvent(path, undefined, undefined, method);
+			await expectUnauthorised(handle({ event, resolve: mockResolve }));
+		});
 	});
 
 	describe('setup and bridge routes after setup', () => {

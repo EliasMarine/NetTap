@@ -52,6 +52,29 @@ test.describe('without a session (NET-197)', () => {
 		expect(await res?.json()).toEqual({ error: 'Open this from NetTap itself.' });
 		expect(new URL(page.url()).pathname).toBe(API);
 	});
+
+	// NET-280: a link or form on a NetTap page opens a bridge address without a session. The sign-in
+	// page comes back, never the bridge route's JSON. Sec-Fetch-Dest: document and Sec-Fetch-Site:
+	// same-origin are what a real click sends, so this is the one case a typed address can't cover.
+	test('a same-origin link to a bridge address goes to /login (NET-280)', async ({ page }) => {
+		await page.goto('/login');
+		await page.evaluate(() => {
+			const link = document.createElement('a');
+			link.id = 'bridge-link';
+			link.href = '/api/bridge/create';
+			link.textContent = 'bridge';
+			document.body.appendChild(link);
+		});
+		// The page starts on /login, so watch for the redirect itself: the final URL alone proves nothing
+		const [loginPage] = await Promise.all([
+			page.waitForResponse((r) => new URL(r.url()).pathname === '/login' && r.request().redirectedFrom() !== null),
+			page.click('#bridge-link'),
+		]);
+		const bridgeRequest = loginPage.request().redirectedFrom();
+		expect(new URL(bridgeRequest?.url() ?? '').pathname).toBe('/api/bridge/create');
+		expect((await bridgeRequest?.response())?.status()).toBe(302);
+		expect(new URL(page.url()).pathname).toBe('/login');
+	});
 });
 
 test('with a session the same call reaches the daemon (NET-197)', async ({ page }) => {

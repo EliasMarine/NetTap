@@ -63,7 +63,11 @@ const ADMIN_STORE = JSON.stringify({
 // OLD CODE END
 // NET-277: /go-live no longer opens during first run; it stays for the after-setup and damaged-store checks
 const FIRST_RUN_PAGES = ['/setup', '/go-live'];
-const FIRST_RUN_APIS = ['/api/setup/configure', '/api/bridge/create'];
+// OLD CODE START — NET-280: /api/bridge/* is no longer a first-run path; it is checked as BRIDGE_API below
+// const FIRST_RUN_APIS = ['/api/setup/configure', '/api/bridge/create'];
+// OLD CODE END
+const FIRST_RUN_APIS = ['/api/setup/configure'];
+const BRIDGE_API = '/api/bridge/create';
 const FIRST_RUN_PATHS = [...FIRST_RUN_PAGES, ...FIRST_RUN_APIS];
 
 beforeEach(async () => {
@@ -140,7 +144,10 @@ describe('first-run routes with a real user store', () => {
 	it('a setup cookie stops working once the code is replaced', async () => {
 		const stale = auth.setupToken() ?? '';
 		rmSync(join(dataDir, 'setup-code'));
-		await expectSetupCodeFirst(run('/api/bridge/create', 'POST', undefined, stale));
+		// OLD CODE START — NET-280: the bridge is not a first-run API; /api/setup/configure stands in
+		// await expectSetupCodeFirst(run('/api/bridge/create', 'POST', undefined, stale));
+		// OLD CODE END
+		await expectSetupCodeFirst(run('/api/setup/configure', 'POST', undefined, stale));
 	});
 
 	it('a setup cookie is not a session: after setup it opens nothing', async () => {
@@ -150,10 +157,27 @@ describe('first-run routes with a real user store', () => {
 		await expectUnauthorised(run('/api/bridge/create', 'POST', token));
 	});
 
+	// OLD CODE START — NET-280: the bridge is not a first-run API; /api/setup/configure stands in
+	// it('an existing but empty store is still first run', async () => {
+	// 	writeStore('{"users":[]}');
+	// 	await run('/api/bridge/create', 'POST', undefined, auth.setupToken() ?? '');
+	// 	expect(resolve).toHaveBeenCalledTimes(1);
+	// });
+	// OLD CODE END
 	it('an existing but empty store is still first run', async () => {
 		writeStore('{"users":[]}');
-		await run('/api/bridge/create', 'POST', undefined, auth.setupToken() ?? '');
+		await run('/api/setup/configure', 'POST', undefined, auth.setupToken() ?? '');
 		expect(resolve).toHaveBeenCalledTimes(1);
+	});
+
+	// NET-280: before the first admin exists the setup cookie opens the wizard's API, never the bridge
+	it('the bridge needs a session before the first admin, even with the setup code typed', async () => {
+		const code = auth.setupToken() ?? '';
+		await expectUnauthorised(run(BRIDGE_API, 'POST', undefined, code));
+		writeStore('{"users":[]}');
+		await expectUnauthorised(run(BRIDGE_API, 'POST', undefined, code));
+		await expectUnauthorised(run('/api/bridge/teardown', 'POST', undefined, code));
+		await expectUnauthorised(run('/api/bridge/bypass/enable', 'POST', undefined, code));
 	});
 
 	// OLD CODE START — NET-197: API calls answer 401 JSON now; split into pages and API calls below
