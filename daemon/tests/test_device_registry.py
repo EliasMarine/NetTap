@@ -6,6 +6,7 @@ new device detection, search, get_device_traffic, IP list tracking,
 passive enrichment (DHCP, ARP, mDNS, SSDP), OUI enrichment, JA3 enrichment.
 """
 
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -380,13 +381,17 @@ class TestGetDeviceTraffic:
             }
         )
 
+        # OLD CODE: result = registry.get_device_traffic(mac, from, to) (NET-260: + the chart's bucket)
         result = registry.get_device_traffic(
             "AA:BB:CC:DD:EE:FF",
             "2026-01-01T00:00:00Z",
             "2026-01-02T00:00:00Z",
+            "1h",
         )
 
         assert result["mac"] == "AA:BB:CC:DD:EE:FF"
+        # NET-260: a reply without the series' aggregation draws no chart, not a crash
+        assert result["bandwidth_series"] == []
         assert result["total_bytes"] == 1048576
         assert result["connection_count"] == 42
         assert "tcp" in result["protocols"]
@@ -432,7 +437,7 @@ class TestGetDeviceTraffic:
         )
 
         result = registry.get_device_traffic(
-            "AA:BB:CC:DD:EE:FF", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z"
+            "AA:BB:CC:DD:EE:FF", "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", "1h"
         )
 
         # OLD CODE START — NET-226: in/out were the originator's bytes of the sessions it started
@@ -471,6 +476,84 @@ class TestGetDeviceTraffic:
         # #90: ranking by a sum is only exact when each shard returns every destination
         assert destinations["terms"]["shard_size"] >= 10_000
 
+    def test_get_device_traffic_sends_the_bandwidth_series(self, registry, mock_client):
+        """NET-260: the MAC page draws its bandwidth chart from `bandwidth_series`, which the
+        reply never had. Slots are time_slots' date_range (#120), not a date_histogram."""
+        mock_client.get.return_value = {
+            "_source": {"mac": "AA:BB:CC:DD:EE:FF", "ips": ["192.168.1.100"]}
+        }
+        hour = 3_600_000
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc).timestamp() * 1000
+
+        def slot(n, src=0, dst=0, a_src=0, a_dst=0):
+            # a range bucket as OpenSearch returns it: float epoch-ms from/to
+            return {
+                "key": f"slot-{n}",
+                "from": start + n * hour,
+                "from_as_string": "ignored",
+                "to": start + (n + 1) * hour,
+                "to_as_string": "ignored",
+                "doc_count": 1 if src or dst else 0,
+                "src": {"value": src},
+                "dst": {"value": dst},
+                "answered": {"src": {"value": a_src}, "dst": {"value": a_dst}},
+            }
+
+        mock_client.search.side_effect = _answering(
+            {
+                "hits": {"total": {"value": 3}},
+                "aggregations": {
+                    "src": {"value": 500},
+                    "dst": {"value": 1000},
+                    "answered": {"src": {"value": 200}, "dst": {"value": 50}},
+                    # out of order: histogram_buckets sorts by slot start
+                    "bandwidth_series": {
+                        "buckets": [slot(1), slot(0, 500, 1000, 200, 50)]
+                    },
+                },
+            }
+        )
+
+        result = registry.get_device_traffic(
+            "AA:BB:CC:DD:EE:FF", "2026-01-01T00:00:00Z", "2026-01-01T01:30:00Z", "1h"
+        )
+
+        body = next(
+            c.kwargs["body"]
+            for c in mock_client.search.call_args_list
+            if "bandwidth_series" in c.kwargs["body"].get("aggs", {})
+        )
+        series = body["aggs"]["bandwidth_series"]
+        assert "date_histogram" not in series
+        assert series["date_range"]["field"] == "@timestamp"
+        # spaced by the bucket asked for, from the slot holding `from` to the one holding `to`
+        assert series["date_range"]["ranges"] == [
+            {"from": "2026-01-01T00:00:00.000Z", "to": "2026-01-01T01:00:00.000Z"},
+            {"from": "2026-01-01T01:00:00.000Z", "to": "2026-01-01T02:00:00.000Z"},
+        ]
+        # each slot is counted from the device's side, as the totals are
+        assert series["aggs"] == {
+            k: body["aggs"][k] for k in ("src", "dst", "answered")
+        }
+        # upload 500 - 200 + 50, download 1000 - 50 + 200 (side_bytes)
+        assert result["bandwidth_series"] == [
+            {
+                "timestamp": "2026-01-01T00:00:00.000Z",
+                "bytes": 1500,
+                "download_bytes": 1150,
+                "upload_bytes": 350,
+            },
+            {
+                "timestamp": "2026-01-01T01:00:00.000Z",
+                "bytes": 0,
+                "download_bytes": 0,
+                "upload_bytes": 0,
+            },
+        ]
+        assert (
+            sum(p["bytes"] for p in result["bandwidth_series"]) == result["total_bytes"]
+        )
+
     def test_get_device_traffic_error_raises(self, registry, mock_client):
         """#96: a failed query raises; zeros read as a device with no traffic."""
         mock_client.get.return_value = {
@@ -485,6 +568,7 @@ class TestGetDeviceTraffic:
                 "AA:BB:CC:DD:EE:FF",
                 "2026-01-01T00:00:00Z",
                 "2026-01-02T00:00:00Z",
+                "1h",
             )
 
 
@@ -1152,3 +1236,42 @@ async def test_registry_endpoints_answer_502_when_opensearch_fails(
         resp = await client.get(path)
         assert resp.status == 502
         assert "error" in await resp.json()
+
+
+@pytest.mark.asyncio
+async def test_registry_traffic_takes_a_bucket_and_names_it(registry):
+    """NET-260: the MAC page's chart bucket, as the IP page's (NET-249): `?interval=` or
+    _bandwidth_interval's pick, checked before any search and echoed as bandwidth_interval."""
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from api.devices_v2 import register_devices_v2_routes
+    from api.time_range import TOO_MANY_SLOTS
+
+    registry.get_device = MagicMock(return_value={"mac": "AA:BB:CC:DD:EE:FF"})
+    registry.get_device_traffic = MagicMock(return_value={"bandwidth_series": []})
+    app = web.Application()
+    register_devices_v2_routes(app, registry, MagicMock())
+    path = "/api/devices/registry/AA:BB:CC:DD:EE:FF/traffic"
+    window = {"from": "2026-11-05T00:00:00Z", "to": "2026-11-05T12:00:00Z"}
+
+    async with TestClient(TestServer(app)) as client:
+        own = await client.get(path, params=window)
+        # 12 h: _bandwidth_interval's pick
+        assert (await own.json())["bandwidth_interval"] == "5m"
+        hourly = await client.get(path, params={**window, "interval": "1h"})
+        assert hourly.status == 200
+        assert (await hourly.json())["bandwidth_interval"] == "1h"
+        assert registry.get_device_traffic.call_args.args[3] == "1h"
+
+        unknown = await client.get(path, params={**window, "interval": "7s"})
+        assert unknown.status == 400
+        assert (await unknown.json())["error"].startswith("Unknown interval")
+        week = {"from": "2026-10-29T12:00:00Z", "to": "2026-11-05T12:00:00Z"}
+        too_fine = await client.get(path, params={**week, "interval": "1m"})
+        assert (too_fine.status, await too_fine.json()) == (
+            400,
+            {"error": TOO_MANY_SLOTS},
+        )
+    # the two refusals searched nothing
+    assert registry.get_device.call_count == 2

@@ -37,6 +37,7 @@ from services.device_accounting import (
 )
 from services.excluded_ips import CONN_ACCOUNTING
 from storage.snapshot_search import QueryFailed, checked
+from storage.time_slots import histogram_buckets, time_slots
 
 if TYPE_CHECKING:
     from services.device_custom import DeviceCustomStore
@@ -672,14 +673,21 @@ class DeviceRegistry:
     #     }
     # OLD CODE END
 
+    # OLD CODE: def get_device_traffic(self, mac, from_ts, to_ts, lan_filter=None) (NET-260: + interval)
     def get_device_traffic(
-        self, mac: str, from_ts: str, to_ts: str, lan_filter: dict | None = None
+        self,
+        mac: str,
+        from_ts: str,
+        to_ts: str,
+        interval: str,
+        lan_filter: dict | None = None,
     ) -> dict:
         """Traffic of one device by MAC, both sides of its connections (NET-226).
 
         IPv4 by the addresses the registry holds for it, the sessions it started and the ones
         it answered; IPv6 by its MAC as the device list folds it (services.device_accounting).
         inbound/outbound are the device's download/upload. QueryFailed if a read is partial.
+        `bandwidth_series` slots the same traffic by `interval` (NET-260), as the IP page does.
         """
         mac = self._normalize_mac(mac)
         device = self.get_device(mac)
@@ -735,6 +743,11 @@ class DeviceRegistry:
             },
             "aggs": {
                 **side_sums(answered),
+                # NET-260: the MAC page's chart, the same shape as the IP page's
+                "bandwidth_series": {
+                    **time_slots(from_ts, to_ts, interval),
+                    "aggs": side_sums(answered),
+                },
                 "protocols": {"terms": {"field": "network.transport", "size": 10}},
                 # Where it connected to, ranked by bytes (#90: every shard returns every one)
                 "started": {
@@ -766,6 +779,18 @@ class DeviceRegistry:
         destinations = (
             aggs.get("started", {}).get("top_destinations", {}).get("buckets", [])
         )
+        # download and upload from the device's side, as the IP page sends them
+        bandwidth_series = []
+        for bwb in histogram_buckets(aggs.get("bandwidth_series")):
+            up, down = side_bytes(bwb)
+            bandwidth_series.append(
+                {
+                    "timestamp": bwb.get("key_as_string", bwb.get("key")),
+                    "bytes": up + down,
+                    "download_bytes": down,
+                    "upload_bytes": up,
+                }
+            )
         return {
             "mac": mac,
             "total_bytes": upload + download,
@@ -789,6 +814,7 @@ class DeviceRegistry:
             ],
             "ipv6_left_out": v6.get("left_out", 0),
             "ipv6_left_out_reason": v6.get("reason"),
+            "bandwidth_series": bandwidth_series,
         }
 
     def search_devices(self, query_str: str) -> list[dict]:

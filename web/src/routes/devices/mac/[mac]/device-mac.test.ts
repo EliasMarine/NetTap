@@ -167,6 +167,45 @@ describe('Device by MAC page — live bandwidth (NET-205)', () => {
 	});
 });
 
+// NET-260: the daemon sent no bandwidth series for a MAC, so the card never showed
+describe('Device by MAC page — bandwidth over time (NET-260)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	function stubSeries(bytes: number[]): void {
+		const path = `/api/devices/registry/${encodeURIComponent(MAC)}/traffic`;
+		const reply = REPLIES[path] as { traffic: Record<string, unknown> };
+		const bandwidth_series = bytes.map((b, i) => ({
+			timestamp: `2026-11-02T0${i}:00:00.000Z`,
+			bytes: b,
+			download_bytes: b,
+			upload_bytes: 0,
+		}));
+		const traffic = { ...reply, bandwidth_interval: '1h', traffic: { ...reply.traffic, bandwidth_series } };
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (url: string) => {
+				const p = url.split('?')[0];
+				return { ok: true, status: 200, json: async () => (p === path ? traffic : REPLIES[p]) };
+			}),
+		);
+	}
+
+	it('draws the series with its busiest slot named', async () => {
+		stubSeries([0, 4_000, 1_000]);
+		render(Page);
+		expect(await screen.findByRole('heading', { name: 'Bandwidth over time' })).toBeInTheDocument();
+		expect(screen.getByRole('img', { name: /^Busiest at .*, with 4\.0 KB$/ })).toBeInTheDocument();
+	});
+
+	it('shows the empty state for an all-zero series, not a flat chart', async () => {
+		stubSeries([0, 0, 0]);
+		render(Page);
+		expect(await screen.findByRole('heading', { name: 'Bandwidth over time' })).toBeInTheDocument();
+		expect(screen.queryByRole('img', { name: /^Busiest at / })).not.toBeInTheDocument();
+		expect(screen.getByText(/^No traffic in the /)).toBeInTheDocument();
+	});
+});
+
 // NET-160 slice 2a: an alert's signature opens the alerts list for it
 describe('Device by MAC page — signature links', () => {
 	afterEach(() => vi.unstubAllGlobals());
