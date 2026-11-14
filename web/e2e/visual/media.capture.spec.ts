@@ -11,6 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { APP_URL, STORAGE_STATE } from '../../playwright.visual.config.ts';
+import type { LiveBandwidthSupported } from '../../src/lib/api/live-bandwidth.ts';
 import { ROWS, SEARCH_QUERY } from './fixtures/packets.ts';
 import { expectReached, setMode, settle, stubUpstreams, watchApi } from './harness.ts';
 
@@ -40,10 +41,26 @@ const STILLS: readonly Still[] = [
 	{ file: 'alert-category', path: '/alerts/malware', marker: /malware/i },
 	{ file: 'packets', path: '/packets', search: SEARCH_QUERY, marker: 'Packet analysis', prepare: packetsFound },
 	{ file: 'packet-detail', path: '/packets', search: SEARCH_QUERY, marker: 'Packet analysis', prepare: packetOpen },
+	{ file: 'packets-start', path: '/packets', marker: 'Packet analysis', prepare: askSitesOpened },
+	{ file: 'packets-library', path: '/packets', marker: 'Packet analysis', prepare: (page) => scrollToCard(page, 'Filter library') },
 	{ file: 'devices', path: '/devices', marker: 'Devices' },
-	{ file: 'device-detail', path: '/devices/mac/02:00:5e:10:00:20', marker: 'laptop-01.example.com' },
+	// OLD CODE START — the page now shows the Live bandwidth card (NET-205) below the fold, so it gets its gap filled
+	// { file: 'device-detail', path: '/devices/mac/02:00:5e:10:00:20', marker: 'laptop-01.example.com' },
+	// OLD CODE END
+	{ file: 'device-detail', path: '/devices/mac/02:00:5e:10:00:20', marker: 'laptop-01.example.com', prepare: fillLiveGap },
+	{
+		file: 'device-live',
+		path: '/devices/mac/02:00:5e:10:00:20',
+		marker: 'laptop-01.example.com',
+		prepare: (page) => fillLiveGap(page).then(() => scrollToCard(page, 'Live bandwidth')),
+	},
+	{ file: 'local-services', path: '/local-services', marker: 'Local services' },
 	{ file: 'threats', path: '/threats', marker: 'Threats' },
 	{ file: 'certificates', path: '/certificates', marker: 'Certificates' },
+	{ file: 'connections-flow', path: '/connections', marker: 'Connections', prepare: (page) => scrollToCard(page, 'Network flow') },
+	{ file: 'changelog', path: '/changelog', marker: 'Changelog' },
+	{ file: 'iot', path: '/iot', marker: 'IoT trust score' },
+	{ file: 'tools', path: '/tools', marker: 'Network tools' },
 ];
 
 const globeCard = (page: Page) => page.locator('main .globe-card');
@@ -93,6 +110,43 @@ async function packetOpen(page: Page): Promise<void> {
 	await drawer.getByRole('button', { name: /Destination Address/ }).click();
 	await expect(drawer.locator('.hex mark').first()).toBeVisible();
 	await page.mouse.move(0, 0); // off the layer tree, so no row shows its hover state
+}
+
+/** The first visit's question form with one choice made, so it shows the filter NetTap writes for it. */
+async function askSitesOpened(page: Page): Promise<void> {
+	await page.getByRole('button', { name: 'Sites opened', exact: true }).click();
+	await expect(page.locator('main code.filter')).toBeVisible();
+	await page.mouse.move(0, 0); // off the choice, so it shows no hover state
+}
+
+/** Scroll the card with this heading up level with the sidebar's top, for a card below the fold. */
+async function scrollToCard(page: Page, heading: string): Promise<void> {
+	const title = page.locator('main').getByRole('heading', { name: heading, exact: true }).first();
+	await title.evaluate((el) => {
+		const card = el.closest('.card') ?? el;
+		window.scrollTo({ top: card.getBoundingClientRect().top + window.scrollY - 16, behavior: 'instant' });
+	});
+}
+
+/** The device's Live bandwidth card with every tick measured: the fixture's one missed tick draws a gap that
+ * reads as a glitch in a still, so it gets its neighbours' mean. The card polls every 2 s, so the next answer redraws it. */
+async function fillLiveGap(page: Page): Promise<void> {
+	const isLive = (url: URL) => url.pathname === '/api/live-bandwidth';
+	const mean = (a: number | null, b: number | null) => ((a ?? 0) + (b ?? 0)) / 2;
+	let answered = () => {};
+	// not waitForResponse: a poll already in flight would answer it with the gap still in
+	const filled = new Promise<void>((resolve) => (answered = resolve));
+	await page.route(isLive, async (route) => {
+		const body = (await (await route.fetch()).json()) as LiveBandwidthSupported;
+		const samples = body.samples.map((s, i, all) => {
+			const [before, after] = [all[i - 1], all[i + 1]];
+			if (s.down_bps !== null || !before || !after) return s;
+			return { ...before, tick: s.tick, t: s.t, mono: s.mono, down_bps: mean(before.down_bps, after.down_bps), up_bps: mean(before.up_bps, after.up_bps) };
+		});
+		await route.fulfill({ json: { ...body, samples } });
+		answered();
+	});
+	await filled;
 }
 
 /** The tour's caption: what the screen on view shows. It sits on a band that fades the page to black along

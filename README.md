@@ -40,10 +40,12 @@ NetTap is an open-source, self-hosted network monitor for homes and small busine
 
 ## What you get
 
-- **Devices**: every device on the network, with its traffic, alerts and a risk score
-- **Alerts**: Suricata intrusion detection (Emerging Threats Open rules) explained in plain English, plus behaviour checks such as beaconing and DNS anomalies
-- **Traffic**: connections, DNS, TLS certificates, GeoIP and bandwidth per device
-- **Packet capture**: full PCAP you can search and download, with TShark and CyberChef built in
+- **Devices**: every device on the network, with its traffic, alerts and a risk score. Give a device a name and a picture, watch its live bandwidth (opt-in), compare two periods, and see what your devices announce over mDNS and SSDP
+- **Alerts**: Suricata intrusion detection explained in plain English, plus behaviour checks such as beaconing and DNS anomalies. Emerging Threats Open rules by default; add an ET Pro code or write your own rules in Settings
+- **Traffic**: connections, DNS, TLS certificates, GeoIP and bandwidth per device, with QUIC identified as its own protocol. Click or drag any chart over time to open what it counted
+- **Changelog**: what changed on your network, such as new devices joining and what each one did
+- **Packet capture**: full PCAP you can search and download. Pick what you want to see, or one of 37 ready-made filters, and NetTap writes the Wireshark filter and reads the right capture files. TShark and CyberChef are built in
+- **Network tools**: ping and traceroute with a path MTU check, a LAN throughput test (iperf3), DNS lookups that compare several resolvers, an IPv6 toolkit and a DHCP lease timeline per device
 - **Notifications**: email, Discord, Slack, Telegram, Pushover or a webhook
 - **Low upkeep**: deletes old data before the disk fills, watches SSD health, and updates Malcolm with a backup and rollback
 - **Local only**: no cloud, no account, no subscription. Your traffic stays on the box. Update checks, rule downloads and WHOIS lookups do use the internet.
@@ -67,12 +69,28 @@ NetTap is an open-source, self-hosted network monitor for homes and small busine
     <td width="50%"><a href=".github/assets/media/packet-detail.png"><img src=".github/assets/media/packet-detail.png" alt="One packet opened beside the list: its decoded layers, with the destination address highlighted in the raw bytes"></a><br><sub>One packet: its decoded layers and raw bytes</sub></td>
   </tr>
   <tr>
+    <td width="50%"><a href=".github/assets/media/packets-start.png"><img src=".github/assets/media/packets-start.png" alt="Packet analysis before a search: choose who, what, when and how many, and the page shows the Wireshark filter it wrote, beside a list of common questions"></a><br><sub>Pick what you want to see; NetTap writes the filter</sub></td>
+    <td width="50%"><a href=".github/assets/media/packets-library.png"><img src=".github/assets/media/packets-library.png" alt="Filter library: 37 ready-made packet filters grouped by topic, such as name lookups, connection problems and remote logins, each explained in a line"></a><br><sub>Filter library: 37 ready-made filters, each explained</sub></td>
+  </tr>
+  <tr>
     <td width="50%"><a href=".github/assets/media/devices.png"><img src=".github/assets/media/devices.png" alt="Devices page: every device with its type, operating system, maker and bandwidth"></a><br><sub>Devices: every device, what it is and how much it uses</sub></td>
-    <td width="50%"><a href=".github/assets/media/device-detail.png"><img src=".github/assets/media/device-detail.png" alt="Device page for a laptop: its traffic, connections, top destinations and protocols"></a><br><sub>One device: its traffic, destinations and protocols</sub></td>
+    <td width="50%"><a href=".github/assets/media/device-detail.png"><img src=".github/assets/media/device-detail.png" alt="Device page for a laptop: buttons to rename it and change its picture, its addresses, maker, DHCP history, traffic and connections"></a><br><sub>One device: rename it, give it a picture, see its traffic</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href=".github/assets/media/device-live.png"><img src=".github/assets/media/device-live.png" alt="A device's live bandwidth: download and upload every 2 seconds over the last 5 minutes, above its bandwidth over the last 24 hours"></a><br><sub>Live bandwidth for one device, every 2 seconds (opt-in)</sub></td>
+    <td width="50%"><a href=".github/assets/media/local-services.png"><img src=".github/assets/media/local-services.png" alt="Local services page: AirPlay receivers, a Philips Hue bridge, Google Cast and other services your devices announce over mDNS and SSDP"></a><br><sub>Local services: what your devices announce on the network</sub></td>
   </tr>
   <tr>
     <td width="50%"><a href=".github/assets/media/threats.png"><img src=".github/assets/media/threats.png" alt="Threats page: threat score, a threat brief, kill chains and threat-intel matches"></a><br><sub>Threats: threat score, kill chains and threat-intel matches</sub></td>
     <td width="50%"><a href=".github/assets/media/certificates.png"><img src=".github/assets/media/certificates.png" alt="Certificates page: TLS certificates that need a look, with the reason for each"></a><br><sub>Certificates: TLS certificates that need a look</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href=".github/assets/media/connections-flow.png"><img src=".github/assets/media/connections-flow.png" alt="Network flow on the Connections page: data from each device, through each protocol, to each destination, drawn as bands sized by volume"></a><br><sub>Network flow: from each device, by protocol, to each destination</sub></td>
+    <td width="50%"><a href=".github/assets/media/changelog.png"><img src=".github/assets/media/changelog.png" alt="Changelog page: events and new devices in the last 7 days, the data the new devices moved, and events over time"></a><br><sub>Changelog: new devices and other changes, and what they did</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><a href=".github/assets/media/iot.png"><img src=".github/assets/media/iot.png" alt="IoT trust score page: a smart home health score out of 100 and findings such as a TV contacting tracker domains or a camera using an unexpected port"></a><br><sub>IoT trust score: how your smart home devices behave</sub></td>
+    <td width="50%"><a href=".github/assets/media/tools.png"><img src=".github/assets/media/tools.png" alt="Network tools page: ping and traceroute, LAN throughput test, subnet calculator, IPv6 toolkit, DHCP lease timeline, DNS and WHOIS lookups and more"></a><br><sub>Network tools: diagnostics and lookups that run on the box</sub></td>
   </tr>
 </table>
 
