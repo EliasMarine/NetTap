@@ -1,6 +1,12 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
+import { resetNavigation } from '../../tests/app-navigation.svelte';
 import Page from './+page.svelte';
+
+// NET-273: the open tab follows the URL, so the router is a stand-in that follows goto
+vi.mock('$app/state', () => import('../../tests/app-navigation.svelte'));
+vi.mock('$app/navigation', () => import('../../tests/app-navigation.svelte'));
+beforeEach(() => resetNavigation());
 
 // #96: a failed UniFi status read showed the form as "not configured"
 
@@ -20,6 +26,8 @@ async function openIntegrations() {
 	for (let i = 0; i < 5; i++) await Promise.resolve();
 	await new Promise((r) => setTimeout(r, 0));
 	await fireEvent.click(screen.getByRole('tab', { name: 'Integrations' }));
+	// NET-273: the tab reads its status when it opens
+	await new Promise((r) => setTimeout(r, 0));
 }
 
 describe('Settings — UniFi status failed', () => {

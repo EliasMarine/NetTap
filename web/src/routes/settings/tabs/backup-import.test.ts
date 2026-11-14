@@ -2,7 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import { get } from 'svelte/store';
 import { pageRefresh } from '$lib/stores/pageRefresh';
-import Page from './+page.svelte';
+// OLD CODE: import Page from './+page.svelte'; (NET-273: the page is a Settings tab now)
+import Page from './BackupTab.svelte';
 
 /** Validation always passes; the import answers with `importReply`. */
 function stubFetch(importReply: { ok: boolean; status: number; body: unknown }) {

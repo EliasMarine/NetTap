@@ -2,7 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import { get } from 'svelte/store';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
-import Page from './+page.svelte';
+// OLD CODE: import Page from './+page.svelte'; (NET-273: the page is a Settings tab now)
+import Page from './NotificationsTab.svelte';
 
 /** Stub fetch: URLs in `routes` get their body, everything else a 500. */
 function stubFetch(routes: Record<string, unknown>) {
@@ -81,6 +82,8 @@ describe('Notification settings when requests fail (#96)', () => {
 });
 
 const LISTS: Record<string, unknown> = {
+	// NET-273: the preferences card shares the tab, so its settings answer too (else its load-failed alert joins the page's)
+	'/api/notifications/config': { min_severity: 2, email: { enabled: false, recipients: [], smtp_configured: true }, webhook: { enabled: false, has_url: false, url_hint: '' } },
 	'/api/notifications/channels': { channels: [CHANNEL], count: 1 },
 	'/api/notifications/rules': { rules: [], count: 0 },
 	'/api/notifications/log': { log: [], count: 0 },

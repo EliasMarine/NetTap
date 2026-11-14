@@ -26,9 +26,15 @@
 	const FOLLOW_MS = 2_000;
 	const BACKOFF_MS = 10_000;
 
+	/** NET-273: true while a change is being saved, so Settings holds a tab switch until it lands. */
+	let { busy = $bindable(false) }: { busy?: boolean } = $props();
+
 	let phase = $state<'loading' | 'ready' | 'failed'>('loading');
 	let setting = $state<LiveBandwidthSetting | null>(null);
 	let saving = $state(false);
+	$effect(() => {
+		busy = saving;
+	});
 	let message = $state('');
 	let followFailed = $state(false);
 

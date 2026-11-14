@@ -1,0 +1,52 @@
+/* Layout glue several Settings tabs share (NET-273: moved from the page's scoped styles when it split
+   into tab components). Scoped to the tab panels; forms.css and system.css have no such rules. */
+
+.settings-panel .facts.flush {
+	border-top: 0;
+	padding-top: 0;
+}
+
+.settings-panel .switch-row {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--sp-3);
+}
+
+.settings-panel .switch-row .label {
+	margin-bottom: 0;
+}
+
+.settings-panel .label-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sp-2);
+}
+
+.settings-panel .label-row .label {
+	margin-bottom: 0;
+}
+
+.settings-panel .unit-field,
+.settings-panel .inline-row {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-2);
+	flex-wrap: wrap;
+}
+
+.settings-panel .unit-field .input {
+	width: 120px;
+}
+
+.settings-panel .inline-row .input {
+	flex: 1 1 220px;
+	max-width: 360px;
+}
+
+/* "Unsaved changes" beside a form's Save button */
+.settings-panel .unsaved {
+	align-self: center;
+	font-size: var(--text-sm);
+	color: var(--text-3);
+}

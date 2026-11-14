@@ -18,12 +18,27 @@
 		type HomeLocation,
 	} from '$lib/api/home-location';
 
+	interface Props {
+		/** NET-273: the fields differ from the saved location (a looked-up place counts until it is saved). */
+		dirty?: boolean;
+		/** NET-273: a save or clear is running, so Settings holds a tab switch until it lands. */
+		writing?: boolean;
+	}
+
+	let { dirty = $bindable(false), writing = $bindable(false) }: Props = $props();
+
 	let phase = $state<'loading' | 'ready' | 'failed'>('loading');
 	let saved = $state<HomeLocation | null>(null);
 	let label = $state('');
 	let lat = $state('');
 	let lon = $state('');
 	let busy = $state<'' | 'save' | 'clear' | 'lookup'>('');
+	const fields = (home: HomeLocation | null) => JSON.stringify([home?.label ?? '', home ? String(home.lat) : '', home ? String(home.lon) : '']);
+	const unsaved = $derived(phase === 'ready' && JSON.stringify([label, lat, lon]) !== fields(saved));
+	$effect(() => {
+		dirty = unsaved;
+		writing = busy === 'save' || busy === 'clear';
+	});
 	let message = $state('');
 	let isError = $state(false);
 
@@ -127,6 +142,7 @@
 				</div>
 			</div>
 			<div class="form-actions">
+				{#if unsaved}<span class="unsaved">Unsaved changes</span>{/if}
 				<button class="btn" type="button" onclick={lookup} disabled={busy !== ''}>
 					{busy === 'lookup' ? 'Looking up…' : 'Use my WAN location'}
 				</button>

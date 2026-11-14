@@ -51,9 +51,15 @@ export const APP_ROUTES: readonly RouteCase[] = [
 	{ path: '/packets', marker: 'Packet analysis' },
 	{ path: '/pcap', marker: 'PCAP search' },
 	{ path: '/settings', marker: 'Settings' },
-	{ path: '/settings/backup', marker: 'Backup and restore' },
-	{ path: '/settings/notifications', marker: 'Notifications' },
-	{ path: '/settings/suricata-rules', marker: 'Suricata rules' },
+	// OLD CODE START — NET-273: the three pages are Settings tabs now, and their old addresses redirect there
+	// { path: '/settings/backup', marker: 'Backup and restore' },
+	// { path: '/settings/notifications', marker: 'Notifications' },
+	// { path: '/settings/suricata-rules', marker: 'Suricata rules' },
+	// OLD CODE END
+	// NET-273: each marker is a card heading inside the tab's panel
+	{ path: '/settings?tab=backup', marker: 'Export configuration' },
+	{ path: '/settings?tab=notifications', marker: 'Notification channels' },
+	{ path: '/settings?tab=suricata-rules', marker: 'Rules Suricata runs' },
 	{ path: '/system', marker: 'System' },
 	{ path: '/system/cyberchef', marker: 'CyberChef' },
 	{ path: '/system/updates', marker: 'Software updates' },

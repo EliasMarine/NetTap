@@ -3,12 +3,18 @@ import { render, screen, fireEvent, within } from '@testing-library/svelte';
 import { get } from 'svelte/store';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
 import { previewCleanup, executeCleanup } from '$lib/api/storage';
+import { resetNavigation } from '../../tests/app-navigation.svelte';
 import Page from './+page.svelte';
 
 vi.mock('$lib/api/storage', () => ({
 	previewCleanup: vi.fn(),
 	executeCleanup: vi.fn(),
 }));
+// NET-273: the open tab follows the URL, so the router is a stand-in that follows goto
+vi.mock('$app/state', () => import('../../tests/app-navigation.svelte'));
+vi.mock('$app/navigation', () => import('../../tests/app-navigation.svelte'));
+
+beforeEach(() => resetNavigation());
 
 describe('Settings', () => {
 	it('should export a Svelte component', async () => {
@@ -23,10 +29,19 @@ describe('Settings', () => {
 
 type FetchRoute = (init?: RequestInit) => { status?: number; body: unknown };
 
-/** Stub fetch: URLs in `routes` get their body, everything else a 500. */
+// NET-273: the Notifications tab lists its channels, rules and deliveries beside the preferences
+const HUB_LISTS: Record<string, FetchRoute> = {
+	'/api/notifications/channels': () => ({ body: { channels: [], count: 0 } }),
+	'/api/notifications/rules': () => ({ body: { rules: [], count: 0 } }),
+	'/api/notifications/log': () => ({ body: { log: [], count: 0 } }),
+};
+
+/** Stub fetch: URLs in `routes` get their body, the notification lists are empty, everything else a 500. */
 function stubFetch(routes: Record<string, FetchRoute> = {}) {
+	// OLD CODE: const fn = vi.fn(async (url: string, init?: RequestInit) => { const route = routes[url.split('?')[0]]; … (NET-273: the lists answer too)
+	const all = { ...HUB_LISTS, ...routes };
 	const fn = vi.fn(async (url: string, init?: RequestInit) => {
-		const route = routes[url.split('?')[0]];
+		const route = all[url.split('?')[0]];
 		if (!route) return { ok: false, status: 500, json: async () => ({}) };
 		const { status = 200, body } = route(init);
 		return { ok: status < 400, status, json: async () => body };
@@ -38,6 +53,12 @@ function stubFetch(routes: Record<string, FetchRoute> = {}) {
 async function flush() {
 	for (let i = 0; i < 5; i++) await Promise.resolve();
 	await new Promise((r) => setTimeout(r, 0));
+}
+
+/** NET-273: a tab loads when it opens (only the open tab is mounted), so wait for its reads. */
+async function openTab(name: string) {
+	await fireEvent.click(screen.getByRole('tab', { name }));
+	await flush();
 }
 
 const PREVIEW = {
@@ -69,7 +90,7 @@ describe('Settings — manual cleanup', () => {
 
 	async function openPreview(days: string) {
 		render(Page);
-		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
+		await openTab('Storage & retention');
 		const input = screen.getByLabelText('Delete data older than (days)');
 		await fireEvent.input(input, { target: { value: days } });
 		await fireEvent.click(screen.getByRole('button', { name: 'Preview cleanup' }));
@@ -112,7 +133,7 @@ describe('Settings — retention save', () => {
 		stubFetch({ '/api/setup/storage': (init) => (init?.method === 'POST' ? { status, body } : { body: {} }) });
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
+		await openTab('Storage & retention');
 		await fireEvent.click(screen.getByRole('button', { name: 'Save retention settings' }));
 		await flush();
 	}
@@ -135,7 +156,7 @@ describe('Settings — retention save', () => {
 		stubFetch({});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
+		await openTab('Storage & retention');
 
 		expect(screen.getByText(/Raw packet captures of all traffic/)).toBeInTheDocument();
 		expect(screen.queryByText(/alert-triggered/)).not.toBeInTheDocument();
@@ -145,7 +166,7 @@ describe('Settings — retention save', () => {
 		stubFetch({});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
+		await openTab('Storage & retention');
 
 		expect(screen.getByLabelText('Hot tier (Zeek metadata and Suricata alerts)')).toBeInTheDocument();
 		expect(screen.getByLabelText('Warm tier (separate Suricata indices)')).toBeInTheDocument();
@@ -158,7 +179,7 @@ describe('Settings — retention save', () => {
 		stubFetch({ '/api/setup/storage': () => ({ status: 503, body: { error: "The NetTap service isn't answering" } }) });
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
+		await openTab('Storage & retention');
 
 		expect(screen.getByRole('button', { name: 'Save retention settings' })).toBeDisabled();
 		expect(screen.getByText(/Could not load the current retention settings/)).toBeInTheDocument();
@@ -179,7 +200,7 @@ describe('Settings — About', () => {
 		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'About' }));
+		await openTab('About');
 
 		expect(screen.getByText('0.4.0')).toBeInTheDocument();
 		expect(screen.getByText('6h 6m')).toBeInTheDocument();
@@ -194,7 +215,7 @@ describe('Settings — About', () => {
 		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'About' }));
+		await openTab('About');
 
 		expect(screen.getByText('0.4.0')).toBeInTheDocument();
 		expect(screen.queryByText('Build')).not.toBeInTheDocument();
@@ -208,7 +229,7 @@ describe('Settings — About', () => {
 		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'About' }));
+		await openTab('About');
 
 		expect(screen.getByText('abc1234')).toBeInTheDocument();
 	});
@@ -228,7 +249,7 @@ describe('Settings — retention health', () => {
 		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
+		await openTab('Storage & retention');
 
 		expect(screen.getByText(/Policy synced/)).toBeInTheDocument();
 		expect(screen.queryByText(/All 1 synced/)).not.toBeInTheDocument();
@@ -239,7 +260,7 @@ describe('Settings — retention health', () => {
 		stubFetch();
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
+		await openTab('Storage & retention');
 
 		expect(screen.getByText("Couldn't load the storage status: the request failed.")).toBeInTheDocument();
 		expect(screen.getByText('Unknown', { selector: '.chip' })).toBeInTheDocument();
@@ -259,7 +280,7 @@ describe('Settings — retention health', () => {
 		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
+		await openTab('Storage & retention');
 
 		expect(screen.getByText('Syncing…')).toBeInTheDocument();
 		expect(screen.getByText('Last try just now: error: ConnectionError(Connection refused) NetTap tries again automatically.')).toBeInTheDocument();
@@ -275,7 +296,7 @@ describe('Settings — retention health', () => {
 		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
+		await openTab('Storage & retention');
 
 		expect(screen.getByText('Healthy', { selector: '.chip' })).toBeInTheDocument();
 		expect(screen.getByText(/2 policies synced/)).toBeInTheDocument();
@@ -296,7 +317,7 @@ describe('Settings — capture status label', () => {
 		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Capture' }));
+		await openTab('Capture');
 
 		expect(screen.getByText('Enabled — capture container not running')).toBeInTheDocument();
 		expect(screen.queryByText('Enabled — capturing packets')).not.toBeInTheDocument();
@@ -310,7 +331,7 @@ describe('Settings — capture status label', () => {
 		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Capture' }));
+		await openTab('Capture');
 
 		expect(screen.getByDisplayValue('4096')).toBeInTheDocument();
 		expect(screen.getByText(/or every 10 minutes, whichever comes first/)).toBeInTheDocument();
@@ -326,7 +347,7 @@ describe('Settings — capture status label', () => {
 		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Capture' }));
+		await openTab('Capture');
 
 		const field = screen.getByLabelText('Max file size').closest('.field') as HTMLElement;
 		expect(within(field).getByText('MiB')).toBeInTheDocument();
@@ -345,7 +366,7 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 		stubFetch({ '/api/capture/status': () => ({ status: 502, body: { error: 'Daemon unreachable' } }) });
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Capture' }));
+		await openTab('Capture');
 
 		expect(screen.getByText(/Could not load the current capture settings/)).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Save capture settings' })).not.toBeInTheDocument();
@@ -478,7 +499,9 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 		render(Page);
 		await flush();
 
-		expect(screen.getByText('Email needs an SMTP server: set it in the API keys tab first.')).toBeInTheDocument();
+		// OLD CODE: expect(screen.getByText('Email needs an SMTP server: set it in the API keys tab first.')).toBeInTheDocument(); (NET-273: the tab is a link)
+		expect(screen.getByRole('link', { name: 'API keys tab' }).closest('.notice')).toHaveTextContent('Email needs an SMTP server: set it in the API keys tab first.');
+		expect(screen.getByRole('link', { name: 'API keys tab' })).toHaveAttribute('href', '?tab=api-keys');
 		expect(screen.getByLabelText('Recipient emails')).toHaveValue('a@example.com');
 	});
 
@@ -557,7 +580,7 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 		stubFetch();
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Network' }));
+		await openTab('Network');
 
 		expect(screen.getByText(/Could not load the excluded IP list/)).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Save excluded IPs' })).not.toBeInTheDocument();
@@ -573,7 +596,7 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Network' }));
+		await openTab('Network');
 
 		expect(screen.queryByRole('button', { name: 'Remove 192.0.2.1' })).not.toBeInTheDocument();
 		expect(screen.getByText(/always left out and isn't listed here/)).toBeInTheDocument();
@@ -587,7 +610,7 @@ describe('Settings — a failed load never saves blanks over real settings', () 
 		stubFetch({ '/api/settings/excluded-ips': () => ({ body: { excluded_ips: ['203.0.113.10'] } }) });
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Network' }));
+		await openTab('Network');
 
 		expect(screen.getByText('203.0.113.10')).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Save excluded IPs' })).toBeEnabled();
@@ -618,7 +641,7 @@ describe('Settings — UniFi integration', () => {
 	async function openIntegrations() {
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Integrations' }));
+		await openTab('Integrations');
 	}
 
 	it('shows connected state and last poll from the daemon status fields', async () => {
@@ -666,26 +689,29 @@ describe('Settings — UniFi integration', () => {
 // Redesign: section tabs (Pills tabs mode), the switch, load states, no page refresh
 // ---------------------------------------------------------------------------
 
-describe('Settings — links to its own pages (NET-199)', () => {
-	afterEach(() => vi.unstubAllGlobals());
-
-	it('links Suricata rules, Notification channels and Backup and restore from the page head, on every tab', async () => {
-		stubFetch();
-		render(Page);
-
-		const nav = screen.getByRole('navigation', { name: 'More settings' });
-		const links = within(nav).getAllByRole('link');
-		expect(links.map((a) => [a.textContent?.trim(), a.getAttribute('href')])).toEqual([
-			['Suricata rules', '/settings/suricata-rules'],
-			['Notification channels', '/settings/notifications'],
-			['Backup and restore', '/settings/backup'],
-		]);
-
-		// The links sit outside the tab panel, so another tab keeps them
-		await fireEvent.click(screen.getByRole('tab', { name: 'Display' }));
-		expect(within(screen.getByRole('navigation', { name: 'More settings' })).getAllByRole('link')).toHaveLength(3);
-	});
-});
+// OLD CODE START — NET-273: the three pages are tabs of Settings now, and their old addresses redirect
+// (settings-hub.test.ts covers both)
+// describe('Settings — links to its own pages (NET-199)', () => {
+// 	afterEach(() => vi.unstubAllGlobals());
+//
+// 	it('links Suricata rules, Notification channels and Backup and restore from the page head, on every tab', async () => {
+// 		stubFetch();
+// 		render(Page);
+//
+// 		const nav = screen.getByRole('navigation', { name: 'More settings' });
+// 		const links = within(nav).getAllByRole('link');
+// 		expect(links.map((a) => [a.textContent?.trim(), a.getAttribute('href')])).toEqual([
+// 			['Suricata rules', '/settings/suricata-rules'],
+// 			['Notification channels', '/settings/notifications'],
+// 			['Backup and restore', '/settings/backup'],
+// 		]);
+//
+// 		// The links sit outside the tab panel, so another tab keeps them
+// 		await fireEvent.click(screen.getByRole('tab', { name: 'Display' }));
+// 		expect(within(screen.getByRole('navigation', { name: 'More settings' })).getAllByRole('link')).toHaveLength(3);
+// 	});
+// });
+// OLD CODE END
 
 describe('Settings — section tabs', () => {
 	afterEach(() => vi.unstubAllGlobals());
@@ -696,8 +722,10 @@ describe('Settings — section tabs', () => {
 
 		const tablist = screen.getByRole('tablist', { name: 'Settings sections' });
 		const tabs = within(tablist).getAllByRole('tab');
+		// OLD CODE: 'Notifications', 'Retention', 'Capture', 'API keys', 'Network', 'Integrations', 'Display', 'About' (NET-273: grouped, with three more)
 		expect(tabs.map((t) => t.textContent?.trim())).toEqual([
-			'Notifications', 'Retention', 'Capture', 'API keys', 'Network', 'Integrations', 'Display', 'About',
+			'Notifications', 'Suricata rules', 'Storage & retention', 'Capture', 'Backup & restore',
+			'Network', 'Integrations', 'API keys', 'Display', 'About',
 		]);
 		const first = screen.getByRole('tab', { name: 'Notifications' });
 		expect(first).toHaveAttribute('aria-selected', 'true');
@@ -712,11 +740,12 @@ describe('Settings — section tabs', () => {
 		stubFetch();
 		render(Page);
 
+		// OLD CODE: ArrowRight from Notifications selected Retention (NET-273: Suricata rules comes next)
 		await fireEvent.keyDown(screen.getByRole('tab', { name: 'Notifications' }), { key: 'ArrowRight' });
-		expect(screen.getByRole('tab', { name: 'Retention' })).toHaveAttribute('aria-selected', 'true');
-		expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'settings-panel-retention');
+		expect(screen.getByRole('tab', { name: 'Suricata rules' })).toHaveAttribute('aria-selected', 'true');
+		expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'settings-panel-suricata-rules');
 
-		await fireEvent.keyDown(screen.getByRole('tab', { name: 'Retention' }), { key: 'End' });
+		await fireEvent.keyDown(screen.getByRole('tab', { name: 'Suricata rules' }), { key: 'End' });
 		expect(screen.getByRole('tabpanel')).toHaveAttribute('id', 'settings-panel-about');
 
 		await fireEvent.keyDown(screen.getByRole('tab', { name: 'About' }), { key: 'ArrowRight' });
@@ -745,14 +774,17 @@ describe('Settings — section tabs', () => {
 		await flush();
 		expect(get(pageRefresh).available).toBe(true);
 
-		await fireEvent.click(screen.getByRole('tab', { name: 'Retention' }));
+		await openTab('Storage & retention');
 		const hotDays = screen.getByLabelText('Hot tier (Zeek metadata and Suricata alerts)') as HTMLInputElement;
 		await vi.waitFor(() => expect(hotDays.value).toBe('90'));
 		await fireEvent.input(hotDays, { target: { value: '120' } });
 		expect([reads('/api/setup/storage'), reads('/api/storage/status')]).toEqual([1, 1]);
 
-		// About's reads answer 500 here, so the refresh is partial
-		expect(await refreshPage()).toBe('partial');
+		// OLD CODE START — NET-273: About reads its own figures now, so Retention's Refresh reads only its health card
+		// // About's reads answer 500 here, so the refresh is partial
+		// expect(await refreshPage()).toBe('partial');
+		// OLD CODE END
+		expect(await refreshPage()).toBe('ok');
 		await flush();
 		expect(reads('/api/storage/status')).toBe(2);
 		expect(reads('/api/setup/storage')).toBe(1);
@@ -771,7 +803,8 @@ describe('Settings — load states', () => {
 	}
 
 	it.each([
-		['Retention', 'Loading the storage status'],
+		// OLD CODE: ['Retention', …] (NET-273: the tab is "Storage & retention")
+		['Storage & retention', 'Loading the storage status'],
 		['Capture', 'Loading capture settings'],
 		['API keys', 'Loading API key status'],
 		['Network', 'Loading the excluded IP list'],
@@ -785,30 +818,37 @@ describe('Settings — load states', () => {
 	});
 
 	it('shows the error card, with no form, when the excluded IP list fails', async () => {
-		stubFetch();
+		// OLD CODE: stubFetch(); (NET-273: the tab loads on open, so the location card beside it answers by then)
+		stubFetch({ '/api/settings/home-location': () => ({ body: { home: null } }) });
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Network' }));
+		await openTab('Network');
 
 		expect(screen.getByRole('alert')).toHaveTextContent(/Could not load the excluded IP list/);
 		expect(screen.queryByLabelText('IP address to exclude')).not.toBeInTheDocument();
 	});
 
 	it('shows the capture error card instead of the switch', async () => {
-		stubFetch();
+		// OLD CODE: stubFetch(); (NET-273: the tab loads on open, so the Live bandwidth card beside it answers by then)
+		stubFetch({
+			'/api/settings/live-bandwidth': () => ({
+				body: { enabled: false, supported: true, reason: null, mode: 'mirror', cleanup: { state: 'idle', failed: {} } },
+			}),
+		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Capture' }));
+		await openTab('Capture');
 
 		expect(screen.getByRole('alert')).toHaveTextContent(/Could not load the current capture settings/);
-		expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+		// OLD CODE: expect(screen.queryByRole('switch')).not.toBeInTheDocument(); (NET-273: the Live bandwidth card has loaded its own switch by now)
+		expect(screen.queryByRole('switch', { name: 'PCAP collection' })).not.toBeInTheDocument();
 	});
 
 	it('shows an empty excluded list as text, with the editor still there', async () => {
 		stubFetch({ '/api/settings/excluded-ips': () => ({ body: { excluded_ips: [] } }) });
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Network' }));
+		await openTab('Network');
 
 		expect(screen.getByText('No IPs excluded. All IPs appear in device views.')).toBeInTheDocument();
 		expect(screen.getByLabelText('IP address to exclude')).toBeInTheDocument();
@@ -831,7 +871,7 @@ describe('Settings — PCAP collection switch', () => {
 		});
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Capture' }));
+		await openTab('Capture');
 		return fetchMock;
 	}
 
@@ -870,12 +910,13 @@ describe('Settings — API keys: one place for the ET Pro code (NET-191)', () =>
 		stubFetch({ '/api/settings/api-keys': () => ({ body: { keys: { MAXMIND_LICENSE_KEY: false } } }) });
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'API keys' }));
+		await openTab('API keys');
 
 		expect(screen.getByLabelText('MaxMind licence key')).toBeInTheDocument();
 		expect(screen.queryByLabelText('Emerging Threats Pro key')).not.toBeInTheDocument();
 		expect(document.getElementById('et-pro-key')).toBeNull();
-		expect(screen.getByRole('link', { name: 'Settings › Suricata rules' })).toHaveAttribute('href', '/settings/suricata-rules');
+		// OLD CODE: …toHaveAttribute('href', '/settings/suricata-rules'); (NET-273: a tab of this page)
+		expect(screen.getByRole('link', { name: 'Settings › Suricata rules' })).toHaveAttribute('href', '?tab=suricata-rules');
 	});
 });
 
@@ -891,7 +932,7 @@ describe('Settings — Display: the default time range (NET-195)', () => {
 		stubFetch();
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Display' }));
+		await openTab('Display');
 		return screen.getByLabelText('Default time range') as HTMLSelectElement;
 	}
 
@@ -945,7 +986,7 @@ describe('Settings — Display: the Live map', () => {
 		stubFetch();
 		render(Page);
 		await flush();
-		await fireEvent.click(screen.getByRole('tab', { name: 'Display' }));
+		await openTab('Display');
 		return screen.getByLabelText('Live map') as HTMLSelectElement;
 	}
 
@@ -972,11 +1013,11 @@ describe('Settings — Display: the Live map', () => {
 describe('Settings — links into a tab', () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
-		window.history.replaceState(null, '', '/');
 	});
 
+	// OLD CODE: window.history.replaceState(null, '', '/settings?tab=…') (NET-273: the tab follows the router's URL)
 	it('?tab=network opens Network, with the network location card', async () => {
-		window.history.replaceState(null, '', '/settings?tab=network');
+		resetNavigation('http://localhost/settings?tab=network');
 		stubFetch({ '/api/settings/home-location': () => ({ body: { home: null } }) });
 		render(Page);
 		await flush();
@@ -985,7 +1026,7 @@ describe('Settings — links into a tab', () => {
 	});
 
 	it('an unknown tab is ignored', async () => {
-		window.history.replaceState(null, '', '/settings?tab=nope');
+		resetNavigation('http://localhost/settings?tab=nope');
 		stubFetch();
 		render(Page);
 		await flush();

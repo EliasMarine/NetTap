@@ -2,7 +2,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/svelte';
 import { get } from 'svelte/store';
 import { pageRefresh, refreshPage } from '$lib/stores/pageRefresh';
-import Page from './+page.svelte';
+// OLD CODE: import Page from './+page.svelte'; (NET-273: the page is a Settings tab now)
+import Page from './SuricataRulesTab.svelte';
 
 /** The page shows what Suricata really runs, and controls that are not wired up are off (#58). */
 
