@@ -221,6 +221,30 @@ describe('Settings hub — unsaved edits', () => {
 		expect(tab('Display')).toHaveFocus();
 	});
 
+	it('a second hold while the bar has focus keeps the first place for Keep editing', async () => {
+		await openDirtyDisplay();
+		timeRange().focus();
+
+		followLink(linkTo('/settings?tab=about'));
+		await flush();
+		expect(screen.getByRole('button', { name: 'Keep editing' })).toHaveFocus();
+		followLink(linkTo('/settings?tab=backup'));
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
+		expect(timeRange()).toHaveFocus();
+	});
+
+	it('Discard and continue puts focus on the tab it opens', async () => {
+		await openDirtyDisplay();
+
+		await fireEvent.click(tab('About'));
+		await flush();
+		await fireEvent.click(screen.getByRole('button', { name: 'Discard and continue' }));
+		await flush();
+		expect(panel()).toHaveAttribute('id', 'settings-panel-about');
+		expect(tab('About')).toHaveFocus();
+	});
+
 	it("lets only Discard's own navigation through: after a Back that goes nowhere, the next switch is held", async () => {
 		stubFetch();
 		render(Page);

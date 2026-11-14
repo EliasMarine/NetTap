@@ -144,7 +144,9 @@
 		if (nav.type === 'leave' || !nav.to) return;
 		const focused = document.activeElement;
 		// a tab button already has focus moved onto the tab it asked for; Keep editing goes back to the open one
-		returnFocus = focused instanceof HTMLElement && focused !== document.body && focused.getAttribute('role') !== 'tab' ? focused : null;
+		// a second hold while the bar is open keeps the first place: the bar's own buttons go with it
+		if (!bar?.contains(focused))
+			returnFocus = focused instanceof HTMLElement && focused !== document.body && focused.getAttribute('role') !== 'tab' ? focused : null;
 		pending = { url: nav.to.url, type: nav.type, delta: nav.delta, willUnload: nav.willUnload };
 		// The bar may be above the fold of a long tab: bring focus (and so the eye) to it
 		void tick().then(() => (bar?.querySelector<HTMLElement>('button') ?? bar)?.focus());
@@ -184,6 +186,8 @@
 		dirty = false;
 		bypass = next.url.href;
 		const sameTab = next.url.pathname === page.url.pathname;
+		// The bar, and the button that had focus, goes: focus the tab being opened, not the page body
+		if (sameTab) document.getElementById(`settings-tab-${tabFrom(next.url)}`)?.focus();
 		// The open tab still shows the edits: remount it on its saved values, in case the navigation keeps
 		// it open (a link to the same tab, or a Back that goes nowhere) and so the next edit counts again
 		epoch += 1;
