@@ -211,6 +211,20 @@ describe('layout session expiry', () => {
 		expect(screen.queryByText("Can't reach NetTap")).not.toBeInTheDocument();
 	});
 
+	// NET-259: Go Live opens before the first admin exists (setup cookie, no session), so no session ran out
+	it('stays on the page, and says nothing is offline, before the first admin exists', async () => {
+		pageStore.set({ url: new URL('http://localhost/go-live') });
+		const res = signInFirst();
+		const read = vi.spyOn(res, 'json');
+		stubFetch(() => res);
+		renderLayout(null);
+		await vi.waitFor(() => expect(read).toHaveBeenCalled());
+		await read.mock.results[0].value;
+		await tick();
+		expect(goto).not.toHaveBeenCalled();
+		expect(screen.queryByText("Can't reach NetTap")).not.toBeInTheDocument();
+	});
+
 	it("does not take the daemon's own 401 for a lapsed session", async () => {
 		stubFetch(() => new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 }));
 		renderLayout();
