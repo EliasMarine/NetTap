@@ -286,9 +286,18 @@
 					<text class="ax" x={X(i).toFixed(1)} y={h - 6} text-anchor="middle">{formatX(t)}</text>
 				{/if}
 			{/each}
+			<!-- OLD CODE START — NET-270: with a few points (a picked few minutes) the band grew to most of the
+			     chart and, centred on an end point, painted over the sidebar (system.css lets the svg overflow)
 			{#if highlight !== null}
 				{@const bw = Math.min(slot * 1.6, iw)}
 				<rect class="band" x={(X(highlight) - bw / 2).toFixed(1)} y={PAD.t} width={bw.toFixed(1)} height={ih} rx="10" />
+			{/if}
+			OLD CODE END -->
+			{#if highlight !== null}
+				<!-- a column at the point: at most a tenth of the plot (17+ points keep the design's 1.6 slots), inside it -->
+				{@const bw = Math.min(slot * 1.6, iw / 10)}
+				{@const bx = Math.max(PAD.l, X(highlight) - bw / 2)}
+				<rect class="band" x={bx.toFixed(1)} y={PAD.t} width={(Math.min(PAD.l + iw, X(highlight) + bw / 2) - bx).toFixed(1)} height={ih} rx="10" />
 			{/if}
 			{#if picking}
 				{@const x0 = Math.max(PAD.l, X(picking.lo) - slot / 2)}

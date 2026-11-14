@@ -66,6 +66,28 @@ describe('AreaChart', () => {
 		expect(container.querySelector('.guide')).toBeNull();
 	});
 
+	// NET-270: a picked few minutes has three points; the band was 1.6 slots wide, centred on the end point
+	it('keeps the headline band a narrow column inside the plot when there are few points', () => {
+		const box = (c: HTMLElement) => {
+			const r = c.querySelector('rect.band')!;
+			return { x: Number(r.getAttribute('x')), w: Number(r.getAttribute('width')) };
+		};
+		// jsdom measures nothing, so the chart is 640 wide: the plot runs from 50 to 628
+		const [left, right] = [50, 628];
+		for (const at of [0, 1, 2]) {
+			const { container, unmount } = draw([toSeries('down', 1, [3.1, 0.05, 0])], { highlightIndex: at });
+			const { x, w } = box(container);
+			expect(x).toBeGreaterThanOrEqual(left);
+			expect(x + w).toBeLessThanOrEqual(right + 0.1);
+			expect(w).toBeLessThanOrEqual((right - left) / 10 + 0.1);
+			expect(w).toBeGreaterThan(0);
+			unmount();
+		}
+		// 24 points: the design's width, 1.6 slots, unchanged
+		const { container } = draw([toSeries('down', 1, DOWN)], { highlightIndex: 21 });
+		expect(box(container).w).toBeCloseTo(((right - left) / 23) * 1.6, 0);
+	});
+
 	it('thins the x labels so they never overlap', () => {
 		const { container } = draw([toSeries('down', 1, DOWN)]);
 		const xs = [...container.querySelectorAll('text.ax[text-anchor="middle"]')].map((t) => Number(t.getAttribute('x')));
