@@ -157,6 +157,47 @@ jobs:
         working-directory: web/
 
   # ========================================================================
+  # Visual Tests — first run only (the full suite takes ~8 minutes)
+  # ========================================================================
+  # Setup and Go Live before the first admin exists, on the production build against
+  # the fixture daemon. NET-259 (Go Live bounced to /login) was caught only by hand.
+  test-visual-firstrun:
+    name: Visual tests (first run)
+    # Playwright 1.58 has no Chromium for ubuntu-latest (26.04); move with a Playwright upgrade
+    runs-on: ubuntu-24.04
+    needs: lint-web
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web/
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: web/
+
+      - name: Run first-run visual tests
+        run: npm run test:visual -- --project=firstrun
+        working-directory: web/
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-firstrun-results
+          path: web/test-results/visual/
+          retention-days: 7
+
+  # ========================================================================
   # Docker Image Builds (verify they build, do not push)
   # ========================================================================
   docker-build:
