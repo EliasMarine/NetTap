@@ -12,7 +12,8 @@
 	 */
 
 	import { page } from '$app/stores';
-	import { onDestroy, untrack } from 'svelte';
+	// OLD CODE: import { onDestroy, untrack } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import { getRegistryDevice, getDeviceTraffic, isNewDevice } from '$api/devices-registry';
 	import type { RegistryDevice, DeviceTraffic } from '$api/devices-registry';
 	import IPAddress from '$components/IPAddress.svelte';
@@ -37,6 +38,7 @@
 	// OLD CODE: import DeviceCustomise from './DeviceCustomise.svelte'; (NET-201: the IP device page uses it too)
 	import DeviceCustomise from '$components/DeviceCustomise.svelte';
 	import LiveBandwidthCard from '$components/LiveBandwidthCard.svelte';
+	import DeviceCompareCard from '$components/DeviceCompareCard.svelte';
 
 	type Destination = DeviceTraffic['top_destinations'][number];
 	type DnsQuery = NonNullable<DeviceTraffic['dns_queries']>[number];
@@ -156,6 +158,20 @@
 			display_name: saved.display_name,
 			discovered_name: saved.discovered_name,
 		};
+	}
+
+	/** NET-269: the Compare periods card is open (as on devices/[ip]; Devices › By type opens this page) */
+	let comparing = $state(false);
+	// the registry sorts ips as strings, so an IPv6 (which rotates) can come first: default to the IPv4
+	const compareIp = $derived(device ? (device.ips.find((a) => !a.includes(':')) ?? device.ips[0] ?? null) : null);
+	/** Opening brings the card into view with its first control focused. */
+	async function toggleCompare() {
+		comparing = !comparing;
+		if (!comparing) return;
+		await tick();
+		const first = document.getElementById('cmp-ip') ?? document.getElementById('cmp-length');
+		first?.closest('.card')?.scrollIntoView({ block: 'start' });
+		first?.focus({ preventScroll: true });
 	}
 
 	const refresh = registerPageRefresh(load);
@@ -284,6 +300,7 @@
 		</div>
 		<div class="head-actions">
 			<Pills ariaLabel="Time range" options={RANGE_OPTIONS} bind:value={rangeValue} />
+			{#if device && device.ips.length > 0}<button class="btn" type="button" aria-expanded={comparing} onclick={toggleCompare}>Compare periods</button>{/if}
 		</div>
 	</div>
 	{#if device}
@@ -292,6 +309,8 @@
 		<dl class="ident-meta">
 			<div><dt class="meta-k">MAC address</dt><dd class="meta-v mono">{device.mac}</dd></div>
 			<div><dt class="meta-k">IP addresses</dt><dd class="meta-v mono">{device.ips.length > 0 ? device.ips.join(', ') : '—'}</dd></div>
+			<!-- NET-269: the same link as devices/[ip] -->
+			<div><dt class="meta-k">Leases</dt><dd class="meta-v"><a href="/tools/dhcp-timeline?mac={encodeURIComponent(device.mac.toLowerCase())}">DHCP history</a></dd></div>
 			<div><dt class="meta-k">Manufacturer</dt><dd class="meta-v">{device.manufacturer ?? '—'}</dd></div>
 			<div><dt class="meta-k">Hostnames</dt><dd class="meta-v mono">{device.hostnames.length > 0 ? device.hostnames.join(', ') : '—'}</dd></div>
 			<div><dt class="meta-k">First seen</dt><dd class="meta-v">{formatTime(device.first_seen)}</dd></div>
@@ -343,6 +362,8 @@
 
 		<!-- NET-205: counted by the MAC itself, live -->
 		<LiveBandwidthCard key={{ mac: device.mac }} />
+
+		{#if comparing && compareIp}{#key device.mac}<DeviceCompareCard ip={compareIp} ips={device.ips} />{/key}{/if}
 
 		<!-- the daemon doesn't send a bandwidth series yet; the card shows once it does -->
 		{#if traffic?.bandwidth_series}

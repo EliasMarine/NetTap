@@ -1,6 +1,7 @@
 <!--
   DeviceCompareCard: the connections one device started in two equal periods, by destination
   (NET-265). It asks only when Compare is pressed; the page's own loader never runs it.
+  NET-269: the MAC page passes the device's `ips`; the card compares one of them and says which.
 -->
 <script lang="ts">
 	import { getDeviceCompare, type CompareChange, type CompareDestination, type DeviceCompareResponse } from '$api/device-compare';
@@ -11,8 +12,14 @@
 	import CardState from '$lib/components/ui/CardState.svelte';
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
 	import Icon from '$lib/components/ui/Icon.svelte';
+	import { untrack } from 'svelte';
 
-	let { ip }: { ip: string } = $props();
+	// OLD CODE: let { ip }: { ip: string } = $props(); (NET-269: the MAC page passes every address it has used)
+	let { ip, ips = [] }: { ip: string; ips?: string[] } = $props();
+
+	/** The owner's pick from `ips`; a refresh that drops it falls back to the page's default `ip`. */
+	let picked = $state<string | null>(null);
+	const address = $derived(picked !== null && ips.includes(picked) ? picked : ip);
 
 	let length = $state<CompareLength>('24h');
 	const starts = defaultStarts(lengthMs('24h'), Date.now());
@@ -35,9 +42,17 @@
 		clear();
 	}
 
+	// a result or error on screen is for the address on screen
+	$effect(() => {
+		void address;
+		untrack(clear);
+	});
+
 	async function run() {
 		if (loading) return;
-		const query = periods(ip, aStart, bStart, lengthMs(length));
+		// OLD CODE: const query = periods(ip, aStart, bStart, lengthMs(length)); (NET-269: the address picked)
+		const asked = address;
+		const query = periods(asked, aStart, bStart, lengthMs(length));
 		if (!query) {
 			error = 'Pick when each period starts.';
 			result = null;
@@ -46,11 +61,22 @@
 		// one at a time: the controls are off while it runs, and the page keys this card by device
 		loading = true;
 		error = null;
+		// OLD CODE START — NET-269: a reply for an address the card no longer shows was kept
+		// try {
+		// 	result = await getDeviceCompare(query);
+		// } catch (e) {
+		// 	result = null;
+		// 	error = e instanceof Error ? e.message : String(e);
+		// } finally {
+		// OLD CODE END
 		try {
-			result = await getDeviceCompare(query);
+			const reply = await getDeviceCompare(query);
+			if (asked === address) result = reply;
 		} catch (e) {
-			result = null;
-			error = e instanceof Error ? e.message : String(e);
+			if (asked === address) {
+				result = null;
+				error = e instanceof Error ? e.message : String(e);
+			}
 		} finally {
 			loading = false;
 		}
@@ -65,7 +91,8 @@
 		{ key: 'b_bytes', label: 'Second period', numeric: true, cell: bCell },
 		{ key: 'delta', label: 'Change', numeric: true, cell: deltaCell },
 	];
-	const shown = $derived(result?.ip === ip ? result : null);
+	// OLD CODE: const shown = $derived(result?.ip === ip ? result : null);
+	const shown = $derived(result?.ip === address ? result : null);
 	const quiet = $derived(shown !== null && shown.a.total_bytes === 0 && shown.b.total_bytes === 0 && shown.a.destinations === 0 && shown.b.destinations === 0);
 </script>
 
@@ -84,6 +111,14 @@
 
 <Card class="c-12" title="Compare periods" sub="Bytes by destination · connections this device started">
 	<form class="cmp-form" onsubmit={(e) => { e.preventDefault(); void run(); }}>
+		{#if ips.length > 1}
+			<div class="field">
+				<label class="label" for="cmp-ip">Address</label>
+				<select id="cmp-ip" class="select mono" value={address} onchange={(e) => (picked = e.currentTarget.value)} disabled={loading}>
+					{#each ips as a (a)}<option value={a}>{a}</option>{/each}
+				</select>
+			</div>
+		{/if}
 		<div class="field">
 			<label class="label" for="cmp-length">Length</label>
 			<select id="cmp-length" class="select" bind:value={length} onchange={resetStarts} disabled={loading}>
@@ -101,6 +136,9 @@
 		<button class="btn primary" type="submit" disabled={loading}>Compare</button>
 	</form>
 	<p class="dim scope">{COMPARE_SCOPE}</p>
+	{#if ips.length > 0}
+		<p class="dim scope">Compares <span class="mono">{address}</span> in both periods. The device's other addresses aren't counted, and this address may have belonged to another device before.</p>
+	{/if}
 
 	{#if loading}
 		<CardState state="loading" title="Comparing the two periods" />

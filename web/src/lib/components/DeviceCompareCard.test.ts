@@ -210,4 +210,60 @@ describe('DeviceCompareCard', () => {
 		await screen.findByRole('table', { name: 'Largest changes' });
 		expect(screen.queryByText(/try again in a minute/)).toBeNull();
 	});
+
+	// NET-269: the MAC page passes every address the device has used
+	describe('with the addresses a device has used', () => {
+		const OTHER = '192.168.1.31';
+		const scopeLine = () => screen.queryByText((_, el) => el?.tagName === 'P' && !!el.textContent?.includes(' in both periods.'));
+		const button = () => screen.getByRole<HTMLButtonElement>('button', { name: 'Compare' });
+
+		it('without them there is no Address and no line naming one (the IP page)', () => {
+			render(DeviceCompareCard, { ip: IP });
+			expect(screen.queryByLabelText('Address')).toBeNull();
+			expect(scopeLine()).toBeNull();
+		});
+
+		it('with one there is no picker, and it says which address it compares', () => {
+			render(DeviceCompareCard, { ip: IP, ips: [IP] });
+			expect(screen.queryByLabelText('Address')).toBeNull();
+			expect(scopeLine()).toHaveTextContent(`Compares ${IP} in both periods. The device's other addresses aren't counted, and this address may have belonged to another device before.`);
+		});
+
+		it('another address clears the result on screen and is the one sent next', async () => {
+			render(DeviceCompareCard, { ip: IP, ips: [IP, OTHER] });
+			await compare();
+			answer(COMPLETE);
+			await screen.findByRole('table', { name: 'Largest changes' });
+			await fireEvent.change(screen.getByLabelText('Address'), { target: { value: OTHER } });
+			expect(screen.queryByRole('table')).toBeNull();
+			expect(scopeLine()).toHaveTextContent(`Compares ${OTHER} in both periods.`);
+			await compare();
+			expect(asked()[0].get('ip')).toBe(OTHER);
+		});
+
+		it('a refresh that drops the picked address goes back to the default and hides its result', async () => {
+			const { rerender } = render(DeviceCompareCard, { ip: IP, ips: [IP, OTHER] });
+			await fireEvent.change(screen.getByLabelText('Address'), { target: { value: OTHER } });
+			await compare();
+			answer({ ...COMPLETE, ip: OTHER });
+			await screen.findByRole('table', { name: 'Largest changes' });
+			await rerender({ ip: IP, ips: [IP] }); // the daemon removed the reassigned address
+			expect(screen.queryByRole('table')).toBeNull();
+			expect(scopeLine()).toHaveTextContent(`Compares ${IP} in both periods.`);
+			await compare();
+			expect(asked()[0].get('ip')).toBe(IP);
+		});
+
+		it("a failure for an address it no longer shows isn't shown beside the new one", async () => {
+			const { rerender } = render(DeviceCompareCard, { ip: IP, ips: [IP, OTHER] });
+			await fireEvent.change(screen.getByLabelText('Address'), { target: { value: OTHER } });
+			await compare();
+			await rerender({ ip: IP, ips: [IP] });
+			answer({ error: 'The two periods must not overlap.' }, 400); // the request for OTHER fails late
+			await vi.waitFor(() => expect(button().disabled).toBe(false));
+			expect(screen.queryByText("Couldn't compare these periods")).toBeNull();
+			await compare();
+			expect(asked()[0].get('ip')).toBe(IP);
+		});
+	});
 });
