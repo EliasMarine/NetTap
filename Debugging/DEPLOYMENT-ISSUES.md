@@ -1,6 +1,6 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-11-14 (Chain 35: the 2026-11-14 bug triage. A fresh install's first daily index could get a replica a single node can't place (NET-252); validate-hardware.sh run on its own stopped at the first warning (NET-253). Same day, outside the install path: another site could start /api work with the owner's cookie (NET-257), the MAC device page had no bandwidth series (NET-260), DNS Lookup read "ns" as a type (NET-268).)
+> **Last updated:** 2026-11-14 (Chain 35: the 2026-11-14 bug triage. A fresh install's first daily index could get a replica a single node can't place (NET-252); validate-hardware.sh run on its own stopped at the first warning (NET-253). Same day, outside the install path: another site could start /api work with the owner's cookie (NET-257), the MAC device page had no bandwidth series (NET-260), DNS Lookup read "ns" as a type (NET-268). Second round: extreme years gave a 500 (NET-275), Go Live opened before the first admin (NET-277), Packets ran a URL search on open (NET-276).)
 <!-- previous: **Last updated:** 2026-11-13 (Chain 34: malcolm-config.sh's generate_auth put the admin password on htpasswd's and python3's command lines and in run's verbose log, and a quote in it broke the python fallback; it now goes on stdin. NET-251, install-time only.) -->
 <!-- previous: **Last updated:** 2026-11-12 (Chain 33: installer and Go Live bugs from the setup guide, NET-244 + NET-211: two-port --skip-bridge --non-interactive, a dry run that wrote, capture started on a missing br0, Go Live guessing ports, and a new uninstall.sh.) -->
 <!-- previous: **Last updated:** 2026-11-12 (Chain 32: a box with no index answered "incomplete" instead of zeros; the daemon now fills in the empty aggregations. NET-182, not yet on the device.) -->
@@ -2021,6 +2021,21 @@ Same branch: a device read stopped at 20,000 LAN sources now writes a `device_ca
 
 **Verification (passed on the G11, 2026-11-14, `35f684d4`):** `scripts/remote/deploy-triage-fixes-2026-11-14.sh` rebuilds the daemon and web. It then checks NET-268 (a lookup of `ns` has no `root-servers` answer: 0 records), NET-257 (a cross-site `/api` request gets 403, a same-origin one reaches sign-in with 401) and NET-260 (a device's series sums to its `total_bytes`: 289 slots, 52,692,701 bytes both).
 
+### Second round, same day (follow-ups from the reviews)
+
+* **NET-275 (PR #283):** a `from`/`to` (or the new-count `since`) in year 1 or 9999 is valid ISO, so it passed `iso_param`. It then broke in `time_slots` (`ValueError`) or the timezone shift (`OverflowError`), and the daemon answered with a generic 500. `parse_time_range` now converts both bounds through `_utc_in_years` and gives a 400 that names the parameter. The security review also found that `/api/alerts/categories` and `/api/bandwidth/daily` skipped the slot budget: a 1970-to-now window built millions of slots. Both now go through `slot_interval`.
+* **NET-277 (PR #284):** before the first admin existed, `/go-live` was a first-run page, but its capture-mode call was not a first-run API, so it got 401 and the page showed an error card. `/go-live` left `FIRST_RUN_PATHS`; the hook's existing rule sends it to `/setup`. A second commit pins NET-257's split in the tests: a typed `/api` address gets 403, and a NetTap page's link still goes to `/login`.
+* **NET-276 (PR #285):** the Packets page ran the search in its URL on open, so another site's link could make the owner's page hold a packet reader. `afterNavigate` now drives the load. A full load (`type: 'enter'`) shows the search with "Run the search"; a navigation inside NetTap runs it at once. Known limit: a `/login?next=/packets?…` link runs one search after sign-in. Six more pages with the same shape are NET-281.
+* **CI (PR #286):** the five CI jobs became required status checks on ruleset `26011127` (strict). #286 was the first PR merged under them.
+
+**Verification (passed on the G11, 2026-11-14, `d39ecfcb`):** `scripts/remote/deploy-triage-fixes-2-2026-11-14.sh` rebuilt the daemon and web, then checked:
+* **Year limits:** year 1 and year 9999 on `/api/traffic/summary`, and a year-1 `since` on new-count, each gave 400 "… must be a time between 1970 and 9998".
+* **Slot budget:** a 1970 window on both chart routes gave 400 "Too many points for this window", while the last 24 h and 30 days still answered 200.
+* **NET-276:** the Packets waiting message is in the built app.
+* **Signed out:** `/go-live` and `/packets?filter=tcp` still go to `/login`.
+
+The first-run Go Live path can't be shown on a box with an admin; CI's first-run visual job covers it.
+
 ---
 
 ## Key Files Modified
@@ -2346,6 +2361,8 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 187. **A Fetch Metadata check belongs in the hook, keyed on the matched route, not on a literal path (NET-257)** — a check in one proxy route missed every explicit route, and one of those put its decoded param into the daemon path (`..%2F..%2Fpcap%2Fdownload`). A test on `pathname.startsWith('/api/')` misses `/%61pi/…`, which SvelteKit decodes for routing. Refuse `none` too: browsers send it for links opened from mail and chat apps.
 188. **Pass a user-supplied name to dig with `-q` and the type with `-t` (NET-268)** — a bare word that is also a type or class (`ns`, `mx`, `a`, `any`) is read as one.
 189. **In a script run with `set -e`, capture a status with `cmd || rc=$?`, not `cmd; rc=$?` (NET-253)** — the second form exits before `rc` is read.
+190. **A time validator must check the range, not only the syntax (NET-275)** — year 1 and year 9999 are valid ISO but overflow later, in slot arithmetic and timezone shifts. Refuse them where the parameter is read, with a 400 that names it.
+191. **A first-run page is only useful if every API it calls is first-run too (NET-277)** — `/go-live` was allowed before the first admin, but its capture-mode call was not, so it rendered an error card. Check the page's calls, not just the page.
 
 ---
 
@@ -2466,3 +2483,6 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-268, NET-256 | #275 | DNS Lookup passes `-q`/`-t` to dig; trust-score halves round up | 2026-11-14 |
 | NET-257 | #276 | Another site can't start `/api` work with the owner's cookie (Sec-Fetch-Site, by matched route); three route params encoded | 2026-11-14 |
 | NET-260 | #278 | The MAC device page gets a bandwidth series; the card shows loading and error; the IP page's all-zero series shows empty | 2026-11-14 |
+| NET-275 | #283 | Years outside 1970-9998 get 400, not 500; `/api/alerts/categories` and `/api/bandwidth/daily` keep the slot budget | 2026-11-14 |
+| NET-277 | #284 | Go Live before the first admin goes to `/setup`; NET-257's typed-vs-in-app `/api` split pinned in tests | 2026-11-14 |
+| NET-276 | #285 | A Packets search opened from outside NetTap waits for Run; in-app navigation runs it at once | 2026-11-14 |

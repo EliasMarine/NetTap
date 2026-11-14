@@ -2,8 +2,7 @@
 
 **Linear:** NET-277
 **Branch:** `fix/go-live-first-run-setup`
-**Status:** built and tested locally, not committed yet. Deploys with the web image. The behaviour
-only shows on a box with no admin yet, so the G11 can't demonstrate it.
+**Status:** done. PR #284 merged (`26432184`), deployed to the G11 at `d39ecfcb`. The G11 has an admin, so only the unchanged signed-out redirect shows there; CI's first-run visual job covers the first-run path.
 **Plan:** `PLAN.md` (Codex review, 1 round, APPROVED; log in `PLAN-REVIEW-LOG.md`).
 
 ## Problem
