@@ -3,7 +3,7 @@
  * A matching failure becomes a test annotation; anything else still fails.
  */
 import type { FixtureMode } from './harness.ts';
-import { FIRSTRUN_URL } from '../../playwright.visual.config.ts';
+// OLD CODE: import { FIRSTRUN_URL } from '../../playwright.visual.config.ts'; (NET-277: only the /go-live entry used it)
 
 export interface KnownIssue {
 	route: string;
@@ -45,16 +45,18 @@ export const KNOWN_ISSUES: readonly KnownIssue[] = [
 	// 	note: "first run with no session: the shell's calls and Go Live's capture mode get 401 (NET-197); in the real flow the Account step signs in first",
 	// },
 	// OLD CODE END
-	{
-		// Only the firstrun instance's URLs, and only the calls that run log; the console text ends with the resource URL
-		route: '/go-live',
-		modes: ['empty', 'error'],
-		match: new RegExp(
-			`status of 401 \\(Unauthorized\\) \\(${FIRSTRUN_URL.replaceAll('.', '\\.')}/api/` +
-				'(capture/mode|capture/health|system/ping|storage/status|alerts/count|notifications(/stream|/from-alerts)?)[?)]',
-		),
-		note: "first run with no session: the shell's calls and Go Live's capture mode get 401 (NET-197); in the real flow the Account step signs in first",
-	},
+	// OLD CODE START — NET-277: /go-live goes to /setup before the first admin, so no first-run test renders it
+	// {
+	// 	// Only the firstrun instance's URLs, and only the calls that run log; the console text ends with the resource URL
+	// 	route: '/go-live',
+	// 	modes: ['empty', 'error'],
+	// 	match: new RegExp(
+	// 		`status of 401 \\(Unauthorized\\) \\(${FIRSTRUN_URL.replaceAll('.', '\\.')}/api/` +
+	// 			'(capture/mode|capture/health|system/ping|storage/status|alerts/count|notifications(/stream|/from-alerts)?)[?)]',
+	// 	),
+	// 	note: "first run with no session: the shell's calls and Go Live's capture mode get 401 (NET-197); in the real flow the Account step signs in first",
+	// },
+	// OLD CODE END
 ];
 
 export function knownIssue(route: string, mode: FixtureMode, text: string): KnownIssue | undefined {

@@ -5,7 +5,7 @@ import path from 'path';
 import { FIRSTRUN_DATA_DIR, FIRSTRUN_URL } from '../../playwright.visual.config.ts';
 import { expectNoConsoleErrors, expectReached, setMode, sweep, VIEWPORTS, watchApi, watchConsole } from './harness.ts';
 
-/** NET-229 follow-up: before the first admin, the wizard and Go Live need the setup code typed on Welcome. */
+/** NET-229 follow-up: before the first admin, the wizard needs the setup code typed on Welcome. */
 async function typeSetupCode(page: Page): Promise<void> {
 	await page.request.get('/setup'); // makes sure the code exists
 	const setupCode = readFileSync(path.join(FIRSTRUN_DATA_DIR, 'setup-code'), 'utf-8').trim();
@@ -17,11 +17,15 @@ async function typeSetupCode(page: Page): Promise<void> {
 	expect((await res.json()).type).toBe('success');
 }
 
-// Setup renders without the shell (no <main>), so markers are looked up in <body>; Go Live keeps the shell.
-const FIRST_RUN = [
-	{ path: '/setup', marker: 'Set up NetTap', shell: false },
-	{ path: '/go-live', marker: 'Go Live', shell: true },
-] as const;
+// OLD CODE START — NET-277: /go-live goes to /setup until the first admin exists (its own test below)
+// // Setup renders without the shell (no <main>), so markers are looked up in <body>; Go Live keeps the shell.
+// const FIRST_RUN = [
+// 	{ path: '/setup', marker: 'Set up NetTap', shell: false },
+// 	{ path: '/go-live', marker: 'Go Live', shell: true },
+// ] as const;
+// OLD CODE END
+// Setup renders without the shell (no <main>), so markers are looked up in <body>.
+const FIRST_RUN = [{ path: '/setup', marker: 'Set up NetTap', shell: false }] as const;
 
 for (const mode of ['empty', 'error'] as const) {
 	for (const route of FIRST_RUN) {
@@ -42,6 +46,19 @@ for (const mode of ['empty', 'error'] as const) {
 		});
 	}
 }
+
+// NET-277: Go Live needs the admin the wizard creates. The hook redirects before any daemon call, so one mode is enough.
+test('/go-live goes to /setup before the first admin, even with the code typed', async ({ page }) => {
+	await setMode('empty');
+	const errors = watchConsole(page);
+	const apiIdle = watchApi(page);
+	await page.setViewportSize(VIEWPORTS[0]);
+	await typeSetupCode(page);
+	await page.goto('/go-live');
+	await expectReached(page, '/setup', 'Set up NetTap', { scope: 'body' });
+	await apiIdle();
+	expectNoConsoleErrors(errors, { route: '/setup', mode: 'empty' });
+});
 
 // Before the code, Welcome asks only for it and calls no API (NET-229), so there is nothing to wait for
 test('/setup asks for the setup code first', async ({ page }, testInfo) => {

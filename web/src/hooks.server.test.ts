@@ -337,7 +337,7 @@ describe('hooks.server', () => {
 			expect(mockSetupTokenValid).not.toHaveBeenCalled();
 		});
 
-		it('sends /go-live to /setup until the code is typed', async () => {
+		it('sends /go-live to /setup without the setup cookie', async () => {
 			mockHasUsers.mockReturnValue(false);
 			mockSetupTokenValid.mockReturnValue(false);
 			await expect(handle({ event: createMockEvent('/go-live'), resolve: mockResolve })).rejects.toMatchObject({
@@ -345,10 +345,27 @@ describe('hooks.server', () => {
 			});
 			expect(mockResolve).not.toHaveBeenCalled();
 
-			mockSetupTokenValid.mockReturnValue(true);
-			const event = createMockEvent('/go-live');
-			await handle({ event, resolve: mockResolve });
-			expect(mockResolve).toHaveBeenCalledWith(event);
+			// OLD CODE START — NET-277: with the code typed Go Live opened, but its capture-mode call got 401
+			// mockSetupTokenValid.mockReturnValue(true);
+			// const event = createMockEvent('/go-live');
+			// await handle({ event, resolve: mockResolve });
+			// expect(mockResolve).toHaveBeenCalledWith(event);
+			// OLD CODE END
+		});
+
+		// NET-277: Go Live needs the admin the wizard creates, so it goes to /setup until one exists
+		it.each([
+			['the setup cookie', true, null],
+			['a leftover valid session', false, { username: 'admin', role: 'admin' }],
+		])('sends /go-live to /setup while no users exist, even with %s', async (_label, setupCookie, user) => {
+			mockHasUsers.mockReturnValue(false);
+			mockSetupTokenValid.mockReturnValue(setupCookie);
+			mockVerifyToken.mockReturnValue(user);
+			await expect(handle({ event: createMockEvent('/go-live', 'valid-token'), resolve: mockResolve })).rejects.toMatchObject({
+				status: 302,
+				location: '/setup',
+			});
+			expect(mockResolve).not.toHaveBeenCalled();
 		});
 
 		it.each(['/api/setup/nics', '/api/bridge/create'])(
