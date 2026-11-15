@@ -60,6 +60,17 @@ PINNED_REASON = (
     "NetTap pins Malcolm's container images to a tested release, so they can't be "
     "updated from here: update NetTap to get a newer Malcolm."
 )
+# NET-291: the names the update API acts on, checked before a name reaches a path or the history.
+# Rollback restores a saved file, so only these two.
+ROLLBACK_COMPONENTS = frozenset({"suricata-rules", "geoip-db"})
+# Apply: what the Updates page can start (the rows with no applies_with), and the Malcolm rows
+# _not_applicable_reason answers
+APPLY_COMPONENTS = (
+    frozenset({"malcolm", "suricata-rules", "geoip-db"})
+    | _MALCOLM_COMPONENTS
+    | _MALCOLM_CONTAINERS
+)
+MAX_APPLY_COMPONENTS = 16
 
 
 @dataclass
@@ -463,6 +474,15 @@ class UpdateExecutor:
                 "message": MALCOLM_ROLLBACK_REASON,
             }
 
+        # NET-291: the name is checked before it is joined onto a path, so "not supported" and
+        # "no backup" can't tell a caller which paths exist
+        if component not in ROLLBACK_COMPONENTS:
+            return {
+                "success": False,
+                "component": component,
+                "message": "Rollback not supported for this component.",
+            }
+
         backup_path = os.path.join(self._backup_dir, component)
 
         if not os.path.exists(backup_path):
@@ -493,17 +513,23 @@ class UpdateExecutor:
                 result = await self._rollback_files(
                     component, backup_path, "/var/lib/suricata/rules/suricata.rules"
                 )
-            elif component == "geoip-db":
+            # OLD CODE START — NET-291: ROLLBACK_COMPONENTS is checked above, so geoip-db is the only
+            # name left, and the else below can't be reached
+            # elif component == "geoip-db":
+            # OLD CODE END
+            else:  # geoip-db
                 geoip_path = os.environ.get(
                     "GEOIP_DB_PATH", "/opt/nettap/data/GeoLite2-City.mmdb"
                 )
                 result = await self._rollback_files(component, backup_path, geoip_path)
-            else:
-                return {
-                    "success": False,
-                    "component": component,
-                    "message": f"Rollback not supported for: {component}",
-                }
+            # OLD CODE START — NET-291: unreachable, rollback() refuses every other name first
+            # else:
+            #     return {
+            #         "success": False,
+            #         "component": component,
+            #         "message": f"Rollback not supported for: {component}",
+            #     }
+            # OLD CODE END
 
             logger.info("Rollback completed for %s: %s", component, result)
             return result
@@ -995,34 +1021,36 @@ class UpdateExecutor:
                     # OLD CODE END
                     await asyncio.to_thread(shutil.copy2, geoip_path, dest)
 
-            elif component in (
-                "zeek",
-                "suricata",
-                "arkime",
-                "opensearch",
-                "dashboards",
-                "logstash",
-            ):
-                # For Docker components, save the current image ID
-                # Uses create_subprocess_exec for safe argument passing
-                # OLD CODE START — #96: docker's error text was saved as the image ID
-                # output, _ = await self._run_command(
-                # ...
-                # if output:
-                # OLD CODE END
-                output, returncode = await self._run_command(
-                    [
-                        "docker",
-                        "inspect",
-                        "--format",
-                        "{{.Image}}",
-                        component,
-                    ]
-                )
-                if returncode == 0 and output.strip():
-                    image_file = os.path.join(backup_path, "image_id.txt")
-                    with open(image_file, "w") as f:
-                        f.write(output.strip())
+            # OLD CODE START — NET-291: no caller since NET-288 retired the compose update (nothing restores an image ID)
+            # elif component in (
+            #     "zeek",
+            #     "suricata",
+            #     "arkime",
+            #     "opensearch",
+            #     "dashboards",
+            #     "logstash",
+            # ):
+            #     # For Docker components, save the current image ID
+            #     # Uses create_subprocess_exec for safe argument passing
+            #     # OLD CODE START — #96: docker's error text was saved as the image ID
+            #     # output, _ = await self._run_command(
+            #     # ...
+            #     # if output:
+            #     # OLD CODE END
+            #     output, returncode = await self._run_command(
+            #         [
+            #             "docker",
+            #             "inspect",
+            #             "--format",
+            #             "{{.Image}}",
+            #             component,
+            #         ]
+            #     )
+            #     if returncode == 0 and output.strip():
+            #         image_file = os.path.join(backup_path, "image_id.txt")
+            #         with open(image_file, "w") as f:
+            #             f.write(output.strip())
+            # OLD CODE END
 
             logger.info("Backup created for %s at %s", component, backup_path)
             return backup_path
@@ -1035,8 +1063,9 @@ class UpdateExecutor:
 
     @staticmethod
     def _has_restorable_backup(backup_path: str) -> bool:
-        """True when the backup holds what a rollback restores (image ID, rules or
-        GeoIP file), not just its metadata (#96)."""
+        # OLD CODE: """… (image ID, rules or GeoIP file), not just its metadata (#96).""" (NET-291: no image ID any more)
+        """True when the backup holds what a rollback restores (the rules or GeoIP
+        file), not just its metadata (#96)."""
         try:
             return any(name != "metadata.json" for name in os.listdir(backup_path))
         except OSError:

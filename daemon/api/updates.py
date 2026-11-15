@@ -12,7 +12,11 @@ from aiohttp import web
 
 from services.version_manager import VersionManager
 from services.update_checker import UpdateChecker
-from services.update_executor import UpdateExecutor
+from services.update_executor import (
+    APPLY_COMPONENTS,
+    MAX_APPLY_COMPONENTS,
+    UpdateExecutor,
+)
 
 logger = logging.getLogger("nettap.api.updates")
 
@@ -167,10 +171,24 @@ async def handle_apply_updates(request: web.Request) -> web.Response:
             status=400,
         )
 
+    # NET-291: null, a list or a number parsed as JSON, then failed at body.get as a logged 500
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "Request body must be a JSON object"},
+            status=400,
+        )
+
     components = body.get("components")
     if not isinstance(components, list):
         return web.json_response(
             {"error": "Request body must contain a 'components' list"},
+            status=400,
+        )
+    # NET-291: a result per name is built and kept in the history, so the list and each name are
+    # bounded before anything is queued
+    if len(components) > MAX_APPLY_COMPONENTS:
+        return web.json_response(
+            {"error": f"At most {MAX_APPLY_COMPONENTS} components per update"},
             status=400,
         )
 
@@ -183,6 +201,10 @@ async def handle_apply_updates(request: web.Request) -> web.Response:
     if not all(isinstance(c, str) and c for c in components):
         return web.json_response(
             {"error": "components must be non-empty strings"}, status=400
+        )
+    if not all(c in APPLY_COMPONENTS for c in components):
+        return web.json_response(
+            {"error": "components must be names NetTap can update"}, status=400
         )
     try:
         result, status = await ue.start_update(components)
@@ -242,6 +264,13 @@ async def handle_rollback(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response(
             {"error": "Invalid JSON body"},
+            status=400,
+        )
+
+    # NET-291: null, a list or a number parsed as JSON, then failed at body.get as a logged 500
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "Request body must be a JSON object"},
             status=400,
         )
 

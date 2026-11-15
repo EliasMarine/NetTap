@@ -1033,3 +1033,73 @@ class TestNoComposePathIsLeft(unittest.TestCase):
         self.assertTrue(ran, "the geoipupdate command should have been recorded")
         for cmd in ran:
             self.assertNotIn("compose", cmd)
+
+
+class TestRollbackChecksTheNameFirst(unittest.TestCase):
+    """NET-291: rollback() joined the requested name onto the backup folder and checked that the
+    path exists before it checked the name, so "not supported" vs "no backup" told a caller
+    which paths exist in the (root) daemon container."""
+
+    def _reply(self, ue, name):
+        reply = asyncio.run(ue.rollback(name))
+        return {k: v for k, v in reply.items() if k != "component"}
+
+    def test_a_name_that_cannot_be_rolled_back_gets_one_answer_whether_or_not_its_path_exists(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as tmp:
+            backups = os.path.join(tmp, "backups")
+            os.makedirs(backups)
+            os.makedirs(os.path.join(tmp, "outside"))  # reachable by ../outside
+            ue = UpdateExecutor(backup_dir=backups)
+            pairs = [
+                ("../outside", "../nothing"),  # traversal
+                (
+                    os.path.join(tmp, "outside"),
+                    os.path.join(tmp, "nothing"),
+                ),  # absolute
+                ("nettap-daemon", "nettap-nothing"),  # a plain unknown name
+            ]
+            os.makedirs(
+                os.path.join(backups, "nettap-daemon")
+            )  # even with a backup folder
+            for present, absent in pairs:
+                with self.subTest(present=present):
+                    answer = self._reply(ue, present)
+                    self.assertEqual(answer, self._reply(ue, absent))
+                    self.assertFalse(answer["success"])
+                    self.assertIn("not supported", answer["message"])
+                    self.assertNotIn("No backup", answer["message"])
+
+    def test_only_the_two_file_components_can_be_rolled_back(self):
+        from services.update_executor import ROLLBACK_COMPONENTS
+
+        self.assertEqual(ROLLBACK_COMPONENTS, {"suricata-rules", "geoip-db"})
+
+    def test_the_two_file_components_still_reach_their_backup_check(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ue = UpdateExecutor(backup_dir=tmp)
+            for name in ("suricata-rules", "geoip-db"):
+                with self.subTest(name=name):
+                    self.assertIn("No backup", self._reply(ue, name)["message"])
+
+
+class TestNoDockerImageBackup(unittest.TestCase):
+    """NET-291: _create_backup saved a Docker image ID for Malcolm names, which nothing restores
+    since NET-288 retired the compose update path."""
+
+    def test_a_malcolm_name_gets_metadata_only_and_no_docker_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ue = UpdateExecutor(backup_dir=tmp)
+            ran = []
+
+            async def run_command(cmd):
+                ran.append(cmd)
+                return ("sha256:0123abcd", 0)
+
+            ue._run_command = run_command
+            path = asyncio.run(ue._create_backup("zeek"))
+            saved = os.listdir(path)
+
+        self.assertEqual(ran, [])
+        self.assertEqual(saved, ["metadata.json"])
