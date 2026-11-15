@@ -92,10 +92,12 @@ class TestUpdateExecutorInitialization(unittest.TestCase):
     def test_default_parameters(self):
         """Default init should use expected paths."""
         ue = UpdateExecutor()
-        self.assertEqual(
-            ue._compose_file,
-            "/opt/nettap/docker/docker-compose.yml",
-        )
+        # OLD CODE START — NET-288: the daemon container has no compose file; MalcolmUpgrade finds it
+        # self.assertEqual(
+        #     ue._compose_file,
+        #     "/opt/nettap/docker/docker-compose.yml",
+        # )
+        # OLD CODE END
         self.assertEqual(ue._backup_dir, "/opt/nettap/backups")
         self.assertIsNone(ue._current_update)
         self.assertEqual(ue._update_history, [])
@@ -103,11 +105,14 @@ class TestUpdateExecutorInitialization(unittest.TestCase):
 
     def test_custom_parameters(self):
         """Custom parameters should be stored correctly."""
-        ue = UpdateExecutor(
-            compose_file="/custom/compose.yml",
-            backup_dir="/custom/backups",
-        )
-        self.assertEqual(ue._compose_file, "/custom/compose.yml")
+        # OLD CODE START — NET-288: no compose_file parameter any more
+        # ue = UpdateExecutor(
+        #     compose_file="/custom/compose.yml",
+        #     backup_dir="/custom/backups",
+        # )
+        # self.assertEqual(ue._compose_file, "/custom/compose.yml")
+        # OLD CODE END
+        ue = UpdateExecutor(backup_dir="/custom/backups")
         self.assertEqual(ue._backup_dir, "/custom/backups")
 
 
@@ -118,22 +123,24 @@ class TestApplyUpdate(unittest.TestCase):
         """Create an UpdateExecutor with mocked internal methods."""
         ue = UpdateExecutor()
 
-        async def mock_update_docker(components):
-            results = []
-            for comp in components:
-                results.append(
-                    UpdateResult(
-                        component=comp,
-                        success=success,
-                        old_version="1.0.0",
-                        new_version="1.1.0" if success else "1.0.0",
-                        started_at=datetime.now(timezone.utc).isoformat(),
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                        error=None if success else "Update failed",
-                        rollback_available=True,
-                    )
-                )
-            return results
+        # OLD CODE START — NET-288: _update_docker_images is gone (no caller since Malcolm's images were pinned)
+        # async def mock_update_docker(components):
+        #     results = []
+        #     for comp in components:
+        #         results.append(
+        #             UpdateResult(
+        #                 component=comp,
+        #                 success=success,
+        #                 old_version="1.0.0",
+        #                 new_version="1.1.0" if success else "1.0.0",
+        #                 started_at=datetime.now(timezone.utc).isoformat(),
+        #                 completed_at=datetime.now(timezone.utc).isoformat(),
+        #                 error=None if success else "Update failed",
+        #                 rollback_available=True,
+        #             )
+        #         )
+        #     return results
+        # OLD CODE END
 
         async def mock_update_rules():
             return UpdateResult(
@@ -159,7 +166,7 @@ class TestApplyUpdate(unittest.TestCase):
                 rollback_available=True,
             )
 
-        ue._update_docker_images = mock_update_docker
+        # OLD CODE: ue._update_docker_images = mock_update_docker (NET-288)
         ue._update_suricata_rules = mock_update_rules
         ue._update_geoip = mock_update_geoip
 
@@ -279,23 +286,41 @@ class TestConcurrentUpdatePrevention(unittest.TestCase):
         """_current_update should be None after apply_update completes."""
         ue = UpdateExecutor()
 
-        async def mock_update_docker(components):
-            return [
-                UpdateResult(
-                    component=components[0],
-                    success=True,
-                    old_version="1.0",
-                    new_version="1.1",
-                    started_at="ts1",
-                    completed_at="ts2",
-                    error=None,
-                    rollback_available=True,
-                )
-            ]
+        # OLD CODE START — NET-288: zeek is a pinned Malcolm container and never reached this mock
+        # async def mock_update_docker(components):
+        #     return [
+        #         UpdateResult(
+        #             component=components[0],
+        #             success=True,
+        #             old_version="1.0",
+        #             new_version="1.1",
+        #             started_at="ts1",
+        #             completed_at="ts2",
+        #             error=None,
+        #             rollback_available=True,
+        #         )
+        #     ]
+        #
+        # ue._update_docker_images = mock_update_docker
+        #
+        # asyncio.run(ue.apply_update(["zeek"]))
+        # OLD CODE END
+        async def mock_update_rules():
+            return UpdateResult(
+                component="suricata-rules",
+                success=True,
+                old_version="1.0",
+                new_version="1.1",
+                started_at="ts1",
+                completed_at="ts2",
+                error=None,
+                rollback_available=True,
+            )
 
-        ue._update_docker_images = mock_update_docker
+        ue._update_suricata_rules = mock_update_rules
 
-        asyncio.run(ue.apply_update(["zeek"]))
+        result = asyncio.run(ue.apply_update(["suricata-rules"]))
+        self.assertTrue(result["success"])
         self.assertIsNone(ue._current_update)
 
     def test_current_update_cleared_on_error(self):
@@ -395,26 +420,44 @@ class TestHistoryBounding(unittest.TestCase):
         ue = UpdateExecutor()
         ue._max_history = 5
 
-        async def mock_update_docker(components):
-            return [
-                UpdateResult(
-                    component=components[0],
-                    success=True,
-                    old_version="1.0",
-                    new_version="1.1",
-                    started_at="ts1",
-                    completed_at="ts2",
-                    error=None,
-                    rollback_available=True,
-                )
-            ]
+        # OLD CODE START — NET-288: zeek is a pinned Malcolm container and never reached this mock
+        # async def mock_update_docker(components):
+        #     return [
+        #         UpdateResult(
+        #             component=components[0],
+        #             success=True,
+        #             old_version="1.0",
+        #             new_version="1.1",
+        #             started_at="ts1",
+        #             completed_at="ts2",
+        #             error=None,
+        #             rollback_available=True,
+        #         )
+        #     ]
+        #
+        # ue._update_docker_images = mock_update_docker
+        #
+        # for i in range(10):
+        #     asyncio.run(ue.apply_update(["zeek"]))
+        # OLD CODE END
+        async def mock_update_rules():
+            return UpdateResult(
+                component="suricata-rules",
+                success=True,
+                old_version="1.0",
+                new_version="1.1",
+                started_at="ts1",
+                completed_at="ts2",
+                error=None,
+                rollback_available=True,
+            )
 
-        ue._update_docker_images = mock_update_docker
+        ue._update_suricata_rules = mock_update_rules
 
         for i in range(10):
-            asyncio.run(ue.apply_update(["zeek"]))
+            asyncio.run(ue.apply_update(["suricata-rules"]))
 
-        self.assertLessEqual(len(ue._update_history), 5)
+        self.assertEqual(len(ue._update_history), 5)
 
     def test_history_keeps_newest(self):
         """After trimming, newest entries should be retained."""
@@ -593,26 +636,28 @@ class TestSetReferences(unittest.TestCase):
 class TestRollbackOnlyWithABackup(unittest.TestCase):
     """#96: rollback_available was True whether or not the backup worked."""
 
-    def _docker_update(self, inspect_result):
-        """Update "zeek" with pull and up succeeding; docker inspect gives inspect_result."""
-        with tempfile.TemporaryDirectory() as tmp:
-            ue = UpdateExecutor(backup_dir=tmp)
-
-            async def run_command(cmd):
-                return inspect_result if cmd[1] == "inspect" else ("", 0)
-
-            ue._run_command = run_command
-            (result,) = asyncio.run(ue._update_docker_images(["zeek"]))
-        return result
-
-    def test_failed_image_backup_means_no_rollback(self):
-        result = self._docker_update(("Error: No such object: zeek", 1))
-        self.assertTrue(result.success)
-        self.assertFalse(result.rollback_available)
-
-    def test_saved_image_id_means_rollback(self):
-        result = self._docker_update(("sha256:0123abcd\n", 0))
-        self.assertTrue(result.rollback_available)
+    # OLD CODE START — NET-288: _update_docker_images is gone (no caller since Malcolm's images were pinned)
+    # def _docker_update(self, inspect_result):
+    #     """Update "zeek" with pull and up succeeding; docker inspect gives inspect_result."""
+    #     with tempfile.TemporaryDirectory() as tmp:
+    #         ue = UpdateExecutor(backup_dir=tmp)
+    #
+    #         async def run_command(cmd):
+    #             return inspect_result if cmd[1] == "inspect" else ("", 0)
+    #
+    #         ue._run_command = run_command
+    #         (result,) = asyncio.run(ue._update_docker_images(["zeek"]))
+    #     return result
+    #
+    # def test_failed_image_backup_means_no_rollback(self):
+    #     result = self._docker_update(("Error: No such object: zeek", 1))
+    #     self.assertTrue(result.success)
+    #     self.assertFalse(result.rollback_available)
+    #
+    # def test_saved_image_id_means_rollback(self):
+    #     result = self._docker_update(("sha256:0123abcd\n", 0))
+    #     self.assertTrue(result.rollback_available)
+    # OLD CODE END
 
     def test_rules_update_without_a_rules_file_has_no_rollback(self):
         from unittest.mock import patch
@@ -942,3 +987,49 @@ class TestFailureTextStaysInTheLog(unittest.TestCase):
         ue._run_command = AsyncMock(side_effect=OSError(self.MARKER))
         result = asyncio.run(ue._update_geoip())
         self.assertNotIn(self.MARKER, result.error)
+
+
+class TestNoComposePathIsLeft(unittest.TestCase):
+    """NET-288: the daemon container has no compose file, so the executor must not run
+    `docker compose -f <guessed path>`. Malcolm's compose runs in MalcolmUpgrade's helper
+    container, with the project directory read from the daemon's own labels."""
+
+    def test_no_compose_path_is_left(self):
+        ue = UpdateExecutor()
+        for name in ("_compose_file", "_update_docker_images", "_rollback_docker"):
+            self.assertFalse(hasattr(ue, name), name)
+        with self.assertRaises(TypeError):
+            UpdateExecutor(compose_file="/opt/nettap/docker/docker-compose.yml")
+
+    def test_no_reachable_action_runs_docker_compose(self):
+        """Every component the Updates page can send, applied and rolled back."""
+        from unittest.mock import patch
+
+        components = [
+            "malcolm",
+            "suricata-rules",
+            "geoip-db",
+            "nettap-daemon",
+            "zeek",
+            "nettap-zeek-live",
+            "nettap-web",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"GEOIP_DB_PATH": os.path.join(tmp, "GeoLite2-City.mmdb")}
+            with patch.dict(os.environ, env):
+                ue = UpdateExecutor(backup_dir=tmp, malcolm_upgrade=FakeMalcolm())
+                ue._rule_manager = FakeRuleManager()
+                ran = []
+
+                async def run_command(cmd):
+                    ran.append(cmd)
+                    return ("", 0)
+
+                ue._run_command = run_command
+                asyncio.run(ue.apply_update(components))
+                for component in components:
+                    asyncio.run(ue.rollback(component))
+
+        self.assertTrue(ran, "the geoipupdate command should have been recorded")
+        for cmd in ran:
+            self.assertNotIn("compose", cmd)

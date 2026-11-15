@@ -187,6 +187,19 @@ class TestCreateAppWiring(AioHTTPTestCase):
         )
         self.assertNotEqual(resp.status, 401)
 
+    async def test_update_services_are_built_without_a_compose_path(self):
+        """NET-288: create_app() builds the real update services; the daemon container has
+        no compose file, so neither is given a path to one."""
+        from services.update_executor import UpdateExecutor
+        from services.version_manager import VersionManager
+
+        for key, cls in (
+            ("version_manager", VersionManager),
+            ("update_executor", UpdateExecutor),
+        ):
+            self.assertIsInstance(self.app[key], cls)
+            self.assertFalse(hasattr(self.app[key], "_compose_file"), key)
+
     async def test_health_stays_open_for_the_compose_healthcheck(self):
         resp = await self.client.get("/api/health")
         self.assertEqual(resp.status, 200)

@@ -29,7 +29,7 @@ def _make_mock_version_manager():
     vm._versions = {}
     vm._last_scan = None
     vm._scanning = False
-    vm._compose_file = "/opt/nettap/docker/docker-compose.yml"
+    # OLD CODE: vm._compose_file = "/opt/nettap/docker/docker-compose.yml" (NET-288: VersionManager has no compose path)
     return vm
 
 
@@ -51,7 +51,7 @@ def _make_mock_update_executor():
     ue._current_update = None
     ue._update_history = []
     ue._max_history = 50
-    ue._compose_file = "/opt/nettap/docker/docker-compose.yml"
+    # OLD CODE: ue._compose_file = "/opt/nettap/docker/docker-compose.yml" (NET-288: UpdateExecutor has no compose path)
     ue._backup_dir = "/opt/nettap/backups"
     ue._version_manager = None
     ue._update_checker = None
@@ -213,6 +213,45 @@ class TestGetVersionComponentEndpoint(AioHTTPTestCase):
         self.mock_vm.get_component = AsyncMock(return_value=None)
         resp = await self.client.request("GET", "/api/system/versions/nonexistent")
         self.assertEqual(resp.status, 404)
+
+
+class TestComponentRowsThePageCanAskFor(AioHTTPTestCase):
+    """NET-288: the real VersionManager and handler. nettap-config read the compose file, which
+    isn't in the daemon container, so it was an "unknown" row; it is gone, and nettap-web
+    answers with the Docker row."""
+
+    async def get_application(self):
+        vm = VersionManager()
+
+        async def docker_ps(cmd):
+            return "nettap-web\tnettap/web:latest\tf\n"
+
+        async def none():
+            return []
+
+        vm._run_command = docker_ps
+        vm._scan_system_packages = none
+        vm._scan_databases = none
+        vm._scan_os_info = none
+        app = web.Application()
+        register_update_routes(
+            app, vm, _make_mock_update_checker(), _make_mock_update_executor()
+        )
+        return app
+
+    @unittest_run_loop
+    async def test_component_nettap_config_is_404(self):
+        resp = await self.client.request("GET", "/api/system/versions/nettap-config")
+        self.assertEqual(resp.status, 404)
+
+    @unittest_run_loop
+    async def test_component_nettap_web_comes_from_the_docker_row(self):
+        resp = await self.client.request("GET", "/api/system/versions/nettap-web")
+        self.assertEqual(resp.status, 200)
+        data = await resp.json()
+        self.assertEqual(
+            (data["category"], data["current_version"]), ("docker", "latest")
+        )
 
 
 class TestScanVersionsEndpoint(AioHTTPTestCase):

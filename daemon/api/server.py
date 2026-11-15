@@ -1299,19 +1299,29 @@ def create_app(
     register_bridge_routes(app, bridge_health, bridge_manager)
 
     # Software update system (version inventory + update checker + executor)
-    compose_file = os.environ.get(
-        "COMPOSE_FILE", "/opt/nettap/docker/docker-compose.yml"
-    )
+    # OLD CODE START — NET-288: the daemon container has no compose file (nothing is mounted there,
+    # COMPOSE_FILE was never set); MalcolmUpgrade reads the project from the daemon's own labels
+    # compose_file = os.environ.get(
+    #     "COMPOSE_FILE", "/opt/nettap/docker/docker-compose.yml"
+    # )
+    # OLD CODE END
     backup_dir = os.environ.get("BACKUP_DIR", "/opt/nettap/backups")
     github_repo = os.environ.get("GITHUB_REPO", "EliasMarine/NetTap")
 
-    version_manager = VersionManager(compose_file=compose_file)
+    # OLD CODE: version_manager = VersionManager(compose_file=compose_file) (NET-288)
+    version_manager = VersionManager()
     update_checker = UpdateChecker(github_repo=github_repo)
     # OLD CODE START — the Malcolm update needs the OpenSearch client to see records arrive
     # update_executor = UpdateExecutor(compose_file=compose_file, backup_dir=backup_dir)
     # OLD CODE END
+    # OLD CODE START — NET-288: no compose_file any more
+    # update_executor = UpdateExecutor(
+    #     compose_file=compose_file,
+    #     backup_dir=backup_dir,
+    #     malcolm_upgrade=MalcolmUpgrade(client=storage._client),
+    # )
+    # OLD CODE END
     update_executor = UpdateExecutor(
-        compose_file=compose_file,
         backup_dir=backup_dir,
         malcolm_upgrade=MalcolmUpgrade(client=storage._client),
     )
