@@ -65,19 +65,25 @@ class VersionManager:
     and refreshed on demand or when stale.
     """
 
-    def __init__(
-        self,
-        compose_file: str = "/opt/nettap/docker/docker-compose.yml",
-    ) -> None:
-        self._compose_file = compose_file
+    # OLD CODE START — NET-288: the compose file isn't in the daemon container (nothing is mounted there)
+    # def __init__(
+    #     self,
+    #     compose_file: str = "/opt/nettap/docker/docker-compose.yml",
+    # ) -> None:
+    #     self._compose_file = compose_file
+    # OLD CODE END
+    def __init__(self) -> None:
         self._versions: dict[str, ComponentVersion] = {}
         self._last_scan: str | None = None
         self._scanning: bool = False
 
-        logger.info(
-            "VersionManager initialized: compose_file=%s",
-            compose_file,
-        )
+        # OLD CODE START — NET-288: no compose_file any more
+        # logger.info(
+        #     "VersionManager initialized: compose_file=%s",
+        #     compose_file,
+        # )
+        # OLD CODE END
+        logger.info("VersionManager initialized")
 
     # -------------------------------------------------------------------
     # Public API
@@ -168,10 +174,11 @@ class VersionManager:
     # -------------------------------------------------------------------
 
     async def _scan_core(self) -> list[ComponentVersion]:
+        # OLD CODE: """… Detects daemon version, web UI version (from package.json), and config version.""" (NET-288)
         """Scan NetTap core component versions.
 
-        Detects daemon version, web UI version (from package.json),
-        and config version.
+        The daemon's own version. The web UI (package.json) and config (compose file) rows
+        are gone: neither file is in the daemon container. The web container has its Docker row.
         """
         now = datetime.now(timezone.utc).isoformat()
         results: list[ComponentVersion] = []
@@ -189,68 +196,72 @@ class VersionManager:
             )
         )
 
-        # Web UI version (from package.json)
-        web_version = "unknown"
-        web_status = "unknown"
-        web_details: dict[str, Any] = {}
+        # OLD CODE START — NET-288: package.json isn't in the daemon container, so this row was "unknown" for ever (the Docker scan still reports the nettap-web container)
+        # # Web UI version (from package.json)
+        # web_version = "unknown"
+        # web_status = "unknown"
+        # web_details: dict[str, Any] = {}
+        #
+        # # Try multiple possible locations for package.json
+        # package_paths = [
+        #     "/opt/nettap/web/package.json",
+        #     os.path.join(
+        #         os.path.dirname(self._compose_file), "..", "web", "package.json"
+        #     ),
+        # ]
+        #
+        # for pkg_path in package_paths:
+        #     try:
+        #         with open(pkg_path, "r") as f:
+        #             pkg_data = json.load(f)
+        #             web_version = pkg_data.get("version", "unknown")
+        #             web_status = "ok"
+        #             web_details = {"package_json": pkg_path}
+        #             break
+        #     except (FileNotFoundError, json.JSONDecodeError, PermissionError):
+        #         continue
+        #
+        # results.append(
+        #     ComponentVersion(
+        #         name="nettap-web",
+        #         category="core",
+        #         current_version=web_version,
+        #         install_type="npm",
+        #         last_checked=now,
+        #         status=web_status,
+        #         details=web_details,
+        #     )
+        # )
+        # OLD CODE END
 
-        # Try multiple possible locations for package.json
-        package_paths = [
-            "/opt/nettap/web/package.json",
-            os.path.join(
-                os.path.dirname(self._compose_file), "..", "web", "package.json"
-            ),
-        ]
-
-        for pkg_path in package_paths:
-            try:
-                with open(pkg_path, "r") as f:
-                    pkg_data = json.load(f)
-                    web_version = pkg_data.get("version", "unknown")
-                    web_status = "ok"
-                    web_details = {"package_json": pkg_path}
-                    break
-            except (FileNotFoundError, json.JSONDecodeError, PermissionError):
-                continue
-
-        results.append(
-            ComponentVersion(
-                name="nettap-web",
-                category="core",
-                current_version=web_version,
-                install_type="npm",
-                last_checked=now,
-                status=web_status,
-                details=web_details,
-            )
-        )
-
-        # Config version (based on compose file existence)
-        config_version = "unknown"
-        config_status = "unknown"
-        config_details: dict[str, Any] = {}
-        try:
-            if os.path.exists(self._compose_file):
-                mtime = os.path.getmtime(self._compose_file)
-                config_version = datetime.fromtimestamp(
-                    mtime, tz=timezone.utc
-                ).strftime("%Y%m%d")
-                config_status = "ok"
-                config_details = {"compose_file": self._compose_file}
-        except OSError as exc:
-            config_details = {"error": str(exc)}
-
-        results.append(
-            ComponentVersion(
-                name="nettap-config",
-                category="core",
-                current_version=config_version,
-                install_type="builtin",
-                last_checked=now,
-                status=config_status,
-                details=config_details,
-            )
-        )
+        # OLD CODE START — NET-288: the compose file isn't in the daemon container, so this row was "unknown" for ever
+        # # Config version (based on compose file existence)
+        # config_version = "unknown"
+        # config_status = "unknown"
+        # config_details: dict[str, Any] = {}
+        # try:
+        #     if os.path.exists(self._compose_file):
+        #         mtime = os.path.getmtime(self._compose_file)
+        #         config_version = datetime.fromtimestamp(
+        #             mtime, tz=timezone.utc
+        #         ).strftime("%Y%m%d")
+        #         config_status = "ok"
+        #         config_details = {"compose_file": self._compose_file}
+        # except OSError as exc:
+        #     config_details = {"error": str(exc)}
+        #
+        # results.append(
+        #     ComponentVersion(
+        #         name="nettap-config",
+        #         category="core",
+        #         current_version=config_version,
+        #         install_type="builtin",
+        #         last_checked=now,
+        #         status=config_status,
+        #         details=config_details,
+        #     )
+        # )
+        # OLD CODE END
 
         return results
 
