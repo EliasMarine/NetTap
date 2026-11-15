@@ -58,20 +58,26 @@
 {#snippet receivedCell(r: ChangelogRow)}{#if r.received !== null}<Bytes value={r.received} max={maxReceived} display={formatBytes(r.received)} />{:else}{@render none(r)}{/if}{/snippet}
 {#snippet connectionsCell(r: ChangelogRow)}{#if r.connections !== null}{fmt(r.connections)}{:else}{@render none(r)}{/if}{/snippet}
 
-<DataTable
-	ariaLabel="Changelog events"
-	{rows}
-	{columns}
-	rowKey={(r) => r.id}
-	initialSort={{ key: 'when', dir: 'desc' }}
-	onrowactivate={onactivate}
-	rowLabel={(r) => `Open details: ${what(r) ?? label(r)}, ${formatTime(r.event['@timestamp'], 'short')}`}
-	selectedKey={selectedId ?? undefined}
-/>
+<!-- NET-285: ten columns are wider than the card at 1440 px, so the cells are one step tighter (as in the packet drawer) -->
+<div class="events">
+	<DataTable
+		ariaLabel="Changelog events"
+		{rows}
+		{columns}
+		rowKey={(r) => r.id}
+		initialSort={{ key: 'when', dir: 'desc' }}
+		onrowactivate={onactivate}
+		rowLabel={(r) => `Open details: ${what(r) ?? label(r)}, ${formatTime(r.event['@timestamp'], 'short')}`}
+		selectedKey={selectedId ?? undefined}
+	/>
+</div>
 
 <style>
 	/* Layout glue the system lacks: the event type's icon beside its label, and a name over its MAC */
 	.ev { display: inline-flex; align-items: center; gap: var(--sp-2); white-space: nowrap; }
-	.what { display: inline-flex; flex-direction: column; gap: var(--sp-1); overflow-wrap: anywhere; }
+	/* OLD CODE: .what { display: inline-flex; flex-direction: column; gap: var(--sp-1); overflow-wrap: anywhere; } (NET-285: inherited nowrap, so it never wrapped) */
+	/* Table cells don't wrap (system.css); a long name or title does, down to 10rem, instead of widening the table (as on Packet analysis) */
+	.what { display: inline-flex; flex-direction: column; gap: var(--sp-1); overflow-wrap: anywhere; white-space: normal; min-width: 10rem; }
+	.events :global(th), .events :global(td) { padding-inline: var(--sp-2); }
 	.what .mono { font-size: var(--text-xs); }
 </style>
