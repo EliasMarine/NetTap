@@ -264,12 +264,15 @@ check_command() {
 # Plain variables, not env: bats points them at a temp dir after sourcing this file.
 NETTAP_SYS_NET="/sys/class/net"
 NETTAP_BRIDGE_NETPLAN="/etc/netplan/10-nettap-bridge.yaml"
+# Absent when the kernel has no IPv6 stack (booted with ipv6.disable=1)
+NETTAP_IF_INET6="/proc/net/if_inet6"
 
 # True when NetTap made bridge $1: its alias is "nettap" (set when NetTap creates it), or,
 # for a bridge netplan rebuilt from NetTap's file at boot, it has ports, every one is listed
 # in that file, and it carries no global address and no default route. Read-only.
 nettap_bridge_owned() {
     local br="${1:-br0}" dir port out family
+    local -a families=(-4)
     dir="${NETTAP_SYS_NET}/${br}"
     [[ "$(cat "${dir}/ifalias" 2>/dev/null)" == "nettap" ]] && return 0
     [[ -r "$NETTAP_BRIDGE_NETPLAN" ]] || return 1
@@ -286,7 +289,12 @@ nettap_bridge_owned() {
     # Pure layer 2: a host uplink bridge carries the host's address. A failed read refuses.
     out=$(ip -o addr show dev "$br" scope global) || return 1
     [[ -z "$out" ]] || return 1
-    for family in -4 -6; do
+    # No IPv6 stack means no IPv6 default route, and `ip -6 route` would fail
+    if [[ -e "$NETTAP_IF_INET6" ]]; then
+        families+=(-6)
+    fi
+    # OLD CODE: for family in -4 -6; do (NET-287 review: `ip -6` fails without IPv6, refusing NetTap's own bridge)
+    for family in "${families[@]}"; do
         out=$(ip -j "$family" route show default dev "$br") || return 1
         out="${out//[[:space:]]/}"
         [[ -z "$out" || "$out" == "[]" ]] || return 1

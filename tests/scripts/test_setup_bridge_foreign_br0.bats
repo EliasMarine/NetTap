@@ -102,6 +102,23 @@ ENV_VARS=()
     [[ "$output" == *"didn't make it"* ]] || false
 }
 
+@test "a legacy br0 on a host without IPv6 is reconfigured (no -6 route to read)" {
+    _make_br0; _netplan; _ports enp2s0 enp3s0
+    ENV_VARS=(IPV6_OFF=1 ROUTE6_FAILS=1)
+    _bridge --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"[DRY-RUN] ip link set br0 alias nettap"* ]] || false
+    ! grep -q -- '-6 route' "${TEST_TMPDIR}/ip.log"
+}
+
+@test "a legacy br0 whose -6 route read fails while IPv6 is on is refused" {
+    _make_br0; _netplan; _ports enp2s0 enp3s0
+    ENV_VARS=(ROUTE6_FAILS=1)
+    _bridge --dry-run
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"didn't make it"* ]] || false
+}
+
 @test "a netplan port line with trailing whitespace still counts (as in the daemon)" {
     _make_br0; _ports enp2s0 enp3s0
     printf 'network:\n  bridges:\n    br0:\n      interfaces:\n        - enp2s0 \n        - enp3s0\t\n' \
@@ -168,10 +185,28 @@ ENV_VARS=()
     [[ "$output" != *"stp_state"* ]] || false
 }
 
-@test "bypass-mode.sh refuses a br0 NetTap didn't make" {
+@test "harden-bridge.sh --check still reports on a br0 NetTap didn't make" {
     _make_br0; _ports vnet0
-    _script bypass-mode.sh --enable --dry-run
-    [ "$status" -ne 0 ]
-    [[ "$output" == *"didn't make it"* ]] || false
-    [[ "$output" != *"promisc"* ]] || false
+    _script harden-bridge.sh --check
+    [[ "$output" == *"Bridge Hardening Check"* ]] || false
+    [[ "$output" != *"didn't make it"* ]] || false
+}
+
+@test "bypass-mode.sh refuses a br0 NetTap didn't make in every mode that changes something" {
+    local mode
+    _make_br0; _ports vnet0
+    for mode in --enable --disable --install; do
+        _script bypass-mode.sh "$mode" --dry-run
+        [ "$status" -ne 0 ]
+        [[ "$output" == *"didn't make it"* ]] || false
+        [[ "$output" != *"promisc"* ]] || false
+        [[ "$output" != *"ebtables"* ]] || false
+    done
+}
+
+@test "bypass-mode.sh --status still reports on a br0 NetTap didn't make" {
+    _make_br0; _ports vnet0
+    _script bypass-mode.sh --status
+    [[ "$output" == *"Bypass Mode Status"* ]] || false
+    [[ "$output" != *"didn't make it"* ]] || false
 }

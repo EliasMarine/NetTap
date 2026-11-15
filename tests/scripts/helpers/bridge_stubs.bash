@@ -9,19 +9,23 @@
 #   BR0_ADDR:     what `ip -o addr show dev br0 scope global` prints
 #   ALIAS_FAILS:  non-empty makes `ip link set br0 alias nettap` fail
 #   BR0_ROUTE4/6: what `ip -j -4|-6 route show default dev br0` prints (default: nothing)
-#   ROUTE_FAILS:  non-empty makes those route reads fail
+#   ROUTE_FAILS:  non-empty makes those route reads fail; ROUTE6_FAILS only the -6 one
+#   IPV6_OFF:     non-empty: the host has no IPv6 stack (no if_inet6, as with ipv6.disable=1)
 #   DEL_FAILS:    non-empty makes `ip link del br0` fail
 
 # shellcheck disable=SC2034  # read by nettap_bridge_owned in the real common.sh
 NETTAP_SYS_NET="${TEST_TMPDIR}/sys"
 # shellcheck disable=SC2034
 NETTAP_BRIDGE_NETPLAN="${TEST_TMPDIR}/10-nettap-bridge.yaml"
+NETTAP_IF_INET6="${TEST_TMPDIR}/if_inet6"
+[[ -n "${IPV6_OFF:-}" ]] || : > "$NETTAP_IF_INET6"
 
 require_root() { :; }
 modprobe() { :; }
 sysctl() { :; }
 ethtool() { :; }
 systemctl() { return 1; }
+docker() { return 1; }
 
 _br0_exists() {
     local n
@@ -30,7 +34,7 @@ _br0_exists() {
     [[ -e "${TEST_TMPDIR}/br0-exists" ]] || (( n > ${BR0_APPEARS_AFTER:-999999} ))
 }
 
-_route() { [[ -z "${ROUTE_FAILS:-}" ]] || return 1; printf '%s' "$1"; }
+_route() { [[ -z "$1" ]] || return 1; printf '%s' "$2"; }  # _route FAIL OUTPUT
 
 ip() {
     echo "ip $*" >> "${TEST_TMPDIR}/ip.log"
@@ -40,8 +44,8 @@ ip() {
         "link set br0 alias nettap") [[ -z "${ALIAS_FAILS:-}" ]] ;;
         "link del br0") [[ -z "${DEL_FAILS:-}" ]] && rm -f "${TEST_TMPDIR}/br0-exists" ;;
         "-o addr show dev br0 scope global") printf '%s' "${BR0_ADDR:-}" ;;
-        "-j -4 route show default dev br0") _route "${BR0_ROUTE4:-}" ;;
-        "-j -6 route show default dev br0") _route "${BR0_ROUTE6:-}" ;;
+        "-j -4 route show default dev br0") _route "${ROUTE_FAILS:-}" "${BR0_ROUTE4:-}" ;;
+        "-j -6 route show default dev br0") _route "${ROUTE_FAILS:-}${ROUTE6_FAILS:-}" "${BR0_ROUTE6:-}" ;;
         *) return 0 ;;
     esac
 }

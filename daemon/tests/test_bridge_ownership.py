@@ -44,6 +44,9 @@ class OwnershipCase(unittest.TestCase):
         self.netplan_dir = os.path.join(self.tmp, "netplan")
         os.makedirs(os.path.join(self.sysfs, "br0", "brif"))
         os.makedirs(self.netplan_dir)
+        # The host has IPv6 unless a test removes this (a kernel booted with ipv6.disable=1)
+        self.if_inet6 = os.path.join(self.tmp, "if_inet6")
+        open(self.if_inet6, "w").close()
         self.addr_info = []
         self.addr_readable = True
         self.routes = {"-4": (0, "[]\n"), "-6": (0, "[]\n")}
@@ -51,6 +54,7 @@ class OwnershipCase(unittest.TestCase):
         self.commands = []
         for p in (
             patch("services.bridge_manager._SYSFS_NET", self.sysfs),
+            patch("services.bridge_manager._IF_INET6", self.if_inet6),
             patch(
                 "services.dhcp_gateway_host.HostNetOps.ip_json",
                 side_effect=self._ip_json,
@@ -152,6 +156,12 @@ class TestCreateRefusesForeignBridge(OwnershipCase):
         self.routes["-4"] = (1, "")
         self.assert_refused(self.create())
 
+    def test_failed_ipv6_route_read_while_ipv6_is_on(self):
+        self.netplan()
+        self.ports("enp2s0")
+        self.routes["-6"] = (1, "")
+        self.assert_refused(self.create())
+
     def test_malformed_route_json(self):
         self.netplan()
         self.ports("enp2s0")
@@ -193,6 +203,14 @@ class TestCreateOnNetTapsBridge(OwnershipCase):
     def test_legacy_bridge_rebuilt_from_netplan(self):
         self.netplan()
         self.ports("enp2s0", "enp3s0")
+        self.assert_reconfigured(self.create())
+
+    def test_legacy_bridge_on_a_host_without_ipv6(self):
+        # ipv6.disable=1: `ip -6 route` fails, and there can be no IPv6 default route
+        self.netplan()
+        self.ports("enp2s0")
+        os.remove(self.if_inet6)
+        self.routes["-6"] = (1, "")
         self.assert_reconfigured(self.create())
 
     def test_legacy_bridge_when_ip_prints_nothing_for_no_routes(self):

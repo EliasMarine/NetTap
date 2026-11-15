@@ -33,6 +33,9 @@ _SYSFS_NET = os.environ.get("HOST_SYS_NET", "/host/sys/class/net")
 # NET-287: NetTap labels every bridge it makes with this alias (ip link set <br> alias nettap)
 BRIDGE_ALIAS = "nettap"
 NETPLAN_FILE = "10-nettap-bridge.yaml"
+# Absent when the kernel has no IPv6 stack (booted with ipv6.disable=1). /proc/net is per
+# network namespace, and the daemon shares the host's (network_mode: host).
+_IF_INET6 = "/proc/net/if_inet6"
 
 
 def foreign_bridge_message(bridge: str) -> str:
@@ -95,7 +98,10 @@ async def _bridge_is_layer2_only(bridge_name: str) -> bool:
     if any(isinstance(a, dict) and a.get("scope") == "global" for a in addrs):
         return False
     # Not ip_json: it returns [] for a failed command or bad JSON too
-    for family in ("-4", "-6"):
+    # OLD CODE: for family in ("-4", "-6"): (NET-287 review: `ip -6` fails without IPv6, refusing NetTap's own bridge)
+    # No IPv6 stack means no IPv6 default route, and `ip -6 route` would fail
+    families = ("-4", "-6") if os.path.exists(_IF_INET6) else ("-4",)
+    for family in families:
         rc, out, _ = await host._run_nsenter(
             "ip", "-j", family, "route", "show", "default", "dev", bridge_name
         )

@@ -34,10 +34,23 @@ check() {  # check LABEL STATUS(0=ok) DETAIL
 # Host network commands through the daemon container (network_mode: host)
 host_ip() { sudo docker exec nettap-storage-daemon ip "$@"; }
 
+# Judged on the host, not through the container: a failed docker exec must not read as "gone"
+br0_exists() { [ -e /sys/class/net/br0 ]; }
+
+# OLD CODE START — NET-287 review: the flag was cleared even when the delete failed
+# remove_test_bridge() {
+#     if [ "$TEST_BRIDGE_CREATED" = "true" ]; then
+#         host_ip link del br0 >/dev/null 2>&1 || true
+#         TEST_BRIDGE_CREATED="false"
+#     fi
+# }
+# OLD CODE END
 remove_test_bridge() {
-    if [ "$TEST_BRIDGE_CREATED" = "true" ]; then
-        host_ip link del br0 >/dev/null 2>&1 || true
+    [ "$TEST_BRIDGE_CREATED" = "true" ] || return 0
+    if host_ip link del br0 >/dev/null 2>&1 && ! br0_exists; then
         TEST_BRIDGE_CREATED="false"
+    else
+        echo "   ! Could not remove the temporary br0. Remove it with: sudo ip link del br0"
     fi
 }
 trap remove_test_bridge EXIT
@@ -130,7 +143,8 @@ check "nettap-storage-daemon health" "$rc" "$DAEMON"
 echo ""
 
 echo "→ Step 5: NET-287, a br0 NetTap didn't make is refused (live, read-only)..."
-if host_ip link show br0 >/dev/null 2>&1; then
+# OLD CODE: if host_ip link show br0 >/dev/null 2>&1; then (NET-287 review: a failed docker exec read as "no br0")
+if br0_exists; then
     echo "   - A br0 already exists on this box, so the live check is skipped and it is left alone."
 elif ! host_ip link add br0 type bridge; then
     check "add a temporary empty br0" 1 "ip link add failed"
@@ -164,7 +178,8 @@ print('OK' if ok else 'FAIL', pstatus, perror[:60])")"
     fi
 
     remove_test_bridge
-    if host_ip link show br0 >/dev/null 2>&1; then rc=1; else rc=0; fi
+    # OLD CODE: if host_ip link show br0 >/dev/null 2>&1; then rc=1; else rc=0; fi (NET-287 review: a failed docker exec read as removed)
+    if br0_exists; then rc=1; else rc=0; fi
     check "temporary br0 removed" "$rc"
 fi
 echo ""

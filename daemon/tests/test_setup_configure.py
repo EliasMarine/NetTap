@@ -69,6 +69,7 @@ class _Base(AioHTTPTestCase):
         self.host_addrs = {}
         self.host_routes = []
         self.unreadable_links = set()  # ``ip -j link show dev X`` returns []
+        self.br0_exists = False  # NET-287: no br0 on this host unless a test adds one
         self.patches = [
             patch.dict(
                 os.environ,
@@ -95,6 +96,8 @@ class _Base(AioHTTPTestCase):
 
     async def _ip_json(self, *args):
         if args[:2] == ("link", "show"):
+            if args[3] == "br0" and not self.br0_exists:
+                return []
             return [] if args[3] in self.unreadable_links else [{"ifname": args[3]}]
         if args[:3] == ("-4", "route", "show"):
             return self.host_routes
@@ -508,6 +511,38 @@ class TestRetentionSaveReported(_Base):
         save.assert_called_once_with(self.STORAGE)
         self.assertEqual(data["status"], "ok")
         self.assertNotIn("warnings", data)
+
+
+class TestForeignBridge(_Base):
+    """NET-287: bridge mode would sniff a br0 NetTap didn't make (its VMs' traffic)."""
+
+    BRIDGE_BODY = {
+        "capture_mode": "bridge",
+        "wan_interface": "eth0",
+        "lan_interface": "eth1",
+    }
+
+    async def _post_with_br0(self, body, nettaps):
+        self.br0_exists = True
+        with patch(f"{MODULE}.bridge_is_nettaps", AsyncMock(return_value=nettaps)):
+            return await self._post(body)
+
+    async def test_bridge_mode_is_refused_while_a_foreign_br0_exists(self):
+        resp = await self._post_with_br0(self.BRIDGE_BODY, nettaps=False)
+        self.assertEqual(resp.status, 400)
+        error = (await resp.json())["error"]
+        self.assertIn("br0 that NetTap didn't set up", error)
+        self.assertIn("sudo ip link set br0 alias nettap", error)
+        self.assertFalse(os.path.exists(self.ini))  # nothing written
+        self.restart.assert_not_awaited()  # nothing restarted
+
+    async def test_bridge_mode_is_saved_over_netTaps_own_br0(self):
+        resp = await self._post_with_br0(self.BRIDGE_BODY, nettaps=True)
+        self.assertEqual(resp.status, 200)
+
+    async def test_mirror_mode_is_saved_next_to_a_foreign_br0(self):
+        resp = await self._post_with_br0(MIRROR_BODY, nettaps=False)
+        self.assertEqual(resp.status, 200)
 
 
 if __name__ == "__main__":

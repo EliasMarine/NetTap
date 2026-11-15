@@ -59,9 +59,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# NET-287: everything below changes the bridge or its ports; never one NetTap didn't make
-refuse_foreign_bridge "$BRIDGE_NAME"
-
 # ===========================================================================
 # SYSCTL SETTINGS — These are the kernel parameters we harden
 # ===========================================================================
@@ -193,6 +190,8 @@ fi
 # APPLY MODE — requires root
 # ===========================================================================
 require_root
+# NET-287: the settings below would retune a bridge NetTap didn't make (--check only reads)
+refuse_foreign_bridge "$BRIDGE_NAME"
 
 log "Applying kernel bridge hardening settings..."
 

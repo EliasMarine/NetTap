@@ -32,8 +32,11 @@ There was no ownership marker. The name `br0` was the only test.
 - **Marker.** NetTap sets the alias right after `ip link add` and before any reconfigure change. If that
   fails, a `br0` made in the same call is deleted again and nothing else runs.
 - **Refusals, before anything changes:** daemon create, preview (400), teardown and readiness; bypass
-  enable/disable (409); `setup-bridge.sh` setup, reconfigure and `--teardown`; `harden-bridge.sh`;
-  `bypass-mode.sh`; `install.sh` unless `--skip-bridge`.
+  enable/disable (409); `setup-bridge.sh` setup, reconfigure and `--teardown`; `harden-bridge.sh` apply;
+  `bypass-mode.sh` `--enable`/`--disable`/`--install` (`--check` and `--status` still report); the
+  wizard's bridge-mode save (400, nothing written); `install.sh` unless `--skip-bridge`.
+- **No IPv6.** On a kernel booted with `ipv6.disable=1` (no `/proc/net/if_inet6`) the legacy rule skips
+  the IPv6 route read; with IPv6 on, a failed read still refuses.
 - **After a reboot.** The daemon's `99-nettap-bridge.conf` now also sets
   `net.ipv6.conf.br0.disable_ipv6 = 1`, as the script's did, so a daemon-made `br0` can't pick up a SLAAC
   address from the modem side and fail the legacy rule.

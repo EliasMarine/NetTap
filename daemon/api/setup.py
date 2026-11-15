@@ -263,8 +263,25 @@ async def handle_setup_configure(request: web.Request) -> web.Response:
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
 
+    # NET-287: bridge-mode capture would sniff a br0 NetTap didn't make (its VMs' traffic)
+    if capture_mode == "bridge":
+        refusal = await _foreign_br0_refusal()
+        if refusal is not None:
+            return refusal
+
     async with ensure_capture_lock(request.app):
         return await _apply_configuration(request.app, body, capture_cfg)
+
+
+async def _foreign_br0_refusal() -> web.Response | None:
+    """NET-287: 400 when a br0 exists that NetTap didn't make, else None."""
+    if await HostNetOps().ip_json(
+        "link", "show", "dev", BRIDGE_NAME
+    ) and not await bridge_is_nettaps(BRIDGE_NAME):
+        return web.json_response(
+            {"error": foreign_bridge_message(BRIDGE_NAME)}, status=400
+        )
+    return None
 
 
 async def _gateway_conflict(current: DhcpGatewayManager, config: CaptureConfig):
@@ -520,12 +537,10 @@ async def handle_bridge_preview(request: web.Request) -> web.Response:
         )
 
     # NET-287: say so at Verify, not at Go Live, when a bridge NetTap didn't make has the name
-    if await HostNetOps().ip_json(
-        "link", "show", "dev", BRIDGE_NAME
-    ) and not await bridge_is_nettaps(BRIDGE_NAME):
-        return web.json_response(
-            {"error": foreign_bridge_message(BRIDGE_NAME)}, status=400
-        )
+    # (moved into _foreign_br0_refusal, shared with configure)
+    refusal = await _foreign_br0_refusal()
+    if refusal is not None:
+        return refusal
 
     current = request.app.get("capture_manager")
     for iface in (wan, lan):

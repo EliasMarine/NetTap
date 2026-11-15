@@ -168,7 +168,7 @@ Hosts that run VMs or containers (KVM, LXD, netplan bridges, Unraid) often alrea
 2. **The legacy fallback**, for a bridge netplan rebuilt from NetTap's file at boot (no alias yet). All three must hold:
    - the bridge has at least one port, and every port appears as a `- <port>` line in `10-nettap-bridge.yaml`;
    - it carries no global IPv4 or IPv6 address (`ip -j addr show dev br0`; if that read fails, the bridge is refused);
-   - there is no IPv4 or IPv6 default route through it. The routes are read so that a failed command or unreadable output refuses the bridge.
+   - there is no IPv4 or IPv6 default route through it. The routes are read so that a failed command or unreadable output refuses the bridge. On a kernel without IPv6 (`ipv6.disable=1`, no `/proc/net/if_inet6`) the IPv6 read is skipped, because `ip -6` fails there and no IPv6 route can exist.
 
    NetTap's bridge is pure layer 2: the management address lives on another interface.
 
@@ -177,7 +177,8 @@ Shared code: `bridge_is_nettaps()` in `daemon/services/bridge_manager.py`, and `
 The checks run at these points:
 - `install.sh`, unless `--skip-bridge`, before preflight, dependencies or kernel tuning;
 - `setup-bridge.sh` preflight, its reconfigure branch, and `--teardown` (which now releases only WAN/LAN ports whose master is `br0`);
-- `harden-bridge.sh` and `bypass-mode.sh`, right after argument parsing;
+- `harden-bridge.sh` (apply mode) and `bypass-mode.sh` (`--enable`, `--disable`, `--install`; enable also flushes ebtables, which would drop a VM host's filters). `--check` and `--status` only read, so they still report;
+- the wizard's save (`/api/setup/configure`) in bridge mode, so capture never sniffs a bridge NetTap didn't make;
 - the daemon's create, teardown, readiness, bypass enable/disable and the wizard's bridge preview;
 - the NIC in-use guard, which treats a port of any bridge or bond as in use unless the master is NetTap's own `br0`.
 
