@@ -972,6 +972,73 @@ class TestGeoIPDatabaseInLogstash(unittest.TestCase):
         self.assertIsNone(argv)
 
 
+class TestEveryApplicableRowIsAcceptedByTheApplyApi(unittest.TestCase):
+    """NET-291: POST /api/system/updates/apply takes only the names in APPLY_COMPONENTS. The page
+    posts the rows that have no applies_with, so a new such row the list lacks would be refused."""
+
+    def test_rows_without_applies_with_are_names_the_apply_api_accepts(self):
+        from unittest.mock import patch
+
+        from services.malcolm_upgrade import MALCOLM_SERVICES
+        from services.update_executor import APPLY_COMPONENTS
+
+        class VM:
+            async def get_versions(self):
+                rows = [
+                    {
+                        "name": f"nettap-{service}",
+                        "category": "docker",
+                        "current_version": "26.02.0",
+                        "status": "ok",
+                        "details": {
+                            "image": f"ghcr.io/idaholab/malcolm/{service}:26.02.0"
+                        },
+                    }
+                    for service in MALCOLM_SERVICES
+                ]
+                rows += [
+                    {"name": name, "category": "system", "current_version": "9.0.1"}
+                    for name in ("zeek", "suricata", "tshark", "os")
+                ]
+                return {"versions": rows}
+
+        async def fetch(url):
+            if "idaholab/Malcolm" in url:
+                return {"tag_name": f"v{TESTED_MALCOLM_TAG}"}
+            return {"tag_name": "v99.0.0", "html_url": "https://github.com/x"}
+
+        month_old = datetime.now(timezone.utc).timestamp() - 30 * 86400
+        with tempfile.TemporaryDirectory() as tmp:
+            notifier = os.path.join(tmp, "updates-available")
+            with open(notifier, "w") as fh:
+                fh.write("12 updates can be applied immediately.\n")
+            uc = UpdateChecker()
+            uc._fetch_json = fetch
+            uc.set_version_manager(VM())
+            # a stale rules file and a stale GeoIP file: both exist, both a month old
+            with (
+                patch("os.path.exists", return_value=True),
+                patch("os.path.getmtime", return_value=month_old),
+                patch(
+                    "services.update_checker.os_update_fields",
+                    lambda version: os_update_fields(version, notifier),
+                ),
+            ):
+                result = asyncio.run(uc.check_updates())
+
+        updates = result["updates"]
+        applicable = {u["component"] for u in updates if not u["applies_with"]}
+        # the scenario check: the three rows the page can send are offered
+        self.assertGreaterEqual(applicable, {"malcolm", "suricata-rules", "geoip-db"})
+        # the guard: whatever else is offered without applies_with, the apply API accepts
+        self.assertLessEqual(applicable, APPLY_COMPONENTS)
+        # the scenario really offers rows the page leaves disabled, too
+        disabled = {u["component"] for u in updates if u["applies_with"]}
+        self.assertTrue(
+            {"nettap-daemon", "os", "zeek", "nettap-opensearch"} <= disabled
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -17,7 +17,8 @@ export const POST: RequestHandler = async ({ request }) => {
 		return json({ error: 'Invalid JSON body' }, { status: 400 });
 	}
 
-	if (!body.component || typeof body.component !== 'string') {
+	// OLD CODE: if (!body.component || typeof body.component !== 'string') { (NET-291 review: the JSON body `null` threw here as a 500)
+	if (!body || typeof body !== 'object' || !body.component || typeof body.component !== 'string') {
 		return json({ error: 'component is required and must be a string' }, { status: 400 });
 	}
 

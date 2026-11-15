@@ -625,6 +625,133 @@ class TestRollbackEndpoint(AioHTTPTestCase):
         self.assertEqual(resp.status, 400)
 
 
+class _RealExecutorCase(AioHTTPTestCase):
+    """The real UpdateExecutor behind the real handlers (NET-291), with its history seeded so a
+    batch that slipped through shows. start_update and rollback are spied, not replaced."""
+
+    SENTINEL = {"sentinel": "history before the request"}
+
+    def setUp(self):
+        import tempfile
+
+        self._tmp = tempfile.TemporaryDirectory()
+        self.ue = UpdateExecutor(backup_dir=self._tmp.name)
+        self.ue._update_history = [dict(self.SENTINEL)]
+        self.ue.start_update = AsyncMock(wraps=self.ue.start_update)
+        self.ue.rollback = AsyncMock(wraps=self.ue.rollback)
+        super().setUp()
+
+    def tearDown(self):
+        super().tearDown()
+        self._tmp.cleanup()
+
+    async def get_application(self):
+        app = web.Application()
+        register_update_routes(
+            app,
+            _make_mock_version_manager(),
+            _make_mock_update_checker(),
+            self.ue,
+        )
+        return app
+
+    async def _settle(self):
+        if self.ue._task is not None:  # a batch that was queued runs to its end
+            await self.ue._task
+
+    async def assert_nothing_queued_or_recorded(self):
+        await self._settle()
+        self.ue.start_update.assert_not_called()
+        self.assertEqual(self.ue._update_history, [self.SENTINEL])
+        self.assertEqual(self.ue._live_results, [])
+        self.assertIsNone(self.ue._current_update)
+
+
+class TestApplyChecksNamesBeforeQueuing(_RealExecutorCase):
+    """NET-291: any list of strings was turned into a result each and kept in the history."""
+
+    async def _refuses(self, body):
+        resp = await self.client.request("POST", "/api/system/updates/apply", json=body)
+        self.assertEqual(
+            resp.status, 400, body if len(str(body)) < 200 else "a big body"
+        )
+        await self.assert_nothing_queued_or_recorded()
+
+    @unittest_run_loop
+    async def test_a_list_over_the_cap_is_refused_even_of_allowed_names(self):
+        from services.update_executor import MAX_APPLY_COMPONENTS
+
+        self.assertEqual(MAX_APPLY_COMPONENTS, 16)
+        await self._refuses({"components": ["zeek"] * 17})
+
+    @unittest_run_loop
+    async def test_a_list_at_the_cap_is_queued(self):
+        self.ue.start_update = AsyncMock(return_value=({"state": "in_progress"}, 202))
+        resp = await self.client.request(
+            "POST", "/api/system/updates/apply", json={"components": ["zeek"] * 16}
+        )
+        self.assertEqual(resp.status, 202)
+        self.ue.start_update.assert_awaited_once()
+
+    @unittest_run_loop
+    async def test_unknown_names_are_refused(self):
+        for components in (
+            ["../../etc/passwd"],
+            ["nettap-nothing"],
+            ["x" * 100_000],  # a long one is refused, not stored
+            ["suricata-rules", "../x"],  # one bad name refuses the batch
+        ):
+            await self._refuses({"components": components})
+
+    @unittest_run_loop
+    async def test_a_body_that_is_not_an_object_is_a_400_not_a_500(self):
+        for body in (None, [], 5, "malcolm"):
+            await self._refuses(body)
+
+    @unittest_run_loop
+    async def test_the_page_names_and_the_malcolm_rows_are_queued(self):
+        self.ue.start_update = AsyncMock(return_value=({"state": "in_progress"}, 202))
+        for components in (
+            ["malcolm", "suricata-rules", "geoip-db"],
+            ["zeek", "suricata", "nettap-logstash", "nettap-zeek-live"],
+        ):
+            resp = await self.client.request(
+                "POST", "/api/system/updates/apply", json={"components": components}
+            )
+            self.assertEqual(resp.status, 202, components)
+            self.assertEqual(self.ue.start_update.await_args.args[0], components)
+
+
+class TestRollbackChecksTheBody(_RealExecutorCase):
+    """NET-291: a body that is not an object reached body.get and became a logged 500; a name
+    that is not a string never reaches rollback()."""
+
+    async def _refuses(self, body):
+        resp = await self.client.request(
+            "POST", "/api/system/updates/rollback", json=body
+        )
+        self.assertEqual(resp.status, 400, body)
+        self.ue.rollback.assert_not_called()
+
+    @unittest_run_loop
+    async def test_a_body_that_is_not_an_object_is_a_400_not_a_500(self):
+        for body in (None, [], 5, "suricata-rules"):
+            await self._refuses(body)
+
+    @unittest_run_loop
+    async def test_a_component_that_is_not_a_string_is_a_400(self):
+        for component in (["suricata-rules"], 5, {"a": 1}, None, ""):
+            await self._refuses({"component": component})
+
+    @unittest_run_loop
+    async def test_a_traversal_name_is_refused_as_not_supported(self):
+        resp = await self.client.request(
+            "POST", "/api/system/updates/rollback", json={"component": "../../../etc/x"}
+        )
+        self.assertEqual(resp.status, 404)
+        self.assertIn("not supported", (await resp.json())["message"])
+
+
 class TestRouteRegistration(AioHTTPTestCase):
     """Tests for route registration."""
 
