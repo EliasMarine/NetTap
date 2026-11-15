@@ -12,18 +12,22 @@ load 'helpers/setup'
 
 NETPLAN_PORTS=$'network:\n  bridges:\n    br0:\n      interfaces:\n        - enp2s0\n        - enp3s0\n'
 
-_bridge() {
-    local mock="${TEST_TMPDIR}/mock"
+# _script NAME ARGS: run scripts/bridge/NAME with the stubbed common.sh
+_script() {
+    local name="$1" mock="${TEST_TMPDIR}/mock"
+    shift
     mkdir -p "${mock}/bridge" "${TEST_TMPDIR}/sys/br0/brif"
     cat > "${mock}/common.sh" <<WRAPPER
 source '${REPO_ROOT}/scripts/common.sh'
 source '${BATS_TEST_DIRNAME}/helpers/bridge_stubs.bash'
 WRAPPER
     sed "s|source \"\${SCRIPT_DIR}/../common.sh\"|source '${mock}/common.sh'|" \
-        "${REPO_ROOT}/scripts/bridge/setup-bridge.sh" > "${mock}/bridge/setup-bridge.sh"
+        "${REPO_ROOT}/scripts/bridge/${name}" > "${mock}/bridge/${name}"
     run env TEST_TMPDIR="$TEST_TMPDIR" NETTAP_COLOR=never "${ENV_VARS[@]}" \
-        bash "${mock}/bridge/setup-bridge.sh" --wan enp2s0 --lan enp3s0 "$@"
+        bash "${mock}/bridge/${name}" "$@"
 }
+
+_bridge() { _script setup-bridge.sh --wan enp2s0 --lan enp3s0 "$@"; }
 
 _make_br0() { touch "${TEST_TMPDIR}/br0-exists"; }
 _ports() { local p; for p in "$@"; do mkdir -p "${TEST_TMPDIR}/sys/br0/brif/${p}"; done; }
@@ -74,6 +78,39 @@ ENV_VARS=()
     [[ "$output" == *"[DRY-RUN] ip link set br0 alias nettap"* ]] || false
 }
 
+@test "a legacy br0 whose route reads print [ ] is reconfigured" {
+    _make_br0; _netplan; _ports enp2s0 enp3s0
+    ENV_VARS=(BR0_ROUTE4='[ ]' BR0_ROUTE6='[ ]')
+    _bridge --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"[DRY-RUN] ip link set br0 alias nettap"* ]] || false
+}
+
+@test "a legacy br0 carrying an IPv6 default route is refused" {
+    _make_br0; _netplan; _ports enp2s0 enp3s0
+    ENV_VARS=(BR0_ROUTE6='[{"dst":"default","gateway":"fe80::1","dev":"br0"}]')
+    _bridge --dry-run
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"didn't make it"* ]] || false
+}
+
+@test "a legacy br0 whose route read fails is refused" {
+    _make_br0; _netplan; _ports enp2s0 enp3s0
+    ENV_VARS=(ROUTE_FAILS=1)
+    _bridge --dry-run
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"didn't make it"* ]] || false
+}
+
+@test "a netplan port line with trailing whitespace still counts (as in the daemon)" {
+    _make_br0; _ports enp2s0 enp3s0
+    printf 'network:\n  bridges:\n    br0:\n      interfaces:\n        - enp2s0 \n        - enp3s0\t\n' \
+        > "${TEST_TMPDIR}/10-nettap-bridge.yaml"
+    _bridge --dry-run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"[DRY-RUN] ip link set br0 alias nettap"* ]] || false
+}
+
 @test "--teardown refuses a br0 NetTap didn't make" {
     _make_br0; _ports vnet0
     _bridge --teardown --dry-run
@@ -111,4 +148,30 @@ ENV_VARS=()
     [ "$status" -ne 0 ]
     [[ "$output" == *"Could not mark br0 as NetTap's bridge"* ]] || false
     [ "$(_changes)" = $'ip link add name br0 type bridge\nip link set br0 alias nettap\nip link del br0' ]
+}
+
+@test "if the alias fails and the cleanup fails too, it says the bridge may remain" {
+    ENV_VARS=(ALIAS_FAILS=1 DEL_FAILS=1)
+    _bridge
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"sudo ip link del br0"* ]] || false
+    [[ "$output" != *"nothing else was changed"* ]] || false
+}
+
+# -- the other bridge scripts -----------------------------------------------
+
+@test "harden-bridge.sh refuses a br0 NetTap didn't make" {
+    _make_br0; _ports vnet0
+    _script harden-bridge.sh --dry-run
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"didn't make it"* ]] || false
+    [[ "$output" != *"stp_state"* ]] || false
+}
+
+@test "bypass-mode.sh refuses a br0 NetTap didn't make" {
+    _make_br0; _ports vnet0
+    _script bypass-mode.sh --enable --dry-run
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"didn't make it"* ]] || false
+    [[ "$output" != *"promisc"* ]] || false
 }

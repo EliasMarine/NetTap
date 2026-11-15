@@ -32,8 +32,11 @@ There was no ownership marker. The name `br0` was the only test.
 - **Marker.** NetTap sets the alias right after `ip link add` and before any reconfigure change. If that
   fails, a `br0` made in the same call is deleted again and nothing else runs.
 - **Refusals, before anything changes:** daemon create, preview (400), teardown and readiness; bypass
-  enable/disable (409); `setup-bridge.sh` setup, reconfigure and `--teardown`; `install.sh` unless
-  `--skip-bridge`.
+  enable/disable (409); `setup-bridge.sh` setup, reconfigure and `--teardown`; `harden-bridge.sh`;
+  `bypass-mode.sh`; `install.sh` unless `--skip-bridge`.
+- **After a reboot.** The daemon's `99-nettap-bridge.conf` now also sets
+  `net.ipv6.conf.br0.disable_ipv6 = 1`, as the script's did, so a daemon-made `br0` can't pick up a SLAAC
+  address from the modem side and fail the legacy rule.
 - **NIC guard.** A port with any master is in use, unless the master is NetTap's own `br0`.
 - **`setup-bridge.sh --teardown`** releases WAN/LAN only if their `master` really is `br0`.
 - **Web.** The bypass buttons (Bridge status card, Go Live) show the daemon's refusal text for a 409. A

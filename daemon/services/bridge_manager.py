@@ -71,7 +71,8 @@ async def bridge_is_nettaps(bridge_name: str, netplan_dir: str | None = None) ->
     try:
         ports = os.listdir(os.path.join(bridge_dir, "brif"))
         text = Path(netplan_dir, NETPLAN_FILE).read_text()
-    except OSError:
+    # OLD CODE: except OSError: (NET-287 review: an undecodable file raised UnicodeDecodeError)
+    except (OSError, ValueError):
         return False
     # Every port must be one NetTap's file lists; an empty bridge proves nothing
     if not ports or not all(
@@ -652,8 +653,21 @@ class BridgeManager:
         )
         if rc == 0:
             return None
+        # OLD CODE START — NET-287 review: a failed cleanup still said "Nothing was changed"
+        # if created:
+        #     await self._run_nsenter("ip", "link", "del", self._bridge_name)
+        # OLD CODE END
         if created:
-            await self._run_nsenter("ip", "link", "del", self._bridge_name)
+            del_rc, _, _ = await self._run_nsenter(
+                "ip", "link", "del", self._bridge_name
+            )
+            if del_rc != 0:
+                return (
+                    f"Could not mark {self._bridge_name} as NetTap's bridge: "
+                    f"{err.strip() or f'exit code {rc}'}. The empty bridge it just made may "
+                    f"still exist; remove it with sudo ip link del {self._bridge_name} "
+                    "on this machine."
+                )
         return (
             f"Could not mark {self._bridge_name} as NetTap's bridge: "
             f"{err.strip() or f'exit code {rc}'}. Nothing was changed."
@@ -856,12 +870,24 @@ class BridgeManager:
         # 3. Sysctl config
         if self._sysctl_dir:
             sysctl_path = os.path.join(self._sysctl_dir, "99-nettap-bridge.conf")
-            sysctl_content = textwrap.dedent("""\
+            # OLD CODE START — NET-287 review: no IPv6 line, so after a reboot br0 could take a
+            # SLAAC address from the modem's adverts and fail the ownership rule
+            # sysctl_content = textwrap.dedent("""\
+            #     # NetTap bridge netfilter disable — auto-generated
+            #     # Prevents Docker iptables from interfering with bridged traffic
+            #     net.bridge.bridge-nf-call-iptables = 0
+            #     net.bridge.bridge-nf-call-ip6tables = 0
+            #     net.bridge.bridge-nf-call-arptables = 0
+            # """)
+            # OLD CODE END
+            # The same lines setup-bridge.sh writes
+            sysctl_content = textwrap.dedent(f"""\
                 # NetTap bridge netfilter disable — auto-generated
                 # Prevents Docker iptables from interfering with bridged traffic
                 net.bridge.bridge-nf-call-iptables = 0
                 net.bridge.bridge-nf-call-ip6tables = 0
                 net.bridge.bridge-nf-call-arptables = 0
+                net.ipv6.conf.{self._bridge_name}.disable_ipv6 = 1
             """)
             try:
                 Path(sysctl_path).write_text(sysctl_content)

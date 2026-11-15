@@ -177,8 +177,11 @@ Shared code: `bridge_is_nettaps()` in `daemon/services/bridge_manager.py`, and `
 The checks run at these points:
 - `install.sh`, unless `--skip-bridge`, before preflight, dependencies or kernel tuning;
 - `setup-bridge.sh` preflight, its reconfigure branch, and `--teardown` (which now releases only WAN/LAN ports whose master is `br0`);
+- `harden-bridge.sh` and `bypass-mode.sh`, right after argument parsing;
 - the daemon's create, teardown, readiness, bypass enable/disable and the wizard's bridge preview;
 - the NIC in-use guard, which treats a port of any bridge or bond as in use unless the master is NetTap's own `br0`.
+
+**After a reboot:** the alias is gone, so a NetTap `br0` rebuilt by netplan must pass rule 2. Both the daemon's and the script's `99-nettap-bridge.conf` set `net.ipv6.conf.br0.disable_ipv6 = 1`, so the bridge can't pick up a SLAAC address from the modem side's router adverts (that address would fail rule 2).
 
 **Recovery:** a `br0` that NetTap did make but that fails both rules can be marked by hand with `sudo ip link set br0 alias nettap`. Examples: a runtime-only bridge from before NET-287, a daemon without the netplan mount, NetTap's own bridge left empty after a NIC rename, or extra ports added later.
 

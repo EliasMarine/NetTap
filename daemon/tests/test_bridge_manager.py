@@ -415,6 +415,8 @@ class TestWritePersistence(unittest.TestCase):
 
             content = open(files[0]).read()
             self.assertIn("net.bridge.bridge-nf-call-iptables = 0", content)
+            # NET-287: no SLAAC address on br0 after a reboot (it would fail rule 2)
+            self.assertIn("net.ipv6.conf.br0.disable_ipv6 = 1", content)
 
     def test_writes_all_three(self):
         """_write_persistence should write all 3 files when all dirs set."""

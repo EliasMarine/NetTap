@@ -59,6 +59,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# NET-287: everything below changes the bridge or its ports; never one NetTap didn't make
+refuse_foreign_bridge "$BRIDGE_NAME"
+
 # ===========================================================================
 # SYSCTL SETTINGS — These are the kernel parameters we harden
 # ===========================================================================

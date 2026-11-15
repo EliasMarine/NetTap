@@ -40,7 +40,11 @@ from services.capture_config import (
     write_env_file_if_changed,
 )
 from services.bridge_capture_adapter import BridgeCaptureAdapter
-from services.bridge_manager import bridge_is_nettaps, foreign_bridge_message
+from services.bridge_manager import (
+    BRIDGE_ALIAS,
+    bridge_is_nettaps,
+    foreign_bridge_message,
+)
 from services.capture_manager import CaptureManager, CaptureMode
 from services.capture_mode_stub import CaptureManagerStub
 from services.dhcp_gateway import DhcpGatewayManager
@@ -343,9 +347,21 @@ async def _nic_in_use_problem(current, interface: str) -> str | None:
     # unless the master is NetTap's own bridge
     master = links[0].get("master") if isinstance(links[0], dict) else None
     if master and not (master == BRIDGE_NAME and await bridge_is_nettaps(master)):
-        return (
+        # OLD CODE START — NET-287 review: no way out for NetTap's own br0 that lost its alias
+        # return (
+        #     f"is already part of {master}, which this machine set up for something else"
+        # )
+        # OLD CODE END
+        problem = (
             f"is already part of {master}, which this machine set up for something else"
         )
+        if master == BRIDGE_NAME:
+            # Create hits this guard before M1, so it needs M1's way out
+            problem += (
+                f". If you're sure NetTap made it, run sudo ip link set {master} "
+                f"alias {BRIDGE_ALIAS} on this machine and try again"
+            )
+        return problem
     routes = await host.ip_json("-4", "route", "show", "default")
     addrs = [str(cidr.ip) for _, cidr in await host.inet_addrs(interface)]
     if any(isinstance(r, dict) and r.get("dev") == interface for r in routes):

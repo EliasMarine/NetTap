@@ -163,6 +163,7 @@ class TestBridgePreview(AioHTTPTestCase):
         status, body = await self._post(PAIR)
         self.assertEqual(status, 400)
         self.assertIn("enp3s0 is already part of bond0", body["error"])
+        self.assertNotIn("alias", body["error"])  # the br0 fix doesn't apply to a bond
 
     async def test_accepts_a_port_of_nettaps_own_br0(self):
         self._br0(nettaps=True)
@@ -174,9 +175,12 @@ class TestBridgePreview(AioHTTPTestCase):
         self._br0()
         self.host_masters["enp3s0"] = "br0"
         problem = await _nic_in_use_problem(None, "enp3s0")
+        # OLD CODE: "is already part of br0, which this machine set up for something else", (NET-287 review)
         self.assertEqual(
             problem,
-            "is already part of br0, which this machine set up for something else",
+            "is already part of br0, which this machine set up for something else. "
+            "If you're sure NetTap made it, run sudo ip link set br0 alias nettap "
+            "on this machine and try again",
         )
 
 

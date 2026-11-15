@@ -280,7 +280,8 @@ nettap_bridge_owned() {
     (( ${#ports[@]} > 0 )) || return 1
     for port in "${ports[@]}"; do
         # Not a pipe: under pipefail, grep -q quitting early can fail it
-        grep -qxF -- "- ${port}" < <(sed 's/^[[:space:]]*//' "$NETTAP_BRIDGE_NETPLAN") || return 1
+        # OLD CODE: grep -qxF -- "- ${port}" < <(sed 's/^[[:space:]]*//' "$NETTAP_BRIDGE_NETPLAN") || return 1 (NET-287 review: trailing whitespace failed here but passed the daemon's rule)
+        grep -qxF -- "- ${port}" < <(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' "$NETTAP_BRIDGE_NETPLAN") || return 1
     done
     # Pure layer 2: a host uplink bridge carries the host's address. A failed read refuses.
     out=$(ip -o addr show dev "$br" scope global) || return 1

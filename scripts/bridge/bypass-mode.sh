@@ -108,6 +108,9 @@ if [[ "$MODE_ENABLE" == "false" && "$MODE_DISABLE" == "false" && \
     usage
 fi
 
+# NET-287: everything below changes the bridge or its ports; never one NetTap didn't make
+refuse_foreign_bridge "$BRIDGE_NAME"
+
 # ---------------------------------------------------------------------------
 # Helper: Check if bypass mode is currently active
 # ---------------------------------------------------------------------------

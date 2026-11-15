@@ -220,7 +220,7 @@ class TestCreateOnNetTapsBridge(OwnershipCase):
 
 
 class TestNewBridgeAlias(unittest.TestCase):
-    def _create(self, alias_rc):
+    def _create(self, alias_rc, del_rc=0):
         commands = []
 
         async def run(*args):
@@ -229,6 +229,8 @@ class TestNewBridgeAlias(unittest.TestCase):
                 return (1, "", 'Device "br0" does not exist.')
             if args[-2:] == ("alias", "nettap"):
                 return (alias_rc, "", "boom")
+            if args == ("ip", "link", "del", "br0"):
+                return (del_rc, "", "busy")
             return (0, "", "")
 
         mgr = BridgeManager(netplan_dir="")
@@ -260,6 +262,13 @@ class TestNewBridgeAlias(unittest.TestCase):
                 "ip link del br0",
             ],
         )
+
+    def test_failed_cleanup_says_the_bridge_may_remain(self):
+        result, _ = self._create(alias_rc=1, del_rc=1)
+        self.assertFalse(result["created"])
+        self.assertIn("may still exist", result["errors"][0])
+        self.assertIn("sudo ip link del br0", result["errors"][0])
+        self.assertNotIn("Nothing was changed", result["errors"][0])
 
 
 class TestTeardownAndReadiness(OwnershipCase):
@@ -334,6 +343,12 @@ class TestBridgeIsNetTaps(OwnershipCase):
     def test_missing_bridge(self):
         self.netplan()
         self.assertFalse(asyncio.run(bridge_is_nettaps("br7", self.netplan_dir)))
+
+    def test_undecodable_netplan_file_refuses(self):
+        self.ports("enp2s0")
+        with open(os.path.join(self.netplan_dir, "10-nettap-bridge.yaml"), "wb") as f:
+            f.write(b"\xff\xfe        - enp2s0\n")
+        self.assertFalse(asyncio.run(bridge_is_nettaps("br0", self.netplan_dir)))
 
 
 if __name__ == "__main__":

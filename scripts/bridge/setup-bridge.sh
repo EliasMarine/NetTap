@@ -354,8 +354,13 @@ fi
 # NET-287: mark the bridge NetTap's before any setting or port changes. Handled here, not by
 # the cleanup trap: the ERR trap doesn't reach into run() (no errtrace).
 if ! run ip link set "$BRIDGE_NAME" alias nettap; then
-    if [[ "$bridge_created" == "true" ]]; then
-        run ip link del "$BRIDGE_NAME" || true
+    # OLD CODE START — NET-287 review: a failed cleanup still said "nothing else was changed"
+    # if [[ "$bridge_created" == "true" ]]; then
+    #     run ip link del "$BRIDGE_NAME" || true
+    # fi
+    # OLD CODE END
+    if [[ "$bridge_created" == "true" ]] && ! run ip link del "$BRIDGE_NAME"; then
+        error "Could not mark ${BRIDGE_NAME} as NetTap's bridge. The empty bridge it just made may still exist; remove it with 'sudo ip link del ${BRIDGE_NAME}'."
     fi
     error "Could not mark ${BRIDGE_NAME} as NetTap's bridge, so nothing else was changed."
 fi
