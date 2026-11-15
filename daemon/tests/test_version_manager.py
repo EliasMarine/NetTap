@@ -91,17 +91,28 @@ class TestVersionManagerInitialization(unittest.TestCase):
     """Tests for VersionManager initialization."""
 
     def test_default_parameters(self):
-        """Default init should use expected compose file path."""
+        """Default init starts with an empty cache."""
         vm = VersionManager()
-        self.assertEqual(vm._compose_file, "/opt/nettap/docker/docker-compose.yml")
+        # OLD CODE START — NET-288: the daemon container has no compose file to read
+        # self.assertEqual(vm._compose_file, "/opt/nettap/docker/docker-compose.yml")
+        # OLD CODE END
         self.assertEqual(vm._versions, {})
         self.assertIsNone(vm._last_scan)
         self.assertFalse(vm._scanning)
 
-    def test_custom_compose_file(self):
-        """Custom compose file path should be stored."""
-        vm = VersionManager(compose_file="/custom/docker-compose.yml")
-        self.assertEqual(vm._compose_file, "/custom/docker-compose.yml")
+    # OLD CODE START — NET-288: no compose_file parameter any more
+    # def test_custom_compose_file(self):
+    #     """Custom compose file path should be stored."""
+    #     vm = VersionManager(compose_file="/custom/docker-compose.yml")
+    #     self.assertEqual(vm._compose_file, "/custom/docker-compose.yml")
+    # OLD CODE END
+
+    def test_version_manager_takes_no_compose_path(self):
+        """NET-288: the daemon container has no repo, so there is no path to guess."""
+        import inspect
+
+        self.assertEqual(list(inspect.signature(VersionManager).parameters), [])
+        self.assertFalse(hasattr(VersionManager(), "_compose_file"))
 
 
 class TestNettapVersionConstant(unittest.TestCase):
@@ -401,15 +412,44 @@ class TestScanCore(unittest.TestCase):
         self.assertEqual(daemon_versions[0].current_version, NETTAP_VERSION)
         self.assertEqual(daemon_versions[0].status, "ok")
 
-    def test_scan_core_includes_web_and_config(self):
-        """_scan_core() should include web UI and config components."""
-        vm = VersionManager()
-        results = asyncio.run(vm._scan_core())
+    # OLD CODE START — NET-288: these rows read /opt/nettap/web/package.json and the compose file,
+    # neither of which exists in the daemon container, so they were "unknown" for ever
+    # def test_scan_core_includes_web_and_config(self):
+    #     """_scan_core() should include web UI and config components."""
+    #     vm = VersionManager()
+    #     results = asyncio.run(vm._scan_core())
+    #
+    #     names = [cv.name for cv in results]
+    #     self.assertIn("nettap-daemon", names)
+    #     self.assertIn("nettap-web", names)
+    #     self.assertIn("nettap-config", names)
+    # OLD CODE END
 
-        names = [cv.name for cv in results]
-        self.assertIn("nettap-daemon", names)
+    def test_scan_core_reports_only_what_the_container_can_read(self):
+        """NET-288: the G11 listed nettap-web and nettap-config as "unknown"."""
+        results = asyncio.run(VersionManager()._scan_core())
+
+        self.assertEqual([cv.name for cv in results], ["nettap-daemon"])
+        self.assertEqual([cv.status for cv in results], ["ok"])
+
+    def test_scan_versions_names_are_unique(self):
+        """The core "nettap-web" row used to share its name with the Docker row."""
+        vm = VersionManager()
+
+        async def run(cmd):
+            return "nettap-web\tnettap/web:latest\tf\n"
+
+        async def none():
+            return []
+
+        vm._run_command = run
+        vm._scan_system_packages = none
+        vm._scan_databases = none
+        vm._scan_os_info = none
+        names = [v["name"] for v in asyncio.run(vm.scan_versions())["versions"]]
+
+        self.assertEqual(sorted(names), sorted(set(names)))
         self.assertIn("nettap-web", names)
-        self.assertIn("nettap-config", names)
 
 
 class TestRunCommand(unittest.TestCase):

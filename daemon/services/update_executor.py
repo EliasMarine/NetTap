@@ -1,10 +1,14 @@
 """
 NetTap Update Executor Service
 
-Performs software updates with rollback capability. Handles Docker
-image pulls, Suricata rule updates, GeoIP database downloads, and
-system package updates. Creates pre-update snapshots for safety.
+Performs software updates with rollback capability. Handles the tested
+Malcolm upgrade (through MalcolmUpgrade's helper container), Suricata rule
+updates and GeoIP database downloads. Creates pre-update snapshots for safety.
 """
+# OLD CODE (NET-288 review: docker pulls and system packages are no longer handled here):
+# Performs software updates with rollback capability. Handles Docker
+# image pulls, Suricata rule updates, GeoIP database downloads, and
+# system package updates. Creates pre-update snapshots for safety.
 
 import asyncio
 import contextlib
@@ -78,18 +82,23 @@ class UpdateResult:
 class UpdateExecutor:
     """Performs software updates with rollback capability.
 
-    Handles Docker image pulls, Suricata rule updates, GeoIP database
-    downloads, and system package updates. Creates pre-update backups
-    for rollback safety.
+    Handles the tested Malcolm upgrade, Suricata rule updates and GeoIP
+    database downloads. Creates pre-update backups for rollback safety.
     """
+
+    # OLD CODE (NET-288 review): "Handles Docker image pulls, Suricata rule updates, GeoIP
+    # database downloads, and system package updates."
 
     def __init__(
         self,
-        compose_file: str = "/opt/nettap/docker/docker-compose.yml",
+        # OLD CODE START — NET-288: the daemon container has no compose file; MalcolmUpgrade reads
+        # the project from the daemon's own container labels
+        # compose_file: str = "/opt/nettap/docker/docker-compose.yml",
+        # OLD CODE END
         backup_dir: str = "/opt/nettap/backups",
         malcolm_upgrade: MalcolmUpgrade | None = None,
     ) -> None:
-        self._compose_file = compose_file
+        # OLD CODE: self._compose_file = compose_file (NET-288)
         self._backup_dir = backup_dir
         # runs the update in the Suricata container: the daemon has no suricata-update
         self._rule_manager = SuricataRuleManager()
@@ -108,11 +117,14 @@ class UpdateExecutor:
         if unfinished:  # the daemon restarted during a Malcolm update: say so once
             self._update_history.append(_unfinished_entry(unfinished))
 
-        logger.info(
-            "UpdateExecutor initialized: compose_file=%s backup_dir=%s",
-            compose_file,
-            backup_dir,
-        )
+        # OLD CODE START — NET-288: no compose_file any more
+        # logger.info(
+        #     "UpdateExecutor initialized: compose_file=%s backup_dir=%s",
+        #     compose_file,
+        #     backup_dir,
+        # )
+        # OLD CODE END
+        logger.info("UpdateExecutor initialized: backup_dir=%s", backup_dir)
 
     def set_version_manager(self, vm: Any) -> None:
         """Set reference to VersionManager for current version lookups."""
@@ -575,135 +587,137 @@ class UpdateExecutor:
         except Exception as exc:  # the update worked; only the listing may be stale
             logger.warning("Couldn't refresh versions after the update: %s", exc)
 
-    # Unreachable while Malcolm's images are pinned (apply_update answers PINNED_REASON)
-    async def _update_docker_images(self, components: list[str]) -> list[UpdateResult]:
-        """Update Docker images for specified components.
-
-        For each component, pulls the latest image tag and restarts
-        the container via docker compose.
-
-        Args:
-            components: List of Docker component names to update.
-
-        Returns:
-            List of UpdateResult for each component.
-        """
-        results: list[UpdateResult] = []
-
-        for component in components:
-            started = datetime.now(timezone.utc).isoformat()
-            old_version = "unknown"
-            new_version = "unknown"
-
-            try:
-                # Get current version
-                if self._version_manager:
-                    comp_info = await self._version_manager.get_component(component)
-                    if comp_info:
-                        old_version = comp_info.get("current_version", "unknown")
-
-                # Create backup (save current image ID)
-                # OLD CODE START — #96: the result was ignored and rollback_available
-                # was always True below
-                # await self._create_backup(component)
-                # OLD CODE END
-                backup_ok = self._has_restorable_backup(
-                    await self._create_backup(component)
-                )
-
-                # Pull latest image via docker compose
-                output, returncode = await self._run_command(
-                    [
-                        "docker",
-                        "compose",
-                        "-f",
-                        self._compose_file,
-                        "pull",
-                        component,
-                    ]
-                )
-
-                if returncode != 0:
-                    results.append(
-                        UpdateResult(
-                            component=component,
-                            success=False,
-                            old_version=old_version,
-                            new_version=old_version,
-                            started_at=started,
-                            completed_at=datetime.now(timezone.utc).isoformat(),
-                            error=f"Docker pull failed: {output}",
-                            rollback_available=backup_ok,  # was True (#96)
-                        )
-                    )
-                    continue
-
-                # Restart the container with the new image
-                output, returncode = await self._run_command(
-                    [
-                        "docker",
-                        "compose",
-                        "-f",
-                        self._compose_file,
-                        "up",
-                        "-d",
-                        "--no-deps",
-                        component,
-                    ]
-                )
-
-                if returncode != 0:
-                    results.append(
-                        UpdateResult(
-                            component=component,
-                            success=False,
-                            old_version=old_version,
-                            new_version=old_version,
-                            started_at=started,
-                            completed_at=datetime.now(timezone.utc).isoformat(),
-                            error=f"Container restart failed: {output}",
-                            rollback_available=backup_ok,  # was True (#96)
-                        )
-                    )
-                    continue
-
-                # Get new version after update
-                if self._version_manager:
-                    # Force rescan for this component
-                    await self._version_manager.scan_versions()
-                    comp_info = await self._version_manager.get_component(component)
-                    if comp_info:
-                        new_version = comp_info.get("current_version", "unknown")
-
-                results.append(
-                    UpdateResult(
-                        component=component,
-                        success=True,
-                        old_version=old_version,
-                        new_version=new_version,
-                        started_at=started,
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                        error=None,
-                        rollback_available=backup_ok,  # was True (#96)
-                    )
-                )
-
-            except Exception as exc:
-                logger.exception("Failed to update Docker image: %s", component)
-                results.append(
-                    UpdateResult(
-                        component=component,
-                        success=False,
-                        old_version=old_version,
-                        new_version=old_version,
-                        started_at=started,
-                        completed_at=datetime.now(timezone.utc).isoformat(),
-                        error=str(exc),
-                        rollback_available=False,
-                    )
-                )
-
-        return results
+    # OLD CODE START — NET-288: no caller since Malcolm's images were pinned, and `-f <compose_file>` named a path the daemon container doesn't have (Malcolm's compose runs in MalcolmUpgrade's helper container)
+    # # Unreachable while Malcolm's images are pinned (apply_update answers PINNED_REASON)
+    # async def _update_docker_images(self, components: list[str]) -> list[UpdateResult]:
+    #     """Update Docker images for specified components.
+    #
+    #     For each component, pulls the latest image tag and restarts
+    #     the container via docker compose.
+    #
+    #     Args:
+    #         components: List of Docker component names to update.
+    #
+    #     Returns:
+    #         List of UpdateResult for each component.
+    #     """
+    #     results: list[UpdateResult] = []
+    #
+    #     for component in components:
+    #         started = datetime.now(timezone.utc).isoformat()
+    #         old_version = "unknown"
+    #         new_version = "unknown"
+    #
+    #         try:
+    #             # Get current version
+    #             if self._version_manager:
+    #                 comp_info = await self._version_manager.get_component(component)
+    #                 if comp_info:
+    #                     old_version = comp_info.get("current_version", "unknown")
+    #
+    #             # Create backup (save current image ID)
+    #             # OLD CODE START — #96: the result was ignored and rollback_available
+    #             # was always True below
+    #             # await self._create_backup(component)
+    #             # OLD CODE END
+    #             backup_ok = self._has_restorable_backup(
+    #                 await self._create_backup(component)
+    #             )
+    #
+    #             # Pull latest image via docker compose
+    #             output, returncode = await self._run_command(
+    #                 [
+    #                     "docker",
+    #                     "compose",
+    #                     "-f",
+    #                     self._compose_file,
+    #                     "pull",
+    #                     component,
+    #                 ]
+    #             )
+    #
+    #             if returncode != 0:
+    #                 results.append(
+    #                     UpdateResult(
+    #                         component=component,
+    #                         success=False,
+    #                         old_version=old_version,
+    #                         new_version=old_version,
+    #                         started_at=started,
+    #                         completed_at=datetime.now(timezone.utc).isoformat(),
+    #                         error=f"Docker pull failed: {output}",
+    #                         rollback_available=backup_ok,  # was True (#96)
+    #                     )
+    #                 )
+    #                 continue
+    #
+    #             # Restart the container with the new image
+    #             output, returncode = await self._run_command(
+    #                 [
+    #                     "docker",
+    #                     "compose",
+    #                     "-f",
+    #                     self._compose_file,
+    #                     "up",
+    #                     "-d",
+    #                     "--no-deps",
+    #                     component,
+    #                 ]
+    #             )
+    #
+    #             if returncode != 0:
+    #                 results.append(
+    #                     UpdateResult(
+    #                         component=component,
+    #                         success=False,
+    #                         old_version=old_version,
+    #                         new_version=old_version,
+    #                         started_at=started,
+    #                         completed_at=datetime.now(timezone.utc).isoformat(),
+    #                         error=f"Container restart failed: {output}",
+    #                         rollback_available=backup_ok,  # was True (#96)
+    #                     )
+    #                 )
+    #                 continue
+    #
+    #             # Get new version after update
+    #             if self._version_manager:
+    #                 # Force rescan for this component
+    #                 await self._version_manager.scan_versions()
+    #                 comp_info = await self._version_manager.get_component(component)
+    #                 if comp_info:
+    #                     new_version = comp_info.get("current_version", "unknown")
+    #
+    #             results.append(
+    #                 UpdateResult(
+    #                     component=component,
+    #                     success=True,
+    #                     old_version=old_version,
+    #                     new_version=new_version,
+    #                     started_at=started,
+    #                     completed_at=datetime.now(timezone.utc).isoformat(),
+    #                     error=None,
+    #                     rollback_available=backup_ok,  # was True (#96)
+    #                 )
+    #             )
+    #
+    #         except Exception as exc:
+    #             logger.exception("Failed to update Docker image: %s", component)
+    #             results.append(
+    #                 UpdateResult(
+    #                     component=component,
+    #                     success=False,
+    #                     old_version=old_version,
+    #                     new_version=old_version,
+    #                     started_at=started,
+    #                     completed_at=datetime.now(timezone.utc).isoformat(),
+    #                     error=str(exc),
+    #                     rollback_available=False,
+    #                 )
+    #             )
+    #
+    #     return results
+    # OLD CODE END
 
     # OLD CODE START — ran suricata-update and suricatasc in the daemon container, which
     # has neither (and no rules file), so it could only fail; kept for reference
@@ -1069,62 +1083,64 @@ class UpdateExecutor:
     # Rollback helpers
     # -------------------------------------------------------------------
 
-    # Unreachable while Malcolm's images are pinned; it also never used the saved image ID
-    async def _rollback_docker(self, component: str, backup_path: str) -> dict:
-        """Rollback a Docker component to its backed-up image.
-
-        Args:
-            component: Component name.
-            backup_path: Path to the backup directory.
-
-        Returns:
-            Dict with rollback result.
-        """
-        # Find the most recent backup with an image ID
-        image_id = None
-        try:
-            # List backup timestamps (subdirectories)
-            if os.path.isdir(backup_path):
-                timestamps = sorted(os.listdir(backup_path), reverse=True)
-                for ts_dir in timestamps:
-                    image_file = os.path.join(backup_path, ts_dir, "image_id.txt")
-                    if os.path.exists(image_file):
-                        with open(image_file, "r") as f:
-                            image_id = f.read().strip()
-                        break
-        except OSError:
-            pass
-
-        if not image_id:
-            return {
-                "success": False,
-                "component": component,
-                "message": "No backed-up image ID found",
-            }
-
-        # Restart the container with the backed-up image
-        output, returncode = await self._run_command(
-            [
-                "docker",
-                "compose",
-                "-f",
-                self._compose_file,
-                "up",
-                "-d",
-                "--no-deps",
-                component,
-            ]
-        )
-
-        return {
-            "success": returncode == 0,
-            "component": component,
-            "message": (
-                f"Rolled back {component} to image {image_id[:12]}"
-                if returncode == 0
-                else f"Rollback failed: {output}"
-            ),
-        }
+    # OLD CODE START — NET-288: no caller since Malcolm's images were pinned, and `-f <compose_file>` named a path the daemon container doesn't have (Malcolm's compose runs in MalcolmUpgrade's helper container)
+    # # Unreachable while Malcolm's images are pinned; it also never used the saved image ID
+    # async def _rollback_docker(self, component: str, backup_path: str) -> dict:
+    #     """Rollback a Docker component to its backed-up image.
+    #
+    #     Args:
+    #         component: Component name.
+    #         backup_path: Path to the backup directory.
+    #
+    #     Returns:
+    #         Dict with rollback result.
+    #     """
+    #     # Find the most recent backup with an image ID
+    #     image_id = None
+    #     try:
+    #         # List backup timestamps (subdirectories)
+    #         if os.path.isdir(backup_path):
+    #             timestamps = sorted(os.listdir(backup_path), reverse=True)
+    #             for ts_dir in timestamps:
+    #                 image_file = os.path.join(backup_path, ts_dir, "image_id.txt")
+    #                 if os.path.exists(image_file):
+    #                     with open(image_file, "r") as f:
+    #                         image_id = f.read().strip()
+    #                     break
+    #     except OSError:
+    #         pass
+    #
+    #     if not image_id:
+    #         return {
+    #             "success": False,
+    #             "component": component,
+    #             "message": "No backed-up image ID found",
+    #         }
+    #
+    #     # Restart the container with the backed-up image
+    #     output, returncode = await self._run_command(
+    #         [
+    #             "docker",
+    #             "compose",
+    #             "-f",
+    #             self._compose_file,
+    #             "up",
+    #             "-d",
+    #             "--no-deps",
+    #             component,
+    #         ]
+    #     )
+    #
+    #     return {
+    #         "success": returncode == 0,
+    #         "component": component,
+    #         "message": (
+    #             f"Rolled back {component} to image {image_id[:12]}"
+    #             if returncode == 0
+    #             else f"Rollback failed: {output}"
+    #         ),
+    #     }
+    # OLD CODE END
 
     async def _rollback_files(
         self, component: str, backup_path: str, target_path: str
