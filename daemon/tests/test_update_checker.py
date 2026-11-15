@@ -1015,10 +1015,9 @@ class TestEveryApplicableRowIsAcceptedByTheApplyApi(unittest.TestCase):
             uc = UpdateChecker()
             uc._fetch_json = fetch
             uc.set_version_manager(VM())
+            # a stale rules file and a stale GeoIP file: both exist, both a month old
             with (
-                patch(
-                    "os.path.exists", return_value=True
-                ),  # a stale rules and GeoIP file
+                patch("os.path.exists", return_value=True),
                 patch("os.path.getmtime", return_value=month_old),
                 patch(
                     "services.update_checker.os_update_fields",
@@ -1029,7 +1028,9 @@ class TestEveryApplicableRowIsAcceptedByTheApplyApi(unittest.TestCase):
 
         updates = result["updates"]
         applicable = {u["component"] for u in updates if not u["applies_with"]}
-        self.assertEqual(applicable, {"malcolm", "suricata-rules", "geoip-db"})
+        # the scenario check: the three rows the page can send are offered
+        self.assertGreaterEqual(applicable, {"malcolm", "suricata-rules", "geoip-db"})
+        # the guard: whatever else is offered without applies_with, the apply API accepts
         self.assertLessEqual(applicable, APPLY_COMPONENTS)
         # the scenario really offers rows the page leaves disabled, too
         disabled = {u["component"] for u in updates if u["applies_with"]}

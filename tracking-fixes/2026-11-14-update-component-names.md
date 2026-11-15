@@ -32,6 +32,10 @@ fall-through (`else: not supported`, `Unsupported component`) after the name had
   non-string name, or a name outside `APPLY_COMPONENTS`, all before `start_update`, so nothing is
   queued or recorded. Rollback returns 400 for a body that is not an object (`null`, `[]`, `5` were a
   logged 500).
+- `rollback()` keeps explicit branches (Python review, MEDIUM): `if suricata-rules`, `elif geoip-db`, and an
+  `else` that answers "not supported". A bare `else` for geoip-db would restore a third name added to
+  `ROLLBACK_COMPONENTS` against the GeoIP path. New test patches the list to three names and checks
+  `_rollback_files` is not called (it was, with the GeoIP path, before).
 - `_create_backup`: the docker `image_id.txt` branch is retired as OLD CODE (no caller since NET-288).
   The replaced `elif`/`else` lines in `rollback()` are OLD CODE too.
 - Chosen: an allow-list plus the cap, not the cap alone. A cap alone still keeps 16 attacker-sized
@@ -62,7 +66,7 @@ fall-through (`else: not supported`, `Unsupported component`) after the name had
   GeoIP file, a newer NetTap release and an OS row. The rows with no `applies_with` are exactly
   `malcolm`, `suricata-rules`, `geoip-db` and all are in `APPLY_COMPONENTS` (checked by mutation: remove
   `geoip-db` and it fails).
-- Full daemon pytest: 5042 passed, 5 skipped, 0 failed. `ruff format --check daemon/` and `ruff check`
+- Full daemon pytest: 5043 passed, 5 skipped, 0 failed. `ruff format --check daemon/` and `ruff check`
   clean.
 - Full Vitest 397 files, 5284 tests passed; `svelte-check` 0 errors.
 - Plan: `/codex-review` approved in 2 rounds.

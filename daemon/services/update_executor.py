@@ -513,23 +513,20 @@ class UpdateExecutor:
                 result = await self._rollback_files(
                     component, backup_path, "/var/lib/suricata/rules/suricata.rules"
                 )
-            # OLD CODE START — NET-291: ROLLBACK_COMPONENTS is checked above, so geoip-db is the only
-            # name left, and the else below can't be reached
-            # elif component == "geoip-db":
-            # OLD CODE END
-            else:  # geoip-db
+            elif component == "geoip-db":
                 geoip_path = os.environ.get(
                     "GEOIP_DB_PATH", "/opt/nettap/data/GeoLite2-City.mmdb"
                 )
                 result = await self._rollback_files(component, backup_path, geoip_path)
-            # OLD CODE START — NET-291: unreachable, rollback() refuses every other name first
-            # else:
-            #     return {
-            #         "success": False,
-            #         "component": component,
-            #         "message": f"Rollback not supported for: {component}",
-            #     }
-            # OLD CODE END
+            # OLD CODE: else:  # geoip-db (NET-291 review: a bare else restored any third name added to ROLLBACK_COMPONENTS against the GeoIP path)
+            else:
+                # a name in ROLLBACK_COMPONENTS that has no branch above
+                return {
+                    "success": False,
+                    "component": component,
+                    # OLD CODE: "message": f"Rollback not supported for: {component}", (NET-291: same reply as the check above)
+                    "message": "Rollback not supported for this component.",
+                }
 
             logger.info("Rollback completed for %s: %s", component, result)
             return result

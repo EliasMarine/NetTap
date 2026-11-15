@@ -1076,6 +1076,25 @@ class TestRollbackChecksTheNameFirst(unittest.TestCase):
 
         self.assertEqual(ROLLBACK_COMPONENTS, {"suricata-rules", "geoip-db"})
 
+    def test_a_name_added_to_the_list_without_a_branch_is_not_restored_as_geoip(self):
+        """NET-291 review: the last branch was a bare else (geoip-db), right only while the list
+        holds exactly two names."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "third-component"))  # it has a backup folder
+            ue = UpdateExecutor(backup_dir=tmp)
+            ue._rollback_files = AsyncMock(
+                return_value={"success": True, "component": "x", "message": "restored"}
+            )
+            three = frozenset({"suricata-rules", "geoip-db", "third-component"})
+            with patch("services.update_executor.ROLLBACK_COMPONENTS", three):
+                answer = self._reply(ue, "third-component")
+
+        ue._rollback_files.assert_not_called()
+        self.assertFalse(answer["success"])
+        self.assertIn("not supported", answer["message"])
+
     def test_the_two_file_components_still_reach_their_backup_check(self):
         with tempfile.TemporaryDirectory() as tmp:
             ue = UpdateExecutor(backup_dir=tmp)
