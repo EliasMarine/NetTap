@@ -2,7 +2,7 @@
 
 **Linear:** NET-282
 **Branch:** `docs/readme-media-refresh`
-**Status:** owner approved the screenshots on 2026-11-14 ("GO GO GO"); PR open.
+**Status:** done. Owner approved the screenshots on 2026-11-14 ("GO GO GO"); PR #288 merged (`dbea628e`).
 **Plan gate:** not needed: docs and media, plus a one-line placeholder fix.
 
 ## What changed

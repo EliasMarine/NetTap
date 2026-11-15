@@ -2,7 +2,7 @@
 
 **Linear:** NET-290 (follow-up to NET-280, LOW-1 and LOW-2 of the PR #289 security review)
 **Branch:** `fix/first-run-setup-paths-net290`
-**Status:** fixed, web only. Deploy: rebuild `nettap-web`.
+**Status:** done. PR #295 merged (`3dbfec7e`); deployed to the G11 at `97793a93` (`deploy-triage-fixes-4-2026-11-14.sh`: a signed-out `POST /api/setup/configure` gets 401). The G11 has an admin, so the first-run list itself is covered by CI's first-run tests.
 
 ## Problem
 

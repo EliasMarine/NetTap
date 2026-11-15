@@ -2,8 +2,8 @@
 
 **Linear:** NET-287
 **Branch:** `fix/foreign-br0-guard-net287`
-**Status:** fixed in code, device run pending. Deploy: rebuild `nettap-storage-daemon` and `nettap-web`;
-the shell changes take effect on the next `install.sh` / `setup-bridge.sh` run.
+**Status:** done. PR #296 merged (`97793a93`); verified on the G11 with `deploy-triage-fixes-4-2026-11-14.sh`
+(every check passed). The shell changes take effect on the next `install.sh` / `setup-bridge.sh` run.
 
 ## Problem
 
@@ -82,9 +82,12 @@ There was no ownership marker. The name `br0` was the only test.
 
 ## Next
 
-- Device run. The G11 runs mirror mode (no `br0`, its capture NIC has no master), so nothing should
-  change there. A pre-fix bridge-mode box rebuilds `br0` from the file with no address, so rule 2 passes;
-  after the first NetTap setup it also has the alias.
+- Device run: done 2026-11-14 at `97793a93`. The G11 runs mirror mode, so the script added a temporary
+  empty, down `br0` through the daemon container. Unmarked, readiness said it isn't NetTap's, the wizard's
+  preview refused it (400) and the installer's shell check called it foreign. After
+  `ip link set br0 alias nettap` all three treated it as NetTap's. The bridge was removed at the end.
+  A pre-fix bridge-mode box rebuilds `br0` from the file with no address, so rule 2 passes there; that
+  path is unit-tested only (no bridge-mode bench).
 - Out of scope, tracked separately: renaming the bridge (NET-289), bypass when no `br0` exists,
   `uninstall.sh`, and the ERR-trap rollback that other `run` failures in `setup-bridge.sh` skip.
 - Accepted residual: a foreign, address-less `br0` whose every port is in a leftover NetTap netplan file

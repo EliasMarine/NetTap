@@ -2,7 +2,7 @@
 
 **Linear:** NET-280
 **Branch:** `fix/first-run-bridge-net280`
-**Status:** fixed, web only. Deploy: rebuild `nettap-web`.
+**Status:** done. PR #289 merged (`323ff37e`); verified on the G11 at `f10eee24` (`deploy-triage-fixes-3-2026-11-14.sh`: a signed-out `POST /api/bridge/create` gets 401). Narrowed further by NET-290 (#295).
 
 ## Problem
 
