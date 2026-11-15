@@ -1,10 +1,14 @@
 """
 NetTap Update Executor Service
 
-Performs software updates with rollback capability. Handles Docker
-image pulls, Suricata rule updates, GeoIP database downloads, and
-system package updates. Creates pre-update snapshots for safety.
+Performs software updates with rollback capability. Handles the tested
+Malcolm upgrade (through MalcolmUpgrade's helper container), Suricata rule
+updates and GeoIP database downloads. Creates pre-update snapshots for safety.
 """
+# OLD CODE (NET-288 review: docker pulls and system packages are no longer handled here):
+# Performs software updates with rollback capability. Handles Docker
+# image pulls, Suricata rule updates, GeoIP database downloads, and
+# system package updates. Creates pre-update snapshots for safety.
 
 import asyncio
 import contextlib
@@ -78,10 +82,11 @@ class UpdateResult:
 class UpdateExecutor:
     """Performs software updates with rollback capability.
 
-    Handles Docker image pulls, Suricata rule updates, GeoIP database
-    downloads, and system package updates. Creates pre-update backups
-    for rollback safety.
+    Handles the tested Malcolm upgrade, Suricata rule updates and GeoIP
+    database downloads. Creates pre-update backups for rollback safety.
     """
+    # OLD CODE (NET-288 review): "Handles Docker image pulls, Suricata rule updates, GeoIP
+    # database downloads, and system package updates."
 
     def __init__(
         self,
