@@ -49,6 +49,14 @@ function createMockEvent(pathname: string, token?: string, user?: any, method = 
 
 let handle: any;
 
+/** NET-290: the wizard's calls under /api/setup before the first admin exists (configure runs after it). */
+const WIZARD_BEFORE_ADMIN: [string, string][] = [
+	['GET', '/api/setup/nics'],
+	['GET', '/api/setup/storage'],
+	['POST', '/api/setup/storage'],
+	['POST', '/api/setup/bridge'],
+];
+
 describe('hooks.server', () => {
 	const mockResolve = vi.fn().mockImplementation(async (event: any) => new Response('ok'));
 
@@ -386,18 +394,49 @@ describe('hooks.server', () => {
 		// 	}
 		// );
 		// OLD CODE END
-		it.each(['/api/setup/nics'])('answers %s only with the setup cookie while no users exist', async (path) => {
+		// OLD CODE START — NET-290: the whole /api/setup prefix was open; only the wizard's exact calls are now
+		// it.each(['/api/setup/nics'])('answers %s only with the setup cookie while no users exist', async (path) => {
+		// 	mockHasUsers.mockReturnValue(false);
+		// 	mockSetupTokenValid.mockReturnValue(false);
+		// 	const res = await handle({ event: createMockEvent(path), resolve: mockResolve });
+		// 	expect(res.status).toBe(401);
+		// 	expect(await res.json()).toEqual({ error: 'Enter the setup code first.' });
+		// 	expect(mockResolve).not.toHaveBeenCalled();
+		//
+		// 	mockSetupTokenValid.mockReturnValue(true);
+		// 	const event = createMockEvent(path);
+		// 	await handle({ event, resolve: mockResolve });
+		// 	expect(mockResolve).toHaveBeenCalledWith(event);
+		// });
+		// OLD CODE END
+		it.each(WIZARD_BEFORE_ADMIN)('answers %s %s only with the setup cookie while no users exist', async (method, path) => {
 			mockHasUsers.mockReturnValue(false);
 			mockSetupTokenValid.mockReturnValue(false);
-			const res = await handle({ event: createMockEvent(path), resolve: mockResolve });
+			const res = await handle({ event: createMockEvent(path, undefined, undefined, method), resolve: mockResolve });
 			expect(res.status).toBe(401);
 			expect(await res.json()).toEqual({ error: 'Enter the setup code first.' });
 			expect(mockResolve).not.toHaveBeenCalled();
 
 			mockSetupTokenValid.mockReturnValue(true);
-			const event = createMockEvent(path);
+			const event = createMockEvent(path, undefined, undefined, method);
 			await handle({ event, resolve: mockResolve });
 			expect(mockResolve).toHaveBeenCalledWith(event);
+		});
+
+		// NET-290: the setup cookie opens the wizard's four calls, not the rest of /api/setup. configure runs
+		// after the Account step, with the new admin's session; a wrong method or an unlisted path is refused.
+		it.each([
+			['POST', '/api/setup/configure'],
+			['GET', '/api/setup/other'],
+			['POST', '/api/setup/nics'],
+			['GET', '/api/setup/bridge'],
+			['PUT', '/api/setup/storage'],
+			['POST', '/api/setup/bridge/preview'],
+		])('answers %s %s with 401 while no users exist, even with the setup cookie', async (method, path) => {
+			mockHasUsers.mockReturnValue(false);
+			mockSetupTokenValid.mockReturnValue(true);
+			const event = createMockEvent(path, undefined, undefined, method);
+			await expectUnauthorised(handle({ event, resolve: mockResolve }));
 		});
 
 		// NET-280: the setup cookie opens the wizard's API, not the bridge: create, teardown and bypass need a session
@@ -445,6 +484,22 @@ describe('hooks.server', () => {
 
 			await expectUnauthorised(handle({ event, resolve: mockResolve }));
 		});
+
+		// NET-290: nothing changes after setup: every wizard call and configure need a session, and a session is enough
+		it.each([...WIZARD_BEFORE_ADMIN, ['POST', '/api/setup/configure']])(
+			'requires a session for %s %s once a user exists, and a session is enough',
+			async (method, path) => {
+				mockHasUsers.mockReturnValue(true);
+				mockSetupTokenValid.mockReturnValue(true);
+				mockVerifyToken.mockReturnValue(null);
+				await expectUnauthorised(handle({ event: createMockEvent(path, undefined, undefined, method), resolve: mockResolve }));
+
+				mockVerifyToken.mockReturnValue({ username: 'admin', role: 'admin' });
+				const event = createMockEvent(path, 'valid-token', undefined, method);
+				await handle({ event, resolve: mockResolve });
+				expect(mockResolve).toHaveBeenCalledWith(event);
+			}
+		);
 
 		it('allows them with a session once a user exists', async () => {
 			mockHasUsers.mockReturnValue(true);

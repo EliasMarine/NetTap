@@ -1,3 +1,4 @@
+import type { BridgeConfigResponse } from '../../../src/routes/api/setup/bridge/+server.ts';
 import type { NicsResponse } from '../../../src/routes/api/setup/nics/+server.ts';
 import type { FixtureRoute } from './types.ts';
 
@@ -23,4 +24,23 @@ const NICS = {
 	source: 'daemon',
 } satisfies NicsResponse;
 
-export const SETUP_ROUTES: FixtureRoute[] = [{ path: '/api/setup/nics', empty: NICS }];
+/** POST /api/setup/bridge/preview: the read-only check the wizard's Bridge step runs (NET-290 calls it before the first admin). */
+const BRIDGE_PREVIEW = {
+	config_preview: '# NetTap bridge preview\nBRIDGE_NAME=br0\nWAN_INTERFACE=enp1s0\nLAN_INTERFACE=enp2s0',
+	wan: 'enp1s0',
+	lan: 'enp2s0',
+	bridge_name: 'br0',
+	ready: true,
+	warnings: [],
+	source: 'daemon',
+} satisfies BridgeConfigResponse;
+
+// OLD CODE START — NET-290: only the card list was served; the wizard's bridge check and storage save had no fixture
+// export const SETUP_ROUTES: FixtureRoute[] = [{ path: '/api/setup/nics', empty: NICS }];
+// OLD CODE END
+export const SETUP_ROUTES: FixtureRoute[] = [
+	{ path: '/api/setup/nics', empty: NICS },
+	{ path: '/api/setup/bridge/preview', method: 'POST', empty: BRIDGE_PREVIEW },
+	// The daemon call behind the wizard's storage save (POST /api/setup/storage)
+	{ path: '/api/storage/config', method: 'POST', empty: { saved: true, ilm_applied: true } },
+];

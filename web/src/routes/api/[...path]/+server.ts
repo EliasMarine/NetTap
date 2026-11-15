@@ -67,10 +67,25 @@ function timeoutFor(path: string): number | undefined {
 	return SLOW_PATH_TIMEOUT_MS[path] ?? SLOW_PREFIX_TIMEOUT_MS.find(([prefix]) => path.startsWith(prefix))?.[1];
 }
 
+// OLD CODE START — NET-290: no params, so a /api/setup path with no route of its own (the wizard's
+// POST /api/setup/bridge, if its web route were removed) went straight to the daemon's real bridge build
+// async function proxyToDaemon(
+// 	{ url, request }: { url: URL; request: Request },
+// 	method: string
+// ): Promise<Response> {
+// OLD CODE END
 async function proxyToDaemon(
-	{ url, request }: { url: URL; request: Request },
+	{ url, request, params }: { url: URL; request: Request; params?: { path?: string } },
 	method: string
 ): Promise<Response> {
+	// NET-290: every call the wizard makes under /api/setup has its own route file, so one that reaches
+	// here has none. The daemon's /api/setup/bridge is a real bridge build. `params.path` is the matched
+	// rest-parameter, already percent-decoded; `url.pathname` is not, and the daemon decodes before it routes.
+	const rest = params?.path ?? '';
+	if (rest === 'setup' || rest.startsWith('setup/')) {
+		return json({ error: 'Not found' }, { status: 404 });
+	}
+
 	const path = url.pathname;
 	const query = url.search;
 	const daemonPath = `${path}${query}`;

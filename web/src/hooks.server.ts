@@ -45,8 +45,12 @@ export const init: ServerInit = () => {
 const PUBLIC_PATHS = new Set(['/login', '/api/auth/login', '/api/auth/logout', '/api/auth/me']);
 
 /** Paths that are public only until the first admin exists.
+ * OLD CODE START — NET-290: /api/setup/* was a prefix here; its calls are exact entries in FIRST_RUN_REQUESTS now
  * The setup wizard (/setup, /api/setup/*) runs before any account exists. Afterwards
  * these paths reconfigure the appliance, so they need a session like every other route.
+ * OLD CODE END
+ * The setup wizard (/setup) runs before any account exists. Afterwards it needs a session
+ * like every other page; the wizard's /api/setup calls are exact entries in FIRST_RUN_REQUESTS (NET-290).
  * The setup action signs the new admin in, so the rest of the wizard and Go Live keep
  * working. Before that, everything but /setup needs the setup cookie (NET-229 follow-up).
  * NET-277: /go-live is not here. Its capture-mode call needs a session, so until the first
@@ -65,7 +69,11 @@ const PUBLIC_PATHS = new Set(['/login', '/api/auth/login', '/api/auth/logout', '
 // OLD CODE START — NET-280: a browser with the setup cookie could create or tear down the bridge and toggle bypass before any admin existed
 // const FIRST_RUN_PATHS = ['/setup', '/api/setup', '/api/bridge'];
 // OLD CODE END
-const FIRST_RUN_PATHS = ['/setup', '/api/setup'];
+// OLD CODE START — NET-290: the whole /api/setup prefix was open, so a setup-cookie holder could call
+// /api/setup/configure (restart capture, set mirror mode, write UniFi settings) before any admin existed
+// const FIRST_RUN_PATHS = ['/setup', '/api/setup'];
+// OLD CODE END
+const FIRST_RUN_PATHS = ['/setup'];
 
 /** The calls the wizard makes before its Account step, matched by exact
  * method and path (not prefix).
@@ -77,9 +85,16 @@ const FIRST_RUN_PATHS = ['/setup', '/api/setup'];
  * a LAN host can no longer claim the box, but it can still call these until the owner finishes setup.
  * OLD CODE END
  * Until the first admin exists they answer a browser that typed the setup code on the Welcome step
- * (the setup cookie), like the wizard's /api paths above.
+ * (the setup cookie).
+ * NET-290: the four /api/setup calls the wizard makes before its Account step are here too, exact.
+ * POST /api/setup/configure is not: it runs after createAdmin has signed the admin in, so it needs
+ * that session. Any other /api/setup path or method gets 401 until the first admin exists.
  */
 const FIRST_RUN_REQUESTS = new Set([
+	'GET /api/setup/nics',
+	'GET /api/setup/storage',
+	'POST /api/setup/storage',
+	'POST /api/setup/bridge',
 	'GET /api/settings/excluded-ips',
 	'POST /api/integrations/unifi/configure',
 	'POST /api/integrations/unifi/test',
