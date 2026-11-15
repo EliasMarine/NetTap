@@ -44,7 +44,10 @@ server-side with a session. Neither is affected.
 - `web/src/routes/api/[...path]/+server.ts`: the catch-all answers 404 `Not found` for `setup` or `setup/*`
   and never calls the daemon. It checks `params.path` (SvelteKit's decoded rest-parameter), not
   `url.pathname`, because the daemon decodes `/api/%73etup/bridge` before it routes. Every wizard call has its own
-  route, so only a removed or never-existing route reaches it.
+  route, so only a removed or never-existing route reaches it. `params` is a required part of the handler's event
+  type (`RequestEvent<{ path: string }>`), so a caller that leaves it out does not compile and cannot skip the
+  guard. (An encoded path that matches an existing route, such as `/api/%73etup/bridge`, goes to that route and
+  is judged by the hook on the raw path, as before.)
 
 Nothing changes after the first admin exists: every call there needs a session, and a session is enough.
 
@@ -52,17 +55,23 @@ Nothing changes after the first admin exists: every call there needs a session, 
 
 - `hooks.server.test.ts` (mocked auth) and `hooks.server.store.test.ts` (real user store): the four calls need the
   setup cookie and pass with it; `configure`, an unlisted `/api/setup/other`, wrong methods
-  (`POST nics`, `GET bridge`, `PUT storage`) and `POST /api/setup/bridge/preview` get 401 with the cookie, with no
-  store, an empty store and a damaged store; after setup all five need a session and a session is enough.
-  10 of the new tests failed with the old prefix.
+  (`POST nics`, `GET bridge`, `PUT storage`) and `POST /api/setup/bridge/preview` get 401 with the cookie (mocked
+  auth; real store with no store and with an empty store); after setup all five need a session and a session is
+  enough. The existing damaged-store test now also covers the four calls, `configure` and `/api/bridge/create`
+  (401, never resolved). 10 of the new tests failed with the old prefix.
 - `routes/api/catchall-setup.test.ts`: GET, POST, PUT and DELETE to `setup/bridge`, `setup/configure`,
   `setup/bridge/preview`, `setup`, `setup/other` and the encoded forms (`%73etup`, `%2F`) get 404 and never reach
-  the daemon; `/api/setupx` and `/api/dhcp/setup/leases` still proxy. All 28 failed before the guard.
+  the daemon; `/api/setupx` and `/api/dhcp/setup/leases` still proxy. All 28 failed before the guard. That test
+  decodes the path itself, so the real router is covered in `e2e/visual/api-401.visual.ts` (below).
 - `e2e/visual/firstrun.visual.ts` (first-run instance, real hook and routes): configure and unlisted
   `/api/setup` paths get 401 with the code typed (failed with the old prefix: 500 from the configure route); the
   four wizard calls each return 200 with a field from the response, and 401 `Enter the setup code first.` without
   the code. Two new fixture routes in `e2e/visual/fixtures/setup.ts`: `POST /api/setup/bridge/preview` and
   `POST /api/storage/config`.
+- `e2e/visual/api-401.visual.ts` (signed-in app instance): `/api/setup/does-not-exist`,
+  `/api/%73etup/does-not-exist`, `/api/%73etup/bridge/preview` and `/api/setup%2Fbridge/preview` answer
+  `{ error: 'Not found' }` through the real router. The body is compared: with the guard off the fixture daemon
+  also answers 404, but with `No fixture for GET ...`, and that is what the test saw fail.
 - Trailing slash: SvelteKit 308-redirects `/api/setup/storage/` to the canonical address before the hook runs, so
   it is judged there, not refused. The visual test asserts the 308 and the canonical 200.
 

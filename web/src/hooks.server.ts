@@ -229,7 +229,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 		// OLD CODE END
 		if (firstRun && isFirstRunPath(event.request.method, pathname)) {
 			// /setup stays open so the code can be typed there; the rest needs the setup cookie.
-			// Only /setup is a first-run page now; the redirect keeps any page added later fail-closed.
+			// Every first-run entry but /setup is an /api call now, so the page redirect below is unreachable
+			// today. It stays so that a first-run page added to FIRST_RUN_PATHS later is fail-closed.
 			if (!isUnder(pathname, '/setup') && !hasSetupCookie(event)) {
 				if (isUnder(pathname, '/api')) {
 					return json({ error: 'Enter the setup code first.' }, { status: 401 });

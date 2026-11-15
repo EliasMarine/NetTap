@@ -79,7 +79,9 @@ const FIRST_RUN_APIS: [string, string][] = [
 /** configure runs after the Account step, with the new admin's session: closed until the first admin exists. */
 const CONFIGURE_API: [string, string] = ['POST', '/api/setup/configure'];
 const BRIDGE_API = '/api/bridge/create';
-const FIRST_RUN_PATHS = [...FIRST_RUN_PAGES, ...FIRST_RUN_APIS.map(([, path]) => path)];
+// OLD CODE START — NET-290 review: only the OLD CODE blocks below still named it; pages and APIs are listed separately
+// const FIRST_RUN_PATHS = [...FIRST_RUN_PAGES, ...FIRST_RUN_APIS.map(([, path]) => path)];
+// OLD CODE END
 
 beforeEach(async () => {
 	dataDir = mkdtempSync(join(tmpdir(), 'nettap-hooks-'));

@@ -74,14 +74,21 @@ function timeoutFor(path: string): number | undefined {
 // 	method: string
 // ): Promise<Response> {
 // OLD CODE END
-async function proxyToDaemon(
-	{ url, request, params }: { url: URL; request: Request; params?: { path?: string } },
-	method: string
-): Promise<Response> {
+// OLD CODE START — NET-290 review: `params` was optional, so a caller that left it out skipped the /api/setup guard below
+// async function proxyToDaemon(
+// 	{ url, request, params }: { url: URL; request: Request; params?: { path?: string } },
+// 	method: string
+// ): Promise<Response> {
+// OLD CODE END
+/** `params.path` is required: the /api/setup guard reads it, so a call without it must not compile. */
+type CatchAllEvent = Pick<RequestEvent<{ path: string }>, 'url' | 'request' | 'params'>;
+
+async function proxyToDaemon({ url, request, params }: CatchAllEvent, method: string): Promise<Response> {
 	// NET-290: every call the wizard makes under /api/setup has its own route file, so one that reaches
 	// here has none. The daemon's /api/setup/bridge is a real bridge build. `params.path` is the matched
 	// rest-parameter, already percent-decoded; `url.pathname` is not, and the daemon decodes before it routes.
-	const rest = params?.path ?? '';
+	// OLD CODE: const rest = params?.path ?? ''; (NET-290 review: a missing params skipped the guard)
+	const rest = params.path;
 	if (rest === 'setup' || rest.startsWith('setup/')) {
 		return json({ error: 'Not found' }, { status: 404 });
 	}
@@ -145,7 +152,13 @@ async function proxyToDaemon(
 	return json(data, { status: res.status, headers: cacheControl ? { 'Cache-Control': cacheControl } : undefined });
 }
 
-export const GET = async (event: RequestEvent) => proxyToDaemon(event, 'GET');
-export const POST = async (event: RequestEvent) => proxyToDaemon(event, 'POST');
-export const PUT = async (event: RequestEvent) => proxyToDaemon(event, 'PUT');
-export const DELETE = async (event: RequestEvent) => proxyToDaemon(event, 'DELETE');
+// OLD CODE START — NET-290 review: the handlers took the default RequestEvent, whose params are all optional
+// export const GET = async (event: RequestEvent) => proxyToDaemon(event, 'GET');
+// export const POST = async (event: RequestEvent) => proxyToDaemon(event, 'POST');
+// export const PUT = async (event: RequestEvent) => proxyToDaemon(event, 'PUT');
+// export const DELETE = async (event: RequestEvent) => proxyToDaemon(event, 'DELETE');
+// OLD CODE END
+export const GET = async (event: RequestEvent<{ path: string }>) => proxyToDaemon(event, 'GET');
+export const POST = async (event: RequestEvent<{ path: string }>) => proxyToDaemon(event, 'POST');
+export const PUT = async (event: RequestEvent<{ path: string }>) => proxyToDaemon(event, 'PUT');
+export const DELETE = async (event: RequestEvent<{ path: string }>) => proxyToDaemon(event, 'DELETE');
