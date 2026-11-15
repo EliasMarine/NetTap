@@ -287,6 +287,30 @@ describe('hooks.server', () => {
 			await expect(handle({ event, resolve: mockResolve })).rejects.toMatchObject({ location: '/setup' });
 		});
 
+		// NET-290 review: only /setup itself is a first-run page, so a route added under it later gets the
+		// setup-code redirect, not an open door. SvelteKit hands the hook `/setup` for the page's /__data.json
+		// request and its form actions (/setup?/verifyCode), so nothing the wizard uses is under it.
+		it.each([true, false])('sends /setup/anything to /setup while no users exist (setup cookie: %s)', async (cookie) => {
+			mockHasUsers.mockReturnValue(false);
+			mockSetupTokenValid.mockReturnValue(cookie);
+			await expect(handle({ event: createMockEvent('/setup/anything'), resolve: mockResolve })).rejects.toMatchObject({
+				status: 302,
+				location: '/setup',
+			});
+			expect(mockResolve).not.toHaveBeenCalled();
+		});
+
+		it('keeps /setup and its form actions open while no users exist', async () => {
+			mockHasUsers.mockReturnValue(false);
+			mockSetupTokenValid.mockReturnValue(false);
+			const event = createMockEvent('/setup?/verifyCode', undefined, undefined, 'POST');
+			// the query is not part of the pathname the hook matches
+			expect(event.url.pathname).toBe('/setup');
+
+			await handle({ event, resolve: mockResolve });
+			expect(mockResolve).toHaveBeenCalledWith(event);
+		});
+
 		it('allows /api/health without auth', async () => {
 			mockHasUsers.mockReturnValue(true);
 			const event = createMockEvent('/api/health');

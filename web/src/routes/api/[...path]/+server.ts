@@ -83,13 +83,32 @@ function timeoutFor(path: string): number | undefined {
 /** `params.path` is required: the /api/setup guard reads it, so a call without it must not compile. */
 type CatchAllEvent = Pick<RequestEvent<{ path: string }>, 'url' | 'request' | 'params'>;
 
+/**
+ * NET-290: the daemon's /api/setup/* includes a real bridge build. The first real segment of the matched
+ * path is `setup`, however it is spelled: leading empty or punctuation-only segments (`//`, `;`), another
+ * round of percent-decoding (`%2573`) and any case. aiohttp 404s most of these today; this does not rely on it.
+ */
+function isSetupPath(rest: string): boolean {
+	let decoded = rest;
+	try {
+		decoded = decodeURIComponent(rest);
+	} catch {
+		// a malformed escape: judge the once-decoded path as it is
+	}
+	return decoded.split('/').find((segment) => /\w/.test(segment))?.toLowerCase() === 'setup';
+}
+
 async function proxyToDaemon({ url, request, params }: CatchAllEvent, method: string): Promise<Response> {
 	// NET-290: every call the wizard makes under /api/setup has its own route file, so one that reaches
-	// here has none. The daemon's /api/setup/bridge is a real bridge build. `params.path` is the matched
-	// rest-parameter, already percent-decoded; `url.pathname` is not, and the daemon decodes before it routes.
+	// here has none. `params.path` is the matched rest-parameter, already percent-decoded once;
+	// `url.pathname` is not (`/api/%73etup/...`), and aiohttp decodes it again when it routes, except `%2F`,
+	// which it keeps encoded.
 	// OLD CODE: const rest = params?.path ?? ''; (NET-290 review: a missing params skipped the guard)
-	const rest = params.path;
-	if (rest === 'setup' || rest.startsWith('setup/')) {
+	// OLD CODE START — NET-290 review: only the exact lowercase first segment; `//setup`, `;/setup`, `Setup`, `%2573etup` got through
+	// const rest = params.path;
+	// if (rest === 'setup' || rest.startsWith('setup/')) {
+	// OLD CODE END
+	if (isSetupPath(params.path)) {
 		return json({ error: 'Not found' }, { status: 404 });
 	}
 

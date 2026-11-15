@@ -132,6 +132,19 @@ test('the wizard\'s four /api/setup calls work with the setup code typed and not
 	expect((await page.request.get('/api/setup/storage/')).status()).toBe(200);
 });
 
+// NET-290 review: only /setup itself is a first-run page. SvelteKit strips /__data.json before the hook runs,
+// so the page's own data request still arrives as `/setup`; a route that someone adds under /setup later does not
+// answer before the first admin exists. (The wizard's form actions, /setup?/verifyCode, are walked by typeSetupCode.)
+test('only /setup is open before the first admin: its data request is, /setup/anything is not', async ({ page }) => {
+	const data = await page.request.get('/setup/__data.json');
+	expect(data.status()).toBe(200);
+	expect((await data.json()).type).toBe('data');
+
+	const other = await page.request.get('/setup/anything', { maxRedirects: 0 });
+	expect(other.status()).toBe(302);
+	expect(new URL(other.headers()['location'], FIRSTRUN_URL).pathname).toBe('/setup');
+});
+
 // Before the code, Welcome asks only for it and calls no API (NET-229), so there is nothing to wait for
 test('/setup asks for the setup code first', async ({ page }, testInfo) => {
 	await setMode('empty');

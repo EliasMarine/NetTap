@@ -40,6 +40,12 @@ describe('catch-all proxy and /api/setup (NET-290)', () => {
 				// percent-encoded: aiohttp decodes these when it routes, so the guard must look at the decoded path
 				'/api/%73etup/bridge',
 				'/api/setup%2Fbridge',
+				// NET-290 review: other spellings of the same first segment (aiohttp 404s them today; the guard doesn't rely on that)
+				'/api//setup/bridge',
+				'/api/%2Fsetup/bridge',
+				'/api/;/setup/bridge',
+				'/api/Setup/bridge',
+				'/api/%2573etup/bridge',
 			].map((path) => [method, path]),
 		),
 	)('%s %s answers 404 and never reaches the daemon', async (method, path) => {

@@ -123,6 +123,16 @@ describe('first-run routes with a real user store', () => {
 		expect(resolve).toHaveBeenCalledTimes(1);
 	});
 
+	// NET-290 review: only /setup is a first-run page; a route under it needs the admin like any other page
+	it('/setup/anything goes to /setup until the first admin exists, even with the code typed', async () => {
+		await expect(run('/setup/anything')).rejects.toMatchObject({ status: 302, location: '/setup' });
+		await expect(run('/setup/anything', 'GET', undefined, auth.setupToken() ?? '')).rejects.toMatchObject({
+			status: 302,
+			location: '/setup',
+		});
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
 	// OLD CODE START — NET-277: with the code typed Go Live opened, but its capture-mode call got 401
 	// it('/go-live goes to /setup until the code is typed', async () => {
 	// 	await expect(run('/go-live')).rejects.toMatchObject({ status: 302, location: '/setup' });

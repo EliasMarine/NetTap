@@ -47,7 +47,16 @@ server-side with a session. Neither is affected.
   route, so only a removed or never-existing route reaches it. `params` is a required part of the handler's event
   type (`RequestEvent<{ path: string }>`), so a caller that leaves it out does not compile and cannot skip the
   guard. (An encoded path that matches an existing route, such as `/api/%73etup/bridge`, goes to that route and
-  is judged by the hook on the raw path, as before.)
+  is judged by the hook on the raw path, as before.) The guard (`isSetupPath`) takes the first real segment of
+  the matched path, so `//setup`, `;/setup`, `Setup` and `%2573etup` (one more round of decoding) are refused too.
+  aiohttp 404s those today (it keeps `%2F` encoded and decodes once); the guard does not rely on it. A segment
+  with no letter or digit (`;`, `.`) is skipped, which the first-non-empty-segment form would not have done.
+- `web/src/hooks.server.ts`: `/setup` is matched exactly, not as a prefix, in `isFirstRunPath` and in the
+  setup-cookie check, so a route file added under `routes/setup/` later is not open before the first admin exists
+  without the code (before this it would have answered without it). Nothing the wizard uses is under `/setup`:
+  SvelteKit 2.70.3 strips `/__data.json` from the page's data request before the hook runs
+  (`respond.js`, `strip_data_suffix`), and form actions are `/setup?/verifyCode`, `/setup?/createAdmin` (the query
+  is not in `pathname`). Old code kept as OLD CODE.
 
 Nothing changes after the first admin exists: every call there needs a session, and a session is enough.
 
@@ -61,7 +70,8 @@ Nothing changes after the first admin exists: every call there needs a session, 
   (401, never resolved). 10 of the new tests failed with the old prefix.
 - `routes/api/catchall-setup.test.ts`: GET, POST, PUT and DELETE to `setup/bridge`, `setup/configure`,
   `setup/bridge/preview`, `setup`, `setup/other` and the encoded forms (`%73etup`, `%2F`) get 404 and never reach
-  the daemon; `/api/setupx` and `/api/dhcp/setup/leases` still proxy. All 28 failed before the guard. That test
+  the daemon, now also `//setup`, `%2Fsetup`, `;/setup`, `Setup` and `%2573etup` (20 more, failed before the
+  change); `/api/setupx` and `/api/dhcp/setup/leases` still proxy. All 28 failed before the guard. That test
   decodes the path itself, so the real router is covered in `e2e/visual/api-401.visual.ts` (below).
 - `e2e/visual/firstrun.visual.ts` (first-run instance, real hook and routes): configure and unlisted
   `/api/setup` paths get 401 with the code typed (failed with the old prefix: 500 from the configure route); the
@@ -69,9 +79,15 @@ Nothing changes after the first admin exists: every call there needs a session, 
   the code. Two new fixture routes in `e2e/visual/fixtures/setup.ts`: `POST /api/setup/bridge/preview` and
   `POST /api/storage/config`.
 - `e2e/visual/api-401.visual.ts` (signed-in app instance): `/api/setup/does-not-exist`,
-  `/api/%73etup/does-not-exist`, `/api/%73etup/bridge/preview` and `/api/setup%2Fbridge/preview` answer
+  `/api/%73etup/does-not-exist`, `/api/%73etup/bridge/preview`, `/api/setup%2Fbridge/preview` and the five other
+  spellings above (`/api//setup/...`, `/api/%2Fsetup/...`, `/api/;/setup/...`, `/api/Setup/...`,
+  `/api/%2573etup/...`) answer
   `{ error: 'Not found' }` through the real router. The body is compared: with the guard off the fixture daemon
   also answers 404, but with `No fixture for GET ...`, and that is what the test saw fail.
+- `hooks.server.test.ts` and `hooks.server.store.test.ts`: `/setup/anything` is redirected to `/setup` before the
+  first admin exists, with and without the setup cookie; `/setup?/verifyCode` stays open. `firstrun.visual.ts`
+  asserts that the page's own `/setup/__data.json` request still answers `type: 'data'` and that
+  `/setup/anything` gets a 302 to `/setup` (404 with the old prefix: the route would have answered open).
 - Trailing slash: SvelteKit 308-redirects `/api/setup/storage/` to the canonical address before the hook runs, so
   it is judged there, not refused. The visual test asserts the 308 and the canonical 200.
 

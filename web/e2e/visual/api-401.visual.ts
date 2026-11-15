@@ -100,6 +100,12 @@ test('an /api/setup path with no route of its own answers 404 from the guard, no
 		'/api/%73etup/does-not-exist',
 		'/api/%73etup/bridge/preview',
 		'/api/setup%2Fbridge/preview',
+		// other spellings of the same first segment (review): empty and punctuation-only segments, case, double encoding
+		'/api//setup/does-not-exist',
+		'/api/%2Fsetup/does-not-exist',
+		'/api/;/setup/does-not-exist',
+		'/api/Setup/does-not-exist',
+		'/api/%2573etup/does-not-exist',
 	]) {
 		const res = await page.request.get(path);
 		expect(res.status(), path).toBe(404);

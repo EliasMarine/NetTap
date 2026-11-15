@@ -51,6 +51,7 @@ const PUBLIC_PATHS = new Set(['/login', '/api/auth/login', '/api/auth/logout', '
  * OLD CODE END
  * The setup wizard (/setup) runs before any account exists. Afterwards it needs a session
  * like every other page; the wizard's /api/setup calls are exact entries in FIRST_RUN_REQUESTS (NET-290).
+ * These are matched exactly: a route added under /setup later is not open before the first admin exists.
  * The setup action signs the new admin in, so the rest of the wizard and Go Live keep
  * working. Before that, everything but /setup needs the setup cookie (NET-229 follow-up).
  * NET-277: /go-live is not here. Its capture-mode call needs a session, so until the first
@@ -121,11 +122,19 @@ function isPublicPath(pathname: string): boolean {
 	return PUBLIC_PATHS.has(pathname);
 }
 
+// OLD CODE START — NET-290 review: /setup and everything under it skipped the setup-cookie check, so a route
+// file added under routes/setup/ later would have answered before the first admin existed, without the code
+// function isFirstRunPath(method: string, pathname: string): boolean {
+// 	return (
+// 		FIRST_RUN_PATHS.some((p) => isUnder(pathname, p)) ||
+// 		FIRST_RUN_REQUESTS.has(`${method} ${pathname}`)
+// 	);
+// }
+// OLD CODE END
+// SvelteKit hands the hook `/setup` for the page's /__data.json request and its form actions (/setup?/verifyCode):
+// it strips the data suffix before the hook runs, and the action is in the query.
 function isFirstRunPath(method: string, pathname: string): boolean {
-	return (
-		FIRST_RUN_PATHS.some((p) => isUnder(pathname, p)) ||
-		FIRST_RUN_REQUESTS.has(`${method} ${pathname}`)
-	);
+	return FIRST_RUN_PATHS.includes(pathname) || FIRST_RUN_REQUESTS.has(`${method} ${pathname}`);
 }
 
 /** True only for a readable, empty user store. A damaged store never reopens first-run. */
@@ -231,7 +240,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 			// /setup stays open so the code can be typed there; the rest needs the setup cookie.
 			// Every first-run entry but /setup is an /api call now, so the page redirect below is unreachable
 			// today. It stays so that a first-run page added to FIRST_RUN_PATHS later is fail-closed.
-			if (!isUnder(pathname, '/setup') && !hasSetupCookie(event)) {
+			// OLD CODE: if (!isUnder(pathname, '/setup') && !hasSetupCookie(event)) { (NET-290 review: /setup exactly)
+			if (pathname !== '/setup' && !hasSetupCookie(event)) {
 				if (isUnder(pathname, '/api')) {
 					return json({ error: 'Enter the setup code first.' }, { status: 401 });
 				}
