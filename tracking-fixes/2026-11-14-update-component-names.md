@@ -2,7 +2,7 @@
 
 **Linear:** NET-291
 **Branch:** `fix/update-component-names-net291`
-**Status:** fixed, daemon only. Deploy: rebuild `nettap-storage-daemon`.
+**Status:** fixed. Deploy: rebuild `nettap-storage-daemon` and `nettap-web` (the web proxies).
 
 ## Problem
 
@@ -38,8 +38,12 @@ fall-through (`else: not supported`, `Unsupported component`) after the name had
   strings in each of 50 history entries; only an allow-list bounds each name.
 - What the page sends: `malcolm`, `suricata-rules` and `geoip-db` only (the rows with no
   `applies_with`; "Update all" and the per-row Update button both filter on it).
-- Not done: a null guard in the web proxies (`routes/api/system/updates/*/+server.ts`). The daemon is
-  the boundary and now answers 400; a web 500 on `null` is a separate pre-existing gap.
+- Web proxies (security review LOW-1, same bug one layer up): `routes/api/system/updates/{apply,rollback}/+server.ts`
+  threw a TypeError on the JSON body `null` (`body.components`, `body.component`) and answered 500.
+  Each guard now starts with `!body || typeof body !== 'object' ||`; the replaced line is an OLD CODE
+  comment. (First thought not worth doing, because the daemon already answers 400; done anyway, since
+  it is the same class of bug.)
+- Not done: the rollback refusal still echoes `component` in its reply (security review LOW-2, cosmetic).
 
 ## Tests
 
@@ -48,6 +52,10 @@ fall-through (`else: not supported`, `Unsupported component`) after the name had
   makes no docker call and no `image_id.txt`; apply refuses `["zeek"] * 17`, unknown and long names,
   a valid-plus-unknown mix, and bodies `null`, `[]`, `5`, `"malcolm"`, leaving history, live results and
   current update untouched; rollback refuses the same non-object bodies.
+- Web (Vitest, `apply/server.test.ts` and `rollback/server.test.ts` beside each proxy): bodies `null`,
+  `[]`, `5`, a string, `{}` and (rollback) a non-string or empty `component` get the proxy's own 400 and
+  never reach the daemon; a valid body is forwarded. Only the `null` cases failed before the fix
+  (`TypeError: Cannot read properties of null`); the rest guard the existing checks.
 - Guards that passed before: `["zeek"] * 16` and the page's names and Malcolm rows still reach
   `start_update`; a non-string `component` is a 400.
 - Checker-driven: the real `check_updates()` with every Malcolm container, a stale rules file, a stale
@@ -56,6 +64,7 @@ fall-through (`else: not supported`, `Unsupported component`) after the name had
   `geoip-db` and it fails).
 - Full daemon pytest: 5042 passed, 5 skipped, 0 failed. `ruff format --check daemon/` and `ruff check`
   clean.
+- Full Vitest 397 files, 5284 tests passed; `svelte-check` 0 errors.
 - Plan: `/codex-review` approved in 2 rounds.
 
 ## Next

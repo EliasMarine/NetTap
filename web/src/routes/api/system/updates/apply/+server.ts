@@ -17,7 +17,8 @@ export const POST: RequestHandler = async ({ request }) => {
 		return json({ error: 'Invalid JSON body' }, { status: 400 });
 	}
 
-	if (!body.components || !Array.isArray(body.components) || body.components.length === 0) {
+	// OLD CODE: if (!body.components || !Array.isArray(body.components) || body.components.length === 0) { (NET-291 review: the JSON body `null` threw here as a 500)
+	if (!body || typeof body !== 'object' || !body.components || !Array.isArray(body.components) || body.components.length === 0) {
 		return json({ error: 'components array is required and must not be empty' }, { status: 400 });
 	}
 
