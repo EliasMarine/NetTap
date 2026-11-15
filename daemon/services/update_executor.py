@@ -85,6 +85,7 @@ class UpdateExecutor:
     Handles the tested Malcolm upgrade, Suricata rule updates and GeoIP
     database downloads. Creates pre-update backups for rollback safety.
     """
+
     # OLD CODE (NET-288 review): "Handles Docker image pulls, Suricata rule updates, GeoIP
     # database downloads, and system package updates."
 
