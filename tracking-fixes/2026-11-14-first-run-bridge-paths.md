@@ -35,8 +35,12 @@ narrowed: that is a separate, optional follow-up in the issue.
   valid setup cookie and no users. The 6 new tests failed with the old list (`expected 200 to be 401`).
 - `hooks.server.store.test.ts`: the same with the real user store, both with no store and with an
   empty one.
-- `e2e/visual/api-401.visual.ts`: a same-origin link to `/api/bridge/create` on a NetTap page, with
-  no session, gets a 302 and lands on `/login`.
+- `e2e/visual/firstrun.visual.ts`: on the first-run instance (no admin yet), with the setup code typed,
+  `POST /api/bridge/create`, `teardown`, `bypass/enable` and `bypass/disable` each get 401
+  `{ error: 'Sign in first' }`. It fails with `/api/bridge` back on the first-run list.
+- `e2e/visual/api-401.visual.ts`: a same-origin link to an `/api` address on a NetTap page, with no
+  session, gets a 302 and lands on `/login` (a NET-197 click check; it runs after setup, so it does not
+  cover NET-280).
 - Full Vitest: 5266 passed. svelte-check: 0 errors. Visual suite: 318 passed, 54 skipped.
 - `/deep-review`: no findings. `/ponytail-review`: ship.
 

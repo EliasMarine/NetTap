@@ -50,9 +50,14 @@ const PUBLIC_PATHS = new Set(['/login', '/api/auth/login', '/api/auth/logout', '
  * The setup action signs the new admin in, so the rest of the wizard and Go Live keep
  * working. Before that, everything but /setup needs the setup cookie (NET-229 follow-up).
  * NET-277: /go-live is not here. Its capture-mode call needs a session, so until the first
- * admin exists it goes to /setup like every other page. NET-280: /api/bridge/* is not here
- * either. Nothing calls it before the first admin (the wizard's one bridge call runs after
- * createAdmin has signed the admin in), and `create` reaches the daemon's real bridge build.
+ * admin exists it goes to /setup like every other page.
+ * OLD CODE START — NET-280: /api/bridge/* left the list too; it used to open on the setup cookie
+ * /api/bridge/* was Go Live's and has no caller before the first admin now; it still needs the
+ * setup cookie then.
+ * OLD CODE END
+ * NET-280: /api/bridge/* is not here either. Nothing calls it before the first admin (the wizard's
+ * one bridge call runs after createAdmin has signed the admin in), and `create` reaches the
+ * daemon's real bridge build.
  */
 // OLD CODE START — NET-277: Go Live opened on the setup cookie, then its capture-mode call got 401
 // const FIRST_RUN_PATHS = ['/setup', '/api/setup', '/api/bridge', '/go-live'];

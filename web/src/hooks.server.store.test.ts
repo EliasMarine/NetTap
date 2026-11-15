@@ -242,7 +242,12 @@ describe('first-run routes with a real user store', () => {
 
 	it.each(DAMAGED)('a %s store fails closed for first-run API calls: 401, never resolved', async (_label, contents) => {
 		writeStore(contents);
-		for (const path of FIRST_RUN_APIS) {
+		// OLD CODE START — NET-280: the bridge left FIRST_RUN_APIS but keeps this check
+		// for (const path of FIRST_RUN_APIS) {
+		// 	await expectUnauthorised(run(path, 'POST'));
+		// }
+		// OLD CODE END
+		for (const path of [...FIRST_RUN_APIS, BRIDGE_API]) {
 			await expectUnauthorised(run(path, 'POST'));
 		}
 	});
