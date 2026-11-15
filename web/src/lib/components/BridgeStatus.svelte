@@ -163,8 +163,9 @@
 			if (res.result === 'error') {
 				// OLD CODE: bypassError = `Couldn't ${wasActive ? 'disable' : 'enable'} bypass: the request failed.`; (NET-287)
 				// NET-287: the daemon's reason, e.g. a bridge NetTap didn't set up
+				// OLD CODE: res.error ?? `Couldn't …` (NET-287 review: an empty reason showed nothing)
 				bypassError =
-					res.error ?? `Couldn't ${wasActive ? 'disable' : 'enable'} bypass: the request failed.`;
+					res.error || `Couldn't ${wasActive ? 'disable' : 'enable'} bypass: the request failed.`;
 			}
 			// Refresh data after toggle
 			await fetchBridgeData();

@@ -139,19 +139,39 @@ export async function getBridgeStats(): Promise<BridgeStats> {
 }
 
 /**
+ * NET-287: the daemon's own reasons from a failed response, e.g. a bridge NetTap didn't set up.
+ * Empty for a 5xx (its body carries exception text) and for a body that isn't
+ * `{ errors: string[] }` or `{ error: string }`.
+ */
+async function daemonReasons(res: Response): Promise<string[]> {
+	if (res.status >= 500) return [];
+	const data: { error?: unknown; errors?: unknown } | null = await res.json().catch(() => null);
+	const errors = data?.errors;
+	if (Array.isArray(errors) && errors.length && errors.every((e) => typeof e === 'string')) {
+		return errors;
+	}
+	const error = data?.error;
+	return typeof error === 'string' && error ? [error] : [];
+}
+
+/**
  * Enable bypass mode (stops capture, passes traffic through directly).
  */
-// NET-287: `error` carries the daemon's 409 reason (a bridge NetTap didn't set up)
 export async function enableBypass(): Promise<{ result: string; error?: string }> {
+	// NET-287: `error` carries the daemon's 409 reason (a bridge NetTap didn't set up)
 	const res = await fetch('/api/bridge/bypass/enable', {
 		method: 'POST',
 	});
 
 	if (!res.ok) {
 		// OLD CODE: return { result: 'error' }; (NET-287: the daemon's reason was dropped)
+		// OLD CODE START — NET-287 review: the body was `any`, unchecked
+		// const data = res.status === 409 ? await res.json().catch(() => ({})) : {};
+		// return { result: 'error', error: data.error };
+		// OLD CODE END
 		// Only the 409 refusal's reason: a 500 carries exception text
-		const data = res.status === 409 ? await res.json().catch(() => ({})) : {};
-		return { result: 'error', error: data.error };
+		const [error] = res.status === 409 ? await daemonReasons(res) : [];
+		return { result: 'error', error };
 	}
 
 	return res.json();
@@ -160,17 +180,21 @@ export async function enableBypass(): Promise<{ result: string; error?: string }
 /**
  * Disable bypass mode (resumes normal bridge capture).
  */
-// NET-287: `error` carries the daemon's 409 reason (a bridge NetTap didn't set up)
 export async function disableBypass(): Promise<{ result: string; error?: string }> {
+	// NET-287: `error` carries the daemon's 409 reason (a bridge NetTap didn't set up)
 	const res = await fetch('/api/bridge/bypass/disable', {
 		method: 'POST',
 	});
 
 	if (!res.ok) {
 		// OLD CODE: return { result: 'error' }; (NET-287: the daemon's reason was dropped)
+		// OLD CODE START — NET-287 review: the body was `any`, unchecked
+		// const data = res.status === 409 ? await res.json().catch(() => ({})) : {};
+		// return { result: 'error', error: data.error };
+		// OLD CODE END
 		// Only the 409 refusal's reason: a 500 carries exception text
-		const data = res.status === 409 ? await res.json().catch(() => ({})) : {};
-		return { result: 'error', error: data.error };
+		const [error] = res.status === 409 ? await daemonReasons(res) : [];
+		return { result: 'error', error };
 	}
 
 	return res.json();
@@ -245,7 +269,8 @@ export async function createBridge(wan: string, lan: string): Promise<BridgeCrea
 	});
 
 	if (!res.ok) {
-		const data = await res.json().catch(() => ({}));
+		// OLD CODE: const data = await res.json().catch(() => ({})); (NET-287 review: `any`, and a 500's exception text was shown)
+		const reasons = await daemonReasons(res);
 		return {
 			created: false,
 			bridge_name: '',
@@ -253,7 +278,8 @@ export async function createBridge(wan: string, lan: string): Promise<BridgeCrea
 			lan,
 			state: 'error',
 			// OLD CODE: errors: [data.error || `HTTP ${res.status}`], (NET-287: the daemon's errors[] was dropped)
-			errors: data.errors?.length ? data.errors : [data.error || `HTTP ${res.status}`],
+			// OLD CODE: errors: data.errors?.length ? data.errors : [data.error || `HTTP ${res.status}`], (NET-287 review)
+			errors: reasons.length ? reasons : [`HTTP ${res.status}`],
 			warnings: [],
 			persistence_files: [],
 		};
@@ -286,12 +312,19 @@ export async function teardownBridge(): Promise<BridgeTeardownResult> {
 
 	if (!res.ok) {
 		// OLD CODE: return { torn_down: false, errors: ['Failed to reach teardown endpoint'] }; (NET-287)
-		const data = await res.json().catch(() => ({}));
+		// OLD CODE START — NET-287 review: `any`, and a 500's exception text was shown
+		// const data = await res.json().catch(() => ({}));
+		// return {
+		// 	torn_down: false,
+		// 	errors: data.errors?.length
+		// 		? data.errors
+		// 		: [data.error || 'Failed to reach teardown endpoint'],
+		// };
+		// OLD CODE END
+		const reasons = await daemonReasons(res);
 		return {
 			torn_down: false,
-			errors: data.errors?.length
-				? data.errors
-				: [data.error || 'Failed to reach teardown endpoint'],
+			errors: reasons.length ? reasons : ['Failed to reach teardown endpoint'],
 		};
 	}
 

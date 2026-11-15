@@ -312,7 +312,8 @@ describe('bridge API client', () => {
 				'fetch',
 				vi.fn().mockResolvedValue({
 					ok: false,
-					status: 500,
+					// OLD CODE: status: 500, (NET-287 review: a 500's error is exception text, now hidden)
+					status: 400,
 					json: () => Promise.resolve({ error: 'Bridge creation failed' }),
 				}),
 			);
@@ -430,6 +431,33 @@ describe('bridge API client', () => {
 			mockFetchSuccess({ error: 'Failed to enable bypass mode: Traceback …' }, 500);
 
 			expect(await enableBypass()).toEqual({ result: 'error', error: undefined });
+		});
+
+		it('createBridge shows no exception text from a 500', async () => {
+			mockFetchSuccess({ error: 'Bridge creation failed: Traceback …' }, 500);
+
+			expect((await createBridge('enp2s0', 'enp3s0')).errors).toEqual(['HTTP 500']);
+		});
+
+		it('teardownBridge shows no exception text from a 500', async () => {
+			mockFetchSuccess({ error: 'Bridge teardown failed: Traceback …' }, 500);
+
+			expect((await teardownBridge()).errors).toEqual(['Failed to reach teardown endpoint']);
+		});
+
+		it('falls back cleanly when the body is not the expected shape', async () => {
+			mockFetchSuccess(null, 400);
+			expect((await createBridge('enp2s0', 'enp3s0')).errors).toEqual(['HTTP 400']);
+			expect(await enableBypass()).toEqual({ result: 'error' });
+
+			mockFetchSuccess({ errors: 'not a list', error: 42 }, 400);
+			expect((await teardownBridge()).errors).toEqual(['Failed to reach teardown endpoint']);
+
+			mockFetchSuccess({ errors: [CREATE, 7] }, 400);
+			expect((await createBridge('enp2s0', 'enp3s0')).errors).toEqual(['HTTP 400']);
+
+			mockFetchSuccess({ errors: 'not a list', error: BYPASS }, 409);
+			expect(await disableBypass()).toEqual({ result: 'error', error: BYPASS });
 		});
 	});
 });
