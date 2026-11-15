@@ -404,6 +404,34 @@ describe('AreaChart', () => {
 		});
 	});
 
+	// NET-286: whole-number data gets whole-number ticks; any fractional value keeps the fractional axis
+	describe('y ticks', () => {
+		const yLabels = (container: HTMLElement) =>
+			[...container.querySelectorAll('text.ax[text-anchor="end"]')].map((t) => t.textContent);
+		const count = (...rows: number[][]) => rows.map((values, k) => toSeries(`s${k}`, k === 0 ? 1 : 2, values));
+		const FRACTIONAL = ['0', '0.2', '0.4', '0.6', '0.8', '1'];
+
+		it.each([
+			['integer [0, 1]', [[0, 1]], ['0', '1']],
+			['integer peak 12', [[0, 4, 12]], ['0', '5', '10', '15']],
+			['fractional [0, 0.5, 1]', [[0, 0.5, 1]], FRACTIONAL],
+			['mixed: the second series is fractional', [[0, 1], [0, 0.5]], FRACTIONAL],
+			['mixed: the first series is fractional', [[0, 0.5], [0, 1]], FRACTIONAL],
+		])('%s', (_name, rows, expected) => {
+			const { container } = draw(count(...rows), { formatY: String });
+			expect(yLabels(container)).toEqual(expected);
+		});
+
+		it('switches between whole and fractional ticks when the data does', async () => {
+			const { container, rerender } = draw(count([0, 1]), { formatY: String });
+			expect(yLabels(container)).toEqual(['0', '1']);
+			await rerender({ series: count([0, 1], [0, 0.5]) });
+			expect(yLabels(container)).toEqual(FRACTIONAL);
+			await rerender({ series: count([0, 1]) });
+			expect(yLabels(container)).toEqual(['0', '1']);
+		});
+	});
+
 	it('ignores a highlight index outside the data', () => {
 		const { container } = draw([toSeries('down', 1, DOWN)], { highlightIndex: 99 });
 		expect(container.querySelector('rect.band')).toBeNull();

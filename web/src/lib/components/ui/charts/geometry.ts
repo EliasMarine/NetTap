@@ -6,12 +6,22 @@ export type Point = readonly [number, number];
 
 const STEP_MULTIPLIERS = [1, 2, 2.5, 5, 10] as const;
 
-/** Round axis: the smallest 1/2/2.5/5 × 10ⁿ step whose `ticks` steps cover `max`. */
-export function niceAxis(max: number, ticks = 4): { step: number; top: number; values: number[] } {
+/**
+ * Round axis: the smallest 1/2/2.5/5 × 10ⁿ step whose `ticks` steps cover `max`.
+ * `whole` (NET-286, a count axis): the step is a whole number, so no tick is a fraction a label would round.
+ */
+export function niceAxis(max: number, ticks = 4, whole = false): { step: number; top: number; values: number[] } {
 	if (!Number.isFinite(max) || max <= 0) return { step: 1, top: ticks, values: range(ticks, 1) };
 	// raw lies in [10ⁿ, 10ⁿ⁺¹), so one of these multipliers always covers it
-	const scale = 10 ** Math.floor(Math.log10(max / ticks));
-	const step = STEP_MULTIPLIERS.map((m) => m * scale).find((s) => s * ticks >= max) ?? 10 * scale;
+	// OLD CODE START — NET-286: the scale went below 1, so a peak of 1 or 2 got steps of 0.2 or 0.5
+	// const scale = 10 ** Math.floor(Math.log10(max / ticks));
+	// const step = STEP_MULTIPLIERS.map((m) => m * scale).find((s) => s * ticks >= max) ?? 10 * scale;
+	// OLD CODE END
+	const scale = Math.max(whole ? 1 : 0, 10 ** Math.floor(Math.log10(max / ticks)));
+	const step =
+		STEP_MULTIPLIERS.map((m) => m * scale)
+			.filter((s) => !whole || Number.isInteger(s))
+			.find((s) => s * ticks >= max) ?? 10 * scale;
 	return { step, top: step * ticks, values: range(ticks, step) };
 }
 
@@ -158,8 +168,9 @@ export function inPolygon(lng: number, lat: number, rings: readonly (readonly Po
  * niceAxis trimmed to the first round value that covers `max`, so a 4.7 GB peak gets a
  * 0–5 axis instead of 0–8 and the line fills the plot.
  */
-export function fitAxis(max: number, ticks = 5): { top: number; values: number[] } {
-	const { top, values } = niceAxis(max, ticks);
+export function fitAxis(max: number, ticks = 5, whole = false): { top: number; values: number[] } {
+	// OLD CODE: const { top, values } = niceAxis(max, ticks); (NET-286: a count axis passes `whole`)
+	const { top, values } = niceAxis(max, ticks, whole);
 	const cover = values.find((v) => v > 0 && v >= max);
 	if (!(max > 0) || cover === undefined) return { top, values };
 	return { top: cover, values: values.filter((v) => v <= cover) };
