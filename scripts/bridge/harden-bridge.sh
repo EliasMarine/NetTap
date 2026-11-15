@@ -190,6 +190,8 @@ fi
 # APPLY MODE — requires root
 # ===========================================================================
 require_root
+# NET-287: the settings below would retune a bridge NetTap didn't make (--check only reads)
+refuse_foreign_bridge "$BRIDGE_NAME"
 
 log "Applying kernel bridge hardening settings..."
 

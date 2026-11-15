@@ -309,6 +309,28 @@ describe('GoLive page — bridge latency', () => {
 		expect(live).toHaveTextContent("It can't read encrypted content, and it doesn't see traffic that bypasses the capture point.");
 		expect(live).not.toHaveTextContent(/All traffic/);
 	});
+
+	// NET-287: a refused toggle shows the daemon's reason, not "the request failed"
+	it("shows why bypass was refused on a bridge NetTap didn't set up", async () => {
+		const M5 = "The network bridge br0 wasn't set up by NetTap, so bypass mode can't change it. Nothing was changed.";
+		await renderLive({ ...HEALTH, latency_us: 42 });
+		vi.stubGlobal(
+			'fetch',
+			vi.fn((input: RequestInfo | URL) =>
+				String(input) === '/api/bridge/bypass/enable'
+					? jsonResponse(409, { error: M5, bypass_active: false })
+					: jsonResponse(200, { mode: 'bridge', interface: '' }),
+			),
+		);
+
+		const enable = await screen.findByRole('button', { name: 'Enable bypass' });
+		await vi.waitFor(() => expect(enable).toBeEnabled());
+		await fireEvent.click(enable);
+		await fireEvent.click(screen.getByRole('button', { name: 'Turn on bypass' }));
+
+		expect(await screen.findByText(M5)).toBeInTheDocument();
+		expect(screen.queryByText(/the request failed/)).not.toBeInTheDocument();
+	});
 });
 
 /**

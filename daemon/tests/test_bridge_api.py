@@ -271,6 +271,20 @@ class TestBypassEnableEndpoint(AioHTTPTestCase):
         self.assertTrue(data["bypass_active"])
         self.assertIn("activated_at", data)
 
+    async def test_refusal_on_a_foreign_bridge_is_409(self):
+        """NET-287: bypass refused on a bridge NetTap didn't make."""
+        refusal = {
+            "error": "The network bridge br0 wasn't set up by NetTap, so bypass mode "
+            "can't change it. Nothing was changed.",
+            "bypass_active": False,
+        }
+        self.mock_monitor.trigger_bypass = AsyncMock(return_value=refusal)
+        self.mock_monitor.disable_bypass = AsyncMock(return_value=refusal)
+        for action in ("enable", "disable"):
+            resp = await self.client.request("POST", f"/api/bridge/bypass/{action}")
+            self.assertEqual(resp.status, 409, action)
+            self.assertEqual(await resp.json(), refusal)
+
 
 class TestBypassDisableEndpoint(AioHTTPTestCase):
     """Tests for POST /api/bridge/bypass/disable."""

@@ -19,6 +19,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from services.bridge_manager import BridgeManager
 
 
+def _own_bridge(sysfs: str, bridge: str = "br0") -> None:
+    """A bridge in a tmp sysfs carrying NetTap's alias (NET-287)."""
+    os.makedirs(os.path.join(sysfs, bridge, "brif"), exist_ok=True)
+    with open(os.path.join(sysfs, bridge, "ifalias"), "w") as f:
+        f.write("nettap\n")
+
+
 class TestBridgeManagerInit(unittest.TestCase):
     """Tests for BridgeManager initialization."""
 
@@ -139,7 +146,13 @@ class TestCreateBridge(unittest.TestCase):
 
         mgr._run_nsenter = mock_nsenter
 
-        result = asyncio.run(mgr.create_bridge("enp2s0", "enp3s0", persist=False))
+        # NET-287: only a bridge NetTap made (its alias says so) is reconfigured
+        with (
+            tempfile.TemporaryDirectory() as sysfs,
+            patch("services.bridge_manager._SYSFS_NET", sysfs),
+        ):
+            _own_bridge(sysfs)
+            result = asyncio.run(mgr.create_bridge("enp2s0", "enp3s0", persist=False))
         self.assertTrue(result["created"])
         self.assertEqual(result["state"], "reconfigured")
 
@@ -227,7 +240,13 @@ class TestTeardownBridge(unittest.TestCase):
 
         mgr._run_nsenter = mock_nsenter
 
-        result = asyncio.run(mgr.teardown_bridge())
+        # NET-287: only a bridge NetTap made (its alias says so) is torn down
+        with (
+            tempfile.TemporaryDirectory() as sysfs,
+            patch("services.bridge_manager._SYSFS_NET", sysfs),
+        ):
+            _own_bridge(sysfs)
+            result = asyncio.run(mgr.teardown_bridge())
         self.assertTrue(result["torn_down"])
 
         cmd_strs = [" ".join(c) for c in commands_run]
@@ -396,6 +415,8 @@ class TestWritePersistence(unittest.TestCase):
 
             content = open(files[0]).read()
             self.assertIn("net.bridge.bridge-nf-call-iptables = 0", content)
+            # NET-287: no SLAAC address on br0 after a reboot (it would fail rule 2)
+            self.assertIn("net.ipv6.conf.br0.disable_ipv6 = 1", content)
 
     def test_writes_all_three(self):
         """_write_persistence should write all 3 files when all dirs set."""

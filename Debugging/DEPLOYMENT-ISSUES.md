@@ -2038,6 +2038,39 @@ The first-run Go Live path can't be shown on a box with an admin; CI's first-run
 
 ---
 
+## Chain 36: any `br0` was treated as NetTap's
+
+### NET-287: setup, teardown and bypass could change a bridge the host already had
+
+| Field | Value |
+|---|---|
+| **PR** | pending (`fix/foreign-br0-guard-net287`) |
+| **Status** | Fixed in code; device run pending |
+| **Severity** | High |
+| **Date** | 2026-11-14 |
+| **Environment** | Any host that already has a `br0`: a VM/LXD/KVM host, a netplan bridge, Unraid |
+
+**Symptom:** none seen in the field. Found while looking at Unraid support. On a host with its own `br0`, bridge setup (installer, `setup-bridge.sh`, the daemon's `/api/bridge/create`) would adopt it: add NetTap's ports, retune STP, forward delay and ageing. Teardown would delete it, which takes the host's uplink and its VMs off the network. Bypass would change its state. The NIC-in-use guard read only the default route and addresses, so it offered a port of another bridge or a bond.
+
+**Root cause:** there was no ownership marker. The name `br0` was the only test.
+
+**Fix:** `br0` is NetTap's only if (1) its `ifalias` is `nettap`, which NetTap now sets right after `ip link add` and before any reconfigure, or (2) the legacy fallback holds for a pre-fix bridge rebuilt by netplan after a reboot: every port is a `- <port>` line in `10-nettap-bridge.yaml`, br0 has no global address, and no default route goes through it (a failed or unreadable read refuses). One copy per language: `bridge_is_nettaps` in `bridge_manager.py`, and `nettap_bridge_owned` / `refuse_foreign_bridge` in `scripts/common.sh`.
+* **Refused on a foreign `br0`, before anything changes:** daemon create, preview (400), teardown and readiness; bypass enable/disable (409); `setup-bridge.sh` setup, reconfigure and teardown; `harden-bridge.sh` apply and `bypass-mode.sh` `--enable`/`--disable`/`--install` (`--check` and `--status` still report); the wizard's bridge-mode save (400); `install.sh` unless `--skip-bridge`.
+* **No IPv6:** on a kernel booted with `ipv6.disable=1` (no `/proc/net/if_inet6`) the legacy rule skips the IPv6 route read, which would fail and refuse NetTap's own bridge. With IPv6 on, a failed read still refuses.
+* **After a reboot:** the daemon's `99-nettap-bridge.conf` now also sets `net.ipv6.conf.br0.disable_ipv6 = 1`, as the script's always did, so a daemon-made `br0` can't pick up a SLAAC address and fail the legacy rule.
+* **NIC guard:** a port with any master is in use, unless that master is NetTap's own `br0`.
+* **Alias failure:** a `br0` made in the same call is deleted again, and nothing else runs.
+* **Teardown in `setup-bridge.sh`** touches WAN/LAN only if their `master` really is `br0`.
+* **Web:** the bypass buttons show the daemon's refusal text for a 409 (a 500 still shows the generic text, because its body carries exception text).
+
+**Recovery:** a NetTap `br0` that fails both rules (left empty after a NIC rename, a runtime-only pre-fix bridge, extra ports added by hand, a daemon without the netplan mount) is refused until `sudo ip link set br0 alias nettap` is run on the host. Every refusal, in the daemon and in the shell scripts, names that command.
+
+**Verification:** daemon 5073 passed; bats 393; vitest 5305; svelte-check 0 errors; shellcheck clean. Each new test failed on the old code first. Not yet run on a box. The G11 runs mirror mode (no br0, its capture NIC has no master), so nothing changes there. A pre-fix bridge-mode N100 rebuilds br0 from the file with no address, so rule 2 passes.
+
+**Key insight:** a well-known interface name (`br0`, `eth0`, `docker0`) is not ownership. Mark what you create, and fail closed on anything you can't prove is yours.
+
+---
+
 ## Key Files Modified
 
 These files were touched repeatedly across the 16+ PRs. Check their current state before making changes.
@@ -2130,6 +2163,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | `daemon/services/pcap_search.py`, `daemon/api/pcap.py` | NET-189 | "Download filtered" streams `FILTER_DOWNLOAD_JOB` (packet analysis's window cut + `tshark -Y -w -`) with files from `CaptureIndex.select`; no temp files. Refuses failed index entries and windows over 400k packets / 64 files / 3 GB; one download at a time; 240 s deadline; aborts the response after a failure past the first byte. |
 | `scripts/remote/deploy-capture-hardening.sh`, `verify_pcap_download.py`, `measure-capture-loss.sh` | NET-220, NET-206, NET-189 | NEW: deploy + checks for the three; the capture-loss comparison (meter off vs eight watches) with Suricata's counters. |
 | `web/src/hooks.server.ts` | NET-193, NET-197, NET-229, NET-257 | The one place every request passes. NET-257: an `/api` request, signed in or not, whose `Sec-Fetch-Site` is present and not `same-origin` gets 403 before any route runs, keyed on `event.route.id` (SvelteKit routes on the decoded path). It sits inside the non-public block, so `/api/auth/me` (nginx `auth_request`), login, logout and `/api/health` are untouched. Any route that puts a param into a daemon path must `encodeURIComponent` it. |
+| `daemon/services/bridge_manager.py`, `scripts/common.sh`, `scripts/bridge/setup-bridge.sh` | NET-287 | Ownership: `bridge_is_nettaps` (daemon) and `nettap_bridge_owned` / `refuse_foreign_bridge` (shell) are the only tests of whether br0 is NetTap's; keep the two in step. NetTap sets `ifalias nettap` right after `ip link add` and before any reconfigure; an alias failure deletes a br0 made in the same call. Never act on br0 by name alone. |
 
 ---
 
@@ -2412,6 +2446,7 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | The rotation-size save can write a bridge-mode capture-mode.conf with the env defaults before the wizard (Chain 33) | Go Live would then offer those port names | `/api/bridge/create` still refuses a port that carries the default route or an address, and a missing one; the wizard overwrites them with the owner's choice. |
 | Capture containers wait quietly for a missing interface (Chain 33) | A typo'd or renamed capture port shows as running containers with no data, not FATAL programs | `docker logs nettap-zeek-live` shows `nettap-capture-env: waiting for capture interface X`. |
 | An expired ET Pro code fails every nightly update (`--fail`) | All sources stop updating, not only ET Pro | Settings › Suricata rules turns amber after 48 h without success; renew or remove the code. |
+| NetTap's own `br0` can fail the ownership rule (Chain 36) | Setup, preview and Go Live refuse ("already has a network bridge called br0 that NetTap didn't set up"), and teardown and bypass refuse ("wasn't set up by NetTap"), when the bridge is NetTap's but lost its alias and fails the legacy rule: emptied after a NIC rename, a runtime-only pre-fix bridge, ports added by hand, or a daemon without the netplan mount. A foreign, address-less br0 whose every port is in a leftover NetTap netplan file still passes (accepted). | Run `sudo ip link set br0 alias nettap` on the host, then retry. The alias is runtime-only: after a reboot, netplan's rebuild has to pass the legacy rule. |
 
 ---
 
@@ -2486,3 +2521,4 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-275 | #283 | Years outside 1970-9998 get 400, not 500; `/api/alerts/categories` and `/api/bandwidth/daily` keep the slot budget | 2026-11-14 |
 | NET-277 | #284 | Go Live before the first admin goes to `/setup`; NET-257's typed-vs-in-app `/api` split pinned in tests | 2026-11-14 |
 | NET-276 | #285 | A Packets search opened from outside NetTap waits for Run; in-app navigation runs it at once | 2026-11-14 |
+| NET-287 | pending | Any `br0` was treated as NetTap's: ownership marker (alias `nettap`) plus a legacy rule; setup, teardown, bypass, preview and install refuse a foreign bridge; NIC guard counts any master (Chain 36) | 2026-11-14 |

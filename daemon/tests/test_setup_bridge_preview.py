@@ -8,7 +8,9 @@ in ``self.ip_calls``.
 """
 
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -17,7 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
 
-from api.setup import register_setup_routes
+from api.setup import _nic_in_use_problem, register_setup_routes
 from services.capture_manager import CaptureMode
 from services.capture_mode_stub import CaptureManagerStub
 from services.dhcp_gateway import DhcpGatewayManager
@@ -35,20 +37,29 @@ class TestBridgePreview(AioHTTPTestCase):
             {"dst": "default", "gateway": "192.168.1.1", "dev": "enp1s0"}
         ]
         self.ip_calls = []
+        self.host_masters = {}  # NET-287: NIC -> the bridge or bond it is a port of
+        self.sysfs = tempfile.mkdtemp()
         self.patch = patch(
             "services.dhcp_gateway_host.HostNetOps.ip_json", side_effect=self._ip_json
         )
         self.patch.start()
+        self.sysfs_patch = patch("services.bridge_manager._SYSFS_NET", self.sysfs)
+        self.sysfs_patch.start()
         super().setUp()
 
     def tearDown(self):
         super().tearDown()
         self.patch.stop()
+        self.sysfs_patch.stop()
+        shutil.rmtree(self.sysfs)
 
     async def _ip_json(self, *args):
         self.ip_calls.append(args)
         if args[:2] == ("link", "show"):
-            return [{"ifname": args[3]}] if args[3] in self.host_links else []
+            if args[3] not in self.host_links:
+                return []
+            master = self.host_masters.get(args[3])
+            return [{"ifname": args[3], **({"master": master} if master else {})}]
         if args[:3] == ("-4", "route", "show"):
             return self.host_routes
         if args[:3] == ("-4", "addr", "show"):
@@ -124,6 +135,53 @@ class TestBridgePreview(AioHTTPTestCase):
             status, _ = await self._post(bad)
             self.assertEqual(status, 400, bad)
         self.assertEqual(self.ip_calls, [])
+
+    # -- NET-287: a br0 NetTap didn't make, and ports of bridges or bonds ---------
+    def _br0(self, nettaps=False):
+        self.host_links.add("br0")
+        os.makedirs(os.path.join(self.sysfs, "br0", "brif"))
+        if nettaps:
+            with open(os.path.join(self.sysfs, "br0", "ifalias"), "w") as f:
+                f.write("nettap\n")
+
+    async def test_refuses_spare_ports_while_a_foreign_br0_exists(self):
+        self._br0()
+        status, body = await self._post(PAIR)
+        self.assertEqual(status, 400)
+        self.assertIn("br0 that NetTap didn't set up", body["error"])
+        self.assertTrue(self._only_reads())
+
+    async def test_refuses_a_port_of_a_foreign_br0(self):
+        self._br0()
+        self.host_masters["enp3s0"] = "br0"
+        status, body = await self._post(PAIR)
+        self.assertEqual(status, 400)
+        self.assertIn("didn't set up", body["error"])
+
+    async def test_refuses_a_port_of_a_bond(self):
+        self.host_masters["enp3s0"] = "bond0"
+        status, body = await self._post(PAIR)
+        self.assertEqual(status, 400)
+        self.assertIn("enp3s0 is already part of bond0", body["error"])
+        self.assertNotIn("alias", body["error"])  # the br0 fix doesn't apply to a bond
+
+    async def test_accepts_a_port_of_nettaps_own_br0(self):
+        self._br0(nettaps=True)
+        self.host_masters["enp3s0"] = "br0"
+        status, body = await self._post(PAIR)
+        self.assertEqual(status, 200, body)
+
+    async def test_guard_calls_a_port_of_a_foreign_br0_in_use(self):
+        self._br0()
+        self.host_masters["enp3s0"] = "br0"
+        problem = await _nic_in_use_problem(None, "enp3s0")
+        # OLD CODE: "is already part of br0, which this machine set up for something else", (NET-287 review)
+        self.assertEqual(
+            problem,
+            "is already part of br0, which this machine set up for something else. "
+            "If you're sure NetTap made it, run sudo ip link set br0 alias nettap "
+            "on this machine and try again",
+        )
 
 
 if __name__ == "__main__":

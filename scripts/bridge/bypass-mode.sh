@@ -299,6 +299,8 @@ fi
 # ===========================================================================
 if [[ "$MODE_INSTALL" == "true" ]]; then
     require_root
+    # NET-287: the unit it installs runs --enable and --disable
+    refuse_foreign_bridge "$BRIDGE_NAME"
 
     log "Installing nettap-bypass systemd service..."
 
@@ -361,6 +363,8 @@ fi
 # ===========================================================================
 if [[ "$MODE_ENABLE" == "true" ]]; then
     require_root
+    # NET-287: ebtables -F/-X and promisc would hit a VM host's bridge and filters
+    refuse_foreign_bridge "$BRIDGE_NAME"
 
     if is_bypass_active; then
         warn "Bypass mode is already active (state file: ${BYPASS_STATE_FILE})"
@@ -419,6 +423,8 @@ fi
 # ===========================================================================
 if [[ "$MODE_DISABLE" == "true" ]]; then
     require_root
+    # NET-287: promisc would hit a bridge NetTap didn't make
+    refuse_foreign_bridge "$BRIDGE_NAME"
 
     if ! is_bypass_active; then
         warn "Bypass mode is not active (no state file at ${BYPASS_STATE_FILE})"

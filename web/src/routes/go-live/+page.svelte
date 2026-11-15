@@ -170,7 +170,8 @@
 		try {
 			const result = await createBridge(wanIface, lanIface);
 			if (!result.created && result.errors.length > 0) {
-				createError = result.errors.join(', ');
+				// OLD CODE: createError = result.errors.join(', '); (NET-287 review: the daemon's errors are full sentences)
+				createError = result.errors.join(' ');
 			} else {
 				// Refresh readiness immediately
 				await fetchReadiness();
@@ -195,7 +196,11 @@
 			const wasActive = health?.bypass_active;
 			const res = wasActive ? await disableBypass() : await enableBypass();
 			if (res.result === 'error') {
-				bypassError = `Couldn't ${wasActive ? 'disable' : 'enable'} bypass: the request failed.`;
+				// OLD CODE: bypassError = `Couldn't ${wasActive ? 'disable' : 'enable'} bypass: the request failed.`; (NET-287)
+				// NET-287: the daemon's reason, e.g. a bridge NetTap didn't set up
+				// OLD CODE: res.error ?? `Couldn't …` (NET-287 review: an empty reason showed nothing)
+				bypassError =
+					res.error || `Couldn't ${wasActive ? 'disable' : 'enable'} bypass: the request failed.`;
 			}
 			// Refresh health
 			await fetchHealth();

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { render, screen, fireEvent } from '@testing-library/svelte';
 import BridgeStatus from './BridgeStatus.svelte';
 
 const HEALTH = {
@@ -150,5 +150,37 @@ describe('BridgeStatus traffic rates', () => {
 		await screen.findByText('RX rate');
 		expect(rate('RX rate')).toBe('—');
 		expect(rate('TX rate')).toBe('—');
+	});
+});
+
+// NET-287: a refused toggle shows the daemon's reason, not "the request failed"
+describe('BridgeStatus bypass refusal', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("shows why bypass was refused on a bridge NetTap didn't set up", async () => {
+		const M5 = "The network bridge br0 wasn't set up by NetTap, so bypass mode can't change it. Nothing was changed.";
+		const replies: Record<string, [number, unknown]> = {
+			'/api/bridge/health': [200, HEALTH],
+			'/api/bridge/bypass/status': [200, { bypass_active: false }],
+			'/api/bridge/bypass/enable': [409, { error: M5, bypass_active: false }],
+		};
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (input: RequestInfo | URL) => {
+				const [status, body] = replies[String(input)] ?? [500, {}];
+				return new Response(JSON.stringify(body), { status });
+			}),
+		);
+
+		render(BridgeStatus);
+		const enable = await screen.findByRole('button', { name: 'Enable bypass' });
+		await vi.waitFor(() => expect(enable).toBeEnabled());
+		await fireEvent.click(enable);
+		await fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+
+		expect(await screen.findByText(M5)).toBeInTheDocument();
+		expect(screen.queryByText(/the request failed/)).not.toBeInTheDocument();
 	});
 });

@@ -854,6 +854,9 @@ main() {
     ui_banner "$(installer_version)"
     # Root first, so a non-root run stops before preflight.sh starts asking.
     require_root
+    # NET-287: a br0 NetTap didn't make stops a bridge install before anything changes
+    # (dependencies restart Docker, kernel tuning applies sysctls); setup-bridge.sh checks again.
+    [[ "$SKIP_BRIDGE" == "true" ]] || refuse_foreign_bridge br0
     step_nic_preflight
     # preflight.sh runs as a child and can only hand its choices back via .env.
     load_env "${PROJECT_ROOT}/.env"

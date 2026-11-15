@@ -40,6 +40,11 @@ from services.capture_config import (
     write_env_file_if_changed,
 )
 from services.bridge_capture_adapter import BridgeCaptureAdapter
+from services.bridge_manager import (
+    BRIDGE_ALIAS,
+    bridge_is_nettaps,
+    foreign_bridge_message,
+)
 from services.capture_manager import CaptureManager, CaptureMode
 from services.capture_mode_stub import CaptureManagerStub
 from services.dhcp_gateway import DhcpGatewayManager
@@ -258,8 +263,25 @@ async def handle_setup_configure(request: web.Request) -> web.Response:
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
 
+    # NET-287: bridge-mode capture would sniff a br0 NetTap didn't make (its VMs' traffic)
+    if capture_mode == "bridge":
+        refusal = await _foreign_br0_refusal()
+        if refusal is not None:
+            return refusal
+
     async with ensure_capture_lock(request.app):
         return await _apply_configuration(request.app, body, capture_cfg)
+
+
+async def _foreign_br0_refusal() -> web.Response | None:
+    """NET-287: 400 when a br0 exists that NetTap didn't make, else None."""
+    if await HostNetOps().ip_json(
+        "link", "show", "dev", BRIDGE_NAME
+    ) and not await bridge_is_nettaps(BRIDGE_NAME):
+        return web.json_response(
+            {"error": foreign_bridge_message(BRIDGE_NAME)}, status=400
+        )
+    return None
 
 
 async def _gateway_conflict(current: DhcpGatewayManager, config: CaptureConfig):
@@ -334,8 +356,29 @@ async def _nic_in_use_problem(current, interface: str) -> str | None:
     host = HostNetOps()
     # Fail closed: ip_json returns [] on failure, which would read as "no route,
     # no address" and pass any NIC (it did on Ubuntu while AppArmor blocked nsenter)
-    if not await host.ip_json("link", "show", "dev", interface):
+    # OLD CODE: if not await host.ip_json("link", "show", "dev", interface): (NET-287: its master is read now)
+    links = await host.ip_json("link", "show", "dev", interface)
+    if not links:
         return "was not found, or NetTap couldn't read its network settings"
+    # NET-287: a port of a bridge or bond (its address lives on the master) is in use,
+    # unless the master is NetTap's own bridge
+    master = links[0].get("master") if isinstance(links[0], dict) else None
+    if master and not (master == BRIDGE_NAME and await bridge_is_nettaps(master)):
+        # OLD CODE START — NET-287 review: no way out for NetTap's own br0 that lost its alias
+        # return (
+        #     f"is already part of {master}, which this machine set up for something else"
+        # )
+        # OLD CODE END
+        problem = (
+            f"is already part of {master}, which this machine set up for something else"
+        )
+        if master == BRIDGE_NAME:
+            # Create hits this guard before M1, so it needs M1's way out
+            problem += (
+                f". If you're sure NetTap made it, run sudo ip link set {master} "
+                f"alias {BRIDGE_ALIAS} on this machine and try again"
+            )
+        return problem
     routes = await host.ip_json("-4", "route", "show", "default")
     addrs = [str(cidr.ip) for _, cidr in await host.inet_addrs(interface)]
     if any(isinstance(r, dict) and r.get("dev") == interface for r in routes):
@@ -492,6 +535,12 @@ async def handle_bridge_preview(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "WAN and LAN interfaces must be different"}, status=400
         )
+
+    # NET-287: say so at Verify, not at Go Live, when a bridge NetTap didn't make has the name
+    # (moved into _foreign_br0_refusal, shared with configure)
+    refusal = await _foreign_br0_refusal()
+    if refusal is not None:
+        return refusal
 
     current = request.app.get("capture_manager")
     for iface in (wan, lan):

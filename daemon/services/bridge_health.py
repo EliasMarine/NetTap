@@ -27,6 +27,8 @@ from collections import deque
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 
+from services.bridge_manager import BRIDGE_ALIAS, bridge_is_nettaps
+
 logger = logging.getLogger("nettap.services.bridge_health")
 
 # Path constants for Linux sysfs/proc/run
@@ -36,6 +38,14 @@ logger = logging.getLogger("nettap.services.bridge_health")
 # points to the correct path for reading host bridge/NIC state.
 _SYSFS_NET = os.environ.get("HOST_SYS_NET", "/sys/class/net")
 _BYPASS_STATE_FILE = "/tmp/nettap-bypass-active"
+
+
+def foreign_bypass_message(bridge: str) -> str:
+    return (
+        f"The network bridge {bridge} wasn't set up by NetTap, so bypass mode can't change it. "
+        f"If you're sure NetTap made it, run sudo ip link set {bridge} alias {BRIDGE_ALIAS} "
+        "on this machine and try again. Nothing was changed."
+    )
 
 
 def _promisc_warning(state: str, iface: str, rc: int, err: str) -> str:
@@ -372,6 +382,9 @@ class BridgeHealthMonitor:
         Returns:
             Dict confirming bypass activation with timestamp.
         """
+        refusal = await self._foreign_bridge_refusal()
+        if refusal is not None:
+            return refusal
         self._bypass_active = True
         self._write_bypass_file(active=True)
 
@@ -416,6 +429,9 @@ class BridgeHealthMonitor:
         Returns:
             Dict confirming bypass deactivation with timestamp.
         """
+        refusal = await self._foreign_bridge_refusal()
+        if refusal is not None:
+            return refusal
         self._bypass_active = False
         self._write_bypass_file(active=False)
 
@@ -457,6 +473,17 @@ class BridgeHealthMonitor:
     # -------------------------------------------------------------------
     # Internal helpers
     # -------------------------------------------------------------------
+
+    async def _foreign_bridge_refusal(self) -> dict | None:
+        """NET-287: bypass never touches a bridge NetTap didn't make (or its ports)."""
+        if not os.path.isdir(os.path.join(_SYSFS_NET, self._bridge_name)):
+            return None  # no bridge: unchanged behaviour
+        if await bridge_is_nettaps(self._bridge_name):
+            return None
+        return {
+            "error": foreign_bypass_message(self._bridge_name),
+            "bypass_active": self._bypass_active,
+        }
 
     async def _run_nsenter(self, *args: str) -> tuple[int, str, str]:
         """Run a command in the host network namespace (network_mode: host)."""

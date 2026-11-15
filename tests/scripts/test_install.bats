@@ -310,3 +310,46 @@ _strict() {
         grep -qE "^ +(-[a-z]\|)?${opt}\)" "$INSTALL_SH" || { echo "header option not parsed: $opt"; false; }
     done
 }
+
+# ---------------------------------------------------------------------------
+# NET-287: a bridge install on a host whose br0 NetTap didn't make stops before anything
+# changes (dependencies restart Docker, kernel tuning applies sysctls). install.sh is
+# sourced, every step stubbed to echo its name; ip says every link exists, br0 too.
+# ---------------------------------------------------------------------------
+_install_main() {
+    local dir; dir="$(mktemp -d)"
+    mkdir -p "$dir/sys"
+    [[ "${2:-}" == "own" ]] && { mkdir -p "$dir/sys/br0"; echo nettap > "$dir/sys/br0/ifalias"; }
+    run bash -c "set -euo pipefail; source '$INSTALL_SH'
+        NETTAP_UI=plain; PROJECT_ROOT='$dir'
+        NETTAP_SYS_NET='$dir/sys'; NETTAP_BRIDGE_NETPLAN='$dir/none.yaml'
+        ip() { return 0; }
+        require_root() { :; }; ui_banner() { :; }; installer_version() { :; }; ui_before_we_start() { :; }
+        for s in step_nic_preflight step_preflight step_dependencies step_kernel_tuning step_bridge \
+                 step_malcolm step_systemd step_mdns step_firewall step_verify; do
+            eval \"\$s() { echo STEP \$s; }\"
+        done
+        $1
+        main"
+    rm -rf "$dir"
+}
+
+@test "NET-287: a br0 NetTap didn't make stops a bridge install before any step" {
+    _install_main "SKIP_BRIDGE=false"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"br0 already exists and NetTap didn't make it"* ]] || false
+    [[ "$output" != *"STEP"* ]] || false
+}
+
+@test "NET-287: --skip-bridge installs past a br0 NetTap didn't make" {
+    _install_main "SKIP_BRIDGE=true"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"STEP step_dependencies"* ]] || false
+    [[ "$output" == *"STEP step_verify"* ]] || false
+}
+
+@test "NET-287: NetTap's own br0 doesn't stop a bridge install" {
+    _install_main "SKIP_BRIDGE=false" own
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"STEP step_bridge"* ]] || false
+}
