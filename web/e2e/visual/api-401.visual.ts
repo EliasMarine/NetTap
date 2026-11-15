@@ -52,6 +52,31 @@ test.describe('without a session (NET-197)', () => {
 		expect(await res?.json()).toEqual({ error: 'Open this from NetTap itself.' });
 		expect(new URL(page.url()).pathname).toBe(API);
 	});
+
+	// NET-197 for a click: a link on a NetTap page opens an /api address with no session and gets the
+	// sign-in page, never the route's JSON. Sec-Fetch-Dest: document and Sec-Fetch-Site: same-origin are
+	// what a real click sends, so a typed address can't cover it. The first-run side of NET-280 is in
+	// firstrun.visual.ts: this test runs after setup, so it passes with or without that fix.
+	test('a same-origin link to an /api address goes to /login', async ({ page }) => {
+		await page.goto('/login');
+		await page.evaluate((href) => {
+			const link = document.createElement('a');
+			link.id = 'api-link';
+			link.href = href;
+			link.textContent = 'api';
+			document.body.appendChild(link);
+		}, API);
+		// The page starts on /login, so watch for the redirect itself: the final URL alone proves nothing
+		const [loginPage] = await Promise.all([
+			page.waitForResponse((r) => new URL(r.url()).pathname === '/login' && r.request().redirectedFrom() !== null),
+			page.click('#api-link'),
+		]);
+		const apiRequest = loginPage.request().redirectedFrom();
+		expect(apiRequest).not.toBeNull();
+		expect(new URL(apiRequest!.url()).pathname).toBe(API);
+		expect((await apiRequest!.response())!.status()).toBe(302);
+		expect(new URL(page.url()).pathname).toBe('/login');
+	});
 });
 
 test('with a session the same call reaches the daemon (NET-197)', async ({ page }) => {

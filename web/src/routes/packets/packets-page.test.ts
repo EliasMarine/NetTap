@@ -166,6 +166,8 @@ describe('Packet analysis: first visit', () => {
 			),
 		);
 		expect(within(builder()).getByText(/with no filter, so every packet/)).toBeInTheDocument();
+		// NET-283: nothing follows with no filter, so the line ends in a full stop, not a colon
+		expect(within(builder()).getByText(/with no filter, so every packet/)).toHaveTextContent(/every packet\.$/);
 
 		await fireEvent.click(within(builder()).getByRole('button', { name: 'Name lookups' }));
 		expect(within(builder()).getByRole('button', { name: 'Name lookups' })).toHaveAttribute('aria-pressed', 'true');

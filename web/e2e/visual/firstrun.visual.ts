@@ -60,6 +60,17 @@ test('/go-live goes to /setup before the first admin, even with the code typed',
 	expectNoConsoleErrors(errors, { route: '/setup', mode: 'empty' });
 });
 
+// NET-280: the setup cookie opens the wizard's API, never the bridge. This runs before the first admin
+// exists, so it fails if /api/bridge is on the hook's first-run list (the `app` instance has an admin already).
+test('a bridge call before the first admin gets 401 even with the setup code typed', async ({ page }) => {
+	await typeSetupCode(page);
+	for (const call of ['create', 'teardown', 'bypass/enable', 'bypass/disable']) {
+		const res = await page.request.post(`/api/bridge/${call}`, { headers: { Origin: FIRSTRUN_URL } });
+		expect(res.status(), call).toBe(401);
+		expect(await res.json(), call).toEqual({ error: 'Sign in first' });
+	}
+});
+
 // Before the code, Welcome asks only for it and calls no API (NET-229), so there is nothing to wait for
 test('/setup asks for the setup code first', async ({ page }, testInfo) => {
 	await setMode('empty');
