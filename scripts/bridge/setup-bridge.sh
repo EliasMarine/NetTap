@@ -86,9 +86,17 @@ require_root
 if [[ "$MODE_TEARDOWN" == "true" ]]; then
     log "Tearing down bridge ${BRIDGE_NAME}..."
 
+    # NET-287: never touch a bridge NetTap didn't make, nor its ports. Checked before the
+    # netplan file goes, because that file is part of the evidence.
+    if ip link show "$BRIDGE_NAME" &>/dev/null && ! nettap_bridge_owned "$BRIDGE_NAME"; then
+        error "${BRIDGE_NAME} wasn't made by NetTap, so --teardown won't touch it or its ports. If you're sure NetTap made it, run 'sudo ip link set ${BRIDGE_NAME} alias nettap' and try again. Nothing was changed."
+    fi
+
     # Remove interfaces from bridge
     for iface in "$WAN_INTERFACE" "$LAN_INTERFACE"; do
-        if ip link show "$iface" &>/dev/null; then
+        # OLD CODE: if ip link show "$iface" &>/dev/null; then (NET-287: released a port of any bridge or bond)
+        master_link="${NETTAP_SYS_NET}/${iface}/master"
+        if [[ -L "$master_link" && "$(readlink -f "$master_link")" == */"$BRIDGE_NAME" ]]; then
             run ip link set "$iface" promisc off 2>/dev/null || true
             run ip link set "$iface" nomaster 2>/dev/null || true
             run ip link set "$iface" down 2>/dev/null || true
@@ -167,6 +175,10 @@ preflight_checks() {
         fi
         check_interface_exists "$MGMT_INTERFACE"
     fi
+
+    # NET-287: a bridge with our name that NetTap didn't make is never adopted. After this,
+    # a NIC already in br0 below is a port of NetTap's own bridge.
+    refuse_foreign_bridge "$BRIDGE_NAME"
 
     # Check neither NIC is already in a different bridge
     for iface in "$WAN_INTERFACE" "$LAN_INTERFACE"; do
@@ -327,12 +339,25 @@ enable_cleanup_trap
 log "Creating bridge ${BRIDGE_NAME} with ${WAN_INTERFACE} (WAN) and ${LAN_INTERFACE} (LAN)"
 
 # ---- Create bridge ----
+bridge_created="false"
 if ! ip link show "$BRIDGE_NAME" &>/dev/null; then
     run ip link add name "$BRIDGE_NAME" type bridge
     push_cleanup "ip link del $BRIDGE_NAME 2>/dev/null"
+    bridge_created="true"
     log "Bridge ${BRIDGE_NAME} created"
 else
+    # NET-287: checked again where it would be adopted (it may have appeared since preflight)
+    refuse_foreign_bridge "$BRIDGE_NAME"
     log "Bridge ${BRIDGE_NAME} already exists, reconfiguring"
+fi
+
+# NET-287: mark the bridge NetTap's before any setting or port changes. Handled here, not by
+# the cleanup trap: the ERR trap doesn't reach into run() (no errtrace).
+if ! run ip link set "$BRIDGE_NAME" alias nettap; then
+    if [[ "$bridge_created" == "true" ]]; then
+        run ip link del "$BRIDGE_NAME" || true
+    fi
+    error "Could not mark ${BRIDGE_NAME} as NetTap's bridge, so nothing else was changed."
 fi
 
 # ---- Disable STP — we are a transparent inline tap, not a switch ----

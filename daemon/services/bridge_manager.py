@@ -16,17 +16,98 @@ Architecture decisions:
 """
 
 import asyncio
+import json
 import logging
 import os
+import re
 import textwrap
 from pathlib import Path
 
-from services.dhcp_gateway_host import replace_symlink
+from services.dhcp_gateway_host import HostNetOps, replace_symlink
 
 logger = logging.getLogger("nettap.services.bridge_manager")
 
 # Host sysfs for reading NIC state (container mounts host /sys at /host/sys)
 _SYSFS_NET = os.environ.get("HOST_SYS_NET", "/host/sys/class/net")
+
+# NET-287: NetTap labels every bridge it makes with this alias (ip link set <br> alias nettap)
+BRIDGE_ALIAS = "nettap"
+NETPLAN_FILE = "10-nettap-bridge.yaml"
+
+
+def foreign_bridge_message(bridge: str) -> str:
+    """Why NetTap won't touch a bridge it didn't make (create, preview, readiness)."""
+    return (
+        f"This machine already has a network bridge called {bridge} that NetTap didn't set up. "
+        "A virtual machine or another network setting may depend on it, so NetTap won't change it. "
+        "Use mirror mode, or remove that bridge first. If you're sure NetTap made it, run "
+        f"sudo ip link set {bridge} alias {BRIDGE_ALIAS} on this machine and try again. "
+        "Nothing was changed."
+    )
+
+
+def foreign_teardown_message(bridge: str) -> str:
+    return (
+        f"The network bridge {bridge} wasn't set up by NetTap, so NetTap won't remove it. "
+        f"If you're sure NetTap made it, run sudo ip link set {bridge} alias {BRIDGE_ALIAS} "
+        "on this machine and try again. Nothing was changed."
+    )
+
+
+async def bridge_is_nettaps(bridge_name: str, netplan_dir: str | None = None) -> bool:
+    """NET-287: True when NetTap made this bridge, so it may change or remove it.
+
+    Its alias is "nettap" (set at creation), or, for a bridge netplan rebuilt from
+    NetTap's file at boot (no alias yet), the legacy evidence holds. ``netplan_dir``
+    None means HOST_NETPLAN_DIR.
+    """
+    bridge_dir = os.path.join(_SYSFS_NET, bridge_name)
+    if BridgeManager._read_sysfs(os.path.join(bridge_dir, "ifalias")) == BRIDGE_ALIAS:
+        return True
+    if netplan_dir is None:
+        netplan_dir = os.environ.get("HOST_NETPLAN_DIR", "")
+    if not netplan_dir:
+        return False  # evidence unavailable; joining '' would read the working dir
+    try:
+        ports = os.listdir(os.path.join(bridge_dir, "brif"))
+        text = Path(netplan_dir, NETPLAN_FILE).read_text()
+    except OSError:
+        return False
+    # Every port must be one NetTap's file lists; an empty bridge proves nothing
+    if not ports or not all(
+        re.search(rf"^\s*- {re.escape(port)}\s*$", text, re.M) for port in ports
+    ):
+        return False
+    return await _bridge_is_layer2_only(bridge_name)
+
+
+async def _bridge_is_layer2_only(bridge_name: str) -> bool:
+    """No global address and no default route on the bridge, read so a failure refuses.
+
+    NetTap's bridge is pure layer 2; a host uplink bridge carries the host's address.
+    """
+    host = HostNetOps()
+    links = await host.ip_json("addr", "show", "dev", bridge_name)
+    if not links or not isinstance(links[0], dict):
+        return False  # couldn't read the bridge's addresses
+    addrs = links[0].get("addr_info", [])
+    if any(isinstance(a, dict) and a.get("scope") == "global" for a in addrs):
+        return False
+    # Not ip_json: it returns [] for a failed command or bad JSON too
+    for family in ("-4", "-6"):
+        rc, out, _ = await host._run_nsenter(
+            "ip", "-j", family, "route", "show", "default", "dev", bridge_name
+        )
+        if rc != 0:
+            return False
+        try:
+            # Some iproute2 builds print nothing at all for an empty list
+            routes = json.loads(out) if out.strip() else []
+        except ValueError:
+            return False
+        if routes != []:
+            return False
+    return True
 
 
 class BridgeManager:
@@ -118,10 +199,17 @@ class BridgeManager:
         bridge_existed = rc == 0
 
         if bridge_existed:
+            # NET-287: never adopt a bridge NetTap didn't make
+            if not await bridge_is_nettaps(self._bridge_name, self._netplan_dir):
+                return self._create_failed(
+                    wan, lan, [foreign_bridge_message(self._bridge_name)]
+                )
             logger.info("Bridge %s already exists — reconfiguring", self._bridge_name)
-            # Remove existing member interfaces before re-adding
-            for iface in (wan, lan):
-                await self._run_nsenter("ip", "link", "set", iface, "nomaster")
+            # OLD CODE START — NET-287: ports were released before the bridge was marked as NetTap's
+            # # Remove existing member interfaces before re-adding
+            # for iface in (wan, lan):
+            #     await self._run_nsenter("ip", "link", "set", iface, "nomaster")
+            # OLD CODE END
         else:
             # Create bridge
             rc, _, err = await self._run_nsenter(
@@ -139,6 +227,16 @@ class BridgeManager:
                     "warnings": warnings,
                     "persistence_files": [],
                 }
+
+        # NET-287: label the bridge NetTap's before any port or setting changes
+        alias_error = await self._mark_as_nettaps(created=not bridge_existed)
+        if alias_error:
+            return self._create_failed(wan, lan, [alias_error])
+
+        if bridge_existed:
+            # Remove existing member interfaces before re-adding
+            for iface in (wan, lan):
+                await self._run_nsenter("ip", "link", "set", iface, "nomaster")
 
         # Tune bridge parameters — STP off, fast forwarding
         bridge_params = [
@@ -289,6 +387,13 @@ class BridgeManager:
                 "errors": [f"Bridge {self._bridge_name} does not exist"],
             }
 
+        # NET-287: never remove a bridge NetTap didn't make, nor release its ports
+        if not await bridge_is_nettaps(self._bridge_name, self._netplan_dir):
+            return {
+                "torn_down": False,
+                "errors": [foreign_teardown_message(self._bridge_name)],
+            }
+
         # Get member interfaces before teardown
         rc, stdout, _ = await self._run_nsenter(
             "ip", "-j", "link", "show", "master", self._bridge_name
@@ -342,13 +447,53 @@ class BridgeManager:
         # 1. Bridge exists
         bridge_dir = os.path.join(_SYSFS_NET, self._bridge_name)
         bridge_exists = os.path.exists(bridge_dir)
+        # NET-287: a bridge NetTap didn't make isn't NetTap's bridge (Go Live showed it as live)
+        foreign = bridge_exists and not await bridge_is_nettaps(
+            self._bridge_name, self._netplan_dir
+        )
+        # OLD CODE START — NET-287: any bridge with this name passed
+        # checks.append(
+        #     {
+        #         "name": "bridge_exists",
+        #         "passed": bridge_exists,
+        #         "detail": f"Bridge {self._bridge_name} {'found' if bridge_exists else 'not found'} in sysfs",
+        #     }
+        # )
+        #
+        # if not bridge_exists:
+        # OLD CODE END
         checks.append(
             {
                 "name": "bridge_exists",
-                "passed": bridge_exists,
-                "detail": f"Bridge {self._bridge_name} {'found' if bridge_exists else 'not found'} in sysfs",
+                "passed": bridge_exists and not foreign,
+                "detail": foreign_bridge_message(self._bridge_name)
+                if foreign
+                else f"Bridge {self._bridge_name} {'found' if bridge_exists else 'not found'} in sysfs",
             }
         )
+
+        if foreign:
+            for name in (
+                "bridge_up",
+                "wan_carrier",
+                "lan_carrier",
+                "wan_promisc",
+                "lan_promisc",
+                "stp_disabled",
+                "netfilter_disabled",
+            ):
+                checks.append(
+                    {
+                        "name": name,
+                        "passed": False,
+                        "detail": "NetTap's bridge does not exist",
+                    }
+                )
+            return {
+                "ready": False,
+                "checks": checks,
+                "message": foreign_bridge_message(self._bridge_name),
+            }
 
         if not bridge_exists:
             # All remaining checks are N/A without a bridge
@@ -495,6 +640,36 @@ class BridgeManager:
     # -------------------------------------------------------------------
     # Internal helpers
     # -------------------------------------------------------------------
+
+    async def _mark_as_nettaps(self, created: bool) -> str | None:
+        """Set the bridge's "nettap" alias (NET-287); the error, or None when set.
+
+        Runs before any port or setting changes. On failure a bridge this call
+        created (still empty) is deleted again, so nothing is left changed.
+        """
+        rc, _, err = await self._run_nsenter(
+            "ip", "link", "set", self._bridge_name, "alias", BRIDGE_ALIAS
+        )
+        if rc == 0:
+            return None
+        if created:
+            await self._run_nsenter("ip", "link", "del", self._bridge_name)
+        return (
+            f"Could not mark {self._bridge_name} as NetTap's bridge: "
+            f"{err.strip() or f'exit code {rc}'}. Nothing was changed."
+        )
+
+    def _create_failed(self, wan: str, lan: str, errors: list[str]) -> dict:
+        return {
+            "created": False,
+            "bridge_name": self._bridge_name,
+            "wan": wan,
+            "lan": lan,
+            "state": "error",
+            "errors": errors,
+            "warnings": [],
+            "persistence_files": [],
+        }
 
     async def _run_nsenter(self, *args: str) -> tuple[int, str, str]:
         """Run a command in the host network namespace (network_mode: host).

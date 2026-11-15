@@ -40,6 +40,7 @@ from services.capture_config import (
     write_env_file_if_changed,
 )
 from services.bridge_capture_adapter import BridgeCaptureAdapter
+from services.bridge_manager import bridge_is_nettaps, foreign_bridge_message
 from services.capture_manager import CaptureManager, CaptureMode
 from services.capture_mode_stub import CaptureManagerStub
 from services.dhcp_gateway import DhcpGatewayManager
@@ -334,8 +335,17 @@ async def _nic_in_use_problem(current, interface: str) -> str | None:
     host = HostNetOps()
     # Fail closed: ip_json returns [] on failure, which would read as "no route,
     # no address" and pass any NIC (it did on Ubuntu while AppArmor blocked nsenter)
-    if not await host.ip_json("link", "show", "dev", interface):
+    # OLD CODE: if not await host.ip_json("link", "show", "dev", interface): (NET-287: its master is read now)
+    links = await host.ip_json("link", "show", "dev", interface)
+    if not links:
         return "was not found, or NetTap couldn't read its network settings"
+    # NET-287: a port of a bridge or bond (its address lives on the master) is in use,
+    # unless the master is NetTap's own bridge
+    master = links[0].get("master") if isinstance(links[0], dict) else None
+    if master and not (master == BRIDGE_NAME and await bridge_is_nettaps(master)):
+        return (
+            f"is already part of {master}, which this machine set up for something else"
+        )
     routes = await host.ip_json("-4", "route", "show", "default")
     addrs = [str(cidr.ip) for _, cidr in await host.inet_addrs(interface)]
     if any(isinstance(r, dict) and r.get("dev") == interface for r in routes):
@@ -491,6 +501,14 @@ async def handle_bridge_preview(request: web.Request) -> web.Response:
     if wan == lan:
         return web.json_response(
             {"error": "WAN and LAN interfaces must be different"}, status=400
+        )
+
+    # NET-287: say so at Verify, not at Go Live, when a bridge NetTap didn't make has the name
+    if await HostNetOps().ip_json(
+        "link", "show", "dev", BRIDGE_NAME
+    ) and not await bridge_is_nettaps(BRIDGE_NAME):
+        return web.json_response(
+            {"error": foreign_bridge_message(BRIDGE_NAME)}, status=400
         )
 
     current = request.app.get("capture_manager")

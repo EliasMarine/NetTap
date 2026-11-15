@@ -394,4 +394,42 @@ describe('bridge API client', () => {
 			expect(result.errors).toContain('Failed to reach teardown endpoint');
 		});
 	});
+
+	// -- NET-287: a refusal for a bridge NetTap didn't set up reaches the caller -------
+
+	describe('daemon refusals', () => {
+		const CREATE = "This machine already has a network bridge called br0 that NetTap didn't set up.";
+		const TEARDOWN = "The network bridge br0 wasn't set up by NetTap, so NetTap won't remove it.";
+		const BYPASS = "The network bridge br0 wasn't set up by NetTap, so bypass mode can't change it.";
+
+		it('createBridge keeps the daemon errors[] from a 400', async () => {
+			mockFetchSuccess({ created: false, errors: [CREATE] }, 400);
+
+			const result = await createBridge('enp2s0', 'enp3s0');
+
+			expect(result.created).toBe(false);
+			expect(result.errors).toEqual([CREATE]);
+		});
+
+		it('teardownBridge keeps the daemon errors[] from a 400', async () => {
+			mockFetchSuccess({ torn_down: false, errors: [TEARDOWN] }, 400);
+
+			const result = await teardownBridge();
+
+			expect(result).toEqual({ torn_down: false, errors: [TEARDOWN] });
+		});
+
+		it('enableBypass and disableBypass keep the error from a 409', async () => {
+			mockFetchSuccess({ error: BYPASS, bypass_active: false }, 409);
+
+			expect(await enableBypass()).toEqual({ result: 'error', error: BYPASS });
+			expect(await disableBypass()).toEqual({ result: 'error', error: BYPASS });
+		});
+
+		it('enableBypass shows no exception text from a 500', async () => {
+			mockFetchSuccess({ error: 'Failed to enable bypass mode: Traceback …' }, 500);
+
+			expect(await enableBypass()).toEqual({ result: 'error', error: undefined });
+		});
+	});
 });

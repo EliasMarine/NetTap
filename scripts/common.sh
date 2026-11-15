@@ -259,6 +259,49 @@ check_command() {
 }
 
 # ---------------------------------------------------------------------------
+# Bridge ownership (NET-287) — never adopt or delete a br0 NetTap didn't make
+# ---------------------------------------------------------------------------
+# Plain variables, not env: bats points them at a temp dir after sourcing this file.
+NETTAP_SYS_NET="/sys/class/net"
+NETTAP_BRIDGE_NETPLAN="/etc/netplan/10-nettap-bridge.yaml"
+
+# True when NetTap made bridge $1: its alias is "nettap" (set when NetTap creates it), or,
+# for a bridge netplan rebuilt from NetTap's file at boot, it has ports, every one is listed
+# in that file, and it carries no global address and no default route. Read-only.
+nettap_bridge_owned() {
+    local br="${1:-br0}" dir port out family
+    dir="${NETTAP_SYS_NET}/${br}"
+    [[ "$(cat "${dir}/ifalias" 2>/dev/null)" == "nettap" ]] && return 0
+    [[ -r "$NETTAP_BRIDGE_NETPLAN" ]] || return 1
+    local -a ports=()
+    for port in "${dir}/brif/"*; do
+        [[ -e "$port" || -L "$port" ]] && ports+=("$(basename "$port")")
+    done
+    (( ${#ports[@]} > 0 )) || return 1
+    for port in "${ports[@]}"; do
+        # Not a pipe: under pipefail, grep -q quitting early can fail it
+        grep -qxF -- "- ${port}" < <(sed 's/^[[:space:]]*//' "$NETTAP_BRIDGE_NETPLAN") || return 1
+    done
+    # Pure layer 2: a host uplink bridge carries the host's address. A failed read refuses.
+    out=$(ip -o addr show dev "$br" scope global) || return 1
+    [[ -z "$out" ]] || return 1
+    for family in -4 -6; do
+        out=$(ip -j "$family" route show default dev "$br") || return 1
+        out="${out//[[:space:]]/}"
+        [[ -z "$out" || "$out" == "[]" ]] || return 1
+    done
+    return 0
+}
+
+# Stop (nothing changed) when bridge $1 exists and NetTap didn't make it.
+refuse_foreign_bridge() {
+    local br="${1:-br0}"
+    ip link show "$br" &>/dev/null || return 0
+    nettap_bridge_owned "$br" && return 0
+    error "A bridge called ${br} already exists and NetTap didn't make it. A virtual machine host or another network setting may use it, so NetTap won't change it. Use mirror mode (install with --skip-bridge), or remove that bridge first. If you're sure NetTap made it, run 'sudo ip link set ${br} alias nettap' and try again. Nothing was changed."
+}
+
+# ---------------------------------------------------------------------------
 # Environment loading
 # ---------------------------------------------------------------------------
 # Load .env file if present

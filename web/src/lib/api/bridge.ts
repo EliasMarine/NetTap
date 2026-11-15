@@ -141,13 +141,17 @@ export async function getBridgeStats(): Promise<BridgeStats> {
 /**
  * Enable bypass mode (stops capture, passes traffic through directly).
  */
-export async function enableBypass(): Promise<{ result: string }> {
+// NET-287: `error` carries the daemon's 409 reason (a bridge NetTap didn't set up)
+export async function enableBypass(): Promise<{ result: string; error?: string }> {
 	const res = await fetch('/api/bridge/bypass/enable', {
 		method: 'POST',
 	});
 
 	if (!res.ok) {
-		return { result: 'error' };
+		// OLD CODE: return { result: 'error' }; (NET-287: the daemon's reason was dropped)
+		// Only the 409 refusal's reason: a 500 carries exception text
+		const data = res.status === 409 ? await res.json().catch(() => ({})) : {};
+		return { result: 'error', error: data.error };
 	}
 
 	return res.json();
@@ -156,13 +160,17 @@ export async function enableBypass(): Promise<{ result: string }> {
 /**
  * Disable bypass mode (resumes normal bridge capture).
  */
-export async function disableBypass(): Promise<{ result: string }> {
+// NET-287: `error` carries the daemon's 409 reason (a bridge NetTap didn't set up)
+export async function disableBypass(): Promise<{ result: string; error?: string }> {
 	const res = await fetch('/api/bridge/bypass/disable', {
 		method: 'POST',
 	});
 
 	if (!res.ok) {
-		return { result: 'error' };
+		// OLD CODE: return { result: 'error' }; (NET-287: the daemon's reason was dropped)
+		// Only the 409 refusal's reason: a 500 carries exception text
+		const data = res.status === 409 ? await res.json().catch(() => ({})) : {};
+		return { result: 'error', error: data.error };
 	}
 
 	return res.json();
@@ -244,7 +252,8 @@ export async function createBridge(wan: string, lan: string): Promise<BridgeCrea
 			wan,
 			lan,
 			state: 'error',
-			errors: [data.error || `HTTP ${res.status}`],
+			// OLD CODE: errors: [data.error || `HTTP ${res.status}`], (NET-287: the daemon's errors[] was dropped)
+			errors: data.errors?.length ? data.errors : [data.error || `HTTP ${res.status}`],
 			warnings: [],
 			persistence_files: [],
 		};
@@ -276,7 +285,14 @@ export async function teardownBridge(): Promise<BridgeTeardownResult> {
 	const res = await fetch('/api/bridge/teardown', { method: 'POST' });
 
 	if (!res.ok) {
-		return { torn_down: false, errors: ['Failed to reach teardown endpoint'] };
+		// OLD CODE: return { torn_down: false, errors: ['Failed to reach teardown endpoint'] }; (NET-287)
+		const data = await res.json().catch(() => ({}));
+		return {
+			torn_down: false,
+			errors: data.errors?.length
+				? data.errors
+				: [data.error || 'Failed to reach teardown endpoint'],
+		};
 	}
 
 	return res.json();

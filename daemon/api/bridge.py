@@ -95,7 +95,8 @@ async def handle_bypass_enable(request: web.Request) -> web.Response:
     monitor: BridgeHealthMonitor = request.app["bridge_health"]
     try:
         result = await monitor.trigger_bypass()
-        return web.json_response(result)
+        # OLD CODE: return web.json_response(result) (NET-287: a refusal on a foreign bridge is a 409)
+        return web.json_response(result, status=409 if "error" in result else 200)
     except Exception as exc:
         logger.exception("Error enabling bypass mode")
         return web.json_response(
@@ -112,7 +113,8 @@ async def handle_bypass_disable(request: web.Request) -> web.Response:
     monitor: BridgeHealthMonitor = request.app["bridge_health"]
     try:
         result = await monitor.disable_bypass()
-        return web.json_response(result)
+        # OLD CODE: return web.json_response(result) (NET-287: a refusal on a foreign bridge is a 409)
+        return web.json_response(result, status=409 if "error" in result else 200)
     except Exception as exc:
         logger.exception("Error disabling bypass mode")
         return web.json_response(

@@ -13,9 +13,13 @@ load 'helpers/setup'
 _dry_run_bridge() {
     local mock="${TEST_TMPDIR}/mock" bin="${TEST_TMPDIR}/bin"
     mkdir -p "${mock}/bridge" "$bin"
+    # NET-287: no br0 yet. The shared mock answers 0 to every "ip link show", which now
+    # reads as a br0 NetTap didn't make, and the script stops.
     cat > "${mock}/common.sh" <<WRAPPER
 source '${REPO_ROOT}/scripts/common.sh'
 source '${BATS_TEST_DIRNAME}/helpers/mocks.bash'
+eval "_mock_ip() \$(declare -f ip | tail -n +2)"
+ip() { [[ "\$*" == "link show br0" ]] && return 1; _mock_ip "\$@"; }
 WRAPPER
     sed "s|source \"\${SCRIPT_DIR}/../common.sh\"|source '${mock}/common.sh'|" \
         "${REPO_ROOT}/scripts/bridge/setup-bridge.sh" > "${mock}/bridge/setup-bridge.sh"

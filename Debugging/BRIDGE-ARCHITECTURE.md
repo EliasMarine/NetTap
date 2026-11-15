@@ -160,6 +160,28 @@ ip link set eth0 promisc on
 ip link set eth1 promisc on
 ```
 
+#### Bridge ownership (added 2026-11-14, NET-287)
+
+Hosts that run VMs or containers (KVM, LXD, netplan bridges, Unraid) often already have a `br0`, usually carrying the host's uplink port and IP address. NetTap never adopts, retunes, tears down or bypasses a `br0` it didn't make. A `br0` counts as NetTap's if either of these holds:
+
+1. **Its alias is `nettap`** (`/sys/class/net/br0/ifalias`). Both the daemon (`BridgeManager.create_bridge`) and `setup-bridge.sh` set it with `ip link set br0 alias nettap` straight after `ip link add`, and on every reconfigure, before any port or setting changes. If setting it fails, a bridge made in that same call is deleted again and nothing else runs. The alias is a runtime marker, so it is gone after a reboot.
+2. **The legacy fallback**, for a bridge netplan rebuilt from NetTap's file at boot (no alias yet). All three must hold:
+   - the bridge has at least one port, and every port appears as a `- <port>` line in `10-nettap-bridge.yaml`;
+   - it carries no global IPv4 or IPv6 address (`ip -j addr show dev br0`; if that read fails, the bridge is refused);
+   - there is no IPv4 or IPv6 default route through it. The routes are read so that a failed command or unreadable output refuses the bridge.
+
+   NetTap's bridge is pure layer 2: the management address lives on another interface.
+
+Shared code: `bridge_is_nettaps()` in `daemon/services/bridge_manager.py`, and `nettap_bridge_owned` / `refuse_foreign_bridge` in `scripts/common.sh`.
+
+The checks run at these points:
+- `install.sh`, unless `--skip-bridge`, before preflight, dependencies or kernel tuning;
+- `setup-bridge.sh` preflight, its reconfigure branch, and `--teardown` (which now releases only WAN/LAN ports whose master is `br0`);
+- the daemon's create, teardown, readiness, bypass enable/disable and the wizard's bridge preview;
+- the NIC in-use guard, which treats a port of any bridge or bond as in use unless the master is NetTap's own `br0`.
+
+**Recovery:** a `br0` that NetTap did make but that fails both rules can be marked by hand with `sudo ip link set br0 alias nettap`. Examples: a runtime-only bridge from before NET-287, a daemon without the netplan mount, NetTap's own bridge left empty after a NIC rename, or extra ports added later.
+
 #### Phase 3: NIC Performance Tuning
 
 ```bash
@@ -665,6 +687,7 @@ Verifies:
 | **Capture started before its interface existed** (Chain 33, NET-211 #9) | `docker/.env` defaults `PCAP_IFACE=br0`. Before the wizard (with `--skip-bridge`), and in bridge mode until Go Live builds br0 (after the wizard restarted capture), Zeek and Suricata started on a missing interface and supervisord gave up (FATAL) while the containers stayed "running"; nothing restarted them after Go Live | `nettap-capture-env.sh` waits until every `PCAP_IFACE` interface exists in `/sys/class/net` (host network), logging `waiting for capture interface X` once; a TERM trap keeps `docker stop` immediate | **FIXED** (fix/installer-two-port-and-setup-guide-bugs), device check pending |
 | **Go Live guessed the bridge ports** (Chain 33, NET-211 #3) | Go Live read the wizard's ports from the browser's localStorage, or fell back to eth0/eth1; another browser, or a cleared one, offered the wrong ports | `GET /api/capture/mode` returns `wan_interface`/`lan_interface` when capture-mode.conf's saved mode is bridge; without them Go Live sends the owner back to the wizard instead of offering Create bridge. In mirror mode Go Live says there is no step to do | **FIXED** (fix/installer-two-port-and-setup-guide-bugs), device check pending |
 | **zeek-live held NET_ADMIN and SYS_NICE, with no memory limit** (NET-220) | Zeek's binaries carried `cap_net_admin,cap_net_raw=eip` (re-applied by Malcolm's entrypoint at every start), and nothing limited its memory (peak 1.66 GiB on the G11, with 0.8 GiB in swap) | `Dockerfile.zeek-live` edits the entrypoint's setcap lines and sets `cap_net_raw=eip` (the build fails if Malcolm changes them); compose `cap_add: [NET_RAW]`, `mem_limit: 3g`. Proven on the G11: an af_packet socket, TPACKET_V3 ring, promisc membership and fanout work with NET_RAW alone. `no-new-privileges` is NOT set: it blocks the file-capability gain Zeek captures with (uid 1000, tested). Residual: Zeek still holds NET_RAW and host networking | **FIXED**, pending device run (`deploy-capture-hardening.sh`) |
+| **Any `br0` was treated as NetTap's** (NET-287) | On a VM/LXD/KVM, netplan-bridge or Unraid host with its own `br0`, bridge setup moved WAN/LAN into it and set STP/ageing/forward-delay 0 plus the bridge-nf sysctls. Teardown removed every port and deleted it, and bypass flipped promisc on its ports. The NIC guard passed a port of a bridge or bond, and Go Live could show "live" on someone else's bridge | Ownership rule in §2 (alias `nettap`, or the legacy netplan fallback with ports listed, no host address and no default route). It is checked in the daemon, `setup-bridge.sh`, `install.sh`, the bridge preview, readiness and bypass. **Recovery** for a NetTap-made bridge that fails both rules: `sudo ip link set br0 alias nettap`. Residual: a foreign, address-less `br0` whose every port is in a leftover NetTap netplan file still passes | **FIXED** (fix/foreign-br0-guard-net287), pending device run |
 | **PCAP Search "Download filtered" failed past one capture file** (NET-189) | mergecap wrote the merged window to nettap-tshark's 100 MB `/tmp`; two ~107 MB files filled it (500, file left behind). Files were picked by mtime, so a window straddling a file's start left that file out (200 with half the packets) | Streams packet analysis's window cut (`FILTER_DOWNLOAD_JOB`) with files from the capture index; a failed index entry or a window over 400k packets / 64 files / 3 GB is refused before any byte; a failure after the first byte aborts the response. PCAP Search has a download-only window | **FIXED**, pending device run |
 
 ### Design Gaps
