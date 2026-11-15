@@ -142,10 +142,17 @@
 {/snippet}
 {#snippet summaryCell(t: Row)}
 	{@const href = data ? packetsHref(t, data.mac) : null}
+	<!-- OLD CODE START — NET-284: no wrapper, so the row ran 727 px wide; and the hint's own leading space was trimmed by Svelte, so it ran into the link
 	<p class="line">{summary(t)}</p>
 	{#if href}<a class="small" {href} aria-label="See the captured packets from {formatTime(t.ts)}">See the captured packets</a><span class="dim small"> Shows which server sent what, if the capture still holds the packets.</span>{/if}
+	OLD CODE END -->
+	<div class="saw">
+		<p class="line">{summary(t)}</p>
+		{#if href}<a class="small" {href} aria-label="See the captured packets from {formatTime(t.ts)}">See the captured packets</a> <span class="dim small">Shows which server sent what, if the capture still holds the packets.</span>{/if}
+	</div>
 {/snippet}
-{#snippet messagesCell(t: Row)}<span class="mono">{messagesText(t)}</span>{/snippet}
+<!-- OLD CODE: {#snippet messagesCell(t: Row)}<span class="mono">{messagesText(t)}</span>{/snippet} (NET-284: a nowrap list kept the table wider than its card) -->
+{#snippet messagesCell(t: Row)}<span class="mono msgs">{messagesText(t)}</span>{/snippet}
 {#snippet requestedCell(t: Row)}{#if t.requested_ip}<IPAddress ip={t.requested_ip} />{:else}<span class="dim">—</span>{/if}{/snippet}
 {#snippet assignedCell(t: Row)}
 	{#if t.assigned_ip}<IPAddress ip={t.assigned_ip} />{:else}<span class="dim">—</span>{/if}
@@ -224,6 +231,9 @@
 	.pick .field { flex: 1 1 var(--sp-8); min-width: 0; }
 	.pick .form-actions { margin: 0; }
 	.line { margin: 0; color: var(--text-1); }
+	/* Table cells don't wrap (system.css); the sentence and the message list do, so the table fits its card at 1440 px (as on Packet analysis) */
+	.saw { white-space: normal; min-width: 12rem; overflow-wrap: anywhere; }
+	.msgs { white-space: normal; }
 	.small { font-size: var(--text-sm); }
 	.notice { margin-bottom: var(--sp-3); }
 </style>

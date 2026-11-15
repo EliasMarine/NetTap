@@ -114,6 +114,15 @@ describe('DHCP lease timeline page', () => {
 		expect(screen.getAllByText('for 24 h')).toHaveLength(2);
 	});
 
+	// NET-284: Svelte trims the space at the start of an element, so the hint must not carry its own
+	it('puts a space between the packets link and the hint that follows it', async () => {
+		goTo(`?mac=${DHCP_MAC}`);
+		stubDaemon(DHCP_TIMELINE);
+		render(Page);
+		const [link] = await screen.findAllByRole('link', { name: /^See the captured packets from \d/ });
+		expect(link.parentElement).toHaveTextContent('See the captured packets Shows which server sent what, if the capture still holds the packets.');
+	});
+
 	it('says why a device can have no DHCP messages', async () => {
 		goTo(`?mac=${DHCP_MAC}`);
 		stubDaemon(DHCP_TIMELINE_EMPTY);
