@@ -1,6 +1,7 @@
 # NetTap Deployment Issues — Source of Truth
 
-> **Last updated:** 2026-11-14 (Chain 35: the 2026-11-14 bug triage. A fresh install's first daily index could get a replica a single node can't place (NET-252); validate-hardware.sh run on its own stopped at the first warning (NET-253). Same day, outside the install path: another site could start /api work with the owner's cookie (NET-257), the MAC device page had no bandwidth series (NET-260), DNS Lookup read "ns" as a type (NET-268). Second round: extreme years gave a 500 (NET-275), Go Live opened before the first admin (NET-277), Packets ran a URL search on open (NET-276).)
+> **Last updated:** 2026-11-14 (Chain 36: any `br0` was treated as NetTap's; setup, teardown and bypass now refuse a bridge NetTap didn't make (NET-287, #296, verified on the G11). Chain 35, third round: the first-run allow-list became exact requests (NET-280, NET-290), update component names are checked before use (NET-291), the dead compose update path is gone (NET-288), count charts get whole-number ticks (NET-286), three small UI fixes (NET-283-285).)
+<!-- previous: **Last updated:** 2026-11-14 (Chain 35: the 2026-11-14 bug triage. A fresh install's first daily index could get a replica a single node can't place (NET-252); validate-hardware.sh run on its own stopped at the first warning (NET-253). Same day, outside the install path: another site could start /api work with the owner's cookie (NET-257), the MAC device page had no bandwidth series (NET-260), DNS Lookup read "ns" as a type (NET-268). Second round: extreme years gave a 500 (NET-275), Go Live opened before the first admin (NET-277), Packets ran a URL search on open (NET-276).) -->
 <!-- previous: **Last updated:** 2026-11-13 (Chain 34: malcolm-config.sh's generate_auth put the admin password on htpasswd's and python3's command lines and in run's verbose log, and a quote in it broke the python fallback; it now goes on stdin. NET-251, install-time only.) -->
 <!-- previous: **Last updated:** 2026-11-12 (Chain 33: installer and Go Live bugs from the setup guide, NET-244 + NET-211: two-port --skip-bridge --non-interactive, a dry run that wrote, capture started on a missing br0, Go Live guessing ports, and a new uninstall.sh.) -->
 <!-- previous: **Last updated:** 2026-11-12 (Chain 32: a box with no index answered "incomplete" instead of zeros; the daemon now fills in the empty aggregations. NET-182, not yet on the device.) -->
@@ -2036,6 +2037,21 @@ Same branch: a device read stopped at 20,000 LAN sources now writes a `device_ca
 
 The first-run Go Live path can't be shown on a box with an admin; CI's first-run visual job covers it.
 
+### Third round, same day (open Linear bugs)
+
+* **NET-280 (PR #289):** before the first admin existed, the hook let a setup-code holder reach `/api/bridge/*`, including create, teardown and bypass. `FIRST_RUN_PATHS` became `/setup` and `/api/setup`.
+* **NET-290 (PR #295), follow-up from the #289 security review:** `/api/setup` as a prefix still opened `/api/setup/configure`, which restarts capture containers. The hook now opens only the wizard's four exact calls before the Account step (`GET /api/setup/nics`, `GET` and `POST /api/setup/storage`, `POST /api/setup/bridge`), matched as `METHOD path`. The catch-all proxy refuses a `setup` first segment (404), after one extra decode. A missed wizard call shows as a 401 "Sign in first", which fails safe.
+* **NET-283, NET-284, NET-285 (PR #290):** the Packets "All traffic" line ends in a full stop. The DHCP timeline and Changelog tables fit their cards at 1440 px; `system.css` makes every table cell `nowrap`, so long cells now wrap. New visual test `e2e/visual/table-fit.visual.ts`.
+* **NET-288 (PR #291):** the update and rollback code still had a `docker compose -f /opt/nettap/...` path that no box has, and the versions page showed `nettap-web` and `nettap-config` core rows that were always "unknown". The dead path and the `compose_file` parameter are retired; `_scan_core` reports `nettap-daemon` only; `GET /api/system/versions/nettap-config` is 404.
+* **NET-291 (PR #293), filed from the #291 security review:** `rollback()` joined the component name into a path before refusing it, so the answer told an existing path from a missing one, and apply stored any names it was sent in the update history. Rollback now refuses names outside `ROLLBACK_COMPONENTS` before `os.path.join`. Apply returns 400 for a non-object body, more than 16 names (`MAX_APPLY_COMPONENTS`) or a name outside `APPLY_COMPONENTS`. The web proxies refuse a `null` body. A drift test runs the real `check_updates()` so a row the page can send can't be missing from the allow-list.
+* **NET-286 (PR #294):** on /pcap with small counts the y-axis repeated labels ("1, 1, 0, 0, 0"), and a peak of 12 put the label "13" at 12.5. `niceAxis` allowed steps of 0.2, 0.5 and 2.5, which a whole-number formatter rounds. `niceAxis`/`fitAxis(max, ticks, whole)` in `charts/geometry.ts` now picks whole-number steps when every value is a whole number (a peak of 1 gives 0-1, 12 gives 0, 5, 10, 15). Twelve count charts share it; byte charts are unchanged.
+
+**Verification (all passed on the G11, 2026-11-14):**
+* **`deploy-triage-fixes-3-2026-11-14.sh` at `f10eee24` (PR #292):** a signed-out `POST /api/bridge/create` gets 401; the built app has the full-stop plan line; `/tools/dhcp-timeline` and `/changelog` still go to `/login` signed out; a fresh version scan's core rows are `nettap-daemon` only, with `nettap-web` listed once; `nettap-config` is 404.
+* **`deploy-update-names-net291.sh` at `032d306f`:** an existing and a missing rollback path get the same 404 text; a non-object rollback body is 400; 17 names, an unknown name and `null` on apply each get 400, and the update history count stays 0; both routes are 401 signed out.
+* **`deploy-chart-ticks-net286.sh` at `2b38309f`:** the new web image runs; `/pcap` and `/` still go to `/login`.
+* **`deploy-triage-fixes-4-2026-11-14.sh` at `97793a93`:** NET-287 below, and a signed-out `POST /api/setup/configure` gets 401 (NET-290). The first-run list itself can't be shown on a box with an admin; CI's first-run tests cover it.
+
 ---
 
 ## Chain 36: any `br0` was treated as NetTap's
@@ -2044,8 +2060,8 @@ The first-run Go Live path can't be shown on a box with an admin; CI's first-run
 
 | Field | Value |
 |---|---|
-| **PR** | pending (`fix/foreign-br0-guard-net287`) |
-| **Status** | Fixed in code; device run pending |
+| **PR** | #296 (`97793a93`) |
+| **Status** | Fixed; verified on the G11 2026-11-14 |
 | **Severity** | High |
 | **Date** | 2026-11-14 |
 | **Environment** | Any host that already has a `br0`: a VM/LXD/KVM host, a netplan bridge, Unraid |
@@ -2065,7 +2081,9 @@ The first-run Go Live path can't be shown on a box with an admin; CI's first-run
 
 **Recovery:** a NetTap `br0` that fails both rules (left empty after a NIC rename, a runtime-only pre-fix bridge, extra ports added by hand, a daemon without the netplan mount) is refused until `sudo ip link set br0 alias nettap` is run on the host. Every refusal, in the daemon and in the shell scripts, names that command.
 
-**Verification:** daemon 5073 passed; bats 393; vitest 5305; svelte-check 0 errors; shellcheck clean. Each new test failed on the old code first. Not yet run on a box. The G11 runs mirror mode (no br0, its capture NIC has no master), so nothing changes there. A pre-fix bridge-mode N100 rebuilds br0 from the file with no address, so rule 2 passes.
+**Verification:** daemon 5073 passed; bats 393; vitest 5305; svelte-check 0 errors; shellcheck clean. Each new test failed on the old code first. A pre-fix bridge-mode N100 rebuilds br0 from the file with no address, so rule 2 passes (unit-tested; no bridge-mode bench).
+
+**Verification (passed on the G11, 2026-11-14, `97793a93`):** the G11 runs mirror mode, so `scripts/remote/deploy-triage-fixes-4-2026-11-14.sh` adds a temporary empty, down `br0` through the daemon container (no ports, no address) and makes only read-only calls. Unmarked: readiness says `bridge_exists` failed with "didn't set up", the wizard's preview gets 400 naming `alias nettap`, and the installer's `nettap_bridge_owned` says foreign. After `ip link set br0 alias nettap`: readiness passes `bridge_exists`, the preview's 400 is the next check (a missing test NIC), and the shell check says owned. The script removes the bridge on exit; `/sys/class/net/br0` was gone afterwards. It skips the live check if a `br0` already exists, and never calls create, teardown or bypass.
 
 **Key insight:** a well-known interface name (`br0`, `eth0`, `docker0`) is not ownership. Mark what you create, and fail closed on anything you can't prove is yours.
 
@@ -2397,6 +2415,9 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 189. **In a script run with `set -e`, capture a status with `cmd || rc=$?`, not `cmd; rc=$?` (NET-253)** — the second form exits before `rc` is read.
 190. **A time validator must check the range, not only the syntax (NET-275)** — year 1 and year 9999 are valid ISO but overflow later, in slot arithmetic and timezone shifts. Refuse them where the parameter is read, with a 400 that names it.
 191. **A first-run page is only useful if every API it calls is first-run too (NET-277)** — `/go-live` was allowed before the first admin, but its capture-mode call was not, so it rendered an error card. Check the page's calls, not just the page.
+192. **Before the first admin exists, open exact requests, not a path prefix (NET-280, NET-290)** — `/api/setup` as a prefix also opened `/api/setup/configure`, which restarts capture. List each `METHOD /path` the wizard calls before its Account step. A missed one shows as a 401, which fails safe; an extra one is a hole.
+193. **Check a client-sent name against an allow-list before it becomes a path or a stored record (NET-291)** — a refusal after `os.path.join` still told an existing path from a missing one, and a length cap alone still stores attacker-sized strings. Refuse first, with the same answer for every unknown name.
+194. **A well-known interface name is not ownership (NET-287)** — `br0`, `eth0` and `docker0` exist on hosts NetTap didn't set up. Mark what you create (`ip link set br0 alias nettap`, right after `ip link add`) and refuse anything you can't prove is yours, with the command that marks it.
 
 ---
 
@@ -2521,4 +2542,10 @@ These files were touched repeatedly across the 16+ PRs. Check their current stat
 | NET-275 | #283 | Years outside 1970-9998 get 400, not 500; `/api/alerts/categories` and `/api/bandwidth/daily` keep the slot budget | 2026-11-14 |
 | NET-277 | #284 | Go Live before the first admin goes to `/setup`; NET-257's typed-vs-in-app `/api` split pinned in tests | 2026-11-14 |
 | NET-276 | #285 | A Packets search opened from outside NetTap waits for Run; in-app navigation runs it at once | 2026-11-14 |
-| NET-287 | pending | Any `br0` was treated as NetTap's: ownership marker (alias `nettap`) plus a legacy rule; setup, teardown, bypass, preview and install refuse a foreign bridge; NIC guard counts any master (Chain 36) | 2026-11-14 |
+| NET-287 | #296 | Any `br0` was treated as NetTap's: ownership marker (alias `nettap`) plus a legacy rule; setup, teardown, bypass, preview and install refuse a foreign bridge; NIC guard counts any master (Chain 36) | 2026-11-14 |
+| NET-280 | #289 | The bridge API needs a session until the first admin exists | 2026-11-14 |
+| NET-283, NET-284, NET-285 | #290 | Packets plan line ends in a full stop; DHCP timeline and Changelog tables fit their cards at 1440 px | 2026-11-14 |
+| NET-288 | #291 | Dead `/opt/nettap` compose update path retired; versions lists `nettap-daemon` only; `nettap-config` is 404 | 2026-11-14 |
+| NET-291 | #293 | Update component names: rollback refuses before the path join; apply caps at 16 known names; null body refused | 2026-11-14 |
+| NET-286 | #294 | Count charts get whole-number y-axis ticks | 2026-11-14 |
+| NET-290 | #295 | Before the first admin, only the wizard's four exact `/api/setup` calls are open; the catch-all refuses `setup` | 2026-11-14 |

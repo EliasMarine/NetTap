@@ -2,7 +2,7 @@
 
 **Linear:** NET-291
 **Branch:** `fix/update-component-names-net291`
-**Status:** fixed. Deploy: rebuild `nettap-storage-daemon` and `nettap-web` (the web proxies).
+**Status:** done. PR #293 merged (`032d306f`); verified on the G11 with `deploy-update-names-net291.sh` (every check passed: an existing and a missing rollback path get the same 404, a non-object body, 17 names, an unknown name and `null` each get 400, update history unchanged).
 
 ## Problem
 

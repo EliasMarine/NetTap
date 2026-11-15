@@ -2,7 +2,7 @@
 
 **Linear:** NET-288
 **Branch:** `fix/update-compose-path-net288`
-**Status:** fixed, daemon only. Deploy: rebuild `nettap-storage-daemon`.
+**Status:** done. PR #291 merged (`3886583c`); verified on the G11 at `f10eee24` (`deploy-triage-fixes-3-2026-11-14.sh`: a fresh scan's core rows are `nettap-daemon` only, `GET /api/system/versions/nettap-config` is 404).
 
 ## Problem
 

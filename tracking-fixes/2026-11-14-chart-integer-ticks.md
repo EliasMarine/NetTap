@@ -2,7 +2,7 @@
 
 **Linear:** NET-286
 **Branch:** `fix/chart-integer-ticks-net286`
-**Status:** fix in the web app. Needs a web rebuild on the device to show; nothing else to deploy.
+**Status:** done. PR #294 merged (`2b38309f`); deployed to the G11 with `deploy-chart-ticks-net286.sh` (every check passed: the new web image runs, `/pcap` and `/` still go to `/login` signed out). The quiet-range axis itself is for the owner to look at once.
 
 ## Problem
 
