@@ -17,7 +17,8 @@ const DELAY_MS = 12_000;
 
 function event(path: string) {
 	const url = new URL(`https://nettap.local${path}`);
-	return { url, request: new Request(url) };
+	// OLD CODE: return { url, request: new Request(url) }; (NET-290: the handler reads params.path)
+	return { url, params: { path: url.pathname.replace(/^\/api\//, '') }, request: new Request(url) };
 }
 
 /** The daemon answers after `delay` (DELAY_MS) unless the request's signal aborts first. */
@@ -109,7 +110,8 @@ describe('catch-all proxy timeouts with the real daemonFetch', () => {
 	it('lets a 12 s channel test answer through, with its reason', async () => {
 		slowDaemon();
 		const url = new URL('https://nettap.local/api/notifications/channels/ch1/test');
-		const pending = POST({ url, request: new Request(url, { method: 'POST' }) } as never);
+		// OLD CODE: const pending = POST({ url, request: new Request(url, { method: 'POST' }) } as never); (NET-290: params.path is required)
+		const pending = POST({ url, params: { path: 'notifications/channels/ch1/test' }, request: new Request(url, { method: 'POST' }) } as never);
 		await vi.advanceTimersByTimeAsync(DELAY_MS);
 		expect((await pending).status).toBe(200);
 	});
@@ -117,7 +119,8 @@ describe('catch-all proxy timeouts with the real daemonFetch', () => {
 	it('lets a 12 s backup restore answer through (A9: restoring a capture mode restarts capture)', async () => {
 		slowDaemon();
 		const url = new URL('https://nettap.local/api/backup/import?apply_capture=1');
-		const pending = POST({ url, request: new Request(url, { method: 'POST', body: '{}' }) } as never);
+		// OLD CODE: const pending = POST({ url, request: new Request(url, { method: 'POST', body: '{}' }) } as never); (NET-290: params.path is required)
+		const pending = POST({ url, params: { path: 'backup/import' }, request: new Request(url, { method: 'POST', body: '{}' }) } as never);
 		await vi.advanceTimersByTimeAsync(DELAY_MS);
 		expect((await pending).status).toBe(200);
 	});

@@ -71,6 +71,80 @@ test('a bridge call before the first admin gets 401 even with the setup code typ
 	}
 });
 
+// NET-290: before the first admin the setup cookie opens the wizard's four /api/setup calls and nothing else
+// there. configure runs after the Account step, with the new admin's session.
+test('configure and unlisted /api/setup paths get 401 before the first admin, even with the setup code typed', async ({ page }) => {
+	await typeSetupCode(page);
+	for (const [method, url] of [
+		['POST', '/api/setup/configure'],
+		['GET', '/api/setup/other'],
+		['POST', '/api/setup/bridge/preview'],
+	]) {
+		const res = await page.request.fetch(url, { method, headers: { Origin: FIRSTRUN_URL } });
+		expect(res.status(), `${method} ${url}`).toBe(401);
+		expect(await res.json(), `${method} ${url}`).toEqual({ error: 'Sign in first' });
+	}
+});
+
+// Real hook, real routes, fixture daemon: a 200 with its field, so a missing route (404), a wrong method (405)
+// or a refusal can't pass. Without the code each call is turned away first.
+const WIZARD_CALLS = [
+	{ method: 'GET', url: '/api/setup/nics', body: undefined, field: 'source', value: 'daemon' },
+	{ method: 'GET', url: '/api/setup/storage', body: undefined, field: 'source', value: 'daemon' },
+	{
+		method: 'POST',
+		url: '/api/setup/storage',
+		body: { hot_days: 90, warm_days: 180, cold_days: 30, disk_threshold_percent: 80, emergency_threshold_percent: 90 },
+		field: 'saved',
+		value: true,
+	},
+	{
+		method: 'POST',
+		url: '/api/setup/bridge',
+		body: { wan_interface: 'enp1s0', lan_interface: 'enp2s0' },
+		field: 'ready',
+		value: true,
+	},
+] as const;
+
+test('the wizard\'s four /api/setup calls work with the setup code typed and not without it (NET-290)', async ({ page }) => {
+	await setMode('empty');
+	const send = (call: (typeof WIZARD_CALLS)[number]) =>
+		page.request.fetch(call.url, { method: call.method, data: call.body, headers: { Origin: FIRSTRUN_URL } });
+
+	for (const call of WIZARD_CALLS) {
+		const refused = await send(call);
+		expect(refused.status(), `${call.method} ${call.url} without the code`).toBe(401);
+		expect(await refused.json()).toEqual({ error: 'Enter the setup code first.' });
+	}
+
+	await typeSetupCode(page);
+	for (const call of WIZARD_CALLS) {
+		const res = await send(call);
+		expect(res.status(), `${call.method} ${call.url}`).toBe(200);
+		expect((await res.json())[call.field], `${call.method} ${call.url}`).toBe(call.value);
+	}
+
+	// SvelteKit sends a trailing slash to the canonical address (308) before the hook runs, so it is judged there
+	const redirect = await page.request.get('/api/setup/storage/', { maxRedirects: 0 });
+	expect(redirect.status()).toBe(308);
+	expect(new URL(redirect.headers()['location'], FIRSTRUN_URL).pathname).toBe('/api/setup/storage');
+	expect((await page.request.get('/api/setup/storage/')).status()).toBe(200);
+});
+
+// NET-290 review: only /setup itself is a first-run page. SvelteKit strips /__data.json before the hook runs,
+// so the page's own data request still arrives as `/setup`; a route that someone adds under /setup later does not
+// answer before the first admin exists. (The wizard's form actions, /setup?/verifyCode, are walked by typeSetupCode.)
+test('only /setup is open before the first admin: its data request is, /setup/anything is not', async ({ page }) => {
+	const data = await page.request.get('/setup/__data.json');
+	expect(data.status()).toBe(200);
+	expect((await data.json()).type).toBe('data');
+
+	const other = await page.request.get('/setup/anything', { maxRedirects: 0 });
+	expect(other.status()).toBe(302);
+	expect(new URL(other.headers()['location'], FIRSTRUN_URL).pathname).toBe('/setup');
+});
+
 // Before the code, Welcome asks only for it and calls no API (NET-229), so there is nothing to wait for
 test('/setup asks for the setup code first', async ({ page }, testInfo) => {
 	await setMode('empty');

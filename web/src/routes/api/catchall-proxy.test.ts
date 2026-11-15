@@ -12,7 +12,8 @@ const { GET, POST } = await import('./[...path]/+server.js');
 function event(path: string) {
 	const url = new URL(`https://nettap.local${path}`);
 	const controller = new AbortController();
-	return { url, request: new Request(url, { signal: controller.signal }), controller };
+	// OLD CODE: return { url, request: new Request(url, { signal: controller.signal }), controller }; (NET-290: the handler reads params.path)
+	return { url, params: { path: url.pathname.replace(/^\/api\//, '') }, request: new Request(url, { signal: controller.signal }), controller };
 }
 
 describe('API Catch-All Proxy Route ([...path]/+server.ts)', () => {
@@ -91,7 +92,8 @@ describe('API Catch-All Proxy Route ([...path]/+server.ts)', () => {
 	it('posts a packet search with its body, timed and not tied to the browser', async () => {
 		const url = new URL('https://nettap.local/api/packets/search');
 		const body = JSON.stringify({ filter: 'dns', from: '1700000000.25', to: '1700000600', limit: 100 });
-		await POST({ url, request: new Request(url, { method: 'POST', body, headers: { 'Content-Type': 'application/json' } }) } as never);
+		// OLD CODE: await POST({ url, request: new Request(url, { method: 'POST', body, headers: { 'Content-Type': 'application/json' } }) } as never); (NET-290: params.path is required)
+		await POST({ url, params: { path: 'packets/search' }, request: new Request(url, { method: 'POST', body, headers: { 'Content-Type': 'application/json' } }) } as never);
 		const [path, options, timeout] = daemonFetch.mock.calls[0];
 		expect([path, options.method, options.body, timeout]).toEqual(['/api/packets/search', 'POST', body, 55_000]);
 		expect(options.signal).toBeUndefined();

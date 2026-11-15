@@ -66,9 +66,22 @@ const FIRST_RUN_PAGES = ['/setup', '/go-live'];
 // OLD CODE START — NET-280: /api/bridge/* is no longer a first-run path; it is checked as BRIDGE_API below
 // const FIRST_RUN_APIS = ['/api/setup/configure', '/api/bridge/create'];
 // OLD CODE END
-const FIRST_RUN_APIS = ['/api/setup/configure'];
+// OLD CODE START — NET-290: the whole /api/setup prefix was open; only the wizard's exact calls are now
+// const FIRST_RUN_APIS = ['/api/setup/configure'];
+// OLD CODE END
+/** The wizard's calls under /api/setup before the first admin exists: [method, path]. */
+const FIRST_RUN_APIS: [string, string][] = [
+	['GET', '/api/setup/nics'],
+	['GET', '/api/setup/storage'],
+	['POST', '/api/setup/storage'],
+	['POST', '/api/setup/bridge'],
+];
+/** configure runs after the Account step, with the new admin's session: closed until the first admin exists. */
+const CONFIGURE_API: [string, string] = ['POST', '/api/setup/configure'];
 const BRIDGE_API = '/api/bridge/create';
-const FIRST_RUN_PATHS = [...FIRST_RUN_PAGES, ...FIRST_RUN_APIS];
+// OLD CODE START — NET-290 review: only the OLD CODE blocks below still named it; pages and APIs are listed separately
+// const FIRST_RUN_PATHS = [...FIRST_RUN_PAGES, ...FIRST_RUN_APIS.map(([, path]) => path)];
+// OLD CODE END
 
 beforeEach(async () => {
 	dataDir = mkdtempSync(join(tmpdir(), 'nettap-hooks-'));
@@ -110,6 +123,16 @@ describe('first-run routes with a real user store', () => {
 		expect(resolve).toHaveBeenCalledTimes(1);
 	});
 
+	// NET-290 review: only /setup is a first-run page; a route under it needs the admin like any other page
+	it('/setup/anything goes to /setup until the first admin exists, even with the code typed', async () => {
+		await expect(run('/setup/anything')).rejects.toMatchObject({ status: 302, location: '/setup' });
+		await expect(run('/setup/anything', 'GET', undefined, auth.setupToken() ?? '')).rejects.toMatchObject({
+			status: 302,
+			location: '/setup',
+		});
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
 	// OLD CODE START — NET-277: with the code typed Go Live opened, but its capture-mode call got 401
 	// it('/go-live goes to /setup until the code is typed', async () => {
 	// 	await expect(run('/go-live')).rejects.toMatchObject({ status: 302, location: '/setup' });
@@ -133,13 +156,33 @@ describe('first-run routes with a real user store', () => {
 		expect(resolve).not.toHaveBeenCalled();
 	});
 
-	it.each(FIRST_RUN_APIS)('API %s needs the setup cookie when the store does not exist', async (path) => {
-		await expectSetupCodeFirst(run(path, 'POST'));
-		await expectSetupCodeFirst(run(path, 'POST', undefined, 'not-the-token'));
+	// OLD CODE START — NET-290: FIRST_RUN_APIS holds [method, path] pairs now
+	// it.each(FIRST_RUN_APIS)('API %s needs the setup cookie when the store does not exist', async (path) => {
+	// 	await expectSetupCodeFirst(run(path, 'POST'));
+	// 	await expectSetupCodeFirst(run(path, 'POST', undefined, 'not-the-token'));
+	//
+	// 	await run(path, 'POST', undefined, auth.setupToken() ?? '');
+	// 	expect(resolve).toHaveBeenCalledTimes(1);
+	// });
+	// OLD CODE END
+	it.each(FIRST_RUN_APIS)('API %s %s needs the setup cookie when the store does not exist', async (method, path) => {
+		await expectSetupCodeFirst(run(path, method));
+		await expectSetupCodeFirst(run(path, method, undefined, 'not-the-token'));
 
-		await run(path, 'POST', undefined, auth.setupToken() ?? '');
+		await run(path, method, undefined, auth.setupToken() ?? '');
 		expect(resolve).toHaveBeenCalledTimes(1);
 	});
+
+	// NET-290: the setup cookie opens the wizard's four calls and nothing else under /api/setup
+	it.each([CONFIGURE_API, ['GET', '/api/setup/other'], ['POST', '/api/setup/nics'], ['GET', '/api/setup/bridge']])(
+		'API %s %s needs a session before the first admin, even with the setup code typed',
+		async (method, path) => {
+			const code = auth.setupToken() ?? '';
+			await expectUnauthorised(run(path, method, undefined, code));
+			writeStore('{"users":[]}');
+			await expectUnauthorised(run(path, method, undefined, code));
+		}
+	);
 
 	it('a setup cookie stops working once the code is replaced', async () => {
 		const stale = auth.setupToken() ?? '';
@@ -147,7 +190,10 @@ describe('first-run routes with a real user store', () => {
 		// OLD CODE START — NET-280: the bridge is not a first-run API; /api/setup/configure stands in
 		// await expectSetupCodeFirst(run('/api/bridge/create', 'POST', undefined, stale));
 		// OLD CODE END
-		await expectSetupCodeFirst(run('/api/setup/configure', 'POST', undefined, stale));
+		// OLD CODE START — NET-290: configure is closed before the first admin; the wizard's GET nics stands in
+		// await expectSetupCodeFirst(run('/api/setup/configure', 'POST', undefined, stale));
+		// OLD CODE END
+		await expectSetupCodeFirst(run('/api/setup/nics', 'GET', undefined, stale));
 	});
 
 	it('a setup cookie is not a session: after setup it opens nothing', async () => {
@@ -164,9 +210,16 @@ describe('first-run routes with a real user store', () => {
 	// 	expect(resolve).toHaveBeenCalledTimes(1);
 	// });
 	// OLD CODE END
+	// OLD CODE START — NET-290: configure is closed before the first admin; the wizard's GET nics stands in
+	// it('an existing but empty store is still first run', async () => {
+	// 	writeStore('{"users":[]}');
+	// 	await run('/api/setup/configure', 'POST', undefined, auth.setupToken() ?? '');
+	// 	expect(resolve).toHaveBeenCalledTimes(1);
+	// });
+	// OLD CODE END
 	it('an existing but empty store is still first run', async () => {
 		writeStore('{"users":[]}');
-		await run('/api/setup/configure', 'POST', undefined, auth.setupToken() ?? '');
+		await run('/api/setup/nics', 'GET', undefined, auth.setupToken() ?? '');
 		expect(resolve).toHaveBeenCalledTimes(1);
 	});
 
@@ -218,11 +271,21 @@ describe('first-run routes with a real user store', () => {
 		expect(resolve).toHaveBeenCalledTimes(1);
 	});
 
-	it.each(FIRST_RUN_APIS)('API %s needs a session once a user exists', async (path) => {
+	// OLD CODE START — NET-290: FIRST_RUN_APIS holds [method, path] pairs now; configure joins them after setup
+	// it.each(FIRST_RUN_APIS)('API %s needs a session once a user exists', async (path) => {
+	// 	writeStore(ADMIN_STORE);
+	// 	await expectUnauthorised(run(path, 'POST'));
+	//
+	// 	await run(path, 'POST', sessionToken);
+	// 	expect(resolve).toHaveBeenCalledTimes(1);
+	// });
+	// OLD CODE END
+	it.each([...FIRST_RUN_APIS, CONFIGURE_API])('API %s %s needs a session once a user exists', async (method, path) => {
 		writeStore(ADMIN_STORE);
-		await expectUnauthorised(run(path, 'POST'));
+		await expectUnauthorised(run(path, method));
+		await expectUnauthorised(run(path, method, undefined, auth.setupToken() ?? ''));
 
-		await run(path, 'POST', sessionToken);
+		await run(path, method, sessionToken);
 		expect(resolve).toHaveBeenCalledTimes(1);
 	});
 
@@ -247,8 +310,13 @@ describe('first-run routes with a real user store', () => {
 		// 	await expectUnauthorised(run(path, 'POST'));
 		// }
 		// OLD CODE END
-		for (const path of [...FIRST_RUN_APIS, BRIDGE_API]) {
-			await expectUnauthorised(run(path, 'POST'));
+		// OLD CODE START — NET-290: FIRST_RUN_APIS holds [method, path] pairs now
+		// for (const path of [...FIRST_RUN_APIS, BRIDGE_API]) {
+		// 	await expectUnauthorised(run(path, 'POST'));
+		// }
+		// OLD CODE END
+		for (const [method, path] of [...FIRST_RUN_APIS, CONFIGURE_API, ['POST', BRIDGE_API]]) {
+			await expectUnauthorised(run(path, method));
 		}
 	});
 
