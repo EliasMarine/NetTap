@@ -67,10 +67,51 @@ function timeoutFor(path: string): number | undefined {
 	return SLOW_PATH_TIMEOUT_MS[path] ?? SLOW_PREFIX_TIMEOUT_MS.find(([prefix]) => path.startsWith(prefix))?.[1];
 }
 
-async function proxyToDaemon(
-	{ url, request }: { url: URL; request: Request },
-	method: string
-): Promise<Response> {
+// OLD CODE START — NET-290: no params, so a /api/setup path with no route of its own (the wizard's
+// POST /api/setup/bridge, if its web route were removed) went straight to the daemon's real bridge build
+// async function proxyToDaemon(
+// 	{ url, request }: { url: URL; request: Request },
+// 	method: string
+// ): Promise<Response> {
+// OLD CODE END
+// OLD CODE START — NET-290 review: `params` was optional, so a caller that left it out skipped the /api/setup guard below
+// async function proxyToDaemon(
+// 	{ url, request, params }: { url: URL; request: Request; params?: { path?: string } },
+// 	method: string
+// ): Promise<Response> {
+// OLD CODE END
+/** `params.path` is required: the /api/setup guard reads it, so a call without it must not compile. */
+type CatchAllEvent = Pick<RequestEvent<{ path: string }>, 'url' | 'request' | 'params'>;
+
+/**
+ * NET-290: the daemon's /api/setup/* includes a real bridge build. The first real segment of the matched
+ * path is `setup`, however it is spelled: leading empty or punctuation-only segments (`//`, `;`), another
+ * round of percent-decoding (`%2573`) and any case. aiohttp 404s most of these today; this does not rely on it.
+ */
+function isSetupPath(rest: string): boolean {
+	let decoded = rest;
+	try {
+		decoded = decodeURIComponent(rest);
+	} catch {
+		// a malformed escape: judge the once-decoded path as it is
+	}
+	return decoded.split('/').find((segment) => /\w/.test(segment))?.toLowerCase() === 'setup';
+}
+
+async function proxyToDaemon({ url, request, params }: CatchAllEvent, method: string): Promise<Response> {
+	// NET-290: every call the wizard makes under /api/setup has its own route file, so one that reaches
+	// here has none. `params.path` is the matched rest-parameter, already percent-decoded once;
+	// `url.pathname` is not (`/api/%73etup/...`), and aiohttp decodes it again when it routes, except `%2F`,
+	// which it keeps encoded.
+	// OLD CODE: const rest = params?.path ?? ''; (NET-290 review: a missing params skipped the guard)
+	// OLD CODE START — NET-290 review: only the exact lowercase first segment; `//setup`, `;/setup`, `Setup`, `%2573etup` got through
+	// const rest = params.path;
+	// if (rest === 'setup' || rest.startsWith('setup/')) {
+	// OLD CODE END
+	if (isSetupPath(params.path)) {
+		return json({ error: 'Not found' }, { status: 404 });
+	}
+
 	const path = url.pathname;
 	const query = url.search;
 	const daemonPath = `${path}${query}`;
@@ -130,7 +171,13 @@ async function proxyToDaemon(
 	return json(data, { status: res.status, headers: cacheControl ? { 'Cache-Control': cacheControl } : undefined });
 }
 
-export const GET = async (event: RequestEvent) => proxyToDaemon(event, 'GET');
-export const POST = async (event: RequestEvent) => proxyToDaemon(event, 'POST');
-export const PUT = async (event: RequestEvent) => proxyToDaemon(event, 'PUT');
-export const DELETE = async (event: RequestEvent) => proxyToDaemon(event, 'DELETE');
+// OLD CODE START — NET-290 review: the handlers took the default RequestEvent, whose params are all optional
+// export const GET = async (event: RequestEvent) => proxyToDaemon(event, 'GET');
+// export const POST = async (event: RequestEvent) => proxyToDaemon(event, 'POST');
+// export const PUT = async (event: RequestEvent) => proxyToDaemon(event, 'PUT');
+// export const DELETE = async (event: RequestEvent) => proxyToDaemon(event, 'DELETE');
+// OLD CODE END
+export const GET = async (event: RequestEvent<{ path: string }>) => proxyToDaemon(event, 'GET');
+export const POST = async (event: RequestEvent<{ path: string }>) => proxyToDaemon(event, 'POST');
+export const PUT = async (event: RequestEvent<{ path: string }>) => proxyToDaemon(event, 'PUT');
+export const DELETE = async (event: RequestEvent<{ path: string }>) => proxyToDaemon(event, 'DELETE');

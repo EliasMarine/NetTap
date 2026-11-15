@@ -17,7 +17,8 @@ const PICTURE = '/api/devices/registry/AA:BB:CC:DD:EE:FF/picture?v=0123456789abc
 
 function event(path: string) {
 	const url = new URL(`https://nettap.local${path}`);
-	return { url, request: new Request(url) };
+	// OLD CODE: return { url, request: new Request(url) }; (NET-290: the handler reads params.path)
+	return { url, params: { path: url.pathname.replace(/^\/api\//, '') }, request: new Request(url) };
 }
 
 function daemonAnswers(response: Response) {

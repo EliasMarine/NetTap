@@ -88,3 +88,27 @@ test('with a session the same call reaches the daemon (NET-197)', async ({ page 
 	expect(res.redirected).toBe(false);
 	expect(res.contentType).toContain('application/json');
 });
+
+// NET-290: the catch-all never forwards /api/setup/*, through the real router, which decodes %73 (and %2F in
+// a segment) before it matches. A path with no route of its own reaches the catch-all; the guard answers it.
+// The body is compared, not just the status: without the guard the fixture daemon also answers 404, but
+// with "No fixture for ...", so only the guard's own { error: 'Not found' } proves the daemon was not asked.
+test('an /api/setup path with no route of its own answers 404 from the guard, not the daemon (NET-290)', async ({ page }) => {
+	await setMode('empty');
+	for (const path of [
+		'/api/setup/does-not-exist',
+		'/api/%73etup/does-not-exist',
+		'/api/%73etup/bridge/preview',
+		'/api/setup%2Fbridge/preview',
+		// other spellings of the same first segment (review): empty and punctuation-only segments, case, double encoding
+		'/api//setup/does-not-exist',
+		'/api/%2Fsetup/does-not-exist',
+		'/api/;/setup/does-not-exist',
+		'/api/Setup/does-not-exist',
+		'/api/%2573etup/does-not-exist',
+	]) {
+		const res = await page.request.get(path);
+		expect(res.status(), path).toBe(404);
+		expect(await res.json(), path).toEqual({ error: 'Not found' });
+	}
+});
