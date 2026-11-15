@@ -262,7 +262,8 @@
 				NetTap will read
 				{#if plan}<b>{plural(plan.read.length, 'capture file')}</b> ({clockTime(preview.from, false)} to {clockTime(preview.to, false)}, {formatBytes(plan.bytes)}){:else}the capture files from {clockTime(preview.from, false)} to {clockTime(preview.to, false)}{/if}
 				{#if plan?.unindexed}and up to {plan.unindexed.toLocaleString('en-GB')} more not indexed yet, if {plan.unindexed === 1 ? 'it holds' : 'they hold'} packets from this window,{/if}
-				with {filter ? 'this filter:' : 'no filter, so every packet:'}
+				<!-- OLD CODE: with {filter ? 'this filter:' : 'no filter, so every packet:'} (NET-283: with no filter nothing follows, so a colon left the line hanging) -->
+				with {filter ? 'this filter:' : 'no filter, so every packet.'}
 			</p>
 			{#if filter}<code class="filter">{filter}</code>{/if}
 			{#if override !== null}<p class="field-help">You wrote this filter. Changing a choice above writes it again.</p>{/if}
