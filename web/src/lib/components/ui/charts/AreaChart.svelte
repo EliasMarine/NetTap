@@ -74,7 +74,10 @@
 	const n = $derived(Math.max(0, ...series.map((s) => s.points.length)));
 	const ts = $derived(series.find((s) => s.points.length === n)?.points.map((p) => p.t) ?? []);
 	const peak = $derived(Math.max(0, ...series.flatMap((s) => s.points.map((p) => p.v)).filter(Number.isFinite)));
-	const axis = $derived(bytes ? fitByteAxis(peak) : fitAxis(peak));
+	// OLD CODE: const axis = $derived(bytes ? fitByteAxis(peak) : fitAxis(peak)); (NET-286: counts got ticks of 0.2 or 2.5, which labels rounded)
+	// every value a whole number (a count): the ticks are whole numbers too
+	const whole = $derived(series.every((s) => s.points.every((p) => !Number.isFinite(p.v) || Number.isInteger(p.v))));
+	const axis = $derived(bytes ? fitByteAxis(peak) : fitAxis(peak, 5, whole));
 	// "Nov 4, 04:00 PM" needs more room than "21:00": space labels by the longest, at tipBox's 6.2 px a character
 	const labelGap = $derived(Math.max(64, Math.max(0, ...ts.map((t) => formatX(t).length)) * 6.2 + 16));
 	const every = $derived(labelStep(n, iw, labelGap));
