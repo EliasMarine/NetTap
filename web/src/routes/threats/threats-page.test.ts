@@ -305,6 +305,20 @@ describe('Threats page — drill-downs and the investigation layout', () => {
 		expectNoNestedInteractive(container);
 	});
 
+	it('leaves a DNS row plain when its name has no domain page (Zeek writes non-ASCII as \\xNN)', async () => {
+		const odd = 'caf\\xc3\\xa9-kq3z8wxv1m7tbn5r6yhp.com';
+		stubDaemon({
+			'/api/threats/report': { ...REPORT, failed_checks: [], incomplete_checks: [], dns_anomalies: { ...DNS, dga_suspects: [{ domain: odd, entropy: 4.1, query_count: 2, assessment: '' }] } },
+			'/api/threats/intel': INTEL,
+		});
+		render(ThreatsPage);
+		const table = await screen.findByRole('table', { name: 'DNS anomalies' });
+		expect(screen.queryByRole('button', { name: `Open DGA suspect ${odd}: why it was listed` })).not.toBeInTheDocument();
+		expect(table).toHaveTextContent(odd);
+		// the other rows still open
+		expect(screen.getByRole('button', { name: 'Open NXDOMAIN spike 192.168.1.116: why it was listed' })).toBeInTheDocument();
+	});
+
 	it('lays the investigation sections out apart from the todo, and breaks an IPv6 address only after a colon', async () => {
 		const v6 = '2001:0db8:85a3:0000:0000:8a2e:0370:7334';
 		const investigation = {

@@ -203,6 +203,8 @@
 	<Card class="c-12" title="Why NetTap lists this device" sub="From the lookups read for this page · {words}">
 		{#if !data}
 			{@render lookupState('the explanation')}
+		{:else if data.lookups === 0}
+			<CardState state="empty" icon="dns" title="No lookups from {ip} in the {words}" message="NetTap lists a device when more than 40% of more than 50 lookups fail. Try a longer range." />
 		{:else}
 			<div class="story">
 				{#each why as line, i (i)}<p>{line}</p>{/each}

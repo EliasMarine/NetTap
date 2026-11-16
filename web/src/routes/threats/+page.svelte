@@ -42,7 +42,8 @@
 	import { ipHref } from '$lib/stores/lan';
 	import { formatTime } from '$lib/utils/time';
 	// OLD CODE: import { DRILL_RANGES, rangeWindow, startRange } from '$lib/utils/drilldown'; (NET-238: fmt, SCAN_CAP)
-	import { DRILL_RANGES, fmt, rangeWindow, SCAN_CAP, startRange } from '$lib/utils/drilldown';
+	// OLD CODE: import { DRILL_RANGES, fmt, rangeWindow, SCAN_CAP, startRange } from '$lib/utils/drilldown'; (isHostName: a DNS row links only a host name)
+	import { DRILL_RANGES, fmt, isHostName, rangeWindow, SCAN_CAP, startRange } from '$lib/utils/drilldown';
 	// NET-228 (audit B5): "nothing needs attention" carries the pipeline's current state
 	// OLD CODE: import { getSystemHealth, nothingFound, type SystemHealth } from '$api/system'; (review L7)
 	// OLD CODE: import { nothingFound } from '$api/system'; (NET-242: and the page-level pipeline line)
@@ -276,8 +277,8 @@
 		signalValue: number;
 		queries: number;
 		queriesText: string;
-		/** Why it was listed: the domain page in finding mode, or the device's failed lookups */
-		href: string;
+		/** Why it was listed: the domain page in finding mode, or the device's failed lookups; null for a name with no domain page */
+		href: string | null;
 	}
 	// OLD CODE START — the rows opened nothing; each now links to why it was listed
 	// let dnsRows = $derived<DnsRow[]>([
@@ -300,12 +301,13 @@
 		...(dnsAnomalies.dga_suspects ?? []).slice(0, 5).map((d, i) => ({
 			key: `dga-${i}`, kind: 'DGA suspect', name: d.domain, signal: `H=${d.entropy}`, signalValue: d.entropy,
 			queries: d.query_count, queriesText: formatNumber(d.query_count),
-			href: findingHref(d.domain, { range: selectedRange }),
+			// Zeek writes non-ASCII bytes as \xNN, which no domain page can take
+			href: isHostName(d.domain) ? findingHref(d.domain, { range: selectedRange }) : null,
 		})),
 		...(dnsAnomalies.tunnel_suspects ?? []).slice(0, 5).map((t, i) => ({
 			key: `tunnel-${i}`, kind: 'DNS tunnelling', name: t.domain, signal: `${t.subdomain_length} chars`, signalValue: t.subdomain_length,
 			queries: t.query_count, queriesText: formatNumber(t.query_count),
-			href: findingHref(t.domain, { range: selectedRange }),
+			href: isHostName(t.domain) ? findingHref(t.domain, { range: selectedRange }) : null,
 		})),
 		...(dnsAnomalies.nxdomain_spikes ?? []).slice(0, 5).map((nx, i) => ({
 			key: `nx-${i}`, kind: 'NXDOMAIN spike', name: nx.source_ip, signal: `${Math.round(nx.nxdomain_ratio * 100)}% failed`,
@@ -854,7 +856,8 @@
 					rows={dnsRows}
 					ariaLabel="DNS anomalies"
 					rowKey={(r) => r.key}
-					onrowactivate={(r) => goto(r.href)}
+					onrowactivate={(r) => r.href && goto(r.href)}
+					rowActivatable={(r) => r.href !== null}
 					rowLabel={(r) => `Open ${r.kind} ${r.name}: why it was listed`}
 				/>
 			{:else}

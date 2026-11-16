@@ -116,10 +116,22 @@ describe('Failed lookups page', () => {
 		await vi.waitFor(() => expect(kpi('Lookups')).toHaveTextContent('0'));
 		expect(within(card('Lookups over time')).getByText('No lookups from 192.168.1.80 in the last 24 hours')).toBeInTheDocument();
 		expect(within(card('Names that failed')).getByText('No failed lookups from 192.168.1.80 in the last 24 hours')).toBeInTheDocument();
+		// no lookups: an empty state, not "All 0 names that failed were read."
+		const why = card('Why NetTap lists this device');
+		expect(within(why).getByText('No lookups from 192.168.1.80 in the last 24 hours')).toBeInTheDocument();
+		expect(why).not.toHaveTextContent('names that failed were read');
+		expect(within(why).queryByText('What to do')).not.toBeInTheDocument();
 		vi.unstubAllGlobals();
 		stubDaemon(undefined);
 		goTo('?range=7d');
 		await vi.waitFor(() => expect(screen.getAllByText('Invalid IP address: x').length).toBeGreaterThan(0));
+	});
+
+	it("says when the page's window doesn't meet the check's rule", async () => {
+		goTo();
+		stubDaemon({ ...FAILED_LOOKUPS, lookups: 40, failed: 30, timeline: [] });
+		render(Page);
+		await vi.waitFor(() => expect(card('Why NetTap lists this device')).toHaveTextContent("In this window that isn't met, so the check wouldn't list this device for it."));
 	});
 
 	it('says when the device is excluded in Settings', async () => {

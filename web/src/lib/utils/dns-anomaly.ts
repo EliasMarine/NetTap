@@ -38,6 +38,8 @@ function lookupLine(dns: DomainSummary['dns']): string {
 	if (failedCount(dns) === dns.lookups) {
 		return `Every one of its ${lookupsWord(dns.lookups)} from ${devices} in this window came back as “no such name” (NXDOMAIN), the pattern malware's generated names leave.`;
 	}
+	// not every lookup failed with NXDOMAIN, but none answered (SERVFAIL, or REFUSED from a DNS filter)
+	if (dns.addresses === 0) return `None of its ${lookupsWord(dns.lookups)} from ${devices} in this window returned an address.`;
 	const answered = dns.addresses === null ? 'too many addresses to count' : `${fmt(dns.addresses)} ${dns.addresses === 1 ? 'address' : 'addresses'}`;
 	return `It resolves: ${lookupsWord(dns.lookups)} from ${devices} in this window, answered with ${answered}.`;
 }
@@ -115,10 +117,15 @@ function namesLine(f: FailedLookups): string[] {
 	];
 }
 
+/** The NXDOMAIN check's rule (threat_detection.py analyze_dns_anomalies): more than 40% of more than 50 lookups failed. */
+const meetsRule = (f: FailedLookups) => f.lookups > 50 && f.failed / f.lookups > 0.4;
+
 /** Why the NXDOMAIN check listed the device, stating only what was measured. */
 export function failedWhy(f: FailedLookups, who: string, words: string): string[] {
 	return [
 		`${who} made ${lookupsWord(f.lookups)} in the ${words}; ${fmt(f.failed)} of them${f.lookups > 0 ? ` (${pct(f.failed, f.lookups)})` : ''} came back as “no such name” (NXDOMAIN). NetTap lists a device when more than 40% of more than 50 lookups fail.`,
+		// the page's window can differ from the Threats scan that listed it
+		...(meetsRule(f) ? [] : ["In this window that isn't met, so the check wouldn't list this device for it."]),
 		...namesLine(f),
 	];
 }

@@ -73,6 +73,11 @@ describe('dgaWhy', () => {
 		expect(why[2]).toMatch(/Every one of its 3 lookups from at least 1 device .*\(NXDOMAIN\)/);
 	});
 
+	it('says no lookup returned an address when some failed another way (SERVFAIL, a filter\'s REFUSED)', () => {
+		const dnsReply = dns({ lookups: 5, addresses: 0, rcodes: [{ rcode: 'NXDOMAIN', lookups: 3 }, { rcode: 'SERVFAIL', lookups: 2 }] });
+		expect(dgaWhy(DGA, dnsReply)[2]).toBe('None of its 5 lookups from 1 device in this window returned an address.');
+	});
+
 	it('says when nothing looked it up and when answers are too many to count', () => {
 		expect(dgaWhy(DGA, dns({ lookups: 0 }))[2]).toBe('No device looked it up in this window.');
 		expect(dgaWhy(DGA, dns({ addresses: null }))[2]).toMatch(/too many addresses to count/);
@@ -119,6 +124,15 @@ describe('failedWhy', () => {
 		expect(why[1]).toBe('All 364 failures were for one name, lb._dns-sd._udp.0.1.168.192.in-addr.arpa.');
 		expect(why[2]).toBe(KIND_WORDS.service_discovery.meaning);
 		expect(why).toHaveLength(3);
+	});
+
+	it("says when this window doesn't meet the rule the Threats scan listed it by", () => {
+		const NOT_MET = "In this window that isn't met, so the check wouldn't list this device for it.";
+		expect(failedWhy(failures(), 'x', 'w')).not.toContain(NOT_MET);
+		// too few lookups, and too small a share
+		expect(failedWhy(failures({ lookups: 50, failed: 40 }), 'x', 'w')[1]).toBe(NOT_MET);
+		expect(failedWhy(failures({ lookups: 827, failed: 300 }), 'x', 'w')[1]).toBe(NOT_MET);
+		expect(failedWhy(failures({ lookups: 0, failed: 0 }), 'x', 'w')[1]).toBe(NOT_MET);
 	});
 
 	it('makes no claim about every name when the read was capped', () => {

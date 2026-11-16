@@ -206,6 +206,8 @@
 	<Card class="c-8" title="What this means" sub="From the figures on this page · {words}">
 		{#if !data}
 			{@render pairState('the explanation')}
+		{:else if data.connections === 0}
+			<CardState state="empty" icon="connections" title={emptyTitle} message="NetTap needs at least 10 calls to judge a schedule. Try a longer range." />
 		{:else}
 			<div class="story">
 				{#each story as line, i (i)}<p>{line}</p>{/each}

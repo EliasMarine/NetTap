@@ -143,7 +143,12 @@ describe('Beaconing pair page', () => {
 		render(Page);
 		await vi.waitFor(() => expect(kpi('Calls')).toHaveTextContent('0'));
 		expect(within(card('Calls over time')).getByText('No calls from 192.168.1.42 to 203.0.113.45:8080 in the last 24 hours')).toBeInTheDocument();
-		expect(card('What this means')).toHaveTextContent('NetTap needs at least 10 calls to judge a schedule');
+		// OLD CODE: expect(card('What this means')).toHaveTextContent('NetTap needs at least 10 calls to judge a schedule'); (review: no calls is an empty state, not a story)
+		const means = card('What this means');
+		expect(within(means).getByText('No calls from 192.168.1.42 to 203.0.113.45:8080 in the last 24 hours')).toBeInTheDocument();
+		expect(within(means).getByText('NetTap needs at least 10 calls to judge a schedule. Try a longer range.')).toBeInTheDocument();
+		expect(within(means).queryByText('What to do')).not.toBeInTheDocument();
+		expect(means).not.toHaveTextContent('0 times');
 	});
 
 	it("shows the daemon's reason with a retry when the pair fails", async () => {
