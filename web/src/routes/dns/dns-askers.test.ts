@@ -111,6 +111,10 @@ describe('DomainAskers card', () => {
 	it('shows loading, an error with a retry, a stale answer, an empty and an incomplete list', async () => {
 		const { rerender } = render(DomainAskers, { ...props, askers: null, loading: true });
 		expect(screen.getByText('Loading the devices that looked up a.example')).toBeInTheDocument();
+		// a new pick still loading never shows the last pick's error
+		await rerender({ ...props, askers: null, failed: 'The daemon is busy.', loading: true });
+		expect(screen.getByText('Loading the devices that looked up a.example')).toBeInTheDocument();
+		expect(screen.queryByText('The daemon is busy.')).not.toBeInTheDocument();
 		await rerender({ ...props, askers: null, failed: 'The daemon is busy.' });
 		expect(screen.getByText("Couldn't load the devices that looked up a.example: the request failed.")).toBeInTheDocument();
 		expect(screen.getByText('The daemon is busy.')).toBeInTheDocument();

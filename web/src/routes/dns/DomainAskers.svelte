@@ -63,7 +63,8 @@
 			<button class="link" type="button" onclick={() => oncopy(name)}>Copy</button>
 			<button class="link" type="button" onclick={onclear}>Clear</button>
 		</div>
-		{#if !askers && failed !== null}
+		<!-- OLD CODE: {#if !askers && failed !== null} (a new pick still loading kept the last pick's error) -->
+		{#if !askers && failed !== null && !loading}
 			<CardState state="error" title={loadFailed(what)} message={failed || RETRY_HINT} onaction={onretry} />
 		{:else if !askers}
 			<CardState state="loading" title="Loading {what}" />
