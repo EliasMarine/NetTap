@@ -32,7 +32,8 @@ test(`${DEVICE} with Compare periods open`, async ({ page }, testInfo) => {
 	await apiIdle();
 	await expect(page.getByRole('link', { name: 'DHCP history' })).toHaveAttribute('href', `/tools/dhcp-timeline?mac=${encodeURIComponent(MAC)}`);
 	await page.getByRole('button', { name: 'Compare periods' }).click();
-	const address = page.getByLabel('Address');
+	// OLD CODE: const address = page.getByLabel('Address'); (NET-316: "Copy MAC address" matched too)
+	const address = page.getByLabel('Address', { exact: true });
 	await expect(address).toBeFocused();
 	await expect(address).toHaveValue('192.168.1.20');
 	await expect(page.getByText('Compares 192.168.1.20 in both periods.', { exact: false })).toBeVisible();

@@ -63,6 +63,7 @@
 	} from '$api/devices';
 	import Card from '$lib/components/ui/Card.svelte';
 	import CardState from '$lib/components/ui/CardState.svelte';
+	import MacAddress from '$lib/components/ui/MacAddress.svelte';
 	import KpiCard from '$lib/components/ui/KpiCard.svelte';
 	import Pills from '$lib/components/ui/Pills.svelte';
 	import DataTable, { type Column } from '$lib/components/ui/DataTable.svelte';
@@ -901,7 +902,8 @@ OLD CODE END -->
 		{/if}
 		<dl class="ident-meta">
 			<div><dt class="meta-k">IP address</dt><dd class="meta-v mono">{device.ip}</dd></div>
-			<div><dt class="meta-k">MAC</dt><dd class="meta-v mono">{device.mac ?? '—'}</dd></div>
+			<!-- OLD CODE: <div><dt class="meta-k">MAC</dt><dd class="meta-v mono">{device.mac ?? '—'}</dd></div> (NET-316: the Private tag and Copy) -->
+			<div><dt class="meta-k">MAC</dt><dd class="meta-v">{#if device.mac}<MacAddress mac={device.mac} />{:else}—{/if}</dd></div>
 			<!-- NET-263: its DHCP transactions, kept by MAC, so only a device with one has the link -->
 			{#if device.mac}<div><dt class="meta-k">Leases</dt><dd class="meta-v"><a href="/tools/dhcp-timeline?mac={encodeURIComponent(device.mac.toLowerCase())}">DHCP history</a></dd></div>{/if}
 			<div><dt class="meta-k">Vendor</dt><dd class="meta-v">{device.manufacturer ?? '—'}</dd></div>
