@@ -30,6 +30,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from services import rules_lock
+from services.rules_lock import RULES_FOLLOW_WAIT_S
 
 logger = logging.getLogger("nettap.services.malcolm_upgrade")
 
@@ -93,10 +94,8 @@ HEALTHY_TIMEOUT_S = 900
 ARRIVAL_TIMEOUT_S = 600
 POLL_S = 10
 # Suricata's rules lock (the shim's flock in the nettap-rules-state volume): free within this before
-# anything starts, and taken for as long as a rule update may run (the shim's own limits add up to
-# 2,100 s) before suricata-live is recreated
+# anything starts, and taken within rules_lock.RULES_FOLLOW_WAIT_S before suricata-live is recreated
 RULES_FREE_WAIT_S = 10
-RULES_LOCK_UP_WAIT_S = 2400
 
 _TAG_RE = re.compile(r"^\d+\.\d+\.\d+$")
 # sets each KEY=VALUE in an env file, adding the lines that are missing; keeps the file's mode
@@ -602,7 +601,7 @@ class MalcolmUpgrade:
             if "suricata-live" in services:
                 try:
                     await stack.enter_async_context(
-                        rules_lock.rules_lock(RULES_LOCK_UP_WAIT_S)
+                        rules_lock.rules_lock(RULES_FOLLOW_WAIT_S)
                     )
                 except rules_lock.RulesBusyError as exc:
                     # a half-done rollback (OpenSearch restored, the rest stopped) is worse than one
@@ -611,11 +610,11 @@ class MalcolmUpgrade:
                     if not abort_on_busy:
                         logger.warning(
                             "A Suricata rule update kept its lock for %d minutes: rolling back Suricata anyway",
-                            RULES_LOCK_UP_WAIT_S // 60,
+                            RULES_FOLLOW_WAIT_S // 60,
                         )
                     else:
                         raise UpgradeError(
-                            f"A Suricata rule update kept its lock for {RULES_LOCK_UP_WAIT_S // 60} minutes, "
+                            f"A Suricata rule update kept its lock for {RULES_FOLLOW_WAIT_S // 60} minutes, "
                             "so Suricata couldn't be restarted safely."
                         ) from exc
                 except OSError as exc:  # as rules_lock does without the volume

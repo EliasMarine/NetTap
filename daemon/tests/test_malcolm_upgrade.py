@@ -640,7 +640,7 @@ class TestSuricataIsNeverRestartedUnderARuleUpdate:
         self, tmp_path, rules_dir, monkeypatch, caplog
     ):
         """Review: a rollback that gave up here left OpenSearch restored and the rest stopped."""
-        monkeypatch.setattr(mu, "RULES_LOCK_UP_WAIT_S", 0)
+        monkeypatch.setattr(mu, "RULES_FOLLOW_WAIT_S", 0)
         docker = FakeDocker()
         held = []
 

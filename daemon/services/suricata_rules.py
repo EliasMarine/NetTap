@@ -17,6 +17,7 @@ from typing import Any
 import yaml
 
 from services import rules_lock
+from services.rules_lock import RULES_FOLLOW_WAIT_S
 from services.tshark_service import bounded_exec
 
 logger = logging.getLogger("nettap.services.suricata_rules")
@@ -96,9 +97,6 @@ RULES_UPDATE_SHIM = "/usr/local/bin/suricata-update-rules.sh"
 RULES_UPDATE_USER = "suricata"
 # The web proxy waits 290 s; past this the update keeps running and its status record says how it went
 RULES_UPDATE_WAIT_S = 270
-# The Updates page's batch follows a rule update to its end, but not forever: past the shim's own worst
-# case (900 s for the lock, 900 s to update, 300 s to confirm) something is stuck, such as docker exec
-RULES_FOLLOW_WAIT_S = 2400
 STALE_AFTER = timedelta(hours=48)
 _RECORD_FIELDS = (
     "state",
@@ -406,24 +404,20 @@ class SuricataRuleManager:
                 wait_s = RULES_FOLLOW_WAIT_S if follow else RULES_UPDATE_WAIT_S
                 stdout, _ = await asyncio.wait_for(asyncio.shield(drain), wait_s)
             except asyncio.TimeoutError:
-                logger.info("Rule update still running after %d s", wait_s)
-                if follow:
-                    logger.warning(
-                        "Rule update didn't finish within %d s: something may be stuck",
-                        wait_s,
-                    )
-                    return {
-                        "success": False,
-                        "running": True,
-                        "output": f"It was still running after {wait_s // 60} minutes, so something may "
-                        "be stuck. Its result shows under Rules Suricata runs if it finishes.",
-                        "reload_output": "",
-                        "status": update_record(),
-                    }
+                # past the follow limit something may be stuck (a wedged docker exec); the Rules
+                # page's 270 s is routine
+                logger.log(
+                    logging.WARNING if follow else logging.INFO,
+                    "Rule update still running after %d s",
+                    wait_s,
+                )
                 return {
                     "success": False,
                     "running": True,
-                    "output": "The update is still running. Its result shows under "
+                    "output": f"It was still running after {wait_s // 60} minutes, so something may "
+                    "be stuck. Its result shows under Rules Suricata runs if it finishes."
+                    if follow
+                    else "The update is still running. Its result shows under "
                     "Rules Suricata runs when it finishes.",
                     "reload_output": "",
                     "status": update_record(),
