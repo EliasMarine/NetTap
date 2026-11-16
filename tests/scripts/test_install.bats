@@ -361,3 +361,11 @@ _install_main() {
     [ "$status" -eq 0 ]
     [ "$output" = "noninteractive a" ]
 }
+
+@test "the standalone apt scripts run apt unattended too" {
+    # install.sh doesn't call these two, so its export doesn't reach their apt-get install.
+    local f
+    for f in setup-watchdog.sh setup-firewall.sh; do
+        grep -qx 'export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a' "${REPO_ROOT}/scripts/install/${f}"
+    done
+}

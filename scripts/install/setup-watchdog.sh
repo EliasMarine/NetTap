@@ -22,6 +22,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../common.sh
 source "${SCRIPT_DIR}/../common.sh"
+# apt runs unattended (as in install.sh): no needrestart dialog on Ubuntu 22.04.
+export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
 
 # ---------------------------------------------------------------------------
 # Defaults
