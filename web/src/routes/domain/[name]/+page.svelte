@@ -442,7 +442,8 @@
 			<!-- OLD CODE START — Log Explorer matches the exact spelling, so it can list fewer than the count above
 			<a class="link" href={httpLogs}>Search them in Log Explorer<Icon name="back" class="chev" /></a>
 			OLD CODE END -->
-			<a class="link" href={httpLogs}>Search Log Explorer for “{name}”<Icon name="back" class="chev" /></a>
+			<!-- OLD CODE: <a class="link" href={httpLogs}>Search Log Explorer for “{name}”<Icon name="back" class="chev" /></a> (.link is nowrap: a long name scrolled the page at 390 px) -->
+			<a class="link wraps" href={httpLogs}>Search Log Explorer for “{name}”<Icon name="back" class="chev" /></a>
 			<p class="dim small">Log Explorer matches this exact spelling, so it can list fewer requests than this count, which ignores case.</p>
 		{/if}
 	</Card>
@@ -469,4 +470,7 @@
 	.excluded { margin-left: var(--sp-2); }
 	/* a long name has no space to break at, so it scrolled the page sideways at 390 px */
 	.page-title { overflow-wrap: anywhere; }
+	/* system .link is a nowrap inline-flex; a link naming the domain wraps like text, chevron after the last word */
+	.link.wraps { display: inline; white-space: normal; overflow-wrap: anywhere; }
+	.link.wraps :global(.ic) { vertical-align: middle; margin-left: var(--sp-1); }
 </style>
