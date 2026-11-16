@@ -10,6 +10,7 @@ import type { ChangelogEvent } from '$lib/api/changelog';
 import type { Device, DeviceListResponse } from '$lib/api/devices';
 import type { IconName } from '$lib/components/ui/icons';
 import { bucketWindow, customRange, type DrillWindow } from '$lib/utils/drilldown';
+import { csvCell } from '$lib/utils/csv';
 import { ipv6ListNotes } from '$lib/utils/ipv6-coverage';
 import { formatDuration } from '$lib/utils/tshark-helpers';
 
@@ -294,18 +295,22 @@ export function spanText(ms: number | null): string {
 	return days >= 1 ? `${days}d ${Math.floor((ms % 86_400_000) / 3_600_000)}h` : formatDuration(ms / 1000);
 }
 
-const FORMULA_START = /^[=+\-@\t\r]/;
-
-/**
- * One CSV cell. Text that a spreadsheet would read as a formula (names come from discovery or the
- * owner) gets a leading `'`; then it is quoted with quotes doubled. Numbers stay numeric.
- */
-export function csvCell(v: unknown): string {
-	if (v === null || v === undefined) return '';
-	if (typeof v === 'number') return Number.isFinite(v) ? String(v) : '';
-	const s = String(v);
-	return `"${(FORMULA_START.test(s) ? `'${s}` : s).replace(/"/g, '""')}"`;
-}
+// OLD CODE START — NET-316: moved unchanged to $lib/utils/csv so the Devices export escapes the same way
+// const FORMULA_START = /^[=+\-@\t\r]/;
+//
+// /**
+//  * One CSV cell. Text that a spreadsheet would read as a formula (names come from discovery or the
+//  * owner) gets a leading `'`; then it is quoted with quotes doubled. Numbers stay numeric.
+//  */
+// export function csvCell(v: unknown): string {
+// 	if (v === null || v === undefined) return '';
+// 	if (typeof v === 'number') return Number.isFinite(v) ? String(v) : '';
+// 	const s = String(v);
+// 	return `"${(FORMULA_START.test(s) ? `'${s}` : s).replace(/"/g, '""')}"`;
+// }
+// OLD CODE END
+// imported (toCsv needs the local binding), then re-exported for this module's callers
+export { csvCell };
 
 const CSV_COLUMNS: readonly [string, (r: ChangelogRow) => unknown][] = [
 	['Timestamp', (r) => r.event['@timestamp']],
