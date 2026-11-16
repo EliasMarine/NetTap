@@ -254,3 +254,121 @@ describe('Threats page — what changed the score', () => {
 		expect(screen.queryByText(/× (vs|above) baseline/)).not.toBeInTheDocument();
 	});
 });
+
+// The owner's three asks: the investigation's sections share its width, a beaconing row opens its
+// pair, and a DNS row opens why it was listed
+describe('Threats page — drill-downs and the investigation layout', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.mocked(goto).mockClear();
+	});
+	const INTEL = { from: '', to: '', new_indicators: 0, feeds: {}, total_indicators: 0 };
+	const BEACON = {
+		source_ip: '192.168.1.188', destination_ip: '188.166.201.72', destination_port: 443, connection_count: 204,
+		interval_seconds: 3600.6, jitter_coefficient: 0.0012, confidence: 100, assessment: '', pattern: 'beacon',
+	};
+	const MANY = {
+		source_ip: '192.168.1.205', destination_ip: '198.51.100.9', destination_port: 6881, connection_count: 30,
+		interval_seconds: 2206, jitter_coefficient: 0.01, confidence: 60, assessment: '', pattern: 'many_hosts', host_count: 12,
+	};
+	const DNS = {
+		dga_suspects: [{ domain: 'Static.CloudflareInsights.com', entropy: 3.837, query_count: 1, assessment: '' }],
+		tunnel_suspects: [{ domain: 'a'.repeat(51) + '.example.com.', subdomain_length: 59, query_count: 24, assessment: '' }],
+		nxdomain_spikes: [{ source_ip: '192.168.1.116', total_queries: 827, nxdomain_count: 364, nxdomain_ratio: 0.44, assessment: '' }],
+		suspicious_tlds: [],
+	};
+
+	it('opens a beaconing row on its pair, over the same range, and links a many-hosts device', async () => {
+		stubDaemon({
+			'/api/threats/report': { ...REPORT, failed_checks: [], incomplete_checks: [], beaconing: [BEACON, MANY] },
+			'/api/threats/intel': INTEL,
+			'/api/network/lan': LAN_POLICY,
+		});
+		const { container } = render(ThreatsPage);
+		const open = await screen.findByRole('button', { name: 'Open beaconing from 192.168.1.188 to 188.166.201.72:443' });
+		await fireEvent.click(open);
+		expect(goto).toHaveBeenLastCalledWith('/threats/beaconing/192.168.1.188/188.166.201.72/443?range=24h');
+		await vi.waitFor(() => expect(screen.getByRole('link', { name: '192.168.1.205' })).toHaveAttribute('href', '/devices/192.168.1.205'));
+		expectNoNestedInteractive(container);
+	});
+
+	it('opens a DNS row on why it was listed: the raw name in finding mode, or the device\'s failed lookups', async () => {
+		stubDaemon({ '/api/threats/report': { ...REPORT, failed_checks: [], incomplete_checks: [], dns_anomalies: DNS }, '/api/threats/intel': INTEL });
+		const { container } = render(ThreatsPage);
+		await screen.findByText('Up to 5 of each finding · select one to see why it was listed · last 24 hours');
+		await fireEvent.click(screen.getByRole('button', { name: 'Open DGA suspect Static.CloudflareInsights.com: why it was listed' }));
+		expect(goto).toHaveBeenLastCalledWith('/domain/static.cloudflareinsights.com?range=24h&finding=Static.CloudflareInsights.com');
+		await fireEvent.click(screen.getByRole('button', { name: /^Open DNS tunnelling a+\.example\.com\.: why it was listed$/ }));
+		expect(goto).toHaveBeenLastCalledWith(`/domain/${'a'.repeat(51)}.example.com?range=24h&finding=${'a'.repeat(51)}.example.com.`);
+		await fireEvent.click(screen.getByRole('button', { name: 'Open NXDOMAIN spike 192.168.1.116: why it was listed' }));
+		expect(goto).toHaveBeenLastCalledWith('/threats/failed-lookups/192.168.1.116?range=24h');
+		expectNoNestedInteractive(container);
+	});
+
+	it('leaves a DNS row plain when its name has no domain page (Zeek writes non-ASCII as \\xNN)', async () => {
+		const odd = 'caf\\xc3\\xa9-kq3z8wxv1m7tbn5r6yhp.com';
+		stubDaemon({
+			'/api/threats/report': { ...REPORT, failed_checks: [], incomplete_checks: [], dns_anomalies: { ...DNS, dga_suspects: [{ domain: odd, entropy: 4.1, query_count: 2, assessment: '' }] } },
+			'/api/threats/intel': INTEL,
+		});
+		render(ThreatsPage);
+		const table = await screen.findByRole('table', { name: 'DNS anomalies' });
+		expect(screen.queryByRole('button', { name: `Open DGA suspect ${odd}: why it was listed` })).not.toBeInTheDocument();
+		expect(table).toHaveTextContent(odd);
+		// the other rows still open
+		expect(screen.getByRole('button', { name: 'Open NXDOMAIN spike 192.168.1.116: why it was listed' })).toBeInTheDocument();
+	});
+
+	it("links an investigation's rule to its page by rule.name, over the report's window", async () => {
+		const investigation = (rule_name?: string | null) => ({
+			alert: { signature: 'ET MALWARE Example CnC (as shown)', severity_label: 'CRITICAL', category_label: 'Malware', source_ip: '192.168.1.42', destination_ip: '203.0.113.45', count: 3, rule_name, activity: true },
+			generated_at: '',
+			sections: { source_profile: { ip: '192.168.1.42', connection_count_24h: 1, unique_destinations: 1, total_bytes_24h: 1 } },
+			recommendation: 'Check the device.',
+		});
+		const from = '2026-11-15T00:00:00.000Z';
+		const to = '2026-11-16T00:00:00.000Z';
+		stubDaemon({ '/api/threats/report': { ...REPORT, from, to, failed_checks: [], incomplete_checks: [], investigations: [investigation('ET MALWARE Example CnC')] }, '/api/threats/intel': INTEL });
+		const { container, unmount } = render(ThreatsPage);
+		const link = await screen.findByRole('link', { name: 'What this rule means and which devices it involved' });
+		const href = new URL(link.getAttribute('href')!, 'http://x');
+		expect(href.pathname).toBe('/alerts/rule/ET%20MALWARE%20Example%20CnC');
+		expect(Object.fromEntries(href.searchParams)).toEqual({ from, to, range: '24h', activity: 'true' });
+		expectNoNestedInteractive(container);
+		unmount();
+		// an older daemon's investigation has no rule.name: no link rather than one by the shown signature
+		stubDaemon({ '/api/threats/report': { ...REPORT, failed_checks: [], incomplete_checks: [], investigations: [investigation(undefined)] }, '/api/threats/intel': INTEL });
+		render(ThreatsPage);
+		await screen.findByText('Source host profile');
+		expect(screen.queryByRole('link', { name: 'What this rule means and which devices it involved' })).not.toBeInTheDocument();
+	});
+
+	it('lays the investigation sections out apart from the todo, and breaks an IPv6 address only after a colon', async () => {
+		const v6 = '2001:0db8:85a3:0000:0000:8a2e:0370:7334';
+		const investigation = {
+			alert: { signature: 'ET MALWARE Example CnC', severity_label: 'CRITICAL', category_label: 'Malware', source_ip: v6, destination_ip: '203.0.113.45', count: 3 },
+			generated_at: '',
+			sections: {
+				source_profile: { ip: v6, connection_count_24h: 120, unique_destinations: 8, total_bytes_24h: 1_000 },
+				destination_profile: { ip: '203.0.113.45', connection_count_24h: 3, unique_destinations: 1, total_bytes_24h: 10 },
+				connection_history: { total_connections_7d: 900, total_bytes_7d: 2_500_000, first_seen: '' },
+			},
+			recommendation: 'Check the device.',
+		};
+		stubDaemon({ '/api/threats/report': { ...REPORT, failed_checks: [], incomplete_checks: [], investigations: [investigation] }, '/api/threats/intel': INTEL });
+		const { container } = render(ThreatsPage);
+		await screen.findByText('Source host profile');
+		const body = container.querySelector('.inv-body')!;
+		expect(body.querySelectorAll(':scope > .inv-sections > section')).toHaveLength(3);
+		// the todo is outside the sections' grid, so auto-fit can collapse the tracks no section fills
+		expect(body.querySelector(':scope > .todo')).toHaveTextContent('Check the device.');
+		expect(body.querySelector('.inv-sections .todo')).toBeNull();
+		const ip = body.querySelector('dd.ip')!;
+		expect(ip.textContent).toBe(v6);
+		expect(ip.querySelectorAll('wbr')).toHaveLength(7);
+		// the head's source → destination line breaks the same way (it scrolled the page at 390 px)
+		const head = container.querySelector('.inv-head .mono')!;
+		expect(head.textContent).toBe(`${v6} → 203.0.113.45`);
+		expect(head.querySelectorAll('wbr')).toHaveLength(7);
+	});
+});

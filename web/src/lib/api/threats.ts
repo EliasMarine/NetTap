@@ -2,6 +2,8 @@
  * Client-side API helpers for the Threat Intelligence page.
  */
 
+import { getJson, isBoolean, isNullable, isNumber, isObject, isString, type ThreatIntel, type TimelinePoint } from './drilldown';
+
 // Types
 export interface ThreatReportSummary {
 	threat_score: number;
@@ -123,6 +125,10 @@ export interface Investigation {
 		source_ip: string;
 		destination_ip: string;
 		count: number;
+		/** The group's exact rule.name (the shown signature can differ); absent from an older daemon. */
+		rule_name?: string | null;
+		/** ET rates the rule informational, so its page opens on the activity list. */
+		activity?: boolean;
 	};
 	generated_at: string;
 	sections: InvestigationSection;
@@ -300,4 +306,139 @@ export async function getThreatIntel(
 	// OLD CODE: return res.json(); (NET-238: a reply without complete, from an older daemon, reads as complete)
 	const body = await res.json();
 	return { ...body, complete: body.complete !== false };
+}
+
+// ---------------------------------------------------------------------------
+// Drill-downs: one beaconing pair, and one device's failed lookups
+// (daemon/api/threat_drilldowns.py). Both read their detector's records, so a device excluded in
+// Settings is counted and the reply says so. Errors throw the daemon's reason (getJson).
+// ---------------------------------------------------------------------------
+
+/**
+ * What the beaconing scan's rule makes of a pair's 10-second slots. `capped`: too many to read
+ * whole, so nothing is claimed; `too_few`: under 10 calls or 10 occupied slots; `periodic`: the
+ * scan would list it; `irregular`: enough calls, gaps too uneven.
+ */
+export type BeaconTimingStatus = 'periodic' | 'irregular' | 'too_few' | 'capped';
+
+export interface BeaconTiming {
+	status: BeaconTimingStatus;
+	/** 10-second slots with at least one call (for `capped`, how many were read before the cap). */
+	slots: number;
+	/** Average gap between occupied slots; null below 3 slots or when capped. */
+	mean_gap_seconds: number | null;
+	/** Standard deviation of the gaps over their mean; null below 3 slots or when capped. */
+	jitter: number | null;
+	// OLD CODE: beacon: { interval_seconds; jitter_coefficient; confidence } | null; (the first two are mean_gap_seconds and jitter)
+	/** The scan's confidence (0-100), present only for `periodic`. */
+	confidence: number | null;
+	/** The scan's thresholds: fewer calls or occupied slots than this are too few to judge. */
+	min_calls: number;
+	/** Gaps varying by this share of their mean or more are irregular. */
+	max_jitter: number;
+	/** The most common gaps, to the nearest 10 seconds. */
+	gaps: { seconds: number; count: number }[];
+}
+
+export interface BeaconPair {
+	device: string;
+	server: string;
+	port: number;
+	device_excluded: boolean;
+	from: string;
+	to: string;
+	interval?: string;
+	connections: number;
+	first_seen: string | null;
+	last_seen: string | null;
+	timeline: TimelinePoint[];
+	transports: { name: string; connections: number }[];
+	services: { name: string; connections: number }[];
+	timing: BeaconTiming;
+	/** The TLS names this device asked this server for; a null name is a session that sent none. */
+	tls_names: { name: string | null; sessions: number }[];
+	tls_complete: boolean;
+	/** The names this device looked up that answered with this server's address. */
+	dns_names: { name: string; lookups: number }[];
+	dns_complete: boolean;
+	/** null: nothing matched and this window's listing alerts couldn't all be checked. */
+	threat_intel: ThreatIntel | null;
+}
+
+/** What a failed lookup asked for (daemon `failed_name_kind`); `generated` is the detector's own DGA rule. */
+export type FailedNameKind = 'service_discovery' | 'reverse' | 'wpad' | 'bare' | 'local' | 'generated' | 'other';
+
+export interface FailedLookups {
+	ip: string;
+	excluded: boolean;
+	from: string;
+	to: string;
+	interval?: string;
+	lookups: number;
+	failed: number;
+	timeline: { t: string; n: number; failed: number }[];
+	rcodes: { rcode: string | null; lookups: number }[];
+	/** The busiest of the names read (at most 100). */
+	failed_names: { name: string; lookups: number; last_seen: string | null; kind: FailedNameKind }[];
+	/** How many failed names were read; every name when `failed_names_complete`. */
+	failed_names_read: number;
+	/** False: more names failed than one read holds; the read is the first names in name order, not the busiest. */
+	failed_names_complete: boolean;
+	/** Over every name read, not only those listed. */
+	kinds: { kind: FailedNameKind; names: number; lookups: number }[];
+	generated_names: number;
+	/** Whether this window meets the NXDOMAIN check's rule (`rule`), which can differ from the scan's window. */
+	meets_rule: boolean;
+	/** More than `min_share` of more than `min_lookups` lookups failed. */
+	rule: { min_lookups: number; min_share: number };
+}
+
+const TIMING_STATUSES: readonly string[] = ['periodic', 'irregular', 'too_few', 'capped'] satisfies BeaconTimingStatus[];
+const isNullableNumber = (v: unknown) => isNullable(v, isNumber);
+
+/** One beaconing pair over the window; `interval` is the chart's bucket (the daemon's default without it). */
+export async function getBeaconPair(
+	device: string,
+	server: string,
+	port: number,
+	from: string,
+	to: string,
+	interval?: string,
+): Promise<BeaconPair> {
+	const q = new URLSearchParams({ device, server, port: String(port), from, to, ...(interval ? { interval } : {}) });
+	const body = await getJson(`/api/threats/beaconing/pair?${q.toString()}`, 'Beaconing pair');
+	const timing = isObject(body) ? body.timing : undefined;
+	const ok =
+		isObject(body) &&
+		[body.device, body.server, body.from, body.to].every(isString) &&
+		[body.port, body.connections].every(isNumber) &&
+		[body.device_excluded, body.tls_complete, body.dns_complete].every(isBoolean) &&
+		[body.timeline, body.transports, body.services, body.tls_names, body.dns_names].every(Array.isArray) &&
+		isObject(timing) &&
+		TIMING_STATUSES.includes(String(timing.status)) &&
+		isNumber(timing.slots) &&
+		[timing.mean_gap_seconds, timing.jitter].every(isNullableNumber) &&
+		isNullableNumber(timing.confidence) &&
+		[timing.min_calls, timing.max_jitter].every(isNumber) &&
+		Array.isArray(timing.gaps) &&
+		(body.threat_intel === null || (isObject(body.threat_intel) && isBoolean(body.threat_intel.matched) && Array.isArray(body.threat_intel.feeds)));
+	if (!ok) throw new Error('Beaconing pair failed: the reply was malformed');
+	return body as unknown as BeaconPair;
+}
+
+/** One device's failed lookups over the window; `interval` is the chart's bucket. */
+export async function getFailedLookups(ip: string, from: string, to: string, interval?: string): Promise<FailedLookups> {
+	const q = new URLSearchParams({ from, to, ...(interval ? { interval } : {}) });
+	const body = await getJson(`/api/threats/failed-lookups/${encodeURIComponent(ip)}?${q.toString()}`, 'Failed lookups');
+	const ok =
+		isObject(body) &&
+		[body.ip, body.from, body.to].every(isString) &&
+		[body.lookups, body.failed, body.failed_names_read, body.generated_names].every(isNumber) &&
+		[body.excluded, body.failed_names_complete, body.meets_rule].every(isBoolean) &&
+		isObject(body.rule) &&
+		[body.rule.min_lookups, body.rule.min_share].every(isNumber) &&
+		[body.timeline, body.rcodes, body.failed_names, body.kinds].every(Array.isArray) &&
+		(body.failed_names as unknown[]).every((r) => isObject(r) && isString(r.name) && isNumber(r.lookups) && isString(r.kind));
+	if (!ok) throw new Error('Failed lookups failed: the reply was malformed');
+	return body as unknown as FailedLookups;
 }
