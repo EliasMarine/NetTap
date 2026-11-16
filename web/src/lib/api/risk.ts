@@ -20,6 +20,10 @@ export interface DeviceRiskScore {
 	score: number;
 	level: string; // 'low' | 'medium' | 'high' | 'critical'
 	factors: RiskFactor[];
+	/** Connections it opened in the window; the list sends it, a single score may not */
+	connection_count?: number;
+	/** Rule matches in its own traffic (NET-209) */
+	alert_count?: number;
 }
 
 export interface RiskScoresResponse {
@@ -31,10 +35,13 @@ export interface RiskScoresResponse {
 // ---------------------------------------------------------------------------
 
 /**
- * Get risk scores for all monitored devices.
+ * Get risk scores for all monitored devices, over `from`/`to` when given (the daemon's last 24 h otherwise).
  */
-export async function getRiskScores(): Promise<RiskScoresResponse> {
-	const res = await fetch('/api/risk/scores');
+// OLD CODE: export async function getRiskScores(): Promise<RiskScoresResponse> { (posture pages: the window their other figures use)
+export async function getRiskScores(opts: { from?: string; to?: string } = {}): Promise<RiskScoresResponse> {
+	// OLD CODE: const res = await fetch('/api/risk/scores');
+	const query = opts.from && opts.to ? `?${new URLSearchParams({ from: opts.from, to: opts.to }).toString()}` : '';
+	const res = await fetch(`/api/risk/scores${query}`);
 
 	// OLD CODE START — #96: a failure read as "0 of N devices have risk scores"
 	// if (!res.ok) {
