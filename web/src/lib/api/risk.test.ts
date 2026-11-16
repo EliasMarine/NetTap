@@ -66,6 +66,12 @@ describe('risk API client', () => {
 			expect(result.scores[0].score).toBe(72);
 		});
 
+		it('sends the window when given, so its figures match the page\'s other requests', async () => {
+			mockFetchSuccess({ devices: [] });
+			await getRiskScores({ from: '2026-11-15T00:00:00.000Z', to: '2026-11-16T00:00:00.000Z' });
+			expect(fetch).toHaveBeenCalledWith('/api/risk/scores?from=2026-11-15T00%3A00%3A00.000Z&to=2026-11-16T00%3A00%3A00.000Z');
+		});
+
 		it('returns scores array with multiple devices', async () => {
 			const secondScore = { ...sampleScore, ip: '192.168.1.200', score: 35, level: 'medium' };
 			mockFetchSuccess({ devices: [sampleScore, secondScore] });

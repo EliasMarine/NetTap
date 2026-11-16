@@ -60,7 +60,7 @@ function span(seconds: number): string {
 }
 
 /** "Zeek", "Zeek and Suricata", "Zeek, Suricata and Logstash" */
-function listWords(words: string[]): string {
+export function listWords(words: string[]): string {
 	return words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
 }
 

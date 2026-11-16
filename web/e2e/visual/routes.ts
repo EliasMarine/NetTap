@@ -29,6 +29,13 @@ export const APP_ROUTES: readonly RouteCase[] = [
 	{ path: '/certificates', marker: 'Certificates' },
 	{ path: '/changelog', marker: 'Changelog' },
 	{ path: '/compliance', marker: 'Security posture' },
+	// Posture category pages: the heading is the category name in every mode
+	{ path: '/compliance/encryption', marker: 'Encryption' },
+	{ path: '/compliance/dns-security', marker: 'DNS security' },
+	{ path: '/compliance/network-segmentation', marker: 'Network segmentation' },
+	{ path: '/compliance/patch-currency', marker: 'Patch currency' },
+	{ path: '/compliance/alert-response', marker: 'Alert response' },
+	{ path: '/compliance/monitoring-coverage', marker: 'Monitoring coverage' },
 	{ path: '/connections', marker: 'Connections' },
 	{ path: '/devices', marker: 'Devices' },
 	{ path: '/devices/192.168.1.20', marker: '192.168.1.20', errorText: "Couldn't load device 192.168.1.20" },
