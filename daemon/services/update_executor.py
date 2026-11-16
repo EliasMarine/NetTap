@@ -924,7 +924,10 @@ class UpdateExecutor:
             await self._create_backup("suricata-rules")
         )
         try:
-            result = await self._rule_manager.update_rules()
+            # OLD CODE: result = await self._rule_manager.update_rules() (gave up after 270 s and recorded
+            # a still-running update as failed, then went on to Malcolm, which restarts Suricata)
+            # follow: the batch has no proxy limit, so it waits for the rule update's own end
+            result = await self._rule_manager.update_rules(follow=True)
         except Exception as exc:
             logger.error("Suricata rule update failed: %s", exc)
             # OLD CODE: result = {"success": False, "output": str(exc), "reload_output": ""} (NET-229)

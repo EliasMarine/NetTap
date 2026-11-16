@@ -347,7 +347,8 @@ class SuricataRuleManager:
     # Rule updates
     # ------------------------------------------------------------------
 
-    async def update_rules(self) -> dict[str, Any]:
+    # OLD CODE: async def update_rules(self) -> dict[str, Any]: (always gave up after RULES_UPDATE_WAIT_S)
+    async def update_rules(self, follow: bool = False) -> dict[str, Any]:
         """Update the rules the way the nightly update does (NET-191 slice 2).
 
         Runs the shim in the Suricata container, which takes the rules lock, runs Malcolm's
@@ -357,6 +358,9 @@ class SuricataRuleManager:
 
         Returns 'success', 'output' (redacted by the shim), 'reload_output' (the record's reason or
         state), 'status' (the record) and, when the wait ran out first, 'running'.
+
+        follow=True waits for the shim to exit however long it takes (the Updates page's background
+        batch, which has no proxy limit); the Rules page's request gives up after RULES_UPDATE_WAIT_S.
         """
         async with self._op_lock:
             try:
@@ -383,8 +387,15 @@ class SuricataRuleManager:
             # (kept on self: asyncio holds only a weak reference to a task)
             drain = self._update_drain = asyncio.ensure_future(proc.communicate())
             try:
-                stdout, _ = await asyncio.wait_for(
-                    asyncio.shield(drain), RULES_UPDATE_WAIT_S
+                # OLD CODE START — every caller gave up after RULES_UPDATE_WAIT_S
+                # stdout, _ = await asyncio.wait_for(
+                #     asyncio.shield(drain), RULES_UPDATE_WAIT_S
+                # )
+                # OLD CODE END
+                stdout, _ = await (
+                    drain
+                    if follow
+                    else asyncio.wait_for(asyncio.shield(drain), RULES_UPDATE_WAIT_S)
                 )
             except asyncio.TimeoutError:
                 logger.info("Rule update still running after %d s", RULES_UPDATE_WAIT_S)

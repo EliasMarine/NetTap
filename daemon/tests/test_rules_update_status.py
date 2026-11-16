@@ -108,6 +108,39 @@ class TestUpdateRulesThroughTheShim:
         assert result["running"] is True
         assert result["success"] is False
 
+    @pytest.mark.parametrize(
+        ("rc", "record", "success"),
+        [
+            (0, {"state": "active", "exit_code": 0, "reason": ""}, True),
+            (
+                1,
+                {"state": "failed", "exit_code": 1, "reason": "Lock held 900 s"},
+                False,
+            ),
+        ],
+    )
+    def test_follow_waits_past_the_limit_for_the_real_result(
+        self, state, monkeypatch, rc, record, success
+    ):
+        """The Updates page's batch recorded a long update as failed and moved on to Malcolm."""
+        monkeypatch.setattr(sr, "RULES_UPDATE_WAIT_S", 0.01)
+
+        async def slow():
+            await asyncio.sleep(0.1)  # longer than the wait above
+            _record(state, **record)
+            return b"done", None
+
+        proc = AsyncMock()
+        proc.returncode = rc
+        proc.communicate = slow
+        with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+            result = asyncio.run(
+                SuricataRuleManager(container_name="live").update_rules(follow=True)
+            )
+        assert "running" not in result
+        assert result["success"] is success
+        assert result["reload_output"] == (record["reason"] or record["state"])
+
     def test_docker_missing_is_a_failure(self, state):
         with patch(
             "asyncio.create_subprocess_exec",
