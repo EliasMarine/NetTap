@@ -56,6 +56,10 @@ export interface Device {
 	discovered_name?: string | null;
 	icon?: string | null;
 	picture?: string | null;
+	/** NET-317: its 3 commonest network.protocol (IPv4, both directions); null when they couldn't be read */
+	services?: string[] | null;
+	/** NET-317: when the device registry first saw its MAC, any time; null when the registry doesn't know it */
+	known_since?: string | null;
 }
 
 export interface DeviceListResponse {
