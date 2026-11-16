@@ -37,12 +37,14 @@ from api.drilldown_runner import (
 )
 from api.time_range import parse_time_range
 from services.dns_analytics import DNSAnalytics
+from services.excluded_ips import valid_excluded_ips
 from services.hostnames import (
     canonical_name,
     keyword_paths,
     name_match,
     require_keyword,
 )
+from services.threat_detection import NO_EVIDENCE, dns_name_evidence
 from storage.snapshot_search import (
     NETWORK_INDEX,
     Budget,
@@ -56,6 +58,7 @@ from storage.snapshot_search import (
 logger = logging.getLogger("nettap.api.domains")
 
 _DEFAULT_RANGE = timedelta(hours=24)
+_MAX_FINDING = 255  # a host name (253) with a trailing dot, and a little room
 _QUERY = "zeek.dns.query"
 _SNI = "zeek.ssl.server_name"
 _HTTP_HOST = "zeek.http.host"
@@ -454,11 +457,43 @@ def domain_figures(
     }
 
 
+def _finding(raw: str) -> dict:
+    """The DNS check's evidence for the name exactly as the detector read it, rounded as the
+    Threats rows round it (entropy to 3 places)."""
+    evidence = dns_name_evidence(raw) or NO_EVIDENCE
+    dga = evidence["dga"]
+    return {
+        "name": raw,
+        "excluded_counted": True,
+        "dga": {**dga, "entropy": round(dga["entropy"], 3)} if dga else None,
+        "tunnel": evidence["tunnel"],
+    }
+
+
+def _with_finding(figures: dict, raw: str, excluded: set[str]) -> dict:
+    """Finding mode's reply: the check's evidence, and which askers Settings excludes."""
+    dns = figures["dns"]
+    askers = [{**a, "excluded": a["ip"] in excluded} for a in dns["askers"]]
+    return {
+        **figures,
+        "dns": {**dns, "askers": askers},
+        "finding": _finding(raw),
+    }
+
+
 async def handle_domain(request: web.Request) -> web.Response:
-    """GET /api/domains/{name}?from=&to=&interval= — the domain page's figures."""
+    """GET /api/domains/{name}?from=&to=&interval=&finding= — the domain page's figures.
+
+    `finding` is the name exactly as the Threats page's DNS check read it (any case, a
+    trailing dot). With it, the DNS figures count every device, as the detector does, each
+    asker says whether Settings excludes it, and the reply carries the check's evidence.
+    """
     name = canonical_name(request.match_info["name"])
     if name is None:
         return json_error("That is not a host name.", 400)
+    raw = request.query.get("finding")
+    if raw is not None and (len(raw) > _MAX_FINDING or canonical_name(raw) != name):
+        return json_error("That finding is not this name.", 400)
     from_ts, to_ts = parse_time_range(request, _DEFAULT_RANGE)
     # OLD CODE: slots = chart_slots(from_ts, to_ts) (NET-249: the chart's bucket can be asked for)
     interval = chart_interval(request, from_ts, to_ts)
@@ -466,18 +501,22 @@ async def handle_domain(request: web.Request) -> web.Response:
     if slots is None:
         return json_error("This time range is too long; choose a shorter one.", 400)
     client, is_lan = request.app["drill_client"], lan_check(request.app)
-    excluded = list(request.app.get("excluded_ips", []))
-    return await run_drilldown(
-        request,
+    # OLD CODE: excluded = list(request.app.get("excluded_ips", [])) (finding mode counts every device)
+    settings_excluded = list(request.app.get("excluded_ips", []))
+    excluded = [] if raw is not None else settings_excluded
+    marked = set(valid_excluded_ips(settings_excluded))
+
+    def figures(budget: Budget) -> dict:
         # OLD CODE: lambda budget: domain_figures(...) (NET-249: + the bucket the slots used)
-        lambda budget: {
+        found = {
             **domain_figures(
                 client, name, from_ts, to_ts, excluded, slots, is_lan, budget
             ),
             "interval": interval,
-        },
-        f"domain {name}",
-    )
+        }
+        return found if raw is None else _with_finding(found, raw, marked)
+
+    return await run_drilldown(request, figures, f"domain {name}")
 
 
 def register_domain_routes(app: web.Application, client: Any) -> None:
