@@ -379,7 +379,10 @@
 	.sub-head { margin: var(--sp-4) 0 var(--sp-1); font-size: var(--text-sm); color: var(--text-2); }
 	.links { margin: 0 0 var(--sp-3); padding-left: var(--sp-4); display: grid; gap: var(--sp-1); font-size: var(--text-sm); overflow-wrap: anywhere; }
 	.sid + .sid { margin-top: var(--sp-4); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
-	.facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--sp-1) var(--sp-4); margin: 0 0 var(--sp-3); font-size: var(--text-sm); }
+	/* OLD CODE: .facts { …; grid-template-columns: max-content 1fr; … } (1fr can't shrink below a nowrap chip, so 390 px scrolled sideways) */
+	.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--sp-1) var(--sp-4); margin: 0 0 var(--sp-3); font-size: var(--text-sm); }
 	.facts dt { color: var(--text-3); }
 	.facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+	/* A technique's name, a CVE or the KEV chip wraps inside its cell at phone width */
+	.facts .chip { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
 </style>
