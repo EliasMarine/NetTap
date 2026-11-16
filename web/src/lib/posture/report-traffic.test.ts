@@ -26,6 +26,17 @@ describe('hints', () => {
 		expect(deviceHint([{ name: 'unknown', count: 5 }], [{ port: 23, count: 5 }]).severity).toBe('high');
 		expect(deviceHint([], [{ port: 40000, count: 1 }])).toBe(UNKNOWN_HINT);
 	});
+
+	it('read a torrent box by its port, not a small labelled service, at that service\'s higher severity (review M1)', () => {
+		const h = deviceHint([{ name: 'unknown', count: 790_000 }, { name: 'http', count: 200 }], [{ port: 6881, count: 700_000 }]);
+		expect(h.label).toBe(BITTORRENT.label);
+		expect(h.fix).toBe(BITTORRENT.fix);
+		expect(h.severity).toBe('medium');
+		// a labelled top service still wins
+		expect(deviceHint([{ name: 'http', count: 900 }, { name: 'unknown', count: 100 }], [{ port: 6881, count: 50 }]).label).toBe('Unencrypted web traffic (HTTP)');
+		// no port hint: the labelled service
+		expect(deviceHint([{ name: 'unknown', count: 900 }, { name: 'telnet', count: 3 }], [{ port: 40000, count: 900 }]).label).toBe('Telnet remote login');
+	});
 });
 
 describe('encryptionReport', () => {
@@ -72,6 +83,7 @@ describe('encryptionReport', () => {
 	it('explains, at low priority, when most unencrypted connections carried data one way or none', () => {
 		const low = enc(POSTURE_ENCRYPTION).steps.find((s) => s.priority === 'low')!;
 		expect(low.text).toMatch(/^83% of the unencrypted connections carried data one way or none/);
+		expect(low.text).not.toContain('carry little');
 	});
 
 	it('reads nothing measured, unattributed and failed per source (R1-9)', () => {
@@ -82,6 +94,13 @@ describe('encryptionReport', () => {
 		expect(failed.sources[0]).toMatchObject({ state: 'failed', note: "Couldn't load devices sending unencrypted traffic: the request failed." });
 		expect(failed.findings).toEqual([]);
 		expect(failed.kpis[2]).toMatchObject({ value: '—', sub: "Couldn't load" });
+	});
+
+	it('shows no stand-in zero for a KPI whose score input failed, beside the detail that loaded (review M2)', () => {
+		const r = encryptionReport(reportData('encryption', { inputs: { failed: ['protocols'] }, extras: { encryption: POSTURE_ENCRYPTION } }));
+		expect(r.kpis[1]).toMatchObject({ key: 'encrypted', value: '—', sub: "Couldn't load" });
+		expect(r.kpis[2]).toMatchObject({ value: '260' });
+		expect(r.findings.length).toBeGreaterThan(0);
 	});
 });
 
@@ -100,11 +119,27 @@ describe('dnsReport', () => {
 		]);
 		expect(r.drivers.resolvers?.map((x) => [x.ip, x.kind, x.scope])).toContainEqual(['198.51.100.153', 'DNS-over-TLS', 'Public']);
 		expect(r.kpis[2]).toMatchObject({ value: '1,200' });
+		// DoT is counted in connections, plain in lookups (review L8)
+		expect(r.kpis[1]).toMatchObject({ value: '60', sub: 'connections, beside 5,400 plain lookups' });
+	});
+
+	it('judges a forwarding private-address resolver as a resolver, not a device, and leaves its lookups out of the device step (review M3)', () => {
+		const piHole = resolver({ ip: '192.168.1.2', upstream: { plain_public: 300, dot: 0 } });
+		const d = withResolvers([piHole], {
+			plain_scope: { private_local: 4200, unknown: 0, public: 1200 },
+			public_devices: { lan: 1200, other: 0, rows: [{ ip: '192.168.1.2', count: 300, resolvers: [{ ip: '1.1.1.1', count: 300, org: null }] }, { ip: '192.168.1.22', count: 900, resolvers: [{ ip: '8.8.8.8', count: 900, org: null }] }] },
+		});
+		const r = dns(d);
+		expect(r.findings.some((f) => f.key === 'public-192.168.1.2')).toBe(false);
+		expect(r.findings.find((f) => f.key === 'resolver-192.168.1.2')).toMatchObject({ severity: 'medium', title: 'Private-address resolver also sends plain lookups out' });
+		const step = r.steps.find((s) => s.href === '/dns')!;
+		expect(step).toMatchObject({ priority: 'medium' });
+		expect(step.text).toMatch(/^900 plain lookups went straight to public resolvers/);
 	});
 
 	it('judges a local resolver from its own upstream counts, and never asks for encryption it can’t see (R1-2)', () => {
 		const findings = (u: { plain_public: number; dot: number } | null) => dns(withResolvers([resolver({ upstream: u })])).findings.filter((f) => f.key.startsWith('resolver-'));
-		expect(findings({ plain_public: 0, dot: 60 })[0]).toMatchObject({ severity: 'info', title: 'Your resolver uses DNS-over-TLS' });
+		expect(findings({ plain_public: 0, dot: 60 })[0]).toMatchObject({ severity: 'info', title: 'Private-address resolver uses DNS-over-TLS' });
 		expect(findings({ plain_public: 30, dot: 60 })[0]).toMatchObject({ severity: 'medium', fix: 'Set its upstream to encrypted only (DNS-over-TLS or DNS-over-HTTPS).' });
 		const unknown = findings({ plain_public: 0, dot: 0 })[0];
 		expect(unknown.detail).toContain("Unknown: NetTap saw no lookups leaving it; it may use DNS-over-HTTPS, or its upstream isn't visible");
@@ -157,6 +192,14 @@ describe('patchReport', () => {
 		expect(r.steps.map((s) => s.priority)).toEqual(['high', 'medium', 'low']);
 		expect(r.findings.find((f) => f.key === 'telnet-192.168.1.31')).toMatchObject({ severity: 'high', devices: [{ ip: '192.168.1.31' }] });
 		expect(r.findings.find((f) => f.key === 'http-192.168.1.50')!.fix).toContain('replace the device if the maker no longer updates it');
+	});
+
+	it('keeps the device findings and shows no stand-in zeros when the protocols request failed (review M2)', () => {
+		const r = patchReport(reportData('patch-currency', { inputs: { failed: ['protocols'] }, extras: { 'patch-currency': POSTURE_PATCH } }));
+		expect(r.sources[0].state).toBe('measured');
+		expect(r.findings.length).toBe(2);
+		expect(r.kpis[1]).toMatchObject({ key: 'legacy', value: '—', sub: "Couldn't load" });
+		expect(r.kpis[2]).toMatchObject({ key: 'telnet-ftp', value: '—' });
 	});
 
 	it('links a protocol’s truncation note to Log Explorer for that label', () => {

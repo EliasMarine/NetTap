@@ -59,6 +59,14 @@ describe('segmentationReport', () => {
 		expect(r.sources.map((s) => s.state)).toEqual(['measured', 'failed']);
 		expect(r.kpis[2]).toMatchObject({ value: '—' });
 	});
+
+	it('shows no stand-in "0 of 0" when the device count or risk scores failed (review M2)', () => {
+		const r = segmentationReport(reportData('network-segmentation', { inputs: { failed: ['risk'] }, extras: { isolation: ISOLATION } }));
+		expect(r.kpis[1]).toMatchObject({ key: 'baseline', value: '—', sub: "Couldn't load" });
+		expect(r.findings.length).toBe(2);
+		const m = monitoringReport(reportData('monitoring-coverage', { inputs: { failed: ['devices'], health: health('fresh') }, extras: { mode: { mode: 'mirror', interface: 'x' }, stats: stats(0) } }));
+		expect(m.kpis[1]).toMatchObject({ key: 'scored', value: '—', sub: "Couldn't load" });
+	});
 });
 
 describe('postureRuleHref', () => {

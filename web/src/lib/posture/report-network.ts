@@ -7,7 +7,7 @@ import { BRIDGE_NO_DEVICES, lossWords } from '$api/capture';
 import { pipelineStage } from '$api/system';
 import { alertsHrefForSignature, fmt, windowQuery } from '$lib/utils/drilldown';
 import { suricataLevel, type SeverityLevel } from '$lib/utils/severity';
-import { device, deviceWords, failedSource, listWords, notMeasured, pct, scoreKpi, type Finding, type Kpi, type Report, type ReportData, type Source, type Step } from './report';
+import { device, deviceWords, failedSource, listWords, notMeasured, pct, scoreKpi, unloaded, type Finding, type Kpi, type Report, type ReportData, type Source, type Step } from './report';
 
 /** Devices with a baseline: the score's own figures (min() as the score takes it). */
 function baselineCounts(data: ReportData): { total: number; scored: number; unscored: number } {
@@ -86,7 +86,7 @@ export function segmentationReport(data: ReportData): Report {
 			: { key: 'pairs', label: 'Smart devices reaching others', icon: 'iot', value: 'Not measured', sub: 'No smart (IoT) devices detected yet' };
 
 	return {
-		kpis: [scoreKpi(category), { key: 'baseline', label: 'Devices with a baseline', icon: 'devices', value: `${fmt(b.scored)} of ${fmt(b.total)}`, sub: 'seen in the last 24 hours' }, isoKpi],
+		kpis: [scoreKpi(category), unloaded({ key: 'baseline', label: 'Devices with a baseline', icon: 'devices', value: `${fmt(b.scored)} of ${fmt(b.total)}`, sub: 'seen in the last 24 hours' }, sources[0].state === 'failed'), isoKpi],
 		drivers: {
 			formula: `100 − 10 × ${fmt(b.unscored)} device(s) without a baseline = ${Math.max(0, 100 - b.unscored * 10)}`,
 			counts: [
@@ -199,8 +199,8 @@ export function alertReport(data: ReportData): Report {
 	return {
 		kpis: [
 			scoreKpi(category),
-			{ key: 'alerts', label: 'Alerts', icon: 'alerts', value: alertsFailed ? '—' : fmt(counts.total), sub: alertsFailed ? "Couldn't load" : `${fmt(counts.high)} high · ${fmt(counts.medium)} medium · ${fmt(counts.low)} low` },
-			{ key: 'investigations', label: 'Investigations (all time)', icon: 'check', value: inputs.failed.includes('investigations') ? '—' : `${fmt(done)} of ${fmt(inv.total)}`, sub: 'resolved or closed' },
+			unloaded({ key: 'alerts', label: 'Alerts', icon: 'alerts', value: fmt(counts.total), sub: `${fmt(counts.high)} high · ${fmt(counts.medium)} medium · ${fmt(counts.low)} low` }, alertsFailed),
+			unloaded({ key: 'investigations', label: 'Investigations (all time)', icon: 'check', value: `${fmt(done)} of ${fmt(inv.total)}`, sub: 'resolved or closed' }, inputs.failed.includes('investigations')),
 		],
 		drivers: {
 			formula,
@@ -260,7 +260,7 @@ export function monitoringReport(data: ReportData): Report {
 	return {
 		kpis: [
 			scoreKpi(category),
-			{ key: 'scored', label: 'Devices with a risk score', icon: 'devices', value: `${fmt(b.scored)} of ${fmt(b.total)}`, sub: 'seen in the last 24 hours' },
+			unloaded({ key: 'scored', label: 'Devices with a risk score', icon: 'devices', value: `${fmt(b.scored)} of ${fmt(b.total)}`, sub: 'seen in the last 24 hours' }, sources[0].state === 'failed'),
 			{ key: 'pipeline', label: 'Data pipeline', icon: 'system', value: stage ? (stage.status === 'ok' ? 'Running' : stage.status === 'failing' ? 'Failing' : 'Check') : '—', sub: stage?.detail ?? "Couldn't check" },
 		],
 		drivers: {

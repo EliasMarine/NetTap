@@ -16,7 +16,9 @@ import {
 	listWords,
 	pct,
 	scoreKpi,
+	SEVERITY_RANK,
 	truncationNote,
+	unloaded,
 	type Finding,
 	type Note,
 	type Report,
@@ -141,11 +143,20 @@ export function serviceHint(name: string): Hint {
 	);
 }
 
-/** A device's hint: from its top service label, else its top port, else unidentified. */
+const known = (s: NamedCount | undefined): s is NamedCount => !!s && !!s.name && s.name !== 'unknown';
+
+/**
+ * A device's hint: its top service when that is labelled; else its top port's hint (a small labelled
+ * service beside a large unidentified share doesn't describe the device), at the higher severity of the
+ * port and that service, since a port never lowers it; else the service; else unidentified.
+ */
 export function deviceHint(services: readonly NamedCount[], ports: readonly PortCount[]): Hint {
-	const top = services.find((s) => s.name && s.name !== 'unknown');
-	if (top) return serviceHint(top.name);
-	return (ports[0] && PORT_HINTS[ports[0].port]) || UNKNOWN_HINT;
+	if (known(services[0])) return serviceHint(services[0].name);
+	const port = ports[0] && PORT_HINTS[ports[0].port];
+	const labelled = services.find(known);
+	const service = labelled && serviceHint(labelled.name);
+	if (port && service) return SEVERITY_RANK[service.severity] < SEVERITY_RANK[port.severity] ? { ...port, severity: service.severity } : port;
+	return port || service || UNKNOWN_HINT;
 }
 
 const portWords = (ports: readonly PortCount[]) => (ports.length ? `Top ports: ${listWords(ports.map((p) => String(p.port)))}.` : '');
@@ -204,7 +215,7 @@ export function encryptionReport(data: ReportData): Report {
 		if (risky.ftp.count > 0) steps.push({ priority: 'high', text: `${fmt(risky.ftp.count)} FTP connections send passwords in plain text. Open them to see which devices, then switch them to SFTP or FTPS.`, href: logs(risky.ftp.logs_query) });
 		if (risky.http.count > 0) steps.push({ priority: 'medium', text: `${fmt(risky.http.count)} unencrypted web (HTTP) connections. Open them to see which devices and sites, and use HTTPS where it is offered.`, href: logs(risky.http.logs_query) });
 		if (u.total > 0 && pct(other, u.total) >= START_WITH_SHARE) {
-			steps.push({ priority: 'low', text: `${pct(other, u.total)}% of the unencrypted connections carried data one way or none, often attempts that never got an answer. They lower the score but carry little; see What drives this score.` });
+			steps.push({ priority: 'low', text: `${pct(other, u.total)}% of the unencrypted connections carried data one way or none, often attempts that never got an answer. They lower the score; see What drives this score.` });
 		}
 		const note = truncationNote(detail.devices);
 		if (note) notes.push(note);
@@ -213,7 +224,7 @@ export function encryptionReport(data: ReportData): Report {
 	return {
 		kpis: [
 			scoreKpi(category),
-			{ key: 'encrypted', label: 'Encrypted', icon: 'check', value: fmt(enc.encrypted), sub: `of ${fmt(enc.eligible)} connections that can be encrypted` },
+			unloaded({ key: 'encrypted', label: 'Encrypted', icon: 'check', value: fmt(enc.encrypted), sub: `of ${fmt(enc.eligible)} connections that can be encrypted` }, inputs.failed.includes('protocols')),
 			{ key: 'both', label: 'Payload both ways', icon: 'connections', value: u ? fmt(u.payload_both) : '—', sub: u ? `of ${fmt(u.total)} unencrypted connections` : "Couldn't load" },
 		],
 		drivers: {
@@ -265,7 +276,10 @@ export function dnsReport(data: ReportData): Report {
 	const steps: Step[] = [];
 	const notes: Note[] = [];
 	if (detail && scope) {
-		for (const d of detail.public_devices.rows) {
+		// A private-address resolver forwarding plain lookups upstream is judged as a resolver below, not as a device
+		const forwarders = new Map(detail.resolvers.plain.filter((r) => r.scope === 'private_local' && r.upstream).map((r) => [r.ip, r.upstream!.plain_public]));
+		const fromDevices = Math.max(0, scope.public - [...forwarders.values()].reduce((sum, n) => sum + n, 0));
+		for (const d of detail.public_devices.rows.filter((row) => !forwarders.has(row.ip))) {
 			findings.push({
 				key: `public-${d.ip}`,
 				severity: 'medium',
@@ -281,16 +295,16 @@ export function dnsReport(data: ReportData): Report {
 			const { plain_public, dot } = r.upstream;
 			const base = { devices: [device(r.ip, names)], count: r.count };
 			if (plain_public > 0) {
-				findings.push({ ...base, key: `resolver-${r.ip}`, severity: 'medium', title: 'Your resolver also sends plain lookups out', detail: `It answered ${fmt(r.count)} lookups, and sent ${fmt(plain_public)} plain lookups to public addresses${dot > 0 ? ` beside ${fmt(dot)} DNS-over-TLS connections` : ''}.`, fix: 'Set its upstream to encrypted only (DNS-over-TLS or DNS-over-HTTPS).' });
+				findings.push({ ...base, key: `resolver-${r.ip}`, severity: 'medium', title: 'Private-address resolver also sends plain lookups out', detail: `It answered ${fmt(r.count)} lookups, and sent ${fmt(plain_public)} plain lookups to public addresses${dot > 0 ? ` beside ${fmt(dot)} DNS-over-TLS connections` : ''}.`, fix: 'Set its upstream to encrypted only (DNS-over-TLS or DNS-over-HTTPS).' });
 				steps.push({ priority: 'medium', text: `Set ${deviceWords(r.ip, names)}'s upstream to encrypted only: it sent ${fmt(plain_public)} plain lookups to public addresses.` });
 			} else if (dot > 0) {
-				findings.push({ ...base, key: `resolver-${r.ip}`, severity: 'info', title: 'Your resolver uses DNS-over-TLS', detail: `It answered ${fmt(r.count)} lookups and was seen using DNS-over-TLS (${fmt(dot)} connections).`, fix: 'Nothing to change.' });
+				findings.push({ ...base, key: `resolver-${r.ip}`, severity: 'info', title: 'Private-address resolver uses DNS-over-TLS', detail: `It answered ${fmt(r.count)} lookups and was seen using DNS-over-TLS (${fmt(dot)} connections).`, fix: 'Nothing to change.' });
 			} else {
-				findings.push({ ...base, key: `resolver-${r.ip}`, severity: 'info', title: 'Your resolver: upstream unknown', detail: `It answered ${fmt(r.count)} lookups. Unknown: NetTap saw no lookups leaving it; it may use DNS-over-HTTPS, or its upstream isn't visible from where NetTap sits.`, fix: 'Nothing NetTap can check; its own settings show its upstream.' });
+				findings.push({ ...base, key: `resolver-${r.ip}`, severity: 'info', title: 'Private-address resolver: upstream unknown', detail: `It answered ${fmt(r.count)} lookups. Unknown: NetTap saw no lookups leaving it; it may use DNS-over-HTTPS, or its upstream isn't visible from where NetTap sits.`, fix: 'Nothing NetTap can check; its own settings show its upstream.' });
 			}
 		}
-		if (scope.public > 0) {
-			steps.push({ priority: scope.public >= PUBLIC_LOOKUPS_HIGH ? 'high' : 'medium', text: `${fmt(scope.public)} plain lookups went straight to public resolvers. Point those devices at your router or resolver, or turn on Private DNS on phones.`, href: '/dns' });
+		if (fromDevices > 0) {
+			steps.push({ priority: fromDevices >= PUBLIC_LOOKUPS_HIGH ? 'high' : 'medium', text: `${fmt(fromDevices)} plain lookups went straight to public resolvers. Point those devices at your router or resolver, or turn on Private DNS on phones.`, href: '/dns' });
 			// exact counts, never list membership: a resolver outside the top ten still counts in private_local
 			if (detail.over_tls === 0 && scope.private_local === 0) {
 				steps.push({ priority: 'high', text: 'Turn on DNS-over-TLS on the router, or run a local resolver with an encrypted upstream (Pi-hole, AdGuard Home) and hand it out by DHCP.' });
@@ -310,7 +324,7 @@ export function dnsReport(data: ReportData): Report {
 	return {
 		kpis: [
 			scoreKpi(category),
-			{ key: 'dot', label: 'DNS-over-TLS', icon: 'dns', value: fmt(dns.over_tls), sub: `of ${fmt(dns.plain + dns.over_tls)} lookups` },
+			unloaded({ key: 'dot', label: 'DNS-over-TLS', icon: 'dns', value: fmt(dns.over_tls), sub: `connections, beside ${fmt(dns.plain)} plain lookups` }, inputs.failed.includes('protocols')),
 			{ key: 'public', label: 'Plain lookups to public addresses', icon: 'warn', value: scope ? fmt(scope.public) : '—', sub: scope ? 'sent straight to resolvers on the internet' : "Couldn't load" },
 		],
 		drivers: {
@@ -351,7 +365,7 @@ export function patchReport(data: ReportData): Report {
 
 	const sources: Source[] = failed || !detail
 		? [failedSource('legacy', 'Devices using old protocols')]
-		: [listSource('legacy', 'Devices using old protocols', { seen: counts.total > 0, total: detail.unique_connections, list: lan!, nothing: 'No labelled connections in the last 24 hours' }, inputs)];
+		: [listSource('legacy', 'Devices using old protocols', { seen: counts.total > 0 || detail.unique_connections > 0, total: detail.unique_connections, list: lan!, nothing: 'No labelled connections in the last 24 hours' }, inputs)];
 
 	const findings: Finding[] = [];
 	const notes: Note[] = [];
@@ -383,8 +397,8 @@ export function patchReport(data: ReportData): Report {
 	return {
 		kpis: [
 			scoreKpi(category),
-			{ key: 'legacy', label: 'Old-protocol connections', icon: 'warn', value: fmt(counts.legacy), sub: `of ${fmt(counts.total)} labelled connections` },
-			{ key: 'telnet-ftp', label: 'Telnet or FTP connections', icon: 'threats', value: fmt(telnetFtp), sub: 'send passwords in plain text' },
+			unloaded({ key: 'legacy', label: 'Old-protocol connections', icon: 'warn', value: fmt(counts.legacy), sub: `of ${fmt(counts.total)} labelled connections` }, inputs.failed.includes('protocols')),
+			unloaded({ key: 'telnet-ftp', label: 'Telnet or FTP connections', icon: 'threats', value: fmt(telnetFtp), sub: 'send passwords in plain text' }, inputs.failed.includes('protocols')),
 		],
 		drivers: {
 			formula: `100 − (${fmt(counts.legacy)} old-protocol labels ÷ ${fmt(counts.total)} labels × 100) = ${counts.total > 0 ? Math.round(100 - (counts.legacy / counts.total) * 100) : 100}`,

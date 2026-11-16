@@ -89,6 +89,7 @@ describe('Security posture category page', () => {
 		expect(calls.some((u) => u.pathname === '/api/risk/scores')).toBe(false);
 
 		const findings = within(card('Findings')).getByRole('table', { name: 'Encryption findings' });
+		expect(within(findings).getByRole('columnheader', { name: /^Count/ })).toBeInTheDocument();
 		const laptop = within(findings).getAllByRole('row').find((r) => r.textContent?.includes('Ports BitTorrent apps use'))!;
 		expect(laptop).toHaveTextContent('Laptop');
 		expect(within(laptop).getByRole('link', { name: '192.168.1.20' })).toHaveAttribute('href', '/devices/192.168.1.20');
@@ -113,6 +114,10 @@ describe('Security posture category page', () => {
 		expect(within(findings).getByText("Couldn't load the findings: the request failed.")).toBeInTheDocument();
 		expect(within(findings).getByRole('button', { name: 'Try again' })).toBeInTheDocument();
 		expect(kpi('Payload both ways')).toHaveTextContent('—');
+		// review L5: no "Nothing to change" when the steps' request failed
+		const steps = card('How to improve');
+		expect(within(steps).getByText("Couldn't load the recommendations: the request failed.")).toBeInTheDocument();
+		expect(within(steps).queryByText('Nothing to change from what NetTap saw')).toBeNull();
 	});
 
 	it("says which score input failed instead of scoring a stand-in", async () => {
@@ -181,6 +186,15 @@ describe('Security posture category page', () => {
 		const findings = card('Findings');
 		expect(within(findings).getByText(/2 device\(s\) without a baseline/)).toBeInTheDocument();
 		expect(within(findings).getByText(/No smart \(IoT\) devices detected yet/)).toBeInTheDocument();
+	});
+
+	it('renders two steps with the same text (review L7: keyed by position)', async () => {
+		goTo('network-segmentation');
+		const pair = { iot_device: { mac: '02:00:5e:10:00:50', name: 'Camera', ip: '192.168.1.50' }, internal_target: { ip: '192.168.1.20', hostname: null }, risk: 'high', connection_count: 4, ports: [445], description: 'Camera reached a computer.' };
+		stubDaemon({ '/api/iot/network-isolation': { segmentation_score: 40, segmentation_grade: 'F', recommendation: '', pairs: [pair, { ...pair, ports: [139] }] } });
+		render(Page);
+		await loadedScore('80');
+		expect(within(card('How to improve')).getAllByText('Move Camera to a guest or IoT network: it reached Laptop.')).toHaveLength(2);
 	});
 
 	it('shows the capture mode and pipeline findings for Monitoring coverage', async () => {

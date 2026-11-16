@@ -22,7 +22,7 @@
 	import { loadFailed } from '$lib/utils/load-failed';
 	import { HEALTH_CHECKING, readHealth } from '$lib/utils/read-health';
 	import { EMPTY_DATA, INPUT_NAMES, scoreCategories, type Input, type PostureData, type PostureInputs, type PostureSlug } from '$lib/posture/score';
-	import { buildReport, EXTRAS, type ExtraKey, type Finding, type PostureExtras, type ResolverRow, type Source } from '$lib/posture/report';
+	import { buildReport, EXTRAS, SEVERITY_RANK, type ExtraKey, type Finding, type PostureExtras, type ResolverRow, type Source } from '$lib/posture/report';
 	import { GUIDES } from '$lib/posture/guides';
 	import IPAddress from '$components/IPAddress.svelte';
 	import BarList from '$lib/components/ui/BarList.svelte';
@@ -150,12 +150,11 @@
 	const unmeasured = $derived(report?.sources.filter((s) => s.state !== 'measured') ?? []);
 	const allFailed = $derived(!!report && report.sources.every((s) => s.state === 'failed'));
 
-	const RANK = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
 	const findingColumns: Column<Finding>[] = [
-		{ key: 'severity', label: 'Severity', sortValue: (f) => RANK[f.severity], cell: severityCell },
+		{ key: 'severity', label: 'Severity', sortValue: (f) => SEVERITY_RANK[f.severity], cell: severityCell },
 		{ key: 'title', label: 'Finding', cell: findingCell },
 		{ key: 'devices', label: 'Devices', sortValue: (f) => f.devices[0]?.name ?? f.devices[0]?.ip ?? '', cell: devicesCell },
-		{ key: 'count', label: 'Connections', numeric: true, sortValue: (f) => f.count ?? -1, cell: countCell },
+		{ key: 'count', label: 'Count', numeric: true, sortValue: (f) => f.count ?? -1, cell: countCell },
 		{ key: 'fix', label: 'How to fix', class: 'wrap' },
 	];
 	const resolverColumns: Column<ResolverRow>[] = [
@@ -296,13 +295,13 @@
 	</Card>
 
 	<Card class="c-8" title="How to improve" sub="Highest priority first, from what NetTap saw">
-		{#if !report}
+		{#if !report || (report.steps.length === 0 && report.sources.some((s) => s.state === 'failed'))}
 			{@render loadingOr('the recommendations')}
 		{:else if report.steps.length === 0}
 			<CardState state="empty" icon="check" title="Nothing to change from what NetTap saw" message={unmeasured.length ? 'Some of the data couldn’t be measured or loaded; see Findings.' : undefined} />
 		{:else}
 			<ol class="steps">
-				{#each report.steps as step (step.text)}
+				{#each report.steps as step, i (i)}
 					<li>
 						<SeverityPill level={step.priority} />
 						<span>{step.text}{#if step.href} <a href={step.href}>{linkWords(step.href)}</a>{/if}</span>

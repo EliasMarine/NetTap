@@ -180,13 +180,16 @@ export function truncationNote(list: DeviceList<unknown>, href?: string): Note |
 	return href ? { text, href } : { text };
 }
 
+/** A KPI read from a score input whose request failed: no stand-in zero. */
+export const unloaded = (kpi: Kpi, failed: boolean): Kpi => (failed ? { ...kpi, value: '—', unit: undefined, sub: "Couldn't load" } : kpi);
+
 /** The Score KPI every category starts with: the overview's figure and status word. */
 export function scoreKpi(category: CategoryScore): Kpi {
 	const value = category.score === null ? '—' : category.empty ? 'Not measured' : String(category.score);
 	return { key: 'score', label: 'Score', icon: 'check', value, unit: value === String(category.score) ? '%' : undefined, sub: category.status };
 }
 
-const RANK: Record<SeverityLevel, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
+export const SEVERITY_RANK: Record<SeverityLevel, number> = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
 const STEP_RANK: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
 
 /** The category's report: most severe findings and highest-priority steps first. */
@@ -202,7 +205,7 @@ export function buildReport(slug: PostureSlug, data: ReportData): Report {
 	const report = build(data);
 	return {
 		...report,
-		findings: [...report.findings].sort((a, b) => RANK[a.severity] - RANK[b.severity] || (b.count ?? 0) - (a.count ?? 0)),
+		findings: [...report.findings].sort((a, b) => SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] || (b.count ?? 0) - (a.count ?? 0)),
 		steps: [...report.steps].sort((a, b) => STEP_RANK[a.priority] - STEP_RANK[b.priority]),
 	};
 }
